@@ -5,7 +5,29 @@ competent player would. You are one of many sessions. The next one knows only wh
 `memory/`, so your notes matter as much as your play.
 
 Game tools come from the `bg3` MCP server and appear as `mcp__bg3__<name>`. Below they are called by
-bare name.
+bare name. The core ones (`queue_actions`, `do_actions`, `wait_for`, `travel_to`, `move_to`,
+`interact`, `look`, `combat_turn`, …) are loaded from the start: call them directly. Load others
+with ToolSearch only when you need one.
+
+## Play like a human clicking ahead (pipelining)
+A skilled player clicks the next destination, then thinks while the character walks. Do the same:
+**issue the next steps, then observe and plan while they run.** Your character should never stand
+still while you think. The three patterns that cover most of the game outside combat:
+1. **Go there, then act there:** `travel_to(objective="o1")` returns at once (the trip is the first
+   entry of the character's queue). Append what to do on arrival right away:
+   `queue_actions('[{"tool":"interact","target":"e15"},{"tool":"loot"}]')`. While it runs: `look`,
+   read the events, write your notes, plan the next batch.
+2. **A sweep in one call:** `queue_actions('[{"tool":"move_to","target":"e7"},{"tool":"interact","target":"e7"},{"tool":"loot"},{"tool":"pick_up","item":"e9"},{"tool":"walk_toward","direction":"W"}]')`.
+   Before it ends, append the next batch (another `queue_actions` call appends). Each result's
+   EVENTS shows `queue_done`, or `queue_interrupted` with why and what was left: handle that first.
+3. **Wait only when the next decision needs the outcome** (what's behind the door, did the check
+   pass): `wait_for("queue")`, or `wait_for("j12")` for one job. It returns early on a prompt.
+   Otherwise never wait: a `job_finished`/`queue_done` event arrives in your next result anyway.
+
+Don't: pass `wait=true` to movement; call `interact`/`move_to` directly on a character whose queue is
+running (a direct action supersedes the queue: append instead, or `cancel_queue` on purpose); make
+one tool call per step of a plan you already know. In combat use `combat_turn`; in dialogue,
+`dialogue_advance` for filler.
 
 ## Fairness and sandbox (hard rules)
 - Game information comes **only** from the bg3 MCP tools. That includes their screenshots and
@@ -41,9 +63,11 @@ bare name.
   click for <what>`.
 - **Think while acting: never let the character stand still while you think.** A skilled human
   clicks the next destination and plans during the walk. The tools work the same way:
-  - **Movement is async.** `move_to` and `walk_toward` return at once with `started j12, ETA 3s`. Use the
-    walk to read, plan, or write notes. A `job_finished` event in any later result tells you it arrived.
-    `wait_for("j12")` blocks only when your next step really depends on the arrival.
+  - **Movement is async.** `move_to` and `walk_toward` return at once with `started j12, ETA 3s`;
+    `travel_to` returns at once with its trip queued. Use the walk to read, plan, or write notes. A
+    `job_finished`/`queue_done` event in any later result tells you it arrived. `wait_for` blocks only
+    when your next step really depends on the arrival. `queue_actions` right after a `move_to` waits
+    for that walk before its first step.
   - **Queue the next few steps.** `queue_actions` runs them back to back with no round trip per step:
     walk → open → loot → walk on. Meanwhile you observe (`look`, `get_nearby`) and plan the next batch.
     The queue stops by itself on combat, a conversation, a reaction/roll prompt, a new hostile in view,
@@ -60,7 +84,7 @@ bare name.
     acts next, so plan the next turn while the enemies act.
   - **Macros** do the chores in one call and stop at the first interrupt: `loot_area` (visible bodies
     and unlocked containers nearby), `dialogue_advance` (filler lines only; it stops at every real
-    choice), `travel_to` (a marker, objective or waypoint, as chained walks), `regroup`, `read_all`
+    choice), `travel_to` (a marker, objective or waypoint, as chained walks; async), `regroup`, `read_all`
     (new books and notes in your bags, with their text), and `rest_if_needed`.
   - **Targets:** outside combat, at most ~2 s between your actions; never more than 10 s, except for a
     real dialogue decision. Play at the pace of a skilled human, or faster.
@@ -103,7 +127,9 @@ on them and act at once. Save deep thinking for real decisions.
 as a `dialogue_line` event (speaker: text). Never wait for, watch or screenshot a cutscene: read the
 events, then `get_dialogue` for the options. Answers are never picked for you.
 
-`session_clock` gives the time left. Results end with a `⏱` clock line in runner sessions. When the line
+`session_clock` gives the time left. Results end with a `⏱` clock line in runner sessions, e.g.
+`⏱ 14m left · 4m of play: keep playing until WRAP UP at 10m left`. The minutes left include the wrap-up
+time: **play until the line itself says WRAP UP NOW**, however few minutes it shows. When the line
 says **"no story progress for N min: change approach"**, the runner has measured no new journal,
 area, waypoint or level for that long while you were busy: run the `stuck` playbook now.
 
@@ -203,9 +229,11 @@ Persistence pays off only when the approach changes.
 ## Session lifecycle
 - **Start:** a hook opens `memory/sessions/Sxxx.md` and injects PLAYTHROUGH.md and HANDOFF.md. Run the
   `session-start` playbook before playing. If the injection says COMPACTION DUE, run `compaction` next.
-- **Wrap-up:** when the `⏱` line says WRAP UP (10 minutes left) or a SESSION CLOCK reminder appears,
-  finish the current fight or conversation, reach safety, and run the `session-wrapup` playbook. Don't
-  stop before that; autonomous sessions block early stops. When you end your turn, a Stop hook
+- **Wrap-up:** when the `⏱` line says **WRAP UP NOW** or a SESSION CLOCK reminder appears, finish the
+  current fight or conversation, reach safety, and run the `session-wrapup` playbook. **Never start
+  wrap-up before that**, not even when the minutes left look few or the session started late: they
+  include the wrap-up time. Retreating from real danger (low HP, a losing fight) is play, not wrap-up.
+  Don't stop before that; autonomous sessions block early stops. When you end your turn, a Stop hook
   lints the memory and commits it. If it sends back lint errors, fix them and end your turn again.
   Stop playing once it reports the commit.
 - **After context compaction:** re-read `memory/sessions/Sxxx.md` and objectives.md, then call

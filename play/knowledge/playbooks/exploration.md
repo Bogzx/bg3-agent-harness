@@ -26,8 +26,9 @@ the region done in locations.md.
     `interact` on the door, `jump_to(x, y, z)`, another point, or another route. One `screenshot` only
     if the text doesn't explain the block.
   - `still running`: `wait()`.
-- Long distances: `travel_to(marker="m1" | objective="o1")` chains walks there in one call (it stops on
-  an interrupt or when nothing leads further); `fast_travel(waypoint="<name>")` between unlocked
+- Long distances: `travel_to(marker="m1" | objective="o1")` chains walks there and returns at once;
+  append the arrival steps with `queue_actions` and plan meanwhile (it stops on an interrupt or when
+  nothing leads further); `fast_travel(waypoint="<name>")` between unlocked
   waypoints (never in combat). `regroup()` brings stragglers back.
 - Sneaking: `set_party(action="sneak_on")` near enemies you want to avoid or ambush, `sneak_off` after.
 - Keep the party chained (`set_party(action="chain", who=…, leader=…)`) except when positioning on

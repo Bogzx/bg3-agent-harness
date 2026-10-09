@@ -5,11 +5,13 @@ Stdlib only: the bridge (recording), runner/play.py (stream timing, session summ
 
 Three record streams, all JSONL:
 * Sxxx.metrics.jsonl (written by the bridge, path in $BG3AI_METRICS_PATH, default runtime/metrics.jsonl):
-    {"type":"tool", "tool", "t0", "t1", "ms", "rpc_ms", "rpc_n", "job_ms", "busy", "nested", "ok"}
+    {"type":"tool", "tool", "t0", "t1", "ms", "rpc_ms", "rpc_n", "job_ms", "busy", "nested", "ok", "bg", "async"}
       one per tool call. t0/t1 are wall times. ms is the bridge round trip of the whole tool. rpc_ms is the
       time spent in Lua RPCs (TCP eval round trips). job_ms is the time spent waiting on game jobs
       (walking, casting...). nested marks the steps inside do_actions. busy means the party was visibly
-      doing something during the call.
+      doing something during the call. bg (top-level calls only) is how many background activities
+      (async jobs, action queues) were already running when the call started; async marks a call that
+      started one and returned while it runs (move_to, travel_to, queue_actions, wait=false...).
     {"type":"sample", "t", "moving", "job", "dlg", "combat"}
       ~1/s from the activity sampler (nav.activity on its own connection).
 * Sxxx.turns.jsonl (written by the runner from claude's stream-json, arrival times):
@@ -26,6 +28,12 @@ Definitions:
 * think time: from a tool_result reaching the model to its next assistant message (stream-json arrival).
 * busy %: share of samples where a party member moved or a game job was running. Dialogue share is
   reported separately: the server can't tell playback from waiting on an answer.
+* pipelining %: share of the agent's own action calls (top level: action tools, macros, do_actions,
+  queue_actions) issued while another job or queue of the party was still running, i.e. the agent
+  planned and issued the next step while the character was busy, like a human clicking ahead. From the
+  bridge's bg field; for older records without it, from the activity samples (a busy sample in the
+  1.5 s before the call and after the previous top-level action ended). async % is the share of those
+  calls that returned at once while their own job kept running.
 """
 
 from __future__ import annotations
@@ -49,6 +57,12 @@ DIALOGUE_TOOLS = {"choose_dialogue", "roll_check", "dialogue_advance"}
 BATCH_TOOL = "do_actions"
 # Wrappers whose steps run as nested tool records (like do_actions): combat_turn and the macros.
 BATCH_TOOLS = {BATCH_TOOL, "combat_turn", "loot_area", "travel_to", "regroup", "read_all", "rest_if_needed"}
+QUEUE_TOOL = "queue_actions"
+# Top-level calls that issue actions (pipelining is measured over these); waits don't count.
+ISSUE_TOOLS = (ACTION_TOOLS | BATCH_TOOLS | {QUEUE_TOOL}) - NOT_APM
+BG_DEFAULT_S = 10.0  # an async job with no ETA counts as running this long unless its end is seen
+BG_GRACE_S = 1.5     # ETAs are estimates: an async job counts as running a little past its ETA
+PIPE_SAMPLE_S = 1.5  # fallback: a busy sample at most this long before the call
 LONG_GAP_S = 10.0
 MOVE_EPS_M = 0.25  # a party member moved at least this far since the previous sample → moving
 
@@ -102,6 +116,7 @@ class Recorder:
         self.jobs: deque = deque(maxlen=500)    # (t0, t1, op, status)
         self.last_active = 0.0                  # wall time of the latest busy sample
         self.active_now = False
+        self.bg: dict[str, list] = {}           # key -> [t_start, t_end or None, t_expected_end or None]
 
     @classmethod
     def from_env(cls, runtime: Path) -> "Recorder":
@@ -126,6 +141,39 @@ class Recorder:
         with self.lock:
             self.jobs.append((t0, t1, op, status))
 
+    def bg_start(self, key: str, eta_s: float | None = None, t: float | None = None) -> None:
+        """A background activity began: an async job (j12) or a character's action queue."""
+        t = time.time() if t is None else t
+        exp = t + (float(eta_s) + BG_GRACE_S if eta_s is not None else BG_DEFAULT_S)
+        with self.lock:
+            old = self.bg.get(key)
+            if old and old[1] is None and old[0] <= t:  # a queue that got more steps: still the same run
+                old[2] = None if key.startswith("queue") else max(old[2] or exp, exp)
+                return
+            self.bg[key] = [t, None, None if key.startswith("queue") else exp]
+            if len(self.bg) > 200:  # forget the oldest finished ones
+                for k, _ in sorted(self.bg.items(), key=lambda kv: kv[1][0])[:100]:
+                    if self.bg[k][1] is not None or (self.bg[k][2] or t) < t:
+                        del self.bg[k]
+
+    def bg_end(self, key: str, t: float | None = None) -> None:
+        t = time.time() if t is None else t
+        with self.lock:
+            v = self.bg.get(key)
+            if v and v[1] is None:
+                v[1] = t
+
+    def _bg_open_at(self, t: float, exclude_from: float | None = None) -> int:
+        """Background activities running at time t (started before it, not yet ended)."""
+        n = 0
+        for t0, t1, exp in self.bg.values():
+            if exclude_from is not None and t0 >= exclude_from:
+                continue
+            end = t1 if t1 is not None else exp
+            if t0 < t and (end is None or end > t):
+                n += 1
+        return n
+
     def tool_done(self, tool: str, ms: float, nested: bool = False, ok: bool = True,
                   t1: float | None = None) -> dict | None:
         if tool in ("autoskip",):
@@ -136,6 +184,8 @@ class Recorder:
             rpc = [(a, b) for a, b, _ in self.rpcs if a >= t0 - 0.001 and b <= t1 + 0.001]
             job_ms = sum((min(b, t1) - max(a, t0)) * 1000 for a, b, _, _ in self.jobs if b > t0 and a < t1)
             busy = job_ms > 0 or self.last_active >= t0 or self.active_now
+            bg = None if nested else self._bg_open_at(t0, exclude_from=t0)
+            started = not nested and any(t0 <= v[0] <= t1 + 0.001 for v in self.bg.values())
         rec = {"type": "tool", "tool": tool, "t0": round(t0, 3), "t1": round(t1, 3), "ms": round(ms, 1),
                "rpc_ms": round(sum((b - a) * 1000 for a, b in rpc), 1), "rpc_n": len(rpc),
                "job_ms": round(max(job_ms, 0.0), 1), "busy": bool(busy)}
@@ -143,6 +193,10 @@ class Recorder:
             rec["nested"] = True
         if not ok:
             rec["ok"] = False
+        if bg is not None:
+            rec["bg"] = bg
+        if started:
+            rec["async"] = True
         self.write(rec)
         return rec
 
@@ -326,6 +380,31 @@ def gaps(actions: list[dict], samples: list[dict]) -> list[dict]:
     return out
 
 
+def pipelining(tools: list[dict], samples: list[dict]) -> dict:
+    """How often the agent issued its next action while the party was still busy with an earlier one."""
+    top = sorted((r for r in tools if not r.get("nested") and "t0" in r), key=lambda r: r["t0"])
+    issued = [r for r in top if r.get("tool") in ISSUE_TOOLS]
+    busy_t = sorted(s["t"] for s in samples if "t" in s and (s.get("moving") or s.get("job")))
+    n_pipe = n_async = 0
+    source = "bridge" if any("bg" in r for r in issued) else "samples"
+    prev_end = None
+    for r in issued:
+        if "bg" in r:
+            pipe = r["bg"] > 0
+        else:
+            lo = max(r["t0"] - PIPE_SAMPLE_S, prev_end if prev_end is not None else float("-inf"))
+            pipe = any(lo < t < r["t0"] for t in busy_t)
+        n_pipe += bool(pipe)
+        n_async += bool(r.get("async"))
+        prev_end = r["t1"] if prev_end is None else max(prev_end, r["t1"])
+    n = len(issued)
+    pct = (lambda k: round(100.0 * k / n, 1)) if n else (lambda k: None)
+    return {"issued": n, "pipelined": n_pipe, "pct": pct(n_pipe), "async": n_async, "async_pct": pct(n_async),
+            "queue_calls": sum(1 for r in issued if r.get("tool") == QUEUE_TOOL),
+            "batch_calls": sum(1 for r in issued if r.get("tool") in BATCH_TOOLS),
+            "source": source}
+
+
 def _target(value, limit, lower_is_better=True):
     if value is None:
         return {"value": None, "target": limit, "pass": None}
@@ -364,6 +443,7 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
 
     med_explore = percentile(by_kind["explore"], 50)
     read_med = percentile([r["ms"] for r in reads], 50)
+    pipe = pipelining(tool_recs, samp)
     return {
         "start": round(start, 1), "end": round(end, 1), "minutes": round(minutes, 2),
         "source": source,
@@ -380,6 +460,8 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
         "busy_pct": pct(busy), "dialogue_pct": pct(dlg), "busy_or_dialogue_pct": pct(
             sum(1 for s in samp if s.get("moving") or s.get("job") or s.get("dlg"))),
         "samples": len(samp),
+        "pipelining": pipe,
+        "pipelining_pct": pipe["pct"],
         "targets": {
             "median_idle_explore_s": _target(None if med_explore is None else round(med_explore, 2),
                                              TARGETS["median_idle_explore_s"]),
@@ -411,7 +493,7 @@ def write_summary(summary: dict, out_path: Path, history_path: Path | None, sess
                "long_gaps": summary["long_gaps"]["total"], "long_gaps_dialogue": summary["long_gaps"]["dialogue"],
                "think_median_s": summary["think_s"].get("median"), "rt_read_median_ms": summary["tool_rt_ms"]["read"].get("median"),
                "rt_read_p90_ms": summary["tool_rt_ms"]["read"].get("p90"), "apm": summary.get("apm"),
-               "busy_pct": summary.get("busy_pct"),
+               "busy_pct": summary.get("busy_pct"), "pipelining_pct": summary.get("pipelining_pct"),
                "pass": {k: v.get("pass") for k, v in t.items()}}
         with open(history_path, "a") as f:
             f.write(json.dumps(row, separators=(",", ":")) + "\n")
@@ -461,7 +543,8 @@ def live_view(tools: list[dict], samples: list[dict], turns: list[dict], now: fl
         "idle_explore_median_s": s["idle_s"]["explore"].get("median"),
         "think_median_s": s["think_s"].get("median"),
         "rt_read_median_ms": s["tool_rt_ms"]["read"].get("median"), "rt_read_p90_ms": s["tool_rt_ms"]["read"].get("p90"),
-        "apm": s["apm"], "busy_pct": s["busy_pct"], "long_gaps": s["long_gaps"],
+        "apm": s["apm"], "busy_pct": s["busy_pct"], "pipelining_pct": s["pipelining_pct"],
+        "long_gaps": s["long_gaps"],
         "targets": s["targets"],
         "timeline": {"step_s": step, "buckets": buckets},
     }
