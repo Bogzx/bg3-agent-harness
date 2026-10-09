@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<save>
+    <version major="4" minor="8" revision="0" build="400"/>
+    <region id="Config">
+        <node id="root">
+            <children>
+                <node id="Dependencies"/>
+                <node id="ModuleInfo">
+                    <attribute id="Author" type="LSString" value="bg3-ai"/>
+                    <attribute id="CharacterCreationLevelName" type="FixedString" value=""/>
+                    <attribute id="Description" type="LSString" value="Exposes player-visible game state and player actions to an external AI agent."/>
+                    <attribute id="Folder" type="LSString" value="BG3AI"/>
+                    <attribute id="LobbyLevelName" type="FixedString" value=""/>
+                    <attribute id="MD5" type="LSString" value=""/>
+                    <attribute id="MenuLevelName" type="FixedString" value=""/>
+                    <attribute id="Name" type="LSString" value="BG3AI"/>
+                    <attribute id="NumPlayers" type="uint8" value="4"/>
+                    <attribute id="PhotoBooth" type="FixedString" value=""/>
+                    <attribute id="StartupLevelName" type="FixedString" value=""/>
+                    <attribute id="Tags" type="LSString" value=""/>
+                    <attribute id="Type" type="FixedString" value="Add-on"/>
+                    <attribute id="UUID" type="FixedString" value="65734c81-edd1-4b6f-b10e-663fec0e768e"/>
+                    <attribute id="Version64" type="int64" value="36028797018963968"/>
+                    <children>
+                        <node id="PublishVersion">
+                            <attribute id="Version64" type="int64" value="36028797018963968"/>
+                        </node>
+                    </children>
+                </node>
+            </children>
+        </node>
+    </region>
+</save>

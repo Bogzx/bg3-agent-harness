@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+/runtime/
+/shots/
+/build/
+native/**/build/
+*.so
+*.dll
+*.o
+# playthrough memories are their own git repos; play/memory is a symlink to one
+/playthroughs/
+/play/memory

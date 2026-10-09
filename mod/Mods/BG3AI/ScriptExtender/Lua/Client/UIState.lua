@@ -1,0 +1,484 @@
+-- ui.state: what screen the player is looking at, and the decision-relevant
+-- content of it, in short fields (owner: worker "io").
+--
+-- Classification is by the pages present under ContentRoot (names are the
+-- XAML root x:Name, see UI.lua). Content comes from the DataContext where the
+-- XAML binds it, and otherwise from the rendered TextBlocks, so everything
+-- returned is something on screen.
+--
+-- Live-verified (2026-10-09, Moonrise Towers): game / game_menu
+-- classification, region, subtitle fields, notifications (empty), widgets.
+-- Untested live (no dialogue/roll/reaction allowed on the user's save):
+-- dialogue, roll, reaction, container, popup, tutorial, game_over. They are
+-- built from DialogueTemplates.xaml, ActiveRoll.xaml,
+-- ReactionDecisionPopup.xaml, MessageBox.xaml, TutorialPopup.xaml,
+-- Tutorial.xaml and Container.xaml bindings.
+
+BG3AI = BG3AI or {}
+local RPC = BG3AI.RPC
+local UI = BG3AI.UI
+local S = BG3AI.UIState or {}
+BG3AI.UIState = S
+
+local function try(f, ...)
+    local ok, v = pcall(f, ...)
+    if ok then return v end
+    return nil
+end
+
+local prop, props, clean = UI.prop, UI.props, UI.clean
+
+-- Page name -> screen, in priority order (modal things first).
+S.SCREENS = {
+    { "MainMenu", "main_menu" },
+    { "CharacterCreation", "character_creation" },
+    { "CharacterRespec", "character_creation" },
+    { "CharacterFullRespec", "character_creation" },
+    { "CharacterChangeAppearance", "character_creation" },
+    { "ReactionDecisionPopup", "reaction" },
+    { "ActiveRoll", "roll" },
+    { "Dialog_box", "popup" },
+    { "SignUp", "popup" },
+    { "Eula", "popup" },
+    { "SaveGamePopup", "popup" },
+    { "ModalTutorial", "tutorial" },
+    { "TutorialPopup", "tutorial" },
+    { "Dialogue", "dialogue" },
+    { "CharacterLevelUp", "level_up" },
+    { "Trade", "trade" },
+    { "Pickpocket", "trade" },
+    { "LongRest", "rest" },
+    { "MakeCamp", "rest" },
+    { "ContainerWidget", "container" },
+    { "Book", "book" },
+    { "RewardPanel", "reward" },
+    { "LearnSpells", "learn_spells" },
+    { "TadpolePowersTree", "tadpole_tree" },
+    { "SplitItem", "popup" },
+    { "SaveGame", "save_load" },
+    { "LoadGame", "save_load" },
+    { "GameMenu", "game_menu" },
+    { "GameOptions", "options" },
+    { "AudioOptions", "options" },
+    { "VideoOptions", "options" },
+    { "InterfaceOptions", "options" },
+    { "KeybindingOptions", "options" },
+    { "AccessibilityOptions", "options" },
+    { "JournalMap", "map" },
+    { "OverviewMap", "map" },
+}
+
+-- Screens where a modal blocks world actions (move/attack/interact).
+S.BLOCKING = {
+    main_menu = true, loading = true, character_creation = true, reaction = true, roll = true,
+    popup = true, tutorial = true, dialogue = true, level_up = true, trade = true, rest = true,
+    book = true, reward = true, learn_spells = true, tadpole_tree = true, save_load = true,
+    game_menu = true, options = true, game_over = true,
+}
+
+-- Always-there HUD pages; anything else that is visible counts as a panel.
+S.HUD = {
+    HudIndicator = true, OverheadInfo = true, Minimap = true, CombatLog = true, TurnModeInfo = true,
+    TargetInfo = true, CombatantsOverlay = true, WorldTooltips = true, HotBar = true, PlayerPortraits = true,
+    AlwaysOnTopOverlay = true, PassiveRoll = true, CursorText = true, Overlay = true, WorldContextMenu = true,
+    NotificationWidget = true, DragAndDropPreview = true, ScreenFade = true, CrossplayOverlay = true,
+    Busy = true, Saving = true, SelectionFlyOut = true, PinnedTooltips = true, ModDownloadingWidget = true,
+    HudRoot = true,
+}
+
+------------------------------------------------------------------------
+-- Pieces
+------------------------------------------------------------------------
+
+-- "[PERSUASION] [CLERIC] Let me help." -> tags {"PERSUASION","CLERIC"}, "Let me help."
+function S.splitTags(text)
+    local tags = {}
+    if not text then return tags, text end
+    local rest = text
+    while true do
+        local tag, after = rest:match("^%s*%[([^%]]+)%]%s*(.*)$")
+        if not tag then break end
+        tags[#tags + 1] = tag
+        rest = after
+    end
+    return tags, rest
+end
+
+local function activeDialogue(dc)
+    return UI.path(dc, "CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.ActiveDialogue")
+end
+S.activeDialogue = activeDialogue
+
+-- Visible answers in display order: { {i, text, tags, off?, vm} }, changing.
+-- SAFETY (S001 crash, use-after-free in bg3le's Noesis binding): never read
+-- a rendered answer container's DataContext. When an answer is chosen the
+-- answer VMs are released at once while the old LSListBoxItems stay in the
+-- tree until the next layout pass, still pointing at the freed VMs. VMs are
+-- taken from ActiveDialogue.Answers (live) and paired by index with the
+-- rendered texts; if the counts differ the node is changing and nothing is
+-- returned (changing = true).
+function S.dialogueAnswers(widget, ad)
+    local out = {}
+    local list = UI.byName(widget, "answerList")
+    if not list then return out, false end
+    local items = UI.findAll(list, function(e)
+        local ty = UI.typeName(e)
+        return ty == "ls.LSListBoxItem" or ty == "ListBoxItem"
+    end, { prune = true })
+    local vms = ad and UI.prop(ad, "Answers")
+    local n = vms and UI.count(vms) or 0
+    if #items ~= n then return out, #items > 0 or n > 0 end
+    for idx, item in ipairs(items) do
+        local textEl = UI.byName(item, "AnswerText")
+        local text = textEl and UI.text(textEl) or UI.allText(item)
+        if text then
+            local vm = try(vms.At, vms, idx)
+            local tags, body = S.splitTags(text)
+            local a = { i = #out + 1, text = body, vm = vm }
+            if #tags > 0 then a.tags = tags end
+            if vm and props(vm).Enabled == false then a.off = true end
+            out[#out + 1] = a
+        end
+    end
+    return out, false
+end
+
+-- The continue answer VM (ActiveDialogue.ContinueAnswer) when present.
+function S.continueVM(ad)
+    return ad and props(ad).ContinueAnswer or nil
+end
+
+function S.dialogue(wmap)
+    local w = wmap.Dialogue
+    local dc = (w and try(function() return w.el.DataContext end)) or UI.anyDC()
+    local ad = activeDialogue(dc)
+    if ad == nil and not w then return nil end
+    local p = props(ad)
+    local d = {}
+    d.speaker = clean(p.SpeakerName)
+    d.text = clean(p.BodyText)
+    if (not d.text) and w then
+        local body = UI.byName(w.el, "TextBodyContainer")
+        d.text = body and UI.text(body)
+    end
+    if w then
+        local answers, changing = S.dialogueAnswers(w.el, ad)
+        if changing then d.changing = true end
+        if #answers > 0 then
+            d.options = {}
+            for _, a in ipairs(answers) do
+                d.options[#d.options + 1] = { i = a.i, text = a.text, tags = a.tags, off = a.off }
+            end
+        end
+    end
+    if d.text and not d.speaker then
+        -- Rendered body is "<speaker>: <line>" when speaker names are shown.
+        local sp, line = d.text:match("^([^:]+):%s+(.+)$")
+        if sp and #sp <= 40 then d.speaker, d.text = sp, line end
+    end
+    -- The continue item already exists while a line is still being voiced;
+    -- it is only a prompt once answers are shown (ShowAnswers).
+    if not d.options then
+        if p.ShowAnswers == false then
+            d.listening = true
+        elseif p.ContinueAnswer ~= nil then
+            d.continue = true
+        end
+    end
+    if p.CanTrade then d.can_trade = true end
+    return d
+end
+
+local ROLL_PHASE = {
+    IntroductionAnimation = "intro", WaitForStart = "ready", StartRoll = "rolling", StopRoll = "rolling",
+    ResultReady = "result", WaitForReRoll = "reroll",
+}
+
+local function nameValueList(coll, max)
+    local out = {}
+    for _, vm in UI.items(coll, max or 12) do
+        local p = props(vm)
+        local name = clean(p.Name) or clean(p.Description)
+        local e = { name = name }
+        if type(p.Value) == "number" or type(p.Value) == "string" then e.value = p.Value end
+        if p.IsDisabled == true then e.off = true end
+        if name or e.value then out[#out + 1] = e end
+    end
+    return out
+end
+
+function S.roll(wmap)
+    local w = wmap.ActiveRoll
+    if not w then return nil end
+    local dc = try(function() return w.el.DataContext end)
+    local p = props(dc)
+    local r = {
+        phase = ROLL_PHASE[tostring(p.RollState)] or tostring(p.RollState),
+        skill = clean(p.SkillOrAbility),
+        context = p.RollContext ~= "None" and p.RollContext or nil,
+    }
+    local roll = p.Roll
+    if roll then
+        local rp = props(roll)
+        if rp.ShowDC ~= false and type(rp.DifficultyCheck) == "number" and rp.DifficultyCheck > 0 then
+            r.dc = rp.DifficultyCheck
+        end
+        if rp.RollAdvantageType and rp.RollAdvantageType ~= "None" then r.advantage = tostring(rp.RollAdvantageType) end
+        r.modifiers = nameValueList(rp.Modifiers)
+        local adv = nameValueList(rp.Advantages)
+        if #adv > 0 then r.advantages = adv end
+    end
+    local boosts = nameValueList(p.BoostModifierList)
+    if #boosts > 0 then r.boosts = boosts end
+    local sel = nameValueList(p.SelectedBoostModifierList)
+    if #sel > 0 then r.selected = sel end
+    if type(p.InspirationPoints) == "number" then r.inspiration = p.InspirationPoints end
+    if r.phase == "result" or r.phase == "reroll" then
+        r.result = p.FinalResult
+        r.success = p.Success
+    end
+    if type(p.MinBonusValue) == "number" then
+        if p.MinBonusValue == p.MaxBonusValue then r.bonus = p.MinBonusValue
+        else r.bonus = { p.MinBonusValue, p.MaxBonusValue } end
+    end
+    if r.modifiers and #r.modifiers == 0 then r.modifiers = nil end
+    -- SkillOrAbility is not reflected on bg3le: read the panel's rendered
+    -- texts. Layout (live, 2026-10-09): "<Speaker>: <chosen line>",
+    -- "<Skill>", "<Ability> Check", "Total Bonus", ...
+    if not r.skill then
+        local texts = {}
+        for _, it in ipairs(UI.content(w.el, { text_only = true, max = 3000 })) do
+            if it.t and it.t ~= "[ForceUpdate]" then texts[#texts + 1] = it.t end
+        end
+        for i, t in ipairs(texts) do
+            if t:match(" Check$") or t:match(" Saving Throw$") then
+                r.check = t
+                local prev = texts[i - 1]
+                if prev and not prev:find(":") and not tonumber(prev) then r.skill = prev end
+                break
+            end
+        end
+        if texts[1] and texts[1]:find(":") then r.line = texts[1] end
+        if not r.check then r.text = table.concat(texts, " | ") end
+    end
+    return r
+end
+
+-- Reaction prompt: Data.InterruptEvents[1] with its interruptors and the
+-- reactions each can use.
+function S.reaction(wmap)
+    local w = wmap.ReactionDecisionPopup
+    if not w then return nil end
+    local dc = try(function() return w.el.DataContext end)
+    local events = UI.path(dc, "Data.InterruptEvents")
+    if UI.count(events) == 0 then return nil end
+    local ev = try(events.At, events, 1)
+    local out = { prompt = UI.allText(w.el, " | ", 3000), options = {} }
+    local i = 0
+    for _, interruptor in UI.items(prop(ev, "Interruptors"), 8) do
+        local ch = props(prop(interruptor, "Character"))
+        for _, dec in UI.items(prop(interruptor, "InterruptDecisions"), 8) do
+            local dp = props(dec)
+            local ip = props(dp.Interrupt)
+            i = i + 1
+            out.options[#out.options + 1] = {
+                i = i,
+                who = clean(ch.Name),
+                name = clean(ip.Name) or clean(ip.DisplayName),
+                decision = dp.Decision and tostring(dp.Decision) or nil,
+            }
+        end
+    end
+    if #out.options == 0 then out.options = nil end
+    if UI.count(events) > 1 then out.pending = UI.count(events) end
+    return out
+end
+
+-- Generic popup (message box, split item, save name): title/text/buttons as
+-- rendered.
+function S.popup(el)
+    local items = UI.content(el, { max = 4000 })
+    local texts, buttons = {}, {}
+    for _, it in ipairs(items) do
+        if it.t then texts[#texts + 1] = it.t
+        elseif it.b and it.b ~= "" then buttons[#buttons + 1] = it.b end
+    end
+    local p = {}
+    if #texts > 0 then
+        p.title = texts[1]
+        if #texts > 1 then p.text = table.concat(texts, " ", 2) end
+    end
+    if #buttons > 0 then p.buttons = buttons end
+    return p
+end
+
+function S.tutorial(wmap)
+    local w = wmap.ModalTutorial or wmap.TutorialPopup
+    if not w then return nil end
+    return S.popup(w.el)
+end
+
+-- Open loot container. bg3le exposes no item names on ls.VMItem, so this
+-- reports what the grid shows per slot (kind, rarity, stack size) plus the
+-- panel's rendered text; names come from the server (state.inventory).
+-- Slot index i is what ui.loot{slots=[i]} takes.
+function S.container(wmap)
+    local w = wmap.ContainerWidget
+    if not w then return nil end
+    local dc = try(function() return w.el.DataContext end)
+    local out = { slots = {} }
+    local i = 0
+    for _, cont in UI.items(UI.path(dc, "CurrentPlayer.ContainerInventoryList"), 4) do
+        for _, slot in UI.items(UI.path(cont, "LootInventory.Slots"), 120) do
+            local obj = props(slot).Object
+            i = i + 1
+            if obj then
+                local op = props(obj)
+                local it = { i = i, kind = op.ItemType, rarity = op.Rarity ~= "Common" and op.Rarity or nil }
+                if type(op.Count) == "number" and op.Count > 1 then it.n = op.Count end
+                if op.IsStolen then it.stolen = true end
+                if type(op.Gold) == "number" and op.Gold > 0 and op.ItemType ~= "Container" then it.gold = op.Gold end
+                out.slots[#out.slots + 1] = it
+            end
+        end
+    end
+    if #out.slots == 0 then out.slots = nil end
+    out.text = UI.allText(w.el, " | ", 3000)
+    return out
+end
+
+-- Toasts and side notifications currently rendered.
+function S.notifications(wmap)
+    local w = wmap.NotificationWidget
+    if not w or not UI.isVisible(w.el) then return nil end
+    local out = {}
+    for _, it in ipairs(UI.content(w.el, { text_only = true, max = 1500 })) do
+        if it.t then out[#out + 1] = it.t end
+    end
+    if #out == 0 then return nil end
+    return out
+end
+
+-- Region line under the minimap ("Moonrise Towers, First Floor").
+function S.region()
+    local e = UI.cachedByName("Minimap", "LocationHolder")
+    return e and UI.allText(e) or nil
+end
+
+-- Party wipe: BG3 shows a message box whose buttons are only load/main
+-- menu actions. Heuristic (untested live): popup with a load button and no
+-- cancel/back/resume.
+function S.isGameOver(popup)
+    if not popup or not popup.buttons then return false end
+    local load, escape = false, false
+    for _, b in ipairs(popup.buttons) do
+        local l = b:lower()
+        if l:find("load") then load = true end
+        if l:find("cancel") or l:find("resume") or l:find("back") or l:find("no") == 1 then escape = true end
+    end
+    return load and not escape and (popup.title or ""):lower():find("save") == nil
+end
+
+------------------------------------------------------------------------
+-- ui.state
+------------------------------------------------------------------------
+
+function S.state(args)
+    local t0 = RPC.now_ms()
+    local res = {}
+    local gs = tostring(try(Ext.Utils.GetGameState) or "?")
+    local wmap = UI.widgetMap()
+    if next(wmap) == nil or (gs ~= "Running" and gs ~= "Paused" and gs ~= "Menu") then
+        res.screen = (gs == "Menu") and "main_menu" or "loading"
+        res.game_state = gs
+        res.blocking = true
+        res.ms = RPC.now_ms() - t0
+        return res
+    end
+
+    -- Bink movie: only movie-safe widgets, nothing else (see AutoSkip).
+    do
+        local only = true
+        for name in pairs(wmap) do
+            if not (name == "AlwaysOnTopOverlay" or name == "ScreenFade" or name == "CrossplayOverlay"
+                or name == "ModDownloadingWidget") then only = false break end
+        end
+        if only and gs == "Running" then
+            res.screen = "movie"
+            res.blocking = true
+            res.ms = RPC.now_ms() - t0
+            return res
+        end
+    end
+
+    for _, pair in ipairs(S.SCREENS) do
+        local w = wmap[pair[1]]
+        if w and UI.isVisible(w.el) then
+            res.screen = pair[2]
+            res.page = pair[1]
+            break
+        end
+    end
+    res.screen = res.screen or "game"
+
+    -- Panels open besides the HUD.
+    local panels = {}
+    for name, w in pairs(wmap) do
+        if not S.HUD[name] and name ~= res.page and UI.isVisible(w.el) then panels[#panels + 1] = name end
+    end
+    table.sort(panels)
+    if #panels > 0 then res.panels_open = panels end
+
+    local scr = res.screen
+    if scr == "dialogue" then
+        res.dialogue = S.dialogue(wmap)
+    elseif scr == "roll" then
+        res.roll = S.roll(wmap)
+    elseif scr == "reaction" then
+        res.reaction = S.reaction(wmap)
+    elseif scr == "popup" then
+        res.popup = S.popup(wmap[res.page].el)
+        if S.isGameOver(res.popup) then res.screen = "game_over" end
+        -- 2+ buttons = a decision the agent must make (ui.press); otherwise
+        -- ui.dismiss may close it.
+        if res.popup.buttons and #res.popup.buttons >= 2 then res.popup.decision = true
+        else res.popup.dismissable = true end
+    elseif scr == "tutorial" then
+        res.tutorial = S.tutorial(wmap)
+        if res.tutorial then res.tutorial.dismissable = true end
+    elseif scr == "container" then
+        res.container = S.container(wmap)
+    elseif scr == "game_menu" or scr == "main_menu" or scr == "save_load" or scr == "book"
+        or scr == "reward" or scr == "options" then
+        res.popup = S.popup(wmap[res.page].el)
+    end
+
+    -- A dialogue can sit under a roll or popup: keep its context.
+    if scr ~= "dialogue" and wmap.Dialogue and UI.isVisible(wmap.Dialogue.el) and args.full then
+        res.dialogue = S.dialogue(wmap)
+    end
+
+    if scr ~= "main_menu" then
+        res.region = S.region()
+        local oh = wmap.OverheadInfo and try(function() return wmap.OverheadInfo.el.DataContext end)
+        if oh then
+            local sub = clean(prop(oh, "CurrentSubtitle"))
+            if sub then res.subtitle = { speaker = clean(prop(oh, "CurrentSpeaker")), text = sub } end
+        end
+        res.notifications = S.notifications(wmap)
+    end
+    if S.BLOCKING[res.screen] then res.blocking = true end
+    local A = BG3AI.UIActions
+    if A and A.gates and (A.SAVE_ENABLED or A.LOAD_ENABLED or args.full) then res.gates = A.gates() end
+    local K = BG3AI.AutoSkip
+    if K and K.view then
+        local v = K.view()
+        if not v.on or v.skipped > 0 or args.full then res.autoskip = { on = v.on, skipped = v.skipped } end
+    end
+    res.ms = RPC.now_ms() - t0
+    return res
+end
+
+RPC.register("ui.state", function(args) return S.state(args or {}) end)
+
+return S

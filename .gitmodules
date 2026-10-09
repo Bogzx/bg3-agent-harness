@@ -1,0 +1,3 @@
+[submodule "third_party/bg3le"]
+	path = third_party/bg3le
+	url = https://github.com/lenonk/bg3le

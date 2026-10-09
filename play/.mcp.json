@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "bg3": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--project", "../bridge", "bg3ai-mcp"],
+      "env": {},
+      "timeout": 110000
+    }
+  }
+}

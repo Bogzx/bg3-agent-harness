@@ -1,0 +1,19 @@
+BG3AI = BG3AI or {}
+BG3AI.VERSION = "0.1.0"
+Ext.Require("Shared/RPC.lua")
+Ext.Require("Shared/Util.lua")
+local U = BG3AI.Util
+
+-- Server modules: fair state (visibility-filtered), events, guarded actions.
+for _, path in ipairs({
+    "Server/Visibility.lua",
+    "Server/State.lua",
+    "Server/Events.lua",
+    "Server/Navigation.lua",
+    "Server/Guard.lua",
+    "Server/Actions.lua",
+}) do
+    U.require(path)
+end
+
+Ext.Utils.Print("[BG3AI] server context ready, v" .. BG3AI.VERSION)

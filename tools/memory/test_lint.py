@@ -1,0 +1,195 @@
+import io
+import json
+import unittest
+from contextlib import redirect_stdout
+
+import lint as L
+from _testutil import MemoryTestCase
+
+
+def kinds(items):
+    return [k for k, _ in items]
+
+
+class TemplateTest(MemoryTestCase):
+    def test_fresh_template_is_clean(self):
+        r = L.lint(self.mem)
+        self.assertEqual(r.errors, [], r.render(self.mem))
+
+    def test_missing_file_is_error(self):
+        (self.mem / "npcs.md").unlink()
+        r = L.lint(self.mem)
+        self.assertIn("missing", kinds(r.errors))
+
+    def test_missing_memory_dir(self):
+        r = L.lint(self.tmp / "nope")
+        self.assertFalse(r.ok)
+
+
+class BudgetTest(MemoryTestCase):
+    def test_line_budget(self):
+        self.write("objectives.md", "# Objectives\n" + "".join(f"- O-{i} goal\n" for i in range(90)))
+        r = L.lint(self.mem)
+        self.assertTrue(any(k == "budget" and m.startswith("objectives.md") for k, m in r.errors))
+
+    def test_comments_and_blank_lines_do_not_count(self):
+        body = "# Objectives\n<!--\n" + "example line\n" * 200 + "-->\n" + "\n" * 50 + "- O-1 goal\n"
+        self.write("objectives.md", body)
+        self.assertEqual([e for e in L.lint(self.mem).errors if e[0] == "budget"], [])
+
+    def test_char_budget_for_injected_files(self):
+        self.write("HANDOFF.md", "# Handoff S000 → S001\n" + ("x" * 100 + "\n") * 40)
+        r = L.lint(self.mem)
+        self.assertTrue(any("content chars" in m for _, m in r.errors))
+
+    def test_chapter_budget(self):
+        self.write("chapters/C01_S001-S010_x.md", "# C1\n" + "line\n" * 151)
+        self.assertIn("budget", kinds(L.lint(self.mem).errors))
+
+
+class ProvenanceTest(MemoryTestCase):
+    def test_untagged_bullet_reported_with_line_number(self):
+        self.append("npcs.md", "\n## Kagha (Grove)\n- Hostile to tieflings\n- Thread: expose her\n")
+        r = L.lint(self.mem)
+        msgs = [m for k, m in r.errors if k == "provenance"]
+        self.assertEqual(len(msgs), 1, msgs)
+        lineno = self.read("npcs.md").splitlines().index("- Hostile to tieflings") + 1
+        self.assertIn(f"npcs.md:{lineno}:", msgs[0])
+
+    def test_tags_variants_accepted(self):
+        self.append("npcs.md", "- a [seen S004]\n- b [told]\n- c [wiki]\n- d [guess S9]\n* e [SEEN s001]\n")
+        self.assertNotIn("provenance", kinds(L.lint(self.mem).errors))
+
+    def test_meta_labels_and_archive_lines_exempt(self):
+        self.append("decisions.md", "## D-1 x (S001)\n- Choice: spared him\n- Why: mercy\n"
+                                    "- Reversible: no\n- ARCHIVE: condensed\n")
+        self.assertNotIn("provenance", kinds(L.lint(self.mem).errors))
+
+    def test_untagged_consequence_in_decisions(self):
+        self.append("decisions.md", "## D-1 x (S001)\n- Consequence: he ran away\n")
+        self.assertIn("provenance", kinds(L.lint(self.mem).errors))
+
+    def test_untagged_files_not_checked(self):
+        self.append("strategy.md", "- grease plus fire works\n")
+        self.assertNotIn("provenance", kinds(L.lint(self.mem).errors))
+
+    def test_bogus_tag_warns(self):
+        self.append("npcs.md", "- she is a druid [verified] [seen]\n")
+        r = L.lint(self.mem)
+        self.assertIn("provenance", kinds(r.warnings))
+
+
+class HandoffTest(MemoryTestCase):
+    def test_end_phase_requires_current_session(self):
+        r = L.lint(self.mem, "end", 3)
+        self.assertTrue(any(k == "handoff" and "S000" in m for k, m in r.errors))
+
+    def test_end_phase_ok(self):
+        self.write("HANDOFF.md", self.good_handoff(3))
+        self.assertEqual(L.lint(self.mem, "end", 3).errors, [])
+
+    def test_end_phase_requires_sections(self):
+        self.write("HANDOFF.md", "# Handoff S003 → S004\nSave to load: x\n")
+        msgs = [m for k, m in L.lint(self.mem, "end", 3).errors if k == "handoff"]
+        self.assertTrue(any("Doing right now" in m for m in msgs))
+        self.assertTrue(any("Next steps" in m for m in msgs))
+
+    def test_missing_heading(self):
+        self.write("HANDOFF.md", "hello\n")
+        self.assertIn("handoff", kinds(L.lint(self.mem).errors))
+
+    def test_stale_handoff_warns_in_any_phase(self):
+        r = L.lint(self.mem, "any", 5)
+        self.assertIn("handoff", kinds(r.warnings))
+        self.assertNotIn("handoff", kinds(r.errors))
+
+
+class DeletionGuardTest(MemoryTestCase):
+    def setUp(self):
+        super().setUp()
+        self.facts = [f"- fact number {i} [seen S001]" for i in range(15)]
+        self.append("npcs.md", "## Someone\n" + "\n".join(self.facts) + "\n")
+        self.commit("S001")
+
+    def _remove(self, n):
+        text = self.read("npcs.md")
+        for line in self.facts[:n]:
+            text = text.replace(line + "\n", "")
+        self.write("npcs.md", text)
+
+    def test_small_deletion_ok(self):
+        self._remove(5)
+        self.assertNotIn("deletion", kinds(L.lint(self.mem).errors))
+
+    def test_bulk_deletion_refused_and_quoted(self):
+        self._remove(12)
+        msgs = [m for k, m in L.lint(self.mem).errors if k == "deletion"]
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("12 lines removed", msgs[0])
+        self.assertIn("fact number 0", msgs[0])
+
+    def test_archive_marker_allows(self):
+        self._remove(12)
+        self.append("npcs.md", "## Archive\n- ARCHIVE: condensed early NPCs\n")
+        r = L.lint(self.mem)
+        self.assertNotIn("deletion", kinds(r.errors))
+        self.assertIn("deletion", kinds(r.warnings))
+
+    def test_moved_lines_do_not_count(self):
+        self._remove(15)
+        self.append("npcs.md", "## Archive\n" + "\n".join(self.facts) + "\n")
+        self.assertNotIn("deletion", kinds(L.lint(self.mem).errors))
+
+    def test_threshold_configurable(self):
+        self._remove(5)
+        self.assertIn("deletion", kinds(L.lint(self.mem, max_deleted=3).errors))
+
+    def test_deleted_required_file(self):
+        (self.mem / "decisions.md").unlink()
+        self.assertIn("deletion", kinds(L.lint(self.mem).errors))
+
+    def test_session_log_append_only(self):
+        self.write("sessions/S001.md", "# Session S001\n- 10:00 [quest] got quest\n")
+        self.commit("S001b")
+        self.append("sessions/S001.md", "- 10:05 [npc] met someone\n")
+        self.assertNotIn("append-only", kinds(L.lint(self.mem).errors))
+        self.write("sessions/S001.md", "# Session S001\n- 10:00 [quest] got a different quest\n")
+        msgs = [m for k, m in L.lint(self.mem).errors if k == "append-only"]
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("got quest", msgs[0])
+
+
+class MiscTest(MemoryTestCase):
+    def test_markers_validation(self):
+        self.write("markers.json", "{nope")
+        self.assertIn("markers", kinds(L.lint(self.mem).errors))
+        self.write("markers.json", json.dumps({"markers": [{"id": "m1"}]}))
+        self.assertIn("markers", kinds(L.lint(self.mem).errors))
+        self.write("markers.json", json.dumps({"markers": [{"id": "m1", "label": "door"}]}))
+        self.assertNotIn("markers", kinds(L.lint(self.mem).errors))
+        # the shape the MCP server's place_marker writes
+        self.write("markers.json", json.dumps([{"id": "m1", "label": "door", "pos": [1, 2, 3], "region": "R"}]))
+        self.assertNotIn("markers", kinds(L.lint(self.mem).errors))
+        self.write("markers.json", json.dumps("nope"))
+        self.assertIn("markers", kinds(L.lint(self.mem).errors))
+
+    def test_stale_hypothesis_warns(self):
+        self.append("hypotheses.md", "## H-3 Cellar (open, S002)\n- Belief: hatch [guess]\n- Test: look\n")
+        self.assertNotIn("hypothesis", kinds(L.lint(self.mem, session=5).warnings))
+        self.assertIn("hypothesis", kinds(L.lint(self.mem, session=6).warnings))
+
+    def test_compaction_warning(self):
+        self.assertNotIn("compaction", kinds(L.lint(self.mem, session=10).warnings))
+        self.assertIn("compaction", kinds(L.lint(self.mem, session=11).warnings))
+        self.write("chapters/C01_S001-S010_act1.md", "# Chapter 1\n")
+        self.assertNotIn("compaction", kinds(L.lint(self.mem, session=11).warnings))
+
+    def test_cli_exit_codes(self):
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(L.main([str(self.mem)]), 0)
+            self.write("markers.json", "{nope")
+            self.assertEqual(L.main([str(self.mem)]), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

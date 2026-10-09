@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BG3 AI Live</title>
+<style>
+:root {
+  --bg: #0d0f14; --panel: #151922; --panel-2: #1b2030; --line: #262c3d;
+  --text: #e4e7ef; --muted: #8b93a7; --faint: #5b6377;
+  --accent: #d4a24c; --accent-2: #8a6cff;
+  --ok: #4cc38a; --warn: #e6b450; --bad: #ef5f6b; --info: #5aa9ff;
+  --read: #5aa9ff; --act: #d4a24c; --vision: #c678dd; --save: #4cc38a;
+  --mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); }
+body { min-height: 100vh; }
+header {
+  position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+  padding: 10px 16px; background: rgba(13,15,20,.92); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.brand h1 { margin: 0; font-size: 16px; letter-spacing: .04em; font-weight: 650; }
+.brand h1 span { color: var(--accent); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 12px; white-space: nowrap; }
+.chip b { color: var(--text); font-weight: 600; }
+.where { flex: 1 1 260px; min-width: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.where .region { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mode { text-transform: uppercase; font-size: 11px; letter-spacing: .08em; font-weight: 700; padding: 2px 8px; border-radius: 4px; }
+.mode.exploring { background: #1d3326; color: var(--ok); }
+.mode.combat { background: #3a1c22; color: var(--bad); animation: pulse 1.6s infinite; }
+.mode.dialogue { background: #2a2147; color: var(--accent-2); }
+@keyframes pulse { 50% { opacity: .6; } }
+.clock { display: flex; align-items: center; gap: 10px; }
+.clock .time { font: 600 22px/1 var(--mono); letter-spacing: .02em; }
+.clock.play .time { color: var(--text); } .clock.wrapup .time { color: var(--warn); }
+.clock.over .time { color: var(--bad); } .clock.idle .time { color: var(--faint); }
+.clock .bar { width: 120px; height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.clock .bar i { display: block; height: 100%; background: var(--accent); transition: width 1s linear; }
+.dots { display: flex; gap: 10px; font-size: 12px; color: var(--muted); }
+.dot { display: inline-flex; align-items: center; gap: 5px; }
+.dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.dot.on::before { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.dot.off::before { background: var(--bad); }
+
+main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; padding: 14px 16px 24px; }
+.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+@media (max-width: 1100px) { main { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-width: 0; }
+.card > h2 { margin: 0; padding: 9px 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .09em;
+  color: var(--muted); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+.card > h2 .grow { flex: 1; }
+.card > h2 small { text-transform: none; letter-spacing: 0; color: var(--faint); font-weight: 400; }
+.body { padding: 10px 12px; }
+
+.screen { position: relative; aspect-ratio: 16 / 9; background: #07080b; display: grid; place-items: center; }
+.screen img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.screen .msg { position: absolute; color: var(--faint); font-size: 13px; text-align: center; padding: 20px; }
+.screen .age { position: absolute; right: 8px; bottom: 8px; font: 11px var(--mono); color: var(--muted);
+  background: rgba(0,0,0,.55); padding: 2px 6px; border-radius: 4px; }
+
+.party { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.pc { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; }
+.pc.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.pc.downed { border-color: var(--bad); }
+.pc .name { font-weight: 650; display: flex; justify-content: space-between; gap: 6px; }
+.pc .cls { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.hp { height: 8px; background: #0b0d12; border-radius: 4px; overflow: hidden; }
+.hp i { display: block; height: 100%; transition: width .6s ease; }
+.hpnum { font: 12px var(--mono); color: var(--muted); margin-top: 3px; }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #232a3c; color: #b9c0d3; }
+.tag.bad { background: #3a1c22; color: var(--bad); }
+.meta { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+.meta b { color: var(--text); }
+
+.feed { max-height: 62vh; overflow-y: auto; }
+.call { border-bottom: 1px solid var(--line); padding: 7px 12px; }
+.call:hover { background: #181d29; }
+.call .top { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.call .t { font: 11px var(--mono); color: var(--faint); flex: none; }
+.call .tool { font: 600 13px var(--mono); flex: none; }
+.call .args { font: 12px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.call .ms { font: 11px var(--mono); color: var(--faint); flex: none; }
+.call.read .tool { color: var(--read); } .call.act .tool { color: var(--act); }
+.call.vision .tool { color: var(--vision); } .call.save .tool { color: var(--save); }
+.call.fail { background: rgba(239,95,107,.07); } .call.fail .tool { color: var(--bad); }
+.call details summary { cursor: pointer; color: var(--faint); font-size: 12px; list-style: none; margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.call details summary::-webkit-details-marker { display: none; }
+.call details[open] summary { color: var(--muted); }
+pre { margin: 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; color: #c9cfdc; }
+.call pre { margin-top: 6px; padding: 8px; background: #0e1118; border-radius: 6px; max-height: 340px; overflow: auto; }
+.call.new { animation: flash 1.2s ease-out; }
+@keyframes flash { from { background: rgba(212,162,76,.18); } to { background: transparent; } }
+
+.agent { max-height: 46vh; overflow-y: auto; padding: 8px 12px; }
+.agent .ln { font: 12.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; padding: 2px 0; }
+.agent .say { color: var(--text); font-family: var(--sans); font-size: 14px; padding: 6px 0 6px 10px; border-left: 2px solid var(--accent); margin: 4px 0; }
+.agent .tool { color: var(--act); } .agent .result { color: var(--faint); } .agent .error { color: var(--bad); }
+.agent .sys { color: var(--accent-2); }
+.agent.says-only .ln:not(.say):not(.sys) { display: none; }
+
+.tabs { display: flex; gap: 2px; }
+.tabs button { background: none; border: 0; color: var(--muted); font: 600 11px var(--sans); text-transform: uppercase;
+  letter-spacing: .08em; padding: 4px 8px; border-radius: 5px; cursor: pointer; }
+.tabs button.on { background: var(--panel-2); color: var(--text); }
+.mem pre { max-height: 46vh; overflow: auto; }
+.events { max-height: 230px; overflow-y: auto; font: 12px/1.6 var(--mono); }
+.events div { padding: 1px 12px; color: #b9c0d3; } .events .k { color: var(--accent); }
+.empty { color: var(--faint); font-style: italic; padding: 10px 12px; }
+.toggle { font-size: 11px; color: var(--muted); display: inline-flex; gap: 4px; align-items: center; cursor: pointer; text-transform: none; letter-spacing: 0; }
+.banner { display: none; margin: 10px 16px 0; padding: 8px 12px; border-radius: 8px; background: #3a1c22; color: #ffb3ba; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><h1>BG3 <span>·</span> AI playthrough</h1><span class="chip" id="pt">—</span><span class="chip" id="sess">no session</span></div>
+  <div class="where"><span class="mode exploring" id="mode">—</span><span class="region" id="region">waiting for game…</span><span class="chip" id="gold" hidden></span></div>
+  <div class="clock idle" id="clock"><div><div class="time" id="clockTime">--:--</div></div><div class="bar"><i id="clockBar" style="width:0"></i></div></div>
+  <div class="dots"><span class="dot" id="dGame">game</span><span class="dot" id="dScreen">screen</span><span class="dot" id="dAgent">agent</span></div>
+</header>
+<div class="banner" id="banner"></div>
+<main>
+  <div class="col">
+    <section class="card">
+      <h2><span class="grow">Screen</span><small id="screenNote"></small></h2>
+      <div class="screen"><img id="shot" alt="" hidden><div class="msg" id="shotMsg">no frame yet</div><div class="age" id="shotAge" hidden></div></div>
+    </section>
+    <section class="card">
+      <h2><span class="grow">Party</span><small id="combatInfo"></small></h2>
+      <div class="body"><div class="party" id="party"><div class="empty">No status yet.</div></div></div>
+    </section>
+    <section class="card">
+      <h2><span class="grow">Game events</span><small>visible events since the page opened</small></h2>
+      <div class="events" id="events"><div class="empty">none yet</div></div>
+    </section>
+  </div>
+  <div class="col">
+    <section class="card">
+      <h2><span class="grow">Agent tool calls</span><small id="feedCount"></small>
+        <label class="toggle"><input type="checkbox" id="follow" checked> follow</label></h2>
+      <div class="feed" id="feed"><div class="empty">Waiting for runtime/actions.jsonl…</div></div>
+    </section>
+    <section class="card">
+      <h2><span class="grow">Agent</span><small id="agentFile"></small>
+        <label class="toggle"><input type="checkbox" id="saysOnly" checked> thoughts only</label></h2>
+      <div class="agent says-only" id="agent"><div class="empty">No agent transcript yet.</div></div>
+    </section>
+    <section class="card mem">
+      <h2><span class="grow">Memory</span>
+        <span class="tabs" id="memTabs"><button data-k="handoff" class="on">Handoff</button><button data-k="objectives">Objectives</button><button data-k="log">Session log</button></span></h2>
+      <div class="body"><pre id="memBody">—</pre></div>
+    </section>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const hhmmss = (t) => t ? new Date(t * 1000).toLocaleTimeString([], {hour12: false}) : "";
+let skew = 0, clock = null, memTab = "handoff", memData = null, lastShot = null;
+
+async function getJSON(url) {
+  const r = await fetch(url, {cache: "no-store"});
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+/* ---------------- state ---------------- */
+function hpColor(p) { return p > .6 ? "var(--ok)" : p > .3 ? "var(--warn)" : "var(--bad)"; }
+
+function renderParty(st) {
+  const el = $("party");
+  if (!st || !st.party || !st.party.length) { el.innerHTML = '<div class="empty">No party data.</div>'; return; }
+  el.innerHTML = st.party.map((m) => {
+    const p = m.max_hp ? Math.max(0, Math.min(1, m.hp / m.max_hp)) : 0;
+    const tags = (m.statuses || []).slice(0, 8).map((s) => `<span class="tag">${esc(s)}</span>`).join("");
+    const flags = (m.downed ? '<span class="tag bad">DOWNED</span>' : "") + (m.dead ? '<span class="tag bad">DEAD</span>' : "")
+      + (m.in_combat ? '<span class="tag bad">in combat</span>' : "");
+    return `<div class="pc ${m.active ? "active" : ""} ${m.downed || m.dead ? "downed" : ""}">
+      <div class="name"><span>${esc(m.name)}</span>${m.active ? '<span style="color:var(--accent)">★</span>' : ""}</div>
+      <div class="cls">${esc(m.classes)}</div>
+      <div class="hp"><i style="width:${(p * 100).toFixed(0)}%;background:${hpColor(p)}"></i></div>
+      <div class="hpnum">HP ${m.hp ?? "?"}/${m.max_hp ?? "?"}${m.temp_hp ? " +" + m.temp_hp : ""}</div>
+      <div class="tags">${flags}${tags}</div></div>`;
+  }).join("");
+}
+
+function renderClock() {
+  const el = $("clock"), t = $("clockTime"), bar = $("clockBar");
+  if (!clock || !clock.deadline) { el.className = "clock idle"; t.textContent = "--:--"; bar.style.width = "0"; return; }
+  const now = Date.now() / 1000 + skew, left = clock.deadline - now;
+  const a = Math.abs(left), m = Math.floor(a / 60), s = Math.floor(a % 60);
+  t.textContent = (left < 0 ? "+" : "") + `${m}:${String(s).padStart(2, "0")}`;
+  el.className = "clock " + (left <= 0 ? "over" : left <= 600 ? "wrapup" : "play");
+  const total = clock.started ? clock.deadline - clock.started : 3600;
+  bar.style.width = `${Math.max(0, Math.min(100, 100 * (1 - left / total)))}%`;
+  bar.style.background = left <= 600 ? "var(--warn)" : "var(--accent)";
+}
+
+function renderMemory() {
+  const m = memData;
+  if (!m) return;
+  let txt;
+  if (!m.exists) txt = `No memory directory at ${m.dir}`;
+  else if (memTab === "handoff") txt = m.handoff || "(empty)";
+  else if (memTab === "objectives") txt = m.objectives || "(empty)";
+  else txt = (m.log_name ? `${m.log_name}\n\n` : "") + ((m.log_tail || []).join("\n") || "(empty)");
+  $("memBody").textContent = txt;
+}
+
+function renderState(s) {
+  skew = s.now - Date.now() / 1000;
+  clock = s.clock;
+  $("pt").innerHTML = s.playthrough ? `playthrough <b>${esc(s.playthrough)}</b>` : "no runner";
+  const sess = (s.memory && s.memory.session) || (s.runner && s.runner.session);
+  $("sess").innerHTML = sess ? `session <b>${esc(sess)}</b>${s.memory && s.memory.session_open ? "" : " (closed)"}` : "no session";
+  const g = s.game || {}, st = g.status;
+  $("dGame").className = "dot " + (g.reachable ? "on" : "off");
+  $("dGame").title = g.error || g.note || "";
+  if (st) {
+    $("region").textContent = [st.region, st.subregion].filter(Boolean).join(" · ") || "?";
+    const mode = $("mode"); mode.textContent = st.mode + (st.turn_based && st.mode !== "combat" ? " · TB" : ""); mode.className = "mode " + st.mode;
+    $("gold").hidden = st.gold == null; $("gold").innerHTML = `gold <b>${esc(st.gold)}</b>`;
+    $("combatInfo").textContent = st.combat ? `round ${st.combat.round ?? "?"} · turn: ${st.combat.current ?? "?"}` : "";
+  } else {
+    $("region").textContent = g.reachable ? (g.note || "in menus") : "game not reachable";
+    $("mode").textContent = "—"; $("mode").className = "mode";
+  }
+  renderParty(st);
+  const ev = s.events || [];
+  $("events").innerHTML = ev.length ? ev.slice().reverse().map((e) =>
+    `<div><span style="color:var(--faint)">${hhmmss(e.t)}</span> <span class="k">${esc(e.kind)}</span> ${esc(String(e.text || "").replace(/^\S+\s?/, ""))}</div>`).join("")
+    : '<div class="empty">none yet</div>';
+  const sc = s.screen || {};
+  $("dScreen").className = "dot " + (!sc.enabled ? "" : sc.error ? "off" : sc.t ? "on" : "");
+  $("screenNote").textContent = !sc.enabled ? "capture off (--no-screen)" : (sc.error || sc.note || "");
+  if (sc.t && sc.t !== lastShot) {
+    lastShot = sc.t;
+    const img = new Image();
+    img.onload = () => {
+      $("shot").src = img.src; $("shot").hidden = false; $("shotMsg").hidden = true;
+      if (img.naturalWidth && img.naturalHeight) $("shot").parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+    };
+    img.src = `/api/screen?t=${sc.t}`;
+  }
+  if (sc.t) { $("shotAge").hidden = false; $("shotAge").textContent = `${Math.max(0, Math.round(s.now - sc.t))}s ago`; }
+  else if (sc.enabled) $("shotMsg").textContent = sc.error ? `no frame: ${sc.error}` : "waiting for the first frame…";
+  memData = s.memory; renderMemory();
+  const agentLive = s.runner && s.runner.updated && (s.now - s.runner.updated) < 120;
+  $("dAgent").className = "dot " + (agentLive ? "on" : "");
+  renderClock();
+  $("banner").style.display = "none";
+}
+
+async function pollState() {
+  try { renderState(await getJSON("/api/state")); }
+  catch (e) { $("banner").style.display = "block"; $("banner").textContent = "Dashboard server not reachable: retrying…"; }
+  setTimeout(pollState, 2000);
+}
+
+/* ---------------- tool-call feed ---------------- */
+let feedOff = -1, feedN = 0;
+function argStr(a) {
+  if (!a || typeof a !== "object") return "";
+  return Object.entries(a).filter(([, v]) => v !== null && v !== "" && v !== undefined)
+    .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`).join(" ");
+}
+async function pollFeed() {
+  try {
+    const r = await getJSON(`/api/feed?after=${feedOff}`);
+    const feed = $("feed");
+    if (r.reset) { feed.innerHTML = ""; feedN = 0; }
+    if (r.items.length) {
+      if (feed.querySelector(".empty")) feed.innerHTML = "";
+      const frag = document.createDocumentFragment();
+      for (const it of r.items) {
+        const d = document.createElement("div");
+        d.className = `call ${it.kind} ${it.ok ? "" : "fail"} ${feedOff >= 0 ? "new" : ""}`;
+        const first = String(it.result || "").split("\n")[0];
+        d.innerHTML = `<div class="top"><span class="t">${hhmmss(it.t)}</span><span class="tool">${esc(it.tool)}</span>
+          <span class="args" title="${esc(argStr(it.args))}">${esc(argStr(it.args))}</span><span class="ms">${it.ms != null ? it.ms + "ms" : ""}</span></div>
+          <details><summary>${esc(first)}</summary><pre>${esc(it.result)}</pre></details>`;
+        frag.prepend(d);
+      }
+      feed.prepend(frag);
+      feedN += r.items.length;
+      while (feed.children.length > 300) feed.lastChild.remove();
+      if ($("follow").checked) feed.scrollTop = 0;
+      $("feedCount").textContent = `${feedN} shown`;
+    }
+    feedOff = r.offset;
+  } catch (e) { /* server down: state poll shows the banner */ }
+  setTimeout(pollFeed, 1500);
+}
+
+/* ---------------- agent transcript ---------------- */
+let agentOff = -1, agentPath = "";
+function lineClass(l) {
+  const m = /^\[(\w+)\]/.exec(l);
+  const tag = m ? m[1] : "";
+  return {say: "say", tool: "tool", result: "result", error: "error", init: "sys", end: "sys", compact: "sys", prompt: "sys"}[tag] || "";
+}
+async function pollAgent() {
+  try {
+    const r = await getJSON(`/api/agentlog?after=${agentOff}&path=${encodeURIComponent(agentPath)}`);
+    const box = $("agent");
+    if (r.path_id !== agentPath || r.reset) { box.innerHTML = ""; agentPath = r.path_id || ""; }
+    $("agentFile").textContent = r.path_id || "";
+    if (r.text) {
+      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+      const frag = document.createDocumentFragment();
+      for (const l of r.text.split("\n")) {
+        if (!l.trim()) continue;
+        const d = document.createElement("div");
+        const cls = lineClass(l);
+        d.className = "ln " + cls;
+        d.textContent = cls === "say" ? l.replace(/^\[say\]\s*/, "") : l;
+        frag.append(d);
+      }
+      box.append(frag);
+      while (box.children.length > 1500) box.firstChild.remove();
+      if (atBottom) box.scrollTop = box.scrollHeight;
+    } else if (!box.children.length) {
+      box.innerHTML = '<div class="empty">No agent transcript yet.</div>';
+    }
+    agentOff = r.offset;
+  } catch (e) { /* ignore */ }
+  setTimeout(pollAgent, 2000);
+}
+
+/* ---------------- wiring ---------------- */
+$("memTabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  memTab = b.dataset.k;
+  for (const x of $("memTabs").children) x.classList.toggle("on", x === b);
+  renderMemory();
+});
+$("saysOnly").addEventListener("change", (e) => $("agent").classList.toggle("says-only", e.target.checked));
+setInterval(renderClock, 1000);
+pollState(); pollFeed(); pollAgent();
+</script>
+</body>
+</html>
