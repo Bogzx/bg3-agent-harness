@@ -3,7 +3,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
-data="$HOME/.local/share/Steam/steamapps/common/Baldurs Gate 3/Data"
+data="$(python3 "$repo/tools/steam_paths.py" data)"   # $BG3_DIR, else Steam's libraryfolders.vdf
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 docker run --rm -v "$data":/data:ro -v "$here":/tools:ro -v "$tmp":/out python:3.12-slim sh -c \

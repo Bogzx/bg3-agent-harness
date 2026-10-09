@@ -6,7 +6,7 @@
 """Tests for tools/pak.py.  Run: uv run tools/test_pak.py   (or: uv run --with lz4 --with zstandard -m pytest tools/test_pak.py)
 
 The structural checks also run read-only against real game paks when the Steam install is present
-(override with BG3_DATA=/path/to/Data).
+(found like tools/steam_paths.py does: $BG3_DIR, then libraryfolders.vdf; or set BG3_DATA=/path/to/Data).
 """
 from __future__ import annotations
 
@@ -23,8 +23,9 @@ import lz4.block
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pak  # noqa: E402
 
-GAME_DATA = Path(os.environ.get(
-    "BG3_DATA", Path.home() / ".local/share/Steam/steamapps/common/Baldurs Gate 3/Data"))
+from steam_paths import game_dir  # noqa: E402
+
+GAME_DATA = Path(os.environ.get("BG3_DATA") or game_dir() / "Data")
 GAME_PAKS = ["Localization/English.pak", "GamePlatform.pak", "Patch8_HotFix10.pak"]
 
 

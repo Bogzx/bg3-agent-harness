@@ -1,0 +1,322 @@
+bg3le Ext.UI: Noesis objects reach Lua as userdata that hold a reference
+
+Fixes the SIGSEGV in l_type_name (HANDOFF §4 bug 1, research/impl-se.md): push_object()
+handed Noesis objects to Lua as light userdata with no reference, so a proxy could outlive
+its object (the dialogue page frees its answers' view models when it re-templates).
+
+- push_object(): a full userdata box per object, cached by address in a weak registry
+  table (stable identity), taking AddReference() on BaseComponents; __gc queues Release().
+- Releases are drained on the UI thread from the View::Update hooks (noesis_ui.cpp);
+  without the hook they happen at once.
+- __tostring prints "userdata: %p" of the Noesis pointer, as a light userdata did.
+- object_arg(): accepts the box and, as before, light userdata; checks that the vtable's
+  first three slots point into the game's or libbg3le's code before any virtual call.
+- UiInstantiate: the box adopts Construct()'s creation reference.
+
+Against bg3le 3728a68 (v0.3.6). Applied by tools/build_bg3le.sh.
+---
+diff --git a/src/noesis_ui.cpp b/src/noesis_ui.cpp
+index a655ed1..403e199 100644
+--- a/src/noesis_ui.cpp
++++ b/src/noesis_ui.cpp
+@@ -22,6 +22,7 @@ extern "C" bool bg3le_scannable_region(char const* line,
+                                        unsigned long long* from,
+                                        unsigned long long* to);
+ extern "C" std::size_t bg3le_noesis_resolve(void* (*find)(char const*));
++extern "C" void bg3le_ui_drain_releases();
+ 
+ namespace bg3le {
+ namespace {
+@@ -67,11 +68,13 @@ void saw_view(void* view) {
+ 
+ std::uint64_t update_hook(void* view, double time) {
+     saw_view(view);
++    bg3le_ui_drain_releases();
+     return g_update(view, time);
+ }
+ 
+ std::uint64_t update_thunk_hook(void* iview, double time) {
+     saw_view(static_cast<char*>(iview) - kIViewOffset);
++    bg3le_ui_drain_releases();
+     return g_update_thunk(iview, time);
+ }
+ 
+@@ -156,6 +159,10 @@ void* noesis_view() {
+     return scanned;
+ }
+ 
++bool noesis_update_hooked() {
++    return g_hooked;
++}
++
+ void* noesis_root() {
+     using GetContent = void* (*)(void const*);
+     static auto get = reinterpret_cast<GetContent>(
+diff --git a/src/noesis_ui.h b/src/noesis_ui.h
+index 3edc755..79dc702 100644
+--- a/src/noesis_ui.h
++++ b/src/noesis_ui.h
+@@ -12,4 +12,7 @@ void noesis_set_symbols(const SymbolTable* symbols);
+ void* noesis_view();
+ void* noesis_root();
+ 
++// Whether View::Update is hooked, so work can be handed to the UI thread.
++bool noesis_update_hooked();
++
+ }  // namespace bg3le
+diff --git a/src/vendor/bg3le_noesis_lua.inl b/src/vendor/bg3le_noesis_lua.inl
+index 658ab7d..3c385ac 100644
+--- a/src/vendor/bg3le_noesis_lua.inl
++++ b/src/vendor/bg3le_noesis_lua.inl
+@@ -3,8 +3,9 @@
+ // Included at the end of upstream's Lua/Libs/ClientUI/Module.inl, so
+ // upstream's class cache, type tables and custom-type builder are in scope.
+ // What upstream does through its binding framework is done here with plain
+-// Lua C functions: a Noesis object travels as a light userdata, and the
+-// prelude wraps it in a proxy with upstream's methods and properties.
++// Lua C functions: a Noesis object travels as a userdata holding a reference
++// to it, and the prelude wraps it in a proxy with upstream's methods and
++// properties.
+ //
+ // The value conversions are ports of upstream's StoredValueHelpers
+ // (NsHelpers.inl); the command and event plumbing replaces its
+@@ -12,6 +13,7 @@
+ // by Norbyte and the bg3se contributors (https://github.com/Norbyte/bg3se).
+ 
+ #include <deque>
++#include <link.h>
+ #include <mutex>
+ #include <optional>
+ #include <string>
+@@ -21,6 +23,7 @@
+ #include "../log.h"
+ #include "../hook.h"
+ #include "../mem.h"
++#include "../noesis_ui.h"
+ #include <NsGui/BaseCollection.h>
+ 
+ extern "C" bool bg3le_with_client_lua(void (*fn)(lua_State*, void*), void* user);
+@@ -32,17 +35,134 @@ using Noesis::TypeHelpers;
+ 
+ // ---- objects -------------------------------------------------------------
+ 
+-// A light userdata is only as good as the object behind it; this catches the
+-// unmapped case rather than every stale one.
++// A Noesis object crosses into Lua as a full userdata (a Held) that keeps a
++// reference to it until the box is collected, so a proxy Lua still holds
++// cannot outlive its object: the dialogue page frees its answers' view models
++// when it re-templates. One box per object at a time, cached by address in a
++// weak registry table, so a proxy's identity is still its object's.
++struct Held
++{
++    BaseObject* Object;
++    bool Counted;  // a BaseComponent, holding a reference; Types are not counted
++};
++
++char const* const kHeldMeta = "bg3le.NoesisObject";
++char g_held_cache_key = 0;
++
++// The last reference can only go on the UI's own thread: __gc queues it, and
++// the View's Update hook drains the queue (noesis_ui.cpp).
++std::mutex g_release_lock;
++std::vector<BaseComponent*> g_releases;
++
++void release_later(BaseComponent* o)
++{
++    if (!bg3le::noesis_update_hooked()) {
++        o->Release();
++        return;
++    }
++    std::lock_guard<std::mutex> held(g_release_lock);
++    g_releases.push_back(o);
++}
++
++int held_gc(lua_State* L)
++{
++    auto h = static_cast<Held*>(luaL_checkudata(L, 1, kHeldMeta));
++    if (h->Object != nullptr && h->Counted) {
++        release_later(static_cast<BaseComponent*>(h->Object));
++    }
++    h->Object = nullptr;
++    return 0;
++}
++
++// The Noesis address, as a light userdata printed: proxies are told apart by
++// tostring.
++int held_tostring(lua_State* L)
++{
++    auto h = static_cast<Held*>(luaL_checkudata(L, 1, kHeldMeta));
++    lua_pushfstring(L, "userdata: %p", static_cast<void*>(h->Object));
++    return 1;
++}
++
++// One code range: [from, to) as run-time addresses.
++struct CodeRange
++{
++    std::uintptr_t From{ 0 };
++    std::uintptr_t To{ 0 };
++    bool Has(std::uintptr_t at) const { return at >= From && at < To; }
++};
++
++// libbg3le.so's executable segment: the classes RegisterType builds and
++// LuaDelegateCommand have their vtables' functions here.
++CodeRange own_code()
++{
++    CodeRange r;
++    dl_iterate_phdr(
++        [](struct dl_phdr_info* info, std::size_t, void* data) {
++            auto* out = static_cast<CodeRange*>(data);
++            auto self = reinterpret_cast<std::uintptr_t>(&own_code);
++            for (int i = 0; i < info->dlpi_phnum; ++i) {
++                const ElfW(Phdr)& ph = info->dlpi_phdr[i];
++                if (ph.p_type != PT_LOAD || !(ph.p_flags & PF_X)) continue;
++                auto from = info->dlpi_addr + ph.p_vaddr;
++                if (self >= from && self < from + ph.p_memsz) {
++                    *out = CodeRange{ from, from + ph.p_memsz };
++                    return 1;
++                }
++            }
++            return 0;
++        },
++        &r);
++    return r;
++}
++
++CodeRange game_code()
++{
++    CodeRange r;
++    std::uintptr_t offset = 0;
++    std::size_t size = 0;
++    if (bg3le::text_range(&offset, &size)) {
++        r.From = bg3le::load_bias() + offset;
++        r.To = r.From + size;
++    }
++    return r;
++}
++
++// A live object's vtable holds code: its destructors and GetClassType are
++// functions of the game's Noesis or of bg3le. Memory that has been freed and
++// reused reads as anything (the crash this guards against jumped into
++// .data.rel.ro).
++bool plausible_object(BaseObject const* o)
++{
++    static const CodeRange game = game_code();
++    static const CodeRange own = own_code();
++    std::uintptr_t const* vtable = nullptr;
++    std::uintptr_t slots[3] = {};  // ~BaseObject twice (Itanium), GetClassType
++    if (o == nullptr || !bg3le::safe_read(o, &vtable, sizeof(vtable)) || vtable == nullptr
++        || !bg3le::safe_read(vtable, slots, sizeof(slots))) {
++        return false;
++    }
++    if (game.From == 0) return true;  // no ranges to check against
++    for (auto fn : slots) {
++        if (!game.Has(fn) && !own.Has(fn)) return false;
++    }
++    return true;
++}
++
++// A pushed object, or a light userdata from before (still accepted); this
++// catches the unmapped and the reused-as-something-else cases, and the
++// reference a box holds the rest.
+ BaseObject* object_arg(lua_State* L, int index)
+ {
+-    if (!lua_islightuserdata(L, index)) {
++    BaseObject* o = nullptr;
++    if (auto h = static_cast<Held*>(luaL_testudata(L, index, kHeldMeta)); h != nullptr) {
++        o = h->Object;
++    } else if (lua_islightuserdata(L, index)) {
++        o = static_cast<BaseObject*>(lua_touserdata(L, index));
++    } else {
+         luaL_argerror(L, index, "expected a Noesis object");
+         return nullptr;
+     }
+-    auto o = static_cast<BaseObject*>(lua_touserdata(L, index));
+-    void* vtable = nullptr;
+-    if (o == nullptr || !bg3le::safe_read(o, &vtable, sizeof(vtable)) || vtable == nullptr) {
++    if (!plausible_object(o)) {
+         luaL_argerror(L, index, "Noesis object is gone");
+         return nullptr;
+     }
+@@ -54,13 +174,51 @@ BaseObject* optional_object(lua_State* L, int index)
+     return lua_isnoneornil(L, index) ? nullptr : object_arg(L, index);
+ }
+ 
+-void push_object(lua_State* L, void const* o)
++void push_object(lua_State* L, void const* p)
+ {
++    auto o = static_cast<BaseObject*>(const_cast<void*>(p));
+     if (o == nullptr) {
+         lua_pushnil(L);
+-    } else {
+-        lua_pushlightuserdata(L, const_cast<void*>(o));
++        return;
+     }
++    // registry[&key] = setmetatable({}, {__mode = "v"}): address -> box
++    if (lua_rawgetp(L, LUA_REGISTRYINDEX, &g_held_cache_key) != LUA_TTABLE) {
++        lua_pop(L, 1);
++        lua_newtable(L);
++        lua_createtable(L, 0, 1);
++        lua_pushliteral(L, "v");
++        lua_setfield(L, -2, "__mode");
++        lua_setmetatable(L, -2);
++        lua_pushvalue(L, -1);
++        lua_rawsetp(L, LUA_REGISTRYINDEX, &g_held_cache_key);
++    }
++    if (lua_rawgetp(L, -1, o) == LUA_TUSERDATA) {
++        lua_remove(L, -2);
++        return;
++    }
++    lua_pop(L, 1);
++
++    auto h = static_cast<Held*>(lua_newuserdata(L, sizeof(Held)));
++    h->Object = o;
++    h->Counted = false;
++    if (luaL_newmetatable(L, kHeldMeta)) {
++        lua_pushcfunction(L, held_gc);
++        lua_setfield(L, -2, "__gc");
++        lua_pushcfunction(L, held_tostring);
++        lua_setfield(L, -2, "__tostring");
++        lua_pushliteral(L, "NoesisObject");
++        lua_setfield(L, -2, "__metatable");
++    }
++    lua_setmetatable(L, -2);
++    // Taken after the metatable is set, so a failed allocation above leaks
++    // nothing; refcounted objects are the BaseComponents.
++    if (TypeHelpers::IsDescendantOf(o->GetClassType(), TypeOf<BaseComponent>())) {
++        static_cast<BaseComponent*>(o)->AddReference();
++        h->Counted = true;
++    }
++    lua_pushvalue(L, -1);
++    lua_rawsetp(L, -3, o);
++    lua_remove(L, -2);
+ }
+ 
+ bool is_a(BaseObject const* o, TypeClass const* cls)
+@@ -977,6 +1135,8 @@ int l_instantiate(lua_State* L)
+     auto inst = (*cls)->Construct(wrapped);
+     if (!inst) return luaL_error(L, "Unable to construct data context '%s' - invalid parameters", name.c_str());
+     push_object(L, static_cast<BaseComponent*>(inst));
++    // The box's reference is now the one Construct made.
++    static_cast<BaseComponent*>(inst)->Release();
+     return 1;
+ }
+ 
+@@ -1175,6 +1335,18 @@ extern "C" void bg3le_ui_reset()
+     for (auto& sub : Noesis::bg3le_ui::g_subscriptions) sub.Active = false;
+ }
+ 
++// Drops the references Lua let go of; on the UI thread, from View::Update.
++extern "C" void bg3le_ui_drain_releases()
++{
++    std::vector<Noesis::BaseComponent*> now;
++    {
++        std::lock_guard<std::mutex> held(Noesis::bg3le_ui::g_release_lock);
++        if (Noesis::bg3le_ui::g_releases.empty()) return;
++        now.swap(Noesis::bg3le_ui::g_releases);
++    }
++    for (auto o : now) o->Release();
++}
++
+ // Adds Ext.UI's C side to the table on top of the stack.
+ extern "C" void bg3le_ui_register(lua_State* L)
+ {

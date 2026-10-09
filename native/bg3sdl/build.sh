@@ -18,7 +18,7 @@ SRC="$REPO/native/bg3sdl"
 OUT="$REPO/build/bg3sdl"
 SYSROOT="$REPO/build/bg3le/sniper/sysroot"
 IMAGE="bg3ai/bg3le-builder:trixie"
-GAME_BIN="${BG3AI_GAME_DIR:-$HOME/.local/share/Steam/steamapps/common/Baldurs Gate 3}/bin"
+GAME_BIN="$(python3 "$REPO/tools/steam_paths.py" game)/bin"   # $BG3_DIR, else Steam's libraryfolders.vdf
 SDL_VER=2.30.6
 SDL_SHA256=c6ef64ca18a19d13df6eb22df9aff19fb0db65610a74cc81dae33a82235cacd4
 SDL_INC="$OUT/SDL2-$SDL_VER/include"
@@ -50,9 +50,17 @@ if [ "$(printf '%s\n%s\n' "$newest" "$GLIBC_MAX" | sort -V | tail -1)" != "$GLIB
 fi
 echo "exports: $(nm -D --defined-only "$LIB" | awk '$2=="T"{print $3}' | tr '\n' ' ')"
 
-# Test program: host gcc, linked against the game's bundled SDL so the shim is tested against the same build.
+# Test programs (host gcc). sdltest links against the game's bundled SDL so the shim is tested against the same
+# build; before the game is installed it falls back to the system libSDL2 (libsdl2-2.0-0). chainfirst.so stands in
+# for bg3le in front of the shim (test_shim.py --chain).
+SYS_SDL=/usr/lib/x86_64-linux-gnu/libSDL2-2.0.so.0
 if [ -f "$GAME_BIN/libSDL2.so" ]; then
     gcc -std=gnu11 -O1 -g -Wall -Wextra -I"$SDL_INC" -o "$OUT/sdltest" "$SRC/test/sdltest.c" \
         -L"$GAME_BIN" -Wl,-rpath,"$GAME_BIN" -l:libSDL2.so
     echo "built $OUT/sdltest (against $GAME_BIN/libSDL2.so)"
+elif [ -f "$SYS_SDL" ]; then
+    gcc -std=gnu11 -O1 -g -Wall -Wextra -I"$SDL_INC" -o "$OUT/sdltest" "$SRC/test/sdltest.c" "$SYS_SDL"
+    echo "built $OUT/sdltest (against the system $SYS_SDL; the game's libSDL2.so is not installed yet)"
 fi
+gcc -std=gnu11 -O1 -g -Wall -Wextra -fPIC -shared -o "$OUT/chainfirst.so" "$SRC/test/chainfirst.c" -ldl
+echo "built $OUT/chainfirst.so"

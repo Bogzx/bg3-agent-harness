@@ -28,8 +28,11 @@
 #
 # Environment:
 #   BG3AI_RUNTIME      runtime dir (default <repo>/runtime): logs/, shots/
-#   BG3AI_GAME_DIR     game install (default ~/.local/share/Steam/steamapps/common/Baldurs Gate 3)
-#   BG3AI_SNIPER_DIR   SteamLinuxRuntime_sniper (default: next to the game in steamapps/common)
+#   BG3_DIR            game install (BG3AI_GAME_DIR is the older name). Default: found by tools/steam_paths.py
+#                      from Steam's libraryfolders.vdf, else ~/.local/share/Steam/steamapps/common/Baldurs Gate 3
+#   BG3AI_SNIPER_DIR   SteamLinuxRuntime_sniper (default: its library per libraryfolders.vdf, else next to the game)
+#   BG3AI_PRIME        PRIME render offload to the NVIDIA GPU: auto (default; on when an NVIDIA GPU and its
+#                      Vulkan ICD are present), 1 (always), 0 (never)
 #   BG3AI_BG3LE_LIB    the preload (default <repo>/build/bg3le/dist/libbg3le.so, from tools/build_bg3le.sh)
 #   BG3AI_INPUT_LIB    the input shim (default <repo>/build/bg3sdl/libbg3sdl.so, from native/bg3sdl/build.sh)
 #   BG3LE_DEBUG_PORT   bg3le's Lua debug server port (default 9998)
@@ -37,8 +40,8 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME="${BG3AI_RUNTIME:-$REPO/runtime}"
-GAME="${BG3AI_GAME_DIR:-$HOME/.local/share/Steam/steamapps/common/Baldurs Gate 3}"
-SNIPER_DIR="${BG3AI_SNIPER_DIR:-$(dirname "$GAME")/SteamLinuxRuntime_sniper}"
+GAME="$(python3 "$REPO/tools/steam_paths.py" game)"
+SNIPER_DIR="$(python3 "$REPO/tools/steam_paths.py" sniper)"
 LIB="${BG3AI_BG3LE_LIB:-$REPO/build/bg3le/dist/libbg3le.so}"
 INPUT_LIB="${BG3AI_INPUT_LIB:-$REPO/build/bg3sdl/libbg3sdl.so}"
 PROFILE="$HOME/.local/share/Larian Studios/Baldur's Gate 3"
@@ -117,6 +120,25 @@ env_args=(
     VK_LOADER_LAYERS_ENABLE=VK_LAYER_MESA_screenshot
     "VK_LAYER_MESA_SCREENSHOT_CONFIG=comms;control=bg3ai-shot;output_dir=$RUNTIME/shots;log_type=error"
 )
+# PRIME render offload: on a hybrid laptop the game must render on the NVIDIA GPU. The screenshot layer sits
+# above any driver, so capture is unaffected (tools/dev/check_screenshot_layer.sh checks it with vkcube).
+case "${BG3AI_PRIME:-auto}" in
+    1) prime=1 ;;
+    0) prime=0 ;;
+    *) prime=0
+       if grep -qs 0x10de /sys/bus/pci/devices/*/vendor && [ -e /proc/driver/nvidia/version ] &&
+          { compgen -G "/usr/share/vulkan/icd.d/nvidia_icd*.json" || compgen -G "/etc/vulkan/icd.d/nvidia_icd*.json"; } >/dev/null; then
+           prime=1
+       fi ;;
+esac
+if [ "$prime" = 1 ]; then
+    env_args+=(__NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia)
+    echo "launch_game: PRIME offload to the NVIDIA GPU (BG3AI_PRIME=0 turns it off)" >&2
+fi
+if [ ! -f /usr/share/vulkan/explicit_layer.d/VkLayer_MESA_screenshot.json ] &&
+   [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/vulkan/explicit_layer.d/VkLayer_MESA_screenshot.json" ]; then
+    echo "launch_game: warning: no VK_LAYER_MESA_screenshot installed (apt: mesa-vulkan-drivers >= 26.1 from trixie-backports); no screen capture" >&2
+fi
 # bg3le first: it exports SDL_PollEvent and forwards with dlsym(RTLD_NEXT), which reaches the shim, which
 # forwards to the real libSDL2 (tested with native/bg3sdl/test/test_shim.py --chain --sniper).
 preload=()
@@ -138,7 +160,20 @@ if [ "$use_bg3le" = 1 ]; then
 fi
 env_args+=("${extra_env[@]}")
 
-launch=("$SNIPER_DIR/run" -- env "${env_args[@]}" ./bin/bg3 "${game_args[@]}")
+# pressure-vessel shares $HOME and the Steam libraries with the container, not arbitrary paths such as a repo on
+# /data. Share the repo, runtime dir, mod path and preload libraries explicitly when they live outside $HOME.
+pv_fs=()
+for p in "$REPO" "$RUNTIME" $(IFS=:; echo $mod_path) "$(dirname "$LIB")" "$(dirname "$INPUT_LIB")"; do
+    case "$p" in ""|"$HOME"|"$HOME"/*) continue ;; esac
+    [ -e "$p" ] || continue
+    case ":$(IFS=:; echo "${pv_fs[*]:-}"):" in *":$p:"*) continue ;; esac
+    pv_fs+=("$p")
+done
+[ -n "${PRESSURE_VESSEL_FILESYSTEMS_RW:-}" ] && pv_fs+=("$PRESSURE_VESSEL_FILESYSTEMS_RW")
+run_env=()
+[ ${#pv_fs[@]} -gt 0 ] && run_env+=("PRESSURE_VESSEL_FILESYSTEMS_RW=$(IFS=:; echo "${pv_fs[*]}")")
+
+launch=(env "${run_env[@]}" "$SNIPER_DIR/run" -- env "${env_args[@]}" ./bin/bg3 "${game_args[@]}")
 
 if [ "$dry_run" = 1 ]; then
     echo "cd $(printf '%q' "$GAME")"

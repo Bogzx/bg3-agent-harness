@@ -30,7 +30,13 @@ if chain:
 env = dict(os.environ, SDL_VIDEODRIVER="dummy", LD_PRELOAD=":".join(preload), BG3AI_INPUT_SOCKET=SOCK)
 cmd = [str(OUT / "sdltest"), "60"]
 if "--sniper" in sys.argv:  # inside Steam's runtime container, as the game runs
-    sniper = Path.home() / ".local/share/Steam/steamapps/common/SteamLinuxRuntime_sniper/run"
+    sys.path.insert(0, str(REPO / "tools"))
+    from steam_paths import sniper_dir  # $BG3AI_SNIPER_DIR, else Steam's libraryfolders.vdf
+
+    sniper = sniper_dir() / "run"
+    if not REPO.is_relative_to(Path.home()):  # the container shares $HOME, not e.g. /data (as launch_game.sh)
+        env["PRESSURE_VESSEL_FILESYSTEMS_RW"] = ":".join(
+            filter(None, [str(REPO), os.environ.get("PRESSURE_VESSEL_FILESYSTEMS_RW")]))
     cmd = [str(sniper), "--", "env", *(f"{k}={env[k]}" for k in ("SDL_VIDEODRIVER", "LD_PRELOAD",
                                                                     "BG3AI_INPUT_SOCKET")), *cmd]
 proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
