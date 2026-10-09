@@ -863,12 +863,12 @@ class ClockStuck(unittest.TestCase):
         os.utime(self.path, (time.time(), time.time() + len(self.path.read_text())))  # new mtime each write
 
     def test_stuck_signal_shows_at_once_then_clears(self):
-        self.assertEqual(server._clock_line(), "")  # shown recently, not stuck
+        self.assertNotIn("keep playing", server._clock_line())  # shown recently, not stuck: terse at most
         now = time.time()
         self.write({"type": "stuck", "t": now, "since": now - 17 * 60, "idle_min": 17, "actions": 40})
         line = server._clock_line()
         self.assertIn("m left · no story progress for 17 min: change approach", line)
-        self.assertEqual(server._clock_line(), "")  # announced once, then with the clock
+        self.assertNotIn("no story progress", server._clock_line())  # announced once, then with the clock
         self.write({"type": "progress", "t": now + 1, "kind": "area", "what": "x", "points": 3})
         self.assertNotIn("no story progress", server._clock())
 

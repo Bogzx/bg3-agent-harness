@@ -212,6 +212,21 @@ class AsyncActions(Base):
         out = server.wait_for("combat_started", timeout_s=3)
         self.assertIn("stopped waiting: reaction on screen", out)
 
+    def test_wait_for_an_event_with_nothing_running_gives_up_early(self):
+        old = server.IDLE_EVENT_WAIT_S
+        server.IDLE_EVENT_WAIT_S = 0.2
+        try:
+            t0 = time.monotonic()
+            out = server.wait_for("dialogue_started", timeout_s=5)
+            self.assertLess(time.monotonic() - t0, 1.5)
+            self.assertIn("nothing is running that would cause dialogue_started", out)
+            self.g.dur["act.move_to"] = 0.6  # a walk is running: it could start one, so keep waiting
+            server.move_to(target=self.door)
+            out = server.wait_for("dialogue_started", timeout_s=0.5)
+            self.assertIn("still waiting for dialogue_started", out)
+        finally:
+            server.IDLE_EVENT_WAIT_S = old
+
     def test_wait_for_my_turn(self):
         self.g.combat = {"active": True, "current": P1}
         self.assertIn("'s turn", server.wait_for("my_turn", timeout_s=1))

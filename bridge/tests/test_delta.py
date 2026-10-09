@@ -320,6 +320,54 @@ class Helpers(unittest.TestCase):
         self.assertEqual(tr.observe(delta.snapshot(H, status=w["status"])), [])
 
 
+class Arrival(unittest.TestCase):
+    """A walk ends somewhere new: every character is listed, items are led by doors/containers, rest counted."""
+
+    def arrive(self, n_chars: int, n_items: int) -> list[str]:
+        H = Handles()
+        tr = delta.Tracker(H)
+        tr.observe(delta.snapshot(H, nearby={"characters": [], "items": []}))
+        chars = [{"uuid": U(700 + i), "name": f"Druid {i}", "relation": "neutral", "pos": [i, 0.0, 0.0],
+                  "dist": 2.0 + i, "hp": 5, "max_hp": 5} for i in range(n_chars)]
+        items = [{"uuid": U(800 + i), "name": f"Vase {i}", "kind": "usable", "dist": 1.0 + i} for i in range(n_items)]
+        items += [{"uuid": U(900), "name": "Stone Door", "kind": "door", "dist": 30.0},
+                  {"uuid": U(901), "name": "Wicker Chest", "kind": "container", "dist": 25.0}]
+        return tr.observe(delta.snapshot(H, nearby={"characters": chars, "items": items}))
+
+    def test_all_characters_listed_past_the_budget(self):
+        lines = self.arrive(14, 20)
+        self.assertEqual(sum(1 for ln in lines if "Druid" in ln), 14)
+        self.assertNotIn("more characters", "\n".join(lines))
+        # leads first among the items, even though they are the farthest
+        items = [ln for ln in lines if ln.startswith("+ ") and "Druid" not in ln]
+        self.assertEqual(len(items), delta.MIN_APPEARED_ITEMS)
+        self.assertIn("Wicker Chest", items[0])  # leads by distance
+        self.assertIn("Stone Door", items[1])
+        self.assertEqual(lines[len(lines) - 1], "(+18 more: usable 18; get_nearby / get_frontier)")
+
+    def test_few_things_listed_plainly(self):
+        lines = self.arrive(2, 3)
+        self.assertEqual(len(lines), 7)
+        self.assertFalse(any(ln.startswith("(+") for ln in lines))
+
+    def test_character_cap(self):
+        lines = self.arrive(delta.MAX_APPEARED_CHARS + 3, 0)
+        self.assertIn("(+3 more characters; get_nearby)", lines)
+
+
+class Remembered(unittest.TestCase):
+    def test_remembered_uses_mod_keys_and_is_capped(self):
+        from bg3ai import render
+        mem = [{"uuid": U(950 + i), "name": f"Npc {i}", "last_pos": [1.0, 2.0, 3.0], "ago_s": 10 * i}
+               for i in range(8)]
+        text = render.render_nearby({"characters": [], "items": [], "remembered": mem}, Handles())
+        self.assertNotIn("None", text)
+        self.assertNotIn("?s ago", text)
+        self.assertEqual(text.count("REMEMBERED"), render.MAX_REMEMBERED)
+        self.assertIn("last seen @(1,2,3) 10s ago", text)
+        self.assertIn("(+3 more remembered out of sight: Npc 5, Npc 6, Npc 7)", text)
+
+
 def sizes() -> list[tuple[str, int, int, int]]:
     """(scenario, chars of the old way: get_status + get_nearby, chars of look(full=True), chars of look())."""
     rows = []

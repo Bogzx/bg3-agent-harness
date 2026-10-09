@@ -156,16 +156,17 @@ def gaps_section(metrics_path: Path, calls: list[dict]) -> list[str]:
     tools = [r for r in recs if r.get("type") == "tool"]
     samples = [r for r in recs if r.get("type") == "sample"]
     long_ = [g for g in latency.gaps(latency.action_intervals(tools), samples) if g["s"] > LONG_GAP_S]
-    out = [f"## Gaps > {LONG_GAP_S:.0f} s between visible actions ({len(long_)})", ""]
+    out = [f"## Idle gaps > {LONG_GAP_S:.0f} s between visible actions ({len(long_)})", ""]
     if not long_:
         return out + ["none", ""]
     timed = [c for c in calls if c["t"] is not None]
     for g in sorted(long_, key=lambda g: g["t"]):
-        a, b = g["t"], g["t"] + g["s"]
+        a, b = g["t"], g["t"] + g.get("gap_s", g["s"])
         before = [c for c in timed if c["t"] <= a][-1:]
         inside = [c for c in timed if a < c["t"] < b]
         names = Counter(c["name"] for c in inside)
-        out.append(f"- {hm(a)} **{g['s']:.1f} s** ({g['kind']}) → next `{g['next']}`")
+        busy = f", party busy {g['busy_s']:.1f} s of {g['gap_s']:.1f} s" if g.get("busy_s") else ""
+        out.append(f"- {hm(a)} **{g['s']:.1f} s** idle ({g['kind']}{busy}) → next `{g['next']}`")
         if before:
             p = before[0]
             out.append(f"  - preceded by `{p['name']}` `{args_str(p['input'], 100)}`"

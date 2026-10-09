@@ -20,6 +20,40 @@ local function item(name, extra)
 end
 
 local ABIL = { "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma" }
+
+-- Static data the mod names spells and passives from (Ext.StaticData / Ext.Stats / Ext.Loca fakes).
+STATS = {
+    Zone_BurningHands = { Level = 1, SpellSchool = "Evocation", Name = "Burning Hands" },
+    Target_CharmPerson = { Level = 1, SpellSchool = "Enchantment", Name = "Charm Person" },
+    Projectile_MagicMissile = { Level = 1, SpellSchool = "Evocation", Name = "Magic Missile" },
+    Shout_Shield_Wizard = { Level = 1, SpellSchool = "Abjuration", Name = "Shield" },
+    Target_Sleep = { Level = 1, SpellSchool = "Enchantment", Name = "Sleep" },
+    Target_Hex = { Level = 1, SpellSchool = "Enchantment", Name = "Hex" },
+    Shout_HellishRebuke = { Level = 1, SpellSchool = "Evocation", Name = "Hellish Rebuke" },
+    Target_Bless = { Level = 1, SpellSchool = "Enchantment", Name = "Bless" },
+    AgonizingBlast = { Name = "Agonising Blast" }, ArmorOfShadows = { Name = "Armour of Shadows" },
+    RepellingBlast = { Name = "Repelling Blast" }, DevilsSight = { Name = "Devil's Sight" },
+    FS_Archery = { Name = "Archery" }, FS_Defence = { Name = "Defence" }, FS_Duelling = { Name = "Duelling" },
+    FS_Protection = { Name = "Protection" },
+}
+SPELL_LISTS = {
+    wizard1 = { "Zone_BurningHands", "Target_CharmPerson", "Projectile_MagicMissile", "Shout_Shield_Wizard", "Target_Sleep" },
+    -- same size, different school sequence: must not match the wizard page
+    decoy5 = { "Target_CharmPerson", "Zone_BurningHands", "Projectile_MagicMissile", "Shout_Shield_Wizard", "Target_Sleep" },
+    warlock1 = { "Target_CharmPerson", "Shout_HellishRebuke", "Target_Hex" },
+    -- the same level/school sequence as warlock1 with other spells: a page of 3 is ambiguous between these two
+    other3 = { "Target_Bless", "Shout_HellishRebuke", "Target_Sleep" },
+}
+PASSIVE_LISTS = {
+    invocations = { Name = "Warlock invocations", Passives = { "AgonizingBlast", "ArmorOfShadows", "RepellingBlast", "DevilsSight" } },
+    styles = { Name = "Fighting styles", Passives = { "FS_Archery", "FS_Defence", "FS_Duelling", "FS_Protection" } },
+}
+local PROGRESSIONS = {
+    warlock2 = { TableUUID = "tblWarlock", Level = 2, SelectPassives = { { UUID = "invocations" } } },
+    fighter1 = { TableUUID = "tblFighter", Level = 1, SelectPassives = { { UUID = "styles" } } },
+}
+local CLASSES = { clsWarlock = { ProgressionTableUUID = "tblWarlock" }, clsWizard = { ProgressionTableUUID = "tblWizard" } }
+local function keys(t) local o = {} for k in pairs(t) do o[#o + 1] = k end table.sort(o) return o end
 local widget, dc, page        -- the open level-up page (nil = closed)
 
 -- page spec: {class, subclasses?, preselect?, feat_level?, primary?, scores?}
@@ -38,6 +72,44 @@ local function openPage(spec)
         p.SelectableFeats = { item("Ability Improvement"), item("Great Weapon Master"),
             item("Heavy Armour Master", { IsRequirementsMet = false }) }
     end
+    -- Spell selector (spec.spells = {list = spell list id, known = {index = true}, open = n}): VMs with no
+    -- readable name, like the live page; only level and school.
+    local cpd = { SpellSelectors = {}, NotSubPassiveSelectors = {} }
+    if spec.spells then
+        local avail, adds = {}, {}
+        for i, sid in ipairs(SPELL_LISTS[spec.spells.list]) do
+            local st = STATS[sid]
+            avail[i] = obj("ls.VMSpellReference", { NotAvailable = (spec.spells.known or {})[i] == true, Selected = false,
+                Spell = obj("ls.VMCharacterCreationSpell", { Level = st.Level, SpellSchool = st.SpellSchool }) })
+        end
+        for i = 1, spec.spells.open do adds[i] = obj("ls.VMSpellReference", {}) end
+        local sel = obj("ls.VMSpellSelector", { Available = avail, Additions = adds, IsCantrips = false })
+        function sel.GetProperty(self, k)
+            if k == "IsComplete" then
+                for _, a in ipairs(self._p.Additions) do if a._p.Spell == nil then return false end end
+                return true
+            end
+            return self._p[k]
+        end
+        cpd.SpellSelectors = { sel }
+        page.spellSel = sel
+    end
+    -- Passive selector (spec.passives = {list = passive list id, max = n}): VMs with Value 0/1, no names.
+    if spec.passives then
+        local items = {}
+        for i = 1, #PASSIVE_LISTS[spec.passives.list].Passives do items[i] = obj("VMPassive", { Value = 0.0, Enabled = true, Blocked = false }) end
+        local ps = obj("VMPassiveSelector", { Passives = items, MaxSelectedPassiveCount = spec.passives.max })
+        function ps.GetProperty(self, k)
+            local n = 0
+            for _, it in ipairs(self._p.Passives) do if it._p.Value > 0 then n = n + 1 end end
+            if k == "SelectedPassiveCount" then return n end
+            if k == "IsComplete" then return n >= self._p.MaxSelectedPassiveCount end
+            return self._p[k]
+        end
+        cpd.NotSubPassiveSelectors = { ps }
+        page.passiveSel = ps
+    end
+    p.ClassProgressionDetails = obj("VMProgressionDetails", cpd)
     dc = obj("ls.DCCharacterLevelUp", p)
     -- Selecting a feat fills FeatDetails.AbilitySelection (only Ability Improvement asks for abilities here).
     function dc.SetProperty(self, k, v)
@@ -57,6 +129,8 @@ local function openPage(spec)
     function dc.GetProperty(self, k)
         if k == "IsLevelUpComplete" then
             if #(self._p.SelectableSubClasses) > 0 and self._p.SelectedSubClass == nil then return false end
+            if page.spellSel and not page.spellSel:GetProperty("IsComplete") then return false end
+            if page.passiveSel and not page.passiveSel:GetProperty("IsComplete") then return false end
             if self._p.CanSelectFeat then
                 if self._p.SelectedFeat == nil then return false end
                 if #self._p.FeatDetails._p.AbilitySelection > 0 and page.points < 2 then return false end
@@ -79,8 +153,26 @@ local hotbar = obj("ls.DCHotBar", { CurrentPlayer = obj("Player", {
     PartyGroups = { obj("Group", { Characters = { portrait } }) }, SelectedCharacter = portrait }) })
 local opened = 0
 
-Ext = { Entity = { Get = function(u) return { ClientControl = true, Health = { Hp = 16, MaxHp = 16 }, EocLevel = { Level = 1 } } end },
-        Input = { InjectKeyPress = function() end } }
+local CLASS_OF = { gale = "clsWizard", wyll = "clsWarlock" }
+Ext = { Entity = { Get = function(u) return { ClientControl = true, Health = { Hp = 16, MaxHp = 16 }, EocLevel = { Level = 1 },
+                                               Classes = { Classes = { { ClassUUID = CLASS_OF[u], Level = 1 } } } } end },
+        Input = { InjectKeyPress = function() end },
+        Stats = { Get = function(id) local st = STATS[id] if not st then return nil end
+                      return { Level = st.Level, SpellSchool = st.SpellSchool, DisplayName = "h:" .. id } end },
+        Loca = { GetTranslatedString = function(h) local st = STATS[h:sub(3)] return st and st.Name or "" end },
+        StaticData = {
+            GetAll = function(kind)
+                if kind == "SpellList" then return keys(SPELL_LISTS) end
+                if kind == "Progression" then return keys(PROGRESSIONS) end
+                return {}
+            end,
+            Get = function(id, kind)
+                if kind == "SpellList" then return SPELL_LISTS[id] and { Spells = SPELL_LISTS[id] } end
+                if kind == "PassiveList" then return PASSIVE_LISTS[id] end
+                if kind == "Progression" then return PROGRESSIONS[id] end
+                if kind == "ClassDescription" then return CLASSES[id] end
+            end,
+        } }
 
 BG3AI = {}
 local handlers, jobs, now = {}, {}, 0
@@ -141,6 +233,9 @@ BG3AI.UI = {
         elseif name == "FinishLevelUp" then
             page.finished = true
             closePage()
+            return true
+        elseif name == "TogglePassive" then
+            arg._p.Value = arg._p.Value > 0 and 0.0 or 1.0
             return true
         elseif name == "SelectFirstUnusedClass" then
             return true
@@ -241,6 +336,92 @@ check(j.status == "error" and tostring(j.error):find("no level up available") an
 stats.Level._p.LevelUpAvailable = true
 local ok, o = pcall(handlers["ui.level_up_options"], { uuid = "gale" })
 check(ok and o.open == false and o.available == true, "level_up_options: closed page, available")
+
+-- A spell pick as the bridge's click does it: the spell moves into an open Additions slot.
+local function clickSpell(name)
+    for i, sid in ipairs(SPELL_LISTS[page.spec.spells.list]) do
+        if STATS[sid].Name == name then
+            local it = page.spellSel._p.Available[i]
+            for _, a in ipairs(page.spellSel._p.Additions) do
+                if a._p.Spell == nil then a._p.Spell = it._p.Spell it._p.Selected = true return true end
+            end
+        end
+    end
+    return false
+end
+local function has(list, x) for _, v in ipairs(list or {}) do if v == x then return true end end return false end
+local function anyProblem(r, pat) for _, p in ipairs(r.problems or {}) do if p:find(pat, 1, true) then return p end end end
+
+-- 13. Gale, Wizard 2 with spells: names come from the matching SpellList (not the decoy); the known one is not
+--     offered; the picks are left for the bridge's clicks and the page is not finished
+local GALE_SP = { class = "Wizard", subclasses = GALE.subclasses, spells = { list = "wizard1", known = { [5] = true }, open = 2 } }
+openPage(GALE_SP)
+j = run({ uuid = "gale", plan = { subclass = "Evocation", spells = { "Magic Missile", "Shield" } } })
+local nc = j.result.needs_clicks or {}
+check(j.status == "failed" and tostring(j.error):find("need mouse clicks") and #nc == 2 and nc[1].name == "Magic Missile"
+    and nc[2].name == "Shield" and not page.finished, "spells: needs_clicks for Magic Missile and Shield, not finished")
+check(dc._p.SelectedSubClass ~= nil, "spells: the subclass was still chosen")
+local ok13, o13 = pcall(handlers["ui.level_up_options"], { uuid = "gale" })
+local sp13 = ok13 and o13.spells and o13.spells[1] or {}
+check(sp13.open == 2 and has(sp13.can_pick, "Burning Hands") and has(sp13.known, "Sleep") and not has(sp13.can_pick, "Sleep"),
+    "level_up_options: spell names, open slots, known spells kept apart")
+
+-- 14. a known spell and an unknown one are problems, not clicks
+j = run({ uuid = "gale", plan = { subclass = "Evocation", spells = { "Sleep", "Fireball" } } })
+check(anyProblem(j.result, "spell Sleep: already known") and anyProblem(j.result, "spell Fireball: not offered")
+    and j.result.needs_clicks == nil, "spells: known / not offered reported")
+check(anyProblem(j.result, "needs 2 more spells in plan.spells; can pick: Burning Hands, Charm Person, Magic Missile, Shield"),
+    "spells: the error lists what can be picked")
+
+-- 15. after the clicks the same plan finishes
+check(clickSpell("Magic Missile") and clickSpell("Shield"), "fake clicks placed")
+j = run({ uuid = "gale", plan = { subclass = "Evocation", spells = { "Magic Missile", "Shield" } } })
+check(j.status == "done" and j.result.finished and j.result.needs_clicks == nil
+    and has(j.result.set.spells[1].picked, "Magic Missile") and has(j.result.set.spells[1].picked, "Shield"),
+    "spells: placed picks finish the level up")
+
+-- 16. the probe op the bridge clicks with: placed spells say so; an unknown name is an error
+openPage(GALE_SP)
+clickSpell("Shield")
+local okp, pr = pcall(handlers["ui.level_up_spell_probe"], { name = "Shield" })
+check(okp and pr.placed == true, "spell_probe: placed")
+okp, pr = pcall(handlers["ui.level_up_spell_probe"], { name = "Magic Missile" })
+check(okp and pr.name == "Magic Missile" and pr.open == 1 and has(pr.picked, "Shield"), "spell_probe: names the target and the picks")
+okp, pr = pcall(handlers["ui.level_up_spell_probe"], { name = "Fireball" })
+check(not okp and tostring(pr):find("not offered"), "spell_probe: unknown spell refused")
+
+-- 17. Wyll, Warlock 2: no plan → fails listing the invocations (named from his class progression's list) and the
+--     spells; nothing defaulted
+local WYLL = { class = "Warlock", spells = { list = "warlock1", open = 1 }, passives = { list = "invocations", max = 2 } }
+openPage(WYLL)
+j = run({ uuid = "wyll", plan = {} })
+check(j.status == "failed" and not page.finished and j.result.defaulted == nil, "warlock: no plan, nothing defaulted, not finished")
+local inv = j.result.options and j.result.options["Warlock invocations"]
+check(inv and #inv == 4 and inv[1] == "Agonising Blast",
+    "warlock: invocation options named from the PassiveList")
+-- warlock1 and other3 share the level/school sequence: the page's 3 spells stay unnamed rather than guessed
+check(anyProblem(j.result, "needs 1 more spell") and anyProblem(j.result, "#1 (level 1 Enchantment)"),
+    "warlock: ambiguous spell list not guessed")
+
+-- 18. a plan with invocations (US spelling) toggles them; the ambiguous spell list can't be picked by name
+SPELL_LISTS.other3 = nil
+BG3AI.Progression.clearNameCaches()
+openPage(WYLL)
+j = run({ uuid = "wyll", plan = { passives = { "Agonizing Blast", "Repelling Blast" }, spells = { "Hex" } } })
+local pv = page.passiveSel._p.Passives
+check(pv[1]._p.Value == 1 and pv[3]._p.Value == 1 and pv[2]._p.Value == 0, "warlock: Agonizing (= Agonising) and Repelling Blast toggled")
+check(j.result.needs_clicks and j.result.needs_clicks[1].name == "Hex", "warlock: Hex left for a click")
+clickSpell("Hex")
+j = run({ uuid = "wyll", plan = { passives = { "Agonizing Blast", "Repelling Blast" }, spells = { "Hex" } } })
+check(j.status == "done" and j.result.finished and pv[1]._p.Value == 1 and pv[3]._p.Value == 1,
+    "warlock: rerun keeps the invocations on (no toggling off) and finishes")
+check(j.result.set.passives and j.result.set.passives[1].title == "Warlock invocations", "warlock: passives reported with the list's title")
+
+-- 19. allow_defaults fills an invocation selector in list order
+openPage(WYLL)
+j = run({ uuid = "wyll", plan = { allow_defaults = true, spells = { "Hex" } } })
+check(page.passiveSel._p.Passives[1]._p.Value == 1 and page.passiveSel._p.Passives[2]._p.Value == 1
+    and table.concat(j.result.defaulted or {}, ","):find("Agonising Blast"), "allow_defaults: first invocations, reported")
 
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

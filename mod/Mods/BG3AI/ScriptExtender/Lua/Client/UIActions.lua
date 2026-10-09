@@ -100,13 +100,61 @@ A.waitJob = waitJob
 
 ------------------------------------------------------------------------
 -- ui.key {key, mods?, hold_ms?}
---   key: SDL scancode label ("ESCAPE", "SPACE", "F5", "1", "A", "RETURN").
---   mods: SDLKeyModifier label or list ("LSHIFT", {"LCTRL","LALT"}).
+--   key: a key name as a player would say it ("ESCAPE", "Delete", "1",
+--   "Left", "PgDn", "ctrl+s"), normalised to bg3se's SDLScanCode label
+--   (DEL, NUM_1, LEFT, PAGEDOWN; live S007: "not a SDLScanCode: DELETE").
+--   mods: modifier name or list ("shift", {"LCTRL","alt"}) -> SDLKeyModifier
+--   labels (LShift, LCtrl, ...); "ctrl+"/"shift+" prefixes in key add to it.
 --   hold_ms: press down now, release after hold_ms (returns a job).
 ------------------------------------------------------------------------
 
+-- Common names -> SDLScanCode labels (the enum spells DEL, NUM_1, RETURN, ...).
+A.KEY_ALIASES = {
+    DELETE = "DEL", ENTER = "RETURN", ESC = "ESCAPE", BKSP = "BACKSPACE", BACK = "BACKSPACE",
+    SPACEBAR = "SPACE", PGUP = "PAGEUP", PGDN = "PAGEDOWN", PAGE_UP = "PAGEUP", PAGE_DOWN = "PAGEDOWN",
+    INS = "INSERT", ARROWUP = "UP", ARROWDOWN = "DOWN", ARROWLEFT = "LEFT", ARROWRIGHT = "RIGHT",
+    UP_ARROW = "UP", DOWN_ARROW = "DOWN", LEFT_ARROW = "LEFT", RIGHT_ARROW = "RIGHT",
+    ARROW_UP = "UP", ARROW_DOWN = "DOWN", ARROW_LEFT = "LEFT", ARROW_RIGHT = "RIGHT",
+    CTRL = "LCTRL", CONTROL = "LCTRL", SHIFT = "LSHIFT", ALT = "LALT", CAPS = "CAPSLOCK",
+    PRTSC = "PRINTSCREEN", PRINT = "PRINTSCREEN", NUMPAD_ENTER = "KP_ENTER",
+    ["`"] = "GRAVE", ["~"] = "GRAVE", ["-"] = "MINUS", ["="] = "EQUALS", ["["] = "LEFTBRACKET",
+    ["]"] = "RIGHTBRACKET", ["\\"] = "BACKSLASH", [";"] = "SEMICOLON", ["'"] = "APOSTROPHE",
+    [","] = "COMMA", ["."] = "PERIOD", ["/"] = "SLASH",
+}
+A.MOD_ALIASES = {
+    SHIFT = "LShift", LSHIFT = "LShift", RSHIFT = "RShift", CTRL = "LCtrl", CONTROL = "LCtrl",
+    LCTRL = "LCtrl", RCTRL = "RCtrl", ALT = "LAlt", LALT = "LAlt", RALT = "RAlt",
+}
+
+-- (key, mods) -> scancode label, modifier label list or nil. Pure.
+function A.keySpec(key, mods)
+    local out = {}
+    local function addMod(m)
+        local l = A.MOD_ALIASES[tostring(m):upper()] or tostring(m)
+        for _, x in ipairs(out) do if x == l then return end end
+        out[#out + 1] = l
+    end
+    if type(mods) == "table" then for _, m in ipairs(mods) do addMod(m) end
+    elseif mods ~= nil and mods ~= "" then addMod(mods) end
+    local k = tostring(key):gsub("^%s+", ""):gsub("%s+$", "")
+    -- "ctrl+s", "Shift-Tab": leading modifiers (a lone "-"/"+" stays a key)
+    while true do
+        local m, rest = k:match("^(%a+)%s*[%+%-]%s*(.+)$")
+        if not (m and A.MOD_ALIASES[m:upper()]) then break end
+        addMod(m)
+        k = rest
+    end
+    local u = k:upper():gsub("[%s%-]+", "_")
+    u = A.KEY_ALIASES[u] or A.KEY_ALIASES[k] or u
+    if u:match("^%d$") then u = "NUM_" .. u end
+    local kp = u:match("^NUMPAD_?(.+)$") or u:match("^KEYPAD_?(.+)$")
+    if kp then u = "KP_" .. kp end
+    return u, #out > 0 and out or nil
+end
+
 RPC.register("ui.key", function(args)
-    local key = args.key or error("key required")
+    local key, mods = A.keySpec(args.key or error("key required"), args.mods)
+    args.mods = mods
     if args.hold_ms then
         Ext.Input.InjectKeyDown(key, args.mods)
         local release = RPC.now_ms() + tonumber(args.hold_ms)
@@ -117,8 +165,15 @@ RPC.register("ui.key", function(args)
             end
         end)
     end
-    Ext.Input.InjectKeyPress(key, args.mods)
-    return { key = key }
+    local ok, err = pcall(Ext.Input.InjectKeyPress, key, args.mods)
+    if not ok then
+        if tostring(err):find("not a SDL") then
+            error("unknown key '" .. tostring(args.key) .. "' (as " .. key .. "); use names like ESCAPE, RETURN, "
+                .. "SPACE, TAB, DELETE, BACKSPACE, UP/DOWN/LEFT/RIGHT, F1-F12, A-Z, 0-9, ctrl+s", 0)
+        end
+        error(err, 0)
+    end
+    return { key = key, mods = args.mods }
 end)
 
 ------------------------------------------------------------------------

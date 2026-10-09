@@ -78,6 +78,111 @@ class Leveling(unittest.TestCase):
         self.assertEqual(n.text(now=9000), "")
 
 
+class FakeSpellPage:
+    """The level-up spell grid as ui.level_up_spell_probe and the input shim see it: `names` in order, 8 columns
+    of 44 px buttons (1920x1080) whose first centre is at `origin`; a click on a button picks its spell."""
+
+    def __init__(self, names, origin=(326.0, 475.0), cell=44.0, cols=8, open_slots=2, switch_frames=1):
+        self.names, self.origin, self.cell, self.cols = list(names), origin, cell, cols
+        self.picked: list[str] = []
+        self.open = open_slots
+        self.cursor = (0, 0)
+        self.switch = switch_frames   # probes that answer "switched" first (the sub-tab appears)
+        self.moves = 0
+
+    # input shim
+    def window_size(self):
+        return 1920, 1080
+
+    def move(self, x, y, sync=True):
+        self.cursor = (x, y)
+        self.moves += 1
+
+    def wait_frames(self, n, sync=True):
+        pass
+
+    def click(self, x, y, button="L", count=1, sync=True):
+        self.cursor = (x, y)
+        k = self.under()
+        if k and self.open > 0:
+            self.picked.append(self.visible()[k - 1])
+            self.open -= 1
+
+    # page
+    def visible(self):
+        return [n for n in self.names if n not in self.picked]
+
+    def under(self):
+        x, y = self.cursor
+        col = (x - (self.origin[0] - self.cell / 2)) // self.cell
+        row = (y - (self.origin[1] - self.cell / 2)) // self.cell
+        if col < 0 or col >= self.cols or row < 0:
+            return None
+        k = int(row * self.cols + col) + 1
+        return k if k <= len(self.visible()) else None
+
+    def rpc(self, op, args):
+        assert op == "ui.level_up_spell_probe"
+        name = args["name"]
+        if name in self.picked:
+            return {"placed": True}
+        if name not in self.names:
+            raise RuntimeError(f"spell {name}: not offered")
+        if self.switch > 0:
+            self.switch -= 1
+            return {"switched": True}
+        idx = self.visible().index(name) + 1
+        h = self.under()
+        return {"index": idx, "n": len(self.visible()), "cols": self.cols, "cell": {"w": 88.0, "h": 88.0},
+                "over": h == idx, "hovered": h, "enabled": self.open > 0, "open": self.open}
+
+
+NAMES = ["Burning Hands", "Charm Person", "Chromatic Orb", "Colour Spray", "Disguise Self", "Expeditious Retreat",
+         "False Life", "Feather Fall", "Find Familiar", "Ice Knife", "Enhance Leap", "Longstrider", "Magic Missile",
+         "Protection from Evil and Good", "Ray of Sickness", "Shield", "Tasha's Hideous Laughter"]
+
+
+class SpellClicks(unittest.TestCase):
+    """click_spells: hover-search the grid, measure one button, click each pick (hover-checked), confirm it took."""
+
+    def test_two_picks(self):
+        pg = FakeSpellPage(NAMES)
+        r = LV.click_spells(pg.rpc, pg, [{"name": "Magic Missile", "cantrips": False}, {"name": "Shield"}])
+        self.assertEqual(r["failed"], {})
+        self.assertEqual(pg.picked, ["Magic Missile", "Shield"])
+        self.assertLess(r["probes"], 40)
+
+    def test_grid_elsewhere(self):
+        # the list further left and lower than the search start, at a fractional offset
+        pg = FakeSpellPage(NAMES, origin=(180.5, 700.25))
+        r = LV.click_spells(pg.rpc, pg, [{"name": "Shield"}])
+        self.assertEqual((r["failed"], pg.picked), ({}, ["Shield"]))
+
+    def test_already_placed_and_unknown(self):
+        pg = FakeSpellPage(NAMES)
+        pg.picked = ["Shield"]
+        r = LV.click_spells(pg.rpc, pg, [{"name": "Shield"}, {"name": "Fireball"}])
+        self.assertEqual(r["picked"], ["Shield"])
+        self.assertIn("not offered", r["failed"]["Fireball"])
+
+    def test_no_open_slot(self):
+        pg = FakeSpellPage(NAMES, open_slots=0)
+        r = LV.click_spells(pg.rpc, pg, [{"name": "Shield"}])
+        self.assertIn("disabled", r["failed"]["Shield"])
+
+    def test_nothing_under_the_cursor(self):
+        pg = FakeSpellPage(NAMES, origin=(-500.0, -500.0))   # never hoverable
+        r = LV.click_spells(pg.rpc, pg, [{"name": "Shield"}])
+        self.assertIn("no spell button found", r["failed"]["Shield"])
+        self.assertEqual(pg.picked, [])
+
+    def test_spiral(self):
+        pts = LV.spiral(100, 100, 10, 1920, 1080, limit=9)
+        self.assertEqual(pts[0], (100, 100))
+        self.assertEqual(len(set(pts)), 9)
+        self.assertTrue(all(abs(x - 100) <= 10 and abs(y - 100) <= 10 for x, y in pts))
+
+
 class ServerWiring(unittest.TestCase):
     """level_up() with no plan sends the stored plan; get_status shows the LEVEL UP line."""
 
@@ -112,6 +217,36 @@ class ServerWiring(unittest.TestCase):
             self.assertTrue(S._level_up_line(ST).startswith("LEVEL UP: u-gale (2) → level_up(who)"))
         finally:
             S.game, S._act, S.MEMORY, S._who = saved
+
+    def test_level_up_clicks_spells_then_reruns(self):
+        from bg3ai import server as S
+
+        calls = []
+
+        def fake_act(tool, op, args, wait_s=25.0, context="server", wait=True, note=""):
+            calls.append(note)
+            if len(calls) == 1:
+                S._batch["result"] = {"needs_clicks": [{"name": "Hex", "cantrips": False}]}
+                return "level_up: FAILED — finish: spell picks need mouse clicks (Hex)"
+            S._batch["result"] = {"finished": True}
+            return "level_up: done — finished"
+
+        clicked = {}
+
+        def fake_click(rpc, inp, needs, log=None):
+            clicked["needs"] = needs
+            return {"picked": ["Hex"], "failed": {}, "probes": 12}
+
+        saved = (S._act, S._who, S._inp, LV.click_spells)
+        S._act, S._who, S._inp, LV.click_spells = fake_act, (lambda ref: "u-wyll"), (lambda: object()), fake_click
+        try:
+            out = S.level_up("Wyll", plan='{"spells": ["Hex"], "passives": ["Agonizing Blast"]}')
+            self.assertEqual(out, "level_up: done — finished")
+            self.assertEqual(clicked["needs"], [{"name": "Hex", "cantrips": False}])
+            self.assertEqual(len(calls), 2)
+            self.assertIn("clicked spells: Hex", calls[1])
+        finally:
+            S._act, S._who, S._inp, LV.click_spells = saved
 
 
 if __name__ == "__main__":

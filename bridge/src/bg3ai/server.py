@@ -113,7 +113,9 @@ def _clock_line() -> str:
     if not DEADLINE and not st:
         return ""
     if not new_stuck and (not DEADLINE or DEADLINE - now > WRAPUP_S) and now - _clock_shown["at"] < 600:
-        return ""
+        # Between full lines, a terse one: S009 guessed "time is nearly up" 4 min after the last clock with
+        # 15 min left, saved, wrote its handoff (a 42 s gap), then walked back; and session_clock costs a turn.
+        return f"⏱ {time.strftime('%H:%M')} · {int((DEADLINE - now) // 60)}m left" if DEADLINE else ""
     _clock_shown["at"] = now
     if st is not None:
         _clock_shown["stuck"] = st.get("t")
@@ -149,12 +151,14 @@ def _session_over() -> bool:
 
 
 def _events_text() -> str:
-    parts = []
-    for ctx in ("server", "client"):
+    def drain(ctx):
         try:
-            evs = game.drain_events(ctx)
+            return game.drain_events(ctx)
         except GameError:
-            continue
+            return []
+
+    parts = []
+    for evs in _par(lambda: drain("server"), lambda: drain("client")):
         if evs:
             _note_dialogue_speaker(evs)
             parts.append(render.render_events(evs, H))
@@ -297,15 +301,19 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
             ev = _events_text()
             if ev:
                 out.append(ev)
-    if "RUNNING " not in body:  # what still runs, so the agent appends (queue_actions) instead of waiting
+    _running_memo.update(on=True, keys=None, out=None, watch=None)
+    try:
+        if "RUNNING " not in body:  # what still runs, so the agent appends (queue_actions) instead of waiting
+            try:
+                out.append(_running_text())
+            except GameError:
+                pass
         try:
-            out.append(_running_text())
+            out.append(_notes_window())
         except GameError:
             pass
-    try:
-        out.append(_notes_window())
-    except GameError:
-        pass
+    finally:
+        _running_memo["on"] = False
     if tool == "wait_for" and _pace["calls_since"] == 0 and _pace["issued_at"] \
             and t0 - _pace["issued_at"] < PACE_GAP_S:
         out.append("PACE: you waited right after issuing. Next time first do independent work (queue the arrival "
@@ -366,6 +374,26 @@ def _next_walk_hint() -> str:
     return NEXT_WALK
 
 
+def _par(*thunks) -> list:
+    """game.parallel when the game has it (one tick for independent RPCs), else one after another."""
+    p = getattr(game, "parallel", None)
+    return p(*thunks) if p else [t() for t in thunks]
+
+
+def _read(server_ops: list, client_ops: list = ()) -> tuple[list, list]:
+    """game.read: server + client ops (and both contexts' events) in one game tick; failed ops are None."""
+    if hasattr(game, "read"):
+        return game.read(server_ops, client_ops)
+    return (delta.multi_rpc(game, list(server_ops)) if server_ops else [],
+            [game.try_rpc(op, a, context="client") for op, a in client_ops])
+
+
+def _read1(op: str, args: dict | None = None, context: str = "server") -> Any:
+    """game.read1: rpc(op) with both contexts' events folded into the same tick; raises like rpc()."""
+    r1 = getattr(game, "read1", None)
+    return r1(op, args, context) if r1 else game.rpc(op, args, context)
+
+
 def _guard(fn):
     """Wrap a tool so game errors become readable text instead of exceptions."""
     import functools
@@ -373,6 +401,7 @@ def _guard(fn):
     @functools.wraps(fn)
     def wrapper(*a, **kw):
         t0 = time.monotonic()
+        getattr(game, "begin_tool", lambda: None)()
         try:
             return fn(*a, **kw)
         except NotReady as e:
@@ -524,16 +553,24 @@ def _walk_wait(wait: bool) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 _last_subregion = {"name": None}
-_objectives: dict[str, list] = {"last": []}  # markers as last shown (o1, o2, ... index into this)
+_objectives: dict[str, Any] = {"last": [], "at": 0.0}  # markers as last shown (o1, o2, ... index into this)
+MARKERS_TTL_S = 5.0  # route/travel_to reuse markers fetched this recently (a marker's position doesn't move)
 
 
-def _objective_markers() -> list:
-    """Active quest objective markers (nav.markers), remembered so o1/o2 refer to what was shown."""
+def _set_objectives(ms: list) -> None:
+    _objectives["last"], _objectives["at"] = ms, time.monotonic()
+
+
+def _objective_markers(max_age: float = 0.0) -> list:
+    """Active quest objective markers (nav.markers), remembered so o1/o2 refer to what was shown.
+    max_age > 0: the markers fetched within that many seconds (by get_status/look/get_map) are fine."""
+    if max_age and _objectives["last"] and time.monotonic() - _objectives["at"] < max_age:
+        return _objectives["last"]
     res = game.try_rpc("nav.markers", {})
     ms = res.get("markers") if isinstance(res, dict) else None
     if not isinstance(ms, list):
         return []
-    _objectives["last"] = ms
+    _set_objectives(ms)
     return ms
 
 
@@ -556,13 +593,14 @@ def get_status(full: bool = False) -> str:
     """Where you are, party HP/conditions, mode (exploring/combat/dialogue), what's on screen, objectives, and recent events. Call this first.
     After the first call it returns only what CHANGED since your last look (moves, HP, conditions, mode, objectives, new prompts); full=true shows everything again."""
     t0 = time.monotonic()
-    ui = game.try_rpc("ui.state", context="client")
     try:
-        st, mk = delta.multi_rpc(game, [("state.status", {}), ("nav.markers", {})])
+        # One game tick: status+markers (server) and ui.state (client) in parallel, events folded in.
+        (st, mk), (ui,) = _read([("state.status", {}), ("nav.markers", {})], [("ui.state", {})])
         if st is None:
             st = game.rpc("state.status")  # surfaces the real error
     except NotReady:
         gs = game.game_state()
+        ui = game.try_rpc("ui.state", context="client")
         body = f"No game session loaded (game state: {gs})."
         if ui:
             body += "\n" + "\n".join(_render_ui(ui))
@@ -575,7 +613,7 @@ def get_status(full: bool = False) -> str:
             _last_subregion["name"] = sub
     markers = mk.get("markers") if isinstance(mk, dict) and isinstance(mk.get("markers"), list) else None
     if markers is not None:
-        _objectives["last"] = markers
+        _set_objectives(markers)
     first = not DELTA.has("party")
     lines = DELTA.observe(delta.snapshot(H, status=st, ui=ui, markers=markers))
     if full or first or _too_big(lines):
@@ -600,14 +638,14 @@ def look(full: bool = False) -> str:
     """The cheap way to keep your bearings: what CHANGED since your last look, in a few lines. Party moves (12m NW), HP, conditions gained/lost, characters and objects that appeared, left view or changed (hostile, dead, opened, unlocked), items gained/lost, gold, mode, new objectives and quest entries, and any new prompt (dialogue, roll, popup).
     full=true (or the first call, or a new area): the full status plus everything visible nearby."""
     t0 = time.monotonic()
-    got = delta.fetch(game, delta.LOOK_PARTS)
+    got = delta.fetch(game, delta.LOOK_PARTS, events=True)  # one game tick, events included
     st = got.get("status")
     if st is None:
         return get_status(full=True)
     for v in got.values():
         _remember_names(v)
     if got.get("markers") is not None:
-        _objectives["last"] = got["markers"]
+        _set_objectives(got["markers"])
     first = not DELTA.has("party", "ents")
     lines = DELTA.observe(delta.snapshot_of(H, got))
     if full or first or _too_big(lines):
@@ -730,8 +768,10 @@ def get_party() -> str:
     st = game.rpc("state.status")
     _remember_names(st)
     lines = []
-    for c in st.get("party") or []:
-        sheet = game.try_rpc("state.character", {"uuid": c["uuid"], "sections": ["brief", "resources"]})
+    party = st.get("party") or []
+    sheets, _ = _read([("state.character", {"uuid": c["uuid"], "sections": ["brief", "resources"]})
+                           for c in party])  # every sheet + events in one tick (was one RPC per member)
+    for c, sheet in zip(party, sheets):
         lines.append(render.character_line(c, H, st.get("active")))
         if sheet:
             skip = {"uuid", "name", "classes", "hp", "max_hp", "temp_hp", "level", "statuses", "pos"}
@@ -744,10 +784,10 @@ def get_party() -> str:
 def get_character(who: str | None = None, sections: str = "") -> str:
     """Character sheet. Full for party members (abilities, skills, resources, spell slots, equipment, passives); what Examine shows for others. who: id or party name (default: active character). sections: optional comma list to limit output, e.g. "resources,equipment"."""
     t0 = time.monotonic()
-    args = {"uuid": _who(who)}
+    args = {"uuid": _uuid(who)} if who else {}  # no uuid: the mod uses the selected character
     if sections:
         args["sections"] = [s.strip() for s in sections.split(",") if s.strip()]
-    res = game.rpc("state.character", args)
+    res = _read1("state.character", args)
     _remember_names(res)
     return _finish("get_character", {"who": who, "sections": sections}, render.compact(res, H), t0)
 
@@ -757,7 +797,7 @@ def get_character(who: str | None = None, sections: str = "") -> str:
 def get_actions(who: str | None = None) -> str:
     """The actions/spells/items a character can use right now (as on the hotbar), with costs and availability."""
     t0 = time.monotonic()
-    res = game.rpc("state.actions", {"uuid": _who(who)})
+    res = _read1("state.actions", {"uuid": _uuid(who)} if who else {})
     body = render.render_actions(res, H)
     return _finish("get_actions", {"who": who}, body, t0)
 
@@ -770,7 +810,7 @@ def get_nearby(radius: float = 25.0, kinds: str = "") -> str:
     args: dict[str, Any] = {"radius": radius}
     if kinds:
         args["kinds"] = [k.strip() for k in kinds.split(",") if k.strip()]
-    res = game.rpc("state.nearby", args)
+    res = _read1("state.nearby", args)
     _remember_names(res)
     if radius == 25.0 and not kinds and isinstance(res, dict):
         DELTA.observe(delta.snapshot(H, nearby=res))  # the agent has now seen these; look() won't repeat them
@@ -782,7 +822,7 @@ def get_nearby(radius: float = 25.0, kinds: str = "") -> str:
 def look_at(target: str) -> str:
     """What the Examine panel shows for a visible character or object (stats, resistances, conditions, description)."""
     t0 = time.monotonic()
-    res = game.rpc("state.entity", {"uuid": _uuid(target)})
+    res = _read1("state.entity", {"uuid": _uuid(target)})
     _remember_names(res)
     return _finish("look_at", {"target": target}, render.compact(res, H), t0)
 
@@ -798,8 +838,10 @@ def get_inventory(who: str | None = None, filter: str = "") -> str:
     if filter:
         args["filter"] = filter
     args.pop("filter", None)  # filtering happens in the renderer
-    _remember_names(game.try_rpc("state.status") or {})  # party first: short handles + owner names
-    res = game.rpc("state.inventory", args)
+    (st, res), _ = _read([("state.status", {}), ("state.inventory", args)])
+    _remember_names(st or {})  # party first: short handles + owner names
+    if res is None:
+        res = game.rpc("state.inventory", args)  # surfaces the mod's error
     _remember_names(res)
     if not who and isinstance(res, dict):
         DELTA.observe({"inv": delta.snapshot(H, inventory=res)["inv"]})  # seen now; look() reports later changes
@@ -811,7 +853,7 @@ def get_inventory(who: str | None = None, filter: str = "") -> str:
 def get_journal(quest: str = "") -> str:
     """Active quests with their latest journal entry, plus finished quest titles. quest: words from a title to see all of that quest's entries."""
     t0 = time.monotonic()
-    res = game.rpc("state.journal")
+    res = _read1("state.journal")
     if isinstance(res, list):
         DELTA.observe(delta.snapshot(H, journal=res))
     return _finish("get_journal", {"quest": quest}, render.render_journal(res, H, quest), t0)
@@ -823,12 +865,12 @@ def get_map(full: bool = False) -> str:
     """Current region/subregion, unlocked waypoints, active quest objectives (distance, direction), and your own map markers.
     After the first call it shows only what changed (new waypoints, objectives added/done, region); full=true for everything."""
     t0 = time.monotonic()
-    res, mk = delta.multi_rpc(game, [("state.map", {}), ("nav.markers", {})])
+    (res, mk), _ = _read([("state.map", {}), ("nav.markers", {})])
     if res is None:
         res = game.rpc("state.map")
     ms = mk.get("markers") if isinstance(mk, dict) and isinstance(mk.get("markers"), list) else None
     if ms is not None:
-        _objectives["last"] = ms
+        _set_objectives(ms)
     first = not DELTA.has("waypoints")
     snap = delta.snapshot(H, map_=res, markers=ms)
     region = " · ".join(str(x) for x in (res.get("subregion"), res.get("region")) if x) if isinstance(res, dict) else ""
@@ -853,7 +895,7 @@ def get_map(full: bool = False) -> str:
 def get_frontier() -> str:
     """Leads worth exploring: visible doors, ladders, stairs, exits and unvisited things near you, with distance and direction. Use it to decide where to go next."""
     t0 = time.monotonic()
-    res = game.rpc("nav.frontier", {})
+    res = _read1("nav.frontier", {})
     _remember_names(res)
     return _finish("get_frontier", {}, render.render_frontier(res, H), t0)
 
@@ -867,7 +909,7 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
     fire on the way, and when no path exists: the closest walkable spot and the ladders/doors in view ranked by how much they
     help (which way a ladder climbs), ending with one NEXT step. connectors=true lists ladders/doors even when a path exists."""
     t0 = time.monotonic()
-    args: dict[str, Any] = {"char": _who(who)}
+    args: dict[str, Any] = {"char": _uuid(who)} if who else {}  # no char: nav.route uses the active one
     t = (target or objective).strip()
     if re.fullmatch(r"[om]\d+", t) or (objective and not target):  # objective o1 / words, map marker m1
         marker = t if re.fullmatch(r"m\d+", t) else ""
@@ -882,7 +924,7 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
         raise ValueError("give objective=o1 (or m1), target=<id>, or x,y,z")
     if connectors:
         args["connectors"] = True
-    res = game.rpc("nav.route", args)
+    res = _read1("nav.route", args)
     _remember_names(res)
     return _finish("route", {"objective": objective, "target": target}, route_text.render_route(res, H, what), t0)
 
@@ -892,7 +934,7 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
 def get_explored() -> str:
     """Where the party has been in this area (your own breadcrumbs): size of explored region and recent named places."""
     t0 = time.monotonic()
-    res = game.rpc("nav.explored", {})
+    res = _read1("nav.explored", {})
     return _finish("get_explored", {}, render.compact(res, H), t0)
 
 
@@ -1016,7 +1058,7 @@ def get_combat_state() -> str:
 def get_dialogue() -> str:
     """The current dialogue line and numbered answer options. A tagged option also shows its check and your speaker's bonus (plus the party's best), never the DC. Or the roll/reaction/popup on screen."""
     t0 = time.monotonic()
-    ui = game.rpc("ui.state", context="client")
+    ui = _read1("ui.state", context="client")
     lines = _render_ui(ui)
     return _finish("get_dialogue", {}, "\n".join(lines) or f"No dialogue on screen (screen={ui.get('screen')}).", t0)
 
@@ -1507,7 +1549,7 @@ def get_level_up_options(who: str | None = None) -> str:
 @mcp.tool()
 @_guard
 def level_up(who: str | None = None, plan: str = "") -> str:
-    """Level a character up in one call (out of combat). With no plan it uses your stored line for that character and level in memory/party-build.md ("- Gale L2: {...}"). plan: JSON like {"subclass":"Evocation","feat":"Ability Improvement","abilities":{"Strength":2},"spells":["Magic Missile","Shield"],"cantrips":[],"skills":[],"passives":[]}; omitted fields take the game's defaults, except a subclass: a subclass level fails and lists the choices until the plan names one."""
+    """Level a character up in one call (out of combat). With no plan it uses your stored line for that character and level in memory/party-build.md ("- Gale L2: {...}"). plan: JSON like {"subclass":"Evocation","feat":"Ability Improvement","abilities":{"Strength":2},"spells":["Magic Missile","Shield"],"cantrips":[],"skills":[],"passives":["Agonizing Blast"]}; omitted fields take the game's defaults, except choices with no default: a subclass, spells/cantrips to learn, and passives (invocations, fighting styles). Then it fails and lists what can be picked; add them to the plan and call again."""
     uuid = _who(who)
     args: dict[str, Any] = {"uuid": uuid}
     note = ""
@@ -1522,6 +1564,13 @@ def level_up(who: str | None = None, plan: str = "") -> str:
         elif row:
             note = f"(no stored plan for {row['name']} L{row['to']}: game defaults)"
     out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
+    res = _batch.get("result")
+    if out.startswith("level_up: FAILED") and isinstance(res, dict) and res.get("needs_clicks") and _inp() is not None:
+        # Spell picks are mouse clicks (leveling.click_spells); then the same plan again finishes the page.
+        clicks = leveling.click_spells(lambda op, a: game.rpc(op, a, context="client"), _inp(), res["needs_clicks"])
+        note = (note + " " if note else "") + f"(clicked spells: {', '.join(clicks['picked']) or 'none'}" + (
+            f"; failed: {clicks['failed']})" if clicks["failed"] else ")")
+        out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
     if out.startswith("level_up: done"):
         _LEVEL_NUDGE.done(uuid)
     return out
@@ -1900,6 +1949,12 @@ def wait_for(target: str = "idle", timeout_s: float = 15.0) -> str:
             hit = _peek_events(kinds)
             if hit:
                 body = f"{hit.get('kind')} happened"
+            elif now - t0 >= IDLE_EVENT_WAIT_S and screen0 in (None, "game") \
+                    and not _queues().busy() and not _running_jobs():
+                # S009: 'dialogue_started' after a finished 3 m walk waited its full 10 s, and the last minutes
+                # went to 45+30+40 s waits with nothing running. Nothing of ours can cause it: say so now.
+                body = (f"nothing is running that would cause {tgt} (no job, no queue, no prompt) after "
+                        f"{render.num(round(now - t0, 1))}s: act instead (talk_to, move_to, queue_actions)")
         if body is not None:
             break
         if now - ui_at >= 0.5:
@@ -2088,16 +2143,35 @@ def _last_queue_text(who: str | None) -> str:
     return head + ("\n" + "\n".join(rep.lines[-4:]) if rep.lines else "")
 
 
+# One tool result asks twice (RUNNING line, notes window; S009: two job.poll RPCs per job and two act.watch
+# reads per trip on every result). Inside _finish's tail ("on") the first answer is reused.
+_running_memo: dict[str, Any] = {"on": False, "keys": None, "out": None}
+
+
 def _running_jobs() -> list[str]:
-    """Async jobs still running (polls each; forgets settled ones)."""
+    """Async jobs still running (forgets settled ones). All jobs of a context are polled in one eval."""
+    keys = tuple(sorted(_async))
+    if _running_memo["on"] and _running_memo["keys"] == keys and _running_memo["out"] is not None:
+        return list(_running_memo["out"])
+    items = list(_async.items())
+    views: dict[str, Any] = {}
+    for ctx in {info["ctx"] for _, info in items}:
+        mine = [(h, info) for h, info in items if info["ctx"] == ctx]
+        try:
+            res = delta.multi_rpc(game, [("job.poll", {"id": info["id"]}) for _, info in mine], ctx)
+        except GameError:
+            res = [None] * len(mine)
+        views.update({h: v for (h, _), v in zip(mine, res)})
     out = []
-    for h, info in list(_async.items()):
-        view = game.try_rpc("job.poll", {"id": info["id"]}, context=info["ctx"])
+    for h, info in items:
+        view = views.get(h)
         if not isinstance(view, dict) or view.get("status") != "running":
             _async.pop(h, None)
             METRICS.bg_end(h)
             continue
         out.append(h)
+    if _running_memo["on"]:
+        _running_memo.update(keys=tuple(sorted(_async)), out=list(out))
     return out
 
 
@@ -2128,12 +2202,16 @@ def _running_text() -> str:
     return "RUNNING " + " | ".join(parts) + (" (queue_actions appends after it)" if qs else "")
 
 
+IDLE_EVENT_WAIT_S = 4.0  # wait_for <event kinds> with no job, queue or prompt running gives up after this
+
+
 def _peek_events(kinds: set) -> dict | None:
     """First event of one of `kinds` since the agent's last tool call, without consuming it
     (the result's EVENTS section still lists everything)."""
     for ctx in ("server", "client"):
         res = game.try_rpc("events.since", {"seq": game.event_seq[ctx], "limit": 300}, context=ctx)
-        for ev in (res.get("events") or []) if isinstance(res, dict) else []:
+        stashed = game.stashed_events(ctx) if hasattr(game, "stashed_events") else []  # read() took them
+        for ev in stashed + ((res.get("events") or []) if isinstance(res, dict) else []):
             if ev.get("kind") in kinds:
                 return ev
     return None
@@ -2736,7 +2814,7 @@ def _travel_dest(marker: str, objective: str, x, y, z) -> tuple[list, str]:
             raise ValueError(f"marker {m['id']} is in {m.get('region') or m['level']}: fast_travel there first")
         return list(m["pos"]), f"marker {m['id']} {m.get('label', '')}"
     if objective:
-        m = render.find_objective(_objective_markers(), objective)
+        m = render.find_objective(_objective_markers(MARKERS_TTL_S), objective)
         if not (m.get("here") and m.get("pos")):
             raise ValueError(f"objective '{render.objective_label(m)}' is not in this area")
         return list(m["pos"]), f"objective {render.objective_label(m)}"
@@ -3001,7 +3079,12 @@ def _climb_hint(here: list | None, dest: list | None) -> str:
 
 
 def _pos_now(char: str) -> list | None:
-    rows = (_watch_conn().try_rpc("act.watch") or {}).get("party") or []
+    """A party member's position from act.watch (read once per tool result tail, see _running_memo)."""
+    rows = _running_memo.get("watch") if _running_memo["on"] else None
+    if rows is None:
+        rows = (_watch_conn().try_rpc("act.watch") or {}).get("party") or []
+        if _running_memo["on"]:
+            _running_memo["watch"] = rows
     return next((r.get("pos") for r in rows if r.get("uuid") == char), None)
 
 

@@ -644,6 +644,25 @@ local function mapWaypoints(w)
             out[#out + 1] = { region = region, name = entry.b, button = buttons[bi], off = entry.off }
         end
     end
+    if #out == 0 then
+        -- Panel not laid out / collapsed: read each button's own text (hidden too),
+        -- else its view model's name.
+        for _, b in ipairs(buttons) do
+            local parts = {}
+            for _, t in ipairs(UI.findAll(b, function(e) return UI.typeName(e) == "TextBlock" end, { hidden = true, max = 300 })) do
+                parts[#parts + 1] = UI.text(t)
+            end
+            local name = #parts > 0 and table.concat(parts, " ") or nil
+            if not name then
+                local vm = try(function() return b.DataContext end)
+                for _, k in ipairs({ "Name", "DisplayName", "Title", "Label" }) do
+                    local v = vm and UI.prop(vm, k)
+                    if type(v) == "string" and v ~= "" then name = v break end
+                end
+            end
+            if name then out[#out + 1] = { name = name, button = b } end
+        end
+    end
     return out
 end
 
@@ -698,18 +717,82 @@ RPC.register("ui.waypoints", function(args)
     end)
 end)
 
-local function pickWaypoint(list, want)
-    local w = tostring(want):lower()
-    for _, wp in ipairs(list) do
-        if (wp.name or ""):lower() == w then return wp end
-    end
-    local hit, n = nil, 0
-    for _, wp in ipairs(list) do
-        if (wp.name or ""):lower():find(w, 1, true) then hit, n = wp, n + 1 end
-    end
-    if n == 1 then return hit end
-    return nil, n
+-- "Waypoint: Roadside-Cliffs" -> "roadside cliffs"
+local function wpNorm(s)
+    s = tostring(s or ""):lower():gsub("^%s*waypoint%s*[:%-]?%s*", ""):gsub("^wayp_", "")
+    return (s:gsub("[^%w]+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
 end
+
+-- WAYP_CHA_Top (get_map's id) -> its display name, when the client can read it.
+local function wpDisplayName(id)
+    if not tostring(id):match("^WAYP_") then return nil end
+    local L = Ext.Loca
+    local h = L and try(L.GetTranslatedStringKey, id)
+    local name = h and (U.loca and U.loca(tostring(h)) or try(L.GetTranslatedString, tostring(h)))
+    return (name and name ~= "") and name or nil
+end
+
+-- Waypoint by name, forgiving like a player reading the map: case, a
+-- "Waypoint:" prefix, punctuation, partial words ("roadside", "cliffs"),
+-- get_map ids (WAYP_CHA_Top). Returns wp, or nil + number of matches.
+function SV.pickWaypoint(list, want)
+    local names = { wpNorm(want) }
+    local disp = wpDisplayName(want)
+    if disp then table.insert(names, 1, wpNorm(disp)) end
+    local function unique(pred)
+        local hit, n = nil, 0
+        for _, wp in ipairs(list) do
+            if pred(wpNorm(wp.name)) then hit, n = wp, n + 1 end
+        end
+        return hit, n
+    end
+    local best = 0
+    for _, w in ipairs(names) do
+        if w ~= "" then
+            local words = {}
+            for x in w:gmatch("%S+") do words[#words + 1] = x end
+            local tiers = {
+                function(n) return n == w end,
+                function(n) return n:find(w, 1, true) ~= nil or (#n >= 4 and w:find(n, 1, true) ~= nil) end,
+                function(n)  -- every word of want starts a word of the name
+                    for _, x in ipairs(words) do
+                        if not (" " .. n):find(" " .. x, 1, true) then return false end
+                    end
+                    return true
+                end,
+            }
+            for _, t in ipairs(tiers) do
+                local hit, n = unique(t)
+                if n == 1 then return hit end
+                if n > 1 then return nil, n end
+            end
+            -- most shared words (≥3 letters), if one waypoint wins outright
+            local top, topN, tie = nil, 0, false
+            for _, wp in ipairs(list) do
+                local n = " " .. wpNorm(wp.name) .. " "
+                local c = 0
+                for _, x in ipairs(words) do
+                    if #x >= 3 and n:find(" " .. x, 1, true) then c = c + 1 end
+                end
+                if c > topN then top, topN, tie = wp, c, false elseif c == topN and c > 0 then tie = true end
+            end
+            if top and not tie then return top end
+            if tie then best = math.max(best, 2) end
+        end
+    end
+    return nil, best
+end
+local pickWaypoint = SV.pickWaypoint
+
+-- "Overgrown Ruins (Wilderness), Roadside Cliffs (Wilderness)"
+local function waypointNames(list)
+    local out = {}
+    for _, x in ipairs(list) do
+        out[#out + 1] = tostring(x.name) .. (x.region and (" (" .. tostring(x.region) .. ")") or "")
+    end
+    return table.concat(out, ", ")
+end
+SV.waypointNames = waypointNames
 
 RPC.register("ui.fast_travel", function(args)
     local want = args.waypoint or error("waypoint required")
@@ -723,14 +806,24 @@ RPC.register("ui.fast_travel", function(args)
     return withMap("ui.fast_travel", 58000, function(w, opened, state)
         if not state.sent then
             local list = mapWaypoints(w)
+            -- The list fills a few frames after the map opens (live S007: an empty
+            -- list right after M -> "no unlocked waypoint named 'Roadside Cliffs'").
+            state.listT = state.listT or RPC.now_ms()
+            if #list == 0 and RPC.now_ms() - state.listT < 2000 then return nil end
             local wp, n = pickWaypoint(list, want)
             if not wp then
                 closeMap(opened)
                 local names = {}
                 for _, x in ipairs(list) do names[#names + 1] = x.name end
-                return "failed", { waypoints = names },
-                    (n and n > 1) and ("'" .. want .. "' matches " .. n .. " waypoints; be more specific")
-                    or ("no unlocked waypoint named '" .. want .. "'")
+                local msg
+                if #list == 0 then
+                    msg = "the map shows no waypoint list (UI not loaded); try again, or walk (travel_to marker/objective)"
+                elseif n and n > 1 then
+                    msg = "'" .. want .. "' matches " .. n .. " waypoints; be more specific. Unlocked: " .. waypointNames(list)
+                else
+                    msg = "no unlocked waypoint named '" .. want .. "'. Unlocked: " .. waypointNames(list)
+                end
+                return "failed", { waypoints = names }, msg
             end
             local cmd = wp.button and UI.prop(wp.button, "Command")
             local vm = wp.button and try(function() return wp.button.DataContext end)

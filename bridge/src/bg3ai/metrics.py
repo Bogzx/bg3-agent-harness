@@ -58,12 +58,17 @@ BATCH_TOOL = "do_actions"
 # Wrappers whose steps run as nested tool records (like do_actions): combat_turn and the macros.
 BATCH_TOOLS = {BATCH_TOOL, "combat_turn", "loot_area", "travel_to", "regroup", "read_all", "rest_if_needed"}
 QUEUE_TOOL = "queue_actions"
+# Not observations, so not in the read round-trip target: waits on the game (wait_for blocks until a job ends,
+# S009: 26 calls, median 8.6 s), save/load (seconds by nature), screen captures, queue control.
+NOT_READ = {"wait_for", "wait", "save_game", "load_game", "screenshot", "zoom", QUEUE_TOOL, "cancel_queue"}
+OPS_MAX = 12  # tool records list their evals ("ops") when they made at most this many
 # Top-level calls that issue actions (pipelining is measured over these); waits don't count.
 ISSUE_TOOLS = (ACTION_TOOLS | BATCH_TOOLS | {QUEUE_TOOL}) - NOT_APM
 BG_DEFAULT_S = 10.0  # an async job with no ETA counts as running this long unless its end is seen
 BG_GRACE_S = 1.5     # ETAs are estimates: an async job counts as running a little past its ETA
 PIPE_SAMPLE_S = 1.5  # fallback: a busy sample at most this long before the call
 LONG_GAP_S = 10.0
+SAMPLE_SPAN_S = 1.5  # a busy activity sample vouches for at most this long before it (sampler: 1 s)
 MOVE_EPS_M = 0.25  # a party member moved at least this far since the previous sample → moving
 
 TARGETS = {
@@ -112,7 +117,8 @@ class Recorder:
     def __init__(self, path: Path | None):
         self.path = Path(path) if path else None
         self.lock = threading.Lock()
-        self.rpcs: deque = deque(maxlen=5000)   # (t0, t1, op)
+        self.rpcs: deque = deque(maxlen=5000)   # (t0, t1, op, owner): owner = the tool thread it ran for
+        self._tl = threading.local()            # .owner: the tool thread a helper thread works for
         self.jobs: deque = deque(maxlen=500)    # (t0, t1, op, status)
         self.last_active = 0.0                  # wall time of the latest busy sample
         self.active_now = False
@@ -133,9 +139,18 @@ class Recorder:
         except OSError:
             pass
 
+    def owner_token(self) -> int:
+        """Who this thread's RPCs count for: itself, or the tool thread it was lent to (adopt)."""
+        return getattr(self._tl, "owner", None) or threading.get_ident()
+
+    def adopt(self, token: int | None) -> None:
+        """Game.parallel helper threads: count this thread's RPCs for the tool thread `token` (None: stop)."""
+        self._tl.owner = token
+
     def rpc_done(self, op: str, t0: float, t1: float) -> None:
+        owner = self.owner_token()
         with self.lock:
-            self.rpcs.append((t0, t1, op))
+            self.rpcs.append((t0, t1, op, owner))
 
     def job_done(self, op: str, t0: float, t1: float, status: str) -> None:
         with self.lock:
@@ -180,17 +195,22 @@ class Recorder:
             return None
         t1 = time.time() if t1 is None else t1
         t0 = t1 - ms / 1000.0
+        me = self.owner_token()
         with self.lock:
-            rpc = [(a, b) for a, b, _ in self.rpcs if a >= t0 - 0.001 and b <= t1 + 0.001]
+            # Only this call's own RPCs: queue workers, wait polls and other tools share the recorder.
+            rpc = [(a, b, op) for a, b, op, o in self.rpcs if o == me and a >= t0 - 0.001 and b <= t1 + 0.001]
             job_ms = sum((min(b, t1) - max(a, t0)) * 1000 for a, b, _, _ in self.jobs if b > t0 and a < t1)
             busy = job_ms > 0 or self.last_active >= t0 or self.active_now
             bg = None if nested else self._bg_open_at(t0, exclude_from=t0)
             started = not nested and any(t0 <= v[0] <= t1 + 0.001 for v in self.bg.values())
         rec = {"type": "tool", "tool": tool, "t0": round(t0, 3), "t1": round(t1, 3), "ms": round(ms, 1),
-               "rpc_ms": round(sum((b - a) * 1000 for a, b in rpc), 1), "rpc_n": len(rpc),
+               "rpc_ms": round(sum((b - a) * 1000 for a, b, _ in rpc), 1), "rpc_n": len(rpc),
                "job_ms": round(max(job_ms, 0.0), 1), "busy": bool(busy)}
         if nested:
             rec["nested"] = True
+        elif rpc and len(rpc) <= OPS_MAX:
+            # Which evals the call made (ops joined by + ran in one eval), for read-latency triage.
+            rec["ops"] = [[op[:60], round((b - a) * 1000, 1)] for a, b, op in rpc]
         if not ok:
             rec["ok"] = False
         if bg is not None:
@@ -363,20 +383,44 @@ def _samples_between(samples: list[dict], a: float, b: float) -> list[dict]:
     return [s for s in samples if a <= s.get("t", 0) <= b]
 
 
+def _busy_in(samples: list[dict], a: float, b: float) -> float:
+    """Seconds of [a, b] in which the party visibly did something (a busy sample covers the time since the
+    sample before it, at most SAMPLE_SPAN_S): an async walk returns at once, so its whole walk lies inside
+    the gap after it and is not idle."""
+    busy = 0.0
+    prev_t = None
+    for s in samples:
+        t = s.get("t")
+        if t is None:
+            continue
+        if t > a and (s.get("moving") or s.get("job")):
+            lo = t - min(t - prev_t if prev_t is not None else SAMPLE_SPAN_S, SAMPLE_SPAN_S)
+            busy += max(0.0, min(t, b) - max(lo, a))
+        prev_t = t
+        if t >= b + SAMPLE_SPAN_S:
+            break
+    return busy
+
+
 def gaps(actions: list[dict], samples: list[dict]) -> list[dict]:
+    """Idle gaps between visible actions: "s" is the idle time (the gap minus the seconds the party was busy
+    with an earlier async action), "gap_s" the raw time between the two calls, "busy_s" the difference."""
     out = []
+    samples = sorted((s for s in samples if "t" in s), key=lambda s: s["t"])
     for prev, nxt in zip(actions, actions[1:]):
         g = nxt["t0"] - prev["t1"]
         if g <= 0:
             continue
         inside = _samples_between(samples, prev["t1"], nxt["t0"])
+        busy = min(_busy_in(samples, prev["t1"], nxt["t0"]), g)
         if nxt["tool"] in DIALOGUE_TOOLS or any(s.get("dlg") for s in inside):
             kind = "dialogue"
         elif any(s.get("combat") for s in inside) or nxt["tool"] == "end_turn":
             kind = "combat"
         else:
             kind = "explore"
-        out.append({"t": round(prev["t1"], 2), "s": round(g, 2), "kind": kind, "next": nxt["tool"]})
+        out.append({"t": round(prev["t1"], 2), "s": round(g - busy, 2), "gap_s": round(g, 2),
+                    "busy_s": round(busy, 2), "kind": kind, "next": nxt["tool"]})
     return out
 
 
@@ -405,6 +449,15 @@ def pipelining(tools: list[dict], samples: list[dict]) -> dict:
             "source": source}
 
 
+def read_by_tool(reads: list[dict]) -> dict:
+    """{tool: {n, median, max}} of the observation tools, slowest median first."""
+    by: dict[str, list] = {}
+    for r in reads:
+        by.setdefault(r["tool"], []).append(r["ms"])
+    out = {t: {"n": len(v), "median": round(percentile(v, 50), 1), "max": round(max(v), 1)} for t, v in by.items()}
+    return dict(sorted(out.items(), key=lambda kv: -kv[1]["median"]))
+
+
 def _target(value, limit, lower_is_better=True):
     if value is None:
         return {"value": None, "target": limit, "pass": None}
@@ -431,7 +484,9 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
     long_kind = {k: sum(1 for g in long_ if g["kind"] == k) for k in ("explore", "combat", "dialogue")}
 
     top = [r for r in tool_recs if not r.get("nested")]
-    reads = [r for r in top if r["tool"] not in ACTION_TOOLS and r["tool"] not in BATCH_TOOLS]
+    reads = [r for r in top if r["tool"] not in ACTION_TOOLS and r["tool"] not in BATCH_TOOLS
+             and r["tool"] not in NOT_READ]
+    waits = [r for r in top if r["tool"] in ("wait_for",)]
     rt = [r["ms"] - r.get("job_ms", 0) for r in top]
     n_actions = sum(a.get("steps", 1) for a in acts if a["tool"] not in NOT_APM)
 
@@ -453,6 +508,7 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
         "think_s": stats(tt),
         "turns": len(tt),
         "tool_rt_ms": {"all": stats(rt, 1), "read": stats((r["ms"] for r in reads), 1),
+                       "read_by_tool": read_by_tool(reads), "wait_for": stats((r["ms"] for r in waits), 1),
                        "rpc": stats((r.get("rpc_ms", 0) / max(r.get("rpc_n", 1), 1) for r in top if r.get("rpc_n")), 1)},
         "tool_calls": len(top),
         "actions": n_actions,

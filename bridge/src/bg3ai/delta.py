@@ -44,6 +44,8 @@ STATUS_PARTS = ("status", "markers", "ui")
 MOVE_MIN_M = 1.0  # party moves shorter than this aren't reported
 NPC_MOVE_MIN_M = 3.0  # hostile / in-combat characters: report moves at least this long
 MAX_APPEARED = 12  # appeared-entity lines before "(+n more)"
+MAX_APPEARED_CHARS = 16  # appeared characters are all listed up to this many, even past MAX_APPEARED
+MIN_APPEARED_ITEMS = 4   # leads (doors, containers, ...) listed even when characters filled the budget
 MAX_ITEM_LINES = 10
 BIG_CHANGE = 30  # more diff lines than this -> the caller should show the full view instead
 
@@ -278,10 +280,11 @@ def _ent_lines(old: dict, new: dict, H: Handles) -> list[str]:
         n = ne.get(u) or oe.get(u) or {}
         return (n.get("kind") != "char", n.get("dist") if n.get("dist") is not None else 999, H.get(u))
 
+    new_chars, new_items = [], []
     for u in sorted(ne, key=order):
         n, o = ne[u], oe.get(u)
         if o is None:
-            appeared.append(_appeared(H, u, n))
+            (new_chars if n["kind"] == "char" else new_items).append(u)
             continue
         bits = []
         if n["kind"] == "char":
@@ -308,9 +311,25 @@ def _ent_lines(old: dict, new: dict, H: Handles) -> list[str]:
             changed.append(f"~ {_ref(H, u, n['name'])} " + ", ".join(bits))
     for u in sorted((u for u in oe if u not in ne), key=order):
         gone.append(_ref(H, u, oe[u]["name"]))
+    # Arrival in a new place: every character (who's here is what the next decision needs; S009 followed
+    # 5 of 26 arrivals with get_nearby(kinds=characters) because items had filled the list), then the
+    # leads (doors, containers, ladders, story items) up to the budget, and the rest as counts by kind.
+    appeared = [_appeared(H, u, ne[u]) for u in new_chars[:MAX_APPEARED_CHARS]]
+    if len(new_chars) > MAX_APPEARED_CHARS:
+        appeared.append(f"(+{len(new_chars) - MAX_APPEARED_CHARS} more characters; get_nearby)")
+    room = max(MAX_APPEARED - len(appeared), MIN_APPEARED_ITEMS)
+    if len(new_items) > room:
+        new_items.sort(key=lambda u: (0 if ne[u].get("story") else render._KIND_RANK.get(str(ne[u]["kind"]), 4),
+                                      ne[u].get("dist") if ne[u].get("dist") is not None else 999, H.get(u)))
+    appeared += [_appeared(H, u, ne[u]) for u in new_items[:room]]
+    if len(new_items) > room:
+        kinds: dict[str, int] = {}
+        for u in new_items[room:]:
+            kinds[ne[u]["kind"]] = kinds.get(ne[u]["kind"], 0) + 1
+        appeared.append(f"(+{len(new_items) - room} more: "
+                        + ", ".join(f"{k} {kinds[k]}" for k in sorted(kinds, key=lambda k: -kinds[k]))
+                        + "; get_nearby / get_frontier)")
     out = []
-    if len(appeared) > MAX_APPEARED:
-        appeared = appeared[:MAX_APPEARED] + [f"(+{len(appeared) - MAX_APPEARED} more appeared; get_nearby)"]
     out += appeared + changed
     if gone:
         out.append("GONE " + ", ".join(gone[:8]) + (f" (+{len(gone) - 8})" if len(gone) > 8 else ""))
@@ -454,9 +473,12 @@ def _bracket(payload: str) -> str:
     return f"[{eq}[{payload}]{eq}]"
 
 
-def multi_rpc(game: Any, calls: list[tuple[str, dict]], context: str = "server") -> list[Any]:
-    """Run several mod ops in ONE LuaDebug eval (one ~30 ms round trip instead of n). Each slot is the
-    op's result, or None if it failed. Falls back to one try_rpc per op for fakes without eval()."""
+def multi_rpc(game: Any, calls: list[tuple[str, dict]], context: str = "server", events: bool = False) -> list[Any]:
+    """Run several mod ops in ONE LuaDebug eval (one game tick instead of n). Each slot is the op's
+    result, or None if it failed. events=True also drains the context's events in that eval (Game.multi).
+    Falls back to one try_rpc per op for fakes without multi()/eval()."""
+    if hasattr(game, "multi"):
+        return game.multi(calls, context, events=events)
     if not hasattr(game, "eval") or len(calls) == 1:
         return [game.try_rpc(op, args, context) for op, args in calls]
     parts = [f"R({_bracket(json.dumps({'op': op, 'args': args}, separators=(',', ':')))})" for op, args in calls]
@@ -474,18 +496,26 @@ def multi_rpc(game: Any, calls: list[tuple[str, dict]], context: str = "server")
     return [r.get("result") if isinstance(r, dict) and r.get("ok") else None for r in replies]
 
 
-def fetch(game: Any, parts: tuple = ACTION_PARTS) -> dict:
-    """{part: payload} for the requested parts (ui from the client context, the rest in one server eval)."""
+def fetch(game: Any, parts: tuple = ACTION_PARTS, events: bool = False) -> dict:
+    """{part: payload} for the requested parts (ui from the client context, the rest in one server eval).
+    With a real Game both evals run in parallel (one game tick); events=True also drains both contexts'
+    events in those evals, so the caller's EVENTS section costs no extra RPC."""
     server = [p for p in parts if p in _OPS]
-    got = dict(zip(server, multi_rpc(game, [_OPS[p] for p in server]))) if server else {}
+    if hasattr(game, "read"):
+        sres, cres = game.read([_OPS[p] for p in server], [("ui.state", {})] if "ui" in parts else [], events=events)
+        got = dict(zip(server, sres))
+        if "ui" in parts:
+            got["ui"] = cres[0] if cres else None
+    else:
+        got = dict(zip(server, multi_rpc(game, [_OPS[p] for p in server]))) if server else {}
+        if "ui" in parts:
+            got["ui"] = game.try_rpc("ui.state", context="client")
     if "markers" in got:
         m = got["markers"]
         got["markers"] = m.get("markers") if isinstance(m, dict) and isinstance(m.get("markers"), list) else None
     if "hazards" in got:
         h = got["hazards"]
         got["hazards"] = h.get("hazards") if isinstance(h, dict) and isinstance(h.get("hazards"), list) else None
-    if "ui" in parts:
-        got["ui"] = game.try_rpc("ui.state", context="client")
     return got
 
 

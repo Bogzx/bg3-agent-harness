@@ -424,6 +424,7 @@ class LuaDebugClient:
             if self._sock is sock:
                 self._sock = None
                 self._closed.set()
+                sock.close()  # close() won't see it any more (it would leak the fd)
             self._fail_all(reason)
 
     def _dispatch(self, msg: dict) -> None:

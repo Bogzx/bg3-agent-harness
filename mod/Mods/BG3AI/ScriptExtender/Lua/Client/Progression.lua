@@ -13,9 +13,12 @@
 --               DummyCharacter.Stats.Abilities), ToggleSkill(skill VM from AllSkills.*.Skills),
 --               TogglePassive(passive VM from *ProgressionDetails.(Not)SubPassiveSelectors[].Passives),
 --               FinishCreating (button "ventureForth", enabled by IsCharacterComplete)
---     buttons:  SelectSpell / SelectAbilityBonus take a MultiBinding (selector VM + item VM) that Lua cannot
---               build, so those are done by pressing the realized button whose DataContext is the item.
---               The button exists only on the right gameplay tab (ListBoxItem x:Name="<tag>Tab").
+--     buttons:  SelectSpell / SelectAbilityBonus take a MultiBinding (selector VM + item VM) that Lua can
+--               neither build nor read: on the live level-up page the button's CommandParameter and its
+--               DataContext ({Binding}) both read nil (the item is its TemplatedParent ContentPresenter's
+--               Content). So spell picks are real mouse clicks by the bridge (ui.level_up_spell_probe,
+--               bg3ai/leveling.py click_spells). A selector's buttons exist once its sub-tab (ListBoxItem in
+--               "subTabsSpellsList", DataContext = the VMSpellSelector) is selected.
 --   CharacterLevelUp.xaml  ls:DCCharacterLevelUp (widget "CharacterLevelUp")
 --     two-way:  SelectedMultiClass over SelectableMultiClasses, SelectedSubClass, SelectedFeat over SelectableFeats
 --     commands: SelectFirstUsedClass/SelectNextUsedClass/SelectPrevUsedClass/SelectFirstUnusedClass,
@@ -36,9 +39,13 @@
 --             the first live run finished as "Tav". See "Character name" (ui.cc_name / ui.cc_finish): cc_apply
 --             now refuses to finish until the naming page's box shows the name; bg3ai/naming.py types it.
 --             The "Reset Tutorials" message box ignored its button's command; a real click (input shim) works.
+--   VERIFIED  (2026-10-10, machine 2) ui.level_up end to end: Gale Wizard 1->2 (subclass Evocation, spells
+--             Magic Missile + Shield by click), Wyll Warlock 1->2 (invocations Agonising + Repelling Blast by
+--             TogglePassive, spell Hex by click); FinishLevelUp(nil) works. Spell and passive VMs have no readable
+--             name: P.nameSpells / P.namePassives name them from static data (SpellList / PassiveList order).
 --   UNTESTED  FinishCreating by command (the run used the Proceed / Venture Forth buttons with the shim),
---             spell and ability-bonus button presses, passives, custom point buy, every level-up op except
---             availability (FinishLevelUp is bound with "Overview"; we pass nil).
+--             CC spell and ability-bonus presses (same MultiBinding problem as level-up spells), custom point
+--             buy, feat levels, multiclassing, spell replacement.
 --
 -- Fairness: everything returned is what these pages show the player.
 
@@ -112,6 +119,9 @@ local function label(vm)
     -- fall back to the text of the list item showing this VM (refreshLabels).
     local r = P.rendered and P.rendered[tostring(vm)]
     if r then return r end
+    -- Spell and passive VMs show icons only; their names come from the static data lists (P.nameSpells).
+    r = P.vmNames and P.vmNames[tostring(vm)]
+    if r then return r end
     return nil
 end
 
@@ -151,8 +161,10 @@ local function list(coll)
     return out
 end
 
+-- Lower case, no spaces or punctuation, and British spellings folded ("Agonising" = "Agonizing",
+-- "Armour" = "Armor"; applied to both sides, so exact names still match).
 local function norm(s)
-    return (tostring(s or ""):lower():gsub("[%s'’%-_]", ""))
+    return (tostring(s or ""):lower():gsub("[%s'’%-_]", ""):gsub("our", "or"):gsub("is", "iz"))
 end
 
 -- Pick an item from a collection by 1-based index, label or id: exact (normalized) first, then a unique
@@ -399,18 +411,115 @@ local function passiveSelectors(dc)
     return out
 end
 
+-- Passive names (invocations, fighting styles, ...): the VMs are unreadable like spells (P.nameSpells). A
+-- selector's Passives are its PassiveList in list order (verified live: Wyll's Warlock 2 invocations = list
+-- 333fb1b0 "Warlock invocations", 10 entries). The list is the one with that many entries among those the
+-- character's class/subclass progressions offer at their next level (P.levelUpUuid, set by the level-up ops),
+-- else among all SelectPassives lists of all progressions; only a unique match names it.
+P.vmNames = P.vmNames or {}
+local passiveIndex     -- { byTable = {"<table>:<level>" = {list ids}}, all = {list ids} }, built once
+local passiveNames = {} -- list id -> {display names in order}
+
+local function passiveListNames(id)
+    local c = passiveNames[id]
+    if c == nil then
+        c = {}
+        local l = try(Ext.StaticData.Get, id, "PassiveList")
+        for k, v in pairs(l and l.Passives or {}) do
+            local pid = type(k) == "string" and k or v
+            if type(pid) == "string" then
+                local st = try(Ext.Stats.Get, pid)
+                local name = st and try(Ext.Loca.GetTranslatedString, st.DisplayName)
+                c[#c + 1] = (name ~= nil and name ~= "") and name or pid
+            end
+        end
+        c.title = l and l.Name ~= "" and l.Name or nil   -- e.g. "Warlock invocations"
+        passiveNames[id] = c
+    end
+    return c
+end
+
+local function passiveLists()
+    if passiveIndex == nil then
+        passiveIndex = { byTable = {}, all = {} }
+        local seen = {}
+        for _, pid in ipairs(try(Ext.StaticData.GetAll, "Progression") or {}) do
+            local pr = try(Ext.StaticData.Get, pid, "Progression")
+            for _, sp in ipairs(pr and try(function() return pr.SelectPassives end) or {}) do
+                local id = sp.UUID
+                if id then
+                    local key = tostring(pr.TableUUID) .. ":" .. tostring(pr.Level)
+                    passiveIndex.byTable[key] = passiveIndex.byTable[key] or {}
+                    table.insert(passiveIndex.byTable[key], id)
+                    if not seen[id] then seen[id] = true table.insert(passiveIndex.all, id) end
+                end
+            end
+        end
+    end
+    return passiveIndex
+end
+
+-- PassiveList ids the leveling character's classes and subclasses offer at their next level.
+local function characterPassiveLists(uuid)
+    local out = {}
+    local ent = uuid and try(Ext.Entity.Get, uuid)
+    local classes = ent and try(function() return ent.Classes.Classes end) or {}
+    local idx = passiveLists()
+    for _, c in ipairs(classes) do
+        for _, cu in ipairs({ c.ClassUUID, c.SubClassUUID }) do
+            local cd = cu and try(Ext.StaticData.Get, cu, "ClassDescription")
+            if cd then
+                for _, id in ipairs(idx.byTable[tostring(cd.ProgressionTableUUID) .. ":" .. tostring((c.Level or 0) + 1)] or {}) do
+                    out[#out + 1] = id
+                end
+            end
+        end
+    end
+    return out
+end
+
+function P.namePassives(sel)
+    local items = list(UI.prop(sel, "Passives"))
+    local n = #items
+    if n == 0 then return nil end
+    local function unique(ids)
+        local found, key
+        for _, id in ipairs(ids) do
+            local names = passiveListNames(id)
+            if #names == n then
+                local k = table.concat(names, "\0")
+                if found == nil then found, key = names, k elseif k ~= key then return nil, true end
+            end
+        end
+        return found
+    end
+    local names = unique(characterPassiveLists(P.levelUpUuid))
+    if not names then
+        local amb
+        names, amb = unique(passiveLists().all)
+        if amb then names = nil end
+    end
+    if names then
+        for i, it in ipairs(items) do P.vmNames[tostring(it)] = names[i] end
+        if names.title then P.vmNames[tostring(sel)] = names.title end
+    end
+    return names
+end
+
 local function passivesView(dc)
     local out = {}
     for _, sel in ipairs(passiveSelectors(dc)) do
-        local m = meta(sel)
+        P.namePassives(sel)
+        local max = tonumber(UI.prop(sel, "MaxSelectedPassiveCount"))
         local chosen, opts = {}, {}
-        for _, it in ipairs(list(UI.prop(sel, "Passives"))) do
+        for i, it in ipairs(list(UI.prop(sel, "Passives"))) do
             local p = UI.props(it)
-            if p.IsSelected == true or p.Selected == true then chosen[#chosen + 1] = label(it) end
-            opts[#opts + 1] = label(it)
+            local n = label(it) or ("#" .. i)
+            if p.IsSelected == true or p.Selected == true or (tonumber(p.Value) or 0) > 0 then chosen[#chosen + 1] = n
+            elseif p.Enabled ~= false and p.Blocked ~= true then opts[#opts + 1] = n end
         end
-        out[#out + 1] = { title = str(UI.prop(sel, "Title")) or label(sel), max = m.MaxSelectedPassiveCount,
-                          picked = chosen, options = opts, complete = m.IsComplete }
+        out[#out + 1] = { title = str(UI.prop(sel, "Title")) or label(sel), max = max,
+                          picked = chosen, options = opts, complete = UI.prop(sel, "IsComplete") }
     end
     return out
 end
@@ -431,17 +540,135 @@ local function spellSelectors(dc)
     return out
 end
 
+-- Spell names. The VMs carry no readable name (TranslatedStrings bg3le cannot read; the lists render icons
+-- only), so they come from static data: a selector's Available list is its SpellList in list order (verified
+-- live: Gale's Wizard 2 selector = SpellList 11f331b0, 23 spells, the same level/school sequence). The list
+-- whose level/school sequence equals the page's names it; ambiguous or unmatched lists stay unnamed. Only the
+-- spells the page already shows get a name, which is what their tooltips show the player.
+P.vmNames = P.vmNames or {}
+P.spellStats = P.spellStats or {}
+local spellListsByCount       -- n -> { {id, spells = {stat ids in order}} }, built once per Lua state
+
+local function spellStat(sid)
+    local c = P.spellStats[sid]
+    if c == nil then
+        local st = try(Ext.Stats.Get, sid)
+        local name = st and try(Ext.Loca.GetTranslatedString, st.DisplayName)
+        if name == "" then name = nil end
+        c = { level = tonumber(st and st.Level) or -1, school = tostring(st and st.SpellSchool or ""), name = name or sid }
+        P.spellStats[sid] = c
+    end
+    return c
+end
+
+local function listSpells(l)
+    local out = {}
+    -- The list is a set proxy: pairs gives the ids in list order (key = id, value = true).
+    for k, v in pairs(l.Spells or {}) do
+        local sid = type(k) == "string" and k or v
+        if type(sid) == "string" then out[#out + 1] = sid end
+    end
+    return out
+end
+
+local function spellLists(n)
+    if spellListsByCount == nil then
+        spellListsByCount = {}
+        for _, id in ipairs(try(Ext.StaticData.GetAll, "SpellList") or {}) do
+            local l = try(Ext.StaticData.Get, id, "SpellList")
+            local spells = l and listSpells(l) or {}
+            local c = #spells
+            if c > 0 then
+                spellListsByCount[c] = spellListsByCount[c] or {}
+                table.insert(spellListsByCount[c], { id = id, spells = spells })
+            end
+        end
+    end
+    return spellListsByCount[n] or {}
+end
+P.spellLists = spellLists
+
+-- Forget the static-data name caches (offline tests; a data change).
+function P.clearNameCaches()
+    spellListsByCount, passiveIndex, passiveNames = nil, nil, {}
+    P.vmNames, P.spellStats = {}, {}
+end
+
+local function vmSig(spellVM)
+    return tostring(tonumber(UI.prop(spellVM, "Level")) or -1) .. "/" .. tostring(UI.prop(spellVM, "SpellSchool") or "")
+end
+
+-- Names a selector's Available spells (and every Spell VM they share with Additions). Returns names in order
+-- (nil where unknown) and the matched list id.
+function P.nameSpells(sel)
+    local items = list(UI.prop(sel, "Available"))
+    local n = #items
+    if n == 0 then return {}, nil end
+    local sig = {}
+    for i, it in ipairs(items) do sig[i] = vmSig(UI.prop(it, "Spell")) end
+    local found, foundKey, ambiguous = nil, nil, false
+    for _, l in ipairs(spellLists(n)) do
+        local ok = true
+        for i, sid in ipairs(l.spells) do
+            local st = spellStat(sid)
+            if (tostring(st.level) .. "/" .. st.school) ~= sig[i] then ok = false break end
+        end
+        if ok then
+            local key = table.concat(l.spells, ",")
+            if found == nil then found, foundKey = l, key
+            elseif key ~= foundKey then ambiguous = true end
+        end
+    end
+    local names = {}
+    if found and not ambiguous then
+        for i, it in ipairs(items) do
+            local st = spellStat(found.spells[i])
+            names[i] = st.name
+            P.vmNames[tostring(it)] = st.name
+            local sp = UI.prop(it, "Spell")
+            if sp then P.vmNames[tostring(sp)] = st.name end
+        end
+        return names, found.id
+    end
+    return names, nil
+end
+
+local function spellUnknown(it, i)
+    local sp = UI.prop(it, "Spell")
+    return "#" .. i .. " (level " .. tostring(UI.prop(sp, "Level")) .. " " .. tostring(UI.prop(sp, "SpellSchool")) .. ")"
+end
+
+-- What a selector offers and still needs: picked names, open slots, and the names that can be picked.
+local function selectorState(sel)
+    P.nameSpells(sel)
+    local picked, open = {}, 0
+    for _, it in ipairs(list(UI.prop(sel, "Additions"))) do
+        if UI.prop(it, "Spell") == nil then open = open + 1 else picked[#picked + 1] = label(it) or "?" end
+    end
+    local can, known = {}, {}
+    for i, it in ipairs(list(UI.prop(sel, "Available"))) do
+        local n = label(it) or spellUnknown(it, i)
+        if UI.prop(it, "NotAvailable") == true then known[#known + 1] = n
+        elseif UI.prop(it, "Selected") ~= true then can[#can + 1] = n end
+    end
+    return { picked = picked, open = open, can_pick = can, known = known,
+             cantrips = UI.prop(sel, "IsCantrips") == true, complete = UI.prop(sel, "IsComplete") }
+end
+
+local function selectorTitle(s, st)
+    local t = str(UI.prop(s.sel, "Title"))
+    if t then return t end
+    local src = s.source:gsub("ProgressionDetails$", ""):gsub("Details$", "")
+    return (src == "Class" and "" or (src:lower() .. " ")) .. (st.cantrips and "cantrips" or "spells")
+end
+
 local function spellsView(dc)
     local out = {}
     for _, s in ipairs(spellSelectors(dc)) do
-        local m = meta(s.sel)
-        local added = {}
-        for _, it in ipairs(list(UI.prop(s.sel, "Additions"))) do added[#added + 1] = label(it) end
-        local avail = {}
-        for _, it in ipairs(list(UI.prop(s.sel, "Available"))) do avail[#avail + 1] = label(it) end
+        local st = selectorState(s.sel)
         out[#out + 1] = {
-            title = str(UI.prop(s.sel, "Title")), from = s.source, cantrips = m.IsCantrips,
-            picked = added, available = avail, complete = m.IsComplete, counts = m,
+            title = selectorTitle(s, st), from = s.source, cantrips = st.cantrips, picked = st.picked,
+            open = st.open, can_pick = st.can_pick, known = #st.known > 0 and st.known or nil, complete = st.complete,
         }
     end
     return out
@@ -811,85 +1038,116 @@ local function skillsReport(getDC, ctx)
     end
 end
 
--- Passives (fighting styles, ...): toggle wanted ones; when omitted, fill incomplete selectors in list order.
-local function passivesStage(getDC, ctx, wanted)
+-- Passives (fighting styles, invocations, ...): toggle wanted ones. A selector left incomplete is filled in list
+-- order only with `defaults` (character creation, plan.allow_defaults); otherwise passivesReport names the options.
+-- A picked passive VM reads Value = 1 (verified live on Wyll's invocations; no IsSelected).
+local function passiveOn(it)
+    local p = UI.props(it)
+    return p.IsSelected == true or p.Selected == true or (tonumber(p.Value) or 0) > 0
+end
+
+local function passivesStage(getDC, ctx, wanted, defaults)
     return function()
         local dc = getDC()
         local want = wantList(wanted)
+        local found = {}
         for _, sel in ipairs(passiveSelectors(dc)) do
+            P.namePassives(sel)
             local items = UI.prop(sel, "Passives")
             if want then
                 for _, name in ipairs(want) do
                     local item = pick(items, name)
-                    if item and UI.prop(item, "IsSelected") ~= true then
-                        local ok, err = UI.command(dc, "TogglePassive", item)
-                        if not ok then ctx.result.problems[#ctx.result.problems + 1] = "passive " .. name .. ": " .. tostring(err) end
+                    if item then
+                        found[name] = true
+                        if not passiveOn(item) then
+                            local ok, err = UI.command(dc, "TogglePassive", item)
+                            if not ok then ctx.result.problems[#ctx.result.problems + 1] = "passive " .. name .. ": " .. tostring(err) end
+                        end
                     end
                 end
-            elseif UI.prop(sel, "IsComplete") == false then
+            elseif defaults and UI.prop(sel, "IsComplete") == false then
                 local need = (tonumber(UI.prop(sel, "MaxSelectedPassiveCount")) or 1) - (tonumber(UI.prop(sel, "SelectedPassiveCount")) or 0)
-                for _, it in ipairs(list(items)) do
+                for i, it in ipairs(list(items)) do
                     if need <= 0 then break end
-                    if UI.prop(it, "IsSelected") ~= true then
+                    if not passiveOn(it) and UI.prop(it, "Enabled") ~= false and UI.prop(it, "Blocked") ~= true then
                         if UI.command(dc, "TogglePassive", it) then
                             need = need - 1
                             ctx.result.defaulted = ctx.result.defaulted or {}
-                            ctx.result.defaulted[#ctx.result.defaulted + 1] = "passive " .. tostring(label(it))
+                            ctx.result.defaulted[#ctx.result.defaulted + 1] = "passive " .. tostring(label(it) or ("#" .. i))
                         end
                     end
                 end
             end
+        end
+        for _, name in ipairs(want or {}) do
+            if not found[name] then ctx.result.problems[#ctx.result.problems + 1] = "passive " .. name .. ": not offered" end
         end
         return "next", 300
     end
 end
 
--- Spells/cantrips: press the realized select button of each wanted spell. The buttons only exist on the
--- tab that shows the selector, so the stage walks `tabs` until every wanted spell is placed or all were tried.
-local function spellsStage(widgetName, getDC, ctx, wantSpells, wantCantrips, tabs)
-    local state = { tab = 0 }
+local function passivesReport(getDC, ctx)
+    return function()
+        local out = {}
+        for _, v in ipairs(passivesView(getDC())) do
+            local title = v.title or "passives"
+            out[#out + 1] = { title = v.title, picked = v.picked }
+            if v.complete == false then
+                local more = (tonumber(v.max) or 1) - #v.picked
+                ctx.result.problems[#ctx.result.problems + 1] = "passive choice '" .. title .. "' needs " .. more
+                    .. " more in plan.passives; can pick: " .. table.concat(v.options, ", ")
+                ctx.result.options = ctx.result.options or {}
+                ctx.result.options[title] = v.options
+            end
+        end
+        if #out > 0 then ctx.result.set.passives = out end
+        return "next", 0
+    end
+end
+
+-- Spells/cantrips. The select buttons pass a MultiBinding (selector + spell) that Lua can neither read nor
+-- build (the button's CommandParameter and DataContext read as nil; executing SelectSpell with nil is not safe),
+-- so a pick is a real mouse click on the button: the stage only resolves each wanted spell and leaves
+-- result.needs_clicks = { {name, cantrips} } for the bridge (bg3ai/leveling.py click_spells), which shows the
+-- selector with ui.level_up_spell_probe, hover-checks the button and clicks it, then reruns ui.level_up.
+-- Returns sel entry, item, or nil + reason ("placed" when it is already picked).
+function P.findSpell(dc, name, cantrips)
+    local offered = false
+    for _, s in ipairs(spellSelectors(dc)) do
+        local isC = UI.prop(s.sel, "IsCantrips") == true
+        if cantrips == nil or isC == cantrips then
+            P.nameSpells(s.sel)
+            if pick(UI.prop(s.sel, "Additions"), name) then return s, nil, "placed" end
+            local item = pick(UI.prop(s.sel, "Available"), name)
+            if item then
+                offered = true
+                if UI.prop(item, "Selected") == true then return s, item, "placed" end
+                if UI.prop(item, "NotAvailable") ~= true then return s, item end
+            end
+        end
+    end
+    return nil, nil, offered and "already known" or "not offered"
+end
+
+local function spellsStage(widgetName, getDC, ctx, wantSpells, wantCantrips)
     return function()
         local dc = getDC()
         if not dc then return "fail", "page closed" end
-        local selectors = spellSelectors(dc)
-        if #selectors == 0 then return "next", 0 end
-        local todo = {}
+        if #spellSelectors(dc) == 0 then return "next", 0 end
+        local needs = {}
         local function queue(names, cantrips)
-            for _, n in ipairs(wantList(names) or {}) do todo[#todo + 1] = { name = n, cantrips = cantrips } end
+            for _, n in ipairs(wantList(names) or {}) do
+                local s, item, why = P.findSpell(dc, n, cantrips)
+                if item and why == nil then
+                    needs[#needs + 1] = { name = label(item) or n, cantrips = cantrips }
+                elseif why ~= "placed" then
+                    ctx.result.problems[#ctx.result.problems + 1] = "spell " .. n .. ": " .. why
+                end
+            end
         end
         queue(wantCantrips, true)
         queue(wantSpells, false)
-        local remaining = {}
-        for _, t in ipairs(todo) do
-            local placed, found = false, false
-            for _, s in ipairs(selectors) do
-                local isC = UI.prop(s.sel, "IsCantrips") == true
-                if t.cantrips == nil or isC == t.cantrips then
-                    local added = UI.prop(s.sel, "Additions")
-                    if pick(added, t.name) then placed = true break end
-                    local item = pick(UI.prop(s.sel, "Available"), t.name)
-                    if item then
-                        found = true
-                        if pressFor(widgetName, { "SelectSpell", "SelectSelectableSpell", "SelectAvailableSpell" }, item) then
-                            placed = true
-                            break
-                        end
-                    end
-                end
-            end
-            if not placed then remaining[#remaining + 1] = { name = t.name, cantrips = t.cantrips, offered = found } end
-        end
-        if #remaining == 0 then return "next", 300 end
-        -- Try the next tab where the selector buttons might be realized.
-        state.tab = state.tab + 1
-        if tabs[state.tab] then
-            selectTab(widgetName, tabs[state.tab])
-            return "wait", 400
-        end
-        for _, r in ipairs(remaining) do
-            ctx.result.problems[#ctx.result.problems + 1] = "spell " .. r.name .. ": "
-                .. (r.offered and "offered, but its button could not be pressed" or "not offered")
-        end
+        if #needs > 0 then ctx.result.needs_clicks = needs end
         return "next", 0
     end
 end
@@ -899,8 +1157,19 @@ local function spellsReport(getDC, ctx)
         local out = {}
         for _, s in ipairs(spellsView(getDC())) do
             out[#out + 1] = { title = s.title, picked = s.picked }
-            if s.complete == false then
-                ctx.result.problems[#ctx.result.problems + 1] = "spell choice '" .. tostring(s.title) .. "' incomplete"
+            if s.complete == false and s.open > 0 then
+                local waiting = 0
+                for _, nd in ipairs(ctx.result.needs_clicks or {}) do
+                    if nd.cantrips == nil or nd.cantrips == s.cantrips then waiting = waiting + 1 end
+                end
+                if waiting < s.open then
+                    ctx.result.problems[#ctx.result.problems + 1] = "spell choice '" .. s.title .. "' needs "
+                        .. (s.open - waiting) .. " more " .. (s.cantrips and "cantrip" or "spell")
+                        .. (s.open - waiting == 1 and "" or "s") .. " in plan." .. (s.cantrips and "cantrips" or "spells")
+                        .. "; can pick: " .. table.concat(s.can_pick, ", ")
+                    ctx.result.options = ctx.result.options or {}
+                    ctx.result.options[s.title] = s.can_pick
+                end
             end
         end
         ctx.result.set.spells = out
@@ -1158,9 +1427,8 @@ RPC.register("ui.cc_apply", function(args)
         end },
         { "skills", skillsStage(get, ctx, plan.skills) },
         { "skills?", skillsReport(get, ctx) },
-        { "passives", passivesStage(get, ctx, plan.passives) },
-        { "spells", spellsStage("CharacterCreation", get, ctx, plan.spells, plan.cantrips,
-                                { "classTab", "subClassTab", "raceTab", "subRaceTab", "spellPrepTab" }), 20000 },
+        { "passives", passivesStage(get, ctx, plan.passives, true) },
+        { "spells", spellsStage("CharacterCreation", get, ctx, plan.spells, plan.cantrips) },
         { "spells?", spellsReport(get, ctx) },
         { "name?", function()
             if plan.name == nil then return "next", 0 end
@@ -1272,6 +1540,7 @@ end
 
 RPC.register("ui.level_up_open", function(args)
     if not args.uuid then error("uuid required") end
+    P.levelUpUuid = args.uuid
     if P.luDC() then return { open = true } end
     local ok, err = P.openLevelUp(args.uuid)
     if not ok then error(err) end
@@ -1308,6 +1577,7 @@ function P.luOptions(dc)
 end
 
 RPC.register("ui.level_up_options", function(args)
+    if args.uuid then P.levelUpUuid = args.uuid end
     local dc = P.luDC()
     if not dc then
         if args.uuid then
@@ -1330,6 +1600,7 @@ end)
 -- Offline test: tools/dev/test_level_up.sh
 RPC.register("ui.level_up", function(args)
     local plan = args.plan or {}
+    if args.uuid then P.levelUpUuid = args.uuid end
     if not P.luDC() then
         if not args.uuid then error("uuid required when the level-up page is not open") end
         local ok, err = P.openLevelUp(args.uuid)
@@ -1457,9 +1728,9 @@ RPC.register("ui.level_up", function(args)
         end },
         { "skills", skillsStage(get, ctx, plan.skills) },
         { "skills?", skillsReport(get, ctx) },
-        { "passives", passivesStage(get, ctx, plan.passives) },
-        { "spells", spellsStage("CharacterLevelUp", get, ctx, plan.spells, plan.cantrips,
-                                { "levelupTab", "classTab", "subClassTab", "featTab", "spellPrepTab" }), 20000 },
+        { "passives", passivesStage(get, ctx, plan.passives, plan.allow_defaults) },
+        { "passives?", passivesReport(get, ctx) },
+        { "spells", spellsStage("CharacterLevelUp", get, ctx, plan.spells, plan.cantrips) },
         { "spells?", spellsReport(get, ctx) },
         { "check", function()
             local dc = get()
@@ -1469,6 +1740,12 @@ RPC.register("ui.level_up", function(args)
         { "finish", function()
             if args.finish == false then return "done" end
             local dc = get()
+            if ctx.result.needs_clicks then
+                local names = {}
+                for _, nd in ipairs(ctx.result.needs_clicks) do names[#names + 1] = nd.name end
+                return "fail", "spell picks need mouse clicks (" .. table.concat(names, ", ")
+                    .. "): the level_up tool clicks them and reruns"
+            end
             if UI.prop(dc, "IsLevelUpComplete") == false then
                 return "fail", "level up is not complete; not finishing (see problems)"
             end
@@ -1484,6 +1761,76 @@ RPC.register("ui.level_up", function(args)
         end, 10000 },
     }
     return runJob("ui.level_up", stages, ctx, 90000)
+end)
+
+-- ui.level_up_spell_probe {name, cantrips?}: for the bridge's spell clicks (bg3ai/leveling.py click_spells).
+-- Shows the selector offering `name` (its sub-tab in the left list, as a click on "Spells 0/2" does) and reports
+-- where its select button sits among the selector's visible buttons, and what the cursor is over:
+--   {placed} | {index, n, cols, cell = {w, h}, over (cursor on the target), hovered (index under the cursor),
+--    in_list (cursor over the button list), picked, open}
+-- Index and cols give the button's grid cell (WrapPanel, row-major), so one hovered button locates them all.
+local SPELL_BUTTONS = { SelectAvailableSpell = true, SelectSpell = true, SelectSelectableSpell = true }
+
+local function buttonItem(b)
+    local dc = try(function() return b.DataContext end)
+    if dc ~= nil then return dc end
+    -- Inside the item template the button's own DataContext ({Binding}) reads as nil; its ContentPresenter's
+    -- Content is the item (verified live).
+    return UI.prop(UI.prop(b, "TemplatedParent"), "Content")
+end
+
+-- Select the selector's sub-tab (ListBoxItem in "subTabsSpellsList" whose DataContext is the selector).
+function P.showSelector(w, sel)
+    for _, lb in ipairs(UI.findAll(w, function(e) return UI.name(e) == "subTabsSpellsList" end, { max = 80000 })) do
+        for _, it in ipairs(UI.findAll(lb, function(e) return (UI.typeName(e) or ""):find("ListBoxItem", 1, true) ~= nil end,
+                                       { hidden = true, prune = true, max = 4000 })) do
+            if same(UI.prop(it, "DataContext"), sel) then
+                if UI.prop(it, "IsSelected") == true then return true, false end
+                local ok = set(it, "IsSelected", true)
+                return ok, true
+            end
+        end
+    end
+    return false, false
+end
+
+RPC.register("ui.level_up_spell_probe", function(args)
+    local dc = P.luDC()
+    if not dc then error("level up is not open") end
+    local w = visibleWidget("CharacterLevelUp")
+    local s, item, why = P.findSpell(dc, args.name, args.cantrips)
+    if why == "placed" then return { placed = true } end
+    if not item then error("spell " .. tostring(args.name) .. ": " .. tostring(why)) end
+    local st = selectorState(s.sel)
+    local out = { picked = st.picked, open = st.open, name = label(item) }
+    local tabOk, switched = P.showSelector(w, s.sel)
+    if switched then out.switched = true return out end
+    if not tabOk then out.tab = "no sub-tab for this selector" end
+    local mine = {}
+    for _, it in ipairs(list(UI.prop(s.sel, "Available"))) do mine[tostring(it)] = true end
+    local n = 0
+    for _, b in ipairs(UI.findAll(w, function(e) return SPELL_BUTTONS[UI.name(e) or ""] == true end, { prune = true, max = 80000 })) do
+        local it = buttonItem(b)
+        if it ~= nil and mine[tostring(it)] then
+            n = n + 1
+            local over = UI.prop(b, "IsMouseOver") == true
+            if over then out.hovered = n end
+            if same(it, item) then
+                out.index = n
+                out.over = over
+                out.enabled = UI.prop(b, "IsEnabled") ~= false
+                local cp = UI.prop(b, "TemplatedParent")
+                local cw, ch = tonumber(UI.prop(cp, "ActualWidth")) or 0, tonumber(UI.prop(cp, "ActualHeight")) or 0
+                out.cell = { w = cw, h = ch }
+                local panel = cp and try(function() return cp.VisualParent end)
+                local pw = tonumber(UI.prop(panel, "ActualWidth")) or 0
+                out.cols = (cw > 0 and pw >= cw) and math.floor(pw / cw + 0.01) or 1
+                out.in_list = UI.prop(panel, "IsMouseOver") == true
+            end
+        end
+    end
+    out.n = n
+    return out
 end)
 
 -- Level-up availability for every party member the portraits show (cheap; HUD data).

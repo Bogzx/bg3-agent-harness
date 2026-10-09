@@ -20,9 +20,14 @@ results remind you every few minutes. In combat, finish the fight first.
 3. **Subclass levels** (Wizard and Druid 2; Fighter, Rogue, Ranger, Barbarian, Monk, Bard 3; Cleric,
    Paladin, Warlock, Sorcerer pick at 1) refuse to run without `subclass` and list the choices: a subclass
    is permanent. **Feat levels** (4, 8, 12; Fighter also 6, Rogue also 10) default to +2 on the main ability.
-4. If the result lists problems (a spell not offered, choice incomplete), it did not finish: fix the plan
+4. **Spells, cantrips and passives have no default either**: a level that learns spells (Wizard 2 picks 2,
+   Warlock 2 picks 1, ...) or picks passives (Warlock invocations at 2, fighting styles) fails until the plan
+   names them, and the error lists exactly what can be picked (`can pick: ...`), so copy names from it.
+   E.g. `- Wyll L2: {"passives": ["Agonizing Blast", "Repelling Blast"], "spells": ["Hex"]}`. Spells already
+   known are not offered. British and US spellings both match ("Agonising"/"Agonizing").
+5. If the result lists problems (a spell not offered, choice incomplete), it did not finish: fix the plan
    line from the problems and call again. Log `- HH:MM [level] Gale → L2: Evocation, Sleep, Thunderwave`.
-5. Several pending: level each one back to back (Claude, then the companions); no reads in between.
+6. Several pending: level each one back to back (Claude, then the companions); no reads in between.
 
 ## Party composition: 4 roles
 Keep four active members covering these roles; fill gaps by recruiting, swap at camp when a region needs it.

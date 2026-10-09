@@ -144,8 +144,9 @@ as a `dialogue_line` event (speaker: text). Never wait for, watch or screenshot 
 events. Opening and in-between filler is clicked for you: `talk_to` and `choose_dialogue` results show the
 next real choice directly. Answers are never picked for you.
 
-`session_clock` gives the time left. Results end with a `⏱` clock line in runner sessions, e.g.
-`⏱ 14m left · 11m of play: keep playing until WRAP UP at 3m left`. The minutes left include the wrap-up
+Every result ends with a `⏱` clock line in runner sessions: a short `⏱ 00:21 · 15m left`, and every 10 minutes
+the full `⏱ 14m left · 11m of play: keep playing until WRAP UP at 3m left`, so don't call `session_clock` or
+guess the time. The minutes left include the wrap-up
 time: **play until the line itself says WRAP UP NOW**, however few minutes it shows. When the line
 says **"no story progress for N min: change approach"**, the runner has measured no new journal,
 area, waypoint or level for that long while you were busy: run the `stuck` playbook now.

@@ -152,6 +152,20 @@ class Summary(unittest.TestCase):
         self.assertAlmostEqual(s["busy_pct"], round(100 * 5 / 60, 1))
         self.assertAlmostEqual(s["dialogue_pct"], round(100 * 21 / 60, 1))
 
+    def test_async_walk_is_not_idle(self):
+        # An async move_to returns at once; the party walks 1-9 s, the next action comes at 12 s.
+        tools = [tool("move_to", 0.0, 0.5), tool("talk_to", 12.0, 13.0)]
+        samples = [sample(t, moving=1 <= t <= 9) for t in range(0, 14)]
+        (g,) = M.gaps(M.action_intervals(tools), samples)
+        self.assertEqual(g["gap_s"], 11.5)
+        self.assertEqual(g["busy_s"], 8.5)   # 0.5-9 s: each moving sample covers the second before it
+        self.assertEqual(g["s"], 3.0)        # idle: the 3 s after arrival
+        s = M.summarize(tools, samples, [], start=T0, end=T0 + 14)
+        self.assertEqual(s["long_gaps"]["total"], 0)
+        # no busy samples: the whole gap is idle, as before
+        (g,) = M.gaps(M.action_intervals(tools), [sample(t) for t in range(0, 14)])
+        self.assertEqual((g["s"], g["busy_s"]), (11.5, 0.0))
+
     def test_rt_excludes_job_time(self):
         s = M.summarize(self.tools, self.samples, [], start=T0, end=T0 + 60)
         self.assertLess(s["tool_rt_ms"]["all"]["max"], 1000)
@@ -214,7 +228,7 @@ class Recording(unittest.TestCase):
         g.metrics = rec
         g.eval = lambda code, context="client", timeout=12.0: '{"ok":true,"result":{"x":1}}'
         self.assertEqual(g.rpc("state.status"), {"x": 1})
-        self.assertEqual([op for _, _, op in rec.rpcs], ["state.status"])
+        self.assertEqual([r[2] for r in rec.rpcs], ["state.status"])
 
         calls = iter(['{"ok":true,"result":{"job":7}}', '{"ok":true,"result":{"status":"done","elapsed_ms":900}}'])
         g.eval = lambda code, context="client", timeout=12.0: next(calls)

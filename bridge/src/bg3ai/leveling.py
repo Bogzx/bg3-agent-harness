@@ -122,3 +122,173 @@ class Nudge:
 
     def done(self, uuid: str) -> None:
         self.rows = [r for r in self.rows if r.get("uuid") != uuid]
+
+
+# ---- spell picks on the level-up page (mouse clicks) ----
+#
+# The spell buttons pass a MultiBinding (selector + spell) that the mod cannot build, so ui.level_up leaves
+# result.needs_clicks = [{name, cantrips}] and the level_up tool clicks them here, then reruns ui.level_up.
+# ui.level_up_spell_probe {name} shows the spell's selector and says which of its buttons the cursor is over
+# (index in the selector's visible buttons, row-major in `cols` columns of `cell` page units). One hovered button
+# plus its measured edges give the grid; every click is hover-checked first, and checked afterwards (the spell
+# must show as picked). The page lays out at 3840x2160 and is scaled to the window (88-unit buttons were 44 px
+# at 1920x1080, verified live), and the button list sits left of centre (Gale's Wizard 2 page: x 0.16-0.34,
+# y 0.42-0.54 of the window), where the search starts.
+
+DESIGN_H = 2160.0
+SEARCH_FROM = (0.25, 0.47)
+MAX_SEARCH_PROBES = 400
+
+Rpc = Callable[[str, dict], dict]
+
+
+class SpellClickError(RuntimeError):
+    """A spell pick could not be clicked or did not take."""
+
+
+def _cell_of(index: int, cols: int) -> tuple[int, int]:
+    return (index - 1) % max(1, cols), (index - 1) // max(1, cols)
+
+
+def spiral(cx: float, cy: float, step: float, w: int, h: int, limit: int = MAX_SEARCH_PROBES) -> list[tuple[int, int]]:
+    """Points on square rings around (cx, cy), `step` apart, inside the window, nearest first."""
+    out: list[tuple[int, int]] = []
+    rings = int(max(w, h) / max(step, 1.0)) + 1
+    for r in range(rings):
+        ring = [(0, 0)] if r == 0 else (
+            [(dx, -r) for dx in range(-r, r + 1)] + [(r, dy) for dy in range(-r + 1, r + 1)]
+            + [(dx, r) for dx in range(r - 1, -r - 1, -1)] + [(-r, dy) for dy in range(r - 1, -r, -1)])
+        for dx, dy in ring:
+            x, y = round(cx + dx * step), round(cy + dy * step)
+            if 0 <= x < w and 0 <= y < h:
+                out.append((x, y))
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+class SpellClicker:
+    def __init__(self, rpc: Rpc, inp, log: Callable[[str], None] = lambda m: None):
+        self.rpc, self.inp, self.log = rpc, inp, log
+        self.origin: tuple[float, float] | None = None   # centre of visible button 1 (window px)
+        self.cell: float | None = None                   # button pitch (window px)
+        self.probes = 0
+
+    def probe(self, args: dict, at: tuple[int, int] | None = None) -> dict:
+        if at is not None:
+            self.inp.move(*at)
+            self.inp.wait_frames(2)
+            self.probes += 1
+        return self.rpc("ui.level_up_spell_probe", args)
+
+    def ready(self, args: dict) -> dict:
+        """Probe until the selector is shown and the spell's button exists (a sub-tab switch takes a few frames)."""
+        p: dict = {}
+        for _ in range(12):
+            p = self.probe(args)
+            if p.get("placed") or p.get("index"):
+                return p
+            self.inp.wait_frames(6)
+        raise SpellClickError(f"spell {args['name']}: its button never appeared ({p})")
+
+    def _edge(self, args: dict, k: int, inside: tuple[int, int], outside: tuple[int, int]) -> tuple[int, int]:
+        (xi, yi), (xo, yo) = inside, outside
+        while abs(xo - xi) > 1 or abs(yo - yi) > 1:
+            m = ((xi + xo) // 2, (yi + yo) // 2)
+            if self.probe(args, m).get("hovered") == k:
+                xi, yi = m
+            else:
+                xo, yo = m
+        return xi, yi
+
+    def _measure(self, args: dict, k: int, at: tuple[int, int], guess: float) -> tuple[float, float, float]:
+        """Centre and width of hovered button k from its edges."""
+        x, y = at
+        span = round(guess * 1.5) + 2
+        left = self._edge(args, k, (x, y), (x - span, y))[0]
+        right = self._edge(args, k, (x, y), (x + span, y))[0]
+        cx = (left + right) / 2
+        top = self._edge(args, k, (round(cx), y), (round(cx), y - span))[1]
+        bottom = self._edge(args, k, (round(cx), y), (round(cx), y + span))[1]
+        return cx, (top + bottom) / 2, float(max(right - left, bottom - top) + 1)
+
+    def _target(self, p: dict) -> tuple[int, int]:
+        col, row = _cell_of(p["index"], p.get("cols") or 1)
+        assert self.origin is not None and self.cell is not None
+        return round(self.origin[0] + col * self.cell), round(self.origin[1] + row * self.cell)
+
+    def locate(self, args: dict, p: dict) -> tuple[int, int]:
+        """Window coordinates over the spell's button, hover-checked."""
+        if self.origin is not None:
+            at = self._target(p)
+            if self.probe(args, at).get("over"):
+                return at
+            self.origin = None   # the list moved (another selector, a scroll): search again
+        w, h = self.inp.window_size()
+        cell_units = float((p.get("cell") or {}).get("w") or 88.0)
+        guess = cell_units * min(w / (DESIGN_H * 16 / 9), h / DESIGN_H)
+        hit = None
+        for pt in spiral(SEARCH_FROM[0] * w, SEARCH_FROM[1] * h, guess * 0.9, w, h):
+            q = self.probe(args, pt)
+            if q.get("hovered"):
+                hit = (pt, q["hovered"])
+                break
+        if hit is None:
+            raise SpellClickError(f"spell {args['name']}: no spell button found under the cursor "
+                                  f"({self.probes} probes)")
+        (pt, k) = hit
+        kc, kr = _cell_of(k, p.get("cols") or 1)
+        # Quick: the left and top edges of button k with the expected pitch; then the full measure if that misses.
+        span = round(guess * 1.5) + 2
+        left = self._edge(args, k, pt, (pt[0] - span, pt[1]))[0]
+        top = self._edge(args, k, pt, (pt[0], pt[1] - span))[1]
+        for attempt in ("edges", "measured"):
+            if attempt == "edges":
+                self.cell, cx, cy = guess, left + guess / 2, top + guess / 2
+            else:
+                cx, cy, width = self._measure(args, k, pt, guess)
+                self.cell = width if abs(width - guess) < guess * 0.5 else guess
+            self.origin = (cx - kc * self.cell, cy - kr * self.cell)
+            at = self._target(p)
+            if self.probe(args, at).get("over"):
+                self.log(f"spell buttons: #{k} at ({cx:.0f},{cy:.0f}), pitch {self.cell:.1f}px, {p.get('cols')} "
+                         f"columns ({attempt})")
+                return at
+        self.origin = None
+        raise SpellClickError(f"spell {args['name']}: the computed spot {at} is not over its button")
+
+    def pick(self, need: dict) -> None:
+        args = {"name": need["name"]}
+        if need.get("cantrips") is not None:
+            args["cantrips"] = need["cantrips"]
+        p = self.ready(args)
+        if p.get("placed"):
+            return
+        if p.get("enabled") is False:
+            raise SpellClickError(f"spell {need['name']}: its button is disabled (no open slot?)")
+        at = self.locate(args, p)
+        self.inp.click(*at)
+        self.inp.wait_frames(8)
+        for _ in range(10):
+            if self.probe(args).get("placed"):
+                self.log(f"picked {need['name']} (click at {at})")
+                return
+            self.inp.wait_frames(6)
+        raise SpellClickError(f"spell {need['name']}: clicked at {at} but it is not picked")
+
+
+def click_spells(rpc: Rpc, inp, needs: list[dict], log: Callable[[str], None] = lambda m: None) -> dict:
+    """Click each needed spell on the open level-up page. {picked: [...], failed: {name: why}, probes}."""
+    c = SpellClicker(rpc, inp, log)
+    picked, failed = [], {}
+    for need in needs:
+        try:
+            c.pick(need)
+            picked.append(need["name"])
+        except Exception as e:  # noqa: BLE001 - one bad pick must not hide the others
+            failed[need["name"]] = str(e)
+    try:
+        inp.move(*(round(v / 2) for v in inp.window_size()))   # off the buttons (tooltips)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"picked": picked, "failed": failed, "probes": c.probes}

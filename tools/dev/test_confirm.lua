@@ -207,5 +207,59 @@ for _ = 1, 20 do clock = clock + 50 j.on_tick(j) if j.status ~= "running" then b
 ok(j.status == "failed" and tostring(j.error):find("answer with confirm"), "confirm=false fails with the question: " .. tostring(j.error))
 ok(widgets.Dialog_box ~= nil, "box left open")
 
+
+-- ui.key names (live S007: press_key DELETE -> "not a SDLScanCode: DELETE")
+local function ks(k, m) local a, b = A.keySpec(k, m) return a .. "|" .. table.concat(b or {}, ",") end
+ok(ks("DELETE") == "DEL|", "DELETE -> DEL: " .. ks("DELETE"))
+ok(ks("1") == "NUM_1|", "1 -> NUM_1: " .. ks("1"))
+ok(ks("Backspace") == "BACKSPACE|", "Backspace")
+ok(ks("ARROW_UP") == "UP|" and ks("left") == "LEFT|", "arrows")
+ok(ks("f5") == "F5|" and ks("ENTER") == "RETURN|" and ks("ESC") == "ESCAPE|", "F5/ENTER/ESC")
+ok(ks("CTRL+S") == "S|LCtrl", "CTRL+S: " .. ks("CTRL+S"))
+ok(ks("Shift-Tab") == "TAB|LShift", "Shift-Tab: " .. ks("Shift-Tab"))
+ok(ks("TAB", "SHIFT") == "TAB|LShift" and ks("A", { "lctrl", "alt" }) == "A|LCtrl,LAlt", "mods arg")
+ok(ks("-") == "MINUS|" and ks("PGDN") == "PAGEDOWN|" and ks("NUMPAD_5") == "KP_5|", "- PGDN NUMPAD_5")
+local injected
+Ext.Input.InjectKeyPress = function(k, m)
+    if k ~= "DEL" and k ~= "S" then error("Ext.Input.InjectKeyPress: not a SDLScanCode: " .. k) end
+    injected = { k, m }
+end
+local kr = ops["ui.key"]({ key = "DELETE" })
+ok(kr.key == "DEL" and injected[1] == "DEL", "ui.key DELETE injects DEL")
+ops["ui.key"]({ key = "CTRL+S" })
+ok(injected[1] == "S" and injected[2][1] == "LCtrl", "ui.key CTRL+S injects S + LCtrl")
+local okk, ek = pcall(ops["ui.key"], { key = "FOO" })
+ok(not okk and tostring(ek):find("unknown key 'FOO'") and tostring(ek):find("DELETE"), "unknown key lists names: " .. tostring(ek))
+
+-- waypoint names (live S007: travel_to waypoint="Roadside Cliffs" / "WAYP_CHA_Top" failed)
+local WPS = { { name = "Overgrown Ruins", region = "Wilderness" }, { name = "Roadside Cliffs", region = "Wilderness" },
+    { name = "Emerald Grove Environs", region = "Wilderness" }, { name = "The Risen Road", region = "Wilderness" } }
+local function pw(w) local r, n = BG3AI.Services.pickWaypoint(WPS, w) return r and r.name or ("nil:" .. tostring(n)) end
+ok(pw("Roadside Cliffs") == "Roadside Cliffs", "exact")
+ok(pw("roadside cliffs") == "Roadside Cliffs", "case")
+ok(pw("Waypoint: Roadside Cliffs") == "Roadside Cliffs", "Waypoint: prefix")
+ok(pw("Roadside-Cliffs!") == "Roadside Cliffs", "punctuation")
+ok(pw("cliffs") == "Roadside Cliffs" and pw("grove") == "Emerald Grove Environs", "partial word")
+ok(pw("Emerald Grove") == "Emerald Grove Environs", "prefix words")
+ok(pw("Risen Road waypoint") == "The Risen Road", "extra word: " .. pw("Risen Road waypoint"))
+ok(pw("Grove Environs gate") == "Emerald Grove Environs", "word overlap")
+ok(pw("r") == "nil:3" or pw("r"):sub(1, 4) == "nil:", "ambiguous one letter: " .. pw("r"))
+ok(pw("Blighted Village"):sub(1, 4) == "nil:", "unknown stays unknown")
+Ext.Loca = { GetTranslatedStringKey = function(id) return id == "WAYP_CHA_Top" and "h123" or nil end,
+    GetTranslatedString = function(h) return h == "h123" and "Roadside Cliffs" or "" end }
+ok(pw("WAYP_CHA_Top") == "Roadside Cliffs", "get_map id via loca: " .. pw("WAYP_CHA_Top"))
+ok(BG3AI.Services.waypointNames(WPS):find("Roadside Cliffs %(Wilderness%)"), "names listed with region")
+
+-- fast_travel waits for the map's list to fill, then says so instead of "no waypoint named"
+widgets = {}
+W("JournalMap", {}, {})
+Ext.Entity = { GetAllEntitiesWithComponent = function() return {} end }
+local ftr = ops["ui.fast_travel"]({ waypoint = "Roadside Cliffs" })
+local ftj = jobs[ftr.job]
+clock = clock + 50 ftj.on_tick(ftj)
+ok(ftj.status == "running", "waits while the list is empty")
+for _ = 1, 50 do clock = clock + 50 ftj.on_tick(ftj) if ftj.status ~= "running" then break end end
+ok(ftj.status == "failed" and tostring(ftj.error):find("no waypoint list"), "empty list explained: " .. tostring(ftj.error))
+
 print(("%d passed, %d failed"):format(passes, fails))
 os.exit(fails == 0 and 0 or 1)

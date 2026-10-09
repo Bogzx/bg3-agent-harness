@@ -68,7 +68,7 @@ class RouteTool(Base):
         out = server.route(objective="o1")
         args = self.g.ops("nav.route")[0][1]
         self.assertEqual(args["pos"], HELM)
-        self.assertEqual(args["char"], P1)
+        self.assertNotIn("char", args)  # the mod defaults to the active character: no extra state.status RPC
         self.assertIn("ROUTE to objective Helm: 17.8m NE, 9.2m above you", out)
         self.assertIn("FLOORS here: 0 (you), +9.3 · at the goal: +0.1, +9.2 (m, relative to you)", out)
         self.assertIn("NO WALKABLE PATH", out)
@@ -85,7 +85,7 @@ class RouteTool(Base):
         server.route(target=door)
         self.assertEqual(self.g.ops("nav.route")[-1][1]["target"], DOOR)
         server.route(x=1.0, y=2.0, z=3.0, connectors=True)
-        self.assertEqual(self.g.ops("nav.route")[-1][1], {"char": P1, "pos": [1.0, 2.0, 3.0], "connectors": True})
+        self.assertEqual(self.g.ops("nav.route")[-1][1], {"pos": [1.0, 2.0, 3.0], "connectors": True})
 
     def test_path_with_a_climb_lists_legs_and_the_link(self):
         self.reply = WITH_CLIMB

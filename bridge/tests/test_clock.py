@@ -52,6 +52,14 @@ class Clock(unittest.TestCase):
     def test_over(self):
         self.assertIn("SESSION OVER", self.clock(-5, 5 * 60))
 
+    def test_between_full_lines_a_terse_clock(self):
+        # S009: with no clock for 4 minutes the agent guessed the session was over (15 min early).
+        server.DEADLINE = self.now + 30 * 60
+        with mock.patch.object(server.time, "time", lambda: self.now), \
+                mock.patch.dict(server._clock_shown, {"at": 0.0, "stuck": None}):
+            self.assertIn("keep playing", server._clock_line())  # first: the full line
+            self.assertEqual(server._clock_line(), "⏱ " + time.strftime("%H:%M") + " · 30m left")
+
 
 if __name__ == "__main__":
     unittest.main()

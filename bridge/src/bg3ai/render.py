@@ -232,6 +232,7 @@ def render_status(s: dict, ui: dict | None, H: Handles) -> str:
     return "\n".join(lines)
 
 
+MAX_REMEMBERED = 5  # remembered (out of sight) characters listed by get_nearby; the rest by name
 _KIND_RANK = {"door": 0, "container": 0, "ladder": 0, "waypoint": 0, "lever": 0, "trap": 0, "book": 1,
               "item": 2, "usable": 3, "object": 9}
 
@@ -273,9 +274,17 @@ def render_nearby(n: dict, H: Handles, max_items: int = 30) -> str:
     scenery = len(n.get("items") or []) - len(items)
     if hidden or scenery:
         lines.append(f"(+{hidden} more items, {scenery} scenery objects not listed; narrow with radius= or kinds=)")
-    for r in n.get("remembered") or []:
+    # Out of sight now, most recent first (the mod sends last_pos/ago_s). S009 printed 20 of these as
+    # "@None ?s ago" per get_nearby; the few freshest are what a search for someone needs.
+    mem = n.get("remembered") or []
+    for r in mem[:MAX_REMEMBERED]:
         h = H.get(r["uuid"], r.get("name")) if r.get("uuid") else "?"
-        lines.append(f"REMEMBERED {h} {r.get('name', '?')} last seen @{pos(r.get('pos'))} {num(r.get('age_s', '?'))}s ago")
+        p, ago = r.get("last_pos", r.get("pos")), r.get("ago_s", r.get("age_s"))
+        lines.append(f"REMEMBERED {h} {r.get('name', '?')} last seen"
+                     + (f" @{pos(p)}" if p else "") + (f" {num(ago)}s ago" if ago is not None else ""))
+    if len(mem) > MAX_REMEMBERED:
+        lines.append(f"(+{len(mem) - MAX_REMEMBERED} more remembered out of sight: "
+                     + ", ".join(str(r.get("name", "?")) for r in mem[MAX_REMEMBERED:MAX_REMEMBERED + 8]) + ")")
     if not lines:
         lines.append("Nothing visible in range.")
     return "\n".join(lines)
