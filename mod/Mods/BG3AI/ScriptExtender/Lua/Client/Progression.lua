@@ -34,7 +34,7 @@
 --             those TextBlocks keep Text = "[ForceUpdate]" with the string in Inlines (Runs). Only the shown
 --             tab's items are realized, hence the tab stages. CharacterName (ls.LocaString) is not writable:
 --             the first live run finished as "Tav". See "Character name" (ui.cc_name / ui.cc_finish): cc_apply
---             now refuses to finish until the name is confirmed; bg3ai/naming.py types it if needed (UNTESTED live).
+--             now refuses to finish until the naming page's box shows the name; bg3ai/naming.py types it.
 --             The "Reset Tutorials" message box ignored its button's command; a real click (input shim) works.
 --   UNTESTED  FinishCreating by command (the run used the Proceed / Venture Forth buttons with the shim),
 --             spell and ability-bonus button presses, passives, custom point buy, every level-up op except
@@ -522,13 +522,25 @@ RPC.register("ui.new_game", function(args)
             local dc = widgetDC("MainMenu")
             if not dc then
                 if widgetDC("DMSettings") then return "next", 0 end
+                if visibleWidget("SplashScreen") then
+                    -- "Press any key to continue" after a fresh launch. The engine key press is tried every
+                    -- 2 s; result.splash tells the caller to press one through the input shim as well.
+                    ctx.result.splash = true
+                    if RPC.now_ms() >= (ctx.splashKeyAt or 0) then
+                        ctx.splashKeyAt = RPC.now_ms() + 2000
+                        ctx.result.splash_keys = (ctx.result.splash_keys or 0) + 1
+                        pcall(Ext.Input.InjectKeyPress, "SPACE")
+                    end
+                    return "wait", "splash screen up (press any key); SPACE injected x" .. ctx.result.splash_keys
+                end
                 return "wait", "main menu not visible; pages: " .. table.concat(pages(), ",")
             end
+            ctx.result.splash = nil
             local ok, err = UI.command(dc, "StartGameCommand", nil)
             if not ok then return "fail", "StartGameCommand: " .. tostring(err) end
             ctx.result.new_game = true
             return "next", 500
-        end, 10000 },
+        end, 60000 },
         { "difficulty_page", function()
             local dc = widgetDC("DMSettings")
             if not dc or UI.count(UI.prop(dc, "Presets")) == 0 then return "wait", "difficulty page not up" end
@@ -897,19 +909,22 @@ local function spellsReport(getDC, ctx)
 end
 
 ------------------------------------------------------------------------
--- Character name: ui.cc_name {name?, page?, set?}, ui.cc_finish {name?}
+-- Character name: ui.cc_name {name?, page?}, ui.cc_finish {name?}
 ------------------------------------------------------------------------
--- CharacterName is an ls.LocaString, which bg3le cannot write. The naming page shows it in
--- LSTextBox "characterName" (Text="{Binding CharacterName}", TextImmediateSourceUpdate=True, MaxLength=20)
--- inside Control "namingPage" (CharacterCreation.xaml / CCLib_k.xaml). The appearance panel has a second,
--- collapsed "characterName", hence the lookup under namingPage. The naming page is flowPage item 3
--- ("Naming"); its Proceed button (GameplayProceedButton) only sets flowPage.SelectedIndex = 3.
--- Routes, cheapest first:
---   1. write the box's Text (a plain string; the page's binding converts it). Accepted only when the
---      character's CharacterName then reads back as the name: a box that merely shows it proves nothing.
---   2. the bridge types it (bg3ai/naming.py): page = true, hover-probe the box (hover_box), click it,
---      check focused, LCTRL+A, BACKSPACE, text, RETURN (the route used live), then read back here.
--- ui.cc_finish refuses to run FinishCreating unless the name checks out.
+-- The naming page (flowPage item 3, "Enter Character Name") shows LSTextBox "characterName"
+-- (Text="{Binding CharacterName}", TextImmediateSourceUpdate=True, MaxLength=20) inside Control "namingPage"
+-- (CharacterCreation.xaml / CCLib_k.xaml). The appearance panel has a second, collapsed "characterName",
+-- hence the lookup under namingPage. Its Proceed button only sets flowPage.SelectedIndex = 3.
+-- Verified live (machine 2, Patch 8):
+--   * the box is created when the page is first shown: right after page = true it can still be missing.
+--   * CharacterName (ls.LocaString) reads back as its handle ("ResStr_3455818087") before and after
+--     typing, so the character's name cannot be read here; the box's Text reads as nil. The box text is
+--     read through its selection instead: select all, read SelectedText, restore the selection.
+--   * IsMouseOver / IsKeyboardFocused read fine; a click focuses the box and selects its text; LCTRL+A
+--     does nothing; typed text (SDL_TEXTINPUT) lands in the box.
+-- So the name is set by typing it (bg3ai/naming.py: hover-probe, click, END + BACKSPACE, text) and checked
+-- by the box text. Writing the box's Text from Lua is not used: it could not be verified to reach the
+-- character. ui.cc_finish refuses to run FinishCreating unless the box shows the name.
 local NAMING_PAGE = 3
 
 local function namingParts()
@@ -918,23 +933,40 @@ local function namingParts()
     return np, UI.byName(np, "characterName", { hidden = true }), UI.byName(np, "textInputBox", { hidden = true })
 end
 
-local function boxText(box)
+-- The box's text: Text is unreadable, SelectedText is not. Selecting and restoring in one eval leaves
+-- nothing on screen.
+function P.boxText(box)
     if not box then return nil end
     local t = UI.prop(box, "Text")
     if type(t) == "string" then return t end
-    return UI.text(box)
+    local start, len = UI.prop(box, "SelectionStart"), UI.prop(box, "SelectionLength")
+    if not (set(box, "SelectionStart", 0) and set(box, "SelectionLength", 1000)) then return nil end
+    local s = UI.prop(box, "SelectedText")
+    set(box, "SelectionStart", tonumber(start) or 0)
+    set(box, "SelectionLength", tonumber(len) or 0)
+    if type(s) ~= "string" then return nil end
+    return s
+end
+
+-- CharacterName as text, or nil when it only reads as a localization handle.
+function P.readableName(s)
+    if type(s) ~= "string" or s == "" then return nil end
+    if s:match("^ResStr_%d+$") or s:match("^h%x+g%x+g%x+g%x+g%x+$") then return nil end
+    return s
 end
 
 -- What the naming page shows. With `want`: ok = the box shows it and the character's name is it (or is
--- unreadable); confirmed = the character's name was read back as it.
+-- unreadable, the usual case); confirmed = the character's name was read back as it.
 function P.nameView(want)
     local dc = P.ccDC()
     local _, box, frame = namingParts()
     local flow = UI.cachedByName("CharacterCreation", "flowPage")
     local val = dc and validity(dc)
+    local raw = dc and UI.prop(dc, "CharacterName") or nil
     local v = {
-        name = dc and str(UI.prop(dc, "CharacterName")) or nil,
-        text = boxText(box),
+        name = P.readableName(raw),
+        name_handle = (P.readableName(raw) == nil and type(raw) == "string") and raw or nil,
+        text = P.boxText(box),
         can_edit = dc and UI.prop(dc, "CanEditName") or nil,
         valid = val and val.Name or nil,
         page = flow and UI.prop(flow, "SelectedIndex") or nil,
@@ -954,15 +986,10 @@ function P.nameView(want)
     return v
 end
 
-local function writeName(name)
-    local _, box = namingParts()
-    if not box then return false, "no name box on the naming page" end
-    return set(box, "Text", tostring(name))
-end
-
 RPC.register("ui.cc_name", function(args)
     local dc = P.ccDC()
     if not dc then error("character creation is not open (pages: " .. table.concat(pages(), ",") .. ")") end
+    if args.set then error("set is not supported: type the name (bg3ai.naming.ensure_name)") end
     local out = {}
     if args.page then
         local flow = UI.cachedByName("CharacterCreation", "flowPage")
@@ -976,13 +1003,6 @@ RPC.register("ui.cc_name", function(args)
             out.moved = true
         end
     end
-    if args.set then
-        if args.name == nil then error("set needs a name") end
-        if UI.prop(dc, "CanEditName") == false then error("this origin's name cannot be changed") end
-        local ok, err = writeName(args.name)
-        out.set = ok
-        if not ok then out.set_error = err end
-    end
     local v = P.nameView(args.name)
     for k, x in pairs(out) do v[k] = x end
     return v
@@ -995,7 +1015,7 @@ RPC.register("ui.cc_finish", function(args)
         local v = P.nameView(args.name)
         if not v.ok then
             error("name check failed: wanted '" .. tostring(args.name) .. "', the box shows '" .. tostring(v.text)
-                .. "' and the character is '" .. tostring(v.name) .. "'; not finishing")
+                .. "' and the character is '" .. tostring(v.name or v.name_handle) .. "'; not finishing")
         end
     end
     if UI.prop(dc, "IsCharacterComplete") ~= true then
@@ -1142,33 +1162,25 @@ RPC.register("ui.cc_apply", function(args)
         { "spells", spellsStage("CharacterCreation", get, ctx, plan.spells, plan.cantrips,
                                 { "classTab", "subClassTab", "raceTab", "subRaceTab", "spellPrepTab" }), 20000 },
         { "spells?", spellsReport(get, ctx) },
-        { "name", function()
+        { "name?", function()
             if plan.name == nil then return "next", 0 end
-            local dc = get()
-            if UI.prop(dc, "CanEditName") == false then
+            if UI.prop(get(), "CanEditName") == false then
                 ctx.result.problems[#ctx.result.problems + 1] = "this origin's name cannot be changed"
                 return "next", 0
             end
-            -- CharacterName (ls.LocaString) is not writable by bg3le; try the naming page's box (route 1 of
-            -- "Character name" above). name? decides whether the bridge must type it.
-            local ok, err = writeName(plan.name)
-            if not ok then ctx.result.name_write_error = err end
-            return "next", 300
-        end },
-        { "name?", function()
-            if plan.name == nil or UI.prop(get(), "CanEditName") == false then return "next", 0 end
+            -- Typed by the bridge (see "Character name"); the box may already show it (a re-run).
             local v = P.nameView(plan.name)
-            if not v.confirmed then
+            if not v.ok then
                 ctx.result.name_pending = tostring(plan.name)
-                ctx.result.problems[#ctx.result.problems + 1] = "name not confirmed (box shows '" .. tostring(v.text)
-                    .. "', character is '" .. tostring(v.name) .. "'); type it on the naming page "
+                ctx.result.problems[#ctx.result.problems + 1] = "name not set (box shows '" .. tostring(v.text)
+                    .. "', character is '" .. tostring(v.name or v.name_handle) .. "'); type it on the naming page "
                     .. "(bg3ai.naming.ensure_name), then ui.cc_finish {name}"
             end
             return "next", 0
         end },
         { "check", function()
             local dc = get()
-            ctx.result.set.name = str(UI.prop(dc, "CharacterName"))
+            ctx.result.set.name = P.readableName(str(UI.prop(dc, "CharacterName")))
             ctx.result.complete = UI.prop(dc, "IsCharacterComplete")
             ctx.result.validity = validity(dc)
             return "next", 0

@@ -14,16 +14,27 @@ local function obj(type_, props, onset)
     return o
 end
 
-local page = { name = "Tav", writeWorks = false, finished = false }
+-- As seen live (Patch 8): CharacterName reads as a handle whatever the box shows, the box's Text reads as
+-- nil, its text is only readable through SelectedText.
+local HANDLE = "ResStr_3455818087"
+local page = { name = HANDLE, text = "Tav", finished = false }
 local dc = obj("ls.DCCharacterCreation", { CanEditName = true, IsCharacterComplete = true,
     IsCharacterCompleteExceptName = true, Validity = nil })
 setmetatable(dc._p, { __index = function(_, k) if k == "CharacterName" then return page.name end end })
-local box = obj("ls.LSTextBox", { Text = "Tav", IsFocused = false, IsKeyboardFocused = false, IsMouseOver = false },
+local box = obj("ls.LSTextBox", { IsFocused = false, IsKeyboardFocused = false, IsMouseOver = false,
+    SelectionStart = 0, SelectionLength = 0 },
     function(self, k, v)
-        if type(v) ~= "string" then error("bad value") end
+        if k == "Text" then error("unexpected Text write") end
+        if type(v) ~= "number" then error("bad value") end
+        if k == "SelectionLength" then v = math.min(v, #page.text - self._p.SelectionStart) end
         self._p[k] = v
-        if page.writeWorks then page.name = v end
     end)
+setmetatable(box._p, { __index = function(t, k)
+    if k == "SelectedText" then
+        local s0 = rawget(t, "SelectionStart") or 0
+        return page.text:sub(s0 + 1, s0 + (rawget(t, "SelectionLength") or 0))
+    end
+end })
 local frame = obj("Grid", { IsMouseOver = false })
 local flow = obj("ListBox", { SelectedIndex = 0 })
 local namingPage = obj("Control", {})
@@ -67,12 +78,13 @@ local function call(op, args)
     return ok, r
 end
 
--- 1. a fresh page: not confirmed, writing the box doesn't change the character
+-- 1. a fresh page: the box shows Tav, the character's name is unreadable (handle)
 local ok, v = call("ui.cc_name", { name = "Claude" })
-check(ok and v.name == "Tav" and v.confirmed == false and v.ok == false and v.box, "view: Tav, not confirmed")
+check(ok and v.name == nil and v.name_handle == HANDLE and v.text == "Tav" and v.ok == false and v.box,
+    "view: box Tav, name unreadable (handle), not ok")
+check(box._p.SelectionStart == 0 and box._p.SelectionLength == 0, "reading the text restores the selection")
 ok, v = call("ui.cc_name", { name = "Claude", set = true })
-check(ok and v.set == true and v.text == "Claude" and v.confirmed == false and v.ok == false,
-    "set: box shows Claude, character still Tav -> not ok")
+check(not ok and tostring(v):find("not supported"), "set (Text write) is refused")
 ok, v = call("ui.cc_finish", { name = "Claude" })
 check(not ok and tostring(v):find("name check failed"), "cc_finish refuses under the wrong name")
 check(not page.finished, "not finished")
@@ -84,13 +96,22 @@ frame._p.IsMouseOver, box._p.IsMouseOver, box._p.IsFocused = true, true, true
 ok, v = call("ui.cc_name", {})
 check(ok and v.hover_box and v.hover_frame and v.focused, "hover/focus flags")
 
--- 3. typed: the character takes the name -> cc_finish runs
-page.name = "Claude"
+-- 3. typed: the box shows the name -> cc_finish runs
+box._p.SelectionStart, box._p.SelectionLength = 3, 0
+page.text = "Claude"
+ok, v = call("ui.cc_name", { name = "Claude" })
+check(ok and v.ok and v.text == "Claude" and box._p.SelectionStart == 3, "typed: ok, caret kept")
 ok, v = call("ui.cc_finish", { name = "Claude" })
 check(ok and v.finished and page.finished, "cc_finish after the name checks out")
 
+-- 3b. a readable character name that differs blocks it
+page.name, page.finished = "Tav", false
+ok, v = call("ui.cc_finish", { name = "Claude" })
+check(not ok and not page.finished, "readable wrong character name blocks cc_finish")
+page.name = HANDLE
+
 -- 4. cc_apply with finish: the name guard fails the job and never finishes
-page.name, page.finished, box._p.Text, page.writeWorks = "Tav", false, "Tav", false
+page.finished, page.text = false, "Tav"
 local function runjob(res)
     local j = jobs[res.job]
     for _ = 1, 400 do
@@ -103,18 +124,19 @@ end
 ok, v = call("ui.cc_apply", { plan = { name = "Claude" } })
 local j = runjob(v)
 check(j.status == "failed" and j.result.needs_name == "Claude" and tostring(j.error):find("not finishing"),
-    "cc_apply: name not confirmed -> failed with needs_name")
+    "cc_apply: name not set -> failed with needs_name")
 check(not page.finished, "cc_apply did not finish")
+check(j.result.set.name == nil, "cc_apply: handle not reported as the name")
 
--- 5. cc_apply where the box write reaches the character: finishes
-page.writeWorks = true
+-- 5. cc_apply where the box already shows the name (typed earlier): finishes
+page.text = "Claude"
 ok, v = call("ui.cc_apply", { plan = { name = "Claude" } })
 j = runjob(v)
 check(j.status == "done" and j.result.finished and not j.result.name_pending and page.finished,
-    "cc_apply: name confirmed by the box write -> finished")
+    "cc_apply: box shows the name -> finished")
 
 -- 6. finish=false: reports name_pending, no failure
-page.writeWorks, page.name, page.finished = false, "Tav", false
+page.text, page.finished = "Tav", false
 ok, v = call("ui.cc_apply", { plan = { name = "Claude" }, finish = false })
 j = runjob(v)
 check(j.status == "done" and j.result.name_pending == "Claude" and not page.finished, "finish=false: name_pending only")

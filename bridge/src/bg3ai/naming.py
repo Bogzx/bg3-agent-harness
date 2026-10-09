@@ -1,20 +1,23 @@
 """Character creation's name: make sure the character is called what the plan says before "Venture forth".
 
 Saves are matched to a playthrough by the character's name (runner --save-owner, BG3AI_SAVE_PREFIX), so a
-character finished as the default "Tav" breaks save ownership. bg3le cannot write CharacterName (an
-ls.LocaString), and nothing typed it in the first live run. The flow, with the client ops in
-mod/.../Client/Progression.lua ("Character name"):
+character finished as the default "Tav" breaks save ownership. What bg3le can and cannot see on the naming
+page (verified live on machine 2, Patch 8; details in mod/.../Client/Progression.lua "Character name"):
+CharacterName reads as a localization handle ("ResStr_...") whatever the box shows, so the character's name
+is unreadable; the box's text is readable (through its selection); focus and hover are readable; the box is
+only created once the naming page is first shown; a click focuses it and selects its text; LCTRL+A does
+nothing. Writing the box's Text from Lua could not be verified to reach the character, so it is not used.
 
-    1. ui.cc_name {name}                  already called that?             -> done
-    2. ui.cc_name {name, set}             write the name box's Text; accepted only if the character's
-                                          CharacterName reads back as the name
-    3. ui.cc_name {page}                  go to the naming page (flowPage item 3, what Proceed does)
-    4. hover-probe the box                move the shim cursor down the screen's centre line until the
+    1. ui.cc_name {name}                  the box already shows the name               -> done
+    2. ui.cc_name {page}                  go to the naming page (flowPage item 3, what Proceed does), then
+                                          poll until the box exists
+    3. hover-probe the box                move the shim cursor down the screen's centre line until the
                                           box reports IsMouseOver, then centre on it
-    5. click, check `focused`, LCTRL+A, BACKSPACE, text, RETURN (the route used live)
-    6. ui.cc_name {name}                  the box shows the name and the character's name is it (or is
+    4. click, check `focused`, END + BACKSPACE x (MAX_LEN + 2), text, RETURN
+    5. ui.cc_name {name}                  the box shows the name (and the character's name is it, or is
                                           unreadable) -> done; anything else raises NamingError
-    7. ui.cc_finish {name}                re-checks the name, then FinishCreating
+    6. ui.cc_finish {name}                re-checks the box, then FinishCreating; the caller confirms the
+                                          name in game afterwards (the only real read-back)
 
 `rpc(op, args)` is any callable that runs a client-context op and returns its result (raising on error):
 Game.rpc with context="client", or tools/dev/test_new_game.py's Driver.rpc.
@@ -106,33 +109,39 @@ def locate_box(rpc: Rpc, inp, log: Callable[[str], None] = lambda m: None) -> tu
     return at
 
 
-def ensure_name(rpc: Rpc, inp, name: str, log: Callable[[str], None] = lambda m: None,
-                settle: float = 0.3) -> dict:
-    """Make the character creation page's character name `name`, or raise NamingError.
+def _clear_and_type(inp, name: str) -> None:
+    inp.key("END")
+    for _ in range(MAX_LEN + 2):
+        inp.key("BACKSPACE", sync=False)
+    inp.sync()
+    inp.text(name)
+    inp.key("RETURN")
 
-    Returns {"via": "already"|"text"|"typed", "view": <last ui.cc_name view>}. `inp` is a bg3ai.input
-    InputClient (None: only the no-typing routes are tried)."""
+
+def ensure_name(rpc: Rpc, inp, name: str, log: Callable[[str], None] = lambda m: None,
+                settle: float = 0.3, box_timeout: float = 5.0) -> dict:
+    """Make the naming page's box show `name` by typing it, or raise NamingError.
+
+    Returns {"via": "already"|"typed", "view": <last ui.cc_name view>, "at"?: [x, y]}. `inp` is a
+    bg3ai.input InputClient (None: only the "already" route)."""
     check_name(name)
     v = _view(rpc, name)
     if v.get("can_edit") is False:
         raise NamingError("the selected origin's name cannot be changed (pick a custom character)")
-    if v.get("confirmed"):
+    if v.get("ok"):
         return {"via": "already", "view": v}
-
-    v = _view(rpc, name, set=True)
-    time.sleep(settle)
-    v = _view(rpc, name)
-    if v.get("confirmed"):
-        log(f"name '{name}' set by writing the name box")
-        return {"via": "text", "view": v}
-    log(f"writing the name box didn't take (box {v.get('text')!r}, character {v.get('name')!r}); typing it")
-
     if inp is None:
         raise NamingError(f"name '{name}' needs typing and the input shim is not available")
+
     v = _view(rpc, page=True)
-    if not v.get("box"):
-        raise NamingError("no name box on the naming page")
-    time.sleep(0.8)  # page transition
+    deadline = time.monotonic() + box_timeout
+    while not v.get("box"):  # created when the page is first shown
+        if time.monotonic() > deadline:
+            raise NamingError(f"no name box on the naming page after {box_timeout:.0f} s")
+        time.sleep(0.2)
+        v = _view(rpc)
+    if v.get("moved"):
+        time.sleep(0.8)  # page transition
     x, y = locate_box(rpc, inp, log)
 
     for attempt in range(2):
@@ -143,16 +152,13 @@ def ensure_name(rpc: Rpc, inp, name: str, log: Callable[[str], None] = lambda m:
             break
     else:
         raise NamingError(f"clicking the name box at {x},{y} didn't focus it")
-    inp.key("LCTRL+A")
-    inp.key("BACKSPACE")
-    inp.text(name)
-    inp.key("RETURN")
+    _clear_and_type(inp, name)
     time.sleep(settle)
     v = _view(rpc, name)
     if not v.get("ok"):
         raise NamingError(f"typed '{name}', but the box shows {v.get('text')!r} and the character is "
-                          f"{v.get('name')!r}")
-    log(f"name '{name}' typed (box {v.get('text')!r}, character {v.get('name')!r})")
+                          f"{v.get('name') or v.get('name_handle')!r}")
+    log(f"name '{name}' typed (box {v.get('text')!r}, character {v.get('name') or 'unreadable'})")
     return {"via": "typed", "view": v, "at": [x, y]}
 
 

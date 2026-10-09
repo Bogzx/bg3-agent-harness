@@ -2,6 +2,7 @@
 """Drive the new-game flow (or a level up) step by step over LuaDebug, printing every step's result.
 
 Client-context ops from mod/.../Client/Progression.lua:
+    (splash screen)                  "Press any key" after a fresh launch: SPACE through the input shim
     ui.new_game {difficulty}         main menu -> New Game -> difficulty -> character creation (job)
     ui.cc_options {}                 what character creation offers
     ui.cc_apply {plan, finish}       apply a plan (job; run here with finish=false)
@@ -142,7 +143,7 @@ def summarize_cc(opts: dict) -> None:
 
 
 def name_character(d: Driver, name: str) -> bool:
-    """Set and verify the character's name (bg3ai.naming: write the box, else type it with the shim)."""
+    """Type the character's name on the naming page and check the box shows it (bg3ai.naming)."""
     d.header(f"name the character '{name}'")
     try:
         with InputClient() as inp:
@@ -154,6 +155,38 @@ def name_character(d: Driver, name: str) -> bool:
         return False
     d.show(res)
     return True
+
+
+def pass_splash(rpc, press, timeout: float = 60.0, interval: float = 1.5,
+                log=lambda m: None, clock=time.monotonic, sleep=time.sleep) -> int:
+    """After a fresh launch the game waits on "Press any key to continue" (page SplashScreen) and
+    ui.new_game timed out there. Press SPACE through the input shim (real SDL input) until the page is gone;
+    ui.new_game's main_menu stage also injects SPACE through the engine as a second route.
+    rpc(op, args) runs a client op; press() sends one key. Returns the number of presses; raises
+    TimeoutError if the splash screen is still up after `timeout` s."""
+    deadline = clock() + timeout
+    presses = 0
+    while True:
+        try:
+            up = any(w.get("n") == "SplashScreen" and w.get("vis") for w in rpc("ui.widgets", {}) or [])
+        except (RuntimeError, LuaDebugError, TimeoutError, ConnectionError) as exc:
+            log(f"(ui.widgets: {exc})")
+            up = None
+        if up is False:
+            if presses:
+                log(f"splash screen passed after {presses} key press(es)")
+            return presses
+        if clock() > deadline:
+            raise TimeoutError(f"splash screen still up after {timeout:.0f} s ({presses} presses)")
+        if up:
+            press()
+            presses += 1
+        sleep(interval)
+
+
+def shim_space() -> None:
+    with InputClient() as inp:
+        inp.key("SPACE")
 
 
 # The controlled character's display name, as play.py reads it (CHARACTER_NAME_LUA).
@@ -228,6 +261,12 @@ def main() -> int:
         return 0 if d.ok else 1
 
     if args.start == "menu":
+        d.header("pass the splash screen (input shim)")
+        try:
+            pass_splash(d.rpc, shim_space, log=lambda m: print(f"    {m}"))
+        except (TimeoutError, InputError, OSError) as exc:
+            print(f"    FAILED: {exc}")
+            return 1
         st = d.job("new game up to character creation", "ui.new_game", {"difficulty": args.difficulty}, timeout=330)
         if not st or st.get("status") != "done":
             return 1

@@ -13,15 +13,23 @@ from bg3ai import naming
 from bg3ai.naming import NamingError, ensure_name, name_and_finish, probe_points
 
 
-class FakePage:
-    """ui.cc_name / ui.cc_finish over a naming page whose box sits at rows box_y0..box_y1 (window coords)."""
+HANDLE = "ResStr_3455818087"
 
-    def __init__(self, name="Tav", text_write_works=False, readable=True, box=(1150, 1190), can_edit=True,
-                 focus_on_click=True, typing_works=True):
-        self.name, self.text = name, name
-        self.text_write_works, self.readable = text_write_works, readable
+
+class FakePage:
+    """ui.cc_name / ui.cc_finish over a naming page whose box sits at rows box_y0..box_y1 (window coords).
+
+    Like the live page: the character's name reads as a handle (unless `readable`), the box exists only
+    after the page was shown once (`lazy_box` more polls), a click focuses the box and selects its text."""
+
+    def __init__(self, text="Tav", readable=False, box=(1150, 1190), can_edit=True, focus_on_click=True,
+                 typing_works=True, lazy_box=1):
+        self.text = text
+        self.name = text if readable else HANDLE
+        self.readable = readable
         self.box, self.can_edit = box, can_edit
         self.focus_on_click, self.typing_works = focus_on_click, typing_works
+        self.lazy_box, self.shown = lazy_box, False
         self.page, self.cursor, self.focused = 0, (0, 0), False
         self.finished = False
         self.calls: list[tuple[str, dict]] = []
@@ -30,24 +38,30 @@ class FakePage:
         return self.box[0] <= y <= self.box[1] and 1500 <= x <= 2300
 
     def view(self, want=None):
+        has_box = self.shown and self.lazy_box <= 0
+        if self.shown and self.lazy_box > 0:
+            self.lazy_box -= 1
         name = self.name if self.readable else None
-        v = {"name": name, "text": self.text, "can_edit": self.can_edit, "page": self.page,
-             "on_naming_page": self.page == 3, "box": True, "focused": self.focused,
-             "hover_box": self.page == 3 and self.over(*self.cursor), "complete": True}
+        text = self.text if has_box else None
+        v = {"name": name, "name_handle": None if self.readable else HANDLE, "text": text,
+             "can_edit": self.can_edit, "page": self.page, "on_naming_page": self.page == 3, "box": has_box,
+             "focused": self.focused, "hover_box": has_box and self.page == 3 and self.over(*self.cursor),
+             "complete": True}
         if want is not None:
-            v.update(want=want, confirmed=name == want, ok=self.text == want and name in (None, want))
+            v.update(want=want, confirmed=name == want, ok=text == want and name in (None, want))
         return v
 
     def rpc(self, op, args):
         self.calls.append((op, dict(args)))
         if op == "ui.cc_name":
-            if args.get("page"):
-                self.page = 3
-            if args.get("set"):
-                self.text = args["name"]
-                if self.text_write_works:
-                    self.name = args["name"]
-            return self.view(args.get("name"))
+            assert not args.get("set"), "the Text write route is gone"
+            moved = False
+            if args.get("page") and self.page != 3:
+                self.page, self.shown, moved = 3, True, True
+            v = self.view(args.get("name"))
+            if moved:
+                v["moved"] = True
+            return v
         if op == "ui.cc_finish":
             v = self.view(args.get("name"))
             if args.get("name") is not None and not v["ok"]:
@@ -73,59 +87,76 @@ class FakeInput:
     def wait_frames(self, n, sync=True):
         pass
 
+    def sync(self, timeout_ms=5000):
+        pass
+
     def click(self, x, y, button="L", count=1, sync=True):
         self.page.cursor = (x, y)
         self.clicks.append((x, y))
         if self.page.focus_on_click and self.page.over(x, y):
-            self.page.focused = True
+            self.page.focused = self.selected = True
 
     def key(self, keys, sync=True):
-        self.typed.append(f"<{keys}>")
+        if keys != "BACKSPACE" or not self.typed or not self.typed[-1].startswith("<BACKSPACE"):
+            self.typed.append(f"<{keys}>")
+        else:
+            n = self.typed[-1][len("<BACKSPACE"):-1]
+            self.typed[-1] = f"<BACKSPACE{int(n or 1) + 1}>"
         if not self.page.focused:
             return
-        if keys == "LCTRL+A":
-            self.selected = True
-        elif keys == "BACKSPACE" and self.selected:
-            self.page.text, self.selected = "", False
+        if keys == "END":
+            self.selected = False  # LCTRL+A does nothing live
+        elif keys == "BACKSPACE":
+            self.page.text = "" if self.selected else self.page.text[:-1]
+            self.selected = False
 
     def text(self, s, sync=True):
         self.typed.append(s)
         if self.page.focused:
-            self.page.text += s
-            if self.page.typing_works:
+            self.page.text = s if self.selected else self.page.text + s
+            self.selected = False
+            if self.page.typing_works and self.page.readable:
                 self.page.name = self.page.text
 
 
 @mock.patch.object(naming.time, "sleep", lambda s: None)
 class EnsureName(unittest.TestCase):
     def test_already_named(self):
-        page = FakePage(name="Claude")
+        page = FakePage(text="Claude", lazy_box=0)
+        page.shown = True
         self.assertEqual(ensure_name(page.rpc, None, "Claude")["via"], "already")
-        self.assertFalse(any(a.get("set") for _, a in page.calls))
+        self.assertEqual(len(page.calls), 1)
 
-    def test_text_write_confirmed(self):
-        page = FakePage(text_write_works=True)
-        self.assertEqual(ensure_name(page.rpc, None, "Claude")["via"], "text")
-
-    def test_box_showing_the_name_is_not_enough(self):
-        # The box shows "Claude" after the write but the character is still "Tav": must type it.
-        page = FakePage()
+    def test_typed_over_unreadable_handle(self):
+        # The live case: the character's name is a handle, the box shows Tav; the box appears late.
+        page = FakePage(lazy_box=3)
         inp = FakeInput(page)
         res = ensure_name(page.rpc, inp, "Claude")
         self.assertEqual(res["via"], "typed")
-        self.assertEqual(page.name, "Claude")
-        self.assertEqual(inp.typed, ["<LCTRL+A>", "<BACKSPACE>", "Claude", "<RETURN>"])
+        self.assertEqual(page.text, "Claude")
+        self.assertEqual(inp.typed, ["<END>", f"<BACKSPACE{naming.MAX_LEN + 2}>", "Claude", "<RETURN>"])
         x, y = res["at"]
         self.assertTrue(page.over(x, y))
         self.assertAlmostEqual(y, sum(page.box) / 2, delta=12)  # centred on the box
 
-    def test_unreadable_name_still_needs_typing(self):
-        # Without a readable CharacterName the box text alone can't confirm the write: typed route.
-        page = FakePage(readable=False)
+    def test_long_old_name_is_cleared(self):
+        page = FakePage(text="x" * naming.MAX_LEN)
         self.assertEqual(ensure_name(page.rpc, FakeInput(page), "Claude")["via"], "typed")
+        self.assertEqual(page.text, "Claude")
+
+    def test_readable_name_typed(self):
+        page = FakePage(readable=True)
+        self.assertEqual(ensure_name(page.rpc, FakeInput(page), "Claude")["via"], "typed")
+        self.assertEqual(page.name, "Claude")
+
+    def test_box_never_appears(self):
+        page = FakePage(lazy_box=10**9)
+        with mock.patch.object(naming.time, "monotonic", side_effect=range(0, 10**6, 1)):
+            with self.assertRaisesRegex(NamingError, "no name box"):
+                ensure_name(page.rpc, FakeInput(page), "Claude")
 
     def test_no_shim_fails_loudly(self):
-        with self.assertRaises(NamingError):
+        with self.assertRaisesRegex(NamingError, "input shim"):
             ensure_name(FakePage().rpc, None, "Claude")
 
     def test_box_not_found(self):
@@ -140,8 +171,8 @@ class EnsureName(unittest.TestCase):
             ensure_name(page.rpc, inp, "Claude")
         self.assertNotIn("Claude", inp.typed)
 
-    def test_typing_not_taken_by_character(self):
-        page = FakePage(typing_works=False)
+    def test_typing_not_taken_by_readable_character(self):
+        page = FakePage(readable=True, typing_works=False)
         with self.assertRaisesRegex(NamingError, "character is 'Tav'"):
             ensure_name(page.rpc, FakeInput(page), "Claude")
 
@@ -162,7 +193,7 @@ class EnsureName(unittest.TestCase):
         self.assertEqual([op for op, _ in page.calls][-1], "ui.cc_finish")
 
     def test_failed_naming_never_finishes(self):
-        page = FakePage(typing_works=False)
+        page = FakePage(focus_on_click=False)
         with self.assertRaises(NamingError):
             name_and_finish(page.rpc, FakeInput(page), "Claude")
         self.assertFalse(page.finished)
