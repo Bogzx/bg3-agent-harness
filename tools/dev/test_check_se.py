@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import check_se as C  # noqa: E402
 
-HOOKED = "noesis: View at 0x7f0000001000\nlua: client state ready\n"
+HOOKED = ("noesis: 18 of 18 View input entry points hooked\n"
+          "noesis: View at 0x7f0000001000\nlua: client state ready\n")
 
 
 class LogVerdictTest(unittest.TestCase):
@@ -27,6 +28,13 @@ class LogVerdictTest(unittest.TestCase):
         v, d = C.check_log_text(HOOKED + "noesis: View::Update not hooked; Ext.UI will scan for the View\n")
         self.assertEqual(v, "FAIL")
         self.assertIn("not hooked", d)
+
+    def test_input_hooks(self):
+        # 0003: the input entry points hold the UI lock; missing or partial is a WARN
+        self.assertEqual(C.check_log_text("noesis: View at 0x7f0000001000\n")[0], "WARN")
+        v, d = C.check_log_text(HOOKED.replace("18 of 18", "16 of 18"))
+        self.assertEqual(v, "WARN")
+        self.assertIn("16 of 18", d)
 
     def test_no_frame_yet(self):
         self.assertEqual(C.check_log_text("bg3le: started\n")[0], "WARN")

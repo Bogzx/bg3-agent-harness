@@ -1,0 +1,30 @@
+diff --git a/src/debug_server.cpp b/src/debug_server.cpp
+index 895e6d0..b4e3ddb 100644
+--- a/src/debug_server.cpp
++++ b/src/debug_server.cpp
+@@ -138,6 +138,9 @@ void handle_client(int fd) {
+     }
+ 
+     // Replay what the client missed, so attaching mid-session is informative.
++    // A failed send (the peer already hung up: a connect-and-close port probe) must still detach and
++    // close below, or every probe leaks the fd and a g_clients slot.
++    bool replayed = true;
+     {
+         std::lock_guard<std::mutex> lock(g_status_mutex);
+         for (const std::string& line : g_status) {
+@@ -145,10 +148,13 @@ void handle_client(int fd) {
+             pb::bytes_field(&body, 1, line);
+             std::string msg;
+             pb::bytes_field(&msg, kBkDebugOutput, body);
+-            if (!send_packet(fd, msg)) return;
++            if (!send_packet(fd, msg)) {
++                replayed = false;
++                break;
++            }
+         }
+     }
+-    for (;;) {
++    for (; replayed;) {
+         char header[4];
+         if (!recv_exact(fd, header, 4)) break;
+         std::uint32_t total = 0;

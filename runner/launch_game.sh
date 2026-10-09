@@ -28,6 +28,7 @@
 #
 # Environment:
 #   BG3AI_RUNTIME      runtime dir (default <repo>/runtime): logs/, shots/
+#   BG3AI_LAUNCH_STAMP the <stamp> in logs/{game,bg3le}-<stamp>.log* (default: now; runner/play.py passes its own)
 #   BG3_DIR            game install (BG3AI_GAME_DIR is the older name). Default: found by tools/steam_paths.py
 #                      from Steam's libraryfolders.vdf, else ~/.local/share/Steam/steamapps/common/Baldurs Gate 3
 #   BG3AI_SNIPER_DIR   SteamLinuxRuntime_sniper (default: its library per libraryfolders.vdf, else next to the game)
@@ -114,7 +115,7 @@ if [ "$use_bg3le" = 1 ] && command -v ss >/dev/null 2>&1 && ss -Hltn "sport = :$
     echo "launch_game: warning: port $PORT is already in use (another game instance?)" >&2
 fi
 
-stamp="$(date +%Y%m%d-%H%M%S)"
+stamp="${BG3AI_LAUNCH_STAMP:-$(date +%Y%m%d-%H%M%S)}"   # the runner passes its own, to find this launch's logs
 mkdir -p "$RUNTIME/logs" "$RUNTIME/shots"
 GAME_LOG="$RUNTIME/logs/game-$stamp.log"
 

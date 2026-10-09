@@ -1,0 +1,407 @@
+bg3le Ext.UI: never release into a torn-down UI; serialize with the View's input too, on by default
+
+On top of 0001 and 0002. Two crashes in claude-run-2 (2026-10-10, research/impl-se.md):
+
+- The recovery reload crashed in 0001's drain: a reference Lua took under the loading
+  screen's View was given back after that View was freed, and the element's teardown
+  (TimerTrigger::OnDetaching -> AttachableObject::GetView()->CancelTimer) called into it.
+  Now each held reference records the UI generation it was taken in. The generation moves
+  on when the View is replaced and when the client state enters or leaves anything but
+  Running/Save/Paused (game_state.cpp); the queue is dropped then, and a release from an
+  older generation, while the UI is not settled, or of an object that no longer looks
+  alive is leaked instead (counted).
+- A SIGSEGV in Panel::UpdateChildrenZOrder under Mouse::Move (the UI thread's hit test,
+  outside View::Update) while Lua walked the tree from the client thread: both rebuild a
+  Panel's lazy z-order cache. The View's input entry points (mouse, wheel, keys, Char,
+  and their IView thunks) now hold 0002's frame lock too, and serializing is on by
+  default (BG3LE_UI_SERIALIZE=0 turns it off). The UI thread waits at most 16 ms for the
+  lock, as Lua waits at most 50 ms, so neither can deadlock on a game lock.
+- Ext._Internal.UiSerialize() returns on, Lua timeouts, UI timeouts, generation, leaked.
+
+Against bg3le 3728a68 (v0.3.6) with 0001 and 0002. Applied by tools/build_bg3le.sh.
+---
+diff --git a/src/game_state.cpp b/src/game_state.cpp
+index a0c0db1..46c0777 100644
+--- a/src/game_state.cpp
++++ b/src/game_state.cpp
+@@ -28,6 +28,7 @@ extern "C" void bg3le_stats_module_loaded();
+ extern "C" void bg3le_templates_invalidate();
+ extern "C" void bg3le_stats_load_hooked();
+ extern "C" void bg3le_stats_loading(bool loading);
++extern "C" void bg3le_ui_new_generation(char const* why);
+ #include "targets.h"
+ 
+ namespace bg3le {
+@@ -123,6 +124,14 @@ std::uint64_t machine_update_hook(void* machine, void* a, void* b, void* c) {
+     char const* now = client_game_state();
+     if (now != nullptr && last != nullptr && now != last) {
+         logf("gamestate: client %s -> %s", last, now);
++        // Into or out of anything but play (a load, an unload, the menu's
++        // setup): the UI Lua holds references into may be torn down, so they
++        // are never released (bg3le_noesis_lua.inl).
++        auto in_play = [](char const* s) {
++            return std::strcmp(s, "Running") == 0 || std::strcmp(s, "Save") == 0
++                || std::strcmp(s, "Paused") == 0;
++        };
++        if (!in_play(last) || !in_play(now)) bg3le_ui_new_generation(now);
+         // Upstream's client resets on UnloadSession and loads again leaving
+         // LoadMenu; its server resets there too and loads at the next
+         // LoadSession, which is the story work here.
+diff --git a/src/noesis_ui.cpp b/src/noesis_ui.cpp
+index a58fc30..4bfc34e 100644
+--- a/src/noesis_ui.cpp
++++ b/src/noesis_ui.cpp
+@@ -12,6 +12,7 @@
+ #include <cstdint>
+ #include <cstring>
+ #include <string>
++#include <utility>
+ 
+ #include "elf_symbols.h"
+ #include "hook.h"
+@@ -25,6 +26,7 @@ extern "C" std::size_t bg3le_noesis_resolve(void* (*find)(char const*));
+ extern "C" void bg3le_ui_drain_releases();
+ extern "C" bool bg3le_ui_frame_begin();
+ extern "C" void bg3le_ui_frame_end(bool taken);
++extern "C" void bg3le_ui_new_generation(char const* why);
+ 
+ namespace bg3le {
+ namespace {
+@@ -65,6 +67,7 @@ void saw_view(void* view) {
+     } else if (expected != view && !is_view(expected)) {
+         g_view.store(view);  // the old one is gone
+         logf("noesis: View replaced, now at %p", view);
++        bg3le_ui_new_generation("View replaced");
+     }
+ }
+ 
+@@ -87,7 +90,8 @@ std::uint64_t update_thunk_hook(void* iview, double time) {
+ }
+ 
+ // Hooks the View vtable slot that holds `function`.
+-bool hook_view_slot(char const* function, void* replacement, UpdateProc* original) {
++template <typename Proc>
++bool hook_view_slot(char const* function, void* replacement, Proc* original) {
+     const std::uintptr_t vt = view_vtable();
+     auto target = reinterpret_cast<std::uintptr_t>(resolve(function));
+     if (vt == 0 || target == 0) return false;
+@@ -101,12 +105,69 @@ bool hook_view_slot(char const* function, void* replacement, UpdateProc* origina
+         if (!hook_slot(slot - load_bias(), target - load_bias(), replacement, &previous)) {
+             return false;
+         }
+-        *original = reinterpret_cast<UpdateProc>(previous);
++        *original = reinterpret_cast<Proc>(previous);
+         return true;
+     }
+     return false;
+ }
+ 
++// The View's input entry points run on the UI thread outside Update and walk
++// the same tree (MouseMove hit-tests it, rebuilding a Panel's z-order cache as
++// it goes): they hold the frame lock too, so a serialized Ext.UI call cannot
++// read or change the tree under them. Each takes at most three integer
++// arguments after `this` and returns bool; those pass through unchanged.
++using InputProc = std::uint64_t (*)(void*, std::uint64_t, std::uint64_t, std::uint64_t);
++
++struct InputHook {
++    char const* Function;
++    InputProc Original;
++};
++
++InputHook g_input_hooks[] = {
++    {"_ZN6Noesis4View9MouseMoveEii", nullptr},
++    {"_ZThn16_N6Noesis4View9MouseMoveEii", nullptr},
++    {"_ZN6Noesis4View15MouseButtonDownEiiNS_11MouseButtonE", nullptr},
++    {"_ZThn16_N6Noesis4View15MouseButtonDownEiiNS_11MouseButtonE", nullptr},
++    {"_ZN6Noesis4View13MouseButtonUpEiiNS_11MouseButtonE", nullptr},
++    {"_ZThn16_N6Noesis4View13MouseButtonUpEiiNS_11MouseButtonE", nullptr},
++    {"_ZN6Noesis4View16MouseDoubleClickEiiNS_11MouseButtonE", nullptr},
++    {"_ZThn16_N6Noesis4View16MouseDoubleClickEiiNS_11MouseButtonE", nullptr},
++    {"_ZN6Noesis4View10MouseWheelEiii", nullptr},
++    {"_ZThn16_N6Noesis4View10MouseWheelEiii", nullptr},
++    {"_ZN6Noesis4View11MouseHWheelEiii", nullptr},
++    {"_ZThn16_N6Noesis4View11MouseHWheelEiii", nullptr},
++    {"_ZN6Noesis4View7KeyDownENS_3KeyE", nullptr},
++    {"_ZThn16_N6Noesis4View7KeyDownENS_3KeyE", nullptr},
++    {"_ZN6Noesis4View5KeyUpENS_3KeyE", nullptr},
++    {"_ZThn16_N6Noesis4View5KeyUpENS_3KeyE", nullptr},
++    {"_ZN6Noesis4View4CharEj", nullptr},
++    {"_ZThn16_N6Noesis4View4CharEj", nullptr},
++};
++constexpr std::size_t kInputHooks = sizeof(g_input_hooks) / sizeof(g_input_hooks[0]);
++
++template <std::size_t N>
++std::uint64_t input_hook(void* self, std::uint64_t a, std::uint64_t b, std::uint64_t c) {
++    const bool taken = bg3le_ui_frame_begin();
++    const std::uint64_t result = g_input_hooks[N].Original(self, a, b, c);
++    bg3le_ui_frame_end(taken);
++    return result;
++}
++
++template <std::size_t... N>
++std::size_t hook_input(std::index_sequence<N...>) {
++    void* const replacements[] = {reinterpret_cast<void*>(&input_hook<N>)...};
++    std::size_t hooked = 0;
++    for (std::size_t i = 0; i < kInputHooks; ++i) {
++        if (hook_view_slot(g_input_hooks[i].Function, replacements[i],
++                           &g_input_hooks[i].Original)) {
++            ++hooked;
++        } else {
++            logf("noesis: %s not hooked", g_input_hooks[i].Function);
++        }
++    }
++    return hooked;
++}
++
+ // Fallback for when the hooks could not go in: a one-off scan for the vtable.
+ void* scan_for_view() {
+     const std::uintptr_t want = view_vtable();
+@@ -152,6 +213,10 @@ void noesis_set_symbols(const SymbolTable* symbols) {
+         && hook_view_slot("_ZThn16_N6Noesis4View6UpdateEd",
+                           reinterpret_cast<void*>(&update_thunk_hook), &g_update_thunk);
+     if (!g_hooked) logf("noesis: View::Update not hooked; Ext.UI will scan for the View");
++    if (g_hooked) {
++        const std::size_t inputs = hook_input(std::make_index_sequence<kInputHooks>{});
++        logf("noesis: %zu of %zu View input entry points hooked", inputs, kInputHooks);
++    }
+ }
+ 
+ void* noesis_view() {
+diff --git a/src/vendor/bg3le_noesis_lua.inl b/src/vendor/bg3le_noesis_lua.inl
+index c43face..08e7e7d 100644
+--- a/src/vendor/bg3le_noesis_lua.inl
++++ b/src/vendor/bg3le_noesis_lua.inl
+@@ -15,6 +15,7 @@
+ #include <atomic>
+ #include <chrono>
+ #include <cstdlib>
++#include <cstring>
+ #include <deque>
+ #include <link.h>
+ #include <mutex>
+@@ -23,6 +24,7 @@
+ #include <unordered_map>
+ #include <vector>
+ 
++#include "../game_state.h"
+ #include "../log.h"
+ #include "../hook.h"
+ #include "../mem.h"
+@@ -47,31 +49,76 @@ struct Held
+ {
+     BaseObject* Object;
+     bool Counted;  // a BaseComponent, holding a reference; Types are not counted
++    unsigned Generation;  // g_generation when the reference was taken
+ };
+ 
+ char const* const kHeldMeta = "bg3le.NoesisObject";
+ char g_held_cache_key = 0;
+ 
++bool plausible_object(BaseObject const* o);
++
+ // The last reference can only go on the UI's own thread: __gc queues it, and
+ // the View's Update hook drains the queue (noesis_ui.cpp).
+-std::mutex g_release_lock;
+-std::vector<BaseComponent*> g_releases;
+-
+-void release_later(BaseComponent* o)
++//
++// A reference is only given back in the UI generation it was taken in. The
++// generation moves on when the View is replaced and when the client enters or
++// leaves a load (bg3le_ui_new_generation, from game_state.cpp): by then the
++// tree the object belonged to may be gone, and so may its View, which an
++// element's own teardown still calls into (a TimerTrigger cancels its timer
++// through AttachableObject::GetView(): a SIGSEGV on the freed View, the
++// recovery reload's crash in the queue's drain). Those references are leaked
++// instead, a few objects per load.
++struct PendingRelease
+ {
++    BaseComponent* Object;
++    unsigned Generation;
++};
++std::mutex g_release_lock;
++std::vector<PendingRelease> g_releases;
++std::atomic<unsigned> g_generation{ 1 };
++std::atomic<unsigned long long> g_leaked{ 0 };
++
++// The states in which the UI is up and not being torn down; anything else
++// (the loads, the unloads, the menus' setup) leaks rather than releases.
++bool ui_settled()
++{
++    char const* state = bg3le::client_game_state();
++    if (state == nullptr) return false;
++    for (char const* ok : { "Running", "Save", "Paused", "Menu" }) {
++        if (std::strcmp(state, ok) == 0) return true;
++    }
++    return false;
++}
++
++// The last Release, if it is still safe to give; else the reference leaks.
++void release_now(PendingRelease const& r)
++{
++    if (r.Generation != g_generation.load() || !ui_settled() || !plausible_object(r.Object)) {
++        g_leaked.fetch_add(1, std::memory_order_relaxed);
++        return;
++    }
++    r.Object->Release();
++}
++
++void release_later(BaseComponent* o, unsigned generation)
++{
++    if (generation != g_generation.load()) {
++        g_leaked.fetch_add(1, std::memory_order_relaxed);
++        return;
++    }
+     if (!bg3le::noesis_update_hooked()) {
+-        o->Release();
++        release_now(PendingRelease{ o, generation });
+         return;
+     }
+     std::lock_guard<std::mutex> held(g_release_lock);
+-    g_releases.push_back(o);
++    g_releases.push_back(PendingRelease{ o, generation });
+ }
+ 
+ int held_gc(lua_State* L)
+ {
+     auto h = static_cast<Held*>(luaL_checkudata(L, 1, kHeldMeta));
+     if (h->Object != nullptr && h->Counted) {
+-        release_later(static_cast<BaseComponent*>(h->Object));
++        release_later(static_cast<BaseComponent*>(h->Object), h->Generation);
+     }
+     h->Object = nullptr;
+     return 0;
+@@ -204,6 +251,7 @@ void push_object(lua_State* L, void const* p)
+     auto h = static_cast<Held*>(lua_newuserdata(L, sizeof(Held)));
+     h->Object = o;
+     h->Counted = false;
++    h->Generation = g_generation.load();
+     if (luaL_newmetatable(L, kHeldMeta)) {
+         lua_pushcfunction(L, held_gc);
+         lua_setfield(L, -2, "__gc");
+@@ -246,19 +294,31 @@ void ensure_symbols()
+     gStaticSymbols.Initialize();
+ }
+ 
+-// ---- serializing with the UI thread (off by default) ----------------------
++// ---- serializing with the UI thread (on by default) -----------------------
+ //
+ // A held reference covers an object once Lua has it; between reading a child
+-// pointer and AddReference the UI thread can still free it. With
+-// BG3LE_UI_SERIALIZE=1 (or Ext._Internal.UiSerialize(true)) each Ext.UI call
+-// runs under the lock View::Update holds for the frame, so the tree does not
+-// change under it. The UI thread can be waiting for the client Lua lock inside
+-// Update (a routed event handler) while Lua waits here, so Lua waits at most
+-// kFrameWaitMs and then runs unserialized, counted in UiSerialize's result.
+-std::atomic<bool> g_serialize{ false };
++// pointer and AddReference the UI thread can still free it, and Lua reading
++// the tree while the UI thread walks it is a race of its own: a Panel rebuilds
++// its z-order cache lazily from GetVisualChild, so Lua's walk and the UI
++// thread's hit test (View::MouseMove) both rewrite it, and the UI thread read
++// a stale index (a SIGSEGV in Panel::UpdateChildrenZOrder under Mouse::Move).
++// So each Ext.UI call runs under the lock that View::Update and the View's
++// input entry points hold (noesis_ui.cpp), and the tree does not change or get
++// walked under it. BG3LE_UI_SERIALIZE=0 (or Ext._Internal.UiSerialize(false))
++// turns it off.
++//
++// Neither side waits for long. The UI thread can be waiting for the client
++// Lua lock inside Update (a routed event handler) while Lua waits here, so Lua
++// waits at most kFrameWaitMs and then runs unserialized; Lua can be inside a
++// game function that waits for a game lock the UI thread holds around the
++// View, so the UI thread waits at most kUiWaitMs. Both are counted in
++// UiSerialize's result.
++std::atomic<bool> g_serialize{ true };
+ std::recursive_timed_mutex g_frame;
+ std::atomic<unsigned long long> g_serialize_timeouts{ 0 };
++std::atomic<unsigned long long> g_ui_timeouts{ 0 };
+ constexpr int kFrameWaitMs = 50;
++constexpr int kUiWaitMs = 16;
+ 
+ int serialized(lua_State* L)
+ {
+@@ -272,13 +332,17 @@ int serialized(lua_State* L)
+     return fn(L);
+ }
+ 
+-// UiSerialize([on]) -> on, timeouts
++// UiSerialize([on]) -> on, Lua's lock timeouts, the UI thread's lock timeouts,
++// the UI generation, the references leaked rather than released
+ int l_serialize(lua_State* L)
+ {
+     if (!lua_isnoneornil(L, 1)) g_serialize.store(lua_toboolean(L, 1) != 0);
+     lua_pushboolean(L, g_serialize.load() ? 1 : 0);
+     lua_pushinteger(L, (lua_Integer)g_serialize_timeouts.load());
+-    return 2;
++    lua_pushinteger(L, (lua_Integer)g_ui_timeouts.load());
++    lua_pushinteger(L, (lua_Integer)g_generation.load());
++    lua_pushinteger(L, (lua_Integer)g_leaked.load());
++    return 5;
+ }
+ 
+ // ---- values: ports of StoredValueHelpers ---------------------------------
+@@ -1373,13 +1437,15 @@ extern "C" void bg3le_ui_reset()
+     for (auto& sub : Noesis::bg3le_ui::g_subscriptions) sub.Active = false;
+ }
+ 
+-// Taken by the View::Update hooks around the frame when Ext.UI calls are
+-// serialized; true when taken, to be handed back to bg3le_ui_frame_end.
++// Taken by the View::Update and input hooks when Ext.UI calls are serialized;
++// true when taken, to be handed back to bg3le_ui_frame_end.
+ extern "C" bool bg3le_ui_frame_begin()
+ {
+-    if (!Noesis::bg3le_ui::g_serialize.load(std::memory_order_relaxed)) return false;
+-    Noesis::bg3le_ui::g_frame.lock();
+-    return true;
++    using namespace Noesis::bg3le_ui;
++    if (!g_serialize.load(std::memory_order_relaxed)) return false;
++    if (g_frame.try_lock_for(std::chrono::milliseconds(kUiWaitMs))) return true;
++    g_ui_timeouts.fetch_add(1, std::memory_order_relaxed);
++    return false;
+ }
+ 
+ extern "C" void bg3le_ui_frame_end(bool taken)
+@@ -1388,15 +1454,33 @@ extern "C" void bg3le_ui_frame_end(bool taken)
+ }
+ 
+ // Drops the references Lua let go of; on the UI thread, from View::Update.
++// Only those of the current generation, while the UI is settled.
+ extern "C" void bg3le_ui_drain_releases()
+ {
+-    std::vector<Noesis::BaseComponent*> now;
++    std::vector<Noesis::bg3le_ui::PendingRelease> now;
+     {
+         std::lock_guard<std::mutex> held(Noesis::bg3le_ui::g_release_lock);
+         if (Noesis::bg3le_ui::g_releases.empty()) return;
+         now.swap(Noesis::bg3le_ui::g_releases);
+     }
+-    for (auto o : now) o->Release();
++    for (auto const& r : now) Noesis::bg3le_ui::release_now(r);
++}
++
++// The UI the held references belong to is going away (a new View, a load):
++// what was taken before is never released, queued or not.
++extern "C" void bg3le_ui_new_generation(char const* why)
++{
++    std::size_t queued = 0;
++    {
++        std::lock_guard<std::mutex> held(Noesis::bg3le_ui::g_release_lock);
++        queued = Noesis::bg3le_ui::g_releases.size();
++        Noesis::bg3le_ui::g_releases.clear();
++        Noesis::bg3le_ui::g_generation.fetch_add(1);
++    }
++    Noesis::bg3le_ui::g_leaked.fetch_add(queued, std::memory_order_relaxed);
++    bg3le::logf("noesis: UI generation %u (%s); %zu queued releases dropped, %llu leaked in all",
++         Noesis::bg3le_ui::g_generation.load(), why, queued,
++         (unsigned long long)Noesis::bg3le_ui::g_leaked.load());
+ }
+ 
+ // Adds Ext.UI's C side to the table on top of the stack.
+@@ -1442,7 +1526,7 @@ extern "C" void bg3le_ui_register(lua_State* L)
+     lua_setfield(L, -2, "UiSerialize");
+     static bool from_env = [] {
+         char const* v = std::getenv("BG3LE_UI_SERIALIZE");
+-        if (v != nullptr && v[0] == '1') Noesis::bg3le_ui::g_serialize.store(true);
++        if (v != nullptr && v[0] != '\0') Noesis::bg3le_ui::g_serialize.store(v[0] != '0');
+         return true;
+     }();
+     (void)from_env;

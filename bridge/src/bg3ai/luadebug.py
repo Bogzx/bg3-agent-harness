@@ -465,6 +465,29 @@ class LuaDebugClient:
         # Everything else (context updates, mod lists, debuggerReady) is not ours to act on.
 
 
+def port_answers(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout: float = 1.0) -> bool:
+    """Is the debug server listening? A liveness probe that leaves nothing behind on the game's side.
+
+    A bare connect-and-close is not that: bg3le starts replaying its status lines the moment it accepts,
+    the replay's send fails once we're gone, and unpatched bg3le then returns without closing the fd or
+    dropping the g_clients slot (one leak per probe; patches/bg3le/0004 fixes the server). So complete
+    the handshake (bg3le answers it after the replay, on the connection thread, not a game tick) and
+    close only then: the server reads EOF and detaches normally.
+    """
+    client = LuaDebugClient(host, port, connect_timeout=timeout)
+    try:
+        client._open()
+    except OSError:
+        return False
+    try:
+        client._handshake(client.requested_version)
+    except Exception:  # noqa: BLE001 - listening but slow/odd to answer: still open
+        pass
+    finally:
+        client.close()
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m bg3ai.luadebug",
                                      description="Evaluate Lua in the running game over the LuaDebug protocol.")

@@ -324,3 +324,27 @@ class ServerHook(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ApiSpeed(unittest.TestCase):
+    """ms per output token and API seconds per turn next to think time (impl-act, think time S003 -> S013)."""
+
+    def test_stream_estimate_and_exact_result(self):
+        evs = [(0.0, {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "a"}]}}),
+               (1.0, {"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 100}),
+               (2.0, {"type": "assistant", "message": {"id": "m1", "content": [{"type": "text", "text": "x" * 350}]}}),
+               (3.0, {"type": "assistant", "message": {"id": "m1", "content": [
+                   {"type": "tool_use", "id": "b", "name": "look", "input": {}}]}}),
+               (3.5, {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "b"}]}}),
+               (4.5, {"type": "assistant", "message": {"id": "m2", "content": [{"type": "text", "text": "y" * 700}]}})]
+        turns = [r for t, ev in evs for r in M.stream_records(ev, t)]
+        a = M.api_speed(turns)
+        self.assertEqual(a["source"], "stream")
+        self.assertEqual(a["turns"], 2)
+        self.assertEqual(a["api_s_per_turn"], 2.0)  # (3.0 + 1.0) / 2
+        turns += M.stream_records({"type": "result", "duration_api_ms": 3000, "num_turns": 2,
+                                   "usage": {"output_tokens": 200}}, 5.0)
+        a = M.api_speed(turns)
+        self.assertEqual((a["source"], a["ms_per_out_tok"], a["api_s_per_turn"]), ("result", 15.0, 1.5))
+        s = M.summarize([], [], turns)
+        self.assertEqual(s["api"]["ms_per_out_tok"], 15.0)

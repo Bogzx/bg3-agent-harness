@@ -132,7 +132,7 @@ table.hist { width: 100%; border-collapse: collapse; font: 12px var(--mono); mar
 table.hist th { text-align: right; color: var(--muted); font-weight: 500; padding: 3px 5px; border-bottom: 1px solid var(--line); }
 table.hist td { text-align: right; padding: 3px 5px; border-bottom: 1px solid #1d2232; }
 table.hist th:first-child, table.hist td:first-child { text-align: left; }
-td.pass { color: var(--ok); } td.fail { color: var(--bad); }
+td.pass { color: var(--ok); } td.fail { color: var(--bad); } td.warn { color: var(--warn); }
 .goalwrap { padding: 14px 16px 0; }
 .goalwrap .body { overflow-x: auto; }
 table.goals { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
@@ -416,6 +416,9 @@ function renderLatency(r) {
       + kpi("gaps >10s (non-dialogue)", `${tg.long_gaps_non_dialogue ? tg.long_gaps_non_dialogue.value : "–"}`
             + (L.long_gaps && L.long_gaps.dialogue ? ` <small>+${L.long_gaps.dialogue} dlg</small>` : ""), pf(tg.long_gaps_non_dialogue))
       + kpi("think median", fmt(L.think_median_s, "s"))
+      + kpi(L.api_source === "stream" ? "API s/turn · ms/out-tok (est.)" : "API s/turn · ms/out-tok",
+            `${fmt(L.api_s_per_turn, "s")} · ${fmt(L.ms_per_out_tok, "", 0)}`,
+            L.ms_per_out_tok > (L.api_source === "stream" ? 26 : 18) ? "warn" : "")
       + kpi(`read round trip med (<${T.bridge_rt_median_ms}ms)`, fmt(L.rt_read_median_ms, "ms", 0), pf(tg.bridge_rt_median_ms))
       + kpi("actions / min", fmt(L.apm, "", 1))
       + kpi("busy", fmt(L.busy_pct, "%", 0))
@@ -427,12 +430,13 @@ function renderLatency(r) {
   if (h.length) {
     const c = (p) => p == null ? "" : p ? "pass" : "fail";
     $("latHist").innerHTML = `<tr><th>session</th><th>min</th><th>idle med</th><th>p90</th><th>explore</th><th>&gt;10s</th>
-      <th>think</th><th>rt ms</th><th>apm</th><th>busy</th><th>pipe</th></tr>` + h.slice().reverse().map((x) => {
+      <th>think</th><th title="API seconds per model turn">api s</th><th title="API ms per output token (slow API above ~18)">ms/tok</th><th>rt ms</th><th>apm</th><th>busy</th><th>pipe</th></tr>` + h.slice().reverse().map((x) => {
       const p = x.pass || {};
       return `<tr><td>${esc(x.session)}</td><td>${fmt(x.minutes, "", 0)}</td><td>${fmt(x.idle_median_s)}</td><td>${fmt(x.idle_p90_s, "", 0)}</td>
         <td class="${c(p.median_idle_explore_s)}">${fmt(x.idle_explore_median_s)}</td>
         <td class="${c(p.long_gaps_non_dialogue)}">${x.long_gaps ?? "–"}${x.long_gaps_dialogue ? ` (${x.long_gaps_dialogue}d)` : ""}</td>
-        <td>${fmt(x.think_median_s)}</td><td class="${c(p.bridge_rt_median_ms)}">${fmt(x.rt_read_median_ms, "", 0)}</td>
+        <td>${fmt(x.think_median_s)}</td><td>${fmt(x.api_s_per_turn)}</td>
+        <td class="${x.ms_per_out_tok > 18 ? "warn" : ""}">${fmt(x.ms_per_out_tok, "", 0)}</td><td class="${c(p.bridge_rt_median_ms)}">${fmt(x.rt_read_median_ms, "", 0)}</td>
         <td>${fmt(x.apm)}</td><td>${fmt(x.busy_pct, "%", 0)}</td><td>${fmt(x.pipelining_pct, "%", 0)}</td></tr>`;
     }).join("");
   }
@@ -517,15 +521,19 @@ function unattendedHtml(u) {
       : e.kind === "recovery_failed" ? `recovery FAILED (${e.fault}): ${e.error || ""}`
       : e.kind === "steam_refused" ? `launch refused, Steam not offline: ${e.why || ""}`
       : e.kind === "setup_failed" ? `setup failed: ${e.error || ""}`
+      : e.kind === "launch_failed" ? `launch ${e.attempt ?? "?"} died (${e.save || ""}): ${e.error || ""}`
+      : e.kind === "launch_gave_up" ? `GAVE UP: crash loop: ${e.error || ""}`
       : `runner stopped: ${e.why || ""}`;
-    const bad = e.kind === "fault" || e.kind === "recovery_failed" || e.kind === "steam_refused" || e.kind === "setup_failed";
+    const bad = ["fault", "recovery_failed", "steam_refused", "setup_failed", "launch_failed", "launch_gave_up"].includes(e.kind);
     return `<span class="m ${e.kind === "recovered" ? "ok" : bad ? "next" : ""}" title="${esc(what)}">${hhmmss(e.t)} ${esc(what.slice(0, 90))}</span>`;
   };
-  return `<b>unattended ${u.live ? h(u.current_h) + " now" : "– (runner not running)"}</b> `
+  const alert = u.alert ? `<div style="color:var(--bad);font-weight:bold">⚠ ${hhmmss(u.alert.t)} ${esc(u.alert.msg || u.alert.kind || "alert")}</div>` : "";
+  return alert + `<b>unattended ${u.live ? h(u.current_h) + " now" : "– (runner not running)"}</b> `
     + `<small class="k">longest ${h(u.longest_h)} · total ${h(u.total_h)} over ${u.runs} run${u.runs === 1 ? "" : "s"}</small> &nbsp;`
     + `<span class="m">${u.fault_total} fault${u.fault_total === 1 ? "" : "s"}${kinds ? " (" + esc(kinds) + ")" : ""}</span>`
     + `<span class="m ${u.recovered ? "ok" : ""}">${u.recovered} recovered${u.recovery_s_median != null ? ` (median ${u.recovery_s_median} s, max ${u.recovery_s_max} s)` : ""}</span>`
     + (u.failed ? `<span class="m next">${u.failed} recovery failed</span>` : "")
+    + (u.launch_failed ? `<span class="m next">${u.launch_failed} launch${u.launch_failed === 1 ? "" : "es"} died</span>` : "")
     + (u.steam_refused ? `<span class="m next">${u.steam_refused} launch refused (Steam online)</span>` : "")
     + (u.steam_offline === false ? `<span class="m next">⚠ STEAM NOT OFFLINE</span>` : "")
     + (!u.live && u.last_stop ? `<span class="m">last stop: ${esc(u.last_stop)}</span>` : "")

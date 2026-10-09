@@ -344,5 +344,21 @@ class UnattendedTest(TmpCase):
         self.assertEqual(u["last_stop"], "no stop event (killed?)")
         self.assertIsNone(F.unattended_payload(self.tmp, {}, now=0))
 
+    def test_crash_loop_alert(self):
+        d = self.tmp / "sessions" / "pt"
+        d.mkdir(parents=True)
+        evs = [{"t": 0, "kind": "runner_start"},
+               {"t": 10, "kind": "launch_failed", "attempt": 1, "save": "C-2__S014-start", "error": "crash"},
+               {"t": 30, "kind": "launch_failed", "attempt": 2, "save": "C-2__S014-start", "error": "crash"},
+               {"t": 80, "kind": "launch_failed", "attempt": 3, "save": "C-1__S013-end", "error": "crash"},
+               {"t": 81, "kind": "launch_gave_up", "error": "3 launches in a row died"},
+               {"t": 81, "kind": "runner_stop", "why": "gave up: the game crashes on every launch"}]
+        (d / "runner_events.jsonl").write_text("\n".join(json.dumps(e) for e in evs) + "\n")
+        alert = {"t": 81, "kind": "launch_gave_up", "msg": "runner stopped: the game crashes on every launch"}
+        u = F.unattended_payload(d, {"alert": alert}, now=100, pid_alive=lambda p: False)
+        self.assertEqual((u["launch_failed"], u["alert"]), (3, alert))
+        self.assertEqual([e["kind"] for e in u["events"]][-2:], ["launch_gave_up", "runner_stop"])
+        self.assertIsNone(F.unattended_payload(d, {"alert": None}, now=100)["alert"])
+
 if __name__ == "__main__":
     unittest.main()

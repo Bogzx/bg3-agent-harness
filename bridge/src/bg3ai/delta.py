@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from typing import Any
 
@@ -48,6 +49,28 @@ MAX_APPEARED_CHARS = 16  # appeared characters are all listed up to this many, e
 MIN_APPEARED_ITEMS = 4   # leads (doors, containers, ...) listed even when characters filled the budget
 MAX_ITEM_LINES = 10
 BIG_CHANGE = 30  # more diff lines than this -> the caller should show the full view instead
+
+# Props that fill CHANGES on every arrival (S013: "+ Candle <usable>" x5 before the door). Matched on the
+# visible name's ending ("Tin Cup", not "Plate Armour"), so it's fair: get_nearby still lists them. A clutter
+# item is counted, not listed, unless it is a story item, locked, trapped or rare.
+_CLUTTER_WORDS = (
+    "candle", "candles", "candelabrum", "candelabra", "candlestick", "standing torch", "brazier", "lantern",
+    "chair", "stool", "bench", "table", "bed", "bedroll", "pillow", "cushion", "rug", "carpet", "curtain",
+    "cup", "mug", "tankard", "goblet", "plate", "bowl", "fork", "spoon", "jug", "pitcher", "vase", "pot", "pan",
+    "bucket", "tongs", "broom", "clamshell", "rows of books", "stack of books", "ink pot and quill", "milk can",
+)
+_CLUTTER_RE = re.compile(r"\b(" + "|".join(sorted(_CLUTTER_WORDS, key=len, reverse=True)) + r")s?$", re.I)
+_CLUTTER_KINDS = ("usable", "item", "object")
+
+
+def is_clutter(n: dict) -> bool:
+    """A decoration-like prop worth a count, not a line: see _CLUTTER_WORDS."""
+    if n.get("kind") not in _CLUTTER_KINDS or n.get("story") or n.get("rarity"):
+        return False
+    if any(f in (n.get("flags") or ()) for f in ("locked", "trap")):
+        return False
+    return bool(_CLUTTER_RE.search(str(n.get("name") or "")))
+
 
 _DIRS = ("E", "NE", "N", "NW", "W", "SW", "S", "SE")
 
@@ -144,7 +167,8 @@ _ITEM_FLAGS = ("locked", "opened", "trap", "owned")
 def _item_rec(it: dict) -> dict:
     return {"name": it.get("name", "?"), "kind": it.get("kind"), "dist": it.get("dist"),
             "flags": tuple(f for f in _ITEM_FLAGS if it.get(f)), "story": bool(it.get("story")),
-            "count": it.get("count")}
+            "count": it.get("count"),
+            "rarity": it.get("rarity") if it.get("rarity") not in (None, "Common", "common") else None}
 
 
 def snapshot(H: Handles, status: dict | None = None, ui: dict | None = None, nearby: dict | None = None,
@@ -309,11 +333,13 @@ def _ent_lines(old: dict, new: dict, H: Handles) -> list[str]:
                 bits.append(f"x{o.get('count') or 1}->{n['count']}")
         if bits:
             changed.append(f"~ {_ref(H, u, n['name'])} " + ", ".join(bits))
-    for u in sorted((u for u in oe if u not in ne), key=order):
+    for u in sorted((u for u in oe if u not in ne and not is_clutter(oe[u])), key=order):
         gone.append(_ref(H, u, oe[u]["name"]))
     # Arrival in a new place: every character (who's here is what the next decision needs; S009 followed
     # 5 of 26 arrivals with get_nearby(kinds=characters) because items had filled the list), then the
     # leads (doors, containers, ladders, story items) up to the budget, and the rest as counts by kind.
+    props = [u for u in new_items if is_clutter(ne[u])]
+    new_items = [u for u in new_items if u not in set(props)]
     appeared = [_appeared(H, u, ne[u]) for u in new_chars[:MAX_APPEARED_CHARS]]
     if len(new_chars) > MAX_APPEARED_CHARS:
         appeared.append(f"(+{len(new_chars) - MAX_APPEARED_CHARS} more characters; get_nearby)")
@@ -322,11 +348,14 @@ def _ent_lines(old: dict, new: dict, H: Handles) -> list[str]:
         new_items.sort(key=lambda u: (0 if ne[u].get("story") else render._KIND_RANK.get(str(ne[u]["kind"]), 4),
                                       ne[u].get("dist") if ne[u].get("dist") is not None else 999, H.get(u)))
     appeared += [_appeared(H, u, ne[u]) for u in new_items[:room]]
-    if len(new_items) > room:
+    if len(new_items) > room or props:
         kinds: dict[str, int] = {}
         for u in new_items[room:]:
             kinds[ne[u]["kind"]] = kinds.get(ne[u]["kind"], 0) + 1
-        appeared.append(f"(+{len(new_items) - room} more: "
+        if props:
+            kinds["props"] = len(props)
+        n_more = max(len(new_items) - room, 0) + len(props)
+        appeared.append(f"(+{n_more} more: "
                         + ", ".join(f"{k} {kinds[k]}" for k in sorted(kinds, key=lambda k: -kinds[k]))
                         + "; get_nearby / get_frontier)")
     out = []

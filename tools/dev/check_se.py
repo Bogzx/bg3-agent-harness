@@ -12,7 +12,8 @@ Prints one PASS / WARN / FAIL line per check (plus details) and exits 1 if anyth
                shim opens and closes panels (i, m, l, ESCAPE) and dialogue lines are advanced; the game must
                survive, and "Noesis object is gone" errors are counted. --answer also picks answer 1 when a
                dialogue shows options (this changes the playthrough: only on a throwaway save).
-               --serialize runs it with Ext._Internal.UiSerialize(true) (patch 0002) and restores it after.
+               --serialize runs it with Ext._Internal.UiSerialize(true) (patch 0002; on by default since 0003)
+               and restores it after.
   leak         N polls of ui.state + ui.dump, then a full GC: the live Noesis boxes and Lua memory must come
                back to about where they started (references are only held while Lua holds a proxy).
   instantiate  Ext.UI.RegisterType + Instantiate (MCM's path): a property round trip, then the context is
@@ -93,7 +94,12 @@ def check_log_text(text: str) -> tuple[str, str]:
         return "FAIL", "View::Update not hooked: releases run on the Lua thread and UiSerialize cannot work"
     if "noesis: View at" not in text:
         return "WARN", "no 'noesis: View at' yet (no UI frame seen; is the game past the splash?)"
-    return "PASS", "View::Update hooked, no crash in the log"
+    m = re.search(r"noesis: (\d+) of (\d+) View input entry points hooked", text)
+    if m is None:
+        return "WARN", "View::Update hooked, but no input hooks in the log (bg3le without patch 0003?)"
+    if m.group(1) != m.group(2):
+        return "WARN", f"only {m.group(1)} of {m.group(2)} View input entry points hooked: hit tests can race Lua"
+    return "PASS", "View::Update and input hooked, no crash in the log"
 
 
 def loaded_lib(pid: int | None) -> Path | None:
@@ -163,14 +169,22 @@ def check_hook(g: Game) -> None:
     try:
         st = lua(g, 'local f = Ext._Internal and Ext._Internal.UiSerialize\n'
                     'if not f then return \'{"patched":false}\' end\n'
-                    'local on, timeouts = f()\n'
-                    'return string.format(\'{"patched":true,"on":%s,"timeouts":%d}\', tostring(on), timeouts)')
+                    'local on, timeouts, ui, gen, leaked = f()\n'
+                    'return string.format(\'{"patched":true,"on":%s,"timeouts":%d,"ui_timeouts":%d,'
+                    '"generation":%d,"leaked":%d}\', tostring(on), timeouts, ui or -1, gen or -1, leaked or -1)')
     except (GameError, NotReady) as e:
         report("FAIL", "hook.patched", f"client eval failed: {e}")
         st = None
     if st is not None:
         if st.get("patched"):
-            report("PASS", "hook.patched", f"UiSerialize present (on={st['on']}, timeouts={st['timeouts']})")
+            detail = (f"UiSerialize on={st['on']}, Lua timeouts={st['timeouts']}, UI timeouts={st['ui_timeouts']}, "
+                      f"generation={st['generation']}, leaked={st['leaked']}")
+            if st["generation"] < 0:
+                report("WARN", "hook.patched", detail + " (bg3le without patch 0003: releases are not generation-gated)")
+            elif not st["on"]:
+                report("WARN", "hook.patched", detail + " (serializing is off: BG3LE_UI_SERIALIZE=0?)")
+            else:
+                report("PASS", "hook.patched", detail)
         else:
             report("FAIL", "hook.patched", "Ext._Internal.UiSerialize missing: the game runs an unpatched bg3le")
     log = latest_log()
@@ -191,8 +205,10 @@ def check_stress(g: Game, seconds: float, answer: bool, serialize: bool) -> None
     except Exception as e:
         report("FAIL", "stress", f"input shim unreachable: {e}")
         return
+    serialize_was = True
     if serialize:
         try:
+            serialize_was = g.eval("return tostring(Ext._Internal.UiSerialize())", context="client") == "true"
             g.eval("Ext._Internal.UiSerialize(true) return 'ok'", context="client")
         except (GameError, NotReady) as e:
             report("FAIL", "stress.serialize", f"cannot switch UiSerialize on: {e}")
@@ -271,12 +287,13 @@ def check_stress(g: Game, seconds: float, answer: bool, serialize: bool) -> None
                 pass
         if serialize:
             try:
-                to = g.eval("Ext._Internal.UiSerialize(false) local _, n = Ext._Internal.UiSerialize() "
-                            "return tostring(n)", context="client")
+                to = g.eval("Ext._Internal.UiSerialize(was) local _, n = Ext._Internal.UiSerialize() "
+                            "return tostring(n)".replace("was", "true" if serialize_was else "false"),
+                            context="client")
                 report("PASS" if to == "0" else "WARN", "stress.serialize",
                        f"{to} lock timeouts (Lua ran unserialized that often)")
             except (GameError, NotReady) as e:
-                report("WARN", "stress.serialize", f"could not switch UiSerialize off: {e}")
+                report("WARN", "stress.serialize", f"could not restore UiSerialize: {e}")
 
     p50 = statistics.median(lat) if lat else 0.0
     p95 = statistics.quantiles(lat, n=20)[-1] if len(lat) >= 20 else max(lat or [0.0])

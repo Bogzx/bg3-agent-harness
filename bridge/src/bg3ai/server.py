@@ -454,7 +454,34 @@ def _remember_names(obj: Any) -> None:
             _remember_names(v)
 
 
+def _trim_after(res: Any) -> Any:
+    """The mod's after={...} portrait summary, cut to what the agent can act on: no position when the result
+    already has one (walks print it as dist=.. @(..)), and outside combat no action economy or slot table
+    (always full there), only hp when hurt. Slots render flat (slots=1:3) so the {..} stays one level deep."""
+    if not isinstance(res, dict) or not isinstance(res.get("after"), dict):
+        return res
+    a = res["after"]
+    if a.get("in_combat"):
+        keep = {k: a[k] for k in ("hp", "max_hp", "action", "bonus", "reaction", "movement", "my_turn") if k in a}
+        for k in ("slots", "pact_slots"):
+            if isinstance(a.get(k), dict) and a[k]:
+                keep[k] = ",".join(f"{lv}:{n}" for lv, n in sorted(a[k].items()))
+    else:
+        keep = {}
+        if a.get("hp") is not None and a.get("max_hp") is not None and a["hp"] < a["max_hp"]:
+            keep["hp"] = f"{render.num(a['hp'])}/{render.num(a['max_hp'])}"
+    if a.get("sneaking"):
+        keep["sneaking"] = True
+    if a.get("pos") is not None and res.get("pos") is None and res.get("position") is None:
+        keep["pos"] = a["pos"]
+    out = {k: v for k, v in res.items() if k != "after"}
+    if keep:
+        out["after"] = keep
+    return out
+
+
 def _job_text(name: str, r: JobResult) -> str:
+    r = JobResult(r.status, _trim_after(r.result), r.error, r.events, r.elapsed_ms)
     if r.status == "done":
         s = f"{name}: done"
         if r.result not in (None, {}, []):
@@ -1253,6 +1280,33 @@ def _inp():
     return _inp_client["c"]
 
 
+def _box_act(tool: str, op: str, args: dict, wait_s: float, rounds: int = 3) -> str:
+    """_act for the client jobs that answer the game's Yes/No box (rests, fast travel, confirm). When the mod
+    says its button press didn't land (needs_click; live S013/S014 "[ForceUpdate] Yes/No" stayed open), click
+    the button with a hover-checked mouse click (boxclick) and run the op again from where it stopped."""
+    from . import boxclick
+
+    out = _act(tool, op, args, context="client", wait_s=wait_s)
+    notes: list[str] = []
+    for _ in range(rounds):
+        res = _batch.get("result")
+        ans = res.get("needs_click") if isinstance(res, dict) else None
+        inp = _inp() if ans else None
+        if inp is None:
+            break
+        c = boxclick.click_box(lambda o, a: game.rpc(o, a, context="client"), inp, str(ans))
+        notes.append(boxclick.describe(c))
+        if tool in ("confirm", "fast_travel") or not (c.get("closed") or c.get("next") or c.get("gone")):
+            if tool != "long_rest" and tool != "short_rest" and not c.get("error"):
+                out = f"{tool}: done — {notes.pop()}" + ("; travelling" if tool == "fast_travel" else "")
+            break
+        time.sleep(0.5)  # the next screen (rest supplies, travel) opens
+        out = _act(tool, op, args, context="client", wait_s=wait_s)
+    if notes:
+        out = "(the button press didn't land: " + "; ".join(notes) + ")\n" + out
+    return out
+
+
 def _click_act(tool: str, op: str, args: dict, wait_s: float = 40.0) -> str:
     """Server op that walks up and then needs a verified click on the target (engine has no direct call)."""
     from .clicker import run_click_action
@@ -1397,7 +1451,7 @@ def set_party(action: str, who: str | None = None, leader: str | None = None) ->
 @_guard
 def fast_travel(waypoint: str) -> str:
     """Travel to an unlocked waypoint (name or id from get_map). Not possible in combat."""
-    return _act("fast_travel", "ui.fast_travel", {"waypoint": waypoint}, context="client", wait_s=60)
+    return _box_act("fast_travel", "ui.fast_travel", {"waypoint": waypoint}, wait_s=60)
 
 
 @mcp.tool()
@@ -1592,7 +1646,7 @@ def manage_inventory(op: str, item: str, who: str | None = None, to: str | None 
 @_guard
 def short_rest() -> str:
     """Short rest (2 per long rest): restores some HP and short-rest resources."""
-    return _act("short_rest", "ui.short_rest", {}, context="client", wait_s=20)
+    return _box_act("short_rest", "ui.short_rest", {}, wait_s=20)
 
 
 @mcp.tool()
@@ -1600,7 +1654,7 @@ def short_rest() -> str:
 def long_rest(confirm: bool = True) -> str:
     """Long rest at camp (go there with camp first): consumes camp supplies, restores everything, may trigger camp scenes (handle them as dialogues). The game's questions on the way ("End the day?", "someone still wants to talk, rest anyway?") are answered Yes and listed in the result; confirm=false stops at the first one instead (then confirm(...))."""
     args: dict[str, Any] = {} if confirm else {"confirm": False}
-    return _act("long_rest", "ui.long_rest", args, context="client", wait_s=90)
+    return _box_act("long_rest", "ui.long_rest", args, wait_s=90)
 
 
 @mcp.tool()
@@ -1690,7 +1744,7 @@ def dismiss_popups() -> str:
 @_guard
 def confirm(answer: str = "yes") -> str:
     """Answer the open Yes/No (OK/Cancel, Confirm...) question box: answer = "yes" | "no" | a button label | its number. Shows the next question if the game asks another."""
-    return _act("confirm", "ui.confirm", {"answer": answer}, context="client", wait_s=8)
+    return _box_act("confirm", "ui.confirm", {"answer": answer}, wait_s=8)
 
 
 @mcp.tool()

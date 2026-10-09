@@ -539,7 +539,8 @@ def unattended_payload(d: Path, runner_status: dict, now: float | None = None, l
     rec = [e for e in evs if e.get("kind") == "recovered"]
     secs = sorted(e["seconds"] for e in rec if isinstance(e.get("seconds"), (int, float)))
     shown = [e for e in evs if e.get("kind") in ("fault", "recovered", "recovery_failed", "steam_refused",
-                                                  "setup_failed", "runner_stop")]
+                                                  "setup_failed", "launch_failed", "launch_gave_up", "runner_stop")]
+    alert = runner_status.get("alert") if isinstance(runner_status.get("alert"), dict) else None
     return {"live": live is not None,
             "current_h": round(hours[-1], 2) if live is not None else None,
             "longest_h": round(max(hours), 2) if hours else None,
@@ -548,6 +549,8 @@ def unattended_payload(d: Path, runner_status: dict, now: float | None = None, l
             "faults": faults, "fault_total": sum(faults.values()),
             "recovered": len(rec), "failed": sum(e.get("kind") == "recovery_failed" for e in evs),
             "steam_refused": sum(e.get("kind") == "steam_refused" for e in evs),
+            "launch_failed": sum(e.get("kind") == "launch_failed" for e in evs),
+            "alert": alert,
             "steam_offline": runner_status.get("steam_offline"),
             "recovery_s_median": secs[len(secs) // 2] if secs else None,
             "recovery_s_max": secs[-1] if secs else None,

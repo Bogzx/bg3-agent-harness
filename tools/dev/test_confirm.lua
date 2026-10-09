@@ -71,7 +71,7 @@ BG3AI = {
             return true
         end,
         props = function() return {} end,
-        prop = function() return nil end,
+        prop = function(e, k) if k == "IsMouseOver" and type(e) == "table" then return e.over end return nil end,
         path = function(dc, p)
             if p == "CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.IsInCamp" then return inCamp end
             return nil
@@ -207,6 +207,51 @@ for _ = 1, 20 do clock = clock + 50 j.on_tick(j) if j.status ~= "running" then b
 ok(j.status == "failed" and tostring(j.error):find("answer with confirm"), "confirm=false fails with the question: " .. tostring(j.error))
 ok(widgets.Dialog_box ~= nil, "box left open")
 
+
+-- long rest: a box whose Yes ignores its Command (live S013/S014 "[ForceUpdate] Yes/No") -> needs_click
+-- after one press, not three; the re-run after the bridge's click opens the rest screen
+widgets = {}
+local deadPresses = 0
+BG3AI.UI.command = (function(orig)
+    return function(dc, name, param, dry)
+        if name == "CampTravel" and not dry then
+            commands[#commands + 1] = name
+            W("Dialog_box", { "[ForceUpdate]" }, { { "Yes", nil, function() deadPresses = deadPresses + 1 end },
+                { "No", nil, function() deadPresses = deadPresses + 1 end } })
+            return true
+        end
+        return orig(dc, name, param, dry)
+    end
+end)(BG3AI.UI.command)
+r = ops["ui.long_rest"]({})
+j = run(r.job, 5000)
+ok(j.status == "failed" and j.result and j.result.needs_click == "yes", "dead box -> needs_click: " .. tostring(j.status) .. " " .. tostring(j.error))
+ok(deadPresses == 1, "pressed once before asking for a click: " .. deadPresses)
+-- the bridge clicks Yes: the box closes and the rest screen is up; long_rest runs again from there
+widgets.Dialog_box = nil
+W("MakeCamp", {}, {})
+local nCamp = #commands
+r = ops["ui.long_rest"]({})
+ok(#commands == nCamp, "re-run with the rest screen open doesn't ask CampTravel again")
+
+-- ui.confirm on a dead box: still_open + needs_click
+widgets = {}
+W("Dialog_box", { "[ForceUpdate]" }, { { "Yes", nil, function() end }, { "No", nil, function() end } })
+j = run(ops["ui.confirm"]({ answer = "no" }).job)
+ok(j.status == "done" and j.result.still_open and j.result.needs_click == "no", "confirm dead box -> needs_click=no")
+
+-- ui.confirm_probe: hover state of the answering button
+local pr = ops["ui.confirm_probe"]({ answer = "yes" })
+ok(pr.box == true and pr.label == "Yes" and pr.over == false and pr.over_other == nil, "probe: not over")
+widgets.Dialog_box.buttons[2].over = true
+pr = ops["ui.confirm_probe"]({ answer = "yes" })
+ok(pr.over == false and pr.over_other == 2, "probe: over the other button")
+widgets.Dialog_box.buttons[2].over = nil
+widgets.Dialog_box.buttons[1].over = true
+pr = ops["ui.confirm_probe"]({ answer = "yes" })
+ok(pr.over == true, "probe: over Yes")
+widgets = {}
+ok(ops["ui.confirm_probe"]({}).box == false, "probe: no box")
 
 -- ui.key names (live S007: press_key DELETE -> "not a SDLScanCode: DELETE")
 local function ks(k, m) local a, b = A.keySpec(k, m) return a .. "|" .. table.concat(b or {}, ",") end

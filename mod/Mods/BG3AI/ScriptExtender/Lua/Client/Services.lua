@@ -109,12 +109,20 @@ local function handleConfirm(job, args, max)
     job.confirms = job.confirms or {}
     local now = RPC.now_ms()
     if now - (job.confirmAt or 0) < 700 then return true end -- the last press is still closing the box
+    -- The same box still up after a press: the command press didn't land (live S013/S014: the rest
+    -- flow's "[ForceUpdate] Yes/No" box ignores its button's Command, a mouse click works). Hand it
+    -- to the bridge for a hover-checked click instead of pressing again (needs_click).
+    local sig = q .. "#" .. table.concat(labels, "|")
+    if job.confirmSig == sig then
+        return "failed", { needs_click = "yes", confirmed = job.confirms },
+            "the Yes press didn't close the game's question: " .. q .. " [" .. table.concat(labels, "/") .. "]"
+    end
     if #job.confirms >= (max or 3) then
-        return "failed", nil, "too many confirmations; still asking: " .. q .. " [" .. table.concat(labels, "/") .. "]"
+        return "failed", { confirmed = job.confirms }, "too many confirmations; still asking: " .. q .. " [" .. table.concat(labels, "/") .. "]"
     end
     local ok, view = A.answerConfirm("yes", false)
-    job.confirmAt = now
-    if not ok then return "failed", nil, "couldn't answer the game's question (" .. q .. "): " .. tostring(view) end
+    job.confirmAt, job.confirmSig = now, sig
+    if not ok then return "failed", { needs_click = "yes" }, "couldn't answer the game's question (" .. q .. "): " .. tostring(view) end
     job.confirms[#job.confirms + 1] = (view.text or view.title or "?") .. " -> " .. tostring(view.pressed)
     return true
 end
@@ -547,8 +555,8 @@ RPC.register("ui.short_rest", function(args)
         if before and now and now < before then
             return "done", { short_rests_left = now, of = max, confirmed = job.confirms }
         end
-        local c, _, err = handleConfirm(job, args)
-        if c == "failed" then return "failed", nil, err end
+        local c, cres, err = handleConfirm(job, args)
+        if c == "failed" then return "failed", cres, err end
     end)
 end)
 
@@ -568,8 +576,8 @@ RPC.register("ui.long_rest", function(args)
         local w = visibleWidget("MakeCamp")
         -- "End the day?" comes before the rest screen opens; others may follow it.
         if phase ~= "resting" then
-            local c, _, err = handleConfirm(job, args)
-            if c == "failed" then return "failed", { confirmed = job.confirms }, err end
+            local c, cres, err = handleConfirm(job, args)
+            if c == "failed" then return "failed", cres or { confirmed = job.confirms }, err end
             if c then
                 if phase == "open" then phaseStart = RPC.now_ms() end
                 return nil
@@ -835,8 +843,11 @@ RPC.register("ui.fast_travel", function(args)
             state.sent, state.target, state.t = true, wp, RPC.now_ms()
             return nil
         end
-        local c, _, cerr = handleConfirm(state, args)
-        if c == "failed" then closeMap(opened) return "failed", nil, cerr end
+        local c, cres, cerr = handleConfirm(state, args)
+        if c == "failed" then
+            if not (cres and cres.needs_click) then closeMap(opened) end
+            return "failed", cres, cerr
+        end
         if c then state.t = RPC.now_ms() return nil end
         -- Arrived once the party moved and the game is running again.
         local gs = tostring(try(Ext.Utils.GetGameState) or "?")

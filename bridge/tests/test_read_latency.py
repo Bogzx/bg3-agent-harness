@@ -93,6 +93,14 @@ class _Queue:
         self.t.join()
 
 
+def _settle(g: Game) -> None:
+    """Wait for g's background event drains (read() without client ops drains the client context on a
+    helper thread) so eval counts taken after this don't race a late eval."""
+    for t in list(g._bg_drain.values()):
+        if t is not None:
+            t.join(5)
+
+
 def _measure(fn, g: Game, n: int = 30) -> dict:
     ms = []
     for i in range(n):
@@ -158,18 +166,22 @@ class ReadLatency(unittest.TestCase):
         self.assertLess(n["median"], o["median"] / 2)
 
     def test_one_eval_per_context(self):
-        g = Game(port=self.fake.port)
+        fake = _fake()  # its own: the class fake can still get late evals from the timing tests' Games
+        g = Game(port=fake.port)
         try:
             g.begin_tool()
             g.read1("state.nearby")  # warm the pool
-            before = len(self.fake.evals)
+            _settle(g)  # the warm-up's background client drain must not land in the count
+            before = len(fake.evals)
             g.begin_tool()
             g.read([("state.status", {}), ("nav.markers", {})], [("ui.state", {})])
             g.drain_events("server")
             g.drain_events("client")
-            self.assertEqual(len(self.fake.evals) - before, 2)  # one server eval, one client eval, no drains
+            _settle(g)
+            self.assertEqual(len(fake.evals) - before, 2)  # one server eval, one client eval, no drains
         finally:
             g.close()
+            fake.stop()
 
     def test_strict_read_keeps_the_mods_error(self):
         g = Game(port=self.fake.port)
@@ -200,28 +212,35 @@ class LiveTicks(unittest.TestCase):
     contexts on parallel() helper threads, which didn't see the read's thread-local "already drained" mark,
     so each read paid a second tick; and server-only reads also waited for the slow client tick."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.fake = FakeBg3le(server_tick_s=LIVE_TICK_S, client_tick_s=LIVE_CTICK_S)
+    @staticmethod
+    def _live_fake() -> FakeBg3le:
+        fake = FakeBg3le(server_tick_s=LIVE_TICK_S, client_tick_s=LIVE_CTICK_S)
         base = _fake()  # same ops
         base.stop()
-        cls.fake.ops, cls.fake.cost_s = base.ops, base.cost_s
-        cls.fake.start()
+        fake.ops, fake.cost_s = base.ops, base.cost_s
+        return fake.start()
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fake = cls._live_fake()
 
     @classmethod
     def tearDownClass(cls):
         cls.fake.stop()
 
     def test_events_section_after_read_costs_no_eval(self):
-        g = Game(port=self.fake.port)
+        fake = self._live_fake()  # its own, so no other test's late eval lands in the count
+        g = Game(port=fake.port)
         try:
             _tool(g, lambda g: g.read1("state.nearby"))  # warm the pool
-            time.sleep(0.1)
-            before = len(self.fake.evals)
+            _settle(g)
+            before = len(fake.evals)
             _tool(g, lambda g: g.read([("state.status", {}), ("nav.markers", {})], [("ui.state", {})]))
-            self.assertEqual(len(self.fake.evals) - before, 2)  # one server + one client eval, no drains
+            _settle(g)
+            self.assertEqual(len(fake.evals) - before, 2)  # one server + one client eval, no drains
         finally:
             g.close()
+            fake.stop()
 
     def test_server_only_read_does_not_wait_for_the_client_tick(self):
         g = Game(port=self.fake.port)
@@ -253,11 +272,7 @@ class LiveTicks(unittest.TestCase):
             g.close()
 
     def test_background_client_events_arrive_once_on_the_next_tool(self):
-        fake = FakeBg3le(server_tick_s=LIVE_TICK_S, client_tick_s=LIVE_CTICK_S)
-        base = _fake()
-        base.stop()
-        fake.ops, fake.cost_s = base.ops, base.cost_s
-        fake.start()
+        fake = self._live_fake()
         g = Game(port=fake.port)
         try:
             fake.emit("client", "dialogue_started")

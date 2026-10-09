@@ -376,9 +376,33 @@ RPC.register("ui.confirm", function(args)
             -- Same-looking box: either a second question with the same buttons (the
             -- rest flow asks twice) or the press didn't land; the caller looks again.
             view.next, view.still_open = v, true
+            -- live S013: pressed=Yes via=command still_open, Yes and No alike; the bridge clicks it
+            if tostring(view.via) == "command" then view.needs_click = args.answer or "yes" end
             return "done", view
         end
     end)
+end)
+
+-- ui.confirm_probe {answer?="yes"} -> {box=false} | {box=true, over, label, buttons, title?, text?}
+-- Is the cursor over the button that answers `answer`? The bridge's hover-checked click on a box whose
+-- button ignores its Command (boxclick.py) moves the cursor, probes, and clicks only when over = true.
+RPC.register("ui.confirm_probe", function(args)
+    local box = A.confirmBox()
+    if not box then return { box = false } end
+    local b = A.pickConfirm(box.buttons, args.answer)
+    local view = boxView(box)
+    view.box = true
+    if not b then
+        view.error = "no button matches '" .. tostring(args.answer) .. "'"
+        return view
+    end
+    view.label = b.label
+    view.over = UI.prop(b.el, "IsMouseOver") == true
+    -- the cursor over another button of the box (which side to search)
+    for i, o in ipairs(box.buttons) do
+        if o ~= b and UI.prop(o.el, "IsMouseOver") == true then view.over_other = i end
+    end
+    return view
 end)
 
 ------------------------------------------------------------------------

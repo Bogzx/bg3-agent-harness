@@ -90,3 +90,61 @@ class ActionsDelta(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AfterTrim(unittest.TestCase):
+    """walk_toward/interact results printed a full portrait after={...} and the position twice (S013)."""
+
+    AFTER = {"max_hp": 50, "movement": 9, "pos": [-175.4, 20, -331.9], "slots": {"1": 3}, "action": 1,
+             "bonus": 1, "hp": 48, "reaction": 1}
+
+    def text(self, result):
+        from bg3ai.game import JobResult
+        return server._job_text("walk_toward", JobResult("done", result))
+
+    def test_walk_outside_combat(self):
+        out = self.text({"dist": 0.1, "pos": [-175.4, 20, -331.9], "after": dict(self.AFTER)})
+        self.assertEqual(out.count("@("), 1)
+        self.assertNotIn("movement", out)
+        self.assertNotIn("slots", out)
+        self.assertIn("hp=48/50", out)
+
+    def test_unhurt_outside_combat_has_no_after(self):
+        out = self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, hp=50)})
+        self.assertNotIn("after", out)
+
+    def test_interact_keeps_the_position(self):
+        out = self.text({"after": dict(self.AFTER, hp=50)})  # no position of its own
+        self.assertIn("@(-175.4,20,-331.9)", out)
+
+    def test_in_combat_keeps_the_economy_flat(self):
+        out = self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, in_combat=True, my_turn=True)})
+        self.assertIn("movement=9", out)
+        self.assertIn("slots=1:3", out)
+        self.assertEqual(out.count("{"), 1)  # one level: the combat_turn regex strips after={...} whole
+        self.assertEqual(out.count("@("), 1)
+
+
+class ClutterInChanges(unittest.TestCase):
+    def test_props_are_counted_not_listed(self):
+        from bg3ai import delta
+        H = render.Handles()
+        items = [{"uuid": f"00000000-0000-0000-0000-0000000000{i:02d}", "name": n, "kind": k, "dist": 5.0 + i}
+                 for i, (n, k) in enumerate([("Candle", "usable"), ("Tin Cup", "item"), ("Padded Chair", "usable"),
+                                             ("Door", "door"), ("Plate Armour", "item"), ("Candle", "usable"),
+                                             ("Wooden Chest", "container")])]
+        items.append({"uuid": "00000000-0000-0000-0000-000000000099", "name": "Candle", "kind": "usable",
+                      "dist": 3.0, "story": True})
+        old = delta.snapshot(H, nearby={"characters": [], "items": []})
+        new = delta.snapshot(H, nearby={"characters": [], "items": items})
+        out = "\n".join(delta.diff(old, new, H))
+        self.assertNotIn("Tin Cup", out)
+        self.assertNotIn("Padded Chair", out)
+        self.assertIn("Door", out)
+        self.assertIn("Plate Armour", out)
+        self.assertIn("Wooden Chest", out)
+        self.assertEqual(out.count("Candle"), 1)  # the story one
+        self.assertIn("props 4", out)
+        gone = "\n".join(delta.diff(new, old, H))
+        self.assertNotIn("Tin Cup", gone)
+        self.assertIn("Door", gone)

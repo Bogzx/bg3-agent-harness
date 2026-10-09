@@ -80,12 +80,25 @@ class PatchTest(unittest.TestCase):
             self.assertIn(needle, inl)
         ui = (self.src / "src" / "noesis_ui.cpp").read_text()
         self.assertEqual(ui.count("    bg3le_ui_drain_releases();"), 2)  # both Update hooks
-        # 0002: the opt-in serializer, off unless BG3LE_UI_SERIALIZE=1 / UiSerialize(true)
-        self.assertEqual(ui.count("= bg3le_ui_frame_begin();"), 2)
-        self.assertEqual(ui.count("bg3le_ui_frame_end(taken);"), 2)
-        for needle in ("std::atomic<bool> g_serialize{ false };", '"BG3LE_UI_SERIALIZE"', '"UiSerialize"',
-                       "try_lock_for"):
+        # 0002 + 0003: the serializer, on unless BG3LE_UI_SERIALIZE=0 / UiSerialize(false); held by
+        # both Update hooks and the input hooks (one template), timed on both sides
+        self.assertEqual(ui.count("= bg3le_ui_frame_begin();"), 3)
+        self.assertEqual(ui.count("bg3le_ui_frame_end(taken);"), 3)
+        for needle in ("_ZN6Noesis4View9MouseMoveEii", "_ZThn16_N6Noesis4View9MouseMoveEii",
+                       "_ZN6Noesis4View7KeyDownENS_3KeyE", "hook_input("):
+            self.assertIn(needle, ui)
+        for needle in ("std::atomic<bool> g_serialize{ true };", '"BG3LE_UI_SERIALIZE"', '"UiSerialize"',
+                       "try_lock_for(std::chrono::milliseconds(kUiWaitMs))"):
             self.assertIn(needle, inl)
+        # 0003: a release only in the generation its reference was taken in, else leaked; the
+        # generation moves on a View replacement and on loads
+        for needle in ("h->Generation = g_generation.load();", "r.Generation != g_generation.load()",
+                       "!ui_settled()", 'extern "C" void bg3le_ui_new_generation(char const* why)',
+                       "g_releases.clear();"):
+            self.assertIn(needle, inl)
+        self.assertIn('bg3le_ui_new_generation("View replaced");', ui)
+        gs = (self.src / "src" / "game_state.cpp").read_text()
+        self.assertIn("if (!in_play(last) || !in_play(now)) bg3le_ui_new_generation(now);", gs)
 
     def test_partly_applied_is_refused(self):
         # Only the first patch in place (an older checkout of patches/): neither state, so a stop.

@@ -8,7 +8,8 @@ Faults covered, each through the real Runner.play_session (detect → stop claud
   port lost    the process lives on but the debug port stops answering
   game hang    the port stays open but every eval times out (the fake blocks for the eval's timeout)
   agent hang   claude prints nothing for AGENT_SILENT_MINUTES and ignores SIGINT/SIGTERM (needs SIGKILL)
-plus: the worst-case detection budget with the real constants (≤ 3 min), the Steam-offline guard before any
+plus a crash during the relaunch's load (bg3le `crash:` log → retry, then the previous good save, then give up
+with an alert), LaunchWatch's crash signs, the memory note after a crash, the worst-case detection budget with the real constants (≤ 3 min), the Steam-offline guard before any
 launch, and session-config.json "minutes" switching the session length between sessions.
 
 The fake game is a real process started by the real Runner.launch_game() (LAUNCH_SH points at a stub script),
@@ -70,6 +71,23 @@ class FakeGame:
         self.saves = list(saves)
         self.hung_pid: int | None = None   # a hang belongs to one game process; a relaunch answers again
         self.port_lost_pid: int | None = None   # process alive, port 9998 closed
+        self.crash_loads: dict[str, int] = {}   # save folder → how many launches with it crash during the load
+        self.load_crashed: set[int] = set()     # launches (stub pids) that crashed: bg3le crash log, port closed
+
+    def load_crashes(self) -> bool:
+        """Like S014's relaunch: bg3le logs `crash: signal 11` mid-load, the port closes, the launcher lives on."""
+        folder, pid = self.loaded(), self.r.game_proc.pid
+        if pid in self.load_crashed:
+            return True
+        if folder is None or self.crash_loads.get(folder, 0) <= 0:
+            return False
+        self.crash_loads[folder] -= 1
+        self.load_crashed.add(pid)
+        logs = P.RUNTIME / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / f"bg3le-{self.r.state['game']['stamp']}.log.{pid}").write_text(
+            "[ 1.0] bg3le loaded\n[ 9.1] crash: signal 11 at (nil) on tid 7\n[ 9.1] crash:   pc bg3+0x55cf2e6\n")
+        return True
 
     @property
     def hung(self) -> bool:
@@ -87,7 +105,7 @@ class FakeGame:
         return a[a.index("--load") + 1] if "--load" in a else None
 
     def port_open(self, *a, **k) -> bool:
-        return self.alive() and self.r.game_proc.pid != self.port_lost_pid
+        return self.alive() and self.r.game_proc.pid != self.port_lost_pid and not self.load_crashes()
 
     def game_state(self, timeout: float = P.EVAL_TIMEOUT):
         try:
@@ -132,7 +150,8 @@ class CrashRecovery(unittest.TestCase):
                  "AGENT_SILENT_MINUTES", "SIGINT_GRACE", "SIGTERM_GRACE", "KILL_GRACE",
                  "port_open", "game_state", "lua_eval", "rpc",
                  "server_ready", "available_ops", "host_character_name", "ui_screen", "read_progress",
-                 "pids_of_game", "list_saves", "RESUME_MIN_MINUTES", "steam_ready")
+                 "pids_of_game", "list_saves", "RESUME_MIN_MINUTES", "steam_ready", "crash_reporter_pids",
+                 "LAUNCH_BACKOFF")
         self.saved = {n: getattr(P, n) for n in names}
         os.environ.pop("FAKE_CLAUDE_HANG", None)
         P.RUNTIME = self.tmp / "runtime"
@@ -143,6 +162,8 @@ class CrashRecovery(unittest.TestCase):
         P.AGENT_SILENT_MINUTES = 2               # the fake claude idles silently; test_agent_hang sets 3 s
         P.SIGINT_GRACE, P.SIGTERM_GRACE, P.KILL_GRACE = 2, 2, 2
         P.steam_ready = lambda: (True, "test: offline")
+        P.crash_reporter_pids = lambda: []   # never a real reporter (kill_game would kill it)
+        P.LAUNCH_BACKOFF = (0.2, 0.2)
 
         r = P.Runner(P.Options("crash-test", None, 20, "opus", save_owner="Claude"))
         r.next_sid = lambda: "S001"
@@ -174,9 +195,11 @@ class CrashRecovery(unittest.TestCase):
     def claude_runs(self) -> list[list[str]]:
         return [json.loads(ln)["argv"] for ln in self.claude_log.read_text().splitlines()]
 
-    def crash_after(self, s: float, hang: bool = False, port_lost: bool = False) -> None:
+    def crash_after(self, s: float, hang: bool = False, port_lost: bool = False, load_crashes=None) -> None:
         def go():
             time.sleep(s)
+            if load_crashes:
+                self.g.crash_loads = dict(load_crashes)   # the relaunches crash, not the session's first launch
             if hang:
                 self.g.hung_pid = self.r.game_proc.pid
             elif port_lost:
@@ -224,6 +247,46 @@ class CrashRecovery(unittest.TestCase):
         self.assertTrue((self.r.state.dir / "S001-r1.log").exists())
         self.assertIn("FAULT crash: game process exited", log)
         self.assertIn("relaunched", self.assert_recovered("crash", 20)["how"])
+
+    def test_crash_during_the_relaunch_is_seen_in_seconds_and_retried(self):
+        # S014: the relaunch crashed mid-load (bg3le `crash:` lines), the launcher lived on, and the runner waited
+        # 10 min for "game state Running". Now the crash log ends the wait and the same save is tried again.
+        self.crash_after(3, load_crashes={"Claude-2__S001-before-imps": 1})
+        t0 = time.time()
+        res = self.r.play_session(20, first=True)
+        self.assertEqual(res.reason, "exited")
+        self.assertEqual(self.g.loaded(), "Claude-2__S001-before-imps")
+        log = (P.RUNTIME / "runner.log").read_text()
+        self.assertIn("game died while waiting for", log)
+        self.assertIn("bg3le logged crash: signal 11", log)
+        self.assertIn("launch 1/3 with Claude-2__S001-before-imps failed", log)
+        ev = self.events()
+        self.assertEqual([e["attempt"] for e in ev if e["kind"] == "launch_failed"], [1])
+        self.assert_recovered("crash", 20)
+        self.assertLess(time.time() - t0, 40)
+        self.assertNotIn("crashed the game on load", " ".join(self.claude_runs()[1]))   # same save: no note
+
+    def test_second_load_crash_falls_back_to_the_previous_good_save(self):
+        self.crash_after(3, load_crashes={"Claude-2__S001-before-imps": 2})
+        res = self.r.play_session(20, first=True)
+        self.assertEqual(res.reason, "exited")
+        self.assertEqual(self.g.loaded(), "Claude-1__S001-start")
+        self.assertEqual(self.r.state["loaded_save"], "Claude-1__S001-start")
+        prompt = self.claude_runs()[1][self.claude_runs()[1].index("-p") + 1]
+        self.assertIn('"S001-before-imps" crashed the game on load 2 times', prompt)
+        self.assertIn('save "S001-start"', prompt)                                  # recover()'s note: the real one
+        self.assertIn("retrying in 0.2 s with Claude-1__S001-start", (P.RUNTIME / "runner.log").read_text())
+
+    def test_three_load_crashes_stop_the_runner_loudly(self):
+        self.crash_after(3, load_crashes={"Claude-2__S001-before-imps": 9, "Claude-1__S001-start": 9})
+        with self.assertRaises(P.LaunchGaveUp) as cm:
+            self.r.play_session(20, first=True)
+        self.assertIn("3 launches in a row died", str(cm.exception))
+        self.assertEqual([e["save"] for e in self.events() if e["kind"] == "launch_failed"],
+                         ["Claude-2__S001-before-imps", "Claude-2__S001-before-imps", "Claude-1__S001-start"])
+        self.assertEqual(self.r.state["history"][-1]["reason"], "crash")       # the session is still recorded
+        self.assertFalse(self.g.alive())                                       # the last dead launch was killed
+        self.assertEqual(len(self.claude_runs()), 1)                           # no resume into a dead game
 
     def test_port_lost_with_process_alive_is_recovered(self):
         self.crash_after(3, port_lost=True)
@@ -391,6 +454,131 @@ class RunLoop(unittest.TestCase):
         self.assertEqual((kinds[0], kinds[-1]), ("runner_start", "runner_stop"))
         self.assertNotIn("setup_failed", kinds)
         self.assertIn("Steam not offline", (P.RUNTIME / "runner.log").read_text())
+
+
+    def test_launch_gave_up_stops_the_runner_with_an_alert(self):
+        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
+        r.check_memory = lambda: None
+
+        def play(minutes, first):
+            raise P.LaunchGaveUp("3 launches in a row died before the save played: x")
+        r.play_session = play
+        self.assertEqual(r.run(), 1)
+        evs = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
+        self.assertEqual([e["kind"] for e in evs][-2:], ["launch_gave_up", "runner_stop"])
+        self.assertEqual(evs[-1]["why"], "gave up: the game crashes on every launch")
+        alert = json.loads((P.RUNTIME / "runner.status.json").read_text())["alert"]
+        self.assertEqual(alert["kind"], "launch_gave_up")
+        self.assertIn("GAME CRASH LOOP", (P.RUNTIME / "runner.log").read_text())
+        r2 = P.Runner(P.Options("loop-test", None, 20, "opus"))                # the next run clears the alert
+        r2.check_memory = lambda: None
+        r2.stop_requested = True
+        r2.run()
+        self.assertIsNone(json.loads((P.RUNTIME / "runner.status.json").read_text())["alert"])
+
+
+class Watch(unittest.TestCase):
+    """LaunchWatch: each crash sign, read from fakes (no real processes or ports)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-watch-"))
+        self.saved = {n: getattr(P, n) for n in ("pids_of_game", "crash_reporter_pids", "port_open")}
+        self.pids, self.reporters, self.port = [], [], False
+        P.pids_of_game = lambda: list(self.pids)
+        P.crash_reporter_pids = lambda: list(self.reporters)
+        P.port_open = lambda *a, **k: self.port
+        self.w = P.LaunchWatch("20261010-020143", self.tmp, started=100.0)
+
+    def tearDown(self):
+        for n, v in self.saved.items():
+            setattr(P, n, v)
+
+    def test_crash_line_in_this_launchs_bg3le_log(self):
+        main = self.tmp / "bg3le-20261010-020143.log.379707"
+        (self.tmp / "bg3le-20261009-222233.log.124451").write_text("[ 1.0] crash: signal 11 (an older launch)\n")
+        main.write_text("[ 1.0] bg3le loaded\n[ 2.0] Lua debugger listening\n[ 3.0] cra")   # partial last line
+        self.assertIsNone(self.w.check(now=101))
+        with open(main, "a") as f:
+            f.write("sh: signal 11 at (nil) on tid 379801\n[ 3.0] crash:   pc bg3+0x55cf2e6\n")
+        self.assertEqual(self.w.check(now=102), "bg3le logged crash: signal 11 at (nil) on tid 379801")
+
+    def test_crash_reporter_log_and_process(self):
+        (self.tmp / "bg3le-20261010-020143.log.383698").write_text(
+            "[ 1.0] bg3le loaded\n[ 1.0] host is LinuxCrashReporter, not bg3 -- bg3le stays inactive\n")
+        self.assertIn("LinuxCrashReporter started", self.w.check(now=101))
+        w = P.LaunchWatch("other", self.tmp, started=100.0)
+        self.reporters = [4242]
+        self.assertEqual(w.check(now=101), "LinuxCrashReporter is running (pid 4242)")
+
+    def test_bg3_gone_after_it_was_up(self):
+        self.assertIsNone(self.w.check(now=101))          # not up yet: still launching
+        self.pids, self.port = [7], True
+        self.assertIsNone(self.w.check(now=105))
+        self.pids = []
+        self.assertEqual(self.w.check(now=110), "the bg3 process is gone")
+
+    def test_port_refused_too_long_with_bg3_up(self):
+        self.pids = [7]
+        self.assertIsNone(self.w.check(now=110))
+        self.assertIsNone(self.w.check(now=169))
+        self.assertIn("refused for 61 s", self.w.check(now=171))
+        w = P.LaunchWatch("x", self.tmp, started=100.0)  # open, then closed: counted from the last open
+        self.port = True
+        self.assertIsNone(w.check(now=110))
+        self.port = False
+        self.assertIsNone(w.check(now=169))
+        self.assertIn("refused for 61 s", w.check(now=171))
+
+
+class MemoryAfterCrash(unittest.TestCase):
+    """close_memory_session after a game fault: the handoff error is not passed on as a lint task (S014)."""
+
+    S014 = ("memory lint: m — 2 error(s), 0 warning(s)\n"
+            "ERROR  handoff     HANDOFF.md was written by S013, not by the current session S014. Rewrite it.\n"
+            "ERROR  stale       objectives.md unchanged for 3 sessions\nFix the errors above, then re-run.\n")
+
+    def runner(self, report: str):
+        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-mem-"))
+        P.RUNTIME = self.tmp / "runtime"
+        r = P.Runner(P.Options("mem-test", None, 20, "opus"))
+        r.memory_state = lambda: {"open": True, "current": 14}
+        r.session_py = lambda *a: P.subprocess.CompletedProcess(a, 1, report, "")
+        self.fix_runs = []
+        r.run_claude = lambda *a, **k: self.fix_runs.append(a)
+        return r
+
+    def setUp(self):
+        self.saved_rt = P.RUNTIME
+
+    def tearDown(self):
+        P.RUNTIME = self.saved_rt
+
+    def res(self, reason):
+        return P.SessionResult("S014", "c", 0, reason, time.time() - 400, time.time())
+
+    def test_lint_error_lines(self):
+        self.assertEqual(P.memory_lint_errors(self.S014, skip=("handoff",)),
+                         ["ERROR  stale       objectives.md unchanged for 3 sessions"])
+        self.assertEqual(len(P.memory_lint_errors(self.S014)), 2)
+
+    def test_crash_with_only_the_handoff_error_leaves_no_note(self):
+        r = self.runner("ERROR  handoff     HANDOFF.md was written by S013, not by the current session S014.\n")
+        r.close_memory_session(self.res("crash"))
+        self.assertEqual((r.pending_notes, self.fix_runs), ([], []))
+        self.assertIn("memory left open for the next session", (P.RUNTIME / "runner.log").read_text())
+
+    def test_crash_passes_on_other_errors_only(self):
+        r = self.runner(self.S014)
+        r.close_memory_session(self.res("hang"))
+        self.assertEqual(len(r.pending_notes), 1)
+        self.assertIn("objectives.md unchanged", r.pending_notes[0])
+        self.assertNotIn("written by S013", r.pending_notes[0])
+
+    def test_normal_end_still_runs_the_fix_pass_and_passes_everything_on(self):
+        r = self.runner(self.S014)
+        r.close_memory_session(self.res("exited"))
+        self.assertEqual(len(self.fix_runs), 1)
+        self.assertIn("written by S013", r.pending_notes[0])
 
 
 class LiveSessionLength(unittest.TestCase):

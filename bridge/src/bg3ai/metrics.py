@@ -293,8 +293,15 @@ def stream_records(ev: dict, t: float) -> list[dict]:
     out: list[dict] = []
     typ = ev.get("type")
     if typ == "assistant":
-        out.append({"type": "assistant", "t": round(t, 3)})
-        for c in (ev.get("message") or {}).get("content") or []:
+        msg = ev.get("message") or {}
+        a: dict = {"type": "assistant", "t": round(t, 3)}
+        est = _content_tokens(msg.get("content"))
+        if msg.get("id"):
+            a["mid"] = msg["id"]
+        if est:
+            a["est"] = est
+        out.append(a)
+        for c in msg.get("content") or []:
             if isinstance(c, dict) and c.get("type") == "tool_use":
                 name = _bare(c.get("name", ""))
                 r = {"type": "use", "t": round(t, 3), "id": c.get("id"), "name": name}
@@ -306,7 +313,70 @@ def stream_records(ev: dict, t: float) -> list[dict]:
         for c in content if isinstance(content, list) else []:
             if isinstance(c, dict) and c.get("type") == "tool_result":
                 out.append({"type": "result", "t": round(t, 3), "id": c.get("tool_use_id")})
+    elif typ == "system" and ev.get("subtype") == "thinking_tokens":
+        out.append({"type": "think_tok", "t": round(t, 3), "n": ev.get("estimated_tokens") or 0})
+    elif typ == "result":  # the run's end: exact API time and output tokens for the whole session
+        u = ev.get("usage") or {}
+        out.append({"type": "session_result", "t": round(t, 3), "api_ms": ev.get("duration_api_ms"),
+                    "out": u.get("output_tokens"), "turns": ev.get("num_turns")})
     return out
+
+
+def _content_tokens(content: Any) -> int:
+    """Output tokens of one stream-json assistant event, estimated from its size (chars / 3.5): the stream's
+    per-message usage.output_tokens is partial. Thinking text is usually redacted; think_tok records count it."""
+    n = 0
+    for c in content if isinstance(content, list) else []:
+        if not isinstance(c, dict):
+            continue
+        if c.get("type") == "text":
+            n += len(c.get("text") or "")
+        elif c.get("type") == "tool_use":
+            n += len(json.dumps(c.get("input"), separators=(",", ":"))) + len(c.get("name") or "") + 10
+        elif c.get("type") == "thinking":
+            n += len(c.get("thinking") or "")
+    return round(n / 3.5)
+
+
+def api_speed(turns: list[dict]) -> dict:
+    """API speed next to think time, so an API slowdown shows up as such (impl-act: think rose 1.2 -> 2.9 s
+    while tokens per turn stayed flat and ms per output token went 13 -> 22). Per model turn: API seconds =
+    the previous tool result to the turn's last streamed block; output tokens = the content estimate plus the
+    thinking estimate. The session's final `result` event (exact duration_api_ms / output_tokens / num_turns)
+    replaces the estimate when present. The estimate reads ~1.4x high on ms/token (thinking is redacted in the
+    stream; S003 21 vs 12.7 exact, S013 31 vs 21.9) but follows the same trend."""
+    exact = [r for r in turns if r.get("type") == "session_result" and r.get("api_ms") and r.get("out")]
+    if exact:
+        r = exact[-1]
+        n = r.get("turns") or 0
+        return {"source": "result", "ms_per_out_tok": round(r["api_ms"] / r["out"], 1),
+                "api_s_per_turn": round(r["api_ms"] / 1000.0 / n, 2) if n else None,
+                "out_tok_per_turn": round(r["out"] / n) if n else None, "turns": n}
+    per: list[dict] = []
+    last_result, cur, think = None, None, 0
+    for r in sorted(turns, key=lambda r: r.get("t", 0)):
+        typ = r.get("type")
+        if typ == "result":
+            last_result, cur = r["t"], None
+        elif typ == "think_tok":
+            think = max(think, r.get("n") or 0)
+        elif typ == "assistant" and last_result is not None:
+            mid = r.get("mid")
+            if cur is None or (mid and cur["mid"] and mid != cur["mid"]):
+                cur = {"mid": mid, "t0": last_result, "t1": r["t"], "tok": think}
+                think = 0
+                per.append(cur)
+            cur["t1"] = r["t"]
+            cur["tok"] += r.get("est") or 0
+    per = [p for p in per if p["tok"] > 0]
+    if not per:
+        return {"source": "none", "ms_per_out_tok": None, "api_s_per_turn": None, "out_tok_per_turn": None,
+                "turns": 0}
+    secs = sum(p["t1"] - p["t0"] for p in per)
+    toks = sum(p["tok"] for p in per)
+    return {"source": "stream", "ms_per_out_tok": round(1000.0 * secs / toks, 1),
+            "api_s_per_turn": round(secs / len(per), 2), "out_tok_per_turn": round(toks / len(per)),
+            "turns": len(per)}
 
 
 class StreamTiming:
@@ -575,6 +645,7 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
         "long_gaps": {"threshold_s": LONG_GAP_S, "total": len(long_), **long_kind,
                       "worst": sorted(long_, key=lambda g: -g["s"])[:5]},
         "think_s": stats(tt),
+        "api": api_speed(turns),
         "turns": len(tt),
         "tool_rt_ms": {"all": stats(rt, 1), "read": stats((r["ms"] for r in reads), 1),
                        "read_by_tool": read_by_tool(reads), "wait_for": stats((r["ms"] for r in waits), 1),
@@ -617,7 +688,10 @@ def write_summary(summary: dict, out_path: Path, history_path: Path | None, sess
                "idle_explore_median_s": summary["idle_s"]["explore"].get("median"),
                "idle_party_turn_median_s": summary["idle_s"]["combat"].get("median"),
                "long_gaps": summary["long_gaps"]["total"], "long_gaps_dialogue": summary["long_gaps"]["dialogue"],
-               "think_median_s": summary["think_s"].get("median"), "rt_read_median_ms": summary["tool_rt_ms"]["read"].get("median"),
+               "think_median_s": summary["think_s"].get("median"),
+               "ms_per_out_tok": (summary.get("api") or {}).get("ms_per_out_tok"),
+               "api_s_per_turn": (summary.get("api") or {}).get("api_s_per_turn"),
+               "rt_read_median_ms": summary["tool_rt_ms"]["read"].get("median"),
                "rt_read_p90_ms": summary["tool_rt_ms"]["read"].get("p90"), "apm": summary.get("apm"),
                "busy_pct": summary.get("busy_pct"), "pipelining_pct": summary.get("pipelining_pct"),
                "pass": {k: v.get("pass") for k, v in t.items()}}
@@ -668,6 +742,8 @@ def live_view(tools: list[dict], samples: list[dict], turns: list[dict], now: fl
         "idle_median_s": s["idle_s"]["all"].get("median"), "idle_p90_s": s["idle_s"]["all"].get("p90"),
         "idle_explore_median_s": s["idle_s"]["explore"].get("median"),
         "think_median_s": s["think_s"].get("median"),
+        "ms_per_out_tok": s["api"].get("ms_per_out_tok"), "api_s_per_turn": s["api"].get("api_s_per_turn"),
+        "api_source": s["api"].get("source"),
         "rt_read_median_ms": s["tool_rt_ms"]["read"].get("median"), "rt_read_p90_ms": s["tool_rt_ms"]["read"].get("p90"),
         "apm": s["apm"], "busy_pct": s["busy_pct"], "pipelining_pct": s["pipelining_pct"],
         "long_gaps": s["long_gaps"],
