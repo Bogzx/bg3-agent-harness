@@ -173,6 +173,31 @@ function V.characters()
     return out
 end
 
+-- Characters within radius of any of centers (a pos or a list of pos), from
+-- the per-frame V.characters() cache: rows {e, p, d}, d to the nearest center.
+-- Not Ext.Entity.GetEntitiesAroundPosition: bg3le implements it as a Lua walk
+-- over every Transform entity (~5000), slower than this cached scan.
+function V.charactersNear(centers, radius)
+    if type(centers[1]) == "number" then centers = { centers } end
+    local out = {}
+    if #centers == 0 then return out end
+    local sqrt = math.sqrt
+    for _, row in ipairs(V.characters()) do
+        local p = row[2]
+        local best
+        for _, c in ipairs(centers) do
+            local dx, dz = p[1] - c[1], p[3] - c[3]
+            if dx <= radius and dx >= -radius and dz <= radius and dz >= -radius then
+                local dy = p[2] - c[2]
+                local d = sqrt(dx * dx + dy * dy + dz * dz)
+                if d <= radius and (not best or d < best) then best = d end
+            end
+        end
+        if best then out[#out + 1] = { row[1], p, best } end
+    end
+    return out
+end
+
 ------------------------------------------------------------------------
 -- Perception
 ------------------------------------------------------------------------
@@ -439,6 +464,29 @@ function V.largePerceived(ctx, uuid, e, pos, kind)
     if V.rayCacheN > 4000 then V.rayCache, V.rayCacheN = {}, 0 end
     V.rayCache[uuid] = { t = now, v = v }
     return v
+end
+
+-- Is a spot on the ground in view: within a party member's sight range, with
+-- an unobstructed ray from its eye to `lift` m above the spot (a burning
+-- floor, a cloud)? nil when the ray API is unusable (uncalibrated or broken):
+-- the caller decides (nav hazards keep the patch: fail-safe for walking).
+V.POINT_LIFT = 0.5
+function V.pointSeen(ctx, pt, lift)
+    if V.rayBroken then return nil end
+    local o1 = ctx.observers[1]
+    if not (o1 and o1.pos and V.rayCalibrated(o1)) then return nil end
+    local tgt = { pt[1], pt[2] + (lift or V.POINT_LIFT), pt[3] }
+    for _, o in ipairs(ctx.observers) do
+        if o.pos and U.dist(o.pos, tgt) <= o.sight then
+            local eye = { o.pos[1], o.pos[2] + V.EYE_H, o.pos[3] }
+            local ok, hit = pcall(raycast, eye, tgt)
+            if not ok then return nil end
+            if not hit then return true end
+            local d = hitDist(hit, eye)
+            if d and d >= U.dist(eye, tgt) - 0.5 then return true end
+        end
+    end
+    return false
 end
 
 ------------------------------------------------------------------------

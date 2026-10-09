@@ -120,6 +120,19 @@ function N.waypointsHere()
     return list
 end
 
+-- Ids (WAYP_*) of the waypoints the party has unlocked (the map's list; the
+-- same PartyWaypoints set State.map reads). Empty if unreadable: fail closed.
+function N.unlockedWaypointIds()
+    local set = {}
+    local ok, list = pcall(Ext.Entity.GetAllEntitiesWithComponent, "PartyWaypoints")
+    if ok and list and list[1] then
+        pcall(function()
+            for _, w in pairs(list[1].PartyWaypoints.Waypoints) do set[tostring(w.Name)] = true end
+        end)
+    end
+    return set
+end
+
 ------------------------------------------------------------------------
 -- Breadcrumb recording (Tick, ~1 Hz)
 ------------------------------------------------------------------------
@@ -412,7 +425,11 @@ RPC.register("nav.explored", function(args)
     out.cells = l.n
     out.area_m2 = l.n * N.CELL_XZ * N.CELL_XZ
     if l.bbox then out.bbox = { round(l.bbox[1], 0), round(l.bbox[2], 0), round(l.bbox[3], 0), round(l.bbox[4], 0) } end
-    local wps = N.waypointsHere()
+    -- Fairness: only waypoints the party has unlocked name a place (the map
+    -- lists those; an undiscovered shrine nearby is not known yet).
+    local wps = {}
+    local unlocked = N.unlockedWaypointIds()
+    for _, w in ipairs(N.waypointsHere()) do if unlocked[w.id] then wps[#wps + 1] = w end end
     local nPlaces = tonumber(args.last) or 10
     local places = {}
     for i = #l.places, math.max(1, #l.places - nPlaces + 1), -1 do
@@ -1221,6 +1238,25 @@ end
 -- never reported (surfaceAt skips them).
 N.HAZARD_SCAN_M = 12
 N.HAZARD_SCAN_STEP = 1.0
+N.PATCH_SAMPLES = 5
+
+-- Fairness: a patch is listed only if a party member sees part of it (sight
+-- range + an eye ray, V.pointSeen) -- not fire behind a wall or in the next
+-- room. Probes the nearest cell, then cells spread over the patch. Without a
+-- usable ray API (nil) the patch is kept: walks need it, and the game draws
+-- surfaces on the path preview anyway.
+local function patchSeen(ctx, members, near)
+    if not ctx then return true end
+    local k = #members
+    local picks = { near }
+    local nS = math.min(N.PATCH_SAMPLES - 1, k)
+    for s = 1, nS do picks[#picks + 1] = members[math.max(1, math.floor(s * k / nS))].p end
+    for _, p in ipairs(picks) do
+        local v = V.pointSeen(ctx, p)
+        if v ~= false then return true end
+    end
+    return false
+end
 function N.hazardPatches(charUuid, radius, step)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
@@ -1261,7 +1297,8 @@ function N.hazardPatches(charUuid, radius, step)
         end
     end
     N.lastScanProbes = nprobe
-    local seen, patches = {}, {}
+    local ctx = V.pointSeen and V.context and V.context() or nil
+    local seen, patches, hidden = {}, {}, 0
     for key, c in pairs(cells) do
         if not seen[key] then
             seen[key] = true
@@ -1292,9 +1329,14 @@ function N.hazardPatches(charUuid, radius, step)
                 w_m = round((i1 - i0 + 1) * step, 1), d_m = round((j1 - j0 + 1) * step, 1),
                 area_m2 = round(k * step * step, 1) }
             if nd < 0.75 then o.under = true end
-            patches[#patches + 1] = o
+            if o.under or patchSeen(ctx, members, near) then
+                patches[#patches + 1] = o
+            else
+                hidden = hidden + 1
+            end
         end
     end
+    N.lastHiddenPatches = hidden
     table.sort(patches, function(a, b) return a.dist < b.dist end)
     return patches
 end
@@ -1503,10 +1545,12 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
     local out = { from = U.vec(from, 1), goal = U.vec(goal, 1), straight_m = round(U.dist(from, goal), 1),
         dir = N.direction(from, goal), dy = round(goal[2] - from[2], 1) }
     out.levels_here = N.levelsAt(from[1], from[3], from[2])
-    out.levels_goal = N.levelsAt(goal[1], goal[3], from[2])
     if U.dist(from, goal) > N.PATH_MAX_M then
         out.too_far = true
     else
+        -- Floors at the goal only within path range (what panning the camera
+        -- there shows), never for a far, unexplored spot.
+        out.levels_goal = N.levelsAt(goal[1], goal[3], from[2])
         local r = N.path(charUuid, goal)
         if r and r.reachable then
             out.reachable = true
@@ -1574,7 +1618,10 @@ local function stepObjectives()
                     objective = st:match('id="Objective" type="FixedString" value="([^"]*)"'),
                 }
             end
-            if qid then quests[#quests + 1] = q end
+            -- Fairness: technical quests the journal never shows (QuestVisiblity
+            -- false, as State.journal skips them) have no map markers either.
+            local hidden = block:match('id="QuestVisiblity" type="bool" value="([^"]*)"') == "false"
+            if qid and not hidden then quests[#quests + 1] = q end
             pos = qe
         end
     end
@@ -1649,6 +1696,8 @@ function N.objectiveMarkers(ctx)
                 if m then
                     local o = { label = U.loca(m.text) or U.loca(ob.desc) or mid, quest = U.loca(q.title) or q.id,
                         objective = U.loca(ob.desc), kind = m.icon ~= "" and m.icon or "QuestMarker", level = m.level ~= "" and m.level or nil }
+                    -- an area marker (a circle on the map), not an exact spot
+                    if type(m.radius) == "number" and m.radius > 0 then o.area_m = m.radius end
                     local p = markerPos(m.uuid)
                     if p and (not o.level or o.level == lvl) then
                         o.pos = U.vec(p, 1)

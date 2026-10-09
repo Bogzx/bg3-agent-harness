@@ -519,12 +519,23 @@ test("act.watch: party bars, mode, visible characters with hostility", function(
     world[P1].comps.Health = { Hp = 7, MaxHp = 12 }
     osiv[key("IsEnemy", P1, GOB)] = 1
     osiv[key("IsInCombat", P1)] = 1
-    Ext.Entity.GetAllEntitiesWithComponent = function()
-        return { { u = NPC }, { u = GOB }, { u = P1 } }
-    end
+    world.FAR = { pos = { 500, 0, 0 } }
+    local scans = 0
     BG3AI.Visibility = {
         context = function() return { is_party = { [P1] = true } } end,
-        pos = function(e) return world[e.u].pos end,
+        -- the shared per-frame scan; act.watch no longer walks ServerCharacter itself
+        charactersNear = function(centers, radius)
+            scans = scans + 1
+            local out = {}
+            for _, u in ipairs({ NPC, GOB, P1, "FAR" }) do
+                local p = world[u].pos
+                for _, c in ipairs(centers) do
+                    local d = math.sqrt((p[1] - c[1]) ^ 2 + (p[2] - c[2]) ^ 2 + (p[3] - c[3]) ^ 2)
+                    if d <= radius then out[#out + 1] = { { u = u }, p, d }; break end
+                end
+            end
+            return out
+        end,
         entityUuid = function(e) return e.u end,
         name = function(u) return u == GOB and "Goblin" or "Npc" end,
         characterVisible = function(_, u) return u ~= NPC end,
@@ -533,6 +544,8 @@ test("act.watch: party bars, mode, visible characters with hostility", function(
     BG3AI.Visibility = nil
     eq(w.combat, true, "combat"); eq(w.party[1].hp, 7, "hp")
     eq(#w.seen, 1, "seen"); eq(w.seen[1].uuid, GOB, "goblin"); eq(w.seen[1].hostile, true, "hostile")
+    eq(scans, 1, "one shared radius query")
+    world.FAR = nil
 end)
 
 test("act.note: only queue_* kinds reach the event stream", function()

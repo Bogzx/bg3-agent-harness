@@ -870,29 +870,26 @@ function S.nearby(ctx, args)
 
     if not kinds or kinds.characters then
         do
-            for _, row in ipairs(V.characters()) do
-                local e, p = row[1], row[2]
-                if math.abs(p[1] - center[1]) <= radius and math.abs(p[3] - center[3]) <= radius then
-                    local d = U.dist(p, center)
-                    local u = d <= radius and V.entityUuid(e)
-                    if u and not ctx.is_party[u] and V.characterVisible(ctx, u, e, p) then
-                        local o = { uuid = u, name = V.name(u), relation = relation(ctx, u), pos = pos1(p), dist = round(d, 1),
-                            statuses = V.statuses(e) }
-                        if #o.statuses == 0 then o.statuses = nil end
-                        local dead = truthy(osi(Osi.IsDead, u))
-                        if dead then o.dead = true end
-                        local h = health(e)
-                        if h and not dead and not ctx.rules.HIDE_NPC_HP then o.hp, o.max_hp = h.hp, h.max_hp end
-                        if inCombat(u) then o.in_combat = true end
-                        if not dead and o.relation ~= "hostile" and (truthy(osi(Osi.GetHasDefaultDialog, u)) or truthy(osi(Osi.GetHasOsirisDialog, u))) then
-                            o.can_talk = true
-                        end
-                        if not dead and truthy(osi(Osi.CanTrade, u)) then o.can_trade = true end
-                        tactical(ctx, u, p, o)
-                        out.characters[#out.characters + 1] = o
-                        shown[u] = true
-                        V.remember(u, o.name, p, o.relation)
+            for _, row in ipairs(V.charactersNear(center, radius)) do
+                local e, p, d = row[1], row[2], row[3]
+                local u = V.entityUuid(e)
+                if u and not ctx.is_party[u] and V.characterVisible(ctx, u, e, p) then
+                    local o = { uuid = u, name = V.name(u), relation = relation(ctx, u), pos = pos1(p), dist = round(d, 1),
+                        statuses = V.statuses(e) }
+                    if #o.statuses == 0 then o.statuses = nil end
+                    local dead = truthy(osi(Osi.IsDead, u))
+                    if dead then o.dead = true end
+                    local h = health(e)
+                    if h and not dead and not ctx.rules.HIDE_NPC_HP then o.hp, o.max_hp = h.hp, h.max_hp end
+                    if inCombat(u) then o.in_combat = true end
+                    if not dead and o.relation ~= "hostile" and (truthy(osi(Osi.GetHasDefaultDialog, u)) or truthy(osi(Osi.GetHasOsirisDialog, u))) then
+                        o.can_talk = true
                     end
+                    if not dead and truthy(osi(Osi.CanTrade, u)) then o.can_trade = true end
+                    tactical(ctx, u, p, o)
+                    out.characters[#out.characters + 1] = o
+                    shown[u] = true
+                    V.remember(u, o.name, p, o.relation)
                 end
             end
         end

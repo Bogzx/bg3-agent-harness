@@ -309,5 +309,24 @@ test("V.characters: one scan per frame, rows {entity, pos}", function()
     eq(#V.characters(), 3, "next frame sees the new character"); eq(charScans, 2, "rescanned")
 end)
 
+test("V.charactersNear: radius over the frame cache, nearest-center distance", function()
+    world.C1 = { pos = { 1, 0, 2 }, comps = { ServerCharacter = {} } }
+    world.C2 = { pos = { 50, 0, 0 }, comps = { ServerCharacter = {} } }
+    world.C3 = { pos = { 3, 0, 3 }, comps = { ServerCharacter = {} } }
+    world.C4 = { pos = { 0, 40, 0 }, comps = { ServerCharacter = {} } } -- in the xz box, 40 m up
+    N.frame = (N.frame or 0) + 1
+    charScans = 0
+    local near = V.charactersNear({ 0, 0, 0 }, 10)
+    eq(#near, 2, "C1, C3 within 10 m of a single pos")
+    local two = V.charactersNear({ { 0, 0, 0 }, { 48, 0, 0 } }, 10)
+    eq(#two, 3, "any of several centers")
+    for _, r in ipairs(two) do
+        if r[2][1] == 50 then eq(r[3], 2.0, "distance to the nearest center") end
+    end
+    eq(#V.charactersNear({}, 10), 0, "no centers")
+    eq(charScans, 1, "all queries share one scan this frame")
+    world.C1, world.C2, world.C3, world.C4 = nil, nil, nil, nil
+end)
+
 print(("%d/%d passed"):format(count - failures, count))
 os.exit(failures == 0 and 0 or 1)

@@ -1634,23 +1634,13 @@ RPC.register("act.watch", function(args)
         out.party[#out.party + 1] = row
     end
     local V = BG3AI.Visibility
-    if #centers == 0 or type(V) ~= "table" or not V.context or not V.characterVisible then return out end
+    if #centers == 0 or type(V) ~= "table" or not V.context or not V.characterVisible or not V.charactersNear then return out end
     local ctx = V.context()
     local host = G.host() or G.party()[1]
-    local ok, chars = pcall(Ext.Entity.GetAllEntitiesWithComponent, "ServerCharacter")
-    if not ok or not chars then return out end
-    for _, e in ipairs(chars) do
-        local p = V.pos(e)
-        local near = false
-        if p then
-            for _, c in ipairs(centers) do
-                if math.abs(p[1] - c[1]) <= radius and math.abs(p[3] - c[3]) <= radius and U.dist(p, c) <= radius then
-                    near = true
-                    break
-                end
-            end
-        end
-        local u = near and V.entityUuid(e)
+    -- the per-frame shared scan (state.nearby in the same eval reuses it)
+    for _, c in ipairs(V.charactersNear(centers, radius)) do
+        local e, p = c[1], c[2]
+        local u = V.entityUuid(e)
         if u and not ctx.is_party[u] and V.characterVisible(ctx, u, e, p) then
             local row = { uuid = u, name = V.name and V.name(u) or nil }
             if G.is_dead(u) then row.dead = true
