@@ -36,6 +36,7 @@
 #   BG3AI_BG3LE_LIB    the preload (default <repo>/build/bg3le/dist/libbg3le.so, from tools/build_bg3le.sh)
 #   BG3AI_INPUT_LIB    the input shim (default <repo>/build/bg3sdl/libbg3sdl.so, from native/bg3sdl/build.sh)
 #   BG3LE_DEBUG_PORT   bg3le's Lua debug server port (default 9998)
+#   BG3AI_ALLOW_STEAM_ONLINE=1  launch even when Steam's last login was online (default: refuse; see below)
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -101,6 +102,12 @@ if [ "$use_input" = 1 ] && command -v ss >/dev/null 2>&1 && ss -Hxl | grep -q '@
 fi
 if ! pgrep -x steam >/dev/null 2>&1 && ! pgrep -f 'ubuntu12_32/steam' >/dev/null 2>&1; then
     echo "launch_game: warning: Steam does not appear to be running; libsteam_api needs it" >&2
+fi
+# Machine 2 shares the Steam account with the operator's machine: an online launch would kick them off. Refuse
+# unless Steam's last login was offline ($BG3AI_ALLOW_STEAM_ONLINE=1 on a machine where online is fine).
+if [ "$dry_run" != 1 ] && [ "${BG3AI_ALLOW_STEAM_ONLINE:-0}" != 1 ]; then
+    steam_state="$(python3 "$REPO/tools/steam_paths.py" offline)" \
+        || die "REFUSING TO LAUNCH: Steam is not offline ($steam_state). Steam > Go Offline, or BG3AI_ALLOW_STEAM_ONLINE=1"
 fi
 if [ "$use_bg3le" = 1 ] && command -v ss >/dev/null 2>&1 && ss -Hltn "sport = :$PORT" | grep -q .; then
     [ "$dry_run" = 1 ] || die "port $PORT is already in use (another game instance?)"

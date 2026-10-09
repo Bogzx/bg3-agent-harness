@@ -488,7 +488,70 @@ def goals_payload(runtime: Path, runner_status: dict, now: float | None = None, 
                       "best": (min if op in ("<", "==") else max)(done) if done else None,
                       "pass_rate": round(100 * sum(judged) / len(judged)) if judged else None})
     return {"now": now, "playthrough": pt, "sessions": sessions, "goals": goals,
-            "milestones": milestones_payload(d)}
+            "milestones": milestones_payload(d), "unattended": unattended_payload(d, runner_status, now)}
+
+
+def _pid_alive(pid) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+FAULT_KINDS = ("crash", "hang", "agent_hang", "setup")
+
+
+def unattended_payload(d: Path, runner_status: dict, now: float | None = None, last_n: int = 8,
+                       pid_alive=_pid_alive) -> dict | None:
+    """Unattended hours and crashes/recoveries from runtime/sessions/<pt>/runner_events.jsonl (play.py Runner.event).
+
+    A run = runner_start → runner_stop (or the next start: the runner was killed hard; or now, for the live runner).
+    Unattended hours = how long the runner has gone without an operator (re)starting it."""
+    now = time.time() if now is None else now
+    evs = _tail_jsonl(d / "runner_events.jsonl")
+    if not evs:
+        return None
+    runs, cur = [], None
+    for e in evs:
+        if e.get("kind") == "runner_start":
+            if cur is not None:
+                runs.append({**cur, "end": cur["last"], "why": "no stop event (killed?)"})
+            cur = {"start": e["t"], "last": e["t"]}
+        elif cur is not None:
+            cur["last"] = e["t"]
+            if e.get("kind") == "runner_stop":
+                runs.append({**cur, "end": e["t"], "why": e.get("why")})
+                cur = None
+    live = None
+    if cur is not None:
+        if runner_status.get("runner_pid") and pid_alive(runner_status["runner_pid"]):
+            live = {**cur, "end": now, "why": None}
+            runs.append(live)
+        else:
+            beat = max(cur["last"], float(runner_status.get("heartbeat") or 0))
+            runs.append({**cur, "end": beat, "why": "no stop event (killed?)"})
+    hours = [max(0.0, r["end"] - r["start"]) / 3600 for r in runs]
+    faults = {k: 0 for k in FAULT_KINDS}
+    for e in evs:
+        if e.get("kind") == "fault":
+            faults[e.get("fault", "crash")] = faults.get(e.get("fault", "crash"), 0) + 1
+    rec = [e for e in evs if e.get("kind") == "recovered"]
+    secs = sorted(e["seconds"] for e in rec if isinstance(e.get("seconds"), (int, float)))
+    shown = [e for e in evs if e.get("kind") in ("fault", "recovered", "recovery_failed", "steam_refused",
+                                                  "setup_failed", "runner_stop")]
+    return {"live": live is not None,
+            "current_h": round(hours[-1], 2) if live is not None else None,
+            "longest_h": round(max(hours), 2) if hours else None,
+            "total_h": round(sum(hours), 2), "runs": len(runs),
+            "last_stop": next((r["why"] for r in reversed(runs) if r is not live), None),
+            "faults": faults, "fault_total": sum(faults.values()),
+            "recovered": len(rec), "failed": sum(e.get("kind") == "recovery_failed" for e in evs),
+            "steam_refused": sum(e.get("kind") == "steam_refused" for e in evs),
+            "steam_offline": runner_status.get("steam_offline"),
+            "recovery_s_median": secs[len(secs) // 2] if secs else None,
+            "recovery_s_max": secs[-1] if secs else None,
+            "events": shown[-last_n:]}
 
 
 def milestones_payload(d: Path) -> dict | None:

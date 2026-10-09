@@ -488,11 +488,11 @@ RPC.register("nav.frontier", function(args)
         end
     end
     -- Characters the party perceives but hasn't been near.
-    local ok, chars = pcall(Ext.Entity.GetAllEntitiesWithComponent, "ServerCharacter")
-    if ok and chars then
-        for _, e in ipairs(chars) do
-            local p = V.pos(e)
-            if p and math.abs(p[1] - center[1]) <= radius and math.abs(p[3] - center[3]) <= radius then
+    local chars = V.characters and V.characters() or {}
+    do
+        for _, row in ipairs(chars) do
+            local e, p = row[1], row[2]
+            if math.abs(p[1] - center[1]) <= radius and math.abs(p[3] - center[3]) <= radius then
                 local u = V.entityUuid(e)
                 if u and not ctx.is_party[u] and U.dist(center, p) <= radius
                     and not truthy(osi(Osi.IsDead, u)) and V.characterVisible(ctx, u, e, p) then
@@ -581,13 +581,19 @@ N.HAZARD_STEP_M = 1.0   -- sampling step along a route
 N.HAZARD_SKIP_M = 1.0   -- the first metre of a route is where we stand (escaping it is fine)
 
 -- Harmful surface name at pos (ground first, then cloud), or nil.
+local function tileSurfaces(t) return tostring(t.GroundSurface), tostring(t.CloudSurface) end
 function N.surfaceAt(pos)
     if not pos then return nil end
     local ok, t = pcall(Ext.Level.GetTileDebugInfo, { pos[1], pos[2], pos[3] })
     if not ok or not t then return nil end
-    local g, c
-    pcall(function() g = tostring(t.GroundSurface) end)
-    pcall(function() c = tostring(t.CloudSurface) end)
+    -- one pcall, no closures (hazard scans probe hundreds of tiles); field by
+    -- field only if that fails
+    local okr, g, c = pcall(tileSurfaces, t)
+    if not okr then
+        g, c = nil, nil
+        pcall(function() g = tostring(t.GroundSurface) end)
+        pcall(function() c = tostring(t.CloudSurface) end)
+    end
     if g and N.HARMFUL[g] then return g end
     if c and N.HARMFUL[c] then return c end
     return nil
@@ -755,44 +761,76 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid)
         if not v then return nil, "dir must be one of N NE E SE S SW W NW" end
         vx, vz = v[1], v[2]
     end
-    local cands, tried = {}, 0
+    -- Sample points on the floor every `step` m (and the destination itself),
+    -- rounded to 0.1 m so the point handed out is the one searched (no second
+    -- verify search). The floor height follows ramps and stairs: it follows a
+    -- sample's floor unless that is steeper than 1:1 (a ledge or a pit).
+    local pts = {}
     local y = from[2]
-    local d = step
-    -- the destination itself is a sample too (not just multiples of step)
-    local function sample(dd)
-        local x, z = from[1] + vx * dd, from[3] + vz * dd
+    local function point(dd)
+        local x, z = round(from[1] + vx * dd, 1), round(from[3] + vz * dd, 1)
         local fy = floorAt(x, z, y)
         if fy then
-            tried = tried + 1
-            local r = N.path(charUuid, { x, fy, z })
-            if r and r.reachable and not r.partial and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then
-                cands[#cands + 1] = { pos = { x, fy, z }, path_m = r.length_m, straight_m = round(dd, 1),
-                    needs_jump = r.needs_jump, points = r.points }
-                y = fy -- follow ramps and stairs
-            end
+            if math.abs(fy - y) <= step + 0.5 then y = fy end
+            pts[#pts + 1] = { pos = { x, round(fy, 1), z }, dd = dd }
         end
     end
+    local d = step
     while d <= maxM + 0.01 do
-        sample(d)
+        point(d)
         d = d + step
     end
-    if maxM - (d - step) > 0.5 then sample(maxM) end
-    if #cands == 0 then return { reachable = false, samples = tried } end
-    local best, firstHazard, avoided = nil, nil, 0
-    for i = #cands, 1, -1 do
-        local c = cands[i]
-        local hz = nil
-        if avoid then
-            local s = N.surfaceNear(c.pos)
-            hz = s and { surface = s, pos = U.vec(c.pos, 1), at_m = c.path_m } or N.routeHazard(c.points)
+    if maxM - (d - step) > 0.5 then point(maxM) end
+    -- Farthest first: on open ground the first search wins (live: ~15 path
+    -- searches front to back, ~120 ms, before). Then a binary search for
+    -- where the way stops (a wall, a cliff: ~4 more searches), and only if
+    -- that finds nothing, every sample left, farthest first. A sample counts
+    -- if pathable and direct (length <= DETOUR x straight), and (avoid) clear
+    -- of harmful surfaces at its end and along its route.
+    local firstHazard, avoided, tried, memo = nil, 0, 0, {}
+    local function good(i)
+        if memo[i] ~= nil then return memo[i] end
+        local c, dd = pts[i], pts[i].dd
+        tried = tried + 1
+        local ok = false
+        local r = N.path(charUuid, c.pos)
+        if r and r.reachable and not r.partial and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then
+            local hz = nil
+            if avoid then
+                local sf = N.surfaceNear(c.pos)
+                hz = sf and { surface = sf, pos = U.vec(c.pos, 1), at_m = r.length_m } or N.routeHazard(r.points)
+            end
+            if hz then
+                avoided = avoided + 1
+                if not firstHazard or c.dd > firstHazard.dd then firstHazard = hz; firstHazard.dd = c.dd end
+            else
+                ok = { pos = c.pos, path_m = r.length_m, straight_m = round(dd, 1), needs_jump = r.needs_jump }
+            end
         end
-        if not hz then best = c; break end
-        avoided = avoided + 1
-        firstHazard = firstHazard or hz
+        memo[i] = ok
+        return ok
     end
-    if not best then return { reachable = false, samples = tried, hazard = firstHazard } end
+    local best = #pts > 0 and good(#pts) or nil
+    if not best and #pts > 1 then
+        local lo, hi = 0, #pts -- lo: known good (0 = where we stand), hi: known bad
+        while hi - lo > 1 do
+            local mid = math.floor((lo + hi) / 2)
+            if good(mid) then lo = mid else hi = mid end
+        end
+        best = lo > 0 and memo[lo] or nil
+        for i = #pts - 1, 1, -1 do
+            if best then break end
+            best = good(i) or nil
+        end
+    end
+    if firstHazard then firstHazard.dd = nil end
+    if not best then
+        if avoided == 0 then return { reachable = false, samples = tried } end
+        return { reachable = false, samples = tried, hazard = firstHazard }
+    end
     local out = { pos = U.vec(best.pos, 1), path_m = best.path_m, straight_m = best.straight_m,
-        needs_jump = best.needs_jump, reachable = true, samples = tried, dir = N.direction(from, best.pos) }
+        needs_jump = best.needs_jump, reachable = true, samples = tried, dir = N.direction(from, best.pos),
+        searched = true }
     if avoided > 0 then out.avoided = avoided; out.hazard_beyond = firstHazard end
     return out
 end
@@ -899,10 +937,10 @@ function N.altLeg(charUuid, toward, maxM, bad, avoid)
     local from = e and V.pos(e)
     if not from or type(toward) ~= "table" then return nil end
     local d0 = U.dist(from, toward)
-    local function good(p)
+    local function good(p, searched)
         if type(p) ~= "table" or d0 - U.dist(p, toward) < 1.0 then return false end
         if bad and U.dist(p, bad) < N.ALT_EXCLUDE_M then return false end
-        return N.verifyPoint(charUuid, p) == true
+        return searched or N.verifyPoint(charUuid, p) == true
     end
     local ap = N.approach(charUuid, toward, toward, 1.0, maxM, avoid)
     if ap and ap.reachable and good(ap.pos) then
@@ -912,7 +950,7 @@ function N.altLeg(charUuid, toward, maxM, bad, avoid)
     for _, m in ipairs({ maxM * 0.5, maxM * 0.25 }) do
         if m >= 2 then
             local r = N.reachToward(charUuid, nil, toward, m, 1, avoid)
-            if r and r.reachable and good(r.pos) then
+            if r and r.reachable and good(r.pos, r.searched) then
                 r.alt, r.verified = "shorter", true
                 return r
             end
@@ -1190,19 +1228,39 @@ function N.hazardPatches(charUuid, radius, step)
     radius = radius or N.HAZARD_SCAN_M
     step = step or N.HAZARD_SCAN_STEP
     local n = math.floor(radius / step)
-    local cells = {}
-    for i = -n, n do
-        for j = -n, n do
-            if i * i + j * j <= n * n then
-                local x, z = from[1] + i * step, from[3] + j * step
-                local fy = floorAt(x, z, from[2])
-                if fy and math.abs(fy - from[2]) <= 3.0 then
-                    local s = N.surfaceAt({ x, fy, z })
-                    if s then cells[i .. ":" .. j] = { s = s, i = i, j = j, p = { x, fy, z } } end
-                end
+    -- Coarse pass on every other cell (i, j even), then a flood from each hit
+    -- over its 8 neighbours: the same cells as a full scan for every patch
+    -- with a 2x2-cell block (any such block holds an even cell), at ~1/4 of
+    -- the probes (live: 707 probes, ~20 ms, for radius 15). A 1-cell-wide
+    -- sliver can be missed; walks still check their own route (routeHazard).
+    local cells, probed, queue, nprobe = {}, {}, {}, 0
+    local function probe(i, j)
+        local key = i .. ":" .. j
+        if probed[key] or i * i + j * j > n * n then return end
+        probed[key] = true
+        nprobe = nprobe + 1
+        local x, z = from[1] + i * step, from[3] + j * step
+        local fy = floorAt(x, z, from[2])
+        if fy and math.abs(fy - from[2]) <= 3.0 then
+            local s = N.surfaceAt({ x, fy, z })
+            if s then
+                local c = { s = s, i = i, j = j, p = { x, fy, z } }
+                cells[key] = c
+                queue[#queue + 1] = c
             end
         end
     end
+    local i0 = n % 2 == 0 and -n or -n + 1
+    for i = i0, n, 2 do
+        for j = i0, n, 2 do probe(i, j) end
+    end
+    while #queue > 0 do
+        local c = table.remove(queue)
+        for di = -1, 1 do
+            for dj = -1, 1 do probe(c.i + di, c.j + dj) end
+        end
+    end
+    N.lastScanProbes = nprobe
     local seen, patches = {}, {}
     for key, c in pairs(cells) do
         if not seen[key] then
@@ -1670,7 +1728,8 @@ RPC.register("nav.reach_toward", function(args)
     -- leg's end), take a verified alternative (N.altLeg).
     if toward and (args.alt or (r.reachable and r.pos)) then
         local fine = nil
-        if not args.alt then fine = N.verifyPoint(char, r.pos) end
+        -- reachToward searched this exact (0.1 m) point this frame: no second search
+        if not args.alt then fine = r.searched or N.verifyPoint(char, r.pos) end
         if fine == true then
             r.verified = true
         elseif args.alt or fine == false then
@@ -1689,6 +1748,7 @@ RPC.register("nav.reach_toward", function(args)
     end
     local under = N.harmfulUnder(char)
     if under then r.standing_in = under end
+    r.searched = nil
     r.direct_why = args.direct_why
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r

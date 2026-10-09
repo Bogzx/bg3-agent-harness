@@ -9,7 +9,9 @@ Per session: make sure the game is up with this playthrough's save loaded, launc
 (the SessionStart hook opens the memory session, the Stop hook lints and commits it), stream its output
 to runtime/sessions/<playthrough>/Sxxx.{jsonl,log}, enforce the deadline, then make sure a save exists,
 close the memory session (with a short "fix your notes" pass if lint fails), and update the stuck
-detector. Game crashes and hangs are recovered by relaunching and reloading the last save.
+detector. Game crashes and hangs are recovered by relaunching and reloading the last save; a claude process
+that prints nothing for AGENT_SILENT_MINUTES is killed and resumed. Every game launch first requires Steam to be
+offline (steamui_login.txt). Faults, recoveries and runner start/stop go to runner_events.jsonl (dashboard).
 
 Safety: the runner only ever loads saves that belong to this playthrough (label `Sxxx-...`, optionally
 behind $BG3AI_SAVE_PREFIX, and the save owner recorded for the playthrough). It refuses to take over a
@@ -42,6 +44,8 @@ from bg3ai import metrics as latency  # noqa: E402  (stdlib only; doesn't import
 from bg3ai import progress as story  # noqa: E402  (stdlib only: story progress per hour, stuck signal)
 sys.path.insert(0, str(REPO / "runner"))
 import triage  # noqa: E402  (runner/triage.py: post-session Sxxx.triage.md)
+sys.path.insert(0, str(REPO / "tools"))
+import steam_paths  # noqa: E402  (stdlib: Steam's offline state before any game launch)
 
 PLAY_DIR = REPO / "play"
 PLAYTHROUGHS = Path(os.environ.get("BG3AI_PLAYTHROUGHS", REPO / "playthroughs"))
@@ -67,8 +71,15 @@ WRAPUP_MINUTES = 3             # wrap-up phase at the end of a session (a third 
                                # written during play, so wrap-up is save + HANDOFF + Now line (S001/S002: ~35 s)
 EARLY_EXIT_MINUTES = 5         # claude exiting cleanly with more than this left = an early exit (logged)
 HEALTH_INTERVAL = 30           # seconds between liveness evals during a session
+HEALTH_RETRY_INTERVAL = 10     # ... and after a failed one (a hang is declared within ~2 min, see detect_budget_s)
 HEALTH_FAILURES = 3            # consecutive failed evals → hung
+HEALTH_EVAL_TIMEOUT = 8        # a liveness eval slower than this counts as failed
 EVAL_TIMEOUT = 15
+AGENT_SILENT_MINUTES = float(os.environ.get("BG3AI_AGENT_SILENT_MIN", "4"))  # no claude output this long → hung
+                               # (bridge tools cap their waits at ~60 s; a model turn is seconds to ~1 min)
+STEAM_RETRY_S = 120            # Steam not offline: refuse to launch, retry this often (never give up)
+GAME_FAULTS = ("crash", "hang")
+FAULTS = GAME_FAULTS + ("agent_hang",)
 STUCK_SESSIONS = 2
 MAX_QUICK_FAILURES = 3         # claude exiting within a minute this many times in a row → give up
 MAX_RESUMES = 3                # game crashes per session that resume the same claude conversation
@@ -125,6 +136,21 @@ def early_exit_minutes(reason: str, started: float, ended: float, session_minute
         return None
     left = (started + session_minutes * 60 - ended) / 60
     return round(left, 1) if left > threshold else None
+
+
+def detect_budget_s(kind: str) -> float:
+    """Worst case from a fault to claude stopped and recovery starting, with the current constants.
+    crash/port lost: next health check; game hang: HEALTH_FAILURES slow evals; agent hang: the silence limit.
+    Then claude gets SIGINT, SIGTERM, SIGKILL (the main loop ticks every 2 s)."""
+    probe = HEALTH_EVAL_TIMEOUT + 5  # eval timeout + LuaDebugClient connect timeout
+    stop = SIGINT_GRACE + SIGTERM_GRACE + 2 * 3
+    if kind == "crash":
+        return HEALTH_INTERVAL + 1 + stop
+    if kind == "hang":
+        return HEALTH_INTERVAL + probe + (HEALTH_FAILURES - 1) * (HEALTH_RETRY_INTERVAL + probe) + stop
+    if kind == "agent_hang":
+        return AGENT_SILENT_MINUTES * 60 + 2 + stop
+    raise ValueError(kind)
 
 
 def deadlines(start: float, session_minutes: float, grace: float = HARD_STOP_GRACE) -> tuple[float, float]:
@@ -321,6 +347,15 @@ def resume_prompt(why: str, deadline: float, notes: list[str]) -> str:
     return "\n\n".join(lines + notes)
 
 
+def agent_resume_prompt(deadline: float, notes: list[str]) -> str:
+    """The message that resumes a session whose claude process went silent and was stopped by the runner."""
+    end = datetime.fromtimestamp(deadline).strftime("%H:%M")
+    lines = [f"RUNNER: your previous turn produced no output for {AGENT_SILENT_MINUTES:g} min, so the runner stopped "
+             f"and resumed you; the game kept running. Same session (deadline still {end}). Call get_status, then "
+             "keep playing following CLAUDE.md; keep each step short (no tool call or think longer than a minute)."]
+    return "\n\n".join(lines + notes)
+
+
 def new_game_note(owner: str) -> str:
     return (f"RUNNER NOTE: this is a new game. Name your character exactly \"{owner}\" (create_character plan "
             f"\"name\": \"{owner}\"; it is set and verified before Venture forth). Saves are matched to this "
@@ -487,6 +522,26 @@ class RpcError(Exception):
     pass
 
 
+class SteamNotOffline(RuntimeError):
+    """Steam isn't in offline mode: launching BG3 could kick the account's other machine off. Never launch."""
+
+
+def steam_ready() -> tuple[bool, str]:
+    """(ok to launch BG3?, why): Steam's last login was offline and a Steam client is running.
+    $BG3AI_ALLOW_STEAM_ONLINE=1 skips the offline requirement (a machine where online is fine)."""
+    if os.environ.get("BG3AI_ALLOW_STEAM_ONLINE") == "1":
+        ok, why = True, "BG3AI_ALLOW_STEAM_ONLINE=1"
+    else:
+        ok, why = steam_paths.steam_offline()
+    if not ok:
+        return False, why
+    r = subprocess.run(["pgrep", "-x", "steam"], capture_output=True, text=True)
+    if not r.stdout.strip():
+        # libsteam_api would start Steam itself, maybe online
+        return False, f"Steam isn't running ({why})"
+    return True, why
+
+
 def port_open(host: str = DEBUG_HOST, port: int = DEBUG_PORT, timeout: float = 1.0) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -515,10 +570,10 @@ def rpc(op: str, args: dict | None = None, context: str = "server", timeout: flo
     return reply.get("result")
 
 
-def game_state() -> str | None:
+def game_state(timeout: float = EVAL_TIMEOUT) -> str | None:
     """Ext.Utils.GetGameState() from the client context, or None if the game doesn't answer."""
     try:
-        return lua_eval("return tostring(Ext.Utils.GetGameState())", "client").strip()
+        return lua_eval("return tostring(Ext.Utils.GetGameState())", "client", timeout).strip()
     except Exception:  # noqa: BLE001 - any failure means "no answer"
         return None
 
@@ -666,11 +721,12 @@ class Options:
     fix_model: str | None = None       # the fix-notes pass (no game, small edits); None = same as play
     fix_effort: str | None = "low"
     fallback_model: str | None = None
+    allow_short: bool = False          # --allow-short-sessions: session-config minutes below MIN_SESSION_MINUTES too
 
 
 def session_overrides(path: Path) -> dict:
-    """{"model", "effort"} from runtime/sessions/<pt>/session-config.json, re-read before every session so the
-    operator can retune a long run without restarting it. Unknown keys and bad values are ignored."""
+    """{"model", "effort", "minutes"} from runtime/sessions/<pt>/session-config.json, re-read before every session
+    so the operator can retune a long run without restarting it. Unknown keys and bad values are ignored."""
     try:
         raw = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
@@ -681,6 +737,9 @@ def session_overrides(path: Path) -> dict:
             out["model"] = raw["model"]
         if raw.get("effort") in EFFORTS:
             out["effort"] = raw["effort"]
+        m = raw.get("minutes")
+        if isinstance(m, (int, float)) and not isinstance(m, bool) and 0 < m <= 24 * 60:
+            out["minutes"] = float(m)
     return out
 
 
@@ -689,12 +748,14 @@ class SessionResult:
     sid: str
     claude_session: str
     exit_code: int | None
-    reason: str          # exited | hard_stop | crash | hang | aborted | dry_run
+    reason: str          # exited | hard_stop | crash | hang | agent_hang | aborted | dry_run
     started: float
     ended: float
     notes: list[str] = field(default_factory=list)
     model: str | None = None
     effort: str | None = None
+    detail: str = ""     # what the runner saw, for a fault
+    fault_at: float | None = None
 
 
 class Runner:
@@ -716,6 +777,17 @@ class Runner:
         self.pending_notes: list[str] = []
         self.quick_failures = 0
         self.new_game = False
+
+    # ---------------------------------------------------------------- unattended-run events
+
+    def event(self, kind: str, **fields) -> None:
+        """runtime/sessions/<pt>/runner_events.jsonl: runner start/stop, faults, recoveries, refused launches
+        (the dashboard's unattended hours and crash/recovery counts). Never breaks the runner."""
+        try:
+            with open(self.state.dir / "runner_events.jsonl", "a") as f:
+                f.write(json.dumps({"t": round(time.time(), 1), "kind": kind, **fields}) + "\n")
+        except OSError as e:
+            log(f"event log failed: {e}")
 
     # ---------------------------------------------------------------- setup
 
@@ -761,6 +833,13 @@ class Runner:
         return port_open()
 
     def launch_game(self, load_folder: str | None) -> None:
+        ok, why = steam_ready()
+        write_status(steam_offline=ok, steam_why=why)
+        if not ok:
+            log(f"!!!!! REFUSING TO LAUNCH BG3: Steam is not offline: {why}. Put Steam in offline mode "
+                "(Steam > Go Offline...) and leave it running; the runner keeps retrying. !!!!!")
+            self.event("steam_refused", why=why)
+            raise SteamNotOffline(why)
         if port_open():
             raise RuntimeError(f"port {DEBUG_PORT} is still in use; can't launch another game")
         args = [str(LAUNCH_SH)] + (["--load", load_folder] if load_folder else [])
@@ -1110,9 +1189,11 @@ class Runner:
                                 stdin=subprocess.DEVNULL, start_new_session=True, text=True, bufsize=1)
 
         timing = latency.StreamTiming(Path(f"{base}.turns.jsonl"))
+        last_output = [time.time()]  # the agent-hang watchdog: any stream line counts as alive
 
         def pump():
             for line in proc.stdout:
+                last_output[0] = time.time()
                 jsonl.write(line)
                 jsonl.flush()
                 stamp = datetime.now().strftime("%H:%M:%S")
@@ -1139,6 +1220,7 @@ class Runner:
         health = HealthTracker()
         next_health = time.time() + HEALTH_INTERVAL
         reason = "exited"
+        detail, fault_at = "", None
         signals_sent = []
         while proc.poll() is None:
             time.sleep(2)
@@ -1146,14 +1228,24 @@ class Runner:
             if self.abort and reason == "exited":
                 reason = "aborted"
                 hard_stop = min(hard_stop, now)
-            if now >= next_health:
-                next_health = now + HEALTH_INTERVAL
+            if now >= next_health and reason == "exited":
                 alive = self.game_alive()
-                health.record(alive and game_state() is not None)
+                ok = alive and game_state(HEALTH_EVAL_TIMEOUT) is not None
+                health.record(ok)
+                next_health = time.time() + (HEALTH_INTERVAL if ok else HEALTH_RETRY_INTERVAL)
+                write_status(heartbeat=time.time())
                 if not alive or health.hung:
                     reason = "crash" if not alive else "hang"
-                    human.write(f"{datetime.now():%H:%M:%S} [runner] game {reason}; stopping claude\n")
-                    hard_stop = min(hard_stop, now)
+                    detail, fault_at = self.fault_detail(health), now
+            silent = now - last_output[0]
+            if reason == "exited" and silent >= AGENT_SILENT_MINUTES * 60:
+                reason, fault_at = "agent_hang", now
+                detail = f"no claude output for {silent / 60:.1f} min (limit {AGENT_SILENT_MINUTES:g})"
+            if fault_at == now:
+                human.write(f"{datetime.now():%H:%M:%S} [runner] FAULT {reason}: {detail}; stopping claude\n")
+                log(f"{sid}{tag}: FAULT {reason}: {detail}; stopping claude")
+                self.event("fault", fault=reason, session=sid + tag, detail=detail)
+                hard_stop = min(hard_stop, now)
             if now >= hard_stop and "int" not in signals_sent:
                 if reason == "exited":
                     reason = "hard_stop"
@@ -1181,7 +1273,15 @@ class Runner:
         self.write_latency(f"{sid}{tag}", base, start, end)
         self.write_progress(f"{sid}{tag}", base, start, end)
         self.write_triage(f"{sid}{tag}", base)
-        return SessionResult(sid, claude_session, proc.returncode, reason, start, end, model=model, effort=effort)
+        return SessionResult(sid, claude_session, proc.returncode, reason, start, end, model=model, effort=effort,
+                             detail=detail, fault_at=fault_at)
+
+    def fault_detail(self, health: HealthTracker) -> str:
+        if self.game_proc is not None and self.game_proc.poll() is not None:
+            return f"game process exited (status {self.game_proc.returncode})"
+        if not port_open():
+            return f"debug port {DEBUG_PORT} stopped answering" + (" (game process still alive)" if self.game_proc else "")
+        return f"port {DEBUG_PORT} open but {health.limit} liveness evals in a row failed or timed out"
 
     def write_latency(self, session: str, base: Path, start: float, end: float) -> dict | None:
         """Sxxx.latency.json + a line in latency_history.jsonl (bridge records + stream timing)."""
@@ -1336,27 +1436,40 @@ class Runner:
 
         # Game crash or hang mid-session: relaunch, load the latest save, and resume the SAME claude conversation
         # for the time left (an hour-long session that crashes at minute 10 keeps its context and its 50 min).
+        # Agent hang (claude silent too long): the game is fine, so only claude is restarted (resumed).
         resumes = 0
-        while res.reason in ("crash", "hang"):
-            why = "crashed" if res.reason == "crash" else "stopped responding"
-            try:
-                self.recover(why)
-            except (RuntimeError, OSError, TimeoutError) as e:
-                log(f"recovery after {sid} failed: {e}; the next session setup retries")
-                break
+        while res.reason in FAULTS:
+            fault, fault_at = res.reason, res.fault_at or res.ended
+            game_ok = fault == "agent_hang" and self.game_alive() and game_state(HEALTH_EVAL_TIMEOUT) is not None
+            why = {"crash": "crashed", "hang": "stopped responding"}.get(fault, "was unreachable after the agent hang")
+            how = "claude restarted, game untouched"
+            if not game_ok:
+                try:
+                    self.recover(why)
+                except (RuntimeError, OSError, TimeoutError) as e:
+                    log(f"recovery after {sid} failed: {e}; the next session setup retries")
+                    self.event("recovery_failed", fault=fault, session=sid, error=str(e)[:300])
+                    break
+                how = f"game relaunched, loaded {self.state['loaded_save'] or 'main menu'}"
             left = (session_end - time.time()) / 60
             if (resumes >= MAX_RESUMES or left < RESUME_MIN_MINUTES or self.abort or self.stop_requested
                     or (RUNTIME / "STOP").exists()):
                 log(f"{sid}: not resuming after the {res.reason} ({left:.0f} min left, {resumes} resume(s) so far); "
                     "the next session picks up")
+                self.event("recovered", fault=fault, session=sid, seconds=round(time.time() - fault_at),
+                           how=how + "; session ended, the next one picks up")
                 break
             resumes += 1
             notes = list(self.pending_notes)
             self.pending_notes.clear()
-            log(f"{sid}: resuming claude after the {res.reason} ({left:.0f} min left, resume {resumes})")
-            res = self.run_claude(sid, resume_prompt(why, session_end, notes), left, res.claude_session,
-                                  resume=True, tag=f"-r{resumes}")
-        crashed = res.reason in ("crash", "hang")
+            log(f"{sid}: resuming claude after the {res.reason} ({left:.0f} min left, resume {resumes}; "
+                f"{time.time() - fault_at:.0f} s after the fault)")
+            self.event("recovered", fault=fault, session=sid, seconds=round(time.time() - fault_at),
+                       how=how + f"; claude resumed (-r{resumes})")
+            prompt = (agent_resume_prompt(session_end, notes) if game_ok
+                      else resume_prompt(why, session_end, notes))
+            res = self.run_claude(sid, prompt, left, res.claude_session, resume=True, tag=f"-r{resumes}")
+        crashed = res.reason in GAME_FAULTS
         res = replace(res, started=session_start)
         if not crashed:
             self.ensure_save(res.started)
@@ -1384,34 +1497,63 @@ class Runner:
 
     # ---------------------------------------------------------------- main loop
 
+    def session_minutes(self) -> float:
+        """--session-minutes, or session-config.json "minutes" (re-read before every session: switch 20 ↔ 60 live)."""
+        want = session_overrides(self.state.dir / "session-config.json").get("minutes", self.opt.session_minutes)
+        if want < MIN_SESSION_MINUTES and not self.opt.allow_short:
+            log(f"session-config.json minutes {want:g} ignored: below {MIN_SESSION_MINUTES} "
+                "(start the runner with --allow-short-sessions for that)")
+            want = self.opt.session_minutes
+        if want != getattr(self, "_last_minutes", want):
+            log(f"session length now {want:g} min (session-config.json)")
+        self._last_minutes = want
+        write_status(session_minutes=want)
+        return want
+
     def run(self) -> int:
         self.check_memory()
         run_end = time.time() + self.opt.hours * 3600 if self.opt.hours else None
         write_status(playthrough=self.opt.playthrough, runner_pid=os.getpid(), run_end=run_end,
-                     session=None, deadline=None)
+                     session=None, deadline=None, run_started=time.time(), heartbeat=time.time())
+        self.event("runner_start", pid=os.getpid())
         first = True
         setup_failures = 0
+        stop_why = "stopped"
         try:
             while not self.stop_requested and not (RUNTIME / "STOP").exists():
-                minutes = session_budget(time.time(), run_end, self.opt.session_minutes,
-                                         min(MIN_SESSION_MINUTES, self.opt.session_minutes))
+                session_minutes = self.session_minutes()
+                minutes = session_budget(time.time(), run_end, session_minutes,
+                                         min(MIN_SESSION_MINUTES, session_minutes))
                 if minutes is None:
                     log("--hours budget used up")
                     break
                 try:
                     res = self.play_session(minutes, first)
+                except SteamNotOffline as e:
+                    # Never a give-up: an operator puts Steam back offline and the run continues by itself.
+                    log(f"session setup refused: Steam not offline ({e}); retrying in {STEAM_RETRY_S} s")
+                    if self.abort:
+                        break
+                    time.sleep(STEAM_RETRY_S)
+                    continue
                 except (RuntimeError, OSError, TimeoutError) as e:
                     log(f"session setup failed: {e}")
+                    self.event("setup_failed", error=str(e)[:300])
                     if self.abort:
                         break
                     setup_failures += 1
                     if setup_failures >= MAX_SETUP_FAILURES:
                         log(f"{setup_failures} setup failures in a row; giving up")
+                        stop_why = "gave up: setup failures"
                         return 1
                     try:
                         self.recover(f"failed to start ({e})")
+                        self.event("recovered", fault="setup", how=f"game relaunched, loaded "
+                                   f"{self.state['loaded_save'] or 'main menu'}")
                     except Exception as e2:  # noqa: BLE001
                         log(f"recovery failed: {e2}; waiting 2 minutes")
+                        if not isinstance(e2, SteamNotOffline):
+                            self.event("recovery_failed", fault="setup", error=str(e2)[:300])
                         time.sleep(120)
                     continue
                 first = False
@@ -1422,13 +1564,18 @@ class Runner:
                     self.quick_failures += 1
                     if self.quick_failures >= MAX_QUICK_FAILURES:
                         log("claude exited within a minute 3 times in a row; stopping (see the session logs)")
+                        stop_why = "gave up: claude exits at once"
                         return 1
                     time.sleep(30 * self.quick_failures)
                 else:
                     self.quick_failures = 0
+        except BaseException as e:
+            stop_why = f"died: {type(e).__name__}: {e}"[:300]
+            raise
         finally:
             (RUNTIME / "STOP").unlink(missing_ok=True)
             write_status(session=None, deadline=None, runner_pid=None)
+            self.event("runner_stop", why=stop_why)
         log("runner stopped")
         return 0
 
@@ -1460,7 +1607,8 @@ def cmd_run(a) -> int:
     lock = acquire_lock()  # noqa: F841 - held for the process lifetime
     (RUNTIME / "STOP").unlink(missing_ok=True)
     runner = Runner(Options(a.playthrough, a.hours, a.session_minutes, a.model, a.take_over, a.dry_run,
-                            a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model))
+                            a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model,
+                            a.allow_short_sessions))
     # Cutscenes are always skipped, also while the runner waits on menus and loads (the New Game intro
     # plays during StartLoading) and between sessions; the play session's MCP server idles meanwhile
     # (one skipper per game, runtime/skipper.lock).
@@ -1547,7 +1695,8 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("run", help="play sessions until stopped")
     r.add_argument("--playthrough", required=True)
     r.add_argument("--hours", type=float, help="total wall-clock budget (default: until stopped)")
-    r.add_argument("--session-minutes", type=float, default=60)
+    r.add_argument("--session-minutes", type=float, default=60,
+                   help='per-session override, live: session-config.json {"minutes": 60}, re-read before each session')
     r.add_argument("--allow-short-sessions", action="store_true",
                    help=f"allow --session-minutes below {MIN_SESSION_MINUTES} (harness tests only)")
     r.add_argument("--model", default="opus", help="model for play sessions (claude --model)")

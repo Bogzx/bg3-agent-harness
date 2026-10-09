@@ -11,6 +11,7 @@ local world = {}      -- uuid -> {pos, comps = {...}}
 local osiv = {}       -- "Fn:arg1:arg2" -> value
 local ray = {}        -- ray.fn(a, b) -> hit | nil
 local loca = {}
+local charScans = 0
 
 local function entity(u)
     local w = world[u]
@@ -29,6 +30,9 @@ Ext = {
             local out = {}
             if name == "ServerItem" then
                 for u, w in pairs(world) do if w.comps and w.comps.ServerItem then out[#out + 1] = entity(u) end end
+            elseif name == "ServerCharacter" then
+                charScans = charScans + 1
+                for u, w in pairs(world) do if w.comps and w.comps.ServerCharacter then out[#out + 1] = entity(u) end end
             end
             return out
         end,
@@ -71,6 +75,7 @@ local function test(name, fn)
     -- fresh per-test state
     clock = clock + 100000
     V.rayCache, V.rayBroken, V.calib = {}, nil, { t = -1e9, ok = false }
+    V.ctxCache, V.charsCache = nil, nil -- per-frame caches
     osiv = {}
     world = {}
     loca = {}
@@ -273,6 +278,35 @@ test("nav.activity: positions, running jobs, dialogue/combat flags", function()
     eq(r.jobs, 1); eq(r.job_kinds[1], "move_to"); eq(r.in_dialogue, true); eq(r.in_combat, true)
     eq(r.pos.P1[1], 0)
     BG3AI.RPC.jobs = nil
+end)
+
+-- ---- per-frame caches (read cost) -------------------------------------------
+
+test("V.context is built once per game frame", function()
+    local n = 0
+    local party = V.party
+    V.party = function() n = n + 1; return party() end
+    N.frame = (N.frame or 0) + 1
+    local a, b = V.context(), V.context()
+    V.party = party
+    eq(a == b, true, "same table in one frame"); eq(n, 1, "party read once")
+    N.frame = N.frame + 1
+    eq(V.context() ~= a, true, "rebuilt next frame")
+end)
+
+test("V.characters: one scan per frame, rows {entity, pos}", function()
+    world.C1 = { pos = { 1, 0, 2 }, comps = { ServerCharacter = {} } }
+    world.C2 = { pos = { 50, 0, 0 }, comps = { ServerCharacter = {} } }
+    world.I1 = { pos = { 0, 0, 0 }, comps = { ServerItem = {} } }
+    N.frame = (N.frame or 0) + 1
+    charScans = 0
+    local rows = V.characters()
+    V.characters()
+    eq(#rows, 2, "rows"); eq(charScans, 1, "scans in one frame")
+    eq(type(rows[1][1]) == "table" and type(rows[1][2]) == "table", true, "{e, p}")
+    world.C3 = { pos = { 3, 0, 3 }, comps = { ServerCharacter = {} } }
+    N.frame = N.frame + 1
+    eq(#V.characters(), 3, "next frame sees the new character"); eq(charScans, 2, "rescanned")
 end)
 
 print(("%d/%d passed"):format(count - failures, count))

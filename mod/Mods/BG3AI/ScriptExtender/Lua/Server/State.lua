@@ -869,11 +869,10 @@ function S.nearby(ctx, args)
     local shown = {}
 
     if not kinds or kinds.characters then
-        local ok, chars = pcall(Ext.Entity.GetAllEntitiesWithComponent, "ServerCharacter")
-        if ok and chars then
-            for _, e in ipairs(chars) do
-                local p = V.pos(e)
-                if p and math.abs(p[1] - center[1]) <= radius and math.abs(p[3] - center[3]) <= radius then
+        do
+            for _, row in ipairs(V.characters()) do
+                local e, p = row[1], row[2]
+                if math.abs(p[1] - center[1]) <= radius and math.abs(p[3] - center[3]) <= radius then
                     local d = U.dist(p, center)
                     local u = d <= radius and V.entityUuid(e)
                     if u and not ctx.is_party[u] and V.characterVisible(ctx, u, e, p) then

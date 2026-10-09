@@ -299,15 +299,17 @@ end)
 
 -- ---- travel_to legs: verified ends, alternatives --------------------------------
 
-test("reach_toward: a leg end that fails the exact check is replaced by a verified shorter leg (S002 leg 2)", function()
-    local calls = 0
-    blocked = function(x) -- the 10 m sample passes once (the sampler), then fails (the walker's check)
-        if math.abs(x + 10) < 0.01 then calls = calls + 1; return calls > 1 end
-        return false
-    end
+test("reach_toward: the leg end is the exact point searched (one search on open ground, no re-verify)", function()
     local r = RPC.ops["nav.reach_toward"]({ pos = { -20, 0, 0 }, max_m = 10, avoid = "least" })
-    eq(r.reachable, true, "reachable"); eq(r.alt, "shorter", "alt"); eq(r.verified, true, "verified")
-    near(r.pos[1], -5, "half leg"); near(r.replaced[1], -10, "replaced")
+    eq(r.reachable, true, "reachable"); eq(r.verified, true, "verified"); eq(r.alt, nil, "no alt")
+    near(r.pos[1], -10, "full leg"); eq(searches, 1, "searches"); eq(r.searched, nil, "internal flag dropped")
+end)
+
+test("reach_toward: a far sample with no path falls back to the farthest nearer one (S002 leg 2)", function()
+    blocked = function(x) return math.abs(x + 10) < 0.01 end
+    local r = RPC.ops["nav.reach_toward"]({ pos = { -20, 0, 0 }, max_m = 10, avoid = "least" })
+    eq(r.reachable, true, "reachable"); eq(r.verified, true, "verified"); near(r.pos[1], -8, "next sample in")
+    eq(searches <= 4, true, "searches (farthest, then a binary search)")
 end)
 
 test("reach_toward: a good leg end is verified as is", function()
@@ -334,10 +336,11 @@ end)
 
 -- ---- open-world navigation (S005, the beach) -------------------------------------
 
-test("path search budget: 20 samples in one frame all run (IgnoreEntities set)", function()
+test("path search budget: more searches than the budget run in one frame (IgnoreEntities set)", function()
     budget = 4
+    blocked = function(x) return x < -30.5 end -- the 5 farthest samples have no path
     local r = RPC.ops["nav.reach_toward"]({ dir = "W", max_m = 40, step = 2 })
-    eq(r.reachable, true, "reachable"); near(r.pos[1], -40, "the farthest sample")
+    eq(r.reachable, true, "reachable"); near(r.pos[1], -30, "the farthest pathable sample")
     eq(searches > 4, true, "more than the budget ran")
 end)
 

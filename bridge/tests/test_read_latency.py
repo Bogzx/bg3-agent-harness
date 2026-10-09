@@ -184,6 +184,99 @@ class ReadLatency(unittest.TestCase):
             g.close()
 
 
+LIVE_TICK_S, LIVE_CTICK_S = 0.025, 0.046  # 2nd machine, 2026-10-10: server ~40 Hz, client = render frame ~21 fps
+
+
+def _tool(g: Game, read) -> list:
+    """One read tool as server.py runs it: begin_tool, the read, then _events_text's parallel drains."""
+    g.begin_tool()
+    read(g)
+    return g.parallel(lambda: g.drain_events("server"), lambda: g.drain_events("client"))
+
+
+class LiveTicks(unittest.TestCase):
+    """Live (check_reads --queue): every read ~100 ms, ~3 sequential evals. The ticks were the floor (an eval
+    waits for its context's next pump: TCP_NODELAY is set on both ends), but _events_text drained the two
+    contexts on parallel() helper threads, which didn't see the read's thread-local "already drained" mark,
+    so each read paid a second tick; and server-only reads also waited for the slow client tick."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fake = FakeBg3le(server_tick_s=LIVE_TICK_S, client_tick_s=LIVE_CTICK_S)
+        base = _fake()  # same ops
+        base.stop()
+        cls.fake.ops, cls.fake.cost_s = base.ops, base.cost_s
+        cls.fake.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.fake.stop()
+
+    def test_events_section_after_read_costs_no_eval(self):
+        g = Game(port=self.fake.port)
+        try:
+            _tool(g, lambda g: g.read1("state.nearby"))  # warm the pool
+            time.sleep(0.1)
+            before = len(self.fake.evals)
+            _tool(g, lambda g: g.read([("state.status", {}), ("nav.markers", {})], [("ui.state", {})]))
+            self.assertEqual(len(self.fake.evals) - before, 2)  # one server + one client eval, no drains
+        finally:
+            g.close()
+
+    def test_server_only_read_does_not_wait_for_the_client_tick(self):
+        g = Game(port=self.fake.port)
+        try:
+            _tool(g, lambda g: g.read1("state.nearby"))
+            ms = []
+            for i in range(30):
+                time.sleep(0.011 * (i % 7))
+                t0 = time.perf_counter()
+                _tool(g, lambda g: g.read1("state.nearby"))
+                ms.append((time.perf_counter() - t0) * 1000)
+            med = statistics.median(ms)
+            if REPORT:
+                print(f"\nlive ticks: server-only read median {med:.1f} ms  p90 {M.percentile(ms, 90):.1f}")
+            self.assertLess(med, 30)
+            self.assertLess(M.percentile(ms, 90), LIVE_TICK_S * 1000 + 15)
+        finally:
+            g.close()
+
+    def test_get_status_shape_at_live_ticks(self):
+        g = Game(port=self.fake.port)
+        try:
+            r = _measure(lambda g: _tool(g, lambda g: g.read([("state.status", {}), ("nav.markers", {})],
+                                                            [("ui.state", {})])), g)
+            if REPORT:
+                print(f"\nlive ticks: get_status median {r['median']:.1f} ms  p90 {r['p90']:.1f}")
+            self.assertLess(r["median"], LIVE_CTICK_S * 1000)  # one client tick at most, not two
+        finally:
+            g.close()
+
+    def test_background_client_events_arrive_once_on_the_next_tool(self):
+        fake = FakeBg3le(server_tick_s=LIVE_TICK_S, client_tick_s=LIVE_CTICK_S)
+        base = _fake()
+        base.stop()
+        fake.ops, fake.cost_s = base.ops, base.cost_s
+        fake.start()
+        g = Game(port=fake.port)
+        try:
+            fake.emit("client", "dialogue_started")
+            fake.emit("server", "quest_updated")
+            s1, c1 = _tool(g, lambda g: g.read1("state.nearby"))
+            self.assertEqual([e["kind"] for e in s1], ["quest_updated"])
+            seen = [e["kind"] for e in c1]
+            time.sleep(LIVE_CTICK_S * 2.5)
+            fake.emit("client", "line")
+            for _ in range(3):
+                seen += [e["kind"] for e in _tool(g, lambda g: g.read1("state.nearby"))[1]]
+                time.sleep(LIVE_CTICK_S * 2.5)
+            seen += [e["kind"] for e in g.drain_events("client")]
+            self.assertEqual(seen, ["dialogue_started", "line"])
+        finally:
+            g.close()
+            fake.stop()
+
+
 class Events(unittest.TestCase):
     def test_every_event_exactly_once_under_concurrency(self):
         fake = _fake()

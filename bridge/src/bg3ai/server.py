@@ -20,7 +20,7 @@ from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import actq, delta, leveling, macros, metrics, party, render, saves, turn
+from . import actq, delta, leveling, macros, metrics, party, render, saver, saves, turn
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -323,6 +323,7 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
         lv = _LEVEL_NUDGE.text()
         if lv:
             out.append(lv)
+    out.append(SAVER.take_notes())  # SAVED / SAVE FAILED from a background save
     c = _clock_line()
     if c:
         out.append(c)
@@ -402,13 +403,23 @@ def _guard(fn):
     def wrapper(*a, **kw):
         t0 = time.monotonic()
         getattr(game, "begin_tool", lambda: None)()
+        gated = fn.__name__ not in _SAVE_UNGATED
+        if gated:
+            SAVER.enter()  # a background save has the menus up for ~1 s: don't interleave with it
         try:
             return fn(*a, **kw)
         except NotReady as e:
             return _finish(fn.__name__, kw, f"NOT READY: {e}", t0, events=False)
         except (GameError, ValueError) as e:
             return _finish(fn.__name__, kw, "FAILED: " + re.sub(r'\[string "[^"]*"\]:\d+: ', "", str(e)), t0)
+        finally:
+            if gated:
+                SAVER.leave()
     return wrapper
+
+
+# Tools that don't touch the game screen, so they run while a background save has the menus up.
+_SAVE_UNGATED = {"list_saves", "session_clock", "wiki_page", "wiki_search"}
 
 
 def _uuid(ref: str) -> str:
@@ -608,9 +619,14 @@ def get_status(full: bool = False) -> str:
     _remember_names(st)
     sub = (ui or {}).get("region")
     if sub and sub != _last_subregion["name"]:
-        # The minimap's subregion name only exists client-side; hand it to the server's breadcrumbs.
-        if game.try_rpc("nav.set_subregion", {"name": sub}) is not None:
-            _last_subregion["name"] = sub
+        # The minimap's subregion name only exists client-side; hand it to the server's breadcrumbs, off the
+        # read's critical path (it was a whole extra tick on every get_status after a subregion change).
+        _last_subregion["name"] = sub
+
+        def tell(sub=sub):
+            if game.try_rpc("nav.set_subregion", {"name": sub}) is None and _last_subregion["name"] == sub:
+                _last_subregion["name"] = None  # retry on the next get_status
+        threading.Thread(target=tell, daemon=True).start()
     markers = mk.get("markers") if isinstance(mk, dict) and isinstance(mk.get("markers"), list) else None
     if markers is not None:
         _set_objectives(markers)
@@ -760,17 +776,31 @@ def _hazard_lines(hazards: Any, always: bool = False) -> list[str]:
     return render.render_hazards(hazards)
 
 
+_party_seen: list[str] = []  # get_party's last party (uuids), so its sheets ride in the status read
+
+
 @mcp.tool()
 @_guard
 def get_party() -> str:
     """Each party member's key numbers: HP, AC, level, conditions, resources (spell slots, actions), concentration."""
     t0 = time.monotonic()
-    st = game.rpc("state.status")
+
+    def sheet_ops(uuids):
+        return [("state.character", {"uuid": u, "sections": ["brief", "resources"]}) for u in uuids]
+
+    # Status and every sheet (of the party seen last time) + events in one tick; a changed party re-reads.
+    guess = list(_party_seen)
+    got, _ = _read([("state.status", {})] + sheet_ops(guess))
+    st, sheets = got[0], got[1:]
+    if st is None:
+        st = game.rpc("state.status")  # surfaces the real error
     _remember_names(st)
     lines = []
     party = st.get("party") or []
-    sheets, _ = _read([("state.character", {"uuid": c["uuid"], "sections": ["brief", "resources"]})
-                           for c in party])  # every sheet + events in one tick (was one RPC per member)
+    uuids = [c["uuid"] for c in party]
+    _party_seen[:] = uuids
+    if uuids != guess:
+        sheets, _ = _read(sheet_ops(uuids))
     for c, sheet in zip(party, sheets):
         lines.append(render.character_line(c, H, st.get("active")))
         if sheet:
@@ -2208,8 +2238,11 @@ IDLE_EVENT_WAIT_S = 4.0  # wait_for <event kinds> with no job, queue or prompt r
 def _peek_events(kinds: set) -> dict | None:
     """First event of one of `kinds` since the agent's last tool call, without consuming it
     (the result's EVENTS section still lists everything)."""
-    for ctx in ("server", "client"):
-        res = game.try_rpc("events.since", {"seq": game.event_seq[ctx], "limit": 300}, context=ctx)
+    def since(ctx):
+        return game.try_rpc("events.since", {"seq": game.event_seq[ctx], "limit": 300}, context=ctx)
+
+    got = _par(lambda: since("server"), lambda: since("client"))  # both contexts in one tick
+    for ctx, res in zip(("server", "client"), got):
         stashed = game.stashed_events(ctx) if hasattr(game, "stashed_events") else []  # read() took them
         for ev in stashed + ((res.get("events") or []) if isinstance(res, dict) else []):
             if ev.get("kind") in kinds:
@@ -3264,35 +3297,60 @@ def _enable_save_gates() -> None:
     game.rpc("ui.config", {"save_enabled": True, "load_enabled": True}, context="client")
 
 
+def _save_menus(label: str) -> tuple[bool, str]:
+    """Drive the game's save menus for one save (blocking, ~1 s; runs in the saver thread). (ok, detail)"""
+    if not label:
+        r = game.run_job("ui.menu", {"action": "quicksave"}, context="client", wait_s=30)
+        return r.status == "done", _job_text("quicksave", r)
+    r = game.run_job("ui.menu", {"action": "save", "name": label}, context="client", wait_s=30)
+    res = r.result if isinstance(r.result, dict) else {}
+    if (r.status == "done" and res.get("needs_text")) or (r.status == "failed" and res.get("needs_key")):
+        # An in-game key/text didn't land: send it through the input shim, then let the mod continue.
+        inp = _inp()
+        if inp is None:
+            return False, "the save menus need the input shim (" + (r.error or "needs_text") + "); try save_game() (quicksave)"
+        if res.get("needs_text"):
+            inp.text(label)
+        inp.key(res.get("needs_key") or "RETURN")
+        r = game.run_job("ui.menu", {"action": "save_confirm", "name": label}, context="client", wait_s=40)
+        res = r.result if isinstance(r.result, dict) else {}
+    ms = res.get("ms")
+    detail = "menus " + " ".join(f"{k}={v}" for k, v in ms.items()) if isinstance(ms, dict) else _job_text("save", r)
+    return r.status == "done", detail
+
+
+def _can_save() -> tuple[bool, str]:
+    """Whether the game takes a save now: nothing modal on screen and the Save command enabled."""
+    ui = game.try_rpc("ui.state", context="client") or {}
+    scr = (ui.get("screen") or "game") if isinstance(ui, dict) else "game"
+    if scr not in ("game", "game_menu", "save_load"):
+        return False, f"{scr} on screen"
+    dry = game.try_rpc("ui.menu", {"action": "save", "dry": True}, context="client")
+    if not (isinstance(dry, dict) and dry.get("can")):
+        return False, "the game has saving disabled here"
+    return True, ""
+
+
+def _save_log(rec: dict) -> None:
+    try:
+        RUNTIME.mkdir(parents=True, exist_ok=True)
+        with open(RUNTIME / "actions.jsonl", "a") as f:
+            f.write(json.dumps({"t": time.time(), "tool": "save_game.bg", **rec}) + "\n")
+    except OSError:
+        pass
+
+
+SAVER = saver.Saver(_save_menus, _can_save, lambda: SAVE_DIR, _save_log)
+
+
 @mcp.tool()
 @_guard
 def save_game(label: str = "") -> str:
-    """Save the game. label: short name for a named save (e.g. "before-gauntlet"); empty = quicksave."""
+    """Save the game (returns at once: the save runs in the background; SAVED shows on a later result). label: short name for a named save (e.g. "Sxxx-pre-kagha"); empty = quicksave. If the game can't save right now (conversation, roll) it is queued for the next moment it can."""
     t0 = time.monotonic()
     _enable_save_gates()
-    if not label:
-        r = game.run_job("ui.menu", {"action": "quicksave"}, context="client", wait_s=30)
-        return _finish("save_game", {"label": label}, _job_text("save_game", r), t0)
-    label = re.sub(r"[^A-Za-z0-9 _.-]", "", label)[:40] or "save"
-    before = {d.name for d in SAVE_DIR.iterdir()} if SAVE_DIR.is_dir() else set()
-    r = game.run_job("ui.menu", {"action": "save", "name": label}, context="client", wait_s=30)
-    if r.status == "done" and isinstance(r.result, dict) and r.result.get("needs_text"):
-        # The name box only takes real keyboard text: type it through the input shim, then confirm.
-        inp = _inp()
-        if inp is None:
-            raise GameError("named saves need the input shim; use save_game() for a quicksave")
-        inp.text(label)
-        inp.key("RETURN")
-        r = game.run_job("ui.menu", {"action": "save_confirm", "name": label}, context="client", wait_s=40)
-    # Confirm on disk: a new save folder ending in __<label> (the load menu shows it the same way).
-    deadline = time.monotonic() + 15
-    found = None
-    while time.monotonic() < deadline and not found:
-        if SAVE_DIR.is_dir():
-            found = next((d.name for d in SAVE_DIR.iterdir() if d.name not in before and d.name.endswith("__" + label)), None)
-        if not found:
-            time.sleep(0.3)
-    body = _job_text("save_game", r) + (f"\nsaved as '{label}'" if found else "\nWARNING: no save folder appeared; try save_game() (quicksave)")
+    label = re.sub(r"[^A-Za-z0-9 _-]", "", label)[:40] if label else ""  # the mod's name filter (no dots)
+    body = SAVER.save(label, sync=_session_over())  # session over: nothing comes after, so wait for the disk
     return _finish("save_game", {"label": label}, body, t0)
 
 
@@ -3317,6 +3375,7 @@ def load_game(save: str = "latest") -> str:
     """Load one of YOUR saves (folder name from list_saves, or "latest"). Use after a party wipe or a clear mistake."""
     t0 = time.monotonic()
     _enable_save_gates()
+    dropped = SAVER.settle()  # a background save finishes writing first; a queued one is dropped
     mine = sorted((d for d in SAVE_DIR.iterdir() if d.is_dir() and SAVE_PREFIX and d.name.startswith(SAVE_PREFIX)),
                   key=lambda d: d.stat().st_mtime, reverse=True) if SAVE_DIR.is_dir() else []
     if save == "latest":
@@ -3350,7 +3409,8 @@ def load_game(save: str = "latest") -> str:
             JobResult("failed", None, "the game did not come back to Running within 120 s")
     game.event_seq = {"server": 0, "client": 0}
     DELTA.reset()  # a loaded save is a new world: the next look is a full one
-    return _finish("load_game", {"save": save}, _job_text("load_game", r), t0, events=False)
+    return _finish("load_game", {"save": save}, _job_text("load_game", r) + (f"\n{dropped}" if dropped else ""),
+                   t0, events=False)
 
 
 @mcp.tool()

@@ -2,7 +2,7 @@
 
 Calls the bridge's read tools in-process against the running game, N rounds each, and prints per tool the
 median/p90/max round trip plus the evals each call made (ops: "a+b+events.since" ran in one eval).
-Target (goal): read median < 60 ms, p90 < 200 ms.
+Target (goal): read median < 30 ms, p90 < 100 ms (server ticks ~25 ms, client ~46 ms on machine 2).
 
   uv run --project bridge python tools/dev/check_reads.py [--rounds 10] [--queue]
 
@@ -74,8 +74,8 @@ def main() -> int:
               f"  max {max(ms):6.1f}  evals {statistics.median([r['rpc_n'] for r in rs]):.0f}  slowest ops {ops}")
     if allms:
         med, p90 = statistics.median(allms), M.percentile(allms, 90)
-        ok = med < 60 and p90 < 200
-        print(f"ALL            median {med:.1f} ms  p90 {p90:.1f} ms  -> {'PASS' if ok else 'FAIL'} (<60 / <200)")
+        ok = med < 30 and p90 < 100
+        print(f"ALL            median {med:.1f} ms  p90 {p90:.1f} ms  -> {'PASS' if ok else 'FAIL'} (<30 / <100)")
         return 0 if ok else 1
     print("no records (is the game running with a save loaded?)")
     return 2

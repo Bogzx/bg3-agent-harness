@@ -307,5 +307,42 @@ class GoalsTest(TmpCase):
         self.assertEqual(F.goals_payload(self.tmp, {}, now=1.0)["sessions"], [])
 
 
+
+class UnattendedTest(TmpCase):
+    """/api/goals "unattended": runs from runner_events.jsonl, faults and recoveries."""
+
+    def test_runs_faults_recoveries(self):
+        d = self.tmp / "sessions" / "pt"
+        d.mkdir(parents=True)
+        evs = [{"t": 0, "kind": "runner_start"},
+               {"t": 1800, "kind": "runner_stop", "why": "stopped"},                    # 0.5 h
+               {"t": 3600, "kind": "runner_start"},
+               {"t": 4000, "kind": "fault", "fault": "crash", "detail": "game process exited (status -9)"},
+               {"t": 4100, "kind": "recovered", "fault": "crash", "seconds": 100, "how": "game relaunched"},
+               {"t": 5000, "kind": "fault", "fault": "agent_hang", "detail": "no claude output for 4.0 min"},
+               {"t": 5040, "kind": "recovered", "fault": "agent_hang", "seconds": 40, "how": "claude restarted"},
+               {"t": 6000, "kind": "steam_refused", "why": "online"},
+               {"t": 7200, "kind": "runner_start"},                                    # killed hard before
+               {"t": 7300, "kind": "fault", "fault": "hang", "detail": "evals time out"},
+               {"t": 7400, "kind": "recovery_failed", "fault": "hang", "error": "boom"}]
+        (d / "runner_events.jsonl").write_text("\n".join(json.dumps(e) for e in evs) + "\n")
+        u = F.unattended_payload(d, {"runner_pid": 123, "steam_offline": True}, now=7200 + 3 * 3600,
+                                 pid_alive=lambda p: True)
+        self.assertTrue(u["live"])
+        self.assertEqual(u["current_h"], 3.0)
+        self.assertEqual(u["longest_h"], 3.0)
+        self.assertEqual(u["runs"], 3)
+        self.assertAlmostEqual(u["total_h"], 0.5 + 2400 / 3600 + 3.0, places=2)   # the killed run ends at its last event
+        self.assertEqual((u["faults"]["crash"], u["faults"]["agent_hang"], u["faults"]["hang"]), (1, 1, 1))
+        self.assertEqual((u["fault_total"], u["recovered"], u["failed"], u["steam_refused"]), (3, 2, 1, 1))
+        self.assertEqual((u["recovery_s_median"], u["recovery_s_max"]), (100, 100))
+        self.assertEqual(u["events"][-1]["kind"], "recovery_failed")
+        # the runner is gone without a stop event: ends at its heartbeat, not live
+        u = F.unattended_payload(d, {"runner_pid": 123, "heartbeat": 9000}, now=20000, pid_alive=lambda p: False)
+        self.assertFalse(u["live"])
+        self.assertIsNone(u["current_h"])
+        self.assertEqual(u["last_stop"], "no stop event (killed?)")
+        self.assertIsNone(F.unattended_payload(self.tmp, {}, now=0))
+
 if __name__ == "__main__":
     unittest.main()

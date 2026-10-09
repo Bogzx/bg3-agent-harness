@@ -930,8 +930,13 @@ end
 local function saveDriver(name, kind)
     A.pendingSave = { name = name, started = RPC.now_ms() }
     local stage, stageSince, keyTries = nil, RPC.now_ms(), 0
+    local t0 = RPC.now_ms()
+    local ms = {}  -- stage -> ms since start (returned as result.ms: where a save's time goes)
     local function enter(st)
-        if st ~= stage then stage, stageSince, keyTries = st, RPC.now_ms(), 0 end
+        if st ~= stage then
+            stage, stageSince, keyTries = st, RPC.now_ms(), 0
+            if ms[st] == nil then ms[st] = stageSince - t0 end
+        end
     end
     return waitJob(kind, 30000, function(job)
         local now = RPC.now_ms()
@@ -994,9 +999,11 @@ local function saveDriver(name, kind)
             return nil
         end
         -- accept/overwrite/close passed and nothing is open: wait for the
-        -- saving indicator to clear.
+        -- saving indicator to clear. The write itself is confirmed by the
+        -- bridge on disk, in the background (S009: this floor was 600 ms of
+        -- ~1.2 s; 250 ms still lets the game menu come back between pages).
         if savingIndicator() then enter("saving") return nil end
-        if now - stageSince < 600 then return nil end
+        if now - stageSince < 250 then return nil end
         -- leave the game menu (the save page returns to it) so the game is back
         if visible("GameMenu") then
             if not job.menuEsc or (now - job.menuEsc > 1200 and (job.menuTries or 0) < 2) then
@@ -1007,7 +1014,8 @@ local function saveDriver(name, kind)
             return nil
         end
         A.pendingSave = nil
-        return "done", { saved = true, name = name, typed = job.typed }
+        ms.done = now - t0
+        return "done", { saved = true, name = name, typed = job.typed, ms = ms }
     end)
 end
 A.saveDriver = saveDriver

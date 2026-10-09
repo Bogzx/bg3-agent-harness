@@ -15,7 +15,7 @@ No reading through files, no tidying.
 - Start nothing new.
 
 ## 2. Save
-`save_game(label="Sxxx-end")`. Check that the result says `done`.
+`save_game(label="Sxxx-end")` (returns at once; `list_saves` then shows it, and a later result says SAVED). Save `Sxxx-end` once, not again after every note.
 
 ## 3. Write (one call each, while nothing else runs)
 - **HANDOFF.md:** rewrite the whole file with one Write, using the template below.

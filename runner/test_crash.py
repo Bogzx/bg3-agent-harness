@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """Offline crash-recovery test for runner/play.py: a fake game and a fake claude, no BG3, no Steam.
 
-    python3 runner/test_crash.py          (~30 s)
+    python3 runner/test_crash.py          (~60 s)
+
+Faults covered, each through the real Runner.play_session (detect → stop claude → recover → resume):
+  crash        the game process dies (SIGKILL of the stub's process group)
+  port lost    the process lives on but the debug port stops answering
+  game hang    the port stays open but every eval times out (the fake blocks for the eval's timeout)
+  agent hang   claude prints nothing for AGENT_SILENT_MINUTES and ignores SIGINT/SIGTERM (needs SIGKILL)
+plus: the worst-case detection budget with the real constants (≤ 3 min), the Steam-offline guard before any
+launch, and session-config.json "minutes" switching the session length between sessions.
 
 The fake game is a real process started by the real Runner.launch_game() (LAUNCH_SH points at a stub script),
 so the launch → crash → kill → relaunch path runs for real; only the game's answers (debug port, game state,
@@ -38,6 +46,12 @@ log = os.environ["FAKE_CLAUDE_LOG"]
 with open(log, "a") as f:
     f.write(json.dumps({"argv": sys.argv[1:], "t": time.time()}) + "\n")
 resume = "--resume" in sys.argv
+if os.environ.get("FAKE_CLAUDE_HANG") and not resume:
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_IGN)   # a wedged claude: only SIGKILL stops it
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    print(json.dumps({"type": "system", "subtype": "init", "session_id": "x"}), flush=True)
+    time.sleep(3600)
 print(json.dumps({"type": "system", "subtype": "init", "session_id": "x"}), flush=True)
 print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "resumed" if resume else "playing"}]}}), flush=True)
 try:
@@ -55,6 +69,7 @@ class FakeGame:
         self.r = runner
         self.saves = list(saves)
         self.hung_pid: int | None = None   # a hang belongs to one game process; a relaunch answers again
+        self.port_lost_pid: int | None = None   # process alive, port 9998 closed
 
     @property
     def hung(self) -> bool:
@@ -72,16 +87,21 @@ class FakeGame:
         return a[a.index("--load") + 1] if "--load" in a else None
 
     def port_open(self, *a, **k) -> bool:
-        return self.alive()
+        return self.alive() and self.r.game_proc.pid != self.port_lost_pid
 
-    def game_state(self):
-        if not self.alive() or self.hung:
+    def game_state(self, timeout: float = P.EVAL_TIMEOUT):
+        try:
+            self.lua_eval("return tostring(Ext.Utils.GetGameState())", "client", timeout)
+        except Exception:  # noqa: BLE001 - like play.game_state
             return None
         return "Running" if self.loaded() else "Menu"
 
-    def lua_eval(self, code: str, context: str = "client", timeout: float = 0) -> str:
-        if not self.alive() or self.hung:
-            raise ConnectionError("fake game: no answer")
+    def lua_eval(self, code: str, context: str = "client", timeout: float = P.EVAL_TIMEOUT) -> str:
+        if not self.port_open():
+            raise ConnectionError("fake game: connection refused")
+        if self.hung:
+            time.sleep(timeout)            # the port accepts, the eval never answers
+            raise TimeoutError("fake game: eval timed out")
         if "F5" in code:  # the runner's quicksave fallback
             self.saves.append(P.Save(f"Claude-{900 + len(self.saves)}__QuickSave_1", "Claude", "QuickSave_1", time.time()))
         return "{}"
@@ -108,13 +128,21 @@ class CrashRecovery(unittest.TestCase):
         self.claude_log = self.tmp / "claude.jsonl"
         os.environ.update(FAKE_CLAUDE_LOG=str(self.claude_log), FAKE_CLAUDE_FIRST_S="60", FAKE_CLAUDE_RESUME_S="2")
 
-        names = ("RUNTIME", "LAUNCH_SH", "HEALTH_INTERVAL", "port_open", "game_state", "lua_eval", "rpc",
+        names = ("RUNTIME", "LAUNCH_SH", "HEALTH_INTERVAL", "HEALTH_RETRY_INTERVAL", "HEALTH_EVAL_TIMEOUT",
+                 "AGENT_SILENT_MINUTES", "SIGINT_GRACE", "SIGTERM_GRACE", "KILL_GRACE",
+                 "port_open", "game_state", "lua_eval", "rpc",
                  "server_ready", "available_ops", "host_character_name", "ui_screen", "read_progress",
-                 "pids_of_game", "list_saves", "RESUME_MIN_MINUTES")
+                 "pids_of_game", "list_saves", "RESUME_MIN_MINUTES", "steam_ready")
         self.saved = {n: getattr(P, n) for n in names}
+        os.environ.pop("FAKE_CLAUDE_HANG", None)
         P.RUNTIME = self.tmp / "runtime"
         P.LAUNCH_SH = launch
         P.HEALTH_INTERVAL = 1
+        P.HEALTH_RETRY_INTERVAL = 0.5
+        P.HEALTH_EVAL_TIMEOUT = 0.5
+        P.AGENT_SILENT_MINUTES = 2               # the fake claude idles silently; test_agent_hang sets 3 s
+        P.SIGINT_GRACE, P.SIGTERM_GRACE, P.KILL_GRACE = 2, 2, 2
+        P.steam_ready = lambda: (True, "test: offline")
 
         r = P.Runner(P.Options("crash-test", None, 20, "opus", save_owner="Claude"))
         r.next_sid = lambda: "S001"
@@ -127,7 +155,7 @@ class CrashRecovery(unittest.TestCase):
                          P.Save("Claude-2__S001-before-imps", "Claude", "S001-before-imps", now - 100),
                          P.Save("Tav-3__my own game", "Tav", "my own game", now - 10)])   # newer, not ours
         P.port_open, P.game_state, P.lua_eval, P.rpc = g.port_open, g.game_state, g.lua_eval, g.rpc
-        P.server_ready = lambda: g.alive() and not g.hung and g.loaded() is not None
+        P.server_ready = lambda: g.port_open() and not g.hung and g.loaded() is not None
         P.available_ops = lambda ctx: set()
         P.host_character_name = lambda: "Claude"
         P.ui_screen = lambda: "game"
@@ -146,14 +174,30 @@ class CrashRecovery(unittest.TestCase):
     def claude_runs(self) -> list[list[str]]:
         return [json.loads(ln)["argv"] for ln in self.claude_log.read_text().splitlines()]
 
-    def crash_after(self, s: float, hang: bool = False) -> None:
+    def crash_after(self, s: float, hang: bool = False, port_lost: bool = False) -> None:
         def go():
             time.sleep(s)
             if hang:
                 self.g.hung_pid = self.r.game_proc.pid
+            elif port_lost:
+                self.g.port_lost_pid = self.r.game_proc.pid
             else:
                 self.g.crash()
         threading.Thread(target=go, daemon=True).start()
+
+    def events(self) -> list[dict]:
+        f = self.r.state.dir / "runner_events.jsonl"
+        return [json.loads(ln) for ln in f.read_text().splitlines()] if f.exists() else []
+
+    def assert_recovered(self, fault: str, within_s: float) -> dict:
+        ev = self.events()
+        faults = [e for e in ev if e["kind"] == "fault"]
+        rec = [e for e in ev if e["kind"] == "recovered"]
+        self.assertEqual([e["fault"] for e in faults], [fault], ev)
+        self.assertEqual([e["fault"] for e in rec], [fault], ev)
+        self.assertLessEqual(rec[0]["seconds"], within_s, rec)
+        self.assertLessEqual(rec[0]["t"] - faults[0]["t"], within_s)
+        return rec[0]
 
     def test_crash_relaunches_loads_latest_own_save_and_resumes_claude(self):
         self.crash_after(4)
@@ -178,16 +222,50 @@ class CrashRecovery(unittest.TestCase):
         self.assertIn("recovering: crashed", log)
         self.assertIn("resuming claude after the crash", log)
         self.assertTrue((self.r.state.dir / "S001-r1.log").exists())
+        self.assertIn("FAULT crash: game process exited", log)
+        self.assertIn("relaunched", self.assert_recovered("crash", 20)["how"])
+
+    def test_port_lost_with_process_alive_is_recovered(self):
+        self.crash_after(3, port_lost=True)
+        res = self.r.play_session(20, first=True)
+        self.assertEqual(res.reason, "exited")
+        self.assertEqual(len(self.claude_runs()), 2)
+        log = (P.RUNTIME / "runner.log").read_text()
+        self.assertIn("FAULT crash: debug port 9998 stopped answering (game process still alive)", log)
+        self.assertNotEqual(self.r.game_proc.pid, self.g.port_lost_pid)       # the deaf game was killed
+        self.assertTrue(self.g.port_open())
+        self.assert_recovered("crash", 20)
 
     def test_hang_is_recovered_too(self):
         self.crash_after(3, hang=True)
-        hung_pid = None
         self.r.play_session(20, first=True)
         hung_pid = self.g.hung_pid
         self.assertEqual(len(self.claude_runs()), 2)
         self.assertIn("recovering: stopped responding", (P.RUNTIME / "runner.log").read_text())
         self.assertNotEqual(self.r.game_proc.pid, hung_pid)                   # the hung game was replaced
         self.assertFalse(self.g.hung)
+        self.assertIn("liveness evals in a row failed or timed out", (P.RUNTIME / "runner.log").read_text())
+        self.assert_recovered("hang", 25)
+
+    def test_agent_hang_restarts_claude_only(self):
+        os.environ["FAKE_CLAUDE_HANG"] = "1"
+        P.AGENT_SILENT_MINUTES = 3 / 60
+        res = self.r.play_session(20, first=True)
+        game_pid = self.r.game_proc.pid
+        runs = self.claude_runs()
+        self.assertEqual(len(runs), 2)
+        prompt = runs[1][runs[1].index("-p") + 1]
+        self.assertIn("produced no output", prompt)                           # agent_resume_prompt, not a crash note
+        self.assertEqual(runs[1][runs[1].index("--resume") + 1], runs[0][runs[0].index("--session-id") + 1])
+        self.assertEqual(res.reason, "exited")
+        log = (P.RUNTIME / "runner.log").read_text()
+        self.assertIn("FAULT agent_hang: no claude output", log)
+        self.assertNotIn("recovering:", log)                                  # the game was left alone
+        self.assertEqual(self.r.game_proc.pid, game_pid)
+        self.assertNotIn("killing the game", log)
+        rec = self.assert_recovered("agent_hang", 15)                         # SIGINT, SIGTERM ignored → SIGKILL
+        self.assertIn("game untouched", rec["how"])
+        self.assertEqual(self.r.state["history"][-1]["resumes"], 1)
 
     def test_too_little_time_left_ends_the_session_and_keeps_the_note(self):
         P.RESUME_MIN_MINUTES = 30                     # a 20-min session never has 30 left
@@ -197,6 +275,150 @@ class CrashRecovery(unittest.TestCase):
         self.assertEqual(self.r.state["history"][-1]["resumes"], 0)
         self.assertEqual(self.g.loaded(), "Claude-2__S001-before-imps")       # recovered for the next session
         self.assertTrue(any("RUNNER NOTE: the game crashed" in n for n in self.r.pending_notes))
+
+
+class DetectionBudget(unittest.TestCase):
+    """With the real constants, every fault is detected and claude stopped within 3 min (the agent hang after its
+    silence limit). Then kill_game (≤ KILL_GRACE + KILL_CONFIRM) and BG3's own relaunch + load follow."""
+
+    def test_real_constants(self):
+        for kind in ("crash", "hang"):
+            self.assertLessEqual(P.detect_budget_s(kind), 180, kind)
+        self.assertLessEqual(P.detect_budget_s("agent_hang") - P.AGENT_SILENT_MINUTES * 60, 180)
+        self.assertLessEqual(P.AGENT_SILENT_MINUTES, 5)
+        self.assertLessEqual(P.KILL_GRACE + P.KILL_CONFIRM, 60)
+
+
+class SteamGuard(unittest.TestCase):
+    """No game launch unless Steam's last login was offline (and Steam runs)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-steam-"))
+        self.log = self.tmp / "steamui_login.txt"
+        os.environ["BG3AI_STEAM_LOGIN_LOG"] = str(self.log)
+        os.environ.pop("BG3AI_ALLOW_STEAM_ONLINE", None)
+        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "port_open", "LAUNCH_SH")}
+        P.RUNTIME = self.tmp / "runtime"
+        P.port_open = lambda *a, **k: False
+        P.LAUNCH_SH = self.tmp / "must-not-run.sh"
+
+    def tearDown(self):
+        os.environ.pop("BG3AI_STEAM_LOGIN_LOG", None)
+        for n, v in self.saved.items():
+            setattr(P, n, v)
+
+    def write(self, *lines: str) -> None:
+        self.log.write_text("\n".join(f"[2026-10-09 21:00:0{i}] [ None ] {ln}" for i, ln in enumerate(lines)) + "\n")
+
+    def test_parser(self):
+        sp = P.steam_paths
+        self.write("Starting login", "SetLoginState: Success - OK", "Start offline - 1", "SetLoginState: Success - OK")
+        self.assertTrue(sp.steam_offline()[0])
+        self.write("Start offline - 1", "Starting login", "Received logon success response")   # went online
+        ok, why = sp.steam_offline()
+        self.assertFalse(ok)
+        self.assertIn("online", why)
+        self.write("Start offline - 0")
+        self.assertFalse(sp.steam_offline()[0])
+        self.log.unlink()
+        self.assertFalse(sp.steam_offline()[0])
+
+    def test_launch_refused_loudly_when_online(self):
+        self.write("Starting login", "Received logon success response")
+        r = P.Runner(P.Options("steam-test", None, 20, "opus", save_owner="Claude"))
+        with self.assertRaises(P.SteamNotOffline):
+            r.launch_game("Claude-1__x")
+        self.assertIsNone(r.game_proc)                                    # nothing launched
+        self.assertIn("REFUSING TO LAUNCH BG3", (P.RUNTIME / "runner.log").read_text())
+        ev = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
+        self.assertEqual(ev[-1]["kind"], "steam_refused")
+        self.assertFalse(json.loads((P.RUNTIME / "runner.status.json").read_text())["steam_offline"])
+
+    def test_steam_not_running_is_refused_too(self):
+        self.write("Start offline - 1")
+        real = P.subprocess.run
+        P.subprocess.run = lambda *a, **k: P.subprocess.CompletedProcess(a, 1, "", "")   # pgrep: no steam
+        try:
+            ok, why = P.steam_ready()
+        finally:
+            P.subprocess.run = real
+        self.assertFalse(ok)
+        self.assertIn("isn't running", why)
+
+    def test_allow_online_override(self):
+        self.write("Starting login")
+        os.environ["BG3AI_ALLOW_STEAM_ONLINE"] = "1"
+        try:
+            real = P.subprocess.run
+            P.subprocess.run = lambda *a, **k: P.subprocess.CompletedProcess(a, 0, "123\n", "")
+            try:
+                self.assertTrue(P.steam_ready()[0])
+            finally:
+                P.subprocess.run = real
+        finally:
+            os.environ.pop("BG3AI_ALLOW_STEAM_ONLINE")
+
+
+class RunLoop(unittest.TestCase):
+    """Runner.run(): a Steam refusal never counts toward giving up; start/stop land in runner_events.jsonl."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-loop-"))
+        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "STEAM_RETRY_S", "MAX_SETUP_FAILURES")}
+        P.RUNTIME = self.tmp / "runtime"
+        P.STEAM_RETRY_S = 0
+        P.MAX_SETUP_FAILURES = 2
+
+    def tearDown(self):
+        for n, v in self.saved.items():
+            setattr(P, n, v)
+
+    def test_steam_refusals_retry_forever_then_play(self):
+        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
+        r.check_memory = lambda: None
+        calls = []
+
+        def play(minutes, first):
+            calls.append(minutes)
+            if len(calls) <= 5:                     # more than MAX_SETUP_FAILURES refusals
+                raise P.SteamNotOffline("last Steam login was online")
+            r.stop_requested = True
+            return P.SessionResult("S001", "c", 0, "exited", time.time() - 600, time.time())
+        r.play_session = play
+        self.assertEqual(r.run(), 0)
+        self.assertEqual(len(calls), 6)
+        kinds = [json.loads(ln)["kind"] for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
+        self.assertEqual((kinds[0], kinds[-1]), ("runner_start", "runner_stop"))
+        self.assertNotIn("setup_failed", kinds)
+        self.assertIn("Steam not offline", (P.RUNTIME / "runner.log").read_text())
+
+
+class LiveSessionLength(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-len-"))
+        self.saved_rt = P.RUNTIME
+        P.RUNTIME = self.tmp / "runtime"
+
+    def tearDown(self):
+        P.RUNTIME = self.saved_rt
+
+    def test_minutes_from_session_config_each_session(self):
+        r = P.Runner(P.Options("len-test", None, 20, "opus"))
+        cfg = r.state.dir / "session-config.json"
+        self.assertEqual(r.session_minutes(), 20)                          # no file: --session-minutes
+        cfg.write_text(json.dumps({"minutes": 60, "effort": "low"}))
+        self.assertEqual(r.session_minutes(), 60)
+        self.assertIn("session length now 60 min", (P.RUNTIME / "runner.log").read_text())
+        cfg.write_text(json.dumps({"minutes": 5}))                          # too short without --allow-short-sessions
+        self.assertEqual(r.session_minutes(), 20)
+        cfg.write_text(json.dumps({"minutes": "60"}))                       # bad type: ignored
+        self.assertEqual(r.session_minutes(), 20)
+        cfg.write_text("{broken")
+        self.assertEqual(r.session_minutes(), 20)
+        r.opt.allow_short = True
+        cfg.write_text(json.dumps({"minutes": 5}))
+        self.assertEqual(r.session_minutes(), 5)
+        self.assertEqual(json.loads((P.RUNTIME / "runner.status.json").read_text())["session_minutes"], 5)
 
 
 if __name__ == "__main__":

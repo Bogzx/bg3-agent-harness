@@ -72,8 +72,10 @@ function V.entityUuid(e)
     return nil
 end
 
+-- No closure per call: V.pos runs for every character in a scan (900+ live).
+local function translate(e) return e.Transform.Transform.Translate end
 function V.pos(e)
-    local ok, p = pcall(function() return e.Transform.Transform.Translate end)
+    local ok, p = pcall(translate, e)
     if ok and p then return { p[1], p[2], p[3] } end
     return nil
 end
@@ -135,14 +137,40 @@ function V.rules()
 end
 
 -- One context per op call: party, observers, rules.
+-- Cached for the current game frame (Nav.frame, bumped every tick): every op
+-- in one eval (look = 6 server ops) shares it; V.rules alone costs ~0.5 ms
+-- live. Callers treat it as read-only.
+function V.frame() return BG3AI.Nav and BG3AI.Nav.frame or nil end
 function V.context()
+    local f = V.frame()
+    if f and V.ctxFrame == f and V.ctxCache then return V.ctxCache end
     local party, isParty = V.party()
-    return {
+    local ctx = {
         party = party,
         is_party = isParty,
         observers = V.observers(party),
         rules = V.rules(),
     }
+    V.ctxCache, V.ctxFrame = ctx, f
+    return ctx
+end
+
+-- Every ServerCharacter with its position, scanned once per frame (live: 911
+-- characters on WLD_Main_A, ~14 ms): state.nearby, nav.frontier and the
+-- other scans in one eval share it. Rows are {e, p}; read-only.
+function V.characters()
+    local f = V.frame()
+    if f and V.charsFrame == f and V.charsCache then return V.charsCache end
+    local out = {}
+    local ok, chars = pcall(Ext.Entity.GetAllEntitiesWithComponent, "ServerCharacter")
+    if ok and chars then
+        for _, e in ipairs(chars) do
+            local p = V.pos(e)
+            if p then out[#out + 1] = { e, p } end
+        end
+    end
+    V.charsCache, V.charsFrame = out, f
+    return out
 end
 
 ------------------------------------------------------------------------

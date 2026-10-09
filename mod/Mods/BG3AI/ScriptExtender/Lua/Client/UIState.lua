@@ -424,6 +424,17 @@ function S.state(args)
     end
     res.screen = res.screen or "game"
 
+    -- Our own background save drives these menus for ~1 s (UIActions
+    -- saveDriver): report the game underneath, so a running queue's watcher
+    -- doesn't take the save name box for a popup and stop the walk.
+    local SA = BG3AI.UIActions
+    local ps = SA and SA.pendingSave
+    if ps and RPC.now_ms() - (ps.started or 0) < 15000 and (res.screen == "save_load" or res.screen == "game_menu"
+        or res.page == "SaveGamePopup" or res.page == "Dialog_box") then
+        res.saving = { page = res.page }
+        res.screen, res.page = "game", nil
+    end
+
     -- Panels open besides the HUD.
     local panels = {}
     for name, w in pairs(wmap) do

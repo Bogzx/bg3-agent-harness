@@ -227,7 +227,9 @@ line when condensing. A hook reports lint problems right after you edit a memory
 they appear.
 
 ## Save discipline
-Name saves with `save_game(label="Sxxx-<slug>")` (e.g. `S042-pre-kagha`). Save:
+Name saves with `save_game(label="Sxxx-<slug>")` (e.g. `S042-pre-kagha`). It returns at once and saves in the
+background (keep playing; a later result says SAVED). Save at milestones and before real risk only, never "every
+few minutes" (S009 saved 7 times in 20 min). Save:
 - `Sxxx-start` once state is verified
 - **before** dialogues that could turn hostile, skill checks that matter, irreversible choices, boss or
   large fights, long rests with urgent objectives pending, and point-of-no-return prompts

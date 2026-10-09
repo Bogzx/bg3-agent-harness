@@ -165,7 +165,8 @@ table.goals svg { vertical-align: middle; }
   <section class="card">
     <h2><span class="grow">Goal scorecard</span><small id="goalNote">per session · green = pass · trend left→right</small></h2>
     <div class="body"><table class="goals" id="goals"><tr><td class="empty">No sessions yet.</td></tr></table>
-      <div class="milestones" id="goalMilestones"></div></div>
+      <div class="milestones" id="goalMilestones"></div>
+      <div class="milestones" id="goalUnattended"></div></div>
   </section>
 </div>
 <main>
@@ -493,6 +494,31 @@ function milestonesHtml(m) {
     + ok.map((i) => `<span class="m ok" title="${i.t ? hhmmss(i.t) : "before tracking"}">✓ ${esc(i.label)}${i.session ? ` <small>${esc(i.session)}</small>` : ""}</span>`).join("")
     + (m.next ? `<span class="m next">→ next: ${esc(m.next)}</span>` : "");
 }
+function unattendedHtml(u) {
+  if (!u) return "";
+  const h = (v) => v == null ? "–" : v < 1 ? Math.round(v * 60) + " min" : v.toFixed(1) + " h";
+  const f = u.faults || {};
+  const kinds = Object.keys(f).filter((k) => f[k]).map((k) => `${f[k]} ${k.replace("_", " ")}`).join(", ");
+  const evTxt = (e) => {
+    const what = e.kind === "fault" ? `FAULT ${e.fault}: ${e.detail || ""}`
+      : e.kind === "recovered" ? `recovered ${e.fault} in ${e.seconds ?? "?"} s: ${e.how || ""}`
+      : e.kind === "recovery_failed" ? `recovery FAILED (${e.fault}): ${e.error || ""}`
+      : e.kind === "steam_refused" ? `launch refused, Steam not offline: ${e.why || ""}`
+      : e.kind === "setup_failed" ? `setup failed: ${e.error || ""}`
+      : `runner stopped: ${e.why || ""}`;
+    const bad = e.kind === "fault" || e.kind === "recovery_failed" || e.kind === "steam_refused" || e.kind === "setup_failed";
+    return `<span class="m ${e.kind === "recovered" ? "ok" : bad ? "next" : ""}" title="${esc(what)}">${hhmmss(e.t)} ${esc(what.slice(0, 90))}</span>`;
+  };
+  return `<b>unattended ${u.live ? h(u.current_h) + " now" : "– (runner not running)"}</b> `
+    + `<small class="k">longest ${h(u.longest_h)} · total ${h(u.total_h)} over ${u.runs} run${u.runs === 1 ? "" : "s"}</small> &nbsp;`
+    + `<span class="m">${u.fault_total} fault${u.fault_total === 1 ? "" : "s"}${kinds ? " (" + esc(kinds) + ")" : ""}</span>`
+    + `<span class="m ${u.recovered ? "ok" : ""}">${u.recovered} recovered${u.recovery_s_median != null ? ` (median ${u.recovery_s_median} s, max ${u.recovery_s_max} s)` : ""}</span>`
+    + (u.failed ? `<span class="m next">${u.failed} recovery failed</span>` : "")
+    + (u.steam_refused ? `<span class="m next">${u.steam_refused} launch refused (Steam online)</span>` : "")
+    + (u.steam_offline === false ? `<span class="m next">⚠ STEAM NOT OFFLINE</span>` : "")
+    + (!u.live && u.last_stop ? `<span class="m">last stop: ${esc(u.last_stop)}</span>` : "")
+    + ((u.events || []).length ? "<br>" + u.events.slice().reverse().map(evTxt).join("") : "");
+}
 function renderGoals(r) {
   const S = (r.sessions || []).slice(-12), G = r.goals || [];
   if (!S.length) return;
@@ -513,6 +539,7 @@ function renderGoals(r) {
     `<td class="${s.short ? "short" : ""}">${fmt(s.minutes, "", 0)} · ${s.points ?? "–"}</td>`).join("")}<td colspan="3"></td></tr>`;
   $("goals").innerHTML = head + rows + sum;
   $("goalMilestones").innerHTML = milestonesHtml(r.milestones);
+  $("goalUnattended").innerHTML = unattendedHtml(r.unattended);
 }
 async function pollGoals() {
   try { renderGoals(await getJSON("/api/goals")); } catch (e) { /* ignore */ }

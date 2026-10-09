@@ -6,6 +6,7 @@
     python3 tools/steam_paths.py sniper      # .../SteamLinuxRuntime_sniper
     python3 tools/steam_paths.py manifest    # .../steamapps/appmanifest_1086940.acf
     python3 tools/steam_paths.py buildid     # the installed buildid from that manifest
+    python3 tools/steam_paths.py offline     # exit 0 if Steam's last login was offline, else 3
 
 Order, for the game: $BG3_DIR, then $BG3AI_GAME_DIR (older name), then the Steam library that
 libraryfolders.vdf lists for app 1086940, then the old default ~/.local/share/Steam/steamapps/common.
@@ -138,12 +139,52 @@ def buildid(env=os.environ, home: Path | None = None) -> str:
         return ""
 
 
+LOGIN_RE = re.compile(r"Start offline - (\d+)|Starting login")
+
+
+def login_log(home: Path | None = None) -> Path | None:
+    """The newest logs/steamui_login.txt among the Steam roots ($BG3AI_STEAM_LOGIN_LOG overrides)."""
+    if os.environ.get("BG3AI_STEAM_LOGIN_LOG"):
+        return Path(os.environ["BG3AI_STEAM_LOGIN_LOG"])
+    found = {}
+    for root in steam_roots(home or Path.home()):
+        f = root / "logs" / "steamui_login.txt"
+        if f.is_file():
+            found[f.resolve()] = f.stat().st_mtime
+    return max(found, key=found.get) if found else None
+
+
+def steam_offline(home: Path | None = None) -> tuple[bool, str]:
+    """(offline?, why) from the last Steam login in steamui_login.txt: 'Start offline - 1' is an offline start,
+    'Starting login' (also written when Steam goes online from the menu) an online one. No log or no login
+    line = not offline. On machine 2 Steam must stay offline so a running BG3 never kicks the account's other
+    machine off; the runner refuses to launch the game otherwise."""
+    log = login_log(home)
+    if log is None:
+        return False, "no Steam logs/steamui_login.txt found"
+    try:
+        lines = log.read_text(errors="replace").splitlines()
+    except OSError as e:
+        return False, f"can't read {log}: {e}"
+    for line in reversed(lines):
+        m = LOGIN_RE.search(line)
+        if m:
+            if m.group(1) == "1":
+                return True, f"{log}: {line.strip()}"
+            return False, f"last Steam login was online ({log}: {line.strip()})"
+    return False, f"no login line in {log}"
+
+
 def main(argv: list[str]) -> int:
     what = argv[1] if len(argv) > 1 else "game"
+    if what == "offline":
+        ok, why = steam_offline()
+        print(("offline: " if ok else "NOT offline: ") + why)
+        return 0 if ok else 3
     fn = {"game": game_dir, "data": lambda: game_dir() / "Data", "sniper": sniper_dir,
           "manifest": manifest, "buildid": buildid}.get(what)
     if fn is None:
-        print(f"usage: {argv[0]} game|data|sniper|manifest|buildid", file=sys.stderr)
+        print(f"usage: {argv[0]} game|data|sniper|manifest|buildid|offline", file=sys.stderr)
         return 1
     print(fn())
     return 0

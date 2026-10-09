@@ -72,7 +72,13 @@ class Game:
         # the next drain_events() of that context before it asks the game for more.
         self._ev_locks = {"server": threading.RLock(), "client": threading.RLock()}  # per context
         self._stash: dict[str, list[dict]] = {"server": [], "client": []}
-        self._tl = threading.local()  # .fresh: contexts whose events this thread's read() just drained
+        # The stash has its own lock: a background drain holds _ev_locks for a whole tick, and a fresh
+        # drain_events() must hand out the stash without waiting for it.
+        self._stash_lock = threading.Lock()
+        self._bg_drain: dict[str, threading.Thread | None] = {"server": None, "client": None}
+        # .fresh: contexts whose events this tool's read() drained (or is draining in the background).
+        # Shared with parallel()'s helper threads, so _events_text's per-context drains see it too.
+        self._tl = threading.local()
         # Optional metrics.Recorder: gets every RPC's and job's wall-clock interval (set by the MCP server).
         self.metrics = None
 
@@ -158,17 +164,21 @@ class Game:
             return [t() for t in thunks]
         owner = getattr(self.metrics, "owner_token", None)
         token = owner() if owner else None
+        fresh = self._fresh()  # the tool's state, not the helper thread's (live: one extra tick per read)
         out: list[Any] = [None] * len(thunks)
         errs: list[BaseException | None] = [None] * len(thunks)
 
         def run(i, t):
             if token is not None:
                 self.metrics.adopt(token)
+            mine = getattr(self._tl, "fresh", None)
+            self._tl.fresh = fresh
             try:
                 out[i] = t()
             except BaseException as e:  # noqa: BLE001 - re-raised in the caller's thread
                 errs[i] = e
             finally:
+                self._tl.fresh = mine
                 if token is not None:
                     self.metrics.adopt(None)
 
@@ -212,6 +222,8 @@ class Game:
     # ---- events ----
 
     EVENT_LIMIT = 300
+    # Contexts whose events a read() without ops there drains in the background (see read()).
+    LAZY_EVENTS = ("client",)
 
     def _take_events(self, context: str, res: Any, limit: int) -> tuple[list[dict], bool]:
         """Consume one events.since reply (caller holds the context's lock). Returns (events, complete)."""
@@ -228,13 +240,17 @@ class Game:
         return evs, False
 
     def drain_events(self, context: str = "server", limit: int = EVENT_LIMIT) -> list[dict]:
-        fresh = getattr(self._tl, "fresh", set())
-        with self._ev_locks[context]:
-            out, self._stash[context] = self._stash[context], []
-            if context in fresh:
-                # This thread's read() just drained the context in the same eval as its data: no new RPC.
-                fresh.discard(context)
-                return out
+        fresh = self._fresh()
+        if context in fresh:
+            # This tool's read() drained the context in the same eval as its data (or is still draining it
+            # in the background, which stashes for the next tool): no new RPC, and no wait.
+            fresh.discard(context)
+            with self._stash_lock:
+                out, self._stash[context] = self._stash[context], []
+            return out
+        with self._ev_locks[context]:  # waits for a background drain of this context, if one is running
+            with self._stash_lock:
+                out, self._stash[context] = self._stash[context], []
             while True:
                 res = self.rpc("events.since", {"seq": self.event_seq[context], "limit": limit}, context)
                 evs, complete = self._take_events(context, res, limit)
@@ -244,17 +260,39 @@ class Game:
 
     def stashed_events(self, context: str) -> list[dict]:
         """Events read() consumed that no drain_events() has handed out yet (peek, not consumed)."""
-        with self._ev_locks[context]:
+        with self._stash_lock:
             return list(self._stash[context])
 
     def begin_tool(self) -> None:
         """A new tool call on this thread: forget which contexts an earlier read() drained."""
         self._tl.fresh = set()
 
-    def _mark_fresh(self, context: str) -> None:
-        if not hasattr(self._tl, "fresh"):
+    def _fresh(self) -> set:
+        if getattr(self._tl, "fresh", None) is None:
             self._tl.fresh = set()
-        self._tl.fresh.add(context)
+        return self._tl.fresh
+
+    def _mark_fresh(self, context: str) -> None:
+        self._fresh().add(context)
+
+    def _drain_in_background(self, context: str) -> None:
+        """Drain `context`'s events into the stash without making the caller wait for its tick (the client
+        context only runs once a rendered frame: ~46 ms on the 2nd machine's iGPU, vs ~25 ms for the
+        server). At most one such drain per context is in flight; the next tool's drain_events() gets them."""
+        with self._stash_lock:
+            t = self._bg_drain[context]
+            if t is not None and t.is_alive():
+                return
+
+            def run():
+                try:
+                    self._multi([], context, True)
+                except Exception:  # noqa: BLE001 - best effort; the next drain_events() retries
+                    pass
+
+            t = threading.Thread(target=run, daemon=True, name=f"bg3ai-drain-{context}")
+            self._bg_drain[context] = t
+            t.start()
 
     def multi(self, calls: list[tuple[str, dict]], context: str = "server", events: bool = False,
               timeout: float = 12.0) -> list[Any]:
@@ -299,7 +337,8 @@ class Game:
             if events:
                 errs.pop()
                 evs, complete = self._take_events(context, out.pop(), self.EVENT_LIMIT)
-                self._stash[context].extend(evs)
+                with self._stash_lock:
+                    self._stash[context].extend(evs)
             return out, errs, complete
         finally:
             if events:
@@ -315,6 +354,12 @@ class Game:
         way try_rpc("ui.state") did; the others raise."""
         jobs = {"server": list(server), "client": list(client)}
         ctxs = [c for c in ("server", "client") if jobs[c] or events]
+        if events:
+            # A context with no ops here only has events to give: don't make the read wait for its tick.
+            for c in [c for c in ctxs if not jobs[c] and c in self.LAZY_EVENTS and len(ctxs) > 1]:
+                self._drain_in_background(c)
+                self._mark_fresh(c)
+                ctxs.remove(c)
 
         def one(c):
             try:
@@ -347,7 +392,8 @@ class Game:
         res = self.rpc("events.since", {"seq": 10**12, "limit": 1}, context)
         with self._ev_locks[context]:
             self.event_seq[context] = res.get("latest", 0)
-            self._stash[context] = []
+            with self._stash_lock:
+                self._stash[context] = []
 
     # ---- jobs ----
 
