@@ -16,7 +16,7 @@ j12, ETA 3s` (async: a `job_finished` event follows; `wait_for("j12")` to block)
 - `get_character(who, sections="")` → full sheet (party) or Examine view (others); e.g. `sections="resources,equipment"`.
 - `get_actions(who)` → usable actions/spells/items with costs and availability (ability ids for `use_ability`).
 - `get_nearby(radius=25, kinds="")` → visible characters and objects with ids, distance, relation, locked/opened.
-- `get_frontier()` → leads to explore: doors, ladders, stairs, exits and unvisited things, with direction.
+- `get_frontier()` → leads to explore: doors, ladders, stairs, exits and unvisited things, with direction; plus `HAZARD Fire 3m W (2x4m)` lines for harmful patches in view (nearest edge, direction, E-W x N-S size). `look` shows the same lines when the patches in view change.
 - `get_explored()` → your own breadcrumbs in this area (explored extent, recent named places).
 - `path_preview(target | x,y,z, who)` → walking distance, reachable?, needs a jump?, fits remaining movement?
 - `look_at(target)` → the Examine panel for a visible character or object.
@@ -30,12 +30,12 @@ j12, ETA 3s` (async: a `job_finished` event follows; `wait_for("j12")` to block)
 - `session_clock()` → time left in the session.
 
 ## Act (exploration)
-- `move_to(target | x,y,z, who, run=true, wait=false)` → walk there (next to an entity; refused if there's no walkable path). **Returns at once** with a job id + ETA; `wait=true` blocks. Stops early on combat or dialogue.
+- `move_to(target | x,y,z, who, run=true, wait=false)` → walk there (next to an entity; refused if there's no walkable path). **Returns at once** with a job id + ETA (a fast failure comes back at once too). Don't pass `wait=true`: plan or take notes during the walk, then `wait_for` if you must. Stops early on combat or dialogue.
 - `walk_toward(direction | objective | target, max_m=30, who, run=true, wait=false)` → async like `move_to`; walk as far as the ground allows (direct path, stopping short of harmful surfaces) toward N/NE/…/NW, an objective (`o1` or words from its name; this area only) or a visible id. For "head toward the quest marker" when no door or item leads there.
 - `interact(target, who, wait=true)` → door, lever, chest, corpse (opens loot), book, ladder, waypoint; walks there first.
 - `pick_up(item, who, wait=true)` → take an item lying on the ground (walks there first).
 - `loot(take="all", who)` → take from the open container or corpse: "all" or comma-separated ids.
-- `jump_to(x, y, z, who)` → jump (costs movement plus a bonus action in combat; max distance ≈ Strength/2 m).
+- `jump_to(x, y, z, who, force=false)` → jump (costs movement plus a bonus action in combat; max distance ≈ Strength/2 m, but jumps over ~4.5 m have landed short live). A landing in fire/acid/… or on a wall (or a long jump that may fall short into one) is moved to the nearest clear spot in reach, and the result says so; with none near, it is refused. `force=true` jumps exactly there.
 - `set_party(action, who, leader)` → select | chain | unchain | sneak_on | sneak_off | turn_based_on | turn_based_off.
 - `fast_travel(waypoint)` → to an unlocked waypoint (name or id); not in combat.
 - `camp(action="go")` → go | leave camp.
@@ -48,7 +48,7 @@ j12, ETA 3s` (async: a `job_finished` event follows; `wait_for("j12")` to block)
 - `ability_preview(ability, target, who)` → hit chance or save DC, damage, range, line of sight.
 - `react(use, which="")` → answer a reaction prompt (Shield, Counterspell, opportunity attack).
 - `end_turn(who, wait=true)` → end the turn; blocks through enemy turns until a party member can act, combat ends, or a reaction/roll prompt needs you (`wait=false` + `wait_for("my_turn")` to plan meanwhile).
-- `combat_turn(plan, who, end=true, wait_next=false, ignore="hostile")` → **a whole turn in one call** (see below). Returns at once after ending the turn with `NEXT …, then <ally> (yours)`, or `NOW <ally>'s turn` plus their actions: plan that turn while the enemies act, then `wait_for("my_turn")`.
+- `combat_turn(plan, who, end=true, wait_next=false, ignore="hostile")` → **a whole turn in one call** (see below). Returns at once after ending the turn with `NEXT …, then <ally> (yours)`, or `NOW <ally>'s turn` plus their actions: plan that turn while the enemies act, then `wait_for("my_turn")`. Party members with equal initiative share one turn (any order; each needs its own `combat_turn(who=…)` or `end_turn(who=…)`).
 - `end_combat_report(what_worked, what_to_change, next_goal)` → required after every fight; goes to your session log.
 
 ### `combat_turn` plans
@@ -57,7 +57,7 @@ tried in order until one works:
 - `move`: `"e12"` (walk next to it), `{"target":"e12","within":18}` (stop once within 18 m: ranged/spell
   range; no walk if already there), or `[x,y,z]`. If the walk doesn't fit the movement left, it walks as far
   as it does (`"partial":false` turns that off). A failed move doesn't end the turn: the fallbacks decide.
-- `action`, `bonus`: an ability id (`"Shout_Dodge"`), or `{"ability","target" | "x","y","z","upcast","targets","if","unless","then_move"}`,
+- `action`, `bonus`: an ability id (`"Shout_Dash"`), or `{"ability","target" | "x","y","z","upcast","targets","if","unless","then_move"}`,
   or `{"tool":<any do_actions tool>,...}`. `"then_move":true` (Dash) walks the move again after it.
 - `extra`: a list of more slots, e.g. the Extra Attack: `[[{"ability":"Target_MainHandAttack","target":"e12"}]]`.
 - `reactions`: `{"Divine Smite":"always"}` sets reaction prompts before the turn. `on_reaction`: `"use"` or
@@ -67,12 +67,12 @@ tried in order until one works:
 ```json
 {"move":{"target":"e12","within":1.5},
  "action":[{"ability":"Target_MainHandAttack","target":"e12"},
-           {"ability":"Projectile_ThrowWeapon","target":"e12"},
+           {"ability":"Projectile_MainHandAttack","target":"e12"},
            {"ability":"Shout_Dash","then_move":true},
-           "Shout_Dodge"],
+           "Shout_Disengage"],
  "bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"}}
 ```
-Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target is out of range … → Projectile_ThrowWeapon e12: done`), `end_turn: done`, `NOW` (HP, action, bonus, movement), `CHANGES`, `NEXT`.
+Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target is out of range … → Projectile_MainHandAttack e12: done`), `end_turn: done`, `NOW` (HP, action, bonus, movement), `CHANGES`, `NEXT`.
 
 ## Dialogue
 - `talk_to(npc, who)` → walk up (following them if they move) and start a conversation (`who` = the speaker).
@@ -105,7 +105,7 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
 ## Macros (one call each; they stop at the first interrupt and say what was left)
 - `loot_area(radius=12, who, corpses=true, containers=true, opened=false)` → walk to every VISIBLE corpse and unlocked container in range (nearest-first route), open it and take all. Skips locked, owned (stealing), trapped and already-opened ones (`opened=true` includes those) and what it already looted this session. Out of combat.
 - `dialogue_advance(max_lines=12)` → click through filler only: a Continue prompt, or one untagged option that commits to nothing. Stops and shows the dialogue at a real choice (2+ options, a [SKILL]/class tag, "attack/give/pay/leave…"), a roll, or the end. Never picks an answer.
-- `travel_to(marker | objective | waypoint | target | x,y,z, who, wait=false)` → **returns at once**: the trip runs as the first entry of the character's queue, so `queue_actions` appends what to do on arrival (`queue_done`/`queue_interrupted` event at the end; `wait=true` blocks and lists each leg). Destination: your marker (`m1` or label words), an objective here (`o1`), a visible id, a point, or a waypoint (= `fast_travel`). Chains walks of ≤30 m along walkable ground, around fire/acid/other harmful surfaces you can see; stops on arrival (≤3 m), when nothing safe leads further (then `get_frontier`, a door, a jump), after 2 legs without progress, or an interrupt (any damage, stepping into a harmful surface: it steps out first). Out of combat.
+- `travel_to(marker | objective | waypoint | target | x,y,z, who, wait=false)` → **returns at once**: the trip runs as the first entry of the character's queue, so `queue_actions` appends what to do on arrival (`queue_done`/`queue_interrupted` event at the end; `wait_for("queue")` lists each leg; don't pass `wait=true`). Destination: your marker (`m1` or label words), an objective here (`o1`), a visible id, a point, or a waypoint (= `fast_travel`). Chains walks of ≤30 m along walkable ground, around fire/acid/other harmful surfaces you can see; stops on arrival (≤3 m), when nothing leads further (then `get_frontier`, a door, a jump), after 2 legs without progress, or an interrupt (any damage). Stepping into a surface: it steps out, forward if it can, and goes on. When no clear way leads on it walks around patches, or takes the **shortest crossing** and says what it costs (`crossing 1.5m of Fire (~1-4 dmg + Burning)`), unless HP is too low for the worst case (then heal first). `avoid_hazards`: `auto` (default), `strict` (never cross), `cross` (cross even at low HP; never lava/chasms or >6 m). Out of combat.
 - `regroup(leader, near_m=6, chain=false)` → members farther than `near_m` from the leader walk back, all at once; `chain=true` re-links them. Downed members are listed, not moved.
 - `read_all(who, max_items=6)` → read every book, note and letter in the bags not read yet (remembered across sessions) and return their text. Out of combat.
 - `rest_if_needed(threshold=50, allow_long=false)` → short rest if anyone is downed or ≤ threshold % HP; with `allow_long=true`, camp + long rest when no short rest is left. HP only: judge spell slots yourself.

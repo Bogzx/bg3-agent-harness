@@ -485,6 +485,14 @@ RPC.register("nav.frontier", function(args)
         if i > limit then out.more = #leads - limit; break end
         out.leads[#out.leads + 1] = o
     end
+    -- Harmful patches in view (fire, acid, ...): plan around them.
+    if args.hazards ~= false then
+        local hz = N.hazardPatches(active, math.min(tonumber(args.hazard_radius) or 15, 20))
+        if hz and #hz > 0 then
+            out.hazards = {}
+            for i = 1, math.min(#hz, 6) do out.hazards[i] = hz[i] end
+        end
+    end
     out.ms = Ext.Utils.MonotonicTime() - t0
     return out
 end)
@@ -604,6 +612,49 @@ function N.routeHazard(points, skip)
     return nil
 end
 
+-- How much of a route (after `skip` m) lies in harmful surfaces, sampled
+-- every EXPOSURE_STEP_M: {m, patches, longest_m, surface, pos, at_m} (pos/at_m:
+-- where the first patch starts), or nil when the route is clear. A patch is a
+-- run of burning samples; `surface` is the one with the most metres.
+N.EXPOSURE_STEP_M = 0.5
+function N.routeExposure(points, skip)
+    if type(points) ~= "table" or #points < 1 then return nil end
+    skip = skip or N.HAZARD_SKIP_M
+    local st = N.EXPOSURE_STEP_M
+    local total, patches, longest, run, inRun = 0, 0, 0, 0, false
+    local per, first = {}, nil
+    local walked, nextAt = 0, skip
+    local function sample(p, at)
+        local s = N.surfaceAt(p)
+        if s then
+            total = total + st
+            per[s] = (per[s] or 0) + st
+            if not inRun then patches = patches + 1; run = 0; inRun = true end
+            run = run + st
+            if run > longest then longest = run end
+            if not first then first = { pos = U.vec(p, 1), at_m = round(at, 1) } end
+        else
+            inRun = false
+        end
+    end
+    if #points == 1 then sample(points[1], skip) end
+    for i = 2, #points do
+        local a, b = points[i - 1], points[i]
+        local seg = U.dist(a, b)
+        while nextAt <= walked + seg + 1e-6 do
+            local f = seg > 1e-6 and (nextAt - walked) / seg or 1
+            sample({ a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f }, nextAt)
+            nextAt = nextAt + st
+        end
+        walked = walked + seg
+    end
+    if total <= 0 then return nil end
+    local main, mm = nil, -1
+    for s, m in pairs(per) do if m > mm or (m == mm and s < main) then main, mm = s, m end end
+    return { m = round(total, 1), patches = patches, longest_m = round(longest, 1), surface = main,
+        pos = first.pos, at_m = first.at_m }
+end
+
 -- Pure geometry (unit-tested in tools/dev/test_nav_route.lua): where along a
 -- polyline a point projects. Returns arc position (m), horizontal distance
 -- off the route (m), vertical offset (m).
@@ -720,14 +771,20 @@ end
 -- Nearest safe floor out of a harmful surface: rings of 8 directions at
 -- 1.5..max_m; the shortest path whose end and route (after the first metre)
 -- are clear. nil when the character is not in a harmful surface.
-function N.safeSpot(charUuid, maxM)
+-- toward (optional pos, e.g. travel_to's destination): every ring is tried
+-- and a spot costs its path plus the distance it loses toward that point, so
+-- a spot ahead wins over one as near behind (S001: travel_to kept stepping
+-- back E out of the fire, undoing the way on).
+N.ESCAPE_MAX_EXPOSURE_M = 4.0
+function N.safeSpot(charUuid, maxM, toward)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil, "no position" end
     local under = N.surfaceAt(from)
     if not under then return { safe = true } end
     maxM = maxM or 8
-    local best
+    local best, bestCost
+    local d0 = toward and U.dist(from, toward)
     for _, rad in ipairs({ 1.5, 3, 5, 8, 12 }) do
         if rad > maxM + 0.01 then break end
         for _, dname in ipairs(DIRS) do
@@ -737,21 +794,256 @@ function N.safeSpot(charUuid, maxM)
             if fy and not N.surfaceNear({ x, fy, z }) then
                 local r = N.path(charUuid, { x, fy, z })
                 if r and r.reachable and r.length_m <= rad * 2 + 2 then
-                    -- the start is burning anyway: only the rest must be clear
-                    local hz = N.routeHazard(r.points, math.min(rad, 2.0))
-                    if not hz and (not best or r.length_m < best.path_m) then
+                    -- the start is burning anyway: only the rest must be clear;
+                    -- toward: any burning metres cost CROSS_COST each instead
+                    local hz, cost = nil, r.length_m
+                    if toward then
+                        local ex = N.routeExposure(r.points, 0.5)
+                        if ex and ex.m > N.ESCAPE_MAX_EXPOSURE_M then hz = ex end
+                        cost = cost + (U.dist({ x, fy, z }, toward) - d0) + N.CROSS_COST * (ex and ex.m or 0)
+                    else
+                        hz = N.routeHazard(r.points, math.min(rad, 2.0))
+                    end
+                    if not hz and (not best or cost < bestCost) then
                         best = { pos = U.vec({ x, fy, z }, 1), path_m = r.length_m, dir = dname }
+                        bestCost = cost
                     end
                 end
             end
         end
-        if best then break end
+        if best and not toward then break end
     end
     if not best then return { safe = false, standing_in = under, found = false } end
     best.safe = false
     best.standing_in = under
     best.found = true
     return best
+end
+
+local function hdist(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[3] - b[3]) ^ 2) end
+
+-- The AI-grid tile under pos: {blocked, surface} (blocked: a WalkBlock flag,
+-- i.e. a wall, a hole or a burning tile the pathfinder won't enter). Tiles
+-- of another floor (MaxHeight far from pos.y) count as unknown (nil).
+function N.tileAt(pos)
+    local ok, t = pcall(Ext.Level.GetTileDebugInfo, { pos[1], pos[2], pos[3] })
+    if not ok or not t then return nil end
+    local hi
+    pcall(function() hi = t.MaxHeight end)
+    if type(hi) == "number" and math.abs(hi - pos[2]) > 3.0 then return nil end
+    local blocked = false
+    pcall(function()
+        for _, f in pairs(t.Flags or {}) do if tostring(f) == "WalkBlock" then blocked = true end end
+    end)
+    return { blocked = blocked, surface = N.surfaceAt(pos) }
+end
+
+-- Least-exposure way on (travel_to when no fire-free walk leads further):
+-- a fan of bearings around the goal direction x distances. A candidate must
+-- end on clear ground (0.5 m margin), get >= 1 m closer to the goal and be
+-- walkable; its score is progress - CROSS_COST x metres of harmful surface
+-- on its route - a small detour penalty. A clear detour (0 m) beats any
+-- crossing that gains less than CROSS_COST m per burning metre; otherwise
+-- the shortest crossing that still gets on wins (patch edges, quick hops).
+-- nav.reach_toward avoid="least" also takes it over a straight walk that
+-- stops short of a hazard when it scores better than that walk's gain.
+-- Returns {reachable=true, pos, path_m, straight_m, dir, progress_m,
+-- exposure={m, patches, longest_m, surface, pos, at_m}|nil, detour=true|nil}
+-- or {reachable=false, samples}.
+N.CROSS_COST = 8.0  -- a human walks ~8 m around rather than through 1 m of fire
+N.CROSS_MAX_EXPOSURE_M = 8.0
+N.CROSS_STEP_M = 3.0
+N.CROSS_BEARINGS = { 0, 20, -20, 40, -40, 65, -65, 90, -90 }
+function N.crossing(charUuid, toward, maxM)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from then return nil, "no position" end
+    local dx, dz = toward[1] - from[1], toward[3] - from[3]
+    local len = math.sqrt(dx * dx + dz * dz)
+    if len < 0.5 then return { reachable = false, samples = 0 } end
+    local d0 = U.dist(from, toward)
+    local skip = N.surfaceAt(from) and N.HAZARD_SKIP_M or 0.5
+    local best, bestScore, tried = nil, nil, 0
+    local function try(x, z)
+        local fy = floorAt(x, z, from[2])
+        if not fy then return end
+        local p = { x, fy, z }
+        local progress = d0 - U.dist(p, toward)
+        if progress < 1.0 or N.surfaceNear(p, 0.5) then return end
+        tried = tried + 1
+        local dd = U.dist(from, p)
+        local r = N.path(charUuid, p)
+        if not (r and r.reachable and r.length_m <= math.max(2.5 * dd, dd + 6)) then return end
+        local ex = N.routeExposure(r.points, skip)
+        local exm = ex and ex.m or 0
+        if exm > N.CROSS_MAX_EXPOSURE_M then return end
+        local score = progress - N.CROSS_COST * exm - 0.3 * math.max(0, r.length_m - dd)
+        if not best or score > bestScore then
+            best, bestScore = { pos = p, path_m = r.length_m, straight_m = round(dd, 1), progress = progress,
+                exposure = ex, needs_jump = r.needs_jump }, score
+        end
+    end
+    for _, deg in ipairs(N.CROSS_BEARINGS) do
+        local a = math.rad(deg)
+        local vx = (dx * math.cos(a) - dz * math.sin(a)) / len
+        local vz = (dx * math.sin(a) + dz * math.cos(a)) / len
+        local d = 2.0
+        while d <= maxM + 0.01 do
+            try(from[1] + vx * d, from[3] + vz * d)
+            d = d + N.CROSS_STEP_M
+        end
+    end
+    if len <= maxM then try(toward[1], toward[3]) end
+    if not best then return { reachable = false, samples = tried } end
+    local out = { reachable = true, pos = U.vec(best.pos, 1), path_m = best.path_m, straight_m = best.straight_m,
+        progress_m = round(best.progress, 1), dir = N.direction(from, best.pos), needs_jump = best.needs_jump,
+        samples = tried, exposure = best.exposure, score = round(bestScore, 1) }
+    if not best.exposure then out.detour = true end
+    return out
+end
+
+-- Jump landing check (jump_to): a landing in a harmful surface, or on a
+-- blocked tile, is moved to the nearest clear spot near the target within the
+-- reliable jump range. Live S001: jumps of 6.1 m and 7.8 m landed 4.8 m and
+-- 3 m out (the second one in Fire), so a long jump is also checked where it
+-- may fall short. Returns {safe, dist_m, reliable_m, max_m?, surface?,
+-- blocked?, short_pos?, suggest?, suggest_off_m?, suggest_dist_m?}.
+N.JUMP_LAND_CAP_M = 4.5
+N.JUMP_SUGGEST_OFF_M = 3.0
+function N.landing(charUuid, pos)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from then return nil, "no position" end
+    local G = BG3AI.Guard
+    local maxM
+    if G and G.jump_max then
+        local ok, m = pcall(G.jump_max, charUuid)
+        if ok and type(m) == "number" then maxM = m end
+    end
+    local cap = math.min(N.JUMP_LAND_CAP_M, maxM or N.JUMP_LAND_CAP_M)
+    local d = hdist(from, pos)
+    local out = { dist_m = round(d, 1), reliable_m = cap, max_m = maxM and round(maxM, 1) or nil }
+    local function bad(p)
+        local s = N.surfaceNear(p, 0.5)
+        if s then return s end
+        local t = N.tileAt(p)
+        if t and t.blocked then return "blocked" end
+        return nil
+    end
+    local why = bad(pos)
+    if not why and d > cap + 0.3 then
+        local f = cap / d
+        local sx, sz = from[1] + (pos[1] - from[1]) * f, from[3] + (pos[3] - from[3]) * f
+        local sy = floorAt(sx, sz, pos[2])
+        if sy then
+            local sp = { sx, sy, sz }
+            out.short_pos = U.vec(sp, 1)
+            local s = bad(sp)
+            if s and s ~= "blocked" then why = s end
+        end
+    end
+    if not why then out.safe = true; return out end
+    out.safe = false
+    if why == "blocked" then out.blocked = true else out.surface = why end
+    -- the nearest clear landing to the target that this jump surely reaches
+    local best, bd
+    local function cand(x, z)
+        local fy = floorAt(x, z, pos[2])
+        if not fy or math.abs(fy - pos[2]) > 2.5 then return end
+        local p = { x, fy, z }
+        local r = hdist(from, p)
+        if r < 1.5 or r > cap + 0.05 or bad(p) then return end
+        local off = hdist(p, pos)
+        if not bd or off < bd then best, bd = p, off end
+    end
+    for _, rad in ipairs({ 0.75, 1.5, 2.25, 3.0 }) do
+        for _, dname in ipairs(DIRS) do
+            local v = DIR_VEC[dname]
+            cand(pos[1] + v[1] * rad, pos[3] + v[2] * rad)
+        end
+    end
+    if d > 0.1 then
+        local k = math.min(d, cap)
+        while k >= 1.5 do
+            cand(from[1] + (pos[1] - from[1]) * k / d, from[3] + (pos[3] - from[3]) * k / d)
+            k = k - 0.5
+        end
+    end
+    if best and bd <= N.JUMP_SUGGEST_OFF_M then
+        out.suggest = U.vec(best, 1)
+        out.suggest_off_m = round(bd, 1)
+        out.suggest_dist_m = round(hdist(from, best), 1)
+    elseif best then -- too far from what was asked to swap in silently
+        out.nearest_clear = U.vec(best, 1)
+        out.nearest_clear_off_m = round(bd, 1)
+    end
+    return out
+end
+
+-- Visible harmful patches around a character (get_frontier / look): grid
+-- samples every `step` m within `radius` on the character's floor (+-3 m),
+-- grouped 8-connected per surface. Each: {surface, dist, dir (to its
+-- nearest tile), near, center, w_m (E-W), d_m (N-S), area_m2, under?}.
+-- What a player sees burning/bubbling on screen; invisible surfaces are
+-- never reported (surfaceAt skips them).
+N.HAZARD_SCAN_M = 12
+N.HAZARD_SCAN_STEP = 1.0
+function N.hazardPatches(charUuid, radius, step)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from then return nil, "no position" end
+    radius = radius or N.HAZARD_SCAN_M
+    step = step or N.HAZARD_SCAN_STEP
+    local n = math.floor(radius / step)
+    local cells = {}
+    for i = -n, n do
+        for j = -n, n do
+            if i * i + j * j <= n * n then
+                local x, z = from[1] + i * step, from[3] + j * step
+                local fy = floorAt(x, z, from[2])
+                if fy and math.abs(fy - from[2]) <= 3.0 then
+                    local s = N.surfaceAt({ x, fy, z })
+                    if s then cells[i .. ":" .. j] = { s = s, i = i, j = j, p = { x, fy, z } } end
+                end
+            end
+        end
+    end
+    local seen, patches = {}, {}
+    for key, c in pairs(cells) do
+        if not seen[key] then
+            seen[key] = true
+            local stack, members = { c }, {}
+            while #stack > 0 do
+                local m = table.remove(stack)
+                members[#members + 1] = m
+                for di = -1, 1 do
+                    for dj = -1, 1 do
+                        local k2 = (m.i + di) .. ":" .. (m.j + dj)
+                        local c2 = cells[k2]
+                        if c2 and not seen[k2] and c2.s == c.s then seen[k2] = true; stack[#stack + 1] = c2 end
+                    end
+                end
+            end
+            local i0, i1, j0, j1, sx, sy, sz = math.huge, -math.huge, math.huge, -math.huge, 0, 0, 0
+            local near, nd
+            for _, m in ipairs(members) do
+                i0, i1 = math.min(i0, m.i), math.max(i1, m.i)
+                j0, j1 = math.min(j0, m.j), math.max(j1, m.j)
+                sx, sy, sz = sx + m.p[1], sy + m.p[2], sz + m.p[3]
+                local dd = hdist(from, m.p)
+                if not nd or dd < nd then near, nd = m.p, dd end
+            end
+            local k = #members
+            local o = { surface = c.s, dist = round(nd, 1), dir = nd > 0.5 and N.direction(from, near) or nil,
+                near = U.vec(near, 1), center = U.vec({ sx / k, sy / k, sz / k }, 1),
+                w_m = round((i1 - i0 + 1) * step, 1), d_m = round((j1 - j0 + 1) * step, 1),
+                area_m2 = round(k * step * step, 1) }
+            if nd < 0.75 then o.under = true end
+            patches[#patches + 1] = o
+        end
+    end
+    table.sort(patches, function(a, b) return a.dist < b.dist end)
+    return patches
 end
 
 ------------------------------------------------------------------------
@@ -907,6 +1199,22 @@ RPC.register("nav.reach_toward", function(args)
     local t0 = Ext.Utils.MonotonicTime()
     local r, err = N.reachToward(char, args.dir, toward, maxM, step, args.avoid ~= false)
     if not r then error(err, 0) end
+    -- avoid="least" (travel_to): when no clear walk gets >= 1 m closer, look
+    -- around (detours) and, failing that, take the least-exposure crossing.
+    if args.avoid == "least" and toward then
+        local e = V.entity(char)
+        local from = e and V.pos(e)
+        local gain = (r.reachable and r.pos and from) and (U.dist(from, toward) - U.dist(r.pos, toward)) or 0
+        if gain < 1.0 or (r.hazard_beyond and gain < 0.5 * maxM) then
+            local c = N.crossing(char, toward, maxM)
+            if c and c.reachable and (gain < 1.0 or c.score > gain + 0.5) then
+                c.straight = { reachable = r.reachable, hazard = r.hazard or r.hazard_beyond }
+                r = c
+            elseif c then
+                r.cross_samples = c.samples
+            end
+        end
+    end
     local under = N.harmfulUnder(char)
     if under then r.standing_in = under end
     r.ms = Ext.Utils.MonotonicTime() - t0
@@ -920,10 +1228,44 @@ RPC.register("nav.safe_spot", function(args)
     local char = args.char or activeChar(ctx)
     if not ctx.is_party[char] then error("not a party member", 0) end
     local t0 = Ext.Utils.MonotonicTime()
-    local r, err = N.safeSpot(char, math.min(tonumber(args.max_m) or 8, 12))
+    local toward = type(args.pos) == "table" and #args.pos >= 3 and args.pos or nil
+    local r, err = N.safeSpot(char, math.min(tonumber(args.max_m) or 8, 12), toward)
     if not r then error(err, 0) end
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r
+end)
+
+-- nav.landing {char?, pos}: is a jump_to landing clear? {safe, dist_m,
+-- reliable_m, max_m?, surface?|blocked?, short_pos?, suggest?, suggest_off_m?,
+-- suggest_dist_m?} (see N.landing).
+RPC.register("nav.landing", function(args)
+    local ctx = V.context()
+    local char = args.char or activeChar(ctx)
+    if not ctx.is_party[char] then error("not a party member", 0) end
+    if type(args.pos) ~= "table" or #args.pos < 3 then error("need pos [x,y,z]", 0) end
+    local t0 = Ext.Utils.MonotonicTime()
+    local r, err = N.landing(char, args.pos)
+    if not r then error(err, 0) end
+    r.ms = Ext.Utils.MonotonicTime() - t0
+    return r
+end)
+
+-- nav.hazards {char?, radius?, limit?}: harmful patches the party sees nearby.
+RPC.register("nav.hazards", function(args)
+    local ctx = V.context()
+    local char = args.char or activeChar(ctx)
+    if not ctx.is_party[char] then error("not a party member", 0) end
+    local t0 = Ext.Utils.MonotonicTime()
+    local list, err = N.hazardPatches(char, math.min(tonumber(args.radius) or N.HAZARD_SCAN_M, 20))
+    if not list then error(err, 0) end
+    local limit = tonumber(args.limit) or 6
+    local out = { hazards = {} }
+    for i, h in ipairs(list) do
+        if i > limit then out.more = #list - limit; break end
+        out.hazards[i] = h
+    end
+    out.ms = Ext.Utils.MonotonicTime() - t0
+    return out
 end)
 
 -- Cheap activity sample for latency metrics (the bridge polls it ~1/s on its

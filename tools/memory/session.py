@@ -364,10 +364,14 @@ def stop_decision(mem: Path, now: float | None = None) -> dict | None:
     sid = M.session_id(n)
     handoff_ready = L.handoff_session(mem) == n
     deadline = session_deadline()
-    if not (handoff_ready or wrap_due(st, now)):
+    # Manual session: an ordinary pause (a question to the operator), or an early stop the operator asked
+    # for once HANDOFF.md is written. Autonomous session: nobody is there to answer, so stopping before
+    # the wrap-up window just wastes the session, even with HANDOFF.md already written (S001 of
+    # claude-run-2 wrote it at 16 min left because it was stuck on a ladder, and the hook let it stop).
+    early = not wrap_due(st, now) if deadline else not handoff_ready and not wrap_due(st, now)
+    if early:
         if deadline is None:
-            return None  # manual session: an ordinary pause (e.g. a question to the operator)
-        # Autonomous session: nobody is there to answer, so stopping early just wastes the session.
+            return None
         keep = int(st.get("keep_playing_blocks") or 0)
         if keep >= MAX_KEEP_PLAYING_BLOCKS:
             append_log(mem, n, f"- {M.now_local():%H:%M} [note] (harness) allowed an early stop after {keep} "
@@ -378,8 +382,11 @@ def stop_decision(mem: Path, now: float | None = None) -> dict | None:
         left = max(1, int((deadline - now) // 60))
         return {"decision": "block",
                 "reason": (f"Keep playing: {left} minutes left in this session. Continue your current plan "
-                           f"(get_status if you lost track). Only stop after the session-wrapup playbook when "
-                           f"the SESSION CLOCK reminder appears (the ⏱ line in tool results says WRAP UP).")}
+                           f"(get_status if you lost track). Stuck is not a reason to stop: follow "
+                           f"knowledge/playbooks/stuck.md (cancel_queue, reload the last save, move another party "
+                           f"member, another objective). A HANDOFF.md written early is fine; rewrite it at "
+                           f"wrap-up. Only stop after the session-wrapup playbook when the SESSION CLOCK "
+                           f"reminder appears (the ⏱ line in tool results says WRAP UP).")}
     blocks = int(st.get("stop_blocks") or 0)
     if not handoff_ready:
         reason = (f"Wrap-up is due for {sid} but HANDOFF.md hasn't been rewritten for it yet. Run the "

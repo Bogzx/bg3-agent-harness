@@ -134,11 +134,24 @@ function G.in_dialogue(uuid)
 end
 
 -- Is it this character's turn? Uses the replicated TurnBased component.
+-- Party members with the same initiative share one turn group: all of them
+-- have IsActiveCombatTurn until every member has ended. A member that ended
+-- (Osiris EndTurn / the End Turn button) only gets RequestedEndTurn = true
+-- and the game hands control to the next member (live, Nautiloid: Claude +
+-- Lae'zel at initiative 4), so it may not act again this round.
 function G.is_my_turn(uuid)
     local e = G.entity(uuid)
     local tb = e and U.comp(e, "TurnBased")
     if not tb then return false end
-    local ok, v = pcall(function() return tb.IsActiveCombatTurn end)
+    local ok, v = pcall(function() return tb.IsActiveCombatTurn == true and tb.RequestedEndTurn ~= true end)
+    return ok and v == true
+end
+
+-- Has this character ended its turn while its turn group is still active?
+function G.turn_requested_end(uuid)
+    local e = G.entity(uuid)
+    local tb = e and U.comp(e, "TurnBased")
+    local ok, v = pcall(function() return tb and tb.IsActiveCombatTurn == true and tb.RequestedEndTurn == true end)
     return ok and v == true
 end
 
@@ -672,14 +685,28 @@ end
 
 -- Resolve the range of a spell in metres. Returns range, melee (bool), or
 -- nil if unknown. Weapon-range spells (attacks) use the equipped weapon.
+-- Live (bg3le): Target_MainHandAttack/Target_OffhandAttack/Target_ConcussiveSmash
+-- have TargetRadius "MeleeMainWeaponRange" and Range 0 (Range is 0 on every
+-- spell probed, never a real range), Projectile_MainHandAttack
+-- "RangedMainWeaponRange", Target_Shove 1.5, Target_HolyRebuke 18;
+-- WPN_Warhammer/WPN_Longsword WeaponRange 150, WPN_Shortbow 1800.
 G.DEFAULT_RANGED_M = 18.0 -- bows/crossbows when the weapon's stats are unreadable
+G.DEFAULT_MELEE_M = 1.5   -- unarmed / unreadable melee weapon
 function G.spell_range(st, char)
     if not st then return nil end
-    local r = tonumber(st.TargetRadius) or tonumber(st.Range)
-    if r then return r, false end
     local tr = tostring(st.TargetRadius or "")
-    if tr:find("Melee") then return weapon_range(char, "Melee Main Weapon") or 1.5, true end
-    if tr:find("Ranged") then return weapon_range(char, "Ranged Main Weapon") or G.DEFAULT_RANGED_M, false end
+    if tr:find("Melee") then
+        local slot = tr:find("OffHand") and "Melee Offhand Weapon" or "Melee Main Weapon"
+        return weapon_range(char, slot) or weapon_range(char, "Melee Main Weapon") or G.DEFAULT_MELEE_M, true
+    end
+    if tr:find("Ranged") then
+        local slot = tr:find("OffHand") and "Ranged Offhand Weapon" or "Ranged Main Weapon"
+        return weapon_range(char, slot) or weapon_range(char, "Ranged Main Weapon") or G.DEFAULT_RANGED_M, false
+    end
+    local r = tonumber(st.TargetRadius)
+    if r and r > 0 then return r, r <= 3 end
+    r = tonumber(st.Range)
+    if r and r > 0 then return r, r <= 3 end
     return nil
 end
 
@@ -769,6 +796,9 @@ function G.check_cast(char, spell, target, pos, upcast)
     if target then
         G.target_visible(target)
         local d = G.within(char, target, G.MAX_INTERACT_DIST, "target")
+        -- Melee (weapon or a short numeric reach like Shove) is edge to edge:
+        -- centres may be both bounding radii farther apart than the reach
+        -- (1.5 m warhammer + 0.5 + 0.49 for Claude vs an imp = 2.49 m).
         local reach = range and (melee and range + G.radius(char) + G.radius(target) or range + 0.5)
         if reach and not G.same(char, target) and d > reach then
             G.refuse(string.format("target is out of range (%.1f m, range %.1f m): move closer first", d, range))

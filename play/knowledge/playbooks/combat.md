@@ -25,18 +25,23 @@ s = get_combat_state()      # whose turn, action/bonus/movement/reaction left, i
    ability_preview(ability, target)  # only if a hit chance or save DC decides between options
 → combat_turn(plan='{"move":{"target":"e12","within":1.5},
                      "action":[{"ability":"Target_MainHandAttack","target":"e12"},
-                               {"ability":"Projectile_ThrowWeapon","target":"e12"},
-                               "Shout_Dodge"],
+                               {"ability":"Projectile_MainHandAttack","target":"e12"},
+                               "Shout_Disengage"],
                      "bonus":{"ability":"<bonus action id>","if":"hp_below:50"}}')
 → it returns right after end_turn: "NEXT e14 Goblin, e15 Imp, then Lae'zel (yours)".
    Plan Lae'zel's turn NOW, while the enemies act; then wait_for("my_turn") and send it.
    ("NOW Lae'zel's turn" + her actions = she is up already: send her combat_turn at once.)
+   **Shared turn:** party members with equal initiative act in the same turn, in any order
+   ("SHARED TURN" in get_combat_state, "then Lae'zel + Claude (yours, shared turn)"). Give each one its
+   own `combat_turn(who=…)`; the enemies move only after every one of them has ended. A member that
+   ended can't act again this round.
 → if it says STOPPED / "turn NOT ended": read why, then finish the turn (combat_turn with what's left)
 ```
 One observation, one call per turn: that's the target pace. Think during the enemy turns, not during yours.
 **Fallbacks are the plan's safety net.** The usual chain: the attack you want → the ranged option (throw,
-cantrip, bow) → `Shout_Dash` with `"then_move":true` (if you must close in) → `Shout_Dodge` or
-`Shout_Disengage` (if nothing reaches). A dead or vanished target skips to the next alternative, so you can
+cantrip, bow: `Projectile_MainHandAttack` needs a bow equipped, `Throw_Throw` throws an object) →
+`Shout_Dash` with `"then_move":true` (if you must close in) → `Shout_Disengage` or `Shout_Hide` (if
+nothing reaches). BG3 has **no Dodge action**; use only ids `get_actions` lists. A dead or vanished target skips to the next alternative, so you can
 also list a second target (`{"ability":"…","target":"e15"}`).
 **Ranged and spells:** `"move":{"target":"e12","within":<range in m>}` walks only until in range (and not
 at all if already in range); keep casters out of melee.

@@ -20,7 +20,7 @@ Acting:
   queue    queue two short walks (queue_done), then a long walk + a synthetic teleport_blocked event
            (queue_interrupted with why/left, job cancelled), cancel_queue, and the step-to-step gap.
   turn     combat_turn on the active character's turn: walk to the nearest hostile, melee attack with
-           a ranged then Dodge fallback, end the turn; checks the NEXT/NOW line and the wall time.
+           a ranged then Disengage fallback, end the turn; checks the NEXT/NOW line and the wall time.
   macros   dialogue_advance (no dialogue: stops at once), rest_if_needed threshold 0 (no rest),
            regroup, loot_area within 8 m, read_all (reads new books), then travel_to a point 10 m
            away via chained walks and back. Out of combat; loot_area/read_all really act.
@@ -256,7 +256,7 @@ def check_turn() -> None:
         return
     fh = S.H.get(foes[0]["uuid"], foes[0].get("name"))
     plan = {"move": fh, "action": [{"ability": "Target_MainHandAttack", "target": fh},
-                                   {"ability": "Projectile_ThrowWeapon", "target": fh}, "Shout_Dodge"]}
+                                   {"ability": "Projectile_MainHandAttack", "target": fh}, "Shout_Disengage"]}
     t0 = time.monotonic()
     out = S.combat_turn(json.dumps(plan))
     dt = time.monotonic() - t0

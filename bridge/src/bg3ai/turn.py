@@ -4,9 +4,9 @@ A plan names slots, each a list of alternatives tried in order until one succeed
 
     {"move":   {"target": "e12", "within": 1.5},        # or "e12", [x,y,z], {"x":..,"y":..,"z":..}
      "action": [{"ability": "Target_MainHandAttack", "target": "e12"},
-                {"ability": "Projectile_ThrowWeapon", "target": "e12"},   # fallbacks, in order
+                {"ability": "Projectile_MainHandAttack", "target": "e12"},  # fallbacks, in order
                 {"ability": "Shout_Dash", "then_move": true},             # dash, then walk the move again
-                "Shout_Dodge"],
+                "Shout_Disengage"],                                     # BG3 has no Dodge action
      "bonus":  {"ability": "Shout_SecondWind", "if": "hp_below:50"},
      "extra":  [[{"ability": "Target_MainHandAttack", "target": "e12"}]], # more slots (Extra Attack ...)
      "order":  "move,action,bonus,extra",                                   # default
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from itertools import takewhile as _takewhile
 from typing import Any, Callable
 
 from . import actq
@@ -33,7 +34,7 @@ MAX_EXTRA = 3
 
 # Failures after which no fallback can help: the turn is over (or was never ours).
 FATAL = ("not this character's turn", "session is over", "no active character", "is downed", "is dead",
-         "not in combat")
+         "not in combat", "already ended its turn")
 # Failures of a move that a shorter walk can fix.
 MOVE_SHORT = ("beyond remaining movement", "no movement left", "not enough movement")
 
@@ -188,28 +189,62 @@ def straight_dist(combat: dict, who: str, target: str) -> float | None:
     return None
 
 
+def acting(combat: dict) -> list[str]:
+    """Combatants who may act right now, in turn-order order.
+
+    Party members with equal initiative share one turn group: all of them are current together (the mod
+    lists them in `turn_group`; each has `is_current`) and they can act in any order until each one ends
+    its turn (`ended`: the game then hands control to the next member). `current` alone is just one of
+    them, so never compare a character with `current` to decide whether it may act."""
+    c = combat or {}
+    group = c.get("turn_group")
+    if isinstance(group, list) and group:
+        return [u for u in group if isinstance(u, str)]
+    out = [o["uuid"] for o in c.get("order") or []
+           if o.get("is_current") and not o.get("ended") and not o.get("dead") and o.get("uuid")]
+    if out:
+        return out
+    return [c["current"]] if c.get("current") else []
+
+
+def party_acting(combat: dict, party: set) -> list[str]:
+    return [u for u in acting(combat) if u in party]
+
+
 def next_up(combat: dict, party: set, label: Callable[[str], str], ended: str | None = None) -> tuple[str, str | None]:
     """('NEXT e14 Goblin, e15 Imp, then Lae'zel (yours)', uuid of the next party member to act or None).
 
-    Reads the visible turn order only, starting at the current combatant (skipping `ended`, the character
-    whose turn just ended, if the order hasn't moved on yet) and wrapping round."""
+    Reads the visible turn order only, starting at the current turn group (skipping `ended`, the character
+    whose turn just ended, and the members of its group who have ended too, if the order hasn't moved on
+    yet) and wrapping round."""
     order = [o for o in (combat or {}).get("order") or [] if not o.get("dead") and o.get("uuid")]
     if not order:
         return "", None
-    idx = next((i for i, o in enumerate(order) if o.get("uuid") == combat.get("current")), 0)
+    cur = set(acting(combat)) | {o["uuid"] for o in order if o.get("is_current")}
+    idx = next((i for i, o in enumerate(order) if o.get("uuid") in cur), 0)
     seq = order[idx:] + order[:idx]
-    if ended and seq[0].get("uuid") == ended:
-        seq = seq[1:] + seq[:1]
+    done = {ended} | {o["uuid"] for o in order if o.get("is_current") and o.get("ended")}
+    # Members who already ended act again next round: move them to the end of the cycle.
+    lead = 0
+    while lead < len(seq) and seq[lead].get("uuid") in done:
+        lead += 1
+    seq = seq[lead:] + seq[:lead]
     names: list[str] = []
     mine = None
-    for o in seq:
+    group: list[str] = []
+    for i, o in enumerate(seq):
         if o["uuid"] in party:
             mine = o["uuid"]
+            # Party members right after it with the same initiative share its turn (any order).
+            ini = o.get("initiative")
+            group = [mine] + ([x["uuid"] for x in _takewhile(
+                lambda x: x["uuid"] in party and x.get("initiative") == ini, seq[i + 1:])] if ini is not None else [])
             break
         names.append(label(o["uuid"]))
     if len(names) > 6:
         names = names[:6] + [f"+{len(names) - 6} more"]
-    tail = f"{label(mine)} (yours)" if mine else ""
+    tail = (" + ".join(label(u) for u in group) + (" (yours, shared turn)" if len(group) > 1 else " (yours)")
+            if mine else "")
     if not names:
         return (f"NEXT {tail}: plan that turn now", mine) if mine else ("", None)
     return "NEXT " + ", ".join(names) + (f", then {tail}" if mine else ""), mine

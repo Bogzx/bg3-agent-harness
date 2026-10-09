@@ -20,7 +20,7 @@ from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import actq, delta, macros, metrics, render, turn
+from . import actq, delta, macros, metrics, render, saves, turn
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
 
@@ -400,9 +400,32 @@ def look(full: bool = False) -> str:
             body += "\n" + "\n".join(obj)
         if got.get("nearby") is not None:
             body += "\n" + render.render_nearby(got["nearby"], H)
+        hz = _hazard_lines(got.get("hazards"), always=True)
     else:
         body = _delta_body(lines, got.get("ui"))
+        hz = _hazard_lines(got.get("hazards"))
+    if hz:
+        body += "\n" + "\n".join(hz)
     return _finish("look", {"full": full}, body, t0)
+
+
+_hazards_seen: dict = {"sig": None}
+
+
+def _hazard_lines(hazards: Any, always: bool = False) -> list[str]:
+    """HAZARD lines for look: always in the full view; in a delta only when the patches in view changed
+    (one appeared, went out or moved >2 m), so a walk past the same fire doesn't repeat it."""
+    if not isinstance(hazards, list):
+        return []
+    sig = tuple(sorted((str(h.get("surface")), round((h.get("center") or [0])[0] / 2), round((h.get("center") or [0, 0, 0])[2] / 2))
+                       for h in hazards if isinstance(h, dict)))
+    prev = _hazards_seen["sig"]
+    _hazards_seen["sig"] = sig
+    if not (always or sig != prev):
+        return []
+    if not sig:
+        return ["HAZARD none in view now"] if prev and not always else []
+    return render.render_hazards(hazards)
 
 
 @mcp.tool()
@@ -632,9 +655,13 @@ def get_combat_state() -> str:
         return _finish("get_combat_state", {}, "Not in combat.", t0)
     body = render.compact(res, H)
     # One read should be enough to plan the whole turn: add the acting party member's actions.
-    cur = res.get("current") if isinstance(res, dict) else None
     st = game.try_rpc("state.status") or {}
     party = {c.get("uuid") for c in st.get("party") or []}
+    mine = turn.party_acting(res, party) if isinstance(res, dict) else []
+    cur = st.get("active") if st.get("active") in mine else (mine[0] if mine else None)
+    if len(mine) > 1:
+        body += ("\nSHARED TURN: " + ", ".join(_label(u) for u in mine)
+                 + " can all act now, in any order (combat_turn who=..., end each one's turn)")
     if cur in party:
         acts = game.try_rpc("state.actions", {"uuid": cur})
         if acts:
@@ -828,9 +855,32 @@ def talk_to(npc: str, who: str | None = None, wait: bool = True) -> str:
 
 @mcp.tool()
 @_guard
-def jump_to(x: float, y: float, z: float, who: str | None = None, wait: bool = True) -> str:
-    """Jump to a position (costs movement/bonus action in combat; distance limited by Strength)."""
-    return _act("jump_to", "act.cast", {"char": _who(who), "spell": "Projectile_Jump", "pos": [x, y, z]}, wait=wait)
+def jump_to(x: float, y: float, z: float, who: str | None = None, wait: bool = True, force: bool = False) -> str:
+    """Jump to a position (costs movement/bonus action in combat; distance limited by Strength). A landing in a harmful surface (fire, acid, ...) or on a wall, or a long jump that may fall short into one, is moved to the nearest clear spot near it within reliable reach (~4.5 m) and says so; with no clear spot near it the jump is refused. force=true jumps exactly there."""
+    char = _who(who)
+    pos, note = [x, y, z], ""
+    if not force:
+        lnd = game.try_rpc("nav.landing", {"char": char, "pos": pos})
+        if isinstance(lnd, dict) and lnd.get("safe") is False:
+            bad = f"in {lnd['surface']}" if lnd.get("surface") else "on a blocked tile (wall or hole)"
+            if lnd.get("short_pos") and not lnd.get("blocked"):
+                bad = (f"{render.num(lnd.get('dist_m', '?'))}m away, past reliable reach "
+                       f"({render.num(lnd.get('reliable_m', '?'))}m): it may land short {bad}")
+            else:
+                bad = f"is {bad}"
+            if not lnd.get("suggest"):
+                if _batch["active"]:
+                    _batch["last"] = "failed"
+                alt = (f" The nearest clear landing in reach is {render.pos(lnd['nearest_clear'])}, "
+                       f"{render.num(lnd.get('nearest_clear_off_m', '?'))}m from it." if lnd.get("nearest_clear") else "")
+                return (f"jump_to: FAILED — the landing {render.pos(pos)} {bad} and no clear spot within 3m of it is "
+                        f"in reach ({render.num(lnd.get('reliable_m', '?'))}m).{alt} Pick another landing "
+                        "(get_frontier lists HAZARD patches) or force=true.")
+            pos = list(lnd["suggest"])
+            note = (f"landing {render.pos([x, y, z])} {bad}: jumping to {render.pos(pos)} instead "
+                    f"({render.num(lnd.get('suggest_off_m', '?'))}m from it, {render.num(lnd.get('suggest_dist_m', '?'))}m jump, clear)")
+    body = _act("jump_to", "act.cast", {"char": char, "spell": "Projectile_Jump", "pos": pos}, wait=wait)
+    return f"{note}\n{body}" if note else body
 
 
 @mcp.tool()
@@ -930,13 +980,27 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
 def end_turn(who: str | None = None, wait: bool = True) -> str:
     """End the current character's turn; blocks through enemy turns until a party member can act or combat ends (wait=false: return right after ending it; then wait_for('my_turn'))."""
     t0 = time.monotonic()
-    args = {"char": _who(who)}
+    if who:
+        char = _uuid(who)
+    else:
+        # The selected character, unless it can't act now and exactly one other party member can (the
+        # game moves the selection within a shared turn group; ending that one is what the agent means).
+        char = _active()
+        cs = game.try_rpc("state.combat") or {}
+        mine = turn.party_acting(cs, _party_set()) if cs.get("active") else []
+        if char not in mine and len(mine) == 1:
+            char = mine[0]
+    args = {"char": char}
     if _session_over():
         return _finish("end_turn", args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
     r = game.run_job("act.end_turn", args, wait_s=15)
     _remember_names(r.result)
     _batch["last"] = r.status
     body = _job_text("end_turn", r)
+    if not _batch["active"]:
+        # Name whose turn it was: in a shared turn group the game moves the selection, and the agent
+        # read Lae'zel's after={...} as Claude's (claude-run-2 S001).
+        body = body.replace("end_turn:", f"end_turn {_label(char)}:", 1)
     if r.status == "done" and wait and not _batch["active"]:
         body += "\n" + _wait_for_party_turn(80.0)
     elif r.status == "done" and wait:
@@ -946,6 +1010,13 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
 
 # Screens that need an answer from the agent while others act.
 _PROMPT_SCREENS = ("reaction", "dialogue", "roll", "popup", "game_over")
+
+
+def _now_turn_text(mine: list[str]) -> str:
+    """'now e1's turn', or for a shared party turn group 'now e46's and e1's turn (shared: any order)'."""
+    if len(mine) == 1:
+        return f"now {H.get(mine[0])}'s turn"
+    return "now " + " and ".join(f"{H.get(u)}'s" for u in mine) + " turn (shared turn group: any order, end each)"
 
 
 def _wait_for_party_turn(max_s: float) -> str:
@@ -958,9 +1029,9 @@ def _wait_for_party_turn(max_s: float) -> str:
         cs = game.try_rpc("state.combat") or {}
         if not cs.get("active"):
             return "combat is over"
-        cur = cs.get("current")
-        if cur and cur in party:
-            return f"now {H.get(cur)}'s turn"
+        mine = turn.party_acting(cs, party)
+        if mine:
+            return _now_turn_text(mine)
         ui = game.try_rpc("ui.state", context="client") or {}
         if ui.get("screen") in _PROMPT_SCREENS:
             _batch["last"] = "interrupted"
@@ -1243,11 +1314,14 @@ def _enqueue(char: str, steps: list, replace: bool = False, ignore: str | None =
     return f"queued {n} step(s) for {_label(char)} ({waiting} waiting{after})"
 
 
-def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, x, y, z, t0: float) -> str:
+def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, x, y, z, t0: float,
+                  avoid: str = "auto") -> str:
     """travel_to without waiting: check the destination now (bad ones fail at once), then run the trip
     as a queue entry for that character (the queue worker calls travel_to again, batch-active)."""
     args: dict[str, Any] = {k: v for k, v in (("marker", marker), ("objective", objective), ("target", target),
                                               ("x", x), ("y", y), ("z", z)) if v not in ("", None)}
+    if avoid != "auto":
+        args["avoid_hazards"] = avoid
     if target:
         what, dist_m = target, None
         _uuid(target)  # an unknown id fails now
@@ -1318,8 +1392,8 @@ def wait_for(target: str = "idle", timeout_s: float = 15.0) -> str:
             cs = game.try_rpc("state.combat") or {}
             if not cs.get("active"):
                 body = "not in combat"
-            elif cs.get("current") in party:
-                body = f"now {H.get(cs['current'])}'s turn"
+            elif turn.party_acting(cs, party):
+                body = _now_turn_text(turn.party_acting(cs, party))
         else:
             kinds = {k.strip() for k in tgt.split(",") if k.strip()}
             hit = _peek_events(kinds)
@@ -1404,7 +1478,7 @@ def _predicate(name: str, arg: str, who: str | None, _w: dict) -> bool:
         return any(actq._pct(r) is not None and actq._pct(r) < lim for r in rows)
     if name == "my_turn":
         cs = _watch_conn().try_rpc("state.combat") or {}
-        return bool(cs.get("active")) and cs.get("current") == (who or _active())
+        return bool(cs.get("active")) and (who or _active()) in turn.acting(cs)
     if name in ("item_present", "target_visible"):
         try:
             u = _uuid(arg)
@@ -1587,8 +1661,9 @@ def _turn_check(who: str, step: actq.Step | None) -> tuple[bool, str]:
     cs = game.try_rpc("state.combat") or {}
     if not cs.get("active"):
         return True, "combat is over"
-    if cs.get("current") and cs.get("current") != who:
-        return True, f"it is no longer {_label(who)}'s turn (now {_label(cs['current'])})"
+    now = turn.acting(cs)
+    if now and who not in now:
+        return True, f"it is no longer {_label(who)}'s turn (now {', '.join(_label(u) for u in now)})"
     tgt = step.args.get("target") if step is not None else None
     if tgt:
         try:
@@ -1631,7 +1706,14 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
     rep, text = _run_one(watcher, who, step)
     _after(rep, after)
     if rep.done:
-        lines.append(f"move {what}: {text.split(': ', 1)[-1]}")
+        res = text.split(': ', 1)[-1]
+        if tu and "target" not in step.args:
+            # A walk to a point near the target: its dist= is to that point, not to the target.
+            d2 = turn.straight_dist(game.try_rpc("state.combat") or {}, who, tu)
+            res = re.sub(r"\s*dist=[\d.]+", "", res)
+            if d2 is not None:
+                res += f", now {render.num(d2)}m from {what}"
+        lines.append(f"move {what}: {res}")
         return "ok"
     text = text.split(": ", 1)[-1] if text.startswith("move_to:") else text
     if rep.stop_kind not in (None, "failed"):
@@ -1706,9 +1788,12 @@ def _turn_next(who: str, party: set) -> str:
     cs = game.try_rpc("state.combat") or {}
     if not cs.get("active"):
         return "combat is over: loot, heal, then end_combat_report"
-    cur = cs.get("current")
-    if cur in party and cur != who:
+    others = [u for u in turn.party_acting(cs, party) if u != who]
+    cur = others[0] if others else None
+    if cur:
         out = f"NOW {_label(cur)}'s turn: plan it"
+        if len(others) > 1:
+            out += f"; also {', '.join(_label(u) for u in others[1:])}"
         acts = game.try_rpc("state.actions", {"uuid": cur})
         if acts:
             out += "\nYOUR ACTIONS (" + H.get(cur) + ")\n" + render.render_actions(acts, H)
@@ -1723,8 +1808,8 @@ def _turn_next(who: str, party: set) -> str:
 @_guard
 def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: bool = False,
                 ignore: str = "hostile") -> str:
-    """A WHOLE combat turn in one call: move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Dodge).
-    plan: JSON, e.g. {"move":{"target":"e12","within":1.5},"action":[{"ability":"Target_MainHandAttack","target":"e12"},{"ability":"Projectile_ThrowWeapon","target":"e12"},{"ability":"Shout_Dash","then_move":true},"Shout_Dodge"],"bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"},"extra":[[{"ability":"Target_MainHandAttack","target":"e12"}]]}
+    """A WHOLE combat turn in one call: move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Disengage).
+    plan: JSON, e.g. {"move":{"target":"e12","within":1.5},"action":[{"ability":"Target_MainHandAttack","target":"e12"},{"ability":"Projectile_MainHandAttack","target":"e12"},{"ability":"Shout_Dash","then_move":true},"Shout_Disengage"],"bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"},"extra":[[{"ability":"Target_MainHandAttack","target":"e12"}]]}
     move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z]. If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off).
     Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it (Dash), walk the move again.
     order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn (default: stop).
@@ -1739,9 +1824,17 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     party = _party_set()
     if not cs.get("active"):
         raise GameError("not in combat: use do_actions or queue_actions")
-    char = _uuid(who) if who else (cs.get("current") if cs.get("current") in party else _active())
-    if cs.get("current") != char:
-        raise GameError(f"it is not {_label(char)}'s turn (now {_label(cs.get('current') or '?')})")
+    now = turn.acting(cs)
+    mine = [u for u in now if u in party]
+    if who:
+        char = _uuid(who)
+    else:
+        sel = _active()
+        char = sel if sel in mine else (mine[0] if mine else sel)
+    if char not in now:
+        ended = any(o.get("uuid") == char and o.get("ended") for o in cs.get("order") or [])
+        why = f"{_label(char)} already ended its turn" if ended else f"it is not {_label(char)}'s turn"
+        raise GameError(f"{why} (now {', '.join(_label(u) for u in now) or '?'})")
     lines = [f"TURN {_label(char)}" + (f" (round {cs['round']})" if cs.get("round") is not None else "")]
     if p.reactions:
         try:
@@ -1784,7 +1877,7 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
         lines.append("turn NOT ended: decide, then continue (combat_turn again, or single tools)")
     now = _now_line(after)
     if now:
-        lines.append(now)
+        lines.append(now.replace("NOW ", f"NOW {H.get(char)} ", 1))
     changes = delta.changes_text(game, H)
     if changes:
         lines.append(changes)
@@ -1943,10 +2036,11 @@ def _travel_dest(marker: str, objective: str, x, y, z) -> tuple[list, str]:
     raise ValueError("give marker=m1, objective=o1, target=<id>, waypoint=<name> or x,y,z")
 
 
-def _escape_surface(char: str) -> str | None:
+def _escape_surface(char: str, toward: list | None = None) -> str | None:
     """Standing in a harmful surface (fire, acid, ...)? Step to the nearest clear spot (nav.safe_spot), as a
-    player would before anything else. Returns a line saying what happened, or None if not in one."""
-    r = game.try_rpc("nav.safe_spot", {"char": char})
+    player would before anything else; with toward (travel_to's destination) a spot ahead wins over one as
+    near behind. Returns a line saying what happened, or None if not in one."""
+    r = game.try_rpc("nav.safe_spot", {"char": char, **({"pos": toward} if toward else {})})
     if not isinstance(r, dict) or r.get("safe") is not False:
         return None
     what = r.get("standing_in") or "a harmful surface"
@@ -1963,16 +2057,20 @@ def _escape_surface(char: str) -> str | None:
 @_guard
 def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target: str = "",
               x: float | None = None, y: float | None = None, z: float | None = None, who: str | None = None,
-              wait: bool = False) -> str:
-    """Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Chains walks of up to 30 m along walkable ground toward it, around harmful surfaces you can see (fire, acid, ...); stops on arrival (within 3 m), when no safe walkable ground leads further, after 2 legs without progress, or at the first interrupt (combat, conversation, prompt, new hostile, any damage, stepping into a harmful surface: then it first steps out of it).
+              wait: bool = False, avoid_hazards: str = "auto") -> str:
+    """Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Chains walks of up to 30 m along walkable ground toward it, around harmful surfaces you can see (fire, acid, ...); stops on arrival (within 3 m), when no walkable ground leads further, after 2 legs without progress, or at the first interrupt (combat, conversation, prompt, new hostile, any damage). Stepping into a surface: it steps out (forward if it can) and goes on.
+    avoid_hazards: auto (default) = when no clear way leads on, it takes the shortest crossing (says e.g. 'crossing 1.5m of Fire (~1-4 dmg + Burning)') unless HP is too low for the worst case; strict = never crosses; cross = crosses even at low HP (never lava/chasms, never >6 m).
     Returns at once: the trip runs as the first entry of the character's action queue, so queue_actions appends what to do on arrival while you observe and plan. A later result brings queue_done or queue_interrupted (why); wait_for('queue') blocks until then. wait=true blocks and returns each leg."""
     t0 = time.monotonic()
     if waypoint:
         return fast_travel(waypoint)
+    policy = (avoid_hazards or "auto").strip().lower()
+    if policy not in macros.AVOID_POLICIES:
+        raise ValueError("avoid_hazards must be auto, strict or cross")
     w = _no_combat("travel_to")
     char = _who(who)
     if not wait and not _batch["active"]:
-        return _travel_async(char, w, marker, objective, target, x, y, z, t0)
+        return _travel_async(char, w, marker, objective, target, x, y, z, t0, policy)
     outer = _batch["exec"] if _batch["active"] else None  # the queue running this trip: its cancel stops it
     if target:
         lines, stop, left = _macro_groups(char, [(f"walk to {target}", [actq.Step("move_to", {"target": target})])])
@@ -1980,57 +2078,109 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
     dest, what = _travel_dest(marker, objective, x, y, z)
     me = next((r for r in w.get("party") or [] if r.get("uuid") == char), {})
     here = me.get("pos")
+    hp = [me.get("hp"), me.get("max_hp")]
     start_d = macros.dist(here, dest)
     lines = [f"travel_to {what}: {render.num(round(start_d, 1))}m"]
-    esc = _escape_surface(char) if me.get("surface") else None
-    if esc:
-        lines.append(esc)
-        rows = (_watch_conn().try_rpc("act.watch") or {}).get("party") or []
-        here = next((r.get("pos") for r in rows if r.get("uuid") == char), None) or here
-    watcher = actq.Watcher(_watch_conn())
-    watcher.baseline()
-    prog = macros.TravelProgress(here, dest)
-    stop = None
-    for leg in range(1, macros.TRAVEL_MAX_LEGS + 1):
-        d = macros.dist(here, dest)
-        if outer is not None and (outer.interrupt or outer.stop.is_set()):
-            stop = (outer.interrupt or ("cancel", "cancelled"))[1]
-            break
-        if d <= macros.TRAVEL_ARRIVE_M:
-            lines.append(f"arrived ({render.num(round(d, 1))}m from it)")
-            break
-        r = game.try_rpc("nav.reach_toward", {"char": char, "pos": dest, "max_m": min(macros.TRAVEL_LEG_M, d)})
-        if isinstance(r, dict) and not r.get("reachable") and r.get("hazard"):
-            stop = (f"the way on crosses {macros.hazard_text(r['hazard'])} ({render.num(round(d, 1))}m left): "
-                    "go around it (walk_toward another direction, get_frontier) or wait for it to burn out")
-            break
-        if not (isinstance(r, dict) and r.get("reachable") and r.get("pos")) or macros.dist(r["pos"], dest) > d - 1.0:
-            stop = (f"no walkable ground leads further toward it ({render.num(round(d, 1))}m left): "
-                    "try get_frontier, a door, or a jump")
-            if isinstance(r, dict) and r.get("hazard_beyond"):
-                stop += f"; ahead: {macros.hazard_text(r['hazard_beyond'])}"
-            break
-        px, py, pz = r["pos"]
-        rep, text = _run_one(watcher, char, actq.Step("move_to", {"x": px, "y": py, "z": pz}), outer)
-        if r.get("hazard_beyond"):
-            text += f" (kept clear of {macros.hazard_text(r['hazard_beyond'])})"
-        lines.append(f"leg {leg}: {text}")
-        if rep.stop_kind == "surface":
-            esc = _escape_surface(char)
-            stop = _label(rep.stopped or "") + (f"; {esc}" if esc else "")
-            break
-        if not rep.done:
-            stop = _label(rep.stopped or "") if rep.stop_kind not in (None, "failed") else f"leg {leg} failed"
-            break
-        res = rep.last_result if isinstance(rep.last_result, dict) else {}
-        here = ((res.get("after") or {}).get("pos") or res.get("pos") or r["pos"])
-        why = prog.leg(here, macros.leg_stopped_short(res))
-        if why:
-            stop = why + ": try get_frontier, a door, or a jump"
-            break
-    else:
-        stop = f"still {render.num(round(macros.dist(here, dest), 1))}m away after {macros.TRAVEL_MAX_LEGS} legs"
+    # travel_to deals with surfaces and damage itself (steps out, crosses on purpose, its own watcher stops on
+    # other damage): the queue running it must not stop the trip on them.
+    outer_w = outer.watcher if outer is not None else None
+    added: set = set()
+
+    def quiet(kinds: set) -> None:
+        if outer_w is not None:
+            new = kinds - outer_w.ignore
+            outer_w.ignore |= new
+            added.update(new)
+    if policy != "strict":
+        quiet({"surface", "damage"})
+    try:
+        esc = _escape_surface(char, dest) if me.get("surface") else None
+        if esc:
+            lines.append(esc)
+            here = _pos_now(char) or here
+        watcher = actq.Watcher(_watch_conn())
+        watcher.baseline()
+        prog = macros.TravelProgress(here, dest)
+        stop = None
+        for leg in range(1, macros.TRAVEL_MAX_LEGS + 1):
+            d = macros.dist(here, dest)
+            if outer is not None and (outer.interrupt or outer.stop.is_set()):
+                stop = (outer.interrupt or ("cancel", "cancelled"))[1]
+                break
+            if d <= macros.TRAVEL_ARRIVE_M:
+                lines.append(f"arrived ({render.num(round(d, 1))}m from it)")
+                break
+            args = {"char": char, "pos": dest, "max_m": min(macros.TRAVEL_LEG_M, d)}
+            if policy != "strict":
+                args["avoid"] = "least"
+            r = game.try_rpc("nav.reach_toward", args)
+            if isinstance(r, dict) and not r.get("reachable") and r.get("hazard"):
+                stop = (f"the way on crosses {macros.hazard_text(r['hazard'])} ({render.num(round(d, 1))}m left)"
+                        + (": no way around or across it found" if policy != "strict" else "")
+                        + ": go around it (walk_toward another direction, get_frontier) or wait for it to burn out")
+                break
+            if not (isinstance(r, dict) and r.get("reachable") and r.get("pos")) or macros.dist(r["pos"], dest) > d - 1.0:
+                stop = (f"no walkable ground leads further toward it ({render.num(round(d, 1))}m left): "
+                        "try get_frontier, a door, or a jump")
+                if isinstance(r, dict) and r.get("hazard_beyond"):
+                    stop += f"; ahead: {macros.hazard_text(r['hazard_beyond'])}"
+                break
+            ex = r.get("exposure")
+            leg_w, note = watcher, ""
+            if isinstance(ex, dict) and ex.get("surface"):
+                ok, why = macros.crossing_ok(ex, hp[0], hp[1], policy)
+                if not ok:
+                    stop = (f"the way on crosses {macros.exposure_text(ex)} @{render.pos(ex.get('pos'))} "
+                            f"({render.num(round(d, 1))}m left): {why}")
+                    break
+                note = f"crossing {macros.exposure_text(ex)} @{render.pos(ex.get('pos'))}, the shortest way on: "
+                leg_w = actq.Watcher(_watch_conn(), ignore={"surface", "damage"})
+                leg_w.baseline()
+                watcher.ignore.add("damage")  # Burning keeps ticking on the next legs
+            elif r.get("detour"):
+                hz = (r.get("straight") or {}).get("hazard")
+                note = f"around {hz['surface']} (heading {r.get('dir') or ''}): " if isinstance(hz, dict) and hz.get("surface") else ""
+            px, py, pz = r["pos"]
+            rep, text = _run_one(leg_w, char, actq.Step("move_to", {"x": px, "y": py, "z": pz}), outer)
+            if r.get("hazard_beyond") and not ex:
+                text += f" (kept clear of {macros.hazard_text(r['hazard_beyond'])})"
+            lines.append(f"leg {leg}: {note}{text}")
+            res = rep.last_result if isinstance(rep.last_result, dict) else {}
+            aft = res.get("after") or {}
+            if aft.get("hp") is not None:
+                hp = [aft.get("hp"), aft.get("max_hp", hp[1])]
+            if rep.stop_kind == "surface":
+                esc = _escape_surface(char, dest)
+                if policy == "strict":
+                    stop = _label(rep.stopped or "") + (f"; {esc}" if esc else "")
+                    break
+                if esc:
+                    lines.append(esc)
+                here = _pos_now(char) or here
+                why = prog.leg(here, True)
+                if why:
+                    stop = why + ": try get_frontier, a door, or a jump"
+                    break
+                continue
+            if not rep.done:
+                stop = _label(rep.stopped or "") if rep.stop_kind not in (None, "failed") else f"leg {leg} failed"
+                break
+            here = (aft.get("pos") or res.get("pos") or r["pos"])
+            why = prog.leg(here, macros.leg_stopped_short(res))
+            if why:
+                stop = why + ": try get_frontier, a door, or a jump"
+                break
+        else:
+            stop = f"still {render.num(round(macros.dist(here, dest), 1))}m away after {macros.TRAVEL_MAX_LEGS} legs"
+    finally:
+        if outer_w is not None:
+            outer_w.ignore -= added
     return _macro_finish("travel_to", {"to": what}, lines, stop, [], t0)
+
+
+def _pos_now(char: str) -> list | None:
+    rows = (_watch_conn().try_rpc("act.watch") or {}).get("party") or []
+    return next((r.get("pos") for r in rows if r.get("uuid") == char), None)
 
 
 @mcp.tool()
@@ -2252,7 +2402,27 @@ def load_game(save: str = "latest") -> str:
         raise GameError(f"'{save}' is not one of this playthrough's saves; see list_saves")
     else:
         save = next(d.name for d in mine if d.name == save or d.name.endswith("__" + save))
-    r = game.run_job("ui.menu", {"action": "load", "name": save}, context="client", wait_s=120)
+    # The mod selects the save on the Load page (by playthrough, position and date) and presses Load; the
+    # load then resets the mod's Lua, so a poll may fail mid-way: wait for the game to be Running again.
+    try:
+        r = game.run_job("ui.menu", saves.load_args(SAVE_DIR, save), context="client", wait_s=40)
+        if r.status == "failed" and isinstance(r.result, dict) and r.result.get("needs_key") and _inp() is not None:
+            _inp().key(r.result["needs_key"])
+            r = JobResult("done", {"loading": True, "via": "shim"})
+    except (GameError, NotReady) as e:
+        r = JobResult("done", {"loading": True, "note": str(e)[:80]})
+    if r.status == "done":
+        deadline, ok = time.monotonic() + 120, False
+        time.sleep(1.0)
+        while time.monotonic() < deadline and not ok:
+            try:
+                ok = game.game_state() == "Running" and game.server_ready()
+            except (GameError, NotReady, OSError):
+                ok = False
+            if not ok:
+                time.sleep(0.5)
+        r = JobResult("done", {"loaded": save.split("__", 1)[-1]}) if ok else \
+            JobResult("failed", None, "the game did not come back to Running within 120 s")
     game.event_seq = {"server": 0, "client": 0}
     DELTA.reset()  # a loaded save is a new world: the next look is a full one
     return _finish("load_game", {"save": save}, _job_text("load_game", r), t0, events=False)

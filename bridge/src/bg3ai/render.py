@@ -494,7 +494,10 @@ def render_frontier(res: Any, H: Handles) -> str:
         out.append(" ".join(bits))
     if isinstance(res, dict) and res.get("more"):
         out.append(f"(+{res['more']} more leads)")
-    return "\n".join(out) or "No leads in view. Try another direction, a door, or get_map."
+    if not out:
+        out.append("No leads in view. Try another direction, a door, or get_map.")
+    out.extend(render_hazards(res.get("hazards") if isinstance(res, dict) else None, limit=6))
+    return "\n".join(out)
 
 
 def objective_label(m: dict) -> str:
@@ -556,3 +559,21 @@ def find_objective(markers: Any, ref: str) -> dict:
     if not hits:
         raise ValueError(f"no objective matches '{ref}'")
     raise ValueError(f"'{ref}' matches {len(hits)} objectives; use an id like o1")
+
+
+def render_hazards(hazards: Any, limit: int = 4) -> list[str]:
+    """nav.hazards patches -> ['HAZARD Fire 3m W (3x4m)', 'HAZARD Fire here (you stand in it; 2x2m)']."""
+    if not isinstance(hazards, list):
+        return []
+    out = []
+    for h in hazards[:limit]:
+        if not isinstance(h, dict) or not h.get("surface"):
+            continue
+        size = f"{num(h.get('w_m', '?'))}x{num(h.get('d_m', '?'))}m"
+        if h.get("under"):
+            out.append(f"HAZARD {h['surface']} here (you stand in it; {size})")
+        else:
+            out.append(f"HAZARD {h['surface']} {num(h.get('dist', '?'))}m {h.get('dir') or ''} ({size})".replace("  ", " "))
+    if len(hazards) > limit:
+        out.append(f"(+{len(hazards) - limit} more hazard patches)")
+    return out

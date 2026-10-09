@@ -181,3 +181,61 @@ def hazard_text(h: dict | None) -> str:
 
 def leg_stopped_short(result: Any) -> bool:
     return isinstance(result, dict) and bool(result.get("stopped_short") or result.get("reached") is False)
+
+
+# What walking through a harmful surface costs, roughly (BG3 rules, [wiki]): (what happens, worst damage per
+# entry, worst lingering damage after it, worst damage per metre inside). travel_to quotes the text and checks
+# the worst case against HP before a crossing.
+SURFACE_COST: dict[str, tuple[str, float, float, float]] = {
+    "Fire": ("~1-4 dmg + Burning", 4, 8, 0), "TrialFire": ("~1-4 dmg + Burning", 4, 8, 0),
+    "Hellfire": ("~2-12 dmg + Burning", 12, 8, 0),
+    "Acid": ("Acid: -2 AC", 0, 0, 0), "CausticBrine": ("~1-4 acid dmg + Acid", 4, 0, 0),
+    "Poison": ("Poisoned", 0, 4, 0), "WyvernPoison": ("Poisoned", 0, 8, 0),
+    "WaterElectrified": ("~2-8 lightning dmg", 8, 0, 0), "BloodElectrified": ("~2-8 lightning dmg", 8, 0, 0),
+    "Grease": ("may fall Prone", 0, 0, 0), "WaterFrozen": ("may fall Prone", 0, 0, 0),
+    "BloodFrozen": ("may fall Prone", 0, 0, 0), "Web": ("may get stuck (Enwebbed)", 0, 0, 0),
+    "SpikeGrowth": ("2-8 dmg per 1.5m", 0, 0, 5.4), "BlackTentacles": ("Restrained + ~3-18 dmg", 18, 0, 0),
+}
+SURFACE_COST_DEFAULT = ("~1-10 dmg or a condition", 10, 0, 0)
+NEVER_CROSS = {"Lava", "Chasm", "BladeBarrier"}
+CROSS_MAX_M = 6.0          # longer crossings are never taken on their own
+CROSS_HP_RESERVE_PCT = 25  # after the worst case, at least this much HP must be left
+AVOID_POLICIES = ("auto", "strict", "cross")
+
+
+def exposure_text(ex: dict | None) -> str:
+    """{m, surface, patches} -> '1.5m of Fire (~1-4 dmg + Burning)'."""
+    if not isinstance(ex, dict) or not ex.get("surface"):
+        return ""
+    s = str(ex["surface"])
+    m = float(ex.get("m") or 0)
+    out = f"{m:g}m of {s}"
+    if (ex.get("patches") or 1) > 1:
+        out += f" in {ex['patches']} patches"
+    what = SURFACE_COST.get(s, SURFACE_COST_DEFAULT)[0] if s not in NEVER_CROSS else "deadly"
+    return out + f" ({what})"
+
+
+def crossing_worst(ex: dict) -> float:
+    _, entry, linger, per_m = SURFACE_COST.get(str(ex.get("surface")), SURFACE_COST_DEFAULT)
+    return entry * max(1, int(ex.get("patches") or 1)) + linger + per_m * float(ex.get("m") or 0)
+
+
+def crossing_ok(ex: dict, hp: Any, max_hp: Any, policy: str = "auto") -> tuple[bool, str]:
+    """May travel_to walk this crossing? policy: auto (unless HP is low), strict (never), cross (even at
+    low HP, but never into lava, a chasm or a blade barrier, nor more than CROSS_MAX_M)."""
+    s = str(ex.get("surface"))
+    if policy == "strict":
+        return False, "avoid_hazards=strict"
+    if s in NEVER_CROSS:
+        return False, f"{s} is deadly"
+    if float(ex.get("m") or 0) > CROSS_MAX_M:
+        return False, f"more than {CROSS_MAX_M:g}m of it"
+    if policy == "cross":
+        return True, ""
+    worst = crossing_worst(ex)
+    if isinstance(hp, (int, float)) and isinstance(max_hp, (int, float)) and max_hp > 0 and worst > 0:
+        if hp - worst < max(3.0, max_hp * CROSS_HP_RESERVE_PCT / 100.0):
+            return False, (f"HP {hp:g}/{max_hp:g} is too low for the worst case (~{worst:g} dmg): heal first "
+                           "(potion, restoration pod, short rest) or travel_to(avoid_hazards='cross')")
+    return True, ""

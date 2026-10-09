@@ -282,9 +282,20 @@ class AutonomousStopTest(MemoryTestCase):
         self.set_deadline(30)
         self.assertTrue(S.stop_decision(self.mem)["reason"].startswith("Keep playing"))
 
-    def test_handoff_written_early_still_commits(self):
+    def test_handoff_written_early_keeps_playing(self):
+        # claude-run-2 S001: stuck on a ladder, wrote HANDOFF.md at 16 min left and stopped. Not allowed.
         self.open_session(1, minutes_ago=5)
         self.set_deadline(40)
+        self.write("HANDOFF.md", self.good_handoff(1))
+        out = S.stop_decision(self.mem)
+        self.assertEqual(out["decision"], "block")
+        self.assertTrue(out["reason"].startswith("Keep playing"), out["reason"])
+        self.assertIn("stuck.md", out["reason"])
+        self.assertEqual(self.state()["keep_playing_blocks"], 1)
+
+    def test_handoff_written_commits_once_wrap_due(self):
+        self.open_session(1, minutes_ago=25)
+        self.set_deadline(8)  # inside the 10-minute wrap-up window
         self.write("HANDOFF.md", self.good_handoff(1))
         out = S.stop_decision(self.mem)
         self.assertIn("committed", out["systemMessage"])

@@ -20,14 +20,23 @@ still while you think. The three patterns that cover most of the game outside co
 2. **A sweep in one call:** `queue_actions('[{"tool":"move_to","target":"e7"},{"tool":"interact","target":"e7"},{"tool":"loot"},{"tool":"pick_up","item":"e9"},{"tool":"walk_toward","direction":"W"}]')`.
    Before it ends, append the next batch (another `queue_actions` call appends). Each result's
    EVENTS shows `queue_done`, or `queue_interrupted` with why and what was left: handle that first.
-3. **Wait only when the next decision needs the outcome** (what's behind the door, did the check
-   pass): `wait_for("queue")`, or `wait_for("j12")` for one job. It returns early on a prompt.
-   Otherwise never wait: a `job_finished`/`queue_done` event arrives in your next result anyway.
+3. **Needing the outcome is not a reason to block.** Even when the next decision depends on the
+   arrival (what's behind the door, did the route get through), issue the move async, **then do the
+   work that doesn't depend on it** (note the last event in the session log, `path_preview`/`get_frontier`
+   for the next leg, `look_at` something in view, a `wiki_page` you'll need), and only then
+   `wait_for("queue")` / `wait_for("j12")`. It returns early on a prompt. A fast failure (no path, a
+   hazard ahead) still comes back in the first result, so async costs you nothing.
 
-Don't: pass `wait=true` to movement; call `interact`/`move_to` directly on a character whose queue is
-running (a direct action supersedes the queue: append instead, or `cancel_queue` on purpose); make
-one tool call per step of a plan you already know. In combat use `combat_turn`; in dialogue,
-`dialogue_advance` for filler.
+**Never pass `wait=true` to `move_to`, `walk_toward` or `travel_to`**, not even after a failed or
+stopped walk, and not because an earlier call in this session did: one blocking walk invites the next.
+In S001 (claude-run-2) the first async `travel_to` calls were each followed at once by
+`wait_for("queue")`, every later walk used `wait=true` (31 calls), 0 of 96 actions overlapped a running
+one, and the character stood still for 7 of 14 minutes while the model thought. Out of combat a hook now
+drops `wait=true` from walks and says so. Also don't: call `wait()` to pass time (use `wait_for` with a
+target: `my_turn`, `idle`, a job, an event kind); write long notes between two actions instead of during
+a walk; call `interact`/`move_to` directly on a character whose queue is running (a direct action
+supersedes the queue: append instead, or `cancel_queue` on purpose); make one tool call per step of a
+plan you already know. In combat use `combat_turn`; in dialogue, `dialogue_advance` for filler.
 
 ## Fairness and sandbox (hard rules)
 - Game information comes **only** from the bg3 MCP tools. That includes their screenshots and
@@ -79,7 +88,7 @@ one tool call per step of a plan you already know. In combat use `combat_turn`; 
     `my_turn`, `in_dialogue`). The result ends with `CHANGES` (what moved, HP, items, who appeared), so you
     rarely need a fresh `look`.
   - **`combat_turn`** plays a whole combat turn in one call: move, action, bonus action, extra attacks,
-    `end_turn`. Each slot lists fallbacks (melee → ranged → Dash → Dodge), and every step is re-checked
+    `end_turn`. Each slot lists fallbacks (melee → ranged → Dash → Disengage), and every step is re-checked
     (still your turn, target still visible and alive). It returns right after ending the turn with who
     acts next, so plan the next turn while the enemies act.
   - **Macros** do the chores in one call and stop at the first interrupt: `loot_area` (visible bodies
@@ -225,6 +234,13 @@ conversation keep repeating. Then **stop repeating**:
 5. If it still fails, park the objective under Blocked and work on another.
 
 Persistence pays off only when the approach changes.
+
+**Stuck never ends a session.** A loop, a bugged action or a blocked route is a reason to change
+approach, never to wrap up early or stop: the session runs until the `⏱` line says WRAP UP NOW, and
+the Stop hook refuses an early stop even when HANDOFF.md is already written. For a **harness bug**
+(an action that loops, ignores orders, or a tool that keeps failing the same way), the `stuck`
+playbook's harness ladder takes ~5 minutes: cancel and retry differently → reload the last good save →
+continue with another party member → another objective. Then keep playing.
 
 ## Session lifecycle
 - **Start:** a hook opens `memory/sessions/Sxxx.md` and injects PLAYTHROUGH.md and HANDOFF.md. Run the

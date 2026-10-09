@@ -73,6 +73,7 @@ Osi = setmetatable({
     Pickup = record("Pickup"),
     UseSpell = record("UseSpell"),
     MakePlayerActive = record("MakePlayerActive"),
+    EndTurn = record("EndTurn"),
     UseSpellAtPosition = function(...)
         calls[#calls + 1] = { "UseSpellAtPosition?", n = select("#", ...) }
         if select("#", ...) ~= usp_arity then
@@ -211,10 +212,10 @@ test("move_to entity: walks to a verified point, never CharacterMoveTo", functio
     eq(j.status, "running", "status")
     eq(#called("CharacterMoveTo"), 0, "CharacterMoveTo calls")
     local mv = called("CharacterMoveToPosition")
-    eq(#mv, 1, "move calls"); near(mv[1][3], 7.8, "dest x")
-    arrive(j, { 7.8, 0, 0 })
+    eq(#mv, 1, "move calls"); near(mv[1][3], 8.5, "dest x")
+    arrive(j, { 8.5, 0, 0 })
     eq(j.status, "done", "status " .. tostring(j.error))
-    near(j.result.dist, 2.2, "dist to target"); eq(j.result.target, NPC, "target")
+    near(j.result.dist, 1.5, "dist to target"); eq(j.result.target, NPC, "target")
 end)
 
 test("move_to entity: unreachable -> failed job, no movement", function()
@@ -289,10 +290,10 @@ test("combat move_to entity: within movement, guard charges what the engine did 
     combat_setup(12)
     local j = job(op("move_to", { char = P1, target = NPC }))
     eq(j.status, "running", "status " .. tostring(j.error))
-    arrive(j, { 7.8, 0, 0 })
+    arrive(j, { 8.5, 0, 0 })
     eq(j.status, "done", "status " .. tostring(j.error))
-    near(j.result.movement_charged_by_guard, 7.8, "charged")
-    near(j.result.after.movement, 4.2, "movement left")
+    near(j.result.movement_charged_by_guard, 8.5, "charged")
+    near(j.result.after.movement, 3.5, "movement left")
 end)
 
 test("combat loot approach: budget enforced (click ops walk in combat too)", function()
@@ -325,6 +326,16 @@ test("interact: a ladder-like jump next to the item is not a teleport", function
     world[P1].pos = { 9, 8, 0 }
     tick()
     eq(j.status, "running", "status " .. tostring(j.error))
+end)
+
+test("interact: a ladder used from its top landing (item position 3.2 m below) uses, no re-plan loop", function()
+    world[GEM].pos = { 10, -3, 0 }
+    local j = job(op("interact", { char = P1, target = GEM }))
+    eq(j.phase, "approach", "phase")
+    j.approach.plan.pos = { 10, 0.2, 0 } -- the verified landing next to the ladder's top
+    arrive(j, { 10, 0.2, 0 })
+    eq(j.status, "running", "status " .. tostring(j.error))
+    eq(j.phase, "act", "phase"); eq(#called("Use"), 1, "Use"); eq(j.approach.replans, 0, "replans")
 end)
 
 test("interact: Use's own walk teleporting from afar is caught", function()
@@ -534,6 +545,181 @@ test("act.target_state: carried item -> held", function()
     osiv[key("GetInventoryOwner", GEM)] = P1
     local r = RPC.ops["act.target_state"]({ uuid = GEM })
     eq(r.held, true, "held")
+end)
+
+-- ---- live bug S001 (claude-run-2): melee "range 0.0 m", shared turn groups -----
+
+test("cast: melee keyword wins over the stats' Range 0 (live: Target_MainHandAttack Range=0)", function()
+    spell("Target_MainHandAttack", { TargetRadius = "MeleeMainWeaponRange", Range = 0, SpellType = "Target",
+        UseCosts = "ActionPoint:1", Level = 0 })
+    osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = "HAMMER"
+    osiv[key("GetStatString", "HAMMER")] = "WPN_Warhammer"
+    stats.WPN_Warhammer = { WeaponRange = 150 }
+    world[GOB].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.49 } } } } -- an imp
+    for _, d in ipairs({ 1.8, 2.2, 2.45 }) do -- the live refusals were at 1.8 m and 2.2 m
+        world[GOB].pos = { d, 0, 0 }
+        local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+        eq(j.status, "running", d .. " m: " .. tostring(j.error))
+    end
+    world[GOB].pos = { 8.8, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "failed", "status"); assert(j.error:find("range 1.5 m"), j.error)
+    local r, melee = G.spell_range(stats.Target_MainHandAttack, P1)
+    eq(r, 1.5, "range"); eq(melee, true, "melee")
+end)
+
+test("spell_range: numeric TargetRadius, Range 0 ignored, ranged keyword, unknown -> nil", function()
+    eq(G.spell_range({ TargetRadius = "18", Range = 0 }, P1), 18, "numeric")
+    eq(select(2, G.spell_range({ TargetRadius = 1.5, Range = 0 }, P1)), true, "shove-like reach is melee")
+    eq(G.spell_range({ TargetRadius = "RangedMainWeaponRange", Range = 0 }, P1), G.DEFAULT_RANGED_M, "ranged default")
+    eq(G.spell_range({ TargetRadius = "", Range = 0 }, P1), nil, "unknown")
+    eq(G.spell_range({ TargetRadius = "MeleeMainWeaponRange", Range = 0 }, P1), 1.5, "unarmed default")
+end)
+
+local P2 = "ffffffff-0000-0000-0000-000000000006"
+local function group_setup()
+    world[P2] = { pos = { -1, 0, 0 }, comps = {} }
+    osiv[key("IsCharacter", P2)] = 1
+    osiv[key("IsOnStage", P2)] = 1
+    osiv[key("IsInCombat", P1)] = 1
+    osiv[key("IsInCombat", P2)] = 1
+    world[P1].comps.TurnBased = { IsActiveCombatTurn = true, RequestedEndTurn = false }
+    world[P2].comps.TurnBased = { IsActiveCombatTurn = true, RequestedEndTurn = false }
+    local saved = Osi.DB_PartyMembers
+    Osi.DB_PartyMembers = { Get = function() return { { "S_Player_" .. P1 }, { "S_Player_" .. P2 } } end }
+    return function() Osi.DB_PartyMembers = saved end
+end
+
+test("end_turn in a shared turn group: done on RequestedEndTurn, lists who is still to act", function()
+    local restore = group_setup()
+    local j = job(op("end_turn", { char = P1 }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    eq(#called("EndTurn"), 1, "EndTurn called")
+    world[P1].comps.TurnBased.RequestedEndTurn = true -- the group stays active (live)
+    tick(3)
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(j.result.ended, true, "ended")
+    eq(j.result.still_to_act and j.result.still_to_act[1], P2, "Lae'zel still to act")
+    eq(G.is_my_turn(P1), false, "an ended member may not act again")
+    eq(G.is_my_turn(P2), true, "the other member may")
+    local j2 = job(op("end_turn", { char = P1 }))
+    eq(j2.status, "failed", "second end_turn"); assert(j2.error:find("already ended its turn"), j2.error)
+    restore()
+end)
+
+test("end_turn: done when the turn passes (IsActiveCombatTurn drops), no group left", function()
+    local restore = group_setup()
+    world[P2].comps.TurnBased.IsActiveCombatTurn = false
+    local j = job(op("end_turn", { char = P1 }))
+    world[P1].comps.TurnBased.IsActiveCombatTurn = false
+    tick(3)
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.still_to_act, nil, "nobody left")
+    restore()
+end)
+
+test("combat gate: an ended group member cannot cast", function()
+    local restore = group_setup()
+    world[P1].comps.TurnBased.RequestedEndTurn = true
+    spell("Shout_Dodge", { SpellType = "Shout", UseCosts = "ActionPoint:1", Level = 0 })
+    local j = job(op("cast", { char = P1, spell = "Shout_Dodge" }))
+    eq(j.status, "failed", "status"); assert(j.error:find("turn"), j.error)
+    restore()
+end)
+
+-- ---- leftover Osiris tasks and the loop watchdog (se, S001 ladder loop) ----
+
+-- P1 with `n` queued Osiris tasks; PurgeOsirisQueue empties them (and is recorded).
+local function with_tasks(n)
+    local tasks = {}
+    for i = 1, n do tasks[i] = { Type = "UseItem" } end
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = tasks } }
+    local orig = Osi.PurgeOsirisQueue
+    Osi.PurgeOsirisQueue = function(...)
+        orig(...)
+        for i = #tasks, 1, -1 do tasks[i] = nil end
+    end
+    return function() Osi.PurgeOsirisQueue = orig end
+end
+
+test("interact: a ladder Use that keeps climbing after UseFinished is purged when the job is done", function()
+    local restore = with_tasks(1)
+    world[P1].pos = { 9, 0, 0 }
+    local j = job(op("interact", { char = P1, target = GEM }))
+    eq(#called("Use"), 1, "Use right away")
+    A.dispatch("UseFinished", { P1, GEM, 1 })
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(#called("PurgeOsirisQueue"), 1, "purged"); eq(j.result.purged_tasks, 1, "purged_tasks")
+    restore()
+end)
+
+test("move_to: a timed-out walk purges its CharacterMoveToPosition task", function()
+    local restore = with_tasks(1)
+    local j = job(op("move_to", { char = P1, pos = { 5, 0, 0 } }))
+    eq(j.status, "running", "status")
+    clock = j.deadline + 1
+    for _, f in ipairs(tickers) do f() end
+    eq(j.status, "timeout", "status")
+    eq(#called("PurgeOsirisQueue"), 1, "purged")
+    restore()
+end)
+
+test("move_to: done with an empty queue purges nothing", function()
+    local j = job(op("move_to", { char = P1, pos = { 5, 0, 0 } }))
+    arrive(j, { 5, 0, 0 })
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(#called("PurgeOsirisQueue"), 0, "no purge")
+end)
+
+test("loop watchdog: an orphaned task re-using the same ladder is purged after 3 uses", function()
+    local restore = with_tasks(2)
+    A.use_streak = {}
+    A.dispatch("UseFinished", { P1, DOOR, 1 }); clock = clock + 5000
+    A.dispatch("UseFinished", { P1, DOOR, 1 }); clock = clock + 5000
+    eq(#called("PurgeOsirisQueue"), 0, "not after 2")
+    A.dispatch("UseFinished", { P1, DOOR, 1 })
+    eq(#called("PurgeOsirisQueue"), 1, "purged after 3")
+    restore()
+end)
+
+test("loop watchdog: uses far apart, other items or no tasks are not a loop", function()
+    A.use_streak = {}
+    for _ = 1, 4 do A.dispatch("UseFinished", { P1, DOOR, 1 }) end -- no tasks queued
+    eq(#called("PurgeOsirisQueue"), 0, "no tasks")
+    local restore = with_tasks(1)
+    A.use_streak = {}
+    for _ = 1, 3 do A.dispatch("UseFinished", { P1, DOOR, 1 }); clock = clock + 25000 end
+    A.dispatch("UseFinished", { P1, GEM, 1 })
+    eq(#called("PurgeOsirisQueue"), 0, "gaps > 20 s / another item")
+    restore()
+end)
+
+test("loop watchdog: a running job routed through a ladder loop is interrupted", function()
+    local restore = with_tasks(1)
+    A.use_streak = {}
+    local j = job(op("move_to", { char = P1, pos = { 5, 0, 0 } }))
+    for _ = 1, 3 do A.dispatch("UseFinished", { P1, DOOR, 1 }) end
+    eq(j.status, "interrupted", "status"); assert(j.error:find("stuck"), j.error)
+    eq(#called("PurgeOsirisQueue"), 1, "purged once")
+    restore()
+end)
+
+test("act.stop: interrupts the running job and purges the queue", function()
+    local restore = with_tasks(3)
+    local j = job(op("move_to", { char = P1, pos = { 5, 0, 0 } }))
+    local s = job(op("stop", { char = P1 }))
+    eq(j.status, "interrupted", "walk"); eq(s.status, "done", "stop")
+    eq(s.result.stopped_job, j.id, "stopped_job"); eq(s.result.purged_tasks, 3, "purged"); eq(s.result.left, 0, "left")
+    restore()
+end)
+
+test("cast: a finished spell does not purge the queue", function()
+    local restore = with_tasks(1)
+    spell("Shout_Dash", { SpellType = "Shout", UseCosts = "ActionPoint:1", Level = 0 })
+    local j = job(op("cast", { char = P1, spell = "Shout_Dash" }))
+    eq(j.osi_task, "spell", "marked as a spell task")
+    RPC.finish_job(j, "done", {})
+    eq(#called("PurgeOsirisQueue"), 0, "no purge")
+    restore()
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

@@ -501,7 +501,8 @@ end)
 -- ui.menu {action, dry?}
 --   open_menu / close_menu : Escape (game menu), checked against ui.state.
 --   continue               : main menu "Continue" (loads the latest save).
---   load                   : opens the Load Game dialog.
+--   load {name, owner?, index?, date?} : loads a named save (job, see MENU.load);
+--                            without a name it only opens the Load page.
 --   quickload              : QuickLoadCommand.
 --   quicksave              : QuickSaveCommand.
 --   save {name}            : named save, end to end (job, see MENU.save).
@@ -538,11 +539,153 @@ function MENU.continue(args)
     return { done = not args.dry, can = true }
 end
 
+-- Load a named save, end to end (verified live, machine 2, S001-end).
+-- The Load page (widget "LoadGame", gui::DCSavegames) lists saves grouped by
+-- playthrough (an Expander per character name) newest first. bg3le can't
+-- read a save's title (Run.Text is not marshalled) nor pass the Load
+-- button's CustomEvent parameter, so:
+--   1. OpenLoadGameDialog (in game or at the main menu)
+--   2. expand the playthrough(s) named `owner` (folder prefix before "-")
+--   3. select a save (LSListBoxItem.IsSelected): `index` (1 = newest of that
+--      playthrough) first, then, if `date` is given, verify the info pane's
+--      date ("9/10/2026 22:45") against it, scanning the others on mismatch
+--   4. RETURN (= UIAccept = LoadSaveBtn); a confirm box gets RETURN too
+--   5. done once the page closes or the game state leaves Running. The load
+--      itself resets this Lua state; the caller waits for Running again.
+-- args: name (folder), owner?, index?, date? = {y, m, d, H, M} (local time).
+local function loadItems(owner)
+    local w = UI.widget("LoadGame")
+    if not w then return nil, {} end
+    local want = owner and owner:lower()
+    local out, matched = {}, {}
+    for _, ex in ipairs(UI.findAll(w, function(e) return UI.typeName(e) == "Expander" end, { prune = true })) do
+        local hdr = UI.allText(ex, " ", 80)
+        hdr = hdr and hdr:match("^%s*(.-)%s*$") or ""
+        if not want or hdr:lower() == want or hdr:lower():find(want, 1, true) == 1 then
+            matched[#matched + 1] = ex
+            if UI.prop(ex, "IsExpanded") ~= true then pcall(ex.SetProperty, ex, "IsExpanded", true) end
+            for _, it in ipairs(UI.findAll(ex, function(e)
+                return UI.typeName(e) == "ls.LSListBoxItem"
+                    and UI.typeName(UI.prop(e, "DataContext")) == "ls.VMSavegame"
+            end, { prune = true })) do
+                out[#out + 1] = it
+            end
+        end
+    end
+    return w, out, matched
+end
+
+-- Info pane date of the selected save -> {a, b, y, H, M} or nil.
+local function paneDate(w)
+    local el = UI.find(w, function(e)
+        return UI.name(e) == "Date" and UI.typeName(e) == "TextBlock"
+    end)
+    local s = el and UI.text(el)
+    if not s then return nil end
+    local a, b, y, H, M = s:match("(%d+)%D(%d+)%D(%d%d%d%d)%D+(%d+):(%d+)")
+    if not a then return nil, s end
+    H = tonumber(H)
+    if s:find("[Pp]%.?[Mm]") and H < 12 then H = H + 12 end
+    if s:find("[Aa]%.?[Mm]") and H == 12 then H = 0 end
+    return { tonumber(a), tonumber(b), tonumber(y), H, tonumber(M) }, s
+end
+
+-- Pane date vs want {y,m,d,H,M}: either day/month order, +-1 minute.
+local function dateMatches(p, want)
+    if not p or not want then return false end
+    if p[3] ~= tonumber(want.y) then return false end
+    local m, d = tonumber(want.m), tonumber(want.d)
+    if not ((p[1] == d and p[2] == m) or (p[1] == m and p[2] == d)) then return false end
+    local a, b = p[4] * 60 + p[5], tonumber(want.H) * 60 + tonumber(want.M)
+    return math.abs(a - b) <= 1
+end
+
 function MENU.load(args)
     if not args.dry and not A.LOAD_ENABLED then error("loading is disabled (UIActions.LOAD_ENABLED=false)") end
-    local dc = UI.dc("MainMenu") or UI.anyDC()
-    check(UI.command(dc, "OpenLoadGameDialog", nil, args.dry))
-    return { done = not args.dry, can = true }
+    local name = args.name
+    if args.dry or not name or name == "" then
+        if not UI.widget("LoadGame") or not UI.isVisible(UI.widget("LoadGame")) then
+            check(UI.command(UI.dc("MainMenu") or UI.anyDC(), "OpenLoadGameDialog", nil, args.dry))
+        end
+        return { done = not args.dry, can = true, note = (not args.dry) and "load page opened (no save named)" or nil }
+    end
+    local owner = args.owner or tostring(name):match("^(.-)%-%d+__") or tostring(name):match("^([^%-_]+)")
+    local index = tonumber(args.index) or 1
+    local want = type(args.date) == "table" and args.date or nil
+    local stage, since, tries, cand = "open", RPC.now_ms(), 0, nil
+    local function enter(st) stage, since, tries = st, RPC.now_ms(), 0 end
+    return waitJob("ui.menu.load", 30000, function(job)
+        local now = RPC.now_ms()
+        job.partial = { stage = stage, name = name }
+        local st = tostring(try(Ext.Utils.GetGameState) or "")
+        local page = UI.widget("LoadGame")
+        local pageUp = page ~= nil and UI.isVisible(page)
+        if stage == "open" then
+            if pageUp then enter("select") return nil end
+            if tries == 0 then
+                tries = 1
+                local ok, err = UI.command(UI.dc("MainMenu") or UI.anyDC(), "OpenLoadGameDialog", nil, false)
+                if not ok then return "failed", { stage = stage, error = "could not open the load page: " .. tostring(err) } end
+            elseif now - since > 4000 then
+                return "failed", { stage = stage, error = "the load page did not open" }
+            end
+            return nil
+        end
+        if stage == "select" or stage == "verify" then
+            if not pageUp then return "failed", { stage = stage, error = "the load page closed" } end
+            local w, items, matched = loadItems(owner)
+            if #matched == 0 then return "failed", { stage = stage, error = "no playthrough named '" .. tostring(owner) .. "' on the load page" } end
+            if #items == 0 then
+                if now - since > 3000 then return "failed", { stage = stage, error = "no saves listed for '" .. tostring(owner) .. "'" } end
+                return nil -- expanding: items appear on the next frames
+            end
+            if stage == "select" then
+                -- candidates: the hinted index first, then the rest in order
+                if not cand then
+                    cand = { math.min(index, #items) }
+                    for i = 1, #items do if i ~= cand[1] then cand[#cand + 1] = i end end
+                    job.n_items = #items
+                end
+                local i = table.remove(cand, 1)
+                if not i then return "failed", { stage = stage, error = "no save on the page matches the date of '" .. name .. "'", saves = #items } end
+                pcall(items[i].SetProperty, items[i], "IsSelected", true)
+                job.picked = i
+                enter("verify")
+                return nil
+            end
+            -- verify: the info pane follows the selection a frame or two later
+            if not want then enter("accept") return nil end
+            local p, raw = paneDate(w)
+            job.pane = raw
+            if dateMatches(p, want) then enter("accept") return nil end
+            if now - since < 400 then return nil end
+            enter("select")
+            return nil
+        end
+        -- accept / confirm: RETURN until the page closes or the state changes
+        if st ~= "Running" and st ~= "Menu" and st ~= "" then
+            return "done", { loading = true, name = name, picked = job.picked, pane = job.pane, state = st }
+        end
+        local box = UI.widget("Dialog_box")
+        local boxUp = box ~= nil and UI.isVisible(box)
+        if not pageUp and not boxUp then
+            if now - since > 300 then
+                return "done", { loading = true, name = name, picked = job.picked, pane = job.pane, state = st }
+            end
+            return nil
+        end
+        if boxUp and stage ~= "confirm" then enter("confirm") end
+        if now - since > 3000 then
+            return "failed", { needs_key = "RETURN", stage = stage, name = name,
+                error = "in-game RETURN did not load the save; send RETURN via the input shim" }
+        end
+        if tries < 2 and now - (job.lastKey or 0) > 1200 then
+            tries = tries + 1
+            job.lastKey = now
+            pcall(Ext.Input.InjectKeyPress, "RETURN")
+        end
+        return nil
+    end)
 end
 
 function MENU.quickload(args)

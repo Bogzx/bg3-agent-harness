@@ -38,7 +38,7 @@ from .render import Handles
 
 # What an action result gets appended by default (cheap ops only; inventory/journal wait for `look`).
 ACTION_PARTS = ("status", "nearby", "markers", "ui")
-LOOK_PARTS = ("status", "nearby", "markers", "inventory", "journal", "ui")
+LOOK_PARTS = ("status", "nearby", "markers", "inventory", "journal", "ui", "hazards")
 STATUS_PARTS = ("status", "markers", "ui")
 
 MOVE_MIN_M = 1.0  # party moves shorter than this aren't reported
@@ -444,7 +444,7 @@ TRACKER = Tracker()
 
 _OPS = {"status": ("state.status", {}), "nearby": ("state.nearby", {"radius": 25}),
         "markers": ("nav.markers", {}), "inventory": ("state.inventory", {}), "journal": ("state.journal", {}),
-        "map": ("state.map", {})}
+        "map": ("state.map", {}), "hazards": ("nav.hazards", {})}
 
 
 def _bracket(payload: str) -> str:
@@ -481,6 +481,9 @@ def fetch(game: Any, parts: tuple = ACTION_PARTS) -> dict:
     if "markers" in got:
         m = got["markers"]
         got["markers"] = m.get("markers") if isinstance(m, dict) and isinstance(m.get("markers"), list) else None
+    if "hazards" in got:
+        h = got["hazards"]
+        got["hazards"] = h.get("hazards") if isinstance(h, dict) and isinstance(h.get("hazards"), list) else None
     if "ui" in parts:
         got["ui"] = game.try_rpc("ui.state", context="client")
     return got

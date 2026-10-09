@@ -62,7 +62,7 @@ class EndTurn(unittest.TestCase):
         self.use(FakeGame([{"active": True, "current": ENEMY}, {"active": True, "current": ENEMY},
                            {"active": True, "current": PARTY}]))
         out = server.end_turn()
-        self.assertIn("end_turn: done", out)
+        self.assertRegex(out, r"^end_turn \S+ \S+: done")
         self.assertIn("'s turn", out)
         self.assertEqual(server._batch["last"], "done")
 

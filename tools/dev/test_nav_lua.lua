@@ -13,6 +13,7 @@ local P1 = "aaaaaaaa-0000-0000-0000-000000000001"
 local world = { [P1] = { 0, 0, 0 } }
 local fire = function() return false end      -- (x, z) -> burning?
 local blocked = function() return false end   -- (x, z) -> no path there
+local wall = function() return false end      -- (x, z) -> WalkBlock tile (wall, hole)
 local nodesFor = nil                          -- optional (from, target) -> node list
 
 local function mkpath(e, target)
@@ -27,7 +28,8 @@ Ext = {
     Level = {
         GetHeightsAt = function() return { 0.0 } end,
         GetTileDebugInfo = function(p)
-            return { GroundSurface = fire(p[1], p[3]) and "Fire" or "None", CloudSurface = "None" }
+            return { GroundSurface = fire(p[1], p[3]) and "Fire" or "None", CloudSurface = "None",
+                Flags = wall(p[1], p[3]) and { "WalkBlock", "StaticBlock" } or {} }
         end,
         BeginPathfindingImmediate = mkpath,
         FindPath = function(path)
@@ -45,6 +47,7 @@ Ext = {
     Require = function() return nil end,
 }
 Osi = {}
+local TILE = Ext.Level.GetTileDebugInfo
 
 BG3AI = {}
 dofile(LUA .. "/Shared/Util.lua")
@@ -67,6 +70,7 @@ local function reset()
     world[P1] = { 0, 0, 0 }
     fire = function() return false end
     blocked = function() return false end
+    wall = function() return false end
     nodesFor = nil
     clock = clock + 1000
     N.frame = (N.frame or 0) + 1 -- new frame: drop the path cache
@@ -129,9 +133,7 @@ end)
 test("surfaceAt: invisible surfaces are never reported", function()
     Ext.Level.GetTileDebugInfo = function() return { GroundSurface = "InvisibleWeb", CloudSurface = "None" } end
     local ok, s = pcall(N.surfaceAt, { 0, 0, 0 })
-    Ext.Level.GetTileDebugInfo = function(p)
-        return { GroundSurface = fire(p[1], p[3]) and "Fire" or "None", CloudSurface = "None" }
-    end
+    Ext.Level.GetTileDebugInfo = TILE
     eq(ok, true, "no error"); eq(s, nil, "invisible web")
 end)
 
@@ -194,6 +196,139 @@ test("safeSpot: fire everywhere -> found=false", function()
     fire = function() return true end
     local r = N.safeSpot(P1, 8)
     eq(r.found, false, "found")
+end)
+
+
+-- ---- exposure + least-exposure crossing (S001 run 2: stuck at the burning corridor) ----
+
+test("routeExposure: metres in fire, patches, where it starts", function()
+    fire = function(x) return x < -13 and x > -18 end
+    local ex = N.routeExposure(STRAIGHT)
+    eq(ex.surface, "Fire", "surface"); eq(ex.patches, 1, "patches")
+    near(ex.m, 5.0, "metres", 0.6); near(ex.at_m, 13.5, "starts at", 0.6)
+end)
+
+test("routeExposure: two patches, longest run; clear route -> nil", function()
+    fire = function(x) return (x < -3 and x > -5) or (x < -10 and x > -16) end
+    local ex = N.routeExposure(STRAIGHT)
+    eq(ex.patches, 2, "patches"); near(ex.longest_m, 6.0, "longest", 0.6); near(ex.m, 8.0, "total", 1.1)
+    fire = function() return false end
+    eq(N.routeExposure(STRAIGHT), nil, "clear")
+end)
+
+-- A burning band 5 m deep across the way W, except a 1 m strip further S
+-- (S001: the band at z -423..-425, a quick 2 m crossing at z -429).
+local function band(x, z) return (x > -9 and x < -4 and z > -1.5) or (x > -6 and x < -5) end
+
+test("crossing: picks the shortest crossing, not the straight 5 m one", function()
+    fire = band
+    local c = N.crossing(P1, { -30, 0, 0 }, 20)
+    eq(c.reachable, true, "reachable")
+    assert(c.exposure and c.exposure.m <= 2.0, "exposure " .. tostring(c.exposure and c.exposure.m))
+    assert(c.pos[3] < -1.5, "went S of the band: z=" .. c.pos[3])
+    assert(c.progress_m >= 1, "progress")
+    eq(N.surfaceNear(c.pos, 0.5), nil, "ends on clear ground")
+end)
+
+test("crossing: a clear detour beats any crossing", function()
+    fire = function(x, z) return x > -9 and x < -4 and z > -2 end
+    local c = N.crossing(P1, { -30, 0, 0 }, 20)
+    eq(c.reachable, true, "reachable"); eq(c.detour, true, "detour"); eq(c.exposure, nil, "no exposure")
+end)
+
+test("crossing: nothing walkable ahead -> not reachable", function()
+    blocked = function(x) return x < -1 end
+    local c = N.crossing(P1, { -30, 0, 0 }, 20)
+    eq(c.reachable, false, "reachable")
+end)
+
+test("nav.reach_toward avoid=least: falls back to the crossing, keeps the straight hazard", function()
+    fire = band
+    local r = RPC.ops["nav.reach_toward"]({ pos = { -30, 0, 0 }, max_m = 20, avoid = "least" })
+    eq(r.reachable, true, "reachable")
+    assert(r.exposure and r.exposure.surface == "Fire", "exposure")
+    eq(r.straight.hazard.surface, "Fire", "straight hazard")
+    eq(r.points, nil, "no route points in the reply")
+end)
+
+test("nav.reach_toward avoid=least: a clear straight walk is kept as is", function()
+    local r = RPC.ops["nav.reach_toward"]({ pos = { -30, 0, 0 }, max_m = 20, avoid = "least" })
+    near(r.pos[1], -20, "straight"); eq(r.exposure, nil, "exposure")
+end)
+
+test("safeSpot toward: steps out forward when that is as cheap (no undoing the way on)", function()
+    world[P1] = { -21, 0, 0 } -- 2 m of fire W, 3 m E
+    fire = function(x) return x < -18 and x > -23 end
+    local r = N.safeSpot(P1, 8, { -40, 0, 0 })
+    eq(r.found, true, "found")
+    assert(r.pos[1] <= -23, "stepped W out of it: " .. r.pos[1])
+end)
+
+test("safeSpot toward: forward is all fire -> back out", function()
+    world[P1] = { -20, 0, 0 }
+    fire = function(x) return x < -18 end
+    local r = N.safeSpot(P1, 8, { -40, 0, 0 })
+    eq(r.found, true, "found"); eq(r.dir, "E", "dir")
+end)
+
+-- ---- jump landings ----------------------------------------------------------------
+
+test("landing: clear spot in range -> safe", function()
+    local r = N.landing(P1, { -4, 0, 0 })
+    eq(r.safe, true, "safe"); near(r.dist_m, 4, "dist")
+end)
+
+test("landing: target in fire -> suggests the nearest clear spot in reach", function()
+    fire = function(x) return x < -2.5 and x > -5 end
+    local r = N.landing(P1, { -4, 0, 0 })
+    eq(r.safe, false, "safe"); eq(r.surface, "Fire", "surface")
+    assert(r.suggest, "suggest")
+    eq(N.surfaceNear(r.suggest, 0.5), nil, "suggestion is clear")
+    assert(r.suggest_dist_m <= 4.5, "within reach")
+end)
+
+test("landing: a long jump that may fall short into fire (S001: -26 landed at -21.2)", function()
+    fire = function(x) return x < -3 and x > -6 end
+    local r = N.landing(P1, { -7.8, 0, 0 })
+    eq(r.safe, false, "safe"); eq(r.surface, "Fire", "surface")
+    near(r.short_pos[1], -4.5, "short landing")
+end)
+
+test("landing: a wall tile is not a landing", function()
+    wall = function(x) return x < -3.5 and x > -4.5 end
+    local r = N.landing(P1, { -4, 0, 0 })
+    eq(r.safe, false, "safe"); eq(r.blocked, true, "blocked")
+    assert(r.suggest, "suggest")
+end)
+
+test("landing: the nearest clear spot is far from the target -> named, not swapped in", function()
+    fire = function(x) return x < -2.5 and x > -9.5 end
+    local r = N.landing(P1, { -6, 0, 0 })
+    eq(r.safe, false, "safe"); eq(r.suggest, nil, "suggest")
+    assert(r.nearest_clear and r.nearest_clear_off_m > 3, "nearest clear")
+end)
+
+test("landing: no clear spot near -> no suggestion", function()
+    fire = function(x) return x < -1 end
+    local r = N.landing(P1, { -4, 0, 0 })
+    eq(r.safe, false, "safe"); eq(r.suggest, nil, "suggest")
+end)
+
+-- ---- visible hazard patches -----------------------------------------------------------
+
+test("hazardPatches: two patches, nearest first, with size and direction", function()
+    fire = function(x, z) return (x >= -5 and x <= -3 and z >= -1 and z <= 2) or (x >= 6 and x <= 9 and z >= 6 and z <= 7) end
+    local hz = N.hazardPatches(P1, 12, 1.0)
+    eq(#hz, 2, "patches")
+    eq(hz[1].surface, "Fire", "surface"); near(hz[1].dist, 3, "dist"); eq(hz[1].dir, "W", "dir")
+    near(hz[1].w_m, 3, "width"); near(hz[1].d_m, 4, "depth"); near(hz[1].area_m2, 12, "area")
+    eq(hz[2].dir, "NE", "second dir")
+end)
+
+test("nav.hazards: compact list, standing in one is flagged", function()
+    fire = function(x, z) return math.abs(x) <= 1 and math.abs(z) <= 1 end
+    local r = RPC.ops["nav.hazards"]({ radius = 6 })
+    eq(#r.hazards, 1, "patches"); eq(r.hazards[1].under, true, "under")
 end)
 
 -- ---- RPC replies stay compact ------------------------------------------------------

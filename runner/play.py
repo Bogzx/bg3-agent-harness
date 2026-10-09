@@ -256,6 +256,24 @@ def is_stuck(history: list[dict], n: int = STUCK_SESSIONS) -> bool:
     return len(recent) == n and all(h.get("progress") is False for h in recent)
 
 
+# A concrete pre-flight for pace, right in the kickoff (the most salient spot): in claude-run-2 S001 the
+# agent read the CLAUDE.md pipelining rules, then blocked on every walk anyway (31 wait=true walks, 0% of
+# actions pipelined, idle median 2.27 s) and wrapped up 16 min early when a ladder bugged out.
+PACE_PREFLIGHT = """PACE PRE-FLIGHT (read before your first game action):
+- The character must be busy while you think. A walk is: issue it, then do something that doesn't
+  depend on it, then react to its result. For example:
+    travel_to(objective="o1")                      -> started, returns at once
+    queue_actions('[{"tool":"interact","target":"e15"}]')   -> what to do on arrival
+    look() / get_frontier() / Edit your session log  -> while it walks
+    wait_for("queue")                              -> only now, if nothing else is left to do
+- Never pass wait=true to move_to, walk_toward or travel_to, not even after a walk stopped or
+  failed (failures come back at once anyway), and not because you did it earlier this session. Never
+  wait() to pass time: wait_for("my_turn" | "idle" | a job id).
+- Stuck (a loop, a bugged action, a route that keeps failing) never ends the session: follow
+  knowledge/playbooks/stuck.md section 0 (cancel and retry differently, reload the last good save, lead
+  with another party member, another objective) and keep playing until the ⏱ line says WRAP UP NOW."""
+
+
 def build_kickoff(sid: str, playthrough: str, deadline: float, loaded_save: str | None,
                   notes: list[str]) -> str:
     end = datetime.fromtimestamp(deadline).strftime("%H:%M")
@@ -267,6 +285,7 @@ def build_kickoff(sid: str, playthrough: str, deadline: float, loaded_save: str 
         f"Session deadline: {end} local time (the session_clock tool shows the time left). Run the "
         "session-wrapup playbook when the SESSION CLOCK reminder appears, and end your turn when it reports "
         "the commit. Nobody will answer questions: decide yourself and write down why.",
+        PACE_PREFLIGHT,
     ]
     if loaded_save:
         lines.append(f"The runner has already loaded save \"{loaded_save}\". Don't reload it; verify state "
@@ -491,6 +510,18 @@ def list_saves() -> list[Save]:
         if s:
             out.append(s)
     return out
+
+
+def load_menu_args(save: Save, saves: list[Save]) -> dict:
+    """ui.menu load arguments: the Load page groups saves by owner, newest first, and the mod checks the
+    selected save's date before loading (it can't read save titles there)."""
+    same = sorted((s for s in saves if s.owner == save.owner), key=lambda s: s.mtime, reverse=True)
+    args: dict = {"action": "load", "name": save.folder, "owner": save.owner}
+    idx = next((i for i, s in enumerate(same, 1) if s.folder == save.folder), None)
+    if idx is not None:
+        t = time.localtime(save.mtime)
+        args.update(index=idx, date={"y": t.tm_year, "m": t.tm_mon, "d": t.tm_mday, "H": t.tm_hour, "M": t.tm_min})
+    return args
 
 
 def pids_of_game() -> list[int]:
@@ -780,7 +811,7 @@ class Runner:
         if port_open() and ui_load:
             if game_state() != "Menu":
                 self.wait_menu()
-            rpc("ui.menu", {"action": "load", "name": save.folder}, context="client", timeout=30)
+            rpc("ui.menu", load_menu_args(save, list_saves()), context="client", timeout=30)
         else:
             if port_open():
                 if not (self.owns_game() or self.opt.take_over or game_state() == "Menu"):

@@ -1,6 +1,6 @@
 # Session wrap-up (target: ≤ 8 minutes)
 
-**When:** Run only when the clock line in tool results says **WRAP UP NOW** (10 min before the end, a third of a short session; or a SESSION CLOCK reminder in manual sessions) or the operator asks you to stop. Never earlier: "⏱ 14m left · 4m of play" means play 4 more minutes. Escaping real danger is play, not wrap-up. Reaches a safe state, saves, writes HANDOFF.md, trims memory to budget, then ends the turn so the Stop hook lints and commits the memory.
+**When:** Run only when the clock line in tool results says **WRAP UP NOW** (10 min before the end, a third of a short session; or a SESSION CLOCK reminder in manual sessions) or the operator asks you to stop. Never earlier: "⏱ 14m left · 4m of play" means play 4 more minutes. Escaping real danger is play, not wrap-up. **Being stuck is not a reason either** (S001 of claude-run-2 wrapped up at 16 min left because a ladder bugged out, and lost a third of its session): run the `stuck` playbook, section 0, and keep playing. Don't write HANDOFF.md before WRAP UP NOW; an early one doesn't end the session anyway. Reaches a safe state, saves, writes HANDOFF.md, trims memory to budget, then ends the turn so the Stop hook lints and commits the memory.
 
 ## 1. Reach a safe state (≤ 3 min)
 - **In combat:** finish it if you can win within a few turns. Otherwise keep playing it. Never save-quit

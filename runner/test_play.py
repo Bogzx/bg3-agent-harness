@@ -64,6 +64,13 @@ class DeadlineMath(unittest.TestCase):
         self.assertIsNone(P.session_budget(now, now + 14 * 60, 60))
         self.assertIsNone(P.session_budget(now, now - 5, 60))
 
+    def test_kickoff_has_pace_preflight(self):
+        k = P.build_kickoff("S004", "pt1", time.time() + 3600, None, [])
+        self.assertIn("PACE PRE-FLIGHT", k)
+        self.assertIn("Never pass wait=true", k)
+        self.assertIn("stuck.md", k)
+        self.assertNotIn(time.strftime("%Y-%m-%d"), P.PACE_PREFLIGHT)  # static: cache-friendly
+
     def test_kickoff_mentions_deadline_and_notes(self):
         t = time.mktime((2026, 10, 9, 21, 30, 0, 0, 0, -1))
         k = P.build_kickoff("S004", "pt1", t, "S003-end", ["NOTE A", "NOTE B"])
@@ -75,6 +82,16 @@ class DeadlineMath(unittest.TestCase):
 
 
 class HandoffAndSaves(unittest.TestCase):
+    def test_load_menu_args(self):
+        t = time.mktime((2026, 10, 9, 22, 39, 30, 0, 0, -1))
+        saves = [P.Save("Claude-1__S001-start", "Claude", "S001-start", t - 400),
+                 P.Save("Claude-2__S001-imps-done", "Claude", "S001-imps-done", t),
+                 P.Save("Claude-3__S001-end", "Claude", "S001-end", t + 360),
+                 P.Save("Tav-4__S002-end", "Tav", "S002-end", t + 900)]
+        a = P.load_menu_args(saves[1], saves)
+        self.assertEqual((a["action"], a["name"], a["owner"], a["index"]), ("load", "Claude-2__S001-imps-done", "Claude", 2))
+        self.assertEqual(a["date"], {"y": 2026, "m": 10, "d": 9, "H": 22, "M": 39})
+
     def test_parse_handoff(self):
         self.assertEqual(P.parse_handoff_save('# Handoff\nSave to load: "S042-end" — party at the well\n'), "S042-end")
         self.assertEqual(P.parse_handoff_save("Save to load: S042-end — x"), "S042-end")

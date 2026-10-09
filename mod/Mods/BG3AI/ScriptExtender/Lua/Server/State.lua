@@ -433,6 +433,16 @@ local function cooldowns(e)
     return out
 end
 
+-- Footprint radius (m), as Guard.radius: AIBounds.Stand, then Move, then 0.5.
+local function standRadius(e)
+    local ok, r = pcall(function()
+        local b = e.Bound.Bound.AIBounds
+        return (b.Stand and b.Stand.Radius) or (b.Move and b.Move.Radius)
+    end)
+    if ok and type(r) == "number" and r > 0 and r < 5 then return r end
+    return 0.5
+end
+
 -- Weapon reach in metres per range keyword (stats WeaponRange is in cm).
 local function weaponRanges(e)
     local r = { MeleeMainWeaponRange = 1.5, MeleeOffHandWeaponRange = 1.5 }
@@ -644,6 +654,7 @@ function S.combat(ctx)
     if not to then return out end
     pcall(function() out.round = to.Round end)
     local hidden = 0
+    local ended_current -- a group whose members all ended (the game is about to move on)
     pcall(function()
         for _, g in ipairs(to.CurrentGroups) do
             for _, m in ipairs(g.Members) do
@@ -662,9 +673,23 @@ function S.combat(ctx)
                         end
                         if tb then
                             pcall(function()
-                                if tb.IsActiveCombatTurn then o.is_current = true; out.current = u end
+                                -- A turn group (party members with equal initiative)
+                                -- is current together; a member that already ended
+                                -- keeps IsActiveCombatTurn with RequestedEndTurn set.
+                                if tb.IsActiveCombatTurn then
+                                    o.is_current = true
+                                    if tb.RequestedEndTurn then
+                                        o.ended = true
+                                        ended_current = ended_current or u
+                                    else
+                                        out.turn_group = out.turn_group or {}
+                                        table.insert(out.turn_group, u)
+                                        out.current = out.current or u
+                                    end
+                                end
                                 if tb.ActedThisRoundInCombat then o.acted = true end
-                                if ctx.is_party[u] and tb.CanActInCombat and not tb.ActedThisRoundInCombat then
+                                if ctx.is_party[u] and tb.CanActInCombat and not tb.ActedThisRoundInCombat
+                                    and not (tb.IsActiveCombatTurn and tb.RequestedEndTurn) then
                                     o.can_act = true
                                     out.party_can_act = out.party_can_act or {}
                                     table.insert(out.party_can_act, u)
@@ -684,6 +709,7 @@ function S.combat(ctx)
     -- How the turn bar renders unseen combatants is unverified; only report
     -- that the order contains combatants we can't see if any exist.
     if hidden > 0 then out.unseen_combatants = true end
+    out.current = out.current or ended_current
     return out
 end
 
@@ -888,6 +914,14 @@ function S.preview(ctx, args)
     local ce = V.entity(char)
     local out = { spell = spell, name = info.name }
     local rnum = tonumber(info.range)
+    local melee = false
+    if not rnum and type(info.range) == "string" and info.range:find("WeaponRange") then
+        -- Live: attacks have TargetRadius "MeleeMainWeaponRange"/"RangedMainWeaponRange" (Range 0).
+        rnum = weaponRanges(ce)[info.range] or (info.range:find("Melee") and 1.5 or nil)
+        melee = info.range:find("Melee") ~= nil
+    elseif rnum and rnum > 0 and rnum <= 3 then
+        melee = true
+    end
     if rnum then info = setmetatable({ range = rnum }, { __index = info }) end
     if type(info.range) == "number" then out.range = info.range elseif info.range then out.range = tostring(info.range) end
     local tpos
@@ -900,7 +934,11 @@ function S.preview(ctx, args)
         if not visible then return { visible = false } end
         out.distance = round(U.dist(V.pos(ce), tpos), 1)
         out.line_of_sight = truthy(osi(Osi.HasLineOfSight, char, target))
-        if type(info.range) == "number" then out.in_range = out.distance <= info.range + 0.5 end
+        if type(info.range) == "number" then
+            -- The guard's rule (G.check_cast): melee is edge to edge (both AIBounds.Stand radii).
+            local slack = melee and (standRadius(ce) + standRadius(te)) or 0.5
+            out.in_range = out.distance <= info.range + slack
+        end
     elseif type(args.pos) == "table" then
         out.distance = round(U.dist(V.pos(ce), args.pos), 1)
         if type(info.range) == "number" then out.in_range = out.distance <= info.range + 0.5 end

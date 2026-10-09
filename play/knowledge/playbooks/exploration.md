@@ -25,7 +25,10 @@ the region done in locations.md.
   - `FAILED — <reason>` / `TIMEOUT`: check `get_nearby` for the obstacle (closed door, gap). Try
     `interact` on the door, `jump_to(x, y, z)`, another point, or another route. One `screenshot` only
     if the text doesn't explain the block.
-  - `still running`: `wait()`.
+  - `started jN` / `still running`: keep going (plan, note, look); `wait_for("jN")` only once you have
+    nothing else to do. Never `wait()`, and never `wait=true` on a walk (see CLAUDE.md, pipelining).
+  - The same `used <item>` event repeating, or a character ignoring orders: a harness loop → the
+    `stuck` playbook, section 0.
 - Long distances: `travel_to(marker="m1" | objective="o1")` chains walks there and returns at once;
   append the arrival steps with `queue_actions` and plan meanwhile (it stops on an interrupt or when
   nothing leads further); `fast_travel(waypoint="<name>")` between unlocked

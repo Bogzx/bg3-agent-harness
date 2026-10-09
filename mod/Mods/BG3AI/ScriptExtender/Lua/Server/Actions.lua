@@ -12,6 +12,14 @@
 -- One action per character: starting a new action on a character supersedes
 -- (interrupts) the previous one and purges its Osiris task queue.
 --
+-- Leftover tasks: Osiris tasks outlive the job that queued them (and are
+-- saved with the game). A ladder Use task never ends on its own: it keeps
+-- re-climbing (live, S001: "used Arterial Mesh" every few seconds, all other
+-- orders queued behind it, still looping after a reload). So a job that
+-- queued tasks purges the character's queue when it ends (see start()), and
+-- the loop watchdog (A.loop_watch) stops a character that keeps using the
+-- same item while a task drives it.
+--
 -- Cast path: guarded Osi.UseSpell / UseSpellAtPosition with full UI-style
 -- pre-validation (G.check_cast) and a post-cast resource audit that makes the
 -- cast pay exactly what a UI cast pays. See research/impl-act.md for why the
@@ -27,7 +35,8 @@ BG3AI.Actions = A
 A.active = {}   -- char guid -> running job
 
 local TICK_MS = 50   -- post-condition polling; cheap queries, keeps chaining fast
-A.MOVE_REACH = 2.5   -- move_to {target}: stop within this of the entity
+A.MOVE_REACH = 2.2   -- move_to {target}: stop within this of the entity (centres; melee reach is
+                     -- weapon 1.5 + both radii, >= 2.2 m even for a tiny target, see G.check_cast)
 A.USE_REACH = 1.8    -- interact/pickup and the click ops: Use/Pickup/click from here
 
 ------------------------------------------------------------------------
@@ -74,7 +83,49 @@ local INTERRUPTS = {
     end,
 }
 
+-- Number of queued Osiris tasks on a character (0 if unknown).
+local function osi_tasks(char)
+    local ok, n = pcall(function() return #Ext.Entity.Get(char).ServerCharacter.OsirisController.Tasks end)
+    return ok and n or 0
+end
+A.osi_tasks = osi_tasks
+
+-- Loop watchdog: the same item used LOOP_USES times, each within LOOP_GAP_MS
+-- of the last, while Osiris tasks still drive the character, is an engine
+-- task looping (a ladder Use re-climbing, or a route through a ladder that
+-- never arrives). It stops the character's job, or purges the orphaned
+-- tasks when no job runs (e.g. tasks restored from a save).
+A.LOOP_USES, A.LOOP_GAP_MS = 3, 20000
+A.use_streak = {}   -- char guid -> {item, n, t}
+
+function A.loop_watch(char, item)
+    char, item = G.guid(char), G.guid(item)
+    if not char or not item or not G.is_party(char) then return end
+    local t = RPC.now_ms()
+    local s = A.use_streak[char]
+    if s and s.item == item and t - s.t <= A.LOOP_GAP_MS then
+        s.n, s.t = s.n + 1, t
+    else
+        s = { item = item, n = 1, t = t }
+        A.use_streak[char] = s
+    end
+    if s.n < A.LOOP_USES or osi_tasks(char) == 0 then return end
+    A.use_streak[char] = nil
+    local job = A.active[char]
+    RPC.push("loop_stopped", { uuid = char, item = item, uses = s.n, job = job and job.id or nil })
+    if job and job.status == "running" then
+        interrupt(job, "stuck: the character kept using the same item (" .. s.n
+            .. " times, e.g. re-climbing a ladder); try another route or a jump")
+    else
+        pcall(G.osi, "PurgeOsirisQueue", char)
+    end
+end
+
 function A.dispatch(event, args)
+    if event == "UseFinished" then
+        local ok, err = pcall(A.loop_watch, args[1], args[2])
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] loop_watch: " .. tostring(err)) end
+    end
     each_running(function(job)
         local rule = INTERRUPTS[event]
         if rule and job.interrupt then rule(job, args) end
@@ -178,6 +229,20 @@ local function start(kind, char, spec)
     spec.on_finish = function(job)
         if char and A.active[char] == job then A.active[char] = nil end
         if user_finish then pcall(user_finish, job) end
+        -- Leftover tasks this job queued (a timed-out walk, a ladder Use that
+        -- keeps climbing after its UseFinished): purge them, or they run on,
+        -- block every later order and are saved with the game. A finished
+        -- cast is left alone (its spell task may still be resolving).
+        if char and job.osi_task and not job.stopping and A.active[char] == nil
+            and (job.status ~= "done" or job.osi_task ~= "spell") then
+            local n = osi_tasks(char)
+            if n > 0 then
+                job.stopping = true
+                pcall(G.osi, "PurgeOsirisQueue", char)
+                if type(job.result) ~= "table" then job.result = {} end
+                job.result.purged_tasks = n
+            end
+        end
         if char then
             if type(job.result) ~= "table" then job.result = {} end
             local ok, sum = pcall(A.summary, char)
@@ -274,6 +339,7 @@ local function begin_walk(job, opts)
         local ok, pts = pcall(N.route, job.char, p)
         if ok and type(pts) == "table" then job.walk.route = pts end
     end
+    job.osi_task = job.osi_task or true
     G.osi("CharacterMoveToPosition", job.char, p[1], p[2], p[3], opts.speed, job.walk.ev, job.walk.move_id)
 end
 
@@ -480,6 +546,17 @@ local function walk_to_plan(job)
                 j.phase = "act"
                 return ap.ready(j)
             end
+            -- An item that did not move, reached at the verified point: its
+            -- position can sit far from where it is used (a ladder's is at its
+            -- foot: 3.2 m from the top landing, live S001), and re-planning
+            -- gives the same point. Use/Pickup walk the last bit themselves,
+            -- under the teleport check.
+            local here, t = G.pos(j.char), G.pos(ap.target)
+            if here and t and ap.plan.tpos and U.dist(here, ap.plan.pos) <= 1.0
+                and U.dist(t, ap.plan.tpos) <= 0.5 and G.b(G.q("IsItem", ap.target)) then
+                j.phase = "act"
+                return ap.ready(j)
+            end
             local ok, why = ap.replan(j)
             if not ok then
                 RPC.finish_job(j, "failed", { dist = U.round(left, 1) }, why or "could not get close enough")
@@ -587,6 +664,28 @@ reg("move_to", function(args)
     })
 end)
 
+------------------------------------------------------------------------
+-- act.stop {char}: stop what the character is doing, like a player's new
+-- order: the running action is interrupted and queued Osiris tasks (ours,
+-- or left over from a save) are purged. Never moves the character.
+------------------------------------------------------------------------
+
+reg("stop", function(args)
+    local char = G.actor(args.char)
+    local job = A.active[char]
+    local stopped = job and job.status == "running" and job.id or nil
+    local n = osi_tasks(char)
+    if stopped then interrupt(job, "stopped") end -- purges too
+    if osi_tasks(char) > 0 then pcall(G.osi, "PurgeOsirisQueue", char) end
+    A.use_streak[char] = nil
+    return start("stop", char, {
+        timeout_ms = 1000,
+        start = function(j)
+            RPC.finish_job(j, "done", { stopped_job = stopped, purged_tasks = n, left = osi_tasks(char) })
+        end,
+    })
+end)
+
 -- Top-level character holding an item (walks up bags), or nil.
 local function holder(item)
     local cur = item
@@ -672,6 +771,7 @@ reg("interact", function(args)
             begin_approach(job, target, plan, A.USE_REACH, function(j)
                 j.use_ev = ev_name(j, "use")
                 j.use_track = {}
+                j.osi_task = true
                 G.osi("Use", char, target, j.use_ev)
             end)
         end,
@@ -740,6 +840,7 @@ reg("pickup", function(args)
             begin_approach(job, item, plan, A.USE_REACH, function(j)
                 j.use_track = {}
                 -- ForcePickUpOnFailure = 0: never teleport the item into the bag.
+                j.osi_task = true
                 G.osi("Pickup", char, item, ev_name(j, "pick"), 0)
             end)
         end,
@@ -851,9 +952,13 @@ reg("cast", function(args)
     if #targets > 2 then G.refuse("more than two targets is not supported yet") end
     for _, t in ipairs(targets) do if not t then G.refuse("bad target") end end
     local pos = args.pos
+    if not Ext.Stats.Get(base) then
+        -- e.g. Shout_Dodge: BG3 has no Dodge action (live: no such stats entry).
+        G.refuse("unknown action " .. base .. " (not an ability id; get_actions lists them)")
+    end
     if #targets == 0 and not pos then
         local st = Ext.Stats.Get(base)
-        if not (st and tostring(st.SpellType) == "Shout") then G.refuse("this action needs a target") end
+        if tostring(st.SpellType) ~= "Shout" then G.refuse("this action needs a target") end
         targets[1] = char -- self-centred actions (Dash, Hide, Disengage...)
     end
 
@@ -963,6 +1068,7 @@ reg("cast", function(args)
         end,
         start = function(job)
             job.hits, job.statuses = {}, {}
+            job.osi_task = "spell"
             if pos then
                 -- Engine form has 6 inputs (6th = WithoutMove), verified live
                 -- on bg3le; the 5-input form is kept as a fallback for builds
@@ -992,23 +1098,49 @@ reg("cast", function(args)
 end)
 
 ------------------------------------------------------------------------
--- act.end_turn {char}   (untested live)
+-- act.end_turn {char}
+-- Done when the character's turn is over: its TurnBased.IsActiveCombatTurn
+-- drops, Osiris TurnEnded fires, or (a shared party turn group, the usual
+-- case for party members with equal initiative) RequestedEndTurn is set while
+-- the group stays active until the other members end too. TurnEnded only
+-- fires for the whole group (live: one end_turn per member, then both
+-- turn_ended events at once). result.still_to_act lists those members.
 ------------------------------------------------------------------------
+
+local function group_waiting(char)
+    local out = {}
+    for _, m in ipairs(G.party()) do
+        if not G.same(m, char) and G.is_my_turn(m) then out[#out + 1] = m end
+    end
+    return out
+end
 
 reg("end_turn", function(args)
     local char = G.actor(args.char)
     if not G.in_combat(char) then G.refuse("not in combat") end
+    if G.turn_requested_end(char) then
+        G.refuse("this character already ended its turn (the rest of its turn group is still acting)")
+    end
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
+    local function finish(job)
+        local res = { ended = true }
+        local w = group_waiting(char)
+        if #w > 0 then res.still_to_act = w end
+        RPC.finish_job(job, "done", res)
+    end
     return start("end_turn", char, {
         timeout_ms = 10000,
         osi = {
             TurnEnded = function(job, a)
-                if G.same(a[1], char) then RPC.finish_job(job, "done", { ended = true }) end
+                if G.same(a[1], char) then finish(job) end
             end,
         },
         start = function() G.osi("EndTurn", char) end,
         on_tick = function(job)
-            if not G.is_my_turn(char) then RPC.finish_job(job, "done", { ended = true }) end
+            if not G.is_my_turn(char) then finish(job) end
+        end,
+        on_timeout = function(job)
+            job.partial = { requested_end = G.turn_requested_end(char), still_to_act = group_waiting(char) }
         end,
     })
 end)
@@ -1198,7 +1330,7 @@ reg("sneak", function(args)
     local check = G.check_cast(char, "Shout_Hide", char, nil, nil)
     return start("sneak", char, {
         timeout_ms = 8000,
-        start = function() G.osi("UseSpell", char, "Shout_Hide", char, NULL_GUID, 1) end,
+        start = function(job) job.osi_task = "spell"; G.osi("UseSpell", char, "Shout_Hide", char, NULL_GUID, 1) end,
         on_tick = function(job)
             if G.b(G.q("HasActiveStatus", char, "SNEAKING")) then
                 RPC.finish_job(job, "done", { sneaking = true })

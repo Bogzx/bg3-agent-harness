@@ -5,6 +5,32 @@
 Loops are the biggest time sink for game-playing agents. The fix is a **different approach**, not
 more tries of the same one.
 
+**Stuck never ends the session.** Being stuck is not a reason to wrap up, write HANDOFF.md or stop.
+The session runs until the `⏱` line says WRAP UP NOW (the Stop hook refuses an earlier stop, even with
+HANDOFF.md written). Whatever happens below, the last step is always: **keep playing**.
+
+## 0. Harness stuck: the 5-minute ladder
+Use this first when the *tools or the game* misbehave rather than the puzzle being hard: an action
+repeats on its own (the same `used <item>` event over and over), a character ignores orders, a job
+times out and keeps running, the same tool fails the same way three times, a menu or screen won't
+close. Spend ~1–2 minutes per rung, log each one as `- HH:MM [stuck] harness: <rung>: <result>`, and
+stop at the first rung that frees you:
+1. **Cancel and retry differently:** `cancel_queue(who=…)`, then `wait_for("idle", timeout_s=5)`; retry
+   once with *different* arguments (another target, a point next to it, `move_to` instead of
+   `interact`, `jump_to` a spot past it). Not a third identical try.
+2. **Reload the last good save:** `list_saves()`, then `load_game(save="<folder name>")` with an explicit
+   folder (not `"latest"`), then `look(full=true)`. Check the result really says the game loaded
+   (mode `exploring`, not `screen=save_load`); if a load screen stays open, `ui_dump` → `ui_action`
+   for the save's Load button. A reload for a bugged action is allowed: log it as `[reload]` with the
+   reason.
+3. **Another party member:** if one character is stuck (bugged, out of reach), lead with another one:
+   `who="<name>"` on `travel_to`/`interact`/`jump_to`, or `set_party(action="select", who="<name>")`; `set_party(action="unchain", who=<stuck one>)` so the rest can leave. Progress with the rest of
+   the party counts; the stuck one often catches up on its own or after a reload/regroup.
+4. **Another objective:** park this one (objectives.md **Blocked**, what you tried, `place_marker`
+   there) and go do something else from objectives.md, `get_frontier` or `get_journal`.
+Then add one line to strategy.md "Harness and tool quirks" (`<tool> <symptom> → <what worked>`) and a
+`[note] harness: …` line in the session log for the operator, and continue playing.
+
 ## 1. Stop and describe (write it in the session log)
 `- HH:MM [stuck] trying <X>; tried <A>, <B>, <C>; symptom <what happens>`
 
@@ -49,10 +75,11 @@ Categories to draw from:
   `[note] harness: <tool> <symptom>` line, and add it to strategy.md "Harness and tool quirks".
 
 ## 5. Time-box and park
-- Give the new approach ~10 minutes. If it fails, try the next one.
+- Give the new approach ~10 minutes (a harness rung: ~2 minutes). If it fails, try the next one.
 - After three failed approaches: move the objective to objectives.md **Blocked** with what you tried,
   and switch to another objective. Coming back later with more levels, items or knowledge often works.
 - Before parking: `place_marker` at the obstacle with a short label.
+- Parking is not stopping: pick the next objective and play on until WRAP UP NOW.
 
 ## 6. Learn
 Once unstuck, write a one-line lesson in strategy.md (what finally worked, and the general rule

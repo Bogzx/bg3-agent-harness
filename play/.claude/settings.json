@@ -76,6 +76,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "^mcp__bg3__(move_to|walk_toward|travel_to)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/pace_guard.py\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [

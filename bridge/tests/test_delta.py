@@ -82,7 +82,7 @@ class FakeGame:
         w = self.w
         table = {"state.status": w["status"], "state.nearby": w["nearby"], "state.inventory": w["inventory"],
                  "state.journal": w["journal"], "nav.markers": {"markers": w["markers"]}, "state.map": w["map"],
-                 "ui.state": w["ui"], "nav.set_subregion": {}}
+                 "ui.state": w["ui"], "nav.set_subregion": {}, "nav.hazards": {"hazards": w.get("hazards", [])}}
         if op not in table:
             raise AssertionError(f"unexpected op {op}")
         return copy.deepcopy(table[op])

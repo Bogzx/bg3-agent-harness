@@ -62,6 +62,7 @@ class FakeGame:
         self.reach: Any = None  # nav.reach_toward reply (or callable(args))
         self.path: dict = {"reachable": True, "movement_left": 0}
         self.safe: dict = {"safe": True}  # nav.safe_spot reply
+        self.landing: dict | None = None  # nav.landing reply (None: op unknown, like a mod not reloaded yet)
         self.nearby: dict = {"characters": [], "items": []}
         self.inv: dict = {"items": []}
         self.on_start = None  # hook(op, args)
@@ -137,6 +138,8 @@ class FakeGame:
                 return dict(self.path)
             if op == "nav.safe_spot":
                 return dict(self.safe)
+            if op == "nav.landing" and self.landing is not None:
+                return json.loads(json.dumps(self.landing))
             if op == "nav.markers":
                 return {"markers": []}
             if op == "state.nearby":
@@ -558,6 +561,20 @@ class TravelTo(Base):
         self.g.safe = {"safe": False, "standing_in": "Fire", "found": True, "pos": [-2.0, 0.0, 0.0],
                        "path_m": 2.0, "dir": "W"}
         out = server.travel_to(marker="m1", wait=True)
+        # it steps out (toward the destination), then goes on
+        self.assertIn("left Fire W 2m", out)
+        self.assertEqual(self.g.ops("nav.safe_spot")[-1][1]["pos"], [50, 0, 0])
+        self.assertIn("arrived", out)
+
+    def test_stepping_into_fire_strict_steps_out_and_stops(self):
+        def burn(op, a):
+            if op == "act.move_to" and len(self.g.ops("act.move_to")) == 1:
+                self.g.watch["party"][0]["surface"] = "Fire"
+        self.g.on_start = burn
+        self.g.dur["act.move_to"] = 0.2
+        self.g.safe = {"safe": False, "standing_in": "Fire", "found": True, "pos": [-2.0, 0.0, 0.0],
+                       "path_m": 2.0, "dir": "W"}
+        out = server.travel_to(marker="m1", wait=True, avoid_hazards="strict")
         self.assertIn("standing in Fire", out)
         self.assertIn("left Fire W 2m", out)
         self.assertEqual(self.g.ops("act.move_to")[-1][1]["pos"], [-2.0, 0.0, 0.0])
