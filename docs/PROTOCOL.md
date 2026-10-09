@@ -166,6 +166,18 @@ target moves more than 2 m or is out of reach on arrival, up to 4 times. Jump di
   left, last}` or `queue_done {who, done, skipped?}`.
 - **Connection.** Interrupt checks use their own LuaDebug connection: `act.watch` + `events.since` every
   0.3 s, and `ui.state` every 1 s.
+- **`combat_turn`** (`bridge/src/bg3ai/turn.py`). One call per combat turn: slots move/action/bonus/extra, each
+  a list of alternatives (any batchable tool) tried in order. Before each step the bridge re-reads
+  `state.combat` (still our turn?) and `act.target_state` (target visible, not dead). A move that exceeds the
+  movement left becomes a partial walk via `nav.reach_toward`; `within` stops at a range. Reaction prompts
+  stop the turn unless the plan's `on_reaction` answers them (`ui.react`). `end_turn` runs without waiting;
+  the result names the next combatants from the visible turn order.
+- **Macros** (`bridge/src/bg3ai/macros.py`): `loot_area` (`state.nearby` corpses + unlocked, unowned,
+  untrapped containers), `dialogue_advance` (`ui.dialogue_choose` only for a continue prompt or one
+  untagged, non-committing option), `travel_to` (chained `nav.reach_toward` legs ≤30 m), `regroup`
+  (parallel per-character queues), `read_all` (carried books by name, text from the `book` screen), and
+  `rest_if_needed`. All are bridge-side, use only player-visible ops, and run their steps through the
+  guarded tools with the default interrupts.
 
 ### UI (`Client/UI.lua`, `Client/UIState.lua`, `Client/UIActions.lua`; owner: worker **io**)
 Details and live-test status are in `research/impl-io.md`. The helper API for other client modules is documented at the top of `Client/UI.lua`.

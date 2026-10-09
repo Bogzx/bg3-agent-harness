@@ -6,6 +6,8 @@ Run against a loaded game (the AI's own save, never the user's), after a hot rel
     uv run --project bridge python tools/dev/check_act.py move queue      # named checks (these act!)
     uv run --project bridge python tools/dev/check_act.py combat          # on the active character's turn
     uv run --project bridge python tools/dev/check_act.py use --item e12  # drinks/uses that item
+    uv run --project bridge python tools/dev/check_act.py turn            # combat_turn, on our turn
+    uv run --project bridge python tools/dev/check_act.py macros          # out of combat
 
 Read-only (default): latency, approach, forms.
 Acting:
@@ -17,6 +19,11 @@ Acting:
   use      manage_inventory use on --item (Osi.Use on a carried potion).
   queue    queue two short walks (queue_done), then a long walk + a synthetic teleport_blocked event
            (queue_interrupted with why/left, job cancelled), cancel_queue, and the step-to-step gap.
+  turn     combat_turn on the active character's turn: walk to the nearest hostile, melee attack with
+           a ranged then Dodge fallback, end the turn; checks the NEXT/NOW line and the wall time.
+  macros   dialogue_advance (no dialogue: stops at once), rest_if_needed threshold 0 (no rest),
+           regroup, loot_area within 8 m, read_all (reads new books), then travel_to a point 10 m
+           away via chained walks and back. Out of combat; loot_area/read_all really act.
 Each check prints PASS / FAIL / INFO lines; the exit code is the number of FAILs.
 """
 
@@ -223,8 +230,61 @@ def check_queue() -> None:
     S.move_to(x=p[0], y=p[1], z=p[2], wait=True)  # back to the start
 
 
+def check_turn() -> None:
+    import json
+    me = active()
+    cs = G.rpc("state.combat")
+    if not cs.get("active") or cs.get("current") != me:
+        say("INFO", "turn: not the active character's turn; skipped")
+        return
+    foes = sorted((c for c in nearby() if c.get("relation") == "hostile" and not c.get("dead")),
+                  key=lambda c: c.get("dist") or 99)
+    if not foes:
+        say("INFO", "turn: no visible hostile")
+        return
+    fh = S.H.get(foes[0]["uuid"], foes[0].get("name"))
+    plan = {"move": fh, "action": [{"ability": "Target_MainHandAttack", "target": fh},
+                                   {"ability": "Projectile_ThrowWeapon", "target": fh}, "Shout_Dodge"]}
+    t0 = time.monotonic()
+    out = S.combat_turn(json.dumps(plan))
+    dt = time.monotonic() - t0
+    print(out)
+    ok = out.startswith("TURN") and ("end_turn: done" in out or "turn NOT ended" in out)
+    say("PASS" if ok else "FAIL", f"combat_turn ran ({dt:.1f} s)")
+    say("PASS" if ("NEXT " in out or "NOW " in out or "combat is over" in out) else "FAIL",
+        "combat_turn says who acts next")
+    say("INFO", "check the move/action lines against the game (hit? movement spent? fallback taken?)")
+
+
+def check_macros() -> None:
+    if G.rpc("act.watch").get("combat"):
+        say("INFO", "macros: in combat; skipped")
+        return
+    out = S.dialogue_advance()
+    say("PASS" if "STOPPED: conversation ended" in out else "FAIL", f"dialogue_advance idle: {out.splitlines()[-1]}")
+    out = S.rest_if_needed(threshold=0)
+    say("PASS" if "no rest needed" in out else "FAIL", f"rest_if_needed(0): {out.splitlines()[0]}")
+    for name, fn in (("regroup", lambda: S.regroup()), ("loot_area", lambda: S.loot_area(radius=8)),
+                     ("read_all", lambda: S.read_all())):
+        t0 = time.monotonic()
+        out = fn()
+        say("FAIL" if out.startswith("FAILED") else "PASS", f"{name} ({time.monotonic() - t0:.1f} s): "
+            + " | ".join(out.splitlines()[:4]))
+    st = status()
+    p = next(c for c in st["party"] if c["uuid"] == st["active"]).get("pos")
+    r = G.rpc("nav.reach_toward", {"char": st["active"], "dir": "N", "max_m": 10})
+    if not (r.get("reachable") and r.get("pos")):
+        say("INFO", "travel_to: no walkable ground 10 m north; skipped")
+        return
+    out = S.travel_to(x=r["pos"][0], y=r["pos"][1], z=r["pos"][2])
+    say("PASS" if "arrived" in out else "FAIL", "travel_to there: " + " | ".join(out.splitlines()))
+    out = S.travel_to(x=p[0], y=p[1], z=p[2])
+    say("PASS" if "arrived" in out else "FAIL", "travel_to back: " + " | ".join(out.splitlines()))
+
+
 CHECKS = {"latency": check_latency, "approach": check_approach, "forms": check_forms, "move": check_move,
-          "combat": check_combat, "jump": check_jump, "queue": check_queue}
+          "combat": check_combat, "jump": check_jump, "queue": check_queue,
+          "turn": check_turn, "macros": check_macros}
 
 
 def main() -> int:

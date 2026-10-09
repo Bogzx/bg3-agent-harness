@@ -42,11 +42,13 @@ ACTION_TOOLS = {
     "move_to", "walk_toward", "interact", "pick_up", "loot", "loot_corpse", "talk_to", "jump_to", "use_ability",
     "end_turn", "choose_dialogue", "roll_check", "react", "lockpick", "disarm", "pickpocket", "click_on",
     "fast_travel", "camp", "short_rest", "long_rest", "trade", "level_up", "set_party", "click", "press_key",
-    "manage_inventory", "wait",
+    "manage_inventory", "wait", "dialogue_advance",
 }
 NOT_APM = {"wait"}  # counted as an action for gaps (it waits on the game), not as an action per minute
-DIALOGUE_TOOLS = {"choose_dialogue", "roll_check"}
+DIALOGUE_TOOLS = {"choose_dialogue", "roll_check", "dialogue_advance"}
 BATCH_TOOL = "do_actions"
+# Wrappers whose steps run as nested tool records (like do_actions): combat_turn and the macros.
+BATCH_TOOLS = {BATCH_TOOL, "combat_turn", "loot_area", "travel_to", "regroup", "read_all", "rest_if_needed"}
 LONG_GAP_S = 10.0
 MOVE_EPS_M = 0.25  # a party member moved at least this far since the previous sample → moving
 
@@ -262,7 +264,7 @@ def stream_actions(turns: list[dict]) -> list[dict]:
     for r in turns:
         if r.get("type") == "result" and r.get("id") in uses:
             u = uses[r["id"]]
-            if u["name"] in ACTION_TOOLS or u["name"] == BATCH_TOOL:
+            if u["name"] in ACTION_TOOLS or u["name"] in BATCH_TOOLS:
                 out.append({"tool": u["name"], "t0": u["t"], "t1": r["t"],
                             "steps": u.get("steps", 1) if u["name"] == BATCH_TOOL else 1})
     return sorted(out, key=lambda a: a["t0"])
@@ -299,7 +301,7 @@ def action_intervals(tools: list[dict]) -> list[dict]:
             out.append({"tool": name, "t0": r["t0"], "t1": r["t1"], "steps": 1, "nested": r.get("nested", False)})
     if not out:  # no nested step records (old bridge?): fall back to the wrappers
         out = [{"tool": r["tool"], "t0": r["t0"], "t1": r["t1"], "steps": 1}
-               for r in tools if r.get("tool") == BATCH_TOOL]
+               for r in tools if r.get("tool") in BATCH_TOOLS]
     return sorted(out, key=lambda a: a["t0"])
 
 
@@ -350,7 +352,7 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
     long_kind = {k: sum(1 for g in long_ if g["kind"] == k) for k in ("explore", "combat", "dialogue")}
 
     top = [r for r in tool_recs if not r.get("nested")]
-    reads = [r for r in top if r["tool"] not in ACTION_TOOLS and r["tool"] != BATCH_TOOL]
+    reads = [r for r in top if r["tool"] not in ACTION_TOOLS and r["tool"] not in BATCH_TOOLS]
     rt = [r["ms"] - r.get("job_ms", 0) for r in top]
     n_actions = sum(a.get("steps", 1) for a in acts if a["tool"] not in NOT_APM)
 

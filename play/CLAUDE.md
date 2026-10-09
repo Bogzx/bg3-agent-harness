@@ -50,10 +50,18 @@ bare name.
     low HP, or a failed step. The `queue_interrupted` event says why and what was left; handle that
     first. `cancel_queue` stops it. Any direct action for the same character replaces the queue's
     current step.
-  - **`do_actions`** is the blocking form: a whole combat turn (move → attack → bonus action →
-    `end_turn`) or a dialogue chain in one call. Steps can carry `"if"`/`"unless"` conditions
-    (`in_combat`, `hp_below:50`, `item_present:e12`, `target_visible:e7`, `my_turn`, `in_dialogue`). The
-    result ends with `CHANGES` (what moved, HP, items, who appeared), so you rarely need a fresh `look`.
+  - **`do_actions`** is the blocking form: any short chain of steps in one call. Steps can carry
+    `"if"`/`"unless"` conditions (`in_combat`, `hp_below:50`, `item_present:e12`, `target_visible:e7`,
+    `my_turn`, `in_dialogue`). The result ends with `CHANGES` (what moved, HP, items, who appeared), so you
+    rarely need a fresh `look`.
+  - **`combat_turn`** plays a whole combat turn in one call: move, action, bonus action, extra attacks,
+    `end_turn`. Each slot lists fallbacks (melee → ranged → Dash → Dodge), and every step is re-checked
+    (still your turn, target still visible and alive). It returns right after ending the turn with who
+    acts next, so plan the next turn while the enemies act.
+  - **Macros** do the chores in one call and stop at the first interrupt: `loot_area` (visible bodies
+    and unlocked containers nearby), `dialogue_advance` (filler lines only; it stops at every real
+    choice), `travel_to` (a marker, objective or waypoint, as chained walks), `regroup`, `read_all`
+    (new books and notes in your bags, with their text), and `rest_if_needed`.
   - **Targets:** outside combat, at most ~2 s between your actions; never more than 10 s, except for a
     real dialogue decision. Play at the pace of a skilled human, or faster.
 - Don't call `get_status` between every action; the deltas already tell you what changed.
@@ -66,7 +74,7 @@ A human player doesn't deliberate over opening a door. Most turns are routine: s
 on them and act at once. Save deep thinking for real decisions.
 - **Routine (act immediately, one short sentence of reasoning at most):**
   - walking to a known target, looting, opening doors and containers, picking up items
-  - dialogue filler (the only option, "Continue", obvious greetings)
+  - dialogue filler (the only option, "Continue", obvious greetings): `dialogue_advance`
   - following the journal to the next marker
   - re-running an action that was interrupted
   - the mechanical part of a combat turn whose plan is already clear
@@ -83,8 +91,9 @@ on them and act at once. Save deep thinking for real decisions.
 ## Core loop
 1. **Observe** once: `look` (a delta), plus the one mode-specific tool you need.
 2. **Decide:** a short plan tied to an objective in `memory/objectives.md`.
-3. **Act** with the highest-level tool that fits: `queue_actions` for routine multi-step plans (then go
-   straight back to step 1 while they run), `do_actions` for a combat turn or a dialogue chain.
+3. **Act** with the highest-level tool that fits: a macro for a chore (`loot_area`, `travel_to`,
+   `dialogue_advance`, …), `combat_turn` for a combat turn, `queue_actions` for other routine multi-step
+   plans (then go straight back to step 1 while they run), `do_actions` for a short blocking chain.
 4. **Read the delta.** Each action reports `done`, `FAILED — <reason>`, `INTERRUPTED — <what happened>`,
    `TIMEOUT`, or `started jN` (async: watch for `job_finished`, or `wait_for`), followed by EVENTS.
    Handle interrupts (`queue_interrupted`, combat, dialogue) first.
@@ -94,7 +103,9 @@ on them and act at once. Save deep thinking for real decisions.
 as a `dialogue_line` event (speaker: text). Never wait for, watch or screenshot a cutscene: read the
 events, then `get_dialogue` for the options. Answers are never picked for you.
 
-`session_clock` gives the time left. Results end with a `⏱` clock line in runner sessions.
+`session_clock` gives the time left. Results end with a `⏱` clock line in runner sessions. When the line
+says **"no story progress for N min: change approach"**, the runner has measured no new journal,
+area, waypoint or level for that long while you were busy: run the `stuck` playbook now.
 
 ## Playbooks (read on demand)
 Procedures live in `knowledge/playbooks/<name>.md`. They are read-only, and you have no skills or slash commands.
@@ -112,6 +123,7 @@ read them all up front.
 | a level up, companion choice, spell preparation, a build revision | `party-and-leveling` |
 | the stuck criteria below | `stuck` |
 | the `⏱` line says WRAP UP, or a SESSION CLOCK reminder | `session-wrapup` |
+| the `⏱` line says "no story progress for N min" | `stuck` |
 
 ## Memory protocol
 `memory/` is a git repo. Hooks commit it once per session. Files and their jobs:
@@ -178,7 +190,8 @@ Never reload to reroll a failed dialogue check. Log every reload with its reason
 
 ## Stuck procedure
 You are stuck if: three attempts at the same thing have failed, ~15 minutes have passed without
-objective progress, or the same places or conversation keep repeating. Then **stop repeating**:
+objective progress (the `⏱` line says "no story progress for N min"), or the same places or
+conversation keep repeating. Then **stop repeating**:
 1. Run the `stuck` playbook.
 2. List three *different* approaches.
 3. Pick an untried one.

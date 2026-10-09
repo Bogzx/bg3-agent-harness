@@ -48,7 +48,31 @@ j12, ETA 3s` (async: a `job_finished` event follows; `wait_for("j12")` to block)
 - `ability_preview(ability, target, who)` → hit chance or save DC, damage, range, line of sight.
 - `react(use, which="")` → answer a reaction prompt (Shield, Counterspell, opportunity attack).
 - `end_turn(who, wait=true)` → end the turn; blocks through enemy turns until a party member can act, combat ends, or a reaction/roll prompt needs you (`wait=false` + `wait_for("my_turn")` to plan meanwhile).
+- `combat_turn(plan, who, end=true, wait_next=false, ignore="hostile")` → **a whole turn in one call** (see below). Returns at once after ending the turn with `NEXT …, then <ally> (yours)`, or `NOW <ally>'s turn` plus their actions: plan that turn while the enemies act, then `wait_for("my_turn")`.
 - `end_combat_report(what_worked, what_to_change, next_goal)` → required after every fight; goes to your session log.
+
+### `combat_turn` plans
+JSON with slots run in `order` (default `move,action,bonus,extra`); each slot is a list of alternatives
+tried in order until one works:
+- `move`: `"e12"` (walk next to it), `{"target":"e12","within":18}` (stop once within 18 m: ranged/spell
+  range; no walk if already there), or `[x,y,z]`. If the walk doesn't fit the movement left, it walks as far
+  as it does (`"partial":false` turns that off). A failed move doesn't end the turn: the fallbacks decide.
+- `action`, `bonus`: an ability id (`"Shout_Dodge"`), or `{"ability","target" | "x","y","z","upcast","targets","if","unless","then_move"}`,
+  or `{"tool":<any do_actions tool>,...}`. `"then_move":true` (Dash) walks the move again after it.
+- `extra`: a list of more slots, e.g. the Extra Attack: `[[{"ability":"Target_MainHandAttack","target":"e12"}]]`.
+- `reactions`: `{"Divine Smite":"always"}` sets reaction prompts before the turn. `on_reaction`: `"use"` or
+  `"skip"` answers reaction prompts that pop up mid-turn (default: stop and let you answer).
+- Before every step: still your turn? target still visible and alive? (if not: the next alternative). It stops,
+  without ending the turn, on HP below 35%, a prompt, a blocked teleport, or the turn being taken away.
+```json
+{"move":{"target":"e12","within":1.5},
+ "action":[{"ability":"Target_MainHandAttack","target":"e12"},
+           {"ability":"Projectile_ThrowWeapon","target":"e12"},
+           {"ability":"Shout_Dash","then_move":true},
+           "Shout_Dodge"],
+ "bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"}}
+```
+Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target is out of range … → Projectile_ThrowWeapon e12: done`), `end_turn: done`, `NOW` (HP, action, bonus, movement), `CHANGES`, `NEXT`.
 
 ## Dialogue
 - `talk_to(npc, who)` → walk up (following them if they move) and start a conversation (`who` = the speaker).
@@ -78,6 +102,14 @@ j12, ETA 3s` (async: a `job_finished` event follows; `wait_for("j12")` to block)
   - Stops (drops the rest, says why and what was left) on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP below 35%, a blocked teleport, a failed step. `ignore="hostile,hp"` turns some off (combat, dialogue, prompt, hostile, hp, teleport).
   - Returns each step's outcome, `NOW` (HP, action, bonus, movement) and `CHANGES` (moves, HP, items, who appeared, mode). `wait=false` queues instead.
 
+## Macros (one call each; they stop at the first interrupt and say what was left)
+- `loot_area(radius=12, who, corpses=true, containers=true, opened=false)` → walk to every VISIBLE corpse and unlocked container in range (nearest-first route), open it and take all. Skips locked, owned (stealing), trapped and already-opened ones (`opened=true` includes those) and what it already looted this session. Out of combat.
+- `dialogue_advance(max_lines=12)` → click through filler only: a Continue prompt, or one untagged option that commits to nothing. Stops and shows the dialogue at a real choice (2+ options, a [SKILL]/class tag, "attack/give/pay/leave…"), a roll, or the end. Never picks an answer.
+- `travel_to(marker | objective | waypoint | target | x,y,z, who)` → your marker (`m1` or label words), an objective here (`o1`), a visible id, a point, or a waypoint (= `fast_travel`). Chains walks of ≤30 m along walkable ground; stops on arrival (≤3 m), when nothing leads further (then `get_frontier`, a door, a jump), or an interrupt. Out of combat.
+- `regroup(leader, near_m=6, chain=false)` → members farther than `near_m` from the leader walk back, all at once; `chain=true` re-links them. Downed members are listed, not moved.
+- `read_all(who, max_items=6)` → read every book, note and letter in the bags not read yet (remembered across sessions) and return their text. Out of combat.
+- `rest_if_needed(threshold=50, allow_long=false)` → short rest if anyone is downed or ≤ threshold % HP; with `allow_long=true`, camp + long rest when no short rest is left. HP only: judge spell slots yourself.
+
 ## Meta
 - `save_game(label="")` → named save (`Sxxx-<slug>`); empty = quicksave. `list_saves(limit=10)`. `load_game(save="latest")` → folder name from `list_saves`.
 - `ui_action(command, widget="", param="")` → run a UI command that `ui_dump` lists (screens with no dedicated tool).
@@ -96,7 +128,9 @@ move with `path_preview` first if it's tight):
 If a reaction prompt or a downed target stops it, read the result, then re-plan only what's left.
 Conditional variant: `{"tool":"use_ability","ability":"Shout_SecondWind","if":"hp_below:50"}` heals only when hurt.
 
-**A looting sweep, queued** (after a fight; corpse and chest ids from `get_nearby`). Send it with
+**A combat turn** is better done with `combat_turn` (fallbacks, re-checks, returns at once with who's next).
+
+**A looting sweep**: `loot_area()` does it in one call. For a hand-picked set, queue it (ids from `get_nearby`); send it with
 `queue_actions`, then plan the next leg while it runs; `queue_done` tells you it finished:
 ```json
 [{"tool":"interact","target":"e21"},{"tool":"loot","take":"all"},
@@ -106,7 +140,7 @@ Conditional variant: `{"tool":"use_ability","ability":"Shout_SecondWind","if":"h
 ```
 For picky looting, `interact` alone, then `get_inventory()` to see the container, then `loot(take="<ids>")`.
 
-**A dialogue chain** (only the obvious picks; it stops at a roll or a new choice set):
+**A dialogue chain**: `dialogue_advance()` clicks the filler for you. To chain your own picks (only the obvious ones; it stops at a roll or a new choice set):
 ```json
 [{"tool":"choose_dialogue","option":1},
  {"tool":"choose_dialogue","option":1},

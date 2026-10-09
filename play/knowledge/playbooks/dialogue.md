@@ -13,8 +13,10 @@
 - `look_at(target)` first if you need to know who someone is (the Examine panel, nothing hidden).
 
 ## In the conversation
-When the next few answers are obvious (greetings, "continue", known safe choices), chain them in one
-`do_actions` call (`choose_dialogue` steps). It stops at any roll, new choice set or the end of the
+Filler (a Continue prompt, a single plain answer): `dialogue_advance()` clicks through it and stops,
+showing the dialogue, at the first real choice, tag, roll or the end. When the next few answers are
+obvious but are real options (greetings, known safe choices), chain them in one `do_actions` call
+(`choose_dialogue` steps). It stops at any roll, new choice set or the end of the
 conversation, so you never pick blind. Read the result and decide the next real choice.
 
 ```

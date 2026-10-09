@@ -26,7 +26,9 @@ the region done in locations.md.
     `interact` on the door, `jump_to(x, y, z)`, another point, or another route. One `screenshot` only
     if the text doesn't explain the block.
   - `still running`: `wait()`.
-- Long distances: `fast_travel(waypoint="<name>")` between unlocked waypoints (never in combat).
+- Long distances: `travel_to(marker="m1" | objective="o1")` chains walks there in one call (it stops on
+  an interrupt or when nothing leads further); `fast_travel(waypoint="<name>")` between unlocked
+  waypoints (never in combat). `regroup()` brings stragglers back.
 - Sneaking: `set_party(action="sneak_on")` near enemies you want to avoid or ambush, `sneak_off` after.
 - Keep the party chained (`set_party(action="chain", who=…, leader=…)`) except when positioning on
   purpose.
@@ -39,8 +41,11 @@ the region done in locations.md.
 - After `interact` opens a container: `get_inventory()` lists its contents. Then `loot(take="all")`, or
   `loot(take="<id>,<id>")` for picks. Take gold, potions, scrolls, arrows, throwables, camp supplies,
   keys, books and letters, and gear better than what's equipped. Skip junk in a hurry.
-- **Batch a looting sweep** in one `do_actions` call (see knowledge/tools.md):
+- **Loot a whole area** with `loot_area()` (visible bodies and unlocked, unowned containers nearby,
+  nearest-first, take all). For a hand-picked sweep, one `queue_actions`/`do_actions` call:
   interact corpse 1 → loot → interact chest → loot → pick_up the item on the floor.
+- `read_all()` reads every new book, note and letter in your bags and returns their text.
+- `rest_if_needed()` short-rests only when someone is at or below half HP.
 - Locked: try a found key first, then lockpicking (the best Sleight of Hand character via `who=`), then
   another entrance. Log failures as dead ends.
 - **Traps** that `get_nearby` or `get_frontier` shows (revealed by a Perception success): walk around

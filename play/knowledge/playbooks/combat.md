@@ -1,6 +1,6 @@
 # Combat
 
-**When:** Use whenever combat starts or is about to start (a result says INTERRUPTED — combat, enemies turn hostile, or you plan to attack). Covers pre-fight setup, the batched turn loop (get_combat_state + get_actions → do_actions), path_preview, reactions, 5e tactics, downed allies, retreat, and the post-combat report.
+**When:** Use whenever combat starts or is about to start (a result says INTERRUPTED — combat, enemies turn hostile, or you plan to attack). Covers pre-fight setup, the one-call turn loop (get_combat_state + get_actions → combat_turn), path_preview, reactions, 5e tactics, downed allies, retreat, and the post-combat report.
 
 ## Before a fight you choose to start
 1. **Save** (`save_game(label="Sxxx-pre-<enemy>")`) for anything bigger than 2–3 weak enemies.
@@ -18,27 +18,39 @@
 ## Each turn (loop)
 ```
 s = get_combat_state()      # whose turn, action/bonus/movement/reaction left, initiative order,
-                            # visible enemies (health as the UI shows it, distance, line of sight), allies
-a = get_actions()           # usable abilities (ids for use_ability) with range, target type, costs, uses
-→ plan the WHOLE turn from these two reads
-   path_preview(target=…)   # if the move might not fit remaining movement or needs a jump
+                            # visible enemies (health as the UI shows it, distance, line of sight), allies,
+                            # and the acting character's actions (ids for use_ability, range, costs)
+→ plan the WHOLE turn from this one read, with a fallback for each slot
+   path_preview(target=…)   # only if the move might not fit remaining movement or needs a jump
    ability_preview(ability, target)  # only if a hit chance or save DC decides between options
-→ do_actions(actions='[{"tool":"move_to","target":"e12"},
-                       {"tool":"use_ability","ability":"<id from get_actions>","target":"e12"},
-                       {"tool":"use_ability","ability":"<bonus action id>"},
-                       {"tool":"end_turn"}]')
-                            # stops by itself on an interrupt (reaction prompt, target down, failure)
-→ if it stopped early: read why, re-plan the rest of the turn, do_actions again
+→ combat_turn(plan='{"move":{"target":"e12","within":1.5},
+                     "action":[{"ability":"Target_MainHandAttack","target":"e12"},
+                               {"ability":"Projectile_ThrowWeapon","target":"e12"},
+                               "Shout_Dodge"],
+                     "bonus":{"ability":"<bonus action id>","if":"hp_below:50"}}')
+→ it returns right after end_turn: "NEXT e14 Goblin, e15 Imp, then Lae'zel (yours)".
+   Plan Lae'zel's turn NOW, while the enemies act; then wait_for("my_turn") and send it.
+   ("NOW Lae'zel's turn" + her actions = she is up already: send her combat_turn at once.)
+→ if it says STOPPED / "turn NOT ended": read why, then finish the turn (combat_turn with what's left)
 ```
-One observation, one batched turn: that's the target pace. `end_turn` blocks through the enemy turns and
-returns what was visible, plus HP and condition changes. Re-observe only after that, or when a batch
-stops early.
-Several party members may act in a row when their initiative is adjacent. Take each one's turn fully
-before `end_turn`; give `who=` on steps for a character other than the active one.
-**Reaction prompts** (Shield, Counterspell, opportunity attack) stop a batch: `get_dialogue` shows
-the prompt, and `react(use=true, which="…")` or `react(use=false)` answers it.
-**Movement:** commit combat movement only after `path_preview` says the destination is reachable and
-fits the remaining movement. A failed move wastes the turn plan.
+One observation, one call per turn: that's the target pace. Think during the enemy turns, not during yours.
+**Fallbacks are the plan's safety net.** The usual chain: the attack you want → the ranged option (throw,
+cantrip, bow) → `Shout_Dash` with `"then_move":true` (if you must close in) → `Shout_Dodge` or
+`Shout_Disengage` (if nothing reaches). A dead or vanished target skips to the next alternative, so you can
+also list a second target (`{"ability":"…","target":"e15"}`).
+**Ranged and spells:** `"move":{"target":"e12","within":<range in m>}` walks only until in range (and not
+at all if already in range); keep casters out of melee.
+**Extra Attack** (level 5 martials): add `"extra":[[{"ability":"Target_MainHandAttack","target":"e12"},
+{"ability":"Target_MainHandAttack","target":"e15"}]]`.
+Several party members may act in a row when their initiative is adjacent: one `combat_turn` each, with
+`who=`.
+**Reaction prompts** (Shield, Counterspell, Divine Smite, opportunity attacks): decide them up front.
+`"reactions":{"Divine Smite":"always"}` sets the game's own prompt setting; `"on_reaction":"use"` or
+`"skip"` answers prompts that appear during this turn. Otherwise a prompt stops the turn: `get_dialogue`
+shows it, `react(use=true, which="…")` or `react(use=false)` answers it, then finish the turn.
+**Movement:** a move that doesn't fit the movement left walks as far as it can (then the fallbacks decide).
+Check a tight or vertical route with `path_preview` first; a jump is `{"tool":"jump_to",…}` as an alternative.
+`do_actions` still works for odd turns (e.g. two characters' steps in one list), but `combat_turn` is the default.
 
 **Priorities each turn:**
 1. **Downed ally?** Healing Word (bonus action, ranged) or Help (action, adjacent) gets them up. A
@@ -73,9 +85,9 @@ character is below ~35% and in reach of enemies.
 1. `end_combat_report(what_worked="…", what_to_change="…", next_goal="…")`. It goes into your
    session log. Keep it concrete, e.g. "grease + fire at the door took out 4" / "Astarion got caught
    alone on the roof" / "loot, then short rest".
-2. Loot the bodies nearby in one `do_actions` sweep (`interact` corpse → `loot` …; see
-   knowledge/tools.md). Be quick (see `exploration` for what to keep).
-3. Heal: short rest if anyone is below half and short rests remain. Long rest when slots are low and
+2. Loot the bodies and chests nearby with `loot_area()` (one call; it skips locked and owned ones).
+   Be quick (see `exploration` for what to keep). `regroup()` if the party is scattered.
+3. Heal: `rest_if_needed()` (short rest if anyone is at or below half). Long rest when slots are low and
    nothing urgent is pending.
 4. Log `- HH:MM [combat] <enemy group> at <place>: won/lost, downs N`.
 5. If a companion died: get a Scroll of Revivify, or recover them at camp later (the camp NPC resurrects

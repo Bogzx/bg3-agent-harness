@@ -20,7 +20,7 @@ from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import actq, delta, metrics, render
+from . import actq, delta, macros, metrics, render, turn
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
 
@@ -37,6 +37,8 @@ Start with get_status. Refer to things by their short id (e12) or a party member
 Movement tools (move_to, walk_toward) return at once with a job id and ETA: keep planning while the
 character walks, then wait_for the job (or an event). Other action tools block until they settle; pass
 wait=false to return at once. queue_actions runs several steps back to back while you think.
+In combat, combat_turn plays a whole turn (with fallbacks) in one call and says who acts next. Chores are
+one call each: loot_area, dialogue_advance, travel_to, regroup, read_all, rest_if_needed.
 Use screenshot only when the text tools can't tell you something (spatial layout, puzzles, unknown popups)."""
 
 mcp = MCPServer("bg3", instructions=INSTRUCTIONS)
@@ -65,30 +67,68 @@ def _log(tool: str, args: dict, result: str, ms: float) -> None:
         pass
 
 
-_clock_shown = {"at": 0.0}
+_clock_shown = {"at": 0.0, "stuck": None}
+WRAPUP_HINT = "follow knowledge/playbooks/session-wrapup.md"
+PROGRESS_PATH = os.environ.get("BG3AI_PROGRESS_PATH") or (
+    re.sub(r"\.metrics\.jsonl$", ".progress.jsonl", os.environ["BG3AI_METRICS_PATH"])
+    if os.environ.get("BG3AI_METRICS_PATH", "").endswith(".metrics.jsonl") else "")
+_stuck_cache: dict = {"mtime": None, "open": None}
+
+
+def _stuck() -> dict | None:
+    """The runner's open stuck episode (bg3ai.progress: no story progress for STUCK_MIN minutes while
+    active), from Sxxx.progress.jsonl; None when progressing or when no runner writes the file."""
+    if not PROGRESS_PATH:
+        return None
+    try:
+        mt = os.stat(PROGRESS_PATH).st_mtime
+    except OSError:
+        return None
+    if mt != _stuck_cache["mtime"]:
+        from . import progress
+        open_ = None
+        for r in progress.load(Path(PROGRESS_PATH)):
+            if r.get("type") == "stuck":
+                open_ = r
+            elif r.get("type") in ("unstuck", "progress"):
+                open_ = None
+        _stuck_cache.update(mtime=mt, open=open_)
+    return _stuck_cache["open"]
+
+
+def _stuck_text(st: dict) -> str:
+    mins = int((time.time() - float(st.get("since") or st.get("t") or time.time())) // 60)
+    return f"no story progress for {mins} min: change approach (knowledge/playbooks/stuck.md)"
 
 
 def _clock_line() -> str:
-    """The clock for tool results: always in the last 10 minutes, otherwise at most every 10 minutes."""
-    if not DEADLINE:
-        return ""
+    """The clock for tool results: always in the last 10 minutes, otherwise at most every 10 minutes,
+    and at once when a stuck episode starts (then with the clock, while it lasts)."""
     now = time.time()
-    if DEADLINE - now > WRAPUP_S and now - _clock_shown["at"] < 600:
+    st = _stuck()
+    new_stuck = st is not None and st.get("t") != _clock_shown["stuck"]
+    if not DEADLINE and not st:
+        return ""
+    if not new_stuck and (not DEADLINE or DEADLINE - now > WRAPUP_S) and now - _clock_shown["at"] < 600:
         return ""
     _clock_shown["at"] = now
+    if st is not None:
+        _clock_shown["stuck"] = st.get("t")
     return _clock()
 
 
 def _clock() -> str:
+    st = _stuck()
+    stuck = (" · " if DEADLINE else "⏱ ") + _stuck_text(st) if st else ""
     if not DEADLINE:
-        return ""
+        return stuck
     left = DEADLINE - time.time()
     if left <= 0:
-        return "⏱ SESSION OVER: only save_game and note-taking now. Run the session-wrapup skill."
+        return f"⏱ SESSION OVER: only save_game and note-taking now; {WRAPUP_HINT}."
     m = int(left // 60)
     if left <= WRAPUP_S:
-        return f"⏱ {m}m left: WRAP UP NOW. Reach a safe spot, save_game, then run the session-wrapup skill."
-    return f"⏱ {m}m left"
+        return f"⏱ {m}m left: WRAP UP NOW. Reach a safe spot, save_game, then {WRAPUP_HINT}."
+    return f"⏱ {m}m left" + stuck
 
 
 def _session_over() -> bool:
@@ -1436,6 +1476,590 @@ def _peek_events(kinds: set) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# a whole combat turn in one call (turn.py), and macros (macros.py)
+# ---------------------------------------------------------------------------
+
+def _run_one(watcher: actq.Watcher, who: str | None, step: actq.Step) -> tuple[actq.Report, str]:
+    """One step through the executor (guarded tool, interrupts watched, job cancelled on an interrupt).
+    Returns (report, the step's line without its number)."""
+    ex = _new_executor(watcher, _watch_conn(), who)
+    it = iter([step])
+    rep = ex.run(lambda: next(it, None), lambda: None)
+    text = re.sub(r"^\d+\. ", "", rep.lines[0]) if rep.lines else step.short()
+    return rep, text
+
+
+def _outcome(step: actq.Step, text: str) -> str:
+    """'use_ability: done — ...' -> 'Target_MainHandAttack e12: done — ...' (what was tried, then how it went)."""
+    body = text.split(": ", 1)[1] if text.startswith(step.tool + ":") or text.startswith(step.short() + ":") else text
+    a = step.args
+    what = " ".join(str(x) for x in (a.get("ability"), a.get("target")) if x) if step.tool == "use_ability" else step.short()
+    return f"{what}: {body}"
+
+
+def _after(rep: actq.Report, keep: dict) -> None:
+    a = rep.last_result.get("after") if isinstance(rep.last_result, dict) else None
+    if isinstance(a, dict):
+        keep.update(a)
+
+
+def _now_line(after: dict) -> str:
+    keep = {k: after[k] for k in ("hp", "max_hp", "action", "bonus", "movement", "reaction") if k in after}
+    return "NOW " + render.compact(keep, H) if keep else ""
+
+
+def _party_set() -> set:
+    st = game.try_rpc("state.status") or {}
+    return {c.get("uuid") for c in st.get("party") or [] if isinstance(c, dict)}
+
+
+def _turn_check(who: str, step: actq.Step | None) -> tuple[bool, str]:
+    """Before each turn step, from what the player sees: (fatal, why). fatal = the turn is over for us;
+    a non-fatal why (target dead / out of view) skips just this alternative."""
+    cs = game.try_rpc("state.combat") or {}
+    if not cs.get("active"):
+        return True, "combat is over"
+    if cs.get("current") and cs.get("current") != who:
+        return True, f"it is no longer {_label(who)}'s turn (now {_label(cs['current'])})"
+    tgt = step.args.get("target") if step is not None else None
+    if tgt:
+        try:
+            u = _uuid(str(tgt))
+        except ValueError:
+            return False, f"unknown target {tgt}"
+        ts = game.try_rpc("act.target_state", {"uuid": u})
+        if isinstance(ts, dict):
+            if ts.get("dead"):
+                return False, f"{_label(u)} is already dead"
+            if not ts.get("visible"):
+                return False, f"{_label(u)} is not visible"
+    return False, ""
+
+
+def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, after: dict) -> str:
+    """The move slot: 'ok', 'none' (couldn't move; the turn goes on, fallbacks may still work) or 'stop'."""
+    fatal, why = _turn_check(who, None)
+    if fatal:
+        lines.append(f"move: {why}")
+        return "stop"
+    what = mv.target or render.pos(mv.pos)
+    tu = _uuid(mv.target) if mv.target else None
+    step = None
+    if tu and mv.within is not None:
+        d = turn.straight_dist(game.try_rpc("state.combat") or {}, who, tu)
+        if d is not None and d <= mv.within:
+            lines.append(f"move: already within {render.num(mv.within)}m of {what} ({render.num(d)}m)")
+            return "ok"
+        if d is not None:
+            r = game.try_rpc("nav.reach_toward", {"char": who, "target": tu, "max_m": max(0.5, d - mv.within + 0.3)})
+            if not (isinstance(r, dict) and r.get("reachable") and r.get("pos")):
+                # Don't walk all the way up to a target we only wanted to be in range of.
+                lines.append(f"move {what}: no walkable ground toward it ({render.num(d)}m, want ≤{render.num(mv.within)}m)")
+                return "none"
+            x, y, z = r["pos"]
+            step = actq.Step("move_to", {"x": x, "y": y, "z": z})
+    if step is None:
+        step = actq.Step("move_to", {"target": mv.target} if mv.target else dict(zip("xyz", mv.pos)))
+    rep, text = _run_one(watcher, who, step)
+    _after(rep, after)
+    if rep.done:
+        lines.append(f"move {what}: {text.split(': ', 1)[-1]}")
+        return "ok"
+    text = text.split(": ", 1)[-1] if text.startswith("move_to:") else text
+    if rep.stop_kind not in (None, "failed"):
+        lines.append(f"move {what}: {text}")
+        lines.append(f"STOPPED: {_label(rep.stopped or '')}")
+        return "stop"
+    if turn.is_fatal(text):
+        lines.append(f"move {what}: {text}")
+        return "stop"
+    left = turn.movement_left(text)
+    if mv.partial and turn.move_too_long(text) and (left is None or left >= 1.0):
+        if left is None:
+            p = game.try_rpc("nav.path", {"char": who, **({"target": tu} if tu else {"pos": mv.pos})}) or {}
+            left = p.get("movement_left") if isinstance(p, dict) else None
+        if isinstance(left, (int, float)) and left >= 1.0:
+            r = game.try_rpc("nav.reach_toward", {"char": who, **({"target": tu} if tu else {"pos": mv.pos}),
+                                                  "max_m": float(left) - 0.3})
+            if isinstance(r, dict) and r.get("reachable") and r.get("pos"):
+                x, y, z = r["pos"]
+                rep2, text2 = _run_one(watcher, who, actq.Step("move_to", {"x": x, "y": y, "z": z}))
+                _after(rep2, after)
+                lines.append(f"move {what}: {text} → partial {render.num(float(left) - 0.3)}m toward it: "
+                             f"{text2.split(': ', 1)[-1]}")
+                if rep2.done:
+                    return "ok"
+                if rep2.stop_kind not in (None, "failed"):
+                    lines.append(f"STOPPED: {_label(rep2.stopped or '')}")
+                    return "stop"
+                return "none"
+    lines.append(f"move {what}: {text}")
+    return "none"
+
+
+def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: list,
+               after: dict) -> tuple[str, bool]:
+    """Try a slot's alternatives in order. ('ok'|'none'|'stop', then_move of the one that worked)."""
+    tried: list[str] = []
+    for alt in alts:
+        fatal, why = _turn_check(who, alt.step)
+        if fatal:
+            lines.append(f"{name}: " + " → ".join(tried + [why]))
+            return "stop", False
+        if why:
+            tried.append(f"{alt.step.short()}: skipped ({why})")
+            continue
+        rep, text = _run_one(watcher, who, alt.step)
+        text = _outcome(alt.step, text)
+        _after(rep, after)
+        if rep.done:
+            lines.append(f"{name}: " + " → ".join(tried + [text]))
+            return "ok", alt.then_move
+        tried.append(text)
+        if rep.skipped:
+            continue
+        if rep.stop_kind not in (None, "failed") or turn.is_fatal(text):
+            lines.append(f"{name}: " + " → ".join(tried))
+            if rep.stop_kind not in (None, "failed"):
+                lines.append(f"STOPPED: {_label(rep.stopped or '')}")
+            return "stop", False
+    if alts:
+        lines.append(f"{name}: " + " → ".join(tried) + (" (no alternative worked)" if len(alts) > 1 else ""))
+    return "none", False
+
+
+def _answer_reaction(use: bool) -> str:
+    r = _watch_conn().run_job("ui.react", {"use": use}, context="client", wait_s=10)
+    return f"reaction prompt: {'used' if use else 'declined'} ({r.status})"
+
+
+def _turn_next(who: str, party: set) -> str:
+    """After the turn: who acts next, and the next party member's actions if it is already their turn."""
+    cs = game.try_rpc("state.combat") or {}
+    if not cs.get("active"):
+        return "combat is over: loot, heal, then end_combat_report"
+    cur = cs.get("current")
+    if cur in party and cur != who:
+        out = f"NOW {_label(cur)}'s turn: plan it"
+        acts = game.try_rpc("state.actions", {"uuid": cur})
+        if acts:
+            out += "\nYOUR ACTIONS (" + H.get(cur) + ")\n" + render.render_actions(acts, H)
+        return out
+    text, mine = turn.next_up(cs, party, _label, ended=who)
+    if mine:
+        text += ". Plan it while they act; wait_for('my_turn') when ready"
+    return text
+
+
+@mcp.tool()
+@_guard
+def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: bool = False,
+                ignore: str = "hostile") -> str:
+    """A WHOLE combat turn in one call: move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Dodge).
+    plan: JSON, e.g. {"move":{"target":"e12","within":1.5},"action":[{"ability":"Target_MainHandAttack","target":"e12"},{"ability":"Projectile_ThrowWeapon","target":"e12"},{"ability":"Shout_Dash","then_move":true},"Shout_Dodge"],"bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"},"extra":[[{"ability":"Target_MainHandAttack","target":"e12"}]]}
+    move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z]. If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off).
+    Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it (Dash), walk the move again.
+    order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn (default: stop).
+    Before each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore="" adds new hostiles in view).
+    end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn)."""
+    t0 = time.monotonic()
+    if _session_over():
+        return _finish("combat_turn", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
+    p = turn.parse_plan(plan, _BATCHABLE)
+    cs = game.rpc("state.combat")
+    _remember_names(cs)
+    party = _party_set()
+    if not cs.get("active"):
+        raise GameError("not in combat: use do_actions or queue_actions")
+    char = _uuid(who) if who else (cs.get("current") if cs.get("current") in party else _active())
+    if cs.get("current") != char:
+        raise GameError(f"it is not {_label(char)}'s turn (now {_label(cs.get('current') or '?')})")
+    lines = [f"TURN {_label(char)}" + (f" (round {cs['round']})" if cs.get("round") is not None else "")]
+    if p.reactions:
+        try:
+            game.rpc("ui.reactions", {"char": char, "set": p.reactions}, context="client")
+            lines.append("reactions set: " + ", ".join(f"{k}={v}" for k, v in p.reactions.items()))
+        except GameError as e:
+            lines.append(f"reactions: FAILED — {e}")
+    watcher = turn.TurnWatcher(_watch_conn(), p.on_reaction, _answer_reaction, ignore=_parse_ignore(ignore))
+    watcher.baseline()
+    after: dict = {}
+    stopped = False
+    for slot in p.order:
+        if slot == "move":
+            res = _turn_move(p.move, char, watcher, lines, after) if p.move else "none"
+        elif slot == "extra":
+            res = "none"
+            for i, alts in enumerate(p.slots["extra"], 1):
+                res, _ = _turn_slot(f"extra {i}", alts, char, watcher, lines, after)
+                if res == "stop":
+                    break
+        else:
+            res, then_move = _turn_slot(slot, p.slots[slot], char, watcher, lines, after)
+            if res == "ok" and then_move and p.move:
+                res = _turn_move(p.move, char, watcher, lines, after)
+        if res == "stop":
+            stopped = True
+            break
+    lines.extend(watcher.answered)
+    if end and not stopped:
+        fatal, why = _turn_check(char, None)
+        if fatal:
+            lines.append(f"end_turn: {why}")
+        else:
+            ex = _new_executor(watcher, _watch_conn(), char)
+            text, _status, res = ex.call_tool(actq.Step("end_turn", {"wait": wait_next}), char)
+            lines.append(re.sub(r" — after=\{[^}]*\}| after=\{[^}]*\}", "", text))
+            if isinstance(res, dict) and isinstance(res.get("after"), dict):
+                after.update(res["after"])
+    elif stopped:
+        lines.append("turn NOT ended: decide, then continue (combat_turn again, or single tools)")
+    now = _now_line(after)
+    if now:
+        lines.append(now)
+    changes = delta.changes_text(game, H)
+    if changes:
+        lines.append(changes)
+    if end and not stopped:
+        nxt = _turn_next(char, party)
+        if nxt:
+            lines.append(nxt)
+    if stopped:
+        _batch["last"] = "interrupted"
+    return _finish("combat_turn", {"who": who}, "\n".join(lines), t0)
+
+
+# ---- macros ----
+
+_looted: set[str] = set()  # containers/corpses loot_area already emptied this bridge session
+
+
+def _macro_groups(who: str | None, groups: list, ignore: set | None = None,
+                  done: list | None = None) -> tuple[list[str], str | None, list[str]]:
+    """Run groups of steps [(label, [Step])] in order. A failed step skips the rest of its group (that
+    target); an interrupt stops everything. Returns (lines, why it stopped or None, labels not reached);
+    `done` collects the indices of groups whose steps all succeeded."""
+    watcher = actq.Watcher(_watch_conn(), ignore=ignore or set())
+    watcher.baseline()
+    lines: list[str] = []
+    for gi, (label, steps) in enumerate(groups):
+        parts = []
+        ok = True
+        for step in steps:
+            rep, text = _run_one(watcher, who, step)
+            parts.append(text)
+            if rep.stop_kind not in (None, "failed"):
+                lines.append(f"{label}: " + "; ".join(parts))
+                return lines, _label(rep.stopped or rep.stop_kind or ""), [g[0] for g in groups[gi + 1:]]
+            if not rep.done:
+                ok = False
+                break
+        if ok and done is not None:
+            done.append(gi)
+        lines.append(f"{label}: " + "; ".join(parts))
+    return lines, None, []
+
+
+def _macro_finish(tool: str, args: dict, lines: list[str], stop: str | None, left: list[str], t0: float) -> str:
+    if stop:
+        lines.append(f"STOPPED: {stop}" + (f"; not reached: {', '.join(left)}" if left else ""))
+        _batch["last"] = "interrupted"
+    changes = delta.changes_text(game, H)
+    if changes:
+        lines.append(changes)
+    return _finish(tool, args, "\n".join(lines), t0)
+
+
+def _no_combat(tool: str) -> dict:
+    w = _watch_conn().try_rpc("act.watch") or {}
+    if w.get("combat"):
+        raise GameError(f"{tool} is for outside combat")
+    return w
+
+
+@mcp.tool()
+@_guard
+def loot_area(radius: float = macros.LOOT_RADIUS, who: str | None = None, corpses: bool = True,
+              containers: bool = True, opened: bool = False) -> str:
+    """Loot every VISIBLE corpse and unlocked container within radius (m), nearest-first walking order: walk, open, take all. Skips locked ones, owned ones (stealing), discovered armed traps, already opened ones (opened=true includes them) and what this session already looted. Stops at the first interrupt (combat, conversation, prompt, new hostile, HP drop)."""
+    t0 = time.monotonic()
+    w = _no_combat("loot_area")
+    char = _who(who)
+    me = next((r for r in w.get("party") or [] if r.get("uuid") == char), {})
+    near = game.rpc("state.nearby", {"radius": max(2.0, min(float(radius), 30.0))})
+    _remember_names(near)
+    targets, skipped = macros.loot_targets(near, me.get("pos"), float(radius), _looted, corpses, containers,
+                                           opened=opened)
+    if not targets:
+        body = f"nothing to loot within {render.num(radius)}m" + (f" (skipped: {'; '.join(skipped)})" if skipped else "")
+        return _finish("loot_area", {"radius": radius}, body, t0)
+    groups = []
+    for t in targets:
+        h = H.get(t["uuid"], t.get("name"))
+        first = actq.Step("loot_corpse", {"corpse": h}) if t["kind"] == "corpse" else actq.Step("interact", {"target": h})
+        groups.append((f"{h} {t.get('name') or ''}".strip(), [first, actq.Step("loot", {"take": "all"})]))
+    ok: list[int] = []
+    lines, stop, left = _macro_groups(char, groups, done=ok)
+    for i in ok:
+        _looted.add(targets[i]["uuid"])
+    if len(ok) < len(lines):
+        # A failed take (an empty body) can leave the loot window open: close it so the world is usable.
+        game.try_rpc("ui.loot", {"close": True}, context="client")
+    head = f"loot_area: {len(targets)} target(s) within {render.num(radius)}m"
+    if skipped:
+        head += f"; skipped {'; '.join(skipped)}"
+    return _macro_finish("loot_area", {"radius": radius}, [head] + lines, stop, left, t0)
+
+
+@mcp.tool()
+@_guard
+def dialogue_advance(max_lines: int = macros.DIALOGUE_MAX) -> str:
+    """Click through FILLER dialogue lines only (a Continue prompt, or a single untagged option that commits to nothing). Stops and shows the dialogue at the first real choice (2+ options, a skill/class tag, a committing option), a roll, a reaction, a popup, or when the conversation ends. Never picks an answer for you."""
+    t0 = time.monotonic()
+    lines: list[str] = []
+    stop = None
+    n = 0
+    wait_until = time.monotonic() + 8.0  # a voiced line that is still playing
+    while n < max(1, min(int(max_lines), 30)):
+        ui = game.try_rpc("ui.state", context="client") or {}
+        scr = ui.get("screen")
+        if scr != "dialogue":
+            stop = "conversation ended" if scr in (None, "game") else f"{scr} on screen"
+            if scr not in (None, "game"):
+                lines.extend(render.render_ui(ui, H, brief=True))
+            break
+        ok, i, why = macros.dialogue_filler(ui.get("dialogue"))
+        if not ok:
+            if why in ("line still playing", "no options yet") and time.monotonic() < wait_until:
+                time.sleep(0.3)
+                continue
+            stop = why
+            lines.extend(render.render_ui(ui, H, brief=True))
+            break
+        said = (ui.get("dialogue") or {}).get("text")
+        r = game.run_job("ui.dialogue_choose", {"i": i}, context="client", wait_s=20)
+        n += 1
+        lines.append(f"{n}. " + (f"'{H.scrub(str(said))[:90]}' → " if said else "") +
+                     ("continue" if i == 0 else f"option {i}") + ("" if r.status == "done" else f" {r.status.upper()}"
+                                                                  + (f" — {r.error}" if r.error else "")))
+        if r.status != "done":
+            stop = "could not advance"
+            break
+        wait_until = time.monotonic() + 8.0
+        time.sleep(0.2)
+    else:
+        stop = f"advanced {n} lines (max_lines)"
+    head = f"dialogue_advance: {n} filler line(s)"
+    body = [head] + lines + ([f"STOPPED: {stop}"] if stop else [])
+    return _finish("dialogue_advance", {"max_lines": max_lines}, "\n".join(body), t0)
+
+
+def _travel_dest(marker: str, objective: str, x, y, z) -> tuple[list, str]:
+    if marker:
+        st = game.try_rpc("state.status") or {}
+        ms = _load_markers()
+        m = next((m for m in ms if m.get("id") == marker), None) or next(
+            (m for m in ms if marker.lower() in str(m.get("label", "")).lower()), None)
+        if m is None or not m.get("pos"):
+            raise ValueError(f"no marker '{marker}' (get_map lists your markers)")
+        if m.get("level") and st.get("level") and m["level"] != st["level"]:
+            raise ValueError(f"marker {m['id']} is in {m.get('region') or m['level']}: fast_travel there first")
+        return list(m["pos"]), f"marker {m['id']} {m.get('label', '')}"
+    if objective:
+        m = render.find_objective(_objective_markers(), objective)
+        if not (m.get("here") and m.get("pos")):
+            raise ValueError(f"objective '{render.objective_label(m)}' is not in this area")
+        return list(m["pos"]), f"objective {render.objective_label(m)}"
+    if None not in (x, y, z):
+        return [x, y, z], render.pos([x, y, z])
+    raise ValueError("give marker=m1, objective=o1, target=<id>, waypoint=<name> or x,y,z")
+
+
+@mcp.tool()
+@_guard
+def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target: str = "",
+              x: float | None = None, y: float | None = None, z: float | None = None, who: str | None = None) -> str:
+    """Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Chains walks of up to 30 m along walkable ground toward it; stops on arrival (within 3 m), when no walkable ground leads further, or at the first interrupt (combat, conversation, prompt, new hostile, HP drop)."""
+    t0 = time.monotonic()
+    if waypoint:
+        return fast_travel(waypoint)
+    w = _no_combat("travel_to")
+    char = _who(who)
+    if target:
+        lines, stop, left = _macro_groups(char, [(f"walk to {target}", [actq.Step("move_to", {"target": target})])])
+        return _macro_finish("travel_to", {"target": target}, lines, stop, left, t0)
+    dest, what = _travel_dest(marker, objective, x, y, z)
+    watcher = actq.Watcher(_watch_conn())
+    watcher.baseline()
+    me = next((r for r in w.get("party") or [] if r.get("uuid") == char), {})
+    here = me.get("pos")
+    start_d = macros.dist(here, dest)
+    lines = [f"travel_to {what}: {render.num(round(start_d, 1))}m"]
+    stop = None
+    for leg in range(1, macros.TRAVEL_MAX_LEGS + 1):
+        d = macros.dist(here, dest)
+        if d <= macros.TRAVEL_ARRIVE_M:
+            lines.append(f"arrived ({render.num(round(d, 1))}m from it)")
+            break
+        r = game.try_rpc("nav.reach_toward", {"char": char, "pos": dest, "max_m": min(macros.TRAVEL_LEG_M, d)})
+        if not (isinstance(r, dict) and r.get("reachable") and r.get("pos")) or macros.dist(r["pos"], dest) > d - 1.0:
+            stop = (f"no walkable ground leads further toward it ({render.num(round(d, 1))}m left): "
+                    "try get_frontier, a door, or a jump")
+            break
+        px, py, pz = r["pos"]
+        rep, text = _run_one(watcher, char, actq.Step("move_to", {"x": px, "y": py, "z": pz}))
+        lines.append(f"leg {leg}: {text}")
+        if not rep.done:
+            stop = _label(rep.stopped or "") if rep.stop_kind not in (None, "failed") else f"leg {leg} failed"
+            break
+        res = rep.last_result if isinstance(rep.last_result, dict) else {}
+        here = ((res.get("after") or {}).get("pos") or res.get("pos") or r["pos"])
+    else:
+        stop = f"still {render.num(round(macros.dist(here, dest), 1))}m away after {macros.TRAVEL_MAX_LEGS} legs"
+    return _macro_finish("travel_to", {"to": what}, lines, stop, [], t0)
+
+
+@mcp.tool()
+@_guard
+def regroup(leader: str | None = None, near_m: float = macros.REGROUP_NEAR_M, chain: bool = False) -> str:
+    """Bring party members who are farther than near_m from the leader (default: the active character) back to them, all walking at once. chain=true also re-links them to the leader. Downed members are left (help them up first). Each walk stops on the usual interrupts."""
+    t0 = time.monotonic()
+    w = _no_combat("regroup")
+    lead = _who(leader)
+    rows = {r.get("uuid"): r for r in w.get("party") or []}
+    lp = (rows.get(lead) or {}).get("pos")
+    if not lp:
+        raise GameError(f"no position for {_label(lead)}")
+    far, lines = [], []
+    for u, r in rows.items():
+        if u == lead:
+            continue
+        d = macros.dist(r.get("pos"), lp)
+        if r.get("downed"):
+            lines.append(f"{_label(u)}: downed, {render.num(round(d, 1))}m away (help them up)")
+        elif d > near_m:
+            far.append((u, d))
+    if not far and not chain:
+        return _finish("regroup", {}, "\n".join(lines + [f"everyone is within {render.num(near_m)}m of {_label(lead)}"]), t0)
+    for u, d in far:
+        _queue_ignore[u] = set()
+        _queues().add(u, [actq.Step("move_to", {"target": H.get(lead)})], replace=True)
+    end = time.monotonic() + 45.0
+    while any(_queues().busy(u) for u, _ in far) and time.monotonic() < end:
+        time.sleep(0.1)
+    stop = None
+    for u, d in far:
+        q = _queues().queues.get(u)
+        rep = q.last_report if q else None
+        if rep is None or _queues().busy(u):
+            lines.append(f"{_label(u)} ({render.num(round(d, 1))}m): still walking")
+        elif rep.stopped:
+            lines.append(f"{_label(u)} ({render.num(round(d, 1))}m): {rep.lines[-1] if rep.lines else ''}".rstrip())
+            stop = stop or _label(rep.stopped)
+        else:
+            lines.append(f"{_label(u)} ({render.num(round(d, 1))}m): {re.sub(r'^1. ', '', rep.lines[-1]) if rep.lines else 'done'}")
+    if chain and not stop:
+        for u in rows:
+            if u != lead and not (rows[u] or {}).get("downed"):
+                r = game.run_job("act.chain", {"char": u, "leader": lead}, wait_s=10)
+                lines.append(f"chain {_label(u)} → {_label(lead)}: {r.status}" + (f" — {r.error}" if r.error else ""))
+    return _macro_finish("regroup", {}, [f"regroup at {_label(lead)}: {len(far)} walking"] + lines, stop, [], t0)
+
+
+_READ_FILE = "read_items.json"
+
+
+def _read_set() -> set:
+    try:
+        return set(json.loads((MEMORY / _READ_FILE).read_text()))
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+@mcp.tool()
+@_guard
+def read_all(who: str | None = None, max_items: int = 6) -> str:
+    """Read every book, note and letter in the party's bags you haven't read yet (by name), one after another, and return their text. Remembers what was read across sessions. Out of combat only. Stops at a conversation, roll, reaction or decision popup."""
+    t0 = time.monotonic()
+    _no_combat("read_all")
+    inv = game.rpc("state.inventory", {"uuid": _uuid(who)} if who else {})
+    _remember_names(inv)
+    seen = _read_set()
+    items = [it for it in (inv.get("items") or []) if macros.readable(it) and it.get("uuid") not in seen]
+    if not items:
+        return _finish("read_all", {}, "nothing new to read", t0)
+    watcher = actq.Watcher(_watch_conn(), ignore={"prompt"})
+    watcher.baseline()
+    lines, stop, budget = [], None, 6000
+    for it in items[:max(1, min(int(max_items), 12))]:
+        h = H.get(it["uuid"], it.get("name"))
+        rep, text = _run_one(watcher, it.get("owner"), actq.Step("manage_inventory", {"op": "use", "item": h}))
+        if not rep.done:
+            lines.append(f"{h} {it.get('name')}: {text}")
+            if rep.stop_kind not in (None, "failed"):
+                stop = _label(rep.stopped or "")
+                break
+            continue
+        page = None
+        end = time.monotonic() + 2.5
+        while time.monotonic() < end:
+            ui = game.try_rpc("ui.state", context="client") or {}
+            scr = ui.get("screen")
+            if scr in ("dialogue", "roll", "reaction", "game_over") or (scr == "popup" and (ui.get("popup") or {}).get("decision")):
+                lines.extend(render.render_ui(ui, H, brief=True))
+                stop = f"{scr} on screen"
+                break
+            if scr in ("book", "popup", "reward") and ui.get("popup"):
+                page = ui["popup"]
+                break
+            time.sleep(0.2)
+        if stop:
+            break
+        seen.add(it["uuid"])
+        txt = ""
+        if page:
+            txt = " — ".join(str(page[k]) for k in ("title", "text") if page.get(k))
+            game.try_rpc("ui.dismiss", {}, context="client")
+            end = time.monotonic() + 1.5  # let the panel close, so the next book's text isn't this one's
+            while time.monotonic() < end and (game.try_rpc("ui.state", context="client") or {}).get("screen") == "book":
+                time.sleep(0.1)
+        txt = H.scrub(txt)[:max(200, budget)] if txt else "(read; no text panel seen)"
+        budget -= len(txt)
+        lines.append(f"{h} {it.get('name')}: {txt}")
+    try:
+        MEMORY.mkdir(parents=True, exist_ok=True)
+        (MEMORY / _READ_FILE).write_text(json.dumps(sorted(seen)))
+    except OSError:
+        pass
+    left = [f"{H.get(it['uuid'])} {it.get('name')}" for it in items if it["uuid"] not in seen]
+    head = f"read_all: {len(items)} unread"
+    return _macro_finish("read_all", {}, [head] + lines, stop, left if stop else [], t0)
+
+
+@mcp.tool()
+@_guard
+def rest_if_needed(threshold: float = 50.0, allow_long: bool = False) -> str:
+    """Rest only when it's worth it: if any party member is downed or at/below threshold % HP, take a short rest; if no short rest is left and allow_long=true, go to camp and long rest (camp scenes then come up as dialogues). Out of combat only. HP only: check spell slots yourself."""
+    t0 = time.monotonic()
+    w = _no_combat("rest_if_needed")
+    low = macros.hp_low(w.get("party") or [], threshold)
+    if not low:
+        pcts = [round(100 * r["hp"] / r["max_hp"]) for r in w.get("party") or []
+                if isinstance(r.get("hp"), (int, float)) and r.get("max_hp")]
+        return _finish("rest_if_needed", {}, f"no rest needed (lowest HP {min(pcts) if pcts else '?'}%)", t0)
+    who_low = ", ".join(f"{_label(u)} {hp}/{mx}" for u, hp, mx in low)
+    lines, stop, left = _macro_groups(None, [("rest", [actq.Step("short_rest", {})])])
+    rested = bool(lines) and "short_rest: done" in lines[-1]
+    if not rested and not stop and allow_long:
+        more, stop, left = _macro_groups(None, [("long rest", [actq.Step("camp", {"action": "go"}),
+                                                               actq.Step("long_rest", {})])])
+        lines += more
+    elif not rested and not stop:
+        lines.append("no short rest worked: long rest at camp (camp, long_rest) or heal with potions/spells")
+    return _macro_finish("rest_if_needed", {}, [f"low: {who_low}"] + lines, stop, left, t0)
+
+
+# ---------------------------------------------------------------------------
 # meta: saves, waiting, markers, wiki, clock
 # ---------------------------------------------------------------------------
 
@@ -1597,7 +2221,7 @@ def wiki_page(title: str, section: str = "", max_chars: int = 5000) -> str:
 @mcp.tool()
 def session_clock() -> str:
     """Time left in this play session."""
-    return _clock() or "No session deadline set."
+    return _clock() or "No session deadline set."  # includes the stuck signal, if any
 
 
 def _session_log() -> Path | None:
