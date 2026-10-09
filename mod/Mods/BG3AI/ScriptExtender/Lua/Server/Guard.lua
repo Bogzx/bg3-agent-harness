@@ -115,32 +115,84 @@ end
 
 function G.in_combat(uuid) return b(G.q("IsInCombat", uuid)) end
 
--- bg3le has no IsInDialog; SpeakerGetDialog(speaker, 1) returns the dialog
--- resource while the speaker is in one, and DialogState.DialogId is non-zero.
--- An automated dialogue (ambient bark, AutomatedDialog=true on the instance)
--- does not stop a player from acting, so it does not count (live S002: Lae'zel
--- refused "in a conversation" for ~5 s after a console dialogue, no UI shown).
-function G.in_dialogue(uuid)
-    local e = G.entity(uuid)
-    local ds = e and U.comp(e, "DialogState")
-    local ok, id = pcall(function() return ds and ds.DialogId end)
-    -- DialogState.DialogId keeps the last instance id after the dialogue
-    -- ends (seen live: 4 with no dialogue running), so only trust it while
-    -- that instance still exists in the dialog manager.
-    local inst
-    if ok and id ~= nil and id ~= 0 then
+-- Is this character held in a conversation the player would see?
+-- Signals, strongest first:
+--   * ServerCharacter.InDialog: the game's own lock flag (the bridge's metrics
+--     and state read it too).
+--   * live dialog instances (Ext.Utils.GetDialogManager) that this character
+--     is in: DialogState.DialogId's instance, or one listing it in Speakers.
+--     An AutomatedDialog instance (bark, party banter) never blocks (live S002).
+--     When InDialog is readable and false, world/behaviour dialogs (ambient
+--     scenes, combat chatter) don't block either.
+--   * SpeakerGetDialog alone is NOT trusted when InDialog reads false. Live
+--     S005: Claude's combat_turn was refused "in a conversation" for a whole
+--     turn while InDialog was false on every 1 s sample and nothing was on
+--     screen (a combat bark with no matching instance is the likely cause).
+--     It only counts when neither InDialog nor the manager can be read.
+-- DialogState.DialogId keeps the last instance id after the dialogue ends
+-- (seen live: 4, 202, 203 with no dialogue running), so it only counts while
+-- that instance still exists.
+-- Returns blocked, why ("dialog 12 res=..." / "InDialog" / "SpeakerGetDialog").
+local function inst_field(inst, k)
+    local ok, v = pcall(function() return inst[k] end)
+    return ok and v or nil
+end
+
+local function speaker_is(sp, g)
+    local ok, u = pcall(function() return sp.Uuid.EntityUuid end)
+    return ok and type(u) == "string" and u:lower() == g
+end
+
+function G.dialogue_info(uuid)
+    local g = G.guid(uuid) or uuid
+    local e = G.entity(g)
+    local flag
+    pcall(function()
+        local sc = e and U.comp(e, "ServerCharacter")
+        if sc then flag = sc.InDialog == true end
+    end)
+    local dm
+    pcall(function() dm = Ext.Utils.GetDialogManager() end)
+    local dialogs
+    pcall(function() dialogs = dm and dm.Dialogs end)
+    local insts = {}
+    if dialogs then
+        local ds = e and U.comp(e, "DialogState")
+        local ok, id = pcall(function() return ds and ds.DialogId end)
+        if ok and id ~= nil and id ~= 0 then
+            local okd, inst = pcall(function() return dialogs[id] end)
+            if okd and inst ~= nil then insts[#insts + 1] = inst end
+        end
         pcall(function()
-            local dm = Ext.Utils.GetDialogManager()
-            inst = dm and dm.Dialogs[id]
+            for _, inst in pairs(dialogs) do
+                local sps = inst_field(inst, "Speakers")
+                if sps then
+                    for _, sp in pairs(sps) do
+                        if speaker_is(sp, g) then insts[#insts + 1] = inst; break end
+                    end
+                end
+            end
         end)
     end
-    local automated = false
-    if inst ~= nil then
-        pcall(function() automated = inst.AutomatedDialog == true end)
-        if not automated then return true end
+    local live = #insts > 0
+    for _, inst in ipairs(insts) do
+        local ambient = inst_field(inst, "AutomatedDialog") == true
+        if flag == false and not ambient then
+            ambient = inst_field(inst, "IsWorld") == true or inst_field(inst, "IsBehaviour") == true
+        end
+        if not ambient then
+            return true, ("dialog %s res=%s"):format(tostring(inst_field(inst, "DialogId")),
+                tostring(inst_field(inst, "DialogResourceUUID")))
+        end
     end
-    if G.q("SpeakerGetDialog", uuid, 1) ~= nil then return not automated end
+    if flag == true then return true, "InDialog" end
+    if live or flag == false or dialogs ~= nil then return false end
+    if G.q("SpeakerGetDialog", g, 1) ~= nil then return true, "SpeakerGetDialog" end
     return false
+end
+
+function G.in_dialogue(uuid)
+    return (G.dialogue_info(uuid))
 end
 
 -- Is it this character's turn? Uses the replicated TurnBased component.
@@ -217,7 +269,8 @@ function G.combat_gate(char, mode)
 end
 
 function G.not_in_dialogue(char)
-    if G.in_dialogue(char) then G.refuse("character is in a conversation") end
+    local blocked, why = G.dialogue_info(char)
+    if blocked then G.refuse("character is in a conversation (" .. tostring(why) .. ")") end
 end
 
 ------------------------------------------------------------------------

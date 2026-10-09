@@ -89,8 +89,8 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
 
 ## Dialogue
 - `talk_to(npc, who)` → walk up (following them if they move) and start a conversation (`who` = the speaker).
-- `get_dialogue()` → current line and numbered options with check tags, or the roll, reaction or popup on screen.
-- `choose_dialogue(option)` → pick answer N; returns the next line and options.
+- `get_dialogue()` → current line and numbered options with check tags. A tagged option shows the check and your speaker's bonus (`← Persuasion check: e2 +5 (party best e1 +6 …)`). Or the roll, reaction or popup on screen.
+- `choose_dialogue(option)` → pick answer N; clicks through the filler after it and returns the next real choice, roll or the end.
 - `roll_check(boosts="", reroll_on_fail=false)` → resolve the roll on screen (boosts as offered, e.g. "Guidance").
 - Cutscenes are auto-skipped; their lines arrive as `dialogue_line` events. Answers are never auto-picked.
 
@@ -117,9 +117,11 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
 
 ## Macros (one call each; they stop at the first interrupt and say what was left)
 - `loot_area(radius=12, who, corpses=true, containers=true, opened=false)` → walk to every VISIBLE corpse and unlocked container in range (nearest-first route), open it and take all. Skips locked, owned (stealing), trapped and already-opened ones (`opened=true` includes those) and what it already looted this session. Out of combat.
-- `dialogue_advance(max_lines=12)` → click through filler only: a Continue prompt, or one untagged option that commits to nothing. Stops and shows the dialogue at a real choice (2+ options, a [SKILL]/class tag, "attack/give/pay/leave…"), a roll, or the end. Never picks an answer.
+- `dialogue_advance(max_lines=12)` → click through filler only: a Continue prompt, or one untagged option that commits to nothing. Stops and shows the dialogue at a real choice (2+ options, a [SKILL]/class tag, "attack/give/pay/leave…"), a roll, or the end. Never picks an answer. `talk_to`, `choose_dialogue` and any result where a conversation opened already do this, so you rarely call it.
 - `travel_to(marker | objective | waypoint | target | x,y,z, who, wait=false)` → **returns at once**: the trip runs as the first entry of the character's queue, so `queue_actions` appends what to do on arrival (`queue_done`/`queue_interrupted` event at the end; `wait_for("queue")` lists each leg; don't pass `wait=true`). Destination: your marker (`m1` or label words), an objective here (`o1`), a visible id, a point, or a waypoint (= `fast_travel`). Chains walks of ≤30 m along walkable ground, around fire/acid/other harmful surfaces you can see; stops on arrival (≤3 m), when nothing leads further (then `get_frontier`, a door, a jump), after 2 legs without progress, or an interrupt (any damage). Stepping into a surface: it steps out, forward if it can, and goes on. When no clear way leads on it walks around patches, or takes the **shortest crossing** and says what it costs (`crossing 1.5m of Fire (~1-4 dmg + Burning)`), unless HP is too low for the worst case (then heal first). `avoid_hazards`: `auto` (default), `strict` (never cross), `cross` (cross even at low HP; never lava/chasms or >6 m). Out of combat.
-- `regroup(leader, near_m=6, chain=false)` → members farther than `near_m` from the leader walk back, all at once; `chain=true` re-links them. Downed members are listed, not moved.
+- `regroup(leader, near_m=6, chain=true)` → members farther than `near_m` from the leader walk back, all at once, in travel_to legs (any distance), then everyone is chained to the leader. Downed members and members on another level are listed, not moved.
+- Party stays together by default: get_status/look print `PARTY APART: e1 Lae'zel 34m, e3 Gale other level → regroup()` and re-chain a companion that drifted off the group; a companion's own queue re-chains it when it ends; the leader's travel_to waits for (then walks back) a chained member who falls >12 m behind, and stops with `can't keep up` if it can't.
+- `stay(who, on=true)` → leave a companion on purpose (plate, door, lookout): no re-chain, no waiting; `stay(who, on=false)` or `regroup` brings it back.
 - `read_all(who, max_items=6)` → read every book, note and letter in the bags not read yet (remembered across sessions) and return their text. Out of combat.
 - `rest_if_needed(threshold=50, allow_long=false)` → short rest if anyone is downed or ≤ threshold % HP; with `allow_long=true`, camp + long rest when no short rest is left. HP only: judge spell slots yourself.
 

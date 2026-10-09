@@ -290,7 +290,8 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
             lines.append(f"DIALOGUE {sp + ': ' if sp else ''}{H.scrub(str(d['text']))}")
         for o in d.get("options") or []:
             tags = "".join(f"[{t}]" for t in (o.get("tags") or []))
-            lines.append(f"  {o.get('i')}. {tags}{' ' if tags else ''}{H.scrub(str(o.get('text', '')))}")
+            chk = f"  ← {o['check']}" if o.get("check") else ""
+            lines.append(f"  {o.get('i')}. {tags}{' ' if tags else ''}{H.scrub(str(o.get('text', '')))}{chk}")
     r = ui.get("roll")
     if r:
         lines.append("ROLL " + compact(r, H))

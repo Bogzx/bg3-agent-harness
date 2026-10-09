@@ -140,7 +140,8 @@ on them and act at once. Save deep thinking for real decisions.
 
 **Cutscenes are skipped automatically**, and spoken lines are fast-forwarded. Each line still arrives
 as a `dialogue_line` event (speaker: text). Never wait for, watch or screenshot a cutscene: read the
-events, then `get_dialogue` for the options. Answers are never picked for you.
+events. Opening and in-between filler is clicked for you: `talk_to` and `choose_dialogue` results show the
+next real choice directly. Answers are never picked for you.
 
 `session_clock` gives the time left. Results end with a `⏱` clock line in runner sessions, e.g.
 `⏱ 14m left · 11m of play: keep playing until WRAP UP at 3m left`. The minutes left include the wrap-up

@@ -21,6 +21,8 @@ TRAVEL_ARRIVE_M = 3.0
 TRAVEL_MAX_LEGS = 12
 TRAVEL_PROGRESS_M = 1.0  # a leg that gets less than this much closer is a stall
 TRAVEL_STALL_LEGS = 2    # stalls in a row before travel_to gives up (S001 retried in place while burning)
+TRAVEL_LEG_RETRIES = 2   # failed legs per trip that get an alternative leg instead of ending it (S002)
+STEP_INTO_RANGE_M = 3.0  # combat_turn: a cast this far past its range steps in first (S002: 18.6 m vs 18 m)
 REGROUP_NEAR_M = 6.0
 DIALOGUE_MAX = 12
 
@@ -100,7 +102,7 @@ def loot_targets(nearby: dict, start: Any, radius: float, done: set, corpses: bo
     return ordered, skipped
 
 
-def dialogue_filler(d: dict | None) -> tuple[bool, int, str]:
+def dialogue_filler(d: dict | None, strict: bool = False) -> tuple[bool, int, str]:
     """(advance?, option to pick (0 = continue), why not) for the dialogue on screen.
     Advances only when there is no real choice: a continue prompt, or one untagged, enabled, filler-looking
     option. Two or more options, a tagged option (skill check, class, [ATTACK]) or a committing single
@@ -118,6 +120,9 @@ def dialogue_filler(d: dict | None) -> tuple[bool, int, str]:
     text = str(o.get("text") or "").strip()
     if o.get("tags"):
         return False, 0, f"tagged option [{']['.join(o['tags'])}]"
+    if strict and not FILLER.match(text):
+        # The bridge's own autopilot: only a bare Continue/"..."/End; any spoken answer is the agent's to give.
+        return False, 0, f"the only answer is yours to give: '{text[:60]}'"
     if NOT_FILLER.search(text) and not FILLER.match(text):
         return False, 0, f"the only option commits to something: '{text[:60]}'"
     return True, int(o.get("i") or 1), ""
@@ -189,6 +194,29 @@ def hazard_text(h: dict | None) -> str:
 
 def leg_stopped_short(result: Any) -> bool:
     return isinstance(result, dict) and bool(result.get("stopped_short") or result.get("reached") is False)
+
+
+# A walk that failed on the ground itself (not an interrupt, a conversation or the game state): another leg may work.
+_LEG_PATH_FAIL = re.compile(r"no walkable path|could not get closer|path blocked|not reachable|stopped_short|"
+                            r"needs a jump|teleport", re.I)
+_LEG_NOT_PATH = re.compile(r"interrupted|conversation|in combat|dialogue|cancel|downed|dead|timed out", re.I)
+
+
+def leg_retryable(stop_kind: str | None, stopped: str | None, text: str) -> bool:
+    """travel_to: did this leg fail because of where it went (retry with another leg), rather than an
+    interrupt or a state that stops any walk? stop_kind/stopped: the Report's; text: the leg's line."""
+    if stop_kind not in (None, "failed") or (stopped and not str(stopped).endswith(" failed")):
+        return False
+    return bool(_LEG_PATH_FAIL.search(text or "")) and not _LEG_NOT_PATH.search(text or "")
+
+
+_OUT_OF_RANGE = re.compile(r"out of range \(([\d.]+) m, range ([\d.]+) m\)")
+
+
+def range_gap(text: str) -> tuple[float, float] | None:
+    """'target is out of range (18.6 m, range 18.0 m)' -> (18.6, 18.0); None for other failures."""
+    m = _OUT_OF_RANGE.search(text or "")
+    return (float(m.group(1)), float(m.group(2))) if m else None
 
 
 # What walking through a harmful surface costs, roughly (BG3 rules, [wiki]): (what happens, worst damage per

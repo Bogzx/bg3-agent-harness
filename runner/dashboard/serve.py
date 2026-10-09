@@ -15,7 +15,7 @@ Read-only toward the game: only state.status / events.since / sys.info RPCs and 
 share the Mesa layer's single control slot through the file lock in bridge/src/bg3ai/screen.py, and run
 only while someone has the page open.
 
-Endpoints: /  /api/state  /api/feed?after=N  /api/agentlog?after=N&path=ID  /api/screen  /api/latency  /api/progress
+Endpoints: /  /api/state  /api/feed?after=N  /api/agentlog?after=N&path=ID  /api/screen  /api/latency  /api/progress  /api/goals
 """
 
 from __future__ import annotations
@@ -232,6 +232,9 @@ def make_handler(hub: Hub):
                 if url.path == "/api/progress":
                     runner = F.read_json(RUNTIME / "runner.status.json")
                     return self._json(F.progress_payload(RUNTIME, runner))
+                if url.path == "/api/goals":
+                    runner = F.read_json(RUNTIME / "runner.status.json")
+                    return self._json(F.goals_payload(RUNTIME, runner))
                 if url.path == "/api/screen":
                     hub.viewed()
                     with hub.lock:

@@ -68,6 +68,7 @@ class FakeGame:
         self.nearby: dict = {"characters": [], "items": []}
         self.inv: dict = {"items": []}
         self.on_start = None  # hook(op, args)
+        self.sheets: dict[str, dict] = {}  # state.character replies by uuid
 
     def push(self, kind: str, data: Any = None) -> None:
         with self.lock:
@@ -148,6 +149,8 @@ class FakeGame:
                 return {"markers": []}
             if op == "state.nearby":
                 return json.loads(json.dumps(self.nearby))
+            if op == "state.character" and args.get("uuid") in self.sheets:
+                return json.loads(json.dumps(self.sheets[args["uuid"]]))
             if op == "state.inventory":
                 return json.loads(json.dumps(self.inv))
         raise GameError(f"unexpected op {op}")
@@ -566,6 +569,106 @@ class DialogueAdvance(Base):
                          (True, 1))
 
 
+class AutoDialogue(Base):
+    """Fast reflexes: the bridge clicks through opening/follow-up filler itself (never a real answer)."""
+    CHOICE = {"screen": "dialogue", "dialogue": {"text": "Choose.", "options": [
+        {"i": 1, "text": "Yes"}, {"i": 2, "text": "No"}]}}
+
+    def test_talk_to_shows_the_first_real_choice(self):
+        self.g.ui_seq = [{"screen": "game"},
+                         {"screen": "dialogue", "dialogue": {"text": "Hello there.", "continue": True}},
+                         self.CHOICE]
+        out = server.talk_to(self.gob)
+        self.assertEqual([a["i"] for _, a in self.g.ops("ui.dialogue_choose")], [0])
+        self.assertIn("auto-advanced 1 opening filler line(s)", out)
+        self.assertIn("STOPPED: a real choice (2 options)", out)
+        self.assertIn("2. No", out)
+
+    def test_choose_dialogue_clicks_through_following_filler(self):
+        self.g.ui_seq = [{"screen": "dialogue", "dialogue": {"text": "Hm.", "options": [{"i": 1, "text": "..."}]}},
+                         self.CHOICE]
+        out = server.choose_dialogue(2)
+        self.assertEqual([a["i"] for _, a in self.g.ops("ui.dialogue_choose")], [2, 1])
+        self.assertIn("then auto-advanced 1 filler line(s)", out)
+        self.assertIn("STOPPED: a real choice (2 options)", out)
+
+    def test_choose_dialogue_never_picks_a_committing_or_tagged_answer(self):
+        for opt in ({"i": 1, "text": "Let me through.", "tags": ["PERSUASION"]}, {"i": 1, "text": "Attack them."}):
+            self.g.calls.clear()
+            self.g.ui_seq = [{"screen": "dialogue", "dialogue": {"text": "So?", "options": [opt]}}]
+            out = server.choose_dialogue(1)
+            self.assertEqual([a["i"] for _, a in self.g.ops("ui.dialogue_choose")], [1])
+            self.assertNotIn("auto-advanced", out)
+            self.assertIn(opt["text"], out)
+
+    def test_choose_dialogue_end(self):
+        self.g.ui = {"screen": "game"}
+        out = server.choose_dialogue(1)
+        self.assertIn("STOPPED: conversation ended", out)
+
+    def test_plain_interact_adds_nothing_and_stays_quick(self):
+        t = time.monotonic()
+        out = server.interact(self.chest)
+        self.assertLess(time.monotonic() - t, 1.5)
+        self.assertNotIn("DIALOGUE", out)
+        self.assertEqual(self.g.ops("ui.dialogue_choose"), [])
+
+    def test_dialogue_started_event_after_a_walk(self):
+        self.g.push("dialogue_started", {"speakers": [{"name": "Shadowheart"}]})
+        self.g.ui_seq = [self.CHOICE]
+        out = server.wait_for("idle", timeout_s=0.1)
+        self.assertIn("1. Yes", out)
+        self.assertEqual(out.count("1. Yes"), 1)
+        # A result that already shows the dialogue (get_status) is left alone.
+        self.g.push("dialogue_started", {"speakers": [{"name": "Shadowheart"}]})
+        self.assertNotIn("STOPPED", server.get_status())
+
+    def test_ambient_dialogue_event_adds_nothing(self):
+        self.g.push("dialogue_started", {"speakers": [{"name": "Lae'zel"}]})
+        out = server.wait_for("idle", timeout_s=0.1)
+        self.assertNotIn("STOPPED", out)
+
+    def test_autopilot_never_says_a_lone_spoken_answer(self):
+        # dialogue_advance (asked for) may take "Hm."; the bridge's own autopilot leaves any spoken line to the agent.
+        self.g.ui_seq = [{"screen": "dialogue", "dialogue": {"text": "Well?", "options": [{"i": 1, "text": "Hm."}]}}]
+        out = server.choose_dialogue(1)
+        self.assertEqual([a["i"] for _, a in self.g.ops("ui.dialogue_choose")], [1])
+        self.assertIn("the only answer is yours to give: 'Hm.'", out)
+
+    def test_skill_check_options_show_the_speakers_modifier_not_the_dc(self):
+        self.g.sheets = {P1: {"skills": {"Persuasion": 3, "Intimidation": 5, "SleightOfHand": 0},
+                              "abilities": {"str": 17, "wis": 10}},
+                         P2: {"skills": {"Persuasion": 6, "Intimidation": 2}, "abilities": {"str": 16}}}
+        server._sheet_cache.clear()
+        self.g.push("dialogue_started", {"party": [{"uuid": P1, "name": "Claude"}], "speakers": []})
+        server.get_events()
+        self.g.ui = {"screen": "dialogue", "dialogue": {"text": "Halt.", "options": [
+            {"i": 1, "text": "Let me through.", "tags": ["PERSUASION"]},
+            {"i": 2, "text": "Move.", "tags": ["INTIMIDATION"]},
+            {"i": 3, "text": "Shove him.", "tags": ["STRENGTH"]},
+            {"i": 4, "text": "Pray.", "tags": ["CLERIC"]},
+            {"i": 5, "text": "Use the tadpole.", "tags": ["ILLITHID"]},
+            {"i": 6, "text": "Leave."}], "dc": 15}}
+        out = server.get_dialogue()
+        claude, laezel = server.H.get(P1), server.H.get(P2)
+        self.assertIn(f"1. [PERSUASION] Let me through.  ← Persuasion check: {claude} +3 (party best {laezel} +6", out)
+        self.assertIn(f"2. [INTIMIDATION] Move.  ← Intimidation check: {claude} +5", out)
+        self.assertNotIn("party best", out.split("\n")[[i for i, l in enumerate(out.split("\n")) if "2. [" in l][0]])
+        self.assertIn(f"Strength check: {claude} +3", out)
+        self.assertIn("4. [CLERIC] Pray.  ← class/race/background option", out)
+        self.assertIn("tadpole's power", out)
+        self.assertIn("6. Leave.", out)
+        self.assertNotIn("15", out.split("EVENTS")[0].replace("+15", ""))
+
+    def test_off_switch(self):
+        saved, server.AUTO_DIALOGUE = server.AUTO_DIALOGUE, False
+        self.addCleanup(setattr, server, "AUTO_DIALOGUE", saved)
+        self.g.ui_seq = [{"screen": "dialogue", "dialogue": {"text": "Hello there.", "continue": True}}]
+        out = server.talk_to(self.gob)
+        self.assertNotIn("STOPPED", out)
+        self.assertEqual(self.g.ops("ui.dialogue_choose"), [])
+
+
 class TravelTo(Base):
     def setUp(self) -> None:
         super().setUp()
@@ -667,12 +770,19 @@ class TravelTo(Base):
 
 class Regroup(Base):
     def test_far_members_walk_back(self):
+        # Walks back in travel_to legs (S005: one 77 m move_to was refused as too far).
         self.g.watch["party"][1]["pos"] = [20, 0, 0]
+        self.g.reach = {"reachable": True, "pos": [0.0, 0.0, 0.0]}
+
+        def arrive(op, a):
+            if op == "act.move_to" and a.get("char") == P2:
+                self.g.watch["party"][1]["pos"] = list(a["pos"])
+        self.g.on_start = arrive
         out = server.regroup()
         mv = self.g.ops("act.move_to")
-        self.assertEqual((mv[0][1]["char"], mv[0][1]["target"]), (P2, P1))
+        self.assertEqual((mv[0][1]["char"], mv[0][1]["pos"]), (P2, [0.0, 0.0, 0.0]))
         self.assertIn("1 walking", out)
-        self.assertIn("(20m): move_to: done", out)
+        self.assertIn("(20m → 0m): back", out)
 
     def test_nobody_far(self):
         self.assertIn("everyone is within", server.regroup())

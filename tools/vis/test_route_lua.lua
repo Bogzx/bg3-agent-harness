@@ -291,5 +291,40 @@ test("nav.markers objectives share the quest generation (no 2 s re-walk)", funct
     eq(N.MARKER_GEN_TTL_MS >= 10000, true, "long ttl with generations")
 end)
 
+-- ---- travel_to legs: verified ends, alternatives --------------------------------
+
+test("reach_toward: a leg end that fails the exact check is replaced by a verified shorter leg (S002 leg 2)", function()
+    local calls = 0
+    blocked = function(x) -- the 10 m sample passes once (the sampler), then fails (the walker's check)
+        if math.abs(x + 10) < 0.01 then calls = calls + 1; return calls > 1 end
+        return false
+    end
+    local r = RPC.ops["nav.reach_toward"]({ pos = { -20, 0, 0 }, max_m = 10, avoid = "least" })
+    eq(r.reachable, true, "reachable"); eq(r.alt, "shorter", "alt"); eq(r.verified, true, "verified")
+    near(r.pos[1], -5, "half leg"); near(r.replaced[1], -10, "replaced")
+end)
+
+test("reach_toward: a good leg end is verified as is", function()
+    local r = RPC.ops["nav.reach_toward"]({ pos = { -20, 0, 0 }, max_m = 10, avoid = "least" })
+    eq(r.verified, true, "verified"); eq(r.alt, nil, "no alt"); near(r.pos[1], -10, "full leg")
+end)
+
+test("reach_toward alt=true after a failed walk: a leg along the engine's route, away from the failed end", function()
+    local goal = { -20, 0, 0 }
+    nodesFor = function(_, t)
+        if t[1] == goal[1] and t[3] == goal[3] then return { { 0, 0, 5 }, { -20, 0, 5 }, goal } end
+        return { t }
+    end
+    local r = RPC.ops["nav.reach_toward"]({ pos = goal, max_m = 10, avoid = "least", alt = true, exclude = { -10, 0, 0 } })
+    eq(r.reachable, true, "reachable"); eq(r.alt, "route", "alt")
+    near(r.pos[1], -5, "x along the route"); near(r.pos[3], 5, "z along the route")
+end)
+
+test("reach_toward alt=true: no other verified leg -> not reachable, alt_failed", function()
+    blocked = function(x) return x < -0.5 end
+    local r = RPC.ops["nav.reach_toward"]({ pos = { -20, 0, 0 }, max_m = 10, avoid = "least", alt = true, exclude = { -10, 0, 0 } })
+    eq(r.reachable, false, "reachable"); eq(r.alt_failed, true, "alt_failed")
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

@@ -257,5 +257,55 @@ class ProgressFeedTest(TmpCase):
         self.assertEqual(ended["minutes"], 15.0)
 
 
+class GoalsTest(TmpCase):
+    """/api/goals: per-session scorecard from Sxxx.latency.json / .progress.json, live and stub sessions."""
+
+    def setUp(self):
+        super().setUp()
+        self.d = self.tmp / "sessions" / "pt"
+        self.d.mkdir(parents=True)
+        lat = {"start": 1000.0, "end": 1840.0, "minutes": 14.0, "apm": 10.3, "actions": 140, "busy_pct": 61.0,
+               "pipelining_pct": 35.0, "targets": {
+                   "median_idle_explore_s": {"value": 1.6, "target": 2.0, "pass": True},
+                   "long_gaps_non_dialogue": {"value": 4, "target": 0, "pass": False},
+                   "bridge_rt_median_ms": {"value": 94.0, "target": 100.0, "pass": True}}}
+        (self.d / "S001.latency.json").write_text(json.dumps(lat))
+        (self.d / "S001.progress.json").write_text(json.dumps({"minutes": 14.0, "points": 70, "per_hour": 300.0}))
+        (self.d / "S001.progress.jsonl").write_text(json.dumps(
+            {"type": "progress", "t": 1500, "kind": "quest_done", "what": "Escape the Nautiloid", "points": 10}) + "\n")
+        (self.d / "S002.metrics.jsonl").write_text("")                       # a runner-restart stub
+        (self.d / "S003.progress.jsonl").write_text(json.dumps(              # live, no summaries yet
+            {"type": "progress", "t": 2950, "kind": "area", "what": "Campsite", "points": 3}) + "\n")
+        (self.d / "S003-r1.progress.jsonl").write_text("")
+        (self.d / "S003-fix.metrics.jsonl").write_text("")                  # not a play session
+        (self.d / "progress_state.json").write_text(json.dumps(
+            {"regions": ["Nautiloid", "Wilderness"], "areas": ["Wilderness|Campsite"], "levels": {"Claude": 1}}))
+
+    def test_scorecard(self):
+        st = {"playthrough": "pt", "session": "S003", "started": 2900.0, "session_ended": None}
+        g = F.goals_payload(self.tmp, st, now=3500.0)
+        self.assertEqual([s["session"] for s in g["sessions"]], ["S001", "S002", "S003", "S003-r1"])
+        s1, s2, s3 = g["sessions"][:3]
+        self.assertEqual(s1["values"], {"idle": 1.6, "gaps": 4, "rt": 94.0, "apm": 10.3, "busy": 61.0,
+                                        "pipe": 35.0, "pts": 300.0})
+        self.assertEqual(s1["pass"], {"idle": True, "gaps": False, "rt": True, "apm": True, "busy": True,
+                                      "pipe": True, "pts": True})
+        self.assertEqual((s1["passed"], s1["judged"]), (6, 7))
+        self.assertTrue(s2["short"])
+        self.assertTrue(s3["live"])
+        self.assertEqual(s3["values"]["pts"], 18.0)                        # 3 points in 10 live minutes
+        goals = {x["key"]: x for x in g["goals"]}
+        self.assertEqual(goals["gaps"]["pass_rate"], 0)                     # only S001 counts (S002 stub, S003 live)
+        self.assertEqual(goals["pts"]["series"][:3], [300.0, None, 18.0])
+        ms = g["milestones"]
+        self.assertIn("First camp", ms["line"])
+        nx = {i["id"]: i["session"] for i in ms["items"] if i["reached"]}
+        self.assertEqual(nx["nautiloid_escaped"], "S001")
+        self.assertEqual(nx["first_camp"], "S003")
+
+    def test_no_playthrough(self):
+        self.assertEqual(F.goals_payload(self.tmp, {}, now=1.0)["sessions"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

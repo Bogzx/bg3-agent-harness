@@ -31,7 +31,7 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -71,6 +71,8 @@ HEALTH_FAILURES = 3            # consecutive failed evals → hung
 EVAL_TIMEOUT = 15
 STUCK_SESSIONS = 2
 MAX_QUICK_FAILURES = 3         # claude exiting within a minute this many times in a row → give up
+MAX_RESUMES = 3                # game crashes per session that resume the same claude conversation
+RESUME_MIN_MINUTES = 8         # less than this left after a crash: end the session, the next one picks up
 MAX_SETUP_FAILURES = 5         # game launch/load failing this many times in a row → give up
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # Flags for every playing session. Keep the cacheable prefix (system prompt + tool schemas) byte-identical
@@ -308,6 +310,15 @@ def build_kickoff(sid: str, playthrough: str, deadline: float, loaded_save: str 
     for note in notes:
         lines.append(note)
     return "\n\n".join(lines)
+
+
+def resume_prompt(why: str, deadline: float, notes: list[str]) -> str:
+    """The message that resumes a session's claude conversation after the runner recovered a crashed game."""
+    end = datetime.fromtimestamp(deadline).strftime("%H:%M")
+    lines = [f"RUNNER: the game {why}. The runner relaunched it and loaded the latest save; the same session "
+             f"continues (deadline still {end}). Call get_status first: anything after that save is lost, so redo it "
+             "and note the crash in the session log in one line. Then keep playing following CLAUDE.md."]
+    return "\n\n".join(lines + notes)
 
 
 def new_game_note(owner: str) -> str:
@@ -757,6 +768,7 @@ class Runner:
         log(f"launching game: {' '.join(args)}")
         self.game_proc = subprocess.Popen(args, stdout=logf, stderr=subprocess.STDOUT,
                                           stdin=subprocess.DEVNULL, start_new_session=True)
+        logf.close()  # the game has its own copy of the descriptor
         self.state["game"] = {"pgid": self.game_proc.pid, "launched": time.time(), "load": load_folder}
         self.state["mod_hashes"] = mod_tree_hashes()  # a fresh game loads the mod as it is now
         write_status(game_pgid=self.game_proc.pid)
@@ -1320,14 +1332,33 @@ class Runner:
         res = self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))
         if res.reason == "dry_run":
             return res
+        session_start, session_end = res.started, res.started + minutes * 60
 
-        crashed = res.reason in ("crash", "hang")
-        if crashed:
+        # Game crash or hang mid-session: relaunch, load the latest save, and resume the SAME claude conversation
+        # for the time left (an hour-long session that crashes at minute 10 keeps its context and its 50 min).
+        resumes = 0
+        while res.reason in ("crash", "hang"):
+            why = "crashed" if res.reason == "crash" else "stopped responding"
             try:
-                self.recover("crashed" if res.reason == "crash" else "stopped responding")
+                self.recover(why)
             except (RuntimeError, OSError, TimeoutError) as e:
                 log(f"recovery after {sid} failed: {e}; the next session setup retries")
-        else:
+                break
+            left = (session_end - time.time()) / 60
+            if (resumes >= MAX_RESUMES or left < RESUME_MIN_MINUTES or self.abort or self.stop_requested
+                    or (RUNTIME / "STOP").exists()):
+                log(f"{sid}: not resuming after the {res.reason} ({left:.0f} min left, {resumes} resume(s) so far); "
+                    "the next session picks up")
+                break
+            resumes += 1
+            notes = list(self.pending_notes)
+            self.pending_notes.clear()
+            log(f"{sid}: resuming claude after the {res.reason} ({left:.0f} min left, resume {resumes})")
+            res = self.run_claude(sid, resume_prompt(why, session_end, notes), left, res.claude_session,
+                                  resume=True, tag=f"-r{resumes}")
+        crashed = res.reason in ("crash", "hang")
+        res = replace(res, started=session_start)
+        if not crashed:
             self.ensure_save(res.started)
         self.close_memory_session(res)
         end_sig = read_progress()
@@ -1337,7 +1368,7 @@ class Runner:
             "model": res.model, "effort": res.effort,
             "minutes": round((res.ended - res.started) / 60, 1), "start_sig": start_sig, "end_sig": end_sig,
             "progress": None if crashed else made_progress(start_sig, end_sig),
-            "started_at_game_over": screen == "game_over",
+            "started_at_game_over": screen == "game_over", "resumes": resumes,
             "story_points": story_points(self.state.dir / f"{sid}.progress.json"),
         }
         early = early_exit_minutes(res.reason, res.started, res.ended, minutes)

@@ -20,7 +20,7 @@ from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import actq, delta, macros, metrics, render, saves, turn
+from . import actq, delta, macros, metrics, party, render, saves, turn
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -156,8 +156,96 @@ def _events_text() -> str:
         except GameError:
             continue
         if evs:
+            _note_dialogue_speaker(evs)
             parts.append(render.render_events(evs, H))
     return "\n".join(p for p in parts if p)
+
+
+# ---- skill checks in dialogue: each tagged option shows the check and the speaker's own modifier ----------
+# Fair: the player sees the tag on the answer and the bonuses on the character sheet; the DC is only shown on
+# the roll screen after picking, so it is never added here.
+_dlg = {"speaker": None}  # party member in the current conversation (from the last dialogue_started event)
+_sheet_cache: dict[str, tuple[float, dict]] = {}
+SHEET_TTL_S = 120.0
+_ABILITY_TAGS = {"strength": "str", "dexterity": "dex", "constitution": "con", "intelligence": "int",
+                 "wisdom": "wis", "charisma": "cha"}
+_TAG_NOTES = {"illithid": "uses the tadpole's power (story consequences)"}
+
+
+def _note_dialogue_speaker(evs: list) -> None:
+    for e in evs:
+        if not isinstance(e, dict) or e.get("kind") != "dialogue_started":
+            continue
+        d = e.get("data") or {}
+        if d.get("automated"):
+            continue
+        party = [p.get("uuid") if isinstance(p, dict) else p for p in d.get("party") or []]
+        if party and party[0]:
+            _dlg["speaker"] = party[0]
+
+
+def _sheet(uuid: str) -> dict:
+    hit = _sheet_cache.get(uuid)
+    if hit and time.monotonic() - hit[0] < SHEET_TTL_S:
+        return hit[1]
+    c = game.try_rpc("state.character", {"uuid": uuid, "sections": ["abilities"]}) or {}
+    _sheet_cache[uuid] = (time.monotonic(), c if isinstance(c, dict) else {})
+    return _sheet_cache[uuid][1]
+
+
+def _check_mod(sheet: dict, tag: str) -> int | None:
+    key = re.sub(r"[^a-z]", "", tag.lower())
+    for name, v in (sheet.get("skills") or {}).items():
+        if re.sub(r"[^a-z]", "", str(name).lower()) == key and isinstance(v, (int, float)):
+            return int(v)
+    ab = _ABILITY_TAGS.get(key)
+    score = (sheet.get("abilities") or {}).get(ab) if ab else None
+    return (int(score) - 10) // 2 if isinstance(score, (int, float)) else None
+
+
+def _signed(v: int) -> str:
+    return f"+{v}" if v >= 0 else str(v)
+
+
+def _annotate_checks(ui: dict) -> dict:
+    """Add 'check' to each tagged dialogue option: 'Persuasion: Claude +5 (party best: Shadowheart +6)'."""
+    d = ui.get("dialogue") if isinstance(ui, dict) else None
+    opts = [o for o in (d or {}).get("options") or [] if isinstance(o, dict) and o.get("tags")]
+    if not opts:
+        return ui
+    try:
+        party = sorted(_party_set() - {None})
+        speaker = _dlg["speaker"] if _dlg["speaker"] in party else (game.try_rpc("state.status") or {}).get("active")
+    except GameError:
+        return ui
+    for o in opts:
+        notes = []
+        for t in o["tags"]:
+            key = re.sub(r"[^a-z]", "", str(t).lower())
+            if key in _TAG_NOTES:
+                notes.append(_TAG_NOTES[key])
+                continue
+            mods = {u: _check_mod(_sheet(u), str(t)) for u in party}
+            mine = mods.get(speaker)
+            if mine is None and all(v is None for v in mods.values()):
+                notes.append("class/race/background option")
+                continue
+            name = str(t).title()
+            txt = f"{name} check: {H.get(speaker) if speaker else '?'} {_signed(mine) if mine is not None else '?'}"
+            best = max(((v, u) for u, v in mods.items() if v is not None), default=None)
+            if best and best[1] != speaker and (mine is None or best[0] > mine):
+                txt += f" (party best {H.get(best[1])} {_signed(best[0])}: they can start the next talk)"
+            notes.append(txt)
+        o["check"] = "; ".join(notes)
+    return ui
+
+
+def _render_ui(ui: dict, brief: bool = False) -> list[str]:
+    try:
+        ui = _annotate_checks(ui)
+    except Exception:  # best effort: a missing sheet never hides the dialogue itself
+        pass
+    return render.render_ui(ui, H, brief=brief)
 
 
 class _BatchState(threading.local):
@@ -200,6 +288,12 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
         ev = _events_text()
         if ev:
             out.append(ev)
+        auto = _auto_dialogue(tool, body, ev)
+        if auto:
+            out.append(auto)
+            ev = _events_text()
+            if ev:
+                out.append(ev)
     if "RUNNING " not in body:  # what still runs, so the agent appends (queue_actions) instead of waiting
         try:
             out.append(_running_text())
@@ -220,6 +314,36 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
     else:
         _pace["calls_since"] += 1
     return text
+
+
+# Tools after which the bridge does not open-and-advance a conversation by itself (they handle dialogue).
+_NO_AUTO_DIALOGUE = {"dialogue_advance", "choose_dialogue", "get_dialogue", "roll_check", "react", "screenshot",
+                     "zoom", "session_clock", "end_combat_report"}
+
+
+def _auto_dialogue(tool: str, body: str, ev: str) -> str:
+    """When this call opened a conversation (talk_to done, an interact that starts one, or a dialogue_started
+    event), click through its opening filler and show the first real choice now: saves the get_dialogue +
+    dialogue_advance turns the agent spent on every conversation (S002/S003). Filler only, never an answer."""
+    if not AUTO_DIALOGUE or tool in _NO_AUTO_DIALOGUE or "DIALOGUE " in body:
+        return ""
+    head = body.lstrip().split("\n", 1)[0]
+    if tool == "talk_to" and head.startswith("talk_to: done"):
+        open_s = 2.5  # the conversation is expected; it may take a moment to open
+    elif "dialogue_started" in ev:
+        open_s = 0.5
+    elif tool == "interact" and head.startswith("interact: done"):
+        open_s = 0.6  # a console/book/pod may open a dialogue right after the use
+    else:
+        return ""
+    try:
+        n, lines, stop = _dialogue_autopilot(open_s=open_s)
+    except GameError:
+        return ""
+    if n == 0 and stop == "conversation ended":
+        return ""  # no dialogue on screen (ambient banter, a plain door): nothing to add
+    return "\n".join(([f"auto-advanced {n} opening filler line(s):"] if n else []) + lines
+                     + ([f"STOPPED: {stop}"] if stop else []))
 
 
 def _next_walk_hint() -> str:
@@ -406,7 +530,7 @@ def _delta_body(lines: list[str], ui: dict | None = None) -> str:
     """Delta view text. A prompt still on screen (unchanged, so not in the diff) gets a one-line reminder."""
     body = "\n".join(lines) if lines else "No change since your last look (full=true shows everything)."
     open_ = [k for k in ("dialogue", "roll", "reaction", "popup", "container") if (ui or {}).get(k)]
-    if open_ and not set(render.render_ui(ui, H, brief=True)) & set(lines):
+    if open_ and not set(_render_ui(ui, brief=True)) & set(lines):
         body += f"\n({'/'.join(open_).upper()} still open, unchanged; full=true repeats it)"
     return body
 
@@ -430,7 +554,7 @@ def get_status(full: bool = False) -> str:
         gs = game.game_state()
         body = f"No game session loaded (game state: {gs})."
         if ui:
-            body += "\n" + "\n".join(render.render_ui(ui, H))
+            body += "\n" + "\n".join(_render_ui(ui))
         return _finish("get_status", {}, body, t0, events=False)
     _remember_names(st)
     sub = (ui or {}).get("region")
@@ -450,6 +574,9 @@ def get_status(full: bool = False) -> str:
             body += "\n" + "\n".join(obj)
     else:
         body = _delta_body(lines, ui)
+    apart = _party_check(st)
+    if apart:
+        body += "\n" + apart
     return _finish("get_status", {"full": full}, body, t0)
 
 
@@ -482,7 +609,67 @@ def look(full: bool = False) -> str:
         hz = _hazard_lines(got.get("hazards"))
     if hz:
         body += "\n" + "\n".join(hz)
+    apart = _party_check(st)
+    if apart:
+        body += "\n" + apart
     return _finish("look", {"full": full}, body, t0)
+
+
+_stay: set[str] = set()  # companions told to stay (stay tool): no re-chain, no PARTY APART nag, nobody waits
+
+
+def _member_busy(u: str) -> bool:
+    """A companion in the middle of its own queue or walk (re-chaining it now would cut that short)."""
+    return _queues().busy(u) or any(info.get("char") == u for info in list(_async.values()))
+
+
+def _rechain(members: list[str], leader: str) -> list[str]:
+    """Attach members back to the leader's group (act.chain); the ones that took."""
+    ok = []
+    for u in members:
+        r = game.run_job("act.chain", {"char": u, "leader": leader}, wait_s=3)
+        if r.status == "done" or "already chained" in str(r.error or ""):
+            ok.append(u)
+    return ok
+
+
+def _party_check(st: dict | None, rechain: bool = True) -> str:
+    """get_status/look: re-chain companions that drifted off the leader's group (unless told to stay, busy,
+    or in combat/dialogue), then the PARTY APART line ('' when everyone is together)."""
+    if not isinstance(st, dict):
+        return ""
+    try:
+        rows = party.apart(st, stay=_stay)
+        if rechain and rows and not st.get("in_combat") and not st.get("in_dialogue") and st.get("active"):
+            done = set(_rechain(party.rechain_candidates(rows, _member_busy), st["active"]))
+            for r in rows:
+                if r["uuid"] in done:
+                    r["unchained"] = False
+            rows = [r for r in rows if r["unchained"] or r["other_level"]
+                    or (r["dist"] is not None and r["dist"] > party.APART_M)]
+            if done:
+                return (party.apart_line(rows, _label) + "\n" if rows else "") + \
+                    "re-chained to " + _label(st["active"]) + ": " + ", ".join(_label(u) for u in done)
+        return party.apart_line(rows, _label)
+    except (GameError, ValueError, TypeError):
+        return ""
+
+
+@mcp.tool()
+@_guard
+def stay(who: str, on: bool = True) -> str:
+    """Keep a companion where it is on purpose (guarding a door, standing on a plate): it is not re-chained to the leader, PARTY APART only notes it as staying, and the leader's travel_to doesn't wait for it. on=false (or regroup) brings it back into the group. Every other companion is chained to the leader by default and re-chained after it moved on its own."""
+    t0 = time.monotonic()
+    u = _uuid(who)
+    if on:
+        _stay.add(u)
+        game.try_rpc("act.unchain", {"char": u})  # a chained member would follow the leader's next walk
+        return _finish("stay", {"who": who}, f"{_label(u)} stays put (stay(who, on=false) or regroup brings it back)", t0)
+    _stay.discard(u)
+    st = game.try_rpc("state.status") or {}
+    lead = st.get("active")
+    took = _rechain([u], lead) if lead and lead != u else []
+    return _finish("stay", {"who": who}, f"{_label(u)} " + (f"re-chained to {_label(lead)}" if took else "no longer staying"), t0)
 
 
 _hazards_seen: dict = {"sig": None}
@@ -796,10 +983,10 @@ def get_combat_state() -> str:
 @mcp.tool()
 @_guard
 def get_dialogue() -> str:
-    """The current dialogue line and numbered answer options (with skill-check tags), or the roll/reaction/popup on screen."""
+    """The current dialogue line and numbered answer options. A tagged option also shows its check and your speaker's bonus (plus the party's best), never the DC. Or the roll/reaction/popup on screen."""
     t0 = time.monotonic()
     ui = game.rpc("ui.state", context="client")
-    lines = render.render_ui(ui, H)
+    lines = _render_ui(ui)
     return _finish("get_dialogue", {}, "\n".join(lines) or f"No dialogue on screen (screen={ui.get('screen')}).", t0)
 
 
@@ -955,7 +1142,7 @@ def _act_click_roll(tool: str, op: str, args: dict) -> str:
     if _batch["last"] == "done" and not _batch["active"]:
         ui = game.try_rpc("ui.state", context="client") or {}
         if ui.get("roll"):
-            out += "\n" + "\n".join(render.render_ui(ui, H))
+            out += "\n" + "\n".join(_render_ui(ui))
     return out
 
 
@@ -983,7 +1170,7 @@ def loot(take: str = "all", who: str | None = None) -> str:
 @mcp.tool()
 @_guard
 def talk_to(npc: str, who: str | None = None, wait: bool = True) -> str:
-    """Walk up to a visible character (follows them if they move) and start a conversation. Then use get_dialogue / choose_dialogue."""
+    """Walk up to a visible character (follows them if they move) and start a conversation. The result already shows the dialogue at its first real choice (opening filler clicked through); answer with choose_dialogue."""
     return _act("talk_to", "act.talk", {"char": _who(who), "npc": _uuid(npc)}, wait_s=30, wait=wait)
 
 
@@ -1058,12 +1245,20 @@ def camp(action: str = "go") -> str:
 @mcp.tool()
 @_guard
 def choose_dialogue(option: int) -> str:
-    """Pick dialogue answer number `option` (as numbered by get_dialogue). Returns the next line/options."""
+    """Pick dialogue answer number `option` (as numbered in the last DIALOGUE shown). Then clicks through any filler that follows (Continue, a single non-committing line) and returns the next real choice, roll, or the end. Never picks a real answer for you."""
     t0 = time.monotonic()
     r = game.run_job("ui.dialogue_choose", {"i": option}, context="client", wait_s=20)
+    if AUTO_DIALOGUE and r.status == "done" and not _batch["active"]:
+        # Fast reflexes: click through the filler that follows the answer here and show the next real
+        # choice, instead of a dialogue_advance / get_dialogue round trip per line (S002/S003).
+        n, lines, stop = _dialogue_autopilot(open_s=0.3)
+        body = "\n".join([_job_text("choose_dialogue", r)]
+                         + ([f"then auto-advanced {n} filler line(s):"] if n else []) + lines
+                         + ([f"STOPPED: {stop}"] if stop else []))
+        return _finish("choose_dialogue", {"option": option}, body, t0)
     time.sleep(0.3)
     ui = game.try_rpc("ui.state", context="client") or {}
-    body = _job_text("choose_dialogue", r) + "\n" + "\n".join(render.render_ui(ui, H))
+    body = _job_text("choose_dialogue", r) + "\n" + "\n".join(_render_ui(ui))
     return _finish("choose_dialogue", {"option": option}, body, t0)
 
 
@@ -1179,7 +1374,7 @@ def _wait_for_party_turn(max_s: float) -> str:
         ui = game.try_rpc("ui.state", context="client") or {}
         if ui.get("screen") in _PROMPT_SCREENS:
             _batch["last"] = "interrupted"
-            return f"waiting stopped: {ui.get('screen')} on screen\n" + "\n".join(render.render_ui(ui, H))
+            return f"waiting stopped: {ui.get('screen')} on screen\n" + "\n".join(_render_ui(ui))
         if time.monotonic() > deadline:
             _batch["last"] = "interrupted"
             return "other combatants are still acting (use wait or get_combat_state)"
@@ -1582,12 +1777,12 @@ def wait_for(target: str = "idle", timeout_s: float = 15.0) -> str:
             scr = ui.get("screen") if isinstance(ui, dict) else None
             if scr == "dialogue" and "dialogue_started" in low:
                 # Already open (its event went out in an earlier result): live S002 waited the full 5 s here.
-                body = "dialogue open\n" + "\n".join(render.render_ui(ui, H))
+                body = "dialogue open\n" + "\n".join(_render_ui(ui))
                 break
             if screen0 is None:
                 screen0 = scr
             elif scr in _PROMPT_SCREENS_WAIT and scr != screen0:
-                body = f"stopped waiting: {scr} on screen\n" + "\n".join(render.render_ui(ui, H))
+                body = f"stopped waiting: {scr} on screen\n" + "\n".join(_render_ui(ui))
                 break
         if now > deadline:
             body = f"still waiting for {tgt} after {render.num(round(timeout_s, 1))}s" + (
@@ -1722,6 +1917,23 @@ def _on_queue_report(who: str, rep: actq.Report) -> None:
     try:
         _watch_conn().rpc("act.note", {"kind": kind, "data": data})
     except GameError:
+        pass
+    if who not in _stay:
+        _rechain_after(who)
+
+
+def _rechain_after(who: str) -> None:
+    """A companion's own queue ended (walked, interacted, came back from regroup): chain it back to the
+    leader so the next walk takes it along (S005: an unchained Shadowheart stayed 77 m behind)."""
+    try:
+        st = game.try_rpc("state.status") or {}
+        lead = st.get("active")
+        if not lead or lead == who or st.get("in_combat") or st.get("in_dialogue"):
+            return
+        row = next((r for r in st.get("party") or [] if r.get("uuid") == who), None)
+        if row and row.get("chained") is False and not row.get("dead") and not row.get("downed"):
+            _rechain([who], lead)
+    except (GameError, ValueError, TypeError):
         pass
 
 
@@ -2029,6 +2241,13 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
         rep, text = _run_one(watcher, who, alt.step)
         text = _outcome(alt.step, text)
         _after(rep, after)
+        if not rep.done and rep.stop_kind in (None, "failed"):
+            step_in = _step_into_range(who, alt.step, text, watcher, after)
+            if step_in:
+                tried.append(f"{text} → {step_in}")
+                rep, text = _run_one(watcher, who, alt.step)
+                text = _outcome(alt.step, text)
+                _after(rep, after)
         if rep.done:
             lines.append(f"{name}: " + " → ".join(tried + [text]))
             return "ok", alt.then_move
@@ -2043,6 +2262,33 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
     if alts:
         lines.append(f"{name}: " + " → ".join(tried) + (" (no alternative worked)" if len(alts) > 1 else ""))
     return "none", False
+
+
+def _step_into_range(who: str, step: actq.Step, text: str, watcher: actq.Watcher, after: dict) -> str:
+    """combat_turn: a cast just out of range (S002: Sacred Flame at 18.6 m, range 18 m) walks into range
+    along the real route when the movement left covers it; the caller then casts again. Returns what it
+    did ('stepped 0.9m into range'), or '' (not a range failure, too far, no route, not enough movement)."""
+    gap = macros.range_gap(text) if step.tool == "use_ability" else None
+    if not gap or gap[0] - gap[1] > macros.STEP_INTO_RANGE_M:
+        return ""
+    a = step.args
+    args: dict = {"char": who, "within": max(0.5, gap[1] - 0.3), "avoid": True}
+    if a.get("target"):
+        try:
+            args["target"] = _uuid(str(a["target"]))
+        except ValueError:
+            return ""
+    elif all(a.get(k) is not None for k in "xyz"):
+        args["pos"] = [float(a[k]) for k in "xyz"]
+    else:
+        return ""
+    ap = game.try_rpc("nav.approach", args)  # budget: the movement left (the op's default in combat)
+    if not (isinstance(ap, dict) and ap.get("reachable") and ap.get("limit") == "in_range" and ap.get("pos")):
+        return ""
+    x, y, z = ap["pos"]
+    rep, _text = _run_one(watcher, who, actq.Step("move_to", {"x": x, "y": y, "z": z}))
+    _after(rep, after)
+    return f"stepped {render.num(ap.get('walk_m', '?'))}m into range" if rep.done else ""
 
 
 AUTO_RANGED = ("Projectile_MainHandAttack", "Projectile_OffhandAttack")
@@ -2280,16 +2526,27 @@ def loot_area(radius: float = macros.LOOT_RADIUS, who: str | None = None, corpse
     return _macro_finish("loot_area", {"radius": radius}, [head] + lines, stop, left, t0)
 
 
-@mcp.tool()
-@_guard
-def dialogue_advance(max_lines: int = macros.DIALOGUE_MAX) -> str:
-    """Click through FILLER dialogue lines only (a Continue prompt, or a single untagged option that commits to nothing). Stops and shows the dialogue at the first real choice (2+ options, a skill/class tag, a committing option), a roll, a reaction, a popup, or when the conversation ends. Never picks an answer for you."""
-    t0 = time.monotonic()
+# A voiced or cinematic line still playing: wait this long for the next prompt before handing back (every return
+# here costs a model turn; S003's Helm cinematic took 6 empty advance/wait turns at the old 8 s).
+DIALOGUE_LINE_WAIT_S = float(os.environ.get("BG3AI_DIALOGUE_LINE_WAIT_S", "15"))
+# Autopilot (fast reflexes): the bridge clicks through filler itself after choose_dialogue and when a
+# conversation opens, so the agent sees the next real choice at once. BG3AI_AUTO_DIALOGUE=0 turns it off.
+AUTO_DIALOGUE = os.environ.get("BG3AI_AUTO_DIALOGUE", "1") != "0"
+
+
+def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.5,
+                        line_s: float | None = None, strict: bool = True) -> tuple[int, list[str], str | None]:
+    """Click through FILLER only (macros.dialogue_filler: a Continue prompt or one untagged, non-committing
+    option) until a real choice, a roll/reaction/popup, or the end. Returns (lines advanced, report lines,
+    stop reason). open_s: how long a dialogue that is still opening may take to appear. strict (the bridge's
+    own autopilot): only a Continue prompt or a bare "..."/Continue/End option, never a spoken answer, even
+    the only one; dialogue_advance (the agent asked for it) also takes a single plain non-committing answer."""
+    line_s = DIALOGUE_LINE_WAIT_S if line_s is None else line_s
     lines: list[str] = []
     stop = None
     n = 0
-    wait_until = time.monotonic() + 8.0  # a voiced line that is still playing
-    open_until = time.monotonic() + 2.5  # called right after talk_to/interact: the dialogue may still be opening
+    wait_until = time.monotonic() + line_s
+    open_until = time.monotonic() + open_s
     while n < max(1, min(int(max_lines), 30)):
         ui = game.try_rpc("ui.state", context="client") or {}
         scr = ui.get("screen")
@@ -2299,15 +2556,15 @@ def dialogue_advance(max_lines: int = macros.DIALOGUE_MAX) -> str:
         if scr != "dialogue":
             stop = "conversation ended" if scr in (None, "game") else f"{scr} on screen"
             if scr not in (None, "game"):
-                lines.extend(render.render_ui(ui, H, brief=True))
+                lines.extend(_render_ui(ui, brief=True))
             break
-        ok, i, why = macros.dialogue_filler(ui.get("dialogue"))
+        ok, i, why = macros.dialogue_filler(ui.get("dialogue"), strict=strict)
         if not ok:
             if why in ("line still playing", "no options yet") and time.monotonic() < wait_until:
                 time.sleep(0.3)
                 continue
             stop = why
-            lines.extend(render.render_ui(ui, H, brief=True))
+            lines.extend(_render_ui(ui, brief=True))
             break
         said = (ui.get("dialogue") or {}).get("text")
         r = game.run_job("ui.dialogue_choose", {"i": i}, context="client", wait_s=20)
@@ -2318,10 +2575,19 @@ def dialogue_advance(max_lines: int = macros.DIALOGUE_MAX) -> str:
         if r.status != "done":
             stop = "could not advance"
             break
-        wait_until = time.monotonic() + 8.0
+        wait_until = time.monotonic() + line_s
         time.sleep(0.2)
     else:
         stop = f"advanced {n} lines (max_lines)"
+    return n, lines, stop
+
+
+@mcp.tool()
+@_guard
+def dialogue_advance(max_lines: int = macros.DIALOGUE_MAX) -> str:
+    """Click through FILLER dialogue lines only (a Continue prompt, or a single untagged option that commits to nothing). Stops and shows the dialogue at the first real choice (2+ options, a skill/class tag, a committing option), a roll, a reaction, a popup, or when the conversation ends. Never picks an answer for you. Rarely needed: choose_dialogue and talk_to already do this."""
+    t0 = time.monotonic()
+    n, lines, stop = _dialogue_autopilot(max_lines, strict=False)
     head = f"dialogue_advance: {n} filler line(s)"
     body = [head] + lines + ([f"STOPPED: {stop}"] if stop else [])
     return _finish("dialogue_advance", {"max_lines": max_lines}, "\n".join(body), t0)
@@ -2370,7 +2636,7 @@ def _escape_surface(char: str, toward: list | None = None) -> str | None:
 def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target: str = "",
               x: float | None = None, y: float | None = None, z: float | None = None, who: str | None = None,
               wait: bool = False, avoid_hazards: str = "auto") -> str:
-    """Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Chains walks of up to 30 m along walkable ground toward it, around harmful surfaces you can see (fire, acid, ...); stops on arrival (within 3 m), when no walkable ground leads further, after 2 legs without progress, or at the first interrupt (combat, conversation, prompt, new hostile, any damage). Stepping into a surface: it steps out (forward if it can) and goes on.
+    """Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Chains walks of up to 30 m along walkable ground toward it, around harmful surfaces you can see (fire, acid, ...); a leg that fails on the ground (no path, blocked) is retried another way (along the route, or shorter; twice per trip); stops on arrival (within 3 m), when no walkable ground leads further, after 2 legs without progress, or at the first interrupt (combat, conversation, prompt, new hostile, any damage). Stepping into a surface: it steps out (forward if it can) and goes on.
     avoid_hazards: auto (default) = when no clear way leads on, it takes the shortest crossing (says e.g. 'crossing 1.5m of Fire (~1-4 dmg + Burning)') unless HP is too low for the worst case; strict = never crosses; cross = crosses even at low HP (never lava/chasms, never >6 m).
     Returns within ~1 s with live progress (m left, ETA), or the outcome if the trip already ended: the trip runs as the first entry of the character's action queue, so queue_actions appends what to do on arrival while you observe and plan. Every later result shows it RUNNING, then queue_done or queue_interrupted (why). wait is ignored (the trip never blocks)."""
     t0 = time.monotonic()
@@ -2393,6 +2659,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
     hp = [me.get("hp"), me.get("max_hp")]
     start_d = macros.dist(here, dest)
     lines = [f"travel_to {what}: {render.num(round(start_d, 1))}m"]
+    crew = _trip_crew(char, lines)  # the leader's trip takes the party along (None: a companion's own trip)
     # travel_to deals with surfaces and damage itself (steps out, crosses on purpose, its own watcher stops on
     # other damage): the queue running it must not stop the trip on them.
     outer_w = outer.watcher if outer is not None else None
@@ -2414,6 +2681,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
         watcher.baseline()
         prog = macros.TravelProgress(here, dest)
         stop = None
+        retries, failed_end = 0, None  # a failed leg gets an alternative leg (S002: one failed leg ended the trip)
         for leg in range(1, macros.TRAVEL_MAX_LEGS + 1):
             d = macros.dist(here, dest)
             if outer is not None and (outer.interrupt or outer.stop.is_set()):
@@ -2425,6 +2693,8 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             args = {"char": char, "pos": dest, "max_m": min(macros.TRAVEL_LEG_M, d)}
             if policy != "strict":
                 args["avoid"] = "least"
+            if failed_end is not None:
+                args.update(alt=True, exclude=failed_end)
             r = game.try_rpc("nav.reach_toward", args)
             if isinstance(r, dict) and not r.get("reachable") and r.get("hazard"):
                 stop = (f"the way on crosses {macros.hazard_text(r['hazard'])} ({render.num(round(d, 1))}m left)"
@@ -2433,8 +2703,9 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                         + macros.hazard_way_out(r["hazard"]))
                 break
             if not (isinstance(r, dict) and r.get("reachable") and r.get("pos")) or macros.dist(r["pos"], dest) > d - 1.0:
-                stop = (f"no walkable ground leads further toward it ({render.num(round(d, 1))}m left): "
-                        "try get_frontier, a door, or a jump")
+                stop = (f"no walkable ground leads further toward it ({render.num(round(d, 1))}m left"
+                        + (", no other leg either" if failed_end is not None else "")
+                        + "): try get_frontier, a door, or a jump")
                 if isinstance(r, dict) and r.get("hazard_beyond"):
                     stop += f"; ahead: {macros.hazard_text(r['hazard_beyond'])}"
                 stop += _climb_hint(here, dest)
@@ -2454,6 +2725,9 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             elif r.get("detour"):
                 hz = (r.get("straight") or {}).get("hazard")
                 note = f"around {hz['surface']} (heading {r.get('dir') or ''}): " if isinstance(hz, dict) and hz.get("surface") else ""
+            if r.get("alt"):
+                note = f"another way ({'along the route' if r['alt'] == 'route' else 'a shorter leg'}): " + note
+            failed_end = None
             px, py, pz = r["pos"]
             rep, text = _run_one(leg_w, char, actq.Step("move_to", {"x": px, "y": py, "z": pz}), outer)
             if r.get("hazard_beyond") and not ex:
@@ -2477,6 +2751,12 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                     break
                 continue
             if not rep.done:
+                if (retries < macros.TRAVEL_LEG_RETRIES and macros.leg_retryable(rep.stop_kind, rep.stopped, text)
+                        and not (outer is not None and (outer.interrupt or outer.stop.is_set()))):
+                    retries += 1
+                    failed_end = [px, py, pz]
+                    here = _pos_now(char) or here
+                    continue
                 stop = _label(rep.stopped or "") if rep.stop_kind not in (None, "failed") else f"leg {leg} failed"
                 break
             here = (aft.get("pos") or res.get("pos") or r["pos"])
@@ -2484,12 +2764,79 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             if why:
                 stop = why + ": try get_frontier, a door, or a jump"
                 break
+            if crew:
+                note, behind = _wait_for_stragglers(char, here, crew, outer)
+                if note:
+                    lines.append(note)
+                if behind:
+                    stop = behind
+                    break
         else:
             stop = f"still {render.num(round(macros.dist(here, dest), 1))}m away after {macros.TRAVEL_MAX_LEGS} legs"
     finally:
         if outer_w is not None:
             outer_w.ignore -= added
     return _macro_finish("travel_to", {"to": what}, lines, stop, [], t0)
+
+
+def _trip_crew(char: str, lines: list) -> set | None:
+    """Start of the leader's travel_to: chain drifted companions so they follow, and return the members to
+    wait for when they fall behind: chained to the leader (or just re-chained), on this level, not staying,
+    dead, downed or off stage. None when char is not the leader (a companion's own trip)."""
+    st = game.try_rpc("state.status") or {}
+    if st.get("active") != char:
+        return None
+    rows = party.apart(st, stay=_stay)
+    took = _rechain(party.rechain_candidates(rows, _member_busy), char)
+    if took:
+        lines.append("chained to follow: " + ", ".join(_label(u) for u in took))
+    other = {r["uuid"] for r in rows if r["other_level"]}
+    return {r.get("uuid") for r in st.get("party") or []
+            if r.get("uuid") != char and (r.get("chained") is True or r.get("uuid") in took)
+            and r.get("uuid") not in _stay and r.get("uuid") not in other
+            and not (r.get("dead") or r.get("off_stage") or r.get("downed"))}
+
+
+def _wait_for_stragglers(char: str, here: Any, crew: set, outer: actq.Executor | None) -> tuple[str, str | None]:
+    """After a leader's leg: a companion more than party.STRAGGLER_M behind (stuck on a ladder, a gap, a
+    door) is waited for a moment, then walked back in legs. Returns (note for the leg lines, the stop
+    reason if one still can't keep up)."""
+    def lag() -> list[tuple[str, float]]:
+        rows = (_watch_conn().try_rpc("act.watch") or {}).get("party") or []
+        rows = [r for r in rows if r.get("uuid") in crew and not _member_busy(r.get("uuid"))]
+        return party.stragglers(rows, here)
+
+    def stopped() -> bool:
+        return outer is not None and (outer.interrupt is not None or outer.stop.is_set())
+    behind = lag()
+    if not behind:
+        return "", None
+    first = dict(behind)
+    end = time.monotonic() + party.CATCH_UP_S
+    while behind and time.monotonic() < end and not stopped():
+        time.sleep(0.25)
+        behind = lag()
+    names = ", ".join(f"{_label(u)} {render.num(round(d))}m" for u, d in first.items())
+    if not behind:
+        return f"waited for {names} behind: caught up", None
+    if stopped():
+        return "", None
+    x, y, z = here
+    for u, _d in behind:
+        _queue_ignore[u] = set()
+        _queues().add(u, [actq.Step("travel_to", {"x": x, "y": y, "z": z})], replace=True)
+    end = time.monotonic() + 30.0
+    while any(_queues().busy(u) for u, _ in behind) and time.monotonic() < end and not stopped():
+        time.sleep(0.2)
+    rows = {r.get("uuid"): r.get("pos") for r in (_watch_conn().try_rpc("act.watch") or {}).get("party") or []}
+    still = [(u, macros.dist(rows.get(u), here)) for u, _d in behind if rows.get(u)]
+    still = [(u, d) for u, d in still if d > party.STRAGGLER_M]
+    if not still:
+        return f"{names} fell behind: walked back to {_label(char)}", None
+    left = ", ".join(f"{_label(u)} {render.num(round(d))}m behind" for u, d in still)
+    return (f"{names} fell behind; the walk back failed",
+            f"{left} can't keep up (stuck on a ladder, gap or door?): route(who=...) for their way, regroup(), "
+            "or stay(who) to leave them on purpose")
 
 
 def _climb_hint(here: list | None, dest: list | None) -> str:
@@ -2518,48 +2865,68 @@ def _pos_now(char: str) -> list | None:
 
 @mcp.tool()
 @_guard
-def regroup(leader: str | None = None, near_m: float = macros.REGROUP_NEAR_M, chain: bool = False) -> str:
-    """Bring party members who are farther than near_m from the leader (default: the active character) back to them, all walking at once. chain=true also re-links them to the leader. Downed members are left (help them up first). Each walk stops on the usual interrupts."""
+def regroup(leader: str | None = None, near_m: float = macros.REGROUP_NEAR_M, chain: bool = True) -> str:
+    """Bring party members who are farther than near_m from the leader (default: the active character) back to them, all walking at once, each in legs of verified walkable ground like travel_to (any distance; jump/climb links on the route are fine out of combat), then chain everyone to the leader (chain=false skips that). Downed members are left (help them up first); a member on another level is named (walk the leader there or fast travel). Members told to stay come back too. Each walk stops on the usual interrupts."""
     t0 = time.monotonic()
     w = _no_combat("regroup")
     lead = _who(leader)
+    st = game.try_rpc("state.status") or {}
+    info = {r.get("uuid"): r for r in st.get("party") or []}
     rows = {r.get("uuid"): r for r in w.get("party") or []}
     lp = (rows.get(lead) or {}).get("pos")
     if not lp:
         raise GameError(f"no position for {_label(lead)}")
-    far, lines = [], []
+    lreg = (info.get(lead) or {}).get("region")
+    far, lines, skip = [], [], set()
     for u, r in rows.items():
         if u == lead:
+            continue
+        _stay.discard(u)
+        reg = (info.get(u) or {}).get("region")
+        if reg and lreg and reg != lreg:
+            lines.append(f"{_label(u)}: on another level ({reg}): walk {_label(lead)} there or fast_travel")
+            skip.add(u)
             continue
         d = macros.dist(r.get("pos"), lp)
         if r.get("downed"):
             lines.append(f"{_label(u)}: downed, {render.num(round(d, 1))}m away (help them up)")
+            skip.add(u)
         elif d > near_m:
             far.append((u, d))
-    if not far and not chain:
+    unchained = [u for u in rows if u != lead and u not in skip and (info.get(u) or {}).get("chained") is False]
+    if not far and not (chain and unchained):
         return _finish("regroup", {}, "\n".join(lines + [f"everyone is within {render.num(near_m)}m of {_label(lead)}"]), t0)
+    x, y, z = lp
     for u, d in far:
         _queue_ignore[u] = set()
-        _queues().add(u, [actq.Step("move_to", {"target": H.get(lead)})], replace=True)
-    end = time.monotonic() + 45.0
+        _queues().add(u, [actq.Step("travel_to", {"x": x, "y": y, "z": z})], replace=True)
+    end = time.monotonic() + party.REGROUP_WAIT_S
     while any(_queues().busy(u) for u, _ in far) and time.monotonic() < end:
         time.sleep(0.1)
+    now = {r.get("uuid"): r.get("pos") for r in (_watch_conn().try_rpc("act.watch") or {}).get("party") or []}
+    lp2 = now.get(lead) or lp
     stop = None
     for u, d in far:
         q = _queues().queues.get(u)
         rep = q.last_report if q else None
+        d2 = macros.dist(now.get(u), lp2) if now.get(u) else None
+        at = f" → {render.num(round(d2, 1))}m" if d2 is not None else ""
+        last = (rep.lines[-1] if rep and rep.lines else "").splitlines()
+        why = next((ln for ln in reversed(last) if ln.startswith("STOPPED")), last[-1] if last else "")
         if rep is None or _queues().busy(u):
-            lines.append(f"{_label(u)} ({render.num(round(d, 1))}m): still walking")
-        elif rep.stopped:
-            lines.append(f"{_label(u)} ({render.num(round(d, 1))}m): {rep.lines[-1] if rep.lines else ''}".rstrip())
-            stop = stop or _label(rep.stopped)
+            lines.append(f"{_label(u)} ({render.num(round(d, 1))}m{at}): still walking")
+        elif d2 is not None and d2 <= max(near_m, macros.TRAVEL_ARRIVE_M + 1.0):
+            lines.append(f"{_label(u)} ({render.num(round(d, 1))}m{at}): back")
         else:
-            lines.append(f"{_label(u)} ({render.num(round(d, 1))}m): {re.sub(r'^1. ', '', rep.lines[-1]) if rep.lines else 'done'}")
-    if chain and not stop:
+            lines.append(f"{_label(u)} ({render.num(round(d, 1))}m{at}): {why or 'did not get back'}".rstrip())
+            stop = stop or (f"{_label(u)} could not get back to {_label(lead)}"
+                            + (f": {_label(rep.stopped)}" if rep and rep.stopped else ""))
+    if chain:
         for u in rows:
-            if u != lead and not (rows[u] or {}).get("downed"):
+            if u != lead and u not in skip and ((info.get(u) or {}).get("chained") is not True or any(u == f for f, _ in far)):
                 r = game.run_job("act.chain", {"char": u, "leader": lead}, wait_s=10)
-                lines.append(f"chain {_label(u)} → {_label(lead)}: {r.status}" + (f" — {r.error}" if r.error else ""))
+                ok = r.status == "done" or "already chained" in str(r.error or "")
+                lines.append(f"chain {_label(u)} → {_label(lead)}: " + ("done" if ok else f"{r.status} — {r.error}"))
     return _macro_finish("regroup", {}, [f"regroup at {_label(lead)}: {len(far)} walking"] + lines, stop, [], t0)
 
 
@@ -2603,7 +2970,7 @@ def read_all(who: str | None = None, max_items: int = 6) -> str:
             ui = game.try_rpc("ui.state", context="client") or {}
             scr = ui.get("screen")
             if scr in ("dialogue", "roll", "reaction", "game_over") or (scr == "popup" and (ui.get("popup") or {}).get("decision")):
-                lines.extend(render.render_ui(ui, H, brief=True))
+                lines.extend(_render_ui(ui, brief=True))
                 stop = f"{scr} on screen"
                 break
             if scr in ("book", "popup", "reward") and ui.get("popup"):
@@ -2847,7 +3214,7 @@ def wiki_page(title: str, section: str = "", max_chars: int = 5000) -> str:
 
 @mcp.tool()
 def session_clock() -> str:
-    """Time left in this play session."""
+    """Time left in this play session. Rarely needed: every tool result already ends with the ⏱ line."""
     return _clock() or "No session deadline set."  # includes the stuck signal, if any
 
 

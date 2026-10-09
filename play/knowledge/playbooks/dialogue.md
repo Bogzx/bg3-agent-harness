@@ -7,17 +7,28 @@
   threads and objectives.md for what you need from them.
 - Big or risky conversation (an NPC who might turn hostile, a faction leader, a boss)? **Save first**
   (`save_game(label="Sxxx-pre-<name>")`).
-- Want to pass a check? Pre-buff the speaker: Guidance gives +1d4 to ability checks. Cast it
-  (`use_ability`) on the speaker just before talking. Choose who speaks: `talk_to(npc="e8",
-  who="<best talker>")`.
+- **Choose who speaks before you start.** The speaker can't change mid-conversation. Send your best talker
+  for the checks you expect: `talk_to(npc="e8", who="<best talker>")`. Charisma (Persuasion, Deception,
+  Intimidation) for most NPCs, and Insight to read them. A party member's skill bonuses are on
+  `get_character`, and the tagged options in a dialogue name the party's best for next time.
+- **Pre-buff the speaker** when a check is likely: Guidance (+1d4 to ability checks, a cantrip) cast with
+  `use_ability` just before talking, or Bardic Inspiration once you have a bard.
 - `look_at(target)` first if you need to know who someone is (the Examine panel, nothing hidden).
 
 ## In the conversation
-Filler (a Continue prompt, a single plain answer): `dialogue_advance()` clicks through it and stops,
-showing the dialogue, at the first real choice, tag, roll or the end. When the next few answers are
-obvious but are real options (greetings, known safe choices), chain them in one `do_actions` call
-(`choose_dialogue` steps). It stops at any roll, new choice set or the end of the
-conversation, so you never pick blind. Read the result and decide the next real choice.
+Only filler is clicked for you: a Continue prompt or a bare "…"/End. The `talk_to` result (or any
+result where a conversation opened) and every `choose_dialogue` result already show the next real choice,
+roll or the end, so you don't need `get_dialogue`/`dialogue_advance` then. **Every answer, even the only one,
+is yours to give.** When the next few answers are obvious (greetings, known safe choices), you can chain
+them in one `do_actions` call (`choose_dialogue` steps). It stops at any roll, new choice set or the end.
+`dialogue_advance()` waits out a line that is still playing, and it also says a lone plain answer for you.
+
+Tagged options show the check and your speaker's own bonus. The DC appears only on the roll screen, after
+you pick:
+```
+  2. [PERSUASION] Let me through.  ← Persuasion check: e2 +5 (party best e1 +6: they can start the next talk)
+  3. [WIZARD] The runes are Netherese.  ← class/race/background option
+```
 
 ```
 get_dialogue()                        # speaker, current line, numbered options with visible tags
@@ -32,13 +43,25 @@ do_actions(actions='[{"tool":"choose_dialogue","option":1},{"tool":"choose_dialo
 **Cutscenes and spoken lines are skipped automatically** by the mod: movies and cinematics are skipped
 and voiced lines are fast-forwarded. Every line still reaches you as a `dialogue_line` event (speaker:
 text) in the tool results. Don't `wait` for or watch cutscenes, and don't screenshot them. Read the
-`dialogue_line` events, then `get_dialogue` for the options. Answers are **never** picked
-automatically: every choice is yours.
+`dialogue_line` events. The options come with the result (else `get_dialogue`). Answers are **never**
+picked automatically: every choice is yours.
 - **Read every option** before choosing. Options that end the conversation early ("Leave", "Attack",
   "[Illithid]") are often irreversible.
-- **Skill checks:** the game shows the DC before you roll. Prefer the check with the best modifier.
-  Natural 20 always succeeds and natural 1 always fails on these `[wiki]`. If a failure would be
-  catastrophic (combat you can't win, a companion leaving, a key NPC dying), make sure you saved first.
+- **Look for the check options first.** [Persuasion]/[Intimidation]/[Deception], ability checks and class or
+  race options usually give the better outcome. Examples: a fight avoided, a better price, extra
+  information, inspiration and XP, companion approval `[wiki]`. Take one when the odds are good:
+  - a bonus of +3 or more on a routine check (most early DCs are 10–15 `[wiki]`);
+  - or Guidance or Bardic Inspiration is available (the roll screen offers it: `roll_check(boosts="Guidance")`);
+  - or a failure is cheap (the NPC only refuses).
+  - With a low bonus and a costly failure (the NPC turns hostile, a companion leaves), pick the safe answer
+    or save first.
+- **Class/race/background options** ([CLERIC], [HALF-ORC], [SOLDIER]…) need no roll and often give unique,
+  in-character results. Prefer them when they fit your goals.
+- Natural 20 always succeeds and natural 1 always fails on dialogue checks `[wiki]`. Inspiration points
+  allow one reroll (`reroll_on_fail=true`). Use it on checks that matter.
+- **Think harder on story choices.** For companions, factions, sparing or killing, [Illithid] and promises,
+  read every option and check memory (decisions.md, npcs.md). Write the decisions.md entry first. Routine
+  answers (greetings, asking questions) deserve no more than a moment.
 - **Reload policy:** don't reload to reroll a failed check (CLAUDE.md). Accept it, log it, adapt.
 - **Insight / History / Arcana** options reveal information cheaply. Usually take them first.
 - **[Illithid] powers and some tadpole options** have long-term consequences `[wiki]`. Make it a

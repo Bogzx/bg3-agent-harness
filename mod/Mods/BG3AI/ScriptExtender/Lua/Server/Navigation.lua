@@ -858,6 +858,52 @@ function N.approach(charUuid, target, tpos, within, budget, avoid)
     return out
 end
 
+-- Uncached check of the exact point `pos` from where the character stands
+-- now (N.path caches by a 0.1 m key, so a rounded leg end would hit the
+-- unrounded sample's entry). Returns reachable (true/false/nil), raw result.
+function N.verifyPoint(charUuid, pos)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from or type(pos) ~= "table" then return nil end
+    local r = rawPath(e, from, pos)
+    return r.reachable, r
+end
+
+-- Another travel_to leg toward `toward` (<= maxM of path) when the planned
+-- one failed or did not verify (S002: "leg 2: no walkable path there" ended
+-- the whole trip). First a point along the engine's own route (it follows
+-- stairs and detours the straight-line samples miss), then the farthest
+-- straight sample of a half / quarter leg. Each must verify, get >= 1 m
+-- closer, and lie >= ALT_EXCLUDE_M from `bad` (the leg end that failed).
+-- Returns a reach_toward-shaped result with alt="route"|"shorter", or nil.
+N.ALT_EXCLUDE_M = 1.5
+function N.altLeg(charUuid, toward, maxM, bad, avoid)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from or type(toward) ~= "table" then return nil end
+    local d0 = U.dist(from, toward)
+    local function good(p)
+        if type(p) ~= "table" or d0 - U.dist(p, toward) < 1.0 then return false end
+        if bad and U.dist(p, bad) < N.ALT_EXCLUDE_M then return false end
+        return N.verifyPoint(charUuid, p) == true
+    end
+    local ap = N.approach(charUuid, toward, toward, 1.0, maxM, avoid)
+    if ap and ap.reachable and good(ap.pos) then
+        return { reachable = true, pos = ap.pos, path_m = ap.walk_m, alt = "route", verified = true,
+            needs_jump = ap.needs_jump, dir = N.direction(from, ap.pos), hazard_beyond = ap.hazard }
+    end
+    for _, m in ipairs({ maxM * 0.5, maxM * 0.25 }) do
+        if m >= 2 then
+            local r = N.reachToward(charUuid, nil, toward, m, 1, avoid)
+            if r and r.reachable and good(r.pos) then
+                r.alt, r.verified = "shorter", true
+                return r
+            end
+        end
+    end
+    return nil
+end
+
 -- Nearest safe floor out of a harmful surface: rings of 8 directions at
 -- 1.5..max_m; the shortest path whose end and route (after the first metre)
 -- are clear. nil when the character is not in a harmful surface.
@@ -1544,6 +1590,28 @@ RPC.register("nav.reach_toward", function(args)
                 r = c
             elseif c then
                 r.cross_samples = c.samples
+            end
+        end
+    end
+    -- travel_to: verify the exact leg end we hand out; when it fails, or the
+    -- bridge asks for another leg after a failed walk (alt=true, exclude=that
+    -- leg's end), take a verified alternative (N.altLeg).
+    if toward and (args.alt or (r.reachable and r.pos)) then
+        local fine = nil
+        if not args.alt then fine = N.verifyPoint(char, r.pos) end
+        if fine == true then
+            r.verified = true
+        elseif args.alt or fine == false then
+            local bad = type(args.exclude) == "table" and args.exclude or (not args.alt and r.pos) or nil
+            local a = N.altLeg(char, toward, maxM, bad, args.avoid ~= false)
+            if a then
+                if fine == false then a.replaced = r.pos end
+                r = a
+            elseif fine == false then
+                r = { reachable = false, samples = r.samples, unverified = r.pos }
+            else
+                r.alt_failed = true
+                if r.reachable then r = { reachable = false, samples = r.samples, alt_failed = true } end
             end
         end
     end

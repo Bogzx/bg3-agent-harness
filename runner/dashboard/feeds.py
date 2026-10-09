@@ -360,5 +360,146 @@ def progress_payload(runtime: Path, runner_status: dict, now: float | None = Non
         live["session"] = runner_status.get("session")
         live["running"] = not ended
     rows = _tail_jsonl(hist if hist and hist.exists() else None)[-history_rows:]
+    ms = milestones_payload(runtime / "sessions" / pt) if pt else None
     return {"now": now, "live": live, "history": rows, "weights": P.WEIGHTS, "stuck_after_min": P.STUCK_MIN,
+            "milestones": ms,
             "files": {"live": live_path.name if live_path else None, "history": hist.name if hist and hist.exists() else None}}
+
+
+# ---------------------------------------------------------------- goal scorecard (all sessions)
+
+# The user's /goal, as per-session pass/fail lines. The first three are bg3ai.metrics.TARGETS (the latency goal);
+# the rest are provisional bars for "feels like a skilled human playing live" (tune here).
+#   key, label, unit, op, target, digits
+GOALS = [
+    ("idle", "idle median (outside combat)", "s", "<", 2.0, 2),
+    ("gaps", "gaps >10 s (not dialogue)", "", "==", 0, 0),
+    ("rt", "bridge round trip median", "ms", "<", 100.0, 0),
+    ("apm", "actions / min", "", ">=", 10.0, 1),
+    ("busy", "busy (party acting)", "%", ">=", 60.0, 0),
+    ("pipe", "pipelined actions", "%", ">=", 30.0, 0),
+    ("pts", "story points / hour", "", ">=", 90.0, 0),
+]
+SESSION_FILE_RE = re.compile(r"^(S\d{3,}(?:-r\d+)?)\.(metrics\.jsonl|latency\.json|progress\.jsonl|progress\.json)$")
+_CACHE: dict[tuple, Any] = {}
+
+
+def _cached(key: tuple, fn):
+    if key not in _CACHE:
+        if len(_CACHE) > 200:
+            _CACHE.clear()
+        _CACHE[key] = fn()
+    return _CACHE[key]
+
+
+def _sig(p: Path) -> tuple:
+    try:
+        st = p.stat()
+        return (str(p), st.st_size, st.st_mtime)
+    except OSError:
+        return (str(p), None, None)
+
+
+def session_ids(d: Path) -> list[str]:
+    """Play sessions (and crash-resume legs, Sxxx-rN) that left any metrics or progress file, in play order."""
+    try:
+        names = {m.group(1) for f in d.iterdir() if (m := SESSION_FILE_RE.match(f.name))}
+    except OSError:
+        return []
+    def order(s: str):
+        m = re.match(r"S(\d+)(?:-r(\d+))?", s)
+        return (int(m.group(1)), int(m.group(2) or 0))
+    return sorted(names, key=order)
+
+
+def goal_values(lat: dict | None, prog: dict | None) -> dict:
+    """One session's latency + progress summaries → {goal key: value}."""
+    lat, prog = lat or {}, prog or {}
+    t = lat.get("targets") or {}
+    v = lambda k: (t.get(k) or {}).get("value")  # noqa: E731
+    return {"idle": v("median_idle_explore_s"),
+            "gaps": v("long_gaps_non_dialogue") if (t.get("long_gaps_non_dialogue") or {}).get("pass") is not None else None,
+            "rt": v("bridge_rt_median_ms"), "apm": lat.get("apm") if lat.get("actions") else None,
+            "busy": lat.get("busy_pct"), "pipe": lat.get("pipelining_pct"), "pts": prog.get("per_hour")}
+
+
+def goal_pass(op: str, value, target) -> bool | None:
+    if value is None:
+        return None
+    return {"<": value < target, "==": value == target, ">=": value >= target}[op]
+
+
+def _session_summaries(d: Path, sid: str, live: bool, started: float | None, now: float) -> tuple[dict | None, dict | None]:
+    from bg3ai import metrics as M  # noqa: PLC0415
+    from bg3ai import progress as P  # noqa: PLC0415
+
+    lat_f, met_f, turns_f = d / f"{sid}.latency.json", d / f"{sid}.metrics.jsonl", d / f"{sid}.turns.jsonl"
+    prog_f, progl_f = d / f"{sid}.progress.json", d / f"{sid}.progress.jsonl"
+    if lat_f.exists() and not live:
+        lat = read_json(lat_f)
+    elif met_f.exists() or turns_f.exists():
+        # the live session, or one that ended without a summary (runner restarted mid-session)
+        end = now if live else None
+        lat = _cached(("lat", _sig(met_f), _sig(turns_f), started if live else None, int(now / 15) if live else 0),
+                      lambda: M.summarize_files(met_f if met_f.exists() else None, turns_f if turns_f.exists() else None,
+                                                started if live else None, end))
+    else:
+        lat = None
+    if prog_f.exists() and not live:
+        prog = read_json(prog_f)
+    elif progl_f.exists():
+        recs = P.load(progl_f)
+        s0 = started if live and started else (lat or {}).get("start") or min((r.get("t", now) for r in recs), default=now)
+        s1 = now if live else (lat or {}).get("end") or max((r.get("t", s0) for r in recs), default=s0)
+        prog = P.summarize(recs, float(s0), float(s1))
+    else:
+        prog = None
+    return lat, prog
+
+
+def goals_payload(runtime: Path, runner_status: dict, now: float | None = None, max_sessions: int = 30) -> dict:
+    """/api/goals: every session's goal metrics side by side with PASS/FAIL, plus the trend across sessions."""
+    now = time.time() if now is None else now
+    pt = runner_status.get("playthrough")
+    if not pt:
+        return {"now": now, "sessions": [], "goals": [], "playthrough": None}
+    d = runtime / "sessions" / pt
+    live_sid = runner_status.get("session") if not runner_status.get("session_ended") else None
+    sessions = []
+    for sid in session_ids(d)[-max_sessions:]:
+        live = sid == live_sid
+        lat, prog = _session_summaries(d, sid, live, runner_status.get("started"), now)
+        vals = goal_values(lat, prog)
+        verdict = {k: goal_pass(op, vals[k], tgt) for k, _l, _u, op, tgt, _d in GOALS}
+        judged = [p for p in verdict.values() if p is not None]
+        minutes = (lat or prog or {}).get("minutes")
+        sessions.append({"session": sid, "live": live, "minutes": minutes,
+                         "short": not live and (minutes or 0) < 1,  # a runner restart's stub: shown, not counted
+                         "start": (lat or {}).get("start"), "values": vals, "pass": verdict,
+                         "passed": sum(judged), "judged": len(judged),
+                         "points": (prog or {}).get("points")})
+    goals = []
+    counted = [s for s in sessions if not s["short"] and not s["live"]]
+    for k, label, unit, op, tgt, nd in GOALS:
+        done = [s["values"][k] for s in counted if s["values"][k] is not None]
+        judged = [s["pass"][k] for s in counted if s["pass"][k] is not None]
+        goals.append({"key": k, "label": label, "unit": unit, "op": op, "target": tgt, "digits": nd,
+                      "series": [None if s["short"] else s["values"][k] for s in sessions],
+                      "best": (min if op in ("<", "==") else max)(done) if done else None,
+                      "pass_rate": round(100 * sum(judged) / len(judged)) if judged else None})
+    return {"now": now, "playthrough": pt, "sessions": sessions, "goals": goals,
+            "milestones": milestones_payload(d)}
+
+
+def milestones_payload(d: Path) -> dict | None:
+    """Story milestones for the playthrough dir (bg3ai.milestones), with the session that first reached each."""
+    from bg3ai import milestones as MS  # noqa: PLC0415
+    from bg3ai import progress as P  # noqa: PLC0415
+
+    seen = read_json(d / "progress_state.json")
+    sessions = [(sid, P.load(d / f"{sid}.progress.jsonl")) for sid in session_ids(d)]
+    if not seen and not any(r for _s, r in sessions):
+        return None
+    st = MS.status(seen, sessions)
+    st["line"] = MS.line(st)
+    return st

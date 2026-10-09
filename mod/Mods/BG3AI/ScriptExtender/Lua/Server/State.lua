@@ -68,11 +68,23 @@ local function classes(e)
     return out
 end
 
+-- The character's level (EocLevel). AvailableLevel is the level its XP allows: live (2026-10-10) Gale had
+-- EocLevel 1, AvailableLevel 2 and a CanLevelUp component, the HUD showing his level-up button.
 local function level(e)
-    local ok, l = pcall(function() return e.AvailableLevel.Level end)
-    if ok then return l end
-    local ok2, l2 = pcall(function() return e.EocLevel.Level end)
+    local ok, l = pcall(function() return e.EocLevel.Level end)
+    if ok and l then return l end
+    local ok2, l2 = pcall(function() return e.AvailableLevel.Level end)
     return ok2 and l2 or nil
+end
+
+-- The level a pending level up reaches, or nil. Fair: the portrait's level-up button shows exactly this.
+local function levelUpTo(e)
+    local cur = level(e)
+    local ok, avail = pcall(function() return e.AvailableLevel.Level end)
+    local okc, can = pcall(function() return e.CanLevelUp ~= nil end)
+    if ok and avail and cur and avail > cur then return cur + 1 end
+    if okc and can and cur then return cur + 1 end
+    return nil
 end
 
 local function health(e)
@@ -286,6 +298,11 @@ local function partyBrief(ctx, uuid, active)
     if uuid == active then o.active = true end
     if not truthy(osi(Osi.IsOnStage, uuid)) then o.off_stage = true end
     o.concentration = concentration(e)
+    o.level_up = levelUpTo(e)  -- bridge: "LEVEL UP: Gale (2)"
+    -- Party cohesion (bridge party.py: PARTY APART, re-chain): the member's region (a member on another
+    -- level has coordinates in another space) and whether it follows the active character.
+    o.region = osi(Osi.GetRegion, uuid)
+    if active and uuid ~= active then o.chained = truthy(osi(Osi.InSamePartyGroup, uuid, active)) end
     return o
 end
 

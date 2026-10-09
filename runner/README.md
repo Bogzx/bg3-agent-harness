@@ -67,8 +67,13 @@ python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hour
   process group and to every `pgrep -x bg3` process, then SIGKILL after 10 s. It relaunches only once no
   `bg3` process remains and port 9998 is free.
 - **Crash or hang:** the game process or port disappears, or 3 consecutive liveness evals fail at 30-s
-  intervals. The runner stops Claude, kills the game, relaunches it, and reloads the playthrough's latest
-  save. The next kickoff says when it crashed and which save it resumed from.
+  intervals. The runner stops Claude, kills the game, relaunches it (`launch_game.sh --load`), and reloads
+  the playthrough's latest save (newest `Sxxx-`/runner quicksave of the save owner; never anyone else's).
+  If at least 8 min of the session are left, it then **resumes the same Claude conversation**
+  (`claude --resume`, transcript `Sxxx-r1.*`) with a note on the crash and the save, up to 3 times per
+  session; the deadline doesn't move. Otherwise the session ends and the next kickoff carries the note.
+  `runner.json` history records `resumes`. Offline test with a fake game and fake claude:
+  `python3 runner/test_crash.py` (~30 s; crash, hang, too-little-time).
 - **Game Over** (`ui.state` screen `game_over`, once that op exists): the kickoff tells the agent to load.
   If the next session starts at Game Over too, the runner reloads the latest save itself.
 - **Stuck detector:** progress is a signature of level/region/subregion, party levels and XP, and
@@ -102,7 +107,13 @@ python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hour
 | `runtime/sessions/<pt>/Sxxx.{jsonl,log}` | Claude's stream (raw and readable); `Sxxx-fix.*` for fix-notes passes |
 | `runtime/STOP` | created by `play.py stop` |
 
-Tests (pure logic only, nothing is launched): `python3 runner/test_play.py`.
+Tests (pure logic only, nothing is launched): `python3 runner/test_play.py`. Crash recovery end to end with
+stubs (no game, no claude, temp dirs only): `python3 runner/test_crash.py`.
+
+Dashboard: `/api/goals` + the **Goal scorecard** card (every session's goal metrics side by side with
+pass/fail, a trend sparkline, best value and pass rate; goal bars in `runner/dashboard/feeds.py` `GOALS`) and a
+**milestones** line (`bridge/src/bg3ai/milestones.py`: Nautiloid escaped, beach, first camp, … Act 3), also in
+Story progress.
 
 Not verified yet: the exact `ui.menu` load argument (the runner passes the save folder name as `name`),
 `InjectKeyPress("F5")` as the quicksave fallback, and the stream-json event shapes beyond what

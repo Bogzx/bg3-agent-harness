@@ -1323,7 +1323,11 @@ RPC.register("ui.level_up_options", function(args)
 end)
 
 -- ui.level_up {uuid, plan = {class?, subclass?, deity?, feat?, abilities? = {Str=1, Dex=1} | {Dex=2},
---              skills?, passives?, cantrips?, spells?}, finish? = true}
+--              skills?, passives?, cantrips?, spells?, allow_defaults?}, finish? = true}
+-- Subclass levels (Wizard 2, Druid 2, most others 3) need plan.subclass unless the page already shows one or
+-- allow_defaults is set: the job fails with result.subclasses listing the choices, and nothing is changed.
+-- Feat levels (4, 8, 12; Fighter 6, Rogue 10) default to Ability Improvement +2 on the class's primary ability.
+-- Offline test: tools/dev/test_level_up.sh
 RPC.register("ui.level_up", function(args)
     local plan = args.plan or {}
     if not P.luDC() then
@@ -1366,6 +1370,23 @@ RPC.register("ui.level_up", function(args)
         end },
         { "class?", verifyStage(get, ctx) },
         { "subclass_tab", tabStage(ctx, "subClassTab") },
+        { "subclass_needed", function()
+            -- A subclass is permanent: never let the "first in the list" default pick it (Gale's level 2 would
+            -- become Abjuration). With nothing chosen on the page, ask for plan.subclass.
+            local dc = get()
+            if plan.subclass ~= nil or plan.allow_defaults then return "next", 0 end
+            if UI.count(UI.prop(dc, "SelectableSubClasses")) == 0 or UI.prop(dc, "SelectedSubClass") ~= nil then
+                return "next", 0
+            end
+            P.refreshLabels("CharacterLevelUp")
+            local names = {}
+            for _, e in ipairs(view(UI.prop(dc, "SelectableSubClasses"))) do
+                if not e.off then names[#names + 1] = e.name or e.id or ("#" .. e.i) end
+            end
+            ctx.result.needs = "subclass"
+            ctx.result.subclasses = names
+            return "fail", "this level picks a subclass: pass plan.subclass (one of: " .. table.concat(names, ", ") .. ")"
+        end },
         { "subclass", selectStage(get, ctx, "subclass", "SelectedSubClass", "SelectableSubClasses", plan.subclass, true) },
         { "subclass?", verifyStage(get, ctx) },
         { "deity_tab", tabStage(ctx, "deityTab") },

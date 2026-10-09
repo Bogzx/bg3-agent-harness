@@ -133,6 +133,22 @@ table.hist th { text-align: right; color: var(--muted); font-weight: 500; paddin
 table.hist td { text-align: right; padding: 3px 5px; border-bottom: 1px solid #1d2232; }
 table.hist th:first-child, table.hist td:first-child { text-align: left; }
 td.pass { color: var(--ok); } td.fail { color: var(--bad); }
+.goalwrap { padding: 14px 16px 0; }
+.goalwrap .body { overflow-x: auto; }
+table.goals { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+table.goals th, table.goals td { padding: 4px 7px; border-bottom: 1px solid #1d2232; text-align: right; white-space: nowrap; }
+table.goals th { color: var(--muted); font-weight: 500; border-bottom-color: var(--line); }
+table.goals th:first-child, table.goals td:first-child { text-align: left; font-family: var(--sans); color: var(--text); }
+table.goals td.tgt { color: var(--muted); }
+table.goals td.pass { color: var(--ok); background: rgba(76,195,138,.07); }
+table.goals td.fail { color: var(--bad); background: rgba(239,95,107,.07); }
+table.goals .live { color: var(--accent); } table.goals .short { opacity: .45; }
+table.goals tr.sum td { color: var(--muted); border-bottom: 0; }
+table.goals svg { vertical-align: middle; }
+.milestones { font-size: 12.5px; margin-top: 10px; line-height: 1.7; }
+.milestones .m { display: inline-block; margin-right: 10px; white-space: nowrap; }
+.milestones .m.ok { color: var(--ok); } .milestones .m.next { color: var(--warn); }
+.milestones .m small { color: var(--faint); }
 .hwrap { max-height: 220px; overflow: auto; }
 .banner { display: none; margin: 10px 16px 0; padding: 8px 12px; border-radius: 8px; background: #3a1c22; color: #ffb3ba; font-size: 13px; }
 </style>
@@ -145,6 +161,13 @@ td.pass { color: var(--ok); } td.fail { color: var(--bad); }
   <div class="dots"><span class="dot" id="dGame">game</span><span class="dot" id="dScreen">screen</span><span class="dot" id="dAgent">agent</span></div>
 </header>
 <div class="banner" id="banner"></div>
+<div class="goalwrap">
+  <section class="card">
+    <h2><span class="grow">Goal scorecard</span><small id="goalNote">per session · green = pass · trend left→right</small></h2>
+    <div class="body"><table class="goals" id="goals"><tr><td class="empty">No sessions yet.</td></tr></table>
+      <div class="milestones" id="goalMilestones"></div></div>
+  </section>
+</div>
 <main>
   <div class="col">
     <section class="card">
@@ -174,6 +197,7 @@ td.pass { color: var(--ok); } td.fail { color: var(--bad); }
       <h2><span class="grow">Story progress</span><small id="progNote"></small></h2>
       <div class="body">
         <div class="lat" id="progKpis"><div class="empty">No progress timeline yet (runtime/sessions/&lt;pt&gt;/Sxxx.progress.jsonl).</div></div>
+        <div class="milestones" id="progMilestones"></div>
         <div class="prog-ev" id="progEvents"></div>
         <div class="hwrap"><table class="hist" id="progHist"></table></div>
       </div>
@@ -432,6 +456,7 @@ function renderProgress(r) {
       `<div title="${esc(e.what)}"><span class="k">${hhmmss(e.t)}</span><b>+${e.points}</b><span class="k">${esc(e.kind)}</span>${esc(e.what)}</div>`).join("")
       || `<div class="empty">no progress events this session yet</div>`;
   }
+  $("progMilestones").innerHTML = milestonesHtml(r.milestones);
   const h = r.history || [];
   if (h.length) {
     $("progHist").innerHTML = `<tr><th>session</th><th>min</th><th>points</th><th>/hour</th><th>events</th>
@@ -446,6 +471,54 @@ async function pollProgress() {
   setTimeout(pollProgress, 5000);
 }
 
+/* ---------------- goal scorecard ---------------- */
+function spark(series, target, op) {
+  const pts = series.map((v, i) => [i, v]).filter((p) => p[1] != null);
+  if (pts.length < 2) return "";
+  const W = 90, H = 20, ys = pts.map((p) => p[1]).concat([target]);
+  const lo = Math.min(...ys), hi = Math.max(...ys), n = series.length - 1 || 1;
+  const X = (i) => (i / n) * (W - 4) + 2, Y = (v) => hi === lo ? H / 2 : H - 2 - ((v - lo) / (hi - lo)) * (H - 4);
+  const ok = (v) => op === "<" ? v < target : op === "==" ? v === target : v >= target;
+  const last = pts[pts.length - 1];
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">
+    <line x1="0" x2="${W}" y1="${Y(target)}" y2="${Y(target)}" stroke="var(--faint)" stroke-dasharray="2 3"/>
+    <polyline fill="none" stroke="var(--muted)" stroke-width="1.5" points="${pts.map((p) => `${X(p[0])},${Y(p[1])}`).join(" ")}"/>
+    <circle cx="${X(last[0])}" cy="${Y(last[1])}" r="2.5" fill="${ok(last[1]) ? "var(--ok)" : "var(--bad)"}"/></svg>`;
+}
+function milestonesHtml(m) {
+  if (!m) return "";
+  const items = m.items || [];
+  const ok = items.filter((i) => i.reached);
+  return `<b>milestones ${m.reached}/${m.total}</b> <small class="k">(Act ${m.act})</small> &nbsp;`
+    + ok.map((i) => `<span class="m ok" title="${i.t ? hhmmss(i.t) : "before tracking"}">✓ ${esc(i.label)}${i.session ? ` <small>${esc(i.session)}</small>` : ""}</span>`).join("")
+    + (m.next ? `<span class="m next">→ next: ${esc(m.next)}</span>` : "");
+}
+function renderGoals(r) {
+  const S = (r.sessions || []).slice(-12), G = r.goals || [];
+  if (!S.length) return;
+  const off = (r.sessions || []).length - S.length;
+  const opTxt = { "<": "<", "==": "=", ">=": "≥" };
+  const head = `<tr><th>goal</th><th>target</th>${S.map((s) =>
+    `<th class="${s.live ? "live" : s.short ? "short" : ""}" title="${fmt(s.minutes, " min", 1)}">${esc(s.session)}${s.live ? " ●" : ""}</th>`).join("")}<th>trend</th><th>best</th><th>pass rate</th></tr>`;
+  const rows = G.map((g) => `<tr><td>${esc(g.label)}</td><td class="tgt">${opTxt[g.op]} ${g.target}${g.unit}</td>`
+    + S.map((s) => {
+      const v = s.values[g.key], p = s.pass[g.key];
+      return `<td class="${s.short ? "short" : p == null ? "" : p ? "pass" : "fail"}">${v == null ? "–" : fmt(v, "", g.digits)}</td>`;
+    }).join("")
+    + `<td>${spark(g.series.slice(off), g.target, g.op)}</td><td>${g.best == null ? "–" : fmt(g.best, "", g.digits)}</td>`
+    + `<td>${g.pass_rate == null ? "–" : g.pass_rate + "%"}</td></tr>`).join("");
+  const sum = `<tr class="sum"><td>passed</td><td></td>${S.map((s) =>
+    `<td class="${s.short ? "short" : ""}">${s.judged ? `${s.passed}/${s.judged}` : "–"}</td>`).join("")}<td colspan="3"></td></tr>`
+    + `<tr class="sum"><td>minutes · points</td><td></td>${S.map((s) =>
+    `<td class="${s.short ? "short" : ""}">${fmt(s.minutes, "", 0)} · ${s.points ?? "–"}</td>`).join("")}<td colspan="3"></td></tr>`;
+  $("goals").innerHTML = head + rows + sum;
+  $("goalMilestones").innerHTML = milestonesHtml(r.milestones);
+}
+async function pollGoals() {
+  try { renderGoals(await getJSON("/api/goals")); } catch (e) { /* ignore */ }
+  setTimeout(pollGoals, 15000);
+}
+
 /* ---------------- wiring ---------------- */
 $("memTabs").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
@@ -455,7 +528,7 @@ $("memTabs").addEventListener("click", (e) => {
 });
 $("saysOnly").addEventListener("change", (e) => $("agent").classList.toggle("says-only", e.target.checked));
 setInterval(renderClock, 1000);
-pollState(); pollFeed(); pollAgent(); pollLatency(); pollProgress();
+pollState(); pollFeed(); pollAgent(); pollLatency(); pollProgress(); pollGoals();
 </script>
 </body>
 </html>
