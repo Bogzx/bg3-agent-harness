@@ -59,7 +59,9 @@ SIGTERM_GRACE = 15             # then SIGKILL
 KILL_GRACE = 10                # the game ignores SIGTERM: SIGKILL it after this many seconds
 KILL_CONFIRM = 30              # then wait this long for the processes and port 9998 to go away
 FIX_SESSION_MINUTES = 10
-MIN_SESSION_MINUTES = 15       # don't start a session with less time than this left in --hours
+MIN_SESSION_MINUTES = 20       # shortest session: --session-minutes below it is refused, and no session
+                               # starts with less than this left in --hours (start + wrap-up take ~13 min)
+WRAPUP_MINUTES = 10            # wrap-up phase at the end of a session (a third of it, for short ones)
 HEALTH_INTERVAL = 30           # seconds between liveness evals during a session
 HEALTH_FAILURES = 3            # consecutive failed evals → hung
 EVAL_TIMEOUT = 15
@@ -98,9 +100,14 @@ def predict_session_number(existing: list[int], current: int | None) -> int:
     return max(existing + [current or 0]) + 1
 
 
+def wrapup_minutes(session_minutes: float) -> float:
+    """Length of the wrap-up phase: 10 min, but at most a third of the session."""
+    return min(WRAPUP_MINUTES, session_minutes / 3)
+
+
 def wrap_minutes(session_minutes: float) -> float:
-    """When the wrap-up reminder fires: 10 min before the end, but never in the first half."""
-    return max(session_minutes / 2, session_minutes - 10)
+    """Minutes into the session when WRAP UP starts (the clock line and the memory hooks)."""
+    return session_minutes - wrapup_minutes(session_minutes)
 
 
 def deadlines(start: float, session_minutes: float, grace: float = HARD_STOP_GRACE) -> tuple[float, float]:
@@ -161,6 +168,16 @@ def is_ai_label(label: str, prefix: str = SAVE_PREFIX) -> bool:
     return re.match(rf"^{re.escape(prefix)}S\d{{3}}-", label) is not None
 
 
+def is_ai_save(s: Save, prefix: str = SAVE_PREFIX) -> bool:
+    """An `Sxxx-` save of this playthrough. $BG3AI_SAVE_PREFIX is used two ways: as a label prefix
+    (`pt1-S010-end`) and, by the MCP server and docs/HANDOFF.md (`BG3AI_SAVE_PREFIX=Claude-`), as a folder
+    prefix: the character's name plus the dash the game adds (`Claude-123__S001-end`). The agent's
+    save_game never prefixes the label, so a folder-prefix match takes a plain `Sxxx-` label."""
+    if is_ai_label(s.label, prefix):
+        return True
+    return bool(prefix) and s.folder.startswith(prefix) and is_ai_label(s.label, "")
+
+
 def label_matches(label: str, wanted: str, prefix: str = SAVE_PREFIX) -> bool:
     return label == wanted or label == prefix + wanted
 
@@ -180,14 +197,14 @@ def pick_save(saves: list[Save], handoff_label: str | None, owner: str | None,
             continue
         elif handoff_label and label_matches(s.label, handoff_label, prefix):
             cands.append(s)
-        elif owner is not None and is_ai_label(s.label, prefix):
+        elif owner is not None and is_ai_save(s, prefix):
             cands.append(s)
     return max(cands, key=lambda s: s.mtime, default=None)
 
 
 def saves_since(saves: list[Save], t: float, owner: str | None, prefix: str = SAVE_PREFIX) -> list[Save]:
     """AI-labelled saves written after t (by this playthrough's owner, when known)."""
-    return sorted((s for s in saves if s.mtime >= t and is_ai_label(s.label, prefix)
+    return sorted((s for s in saves if s.mtime >= t and is_ai_save(s, prefix)
                    and (owner is None or s.owner == owner)), key=lambda s: s.mtime)
 
 
@@ -257,6 +274,13 @@ def build_kickoff(sid: str, playthrough: str, deadline: float, loaded_save: str 
     for note in notes:
         lines.append(note)
     return "\n\n".join(lines)
+
+
+def new_game_note(owner: str) -> str:
+    return (f"RUNNER NOTE: this is a new game. Name your character exactly \"{owner}\" (create_character plan "
+            f"\"name\": \"{owner}\"; it is set and verified before Venture forth). Saves are matched to this "
+            "playthrough by that name; if create_character reports the name wasn't set, don't finish character "
+            "creation another way.")
 
 
 def fix_notes_prompt(lint_report: str) -> str:
@@ -747,6 +771,10 @@ class Runner:
             if not port_open():
                 self.launch_game(None)
             self.wait_menu()
+            owner = self.opt.save_owner or self.state["save_owner"]
+            if owner:
+                # Saves are matched to this playthrough by the character's name: a "Tav" breaks that.
+                self.pending_notes.append(new_game_note(owner))
             return None
         log(f"loading save {save.folder}")
         if port_open() and ui_load:
@@ -831,10 +859,16 @@ class Runner:
                 self.state["save_owner"] = new[-1].owner
             log(f"session saved: {new[-1].folder}")
             return
+        others = [s.folder for s in list_saves() if s.mtime >= since and is_ai_label(s.label, "")]
         if not self.game_alive() or not server_ready():
             log("no save this session and the game isn't ready for one")
             return
-        log("the agent didn't save this session; quicksaving")
+        if others:
+            # Named saves exist but don't belong to this playthrough's owner/prefix: say why, then quicksave.
+            log(f"session saves {others} don't match save owner {owner!r} / BG3AI_SAVE_PREFIX "
+                f"{SAVE_PREFIX!r} (wrong character name?); quicksaving")
+        else:
+            log("the agent didn't save this session; quicksaving")
         before = {s.folder for s in list_saves()}
         t0 = time.time()
         try:
@@ -890,6 +924,8 @@ class Runner:
                    BG3AI_SAVE_PREFIX=SAVE_PREFIX,
                    BG3_SESSION_MINUTES=str(minutes),
                    BG3_WRAP_MINUTES=str(wrap_minutes(minutes)),
+                   # when the MCP clock line switches to WRAP UP (epoch seconds); play until then
+                   BG3AI_SESSION_WRAPUP=str(int(start + wrap_minutes(minutes) * 60)),
                    # The playthrough has its own memory system; Claude Code's auto-memory would add a second one
                    # (and a per-machine path in the prompt).
                    CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
@@ -1000,7 +1036,7 @@ class Runner:
         verdict = " ".join(f"{k}={'PASS' if v['pass'] else 'FAIL' if v['pass'] is False else 'n/a'}" for k, v in t.items())
         log(f"{session}: latency idle median {summary['idle_s']['all'].get('median')}s, "
             f"{summary['long_gaps']['total']} gaps >10s, think median {summary['think_s'].get('median')}s, "
-            f"apm {summary['apm']}, busy {summary['busy_pct']}% | {verdict}")
+            f"apm {summary['apm']}, busy {summary['busy_pct']}%, pipelined {summary.get('pipelining_pct')}% | {verdict}")
         return summary
 
     def progress_loop(self, session: str, base: Path, start: float, stop: threading.Event, human=None) -> None:
@@ -1158,7 +1194,8 @@ class Runner:
         setup_failures = 0
         try:
             while not self.stop_requested and not (RUNTIME / "STOP").exists():
-                minutes = session_budget(time.time(), run_end, self.opt.session_minutes)
+                minutes = session_budget(time.time(), run_end, self.opt.session_minutes,
+                                         min(MIN_SESSION_MINUTES, self.opt.session_minutes))
                 if minutes is None:
                     log("--hours budget used up")
                     break
@@ -1212,10 +1249,24 @@ def acquire_lock():
 
 
 def cmd_run(a) -> int:
+    if a.session_minutes < MIN_SESSION_MINUTES and not a.allow_short_sessions:
+        # S001/S002 ran 15-min sessions and both wrapped up within 3 min: start and wrap-up playbooks
+        # alone take ~13 min, so a short session is all overhead.
+        print(f"refusing --session-minutes {a.session_minutes:g}: sessions under {MIN_SESSION_MINUTES} min are "
+              "all start-up and wrap-up (use 60; --allow-short-sessions for harness tests)", file=sys.stderr)
+        return 2
+    if a.session_minutes < MIN_SESSION_MINUTES:
+        log(f"WARNING: {a.session_minutes:g}-min sessions (wrap-up at {wrap_minutes(a.session_minutes):.1f} min); "
+            "expect little play")
     lock = acquire_lock()  # noqa: F841 - held for the process lifetime
     (RUNTIME / "STOP").unlink(missing_ok=True)
     runner = Runner(Options(a.playthrough, a.hours, a.session_minutes, a.model, a.take_over, a.dry_run,
                             a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model))
+    # Cutscenes are always skipped, also while the runner waits on menus and loads (the New Game intro
+    # plays during StartLoading) and between sessions; the play session's MCP server idles meanwhile
+    # (one skipper per game, runtime/skipper.lock).
+    from bg3ai.skipper import start_background
+    skip_stop = start_background(DEBUG_PORT, lambda m: log(f"autoskip: {m}"), RUNTIME / "skipper.lock")
 
     def on_signal(signum, _frame):
         if runner.stop_requested:
@@ -1227,7 +1278,11 @@ def cmd_run(a) -> int:
 
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
-    return runner.run()
+    try:
+        return runner.run()
+    finally:
+        if skip_stop is not None:
+            skip_stop.set()
 
 
 def cmd_stop(_a) -> int:
@@ -1294,6 +1349,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--playthrough", required=True)
     r.add_argument("--hours", type=float, help="total wall-clock budget (default: until stopped)")
     r.add_argument("--session-minutes", type=float, default=60)
+    r.add_argument("--allow-short-sessions", action="store_true",
+                   help=f"allow --session-minutes below {MIN_SESSION_MINUTES} (harness tests only)")
     r.add_argument("--model", default="opus", help="model for play sessions (claude --model)")
     r.add_argument("--effort", choices=EFFORTS, help="effort for play sessions (claude --effort; default: "
                    "Claude Code's). Per-session override: runtime/sessions/<pt>/session-config.json "

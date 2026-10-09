@@ -281,6 +281,15 @@ class DoActions(Base):
         self.assertIn("STOPPED: ", out)
         self.assertIn("HP 5/20", out)
 
+    def test_damage_outside_combat_interrupts(self):
+        def burn(op, args):
+            self.g.watch["party"] = [{"uuid": P1, "hp": 18, "max_hp": 20, "surface": "Fire"}]
+        self.g.on_start = burn
+        out = server.do_actions('[{"tool":"interact","target":"%s"},{"tool":"interact","target":"%s"}]'
+                                % (self.door, self.door))
+        self.assertIn("STOPPED: ", out)
+        self.assertIn("standing in Fire", out)
+
     def test_bad_steps(self):
         self.assertIn("FAILED: step 1: 'save_game' can't be batched", server.do_actions('[{"tool":"save_game"}]'))
         self.assertIn("unknown condition 'drunk'",
@@ -393,3 +402,54 @@ class Parsing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WatcherParty(unittest.TestCase):
+    """The S001 interrupts: damage taken outside combat, stepping into a harmful surface."""
+
+    def setUp(self) -> None:
+        self.g = FakeGame()
+        self.w = actq.Watcher(self.g)
+
+    def party(self, **row) -> None:
+        self.g.watch["party"] = [{"uuid": P1, "hp": 20, "max_hp": 20, **row}]
+
+    def test_damage_outside_combat(self):
+        self.w.baseline()
+        self.party(hp=19)
+        kind, why = self.w.check("move_to", None, ui=False)
+        self.assertEqual(kind, "damage")
+        self.assertIn("HP 19/20", why)
+
+    def test_damage_in_combat_is_not_an_interrupt_above_the_threshold(self):
+        self.g.watch["combat"] = True
+        self.w.baseline()
+        self.party(hp=15)
+        self.assertIsNone(self.w.check("move_to", None, ui=False))
+
+    def test_hp_threshold_wins_over_damage(self):
+        self.w.baseline()
+        self.party(hp=3)
+        self.assertEqual(self.w.check("move_to", None, ui=False)[0], "hp")
+
+    def test_stepping_into_a_surface(self):
+        self.w.baseline()
+        self.party(surface="Acid")
+        kind, why = self.w.check("move_to", None, ui=False)
+        self.assertEqual(kind, "surface")
+        self.assertIn("Acid", why)
+
+    def test_already_in_a_surface_at_the_start_is_not_an_interrupt(self):
+        self.party(surface="Fire")
+        self.w.baseline()
+        self.assertIsNone(self.w.check("move_to", None, ui=False))
+        self.party()  # out of it
+        self.assertIsNone(self.w.check("move_to", None, ui=False))
+        self.party(surface="Fire")  # back in
+        self.assertEqual(self.w.check("move_to", None, ui=False)[0], "surface")
+
+    def test_ignore_damage_and_surface(self):
+        self.w = actq.Watcher(self.g, ignore={"damage", "surface"})
+        self.w.baseline()
+        self.party(hp=19, surface="Fire")
+        self.assertIsNone(self.w.check("move_to", None, ui=False))

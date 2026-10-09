@@ -61,6 +61,7 @@ class FakeGame:
         self.combat: dict = {"active": False}
         self.reach: Any = None  # nav.reach_toward reply (or callable(args))
         self.path: dict = {"reachable": True, "movement_left": 0}
+        self.safe: dict = {"safe": True}  # nav.safe_spot reply
         self.nearby: dict = {"characters": [], "items": []}
         self.inv: dict = {"items": []}
         self.on_start = None  # hook(op, args)
@@ -134,6 +135,8 @@ class FakeGame:
                 return r if r is not None else {"reachable": False}
             if op == "nav.path":
                 return dict(self.path)
+            if op == "nav.safe_spot":
+                return dict(self.safe)
             if op == "nav.markers":
                 return {"markers": []}
             if op == "state.nearby":
@@ -504,27 +507,74 @@ class TravelTo(Base):
         self.g.reach = reach
 
     def test_chained_walks_to_a_marker(self):
-        out = server.travel_to(marker="well")
+        out = server.travel_to(marker="well", wait=True)
         self.assertEqual([a["pos"][0] for _, a in self.g.ops("act.move_to")], [30.0, 50.0])
         self.assertIn("travel_to marker m1 Old well: 50m", out)
         self.assertIn("arrived", out)
 
     def test_no_way_further(self):
         self.g.reach = {"reachable": True, "pos": [0.2, 0, 0]}
-        out = server.travel_to(x=50.0, y=0.0, z=0.0)
+        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
         self.assertIn("STOPPED: no walkable ground leads further", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
 
     def test_interrupt_stops_the_trip(self):
         self.g.on_start = lambda op, a: op == "act.move_to" and self.g.push("dialogue_started", {})
-        out = server.travel_to(marker="m1")
+        out = server.travel_to(marker="m1", wait=True)
         self.assertIn("STOPPED: a conversation started", out)
         self.assertEqual(len(self.g.ops("act.move_to")), 1)
+
+    def test_stalled_legs_end_the_trip(self):
+        # S001: after the landing, every leg came back "stopped_short ... path blocked" at the same spot.
+        self.g.reach = {"reachable": True, "pos": [20.0, 0.0, 0.0]}
+        self.g.result_for = lambda op, a: ({"stopped_short": True, "reason": "path blocked",
+                                            "after": {"pos": [5.0, 0.0, 0.0]}} if op == "act.move_to" else {})
+        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        # leg 1 gets 5 m closer (progress), legs 2 and 3 end at the same spot: stop after 2 stalls
+        self.assertEqual(len(self.g.ops("act.move_to")), 3)
+        self.assertIn("STOPPED: stopped short 2 legs in a row", out)
+
+    def test_fire_on_the_only_way_stops_before_walking_into_it(self):
+        self.g.reach = {"reachable": False, "hazard": {"surface": "Fire", "pos": [-18, 18, -424], "at_m": 6}}
+        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        self.assertIn("STOPPED: the way on crosses Fire 6m ahead", out)
+        self.assertEqual(self.g.ops("act.move_to"), [])
+
+    def test_legs_report_the_surface_they_kept_clear_of(self):
+        def reach(a):
+            return {"reachable": True, "pos": [50.0, 0.0, 0.0], "avoided": 1,
+                    "hazard_beyond": {"surface": "Acid", "at_m": 31}}
+        self.g.reach = reach
+        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        self.assertIn("kept clear of Acid 31m ahead", out)
+        self.assertIn("arrived", out)
+
+    def test_stepping_into_fire_interrupts_and_steps_out(self):
+        def burn(op, a):
+            if op == "act.move_to" and len(self.g.ops("act.move_to")) == 1:
+                self.g.watch["party"][0]["surface"] = "Fire"
+        self.g.on_start = burn
+        self.g.dur["act.move_to"] = 0.2
+        self.g.safe = {"safe": False, "standing_in": "Fire", "found": True, "pos": [-2.0, 0.0, 0.0],
+                       "path_m": 2.0, "dir": "W"}
+        out = server.travel_to(marker="m1", wait=True)
+        self.assertIn("standing in Fire", out)
+        self.assertIn("left Fire W 2m", out)
+        self.assertEqual(self.g.ops("act.move_to")[-1][1]["pos"], [-2.0, 0.0, 0.0])
+
+    def test_starting_in_fire_steps_out_first(self):
+        self.g.watch["party"][0]["surface"] = "Fire"
+        self.g.safe = {"safe": False, "standing_in": "Fire", "found": True, "pos": [3.0, 0.0, 0.0],
+                       "path_m": 3.0, "dir": "E"}
+        out = server.travel_to(marker="m1", wait=True)
+        self.assertEqual(self.g.ops("act.move_to")[0][1]["pos"], [3.0, 0.0, 0.0])
+        self.assertIn("left Fire E 3m", out)
+        self.assertIn("arrived", out)
 
     def test_marker_on_another_level(self):
         (self.tmp / "markers.json").write_text(json.dumps([{"id": "m1", "label": "x", "pos": [1, 0, 0],
                                                              "level": "WLD", "region": "Wilderness"}]))
-        self.assertIn("fast_travel there first", server.travel_to(marker="m1"))
+        self.assertIn("fast_travel there first", server.travel_to(marker="m1", wait=True))
 
 
 class Regroup(Base):

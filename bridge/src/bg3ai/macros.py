@@ -19,6 +19,8 @@ LOOT_MAX = 10
 TRAVEL_LEG_M = 30.0
 TRAVEL_ARRIVE_M = 3.0
 TRAVEL_MAX_LEGS = 12
+TRAVEL_PROGRESS_M = 1.0  # a leg that gets less than this much closer is a stall
+TRAVEL_STALL_LEGS = 2    # stalls in a row before travel_to gives up (S001 retried in place while burning)
 REGROUP_NEAR_M = 6.0
 DIALOGUE_MAX = 12
 
@@ -138,3 +140,44 @@ def hp_low(party: list[dict], threshold: float) -> list[tuple[str, int, int]]:
                                and 100.0 * hp / mx <= threshold):
             out.append((r.get("uuid"), hp, mx))
     return out
+
+
+class TravelProgress:
+    """travel_to's stall detector: each leg must get the character TRAVEL_PROGRESS_M closer than the best so
+    far, else it is a stall; TRAVEL_STALL_LEGS stalls in a row end the trip (S001: legs kept returning
+    'stopped_short ... path blocked' at the same spot while the character burned)."""
+
+    def __init__(self, start: Any, dest: Any) -> None:
+        self.dest = dest
+        self.best = dist(start, dest)
+        self.stalls = 0
+
+    def leg(self, here: Any, stopped_short: bool = False) -> str | None:
+        """Record where a leg ended. Returns why to stop, or None to go on."""
+        d = dist(here, self.dest)
+        if d <= self.best - TRAVEL_PROGRESS_M:
+            self.best = d
+            self.stalls = 0
+            return None
+        self.stalls += 1
+        if self.stalls >= TRAVEL_STALL_LEGS:
+            why = "stopped short" if stopped_short else "made no progress"
+            return f"{why} {self.stalls} legs in a row ({round(d, 1)}m left): the way is blocked here"
+        return None
+
+
+def hazard_text(h: dict | None) -> str:
+    """{surface, pos, at_m} -> 'Fire 6m ahead @(-18,18,-424)'."""
+    if not isinstance(h, dict) or not h.get("surface"):
+        return ""
+    out = str(h["surface"])
+    if h.get("at_m") is not None:
+        out += f" {round(float(h['at_m']))}m ahead"
+    p = h.get("pos")
+    if isinstance(p, (list, tuple)) and len(p) >= 3:
+        out += " @(" + ",".join(f"{float(v):g}" for v in p[:3]) + ")"
+    return out
+
+
+def leg_stopped_short(result: Any) -> bool:
+    return isinstance(result, dict) and bool(result.get("stopped_short") or result.get("reached") is False)

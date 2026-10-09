@@ -267,6 +267,13 @@ local function begin_walk(job, opts)
         move_id = opts.move_id or job.id,
     }
     local p = opts.pos
+    -- The engine's own route to p: big steps along it (jump links, a frame
+    -- hitch mid-walk) are the walk, not a teleport (teleport_check).
+    local N = BG3AI.Nav
+    if type(N) == "table" and type(N.route) == "function" then
+        local ok, pts = pcall(N.route, job.char, p)
+        if ok and type(pts) == "table" then job.walk.route = pts end
+    end
     G.osi("CharacterMoveToPosition", job.char, p[1], p[2], p[3], opts.speed, job.walk.ev, job.walk.move_id)
 end
 
@@ -364,6 +371,17 @@ end
 -- to moments when the character was not yet next to the item it uses, so a
 -- ladder climb or portal is not mistaken for a teleport.
 -- Returns here, step, dt; or nil after failing the job.
+local function on_route(job, track, prev, here)
+    local N = BG3AI.Nav
+    if not track.route or type(N) ~= "table" or type(N.onRoute) ~= "function" then return false end
+    local ok, yes = pcall(N.onRoute, track.route, prev, here)
+    if ok and yes then
+        RPC.push("route_jump", { uuid = job.char, from = pos_view(prev), to = pos_view(here) })
+        return true
+    end
+    return false
+end
+
 local function teleport_check(job, track, armed)
     local here = G.pos(job.char)
     if not here then return nil end
@@ -371,7 +389,7 @@ local function teleport_check(job, track, armed)
     local prev, dt = track.last_pos, t - (track.last_t or t)
     local step = prev and U.dist(prev, here) or 0
     if prev and (step > 4.0 or (dt >= 100 and step / (dt / 1000) > 12.0))
-        and (not armed or armed(prev)) then
+        and (not armed or armed(prev)) and not on_route(job, track, prev, here) then
         if job.walk then job.walk.done = true end
         pcall(G.osi, "PurgeOsirisQueue", job.char)
         RPC.push("teleport_blocked", { uuid = job.char, from = pos_view(prev), to = pos_view(here) })
@@ -1440,7 +1458,7 @@ end)
 ------------------------------------------------------------------------
 -- act.watch {radius?}: one cheap read for the bridge's action queue (its
 -- interrupt checks) and the do_actions diff. Only what the player sees: the
--- party's portraits (pos, HP, downed), the mode (combat / conversation), and
+-- party's portraits (pos, HP, downed, a harmful surface underfoot), the mode (combat / conversation), and
 -- the characters in view (visibility-filtered, as in state.nearby).
 -- act.note {kind, data}: the bridge's queue reports (queue_*) go into the
 -- same event stream as the game's events.
@@ -1457,6 +1475,12 @@ RPC.register("act.watch", function(args)
         local h = e and U.comp(e, "Health")
         if h then pcall(function() row.hp = h.Hp; row.max_hp = h.MaxHp end) end
         if G.is_downed(u) then row.downed = true end
+        -- a harmful surface underfoot the player sees (fire, acid, ...): the queue's "surface" interrupt
+        local N = BG3AI.Nav
+        if row.pos and type(N) == "table" and type(N.surfaceAt) == "function" then
+            local ok, sf = pcall(N.surfaceAt, G.pos(u))
+            if ok and sf then row.surface = sf end
+        end
         if G.in_combat(u) then out.combat = true end
         if G.in_dialogue(u) then out.dialogue = true end
         if row.pos then centers[#centers + 1] = row.pos end

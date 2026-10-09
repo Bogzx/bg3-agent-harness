@@ -11,8 +11,10 @@ player can see (the mod's act.watch / act.target_state).
 
 Default interrupts flush the rest of the steps and say why and what was left: combat starting, a
 conversation starting, a reaction / roll / popup on screen, a new hostile in view, a party member's
-HP dropping below a threshold, a teleport the guard blocked, and any step that fails (path failure,
-target gone, refusal).
+HP dropping below a threshold, any damage taken outside combat (fire, traps, falls: S001 burned from 22 to
+3 HP while a travel kept retrying), a party member stepping into a harmful surface the player can see
+(fire, acid, ...), a teleport the guard blocked, and any step that fails (path failure, target gone,
+refusal).
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ PROMPTS = {
     "popup": set(),
     "game_over": set(),
 }
-INTERRUPT_KINDS = ("combat", "dialogue", "prompt", "hostile", "hp", "teleport")
+INTERRUPT_KINDS = ("combat", "dialogue", "prompt", "hostile", "hp", "damage", "surface", "teleport")
 
 
 class StepError(ValueError):
@@ -62,7 +64,7 @@ class Step:
         """`interact e5`, `move_to 12,0,-3`: what the agent wrote, briefly."""
         a = self.args
         main = next((a[k] for k in ("target", "item", "npc", "corpse", "trap", "ability", "direction",
-                                    "objective", "option", "op", "action") if a.get(k) not in (None, "")), None)
+                                    "objective", "marker", "option", "op", "action") if a.get(k) not in (None, "")), None)
         if main is None and a.get("x") is not None:
             main = f"{a.get('x')},{a.get('y')},{a.get('z')}"
         return f"{self.tool} {main}" if main is not None else self.tool
@@ -134,6 +136,7 @@ class Watcher:
         self._screen = "game"
         self._ui_at = 0.0
         self._hp: dict[str, float] = {}
+        self._surf: dict[str, str | None] = {}
         self._hostiles: set[str] = set()
 
     def _watch(self) -> dict:
@@ -156,6 +159,7 @@ class Watcher:
                 p = _pct(row)
                 if p is not None:
                     self._hp[row.get("uuid")] = p
+                self._surf[row.get("uuid")] = row.get("surface")
             self._hostiles = {s.get("uuid") for s in self.start.get("seen") or [] if s.get("hostile")}
 
     def settle(self) -> None:
@@ -177,6 +181,31 @@ class Watcher:
         self.events.extend(out)
         return out
 
+    def _party_check(self, w: dict) -> tuple[str, str] | None:
+        """HP (downed, below the threshold, any damage outside combat) and harmful surfaces underfoot.
+        Surface: only stepping INTO one (or into a different one) counts, so a walk that starts in a fire
+        to get out of it is not stopped by it."""
+        hit = None
+        for row in w.get("party") or []:
+            u, p = row.get("uuid"), _pct(row)
+            surf, was = row.get("surface"), self._surf.get(u)
+            self._surf[u] = surf
+            if hit is None and surf and surf != was and "surface" not in self.ignore:
+                hit = "surface", f"{u} is standing in {surf}"
+            if row.get("downed") and "hp" not in self.ignore:
+                return "hp", f"{u} is downed"
+            if p is None:
+                continue
+            before = self._hp.get(u, 100.0)
+            self._hp[u] = p
+            if p < before - 0.1:
+                if p < self.hp_below and "hp" not in self.ignore:
+                    return "hp", f"{u} HP {row.get('hp')}/{row.get('max_hp')}"
+                if not w.get("combat") and "damage" not in self.ignore and hit is None:
+                    hit = "damage", f"{u} took damage outside combat (HP {row.get('hp')}/{row.get('max_hp')})" \
+                        + (f" in {surf}" if surf else "")
+        return hit
+
     def check(self, tool: str | None, next_tool: str | None, ui: bool | None = None) -> tuple[str, str] | None:
         """(kind, reason) if the run must stop, else None. tool = the step running (or just run)."""
         with self._lock:
@@ -194,17 +223,9 @@ class Watcher:
                 self.last = w
                 if w.get("combat") and not self.start.get("combat") and "combat" not in self.ignore:
                     return "combat", "combat started"
-                if "hp" not in self.ignore:
-                    for row in w.get("party") or []:
-                        u, p = row.get("uuid"), _pct(row)
-                        if row.get("downed"):
-                            return "hp", f"{u} is downed"
-                        if p is None:
-                            continue
-                        before = self._hp.get(u, 100.0)
-                        self._hp[u] = p
-                        if p < self.hp_below and p < before - 0.1:
-                            return "hp", f"{u} HP {row.get('hp')}/{row.get('max_hp')}"
+                hit = self._party_check(w)
+                if hit:
+                    return hit
                 if "hostile" not in self.ignore:
                     for s in w.get("seen") or []:
                         if s.get("hostile") and not s.get("dead") and s.get("uuid") not in self._hostiles:

@@ -1,7 +1,7 @@
 """Story progress per hour, from what the player can see (stdlib only; runner + dashboard use it).
 
 The runner polls the game every POLL_S seconds during a session (one server eval: state.status,
-state.journal, state.map, nav.markers; one client eval: ui.state for the minimap subregion). Every op is
+state.journal, state.map, nav.markers, nav.explored; one client eval: ui.state for the minimap subregion). Every op is
 one of the mod's player-visible projections: the journal only has unlocked steps, the map only unlocked
 waypoints, markers only active objectives. Each poll is diffed against the playthrough's `seen` state
 (persisted in runtime/sessions/<pt>/progress_state.json) and every NEW thing becomes a progress event.
@@ -20,8 +20,12 @@ Weights (points per event; deliberately simple, story-weighted):
     area        3  a new minimap subregion ("Ship Hold", "Blighted Village")
     quest_step  2  a new journal entry in a known quest
     objective   2  an active quest objective marker disappeared (done or superseded)
+    obj_moved   1  an objective marker moved >= OBJ_MOVED_M to a spot it never had (the next leg of it:
+                   S001 opened the first door and the "Escape Route" marker jumped 67 m on, scoring 0)
+    explore     1  per EXPLORE_CELLS new explored 4x4 m cells on a level (the party's own breadcrumbs,
+                   nav.explored; ~130 m2, a corridor of ~30 m)
 
-points/hour = points / session hours. A rough scale: the Nautiloid (~1 h for a human) is ~60-80 points.
+points/hour = points / session hours. A rough scale: the Nautiloid (~1 h for a human) is ~80-100 points.
 
 Stuck signal: no progress event for STUCK_MIN minutes while the agent is active (it made at least
 STUCK_MIN_ACTIONS tool calls in that time, per the bridge metrics file). The runner writes a `stuck`
@@ -36,19 +40,23 @@ Timeline records (Sxxx.progress.jsonl, one JSON per line):
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 WEIGHTS = {"region": 15, "quest_done": 10, "level_up": 8, "waypoint": 5, "companion": 5, "quest_new": 3,
-           "area": 3, "quest_step": 2, "objective": 2}
+           "area": 3, "quest_step": 2, "objective": 2, "obj_moved": 1, "explore": 1}
+EXPLORE_CELLS = 8
+OBJ_MOVED_M = 10.0
+OBJ_POS_CAP = 20  # remembered spots per objective
 POLL_S = float(os.environ.get("BG3AI_PROGRESS_POLL_S", "15") or 15)
 STUCK_MIN = float(os.environ.get("BG3AI_STUCK_MINUTES", "15") or 15)
 STUCK_MIN_ACTIONS = 10
 
 SERVER_OPS = (("status", "state.status"), ("journal", "state.journal"), ("map", "state.map"),
-              ("markers", "nav.markers"))
+              ("markers", "nav.markers"), ("explored", "nav.explored"))
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +100,7 @@ def read_game(lua_eval: Callable[..., str]) -> dict | None:
 
 def empty_seen() -> dict:
     return {"regions": [], "areas": [], "waypoints": [], "quests": {}, "objectives_active": [],
-            "objectives_done": [], "levels": {}, "baseline": False}
+            "objectives_done": [], "levels": {}, "explored": {}, "objective_pos": {}, "baseline": False}
 
 
 def _quests(journal: Any) -> dict:
@@ -112,16 +120,53 @@ def _markers(m: Any) -> list[str] | None:
     return sorted({f"{x.get('label') or x.get('objective') or '?'}|{x.get('quest') or ''}" for x in ms if isinstance(x, dict)})
 
 
+def _objective_moves(seen: dict, m: Any, add: Callable, silent: bool) -> None:
+    """obj_moved: an objective marker of this level standing >= OBJ_MOVED_M from every spot it had before."""
+    ms = m.get("markers") if isinstance(m, dict) else m
+    if not isinstance(ms, list):
+        return
+    for x in ms:
+        p = x.get("pos") if isinstance(x, dict) else None
+        if not (isinstance(p, list) and len(p) >= 3):
+            continue
+        key = f"{x.get('label') or x.get('objective') or '?'}|{x.get('quest') or ''}"
+        spots = seen["objective_pos"].setdefault(key, [])
+        here = [round(float(p[0]), 1), round(float(p[1]), 1), round(float(p[2]), 1)]
+        if all(math.dist(here, s) >= OBJ_MOVED_M for s in spots):
+            if spots:
+                add("obj_moved", f"{key.split('|')[0]} moved on", silent)
+            spots.append(here)
+            del spots[:-OBJ_POS_CAP]
+
+
+def _explored(seen: dict, ex: Any, add: Callable, silent: bool) -> None:
+    """explore: one event per EXPLORE_CELLS new breadcrumb cells on a level (credited = the best count
+    scored so far, so reloading an earlier save never scores the same ground twice)."""
+    if not isinstance(ex, dict) or not ex.get("level") or not isinstance(ex.get("cells"), (int, float)):
+        return
+    lvl, cells = str(ex["level"]), int(ex["cells"])
+    credited = seen["explored"].get(lvl)
+    if credited is None:
+        # a level first seen now: its cells so far are new ground, unless this is the silent baseline
+        credited = cells if (silent or not seen["baseline"]) else 0
+    while cells >= credited + EXPLORE_CELLS:
+        credited += EXPLORE_CELLS
+        add("explore", f"{lvl}: {credited} cells explored", silent)
+    seen["explored"][lvl] = credited
+
+
 def diff(seen: dict, got: dict) -> tuple[dict, list[dict]]:
     """(new seen, events) for one poll. Events: {kind, what, points}. The first call is a silent baseline."""
     seen = json.loads(json.dumps(seen or empty_seen()))
+    # keys added after a playthrough started baseline silently on their first poll (no back-scoring)
+    fresh = {k for k in empty_seen() if k not in seen}
     for k, v in empty_seen().items():
         seen.setdefault(k, v)
     ev: list[dict] = []
     quiet = not seen["baseline"]
 
-    def add(kind: str, what: str) -> None:
-        if not quiet:
+    def add(kind: str, what: str, silent: bool = False) -> None:
+        if not quiet and not silent:
             ev.append({"kind": kind, "what": what, "points": WEIGHTS[kind]})
 
     st = got.get("status") or {}
@@ -130,7 +175,9 @@ def diff(seen: dict, got: dict) -> tuple[dict, list[dict]]:
         seen["regions"].append(region)
         add("region", str(region))
     ui = got.get("ui") or {}
-    sub = (ui.get("region") if ui.get("screen") in (None, "game") else None) or st.get("subregion")
+    ex = got.get("explored") if isinstance(got.get("explored"), dict) else {}
+    sub = (ui.get("region") if ui.get("screen") in (None, "game") else None) or st.get("subregion") \
+        or ex.get("subregion")
     if sub:
         key = f"{region}|{sub}"
         if key not in seen["areas"]:
@@ -178,6 +225,8 @@ def diff(seen: dict, got: dict) -> tuple[dict, list[dict]]:
                 seen["objectives_done"].append(k)
                 add("objective", k.split("|")[0])
         seen["objectives_active"] = ms
+    _objective_moves(seen, got.get("markers"), add, "objective_pos" in fresh)
+    _explored(seen, got.get("explored"), add, "explored" in fresh)
     seen["baseline"] = True
     return seen, ev
 

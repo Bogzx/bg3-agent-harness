@@ -18,7 +18,7 @@ Ctrl-C once does the same as `stop`; a second Ctrl-C interrupts the running sess
 nothing.
 
 Options: `--session-minutes 60` (the wrap-up reminder fires 10 min before the end), `--hours N` (total
-budget; no new session starts with less than 15 min left), `--model`, `--save-owner NAME`,
+budget; no new session starts with less than 20 min left), `--model`, `--save-owner NAME`,
 `--take-over` (see Safety).
 
 `--save-owner` (or `$BG3AI_SAVE_OWNER`) is the player character's name, which starts every save folder
@@ -82,9 +82,13 @@ python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hour
   Quit to the menu or close the game first, or pass `--take-over`.
 - It only kills a game it launched, one at the main menu, or any game under `--take-over`.
 - Only one runner at a time (`runtime/runner.lock`).
-- If several AI playthroughs share one character name, set `BG3AI_SAVE_PREFIX` (e.g. `ilse-`) so their
-  `Sxxx-` labels can't collide. It prefixes the save *label* (the part after `__`), not the folder, and
-  the MCP server's save tool must apply the same prefix. Use `--save-owner` for the character name.
+- `BG3AI_SAVE_PREFIX` marks this playthrough's saves. The runner accepts it as a folder prefix (`Claude-`:
+  the character name plus the game's dash, what the MCP server and docs/HANDOFF.md use; the agent's
+  `Sxxx-` labels stay plain) or as a label prefix (`pt1-S010-end`). Use `--save-owner` for the character
+  name; new games name the character with it (bg3ai/naming.py checks it before "Venture forth").
+- `--session-minutes` below 20 is refused (`--allow-short-sessions` for harness tests): start-up and wrap-up
+  take ~13 min. Wrap-up starts 10 min before the end (a third of a short session), passed to the MCP clock
+  as `BG3AI_SESSION_WRAPUP`.
 
 ## Files
 

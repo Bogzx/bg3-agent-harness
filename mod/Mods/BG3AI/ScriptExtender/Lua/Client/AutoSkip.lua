@@ -8,6 +8,13 @@
 --     AlwaysOnTopOverlay + ScreenFade are under ContentRoot, no HUD at all,
 --     and the game state is Running (a loading screen is the widget "root"
 --     with an ls.LoadingScreen DC). Skip: ESCAPE.
+--   * Load-time movies (the New Game intro after "Venture Forth", LIVE BUG
+--     2026-10-09: >2.5 min unskipped) play while the game state is
+--     StartLoading/LoadLevel/...: GE.OnMovieShow pushes the same "Movie" state
+--     (AlwaysOnTopOverlay, HideStatesBelow) over the Loading state, so the
+--     loading screen "root" is still a child, hidden or under the overlay.
+--     The engine game state "Movie" counts too. These get a shim ESCAPE every
+--     LOAD_RETRY_MS for as long as they stay up (the intro needed two).
 --   * Dialogues and cinematic (timeline) dialogues are the Dialogue page.
 --     While a line plays without answers, the page binds UISkipDialog to
 --     DC.SelectorSkipCommand(PlayerId); we run that command (parameter nil,
@@ -48,6 +55,9 @@ K.MOVIE_CONFIRM_MS = 100 -- a movie seen on two probes is real, not a transition
 K.ENGINE_GRACE_MS = 200 -- after the engine ESCAPE, before asking the bridge for a shim key
 K.RETRY_MS = 700        -- between shim keys, and between line skips
 K.MAX_TRIES = 4
+K.LOAD_RETRY_MS = 2000  -- load-time movies: shim ESCAPE at most this often, while it lasts
+K.LOAD_MAX_TRIES = 120  -- ~4 min of tries
+K.STALE_MS = 500        -- no tick for this long (loading may stall it): autoskip.status probes itself
 K.LINE_GRACE_MS = 250   -- let a new line render before skipping it
 K.stats = K.stats or { lines = 0, movies = 0, seen = 0 }
 K.state = { next = 0, nextMovie = 0 }
@@ -86,28 +96,55 @@ local function isOurCombatTurn(dc)
     return p.IsCurrentTurn == true or p.CanEndTurn == true
 end
 
--- "movie" when only movie-safe widgets exist (and at least one), the game is
--- running and no loading screen is up (a loading screen is the widget "root",
--- which is not movie-safe).
-local function movieShowing(widgets)
-    if #widgets == 0 then return false end
-    for _, w in ipairs(widgets) do
-        if not MOVIE_OK[w.name] then return false end
+-- Game states during which the loading screen is up (a movie can play over it).
+local LOAD_STATES = {
+    StartLoading = true, StopLoading = true, LoadLevel = true, LoadModule = true, LoadSession = true,
+    SwapLevel = true, PrepareRunning = true, Init = true, Idle = true,
+}
+K.LOAD_STATES = LOAD_STATES
+
+-- What is on screen, from the names of ContentRoot's children and the game
+-- state: "movie" (a Bink movie in a running game or the main menu: only
+-- movie-safe widgets), "load" (a movie over a loading screen, or the engine
+-- state Movie), or false. rootHidden() is only called when it decides.
+function K.classify(names, gs, rootHidden)
+    if gs == "Movie" then return "load" end
+    if #names == 0 then return false end
+    local overlay, root, other = false, false, false
+    for _, n in ipairs(names) do
+        if n == "AlwaysOnTopOverlay" then overlay = true end
+        if n == "root" then root = true
+        elseif not MOVIE_OK[n] then other = true end
     end
-    local gs = tostring(try(Ext.Utils.GetGameState) or "")
-    return gs == "Running"
+    if other then return false end
+    if gs == "Running" or gs == "Menu" then
+        return (not root) and "movie" or false
+    end
+    if LOAD_STATES[gs] then
+        -- The Movie state's overlay, or the loading screen hidden by it.
+        if overlay then return "load" end
+        if root and rootHidden and rootHidden() then return "load" end
+    end
+    return false
 end
 
--- The cheap probe: names of ContentRoot's children, nothing else.
+-- The cheap probe: names of ContentRoot's children (plus the loading
+-- screen's visibility while loading), no DataContext reads.
 function K.probeMovie()
+    local gs = tostring(try(Ext.Utils.GetGameState) or "")
+    if gs == "Movie" then return "load" end
     local cr = UI.contentRoot()
     if not cr then return false end
-    local names = {}
+    local names, rootEl = {}, nil
     for i = 1, UI.childCount(cr) do
         local w = UI.child(cr, i)
-        if w then names[#names + 1] = { name = UI.name(w) or "?" } end
+        if w then
+            local n = UI.name(w) or "?"
+            names[#names + 1] = n
+            if n == "root" then rootEl = w end
+        end
     end
-    return movieShowing(names)
+    return K.classify(names, gs, function() return rootEl ~= nil and not UI.isVisible(rootEl) end)
 end
 
 local function press(key)
@@ -124,32 +161,36 @@ end
 -- Movies: from the tick every FAST_MS. Returns true while one is showing.
 function K.movieTick(now)
     local st = K.state
-    if not K.probeMovie() then
+    local kind = K.probeMovie()
+    if not kind then
         st.movie = nil
         K.want = nil
         return false
     end
     local m = st.movie
-    if not m then
-        m = { since = now, tries = 0, last = 0 }
+    if not m or m.kind ~= kind then
+        m = { since = now, tries = 0, last = 0, kind = kind }
         st.movie = m
         return true
     end
-    if now - m.since < K.MOVIE_CONFIRM_MS or m.tries >= K.MAX_TRIES then return true end
+    local load = kind == "load"
+    local maxTries = load and K.LOAD_MAX_TRIES or K.MAX_TRIES
+    if now - m.since < K.MOVIE_CONFIRM_MS or m.tries >= maxTries then return true end
     if m.tries == 0 then
         -- 1st try: the engine's key injection (Bink may only react to real input).
         m.tries = 1
         m.last = now
         press("ESCAPE")
         K.stats.movies = K.stats.movies + 1
-        RPC.push("movie_skipped", {})
-    elseif now - m.last >= (m.tries == 1 and K.ENGINE_GRACE_MS or K.RETRY_MS) then
+        RPC.push("movie_skipped", { kind = kind })
+    elseif now - m.last >= (m.tries == 1 and K.ENGINE_GRACE_MS or (load and K.LOAD_RETRY_MS or K.RETRY_MS)) then
         -- Still up: the bridge sends ESCAPE through the SDL input shim (se
         -- verified it skips Bink movies); it re-checks autoskip.status first,
-        -- since a stray ESCAPE in game opens the menu.
+        -- since a stray ESCAPE in game opens the menu. A load-time movie may
+        -- have several parts: keep asking every LOAD_RETRY_MS.
         m.tries = m.tries + 1
         m.last = now
-        want("ESCAPE", "movie", m.tries, now)
+        want("ESCAPE", load and "load_movie" or "movie", m.tries, now)
     end
     return true
 end
@@ -157,6 +198,7 @@ end
 function K.tick()
     local now = RPC.now_ms()
     local st = K.state
+    K.lastTick = now
     if not K.enabled() then
         st.movie, K.want = nil, nil
         return
@@ -221,16 +263,37 @@ function K.view()
 end
 
 -- autoskip.status: the bridge's skipper polls this (cheap: no UI reads).
--- -> {on, now, movie?={age, tries}, want?={seq,key,reason,try,at}, stats}
-RPC.register("autoskip.status", function()
+-- -> {on, now, movie?={age, tries, kind}, want?={seq,key,reason,try,at}, stats}
+-- {debug=true} adds {gs, widgets=[ContentRoot child names], probe} (for live checks).
+RPC.register("autoskip.status", function(args)
     local now = RPC.now_ms()
+    -- While loading, the client tick may not run: let the skipper's poll drive the movie probe.
+    if K.enabled() and now - (K.lastTick or 0) > K.STALE_MS and now >= (K.state.nextMovie or 0) then
+        K.state.nextMovie = now + K.FAST_MS
+        local ok, err = pcall(K.movieTick, now)
+        if not ok then K.errors = (K.errors or 0) + 1 end
+        K.polled = (K.polled or 0) + 1
+    end
     local m = K.state.movie
-    return {
+    local res = {
         on = K.enabled(), now = now,
-        movie = m and { age = now - m.since, tries = m.tries } or nil,
+        movie = m and { age = now - m.since, tries = m.tries, kind = m.kind } or nil,
         want = K.want,
-        stats = { lines = K.stats.lines, movies = K.stats.movies, seen = K.stats.seen, errors = K.errors or 0 },
+        stats = { lines = K.stats.lines, movies = K.stats.movies, seen = K.stats.seen, errors = K.errors or 0,
+                  polled = K.polled },
     }
+    if type(args) == "table" and args.debug then
+        res.gs = tostring(try(Ext.Utils.GetGameState) or "")
+        local names = {}
+        local cr = UI.contentRoot()
+        for i = 1, cr and UI.childCount(cr) or 0 do
+            local w = UI.child(cr, i)
+            if w then names[#names + 1] = UI.name(w) or "?" end
+        end
+        res.widgets = names
+        res.probe = K.probeMovie() or false
+    end
+    return res
 end)
 
 if not K.subscribed then

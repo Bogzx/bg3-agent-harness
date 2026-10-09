@@ -240,6 +240,36 @@ test("move_to: teleport is detected and purged", function()
     assert(#called("PurgeOsirisQueue") >= 1, "purged")
 end)
 
+-- S001 leg 5: a 7 m single-tick step along the engine's own route (a jump link
+-- or a frame hitch) is the walk, not a teleport. Nav.route/onRoute are stubbed
+-- here; their geometry is tested in tools/dev/test_nav_lua.lua.
+local function with_route(on)
+    BG3AI.Nav.route = function() return { { 0, 0, 0 }, { 30, 0, 0 } } end
+    BG3AI.Nav.onRoute = function() return on end
+end
+local function without_route() BG3AI.Nav.route, BG3AI.Nav.onRoute = nil, nil end
+
+test("move_to: a big step along the walk's own route is not a teleport", function()
+    with_route(true)
+    local j = job(op("move_to", { char = P1, pos = { 30, 0, 0 } }))
+    tick()
+    world[P1].pos = { 7, 0, 0 }
+    tick()
+    without_route()
+    eq(j.status, "running", "status " .. tostring(j.error))
+    eq(#called("PurgeOsirisQueue"), 0, "purged")
+end)
+
+test("move_to: a big step off the route is still a teleport", function()
+    with_route(false)
+    local j = job(op("move_to", { char = P1, pos = { 30, 0, 0 } }))
+    tick()
+    world[P1].pos = { 7, 0, 9 }
+    tick()
+    without_route()
+    eq(j.status, "failed", "status"); assert(j.error:find("teleported"), j.error)
+end)
+
 -- ---- combat movement -------------------------------------------------------
 
 local function combat_setup(mv)

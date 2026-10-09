@@ -23,6 +23,7 @@ N.PLACE_GAP = 15.0  -- a new "place" once the active character is this far from 
 N.PLACES_CAP = 60
 N.RECORD_MS = 1000
 N.PATH_MAX_M = 80
+N.ROUTE_MAX_NODES = 400
 
 ------------------------------------------------------------------------
 -- Persistence (PersistentVars travel with the savegame under bg3le/bg3se)
@@ -249,6 +250,16 @@ local function rawPath(e, from, target)
         end)
         res = { reachable = true, length_m = round(len, 1), nodes = okn and #path.Nodes or nil }
         if jump then res.needs_jump = true end
+        -- The route itself (node positions): hazard checks along it, and the
+        -- teleport detector accepts big steps that stay on it.
+        local pts = { U.vec(from, 2) }
+        pcall(function()
+            for i, n in ipairs(path.Nodes) do
+                if i > N.ROUTE_MAX_NODES then break end
+                pts[#pts + 1] = { round(n.Position[1], 2), round(n.Position[2], 2), round(n.Position[3], 2) }
+            end
+        end)
+        res.points = pts
     else
         local cause
         pcall(function() cause = path.ErrorCause end)
@@ -357,8 +368,11 @@ RPC.register("nav.path", function(args)
     if cp and U.dist(cp, target) > N.PATH_MAX_M then
         return { estimate = true, straight_m = round(U.dist(cp, target), 1), reason = "too far to preview" }
     end
-    local r = N.path(char, target)
-    if not r then error("no path", 0) end
+    local r0 = N.path(char, target)
+    if not r0 then error("no path", 0) end
+    local r = {}
+    for k, v in pairs(r0) do if k ~= "points" then r[k] = v end end
+    if r0.points then r.hazard = N.routeHazard(r0.points) end
     local mv = movementLeft(char)
     if mv and r.reachable then r.within_movement = r.length_m <= mv + 0.05; r.movement_left = round(mv, 1) end
     return r
@@ -506,20 +520,154 @@ floorAt = function(x, z, y)
     return best
 end
 
+------------------------------------------------------------------------
+-- Harmful surfaces (fire, acid, electrified water, ...): what a player sees
+-- burning or bubbling on the ground. Read from the AI grid tile under a
+-- point (Ext.Level.GetTileDebugInfo), the same tiles the game's own path
+-- preview avoids. Invisible surfaces (InvisibleWeb, InvisibleGithAcid) are
+-- never reported: a player can't see them.
+------------------------------------------------------------------------
+
+N.HARMFUL = {
+    Fire = true, TrialFire = true, Hellfire = true, Lava = true, Acid = true, CausticBrine = true,
+    Poison = true, WyvernPoison = true, PurpleWormPoison = true, SerpentVenom = true,
+    WaterElectrified = true, BloodElectrified = true, Web = true, Grease = true,
+    WaterFrozen = true, BloodFrozen = true, SpikeGrowth = true, BlackTentacles = true,
+    ShadowCursedVines = true, BladeBarrier = true, Chasm = true, BloodExploding = true,
+    -- clouds
+    WaterCloudElectrified = true, PoisonCloud = true, ExplosionCloud = true, ShockwaveCloud = true,
+    CloudkillCloud = true, Cloudkill6Cloud = true, MaliceCloud = true, StinkingCloud = true,
+    SporeWhiteCloud = true, SporeGreenCloud = true, SporeBlackCloud = true, DrowPoisonCloud = true,
+    IceCloud = true, VoidCloud = true, CrawlerMucusCloud = true, BlackPowderDetonationCloud = true,
+}
+N.HAZARD_STEP_M = 1.0   -- sampling step along a route
+N.HAZARD_SKIP_M = 1.0   -- the first metre of a route is where we stand (escaping it is fine)
+
+-- Harmful surface name at pos (ground first, then cloud), or nil.
+function N.surfaceAt(pos)
+    if not pos then return nil end
+    local ok, t = pcall(Ext.Level.GetTileDebugInfo, { pos[1], pos[2], pos[3] })
+    if not ok or not t then return nil end
+    local g, c
+    pcall(function() g = tostring(t.GroundSurface) end)
+    pcall(function() c = tostring(t.CloudSurface) end)
+    if g and N.HARMFUL[g] then return g end
+    if c and N.HARMFUL[c] then return c end
+    return nil
+end
+
+-- Harmful surface at pos or within `margin` m of it (4 probes), or nil: a
+-- spot to stop at should not be on the edge of a fire.
+N.HAZARD_MARGIN_M = 1.0
+function N.surfaceNear(pos, margin)
+    local s = N.surfaceAt(pos)
+    if s then return s end
+    margin = margin or N.HAZARD_MARGIN_M
+    for _, d in ipairs({ { margin, 0 }, { -margin, 0 }, { 0, margin }, { 0, -margin } }) do
+        s = N.surfaceAt({ pos[1] + d[1], pos[2], pos[3] + d[2] })
+        if s then return s end
+    end
+    return nil
+end
+
+-- Harmful surface the character stands in, or nil.
+function N.harmfulUnder(uuid)
+    local e = V.entity(uuid)
+    local p = e and V.pos(e)
+    return p and N.surfaceAt(p) or nil
+end
+
+-- First harmful surface along a route (points from rawPath), skipping the
+-- first `skip` metres. Returns {surface, pos, at_m} or nil.
+function N.routeHazard(points, skip)
+    if type(points) ~= "table" or #points < 1 then return nil end
+    skip = skip or N.HAZARD_SKIP_M
+    local walked = 0
+    local function probe(p, at)
+        if at < skip then return nil end
+        local s = N.surfaceAt(p)
+        if s then return { surface = s, pos = U.vec(p, 1), at_m = round(at, 1) } end
+    end
+    for i = 2, #points do
+        local a, b = points[i - 1], points[i]
+        local seg = U.dist(a, b)
+        local n = math.max(1, math.ceil(seg / N.HAZARD_STEP_M))
+        for k = 1, n do
+            local f = k / n
+            local p = { a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f }
+            local h = probe(p, walked + seg * f)
+            if h then return h end
+        end
+        walked = walked + seg
+    end
+    if #points == 1 then return probe(points[1], skip) end
+    return nil
+end
+
+-- Pure geometry (unit-tested in tools/dev/test_nav_route.lua): where along a
+-- polyline a point projects. Returns arc position (m), horizontal distance
+-- off the route (m), vertical offset (m).
+function N.project(points, p)
+    local bestArc, bestOff, bestDy, walked = nil, math.huge, 0, 0
+    for i = 2, #points do
+        local a, b = points[i - 1], points[i]
+        local ax, az, bx, bz = a[1], a[3], b[1], b[3]
+        local dx, dz = bx - ax, bz - az
+        local l2 = dx * dx + dz * dz
+        local t = 0
+        if l2 > 1e-6 then t = math.max(0, math.min(1, ((p[1] - ax) * dx + (p[3] - az) * dz) / l2)) end
+        local qx, qz = ax + dx * t, az + dz * t
+        local off = math.sqrt((p[1] - qx) ^ 2 + (p[3] - qz) ^ 2)
+        local qy = a[2] + (b[2] - a[2]) * t
+        local seg = U.dist(a, b)
+        if off < bestOff then bestArc, bestOff, bestDy = walked + seg * t, off, p[2] - qy end
+        walked = walked + seg
+    end
+    return bestArc, bestOff, bestDy
+end
+
+-- Is a big displacement prev -> here the character following its own route
+-- (a jump/climb link, or a frame hitch mid-walk) rather than the engine's
+-- no-path teleport? Both ends must lie on the route, moving forward, and the
+-- step can't skip more route than it covers in a straight line plus slack.
+N.ROUTE_OFF_M = 2.0
+N.ROUTE_DY_M = 3.0
+function N.onRoute(points, prev, here)
+    if type(points) ~= "table" or #points < 2 or not prev or not here then return false end
+    local a0, off0, dy0 = N.project(points, prev)
+    local a1, off1, dy1 = N.project(points, here)
+    if not a0 or not a1 then return false end
+    if off0 > N.ROUTE_OFF_M or off1 > N.ROUTE_OFF_M then return false end
+    if math.abs(dy0) > N.ROUTE_DY_M or math.abs(dy1) > N.ROUTE_DY_M then return false end
+    if a1 < a0 - 1.0 then return false end
+    local step = U.dist(prev, here)
+    return (a1 - a0) <= step * 1.5 + 3.0
+end
+
+-- The route (points) the engine would walk from char to pos, or nil.
+function N.route(charUuid, pos)
+    local r = N.path(charUuid, pos)
+    return r and r.reachable and r.points or nil
+end
+
 -- Farthest reachable floor point along a compass direction (or toward pos):
 -- the "walk west as far as you can" primitive. Samples every `step` m up to
 -- max_m; a sample counts only if pathable and the path is direct
 -- (length <= DETOUR x straight distance), i.e. floor a player sees that way.
+-- avoid (default true): skip samples standing in, or reached through, a
+-- harmful surface; the farthest safe sample wins. If every sample is unsafe
+-- the result is {reachable=false, hazard={surface,pos,at_m}}.
 N.DETOUR = 1.5
-function N.reachToward(charUuid, dir, toward, maxM, step)
+function N.reachToward(charUuid, dir, toward, maxM, step, avoid)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil, "no position" end
+    if avoid == nil then avoid = true end
     local vx, vz
     if toward then
         local dx, dz = toward[1] - from[1], toward[3] - from[3]
         local len = math.sqrt(dx * dx + dz * dz)
-        if len < 0.5 then return { pos = U.vec(from, 1), path_m = 0, straight_m = 0 } end
+        if len < 0.5 then return { pos = U.vec(from, 1), path_m = 0, straight_m = 0, reachable = true } end
         vx, vz = dx / len, dz / len
         maxM = math.min(maxM, len)
     else
@@ -527,26 +675,82 @@ function N.reachToward(charUuid, dir, toward, maxM, step)
         if not v then return nil, "dir must be one of N NE E SE S SW W NW" end
         vx, vz = v[1], v[2]
     end
-    local best, tried = nil, 0
+    local cands, tried = {}, 0
     local y = from[2]
     local d = step
-    while d <= maxM + 0.01 do
-        local x, z = from[1] + vx * d, from[3] + vz * d
+    -- the destination itself is a sample too (not just multiples of step)
+    local function sample(dd)
+        local x, z = from[1] + vx * dd, from[3] + vz * dd
         local fy = floorAt(x, z, y)
         if fy then
             tried = tried + 1
             local r = N.path(charUuid, { x, fy, z })
-            if r and r.reachable and r.length_m <= math.max(N.DETOUR * d, d + 2.0) then
-                best = { pos = U.vec({ x, fy, z }, 1), path_m = r.length_m, straight_m = round(d, 1), needs_jump = r.needs_jump }
+            if r and r.reachable and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then
+                cands[#cands + 1] = { pos = { x, fy, z }, path_m = r.length_m, straight_m = round(dd, 1),
+                    needs_jump = r.needs_jump, points = r.points }
                 y = fy -- follow ramps and stairs
             end
         end
+    end
+    while d <= maxM + 0.01 do
+        sample(d)
         d = d + step
     end
-    if not best then return { reachable = false, samples = tried } end
-    best.reachable = true
-    best.samples = tried
-    best.dir = N.direction(from, best.pos)
+    if maxM - (d - step) > 0.5 then sample(maxM) end
+    if #cands == 0 then return { reachable = false, samples = tried } end
+    local best, firstHazard, avoided = nil, nil, 0
+    for i = #cands, 1, -1 do
+        local c = cands[i]
+        local hz = nil
+        if avoid then
+            local s = N.surfaceNear(c.pos)
+            hz = s and { surface = s, pos = U.vec(c.pos, 1), at_m = c.path_m } or N.routeHazard(c.points)
+        end
+        if not hz then best = c; break end
+        avoided = avoided + 1
+        firstHazard = firstHazard or hz
+    end
+    if not best then return { reachable = false, samples = tried, hazard = firstHazard } end
+    local out = { pos = U.vec(best.pos, 1), path_m = best.path_m, straight_m = best.straight_m,
+        needs_jump = best.needs_jump, reachable = true, samples = tried, dir = N.direction(from, best.pos) }
+    if avoided > 0 then out.avoided = avoided; out.hazard_beyond = firstHazard end
+    return out
+end
+
+-- Nearest safe floor out of a harmful surface: rings of 8 directions at
+-- 1.5..max_m; the shortest path whose end and route (after the first metre)
+-- are clear. nil when the character is not in a harmful surface.
+function N.safeSpot(charUuid, maxM)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from then return nil, "no position" end
+    local under = N.surfaceAt(from)
+    if not under then return { safe = true } end
+    maxM = maxM or 8
+    local best
+    for _, rad in ipairs({ 1.5, 3, 5, 8, 12 }) do
+        if rad > maxM + 0.01 then break end
+        for _, dname in ipairs(DIRS) do
+            local v = DIR_VEC[dname]
+            local x, z = from[1] + v[1] * rad, from[3] + v[2] * rad
+            local fy = floorAt(x, z, from[2])
+            if fy and not N.surfaceNear({ x, fy, z }) then
+                local r = N.path(charUuid, { x, fy, z })
+                if r and r.reachable and r.length_m <= rad * 2 + 2 then
+                    -- the start is burning anyway: only the rest must be clear
+                    local hz = N.routeHazard(r.points, math.min(rad, 2.0))
+                    if not hz and (not best or r.length_m < best.path_m) then
+                        best = { pos = U.vec({ x, fy, z }, 1), path_m = r.length_m, dir = dname }
+                    end
+                end
+            end
+        end
+        if best then break end
+    end
+    if not best then return { safe = false, standing_in = under, found = false } end
+    best.safe = false
+    best.standing_in = under
+    best.found = true
     return best
 end
 
@@ -701,7 +905,22 @@ RPC.register("nav.reach_toward", function(args)
     local maxM = math.min(tonumber(args.max_m) or 30, N.PATH_MAX_M)
     local step = math.max(tonumber(args.step) or 2, 1)
     local t0 = Ext.Utils.MonotonicTime()
-    local r, err = N.reachToward(char, args.dir, toward, maxM, step)
+    local r, err = N.reachToward(char, args.dir, toward, maxM, step, args.avoid ~= false)
+    if not r then error(err, 0) end
+    local under = N.harmfulUnder(char)
+    if under then r.standing_in = under end
+    r.ms = Ext.Utils.MonotonicTime() - t0
+    return r
+end)
+
+-- nav.safe_spot {char?, max_m?}: where to step out of a harmful surface.
+-- {safe=true} when not standing in one; else {standing_in, found, pos?, path_m?, dir?}.
+RPC.register("nav.safe_spot", function(args)
+    local ctx = V.context()
+    local char = args.char or activeChar(ctx)
+    if not ctx.is_party[char] then error("not a party member", 0) end
+    local t0 = Ext.Utils.MonotonicTime()
+    local r, err = N.safeSpot(char, math.min(tonumber(args.max_m) or 8, 12))
     if not r then error(err, 0) end
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r
@@ -717,7 +936,11 @@ RPC.register("nav.activity", function(args)
         if truthy(osi(Osi.IsOnStage, u)) then
             local e = V.entity(u)
             local p = e and V.pos(e)
-            if p then out.pos[u] = U.vec(p, 2) end
+            if p then
+                out.pos[u] = U.vec(p, 2)
+                local s = N.surfaceAt(p)
+                if s then out.surfaces = out.surfaces or {}; out.surfaces[u] = s end
+            end
             if truthy(osi(Osi.IsInCombat, u)) then out.in_combat = true end
             if not out.in_dialogue then
                 local d = false

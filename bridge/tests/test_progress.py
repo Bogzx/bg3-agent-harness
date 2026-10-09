@@ -82,6 +82,70 @@ class Diff(unittest.TestCase):
         self.assertEqual(sorted(kinds(evs)), ["area", "region"])
 
 
+class Exploration(unittest.TestCase):
+    """S001 scored 0: it opened the first door, the 'Escape Route' marker jumped 67 m on, and the party walked
+    ~40 m of new corridor, but no journal/map/subregion changed. Those now count (small points)."""
+
+    @staticmethod
+    def ship(marker_x: float, cells: int) -> dict:
+        w = world()
+        w["markers"] = {"markers": [{"label": "Escape Route", "quest": "Escape the Nautiloid",
+                                     "pos": [marker_x, 18.5, -423.0]}]}
+        w["explored"] = {"level": "TUT_Avernus_C", "cells": cells}
+        return w
+
+    def test_s001_replay(self):
+        seen, evs = P.diff(None, self.ship(20.0, 9))
+        self.assertEqual(evs, [])
+        seen, evs = P.diff(seen, self.ship(-47.4, 23))  # through the door, marker moved on
+        self.assertEqual(sorted(kinds(evs)), ["explore", "obj_moved"])
+        self.assertEqual(sum(e["points"] for e in evs), 2)
+
+    def test_explore_chunks_and_reload(self):
+        seen, _ = P.diff(None, self.ship(20.0, 0))
+        seen, evs = P.diff(seen, self.ship(20.0, 7))
+        self.assertEqual(evs, [])
+        seen, evs = P.diff(seen, self.ship(20.0, 25))
+        self.assertEqual(kinds(evs), ["explore"] * 3)
+        seen, evs = P.diff(seen, self.ship(20.0, 10))  # an earlier save: fewer breadcrumbs
+        self.assertEqual(evs, [])
+        _, evs = P.diff(seen, self.ship(20.0, 32))  # credited 24 so far: the next chunk is 24..32
+        self.assertEqual(kinds(evs), ["explore"])
+
+    def test_a_new_level_scores_its_ground(self):
+        seen, _ = P.diff(None, self.ship(20.0, 30))
+        w = self.ship(20.0, 30)
+        w["explored"] = {"level": "WLD_Main_A", "cells": 9}
+        _, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs), ["explore"])
+
+    def test_marker_moving_back_does_not_score(self):
+        seen, _ = P.diff(None, self.ship(20.0, 0))
+        seen, evs = P.diff(seen, self.ship(-47.4, 0))
+        self.assertEqual(kinds(evs), ["obj_moved"])
+        seen, evs = P.diff(seen, self.ship(20.0, 0))  # an earlier save
+        self.assertEqual(evs, [])
+        _, evs = P.diff(seen, self.ship(-45.0, 0))  # within OBJ_MOVED_M of a known spot
+        self.assertEqual(evs, [])
+
+    def test_old_state_without_the_new_keys_baselines_silently(self):
+        old = {"regions": ["Nautiloid"], "areas": ["Nautiloid|Ship Hold"], "waypoints": [], "quests": {
+               "Escape the Nautiloid": {"steps": 1, "done": False}}, "objectives_active": ["Escape Route|Escape the Nautiloid"],
+               "objectives_done": [], "levels": {"Claude": 1}, "baseline": True}
+        seen, evs = P.diff(old, self.ship(20.0, 23))
+        self.assertEqual(evs, [])
+        _, evs = P.diff(seen, self.ship(-47.4, 31))
+        self.assertEqual(sorted(kinds(evs)), ["explore", "obj_moved"])
+
+    def test_subregion_from_the_explored_reply(self):
+        seen, _ = P.diff(None, world())
+        w = world()
+        w["ui"] = None
+        w["explored"] = {"level": "TUT_Avernus_C", "cells": 0, "subregion": "Ship Bridge"}
+        _, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs), ["area"])
+
+
 class TimelineTest(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp(prefix="bg3ai-prog-"))
@@ -181,9 +245,10 @@ class ReadGame(unittest.TestCase):
         self.assertIsNone(got["map"])
         self.assertEqual(got["ui"]["region"], "Ship Hold")
         self.assertEqual(P.diff(None, got)[1], [])
+        self.assertIn('"op":"nav.explored"', calls[0][0])
 
     def test_no_session(self):
-        self.assertIsNone(P.read_game(lambda code, ctx: json.dumps([{"ok": False, "error": "no session"}] * 4)))
+        self.assertIsNone(P.read_game(lambda code, ctx: json.dumps([{"ok": False, "error": "no session"}] * 5)))
 
     def test_weights_documented(self):
         doc = P.__doc__

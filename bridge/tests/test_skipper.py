@@ -114,5 +114,43 @@ class SkipperTest(unittest.TestCase):
         self.assertGreaterEqual(self.game.calls.count("autoskip.status"), 2)
 
 
+    def test_load_movie_requests(self):
+        # The New Game intro during StartLoading: the mod asks every 2 s; each new seq gets one key.
+        for seq in (1, 2, 3):
+            self.game.status = {"on": True, "movie": {"age": 2000 * seq, "tries": seq + 1, "kind": "load"},
+                                "want": {"seq": seq, "key": "ESCAPE", "reason": "load_movie", "try": seq + 1}}
+            self.sk.step()
+            self.sk.step()
+        self.assertEqual(self.inp.keys, ["ESCAPE"] * 3)
+
+    def test_one_skipper_per_game(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            lock = os.path.join(d, "skipper.lock")
+            a = MovieSkipper(FakeGame(), lambda: self.inp, lock_path=lock)
+            b_game = FakeGame()
+            b = MovieSkipper(b_game, lambda: self.inp, lock_path=lock, lock_retry_s=0.05)
+            self.assertTrue(a.acquire())
+            stop = threading.Event()
+            t = threading.Thread(target=b.run, args=(stop,))
+            t.start()
+            time.sleep(0.3)
+            self.assertEqual(b_game.calls, [])  # idles while a holds the lock
+            a.release()
+            time.sleep(0.4)
+            stop.set()
+            t.join(1.0)
+            self.assertIn("autoskip.status", b_game.calls)  # took over
+            self.assertTrue(a.acquire())  # b released it on stop
+            a.release()
+
+    def test_start_background_can_be_disabled(self):
+        import os
+        from unittest import mock
+        from bg3ai.skipper import start_background
+        with mock.patch.dict(os.environ, {"BG3AI_MOVIE_SKIP": "0"}):
+            self.assertIsNone(start_background())
+
 if __name__ == "__main__":
     unittest.main()

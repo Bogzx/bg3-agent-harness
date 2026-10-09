@@ -4,7 +4,9 @@
 Client-context ops from mod/.../Client/Progression.lua:
     ui.new_game {difficulty}         main menu -> New Game -> difficulty -> character creation (job)
     ui.cc_options {}                 what character creation offers
-    ui.cc_apply {plan, finish}       apply a plan, then FinishCreating (job)
+    ui.cc_apply {plan, finish}       apply a plan (job; run here with finish=false)
+    ui.cc_name / ui.cc_finish        name the character (bg3ai.naming, shim typing if needed), then
+                                     FinishCreating, refused unless the name checks out
     ui.level_up_options {uuid}       / ui.level_up {uuid, plan} (job)
 
 Usage (from the repo root, with the game running and bg3le's debug server up):
@@ -27,7 +29,9 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "src"))
+from bg3ai.input import InputClient, InputError  # noqa: E402
 from bg3ai.luadebug import LuaDebugClient, LuaDebugError  # noqa: E402
+from bg3ai.naming import NamingError, ensure_name  # noqa: E402
 
 DEFAULT_PLAN = {
     # A simple, robust first character: custom human fighter, soldier, game-recommended abilities.
@@ -35,7 +39,7 @@ DEFAULT_PLAN = {
     "class": "Fighter",
     "background": "Soldier",
     "abilities": "recommended",
-    "name": "Claude",  # bg3le cannot write CharacterName: cc_apply reports name_pending; type it with the shim
+    "name": "Claude",  # set and verified by bg3ai.naming before "Venture forth" (saves are owned by this name)
 }
 
 
@@ -137,6 +141,49 @@ def summarize_cc(opts: dict) -> None:
         print(f"    validity     {opts['validity']}")
 
 
+def name_character(d: Driver, name: str) -> bool:
+    """Set and verify the character's name (bg3ai.naming: write the box, else type it with the shim)."""
+    d.header(f"name the character '{name}'")
+    try:
+        with InputClient() as inp:
+            inp.agent(True)
+            res = ensure_name(lambda op, a: d.rpc(op, a), inp, name, log=lambda m: print(f"    {m}"))
+    except (NamingError, InputError, OSError, RuntimeError, LuaDebugError, TimeoutError) as exc:
+        print(f"    FAILED: {exc}")
+        d.ok = False
+        return False
+    d.show(res)
+    return True
+
+
+# The controlled character's display name, as play.py reads it (CHARACTER_NAME_LUA).
+INGAME_NAME_LUA = (
+    'local c = (Ext.Entity.GetAllEntitiesWithComponent("ClientControl") or {})[1] '
+    'local dn = c and c.DisplayName '
+    'if not dn then return "" end '
+    'return Ext.Loca.GetTranslatedString(dn.NameKey.Handle.Handle) or ""')
+
+
+def check_ingame_name(d: Driver, name: str, timeout: float = 120.0) -> None:
+    """After the load: the character in the world must carry the name (fails the run otherwise)."""
+    d.header(f"in-game character is '{name}'")
+    deadline = time.time() + timeout
+    got = ""
+    while time.time() < deadline:
+        try:
+            got = d.lua.evaluate(INGAME_NAME_LUA, context="client", timeout=10).strip()
+        except (LuaDebugError, TimeoutError, ConnectionError) as exc:
+            print(f"    ({exc})")
+            got = ""
+        if got:
+            break
+        time.sleep(3)
+    print(f"    in-game name: {got!r}")
+    if got.casefold() != name.casefold():
+        print(f"    FAILED: expected '{name}'")
+        d.ok = False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--difficulty", default="Balanced")
@@ -151,6 +198,11 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=9998)
     args = ap.parse_args()
     plan = json.loads(args.plan) if args.plan else None
+
+    # The intro movie plays while the new game loads (and after "Venture forth"): skip it like the MCP
+    # server does (idles if the server or runner already runs the skipper; BG3AI_MOVIE_SKIP=0 turns it off).
+    from bg3ai.skipper import start_background
+    start_background(args.port, lambda m: print(f"    [autoskip] {m}", flush=True))
 
     d = Driver(args.port, args.step, args.raw)
     d.run("client context alive", "sys.ping")
@@ -188,17 +240,38 @@ def main() -> int:
     else:
         return 1
 
-    d.job("apply the plan", "ui.cc_apply", {"plan": plan or DEFAULT_PLAN, "finish": not args.no_finish}, timeout=150)
+    # Apply without finishing: the name is set and verified first, and only ui.cc_finish (which re-checks
+    # it) presses "Venture forth". A character finished as "Tav" breaks save ownership (--save-owner).
+    plan = plan or DEFAULT_PLAN
+    st = d.job("apply the plan", "ui.cc_apply", {"plan": plan, "finish": False}, timeout=150)
+    if not st or st.get("status") != "done":
+        print("\nSOME STEPS FAILED (not finishing)")
+        return 1
+    want = plan.get("name")
+    if want is not None:
+        if not name_character(d, want):
+            print(f"\nNAMING FAILED: the character is not '{want}'; not finishing")
+            return 1
     after = d.run("character creation after applying", "ui.cc_options") if args.no_finish else None
     if after:
         summarize_cc(after)
     if not args.no_finish:
-        for _ in range(6):
+        if d.run("venture forth (name re-checked)", "ui.cc_finish", {"name": want} if want else {}) is None:
+            print("\nSOME STEPS FAILED (not finished)")
+            return 1
+        # The tadpole movie, the load and the intro movie (skipped above): wait for the game to run.
+        for _ in range(60):
             time.sleep(5)
             try:
-                print("    pages:", [w["n"] for w in d.rpc("ui.widgets") if w.get("vis")])
+                st = d.rpc("ui.state", timeout=10)
+                print(f"    screen: {st.get('screen')} {st.get('game_state') or ''}".rstrip())
+                if st.get("screen") not in ("loading", "movie"):
+                    print("    pages:", [w["n"] for w in d.rpc("ui.widgets") if w.get("vis")])
+                    break
             except Exception as exc:  # loading screens stall evals; keep going
-                print(f"    (widgets: {exc})")
+                print(f"    (ui.state: {exc})")
+        if want is not None:
+            check_ingame_name(d, want)
     print("\nALL STEPS OK" if d.ok else "\nSOME STEPS FAILED")
     return 0 if d.ok else 1
 

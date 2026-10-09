@@ -2,6 +2,9 @@
 
 **When:** Run at the start of every play session, right after the memory injection. Loads or verifies the save, reconciles memory against live game state, writes the session goal. Use before taking any game action.
 
+**Then play until the `⏱` line says WRAP UP NOW.** The minutes it shows include the wrap-up time; the
+"Nm of play" part is yours to play, however short the session is. Don't run `session-wrapup` early.
+
 The hook has already opened `memory/sessions/Sxxx.md` and shown you PLAYTHROUGH.md and HANDOFF.md.
 `Sxxx` below is the session number from the injection header.
 

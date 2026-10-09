@@ -84,6 +84,7 @@ local function reset()
     keys, events, commands = {}, {}, {}
     K.state = { next = 0, nextMovie = 0 }
     K.want = nil
+    K.lastTick = clock
     widgets, dialogue, quiet, gameState = {}, nil, false, "Running"
     BG3AI.UIActions.config = {}
     run(50)
@@ -175,6 +176,68 @@ widgets = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true 
 dialogue = { speaker = "Lae'zel", text = "Choose.", options = { {}, {} } }
 run(3000)
 check("answers: no skip", #commands == 0 and #keys == 0)
+
+-- 7. a movie over the loading screen (New Game intro: game state StartLoading, the Movie state's
+--    overlay above the loading screen "root"): engine ESCAPE, then shim requests every LOAD_RETRY_MS
+--    for as long as it lasts (past MAX_TRIES)
+local LOADMOVIE = { { name = "root", dc = "ls.LoadingScreen" }, { name = "AlwaysOnTopOverlay" }, { name = "ScreenFade" } }
+reset()
+widgets, gameState = LOADMOVIE, "StartLoading"
+run(300)
+check("load movie: engine ESCAPE", count(keys, "ESCAPE") == 1, #keys)
+check("load movie: status kind", (ops["autoskip.status"]().movie or {}).kind == "load")
+run(K.ENGINE_GRACE_MS + 50)
+check("load movie: shim request", K.want ~= nil and K.want.reason == "load_movie")
+local lseq = K.want and K.want.seq
+run(K.RETRY_MS + 150)
+check("load movie: no request at RETRY_MS", K.want and K.want.seq == lseq)
+run(K.LOAD_RETRY_MS - K.RETRY_MS)
+check("load movie: request at LOAD_RETRY_MS", K.want and K.want.seq == lseq + 1, K.want and K.want.seq)
+run(K.LOAD_RETRY_MS * (K.MAX_TRIES + 2))
+check("load movie: keeps asking past MAX_TRIES", K.state.movie.tries > K.MAX_TRIES + 2, K.state.movie.tries)
+widgets = { { name = "root", dc = "ls.LoadingScreen" }, { name = "ScreenFade" } }
+run(150)
+check("load movie gone clears want", K.want == nil and K.state.movie == nil)
+
+-- 8. a plain loading screen is never a movie, in any loading state
+for _, gs in ipairs({ "StartLoading", "LoadLevel", "PrepareRunning", "Paused" }) do
+    reset()
+    widgets, gameState = { { name = "root", dc = "ls.LoadingScreen" }, { name = "ScreenFade" } }, gs
+    run(5000)
+    check("loading screen " .. gs .. ": no key", #keys == 0 and K.want == nil, #keys)
+end
+reset()
+widgets, gameState = { { name = "root" }, { name = "AlwaysOnTopOverlay" }, { name = "MessageBox" } }, "LoadLevel"
+run(3000)
+check("loading + other page: no key", #keys == 0 and K.want == nil)
+
+-- 9. the loading screen hidden by the Movie state (no overlay child) counts; engine state Movie counts
+reset()
+widgets, gameState = { { name = "root", visible = false }, { name = "ScreenFade" } }, "LoadLevel"
+run(600)
+check("hidden loading screen: movie", count(keys, "ESCAPE") == 1 and K.want ~= nil)
+reset()
+widgets, gameState = {}, "Movie"
+run(600)
+check("engine state Movie: movie", count(keys, "ESCAPE") == 1 and K.want ~= nil)
+
+-- 10. classify: the main menu's intro movie; the main menu itself is not one
+check("menu movie", K.classify({ "AlwaysOnTopOverlay", "ScreenFade" }, "Menu") == "movie")
+check("main menu", K.classify({ "MainMenu", "ScreenFade" }, "Menu") == false)
+check("running + root", K.classify({ "root", "AlwaysOnTopOverlay" }, "Running") == false)
+
+-- 11. no ticks while loading: autoskip.status drives the probe itself
+reset()
+widgets, gameState = LOADMOVIE, "StartLoading"
+local sawWant = false
+for _ = 1, 10 do
+    clock = clock + 150  -- the skipper's poll, no Tick in between
+    local r = ops["autoskip.status"]({})
+    if r.want and r.movie then sawWant = true end
+end
+check("stale tick: status probes", sawWant and count(keys, "ESCAPE") == 1, #keys)
+local dbg = ops["autoskip.status"]({ debug = true })
+check("debug status", dbg.gs == "StartLoading" and #dbg.widgets == 3 and dbg.probe == "load")
 
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end

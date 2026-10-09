@@ -390,6 +390,9 @@ function S.state(args)
     local wmap = UI.widgetMap()
     if next(wmap) == nil or (gs ~= "Running" and gs ~= "Paused" and gs ~= "Menu") then
         res.screen = (gs == "Menu") and "main_menu" or "loading"
+        -- A movie over the loading screen (the New Game intro): see AutoSkip.
+        local K = BG3AI.AutoSkip
+        if res.screen == "loading" and K and K.probeMovie and try(K.probeMovie) then res.screen = "movie" end
         res.game_state = gs
         res.blocking = true
         res.ms = RPC.now_ms() - t0

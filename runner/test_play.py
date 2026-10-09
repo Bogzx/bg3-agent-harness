@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,8 +43,16 @@ class DeadlineMath(unittest.TestCase):
 
     def test_wrap_minutes(self):
         self.assertEqual(P.wrap_minutes(60), 50)
-        self.assertEqual(P.wrap_minutes(10), 5)   # never before half-time
         self.assertEqual(P.wrap_minutes(30), 20)
+        self.assertEqual(P.wrap_minutes(15), 10)  # short sessions: wrap-up is a third of the session
+        self.assertAlmostEqual(P.wrap_minutes(20), 40 / 3)
+        self.assertEqual(P.wrapup_minutes(90), 10)
+
+    def test_short_sessions_refused(self):
+        a = mock.Mock(session_minutes=15, allow_short_sessions=False)
+        with mock.patch.object(P, "acquire_lock") as lock, mock.patch("sys.stderr"):
+            self.assertEqual(P.cmd_run(a), 2)
+        lock.assert_not_called()
 
     def test_budget_unbounded(self):
         self.assertEqual(P.session_budget(0, None, 60), 60)
@@ -99,6 +108,18 @@ class HandoffAndSaves(unittest.TestCase):
             f("Ilse-5__QuickSave_1", 300),                 # a runner quicksave
             f("Other-6__S001-end", 400),                   # another playthrough, same label
         ]
+
+    def test_named_saves_with_a_folder_prefix(self):
+        # BG3AI_SAVE_PREFIX=Claude- (docs/HANDOFF.md, the MCP server) names the folder, and the agent's
+        # save_game labels are plain "S001-end": the session's named save must count (S001 quicksaved over it).
+        saves = [P.parse_save_folder("Claude-10__S001-end", 200), P.parse_save_folder("Claude-11__QuickSave_0", 300),
+                 P.parse_save_folder("Tav-12__S001-end", 250)]
+        self.assertEqual([s.folder for s in P.saves_since(saves, 100, "Claude", "Claude-")], ["Claude-10__S001-end"])
+        self.assertEqual(P.pick_save(saves, None, "Claude", set(), "Claude-").folder, "Claude-10__S001-end")
+        # a label prefix still works, and a foreign character never matches
+        self.assertTrue(P.is_ai_save(P.parse_save_folder("Ilse-1__pt1-S010-end"), "pt1-"))
+        self.assertFalse(P.is_ai_save(P.parse_save_folder("Ilse-1__S010-end"), "pt1-"))
+        self.assertFalse(P.is_ai_save(P.parse_save_folder("Tav-12__S001-end"), "Claude-"))
 
     def test_pick_never_takes_foreign_saves(self):
         saves = self._saves()

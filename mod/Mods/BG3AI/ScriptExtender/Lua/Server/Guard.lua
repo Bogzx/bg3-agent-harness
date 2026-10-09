@@ -284,9 +284,12 @@ end
 -- Strict (after S001's teleports): a point move needs a PROVEN path. Unknown
 -- (pathfinding unavailable / no Nav) is refused too, because Osiris move tasks
 -- teleport the character when no path exists.
+-- A route with a jump/climb link is fine out of combat (a click auto-jumps it
+-- too, and the teleport detector accepts steps along the route); in combat
+-- the jump is its own action, so it stays refused there.
 function G.point_reachable(char, pos)
     local r, info = G.reachable(char, pos)
-    if info.needs_jump then G.refuse("needs a jump: use jump_to") end
+    if info.needs_jump and G.in_combat(char) then G.refuse("needs a jump: use jump_to") end
     if r ~= true then G.refuse("no walkable path there (may need a jump or another route)") end
     return info
 end
