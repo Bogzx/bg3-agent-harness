@@ -807,10 +807,20 @@ class Runner:
                 # Saves are matched to this playthrough by the character's name: a "Tav" breaks that.
                 self.pending_notes.append(new_game_note(owner))
             return None
+        if port_open() and game_state() == "Running" and server_ready() and self.opt.take_over:
+            # The operator says: take over the game as it is. If it's this playthrough's character, play on
+            # from here instead of reloading (a reload only loses the minutes since the last save).
+            host = host_character_name()
+            owner = self.state.data.get("save_owner") or save.owner
+            if host and owner and host.casefold() == owner.casefold():
+                log(f"--take-over: the running game is '{host}' (this playthrough): playing on from here")
+                return None
         log(f"loading save {save.folder}")
         if port_open() and ui_load:
-            if game_state() != "Menu":
+            state = game_state()
+            if state not in ("Menu", "Running"):
                 self.wait_menu()
+            # ui.menu load works from the main menu and from in-game (it opens the load screen itself).
             rpc("ui.menu", load_menu_args(save, list_saves()), context="client", timeout=30)
         else:
             if port_open():
