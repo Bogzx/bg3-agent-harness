@@ -129,10 +129,10 @@ def build_context(mem: Path, source: str = "startup", notes: list[str] | None = 
             left = (deadline - time.time()) / 60
             head.append(f"Autonomous session: deadline {time.strftime('%H:%M', time.localtime(deadline))} "
                         f"({left:.0f} min left). Play until the ⏱ line in tool results says WRAP UP (10 min before), then "
-                        f"run the session-wrapup skill. Don't stop early: nobody is there to answer.")
+                        f"run the session-wrapup playbook. Don't stop early: nobody is there to answer.")
         else:
             head.append(f"Started {st.get('started', '?')}; elapsed {elapsed_minutes(st):.0f} min. "
-                        f"Wrap up at ~{wrap_minutes():.0f} min (session-wrapup skill); hard limit "
+                        f"Wrap up at ~{wrap_minutes():.0f} min (session-wrapup playbook); hard limit "
                         f"{session_minutes():.0f} min.")
         head.append(f"Your append-only log for this session: memory/sessions/{sid}.md")
     else:
@@ -147,7 +147,7 @@ def build_context(mem: Path, source: str = "startup", notes: list[str] | None = 
         head.append("Context was cleared: re-read objectives.md and your session log before acting.")
     if cur and M.compaction_due(mem, cur):
         head.append(f"COMPACTION DUE: sessions after S{M.last_compacted_session(mem):03d} are not yet in "
-                    f"a chapter. Run the compaction skill this session (after session-start).")
+                    f"a chapter. Run the compaction playbook this session (after session-start).")
     for n in notes or []:
         head.append(n)
     lint_r = L.lint(mem, "any", cur if st.get("open") else None)
@@ -155,7 +155,7 @@ def build_context(mem: Path, source: str = "startup", notes: list[str] | None = 
         head.append(f"Memory lint currently reports {len(lint_r.errors)} error(s) (fix before wrap-up):\n"
                     + "\n".join(f"  {k}: {m.splitlines()[0]}" for k, m in lint_r.errors[:6]))
     if source == "startup":
-        head.append("Next: run the session-start skill.")
+        head.append("Next: run the session-start playbook.")
     header = "\n".join(head)
 
     remaining = HOOK_CHAR_LIMIT - len(header) - 200
@@ -302,10 +302,10 @@ def clock_message(state: dict, now: float) -> str | None:
     sid = M.session_id(state["current"])
     if over:
         return (f"SESSION OVERTIME ({mins:.0f} min, limit {session_minutes():.0f}): stop playing now. "
-                f"Get out of danger if you must, then run the session-wrapup skill for {sid}.")
+                f"Get out of danger if you must, then run the session-wrapup playbook for {sid}.")
     return (f"SESSION CLOCK: {mins:.0f} min elapsed (wrap-up at {wrap_minutes():.0f}, limit "
             f"{session_minutes():.0f}). Finish the current fight or conversation, reach a safe spot, then "
-            f"run the session-wrapup skill for {sid}. Don't start new quests or travel.")
+            f"run the session-wrapup playbook for {sid}. Don't start new quests or travel.")
 
 
 def cmd_clock(mem: Path) -> int:
@@ -378,12 +378,12 @@ def stop_decision(mem: Path, now: float | None = None) -> dict | None:
         left = max(1, int((deadline - now) // 60))
         return {"decision": "block",
                 "reason": (f"Keep playing: {left} minutes left in this session. Continue your current plan "
-                           f"(get_status if you lost track). Only stop after the session-wrapup skill when "
+                           f"(get_status if you lost track). Only stop after the session-wrapup playbook when "
                            f"the SESSION CLOCK reminder appears (the ⏱ line in tool results says WRAP UP).")}
     blocks = int(st.get("stop_blocks") or 0)
     if not handoff_ready:
         reason = (f"Wrap-up is due for {sid} but HANDOFF.md hasn't been rewritten for it yet. Run the "
-                  f"session-wrapup skill: save the game as {sid}-end, update memory, write HANDOFF.md "
+                  f"session-wrapup playbook: save the game as {sid}-end, update memory, write HANDOFF.md "
                   f"with the heading '# Handoff {sid} → {M.session_id(n + 1)}', then stop again.")
     else:
         r = L.lint(mem, "end", n)

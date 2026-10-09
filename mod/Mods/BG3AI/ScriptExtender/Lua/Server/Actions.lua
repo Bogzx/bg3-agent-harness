@@ -27,6 +27,8 @@ BG3AI.Actions = A
 A.active = {}   -- char guid -> running job
 
 local TICK_MS = 50   -- post-condition polling; cheap queries, keeps chaining fast
+A.MOVE_REACH = 2.5   -- move_to {target}: stop within this of the entity
+A.USE_REACH = 1.8    -- interact/pickup and the click ops: Use/Pickup/click from here
 
 ------------------------------------------------------------------------
 -- Osiris listeners: one registration per event per Lua state, dispatching to
@@ -172,6 +174,7 @@ local function start(kind, char, spec)
         user_tick(job)
     end or nil
     local user_finish = spec.on_finish
+    spec.notify = A.notify_next
     spec.on_finish = function(job)
         if char and A.active[char] == job then A.active[char] = nil end
         if user_finish then pcall(user_finish, job) end
@@ -179,6 +182,13 @@ local function start(kind, char, spec)
             if type(job.result) ~= "table" then job.result = {} end
             local ok, sum = pcall(A.summary, char)
             if ok then job.result.after = sum end
+        end
+        -- Async jobs (the bridge returned before they settled) announce their
+        -- end in the event stream, so any later tool result shows it.
+        if job.notify then
+            local r = type(job.result) == "table" and job.result or {}
+            RPC.push("job_finished", { job = "j" .. tostring(job.id), op = job.kind, status = job.status,
+                error = job.error, dist = r.dist, pos = r.pos })
         end
     end
     spec.on_cancel = spec.on_cancel or function(job)
@@ -192,19 +202,39 @@ local function start(kind, char, spec)
         local reason = G.is_refusal(err) and err.reason or tostring(err)
         RPC.finish_job(job, "failed", nil, reason)
     end
-    return { job = job.id }
+    return A.reply(job)
 end
+
+-- The reply to an act.* call: the job id, an ETA for long actions, and the
+-- outcome right away when the job already settled (refusals, no-op moves), so
+-- the bridge needs no extra poll.
+function A.reply(job)
+    local out = { job = job.id }
+    if job.eta_s then out.eta_s = U.round(job.eta_s, 1) end
+    if job.route_m then out.route_m = U.round(job.route_m, 1) end
+    if job.status ~= "running" then
+        out.status, out.result, out.error = job.status, job.result, job.error
+    end
+    return out
+end
+
+-- Rough walking time for an ETA (run ~4 m/s, walk ~1.8 m/s, plus the start).
+A.RUN_MPS, A.WALK_MPS = 4.0, 1.8
+local function walk_eta(m, speed) return 0.4 + (m or 0) / (speed == "Walk" and A.WALK_MPS or A.RUN_MPS) end
 
 -- Run guard checks; a refusal becomes a failed job (so the bridge sees the
 -- same shape for every outcome) and other errors propagate.
 local function guarded(kind, fn)
     return function(args)
-        local ok, res = pcall(fn, args or {})
+        args = args or {}
+        A.notify_next = args.notify == true -- read by start(); Lua runs one op at a time
+        local ok, res = pcall(fn, args)
+        A.notify_next = false
         if ok then return res end
         if G.is_refusal(res) then
             local job = RPC.start_job("act." .. kind, { act = true })
             RPC.finish_job(job, "failed", nil, res.reason)
-            return { job = job.id }
+            return A.reply(job)
         end
         error(res, 0)
     end
@@ -222,39 +252,52 @@ local function movement_left(char)
     return snap.Movement and (snap.Movement[0] or 0) or 0
 end
 
--- Shared walker used by move_to and the approach phase of talk/interact.
--- opts: target (uuid) | pos, speed, tolerance, on_arrive(job, dist) (optional)
+-- Shared walker used by move_to and the approach phase of talk/interact/
+-- pickup and the click ops. It ALWAYS walks to a position
+-- (CharacterMoveToPosition): entity targets are first resolved to a verified
+-- reachable point next to them (G.approach_point), because CharacterMoveTo
+-- teleports the character when no path exists.
+-- opts: pos, target (uuid, optional: distances are then reported to it),
+--       speed, tolerance (m, to pos), reach (m, to target), on_arrive(job, dist)
 local function begin_walk(job, opts)
     job.walk = {
         target = opts.target, pos = opts.pos, ev = ev_name(job, "mv"),
         last_pos = G.pos(job.char), still_ms = 0, travelled = 0,
-        tolerance = opts.tolerance or 1.5, on_arrive = opts.on_arrive,
+        tolerance = opts.tolerance or 1.5, reach = opts.reach, on_arrive = opts.on_arrive,
+        move_id = opts.move_id or job.id,
     }
-    if opts.target then
-        G.osi("CharacterMoveTo", job.char, opts.target, opts.speed, job.walk.ev, job.id)
-    else
-        local p = opts.pos
-        G.osi("CharacterMoveToPosition", job.char, p[1], p[2], p[3], opts.speed, job.walk.ev, job.id)
-    end
+    local p = opts.pos
+    G.osi("CharacterMoveToPosition", job.char, p[1], p[2], p[3], opts.speed, job.walk.ev, job.walk.move_id)
 end
 
+-- Distance left to the walk's destination point, and to its target entity.
 local function walk_dist_left(job)
     local here = G.pos(job.char)
-    local dest = job.walk.target and G.pos(job.walk.target) or job.walk.pos
-    if not here or not dest then return nil, here end
-    return U.dist(here, dest), here
+    if not here then return nil, nil, nil end
+    local w = job.walk
+    local tpos = w.target and G.pos(w.target)
+    return U.dist(here, w.pos), here, tpos and U.dist(here, tpos) or nil
+end
+
+-- Is the walk close enough? Point walks: within tolerance of the point.
+-- Entity walks: within reach of the entity, or at the approach point.
+local function walk_close_enough(job, d, de)
+    local w = job.walk
+    if de and w.reach and de <= w.reach + 0.5 then return true end
+    return d ~= nil and d <= math.max(w.tolerance, 2.0)
 end
 
 local function walk_arrived(job)
     local w = job.walk
     if not w or w.done then return end
     w.done = true
-    local d, here = walk_dist_left(job)
+    local d, here, de = walk_dist_left(job)
     if w.on_arrive then
-        w.on_arrive(job, d or 0)
+        w.on_arrive(job, de or d or 0)
         return
     end
-    local res = { pos = pos_view(here), dist = d and U.round(d, 1) or nil }
+    local res = { pos = pos_view(here), dist = (de or d) and U.round(de or d, 1) or nil }
+    if w.target then res.target = w.target end
     if d and d > 1.5 and not w.target then
         -- Arrived short of a point destination: say so, with the reason if the
         -- pathfinder knows one (e.g. the spot is off the walkable mesh).
@@ -268,7 +311,7 @@ local function walk_arrived(job)
             res.reason = "path blocked"
         end
     end
-    if d and d > math.max(w.tolerance, 2.0) then
+    if not walk_close_enough(job, d, de) then
         res.reached = false
         RPC.finish_job(job, "failed", res, "could not get closer to the destination")
     else
@@ -285,7 +328,7 @@ local WALK_OSI = {
     -- a late cancel from a superseded walk never fails the next one.
     CharacterMoveToCancelled = function(job, a)
         if job.stopping or not job.walk or job.walk.done then return end
-        if tonumber(a[2]) and tonumber(a[2]) ~= job.id then return end
+        if tonumber(a[2]) and tonumber(a[2]) ~= job.walk.move_id then return end
         if G.same(a[1], job.char) then
             job.walk.done = true
             RPC.finish_job(job, "failed", job.partial, "movement was cancelled")
@@ -300,41 +343,72 @@ local WALK_OSI = {
     end,
 }
 
--- Per-tick walk bookkeeping: distance travelled (combat budget) and stuck detection.
+-- A job's osi handlers plus the walker's; both run when both handle an event.
+local function with_walk(osi)
+    local out = {}
+    for k, f in pairs(WALK_OSI) do out[k] = f end
+    for k, f in pairs(osi or {}) do
+        local w = out[k]
+        out[k] = w and function(job, a)
+            w(job, a)
+            if job.status == "running" then f(job, a) end
+        end or f
+    end
+    return out
+end
+
+-- Teleport detector: Osiris move tasks (and the walks Use/Pickup/UseSpell
+-- start on their own) TELEPORT the character when no path exists (seen in
+-- S001). A real walk/run never exceeds ~12 m/s. `track` keeps last_pos and
+-- last_t between ticks. `armed(prev_pos)` (optional) limits detection, e.g.
+-- to moments when the character was not yet next to the item it uses, so a
+-- ladder climb or portal is not mistaken for a teleport.
+-- Returns here, step, dt; or nil after failing the job.
+local function teleport_check(job, track, armed)
+    local here = G.pos(job.char)
+    if not here then return nil end
+    local t = RPC.now_ms()
+    local prev, dt = track.last_pos, t - (track.last_t or t)
+    local step = prev and U.dist(prev, here) or 0
+    if prev and (step > 4.0 or (dt >= 100 and step / (dt / 1000) > 12.0))
+        and (not armed or armed(prev)) then
+        if job.walk then job.walk.done = true end
+        pcall(G.osi, "PurgeOsirisQueue", job.char)
+        RPC.push("teleport_blocked", { uuid = job.char, from = pos_view(prev), to = pos_view(here) })
+        RPC.finish_job(job, "failed", { pos = pos_view(here), teleported = true },
+            "engine teleported the character (not allowed)")
+        return nil
+    end
+    track.last_pos, track.last_t = here, t
+    return here, step, dt
+end
+
+-- Per-tick walk bookkeeping: teleports, distance travelled (combat budget)
+-- and stuck detection.
 local function walk_tick(job)
     local w = job.walk
     if not w or w.done then return end
-    local here = G.pos(job.char)
+    local here, step, dt = teleport_check(job, w)
     if not here then return end
-    local step = w.last_pos and U.dist(w.last_pos, here) or 0
-    local t = RPC.now_ms()
-    local dt = t - (w.last_t or t)
-    -- Teleport detector: Osiris move tasks TELEPORT the character when no
-    -- path exists (seen in S001). A real walk/run never exceeds ~12 m/s.
-    if w.last_pos and (step > 4.0 or (dt >= 100 and step / (dt / 1000) > 12.0)) then
-        w.done = true
-        pcall(G.osi, "PurgeOsirisQueue", job.char)
-        RPC.push("teleport_blocked", { uuid = job.char, from = pos_view(w.last_pos), to = pos_view(here) })
-        RPC.finish_job(job, "failed", { pos = pos_view(here), teleported = true },
-            "engine teleported the character (not allowed)")
-        return
-    end
-    w.last_pos = here
     w.travelled = w.travelled + step
     job.partial = { pos = pos_view(here), travelled = U.round(w.travelled, 1) }
-    w.last_t = t
     if step < 0.03 then w.still_ms = w.still_ms + dt else w.still_ms = 0 end
 
     if w.budget and w.travelled >= w.budget - 0.05 then
         w.done = true
         pcall(G.osi, "PurgeOsirisQueue", job.char)
-        RPC.finish_job(job, "done", { pos = pos_view(here), stopped = "out of movement",
-            travelled = U.round(w.travelled, 1) })
+        local res = { pos = pos_view(here), stopped = "out of movement", travelled = U.round(w.travelled, 1) }
+        if w.on_arrive then
+            -- an approach that cannot finish: the action after it never happens
+            RPC.finish_job(job, "failed", res, "ran out of movement before getting there")
+        else
+            RPC.finish_job(job, "done", res)
+        end
         return
     end
     if w.still_ms >= 5000 then
-        local d = walk_dist_left(job)
-        if d and d <= w.tolerance then
+        local d, _, de = walk_dist_left(job)
+        if walk_close_enough(job, d, de) or (d and d <= w.tolerance) then
             walk_arrived(job)
         else
             w.done = true
@@ -344,67 +418,169 @@ local function walk_tick(job)
     end
 end
 
+-- Combat: the walk must fit in the remaining Movement. Returns budget,
+-- movement before (both nil out of combat) or refuses.
+local function combat_budget(char, route)
+    if not G.in_combat(char) then return nil, nil end
+    local mv = movement_left(char)
+    if mv < 0.5 then G.refuse("no movement left") end
+    if route > mv + 0.5 then
+        G.refuse(string.format("destination is beyond remaining movement (path %.1f m, %.1f m left)", route, mv))
+    end
+    return mv, mv
+end
+
+-- Combat movement must cost what the UI path costs: if the engine did not
+-- deduct the distance walked, the guard does.
+local function charge_movement(job, char, mv_before)
+    if not mv_before or not job.walk then return end
+    local used = mv_before - movement_left(char)
+    local owed = job.walk.travelled - used
+    if owed > 0.25 then
+        G.deduct(char, "Movement", 0, owed)
+        if type(job.result) == "table" then job.result.movement_charged_by_guard = U.round(owed, 1) end
+    end
+end
+
+-- Walk timeout for a route of `m` metres.
+local function walk_timeout(m) return math.min(90000, 8000 + math.floor((m or 0) / 0.8 * 1000)) end
+
+-- Approach phase shared by talk/interact/pickup and the click ops: walk to the
+-- verified point of `plan` (G.approach_point), then call ready(job). A target
+-- that moves (an NPC walking off) is re-planned: mid-walk once it is
+-- REPLAN_MOVED_M from where we planned, or on arrival if it is out of reach.
+A.REPLAN_MOVED_M = 2.0
+A.MAX_REPLANS = 4
+
+local function walk_to_plan(job)
+    local ap = job.approach
+    local carried = job.walk and job.walk.travelled or 0
+    begin_walk(job, { pos = ap.plan.pos, target = ap.target, speed = "Run", tolerance = 1.0, reach = ap.reach,
+        move_id = job.id + ap.replans * 1000000,
+        on_arrive = function(j, left)
+            if left <= ap.reach + 1.0 then
+                j.phase = "act"
+                return ap.ready(j)
+            end
+            local ok, why = ap.replan(j)
+            if not ok then
+                RPC.finish_job(j, "failed", { dist = U.round(left, 1) }, why or "could not get close enough")
+            end
+        end })
+    job.walk.travelled = carried -- cumulative over re-plans (combat budget, guard charge)
+    job.walk.budget = ap.budget
+end
+
+-- Start a new walk toward the target's current position. Returns true if the
+-- job goes on (walking again, or already in reach), else false, reason.
+local function replan(job)
+    local ap = job.approach
+    if ap.replans >= A.MAX_REPLANS then return false, "could not catch up with the target" end
+    if not G.visible(ap.target) then return false, "the target is no longer visible" end
+    local ok, plan = pcall(G.approach_point, job.char, ap.target, ap.reach)
+    if not ok then return false, G.is_refusal(plan) and plan.reason or tostring(plan) end
+    ap.replans = ap.replans + 1
+    if job.walk then job.walk.done = true end
+    pcall(G.osi, "PurgeOsirisQueue", job.char)
+    if plan.here then
+        job.phase = "act"
+        ap.ready(job)
+        return true
+    end
+    ap.plan = plan
+    walk_to_plan(job)
+    return true
+end
+
+local function begin_approach(job, target, plan, reach, ready, budget)
+    if plan.here then
+        job.phase = "act"
+        return ready(job)
+    end
+    job.phase = "approach"
+    job.approach = { target = target, reach = reach, ready = ready, budget = budget, plan = plan,
+        replans = 0, replan = replan }
+    walk_to_plan(job)
+end
+
+-- walk_tick for approach phases, plus the moving-target check.
+local function approach_tick(job)
+    local ap, w = job.approach, job.walk
+    if ap and w and not w.done and ap.plan.tpos then
+        local t = G.pos(ap.target)
+        if t and U.dist(t, ap.plan.tpos) > A.REPLAN_MOVED_M then
+            local ok, why = replan(job)
+            if not ok then
+                w.done = true
+                pcall(G.osi, "PurgeOsirisQueue", job.char)
+                RPC.finish_job(job, "failed", job.partial, why)
+            end
+            return
+        end
+    end
+    return walk_tick(job)
+end
+
 reg("move_to", function(args)
     local char = G.actor(args.char)
     G.not_in_dialogue(char)
     G.combat_gate(char, "turn")
     local target = args.target and G.guid(args.target)
     local pos = args.pos
-    local path_info
+    local route
     if target then
-        -- Entity targets: the walker stops next to them; no point path check.
+        -- Entity targets: walk to a verified reachable point next to them.
         G.target_visible(target)
         G.within(char, target, G.MAX_MOVE_DIST, "destination")
-        pos = nil
+        local plan = G.approach_point(char, target, A.MOVE_REACH)
+        if plan.here then
+            return start("move_to", char, {
+                timeout_ms = 1000,
+                start = function(job)
+                    RPC.finish_job(job, "done", { pos = pos_view(G.pos(char)), dist = U.round(plan.dist, 1),
+                        target = target, already_there = true })
+                end,
+            })
+        end
+        pos, route = plan.pos, plan.length_m
     elseif pos then
         G.point_ok(char, pos)
-        path_info = G.point_reachable(char, pos)
+        route = G.point_reachable(char, pos).length_m or U.dist(G.pos(char), pos)
     else
         G.refuse("no destination given")
     end
 
-    local here = G.pos(char)
-    local dest = target and G.pos(target) or pos
-    local straight = U.dist(here, dest)
-    local route = (path_info and path_info.length_m) or straight
-    local combat = G.in_combat(char)
-    local budget, mv_before
-    if combat then
-        mv_before = movement_left(char)
-        if mv_before < 0.5 then G.refuse("no movement left") end
-        if route > mv_before + 0.5 then
-            G.refuse(string.format("destination is beyond remaining movement (path %.1f m, %.1f m left)",
-                route, mv_before))
-        end
-        budget = mv_before
-    end
+    local budget, mv_before = combat_budget(char, route)
+    local combat = budget ~= nil
     local speed = (args.run == false and not combat) and "Walk" or "Run"
-    local timeout = math.min(90000, 8000 + math.floor(route / 0.8 * 1000))
 
     return start("move_to", char, {
-        timeout_ms = timeout,
+        eta_s = walk_eta(route, speed), route_m = route,
+        timeout_ms = walk_timeout(route),
         interrupt = { combat = not combat, dialogue = true, attacked = not combat },
         osi = WALK_OSI,
         start = function(job)
-            begin_walk(job, { target = target, pos = pos, speed = speed,
-                tolerance = target and 2.5 or 1.5 })
+            begin_walk(job, { pos = pos, target = target, speed = speed,
+                tolerance = 1.5, reach = target and A.MOVE_REACH or nil })
             job.walk.budget = budget
         end,
         on_tick = walk_tick,
-        on_finish = function(job)
-            -- Combat movement must cost what the UI path costs: if the engine
-            -- did not deduct the distance walked, the guard does.
-            if combat and job.walk then
-                local used = mv_before - movement_left(char)
-                local owed = job.walk.travelled - used
-                if owed > 0.25 then
-                    G.deduct(char, "Movement", 0, owed)
-                    if type(job.result) == "table" then job.result.movement_charged_by_guard = U.round(owed, 1) end
-                end
-            end
-        end,
+        on_finish = function(job) charge_movement(job, char, mv_before) end,
     })
 end)
+
+-- Top-level character holding an item (walks up bags), or nil.
+local function holder(item)
+    local cur = item
+    for _ = 1, 6 do
+        local o = G.guid(G.q("GetInventoryOwner", cur))
+        if not o then return nil end
+        if G.b(G.q("IsCharacter", o)) then return o end
+        cur = o
+    end
+    return nil
+end
+A.holder = holder
 
 ------------------------------------------------------------------------
 -- act.interact {char, target}: doors, levers, containers, books, ladders...
@@ -416,8 +592,13 @@ reg("interact", function(args)
     G.combat_gate(char, "no_combat")
     local target = G.guid(args.target)
     if not target then G.refuse("no target given") end
-    G.target_visible(target)
-    G.within(char, target, G.MAX_INTERACT_DIST, "target")
+    -- An item in the actor's own bags (potion, scroll, book): use it in place.
+    local carried = G.b(G.q("IsItem", target)) and holder(target)
+    if carried and not G.same(carried, char) then G.refuse("that is in another character's inventory") end
+    if not carried then
+        G.target_visible(target)
+        G.within(char, target, G.MAX_INTERACT_DIST, "target")
+    end
     if G.b(G.q("IsCharacter", target)) then
         if G.is_dead(target) then
             G.refuse("looting corpses is not supported by this action yet (use the UI)")
@@ -446,10 +627,13 @@ reg("interact", function(args)
         return res
     end
 
+    local plan = carried and { here = true, length_m = 0 } or G.approach_point(char, target, A.USE_REACH)
+
     return start("interact", char, {
-        timeout_ms = 30000,
+        eta_s = walk_eta(plan.length_m) + 1.0, route_m = plan.length_m,
+        timeout_ms = 30000 + walk_timeout(plan.length_m),
         interrupt = { combat = true, dialogue = true, attacked = true },
-        osi = {
+        osi = with_walk({
             UseFinished = function(job, a)
                 if G.same(a[1], char) and G.same(a[2], target) then
                     if not G.b(a[3]) then
@@ -465,12 +649,23 @@ reg("interact", function(args)
             EntityEvent = function(job, a)
                 if a[2] == job.use_ev and not job.used_at then job.used_at = RPC.now_ms() end
             end,
-        },
+        }),
         start = function(job)
-            job.use_ev = ev_name(job, "use")
-            G.osi("Use", char, target, job.use_ev)
+            begin_approach(job, target, plan, A.USE_REACH, function(j)
+                j.use_ev = ev_name(j, "use")
+                j.use_track = {}
+                G.osi("Use", char, target, j.use_ev)
+            end)
         end,
         on_tick = function(job)
+            if job.phase == "approach" then return approach_tick(job) end
+            if job.phase ~= "act" then return end
+            -- Use walks on its own if still out of range; a jump while far from
+            -- the item is a teleport, a jump next to it is the use (ladders, portals).
+            if not teleport_check(job, job.use_track, function(prev)
+                local t = G.pos(target)
+                return not t or U.dist(prev, t) > A.USE_REACH + 0.7
+            end) then return end
             local res = state_result()
             if res then
                 RPC.finish_job(job, "done", res)
@@ -485,23 +680,11 @@ end)
 -- act.pickup {char, item}   (untested live)
 ------------------------------------------------------------------------
 
--- Top-level character holding an item (walks up bags), or nil.
 function A.selected(char)
     local user = G.q("GetReservedUserID", char)
     return user ~= nil and G.same(G.q("GetCurrentCharacter", user), char)
 end
 
-local function holder(item)
-    local cur = item
-    for _ = 1, 6 do
-        local o = G.guid(G.q("GetInventoryOwner", cur))
-        if not o then return nil end
-        if G.b(G.q("IsCharacter", o)) then return o end
-        cur = o
-    end
-    return nil
-end
-A.holder = holder
 
 reg("pickup", function(args)
     local char = G.actor(args.char)
@@ -522,22 +705,35 @@ reg("pickup", function(args)
             return true
         end
     end
+    local plan = G.approach_point(char, item, A.USE_REACH)
     return start("pickup", char, {
-        timeout_ms = 30000,
+        eta_s = walk_eta(plan.length_m) + 1.0, route_m = plan.length_m,
+        timeout_ms = 30000 + walk_timeout(plan.length_m),
         interrupt = { combat = true, dialogue = true, attacked = true },
-        osi = {
+        osi = with_walk({
             AddedTo = function(job, a) if G.same(a[1], item) then picked(job) end end,
             PickupFailed = function(job, a)
                 if G.same(a[1], char) and G.same(a[2], item) then
                     RPC.finish_job(job, "failed", nil, "could not pick that up")
                 end
             end,
-        },
+        }),
         start = function(job)
-            -- ForcePickUpOnFailure = 0: never teleport the item into the bag.
-            G.osi("Pickup", char, item, ev_name(job, "pick"), 0)
+            begin_approach(job, item, plan, A.USE_REACH, function(j)
+                j.use_track = {}
+                -- ForcePickUpOnFailure = 0: never teleport the item into the bag.
+                G.osi("Pickup", char, item, ev_name(j, "pick"), 0)
+            end)
         end,
-        on_tick = picked,
+        on_tick = function(job)
+            if job.phase == "approach" then return approach_tick(job) end
+            if job.phase ~= "act" then return end
+            if picked(job) then return end
+            teleport_check(job, job.use_track, function(prev)
+                local t = G.pos(item)
+                return t ~= nil and U.dist(prev, t) > A.USE_REACH + 0.7
+            end)
+        end,
     })
 end)
 
@@ -557,7 +753,8 @@ reg("talk", function(args)
     if G.same(npc, char) then G.refuse("cannot talk to yourself") end
     if G.is_dead(npc) then G.refuse("they are dead") end
     G.target_visible(npc)
-    local d = G.within(char, npc, G.MAX_INTERACT_DIST, "character")
+    G.within(char, npc, G.MAX_INTERACT_DIST, "character")
+    local plan = G.approach_point(char, npc, G.TALK_RANGE)
 
     local function request(job)
         job.phase = "requested"
@@ -566,9 +763,10 @@ reg("talk", function(args)
     end
 
     return start("talk", char, {
+        eta_s = walk_eta(plan.length_m) + 1.5, route_m = plan.length_m,
         timeout_ms = 60000,
         interrupt = { combat = true, dialogue = false, attacked = true },
-        osi = setmetatable({
+        osi = with_walk({
             DialogActorJoined = function(job, a)
                 if job.phase == "requested" and (G.same(a[3], char) or G.same(a[3], npc)) then
                     RPC.finish_job(job, "done", { dialogue = true })
@@ -579,24 +777,12 @@ reg("talk", function(args)
                     RPC.finish_job(job, "failed", nil, "they have nothing to say")
                 end
             end,
-        }, { __index = WALK_OSI }),
+        }),
         start = function(job)
-            if d <= G.TALK_RANGE then
-                request(job)
-            else
-                job.phase = "approach"
-                begin_walk(job, { target = npc, speed = "Run", tolerance = G.TALK_RANGE,
-                    on_arrive = function(j, left)
-                        if left > G.TALK_RANGE + 1.5 then
-                            RPC.finish_job(j, "failed", nil, "could not reach them")
-                        else
-                            request(j)
-                        end
-                    end })
-            end
+            begin_approach(job, npc, plan, G.TALK_RANGE, request)
         end,
         on_tick = function(job)
-            if job.phase == "approach" then return walk_tick(job) end
+            if job.phase == "approach" then return approach_tick(job) end
             if job.phase == "requested" then
                 if G.in_dialogue(char) then
                     RPC.finish_job(job, "done", { dialogue = true })
@@ -620,6 +806,8 @@ local function name_of(uuid)
     end
     return U.loca(G.q("GetDisplayName", uuid))
 end
+
+local NULL_GUID = "NULL_00000000-0000-0000-0000-000000000000"
 
 local function resolve_spell(spell, upcast)
     if upcast then
@@ -651,13 +839,25 @@ reg("cast", function(args)
         targets[1] = char -- self-centred actions (Dash, Hide, Disengage...)
     end
 
-    -- Validate the base spell (known/prepared/cooldown) and the cast itself.
-    local check = G.check_cast(char, base, targets[1], pos, nil)
-    if targets[2] then G.target_visible(targets[2]) end
-    local spell = resolve_spell(base, args.upcast and tonumber(args.upcast))
+    -- Upcasting to the spell's own level is just a normal cast.
+    local upcast = args.upcast and tonumber(args.upcast)
+    local bst = Ext.Stats.Get(base)
+    if upcast and bst and upcast == (tonumber(bst.Level) or 0) then upcast = nil end
+
+    -- Validate the base spell (known/prepared/cooldown) and the cast itself;
+    -- with an upcast, slots are checked at the upcast level (not the base
+    -- level, which may be spent).
+    local check = G.check_cast(char, base, targets[1], pos, upcast)
+    if targets[2] then
+        G.target_visible(targets[2])
+        G.within(char, targets[2], G.MAX_INTERACT_DIST, "target")
+        if check.range and U.dist(G.pos(char), G.pos(targets[2])) > check.range + 0.5 then
+            G.refuse("second target is out of range: move closer first")
+        end
+    end
+    local spell = resolve_spell(base, upcast)
     if spell ~= base then
-        -- Re-validate resources for the upcast variant's costs.
-        check = G.check_cast(char, base, targets[1], pos, tonumber(args.upcast))
+        -- Resources for the upcast variant's own costs.
         local vst = Ext.Stats.Get(spell)
         check.costs = G.parse_costs(vst.UseCosts)
         check.payers = {}
@@ -673,6 +873,10 @@ reg("cast", function(args)
         end
     end
     local combat = G.in_combat(char)
+    -- Never let the cast walk: the Osiris spell task's approach has no path
+    -- check (teleports). The range was checked by G.check_cast whenever it is
+    -- known; only an unknown range out of combat lets the engine walk into range.
+    local without_move = (combat or check.range) and 1 or 0
     local harmful = false
     pcall(function()
         for _, f in ipairs(check.stats.SpellFlags) do if f == "IsHarmful" then harmful = true end end
@@ -683,6 +887,7 @@ reg("cast", function(args)
     end
 
     return start("cast", char, {
+        eta_s = 2.0,
         timeout_ms = 30000,
         interrupt = { combat = false, dialogue = true, attacked = false },
         osi = {
@@ -741,12 +946,12 @@ reg("cast", function(args)
         start = function(job)
             job.hits, job.statuses = {}, {}
             if pos then
-                G.osi("UseSpellAtPosition", char, spell, pos[1], pos[2], pos[3])
-            elseif targets[2] then
-                G.osi("UseSpell", char, spell, targets[1], targets[2], combat and 1 or 0)
+                -- 5 inputs as the story calls it; the bg3le dump also has a
+                -- 6th (WithoutMove).
+                G.osi_forms("UseSpellAtPosition", { char, spell, pos[1], pos[2], pos[3] },
+                    { char, spell, pos[1], pos[2], pos[3], without_move })
             else
-                G.osi("UseSpell", char, spell, targets[1], "NULL_00000000-0000-0000-0000-000000000000",
-                    combat and 1 or 0)
+                G.osi("UseSpell", char, spell, targets[1], targets[2] or NULL_GUID, without_move)
             end
         end,
         on_finish = function(job)
@@ -817,7 +1022,9 @@ reg("equip", function(args)
                 if G.same(a[1], item) then RPC.finish_job(job, "failed", nil, "cannot equip that") end
             end,
         },
-        start = function() G.osi("Equip", char, item) end,
+        -- Equip/2 as written; the bg3le dump has Equip/5 (AddToMainInventoryOnFail,
+        -- ShowNotification, ClearOriginalOwner=0: never launder stolen goods).
+        start = function() G.osi_forms("Equip", { char, item }, { char, item, 1, 1, 0 }) end,
         on_tick = function(job)
             if G.b(G.q("IsEquipped", item)) and G.same(holder(item), char) then
                 RPC.finish_job(job, "done", { equipped = true })
@@ -971,7 +1178,7 @@ reg("sneak", function(args)
     local check = G.check_cast(char, "Shout_Hide", char, nil, nil)
     return start("sneak", char, {
         timeout_ms = 8000,
-        start = function() G.osi("UseSpell", char, "Shout_Hide", char) end,
+        start = function() G.osi("UseSpell", char, "Shout_Hide", char, NULL_GUID, 1) end,
         on_tick = function(job)
             if G.b(G.q("HasActiveStatus", char, "SNEAKING")) then
                 RPC.finish_job(job, "done", { sneaking = true })
@@ -1088,39 +1295,30 @@ reg("leave_camp", camp_travel("leave_camp", false))
 -- CharacterLootedCharacter fires when items are taken (Take All), as with a
 -- click. The story-DB gate below stays as a conservative extra.
 A.LOOT_ENGINE_SHORTCUT = true
-local CLICK_RANGE = 1.8
 
--- Walk next to `target`, select `char`, then call finish(job).
+-- Walk next to `target` (verified approach point; in combat within the
+-- remaining Movement, which the walk is charged for), select `char`, then
+-- call finish(job).
 local function approach(kind, char, target, finish, extra)
-    local d = G.within(char, target, G.MAX_INTERACT_DIST, "target")
+    G.within(char, target, G.MAX_INTERACT_DIST, "target")
+    local plan = G.approach_point(char, target, A.USE_REACH)
+    local budget, mv_before = combat_budget(char, plan.length_m)
     local spec = {
-        timeout_ms = 30000 + math.floor(d / 0.8 * 1000),
-        interrupt = { combat = true, dialogue = true, attacked = true },
-        osi = setmetatable(extra and extra.osi or {}, { __index = WALK_OSI }),
+        eta_s = walk_eta(plan.length_m) + 0.5, route_m = plan.length_m,
+        timeout_ms = 30000 + walk_timeout(plan.length_m),
+        interrupt = { combat = budget == nil, dialogue = true, attacked = budget == nil },
+        osi = with_walk(extra and extra.osi),
         start = function(job)
-            local function arrived(j)
+            begin_approach(job, target, plan, A.USE_REACH, function(j)
                 pcall(G.osi, "MakePlayerActive", char)
-                job.phase = "act"
                 finish(j)
-            end
-            if d <= CLICK_RANGE then
-                arrived(job)
-            else
-                job.phase = "approach"
-                begin_walk(job, { target = target, speed = "Run", tolerance = CLICK_RANGE,
-                    on_arrive = function(j, left)
-                        if left > CLICK_RANGE + 1.5 then
-                            RPC.finish_job(j, "failed", nil, "could not get close enough")
-                        else
-                            arrived(j)
-                        end
-                    end })
-            end
+            end, budget)
         end,
         on_tick = function(job)
-            if job.phase == "approach" then return walk_tick(job) end
+            if job.phase == "approach" then return approach_tick(job) end
             if extra and extra.on_tick then extra.on_tick(job) end
         end,
+        on_finish = function(job) charge_movement(job, char, mv_before) end,
     }
     return start(kind, char, spec)
 end
@@ -1133,9 +1331,15 @@ end
 -- target (locked padlock icon, open/closed, trap marker of a discovered trap).
 RPC.register("act.target_state", function(args)
     local t = G.guid(args.uuid)
+    if t and G.b(G.q("IsItem", t)) then
+        local h = holder(t)
+        if h and G.is_party(h) then return { visible = true, held = true } end
+    end
     if not t or not G.visible(t) then return { visible = false } end
     local out = { visible = true }
     if G.b(G.q("IsItem", t)) then
+        local h = holder(t)
+        if h and G.is_party(h) then out.held = true end
         out.locked = G.b(G.q("IsLocked", t))
         out.opened = G.b(G.q("IsOpened", t))
         if G.b(G.q("IsTrapDiscovered", t)) then out.trap_armed = G.b(G.q("IsTrapArmed", t)) end
@@ -1229,6 +1433,66 @@ reg("pickpocket", function(args)
             end
         end,
     })
+end)
+
+------------------------------------------------------------------------
+-- act.watch {radius?}: one cheap read for the bridge's action queue (its
+-- interrupt checks) and the do_actions diff. Only what the player sees: the
+-- party's portraits (pos, HP, downed), the mode (combat / conversation), and
+-- the characters in view (visibility-filtered, as in state.nearby).
+-- act.note {kind, data}: the bridge's queue reports (queue_*) go into the
+-- same event stream as the game's events.
+------------------------------------------------------------------------
+
+A.WATCH_RADIUS = 30
+RPC.register("act.watch", function(args)
+    local radius = tonumber(args.radius) or A.WATCH_RADIUS
+    local out = { party = {}, seen = {}, combat = false, dialogue = false }
+    local centers = {}
+    for _, u in ipairs(G.party()) do
+        local row = { uuid = u, pos = pos_view(G.pos(u)) }
+        local e = G.entity(u)
+        local h = e and U.comp(e, "Health")
+        if h then pcall(function() row.hp = h.Hp; row.max_hp = h.MaxHp end) end
+        if G.is_downed(u) then row.downed = true end
+        if G.in_combat(u) then out.combat = true end
+        if G.in_dialogue(u) then out.dialogue = true end
+        if row.pos then centers[#centers + 1] = row.pos end
+        out.party[#out.party + 1] = row
+    end
+    local V = BG3AI.Visibility
+    if #centers == 0 or type(V) ~= "table" or not V.context or not V.characterVisible then return out end
+    local ctx = V.context()
+    local host = G.host() or G.party()[1]
+    local ok, chars = pcall(Ext.Entity.GetAllEntitiesWithComponent, "ServerCharacter")
+    if not ok or not chars then return out end
+    for _, e in ipairs(chars) do
+        local p = V.pos(e)
+        local near = false
+        if p then
+            for _, c in ipairs(centers) do
+                if math.abs(p[1] - c[1]) <= radius and math.abs(p[3] - c[3]) <= radius and U.dist(p, c) <= radius then
+                    near = true
+                    break
+                end
+            end
+        end
+        local u = near and V.entityUuid(e)
+        if u and not ctx.is_party[u] and V.characterVisible(ctx, u, e, p) then
+            local row = { uuid = u, name = V.name and V.name(u) or nil }
+            if G.is_dead(u) then row.dead = true
+            elseif host and G.b(G.q("IsEnemy", host, u)) then row.hostile = true end
+            out.seen[#out.seen + 1] = row
+        end
+    end
+    return out
+end)
+
+RPC.register("act.note", function(args)
+    local kind = tostring(args.kind or "")
+    if not kind:match("^queue_[%w_]+$") then error("act.note: only queue_* events") end
+    RPC.push(kind, args.data)
+    return { ok = true }
 end)
 
 return A

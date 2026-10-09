@@ -12,7 +12,7 @@ Now: (prologue) · Region: (unknown) · Last session: S000 · Save: (none)
 Main thread: (unknown yet; see objectives.md)
 
 ## Read when
-- Starting a session: HANDOFF.md → objectives.md → `get_status` (then the session-start skill)
+- Starting a session: HANDOFF.md → objectives.md → `get_status` (then the session-start playbook)
 - Before talking to a named NPC: Grep memory/ for the name
 - Entering or leaving a region: locations.md (that region's section)
 - Before any irreversible choice: decisions.md + hypotheses.md

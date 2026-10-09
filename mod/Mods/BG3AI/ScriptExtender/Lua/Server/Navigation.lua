@@ -596,6 +596,41 @@ local function stepObjectives()
     return quests
 end
 
+-- Accepted, open quests and the objective of their latest unlocked step.
+-- Walking every quest's steps costs a few hundred Osiris calls, and get_status
+-- asks every turn, so the list is reused for MARKER_CACHE_MS.
+N.MARKER_CACHE_MS = 2000
+N.activeCache = N.activeCache or nil
+local function activeObjectives(who)
+    local now = Ext.Utils.MonotonicTime()
+    local c = N.activeCache
+    if c and c.who == who and now - c.t < N.MARKER_CACHE_MS then return c.list end
+    local list = {}
+    for _, q in ipairs(stepObjectives()) do
+        if truthy(osi(Osi.QuestIsAccepted, who, q.id)) and not truthy(osi(Osi.QuestIsClosed, q.id)) then
+            local current
+            for _, st in ipairs(q.steps) do
+                if st.id and truthy(osi(Osi.QuestUpdateIsUnlocked, who, q.id, st.id)) then current = st end
+            end
+            if current and current.objective then list[#list + 1] = { quest = q, objective = current.objective } end
+        end
+    end
+    N.activeCache = { who = who, t = now, list = list }
+    return list
+end
+
+-- Marker targets are items, characters or triggers. Triggers may lack a
+-- Transform on the server, so fall back to Osiris' position query.
+local function markerPos(uuid)
+    if not uuid or uuid == "" then return nil end
+    local te = V.entity(uuid)
+    local p = te and V.pos(te)
+    if p then return p end
+    local ok, x, y, z = pcall(Osi.GetPosition, uuid)
+    if ok and type(x) == "number" and type(y) == "number" and type(z) == "number" then return { x, y, z } end
+    return nil
+end
+
 -- Active objective markers with positions (server truth). Each:
 -- {label, quest, objective, kind, pos, dist, dir, level, here}
 function N.objectiveMarkers(ctx)
@@ -613,31 +648,25 @@ function N.objectiveMarkers(ctx)
     local from = ae and V.pos(ae)
     local lvl = currentLevel()
     local out = {}
-    for _, q in ipairs(stepObjectives()) do
-        if truthy(osi(Osi.QuestIsAccepted, who, q.id)) and not truthy(osi(Osi.QuestIsClosed, q.id)) then
-            local current
-            for _, st in ipairs(q.steps) do
-                if st.id and truthy(osi(Osi.QuestUpdateIsUnlocked, who, q.id, st.id)) then current = st end
-            end
-            local ob = current and current.objective and data.objectives[current.objective]
-            if ob then
-                for _, mid in ipairs(ob.markers) do
-                    local m = data.markers[mid]
-                    if m then
-                        local o = { label = U.loca(m.text) or U.loca(ob.desc) or mid, quest = U.loca(q.title) or q.id,
-                            objective = U.loca(ob.desc), kind = m.icon ~= "" and m.icon or "QuestMarker", level = m.level ~= "" and m.level or nil }
-                        local te = m.uuid ~= "" and V.entity(m.uuid)
-                        local p = te and V.pos(te)
-                        if p and (not o.level or o.level == lvl) then
-                            o.pos = U.vec(p, 1)
-                            o.here = true
-                            if from then
-                                o.dist = round(U.dist(from, p), 1)
-                                o.dir = N.direction(from, p)
-                            end
+    for _, a in ipairs(activeObjectives(who)) do
+        local q = a.quest
+        local ob = data.objectives[a.objective]
+        if ob then
+            for _, mid in ipairs(ob.markers) do
+                local m = data.markers[mid]
+                if m then
+                    local o = { label = U.loca(m.text) or U.loca(ob.desc) or mid, quest = U.loca(q.title) or q.id,
+                        objective = U.loca(ob.desc), kind = m.icon ~= "" and m.icon or "QuestMarker", level = m.level ~= "" and m.level or nil }
+                    local p = markerPos(m.uuid)
+                    if p and (not o.level or o.level == lvl) then
+                        o.pos = U.vec(p, 1)
+                        o.here = true
+                        if from then
+                            o.dist = round(U.dist(from, p), 1)
+                            o.dir = N.direction(from, p)
                         end
-                        out[#out + 1] = o
                     end
+                    out[#out + 1] = o
                 end
             end
         end
@@ -676,6 +705,34 @@ RPC.register("nav.reach_toward", function(args)
     if not r then error(err, 0) end
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r
+end)
+
+-- Cheap activity sample for latency metrics (the bridge polls it ~1/s on its
+-- own connection): party positions (the bridge diffs them to detect movement),
+-- running jobs, dialogue and combat flags. Party-only data, nothing hidden.
+RPC.register("nav.activity", function(args)
+    local party = V.party()
+    local out = { pos = {}, jobs = 0, job_kinds = {}, in_dialogue = false, in_combat = false }
+    for _, u in ipairs(party) do
+        if truthy(osi(Osi.IsOnStage, u)) then
+            local e = V.entity(u)
+            local p = e and V.pos(e)
+            if p then out.pos[u] = U.vec(p, 2) end
+            if truthy(osi(Osi.IsInCombat, u)) then out.in_combat = true end
+            if not out.in_dialogue then
+                local d = false
+                pcall(function() d = e.ServerCharacter.InDialog == true end)
+                out.in_dialogue = d or truthy(osi(Osi.IsInDialog, u))
+            end
+        end
+    end
+    for _, j in pairs(RPC.jobs or {}) do
+        if j.status == "running" then
+            out.jobs = out.jobs + 1
+            out.job_kinds[#out.job_kinds + 1] = j.kind
+        end
+    end
+    return out
 end)
 
 return N

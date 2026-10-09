@@ -283,3 +283,82 @@ def resolve_agent_log(runtime: Path, runner_status: dict) -> Path | None:
     except OSError:
         return None
     return max(logs, key=lambda f: f.stat().st_mtime) if logs else None
+
+
+# ---------------------------------------------------------------- latency
+
+
+def resolve_latency_paths(runtime: Path, runner_status: dict) -> dict:
+    """The live session's bridge metrics + stream timing files, and the playthrough's history."""
+    metrics = runner_status.get("metrics")
+    turns = runner_status.get("turns")
+    pt = runner_status.get("playthrough")
+    hist = runtime / "sessions" / pt / "latency_history.jsonl" if pt else None
+    m = Path(metrics) if metrics and Path(metrics).exists() else runtime / "metrics.jsonl"
+    return {"metrics": m if m.exists() else None,
+            "turns": Path(turns) if turns and Path(turns).exists() else None,
+            "history": hist if hist and hist.exists() else None}
+
+
+def _tail_jsonl(path: Path | None, max_bytes: int = 4 * 1024 * 1024) -> list[dict]:
+    if path is None:
+        return []
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as f:
+            f.seek(max(0, size - max_bytes))
+            data = f.read().decode("utf-8", "replace")
+    except OSError:
+        return []
+    lines = data.splitlines()
+    if size > max_bytes and lines:
+        lines = lines[1:]  # partial first line
+    out = []
+    for ln in lines:
+        try:
+            v = json.loads(ln)
+        except ValueError:
+            continue
+        if isinstance(v, dict):
+            out.append(v)
+    return out
+
+
+def latency_payload(runtime: Path, runner_status: dict, now: float | None = None, history_rows: int = 30) -> dict:
+    """/api/latency: live view (bg3ai.metrics.live_view) plus the per-session history table."""
+    from bg3ai import metrics as M  # noqa: PLC0415 - bridge/src is on sys.path (serve.py)
+
+    now = time.time() if now is None else now
+    paths = resolve_latency_paths(runtime, runner_status)
+    recs = _tail_jsonl(paths["metrics"])
+    tools = [r for r in recs if r.get("type") == "tool" and "t0" in r]
+    samples = [r for r in recs if r.get("type") == "sample" and "t" in r]
+    turns = _tail_jsonl(paths["turns"])
+    live = M.live_view(tools, samples, turns, now) if (tools or samples or turns) else None
+    hist = _tail_jsonl(paths["history"])[-history_rows:]
+    return {"now": now, "live": live, "history": hist, "targets": M.TARGETS,
+            "files": {k: (v.name if v else None) for k, v in paths.items()}}
+
+
+# ---------------------------------------------------------------- story progress
+
+
+def progress_payload(runtime: Path, runner_status: dict, now: float | None = None, history_rows: int = 30) -> dict:
+    """/api/progress: live counter of the running session (bg3ai.progress.live_view) + per-session history."""
+    from bg3ai import progress as P  # noqa: PLC0415 - bridge/src is on sys.path (serve.py)
+
+    now = time.time() if now is None else now
+    live_path = runner_status.get("progress")
+    live_path = Path(live_path) if live_path and Path(live_path).exists() else None
+    pt = runner_status.get("playthrough")
+    hist = runtime / "sessions" / pt / "progress_history.jsonl" if pt else None
+    live = None
+    if live_path is not None:
+        started = runner_status.get("started") or now
+        ended = runner_status.get("session_ended")
+        live = P.live_view(_tail_jsonl(live_path), float(started), float(ended) if ended else now)
+        live["session"] = runner_status.get("session")
+        live["running"] = not ended
+    rows = _tail_jsonl(hist if hist and hist.exists() else None)[-history_rows:]
+    return {"now": now, "live": live, "history": rows, "weights": P.WEIGHTS, "stuck_after_min": P.STUCK_MIN,
+            "files": {"live": live_path.name if live_path else None, "history": hist.name if hist and hist.exists() else None}}

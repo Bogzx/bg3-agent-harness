@@ -25,6 +25,14 @@
 -- Every new dialogue line seen (skipped or not) is pushed as a client event
 -- "dialogue_line" {speaker?, text, options?=n}, so the agent still reads all
 -- of it; skipped movies push "movie_skipped".
+--
+-- Latency (se, machine 2): movies are probed every FAST_MS from the tick with
+-- a cheap check (ContentRoot child names only, no DataContext reads), and at
+-- once after a game-state change. A movie seen on two probes gets the engine
+-- ESCAPE; if it is still up ENGINE_GRACE_MS later, a shim key is wanted.
+-- The bridge's skipper (bridge/src/bg3ai/skipper.py) polls the cheap op
+-- autoskip.status and sends that key through the input shim, so a movie is
+-- gone within about half a second. Dialogue lines run every PERIOD_MS.
 
 BG3AI = BG3AI or {}
 local RPC = BG3AI.RPC
@@ -34,12 +42,19 @@ local A = BG3AI.UIActions
 local K = BG3AI.AutoSkip or {}
 BG3AI.AutoSkip = K
 
-K.PERIOD_MS = 500       -- 2 Hz (reduced after the S001 crash)
-K.RETRY_MS = 700
+K.PERIOD_MS = 250       -- dialogue lines (was 500 after the S001 crash; bg3le now holds references)
+K.FAST_MS = 100         -- movie probe
+K.MOVIE_CONFIRM_MS = 100 -- a movie seen on two probes is real, not a transition
+K.ENGINE_GRACE_MS = 200 -- after the engine ESCAPE, before asking the bridge for a shim key
+K.RETRY_MS = 700        -- between shim keys, and between line skips
 K.MAX_TRIES = 4
 K.LINE_GRACE_MS = 250   -- let a new line render before skipping it
 K.stats = K.stats or { lines = 0, movies = 0, seen = 0 }
-K.state = { next = 0 }
+K.state = { next = 0, nextMovie = 0 }
+-- What the bridge should press through the shim: {seq, key, reason, try, at}
+-- while a movie stays up; nil otherwise. seq grows with every request.
+K.want = nil
+K.wantSeq = K.wantSeq or 0
 
 local function try(f, ...)
     local ok, v = pcall(f, ...)
@@ -72,7 +87,8 @@ local function isOurCombatTurn(dc)
 end
 
 -- "movie" when only movie-safe widgets exist (and at least one), the game is
--- running and no loading screen is up.
+-- running and no loading screen is up (a loading screen is the widget "root",
+-- which is not movie-safe).
 local function movieShowing(widgets)
     if #widgets == 0 then return false end
     for _, w in ipairs(widgets) do
@@ -82,19 +98,81 @@ local function movieShowing(widgets)
     return gs == "Running"
 end
 
+-- The cheap probe: names of ContentRoot's children, nothing else.
+function K.probeMovie()
+    local cr = UI.contentRoot()
+    if not cr then return false end
+    local names = {}
+    for i = 1, UI.childCount(cr) do
+        local w = UI.child(cr, i)
+        if w then names[#names + 1] = { name = UI.name(w) or "?" } end
+    end
+    return movieShowing(names)
+end
+
 local function press(key)
     local ok = pcall(Ext.Input.InjectKeyPress, key)
     return ok
 end
 
+local function want(key, reason, tries, now)
+    K.wantSeq = K.wantSeq + 1
+    K.want = { seq = K.wantSeq, key = key, reason = reason, try = tries, at = now }
+    RPC.push("needs_skip_key", { key = key, reason = reason, try = tries, seq = K.wantSeq })
+end
+
+-- Movies: from the tick every FAST_MS. Returns true while one is showing.
+function K.movieTick(now)
+    local st = K.state
+    if not K.probeMovie() then
+        st.movie = nil
+        K.want = nil
+        return false
+    end
+    local m = st.movie
+    if not m then
+        m = { since = now, tries = 0, last = 0 }
+        st.movie = m
+        return true
+    end
+    if now - m.since < K.MOVIE_CONFIRM_MS or m.tries >= K.MAX_TRIES then return true end
+    if m.tries == 0 then
+        -- 1st try: the engine's key injection (Bink may only react to real input).
+        m.tries = 1
+        m.last = now
+        press("ESCAPE")
+        K.stats.movies = K.stats.movies + 1
+        RPC.push("movie_skipped", {})
+    elseif now - m.last >= (m.tries == 1 and K.ENGINE_GRACE_MS or K.RETRY_MS) then
+        -- Still up: the bridge sends ESCAPE through the SDL input shim (se
+        -- verified it skips Bink movies); it re-checks autoskip.status first,
+        -- since a stray ESCAPE in game opens the menu.
+        m.tries = m.tries + 1
+        m.last = now
+        want("ESCAPE", "movie", m.tries, now)
+    end
+    return true
+end
+
 function K.tick()
     local now = RPC.now_ms()
     local st = K.state
-    if now < st.next then return end
-    st.next = now + K.PERIOD_MS
-    if not K.enabled() then return end
+    if not K.enabled() then
+        st.movie, K.want = nil, nil
+        return
+    end
+    local fast = now >= st.nextMovie
+    local slow = now >= st.next
+    if not fast and not slow then return end
     -- Stay off the tree right after our own UI commands.
     if UI.quiet(3) then return end
+
+    if fast then
+        st.nextMovie = now + K.FAST_MS
+        if K.movieTick(now) then return end
+    end
+    if not slow then return end
+    st.next = now + K.PERIOD_MS
 
     local widgets = UI.widgets()
     local wmap = {}
@@ -103,37 +181,10 @@ function K.tick()
         if w.name == "root" or w.dc == "ls.LoadingScreen" then return end -- loading
     end
     for name in pairs(wmap) do
-        if DECISION_PAGES[name] then st.movie = nil return end
+        if DECISION_PAGES[name] then st.line = nil return end
     end
 
-    -- (a) movies
-    if movieShowing(widgets) then
-        local m = st.movie
-        if not m then
-            m = { since = now, tries = 0, last = 0 }
-            st.movie = m
-        end
-        -- 1st try: in-game key injection. Later tries (movie still up after
-        -- RETRY_MS): ask the bridge to send ESCAPE through the SDL input shim
-        -- (event "needs_skip_key"); se verified the shim's ESCAPE skips Bink
-        -- movies. The bridge should re-check ui.state (screen "movie") before
-        -- sending, since a stray ESCAPE in game opens the menu.
-        if now - m.since > 400 and m.tries < K.MAX_TRIES and now - m.last > K.RETRY_MS then
-            m.tries = m.tries + 1
-            m.last = now
-            if m.tries == 1 then
-                press("ESCAPE")
-                K.stats.movies = K.stats.movies + 1
-                RPC.push("movie_skipped", {})
-            else
-                RPC.push("needs_skip_key", { key = "ESCAPE", reason = "movie", try = m.tries })
-            end
-        end
-        return
-    end
-    st.movie = nil
-
-    -- (b) dialogue lines
+    -- Dialogue lines
     local dw = wmap.Dialogue
     if not dw then st.line = nil return end
     local dc = try(function() return dw.el.DataContext end)
@@ -169,6 +220,19 @@ function K.view()
              movies = K.stats.movies }
 end
 
+-- autoskip.status: the bridge's skipper polls this (cheap: no UI reads).
+-- -> {on, now, movie?={age, tries}, want?={seq,key,reason,try,at}, stats}
+RPC.register("autoskip.status", function()
+    local now = RPC.now_ms()
+    local m = K.state.movie
+    return {
+        on = K.enabled(), now = now,
+        movie = m and { age = now - m.since, tries = m.tries } or nil,
+        want = K.want,
+        stats = { lines = K.stats.lines, movies = K.stats.movies, seen = K.stats.seen, errors = K.errors or 0 },
+    }
+end)
+
 if not K.subscribed then
     K.subscribed = true
     Ext.Events.Tick:Subscribe(function()
@@ -177,6 +241,10 @@ if not K.subscribed then
             K.errors = (K.errors or 0) + 1
             if K.errors <= 5 then Ext.Utils.PrintWarning("[BG3AI] autoskip: " .. tostring(err)) end
         end
+    end)
+    -- Movies follow loads and level changes: probe on the next tick.
+    pcall(function()
+        Ext.Events.GameStateChanged:Subscribe(function() K.state.nextMovie = 0 end)
     end)
 end
 

@@ -1,0 +1,144 @@
+bg3le Ext.UI: optionally serialize Ext.UI calls with View::Update (off by default)
+
+On top of 0001. Closes the window 0001 leaves: between Lua reading a child pointer and
+AddReference(), the UI thread could free the child. With BG3LE_UI_SERIALIZE=1 in the
+environment, or Ext._Internal.UiSerialize(true) at run time, each Ext.UI C function runs
+under a recursive timed mutex that the View::Update hooks hold for the frame. Lua waits at
+most 50 ms (the UI thread may itself be waiting on the client Lua lock inside a routed event
+handler), then runs unserialized; UiSerialize() returns (on, timeouts).
+Lua is compiled as C++, so a Lua error unwinds through the lock guard.
+---
+diff --git a/src/noesis_ui.cpp b/src/noesis_ui.cpp
+index 403e199..a58fc30 100644
+--- a/src/noesis_ui.cpp
++++ b/src/noesis_ui.cpp
+@@ -23,6 +23,8 @@ extern "C" bool bg3le_scannable_region(char const* line,
+                                        unsigned long long* to);
+ extern "C" std::size_t bg3le_noesis_resolve(void* (*find)(char const*));
+ extern "C" void bg3le_ui_drain_releases();
++extern "C" bool bg3le_ui_frame_begin();
++extern "C" void bg3le_ui_frame_end(bool taken);
+ 
+ namespace bg3le {
+ namespace {
+@@ -68,14 +70,20 @@ void saw_view(void* view) {
+ 
+ std::uint64_t update_hook(void* view, double time) {
+     saw_view(view);
++    const bool taken = bg3le_ui_frame_begin();
+     bg3le_ui_drain_releases();
+-    return g_update(view, time);
++    const std::uint64_t render = g_update(view, time);
++    bg3le_ui_frame_end(taken);
++    return render;
+ }
+ 
+ std::uint64_t update_thunk_hook(void* iview, double time) {
+     saw_view(static_cast<char*>(iview) - kIViewOffset);
++    const bool taken = bg3le_ui_frame_begin();
+     bg3le_ui_drain_releases();
+-    return g_update_thunk(iview, time);
++    const std::uint64_t render = g_update_thunk(iview, time);
++    bg3le_ui_frame_end(taken);
++    return render;
+ }
+ 
+ // Hooks the View vtable slot that holds `function`.
+diff --git a/src/vendor/bg3le_noesis_lua.inl b/src/vendor/bg3le_noesis_lua.inl
+index 3c385ac..c43face 100644
+--- a/src/vendor/bg3le_noesis_lua.inl
++++ b/src/vendor/bg3le_noesis_lua.inl
+@@ -12,6 +12,9 @@
+ // DeferredUIEvents and UIEventHooks, which need upstream's Lua state. Both are
+ // by Norbyte and the bg3se contributors (https://github.com/Norbyte/bg3se).
+ 
++#include <atomic>
++#include <chrono>
++#include <cstdlib>
+ #include <deque>
+ #include <link.h>
+ #include <mutex>
+@@ -243,6 +246,41 @@ void ensure_symbols()
+     gStaticSymbols.Initialize();
+ }
+ 
++// ---- serializing with the UI thread (off by default) ----------------------
++//
++// A held reference covers an object once Lua has it; between reading a child
++// pointer and AddReference the UI thread can still free it. With
++// BG3LE_UI_SERIALIZE=1 (or Ext._Internal.UiSerialize(true)) each Ext.UI call
++// runs under the lock View::Update holds for the frame, so the tree does not
++// change under it. The UI thread can be waiting for the client Lua lock inside
++// Update (a routed event handler) while Lua waits here, so Lua waits at most
++// kFrameWaitMs and then runs unserialized, counted in UiSerialize's result.
++std::atomic<bool> g_serialize{ false };
++std::recursive_timed_mutex g_frame;
++std::atomic<unsigned long long> g_serialize_timeouts{ 0 };
++constexpr int kFrameWaitMs = 50;
++
++int serialized(lua_State* L)
++{
++    auto fn = lua_tocfunction(L, lua_upvalueindex(1));
++    if (!g_serialize.load(std::memory_order_relaxed)) return fn(L);
++    std::unique_lock<std::recursive_timed_mutex> held(g_frame, std::defer_lock);
++    if (!held.try_lock_for(std::chrono::milliseconds(kFrameWaitMs))) {
++        g_serialize_timeouts.fetch_add(1, std::memory_order_relaxed);
++    }
++    // Lua is built as C++: a Lua error unwinds through here and unlocks.
++    return fn(L);
++}
++
++// UiSerialize([on]) -> on, timeouts
++int l_serialize(lua_State* L)
++{
++    if (!lua_isnoneornil(L, 1)) g_serialize.store(lua_toboolean(L, 1) != 0);
++    lua_pushboolean(L, g_serialize.load() ? 1 : 0);
++    lua_pushinteger(L, (lua_Integer)g_serialize_timeouts.load());
++    return 2;
++}
++
+ // ---- values: ports of StoredValueHelpers ---------------------------------
+ 
+ void push_floats(lua_State* L, float const* v, int n)
+@@ -1335,6 +1373,20 @@ extern "C" void bg3le_ui_reset()
+     for (auto& sub : Noesis::bg3le_ui::g_subscriptions) sub.Active = false;
+ }
+ 
++// Taken by the View::Update hooks around the frame when Ext.UI calls are
++// serialized; true when taken, to be handed back to bg3le_ui_frame_end.
++extern "C" bool bg3le_ui_frame_begin()
++{
++    if (!Noesis::bg3le_ui::g_serialize.load(std::memory_order_relaxed)) return false;
++    Noesis::bg3le_ui::g_frame.lock();
++    return true;
++}
++
++extern "C" void bg3le_ui_frame_end(bool taken)
++{
++    if (taken) Noesis::bg3le_ui::g_frame.unlock();
++}
++
+ // Drops the references Lua let go of; on the UI thread, from View::Update.
+ extern "C" void bg3le_ui_drain_releases()
+ {
+@@ -1379,5 +1431,19 @@ extern "C" void bg3le_ui_register(lua_State* L)
+         {"UiRaiseEvent", Noesis::bg3le_ui::l_raise_event},
+         {"UiTakeWrite", Noesis::bg3le_ui::l_take_write},
+         {nullptr, nullptr}};
+-    luaL_setfuncs(L, functions, 0);
++    // Each goes through serialized(), which calls it directly unless
++    // UiSerialize is on.
++    for (auto f = functions; f->name != nullptr; ++f) {
++        lua_pushcfunction(L, f->func);
++        lua_pushcclosure(L, Noesis::bg3le_ui::serialized, 1);
++        lua_setfield(L, -2, f->name);
++    }
++    lua_pushcfunction(L, Noesis::bg3le_ui::l_serialize);
++    lua_setfield(L, -2, "UiSerialize");
++    static bool from_env = [] {
++        char const* v = std::getenv("BG3LE_UI_SERIALIZE");
++        if (v != nullptr && v[0] == '1') Noesis::bg3le_ui::g_serialize.store(true);
++        return true;
++    }();
++    (void)from_env;
+ }

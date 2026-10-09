@@ -49,6 +49,8 @@ class Game:
         self._lock = threading.Lock()
         # Last event seq consumed per context, so every tool can report "what happened since".
         self.event_seq = {"server": 0, "client": 0}
+        # Optional metrics.Recorder: gets every RPC's and job's wall-clock interval (set by the MCP server).
+        self.metrics = None
 
     # ---- connection ----
 
@@ -90,7 +92,12 @@ class Game:
 
     def rpc(self, op: str, args: dict | None = None, context: str = "server", timeout: float = 12.0) -> Any:
         payload = json.dumps({"op": op, "args": args or {}}, separators=(",", ":"))
-        raw = self.eval(_long_bracket(payload), context=context, timeout=timeout)
+        t0 = time.time()
+        try:
+            raw = self.eval(_long_bracket(payload), context=context, timeout=timeout)
+        finally:
+            if self.metrics is not None:
+                self.metrics.rpc_done(op, t0, time.time())
         if raw in ("", "nil"):
             raise NotReady(f"BG3AI mod is not loaded in the {context} context")
         try:
@@ -130,13 +137,27 @@ class Game:
     # ---- jobs ----
 
     def run_job(self, op: str, args: dict, context: str = "server", wait_s: float = 25.0,
-                poll_s: float = 0.15) -> JobResult:
-        """Start an action op that returns {job}, then poll until it settles or wait_s passes."""
+                poll_s: float = 0.1, on_start=None) -> JobResult:
+        """Start an action op that returns {job}, then poll until it settles or wait_s passes.
+        on_start(context, job_id) runs once the job exists (the action queue uses it to cancel)."""
+        t0 = time.time()
+        r = self._run_job(op, args, context, wait_s, poll_s, on_start)
+        if self.metrics is not None and (r.elapsed_ms or r.status == "still_running"):  # a real job, not an instant op
+            self.metrics.job_done(op, t0, time.time(), r.status)
+        return r
+
+    def _run_job(self, op: str, args: dict, context: str, wait_s: float, poll_s: float,
+                 on_start=None) -> JobResult:
         started = self.rpc(op, args, context)
         if not isinstance(started, dict) or "job" not in started:
             # Instant op: no job, just a result.
             return JobResult("done", result=started)
         job_id = started["job"]
+        if started.get("status") not in (None, "running"):
+            # Settled during the call (refusal, nothing to do): no poll needed.
+            return JobResult(started["status"], started.get("result"), started.get("error"))
+        if on_start is not None:
+            on_start(context, job_id)
         deadline = time.monotonic() + wait_s
         while True:
             view = self.rpc("job.poll", {"id": job_id}, context)

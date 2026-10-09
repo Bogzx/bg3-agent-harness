@@ -40,7 +40,7 @@ class StartTest(MemoryTestCase):
         self.assertIn("----- HANDOFF.md -----", out)
         self.assertIn("Playthrough: test-run", out)
         self.assertNotIn("<!--", out)  # template guidance stripped
-        self.assertIn("session-start skill", out)
+        self.assertIn("session-start playbook", out)
         self.assertLessEqual(len(out), 10000)
 
     def test_numbering_continues_from_existing_logs(self):

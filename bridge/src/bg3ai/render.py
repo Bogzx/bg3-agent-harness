@@ -495,3 +495,64 @@ def render_frontier(res: Any, H: Handles) -> str:
     if isinstance(res, dict) and res.get("more"):
         out.append(f"(+{res['more']} more leads)")
     return "\n".join(out) or "No leads in view. Try another direction, a door, or get_map."
+
+
+def objective_label(m: dict) -> str:
+    return str(m.get("label") or m.get("objective") or m.get("quest") or "?")
+
+
+def render_objectives(markers: Any, here_only: bool = False, limit: int | None = None) -> list[str]:
+    """Quest/objective markers (nav.markers) as `OBJECTIVE o1 <label> 16m W [quest]` lines.
+
+    Ids o1, o2, ... follow the list order (here first, nearest first), which is the order the server
+    returns; walk_toward accepts them. Markers in another area have no distance; with here_only they
+    collapse into one "(+n elsewhere)" line.
+    """
+    if not isinstance(markers, list):
+        return []
+    lines, elsewhere = [], 0
+    for i, m in enumerate(markers, 1):
+        if not isinstance(m, dict):
+            continue
+        here = m.get("here") and m.get("dist") is not None
+        if here_only and not here:
+            elsewhere += 1
+            continue
+        if limit is not None and len(lines) >= limit:
+            elsewhere += 1
+            continue
+        label = objective_label(m)
+        s = f"OBJECTIVE o{i} {label}"
+        if here:
+            s += f" {num(m['dist'])}m {m.get('dir') or ''}".rstrip()
+        else:
+            s += " (another area)"
+        quest = m.get("quest")
+        if quest and quest != label:
+            s += f" [{quest}]"
+        lines.append(s)
+    if elsewhere:
+        lines.append(f"(+{elsewhere} more objective{'s' if elsewhere != 1 else ''}; get_map lists all)")
+    return lines
+
+
+def find_objective(markers: Any, ref: str) -> dict:
+    """Pick a marker by id (o2) or by words from its label/quest/objective text."""
+    ms = [m for m in markers if isinstance(m, dict)] if isinstance(markers, list) else []
+    if not ms:
+        raise ValueError("no active objective markers")
+    r = (ref or "").strip().lower()
+    m_id = re.fullmatch(r"o?(\d+)", r)
+    if m_id:
+        i = int(m_id.group(1))
+        if 1 <= i <= len(markers):
+            return markers[i - 1]
+        raise ValueError(f"no objective o{i}; there are {len(markers)}")
+    words = r.split()
+    hits = [m for m in ms if all(w in " ".join(str(m.get(k) or "") for k in ("label", "quest", "objective")).lower()
+                                 for w in words)]
+    if len(hits) == 1:
+        return hits[0]
+    if not hits:
+        raise ValueError(f"no objective matches '{ref}'")
+    raise ValueError(f"'{ref}' matches {len(hits)} objectives; use an id like o1")

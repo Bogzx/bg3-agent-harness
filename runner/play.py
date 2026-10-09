@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Autonomous session runner: keeps an AI playing BG3 for hours, one ~1 h Claude Code session at a time.
 
-    runner/play.py run --playthrough NAME [--hours N] [--session-minutes 60] [--model opus]
+    runner/play.py run --playthrough NAME [--hours N] [--session-minutes 60] [--model opus] [--effort medium]
     runner/play.py status [--playthrough NAME]
     runner/play.py stop                  # finish the current session, then exit
 
@@ -38,6 +38,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "bridge" / "src"))
 sys.path.insert(0, str(REPO / "tools" / "memory"))
+from bg3ai import metrics as latency  # noqa: E402  (stdlib only; doesn't import the MCP server)
+from bg3ai import progress as story  # noqa: E402  (stdlib only: story progress per hour, stuck signal)
 
 PLAY_DIR = REPO / "play"
 PLAYTHROUGHS = Path(os.environ.get("BG3AI_PLAYTHROUGHS", REPO / "playthroughs"))
@@ -64,6 +66,14 @@ EVAL_TIMEOUT = 15
 STUCK_SESSIONS = 2
 MAX_QUICK_FAILURES = 3         # claude exiting within a minute this many times in a row → give up
 MAX_SETUP_FAILURES = 5         # game launch/load failing this many times in a row → give up
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# Flags for every playing session. Keep the cacheable prefix (system prompt + tool schemas) byte-identical
+# across sessions: per-machine sections (cwd, git status, env info) move into the first user message, and the
+# operator's user-level settings (hooks, plugins) stay out of the playing agent.
+# No skills at all (bundled, synced or project): the playing agent's procedures are read-only playbooks in
+# play/knowledge/playbooks/, which play/CLAUDE.md says when to read.
+CLAUDE_FLAGS = ["--exclude-dynamic-system-prompt-sections", "--setting-sources", "project,local",
+                "--disable-slash-commands"]
 
 
 def log(msg: str) -> None:
@@ -215,6 +225,14 @@ def made_progress(start_sig: dict | None, end_sig: dict | None) -> bool | None:
     return start_sig != end_sig
 
 
+def story_points(summary_path: Path) -> int | None:
+    """Story progress points of a finished session (Sxxx.progress.json), or None."""
+    try:
+        return json.loads(summary_path.read_text()).get("points")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def is_stuck(history: list[dict], n: int = STUCK_SESSIONS) -> bool:
     """The last n finished sessions each ended with no progress (unknowns don't count as stuck)."""
     recent = [h for h in history if h.get("kind", "play") == "play"][-n:]
@@ -226,10 +244,11 @@ def build_kickoff(sid: str, playthrough: str, deadline: float, loaded_save: str 
     end = datetime.fromtimestamp(deadline).strftime("%H:%M")
     lines = [
         f"This is session {sid} of the BG3 playthrough '{playthrough}', started by the autonomous runner.",
-        "Your memory injection (PLAYTHROUGH.md and HANDOFF.md) is above. Run the session-start skill, then "
+        "Your memory injection (PLAYTHROUGH.md and HANDOFF.md) is above. Run the session-start playbook (Read "
+        "knowledge/playbooks/session-start.md), then "
         "play following CLAUDE.md.",
         f"Session deadline: {end} local time (the session_clock tool shows the time left). Run the "
-        "session-wrapup skill when the SESSION CLOCK reminder appears, and end your turn when it reports "
+        "session-wrapup playbook when the SESSION CLOCK reminder appears, and end your turn when it reports "
         "the commit. Nobody will answer questions: decide yourself and write down why.",
     ]
     if loaded_save:
@@ -249,7 +268,7 @@ def fix_notes_prompt(lint_report: str) -> str:
 STUCK_DIRECTIVE = (
     "RUNNER DIRECTIVE, CHANGE APPROACH: the last {n} sessions ended with no measurable progress "
     "(same level, region, party levels/XP and journal: {what}). What you've been doing isn't working. "
-    "Before anything else: run the `stuck` skill, write three approaches in hypotheses.md that are "
+    "Before anything else: run the stuck playbook, write three approaches in hypotheses.md that are "
     "genuinely different from the ones in your recent session logs, and pick one you haven't tried. "
     "Consider parking the blocked objective and pursuing a different quest, region or main-story lead.")
 
@@ -509,6 +528,26 @@ class Options:
     take_over: bool = False
     dry_run: bool = False
     save_owner: str | None = None
+    effort: str | None = None          # claude --effort; None = Claude Code's default
+    fix_model: str | None = None       # the fix-notes pass (no game, small edits); None = same as play
+    fix_effort: str | None = "low"
+    fallback_model: str | None = None
+
+
+def session_overrides(path: Path) -> dict:
+    """{"model", "effort"} from runtime/sessions/<pt>/session-config.json, re-read before every session so the
+    operator can retune a long run without restarting it. Unknown keys and bad values are ignored."""
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out = {}
+    if isinstance(raw, dict):
+        if isinstance(raw.get("model"), str) and raw["model"]:
+            out["model"] = raw["model"]
+        if raw.get("effort") in EFFORTS:
+            out["effort"] = raw["effort"]
+    return out
 
 
 @dataclass
@@ -520,6 +559,8 @@ class SessionResult:
     started: float
     ended: float
     notes: list[str] = field(default_factory=list)
+    model: str | None = None
+    effort: str | None = None
 
 
 class Runner:
@@ -820,9 +861,22 @@ class Runner:
 
     # ---------------------------------------------------------------- claude
 
-    def claude_cmd(self, prompt: str, claude_session: str, resume: bool) -> list[str]:
-        cmd = ["claude", "-p", prompt, "--model", self.opt.model, "--output-format", "stream-json",
-               "--verbose", "--strict-mcp-config", "--mcp-config", str(PLAY_DIR / ".mcp.json")]
+    def model_for(self, tag: str = "") -> tuple[str, str | None]:
+        """(model, effort) for a session: CLI options < session-config.json; the fix pass has its own."""
+        if tag == "-fix":
+            return self.opt.fix_model or self.opt.model, self.opt.fix_effort
+        state = getattr(self, "state", None)
+        o = session_overrides(state.dir / "session-config.json") if state else {}
+        return o.get("model", self.opt.model), o.get("effort", self.opt.effort)
+
+    def claude_cmd(self, prompt: str, claude_session: str, resume: bool, tag: str = "") -> list[str]:
+        model, effort = self.model_for(tag)
+        cmd = ["claude", "-p", prompt, "--model", model, "--output-format", "stream-json",
+               "--verbose", "--strict-mcp-config", "--mcp-config", str(PLAY_DIR / ".mcp.json"), *CLAUDE_FLAGS]
+        if effort:
+            cmd += ["--effort", effort]
+        if self.opt.fallback_model:
+            cmd += ["--fallback-model", self.opt.fallback_model]
         cmd += ["--resume", claude_session] if resume else ["--session-id", claude_session]
         return cmd
 
@@ -835,16 +889,24 @@ class Runner:
                    BG3AI_PLAYTHROUGH=self.opt.playthrough,
                    BG3AI_SAVE_PREFIX=SAVE_PREFIX,
                    BG3_SESSION_MINUTES=str(minutes),
-                   BG3_WRAP_MINUTES=str(wrap_minutes(minutes)))
+                   BG3_WRAP_MINUTES=str(wrap_minutes(minutes)),
+                   # The playthrough has its own memory system; Claude Code's auto-memory would add a second one
+                   # (and a per-machine path in the prompt).
+                   CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
         base = self.state.dir / f"{sid}{tag}"
-        cmd = self.claude_cmd(prompt, claude_session, resume)
+        env["BG3AI_METRICS_PATH"] = f"{base}.metrics.jsonl"  # the bridge's per-tool latency records
+        cmd = self.claude_cmd(prompt, claude_session, resume, tag)
+        model, effort = self.model_for(tag)
         write_status(playthrough=self.opt.playthrough, session=sid + tag, claude_session=claude_session,
-                     started=start, deadline=deadline, hard_stop=hard_stop, log=str(base) + ".log")
-        log(f"{sid}{tag}: claude starting (deadline {datetime.fromtimestamp(deadline):%H:%M}, "
+                     model=model, effort=effort or "default",
+                     started=start, deadline=deadline, hard_stop=hard_stop, log=str(base) + ".log",
+                     metrics=f"{base}.metrics.jsonl", turns=f"{base}.turns.jsonl",
+                     progress=f"{base}.progress.jsonl", session_ended=None)
+        log(f"{sid}{tag}: claude starting ({model}, effort {effort or 'default'}; deadline {datetime.fromtimestamp(deadline):%H:%M}, "
             f"hard stop {datetime.fromtimestamp(hard_stop):%H:%M})")
         if self.opt.dry_run:
             print(json.dumps({"cmd": cmd, "cwd": str(PLAY_DIR), "deadline": deadline}, indent=1))
-            return SessionResult(sid, claude_session, 0, "dry_run", start, start)
+            return SessionResult(sid, claude_session, 0, "dry_run", start, start, model=model, effort=effort)
 
         jsonl = open(f"{base}.jsonl", "a")
         human = open(f"{base}.log", "a", buffering=1)
@@ -852,6 +914,8 @@ class Runner:
         human.write("[prompt] " + _short(prompt, 4000) + "\n")
         proc = subprocess.Popen(cmd, cwd=PLAY_DIR, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 stdin=subprocess.DEVNULL, start_new_session=True, text=True, bufsize=1)
+
+        timing = latency.StreamTiming(Path(f"{base}.turns.jsonl"))
 
         def pump():
             for line in proc.stdout:
@@ -866,9 +930,17 @@ class Runner:
                     continue
                 for text in format_stream_event(ev):
                     human.write(f"{stamp} {text}\n")
+                try:
+                    timing.on_event(ev)
+                except Exception:  # noqa: BLE001 - metrics never break a session
+                    pass
 
         reader = threading.Thread(target=pump, daemon=True)
         reader.start()
+        poll_stop = threading.Event()
+        poller = threading.Thread(target=self.progress_loop, args=(sid + tag, base, start, poll_stop, human),
+                                  name="progress", daemon=True)
+        poller.start()
 
         health = HealthTracker()
         next_health = time.time() + HEALTH_INTERVAL
@@ -903,13 +975,68 @@ class Runner:
                 self._signal(proc, signal.SIGKILL)
                 signals_sent.append("kill")
         reader.join(timeout=10)
+        poll_stop.set()
+        poller.join(timeout=20)
         end = time.time()
+        write_status(session_ended=end)
         human.write(f"===== {sid}{tag} ended: {reason}, exit {proc.returncode}, "
                     f"{(end - start) / 60:.1f} min\n")
         human.close()
         jsonl.close()
         log(f"{sid}{tag}: claude finished ({reason}, exit {proc.returncode}, {(end - start) / 60:.1f} min)")
-        return SessionResult(sid, claude_session, proc.returncode, reason, start, end)
+        self.write_latency(f"{sid}{tag}", base, start, end)
+        self.write_progress(f"{sid}{tag}", base, start, end)
+        return SessionResult(sid, claude_session, proc.returncode, reason, start, end, model=model, effort=effort)
+
+    def write_latency(self, session: str, base: Path, start: float, end: float) -> dict | None:
+        """Sxxx.latency.json + a line in latency_history.jsonl (bridge records + stream timing)."""
+        try:
+            summary = latency.summarize_files(Path(f"{base}.metrics.jsonl"), Path(f"{base}.turns.jsonl"), start, end)
+            latency.write_summary(summary, Path(f"{base}.latency.json"), self.state.dir / "latency_history.jsonl", session)
+        except Exception as e:  # noqa: BLE001 - metrics never break the runner
+            log(f"{session}: latency summary failed: {e}")
+            return None
+        t = summary["targets"]
+        verdict = " ".join(f"{k}={'PASS' if v['pass'] else 'FAIL' if v['pass'] is False else 'n/a'}" for k, v in t.items())
+        log(f"{session}: latency idle median {summary['idle_s']['all'].get('median')}s, "
+            f"{summary['long_gaps']['total']} gaps >10s, think median {summary['think_s'].get('median')}s, "
+            f"apm {summary['apm']}, busy {summary['busy_pct']}% | {verdict}")
+        return summary
+
+    def progress_loop(self, session: str, base: Path, start: float, stop: threading.Event, human=None) -> None:
+        """Poll story progress (fair journal/map/status data) into Sxxx.progress.jsonl until stop is set."""
+        tl = story.Timeline(Path(f"{base}.progress.jsonl"), self.state.dir / "progress_state.json", start)
+        actions = story.actions_in(Path(f"{base}.metrics.jsonl"))
+        while not stop.wait(story.POLL_S):
+            try:
+                got = story.read_game(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
+            except Exception:  # noqa: BLE001 - loading screens, crashes: just a failed poll
+                got = None
+            try:
+                was_stuck = tl.stuck_since is not None
+                evs = tl.observe(got, actions_since=actions)
+                stamp = datetime.now().strftime("%H:%M:%S")
+                if human is not None:
+                    for e in evs:
+                        human.write(f"{stamp} [progress] +{e['points']} {e['kind']}: {e['what']}\n")
+                    if tl.stuck_since is not None and not was_stuck:
+                        human.write(f"{stamp} [progress] STUCK: no progress for {story.STUCK_MIN:.0f}+ min while active\n")
+                if tl.stuck_since is not None and not was_stuck:
+                    log(f"{session}: stuck signal: no story progress for {story.STUCK_MIN:.0f}+ min while active")
+            except Exception as e:  # noqa: BLE001 - progress never breaks a session
+                log(f"{session}: progress poll failed: {e}")
+
+    def write_progress(self, session: str, base: Path, start: float, end: float) -> dict | None:
+        """Sxxx.progress.json + a line in progress_history.jsonl."""
+        try:
+            summary = story.summarize(story.load(Path(f"{base}.progress.jsonl")), start, end)
+            story.write_summary(summary, Path(f"{base}.progress.json"), self.state.dir / "progress_history.jsonl", session)
+        except Exception as e:  # noqa: BLE001
+            log(f"{session}: progress summary failed: {e}")
+            return None
+        log(f"{session}: story progress {summary['points']} pts ({summary['per_hour']}/h), {summary['events']} events, "
+            f"longest stretch without progress {summary['longest_no_progress_min']} min, {summary['stuck_episodes']} stuck episode(s)")
+        return summary
 
     @staticmethod
     def _signal(proc: subprocess.Popen, sig: int) -> None:
@@ -1008,9 +1135,11 @@ class Runner:
         entry = {
             "kind": "play", "session": sid, "claude_session": res.claude_session, "reason": res.reason,
             "exit": res.exit_code, "started": res.started, "ended": res.ended,
+            "model": res.model, "effort": res.effort,
             "minutes": round((res.ended - res.started) / 60, 1), "start_sig": start_sig, "end_sig": end_sig,
             "progress": None if crashed else made_progress(start_sig, end_sig),
             "started_at_game_over": screen == "game_over",
+            "story_points": story_points(self.state.dir / f"{sid}.progress.json"),
         }
         self.state["history"] = self.state["history"] + [entry]
         self.new_game = False  # from here on the game has a character: confirm by name
@@ -1086,7 +1215,7 @@ def cmd_run(a) -> int:
     lock = acquire_lock()  # noqa: F841 - held for the process lifetime
     (RUNTIME / "STOP").unlink(missing_ok=True)
     runner = Runner(Options(a.playthrough, a.hours, a.session_minutes, a.model, a.take_over, a.dry_run,
-                            a.save_owner))
+                            a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model))
 
     def on_signal(signum, _frame):
         if runner.stop_requested:
@@ -1165,7 +1294,13 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--playthrough", required=True)
     r.add_argument("--hours", type=float, help="total wall-clock budget (default: until stopped)")
     r.add_argument("--session-minutes", type=float, default=60)
-    r.add_argument("--model", default="opus")
+    r.add_argument("--model", default="opus", help="model for play sessions (claude --model)")
+    r.add_argument("--effort", choices=EFFORTS, help="effort for play sessions (claude --effort; default: "
+                   "Claude Code's). Per-session override: runtime/sessions/<pt>/session-config.json "
+                   '{"model": ..., "effort": ...}, re-read before each session')
+    r.add_argument("--fix-model", help="model for the fix-notes pass (default: --model)")
+    r.add_argument("--fix-effort", choices=EFFORTS, default="low", help="effort for the fix-notes pass")
+    r.add_argument("--fallback-model", help="claude --fallback-model (used when the main model is overloaded)")
     r.add_argument("--save-owner", help="character name that prefixes this playthrough's save folders "
                    "('Claude' for Claude-<id>__<label>); default: learned from the first save, or $BG3AI_SAVE_OWNER")
     r.add_argument("--take-over", action="store_true",

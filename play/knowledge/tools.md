@@ -1,12 +1,17 @@
-# bg3 tools cheat-sheet (56 tools, called as `mcp__bg3__<name>`)
+# bg3 tools cheat-sheet (called as `mcp__bg3__<name>`)
 
 Targets (`target`, `npc`, `item`, `who`) are short ids from the observation tools (`e12`) or a party
 member's name. Ids last one session only: write names in notes. `who` defaults to the active
-character. Job results are `done`, `FAILED — reason`, `INTERRUPTED — reason`, `TIMEOUT`, or `still
-running` (→ `wait`), followed by EVENTS.
+character. Job results are `done`, `FAILED — reason`, `INTERRUPTED — reason`, `TIMEOUT`, or `started
+j12, ETA 3s` (async: a `job_finished` event follows; `wait_for("j12")` to block), followed by EVENTS.
 
 ## Observe
-- `get_status()` → where you are, party HP/conditions, mode, what's on screen, recent events. Start here.
+- `look(full=false)` → **what changed since your last look**, a few lines: `PARTY moved 12m W`, `e4 Gale HP 8->3/12, +Burning`,
+  `+ e66 Imp hostile HP 9/9 7m` (appeared), `~ e11 Chest unlocked, opened`, `GONE e14 …` (left view/range),
+  `ITEM + e69 Potion x2 (Claude)`, `GOLD 40->65`, `MODE …`/`TURN …`, `QUEST …`, `OBJECTIVE + …`, and any new dialogue/roll/popup.
+  "No change since your last look." is a real answer. `full=true`, the first call and a new area give the full status + nearby view.
+- `get_status(full=false)` → where you are, party HP/conditions, mode, what's on screen, objectives, recent events. Start here.
+  After the first call it shows only changes (like `look`, without nearby/items); `full=true` for everything.
 - `get_party()` → each member's HP, AC, level, conditions, resources (slots, actions), concentration.
 - `get_character(who, sections="")` → full sheet (party) or Examine view (others); e.g. `sections="resources,equipment"`.
 - `get_actions(who)` → usable actions/spells/items with costs and availability (ability ids for `use_ability`).
@@ -17,35 +22,36 @@ running` (→ `wait`), followed by EVENTS.
 - `look_at(target)` → the Examine panel for a visible character or object.
 - `get_inventory(who, filter="")` → equipment, notable items, junk summary, and the OPEN container's contents; filter: equipped | consumables | all | words.
 - `get_journal(quest="")` → active quests with latest entry; `quest="<words>"` → all entries of one quest.
-- `get_map()` → region, unlocked waypoints, your markers.
-- `get_events()` → everything since your last call.
+- `get_map(full=false)` → (after the first call: only new waypoints/objectives, unless you changed area) region, unlocked waypoints, all active quest objectives (`OBJECTIVE o1 <label> 16m W [quest]`, or "(another area)"), your markers. `get_status()` shows the objectives in this area (max 3).
+- `get_events()` → never blocks: everything since your last call, plus `RUNNING` jobs/queues (what's still walking, what's queued).
 - `wiki_search(query, limit=5)` / `wiki_page(title, section="", max_chars=5000)` → bg3.wiki; tag it `[wiki]`.
 - `screenshot(scale=0.5)` / `zoom(x, y, w, h)` → pixels: only when text can't answer (zoom crops the last screenshot; fractions 0-1).
 - `ui_dump(text_only=true)` → text and buttons of the current UI screen; cheaper than a screenshot.
 - `session_clock()` → time left in the session.
 
 ## Act (exploration)
-- `move_to(target | x,y,z, who, run=true)` → walk there; stops early on combat or dialogue.
-- `interact(target, who)` → door, lever, chest, corpse (opens loot), book, ladder, waypoint; walks there first.
-- `pick_up(item, who)` → take an item lying on the ground.
+- `move_to(target | x,y,z, who, run=true, wait=false)` → walk there (next to an entity; refused if there's no walkable path). **Returns at once** with a job id + ETA; `wait=true` blocks. Stops early on combat or dialogue.
+- `walk_toward(direction | objective | target, max_m=30, who, run=true, wait=false)` → async like `move_to`; walk as far as the ground allows (direct path) toward N/NE/…/NW, an objective (`o1` or words from its name; this area only) or a visible id. For "head toward the quest marker" when no door or item leads there.
+- `interact(target, who, wait=true)` → door, lever, chest, corpse (opens loot), book, ladder, waypoint; walks there first.
+- `pick_up(item, who, wait=true)` → take an item lying on the ground (walks there first).
 - `loot(take="all", who)` → take from the open container or corpse: "all" or comma-separated ids.
-- `jump_to(x, y, z, who)` → jump (costs movement plus a bonus action in combat).
+- `jump_to(x, y, z, who)` → jump (costs movement plus a bonus action in combat; max distance ≈ Strength/2 m).
 - `set_party(action, who, leader)` → select | chain | unchain | sneak_on | sneak_off | turn_based_on | turn_based_off.
 - `fast_travel(waypoint)` → to an unlocked waypoint (name or id); not in combat.
 - `camp(action="go")` → go | leave camp.
 - `place_marker(label, target | x,y,z)` / `delete_marker(marker_id)` → your own persistent map markers.
-- `wait(seconds=3)` → let game time pass; continue a `still running` action.
+- `wait(seconds=3)` → let game time pass. Prefer `wait_for`, which returns as soon as the thing happens.
 
 ## Combat
 - `get_combat_state()` → turn order (visible), whose turn, round, the active character's remaining economy.
 - `use_ability(ability, target | x,y,z, who, upcast=0, targets="")` → attack, spell, item or action from `get_actions`; `targets` = comma list for multi-target spells.
 - `ability_preview(ability, target, who)` → hit chance or save DC, damage, range, line of sight.
 - `react(use, which="")` → answer a reaction prompt (Shield, Counterspell, opportunity attack).
-- `end_turn(who)` → end the turn; blocks through enemy turns until a party member can act or combat ends.
+- `end_turn(who, wait=true)` → end the turn; blocks through enemy turns until a party member can act, combat ends, or a reaction/roll prompt needs you (`wait=false` + `wait_for("my_turn")` to plan meanwhile).
 - `end_combat_report(what_worked, what_to_change, next_goal)` → required after every fight; goes to your session log.
 
 ## Dialogue
-- `talk_to(npc, who)` → walk up and start a conversation (`who` = the speaker).
+- `talk_to(npc, who)` → walk up (following them if they move) and start a conversation (`who` = the speaker).
 - `get_dialogue()` → current line and numbered options with check tags, or the roll, reaction or popup on screen.
 - `choose_dialogue(option)` → pick answer N; returns the next line and options.
 - `roll_check(boosts="", reroll_on_fail=false)` → resolve the roll on screen (boosts as offered, e.g. "Guidance").
@@ -63,8 +69,16 @@ running` (→ `wait`), followed by EVENTS.
 - `character_creation_options()` → what the creation screen offers now.
 - `create_character(plan)` → JSON, e.g. `{"race":"Half-Orc","class":"Paladin","subclass":"Oath of Devotion","background":"Soldier","abilities":"recommended","name":"Claude"}` or `{"origin":"Lae'zel"}`.
 
+## Think while acting
+- `queue_actions(actions, who, replace=false, ignore="")` → append steps to that character's queue and **return at once**; they run back to back while you keep observing and planning. Same steps as `do_actions`. The end arrives as a `queue_done` / `queue_interrupted {why, left}` event; `wait_for("queue")` blocks until then. Each character has its own queue (two can act at once).
+- `cancel_queue(who="")` → stop one character's queue (or all): cancels the running step, drops the rest.
+- `wait_for(target="idle", timeout_s=15)` → block only until it happens: a job id (`j12`), `queue` / `queue:<who>`, `idle`, `my_turn`, or event kinds (`combat_started,dialogue_started`). Returns early if a reaction/roll/dialogue/popup appears. Ends with CHANGES.
+- `do_actions(actions, wait=true, ignore="")` → JSON list of steps `{"tool": name, ...args}` run in order in ONE call. Allowed: move_to, walk_toward, interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
+  - Per step `"if"` / `"unless"`: `in_combat`, `in_dialogue`, `my_turn`, `hp_below:<pct>`, `item_present:<id>`, `target_visible:<id>` (a list = all must hold); a failed condition skips the step.
+  - Stops (drops the rest, says why and what was left) on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP below 35%, a blocked teleport, a failed step. `ignore="hostile,hp"` turns some off (combat, dialogue, prompt, hostile, hp, teleport).
+  - Returns each step's outcome, `NOW` (HP, action, bonus, movement) and `CHANGES` (moves, HP, items, who appeared, mode). `wait=false` queues instead.
+
 ## Meta
-- `do_actions(actions)` → JSON list of steps `{"tool": name, ...args}` run in order in ONE call; stops at the first failure or interrupt. Allowed: move_to, interact, pick_up, loot, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
 - `save_game(label="")` → named save (`Sxxx-<slug>`); empty = quicksave. `list_saves(limit=10)`. `load_game(save="latest")` → folder name from `list_saves`.
 - `ui_action(command, widget="", param="")` → run a UI command that `ui_dump` lists (screens with no dedicated tool).
 - `press_key(key)` / `click(x, y, button="left")` → last resort (SDL key names; fractions of the last screenshot). Log each use.
@@ -80,8 +94,10 @@ move with `path_preview` first if it's tight):
  {"tool":"end_turn"}]
 ```
 If a reaction prompt or a downed target stops it, read the result, then re-plan only what's left.
+Conditional variant: `{"tool":"use_ability","ability":"Shout_SecondWind","if":"hp_below:50"}` heals only when hurt.
 
-**A looting sweep** (after a fight; corpse and chest ids from `get_nearby`):
+**A looting sweep, queued** (after a fight; corpse and chest ids from `get_nearby`). Send it with
+`queue_actions`, then plan the next leg while it runs; `queue_done` tells you it finished:
 ```json
 [{"tool":"interact","target":"e21"},{"tool":"loot","take":"all"},
  {"tool":"interact","target":"e22"},{"tool":"loot","take":"all"},
@@ -97,3 +113,7 @@ For picky looting, `interact` alone, then `get_inventory()` to see the container
  {"tool":"choose_dialogue","option":3}]
 ```
 Then `get_dialogue()` and decide the real choice yourself.
+
+**Exploring at human pace** (no idle gaps): `queue_actions([{"tool":"walk_toward","objective":"o1"},
+{"tool":"interact","target":"e40","if":"target_visible:e40"}])`, then right away `look` / `get_frontier`
+and plan what's next. When `queue_done` or `job_finished` shows up, the next plan is already ready.

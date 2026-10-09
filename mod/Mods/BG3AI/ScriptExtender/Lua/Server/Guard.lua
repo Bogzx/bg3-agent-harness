@@ -291,6 +291,78 @@ function G.point_reachable(char, pos)
     return info
 end
 
+-- Floor height at (x, z) closest to y (multi-floor aware), or nil.
+function G.floor_at(x, z, y)
+    local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+    if not ok or type(hs) ~= "table" then return nil end
+    local best
+    for _, h in ipairs(hs) do
+        if type(h) == "number" and math.abs(h - y) <= 4.0
+            and (not best or math.abs(h - y) < math.abs(best - y)) then best = h end
+    end
+    return best
+end
+
+-- Entity targets (move_to, talk, interact, pickup, the click ops): Osiris
+-- CharacterMoveTo / Use / Pickup walk with no path check and teleport when no
+-- path exists. Instead we walk to a *verified* floor point next to the entity
+-- with CharacterMoveToPosition. Candidates are rings around the entity, the
+-- side facing the actor first; the first one BG3AI.Nav proves reachable
+-- without a jump wins.
+G.APPROACH_RADII = { 1.0, 1.5, 2.2 }
+G.APPROACH_MAX_TRIES = 16   -- pathfinder queries per resolve (each ~ms)
+G.UNVERIFIED_APPROACH_M = 8.0
+
+-- approach_point(char, target, reach) -> plan
+--   plan.here = true            already within `reach` of the target (no walk)
+--   plan.pos, plan.length_m     walk there (path length in metres)
+--   plan.unverified = true      pathfinding unavailable; only allowed for short,
+--                               in-sight approaches (the walker's teleport
+--                               detector still applies)
+--   plan.dist                   straight distance actor -> target now
+-- Refuses when no candidate is reachable.
+function G.approach_point(char, target, reach)
+    local a, t = G.pos(char), G.pos(target)
+    if not a or not t then G.refuse("cannot locate target") end
+    local d = U.dist(a, t)
+    if d <= reach then return { here = true, dist = d, length_m = 0, tpos = t } end
+    local base = math.atan(a[3] - t[3], a[1] - t[1]) -- angle from target toward actor
+    local cands = {}
+    for _, r in ipairs(G.APPROACH_RADII) do
+        if r <= reach - 0.2 then
+            for i = 0, 7 do
+                local ang = base + i * math.pi / 4
+                local x, z = t[1] + r * math.cos(ang), t[3] + r * math.sin(ang)
+                cands[#cands + 1] = { x, z, (x - a[1]) ^ 2 + (z - a[3]) ^ 2 }
+            end
+        end
+    end
+    table.sort(cands, function(p, q) return p[3] < q[3] end)
+    local tries, jump_only, known = 0, false, false
+    for _, c in ipairs(cands) do
+        if tries >= G.APPROACH_MAX_TRIES then break end
+        local y = G.floor_at(c[1], c[2], t[2])
+        if y then
+            tries = tries + 1
+            local p = { c[1], y, c[2] }
+            local r, info = G.reachable(char, p)
+            if r ~= nil then known = true end
+            if r == true and not info.needs_jump then
+                return { pos = p, length_m = info.length_m or U.dist(a, p), dist = d, tpos = t }
+            end
+            if r == true and info.needs_jump then jump_only = true end
+        end
+    end
+    if jump_only then G.refuse("needs a jump: use jump_to") end
+    if not known and d <= G.UNVERIFIED_APPROACH_M and b(G.q("HasLineOfSight", char, target)) then
+        -- No pathfinding answer at all (Nav missing, or nothing floor-like
+        -- around a small target): a short walk toward something in plain
+        -- sight is what a click would do; the teleport detector still guards.
+        return { pos = t, length_m = d, dist = d, unverified = true, tpos = t }
+    end
+    G.refuse("no walkable path there (may need a jump or another route)")
+end
+
 function G.within(char, target, maxd, what)
     local a, t = G.pos(char), G.pos(target)
     if not a or not t then G.refuse("cannot locate " .. (what or "target")) end
@@ -337,6 +409,22 @@ function G.osi(name, ...)
     end
     if name:sub(1, 3) == "DB_" then error("guard: database writes are not permitted", 0) end
     return Osi[name](...)
+end
+
+-- Like G.osi, for calls whose argument count differs between game builds
+-- (the bg3le Osiris dump has UseSpellAtPosition/6 and Equip/5; our code was
+-- written against the shorter forms). Tries each argument list in order and
+-- only moves on when bg3le rejects the count.
+function G.osi_forms(name, ...)
+    local forms = { ... }
+    local last
+    for _, args in ipairs(forms) do
+        local ok, r = pcall(G.osi, name, table.unpack(args, 1, args.n or #args))
+        if ok then return r end
+        last = r
+        if not tostring(r):find("number of IN arguments", 1, true) then break end
+    end
+    error(last, 0)
 end
 
 -- Does a story database have a row whose first column is `uuid`? Reading a
@@ -564,14 +652,56 @@ function G.known_spell(char, spell)
     return found
 end
 
--- Resolve the stats range of a spell in metres (nil if not numeric / unknown).
-function G.spell_range(st)
+-- Range (m) of a weapon slot's equipped weapon from its stats (WeaponRange is
+-- in cm: 150 = melee 1.5 m, 1800 = longbow 18 m), or nil.
+local function weapon_range(char, slot)
+    if not char then return nil end
+    local item = G.q("GetEquippedItem", char, slot)
+    if not item then return nil end
+    local name = G.q("GetStatString", item)
+    local st = name and Ext.Stats.Get(name)
+    local ok, wr = pcall(function() return st and tonumber(st.WeaponRange) end)
+    if ok and wr and wr > 0 then return wr / 100 end
+    return nil
+end
+
+-- Resolve the range of a spell in metres. Returns range, melee (bool), or
+-- nil if unknown. Weapon-range spells (attacks) use the equipped weapon.
+G.DEFAULT_RANGED_M = 18.0 -- bows/crossbows when the weapon's stats are unreadable
+function G.spell_range(st, char)
     if not st then return nil end
     local r = tonumber(st.TargetRadius) or tonumber(st.Range)
-    if r then return r end
+    if r then return r, false end
     local tr = tostring(st.TargetRadius or "")
-    if tr:find("Melee") then return 1.5 end
+    if tr:find("Melee") then return weapon_range(char, "Melee Main Weapon") or 1.5, true end
+    if tr:find("Ranged") then return weapon_range(char, "Ranged Main Weapon") or G.DEFAULT_RANGED_M, false end
     return nil
+end
+
+-- Bounding radius of a character (melee reach is edge to edge, positions are
+-- centres). Falls back to a medium creature's 0.5 m.
+function G.radius(uuid)
+    local e = G.entity(uuid)
+    local ok, r = pcall(function() return e.Bound.Bound.Radius end)
+    if ok and type(r) == "number" and r > 0 and r < 5 then return r end
+    return 0.5
+end
+
+-- Jump distance (Projectile_Jump has no numeric range, so the guard caps it).
+-- BG3: about half the Strength score in metres; Enhance Leap triples it, Step
+-- of the Wind doubles it. UNVERIFIED formula and status ids: tune here.
+G.JUMP_SPELL = "Projectile_Jump"
+G.JUMP_MIN_M = 4.0
+G.JUMP_SLACK_M = 0.5
+G.JUMP_MULTIPLIERS = { ENHANCE_LEAP = 3, STEP_OF_THE_WIND = 2, STEP_OF_THE_WIND_DASH = 2 }
+function G.jump_max(char)
+    local str = tonumber(G.q("GetAbility", char, "Strength")) or 10
+    local m = math.max(G.JUMP_MIN_M, str / 2)
+    local mult = 1
+    for status, k in pairs(G.JUMP_MULTIPLIERS) do
+        if b(G.q("HasActiveStatus", char, status)) and k > mult then mult = k end
+    end
+    return m * mult
 end
 
 -- Full pre-validation for an Osiris-originated cast. Returns
@@ -617,12 +747,19 @@ function G.check_cast(char, spell, target, pos, upcast)
     end
 
     -- Target checks.
+    -- Range is enforced in and out of combat: a cast we originate never walks
+    -- (WithoutMove=1 whenever the range is known, see act.cast), because the
+    -- Osiris spell task's approach walk has no path check (teleport risk), and
+    -- an unchecked WithoutMove cast would hit from any distance.
     local st_type = tostring(st.SpellType or "")
-    local range = G.spell_range(st)
+    local range, melee = G.spell_range(st, char)
     if target then
         G.target_visible(target)
         local d = G.within(char, target, G.MAX_INTERACT_DIST, "target")
-        if in_combat and range and d > range + 0.5 then G.refuse("target is out of range") end
+        local reach = range and (melee and range + G.radius(char) + G.radius(target) or range + 0.5)
+        if reach and not G.same(char, target) and d > reach then
+            G.refuse(string.format("target is out of range (%.1f m, range %.1f m): move closer first", d, range))
+        end
         if st_type ~= "Shout" and not G.same(char, target)
             and not b(G.q("HasLineOfSight", char, target)) then
             G.refuse("no line of sight to target")
@@ -630,11 +767,19 @@ function G.check_cast(char, spell, target, pos, upcast)
     elseif pos then
         G.point_ok(char, pos)
         local p = G.pos(char)
-        if in_combat and range and p and U.dist(p, pos) > range + 0.5 then
-            G.refuse("target point is out of range")
+        if spell == G.JUMP_SPELL and p then
+            local dx, dz = pos[1] - p[1], pos[3] - p[3]
+            local d, maxd = math.sqrt(dx * dx + dz * dz), G.jump_max(char)
+            if d > maxd + G.JUMP_SLACK_M then
+                G.refuse(string.format("too far to jump (%.1f m, this character can jump %.1f m)", d, maxd))
+            end
+        end
+        if range and p and U.dist(p, pos) > range + 0.5 then
+            G.refuse(string.format("target point is out of range (%.1f m, range %.1f m): move closer first",
+                U.dist(p, pos), range))
         end
     end
-    return { stats = st, costs = costs, payers = payers, snapshot = snap, level = level }
+    return { stats = st, costs = costs, payers = payers, snapshot = snap, level = level, range = range }
 end
 
 return G

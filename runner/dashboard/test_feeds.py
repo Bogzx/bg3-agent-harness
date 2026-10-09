@@ -179,5 +179,83 @@ class MemoryViewTest(TmpCase):
         self.assertIsNone(F.resolve_agent_log(rt, {"playthrough": "none"}))
 
 
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "src"))
+
+
+class LatencyTest(TmpCase):
+    def _write(self, path, recs):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(json.dumps(r) + "\n" for r in recs))
+
+    def test_no_files(self):
+        r = F.latency_payload(self.tmp, {})
+        self.assertIsNone(r["live"])
+        self.assertEqual(r["history"], [])
+
+    def test_live_and_history(self):
+        now = 1_760_000_100.0
+        sess = self.tmp / "sessions" / "pt"
+        m = sess / "S003.metrics.jsonl"
+        self._write(m, [
+            {"type": "tool", "tool": "move_to", "t0": now - 30, "t1": now - 25, "ms": 5000, "job_ms": 4800, "rpc_ms": 30, "rpc_n": 2},
+            {"type": "tool", "tool": "get_status", "t0": now - 24, "t1": now - 23.95, "ms": 50, "rpc_ms": 40, "rpc_n": 1},
+            {"type": "tool", "tool": "interact", "t0": now - 22, "t1": now - 20, "ms": 2000, "job_ms": 1900},
+            {"type": "sample", "t": now - 27, "moving": True, "job": 1, "dlg": False, "combat": False},
+            {"type": "sample", "t": now - 5, "moving": False, "job": 0, "dlg": False, "combat": False},
+        ])
+        self._write(sess / "latency_history.jsonl", [{"session": "S001", "apm": 3.2}, {"session": "S002", "apm": 4.0}])
+        r = F.latency_payload(self.tmp, {"playthrough": "pt", "metrics": str(m), "turns": str(sess / "S003.turns.jsonl")}, now=now)
+        live = r["live"]
+        self.assertEqual(live["current_idle_s"], 20.0)
+        self.assertEqual(live["idle_median_s"], 3.0)
+        self.assertTrue(live["targets"]["bridge_rt_median_ms"]["pass"])
+        self.assertEqual([h["session"] for h in r["history"]], ["S001", "S002"])
+        self.assertEqual(r["files"]["metrics"], "S003.metrics.jsonl")
+        self.assertIsNone(r["files"]["turns"])
+
+    def test_fallback_runtime_metrics(self):
+        self._write(self.tmp / "metrics.jsonl", [{"type": "tool", "tool": "get_status", "t0": 1.0, "t1": 1.05, "ms": 50}])
+        r = F.latency_payload(self.tmp, {}, now=10.0)
+        self.assertEqual(r["files"]["metrics"], "metrics.jsonl")
+        self.assertIsNotNone(r["live"])
+
+    def test_tail_skips_partial_line(self):
+        p = self.tmp / "big.jsonl"
+        self._write(p, [{"i": i} for i in range(1000)])
+        out = F._tail_jsonl(p, max_bytes=200)
+        self.assertEqual(out[-1], {"i": 999})
+        self.assertTrue(all("i" in x for x in out))
+
+class ProgressFeedTest(TmpCase):
+    def _write(self, path, recs):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(json.dumps(r) + "\n" for r in recs))
+
+    def test_no_files(self):
+        r = F.progress_payload(self.tmp, {})
+        self.assertIsNone(r["live"])
+        self.assertEqual(r["history"], [])
+        self.assertIn("region", r["weights"])
+
+    def test_live_and_history(self):
+        sess = self.tmp / "sessions" / "pt"
+        p = sess / "S003.progress.jsonl"
+        self._write(p, [{"type": "progress", "t": 1000.0 + 600, "kind": "quest_new", "what": "Find a Cure", "points": 3}])
+        self._write(sess / "progress_history.jsonl", [{"session": "S001", "points": 40}, {"session": "S002", "points": 12}])
+        r = F.progress_payload(self.tmp, {"playthrough": "pt", "progress": str(p), "session": "S003", "started": 1000.0},
+                               now=1000.0 + 1800)
+        live = r["live"]
+        self.assertEqual((live["points"], live["per_hour"], live["session"], live["running"]), (3, 6.0, "S003", True))
+        self.assertEqual(live["since_progress_min"], 20.0)
+        self.assertEqual(live["recent"][0]["what"], "Find a Cure")
+        self.assertEqual([h["session"] for h in r["history"]], ["S001", "S002"])
+        ended = F.progress_payload(self.tmp, {"playthrough": "pt", "progress": str(p), "started": 1000.0,
+                                              "session_ended": 1000.0 + 900}, now=99999.0)["live"]
+        self.assertFalse(ended["running"])
+        self.assertEqual(ended["minutes"], 15.0)
+
+
 if __name__ == "__main__":
     unittest.main()

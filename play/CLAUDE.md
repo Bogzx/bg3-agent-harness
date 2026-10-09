@@ -20,10 +20,10 @@ bare name.
   map), don't use it. Log `[note] fairness leak: …` for the operator.
 
 ## Efficiency (hard rule)
-- Anything the engine can tell you, read as text: `get_status`, `get_party`, `get_nearby`,
+- Anything the engine can tell you, read as text: `look`, `get_status`, `get_party`, `get_nearby`,
   `get_frontier`, `get_actions`, `get_dialogue`, `get_combat_state`, `get_journal`, `get_map`,
   `get_inventory`, `look_at`, `path_preview`. Every tool and its arguments: `knowledge/tools.md`.
-- Anything the engine can do, do with an action tool: `move_to`, `interact`, `talk_to`, `loot`,
+- Anything the engine can do, do with an action tool: `move_to`, `walk_toward`, `interact`, `talk_to`, `loot`,
   `use_ability`, `end_turn`, `choose_dialogue`, `roll_check`, `react`, `fast_travel`, `manage_inventory`,
   `short_rest`/`long_rest`, `camp`, `level_up`, `trade`, `save_game`, and so on. For a screen no tool
   covers, use `ui_dump` (text) then `ui_action`, before considering `screenshot` + `click`.
@@ -39,33 +39,79 @@ bare name.
   screenshot when you only need one detail.
 - `click`/`press_key` are a last resort for unmodelled UI. Log each use as `[note] harness: needed
   click for <what>`.
-- **Plan several actions per observation, then run them in one `do_actions` call.** One `get_status`
-  or `get_combat_state` plus `get_actions` gives positions, distances, costs and remaining resources:
-  enough to plan a whole combat turn (move → attack → bonus action → end turn), a looting sweep, or a
-  run of dialogue picks. `do_actions` stops by itself at the first interrupt or failure and reports
-  what ran, so batching is safe. Play at the pace of a skilled human, or faster.
+- **Think while acting: never let the character stand still while you think.** A skilled human
+  clicks the next destination and plans during the walk. The tools work the same way:
+  - **Movement is async.** `move_to` and `walk_toward` return at once with `started j12, ETA 3s`. Use the
+    walk to read, plan, or write notes. A `job_finished` event in any later result tells you it arrived.
+    `wait_for("j12")` blocks only when your next step really depends on the arrival.
+  - **Queue the next few steps.** `queue_actions` runs them back to back with no round trip per step:
+    walk → open → loot → walk on. Meanwhile you observe (`look`, `get_nearby`) and plan the next batch.
+    The queue stops by itself on combat, a conversation, a reaction/roll prompt, a new hostile in view,
+    low HP, or a failed step. The `queue_interrupted` event says why and what was left; handle that
+    first. `cancel_queue` stops it. Any direct action for the same character replaces the queue's
+    current step.
+  - **`do_actions`** is the blocking form: a whole combat turn (move → attack → bonus action →
+    `end_turn`) or a dialogue chain in one call. Steps can carry `"if"`/`"unless"` conditions
+    (`in_combat`, `hp_below:50`, `item_present:e12`, `target_visible:e7`, `my_turn`, `in_dialogue`). The
+    result ends with `CHANGES` (what moved, HP, items, who appeared), so you rarely need a fresh `look`.
+  - **Targets:** outside combat, at most ~2 s between your actions; never more than 10 s, except for a
+    real dialogue decision. Play at the pace of a skilled human, or faster.
 - Don't call `get_status` between every action; the deltas already tell you what changed.
+- Observations are **deltas**: after the first call, `look`/`get_status`/`get_map` return only what changed
+  since your last look (moves, HP, conditions, who appeared/left/turned hostile, items, mode, objectives).
+  `look()` is the cheap glance; use `full=true` only when you've lost track (after a load, a long break, confusion).
+
+## Reflexes vs. decisions (pace)
+A human player doesn't deliberate over opening a door. Most turns are routine: spend almost no thought
+on them and act at once. Save deep thinking for real decisions.
+- **Routine (act immediately, one short sentence of reasoning at most):**
+  - walking to a known target, looting, opening doors and containers, picking up items
+  - dialogue filler (the only option, "Continue", obvious greetings)
+  - following the journal to the next marker
+  - re-running an action that was interrupted
+  - the mechanical part of a combat turn whose plan is already clear
+- **Real decisions (think it through, then write the reason down):**
+  - dialogue choices with consequences (approval, hostility, quests, who lives)
+  - skill checks that matter, and which party member makes them
+  - the plan for a new fight (targets, positioning, spells, consumables), and when a fight goes badly
+  - irreversible choices, long rests, spending rare resources
+  - getting unstuck
+- Don't re-plan what hasn't changed. If the last plan still holds, continue it.
+- Batch routine steps: `queue_actions` (keep thinking while they run) or `do_actions` (blocking), never one tool call per thought.
+- Never idle: if you're unsure, take the cheapest informative action (one `get_status`, or `look_at`), not a long think.
 
 ## Core loop
-1. **Observe** once: `get_status`, plus the one mode-specific tool you need.
+1. **Observe** once: `look` (a delta), plus the one mode-specific tool you need.
 2. **Decide:** a short plan tied to an objective in `memory/objectives.md`.
-3. **Act** with the highest-level tool that fits. Use `do_actions` for multi-step plans.
+3. **Act** with the highest-level tool that fits: `queue_actions` for routine multi-step plans (then go
+   straight back to step 1 while they run), `do_actions` for a combat turn or a dialogue chain.
 4. **Read the delta.** Each action reports `done`, `FAILED — <reason>`, `INTERRUPTED — <what happened>`,
-   `TIMEOUT`, or `still running` (then `wait`), followed by EVENTS. Handle interrupts first.
+   `TIMEOUT`, or `started jN` (async: watch for `job_finished`, or `wait_for`), followed by EVENTS.
+   Handle interrupts (`queue_interrupted`, combat, dialogue) first.
 5. **Record** noteworthy events right away (see Memory).
-
-Modes:
-- **Combat** → `combat` skill
-- **Dialogue** → `dialogue` skill
-- **Out of combat** → `exploration` skill
-- **Level up or party** → `party-and-leveling`
-- **Stuck** → `stuck`
 
 **Cutscenes are skipped automatically**, and spoken lines are fast-forwarded. Each line still arrives
 as a `dialogue_line` event (speaker: text). Never wait for, watch or screenshot a cutscene: read the
 events, then `get_dialogue` for the options. Answers are never picked for you.
 
 `session_clock` gives the time left. Results end with a `⏱` clock line in runner sessions.
+
+## Playbooks (read on demand)
+Procedures live in `knowledge/playbooks/<name>.md`. They are read-only, and you have no skills or slash commands.
+**"Run the X playbook"** (or "the X skill" in an older message) means: Read `knowledge/playbooks/X.md`
+**once** when its moment comes, then follow it. Don't re-read one that is still in your context. Don't
+read them all up front.
+
+| Moment | Playbook |
+|---|---|
+| session start, right after the memory injection, before any game action | `session-start` |
+| the injection says COMPACTION DUE (after session-start) | `compaction` |
+| combat starts or is about to start (`INTERRUPTED — combat`, hostiles, you plan to attack) | `combat` |
+| a conversation opens or you're about to start one with a named NPC | `dialogue` |
+| out of combat and dialogue: where to go, looting, locks and traps, camp, trading | `exploration` |
+| a level up, companion choice, spell preparation, a build revision | `party-and-leveling` |
+| the stuck criteria below | `stuck` |
+| the `⏱` line says WRAP UP, or a SESSION CLOCK reminder | `session-wrapup` |
 
 ## Memory protocol
 `memory/` is a git repo. Hooks commit it once per session. Files and their jobs:
@@ -133,7 +179,7 @@ Never reload to reroll a failed dialogue check. Log every reload with its reason
 ## Stuck procedure
 You are stuck if: three attempts at the same thing have failed, ~15 minutes have passed without
 objective progress, or the same places or conversation keep repeating. Then **stop repeating**:
-1. Run the `stuck` skill.
+1. Run the `stuck` playbook.
 2. List three *different* approaches.
 3. Pick an untried one.
 4. Write it in hypotheses.md with a test.
@@ -143,9 +189,9 @@ Persistence pays off only when the approach changes.
 
 ## Session lifecycle
 - **Start:** a hook opens `memory/sessions/Sxxx.md` and injects PLAYTHROUGH.md and HANDOFF.md. Run the
-  `session-start` skill before playing. If the injection says COMPACTION DUE, run `compaction` next.
+  `session-start` playbook before playing. If the injection says COMPACTION DUE, run `compaction` next.
 - **Wrap-up:** when the `⏱` line says WRAP UP (10 minutes left) or a SESSION CLOCK reminder appears,
-  finish the current fight or conversation, reach safety, and run the `session-wrapup` skill. Don't
+  finish the current fight or conversation, reach safety, and run the `session-wrapup` playbook. Don't
   stop before that; autonomous sessions block early stops. When you end your turn, a Stop hook
   lints the memory and commits it. If it sends back lint errors, fix them and end your turn again.
   Stop playing once it reports the commit.

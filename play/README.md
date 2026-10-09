@@ -4,11 +4,14 @@ Operator notes (the agent reads CLAUDE.md, not this file).
 
 1. Create a playthrough: `python3 tools/memory/new_playthrough.py <name>`. This creates
    `playthroughs/<name>/memory` (its own git repo) and points `play/memory` at it.
-2. Start Claude Code in `play/`. Hooks (`.claude/settings.json`) do the following:
+2. Start Claude Code in `play/` with the runner's flags (`runner/play.py` passes them itself):
+   `claude --disable-slash-commands --exclude-dynamic-system-prompt-sections --setting-sources project,local`.
+   There are no skills: the procedures are playbooks in `knowledge/playbooks/` (read-only for the agent),
+   and CLAUDE.md says when to read each one. Hooks (`.claude/settings.json`) do the following:
    - SessionStart: `session.py hook` opens `sessions/Sxxx.md` and injects PLAYTHROUGH.md and
      HANDOFF.md. On resume or compact it re-injects them without opening a new session.
-   - PreToolUse: `fairness_guard.py` allows only the `mcp__bg3__*` tools, skills, todos, and file
-     tools under `memory/` and `knowledge/`. Everything else, including Bash, Monitor, web and
+   - PreToolUse: `fairness_guard.py` allows only the `mcp__bg3__*` tools, todos, and file
+     tools under `memory/` and `knowledge/` (writes are refused under `knowledge/playbooks/`). Everything else, including Bash, Monitor, web and
      subagents, is blocked.
    - PostToolUse: on bg3 tools, a wrap-up reminder after 50 min (`BG3_WRAP_MINUTES`,
      `BG3_SESSION_MINUTES`). On Edit/Write, lint errors for the edited memory file.

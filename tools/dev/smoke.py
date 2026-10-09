@@ -26,11 +26,24 @@ READ_ONLY = [
     ("get_combat_state", {}),
     ("get_journal", {}),
     ("get_map", {}),
+    ("get_frontier", {}),
+    ("objectives", {}),  # raw nav.markers through the OBJECTIVE renderer (see _objectives)
     ("get_dialogue", {}),
     ("ui_dump", {}),
     ("list_saves", {"limit": 3}),
     ("session_clock", {}),
 ]
+
+
+def _objectives() -> str:
+    """nav.markers straight from the mod, rendered as the agent sees it in get_map."""
+    res = S.game.rpc("nav.markers", {})
+    if not isinstance(res, dict):
+        return f"FAILED: nav.markers returned {res!r}"
+    head = f"nav.markers: {len(res.get('markers') or [])} marker(s), {res.get('ms')} ms"
+    if res.get("error"):
+        return f"FAILED: {head}, error={res['error']}"
+    return "\n".join([head] + S.render.render_objectives(res.get("markers")))
 
 
 def main() -> int:
@@ -41,7 +54,7 @@ def main() -> int:
     for name, kwargs in READ_ONLY:
         if wanted and name not in wanted:
             continue
-        fn = getattr(S, name)
+        fn = _objectives if name == "objectives" else getattr(S, name)
         t = time.perf_counter()
         try:
             out = fn(**kwargs)

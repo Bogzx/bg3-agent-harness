@@ -260,8 +260,157 @@ function V.itemVisible(ctx, uuid, e, pos)
     if not interact and kind ~= "door" and kind ~= "container" and kind ~= "ladder" and not isTrap then
         return false -- scenery: the game doesn't highlight it either
     end
-    if not V.perceived(ctx, uuid, pos) then return false end
+    if not V.perceived(ctx, uuid, pos) and not V.largePerceived(ctx, uuid, e, pos, kind) then return false end
     return true, kind
+end
+
+------------------------------------------------------------------------
+-- Large-object perception (doors, ladders, big interactables).
+--
+-- HasLineOfSight to a door is often false because the door is its own
+-- occluder, and CanSee is FOV-coned, so doors used to appear only up close.
+-- For these objects only, a party member also perceives the object if a
+-- physics ray from its eye reaches one of a few sample points on the object's
+-- bounds unobstructed (or the first thing it hits is the object itself).
+-- Characters never use this path: they stay on CanSee/LOS above.
+-- Called only after the trap/secret-door/scenery filters, so it can never
+-- reveal an undiscovered standalone trap or a hidden secret door.
+------------------------------------------------------------------------
+
+V.EYE_H = 1.6               -- eye height above the feet (m)
+V.LARGE_H = 2.0             -- bounds this tall, or this wide, count as "large"
+V.LARGE_R = 1.0
+V.LARGE_KINDS = { door = true, ladder = true }
+V.RAY_TYPE = 0x05          -- PhysicsType Static | Dynamic
+V.RAY_INCLUDE = 0xFFFFFFFF -- all PhysicsGroupFlags...
+V.RAY_EXCLUDE = 0x820200   -- ...except Character | CanSeeThrough | CanSeeThrough2
+V.RAY_CACHE_MS = 250
+V.rayCache = V.rayCache or {}
+V.rayStats = V.rayStats or { ray = 0, blocked = 0, out_of_range = 0, errors = 0, uncalibrated = 0 }
+
+-- {height, radius} from the entity's AI bounds (Hit preferred), or nil.
+function V.bounds(e)
+    local b = U.comp(e, "Bound")
+    if not b then return nil end
+    local best
+    pcall(function()
+        for k, d in pairs(b.Bound.AIBounds) do
+            local h = d.ActualHeight and d.ActualHeight > 0 and d.ActualHeight or d.Height
+            local r = d.Radius
+            if type(h) == "number" and type(r) == "number" then
+                local hit = (k == "Hit" or k == 1)
+                if not best or hit then best = { height = h, radius = r } end
+            end
+        end
+    end)
+    return best
+end
+
+-- Sample points on the object as seen from `eye`: middle and upper body, the
+-- two side edges (perpendicular to the view), and the middle pulled toward
+-- the viewer (a door's near face).
+local function samplePoints(eye, pos, h, r)
+    local dx, dz = pos[1] - eye[1], pos[3] - eye[3]
+    local len = math.sqrt(dx * dx + dz * dz)
+    if len < 0.01 then return { { pos[1], pos[2] + h * 0.5, pos[3] } } end
+    local ux, uz = dx / len, dz / len
+    local side = math.min(r * 0.8, 1.5)
+    local pull = math.min(r, 0.75)
+    local mid = pos[2] + h * 0.5
+    return {
+        { pos[1], mid, pos[3] },
+        { pos[1], pos[2] + h * 0.85, pos[3] },
+        { pos[1] - uz * side, mid, pos[3] + ux * side },
+        { pos[1] + uz * side, mid, pos[3] - ux * side },
+        { pos[1] - ux * pull, mid, pos[3] - uz * pull },
+    }
+end
+
+local function hitEntityUuid(hit)
+    local ok, u = pcall(function()
+        local ent = hit.Shape.PhysicsObject.Entity
+        return ent and ent.Uuid and ent.Uuid.EntityUuid
+    end)
+    return ok and u or nil
+end
+
+local function raycast(a, b)
+    return Ext.Level.RaycastClosest(a, b, V.RAY_TYPE, V.RAY_INCLUDE, V.RAY_EXCLUDE, 0)
+end
+
+-- Distance from `from` to the hit, from its position (or its Distance field).
+local function hitDist(hit, from)
+    local ok, p = pcall(function() return hit.Position end)
+    if ok and (type(p) == "table" or type(p) == "userdata") then
+        local okp, d = pcall(function() return U.dist(from, { p[1], p[2], p[3] }) end)
+        if okp and type(d) == "number" then return d end
+    end
+    local okd, d = pcall(function() return hit.Distance end)
+    return okd and type(d) == "number" and d or nil
+end
+
+-- Is the segment eye -> pt clear up to the object? Raises on API failure.
+local function rayClear(uuid, eye, pt, slack)
+    local hit = raycast(eye, pt)
+    if not hit then return true end
+    local d = hitDist(hit, eye)
+    if d and d >= U.dist(eye, pt) - slack then return true end
+    return hitEntityUuid(hit) == uuid
+end
+
+-- Fail-closed self-test: a ray from the eye straight down must hit the floor.
+-- If it doesn't, the filter flags or the API are wrong and "no hit" would mean
+-- nothing, so large-object perception stays off. Re-checked every 5 s.
+V.calib = V.calib or { t = -1e9, ok = false }
+function V.rayCalibrated(o)
+    local now = Ext.Utils.MonotonicTime()
+    if now - V.calib.t < 5000 then return V.calib.ok end
+    local ok, hit = pcall(raycast, { o.pos[1], o.pos[2] + V.EYE_H, o.pos[3] }, { o.pos[1], o.pos[2] - 3.0, o.pos[3] })
+    V.calib = { t = now, ok = ok and hit ~= nil }
+    if not V.calib.ok then V.rayStats.uncalibrated = V.rayStats.uncalibrated + 1 end
+    return V.calib.ok
+end
+
+-- Is a large object perceived by an unobstructed ray from a party member?
+function V.largePerceived(ctx, uuid, e, pos, kind)
+    if not pos or V.rayBroken then return false end
+    local bd = V.bounds(e)
+    local large = V.LARGE_KINDS[kind] or (bd and (bd.height >= V.LARGE_H or bd.radius >= V.LARGE_R))
+    if not large then return false end
+    local now = Ext.Utils.MonotonicTime()
+    local c = V.rayCache[uuid]
+    if c and now - c.t < V.RAY_CACHE_MS then return c.v end
+    local o1 = ctx.observers[1]
+    if not (o1 and o1.pos and V.rayCalibrated(o1)) then return false end
+    local h = math.max(bd and bd.height or 2.0, 1.0)
+    local r = math.max(bd and bd.radius or 0.75, 0.3)
+    local v, inRange = false, false
+    for _, o in ipairs(ctx.observers) do
+        if o.pos and U.dist(o.pos, pos) <= o.sight then
+            inRange = true
+            local eye = { o.pos[1], o.pos[2] + V.EYE_H, o.pos[3] }
+            local ok, res = pcall(function()
+                for _, pt in ipairs(samplePoints(eye, pos, h, r)) do
+                    if rayClear(uuid, eye, pt, math.max(0.5, r)) then return true end
+                end
+                return false
+            end)
+            if not ok then
+                -- Fail closed: no raycasts, strict perception only.
+                V.rayStats.errors = V.rayStats.errors + 1
+                V.rayBroken = true
+                Ext.Utils.PrintWarning("[BG3AI] large-object raycast disabled: " .. tostring(res))
+                return false
+            end
+            if res then v = true; break end
+        end
+    end
+    local st = V.rayStats
+    if v then st.ray = st.ray + 1 elseif inRange then st.blocked = st.blocked + 1 else st.out_of_range = st.out_of_range + 1 end
+    V.rayCacheN = (V.rayCacheN or 0) + 1
+    if V.rayCacheN > 4000 then V.rayCache, V.rayCacheN = {}, 0 end
+    V.rayCache[uuid] = { t = now, v = v }
+    return v
 end
 
 ------------------------------------------------------------------------
@@ -439,6 +588,62 @@ function V.recall(exclude, around, radius)
     table.sort(out, function(a, b) return a.ago_s < b.ago_s end)
     while #out > 20 do table.remove(out) end
     return out
+end
+
+------------------------------------------------------------------------
+-- Dev check for the large-object rule (complements dev.fairness_probe).
+-- dev.perception_probe{radius=30} -> counts of large objects by how they are
+-- perceived, plus the ones only the ray rule shows (shown anyway, so their
+-- uuid/name are no leak). Anything hidden is reported as counts only.
+------------------------------------------------------------------------
+
+if BG3AI.RPC then
+    BG3AI.RPC.register("dev.perception_probe", function(args)
+        local ctx = V.context()
+        local radius = tonumber(args.radius) or 30
+        local center = ctx.observers[1] and ctx.observers[1].pos
+        if not center then error("no party member in the world", 0) end
+        if args.reset then V.rayBroken = nil; V.calib.t = -1e9 end
+        V.rayCache = {}
+        local c = { large = 0, by_sight = 0, by_ray = 0, not_perceived = 0, filtered = 0,
+            ray_shown_traps = 0, ray_shown_secret_doors = 0 }
+        local rayOnly = {}
+        for _, u in ipairs(V.itemsAround(center, radius)) do
+            local e = V.entity(u)
+            local p = e and V.pos(e)
+            if p and U.dist(p, center) <= radius then
+                local kind = V.itemKind(u, e)
+                local bd = V.bounds(e)
+                if V.LARGE_KINDS[kind] or (bd and (bd.height >= V.LARGE_H or bd.radius >= V.LARGE_R)) then
+                    c.large = c.large + 1
+                    local shown = V.itemVisible(ctx, u, e, p)
+                    if not shown then
+                        if V.perceived(ctx, u, p) or V.largePerceived(ctx, u, e, p, kind) then
+                            c.filtered = c.filtered + 1 -- hidden by the trap/secret/scenery rules
+                        else
+                            c.not_perceived = c.not_perceived + 1
+                        end
+                    elseif V.perceived(ctx, u, p) then
+                        c.by_sight = c.by_sight + 1
+                    else
+                        c.by_ray = c.by_ray + 1
+                        if truthy(V.osi(Osi.IsTrap, u)) and not truthy(V.osi(Osi.IsTrapDiscovered, u)) then
+                            c.ray_shown_traps = c.ray_shown_traps + 1
+                        end
+                        local si = U.comp(e, "ServerItem")
+                        local okS, sec = pcall(function() return si and si.IsSecretDoor end)
+                        if okS and sec == true then c.ray_shown_secret_doors = c.ray_shown_secret_doors + 1 end
+                        if #rayOnly < 25 then
+                            rayOnly[#rayOnly + 1] = { uuid = u, name = V.name(u), kind = kind, dist = U.round(U.dist(p, center), 1),
+                                height = bd and U.round(bd.height, 1), radius = bd and U.round(bd.radius, 1) }
+                        end
+                    end
+                end
+            end
+        end
+        return { radius = radius, counts = c, ray_only = rayOnly, stats = V.rayStats,
+            calibrated = V.calib.ok, ray_broken = V.rayBroken or false }
+    end)
 end
 
 return V

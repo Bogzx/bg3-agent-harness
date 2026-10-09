@@ -5,7 +5,9 @@
     uv run --project bridge python runner/dashboard/serve.py --port 8765   # screen as small JPEGs
 
 Shows the game screen (for the human only, never sent to the agent), the live status and party,
-the session clock, the agent's tool calls (runtime/actions.jsonl) and its own text
+the session clock, the agent's tool calls (runtime/actions.jsonl), live latency (idle gaps, think time, APM, round trips;
+bridge/src/bg3ai/metrics.py), story progress per hour with a stuck flag
+(bridge/src/bg3ai/progress.py) and its own text
 (runtime/sessions/<playthrough>/Sxxx.log), visible game events, and the playthrough memory
 (HANDOFF.md, objectives.md, the session log tail).
 
@@ -13,7 +15,7 @@ Read-only toward the game: only state.status / events.since / sys.info RPCs and 
 share the Mesa layer's single control slot through the file lock in bridge/src/bg3ai/screen.py, and run
 only while someone has the page open.
 
-Endpoints: /  /api/state  /api/feed?after=N  /api/agentlog?after=N&path=ID  /api/screen
+Endpoints: /  /api/state  /api/feed?after=N  /api/agentlog?after=N&path=ID  /api/screen  /api/latency  /api/progress
 """
 
 from __future__ import annotations
@@ -224,6 +226,12 @@ def make_handler(hub: Hub):
                         after = -1  # a new session log: start over near its end
                     off, text, reset = F.read_new(log, after, initial_bytes=32 * 1024)
                     return self._json({"offset": off, "reset": reset, "text": text, "path_id": log.name})
+                if url.path == "/api/latency":
+                    runner = F.read_json(RUNTIME / "runner.status.json")
+                    return self._json(F.latency_payload(RUNTIME, runner))
+                if url.path == "/api/progress":
+                    runner = F.read_json(RUNTIME / "runner.status.json")
+                    return self._json(F.progress_payload(RUNTIME, runner))
                 if url.path == "/api/screen":
                     hub.viewed()
                     with hub.lock:

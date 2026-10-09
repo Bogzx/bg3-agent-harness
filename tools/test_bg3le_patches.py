@@ -54,7 +54,7 @@ class PatchTest(unittest.TestCase):
 
         again = self.run_script("--patch")
         self.assertEqual(again.returncode, 0, again.stderr)
-        self.assertEqual(again.stdout.count("patch already applied:"), len(PATCHES), again.stdout)
+        self.assertIn(f"patches already applied: {len(PATCHES)}", again.stdout)
         self.assertEqual(git("diff", cwd=self.src), patched)
 
         back = self.run_script("--unpatch")
@@ -80,6 +80,22 @@ class PatchTest(unittest.TestCase):
             self.assertIn(needle, inl)
         ui = (self.src / "src" / "noesis_ui.cpp").read_text()
         self.assertEqual(ui.count("    bg3le_ui_drain_releases();"), 2)  # both Update hooks
+        # 0002: the opt-in serializer, off unless BG3LE_UI_SERIALIZE=1 / UiSerialize(true)
+        self.assertEqual(ui.count("= bg3le_ui_frame_begin();"), 2)
+        self.assertEqual(ui.count("bg3le_ui_frame_end(taken);"), 2)
+        for needle in ("std::atomic<bool> g_serialize{ false };", '"BG3LE_UI_SERIALIZE"', '"UiSerialize"',
+                       "try_lock_for"):
+            self.assertIn(needle, inl)
+
+    def test_partly_applied_is_refused(self):
+        # Only the first patch in place (an older checkout of patches/): neither state, so a stop.
+        if len(PATCHES) < 2:
+            self.skipTest("one patch")
+        git("apply", str(PATCHES[0]), cwd=self.src)
+        res = self.run_script("--patch")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("does not apply", res.stderr)
+        self.assertNotEqual(self.run_script("--unpatch").returncode, 0)
 
 
 if __name__ == "__main__":

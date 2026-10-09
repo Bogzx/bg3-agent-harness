@@ -113,6 +113,27 @@ pre { margin: 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: 
 .events div { padding: 1px 12px; color: #b9c0d3; } .events .k { color: var(--accent); }
 .empty { color: var(--faint); font-style: italic; padding: 10px 12px; }
 .toggle { font-size: 11px; color: var(--muted); display: inline-flex; gap: 4px; align-items: center; cursor: pointer; text-transform: none; letter-spacing: 0; }
+.lat { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.kpi { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
+.kpi .v { font: 600 18px/1.2 var(--mono); }
+.kpi .l { font-size: 11px; color: var(--muted); }
+.kpi.pass { border-color: #2c5a43; } .kpi.pass .v { color: var(--ok); }
+.kpi.fail { border-color: #6a2b33; } .kpi.fail .v { color: var(--bad); }
+.kpi.warn .v { color: var(--warn); }
+.tl { display: flex; height: 14px; margin: 10px 0 2px; border-radius: 3px; overflow: hidden; background: #0b0d12; }
+.tl i { flex: 1; } .tl i.act { background: var(--ok); } .tl i.dlg { background: var(--accent-2); }
+.tl i.idle { background: #3a2a1a; } .tl i.none { background: transparent; }
+.tlcap { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--faint); }
+.prog-ev { font: 12px var(--mono); margin-top: 8px; max-height: 150px; overflow: auto; }
+.prog-ev div { padding: 2px 0; border-bottom: 1px solid #1d2232; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prog-ev b { color: var(--ok); font-weight: 600; display: inline-block; min-width: 34px; }
+.prog-ev .k { color: var(--muted); display: inline-block; min-width: 82px; }
+table.hist { width: 100%; border-collapse: collapse; font: 12px var(--mono); margin-top: 10px; }
+table.hist th { text-align: right; color: var(--muted); font-weight: 500; padding: 3px 5px; border-bottom: 1px solid var(--line); }
+table.hist td { text-align: right; padding: 3px 5px; border-bottom: 1px solid #1d2232; }
+table.hist th:first-child, table.hist td:first-child { text-align: left; }
+td.pass { color: var(--ok); } td.fail { color: var(--bad); }
+.hwrap { max-height: 220px; overflow: auto; }
 .banner { display: none; margin: 10px 16px 0; padding: 8px 12px; border-radius: 8px; background: #3a1c22; color: #ffb3ba; font-size: 13px; }
 </style>
 </head>
@@ -140,6 +161,23 @@ pre { margin: 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: 
     </section>
   </div>
   <div class="col">
+    <section class="card">
+      <h2><span class="grow">Latency</span><small id="latNote"></small></h2>
+      <div class="body">
+        <div class="lat" id="latKpis"><div class="empty">No metrics yet (runtime/sessions/&lt;pt&gt;/Sxxx.metrics.jsonl).</div></div>
+        <div class="tl" id="latTl" title="last 5 min, 5-s buckets: green = acting, purple = dialogue, brown = idle"></div>
+        <div class="tlcap"><span>−5 min</span><span>action · dialogue · idle</span><span>now</span></div>
+        <div class="hwrap"><table class="hist" id="latHist"></table></div>
+      </div>
+    </section>
+    <section class="card">
+      <h2><span class="grow">Story progress</span><small id="progNote"></small></h2>
+      <div class="body">
+        <div class="lat" id="progKpis"><div class="empty">No progress timeline yet (runtime/sessions/&lt;pt&gt;/Sxxx.progress.jsonl).</div></div>
+        <div class="prog-ev" id="progEvents"></div>
+        <div class="hwrap"><table class="hist" id="progHist"></table></div>
+      </div>
+    </section>
     <section class="card">
       <h2><span class="grow">Agent tool calls</span><small id="feedCount"></small>
         <label class="toggle"><input type="checkbox" id="follow" checked> follow</label></h2>
@@ -333,6 +371,80 @@ async function pollAgent() {
   setTimeout(pollAgent, 2000);
 }
 
+/* ---------------- latency ---------------- */
+const fmt = (v, u = "", d = 1) => v == null ? "–" : `${Number(v).toFixed(d)}${u}`;
+function kpi(label, value, cls = "") { return `<div class="kpi ${cls}"><div class="v">${value}</div><div class="l">${esc(label)}</div></div>`; }
+const pf = (t) => !t || t.pass == null ? "" : t.pass ? "pass" : "fail";
+function renderLatency(r) {
+  const L = r.live, T = r.targets || {};
+  $("latNote").textContent = [r.files && r.files.metrics, r.files && r.files.turns].filter(Boolean).join(" · ");
+  if (L) {
+    const tg = L.targets || {};
+    const cur = L.busy_now ? "acting" : L.current_idle_s == null ? "–" : `${L.current_idle_s.toFixed(0)}s`;
+    const curCls = L.busy_now ? "pass" : L.current_idle_s > 10 && !L.in_dialogue ? "fail" : L.current_idle_s > 2 ? "warn" : "";
+    $("latKpis").innerHTML =
+      kpi(L.in_dialogue ? "idle now (dialogue)" : L.in_combat ? "idle now (combat)" : "idle now", cur, curCls)
+      + kpi(`idle median explore (<${T.median_idle_explore_s}s)`, fmt(L.idle_explore_median_s, "s"), pf(tg.median_idle_explore_s))
+      + kpi("idle median / p90 all", `${fmt(L.idle_median_s, "", 1)}/${fmt(L.idle_p90_s, "s", 0)}`)
+      + kpi("gaps >10s (non-dialogue)", `${tg.long_gaps_non_dialogue ? tg.long_gaps_non_dialogue.value : "–"}`
+            + (L.long_gaps && L.long_gaps.dialogue ? ` <small>+${L.long_gaps.dialogue} dlg</small>` : ""), pf(tg.long_gaps_non_dialogue))
+      + kpi("think median", fmt(L.think_median_s, "s"))
+      + kpi(`read round trip med (<${T.bridge_rt_median_ms}ms)`, fmt(L.rt_read_median_ms, "ms", 0), pf(tg.bridge_rt_median_ms))
+      + kpi("actions / min", fmt(L.apm, "", 1))
+      + kpi("busy", fmt(L.busy_pct, "%", 0));
+    const b = (L.timeline && L.timeline.buckets) || [];
+    $("latTl").innerHTML = b.map((x) => `<i class="${x}"></i>`).join("");
+  }
+  const h = r.history || [];
+  if (h.length) {
+    const c = (p) => p == null ? "" : p ? "pass" : "fail";
+    $("latHist").innerHTML = `<tr><th>session</th><th>min</th><th>idle med</th><th>p90</th><th>explore</th><th>&gt;10s</th>
+      <th>think</th><th>rt ms</th><th>apm</th><th>busy</th></tr>` + h.slice().reverse().map((x) => {
+      const p = x.pass || {};
+      return `<tr><td>${esc(x.session)}</td><td>${fmt(x.minutes, "", 0)}</td><td>${fmt(x.idle_median_s)}</td><td>${fmt(x.idle_p90_s, "", 0)}</td>
+        <td class="${c(p.median_idle_explore_s)}">${fmt(x.idle_explore_median_s)}</td>
+        <td class="${c(p.long_gaps_non_dialogue)}">${x.long_gaps ?? "–"}${x.long_gaps_dialogue ? ` (${x.long_gaps_dialogue}d)` : ""}</td>
+        <td>${fmt(x.think_median_s)}</td><td class="${c(p.bridge_rt_median_ms)}">${fmt(x.rt_read_median_ms, "", 0)}</td>
+        <td>${fmt(x.apm)}</td><td>${fmt(x.busy_pct, "%", 0)}</td></tr>`;
+    }).join("");
+  }
+}
+async function pollLatency() {
+  try { renderLatency(await getJSON("/api/latency")); } catch (e) { /* ignore */ }
+  setTimeout(pollLatency, 3000);
+}
+
+/* ---------------- story progress ---------------- */
+function renderProgress(r) {
+  const L = r.live;
+  $("progNote").textContent = [r.files && r.files.live, `stuck after ${r.stuck_after_min} min`].filter(Boolean).join(" · ");
+  if (L) {
+    const since = L.since_progress_min;
+    const sinceCls = L.stuck ? "fail" : since > r.stuck_after_min / 2 ? "warn" : "";
+    $("progKpis").innerHTML =
+      kpi(`points (${L.session || "?"}${L.running ? "" : ", ended"})`, `${L.points}`)
+      + kpi("points / hour", fmt(L.per_hour, "", 0))
+      + kpi("progress events", `${L.events}`)
+      + kpi(L.stuck ? "STUCK for" : "since last progress", `${fmt(L.stuck ? L.stuck_min : since, "m", 0)}`, sinceCls)
+      + kpi("session", fmt(L.minutes, "m", 0));
+    $("progEvents").innerHTML = (L.recent || []).map((e) =>
+      `<div title="${esc(e.what)}"><span class="k">${hhmmss(e.t)}</span><b>+${e.points}</b><span class="k">${esc(e.kind)}</span>${esc(e.what)}</div>`).join("")
+      || `<div class="empty">no progress events this session yet</div>`;
+  }
+  const h = r.history || [];
+  if (h.length) {
+    $("progHist").innerHTML = `<tr><th>session</th><th>min</th><th>points</th><th>/hour</th><th>events</th>
+      <th>longest dry</th><th>stuck</th></tr>` + h.slice().reverse().map((x) =>
+      `<tr><td>${esc(x.session)}</td><td>${fmt(x.minutes, "", 0)}</td><td>${x.points ?? "–"}</td><td>${fmt(x.per_hour, "", 0)}</td>
+        <td>${x.events ?? "–"}</td><td>${fmt(x.longest_no_progress_min, "m", 0)}</td>
+        <td class="${x.stuck_episodes ? "fail" : "pass"}">${x.stuck_episodes ? `${x.stuck_episodes}× ${fmt(x.stuck_min, "m", 0)}` : "0"}</td></tr>`).join("");
+  }
+}
+async function pollProgress() {
+  try { renderProgress(await getJSON("/api/progress")); } catch (e) { /* ignore */ }
+  setTimeout(pollProgress, 5000);
+}
+
 /* ---------------- wiring ---------------- */
 $("memTabs").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
@@ -342,7 +454,7 @@ $("memTabs").addEventListener("click", (e) => {
 });
 $("saysOnly").addEventListener("change", (e) => $("agent").classList.toggle("says-only", e.target.checked));
 setInterval(renderClock, 1000);
-pollState(); pollFeed(); pollAgent();
+pollState(); pollFeed(); pollAgent(); pollLatency(); pollProgress();
 </script>
 </body>
 </html>

@@ -13,13 +13,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import render
+from . import actq, delta, metrics, render
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
 
@@ -33,12 +34,17 @@ WRAPUP_S = 10 * 60
 
 INSTRUCTIONS = """Tools to play Baldur's Gate 3 as the player. All information is what the player can see.
 Start with get_status. Refer to things by their short id (e12) or a party member's name.
-Action tools block until the action settles (arrived / interrupted / failed) and report events.
+Movement tools (move_to, walk_toward) return at once with a job id and ETA: keep planning while the
+character walks, then wait_for the job (or an event). Other action tools block until they settle; pass
+wait=false to return at once. queue_actions runs several steps back to back while you think.
 Use screenshot only when the text tools can't tell you something (spatial layout, puzzles, unknown popups)."""
 
 mcp = MCPServer("bg3", instructions=INSTRUCTIONS)
 game = Game(port=int(os.environ.get("BG3LE_DEBUG_PORT", "9998")))
 H = Handles()
+DELTA = delta.TRACKER.bind(H)  # the agent's last look; get_status/look/get_map diff against it
+METRICS = metrics.Recorder.from_env(RUNTIME)  # $BG3AI_METRICS_PATH (set by the runner) or runtime/metrics.jsonl
+game.metrics = METRICS
 _screen = None
 _last_full_frame = None  # PIL image of the latest screenshot (for zoom)
 
@@ -48,6 +54,8 @@ _last_full_frame = None  # PIL image of the latest screenshot (for zoom)
 # ---------------------------------------------------------------------------
 
 def _log(tool: str, args: dict, result: str, ms: float) -> None:
+    # Every tool result passes here (via _finish): one latency record per call (metrics.py).
+    METRICS.tool_done(tool, ms, nested=_batch["active"], ok=not result.startswith(("FAILED", "NOT READY", "REFUSED")))
     try:
         RUNTIME.mkdir(parents=True, exist_ok=True)
         with open(RUNTIME / "actions.jsonl", "a") as f:
@@ -99,7 +107,23 @@ def _events_text() -> str:
     return "\n".join(p for p in parts if p)
 
 
-_batch = {"active": False, "last": "done"}
+class _BatchState(threading.local):
+    """Per-thread batch flags (same [] interface as the old dict). A queue worker thread runs steps
+    batch-quiet while the agent's own tool calls on the MCP thread report normally.
+    active: inside do_actions / a queue (no per-step event drain); last: the last step's status;
+    exec: the actq.Executor running the steps (gets the job id to cancel); result: last job result."""
+
+    def __init__(self) -> None:
+        self.d = {"active": False, "last": "done", "exec": None, "result": None}
+
+    def __getitem__(self, k: str) -> Any:
+        return self.d[k]
+
+    def __setitem__(self, k: str, v: Any) -> None:
+        self.d[k] = v
+
+
+_batch = _BatchState()
 
 
 def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True) -> str:
@@ -184,14 +208,52 @@ def _job_text(name: str, r: JobResult) -> str:
     return s
 
 
-def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server") -> str:
+def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
+         wait: bool = True) -> str:
     t0 = time.monotonic()
     if _session_over():
         return _finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
-    r = game.run_job(op, args, context=context, wait_s=wait_s)
+    if not wait and not _batch["active"] and context == "server":
+        return _start_async(tool, op, args, t0)
+    ex = _batch["exec"]
+    if _batch["active"]:
+        wait_s = max(wait_s, 120.0)  # a batch/queue step runs to completion (interrupts cancel it)
+    kw = {"on_start": ex.track} if ex is not None else {}
+    r = game.run_job(op, args, context=context, wait_s=wait_s, **kw)
     _remember_names(r.result)
     _batch["last"] = r.status
+    _batch["result"] = r.result
+    if _batch["active"] and isinstance(r.result, dict) and "after" in r.result:
+        # In a batch the per-step portrait summary is noise; the run ends with one NOW line + CHANGES.
+        r = JobResult(r.status, {k: v for k, v in r.result.items() if k != "after"}, r.error, r.events, r.elapsed_ms)
     return _finish(tool, args, _job_text(tool, r), t0)
+
+
+# Async jobs started with wait=false: handle (j12) -> what the agent needs to follow them up.
+_async: dict[str, dict] = {}
+
+
+def _start_async(tool: str, op: str, args: dict, t0: float) -> str:
+    """Start a mod job and return at once: "move_to: started j12, ETA 3.4s (14m)". The mod announces the
+    end with a job_finished event (notify), so any later tool result shows it; wait_for('j12') blocks."""
+    started = game.rpc(op, dict(args, notify=True))
+    if not isinstance(started, dict) or "job" not in started:
+        return _finish(tool, args, _job_text(tool, JobResult("done", result=started)), t0)
+    if started.get("status") not in (None, "running"):
+        r = JobResult(started["status"], started.get("result"), started.get("error"))
+        _remember_names(r.result)
+        _batch["last"] = r.status
+        return _finish(tool, args, _job_text(tool, r), t0)
+    h = f"j{started['job']}"
+    _async[h] = {"ctx": "server", "id": started["job"], "tool": tool, "t0": time.monotonic(),
+                 "eta": started.get("eta_s")}
+    body = f"{tool}: started {h}"
+    if started.get("eta_s") is not None:
+        body += f", ETA {render.num(float(started['eta_s']))}s"
+    if started.get("route_m") is not None:
+        body += f" ({render.num(float(started['route_m']))}m)"
+    _batch["last"] = "done"
+    return _finish(tool, args, body, t0)
 
 
 # ---------------------------------------------------------------------------
@@ -199,16 +261,43 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
 # ---------------------------------------------------------------------------
 
 _last_subregion = {"name": None}
+_objectives: dict[str, list] = {"last": []}  # markers as last shown (o1, o2, ... index into this)
+
+
+def _objective_markers() -> list:
+    """Active quest objective markers (nav.markers), remembered so o1/o2 refer to what was shown."""
+    res = game.try_rpc("nav.markers", {})
+    ms = res.get("markers") if isinstance(res, dict) else None
+    if not isinstance(ms, list):
+        return []
+    _objectives["last"] = ms
+    return ms
+
+
+def _delta_body(lines: list[str], ui: dict | None = None) -> str:
+    """Delta view text. A prompt still on screen (unchanged, so not in the diff) gets a one-line reminder."""
+    body = "\n".join(lines) if lines else "No change since your last look."
+    open_ = [k for k in ("dialogue", "roll", "reaction", "popup", "container") if (ui or {}).get(k)]
+    if open_ and not set(render.render_ui(ui, H, brief=True)) & set(lines):
+        body += f"\n({'/'.join(open_).upper()} still open, unchanged; full=true repeats it)"
+    return body
+
+
+def _too_big(lines: list[str]) -> bool:
+    return len(lines) > delta.BIG_CHANGE or any(x.startswith("WHERE") for x in lines)
 
 
 @mcp.tool()
 @_guard
-def get_status() -> str:
-    """Where you are, party HP/conditions, mode (exploring/combat/dialogue), what's on screen, and recent events. Call this first."""
+def get_status(full: bool = False) -> str:
+    """Where you are, party HP/conditions, mode (exploring/combat/dialogue), what's on screen, objectives, and recent events. Call this first.
+    After the first call it returns only what CHANGED since your last look (moves, HP, conditions, mode, objectives, new prompts); full=true shows everything again."""
     t0 = time.monotonic()
     ui = game.try_rpc("ui.state", context="client")
     try:
-        st = game.rpc("state.status")
+        st, mk = delta.multi_rpc(game, [("state.status", {}), ("nav.markers", {})])
+        if st is None:
+            st = game.rpc("state.status")  # surfaces the real error
     except NotReady:
         gs = game.game_state()
         body = f"No game session loaded (game state: {gs})."
@@ -221,7 +310,47 @@ def get_status() -> str:
         # The minimap's subregion name only exists client-side; hand it to the server's breadcrumbs.
         if game.try_rpc("nav.set_subregion", {"name": sub}) is not None:
             _last_subregion["name"] = sub
-    return _finish("get_status", {}, render.render_status(st, ui, H), t0)
+    markers = mk.get("markers") if isinstance(mk, dict) and isinstance(mk.get("markers"), list) else None
+    if markers is not None:
+        _objectives["last"] = markers
+    first = not DELTA.has("party")
+    lines = DELTA.observe(delta.snapshot(H, status=st, ui=ui, markers=markers))
+    if full or first or _too_big(lines):
+        body = render.render_status(st, ui, H)
+        obj = render.render_objectives(markers or [], here_only=True, limit=3)
+        if obj:
+            body += "\n" + "\n".join(obj)
+    else:
+        body = _delta_body(lines, ui)
+    return _finish("get_status", {"full": full}, body, t0)
+
+
+@mcp.tool()
+@_guard
+def look(full: bool = False) -> str:
+    """The cheap way to keep your bearings: what CHANGED since your last look, in a few lines. Party moves (12m NW), HP, conditions gained/lost, characters and objects that appeared, left view or changed (hostile, dead, opened, unlocked), items gained/lost, gold, mode, new objectives and quest entries, and any new prompt (dialogue, roll, popup).
+    full=true (or the first call, or a new area): the full status plus everything visible nearby."""
+    t0 = time.monotonic()
+    got = delta.fetch(game, delta.LOOK_PARTS)
+    st = got.get("status")
+    if st is None:
+        return get_status(full=True)
+    for v in got.values():
+        _remember_names(v)
+    if got.get("markers") is not None:
+        _objectives["last"] = got["markers"]
+    first = not DELTA.has("party", "ents")
+    lines = DELTA.observe(delta.snapshot_of(H, got))
+    if full or first or _too_big(lines):
+        body = render.render_status(st, got.get("ui"), H)
+        obj = render.render_objectives(got.get("markers") or [], here_only=True, limit=3)
+        if obj:
+            body += "\n" + "\n".join(obj)
+        if got.get("nearby") is not None:
+            body += "\n" + render.render_nearby(got["nearby"], H)
+    else:
+        body = _delta_body(lines, got.get("ui"))
+    return _finish("look", {"full": full}, body, t0)
 
 
 @mcp.tool()
@@ -274,6 +403,8 @@ def get_nearby(radius: float = 25.0, kinds: str = "") -> str:
         args["kinds"] = [k.strip() for k in kinds.split(",") if k.strip()]
     res = game.rpc("state.nearby", args)
     _remember_names(res)
+    if radius == 25.0 and not kinds and isinstance(res, dict):
+        DELTA.observe(delta.snapshot(H, nearby=res))  # the agent has now seen these; look() won't repeat them
     return _finish("get_nearby", args, render.render_nearby(res, H), t0)
 
 
@@ -301,6 +432,8 @@ def get_inventory(who: str | None = None, filter: str = "") -> str:
     _remember_names(game.try_rpc("state.status") or {})  # party first: short handles + owner names
     res = game.rpc("state.inventory", args)
     _remember_names(res)
+    if not who and isinstance(res, dict):
+        DELTA.observe({"inv": delta.snapshot(H, inventory=res)["inv"]})  # seen now; look() reports later changes
     return _finish("get_inventory", {"who": who, "filter": filter}, render.render_inventory(res, H, filter), t0)
 
 
@@ -310,20 +443,40 @@ def get_journal(quest: str = "") -> str:
     """Active quests with their latest journal entry, plus finished quest titles. quest: words from a title to see all of that quest's entries."""
     t0 = time.monotonic()
     res = game.rpc("state.journal")
+    if isinstance(res, list):
+        DELTA.observe(delta.snapshot(H, journal=res))
     return _finish("get_journal", {"quest": quest}, render.render_journal(res, H, quest), t0)
 
 
 @mcp.tool()
 @_guard
-def get_map() -> str:
-    """Current region/subregion, unlocked waypoints, and your own map markers."""
+def get_map(full: bool = False) -> str:
+    """Current region/subregion, unlocked waypoints, active quest objectives (distance, direction), and your own map markers.
+    After the first call it shows only what changed (new waypoints, objectives added/done, region); full=true for everything."""
     t0 = time.monotonic()
-    res = game.rpc("state.map")
-    body = render.compact(res, H)
+    res, mk = delta.multi_rpc(game, [("state.map", {}), ("nav.markers", {})])
+    if res is None:
+        res = game.rpc("state.map")
+    ms = mk.get("markers") if isinstance(mk, dict) and isinstance(mk.get("markers"), list) else None
+    if ms is not None:
+        _objectives["last"] = ms
+    first = not DELTA.has("waypoints")
+    snap = delta.snapshot(H, map_=res, markers=ms)
+    region = " · ".join(str(x) for x in (res.get("subregion"), res.get("region")) if x) if isinstance(res, dict) else ""
+    snap["map_region"] = region
+    moved_area = DELTA.last.get("map_region") not in (None, region)
+    lines = DELTA.observe(snap)
     markers = _load_markers()
-    if markers:
-        body += "\nMARKERS\n" + "\n".join(f"  {m['id']} {m['label']} @{render.pos(m.get('pos'))} ({m.get('region', '')})" for m in markers)
-    return _finish("get_map", {}, body, t0)
+    if full or first or moved_area:
+        body = render.compact(res, H)
+        obj = render.render_objectives(ms or [])
+        if obj:
+            body += "\nOBJECTIVES\n" + "\n".join(obj)
+        if markers:
+            body += "\nMARKERS\n" + "\n".join(f"  {m['id']} {m['label']} @{render.pos(m.get('pos'))} ({m.get('region', '')})" for m in markers)
+    else:
+        body = "\n".join(lines) if lines else f"No map change ({region or '?'}; {len(ms or [])} objectives, {len(markers)} markers). full=true lists them."
+    return _finish("get_map", {"full": full}, body, t0)
 
 
 @mcp.tool()
@@ -364,6 +517,52 @@ def path_preview(target: str = "", x: float | None = None, y: float | None = Non
 
 @mcp.tool()
 @_guard
+def walk_toward(direction: str = "", objective: str = "", target: str = "", max_m: float = 30.0,
+                who: str | None = None, run: bool = True, wait: bool = False) -> str:
+    """Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (returns at once with a job id + ETA unless wait=true). Good for "head west" or "go toward the objective marker" when no door or item is in view."""
+    t0 = time.monotonic()
+    args: dict[str, Any] = {"char": _who(who), "max_m": max_m}
+    if objective:
+        try:  # o2 means the o2 the agent last saw; the order changes as the party moves
+            want = render.find_objective(_objectives["last"], objective)
+        except ValueError:
+            want = None
+        fresh = _objective_markers()
+        m = None
+        if want is not None:
+            m = next((x for x in fresh if isinstance(x, dict) and x.get("label") == want.get("label")
+                      and x.get("quest") == want.get("quest")), None)
+        if m is None:
+            m = render.find_objective(fresh, objective)
+        if not (m.get("here") and m.get("pos")):
+            raise ValueError(f"objective '{render.objective_label(m)}' is not in this area")
+        args["pos"] = m["pos"]
+        what = f"objective {render.objective_label(m)}"
+    elif target:
+        args["target"] = _uuid(target)
+        what = target
+    elif direction:
+        args["dir"] = direction.strip().upper()
+        what = args["dir"]
+    else:
+        raise ValueError("give direction=N|NE|E|SE|S|SW|W|NW, objective=o1, or target=<id>")
+    res = game.rpc("nav.reach_toward", args)
+    if not isinstance(res, dict) or not res.get("reachable") or not res.get("pos"):
+        n = res.get("samples") if isinstance(res, dict) else None
+        return _finish("walk_toward", args, f"FAILED: no walkable ground toward {what} within {render.num(max_m)}m"
+                       + (f" ({n} spots checked)" if n is not None else "")
+                       + ". Try another direction, get_frontier, or a door.", t0)
+    head = f"heading {res.get('dir') or ''} toward {what}: {render.num(res.get('straight_m', 0))}m"
+    if res.get("path_m") is not None:
+        head += f" (path {render.num(res['path_m'])}m)"
+    if res.get("needs_jump"):
+        head += ", needs a jump"
+    body = _act("walk_toward", "act.move_to", {"char": args["char"], "pos": res["pos"], "run": run}, wait=wait)
+    return head + "\n" + body
+
+
+@mcp.tool()
+@_guard
 def get_combat_state() -> str:
     """Turn order (visible combatants), whose turn it is, round, and the active character's remaining action economy."""
     t0 = time.monotonic()
@@ -396,9 +595,10 @@ def get_dialogue() -> str:
 @mcp.tool()
 @_guard
 def get_events() -> str:
-    """Everything that happened since your last tool call (combat log, quest updates, items, rolls)."""
+    """Never blocks: what happened since your last tool call (combat log, quest updates, items, rolls, job_finished, queue_*), plus jobs and queues still running."""
     t0 = time.monotonic()
-    return _finish("get_events", {}, "", t0) or "No new events."
+    body = _running_text()
+    return _finish("get_events", {}, body, t0) or "No new events."
 
 
 @mcp.tool()
@@ -442,8 +642,8 @@ def zoom(x: float, y: float, w: float, h: float) -> Image | str:
 @mcp.tool()
 @_guard
 def move_to(target: str = "", x: float | None = None, y: float | None = None, z: float | None = None,
-            who: str | None = None, run: bool = True) -> str:
-    """Walk to a visible entity (target=id) or a position (x,y,z). Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow)."""
+            who: str | None = None, run: bool = True, wait: bool = False) -> str:
+    """Walk to a visible entity (target=id) or a position (x,y,z). Returns at once with a job id + ETA (wait=true blocks until arrival); keep planning meanwhile. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow)."""
     args: dict[str, Any] = {"char": _who(who), "run": run}
     if target:
         args["target"] = _uuid(target)
@@ -451,21 +651,21 @@ def move_to(target: str = "", x: float | None = None, y: float | None = None, z:
         args["pos"] = [x, y, z]
     else:
         raise ValueError("give target=<id> or x,y,z")
-    return _act("move_to", "act.move_to", args)
+    return _act("move_to", "act.move_to", args, wait=wait)
 
 
 @mcp.tool()
 @_guard
-def interact(target: str, who: str | None = None) -> str:
-    """Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first."""
-    return _act("interact", "act.interact", {"char": _who(who), "target": _uuid(target)})
+def interact(target: str, who: str | None = None, wait: bool = True) -> str:
+    """Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first. wait=false returns at once with a job id."""
+    return _act("interact", "act.interact", {"char": _who(who), "target": _uuid(target)}, wait=wait)
 
 
 @mcp.tool()
 @_guard
-def pick_up(item: str, who: str | None = None) -> str:
-    """Pick up a visible item from the ground."""
-    return _act("pick_up", "act.pickup", {"char": _who(who), "item": _uuid(item)})
+def pick_up(item: str, who: str | None = None, wait: bool = True) -> str:
+    """Pick up a visible item from the ground (walks there first). wait=false returns at once with a job id."""
+    return _act("pick_up", "act.pickup", {"char": _who(who), "item": _uuid(item)}, wait=wait)
 
 
 _inp_client = {"c": None}
@@ -561,16 +761,16 @@ def loot(take: str = "all", who: str | None = None) -> str:
 
 @mcp.tool()
 @_guard
-def talk_to(npc: str, who: str | None = None) -> str:
-    """Walk up to a visible character and start a conversation. Then use get_dialogue / choose_dialogue."""
-    return _act("talk_to", "act.talk", {"char": _who(who), "npc": _uuid(npc)}, wait_s=30)
+def talk_to(npc: str, who: str | None = None, wait: bool = True) -> str:
+    """Walk up to a visible character (follows them if they move) and start a conversation. Then use get_dialogue / choose_dialogue."""
+    return _act("talk_to", "act.talk", {"char": _who(who), "npc": _uuid(npc)}, wait_s=30, wait=wait)
 
 
 @mcp.tool()
 @_guard
-def jump_to(x: float, y: float, z: float, who: str | None = None) -> str:
-    """Jump to a position (costs movement/bonus action in combat)."""
-    return _act("jump_to", "act.cast", {"char": _who(who), "spell": "Projectile_Jump", "pos": [x, y, z]})
+def jump_to(x: float, y: float, z: float, who: str | None = None, wait: bool = True) -> str:
+    """Jump to a position (costs movement/bonus action in combat; distance limited by Strength)."""
+    return _act("jump_to", "act.cast", {"char": _who(who), "spell": "Projectile_Jump", "pos": [x, y, z]}, wait=wait)
 
 
 @mcp.tool()
@@ -650,7 +850,8 @@ def react(use: bool, which: str = "") -> str:
 @mcp.tool()
 @_guard
 def use_ability(ability: str, target: str = "", x: float | None = None, y: float | None = None,
-                z: float | None = None, who: str | None = None, upcast: int = 0, targets: str = "") -> str:
+                z: float | None = None, who: str | None = None, upcast: int = 0, targets: str = "",
+                wait: bool = True) -> str:
     """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: comma list for multi-target spells. Costs and rules are the game's."""
     args: dict[str, Any] = {"char": _who(who), "spell": ability}
     if target:
@@ -661,14 +862,53 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
         args["pos"] = [x, y, z]
     if upcast:
         args["upcast"] = upcast
-    return _act("use_ability", "act.cast", args, wait_s=30)
+    return _act("use_ability", "act.cast", args, wait_s=30, wait=wait)
 
 
 @mcp.tool()
 @_guard
-def end_turn(who: str | None = None) -> str:
-    """End the current character's turn; blocks through enemy turns until a party member can act or combat ends."""
-    return _act("end_turn", "act.end_turn", {"char": _who(who)}, wait_s=90)
+def end_turn(who: str | None = None, wait: bool = True) -> str:
+    """End the current character's turn; blocks through enemy turns until a party member can act or combat ends (wait=false: return right after ending it; then wait_for('my_turn'))."""
+    t0 = time.monotonic()
+    args = {"char": _who(who)}
+    if _session_over():
+        return _finish("end_turn", args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
+    r = game.run_job("act.end_turn", args, wait_s=15)
+    _remember_names(r.result)
+    _batch["last"] = r.status
+    body = _job_text("end_turn", r)
+    if r.status == "done" and wait and not _batch["active"]:
+        body += "\n" + _wait_for_party_turn(80.0)
+    elif r.status == "done" and wait:
+        body += " — " + _wait_for_party_turn(80.0)
+    return _finish("end_turn", args, body, t0)
+
+
+# Screens that need an answer from the agent while others act.
+_PROMPT_SCREENS = ("reaction", "dialogue", "roll", "popup", "game_over")
+
+
+def _wait_for_party_turn(max_s: float) -> str:
+    """After ending a turn: poll until a party member is the active combatant, combat ends,
+    or a prompt (reaction, roll, dialogue, popup) needs an answer."""
+    st = game.try_rpc("state.status") or {}
+    party = {c.get("uuid") for c in st.get("party") or [] if isinstance(c, dict)}
+    deadline = time.monotonic() + max_s
+    while True:
+        cs = game.try_rpc("state.combat") or {}
+        if not cs.get("active"):
+            return "combat is over"
+        cur = cs.get("current")
+        if cur and cur in party:
+            return f"now {H.get(cur)}'s turn"
+        ui = game.try_rpc("ui.state", context="client") or {}
+        if ui.get("screen") in _PROMPT_SCREENS:
+            _batch["last"] = "interrupted"
+            return f"waiting stopped: {ui.get('screen')} on screen\n" + "\n".join(render.render_ui(ui, H))
+        if time.monotonic() > deadline:
+            _batch["last"] = "interrupted"
+            return "other combatants are still acting (use wait or get_combat_state)"
+        time.sleep(0.5)
 
 
 @mcp.tool()
@@ -697,7 +937,9 @@ def manage_inventory(op: str, item: str, who: str | None = None, to: str | None 
     if o == "unequip":
         return _act("manage_inventory", "act.unequip", {"char": _who(who), "item": _uuid(item)})
     if o == "use":
-        return _act("manage_inventory", "act.cast", {"char": _who(who), "item": _uuid(item)})
+        # Osiris Use on a carried item; out of combat only (it would skip the
+        # bonus-action cost: in combat use the item's action from get_actions).
+        return _act("manage_inventory", "act.interact", {"char": _who(who), "target": _uuid(item)})
     if o == "give":
         return _act("manage_inventory", "act.transfer", {"item": _uuid(item), "to": _uuid(to) if to else None})
     if o == "camp":
@@ -863,51 +1105,334 @@ def create_character(plan: str) -> str:
 _BATCHABLE = {
     "move_to", "interact", "pick_up", "loot", "loot_corpse", "talk_to", "jump_to", "set_party", "use_ability",
     "end_turn", "choose_dialogue", "roll_check", "react", "manage_inventory", "wait", "press_key",
-    "place_marker", "camp", "short_rest",
+    "place_marker", "camp", "short_rest", "walk_toward",
 }
 
 
 @mcp.tool()
-def do_actions(actions: str) -> str:
+def do_actions(actions: str, wait: bool = True, ignore: str = "") -> str:
     """Run several actions in order in ONE call: a whole combat turn, a looting sweep, a dialogue chain. Plan from one observation, then execute.
-    actions: JSON list of steps, each {"tool": <name>, ...that tool's arguments}, e.g.
-    [{"tool":"move_to","target":"e12"},{"tool":"use_ability","ability":"Target_MainHandAttack","target":"e12"},{"tool":"use_ability","ability":"Shout_SecondWind"},{"tool":"end_turn"}]
-    Allowed: move_to, interact, pick_up, loot, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
-    Stops at the first step that fails or is interrupted (combat/dialogue started, reaction prompt, target gone) and reports what ran, plus all events."""
+    actions: JSON list of steps, e.g.
+    [{"tool":"move_to","target":"e12"},{"tool":"use_ability","ability":"Target_MainHandAttack","target":"e12","unless":"hp_below:30"},{"tool":"use_ability","ability":"Shout_SecondWind","if":"hp_below:50"},{"tool":"end_turn"}]
+    Allowed: move_to, walk_toward, interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
+    Optional per step: "if"/"unless" with in_combat, in_dialogue, my_turn, hp_below:<pct>, item_present:<id>, target_visible:<id> (a failed condition skips the step).
+    Stops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, a blocked teleport, or a failed step. ignore="hostile,hp" disables some (combat, dialogue, prompt, hostile, hp, teleport).
+    Returns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions)."""
     t0 = time.monotonic()
+    if not wait:
+        return queue_actions(actions, ignore=ignore)
     try:
-        steps = json.loads(actions)
-        if isinstance(steps, dict):
-            steps = steps.get("actions", [steps])
-        assert isinstance(steps, list) and steps
-    except Exception:
-        return "FAILED: actions must be a JSON list of {\"tool\": ..., args...}"
-    if len(steps) > 20:
-        return "FAILED: at most 20 steps per batch"
-    lines = []
-    _batch["active"] = True
+        steps = actq.parse_steps(actions, _BATCHABLE)
+    except actq.StepError as e:
+        return f"FAILED: {e}"
+    ex = _make_executor(None, ignore)
+    ex.watcher.baseline()
+    it = iter(steps)
+    pending: list = []
+
+    def nxt():
+        return pending.pop(0) if pending else next(it, None)
+
+    def peek():
+        if not pending:
+            s_ = next(it, None)
+            if s_ is not None:
+                pending.append(s_)
+        return pending[0] if pending else None
+
+    rep = ex.run(nxt, peek)
+    body = _report_text(rep, len(steps))
+    if rep.stopped:
+        _batch["last"] = "interrupted"
+    changes = delta.changes_text(game, H)
+    if changes:
+        body += "\n" + changes
+    return _finish("do_actions", {"n": len(steps)}, body, t0)
+
+
+@mcp.tool()
+@_guard
+def queue_actions(actions: str, who: str | None = None, replace: bool = False, ignore: str = "") -> str:
+    """Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Same step format, conditions and interrupts as do_actions. On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue."""
+    t0 = time.monotonic()
+    if _session_over():
+        return _finish("queue_actions", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
     try:
-        for i, step in enumerate(steps, 1):
-            step = dict(step)
-            name = step.pop("tool", None)
-            if name not in _BATCHABLE:
-                lines.append(f"{i}. {name}: not allowed in a batch; stopped")
+        steps = actq.parse_steps(actions, _BATCHABLE)
+    except actq.StepError as e:
+        return _finish("queue_actions", {}, f"FAILED: {e}", t0)
+    char = _who(who)
+    _queue_ignore[char] = _parse_ignore(ignore)
+    q = _queues().add(char, steps, replace=replace)
+    with _queues().lock:
+        waiting = len(q.steps)
+    body = f"queued {len(steps)} step(s) for {_label(char)} ({waiting} waiting)"
+    return _finish("queue_actions", {"n": len(steps)}, body, t0)
+
+
+@mcp.tool()
+@_guard
+def cancel_queue(who: str | None = None) -> str:
+    """Stop a character's queue (who) or every queue (who empty): the running step is cancelled and the rest dropped."""
+    t0 = time.monotonic()
+    out = _queues().cancel(_uuid(who) if who else None)
+    if not out:
+        return _finish("cancel_queue", {}, "no queue was running", t0)
+    lines = [f"cancelled {_label(w)}: " + (f"stopped {run}, " if run else "") + f"dropped {n}" for w, n, run in out]
+    return _finish("cancel_queue", {}, "\n".join(lines), t0)
+
+
+_PROMPT_SCREENS_WAIT = ("reaction", "dialogue", "roll", "popup", "game_over")
+
+
+@mcp.tool()
+@_guard
+def wait_for(target: str = "idle", timeout_s: float = 15.0) -> str:
+    """Block only until something happens, then report it plus events and CHANGES. target: a job id (j12) from an async action; 'queue' (all queues done) or 'queue:<who>'; 'idle' (no async job or queue running); 'my_turn' (a party member can act, or combat ended); or event kinds, comma-separated (e.g. 'combat_started,dialogue_started,job_finished'). Also returns early when a reaction/roll/dialogue/popup appears."""
+    t0 = time.monotonic()
+    timeout_s = max(0.1, min(float(timeout_s), 60.0))
+    deadline = t0 + timeout_s
+    tgt = (target or "idle").strip()
+    low = tgt.lower()
+    ui_at = 0.0
+    screen0 = None
+    party = None
+    body = None
+    while body is None:
+        now = time.monotonic()
+        if re.fullmatch(r"j\d+", low):
+            view = game.rpc("job.poll", {"id": int(low[1:])})
+            if view.get("status") != "running":
+                info = _async.pop(low, {})
+                r = JobResult(view["status"], view.get("result"), view.get("error"),
+                              elapsed_ms=view.get("elapsed_ms", 0))
+                _remember_names(r.result)
+                body = _job_text(info.get("tool") or low, r)
+        elif low == "idle":
+            if not _queues().busy() and not _running_jobs():
+                body = "idle: no action running"
+        elif low == "queue" or low.startswith("queue:"):
+            who = _uuid(tgt.split(":", 1)[1]) if ":" in tgt else None
+            if not _queues().busy(who):
+                body = _last_queue_text(who) or "queue: empty"
+        elif low == "my_turn":
+            if party is None:
+                st = game.try_rpc("state.status") or {}
+                party = {c.get("uuid") for c in st.get("party") or [] if isinstance(c, dict)}
+            cs = game.try_rpc("state.combat") or {}
+            if not cs.get("active"):
+                body = "not in combat"
+            elif cs.get("current") in party:
+                body = f"now {H.get(cs['current'])}'s turn"
+        else:
+            kinds = {k.strip() for k in tgt.split(",") if k.strip()}
+            hit = _peek_events(kinds)
+            if hit:
+                body = f"{hit.get('kind')} happened"
+        if body is not None:
+            break
+        if now - ui_at >= 0.5:
+            ui_at = now
+            ui = game.try_rpc("ui.state", context="client") or {}
+            scr = ui.get("screen") if isinstance(ui, dict) else None
+            if screen0 is None:
+                screen0 = scr
+            elif scr in _PROMPT_SCREENS_WAIT and scr != screen0:
+                body = f"stopped waiting: {scr} on screen\n" + "\n".join(render.render_ui(ui, H))
                 break
-            fn = globals()[name]
-            _batch["last"] = "done"
-            try:
-                text = fn(**step)
-            except TypeError as e:
-                lines.append(f"{i}. {name}: bad arguments ({e}); stopped")
-                break
-            lines.append(f"{i}. {text}")
-            if _batch["last"] != "done":
-                if i < len(steps):
-                    lines.append(f"stopped after step {i} ({_batch['last']}); {len(steps) - i} step(s) not run")
-                break
+        if now > deadline:
+            body = f"still waiting for {tgt} after {render.num(round(timeout_s, 1))}s" + (
+                "\n" + _running_text() if _running_text() else "")
+            break
+        time.sleep(0.1)
+    changes = delta.changes_text(game, H)
+    if changes:
+        body += "\n" + changes
+    return _finish("wait_for", {"target": tgt}, body, t0)
+
+
+# ---- queue plumbing ----
+
+_watch_game: Game | None = None  # own LuaDebug connection for interrupt checks (never blocks the agent's calls)
+_queue_mgr: actq.QueueManager | None = None
+_queue_ignore: dict[str, set] = {}
+
+
+def _watch_conn() -> Game:
+    global _watch_game
+    if _watch_game is None:
+        _watch_game = Game(port=game.port)
+    return _watch_game
+
+
+def _parse_ignore(ignore: str) -> set:
+    out = {x.strip().lower() for x in (ignore or "").split(",") if x.strip()}
+    bad = out - set(actq.INTERRUPT_KINDS)
+    if bad:
+        raise ValueError(f"unknown interrupt kind(s) {', '.join(sorted(bad))}; use {', '.join(actq.INTERRUPT_KINDS)}")
+    return out
+
+
+def _accepts(fn, name: str) -> bool:
+    import inspect
+    try:
+        return name in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _call_step(ex: actq.Executor, step: actq.Step, who: str | None) -> tuple[str, str, Any]:
+    """Run one step's tool in this thread, batch-quiet, with ex receiving the job id (for cancelling)."""
+    fn = globals()[step.tool]
+    args = dict(step.args)
+    if who and not args.get("who") and _accepts(fn, "who"):
+        args["who"] = H.get(who)
+    saved = dict(_batch.d)
+    _batch["active"], _batch["exec"], _batch["last"], _batch["result"] = True, ex, "done", None
+    try:
+        text = fn(**args)
+        return text, _batch["last"], _batch["result"]
     finally:
-        _batch["active"] = False
-    return _finish("do_actions", {"n": len(steps)}, "\n".join(lines), t0)
+        _batch.d.update(saved)
+
+
+def _predicate(name: str, arg: str, who: str | None, _w: dict) -> bool:
+    w = _watch_conn().try_rpc("act.watch") or {}
+    if name == "in_combat":
+        return bool(w.get("combat"))
+    if name == "in_dialogue":
+        return bool(w.get("dialogue"))
+    if name == "hp_below":
+        rows = [r for r in w.get("party") or [] if who is None or r.get("uuid") == who] or (w.get("party") or [])
+        lim = float(arg)
+        return any(actq._pct(r) is not None and actq._pct(r) < lim for r in rows)
+    if name == "my_turn":
+        cs = _watch_conn().try_rpc("state.combat") or {}
+        return bool(cs.get("active")) and cs.get("current") == (who or _active())
+    if name in ("item_present", "target_visible"):
+        try:
+            u = _uuid(arg)
+        except ValueError:
+            return False
+        ts = _watch_conn().try_rpc("act.target_state", {"uuid": u}) or {}
+        if name == "item_present":
+            return bool(ts.get("visible") or ts.get("held"))
+        return bool(ts.get("visible")) and not ts.get("held")
+    return False
+
+
+def _make_executor(who: str | None, ignore: str | set = "") -> actq.Executor:
+    ign = ignore if isinstance(ignore, set) else _parse_ignore(ignore)
+    return _new_executor(actq.Watcher(_watch_conn(), ignore=ign), _watch_conn(), who)
+
+
+def _new_executor(watcher: actq.Watcher, wg: Game, who: str | None) -> actq.Executor:
+    holder: dict = {}
+    ex = actq.Executor(lambda step, w: _call_step(holder["ex"], step, w), watcher,
+                       lambda ctx, jid: wg.rpc("job.cancel", {"id": jid}, ctx), who=who, predicate=_predicate)
+    holder["ex"] = ex
+    return ex
+
+
+def _label(text: str) -> str:
+    """uuids in a reason -> "e14 Goblin" (handles plus the last known name)."""
+    def sub(m: re.Match) -> str:
+        h = H.get(m.group(0))
+        n = H.names.get(h)
+        return f"{h} {n}" if n else h
+    return render.UUID_RE.sub(sub, text)
+
+
+def _report_text(rep: actq.Report, n: int) -> str:
+    lines = list(rep.lines)
+    if rep.stopped:
+        tail = f"STOPPED: {_label(rep.stopped)}"
+        if rep.left:
+            tail += f"; not run: {', '.join(rep.left)}"
+        lines.append(tail)
+    after = rep.last_result.get("after") if isinstance(rep.last_result, dict) else None
+    if isinstance(after, dict):
+        keep = {k: after[k] for k in ("hp", "max_hp", "action", "bonus", "movement", "my_turn") if k in after}
+        if keep:
+            lines.append("NOW " + render.compact(keep, H))
+    return "\n".join(lines)
+
+
+def _on_queue_report(who: str, rep: actq.Report) -> None:
+    data: dict[str, Any] = {"who": who, "done": rep.done}
+    if rep.skipped:
+        data["skipped"] = rep.skipped
+    if rep.stopped:
+        data["why"] = _label(rep.stopped)
+        if rep.left:
+            data["left"] = rep.left
+        if rep.lines:
+            data["last"] = H.scrub(rep.lines[-1])[:160]
+    kind = "queue_interrupted" if rep.stopped else "queue_done"
+    try:
+        _watch_conn().rpc("act.note", {"kind": kind, "data": data})
+    except GameError:
+        pass
+
+
+def _queues() -> actq.QueueManager:
+    global _queue_mgr
+    if _queue_mgr is None:
+        _queue_mgr = actq.QueueManager(lambda who: _new_executor(
+            actq.Watcher(_watch_conn(), ignore=_queue_ignore.get(who, set())), _watch_conn(), who), _on_queue_report)
+    return _queue_mgr
+
+
+def _last_queue_text(who: str | None) -> str:
+    qs = [q for w, q in _queues().queues.items() if (who is None or w == who) and q.last_report is not None]
+    if not qs:
+        return ""
+    q = max(qs, key=lambda x: x.finished_at)
+    rep = q.last_report
+    head = f"queue {_label(q.who)}: " + (f"STOPPED: {_label(rep.stopped)}" if rep.stopped else f"done ({rep.done} steps)")
+    if rep.stopped and rep.left:
+        head += f"; not run: {', '.join(rep.left)}"
+    return head + ("\n" + "\n".join(rep.lines[-4:]) if rep.lines else "")
+
+
+def _running_jobs() -> list[str]:
+    """Async jobs still running (polls each; forgets settled ones)."""
+    out = []
+    for h, info in list(_async.items()):
+        view = game.try_rpc("job.poll", {"id": info["id"]}, context=info["ctx"])
+        if not isinstance(view, dict) or view.get("status") != "running":
+            _async.pop(h, None)
+            continue
+        out.append(h)
+    return out
+
+
+def _running_text() -> str:
+    parts = []
+    for h in _running_jobs():
+        info = _async[h]
+        s_ = f"{h} {info['tool']}"
+        if info.get("eta") is not None:
+            left = float(info["eta"]) - (time.monotonic() - info["t0"])
+            s_ += f" ~{render.num(round(max(0.0, left), 1))}s left"
+        parts.append(s_)
+    for q in _queues().status():
+        s_ = f"queue {_label(q['who'])}: " + (q["running"] or "starting")
+        if q["waiting"]:
+            s_ += f" then {', '.join(q['waiting'][:4])}" + (f" +{len(q['waiting']) - 4}" if len(q["waiting"]) > 4 else "")
+        parts.append(s_)
+    return ("RUNNING " + " | ".join(parts)) if parts else ""
+
+
+def _peek_events(kinds: set) -> dict | None:
+    """First event of one of `kinds` since the agent's last tool call, without consuming it
+    (the result's EVENTS section still lists everything)."""
+    for ctx in ("server", "client"):
+        res = game.try_rpc("events.since", {"seq": game.event_seq[ctx], "limit": 300}, context=ctx)
+        for ev in (res.get("events") or []) if isinstance(res, dict) else []:
+            if ev.get("kind") in kinds:
+                return ev
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -991,6 +1516,7 @@ def load_game(save: str = "latest") -> str:
         save = next(d.name for d in mine if d.name == save or d.name.endswith("__" + save))
     r = game.run_job("ui.menu", {"action": "load", "name": save}, context="client", wait_s=120)
     game.event_seq = {"server": 0, "client": 0}
+    DELTA.reset()  # a loaded save is a new world: the next look is a full one
     return _finish("load_game", {"save": save}, _job_text("load_game", r), t0, events=False)
 
 
@@ -1084,31 +1610,12 @@ def _session_log() -> Path | None:
 
 
 def _movie_skipper(stop: "threading.Event") -> None:
-    """Cutscenes are always skipped (user requirement). The mod's AutoSkip handles dialogue lines in-game;
-    Bink movies only react to real input, so this watcher sends ESCAPE through the input shim when the
-    UI reports a movie for two consecutive polls. Uses its own connection; never touches other screens."""
-    watcher = Game(port=game.port)
-    seen = 0
-    while not stop.wait(2.0):
-        try:
-            st = watcher.rpc("ui.state", context="client", timeout=3.0)
-        except Exception:
-            seen = 0
-            continue
-        if st.get("screen") == "movie":
-            seen += 1
-            if seen >= 2:
-                inp = _inp()
-                if inp is not None:
-                    try:
-                        inp.key("ESCAPE")
-                        _log("autoskip", {}, "movie skipped (ESCAPE via shim)", 0)
-                    except Exception:
-                        pass
-                seen = 0
-                stop.wait(1.0)
-        else:
-            seen = 0
+    """Cutscenes are always skipped (user requirement). The mod's AutoSkip handles dialogue lines in-game
+    and asks for a shim ESCAPE when a Bink movie ignores the engine's; skipper.py polls that request
+    (autoskip.status, ~150 ms) on its own connection, with the old ui.state poll as a fallback."""
+    from .skipper import MovieSkipper
+
+    MovieSkipper(Game(port=game.port), _inp, lambda msg: _log("autoskip", {}, msg, 0)).run(stop)
 
 
 def main() -> None:
@@ -1117,6 +1624,10 @@ def main() -> None:
     stop = threading.Event()
     if os.environ.get("BG3AI_MOVIE_SKIP", "1") != "0":
         threading.Thread(target=_movie_skipper, args=(stop,), name="movie-skipper", daemon=True).start()
+    sample_s = float(os.environ.get("BG3AI_METRICS_SAMPLE_S", "1.0") or 0)
+    if sample_s > 0:  # busy/idle samples for the latency metrics, on their own connection
+        threading.Thread(target=metrics.sampler_loop, args=(METRICS, Game(port=game.port), stop, sample_s),
+                         name="activity-sampler", daemon=True).start()
     try:
         mcp.run("stdio")
     finally:

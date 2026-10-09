@@ -103,6 +103,27 @@ Context: **S** = server, **C** = client. `uuid` = entity GUID string. `pos` = `[
 `spotted{uuid}` (a hidden thing revealed to the party), `cast{caster,spell,target?}` for visible
 casters, and `moved_done{uuid,move_id}`.
 
+### Navigation (`Server/Navigation.lua`; owner: **vis**)
+| op | ctx | args | result (sketch) |
+|---|---|---|---|
+| `nav.path` | S | `{char?, pos \| target}` | `{reachable, length_m, nodes, needs_jump?, within_movement?, movement_left, approach_pos?}` or `{reachable:false, straight_m, error_cause}`; points > 80 m → `{estimate:true, straight_m}` |
+| `nav.reach_toward` | S | `{char?, dir:N\|NE\|…\|NW \| pos \| target, max_m=30, step=2}` | Farthest walkable point that way with a direct path (path ≤ max(1.5×straight, straight+2 m)): `{reachable, pos, path_m, straight_m, dir, needs_jump?, samples, ms}`. Target must be visible |
+| `nav.markers` | S | – | Active quest objective markers (what the map shows): `{markers:[{label, quest, objective, kind, level?, here?, pos?, dist?, dir?}], error?, ms}`; `here` = on the current level with a position; sorted here-first, nearest-first. Data: generated `Server/Data/JournalMarkers.lua` |
+| `nav.explored` | S | `{last=10}` | Party breadcrumbs: `{level, cells, cell_m, area_m2, bbox, subregion, recent:[{pos, subregion?, near?, near_m?}]}` |
+| `nav.frontier` | S | `{radius=30, limit=25}` | Perceived leads `{leads:[{kind, uuid, name, dist, dir, pos, unvisited?, locked?, relation?, waypoint?}], more?, ms}` |
+| `nav.set_subregion` | S | `{name}` | Tells breadcrumbs the minimap subregion (the bridge sends it from `ui.state`) |
+
+Directions are 8-point compass from the active character, assuming +X = east, +Z = north (unverified).
+The bridge renders markers as `OBJECTIVE o1 <label> 16m W [quest]` (get_status: this area, max 3;
+get_map: all) and exposes `walk_toward(direction | objective | target)` = `nav.reach_toward` → `act.move_to{pos}`.
+
+### Dev (never exposed as agent tools)
+| op | ctx | args | result |
+|---|---|---|---|
+| `dev.fairness_probe` | S | `{radius=30}` | Per-rule counts only: characters `{shown, off_stage_or_script_hidden, invisible, sneaking, not_perceived}`, items `{shown, hidden_or_invisible, carried, undiscovered_trap, secret_door, scenery, not_perceived}` |
+| `dev.perception_probe` | S | `{radius=30, reset?}` | Large-object (door/ladder/≥2 m tall or ≥1 m radius) perception: `{counts:{large, by_sight, by_ray, not_perceived, filtered, ray_shown_traps, ray_shown_secret_doors}, ray_only:[{uuid,name,kind,dist,height,radius}], stats, calibrated, ray_broken}`. `ray_shown_*` must be 0. `reset` re-enables a ray rule disabled by an error |
+| `state.timings` | S | – | Per-op latency in ms |
+
 ### Actions (`Server/Guard.lua`, `Server/Actions.lua`; owner: worker **act**)
 All take `{char: uuid, ...}` and return `{job}`. A job finishes `done` (with a short result), `failed`
 (with the reason a player would see), `interrupted` (with what happened, e.g. combat started or dialogue
@@ -115,6 +136,36 @@ Hide, Throw, consumables) · `act.end_turn{char}` · `act.equip{char,item}` / `a
 `act.sneak{char, on}` · `act.turn_based{on}` · `act.go_to_camp{}`.
 `Guard.lua` enforces visibility, legality, combat gating and the cheat blocklist
 (`research/03-actions.md` §7).
+
+**Reply shape.** Every `act.*` call returns `{job, eta_s?, route_m?}` at once. When the job already
+settled during the call (a refusal, or a `move_to` that is already there) the reply also carries
+`{status, result, error}`, so the bridge doesn't need a `job.poll`. `eta_s` is a rough walk estimate (run 4 m/s).
+`notify:true` in any `act.*` call makes the job push `job_finished {job:"j12", op, status, error?, dist?, pos?}`
+when it ends. The bridge sets it for async (`wait=false`) actions, so any later tool result shows the end.
+
+**Movement.** Entity targets are walked to a verified reachable point next to them (`G.approach_point`: rings
+of 1.0/1.5/2.2 m, each proven by `BG3AI.Nav`). It never uses `CharacterMoveTo`. Approaches re-plan when the
+target moves more than 2 m or is out of reach on arrival, up to 4 times. Jump distance is capped
+(`G.jump_max`: Strength/2 m, ×3 Enhance Leap; UNVERIFIED formula).
+
+| op | ctx | args | result |
+|---|---|---|---|
+| `act.watch` | S | `{radius=30}` | One cheap read for the bridge's action queue: `{party:[{uuid,pos,hp,max_hp,downed?}], combat, dialogue, seen:[{uuid,name,hostile?,dead?}]}`. `seen` is visibility-filtered, as in `state.nearby` |
+| `act.note` | S | `{kind:"queue_*", data}` | Pushes the bridge's queue reports into the event stream. Only `queue_*` kinds are accepted |
+| `act.target_state` | S | `{uuid}` | `{visible, held?, locked?, opened?, trap_armed?, dead?}`; `held` = carried by the party |
+
+**Bridge-side scheduling (`bridge/src/bg3ai/actq.py`, no mod op).**
+- **Async tools.** `move_to` and `walk_toward` are async by default; other actions take `wait=false`.
+- **`wait_for(target, timeout_s)`.** `target` is a job id, `queue[:who]`, `idle`, `my_turn`, or event kinds.
+- **`queue_actions`.** A per-character FIFO, run by a worker thread through the same tools, so the guard
+  checks every step.
+- **`do_actions`.** Steps take optional `if`/`unless` conditions.
+- **Interrupts and events.** The default interrupts are combat start, conversation start, a reaction/roll/popup
+  on screen, a new hostile in `act.watch`, HP below 35%, `teleport_blocked`, and any failed step. They cancel
+  the running job (`job.cancel`) and drop the rest, and are reported as `queue_interrupted {who, why, done,
+  left, last}` or `queue_done {who, done, skipped?}`.
+- **Connection.** Interrupt checks use their own LuaDebug connection: `act.watch` + `events.since` every
+  0.3 s, and `ui.state` every 1 s.
 
 ### UI (`Client/UI.lua`, `Client/UIState.lua`, `Client/UIActions.lua`; owner: worker **io**)
 Details and live-test status are in `research/impl-io.md`. The helper API for other client modules is documented at the top of `Client/UI.lua`.

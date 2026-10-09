@@ -21,7 +21,7 @@ The research behind every decision is in `research/` (01–06; this document is 
 
 ```
 ┌──────────────── Claude Code session (play/, ~1 h) ───────────────────────┐
-│ CLAUDE.md rules · skills (combat, dialogue, exploration, ...) · hooks     │
+│ CLAUDE.md rules · playbooks (knowledge/playbooks, read on demand) · hooks│
 │ memory/ (git)  ← Read/Edit/Write only here; no Bash, no web               │
 └───────────────┬──────────────────────────────────────────────────────────┘
                 │ MCP (stdio)
@@ -68,7 +68,8 @@ only deltas after actions.
 
 ### 2. Playthrough memory (Markdown, multi-session)
 `memory-template/`, `tools/memory/` (`new_playthrough.py`, `session.py`, `lint.py`, `snapshots.py`), and
-the skills `session-start`, `session-wrapup` and `compaction` in `play/.claude/skills/`. A SessionStart hook
+the playbooks `session-start`, `session-wrapup` and `compaction` in `play/knowledge/playbooks/` (read-only
+for the agent; it runs with `--disable-slash-commands`, so it has no skills). A SessionStart hook
 injects PLAYTHROUGH.md and HANDOFF.md. A clock in every tool result forces wrap-up at T-10 min. The Stop
 hook lints and commits.
 
@@ -103,6 +104,6 @@ agent's tool calls and its notes.
 | `mod/Mods/BG3AI` | the Lua mod (loose folder, loaded via `BG3LE_MOD_PATH`; `tools/pak.py create` packs it) |
 | `native/bg3sdl` | SDL input shim |
 | `bridge/` | Python: `luadebug.py` (TCP client), `game.py` (RPC), `render.py`, `server.py` (MCP), `screen.py`, `input.py`, `wiki.py` |
-| `play/` | where the playing agent runs: CLAUDE.md, skills, hooks, `.mcp.json`, `knowledge/`, `memory -> ../playthroughs/<name>/memory` |
+| `play/` | where the playing agent runs: CLAUDE.md, hooks, `.mcp.json`, `knowledge/` (incl. `playbooks/`), `memory -> ../playthroughs/<name>/memory` |
 | `memory-template/`, `tools/memory/` | memory layout and tooling |
 | `runner/` | launcher, session runner, dashboard |

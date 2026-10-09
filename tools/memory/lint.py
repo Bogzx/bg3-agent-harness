@@ -268,7 +268,7 @@ def check_misc(mem: Path, r: Report, current: int | None) -> None:
                                   f"no note references")
     if current is not None and M.compaction_due(mem, current):
         r.warn("compaction", f"compaction due: sessions after S{M.last_compacted_session(mem):03d} are not "
-                             f"in a chapter yet (run the compaction skill)")
+                             f"in a chapter yet (run the compaction playbook)")
 
 
 # ---------------------------------------------------------------- driver

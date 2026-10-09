@@ -173,4 +173,4 @@ ends, or they die. If nobody makes it back, the game is over. Never use the subm
 - Game Over screen: load the latest save. If it was taken mid-disaster, load the previous hard save.
 - A quest won't advance: check the journal text, then `wiki_page("<quest name>")`. Long resting
   sometimes advances it (unless a deadline above applies).
-- No way forward found after three different tries: run the `stuck` skill.
+- No way forward found after three different tries: run the `stuck` playbook (`knowledge/playbooks/stuck.md`).

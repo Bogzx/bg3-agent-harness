@@ -205,6 +205,34 @@ class Misc(unittest.TestCase):
         self.assertIn("--verbose", cmd)
         self.assertEqual(cmd[cmd.index("--model") + 1], "opus")
         self.assertIn("--resume", r.claude_cmd("fix", "1234", resume=True))
+        self.assertNotIn("--effort", cmd)  # Claude Code's default unless asked
+        for flag in P.CLAUDE_FLAGS:
+            self.assertIn(flag, cmd)
+
+    def test_model_and_effort(self):
+        import tempfile
+        from types import SimpleNamespace
+        r = P.Runner.__new__(P.Runner)
+        r.opt = P.Options("pt", None, 60, "opus", effort="medium", fix_model="sonnet", fallback_model="sonnet")
+        with tempfile.TemporaryDirectory() as d:
+            r.state = SimpleNamespace(dir=Path(d))
+            cmd = r.claude_cmd("go", "1", resume=False)
+            self.assertEqual(cmd[cmd.index("--effort") + 1], "medium")
+            self.assertEqual(cmd[cmd.index("--fallback-model") + 1], "sonnet")
+            fix = r.claude_cmd("fix", "1", resume=True, tag="-fix")
+            self.assertEqual((fix[fix.index("--model") + 1], fix[fix.index("--effort") + 1]), ("sonnet", "low"))
+            # session-config.json overrides the CLI for play sessions, re-read every time; bad values ignored
+            (Path(d) / "session-config.json").write_text('{"model": "fable", "effort": "high"}')
+            self.assertEqual(r.model_for(), ("fable", "high"))
+            (Path(d) / "session-config.json").write_text('{"effort": "turbo", "model": 3}')
+            self.assertEqual(r.model_for(), ("opus", "medium"))
+            (Path(d) / "session-config.json").write_text("not json")
+            self.assertEqual(r.model_for(), ("opus", "medium"))
+            self.assertEqual(r.model_for("-fix"), ("sonnet", "low"))
+
+    def test_cli_effort(self):
+        with self.assertRaises(SystemExit):
+            P.main(["run", "--playthrough", "x", "--effort", "turbo"])
 
 
 class KillGame(unittest.TestCase):
@@ -316,6 +344,105 @@ class ClaudeSaves(unittest.TestCase):
         best = P.pick_save(saves, "S002-end", "Claude", set(), "")
         self.assertEqual(best.folder, "Claude-12__S002-end")
         self.assertEqual(saves[0].owner, "Claude")
+
+
+
+
+class Latency(unittest.TestCase):
+    """Runner metrics: stream timing from a fake stream-json transcript + the end-of-session summary."""
+
+    def test_stream_timing_and_summary(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            base = d / "S001"
+            timing = P.latency.StreamTiming(Path(f"{base}.turns.jsonl"))
+            t0 = 1_760_000_000.0
+            events = [
+                (1.0, {"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "id": "a", "name": "mcp__bg3__move_to", "input": {"target": "e1"}}]}}),
+                (4.0, {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "a", "content": "done"}]}}),
+                (5.5, {"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "id": "b", "name": "mcp__bg3__interact", "input": {"target": "e2"}}]}}),
+                (7.0, {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "b", "content": "done"}]}}),
+            ]
+            for t, ev in events:
+                timing.on_event(ev, t0 + t)
+            Path(f"{base}.metrics.jsonl").write_text(json.dumps(
+                {"type": "tool", "tool": "get_status", "t0": t0, "t1": t0 + 0.04, "ms": 40, "rpc_ms": 30, "rpc_n": 1}) + "\n")
+
+            class FakeRunner:
+                state = type("S", (), {"dir": d})()
+
+            s = P.Runner.write_latency(FakeRunner(), "S001", base, t0, t0 + 60)
+            self.assertEqual(s["think_s"]["median"], 1.5)
+            self.assertEqual(s["source"], "stream")       # no action records from the bridge: stream fallback
+            self.assertEqual(s["idle_s"]["all"]["median"], 1.5)
+            self.assertTrue(s["targets"]["median_idle_explore_s"]["pass"])
+            self.assertTrue(s["targets"]["bridge_rt_median_ms"]["pass"])
+            self.assertTrue(Path(f"{base}.latency.json").exists())
+            hist = (d / "latency_history.jsonl").read_text().splitlines()
+            self.assertEqual(json.loads(hist[0])["session"], "S001")
+
+    def test_metrics_path_in_env(self):
+        src = Path(P.__file__).read_text()
+        self.assertIn('env["BG3AI_METRICS_PATH"] = f"{base}.metrics.jsonl"', src)
+
+class Progress(unittest.TestCase):
+    """Story progress: the session poller writes Sxxx.progress.jsonl, the end writes the summary + history."""
+
+    def test_poller_and_summary(self):
+        import json
+        import tempfile
+        import threading
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            base = d / "S004"
+            world = {"status": {"region": "Nautiloid", "party": [{"name": "Claude", "level": 1}]},
+                     "journal": [{"title": "Escape", "steps": ["a"]}], "map": {"waypoints": []},
+                     "markers": {"markers": []}, "ui": {"screen": "game", "region": "Hold"}}
+            polls = []
+            stop = threading.Event()
+
+            def fake_read(_eval):
+                polls.append(1)
+                if len(polls) == 2:
+                    world["journal"][0]["steps"].append("b")
+                    world["status"]["region"] = "Wilderness"
+                if len(polls) == 3:
+                    raise OSError("loading screen")
+                if len(polls) >= 4:
+                    stop.set()
+                return json.loads(json.dumps(world))
+
+            class FakeRunner:
+                state = type("S", (), {"dir": d})()
+
+            orig_read, orig_poll = P.story.read_game, P.story.POLL_S
+            P.story.read_game, P.story.POLL_S = fake_read, 0.001
+            try:
+                log = []
+                human = type("H", (), {"write": lambda self, x: log.append(x)})()
+                P.Runner.progress_loop(FakeRunner(), "S004", base, 0.0, stop, human)
+            finally:
+                P.story.read_game, P.story.POLL_S = orig_read, orig_poll
+            self.assertTrue(any("+15 region: Wilderness" in x for x in log), log)
+            self.assertTrue(any("+2 quest_step: Escape: b" in x for x in log), log)
+            s = P.Runner.write_progress(FakeRunner(), "S004", base, 0.0, 1800.0)
+            self.assertEqual(s["points"], 15 + 2 + 3)  # region, quest_step, area (Hold in a new region)
+            self.assertEqual(s["per_hour"], 40.0)
+            self.assertEqual(P.story_points(Path(f"{base}.progress.json")), 20)
+            row = json.loads((d / "progress_history.jsonl").read_text())
+            self.assertEqual(row["session"], "S004")
+            self.assertTrue((d / "progress_state.json").exists())
+
+    def test_wired_into_run_claude(self):
+        src = Path(P.__file__).read_text()
+        self.assertIn('progress=f"{base}.progress.jsonl"', src)
+        self.assertIn('self.write_progress(f"{sid}{tag}", base, start, end)', src)
 
 
 if __name__ == "__main__":
