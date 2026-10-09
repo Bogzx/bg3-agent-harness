@@ -74,6 +74,7 @@ Osi = setmetatable({
     UseSpell = record("UseSpell"),
     MakePlayerActive = record("MakePlayerActive"),
     UseSpellAtPosition = function(...)
+        calls[#calls + 1] = { "UseSpellAtPosition?", n = select("#", ...) }
         if select("#", ...) ~= usp_arity then
             error("Incorrect number of IN arguments for 'UseSpellAtPosition'; expected 6, got 5", 0)
         end
@@ -350,15 +351,16 @@ local function spell(name, st)
     table.insert(world[P1].comps.SpellBook.Spells, { Id = { Prototype = name } })
 end
 
-test("cast at position: falls back to the 6-argument UseSpellAtPosition", function()
+test("cast at position: engine's 6-argument UseSpellAtPosition first (no story-form try)", function()
     spell("Target_Thing", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
     local j = job(op("cast", { char = P1, spell = "Target_Thing", pos = { 5, 0, 0 } }))
     eq(j.status, "running", "status " .. tostring(j.error))
     local c = called("UseSpellAtPosition")
     eq(#c, 1, "calls"); eq(c[1].n, 6, "arity"); eq(c[1][7], 1, "WithoutMove")
+    eq(#called("UseSpellAtPosition?"), 1, "attempts")
 end)
 
-test("cast at position: 5-argument form when the game takes it", function()
+test("cast at position: falls back to 5 arguments on a build without the 6th", function()
     usp_arity = 5
     spell("Target_Thing", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
     job(op("cast", { char = P1, spell = "Target_Thing", pos = { 5, 0, 0 } }))
@@ -380,7 +382,13 @@ test("cast: in range uses UseSpell/5 with WithoutMove=1", function()
     eq(#c, 1, "calls"); eq(c[1].n, 5, "arity"); eq(c[1][6], 1, "WithoutMove")
 end)
 
-test("cast: melee reach is edge to edge (weapon 1.5 m + radii)", function()
+test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Stand radii)", function()
+    eq(G.radius(P1), 0.5, "fallback radius")
+    world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.4 }, Hit = { Radius = 1.28 }, Stand = { Radius = 0.7 } } } }
+    eq(G.radius(GOB), 0.7, "Stand radius")
+    world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.25 } } } }
+    eq(G.radius(GOB), 0.25, "Move fallback")
+    world[GOB].comps.Bound = nil
     spell("Target_Slash", { TargetRadius = "MeleeMainWeaponRange", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
     local j = job(op("cast", { char = P1, spell = "Target_Slash", target = GOB })) -- 2.4 m
     eq(j.status, "running", "status " .. tostring(j.error))
@@ -452,8 +460,9 @@ test("talk: arrival out of reach -> re-plan, gone target -> clear reason", funct
     eq(j.status, "failed", "status"); assert(j.error:find("no longer visible"), j.error)
 end)
 
-test("jump: capped at half the Strength score (UNVERIFIED formula)", function()
-    stats.Projectile_Jump = { TargetRadius = "", SpellType = "Projectile", UseCosts = "", Level = 0 }
+test("jump: capped at half the Strength score (UNVERIFIED formula), not TargetRadius", function()
+    -- live stats: TargetRadius 4.5, below a Str 16 jump
+    stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
     world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
     osiv[key("GetAbility", P1, "Strength")] = 16
     local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 8.4, 0, 0 } }))

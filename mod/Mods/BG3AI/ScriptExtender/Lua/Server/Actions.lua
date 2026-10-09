@@ -946,10 +946,11 @@ reg("cast", function(args)
         start = function(job)
             job.hits, job.statuses = {}, {}
             if pos then
-                -- 5 inputs as the story calls it; the bg3le dump also has a
-                -- 6th (WithoutMove).
-                G.osi_forms("UseSpellAtPosition", { char, spell, pos[1], pos[2], pos[3] },
-                    { char, spell, pos[1], pos[2], pos[3], without_move })
+                -- Engine form has 6 inputs (6th = WithoutMove), verified live
+                -- on bg3le; the 5-input form is kept as a fallback for builds
+                -- without it.
+                G.osi_forms("UseSpellAtPosition", { char, spell, pos[1], pos[2], pos[3], without_move },
+                    { char, spell, pos[1], pos[2], pos[3] })
             else
                 G.osi("UseSpell", char, spell, targets[1], targets[2] or NULL_GUID, without_move)
             end
@@ -1022,9 +1023,10 @@ reg("equip", function(args)
                 if G.same(a[1], item) then RPC.finish_job(job, "failed", nil, "cannot equip that") end
             end,
         },
-        -- Equip/2 as written; the bg3le dump has Equip/5 (AddToMainInventoryOnFail,
-        -- ShowNotification, ClearOriginalOwner=0: never launder stolen goods).
-        start = function() G.osi_forms("Equip", { char, item }, { char, item, 1, 1, 0 }) end,
+        -- Engine form is Equip/5 (verified live on bg3le): AddToMainInventoryOnFail,
+        -- ShowNotification, ClearOriginalOwner=0 (never launder stolen goods).
+        -- Equip/2 is a fallback for builds without it.
+        start = function() G.osi_forms("Equip", { char, item, 1, 1, 0 }, { char, item }) end,
         on_tick = function(job)
             if G.b(G.q("IsEquipped", item)) and G.same(holder(item), char) then
                 RPC.finish_job(job, "done", { equipped = true })

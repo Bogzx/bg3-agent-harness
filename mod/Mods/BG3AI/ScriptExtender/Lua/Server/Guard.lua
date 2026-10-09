@@ -411,10 +411,12 @@ function G.osi(name, ...)
     return Osi[name](...)
 end
 
--- Like G.osi, for calls whose argument count differs between game builds
--- (the bg3le Osiris dump has UseSpellAtPosition/6 and Equip/5; our code was
--- written against the shorter forms). Tries each argument list in order and
--- only moves on when bg3le rejects the count.
+-- Like G.osi, for calls whose argument count differs between game builds.
+-- Tries each argument list in order and only moves on when bg3le rejects the
+-- count. Put the engine form first: bg3le routes a count the engine lacks to a
+-- story-declared form of that name if one exists (lua_host.cpp), so a short
+-- form could run story code instead. Live (bg3le, 2026-10-09): engine forms
+-- are UseSpellAtPosition/6, Equip/5, UseSpell/5, Unequip/2.
 function G.osi_forms(name, ...)
     local forms = { ... }
     local last
@@ -679,17 +681,25 @@ function G.spell_range(st, char)
 end
 
 -- Bounding radius of a character (melee reach is edge to edge, positions are
--- centres). Falls back to a medium creature's 0.5 m.
+-- centres). bg3le has no Bound.Bound.Radius; the per-type radii live in
+-- Bound.Bound.AIBounds.{Move,Hit,Stand}. Stand is the footprint the engine's
+-- AiPath uses for bounds (Ai.inl SetSourceEntity). Live (Nautiloid): medium
+-- creatures Stand 0.50 (Move 0.25, Hit 0.20), imps/devourers 0.45-0.49, a hell
+-- boar 0.70. Falls back to Move, then a medium creature's 0.5 m.
 function G.radius(uuid)
     local e = G.entity(uuid)
-    local ok, r = pcall(function() return e.Bound.Bound.Radius end)
+    local ok, r = pcall(function()
+        local b = e.Bound.Bound.AIBounds
+        return (b.Stand and b.Stand.Radius) or (b.Move and b.Move.Radius)
+    end)
     if ok and type(r) == "number" and r > 0 and r < 5 then return r end
     return 0.5
 end
 
 -- Jump distance (Projectile_Jump has no numeric range, so the guard caps it).
--- BG3: about half the Strength score in metres; Enhance Leap triples it, Step
--- of the Wind doubles it. UNVERIFIED formula and status ids: tune here.
+-- Its stats TargetRadius is 4.5 (live, bg3le). BG3: about half the Strength
+-- score in metres; Enhance Leap triples it, Step of the Wind doubles it.
+-- UNVERIFIED formula and status ids: tune here.
 G.JUMP_SPELL = "Projectile_Jump"
 G.JUMP_MIN_M = 4.0
 G.JUMP_SLACK_M = 0.5
@@ -774,7 +784,9 @@ function G.check_cast(char, spell, target, pos, upcast)
                 G.refuse(string.format("too far to jump (%.1f m, this character can jump %.1f m)", d, maxd))
             end
         end
-        if range and p and U.dist(p, pos) > range + 0.5 then
+        -- Projectile_Jump has TargetRadius 4.5 (live), below a strong
+        -- character's jump; jump_max above is its cap instead.
+        if range and p and spell ~= G.JUMP_SPELL and U.dist(p, pos) > range + 0.5 then
             G.refuse(string.format("target point is out of range (%.1f m, range %.1f m): move closer first",
                 U.dist(p, pos), range))
         end
