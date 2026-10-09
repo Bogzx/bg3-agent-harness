@@ -233,10 +233,58 @@ def finish_needs_click(game: Game, inp: InputClient, result: dict | None) -> dic
     return out
 
 
+# Click flows that only work with a tool in the actor's own inventory. Without it the game's click just "uses"
+# the door/chest (tries to open it) and nothing else happens: live S011/S013 spent ~16 lockpick attempts,
+# right-click context menus and screenshots on locked doors while nobody in the party carried Thieves' Tools.
+TOOL_NEEDED: dict[str, tuple[str, str, str]] = {
+    # op: (item name, name fragment to match, what to do instead)
+    "act.lockpick": ("Thieves' Tools", "thieves", "use its key, force it (attack the lock or door; "
+                     "a Sturdy one shrugs off weak hits), cast Knock, find another way in, or buy Thieves' "
+                     "Tools from a trader"),
+    "act.disarm": ("Trap Disarm Toolkit", "trap disarm", "avoid the trap, trigger it from range, "
+                   "or buy a Trap Disarm Toolkit from a trader"),
+}
+
+
+def tool_check(game: Game, op: str, char: str | None) -> str | None:
+    """None when the actor carries the tool op needs (or the op needs none, or the check can't be made);
+    otherwise why not, naming the party members who do carry one. Party inventory is on screen anyway."""
+    need = TOOL_NEEDED.get(op)
+    if not need or not char:
+        return None
+    name, frag, instead = need
+    try:
+        inv = game.rpc("state.inventory", {"expand": True})
+    except Exception:
+        return None
+    if not isinstance(inv, dict):
+        return None
+    owners: list[str] = []
+    for it in inv.get("items") or []:
+        if frag in str(it.get("name") or "").lower() and it.get("owner") and it["owner"] not in owners:
+            owners.append(it["owner"])
+    if char in owners:
+        return None
+    names = {}
+    try:
+        st = game.rpc("state.status", {})
+        names = {m.get("uuid"): m.get("name") for m in (st or {}).get("party") or []}
+    except Exception:
+        pass
+    me = names.get(char) or "this character"
+    if owners:
+        who = [str(names.get(u) or u) for u in owners]
+        return f"{me} carries no {name}; {', '.join(who)} does: run it again with who={who[0]}"
+    return f"nobody in the party carries {name}: {instead}"
+
+
 def run_click_action(game: Game, inp: InputClient | None, op: str, args: dict, wait_s: float = 40.0) -> JobResult:
     """Run a click-on-entity server op end to end (approach, click, verify).
 
     The job's status is downgraded to "failed" if the click could not be completed."""
+    why = tool_check(game, op, args.get("char"))
+    if why:
+        return JobResult("failed", error=why)
     jr = game.run_job(op, args, wait_s=wait_s)
     if jr.status != "done" or not isinstance(jr.result, dict) or not jr.result.get("needs_click"):
         return jr

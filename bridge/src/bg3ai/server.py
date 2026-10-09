@@ -59,9 +59,10 @@ _last_full_frame = None  # PIL image of the latest screenshot (for zoom)
 # plumbing
 # ---------------------------------------------------------------------------
 
-def _log(tool: str, args: dict, result: str, ms: float) -> None:
+def _log(tool: str, args: dict, result: str, ms: float, extra: dict | None = None) -> None:
     # Every tool result passes here (via _finish): one latency record per call (metrics.py).
-    METRICS.tool_done(tool, ms, nested=_batch["active"], ok=not result.startswith(("FAILED", "NOT READY", "REFUSED")))
+    METRICS.tool_done(tool, ms, nested=_batch["active"], ok=not result.startswith(("FAILED", "NOT READY", "REFUSED")),
+                      extra=extra)
     try:
         RUNTIME.mkdir(parents=True, exist_ok=True)
         with open(RUNTIME / "actions.jsonl", "a") as f:
@@ -284,11 +285,12 @@ NEXT_WALK = ("NEXT: queue_actions what to do on arrival, then look/plan/notes wh
              "wait_for only when you are out of work")
 
 
-def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, issued: bool = False) -> str:
+def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, issued: bool = False,
+            extra: dict | None = None) -> str:
     if _batch["active"]:
         # Inside do_actions: no per-step event drain or clock; the batch reports once at the end.
         text = H.scrub(body.rstrip())
-        _log(tool, args, text, (time.monotonic() - t0) * 1000)
+        _log(tool, args, text, (time.monotonic() - t0) * 1000, extra)
         if text.startswith(("FAILED", "NOT READY", "REFUSED")):
             _batch["last"] = "failed"
         return text
@@ -331,7 +333,7 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
     if c:
         out.append(c)
     text = H.scrub("\n".join(x for x in out if x))
-    _log(tool, args, text, (time.monotonic() - t0) * 1000)
+    _log(tool, args, text, (time.monotonic() - t0) * 1000, extra)
     if issued:
         _pace["issued_at"], _pace["calls_since"] = time.monotonic(), 0
     else:
@@ -2057,76 +2059,143 @@ def cancel_queue(who: str | None = None) -> str:
 
 
 _PROMPT_SCREENS_WAIT = ("reaction", "dialogue", "roll", "popup", "game_over")
+# Event kinds the world can raise with none of our jobs or queues running (an ambush, a hazard). Waiting on
+# anything else with nothing running, on the plain game screen and not during enemy turns, cannot end (S013:
+# 3x 4 s on 'roll'/'dialogue_started' after a failed lockpick), so wait_for answers at once.
+WORLD_EVENT_KINDS = {"combat_started", "spotted", "damage", "died", "status_applied", "status_removed"}
+EVENT_GRACE_S = 0.5  # after a job/queue we saw running stops, wait this long for the event it may cause
+
+
+def _wait_combat(view: dict) -> dict:
+    """state.combat, read at most once per wait_for tick; `view` also keeps the party set for the whole wait."""
+    if "combat" not in view:
+        view["combat"] = game.try_rpc("state.combat") or {}
+    return view["combat"]
+
+
+def _wait_acting(view: dict) -> list[str]:
+    """Party members whose turn it is ([] out of combat)."""
+    cs = _wait_combat(view)
+    if not cs.get("active"):
+        return []
+    if "party" not in view:
+        view["party"] = _party_set()
+    return turn.party_acting(cs, view["party"])
+
+
+def _wait_state(low: str, tgt: str, kinds: set, ui: dict, view: dict) -> str | None:
+    """What the current state already answers for a wait target (None: nothing yet). `view`: see _wait_combat."""
+    scr = ui.get("screen") if isinstance(ui, dict) else None
+    if low == "idle" or "idle" in kinds:
+        if not _queues().busy() and not _running_jobs():
+            return "idle: no action running"
+    if low == "queue" or low.startswith("queue:") or "queue" in kinds:
+        who = _uuid(tgt.split(":", 1)[1]) if low.startswith("queue:") else None
+        if not _queues().busy(who):
+            return _last_queue_text(who) or "queue: empty"
+    if low == "my_turn" or "my_turn" in kinds:
+        if not _wait_combat(view).get("active"):
+            return "not in combat"
+        if _wait_acting(view):
+            return _now_turn_text(_wait_acting(view))
+    if not kinds:
+        return None
+    for k in kinds & set(_PROMPT_SCREENS_WAIT):
+        if scr == k:  # the prompt is already up: its screen change is never coming
+            return f"{k} on screen\n" + "\n".join(_render_ui(ui))
+    d = (ui.get("dialogue") or {}) if isinstance(ui, dict) else {}
+    if scr == "dialogue" and kinds & {"dialogue_started", "dialogue_options"} and (
+            "dialogue_started" in kinds or d.get("options")):
+        # Already open (its event went out in an earlier result): live S002 waited the full 5 s here.
+        return "dialogue open\n" + "\n".join(_render_ui(ui))
+    if "dialogue_ended" in kinds and scr == "game":
+        return "no dialogue open"
+    if "combat_ended" in kinds and not _wait_combat(view).get("active"):
+        return "not in combat"
+    if "combat_started" in kinds and _wait_combat(view).get("active"):
+        return "already in combat"
+    return None
+
+
+def _quiet(scr: str | None, view: dict) -> bool:
+    """Nothing of ours runs and the game waits on us: plain game screen, no job, no queue, not an enemy turn."""
+    if scr not in (None, "game") or _queues().busy() or _running_jobs():
+        return False
+    return not _wait_combat(view).get("active") or bool(_wait_acting(view))
 
 
 @mcp.tool()
 @_guard
 def wait_for(target: str = "idle", timeout_s: float = 15.0) -> str:
-    """Block only until something happens, then report it plus events and CHANGES. target: a job id (j12) from an async action; 'queue' (all queues done) or 'queue:<who>'; 'idle' (no async job or queue running); 'my_turn' (a party member can act, or combat ended); or event kinds, comma-separated (e.g. 'combat_started,dialogue_started,job_finished'). Also returns early when a reaction/roll/dialogue/popup appears."""
+    """Block only until something happens, then report it plus events and CHANGES. target: a job id (j12) from an async action; 'queue' (all queues done) or 'queue:<who>'; 'idle' (no async job or queue running); 'my_turn' (a party member can act, or combat ended); or event kinds, comma-separated (e.g. 'combat_started,dialogue_started,job_finished'). Also returns early when a reaction/roll/dialogue/popup appears. Returns at once when the state already answers it or nothing running could cause it."""
     t0 = time.monotonic()
     timeout_s = max(0.1, min(float(timeout_s), 60.0))
     deadline = t0 + timeout_s
     tgt = (target or "idle").strip()
     low = tgt.lower()
+    special = re.fullmatch(r"j\d+", low) or low in ("idle", "queue", "my_turn") or low.startswith("queue:")
+    kinds = set() if special else {k.strip() for k in low.split(",") if k.strip()}
     ui_at = 0.0
     screen0 = None
-    party = None
+    view: dict = {}
+    ui: dict = {}
     body = None
+    noop = None  # why the wait never blocked (metrics 'wait_for_noop'), or None
+    first = True
+    busy_seen = 0.0  # last time a job/queue was seen running during this wait
     while body is None:
         now = time.monotonic()
-        if re.fullmatch(r"j\d+", low):
-            if _batch["active"] and _batch["exec"] is not None and low in _async:
-                _batch["exec"].track(_async[low]["ctx"], _async[low]["id"])  # cancel_queue cancels it too
-            view = game.rpc("job.poll", {"id": int(low[1:])})
-            if view.get("status") != "running":
-                info = _async.pop(low, {})
-                METRICS.bg_end(low)
-                r = JobResult(view["status"], view.get("result"), view.get("error"),
-                              elapsed_ms=view.get("elapsed_ms", 0))
-                _remember_names(r.result)
-                body = _job_text(info.get("tool") or low, r)
-        elif low == "idle":
-            if not _queues().busy() and not _running_jobs():
-                body = "idle: no action running"
-        elif low == "queue" or low.startswith("queue:"):
-            who = _uuid(tgt.split(":", 1)[1]) if ":" in tgt else None
-            if not _queues().busy(who):
-                body = _last_queue_text(who) or "queue: empty"
-        elif low == "my_turn":
-            if party is None:
-                st = game.try_rpc("state.status") or {}
-                party = {c.get("uuid") for c in st.get("party") or [] if isinstance(c, dict)}
-            cs = game.try_rpc("state.combat") or {}
-            if not cs.get("active"):
-                body = "not in combat"
-            elif turn.party_acting(cs, party):
-                body = _now_turn_text(turn.party_acting(cs, party))
-        else:
-            kinds = {k.strip() for k in tgt.split(",") if k.strip()}
-            hit = _peek_events(kinds)
-            if hit:
-                body = f"{hit.get('kind')} happened"
-            elif now - t0 >= IDLE_EVENT_WAIT_S and screen0 in (None, "game") \
-                    and not _queues().busy() and not _running_jobs():
-                # S009: 'dialogue_started' after a finished 3 m walk waited its full 10 s, and the last minutes
-                # went to 45+30+40 s waits with nothing running. Nothing of ours can cause it: say so now.
-                body = (f"nothing is running that would cause {tgt} (no job, no queue, no prompt) after "
-                        f"{render.num(round(now - t0, 1))}s: act instead (talk_to, move_to, queue_actions)")
-        if body is not None:
-            break
         if now - ui_at >= 0.5:
             ui_at = now
             ui = game.try_rpc("ui.state", context="client") or {}
-            scr = ui.get("screen") if isinstance(ui, dict) else None
-            if scr == "dialogue" and "dialogue_started" in low:
-                # Already open (its event went out in an earlier result): live S002 waited the full 5 s here.
-                body = "dialogue open\n" + "\n".join(_render_ui(ui))
-                break
+            ui = ui if isinstance(ui, dict) else {}
+            scr = ui.get("screen")
             if screen0 is None:
                 screen0 = scr
             elif scr in _PROMPT_SCREENS_WAIT and scr != screen0:
                 body = f"stopped waiting: {scr} on screen\n" + "\n".join(_render_ui(ui))
                 break
+        view.pop("combat", None)  # fresh each tick (the party set is kept)
+        scr = ui.get("screen")
+        if re.fullmatch(r"j\d+", low):
+            if _batch["active"] and _batch["exec"] is not None and low in _async:
+                _batch["exec"].track(_async[low]["ctx"], _async[low]["id"])  # cancel_queue cancels it too
+            jv = game.rpc("job.poll", {"id": int(low[1:])})
+            if jv.get("status") != "running":
+                info = _async.pop(low, {})
+                METRICS.bg_end(low)
+                r = JobResult(jv["status"], jv.get("result"), jv.get("error"),
+                              elapsed_ms=jv.get("elapsed_ms", 0))
+                _remember_names(r.result)
+                body = _job_text(info.get("tool") or low, r)
+                noop = "job_done" if first else None
+                break
+        else:
+            body = _wait_state(low, tgt, kinds, ui, view)
+            if body is not None:
+                noop = "already" if first else None
+                break
+        if kinds:
+            hit = _peek_events(kinds)
+            if hit:
+                body = f"{hit.get('kind')} happened"
+                noop = "already" if first else None
+                break
+            quiet = _quiet(scr, view)
+            if not quiet:
+                busy_seen = now
+            elif not kinds & WORLD_EVENT_KINDS and now - busy_seen >= EVENT_GRACE_S:
+                body = (f"nothing is running that would cause {tgt} (no job, no queue, no prompt): "
+                        "act instead (talk_to, move_to, queue_actions)")
+                noop = "cannot_happen" if busy_seen == 0.0 else None
+                break
+            elif quiet and now - max(t0, busy_seen) >= IDLE_EVENT_WAIT_S:
+                # S009: 'dialogue_started' after a finished 3 m walk waited its full 10 s, and the last minutes
+                # went to 45+30+40 s waits with nothing running. Nothing of ours can cause it: say so now.
+                body = (f"nothing is running that would cause {tgt} (no job, no queue, no prompt) after "
+                        f"{render.num(round(now - t0, 1))}s: act instead (talk_to, move_to, queue_actions)")
+                break
+        first = False
         if now > deadline:
             body = f"still waiting for {tgt} after {render.num(round(timeout_s, 1))}s" + (
                 "\n" + _running_text() if _running_text() else "")
@@ -2135,7 +2204,7 @@ def wait_for(target: str = "idle", timeout_s: float = 15.0) -> str:
     changes = delta.changes_text(game, H)
     if changes:
         body += "\n" + changes
-    return _finish("wait_for", {"target": tgt}, body, t0)
+    return _finish("wait_for", {"target": tgt}, body, t0, extra={"noop": noop} if noop else None)
 
 
 # ---- queue plumbing ----

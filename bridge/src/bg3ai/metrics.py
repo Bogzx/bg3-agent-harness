@@ -213,7 +213,7 @@ class Recorder:
         return n
 
     def tool_done(self, tool: str, ms: float, nested: bool = False, ok: bool = True,
-                  t1: float | None = None) -> dict | None:
+                  t1: float | None = None, extra: dict | None = None) -> dict | None:
         if tool in ("autoskip",):
             return None
         t1 = time.time() if t1 is None else t1
@@ -240,6 +240,8 @@ class Recorder:
             rec["bg"] = bg
         if started:
             rec["async"] = True
+        if extra:
+            rec.update(extra)  # e.g. wait_for's noop: why it never blocked
         self.write(rec)
         return rec
 
@@ -712,6 +714,11 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
         "tool_rt_ms": {"all": stats(rt, 1), "read": stats((r["ms"] for r in reads), 1),
                        "read_by_tool": read_by_tool(reads), "wait_for": stats((r["ms"] for r in waits), 1),
                        "rpc": stats((r.get("rpc_ms", 0) / max(r.get("rpc_n", 1), 1) for r in top if r.get("rpc_n")), 1)},
+        # wait_for calls that never blocked (the state already answered it, or nothing could cause it)
+        "wait_for_noop": {"n": sum(1 for r in waits if r.get("noop")), "of": len(waits),
+                          "ms": round(sum(r["ms"] for r in waits if r.get("noop")), 1),
+                          "by": {k: sum(1 for r in waits if r.get("noop") == k)
+                                 for k in sorted({r["noop"] for r in waits if r.get("noop")})}},
         "tool_calls": len(top),
         "actions": n_actions,
         "apm": round(n_actions / minutes, 2),

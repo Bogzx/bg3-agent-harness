@@ -174,5 +174,42 @@ do
     check("plain: no tags", out[1].tags == nil and out[2].tags == nil)
 end
 
+-- 7. S015 Olak: 6 answers on screen, 7 VMs (one never shown, text-less here) -> paired by text.
+do
+    local texts = { "I'm looking for someone named Halsin.", "Stand aside.", "I'm a hired sword.",
+                    "Glossy coat on that animal.", "Your leader summoned me.", "Read the goblin's mind." }
+    local items, vms = {}, {}
+    for k, t in ipairs(texts) do
+        items[k] = (k == 5) and item({ run("[DECEPTION] ", "Tag"), run(t) }, t) or item({}, t)
+        vms[#vms + 1] = (k == 5) and vm({ { Type = "Tag", Text = "Deception" }, { Text = t } }) or vm({ { Text = t } })
+        if k == 3 then vms[#vms + 1] = vm({}) end -- the hidden one
+    end
+    local out, changing = S.dialogueAnswers(widget(items), ad(vms, true))
+    check("paired: not changing", changing == false)
+    check("paired: six options in screen order", #out == 6 and out[6].text == texts[6], #out)
+    check("paired: vm of option 4 skips the hidden one", out[4] and out[4].vm == vms[5])
+    check("paired: tag kept", out[5] and out[5].tags and out[5].tags[1] == "DECEPTION")
+end
+
+-- 8. Same, but the hidden VM has text too (so the all-VMs rule can't be used): still paired by text.
+do
+    local items = { item({}, "Who are you?"), item({}, "Leave.") }
+    local vms = { vm({ { Text = "Who are you?" } }), vm({ { Text = "A secret line." } }), vm({ { Text = "Leave." } }) }
+    local show = ad(vms, true)
+    show._props.ShowAnswers = nil -- not readable: pairing still allowed (only an explicit false blocks it)
+    local out, changing = S.dialogueAnswers(widget(items), show)
+    check("paired hidden text: not changing", changing == false)
+    check("paired hidden text: option 2 is Leave", #out == 2 and out[2].text == "Leave." and out[2].vm == vms[3])
+end
+
+-- 9. Stale rendered list from the previous node (texts match no VM): still changing.
+do
+    local items = { item({}, "Old answer one"), item({}, "Old answer two") }
+    local vms = { vm({ { Text = "New a" } }), vm({}), vm({ { Text = "New b" } }) }
+    local out, changing = S.dialogueAnswers(widget(items), ad(vms, true))
+    check("stale: changing", changing == true)
+    check("stale: no options", #out == 0)
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end

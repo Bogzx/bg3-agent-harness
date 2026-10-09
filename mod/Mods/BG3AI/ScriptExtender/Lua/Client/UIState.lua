@@ -204,6 +204,15 @@ function S.dialogueAnswers(widget, ad)
             local fromVM = S.answersFromVMs(vms, n)
             if fromVM then return fromVM, false end
         end
+        -- S015 (Olak, 6 answers on screen, 7 in Answers): one VM is never shown,
+        -- so the rule above gave nothing for minutes and the agent read the
+        -- options off a screenshot. Pair each on-screen answer text with the
+        -- live VM that has the same text (rendered texts only, never their
+        -- DataContext); used only when every rendered answer finds its own VM.
+        if n > 0 and #items > 0 and props(ad).ShowAnswers ~= false then
+            local paired = S.pairRenderedWithVMs(items, vms, n)
+            if paired then return paired, false end
+        end
         return out, #items > 0 or n > 0, { rendered = #items, vms = n }
     end
     for idx, item in ipairs(items) do
@@ -235,6 +244,44 @@ function S.answersFromVMs(vms, n)
         addTags(a, try(S.answerTags, vm))
         if props(vm).Enabled == false then a.off = true end
         out[idx] = a
+    end
+    return out
+end
+
+local function answerKey(text)
+    local _, body = S.splitTags(text or "")
+    body = clean(body)
+    return body and (body:lower():gsub("[%s%p]+", " "))
+end
+
+-- Rendered answers in display order, each with the live VM whose text matches
+-- (by body, tags ignored). nil unless every rendered answer has text and its
+-- own distinct VM, so a stale list from the previous node never matches.
+function S.pairRenderedWithVMs(items, vms, n)
+    local pool = {}
+    for idx = 1, n do
+        local vm = try(vms.At, vms, idx)
+        local key = vm and answerKey(try(S.answerTextFromVM, vm))
+        if key then pool[#pool + 1] = { vm = vm, key = key } end
+    end
+    local out = {}
+    for _, item in ipairs(items) do
+        local textEl = UI.byName(item, "AnswerText")
+        local text = textEl and answerText(textEl) or UI.allText(item)
+        local key = text and answerKey(text)
+        if not key then return nil end
+        local hit
+        for j, c in ipairs(pool) do
+            if c.key == key then hit = j break end
+        end
+        if not hit then return nil end
+        local vm = table.remove(pool, hit).vm
+        local tags, body = S.splitTags(text)
+        local a = { i = #out + 1, text = body, vm = vm }
+        if #tags > 0 then a.tags = tags end
+        addTags(a, try(S.answerTags, vm))
+        if props(vm).Enabled == false then a.off = true end
+        out[#out + 1] = a
     end
     return out
 end

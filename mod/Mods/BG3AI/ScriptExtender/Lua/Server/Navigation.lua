@@ -504,6 +504,8 @@ RPC.register("nav.frontier", function(args)
                     add("ladder", u, p, extra)
                 elseif kind == "container" and not U.comp(e, "HasOpened") then
                     add("container", u, p, { locked = truthy(osi(Osi.IsLocked, u)) or nil })
+                elseif (kind == "usable" or kind == "item") and N.exitName(V.name(u)) then
+                    add("exit", u, p, { locked = truthy(osi(Osi.IsLocked, u)) or nil })
                 elseif not N.visited(lvl, p, 1) and (kind == "usable" or kind == "item") then
                     add(kind, u, p)
                 end
@@ -527,9 +529,10 @@ RPC.register("nav.frontier", function(args)
             end
         end
     end
-    -- Rank: unvisited first, then distance.
+    -- Rank: unvisited things and named exits first, then distance.
     table.sort(leads, function(a, b)
-        if (a.unvisited or false) ~= (b.unvisited or false) then return a.unvisited == true end
+        local na, nb = a.unvisited == true or a.kind == "exit", b.unvisited == true or b.kind == "exit"
+        if na ~= nb then return na end
         return a.dist < b.dist
     end)
     local out = { level = lvl, leads = {} }
@@ -544,6 +547,11 @@ RPC.register("nav.frontier", function(args)
             out.hazards = {}
             for i = 1, math.min(#hz, 6) do out.hazards[i] = hz[i] end
         end
+    end
+    -- Open directions (args.ways=false skips; ~25-100 ms of path searches).
+    if args.ways ~= false then
+        local ways = N.ways(active, tonumber(args.ways_far) or 20, 8, tonumber(args.ways_budget_ms) or 100)
+        if ways and #ways > 0 then out.ways = ways end
     end
     out.ms = Ext.Utils.MonotonicTime() - t0
     return out
@@ -1859,6 +1867,62 @@ RPC.register("nav.markers", function(args)
     local list, err = N.objectiveMarkers(V.context())
     return { markers = list, error = err, ms = Ext.Utils.MonotonicTime() - t0 }
 end)
+
+-- Open directions from where the character stands: what a player reads off
+-- the screen at a glance ("the road goes on north, cliffs to the west"). Live
+-- S010-S015: screenshots "to find the way out / the exits" were the most common
+-- reason to look at the screen. Per compass direction one path search `far` m
+-- out (open ground: ~3 ms live), and only if that fails one `near` m out
+-- (a blocked search costs ~15 ms). A direction counts as open when the path is
+-- direct (<= DETOUR x straight), the same test walk_toward uses. budget_ms caps
+-- the total; directions left unsearched are omitted (unknown).
+-- -> { {dir, open_m (0 = blocked within near), dy?}, ... }, ms
+function N.ways(charUuid, far, near, budgetMs)
+    far, near, budgetMs = far or 20, near or 8, budgetMs or 100
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from then return nil end
+    local t0 = Ext.Utils.MonotonicTime()
+    local function open(v, dd)
+        local x, z = round(from[1] + v[1] * dd, 1), round(from[3] + v[2] * dd, 1)
+        local fy = floorAt(x, z, from[2])
+        if not fy then return false end
+        local r = N.path(charUuid, { x, round(fy, 1), z })
+        if r and r.reachable and not r.partial and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then
+            return true, fy - from[2]
+        end
+        return false
+    end
+    local out = {}
+    for _, d in ipairs({ "N", "NE", "E", "SE", "S", "SW", "W", "NW" }) do
+        if Ext.Utils.MonotonicTime() - t0 > budgetMs then break end
+        local v = DIR_VEC[d]
+        local ok, dy = open(v, far)
+        local m = far
+        if not ok then
+            m = near
+            ok, dy = open(v, near)
+            if not ok then m = 0 end
+        end
+        local w = { dir = d, open_m = m }
+        if dy and math.abs(dy) >= 2 then w.dy = round(dy, 1) end
+        out[#out + 1] = w
+    end
+    return out, Ext.Utils.MonotonicTime() - t0
+end
+
+-- Ways on and off a level a player spots by name even where they have
+-- already walked (S015: "looking for the hatch to the windmill basement").
+-- Lua patterns matched at a word start ("Gatekeeper" and "Hatchet" are not exits).
+N.EXIT_NAME = { "hatch%f[%A]", "hatches", "trap ?door", "stair", "ladder", "vines", "gates?%f[%A]", "passage",
+    "tunnel", "entrance", "exit%f[%A]", "portal", "lift%f[%A]", "elevator" }
+function N.exitName(name)
+    local l = type(name) == "string" and name:lower() or ""
+    for _, w in ipairs(N.EXIT_NAME) do
+        if l:find("%f[%a]" .. w) then return true end
+    end
+    return false
+end
 
 RPC.register("nav.reach_toward", function(args)
     local ctx = V.context()

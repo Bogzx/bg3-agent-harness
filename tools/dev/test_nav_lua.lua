@@ -480,5 +480,39 @@ test("connectors: an unreachable verdict is kept while we stand still, dropped a
     end)
 end)
 
+-- ---- open directions + named exits (S010-S015: screenshots "to find the way out") ----------
+
+test("ways: open, short and blocked directions", function()
+    -- a wall 12 m east (the 20 m search fails, 8 m works), nothing at all to the west
+    blocked = function(x, z) return x > 12 or x < -1 end
+    local ways = N.ways(P1, 20, 8, 1000)
+    local by = {}
+    for _, w in ipairs(ways) do by[w.dir] = w end
+    eq(#ways, 8, "eight directions")
+    eq(by.N.open_m, 20, "N open"); eq(by.S.open_m, 20, "S open")
+    eq(by.E.open_m, 8, "E stops between 8 and 20 m")
+    eq(by.W.open_m, 0, "W blocked"); eq(by.NW.open_m, 0, "NW blocked")
+end)
+
+test("ways: the budget leaves the rest unknown", function()
+    local real = Ext.Level.FindPath
+    Ext.Level.FindPath = function(path) clock = clock + 30; return real(path) end
+    local ok, err = pcall(function()
+        local ways = N.ways(P1, 20, 8, 50)
+        assert(#ways < 8 and #ways >= 2, "searched until the budget: " .. #ways)
+    end)
+    Ext.Level.FindPath = real
+    assert(ok, err)
+end)
+
+test("exitName: hatches, stairs, gates; not lookalikes", function()
+    for _, n in ipairs({ "Hatch", "Wooden Trapdoor", "Stairs", "Ruined Staircase", "Village Gate", "Secret Passage" }) do
+        eq(N.exitName(n), true, n)
+    end
+    for _, n in ipairs({ "Investigate the Gatekeeper's Note", "Hatchet", "Bottle", nil }) do
+        eq(N.exitName(n), false, tostring(n))
+    end
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

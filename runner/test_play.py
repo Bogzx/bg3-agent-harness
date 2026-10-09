@@ -800,5 +800,113 @@ class CheckAllBetweenSessions(unittest.TestCase):
         self.assertLess(body.index("self.between_sessions_check()"), body.index("build_kickoff("))
 
 
+
+class SelfRestart(unittest.TestCase):
+    """Between sessions the runner execs itself when its own code changed on disk."""
+
+    def test_code_watch(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = Path(d, "a.py"), Path(d, "b.py")
+            a.write_text("x = 1\n")
+            b.write_text("y = 1\n")
+            w = P.CodeWatch([a])
+            self.assertEqual(w.changed([a]), [])
+            self.assertEqual(w.changed([a, b]), [])          # a lazily imported module: its hash when first seen
+            b.write_text("y = 2\n")
+            self.assertEqual(w.changed([a, b]), [b])
+            a.unlink()
+            self.assertEqual(sorted(w.changed([])), sorted([a, b]))
+
+    def test_loaded_code_files(self):
+        repo = Path("/r")
+        mods = {"play": mock.Mock(__file__="/r/runner/play.py"),
+                "metrics": mock.Mock(__file__="/r/bridge/src/bg3ai/metrics.py"),
+                "dep": mock.Mock(__file__="/r/bridge/.venv/lib/site-packages/x.py"),
+                "json": mock.Mock(__file__="/usr/lib/python3/json/__init__.py"),
+                "ext": mock.Mock(__file__="/r/x.so"), "builtin": object()}
+        self.assertEqual(P.loaded_code_files(repo, mods),
+                         [Path("/r/bridge/src/bg3ai/metrics.py"), Path("/r/runner/play.py")])
+        self.assertIn(Path(P.__file__).resolve(), P.loaded_code_files())
+
+    def test_handover(self):
+        with tempfile.TemporaryDirectory() as d:
+            h = Path(d, "handover.json")
+            P.write_handover({"run_end": 5.0}, h)
+            self.assertEqual(P.read_handover(h)["run_end"], 5.0)
+            self.assertFalse(h.exists())                     # consumed
+            self.assertIsNone(P.read_handover(h))
+            P.write_handover({}, h)
+            self.assertIsNone(P.read_handover(h, now=time.time() + P.HANDOVER_MAX_AGE + 1))  # stale
+            h.write_text(json.dumps({"pid": -1, "t": time.time()}))
+            self.assertIsNone(P.read_handover(h))            # another process's
+
+    def _runner(self, stale):
+        r = object.__new__(P.Runner)
+        r.stop_requested = False
+        r.bridge_hashes = None
+        r.code_watch = mock.Mock(changed=mock.Mock(return_value=stale), hashes={})
+        r.event = mock.Mock()
+        return r
+
+    def test_between_sessions(self):
+        f = Path(P.__file__).resolve()
+        logs = []
+        with mock.patch.object(P, "log", logs.append), mock.patch.object(P, "tree_hashes", return_value={"a": "1"}):
+            r = self._runner([])
+            r.code_update_check()                             # nothing changed
+            with mock.patch.object(P, "tree_hashes", return_value={"a": "2", "b": "1"}):
+                r.code_update_check()
+            self.assertIn("bridge code changed since last session: a, b", logs)
+            ok = mock.Mock(returncode=0, stdout="", stderr="")
+            r = self._runner([f])
+            with mock.patch.object(P.subprocess, "run", return_value=ok) as run:
+                with self.assertRaises(P.RestartRunner):
+                    r.code_update_check()
+            self.assertEqual(run.call_args.args[0][-2:], ["run", "--help"])
+            self.assertTrue(any(m.startswith("runner code changed: restarting") for m in logs))
+            r = self._runner([f])
+            r.stop_requested = True                          # stopping anyway: no restart
+            r.code_update_check()
+            bad = mock.Mock(returncode=1, stdout="", stderr="Traceback\nSyntaxError: invalid syntax")
+            r = self._runner([f])
+            with mock.patch.object(P.subprocess, "run", return_value=bad):
+                r.code_update_check()                         # broken new code: keep running the old one
+            self.assertIn(f, r.code_watch.hashes)            # and don't retry until it changes again
+            r.event.assert_called_once()
+            self.assertIn("SyntaxError", r.event.call_args.kwargs["error"])
+
+    def test_handover_data_roundtrip(self):
+        r = self._runner([])
+        r.pending_notes, r.quick_failures, r.new_game = ["note"], 1, True
+        r.last_triage = ("S007", Path("/x/S007.triage.md"))
+        d = json.loads(json.dumps(r.handover_data(123.0, 100.0)))
+        self.assertEqual((d["run_end"], d["run_started"], d["pending_notes"]), (123.0, 100.0, ["note"]))
+        self.assertEqual(d["last_triage"], ["S007", "/x/S007.triage.md"])
+
+    def test_fake_runner_execs_itself(self):
+        """A real execv: same pid, same argv, the lock taken again, the handover read by the successor."""
+        script = (
+            "import os, sys\n"
+            f"sys.path.insert(0, {str(Path(P.__file__).resolve().parent)!r})\n"
+            "import play as P\n"
+            "lock = P.acquire_lock()\n"
+            "h = P.read_handover()\n"
+            "if h is None:\n"
+            "    P.write_handover({'n': 1})\n"
+            "    print('first', os.getpid(), sys.argv[1:], flush=True)\n"
+            "    P.exec_new_runner(lock, None)\n"
+            "print('second', os.getpid(), sys.argv[1:], h['n'], flush=True)\n")
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "fake_runner.py").write_text(script)
+            env = {**__import__("os").environ, "BG3AI_RUNTIME": d}
+            p = __import__("subprocess").run([sys.executable, "fake_runner.py", "run", "--x"], cwd=d, env=env,
+                                             capture_output=True, text=True, timeout=60)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            first, second = p.stdout.split("\n")[:2]
+            self.assertEqual(first.split()[1], second.split()[1])     # same pid
+            self.assertIn("['run', '--x']", second)
+            self.assertTrue(second.endswith(" 1"))
+            self.assertFalse(Path(d, "runner-handover.json").exists())
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

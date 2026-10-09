@@ -493,6 +493,97 @@ def changed_files(old: dict | None, new: dict) -> list[str]:
     return sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))
 
 
+# ---------------------------------------------------------------- self-update (between sessions)
+
+BRIDGE_SRC = REPO / "bridge" / "src"
+HANDOVER = RUNTIME / "runner-handover.json"   # state the runner hands to its own execv'd successor
+HANDOVER_MAX_AGE = 300
+
+
+def _sha1(path: Path) -> str | None:
+    try:
+        return hashlib.sha1(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def loaded_code_files(repo: Path = REPO, modules=None) -> list[Path]:
+    """Source files of the repo modules loaded in this process: runner/*.py plus what runs in-process from
+    tools/ and bridge/src (metrics, progress, skipper, ...). Never a venv or site-packages."""
+    out = set()
+    for m in list((modules if modules is not None else sys.modules).values()):
+        f = getattr(m, "__file__", None)
+        if not f or not f.endswith(".py"):
+            continue
+        p = Path(f).resolve()
+        if p.is_relative_to(repo) and not any(x in p.parts for x in (".venv", "site-packages", "__pycache__")):
+            out.add(p)
+    return sorted(out)
+
+
+class CodeWatch:
+    """Remembers each loaded repo module's hash when first seen (at start, or on a later lazy import) and
+    reports the ones edited on disk since: that code is stale in this process."""
+
+    def __init__(self, files=None):
+        self.hashes: dict[Path, str | None] = {}
+        self.track(files)
+
+    def track(self, files=None) -> None:
+        for p in loaded_code_files() if files is None else files:
+            self.hashes.setdefault(p, _sha1(p))
+
+    def changed(self, files=None) -> list[Path]:
+        self.track(files)
+        return [p for p, h in self.hashes.items() if _sha1(p) != h]
+
+
+def tree_hashes(root: Path, pattern: str = "*.py") -> dict[str, str]:
+    """{relative path: sha1} for the files matching pattern under root (the bridge's source tree)."""
+    out = {}
+    for p in sorted(root.rglob(pattern)) if root.is_dir() else []:
+        if p.is_file() and "__pycache__" not in p.parts:
+            out[str(p.relative_to(root))] = hashlib.sha1(p.read_bytes()).hexdigest()
+    return out
+
+
+def code_check_cmd(script: Path) -> list[str]:
+    """Imports the new runner the way a restart would (argparse --help exits 0 after every top-level import)."""
+    return [sys.executable, str(script), "run", "--help"]
+
+
+def restart_argv() -> list[str]:
+    """Same interpreter, flags and arguments (cwd is unchanged by execv, so relative paths still hold)."""
+    return [sys.executable, *getattr(sys, "orig_argv", [sys.executable, *sys.argv])[1:]]
+
+
+def write_handover(data: dict, path: Path | None = None) -> None:
+    path = path or HANDOVER
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({**data, "pid": os.getpid(), "t": time.time()}))
+    tmp.replace(path)
+
+
+def read_handover(path: Path | None = None, now: float | None = None) -> dict | None:
+    """The handover the previous incarnation of this process wrote (same pid, fresh); always consumed."""
+    path = path or HANDOVER
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    finally:
+        path.unlink(missing_ok=True)
+    if not isinstance(data, dict) or data.get("pid") != os.getpid():
+        return None
+    if (now or time.time()) - data.get("t", 0) > HANDOVER_MAX_AGE:
+        return None
+    return data
+
+
+class RestartRunner(Exception):
+    """Raised between sessions when the runner's own code changed on disk: cmd_run execs the new code."""
+
+
 class WaitReporter:
     """Watchdog for long runner waits: past WAIT_REPORT_AFTER s, logs what it waits for every WAIT_REPORT_EVERY s
     (so a silent runner log always says why it's silent)."""
@@ -952,6 +1043,16 @@ class Runner:
         self.quick_failures = 0
         self.new_game = False
         self.last_triage: tuple[str, Path] | None = None  # (session, Sxxx.triage.md) of the last claude run
+        self.code_watch = CodeWatch()         # this process's repo code, for the self-restart between sessions
+        self.bridge_hashes: dict | None = None  # bridge/src as the last session's MCP server ran it
+        self.handover = read_handover()       # set when this process is the execv'd successor of the runner
+        if self.handover:
+            self.pending_notes = list(self.handover.get("pending_notes") or [])
+            self.quick_failures = int(self.handover.get("quick_failures") or 0)
+            self.new_game = bool(self.handover.get("new_game"))
+            self.bridge_hashes = self.handover.get("bridge_hashes")
+            lt = self.handover.get("last_triage")
+            self.last_triage = (lt[0], Path(lt[1])) if lt else None
         g = self.state["game"] or {}
         # The game a previous run of the runner launched: keep watching its bg3le logs.
         self.watch = LaunchWatch(g["stamp"], RUNTIME / "logs", g.get("launched")) if g.get("stamp") else None
@@ -999,6 +1100,10 @@ class Runner:
         pg = (self.state["game"] or {}).get("pgid")
         if not pg:
             return False
+        try:   # after a self-restart (execv) the game is still our child: reap it if it exited, or it stays a zombie
+            os.waitpid(pg, os.WNOHANG)
+        except OSError:
+            pass
         try:
             os.killpg(pg, 0)
             return True
@@ -1588,6 +1693,7 @@ class Runner:
             f"(API {(summary.get('api') or {}).get('api_s_per_turn')}s/turn, "
             f"{(summary.get('api') or {}).get('ms_per_out_tok')} ms/out-tok), "
             f"apm {summary['apm']}, busy {summary['busy_pct']}%, pipelined {summary.get('pipelining_pct')}%, "
+            f"wait_for noop {(summary.get('wait_for_noop') or {}).get('n')}/{(summary.get('wait_for_noop') or {}).get('of')}, "
             f"wrap-up {summary.get('wrapup_s')}s (not counted) | {verdict}")
         return summary
 
@@ -1870,17 +1976,63 @@ class Runner:
         write_status(session_minutes=want)
         return want
 
+    def code_update_check(self) -> None:
+        """Before every session: log bridge edits (the MCP server restarts per session, nothing else to do), and
+        raise RestartRunner when the runner's own loaded code changed on disk and the new code imports."""
+        cur = tree_hashes(BRIDGE_SRC)
+        if self.bridge_hashes is not None:
+            changed = changed_files(self.bridge_hashes, cur)
+            if changed:
+                log(f"bridge code changed since last session: {', '.join(changed[:8])}"
+                    + (f" (+{len(changed) - 8} more)" if len(changed) > 8 else ""))
+        self.bridge_hashes = cur
+        stale = self.code_watch.changed()
+        if not stale or self.stop_requested or (RUNTIME / "STOP").exists():
+            return
+        names = [str(p.relative_to(REPO)) for p in stale]
+        try:
+            p = subprocess.run(code_check_cmd(Path(__file__).resolve()), capture_output=True, text=True,
+                               timeout=60, cwd=os.getcwd())
+            ok, why = p.returncode == 0, (p.stderr or p.stdout).strip().splitlines()[-1:] or [f"exit {p.returncode}"]
+        except (OSError, subprocess.TimeoutExpired) as e:
+            ok, why = False, [str(e)]
+        if not ok:
+            # Keep playing on the code that works; try again once these files change again.
+            log(f"runner code changed ({', '.join(names)}) but the new code fails to import: {why[0][:300]}; "
+                "keeping the running code")
+            self.event("runner_restart_refused", files=names, error=why[0][:300])
+            for f in stale:
+                self.code_watch.hashes[f] = _sha1(f)
+            return
+        log(f"runner code changed: restarting ({', '.join(names)})")
+        raise RestartRunner(names)
+
+    def handover_data(self, run_end: float | None, run_started: float) -> dict:
+        return {"run_end": run_end, "run_started": run_started, "pending_notes": self.pending_notes,
+                "quick_failures": self.quick_failures, "new_game": self.new_game,
+                "bridge_hashes": self.bridge_hashes,
+                "last_triage": [self.last_triage[0], str(self.last_triage[1])] if self.last_triage else None}
+
     def run(self) -> int:
         self.check_memory()
-        run_end = time.time() + self.opt.hours * 3600 if self.opt.hours else None
+        h = self.handover or {}
+        run_started = h.get("run_started") or time.time()
+        if h:   # same run, new code: keep its --hours budget; the game is the one this run was playing
+            run_end = h.get("run_end")
+            log(f"runner restarted in place with the new code (pid {os.getpid()})")
+            self.event("runner_restarted", pid=os.getpid())
+        else:
+            run_end = time.time() + self.opt.hours * 3600 if self.opt.hours else None
+            self.event("runner_start", pid=os.getpid())
         write_status(playthrough=self.opt.playthrough, runner_pid=os.getpid(), run_end=run_end,
-                     session=None, deadline=None, run_started=time.time(), heartbeat=time.time(), alert=None)
-        self.event("runner_start", pid=os.getpid())
-        first = True
+                     session=None, deadline=None, run_started=run_started, heartbeat=time.time(), alert=None)
+        first = not h
         setup_failures = 0
         stop_why = "stopped"
+        restarting = False
         try:
             while not self.stop_requested and not (RUNTIME / "STOP").exists():
+                self.code_update_check()
                 session_minutes = self.session_minutes()
                 minutes = session_budget(time.time(), run_end, session_minutes,
                                          min(MIN_SESSION_MINUTES, session_minutes))
@@ -1931,6 +2083,11 @@ class Runner:
                     time.sleep(30 * self.quick_failures)
                 else:
                     self.quick_failures = 0
+        except RestartRunner as e:
+            restarting = True
+            write_handover(self.handover_data(run_end, run_started))
+            self.event("runner_restart", files=e.args[0] if e.args else [])
+            raise
         except LaunchGaveUp as e:
             self.give_up_launch(e)
             stop_why = "gave up: the game crashes on every launch"
@@ -1939,9 +2096,10 @@ class Runner:
             stop_why = f"died: {type(e).__name__}: {e}"[:300]
             raise
         finally:
-            (RUNTIME / "STOP").unlink(missing_ok=True)
-            write_status(session=None, deadline=None, runner_pid=None)
-            self.event("runner_stop", why=stop_why)
+            if not restarting:
+                (RUNTIME / "STOP").unlink(missing_ok=True)
+                write_status(session=None, deadline=None, runner_pid=None)
+                self.event("runner_stop", why=stop_why)
         log("runner stopped")
         return 0
 
@@ -1970,7 +2128,7 @@ def cmd_run(a) -> int:
     if a.session_minutes < MIN_SESSION_MINUTES:
         log(f"WARNING: {a.session_minutes:g}-min sessions (wrap-up at {wrap_minutes(a.session_minutes):.1f} min); "
             "expect little play")
-    lock = acquire_lock()  # noqa: F841 - held for the process lifetime
+    lock = acquire_lock()  # held for the process lifetime (released only to exec the new runner code)
     (RUNTIME / "STOP").unlink(missing_ok=True)
     runner = Runner(Options(a.playthrough, a.hours, a.session_minutes, a.model, a.take_over, a.dry_run,
                             a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model,
@@ -1993,9 +2151,26 @@ def cmd_run(a) -> int:
     signal.signal(signal.SIGTERM, on_signal)
     try:
         return runner.run()
+    except RestartRunner:
+        exec_new_runner(lock, skip_stop)
+        raise  # not reached
     finally:
         if skip_stop is not None:
             skip_stop.set()
+
+
+def exec_new_runner(lock, skip_stop, execv=os.execv) -> None:
+    """Replace this process with the new runner code: same pid (the game's pgid bookkeeping and the status file
+    stay valid), same argv. The lock and skipper are released first; the successor takes them again at once."""
+    if skip_stop is not None:
+        skip_stop.set()
+    try:
+        lock.close()
+    except OSError:
+        pass
+    sys.stdout.flush()
+    sys.stderr.flush()
+    execv(sys.executable, restart_argv())
 
 
 def cmd_stop(_a) -> int:

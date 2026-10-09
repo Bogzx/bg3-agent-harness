@@ -38,6 +38,7 @@ class FakeGame:
         self.watch: dict = {"party": [{"uuid": P1, "hp": 20, "max_hp": 20}], "seen": [], "combat": False,
                             "dialogue": False}
         self.screen = "game"
+        self.ui: dict = {}  # extra ui.state fields (dialogue, roll, ...)
         self.dur: dict[str, float] = {}  # op -> seconds
         self.refuse: dict[str, str] = {}  # op -> error
         self.visible: set[str] = {DOOR}
@@ -98,7 +99,7 @@ class FakeGame:
                 evs = [e for e in self.events if e["seq"] > int(args.get("seq", 0))][: int(args.get("limit", 200))]
                 return {"latest": self.seq, "events": evs if context == "server" else []}
             if op == "ui.state":
-                return {"screen": self.screen}
+                return {"screen": self.screen, **self.ui}
             if op == "state.status":
                 return {"active": P1, "party": [{"uuid": P1, "name": "Claude"}, {"uuid": P2, "name": "Lae'zel"}]}
             if op == "state.combat":
@@ -429,6 +430,104 @@ class Parsing(unittest.TestCase):
             actq.parse_steps('[{"tool":"wait","if":"hp_below"}]', {"wait"})
         with self.assertRaises(actq.StepError):
             actq.parse_steps("[" + ",".join(['{"tool":"wait"}'] * 21) + "]", {"wait"})
+
+
+class WaitForNoop(Base):
+    """wait_for answers at once when the state already answers it or nothing running could cause it (S013:
+    3x 4 s on 'roll'/'dialogue_started' after a failed lockpick), and flags those calls 'noop' in metrics."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.recs: list[dict] = []
+        orig = server.METRICS.write
+        server.METRICS.write = lambda rec: self.recs.append(rec)
+        self.addCleanup(setattr, server.METRICS, "write", orig)
+
+    def timed(self, target: str, timeout_s: float = 5.0) -> tuple[str, float]:
+        t0 = time.monotonic()
+        out = server.wait_for(target, timeout_s=timeout_s)
+        return out, time.monotonic() - t0
+
+    def last_noop(self):
+        return [r for r in self.recs if r.get("tool") == "wait_for"][-1].get("noop")
+
+    def test_event_nothing_could_cause_returns_at_once(self):
+        for tgt in ("roll", "dialogue_started", "dialogue_options", "job_finished,queue_done"):
+            out, dt = self.timed(tgt)
+            self.assertLess(dt, 0.4, tgt)
+            self.assertIn(f"nothing is running that would cause {tgt}", out)
+            self.assertEqual(self.last_noop(), "cannot_happen")
+
+    def test_trivial_targets_return_at_once(self):
+        self.g.combat = {"active": False}
+        for tgt, want in (("queue", "queue: empty"), ("idle", "idle: no action running"),
+                          ("my_turn", "not in combat"), ("dialogue_ended", "no dialogue open"),
+                          ("combat_ended", "not in combat"), ("dialogue_started,idle", "idle: no action running")):
+            out, dt = self.timed(tgt)
+            self.assertLess(dt, 0.4, tgt)
+            self.assertIn(want, out, tgt)
+            self.assertEqual(self.last_noop(), "already", tgt)
+
+    def test_my_turn_when_it_already_is(self):
+        self.g.combat = {"active": True, "current": P1}
+        out, dt = self.timed("my_turn")
+        self.assertLess(dt, 0.4)
+        self.assertIn("'s turn", out)
+        self.assertEqual(self.last_noop(), "already")
+        out, dt = self.timed("combat_started")
+        self.assertIn("already in combat", out)
+
+    def test_finished_job_returns_at_once(self):
+        server.move_to(target=self.door)
+        time.sleep(0.05)
+        out, dt = self.timed("j1")
+        self.assertLess(dt, 0.4)
+        self.assertIn("move_to: done", out)
+        self.assertEqual(self.last_noop(), "job_done")
+
+    def test_prompt_already_on_screen(self):
+        self.g.screen = "roll"
+        self.g.ui = {"roll": {"skill": "Sleight of Hand", "dc": 15}}
+        out, dt = self.timed("roll")
+        self.assertLess(dt, 0.4)
+        self.assertIn("roll on screen", out)
+        self.g.screen = "dialogue"
+        self.g.ui = {"dialogue": {"speaker": "Kagha", "text": "Well?", "options": [{"i": 1, "text": "Yes."}]}}
+        out, dt = self.timed("dialogue_options")
+        self.assertLess(dt, 0.4)
+        self.assertIn("dialogue open", out)
+        self.assertIn("1. Yes.", out)
+
+    def test_waits_while_a_job_runs_then_a_short_grace(self):
+        self.g.dur["act.move_to"] = 0.4
+        server.move_to(target=self.door)
+        out, dt = self.timed("dialogue_started", timeout_s=5)
+        self.assertGreater(dt, 0.4 + server.EVENT_GRACE_S - 0.15)
+        self.assertLess(dt, 0.4 + server.EVENT_GRACE_S + 0.6)
+        self.assertIn("nothing is running that would cause dialogue_started", out)
+        self.assertIsNone(self.last_noop())  # it really waited for the walk
+
+    def test_world_events_keep_the_idle_fallback(self):
+        old, server.IDLE_EVENT_WAIT_S = server.IDLE_EVENT_WAIT_S, 0.4
+        try:
+            out, dt = self.timed("combat_started,dialogue_started", timeout_s=5)  # an ambush needs no job of ours
+            self.assertGreater(dt, 0.35)
+            self.assertIn("after 0.", out)
+        finally:
+            server.IDLE_EVENT_WAIT_S = old
+
+    def test_enemy_turn_keeps_waiting(self):
+        self.g.combat = {"active": True, "current": GOB}
+        out, dt = self.timed("dialogue_started", timeout_s=0.4)
+        self.assertIn("still waiting for dialogue_started", out)
+
+    def test_summary_counts_noops(self):
+        from bg3ai import metrics
+        self.timed("roll")
+        self.timed("idle")
+        s = metrics.summarize([r for r in self.recs if r.get("type") == "tool"], [], [])
+        self.assertEqual(s["wait_for_noop"]["n"], 2)
+        self.assertEqual(s["wait_for_noop"]["by"], {"already": 1, "cannot_happen": 1})
 
 
 if __name__ == "__main__":

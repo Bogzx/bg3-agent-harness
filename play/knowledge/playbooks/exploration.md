@@ -53,7 +53,9 @@ the region done in locations.md.
 - `read_all()` reads every new book, note and letter in your bags and returns their text.
 - `rest_if_needed()` short-rests only when someone is at or below half HP.
 - Locked: try a found key first, then lockpicking (the best Sleight of Hand character via `who=`), then
-  another entrance. Log failures as dead ends.
+  another entrance. Log failures as dead ends. Lockpicking needs Thieves' Tools in that character's own
+  bags: `lockpick` says at once who carries them, or that nobody does (then force it, Knock, another way in,
+  or buy tools from a trader). A right-click menu or a screenshot won't get past a missing tool.
 - **Traps** that `get_nearby` or `get_frontier` shows (revealed by a Perception success): walk around
   them, or disarm with a trap disarm kit and the best Sleight of Hand character. Never step on one.
 - Hidden things are only revealed by the game's own Perception rolls. Keep a high-Perception member at

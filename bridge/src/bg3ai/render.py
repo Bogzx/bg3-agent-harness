@@ -546,8 +546,36 @@ def render_frontier(res: Any, H: Handles) -> str:
         out.append(f"(+{res['more']} more leads)")
     if not out:
         out.append("No leads in view. Try another direction, a door, or get_map.")
+    ways = render_ways(res.get("ways") if isinstance(res, dict) else None)
+    if ways:
+        out.append(ways)
     out.extend(render_hazards(res.get("hazards") if isinstance(res, dict) else None, limit=6))
     return "\n".join(out)
+
+
+def render_ways(ways: Any, far: float = 20.0) -> str:
+    """nav.frontier ways -> one line: how far the ground is walkable (direct path) in each compass direction,
+    so finding the way on (S010-S015's most common screenshot) needs no picture. "20m+" = open at least that
+    far, "8m" = open 8 m but not 20, blocked = not even 8 m (a wall, a cliff, water)."""
+    if not isinstance(ways, list) or not ways:
+        return ""
+    open_, blocked = [], []
+    for w in ways:
+        if not isinstance(w, dict) or not w.get("dir"):
+            continue
+        m = w.get("open_m") or 0
+        if m <= 0:
+            blocked.append(str(w["dir"]))
+            continue
+        bit = f"{w['dir']} {num(m)}m" + ("+" if m >= far else "")
+        dy = w.get("dy")
+        if isinstance(dy, (int, float)) and abs(dy) >= 2:
+            bit += f" ({num(abs(dy))}m {'up' if dy > 0 else 'down'})"
+        open_.append(bit)
+    line = "WAYS walkable: " + (", ".join(open_) if open_ else "none")
+    if blocked:
+        line += " | blocked: " + " ".join(blocked)
+    return line
 
 
 def render_path(res: Any, H: Handles) -> str:

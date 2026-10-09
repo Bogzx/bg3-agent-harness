@@ -142,3 +142,54 @@ class ClickEntity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ToolCheck(unittest.TestCase):
+    """Live S011/S013: lockpick said "nothing happened" ~16 times while nobody carried Thieves' Tools."""
+
+    class Inv:
+        def __init__(self, items):
+            self.items, self.jobs = items, []
+
+        def rpc(self, op, args=None, context="server"):
+            if op == "state.inventory":
+                assert args.get("expand"), "tools can sit in a pouch"
+                return {"items": self.items}
+            if op == "state.status":
+                return {"party": [{"uuid": "U1", "name": "Claude"}, {"uuid": "U2", "name": "Shadowheart"}]}
+            raise AssertionError(op)
+
+        def run_job(self, op, args, wait_s=40.0):
+            self.jobs.append(op)
+            return clicker.JobResult("done", {})
+
+    def test_nobody_has_tools(self):
+        g = self.Inv([{"name": "Warhammer", "owner": "U1"}])
+        r = clicker.run_click_action(g, None, "act.lockpick", {"char": "U1", "target": "D"})
+        self.assertEqual(r.status, "failed")
+        self.assertIn("nobody in the party carries Thieves' Tools", r.error)
+        self.assertIn("force it", r.error)
+        self.assertEqual(g.jobs, [])  # never walked up or clicked
+
+    def test_other_member_has_tools(self):
+        g = self.Inv([{"name": "Thieves' Tools", "owner": "U2", "in": "Pouch"}])
+        r = clicker.run_click_action(g, None, "act.lockpick", {"char": "U1", "target": "D"})
+        self.assertEqual(r.status, "failed")
+        self.assertIn("Claude carries no Thieves' Tools; Shadowheart does: run it again with who=Shadowheart", r.error)
+
+    def test_actor_has_tools_runs_the_job(self):
+        g = self.Inv([{"name": "Thieves' Tools", "owner": "U1", "count": 2}])
+        r = clicker.run_click_action(g, None, "act.lockpick", {"char": "U1", "target": "D"})
+        self.assertEqual(g.jobs, ["act.lockpick"])
+        self.assertEqual(r.status, "done")
+
+    def test_disarm_needs_kit_and_loot_needs_nothing(self):
+        g = self.Inv([])
+        self.assertIn("Trap Disarm Toolkit", clicker.tool_check(g, "act.disarm", "U1"))
+        self.assertIsNone(clicker.tool_check(g, "act.loot_corpse", "U1"))
+
+    def test_unreadable_inventory_does_not_block(self):
+        class Broken(self.Inv):
+            def rpc(self, op, args=None, context="server"):
+                raise RuntimeError("no save loaded")
+        self.assertIsNone(clicker.tool_check(Broken([]), "act.lockpick", "U1"))
