@@ -15,7 +15,7 @@ Acting:
            talk/interact approach order (approach first, Use/Pickup after; check the log).
   combat   one turn: move 2 m toward the nearest hostile, attack it, end_turn (waits for the party's next
            turn); prints after.movement / after.action and the guard's charges.
-  jump     jump 2 m ahead (UseSpellAtPosition 5 vs 6 args), then a too-far jump (refused by the cap).
+  jump     jump 2 m ahead (UseSpellAtPosition/6), then 5 m (above the 4.5 m TargetRadius, under jump_max), then a too-far jump (refused by the cap).
   use      manage_inventory use on --item (Osi.Use on a carried potion).
   queue    queue two short walks (queue_done), then a long walk + a synthetic teleport_blocked event
            (queue_interrupted with why/left, job cancelled), cancel_queue, and the step-to-step gap.
@@ -102,7 +102,7 @@ def check_approach() -> None:
         say("INFO", "approach: no door/container in view; skipped")
     for it in items:
         r = lua(f"""
-            local G = BG3AI.Guard
+            local G = Mods.BG3AI.BG3AI.Guard
             local t0 = Ext.Utils.MonotonicTime()
             local ok, p = pcall(G.approach_point, "{me}", "{it['uuid']}", 1.8)
             local t = G.pos("{it['uuid']}")
@@ -114,13 +114,21 @@ def check_approach() -> None:
 
 
 def check_forms() -> None:
-    """Live test 4 (read-only part): Bound radius readable? Which Osiris forms exist?"""
+    """Live test 4 (read-only part): bounding radius readable? Which Osiris forms exist?"""
     me = active()
     r = lua(f"""local e = Ext.Entity.Get("{me}")
-        local ok, rad = pcall(function() return e.Bound.Bound.Radius end)
-        return {{ ok = ok, radius = ok and rad or tostring(rad), guard = BG3AI.Guard.radius("{me}"),
-                  jump_max = BG3AI.Guard.jump_max("{me}") }}""")
-    say("PASS" if r and r.get("ok") else "FAIL", f"Bound.Bound.Radius / jump_max: {r}")
+        local ok, rad = pcall(function() return e.Bound.Bound.AIBounds.Stand.Radius end)
+        return {{ ok = ok, radius = ok and rad or tostring(rad), guard = Mods.BG3AI.BG3AI.Guard.radius("{me}"),
+                  jump_max = Mods.BG3AI.BG3AI.Guard.jump_max("{me}") }}""")
+    ok = bool(r and r.get("ok") and abs((r.get("guard") or 0) - (r.get("radius") or -1)) < 1e-6)
+    say("PASS" if ok else "FAIL", f"AIBounds.Stand.Radius == Guard.radius / jump_max: {r}")
+    # A 0-argument call never runs anything: bg3le answers with the engine's arity
+    # ("expected N, got 0"), so this is read-only.
+    want = {"UseSpellAtPosition": 6, "Equip": 5, "UseSpell": 5, "Unequip": 2}
+    for name, n in want.items():
+        msg = lua(f'local ok, e = pcall(function() return Osi.{name}() end) return tostring(e)')
+        good = f"expected {n}," in str(msg) or f"expected {n} " in str(msg)
+        say("PASS" if good else "FAIL", f"Osi.{name} engine arity {n}: {str(msg)[-140:]}")
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +189,11 @@ def check_jump() -> None:
     me = st["active"]
     p = next(c for c in st["party"] if c["uuid"] == me).get("pos")
     out = S.jump_to(p[0] + 2.0, p[1], p[2])
-    say("PASS" if "done" in out else "FAIL", f"jump 2 m (UseSpellAtPosition form): {out.splitlines()[0]}")
+    say("PASS" if "done" in out else "FAIL", f"jump 2 m (UseSpellAtPosition/6): {out.splitlines()[0]}")
+    jmax = lua(f'return Mods.BG3AI.BG3AI.Guard.jump_max("{me}")') or 0
+    if jmax >= 5.5:  # past Projectile_Jump's 4.5 m TargetRadius: must not hit the generic range check
+        out = S.jump_to(p[0] - 3.0, p[1], p[2])  # 5 m back from p+2
+        say("PASS" if "out of range" not in out else "FAIL", f"jump 5 m (jump_max {jmax}): {out.splitlines()[0]}")
     out = S.jump_to(p[0] + 25.0, p[1], p[2])
     say("PASS" if "too far to jump" in out else "FAIL", f"jump 25 m refused: {out.splitlines()[0]}")
 
@@ -218,7 +230,7 @@ def check_queue() -> None:
     out = S.queue_actions('[{"tool":"walk_toward","direction":"S","max_m":20},{"tool":"wait","seconds":1},'
                           '{"tool":"move_to","x":%s,"y":%s,"z":%s}]' % (p[0], p[1], p[2]))
     time.sleep(0.8)
-    lua('BG3AI.RPC.push("teleport_blocked", { uuid = "check_act synthetic" }) return true')
+    lua('Mods.BG3AI.BG3AI.RPC.push("teleport_blocked", { uuid = "check_act synthetic" }) return true')
     out = S.wait_for("queue_interrupted", timeout_s=10)
     ok = "queue_interrupted" in out and "teleport" in out and "left" in out
     say("PASS" if ok else "FAIL", "queue_interrupted on teleport_blocked: " + " | ".join(out.splitlines()[:4]))
@@ -289,6 +301,8 @@ CHECKS = {"latency": check_latency, "approach": check_approach, "forms": check_f
 
 def main() -> int:
     args = sys.argv[1:]
+    if "-h" in args or "--help" in args:
+        print(__doc__ or "", "\nchecks:", " ".join(CHECKS)); return 0
     item = None
     if "--item" in args:
         i = args.index("--item")
