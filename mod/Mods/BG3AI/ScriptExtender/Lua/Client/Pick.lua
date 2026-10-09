@@ -2,8 +2,11 @@
 -- (client context; owner: worker "act").
 --
 -- ops:
---   ui.screen_pos  {uuid, aim?="auto"|"feet"|"chest"|"low", dy?}
---       -> {x, y, on_screen, ndc=[x,y], depth, size=[w,h], aim}
+--   ui.screen_pos  {uuid, aim?="auto"|"feet"|"low"|"mid"|"chest", dy?, ox?}
+--       -> {x, y, on_screen, ndc=[x,y], depth, size=[w,h], aim, side}
+--       ox: metres along the entity's own X axis (a door's origin is its
+--       hinge; +-0.5 aims at the leaf). side: "left"|"right" = where the
+--       point is relative to the view direction (also when behind).
 --       x,y are window pixels (Noesis root size, which matches the SDL
 --       window size the input shim uses); ndc is [-1,1] with +y = down.
 --   ui.hover_check {uuid}
@@ -108,17 +111,18 @@ function P.project(p)
     end)
     if not ok or not C or not q then return nil, "camera transform unavailable" end
     local l = rotate_inv(q, { p[1] - C[1], p[2] - C[2], p[3] - C[3] })
-    if l[3] <= 0.05 then return { behind = true } end
+    local side = l[1] < 0 and "left" or "right"
+    if l[3] <= 0.05 then return { behind = true, side = side } end
     local fx, fy = P.intrinsics(ctrl)
     local nx = fx * l[1] / l[3]
     local ny = -fy * l[2] / l[3]
-    return { ndc = { nx, ny }, depth = l[3],
+    return { ndc = { nx, ny }, depth = l[3], side = side,
         on_screen = nx >= -1 and nx <= 1 and ny >= -1 and ny <= 1 }
 end
 
 -- Where to aim on an entity: characters at chest height, corpses low, items
 -- slightly above their origin.
-function P.aim_point(uuid, aim, dy)
+function P.aim_point(uuid, aim, dy, ox)
     local e = Ext.Entity.Get(uuid)
     if not e then return nil, "unknown entity" end
     local ok, t = pcall(function() return e.Transform.Transform.Translate end)
@@ -129,22 +133,30 @@ function P.aim_point(uuid, aim, dy)
         local dead = U.comp(e, "Death") ~= nil
         if is_char then aim = dead and "low" or "chest" else aim = "low" end
     end
-    local off = ({ feet = 0.05, low = 0.3, chest = 1.1 })[aim] or 0.3
+    local off = ({ feet = 0.05, low = 0.3, mid = 0.9, chest = 1.1 })[aim] or 0.3
     p[2] = p[2] + off + (tonumber(dy) or 0)
+    ox = tonumber(ox)
+    if ox and ox ~= 0 then
+        pcall(function()
+            local q = e.Transform.Transform.RotationQuat
+            local d = rotate_inv({ -q[1], -q[2], -q[3], q[4] }, { ox, 0, 0 }) -- rotate by q
+            p[1], p[3] = p[1] + d[1], p[3] + d[3]
+        end)
+    end
     return p, aim
 end
 
 RPC.register("ui.screen_pos", function(args)
     local uuid = guid(args.uuid)
     if not uuid then error("bad uuid") end
-    local p, aim = P.aim_point(uuid, args.aim, args.dy)
+    local p, aim = P.aim_point(uuid, args.aim, args.dy, args.ox)
     if not p then error(aim) end
     local r, err = P.project(p)
     if not r then error(err) end
-    if r.behind then return { on_screen = false, behind = true } end
+    if r.behind then return { on_screen = false, behind = true, side = r.side } end
     local w, h = P.screen_size()
     local out = { ndc = { U.round(r.ndc[1], 4), U.round(r.ndc[2], 4) }, on_screen = r.on_screen,
-        depth = U.round(r.depth, 2), aim = aim }
+        depth = U.round(r.depth, 2), aim = aim, side = r.side }
     if w then
         out.size = { w, h }
         out.x = math.floor((r.ndc[1] * 0.5 + 0.5) * w + 0.5)

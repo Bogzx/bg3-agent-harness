@@ -20,7 +20,7 @@ from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import actq, delta, macros, metrics, party, render, saves, turn
+from . import actq, delta, leveling, macros, metrics, party, render, saves, turn
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -263,6 +263,9 @@ class _BatchState(threading.local):
     def __setitem__(self, k: str, v: Any) -> None:
         self.d[k] = v
 
+    def get(self, k: str, default: Any = None) -> Any:
+        return self.d.get(k, default)  # dict parity: roll_check used .get and raised (live S005)
+
 
 _batch = _BatchState()
 
@@ -299,11 +302,19 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
             out.append(_running_text())
         except GameError:
             pass
+    try:
+        out.append(_notes_window())
+    except GameError:
+        pass
     if tool == "wait_for" and _pace["calls_since"] == 0 and _pace["issued_at"] \
             and t0 - _pace["issued_at"] < PACE_GAP_S:
         out.append("PACE: you waited right after issuing. Next time first do independent work (queue the arrival "
                    "steps, look, plan, notes): the character acts while you think.")
         _pace["nudge"] = True
+    if tool not in ("get_status", "look", "level_up"):
+        lv = _LEVEL_NUDGE.text()
+        if lv:
+            out.append(lv)
     c = _clock_line()
     if c:
         out.append(c)
@@ -577,6 +588,9 @@ def get_status(full: bool = False) -> str:
     apart = _party_check(st)
     if apart:
         body += "\n" + apart
+    lv = _level_up_line(st)
+    if lv:
+        body += "\n" + lv
     return _finish("get_status", {"full": full}, body, t0)
 
 
@@ -612,7 +626,24 @@ def look(full: bool = False) -> str:
     apart = _party_check(st)
     if apart:
         body += "\n" + apart
+    lv = _level_up_line(st)
+    if lv:
+        body += "\n" + lv
     return _finish("look", {"full": full}, body, t0)
+
+
+_LEVEL_NUDGE = leveling.Nudge()
+
+
+def _level_up_line(st: dict | None) -> str:
+    """get_status/look: 'LEVEL UP: e3 Gale (2) → level_up(who) …' outside combat ('' when nobody can level)."""
+    if not isinstance(st, dict):
+        return ""
+    _LEVEL_NUDGE.observe(st)
+    text = leveling.line(st, _label, MEMORY)
+    if text:
+        _LEVEL_NUDGE.text(shown=True)
+    return text
 
 
 _stay: set[str] = set()  # companions told to stay (stay tool): no re-chain, no PARTY APART nag, nobody waits
@@ -1041,7 +1072,7 @@ def zoom(x: float, y: float, w: float, h: float) -> Image | str:
 @_guard
 def move_to(target: str = "", x: float | None = None, y: float | None = None, z: float | None = None,
             who: str | None = None, run: bool = True, wait: bool = False) -> str:
-    """Walk to a visible entity (target=id) or a position (x,y,z). Returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. wait=true blocks only in combat. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow)."""
+    """Walk to a visible entity (target=id) or a position (x,y,z). Returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. wait=true blocks only in combat. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow). Out of combat a destination past ~58 m goes via travel_to (legs) by itself."""
     args: dict[str, Any] = {"char": _who(who), "run": run}
     if target:
         args["target"] = _uuid(target)
@@ -1049,8 +1080,40 @@ def move_to(target: str = "", x: float | None = None, y: float | None = None, z:
         args["pos"] = [x, y, z]
     else:
         raise ValueError("give target=<id> or x,y,z")
+    far = None if _batch.get("in_travel") else _far_move(args["char"], args.get("target"), args.get("pos"))
+    if far:  # S005: 'destination is too far away' ×4 (one move is capped at MOVE_CAP_M): walk it in legs
+        dest, d = far
+        out = travel_to(x=dest[0], y=dest[1], z=dest[2], who=who)
+        return f"move_to: {render.num(round(d))}m is past one walk ({render.num(MOVE_CAP_M)}m): went via travel_to\n" + out
     wait, note = _walk_wait(wait)
     return _act("move_to", "act.move_to", args, wait=wait, note=note)
+
+
+MOVE_CAP_M = 58.0  # just under Guard.lua's G.MAX_MOVE_DIST (60 m, from the character): beyond it act.move_to refuses
+
+
+def _ent_pos(uuid: str) -> list | None:
+    """A party member's position from act.watch (cheap), else the visible entity's from state.entity."""
+    p = _pos_now(uuid)
+    if p:
+        return p
+    ent = game.try_rpc("state.entity", {"uuid": uuid}) or {}
+    p = ent.get("pos") if isinstance(ent, dict) else None
+    return p if isinstance(p, (list, tuple)) and len(p) >= 3 else None
+
+
+def _far_move(char: str, target: str | None, pos: list | None) -> tuple[list, float] | None:
+    """(destination, metres) when a move is past MOVE_CAP_M out of combat (go via travel_to's legs), else None.
+    In combat it stays a plain move (the guard's refusal is the honest answer there)."""
+    w = _watch_conn().try_rpc("act.watch") or {}
+    if w.get("combat"):
+        return None
+    here = next((r.get("pos") for r in w.get("party") or [] if r.get("uuid") == char), None)
+    dest = _ent_pos(target) if target else pos
+    if not here or not dest:
+        return None
+    d = macros.dist(here, dest)
+    return (list(dest[:3]), d) if d > MOVE_CAP_M else None
 
 
 @mcp.tool()
@@ -1426,9 +1489,10 @@ def short_rest() -> str:
 
 @mcp.tool()
 @_guard
-def long_rest() -> str:
-    """Long rest at camp (go there with camp first): consumes camp supplies, restores everything, may trigger camp scenes (handle them as dialogues)."""
-    return _act("long_rest", "ui.long_rest", {}, context="client", wait_s=90)
+def long_rest(confirm: bool = True) -> str:
+    """Long rest at camp (go there with camp first): consumes camp supplies, restores everything, may trigger camp scenes (handle them as dialogues). The game's questions on the way ("End the day?", "someone still wants to talk, rest anyway?") are answered Yes and listed in the result; confirm=false stops at the first one instead (then confirm(...))."""
+    args: dict[str, Any] = {} if confirm else {"confirm": False}
+    return _act("long_rest", "ui.long_rest", args, context="client", wait_s=90)
 
 
 @mcp.tool()
@@ -1443,11 +1507,24 @@ def get_level_up_options(who: str | None = None) -> str:
 @mcp.tool()
 @_guard
 def level_up(who: str | None = None, plan: str = "") -> str:
-    """Level a character up. plan: JSON like {"class":"Paladin","subclass":"Devotion","feat":"Ability Improvement","abilities":{"Strength":2},"spells":["Bless"],"skills":[]}; omit fields to take the game's defaults/recommendations."""
-    args: dict[str, Any] = {"uuid": _who(who)}
+    """Level a character up in one call (out of combat). With no plan it uses your stored line for that character and level in memory/party-build.md ("- Gale L2: {...}"). plan: JSON like {"subclass":"Evocation","feat":"Ability Improvement","abilities":{"Strength":2},"spells":["Magic Missile","Shield"],"cantrips":[],"skills":[],"passives":[]}; omitted fields take the game's defaults, except a subclass: a subclass level fails and lists the choices until the plan names one."""
+    uuid = _who(who)
+    args: dict[str, Any] = {"uuid": uuid}
+    note = ""
     if plan:
         args["plan"] = json.loads(plan)
-    return _act("level_up", "ui.level_up", args, context="client", wait_s=60)
+    else:
+        row = next((r for r in leveling.pending(game.try_rpc("state.status")) if r["uuid"] == uuid), None)
+        stored = leveling.plan_for(MEMORY, row["name"], row["to"]) if row else None
+        if stored is not None:
+            args["plan"] = stored
+            note = f"(plan: {row['name']} L{row['to']} from memory/party-build.md)"
+        elif row:
+            note = f"(no stored plan for {row['name']} L{row['to']}: game defaults)"
+    out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
+    if out.startswith("level_up: done"):
+        _LEVEL_NUDGE.done(uuid)
+    return out
 
 
 @mcp.tool()
@@ -1488,10 +1565,17 @@ def ui_action(command: str, widget: str = "", param: str = "") -> str:
 @mcp.tool()
 @_guard
 def dismiss_popups() -> str:
-    """Close informational popups (tutorials, info boxes, reward/book panels). Decision popups are never closed; they're listed so you can choose with ui_action."""
+    """Close informational popups (tutorials, info boxes, reward/book panels). Decision popups are never closed; they're listed so you can answer with confirm."""
     t0 = time.monotonic()
     res = game.rpc("ui.dismiss", {}, context="client")
     return _finish("dismiss_popups", {}, render.compact(res, H), t0)
+
+
+@mcp.tool()
+@_guard
+def confirm(answer: str = "yes") -> str:
+    """Answer the open Yes/No (OK/Cancel, Confirm...) question box: answer = "yes" | "no" | a button label | its number. Shows the next question if the game asks another."""
+    return _act("confirm", "ui.confirm", {"answer": answer}, context="client", wait_s=8)
 
 
 @mcp.tool()
@@ -1690,21 +1774,68 @@ def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, 
 _trips: dict[str, dict] = {}  # char -> {dest, d0, t0} of the travel_to its queue is running (live progress)
 
 
-def _trip_progress(char: str) -> str:
-    """'31m left, ETA ~7s' for a running travel_to (one act.watch read; ETA from the speed so far)."""
+def _trip_left(char: str) -> tuple[float, float | None] | None:
+    """(metres left, ETA s or None) of a running travel_to: one act.watch read, ETA from the speed so far."""
     trip = _trips.get(char)
     if not trip:
-        return ""
+        return None
     pos = _pos_now(char)
     if not pos:
-        return ""
+        return None
     left = macros.dist(pos, trip["dest"])
-    s = f"{render.num(round(left))}m left"
     dt = time.monotonic() - trip["t0"]
     speed = (trip["d0"] - left) / dt if dt > 0.3 else 0.0
-    if speed > 0.5:
-        s += f", ETA ~{render.num(round(left / speed))}s"
+    return left, (left / speed if speed > 0.5 else None)
+
+
+def _trip_progress(char: str) -> str:
+    """'31m left, ETA ~7s' for a running travel_to."""
+    tl = _trip_left(char)
+    if tl is None:
+        return ""
+    left, eta = tl
+    s = f"{render.num(round(left))}m left"
+    if eta is not None:
+        s += f", ETA ~{render.num(round(eta))}s"
     return s
+
+
+# S005: 11 gaps >10 s, most with Edit/Write of notes right after a walk ENDED (the character stood still while
+# the agent wrote). A result that sees a long walk running says once that this is the window for notes.
+NOTES_MIN_S = 8.0     # a job/trip with at least this much left gets the hint
+TRIP_MPS = 2.0        # travel_to ETA before its speed is known (S005: 88 m in ~50 s, legs included)
+_notes_shown: set = set()
+
+
+def _long_running() -> tuple[str, float] | None:
+    """(key, seconds left) of the longest-running async job or travel_to trip, if any."""
+    best = None
+    for h in _running_jobs():
+        info = _async[h]
+        if info.get("eta") is not None:
+            left = float(info["eta"]) - (time.monotonic() - info["t0"])
+            if best is None or left > best[1]:
+                best = (f"{h}@{info['t0']}", left)
+    for c, trip in list(_trips.items()):
+        if not _queues().busy(c):
+            continue
+        tl = _trip_left(c)
+        if tl is None:
+            continue
+        left = tl[1] if tl[1] is not None else tl[0] / TRIP_MPS
+        if best is None or left > best[1]:
+            best = (f"{c}@{trip['t0']}", left)
+    return best
+
+
+def _notes_window() -> str:
+    """'NOTES WINDOW: ~20s of walking left ...' once per long job/trip ('' otherwise)."""
+    lr = _long_running()
+    if lr is None or lr[1] < NOTES_MIN_S or lr[0] in _notes_shown:
+        return ""
+    _notes_shown.add(lr[0])
+    return (f"NOTES WINDOW: ~{render.num(round(lr[1]))}s of walking left: write memory notes / plan now "
+            "(not after it ends, when the character would stand idle); queue_actions the arrival first")
 
 
 @mcp.tool()
@@ -2636,7 +2767,7 @@ def _escape_surface(char: str, toward: list | None = None) -> str | None:
 def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target: str = "",
               x: float | None = None, y: float | None = None, z: float | None = None, who: str | None = None,
               wait: bool = False, avoid_hazards: str = "auto") -> str:
-    """Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Chains walks of up to 30 m along walkable ground toward it, around harmful surfaces you can see (fire, acid, ...); a leg that fails on the ground (no path, blocked) is retried another way (along the route, or shorter; twice per trip); stops on arrival (within 3 m), when no walkable ground leads further, after 2 legs without progress, or at the first interrupt (combat, conversation, prompt, new hostile, any damage). Stepping into a surface: it steps out (forward if it can) and goes on.
+    """Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Walks the game's own route in one go when the whole way is plain walking (long trips in ≤55 m legs), else chains walks of up to 30 m along walkable ground toward it, around harmful surfaces you can see (fire, acid, ...); a leg that fails on the ground (no path, blocked) is retried another way (along the route, or shorter; twice per trip); stops on arrival (within 3 m), when no walkable ground leads further, after 2 legs without progress, or at the first interrupt (combat, conversation, prompt, new hostile, any damage). Stepping into a surface: it steps out (forward if it can) and goes on.
     avoid_hazards: auto (default) = when no clear way leads on, it takes the shortest crossing (says e.g. 'crossing 1.5m of Fire (~1-4 dmg + Burning)') unless HP is too low for the worst case; strict = never crosses; cross = crosses even at low HP (never lava/chasms, never >6 m).
     Returns within ~1 s with live progress (m left, ETA), or the outcome if the trip already ended: the trip runs as the first entry of the character's action queue, so queue_actions appends what to do on arrival while you observe and plan. Every later result shows it RUNNING, then queue_done or queue_interrupted (why). wait is ignored (the trip never blocks)."""
     t0 = time.monotonic()
@@ -2647,6 +2778,11 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
         raise ValueError("avoid_hazards must be auto, strict or cross")
     w = _no_combat("travel_to")
     char = _who(who)
+    if target:  # a far target is walked in legs to where it stands (one move_to to it is capped at MOVE_CAP_M)
+        here = next((r.get("pos") for r in w.get("party") or [] if r.get("uuid") == char), None)
+        tp = _ent_pos(_uuid(target))
+        if here and tp and macros.dist(here, tp) > macros.TRAVEL_LEG_M:
+            x, y, z, target = tp[0], tp[1], tp[2], ""
     if not _batch["active"]:  # wait=true too: the agent plans while the character walks
         return _travel_async(char, w, marker, objective, target, x, y, z, t0, policy, waited=wait)
     outer = _batch["exec"] if _batch["active"] else None  # the queue running this trip: its cancel stops it
@@ -2672,6 +2808,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             added.update(new)
     if policy != "strict":
         quiet({"surface", "damage"})
+    in_travel, _batch["in_travel"] = _batch.get("in_travel"), True  # its legs are plain moves (never re-routed)
     try:
         esc = _escape_surface(char, dest) if me.get("surface") else None
         if esc:
@@ -2690,7 +2827,9 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             if d <= macros.TRAVEL_ARRIVE_M:
                 lines.append(f"arrived ({render.num(round(d, 1))}m from it)")
                 break
-            args = {"char": char, "pos": dest, "max_m": min(macros.TRAVEL_LEG_M, d)}
+            # direct: the engine's own route in one long move_to when the whole way is plain walking (S005: 30 m
+            # legs of sampled points ended on beach rocks and slopes, "path blocked stopped_short")
+            args = {"char": char, "pos": dest, "max_m": min(macros.TRAVEL_LEG_M, d), "direct": True}
             if policy != "strict":
                 args["avoid"] = "least"
             if failed_end is not None:
@@ -2725,6 +2864,8 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             elif r.get("detour"):
                 hz = (r.get("straight") or {}).get("hazard")
                 note = f"around {hz['surface']} (heading {r.get('dir') or ''}): " if isinstance(hz, dict) and hz.get("surface") else ""
+            if r.get("direct"):
+                note = f"along the route ({render.num(r.get('route_m') or r.get('path_m') or 0)}m): " + note
             if r.get("alt"):
                 note = f"another way ({'along the route' if r['alt'] == 'route' else 'a shorter leg'}): " + note
             failed_end = None
@@ -2774,6 +2915,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
         else:
             stop = f"still {render.num(round(macros.dist(here, dest), 1))}m away after {macros.TRAVEL_MAX_LEGS} legs"
     finally:
+        _batch["in_travel"] = in_travel
         if outer_w is not None:
             outer_w.ignore -= added
     return _macro_finish("travel_to", {"to": what}, lines, stop, [], t0)
@@ -3255,6 +3397,12 @@ ALWAYS_LOAD = (
     "save_game",
     # S001 spent 7 ToolSearch turns loading these mid-play
     "wiki_page", "wiki_search", "load_game", "list_saves",
+    # S002-S007: 26 ToolSearch calls (10 in S005) loaded these mid-play; each tool here was used in 2+
+    # sessions or 3+ times (rests/camp/level-up: rare but on every long day). Still deferred: ui_dump,
+    # ui_action, path_preview, fast_travel and the setup/menu tools (1 use or none).
+    "screenshot", "click", "click_on", "press_key", "dismiss_popups", "lockpick", "regroup", "get_map",
+    "get_party", "get_actions", "get_inventory", "level_up", "get_level_up_options", "short_rest", "long_rest",
+    "camp", "confirm",
 )
 ALWAYS_LOAD_META = {"anthropic/alwaysLoad": True}
 

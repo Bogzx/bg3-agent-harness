@@ -13,6 +13,7 @@ local P1 = "aaaaaaaa-0000-0000-0000-000000000001"
 local world, items                            -- uuid -> pos; uuid -> {kind, visible, height, locked}
 local fire, blocked, heights, nodesFor, portalAt
 local osiCalls = 0
+local searches, budget = 0, nil
 
 local function mkpath(e, target)
     return { from = world[P1], target = target, Nodes = {}, ErrorCause = 3 }
@@ -31,6 +32,10 @@ Ext = {
         BeginPathfindingImmediate = mkpath,
         FindPath = function(path)
             local t = path.target
+            searches = searches + 1
+            -- the engine's per-frame search budget: past it a search never runs,
+            -- unless IgnoreEntities sends it through the grid's own step
+            if budget and searches > budget and not (path.IgnoreEntities and #path.IgnoreEntities > 0) then return false end
             if blocked(t[1], t[2], t[3]) then return false end
             local nodes = nodesFor and nodesFor(path.from, t) or { t }
             for _, n in ipairs(nodes) do
@@ -85,6 +90,7 @@ local function reset()
     blocked = function() return false end
     heights = function() return { 0.0 } end
     nodesFor, portalAt = nil, nil
+    searches, budget = 0, nil
     clock = clock + 1000
     N.frame = (N.frame or 0) + 1 -- new frame: drop the path cache
 end
@@ -324,6 +330,59 @@ test("reach_toward alt=true: no other verified leg -> not reachable, alt_failed"
     blocked = function(x) return x < -0.5 end
     local r = RPC.ops["nav.reach_toward"]({ pos = { -20, 0, 0 }, max_m = 10, avoid = "least", alt = true, exclude = { -10, 0, 0 } })
     eq(r.reachable, false, "reachable"); eq(r.alt_failed, true, "alt_failed")
+end)
+
+-- ---- open-world navigation (S005, the beach) -------------------------------------
+
+test("path search budget: 20 samples in one frame all run (IgnoreEntities set)", function()
+    budget = 4
+    local r = RPC.ops["nav.reach_toward"]({ dir = "W", max_m = 40, step = 2 })
+    eq(r.reachable, true, "reachable"); near(r.pos[1], -40, "the farthest sample")
+    eq(searches > 4, true, "more than the budget ran")
+end)
+
+test("a found path that ends 3.5 m short (goal on a rock) is partial: not a sample, not verified", function()
+    nodesFor = function(_, t)
+        if math.abs(t[1] + 10) < 0.01 then return { { -6.5, 0, 0 } } end
+        return { t }
+    end
+    local p = N.path(P1, { -10, 0, 0 })
+    eq(p.reachable, true, "Guard still walks there"); eq(p.partial, true, "partial"); near(p.end_off, 3.5, "end_off")
+    eq((N.verifyPoint(P1, { -10, 0, 0 })), false, "verify")
+    local r = N.reachToward(P1, nil, { -10, 0, 0 }, 10, 2, false)
+    near(r.pos[1], -8, "the last full sample, not the partial goal")
+    eq((N.verifyPoint(P1, { -8, 0, 0 })), true, "a normal end ~1 m short still verifies")
+end)
+
+test("travel_to direct: a reachable goal 40 m away is one leg to it (y snapped to the floor)", function()
+    nodesFor = function(_, t) return { { -10, 0, 1 }, { -30, 0, 1 }, t } end
+    local r = RPC.ops["nav.reach_toward"]({ pos = { -40, 3, 0 }, max_m = 30, avoid = "least", direct = true })
+    eq(r.direct, true, "direct"); eq(r.whole, true, "to the goal"); near(r.pos[1], -40, "x"); near(r.pos[2], 0, "y snapped")
+end)
+
+test("travel_to direct: 100 m away -> the farthest route node within DIRECT_LEG_M", function()
+    nodesFor = function(_, t)
+        local out = {}
+        for x = -10, math.floor(t[1]) , -10 do out[#out + 1] = { x, 0, 0 } end
+        if out[#out][1] ~= t[1] then out[#out + 1] = t end
+        return out
+    end
+    local r = RPC.ops["nav.reach_toward"]({ pos = { -100, 0, 0 }, max_m = 30, avoid = "least", direct = true })
+    eq(r.direct, true, "direct"); eq(r.whole, nil, "not the goal"); near(r.pos[1], -50, "node in reach")
+    near(r.route_m, 100, "route")
+end)
+
+test("travel_to direct: fire on the route, a partial goal or no path -> the sampled legs", function()
+    fire = function(x) return x < -14 and x > -16 end
+    local r = RPC.ops["nav.reach_toward"]({ pos = { -40, 0, 0 }, max_m = 30, avoid = "least", direct = true })
+    eq(r.direct, nil, "not direct"); eq(r.direct_why, "hazard", "why")
+    reset()
+    nodesFor = function(_, t) if t[1] < -39 then return { { -35, 0, 0 } } end; return { t } end
+    r = RPC.ops["nav.reach_toward"]({ pos = { -40, 0, 0 }, max_m = 30, avoid = "least", direct = true })
+    eq(r.direct_why, "partial", "why"); eq(r.reachable, true, "a sampled leg"); near(r.pos[1], -30, "leg")
+    reset()
+    r = RPC.ops["nav.reach_toward"]({ pos = { -40, 0, 0 }, max_m = 30, avoid = "least", direct = true, alt = true, exclude = { -30, 0, 0 } })
+    eq(r.direct, nil, "alt never takes the direct leg")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

@@ -183,6 +183,7 @@ LINKS_LUA = """
 local char, target = %s, %s
 local e = V.entity(char); local from = V.pos(e)
 local path = Ext.Level.BeginPathfindingImmediate(e, target)
+pcall(function() path.IgnoreEntities = { e } end) -- past the per-frame search budget (see Navigation rawPath)
 out = { found = false }
 local okf, found = pcall(Ext.Level.FindPath, path)
 out.found = okf and found or false

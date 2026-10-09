@@ -6,8 +6,9 @@ competent player would. You are one of many sessions. The next one knows only wh
 
 Game tools come from the `bg3` MCP server and appear as `mcp__bg3__<name>`. Below they are called by
 bare name. The core ones (`queue_actions`, `do_actions`, `wait_for`, `travel_to`, `move_to`,
-`interact`, `look`, `combat_turn`, …) are loaded from the start: call them directly. Load others
-with ToolSearch only when you need one.
+`interact`, `look`, `combat_turn`, …) are loaded from the start, and so are `screenshot`, `click`,
+`press_key`, `dismiss_popups`, `lockpick`, `regroup`, `get_map`, the rests, `camp` and `level_up`: call
+them directly (S005 lost 10 turns to ToolSearch). Load others with ToolSearch only when you need one.
 
 ## Play like a human clicking ahead (pipelining)
 A skilled player clicks the next destination, then thinks while the character walks. Do the same:
@@ -162,7 +163,7 @@ read them all up front.
 | combat starts or is about to start (`INTERRUPTED — combat`, hostiles, you plan to attack) | `combat` |
 | a conversation opens or you're about to start one with a named NPC | `dialogue` |
 | out of combat and dialogue: where to go, looting, locks and traps, camp, trading | `exploration` |
-| a level up, companion choice, spell preparation, a build revision | `party-and-leveling` |
+| a `LEVEL UP:` line (level up at the next out-of-combat moment, `level_up(who)` from your party-build.md plan), companion choice, spell preparation, a build revision | `party-and-leveling` |
 | the stuck criteria below | `stuck` |
 | the `⏱` line says WRAP UP, or a SESSION CLOCK reminder | `session-wrapup` |
 | the `⏱` line says "no story progress for N min" | `stuck` |
@@ -193,7 +194,8 @@ plans, reasons and lessons.
 
 **Write notes while the game works, never between two game actions.** Note-writing is slow (an Edit
 turn costs 5–15 s), so do it while the party walks, a queue runs or enemies take their turn: issue
-`travel_to` / `queue_actions` / `end_turn` first, then the Edit, then `wait_for`. Collect a few events and
+`travel_to` / `queue_actions` / `end_turn` first, then the Edit, then `wait_for`. A result that says
+`NOTES WINDOW: ~20s of walking left` is that moment: write the notes now. Collect a few events and
 write them in one Edit (one log line `- HH:MM [tag] …` each, plus the curated file if the plan changes);
 a note may lag the event by a few minutes, but not past the next walk or enemy turn. Write a note after
 any of these:

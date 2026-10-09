@@ -36,9 +36,17 @@ EXPECT_SCREENS: dict[str, set[str]] = {
     "any": set(),  # any change of screen
 }
 
-# Pixel nudges tried around the projected point, then aim heights.
+# Pixel nudges tried around the projected point, then aim points: (aim height, metres along the entity's own
+# X axis). A door's origin is its hinge, so the leaf is ~0.5 m to one side of it (live S005: 9 hover misses).
 OFFSETS = [(0, 0), (0, -14), (0, 14), (-12, 0), (12, 0), (0, -30), (0, 28), (-24, -10), (24, -10)]
-AIMS = ["auto", "chest", "low", "feet"]
+AIMS: list[tuple[str, float]] = [("auto", 0.0), ("chest", 0.0), ("low", 0.0), ("feet", 0.0),
+                                 ("mid", 0.5), ("mid", -0.5), ("mid", 0.9), ("mid", -0.9)]
+
+# Camera moves a player would make to look at the target (closed loop on ui.screen_pos): zoom out while the
+# target sits near/over an edge, rotate (middle-drag) toward it when it is far off to a side or behind.
+EDGE = 0.85          # |ndc| beyond this counts as "at the edge" (hover may land on the HUD)
+CAMERA_STEPS = 6
+ROTATE_FRAC = 0.18   # middle-drag length as a fraction of the window width
 
 
 @dataclass
@@ -68,6 +76,68 @@ def _screen(game: Game) -> dict:
         return {}
 
 
+def _screen_pos(game: Game, uuid: str, aim: str = "auto", ox: float = 0.0) -> dict:
+    args: dict[str, Any] = {"uuid": uuid, "aim": aim}
+    if ox:
+        args["ox"] = ox
+    return game.rpc("ui.screen_pos", args, context="client") or {}
+
+
+def _centered(sp: dict) -> bool:
+    nd = sp.get("ndc")
+    return bool(sp.get("on_screen")) and nd is not None and abs(nd[0]) <= EDGE and abs(nd[1]) <= EDGE
+
+
+def camera_move(sp: dict) -> str | None:
+    """The next camera move that brings a projected point into view: "zoom_out", "rotate_left",
+    "rotate_right", or None when it is already well inside the window."""
+    if _centered(sp):
+        return None
+    nd = sp.get("ndc")
+    if sp.get("behind") or nd is None or abs(nd[0]) > 1.4:
+        return "rotate_left" if sp.get("side") == "left" else "rotate_right"
+    return "zoom_out"
+
+
+def bring_into_view(game: Game, inp: InputClient, uuid: str, steps: int = CAMERA_STEPS) -> list[str]:
+    """Move the camera like a player would until `uuid` is well inside the window. Returns the moves made."""
+    moves: list[str] = []
+    flip = False          # set when a rotation made things worse: the drag direction is the other way
+    prev_x: float | None = None
+    prev_edge: float | None = None
+    for _ in range(steps):
+        try:
+            sp = _screen_pos(game, uuid)
+        except GameError:
+            break
+        mv = camera_move(sp)
+        nd = sp.get("ndc")
+        if moves and moves[-1].startswith("rotate") and nd is not None and prev_x is not None \
+                and abs(nd[0]) > abs(prev_x) + 0.05:
+            flip = not flip
+        edge = max(abs(nd[0]), abs(nd[1])) if nd is not None else None
+        if moves and moves[-1] == "zoom_out" and mv == "zoom_out" and edge is not None and prev_edge is not None \
+                and edge > prev_edge - 0.02:
+            break  # zoomed out as far as it goes
+        prev_x = nd[0] if nd is not None else None
+        prev_edge = edge
+        if mv is None:
+            break
+        w, h = inp.window_size()
+        cx, cy = w // 2, h // 2
+        if mv == "zoom_out":
+            inp.wheel(-2, cx, cy)
+        else:
+            right = (mv == "rotate_right") != flip
+            dx = int(w * ROTATE_FRAC) * (-1 if right else 1)
+            inp.drag(cx, cy, cx + dx, cy, button="M", steps=10)
+            inp.move(cx, cy)
+        moves.append(mv)
+        inp.wait_frames(12)   # the camera eases into place
+        time.sleep(0.15)
+    return moves
+
+
 def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2) -> tuple[tuple[int, int] | None, int, dict]:
     """Move the virtual cursor until the engine's picking helper reports `uuid` under it.
 
@@ -75,9 +145,9 @@ def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2) -> tup
     w, h = inp.window_size()
     tries = 0
     last: dict = {}
-    for aim in AIMS:
+    for aim, ox in AIMS:
         try:
-            sp = game.rpc("ui.screen_pos", {"uuid": uuid, "aim": aim}, context="client")
+            sp = _screen_pos(game, uuid, aim, ox)
         except GameError as e:
             last = {"error": str(e)}
             continue
@@ -107,13 +177,27 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
                  verify_timeout: float = 4.0) -> ClickResult:
     """Hover-verify then click `uuid`; if `expect` is given, wait until ui.state shows that screen."""
     before = _screen(game).get("screen")
+    moves = bring_into_view(game, inp, uuid)
     pos, tries, last = hover_point(game, inp, uuid)
+    if pos is None and not moves:
+        # Every aim missed although the target looked in view: one more look from a wider angle.
+        w, h = inp.window_size()
+        inp.wheel(-2, w // 2, h // 2)
+        inp.wait_frames(12)
+        time.sleep(0.15)
+        moves = ["zoom_out"]
+        pos, t2, last = hover_point(game, inp, uuid)
+        tries += t2
+    extra: dict[str, Any] = {"camera": moves} if moves else {}
     if pos is None:
-        reason = "off_screen" if last.get("off_screen") else "hover_miss"
-        return ClickResult(False, reason, before, None, tries, {"hover": last.get("hover")} if last.get("hover") else {})
+        # off_screen only when no aim point was ever in the window (tries counts the in-window points)
+        reason = "off_screen" if tries == 0 and last.get("off_screen") else "hover_miss"
+        if last.get("hover"):
+            extra["hover"] = last["hover"]
+        return ClickResult(False, reason, before, None, tries, extra)
     inp.click(pos[0], pos[1], button=button)
     if not expect:
-        return ClickResult(True, None, None, pos, tries)
+        return ClickResult(True, None, None, pos, tries, extra)
     wanted = EXPECT_SCREENS.get(expect, {expect})
     deadline = time.monotonic() + verify_timeout
     st: dict = {}
@@ -121,7 +205,7 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
         st = _screen(game)
         scr = st.get("screen")
         if (wanted and scr in wanted) or (not wanted and scr != before):
-            return ClickResult(True, None, scr, pos, tries)
+            return ClickResult(True, None, scr, pos, tries, extra)
         time.sleep(0.05)
     if expect == "roll":
         # A key in the party opens the lock without a roll; a trap kit may
@@ -131,9 +215,10 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
         except GameError:
             ts = {}
         if ts.get("locked") is False or ts.get("trap_armed") is False:
-            return ClickResult(True, None, "unlocked" if ts.get("locked") is False else "disarmed", pos, tries)
-    return ClickResult(False, "no_effect", st.get("screen"), pos, tries,
-                       {"notifications": st["notifications"]} if st.get("notifications") else {})
+            return ClickResult(True, None, "unlocked" if ts.get("locked") is False else "disarmed", pos, tries, extra)
+    if st.get("notifications"):
+        extra["notifications"] = st["notifications"]
+    return ClickResult(False, "no_effect", st.get("screen"), pos, tries, extra)
 
 
 def finish_needs_click(game: Game, inp: InputClient, result: dict | None) -> dict | None:

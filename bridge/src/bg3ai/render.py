@@ -300,7 +300,8 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
         lines.append("REACTION " + compact(rx, H))
     p = ui.get("popup")
     if p:
-        lines.append("POPUP " + compact(p, H))
+        lines.append("POPUP " + compact(p, H) + (" → answer with confirm(\"yes\"|\"no\"|label)"
+                                                 if p.get("decision") else ""))
     c = ui.get("container")
     if c:
         lines.append("CONTAINER " + compact(c, H))

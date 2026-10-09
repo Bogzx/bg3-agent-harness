@@ -6,8 +6,10 @@
 -- are the engine's. Every op takes dry=true to only check CanExecute.
 --
 --   ui.trade {npc?, offer?:[uuid], request?:[uuid], confirm?, dry?}  -> job
---   ui.short_rest {dry?}                                              -> job
---   ui.long_rest {dry?}                                               -> job
+--   ui.short_rest {dry?, confirm?}                                    -> job
+--   ui.long_rest {dry?, confirm?}                                     -> job
+--     confirm=false: stop at a game question ("End the day?") instead of
+--     answering Yes; result.confirmed lists the questions answered.
 --   ui.waypoints {}                                                   -> job (opens/closes the map)
 --   ui.fast_travel {waypoint, dry?}                                   -> job
 --
@@ -86,6 +88,37 @@ local function popupText()
     end
     return nil
 end
+
+-- A confirmation box raised by the op's own request ("End the day?", "Someone
+-- still wants to talk, rest anyway?", live S005): the agent asked for this
+-- rest/travel, so answer it the way that player would, at most `max` per job,
+-- and keep each question for the result. args.confirm == false: leave it and
+-- fail with the question so the agent answers with ui.confirm.
+-- Returns nil (no box), true (handled: keep waiting) or "failed", nil, err.
+local function handleConfirm(job, args, max)
+    local A = BG3AI.UIActions
+    if not (A and A.confirmBox) then return nil end
+    local box = A.confirmBox()
+    if not box then return nil end
+    local labels = {}
+    for _, b in ipairs(box.buttons) do labels[#labels + 1] = b.label end
+    local q = box.text or box.title or "?"
+    if args.confirm == false then
+        return "failed", nil, "the game asks: " .. q .. " [" .. table.concat(labels, "/") .. "]; answer with confirm"
+    end
+    job.confirms = job.confirms or {}
+    local now = RPC.now_ms()
+    if now - (job.confirmAt or 0) < 700 then return true end -- the last press is still closing the box
+    if #job.confirms >= (max or 3) then
+        return "failed", nil, "too many confirmations; still asking: " .. q .. " [" .. table.concat(labels, "/") .. "]"
+    end
+    local ok, view = A.answerConfirm("yes", false)
+    job.confirmAt = now
+    if not ok then return "failed", nil, "couldn't answer the game's question (" .. q .. "): " .. tostring(view) end
+    job.confirms[#job.confirms + 1] = (view.text or view.title or "?") .. " -> " .. tostring(view.pressed)
+    return true
+end
+SV.handleConfirm = handleConfirm
 
 ------------------------------------------------------------------------
 -- Client ECS helpers
@@ -509,11 +542,13 @@ RPC.register("ui.short_rest", function(args)
     end
     check(UI.command(dc, "ShortRest", nil, args.dry))
     if args.dry then return { can = true, short_rests_left = before } end
-    return waitJob("ui.short_rest", 15000, function()
+    return waitJob("ui.short_rest", 15000, function(job)
         local now = tonumber(selected(hotbarDC(), "Stats.ShortRestPointsResource.Value"))
         if before and now and now < before then
-            return "done", { short_rests_left = now, of = max }
+            return "done", { short_rests_left = now, of = max, confirmed = job.confirms }
         end
+        local c, _, err = handleConfirm(job, args)
+        if c == "failed" then return "failed", nil, err end
     end)
 end)
 
@@ -529,8 +564,17 @@ RPC.register("ui.long_rest", function(args)
     if args.dry then return { can = true, supplies_required = required } end
 
     local phase, sawActive, used, phaseStart = "open", false, nil, RPC.now_ms()
-    return waitJob("ui.long_rest", 85000, function()
+    return waitJob("ui.long_rest", 85000, function(job)
         local w = visibleWidget("MakeCamp")
+        -- "End the day?" comes before the rest screen opens; others may follow it.
+        if phase ~= "resting" then
+            local c, _, err = handleConfirm(job, args)
+            if c == "failed" then return "failed", { confirmed = job.confirms }, err end
+            if c then
+                if phase == "open" then phaseStart = RPC.now_ms() end
+                return nil
+            end
+        end
         if phase == "open" then
             if not w then
                 if RPC.now_ms() - phaseStart > 5000 then
@@ -563,7 +607,7 @@ RPC.register("ui.long_rest", function(args)
         if active then sawActive = true end
         local result = {
             rest = (used and required and used >= required) and "full" or "partial",
-            supplies_used = used, supplies_required = required,
+            supplies_used = used, supplies_required = required, confirmed = job.confirms,
         }
         if result.rest == "partial" then
             result.note = "not enough camp supplies: partial rest (half HP and spell slots, no short rests restored)"
@@ -698,6 +742,9 @@ RPC.register("ui.fast_travel", function(args)
             state.sent, state.target, state.t = true, wp, RPC.now_ms()
             return nil
         end
+        local c, _, cerr = handleConfirm(state, args)
+        if c == "failed" then closeMap(opened) return "failed", nil, cerr end
+        if c then state.t = RPC.now_ms() return nil end
         -- Arrived once the party moved and the game is running again.
         local gs = tostring(try(Ext.Utils.GetGameState) or "?")
         if gs ~= "Running" then state.loading = true return nil end
@@ -705,7 +752,7 @@ RPC.register("ui.fast_travel", function(args)
         local moved = startPos and pos and U.dist(startPos, pos) > 3
         if moved or (state.loading and RPC.now_ms() - state.t > 2000) then
             if mapWidget() then Ext.Input.InjectKeyPress("ESCAPE") end
-            return "done", { arrived = state.target.name, region = state.target.region }
+            return "done", { arrived = state.target.name, region = state.target.region, confirmed = state.confirms }
         end
         local te = travelError()
         if te and RPC.now_ms() - state.t > 1000 then

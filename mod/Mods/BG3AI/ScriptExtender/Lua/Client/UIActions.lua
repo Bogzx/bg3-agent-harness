@@ -135,7 +135,7 @@ local function dcOf(widget)
     return UI.dc(widget)
 end
 
-RPC.register("ui.command", function(args)
+local function commandOp(args)
     local dc = dcOf(args.widget) or error("widget not open: " .. tostring(args.widget))
     local obj = args.target and UI.path(dc, args.target) or dc
     if obj == nil then error("target not found: " .. tostring(args.target)) end
@@ -146,6 +146,23 @@ RPC.register("ui.command", function(args)
     end
     check(UI.command(obj, args.command or error("command required"), param, args.dry))
     return { done = not args.dry, can = true }
+end
+
+RPC.register("ui.command", function(args)
+    local ok, res = pcall(commandOp, args)
+    if ok then return res end
+    -- With a confirmation box open, "Yes"/"OK"/"No" (as command or param) means
+    -- its button (live S005: ui_action Yes -> "no command 'Yes' on ls.Widget").
+    if A.confirmBox and A.confirmBox() then
+        for _, k in ipairs({ "param", "command" }) do
+            local want = args[k]
+            if type(want) == "string" and want ~= "" then
+                local pressed, view = A.answerConfirm(want, args.dry)
+                if pressed then return view end
+            end
+        end
+    end
+    error(res, 0)
 end)
 
 -- BoundEvent -> key for buttons whose command needs a string parameter
@@ -193,6 +210,120 @@ RPC.register("ui.press", function(args)
     local ok, how = A.pressButton(found, args.dry)
     check(ok, how)
     return { done = not args.dry, page = page, via = how, matches = total }
+end)
+
+------------------------------------------------------------------------
+-- Confirmation boxes (ls.DCMessageBox in "Dialog_box": "End the day?",
+-- "Someone wants to talk, rest anyway?", "Leave party members behind?").
+-- The box's title can read "[ForceUpdate]" (an unresolved handle), so the
+-- answer is matched on the buttons, never on the question (live S005).
+--
+--   ui.confirm {answer?="yes"|"no"|<label>|<n>, dry?} -> job
+--     settles when the box closes or shows a new question:
+--     {pressed, title?, text?, buttons, next?={title,text,buttons}}
+------------------------------------------------------------------------
+
+A.CONFIRM_WORDS = {
+    yes = { "yes", "ok", "confirm", "accept", "continue", "proceed" },
+    no = { "no", "cancel", "back", "close" },
+}
+A.CONFIRM_WORDS.ok = A.CONFIRM_WORDS.yes
+A.CONFIRM_WORDS.confirm = A.CONFIRM_WORDS.yes
+A.CONFIRM_WORDS.cancel = A.CONFIRM_WORDS.no
+
+local function trim(s) return (tostring(s or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")) end
+
+-- The open confirmation box: { name, el, title, text, buttons = { {el, label, name} } } or nil.
+function A.confirmBox()
+    for _, rec in ipairs(UI.widgets()) do
+        local n = rec.name:lower()
+        if (n == "dialog_box" or n:find("messagebox", 1, true) or n:find("confirm", 1, true))
+            and UI.isVisible(rec.el) then
+            local box = { name = rec.name, el = rec.el, buttons = {} }
+            local p = S.popup(rec.el)
+            box.title, box.text = p.title, p.text
+            for _, b in ipairs(UI.findAll(rec.el, UI.isButton, { prune = true })) do
+                local label = UI.allText(b, " ", 120)
+                local name = UI.name(b)
+                if (label and label ~= "") or name then
+                    box.buttons[#box.buttons + 1] = { el = b, label = label or name, name = name }
+                end
+            end
+            if #box.buttons > 0 then return box end
+        end
+    end
+    return nil
+end
+
+-- Which button answers `answer` (pure; tested offline): exact label/name for
+-- each synonym in order, then a word at the start of the label (len >= 3),
+-- then BG3's layout (affirmative first, negative last) for yes/no.
+function A.pickConfirm(buttons, answer)
+    answer = trim(answer ~= nil and answer or "yes")
+    local n = tonumber(answer)
+    if n then return buttons[n] end
+    local words = A.CONFIRM_WORDS[answer] or { answer }
+    local function nm(b) return trim(b.name):gsub("btn$", ""):gsub("button$", "") end
+    for _, w in ipairs(words) do
+        for _, b in ipairs(buttons) do
+            if trim(b.label) == w or nm(b) == w then return b end
+        end
+    end
+    for _, w in ipairs(words) do
+        if #w >= 3 then
+            for _, b in ipairs(buttons) do
+                local l = trim(b.label)
+                if l:sub(1, #w) == w or l:find(w, 1, true) then return b end
+            end
+        end
+    end
+    if #buttons >= 2 and A.CONFIRM_WORDS[answer] == A.CONFIRM_WORDS.yes then return buttons[1] end
+    if #buttons >= 2 and A.CONFIRM_WORDS[answer] == A.CONFIRM_WORDS.no then return buttons[#buttons] end
+    return nil
+end
+
+local function boxView(box)
+    local labels = {}
+    for _, b in ipairs(box.buttons) do labels[#labels + 1] = b.label end
+    return { title = box.title, text = box.text, buttons = labels }
+end
+
+-- Press the button for `answer` on the open box. -> ok, view|err
+function A.answerConfirm(answer, dry)
+    local box = A.confirmBox()
+    if not box then return false, "no confirmation box is open" end
+    local b = A.pickConfirm(box.buttons, answer)
+    local view = boxView(box)
+    if not b then
+        return false, "no button matches '" .. tostring(answer) .. "' (buttons: " .. table.concat(view.buttons, ", ") .. ")"
+    end
+    local ok, how = A.pressButton(b.el, dry)
+    if not ok then return false, "couldn't press " .. tostring(b.label) .. ": " .. tostring(how) end
+    view.pressed, view.via = b.label, how
+    return true, view
+end
+
+RPC.register("ui.confirm", function(args)
+    local ok, view = A.answerConfirm(args.answer, args.dry)
+    check(ok, view)
+    if args.dry then return view end
+    local sig0 = table.concat({ view.title or "", view.text or "", table.concat(view.buttons, "|") }, "#")
+    return waitJob("ui.confirm", 4000, function(job)
+        if RPC.now_ms() - job.started < 150 then return nil end
+        local box = A.confirmBox()
+        if not box then return "done", view end
+        local v = boxView(box)
+        if table.concat({ v.title or "", v.text or "", table.concat(v.buttons, "|") }, "#") ~= sig0 then
+            view.next = v
+            return "done", view
+        end
+        if RPC.now_ms() - job.started > 1500 then
+            -- Same-looking box: either a second question with the same buttons (the
+            -- rest flow asks twice) or the press didn't land; the caller looks again.
+            view.next, view.still_open = v, true
+            return "done", view
+        end
+    end)
 end)
 
 ------------------------------------------------------------------------

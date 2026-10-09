@@ -217,7 +217,7 @@ class AlwaysLoad(unittest.TestCase):
             self.assertEqual((tools[name].meta or {}).get("anthropic/alwaysLoad"), True, name)
         for name in ("wiki_page", "wiki_search", "load_game", "list_saves"):
             self.assertEqual((tools[name].meta or {}).get("anthropic/alwaysLoad"), True, name)
-        for name in ("lockpick", "new_game", "click"):
+        for name in ("new_game", "ui_dump", "fast_travel"):  # lockpick, click: preloaded since S002-S007
             self.assertFalse((tools[name].meta or {}).get("anthropic/alwaysLoad"), name)
 
     def test_movement_defaults_to_async(self):

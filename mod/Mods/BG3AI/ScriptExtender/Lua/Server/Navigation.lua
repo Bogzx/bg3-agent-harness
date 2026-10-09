@@ -229,12 +229,24 @@ local function cachePut(key, v)
     N.pathCache[key] = v
 end
 
-local function rawPath(e, from, target)
+-- The engine's path search has a per-frame budget: in one frame only the
+-- first 3-4 immediate searches run, the rest come back GoalFound=false with
+-- SearchComplete=false (live, WLD_Main_A: 8 identical searches -> 4 ok, 4
+-- "no path"). So a 17-sample reachToward said "no walkable ground" on open
+-- beach. With IgnoreEntities set, bg3le runs the search through the grid's
+-- own step, which resets that budget (10/10 ok, ~5.6 ms each). Ignoring the
+-- source itself changes nothing (its own tile is WalkBlockCharacter).
+-- A found path can also end short of the target (the goal is on a rock or
+-- off the mesh: the last node 3+ m from it, where a normal path ends ~1 m
+-- from it); with endTol such a path is flagged partial (end_pos, end_off).
+N.PATH_END_TOL_M = 2.0 -- the walker's own "close enough" (Actions walk_close_enough)
+local function rawPath(e, from, target, endTol)
     local t0 = Ext.Utils.MonotonicTime()
     local ok, path = pcall(Ext.Level.BeginPathfindingImmediate, e, target)
     if not ok or not path then
         return { reachable = nil, estimate = true, length_m = round(U.dist(from, target), 1), reason = "pathfinding unavailable" }
     end
+    pcall(function() path.IgnoreEntities = { e } end)
     local res
     local okf, found = pcall(Ext.Level.FindPath, path)
     if okf and found then
@@ -264,6 +276,10 @@ local function rawPath(e, from, target)
             end
         end)
         res.points = pts
+        local last = pts[#pts]
+        if endTol and #pts >= 2 and U.dist(last, target) > endTol then
+            res.partial, res.end_pos, res.end_off = true, U.vec(last, 1), round(U.dist(last, target), 1)
+        end
     else
         local cause
         pcall(function() cause = path.ErrorCause end)
@@ -297,7 +313,7 @@ function N.path(charUuid, target)
         .. "|" .. string.format("%.1f:%.1f", from[1], from[3])
     local c = cacheGet(key)
     if c then return c end
-    local r = rawPath(e, from, tpos)
+    local r = rawPath(e, from, tpos, not isEntity and N.PATH_END_TOL_M or nil)
     if isEntity and r.reachable == false then
         local t0 = Ext.Utils.MonotonicTime()
         for _, d in ipairs(RING) do
@@ -749,7 +765,7 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid)
         if fy then
             tried = tried + 1
             local r = N.path(charUuid, { x, fy, z })
-            if r and r.reachable and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then
+            if r and r.reachable and not r.partial and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then
                 cands[#cands + 1] = { pos = { x, fy, z }, path_m = r.length_m, straight_m = round(dd, 1),
                     needs_jump = r.needs_jump, points = r.points }
                 y = fy -- follow ramps and stairs
@@ -865,7 +881,8 @@ function N.verifyPoint(charUuid, pos)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from or type(pos) ~= "table" then return nil end
-    local r = rawPath(e, from, pos)
+    local r = rawPath(e, from, pos, N.PATH_END_TOL_M)
+    if r.reachable and r.partial then return false, r end
     return r.reachable, r
 end
 
@@ -904,6 +921,48 @@ function N.altLeg(charUuid, toward, maxM, bad, avoid)
     return nil
 end
 
+-- travel_to's long leg: the engine's own route to the goal, walked in one
+-- move_to instead of 30 m legs of straight-line samples (S005 on the beach:
+-- sampled leg ends on rocks and slopes stopped 2-4 m short, "path blocked").
+-- The goal's y is snapped to the floor nearest it (an agent's y is a guess).
+-- Only when the whole route is plain walking: a full path (not partial) of
+-- <= DIRECT_MAX_M, no jump link, and (avoid) no harmful surface on it. The
+-- leg ends at the goal when it is <= DIRECT_LEG_M away in a straight line
+-- (Guard refuses moves past G.MAX_MOVE_DIST = 60 m), else at the farthest
+-- route node within it, verified. Returns a reach_toward-shaped result with
+-- direct=true, or nil, why.
+N.DIRECT_MAX_M = 150
+N.DIRECT_LEG_M = 55
+function N.directLeg(charUuid, toward, avoid)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from or type(toward) ~= "table" then return nil, "no position" end
+    local goal = { toward[1], floorAt(toward[1], toward[3], toward[2]) or toward[2], toward[3] }
+    local r = rawPath(e, from, goal, N.PATH_END_TOL_M)
+    if not r.reachable then return nil, "no path" end
+    if r.partial then return nil, "partial" end
+    if r.needs_jump then return nil, "jump" end
+    if (r.length_m or 0) > N.DIRECT_MAX_M then return nil, "long" end
+    local pts = r.points
+    if type(pts) ~= "table" or #pts < 2 then return nil, "no route" end
+    if avoid and (N.routeHazard(pts) or N.surfaceNear(goal)) then return nil, "hazard" end
+    local pos, walk = goal, r.length_m
+    if U.dist(from, goal) > N.DIRECT_LEG_M then
+        local walked, idx, acc = 0, nil, 0
+        for i = 2, #pts do
+            acc = acc + U.dist(pts[i - 1], pts[i])
+            if U.dist(from, pts[i]) <= N.DIRECT_LEG_M then idx, walked = i, acc end
+        end
+        if not idx or walked < 5 then return nil, "no node in reach" end
+        pos, walk = pts[idx], walked
+        local ok = N.verifyPoint(charUuid, pos)
+        if ok ~= true then return nil, "leg end unverified" end
+    end
+    return { reachable = true, pos = U.vec(pos, 1), path_m = round(walk, 1), straight_m = round(U.dist(from, pos), 1),
+        route_m = r.length_m, direct = true, verified = true, dir = N.direction(from, pos),
+        whole = pos == goal or nil }
+end
+
 -- Nearest safe floor out of a harmful surface: rings of 8 directions at
 -- 1.5..max_m; the shortest path whose end and route (after the first metre)
 -- are clear. nil when the character is not in a harmful surface.
@@ -929,7 +988,7 @@ function N.safeSpot(charUuid, maxM, toward)
             local fy = floorAt(x, z, from[2])
             if fy and not N.surfaceNear({ x, fy, z }) then
                 local r = N.path(charUuid, { x, fy, z })
-                if r and r.reachable and r.length_m <= rad * 2 + 2 then
+                if r and r.reachable and not r.partial and r.length_m <= rad * 2 + 2 then
                     -- the start is burning anyway: only the rest must be clear;
                     -- toward: any burning metres cost CROSS_COST each instead
                     local hz, cost = nil, r.length_m
@@ -1009,7 +1068,7 @@ function N.crossing(charUuid, toward, maxM)
         tried = tried + 1
         local dd = U.dist(from, p)
         local r = N.path(charUuid, p)
-        if not (r and r.reachable and r.length_m <= math.max(2.5 * dd, dd + 6)) then return end
+        if not (r and r.reachable and not r.partial and r.length_m <= math.max(2.5 * dd, dd + 6)) then return end
         local ex = N.routeExposure(r.points, skip)
         local exm = ex and ex.m or 0
         if exm > N.CROSS_MAX_EXPOSURE_M then return end
@@ -1294,7 +1353,7 @@ function N.closestReach(charUuid, goal)
             if fy then
                 local p = { x, fy, z }
                 local r = N.path(charUuid, p)
-                if r and r.reachable then
+                if r and r.reachable and not r.partial then
                     local d = U.dist(p, goal)
                     if not bd or d < bd then best, bd = { pos = p, path_m = r.length_m }, d end
                 end
@@ -1394,6 +1453,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
         if r and r.reachable then
             out.reachable = true
             out.length_m, out.needs_jump = r.length_m, r.needs_jump
+            if r.partial then out.end_off_m = r.end_off end -- the goal itself is off the walkable ground
             out.legs, out.links = N.routeLegs(r.points, r.portals)
             out.exposure = N.routeExposure(r.points)
         elseif r and r.reachable == false then
@@ -1575,6 +1635,18 @@ RPC.register("nav.reach_toward", function(args)
     local maxM = math.min(tonumber(args.max_m) or 30, N.PATH_MAX_M)
     local step = math.max(tonumber(args.step) or 2, 1)
     local t0 = Ext.Utils.MonotonicTime()
+    -- direct=true (travel_to): the engine's own route in one long leg when the
+    -- whole way is plain walking; else the sampled legs below.
+    if args.direct and toward and not args.alt then
+        local d, why = N.directLeg(char, toward, args.avoid ~= false)
+        if d then
+            local under = N.harmfulUnder(char)
+            if under then d.standing_in = under end
+            d.ms = Ext.Utils.MonotonicTime() - t0
+            return d
+        end
+        args.direct_why = why
+    end
     local r, err = N.reachToward(char, args.dir, toward, maxM, step, args.avoid ~= false)
     if not r then error(err, 0) end
     -- avoid="least" (travel_to): when no clear walk gets >= 1 m closer, look
@@ -1617,6 +1689,7 @@ RPC.register("nav.reach_toward", function(args)
     end
     local under = N.harmfulUnder(char)
     if under then r.standing_in = under end
+    r.direct_why = args.direct_why
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r
 end)

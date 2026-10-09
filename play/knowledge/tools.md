@@ -101,7 +101,7 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
 ## Progression
 - `short_rest()` → 2 per long rest. `long_rest()` → at camp (`camp("go")` first); handle camp scenes as dialogue.
 - `get_level_up_options(who)` → what the level-up screen offers.
-- `level_up(who, plan)` → plan JSON, e.g. `{"feat":"Ability Improvement","abilities":{"Wisdom":2},"spells":["Bless"]}`; omitted fields take the defaults.
+- `level_up(who, plan?)` → one call per character level. No plan: uses the line `- <Name> L<n>: {json}` in memory/party-build.md. Plan JSON keys: `subclass`, `feat`, `abilities` (`{"Wisdom":2}` or `{"Wisdom":1,"Constitution":1}`), `spells`, `cantrips`, `skills`, `passives`, `class` (multiclass only). A subclass level fails and lists the choices until `subclass` is given; a feat level defaults to +2 main ability. get_status/look show `LEVEL UP: <who> (<level>)` while one is pending (out of combat).
 - `new_game(difficulty="Explorer")` → from the main menu: Explorer | Balanced | Tactician, then character creation.
 - `character_creation_options()` → what the creation screen offers now.
 - `create_character(plan)` → JSON, e.g. `{"race":"Half-Orc","class":"Paladin","subclass":"Oath of Devotion","background":"Soldier","abilities":"recommended","name":"Claude"}` or `{"origin":"Lae'zel"}`.
@@ -127,6 +127,7 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
 
 ## Meta
 - `save_game(label="")` → named save (`Sxxx-<slug>`); empty = quicksave. `list_saves(limit=10)`. `load_game(save="latest")` → folder name from `list_saves`.
+- `confirm(answer="yes")` → answer an open Yes/No (OK/Cancel…) box: `"yes"`, `"no"`, a button label or its number (`POPUP decision … → answer with confirm`). `long_rest`/`short_rest`/`fast_travel` answer their own "End the day?"-type questions and list them (`long_rest(confirm=false)` stops at the first instead).
 - `ui_action(command, widget="", param="")` → run a UI command that `ui_dump` lists (screens with no dedicated tool).
 - `press_key(key)` / `click(x, y, button="left")` → last resort (SDL key names; fractions of the last screenshot). Log each use.
 

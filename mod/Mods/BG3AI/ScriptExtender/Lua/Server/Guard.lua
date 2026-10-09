@@ -345,7 +345,11 @@ function G.point_ok(char, pos)
     end
     local p = G.pos(char)
     if not p then G.refuse("cannot locate character") end
-    if U.dist(p, pos) > G.MAX_MOVE_DIST then G.refuse("destination is too far away") end
+    local dd = U.dist(p, pos)
+    if dd > G.MAX_MOVE_DIST then
+        G.refuse(string.format("destination is too far away (%.0fm from this character; one walk reaches %.0fm: use travel_to)",
+            dd, G.MAX_MOVE_DIST))
+    end
     local V = BG3AI.Visibility
     if type(V) == "table" and type(V.position_known) == "function" then
         local ok, r = pcall(V.position_known, pos)
@@ -472,7 +476,7 @@ function G.within(char, target, maxd, what)
     local a, t = G.pos(char), G.pos(target)
     if not a or not t then G.refuse("cannot locate " .. (what or "target")) end
     local d = U.dist(a, t)
-    if d > maxd then G.refuse((what or "target") .. " is too far away") end
+    if d > maxd then G.refuse(string.format("%s is too far away (%.0fm from this character, max %.0fm)", what or "target", d, maxd)) end
     return d
 end
 

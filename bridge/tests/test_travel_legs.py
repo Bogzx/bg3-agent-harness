@@ -81,6 +81,21 @@ class TravelLegs(Base):
         self.assertEqual(len(self.g.ops("act.move_to")), 1)
         self.assertIn("leg 1 failed", out)
 
+    def test_direct_route_is_one_leg(self):
+        # S005 (the beach): a reachable goal 90 m off is walked along the engine's route in <= 55 m legs.
+        def reach(a):
+            self.assertTrue(a.get("direct"))
+            moves = self.g.ops("act.move_to")
+            x = moves[-1][1]["pos"][0] if moves else 0.0
+            nx = min(90.0, x + 55.0)
+            return {"reachable": True, "pos": [nx, 0.0, 0.0], "direct": True, "verified": True,
+                    "route_m": 92.0 - x, "path_m": nx - x}
+        self.g.reach = reach
+        out = server.travel_to(x=90.0, y=0.0, z=0.0)
+        self.assertEqual([m[1]["pos"][0] for m in self.g.ops("act.move_to")], [55.0, 90.0])
+        self.assertIn("leg 1: along the route (92m): move_to: done", out)
+        self.assertIn("arrived", out)
+
 
 class StepIntoRange(Base):
     def setUp(self) -> None:
