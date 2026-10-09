@@ -477,8 +477,11 @@ RPC.register("ui.dialogue_choose", function(args)
         end
     else
         i = tonumber(i) or error("i must be an option number")
-        local answers, changing = S.dialogueAnswers(w.el, S.activeDialogue(dc))
-        if changing then error("dialogue is changing; read ui.state again") end
+        local answers, changing, counts = S.dialogueAnswers(w.el, S.activeDialogue(dc))
+        if changing then
+            error(("dialogue is changing (%s answers rendered, %s in the game); read ui.state again"):format(
+                tostring(counts and counts.rendered), tostring(counts and counts.vms)))
+        end
         local a = answers[i] or error("no option " .. i .. " (" .. #answers .. " shown)")
         if a.off then error("option " .. i .. " is disabled") end
         local ok, err = UI.command(dc, "SelectAnswerCommand", a.vm, args.dry)

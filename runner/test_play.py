@@ -665,6 +665,22 @@ class Triage(unittest.TestCase):
         self.assertIn("no story progress for 8 min", md)
         self.assertIn("Reached the Helm", md)
 
+    def test_combat_gaps_split_own_turn(self):
+        # combat: end_turn at 1001, enemies act 1002-1020 (pturn false), next action 1035: 34 s raw, 15 s own;
+        # then a 25 s gap with a 19 s enemy turn: not long once enemies are excluded.
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d) / "S011"
+            metrics = [{"type": "tool", "tool": "end_turn", "t0": 1000.0, "t1": 1001.0},
+                       {"type": "tool", "tool": "use_ability", "t0": 1035.0, "t1": 1036.0},
+                       {"type": "tool", "tool": "use_ability", "t0": 1061.0, "t1": 1062.0}]
+            metrics += [{"type": "sample", "t": float(t), "moving": False, "job": 0, "dlg": False, "combat": True,
+                         "pturn": not (1002 <= t <= 1020 or 1037 <= t <= 1055)} for t in range(1000, 1063)]
+            Path(f"{base}.metrics.jsonl").write_text("\n".join(map(json.dumps, metrics)) + "\n")
+            md = P.triage.write(base).read_text()
+        self.assertIn("Idle gaps > 10 s between visible actions (1)", md)
+        self.assertIn("**15.0 s** idle (combat; own turn 15.0 s of 34.0 s, enemy turns 19.0 s)", md)
+        self.assertIn("not counted: 1 combat gap(s)", md)
+
     def test_missing_files_still_write(self):
         with tempfile.TemporaryDirectory() as d:
             md = P.triage.write(Path(d) / "S001").read_text()
@@ -674,6 +690,114 @@ class Triage(unittest.TestCase):
     def test_wired_into_run_claude(self):
         src = Path(P.__file__).read_text()
         self.assertIn('self.write_triage(f"{sid}{tag}", base)', src)
+
+
+
+class CheckAllBetweenSessions(unittest.TestCase):
+    """check_all after the hot reload, before the next kickoff: spacing, verdict, triage append, status."""
+
+    REPORT = {"exit": 1, "counts": {"PASS": 7, "WARN": 1, "FAIL": 1, "SKIP": 0},
+              "rows": [{"name": "latency", "verdict": "PASS", "secs": 6.1, "detail": "p50 40 ms", "lines": []},
+                       {"name": "vis", "verdict": "FAIL", "secs": 3.0, "detail": "markers | unknown op",
+                        "lines": ["[FAIL] markers: unknown op", "[FAIL] second: x"]}]}
+
+    def test_due(self):
+        self.assertTrue(P.check_all_due(None, 1000.0))
+        self.assertFalse(P.check_all_due(1000.0, 1000.0 + 29 * 60))
+        self.assertTrue(P.check_all_due(1000.0, 1000.0 + 30 * 60))
+
+    def test_result(self):
+        res = P.check_all_result(1, "", self.REPORT)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["line"], "check_all: 7 pass, 1 warn, 1 fail")
+        for rc, want in ((2, "not reachable"), (3, "refused"), (None, "timed out")):
+            res = P.check_all_result(rc, "", None)
+            self.assertFalse(res["ok"])
+            self.assertIn(want, res["line"])
+        self.assertIn("Traceback boom", P.check_all_result(1, "x\nTraceback boom\n", None)["line"])
+
+    def test_markdown(self):
+        md = P.check_all_markdown(P.check_all_result(1, "", self.REPORT), time.time(), 25.4, "after the session ")
+        self.assertIn("## check_all after the session (", md)
+        self.assertIn("25 s): 7 pass, 1 warn, 1 fail", md)
+        self.assertIn("| vis | **FAIL** | 3.0 | markers \\| unknown op |", md)
+        self.assertIn("[FAIL] second: x", md)
+        self.assertEqual(md.count("\n|"), 5)  # header, rule, 2 rows, 1 extra line
+
+    def test_cmd_uses_bridge_env(self):
+        with mock.patch.object(P.shutil, "which", return_value="/u/uv"):
+            cmd = P.check_all_cmd(Path("/r/x.json"))
+        self.assertEqual(cmd[:2], ["/u/uv", "run"])
+        self.assertEqual(cmd[-3:], [str(P.CHECK_ALL), "--json", "/r/x.json"])
+
+    def _runner(self, d: Path, last=None):
+        r = P.Runner.__new__(P.Runner)
+        r.stop_requested = False
+        r.state = P.RunnerState.__new__(P.RunnerState)
+        r.state.dir, r.state.path, r.state.data = d, d / "runner.json", {"check_all_at": last}
+        triage_md = d / "S004.triage.md"
+        triage_md.write_text("# S004 triage\n")
+        r.last_triage = ("S004", triage_md)
+        return r, triage_md
+
+    def _run(self, d: Path, r, report, rc=1):
+        logs, calls = [], []
+
+        def fake_run(cmd, **kw):
+            calls.append((cmd, kw))
+            if report is not None:
+                Path(cmd[-1]).write_text(json.dumps(report))
+            return mock.Mock(returncode=rc, stdout="", stderr="")
+
+        with mock.patch.object(P, "RUNTIME", d), mock.patch.object(P, "log", logs.append), \
+                mock.patch.object(P.subprocess, "run", fake_run):
+            res = r.between_sessions_check()
+        return res, logs, calls
+
+    def test_runs_appends_and_reports(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            r, triage_md = self._runner(d)
+            res, logs, calls = self._run(d, r, self.REPORT)
+            self.assertTrue(res["ok"])
+            self.assertEqual(calls[0][1]["env"]["BG3AI_CHECK_ALL_RUNNER_PID"], str(P.os.getpid()))
+            self.assertTrue(logs[0].startswith("check_all: 7 pass, 1 warn, 1 fail (after S004"))
+            self.assertTrue(any(line.startswith("check_all FAIL vis") for line in logs))
+            md = triage_md.read_text()
+            self.assertTrue(md.startswith("# S004 triage\n"))
+            self.assertIn("| vis | **FAIL** |", md)
+            st = json.loads((d / "runner.status.json").read_text())["check_all"]
+            self.assertEqual((st["session"], st["counts"]["FAIL"], st["ok"]), ("S004", 1, True))
+            self.assertIsNotNone(r.state["check_all_at"])
+            # within 30 min: skipped, nothing run
+            res, logs, calls = self._run(d, r, self.REPORT)
+            self.assertIsNone(res)
+            self.assertEqual(calls, [])
+
+    def test_no_verdict_retries_next_time(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            r, triage_md = self._runner(d, last=time.time() - 3600)
+            res, logs, _ = self._run(d, r, None, rc=2)
+            self.assertFalse(res["ok"])
+            self.assertIn("not reachable", logs[0])
+            self.assertLess(r.state["check_all_at"], time.time() - 3000)  # not recorded: retried next session
+            self.assertIn("no verdict", triage_md.read_text())
+
+    def test_stop_requested_skips(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            r, _ = self._runner(d)
+            r.stop_requested = True
+            res, _, calls = self._run(d, r, self.REPORT)
+            self.assertIsNone(res)
+            self.assertEqual(calls, [])
+
+    def test_wired_after_reload_before_kickoff(self):
+        src = Path(P.__file__).read_text()
+        body = src[src.index("    def play_session("):]
+        self.assertLess(body.index("self.hot_reload_mod()"), body.index("self.between_sessions_check()"))
+        self.assertLess(body.index("self.between_sessions_check()"), body.index("build_kickoff("))
 
 
 if __name__ == "__main__":

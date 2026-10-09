@@ -166,7 +166,8 @@ table.goals svg { vertical-align: middle; }
     <h2><span class="grow">Goal scorecard</span><small id="goalNote">per session · green = pass · trend left→right</small></h2>
     <div class="body"><table class="goals" id="goals"><tr><td class="empty">No sessions yet.</td></tr></table>
       <div class="milestones" id="goalMilestones"></div>
-      <div class="milestones" id="goalUnattended"></div></div>
+      <div class="milestones" id="goalUnattended"></div>
+      <div class="milestones" id="checkAll"></div></div>
   </section>
 </div>
 <main>
@@ -317,6 +318,7 @@ function renderState(s) {
   const agentLive = s.runner && s.runner.updated && (s.now - s.runner.updated) < 120;
   $("dAgent").className = "dot " + (agentLive ? "on" : "");
   renderClock();
+  $("checkAll").innerHTML = checkAllHtml(s.runner && s.runner.check_all, s.now);
   $("banner").style.display = "none";
 }
 
@@ -494,6 +496,16 @@ function milestonesHtml(m) {
     + ok.map((i) => `<span class="m ok" title="${i.t ? hhmmss(i.t) : "before tracking"}">✓ ${esc(i.label)}${i.session ? ` <small>${esc(i.session)}</small>` : ""}</span>`).join("")
     + (m.next ? `<span class="m next">→ next: ${esc(m.next)}</span>` : "");
 }
+function checkAllHtml(c, now) {
+  // runner.status.json check_all: tools/dev/check_all.py between sessions (FAILs never stop play)
+  if (!c) return "";
+  const n = c.counts || {}, ago = c.t ? ` · ${Math.round((now - c.t) / 60)} min ago` : "";
+  const col = !c.ok ? "var(--warn)" : n.FAIL ? "var(--bad)" : n.WARN ? "var(--warn)" : "var(--ok)";
+  const what = c.ok ? `${n.PASS} pass, ${n.WARN} warn, ${n.FAIL} fail` : esc(c.why || "no verdict");
+  const fails = (c.fails || []).map((f) => `<div style="color:var(--bad)">FAIL ${esc(f)}</div>`).join("");
+  return `<b style="color:${col}">check_all ${what}</b>${c.session ? " after " + esc(c.session) : ""}${ago}${fails}`;
+}
+
 function unattendedHtml(u) {
   if (!u) return "";
   const h = (v) => v == null ? "–" : v < 1 ? Math.round(v * 60) + " min" : v.toFixed(1) + " h";

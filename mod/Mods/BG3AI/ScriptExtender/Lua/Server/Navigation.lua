@@ -2024,7 +2024,15 @@ RPC.register("nav.activity", function(args)
                 local s = N.surfaceAt(p)
                 if s then out.surfaces = out.surfaces or {}; out.surfaces[u] = s end
             end
-            if truthy(osi(Osi.IsInCombat, u)) then out.in_combat = true end
+            if truthy(osi(Osi.IsInCombat, u)) then
+                out.in_combat = true
+                -- party_turn: a party member can act now (false: enemies' turns, the agent can only wait)
+                local G = BG3AI.Guard
+                if not out.party_turn and G and G.is_my_turn then
+                    local ok, mine = pcall(G.is_my_turn, u)
+                    out.party_turn = ok and mine == true
+                end
+            end
             if not out.in_dialogue then
                 local d = false
                 pcall(function() d = e.ServerCharacter.InDialog == true end)

@@ -155,8 +155,14 @@ def gaps_section(metrics_path: Path, calls: list[dict]) -> list[str]:
     recs = latency.read_jsonl(metrics_path)
     tools = [r for r in recs if r.get("type") == "tool"]
     samples = [r for r in recs if r.get("type") == "sample"]
-    long_ = [g for g in latency.gaps(latency.action_intervals(tools), samples) if g["s"] > LONG_GAP_S]
+    gl = latency.gaps(latency.action_intervals(tools), samples, tools)
+    long_ = [g for g in gl if g["s"] > LONG_GAP_S]
     out = [f"## Idle gaps > {LONG_GAP_S:.0f} s between visible actions ({len(long_)})", ""]
+    excused = [g for g in gl if g["s"] <= LONG_GAP_S < g["gap_s"] - g["busy_s"] and g.get("turn_s")]
+    if excused:  # long only because of enemy turns: not idle (a human waits through them too)
+        out += [f"(not counted: {len(excused)} combat gap(s) over {LONG_GAP_S:.0f} s only because of enemy turns, "
+                + ", ".join(f"{hm(g['t'])} {g['gap_s']:.0f} s with {g['turn_s']:.0f} s enemy" for g in excused) + ")",
+                ""]
     if not long_:
         return out + ["none", ""]
     timed = [c for c in calls if c["t"] is not None]
@@ -166,6 +172,8 @@ def gaps_section(metrics_path: Path, calls: list[dict]) -> list[str]:
         inside = [c for c in timed if a < c["t"] < b]
         names = Counter(c["name"] for c in inside)
         busy = f", party busy {g['busy_s']:.1f} s of {g['gap_s']:.1f} s" if g.get("busy_s") else ""
+        if g["kind"] == "combat":  # how much of it was the agent's own turn (the real target in combat)
+            busy += (f"; own turn {g['own_s']:.1f} s of {g['gap_s']:.1f} s, enemy turns {g.get('turn_s', 0):.1f} s")
         out.append(f"- {hm(a)} **{g['s']:.1f} s** idle ({g['kind']}{busy}) → next `{g['next']}`")
         if before:
             p = before[0]

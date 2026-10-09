@@ -325,20 +325,54 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
 
 # Event kinds that only duplicate what an action's own result already says.
 _REDUNDANT_EVENTS = {"moved_done"}
+# Consecutive events of these kinds share one line ("turn_ended Claude e4; Wyll e1; ...").
+_RUN_EVENTS = {"turn_ended", "turn_started"}
 
 
-def render_events(evs: list[dict], H: Handles, limit: int = 25) -> str:
-    evs = [e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS]
+def _ref_handle(x: Any, H: Handles) -> str | None:
+    return H.get(x["uuid"], x.get("name")) if isinstance(x, dict) and isinstance(x.get("uuid"), str) else None
+
+
+def _already_shown(e: dict, H: Handles, body: str, own: str | None, job: str | None) -> bool:
+    """True when the result's own text already reports this event (S013: 'think' grows with every repeated
+    line): the turn owner's cast/damage/statuses (combat_turn prints them), the job a wait_for returned, and
+    the queue report a wait_for('queue') printed."""
+    kind, d = e.get("kind"), e.get("data")
+    if not isinstance(d, dict):
+        return False
+    if own and kind in ("cast", "damage", "status_applied"):
+        src = _ref_handle(d.get("caster") or d.get("source"), H)
+        if src == own or (kind == "status_applied" and src is None and _ref_handle(d.get("target"), H) == own):
+            return True
+    if job and kind == "job_finished" and d.get("job") == job:
+        return True
+    if kind in ("queue_done", "queue_interrupted") and body and isinstance(d.get("who"), str):
+        return f"queue {H.scrub(d['who'])} " in body
+    return False
+
+
+def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", job: str | None = None) -> str:
+    """EVENTS section. body: the tool result's own text, so events it already reports are left out
+    (job: the job id a wait_for just returned)."""
+    m = re.match(r"TURN (e\d+)", body or "")
+    own = m.group(1) if m else None
+    evs = [e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS and not _already_shown(e, H, body, own, job)]
     if not evs:
         return ""
     shown = evs[-limit:]
     out = []
     if len(evs) > limit:
         out.append(f"(+{len(evs) - limit} earlier events)")
+    prev = None
     for e in shown:
         data = e.get("data")
         txt = compact(data, H) if isinstance(data, (dict, list)) else (H.scrub(str(data)) if data is not None else "")
-        out.append(f"{e.get('kind')} {txt}".strip())
+        kind = e.get("kind")
+        if kind in _RUN_EVENTS and prev == kind:
+            out[-1] += f"; {txt}"
+        else:
+            out.append(f"{kind} {txt}".strip())
+        prev = kind
     return "EVENTS\n" + "\n".join("  " + x for x in out)
 
 

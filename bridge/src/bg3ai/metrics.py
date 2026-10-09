@@ -12,8 +12,9 @@ Three record streams, all JSONL:
       doing something during the call. bg (top-level calls only) is how many background activities
       (async jobs, action queues) were already running when the call started; async marks a call that
       started one and returned while it runs (move_to, travel_to, queue_actions, wait=false...).
-    {"type":"sample", "t", "moving", "job", "dlg", "combat"}
-      ~1/s from the activity sampler (nav.activity on its own connection).
+    {"type":"sample", "t", "moving", "job", "dlg", "combat", "pturn"}
+      ~1/s from the activity sampler (nav.activity on its own connection). pturn (in combat only, newer mods):
+      a party member has the active turn; false means enemies/NPCs are acting and the agent can only wait.
 * Sxxx.turns.jsonl (written by the runner from claude's stream-json, arrival times):
     {"type":"use", "t", "id", "name", "steps"} / {"type":"result", "t", "id"} / {"type":"assistant", "t"}
 * Sxxx.latency.json: summarize() at session end. One line per session is also appended to
@@ -24,7 +25,12 @@ Definitions:
   steps count, not the wrapper.
 * idle gap: from the end of one action to the start of the next. It's tagged "dialogue" when the next
   action answers a dialogue or roll (or the party is in dialogue during the gap), "combat" when the
-  party is in combat during the gap, else "explore".
+  party is in combat during the gap, else "explore". Its idle time "s" excludes the seconds the party was
+  visibly busy (an async walk) and, in turn-based combat, the seconds it was NOT a party member's turn
+  (enemy turns: a human waits through them too). So a combat gap's "s" is the party-turn idle, the agent's
+  own think time on its turn; "gap_s" keeps the raw time. Whose turn: from the samples' pturn; for records
+  without it, a top-level wait_for in combat that blocked >= WAIT_TURN_MIN_S counts the gap up to its end
+  as enemy turns (the agent ended its turn and waited for the next one).
 * think time: from a tool_result reaching the model to its next assistant message (stream-json arrival).
 * busy %: share of samples where a party member moved or a game job was running. Dialogue share is
   reported separately: the server can't tell playback from waiting on an answer.
@@ -69,6 +75,7 @@ BG_GRACE_S = 1.5     # ETAs are estimates: an async job counts as running a litt
 PIPE_SAMPLE_S = 1.5  # fallback: a busy sample at most this long before the call
 LONG_GAP_S = 10.0
 SAMPLE_SPAN_S = 1.5  # a busy activity sample vouches for at most this long before it (sampler: 1 s)
+WAIT_TURN_MIN_S = 1.0  # fallback: an in-combat wait_for that blocked this long waited through enemy turns
 MOVE_EPS_M = 0.25  # a party member moved at least this far since the previous sample → moving
 
 TARGETS = {
@@ -220,7 +227,8 @@ class Recorder:
         self.write(rec)
         return rec
 
-    def sample(self, t: float, moving: bool, job: int, dlg: bool, combat: bool) -> dict:
+    def sample(self, t: float, moving: bool, job: int, dlg: bool, combat: bool,
+               party_turn: bool | None = None) -> dict:
         active = bool(moving or job)
         with self.lock:
             self.active_now = active
@@ -228,6 +236,8 @@ class Recorder:
                 self.last_active = t
         rec = {"type": "sample", "t": round(t, 2), "moving": bool(moving), "job": int(job), "dlg": bool(dlg),
                "combat": bool(combat)}
+        if combat and party_turn is not None:
+            rec["pturn"] = bool(party_turn)
         self.write(rec)
         return rec
 
@@ -256,8 +266,9 @@ def sampler_loop(rec: Recorder, game, stop: threading.Event, interval: float = 1
         if not isinstance(a, dict):
             continue
         pos = a.get("pos") if isinstance(a.get("pos"), dict) else {}
+        pt = a.get("party_turn")  # absent with an older mod
         rec.sample(time.time(), moved(prev, pos), int(a.get("jobs") or 0), bool(a.get("in_dialogue")),
-                   bool(a.get("in_combat")))
+                   bool(a.get("in_combat")), None if pt is None else bool(pt))
         prev = pos
 
 
@@ -383,44 +394,97 @@ def _samples_between(samples: list[dict], a: float, b: float) -> list[dict]:
     return [s for s in samples if a <= s.get("t", 0) <= b]
 
 
-def _busy_in(samples: list[dict], a: float, b: float) -> float:
-    """Seconds of [a, b] in which the party visibly did something (a busy sample covers the time since the
-    sample before it, at most SAMPLE_SPAN_S): an async walk returns at once, so its whole walk lies inside
-    the gap after it and is not idle."""
-    busy = 0.0
+def _spans(samples: list[dict], a: float, b: float, pred) -> list[tuple[float, float]]:
+    """Parts of [a, b] vouched for by samples matching pred: a sample covers the time since the sample before
+    it, at most SAMPLE_SPAN_S."""
+    out = []
     prev_t = None
     for s in samples:
         t = s.get("t")
         if t is None:
             continue
-        if t > a and (s.get("moving") or s.get("job")):
-            lo = t - min(t - prev_t if prev_t is not None else SAMPLE_SPAN_S, SAMPLE_SPAN_S)
-            busy += max(0.0, min(t, b) - max(lo, a))
+        if t > a and pred(s):
+            lo = max(t - min(t - prev_t if prev_t is not None else SAMPLE_SPAN_S, SAMPLE_SPAN_S), a)
+            hi = min(t, b)
+            if hi > lo:
+                out.append((lo, hi))
         prev_t = t
         if t >= b + SAMPLE_SPAN_S:
             break
-    return busy
+    return out
 
 
-def gaps(actions: list[dict], samples: list[dict]) -> list[dict]:
-    """Idle gaps between visible actions: "s" is the idle time (the gap minus the seconds the party was busy
-    with an earlier async action), "gap_s" the raw time between the two calls, "busy_s" the difference."""
+def _union_len(spans: Iterable[tuple[float, float]]) -> float:
+    total, end = 0.0, None
+    for lo, hi in sorted(spans):
+        if end is None or lo > end:
+            total += hi - lo
+            end = hi
+        elif hi > end:
+            total += hi - end
+            end = hi
+    return total
+
+
+def _is_busy(s: dict) -> bool:
+    return bool(s.get("moving") or s.get("job"))
+
+
+def _busy_in(samples: list[dict], a: float, b: float) -> float:
+    """Seconds of [a, b] in which the party visibly did something: an async walk returns at once, so its whole
+    walk lies inside the gap after it and is not idle."""
+    return _union_len(_spans(samples, a, b, _is_busy))
+
+
+def _enemy_turn_spans(samples: list[dict], waits: list[dict], a: float, b: float) -> list[tuple[float, float]]:
+    """Parts of [a, b] in turn-based combat when no party member had the turn (enemies acting). From the
+    samples' pturn when the gap has any; else from top-level wait_for calls that blocked in combat."""
+    inside = [s for s in samples if a <= s.get("t", 0) <= b + SAMPLE_SPAN_S]
+    if any("pturn" in s for s in inside):
+        return _spans(samples, a, b, lambda s: s.get("combat") and s.get("pturn") is False)
+    if not any(s.get("combat") for s in inside):
+        return []
+    out = []
+    for w in waits:
+        if a <= w["t0"] < b and w["t1"] - w["t0"] >= WAIT_TURN_MIN_S:
+            out.append((a, min(w["t1"], b)))
+    return out
+
+
+def gaps(actions: list[dict], samples: list[dict], tools: list[dict] | None = None) -> list[dict]:
+    """Idle gaps between visible actions: "s" is the idle time (the raw gap "gap_s" minus "busy_s", the
+    seconds the party was busy with an earlier async action, and "turn_s", the seconds in combat when it was
+    not a party member's turn); "own_s" (combat gaps) is the same as "s": the agent's own time on its turn.
+    tools: the bridge tool records (fallback for whose turn it was; see _enemy_turn_spans)."""
     out = []
     samples = sorted((s for s in samples if "t" in s), key=lambda s: s["t"])
+    waits = sorted((r for r in tools or () if r.get("tool") == "wait_for" and not r.get("nested") and "t0" in r),
+                   key=lambda r: r["t0"])
     for prev, nxt in zip(actions, actions[1:]):
-        g = nxt["t0"] - prev["t1"]
+        a, b = prev["t1"], nxt["t0"]
+        g = b - a
         if g <= 0:
             continue
-        inside = _samples_between(samples, prev["t1"], nxt["t0"])
-        busy = min(_busy_in(samples, prev["t1"], nxt["t0"]), g)
+        inside = _samples_between(samples, a, b)
+        busy_sp = _spans(samples, a, b, _is_busy)
+        busy = min(_union_len(busy_sp), g)
         if nxt["tool"] in DIALOGUE_TOOLS or any(s.get("dlg") for s in inside):
             kind = "dialogue"
         elif any(s.get("combat") for s in inside) or nxt["tool"] == "end_turn":
             kind = "combat"
         else:
             kind = "explore"
-        out.append({"t": round(prev["t1"], 2), "s": round(g - busy, 2), "gap_s": round(g, 2),
-                    "busy_s": round(busy, 2), "kind": kind, "next": nxt["tool"]})
+        r = {"t": round(a, 2), "s": round(g - busy, 2), "gap_s": round(g, 2), "busy_s": round(busy, 2),
+             "kind": kind, "next": nxt["tool"]}
+        if kind != "explore":
+            turn_sp = _enemy_turn_spans(samples, waits, a, b)
+            if turn_sp:
+                excl = min(_union_len(busy_sp + turn_sp), g)
+                r["turn_s"] = round(excl - busy, 2)  # enemy-turn seconds not already counted as busy
+                r["s"] = round(g - excl, 2)
+        if kind == "combat":
+            r["own_s"] = r["s"]
+        out.append(r)
     return out
 
 
@@ -478,8 +542,9 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
     source = "bridge"
     if not acts:
         acts, source = stream_actions(turns), "stream"
-    gl = gaps(acts, samples)
+    gl = gaps(acts, samples, tool_recs)
     by_kind = {k: [g["s"] for g in gl if g["kind"] == k] for k in ("explore", "combat", "dialogue")}
+    combat = [g for g in gl if g["kind"] == "combat"]
     long_ = [g for g in gl if g["s"] > LONG_GAP_S]
     long_kind = {k: sum(1 for g in long_ if g["kind"] == k) for k in ("explore", "combat", "dialogue")}
 
@@ -502,7 +567,11 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
     return {
         "start": round(start, 1), "end": round(end, 1), "minutes": round(minutes, 2),
         "source": source,
-        "idle_s": {"all": stats(g["s"] for g in gl), **{k: stats(v) for k, v in by_kind.items()}},
+        "idle_s": {"all": stats(g["s"] for g in gl), **{k: stats(v) for k, v in by_kind.items()},
+                   # combat: the party-turn idle (own think time on its turn); this: the same gaps with the
+                   # enemy turns left in (what the idle metric was before turns were excluded)
+                   "combat_incl_enemy": stats(g["gap_s"] - g["busy_s"] for g in combat)},
+        "enemy_turn_s": round(sum(g.get("turn_s", 0) for g in gl), 1),
         "long_gaps": {"threshold_s": LONG_GAP_S, "total": len(long_), **long_kind,
                       "worst": sorted(long_, key=lambda g: -g["s"])[:5]},
         "think_s": stats(tt),
@@ -546,6 +615,7 @@ def write_summary(summary: dict, out_path: Path, history_path: Path | None, sess
                "idle_median_s": summary["idle_s"]["all"].get("median"),
                "idle_p90_s": summary["idle_s"]["all"].get("p90"),
                "idle_explore_median_s": summary["idle_s"]["explore"].get("median"),
+               "idle_party_turn_median_s": summary["idle_s"]["combat"].get("median"),
                "long_gaps": summary["long_gaps"]["total"], "long_gaps_dialogue": summary["long_gaps"]["dialogue"],
                "think_median_s": summary["think_s"].get("median"), "rt_read_median_ms": summary["tool_rt_ms"]["read"].get("median"),
                "rt_read_p90_ms": summary["tool_rt_ms"]["read"].get("p90"), "apm": summary.get("apm"),

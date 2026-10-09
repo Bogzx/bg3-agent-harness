@@ -166,6 +166,48 @@ class Summary(unittest.TestCase):
         (g,) = M.gaps(M.action_intervals(tools), [sample(t) for t in range(0, 14)])
         self.assertEqual((g["s"], g["busy_s"]), (11.5, 0.0))
 
+    def test_enemy_turns_are_not_idle(self):
+        # Combat: the party ends its turn at 1 s, enemies act 1-21 s (pturn false), the agent's next action
+        # comes at 25 s: 24 s raw, 4 s of it the agent's own turn.
+        tools = [tool("end_turn", 0.0, 1.0), tool("use_ability", 25.0, 26.0)]
+        samples = [sample(t, combat=True) | {"pturn": not (2 <= t <= 21)} for t in range(0, 27)]
+        (g,) = M.gaps(M.action_intervals(tools), samples)
+        self.assertEqual((g["kind"], g["gap_s"], g["turn_s"], g["s"], g["own_s"]), ("combat", 24.0, 20.0, 4.0, 4.0))
+        s = M.summarize(tools, samples, [], start=T0, end=T0 + 27)
+        self.assertEqual(s["long_gaps"]["total"], 0)
+        self.assertEqual(s["idle_s"]["combat"]["median"], 4.0)            # party-turn idle
+        self.assertEqual(s["idle_s"]["combat_incl_enemy"]["median"], 24.0)  # the raw view stays reported
+        self.assertEqual(s["enemy_turn_s"], 20.0)
+        # busy during an enemy turn (party member pushed) is not subtracted twice
+        samples2 = [x | {"moving": 5 <= x["t"] - T0 <= 8} for x in samples]
+        (g2,) = M.gaps(M.action_intervals(tools), samples2)
+        self.assertEqual((g2["busy_s"], g2["turn_s"], g2["s"]), (4.0, 16.0, 4.0))
+        # the agent's own long think on its turn still counts
+        samples3 = [sample(t, combat=True) | {"pturn": True} for t in range(0, 27)]
+        (g3,) = M.gaps(M.action_intervals(tools), samples3)
+        self.assertEqual((g3["s"], g3.get("turn_s")), (24.0, None))
+
+    def test_enemy_turns_fallback_from_wait_for(self):
+        # Older samples without pturn: an in-combat wait_for that blocked (3-20 s) marks the gap up to its end
+        # as enemy turns; a wait_for that returned at once (and gaps out of combat) excludes nothing.
+        tools = [tool("end_turn", 0.0, 1.0), tool("wait_for", 3.0, 20.0), tool("use_ability", 24.0, 25.0),
+                 tool("wait_for", 26.0, 26.2), tool("use_ability", 40.0, 41.0)]
+        samples = [sample(t, combat=True) for t in range(0, 42)]
+        g1, g2 = M.gaps(M.action_intervals(tools), samples, tools)
+        self.assertEqual((g1["gap_s"], g1["turn_s"], g1["s"]), (23.0, 19.0, 4.0))
+        self.assertEqual((g2["gap_s"], g2["s"], "turn_s" in g2), (15.0, 15.0, False))
+        (e,) = M.gaps(M.action_intervals(tools[:3]), [sample(t) for t in range(0, 26)], tools)
+        self.assertEqual((e["kind"], e["s"]), ("explore", 23.0))
+        # without the tool records (old callers): unchanged
+        g1, _ = M.gaps(M.action_intervals(tools), samples)
+        self.assertEqual(g1["s"], 23.0)
+
+    def test_sample_pturn(self):
+        rec = M.Recorder(None)
+        self.assertNotIn("pturn", rec.sample(T0, False, 0, False, False, party_turn=False))  # out of combat
+        self.assertIs(rec.sample(T0, False, 0, False, True, party_turn=False)["pturn"], False)
+        self.assertNotIn("pturn", rec.sample(T0, False, 0, False, True))  # older mod: unknown
+
     def test_rt_excludes_job_time(self):
         s = M.summarize(self.tools, self.samples, [], start=T0, end=T0 + 60)
         self.assertLess(s["tool_rt_ms"]["all"]["max"], 1000)
@@ -249,14 +291,16 @@ class Recording(unittest.TestCase):
                 G.n += 1
                 if G.n >= 3:
                     stop.set()
-                return {"pos": {"p": [G.n * 2.0, 0, 0]}, "jobs": 0, "in_dialogue": False, "in_combat": G.n == 2}
+                return {"pos": {"p": [G.n * 2.0, 0, 0]}, "jobs": 0, "in_dialogue": False, "in_combat": G.n == 2,
+                        **({"party_turn": False} if G.n == 2 else {})}
 
         stop = threading.Event()
         rec = M.Recorder(None)
         seen = []
         rec.sample = lambda *a: seen.append(a)
         M.sampler_loop(rec, G(), stop, interval=0.001)
-        self.assertEqual([(s[1], s[4]) for s in seen], [(False, False), (True, True), (True, False)])
+        self.assertEqual([(s[1], s[4], s[5]) for s in seen], [(False, False, None), (True, True, False),
+                                                              (True, False, None)])
 
 
 class ServerHook(unittest.TestCase):

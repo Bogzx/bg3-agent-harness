@@ -109,6 +109,74 @@ local function activeDialogue(dc)
 end
 S.activeDialogue = activeDialogue
 
+-- Live answer VM (gui::VMDialogueAnswer, probed live 2026-10-10): values
+-- AnswerIdx, Enabled, BoundEvent; objects CtxAnswer (ls.VMContextTransString
+-- with a Params collection: the runs the answer template renders, tag params
+-- as "[TEXT] ") and AnswerTags (ls.VMDialogueAnswerTag items).
+local function vmItems(obj, name, max)
+    local coll = obj and props(obj)[name]
+    local out = {}
+    if coll == nil then return out end
+    for _, x in UI.items(coll, max or 12) do
+        if x ~= nil then out[#out + 1] = props(x) end
+    end
+    return out
+end
+
+local function tagName(p)
+    for _, k in ipairs({ "Text", "Name", "DisplayName", "Label", "Tag" }) do
+        local t = type(p[k]) == "string" and clean(p[k]) or nil
+        if t then return t:upper() end
+    end
+end
+
+-- Tags of an answer from its VM: AnswerTags, then CtxAnswer tag params
+-- (S007-S013: the rendered AnswerText often came back without its
+-- "[PERSUASION] " runs, so check options looked plain and got no annotation).
+function S.answerTags(vm)
+    local tags = {}
+    for _, p in ipairs(vmItems(vm, "AnswerTags")) do
+        tags[#tags + 1] = tagName(p)
+    end
+    local ctx = props(vm).CtxAnswer
+    for _, p in ipairs(vmItems(ctx, "Params")) do
+        if p.Type == "Tag" then tags[#tags + 1] = tagName(p) end
+    end
+    return tags
+end
+
+-- An answer's text from its VM alone (no rendered element): the CtxAnswer
+-- params in order, tags as "[TAG] ". nil when no param has text.
+function S.answerTextFromVM(vm)
+    local parts = {}
+    for _, p in ipairs(vmItems(props(vm).CtxAnswer, "Params", 20)) do
+        if type(p.Text) == "string" then
+            parts[#parts + 1] = p.Type == "Tag" and ("[" .. p.Text:upper() .. "] ") or p.Text
+        end
+    end
+    return clean(table.concat(parts))
+end
+
+-- Rendered text of an AnswerText block: the inline runs (tag runs included)
+-- when they say more than ToString (which can be the bare line without tags).
+local function answerText(textEl)
+    local plain = UI.text(textEl)
+    local inl = UI.prop(textEl, "Inlines")
+    local runs = inl and clean(UI.inlineText(inl)) or nil
+    if runs and #runs > #(plain or "") then return runs end
+    return plain
+end
+
+local function addTags(a, more)
+    if not more or #more == 0 then return end
+    a.tags = a.tags or {}
+    local have = {}
+    for _, t in ipairs(a.tags) do have[t:upper()] = true end
+    for _, t in ipairs(more) do
+        if not have[t:upper()] then a.tags[#a.tags + 1] = t; have[t:upper()] = true end
+    end
+end
+
 -- Visible answers in display order: { {i, text, tags, off?, vm} }, changing.
 -- SAFETY (S001 crash, use-after-free in bg3le's Noesis binding): never read
 -- a rendered answer container's DataContext. When an answer is chosen the
@@ -127,20 +195,48 @@ function S.dialogueAnswers(widget, ad)
     end, { prune = true })
     local vms = ad and UI.prop(ad, "Answers")
     local n = vms and UI.count(vms) or 0
-    if #items ~= n then return out, #items > 0 or n > 0 end
+    if #items ~= n then
+        -- S007/S010: the answers stayed on screen for minutes while the rendered
+        -- list and Answers never matched, so options were never reported and
+        -- choose failed ("dialogue is changing"). When the game says answers are
+        -- shown, take them from the live VMs alone (never the rendered items).
+        if n > 0 and props(ad).ShowAnswers == true then
+            local fromVM = S.answersFromVMs(vms, n)
+            if fromVM then return fromVM, false end
+        end
+        return out, #items > 0 or n > 0, { rendered = #items, vms = n }
+    end
     for idx, item in ipairs(items) do
         local textEl = UI.byName(item, "AnswerText")
-        local text = textEl and UI.text(textEl) or UI.allText(item)
+        local text = textEl and answerText(textEl) or UI.allText(item)
         if text then
             local vm = try(vms.At, vms, idx)
             local tags, body = S.splitTags(text)
             local a = { i = #out + 1, text = body, vm = vm }
             if #tags > 0 then a.tags = tags end
+            if vm then addTags(a, try(S.answerTags, vm)) end
             if vm and props(vm).Enabled == false then a.off = true end
             out[#out + 1] = a
         end
     end
     return out, false
+end
+
+-- Answers built from the live answer VMs only; nil unless every one has text.
+function S.answersFromVMs(vms, n)
+    local out = {}
+    for idx = 1, n do
+        local vm = try(vms.At, vms, idx)
+        local text = vm and try(S.answerTextFromVM, vm)
+        if not text then return nil end
+        local tags, body = S.splitTags(text)
+        local a = { i = idx, text = body, vm = vm }
+        if #tags > 0 then a.tags = tags end
+        addTags(a, try(S.answerTags, vm))
+        if props(vm).Enabled == false then a.off = true end
+        out[idx] = a
+    end
+    return out
 end
 
 -- The continue answer VM (ActiveDialogue.ContinueAnswer) when present.
@@ -162,8 +258,8 @@ function S.dialogue(wmap)
         d.text = body and UI.text(body)
     end
     if w then
-        local answers, changing = S.dialogueAnswers(w.el, ad)
-        if changing then d.changing = true end
+        local answers, changing, counts = S.dialogueAnswers(w.el, ad)
+        if changing then d.changing = true; d.answer_counts = counts end
         if #answers > 0 then
             d.options = {}
             for _, a in ipairs(answers) do

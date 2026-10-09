@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import fcntl
 import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -95,6 +96,23 @@ class SessionGuardTest(unittest.TestCase):
                 why = C.session_blockers(Path(d), Path(d) / "play", procs=[])
                 self.assertEqual(len(why), 1)
                 self.assertIn("runner.lock", why[0])
+
+    def test_runner_pid_waves_its_own_lock_through(self):
+        # the runner runs check_all between sessions with BG3AI_CHECK_ALL_RUNNER_PID=<its pid>
+        with tempfile.TemporaryDirectory() as d:
+            lock, play = Path(d) / "runner.lock", Path(d) / "play"
+            with open(lock, "w") as f:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                f.write("4242")
+                f.flush()
+                self.assertEqual(C.session_blockers(Path(d), play, procs=[], runner_pid="4242"), [])
+                self.assertEqual(len(C.session_blockers(Path(d), play, procs=[], runner_pid="999")), 1)
+                with mock.patch.dict("os.environ", {"BG3AI_CHECK_ALL_RUNNER_PID": "4242"}):
+                    self.assertEqual(C.session_blockers(Path(d), play, procs=[]), [])
+                # a claude still playing in play/ blocks even the runner
+                why = C.session_blockers(Path(d), play, procs=[(7, ["claude"], play)], runner_pid="4242")
+                self.assertEqual(len(why), 1)
+                self.assertIn("claude", why[0])
 
     def test_claude_in_play_dir(self):
         with tempfile.TemporaryDirectory() as d:
@@ -337,6 +355,24 @@ class RunAllTest(unittest.TestCase):
             self.assertEqual(C.main(["--calls", "2", "--skip", "latency"]), 1)
             self.assertEqual(C.main(["--only", "keys,confirm"]), 0)
         self.assertIn("9 PASS, 0 WARN, 0 FAIL", out.getvalue())
+
+    def test_json_report(self):
+        outputs = {"smoke.py": (0, "✓ get_status 4 ms\n"), "check_act.py": (0, "WARN  slow\n"),
+                   "check_vis.py": (1, "[FAIL] markers: unknown op\n"), "check_se.py": (0, "PASS hook: ok\n"),
+                   "check_route.py": (0, "[PASS] route: ok\n")}
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(C, "session_blockers", return_value=[]), \
+                mock.patch("bg3ai.game.Game", lambda port=9998: FakeGame()), \
+                mock.patch.object(C, "server_tools", lambda: {"look": lambda: "ok"}), \
+                mock.patch.object(C.subprocess, "run", self.fake_runner(outputs)), \
+                mock.patch.dict("os.environ", {}), mock.patch("sys.stdout", io.StringIO()):
+            path = Path(d) / "r.json"
+            self.assertEqual(C.main(["--calls", "2", "--json", str(path)]), 1)
+            rep = json.loads(path.read_text())
+        self.assertEqual(rep["exit"], 1)
+        self.assertEqual(rep["counts"], {"PASS": 7, "WARN": 1, "FAIL": 1, "SKIP": 0})
+        self.assertEqual([r["name"] for r in rep["rows"]], C.ORDER)
+        self.assertEqual(next(r for r in rep["rows"] if r["name"] == "vis")["verdict"], "FAIL")
 
     def test_unreachable(self):
         g = FakeGame()

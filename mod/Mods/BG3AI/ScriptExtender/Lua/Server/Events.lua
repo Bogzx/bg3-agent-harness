@@ -166,7 +166,8 @@ listen("RollResult", 6, function(_, roller, _, result, isActive, crit)
     if not active and not success and c.rules.HIDE_FAILED_PERCEPTION_ROLLS then return end
     if not active and c.rules.DIALOGUE_PASSIVE_ROLL_HIDE and truthy(osi(Osi.IsInDialog, u)) then return end
     local data = { roller = ref(u), success = success, active = active }
-    if crit and crit ~= 0 then data.critical = crit end
+    -- Osiris criticality: 1 = natural 20, 2 = natural 1 (S009: a nat-1 Persuasion read as "critical=2").
+    if crit and crit ~= 0 then data.critical = ({ [1] = "success", [2] = "fail" })[tonumber(crit)] or crit end
     RPC.push("roll_result", data)
 end)
 

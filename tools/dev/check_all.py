@@ -3,7 +3,9 @@
     uv run --project bridge python tools/dev/check_all.py [--skip a,b] [--only a,b] [--budget 120] [--calls 50] [-v]
 
 Refuses to run while a session is playing: runtime/runner.lock held by a runner, or a `claude` process working
-in play/ (exit 3). Nothing here moves a character, saves, loads or hot-reloads. The only UI it touches: the
+in play/ (exit 3). The runner itself runs it between sessions with BG3AI_CHECK_ALL_RUNNER_PID=<its pid>: a lock
+held by that pid (the pid the lock file names) is then not a blocker; a claude in play/ still is. --json PATH
+also writes the rows and counts (the runner appends the table to the session's triage report). Nothing here moves a character, saves, loads or hot-reloads. The only UI it touches: the
 `waypoints` check opens the map (M) and closes it, and only on the plain game view out of combat.
 
 Checks, in order (latency first, so nothing else is in flight while it measures):
@@ -141,9 +143,22 @@ def playing_sessions(play_dir: Path = PLAY_DIR, procs=None) -> list[str]:
     return out
 
 
-def session_blockers(runtime: Path = RUNTIME, play_dir: Path = PLAY_DIR, procs=None) -> list[str]:
+def lock_pid(lock: Path) -> int | None:
+    try:
+        return int(lock.read_text().strip() or "x")
+    except (OSError, ValueError):
+        return None
+
+
+def session_blockers(runtime: Path = RUNTIME, play_dir: Path = PLAY_DIR, procs=None,
+                     runner_pid: str | None = None) -> list[str]:
+    """Why a check can't run now. runner_pid (BG3AI_CHECK_ALL_RUNNER_PID): the runner calling us between
+    sessions; its own lock doesn't count, any other holder does."""
+    if runner_pid is None:
+        runner_pid = os.environ.get("BG3AI_CHECK_ALL_RUNNER_PID")
     why = []
-    if runner_lock_held(runtime / "runner.lock"):
+    lock = runtime / "runner.lock"
+    if runner_lock_held(lock) and not (runner_pid and str(lock_pid(lock)) == runner_pid.strip()):
         why.append(f"a runner holds {runtime / 'runner.lock'} (stop it: kill -TERM <runner pid>)")
     why += [f"a claude session is playing in {play_dir.name}/ ({p})" for p in playing_sessions(play_dir, procs)]
     return why
@@ -442,6 +457,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--budget", type=float, default=120.0, help="wall-clock budget in seconds")
     ap.add_argument("--calls", type=int, default=50, help="calls per read tool in the latency check")
     ap.add_argument("-v", "--verbose", action="store_true", help="print the sub-scripts' output")
+    ap.add_argument("--json", type=Path, help="also write {rows, counts, exit} here")
     a = ap.parse_args(argv)
     only = [x for x in a.only.split(",") if x]
     skip = set(x for x in a.skip.split(",") if x)
@@ -466,7 +482,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     rows = run_all(names, g, server_tools, a.calls, a.budget, a.verbose, tmp)
     print_table(rows, a.verbose)
-    return 1 if any(r.verdict == "FAIL" for r in rows) else 0
+    rc = 1 if any(r.verdict == "FAIL" for r in rows) else 0
+    if a.json:
+        write_json(a.json, rows, rc)
+    return rc
+
+
+def write_json(path: Path, rows: list[Row], rc: int) -> None:
+    counts = {v: sum(1 for r in rows if r.verdict == v) for v in ("PASS", "WARN", "FAIL", "SKIP")}
+    path.write_text(json.dumps({"t": time.time(), "exit": rc, "counts": counts,
+                                "rows": [{"name": r.name, "verdict": r.verdict, "secs": round(r.secs, 1),
+                                          "detail": r.detail, "lines": r.lines[:6]} for r in rows]}, indent=1))
 
 
 if __name__ == "__main__":

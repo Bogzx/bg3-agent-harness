@@ -151,7 +151,8 @@ def _session_over() -> bool:
     return bool(DEADLINE) and time.time() > DEADLINE
 
 
-def _events_text() -> str:
+def _events_text(body: str = "", job: str | None = None) -> str:
+    """Drained events, minus those the result's own text (body) already reports."""
     def drain(ctx):
         try:
             return game.drain_events(ctx)
@@ -162,7 +163,7 @@ def _events_text() -> str:
     for evs in _par(lambda: drain("server"), lambda: drain("client")):
         if evs:
             _note_dialogue_speaker(evs)
-            parts.append(render.render_events(evs, H))
+            parts.append(render.render_events(evs, H, body=body, job=job))
     return "\n".join(p for p in parts if p)
 
 
@@ -293,7 +294,8 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
         return text
     out = [body.rstrip()]
     if events:
-        ev = _events_text()
+        job = str(args.get("target") or "").strip().lower() if tool == "wait_for" else ""
+        ev = _events_text(body, job if re.fullmatch(r"j\d+", job) else None)
         if ev:
             out.append(ev)
         auto = _auto_dialogue(tool, body, ev)
@@ -1069,6 +1071,7 @@ def get_combat_state() -> str:
     res = game.rpc("state.combat")
     _remember_names(res)
     if isinstance(res, dict) and not res.get("active", True) and len(res) <= 1:
+        _acts_shown.clear()
         return _finish("get_combat_state", {}, "Not in combat.", t0)
     body = render.compact(res, H)
     # One read should be enough to plan the whole turn: add the acting party member's actions.
@@ -1083,7 +1086,37 @@ def get_combat_state() -> str:
         acts = game.try_rpc("state.actions", {"uuid": cur})
         if acts:
             body += "\nYOUR ACTIONS (" + H.get(cur) + ")\n" + render.render_actions(acts, H)
+            _acts_shown[cur] = set(render.render_actions(acts, H).splitlines()[1:])
     return _finish("get_combat_state", {}, body, t0)
+
+
+# Action lines last listed per character this combat: combat_turn's next-up listing repeated the same ~40 lines
+# (~2 KB) every turn in S011 (Jump, Dip, Shove, all spells). get_combat_state always lists everything.
+_acts_shown: dict[str, set[str]] = {}
+
+
+def _actions_delta(uuid: str, acts: Any) -> str:
+    """'\n<full list>' the first time this combat, then only the NOW line and what changed since."""
+    text = render.render_actions(acts, H)
+    lines = text.splitlines()
+    head = lines[:1] if lines and lines[0].startswith("NOW ") else []
+    body = lines[len(head):]
+    prev = _acts_shown.get(uuid)
+    _acts_shown[uuid] = set(body)
+    if prev is None:
+        return "\n" + text
+    new = [x for x in body if x not in prev]
+
+    def key(x: str) -> str:  # "Name (spell_id)": a changed cost/uses line is a '+', not a '-'
+        m = re.match(r"(.*?\(\S+\))", x)
+        return m.group(1) if m else x
+    renewed = {key(x) for x in new}
+    gone = sorted(x for x in prev if x not in body and key(x) not in renewed and not x.startswith("UNAVAILABLE"))
+    if len(gone) + len(new) > len(body) // 2:
+        return "\n" + text
+    out = head + [f"(other actions as listed before for {H.get(uuid)}; get_combat_state lists them all)"]
+    out += ["+ " + x for x in new] + ["- " + key(x) for x in gone]
+    return "\n" + "\n".join(out)
 
 
 @mcp.tool()
@@ -2690,6 +2723,7 @@ def _turn_next(who: str, party: set) -> str:
     """After the turn: who acts next, and the next party member's actions if it is already their turn."""
     cs = game.try_rpc("state.combat") or {}
     if not cs.get("active"):
+        _acts_shown.clear()
         return "combat is over: loot, heal, then end_combat_report"
     others = [u for u in turn.party_acting(cs, party) if u != who]
     cur = others[0] if others else None
@@ -2699,7 +2733,7 @@ def _turn_next(who: str, party: set) -> str:
             out += f"; also {', '.join(_label(u) for u in others[1:])}"
         acts = game.try_rpc("state.actions", {"uuid": cur})
         if acts:
-            out += "\nYOUR ACTIONS (" + H.get(cur) + ")\n" + render.render_actions(acts, H)
+            out += "\nYOUR ACTIONS (" + H.get(cur) + ")" + _actions_delta(cur, acts)
         return out
     text, mine = turn.next_up(cs, party, _label, ended=who)
     if mine:

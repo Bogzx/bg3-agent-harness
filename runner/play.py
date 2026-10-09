@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -52,6 +53,7 @@ PLAYTHROUGHS = Path(os.environ.get("BG3AI_PLAYTHROUGHS", REPO / "playthroughs"))
 RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
 SESSION_PY = REPO / "tools" / "memory" / "session.py"
 LAUNCH_SH = REPO / "runner" / "launch_game.sh"
+CHECK_ALL = REPO / "tools" / "dev" / "check_all.py"
 SAVE_DIR = Path(os.environ.get(
     "BG3AI_SAVE_DIR",
     Path.home() / ".local/share/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public/Savegames/Story"))
@@ -77,6 +79,8 @@ HEALTH_EVAL_TIMEOUT = 8        # a liveness eval slower than this counts as fail
 EVAL_TIMEOUT = 15
 AGENT_SILENT_MINUTES = float(os.environ.get("BG3AI_AGENT_SILENT_MIN", "4"))  # no claude output this long → hung
                                # (bridge tools cap their waits at ~60 s; a model turn is seconds to ~1 min)
+CHECK_ALL_INTERVAL = 30 * 60   # tools/dev/check_all.py between sessions, at most this often (it takes ~25 s)
+CHECK_ALL_TIMEOUT = 240        # its own budget is 120 s plus the bridge import; past this it's killed
 STEAM_RETRY_S = 120            # Steam not offline: refuse to launch, retry this often (never give up)
 GAME_FAULTS = ("crash", "hang")
 FAULTS = GAME_FAULTS + ("agent_hang",)
@@ -665,6 +669,53 @@ def pids_of_game() -> list[int]:
     return [int(p) for p in r.stdout.split()]
 
 
+# ======================================================================== check_all between sessions
+
+def check_all_cmd(json_path: Path) -> list[str]:
+    """check_all imports the MCP server (bridge deps): through uv's bridge env when uv is there."""
+    uv = shutil.which("uv")
+    py = [uv, "run", "--quiet", "--project", str(REPO / "bridge"), "python"] if uv else [sys.executable]
+    return py + [str(CHECK_ALL), "--json", str(json_path)]
+
+
+def check_all_due(last: float | None, now: float, interval: float = CHECK_ALL_INTERVAL) -> bool:
+    return last is None or now - last >= interval
+
+
+def check_all_result(rc: int | None, out: str, report: dict | None) -> dict:
+    """{ok, counts, line, rows, why} from check_all's exit code, stdout and --json report. ok=False: no verdict
+    (refused, game unreachable, timed out or crashed), which doesn't count as a run for the 30-min spacing."""
+    if report and isinstance(report.get("counts"), dict):
+        c = {k: int(report["counts"].get(k, 0)) for k in ("PASS", "WARN", "FAIL", "SKIP")}
+        line = f"check_all: {c['PASS']} pass, {c['WARN']} warn, {c['FAIL']} fail" + (
+            f", {c['SKIP']} skip" if c["SKIP"] else "")
+        return {"ok": True, "counts": c, "line": line, "rows": report.get("rows") or [], "why": None}
+    why = {None: f"timed out after {CHECK_ALL_TIMEOUT} s", 2: "game/mod not reachable",
+           3: "refused: a session is playing"}.get(rc)
+    if why is None:
+        tail = (out.strip().splitlines() or ["no output"])[-1][:160]
+        why = f"exit {rc}: {tail}"
+    return {"ok": False, "counts": None, "line": f"check_all: no verdict ({why})", "rows": [], "why": why}
+
+
+def _cell(text, limit: int = 300) -> str:
+    return str(text)[:limit].replace("|", "\\|").replace("\n", " ")
+
+
+def check_all_markdown(res: dict, when: float, secs: float, label: str = "") -> str:
+    """The section appended to the finished session's Sxxx.triage.md."""
+    verdict = res["line"].removeprefix("check_all: ")
+    head = f"\n## check_all {label}({datetime.fromtimestamp(when):%H:%M}, {secs:.0f} s): {verdict}\n"
+    if not res["ok"]:
+        return head
+    out = [head, "| check | verdict | secs | detail |", "|---|---|---|---|"]
+    for r in res["rows"]:
+        mark = {"FAIL": "**FAIL**"}.get(r.get("verdict"), r.get("verdict"))
+        out.append(f"| {r.get('name')} | {mark} | {r.get('secs', '')} | {_cell(r.get('detail', ''))} |")
+        out += [f"| | | | {_cell(line, 150)} |" for line in (r.get("lines") or [])[1:4]]
+    return "\n".join(out) + "\n"
+
+
 # ======================================================================== persistent runner state
 
 class RunnerState:
@@ -778,6 +829,7 @@ class Runner:
         self.pending_notes: list[str] = []
         self.quick_failures = 0
         self.new_game = False
+        self.last_triage: tuple[str, Path] | None = None  # (session, Sxxx.triage.md) of the last claude run
 
     # ---------------------------------------------------------------- unattended-run events
 
@@ -1307,7 +1359,51 @@ class Runner:
             log(f"{session}: triage failed: {e}")
             return None
         log(f"{session}: triage {path}")
+        self.last_triage = (session, path)
         return path
+
+    def between_sessions_check(self) -> dict | None:
+        """tools/dev/check_all.py after the mod hot reload, before the next kickoff (no claude is in play/ then;
+        our own runner.lock is waved through by BG3AI_CHECK_ALL_RUNNER_PID). At most every CHECK_ALL_INTERVAL.
+        The table goes to the finished session's triage report, the counts to the log and runner.status.json
+        (dashboard). A FAIL never stops play; nothing here raises."""
+        now = time.time()
+        if not check_all_due(self.state["check_all_at"], now) or self.stop_requested or (RUNTIME / "STOP").exists():
+            return None
+        json_path = RUNTIME / "check_all.json"
+        json_path.unlink(missing_ok=True)
+        env = dict(os.environ, BG3AI_CHECK_ALL_RUNNER_PID=str(os.getpid()))
+        t0 = time.time()
+        try:
+            p = subprocess.run(check_all_cmd(json_path), capture_output=True, text=True, cwd=REPO, env=env,
+                               timeout=CHECK_ALL_TIMEOUT)
+            rc, out = p.returncode, p.stdout + p.stderr
+        except subprocess.TimeoutExpired:
+            rc, out = None, ""
+        except OSError as e:
+            rc, out = -1, str(e)
+        secs = time.time() - t0
+        try:
+            report = json.loads(json_path.read_text())
+        except (OSError, ValueError):
+            report = None
+        res = check_all_result(rc, out, report)
+        session, triage_path = self.last_triage or (None, None)
+        log(res["line"] + (f" (after {session}, {secs:.0f} s)" if session else f" ({secs:.0f} s)"))
+        if res["ok"]:
+            self.state["check_all_at"] = now
+        bad = [f"{r.get('name')}: {r.get('detail')}"[:200] for r in res["rows"] if r.get("verdict") == "FAIL"]
+        for b in bad:
+            log(f"check_all FAIL {b}")
+        write_status(check_all={"t": now, "session": session, "ok": res["ok"], "counts": res["counts"],
+                                "line": res["line"], "fails": bad[:5], "why": res["why"]})
+        if triage_path is not None:
+            try:
+                with open(triage_path, "a") as f:
+                    f.write(check_all_markdown(res, now, secs, "after the session "))
+            except OSError as e:
+                log(f"check_all: triage append failed: {e}")
+        return res
 
     def progress_loop(self, session: str, base: Path, start: float, stop: threading.Event, human=None) -> None:
         """Poll story progress (fair journal/map/status data) into Sxxx.progress.jsonl until stop is set."""
@@ -1428,6 +1524,10 @@ class Runner:
             self.apply_play_settings()
         except Exception as e:  # noqa: BLE001 - never fail a session over settings
             log(f"play settings failed: {e}")
+        try:
+            self.between_sessions_check()  # after the reload: checks the Lua the next session plays with
+        except Exception as e:  # noqa: BLE001 - checks never stop play
+            log(f"check_all failed: {e}")
         start_sig = read_progress()
         prompt = build_kickoff(sid, self.opt.playthrough, time.time() + minutes * 60, loaded, notes)
         res = self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))

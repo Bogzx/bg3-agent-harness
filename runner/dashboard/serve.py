@@ -168,7 +168,7 @@ class Hub:
             "now": time.time(),
             "playthrough": runner.get("playthrough") or os.environ.get("BG3AI_PLAYTHROUGH"),
             "runner": {k: runner.get(k) for k in ("session", "started", "deadline", "hard_stop", "runner_pid",
-                                                   "run_end", "updated", "claude_session") if k in runner},
+                                                   "run_end", "updated", "claude_session", "check_all") if k in runner},
             "clock": F.session_clock(runner, session_file, mem_state),
             "game": game,
             "events": events,

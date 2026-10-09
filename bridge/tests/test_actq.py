@@ -189,7 +189,7 @@ class AsyncActions(Base):
         server.move_to(target=self.door)
         out = server.wait_for("j1", timeout_s=2)
         self.assertIn("move_to: done", out)
-        self.assertIn("job_finished", out)  # the mod's notify event is reported once
+        self.assertNotIn("job_finished", out)  # the result already says it: no duplicate EVENTS line
 
     def test_wait_for_times_out_and_lists_running(self):
         self.g.dur["act.move_to"] = 5
@@ -334,7 +334,7 @@ class Queue(Base):
         self.assertFalse(server._batch["active"])  # the worker's batch flag is its own
         out = server.wait_for("queue", timeout_s=3)
         self.assertIn("done (2 steps)", out)
-        self.assertIn("queue_done", out)
+        self.assertNotIn("queue_done", out)  # the wait_for result is the report: no duplicate EVENTS line
 
     def test_queue_steps_act_for_the_queue_owner(self):
         server.queue_actions('[{"tool":"interact","target":"%s"}]' % self.door, who="Lae'zel")

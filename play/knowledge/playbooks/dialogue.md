@@ -11,8 +11,14 @@
   for the checks you expect: `talk_to(npc="e8", who="<best talker>")`. Charisma (Persuasion, Deception,
   Intimidation) for most NPCs, and Insight to read them. A party member's skill bonuses are on
   `get_character`, and the tagged options in a dialogue name the party's best for next time.
+- **Conversations that start by themselves** (ambushes, NPCs who call out as you walk past) are spoken by
+  whoever walked into them. In goblin/bandit/cultist areas, walk with your best talker in front
+  (`travel_to(..., who="<best talker>")`). S013: Shadowheart (Persuasion −1) got the goblin talks that
+  Claude (+6) should have had.
 - **Pre-buff the speaker** when a check is likely: Guidance (+1d4 to ability checks, a cantrip) cast with
-  `use_ability` just before talking, or Bardic Inspiration once you have a bard.
+  `use_ability` just before talking, or Bardic Inspiration once you have a bard. It costs one action out
+  of combat, so do it for every named-NPC talk where memory or the wiki expects a check. (Through S014 it
+  was never used.)
 - `look_at(target)` first if you need to know who someone is (the Examine panel, nothing hidden).
 
 ## In the conversation
