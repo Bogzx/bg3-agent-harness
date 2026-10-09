@@ -17,7 +17,7 @@ Ctrl-C once does the same as `stop`; a second Ctrl-C interrupts the running sess
 `run --dry-run` prints the next session's plan (save to load, session id, the claude command) and changes
 nothing.
 
-Options: `--session-minutes 60` (the wrap-up reminder fires 10 min before the end), `--hours N` (total
+Options: `--session-minutes 60` (wrap-up starts 3 min before the end), `--hours N` (total
 budget; no new session starts with less than 20 min left), `--model`, `--save-owner NAME`,
 `--take-over` (see Safety).
 
@@ -51,7 +51,9 @@ python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hour
    not call `session.py start` itself, since that would open two sessions. Output goes to
    `runtime/sessions/<playthrough>/Sxxx.jsonl` (raw) and `Sxxx.log` (readable: `[say]`, `[tool]`,
    `[result]`, `[end]`).
-4. **Deadline.** At deadline + 10 min Claude gets SIGINT, then SIGTERM 30 s later, then SIGKILL.
+4. **Deadline.** At deadline + 10 min Claude gets SIGINT, then SIGTERM 30 s later, then SIGKILL. If Claude
+   exits on its own more than 5 min before the deadline (not a crash, hang or hard stop), the runner logs
+   `Sxxx: early exit: … min left`, records `early_exit_min` in the history, and starts the next session at once.
 5. **After.**
    - If no new `Sxxx-` save appeared during the session, the runner quicksaves (`ui.menu quicksave`, or an
      injected F5) and records the new folder.
@@ -86,9 +88,9 @@ python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hour
   the character name plus the game's dash, what the MCP server and docs/HANDOFF.md use; the agent's
   `Sxxx-` labels stay plain) or as a label prefix (`pt1-S010-end`). Use `--save-owner` for the character
   name; new games name the character with it (bg3ai/naming.py checks it before "Venture forth").
-- `--session-minutes` below 20 is refused (`--allow-short-sessions` for harness tests): start-up and wrap-up
-  take ~13 min. Wrap-up starts 10 min before the end (a third of a short session), passed to the MCP clock
-  as `BG3AI_SESSION_WRAPUP`.
+- `--session-minutes` below 20 is refused (`--allow-short-sessions` for harness tests): start-up (≤1 min)
+  and wrap-up (3 min) need room. Wrap-up starts 3 min before the end (a third of a tiny session), passed to
+  the MCP clock line and the Stop hook as `BG3AI_SESSION_WRAPUP`, so both switch at the same moment.
 
 ## Files
 

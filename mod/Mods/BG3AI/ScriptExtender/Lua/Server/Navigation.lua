@@ -781,6 +781,83 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid)
     return out
 end
 
+-- Pure geometry (unit-tested in tools/dev/test_nav_lua.lua): the point at arc
+-- length m along a polyline (clamped to its ends).
+function N.pointAlong(points, m)
+    local walked = 0
+    for i = 2, #points do
+        local a, b = points[i - 1], points[i]
+        local seg = U.dist(a, b)
+        if walked + seg >= m and seg > 1e-6 then
+            local f = math.max(0, (m - walked) / seg)
+            return { a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f }
+        end
+        walked = walked + seg
+    end
+    local p = points[#points]
+    return { p[1], p[2], p[3] }
+end
+
+-- Pure geometry: walking the route `points`, the first arc length where the
+-- straight distance to `tpos` is <= within (sampled every APPROACH_STEP_M),
+-- or nil if the route never gets that close. Also returns the route length.
+N.APPROACH_STEP_M = 0.25
+function N.arcWithin(points, tpos, within)
+    local walked = 0
+    if #points >= 1 and U.dist(points[1], tpos) <= within then return 0, 0 end
+    local found
+    for i = 2, #points do
+        local a, b = points[i - 1], points[i]
+        local seg = U.dist(a, b)
+        if not found then
+            local n = math.max(1, math.ceil(seg / N.APPROACH_STEP_M))
+            for k = 1, n do
+                local f = k / n
+                local p = { a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f }
+                if U.dist(p, tpos) <= within then found = walked + seg * f; break end
+            end
+        end
+        walked = walked + seg
+    end
+    return found, walked
+end
+
+-- Walk the engine's own route toward a target (entity uuid or pos) until
+-- within `within` m of it, at most budget_m of path (movement left), keeping
+-- out of harmful surfaces when avoid. Unlike reachToward (straight-line
+-- samples), this follows stairs, ramps and detours: S002, the move toward
+-- Commander Zhalk's platform stopped 0.3 m in and still said "done".
+-- Returns {reachable, pos, walk_m, need_m?, route_m, end_m, limit} where limit
+-- says why pos is where it is: "in_range" | "movement" | "hazard" | "route_end";
+-- or {reachable=false, reason}.
+function N.approach(charUuid, target, tpos, within, budget, avoid)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from then return nil, "no position" end
+    local r = N.path(charUuid, target)
+    if not r or r.reachable ~= true or type(r.points) ~= "table" then
+        return { reachable = false, reason = r and r.reachable == false and "no path to it"
+            or (r and r.reason) or "pathfinding unavailable", straight_m = round(U.dist(from, tpos), 1) }
+    end
+    local pts = r.points
+    local need, routeM = N.arcWithin(pts, tpos, within)
+    local walk, limit = need or routeM, need and "in_range" or "route_end"
+    if budget and walk > budget then walk, limit = math.max(0, budget), "movement" end
+    local out = { reachable = true, route_m = round(routeM, 1), need_m = need and round(need, 1) or nil,
+        needs_jump = r.needs_jump }
+    if avoid then
+        local h = N.routeHazard(pts)
+        if h and h.at_m < walk + 0.5 then
+            walk, limit = math.max(0, h.at_m - N.HAZARD_STEP_M - 0.2), "hazard" -- samples are 1 m apart
+            out.hazard = h
+        end
+    end
+    local p = N.pointAlong(pts, walk)
+    out.pos, out.walk_m, out.limit = U.vec(p, 2), round(walk, 1), limit
+    out.end_m = round(U.dist(p, tpos), 1)
+    return out
+end
+
 -- Nearest safe floor out of a harmful surface: rings of 8 directions at
 -- 1.5..max_m; the shortest path whose end and route (after the first metre)
 -- are clear. nil when the character is not in a harmful surface.
@@ -1472,6 +1549,43 @@ RPC.register("nav.reach_toward", function(args)
     end
     local under = N.harmfulUnder(char)
     if under then r.standing_in = under end
+    r.ms = Ext.Utils.MonotonicTime() - t0
+    return r
+end)
+
+-- nav.approach {char?, target|pos, within?=1.5, budget_m?, avoid?=true}: where
+-- to walk along the real route to get within `within` m (see N.approach).
+-- budget_m defaults to the movement left (in combat) minus 0.2.
+RPC.register("nav.approach", function(args)
+    local ctx = V.context()
+    local char = args.char or activeChar(ctx)
+    if not ctx.is_party[char] then error("not a party member", 0) end
+    local target, tpos = nil, type(args.pos) == "table" and args.pos or nil
+    if args.target then
+        local te = V.entity(args.target)
+        tpos = te and V.pos(te)
+        if not tpos then error("unknown target", 0) end
+        local visible = U.comp(te, "ServerCharacter") and V.characterVisible(ctx, args.target, te, tpos)
+            or (U.comp(te, "ServerItem") and V.itemVisible(ctx, args.target, te, tpos))
+        if not visible then error("not visible", 0) end
+        target = args.target
+    end
+    if type(tpos) ~= "table" or #tpos < 3 then error("need pos [x,y,z] or target", 0) end
+    local ce = V.entity(char)
+    local cp = ce and V.pos(ce)
+    if cp and U.dist(cp, tpos) > N.PATH_MAX_M then
+        return { reachable = false, reason = "too far", straight_m = round(U.dist(cp, tpos), 1) }
+    end
+    local mv = movementLeft(char)
+    local budget = tonumber(args.budget_m)
+    if mv and Osi.IsInCombat and truthy(osi(Osi.IsInCombat, char)) then
+        budget = math.min(budget or math.huge, math.max(0, mv - 0.2))
+    end
+    local t0 = Ext.Utils.MonotonicTime()
+    local r, err = N.approach(char, target or tpos, tpos, math.max(0, tonumber(args.within) or N.APPROACH_M),
+        budget, args.avoid ~= false)
+    if not r then error(err, 0) end
+    if mv then r.movement_left = round(mv, 1) end
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r
 end)

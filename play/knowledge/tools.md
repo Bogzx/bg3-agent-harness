@@ -4,6 +4,13 @@ Targets (`target`, `npc`, `item`, `who`) are short ids from the observation tool
 member's name. Ids last one session only: write names in notes. `who` defaults to the active
 character. Job results are `done`, `FAILED — reason`, `INTERRUPTED — reason`, `TIMEOUT`, or `started
 j12, ETA 3s` (async: a `job_finished` event follows; `wait_for("j12")` to block), followed by EVENTS.
+Lines a result may end with:
+- `RUNNING j3 move_to ~2s left | queue Claude: travel_to m1 (31m left, ETA ~7s) then interact …` → what is
+  still walking or queued right now. Don't wait on it: append with `queue_actions`, then plan or write notes.
+- `NEXT: queue_actions what to do on arrival, then look/plan/notes while it runs; …` → after a walk that is
+  still running: the order to work in (shown the first few times).
+- `PACE: you waited right after issuing…` → on a `wait_for` called <1.5 s after starting something: next
+  time do independent work first and `wait_for` last.
 
 ## Observe
 - `look(full=false)` → **what changed since your last look**, a few lines: `PARTY moved 12m W`, `e4 Gale HP 8->3/12, +Burning`,
@@ -58,6 +65,11 @@ tried in order until one works:
 - `move`: `"e12"` (walk next to it), `{"target":"e12","within":18}` (stop once within 18 m: ranged/spell
   range; no walk if already there), or `[x,y,z]`. If the walk doesn't fit the movement left, it walks as far
   as it does (`"partial":false` turns that off). A failed move doesn't end the turn: the fallbacks decide.
+  It follows the real route (stairs, detours) and keeps out of fire on the way (`"avoid":false` walks through).
+  A move that ends out of reach says so and why: `now 9.9m from e12 — stopped short of ≤1.5m: out of
+  movement (9m left, the route needs 18.5m)` / `kept out of Fire on the route 4m ahead` / `no walkable
+  route gets closer than 7m (raised/blocked …)`. If then every action alternative is out of range, it
+  tries the ranged weapon attack itself (`action (auto fallback): …`), else Dash + walk on (out of movement only).
 - `action`, `bonus`: an ability id (`"Shout_Dash"`), or `{"ability","target" | "x","y","z","upcast","targets","if","unless","then_move"}`,
   or `{"tool":<any do_actions tool>,...}`. `"then_move":true` (Dash) walks the move again after it.
 - `extra`: a list of more slots, e.g. the Extra Attack: `[[{"ability":"Target_MainHandAttack","target":"e12"}]]`.

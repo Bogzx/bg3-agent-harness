@@ -108,6 +108,7 @@ casters, and `moved_done{uuid,move_id}`.
 |---|---|---|---|
 | `nav.path` | S | `{char?, pos \| target}` | `{reachable, length_m, nodes, needs_jump?, within_movement?, movement_left, approach_pos?}` or `{reachable:false, straight_m, error_cause}`; points > 80 m → `{estimate:true, straight_m}` |
 | `nav.reach_toward` | S | `{char?, dir:N\|NE\|…\|NW \| pos \| target, max_m=30, step=2}` | Farthest walkable point that way with a direct path (path ≤ max(1.5×straight, straight+2 m)): `{reachable, pos, path_m, straight_m, dir, needs_jump?, samples, ms}`. Target must be visible |
+| `nav.approach` | S | `{char?, target \| pos, within=1.5, budget_m?, avoid=true}` | Walk along the engine's real route until within `within` m (straight) of it, capped by budget_m and, in combat, the movement left − 0.2; stops 1.2 m before a harmful surface when avoid: `{reachable, pos, walk_m, need_m?, route_m, end_m, limit: in_range\|movement\|hazard\|route_end, hazard?, movement_left?, ms}` or `{reachable=false, reason}`. Used by combat_turn's move |
 | `nav.markers` | S | – | Active quest objective markers (what the map shows): `{markers:[{label, quest, objective, kind, level?, here?, pos?, dist?, dir?}], error?, ms}`; `here` = on the current level with a position; sorted here-first, nearest-first. Data: generated `Server/Data/JournalMarkers.lua` |
 | `nav.explored` | S | `{last=10}` | Party breadcrumbs: `{level, cells, cell_m, area_m2, bbox, subregion, recent:[{pos, subregion?, near?, near_m?}]}` |
 | `nav.frontier` | S | `{radius=30, limit=25}` | Perceived leads `{leads:[{kind, uuid, name, dist, dir, pos, dy? (another floor, \|dy\|≥1.5), unvisited?, locked?, relation?, waypoint?, height_m?+leads? (ladders: AI-bounds height, up\|down)}], more?, ms}` |
@@ -170,7 +171,7 @@ target moves more than 2 m or is out of reach on arrival, up to 4 times. Jump di
 - **`combat_turn`** (`bridge/src/bg3ai/turn.py`). One call per combat turn: slots move/action/bonus/extra, each
   a list of alternatives (any batchable tool) tried in order. Before each step the bridge re-reads
   `state.combat` (still our turn?) and `act.target_state` (target visible, not dead). A move that exceeds the
-  movement left becomes a partial walk via `nav.reach_toward`; `within` stops at a range. Reaction prompts
+  movement left becomes a partial walk via `nav.approach` (route-following; `nav.reach_toward` on an old mod); `within` stops at a range, and a move that ends out of range says why. Reaction prompts
   stop the turn unless the plan's `on_reaction` answers them (`ui.react`). `end_turn` runs without waiting;
   the result names the next combatants from the visible turn order.
 - **Macros** (`bridge/src/bg3ai/macros.py`): `loot_area` (`state.nearby` corpses + unlocked, unowned,

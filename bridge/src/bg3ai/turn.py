@@ -36,6 +36,7 @@ MAX_EXTRA = 3
 FATAL = ("not this character's turn", "session is over", "no active character", "is downed", "is dead",
          "not in combat", "already ended its turn")
 # Failures of a move that a shorter walk can fix.
+MELEE_M = 1.5  # a plain move to a target means "next to it"
 MOVE_SHORT = ("beyond remaining movement", "no movement left", "not enough movement")
 
 
@@ -55,6 +56,7 @@ class Move:
     pos: list | None = None
     within: float | None = None  # stop once this close (straight line), e.g. weapon/spell range
     partial: bool = True  # if the full walk doesn't fit the movement left, walk as far as it does
+    avoid: bool = True  # keep out of harmful surfaces on the way (false: walk through fire to get there)
 
 
 @dataclass
@@ -103,7 +105,7 @@ def _move(v: Any) -> Move | None:
         return Move(pos=[float(x) for x in v])
     if not isinstance(v, dict):
         raise PlanError('move: give "e12", [x,y,z], or {"target":"e12","within":1.5}')
-    m = Move(partial=bool(v.get("partial", True)))
+    m = Move(partial=bool(v.get("partial", True)), avoid=bool(v.get("avoid", True)))
     if v.get("target"):
         m.target = str(v["target"])
     elif None not in (v.get("x"), v.get("y"), v.get("z")):

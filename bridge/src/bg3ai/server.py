@@ -1868,8 +1868,45 @@ def _turn_check(who: str, step: actq.Step | None) -> tuple[bool, str]:
     return False, ""
 
 
-def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, after: dict) -> str:
-    """The move slot: 'ok', 'none' (couldn't move; the turn goes on, fallbacks may still work) or 'stop'."""
+def _approach(who: str, tu: str | None, mv: turn.Move, within: float, budget: float | None = None) -> dict | None:
+    """nav.approach: where to walk along the real route to get within `within` m (None: the op is missing)."""
+    args: dict = {"char": who, "within": within, "avoid": mv.avoid}
+    args.update({"target": tu} if tu else {"pos": mv.pos})
+    if budget is not None:
+        args["budget_m"] = budget
+    r = game.try_rpc("nav.approach", args)
+    return r if isinstance(r, dict) and ("pos" in r or "reachable" in r) else None
+
+
+def _short_why(ap: dict | None) -> str:
+    """Why an approach stops where it does, as the agent should hear it ('' = it reaches range)."""
+    if not ap:
+        return ""
+    if ap.get("reachable") is False:
+        return str(ap.get("reason") or "no path to it")
+    lim = ap.get("limit")
+    if lim == "movement":
+        need = ap.get("need_m") or ap.get("route_m")
+        left = ap.get("movement_left")
+        bits = ([f"{render.num(left)}m left"] if left is not None else []) + \
+            ([f"the route needs {render.num(need)}m"] if need is not None else [])
+        return "out of movement" + (f" ({', '.join(bits)})" if bits else "")
+    if lim == "hazard":
+        h = ap.get("hazard") or {}
+        return (f"kept out of {h.get('surface', 'a harmful surface')} on the route {render.num(h.get('at_m', 0))}m ahead"
+                " (move avoid:false walks through)")
+    if lim == "route_end":
+        return f"no walkable route gets closer than {render.num(ap.get('end_m', 0))}m (raised/blocked: ranged, jump or another way)"
+    return ""
+
+
+def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, after: dict,
+               info: dict | None = None) -> str:
+    """The move slot: 'ok', 'none' (couldn't move; the turn goes on, fallbacks may still work) or 'stop'.
+    A move toward a target that ends out of `within` says how far it got and why; info["short"] gets that
+    reason ("movement" / "hazard" / "route_end" / "no_path" / "early") for combat_turn's fallbacks."""
+    info = info if info is not None else {}
+    info.pop("short", None)
     fatal, why = _turn_check(who, None)
     if fatal:
         lines.append(f"move: {why}")
@@ -1877,16 +1914,39 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
     what = mv.target or render.pos(mv.pos)
     tu = _uuid(mv.target) if mv.target else None
     step = None
+    ap = None
+
+    def dist_now() -> float | None:
+        return turn.straight_dist(game.try_rpc("state.combat") or {}, who, tu) if tu else None
+
+    def short_note(d2: float | None, ap2: dict | None) -> str:
+        want = mv.within if mv.within is not None else turn.MELEE_M
+        if d2 is None or d2 <= want + 0.3:
+            return ""
+        w = _short_why(ap2)
+        info["short"] = (ap2 or {}).get("limit") or "early"
+        return f" — stopped short of ≤{render.num(want)}m: " + (w or "the walk ended early (blocked or bumped?)")
+
     if tu and mv.within is not None:
-        d = turn.straight_dist(game.try_rpc("state.combat") or {}, who, tu)
+        d = dist_now()
         if d is not None and d <= mv.within:
             lines.append(f"move: already within {render.num(mv.within)}m of {what} ({render.num(d)}m)")
             return "ok"
-        if d is not None:
+        ap = _approach(who, tu, mv, mv.within)
+        if ap is not None:
+            if ap.get("reachable") is False or not ap.get("pos") or float(ap.get("walk_m") or 0) < 0.5:
+                info["short"] = "no_path" if ap.get("reachable") is False else (ap.get("limit") or "no_path")
+                lines.append(f"move {what}: stays put, {render.num(d) if d is not None else '?'}m away — "
+                             + (_short_why(ap) or "no way closer"))
+                return "none"
+            x, y, z = ap["pos"]
+            step = actq.Step("move_to", {"x": x, "y": y, "z": z})
+        elif d is not None:  # a mod without nav.approach: straight-line samples
             r = game.try_rpc("nav.reach_toward", {"char": who, "target": tu, "max_m": max(0.5, d - mv.within + 0.3)})
             if not (isinstance(r, dict) and r.get("reachable") and r.get("pos")):
                 # Don't walk all the way up to a target we only wanted to be in range of.
                 lines.append(f"move {what}: no walkable ground toward it ({render.num(d)}m, want ≤{render.num(mv.within)}m)")
+                info["short"] = "no_path"
                 return "none"
             x, y, z = r["pos"]
             step = actq.Step("move_to", {"x": x, "y": y, "z": z})
@@ -1898,10 +1958,10 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
         res = text.split(': ', 1)[-1]
         if tu and "target" not in step.args:
             # A walk to a point near the target: its dist= is to that point, not to the target.
-            d2 = turn.straight_dist(game.try_rpc("state.combat") or {}, who, tu)
-            res = re.sub(r"\s*dist=[\d.]+", "", res)
+            d2 = dist_now()
+            res = re.sub(r"\s*dist=[\d.]+", "", res).rstrip(" —")
             if d2 is not None:
-                res += f", now {render.num(d2)}m from {what}"
+                res += f", now {render.num(d2)}m from {what}" + short_note(d2, ap)
         lines.append(f"move {what}: {res}")
         return "ok"
     text = text.split(": ", 1)[-1] if text.startswith("move_to:") else text
@@ -1918,20 +1978,38 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
             p = game.try_rpc("nav.path", {"char": who, **({"target": tu} if tu else {"pos": mv.pos})}) or {}
             left = p.get("movement_left") if isinstance(p, dict) else None
         if isinstance(left, (int, float)) and left >= 1.0:
-            r = game.try_rpc("nav.reach_toward", {"char": who, **({"target": tu} if tu else {"pos": mv.pos}),
-                                                  "max_m": float(left) - 0.3})
+            budget = float(left) - 0.3
+            ap = _approach(who, tu, mv, mv.within if mv.within is not None else turn.MELEE_M, budget)
+            if ap is not None:
+                r = ap if ap.get("reachable") and ap.get("pos") and float(ap.get("walk_m") or 0) >= 0.5 else None
+                if r is None:
+                    info["short"] = ap.get("limit") or "no_path"
+                    lines.append(f"move {what}: {text} → can't get closer: {_short_why(ap) or 'no way closer'}")
+                    return "none"
+            else:
+                r = game.try_rpc("nav.reach_toward", {"char": who, **({"target": tu} if tu else {"pos": mv.pos}),
+                                                      "max_m": budget})
             if isinstance(r, dict) and r.get("reachable") and r.get("pos"):
                 x, y, z = r["pos"]
                 rep2, text2 = _run_one(watcher, who, actq.Step("move_to", {"x": x, "y": y, "z": z}))
                 _after(rep2, after)
-                lines.append(f"move {what}: {text} → partial {render.num(float(left) - 0.3)}m toward it: "
-                             f"{text2.split(': ', 1)[-1]}")
+                res2 = text2.split(': ', 1)[-1]
+                if rep2.done and tu:
+                    d2 = dist_now()
+                    res2 = re.sub(r"\s*dist=[\d.]+", "", res2).rstrip(" —")
+                    if d2 is not None:
+                        res2 += f", now {render.num(d2)}m from {what}" + short_note(d2, ap)
+                lines.append(f"move {what}: {text} → partial {render.num(budget)}m toward it: {res2}")
                 if rep2.done:
+                    if tu is None:
+                        info["short"] = "movement"
                     return "ok"
                 if rep2.stop_kind not in (None, "failed"):
                     lines.append(f"STOPPED: {_label(rep2.stopped or '')}")
                     return "stop"
                 return "none"
+    if turn.move_too_long(text):
+        info["short"] = "movement"
     lines.append(f"move {what}: {text}")
     return "none"
 
@@ -1967,6 +2045,43 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
     return "none", False
 
 
+AUTO_RANGED = ("Projectile_MainHandAttack", "Projectile_OffhandAttack")
+
+
+def _turn_auto_fallback(p: turn.TurnPlan, who: str, watcher: actq.Watcher, lines: list, after: dict,
+                        info: dict) -> str:
+    """Every action alternative was out of range (S002: the move toward Zhalk stopped short): the ranged
+    weapon attack if the target is within its range, else Dash and walk on when the move ran out of
+    movement. Only abilities the plan didn't already try, and only ones the character has available."""
+    tgt = (p.move.target if p.move else None) or next(
+        (a.step.args.get("target") for a in p.slots["action"] if a.step.args.get("target")), None)
+    if not tgt:
+        return "none"
+    try:
+        tu = _uuid(str(tgt))
+    except ValueError:
+        return "none"
+    acts = game.try_rpc("state.actions", {"uuid": who})
+    acts = acts.get("actions") if isinstance(acts, dict) else acts
+    avail = {a.get("spell"): a for a in acts or [] if isinstance(a, dict) and a.get("available") is not False}
+    tried = {a.step.args.get("ability") for a in p.slots["action"]}
+    d = turn.straight_dist(game.try_rpc("state.combat") or {}, who, tu)
+    alts: list[turn.Alt] = []
+    for sp in AUTO_RANGED:
+        rng = (avail.get(sp) or {}).get("range")
+        if sp in avail and sp not in tried and (d is None or not isinstance(rng, (int, float)) or d <= rng):
+            alts.append(turn.Alt(actq.Step("use_ability", {"ability": sp, "target": str(tgt)})))
+            break
+    if p.move and info.get("short") == "movement" and "Shout_Dash" in avail and "Shout_Dash" not in tried:
+        alts.append(turn.Alt(actq.Step("use_ability", {"ability": "Shout_Dash"}), then_move=True))
+    if not alts:
+        return "none"
+    res, then_move = _turn_slot("action (auto fallback)", alts, who, watcher, lines, after)
+    if res == "ok" and then_move and p.move:
+        res = _turn_move(p.move, who, watcher, lines, after, info)
+    return res
+
+
 def _answer_reaction(use: bool) -> str:
     r = _watch_conn().run_job("ui.react", {"use": use}, context="client", wait_s=10)
     return f"reaction prompt: {'used' if use else 'declined'} ({r.status})"
@@ -1997,9 +2112,9 @@ def _turn_next(who: str, party: set) -> str:
 @_guard
 def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: bool = False,
                 ignore: str = "hostile") -> str:
-    """A WHOLE combat turn in one call: move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Disengage).
+    """A WHOLE combat turn in one call: move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Disengage). If every action alternative is out of range, it tries the ranged weapon attack itself, else Dash + walk on when the move ran out of movement. A move that ends out of reach says how far it got and why (out of movement / fire on the route / no route closer).
     plan: JSON, e.g. {"move":{"target":"e12","within":1.5},"action":[{"ability":"Target_MainHandAttack","target":"e12"},{"ability":"Projectile_MainHandAttack","target":"e12"},{"ability":"Shout_Dash","then_move":true},"Shout_Disengage"],"bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"},"extra":[[{"ability":"Target_MainHandAttack","target":"e12"}]]}
-    move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z]. If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off).
+    move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z]. Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).
     Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it (Dash), walk the move again.
     order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn (default: stop).
     Before each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore="" adds new hostiles in view).
@@ -2034,10 +2149,11 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     watcher = turn.TurnWatcher(_watch_conn(), p.on_reaction, _answer_reaction, ignore=_parse_ignore(ignore))
     watcher.baseline()
     after: dict = {}
+    info: dict = {}
     stopped = False
     for slot in p.order:
         if slot == "move":
-            res = _turn_move(p.move, char, watcher, lines, after) if p.move else "none"
+            res = _turn_move(p.move, char, watcher, lines, after, info) if p.move else "none"
         elif slot == "extra":
             res = "none"
             for i, alts in enumerate(p.slots["extra"], 1):
@@ -2047,7 +2163,10 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
         else:
             res, then_move = _turn_slot(slot, p.slots[slot], char, watcher, lines, after)
             if res == "ok" and then_move and p.move:
-                res = _turn_move(p.move, char, watcher, lines, after)
+                res = _turn_move(p.move, char, watcher, lines, after, info)
+            elif (res == "none" and slot == "action" and p.slots[slot] and lines
+                  and lines[-1].startswith("action:") and "out of range" in lines[-1]):
+                res = _turn_auto_fallback(p, char, watcher, lines, after, info)
         if res == "stop":
             stopped = True
             break

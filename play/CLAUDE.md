@@ -37,6 +37,9 @@ target: `my_turn`, `idle`, a job, an event kind); write long notes between two a
 a walk; call `interact`/`move_to` directly on a character whose queue is running (a direct action
 supersedes the queue: append instead, or `cancel_queue` on purpose); make one tool call per step of a
 plan you already know. In combat use `combat_turn`; in dialogue, `dialogue_advance` for filler.
+Results may end with `RUNNING …` (still walking/queued: append, don't wait), `NEXT: …` (what to do while it
+runs) and `PACE: …` (you waited too soon): follow them. A combat move that ends out of reach says
+`stopped short of ≤Nm: <why>`; plan from the distance it gives, not from the move being `done`.
 
 ## Fairness and sandbox (hard rules)
 - Game information comes **only** from the bg3 MCP tools. That includes their screenshots and
@@ -133,14 +136,14 @@ on them and act at once. Save deep thinking for real decisions.
 4. **Read the delta.** Each action reports `done`, `FAILED — <reason>`, `INTERRUPTED — <what happened>`,
    `TIMEOUT`, or `started jN` (async: watch for `job_finished`, or `wait_for`), followed by EVENTS.
    Handle interrupts (`queue_interrupted`, combat, dialogue) first.
-5. **Record** noteworthy events right away (see Memory).
+5. **Record** noteworthy events during the next walk, queue or enemy turn, not between actions (see Memory).
 
 **Cutscenes are skipped automatically**, and spoken lines are fast-forwarded. Each line still arrives
 as a `dialogue_line` event (speaker: text). Never wait for, watch or screenshot a cutscene: read the
 events, then `get_dialogue` for the options. Answers are never picked for you.
 
 `session_clock` gives the time left. Results end with a `⏱` clock line in runner sessions, e.g.
-`⏱ 14m left · 4m of play: keep playing until WRAP UP at 10m left`. The minutes left include the wrap-up
+`⏱ 14m left · 11m of play: keep playing until WRAP UP at 3m left`. The minutes left include the wrap-up
 time: **play until the line itself says WRAP UP NOW**, however few minutes it shows. When the line
 says **"no story progress for N min: change approach"**, the runner has measured no new journal,
 area, waypoint or level for that long while you were busy: run the `stuck` playbook now.
@@ -187,8 +190,12 @@ reusable know-how there. Playthrough-specific facts belong in `memory/`.
 it, or read `snapshots/`. Notes hold what the game doesn't: intentions, judgments, promises, suspicions,
 plans, reasons and lessons.
 
-**Write immediately** (one log line `- HH:MM [tag] …`, plus the curated file if the plan changes)
-after any of these:
+**Write notes while the game works, never between two game actions.** Note-writing is slow (an Edit
+turn costs 5–15 s), so do it while the party walks, a queue runs or enemies take their turn: issue
+`travel_to` / `queue_actions` / `end_turn` first, then the Edit, then `wait_for`. Collect a few events and
+write them in one Edit (one log line `- HH:MM [tag] …` each, plus the curated file if the plan changes);
+a note may lag the event by a few minutes, but not past the next walk or enemy turn. Write a note after
+any of these:
 - a quest update
 - a decision
 - meeting a named NPC
@@ -248,13 +255,15 @@ continue with another party member → another objective. Then keep playing.
 ## Session lifecycle
 - **Start:** a hook opens `memory/sessions/Sxxx.md` and injects PLAYTHROUGH.md and HANDOFF.md. Run the
   `session-start` playbook before playing. If the injection says COMPACTION DUE, run `compaction` next.
-- **Wrap-up:** when the `⏱` line says **WRAP UP NOW** or a SESSION CLOCK reminder appears, finish the
-  current fight or conversation, reach safety, and run the `session-wrapup` playbook. **Never start
-  wrap-up before that**, not even when the minutes left look few or the session started late: they
-  include the wrap-up time. Retreating from real danger (low HP, a losing fight) is play, not wrap-up.
-  Don't stop before that; autonomous sessions block early stops. When you end your turn, a Stop hook
-  lints the memory and commits it. If it sends back lint errors, fix them and end your turn again.
-  Stop playing once it reports the commit.
+- **Wrap-up (3 min):** only when the `⏱` line says **WRAP UP NOW** or a SESSION CLOCK reminder
+  appears. **Never start wrap-up before that**, not even with 1m of play left, and don't save `Sxxx-end`
+  or rewrite HANDOFF.md early: the minutes left include the wrap-up time, and autonomous sessions block
+  early stops. Retreating from real danger is play, not wrap-up. Because notes were written during
+  play, wrap-up is short: finish the current fight round or conversation → `save_game("Sxxx-end")` →
+  rewrite HANDOFF.md (one Write) → update PLAYTHROUGH.md's `Now:` line → end your turn. Details (the
+  HANDOFF template, lint fixes) are in the `session-wrapup` playbook. The Stop hook lints the memory and
+  commits it. If it sends back lint errors, fix them and end your turn again. Stop playing once it
+  reports the commit.
 - **After context compaction:** re-read `memory/sessions/Sxxx.md` and objectives.md, then call
   `get_status`.
 

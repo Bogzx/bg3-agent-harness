@@ -246,6 +246,7 @@ class AutonomousStopTest(MemoryTestCase):
     def setUp(self):
         super().setUp()
         self.addCleanup(os.environ.pop, "BG3AI_SESSION_DEADLINE", None)
+        self.addCleanup(os.environ.pop, "BG3AI_SESSION_WRAPUP", None)
 
     def set_deadline(self, minutes_from_now):
         os.environ["BG3AI_SESSION_DEADLINE"] = str(time.time() + minutes_from_now * 60)
@@ -274,7 +275,7 @@ class AutonomousStopTest(MemoryTestCase):
 
     def test_deadline_decides_due_not_elapsed(self):
         self.open_session(1, minutes_ago=2)  # elapsed is tiny...
-        self.set_deadline(5)                 # ...but the deadline is within the wrap-up window
+        self.set_deadline(2)                 # ...but the deadline is within the wrap-up window
         out = S.stop_decision(self.mem)
         self.assertEqual(out["decision"], "block")
         self.assertIn("session-wrapup", out["reason"])
@@ -295,7 +296,7 @@ class AutonomousStopTest(MemoryTestCase):
 
     def test_handoff_written_commits_once_wrap_due(self):
         self.open_session(1, minutes_ago=25)
-        self.set_deadline(8)  # inside the 10-minute wrap-up window
+        self.set_deadline(2)  # inside the 3-minute wrap-up window
         self.write("HANDOFF.md", self.good_handoff(1))
         out = S.stop_decision(self.mem)
         self.assertIn("committed", out["systemMessage"])
@@ -303,7 +304,7 @@ class AutonomousStopTest(MemoryTestCase):
     def test_clock_follows_deadline(self):
         now = time.time()
         st = {"current": 1, "open": True, "started_epoch": now - 60}
-        self.set_deadline(9)
+        self.set_deadline(2)
         self.assertIn("SESSION CLOCK", S.clock_message(st, now))
         st["warned_epoch"] = None
         self.set_deadline(-1)
@@ -312,10 +313,31 @@ class AutonomousStopTest(MemoryTestCase):
         self.set_deadline(30)
         self.assertIsNone(S.clock_message(st, now))
 
+    def test_wrapup_follows_runner_epoch(self):
+        # claude-run-2 S002: the runner's WRAP UP was 6.7 min before the deadline but the hook used a fixed
+        # 10-min window, so the agent stopped at 7.4 min left while the clock line still said "1m of play".
+        self.open_session(1, minutes_ago=12)
+        self.write("HANDOFF.md", self.good_handoff(1))
+        self.set_deadline(7.4)
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 4.4 * 60)  # wrap-up 3 min before the deadline
+        self.assertTrue(S.stop_decision(self.mem)["reason"].startswith("Keep playing"))
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() - 1)
+        self.assertIn("committed", S.stop_decision(self.mem)["systemMessage"])
+
+    def test_wrapup_epoch_out_of_range_falls_back(self):
+        self.set_deadline(10)
+        dl = float(os.environ["BG3AI_SESSION_DEADLINE"])
+        for bad in ("", "garbage", "0", str(dl + 60)):
+            os.environ["BG3AI_SESSION_WRAPUP"] = bad
+            self.assertAlmostEqual(S.wrap_at(), dl - S.WRAP_WINDOW_S)
+
     def test_context_mentions_deadline(self):
         self.set_deadline(45)
         run_quiet(S.cmd_start, self.mem)
-        self.assertIn("Autonomous session: deadline", S.build_context(self.mem))
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(float(os.environ["BG3AI_SESSION_DEADLINE"]) - 180)
+        ctx = S.build_context(self.mem)
+        self.assertIn("Autonomous session: deadline", ctx)
+        self.assertIn("WRAP UP (3 min before)", ctx)
 
     def test_manual_session_unchanged(self):
         self.open_session(1, minutes_ago=5)

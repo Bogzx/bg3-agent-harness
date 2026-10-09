@@ -59,7 +59,7 @@ def session_minutes() -> float:
     return float(os.environ.get("BG3_SESSION_MINUTES", "60"))
 
 
-WRAP_WINDOW_S = 10 * 60          # autonomous mode: wrap-up starts this long before the deadline
+WRAP_WINDOW_S = 3 * 60           # autonomous mode without $BG3AI_SESSION_WRAPUP: wrap-up window before the deadline
 MAX_KEEP_PLAYING_BLOCKS = 200    # autonomous mode: cap on "keep playing" stop blocks per session
 
 
@@ -72,10 +72,25 @@ def session_deadline() -> float | None:
     return v if v > 0 else None
 
 
-def wrap_due(state: dict, now: float) -> bool:
+def wrap_at() -> float | None:
+    """Epoch when wrap-up starts in autonomous mode: $BG3AI_SESSION_WRAPUP (set by runner/play.py, the same
+    value the MCP clock line uses), else WRAP_WINDOW_S before the deadline. None in manual sessions.
+    S002 of claude-run-2: a fixed 10-min window let the agent stop at 7.4 min left while the clock line
+    (wrap-up at 6.7 min left) still said "1m of play", so 7 min of the session went unused."""
     deadline = session_deadline()
-    if deadline:
-        return now >= deadline - WRAP_WINDOW_S
+    if not deadline:
+        return None
+    try:
+        w = float(os.environ.get("BG3AI_SESSION_WRAPUP", "") or 0)
+    except ValueError:
+        w = 0.0
+    return w if 0 < w < deadline else deadline - WRAP_WINDOW_S
+
+
+def wrap_due(state: dict, now: float) -> bool:
+    w = wrap_at()
+    if w is not None:
+        return now >= w
     return elapsed_minutes(state, now) >= wrap_minutes()
 
 
@@ -128,7 +143,8 @@ def build_context(mem: Path, source: str = "startup", notes: list[str] | None = 
         if deadline:
             left = (deadline - time.time()) / 60
             head.append(f"Autonomous session: deadline {time.strftime('%H:%M', time.localtime(deadline))} "
-                        f"({left:.0f} min left). Play until the ⏱ line in tool results says WRAP UP (10 min before), then "
+                        f"({left:.0f} min left). Play until the ⏱ line in tool results says WRAP UP "
+                        f"({(deadline - wrap_at()) / 60:.0f} min before), then "
                         f"run the session-wrapup playbook. Don't stop early: nobody is there to answer.")
         else:
             head.append(f"Started {st.get('started', '?')}; elapsed {elapsed_minutes(st):.0f} min. "

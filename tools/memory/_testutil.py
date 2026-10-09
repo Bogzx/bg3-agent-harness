@@ -22,7 +22,7 @@ def isolate_git() -> None:
     os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
     os.environ["BG3_SNAPSHOTS"] = "0"  # never touch the live game from unit tests
     for var in ("BG3_MEMORY_DIR", "CLAUDE_PROJECT_DIR", "BG3_WRAP_MINUTES", "BG3_SESSION_MINUTES",
-                "BG3AI_SESSION_DEADLINE"):
+                "BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP"):
         os.environ.pop(var, None)
 
 

@@ -331,6 +331,65 @@ test("nav.hazards: compact list, standing in one is flagged", function()
     eq(#r.hazards, 1, "patches"); eq(r.hazards[1].under, true, "under")
 end)
 
+-- ---- approach along the real route (S002: "move within 1.5 m of Zhalk" stopped 6-16 m short) ----
+
+test("pointAlong: interpolates along the polyline and clamps at the end", function()
+    local pts = { { 0, 0, 0 }, { 0, 0, 4 }, { -6, 0, 4 } }
+    local p = N.pointAlong(pts, 7)
+    near(p[1], -3, "x"); near(p[3], 4, "z")
+    p = N.pointAlong(pts, 99)
+    near(p[1], -6, "end x")
+end)
+
+test("arcWithin: first point of the route within range, nil if it never gets there", function()
+    local pts = { { 0, 0, 0 }, { 0, 0, 5 }, { -10, 0, 5 }, { -10, 0, 0 } }
+    local a, L = N.arcWithin(pts, { -10, 0, 0 }, 1.5)
+    near(L, 20, "route length"); near(a, 18.5, "arc", 0.3)
+    eq(N.arcWithin(pts, { -10, 0, -6 }, 1.5), nil, "never within")
+end)
+
+test("approach: follows a detour that straight-line sampling rejects", function()
+    nodesFor = function(_, t) return { { 0, 0, 5 }, { t[1], 0, 5 }, t } end
+    local straight = N.reachToward(P1, nil, { -10, 0, 0 }, 9, 2, true)
+    assert(not straight.reachable or straight.pos[1] > -3, "straight sampling should stall near the start")
+    local r = N.approach(P1, { -10, 0, 0 }, { -10, 0, 0 }, 1.5, nil, true)
+    eq(r.limit, "in_range", "limit"); near(r.walk_m, 18.5, "walk", 0.3)
+    assert(r.end_m <= 1.5, "ends in range: " .. r.end_m)
+end)
+
+test("approach: out of movement walks the budget and says so", function()
+    nodesFor = function(_, t) return { { 0, 0, 5 }, { t[1], 0, 5 }, t } end
+    local r = N.approach(P1, { -10, 0, 0 }, { -10, 0, 0 }, 1.5, 9, true)
+    eq(r.limit, "movement", "limit"); near(r.walk_m, 9, "walk"); near(r.need_m, 18.5, "need", 0.3)
+    near(r.pos[1], -4, "x"); near(r.pos[3], 5, "z")
+end)
+
+test("approach: stops before fire on the route, avoid=false walks through", function()
+    fire = function(x) return x < -4 and x > -7 end
+    local r = N.approach(P1, { -12, 0, 0 }, { -12, 0, 0 }, 1.5, nil, true)
+    eq(r.limit, "hazard", "limit"); eq(r.hazard.surface, "Fire", "surface")
+    assert(r.pos[1] > -4, "kept out of the fire: " .. r.pos[1])
+    r = N.approach(P1, { -12, 0, 0 }, { -12, 0, 0 }, 1.5, nil, false)
+    eq(r.limit, "in_range", "no avoid")
+end)
+
+test("approach: route ends short of the target (e.g. a raised platform)", function()
+    nodesFor = function() return { { -6, 0, 0 } } end
+    local r = N.approach(P1, { -10, 0, 0 }, { -10, 0, 0 }, 1.5, nil, true)
+    eq(r.limit, "route_end", "limit"); near(r.end_m, 4, "end_m")
+end)
+
+test("approach: no path at all", function()
+    blocked = function() return true end
+    local r = N.approach(P1, { -10, 0, 0 }, { -10, 0, 0 }, 1.5, nil, true)
+    eq(r.reachable, false, "reachable"); eq(r.reason, "no path to it", "reason")
+end)
+
+test("nav.approach RPC: budget_m caps the walk", function()
+    local r = RPC.ops["nav.approach"]({ pos = { -20, 0, 0 }, within = 1.5, budget_m = 6 })
+    eq(r.limit, "movement", "limit"); near(r.pos[1], -6, "x")
+end)
+
 -- ---- RPC replies stay compact ------------------------------------------------------
 
 test("nav.path reply drops the route points and adds the hazard", function()

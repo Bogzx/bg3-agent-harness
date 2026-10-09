@@ -239,5 +239,57 @@ check("stale tick: status probes", sawWant and count(keys, "ESCAPE") == 1, #keys
 local dbg = ops["autoskip.status"]({ debug = true })
 check("debug status", dbg.gs == "StartLoading" and #dbg.widgets == 3 and dbg.probe == "load")
 
+-- 12. text-less cinematic nodes (S002 TUT_Helm_MindflayerCall: ~20 s of shots without subtitles):
+--     skipped while ShowAnswers == false, repeatedly while they last; never without the listening flag,
+--     never with answers or a continue prompt, and no empty dialogue_line events
+local DLG = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true } } }
+reset()
+widgets = DLG
+dialogue = { listening = true }
+run(K.NOTEXT_GRACE_MS - 100)
+check("notext: not before grace", #commands == 0, #commands)
+run(K.PERIOD_MS * 2)
+check("notext: skipped", count(commands, "SelectorSkipCommand") == 1, #commands)
+check("notext: no dialogue_line", count(events, "dialogue_line") == 0)
+run(K.NOTEXT_RETRY_MS * 5)
+check("notext: keeps skipping past MAX_TRIES", count(commands, "SelectorSkipCommand") > K.MAX_TRIES, #commands)
+check("notext: stat", K.view().cinematic == 1 and ops["autoskip.status"]().line.notext == true)
+-- then the mind flayer's line appears: pushed and skipped like any line
+dialogue = { speaker = "Mind Flayer", text = "Thrall. Connect the nerves of the transponder.", listening = true }
+local before = #commands
+run(600)
+check("text after notext: event", count(events, "dialogue_line") == 1)
+check("text after notext: skipped", #commands == before + 1, #commands - before)
+-- whitespace-only text counts as none
+reset()
+widgets = DLG
+dialogue = { text = "  ", listening = true }
+run(1500)
+check("blank text: skipped as notext", count(commands, "SelectorSkipCommand") >= 1 and count(events, "dialogue_line") == 0)
+for _, case in ipairs({
+    { "notext without listening flag", {} },
+    { "notext with answers", { listening = true, options = { {}, {} } } },
+    { "notext with continue", { continue = true } },
+    { "notext changing", { listening = true, changing = true } },
+}) do
+    reset()
+    widgets = DLG
+    dialogue = case[2]
+    run(5000)
+    check(case[1] .. ": no skip", #commands == 0 and #keys == 0, #commands)
+end
+-- a decision page over a text-less node
+reset()
+widgets = { DLG[1], { name = "ActiveRoll" } }
+dialogue = { listening = true }
+run(3000)
+check("notext + roll: no skip", #commands == 0)
+-- a text line with a continue prompt is still the agent's
+reset()
+widgets = DLG
+dialogue = { speaker = "Lae'zel", text = "Go on.", continue = true }
+run(3000)
+check("continue: no skip", #commands == 0 and count(events, "dialogue_line") == 1)
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end

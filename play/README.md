@@ -18,7 +18,8 @@ Operator notes (the agent reads CLAUDE.md, not this file).
    - PostToolUse: on bg3 tools, a wrap-up reminder after 50 min (`BG3_WRAP_MINUTES`,
      `BG3_SESSION_MINUTES`). On Edit/Write, lint errors for the edited memory file.
    - Stop: once wrap-up is due (or, in manual sessions, HANDOFF.md names the current session), it lints.
-     Autonomous sessions (`BG3AI_SESSION_DEADLINE`) get "keep playing" blocks before the wrap-up window,
+     Autonomous sessions (`BG3AI_SESSION_DEADLINE`) get "keep playing" blocks before the runner's
+     wrap-up time (`BG3AI_SESSION_WRAPUP`, else 3 min before the deadline),
      even with HANDOFF.md written. On errors it blocks
      the stop and feeds Claude the report; on success it commits `Sxxx`. It gives up after 4 blocks.
    - SessionEnd: commits if wrap-up was finished; otherwise it leaves the session open, and the next

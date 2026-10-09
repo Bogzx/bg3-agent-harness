@@ -60,6 +60,8 @@ class FakeGame:
         self.dead: set[str] = set()
         self.combat: dict = {"active": False}
         self.reach: Any = None  # nav.reach_toward reply (or callable(args))
+        self.approach: Any = None  # nav.approach reply (None: op unknown, like a mod not reloaded yet)
+        self.actions: list = [{"spell": "Target_MainHandAttack", "name": "Attack"}]
         self.path: dict = {"reachable": True, "movement_left": 0}
         self.safe: dict = {"safe": True}  # nav.safe_spot reply
         self.landing: dict | None = None  # nav.landing reply (None: op unknown, like a mod not reloaded yet)
@@ -130,7 +132,9 @@ class FakeGame:
             if op == "state.combat":
                 return json.loads(json.dumps(self.combat))
             if op == "state.actions":
-                return [{"spell": "Target_MainHandAttack", "name": "Attack"}]
+                return json.loads(json.dumps(self.actions))
+            if op == "nav.approach" and self.approach is not None:
+                return self.approach(args) if callable(self.approach) else dict(self.approach)
             if op == "nav.reach_toward":
                 r = self.reach(args) if callable(self.reach) else self.reach
                 return r if r is not None else {"reachable": False}
@@ -340,6 +344,68 @@ class CombatTurn(Base):
         self.assertEqual(self.casts(), ["Shout_Dash"])
         self.assertIn("no longer", out)
         self.assertEqual(self.g.ops("act.end_turn"), [])
+
+    # S002: "move within 1.5 m of Commander Zhalk" said done 6-16 m away, then the melee swing failed.
+    def _walk_to(self, dist_after: float) -> None:
+        def advance(op, args):
+            if op == "act.move_to":
+                for o in self.g.combat["order"]:
+                    if o["uuid"] == GOB:
+                        o["from"][P1] = [dist_after, 1]
+            if op == "act.end_turn":
+                self.g.combat["current"] = GOB
+        self.g.on_start = advance
+
+    def test_within_follows_the_route_and_says_why_it_stopped_short(self):
+        self.g.combat = combat(gob_dist=16.0)
+        self.g.approach = {"reachable": True, "pos": [-4.0, 0.0, 5.0], "walk_m": 8.8, "need_m": 18.5,
+                           "route_m": 20.0, "limit": "movement", "movement_left": 9.0, "end_m": 9.9}
+        self._walk_to(9.9)
+        self.g.refuse_if = lambda op, a: ("target is out of range (9.9 m, range 1.5 m): move closer first"
+                                          if a.get("spell") == "Target_MainHandAttack" else None)
+        self.g.actions = [{"spell": "Target_MainHandAttack"}, {"spell": "Projectile_MainHandAttack", "range": 18}]
+        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+                                           action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertEqual(self.g.ops("nav.approach")[0][1]["within"], 1.5)
+        self.assertEqual(self.g.ops("act.move_to")[0][1]["pos"], [-4.0, 0.0, 5.0])
+        self.assertIn("now 9.9m from", out)
+        self.assertIn("stopped short of ≤1.5m: out of movement (9m left, the route needs 18.5m)", out)
+        self.assertEqual(self.casts(), ["Target_MainHandAttack", "Projectile_MainHandAttack"])
+        self.assertIn(f"action (auto fallback): Projectile_MainHandAttack {self.gob}: done", out)
+
+    def test_short_move_without_ranged_dashes_and_walks_on(self):
+        self.g.combat = combat(gob_dist=16.0)
+        self.g.approach = {"reachable": True, "pos": [-4.0, 0.0, 5.0], "walk_m": 8.8, "need_m": 14.0,
+                           "limit": "movement", "movement_left": 9.0}
+        self._walk_to(6.0)
+        self.g.refuse_if = lambda op, a: ("target is out of range (6 m, range 1.5 m): move closer first"
+                                          if a.get("spell") == "Target_MainHandAttack" else None)
+        self.g.actions = [{"spell": "Target_MainHandAttack"}, {"spell": "Shout_Dash"}]
+        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+                                           action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertEqual(self.casts(), ["Target_MainHandAttack", "Shout_Dash"])
+        self.assertEqual(len(self.g.ops("act.move_to")), 2)
+        self.assertIn("action (auto fallback): Shout_Dash: done", out)
+
+    def test_no_route_closer_stays_put_and_says_so(self):
+        self.g.combat = combat(gob_dist=8.0)
+        self.g.approach = {"reachable": True, "pos": [0.0, 0.0, 0.0], "walk_m": 0.2, "limit": "route_end",
+                           "end_m": 7.8}
+        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5}, action=["Shout_Dodge"]))
+        self.assertEqual(self.g.ops("act.move_to"), [])
+        self.assertIn("stays put, 8m away — no walkable route gets closer than 7.8m", out)
+
+    def test_fire_on_the_route_is_the_reason_and_avoid_false_is_passed(self):
+        self.g.combat = combat(gob_dist=10.0)
+        self.g.approach = {"reachable": True, "pos": [-3.0, 0.0, 0.0], "walk_m": 3.0, "limit": "hazard",
+                           "hazard": {"surface": "Fire", "at_m": 4.2}}
+        self._walk_to(7.0)
+        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5}, action=["Shout_Dodge"]),
+                                 end=False)
+        self.assertIn("stopped short of ≤1.5m: kept out of Fire on the route 4.2m ahead", out)
+        server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5, "avoid": False},
+                                     action=["Shout_Dodge"]), end=False)
+        self.assertIs(self.g.ops("nav.approach")[-1][1]["avoid"], False)
 
     def test_dash_then_move_again(self):
         n = {"moves": 0}

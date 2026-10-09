@@ -28,6 +28,12 @@
 --     ActiveDialogue exists, no answers are shown, and it is not our
 --     combat turn (Space is End Turn).
 --   * Each line or movie gets at most MAX_TRIES presses, RETRY_MS apart.
+--   * A node without subtitle text (cinematic shots, a door opening, the
+--     mind flayer's reveal: S002 sat ~20 s on these in TUT_Helm_MindflayerCall
+--     because AutoSkip needed text) is only skipped while the game says the
+--     line is playing (ActiveDialogue.ShowAnswers == false) with no answers or
+--     continue prompt, after NOTEXT_GRACE_MS, every NOTEXT_RETRY_MS while it
+--     lasts (up to NOTEXT_MAX_TRIES).
 --
 -- Every new dialogue line seen (skipped or not) is pushed as a client event
 -- "dialogue_line" {speaker?, text, options?=n}, so the agent still reads all
@@ -59,6 +65,9 @@ K.LOAD_RETRY_MS = 2000  -- load-time movies: shim ESCAPE at most this often, whi
 K.LOAD_MAX_TRIES = 120  -- ~4 min of tries
 K.STALE_MS = 500        -- no tick for this long (loading may stall it): autoskip.status probes itself
 K.LINE_GRACE_MS = 250   -- let a new line render before skipping it
+K.NOTEXT_GRACE_MS = 600 -- a text-less node: longer, so a line whose text is still rendering is not lost
+K.NOTEXT_RETRY_MS = 1000
+K.NOTEXT_MAX_TRIES = 60 -- text-less nodes chain under one key: keep skipping for about a minute
 K.stats = K.stats or { lines = 0, movies = 0, seen = 0 }
 K.state = { next = 0, nextMovie = 0 }
 -- What the bridge should press through the shim: {seq, key, reason, try, at}
@@ -232,34 +241,48 @@ function K.tick()
     local dc = try(function() return dw.el.DataContext end)
     if not dc or not S.activeDialogue(dc) then return end
     local d = S.dialogue({ Dialogue = dw })
-    if not d or not d.text or d.changing then st.line = nil return end
+    if not d or d.changing then st.line = nil return end
+    local text = d.text
+    if type(text) ~= "string" or not text:find("%S") then text = nil end
+    -- No text: only a node the game reports as playing (ShowAnswers == false) and
+    -- with nothing to choose. Anything else (opening, closing, answers coming) waits.
+    if not text and not (d.listening and not d.options and not d.continue) then st.line = nil return end
 
-    local key = (d.speaker or "") .. "|" .. d.text
+    local key = text and ((d.speaker or "") .. "|" .. text) or "#notext"
     local line = st.line
     if not line or line.key ~= key then
-        line = { key = key, since = now, tries = 0, last = 0 }
+        line = { key = key, since = now, tries = 0, last = 0, notext = not text }
         st.line = line
-        K.stats.seen = K.stats.seen + 1
-        line.ev = RPC.push("dialogue_line", { speaker = d.speaker, text = d.text, options = d.options and #d.options or nil })
+        if text then
+            K.stats.seen = K.stats.seen + 1
+            line.ev = RPC.push("dialogue_line", { speaker = d.speaker, text = text, options = d.options and #d.options or nil })
+        end
     end
 
     -- Choices are the agent's: answers or a continue prompt mean stop.
     if d.options or d.continue then return end
     -- Act only on a node seen unchanged on two consecutive ticks.
-    if now - line.since < math.max(K.LINE_GRACE_MS, K.PERIOD_MS) then return end
-    if line.tries >= K.MAX_TRIES or now - line.last < K.RETRY_MS then return end
+    local grace = line.notext and K.NOTEXT_GRACE_MS or K.LINE_GRACE_MS
+    if now - line.since < math.max(grace, K.PERIOD_MS) then return end
+    local maxTries = line.notext and K.NOTEXT_MAX_TRIES or K.MAX_TRIES
+    local gap = line.notext and K.NOTEXT_RETRY_MS or K.RETRY_MS
+    if line.tries >= maxTries or now - line.last < gap then return end
     if isOurCombatTurn(dc) then return end
 
     line.tries = line.tries + 1
     line.last = now
     local ok = UI.command(dc, "SelectorSkipCommand", nil, false)
     if not ok then ok = press("SPACE") end
-    if ok and line.tries == 1 then K.stats.lines = K.stats.lines + 1 end
+    if ok and line.tries == 1 then
+        if line.notext then K.stats.cinematic = (K.stats.cinematic or 0) + 1
+        else K.stats.lines = K.stats.lines + 1 end
+    end
 end
 
 function K.view()
-    return { on = K.enabled(), skipped = K.stats.lines + K.stats.movies, lines = K.stats.lines,
-             movies = K.stats.movies }
+    local cin = K.stats.cinematic or 0
+    return { on = K.enabled(), skipped = K.stats.lines + K.stats.movies + cin, lines = K.stats.lines,
+             movies = K.stats.movies, cinematic = cin > 0 and cin or nil }
 end
 
 -- autoskip.status: the bridge's skipper polls this (cheap: no UI reads).
@@ -279,8 +302,10 @@ RPC.register("autoskip.status", function(args)
         on = K.enabled(), now = now,
         movie = m and { age = now - m.since, tries = m.tries, kind = m.kind } or nil,
         want = K.want,
+        line = K.state.line and { notext = K.state.line.notext or nil, tries = K.state.line.tries,
+                                  age = now - K.state.line.since } or nil,
         stats = { lines = K.stats.lines, movies = K.stats.movies, seen = K.stats.seen, errors = K.errors or 0,
-                  polled = K.polled },
+                  cinematic = K.stats.cinematic or 0, polled = K.polled },
     }
     if type(args) == "table" and args.debug then
         res.gs = tostring(try(Ext.Utils.GetGameState) or "")

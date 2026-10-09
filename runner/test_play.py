@@ -44,11 +44,20 @@ class DeadlineMath(unittest.TestCase):
         self.assertEqual(P.deadlines(0, 10, grace=30), (600, 630))
 
     def test_wrap_minutes(self):
-        self.assertEqual(P.wrap_minutes(60), 50)
-        self.assertEqual(P.wrap_minutes(30), 20)
-        self.assertEqual(P.wrap_minutes(15), 10)  # short sessions: wrap-up is a third of the session
-        self.assertAlmostEqual(P.wrap_minutes(20), 40 / 3)
-        self.assertEqual(P.wrapup_minutes(90), 10)
+        self.assertEqual(P.wrap_minutes(60), 57)
+        self.assertEqual(P.wrap_minutes(30), 27)
+        self.assertEqual(P.wrap_minutes(20), 17)
+        self.assertEqual(P.wrap_minutes(6), 4)  # tiny harness sessions: wrap-up is a third of the session
+        self.assertEqual(P.wrapup_minutes(90), 3)
+
+    def test_early_exit_minutes(self):
+        t0 = 1_000_000.0
+        # claude-run-2 S002: exited cleanly after 12.6 of 20 min -> early exit with 7.4 min left
+        self.assertEqual(P.early_exit_minutes("exited", t0, t0 + 12.6 * 60, 20), 7.4)
+        self.assertIsNone(P.early_exit_minutes("exited", t0, t0 + 17.5 * 60, 20))  # normal wrap-up end
+        self.assertIsNone(P.early_exit_minutes("exited", t0, t0 + 25 * 60, 20))    # overtime
+        for hard in ("crash", "hang", "hard_stop", "aborted"):
+            self.assertIsNone(P.early_exit_minutes(hard, t0, t0 + 60, 20))
 
     def test_short_sessions_refused(self):
         a = mock.Mock(session_minutes=15, allow_short_sessions=False)

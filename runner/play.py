@@ -62,8 +62,10 @@ KILL_GRACE = 10                # the game ignores SIGTERM: SIGKILL it after this
 KILL_CONFIRM = 30              # then wait this long for the processes and port 9998 to go away
 FIX_SESSION_MINUTES = 10
 MIN_SESSION_MINUTES = 20       # shortest session: --session-minutes below it is refused, and no session
-                               # starts with less than this left in --hours (start + wrap-up take ~13 min)
-WRAPUP_MINUTES = 10            # wrap-up phase at the end of a session (a third of it, for short ones)
+                               # starts with less than this left in --hours (start ≤1 min + wrap-up 3 min)
+WRAPUP_MINUTES = 3             # wrap-up phase at the end of a session (a third of it, for short ones): notes are
+                               # written during play, so wrap-up is save + HANDOFF + Now line (S001/S002: ~35 s)
+EARLY_EXIT_MINUTES = 5         # claude exiting cleanly with more than this left = an early exit (logged)
 HEALTH_INTERVAL = 30           # seconds between liveness evals during a session
 HEALTH_FAILURES = 3            # consecutive failed evals → hung
 EVAL_TIMEOUT = 15
@@ -103,13 +105,24 @@ def predict_session_number(existing: list[int], current: int | None) -> int:
 
 
 def wrapup_minutes(session_minutes: float) -> float:
-    """Length of the wrap-up phase: 10 min, but at most a third of the session."""
+    """Length of the wrap-up phase: 3 min, but at most a third of the session."""
     return min(WRAPUP_MINUTES, session_minutes / 3)
 
 
 def wrap_minutes(session_minutes: float) -> float:
     """Minutes into the session when WRAP UP starts (the clock line and the memory hooks)."""
     return session_minutes - wrapup_minutes(session_minutes)
+
+
+def early_exit_minutes(reason: str, started: float, ended: float, session_minutes: float,
+                       threshold: float = EARLY_EXIT_MINUTES) -> float | None:
+    """Minutes left when claude exited on its own (not a crash, hang, hard stop or abort) more than
+    `threshold` minutes before the deadline; else None. The runner then starts the next session at once
+    (claude-run-2: S001 used 14 of 30 min, S002 12.6 of 20)."""
+    if reason != "exited":
+        return None
+    left = (started + session_minutes * 60 - ended) / 60
+    return round(left, 1) if left > threshold else None
 
 
 def deadlines(start: float, session_minutes: float, grace: float = HARD_STOP_GRACE) -> tuple[float, float]:
@@ -1327,6 +1340,11 @@ class Runner:
             "started_at_game_over": screen == "game_over",
             "story_points": story_points(self.state.dir / f"{sid}.progress.json"),
         }
+        early = early_exit_minutes(res.reason, res.started, res.ended, minutes)
+        if early is not None:
+            entry["early_exit_min"] = early
+            log(f"{sid}: early exit: claude ended with {early:g} of {minutes:g} min left (exit {res.exit_code}); "
+                f"starting the next session now")
         self.state["history"] = self.state["history"] + [entry]
         self.new_game = False  # from here on the game has a character: confirm by name
         if is_stuck(self.state["history"]):
