@@ -314,7 +314,7 @@ class RunAllTest(unittest.TestCase):
         self.assertEqual(got, {"latency": "PASS", "waypoints": "PASS", "keys": "PASS", "confirm": "PASS",
                                "smoke": "PASS", "act": "WARN", "vis": "WARN", "se": "FAIL", "route": "FAIL"})
         args = {n: a for n, a, _, _ in self.seen}
-        self.assertEqual(args["check_se.py"], ["--only", "hook,autoskip"])  # never the stress/leak checks
+        self.assertEqual(args["check_se.py"], ["--only", "hook,children,autoskip"])  # never the stress/leak checks
         self.assertEqual(args["check_act.py"], ["latency", "approach", "forms"])  # read-only checks only
         self.assertEqual(args["check_vis.py"], [])  # no --move / --reload
         envs = {n: e for n, _, e, _ in self.seen}

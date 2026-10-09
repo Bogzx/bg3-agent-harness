@@ -151,13 +151,17 @@ def failures_section(calls: list[dict]) -> list[str]:
     return out + [""]
 
 
-def gaps_section(metrics_path: Path, calls: list[dict]) -> list[str]:
+def gaps_section(metrics_path: Path, calls: list[dict], wrap_t: float | None = None) -> list[str]:
     recs = latency.read_jsonl(metrics_path)
     tools = [r for r in recs if r.get("type") == "tool"]
     samples = [r for r in recs if r.get("type") == "sample"]
-    gl = latency.gaps(latency.action_intervals(tools), samples, tools)
+    all_gl = latency.gaps(latency.action_intervals(tools), samples, tools, wrap_t)
+    gl = [g for g in all_gl if g["kind"] != "wrapup"]  # wrap-up (save + notes) is not play
     long_ = [g for g in gl if g["s"] > LONG_GAP_S]
     out = [f"## Idle gaps > {LONG_GAP_S:.0f} s between visible actions ({len(long_)})", ""]
+    if wrap_t is not None:
+        out += [f"(not counted: the wrap-up phase from {hm(wrap_t)}, "
+                f"{sum(1 for g in all_gl if g['kind'] == 'wrapup')} gap(s))", ""]
     excused = [g for g in gl if g["s"] <= LONG_GAP_S < g["gap_s"] - g["busy_s"] and g.get("turn_s")]
     if excused:  # long only because of enemy turns: not idle (a human waits through them too)
         out += [f"(not counted: {len(excused)} combat gap(s) over {LONG_GAP_S:.0f} s only because of enemy turns, "
@@ -241,7 +245,10 @@ def build(base: Path) -> str:
     calls, summary = load_calls(Path(f"{base}.jsonl"), Path(f"{base}.turns.jsonl"))
     lines = [f"# Triage {base.name}", ""]
     lines += failures_section(calls)
-    lines += gaps_section(Path(f"{base}.metrics.jsonl"), calls)
+    turns_path = Path(f"{base}.turns.jsonl")
+    turns = latency.read_jsonl(turns_path)
+    wrap_t = latency.wrapup_start(turns + latency.wrapup_from_stream(Path(f"{base}.jsonl"), turns))
+    lines += gaps_section(Path(f"{base}.metrics.jsonl"), calls, wrap_t)
     lines += toolsearch_section(calls)
     lines += counts_section(calls)
     lines += stuck_section(Path(f"{base}.progress.jsonl"), calls)

@@ -65,6 +65,7 @@ class Game:
         self.pool_max = pool_max or POOL_MAX
         self._idle: list[LuaDebugClient] = []
         self._open_n = 0
+        self._closed = False  # after close(): connections still in flight are closed when released
         self._cond = threading.Condition()
         # Last event seq consumed per context, so every tool can report "what happened since".
         self.event_seq = {"server": 0, "client": 0}
@@ -96,6 +97,7 @@ class Game:
     def _acquire(self) -> LuaDebugClient:
         while True:
             with self._cond:
+                self._closed = False
                 while True:
                     while self._idle:
                         c = self._idle.pop()
@@ -118,9 +120,15 @@ class Game:
                         continue
                 raise NotReady(f"game not reachable on {self.host}:{self.port} ({e}); is it running?") from e
 
+    @property
+    def open_connections(self) -> int:
+        """LuaDebug connections this Game holds open (idle + in flight); never more than pool_max."""
+        with self._cond:
+            return self._open_n
+
     def _release(self, client: LuaDebugClient, ok: bool = True) -> None:
         with self._cond:
-            if ok and client.connected:
+            if ok and client.connected and not self._closed:
                 self._idle.append(client)
             else:
                 self._open_n -= 1
@@ -128,7 +136,9 @@ class Game:
             self._cond.notify()
 
     def close(self) -> None:
+        """Close every connection (in-flight ones as they finish). A later RPC reopens the pool."""
         with self._cond:
+            self._closed = True
             idle, self._idle = self._idle, []
             self._open_n -= len(idle)
         for c in idle:

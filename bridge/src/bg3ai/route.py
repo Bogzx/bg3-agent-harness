@@ -67,6 +67,8 @@ def _connector(c: dict, H: Handles, ends: list | None = None) -> str:
         bits.append("no walkable path to it")
     elif c.get("path_m") is not None:
         bits.append(f"walk {_m(c['path_m'])}")
+    elif c.get("unprobed"):
+        bits.append("path not checked")
     if c.get("to_goal_m") is not None:
         bits.append(f"then {_m(c['to_goal_m'])} from the goal" + (" (closer)" if c.get("helps") else ""))
     dead = longnav.connector_dead(c, ends or [])

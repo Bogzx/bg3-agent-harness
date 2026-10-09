@@ -28,6 +28,8 @@ still while you think. The three patterns that cover most of the game outside co
    for the next leg, `look_at` something in view, a `wiki_page` you'll need), and only then
    `wait_for("queue")` / `wait_for("j12")`. It returns early on a prompt. A fast failure (no path, a
    hazard ahead) still comes back in the first result, so async costs you nothing.
+4. **Wiki lookups ride on a walk.** Before `wiki_search`/`wiki_page`, start a walk or queue (toward the
+   lead you're checking, the next loot, a regroup), then read the wiki while it runs.
 
 **Never pass `wait=true` to `move_to`, `walk_toward` or `travel_to`**, not even after a failed or
 stopped walk, and not because an earlier call in this session did: one blocking walk invites the next.

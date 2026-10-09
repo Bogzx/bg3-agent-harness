@@ -124,6 +124,13 @@ class Rendering(unittest.TestCase):
     def test_hint_is_empty_when_reachable(self):
         self.assertEqual(route.hint_text(WITH_CLIMB, render.Handles()), "")
 
+    def test_unprobed_connector_says_so(self):
+        # nav.route's connector probes have a budget: past it a ladder/door is listed without a path probe
+        line = route._connector({"uuid": LADDER, "name": "Ladder", "kind": "ladder", "dist": 13.0, "dir": "W",
+                                 "unprobed": True}, render.Handles())
+        self.assertIn("path not checked", line)
+        self.assertNotIn("no walkable path", line)
+
     def test_frontier_shows_ladder_way_and_levels(self):
         H = render.Handles()
         res = {"leads": [{"uuid": LADDER, "name": "Arterial Mesh", "kind": "ladder", "dist": 2.5, "dir": "N",

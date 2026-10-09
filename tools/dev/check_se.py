@@ -1,7 +1,8 @@
 """Live checks for se's bg3le patches (patches/bg3le) and AutoSkip, against the running game.
 
     uv run --project bridge python tools/dev/check_se.py [--seconds 60] [--polls 300] [--answer]
-                                                        [--serialize] [--only hook,stress,leak,instantiate,autoskip]
+                                                        [--serialize] [--loot-cycles 20]
+                                                        [--only hook,children,stress,leak,instantiate,autoskip,loot]
 
 Prints one PASS / WARN / FAIL line per check (plus details) and exits 1 if anything FAILed.
 
@@ -21,9 +22,15 @@ Prints one PASS / WARN / FAIL line per check (plus details) and exits 1 if anyth
                as DataContext) and the old value restored.
   autoskip     autoskip.status answers, AutoSkip is on and error-free, its movie probe is cheap, the
                bridge's skipper takes the fast path, and a movie on screen is gone within 3 s.
+  children     (read-only) ContentRoot's type and how UI walks read children: stock panels must be read
+               through their Children collection, not VisualChild (S014 crash in Panel::UpdateChildrenZOrder).
+  loot         (opt-in, between sessions only) the S014 crash repro: open and close the loot panel of the
+               nearest corpse/container within reach --loot-cycles times (engine OpenCharacterLootUI for a
+               corpse, act.interact for a container; never takes anything) while a second connection reads
+               ui.state in a tight loop. The game must survive and every cycle open and close the panel.
 
 Never builds anything, never saves or loads. The stress check only presses panel keys and ESCAPE while the
-screen is the plain game view.
+screen is the plain game view; the loot check only opens and closes a loot panel next to the active character.
 """
 
 from __future__ import annotations
@@ -44,6 +51,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "bridge" / "src"))
 
 from bg3ai.game import Game, GameError, NotReady  # noqa: E402
+from bg3ai import macros  # noqa: E402
 
 NO_KEYS = ("dialogue", "main_menu", "loading", "movie", "game_over", "?")
 RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
@@ -312,6 +320,142 @@ def check_stress(g: Game, seconds: float, answer: bool, serialize: bool) -> None
         report("WARN", "stress.keys", "no panel key was pressed (the screen never was the plain game view)")
 
 
+CHILDREN_LUA = r"""
+local UI = BG3AI and BG3AI.UI
+if not UI then return '{"ui":false}' end
+local cr = UI.contentRoot()
+local n = 0
+for _ in ipairs(UI.widgets()) do n = n + 1 end
+local r = UI.childReads or {collection = -1, visual = -1}
+return string.format('{"ui":true,"cr":"%s","count":%d,"collection":%d,"visual":%d,"patched":%s}',
+  tostring(cr and UI.typeName(cr) or "nil"), n, r.collection, r.visual, tostring(UI.childReads ~= nil))
+"""
+
+
+def children_verdict(st: dict | None) -> tuple[str, str]:
+    """PASS when ContentRoot is a stock panel read through its Children collection."""
+    if not st or not st.get("ui"):
+        return "FAIL", "no BG3AI.UI in the client context"
+    if not st.get("patched"):
+        return "WARN", "the game runs a mod without UI.childReads (hot-reload the mod Lua)"
+    detail = (f"ContentRoot is {st['cr']} with {st['count']} pages; child reads so far "
+              f"collection={st['collection']}, visual={st['visual']}")
+    if st["count"] == 0:
+        return "WARN", detail + " (no pages: not in game?)"
+    if st["collection"] <= 0:
+        return "WARN", detail + " (ContentRoot is not read through Children: add its type to UI.PANEL_TYPES)"
+    return "PASS", detail
+
+
+def check_children(g: Game) -> None:
+    try:
+        st = lua(g, CHILDREN_LUA)
+    except (GameError, NotReady) as e:
+        report("FAIL", "children", f"client eval failed: {e}")
+        return
+    verdict, detail = children_verdict(st)
+    report(verdict, "children", detail)
+
+
+def loot_target(nearby: dict, pos, reach: float = 2.5) -> dict | None:
+    """The nearest lootable within reach (a corpse first: the engine opens it, no click), or None."""
+    targets, _ = macros.loot_targets(nearby, pos, reach, set(), opened=True)
+    corpses = [t for t in targets if t["kind"] == "corpse"]
+    return (corpses or targets or [None])[0]
+
+
+def check_loot(g: Game, cycles: int) -> None:
+    pid = game_pid()
+    try:
+        w = g.rpc("act.watch")
+        if w.get("combat"):
+            report("WARN", "loot", "in combat: skipped")
+            return
+        char = g.rpc("state.status").get("active")
+        me = next((r for r in w.get("party") or [] if r.get("uuid") == char), {})
+        near = g.rpc("state.nearby", {"radius": 6.0})
+        screen = g.rpc("ui.state", {}, context="client").get("screen")
+    except (GameError, NotReady) as e:
+        report("FAIL", "loot", f"{e}")
+        return
+    if screen != "game":
+        report("WARN", "loot", f"the screen is {screen!r}, not the plain game view: skipped")
+        return
+    t = loot_target(near, me.get("pos"))
+    if t is None:
+        report("WARN", "loot", "no corpse or unlocked, unowned container within 2.5 m of the active character: "
+               "stand next to one and rerun")
+        return
+    op, args = (("act.loot_corpse", {"char": char, "corpse": t["uuid"]}) if t["kind"] == "corpse"
+                else ("act.interact", {"char": char, "target": t["uuid"]}))
+
+    stop = threading.Event()
+    stats = {"polls": 0, "errors": 0, "lost": False}
+    last_err: list[str] = []
+
+    def poll() -> None:
+        poller = Game(port=g.port)
+        while not stop.is_set():
+            try:
+                poller.rpc("ui.state", {}, context="client", timeout=5.0)
+            except NotReady as e:
+                if not alive(pid):
+                    stats["lost"] = True
+                    stop.set()
+                    return
+                stats["errors"] += 1
+                last_err[:] = [str(e)]
+            except GameError as e:
+                stats["errors"] += 1
+                last_err[:] = [str(e)]
+            stats["polls"] += 1
+
+    th = threading.Thread(target=poll, daemon=True)
+    th.start()
+    opened = closed = 0
+    open_ms: list[float] = []
+    try:
+        for _ in range(cycles):
+            if stop.is_set():
+                break
+            t0 = time.perf_counter()
+            r = g.run_job(op, args, wait_s=10.0)
+            if r.status != "done":
+                last_err[:] = [f"{op}: {r.status} {r.error}"]
+                break
+            for _ in range(30):  # the panel shows a few frames after the engine opens it
+                if g.rpc("ui.state", {}, context="client").get("screen") == "container":
+                    opened += 1
+                    open_ms.append((time.perf_counter() - t0) * 1000)
+                    break
+                time.sleep(0.1)
+            else:
+                last_err[:] = ["the loot panel never showed"]
+                break
+            c = g.run_job("ui.loot", {"close": True}, context="client", wait_s=6.0)
+            if c.status == "done":
+                closed += 1
+            else:
+                last_err[:] = [f"close: {c.status} {c.error}"]
+                break
+    except (GameError, NotReady) as e:
+        last_err[:] = [str(e)]
+    finally:
+        stop.set()
+        th.join(10)
+    detail = (f"{t['kind']} {t.get('name')} at {t.get('dist')} m: {opened}/{cycles} opened "
+              f"(p50 {statistics.median(open_ms) if open_ms else 0:.0f} ms), {closed} closed, "
+              f"{stats['polls']} ui.state reads alongside, {stats['errors']} errors")
+    log = latest_log()
+    log_verdict, log_detail = check_log_text(log.read_text(errors="replace")) if log else ("PASS", "")
+    if stats["lost"] or not alive(pid) or log_verdict == "FAIL" and "crash" in log_detail:
+        report("FAIL", "loot", f"the game died. {detail}. {log_detail}")
+    elif closed < cycles:
+        report("WARN", "loot", f"{detail}; last error: {last_err[:1]}")
+    else:
+        report("PASS", "loot", detail)
+
+
 def check_leak(g: Game, polls: int) -> None:
     pid = game_pid()
     try:
@@ -454,7 +598,9 @@ def main() -> int:
     ap.add_argument("--polls", type=int, default=300, help="leak-watch polls")
     ap.add_argument("--answer", action="store_true", help="stress: also pick answer 1 in dialogues")
     ap.add_argument("--serialize", action="store_true", help="stress: with Ext._Internal.UiSerialize(true)")
-    ap.add_argument("--only", default="hook,stress,leak,instantiate,autoskip")
+    ap.add_argument("--loot-cycles", type=int, default=20, help="loot: open/close cycles")
+    ap.add_argument("--only", default="hook,children,stress,leak,instantiate,autoskip",
+                    help="comma list; 'loot' is opt-in (it opens a loot panel next to the active character)")
     ap.add_argument("--port", type=int, default=int(os.environ.get("BG3LE_DEBUG_PORT", "9998")))
     a = ap.parse_args()
     only = set(a.only.split(","))
@@ -465,6 +611,8 @@ def main() -> int:
         return 1
     if "hook" in only:
         check_hook(g)
+    if "children" in only:
+        check_children(g)
     if "autoskip" in only:
         check_autoskip(g)
     if "instantiate" in only:
@@ -473,6 +621,8 @@ def main() -> int:
         check_leak(g, a.polls)
     if "stress" in only:
         check_stress(g, a.seconds, a.answer, a.serialize)
+    if "loot" in only:
+        check_loot(g, a.loot_cycles)
 
     n = {v: sum(1 for r in results if r[0] == v) for v in ("PASS", "WARN", "FAIL")}
     print(f"\n{n['PASS']} PASS, {n['WARN']} WARN, {n['FAIL']} FAIL")

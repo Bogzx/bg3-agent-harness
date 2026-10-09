@@ -102,11 +102,52 @@ function UI.name(el)
     return n
 end
 
+-- Children of a Panel are read from its Children collection
+-- (UIElementCollection:At, BaseCollection::GetComponent), never VisualChild:
+-- in this build Panel::GetVisualChild always runs Panel::UpdateChildrenZOrder,
+-- a lazy rebuild of the z-order cache, and our walk rebuilding it while the UI
+-- thread's hit test (View::MouseMove) did the same crashed the game (S014:
+-- SIGSEGV in UpdateChildrenZOrder, right after a loot panel was added to
+-- ContentRoot). Reading the collection writes nothing. Same set of children;
+-- the order is the insertion one, not the ZIndex one (ContentRoot uses ZIndex;
+-- lookups go by name, and cached index paths check the name). Not the logical
+-- children (el:Child): live, ContentRoot (a Grid) has 2 logical children that
+-- are not in its visual tree. Only stock Noesis panels (GetProperty on an
+-- unknown name logs an error), and only while the collection's count equals
+-- the visual one; anything else falls back to VisualChild.
+UI.PANEL_TYPES = {
+    Panel = true, Grid = true, StackPanel = true, Canvas = true, DockPanel = true, WrapPanel = true,
+    UniformGrid = true, VirtualizingPanel = true, VirtualizingStackPanel = true, TabPanel = true,
+    ToolBarPanel = true, ToolBarOverflowPanel = true,
+}
+UI.childReads = UI.childReads or { collection = 0, visual = 0 }
+-- element proxy -> its Children collection, or false (read VisualChild)
+local childColl = setmetatable({}, { __mode = "k" })
+
 function UI.childCount(el)
-    return try(function() return el.VisualChildrenCount end) or 0
+    local n = try(function() return el.VisualChildrenCount end) or 0
+    if el == nil then return n end
+    local coll = false
+    if n > 0 and UI.PANEL_TYPES[UI.typeName(el) or ""] then
+        local c = UI.prop(el, "Children")
+        if c ~= nil and tonumber(UI.prop(c, "Count")) == n then coll = c end
+    end
+    childColl[el] = coll
+    return n
 end
 
 function UI.child(el, i)
+    if el == nil then return nil end
+    local coll = childColl[el]
+    if coll == nil then
+        UI.childCount(el)
+        coll = childColl[el]
+    end
+    if coll then
+        UI.childReads.collection = UI.childReads.collection + 1
+        return try(coll.At, coll, i)
+    end
+    UI.childReads.visual = UI.childReads.visual + 1
     return try(el.VisualChild, el, i)
 end
 

@@ -67,5 +67,28 @@ class LogVerdictTest(unittest.TestCase):
         self.assertIsNone(C.loaded_lib(None))
 
 
+
+class ChildrenAndLootTest(unittest.TestCase):
+    def test_children_verdicts(self):
+        self.assertEqual(C.children_verdict(None)[0], "FAIL")
+        self.assertEqual(C.children_verdict({"ui": True, "patched": False})[0], "WARN")
+        st = {"ui": True, "patched": True, "cr": "Grid", "count": 25, "collection": 50, "visual": 3}
+        self.assertEqual(C.children_verdict(st)[0], "PASS")
+        v, d = C.children_verdict(dict(st, collection=0))
+        self.assertEqual(v, "WARN")
+        self.assertIn("PANEL_TYPES", d)
+
+    def test_loot_target_prefers_corpse_within_reach(self):
+        near = {"characters": [{"uuid": "c-far", "dead": True, "dist": 4.0, "relation": "hostile", "pos": [4, 0, 0]},
+                               {"uuid": "c-near", "dead": True, "dist": 2.0, "relation": "hostile", "pos": [2, 0, 0]},
+                               {"uuid": "alive", "dead": False, "dist": 1.0, "pos": [1, 0, 0]}],
+                "items": [{"uuid": "box", "kind": "container", "dist": 1.0, "opened": True, "pos": [1, 0, 0]},
+                          {"uuid": "owned", "kind": "container", "dist": 0.5, "owned": True, "pos": [0.5, 0, 0]}]}
+        self.assertEqual(C.loot_target(near, [0, 0, 0])["uuid"], "c-near")
+        near["characters"] = []
+        self.assertEqual(C.loot_target(near, [0, 0, 0])["uuid"], "box")  # opened ones count; owned never
+        near["items"] = near["items"][1:]
+        self.assertIsNone(C.loot_target(near, [0, 0, 0]))
+
 if __name__ == "__main__":
     unittest.main()

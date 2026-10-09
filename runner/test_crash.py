@@ -477,6 +477,109 @@ class RunLoop(unittest.TestCase):
         self.assertIsNone(json.loads((P.RUNTIME / "runner.status.json").read_text())["alert"])
 
 
+class FakeMenuGame:
+    """A game at the main menu's splash ("Press any key"): the client state flips LoadMenu/Menu (or stays LoadMenu),
+    ui.state shows SplashScreen as a panel, ui.menu fails until a key gets past it; a load takes 3 polls."""
+
+    def __init__(self, splash: bool = True, flip: bool = True, load_starts: bool = True):
+        self.splash, self.flip, self.load_starts = splash, flip, load_starts
+        self.polls, self.presses, self.loads, self.loading, self.running = 0, 0, [], 0, False
+
+    def game_state(self, timeout: float = 0):
+        self.polls += 1
+        if self.running:
+            return "Running"
+        if self.loading:
+            self.loading -= 1
+            self.running = self.loading == 0
+            return "Running" if self.running else "LoadSession"
+        if self.splash:
+            return ("LoadMenu", "Menu")[self.polls % 2] if self.flip else "LoadMenu"
+        return "Menu"
+
+    def rpc(self, op: str, args=None, context: str = "server", timeout: float = 0):
+        if op == "ui.state":
+            if self.running:
+                return {"screen": "game"}
+            return {"screen": "game", "panels_open": ["SplashScreen"]} if self.splash else {"screen": "main_menu"}
+        if op == "ui.menu":
+            if self.splash:
+                raise P.RpcError("ui.menu: not at the main menu")
+            self.loads.append(args)
+            self.loading = 3 if self.load_starts else 0
+            return {}
+        return {}
+
+    def press(self) -> str:
+        self.presses += 1
+        self.splash = False
+        return "fake Enter"
+
+
+class SplashMenu(unittest.TestCase):
+    """Live bug: a fresh game at the splash (state LoadMenu/Menu) made ensure_game wait 5+ min for Running.
+    Now LoadMenu counts as the menu, the splash gets a key, and Running is awaited only after a load started."""
+
+    NAMES = ("RUNTIME", "port_open", "game_state", "rpc", "available_ops", "server_ready", "list_saves",
+             "press_menu_key", "host_character_name", "MENU_POLL", "SPLASH_LOADMENU_S", "LOAD_START_TIMEOUT")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-splash-"))
+        self.saved = {n: getattr(P, n) for n in self.NAMES}
+        P.RUNTIME = self.tmp / "runtime"
+        P.MENU_POLL, P.SPLASH_LOADMENU_S, P.LOAD_START_TIMEOUT = 0.01, 0.2, 1
+
+    def tearDown(self):
+        for n, v in self.saved.items():
+            setattr(P, n, v)
+
+    def run_ensure(self, g: FakeMenuGame):
+        P.port_open = lambda *a, **k: True
+        P.game_state, P.rpc, P.press_menu_key = g.game_state, g.rpc, g.press
+        P.available_ops = lambda ctx: {"ui.state", "ui.menu"}
+        P.server_ready = lambda: g.running
+        P.host_character_name = lambda: "Claude"
+        P.list_saves = lambda: [P.Save("Claude-1__S014-start", "Claude", "S014-start", time.time() - 60)]
+        r = P.Runner(P.Options("splash-test", None, 20, "opus", save_owner="Claude"))
+        r.mem = self.tmp / "memory"
+        r.owns_game = lambda: True
+        t0 = time.time()
+        label = r.ensure_game(first=True)
+        return r, label, time.time() - t0, (P.RUNTIME / "runner.log").read_text()
+
+    def test_splash_flipping_loadmenu_menu_gets_a_key_then_the_save_loads(self):
+        g = FakeMenuGame()
+        r, label, secs, log = self.run_ensure(g)
+        self.assertEqual(label, "S014-start")
+        self.assertEqual(g.presses, 1)
+        self.assertEqual(len(g.loads), 1)
+        self.assertTrue(g.running)
+        self.assertEqual(r.state["loaded_save"], "Claude-1__S014-start")
+        self.assertLess(secs, 5)
+        self.assertNotIn("game is busy", log)
+        self.assertIn("splash screen (state Menu): pressed fake Enter", log)
+
+    def test_splash_stuck_in_loadmenu_gets_a_key_after_a_while(self):
+        g = FakeMenuGame(flip=False)
+        _r, label, _secs, log = self.run_ensure(g)
+        self.assertEqual((label, g.presses), ("S014-start", 1))
+        self.assertIn("splash screen (state LoadMenu)", log)
+
+    def test_main_menu_gets_no_key(self):
+        # a key on the main menu would hit Continue
+        g = FakeMenuGame(splash=False)
+        _r, label, _secs, _log = self.run_ensure(g)
+        self.assertEqual((label, g.presses, len(g.loads)), ("S014-start", 0, 1))
+
+    def test_a_load_that_never_starts_fails_fast_instead_of_waiting_for_running(self):
+        g = FakeMenuGame(load_starts=False)
+        t0 = time.time()
+        with self.assertRaisesRegex(RuntimeError, "never started"):
+            self.run_ensure(g)
+        self.assertLess(time.time() - t0, 5)
+        self.assertNotIn("waiting for game state Running", (P.RUNTIME / "runner.log").read_text())
+
+
 class Watch(unittest.TestCase):
     """LaunchWatch: each crash sign, read from fakes (no real processes or ports)."""
 

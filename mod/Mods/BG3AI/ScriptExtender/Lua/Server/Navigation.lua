@@ -311,7 +311,9 @@ N.APPROACH_M = 1.5
 local RING = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 0.7071, 0.7071 }, { -0.7071, 0.7071 }, { 0.7071, -0.7071 }, { -0.7071, -0.7071 } }
 local floorAt -- defined below
 
-function N.path(charUuid, target)
+-- deadline (MonotonicTime ms, optional): the approach ring stops there; the
+-- result is then r.unfinished (reachable unknown) and not cached.
+function N.path(charUuid, target, deadline)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil, "no position" end
@@ -330,6 +332,10 @@ function N.path(charUuid, target)
     if isEntity and r.reachable == false then
         local t0 = Ext.Utils.MonotonicTime()
         for _, d in ipairs(RING) do
+            if deadline and Ext.Utils.MonotonicTime() > deadline then
+                r = { reachable = nil, unfinished = true, ms = r.ms }
+                break
+            end
             local x, z = tpos[1] + d[1] * N.APPROACH_M, tpos[3] + d[2] * N.APPROACH_M
             local fy = floorAt and floorAt(x, z, tpos[2]) or tpos[2]
             if fy then
@@ -343,7 +349,7 @@ function N.path(charUuid, target)
         end
         r.ms = (r.ms or 0) + (Ext.Utils.MonotonicTime() - t0)
     end
-    cachePut(key, r)
+    if not r.unfinished then cachePut(key, r) end
     return r
 end
 
@@ -1360,6 +1366,15 @@ N.CONNECT_M = 30         -- ladders/doors considered within 30 m
 N.CONNECT_MAX = 5
 N.CONNECT_PROBE = 8      -- path probes for the nearest 8 only
 N.NEAR_GOAL_RINGS = { 1.5, 3, 5, 8 }
+-- An unreachable ladder/door costs a failing search plus its 8-spot approach
+-- ring, ~20 ms each (live 2026-10-10: one ladder 13 m away, 189 ms of game
+-- thread for a route that itself took 3 ms). So connector probes share a
+-- budget (the rest are listed unprobed), and an unreachable verdict is kept
+-- CONNECT_FAIL_TTL_MS while the character stays within CONNECT_FAIL_MOVE_M.
+N.CONNECT_BUDGET_MS = 40
+N.CONNECT_FAIL_TTL_MS = 30000
+N.CONNECT_FAIL_MOVE_M = 2
+N.connectFail = N.connectFail or {}
 
 -- Floor heights at (x, z) relative to y, ascending and de-duplicated: {-6.1,
 -- 0, 9.2} = a floor 6 m below, this one, a ledge 9 m up. nil if unknown.
@@ -1488,7 +1503,8 @@ function N.connectors(ctx, charUuid, goal, radius, limit)
     for _, u in ipairs(V.itemsAround(from, radius)) do
         local ie = V.entity(u)
         local p = ie and V.pos(ie)
-        if p and U.dist(from, p) <= radius then
+        local k0 = p and U.dist(from, p) <= radius and V.itemKind(u, ie)
+        if k0 == "ladder" or k0 == "door" then -- the full visibility test (raycasts) only for these
             local vis, kind = V.itemVisible(ctx, u, ie, p)
             if vis and (kind == "ladder" or kind == "door") then
                 cands[#cands + 1] = { u = u, ie = ie, p = p, kind = kind, d = U.dist(from, p) }
@@ -1497,6 +1513,11 @@ function N.connectors(ctx, charUuid, goal, radius, limit)
     end
     table.sort(cands, function(a, b) return a.d < b.d end)
     local out = {}
+    local now = Ext.Utils.MonotonicTime()
+    local deadline = now + N.CONNECT_BUDGET_MS
+    for k, f in pairs(N.connectFail) do
+        if now - f.t > N.CONNECT_FAIL_TTL_MS then N.connectFail[k] = nil end
+    end
     for i, cd in ipairs(cands) do
         if i > N.CONNECT_PROBE then break end
         local u, ie, p, kind = cd.u, cd.ie, cd.p, cd.kind
@@ -1518,8 +1539,26 @@ function N.connectors(ctx, charUuid, goal, radius, limit)
         elseif truthy(osi(Osi.IsLocked, u)) then
             o.locked = true
         end
-        local r = N.path(charUuid, u)
-        if r and r.reachable then o.path_m = r.length_m elseif r and r.reachable == false then o.unreachable = true end
+        local fkey = charUuid .. "|" .. u
+        local f = N.connectFail[fkey]
+        if f and (now - f.t > N.CONNECT_FAIL_TTL_MS or U.dist(from, f.from) > N.CONNECT_FAIL_MOVE_M) then
+            N.connectFail[fkey], f = nil, nil
+        end
+        if f then
+            o.unreachable = true
+        elseif Ext.Utils.MonotonicTime() > deadline then
+            o.unprobed = true -- out of budget: no path probe (ranked by straight distance)
+        else
+            local r = N.path(charUuid, u, deadline)
+            if r and r.reachable then
+                o.path_m = r.length_m
+            elseif r and r.reachable == false then
+                o.unreachable = true
+                N.connectFail[fkey] = { t = now, from = from }
+            elseif r and r.unfinished then
+                o.unprobed = true
+            end
+        end
         if goal then
             o.to_goal_m = round(U.dist(far, goal), 1)
             if o.to_goal_m < d0 - 2 then o.helps = true end

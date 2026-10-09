@@ -21,7 +21,7 @@ Checks, in order (latency first, so nothing else is in flight while it measures)
   smoke       tools/dev/smoke.py (every read tool)
   act         tools/dev/check_act.py latency approach forms (its read-only default)
   vis         tools/dev/check_vis.py (no --move/--reload; it toggles the ray rule and restores it)
-  se          tools/dev/check_se.py --only hook,autoskip
+  se          tools/dev/check_se.py --only hook,children,autoskip
   route       tools/dev/check_route.py
 
 Prints one PASS / WARN / FAIL table (one row per check, the worst line of a sub-script decides its row) and
@@ -71,7 +71,7 @@ SCRIPTS = {
     "smoke": (["smoke.py"], 40, {"BG3AI_RUNTIME": "TMP"}),
     "act": (["check_act.py", "latency", "approach", "forms"], 30, {"BG3AI_RUNTIME": "TMP"}),
     "vis": (["check_vis.py"], 40, {}),
-    "se": (["check_se.py", "--only", "hook,autoskip"], 25, {}),
+    "se": (["check_se.py", "--only", "hook,children,autoskip"], 25, {}),
     "route": (["check_route.py"], 25, {}),
 }
 ORDER = ["latency", "waypoints", "keys", "confirm", "smoke", "act", "vis", "se", "route"]

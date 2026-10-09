@@ -76,9 +76,10 @@ def check_route(g: Game, char: str, goal: list[float], label: str, dump: bool) -
         return None
     rt = (time.time() - t0) * 1000
     ms = r.get("ms") or 0
+    # timing first: check_all cuts the line at ~150 chars ("mod 222 ms, rou" once read as 222 m of route)
     report("route", "PASS" if ms < 50 else ("WARN" if ms < 150 else "FAIL"),
-           f"goal {label} {goal}: straight {r.get('straight_m')}m {r.get('dir')} dy={r.get('dy')}; "
-           f"mod {ms:.0f} ms, round trip {rt:.0f} ms")
+           f"nav.route took {ms:.0f} ms in the mod (round trip {rt:.0f} ms, connectors=true); "
+           f"goal {label} {goal}: straight {r.get('straight_m')} m {r.get('dir')} dy={r.get('dy')}")
     lh = r.get("levels_here")
     report("route", "PASS" if lh else "WARN", f"levels_here={lh} levels_goal={r.get('levels_goal')}"
            + ("" if lh else " (GetHeightsAt gave nothing)"))

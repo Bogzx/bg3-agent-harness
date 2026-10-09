@@ -31,6 +31,10 @@ Definitions:
   own think time on its turn; "gap_s" keeps the raw time. Whose turn: from the samples' pturn; for records
   without it, a top-level wait_for in combat that blocked >= WAIT_TURN_MIN_S counts the gap up to its end
   as enemy turns (the agent ended its turn and waited for the next one).
+* wrap-up: from the first "⏱ … WRAP UP NOW" (or "⏱ SESSION OVER") clock line in a tool result to the session end
+  (a "wrapup" record in Sxxx.turns.jsonl). Gaps in it are kind "wrapup" (save + notes, not play): reported as
+  idle_s.wrapup and wrapup_s, left out of idle_s.all, long gaps and the targets. A gap that straddles the
+  first clock line counts up to it.
 * think time: from a tool_result reaching the model to its next assistant message (stream-json arrival).
 * busy %: share of samples where a party member moved or a game job was running. Dialogue share is
   reported separately: the server can't tell playback from waiting on an answer.
@@ -46,6 +50,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -83,6 +88,17 @@ TARGETS = {
     "long_gaps_non_dialogue": 0,    # gaps > 10 s, except deliberate dialogue choices
     "bridge_rt_median_ms": 100.0,   # median round trip of observation tools
 }
+
+
+# The bridge's clock line once wrap-up has begun (server.py session clock), not the playbooks quoting it.
+WRAPUP_RE = re.compile(r"⏱ (?:[^\n·]*·\s*\d+m left: WRAP UP NOW|SESSION OVER)")
+
+
+def _result_text(c: dict) -> str:
+    body = c.get("content")
+    if isinstance(body, list):
+        return " ".join(b.get("text", "") for b in body if isinstance(b, dict) and isinstance(b.get("text"), str))
+    return body if isinstance(body, str) else ""
 
 
 def _bare(name: str) -> str:
@@ -313,6 +329,8 @@ def stream_records(ev: dict, t: float) -> list[dict]:
         for c in content if isinstance(content, list) else []:
             if isinstance(c, dict) and c.get("type") == "tool_result":
                 out.append({"type": "result", "t": round(t, 3), "id": c.get("tool_use_id")})
+                if WRAPUP_RE.search(_result_text(c)):
+                    out.append({"type": "wrapup", "t": round(t, 3)})
     elif typ == "system" and ev.get("subtype") == "thinking_tokens":
         out.append({"type": "think_tok", "t": round(t, 3), "n": ev.get("estimated_tokens") or 0})
     elif typ == "result":  # the run's end: exact API time and output tokens for the whole session
@@ -385,9 +403,14 @@ class StreamTiming:
     def __init__(self, path: Path | None):
         self.path = Path(path) if path else None
         self.records: list[dict] = []
+        self.wrapup_seen = False
 
     def on_event(self, ev: dict, t: float | None = None) -> None:
         recs = stream_records(ev, time.time() if t is None else t)
+        if self.wrapup_seen:  # only the first clock line marks the start of wrap-up
+            recs = [r for r in recs if r["type"] != "wrapup"]
+        elif any(r["type"] == "wrapup" for r in recs):
+            self.wrapup_seen = True
         if not recs:
             return
         self.records.extend(recs)
@@ -398,6 +421,28 @@ class StreamTiming:
                         f.write(json.dumps(r, separators=(",", ":")) + "\n")
             except OSError:
                 pass
+
+
+def wrapup_start(turns: list[dict]) -> float | None:
+    """Arrival time of the first WRAP UP NOW clock line (None: the session never reached wrap-up)."""
+    return min((r["t"] for r in turns if r.get("type") == "wrapup" and "t" in r), default=None)
+
+
+def wrapup_from_stream(stream_path: Path | None, turns: list[dict]) -> list[dict]:
+    """Backfill for sessions recorded before "wrapup" records: find the first tool_result with the clock line in
+    the raw stream (Sxxx.jsonl, no timestamps) and time it by its "result" record in turns.jsonl."""
+    if wrapup_start(turns) is not None or not stream_path:
+        return []
+    at = {r.get("id"): r["t"] for r in turns if r.get("type") == "result" and "t" in r}
+    for ev in read_jsonl(stream_path):
+        if ev.get("type") != "user":
+            continue
+        content = (ev.get("message") or {}).get("content")
+        for c in content if isinstance(content, list) else []:
+            if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("tool_use_id") in at \
+                    and WRAPUP_RE.search(_result_text(c)):
+                return [{"type": "wrapup", "t": at[c["tool_use_id"]]}]
+    return []
 
 
 def think_times(turns: list[dict]) -> list[float]:
@@ -521,24 +566,31 @@ def _enemy_turn_spans(samples: list[dict], waits: list[dict], a: float, b: float
     return out
 
 
-def gaps(actions: list[dict], samples: list[dict], tools: list[dict] | None = None) -> list[dict]:
+def gaps(actions: list[dict], samples: list[dict], tools: list[dict] | None = None,
+         wrap_t: float | None = None) -> list[dict]:
     """Idle gaps between visible actions: "s" is the idle time (the raw gap "gap_s" minus "busy_s", the
     seconds the party was busy with an earlier async action, and "turn_s", the seconds in combat when it was
     not a party member's turn); "own_s" (combat gaps) is the same as "s": the agent's own time on its turn.
-    tools: the bridge tool records (fallback for whose turn it was; see _enemy_turn_spans)."""
+    tools: the bridge tool records (fallback for whose turn it was; see _enemy_turn_spans).
+    wrap_t: start of the wrap-up phase: gaps from it on are kind "wrapup", a gap across it is cut at it."""
     out = []
     samples = sorted((s for s in samples if "t" in s), key=lambda s: s["t"])
     waits = sorted((r for r in tools or () if r.get("tool") == "wait_for" and not r.get("nested") and "t0" in r),
                    key=lambda r: r["t0"])
     for prev, nxt in zip(actions, actions[1:]):
         a, b = prev["t1"], nxt["t0"]
+        wrap = wrap_t is not None and a >= wrap_t
+        if wrap_t is not None and a < wrap_t < b:
+            b = wrap_t  # the play part of a gap that runs into wrap-up
         g = b - a
         if g <= 0:
             continue
         inside = _samples_between(samples, a, b)
         busy_sp = _spans(samples, a, b, _is_busy)
         busy = min(_union_len(busy_sp), g)
-        if nxt["tool"] in DIALOGUE_TOOLS or any(s.get("dlg") for s in inside):
+        if wrap:
+            kind = "wrapup"
+        elif nxt["tool"] in DIALOGUE_TOOLS or any(s.get("dlg") for s in inside):
             kind = "dialogue"
         elif any(s.get("combat") for s in inside) or nxt["tool"] == "end_turn":
             kind = "combat"
@@ -546,7 +598,7 @@ def gaps(actions: list[dict], samples: list[dict], tools: list[dict] | None = No
             kind = "explore"
         r = {"t": round(a, 2), "s": round(g - busy, 2), "gap_s": round(g, 2), "busy_s": round(busy, 2),
              "kind": kind, "next": nxt["tool"]}
-        if kind != "explore":
+        if kind in ("combat", "dialogue"):
             turn_sp = _enemy_turn_spans(samples, waits, a, b)
             if turn_sp:
                 excl = min(_union_len(busy_sp + turn_sp), g)
@@ -612,7 +664,12 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
     source = "bridge"
     if not acts:
         acts, source = stream_actions(turns), "stream"
-    gl = gaps(acts, samples, tool_recs)
+    wrap_t = wrapup_start(turns)
+    if wrap_t is not None and not start <= wrap_t < end:
+        wrap_t = None
+    all_gl = gaps(acts, samples, tool_recs, wrap_t)
+    gl = [g for g in all_gl if g["kind"] != "wrapup"]  # play only: wrap-up is save + notes
+    wrap_gl = [g for g in all_gl if g["kind"] == "wrapup"]
     by_kind = {k: [g["s"] for g in gl if g["kind"] == k] for k in ("explore", "combat", "dialogue")}
     combat = [g for g in gl if g["kind"] == "combat"]
     long_ = [g for g in gl if g["s"] > LONG_GAP_S]
@@ -640,9 +697,14 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
         "idle_s": {"all": stats(g["s"] for g in gl), **{k: stats(v) for k, v in by_kind.items()},
                    # combat: the party-turn idle (own think time on its turn); this: the same gaps with the
                    # enemy turns left in (what the idle metric was before turns were excluded)
-                   "combat_incl_enemy": stats(g["gap_s"] - g["busy_s"] for g in combat)},
+                   "combat_incl_enemy": stats(g["gap_s"] - g["busy_s"] for g in combat),
+                   "wrapup": stats(g["s"] for g in wrap_gl)},
+        # the wrap-up phase (first WRAP UP NOW clock line to the end), excluded from the idle/gap targets
+        "wrapup_s": None if wrap_t is None else round(end - wrap_t, 1),
+        "wrapup_at": None if wrap_t is None else round(wrap_t, 1),
         "enemy_turn_s": round(sum(g.get("turn_s", 0) for g in gl), 1),
         "long_gaps": {"threshold_s": LONG_GAP_S, "total": len(long_), **long_kind,
+                      "wrapup": sum(1 for g in wrap_gl if g["s"] > LONG_GAP_S),
                       "worst": sorted(long_, key=lambda g: -g["s"])[:5]},
         "think_s": stats(tt),
         "api": api_speed(turns),
@@ -675,7 +737,12 @@ def summarize_files(metrics_path: Path | None, turns_path: Path | None,
     recs = read_jsonl(metrics_path)
     tools = [r for r in recs if r.get("type") == "tool"]
     samples = [r for r in recs if r.get("type") == "sample"]
-    return summarize(tools, samples, read_jsonl(turns_path), start, end)
+    turns = read_jsonl(turns_path)
+    if turns_path:  # older sessions: no "wrapup" record yet, find the clock line in the raw stream next to it
+        stream = Path(str(turns_path).removesuffix(".turns.jsonl") + ".jsonl")
+        if stream != Path(turns_path):
+            turns += wrapup_from_stream(stream, turns)
+    return summarize(tools, samples, turns, start, end)
 
 
 def write_summary(summary: dict, out_path: Path, history_path: Path | None, session: str) -> None:
@@ -688,6 +755,7 @@ def write_summary(summary: dict, out_path: Path, history_path: Path | None, sess
                "idle_explore_median_s": summary["idle_s"]["explore"].get("median"),
                "idle_party_turn_median_s": summary["idle_s"]["combat"].get("median"),
                "long_gaps": summary["long_gaps"]["total"], "long_gaps_dialogue": summary["long_gaps"]["dialogue"],
+               "wrapup_s": summary.get("wrapup_s"),
                "think_median_s": summary["think_s"].get("median"),
                "ms_per_out_tok": (summary.get("api") or {}).get("ms_per_out_tok"),
                "api_s_per_turn": (summary.get("api") or {}).get("api_s_per_turn"),

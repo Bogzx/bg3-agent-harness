@@ -90,6 +90,11 @@ RESUME_MIN_MINUTES = 8         # less than this left after a crash: end the sess
 MAX_SETUP_FAILURES = 5         # game launch/load failing this many times in a row → give up
 LAUNCH_ATTEMPTS = 3            # a launch that dies before the save plays is retried; the 3rd try loads the previous
 LAUNCH_BACKOFF = (15, 45)      # good save; then the runner stops (alert). Seconds to wait before the 2nd and 3rd try
+MENU_STATES = ("Menu", "LoadMenu")   # client game states at the main menu or its splash ("Press any key")
+SPLASH_LOADMENU_S = 10         # LoadMenu this long without the main menu = the splash waiting for a key
+MENU_TIMEOUT = 180             # debug port up → main menu (splash pressed past), else wait_menu fails
+MENU_POLL = 3                  # seconds between menu/splash checks
+LOAD_START_TIMEOUT = 60        # ui.menu load → the game leaves the menu, else the load never started
 PORT_DEAD_S = 60               # bg3 up this long with port 9998 refusing = dead (bg3le listens ~1 s after start)
 BG3_APP_ENV = b"SteamAppId=1086940"
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -620,13 +625,38 @@ def server_ready() -> bool:
         return False
 
 
-def ui_screen() -> str | None:
+def ui_state() -> dict | None:
+    """The mod's ui.state (client), or None without the op or an answer."""
     if "ui.state" not in available_ops("client"):
         return None
     try:
-        return (rpc("ui.state", context="client") or {}).get("screen")
+        return rpc("ui.state", context="client") or {}
     except Exception:  # noqa: BLE001
         return None
+
+
+def ui_screen() -> str | None:
+    return (ui_state() or {}).get("screen")
+
+
+def at_splash(st: dict | None) -> bool:
+    """The "Press any key" splash before the main menu (ui.state shows it as a panel, not a screen)."""
+    st = st or {}
+    return st.get("page") == "SplashScreen" or "SplashScreen" in (st.get("panels_open") or [])
+
+
+def press_menu_key() -> str:
+    """One key past the splash: Enter through the input shim (a real SDL key, like a player), else the engine's
+    InjectKeyPress. Returns which one worked."""
+    try:
+        from bg3ai.input import InputClient
+        with InputClient(timeout=3.0) as inp:
+            inp.key("ENTER")
+        return "shim Enter"
+    except Exception as e:  # noqa: BLE001
+        log(f"shim key failed ({e}); using InjectKeyPress")
+    lua_eval('Ext.Input.InjectKeyPress("SPACE") return 1')
+    return "InjectKeyPress SPACE"
 
 
 def read_progress() -> dict | None:
@@ -1076,26 +1106,55 @@ class Runner:
         return False
 
     def wait_menu(self) -> bool:
+        """Up to the main menu, pressing past the "Press any key" splash. The client state there is Menu or LoadMenu
+        (it flips between them on the splash): never a reason to wait for Running."""
         if not self.wait_for("debug port", port_open, 240):
             return False
-        if not self.wait_for("client game state Menu", lambda: game_state() == "Menu", 300):
+        if not self.wait_for("client game state Menu", lambda: game_state() in MENU_STATES, 300):
             return False
-        # Splash screen → main menu. ui.state tells us when it's there; without it, two presses.
-        for i in range(5):
-            screen = ui_screen()
-            if screen == "main_menu" or (screen is None and i >= 2):
-                break  # without ui.state: two blind presses
-            try:
-                lua_eval('Ext.Input.InjectKeyPress("SPACE") return 1')
-            except Exception as e:  # noqa: BLE001
-                log(f"InjectKeyPress failed: {e}")
-            time.sleep(3)
-        if game_state() != "Menu":
-            log(f"warning: game left the menu on its own (state {game_state()})")
+        if "ui.state" not in available_ops("client"):
+            for _ in range(2):  # without ui.state (no mod yet): two blind presses
+                self.try_menu_key()
+                time.sleep(MENU_POLL)
+            return True
+        loadmenu_since = None
+        presses = 0
+
+        def at_menu() -> bool:
+            nonlocal loadmenu_since, presses
+            state, st = game_state(), ui_state() or {}
+            if state == "Menu" and st.get("screen") == "main_menu":
+                return True
+            loadmenu_since = (loadmenu_since or time.time()) if state == "LoadMenu" else None
+            # Only on the splash: a key on the main menu itself would hit Continue (someone else's save, maybe).
+            if (state == "Menu" and at_splash(st)) or (
+                    loadmenu_since is not None and time.time() - loadmenu_since >= SPLASH_LOADMENU_S):
+                presses += 1
+                how = self.try_menu_key()
+                log(f"splash screen (state {state}): pressed {how} ({presses})")
+                loadmenu_since = None   # give the press time to act before the next one
+            return False
+        if not self.wait_for("the main menu", at_menu, MENU_TIMEOUT, MENU_POLL):
+            return False
         return True
 
+    def try_menu_key(self) -> str:
+        try:
+            return press_menu_key()
+        except Exception as e:  # noqa: BLE001
+            log(f"key press failed: {e}")
+            return "nothing (failed)"
+
     def wait_running(self) -> bool:
-        return (self.wait_for("game state Running", lambda: game_state() == "Running", 600, 3)
+        """After a load was started: Running, then the server context. A splash on the way gets a key press."""
+        def running() -> bool:
+            state = game_state()
+            if state == "Running":
+                return True
+            if state == "Menu" and at_splash(ui_state()):
+                log(f"splash screen while waiting for the load: pressed {self.try_menu_key()}")
+            return False
+        return (self.wait_for("game state Running", running, 600, MENU_POLL)
                 and self.wait_for("server context", server_ready, 120, 3))
 
     def choose_save(self) -> Save | None:
@@ -1123,7 +1182,8 @@ class Runner:
             log("no save for this playthrough yet: leaving the game at the main menu (new game)")
             if not port_open():
                 self.launch_game(None)
-            self.wait_menu()
+            if not self.wait_menu():
+                raise RuntimeError("the main menu never came up")
             owner = self.opt.save_owner or self.state["save_owner"]
             if owner:
                 # Saves are matched to this playthrough by the character's name: a "Tav" breaks that.
@@ -1140,17 +1200,19 @@ class Runner:
         log(f"loading save {save.folder}")
         if port_open() and ui_load:
             state = game_state()
-            if state not in ("Menu", "Running"):
-                self.wait_menu()
+            if state != "Running" and not self.wait_menu():   # splash included: press past it first
+                raise RuntimeError(f"the main menu never came up (state {game_state()})")
             # ui.menu load works from the main menu and from in-game (it opens the load screen itself).
             rpc("ui.menu", load_menu_args(save, list_saves()), context="client", timeout=30)
-            if state == "Running":
-                # From in-game the state is still Running until the load begins: without this wait,
-                # wait_running() passed at once and S002's agent started mid-load (se triage).
-                self.wait_for("the load to start", lambda: game_state() != "Running", 60, 0.5)
+            # Wait for Running only once the load really started. From in-game the state stays Running until the
+            # load begins (S002's agent started mid-load); from the menu a load that never starts is an error,
+            # not a 10-minute wait.
+            here = ("Running",) if state == "Running" else MENU_STATES
+            if not self.wait_for("the load to start", lambda: game_state() not in here, LOAD_START_TIMEOUT, 0.5):
+                raise RuntimeError(f"the load of {save.folder} never started (state {game_state()})")
         else:
             if port_open():
-                if not (self.owns_game() or self.opt.take_over or game_state() == "Menu"):
+                if not (self.owns_game() or self.opt.take_over or game_state() in MENU_STATES):
                     raise SystemExit("would have to restart a game the runner didn't launch; "
                                      "close it or pass --take-over")
                 self.kill_game()
@@ -1231,10 +1293,13 @@ class Runner:
     def ensure_game(self, first: bool) -> str | None:
         """Make sure the game runs with this playthrough loaded. Returns the loaded save label, if any."""
         state = game_state() if port_open() else None
-        if state not in (None, "Menu", "Running") or (state == "Running" and not server_ready()):
+        if state not in (None, *MENU_STATES, "Running"):
+            # Mid-load or similar: settle at a menu or in-game; never wait for Running from the menu/splash.
             log(f"game is busy (state {state}); waiting for it to settle")
-            self.wait_running()
+            self.wait_for("the game to settle", lambda: game_state() in (*MENU_STATES, "Running"), 600, 3)
             state = game_state()
+        if state == "Running" and not server_ready():
+            self.wait_for("server context", server_ready, 120, 3)
         owned = self.owns_game() and self.state["loaded_save"] is not None
         if state == "Running" and server_ready():
             if first and not owned and not self.opt.take_over:
@@ -1522,7 +1587,8 @@ class Runner:
             f"{summary['long_gaps']['total']} gaps >10s, think median {summary['think_s'].get('median')}s "
             f"(API {(summary.get('api') or {}).get('api_s_per_turn')}s/turn, "
             f"{(summary.get('api') or {}).get('ms_per_out_tok')} ms/out-tok), "
-            f"apm {summary['apm']}, busy {summary['busy_pct']}%, pipelined {summary.get('pipelining_pct')}% | {verdict}")
+            f"apm {summary['apm']}, busy {summary['busy_pct']}%, pipelined {summary.get('pipelining_pct')}%, "
+            f"wrap-up {summary.get('wrapup_s')}s (not counted) | {verdict}")
         return summary
 
     def write_triage(self, session: str, base: Path) -> Path | None:

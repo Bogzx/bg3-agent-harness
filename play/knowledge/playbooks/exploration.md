@@ -11,6 +11,8 @@
 3. `get_journal()` for what the game says to do (`get_journal(quest="<words>")` shows a quest's full
    history). `get_map()` lists waypoints and your own markers.
 4. In-region leads from locations.md ("Unexplored: …").
+5. Need the wiki (a quest, a puzzle, an item)? Start a walk or queue first (toward the likeliest lead),
+   then `wiki_search`/`wiki_page` while it runs; never stand still to read.
 Don't try to uncover every corner. Once `get_frontier` shows nothing new that matters, move on and mark
 the region done in locations.md.
 

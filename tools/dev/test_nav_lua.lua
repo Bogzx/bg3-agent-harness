@@ -405,5 +405,80 @@ test("nav.activity reports a harmful surface under a party member", function()
     eq(r.surfaces[P1], "Fire", "surface")
 end)
 
+-- ---- connectors: probe budget + unreachable memo (live 2026-10-10: one unreachable ladder, 189 ms) ----------
+
+local L1, L2, D1 = "ladder-1", "ladder-2", "door-1"
+local function withConnectorWorld(fn)
+    local V = BG3AI.Visibility
+    local saved = { V.itemsAround, V.itemKind, V.itemVisible, V.name, V.bounds, Osi.IsLocked, Ext.Level.FindPath }
+    world[L1], world[L2], world[D1] = { -13, 0, 0 }, { 0, 0, -20 }, { 8, 0, 0 }
+    local kinds = { [L1] = "ladder", [L2] = "ladder", [D1] = "door", rock = "object" }
+    world.rock = { 1, 0, 0 }
+    local visCalls = 0
+    V.itemsAround = function() return { "rock", L1, L2, D1 } end
+    V.itemKind = function(u) return kinds[u] or "item" end
+    V.itemVisible = function(_, u) visCalls = visCalls + 1; return true, kinds[u] end
+    V.name = function(u) return u end
+    V.bounds = function() return nil end
+    Osi.IsLocked = function() return 0 end
+    local find = Ext.Level.FindPath
+    Ext.Level.FindPath = function(path)
+        clock = clock + 20 -- each engine search costs ~20 ms of game thread
+        return find(path)
+    end
+    local ok, err = pcall(fn, function() return visCalls end)
+    V.itemsAround, V.itemKind, V.itemVisible, V.name, V.bounds, Osi.IsLocked, Ext.Level.FindPath = table.unpack(saved)
+    world[L1], world[L2], world[D1], world.rock = nil, nil, nil, nil
+    N.connectFail = {}
+    if not ok then error(err, 0) end
+end
+local function byUuid(list)
+    local m = {}
+    for _, o in ipairs(list) do m[o.uuid] = o end
+    return m
+end
+
+test("connectors: only ladders/doors get the visibility test", function()
+    withConnectorWorld(function(visCalls)
+        N.connectors({}, P1, nil, 30, 5)
+        eq(visCalls(), 3, "itemVisible calls (the rock is skipped by kind)")
+    end)
+end)
+
+test("connectors: an unreachable ladder eats the budget, the rest are unprobed", function()
+    withConnectorWorld(function()
+        blocked = function(x) return x < -10 end -- the ladder at x=-13 and its approach ring: no path
+        local t0 = clock
+        local m = byUuid(N.connectors({}, P1, nil, 30, 5))
+        if clock - t0 > N.CONNECT_BUDGET_MS + 20 then error("spent " .. (clock - t0) .. " ms", 0) end
+        eq(m[D1].path_m ~= nil, true, "nearest (door, 8 m) probed")
+        eq(m[L1].unprobed, true, "ladder ring cut at the deadline: unprobed, not unreachable")
+        eq(m[L1].unreachable, nil, "not unreachable")
+        eq(m[L2].unprobed, true, "past the budget")
+    end)
+end)
+
+test("connectors: an unreachable verdict is kept while we stand still, dropped after a move", function()
+    withConnectorWorld(function()
+        N.CONNECT_BUDGET_MS, world[L2] = 1000, nil
+        blocked = function(x) return x < -10 end
+        local m = byUuid(N.connectors({}, P1, nil, 30, 5))
+        eq(m[L1].unreachable, true, "probed: unreachable")
+        N.frame = N.frame + 1 -- no per-frame path cache
+        local t0 = clock
+        m = byUuid(N.connectors({}, P1, nil, 30, 5))
+        eq(m[L1].unreachable, true, "memo: still unreachable")
+        eq(clock - t0, 20, "only the door was searched again")
+        world[P1] = { 3, 0, 0 } -- moved 3 m: probe again
+        N.frame = N.frame + 1
+        t0 = clock
+        N.connectors({}, P1, nil, 30, 5)
+        eq(clock - t0 > 20, true, "ladder probed again after the move")
+        clock = clock + N.CONNECT_FAIL_TTL_MS + 1 -- expiry also prunes
+        N.connectors({}, P1, nil, 30, 5)
+        N.CONNECT_BUDGET_MS = 40
+    end)
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

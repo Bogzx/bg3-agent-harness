@@ -348,3 +348,49 @@ class ApiSpeed(unittest.TestCase):
         self.assertEqual((a["source"], a["ms_per_out_tok"], a["api_s_per_turn"]), ("result", 15.0, 1.5))
         s = M.summarize([], [], turns)
         self.assertEqual(s["api"]["ms_per_out_tok"], 15.0)
+
+    def test_wrapup_phase_is_not_play(self):
+        # Play until the first WRAP UP NOW clock line at 30 s, then save + notes with long gaps.
+        clock = "ok\n⏱ 21:40 · 3m left: WRAP UP NOW. Reach a safe spot, save_game, then follow ..."
+        evs = [(29.0, {"type": "user", "message": {"content": [
+                   {"type": "tool_result", "tool_use_id": "q", "content": "playbook: when the ⏱ line says WRAP UP NOW"}]}}),
+               (30.0, {"type": "user", "message": {"content": [
+                   {"type": "tool_result", "tool_use_id": "a", "content": [{"type": "text", "text": clock}]}]}}),
+               (45.0, {"type": "user", "message": {"content": [
+                   {"type": "tool_result", "tool_use_id": "b", "content": "⏱ SESSION OVER: only save_game"}]}})]
+        st = M.StreamTiming(None)
+        for t, ev in evs:
+            st.on_event(ev, T0 + t)
+        self.assertEqual([r["t"] - T0 for r in st.records if r["type"] == "wrapup"], [30.0])  # first only
+        tools = [tool("move_to", 0.0, 1.0), tool("interact", 2.0, 3.0),
+                 tool("loot", 25.0, 26.0),         # 22 s gap before it: play, counted
+                 tool("move_to", 40.0, 41.0),      # 14 s gap, cut at 30 s: 4 s of play
+                 tool("wait", 60.0, 61.0)]         # 19 s gap in wrap-up: not counted
+        samples = [sample(t) for t in range(0, 62)]
+        s = M.summarize(tools, samples, st.records, start=T0, end=T0 + 70)
+        self.assertEqual(s["wrapup_s"], 40.0)
+        self.assertEqual(s["idle_s"]["wrapup"]["n"], 1)
+        self.assertEqual(s["idle_s"]["wrapup"]["max"], 19.0)
+        self.assertEqual(s["idle_s"]["all"]["n"], 3)
+        self.assertEqual(s["idle_s"]["explore"]["max"], 22.0)
+        self.assertEqual((s["long_gaps"]["total"], s["long_gaps"]["wrapup"]), (1, 1))
+        self.assertEqual(s["targets"]["long_gaps_non_dialogue"]["value"], 1)
+        g = M.gaps(M.action_intervals(tools), samples, tools, T0 + 30)
+        self.assertEqual([(x["kind"], x["s"]) for x in g],
+                         [("explore", 1.0), ("explore", 22.0), ("explore", 4.0), ("wrapup", 19.0)])
+        # no clock line: everything counts, as before
+        s = M.summarize(tools, samples, [], start=T0, end=T0 + 70)
+        self.assertIsNone(s["wrapup_s"])
+        self.assertEqual(s["long_gaps"]["total"], 3)
+
+    def test_wrapup_backfill_from_stream(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            stream = Path(d) / "S001.jsonl"
+            stream.write_text(json.dumps({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "a", "content": "x ⏱ 21:40 · 2m left: WRAP UP NOW."}]}}) + "\n")
+            turns = [{"type": "result", "t": T0 + 5, "id": "a"}]
+            self.assertEqual(M.wrapup_from_stream(stream, turns), [{"type": "wrapup", "t": T0 + 5}])
+            (Path(d) / "S001.turns.jsonl").write_text("\n".join(json.dumps(r) for r in turns) + "\n")
+            s = M.summarize_files(None, Path(d) / "S001.turns.jsonl", T0, T0 + 20)
+            self.assertEqual(s["wrapup_s"], 15.0)

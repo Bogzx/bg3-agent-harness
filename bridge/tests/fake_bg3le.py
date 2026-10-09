@@ -37,8 +37,14 @@ class _Job:
 
 
 class FakeBg3le:
-    def __init__(self, server_tick_s: float = 0.030, client_tick_s: float = 0.016, max_conns: int = 0):
+    def __init__(self, server_tick_s: float = 0.030, client_tick_s: float = 0.016, max_conns: int = 0,
+                 status_lines: int = 0, leak_failed_replay: bool = False):
         self.server_tick_s, self.client_tick_s, self.max_conns = server_tick_s, client_tick_s, max_conns
+        # bg3le replays its recent status lines (DebugOutput) to every new client before reading anything;
+        # unpatched (no patches/bg3le/0004) it returns when that send fails without closing the fd or
+        # dropping the client: leak_failed_replay=True keeps such a client counted in `conns`, like that.
+        self.status_lines, self.leak_failed_replay = status_lines, leak_failed_replay
+        self.leaked = 0
         self.ops: dict = {}          # op -> fn(args, ctx) -> result (raise to fail)
         self.cost_s: dict = {}       # op -> simulated Lua time inside the tick
         self.events = {"server": [], "client": []}
@@ -138,7 +144,10 @@ class FakeBg3le:
             if self.max_conns and self.conns >= self.max_conns:
                 fd.close()  # like a debugger that takes one client
                 continue
-            fd.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            try:
+                fd.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass  # the peer already hung up (a port probe): the client thread sees it
             threading.Thread(target=self._client, args=(fd,), daemon=True).start()
 
     @staticmethod
@@ -160,6 +169,15 @@ class FakeBg3le:
             self.conns += 1
             self.peak_conns = max(self.peak_conns, self.conns)
         try:
+            for i in range(self.status_lines):
+                try:
+                    self._send(fd, _bytes_field(8, _bytes_field(1, f"status line {i} ".ljust(120, ".").encode())))
+                except OSError:
+                    if self.leak_failed_replay:
+                        with self._cv:
+                            self.conns += 1  # cancels the finally's decrement: the slot stays taken
+                            self.leaked += 1
+                    return
             while True:
                 h = self._recv(fd, 4)
                 if h is None:
