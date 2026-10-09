@@ -161,9 +161,9 @@ fi
 env_args+=("${extra_env[@]}")
 
 # pressure-vessel shares $HOME and the Steam libraries with the container, not arbitrary paths such as a repo on
-# /data. Share the repo, runtime dir, mod path and preload libraries explicitly when they live outside $HOME.
+# /data. Share the game dir (Steam does that itself only for games it launches), the repo, runtime dir, mod path and preload libraries explicitly when they live outside $HOME.
 pv_fs=()
-for p in "$REPO" "$RUNTIME" $(IFS=:; echo $mod_path) "$(dirname "$LIB")" "$(dirname "$INPUT_LIB")"; do
+for p in "$GAME" "$REPO" "$RUNTIME" $(IFS=:; echo $mod_path) "$(dirname "$LIB")" "$(dirname "$INPUT_LIB")"; do
     case "$p" in ""|"$HOME"|"$HOME"/*) continue ;; esac
     [ -e "$p" ] || continue
     case ":$(IFS=:; echo "${pv_fs[*]:-}"):" in *":$p:"*) continue ;; esac
