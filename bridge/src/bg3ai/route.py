@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import macros
+from . import longnav, macros
 from .render import Handles, num, pos
 
 
@@ -51,7 +51,7 @@ def _link_size(l: dict) -> str:
     return f"{_m(abs(dy))} {'up' if (dy or 0) > 0 else 'down'}" if isinstance(dy, (int, float)) else ""
 
 
-def _connector(c: dict, H: Handles) -> str:
+def _connector(c: dict, H: Handles, ends: list | None = None) -> str:
     h = H.get(c["uuid"], c.get("name")) if c.get("uuid") else "?"
     bits = [f"{h} {c.get('name', '?')} <{c.get('kind', '?')}> {_m(c.get('dist'))} {c.get('dir') or ''}".rstrip()]
     hd = _height(c.get("dy"))
@@ -69,11 +69,26 @@ def _connector(c: dict, H: Handles) -> str:
         bits.append(f"walk {_m(c['path_m'])}")
     if c.get("to_goal_m") is not None:
         bits.append(f"then {_m(c['to_goal_m'])} from the goal" + (" (closer)" if c.get("helps") else ""))
+    dead = longnav.connector_dead(c, ends or [])
+    if dead:
+        bits.append(f"LEADS TO A DEAD END ({longnav.dead_end_text(dead)})")
     return "  " + " ".join(bits)
 
 
-def _next(res: dict, H: Handles) -> str:
+def route_waypoint(res: dict) -> dict | None:
+    """An unlocked waypoint ROUTE_WP_SAVE_M nearer the goal than we are (nav.route's waypoints), or None."""
+    if not isinstance(res, dict) or not res.get("from") or not res.get("goal"):
+        return None
+    return longnav.pick_waypoint(res["from"], res["goal"], res.get("waypoints"), min_m=0,
+                                 save_m=longnav.ROUTE_WP_SAVE_M, ratio=1.0)
+
+
+def _next(res: dict, H: Handles, ends: list | None = None) -> str:
     """One concrete suggestion."""
+    wp = route_waypoint(res)
+    if wp and (res.get("reachable") is False or (res.get("length_m") or 0) > (wp.get("to_goal_m") or 0) + 60):
+        return (f"NEXT: travel_to waypoint=\"{wp['name']}\" ({_m(wp.get('to_goal_m'))} from the goal, you are "
+                f"{_m(res.get('straight_m'))}), then route again")
     if res.get("reachable"):
         links = res.get("links") or []
         if links:
@@ -81,7 +96,14 @@ def _next(res: dict, H: Handles) -> str:
             return (f"NEXT: travel_to/move_to walks it; if the walk stops at the {l.get('kind')} ({_m(l.get('at_m'))} in), "
                     f"interact with the ladder there or jump_to {pos(l.get('to'))}")
         return "NEXT: travel_to/move_to walks it"
-    cons = [c for c in res.get("connectors") or [] if not c.get("unreachable") and not c.get("locked")]
+    c = res.get("closest")
+    dead = longnav.near_in(ends or [], c.get("pos")) if isinstance(c, dict) and c.get("pos") else None
+    if res.get("reachable") is False and (dead or res.get("far")) and any(e.count >= longnav.DEAD_REPEAT for e in ends or []):
+        return ("NEXT: this side is closed (" + longnav.dead_end_text(max(ends, key=lambda e: e.count))
+                + "): don't walk it again. Come from another side: explore along the roads (get_map), "
+                  "wiki_search how to reach it, or another objective first")
+    cons = [c for c in res.get("connectors") or [] if not c.get("unreachable") and not c.get("locked")
+            and not longnav.connector_dead(c, ends or [])]
     up = res.get("dy") or 0
     if abs(up) >= 2.5:
         want = "up" if up > 0 else "down"
@@ -106,7 +128,8 @@ def _next(res: dict, H: Handles) -> str:
     return "NEXT: get_frontier for doors/exits, or walk_toward another direction"
 
 
-def render_route(res: Any, H: Handles, what: str = "it") -> str:
+def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = None) -> str:
+    """ends: this session's dead ends toward this goal (longnav.DeadEnds.for_goal)."""
     if not isinstance(res, dict):
         return str(res)
     head = f"ROUTE to {what}: {_m(res.get('straight_m'))} {res.get('dir') or ''}".rstrip()
@@ -123,6 +146,9 @@ def render_route(res: Any, H: Handles, what: str = "it") -> str:
         out.append("too far to preview the walk: travel_to goes in 30 m legs")
     elif res.get("reachable"):
         line = f"PATH {_m(res.get('length_m'))}"
+        sm, lm = res.get("straight_m"), res.get("length_m")
+        if isinstance(sm, (int, float)) and isinstance(lm, (int, float)) and sm > 20 and lm > 1.6 * sm:
+            line += f" (a long way round: {num(round(lm / sm, 1))}x the straight line)"
         if res.get("links"):
             line += ", with " + ", ".join(f"a {l.get('kind')} ({_link_size(l)}) at {_m(l.get('at_m'))}" for l in res["links"][:3])
         out.append(line)
@@ -131,7 +157,7 @@ def render_route(res: Any, H: Handles, what: str = "it") -> str:
             ex = res["exposure"]
             out.append(f"  crosses {macros.exposure_text(ex)} at {_m(ex.get('at_m'))} @{pos(ex.get('pos'))}")
     elif res.get("reachable") is False:
-        line = "NO WALKABLE PATH"
+        line = "NO WALKABLE PATH" + (" from here: the engine finds no way there from this side" if res.get("far") else "")
         if res.get("straight_hazard"):
             sh = res["straight_hazard"]
             line += f" (the straight line crosses {macros.exposure_text(sh)} at {_m(sh.get('at_m'))})"
@@ -149,11 +175,20 @@ def render_route(res: Any, H: Handles, what: str = "it") -> str:
                 out.append(f"  crosses {macros.exposure_text(c['exposure'])}")
     else:
         out.append("path unknown (pathfinding unavailable)")
+    vn = res.get("visited_near")
+    if isinstance(vn, dict) and vn.get("pos") and (vn.get("to_goal_m") or 0) < (res.get("straight_m") or 0) - 5:
+        out.append(f"CLOSEST YOU HAVE BEEN: {pos(vn['pos'])}, {_m(vn.get('to_goal_m'))} from it")
+    for e in (ends or [])[:3]:
+        out.append(f"BLOCKED BEFORE (this session): {longnav.dead_end_text(e)}")
+    wps = res.get("waypoints") or []
+    if wps:
+        out.append("WAYPOINTS (unlocked, nearest the goal first): " + "; ".join(
+            f"{w.get('name')} {_m(w.get('to_goal_m'))} from it (you: {_m(w.get('dist'))})" for w in wps[:3]))
     cons = res.get("connectors") or []
     if cons:
         out.append("LADDERS/DOORS in view (best first):")
-        out.extend(_connector(c, H) for c in cons)
-    out.append(_next(res, H))
+        out.extend(_connector(c, H, ends) for c in cons)
+    out.append(_next(res, H, ends))
     return "\n".join(out)
 
 

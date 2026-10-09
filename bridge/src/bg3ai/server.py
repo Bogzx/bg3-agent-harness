@@ -21,6 +21,7 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, delta, leveling, macros, metrics, party, render, saver, saves, turn
+from . import longnav
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -956,7 +957,9 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
         args["connectors"] = True
     res = _read1("nav.route", args)
     _remember_names(res)
-    return _finish("route", {"objective": objective, "target": target}, route_text.render_route(res, H, what), t0)
+    ends = DEAD.for_goal(args.get("pos") or (res.get("goal") if isinstance(res, dict) else None))
+    return _finish("route", {"objective": objective, "target": target},
+                   route_text.render_route(res, H, what, ends), t0)
 
 
 @mcp.tool()
@@ -1817,7 +1820,7 @@ def _enqueue(char: str, steps: list, replace: bool = False, ignore: str | None =
 
 
 def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, x, y, z, t0: float,
-                  avoid: str = "auto", waited: bool = False) -> str:
+                  avoid: str = "auto", waited: bool = False, fast: bool = True) -> str:
     """travel_to without waiting: check the destination now (bad ones fail at once), then run the trip
     as a queue entry for that character (the queue worker calls travel_to again, batch-active)."""
     args: dict[str, Any] = {k: v for k, v in (("marker", marker), ("objective", objective), ("target", target),
@@ -1834,10 +1837,20 @@ def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, 
         dist_m = macros.dist(me.get("pos"), dest) if me.get("pos") else None
     if _session_over():
         return _finish("travel_to", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
+    pre = []
+    if dest is not None:
+        ft = _fast_travel_first(char, dest, dist_m) if fast else None
+        if ft:
+            pre.append(ft[0])
+            dist_m = ft[1] if ft[1] is not None else dist_m
+        warn = longnav.start_warning(DEAD.for_goal(dest))
+        if warn:
+            pre.append(warn)
     queued = _enqueue(char, [actq.Step("travel_to", args)], ignore=None)
     if dest is not None and dist_m is not None:
         _trips[char] = {"dest": dest, "d0": dist_m, "t0": time.monotonic()}
-    body = f"travel_to {what}: started" + (f" ({render.num(round(dist_m, 1))}m)" if dist_m is not None else "")
+    body = "".join(p + "\n" for p in pre)
+    body += f"travel_to {what}: started" + (f" ({render.num(round(dist_m, 1))}m)" if dist_m is not None else "")
     # Settle window: a trip that stops at once (hazard, no ground, an interrupt) or a short one comes back now.
     if _settle(lambda: None if _queues().busy(char) else {"status": "ended"}) is not None:
         _trips.pop(char, None)
@@ -1850,7 +1863,34 @@ def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, 
     return _finish("travel_to", {"to": what}, body + ("\n" + hint if hint else ""), t0, issued=True)
 
 
+def _fast_travel_first(char: str, dest: list, dist_m: float | None) -> tuple[str, float | None] | None:
+    """A long trip with an unlocked waypoint much nearer the goal (longnav.pick_waypoint): fast travel there
+    first, as a player would (S011: travel_to Zevlor 463 m on foot, ETA 6 min, with Emerald Grove Environs
+    next to him). Returns (line, metres left after it) or None (no shortcut, or the fast travel failed: walk)."""
+    if dist_m is None or dist_m < longnav.FT_MIN_M:
+        return None
+    wps = (game.try_rpc("nav.waypoints", {"pos": dest}) or {}).get("waypoints")
+    here = _pos_now(char)
+    wp = longnav.pick_waypoint(here, dest, wps) if here else None
+    if not wp:
+        return None
+    r = game.run_job("ui.fast_travel", {"waypoint": wp["name"]}, context="client", wait_s=60)
+    if r.status != "done":
+        return (f"fast travel to {wp['name']} failed ({r.error or r.status}): walking instead", None)
+    now = None
+    for _ in range(20):  # the party reappears at the waypoint after the load
+        p = (_watch_conn().try_rpc("act.watch") or {}).get("party") or []
+        now = next((q.get("pos") for q in p if q.get("uuid") == char), None)
+        if now and macros.dist(now, wp["pos"]) < 40:
+            break
+        time.sleep(0.5)
+    left = macros.dist(now, dest) if now else None
+    return (f"fast travel to {wp['name']} first ({render.num(wp['to_goal_m'])}m from it; you were "
+            f"{render.num(round(dist_m))}m away): done", left)
+
+
 _trips: dict[str, dict] = {}  # char -> {dest, d0, t0} of the travel_to its queue is running (live progress)
+DEAD = longnav.DeadEnds()  # where trips were blocked this session (S010: the same boulder wall 5 times)
 
 
 def _trip_left(char: str) -> tuple[float, float | None] | None:
@@ -2536,38 +2576,109 @@ def _step_into_range(who: str, step: actq.Step, text: str, watcher: actq.Watcher
 AUTO_RANGED = ("Projectile_MainHandAttack", "Projectile_OffhandAttack")
 
 
-def _turn_auto_fallback(p: turn.TurnPlan, who: str, watcher: actq.Watcher, lines: list, after: dict,
-                        info: dict) -> str:
-    """Every action alternative was out of range (S002: the move toward Zhalk stopped short): the ranged
-    weapon attack if the target is within its range, else Dash and walk on when the move ran out of
-    movement. Only abilities the plan didn't already try, and only ones the character has available."""
+def _turn_auto_fallback(p: turn.TurnPlan, slot: str, planned: list, who: str, watcher: actq.Watcher,
+                        lines: list, after: dict, info: dict) -> str:
+    """Every alternative of a slot missed its target (claude-run-2: S002 the move toward Zhalk stopped short,
+    S002 the planned imp died first, S007 two casts with no line of sight wasted the action):
+      1. out of range: the ranged weapon attack on the same target if it is within its range;
+      2. retarget: the plan's own targeted abilities on the nearest other hostile in sight and in reach;
+      3. action slot, the move ran out of movement: Dash and walk on.
+    Only abilities the character has available; retarget=false in the plan turns 2 off."""
+    miss = lines[-1] if lines else ""
     tgt = (p.move.target if p.move else None) or next(
-        (a.step.args.get("target") for a in p.slots["action"] if a.step.args.get("target")), None)
-    if not tgt:
+        (a.step.args.get("target") for a in planned if a.step.args.get("target")), None)
+    tu = None
+    if tgt:
+        try:
+            tu = _uuid(str(tgt))
+        except ValueError:
+            tu = None
+    acts = game.try_rpc("state.actions", {"uuid": who})
+    acts = acts.get("actions") if isinstance(acts, dict) else acts
+    avail = {a.get("spell"): a for a in acts or [] if isinstance(a, dict) and a.get("available") is not False}
+    tried = {a.step.args.get("ability") for a in planned}
+    cs = game.try_rpc("state.combat") or {}
+    alts: list[turn.Alt] = []
+    if tu and "out of range" in miss:
+        d = turn.straight_dist(cs, who, tu)
+        for sp in AUTO_RANGED:
+            rng = (avail.get(sp) or {}).get("range")
+            if sp in avail and sp not in tried and (d is None or not isinstance(rng, (int, float)) or d <= rng):
+                alts.append(turn.Alt(actq.Step("use_ability", {"ability": sp, "target": str(tgt)})))
+                break
+    if p.retarget:
+        planned_targets = set()
+        for a in planned:
+            t = a.step.args.get("target")
+            if t:
+                try:
+                    planned_targets.add(_uuid(str(t)))
+                except ValueError:
+                    pass
+        used: set = set()
+        for a in planned:
+            sp, t = a.step.args.get("ability"), a.step.args.get("target")
+            if a.step.tool != "use_ability" or not sp or not t or sp in used or sp not in avail:
+                continue
+            used.add(sp)
+            rng = avail[sp].get("range")
+            for u in turn.hostiles_in_reach(cs, who, rng if isinstance(rng, (int, float)) else None,
+                                            planned_targets)[:2]:
+                args = {k: v for k, v in a.step.args.items() if k not in ("target", "targets", "x", "y", "z")}
+                alts.append(turn.Alt(actq.Step("use_ability", {**args, "target": H.get(u)})))
+        alts = alts[:1 + turn.MAX_RETARGET]
+    if (slot == "action" and p.move and info.get("short") == "movement" and "Shout_Dash" in avail
+            and "Shout_Dash" not in tried):
+        alts.append(turn.Alt(actq.Step("use_ability", {"ability": "Shout_Dash"}), then_move=True))
+    if not alts:
         return "none"
-    try:
-        tu = _uuid(str(tgt))
-    except ValueError:
+    res, then_move = _turn_slot(f"{slot} (auto fallback)", alts, who, watcher, lines, after)
+    if res == "ok" and then_move and p.move:
+        res = _turn_move(p.move, who, watcher, lines, after, info)
+    return res
+
+
+def _turn_auto_bonus(who: str, watcher: actq.Watcher, lines: list, after: dict) -> str:
+    """No bonus action was planned: if an ally is downed and this character can Healing Word them, do it
+    (a downed ally loses its turns and dies on 3 failed saves; the bonus action was unused in ~all
+    claude-run-2 turns). 'ok' | 'none' | 'stop'."""
+    if after.get("bonus") == 0:
+        return "none"
+    cs = game.try_rpc("state.combat") or {}
+    if not any(o.get("relation") == "party" and o.get("hp_pct") == 0 and not o.get("dead")
+               for o in cs.get("order") or []):
         return "none"
     acts = game.try_rpc("state.actions", {"uuid": who})
     acts = acts.get("actions") if isinstance(acts, dict) else acts
     avail = {a.get("spell"): a for a in acts or [] if isinstance(a, dict) and a.get("available") is not False}
-    tried = {a.step.args.get("ability") for a in p.slots["action"]}
-    d = turn.straight_dist(game.try_rpc("state.combat") or {}, who, tu)
-    alts: list[turn.Alt] = []
-    for sp in AUTO_RANGED:
-        rng = (avail.get(sp) or {}).get("range")
-        if sp in avail and sp not in tried and (d is None or not isinstance(rng, (int, float)) or d <= rng):
-            alts.append(turn.Alt(actq.Step("use_ability", {"ability": sp, "target": str(tgt)})))
-            break
-    if p.move and info.get("short") == "movement" and "Shout_Dash" in avail and "Shout_Dash" not in tried:
-        alts.append(turn.Alt(actq.Step("use_ability", {"ability": "Shout_Dash"}), then_move=True))
+    alts = []
+    for sp in turn.BONUS_HEALS:
+        if sp in avail:
+            rng = avail[sp].get("range")
+            for u in turn.downed_allies(cs, who, float(rng) if isinstance(rng, (int, float)) else 18.0)[:2]:
+                alts.append(turn.Alt(actq.Step("use_ability", {"ability": sp, "target": H.get(u)})))
     if not alts:
         return "none"
-    res, then_move = _turn_slot("action (auto fallback)", alts, who, watcher, lines, after)
-    if res == "ok" and then_move and p.move:
-        res = _turn_move(p.move, who, watcher, lines, after, info)
-    return res
+    return _turn_slot("bonus (auto: ally downed)", alts, who, watcher, lines, after)[0]
+
+
+def _wait_turn(ready, max_s: float) -> tuple[dict, str]:
+    """combat_turn sent ahead (planned while enemies act): poll until ready(combat) or combat ends, a prompt
+    needs an answer, or max_s passes. (last state.combat, why it stopped waiting or '')."""
+    deadline = time.monotonic() + max_s
+    n = 0
+    while True:
+        cs = game.try_rpc("state.combat") or {}
+        if not cs.get("active") or ready(cs):
+            return cs, ""
+        n += 1
+        if n % 3 == 0:
+            ui = game.try_rpc("ui.state", context="client") or {}
+            if ui.get("screen") in _PROMPT_SCREENS:
+                return cs, f"{ui.get('screen')} on screen"
+        if time.monotonic() > deadline:
+            return cs, "timed out"
+        time.sleep(0.3)
 
 
 def _answer_reaction(use: bool) -> str:
@@ -2592,21 +2703,23 @@ def _turn_next(who: str, party: set) -> str:
         return out
     text, mine = turn.next_up(cs, party, _label, ended=who)
     if mine:
-        text += ". Plan it while they act; wait_for('my_turn') when ready"
+        text += ". Plan it while they act and send its combat_turn now (it waits for the turn)"
     return text
 
 
 @mcp.tool()
 @_guard
 def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: bool = False,
-                ignore: str = "hostile") -> str:
+                ignore: str = "hostile", wait_turn: float = 30.0) -> str:
     """A WHOLE combat turn in one call: move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Disengage). If every action alternative is out of range, it tries the ranged weapon attack itself, else Dash + walk on when the move ran out of movement. A move that ends out of reach says how far it got and why (out of movement / fire on the route / no route closer).
     plan: JSON, e.g. {"move":{"target":"e12","within":1.5},"action":[{"ability":"Target_MainHandAttack","target":"e12"},{"ability":"Projectile_MainHandAttack","target":"e12"},{"ability":"Shout_Dash","then_move":true},"Shout_Disengage"],"bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"},"extra":[[{"ability":"Target_MainHandAttack","target":"e12"}]]}
     move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z]. Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).
     Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it (Dash), walk the move again.
     order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn (default: stop).
     Before each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore="" adds new hostiles in view).
-    end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn)."""
+    A slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).
+    end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn).
+    Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), then plays it."""
     t0 = time.monotonic()
     if _session_over():
         return _finish("combat_turn", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
@@ -2617,17 +2730,29 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     if not cs.get("active"):
         raise GameError("not in combat: use do_actions or queue_actions")
     now = turn.acting(cs)
+    waited = ""
+    want = _uuid(who) if who else None
+    ready = (lambda c: want in turn.acting(c)) if want else (lambda c: bool(turn.party_acting(c, party)))
+    if not ready(cs) and wait_turn > 0:
+        w0 = time.monotonic()
+        cs, why = _wait_turn(ready, wait_turn)
+        _remember_names(cs)
+        if not cs.get("active"):
+            raise GameError("combat is over: loot, heal, then end_combat_report")
+        now = turn.acting(cs)
+        waited = f"waited {time.monotonic() - w0:.1f}s for the turn" + (f" ({why})" if why else "")
     mine = [u for u in now if u in party]
     if who:
-        char = _uuid(who)
+        char = want
     else:
         sel = _active()
         char = sel if sel in mine else (mine[0] if mine else sel)
     if char not in now:
         ended = any(o.get("uuid") == char and o.get("ended") for o in cs.get("order") or [])
         why = f"{_label(char)} already ended its turn" if ended else f"it is not {_label(char)}'s turn"
-        raise GameError(f"{why} (now {', '.join(_label(u) for u in now) or '?'})")
-    lines = [f"TURN {_label(char)}" + (f" (round {cs['round']})" if cs.get("round") is not None else "")]
+        raise GameError(f"{why} (now {', '.join(_label(u) for u in now) or '?'})" + (f"; {waited}" if waited else ""))
+    lines = [f"TURN {_label(char)}" + (f" (round {cs['round']})" if cs.get("round") is not None else "")
+             + (f" — {waited}" if waited else "")]
     if p.reactions:
         try:
             game.rpc("ui.reactions", {"char": char, "set": p.reactions}, context="client")
@@ -2646,18 +2771,24 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
             res = "none"
             for i, alts in enumerate(p.slots["extra"], 1):
                 res, _ = _turn_slot(f"extra {i}", alts, char, watcher, lines, after)
+                if (res == "none" and alts and lines and lines[-1].startswith(f"extra {i}:")
+                        and turn.missed_target(lines[-1])):
+                    res = _turn_auto_fallback(p, f"extra {i}", alts, char, watcher, lines, after, info)
                 if res == "stop":
                     break
         else:
             res, then_move = _turn_slot(slot, p.slots[slot], char, watcher, lines, after)
             if res == "ok" and then_move and p.move:
                 res = _turn_move(p.move, char, watcher, lines, after, info)
-            elif (res == "none" and slot == "action" and p.slots[slot] and lines
-                  and lines[-1].startswith("action:") and "out of range" in lines[-1]):
-                res = _turn_auto_fallback(p, char, watcher, lines, after, info)
+            elif (res == "none" and slot in ("action", "bonus") and p.slots[slot] and lines
+                  and lines[-1].startswith(f"{slot}:") and turn.missed_target(lines[-1])):
+                res = _turn_auto_fallback(p, slot, p.slots[slot], char, watcher, lines, after, info)
         if res == "stop":
             stopped = True
             break
+    if not stopped and p.auto_bonus and not p.slots["bonus"]:
+        if _turn_auto_bonus(char, watcher, lines, after) == "stop":
+            stopped = True
     lines.extend(watcher.answered)
     if end and not stopped:
         fatal, why = _turn_check(char, None)
@@ -2877,10 +3008,12 @@ def _escape_surface(char: str, toward: list | None = None) -> str | None:
 @_guard
 def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target: str = "",
               x: float | None = None, y: float | None = None, z: float | None = None, who: str | None = None,
-              wait: bool = False, avoid_hazards: str = "auto") -> str:
+              wait: bool = False, avoid_hazards: str = "auto", fast: str = "auto") -> str:
     """Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Walks the game's own route in one go when the whole way is plain walking (long trips in ≤55 m legs), else chains walks of up to 30 m along walkable ground toward it, around harmful surfaces you can see (fire, acid, ...); a leg that fails on the ground (no path, blocked) is retried another way (along the route, or shorter; twice per trip); stops on arrival (within 3 m), when no walkable ground leads further, after 2 legs without progress, or at the first interrupt (combat, conversation, prompt, new hostile, any damage). Stepping into a surface: it steps out (forward if it can) and goes on.
     avoid_hazards: auto (default) = when no clear way leads on, it takes the shortest crossing (says e.g. 'crossing 1.5m of Fire (~1-4 dmg + Burning)') unless HP is too low for the worst case; strict = never crosses; cross = crosses even at low HP (never lava/chasms, never >6 m).
-    Returns within ~1 s with live progress (m left, ETA), or the outcome if the trip already ended: the trip runs as the first entry of the character's action queue, so queue_actions appends what to do on arrival while you observe and plan. Every later result shows it RUNNING, then queue_done or queue_interrupted (why). wait is ignored (the trip never blocks)."""
+    Returns within ~1 s with live progress (m left, ETA), or the outcome if the trip already ended: the trip runs as the first entry of the character's action queue, so queue_actions appends what to do on arrival while you observe and plan. Every later result shows it RUNNING, then queue_done or queue_interrupted (why). wait is ignored (the trip never blocks).
+    fast: auto (default) = a trip of 120 m+ fast travels first to an unlocked waypoint of this level that is much nearer the goal (says so); never = always walk.
+    A trip that stops twice at the same blocked spot says "tried 2x: blocked" and names another way (a waypoint, another side); route() shows the dead ends, unlocked waypoints and the closest spot you have been."""
     t0 = time.monotonic()
     if waypoint:
         return fast_travel(waypoint)
@@ -2895,7 +3028,8 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
         if here and tp and macros.dist(here, tp) > macros.TRAVEL_LEG_M:
             x, y, z, target = tp[0], tp[1], tp[2], ""
     if not _batch["active"]:  # wait=true too: the agent plans while the character walks
-        return _travel_async(char, w, marker, objective, target, x, y, z, t0, policy, waited=wait)
+        return _travel_async(char, w, marker, objective, target, x, y, z, t0, policy, waited=wait,
+                             fast=(fast or "auto").strip().lower() != "never")
     outer = _batch["exec"] if _batch["active"] else None  # the queue running this trip: its cancel stops it
     if target:
         lines, stop, left = _macro_groups(char, [(f"walk to {target}", [actq.Step("move_to", {"target": target})])])
@@ -3029,7 +3163,21 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
         _batch["in_travel"] = in_travel
         if outer_w is not None:
             outer_w.ignore -= added
+    if longnav.ground_stop(stop, lines):
+        stop += _dead_end_note(char, here, dest, what)
     return _macro_finish("travel_to", {"to": what}, lines, stop, [], t0)
+
+
+def _dead_end_note(char: str, here: Any, dest: list, what: str) -> str:
+    """travel_to stopped on blocked ground: remember the spot; from the second stop there, say so and name
+    another way (longnav.stop_note)."""
+    at = _pos_now(char) or here
+    e = DEAD.record(dest, at, macros.dist(at, dest))
+    if e is None or e.count < longnav.DEAD_REPEAT:
+        return ""
+    wps = (game.try_rpc("nav.waypoints", {"pos": dest}) or {}).get("waypoints")
+    wp = longnav.pick_waypoint(at, dest, wps, min_m=0, save_m=longnav.ROUTE_WP_SAVE_M, ratio=1.0)
+    return longnav.stop_note(e, wp, what.replace("objective ", ""))
 
 
 def _trip_crew(char: str, lines: list) -> set | None:

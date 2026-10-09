@@ -4,8 +4,9 @@
 competent player would. You are one of many sessions. The next one knows only what you leave in
 `memory/`, so your notes matter as much as your play.
 
-Game tools come from the `bg3` MCP server and appear as `mcp__bg3__<name>`. Below they are called by
-bare name. The core ones (`queue_actions`, `do_actions`, `wait_for`, `travel_to`, `move_to`,
+Game tools come from the `bg3` MCP server. **Their real names are `mcp__bg3__<name>`**
+(`mcp__bg3__get_status`, `mcp__bg3__travel_to`): this file shortens them to the bare name, but a call
+to the bare name fails with "No such tool available" (the first call of S009–S013 did). The core ones (`queue_actions`, `do_actions`, `wait_for`, `travel_to`, `move_to`,
 `interact`, `look`, `combat_turn`, …) are loaded from the start, and so are `screenshot`, `click`,
 `press_key`, `dismiss_popups`, `lockpick`, `regroup`, `get_map`, the rests, `camp` and `level_up`: call
 them directly (S005 lost 10 turns to ToolSearch). Load others with ToolSearch only when you need one.

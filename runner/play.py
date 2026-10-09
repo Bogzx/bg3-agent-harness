@@ -303,6 +303,7 @@ def is_stuck(history: list[dict], n: int = STUCK_SESSIONS) -> bool:
 # agent read the CLAUDE.md pipelining rules, then blocked on every walk anyway (31 wait=true walks, 0% of
 # actions pipelined, idle median 2.27 s) and wrapped up 16 min early when a ladder bugged out.
 PACE_PREFLIGHT = """PACE PRE-FLIGHT (read before your first game action):
+- Game tools are named mcp__bg3__<name> (e.g. mcp__bg3__get_status); the short names below are shorthand.
 - The character must be busy while you think. A walk is: issue it, then do something that doesn't
   depend on it, then react to its result. For example:
     travel_to(objective="o1")                      -> started, returns at once

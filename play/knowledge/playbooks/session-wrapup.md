@@ -21,8 +21,9 @@ No reading through files, no tidying.
 - **HANDOFF.md:** rewrite the whole file with one Write, using the template below.
 - **PLAYTHROUGH.md:** the `Now:` line (act, region, `Last session: Sxxx`, `Save: Sxxx-end`), plus party
   lines only if they changed.
-- **objectives.md** only if a goal finished or changed and you haven't noted it yet. Same for
-  decisions.md (irreversible choices this session need an entry).
+- **objectives.md** if a goal finished or changed and you haven't noted it yet, and in any case when it
+  is 3 sessions old (lint then refuses the wrap-up until it is current). Same for decisions.md
+  (irreversible choices this session need an entry).
 - One log line: `- HH:MM [save] Sxxx-end at <region>`.
 
 ```

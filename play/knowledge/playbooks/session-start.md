@@ -10,7 +10,7 @@ that is enough to start. Don't read other memory files up front. Read one only w
 to it (e.g. objectives.md before choosing a new goal, npcs.md before talking to someone you've met).
 
 ## 1. Get the game into the handoff state (one or two calls)
-- `get_status` (the runner may already have loaded the save: then don't reload).
+- `mcp__bg3__get_status` (full name; the runner may already have loaded the save: then don't reload).
 - At the main menu, or somewhere other than HANDOFF says: `load_game(save="<Save to load>")` (fall back
   to the newest `S<prev>-*` save, then `"latest"`).
 - **Brand-new playthrough** (PLAYTHROUGH.md says "Character: (not created yet)" and `list_saves` has
@@ -20,10 +20,14 @@ to it (e.g. objectives.md before choosing a new goal, npcs.md before talking to 
 - Dialogue or combat in progress: handle it first (the `dialogue` or `combat` playbook).
 
 ## 2. Start moving, then write the goal
-Issue the first action from HANDOFF "Next steps" #1 (e.g. `travel_to`). **While it runs**, in one
-Edit of `memory/sessions/Sxxx.md`, replace the `Goal:` line (the only line you may rewrite) with one
-concrete sentence and append `- HH:MM [save] Sxxx-start at <region>`. Then `save_game(label="Sxxx-start")`
-at the next calm moment.
+Issue the first action from HANDOFF "Next steps" #1 (e.g. `travel_to`). **While it runs**, make one
+Edit of `memory/sessions/Sxxx.md` that replaces only the `Goal: (write one line …)` line with one concrete
+sentence (`Goal: <sentence>`, nothing else in that Edit). Log lines always go at the **end** of the file,
+under `## Log` (S002 and S010 put them above it, next to the Goal). Then `save_game(label="Sxxx-start")`
+at the next calm moment and log `- HH:MM [save] Sxxx-start at <region>`.
+
+If the injection says **STALE NOTES** with objectives.md in it: during the first long walk, rewrite
+objectives.md from HANDOFF.md (Main goal, why, next step; drop finished goals). One Write, ≤ 15 lines.
 
 ## 3. Reconcile lazily
 No reconciliation pass. When live state contradicts a note during play (party, quest, item, place), live

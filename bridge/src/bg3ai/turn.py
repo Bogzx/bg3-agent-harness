@@ -11,7 +11,10 @@ A plan names slots, each a list of alternatives tried in order until one succeed
      "extra":  [[{"ability": "Target_MainHandAttack", "target": "e12"}]], # more slots (Extra Attack ...)
      "order":  "move,action,bonus,extra",                                   # default
      "reactions": {"Divine Smite": "ask"},                                  # set_reactions prep
-     "on_reaction": "use" | "skip"}                                         # answer prompts mid-turn
+     "on_reaction": "use" | "skip",                                         # answer prompts mid-turn
+     "retarget": true,      # all alternatives missed (dead / out of range / no line of sight): same abilities
+                            # on the nearest other hostile in range and in sight (false: off)
+     "auto_bonus": true}    # no bonus slot given and an ally is downed: Healing Word them (false: off)
 
 Every alternative is an ordinary tool step (use_ability by default; "tool" picks another batchable tool),
 so the mod's guard checks each one exactly like a direct call. Before each step the bridge also checks
@@ -66,6 +69,8 @@ class TurnPlan:
     order: tuple = DEFAULT_ORDER
     reactions: dict = field(default_factory=dict)
     on_reaction: str | None = None  # None = stop the turn on a reaction prompt
+    retarget: bool = True  # a slot whose every alternative missed its target tries other hostiles in reach
+    auto_bonus: bool = True  # unplanned bonus action: Healing Word on a downed ally in range
 
 
 def _alt(v: Any, allowed: set, where: str) -> Alt:
@@ -126,11 +131,12 @@ def parse_plan(raw: Any, allowed: set) -> TurnPlan:
         raise PlanError("plan must be JSON") from None
     if not isinstance(p, dict):
         raise PlanError('plan must be a JSON object like {"move":..., "action":[...], "bonus":...}')
-    unknown = set(p) - set(SLOT_NAMES) - {"order", "reactions", "on_reaction"}
+    unknown = set(p) - set(SLOT_NAMES) - {"order", "reactions", "on_reaction", "retarget", "auto_bonus"}
     if unknown:
         raise PlanError(f"unknown plan key(s) {', '.join(sorted(unknown))}; use move, action, bonus, extra, "
-                        "order, reactions, on_reaction")
-    plan = TurnPlan(move=_move(p.get("move")))
+                        "order, reactions, on_reaction, retarget, auto_bonus")
+    plan = TurnPlan(move=_move(p.get("move")), retarget=p.get("retarget") is not False,
+                    auto_bonus=p.get("auto_bonus") is not False)
     plan.slots["action"] = _alts(p.get("action"), allowed, "action")
     plan.slots["bonus"] = _alts(p.get("bonus"), allowed, "bonus")
     extra = p.get("extra") or []
@@ -161,6 +167,48 @@ def parse_plan(raw: Any, allowed: set) -> TurnPlan:
     if not (plan.move or any(plan.slots.values())):
         raise PlanError("the plan does nothing: give move, action, bonus or extra")
     return plan
+
+
+# Failures that another target could fix (the planned one died, moved out of range or out of sight).
+TARGET_MISS = ("out of range", "line of sight", "already dead", "is dead", "not visible")
+MELEE_REACH_PAD = 1.0  # weapon range is edge to edge: add both bounding radii (0.5 m each, medium creatures)
+MAX_RETARGET = 3
+BONUS_HEALS = ("Target_HealingWord",)  # bonus-action heals that bring a downed ally back up
+
+
+def missed_target(line: str) -> bool:
+    low = line.lower()
+    return any(m in low for m in TARGET_MISS)
+
+
+def hostiles_in_reach(combat: dict, who: str, rng: float | None, skip: set) -> list[str]:
+    """Living hostile combatants `who` can see, nearest first, within reach of an ability with range `rng`
+    (None: unknown, only melee reach). A melee range (≤ 3 m) reaches edge to edge."""
+    reach = 1.5 + MELEE_REACH_PAD if rng is None else (rng + MELEE_REACH_PAD if rng <= 3 else rng)
+    out = []
+    for o in (combat or {}).get("order") or []:
+        u = o.get("uuid")
+        if not u or u in skip or o.get("dead") or o.get("relation") != "hostile":
+            continue
+        d = (o.get("from") or {}).get(who)
+        if not (isinstance(d, (list, tuple)) and len(d) >= 2 and isinstance(d[0], (int, float))):
+            continue
+        if d[1] and d[0] <= reach:
+            out.append((float(d[0]), u))
+    return [u for _, u in sorted(out)]
+
+
+def downed_allies(combat: dict, who: str, rng: float) -> list[str]:
+    """Party members at 0 HP (downed, not dead) that `who` sees within `rng` m, nearest first."""
+    out = []
+    for o in (combat or {}).get("order") or []:
+        u = o.get("uuid")
+        if not u or u == who or o.get("dead") or o.get("relation") != "party" or o.get("hp_pct") != 0:
+            continue
+        d = (o.get("from") or {}).get(who)
+        if isinstance(d, (list, tuple)) and len(d) >= 2 and isinstance(d[0], (int, float)) and d[1] and d[0] <= rng:
+            out.append((float(d[0]), u))
+    return [u for _, u in sorted(out)]
 
 
 def is_fatal(text: str) -> bool:

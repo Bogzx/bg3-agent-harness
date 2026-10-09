@@ -12,7 +12,7 @@ Now: (prologue) · Region: (unknown) · Last session: S000 · Save: (none)
 Main thread: (unknown yet; see objectives.md)
 
 ## Read when
-- Starting a session: HANDOFF.md → objectives.md → `get_status` (then the session-start playbook)
+- Starting a session: the injection (this file, HANDOFF.md, snapshots/status.md) is enough; then the session-start playbook
 - Before talking to a named NPC: Grep memory/ for the name
 - Entering or leaving a region: locations.md (that region's section)
 - Before any irreversible choice: decisions.md + hypotheses.md
@@ -23,7 +23,8 @@ Main thread: (unknown yet; see objectives.md)
 
 ## Party
 <!--
-One line per member, intent only (numbers come from get_party / snapshots/party.md):
+One line per member: role, build intent, approval notes. No levels, HP or gear: those go stale (claude-run-2
+kept "Paladin 2, Gale L2 pending" for 8 sessions); the game tracks them (snapshots/status.md, get_party).
 - Ilse (Cleric, Life) · leader · face for WIS/CHA checks
 - Lae'zel (Fighter) · frontline · approves of decisive/ruthless choices [seen S003]
 - Gale (Wizard) · at camp

@@ -124,7 +124,7 @@ end
 -- same PartyWaypoints set State.map reads). Empty if unreadable: fail closed.
 function N.unlockedWaypointIds()
     local set = {}
-    local ok, list = pcall(Ext.Entity.GetAllEntitiesWithComponent, "PartyWaypoints")
+    local ok, list = pcall(function() return Ext.Entity.GetAllEntitiesWithComponent("PartyWaypoints") end)
     if ok and list and list[1] then
         pcall(function()
             for _, w in pairs(list[1].PartyWaypoints.Waypoints) do set[tostring(w.Name)] = true end
@@ -1534,10 +1534,73 @@ function N.connectors(ctx, charUuid, goal, radius, limit)
     return out
 end
 
+-- Long trips (S010/S011: Karlach 90-150 m away, route said only "too far to
+-- preview", and travel_to died on the same boulder wall again and again).
+-- Beyond PATH_MAX_M the route is still asked of the engine (up to
+-- ROUTE_FAR_M), but only reachable/length/legs come back: no floors at the
+-- goal, no ring probes (a failing far search costs ~25 ms of game thread).
+N.ROUTE_FAR_M = 400
+N.FAR_RING_M = 3
+N.WAYPOINTS_SHOWN = 3
+
+-- The party's unlocked waypoints on this level (what the map shows), with
+-- distances to `from` and `goal`, nearest the goal first.
+function N.unlockedWaypointsHere(goal, from)
+    local unl = N.unlockedWaypointIds()
+    local out = {}
+    for _, w in ipairs(N.waypointsHere()) do
+        if unl[w.id] then
+            local o = { name = w.name, id = w.id, pos = U.vec(w.pos, 1) }
+            if from then o.dist = round(U.dist(from, w.pos), 1) end
+            if goal then o.to_goal_m = round(U.dist(w.pos, goal), 1) end
+            out[#out + 1] = o
+        end
+    end
+    if goal then table.sort(out, function(a, b) return a.to_goal_m < b.to_goal_m end) end
+    return out
+end
+
+-- The explored breadcrumb cell nearest `goal` (horizontally): the closest the
+-- party has been. {pos, to_goal_m} or nil. Pure over the party's own cells.
+function N.nearestVisited(level, goal)
+    local l = level and store().levels[level]
+    if not l or not goal then return nil end
+    local best, bd
+    for k in pairs(l.cells) do
+        local cx, cy, cz = tostring(k):match("^(-?%d+):(-?%d+):(-?%d+)$")
+        if cx then
+            local p = { (tonumber(cx) + 0.5) * N.CELL_XZ, (tonumber(cy) + 0.5) * N.CELL_Y, (tonumber(cz) + 0.5) * N.CELL_XZ }
+            local d = math.sqrt((p[1] - goal[1]) ^ 2 + (p[3] - goal[3]) ^ 2)
+            if not bd or d < bd then best, bd = p, d end
+        end
+    end
+    if not best then return nil end
+    best[2] = floorAt(best[1], best[3], best[2]) or best[2]
+    return { pos = U.vec(best, 1), to_goal_m = round(bd, 1) }
+end
+
+-- The engine's route to a far goal: the goal on its floor, else 4 spots
+-- FAR_RING_M around it (a character's own tile blocks the goal itself).
+local function farPath(charUuid, goal)
+    local g = { goal[1], floorAt(goal[1], goal[3], goal[2]) or goal[2], goal[3] }
+    local r = N.path(charUuid, g)
+    if r and r.reachable ~= false then return r end
+    for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+        local x, z = goal[1] + d[1] * N.FAR_RING_M, goal[3] + d[2] * N.FAR_RING_M
+        local fy = floorAt(x, z, goal[2])
+        if fy then
+            local r2 = N.path(charUuid, { x, fy, z })
+            if r2 and r2.reachable then return r2 end
+        end
+    end
+    return r
+end
+
 -- Everything above for one goal. {from, goal, straight_m, dir, dy,
 -- levels_here, levels_goal, reachable, length_m?, needs_jump?, legs?, links?,
 -- exposure?, straight_hazard?, closest?{..., legs, links}, connectors?,
--- standing_in?, too_far?}.
+-- standing_in?, far? (beyond PATH_MAX_M: probed, no detail), too_far? (beyond
+-- ROUTE_FAR_M: not probed), waypoints? and visited_near? (far or no path)}.
 function N.routeAhead(ctx, charUuid, goal, withConnectors)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
@@ -1545,8 +1608,23 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
     local out = { from = U.vec(from, 1), goal = U.vec(goal, 1), straight_m = round(U.dist(from, goal), 1),
         dir = N.direction(from, goal), dy = round(goal[2] - from[2], 1) }
     out.levels_here = N.levelsAt(from[1], from[3], from[2])
-    if U.dist(from, goal) > N.PATH_MAX_M then
+    if U.dist(from, goal) > N.ROUTE_FAR_M then
         out.too_far = true
+    elseif U.dist(from, goal) > N.PATH_MAX_M then
+        out.far = true
+        local r = farPath(charUuid, goal)
+        if r and r.reachable then
+            out.reachable = true
+            out.length_m, out.needs_jump = r.length_m, r.needs_jump
+            out.legs, out.links = N.routeLegs(r.points, r.portals)
+        elseif r and r.reachable == false then
+            out.reachable = false
+            local t = N.reachToward(charUuid, nil, goal, N.CONNECT_M, 2, false)
+            if t and t.reachable and t.pos and (t.straight_m or 0) >= 1 then
+                out.closest = { pos = t.pos, path_m = t.path_m, to_goal_m = round(U.dist(t.pos, goal), 1),
+                    dy_to_goal = round(goal[2] - t.pos[2], 1), via = "toward" }
+            end
+        end
     else
         -- Floors at the goal only within path range (what panning the camera
         -- there shows), never for a far, unexplored spot.
@@ -1575,10 +1653,28 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
     if withConnectors or not out.reachable then
         out.connectors = N.connectors(ctx, charUuid, goal, N.CONNECT_M, N.CONNECT_MAX)
     end
+    if out.far or out.too_far or out.reachable == false then
+        local wps = N.unlockedWaypointsHere(goal, from)
+        while #wps > N.WAYPOINTS_SHOWN do table.remove(wps) end
+        if #wps > 0 then out.waypoints = wps end
+        out.visited_near = N.nearestVisited(currentLevel(), goal)
+    end
     local under = N.harmfulUnder(charUuid)
     if under then out.standing_in = under end
     return out
 end
+
+-- nav.waypoints {pos?}: the party's unlocked waypoints on this level with
+-- positions (the map shows them), nearest pos first (travel_to's fast-travel
+-- shortcut for far goals).
+RPC.register("nav.waypoints", function(args)
+    local ctx = V.context()
+    local char = args.char or activeChar(ctx)
+    local e = char and V.entity(char)
+    local from = e and V.pos(e)
+    local goal = type(args.pos) == "table" and #args.pos >= 3 and args.pos or nil
+    return { level = currentLevel(), here = from and U.vec(from, 1), waypoints = N.unlockedWaypointsHere(goal, from) }
+end)
 
 ------------------------------------------------------------------------
 -- Objective markers (what the map/minimap shows for tracked objectives).

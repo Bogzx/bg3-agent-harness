@@ -8,6 +8,8 @@ Checks:
   * HANDOFF.md freshness (at --phase end it must be written by the current session)
   * deletion guard vs git HEAD: decisions.md / npcs.md may not lose more than N lines unless an
     added line contains "ARCHIVE:"; session logs are append-only
+  * staleness: curated files no session has changed for a while (objectives.md: an error at wrap-up),
+    hand-copied class levels in PLAYTHROUGH.md's party lines
   * warnings: stale open hypotheses, oversized session logs, compaction due, screenshot bloat
 
 Exit status: 0 = no errors (warnings allowed), 1 = errors, 2 = usage problem.
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
@@ -271,6 +274,42 @@ def check_misc(mem: Path, r: Report, current: int | None) -> None:
                              f"in a chapter yet (run the compaction playbook)")
 
 
+LEVEL_COPY_RE = re.compile(
+    r"\b(?:(?:Paladin|Cleric|Wizard|Warlock|Fighter|Rogue|Ranger|Bard|Druid|Monk|Sorcerer|Barbarian)\s*\d+"
+    r"|L\d+\b|level \d+)", re.IGNORECASE)
+
+
+def stale_files(mem: Path, current: int | None) -> list[tuple[str, int]]:
+    """(file, sessions since its last change) for curated files past their M.STALE_AFTER threshold."""
+    if current is None:
+        return []
+    out = []
+    for rel, limit in M.STALE_AFTER.items():
+        last = M.last_touched_session(mem, rel)
+        if last is None or last < 0:
+            continue
+        age = current - last
+        if age >= limit:
+            out.append((rel, age))
+    return out
+
+
+def check_staleness(mem: Path, r: Report, phase: str, current: int | None) -> None:
+    for rel, age in stale_files(mem, current):
+        msg = (f"{rel} unchanged for {age} sessions (last changed in {M.session_id(current - age)}) "
+               f"while the session logs moved on. Bring it up to date from the logs and HANDOFF.md")
+        if rel == "objectives.md" and phase == "end" and age >= M.OBJECTIVES_STALE_ERROR:
+            r.error("stale", msg + ": the current Main goal, its why and its next step (one short Edit).")
+        else:
+            r.warn("stale", msg + ".")
+    p = mem / "PLAYTHROUGH.md"
+    if p.is_file():
+        m = re.search(r"^## Party\n(.*?)(?=^## |\Z)", M.strip_comments(p.read_text()), re.MULTILINE | re.DOTALL)
+        if m and LEVEL_COPY_RE.search(m.group(1)):
+            r.warn("copy", "PLAYTHROUGH.md party lines hold class levels, which go stale; the game tracks them "
+                           "(snapshots/status.md, get_party). Keep roles and intentions only.")
+
+
 # ---------------------------------------------------------------- driver
 
 
@@ -289,6 +328,7 @@ def lint(mem: Path, phase: str = "any", session: int | None = None,
     check_handoff(mem, r, phase, session)
     check_deletions(mem, r, max_deleted)
     check_hypotheses(mem, r, session)
+    check_staleness(mem, r, phase, session)
     check_misc(mem, r, session)
     return r
 

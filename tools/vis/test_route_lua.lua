@@ -220,9 +220,56 @@ test("routeAhead: the straight line's fire is reported when there is no path", f
     eq(r.straight_hazard ~= nil, true, "hazard"); eq(r.straight_hazard.surface, "Fire", "fire")
 end)
 
-test("routeAhead: beyond PATH_MAX_M: no path probe, connectors only", function()
-    local r = N.routeAhead(BG3AI.Visibility.context(), P1, { -200, 0, 0 })
+test("routeAhead: beyond ROUTE_FAR_M: no path probe, connectors only", function()
+    local r = N.routeAhead(BG3AI.Visibility.context(), P1, { -500, 0, 0 })
     eq(r.too_far, true, "too far"); eq(r.reachable, nil, "not probed"); eq(type(r.connectors), "table", "connectors")
+end)
+
+local function withWaypoints(list, fn)
+    local wh, wu = N.waypointsHere, N.unlockedWaypointIds
+    N.waypointsHere = function() return list end
+    N.unlockedWaypointIds = function() return { WAYP_A = true, WAYP_B = true } end
+    local ok, err = pcall(fn)
+    N.waypointsHere, N.unlockedWaypointIds = wh, wu
+    if not ok then error(err, 0) end
+end
+
+test("routeAhead far (S010 Karlach 120 m): the engine's route is asked, legs only, no floors at the goal", function()
+    local r = N.routeAhead(BG3AI.Visibility.context(), P1, { -150, 0, 0 })
+    eq(r.far, true, "far"); eq(r.too_far, nil, "probed"); eq(r.reachable, true, "reachable")
+    near(r.length_m, 150, "len"); eq(#r.legs >= 1, true, "legs"); eq(r.levels_goal, nil, "no goal floors")
+    eq(r.connectors, nil, "no connectors with a path")
+end)
+
+test("routeAhead far, no path: closest straight walk, unlocked waypoints by distance to the goal, nearest explored spot", function()
+    blocked = function(x) return x < -20 end
+    PersistentVars = { nav = { levels = { [0] = { cells = { ["-10:0:0"] = 1, ["-2:0:0"] = 1, ["5:0:5"] = 1 }, n = 3, places = {} } } } }
+    withWaypoints({
+        { id = "WAYP_A", name = "Grove", pos = { 50, 0, 0 } },
+        { id = "WAYP_B", name = "Road", pos = { -170, 0, 10 } },
+        { id = "WAYP_C", name = "Locked one", pos = { -150, 0, 0 } },
+    }, function()
+        local r = N.routeAhead(BG3AI.Visibility.context(), P1, { -150, 0, 0 })
+        eq(r.far, true, "far"); eq(r.reachable, false, "no path")
+        eq(r.closest.via, "toward", "straight walk"); near(r.closest.to_goal_m, 130, "20 m along, 130 short")
+        eq(#r.waypoints, 2, "only unlocked ones"); eq(r.waypoints[1].name, "Road", "nearest the goal first")
+        near(r.waypoints[1].to_goal_m, 22.4, "road to goal", 0.1); near(r.waypoints[1].dist, 170.3, "road from here", 0.1)
+        near(r.visited_near.pos[1], -38, "explored cell -10 is the nearest"); near(r.visited_near.to_goal_m, 112, "112 m short")
+    end)
+    PersistentVars = nil
+end)
+
+test("routeAhead far: the goal tile itself blocked (a character stands there) -> a spot 3 m around it", function()
+    blocked = function(x, y, z) return math.abs(x + 150) < 0.5 and math.abs(z) < 0.5 end
+    local r = N.routeAhead(BG3AI.Visibility.context(), P1, { -150, 0, 0 })
+    eq(r.reachable, true, "reachable via the ring")
+end)
+
+test("nav.waypoints: unlocked ones with positions, nearest the pos first", function()
+    withWaypoints({ { id = "WAYP_A", name = "Grove", pos = { 50, 0, 0 } }, { id = "WAYP_B", name = "Road", pos = { -170, 0, 10 } } }, function()
+        local r = RPC.ops["nav.waypoints"]({ pos = { -150, 0, 0 } })
+        eq(#r.waypoints, 2, "two"); eq(r.waypoints[1].name, "Road", "nearest first"); eq(r.here[1], 0, "here")
+    end)
 end)
 
 test("nav.route: a pos goal; a target must be visible", function()

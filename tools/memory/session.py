@@ -133,7 +133,52 @@ def _file_block(mem: Path, name: str, budget: int) -> str:
     return f"----- {name} -----\n{body}"
 
 
-def build_context(mem: Path, source: str = "startup", notes: list[str] | None = None) -> str:
+NEWS_RE = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s+(.*\S)")
+NEWS_MAX = 6
+
+
+def knowledge_dir() -> Path:
+    return Path(os.environ.get("BG3_KNOWLEDGE_DIR") or (M.REPO_ROOT / "play" / "knowledge"))
+
+
+def harness_news(since: str | None) -> list[str]:
+    """Operator entries in knowledge/harness-news.md ("- YYYY-MM-DD HH:MM text") newer than `since`
+    (ISO time of the previous session's start; None = only the newest few). A fixed harness bug otherwise
+    lives on as a wrong lesson in the notes (claude-run-2: "in a conversation = a tutorial popup")."""
+    p = knowledge_dir() / "harness-news.md"
+    if not p.is_file():
+        return []
+    entries = [(m.group(1), m.group(2)) for line in M.strip_comments(p.read_text()).splitlines()
+               if (m := NEWS_RE.match(line))]
+    cut = (since or "")[:16].replace("T", " ")
+    new = [e for e in entries if e[0] > cut] if cut else entries
+    new.sort()
+    return [f"- {t} {text}" for t, text in new[-NEWS_MAX:]]
+
+
+def memory_health(mem: Path, current: int | None) -> str | None:
+    stale = L.stale_files(mem, current)
+    if not stale:
+        return None
+    files = ", ".join(f"{rel} ({age} sessions)" for rel, age in stale)
+    return (f"STALE NOTES: {files} not updated since; HANDOFF.md and the session logs are newer, so trust "
+            f"them over these files. Update objectives.md this session (lint requires it at wrap-up), "
+            f"and the others during walks when you touch their subject.")
+
+
+def _status_block(mem: Path, budget: int = 700) -> str | None:
+    p = mem / "snapshots" / "status.md"
+    if not p.is_file():
+        return None
+    body = "\n".join(l for l in p.read_text().splitlines()
+                     if l.strip() and not l.startswith("<!--") and not l.startswith("# Snapshot"))
+    if not body:
+        return None
+    return f"----- snapshots/status.md (game state at the end of the last session) -----\n{body[:budget]}"
+
+
+def build_context(mem: Path, source: str = "startup", notes: list[str] | None = None,
+                  news_since: str | None = None) -> str:
     st = M.load_state(mem)
     cur = st.get("current")
     sid = M.session_id(cur) if cur else "(none)"
@@ -166,6 +211,11 @@ def build_context(mem: Path, source: str = "startup", notes: list[str] | None = 
                     f"a chapter. Run the compaction playbook this session (after session-start).")
     for n in notes or []:
         head.append(n)
+    if source == "startup" and (news := harness_news(news_since)):
+        head.append("HARNESS CHANGES since the last session (they override older notes and lessons):\n"
+                    + "\n".join(news))
+    if health := memory_health(mem, cur if st.get("open") else None):
+        head.append(health)
     lint_r = L.lint(mem, "any", cur if st.get("open") else None)
     if lint_r.errors:
         head.append(f"Memory lint currently reports {len(lint_r.errors)} error(s) (fix before wrap-up):\n"
@@ -174,11 +224,14 @@ def build_context(mem: Path, source: str = "startup", notes: list[str] | None = 
         head.append("Next: run the session-start playbook.")
     header = "\n".join(head)
 
-    remaining = HOOK_CHAR_LIMIT - len(header) - 200
+    status = _status_block(mem)
+    remaining = HOOK_CHAR_LIMIT - len(header) - 200 - (len(status) + 2 if status else 0)
     pt_budget = min(5200, int(remaining * 0.58))
     ho_budget = remaining - pt_budget
-    parts = [header, _file_block(mem, "PLAYTHROUGH.md", pt_budget), _file_block(mem, "HANDOFF.md", ho_budget),
-             "=== end of memory injection ==="]
+    parts = [header, _file_block(mem, "PLAYTHROUGH.md", pt_budget), _file_block(mem, "HANDOFF.md", ho_budget)]
+    if status:
+        parts.append(status)
+    parts.append("=== end of memory injection ===")
     out = "\n\n".join(parts)
     return out[:HOOK_CHAR_LIMIT]
 
@@ -208,6 +261,7 @@ def cmd_start(mem: Path, quiet: bool = False) -> int:
     st = M.load_state(mem)
     notes = []
     now = M.now_local()
+    news_since = st.get("started")
     if st.get("open") and st.get("current"):
         prev = st["current"]
         append_log(mem, prev, f"- {now:%H:%M} [note] (harness) session ended WITHOUT wrap-up; "
@@ -222,7 +276,7 @@ def cmd_start(mem: Path, quiet: bool = False) -> int:
     M.save_state(mem, {"current": n, "open": True, "started": started, "started_epoch": time.time(),
                        "warned_epoch": None})
     if not quiet:
-        print(build_context(mem, "startup", notes))
+        print(build_context(mem, "startup", notes, news_since))
     return 0
 
 

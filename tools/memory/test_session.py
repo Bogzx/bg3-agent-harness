@@ -94,6 +94,46 @@ class ContextTest(MemoryTestCase):
         self.assertIn("markers:", S.build_context(self.mem))
 
 
+class InjectionExtrasTest(MemoryTestCase):
+    def setUp(self):
+        super().setUp()
+        self.kdir = self.tmp / "knowledge"
+        self.kdir.mkdir()
+        os.environ["BG3_KNOWLEDGE_DIR"] = str(self.kdir)
+
+    def tearDown(self):
+        os.environ.pop("BG3_KNOWLEDGE_DIR", None)
+        super().tearDown()
+
+    def test_harness_news_since_previous_start(self):
+        (self.kdir / "harness-news.md").write_text(
+            "# news\n<!--\n- 2026-01-01 00:00 example in a comment\n-->\n"
+            "- 2026-10-09 10:00 old fix\n- 2026-10-10 01:30 dismiss_popups is not the fix\n")
+        self.assertEqual(S.harness_news("2026-10-10T01:18:20+03:00"),
+                         ["- 2026-10-10 01:30 dismiss_popups is not the fix"])
+        self.assertEqual(len(S.harness_news(None)), 2)
+        M.save_state(self.mem, {"current": 4, "open": False, "started": "2026-10-10T01:00:00+03:00"})
+        _, out = run_quiet(S.cmd_start, self.mem)
+        self.assertIn("HARNESS CHANGES", out)
+        self.assertIn("dismiss_popups is not the fix", out)
+        self.assertNotIn("old fix", out)
+        self.assertNotIn("HARNESS CHANGES", S.build_context(self.mem, "compact"))
+
+    def test_no_news_file(self):
+        self.assertEqual(S.harness_news("2026-10-10T01:00"), [])
+
+    def test_status_snapshot_and_stale_notes_injected(self):
+        self.write("snapshots/status.md", "<!-- generated -->\n# Snapshot: status\n\nPARTY * Claude Paladin 3 HP 9/9\n")
+        for n in (1, 2, 3, 4):
+            self.write(f"sessions/S{n:03d}.md", "# s\n\n## Log\n")
+            M.git_commit_all(self.mem, f"S{n:03d}")
+        run_quiet(S.cmd_start, self.mem)
+        out = S.build_context(self.mem)
+        self.assertIn("PARTY * Claude Paladin 3", out)
+        self.assertIn("STALE NOTES: objectives.md", out)
+        self.assertLessEqual(len(out), S.HOOK_CHAR_LIMIT)
+
+
 class HookDispatchTest(MemoryTestCase):
     def _hook(self, payload):
         env = dict(os.environ)

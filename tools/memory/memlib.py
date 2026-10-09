@@ -79,6 +79,21 @@ UUID_LIKE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 COMPACTION_EVERY = 10
 
+# Curated files that go stale when only the session logs get written (claude-run-2: objectives.md,
+# npcs.md, quests.md and locations.md were untouched from S000-S003 to S011 while the logs grew):
+# file -> sessions without a change before lint warns. objectives.md is the goal stack the session-start
+# playbook sends the agent to, so at wrap-up a stale one is an error (OBJECTIVES_STALE_ERROR).
+STALE_AFTER = {
+    "objectives.md": 3,
+    "quests.md": 5,
+    "npcs.md": 5,
+    "locations.md": 5,
+    "strategy.md": 6,
+    "party-build.md": 6,
+}
+OBJECTIVES_STALE_ERROR = 3
+COMMIT_SESSION_RE = re.compile(r"^S(\d{3,})\b")
+
 
 def session_id(n: int) -> str:
     return f"S{n:03d}"
@@ -181,6 +196,20 @@ def is_git_repo(mem: Path) -> bool:
 
 def has_head(mem: Path) -> bool:
     return git(mem, "rev-parse", "--verify", "-q", "HEAD", check=False).returncode == 0
+
+
+def last_touched_session(mem: Path, rel: str) -> int | None:
+    """Session whose memory commit last changed `rel` (commit subjects start "Sxxx"), or None if unknown.
+    A file with uncommitted changes counts as touched by the open session: returns -1 (caller decides)."""
+    if not is_git_repo(mem) or not has_head(mem):
+        return None
+    if git(mem, "status", "--porcelain", "--", rel, check=False).stdout.strip():
+        return -1
+    log = git(mem, "log", "--format=%s", "--", rel, check=False).stdout.splitlines()
+    for subject in log:
+        if m := COMMIT_SESSION_RE.match(subject):
+            return int(m.group(1))
+    return None
 
 
 def git_commit_all(mem: Path, message: str) -> str | None:

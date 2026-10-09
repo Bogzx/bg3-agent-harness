@@ -317,9 +317,112 @@ class CombatTurn(Base):
 
     def test_not_my_turn_is_refused(self):
         self.g.combat["current"] = GOB
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1))
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=0)
         self.assertIn("FAILED: it is not", out)
         self.assertEqual(self.g.ops("act.cast"), [])
+
+    # claude-run-2 S001/S003/S005/S007: combat_turn sent while enemies acted came back "not your turn" and
+    # cost a whole think + call cycle. A plan sent ahead now waits for the turn.
+    def test_plan_sent_ahead_waits_for_the_turn(self):
+        self.g.combat["current"] = GOB
+        threading.Timer(0.4, lambda: self.g.combat.update(current=P1)).start()
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        self.assertRegex(out, r"TURN .* — waited 0\.\ds for the turn")
+        self.assertEqual(self.casts(), ["Shout_Dodge"])
+
+    def test_waiting_for_the_turn_stops_on_a_prompt_and_times_out(self):
+        self.g.combat["current"] = GOB
+        self.g.ui["screen"] = "reaction"
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        self.assertIn("reaction on screen", out)
+        self.g.ui["screen"] = "game"
+        t = time.monotonic()
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=0.5)
+        self.assertIn("(timed out)", out)
+        self.assertLess(time.monotonic() - t, 2.0)
+        self.assertEqual(self.g.ops("act.cast"), [])
+
+    def test_combat_ending_while_waiting(self):
+        self.g.combat["current"] = GOB
+        threading.Timer(0.2, lambda: self.g.combat.update(active=False)).start()
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        self.assertIn("combat is over", out)
+
+    # S007: Shadowheart's and Gale's casts had no line of sight to the goblin -> action wasted twice.
+    def test_no_line_of_sight_retargets_the_nearest_visible_hostile_in_range(self):
+        self.g.refuse_if = lambda op, a: "no line of sight to target" if a.get("target") == GOB else None
+        self.g.actions = [{"spell": "Target_SacredFlame", "range": 18}]
+        out = server.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
+        self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [GOB, IMP])
+        self.assertIn(f"action (auto fallback): Target_SacredFlame {self.imp}: done", out)
+
+    # S002: the planned imp died before Shadowheart's cast -> "skipped (already dead)", action unused.
+    def test_dead_target_retargets(self):
+        self.g.dead.add(GOB)
+        self.g.actions = [{"spell": "Target_SacredFlame", "range": 18}]
+        out = server.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
+        self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [IMP])
+        self.assertIn("already dead", out)
+        self.assertIn("(auto fallback)", out)
+
+    def test_retarget_respects_reach_sight_and_the_off_switch(self):
+        self.g.dead.add(GOB)
+        self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
+        plan = {"action": {"ability": "Target_MainHandAttack", "target": self.gob}}
+        server.combat_turn(self.plan(**plan))  # the imp is 12 m away: out of melee reach
+        self.assertEqual(self.g.ops("act.cast"), [])
+        imp = next(o for o in self.g.combat["order"] if o["uuid"] == IMP)
+        imp["from"][P1] = [2.2, 0]  # in reach (edge to edge) but out of sight
+        self.g.combat["current"] = P1
+        server.combat_turn(self.plan(**plan))
+        self.assertEqual(self.g.ops("act.cast"), [])
+        imp["from"][P1] = [2.2, 1]
+        self.g.combat["current"] = P1
+        server.combat_turn(self.plan(**plan, retarget=False))
+        self.assertEqual(self.g.ops("act.cast"), [])
+        self.g.combat["current"] = P1
+        server.combat_turn(self.plan(**plan))
+        self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [IMP])
+
+    def test_extra_attack_retargets_after_the_first_kill(self):
+        def kill(op, a):
+            if op == "act.cast" and a.get("target") == GOB:
+                self.g.dead.add(GOB)
+            if op == "act.end_turn":
+                self.g.combat["current"] = GOB
+        self.g.on_start = kill
+        self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
+        next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.9, 1]
+        hit = {"ability": "Target_MainHandAttack", "target": self.gob}
+        out = server.combat_turn(self.plan(action=hit, extra=[[hit]]))
+        self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [GOB, IMP])
+        self.assertIn("extra 1 (auto fallback)", out)
+
+    def test_unplanned_bonus_heals_a_downed_ally(self):
+        lae = next(o for o in self.g.combat["order"] if o["uuid"] == P2)
+        lae.update(hp_pct=0, **{"from": {P1: [7.0, 1]}})
+        self.g.visible.add(P2)  # G.visible: party members always
+        self.g.actions = [{"spell": "Target_HealingWord", "range": 18}, {"spell": "Shout_Dodge"}]
+        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        self.assertEqual(self.casts(), ["Shout_Dodge", "Target_HealingWord"])
+        self.assertEqual(self.g.ops("act.cast")[1][1]["target"], P2)
+        self.assertIn("bonus (auto: ally downed): Target_HealingWord", out)
+        self.assertTrue(out.index("bonus (auto") < out.index("end_turn:"))
+
+    def test_no_auto_bonus_without_a_downed_ally_or_when_planned_or_off(self):
+        self.g.actions = [{"spell": "Target_HealingWord", "range": 18}]
+        self.g.visible.add(P2)
+        server.combat_turn(self.plan(action="Shout_Dodge"))
+        lae = next(o for o in self.g.combat["order"] if o["uuid"] == P2)
+        lae.update(hp_pct=0, **{"from": {P1: [7.0, 1]}})
+        for kw in ({"auto_bonus": False}, {"bonus": "Shout_SecondWind"}):
+            self.g.combat["current"] = P1
+            server.combat_turn(self.plan(action="Shout_Dodge", **kw))
+        self.assertNotIn("Target_HealingWord", self.casts())
+        lae["from"][P1] = [25.0, 1]  # out of range
+        self.g.combat["current"] = P1
+        server.combat_turn(self.plan(action="Shout_Dodge"))
+        self.assertNotIn("Target_HealingWord", self.casts())
 
     def test_not_in_combat(self):
         self.g.combat = {"active": False}

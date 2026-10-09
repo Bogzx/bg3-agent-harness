@@ -29,7 +29,8 @@ s = get_combat_state()      # whose turn, action/bonus/movement/reaction left, i
                                "Shout_Disengage"],
                      "bonus":{"ability":"<bonus action id>","if":"hp_below:50"}}')
 → it returns right after end_turn: "NEXT e14 Goblin, e15 Imp, then Lae'zel (yours)".
-   Plan Lae'zel's turn NOW, while the enemies act; then wait_for("my_turn") and send it.
+   Plan Lae'zel's turn NOW, while the enemies act, and send it right away: combat_turn waits for her turn
+   (wait_turn, 30 s) and plays it the moment it comes. No wait_for("my_turn") round trip.
    ("NOW Lae'zel's turn" + her actions = she is up already: send her combat_turn at once.)
    **Shared turn:** party members with equal initiative act in the same turn, in any order
    ("SHARED TURN" in get_combat_state, "then Lae'zel + Claude (yours, shared turn)"). Give each one its
@@ -42,7 +43,9 @@ One observation, one call per turn: that's the target pace. Think during the ene
 cantrip, bow: `Projectile_MainHandAttack` needs a bow equipped, `Throw_Throw` throws an object) →
 `Shout_Dash` with `"then_move":true` (if you must close in) → `Shout_Disengage` or `Shout_Hide` (if
 nothing reaches). BG3 has **no Dodge action**; use only ids `get_actions` lists. A dead or vanished target skips to the next alternative, so you can
-also list a second target (`{"ability":"…","target":"e15"}`).
+also list a second target (`{"ability":"…","target":"e15"}`). If every alternative misses (target dead, out of
+range, no line of sight), the same abilities go to the nearest other visible hostile in reach by themselves.
+Still plan a bonus action every turn (Healing Word for a downed ally is automatic if nothing else is planned).
 **Ranged and spells:** `"move":{"target":"e12","within":<range in m>}` walks only until in range (and not
 at all if already in range); keep casters out of melee.
 **Extra Attack** (level 5 martials): add `"extra":[[{"ability":"Target_MainHandAttack","target":"e12"},

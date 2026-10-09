@@ -86,6 +86,7 @@ class HandoffTest(MemoryTestCase):
 
     def test_end_phase_ok(self):
         self.write("HANDOFF.md", self.good_handoff(3))
+        self.append("objectives.md", "- O-1 Escape the ship — why: it is crashing [seen S003]\n")
         self.assertEqual(L.lint(self.mem, "end", 3).errors, [])
 
     def test_end_phase_requires_sections(self):
@@ -189,6 +190,53 @@ class MiscTest(MemoryTestCase):
             self.assertEqual(L.main([str(self.mem)]), 0)
             self.write("markers.json", "{nope")
             self.assertEqual(L.main([str(self.mem)]), 1)
+
+
+class StalenessTest(MemoryTestCase):
+    def commit_session(self, n, rel=None):
+        if rel:
+            self.append(rel, f"- touched in S{n:03d} [seen S{n:03d}]\n")
+        self.write(f"sessions/S{n:03d}.md", f"# Session S{n:03d}\n\n## Log\n")
+        self.commit(f"S{n:03d}")
+
+    def test_fresh_files_are_not_stale(self):
+        self.assertNotIn("stale", kinds(L.lint(self.mem, "any", 2).warnings))
+
+    def test_objectives_stale_warns_then_errors_at_end(self):
+        for n in (1, 2, 3):
+            self.commit_session(n)
+        r = L.lint(self.mem, "any", 4)
+        self.assertIn("stale", kinds(r.warnings))
+        self.assertNotIn("stale", kinds(r.errors))
+        r = L.lint(self.mem, "end", 4)
+        self.assertTrue(any(k == "stale" and m.startswith("objectives.md") for k, m in r.errors))
+
+    def test_commit_or_uncommitted_edit_refreshes(self):
+        for n in (1, 2):
+            self.commit_session(n)
+        self.commit_session(3, "objectives.md")
+        self.assertNotIn("objectives.md", dict(L.stale_files(self.mem, 5)))
+        self.assertIn(("objectives.md", 6), L.stale_files(self.mem, 9))
+        self.append("objectives.md", "- O-2 new goal\n")  # being edited in the open session
+        self.assertNotIn("objectives.md", [f for f, _ in L.stale_files(self.mem, 9)])
+
+    def test_slower_files_have_longer_thresholds(self):
+        self.commit_session(1)
+        stale = dict(L.stale_files(self.mem, 4))
+        self.assertIn("objectives.md", stale)
+        self.assertNotIn("npcs.md", stale)
+        self.assertIn("npcs.md", dict(L.stale_files(self.mem, 5)))
+
+    def test_no_session_no_staleness(self):
+        self.assertEqual(L.stale_files(self.mem, None), [])
+
+    def test_party_levels_in_playthrough_warn(self):
+        self.append("PLAYTHROUGH.md", "")
+        text = self.read("PLAYTHROUGH.md").replace("## Party\n", "## Party\n- Gale: Wizard 2, Evocation\n")
+        self.write("PLAYTHROUGH.md", text)
+        self.assertIn("copy", kinds(L.lint(self.mem).warnings))
+        self.write("PLAYTHROUGH.md", text.replace("Wizard 2, Evocation", "Wizard (Evocation), blaster"))
+        self.assertNotIn("copy", kinds(L.lint(self.mem).warnings))
 
 
 if __name__ == "__main__":
