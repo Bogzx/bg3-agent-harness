@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 import unittest
 
@@ -103,10 +104,31 @@ class AsyncTravel(Base):
         self.assertFalse(server._queues().busy())
         self.assertEqual(self.g.ops("act.move_to"), [])
 
-    def test_wait_true_blocks(self):
+    def test_wait_true_does_not_block_and_shows_progress(self):
+        server.SETTLE_S = 0.2
+        self.g.dur["act.move_to"] = 1.0
+        self.g.watch["party"][0]["pos"] = [0.0, 0.0, 0.0]
+        t0 = time.monotonic()
         out = server.travel_to(marker="m1", wait=True)
+        self.assertLess(time.monotonic() - t0, 0.6)
+        self.assertIn("travel_to marker m1 Old well: started (50m); 50m left", out)
+        self.assertIn("wait=true ignored", out)
+        self.assertIn("RUNNING queue e3 Claude: travel_to", out)
+        self.assertIn("(queue_actions appends after it)", out)
+        self.assertIn("NEXT: queue_actions", out)
+
+    def test_a_trip_that_ends_in_the_settle_window_reports_now(self):
+        server.SETTLE_S = 3.0
+        out = server.travel_to(marker="m1")
+        self.assertIn("queue e3 Claude: done (1 steps)", out)
         self.assertIn("arrived", out)
-        self.assertFalse(server._queues().busy())
+        self.assertNotIn("RUNNING", out)
+        self.assertNotIn("NEXT:", out)
+
+    def test_trip_progress_has_an_eta(self):
+        server._trips[P1] = {"dest": [50.0, 0.0, 0.0], "d0": 50.0, "t0": time.monotonic() - 4.0}
+        self.g.watch["party"][0]["pos"] = [20.0, 0.0, 0.0]  # 20 m in 4 s: 30 m left at 5 m/s
+        self.assertEqual(server._trip_progress(P1), "30m left, ETA ~6s")
 
     def test_do_actions_can_travel(self):
         out = server.do_actions(json.dumps([{"tool": "travel_to", "marker": "m1"},
@@ -117,13 +139,85 @@ class AsyncTravel(Base):
         self.assertEqual(len(self.g.ops("act.move_to")), 2)
 
 
+class SettleAndPace(Base):
+    def setUp(self) -> None:
+        super().setUp()
+        server.SETTLE_S = 0.3
+
+    def test_quick_walk_reports_its_result(self):
+        self.g.dur["act.move_to"] = 0.05
+        t0 = time.monotonic()
+        out = server.move_to(x=5.0, y=0.0, z=0.0)
+        self.assertLess(time.monotonic() - t0, 0.25)  # returned when the job ended, not after the window
+        self.assertTrue(out.startswith("move_to: done"), out)
+        self.assertEqual(server._async, {})
+
+    def test_failure_in_the_window_comes_back_now(self):
+        self.g.refuse_if = lambda op, a: "no walkable path there" if op == "act.move_to" else None
+        self.assertIn("FAILED — no walkable path there", server.move_to(x=5.0, y=0.0, z=0.0))
+
+    def test_long_walk_returns_after_the_window(self):
+        self.g.dur["act.move_to"] = 3.0
+        t0 = time.monotonic()
+        out = server.move_to(x=5.0, y=0.0, z=0.0, wait=True)
+        self.assertLess(time.monotonic() - t0, 0.8)
+        self.assertTrue(out.startswith("move_to: started j1, ETA"), out)
+        self.assertIn("\n(wait=true ignored outside combat", out.split("RUNNING")[0])  # before the status lines
+        self.assertIn("RUNNING j1 move_to", out)
+
+    def test_wait_true_blocks_in_combat(self):
+        self.g.watch["combat"] = True
+        self.g.dur["act.move_to"] = 0.5
+        out = server.move_to(x=5.0, y=0.0, z=0.0, wait=True)
+        self.assertTrue(out.startswith("move_to: done"), out)
+        self.assertNotIn("ignored", out)
+
+    def test_pace_hint_when_waiting_right_after_issuing(self):
+        self.g.dur["act.move_to"] = 0.6
+        server.move_to(x=5.0, y=0.0, z=0.0)
+        self.assertIn("PACE:", server.wait_for("j1", timeout_s=2))
+        server.move_to(x=6.0, y=0.0, z=0.0)
+        server.get_events()  # independent work in between: no nudge
+        self.assertNotIn("PACE:", server.wait_for("j2", timeout_s=2))
+
+    def test_next_hint_three_times_then_after_a_nudge(self):
+        self.g.dur["act.move_to"] = 5.0
+        seen = []
+        for i in range(5):
+            seen.append("NEXT:" in server.move_to(x=float(i), y=0.0, z=0.0))
+            server.get_events()
+        self.assertEqual(seen, [True, True, True, False, False])
+        server.move_to(x=9.0, y=0.0, z=0.0)
+        server.wait_for("idle", timeout_s=0.1)  # right after issuing: nudged
+        self.assertIn("NEXT:", server.move_to(x=10.0, y=0.0, z=0.0))
+
+    def test_queue_result_shows_what_runs(self):
+        self.g.dur["act.interact"] = 2.0
+        out = server.queue_actions(json.dumps([{"tool": "interact", "target": server.H.get(CHEST)},
+                                               {"tool": "interact", "target": server.H.get(CHEST)}]))
+        self.assertIn("RUNNING queue e3 Claude:", out)
+        self.assertIn("(queue_actions appends after it)", out)
+
+    def test_wait_returns_on_the_first_event(self):
+        def later():
+            time.sleep(0.3)
+            self.g.push("combat_started", {})
+        threading.Thread(target=later).start()
+        t0 = time.monotonic()
+        out = server.wait(5)
+        self.assertLess(time.monotonic() - t0, 1.5)
+        self.assertIn("combat_started after", out)
+
+
 class AlwaysLoad(unittest.TestCase):
     def test_core_tools_are_marked_and_the_rest_deferred(self):
         tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
         self.assertEqual(server._mark_always_load(), [])  # every listed name exists
         for name in ("queue_actions", "do_actions", "wait_for", "look", "travel_to", "combat_turn"):
             self.assertEqual((tools[name].meta or {}).get("anthropic/alwaysLoad"), True, name)
-        for name in ("lockpick", "new_game", "wiki_page", "click"):
+        for name in ("wiki_page", "wiki_search", "load_game", "list_saves"):
+            self.assertEqual((tools[name].meta or {}).get("anthropic/alwaysLoad"), True, name)
+        for name in ("lockpick", "new_game", "click"):
             self.assertFalse((tools[name].meta or {}).get("anthropic/alwaysLoad"), name)
 
     def test_movement_defaults_to_async(self):

@@ -36,13 +36,13 @@ class Clock(unittest.TestCase):
     def test_short_session_14m_left_is_play_time(self):
         # 15-min session: wrap-up is its last third (5 min). 14m left must not read as "wrap up".
         line = self.clock(14 * 60 + 30, 5 * 60)
-        self.assertEqual(line, "⏱ 14m left · 9m of play: keep playing until WRAP UP at 5m left")
+        self.assertEqual(line, "⏱ " + time.strftime("%H:%M") + " · 14m left · 9m of play: keep playing until WRAP UP at 5m left")
         self.assertNotIn("WRAP UP NOW", line)
         self.assertIn("WRAP UP NOW", self.clock(4 * 60 + 50, 5 * 60))
 
     def test_hour_session(self):
         self.assertEqual(self.clock(14 * 60 + 30, 10 * 60),
-                         "⏱ 14m left · 4m of play: keep playing until WRAP UP at 10m left")
+                         "⏱ " + time.strftime("%H:%M") + " · 14m left · 4m of play: keep playing until WRAP UP at 10m left")
         self.assertIn("WRAP UP NOW", self.clock(9 * 60 + 59, 10 * 60))
 
     def test_without_the_runner_env_defaults_to_10_min(self):

@@ -676,9 +676,10 @@ function S.combat(ctx)
                                 -- A turn group (party members with equal initiative)
                                 -- is current together; a member that already ended
                                 -- keeps IsActiveCombatTurn with RequestedEndTurn set.
+                                local pending = BG3AI.Guard and BG3AI.Guard.end_pending and BG3AI.Guard.end_pending(u)
                                 if tb.IsActiveCombatTurn then
                                     o.is_current = true
-                                    if tb.RequestedEndTurn then
+                                    if tb.RequestedEndTurn or pending then
                                         o.ended = true
                                         ended_current = ended_current or u
                                     else
@@ -689,7 +690,7 @@ function S.combat(ctx)
                                 end
                                 if tb.ActedThisRoundInCombat then o.acted = true end
                                 if ctx.is_party[u] and tb.CanActInCombat and not tb.ActedThisRoundInCombat
-                                    and not (tb.IsActiveCombatTurn and tb.RequestedEndTurn) then
+                                    and not (tb.IsActiveCombatTurn and (tb.RequestedEndTurn or pending)) then
                                     o.can_act = true
                                     out.party_can_act = out.party_can_act or {}
                                     table.insert(out.party_can_act, u)
@@ -750,8 +751,31 @@ local function loadQuests()
     return quests
 end
 
+-- Journal cache. A full walk calls QuestIsAccepted on every quest prototype
+-- (~100 ms of Osiris calls; live get_journal took 143 ms) and get_journal,
+-- look and the runner's progress poll all read it. Quest listeners bump
+-- S.questGen (Navigation's active-objective list keys on it too); the cache
+-- also expires after JOURNAL_TTL_MS, a backstop for anything they miss.
+S.questGen = S.questGen or 0
+S.JOURNAL_TTL_MS = 30000
+function S.bumpQuests() S.questGen = (S.questGen or 0) + 1 end
+for _, ev in ipairs({ { "QuestAccepted", 2 }, { "QuestUpdateUnlocked", 3 }, { "QuestClosed", 1 },
+    { "SavegameLoaded", 0 }, { "LevelGameplayStarted", 2 } }) do
+    if Ext.Osiris then pcall(Ext.Osiris.RegisterListener, ev[1], ev[2], "after", function() S.bumpQuests() end) end
+end
+
+local journalWalk
 function S.journal(ctx)
     local who = ctx.party[1]
+    local now = Ext.Utils.MonotonicTime()
+    local c = S.journalCache
+    if c and c.who == who and c.gen == S.questGen and now - c.t < S.JOURNAL_TTL_MS then return c.list end
+    local list = journalWalk(who)
+    S.journalCache = { who = who, gen = S.questGen, t = now, list = list }
+    return list
+end
+
+journalWalk = function(who)
     local out = {}
     for _, q in ipairs(loadQuests()) do
         if q.visible and truthy(osi(Osi.QuestIsAccepted, who, q.id)) then

@@ -46,6 +46,8 @@ class FakeGame:
             return {"markers": self.markers, "ms": 1}
         if op == "nav.reach_toward":
             return self.reach
+        if op == "act.watch":  # in combat: wait=true still blocks (the blocking path these tests check)
+            return {"combat": True}
         raise AssertionError(f"unexpected op {op}")
 
     def try_rpc(self, op: str, args: dict | None = None, context: str = "server") -> Any:

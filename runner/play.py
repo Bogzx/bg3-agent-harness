@@ -40,6 +40,8 @@ sys.path.insert(0, str(REPO / "bridge" / "src"))
 sys.path.insert(0, str(REPO / "tools" / "memory"))
 from bg3ai import metrics as latency  # noqa: E402  (stdlib only; doesn't import the MCP server)
 from bg3ai import progress as story  # noqa: E402  (stdlib only: story progress per hour, stuck signal)
+sys.path.insert(0, str(REPO / "runner"))
+import triage  # noqa: E402  (runner/triage.py: post-session Sxxx.triage.md)
 
 PLAY_DIR = REPO / "play"
 PLAYTHROUGHS = Path(os.environ.get("BG3AI_PLAYTHROUGHS", REPO / "playthroughs"))
@@ -382,11 +384,62 @@ PLAY_SETTINGS = [
     ("ui.dismiss", {}),
 ]
 
-CHARACTER_NAME_LUA = (
-    'local c = (Ext.Entity.GetAllEntitiesWithComponent("ClientControl") or {})[1] '
-    'local dn = c and c.DisplayName '
-    'if not dn then return "" end '
-    'return Ext.Loca.GetTranslatedString(dn.NameKey.Handle.Handle) or ""')
+# The player's own created character (the avatar), not the selected one: Osi.GetHostCharacter() and the
+# client's ClientControl follow the selection, so picking Lae'zel used to close the save/load gates.
+# Server context. DB_Avatars first, then the Avatar component; the host character only as a last resort.
+AVATAR_NAME_LUA = (
+    'local function nm(g) local ok, n = pcall(function() return '
+    'Ext.Loca.GetTranslatedString(Osi.GetDisplayName(g)) end) return ok and n or nil end '
+    'local ok, rows = pcall(function() return Osi.DB_Avatars:Get(nil) end) '
+    'if ok and rows and rows[1] and rows[1][1] then local n = nm(rows[1][1]) if n and n ~= "" then return n end end '
+    'for _, e in ipairs(Ext.Entity.GetAllEntitiesWithComponent("Avatar") or {}) do '
+    '  local dn = e.DisplayName '
+    '  if dn then local n = Ext.Loca.GetTranslatedString(dn.NameKey.Handle.Handle) if n and n ~= "" then return n end end '
+    'end '
+    'return nm(Osi.GetHostCharacter()) or ""')
+
+MOD_DIR = REPO / "mod"
+MOD_READY_LUA = "return tostring(Mods.BG3AI ~= nil and Mods.BG3AI.BG3AI ~= nil and Mods.BG3AI.BG3AI.RPC ~= nil)"
+RELOAD_TIMEOUT = 60
+WAIT_REPORT_AFTER = 90         # a runner wait longer than this logs what it waits for ...
+WAIT_REPORT_EVERY = 30         # ... every this many seconds
+
+
+def mod_tree_hashes(root: Path = MOD_DIR) -> dict[str, str]:
+    """{relative path: sha1} for every file under mod/ (the Lua tree the game loads)."""
+    out = {}
+    for p in sorted(root.rglob("*")) if root.is_dir() else []:
+        if p.is_file() and "__pycache__" not in p.parts:
+            out[str(p.relative_to(root))] = hashlib.sha1(p.read_bytes()).hexdigest()
+    return out
+
+
+def changed_files(old: dict | None, new: dict) -> list[str]:
+    """Files added, removed or edited between two mod_tree_hashes; everything when old is unknown."""
+    if old is None:
+        return sorted(new)
+    return sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))
+
+
+class WaitReporter:
+    """Watchdog for long runner waits: past WAIT_REPORT_AFTER s, logs what it waits for every WAIT_REPORT_EVERY s
+    (so a silent runner log always says why it's silent)."""
+
+    def __init__(self, what: str, timeout: float | None, start: float | None = None, logf=None):
+        self.what, self.timeout = what, timeout
+        self.start = time.time() if start is None else start
+        self.next = self.start + WAIT_REPORT_AFTER
+        self.log = logf or log
+
+    def tick(self, now: float | None = None) -> bool:
+        now = time.time() if now is None else now
+        if now < self.next:
+            return False
+        left = f", {self.timeout - (now - self.start):.0f} s left" if self.timeout else ""
+        self.log(f"still waiting for {self.what} ({now - self.start:.0f} s so far{left})")
+        while self.next <= now:
+            self.next += WAIT_REPORT_EVERY
+        return True
 
 
 class HealthTracker:
@@ -454,11 +507,13 @@ def available_ops(context: str) -> set[str]:
 
 
 def host_character_name() -> str | None:
-    """Display name of the host (controlled) character, or None."""
+    """Display name of the party's avatar (the player's own created character), or None.
+
+    Not the selected character: selecting a companion must neither close the save/load gates nor make
+    --take-over think the running game belongs to someone else."""
     try:
-        return lua_eval("return Ext.Loca.GetTranslatedString(Osi.GetDisplayName(Osi.GetHostCharacter()))",
-                        context="server").strip() or None
-    except Exception:
+        return lua_eval(AVATAR_NAME_LUA, context="server").strip() or None
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -690,6 +745,7 @@ class Runner:
         self.game_proc = subprocess.Popen(args, stdout=logf, stderr=subprocess.STDOUT,
                                           stdin=subprocess.DEVNULL, start_new_session=True)
         self.state["game"] = {"pgid": self.game_proc.pid, "launched": time.time(), "load": load_folder}
+        self.state["mod_hashes"] = mod_tree_hashes()  # a fresh game loads the mod as it is now
         write_status(game_pgid=self.game_proc.pid)
 
     def kill_game(self) -> None:
@@ -741,8 +797,11 @@ class Runner:
             raise RuntimeError(f"port {DEBUG_PORT} is still in use after the game was killed")
 
     def wait_for(self, what: str, pred, timeout: float, interval: float = 2.0) -> bool:
-        end = time.time() + timeout
+        start = time.time()
+        end = start + timeout
+        report = WaitReporter(what, timeout, start)
         while time.time() < end:
+            report.tick()
             if self.game_proc is not None and self.game_proc.poll() is not None:
                 raise RuntimeError(f"game exited (status {self.game_proc.returncode}) while waiting for {what}")
             if self.abort:
@@ -822,6 +881,10 @@ class Runner:
                 self.wait_menu()
             # ui.menu load works from the main menu and from in-game (it opens the load screen itself).
             rpc("ui.menu", load_menu_args(save, list_saves()), context="client", timeout=30)
+            if state == "Running":
+                # From in-game the state is still Running until the load begins: without this wait,
+                # wait_running() passed at once and S002's agent started mid-load (se triage).
+                self.wait_for("the load to start", lambda: game_state() != "Running", 60, 0.5)
         else:
             if port_open():
                 if not (self.owns_game() or self.opt.take_over or game_state() == "Menu"):
@@ -864,10 +927,9 @@ class Runner:
                 log(f"play settings: {op} {args} failed: {e}")
         name = None
         if not self.new_game:
-            try:
-                name = lua_eval(CHARACTER_NAME_LUA, "client").strip() or None
-            except Exception as e:  # noqa: BLE001
-                log(f"play settings: couldn't read the character name: {e}")
+            name = host_character_name()
+            if name is None:
+                log("play settings: couldn't read the avatar's name")
         owner = self.opt.save_owner or self.state["save_owner"]
         allow = gates_decision(name, owner, self.new_game)
         if allow is None:
@@ -879,6 +941,36 @@ class Runner:
                 f"({'new game' if self.new_game else f'character {name!r}, save owner {owner!r}'})")
         except Exception as e:  # noqa: BLE001
             log(f"play settings: ui.config gates failed: {e}")
+
+    def hot_reload_mod(self) -> int:
+        """Between sessions: if any file under mod/ changed since the game last loaded it, Ext.Debug.Reset() and
+        wait for the mod's RPC table to come back. Returns the number of changed files (0 = nothing done)."""
+        cur = mod_tree_hashes()
+        changed = changed_files(self.state["mod_hashes"], cur)
+        if not changed:
+            return 0
+        state = game_state() if port_open() else None
+        if state not in ("Running", "Menu"):
+            log(f"mod changed ({len(changed)} files) but the game is {state or 'not up'}; reload skipped")
+            return 0
+        ctxs = ["server", "client"] if state == "Running" else ["client"]  # no server context at the menu
+        try:
+            lua_eval("Ext.Debug.Reset() return 'reset'", ctxs[0], timeout=EVAL_TIMEOUT)
+        except Exception as e:  # noqa: BLE001 - the reset can drop the eval connection
+            log(f"hot reload: Reset eval returned {e!r} (usually harmless)")
+
+        def back() -> bool:
+            try:
+                return all(lua_eval(MOD_READY_LUA, c, timeout=5).strip() == "true" for c in ctxs)
+            except Exception:  # noqa: BLE001
+                return False
+        time.sleep(1)
+        if not self.wait_for("BG3AI mod after Ext.Debug.Reset()", back, RELOAD_TIMEOUT, 1):
+            raise RuntimeError("the mod didn't come back after a hot reload")
+        self.state["mod_hashes"] = cur
+        shown = ", ".join(changed[:5]) + (" …" if len(changed) > 5 else "")
+        log(f"mod hot-reloaded ({len(changed)} files changed: {shown})")
+        return len(changed)
 
     def recover(self, why: str) -> None:
         log(f"recovering: {why}")
@@ -1063,6 +1155,7 @@ class Runner:
         log(f"{sid}{tag}: claude finished ({reason}, exit {proc.returncode}, {(end - start) / 60:.1f} min)")
         self.write_latency(f"{sid}{tag}", base, start, end)
         self.write_progress(f"{sid}{tag}", base, start, end)
+        self.write_triage(f"{sid}{tag}", base)
         return SessionResult(sid, claude_session, proc.returncode, reason, start, end, model=model, effort=effort)
 
     def write_latency(self, session: str, base: Path, start: float, end: float) -> dict | None:
@@ -1079,6 +1172,16 @@ class Runner:
             f"{summary['long_gaps']['total']} gaps >10s, think median {summary['think_s'].get('median')}s, "
             f"apm {summary['apm']}, busy {summary['busy_pct']}%, pipelined {summary.get('pipelining_pct')}% | {verdict}")
         return summary
+
+    def write_triage(self, session: str, base: Path) -> Path | None:
+        """Sxxx.triage.md: failed calls by tool + error, long gaps, ToolSearch, clicks, stuck stretches, summary."""
+        try:
+            path = triage.write(base)
+        except Exception as e:  # noqa: BLE001 - triage never breaks the runner
+            log(f"{session}: triage failed: {e}")
+            return None
+        log(f"{session}: triage {path}")
+        return path
 
     def progress_loop(self, session: str, base: Path, start: float, stop: threading.Event, human=None) -> None:
         """Poll story progress (fair journal/map/status data) into Sxxx.progress.jsonl until stop is set."""
@@ -1189,6 +1292,12 @@ class Runner:
         if is_stuck(self.state["history"]):
             notes.append(stuck_directive(self.state["history"]))
 
+        try:
+            self.hot_reload_mod()  # before the settings: a reset wipes the mod's client-side config
+        except RuntimeError:
+            raise  # the mod is gone: let session setup recover (restart the game)
+        except Exception as e:  # noqa: BLE001
+            log(f"hot reload failed: {e}")
         try:
             self.apply_play_settings()
         except Exception as e:  # noqa: BLE001 - never fail a session over settings

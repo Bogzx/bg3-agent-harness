@@ -42,6 +42,8 @@ Then add one line to strategy.md "Harness and tool quirks" (`<tool> <symptom> �
   one.
 - `OBJECTIVE` lines (`get_map`) for where the game wants you; `walk_toward(objective="o1")` or
   `walk_toward(direction=…)` to probe a direction.
+- `route(objective="o1")` (or `target=`/x,y,z) when the way is the problem: how high the goal is, the closest
+  walkable spot, which ladder/door leads there, fire on the way, and a NEXT step. Before any screenshot.
 - `get_frontier()` for exits and leads you haven't used; `path_preview(target=…)` to check whether a
   spot is reachable at all, or needs a jump.
 - `get_journal` for the quest text: what does the game itself say to do?

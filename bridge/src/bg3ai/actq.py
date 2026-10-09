@@ -216,7 +216,8 @@ class Watcher:
                     return "teleport", "the engine tried to teleport a character (blocked)"
                 if k == "combat_started" and "combat" not in self.ignore and not self.start.get("combat"):
                     return "combat", "combat started"
-                if k == "dialogue_started" and "dialogue" not in self.ignore and not handled & PROMPTS["dialogue"]:
+                if k == "dialogue_started" and "dialogue" not in self.ignore and not handled & PROMPTS["dialogue"] \
+                        and not (ev.get("data") or ev).get("automated"):
                     return "dialogue", "a conversation started"
             w = self._watch()
             if w:

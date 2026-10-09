@@ -5,7 +5,9 @@
 """
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import time
 import unittest
 from unittest import mock
@@ -481,6 +483,188 @@ class Progress(unittest.TestCase):
         src = Path(P.__file__).read_text()
         self.assertIn('progress=f"{base}.progress.jsonl"', src)
         self.assertIn('self.write_progress(f"{sid}{tag}", base, start, end)', src)
+
+
+class AvatarName(unittest.TestCase):
+    def test_reads_the_avatar_not_the_selection(self):
+        seen = []
+        saved = P.lua_eval
+        try:
+            P.lua_eval = lambda code, context="client", timeout=0: seen.append((code, context)) or " Claude \n"
+            self.assertEqual(P.host_character_name(), "Claude")
+        finally:
+            P.lua_eval = saved
+        code, ctx = seen[0]
+        self.assertEqual(ctx, "server")
+        self.assertIn("DB_Avatars", code)
+        self.assertLess(code.index("DB_Avatars"), code.index("GetHostCharacter"))  # selection only as fallback
+
+    def test_unreadable_is_none(self):
+        saved = P.lua_eval
+        try:
+            P.lua_eval = lambda *a, **k: (_ for _ in ()).throw(OSError("no game"))
+            self.assertIsNone(P.host_character_name())
+        finally:
+            P.lua_eval = saved
+
+
+class HotReload(unittest.TestCase):
+    def setUp(self):
+        self.saved = (P.port_open, P.game_state, P.lua_eval, P.log, P.time.sleep, P.mod_tree_hashes)
+        self.logs, self.evals = [], []
+        self.back_after = 2
+        P.port_open = lambda *a, **k: True
+        P.game_state = lambda: "Running"
+        P.log = self.logs.append
+        P.time.sleep = lambda s: None
+
+        def ev(code, context="client", timeout=0):
+            self.evals.append((code, context))
+            if "Reset" in code:
+                raise ConnectionError("dropped")
+            self.back_after -= 1
+            return "true" if self.back_after <= 0 else "false"
+        P.lua_eval = ev
+        self.r = P.Runner.__new__(P.Runner)
+        self.r.game_proc, self.r.abort = None, False
+        self.r.state = type("S", (), {"data": {}, "__getitem__": lambda s, k: s.data.get(k),
+                                      "__setitem__": lambda s, k, v: s.data.__setitem__(k, v)})()
+
+    def tearDown(self):
+        (P.port_open, P.game_state, P.lua_eval, P.log, P.time.sleep, P.mod_tree_hashes) = self.saved
+
+    def test_hashes_and_diff(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "a").mkdir()
+            (root / "a" / "x.lua").write_text("one")
+            (root / "y.lua").write_text("two")
+            h1 = P.mod_tree_hashes(root)
+            self.assertEqual(set(h1), {"a/x.lua", "y.lua"})
+            (root / "y.lua").write_text("2")
+            (root / "z.lua").write_text("new")
+            h2 = P.mod_tree_hashes(root)
+            self.assertEqual(P.changed_files(h1, h2), ["y.lua", "z.lua"])
+            self.assertEqual(P.changed_files(h2, h2), [])
+            self.assertEqual(P.changed_files(None, h2), sorted(h2))
+            (root / "a" / "x.lua").unlink()
+            self.assertEqual(P.changed_files(h2, P.mod_tree_hashes(root)), ["a/x.lua"])
+
+    def test_unchanged_does_nothing(self):
+        P.mod_tree_hashes = lambda: {"a.lua": "1"}
+        self.r.state["mod_hashes"] = {"a.lua": "1"}
+        self.assertEqual(self.r.hot_reload_mod(), 0)
+        self.assertEqual(self.evals, [])
+
+    def test_changed_resets_and_waits_for_rpc(self):
+        P.mod_tree_hashes = lambda: {"a.lua": "2", "b.lua": "1"}
+        self.r.state["mod_hashes"] = {"a.lua": "1", "b.lua": "1"}
+        self.assertEqual(self.r.hot_reload_mod(), 1)
+        self.assertEqual(self.evals[0], ("Ext.Debug.Reset() return 'reset'", "server"))
+        self.assertTrue(any("Mods.BG3AI.BG3AI.RPC" in c for c, _ in self.evals[1:]))
+        self.assertEqual(self.r.state["mod_hashes"], {"a.lua": "2", "b.lua": "1"})
+        self.assertTrue(any(m.startswith("mod hot-reloaded (1 files changed") for m in self.logs), self.logs)
+
+    def test_mod_never_back_raises_and_keeps_old_hashes(self):
+        P.mod_tree_hashes = lambda: {"a.lua": "2"}
+        self.r.state["mod_hashes"] = {"a.lua": "1"}
+        self.back_after = 10 ** 9
+        saved = P.RELOAD_TIMEOUT
+        P.RELOAD_TIMEOUT = 0.05
+        try:
+            with self.assertRaises(RuntimeError):
+                self.r.hot_reload_mod()
+        finally:
+            P.RELOAD_TIMEOUT = saved
+        self.assertEqual(self.r.state["mod_hashes"], {"a.lua": "1"})  # retried next time
+
+    def test_skipped_while_loading(self):
+        P.mod_tree_hashes = lambda: {"a.lua": "2"}
+        P.game_state = lambda: "LoadLevel"
+        self.assertEqual(self.r.hot_reload_mod(), 0)
+        self.assertEqual(self.evals, [])
+
+    def test_menu_uses_client_context(self):
+        P.mod_tree_hashes = lambda: {"a.lua": "2"}
+        P.game_state = lambda: "Menu"
+        self.r.hot_reload_mod()
+        self.assertEqual({c for _, c in self.evals}, {"client"})
+
+
+class WaitWatchdog(unittest.TestCase):
+    def test_reports_after_90s_then_every_30s(self):
+        out = []
+        w = P.WaitReporter("game state Running", 600, start=0.0, logf=out.append)
+        fired = [t for t in range(0, 200, 5) if w.tick(float(t))]
+        self.assertEqual(fired, [90, 120, 150, 180])
+        self.assertIn("game state Running", out[0])
+        self.assertIn("90 s so far, 510 s left", out[0])
+
+    def test_short_wait_silent(self):
+        out = []
+        w = P.WaitReporter("x", 60, start=0.0, logf=out.append)
+        self.assertFalse(any(w.tick(float(t)) for t in range(0, 61)))
+
+
+class Triage(unittest.TestCase):
+    def _session(self, d: Path) -> Path:
+        base = d / "S009"
+        use = lambda i, name, inp: {"type": "tool_use", "id": f"t{i}", "name": f"mcp__bg3__{name}", "input": inp}
+        res = lambda i, text, err=False: {"type": "tool_result", "tool_use_id": f"t{i}", "is_error": err,
+                                          "content": [{"type": "text", "text": json.dumps({"result": text})}]}
+        calls = [
+            (use(1, "move_to", {"x": 1}), res(1, "move_to: done")),
+            (use(2, "use_ability", {"target": "e4"}), res(2, "use_ability: FAILED — target is out of range (2.2 m, range 0.0 m)")),
+            (use(3, "do_actions", {"actions": "[]"}), res(3, "1. move_to: done\n2. use_ability: FAILED — target is out of range (1.9 m, range 0.0 m)\nSTOPPED: step 2 failed")),
+            ({"type": "tool_use", "id": "t4", "name": "ToolSearch", "input": {"query": "select:mcp__bg3__click"}}, res(4, "ok")),
+            (use(5, "click", {"x": 1, "y": 2}), res(5, "clicked")),
+            (use(6, "click", {"x": 1, "y": 2}), res(6, "clicked")),
+            (use(7, "click", {"x": 1, "y": 2}), res(7, "clicked")),
+            (use(8, "screenshot", {}), res(8, "img")),
+            (use(9, "move_to", {"x": 2}), res(9, "move_to: done")),
+            (use(10, "travel_to", {"objective": "o1"}), {"type": "tool_result", "tool_use_id": "t10", "is_error": True,
+                                                       "content": "<tool_use_error>Error: No such tool available: travel_to</tool_use_error>"}),
+        ]
+        stream, turns, t = [], [], 1000.0
+        for i, (u, r) in enumerate(calls, 1):
+            stream.append({"type": "assistant", "message": {"content": [u]}})
+            stream.append({"type": "user", "message": {"content": [r]}})
+            turns += [{"type": "use", "t": t, "id": f"t{i}", "name": u["name"]}, {"type": "result", "t": t + 1, "id": f"t{i}"}]
+            t += 2 if i != 8 else 30  # a 30 s gap before the 2nd move_to
+        stream.append({"type": "result", "result": "Reached the Helm. Saved as S009-end."})
+        Path(f"{base}.jsonl").write_text("\n".join(map(json.dumps, stream)) + "\n")
+        Path(f"{base}.turns.jsonl").write_text("\n".join(map(json.dumps, turns)) + "\n")
+        metrics = [{"type": "tool", "tool": "move_to", "t0": 1000.0, "t1": 1001.0},
+                   {"type": "tool", "tool": "move_to", "t0": 1044.0, "t1": 1045.0}]
+        Path(f"{base}.metrics.jsonl").write_text("\n".join(map(json.dumps, metrics)) + "\n")
+        Path(f"{base}.progress.jsonl").write_text(json.dumps({"type": "stuck", "t": 1500, "since": 1000,
+                                                              "idle_min": 8, "actions": 40}) + "\n")
+        return base
+
+    def test_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = self._session(Path(d))
+            md = P.triage.write(base).read_text()
+        self.assertIn("**use_ability** ×2 (via do_actions)", md)              # top-level + batch step, one group
+        self.assertIn("range N m", md)
+        self.assertIn("**travel_to** ×1", md)                                 # is_error
+        self.assertIn("43.0 s", md)                                           # the long gap
+        self.assertIn("during: ", md)
+        self.assertIn("select:mcp__bg3__click", md)
+        self.assertIn("screenshots: 1; clicks: 3", md)
+        self.assertIn("`click` repeated 3×", md)
+        self.assertIn("no story progress for 8 min", md)
+        self.assertIn("Reached the Helm", md)
+
+    def test_missing_files_still_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            md = P.triage.write(Path(d) / "S001").read_text()
+        self.assertIn("# Triage S001", md)
+        self.assertIn("(none)", md)
+
+    def test_wired_into_run_claude(self):
+        src = Path(P.__file__).read_text()
+        self.assertIn('self.write_triage(f"{sid}{tag}", base)', src)
 
 
 if __name__ == "__main__":

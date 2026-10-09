@@ -21,6 +21,7 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, delta, macros, metrics, render, saves, turn
+from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
 
@@ -135,10 +136,11 @@ def _clock() -> str:
         wrap_at = 0.0
     wrap_left = DEADLINE - wrap_at if 0 < wrap_at < DEADLINE else WRAPUP_S
     m = int(left // 60)
+    hhmm = time.strftime("%H:%M")  # wall clock: S001 invented log times without it
     if left <= wrap_left:
-        return f"⏱ {m}m left: WRAP UP NOW. Reach a safe spot, save_game, then {WRAPUP_HINT}."
+        return f"⏱ {hhmm} · {m}m left: WRAP UP NOW. Reach a safe spot, save_game, then {WRAPUP_HINT}."
     play = int((left - wrap_left) // 60)
-    return (f"⏱ {m}m left · {play}m of play: keep playing until WRAP UP at {round(wrap_left / 60)}m left"
+    return (f"⏱ {hhmm} · {m}m left · {play}m of play: keep playing until WRAP UP at {round(wrap_left / 60)}m left"
             + stuck)
 
 
@@ -177,7 +179,15 @@ class _BatchState(threading.local):
 _batch = _BatchState()
 
 
-def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True) -> str:
+# Pace bookkeeping for the agent's own calls (MCP thread): when it last issued an async action, how many calls
+# came after it, and how often the NEXT hint was shown. Teaches pipelining in context (impl-setup part 5).
+_pace = {"issued_at": 0.0, "calls_since": 0, "next_shown": 0, "nudge": False}
+PACE_GAP_S = 1.5
+NEXT_WALK = ("NEXT: queue_actions what to do on arrival, then look/plan/notes while it runs; "
+             "wait_for only when you are out of work")
+
+
+def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, issued: bool = False) -> str:
     if _batch["active"]:
         # Inside do_actions: no per-step event drain or clock; the batch reports once at the end.
         text = H.scrub(body.rstrip())
@@ -190,12 +200,35 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True) ->
         ev = _events_text()
         if ev:
             out.append(ev)
+    if "RUNNING " not in body:  # what still runs, so the agent appends (queue_actions) instead of waiting
+        try:
+            out.append(_running_text())
+        except GameError:
+            pass
+    if tool == "wait_for" and _pace["calls_since"] == 0 and _pace["issued_at"] \
+            and t0 - _pace["issued_at"] < PACE_GAP_S:
+        out.append("PACE: you waited right after issuing. Next time first do independent work (queue the arrival "
+                   "steps, look, plan, notes): the character acts while you think.")
+        _pace["nudge"] = True
     c = _clock_line()
     if c:
         out.append(c)
     text = H.scrub("\n".join(x for x in out if x))
     _log(tool, args, text, (time.monotonic() - t0) * 1000)
+    if issued:
+        _pace["issued_at"], _pace["calls_since"] = time.monotonic(), 0
+    else:
+        _pace["calls_since"] += 1
     return text
+
+
+def _next_walk_hint() -> str:
+    """The NEXT line after a walk that is still running: the first 3 times, then only after a PACE nudge."""
+    if _pace["next_shown"] >= 3 and not _pace["nudge"]:
+        return ""
+    _pace["next_shown"] += 1
+    _pace["nudge"] = False
+    return NEXT_WALK
 
 
 def _guard(fn):
@@ -210,7 +243,7 @@ def _guard(fn):
         except NotReady as e:
             return _finish(fn.__name__, kw, f"NOT READY: {e}", t0, events=False)
         except (GameError, ValueError) as e:
-            return _finish(fn.__name__, kw, f"FAILED: {e}", t0)
+            return _finish(fn.__name__, kw, "FAILED: " + re.sub(r'\[string "[^"]*"\]:\d+: ', "", str(e)), t0)
     return wrapper
 
 
@@ -260,12 +293,12 @@ def _job_text(name: str, r: JobResult) -> str:
 
 
 def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
-         wait: bool = True) -> str:
+         wait: bool = True, note: str = "") -> str:
     t0 = time.monotonic()
     if _session_over():
         return _finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
     if not wait and not _batch["active"] and context == "server":
-        return _start_async(tool, op, args, t0)
+        return _start_async(tool, op, args, t0, note)
     ex = _batch["exec"]
     if _batch["active"]:
         wait_s = max(wait_s, 120.0)  # a batch/queue step runs to completion (interrupts cancel it)
@@ -277,14 +310,14 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
     if _batch["active"] and isinstance(r.result, dict) and "after" in r.result:
         # In a batch the per-step portrait summary is noise; the run ends with one NOW line + CHANGES.
         r = JobResult(r.status, {k: v for k, v in r.result.items() if k != "after"}, r.error, r.events, r.elapsed_ms)
-    return _finish(tool, args, _job_text(tool, r), t0)
+    return _finish(tool, args, _job_text(tool, r) + ("\n" + note if note else ""), t0)
 
 
 # Async jobs started with wait=false: handle (j12) -> what the agent needs to follow them up.
 _async: dict[str, dict] = {}
 
 
-def _start_async(tool: str, op: str, args: dict, t0: float) -> str:
+def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> str:
     """Start a mod job and return at once: "move_to: started j12, ETA 3.4s (14m)". The mod announces the
     end with a job_finished event (notify), so any later tool result shows it; wait_for('j12') blocks."""
     started = game.rpc(op, dict(args, notify=True))
@@ -299,13 +332,56 @@ def _start_async(tool: str, op: str, args: dict, t0: float) -> str:
     _async[h] = {"ctx": "server", "id": started["job"], "tool": tool, "t0": time.monotonic(),
                  "eta": started.get("eta_s"), "char": args.get("char")}
     METRICS.bg_start(h, started.get("eta_s"))
+    # Settle window: a refusal, a blocked path or a short action that ends within SETTLE_S comes back as
+    # its real result now (no wait_for round trip); anything longer keeps running while the agent plans.
+    view = _settle(lambda: game.try_rpc("job.poll", {"id": started["job"]}))
+    if view is not None:
+        _async.pop(h, None)
+        METRICS.bg_end(h)
+        r = JobResult(view["status"], view.get("result"), view.get("error"), elapsed_ms=view.get("elapsed_ms", 0))
+        _remember_names(r.result)
+        _batch["last"] = r.status
+        return _finish(tool, args, _job_text(tool, r) + ("\n" + note if note else ""), t0)
     body = f"{tool}: started {h}"
     if started.get("eta_s") is not None:
         body += f", ETA {render.num(float(started['eta_s']))}s"
     if started.get("route_m") is not None:
         body += f" ({render.num(float(started['route_m']))}m)"
+    if note:
+        body += "\n" + note
+    if tool in _WALKS:
+        hint = _next_walk_hint()
+        if hint:
+            body += "\n" + hint
     _batch["last"] = "done"
-    return _finish(tool, args, body, t0)
+    return _finish(tool, args, body, t0, issued=True)
+
+
+SETTLE_S = float(os.environ.get("BG3AI_SETTLE_S", "1.0") or 0)  # ≤1.5 s: the goal's live-feel budget
+_WALKS = ("move_to", "walk_toward", "travel_to")
+
+
+def _settle(poll, limit: float | None = None) -> dict | None:
+    """Poll a just-started job for up to SETTLE_S; its final view if it ended, else None (still running)."""
+    end = time.monotonic() + (SETTLE_S if limit is None else limit)
+    while True:
+        view = poll()
+        if isinstance(view, dict) and view.get("status") not in (None, "running"):
+            return view
+        if time.monotonic() >= end:
+            return None
+        time.sleep(0.1)
+
+
+def _walk_wait(wait: bool) -> tuple[bool, str]:
+    """wait=true on a walk blocks only in combat (moving before an attack). Outside it the walk runs while the
+    agent plans: S001 learned wait=true from its own results and pipelined 0% (impl-setup part 5)."""
+    if not wait or _batch["active"]:
+        return wait, ""
+    w = game.try_rpc("act.watch")
+    if not isinstance(w, dict) or w.get("combat"):
+        return True, ""  # in combat, or unknown: keep the old blocking behaviour
+    return False, "(wait=true ignored outside combat: the walk runs while you plan)"
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +404,7 @@ def _objective_markers() -> list:
 
 def _delta_body(lines: list[str], ui: dict | None = None) -> str:
     """Delta view text. A prompt still on screen (unchanged, so not in the diff) gets a one-line reminder."""
-    body = "\n".join(lines) if lines else "No change since your last look."
+    body = "\n".join(lines) if lines else "No change since your last look (full=true shows everything)."
     open_ = [k for k in ("dialogue", "roll", "reaction", "popup", "container") if (ui or {}).get(k)]
     if open_ and not set(render.render_ui(ui, H, brief=True)) & set(lines):
         body += f"\n({'/'.join(open_).upper()} still open, unchanged; full=true repeats it)"
@@ -566,6 +642,35 @@ def get_frontier() -> str:
 
 @mcp.tool()
 @_guard
+def route(objective: str = "", target: str = "", x: float | None = None, y: float | None = None,
+          z: float | None = None, who: str | None = None, connectors: bool = False) -> str:
+    """The way to a goal, read from the engine instead of a screenshot: objective (o1, or a map marker m1), a visible target id, or x,y,z.
+    Says how far and how high it is (floors above/below you and at the goal), the walk in legs (8m NW, CLIMB 9m up, 6m E) with
+    fire on the way, and when no path exists: the closest walkable spot and the ladders/doors in view ranked by how much they
+    help (which way a ladder climbs), ending with one NEXT step. connectors=true lists ladders/doors even when a path exists."""
+    t0 = time.monotonic()
+    args: dict[str, Any] = {"char": _who(who)}
+    t = (target or objective).strip()
+    if re.fullmatch(r"[om]\d+", t) or (objective and not target):  # objective o1 / words, map marker m1
+        marker = t if re.fullmatch(r"m\d+", t) else ""
+        args["pos"], what = _travel_dest(marker, "" if marker else t, None, None, None)
+    elif target:
+        args["target"] = _uuid(target)
+        what = target
+    elif None not in (x, y, z):
+        args["pos"] = [x, y, z]
+        what = render.pos([x, y, z])
+    else:
+        raise ValueError("give objective=o1 (or m1), target=<id>, or x,y,z")
+    if connectors:
+        args["connectors"] = True
+    res = game.rpc("nav.route", args)
+    _remember_names(res)
+    return _finish("route", {"objective": objective, "target": target}, route_text.render_route(res, H, what), t0)
+
+
+@mcp.tool()
+@_guard
 def get_explored() -> str:
     """Where the party has been in this area (your own breadcrumbs): size of explored region and recent named places."""
     t0 = time.monotonic()
@@ -580,21 +685,35 @@ def path_preview(target: str = "", x: float | None = None, y: float | None = Non
     """Walking distance to a target id or x,y,z: reachable?, path length, needs a jump?, fits remaining movement? Use before committing combat movement."""
     t0 = time.monotonic()
     args: dict[str, Any] = {"char": _who(who)}
-    if target:
+    if target and re.fullmatch(r"[om]\d+", target.strip()):  # objective o1 / map marker m1, as travel_to takes
+        t = target.strip()
+        args["pos"] = _travel_dest(t if t[0] == "m" else "", t if t[0] == "o" else "", None, None, None)[0]
+    elif target:
         args["target"] = _uuid(target)
     elif None not in (x, y, z):
         args["pos"] = [x, y, z]
     else:
-        raise ValueError("give target=<id> or x,y,z")
+        raise ValueError("give target=<id or o1/m1> or x,y,z")
     res = game.rpc("nav.path", args)
-    return _finish("path_preview", {"target": target}, render.compact(res, H), t0)
+    return _finish("path_preview", {"target": target}, render.render_path(res, H), t0)
+
+
+def _route_hint(args: dict) -> str:
+    """nav.route for a failed walk toward a pos/target: the height gap, the closest spot, the best ladder/door,
+    and one NEXT step (route.hint_text). '' if it can't be had."""
+    q = {k: args[k] for k in ("char", "pos", "target") if k in args}
+    res = game.try_rpc("nav.route", q) if ("pos" in q or "target" in q) else None
+    if not isinstance(res, dict):
+        return ""
+    _remember_names(res)
+    return route_text.hint_text(res, H)
 
 
 @mcp.tool()
 @_guard
 def walk_toward(direction: str = "", objective: str = "", target: str = "", max_m: float = 30.0,
                 who: str | None = None, run: bool = True, wait: bool = False) -> str:
-    """Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (returns at once with a job id + ETA unless wait=true). Good for "head west" or "go toward the objective marker" when no door or item is in view."""
+    """Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (returns within ~1 s with a job id + ETA, or the result if it already ended; wait=true blocks only in combat). Good for "head west" or "go toward the objective marker" when no door or item is in view."""
     t0 = time.monotonic()
     args: dict[str, Any] = {"char": _who(who), "max_m": max_m}
     if objective:
@@ -627,10 +746,13 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         hz = macros.hazard_text(res.get("hazard")) if isinstance(res, dict) else ""
         if hz:
             return _finish("walk_toward", args, f"FAILED: the way toward {what} crosses {hz}. Go around it"
-                           " (another direction, get_frontier) or wait for it to burn out.", t0)
-        return _finish("walk_toward", args, f"FAILED: no walkable ground toward {what} within {render.num(max_m)}m"
-                       + (f" ({n} spots checked)" if n is not None else "")
-                       + ". Try another direction, get_frontier, or a door.", t0)
+                           " (another direction, get_frontier) or "
+                           f"{macros.hazard_way_out(res.get('hazard'))}.", t0)
+        body = (f"FAILED: no walkable ground toward {what} within {render.num(max_m)}m"
+                + (f" ({n} spots checked)" if n is not None else ""))
+        hint = _route_hint(args)  # toward an objective/target only (a direction has no goal)
+        return _finish("walk_toward", args, body + ("\n" + hint if hint else
+                                                    ". Try another direction, get_frontier, or a door."), t0)
     head = f"heading {res.get('dir') or ''} toward {what}: {render.num(res.get('straight_m', 0))}m"
     if res.get("path_m") is not None:
         head += f" (path {render.num(res['path_m'])}m)"
@@ -640,7 +762,9 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         head += f", stopping short of {macros.hazard_text(res['hazard_beyond'])}"
     if res.get("standing_in"):
         head += f" (you are standing in {res['standing_in']})"
-    body = _act("walk_toward", "act.move_to", {"char": args["char"], "pos": res["pos"], "run": run}, wait=wait)
+    wait, note = _walk_wait(wait)
+    body = _act("walk_toward", "act.move_to", {"char": args["char"], "pos": res["pos"], "run": run}, wait=wait,
+                note=note)
     return head + "\n" + body
 
 
@@ -730,7 +854,7 @@ def zoom(x: float, y: float, w: float, h: float) -> Image | str:
 @_guard
 def move_to(target: str = "", x: float | None = None, y: float | None = None, z: float | None = None,
             who: str | None = None, run: bool = True, wait: bool = False) -> str:
-    """Walk to a visible entity (target=id) or a position (x,y,z). Returns at once with a job id + ETA (wait=true blocks until arrival); keep planning meanwhile. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow)."""
+    """Walk to a visible entity (target=id) or a position (x,y,z). Returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. wait=true blocks only in combat. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow)."""
     args: dict[str, Any] = {"char": _who(who), "run": run}
     if target:
         args["target"] = _uuid(target)
@@ -738,7 +862,8 @@ def move_to(target: str = "", x: float | None = None, y: float | None = None, z:
         args["pos"] = [x, y, z]
     else:
         raise ValueError("give target=<id> or x,y,z")
-    return _act("move_to", "act.move_to", args, wait=wait)
+    wait, note = _walk_wait(wait)
+    return _act("move_to", "act.move_to", args, wait=wait, note=note)
 
 
 @mcp.tool()
@@ -839,6 +964,15 @@ def _act_click_roll(tool: str, op: str, args: dict) -> str:
 def loot(take: str = "all", who: str | None = None) -> str:
     """Take items from the open container/corpse window. take: "all", or comma-separated item ids (from get_inventory, which lists the open container's contents)."""
     if take.strip().lower() == "all":
+        # Right after interact/loot_corpse the container panel may still be opening (live S002: "no container
+        # open" then the Backpack counted as already looted): give it up to ~2 s.
+        for _ in range(8):
+            try:
+                return _act("loot", "ui.loot", {"all": True}, context="client")
+            except GameError as e:
+                if "no container open" not in str(e):
+                    raise
+                time.sleep(0.25)
         return _act("loot", "ui.loot", {"all": True}, context="client")
     char = _who(who)
     results = [_act("loot", "act.transfer", {"item": _uuid(t.strip()), "to": char})
@@ -940,7 +1074,17 @@ def roll_check(boosts: str = "", reroll_on_fail: bool = False) -> str:
     args: dict[str, Any] = {"reroll": reroll_on_fail}
     if boosts:
         args["boosts"] = [b.strip() for b in boosts.split(",") if b.strip()]
-    return _act("roll_check", "ui.roll", args, context="client", wait_s=20)
+    first = _act("roll_check", "ui.roll", args, context="client", wait_s=20)
+    # ui.roll stops at the result screen (so a reroll can be chosen); "roll, and continue" means one call:
+    # press Continue (or reroll a failure first) here, not in a second roll_check round trip (live S002).
+    roll = (_batch.get("result") or {}).get("roll") if isinstance(_batch.get("result"), dict) else None
+    if _batch.get("last") != "done" or not isinstance(roll, dict) or roll.get("phase") != "result":
+        return first
+    if reroll_on_fail and not roll.get("success"):
+        first += "\n" + _act("roll_check", "ui.roll", {"reroll": True}, context="client", wait_s=20)
+        if _batch.get("last") != "done":
+            return first
+    return first + "\n" + _act("roll_check", "ui.roll", {}, context="client", wait_s=30)
 
 
 @mcp.tool()
@@ -1315,13 +1459,14 @@ def _enqueue(char: str, steps: list, replace: bool = False, ignore: str | None =
 
 
 def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, x, y, z, t0: float,
-                  avoid: str = "auto") -> str:
+                  avoid: str = "auto", waited: bool = False) -> str:
     """travel_to without waiting: check the destination now (bad ones fail at once), then run the trip
     as a queue entry for that character (the queue worker calls travel_to again, batch-active)."""
     args: dict[str, Any] = {k: v for k, v in (("marker", marker), ("objective", objective), ("target", target),
                                               ("x", x), ("y", y), ("z", z)) if v not in ("", None)}
     if avoid != "auto":
         args["avoid_hazards"] = avoid
+    dest = None
     if target:
         what, dist_m = target, None
         _uuid(target)  # an unknown id fails now
@@ -1332,9 +1477,39 @@ def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, 
     if _session_over():
         return _finish("travel_to", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
     queued = _enqueue(char, [actq.Step("travel_to", args)], ignore=None)
-    body = (f"travel_to {what}: started" + (f" ({render.num(round(dist_m, 1))}m)" if dist_m is not None else "")
-            + f"; {queued}. Append arrival steps with queue_actions; wait_for('queue') only if you must.")
-    return _finish("travel_to", {"to": what}, body, t0)
+    if dest is not None and dist_m is not None:
+        _trips[char] = {"dest": dest, "d0": dist_m, "t0": time.monotonic()}
+    body = f"travel_to {what}: started" + (f" ({render.num(round(dist_m, 1))}m)" if dist_m is not None else "")
+    # Settle window: a trip that stops at once (hazard, no ground, an interrupt) or a short one comes back now.
+    if _settle(lambda: None if _queues().busy(char) else {"status": "ended"}) is not None:
+        _trips.pop(char, None)
+        return _finish("travel_to", {"to": what}, body + "\n" + (_last_queue_text(char) or "queue: ended"), t0)
+    prog = _trip_progress(char)
+    body += (f"; {prog}" if prog else "") + f"; {queued}."
+    if waited:
+        body += " (wait=true ignored: the trip runs while you plan)"
+    hint = _next_walk_hint()
+    return _finish("travel_to", {"to": what}, body + ("\n" + hint if hint else ""), t0, issued=True)
+
+
+_trips: dict[str, dict] = {}  # char -> {dest, d0, t0} of the travel_to its queue is running (live progress)
+
+
+def _trip_progress(char: str) -> str:
+    """'31m left, ETA ~7s' for a running travel_to (one act.watch read; ETA from the speed so far)."""
+    trip = _trips.get(char)
+    if not trip:
+        return ""
+    pos = _pos_now(char)
+    if not pos:
+        return ""
+    left = macros.dist(pos, trip["dest"])
+    s = f"{render.num(round(left))}m left"
+    dt = time.monotonic() - trip["t0"]
+    speed = (trip["d0"] - left) / dt if dt > 0.3 else 0.0
+    if speed > 0.5:
+        s += f", ETA ~{render.num(round(left / speed))}s"
+    return s
 
 
 @mcp.tool()
@@ -1405,6 +1580,10 @@ def wait_for(target: str = "idle", timeout_s: float = 15.0) -> str:
             ui_at = now
             ui = game.try_rpc("ui.state", context="client") or {}
             scr = ui.get("screen") if isinstance(ui, dict) else None
+            if scr == "dialogue" and "dialogue_started" in low:
+                # Already open (its event went out in an earlier result): live S002 waited the full 5 s here.
+                body = "dialogue open\n" + "\n".join(render.render_ui(ui, H))
+                break
             if screen0 is None:
                 screen0 = scr
             elif scr in _PROMPT_SCREENS_WAIT and scr != screen0:
@@ -1588,12 +1767,22 @@ def _running_text() -> str:
             left = float(info["eta"]) - (time.monotonic() - info["t0"])
             s_ += f" ~{render.num(round(max(0.0, left), 1))}s left"
         parts.append(s_)
-    for q in _queues().status():
+    qs = _queues().status()
+    for q in qs:
         s_ = f"queue {_label(q['who'])}: " + (q["running"] or "starting")
+        if (q["running"] or "").startswith("travel_to"):
+            prog = _trip_progress(q["who"])
+            if prog:
+                s_ += f" ({prog})"
         if q["waiting"]:
             s_ += f" then {', '.join(q['waiting'][:4])}" + (f" +{len(q['waiting']) - 4}" if len(q["waiting"]) > 4 else "")
         parts.append(s_)
-    return ("RUNNING " + " | ".join(parts)) if parts else ""
+    running = {q["who"] for q in qs}
+    for c in [c for c in _trips if c not in running]:
+        _trips.pop(c, None)
+    if not parts:
+        return ""
+    return "RUNNING " + " | ".join(parts) + (" (queue_actions appends after it)" if qs else "")
 
 
 def _peek_events(kinds: set) -> dict | None:
@@ -1981,9 +2170,13 @@ def dialogue_advance(max_lines: int = macros.DIALOGUE_MAX) -> str:
     stop = None
     n = 0
     wait_until = time.monotonic() + 8.0  # a voiced line that is still playing
+    open_until = time.monotonic() + 2.5  # called right after talk_to/interact: the dialogue may still be opening
     while n < max(1, min(int(max_lines), 30)):
         ui = game.try_rpc("ui.state", context="client") or {}
         scr = ui.get("screen")
+        if scr in (None, "game") and n == 0 and time.monotonic() < open_until:
+            time.sleep(0.25)
+            continue
         if scr != "dialogue":
             stop = "conversation ended" if scr in (None, "game") else f"{scr} on screen"
             if scr not in (None, "game"):
@@ -2060,7 +2253,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
               wait: bool = False, avoid_hazards: str = "auto") -> str:
     """Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Chains walks of up to 30 m along walkable ground toward it, around harmful surfaces you can see (fire, acid, ...); stops on arrival (within 3 m), when no walkable ground leads further, after 2 legs without progress, or at the first interrupt (combat, conversation, prompt, new hostile, any damage). Stepping into a surface: it steps out (forward if it can) and goes on.
     avoid_hazards: auto (default) = when no clear way leads on, it takes the shortest crossing (says e.g. 'crossing 1.5m of Fire (~1-4 dmg + Burning)') unless HP is too low for the worst case; strict = never crosses; cross = crosses even at low HP (never lava/chasms, never >6 m).
-    Returns at once: the trip runs as the first entry of the character's action queue, so queue_actions appends what to do on arrival while you observe and plan. A later result brings queue_done or queue_interrupted (why); wait_for('queue') blocks until then. wait=true blocks and returns each leg."""
+    Returns within ~1 s with live progress (m left, ETA), or the outcome if the trip already ended: the trip runs as the first entry of the character's action queue, so queue_actions appends what to do on arrival while you observe and plan. Every later result shows it RUNNING, then queue_done or queue_interrupted (why). wait is ignored (the trip never blocks)."""
     t0 = time.monotonic()
     if waypoint:
         return fast_travel(waypoint)
@@ -2069,8 +2262,8 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
         raise ValueError("avoid_hazards must be auto, strict or cross")
     w = _no_combat("travel_to")
     char = _who(who)
-    if not wait and not _batch["active"]:
-        return _travel_async(char, w, marker, objective, target, x, y, z, t0, policy)
+    if not _batch["active"]:  # wait=true too: the agent plans while the character walks
+        return _travel_async(char, w, marker, objective, target, x, y, z, t0, policy, waited=wait)
     outer = _batch["exec"] if _batch["active"] else None  # the queue running this trip: its cancel stops it
     if target:
         lines, stop, left = _macro_groups(char, [(f"walk to {target}", [actq.Step("move_to", {"target": target})])])
@@ -2117,13 +2310,15 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             if isinstance(r, dict) and not r.get("reachable") and r.get("hazard"):
                 stop = (f"the way on crosses {macros.hazard_text(r['hazard'])} ({render.num(round(d, 1))}m left)"
                         + (": no way around or across it found" if policy != "strict" else "")
-                        + ": go around it (walk_toward another direction, get_frontier) or wait for it to burn out")
+                        + ": go around it (walk_toward another direction, get_frontier) or "
+                        + macros.hazard_way_out(r["hazard"]))
                 break
             if not (isinstance(r, dict) and r.get("reachable") and r.get("pos")) or macros.dist(r["pos"], dest) > d - 1.0:
                 stop = (f"no walkable ground leads further toward it ({render.num(round(d, 1))}m left): "
                         "try get_frontier, a door, or a jump")
                 if isinstance(r, dict) and r.get("hazard_beyond"):
                     stop += f"; ahead: {macros.hazard_text(r['hazard_beyond'])}"
+                stop += _climb_hint(here, dest)
                 break
             ex = r.get("exposure")
             leg_w, note = watcher, ""
@@ -2176,6 +2371,25 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
         if outer_w is not None:
             outer_w.ignore -= added
     return _macro_finish("travel_to", {"to": what}, lines, stop, [], t0)
+
+
+def _climb_hint(here: list | None, dest: list | None) -> str:
+    """travel_to stopped short of a destination on another deck: name the nearest ladders/stairs (the walker
+    never climbs on its own; interact with the ladder does)."""
+    if not (here and dest) or abs(dest[1] - here[1]) < 2.5:
+        return ""
+    res = game.try_rpc("nav.frontier", {})
+    leads = res.get("leads") if isinstance(res, dict) else None
+    ups = sorted((l for l in leads or [] if l.get("uuid") and l.get("kind") in ("ladder", "stairs")),
+                 key=lambda l: l.get("dist") or 1e9)[:2]
+    side = "above" if dest[1] > here[1] else "below"
+    hint = f"; it is {render.num(round(abs(dest[1] - here[1]), 1))}m {side} you"
+    if not ups:
+        return hint + ": find a ladder or stairs (get_frontier) or jump_to"
+    _remember_names(res)
+    names = ", ".join(f"{H.get(l['uuid'], l.get('name'))} {l.get('name', '?')} {render.num(l.get('dist', '?'))}m"
+                      for l in ups)
+    return hint + f": climb with interact on a ladder ({names}), then travel_to again"
 
 
 def _pos_now(char: str) -> list | None:
@@ -2431,10 +2645,20 @@ def load_game(save: str = "latest") -> str:
 @mcp.tool()
 @_guard
 def wait(seconds: float = 3.0) -> str:
-    """Let game time pass (cutscenes, NPC turns, a still-running action) and report what happened."""
+    """Let game time pass (cutscenes, NPC turns) and report what happened. Returns early on the first notable event (combat/turn/dialogue start or end, a job or queue finishing). To follow an action, prefer wait_for."""
     t0 = time.monotonic()
-    time.sleep(max(0.2, min(seconds, 30.0)))
-    return _finish("wait", {"seconds": seconds}, f"waited {seconds}s", t0)
+    end = t0 + max(0.2, min(seconds, 30.0))
+    hit = None
+    while time.monotonic() < end and hit is None:
+        time.sleep(min(0.25, max(0.0, end - time.monotonic())))
+        hit = _peek_events(_WAIT_KINDS)
+    waited = render.num(round(time.monotonic() - t0, 1))
+    body = f"{hit.get('kind')} after {waited}s" if hit else f"waited {waited}s"
+    return _finish("wait", {"seconds": seconds}, body, t0)
+
+
+_WAIT_KINDS = {"combat_started", "combat_ended", "turn_started", "dialogue_started", "dialogue_ended",
+               "job_finished", "queue_done", "queue_interrupted"}
 
 
 def _load_markers() -> list[dict]:
@@ -2541,8 +2765,10 @@ ALWAYS_LOAD = (
     # dialogue
     "get_dialogue", "choose_dialogue", "dialogue_advance",
     # observation
-    "look", "get_status", "get_nearby", "get_frontier", "get_combat_state", "look_at", "session_clock",
+    "look", "get_status", "get_nearby", "get_frontier", "route", "get_combat_state", "look_at", "session_clock",
     "save_game",
+    # S001 spent 7 ToolSearch turns loading these mid-play
+    "wiki_page", "wiki_search", "load_game", "list_saves",
 )
 ALWAYS_LOAD_META = {"anthropic/alwaysLoad": True}
 

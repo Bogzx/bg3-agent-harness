@@ -53,7 +53,10 @@ plan you already know. In combat use `combat_turn`; in dialogue, `dialogue_advan
 ## Efficiency (hard rule)
 - Anything the engine can tell you, read as text: `look`, `get_status`, `get_party`, `get_nearby`,
   `get_frontier`, `get_actions`, `get_dialogue`, `get_combat_state`, `get_journal`, `get_map`,
-  `get_inventory`, `look_at`, `path_preview`. Every tool and its arguments: `knowledge/tools.md`.
+  `get_inventory`, `look_at`, `path_preview`, `route`. Every tool and its arguments: `knowledge/tools.md`.
+- **Don't know the way** (no path, the goal on another floor, fire in the way, a ladder)? `route(objective="o1")`
+  (or `target=`/x,y,z) answers it as text: floors above/below, the walk in legs with climbs and jumps, the
+  closest walkable spot, which ladder/door helps, and a NEXT step. Use it instead of a screenshot.
 - Anything the engine can do, do with an action tool: `move_to`, `walk_toward`, `interact`, `talk_to`, `loot`,
   `use_ability`, `end_turn`, `choose_dialogue`, `roll_check`, `react`, `fast_travel`, `manage_inventory`,
   `short_rest`/`long_rest`, `camp`, `level_up`, `trade`, `save_game`, and so on. For a screen no tool

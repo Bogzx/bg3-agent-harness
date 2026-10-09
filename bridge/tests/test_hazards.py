@@ -39,6 +39,7 @@ class CrossingPolicy(unittest.TestCase):
 class TravelCrossing(Base):
     def setUp(self) -> None:
         super().setUp()
+        server.SETTLE_S = 10.0  # the trips end within the settle window: their whole report comes back
         self.g.watch["party"][0].update(hp=22, max_hp=22)
         self.g.result_for = lambda op, a: ({"after": {"pos": a.get("pos"), "hp": 21, "max_hp": 22}}
                                            if op == "act.move_to" else {})

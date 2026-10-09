@@ -146,6 +146,10 @@ class Base(unittest.TestCase):
         server._async.clear()
         actq.WATCH_EVERY_S, actq.UI_EVERY_S = 0.01, 0.01
         self.addCleanup(self._restore, saved)
+        # Old tests check the instant-return shape; settle-window tests set it themselves.
+        saved_settle, server.SETTLE_S = server.SETTLE_S, 0.0
+        self.addCleanup(setattr, server, "SETTLE_S", saved_settle)
+        server._pace.update(issued_at=0.0, calls_since=0, next_shown=0, nudge=False)
         self.door = server.H.get(DOOR, "Door")
         self.gob = server.H.get(GOB, "Goblin")
         server.H.get(P1, "Claude")
@@ -336,6 +340,18 @@ class Queue(Base):
         self.assertEqual(note["kind"], "queue_interrupted")
         self.assertEqual(note["data"]["why"], "a conversation started")
         self.assertEqual(note["data"]["left"], [f"interact {self.door}", f"pick_up {self.door}"])
+
+    def test_party_banter_does_not_interrupt(self):
+        # An automated dialogue (companion banter while walking) is not a conversation the player must answer.
+        self.g.dur["act.move_to"] = 0.5
+
+        def banter(op, args):
+            if op == "act.move_to":
+                self.g.push("dialogue_started", {"automated": True})
+        self.g.on_start = banter
+        server.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"wait","seconds":0.2}]' % self.door)
+        self.wait_queue_idle()
+        self.assertEqual(self.g.ops("act.note")[-1][1]["kind"], "queue_done")
 
     def test_talk_step_does_not_interrupt_itself(self):
         def talk(op, args):

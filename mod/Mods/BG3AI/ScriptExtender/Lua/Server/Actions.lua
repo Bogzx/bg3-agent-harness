@@ -37,6 +37,7 @@ A.active = {}   -- char guid -> running job
 local TICK_MS = 50   -- post-condition polling; cheap queries, keeps chaining fast
 A.MOVE_REACH = 2.2   -- move_to {target}: stop within this of the entity (centres; melee reach is
                      -- weapon 1.5 + both radii, >= 2.2 m even for a tiny target, see G.check_cast)
+A.END_REQUEST_AFTER_MS = 1500 -- end_turn in a shared group: report the request as done after this
 A.USE_REACH = 1.8    -- interact/pickup and the click ops: Use/Pickup/click from here
 
 ------------------------------------------------------------------------
@@ -122,6 +123,10 @@ function A.loop_watch(char, item)
 end
 
 function A.dispatch(event, args)
+    if event == "TurnEnded" and args[1] then
+        local g = G.guid(args[1]) or args[1]
+        if g then G.end_requested[g] = nil end
+    end
     if event == "UseFinished" then
         local ok, err = pcall(A.loop_watch, args[1], args[2])
         if not ok then Ext.Utils.PrintWarning("[BG3AI] loop_watch: " .. tostring(err)) end
@@ -1122,8 +1127,12 @@ reg("end_turn", function(args)
         G.refuse("this character already ended its turn (the rest of its turn group is still acting)")
     end
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
-    local function finish(job)
+    local function finish(job, requested)
         local res = { ended = true }
+        if requested then
+            -- The game applies it when the rest of the group ends; until then the guard counts it as ended.
+            res.requested = true
+        end
         local w = group_waiting(char)
         if #w > 0 then res.still_to_act = w end
         RPC.finish_job(job, "done", res)
@@ -1137,7 +1146,13 @@ reg("end_turn", function(args)
         },
         start = function() G.osi("EndTurn", char) end,
         on_tick = function(job)
-            if not G.is_my_turn(char) then finish(job) end
+            if not G.is_my_turn(char) then finish(job) return end
+            -- Shared turn group, others still up: EndTurn stays pending until they end (live S002:
+            -- every such end_turn timed out at 10 s). Record it and return.
+            if RPC.now_ms() - job.started >= A.END_REQUEST_AFTER_MS and #group_waiting(char) > 0 then
+                G.end_requested[char] = G.now_ms()
+                finish(job, true)
+            end
         end,
         on_timeout = function(job)
             job.partial = { requested_end = G.turn_requested_end(char), still_to_act = group_waiting(char) }

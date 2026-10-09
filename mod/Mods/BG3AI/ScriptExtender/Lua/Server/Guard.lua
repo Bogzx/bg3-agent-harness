@@ -117,20 +117,30 @@ function G.in_combat(uuid) return b(G.q("IsInCombat", uuid)) end
 
 -- bg3le has no IsInDialog; SpeakerGetDialog(speaker, 1) returns the dialog
 -- resource while the speaker is in one, and DialogState.DialogId is non-zero.
+-- An automated dialogue (ambient bark, AutomatedDialog=true on the instance)
+-- does not stop a player from acting, so it does not count (live S002: Lae'zel
+-- refused "in a conversation" for ~5 s after a console dialogue, no UI shown).
 function G.in_dialogue(uuid)
-    if G.q("SpeakerGetDialog", uuid, 1) ~= nil then return true end
     local e = G.entity(uuid)
     local ds = e and U.comp(e, "DialogState")
     local ok, id = pcall(function() return ds and ds.DialogId end)
-    if not ok or id == nil or id == 0 then return false end
     -- DialogState.DialogId keeps the last instance id after the dialogue
     -- ends (seen live: 4 with no dialogue running), so only trust it while
     -- that instance still exists in the dialog manager.
-    local ok2, live = pcall(function()
-        local dm = Ext.Utils.GetDialogManager()
-        return dm and dm.Dialogs[id] ~= nil
-    end)
-    return ok2 and live == true
+    local inst
+    if ok and id ~= nil and id ~= 0 then
+        pcall(function()
+            local dm = Ext.Utils.GetDialogManager()
+            inst = dm and dm.Dialogs[id]
+        end)
+    end
+    local automated = false
+    if inst ~= nil then
+        pcall(function() automated = inst.AutomatedDialog == true end)
+        if not automated then return true end
+    end
+    if G.q("SpeakerGetDialog", uuid, 1) ~= nil then return not automated end
+    return false
 end
 
 -- Is it this character's turn? Uses the replicated TurnBased component.
@@ -139,20 +149,46 @@ end
 -- (Osiris EndTurn / the End Turn button) only gets RequestedEndTurn = true
 -- and the game hands control to the next member (live, Nautiloid: Claude +
 -- Lae'zel at initiative 4), so it may not act again this round.
+-- Ended, as far as we know: in a 3-member group (live S002) Osiris EndTurn on a
+-- member did NOT set RequestedEndTurn until the last member ended; then the
+-- requests applied one by one, ~2 s apart. act.end_turn records its request
+-- here so that member counts as ended (no acting again, no 10 s wait). Cleared
+-- on TurnEnded (Actions dispatch), out of combat, or after END_REQUEST_TTL_MS.
+G.end_requested = G.end_requested or {}
+G.END_REQUEST_TTL_MS = 120000
+local function now_ms()
+    local ok, t = pcall(function() return Ext.Utils.MonotonicTime() end)
+    return ok and t or os.clock() * 1000
+end
+G.now_ms = now_ms
+
+function G.end_pending(uuid)
+    local g = G.guid(uuid) or uuid
+    local t = g and G.end_requested[g]
+    if not t then return false end
+    if now_ms() - t > G.END_REQUEST_TTL_MS or not G.in_combat(g) then
+        G.end_requested[g] = nil
+        return false
+    end
+    return true
+end
+
 function G.is_my_turn(uuid)
     local e = G.entity(uuid)
     local tb = e and U.comp(e, "TurnBased")
     if not tb then return false end
     local ok, v = pcall(function() return tb.IsActiveCombatTurn == true and tb.RequestedEndTurn ~= true end)
-    return ok and v == true
+    return ok and v == true and not G.end_pending(uuid)
 end
 
 -- Has this character ended its turn while its turn group is still active?
 function G.turn_requested_end(uuid)
     local e = G.entity(uuid)
     local tb = e and U.comp(e, "TurnBased")
-    local ok, v = pcall(function() return tb and tb.IsActiveCombatTurn == true and tb.RequestedEndTurn == true end)
-    return ok and v == true
+    local ok, v = pcall(function() return tb and tb.IsActiveCombatTurn == true end)
+    if not (ok and v == true) then return false end
+    local okr, r = pcall(function() return tb.RequestedEndTurn == true end)
+    return (okr and r == true) or G.end_pending(uuid)
 end
 
 -- The actor must be a living, standing, on-stage party member.

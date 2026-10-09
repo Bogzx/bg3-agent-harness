@@ -607,6 +607,24 @@ test("end_turn in a shared turn group: done on RequestedEndTurn, lists who is st
     restore()
 end)
 
+test("end_turn in a group whose EndTurn stays pending: done {requested} after 1.5 s, counts as ended", function()
+    local restore = group_setup()
+    local j = job(op("end_turn", { char = P1 }))
+    tick(10) -- 0.6 s: still waiting for RequestedEndTurn
+    eq(j.status, "running", "status " .. tostring(j.error))
+    tick(20) -- past A.END_REQUEST_AFTER_MS; RequestedEndTurn never set (live S002)
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(j.result.requested, true, "requested")
+    eq(j.result.still_to_act and j.result.still_to_act[1], P2, "Lae'zel still to act")
+    eq(G.is_my_turn(P1), false, "a pending member may not act again")
+    eq(G.turn_requested_end(P1), true, "counts as ended")
+    local j2 = job(op("end_turn", { char = P1 }))
+    eq(j2.status, "failed", "second end_turn refused at once")
+    A.dispatch("TurnEnded", { "S_Player_" .. P1 })
+    eq(G.is_my_turn(P1), true, "TurnEnded clears the request (next round)")
+    restore()
+end)
+
 test("end_turn: done when the turn passes (IsActiveCombatTurn drops), no group left", function()
     local restore = group_setup()
     world[P2].comps.TurnBased.IsActiveCombatTurn = false

@@ -486,6 +486,11 @@ def render_frontier(res: Any, H: Handles) -> str:
     for l in leads:
         h = H.get(l["uuid"], l.get("name")) if l.get("uuid") else "?"
         bits = [f"{h} {l.get('name', '?')} <{l.get('kind', '?')}> {num(l.get('dist', '?'))}m {l.get('dir', '')}"]
+        dy = l.get("dy")
+        if isinstance(dy, (int, float)) and abs(dy) >= 1.5:
+            bits.append(f"({num(abs(dy))}m {'up' if dy > 0 else 'down'})")
+        if l.get("kind") == "ladder" and l.get("height_m") and l.get("leads"):
+            bits.append(f"climbs {num(l['height_m'])}m {l['leads']}")
         for flag in ("unvisited", "locked", "waypoint"):
             if l.get(flag):
                 bits.append(flag)
@@ -498,6 +503,31 @@ def render_frontier(res: Any, H: Handles) -> str:
         out.append("No leads in view. Try another direction, a door, or get_map.")
     out.extend(render_hazards(res.get("hazards") if isinstance(res, dict) else None, limit=6))
     return "\n".join(out)
+
+
+def render_path(res: Any, H: Handles) -> str:
+    """nav.path -> one line. Drops the route points (dozens of coordinates) and says plainly when there is
+    no path; error_cause is the engine's opaque code, so it is left out."""
+    if not isinstance(res, dict):
+        return compact(res, H)
+    if res.get("reachable") is False:
+        return (f"UNREACHABLE: no walkable path ({num(res.get('straight_m', '?'))}m straight line): "
+                "it may need a ladder, a jump (jump_to), a door, or another route")
+    if res.get("reachable") is None:
+        return compact({k: v for k, v in res.items() if k != "points"}, H)
+    bits = [f"reachable: walk {num(res.get('length_m', '?'))}m"]
+    if res.get("needs_jump"):
+        bits.append("(route uses a jump/climb link)")
+    if res.get("estimate"):
+        bits.append("(estimate)")
+    if res.get("approach_pos"):
+        bits.append(f"ends @{pos(res['approach_pos'])}")
+    if "within_movement" in res:
+        bits.append(("fits" if res["within_movement"] else "does NOT fit")
+                    + f" movement left {num(res.get('movement_left', '?'))}m")
+    if res.get("hazard"):
+        bits.append(f"hazard on the way: {compact(res['hazard'], H, 1)}")
+    return " ".join(bits)
 
 
 def objective_label(m: dict) -> str:

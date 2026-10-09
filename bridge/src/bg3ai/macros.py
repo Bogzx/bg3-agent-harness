@@ -89,7 +89,7 @@ def loot_targets(nearby: dict, start: Any, radius: float, done: set, corpses: bo
                 skipped.append(f"{name} (trapped)")
                 continue
             if it.get("opened") and not opened:
-                skipped.append(f"{name} (already opened)")
+                skipped.append(f"{name} (already opened; opened=true loots it anyway)")
                 continue
             out.append({"kind": "container", "uuid": it["uuid"], "name": name, "pos": it.get("pos"),
                         "dist": it.get("dist")})
@@ -164,6 +164,14 @@ class TravelProgress:
             why = "stopped short" if stopped_short else "made no progress"
             return f"{why} {self.stalls} legs in a row ({round(d, 1)}m left): the way is blocked here"
         return None
+
+
+def hazard_way_out(h: dict | None) -> str:
+    """The advice after 'go around it': a chasm or lava never burns out, so offer a jump or a ladder instead."""
+    s = str((h or {}).get("surface") or "").lower() if isinstance(h, dict) else ""
+    if "chasm" in s or "lava" in s or "void" in s:
+        return "jump_to across it (if it is narrow) or take a ladder/door (get_frontier)"
+    return "wait for it to burn out"
 
 
 def hazard_text(h: dict | None) -> str:

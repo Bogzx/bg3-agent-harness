@@ -192,7 +192,10 @@ listen("DialogStarted", 2, function(_, instance)
     if #party == 0 then return end -- not our dialogue (ambient NPC chatter)
     E.dialogs = E.dialogs or {}
     E.dialogs[instance] = true
-    RPC.push("dialogue_started", { speakers = speakers, party = party })
+    -- Party banter / barks (automated dialogs) play while you walk: flagged so queues don't stop on them.
+    local auto = osi(Osi.DialogIsAutomated, instance)
+    RPC.push("dialogue_started", { speakers = speakers, party = party,
+        automated = (auto == 1 or auto == true) or nil })
 end)
 
 listen("DialogEnded", 2, function(_, instance)

@@ -202,6 +202,10 @@ class Base(unittest.TestCase):
         server.delta.changes_text = lambda game, H: ""
         actq.WATCH_EVERY_S, actq.UI_EVERY_S = 0.01, 0.01
         self.addCleanup(self._restore, saved)
+        # Old tests check the instant-return shape; settle-window tests set it themselves.
+        saved_settle, server.SETTLE_S = server.SETTLE_S, 0.0
+        self.addCleanup(setattr, server, "SETTLE_S", saved_settle)
+        server._pace.update(issued_at=0.0, calls_since=0, next_shown=0, nudge=False)
         self.gob = server.H.get(GOB, "Goblin")
         self.imp = server.H.get(IMP, "Imp")
         self.chest = server.H.get(CHEST, "Chest")
@@ -499,6 +503,7 @@ class DialogueAdvance(Base):
 class TravelTo(Base):
     def setUp(self) -> None:
         super().setUp()
+        server.SETTLE_S = 10.0  # the trips end within the settle window: their whole report comes back
         (self.tmp / "markers.json").write_text(json.dumps([{"id": "m1", "label": "Old well", "pos": [50, 0, 0],
                                                              "level": "TUT"}]))
         self.g.result_for = lambda op, a: {"after": {"pos": a.get("pos")}} if op == "act.move_to" else {}

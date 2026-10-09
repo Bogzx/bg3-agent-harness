@@ -162,7 +162,7 @@ class LookTool(Base):
         out = server.look()
         self.assertIn("WHERE Ship Hold · Nautiloid", out)
         self.assertIn("ITEM", out)  # nearby listing
-        self.assertEqual(server.look(), "No change since your last look.")
+        self.assertEqual(server.look(), "No change since your last look (full=true shows everything).")
 
     def test_walk(self):
         server.look()
@@ -200,7 +200,7 @@ class LookTool(Base):
         self.assertIn("DIALOGUE Lae'zel: You. Tadpole. Help me or die.", out)
         self.assertIn("  2. [Intimidation] Back off.", out)
         again = server.look()
-        self.assertEqual(again, "No change since your last look.\n(DIALOGUE still open, unchanged; full=true repeats it)")
+        self.assertEqual(again, "No change since your last look (full=true shows everything).\n(DIALOGUE still open, unchanged; full=true repeats it)")
         self.assertIn("2. [Intimidation] Back off.", server.look(full=True))
 
     def test_quest(self):

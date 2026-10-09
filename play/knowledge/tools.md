@@ -19,6 +19,7 @@ j12, ETA 3s` (async: a `job_finished` event follows; `wait_for("j12")` to block)
 - `get_frontier()` → leads to explore: doors, ladders, stairs, exits and unvisited things, with direction; plus `HAZARD Fire 3m W (2x4m)` lines for harmful patches in view (nearest edge, direction, E-W x N-S size). `look` shows the same lines when the patches in view change.
 - `get_explored()` → your own breadcrumbs in this area (explored extent, recent named places).
 - `path_preview(target | x,y,z, who)` → walking distance, reachable?, needs a jump?, fits remaining movement?
+- `route(objective | target | x,y,z, who, connectors=false)` → the way to a goal as text, instead of a screenshot: distance and height (`9.2m above you`), `FLOORS` here and at the goal, the walk in legs (`1. 8m NW`, `2. CLIMB 9.2m up to (x,y,z)`, `3. 6m E`) with fire on it, or `NO WALKABLE PATH` + the `CLOSEST walkable spot` + `LADDERS/DOORS in view` ranked by how much they help (`climbs 9.4m up [interact to climb]`), and one `NEXT:` step. `get_frontier` ladders also say `climbs 9m up/down`; leads on another floor say `(9m up)`.
 - `look_at(target)` → the Examine panel for a visible character or object.
 - `get_inventory(who, filter="")` → equipment, notable items, junk summary, and the OPEN container's contents; filter: equipped | consumables | all | words.
 - `get_journal(quest="")` → active quests with latest entry; `quest="<words>"` → all entries of one quest.

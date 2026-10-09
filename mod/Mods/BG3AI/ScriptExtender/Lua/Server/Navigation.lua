@@ -238,18 +238,22 @@ local function rawPath(e, from, target)
     local res
     local okf, found = pcall(Ext.Level.FindPath, path)
     if okf and found then
-        local len, prev, jump = 0, from, false
+        local len, prev, jump, portals = 0, from, false, {}
         local okn = pcall(function()
-            for _, n in ipairs(path.Nodes) do
+            for i, n in ipairs(path.Nodes) do
                 local p = { n.Position[1], n.Position[2], n.Position[3] }
                 len = len + U.dist(prev, p)
                 prev = p
                 -- A node with a portal is a jump/climb/ladder link the pathfinder uses.
-                if n.Portal and Ext.Utils.IsValidHandle and Ext.Utils.IsValidHandle(n.Portal) then jump = true end
+                if n.Portal and Ext.Utils.IsValidHandle and Ext.Utils.IsValidHandle(n.Portal) then
+                    jump = true
+                    if i <= N.ROUTE_MAX_NODES then portals[#portals + 1] = i + 1 end -- index into points
+                end
             end
         end)
         res = { reachable = true, length_m = round(len, 1), nodes = okn and #path.Nodes or nil }
         if jump then res.needs_jump = true end
+        if #portals > 0 then res.portals = portals end
         -- The route itself (node positions): hazard checks along it, and the
         -- teleport detector accepts big steps that stay on it.
         local pts = { U.vec(from, 2) }
@@ -371,7 +375,7 @@ RPC.register("nav.path", function(args)
     local r0 = N.path(char, target)
     if not r0 then error("no path", 0) end
     local r = {}
-    for k, v in pairs(r0) do if k ~= "points" then r[k] = v end end
+    for k, v in pairs(r0) do if k ~= "points" and k ~= "portals" then r[k] = v end end
     if r0.points then r.hazard = N.routeHazard(r0.points) end
     local mv = movementLeft(char)
     if mv and r.reachable then r.within_movement = r.length_m <= mv + 0.05; r.movement_left = round(mv, 1) end
@@ -431,6 +435,8 @@ RPC.register("nav.frontier", function(args)
         local o = { kind = kind, uuid = uuid, name = V.name(uuid), dist = round(d, 1),
             dir = N.direction(center, p), pos = U.vec(p, 1) }
         if not N.visited(lvl, p, 1) then o.unvisited = true end
+        local dy = p[2] - center[2]
+        if math.abs(dy) >= 1.5 then o.dy = round(dy, 1) end -- on a ledge above / a floor below
         if extra then for k, v in pairs(extra) do o[k] = v end end
         leads[#leads + 1] = o
     end
@@ -449,7 +455,14 @@ RPC.register("nav.frontier", function(args)
                 elseif kind == "door" then
                     add("door", u, p, { locked = truthy(osi(Osi.IsLocked, u)) or nil })
                 elseif kind == "ladder" then
-                    add("ladder", u, p)
+                    -- how far it climbs (AI bounds), and which way from where we stand
+                    local b, extra = V.bounds and V.bounds(e), nil
+                    if b and type(b.height) == "number" and b.height >= 1.5 then
+                        local top = p[2] + b.height
+                        extra = { height_m = round(b.height, 1),
+                            leads = math.abs(center[2] - top) < math.abs(center[2] - p[2]) and "down" or "up" }
+                    end
+                    add("ladder", u, p, extra)
                 elseif kind == "container" and not U.comp(e, "HasOpened") then
                     add("container", u, p, { locked = truthy(osi(Osi.IsLocked, u)) or nil })
                 elseif not N.visited(lvl, p, 1) and (kind == "usable" or kind == "item") then
@@ -1047,6 +1060,242 @@ function N.hazardPatches(charUuid, radius, step)
 end
 
 ------------------------------------------------------------------------
+-- Route ahead (the bridge's `route` tool and travel_to/walk_toward hints):
+-- what a player reads off the path preview and the scenery between here and
+-- a goal, so the agent needs no screenshot (live S001: 23 screenshots and 13
+-- clicks, mostly at the fire maze and the ladder). The legs of the walk, the
+-- climbs/jumps/drops on it, burning stretches, the floor levels at both ends;
+-- with no path: the walkable spot nearest the goal and the ladders/doors in
+-- view, ranked by how much they help.
+------------------------------------------------------------------------
+
+N.ROUTE_LEG_M = 10       -- a leg ends after this many metres...
+N.ROUTE_TURN_DEG = 35    -- ...or at a turn this sharp
+N.ROUTE_MAX_LEGS = 8
+N.LINK_DY_M = 1.0        -- a step this high and steeper than 1:1 is a climb/drop
+N.LEVEL_RANGE_M = 15     -- floors reported within +-15 m
+N.CONNECT_M = 30         -- ladders/doors considered within 30 m
+N.CONNECT_MAX = 5
+N.CONNECT_PROBE = 8      -- path probes for the nearest 8 only
+N.NEAR_GOAL_RINGS = { 1.5, 3, 5, 8 }
+
+-- Floor heights at (x, z) relative to y, ascending and de-duplicated: {-6.1,
+-- 0, 9.2} = a floor 6 m below, this one, a ledge 9 m up. nil if unknown.
+function N.levelsAt(x, z, y)
+    local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+    if not ok or type(hs) ~= "table" then return nil end
+    local out = {}
+    for _, h in ipairs(hs) do
+        if type(h) == "number" and math.abs(h - y) <= N.LEVEL_RANGE_M then
+            local d = round(h - y, 1)
+            local dup = false
+            for _, o in ipairs(out) do if math.abs(o - d) < 0.5 then dup = true end end
+            if not dup then out[#out + 1] = d end
+        end
+    end
+    table.sort(out)
+    return out
+end
+
+local function heading(a, b)
+    local dx, dz = b[1] - a[1], b[3] - a[3]
+    if dx * dx + dz * dz < 0.09 then return nil end
+    return math.deg(math.atan(dz, dx))
+end
+
+local function turned(h0, h1)
+    if not h0 or not h1 then return false end
+    local d = math.abs(h1 - h0) % 360
+    if d > 180 then d = 360 - d end
+    return d >= N.ROUTE_TURN_DEG
+end
+
+-- Pure (unit-tested): split a route (points from rawPath; portals = indices of
+-- points reached through a jump/climb link) into legs and links. A leg ends
+-- after ROUTE_LEG_M (stretched so there are at most ROUTE_MAX_LEGS), at a
+-- turn >= ROUTE_TURN_DEG, or at a link. A link is a portal step or a steep
+-- step (|dy| >= LINK_DY_M and steeper than 1:1): climb (up), drop (down) or
+-- jump (level). legs: {{to, at_m, m, dir, dy}}; links: {{at_m, from, to, dy, m, kind}}.
+function N.routeLegs(points, portals)
+    local legs, links = {}, {}
+    if type(points) ~= "table" or #points < 2 then return legs, links end
+    local isPortal = {}
+    for _, i in ipairs(portals or {}) do isPortal[i] = true end
+    local total = 0
+    for i = 2, #points do total = total + U.dist(points[i - 1], points[i]) end
+    local legM = math.max(N.ROUTE_LEG_M, total / N.ROUTE_MAX_LEGS)
+    local walked, start, startAt, h0 = 0, points[1], 0, nil
+    local function close(p, at)
+        if at - startAt < 0.3 then start, startAt, h0 = p, at, nil; return end
+        legs[#legs + 1] = { to = U.vec(p, 1), at_m = round(at, 1), m = round(at - startAt, 1),
+            dir = N.direction(start, p), dy = round(p[2] - start[2], 1) }
+        start, startAt, h0 = p, at, nil
+    end
+    for i = 2, #points do
+        local a, b = points[i - 1], points[i]
+        local seg, hd, dy = U.dist(a, b), hdist(a, b), b[2] - a[2]
+        if isPortal[i] or (math.abs(dy) >= N.LINK_DY_M and math.abs(dy) > hd) then
+            close(a, walked)
+            local kind = dy >= N.LINK_DY_M and "climb" or (dy <= -N.LINK_DY_M and "drop" or "jump")
+            links[#links + 1] = { at_m = round(walked, 1), from = U.vec(a, 1), to = U.vec(b, 1),
+                dy = round(dy, 1), m = round(hd, 1), kind = kind }
+            walked = walked + seg
+            legs[#legs + 1] = { to = U.vec(b, 1), at_m = round(walked, 1), m = round(seg, 1),
+                dir = N.direction(a, b), dy = round(dy, 1), link = kind }
+            start, startAt, h0 = b, walked, nil
+        else
+            local h = heading(a, b)
+            if turned(h0, h) then close(a, walked) end
+            h0 = h0 or h
+            walked = walked + seg
+            if walked - startAt >= legM - 0.01 then close(b, walked) end
+        end
+    end
+    close(points[#points], walked)
+    return legs, links
+end
+
+-- The walkable spot nearest `goal`: rings around it (floors near its height,
+-- nearest ring first), else the farthest direct walk straight toward it.
+-- {pos, path_m, to_goal_m, dy_to_goal, via=near_goal|toward} or nil.
+function N.closestReach(charUuid, goal)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from then return nil end
+    for _, rad in ipairs(N.NEAR_GOAL_RINGS) do
+        local best, bd
+        for _, dname in ipairs(DIRS) do
+            local v = DIR_VEC[dname]
+            local x, z = goal[1] + v[1] * rad, goal[3] + v[2] * rad
+            local fy = floorAt(x, z, goal[2])
+            if fy then
+                local p = { x, fy, z }
+                local r = N.path(charUuid, p)
+                if r and r.reachable then
+                    local d = U.dist(p, goal)
+                    if not bd or d < bd then best, bd = { pos = p, path_m = r.length_m }, d end
+                end
+            end
+        end
+        if best then
+            return { pos = U.vec(best.pos, 1), path_m = best.path_m, to_goal_m = round(bd, 1),
+                dy_to_goal = round(goal[2] - best.pos[2], 1), via = "near_goal" }
+        end
+    end
+    local r = N.reachToward(charUuid, nil, goal, math.min(U.dist(from, goal), N.CONNECT_M), 2, false)
+    if r and r.reachable and r.pos and (r.straight_m or 0) >= 1 then
+        return { pos = r.pos, path_m = r.path_m, to_goal_m = round(U.dist(r.pos, goal), 1),
+            dy_to_goal = round(goal[2] - r.pos[2], 1), via = "toward" }
+    end
+    return nil
+end
+
+-- Ladders and doors in view, ranked for reaching `goal` (or by distance):
+-- walking metres to it + straight metres from its far end to the goal (a
+-- ladder's top when we stand at its foot, from its AI bounds). Each: {uuid,
+-- name, kind, pos, dist, dir, dy, path_m?|unreachable?, height_m?, leads?
+-- (up|down), far_dy?, to_goal_m?, helps?, locked?}.
+function N.connectors(ctx, charUuid, goal, radius, limit)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from then return {} end
+    local d0 = goal and U.dist(from, goal)
+    -- candidates first; only the nearest CONNECT_PROBE get path probes (an
+    -- unreachable one costs up to 9: the approach ring), bounding game-thread time
+    local cands = {}
+    for _, u in ipairs(V.itemsAround(from, radius)) do
+        local ie = V.entity(u)
+        local p = ie and V.pos(ie)
+        if p and U.dist(from, p) <= radius then
+            local vis, kind = V.itemVisible(ctx, u, ie, p)
+            if vis and (kind == "ladder" or kind == "door") then
+                cands[#cands + 1] = { u = u, ie = ie, p = p, kind = kind, d = U.dist(from, p) }
+            end
+        end
+    end
+    table.sort(cands, function(a, b) return a.d < b.d end)
+    local out = {}
+    for i, cd in ipairs(cands) do
+        if i > N.CONNECT_PROBE then break end
+        local u, ie, p, kind = cd.u, cd.ie, cd.p, cd.kind
+        local o = { uuid = u, name = V.name(u), kind = kind, pos = U.vec(p, 1), dist = round(U.dist(from, p), 1),
+            dir = N.direction(from, p), dy = round(p[2] - from[2], 1) }
+        local far = p
+        if kind == "ladder" then
+            local b = V.bounds and V.bounds(ie)
+            if b and type(b.height) == "number" and b.height >= 1.5 then
+                o.height_m = round(b.height, 1)
+                local top = { p[1], p[2] + b.height, p[3] }
+                if math.abs(from[2] - top[2]) < math.abs(from[2] - p[2]) then
+                    o.leads = "down"
+                else
+                    far, o.leads = top, "up"
+                end
+                o.far_dy = round(far[2] - from[2], 1)
+            end
+        elseif truthy(osi(Osi.IsLocked, u)) then
+            o.locked = true
+        end
+        local r = N.path(charUuid, u)
+        if r and r.reachable then o.path_m = r.length_m elseif r and r.reachable == false then o.unreachable = true end
+        if goal then
+            o.to_goal_m = round(U.dist(far, goal), 1)
+            if o.to_goal_m < d0 - 2 then o.helps = true end
+        end
+        out[#out + 1] = o
+    end
+    local function score(o)
+        return (o.unreachable and 1000 or 0) + (o.path_m or o.dist) + (o.to_goal_m or 0) + (o.locked and 20 or 0)
+    end
+    table.sort(out, function(a, b) return score(a) < score(b) end)
+    while #out > (limit or N.CONNECT_MAX) do table.remove(out) end
+    return out
+end
+
+-- Everything above for one goal. {from, goal, straight_m, dir, dy,
+-- levels_here, levels_goal, reachable, length_m?, needs_jump?, legs?, links?,
+-- exposure?, straight_hazard?, closest?{..., legs, links}, connectors?,
+-- standing_in?, too_far?}.
+function N.routeAhead(ctx, charUuid, goal, withConnectors)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from then return nil, "no position" end
+    local out = { from = U.vec(from, 1), goal = U.vec(goal, 1), straight_m = round(U.dist(from, goal), 1),
+        dir = N.direction(from, goal), dy = round(goal[2] - from[2], 1) }
+    out.levels_here = N.levelsAt(from[1], from[3], from[2])
+    out.levels_goal = N.levelsAt(goal[1], goal[3], from[2])
+    if U.dist(from, goal) > N.PATH_MAX_M then
+        out.too_far = true
+    else
+        local r = N.path(charUuid, goal)
+        if r and r.reachable then
+            out.reachable = true
+            out.length_m, out.needs_jump = r.length_m, r.needs_jump
+            out.legs, out.links = N.routeLegs(r.points, r.portals)
+            out.exposure = N.routeExposure(r.points)
+        elseif r and r.reachable == false then
+            out.reachable = false
+            out.straight_hazard = N.routeExposure({ from, goal })
+            local c = N.closestReach(charUuid, goal)
+            if c then
+                local rc = N.path(charUuid, c.pos)
+                if rc and rc.reachable then
+                    c.legs, c.links = N.routeLegs(rc.points, rc.portals)
+                    c.exposure = N.routeExposure(rc.points)
+                end
+                out.closest = c
+            end
+        end
+    end
+    if withConnectors or not out.reachable then
+        out.connectors = N.connectors(ctx, charUuid, goal, N.CONNECT_M, N.CONNECT_MAX)
+    end
+    local under = N.harmfulUnder(charUuid)
+    if under then out.standing_in = under end
+    return out
+end
+
+------------------------------------------------------------------------
 -- Objective markers (what the map/minimap shows for tracked objectives).
 -- Active objective = the objective of each accepted, open quest's latest
 -- unlocked step (prototype order). Objective -> markers -> target entity
@@ -1095,12 +1344,18 @@ end
 -- Accepted, open quests and the objective of their latest unlocked step.
 -- Walking every quest's steps costs a few hundred Osiris calls, and get_status
 -- asks every turn, so the list is reused for MARKER_CACHE_MS.
+-- With State's quest generation (bumped by quest listeners) the list lives
+-- until a quest event, up to MARKER_GEN_TTL_MS; without it, MARKER_CACHE_MS.
 N.MARKER_CACHE_MS = 2000
+N.MARKER_GEN_TTL_MS = 30000
 N.activeCache = N.activeCache or nil
 local function activeObjectives(who)
     local now = Ext.Utils.MonotonicTime()
     local c = N.activeCache
-    if c and c.who == who and now - c.t < N.MARKER_CACHE_MS then return c.list end
+    local S = BG3AI.State
+    local gen = S and S.questGen
+    local ttl = gen and N.MARKER_GEN_TTL_MS or N.MARKER_CACHE_MS
+    if c and c.who == who and c.gen == gen and now - c.t < ttl then return c.list end
     local list = {}
     for _, q in ipairs(stepObjectives()) do
         if truthy(osi(Osi.QuestIsAccepted, who, q.id)) and not truthy(osi(Osi.QuestIsClosed, q.id)) then
@@ -1111,7 +1366,7 @@ local function activeObjectives(who)
             if current and current.objective then list[#list + 1] = { quest = q, objective = current.objective } end
         end
     end
-    N.activeCache = { who = who, t = now, list = list }
+    N.activeCache = { who = who, gen = gen, t = now, list = list }
     return list
 end
 
@@ -1266,6 +1521,32 @@ RPC.register("nav.hazards", function(args)
     end
     out.ms = Ext.Utils.MonotonicTime() - t0
     return out
+end)
+
+-- nav.route {char?, pos | target, connectors?}: the route ahead (N.routeAhead).
+-- A target must be visible; a pos is the agent's own goal (objective marker,
+-- map marker, coordinates it read). Ladders/doors are listed when there is no
+-- path, or always with connectors=true.
+RPC.register("nav.route", function(args)
+    local ctx = V.context()
+    local char = args.char or activeChar(ctx)
+    if not ctx.is_party[char] then error("not a party member", 0) end
+    local goal = type(args.pos) == "table" and #args.pos >= 3 and args.pos or nil
+    if not goal and args.target then
+        local te = V.entity(args.target)
+        local tp = te and V.pos(te)
+        if not tp then error("unknown target", 0) end
+        local visible = U.comp(te, "ServerCharacter") and V.characterVisible(ctx, args.target, te, tp)
+            or (U.comp(te, "ServerItem") and V.itemVisible(ctx, args.target, te, tp))
+        if not visible then error("not visible", 0) end
+        goal = tp
+    end
+    if not goal then error("need pos [x,y,z] or target", 0) end
+    local t0 = Ext.Utils.MonotonicTime()
+    local r, err = N.routeAhead(ctx, char, goal, args.connectors == true)
+    if not r then error(err, 0) end
+    r.ms = Ext.Utils.MonotonicTime() - t0
+    return r
 end)
 
 -- Cheap activity sample for latency metrics (the bridge polls it ~1/s on its
