@@ -6,14 +6,15 @@ Refuses to run while a session is playing: runtime/runner.lock held by a runner,
 in play/ (exit 3). The runner itself runs it between sessions with BG3AI_CHECK_ALL_RUNNER_PID=<its pid>: a lock
 held by that pid (the pid the lock file names) is then not a blocker; a claude in play/ still is. --json PATH
 also writes the rows and counts (the runner appends the table to the session's triage report). Nothing here moves a character, saves, loads or hot-reloads. The only UI it touches: the
-`waypoints` check opens the map (M) and closes it, and only on the plain game view out of combat.
+`waypoints` check opens the map (M) twice and closes it, and only on the plain game view out of combat.
 
 Checks, in order (latency first, so nothing else is in flight while it measures):
   latency     look / get_status / get_nearby through the MCP tool functions, --calls each: p50/p90 (goal: bridge
               read round trip < 100 ms). PASS p50 < 100 and p90 < 250; FAIL p50 > 300 or any FAILED reply.
   waypoints   fast_travel's list: state.map's unlocked waypoints vs the map UI's list (ui.waypoints), and each
               one (by name and by WAYP id) resolves to itself through the mod's SV.pickWaypoint. Empty UI list
-              = the S007 bug (FAIL).
+              = the S007 bug (FAIL). Then opens the map again at once: it must open (S021 "the map didn't
+              open" right after a travel), in one M press (more = a swallowed press, WARN), and close.
   keys        press_key dry run: UIActions.keySpec maps DELETE/1/ENTER/ctrl+s/... to bg3se SDLScanCode labels,
               and each label exists in Ext.Enums.SDLScanCode / SDLKeyModifier. Nothing is pressed.
   confirm     confirm-dialog detection: UIActions.confirmBox() runs, and when a box is open, which button
@@ -399,6 +400,18 @@ def check_waypoints(g) -> Row:
     detail = f"map UI lists {len(listed)}, state.map {len(unlocked)}; {len(wants) - len(misses)}/{len(wants)} names+ids resolve"
     if blocked:
         detail += f"; travel blocked now ({blocked})"
+    # Live S021: the map open right after another one swallowed the M press ("the map didn't open").
+    # Open it again at once; withMap re-presses, so >1 press means the toggle was out of step.
+    r2 = g.run_job("ui.waypoints", {}, context="client", wait_s=8.0)
+    presses = [(x.result or {}).get("map_presses") for x in (r, r2)]
+    detail += f"; map reopened ({r2.status}), M presses {presses[0]}+{presses[1]}"
+    if r2.status != "done":
+        return Row("waypoints", "FAIL", detail + f": 2nd open {r2.status}: {r2.error or r2.result}")
+    ui2 = g.try_rpc("ui.state", {}, context="client", default={}) or {}
+    if isinstance(ui2, dict) and ui2.get("screen", "game") != "game":
+        return Row("waypoints", "FAIL", detail + f": screen {ui2.get('screen')} after closing the map (left open?)")
+    if any(isinstance(n, int) and n > 1 for n in presses):
+        return Row("waypoints", "WARN", detail + ": a press was swallowed (re-pressed, opened)")
     if misses:
         return Row("waypoints", "FAIL" if len(misses) * 2 > len(wants) else "WARN", detail + ": " + "; ".join(misses[:3]),
                    lines=[f"WARN {m}" for m in misses])

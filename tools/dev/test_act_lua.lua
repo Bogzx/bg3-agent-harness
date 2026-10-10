@@ -196,6 +196,17 @@ test("approach: nothing reachable -> refused", function()
     refused(function() G.approach_point(P1, NPC, 2.5) end, "no walkable path")
 end)
 
+test("approach / point move: no path -> names the closest walkable spot (S021)", function()
+    nav.fn = function() return { reachable = false } end
+    BG3AI.Nav.closestReach = function(_, goal)
+        return { pos = { goal[1] - 3, goal[2] - 4.6, goal[3] }, path_m = 21, to_goal_m = 5.2, dy_to_goal = 4.6 }
+    end
+    refused(function() G.approach_point(P1, NPC, 2.5) end, "closest walkable spot (")
+    refused(function() G.point_reachable(P1, { 5, 0, 0 }) end, "4.6m above that spot")
+    BG3AI.Nav.closestReach = nil
+    refused(function() G.point_reachable(P1, { 5, 0, 0 }) end, "may need a jump or another route)")
+end)
+
 test("approach: only with a jump -> refused, says jump", function()
     nav.fn = function() return { reachable = true, length_m = 5, needs_jump = true } end
     refused(function() G.approach_point(P1, NPC, 2.5) end, "needs a jump")

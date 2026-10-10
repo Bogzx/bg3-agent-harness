@@ -36,6 +36,7 @@ class FakeGame:
         self.ui_list = [{"region": "Wilderness", "name": "Roadside Cliffs"}, {"region": "Wilderness", "name": "Emerald Grove"}]
         self.picks = None  # None: every wanted name/id resolves
         self.job = None
+        self.jobs: list = []  # ui.waypoints results in call order (then self.job / the default)
         self.mod = {"nav": True, "budget": 40, "memo": True,
                     "ops": {"nav.waypoints": True, "act.watch": True, "nav.activity": True}}
         self.activity = {"in_combat": False, "pos": {}}
@@ -86,7 +87,9 @@ class FakeGame:
 
     def run_job(self, op, args, context="server", wait_s=25.0, poll_s=0.1, on_start=None):
         self.calls.append((op, args))
-        return self.job or JobResult("done", {"waypoints": self.ui_list})
+        if self.jobs:
+            return self.jobs.pop(0)
+        return self.job or JobResult("done", {"waypoints": self.ui_list, "map_presses": 1})
 
 
 class SessionGuardTest(unittest.TestCase):
@@ -308,6 +311,28 @@ class WaypointsTest(unittest.TestCase):
         g = FakeGame(unlocked=[])
         self.assertEqual(C.check_waypoints(g).verdict, "PASS")
         self.assertNotIn("ui.waypoints", [c[0] for c in g.calls])
+
+    def test_reopens_map(self):
+        g = FakeGame()
+        r = C.check_waypoints(g)
+        self.assertEqual(r.verdict, "PASS", r.detail)
+        self.assertEqual([c[0] for c in g.calls].count("ui.waypoints"), 2)
+        self.assertIn("map reopened (done), M presses 1+1", r.detail)
+
+    def test_second_open_fails(self):
+        ok = JobResult("done", {"waypoints": [{"name": "Roadside Cliffs"}, {"name": "Emerald Grove"}], "map_presses": 1})
+        g = FakeGame(jobs=[ok, JobResult("failed", None, "the map didn't open (pressed M,M,M over 3.6s)")])
+        r = C.check_waypoints(g)
+        self.assertEqual(r.verdict, "FAIL")
+        self.assertIn("2nd open failed", r.detail)
+
+    def test_swallowed_press_warns(self):
+        lst = [{"name": "Roadside Cliffs"}, {"name": "Emerald Grove"}]
+        g = FakeGame(jobs=[JobResult("done", {"waypoints": lst, "map_presses": 1}),
+                           JobResult("done", {"waypoints": lst, "map_presses": 2})])
+        r = C.check_waypoints(g)
+        self.assertEqual(r.verdict, "WARN")
+        self.assertIn("swallowed", r.detail)
 
     def test_job_failed(self):
         g = FakeGame(job=JobResult("failed", None, "the map didn't open"))

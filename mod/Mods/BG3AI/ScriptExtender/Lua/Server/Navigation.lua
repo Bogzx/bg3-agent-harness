@@ -775,7 +775,9 @@ end
 -- harmful surface; the farthest safe sample wins. If every sample is unsafe
 -- the result is {reachable=false, hazard={surface,pos,at_m}}.
 N.DETOUR = 1.5
-function N.reachToward(charUuid, dir, toward, maxM, step, avoid)
+N.DETOUR_LOOSE = 3.0 -- loose: a winding walk still counts (walk_toward)
+N.LOOSE_TRIES = 5
+function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil, "no position" end
@@ -854,6 +856,31 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid)
             best = good(i) or nil
         end
     end
+    -- loose (walk_toward): nothing direct -> the farthest sample whose walk
+    -- winds (a room's furniture, a cliff path's switchbacks) up to
+    -- DETOUR_LOOSE x the straight line. S021: "no walkable ground toward E"
+    -- inside buildings and on the Risen Road cliffs, where a click on that
+    -- ground walks there. Same-frame searches come from the path cache.
+    local winding = false
+    if not best and loose and avoided == 0 then
+        local n = 0
+        for i = #pts, 1, -1 do
+            if n >= N.LOOSE_TRIES then break end
+            local c, dd = pts[i], pts[i].dd
+            if dd >= 2.0 then
+                if memo[i] == nil then tried = tried + 1 end
+                n = n + 1
+                local r = N.path(charUuid, c.pos)
+                if r and r.reachable and not r.partial and not r.needs_jump
+                    and r.length_m <= math.max(N.DETOUR_LOOSE * dd, dd + 6.0)
+                    and not (avoid and (N.surfaceNear(c.pos) or N.routeHazard(r.points))) then
+                    best = { pos = c.pos, path_m = r.length_m, straight_m = round(dd, 1) }
+                    winding = true
+                    break
+                end
+            end
+        end
+    end
     if firstHazard then firstHazard.dd = nil end
     if not best then
         if avoided == 0 then return { reachable = false, samples = tried } end
@@ -861,8 +888,31 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid)
     end
     local out = { pos = U.vec(best.pos, 1), path_m = best.path_m, straight_m = best.straight_m,
         needs_jump = best.needs_jump, reachable = true, samples = tried, dir = N.direction(from, best.pos),
-        searched = true }
+        searched = true, winding = winding or nil }
     if avoided > 0 then out.avoided = avoided; out.hazard_beyond = firstHazard end
+    return out
+end
+
+-- Other compass directions that do lead somewhere, nearest bearing to the
+-- failed one first (walk_toward's FAILED reply names them, so the next call
+-- walks instead of probing: S021 spent 2-4 model turns per dead direction).
+-- Stops after `want` hits; each direction is a farthest-first sweep (~1-5
+-- searches). Returns {{dir, m, path_m, winding?}, ...}.
+N.ALT_DIRS_WANT = 3
+local ALT_ORDER = { 1, -1, 2, -2, 3, -3, 4 }
+function N.otherDirections(charUuid, dir, maxM, avoid, want)
+    local out = {}
+    local i0
+    for i, d in ipairs(DIRS) do if d == dir then i0 = i end end
+    if not i0 then return out end
+    for _, k in ipairs(ALT_ORDER) do
+        if #out >= (want or N.ALT_DIRS_WANT) then break end
+        local d = DIRS[((i0 - 1 + k) % 8) + 1]
+        local r = N.reachToward(charUuid, d, nil, maxM, 3, avoid, true)
+        if r and r.reachable and (r.straight_m or 0) >= 3 then
+            out[#out + 1] = { dir = d, m = r.straight_m, path_m = r.path_m, winding = r.winding }
+        end
+    end
     return out
 end
 
@@ -1279,7 +1329,20 @@ function N.landing(charUuid, pos)
         if t and t.blocked then return "blocked" end
         return nil
     end
+    -- What is at the landing's column: an agent-guessed y with no floor near
+    -- it is a jump into air (S021: y 45 where the ground is 37.4; y 32.4 over
+    -- a 10 m drop to 22.5).
+    local okh, hs = pcall(Ext.Level.GetHeightsAt, pos[1], pos[3])
+    local fl = {}
+    if okh and type(hs) == "table" then
+        for _, h in ipairs(hs) do if type(h) == "number" then fl[#fl + 1] = round(h, 1) end end
+    end
     local why = bad(pos)
+    if not why and #fl > 0 and not floorAt(pos[1], pos[3], pos[2]) then
+        why = "no_floor"
+        table.sort(fl, function(a, b2) return math.abs(a - pos[2]) < math.abs(b2 - pos[2]) end)
+        out.floors = fl
+    end
     if not why and d > cap + 0.3 then
         local f = cap / d
         local sx, sz = from[1] + (pos[1] - from[1]) * f, from[3] + (pos[3] - from[3]) * f
@@ -1291,9 +1354,15 @@ function N.landing(charUuid, pos)
             if s and s ~= "blocked" then why = s end
         end
     end
-    if not why then out.safe = true; return out end
+    local tooFar = maxM and d > maxM + N.JUMP_SLACK_M
+    if tooFar then out.too_far = true end
+    if not why then
+        out.safe = true
+        if tooFar then out.plan = N.jumpPlan(charUuid, from, pos, cap, bad) end
+        return out
+    end
     out.safe = false
-    if why == "blocked" then out.blocked = true else out.surface = why end
+    if why == "blocked" then out.blocked = true elseif why == "no_floor" then out.no_floor = true else out.surface = why end
     -- the nearest clear landing to the target that this jump surely reaches
     local best, bd
     local function cand(x, z)
@@ -1326,7 +1395,88 @@ function N.landing(charUuid, pos)
         out.nearest_clear = U.vec(best, 1)
         out.nearest_clear_off_m = round(bd, 1)
     end
+    if not out.suggest or tooFar then out.plan = N.jumpPlan(charUuid, from, pos, cap, bad) end
     return out
+end
+
+-- A jump that works (jump_to's FAILED reply hands it out instead of "pick
+-- another landing"): a clear landing at or near `pos` (<= JUMP_SUGGEST_OFF_M
+-- off), then either it is plain walking (walk=true), or a clear spot to stand
+-- that a walk reaches and from which the landing is within `cap`. S021: 11
+-- jump_to refusals (blocked slope tiles, 8-10 m gaps) each cost the agent
+-- 1-3 more model turns of guessing. Budget: N.JUMP_PLAN_TRIES path searches.
+-- Returns {walk=true, land, land_off_m, path_m} | {stand, walk_m, land,
+-- land_off_m, jump_m} | nil.
+N.JUMP_SLACK_M = 0.5        -- Guard's own slack over jump_max
+N.JUMP_PLAN_TRIES = 14
+N.JUMP_UP_MAX_M = 2.5       -- UNVERIFIED: how high a jump climbs
+function N.jumpPlan(charUuid, from, pos, cap, bad)
+    local lands = {}
+    local function addLand(x, z, off)
+        local fy = floorAt(x, z, pos[2])
+        if not fy or math.abs(fy - pos[2]) > 2.5 then return end
+        local p = { x, fy, z }
+        if bad(p) then return end
+        lands[#lands + 1] = { p = p, off = off }
+    end
+    addLand(pos[1], pos[3], 0)
+    for _, rad in ipairs({ 1.0, 2.0, N.JUMP_SUGGEST_OFF_M }) do
+        if #lands >= 3 then break end
+        for _, dname in ipairs(DIRS) do
+            local v = DIR_VEC[dname]
+            addLand(pos[1] + v[1] * rad, pos[3] + v[2] * rad, rad)
+        end
+    end
+    if #lands == 0 then return nil end
+    -- nearer the target first, then nearer us
+    table.sort(lands, function(a, b2)
+        if a.off ~= b2.off then return a.off < b2.off end
+        return hdist(from, a.p) < hdist(from, b2.p)
+    end)
+    local tries = 0
+    local function walkable(p, linkOk)
+        tries = tries + 1
+        local r = N.path(charUuid, p)
+        if r and r.reachable and not r.partial and (linkOk or not r.needs_jump) then return r end
+        return nil
+    end
+    -- the landing itself may just be a walk (the agent jumps where a path
+    -- goes); a route with a jump link is a move_to out of combat (Guard)
+    local r0 = walkable(lands[1].p, true)
+    if r0 then
+        return { walk = true, land = U.vec(lands[1].p, 1), land_off_m = round(lands[1].off, 1), path_m = r0.length_m,
+            needs_jump = r0.needs_jump }
+    end
+    local best
+    for li = 1, math.min(#lands, 3) do
+        local L = lands[li]
+        local stands = {}
+        for _, rad in ipairs({ cap - 0.5, cap - 1.5 }) do
+            if rad >= 1.5 then
+                for _, dname in ipairs(DIRS) do
+                    local v = DIR_VEC[dname]
+                    local x, z = L.p[1] + v[1] * rad, L.p[3] + v[2] * rad
+                    local fy = floorAt(x, z, from[2]) or floorAt(x, z, L.p[2])
+                    if fy and L.p[2] - fy <= N.JUMP_UP_MAX_M then
+                        local sp = { x, fy, z }
+                        if not bad(sp) then stands[#stands + 1] = { p = sp, d = hdist(from, sp), jump = rad } end
+                    end
+                end
+            end
+        end
+        table.sort(stands, function(a, b2) return a.d < b2.d end)
+        for _, st in ipairs(stands) do
+            if tries >= N.JUMP_PLAN_TRIES then break end
+            local r = walkable(st.p)
+            if r and (not best or r.length_m < best.walk_m) then
+                best = { stand = U.vec(st.p, 1), walk_m = r.length_m, land = U.vec(L.p, 1),
+                    land_off_m = round(L.off, 1), jump_m = round(st.jump, 1) }
+                break -- nearest stand for this landing; a nearer landing was tried first
+            end
+        end
+        if best or tries >= N.JUMP_PLAN_TRIES then break end
+    end
+    return best
 end
 
 -- Visible harmful patches around a character (get_frontier / look): grid
@@ -2038,8 +2188,12 @@ RPC.register("nav.reach_toward", function(args)
         end
         args.direct_why = why
     end
-    local r, err = N.reachToward(char, args.dir, toward, maxM, step, args.avoid ~= false)
+    local r, err = N.reachToward(char, args.dir, toward, maxM, step, args.avoid ~= false, args.loose == true)
     if not r then error(err, 0) end
+    -- alts=true (walk_toward by direction): on failure, which directions do work
+    if args.alts and args.dir and not r.reachable then
+        r.others = N.otherDirections(char, tostring(args.dir):upper(), math.min(maxM, 20), args.avoid ~= false)
+    end
     -- avoid="least" (travel_to): when no clear walk gets >= 1 m closer, look
     -- around (detours) and, failing that, take the least-exposure crossing.
     if args.avoid == "least" and toward then

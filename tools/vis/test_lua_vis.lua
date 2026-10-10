@@ -122,6 +122,13 @@ test("door with no LOS but a clear ray is perceived", function()
     eq(visible("D"), true)
 end)
 
+test("itemVisible without pos (Guard's call) uses the item's own position", function()
+    setup(); door("D", { 10, 0, 0 })
+    ray.fn = floorThen(function() return nil end)
+    eq((V.itemVisible(V.context(), "D", V.entity("D"))) == true, true, "no pos")
+    eq((V.itemVisible(V.context(), "D")) == true, true, "no entity, no pos")
+end)
+
 test("door behind a wall (ray hits halfway) is not perceived", function()
     setup(); door("D", { 10, 0, 0 })
     ray.fn = floorThen(function(a) return { Position = { a[1] + 5, a[2], a[3] }, Distance = 5 } end)

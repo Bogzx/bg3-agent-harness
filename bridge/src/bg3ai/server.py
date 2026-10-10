@@ -21,7 +21,7 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, delta, leveling, macros, metrics, party, render, saver, saves, turn
-from . import longnav
+from . import longnav, navhints
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -1093,7 +1093,8 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         what = args["dir"]
     else:
         raise ValueError("give direction=N|NE|E|SE|S|SW|W|NW, objective=o1, or target=<id>")
-    res = game.rpc("nav.reach_toward", args)
+    # loose: a winding walk counts when nothing direct does; alts: a dead direction names the ones that walk
+    res = game.rpc("nav.reach_toward", {**args, "loose": True, "alts": "dir" in args})
     if not isinstance(res, dict) or not res.get("reachable") or not res.get("pos"):
         n = res.get("samples") if isinstance(res, dict) else None
         hz = macros.hazard_text(res.get("hazard")) if isinstance(res, dict) else ""
@@ -1104,11 +1105,12 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         body = (f"FAILED: no walkable ground toward {what} within {render.num(max_m)}m"
                 + (f" ({n} spots checked)" if n is not None else ""))
         hint = _route_hint(args)  # toward an objective/target only (a direction has no goal)
-        return _finish("walk_toward", args, body + ("\n" + hint if hint else
+        others = navhints.other_dirs_text(res.get("others") if isinstance(res, dict) else None)
+        return _finish("walk_toward", args, body + ("\n" + hint if hint else others + "." if others else
                                                     ". Try another direction, get_frontier, or a door."), t0)
     head = f"heading {res.get('dir') or ''} toward {what}: {render.num(res.get('straight_m', 0))}m"
     if res.get("path_m") is not None:
-        head += f" (path {render.num(res['path_m'])}m)"
+        head += f" (path {render.num(res['path_m'])}m{', winding' if res.get('winding') else ''})"
     if res.get("needs_jump"):
         head += ", needs a jump"
     if res.get("hazard_beyond"):
@@ -1438,21 +1440,13 @@ def jump_to(x: float, y: float, z: float, who: str | None = None, wait: bool = T
     pos, note = [x, y, z], ""
     if not force:
         lnd = game.try_rpc("nav.landing", {"char": char, "pos": pos})
+        refusal = navhints.jump_refusal(lnd, pos)  # with a working plan (walk / walk-then-jump) when one exists
+        if refusal:
+            if _batch["active"]:
+                _batch["last"] = "failed"
+            return refusal
         if isinstance(lnd, dict) and lnd.get("safe") is False:
-            bad = f"in {lnd['surface']}" if lnd.get("surface") else "on a blocked tile (wall or hole)"
-            if lnd.get("short_pos") and not lnd.get("blocked"):
-                bad = (f"{render.num(lnd.get('dist_m', '?'))}m away, past reliable reach "
-                       f"({render.num(lnd.get('reliable_m', '?'))}m): it may land short {bad}")
-            else:
-                bad = f"is {bad}"
-            if not lnd.get("suggest"):
-                if _batch["active"]:
-                    _batch["last"] = "failed"
-                alt = (f" The nearest clear landing in reach is {render.pos(lnd['nearest_clear'])}, "
-                       f"{render.num(lnd.get('nearest_clear_off_m', '?'))}m from it." if lnd.get("nearest_clear") else "")
-                return (f"jump_to: FAILED — the landing {render.pos(pos)} {bad} and no clear spot within 3m of it is "
-                        f"in reach ({render.num(lnd.get('reliable_m', '?'))}m).{alt} Pick another landing "
-                        "(get_frontier lists HAZARD patches) or force=true.")
+            bad = navhints.landing_bad_text(lnd)
             pos = list(lnd["suggest"])
             note = (f"landing {render.pos([x, y, z])} {bad}: jumping to {render.pos(pos)} instead "
                     f"({render.num(lnd.get('suggest_off_m', '?'))}m from it, {render.num(lnd.get('suggest_dist_m', '?'))}m jump, clear)")
@@ -3182,6 +3176,30 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
 _looted: set[str] = set()  # containers/corpses loot_area already emptied this bridge session
 
 
+_IN_CONVO = "in a conversation"  # Guard's refusal: "character is in a conversation (InDialog)"
+CONVO_WAIT_S = 4.0  # a step refused for a conversation with none on screen: retry this long (banter, a stale flag)
+
+
+def _retry_after_dialogue(watcher: actq.Watcher, who: str | None, step: actq.Step, rep: actq.Report,
+                          text: str) -> tuple[actq.Report, str, str | None]:
+    """A macro step refused "in a conversation". Live S021: loot_area right after a fight hit Karlach's
+    post-combat conversation and failed all 4 corpses the same way. A dialogue on screen is the agent's
+    to answer: stop the macro at once (why). None on screen (ambient banter, a flag a moment stale after a
+    dialogue ended): retry the step until the game lets it, up to CONVO_WAIT_S."""
+    end = time.monotonic() + CONVO_WAIT_S
+    while True:
+        ui = game.try_rpc("ui.state", context="client") or {}
+        if isinstance(ui, dict) and ui.get("screen") == "dialogue":
+            return rep, text, "a conversation is open: answer it (choose_dialogue), then run this again"
+        if time.monotonic() >= end:
+            return rep, text, (f"still in a conversation after {CONVO_WAIT_S:g}s with no dialogue on screen "
+                               f"({text.split(': ', 1)[-1]})")
+        time.sleep(0.4)
+        rep, text = _run_one(watcher, who, step)
+        if rep.done or rep.stop_kind not in (None, "failed") or _IN_CONVO not in text:
+            return rep, text, None
+
+
 def _macro_groups(who: str | None, groups: list, ignore: set | None = None,
                   done: list | None = None) -> tuple[list[str], str | None, list[str]]:
     """Run groups of steps [(label, [Step])] in order. A failed step skips the rest of its group (that
@@ -3195,6 +3213,11 @@ def _macro_groups(who: str | None, groups: list, ignore: set | None = None,
         ok = True
         for step in steps:
             rep, text = _run_one(watcher, who, step)
+            if not rep.done and rep.stop_kind in (None, "failed") and _IN_CONVO in text:
+                rep, text, why = _retry_after_dialogue(watcher, who, step, rep, text)
+                if why:
+                    lines.extend([f"{label}: " + "; ".join(parts)] if parts else [])
+                    return lines, why, [g[0] for g in groups[gi:]]
             parts.append(text)
             if rep.stop_kind not in (None, "failed"):
                 lines.append(f"{label}: " + "; ".join(parts))

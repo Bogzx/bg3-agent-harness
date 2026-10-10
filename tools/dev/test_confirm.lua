@@ -405,5 +405,64 @@ ok(ftj.status == "running", "waits while the list is empty")
 for _ = 1, 50 do clock = clock + 50 ftj.on_tick(ftj) if ftj.status ~= "running" then break end end
 ok(ftj.status == "failed" and tostring(ftj.error):find("no waypoint list"), "empty list explained: " .. tostring(ftj.error))
 
+-- withMap (live S021 x7): after a successful travel the M toggle was a step out of phase,
+-- so the next press was swallowed and fast_travel failed "the map didn't open"; the
+-- following call found the map up. Now: no map 1.2 s after M -> press again.
+local swallow, mapKeys = 0, {}
+Ext.Input.InjectKeyPress = function(k)
+    mapKeys[#mapKeys + 1] = k
+    if k == "M" then
+        if swallow > 0 then swallow = swallow - 1
+        elseif widgets.JournalMap then widgets.JournalMap = nil
+        else W("JournalMap", {}, {}) end
+    elseif k == "ESCAPE" then
+        if widgets.GameMenu then widgets.GameMenu = nil
+        elseif widgets.JournalMap then widgets.JournalMap = nil
+        else W("GameMenu", {}, {}) end
+    end
+end
+widgets = {}
+swallow = 1
+local wj = run(ops["ui.waypoints"]({}).job, 6000)
+ok(wj.status == "done" and wj.result.map_presses == 2, "swallowed M -> pressed again, map opened: "
+    .. tostring(wj.status) .. " " .. tostring(wj.error) .. " presses=" .. tostring(wj.result and wj.result.map_presses))
+ok(widgets.JournalMap == nil, "ui.waypoints closed the map it opened")
+widgets, mapKeys = {}, {}
+wj = run(ops["ui.waypoints"]({}).job, 6000)
+ok(wj.status == "done" and wj.result.map_presses == 1 and #mapKeys == 2, "normal open: one M, one ESCAPE ("
+    .. table.concat(mapKeys, ",") .. ")")
+-- a stray ESCAPE left the game menu up: M does nothing there, so close it first
+widgets, mapKeys = {}, {}
+W("GameMenu", {}, {})
+local _inj = Ext.Input.InjectKeyPress
+Ext.Input.InjectKeyPress = function(k) if k == "M" and widgets.GameMenu then mapKeys[#mapKeys + 1] = k return end _inj(k) end
+wj = run(ops["ui.waypoints"]({}).job, 6000)
+ok(wj.status == "done" and mapKeys[1] == "ESCAPE" and mapKeys[2] == "M", "game menu closed, then M: " .. table.concat(mapKeys, ","))
+Ext.Input.InjectKeyPress = _inj
+-- the map never opens: 3 presses, then a failure that says what is on screen
+widgets, mapKeys = {}, {}
+swallow = 99
+W("Tooltip", {}, {})
+wj = run(ops["ui.waypoints"]({}).job, 6000)
+ok(wj.status == "failed" and #mapKeys == 3 and tostring(wj.error):find("pressed M,M,M over 3%.6s")
+    and tostring(wj.error):find("Tooltip"), "never opens: " .. tostring(wj.error))
+swallow = 0
+-- fast_travel through the same path: swallowed press, then the waypoint is found and pressed
+widgets, mapKeys = {}, {}
+swallow = 1
+local _byName, _content, _findAll = BG3AI.UI.byName, BG3AI.UI.content, BG3AI.UI.findAll
+local btn = { name = "WaypointEntryButton" }
+BG3AI.UI.byName = function(w, n) if n == "Waypoints" then return { list = true } end return _byName(w, n) end
+BG3AI.UI.content = function() return { { t = "Wilderness" }, { n = "WaypointEntryButton", b = "The Risen Road" } } end
+BG3AI.UI.findAll = function(el, pred) if el.list then return { btn } end return _findAll(el, pred) end
+local executed
+local _exec = BG3AI.UI.execute
+BG3AI.UI.execute = function() executed = true return true end
+local ftj2 = jobs[ops["ui.fast_travel"]({ waypoint = "Risen Road" }).job]
+for _ = 1, 60 do clock = clock + 50 ftj2.on_tick(ftj2) if executed then break end end
+ok(executed and ftj2.status == "running", "fast_travel pressed the waypoint after a swallowed M: "
+    .. tostring(ftj2.status) .. " " .. tostring(ftj2.error))
+BG3AI.UI.byName, BG3AI.UI.content, BG3AI.UI.findAll, BG3AI.UI.execute = _byName, _content, _findAll, _exec
+
 print(("%d passed, %d failed"):format(passes, fails))
 os.exit(fails == 0 and 0 or 1)

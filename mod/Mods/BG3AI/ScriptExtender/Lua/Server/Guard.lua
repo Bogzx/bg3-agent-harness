@@ -393,10 +393,29 @@ end
 -- A route with a jump/climb link is fine out of combat (a click auto-jumps it
 -- too, and the teleport detector accepts steps along the route); in combat
 -- the jump is its own action, so it stays refused there.
+-- The concrete way on after a "no walkable path" (S021: 6 such refusals left
+-- the agent guessing for 2-5 model turns): the reachable spot nearest the
+-- goal (BG3AI.Nav.closestReach: rings around the goal, else the farthest
+-- walk toward it). "" when there is none or Nav is missing.
+function G.closest_hint(char, goal)
+    local N = BG3AI.Nav
+    if type(N) ~= "table" or type(N.closestReach) ~= "function" or not goal then return "" end
+    local ok, c = pcall(N.closestReach, char, goal)
+    if not ok or type(c) ~= "table" or not c.pos then return "" end
+    local up = ""
+    if type(c.dy_to_goal) == "number" and math.abs(c.dy_to_goal) >= 1.5 then
+        up = string.format(", it is %.1fm %s that spot", math.abs(c.dy_to_goal), c.dy_to_goal > 0 and "above" or "below")
+    end
+    return string.format("; closest walkable spot (%.1f,%.1f,%.1f) is %.1fm from it (walk %.0fm%s): move_to that, then a ladder/jump_to",
+        c.pos[1], c.pos[2], c.pos[3], c.to_goal_m or 0, c.path_m or 0, up)
+end
+
 function G.point_reachable(char, pos)
     local r, info = G.reachable(char, pos)
     if info.needs_jump and G.in_combat(char) then G.refuse("needs a jump: use jump_to") end
-    if r ~= true then G.refuse("no walkable path there (may need a jump or another route)") end
+    if r ~= true then
+        G.refuse("no walkable path there (may need a jump or another route)" .. G.closest_hint(char, pos))
+    end
     return info
 end
 
@@ -469,7 +488,7 @@ function G.approach_point(char, target, reach)
         -- sight is what a click would do; the teleport detector still guards.
         return { pos = t, length_m = d, dist = d, unverified = true, tpos = t }
     end
-    G.refuse("no walkable path there (may need a jump or another route)")
+    G.refuse("no walkable path there (may need a jump or another route)" .. G.closest_hint(char, t))
 end
 
 function G.within(char, target, maxd, what)

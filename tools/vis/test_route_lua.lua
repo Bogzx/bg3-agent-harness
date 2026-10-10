@@ -74,6 +74,7 @@ BG3AI.Visibility = {
     context = function() return { party = { P1 }, is_party = { [P1] = true } } end,
     itemsAround = function() local out = {}; for u in pairs(items) do out[#out + 1] = u end; table.sort(out); return out end,
     itemVisible = function(ctx, u) local it = items[u]; return it and it.visible ~= false, it and it.kind end,
+    itemKind = function(u) local it = items[u]; return it and it.kind or "item" end,
     characterVisible = function() return false end,
     bounds = function(e) local it = items[e.uuid]; return it and it.height and { height = it.height, radius = 0.5 } or nil end,
 }

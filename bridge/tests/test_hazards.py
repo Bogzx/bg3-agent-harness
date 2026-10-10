@@ -151,6 +151,53 @@ class JumpLanding(Base):
         self.assertIn("STOPPED", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
 
+    # S021: 11 jump_to refusals, each followed by turns of guessing: the reply now carries a plan that works.
+    def test_too_far_names_a_walk_then_a_jump(self):
+        self.g.landing = {"safe": True, "too_far": True, "dist_m": 9.6, "max_m": 4.0, "reliable_m": 4.0,
+                          "plan": {"stand": [78.1, 22.9, 506.0], "walk_m": 7.4, "land": [74.8, 22.8, 507.3],
+                                   "land_off_m": 0, "jump_m": 3.5}}
+        out = server.jump_to(74.8, 22.8, 507.3)
+        self.assertIn("jump_to: FAILED — too far to jump (9.6 m, this character can jump 4 m)", out)
+        self.assertIn("move_to (78.1,22.9,506) (walk 7.4m), then jump_to (74.8,22.8,507.3), a 3.5m jump", out)
+        self.assertEqual(self.g.ops("act.cast"), [])
+
+    def test_too_far_but_walkable(self):
+        self.g.landing = {"safe": True, "too_far": True, "dist_m": 9.0, "max_m": 4.0,
+                          "plan": {"walk": True, "land": [-9.0, 0.0, 0.0], "land_off_m": 0, "path_m": 9.4}}
+        out = server.jump_to(-9.0, 0.0, 0.0)
+        self.assertIn("It is walkable: move_to (-9,0,0) (path 9.4m)", out)
+
+    def test_blocked_landing_plan_replaces_pick_another(self):
+        self.g.landing = {"safe": False, "blocked": True, "dist_m": 4.4, "reliable_m": 4.0,
+                          "plan": {"stand": [-8.9, 33.8, 490.0], "walk_m": 3.1, "land": [-9.4, 33.6, 492.4],
+                                   "land_off_m": 1.0, "jump_m": 2.5}}
+        out = server.jump_to(-6.0, 35.0, 493.0)
+        self.assertIn("is on a blocked tile (wall or hole)", out)
+        self.assertIn("then jump_to (-9.4,33.6,492.4) (1m from what you asked), a 2.5m jump", out)
+        self.assertNotIn("Pick another landing", out)
+
+    def test_landing_in_the_air(self):
+        self.g.landing = {"safe": False, "no_floor": True, "floors": [37.4], "dist_m": 4.0, "reliable_m": 4.5}
+        out = server.jump_to(-72.0, 45.0, 606.0)
+        self.assertIn("is in the air: no floor at that height (the ground there is at y 37.4)", out)
+
+
+class WalkTowardAlternatives(Base):
+    def test_dead_direction_names_working_ones(self):
+        self.g.reach = {"reachable": False, "samples": 7,
+                        "others": [{"dir": "SW", "m": 18.0, "path_m": 19.0}, {"dir": "NW", "m": 12.0, "winding": True}]}
+        out = server.walk_toward(direction="W", max_m=30)
+        self.assertIn("no walkable ground toward W within 30m (7 spots checked). Walkable instead: SW 18m, "
+                      "NW 12m (winding) → walk_toward(direction=\"SW\").", out)
+        args = self.g.ops("nav.reach_toward")[0][1]
+        self.assertTrue(args["loose"]); self.assertTrue(args["alts"])
+
+    def test_winding_walk_is_said(self):
+        self.g.reach = {"reachable": True, "pos": [-20.0, 0.0, 0.0], "straight_m": 20.0, "path_m": 32.0,
+                        "dir": "W", "winding": True}
+        out = server.walk_toward(direction="W", max_m=20)
+        self.assertIn("heading W toward W: 20m (path 32m, winding)", out)
+
 
 PATCHES = [{"surface": "Fire", "dist": 3.0, "dir": "W", "w_m": 2.0, "d_m": 4.0, "center": [-4, 0, 0]},
            {"surface": "Acid", "dist": 9.5, "dir": "SW", "w_m": 3.0, "d_m": 3.0, "center": [-7, 0, -7]}]

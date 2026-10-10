@@ -290,7 +290,12 @@ end
 
 -- Is item `uuid` perceivable, and is it something worth listing?
 -- Returns visible:boolean, kind:string.
+-- pos defaults to the item's own position (S021: Guard called this without
+-- one, so the LOS-in-sight and large-object ray checks were skipped and a
+-- ladder/gate/bench listed in look at 8-22 m was "not visible" to interact).
 function V.itemVisible(ctx, uuid, e, pos)
+    e = e or V.entity(uuid)
+    pos = pos or (e and V.pos(e))
     if scriptHidden(uuid) or truthy(V.osi(Osi.IsInvisible, uuid)) then return false end
     local si = U.comp(e, "ServerItem")
     if si then

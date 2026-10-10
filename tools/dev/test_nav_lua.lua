@@ -314,6 +314,72 @@ test("landing: no clear spot near -> no suggestion", function()
     eq(r.safe, false, "safe"); eq(r.suggest, nil, "suggest")
 end)
 
+test("landing: a guessed y with no floor near it is a jump into air (S021)", function()
+    local r = N.landing(P1, { -4, 8, 0 })
+    eq(r.safe, false, "safe"); eq(r.no_floor, true, "no_floor"); eq(r.floors[1], 0, "floor named")
+end)
+
+local function withJump(m, fn)
+    local saved = BG3AI.Guard
+    BG3AI.Guard = { jump_max = function() return m end }
+    local ok, err = pcall(fn)
+    BG3AI.Guard = saved
+    if not ok then error(err, 0) end
+end
+
+test("landing: too far but plain walking -> plan says walk (S021 9.6 m 'jump')", function()
+    withJump(4, function()
+        local r = N.landing(P1, { -9, 0, 0 })
+        eq(r.too_far, true, "too_far")
+        assert(r.plan and r.plan.walk, "walk plan")
+        near(r.plan.land[1], -9, "land x")
+    end)
+end)
+
+test("landing: too far over a gap -> walk to a stand spot, then a jump in reach", function()
+    blocked = function(x) return x < -6 end -- the far side: no walk reaches it
+    withJump(4, function()
+        local r = N.landing(P1, { -9, 0, 0 })
+        eq(r.too_far, true, "too_far")
+        local pl = r.plan
+        assert(pl and pl.stand, "stand plan")
+        assert(pl.stand[1] >= -6, "stand is walkable: " .. pl.stand[1])
+        assert(pl.jump_m <= 4, "jump within reach")
+        near(pl.land[1], -9, "land x")
+    end)
+end)
+
+test("landing: blocked tile, no clear spot in reach -> plan to a clear spot near it", function()
+    wall = function(x) return x < -6 and x > -10 end
+    blocked = function(x) return x < -10.5 end
+    withJump(4, function()
+        local r = N.landing(P1, { -8, 0, 0 })
+        eq(r.blocked, true, "blocked"); eq(r.suggest, nil, "no suggest")
+        assert(r.plan, "plan")
+        local off = math.abs(r.plan.land[1] + 8) + math.abs(r.plan.land[3])
+        assert(off <= 3.01 and off > 0, "land near it, off the wall")
+    end)
+end)
+
+-- ---- walk_toward: winding walks, other directions ------------------------------------
+
+test("reachToward loose: a winding walk counts when nothing direct does (S021 interiors)", function()
+    nodesFor = function(_, t) return { { 0, 0, 6 }, { t[1], 0, 6 }, t } end
+    local strict = N.reachToward(P1, "W", nil, 20, 2, true)
+    eq(strict.reachable, false, "strict")
+    reset(); nodesFor = function(_, t) return { { 0, 0, 6 }, { t[1], 0, 6 }, t } end
+    local r = N.reachToward(P1, "W", nil, 20, 2, true, true)
+    eq(r.reachable, true, "loose"); eq(r.winding, true, "winding"); near(r.pos[1], -20, "farthest")
+end)
+
+test("nav.reach_toward alts: a dead direction names the ones that walk", function()
+    blocked = function(x) return x < -1 end
+    local r = RPC.ops["nav.reach_toward"]({ dir = "W", max_m = 20, alts = true, loose = true })
+    eq(r.reachable, false, "W dead")
+    eq(#r.others, 3, "three others"); eq(r.others[1].dir, "S", "nearest bearing first")
+    eq(r.others[2].dir, "N", "then the other side")
+end)
+
 -- ---- visible hazard patches -----------------------------------------------------------
 
 test("hazardPatches: two patches, nearest first, with size and direction", function()

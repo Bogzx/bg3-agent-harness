@@ -779,20 +779,38 @@ local function playerPos()
     return v and { v[1], v[2], v[3] } or nil
 end
 
--- Opens the map if needed, runs fn(mapWidget, openedByUs) on a later tick.
+-- Opens the map if needed, runs fn(mapWidget, openedByUs, state) on a later tick.
+-- Live S021 (x7): every fast_travel right after a successful one failed "the map didn't
+-- open" after 3 s, and the call after that found the map already up (done in 0.5 s): the
+-- M toggle was a step out of phase, so one press was swallowed. So: no map MAP_PRESS_MS
+-- after a press -> press again (MAP_PRESSES in all). A game menu (a stray ESCAPE) eats M,
+-- so that press is an ESCAPE instead. A map that opens slowly and gets closed by the
+-- 2nd press is reopened by the 3rd (normal opens + travel take 0.5 s in all).
+local MAP_PRESS_MS, MAP_PRESSES = 1200, 3
 local function withMap(kind, timeout_ms, fn)
+    local state = { mapPresses = 0, mapKeys = {} }
+    local function press()
+        local k = visibleWidget("GameMenu") and "ESCAPE" or "M"
+        Ext.Input.InjectKeyPress(k)
+        state.mapPresses, state.mapPressT = state.mapPresses + 1, RPC.now_ms()
+        state.mapKeys[#state.mapKeys + 1] = k
+    end
     local opened = false
     if not mapWidget() then
-        Ext.Input.InjectKeyPress("M")
+        press()
         opened = true
     end
-    local t0 = RPC.now_ms()
-    local state = {}
     return waitJob(kind, timeout_ms, function(job)
         if not state.ready then
-            local w = mapWidget()
-            if not w then
-                if RPC.now_ms() - t0 > 3000 then return "failed", nil, "the map didn't open" end
+            if not mapWidget() then
+                if RPC.now_ms() - (state.mapPressT or 0) >= MAP_PRESS_MS then
+                    if state.mapPresses >= MAP_PRESSES then
+                        return "failed", { map_presses = state.mapPresses, keys = state.mapKeys },
+                            "the map didn't open (pressed " .. table.concat(state.mapKeys, ",") .. " over " .. string.format("%.1f", (RPC.now_ms() - job.started) / 1000)
+                            .. "s). On screen: " .. screenNow()
+                    end
+                    press()
+                end
                 return nil
             end
             state.ready = true
@@ -807,13 +825,13 @@ end
 
 RPC.register("ui.waypoints", function(args)
     local err = travelError()
-    return withMap("ui.waypoints", 5000, function(w, opened)
+    return withMap("ui.waypoints", 6000, function(w, opened, state)
         local out = {}
         for _, wp in ipairs(mapWaypoints(w)) do
             out[#out + 1] = { region = wp.region, name = wp.name, off = wp.off }
         end
         closeMap(opened)
-        return "done", { waypoints = out, travel_blocked = err }
+        return "done", { waypoints = out, travel_blocked = err, map_presses = state.mapPresses }
     end)
 end)
 

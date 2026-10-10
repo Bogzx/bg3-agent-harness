@@ -723,6 +723,45 @@ class LootArea(Base):
         self.g.watch["combat"] = True
         self.assertIn("FAILED: loot_area is for outside combat", server.loot_area())
 
+    def _in_convo(self, refusals: int) -> None:
+        """The Guard refuses the first `refusals` act steps (live S021: InDialog after a fight)."""
+        n = {"left": refusals}
+
+        def refuse(op, args):
+            if op.startswith("act.") and n["left"] > 0:
+                n["left"] -= 1
+                return "character is in a conversation (InDialog)"
+            return None
+        self.g.refuse_if = refuse
+
+    def test_conversation_on_screen_stops_at_once(self):
+        # S021: 4 corpses each "FAILED — character is in a conversation"; now one try, then hand it back.
+        self._in_convo(99)
+        self.g.ui = {"screen": "dialogue"}
+        out = server.loot_area()
+        self.assertIn("STOPPED: a conversation is open: answer it (choose_dialogue)", out)
+        self.assertIn(f"not reached: {self.chest} Chest, {self.gob} Goblin", out)
+        self.assertEqual(len(self.g.ops("act.interact")), 1)
+        self.assertEqual(self.corpses, [])
+
+    def test_stale_conversation_flag_retried(self):
+        saved, server.CONVO_WAIT_S = server.CONVO_WAIT_S, 2.0
+        self.addCleanup(setattr, server, "CONVO_WAIT_S", saved)
+        self._in_convo(2)
+        out = server.loot_area()
+        self.assertNotIn("STOPPED", out)
+        self.assertNotIn("conversation", out)
+        self.assertEqual(len(self.g.ops("act.interact")), 3)  # 2 refused, then opened
+        self.assertEqual(self.corpses, [self.gob])
+
+    def test_conversation_flag_that_never_clears(self):
+        saved, server.CONVO_WAIT_S = server.CONVO_WAIT_S, 0.5
+        self.addCleanup(setattr, server, "CONVO_WAIT_S", saved)
+        self._in_convo(99)
+        out = server.loot_area()
+        self.assertIn("STOPPED: still in a conversation after 0.5s with no dialogue on screen", out)
+        self.assertEqual(self.corpses, [])
+
 
 class DialogueAdvance(Base):
     def test_advances_filler_and_stops_at_a_choice(self):
