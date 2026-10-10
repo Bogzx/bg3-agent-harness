@@ -352,6 +352,54 @@ class Recording(unittest.TestCase):
         M.sampler_loop(rec, G(), stop, interval=0.001)
         self.assertEqual(kinds, ["sample", "load", "load", "sample"])
 
+    def test_mem_sampler(self):
+        """S038 20:48 OOM (RSS 5 -> 13 GB in ~30 s): a mem record a minute, and at once on a 1 GB RSS jump, with
+        both Lua heaps (sys.mem) so the next spike reads as our Lua or the engine."""
+        clock = [1000.0]
+        rss = [5000]
+
+        class G:
+            calls = []
+
+            def rpc(self, op, args=None, context="server", timeout=3.0):
+                G.calls.append((op, context))
+                if context == "client":
+                    raise TimeoutError("client frozen")
+                return {"context": "server", "lua_mb": 41.5, "high": True}
+
+        rec = M.Recorder(None)
+        out = []
+        rec.write = out.append
+        ms = M.MemSampler(rec, G(), rss=lambda: rss[0], now=lambda: clock[0])
+        self.assertIsNone(ms.tick())  # a fresh bridge: not before a minute
+        clock[0] += 30
+        self.assertIsNone(ms.tick())
+        clock[0] += 31
+        r = ms.tick()
+        self.assertEqual(r, {"type": "mem", "t": 1061.0, "rss_mb": 5000, "lua_server_mb": 41.5, "high": True})
+        self.assertEqual(G.calls, [("sys.mem", "server"), ("sys.mem", "client")])
+        clock[0] += 5
+        rss[0] = 6100
+        r = ms.tick()
+        self.assertEqual((r["why"], r["rss_mb"]), ("rss_jump", 6100))
+        clock[0] += 5
+        rss[0] = 6500
+        self.assertIsNone(ms.tick())
+        self.assertEqual(len(out), 2)
+
+    def test_rss_from_proc(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            proc = Path(d)
+            (proc / "4242").mkdir()
+            (proc / "4242" / "comm").write_text("bg3\n")
+            (proc / "4242" / "status").write_text("Name:\tbg3\nVmRSS:\t 5242880 kB\n")
+            (proc / "self").mkdir()
+            self.assertEqual(M.game_pid(proc), 4242)
+            self.assertEqual(M.rss_mb(4242, proc), 5120)
+            self.assertIsNone(M.rss_mb(99, proc))
+            self.assertIsNone(M.rss_mb(None, proc))
+
     def test_client_state_unknown(self):
         class Boom:
             def eval(self, *a, **k):

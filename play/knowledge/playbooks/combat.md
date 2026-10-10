@@ -3,6 +3,9 @@
 **When:** Use whenever combat starts or is about to start (a result says INTERRUPTED — combat, enemies turn hostile, or you plan to attack). Covers pre-fight setup, the one-call turn loop (get_combat_state + get_actions → combat_turn), path_preview, reactions, 5e tactics, downed allies, retreat, and the post-combat report.
 
 ## Before a fight you choose to start
+0. **Lessons:** a `LESSONS:` block in a result (at a fight start, or on entering a place) holds your own past
+   failures against these enemies/this place, from `memory/lessons.md`. Plan the fight around them; don't
+   repeat what failed.
 1. **Save** (`save_game(label="Sxxx-pre-<enemy>")`) for anything bigger than 2–3 weak enemies.
 2. **Scout** with `get_nearby` and `get_combat_state` once combat starts: hostiles, distances,
    elevation, and visible surfaces and objects (ladders, explosive barrels, grease or water). A
@@ -94,8 +97,12 @@ character is below ~35% and in reach of enemies.
 - Two party members down and no healing → retreat, or use everything you have now (scrolls, potions,
   big spells). Leaving combat: Dash or Disengage away, break line of sight, or jump to unreachable
   ground.
-- **Party wipe** → `list_saves`, then `load_game(save="<folder of the pre-fight save>")`. `note("[death] wipe vs <enemy>; reloaded <save>")`
-  and add a lesson about what to do differently. Don't repeat the identical opening.
+- **Party wipe or a reload mid-fight** → `list_saves`, then `load_game(save="<folder of the pre-fight save>")`.
+  Read the `LAST ATTEMPT:` line its result carries (the harness's debrief of the failed try), then write ONE
+  lesson before the retry: `note("[lesson] WHEN <enemy or stem>, <place or situation>: <what failed> → <what to
+  do instead>")` (e.g. `WHEN Justiciar Soulhunter, ranged: they shot us down from 20 m → Fireball the archer
+  cluster first, fight from cover`). Then plan a DIFFERENT opening: pre-buff, another position, another first
+  target, the consumable you didn't use. Never the identical opening.
 - If the same fight is lost twice: run the `stuck` playbook (a different approach: level up first, rest,
   other route, avoid, talk).
 
@@ -108,5 +115,8 @@ character is below ~35% and in reach of enemies.
 3. Heal: `rest_if_needed()` (short rest if anyone is at or below half). Long rest when slots are low and
    nothing urgent is pending.
 4. `note("[combat] <enemy group> at <place>: won/lost, downs N")` (instant; or note= on your next walk).
+   A costly fight (someone went down, or a `DEBRIEF costly/near_wipe` line): add one
+   `[lesson] WHEN …: … → …` line too. The memory keeper turns these into `memory/lessons.md`, which the
+   harness shows at the next matching fight.
 5. If a companion died: get a Scroll of Revivify, or recover them at camp later (the camp NPC resurrects
    for gold `[wiki]`). Note it in objectives.

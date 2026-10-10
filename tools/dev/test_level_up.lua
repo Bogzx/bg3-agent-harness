@@ -61,7 +61,8 @@ local PROGRESSIONS = {
     warlock2 = { TableUUID = "tblWarlock", Level = 2, SelectPassives = { { UUID = "invocations" } } },
     fighter1 = { TableUUID = "tblFighter", Level = 1, SelectPassives = { { UUID = "styles" } } },
 }
-local CLASSES = { clsWarlock = { ProgressionTableUUID = "tblWarlock" }, clsWizard = { ProgressionTableUUID = "tblWizard" } }
+local CLASSES = { clsWarlock = { ProgressionTableUUID = "tblWarlock", Name = "Warlock" },
+                  clsWizard = { ProgressionTableUUID = "tblWizard", Name = "Wizard" } }
 local function keys(t) local o = {} for k in pairs(t) do o[#o + 1] = k end table.sort(o) return o end
 local widget, dc, page        -- the open level-up page (nil = closed)
 -- Gameplay tabs: one selected at a time (ListBox), like the page's gameplayTabs.
@@ -629,6 +630,22 @@ page.chain = other
 j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
 check(j.status == "done" and widget == nil and j.result.next_page_closed and not j.result.page_still_open,
       "chained page after the finish: closed")
+
+-- 34. S032 Wyll L6 (Warlock, no feat): the multiclass items show "Lv 2" / nothing; options name the class from the
+--     character, drop the unnamed list, and the run never selects (or reports) the feat tab.
+openPage({ class = "Lv 2", spells = { list = "warlock1", open = 1 } })
+for _ = 1, 3 do table.insert(dc._p.SelectableMultiClasses, item(nil)) end
+TABS.featTab:SetProperty("IsSelected", true)
+local ok34, o34 = pcall(handlers["ui.level_up_options"], { uuid = "wyll" })
+check(ok34 and o34.class == "Warlock" and o34.classes == nil and o34.tab ~= "featTab",
+      "level_up_options: class named from the character, unnamed class list dropped, no feat tab on a non-feat level")
+TABS.levelupTab:SetProperty("IsSelected", true)
+TAB_LOG = {}
+local j34 = run({ uuid = "wyll", plan = { spells = { "Hex" } } })
+check(j34.result.set.class == "Warlock", "level_up result: set.class named from the character, not 'Lv 2'")
+local featSel = false
+for _, n in ipairs(TAB_LOG) do if n == "featTab" then featSel = true end end
+check(not featSel, "non-feat level: the run never selects the feat tab")
 
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

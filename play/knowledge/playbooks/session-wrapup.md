@@ -4,7 +4,11 @@
 SESSION CLOCK reminder in manual sessions) or the operator asks you to stop. Never earlier: "⏱ 5m left ·
 2m of play" means play 2 more minutes. Being stuck is not a reason (run `stuck`, section 0). Escaping
 danger is play. Don't save `Sxxx-end` or rewrite HANDOFF.md before WRAP UP NOW. Exception: when the ⏱ line
-says "1m of play" or "0m of play", start the wrap-up now; the Stop hook accepts a finished wrap-up from then on.
+says "5m of play" or less and the next step is a point of no return or won't finish in time (a descent, a boss
+fight, a long trip, a new region), start the wrap-up now; the Stop hook accepts a finished wrap-up from then on.
+Never kill time with repeated get_status/wiki reads (S036 idled ~2.5 min "waiting for the wrap-up mark"): with
+minutes left and no safe next step, either wrap up, or do reversible useful work (sell/stash junk, equip_best,
+level plans, loot nearby, notes).
 **Do it once.** If the Stop hook still says "Keep playing", play on and do not redo the wrap-up: no second
 `Sxxx-end` save unless the party moved, no HANDOFF rewrite (one Edit to a line that changed is fine).
 

@@ -274,6 +274,24 @@ def check_misc(mem: Path, r: Report, current: int | None) -> None:
                              f"in a chapter yet (run the compaction playbook)")
 
 
+# lessons.md: one lesson per bullet, "- WHEN <trigger>, …: <what failed> → <what to do instead> (Sxxx) [seen]"
+# (docs/ARCHITECTURE.md "Learning from fights"; the bridge's lessons.py parses the same shape). Kept here, not in
+# memlib: the long-lived runner re-imports lint but keeps its old memlib (S034 keeper: AttributeError).
+LESSON_RE = re.compile(r"^\s*[-*]\s*WHEN\s+[^:]+:\s*.+(?:→|->).+\(S\d{3,}[^)]*\)")
+
+
+def check_lessons(mem: Path, r: Report) -> None:
+    """lessons.md (optional): every bullet must be a `- WHEN triggers: failed → instead (Sxxx)` line, or the
+    bridge never shows it at a fight start."""
+    p = mem / "lessons.md"
+    if not p.is_file():
+        return
+    for ln in M.content_lines(p.read_text()):
+        if M.BULLET_RE.match(ln) and not LESSON_RE.match(ln):
+            r.error("lessons", f"lessons.md: not a lesson line (want '- WHEN <trigger>, …: <what failed> → "
+                               f"<what to do instead> (Sxxx) [seen]'): {ln.strip()[:120]}")
+
+
 LEVEL_COPY_RE = re.compile(
     r"\b(?:(?:Paladin|Cleric|Wizard|Warlock|Fighter|Rogue|Ranger|Bard|Druid|Monk|Sorcerer|Barbarian)\s*\d+"
     r"|L\d+\b|level \d+)", re.IGNORECASE)
@@ -330,6 +348,7 @@ def lint(mem: Path, phase: str = "any", session: int | None = None,
     check_hypotheses(mem, r, session)
     check_staleness(mem, r, phase, session)
     check_misc(mem, r, session)
+    check_lessons(mem, r)
     return r
 
 

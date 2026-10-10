@@ -118,6 +118,19 @@ class RouteText(unittest.TestCase):
         self.assertIn("NEXT: travel_to/move_to walks it", out)
 
 
+class RouteJump(unittest.TestCase):
+    def test_no_path_names_the_jump_across(self):
+        """S032 17:30-17:35 Yurgir: the broken staircase is a 3 m jump; route said only NO WALKABLE PATH."""
+        res = {"from": [-698, 8.1, -799], "goal": [-688, -6, -795], "straight_m": 19.2, "dir": "E", "dy": -14.1,
+               "reachable": False,
+               "jump": {"from": [-689, 1.3, -786], "to": [-686, -1.2, -786], "gap_m": 3, "dy": -2.5, "walk_m": 16.4,
+                        "to_goal_m": 9.2},
+               "closest": {"pos": [-697.9, 8.1, -799], "to_goal_m": 17.7, "dy_to_goal": -14.1, "path_m": 1.2}}
+        out = route.render_route(res, render.Handles(), "it")
+        self.assertIn("JUMP ACROSS: from (-689,1.3,-786) (walk 16.4m) over a 3m gap, 2.5m down to (-686,-1.2,-786)", out)
+        self.assertIn("NEXT: travel_to x,y,z = (-689,1.3,-786) (the edge), then jump_to x,y,z = (-686,-1.2,-786)", out)
+
+
 class TravelTrips(Base):
     def setUp(self) -> None:
         super().setUp()
@@ -228,6 +241,25 @@ class TravelTrips(Base):
             self.assertNotIn("ui.fast_travel", seen)
         finally:
             server._wait_running = orig_wait
+
+    def test_fast_travel_in_a_no_travel_area_says_why_at_once(self):
+        # S035 19:27/19:39: "can't fast travel now (Location)" twice in the Gauntlet of Shar, no way out given
+        seen = []
+        orig_try, orig_job = self.g.try_rpc, self.g.run_job
+
+        def try_rpc(op, args=None, context="server", **kw):
+            if op == "ui.travel_block":
+                return {"error": "Location"}
+            return orig_try(op, args, context=context, **kw)
+        self.g.try_rpc = try_rpc
+        self.g.run_job = lambda op, args, **kw: (seen.append(op), JobResult("done", {}))[1]
+        try:
+            out = server.fast_travel("Last Light Inn")
+        finally:
+            self.g.try_rpc, self.g.run_job = orig_try, orig_job
+        self.assertIn("FAILED — can't fast travel now (Location)", out)
+        self.assertIn("Walk out the way you came", out)
+        self.assertNotIn("ui.fast_travel", seen)
 
     def test_route_tool_shows_this_sessions_dead_ends(self):
         server.DEAD.record([60.0, 0.0, 0.0], [10.0, 0.0, 0.0], 50.0)

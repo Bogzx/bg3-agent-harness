@@ -164,8 +164,10 @@ class BoxAct(Base):
         out = server.long_rest()
         self.assertEqual(calls, ["ui.long_rest", "ui.long_rest"])
         self.assertEqual(self.scr.pressed, "Yes")
-        self.assertIn("clicked Yes", out)
-        self.assertIn("long_rest: done", out)
+        # S033 18:36:20: a "(the button press didn't land: clicked Yes …)" prefix on a SUCCESS read as a failure;
+        # the click note shows only when the call did not end done.
+        self.assertNotIn("didn't land", out)
+        self.assertTrue(out.startswith("long_rest: done"), out)
 
     def test_long_rest_no_click_without_needs_click(self):
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult(

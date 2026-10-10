@@ -485,13 +485,35 @@ class Lookalikes(unittest.TestCase):
         from bg3ai import server
         items = [{"uuid": U(1600 + i), "name": "Mystic Thurible", "kind": "usable", "dist": 9 + i} for i in range(6)]
         items += [{"uuid": U(1700 + i), "name": "Candles", "kind": "usable", "dist": 3 + i} for i in range(5)]
-        with mock.patch.object(server, "_read1", return_value={"characters": [], "items": items}):
+        with mock.patch.object(server, "_read1", return_value={"characters": [], "items": items}), \
+                mock.patch.object(server, "_finish", lambda name, args, text, t0: text):  # no live game events
             text = server.get_nearby(radius=60, kinds="Mystic Thurible")
             props = server.get_nearby(radius=60, kinds="props")
         self.assertEqual(text.count("Mystic Thurible <usable>"), 6, text)
         self.assertNotIn("more Mystic Thurible", text)
         self.assertNotIn("Candles", text)
         self.assertIn("(+4 more Candles", props)  # a props search still folds
+
+    def test_item_searches_drop_unrelated_remembered_characters(self):
+        """S035 19:37: get_nearby kinds="umbral,gem" / "item" listed 4 REMEMBERED Self-Same mirrors every time."""
+        from unittest import mock
+        from bg3ai import server
+        items = [{"uuid": U(1800), "name": "Umbral Transporter", "kind": "usable", "dist": 0.9}]
+        mem = [{"uuid": U(1801), "name": "Karlach", "last_pos": [1, 2, 3], "ago_s": 140},
+               {"uuid": U(1802), "name": "Umbral Horror", "last_pos": [4, 5, 6], "ago_s": 30}]
+        with mock.patch.object(server, "_read1", return_value={"characters": [], "items": items, "remembered": mem}), \
+                mock.patch.object(server, "_finish", lambda name, args, text, t0: text):  # no live game events
+            words = server.get_nearby(radius=40, kinds="umbral,gem")
+            kinds = server.get_nearby(radius=40, kinds="items")
+            chars = server.get_nearby(radius=40, kinds="characters")
+            plain = server.get_nearby(radius=40)
+        self.assertIn("Umbral Transporter", words)
+        self.assertIn("REMEMBERED", words)  # the remembered one the search names
+        self.assertIn("Umbral Horror", words)
+        self.assertNotIn("Karlach", words)
+        self.assertNotIn("REMEMBERED", kinds)
+        self.assertIn("Karlach", chars)
+        self.assertIn("Karlach", plain)
 
 
 class Fixtures(unittest.TestCase):

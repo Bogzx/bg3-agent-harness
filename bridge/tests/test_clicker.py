@@ -271,6 +271,38 @@ class ClickEntity(unittest.TestCase):
         self.assertEqual(r.reason, "hover_miss")
         self.assertEqual(r.detail.get("hovered_instead"), ["pillar"])
 
+    def test_wide_door_leaf_is_aimed_at(self):
+        # S032 17:42 Vault Door: the leaf is ~1.4 m from the hinge (the origin)
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), hover_aims={("mid", -1.4)})
+        g.screen_after = "roll"
+        r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.1)
+        self.assertTrue(r.ok)
+
+    def test_duplicate_resolved_aim_is_skipped(self):
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), hover_aims=set())
+        real = g.rpc
+
+        def item_aims(op, args=None, context="server"):
+            out = real(op, args, context)
+            if op == "ui.screen_pos" and isinstance(out, dict):
+                out["aim"] = "low" if (args or {}).get("aim") in ("auto", "low") else (args or {}).get("aim")
+            return out
+        g.rpc = item_aims
+        r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.1)
+        per_pass = (len(clicker.AIMS) - 1) * len(clicker.OFFSETS)
+        self.assertEqual(r.tries, 2 * per_pass)
+
+    def test_hover_on_an_object_with_no_id_is_named(self):
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), hover_aims=set())
+        real = g.rpc
+        g.rpc = lambda op, args=None, context="server": (
+            {"hovered": False, "hover_nouuid": True} if op == "ui.hover_check" else real(op, args, context))
+        r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.1)
+        self.assertEqual(r.detail.get("hovered_instead"), ["(an object with no id)"])
+
     def test_hover_search_gives_up_at_the_time_budget(self):
         # live S017-S024: 144 tries = 15-33 s per failed lockpick; now capped at HOVER_BUDGET_S
         inp = FakeInput()

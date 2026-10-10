@@ -14,7 +14,9 @@
 #                 native/bg3sdl/test/test_shim.py --chain, then --sniper
 #   3 launch      runner/launch_game.sh in the background (PRIME offload to NVIDIA when present)
 #   4 bg3le       wait for the Lua debug server on 127.0.0.1:$BG3LE_DEBUG_PORT, then sys.info from the mod
-#   5 health      no "WARNING: resolve:" in bg3le's log; the game is on the NVIDIA GPU (nvidia-smi)
+#   5 health      no "WARNING: resolve:" in bg3le's log; the game is on the NVIDIA GPU (nvidia-smi); the game runs
+#                 in its own systemd scope bg3ai-game-<stamp>.scope (launch_game.sh: OOMPolicy=continue, MemoryMax
+#                 10G), so an OOM kills only the game, never the agents' unit (20:48: one did, inside the multiplexer's unit)
 #   6 screen      one frame through the screenshot layer (bridge/src/bg3ai/screen.py)
 # Then it prints what to do next. The game is left running.
 set -euo pipefail
@@ -171,6 +173,14 @@ if command -v nvidia-smi >/dev/null; then
         warn "bg3 isn't in nvidia-smi's process list: it may be rendering on the iGPU (check launch_game's PRIME line;"
         echo "        try --env MESA_VK_DEVICE_SELECT=10de:* or --env DRI_PRIME=1)"
     fi
+fi
+gpid="$(pgrep -x bg3 | head -1 || true)"
+if [ -z "$gpid" ]; then
+    warn "no bg3 process to check the cgroup of"
+elif cg="$(cat /proc/$gpid/cgroup 2>/dev/null)"; [[ "$cg" == *bg3ai-game-*.scope* ]]; then
+    ok "the game has its own cgroup (${cg##*/}): an OOM kills only the game"
+else
+    warn "bg3 shares a cgroup with ${cg##*/}: an OOM there can stop that whole unit (relaunch via launch_game.sh)"
 fi
 
 # ---------------------------------------------------------------- 6 screen

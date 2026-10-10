@@ -15,6 +15,18 @@ local fire = function() return false end      -- (x, z) -> burning?
 local blocked = function() return false end   -- (x, z) -> no path there
 local wall = function() return false end      -- (x, z) -> WalkBlock tile (wall, hole)
 local nodesFor = nil                          -- optional (from, target) -> node list
+printedErrors = {}
+asyncQ = {}                                    -- pending async path requests
+function pumpPaths()                           -- the engine answers every pending async request
+    local q = asyncQ
+    asyncQ = {}
+    for _, r in ipairs(q) do
+        if not r.path.released then
+            r.path.GoalFound = Ext.Level.FindPath(r.path) and true or false
+            r.cb(r.path)
+        end
+    end
+end
 
 local function mkpath(e, target)
     return { from = world[P1], target = target, Nodes = {}, ErrorCause = 3 }
@@ -23,6 +35,7 @@ end
 Ext = {
     IsServer = function() return true end,
     Utils = { MonotonicTime = function() return clock end, PrintWarning = function() end, Print = function() end,
+        PrintError = function(m) printedErrors[#printedErrors + 1] = m end,
         GameTime = function() return 0 end, GetGameState = function() return "Running" end },
     Events = { Tick = { Subscribe = function() end } },
     Level = {
@@ -39,7 +52,13 @@ Ext = {
             for _, n in ipairs(nodes) do path.Nodes[#path.Nodes + 1] = { Position = { n[1], n[2], n[3] } } end
             return true
         end,
-        ReleasePath = function() end,
+        ReleasePath = function(path) if path then path.released = true end end,
+        -- async (N.waysWarm): queued here, answered by pumpPaths() (the engine's own update in the game)
+        BeginPathfinding = function(e, target, cb)
+            local p = mkpath(e, target)
+            asyncQ[#asyncQ + 1] = { path = p, cb = cb }
+            return p
+        end,
     },
     IO = { LoadFile = function() return nil end, SaveFile = function() end },
     Json = { Parse = function() return nil end, Stringify = function() return "{}" end },
@@ -76,6 +95,11 @@ local function reset()
     clock = clock + 1000
     N.frame = (N.frame or 0) + 1 -- new frame: drop the path cache
     N.waysCache, N.waysCacheN, N.waysWarmState = {}, 0, { t = 0 }
+    N.slowPaths, N.slowPathsN = {}, 0
+    N.asyncPaths, N.asyncPathsN = {}, 0
+    N.warmAsync = { ok = 0, timeouts = 0, byLevel = {}, broken = false }
+    N.guardReset()
+    asyncQ = {}
 end
 local function test(name, fn)
     count = count + 1
@@ -329,6 +353,67 @@ test("landing: no floor at the guessed y -> the floor there is the landing, unle
     world[P1] = { 0, 20, 0 } -- the floor is 20 m below the jumper: never swapped in
     r = N.landing(P1, { -4, 9, 0 })
     eq(r.no_floor, true, "no_floor"); eq(r.suggest, nil, "no suggestion 20 m down")
+end)
+
+test("landing: a guessed y over the chasm around a floor -> that floor (S032 Gauntlet broken staircase)", function()
+    world[P1] = { 0, 1, 0 }
+    local savedH, savedT = Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo
+    local deep = false
+    Ext.Level.GetHeightsAt = function(x) if x < -2 then return deep and { -12 } or { -2.5, -12 } end return { 1.0 } end
+    Ext.Level.GetTileDebugInfo = function(p)
+        local void = p[1] < -2 and (deep or p[2] > -2)
+        return { GroundSurface = void and "Chasm" or "None", CloudSurface = "None", Flags = {} }
+    end
+    local ok, err = pcall(function()
+        local r = N.landing(P1, { -4, -1, 0 })
+        eq(r.safe, false, "safe"); eq(r.surface, "Chasm", "surface")
+        assert(r.suggest, "suggest")
+        near(r.suggest[2], -2.5, "the stairs' floor"); near(r.suggest[1], -4, "same column")
+        eq(r.floor_y, -2.5, "floor_y")
+        deep = true
+        r = N.landing(P1, { -4, -1, 0 })
+        eq(r.safe, false, "safe"); eq(r.floor_y, nil, "only the chasm bottom 13 m down: never the landing")
+        assert(not r.suggest or r.suggest[2] > 0, "no landing at the bottom")
+    end)
+    Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo = savedH, savedT
+    if not ok then error(err, 0) end
+end)
+
+test("jumpAcross: no walk to the goal -> the jump over the chasm toward it (S032 Yurgir broken staircase)", function()
+    reset()
+    local savedH, savedT = Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo
+    local wallMode = false
+    Ext.Level.GetHeightsAt = function(x)
+        if x > -2.9 then return { 0.0 } end
+        if x > -5.9 then return wallMode and { 0.0 } or { -30.0 } end
+        return { -2.0 }
+    end
+    Ext.Level.GetTileDebugInfo = function(p)
+        local chasm = p[2] < -20
+        local w = wallMode and p[1] <= -2.9 and p[1] > -5.9
+        return { GroundSurface = chasm and "Chasm" or "None", CloudSurface = "None",
+            Flags = (chasm or w) and { "WalkBlock" } or {} }
+    end
+    blocked = function(x) return x < -5 end
+    local ok, err = pcall(function()
+        local j = N.jumpAcross(P1, { 0, 0, 0 }, { -20, -2, 0 })
+        assert(j, "a jump found")
+        assert(j.from[1] > -2.9 and j.from[1] <= -1.4, "takeoff at the edge: " .. j.from[1])
+        assert(j.to[1] <= -5.9, "landing past the chasm: " .. j.to[1])
+        near(j.to[2], -2, "landing floor"); eq(j.dy, -2, "2 m down")
+        assert(j.gap_m <= 3.6, "slid to the real edges (gap 3 m): " .. j.gap_m)
+        local savedIA = BG3AI.Visibility.itemsAround
+        BG3AI.Visibility.itemsAround = function() return {} end
+        local okr, r = pcall(N.routeAhead, { party = { P1 }, is_party = { [P1] = true } }, P1, { -20, -2, 0 })
+        BG3AI.Visibility.itemsAround = savedIA
+        assert(okr, tostring(r))
+        eq(r.reachable, false, "no walk"); assert(r.jump, "route names the jump")
+        wallMode = true
+        N.frame = N.frame + 1
+        eq(N.jumpAcross(P1, { 0, 0, 0 }, { -20, -2, 0 }), nil, "a wall in between is no jump")
+    end)
+    Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo = savedH, savedT
+    if not ok then error(err, 0) end
 end)
 
 local function withJump(m, fn)
@@ -663,12 +748,12 @@ test("waysWarm: one direction per step while the active character stands still, 
     Ext.Level.FindPath = function(path) n = n + 1; return real(path) end
     local ok, err = pcall(function()
         N.waysWarm(clock) -- first sight of the spot
-        clock = clock + 200; N.waysWarm(clock)
+        clock = clock + 200; pumpPaths(); N.waysWarm(clock)
         eq(n, 0, "not still long enough")
         world[P1] = { 1, 0, 0 } -- moved
-        clock = clock + 1000; N.waysWarm(clock)
+        clock = clock + 1000; pumpPaths(); N.waysWarm(clock)
         eq(n, 0, "moving: nothing")
-        for _ = 1, 20 do clock = clock + N.WAYS_WARM_STILL_MS; N.frame = N.frame + 1; N.waysWarm(clock) end
+        for _ = 1, 20 do clock = clock + N.WAYS_WARM_STILL_MS; N.frame = N.frame + 1; pumpPaths(); N.waysWarm(clock) end
         local searched = n
         eq(searched >= 8, true, "all eight warmed: " .. searched)
         local ways = N.ways(P1, 20, 8, 0)
@@ -679,24 +764,52 @@ test("waysWarm: one direction per step while the active character stands still, 
     assert(ok, err)
 end)
 
-test("waysWarm: all eight warm within ~1 s of stopping (arrival); a slow step pauses the warm-up", function()
-    local real, n, cost = Ext.Level.FindPath, 0, 0
-    Ext.Level.FindPath = function(path) n = n + 1; clock = clock + cost; return real(path) end
+test("waysWarm: all eight warm within ~1 s of stopping (arrival), with no search on the server thread", function()
+    local real, realB, sync = Ext.Level.FindPath, Ext.Level.BeginPathfindingImmediate, 0
+    Ext.Level.BeginPathfindingImmediate = function(...) sync = sync + 1; return realB(...) end
     local ok, err = pcall(function()
         local t0 = clock
         N.waysWarm(clock) -- arrival: first sight of the spot
-        while clock - t0 < 1000 do clock = clock + 16; N.frame = N.frame + 1; N.waysWarm(clock) end
+        while clock - t0 < 1000 do clock = clock + 16; N.frame = N.frame + 1; pumpPaths(); N.waysWarm(clock) end
+        eq(sync, 0, "no synchronous search in the warm-up")
         eq(#N.ways(P1, 20, 8, 0), 8, "eight directions warm 1 s after arrival")
-        -- a new spot where every search is slow (a failing search over a big level)
-        N.waysCache, N.waysCacheN, N.waysWarmState = {}, 0, { t = 0 }
-        cost = 200
-        local t1 = clock
-        N.waysWarm(clock)
-        n = 0
-        while clock - t1 < 2000 do clock = clock + 16; N.frame = N.frame + 1; N.waysWarm(clock) end
-        eq(n <= 2, true, "one slow step (far+near), then paused: " .. n .. " searches")
+        eq(sync, 0, "the frontier read them from the async answers")
+    end)
+    Ext.Level.FindPath, Ext.Level.BeginPathfindingImmediate = real, realB
+    assert(ok, err)
+end)
+
+test("waysWarm: nothing while the Lua heap is over the cap (Shared/Mem.lua); a crumb names the spot", function()
+    local real, n = Ext.Level.FindPath, 0
+    local crumbs, paused = {}, true
+    BG3AI.Mem = { paused = function() return paused end, crumb = function(l) crumbs[#crumbs + 1] = l end }
+    Ext.Level.FindPath = function(path) n = n + 1; return real(path) end
+    local ok, err = pcall(function()
+        pumpPaths(); N.waysWarm(clock)
+        for _ = 1, 10 do clock = clock + N.WAYS_WARM_STILL_MS; N.frame = N.frame + 1; pumpPaths(); N.waysWarm(clock) end
+        eq(n, 0, "paused: no search")
+        eq(#crumbs, 0, "paused: no crumb")
+        paused = false
+        clock = clock + N.WAYS_WARM_STILL_MS; N.frame = N.frame + 1; pumpPaths(); N.waysWarm(clock); pumpPaths()
+        eq(n > 0, true, "resumed")
+        eq(crumbs[1], "ways warm @(0.0,0.0,0.0)", "crumb")
     end)
     Ext.Level.FindPath = real
+    BG3AI.Mem = nil
+    assert(ok, err)
+end)
+
+test("rawPath: a FindPath over PATH_SLOW_MS is logged with its endpoints (S038 OOM attribution)", function()
+    local real, realW, warned = Ext.Level.FindPath, Ext.Utils.PrintWarning, {}
+    Ext.Level.FindPath = function(path) clock = clock + N.PATH_SLOW_MS + 5; return real(path) end
+    Ext.Utils.PrintWarning = function(s) warned[#warned + 1] = s end
+    local ok, err = pcall(function()
+        N.path(P1, { 5, 0, 0 })
+        eq(#warned, 1, "one warning")
+        eq(warned[1]:find("slow FindPath 1005 ms (0.0,0.0,0.0)->(5.0,0.0,0.0) found=true", 1, true) ~= nil, true,
+            warned[1])
+    end)
+    Ext.Level.FindPath, Ext.Utils.PrintWarning = real, realW
     assert(ok, err)
 end)
 
@@ -874,6 +987,351 @@ test("layout: the Faith-Leap walkway layer is never floor; the mosaic shows it n
     Ext.Level.GetHeightsAt, Ext.Entity, BG3AI.Visibility.helperItem, BG3AI.Visibility.pos = savedH, savedE, savedHelper, savedPos
     N.helperCache = {}
     if not ok then error(err, 0) end
+end)
+
+test("hidden floor: walks stop at the invisible-floor trial's edge; a short step onto it is left to the player (S035)", function()
+    reset()
+    local savedE, savedHelper, savedPos = Ext.Entity, BG3AI.Visibility.helperItem, BG3AI.Visibility.pos
+    -- the Faith-Leap layout: the engine mesh is one flat floor (y 0) over the chasm W of x=-9; the hidden
+    -- platforms' helpers sit just under it (y -0.2) from x=-10 to -20
+    local cubes = {}
+    for i = 0, 5 do cubes["H" .. i] = { -10 - 2 * i, -0.2, 0 } end
+    Ext.Entity = { GetAllEntitiesWithComponent = function()
+        local out = {}
+        for u in pairs(cubes) do out[#out + 1] = { Uuid = { EntityUuid = u } } end
+        return out
+    end }
+    BG3AI.Visibility.helperItem = function(u) return cubes[u] ~= nil end
+    BG3AI.Visibility.pos = function(e) local p = cubes[e.uuid or e.Uuid and e.Uuid.EntityUuid] or world[e.uuid]; return p and { p[1], p[2], p[3] } end
+    N.helperCache = {}
+    local ok, err = pcall(function()
+        local r = N.reachToward(P1, "W", nil, 20, 2, true, true)
+        eq(r.reachable, true, "the visible floor up to the edge walks")
+        assert(r.pos[1] >= -8.01, "stops before the hidden layer: " .. r.pos[1])
+        assert(r.hidden_beyond and r.hidden_beyond.pos, "says why it stopped")
+        local p = N.path(P1, { -15, 0, 0 })
+        eq(p.reachable, true, "a straight walk the agent picked is its own risk")
+        assert(p.hidden_floor and p.hidden_floor.at_m >= 8.5 and p.hidden_floor.at_m <= 9.5, "marked where: " .. tostring(p.hidden_floor and p.hidden_floor.at_m))
+        eq(p.hidden_floor.winds, nil, "straight")
+        local savedNodes = nodesFor
+        nodesFor = function(from, t) return { { -6, 0, 0 }, { -12, 0, 4 }, t } end
+        local w = N.path(P1, { -16, 0, 0 })
+        nodesFor = savedNodes
+        assert(w.hidden_floor and w.hidden_floor.winds, "a bend over the hidden floor is flagged (Guard refuses it)")
+        local rt = N.reachToward(P1, nil, { -16, 0, 0 }, 20, 2, true, true)
+        assert(rt.reachable and rt.pos[1] >= -8.01, "walk_toward a point across it stops at the edge too")
+        world[P1] = { -8.5, 0, 0 }
+        eq(N.path(P1, { -10.5, 0, 0 }).reachable, true, "a 2 m step onto it: the player's own risk")
+        world[P1] = { 0, 0, 0 }
+        eq(N.path(P1, { 0, 0, 15 }).reachable, true, "walks elsewhere unaffected")
+        eq(N.directLeg(P1, { -15, 0, 0 }, true), nil, "travel_to's direct leg refuses it too")
+        N.helperCache = {}
+        N.frame = N.frame + 1
+        cubes = {}
+        eq(N.path(P1, { -15, 0, 0 }).hidden_floor, nil, "no helpers on the level: plain floor")
+    end)
+    Ext.Entity, BG3AI.Visibility.helperItem, BG3AI.Visibility.pos = savedE, savedHelper, savedPos
+    N.helperCache = {}
+    world[P1] = { 0, 0, 0 }
+    if not ok then error(err, 0) end
+end)
+
+test("drop: a route that falls more than 6 m is marked and walk_toward never takes it (S035)", function()
+    reset()
+    local saved = nodesFor
+    nodesFor = function(from, t)
+        if t[1] < -10 then return { { -9, 0, 0 }, { -10, -8, 0 }, { t[1], -8, 0 } } end
+        return { t }
+    end
+    local realH = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function(x) return x < -10 and { -8.0 } or { 0.0 } end
+    local ok, err = pcall(function()
+        local p = N.path(P1, { -14, -8, 0 })
+        assert(p.reachable and p.drop and p.drop.m == 8, "marked: " .. tostring(p.drop and p.drop.m))
+        local r = N.reachToward(P1, "W", nil, 20, 2, true, true)
+        assert(r.reachable and r.pos[1] >= -10, "stops above the drop: " .. tostring(r.pos and r.pos[1]))
+        eq(N.path(P1, { -6, 0, 0 }).drop, nil, "a plain walk")
+    end)
+    nodesFor = saved
+    Ext.Level.GetHeightsAt = realH
+    if not ok then error(err, 0) end
+end)
+
+-- ---- S038 OOM: bounded engine reads ------------------------------------------------
+-- The game went 5 -> 13 GB in <40 s with the server hung inside nav.landing (Shadowfell). The node walk was the
+-- one unbounded loop: an engine array that never ends (or a garbage count) must not be walked without a cap.
+
+local function endlessNodes(len)
+    -- every index answers a node, as a proxy over a garbage Size would; # says `len`
+    return setmetatable({}, { __len = function() return len end,
+        __index = function(_, i) return { Position = { -i * 0.5, 0, 0 } } end })
+end
+
+test("path: a runaway engine node count is not walked (S038) -> reachable unknown", function()
+    local real = Ext.Level.FindPath
+    Ext.Level.FindPath = function(path) path.Nodes = endlessNodes(1e9); return true end
+    N.frame = N.frame + 1
+    local ok, r = pcall(N.path, P1, { -9, 0, 0 })
+    Ext.Level.FindPath = real
+    assert(ok, tostring(r))
+    eq(r.reachable, nil, "unknown")
+    assert(tostring(r.reason):find("unreadable"), "reason: " .. tostring(r.reason))
+end)
+
+test("path: nodes past the engine's count are never read", function()
+    local real, reads = Ext.Level.FindPath, 0
+    Ext.Level.FindPath = function(path)
+        path.Nodes = setmetatable({}, { __len = function() return 3 end,
+            __index = function(_, i) reads = reads + 1; return { Position = { -i, 0, 0 } } end })
+        return true
+    end
+    N.frame = N.frame + 1
+    local r = N.path(P1, { -3, 0, 0 })
+    Ext.Level.FindPath = real
+    eq(r.reachable, true, "found")
+    eq(reads, 3, "nodes read")
+    eq(#r.points, 4, "from + 3 nodes")
+    near(r.length_m, 3, "length")
+end)
+
+test("landing: the jump plan's path searches stop at its time budget (S038)", function()
+    local real, n = Ext.Level.FindPath, 0
+    Ext.Level.FindPath = function(path) n = n + 1; clock = clock + 200; return false end
+    local saved = blocked
+    blocked = function() return true end
+    N.frame = N.frame + 1
+    local plan = N.jumpPlan(P1, { 0, 0, 0 }, { -12, 0, 0 }, 4.5, function() return nil end)
+    Ext.Level.FindPath, blocked = real, saved
+    eq(plan, nil, "no plan")
+    assert(n <= 2, "searches after the budget: " .. n)
+end)
+
+-- ---- S038: bounds over every caller (a huge synthetic level) ----------------
+
+test("huge level: chained searches in one frame stop at PATH_FRAME_BUDGET_MS (S038 OOM)", function()
+    -- every search is a 120 ms no-path over a vast mesh; every column holds 200 floors (a stack of islands)
+    local real, realH, n = Ext.Level.FindPath, Ext.Level.GetHeightsAt, 0
+    Ext.Level.FindPath = function(path) n = n + 1; clock = clock + 120; return false end
+    Ext.Level.GetHeightsAt = function()
+        local hs = {}
+        for i = 1, 200 do hs[i] = (i - 100) * 7.5 end
+        hs[#hs + 1] = 0.0
+        return hs
+    end
+    N.frame = N.frame + 1
+    local t0 = clock
+    N.ways(P1, 20, 8, 1e9)
+    N.reachToward(P1, "W", nil, 30, 1, true, true)
+    N.otherDirections(P1, "W", 30, true, 3)
+    N.landing(P1, { -7, 0, 0 })
+    N.closestReach(P1, { -60, 0, 0 }, 1e9)
+    local spent = clock - t0
+    Ext.Level.FindPath, Ext.Level.GetHeightsAt = real, realH
+    assert(n <= N.PATH_FRAME_MAX, "searches: " .. n)
+    assert(spent <= N.PATH_FRAME_BUDGET_MS + 120, "frame ms: " .. spent)
+    eq(N.pathFrame.skipped > 0, true, "skipped some")
+end)
+
+test("frame budget: at most PATH_FRAME_MAX searches per frame, the rest unknown and not cached", function()
+    local real, n = Ext.Level.FindPath, 0
+    Ext.Level.FindPath = function(path) n = n + 1; return real(path) end
+    N.frame = N.frame + 1
+    local last
+    for i = 1, N.PATH_FRAME_MAX + 50 do last = N.path(P1, { -i * 0.5, 0, 3 }) end
+    eq(n, N.PATH_FRAME_MAX, "engine searches")
+    eq(last.reachable, nil, "over budget: unknown")
+    eq(last.budget, true, "budget flag")
+    N.frame = N.frame + 1 -- next frame: searches run again
+    local r = N.path(P1, { -(N.PATH_FRAME_MAX + 50) * 0.5, 0, 3 })
+    Ext.Level.FindPath = real
+    eq(r.reachable, true, "next frame searched")
+end)
+
+test("slow memo: a search slower than PATH_SLOW_MEMO_MS is not run again for the TTL", function()
+    local real, n = Ext.Level.FindPath, 0
+    Ext.Level.FindPath = function(path) n = n + 1; clock = clock + N.PATH_SLOW_MEMO_MS + 50; return false end
+    N.slowPaths, N.slowPathsN = {}, 0
+    N.frame = N.frame + 1
+    local r1 = N.path(P1, { -30, 0, 9 })
+    N.frame = N.frame + 1
+    local r2 = N.path(P1, { -30, 0, 9 })
+    eq(n, 1, "searched once")
+    eq(r1.reachable, false, "first: no path"); eq(r2.reachable, false, "memo: no path"); eq(r2.memo, true, "memo flag")
+    clock = clock + N.PATH_SLOW_MEMO_TTL_MS + 1
+    N.frame = N.frame + 1
+    N.path(P1, { -30, 0, 9 })
+    world[P1] = { 5, 0, 0 } -- another start is another search
+    N.path(P1, { -30, 0, 9 })
+    Ext.Level.FindPath = real
+    eq(n, 3, "after the TTL / from elsewhere: searched again")
+end)
+
+test("PATH_HORIZON caps the engine's own search when set", function()
+    local real, seen = Ext.Level.FindPath, nil
+    Ext.Level.FindPath = function(path) seen = path.SearchHorizon; return real(path) end
+    N.frame = N.frame + 1
+    N.path(P1, { -3, 0, 1 })
+    eq(seen, nil, "default: engine's own")
+    N.PATH_HORIZON = 8000
+    N.frame = N.frame + 1
+    N.path(P1, { -3, 0, 2 })
+    N.PATH_HORIZON = nil
+    Ext.Level.FindPath = real
+    eq(seen, 8000, "horizon set")
+end)
+
+-- ---- S038 (se's verdict: the engine's FindPath never ended): pre-checks, async warm-up, kill switch ------
+
+local function onLevel(name, fn)
+    local h, r = Osi.GetHostCharacter, Osi.GetRegion
+    Osi.GetHostCharacter = function() return P1 end
+    Osi.GetRegion = function() return name end
+    local ok, err = pcall(fn)
+    Osi.GetHostCharacter, Osi.GetRegion = h, r
+    if not ok then error(err, 0) end
+end
+local function countingFind()
+    local real, c = Ext.Level.FindPath, { n = 0 }
+    Ext.Level.FindPath = function(path) c.n = c.n + 1; return real(path) end
+    return c, function() Ext.Level.FindPath = real end
+end
+
+test("precheck: no engine search for a goal with no floor, a floor far from its y, a Chasm, too far, mid-air", function()
+    local c, restore = countingFind()
+    local realH, realT = Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo
+    local ok, err = pcall(function()
+        Ext.Level.GetHeightsAt = function(x) if x < -50 then return {} end return { 0.0 } end
+        local r = N.path(P1, { -60, 0, 0 })
+        eq(r.reachable, false, "no tile column"); eq(r.no_floor, true, "no_floor")
+        r = N.path(P1, { -8, -30, 0 })
+        eq(r.reachable, false, "30 m below the only floor (the void)")
+        Ext.Level.GetTileDebugInfo = function(p)
+            return { GroundSurface = p[1] < -5 and "Chasm" or "None", CloudSurface = "None", Flags = {} }
+        end
+        r = N.path(P1, { -7, 0, 0 })
+        eq(r.reachable, false, "Chasm"); eq(r.chasm, true, "chasm flag")
+        Ext.Level.GetTileDebugInfo = realT
+        r = N.path(P1, { 500, 0, 0 })
+        eq(r.reachable, nil, "too far: unknown"); eq(r.too_far, true, "too_far")
+        world[P1] = { 0, 12, 0 } -- mid-jump: 12 m over the floor
+        N.frame = N.frame + 1
+        r = N.path(P1, { -4, 0, 0 })
+        eq(r.reachable, nil, "mid-air: unknown"); eq(r.midair, true, "midair")
+        eq(c.n, 0, "no engine search at all")
+        world[P1] = { 0, 0, 0 }
+        N.frame = N.frame + 1
+        eq(N.path(P1, { -4, 0, 0 }).reachable, true, "a real goal still searches")
+        eq(c.n, 1, "one search")
+    end)
+    Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo = realH, realT
+    restore()
+    if not ok then error(err, 0) end
+end)
+
+local function stillWarm(steps, pump)
+    N.waysWarm(clock)
+    for _ = 1, steps do
+        clock = clock + 100; N.frame = N.frame + 1
+        if pump then pumpPaths() end
+        N.waysWarm(clock)
+    end
+end
+
+test("waysWarm: one async request at a time; unanswered ones are released, and twice kills the level", function()
+    onLevel("SHADOWFELL", function()
+        stillWarm(10, true) -- async works here (answers came)
+        eq(N.warmAsync.ok > 0, true, "answered")
+        N.waysCache, N.waysCacheN, N.asyncPaths, N.asyncPathsN = {}, 0, {}, 0
+        world[P1] = { 3, 0, 0 } -- a new spot where the engine never answers
+        N.waysWarmState = { t = 0 }
+        stillWarm(10, false)
+        eq(#asyncQ, 1, "one request outstanding, no more")
+        local first = asyncQ[1].path
+        clock = clock + N.WARM_ASYNC_TIMEOUT_MS + 1; N.waysWarm(clock)
+        eq(first.released, true, "the stuck search is released (ends the engine's search)")
+        eq(N.levelSlow(), nil, "one timeout: not yet")
+        stillWarm(5, false)
+        clock = clock + N.WARM_ASYNC_TIMEOUT_MS + 1; N.waysWarm(clock)
+        assert(N.levelSlow(), "two timeouts: the level's kill switch is on")
+        local before = #asyncQ
+        stillWarm(10, false)
+        eq(#asyncQ, before, "no warm-up on a killed level")
+    end)
+end)
+
+test("waysWarm: async that never answers anywhere turns the warm-up off (no kill switch)", function()
+    onLevel("WLD_Main_A", function()
+        for _ = 1, N.WARM_ASYNC_BROKEN_AFTER do
+            stillWarm(5, false)
+            clock = clock + N.WARM_ASYNC_TIMEOUT_MS + 1; N.waysWarm(clock)
+        end
+        eq(N.warmAsync.broken, true, "broken")
+        eq(N.levelSlow(), nil, "not the level's fault")
+    end)
+end)
+
+test("waysWarm: nothing while a job (walk, jump, cast) runs", function()
+    RPC.jobs[999] = { status = "running" }
+    stillWarm(10, true)
+    eq(N.warmAsync.ok, 0, "no request")
+    RPC.jobs[999] = nil
+    stillWarm(10, true)
+    eq(N.warmAsync.ok > 0, true, "after the job")
+end)
+
+test("kill switch: a search over PATH_LEVEL_KILL_MS turns off jump planning, jumpGap and the warm-up there", function()
+    onLevel("SHADOWFELL", function()
+        local real = Ext.Level.FindPath
+        Ext.Level.FindPath = function(path) clock = clock + N.PATH_LEVEL_KILL_MS + 10; return false end
+        N.path(P1, { -9, 0, 3 })
+        Ext.Level.FindPath = real
+        assert(N.levelSlow(), "killed")
+        local c, restore = countingFind()
+        local plan, why = N.jumpPlan(P1, { 0, 0, 0 }, { -12, 0, 0 }, 4.5, function() return nil end)
+        eq(plan, nil, "no plan"); assert(tostring(why):find("off on this level"), "why: " .. tostring(why))
+        eq(N.jumpGap(P1, { 0, 0, 0 }, { -1, 0 }), nil, "no jumpGap")
+        local savedG = BG3AI.Guard
+        BG3AI.Guard = { jump_max = function() return 8.5 end } -- 11 m: too far, so a plan is wanted
+        local l = N.landing(P1, { -11, 0, 0 })
+        BG3AI.Guard = savedG
+        restore()
+        assert(l.plan_skipped, "landing says why there is no plan")
+        eq(c.n, 0, "no searches for the plan")
+    end)
+    onLevel("WLD_Main_A", function() eq(N.levelSlow(), nil, "other levels unaffected") end)
+end)
+
+test("kill switch: a crash during a jump plan (marker left in the file) turns that level off at the next load", function()
+    local realL, realP, realS = Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile
+    local saved
+    Ext.IO.LoadFile = function(p) if p == N.GUARD_FILE then return "x" end end
+    Ext.Json.Parse = function() return { slow = {}, inflight = { level = "SHADOWFELL", op = "jump plan" } } end
+    Ext.IO.SaveFile = function(p, txt) if p == N.GUARD_FILE then saved = true end end
+    local ok, err = pcall(function()
+        N.guardReset()
+        local s = N.levelSlow("SHADOWFELL")
+        assert(s and s.why:find("died during jump plan"), "killed by the marker")
+        eq(N.guardState().inflight, nil, "marker cleared")
+        eq(saved, true, "written back")
+    end)
+    Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile = realL, realP, realS
+    N.guardReset()
+    if not ok then error(err, 0) end
+end)
+
+test("jump plan: the in-flight marker is set during its searches and cleared after", function()
+    local marks = {}
+    local realS, realJ = Ext.IO.SaveFile, Ext.Json.Stringify
+    Ext.Json.Stringify = function(t) return t.inflight and ("in:" .. t.inflight.op) or "clear" end
+    Ext.IO.SaveFile = function(p, txt) if p == N.GUARD_FILE then marks[#marks + 1] = txt end end
+    local ok, err = pcall(function()
+        onLevel("SCL_Main_A", function()
+            N.jumpPlan(P1, { 0, 0, 0 }, { -6, 0, 0 }, 4.5, function() return nil end)
+        end)
+    end)
+    Ext.IO.SaveFile, Ext.Json.Stringify = realS, realJ
+    if not ok then error(err, 0) end
+    eq(marks[1], "in:jump plan", "set first"); eq(marks[#marks], "clear", "cleared after")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

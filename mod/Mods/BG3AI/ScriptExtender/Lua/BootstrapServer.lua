@@ -2,6 +2,7 @@ BG3AI = BG3AI or {}
 BG3AI.VERSION = "0.1.0"
 Ext.Require("Shared/RPC.lua")
 Ext.Require("Shared/Util.lua")
+Ext.Require("Shared/Mem.lua")
 local U = BG3AI.Util
 
 -- Server modules: fair state (visibility-filtered), events, guarded actions.

@@ -416,6 +416,19 @@ class Tools(unittest.TestCase):
         i = ops.index(("act.transfer", _u(3), CLAUDE))
         self.assertEqual(ops[i + 1], ("act.equip", _u(3), CLAUDE))
 
+    def test_equip_best_waits_out_a_fight(self):
+        # S034 19:15: equip_best during an ambush → "give failed: … (use the UI)"; now nothing moves
+        g = self.use(FakeGame(lantern_inventory()))
+        saved = dict(STATUS)
+        STATUS["in_combat"] = True
+        try:
+            out = server.equip_best()
+        finally:
+            STATUS.clear()
+            STATUS.update(saved)
+        self.assertIn("NOT NOW — in combat", out)
+        self.assertEqual(g.jobs, [])
+
     def test_equip_best_hands_the_lantern_to_the_caster_then_arms_the_fighter(self):
         class G(FakeGame):
             def run_job(self, op, args, context="server", wait_s=25.0, **kw):
@@ -838,6 +851,66 @@ class ContestedWeapon(unittest.TestCase):
                           "ench": 1, "rarity": "uncommon", "finesse": True, "prof": "Daggers|SimpleWeapons"}]}
         ups = economy.upgrades(inv)
         self.assertEqual([(o["who"], o["name"]) for o in ups], [(sh, "Syringe")])
+
+
+class PactWeapon(unittest.TestCase):
+    """S032 17:39: equip_best swapped Pact-of-the-Blade Wyll's rapier for a Greatclub +1. A bound weapon
+    (PACT_BLADE / WEAPON_BOND: re-binding costs an action) or a summoned pact weapon stays in hand."""
+    WYLL, KARLACH = _u(1), _u(4)
+
+    def inv(self, bound=None, summoned=False):
+        rapier = {"uuid": _u(10), "name": "Rapier", "owner": self.WYLL, "equipped_slot": "MeleeMainHand",
+                  "slot_type": "MeleeMainHand", "dmg": "1d8", "finesse": True, "prof": "Rapiers|MartialWeapons"}
+        if bound:
+            rapier["bound"] = bound
+        if summoned:
+            rapier.update(summoned=True, name="Pact Rapier")
+        return {"members": {self.WYLL: {"prof": ["SimpleWeapons", "LightArmor", "Rapiers"], "str": 10, "dex": 12,
+                                        "cha": 18, "binds": "pact", "caster": True},
+                            self.KARLACH: {"prof": ["SimpleWeapons", "MartialWeapons", "MediumArmor"], "str": 17,
+                                           "dex": 12}},
+                "items": [rapier,
+                          {"uuid": _u(11), "name": "Greataxe", "owner": self.KARLACH, "equipped_slot": "MeleeMainHand",
+                           "slot_type": "MeleeMainHand", "dmg": "1d12", "twohanded": True,
+                           "prof": "Greataxes|MartialWeapons"},
+                          {"uuid": _u(12), "name": "Greatclub +1", "owner": self.WYLL, "slot_type": "MeleeMainHand",
+                           "dmg": "1d8", "ench": 1, "rarity": "uncommon", "twohanded": True,
+                           "prof": "Greatclubs|SimpleWeapons"}]}
+
+    def test_bound_pact_weapon_kept(self):
+        self.assertEqual([o for o in economy.upgrades(self.inv(bound="pact")) if o["who"] == self.WYLL], [])
+
+    def test_summoned_pact_weapon_kept(self):
+        self.assertEqual([o for o in economy.upgrades(self.inv(bound="pact", summoned=True))
+                          if o["who"] == self.WYLL], [])
+
+    def test_unbound_swap_says_to_bind_and_scores_with_cha(self):
+        ups = [o for o in economy.upgrades(self.inv()) if o["who"] == self.WYLL]
+        self.assertEqual([o["name"] for o in ups], ["Greatclub +1"])
+        self.assertIn("Bind Pact Weapon", ups[0]["why"])
+        # CHA 18 counts (+4), not STR 10: same modifier both sides, gain = +1 enchantment ×2 + rarity
+        self.assertEqual(economy._ability_mod(ups[0] | {"slot_type": "MeleeMainHand"}, self.inv()["members"][self.WYLL]), 4)
+
+    def test_pact_warlock_is_not_a_spell_only_caster(self):
+        # a plain (non-magic) better weapon is still offered: a caster would only take magic ones
+        inv = self.inv()
+        inv["items"][2].update(name="Longsword", ench=None, rarity=None, twohanded=False, dmg="1d10",
+                               prof="Longswords|SimpleWeapons")
+        self.assertIn("Longsword", [o["name"] for o in economy.upgrades(inv) if o["who"] == self.WYLL])
+
+    def test_bound_weapon_never_handed_to_another_member(self):
+        inv = self.inv()
+        inv["items"].append({"uuid": _u(13), "name": "Bonded Longsword +1", "owner": self.WYLL,
+                             "slot_type": "MeleeMainHand", "dmg": "1d8", "ench": 1, "rarity": "uncommon",
+                             "bound": "weapon_bond", "prof": "Longswords|MartialWeapons"})
+        inv["items"][-1].update(dmg="2d8")
+        self.assertNotIn("Bonded Longsword +1", [o["name"] for o in economy.upgrades(inv) if o["who"] == self.KARLACH])
+        inv["items"][-1].pop("bound")  # control: unbound, Karlach takes it
+        self.assertIn("Bonded Longsword +1", [o["name"] for o in economy.upgrades(inv) if o["who"] == self.KARLACH])
+
+    def test_main_hands_names_the_pact_weapon(self):
+        line = economy.main_hands(self.inv(bound="pact"), lambda u: {self.WYLL: "Wyll"}.get(u, "Karlach"))
+        self.assertIn("Wyll Rapier (rapier 1d8 pact weapon)", line)
 
 
 class TradeHandover(unittest.TestCase):

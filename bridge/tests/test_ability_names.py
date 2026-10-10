@@ -103,6 +103,13 @@ class OwnAttack(Base):
         self.g.actions = json.loads(json.dumps(ACTS))
         self.assertEqual(server._own_attack(P1, "Target_MainHandAttack"), ("Target_MainHandAttack", ""))
 
+    def test_casters_variant_is_not_an_attack(self):
+        # S033 18:37: Shadowheart's Target_SpiritualWeapon_Greataxe became her Main Hand Attack
+        self.g.actions = [{"spell": "Target_MainHandAttack", "name": "Main Hand Attack", "range": 1.5},
+                          {"spell": "Target_SpiritualWeapon", "name": "Spiritual Weapon", "range": 18}]
+        self.assertEqual(server._own_attack(P1, "Target_SpiritualWeapon_Greataxe"),
+                         ("Target_SpiritualWeapon_Greataxe", ""))
+
     def test_combat_turn_uses_the_summons_attack(self):
         self.g.combat = combat()
         self.g.watch["combat"] = True

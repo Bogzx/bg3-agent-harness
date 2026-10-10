@@ -516,6 +516,25 @@ test("cast: a projectile's late hit is in the result, not no_damage (acceptance 
     eq(j.status, "done", "miss status"); eq(j.result.no_damage, true, "miss")
 end)
 
+test("cast: an order the engine silently drops fails after CAST_NO_START_MS (S035 jump_to 25 s x3)", function()
+    spell("Target_Thing", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    local j = job(op("cast", { char = P1, spell = "Target_Thing", pos = { 5, 0, 0 } }))
+    tick(100) -- 6 s: still waiting
+    eq(j.status, "running", "early")
+    tick(40) -- 8.4 s, no CastSpell, no step
+    eq(j.status, "failed", "status"); assert(j.error:find("never started"), j.error)
+    -- the cast began (CastSpell): waits on
+    j = job(op("cast", { char = P1, spell = "Target_Thing", pos = { 5, 0, 0 } }))
+    A.dispatch("CastSpell", { P1, "Target_Thing", "Target", "None", 0 })
+    tick(140)
+    eq(j.status, "running", "began")
+    -- the character stepped (an engine approach / the jump took off): waits on
+    j = job(op("cast", { char = P1, spell = "Target_Thing", pos = { 5, 0, 0 } }))
+    world[P1].pos = { 1, 0, 0 }; tick(140)
+    eq(j.status, "running", "moved")
+    world[P1].pos = { 0, 0, 0 }
+end)
+
 test("cast: a once-per-rest item spell is refused after one use until a rest (S030 Spell Slot Restoration x3)", function()
     PersistentVars = nil
     spell("Shout_MAG_Restore", { SpellType = "Shout", UseCosts = "BonusActionPoint:1", Level = 0,
@@ -1360,6 +1379,21 @@ test("cast: Oath of Devotion refuses a killing blow on a Temporarily Hostile tar
     world[P1].comps.PassiveContainer.Passives[1].Passive.PassiveId = "Something_Else"
     j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
     eq(j.status, "running", "not devotion: " .. tostring(j.error))
+end)
+
+test("go_to_camp: a dead selected character doesn't block the party's camp button (S035 19:38)", function()
+    Osi.TeleportToFromCamp = record("TeleportToFromCamp")
+    add_p2()
+    osiv[key("GetHostCharacter")] = P1
+    osiv[key("IsDead", P1)] = 1
+    local j = job(op("go_to_camp", {}))
+    eq(j.status, "running", "status: " .. tostring(j.error))
+    local tp = called("TeleportToFromCamp")
+    eq(#tp, 1, "teleport"); eq(tp[1][2], P2, "the living member presses it")
+    RPC.jobs[j.id] = nil; A.active[P2] = nil
+    -- an explicit char is still checked
+    j = job(op("go_to_camp", { char = P1 }))
+    eq(j.status, "failed", "explicit dead char"); assert(j.error:find("character is dead", 1, true), j.error)
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

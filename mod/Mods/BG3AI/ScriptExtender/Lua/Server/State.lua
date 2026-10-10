@@ -622,6 +622,39 @@ local function itemStats(ie, o)
     end
 end
 
+-- Class-bound weapons (equip_best keeps them in hand): the bind statuses the bind spells apply to the item
+-- (Shout_PactOfTheBlade_Bind -> PACT_BLADE, Shout_WeaponBond -> WEAPON_BOND; 1 action each to redo), and the
+-- summoned pact weapons (WPN_Rapier_Pact … from Shout_PactOfTheBlade_<Weapon>; gone once unequipped).
+local BOND_STATUSES = { { "PACT_BLADE", "pact" }, { "PACTOFTHEBLADE_HEXBLADE", "pact" },
+                        { "WEAPON_BOND", "weapon_bond" }, { "MAG_WEAPON_BOND", "weapon_bond" } }
+
+local function weaponBond(ie, u, o)
+    local sid
+    pcall(function() sid = ie.Data.StatsId end)
+    if type(sid) == "string" and (sid:find("_Pact$") or sid == "_PactWeapon") then
+        o.bound, o.summoned = "pact", true
+        return
+    end
+    for _, b in ipairs(BOND_STATUSES) do
+        if truthy(osi(Osi.HasActiveStatus, u, b[1])) then o.bound = b[2] return end
+    end
+end
+
+-- Bind spells a member knows: "pact" (Pact of the Blade: the bound weapon attacks with CHA), "weapon_bond"
+-- (Eldritch Knight).
+local BIND_SPELLS = { Shout_PactOfTheBlade_Bind = "pact", Shout_PactOfTheBlade = "pact", Shout_WeaponBond = "weapon_bond" }
+
+local function bindsOf(e)
+    local out
+    pcall(function()
+        for _, sp in ipairs(e.SpellBook.Spells) do
+            local b = BIND_SPELLS[sp.Id.Prototype] or BIND_SPELLS[sp.Id.OriginatorPrototype]
+            if b then out = (out == nil or out == b) and b or out end
+        end
+    end)
+    return out
+end
+
 local function itemView(ie, owner, slot)
     local u = V.entityUuid(ie)
     if not u then return nil end
@@ -644,6 +677,7 @@ local function itemView(ie, owner, slot)
     if slot then o.equipped_slot = slot end
     if comp(ie, "IsGold") then o.gold = true end
     itemStats(ie, o)
+    if o.dmg then weaponBond(ie, u, o) end
     return o
 end
 
@@ -681,7 +715,8 @@ local function memberInfo(e)
         m.caster = (r.SpellSlot ~= nil or r.WarlockSpellSlot ~= nil)
     end)
     local ab = abilityBlock(e)  -- weapon choice: STR weapons vs finesse/ranged (DEX)
-    if ab then m.str, m.dex = ab.str, ab.dex end
+    if ab then m.str, m.dex, m.cha = ab.str, ab.dex, ab.cha end
+    m.binds = bindsOf(e)  -- pact / weapon_bond: equip_best keeps the bound weapon, a pact weapon uses CHA
     pcall(function() m.enc = tonumber(e.EncumbranceState.State) or 0 end)
     pcall(function() m.kg = round((e.InventoryWeight.Weight or 0) / 1000, 1) end)
     pcall(function() m.limit = round(e.EncumbranceStats.UnencumberedWeight / 1000, 1) end)
@@ -900,6 +935,8 @@ function S.combat(ctx)
                         local o = { uuid = u, name = V.name(u), relation = relation(ctx, u) }
                         if comp(me, "IsSummon") then o.summon = true end  -- ours or theirs: an ally, not a companion
                         if comp(me, "ServerItem") then o.item = true end  -- a prop/trap on the turn order
+                        -- the race the hover tooltip shows: lessons.md triggers match it (Undead, Githyanki …)
+                        if not o.item and not ctx.is_party[u] then o.race = raceName(me) end
                         local p = V.pos(me)
                         if p then o.pos = pos1(p); tactical(ctx, u, p, o) end
                         pcall(function() if m.Initiative then o.initiative = m.Initiative end end)
@@ -1477,7 +1514,9 @@ timed("state.combat", function()
 end)
 
 timed("state.journal", function()
-    return S.journal(V.context())
+    -- only the host's id: V.party(), not V.context() (its per-frame sight data cost ~6 ms on a cached journal,
+    -- check_route 18:30 "second 6 ms (cached; expect ~0)")
+    return S.journal({ party = V.party() })
 end)
 
 timed("state.map", function()

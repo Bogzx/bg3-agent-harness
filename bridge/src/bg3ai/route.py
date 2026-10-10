@@ -87,6 +87,10 @@ def route_waypoint(res: dict) -> dict | None:
 
 def _next(res: dict, H: Handles, ends: list | None = None) -> str:
     """One concrete suggestion."""
+    jx = res.get("jump")
+    if res.get("reachable") is False and isinstance(jx, dict) and jx.get("to"):
+        return (f"NEXT: travel_to x,y,z = {pos(jx['from'])} (the edge), then jump_to x,y,z = {pos(jx['to'])}, "
+                f"then route again")
     wp = route_waypoint(res)
     if wp and (res.get("reachable") is False or (res.get("length_m") or 0) > (wp.get("to_goal_m") or 0) + 60):
         return (f"NEXT: travel_to waypoint=\"{wp['name']}\" ({_m(wp.get('to_goal_m'))} from the goal, you are "
@@ -175,6 +179,12 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
             out.extend(_legs(c.get("legs"), 4))
             if c.get("exposure"):
                 out.append(f"  crosses {macros.exposure_text(c['exposure'])}")
+        jx = res.get("jump")
+        if isinstance(jx, dict) and jx.get("to"):  # S032 Yurgir: the broken staircase was a jump, never a walk
+            dy = jx.get("dy") or 0
+            hd = f", {_m(abs(dy))} {'down' if dy < 0 else 'up'}" if abs(dy) >= 1 else ""
+            out.append(f"JUMP ACROSS: from {pos(jx['from'])} (walk {_m(jx.get('walk_m'))}) over a {_m(jx.get('gap_m'))} "
+                       f"gap{hd} to {pos(jx['to'])}, {_m(jx.get('to_goal_m'))} from the goal")
         if res.get("ways"):  # the open directions from here, as get_frontier says them
             out.append(render.render_ways(res["ways"]))
     else:

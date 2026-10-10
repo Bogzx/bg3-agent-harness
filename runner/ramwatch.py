@@ -4,8 +4,15 @@
 2026-10-10 09:50 the kernel OOM killer killed bg3 (anon-rss 1.8 GB, oom_score_adj 200: the game inherits Steam's
 200, so it was the preferred victim) while 4 worker agents ran test suites in parallel. This watchdog:
   - logs free RAM once a minute to runtime/ram.log (every 10 s while low);
-  - lowers the game's oom_score_adj to GAME_OOM_ADJ (needs root to go below the inherited value: tries a direct
-    write, then `sudo -n choom`; logs once if neither is allowed);
+  - samples the game's RSS every SAMPLE_S; growth > SPIKE_MB within SPIKE_WINDOW_S is logged with the last tool
+    calls (runtime/actions.jsonl) to ram.log, the runner log and runtime/ram_spikes.jsonl (OOM attribution:
+    20:48 the game went 5.0 → 13.3 GB in < 40 s after loading the Shadowfell, between two 60 s samples);
+  - samples every FAST_SAMPLE_S while the RSS climbs fast, and SIGKILLs bg3 above KILL_GAME_MB RSS or below
+    KILL_AVAIL_MB available (test runs go first), logging the last bg3le log lines and tool calls
+    (runtime/ram_kills.jsonl); our own kill is no OOM event, so systemd stops no unit for it;
+  - no longer lowers the game's oom_score_adj (it used to set -500): the game runs in its own capped systemd scope
+    (runner/launch_game.sh), and when RAM runs out the game must be the victim, never an agent (an OOM kill inside
+    the multiplexer's unit makes systemd stop every agent);
   - below WARN_MB available: marks test runs (unittest/pytest/Lua test suites of this user) as the OOM killer's
     first victims (oom_score_adj 1000, no privilege needed) and logs a warning;
   - below KILL_MB available: SIGTERMs those test runs before the kernel picks the game.
@@ -17,7 +24,9 @@ runner/play.py runs it as a thread for the whole run; standalone (e.g. live test
 from __future__ import annotations
 
 import argparse
+import collections
 import fcntl
+import json
 import os
 import re
 import signal
@@ -31,9 +40,23 @@ RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", Path(__file__).resolve().parents[
 LOG = RUNTIME / "ram.log"
 INTERVAL_S = 60
 LOW_INTERVAL_S = 10
+SAMPLE_S = 5                   # game RSS sampling (cheap: /proc/<pid>/status)
+FAST_SAMPLE_S = 1              # … while the RSS grows by more than FAST_GROWTH_MB per sample
+FAST_GROWTH_MB = 300
+# Last resort: ramwatch SIGKILLs bg3 itself (a kill from us is no kernel OOM, so systemd never stops a unit for it).
+# 9.5 GB: above the 6.3 GB normal peak and just under launch_game.sh's MemoryMax=10G, so a runaway dies here, with
+# the bg3le crumbs and last tool calls logged, rather than at the cgroup cap or the global OOM killer.
+KILL_GAME_MB = 9500
+KILL_AVAIL_MB = 700            # … or when RAM available drops below this and no test run is left to kill
+KILLS = RUNTIME / "ram_kills.jsonl"   # the runner's OOM crash-loop guard counts these like kernel OOM kills
+SPIKE_MB = 2048                # RSS growth within SPIKE_WINDOW_S that gets logged with the last tool calls
+SPIKE_WINDOW_S = 60
+LOUD_MB = 7000                 # spikes ending above this (normal play peaks at ~6.3 GB) also go to the runner log;
+                               # smaller ones are usually a save loading (menu ~2 GB → 5 GB) and stay in ram.log
+SPIKES = RUNTIME / "ram_spikes.jsonl"
+ACTIONS = RUNTIME / "actions.jsonl"   # the MCP server's tool log
 WARN_MB = 1500
 KILL_MB = 800
-GAME_OOM_ADJ = -500
 TEST_OOM_ADJ = 1000
 GAME_COMM = "bg3"
 # Test runs that may be sacrificed for the game: python unittest/pytest, the Lua test scripts and their Docker
@@ -114,6 +137,44 @@ def set_adj(pid: int, adj: int, sudo: bool = True) -> str:
     return "sudo" if r.returncode == 0 else f"not permitted (sudo -n choom: {(r.stderr or r.stdout).strip()[:120]})"
 
 
+def last_tools(t: float, path: Path = ACTIONS, window_s: float = 120, n: int = 8,
+               tail_bytes: int = 400_000) -> list[str]:
+    """The tool calls of the last `window_s` before t, oldest first: 'HH:MM:SS tool {args} 1234ms → result…'."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - tail_bytes))
+            data = f.read()
+    except OSError:
+        return []
+    out = []
+    for line in data.splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(r, dict) or not (t - window_s <= r.get("t", 0) <= t + 1):
+            continue
+        args = json.dumps(r.get("args") or {}, separators=(",", ":"))[:160]
+        res = str(r.get("result") or "").split("\n")[0][:100]
+        out.append(f"{datetime.fromtimestamp(r['t']):%H:%M:%S} {r.get('tool')} {args} {r.get('ms', '?')}ms → {res}")
+    return out[-n:]
+
+
+def bg3le_crumbs(logs: Path | None = None, n: int = 12, tail_bytes: int = 65536) -> list[str]:
+    """The last n non-empty lines of the newest bg3le log (runtime/logs/bg3le-<stamp>.log.<pid>; binary-safe)."""
+    logs = logs or RUNTIME / "logs"
+    try:
+        f = max(logs.glob("bg3le-*.log*"), key=lambda p: p.stat().st_mtime)
+        with open(f, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - tail_bytes))
+            data = fh.read().decode(errors="replace")
+    except (OSError, ValueError):
+        return []
+    return [ln.rstrip()[:200] for ln in data.splitlines() if ln.strip()][-n:]
+
+
 class RamWatch:
     def __init__(self, log=None, logfile: Path = LOG, warn_mb: int = WARN_MB, kill_mb: int = KILL_MB,
                  exclude: set[int] | None = None):
@@ -121,8 +182,12 @@ class RamWatch:
         self.logfile = logfile
         self.warn_mb, self.kill_mb = warn_mb, kill_mb
         self.exclude = exclude or set()
-        self.protected: dict[int, str] = {}   # game pid → result of lowering its oom_score_adj (tried once)
         self.low = False
+        self.samples: collections.deque[tuple[float, int]] = collections.deque()   # (t, game RSS MB)
+        self.spike_at = 0.0
+        self.actions, self.spikes, self.kills, self.logs = ACTIONS, SPIKES, KILLS, RUNTIME / "logs"
+        self.fast = False            # the RSS grew fast at the last sample: sample every FAST_SAMPLE_S
+        self.tests_killed_at = 0.0
 
     def _write(self, line: str) -> None:
         try:
@@ -137,13 +202,6 @@ class RamWatch:
         procs = list(procs if procs is not None else _procs())
         avail = mem.get("MemAvailable", 0)
         games = game_pids(procs)
-        for pid in games:
-            if pid not in self.protected:
-                adj = get_adj(pid)
-                res = "ok" if adj is not None and adj <= GAME_OOM_ADJ else set_adj(pid, GAME_OOM_ADJ)
-                self.protected[pid] = res
-                if res not in ("ok", "sudo"):
-                    self.log(f"ramwatch: can't lower bg3 {pid} oom_score_adj from {adj} to {GAME_OOM_ADJ}: {res}")
         out = {"avail_mb": avail, "swap_free_mb": mem.get("SwapFree", 0),
                "game_rss_mb": sum(rss_mb(p) for p in games), "game_adj": [get_adj(p) for p in games],
                "action": ""}
@@ -168,13 +226,98 @@ class RamWatch:
                     f"game_adj={out['game_adj']} {out['action']}".rstrip())
         return out
 
+    def _append(self, path: Path, rec: dict) -> None:
+        try:
+            with path.open("a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except OSError:
+            pass
+
+    def sample(self, now: float | None = None, rss: int | None = None, avail: int | None = None,
+               pids: list[int] | None = None) -> dict | None:
+        """One game RSS sample. Kills bg3 (SIGKILL) above KILL_GAME_MB RSS, or below KILL_AVAIL_MB available once no
+        test run is left to kill; logs growth > SPIKE_MB within SPIKE_WINDOW_S (once per window). Returns the kill
+        record ({"kind": "kill", …}), the spike record ({"kind": "spike", …}) or None."""
+        now = time.time() if now is None else now
+        if pids is None:
+            pids = game_pids()
+        if rss is None:
+            rss = sum(rss_mb(p) for p in pids)
+        q = self.samples
+        if rss <= 0:          # no game (or it just died): a new game starts a new baseline
+            q.clear()
+            self.fast = False
+            return None
+        if avail is None:
+            try:
+                avail = meminfo().get("MemAvailable", 0)
+            except OSError:
+                avail = 1 << 30
+        self.fast = bool(q) and rss - q[-1][1] > FAST_GROWTH_MB
+        q.append((now, rss))
+        while q and q[0][0] < now - SPIKE_WINDOW_S:
+            q.popleft()
+        t0, low = min(q, key=lambda s: s[1])
+        if rss >= KILL_GAME_MB or avail < KILL_AVAIL_MB:
+            if rss < KILL_GAME_MB and now - self.tests_killed_at > 10:   # still short soon after: the game
+                tests = test_pids(exclude=self.exclude)
+                if tests:      # RAM is short but the game is in bounds: test runs go first
+                    for pid in tests:
+                        try:
+                            os.kill(pid, signal.SIGTERM)
+                        except OSError:
+                            pass
+                    self.tests_killed_at = now
+                    self.fast = True
+                    self._write(f"only {avail} MB available (game {rss} MB): SIGTERM to test runs {tests[:8]}")
+                    return None
+            return self._kill_game(now, pids, rss, avail, low, t0)
+        if rss - low <= SPIKE_MB or now - self.spike_at < SPIKE_WINDOW_S:
+            return None
+        self.spike_at = now
+        rec = {"kind": "spike", "t": now, "from_mb": low, "to_mb": rss, "seconds": round(now - t0),
+               "avail_mb": avail, "tools": last_tools(now, self.actions)}
+        msg = (f"RSS SPIKE: game {low} → {rss} MB in {rec['seconds']} s (RAM available {avail} MB); last tool calls: "
+               + (" | ".join(rec["tools"]) or "none in the last 2 min"))
+        self._write(msg)
+        if rss >= LOUD_MB:
+            self.log(f"ramwatch: {msg}")
+        self._append(self.spikes, rec)
+        return rec
+
+    def _kill_game(self, now: float, pids: list[int], rss: int, avail: int, low: int, t0: float) -> dict:
+        why = (f"game RSS {rss} MB >= {KILL_GAME_MB} MB" if rss >= KILL_GAME_MB
+               else f"only {avail} MB RAM available (< {KILL_AVAIL_MB} MB, game {rss} MB)")
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        rec = {"kind": "kill", "t": now, "why": why, "rss_mb": rss, "to_mb": rss, "avail_mb": avail, "from_mb": low,
+               "seconds": round(now - t0), "pids": pids, "tools": last_tools(now, self.actions),
+               "bg3le": bg3le_crumbs(self.logs)}
+        msg = (f"KILLED bg3 {pids} (SIGKILL): {why}; RSS {low} → {rss} MB in {rec['seconds']} s. Last tool calls: "
+               + (" | ".join(rec["tools"]) or "none in the last 2 min")
+               + ". Last bg3le lines: " + (" ⏎ ".join(rec["bg3le"][-6:]) or "none"))
+        self._write(msg)
+        self.log(f"ramwatch: !!!!! {msg}")
+        self._append(self.kills, rec)
+        self._append(self.spikes, rec)
+        self.samples.clear()
+        self.fast = False
+        return rec
+
     def loop(self, stop: threading.Event) -> None:
+        next_tick = 0.0
         while not stop.is_set():
             try:
-                self.tick()
+                if time.time() >= next_tick:
+                    self.tick()
+                    next_tick = time.time() + (LOW_INTERVAL_S if self.low else INTERVAL_S)
+                self.sample()
             except Exception as e:  # noqa: BLE001 - the watchdog never breaks the runner
                 self._write(f"error: {e}")
-            stop.wait(LOW_INTERVAL_S if self.low else INTERVAL_S)
+            stop.wait(FAST_SAMPLE_S if self.fast else SAMPLE_S)
 
 
 def take_lock(path: Path = RUNTIME / "ramwatch.lock"):

@@ -541,6 +541,27 @@ class ServerWiring(unittest.TestCase):
         finally:
             S.game, S.H = saved
 
+    def test_who_prefers_the_party_member_over_a_namesake(self):
+        """S035 19:32/19:38: a hostile copy named 'Karlach' made use_ability(who="Karlach") / set_party(who=
+        "Shadowheart") fail "is ambiguous"; a `who` is always ours. A target name stays ambiguous."""
+        from bg3ai import server as S
+        from bg3ai.render import Handles
+        ka, foe = "aaaaaaaa-2222-3333-4444-555555555555", "bbbbbbbb-2222-3333-4444-555555555555"
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                return {"party": [{"uuid": ka, "name": "Karlach"}]} if op == "state.status" else default
+        saved = (S.game, S.H)
+        S.game, S.H = G(), Handles()
+        try:
+            S.H.get(ka, "Karlach"); S.H.get(foe, "Karlach")
+            self.assertEqual(S._who("Karlach"), ka)
+            self.assertEqual(S._who_uuid("karlach"), ka)
+            with self.assertRaises(ValueError):
+                S._uuid("Karlach")                               # as a target: still ask
+        finally:
+            S.game, S.H = saved
+
     def test_npc_in_view_resolves_on_a_fresh_bridge(self):
         """S029 16:04: talk_to(npc="Wulbren") as the session's first call failed "unknown target" with him in view."""
         from bg3ai import server as S

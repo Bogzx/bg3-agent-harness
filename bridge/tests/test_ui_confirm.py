@@ -29,6 +29,24 @@ class RollCheck(Base):
         self.assertNotIn("Error", out)
         self.assertEqual([c[0] for c in calls], ["ui.roll", "ui.roll"])  # rolled, then Continue
 
+    def test_boost_not_offered_rolls_without_it(self):
+        # S035 19:24:20: roll_check(boosts="Guidance") on a roll with no boosts failed; the agent rolled bare next.
+        from bg3ai.game import GameError
+        calls = []
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            calls.append(dict(args))
+            if len(calls) == 1:
+                raise GameError("no boost 'Guidance' on this roll (the roll offers no boosts)")
+            if len(calls) == 2:
+                return JobResult("done", {"roll": {"phase": "result", "success": True, "result": 15}})
+            return JobResult("done", {"screen": "dialogue"})
+        self.g.run_job = run_job
+        out = server.roll_check(boosts="Guidance")
+        self.assertEqual(calls[1], {"reroll": False})
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(out.startswith("(rolled without Guidance: the roll offers no boosts)"), out)
+
     def test_reroll_on_fail(self):
         calls = []
 

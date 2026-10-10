@@ -7,6 +7,8 @@ render as `key=value`, so the bridge keeps working while the mod's output shapes
 
 from __future__ import annotations
 
+import json
+import math
 import re
 import time
 from typing import Any
@@ -47,16 +49,19 @@ class Handles:
         r = str(ref).strip()
         if r.lower() in self.by_handle:
             return self.by_handle[r.lower()]
-        low = r.lower()
-        matches = [h for h, n in self.names.items() if n and n.lower() == low]
-        if not matches:
-            matches = [h for h, n in self.names.items() if n and n.lower().startswith(low)]
+        matches = self.matches(r)
         if len(matches) == 1:
             return self.by_handle[matches[0]]
         if len(matches) > 1:
             opts = ", ".join(f"{h} ({self.names[h]})" for h in matches[:8])
             raise ValueError(f"'{ref}' is ambiguous: {opts}")
         raise ValueError(f"unknown target '{ref}'; use an id like e12 from get_nearby/get_status, or a party member name")
+
+    def matches(self, ref: str) -> list[str]:
+        """Handles whose name equals ref (or, failing that, starts with it), case-insensitive."""
+        low = str(ref).strip().lower()
+        out = [h for h, n in self.names.items() if n and n.lower() == low]
+        return out or [h for h, n in self.names.items() if n and n.lower().startswith(low)]
 
     def scrub(self, text: str) -> str:
         """Replace any GUID that slipped into free text with its handle."""
@@ -1070,8 +1075,83 @@ def _layout_mark(o: dict, kind: str) -> str | None:
     return None
 
 
+MOSAIC_START_M = 6.0  # the picture's nearest cell this close to you = you stand at its start
+
+
+def mosaic_path(mo: dict, here: Any, goal: Any = None) -> list[tuple[float, float, str]] | None:
+    """The way along the mosaic's lines (S036: 15 min of 1-3 m checked steps across the Faith-Leap): breadth-first over
+    the picture's '#'/'O' cells (4-neighbour; a diagonal only where the picture draws one), from the cell nearest `here`
+    to the cell nearest `goal` (x,z), or, without one, to the line cell farthest from the start (the far side). Only
+    what the picture shows: cell centres, 1 m. Returns the corners [(x, z, '#'|'O')], start first, or None."""
+    rows, x1, z2 = mo.get("rows") or [], mo.get("x1"), mo.get("z2")
+    if not rows or x1 is None or z2 is None or not isinstance(here, (list, tuple)) or len(here) < 3:
+        return None
+    cells = {(r, c): ch for r, row in enumerate(rows) for c, ch in enumerate(row) if ch in "#O"}
+    if not cells:
+        return None
+
+    def world(rc):
+        return (x1 + rc[1], z2 - rc[0])
+
+    def nearest(x, z):
+        return min(cells, key=lambda rc: (world(rc)[0] - x) ** 2 + (world(rc)[1] - z) ** 2)
+
+    start = nearest(here[0], here[2])
+    if math.dist(world(start), (here[0], here[2])) > MOSAIC_START_M:
+        return None
+    prev, order, queue = {start: None}, [start], [start]
+    while queue:
+        nxt = []
+        for r, c in queue:
+            steps = [(r + dr, c + dc) for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0))]
+            steps += [(r + dr, c + dc) for dr, dc in ((1, 1), (1, -1), (-1, 1), (-1, -1))
+                      if (r + dr, c) not in cells and (r, c + dc) not in cells]
+            for n in steps:
+                if n in cells and n not in prev:
+                    prev[n] = (r, c)
+                    order.append(n)
+                    nxt.append(n)
+        queue = nxt
+    if goal is not None:
+        end = min(order, key=lambda rc: (world(rc)[0] - goal[0]) ** 2 + (world(rc)[1] - goal[-1]) ** 2)
+    else:
+        end = max(order, key=lambda rc: math.dist(world(rc), world(start)))
+    way = []
+    while end is not None:
+        way.append(end)
+        end = prev[end]
+    way.reverse()
+    corners = [way[0]]
+    for i in range(1, len(way) - 1):
+        a, b, c = way[i - 1], way[i], way[i + 1]
+        if (b[0] - a[0], b[1] - a[1]) != (c[0] - b[0], c[1] - b[1]) or cells[b] != cells[a]:
+            corners.append(b)
+    if len(way) > 1:
+        corners.append(way[-1])
+    return [(*world(rc), cells[rc]) for rc in corners]
+
+
+def render_mosaic_path(mo: dict, here: Any, goal: Any = None) -> list[str]:
+    way = mosaic_path(mo, here, goal)
+    if not way or len(way) < 2:
+        return []
+    y = mo.get("y")
+    yo = (lambda k: y + 0.9 if k == "O" else y) if isinstance(y, (int, float)) else (lambda k: None)
+    # off the line's start (> 1.5 m): walk onto it first, never a diagonal across the chasm to the 2nd corner
+    first = 0 if math.dist(way[0][:2], (here[0], here[2])) > 1.5 else 1
+    legs = [{"tool": "move_to", "x": x, **({"y": round(yo(k), 1)} if yo(k) is not None else {}), "z": z}
+            for x, z, k in way[first:]]
+    m = sum(math.dist(way[i][:2], way[i + 1][:2]) for i in range(len(way) - 1))
+    to = "the cell nearest your goal" if goal is not None else "its far end"
+    return [f"MOSAIC PATH (the picture's lines from your end to {to}, {len(legs)} straight legs, {num(round(m))}m;"
+            " O = a statue platform, 1 m up): " + " → ".join(f"({num(x)},{num(z)}){'O' if k == 'O' else ''}"
+                                                           for x, z, k in way),
+            "  walk it: do_actions " + json.dumps(legs, separators=(",", ":"))
+            + "  (a step off a line drops you; the trial puts you back at its start)"]
+
+
 def render_layout(lay: dict, H: Handles, nearby: dict | None = None, party: list | None = None,
-                  me: str | None = None) -> str:
+                  me: str | None = None, goal: Any = None) -> str:
     rows = [list(r) for r in (lay.get("rows") or [])]
     if not rows:
         return "no layout (no position?)"
@@ -1105,7 +1185,13 @@ def render_layout(lay: dict, H: Handles, nearby: dict | None = None, party: list
         out.append("ON IT: " + " | ".join(legend))
     mo = lay.get("mosaic")
     if isinstance(mo, dict) and mo.get("rows"):
+        # S036 19:52: counted from "the right edge", the agent walked 1.4 m beside a line and fell twice; lined up
+        # with the room (what a player does with the statue platforms in view) the picture's columns are x, rows z
+        anchor = (f"; column 1 = x {num(mo['x1'])}, row 1 = z {num(mo['z2'])}, so a # at column c, row r is about"
+                  f" x {num(mo['x1'])}+c-1, z {num(mo['z2'])}-r+1"
+                  if mo.get("x1") is not None and mo.get("z2") is not None else "")
         out.append("MOSAIC on the floor of this room (the trial's picture: its safe lines from above, N up, 1 char = "
-                   "1m of the chasm; # line, O statue platform; the right edge is the chasm's edge on your side)")
+                   f"1m of the chasm; # line, O statue platform{anchor})")
         out += ["|" + r for r in mo["rows"]]
+        out += render_mosaic_path(mo, lay.get("center"), goal)
     return "\n".join(out)

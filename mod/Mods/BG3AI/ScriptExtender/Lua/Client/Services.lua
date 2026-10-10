@@ -1679,6 +1679,18 @@ RPC.register("ui.insert", function(args)
                 phase, t = "pressed", now
                 return nil
             end
+            -- S037 20:23: the Verge altar has 3 gem slots; each of the first two gems sat in its slot (state
+            -- Preparing, slots "?, empty, empty") and was reported "didn't make the panel ready" after 2.5 s.
+            -- In its slot with empty ones left = a partial fill: done, the panel waits for the rest.
+            if now - t > 400 and UI.get(hit.vm, "IsSelected") == true then
+                local v = insertView(dc)
+                local filled, empty = 0, 0
+                for _, x in ipairs(v.slots) do if x then filled = filled + 1 else empty = empty + 1 end end
+                if empty > 0 and filled > 0 then
+                    return "done", { placed = hit.name, uuid = hit.uuid, state = st, filled = filled, slots_total = filled + empty,
+                        panel_open = true }
+                end
+            end
             if now - t > 2500 then
                 local v = insertView(dc)
                 return "failed", nil, "the item didn't make the panel ready (state " .. tostring(st) .. ", fail "

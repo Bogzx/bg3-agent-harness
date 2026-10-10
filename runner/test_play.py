@@ -382,6 +382,92 @@ class KillGame(unittest.TestCase):
             self.r.kill_game()
 
 
+class Relaunch(unittest.TestCase):
+    """se's discriminator (2026-10-10 18:07-18:18): party ready checks break in a long-lived game process; the
+    runner relaunches it between sessions (age ≥ GAME_MAX_AGE_H, or the last session logged a ready-check failure)."""
+
+    def test_reason(self):
+        now = 100_000.0
+        self.assertIsNone(P.relaunch_reason(now - 3600, now, "fine", 2))
+        self.assertIn("2.0 h old", P.relaunch_reason(now - 7200, now, "", 2))
+        self.assertIsNone(P.relaunch_reason(now - 9 * 3600, now, "", 0))   # 0 = never by age
+        why = P.relaunch_reason(now - 60, now, "EVENTS\n  rest_flow step=ready_failed:ReadyCheckContent_GoToNight\n", 2)
+        self.assertIn("ready_failed:ReadyCheckContent_GoToNight", why)
+        self.assertIn("end_day_failed", P.relaunch_reason(None, now, "rest_flow step=end_day_failed", 2))
+        self.assertIsNone(P.relaunch_reason(None, now, None, 2))
+
+    def test_pick_save_never_an_autosave(self):
+        f = P.parse_save_folder
+        saves = [f("Claude-1__S032-end", 10.0), f("Claude-2__AutoSave_59", 20.0), f("Claude-3__QuickSave_4", 30.0)]
+        self.assertEqual(P.pick_save(saves, None, "Claude", set()).label, "S032-end")
+        self.assertEqual(P.pick_save(saves, "AutoSave_59", "Claude", set()).label, "S032-end")   # not even by HANDOFF
+        self.assertEqual(P.pick_save(saves, None, "Claude", {"Claude-3__QuickSave_4"}).label, "QuickSave_4")  # runner's own
+
+    def _runner(self, d: Path, *, launched, log_text, save_mtime, last_started=50.0, steam=(True, "offline"),
+                owns=True, first=False):
+        self.saved = (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log)
+        P.port_open = lambda *a, **k: True
+        P.steam_ready = lambda: steam
+        P.list_saves = lambda: [P.Save("Claude-1__S032-end", "Claude", "S032-end", save_mtime)]
+        P.game_started_at = lambda: launched
+        P.log = lambda m: self.logs.append(m)
+        self.logs, self.killed, self.events = [], [], []
+        r = P.Runner.__new__(P.Runner)
+        r.opt = P.Options("pt", None, 30, "opus", save_owner="Claude", take_over=True)
+        r.mem = d
+        r.state = type("S", (), {"dir": d, "data": {"game": None, "save_owner": "Claude", "runner_saves": [],
+                                                       "loaded_save": "x",
+                                                       "history": [{"kind": "play", "session": "S032",
+                                                                    "started": last_started}]},
+                                  "__getitem__": lambda s, k: s.data.get(k),
+                                  "__setitem__": lambda s, k, v: s.data.__setitem__(k, v)})()
+        (d / "S032.log").write_text(log_text)
+        r.owns_game = lambda: owns
+        r.kill_game = lambda: self.killed.append(1)
+        r.event = lambda kind, **f: self.events.append(kind)
+        return r
+
+    def tearDown(self):
+        if hasattr(self, "saved"):
+            (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log) = self.saved
+
+    def test_relaunches_after_a_ready_check_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="step=ready_failed:X", save_mtime=100.0)
+            self.assertIn("ready_failed", r.maybe_relaunch(False))
+            self.assertEqual(self.killed, [1])
+            self.assertIsNone(r.state["loaded_save"])
+            self.assertIn("game_relaunch", self.events)
+
+    def test_relaunches_an_old_process(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 5 * 3600, log_text="ok", save_mtime=100.0)
+            self.assertIn("h old", r.maybe_relaunch(False))
+            self.assertEqual(self.killed, [1])
+
+    def test_young_healthy_process_kept(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=100.0)
+            self.assertIsNone(r.maybe_relaunch(False))
+            self.assertEqual(self.killed, [])
+
+    def test_kept_when_steam_not_offline(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="end_day_failed", save_mtime=100.0,
+                             steam=(False, "Steam is not running"))
+            self.assertIsNone(r.maybe_relaunch(False))
+            self.assertEqual(self.killed, [])
+            self.assertIn("game_relaunch_skipped", self.events)
+
+    def test_kept_when_the_newest_save_predates_the_last_session(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ready_failed", save_mtime=10.0,
+                             last_started=50.0)
+            self.assertIsNone(r.maybe_relaunch(False))
+            self.assertEqual(self.killed, [])
+            self.assertTrue(any("lose play" in m for m in self.logs))
+
+
 class Gates(unittest.TestCase):
     def setUp(self):
         self.saved = (P.rpc, P.lua_eval, P.log)
@@ -1034,6 +1120,132 @@ class PlanCheck(unittest.TestCase):
         cmd = P.check_plans_cmd(Path("/tmp/x.json"), Path("/m"))
         self.assertEqual(cmd[-4:], ["--json", "/tmp/x.json", "--memory", "/m"])
         self.assertTrue(cmd[-5].endswith("check_plans.py"))
+
+
+class OomGuard(unittest.TestCase):
+    """20:48 S038: the Shadowfell load blew the game up to 13.3 GB; the kernel OOM-killed it (and systemd every
+    agent). The runner must spot a game OOM, and refuse a save that OOM-killed the game twice in a row."""
+    J = ("1791654500.100000 the test machine systemd[1740]: bg3ai-game-20261010-2000.scope: A process of this unit has been "
+         "killed by the OOM killer.\n")
+    HERDR = ("1791654510.000000 the test machine systemd[1740]: app-the multiplexer@b676.service: A process of this unit has been killed "
+             "by the OOM killer.\n")
+
+    def test_find_game_oom(self):
+        self.assertIn("its scope bg3ai-game-20261010-2000.scope", P.find_game_oom(self.J, "20261010-2000", []))
+        self.assertIsNone(P.find_game_oom(self.J, "20261010-2100", []))             # another launch's scope
+        self.assertIsNone(P.find_game_oom(self.HERDR, "x", []))                       # a test OOM'd in the multiplexer's unit
+        spike = {"t": 1791654480.0, "from_mb": 5000, "to_mb": 13300, "seconds": 35}
+        why = P.find_game_oom(self.HERDR, "x", [spike])                                # legacy: no scope, but a spike
+        self.assertIn("app-the multiplexer@b676.service", why)
+        self.assertIn("5000 → 13300 MB", why)
+        self.assertIsNone(P.find_game_oom("garbage killed by the OOM killer\n", "x", [spike]))
+
+    def test_streak(self):
+        a = P.oom_streak_update(None, "S038", "oom")
+        self.assertEqual(a["n"], 1)
+        self.assertEqual(P.oom_streak_update(a, "S038", "oom")["n"], 2)
+        self.assertEqual(P.oom_streak_update(a, "S037", "oom")["n"], 1)
+        self.assertIsNone(P.oom_streak_update(a, "S038", None))                     # a non-OOM death resets
+
+    def _runner(self, d: Path, saves):
+        self.saved = (P.list_saves, P.log, P.user_journal, P.read_spikes, P.write_status, P.read_actions_since)
+        self.logs, self.events = [], []
+        P.list_saves = lambda: saves
+        P.log = self.logs.append
+        P.user_journal = lambda since: self.J
+        P.read_spikes = lambda since, path=None: [{"t": 1.0, "tools": ["20:47:41 jump_to {} 12118ms → NOT READY"]}]
+        P.write_status = lambda **f: None
+        P.read_actions_since = lambda t, path=None: []
+        r = P.Runner.__new__(P.Runner)
+        r.opt = P.Options("pt", None, 30, "opus", save_owner="Claude")
+        r.mem = d
+        r.pending_notes = []
+        r.state = type("S", (), {"dir": d, "data": {"save_owner": "Claude", "runner_saves": [],
+                                                       "loaded_save": "Claude-2__S038-shadowfell"},
+                                  "__getitem__": lambda s, k: s.data.get(k),
+                                  "__setitem__": lambda s, k, v: s.data.__setitem__(k, v)})()
+        r.event = lambda kind, **f: self.events.append(kind)
+        return r
+
+    def tearDown(self):
+        if hasattr(self, "saved"):
+            (P.list_saves, P.log, P.user_journal, P.read_spikes, P.write_status, P.read_actions_since) = self.saved
+
+    def test_second_oom_from_the_same_save_refuses_it(self):
+        saves = [P.Save("Claude-1__S037-end", "Claude", "S037-end", 10.0),
+                 P.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0)]
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), saves)
+            r.state["game"] = {"stamp": "20261010-2000", "launched": 1.0}
+            self.assertIn("OOM-killed", r.check_game_oom())
+            self.assertIsNone(r.check_game_oom())                                   # once per launch
+            self.assertEqual(r.choose_save().label, "S038-shadowfell")               # 1st OOM: retried
+            r.state["game"] = {"stamp": "20261010-2000", "launched": 2.0}
+            r.state["oom_checked"] = None                                            # (2nd launch, same journal)
+            r.check_game_oom()
+            self.assertEqual(r.state["oom_streak"]["n"], 2)
+            self.assertEqual(r.choose_save().label, "S037-end")                      # 2nd: refused
+            self.assertIn("oom_save_refused", self.events)
+            self.assertTrue(any("REFUSING TO RESUME" in m for m in self.logs))
+            self.assertIn("jump_to", r.pending_notes[-1])
+            self.assertIn("S037-end", r.pending_notes[-1])
+
+    def test_refused_with_no_other_save_stops(self):
+        saves = [P.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0)]
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), saves)
+            r.state["oom_blocked"] = ["Claude-2__S038-shadowfell"]
+            with self.assertRaises(P.LaunchGaveUp):
+                r.choose_save()
+
+    def test_ramwatch_kill_counts_as_oom(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), [])
+            P.user_journal = lambda since: ""
+            P.read_spikes = lambda since, path=None: (
+                [{"kind": "kill", "t": 5.0, "why": "game RSS 9600 MB >= 9500 MB"}] if path else [])
+            r.state["game"] = {"stamp": "s", "launched": 1.0}
+            self.assertIn("ramwatch killed the game", r.check_game_oom())
+
+    def test_crash_note_names_the_last_three_calls(self):
+        acts = [{"t": 10.0, "tool": "get_status", "args": {}, "result": "x"},
+                {"t": 1791654449.2, "tool": "do_actions", "args": {"n": 3}, "result": "1. jump_to: FAILED\nSTOPPED"},
+                {"t": 1791654481.5, "tool": "move_to", "args": {"pos": [-415.4, -0.2, -1436.6]}, "result": "done"},
+                {"t": 1791654493.7, "tool": "jump_to", "args": {"x": -408.5, "y": 1, "z": -1437},
+                 "result": "NOT READY: timed out"},
+                {"t": 1791654600.0, "tool": "get_status", "args": {}, "result": "after"}]
+        note = P.crash_tools_note("S038: game gone", acts, 1791654514.7)
+        self.assertIn("jump_to {\"x\":-408.5,\"y\":1,\"z\":-1437}", note)
+        self.assertIn("do_actions", note)
+        self.assertNotIn("after", note)
+        self.assertNotIn("get_status {}", note)
+        self.assertIn("route/WAYS", note)
+
+    def test_game_gone_at_start_warns_once(self):
+        acts = [{"t": 99.0, "tool": "jump_to", "args": {"x": -408.5}, "result": "NOT READY"}]
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), [])
+            P.read_actions_since = lambda t, path=None: acts
+            r.state["history"] = [{"kind": "play", "session": "S038", "ended": 100.0}]
+            r.note_game_gone(None)
+            r.note_game_gone(None)
+            self.assertEqual(len(r.pending_notes), 1)
+            self.assertIn("S038", r.pending_notes[0])
+            self.assertIn("jump_to", r.pending_notes[0])
+            r.pending_notes.clear()
+            r.state["crash_noted"] = None
+            r.state["game_killed_at"] = 200.0          # the runner killed it after S038 (age relaunch): no warning
+            r.note_game_gone(None)
+            self.assertEqual(r.pending_notes, [])
+
+    def test_no_oom_resets(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), [])
+            P.user_journal = lambda since: ""
+            r.state["oom_streak"] = {"save": "Claude-2__S038-shadowfell", "n": 1}
+            r.state["game"] = {"stamp": "s", "launched": 1.0}
+            self.assertIsNone(r.check_game_oom())
+            self.assertIsNone(r.state["oom_streak"])
 
 
 if __name__ == "__main__":

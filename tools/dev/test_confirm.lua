@@ -855,6 +855,11 @@ do
         cmds[#cmds + 1] = name
         if name == "ToggleItemCommand" then
             param.IsSelected = true
+            if dc.multi then  -- a 3-slot altar: the first empty slot takes it, the panel waits for the rest
+                for i = 1, #dc.Ingredients do if dc.Ingredients[i] == false then dc.Ingredients[i] = param break end end
+                dc.CurrentState = "Preparing"
+                return true
+            end
             dc.Ingredients = { param }
             dc.CurrentState = "Ready"
             return true
@@ -894,6 +899,19 @@ do
     else
         ok(false, "insert by name: " .. tostring(rf))
     end
+    -- S037 20:23: the Verge altar's 3 gem slots: a gem in its slot with slots left is a partial fill, not a failure
+    book.IsSelected, dc.CurrentState, dc.Ingredients, dc.willFail, dc.multi, cmds = false, "Empty", { false, false, false }, nil, true, {}
+    local okp, rp = pcall(ops["ui.insert"], { item = "uuid-book" })
+    if okp and rp.job then
+        local j = run(rp.job, 5000)
+        ok(j.status == "done" and j.result.placed == "Teachings of Loss: The Nightsinger" and j.result.filled == 1
+            and j.result.slots_total == 3 and j.result.inserted == nil,
+            "insert: partial fill of a 3-slot panel → done, placed 1/3: " .. tostring(j.status) .. " " .. tostring(j.error))
+        ok(cmds[#cmds] == "ToggleItemCommand", "insert: partial fill presses no Insert: " .. table.concat(cmds, ","))
+    else
+        ok(false, "insert partial: " .. tostring(rp))
+    end
+    dc.multi = nil
     for k, v in pairs(saved) do BG3AI.UI[k] = v end
     BG3AI.Util.comp, BG3AI.Util.loca, Ext.Entity = _comp, _loca, _entity
     widgets = {}

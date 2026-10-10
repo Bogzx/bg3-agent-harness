@@ -10,6 +10,7 @@ import unittest
 from test_turn_macros import Base, P1  # noqa: F401  (sets BG3AI_RUNTIME first)
 
 from bg3ai import macros, render, server  # noqa: E402
+from bg3ai.game import NotReady  # noqa: E402
 
 FIRE = {"m": 1.5, "surface": "Fire", "patches": 1, "longest_m": 1.5, "pos": [5.0, 0.0, 0.0], "at_m": 4.0}
 
@@ -117,6 +118,14 @@ class JumpLanding(Base):
         self.assertIn("landing (-4,0,0) is in Fire: jumping to (-4,0,1.5) instead (1.5m from it, 4.3m jump, clear)", out)
         self.assertEqual(self.g.ops("act.cast")[0][1]["pos"], [-4.0, 0.0, 1.5])
 
+    def test_landing_over_the_chasm_jumps_to_the_floor_in_that_column(self):
+        # S032 17:32 Gauntlet broken staircase: y -1 asked over the Chasm around the stairs' floor
+        self.g.landing = {"safe": False, "surface": "Chasm", "dist_m": 4.0, "reliable_m": 4.5,
+                          "suggest": [-672.0, -3.2, -859.0], "suggest_off_m": 0, "suggest_dist_m": 4.0, "floor_y": -3.2}
+        out = server.jump_to(-672.0, -1.0, -859.0)
+        self.assertIn("landing (-672,-1,-859) is in Chasm: the floor there is at y -3.2, jumping to (-672,-3.2,-859)", out)
+        self.assertEqual(self.g.ops("act.cast")[0][1]["pos"], [-672.0, -3.2, -859.0])
+
     def test_long_jump_that_may_fall_short(self):
         self.g.landing = {"safe": False, "surface": "Fire", "dist_m": 7.8, "reliable_m": 4.5, "short_pos": [-4.5, 0, 0],
                           "suggest": [-2.0, 0.0, 0.0], "suggest_off_m": 5.8, "suggest_dist_m": 2.0}
@@ -128,6 +137,16 @@ class JumpLanding(Base):
         out = server.jump_to(-4.0, 0.0, 0.0)
         self.assertIn("jump_to: FAILED", out)
         self.assertEqual(self.g.ops("act.cast"), [])
+
+    def test_chasm_refusal_never_offers_force(self):
+        # S035 19:38 / S038 20:44: force=true into a Chasm killed Claude both times
+        self.g.landing = {"safe": False, "surface": "Chasm", "dist_m": 4.0, "reliable_m": 4.5}
+        out = server.jump_to(-449.0, -12.0, -1421.0)
+        self.assertIn("is in Chasm", out)
+        self.assertNotIn("force=true", out)
+        self.assertIn("fatal fall", out)
+        self.g.landing = {"safe": False, "surface": "Fire", "dist_m": 4.0, "reliable_m": 4.5}
+        self.assertIn("force=true", server.jump_to(-4.0, 0.0, 0.0))  # other hazards still offer it
 
     def test_far_alternative_is_named_not_taken(self):
         self.g.landing = {"safe": False, "blocked": True, "dist_m": 10.3, "reliable_m": 4.5,
@@ -147,12 +166,34 @@ class JumpLanding(Base):
         self.assertEqual([a["pos"] for _, a in self.g.ops("act.cast")],
                          [[-4.0, 0.0, 0.0], [-3.0, 0.0, 0.0], [-2.0, 0.0, 0.0]])
 
+    def test_landing_check_hang_casts_nothing(self):
+        # S038 20:48: nav.landing hung the server (story-thread timeout); the jump must not be cast unchecked after it
+        real = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "nav.landing":
+                raise NotReady("timed out waiting for the story thread; is the game paused or still loading?")
+            return real(op, args, context, timeout)
+        self.g.rpc = rpc
+        out = server.jump_to(-408.5, 1.0, -1437.0)
+        self.assertIn("NOT READY", out)
+        self.assertEqual(self.g.ops("act.cast"), [])
+
     def test_refusal_fails_the_batch_step(self):
         self.g.landing = {"safe": False, "surface": "Fire", "dist_m": 4.0, "reliable_m": 4.5}
         out = server.do_actions(json.dumps([{"tool": "jump_to", "x": -4, "y": 0, "z": 0},
                                             {"tool": "move_to", "x": 1, "y": 0, "z": 0}]))
         self.assertIn("STOPPED", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
+
+    # S038 OOM: on a level the nav kill switch turned off, the refusal says why there is no plan.
+    def test_too_far_on_a_killed_level_says_planning_is_off(self):
+        self.g.landing = {"safe": True, "too_far": True, "dist_m": 11.0, "max_m": 8.5, "reliable_m": 4.5,
+                          "plan_skipped": "jump planning is off on this level (a path search took 900 ms)"}
+        out = server.jump_to(-11, 0, 0)
+        self.assertIn("too far to jump (11 m", out)
+        self.assertIn("No jump plan: jump planning is off on this level", out)
+        self.assertNotIn("No walk gets within jumping distance", out)
 
     # S021: 11 jump_to refusals, each followed by turns of guessing: the reply now carries a plan that works.
     def test_too_far_names_a_walk_then_a_jump(self):

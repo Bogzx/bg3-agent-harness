@@ -193,6 +193,7 @@ read them all up front.
 | objectives.md | goal stack with a *why* per goal | rewrite |
 | hypotheses.md | beliefs under test, each with a test | rewrite; close or drop |
 | strategy.md | lessons, playbook, harness quirks | rewrite, ≤150 lines |
+| lessons.md | fight lessons `- WHEN <trigger>: <failed> → <instead> (Sxxx)`; the harness shows matching ones at a fight start (`LESSONS:`) | the keeper distills your `[lesson]`/`[fight]` notes; ≤60 |
 | decisions.md | irreversible choices, why, consequences seen | append; never delete |
 | npcs.md / locations.md / quests.md | facts and leads by name, region, quest | edit; archive, don't delete |
 | party-build.md / inventory-notes.md | build *intentions*, item *judgments* | rewrite |
@@ -277,9 +278,10 @@ continue with another party member → another objective. Then keep playing.
 - **Start:** a hook opens `memory/sessions/Sxxx.md` and injects PLAYTHROUGH.md and HANDOFF.md. Run the
   `session-start` playbook before playing. If the injection says COMPACTION DUE, run `compaction` next.
 - **Wrap-up (3 min):** only when the `⏱` line says **WRAP UP NOW** or a SESSION CLOCK reminder
-  appears. **Never start wrap-up before that**, not even with 1m of play left, and don't save `Sxxx-end`
-  or rewrite HANDOFF.md early: the minutes left include the wrap-up time, and autonomous sessions block
-  early stops. Retreating from real danger is play, not wrap-up. Because notes were written during
+  appears. **Don't start wrap-up before that**, and don't save `Sxxx-end` or rewrite HANDOFF.md early: the
+  minutes left include the wrap-up time, and autonomous sessions block early stops. One exception: with
+  ≤ 5m of play left and a point of no return next (a descent, a boss, a new region), wrap up now instead
+  of killing time (the hook accepts it); never idle with get_status/wiki reads. Retreating from real danger is play, not wrap-up. Because notes were written during
   play, wrap-up is short: finish the current fight round or conversation → `save_game("Sxxx-end")` →
   rewrite HANDOFF.md (one Write) → update PLAYTHROUGH.md's `Now:` line → end your turn. Details (the
   HANDOFF template, lint fixes) are in the `session-wrapup` playbook. The Stop hook lints the memory and

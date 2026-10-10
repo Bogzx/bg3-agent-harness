@@ -38,6 +38,9 @@ local TICK_MS = 50   -- post-condition polling; cheap queries, keeps chaining fa
 A.MOVE_REACH = 2.2   -- move_to {target}: stop within this of the entity (centres; melee reach is
                      -- weapon 1.5 + both radii, >= 2.2 m even for a tiny target, see G.check_cast)
 A.END_REQUEST_AFTER_MS = 1500 -- end_turn in a shared group: report the request as done after this
+-- S035 19:28-19:30: three jump_to calls each ran 25 s "still running" while Shadowheart never moved: the engine
+-- dropped UseSpellAtPosition without CastSpellFailed. No CastSpell and no step this long after the order: fail.
+A.CAST_NO_START_MS = 8000
 A.CAST_WALK_MAX_REACH = 3.0 -- act.cast out of combat walks into range only for touch-range casts (Help, melee)
 A.MELEE_STOP_SLACK = 0.4 -- move_to {target, within}: stop this far inside the melee reach
 A.CAST_SETTLE_MS = 250       -- cast: report this long after CastedSpell / the last hit
@@ -176,7 +179,7 @@ for event, arity in pairs({
     EntityEvent = 2, CharacterMoveToCancelled = 2, CharacterMoveFailedUseJump = 1,
     UseFinished = 3, Opened = 1, Closed = 1,
     DialogStarted = 2, DialogActorJoined = 4, DialogRequestFailed = 2,
-    CastedSpell = 5, CastSpellFailed = 5,
+    CastSpell = 5, CastedSpell = 5, CastSpellFailed = 5,
     AttackedBy = 7, EnteredCombat = 2, TurnEnded = 1,
     PickupFailed = 2, AddedTo = 3,
     Equipped = 2, EquipFailed = 2, Unequipped = 2, UnequipFailed = 2,
@@ -1201,6 +1204,9 @@ reg("cast", function(args)
         timeout_ms = 30000 + (walk and walk_timeout(walk_m) or 0),
         interrupt = { combat = walk ~= nil, dialogue = true, attacked = false },
         osi = with_walk({
+            CastSpell = function(job, a)
+                if matches(a) then job.began = true end
+            end,
             CastedSpell = function(job, a)
                 if matches(a) and not job.casted then
                     -- Hits usually land before CastedSpell; give stragglers a
@@ -1237,6 +1243,22 @@ reg("cast", function(args)
         }),
         on_tick = function(job)
             if job.phase == "approach" then return approach_tick(job) end
+            if not job.casted and not job.began and job.ordered_ms then
+                local p = G.pos(char)
+                if p and job.ordered_pos and U.dist(p, job.ordered_pos) > 0.5 then
+                    job.began = true -- the engine walks into range / the jump took off
+                elseif RPC.now_ms() - job.ordered_ms > A.CAST_NO_START_MS then
+                    local why = "the game never started it (" .. tostring(math.floor(A.CAST_NO_START_MS / 1000))
+                        .. " s, no cast, no step)"
+                    if base == "Projectile_Jump" then
+                        why = why .. ": it ignores a landing the jump can't reach (too far or too high for this"
+                            .. " character, or no clear arc): pick a nearer, lower landing (route / get_layout)"
+                    end
+                    pcall(G.osi, "PurgeOsirisQueue", char)
+                    RPC.finish_job(job, "failed", nil, why)
+                    return
+                end
+            end
             local now = job.casted and RPC.now_ms()
             -- Report CAST_SETTLE_MS after the cast once the hits are in (250 ms after the last one), at
             -- the latest `settle` after it (a projectile still in flight, or a miss).
@@ -1274,10 +1296,12 @@ reg("cast", function(args)
                     check = c
                     j.walked = U.round(walk_m, 1)
                     j.osi_task = "spell"
+                    j.ordered_ms, j.ordered_pos = RPC.now_ms(), G.pos(char)
                     G.osi("UseSpell", char, spell, targets[1], NULL_GUID, without_move)
                 end)
             end
             job.osi_task = "spell"
+            job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
             if pos then
                 -- Engine form has 6 inputs (6th = WithoutMove), verified live
                 -- on bg3le; the 5-input form is kept as a fallback for builds
@@ -1696,7 +1720,18 @@ A.in_camp = in_camp
 
 local function camp_travel(kind, want_in_camp)
     return function(args)
-        local char = G.actor(args.char or G.host())
+        -- The HUD's camp button is the party's: a dead or downed selected character doesn't grey it (S035 19:38:
+        -- Claude fell to death, camp() refused "character is dead" twice). With no char given, any living member.
+        local who = args.char
+        if not who then
+            who = G.host()
+            if not pcall(G.actor, who) then
+                for _, p in ipairs(G.party()) do
+                    if pcall(G.actor, p) then who = p; break end
+                end
+            end
+        end
+        local char = G.actor(who)
         for _, p in ipairs(G.party()) do
             if G.in_combat(p) then G.refuse("cannot do that during combat") end
             if G.in_dialogue(p) then G.refuse("cannot do that during a conversation") end

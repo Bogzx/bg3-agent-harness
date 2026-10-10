@@ -388,7 +388,8 @@ function G.reachable(char, pos)
     if type(N.path) == "function" then
         local ok, r = pcall(N.path, char, pos)
         if ok and type(r) == "table" then
-            return r.reachable, { length_m = r.length_m, needs_jump = r.needs_jump, reason = r.error_cause or r.reason }
+            return r.reachable, { length_m = r.length_m, needs_jump = r.needs_jump, reason = r.error_cause or r.reason,
+                hidden_floor = r.hidden_floor, drop = r.drop }
         end
     end
     if type(N.reachable) == "function" then
@@ -432,6 +433,19 @@ end
 function G.point_reachable(char, pos)
     local r, info = G.reachable(char, pos)
     if info.needs_jump and G.in_combat(char) then G.refuse("needs a jump: use jump_to") end
+    if r == true and info.drop then
+        -- Navigation.lua N.path: a walk never takes a fall that hurts (S035 Faith-Leap death)
+        local d = info.drop.pos or {}
+        G.refuse(string.format("the way there drops %.1fm at (%.1f,%.1f,%.1f) (fall damage): find a ladder or stairs"
+            .. " (route), or jump_to the landing on purpose", info.drop.m or 0, d[1] or 0, d[2] or 0, d[3] or 0))
+    end
+    if r == true and info.hidden_floor and info.hidden_floor.winds then
+        -- Navigation.lua N.path (S035: a walk onto the Faith-Leap chasm's invisible floor killed Claude)
+        local h = info.hidden_floor.pos or {}
+        G.refuse(string.format("the engine's way there bends across the chasm where no floor shows (from (%.1f,%.1f,%.1f), %.1fm along):"
+            .. " on an invisible-floor trial walk straight lines along the mosaic's lines (get_layout LINES), corner to corner",
+            h[1] or 0, h[2] or 0, h[3] or 0, info.hidden_floor.at_m or 0))
+    end
     if r ~= true then
         G.refuse("no walkable path there (may need a jump or another route)" .. G.closest_hint(char, pos))
     end

@@ -21,7 +21,7 @@ from typing import Any, Callable
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, delta, economy, leveling, macros, metrics, party, render, saver, saves, turn
-from . import companions, longnav, lore, navhints
+from . import companions, debrief, lessons, longnav, lore, navhints
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -193,12 +193,118 @@ def _events_text(body: str = "", job: str | None = None, max_wait: float | None 
             return []
 
     parts = []
+    seen: list = []
     for evs in _par(lambda: drain("server"), lambda: drain("client")):
         evs = _drop_events(evs)
         if evs:
+            seen += evs
             _note_dialogue_speaker(evs)
             parts.append(render.render_events(evs, H, body=body, job=job, flap=render.FLAP, party=_party_cached()))
+    fight = _fight_feed(seen)
+    if fight:
+        parts.append(fight)
     return "\n".join(p for p in parts if p)
+
+
+# ---- fight debriefs (debrief.py, research/fight-debrief.md): learn from a fight that went badly ----
+_FIGHTS: dict[str, Any] = {"tr": None}
+_retry: dict[str, Any] = {"rec": None, "status": False, "fight": False}
+
+
+def _fights_path() -> Path:
+    """runtime/sessions/<playthrough>/<Sxxx>.fights.jsonl beside the session's metrics (docs/ARCHITECTURE.md
+    "Learning from fights"); memory/fights.jsonl when the runner set no metrics path (tests, hand runs)."""
+    m = os.environ.get("BG3AI_METRICS_PATH", "")
+    if m.endswith(".metrics.jsonl"):
+        return Path(m[: -len(".metrics.jsonl")] + ".fights.jsonl")
+    return MEMORY / "fights.jsonl"
+
+
+def _fights() -> debrief.Tracker:
+    p = _fights_path()
+    if _FIGHTS["tr"] is None or _FIGHTS.get("path") != p:   # a new memory dir (tests): a fresh history
+        hist: list = []
+        for f in sorted(p.parent.glob("*fights.jsonl")) if p.parent.is_dir() else []:
+            hist += debrief.load_history(f)   # every session's fights of this playthrough, oldest first
+        _FIGHTS.update(tr=debrief.Tracker(hist), path=p)
+        _retry.update(rec=None, status=False, fight=False)
+    return _FIGHTS["tr"]
+
+
+def _fight_feed(evs: list) -> str:
+    """Every drained event batch: WARNING lines for repeated patterns, and the FIGHT DEBRIEF when the fight ended."""
+    if not evs:
+        return ""
+    try:
+        warns, ended = _fights().feed(evs, _party_cached())
+        out = list(warns)
+        if ended:
+            out.append(_close_fight())
+        return "\n".join(x for x in out if x)
+    except Exception as e:  # noqa: BLE001 - a debrief must never break a tool result
+        _log("debrief", {}, f"feed failed: {e}", 0)
+        return ""
+
+
+_UNUSED_RX = re.compile(r"(?i)\b(potion|elixir|scroll|grenade|flask|bomb)\b")
+
+
+def _close_fight(reloaded: bool = False) -> str:
+    """Close the open fight: the debrief block, a [fight] line in the session log, a fights.jsonl record."""
+    st = game.try_rpc("state.status") or {}
+    rows = [r for r in st.get("party") or [] if isinstance(r, dict) and not r.get("summon")]
+    m = os.environ.get("BG3AI_METRICS_PATH", "")
+    sess = os.environ.get("BG3AI_SESSION") or (Path(m).name.split(".")[0] if m.endswith(".metrics.jsonl") else None)
+    meta = {"session": sess, "region": st.get("region")}   # the runner sets only the metrics path (S035: null)
+    rec = _fights().close(rows, [], meta, reloaded=reloaded)
+    if rec is None:
+        return ""
+    if rec["grade"] != "clean":
+        # What the party carried and didn't use (its own inventory: fair). One read, bad fights only.
+        inv = game.try_rpc("state.inventory", {}) or {}
+        used = set((rec.get("consumables") or {}).get("used") or [])
+        names = []
+        for it in inv.get("items") or [] if isinstance(inv, dict) else []:
+            n = str(it.get("name") or "") if isinstance(it, dict) else ""
+            if n and _UNUSED_RX.search(n) and n not in used and n not in names and not it.get("equipped_slot"):
+                names.append(n)
+        rec["consumables"]["unused"] = rec["unused"] = names[:6]
+        rec["key_facts"] = debrief.key_facts(rec)
+        rec["summary"] = debrief.summary(rec)
+    debrief.append(_fights_path(), rec)
+    try:
+        _append_note(debrief.fight_note(rec), "fight")
+    except Exception:  # noqa: BLE001
+        pass
+    return debrief.render(rec)
+
+
+def _fight_hint(cs: dict, party: set | None) -> str:
+    """At the first combat-state read of a fight: the retried fight's key facts (after a load_game), else what
+    past debriefs vs these enemies said. Once per fight."""
+    try:
+        tr = _fights()
+        if not isinstance(cs, dict) or not cs.get("active"):
+            return ""
+        if tr.cur is None:
+            tr.feed([{"kind": "round_started", "data": {"round": cs.get("round") or 1}}], party)
+        tr.observe(cs, party)
+        f = tr.cur
+        if f is None or getattr(f, "hinted", False):
+            return ""
+        f.hinted = True
+        rec = _retry["rec"] if _retry["fight"] else None
+        if rec:
+            names = {o.get("name") for o in cs.get("order") or [] if isinstance(o, dict) and o.get("relation") == "hostile"}
+            if not names or names & {e.get("name") for e in rec.get("enemies") or []}:
+                _retry["fight"] = False
+                facts = (rec.get("key_facts") or [])[:3]
+                return (f"RETRY of the fight that went {rec.get('grade_before') or rec.get('grade')}: "
+                        + ("; ".join(facts) if facts else rec.get("summary", "")))
+        return "\n".join(tr.first_turn_warnings(cs))
+    except Exception as e:  # noqa: BLE001
+        _log("debrief", {}, f"hint failed: {e}", 0)
+        return ""
 
 
 # ---- skill checks in dialogue: each tagged option shows the check and the speaker's own modifier ----------
@@ -411,6 +517,9 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
         fight = _auto_combat(tool, body, ev)
         if fight:
             out.append(fight)
+        les = _lessons_text(tool, body, ev)
+        if les:
+            out.append(les)
     _running_memo.update(on=True, keys=None, out=None, watch=None)
     try:
         if "RUNNING " not in body:  # what still runs, so the agent appends (queue_actions) instead of waiting
@@ -501,6 +610,34 @@ def _auto_combat(tool: str, body: str, ev: str) -> str:
         return ""
 
 
+LESSONS = lessons.Store(MEMORY / "lessons.md")
+_WHERE_RE = re.compile(r"^WHERE ([^|\n]+)", re.M)
+# A move/action result's CHANGES block: "  WHERE <old> -> <new>" (S035 entered the Gauntlet of Shar and its trials
+# through move_to/walk results only; its Umbral Tremor lesson never showed).
+_WHERE_MOVED_RE = re.compile(r"^\s+WHERE .*? -> ([^\n]+)$", re.M)
+
+
+def _lessons_text(tool: str, body: str, ev: str) -> str:
+    """memory/lessons.md lines matching a fight that just started (enemy names/races, the place) or a place just
+    entered (docs/ARCHITECTURE.md "Learning from fights"). Once per fight / place; one combat + one status read
+    per fight start, none otherwise."""
+    ev = ev or ""
+    if "combat_ended" in ev or tool == "load_game":
+        LESSONS.fight_over()
+    m = _WHERE_RE.search(body) if tool in ("get_status", "look") else None
+    m = m or _WHERE_MOVED_RE.search(body)
+    if m and not LESSONS.in_fight and "combat_started" not in ev:
+        return LESSONS.region_lines([x.strip() for x in m.group(1).split("·")])
+    started = "combat_started" in ev or (tool == "get_combat_state" and body.startswith("COMBAT"))
+    if LESSONS.in_fight or not started or not LESSONS.lessons():
+        return ""
+    cs = game.try_rpc("state.combat") or {}
+    st = game.try_rpc("state.status") or {}
+    enemies = [o for o in cs.get("order") or [] if isinstance(o, dict) and o.get("relation") == "hostile"
+               and not o.get("item")]
+    return LESSONS.fight_lines(enemies, [st.get("subregion") or "", st.get("region") or ""])
+
+
 def _next_walk_hint() -> str:
     """The NEXT line after a walk that is still running: the first 3 times, then only after a PACE nudge."""
     if _pace["next_shown"] >= 3 and not _pace["nudge"]:
@@ -571,9 +708,11 @@ def _uuid(ref: str) -> str:
         except ValueError as e2:
             # S029 16:04: talk_to(npc="Wulbren") as the session's first call: he stood in view, unnamed to a fresh
             # bridge. A character in sight is worth one nearby read (sight-checked by the mod, so fair).
+            # S037 20:15: insert_item(into="Riddle of the Night") right after a travel: the pedestal stood in view,
+            # unnamed until a get_nearby. Items in sight are learnt by the same read.
             if "unknown target" not in str(e2):
                 raise
-            _remember_names(game.try_rpc("state.nearby", {"radius": 40, "kinds": ["characters"]}))
+            _remember_names(game.try_rpc("state.nearby", {"radius": 40, "kinds": ["characters", "items"]}))
             return H.resolve(ref)
 
 
@@ -586,8 +725,73 @@ def _active() -> str:
     return a
 
 
+def _who_uuid(ref: str) -> str:
+    """A `who` reference: always one of ours. S035 19:32/19:38: a hostile copy named 'Karlach'/'Shadowheart' (Shadow-
+    Cursed Lands) made who="Karlach" ambiguous; the party member is the only valid `who`, so take it."""
+    try:
+        return _uuid(ref)
+    except ValueError as e:
+        if "is ambiguous" not in str(e):
+            raise
+        party = _party_set()
+        mine = [H.by_handle[h] for h in H.matches(ref) if H.by_handle.get(h) in party]
+        if len(mine) == 1:
+            return mine[0]
+        raise
+
+
 def _who(ref: str | None) -> str:
-    return _uuid(ref) if ref else _active()
+    return _who_uuid(ref) if ref else _active()
+
+
+def _world_uuid(ref: str) -> str:
+    """A target out in the world (click_on/pick_up/interact) given by name: never an item the party carries.
+    S035 19:37: click_on("Umbral Gem") for the trial's gem on the floor → "ambiguous: e55, e257", both gems in
+    party bags. Carried namesakes are skipped; if only carried ones are known, one nearby read looks for one in
+    sight, else the refusal says who holds it."""
+    r = str(ref or "").strip()
+    try:
+        u = _uuid(r)
+        err = None
+    except ValueError as e:
+        if "is ambiguous" not in str(e):
+            raise
+        u, err = None, e
+    if re.fullmatch(r"e\d+", r.lower()):
+        return u
+    inv = game.try_rpc("state.inventory", {"expand": True}) or {}
+    _remember_names(inv)
+    carried = {it["uuid"]: it.get("owner") for it in inv.get("items") or []
+               if isinstance(it, dict) and isinstance(it.get("uuid"), str)}
+    if u is not None and u not in carried:
+        return u
+
+    def world() -> list[str]:
+        return [H.by_handle[h] for h in H.matches(r) if H.by_handle.get(h) not in carried]
+
+    w = world()
+    if not w:
+        _remember_names(game.try_rpc("state.nearby", {"radius": 40, "kinds": ["characters", "items"]}))
+        w = world()
+    if len(w) == 1:
+        return w[0]
+    if not w:
+        held = ", ".join(f"{H.get(c)} by {_name_of(carried[c])}" if carried[c] else H.get(c)
+                         for c in (H.by_handle[h] for h in H.matches(r)) if c in carried)
+        raise ValueError(f"no '{r}' in sight; the party carries it ({held}): it is in a bag, not in the world "
+                         "(get_inventory; get_nearby/get_frontier list what lies around)")
+    opts = ", ".join(f"{H.get(x)} ({_name_of(x)})" for x in w[:8])
+    raise ValueError(f"'{r}' is ambiguous: {opts} (party-carried ones skipped)") from err
+
+
+def _interact_uuid(ref: str) -> str:
+    """interact's target: a carried item can be used too (a book), so only an ambiguous name skips the carried."""
+    try:
+        return _uuid(ref)
+    except ValueError as e:
+        if "is ambiguous" not in str(e):
+            raise
+        return _world_uuid(ref)
 
 
 def _remember_names(obj: Any) -> None:
@@ -759,6 +963,11 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
         tb = _leave_turn_based_for_walk()
         note = "\n".join(x for x in (tb, note) if x)
         r = game.run_job(op, args, context=context, wait_s=wait_s, **kw)
+    if context == "server" and r.status == "failed" and _IN_CONVO in str(r.error or "") and _close_left_trade():
+        # S037 20:25:57: walk_toward right after trade(confirm) → "character is in a conversation"; the trade window
+        # was still up (get_dialogue + ESCAPE, 2 more calls). Walking off closes a trade for a player: close, rerun.
+        note = "\n".join(x for x in ("(closed the trade window first)", note) if x)
+        r = game.run_job(op, args, context=context, wait_s=wait_s, **kw)
     _log_stage_ms(op, r)
     _remember_names(r.result)
     _batch["last"] = r.status
@@ -769,6 +978,20 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
     if post is not None:  # a line from after the job (use_ability: did the opener start a fight?)
         note = "\n".join(x for x in (post(r), note) if x)
     return _finish(tool, args, _job_text(tool, r, args.get("char")) + ("\n" + note if note else ""), t0)
+
+
+def _close_left_trade(wait_s: float = 2.0) -> bool:
+    """A trade screen left open blocks every action as "in a conversation": close it with ESCAPE (the trade
+    screen's own close) and wait for it to go. True = it was open and is closed now."""
+    if _ui_screen()[0] != "trade":
+        return False
+    game.try_rpc("ui.key", {"key": "ESCAPE"}, context="client")
+    end = time.monotonic() + wait_s
+    while time.monotonic() < end:
+        time.sleep(0.2)
+        if _ui_screen()[0] not in ("trade", "dialogue"):
+            return True
+    return False
 
 
 # Async jobs started with wait=false: handle (j12) -> what the agent needs to follow them up.
@@ -951,6 +1174,9 @@ def get_status(full: bool = False) -> str:
     ph = _party_hint_line(st, markers, force=full or first or _too_big(lines))
     if ph:
         body += "\n" + ph
+    if _retry["status"] and _retry["rec"]:
+        _retry["status"] = False   # the first look after a reload repeats it once
+        body += "\n" + debrief.last_attempt(_retry["rec"])
     return _finish("get_status", {"full": full}, body, t0)
 
 
@@ -1128,7 +1354,7 @@ def _party_check(st: dict | None, rechain: bool = True, ui: dict | None = None) 
 def stay(who: str, on: bool = True) -> str:
     """Keep a companion where it is on purpose (guarding a door, standing on a plate): it is not re-chained to the leader, PARTY APART only notes it as staying, and the leader's travel_to doesn't wait for it. on=false (or regroup) brings it back into the group. Every other companion is chained to the leader by default and re-chained after it moved on its own."""
     t0 = time.monotonic()
-    u = _uuid(who)
+    u = _who_uuid(who)
     if on:
         _stay.add(u)
         game.try_rpc("act.unchain", {"char": u})  # a chained member would follow the leader's next walk
@@ -1203,7 +1429,7 @@ def get_party(camp: bool = False) -> str:
 def get_character(who: str | None = None, sections: str = "") -> str:
     """Character sheet. Full for party members (abilities, skills, resources, spell slots, equipment, passives); what Examine shows for others. who: id or party name (default: active character). sections: optional comma list to limit output, e.g. "resources,equipment"."""
     t0 = time.monotonic()
-    args = {"uuid": _uuid(who)} if who else {}  # no uuid: the mod uses the selected character
+    args = {"uuid": _who_uuid(who)} if who else {}  # no uuid: the mod uses the selected character
     if sections:
         args["sections"] = [s.strip() for s in sections.split(",") if s.strip()]
     res = _read1("state.character", args)
@@ -1252,6 +1478,14 @@ def _ability_id(who: str, ability: str) -> str:
     return ids[0]
 
 
+def _unknown_ability_line(line: str, slot: str) -> bool:
+    """A combat_turn slot line whose alternatives all failed on a wrong ability id/name (refused before anything
+    was spent), e.g. 'action: Shout_Dodge: FAILED — unknown action Shout_Dodge (not an ability id; …)'."""
+    if not line.startswith(f"{slot}:") or ": done" in line:
+        return False
+    return "not an ability id" in line or "has no action called" in line
+
+
 def _id_words(i: str) -> list[str]:
     """Shout_Rage_Frenzy → ['rage', 'frenzy'] (the type prefix dropped, CamelCase split)."""
     parts = i.split("_")[1:] if "_" in i else [i]
@@ -1285,6 +1519,10 @@ def _own_attack(who: str, ability: str) -> tuple[str, str]:
     shown = {i: n for n, ids in (_ability_ids.get(who) or {}).items() for i in ids}
     if not shown or ability in shown:
         return ability, ""
+    if any(ability.startswith(i + "_") for i in shown):
+        # S033 18:37: Shadowheart's Spiritual Weapon variant Target_SpiritualWeapon_Greataxe (the container
+        # Target_SpiritualWeapon is what she has) became her Main Hand Attack: a variant of a spell it has is a cast.
+        return ability, ""
     pre = "Projectile_MainHandAttack" if ability.startswith("Projectile_") else "Target_MainHandAttack"
     own = sorted(i for i in shown if i.startswith(pre))
     if len(own) != 1:
@@ -1298,8 +1536,8 @@ def _own_attack(who: str, ability: str) -> tuple[str, str]:
 def get_actions(who: str | None = None) -> str:
     """The actions/spells/items a character can use right now (as on the hotbar), with costs and availability."""
     t0 = time.monotonic()
-    res = _read1("state.actions", {"uuid": _uuid(who)} if who else {})
-    _learn_actions(_uuid(who) if who else (res.get("uuid") if isinstance(res, dict) else None), res)
+    res = _read1("state.actions", {"uuid": _who_uuid(who)} if who else {})
+    _learn_actions(_who_uuid(who) if who else (res.get("uuid") if isinstance(res, dict) else None), res)
     body = render.render_actions(res, H)
     return _finish("get_actions", {"who": who}, body, t0)
 
@@ -1335,6 +1573,7 @@ def _nearby_match(res: dict, words: list[str]) -> dict:
     out = dict(res)
     out["characters"] = [c for c in res.get("characters") or [] if hit(c)]
     out["items"] = [it for it in res.get("items") or [] if hit(it)]
+    out["remembered"] = [r for r in res.get("remembered") or [] if hit(r)]
     out.pop("more_items", None)
     return out
 
@@ -1353,6 +1592,10 @@ def get_nearby(radius: float = 25.0, kinds: str = "") -> str:
     res = _read1("state.nearby", args)
     if words and isinstance(res, dict):
         res = _nearby_match(res, words)
+    elif kinds and "characters" not in args["kinds"] and isinstance(res, dict):
+        # Remembered = characters out of sight: noise in a search for doors/items (S018-S035: 65 of 123 such calls
+        # carried ~4 REMEMBERED lines each, e.g. the Self-Same mirrors in every gem search)
+        res = {k: v for k, v in res.items() if k != "remembered"}
     _remember_names(res)
     if radius == 25.0 and not kinds and isinstance(res, dict):
         DELTA.observe(delta.snapshot(H, nearby=res))  # the agent has now seen these; look() won't repeat them
@@ -1386,7 +1629,7 @@ def get_inventory(who: str | None = None, filter: str = "") -> str:
     t0 = time.monotonic()
     args: dict[str, Any] = {}
     if who:
-        args["uuid"] = _uuid(who)
+        args["uuid"] = _who_uuid(who)
     if filter and filter.strip().lower() not in ("equipped", "notable"):
         args["expand"] = True  # food sits in the Camp Supply Sacks, keys on the keychain (S026: filter=food found nothing)
     (st, res), _ = _read([("state.status", {}), ("state.inventory", args)])
@@ -1453,16 +1696,29 @@ def get_frontier() -> str:
 
 @mcp.tool()
 @_guard
-def get_layout(radius: float = 12.0, who: str | None = None) -> str:
-    """The walls, openings and floor around you as a text map (what the overhead camera shows), N up, you = @: mazes, rooms, ledges, chasms. Marks the party (1-3), characters (E hostile, n other), doors (D), ladders (H), levers/buttons (L), containers (C). In a trial room with a floor mosaic it also prints the mosaic's picture. radius 4-20 m."""
+def get_layout(radius: float = 12.0, who: str | None = None, to: str = "") -> str:
+    """The walls, openings and floor around you as a text map (what the overhead camera shows), N up, you = @: mazes, rooms, ledges, chasms. Marks the party (1-3), characters (E hostile, n other), doors (D), ladders (H), levers/buttons (L), containers (C). In a trial room with a floor mosaic it also prints the mosaic's picture and, standing at its start, the MOSAIC PATH along its lines to the far end (to="x,z" or an id: to the line nearest that instead) as one do_actions of straight move_to legs. radius 4-20 m."""
     t0 = time.monotonic()
-    char = _uuid(who) if who else _active()
+    char = _who_uuid(who) if who else _active()
     lay = _read1("nav.layout", {"char": char, "radius": radius})
     st = game.try_rpc("state.status") or {}
     near = game.try_rpc("state.nearby", {"radius": min(max(radius, 4.0), 20.0) * 1.5}) or {}
     _remember_names(near)
-    text = render.render_layout(lay if isinstance(lay, dict) else {}, H, near, st.get("party") or [], char)
+    goal = _layout_goal(to, near) if to else None
+    text = render.render_layout(lay if isinstance(lay, dict) else {}, H, near, st.get("party") or [], char, goal)
     return _finish("get_layout", {"radius": radius}, text, t0)
+
+
+def _layout_goal(to: str, near: dict) -> tuple[float, float]:
+    """get_layout to=: "x,z" (or "x,y,z"), or the id/name of something in view -> (x, z)."""
+    nums = re.findall(r"-?\d+(?:\.\d+)?", to)
+    if "," in to and len(nums) in (2, 3):
+        return float(nums[0]), float(nums[-1])
+    u = _uuid(to)
+    for o in (near.get("characters") or []) + (near.get("items") or []):
+        if isinstance(o, dict) and o.get("uuid") and H.get(o["uuid"]) == H.get(u) and isinstance(o.get("pos"), list) and len(o["pos"]) >= 3:
+            return float(o["pos"][0]), float(o["pos"][2])
+    raise ValueError(f"to={to!r}: give x,z or the id of something in view")
 
 
 @mcp.tool()
@@ -1475,7 +1731,7 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
     help (which way a ladder climbs), ending with one NEXT step. connectors=true lists ladders/doors even when a path exists.
     go=true: check and go in one call: starts travel_to the goal when a path exists, else to the closest walkable spot."""
     t0 = time.monotonic()
-    args: dict[str, Any] = {"char": _uuid(who)} if who else {}  # no char: nav.route uses the active one
+    args: dict[str, Any] = {"char": _who_uuid(who)} if who else {}  # no char: nav.route uses the active one
     t = (target or objective).strip()
     if re.fullmatch(r"[om]\d+", t) or (objective and not target):  # objective o1 / words, map marker m1
         marker = t if re.fullmatch(r"m\d+", t) else ""
@@ -1596,6 +1852,10 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
     if not isinstance(res, dict) or not res.get("reachable") or not res.get("pos"):
         n = res.get("samples") if isinstance(res, dict) else None
         hz = macros.hazard_text(res.get("hazard")) if isinstance(res, dict) else ""
+        if isinstance(res, dict) and res.get("hidden_floor"):
+            return _finish("walk_toward", args, f"FAILED: the way toward {what} is the chasm, with no floor you can see"
+                           f" ({_hidden_text(res['hidden_floor'])}). On an invisible-floor trial walk in short steps"
+                           " (move_to ≤ 3m) along the mosaic's lines (get_layout).", t0)
         if hz:
             return _finish("walk_toward", args, f"FAILED: the way toward {what} crosses {hz}. Go around it"
                            " (another direction, get_frontier) or "
@@ -1613,12 +1873,21 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         head += ", needs a jump"
     if res.get("hazard_beyond"):
         head += f", stopping short of {macros.hazard_text(res['hazard_beyond'])}"
+    if res.get("hidden_beyond"):
+        head += f", stopping at the chasm edge (no floor you can see beyond, {_hidden_text(res['hidden_beyond'])})"
     if res.get("standing_in"):
         head += f" (you are standing in {res['standing_in']})"
     wait, note = _walk_wait(wait)
     body = _act("walk_toward", "act.move_to", {"char": args["char"], "pos": res["pos"], "run": run}, wait=wait,
                 note=note)
     return head + "\n" + body
+
+
+def _hidden_text(h: dict) -> str:
+    """Where a walk would leave visible floor for a trial's invisible one (nav hidden_floor {pos, at_m})."""
+    p = h.get("pos") if isinstance(h, dict) else None
+    at = f"{render.num(h.get('at_m', 0))}m along, " if isinstance(h, dict) and h.get("at_m") is not None else ""
+    return at + ("at " + render.pos(p) if isinstance(p, list) and len(p) == 3 else "ahead")
 
 
 @mcp.tool()
@@ -1640,6 +1909,9 @@ def _combat_state_text() -> str:
     # One read should be enough to plan the whole turn: add the acting party member's actions.
     st = game.try_rpc("state.status") or {}
     party = {c.get("uuid") for c in st.get("party") or []}
+    hint = _fight_hint(res, party)
+    if hint:
+        body += "\n" + hint
     mine = turn.party_acting(res, party) if isinstance(res, dict) else []
     cur = st.get("active") if st.get("active") in mine else (mine[0] if mine else None)
     if len(mine) > 1:
@@ -1850,7 +2122,7 @@ def _far_move(char: str, target: str | None, pos: list | None) -> tuple[list, fl
 def interact(target: str, who: str | None = None, wait: bool = True) -> str:
     """Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first (past 40 m: a travel_to, then the use on arrival). A locked door/chest opens when anyone in the party carries its key (that member walks up and opens it). wait=false returns at once with a job id."""
     char = _who(who)
-    out = _act("interact", "act.interact", {"char": char, "target": _uuid(target)}, wait=wait)
+    out = _act("interact", "act.interact", {"char": char, "target": _interact_uuid(target)}, wait=wait)
     return _walk_first("interact", out, char, who, target, actq.Step("interact", {"target": target})) or out
 
 
@@ -1858,7 +2130,7 @@ def interact(target: str, who: str | None = None, wait: bool = True) -> str:
 @_guard
 def pick_up(item: str, who: str | None = None, wait: bool = True) -> str:
     """Pick up a visible item from the ground (walks there first). wait=false returns at once with a job id."""
-    return _act("pick_up", "act.pickup", {"char": _who(who), "item": _uuid(item)}, wait=wait)
+    return _act("pick_up", "act.pickup", {"char": _who(who), "item": _world_uuid(item)}, wait=wait)
 
 
 _inp_client = {"c": None}
@@ -1892,14 +2164,15 @@ def _box_act(tool: str, op: str, args: dict, wait_s: float, rounds: int = 3) -> 
             break
         c = boxclick.click_box(lambda o, a: game.rpc(o, a, context="client"), inp, str(ans))
         q = res.get("question")
-        notes.append(boxclick.describe(c) + (f" (the question: {q})" if q else ""))
+        notes.append(boxclick.describe(c) + (f" (the question: {q})" if q and "[ForceUpdate]" not in str(q) else ""))
         if tool in ("confirm", "fast_travel") or not (c.get("closed") or c.get("next") or c.get("gone")):
             if tool != "long_rest" and tool != "short_rest" and not c.get("error"):
                 out = f"{tool}: done — {notes.pop()}" + ("; travelling" if tool == "fast_travel" else "")
             break
         time.sleep(0.5)  # the next screen (rest supplies, travel) opens
         out = _act(tool, op, args, context="client", wait_s=wait_s)
-    if notes:
+    if notes and ": done" not in out.split("\n", 1)[0]:
+        # Only on a failure: S033 18:36 a full rest read "(the button press didn't land …)" first, as if it failed.
         out = "(the button press didn't land: " + "; ".join(notes) + ")\n" + out
     return out
 
@@ -2060,7 +2333,7 @@ def click_on(target: str, button: str = "left") -> str:
     inp = _inp()
     if inp is None:
         raise GameError("input shim not available")
-    cr = click_entity(game, inp, _uuid(target), "R" if button.lower().startswith("r") else "L")
+    cr = click_entity(game, inp, _world_uuid(target), "R" if button.lower().startswith("r") else "L")
     tail = f"\nthe {cr.screen} screen covers the world: press_key ESCAPE first" if cr.reason == "covered" else ""
     return _finish("click_on", {"target": target}, ("clicked" if cr.ok else f"FAILED: {cr.reason}") + " — " + render.compact(cr.as_dict(), H) + tail, t0)
 
@@ -2143,7 +2416,12 @@ def jump_to(x: float, y: float, z: float, who: str | None = None, wait: bool = T
     char = _who(who)
     pos, note = [x, y, z], ""
     if not force:
-        lnd = game.try_rpc("nav.landing", {"char": char, "pos": pos})
+        try:
+            lnd = game.rpc("nav.landing", {"char": char, "pos": pos})
+        except NotReady:
+            raise  # S038: the check hung the server; an unchecked jump on top of it helps nothing
+        except GameError:
+            lnd = None
         refusal = navhints.jump_refusal(lnd, pos)  # with a working plan (walk / walk-then-jump) when one exists
         if refusal:
             if _batch["active"]:
@@ -2152,8 +2430,12 @@ def jump_to(x: float, y: float, z: float, who: str | None = None, wait: bool = T
         if isinstance(lnd, dict) and lnd.get("safe") is False:
             bad = navhints.landing_bad_text(lnd)
             pos = list(lnd["suggest"])
-            note = (f"landing {render.pos([x, y, z])} {bad}: jumping to {render.pos(pos)} instead "
-                    f"({render.num(lnd.get('suggest_off_m', '?'))}m from it, {render.num(lnd.get('suggest_dist_m', '?'))}m jump, clear)")
+            if lnd.get("floor_y") is not None:  # the same column's floor (a guessed y over the chasm around it)
+                note = (f"landing {render.pos([x, y, z])} {bad}: the floor there is at y {render.num(lnd['floor_y'])}, "
+                        f"jumping to {render.pos(pos)} ({render.num(lnd.get('suggest_dist_m', '?'))}m jump, clear)")
+            else:
+                note = (f"landing {render.pos([x, y, z])} {bad}: jumping to {render.pos(pos)} instead "
+                        f"({render.num(lnd.get('suggest_off_m', '?'))}m from it, {render.num(lnd.get('suggest_dist_m', '?'))}m jump, clear)")
     body = _act("jump_to", "act.cast", {"char": char, "spell": "Projectile_Jump", "pos": pos}, wait=wait)
     return f"{note}\n{body}" if note else body
 
@@ -2280,6 +2562,14 @@ def fast_travel(waypoint: str) -> str:
     if left.startswith("FAILED"):
         _batch["last"] = "failed"
         return _finish("fast_travel", {"waypoint": waypoint}, "fast_travel: " + left, time.monotonic())
+    # S035 19:27:44, 19:39:13: "can't fast travel now (Location)" twice inside the Gauntlet of Shar, no reason or
+    # way out. The greyed map button says it all along: an area block answers at once, like camp().
+    if not left and _travel_block().get("error") == "Location":
+        _batch["last"] = "failed"
+        return _finish("fast_travel", {"waypoint": waypoint}, "fast_travel: FAILED — can't fast travel now "
+                       "(Location): this area does not allow travel (a dungeon or story area; camp() is blocked "
+                       "too). Walk out the way you came (travel_to the spot where camp/fast_travel last worked), "
+                       "then fast_travel.", time.monotonic())
     out = _box_act("fast_travel", "ui.fast_travel", {"waypoint": waypoint}, wait_s=70)
     if out.rstrip().endswith("travelling"):
         # The box needed a mouse click (region change): the mod's job had stopped there, so nothing watched the
@@ -2337,6 +2627,14 @@ def camp(action: str = "go") -> str:
         if "cannot travel right now" in out:
             out += _travel_block_text(_travel_block())
         return out
+    # S035 19:27:30, 19:38:58: camp() pressed the button inside the Gauntlet of Shar and the job failed only after
+    # its 12 s wait, with the reason (Location) the greyed button showed all along. A player sees the grey button:
+    # an area block reads first and answers at once (transient errors still get the press).
+    b = _travel_block()
+    if b.get("error") == "Location":
+        _batch["last"] = "failed"
+        return _finish("camp", {"action": action}, "camp: FAILED — cannot travel right now —" + _camp_block_text(b),
+                       time.monotonic())
     out = _act("camp", "act.go_to_camp", {}, wait_s=60)
     if isinstance(out, str) and "cannot travel right now" in out:
         out += _camp_block_text(_travel_block())
@@ -2627,7 +2925,16 @@ def roll_check(boosts: str = "", reroll_on_fail: bool = False) -> str:
     args: dict[str, Any] = {"reroll": reroll_on_fail}
     if boosts:
         args["boosts"] = [b.strip() for b in boosts.split(",") if b.strip()]
-    first, roll = _roll_step(args, "roll", 20)
+    try:
+        first, roll = _roll_step(args, "roll", 20)
+    except GameError as e:
+        # S035 19:24:20: roll_check(boosts="Guidance") on a roll without Guidance → FAILED, and the agent rolled bare
+        # in a second call. A boost the roll doesn't offer can't be added by hand either: roll without it, say so.
+        if not args.get("boosts") or "no boost '" not in str(e):
+            raise
+        args.pop("boosts")
+        first, roll = _roll_step(args, "roll", 20)
+        first = f"(rolled without {boosts}: {str(e).split(' on this roll ', 1)[-1].strip('()')})\n" + first
     # ui.roll stops at the result screen (so a reroll can be chosen); "roll, and continue" means one call:
     # press Continue (or reroll a failure first) here, not in a second roll_check round trip (live S002).
     outs = [first]
@@ -2749,7 +3056,7 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
     """End the current character's turn; blocks through enemy turns until a party member can act or combat ends (wait=false: return right after ending it; then wait_for('my_turn'))."""
     t0 = time.monotonic()
     if who:
-        char = _uuid(who)
+        char = _who_uuid(who)
     else:
         # The selected character, unless it can't act now and exactly one other party member can (the
         # game moves the selection within a shared turn group; ending that one is what the agent means).
@@ -2973,7 +3280,37 @@ def _insert_listing(res: dict) -> str:
         h = H.get(u, it.get("name")) if isinstance(u, str) and u else "?"
         rows.append(f"{h} {it.get('name') or '?'}" + (" (in the slot)" if it.get("selected") else ""))
     return (f"INSERT panel {res.get('panel') or '?'}: slot(s) {slots}; state {res.get('state') or '?'}\n"
-            + ("items it can take: " + "; ".join(rows[:40]) if rows else "no items listed (the panel shows the selected character's bag)"))
+            + ("items it can take: " + "; ".join(rows[:20]) + (f" (+{len(rows) - 20} more)" if len(rows) > 20 else "")
+               if rows else "no items listed (the panel shows the selected character's bag)"))
+
+
+def _opened_dialogue(out: str) -> bool:
+    return "\nDIALOGUE " in "\n" + (out or "") or "dialogue_started" in (out or "")
+
+
+def _insert_poll(out: str, wait_s: float = 4.0) -> JobResult:
+    """The panel shows a moment after the interact; a conversation instead of it ends the wait at once."""
+    deadline = time.monotonic() + wait_s
+    while True:
+        r = _insert_job({})
+        if (r.status != "failed" or "no Insert Item panel" not in str(r.error) or _opened_dialogue(out)
+                or time.monotonic() > deadline):
+            return r
+        time.sleep(0.25)
+
+
+def _colocated_usables(target: str, within_m: float = 1.5) -> list[tuple[str, str]]:
+    """Other usable objects in sight standing where the target stands (uuid, name), nearest first."""
+    near = game.try_rpc("state.nearby", {"radius": 20, "kinds": ["usable", "container"]}) or {}
+    _remember_names(near)
+    rows = [it for it in near.get("items") or [] if isinstance(it, dict) and isinstance(it.get("pos"), list)]
+    me = next((it for it in rows if it.get("uuid") == target), None)
+    if not me:
+        return []
+    def d(it: dict) -> float:
+        return sum((float(a) - float(b)) ** 2 for a, b in zip(it["pos"][:3], me["pos"][:3])) ** 0.5
+    return [(it["uuid"], str(it.get("name") or "?")) for it in sorted(rows, key=d)
+            if it is not me and d(it) <= within_m]
 
 
 @mcp.tool()
@@ -2983,7 +3320,7 @@ def insert_item(item: str | None = None, into: str | None = None, who: str | Non
     t0 = time.monotonic()
     args = {"item": item, "into": into, "who": who}
     u_item = _uuid(H.get(_item_uuid(item))) if item else None
-    char = _uuid(who) if who else None
+    char = _who_uuid(who) if who else None
     if char is None and u_item:
         inv = game.try_rpc("state.inventory", {}) or {}
         _remember_names(inv)
@@ -2995,22 +3332,43 @@ def insert_item(item: str | None = None, into: str | None = None, who: str | Non
     if r.status == "failed" and "no Insert Item panel" in str(r.error):
         if not into:
             return _finish("insert_item", args, "insert_item: FAILED — no Insert Item panel is open: pass into=<the pedestal/socket> (interact opens it)", t0)
+        if char != (game.try_rpc("state.status") or {}).get("active"):
+            # S037 20:15-20:17: who=Shadowheart while Claude was controlled: 3 interacts "used … success", no panel;
+            # selecting her and clicking opened it. The client shows the panel only to the controlled character
+            # (as pickpocket's window), so take control first, as a player does.
+            if game.run_job("act.select", {"char": char}, wait_s=5).status == "done":
+                note = f"took control of {_name_of(char)} (the panel shows for the controlled character)"
         out = _act("interact", "act.interact", {"char": char, "target": _uuid(into)}, wait_s=40)
         walked = _walk_first("interact", out, char, who, into, actq.Step("interact", {"target": into}))
         if walked:  # far / out of sight: the walk runs, the interact is queued for the arrival
             return _finish("insert_item", args, walked + "\ncall insert_item again when the panel is open", t0)
-        deadline = time.monotonic() + 4.0
-        while True:
-            r = _insert_job({})
-            if r.status != "failed" or "no Insert Item panel" not in str(r.error) or time.monotonic() > deadline:
-                break
-            time.sleep(0.25)
+        r = _insert_poll(out)
+        others = _colocated_usables(_uuid(into)) if r.status == "failed" and "no Insert Item panel" in str(r.error) else []
+        if others and not _opened_dialogue(out):
+            # S037 20:18-20:20: the Pedestal of Reckoning only talks; the gem slot is the Ancient Altar at the same
+            # spot (a hand click on it opened the panel). Try what stands there, as a player clicks the other part.
+            h, nm = others[0]
+            out2 = _act("interact", "act.interact", {"char": char, "target": h}, wait_s=40)
+            r = _insert_poll(out2)
+            if r.status == "done":
+                into = H.get(h)
+                note = "; ".join(x for x in (note, f"the slot is on {H.get(h)} {nm} (at the same spot)") if x)
+            else:
+                out = out2 if _opened_dialogue(out2) else out
         if r.status == "failed" and "no Insert Item panel" not in str(r.error):
             return _finish("insert_item", args, f"insert_item: FAILED — {r.error}", t0)
         if r.status == "failed":
-            return _finish("insert_item", args, f"insert_item: FAILED — no Insert Item panel opened ({out.splitlines()[0] if out else 'interact'}); "
-                           "not every pedestal takes items: look at it (get_nearby / screenshot)", t0)
-        note = f"opened the panel by {_name_of(char)}"
+            alt = "; ".join(f"{H.get(h)} {nm}" for h, nm in others)
+            if _opened_dialogue(out):
+                body = (f"insert_item: FAILED — no Insert Item panel: using it opened a conversation instead\n{out}"
+                        + (f"\nthe slot may be on what stands at the same spot ({alt}): end the conversation, then "
+                           f"insert_item(into={H.get(others[0][0])})" if others else ""))
+            else:
+                body = (f"insert_item: FAILED — no Insert Item panel opened ({out.splitlines()[0] if out else 'interact'})"
+                        + (f"; tried {H.get(others[0][0])} {others[0][1]} at the same spot too" if others else "")
+                        + "; not every pedestal takes items: look at it (get_nearby / screenshot)")
+            return _finish("insert_item", args, body, t0)
+        note = "; ".join(x for x in (note, f"opened the panel by {_name_of(char)}") if x)
     elif r.status == "failed":
         return _finish("insert_item", args, f"insert_item: FAILED — {r.error}", t0)
     listing = dict(r.result) if isinstance(r.result, dict) else {}
@@ -3024,8 +3382,13 @@ def insert_item(item: str | None = None, into: str | None = None, who: str | Non
         body = f"insert_item: FAILED — {r.error or r.status}\n" + _insert_listing(listing)
         return _finish("insert_item", args, body, t0)
     res = r.result or {}
-    name = res.get("item") or res.get("inserted") or _name_of(u_item)
-    if res.get("state") == "Fail":
+    name = res.get("item") or res.get("inserted") or res.get("placed") or _name_of(u_item)
+    if res.get("placed") and not res.get("inserted"):
+        # S037 20:23: the Verge altar's 3 gem slots; the first two gems read FAILED though each sat in its slot.
+        n, k = res.get("slots_total") or 0, res.get("filled") or 0
+        body = (f"insert_item: done — put {name} in the slot ({k} of {n} filled; state {res.get('state')}): the panel "
+                f"waits for {n - k} more item(s): insert_item(item=<next>) fills the next slot, Insert presses itself")
+    elif res.get("state") == "Fail":
         why = res.get("fail_reason") or "no reason given"
         body = f"insert_item: FAILED — the panel refused {name} ({why}); it is still open"
         if why == "Interrupted":
@@ -3034,8 +3397,15 @@ def insert_item(item: str | None = None, into: str | None = None, who: str | Non
             body += ("\nthe game interrupted the insert (a real drag and click get the same answer now): don't retry "
                      "by hand; note it and play on elsewhere")
     else:
+        # S037 20:17/20:20: "the panel is still open: ESCAPE closes it" after a story insert that closed it (the
+        # pedestal vanished) → the ESCAPE was REFUSED. Look once before saying so.
+        closed = res.get("closed")
+        if not closed:
+            time.sleep(0.3)
+            again = _insert_job({}, wait_s=3)
+            closed = again.status == "failed" and "no Insert Item panel" in str(again.error)
         body = f"insert_item: done — inserted {name} into {listing.get('panel') or 'the panel'}" + (
-            " (panel closed)" if res.get("closed") else f" (state {res.get('state')}; the panel is still open: ESCAPE closes it)")
+            " (panel closed)" if closed else f" (state {res.get('state')}; the panel is still open: ESCAPE closes it)")
     return _finish("insert_item", args, body + ("\n" + note if note else ""), t0)
 
 
@@ -3085,7 +3455,7 @@ def _stash_junk(who: str | None, keep: str = "") -> str:
     """manage_inventory(op="camp", item="junk"): send every junk item (economy.is_junk) to the camp chest, one
     engine transfer each (S023 did this by hand: inventory screen, right-click, 6 screenshots)."""
     t0 = time.monotonic()
-    inv = game.rpc("state.inventory", {"uuid": _uuid(who)} if who else {})
+    inv = game.rpc("state.inventory", {"uuid": _who_uuid(who)} if who else {})
     _remember_names(inv)
     items = economy.junk(inv, _keep_set(keep))
     sent, failed = [], []
@@ -3111,11 +3481,16 @@ def _stash_junk(who: str | None, keep: str = "") -> str:
 def equip_best(who: str | None = None) -> str:
     """Equip the better gear sitting in party bags (out of combat): for each member (or just who), every item that beats what they wear in that slot (armour/shield AC, weapon damage/enchantment, else rarity) and that they are proficient with; moved from another member's bag first. get_inventory(filter="gear") lists the same without equipping."""
     t0 = time.monotonic()
+    if (game.try_rpc("state.status") or {}).get("in_combat"):
+        # S034 19:15: called as a Displacer Beast ambush began; every give failed "… (use the UI)", which invites a
+        # hand click. In combat a swap costs an action and gives are refused: say so, do nothing.
+        return _finish("equip_best", {"who": who}, "equip_best: NOT NOW — in combat (gear swaps cost actions and "
+                       "items can't change hands mid-fight). Call it again once the fight ends; nothing was moved.", t0)
     inv = game.rpc("state.inventory", {})
     _remember_names(inv)
     done, failed = [], []
     lp = economy.lantern_plan(inv)
-    if lp and (not who or _uuid(who) in (lp["frm"], lp["to"])):
+    if lp and (not who or _who_uuid(who) in (lp["frm"], lp["to"])):
         # The lantern's aura works from any holder: the caster carries the light, the fighter gets a weapon
         # (S025-S027 Claude fought with it). Unequip → give → equip: the gap is ~1 s.
         tag = f"{_name_of(lp['to'])}: {H.get(lp['lantern'])} {lp['name']} (light for the party; was {_name_of(lp['frm'])}'s main hand)"
@@ -3136,7 +3511,7 @@ def equip_best(who: str | None = None) -> str:
             _remember_names(inv)
     ups = economy.upgrades(inv)
     if who:
-        ups = [u for u in ups if u["who"] == _uuid(who)]
+        ups = [u for u in ups if u["who"] == _who_uuid(who)]
     if not ups and not done and not failed:
         hands = economy.main_hands(inv, _name_of)
         return _finish("equip_best", {"who": who}, "equip_best: done — nothing better in the bags"
@@ -4026,7 +4401,7 @@ def _notes_window() -> str:
 def cancel_queue(who: str | None = None) -> str:
     """Stop a character's queue (who) or every queue (who empty): the running step is cancelled and the rest dropped."""
     t0 = time.monotonic()
-    out = _queues().cancel(_uuid(who) if who else None)
+    out = _queues().cancel(_who_uuid(who) if who else None)
     if not out:
         return _finish("cancel_queue", {}, "no queue was running", t0)
     lines = [f"cancelled {_label(w)}: " + (f"stopped {run}, " if run else "") + f"dropped {n}" for w, n, run in out]
@@ -4996,11 +5371,15 @@ def _pick_variant(step: actq.Step, text: str) -> str:
     m = _VARIANTS.search(text) if step.tool == "use_ability" else None
     if not m:
         return ""
-    first = m.group(1).split(",")[0].strip()
+    names = [v.strip() for v in m.group(1).split(",") if v.strip()]
+    # S033 18:47: Lay on Hands on Claude at 13/104 HP took SmallHeal (the first); the agent re-cast BigHeal the next
+    # round. A heal container takes its biggest heal (the engine refuses it when the charges don't cover it).
+    big = next((v for v in names if re.search(r"(?i)bigheal|_big\b|greater", v)), None)
+    first = big or (names[0] if names else "")
     if not first or first == step.args.get("ability"):
         return ""
     step.args["ability"] = first
-    return f"took the first variant {first}"
+    return f"took the {'biggest heal' if big else 'first'} variant {first}"
 
 
 def _step_into_range(who: str, step: actq.Step, text: str, watcher: actq.Watcher, after: dict) -> str:
@@ -5064,8 +5443,15 @@ def _step_into_sight(who: str, step: actq.Step, text: str, watcher: actq.Watcher
     acts = acts.get("actions") if isinstance(acts, dict) else acts
     rng = next((a.get("range") for a in acts or [] if isinstance(a, dict)
                 and a.get("spell") == step.args.get("ability")), None)
-    if not isinstance(rng, (int, float)) or rng <= turn.MELEE_RANGE_M:
-        return ""  # melee: walking next to it is the move's job (out of range → step in)
+    if not isinstance(rng, (int, float)):
+        return ""
+    if rng <= turn.MELEE_RANGE_M:
+        # S033 18:49: Cure Wounds and Help on downed Shadowheart 1.5 m away: "no line of sight" twice, the turn
+        # lost, Claude downed next. A touch cast already in reach looks for a spot beside it that sees it;
+        # out of reach, walking next to it is the move's job (out of range → step in).
+        d = turn.straight_dist(game.try_rpc("state.combat") or {}, who, tu)
+        if d is None or d > rng + turn.MELEE_REACH_PAD:
+            return ""
     sp = game.try_rpc("nav.los_spot", {"char": who, "target": tu, "range": max(1.0, float(rng) - 0.5),
                                        "avoid": True})
     if not (isinstance(sp, dict) and sp.get("found") and sp.get("pos")):
@@ -5320,7 +5706,7 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     Abilities: the shown name or the id; a weapon attack the character doesn't have (a summon's) becomes its own weapon attack. Extra Attack: after the first weapon attack, an "extra" slot attack costs no action (the game's rule).
     Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","force","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it, walk the move again (a Dash does this by default; then_move:false turns it off).
     order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn and while a sent-ahead plan waits (default: stop).
-    No line of sight to a ranged target: it first steps (within the movement left and the ability's range) to the nearest spot that sees it, then casts again. A downed character has no turn to play (it passes by itself); another of your characters (a summon too) acting first makes a sent-ahead plan return at once.
+    No line of sight to a ranged target: it first steps (within the movement left and the ability's range) to the nearest spot that sees it, then casts again. A downed character has no turn to play (it passes by itself); another of your characters acting first makes a sent-ahead plan return at once; your summon (Spiritual Weapon …) acting first and not in the plan: its turn is played for it (its weapon attack on the plan's first target, else the nearest hostile) and then the plan.
     Before each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore="" adds new hostiles in view).
     A slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off). A melee move that ends out of reach says "melee is out of reach this turn" and skips the melee attacks on that target (ranged / Dash next). The move's target dead or out of sight (Shadow Blend, killed first): the plan is re-aimed at the nearest visible hostile, and walks on if movement is left (retarget:false keeps it). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).
     An empty plan {} just ends that character's turn (e.g. it already acted through single tools).
@@ -5328,7 +5714,13 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), up to 30 s longer while enemies are still taking turns, then plays it."""
     chain = _turn_chain(plan)
     if chain is None:
-        return _combat_turn_one(plan, who, end, wait_next, ignore, wait_turn, extend_s=TURN_EXTEND_S)
+        try:
+            return _combat_turn_one(plan, who, end, wait_next, ignore, wait_turn, extend_s=TURN_EXTEND_S)
+        except (GameError, ValueError) as e:
+            auto = _summon_first(str(e), plan, ignore)
+            if auto is None:
+                raise
+        return auto + "\n\n" + _combat_turn_one(plan, who, end, wait_next, ignore, wait_turn, extend_s=TURN_EXTEND_S)
     if not end:
         raise ValueError("a list of member plans ends each turn: send end=false plans one at a time")
     outs: list[str] = []
@@ -5359,6 +5751,11 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
                 swaps += 1
                 chain.insert(i, chain.pop(i + 1 + first))
                 continue
+            auto = _summon_first(why, pl, ignore) if swaps < len(chain) else None
+            if auto is not None:
+                swaps += 1
+                outs.append(auto)
+                continue
             stop = f"{w}: not played — {why}"
             break
         outs.append(txt)
@@ -5386,6 +5783,47 @@ TURN_EXTEND_S = 30.0  # the first (or only) plan: extra wait past wait_turn whil
 TURN_PROGRESS_S = 10.0  # ... "progress" = the acting combatant changed this recently
 
 
+def _summon_first(why: str, plan: str, ignore: str) -> str | None:
+    """A turn refused because our own summon (Spiritual Weapon …) must act first and the plan has no turn for it
+    (S035: 3 chains stopped 'now e510 Spiritual Weapon', up to 21.7 s waited, a re-send each): play the summon's
+    turn as a player would — its weapon attack on the plan's first target (the nearest visible hostile when that
+    one is gone or out of sight), else end it — then the caller retries. None: not a summon of ours."""
+    m = re.search(r"\(combat_turn who=([^)\s]+)\)", why)
+    if not m:
+        return None
+    try:
+        su = _uuid(m.group(1))
+    except ValueError:
+        return None
+    cs = game.try_rpc("state.combat") or {}
+    row = next((o for o in cs.get("order") or [] if isinstance(o, dict) and o.get("uuid") == su), None)
+    if not row or not row.get("summon"):
+        return None
+    hostile = {o.get("uuid") for o in cs.get("order") or [] if isinstance(o, dict)
+               and o.get("relation") == "hostile" and not o.get("dead")}
+    tgt = None
+    for t in re.findall(r'"target"\s*:\s*"([^"]+)"', plan or ""):
+        try:
+            u = _uuid(t)
+        except ValueError:
+            continue
+        if u in hostile:   # never a heal's target (an ally)
+            tgt = u
+            break
+    if tgt is None:
+        here = row.get("pos")
+        foes = [o for o in cs.get("order") or [] if isinstance(o, dict) and o.get("relation") == "hostile"
+                and not o.get("dead") and o.get("pos") and here]
+        if foes:
+            tgt = min(foes, key=lambda o: sum((a - b) ** 2 for a, b in zip(o["pos"], here)))["uuid"]
+    sp = ({"move": {"target": H.get(tgt), "within": 1.5},
+           "action": [{"ability": "Target_MainHandAttack", "target": H.get(tgt)}], "on_reaction": "skip"}
+          if tgt else {})
+    txt = _combat_turn_one(json.dumps(sp), H.get(su), True, False, ignore, 5.0)
+    return f"{_label(su)} (your summon) had to act first and wasn't in the plan: played it (weapon attack on " \
+           f"the plan's target, else ended)\n" + txt
+
+
 def _chain_first(why: str, later: list[tuple[str, str]]) -> int | None:
     """A member's turn refused because '<eX> (yours) must act first: play that turn (combat_turn who=eX)':
     the index in later of the member that is eX, or None."""
@@ -5398,7 +5836,7 @@ def _chain_first(why: str, later: list[tuple[str, str]]) -> int | None:
         return None
     for j, (w, _pl) in enumerate(later):
         try:
-            if _uuid(w) == first:
+            if _who_uuid(w) == first:
                 return j
         except ValueError:
             continue
@@ -5435,7 +5873,7 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
                        "or start a fight with use_ability / do_actions)", t0)
     now = turn.acting(cs)
     waited = ""
-    want = _uuid(who) if who else None
+    want = _who_uuid(who) if who else None
     if want and want in turn.downed(cs):
         return _finish("combat_turn", {"who": who}, _downed_text(want), t0)
     ready = (lambda c: want in turn.acting(c)) if want else (lambda c: bool(turn.party_acting(c, party)))
@@ -5491,12 +5929,15 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
         raise GameError(f"{why} (now {', '.join(_label(u) for u in now) or '?'})" + (f"; {waited}" if waited else ""))
     lines = [f"TURN {_label(char)}" + (f" (round {cs['round']})" if cs.get("round") is not None else "")
              + (f" — {waited}" if waited else "") + _light_note(cs)]
+    fight_hint = _fight_hint(cs, party)   # the first turn of a fight: a retry's key facts / past debriefs' warnings
+    if fight_hint:
+        lines.append(fight_hint)
     notes: list[str] = []
     for alt in [a for k in ("action", "bonus") for a in p.slots.get(k) or []] + \
             [a for slot in p.slots.get("extra") or [] for a in slot]:
         if alt.step.tool == "use_ability" and alt.step.args.get("ability"):
             try:  # shown names → ids first: the fallbacks below compare ids (retarget, variants, tried)
-                actor = alt.step.args.get("who") and _uuid(alt.step.args["who"]) or char
+                actor = alt.step.args.get("who") and _who_uuid(alt.step.args["who"]) or char
                 sp, note = _own_attack(actor, _ability_id(actor, alt.step.args["ability"]))
                 alt.step.args["ability"] = sp
                 if note and note not in notes:
@@ -5556,6 +5997,12 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
             elif (res == "none" and slot in ("action", "bonus") and p.slots[slot] and lines
                   and lines[-1].startswith(f"{slot}:") and turn.missed_target(lines[-1])):
                 res = _turn_auto_fallback(p, slot, p.slots[slot], char, watcher, lines, after, info)
+            if res == "none" and slot in ("action", "bonus") and lines and _unknown_ability_line(lines[-1], slot):
+                # S035 19:33: action ["Shout_Dodge"] → "unknown action" (refused, nothing spent), then end_turn threw
+                # Wyll's action away. A wrong id/name is a plan slip: keep the turn open for the real choice.
+                if "Dodge" in lines[-1]:
+                    lines.append("BG3 has no Dodge action (5e only): Shout_Disengage, Shout_Dash, Shout_Hide, or an attack")
+                res = "stop"
         _turn_cs.clear()
         if res == "stop":
             stopped = True
@@ -5912,6 +6359,11 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                         + "): try get_frontier, a door, or a jump")
                 if isinstance(r, dict) and r.get("hazard_beyond"):
                     stop += f"; ahead: {macros.hazard_text(r['hazard_beyond'])}"
+                hid = r.get("hidden_floor") or r.get("hidden_beyond") if isinstance(r, dict) else None
+                if hid:  # S035: a walk onto the Faith-Leap chasm's invisible floor killed Claude
+                    stop = (f"the way on is the chasm, with no floor you can see ({_hidden_text(hid)};"
+                            f" {render.num(round(d, 1))}m left): on an invisible-floor trial walk in short steps"
+                            " (move_to ≤ 3m) along the mosaic's lines (get_layout)")
                 break
             # A plain sampled leg that gains only a few metres on a long trip (acceptance: 30 m, 2 m, 29 m legs; the
             # sampler stopped at an obstacle edge): one verified alternative leg first, kept when it gets clearly further.
@@ -6292,6 +6744,16 @@ def regroup(leader: str | None = None, near_m: float = macros.REGROUP_NEAR_M, ch
     if not far and not (chain and unchained):
         return _finish("regroup", {}, "\n".join(lines + [f"everyone is within {render.num(near_m)}m of {_label(lead)}"]), t0)
     x, y, z = lp
+    # S035 19:28: Shadowheart's own move_to + jump_to queue (her way up) was replaced by regroup's travel_to, which
+    # found no walkable way ("no walkable ground leads further"). A member already on its own queue keeps it.
+    own = [(u, d) for u, d in far if _queues().busy(u)]
+    for u, d in own:
+        lines.append(f"{_label(u)} ({render.num(round(d, 1))}m): left on its own queue (it is still running); "
+                     "regroup again once it ends")
+    far = [(u, d) for u, d in far if (u, d) not in own]
+    skip.update(u for u, _ in own)   # no chain mid-queue either (a chained follower walks after the leader)
+    if not far and not (chain and unchained):
+        return _finish("regroup", {}, "\n".join(lines), t0)
     for u, d in far:
         _queue_ignore[u] = set()
         _queues().add(u, [actq.Step("travel_to", {"x": x, "y": y, "z": z})], replace=True)
@@ -6341,7 +6803,7 @@ def read_all(who: str | None = None, max_items: int = 6) -> str:
     """Read every book, note and letter in the party's bags you haven't read yet (by name), one after another, and return their text. Remembers what was read across sessions. Out of combat only. Stops at a conversation, roll, reaction or decision popup."""
     t0 = time.monotonic()
     _no_combat("read_all")
-    inv = game.rpc("state.inventory", {"uuid": _uuid(who)} if who else {})
+    inv = game.rpc("state.inventory", {"uuid": _who_uuid(who)} if who else {})
     _remember_names(inv)
     seen = _read_set()
     items = [it for it in (inv.get("items") or []) if macros.readable(it) and it.get("uuid") not in seen]
@@ -6638,6 +7100,7 @@ def load_game(save: str = "latest") -> str:
         raise GameError(f"'{save}' is not one of this playthrough's saves; see list_saves")
     else:
         save = next(d.name for d in mine if d.name == save or d.name.endswith("__" + save))
+    retried_fight, fight_block = _fight_before_load()
     alive_at_start = _game_process_alive()
     boot0 = _server_boot()
     retried = 0
@@ -6660,8 +7123,34 @@ def load_game(save: str = "latest") -> str:
     game.event_seq = {"server": 0, "client": 0}
     DELTA.reset()  # a loaded save is a new world: the next look is a full one
     delta.INV.reset()  # and its inventory: the mod's rev restarts with its Lua state (stale gear/gold after a load)
-    return _finish("load_game", {"save": save}, _job_text("load_game", r) + (f"\n{dropped}" if dropped else ""),
-                   t0, events=False)
+    body = _job_text("load_game", r) + (f"\n{dropped}" if dropped else "")
+    if fight_block:
+        body += "\n" + fight_block
+    if retried_fight is not None and r.status == "done":
+        _retry.update(rec=retried_fight, status=True, fight=True)
+        body += "\n" + debrief.last_attempt(retried_fight)
+    return _finish("load_game", {"save": save}, body, t0, events=False)
+
+
+def _fight_before_load() -> tuple[dict | None, str]:
+    """load_game: the events not drained yet still belong to the fight (the load resets the event cursor); a fight
+    still open is closed as reloaded. Returns (the fight this load retries or None, its debrief block or '')."""
+    try:
+        tr = _fights()
+        evs = []
+        for ctx in ("server", "client"):
+            try:
+                evs += game.drain_events(ctx)
+            except GameError:
+                pass
+        _warns, ended = tr.feed(evs, _party_cached())
+        if tr.cur is not None:
+            block = _close_fight(reloaded=not ended)   # it ended in these events: its own grade, else reloaded
+            return tr.retry_of() if ended else tr.last, block
+        return tr.retry_of(), ""
+    except Exception as e:  # noqa: BLE001 - never block a load
+        _log("debrief", {}, f"before load failed: {e}", 0)
+        return None, ""
 
 
 @mcp.tool()

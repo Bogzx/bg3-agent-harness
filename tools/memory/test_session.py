@@ -416,8 +416,8 @@ class AutonomousStopTest(MemoryTestCase):
         # 10-min window, so the agent stopped at 7.4 min left while the clock line still said "1m of play".
         self.open_session(1, minutes_ago=12)
         self.write("HANDOFF.md", self.good_handoff(1))
-        self.set_deadline(7.4)
-        os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 4.4 * 60)  # wrap-up 3 min before the deadline
+        self.set_deadline(9.4)  # (S036: past STOP_GRACE_S = 5 min before the wrap-up, so 6.4 min out still bounces)
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 6.4 * 60)  # wrap-up 3 min before the deadline
         self.assertTrue(S.stop_decision(self.mem)["reason"].startswith("Keep playing"))
         os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() - 1)
         self.assertIn("committed", S.stop_decision(self.mem)["systemMessage"])
@@ -431,6 +431,24 @@ class AutonomousStopTest(MemoryTestCase):
         self.assertTrue(S.stop_decision(self.mem)["reason"].startswith("Keep playing"))  # no HANDOFF yet
         self.write("HANDOFF.md", self.good_handoff(1))
         self.assertIn("committed", S.stop_decision(self.mem)["systemMessage"])
+
+    def test_wrapup_at_a_natural_stop_4_min_before_wrap_accepted(self):
+        # S036: HANDOFF written 3.3 min before WRAP UP at a point of no return; the 150 s grace bounced it and it
+        # killed ~2.5 min with idle reads. A finished wrap-up counts from STOP_GRACE_S (5 min) before WRAP UP.
+        self.open_session(1, minutes_ago=24)
+        self.set_deadline(7.5)
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 4.5 * 60)
+        self.write("HANDOFF.md", self.good_handoff(1))
+        self.assertIn("committed", S.stop_decision(self.mem)["systemMessage"])
+
+    def test_wrapup_far_from_wrap_still_bounced(self):
+        self.open_session(1, minutes_ago=14)
+        self.set_deadline(16)
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 13 * 60)
+        self.write("HANDOFF.md", self.good_handoff(1))
+        r = S.stop_decision(self.mem)["reason"]
+        self.assertTrue(r.startswith("Keep playing"))
+        self.assertIn("reversible work", r)
 
     def test_wrapup_epoch_out_of_range_falls_back(self):
         self.set_deadline(10)

@@ -45,6 +45,13 @@ function RPC.register(name, fn)
     RPC.ops[name] = fn
 end
 
+-- Polls and cheap reads: no breadcrumb (they run several times a second).
+RPC.QUIET_OPS = {
+    ["events.since"] = true, ["job.poll"] = true, ["ui.state"] = true, ["state.status"] = true,
+    ["state.nearby"] = true, ["nav.markers"] = true, ["nav.activity"] = true, ["sys.ping"] = true,
+    ["sys.info"] = true, ["sys.mem"] = true, ["batch"] = true,
+}
+
 function BG3AI.rpc(json)
     local ok, req = pcall(Ext.Json.Parse, json)
     if not ok or type(req) ~= "table" then
@@ -53,6 +60,14 @@ function BG3AI.rpc(json)
     local fn = RPC.ops[req.op or ""]
     if not fn then
         return encode({ ok = false, error = "unknown op '" .. tostring(req.op) .. "' in " .. CONTEXT .. " context" })
+    end
+    -- Breadcrumb (Shared/Mem.lua): a call that never returns (S038 20:48 OOM) leaves its name as the last line.
+    local Mem = BG3AI.Mem
+    if Mem and Mem.crumb and not RPC.QUIET_OPS[req.op] then
+        local a = type(req.args) == "table" and req.args or {}
+        local p = type(a.pos) == "table" and a.pos or nil
+        Mem.crumb(req.op .. (p and string.format(" (%s,%s,%s)", tostring(p[1]), tostring(p[2]), tostring(p[3])) or "")
+            .. (a.target and (" " .. tostring(a.target)) or ""))
     end
     local ok2, res = pcall(fn, req.args or {})
     if not ok2 then

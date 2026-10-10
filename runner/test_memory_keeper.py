@@ -110,6 +110,14 @@ class KeeperTest(MemoryTestCase):
         self.assertIn("HARNESS FIXES", prompt)  # the real harness-news.md: retire fixed quirks
         self.assertIn("## Retired quirks", prompt)
 
+    def test_lessons_md_is_the_keepers(self):
+        # fight debriefs → lessons.md (docs/ARCHITECTURE.md "Learning from fights"): writable, a new file survives
+        self.assertTrue(K.writable("lessons.md"))
+        p = K.build_prompt(self.mem, "S012", 12, "", 5)
+        self.assertIn("lessons.md", p)
+        self.assertIn("[fight]", p)
+        self.assertIn("- WHEN <trigger>", p)
+
     def test_out_of_bounds_edits_are_reverted(self):
         handoff, log = self.read("HANDOFF.md"), self.read("sessions/S003.md")
         r = self.run_keeper("out_of_bounds")

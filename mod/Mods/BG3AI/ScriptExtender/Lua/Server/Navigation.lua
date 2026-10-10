@@ -259,23 +259,44 @@ end
 -- A found path can also end short of the target (the goal is on a rock or
 -- off the mesh: the last node 3+ m from it, where a normal path ends ~1 m
 -- from it); with endTol such a path is flagged partial (end_pos, end_off).
+N.PATH_MAX_NODES = 5000 -- more is not a real route (S038: runaway node walk); ~2.5 km tile by tile
+N.PATH_SLOW_MS = 1000
 N.PATH_END_TOL_M = 2.0 -- the walker's own "close enough" (Actions walk_close_enough)
-local function rawPath(e, from, target, endTol)
-    local t0 = Ext.Utils.MonotonicTime()
-    local ok, path = pcall(Ext.Level.BeginPathfindingImmediate, e, target)
-    if not ok or not path then
-        return { reachable = nil, estimate = true, length_m = round(U.dist(from, target), 1), reason = "pathfinding unavailable" }
+-- A finished search's result (the sync FindPath here, or an async request's callback, N.waysWarm).
+local function readResult(path, found, from, target, endTol)
+    -- S038 20:48 (Shadowfell): the server hung inside nav.landing and the game's RSS went 5 -> 13 GB in <40 s
+    -- (OOM kill). The node walk was the one loop here without a bound (ipairs over the engine's array, a proxy per
+    -- node and per Position read): a found path whose node count is garbage or runaway allocated without end. The
+    -- count is read once and checked; a path longer than PATH_MAX_NODES is not trusted (reachable unknown).
+    local nn
+    if found then
+        local okc, c = pcall(function() return #path.Nodes end)
+        nn = okc and tonumber(c) or nil
+        if not nn or nn > N.PATH_MAX_NODES then
+            if nn then
+                Ext.Utils.Print(string.format("[BG3AI] path: %s nodes to (%.1f,%.1f,%.1f) from (%.1f,%.1f,%.1f), not read",
+                    tostring(nn), target[1], target[2], target[3], from[1], from[2], from[3]))
+            end
+            return { reachable = nil, estimate = true, length_m = round(U.dist(from, target), 1),
+                reason = "the engine's path is unreadable (" .. tostring(nn) .. " nodes)" }
+        end
     end
-    pcall(function() path.IgnoreEntities = { e } end)
     local res
-    local okf, found = pcall(Ext.Level.FindPath, path)
-    if okf and found then
+    if found then
         local len, prev, jump, portals = 0, from, false, {}
+        -- The route itself (node positions): hazard checks along it, and the
+        -- teleport detector accepts big steps that stay on it.
+        local pts = { U.vec(from, 2) }
         local okn = pcall(function()
-            for i, n in ipairs(path.Nodes) do
-                local p = { n.Position[1], n.Position[2], n.Position[3] }
+            local nodes = path.Nodes
+            for i = 1, nn do
+                local n = nodes[i]
+                if n == nil then break end
+                local q = n.Position
+                local p = { q[1], q[2], q[3] }
                 len = len + U.dist(prev, p)
                 prev = p
+                if i <= N.ROUTE_MAX_NODES then pts[#pts + 1] = { round(p[1], 2), round(p[2], 2), round(p[3], 2) } end
                 -- A node with a portal is a jump/climb/ladder link the pathfinder uses.
                 if n.Portal and Ext.Utils.IsValidHandle and Ext.Utils.IsValidHandle(n.Portal) then
                     jump = true
@@ -283,18 +304,9 @@ local function rawPath(e, from, target, endTol)
                 end
             end
         end)
-        res = { reachable = true, length_m = round(len, 1), nodes = okn and #path.Nodes or nil }
+        res = { reachable = true, length_m = round(len, 1), nodes = okn and nn or nil }
         if jump then res.needs_jump = true end
         if #portals > 0 then res.portals = portals end
-        -- The route itself (node positions): hazard checks along it, and the
-        -- teleport detector accepts big steps that stay on it.
-        local pts = { U.vec(from, 2) }
-        pcall(function()
-            for i, n in ipairs(path.Nodes) do
-                if i > N.ROUTE_MAX_NODES then break end
-                pts[#pts + 1] = { round(n.Position[1], 2), round(n.Position[2], 2), round(n.Position[3], 2) }
-            end
-        end)
         res.points = pts
         local last = pts[#pts]
         if endTol and #pts >= 2 and U.dist(last, target) > endTol then
@@ -305,9 +317,191 @@ local function rawPath(e, from, target, endTol)
         pcall(function() cause = path.ErrorCause end)
         res = { reachable = false, straight_m = round(U.dist(from, target), 1), error_cause = cause }
     end
+    return res
+end
+
+local function rawPath(e, from, target, endTol)
+    local t0 = Ext.Utils.MonotonicTime()
+    local ok, path = pcall(Ext.Level.BeginPathfindingImmediate, e, target)
+    if not ok or not path then
+        return { reachable = nil, estimate = true, length_m = round(U.dist(from, target), 1), reason = "pathfinding unavailable" }
+    end
+    pcall(function() path.IgnoreEntities = { e } end)
+    if N.PATH_HORIZON then pcall(function() path.SearchHorizon = N.PATH_HORIZON end) end
+    local okf, found = pcall(Ext.Level.FindPath, path)
+    local res = readResult(path, okf and found, from, target, endTol)
     pcall(Ext.Level.ReleasePath, path)
     res.ms = Ext.Utils.MonotonicTime() - t0
+    -- a FindPath that freezes the game (S025: 1.6-2.3 s no-path searches; S038: one that never returned and took
+    -- the RSS to 13 GB) is named in the log with its endpoints
+    if res.ms > N.PATH_SLOW_MS then
+        Ext.Utils.PrintWarning(string.format("[BG3AI] slow FindPath %d ms (%.1f,%.1f,%.1f)->(%.1f,%.1f,%.1f) found=%s",
+            math.floor(res.ms), from[1], from[2], from[3], target[1], target[2], target[3], tostring(res.reachable)))
+    end
     return res
+end
+
+-- Per-level kill switch (se's S038 verdict: the engine's FindPath never ended on the Shadowfell grid). A level where
+-- one search took over PATH_LEVEL_KILL_MS, where two async warm-up searches timed out, or where the game died while
+-- background/jump-planning searches were in flight (the in-flight marker below is still in the file at the next
+-- load) gets no warm-ups, no jump planning and no jumpGap/jumpAcross probes; replies say so (plan_skipped). Kept in
+-- GUARD_FILE across crashes and playthroughs (it is the level's grid that is the problem). Cleared with
+-- nav.level_guard {clear=true}.
+N.GUARD_FILE = "BG3AI/nav_guard.json"
+N.PATH_LEVEL_KILL_MS = 800
+local guard
+local function guardSave()
+    pcall(Ext.IO.SaveFile, N.GUARD_FILE, Ext.Json.Stringify(guard, { Beautify = false }))
+end
+local function guardState()
+    if guard then return guard end
+    guard = { slow = {} }
+    local ok, txt = pcall(Ext.IO.LoadFile, N.GUARD_FILE)
+    if ok and type(txt) == "string" and txt ~= "" then
+        local okp, d = pcall(Ext.Json.Parse, txt)
+        if okp and type(d) == "table" then
+            guard.slow = type(d.slow) == "table" and d.slow or {}
+            local f = d.inflight
+            if type(f) == "table" and f.level then
+                guard.slow[f.level] = guard.slow[f.level] or { why = "the game died during " .. tostring(f.op), ms = -1 }
+                Ext.Utils.PrintError(string.format("[BG3AI] nav guard: the game died during %s on %s @%s: warm-ups"
+                    .. " and jump planning are off on that level", tostring(f.op), tostring(f.level), tostring(f.at)))
+                guardSave()
+            end
+        end
+    end
+    return guard
+end
+N.guardState = function() return guardState() end
+N.guardReset = function() guard = nil end -- tests
+function N.levelSlow(level)
+    level = level or currentLevel()
+    return level and guardState().slow[level] or nil
+end
+function N.killLevel(level, why, ms)
+    level = level or currentLevel()
+    if not level then return end
+    local g = guardState()
+    if g.slow[level] then return end
+    g.slow[level] = { why = why, ms = ms and math.floor(ms) or nil }
+    Ext.Utils.PrintError(string.format("[BG3AI] nav guard: %s on %s: warm-ups and jump planning off on this level",
+        tostring(why), tostring(level)))
+    guardSave()
+end
+-- In-flight marker around background and jump-planning searches: a crash inside one leaves it in the file.
+function N.inflight(op, at)
+    local g = guardState()
+    g.inflight = op and { level = currentLevel(), op = op, at = at and U.vec(at, 1) and table.concat(U.vec(at, 1), ",") } or nil
+    guardSave()
+end
+
+-- Cheap checks before a search (se's S038 point 1): no engine search for a goal it can't walk to. A goal column with
+-- no AI-grid tile, or none within PATH_FLOOR_SLACK_M of the goal's height (the void over a chasm, a guessed y in the
+-- air), or a Chasm tile, is reachable=false at once; a start with no floor near the character's feet (mid-jump, a
+-- fall) or a goal farther than PATH_STRAIGHT_MAX_M is unknown (nil).
+N.PATH_STRAIGHT_MAX_M = 450
+N.PATH_FLOOR_SLACK_M = 5.0
+N.PATH_START_SLACK_M = 3.0
+local function nearFloor(x, z, y, slack)
+    local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+    if not ok or type(hs) ~= "table" then return nil end -- can't tell: search
+    for _, h in ipairs(hs) do if type(h) == "number" and math.abs(h - y) <= slack then return true end end
+    return false, #hs
+end
+local function precheck(from, target, isEntity)
+    local d = U.dist(from, target)
+    if d > N.PATH_STRAIGHT_MAX_M then
+        return { reachable = nil, estimate = true, too_far = true, length_m = round(d, 1),
+            reason = "too far to search a walk (straight " .. math.floor(d) .. " m)", ms = 0 }
+    end
+    if nearFloor(from[1], from[3], from[2], N.PATH_START_SLACK_M) == false then
+        return { reachable = nil, midair = true, reason = "no floor under the character (mid-jump or falling)", ms = 0 }
+    end
+    if isEntity then return nil end
+    local okF, n = nearFloor(target[1], target[3], target[2], N.PATH_FLOOR_SLACK_M)
+    if okF == false then
+        return { reachable = false, no_floor = true, straight_m = round(d, 1), ms = 0,
+            reason = n == 0 and "no walkable ground at the target" or "no floor near that height at the target" }
+    end
+    if N.surfaceAt and N.surfaceAt(target) == "Chasm" then
+        return { reachable = false, chasm = true, straight_m = round(d, 1), ms = 0, reason = "the target is in a Chasm" }
+    end
+    return nil
+end
+
+-- Async results (N.waysWarm): N.path answers from here before searching. key = N.path's own key.
+N.ASYNC_TTL_MS = 30000
+N.ASYNC_MAX = 256
+N.asyncPaths = N.asyncPaths or {}
+N.asyncPathsN = N.asyncPathsN or 0
+local function pathKey(charUuid, tposOrUuid, from)
+    return charUuid .. "|" .. (type(tposOrUuid) == "string" and tposOrUuid
+        or string.format("%.1f:%.1f:%.1f", tposOrUuid[1], tposOrUuid[2], tposOrUuid[3]))
+        .. "|" .. string.format("%.1f:%.1f", from[1], from[3])
+end
+
+-- Bounds over every caller at once (S038 20:48: the server froze in a FindPath on the Shadowfell and the RSS went
+-- 5 -> 13 GB; S025: 1.6-2.3 s no-path searches over a big level). Each caller has its own budget (jumpPlan, ways,
+-- closestReach), but a request chains several (route = closestReach + connectors + ways + jumpGap, walk_toward =
+-- reachToward + otherDirections x7): one server frame (one RPC, or one Tick) runs at most PATH_FRAME_MAX searches
+-- and PATH_FRAME_BUDGET_MS of them; past that a search answers reachable=nil (budget=true, unknown, not cached),
+-- which every caller already reads as "don't know". A search slower than PATH_SLOW_MEMO_MS is remembered per level,
+-- start (1 m) and target (0.5 m) for PATH_SLOW_MEMO_TTL_MS and answered from memory, so no frame repeats a search
+-- that froze the game once (the cross-frame path cache only lives one frame).
+-- PATH_HORIZON (nil = the engine's default SearchHorizon 32000) caps the engine's own search when set (UNVERIFIED
+-- units: set it live with luadebug `BG3AI.Nav.PATH_HORIZON = 8000` and compare a long route's result first).
+N.PATH_FRAME_MAX = 150
+N.PATH_FRAME_BUDGET_MS = 1500
+N.PATH_SLOW_MEMO_MS = 250
+N.PATH_SLOW_MEMO_TTL_MS = 60000
+N.PATH_SLOW_MEMO_MAX = 64
+N.PATH_HORIZON = N.PATH_HORIZON or nil
+N.pathFrame = N.pathFrame or { frame = -1, n = 0, ms = 0, skipped = 0 }
+N.slowPaths = N.slowPaths or {}
+N.slowPathsN = N.slowPathsN or 0
+local function slowKey(from, target)
+    return string.format("%s|%d:%d:%d|%d:%d:%d", tostring(currentLevel()), math.floor(from[1] + 0.5),
+        math.floor(from[2] + 0.5), math.floor(from[3] + 0.5), math.floor(target[1] * 2 + 0.5),
+        math.floor(target[2] * 2 + 0.5), math.floor(target[3] * 2 + 0.5))
+end
+local function gatedPath(e, from, target, endTol)
+    local pf = N.pathFrame
+    if pf.frame ~= N.frame then
+        if pf.skipped > 0 then
+            Ext.Utils.PrintWarning(string.format("[BG3AI] path budget: %d searches skipped in one frame (%d run, %d ms)",
+                pf.skipped, pf.n, math.floor(pf.ms)))
+        end
+        pf.frame, pf.n, pf.ms, pf.skipped = N.frame, 0, 0, 0
+    end
+    local key = slowKey(from, target)
+    local s = N.slowPaths[key]
+    local now = Ext.Utils.MonotonicTime()
+    if s then
+        if now - s.t <= N.PATH_SLOW_MEMO_TTL_MS then
+            local r = {}
+            for k, v in pairs(s.r) do r[k] = v end
+            r.memo, r.ms = true, 0
+            return r
+        end
+        N.slowPaths[key] = nil
+    end
+    if pf.n >= N.PATH_FRAME_MAX or pf.ms >= N.PATH_FRAME_BUDGET_MS then
+        pf.skipped = pf.skipped + 1
+        return { reachable = nil, budget = true, unfinished = true, reason = "path search budget for this frame spent",
+            straight_m = round(U.dist(from, target), 1), ms = 0 }
+    end
+    local r = rawPath(e, from, target, endTol)
+    pf.n = pf.n + 1
+    pf.ms = pf.ms + (r.ms or 0)
+    if (r.ms or 0) > N.PATH_LEVEL_KILL_MS then
+        N.killLevel(nil, string.format("a path search took %d ms", math.floor(r.ms)), r.ms)
+    end
+    if (r.ms or 0) > N.PATH_SLOW_MEMO_MS and r.reachable ~= nil then
+        if N.slowPathsN >= N.PATH_SLOW_MEMO_MAX then N.slowPaths, N.slowPathsN = {}, 0 end
+        N.slowPaths[key] = { t = now, r = r }
+        N.slowPathsN = N.slowPathsN + 1
+    end
+    return r
 end
 
 -- path(char, target): target is a pos {x,y,z} or an entity uuid. For an entity
@@ -331,11 +525,22 @@ function N.path(charUuid, target, deadline)
         if not tpos then return nil, "unknown target" end
         isEntity = true
     end
-    local key = charUuid .. "|" .. (isEntity and target or string.format("%.1f:%.1f:%.1f", tpos[1], tpos[2], tpos[3]))
-        .. "|" .. string.format("%.1f:%.1f", from[1], from[3])
+    local key = pathKey(charUuid, isEntity and target or tpos, from)
     local c = cacheGet(key)
     if c then return c end
-    local r = rawPath(e, from, tpos, not isEntity and N.PATH_END_TOL_M or nil)
+    local r = precheck(from, tpos, isEntity)
+    if r then
+        cachePut(key, r)
+        return r
+    end
+    local a = N.asyncPaths[key]
+    if a and Ext.Utils.MonotonicTime() - a.t <= N.ASYNC_TTL_MS then
+        r = {}
+        for k, v in pairs(a.r) do r[k] = v end
+        r.async = true
+    else
+        r = gatedPath(e, from, tpos, not isEntity and N.PATH_END_TOL_M or nil)
+    end
     if isEntity and r.reachable == false then
         local t0 = Ext.Utils.MonotonicTime()
         for _, d in ipairs(RING) do
@@ -346,7 +551,7 @@ function N.path(charUuid, target, deadline)
             local x, z = tpos[1] + d[1] * N.APPROACH_M, tpos[3] + d[2] * N.APPROACH_M
             local fy = floorAt and floorAt(x, z, tpos[2]) or tpos[2]
             if fy then
-                local r2 = rawPath(e, from, { x, fy, z })
+                local r2 = gatedPath(e, from, { x, fy, z })
                 if r2.reachable then
                     r = r2
                     r.approach_pos = U.vec({ x, fy, z }, 1)
@@ -356,9 +561,38 @@ function N.path(charUuid, target, deadline)
         end
         r.ms = (r.ms or 0) + (Ext.Utils.MonotonicTime() - t0)
     end
+    -- S035 19:38: walk_toward W in the Faith-Leap room ran Claude onto the
+    -- trial's invisible-floor layer (the engine mesh is one flat floor over
+    -- the whole chasm; only the hidden platforms hold) and Claude fell to
+    -- death. Marked here (hidden_floor, winds = the engine's line bends off
+    -- the straight one); the automatic walks (reachToward, directLeg) never
+    -- take it, Guard refuses a winding one; a straight move_to the agent
+    -- picked from the mosaic, or a short step, is the player's own risk.
+    if r.reachable and r.points and N.hiddenFloor and (r.length_m or 0) > N.HIDDEN_STEP_M then
+        local h = N.hiddenFloor(r.points)
+        if h then
+            r.hidden_floor = h
+            if r.length_m > U.dist(from, r.points[#r.points]) + 1.0 then h.winds = true end
+        end
+    end
+    -- A walk never takes a fall that hurts (S035: "walks must never path over a lethal drop"): an engine route
+    -- whose link drops more than WALK_DROP_MAX_M is marked; reachToward/directLeg skip it, Guard refuses it
+    -- (jump_to is the deliberate way down, it checks the landing).
+    if r.reachable and r.points and not r.drop then
+        local pts = r.points
+        for i = 2, #pts do
+            local a, b = pts[i - 1], pts[i]
+            local dy = a[2] - b[2]
+            if dy > N.WALK_DROP_MAX_M and math.sqrt((a[1] - b[1]) ^ 2 + (a[3] - b[3]) ^ 2) <= 2 * dy then
+                r.drop = { pos = U.vec(a, 1), m = round(dy, 1) }
+                break
+            end
+        end
+    end
     if not r.unfinished then cachePut(key, r) end
     return r
 end
+N.WALK_DROP_MAX_M = 6.0 -- BG3 fall damage grows past ~4 m; 6+ m can down a hurt character
 
 -- For Guard.lua / Actions.lua: path length in metres (pos or entity uuid), or nil.
 function N.pathLength(charUuid, target)
@@ -833,13 +1067,15 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose)
     -- if pathable and direct (length <= DETOUR x straight), and (avoid) clear
     -- of harmful surfaces at its end and along its route.
     local firstHazard, avoided, tried, memo = nil, 0, 0, {}
+    local hidden -- a sample refused for crossing the invisible-floor layer (N.hiddenFloor)
     local function good(i)
         if memo[i] ~= nil then return memo[i] end
         local c, dd = pts[i], pts[i].dd
         tried = tried + 1
         local ok = false
         local r = N.path(charUuid, c.pos)
-        if r and r.reachable and not r.partial and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then
+        if r and r.hidden_floor and (not hidden or c.dd < hidden.dd) then hidden = { pos = r.hidden_floor.pos, at_m = r.hidden_floor.at_m, dd = c.dd } end
+        if r and r.reachable and not r.hidden_floor and not r.drop and not r.partial and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then
             local hz = nil
             if avoid then
                 local sf = N.surfaceNear(c.pos)
@@ -883,7 +1119,7 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose)
                 if memo[i] == nil then tried = tried + 1 end
                 n = n + 1
                 local r = N.path(charUuid, c.pos)
-                if r and r.reachable and not r.partial and not r.needs_jump
+                if r and r.reachable and not r.partial and not r.needs_jump and not r.hidden_floor and not r.drop
                     and r.length_m <= math.max(N.DETOUR_LOOSE * dd, dd + 6.0)
                     and not (avoid and (N.surfaceNear(c.pos) or N.routeHazard(r.points))) then
                     best = { pos = c.pos, path_m = r.length_m, straight_m = round(dd, 1) }
@@ -894,14 +1130,16 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose)
         end
     end
     if firstHazard then firstHazard.dd = nil end
+    if hidden then hidden.dd = nil end
     if not best then
-        if avoided == 0 then return { reachable = false, samples = tried } end
-        return { reachable = false, samples = tried, hazard = firstHazard }
+        if avoided == 0 then return { reachable = false, samples = tried, hidden_floor = hidden } end
+        return { reachable = false, samples = tried, hazard = firstHazard, hidden_floor = hidden }
     end
     local out = { pos = U.vec(best.pos, 1), path_m = best.path_m, straight_m = best.straight_m,
         needs_jump = best.needs_jump, reachable = true, samples = tried, dir = N.direction(from, best.pos),
         searched = true, winding = winding or nil }
     if avoided > 0 then out.avoided = avoided; out.hazard_beyond = firstHazard end
+    if hidden then out.hidden_beyond = hidden end
     return out
 end
 
@@ -1184,6 +1422,7 @@ function N.directLeg(charUuid, toward, avoid)
     local legPts = {}
     for i = 1, last do legPts[i] = pts[i] end
     if pos == goal and U.dist(legPts[#legPts], goal) > 0.5 then legPts[#legPts + 1] = goal end
+    if walk > N.HIDDEN_STEP_M and N.hiddenFloor(legPts) then return nil, "hidden floor" end
     local risky = nil
     if avoid and (N.routeHazard(legPts) or (pos == goal and N.surfaceNear(goal))) then
         risky = N.routeExposure(legPts) or { surface = N.surfaceNear(goal), m = 0, pos = U.vec(goal, 1), at_m = round(walk, 1) }
@@ -1377,6 +1616,24 @@ function N.landing(charUuid, pos)
         table.sort(fl, function(a, b2) return math.abs(a - pos[2]) < math.abs(b2 - pos[2]) end)
         out.floors = fl
     end
+    -- A guessed y over a chasm with a real floor in the same column (S032 17:32 / 17:35, the Gauntlet's broken
+    -- staircase, the wiki's "jump over it": y -1 and -2 asked, both "in Chasm", Yurgir parked): the Chasm is the void
+    -- around the floor, so jump to that floor when it is in jumping height (up JUMP_UP_MAX_M, down JUMP_SAFE_DROP_M).
+    if why and why ~= "no_floor" then
+        local alt
+        for _, h in ipairs(fl) do
+            if math.abs(h - pos[2]) > 0.5 and h <= from[2] + N.JUMP_UP_MAX_M and h >= from[2] - N.JUMP_SAFE_DROP_M
+                and not bad({ pos[1], h, pos[3] }) and (not alt or math.abs(h - pos[2]) < math.abs(alt - pos[2])) then
+                alt = h
+            end
+        end
+        if alt and d <= cap + 0.3 then
+            out.safe, out.surface, out.blocked = false, why ~= "blocked" and why or nil, why == "blocked" or nil
+            out.suggest, out.suggest_off_m, out.suggest_dist_m = U.vec({ pos[1], alt, pos[3] }, 1), 0, round(d, 1)
+            out.floor_y = round(alt, 1)
+            return out
+        end
+    end
     if not why and d > cap + 0.3 then
         local f = cap / d
         local sx, sz = from[1] + (pos[1] - from[1]) * f, from[3] + (pos[3] - from[3]) * f
@@ -1392,7 +1649,7 @@ function N.landing(charUuid, pos)
     if tooFar then out.too_far = true end
     if not why then
         out.safe = true
-        if tooFar then out.plan = N.jumpPlan(charUuid, from, pos, cap, bad) end
+        if tooFar then out.plan, out.plan_skipped = N.jumpPlan(charUuid, from, pos, cap, bad) end
         return out
     end
     out.safe = false
@@ -1437,7 +1694,7 @@ function N.landing(charUuid, pos)
         out.nearest_clear = U.vec(best, 1)
         out.nearest_clear_off_m = round(bd, 1)
     end
-    if not out.suggest or tooFar then out.plan = N.jumpPlan(charUuid, from, pos, cap, bad) end
+    if not out.suggest or tooFar then out.plan, out.plan_skipped = N.jumpPlan(charUuid, from, pos, cap, bad) end
     return out
 end
 
@@ -1451,8 +1708,21 @@ end
 -- land_off_m, jump_m} | nil.
 N.JUMP_SLACK_M = 0.5        -- Guard's own slack over jump_max
 N.JUMP_PLAN_TRIES = 14
+N.JUMP_PLAN_BUDGET_MS = 300 -- and this long (a failing search over a big level can take 100+ ms)
 N.JUMP_UP_MAX_M = 2.5       -- UNVERIFIED: how high a jump climbs
+-- On a level the kill switch turned off (N.levelSlow): nil, why (nav.landing's plan_skipped). Otherwise the plan runs
+-- under the in-flight marker, so a crash inside its searches turns jump planning off on this level for good.
+local jumpPlanImpl
 function N.jumpPlan(charUuid, from, pos, cap, bad)
+    local slow = N.levelSlow()
+    if slow then return nil, "jump planning is off on this level (" .. tostring(slow.why) .. ")" end
+    N.inflight("jump plan", pos)
+    local ok, r = pcall(jumpPlanImpl, charUuid, from, pos, cap, bad)
+    N.inflight(nil)
+    if not ok then error(r, 0) end
+    return r
+end
+jumpPlanImpl = function(charUuid, from, pos, cap, bad)
     local lands = {}
     local function addLand(x, z, off)
         local fy = floorAt(x, z, pos[2])
@@ -1475,8 +1745,9 @@ function N.jumpPlan(charUuid, from, pos, cap, bad)
         if a.off ~= b2.off then return a.off < b2.off end
         return hdist(from, a.p) < hdist(from, b2.p)
     end)
-    local tries = 0
+    local tries, deadline = 0, Ext.Utils.MonotonicTime() + N.JUMP_PLAN_BUDGET_MS
     local function walkable(p, linkOk)
+        if Ext.Utils.MonotonicTime() > deadline then tries = N.JUMP_PLAN_TRIES; return nil end
         tries = tries + 1
         local r = N.path(charUuid, p)
         if r and r.reachable and not r.partial and (linkOk or not r.needs_jump) then return r end
@@ -1949,6 +2220,134 @@ local function farPath(charUuid, goal)
     return r
 end
 
+-- A jump across when no walk leads to the goal (S032 17:30-17:35, Yurgir: the wiki's "jump over the broken
+-- staircase", a 3 m gap 2.5 m down E of the Gauntlet's Stone Door hall; route() said only "NO WALKABLE PATH" and its
+-- closest spot lay 40 m W of the stairs). A floor grid (JUMPX_CELL_M cells, <= JUMPX_R_M around the character; Chasm
+-- and WalkBlock tiles are no floor) gives pairs: an edge cell, open air (no floor within the jump's height band) for
+-- >= 1 cell, then a floor within reach that is nearer the goal. The few best pairs are checked with real paths: the
+-- edge walkable, the landing not (else it is a walk). -> {from (takeoff), to (landing), gap_m, dy, walk_m, to_goal_m}
+-- or nil. Cost: ~(2R/cell)^2 height+tile reads (~1.7k) + <= JUMPX_TRIES paths.
+N.JUMPX_R_M, N.JUMPX_CELL_M, N.JUMPX_TRIES = 30.0, 1.5, 6
+function N.jumpAcross(charUuid, from, goal)
+    if N.levelSlow() then return nil end -- kill switch: no extra searches on this level
+    local cap = N.JUMP_LAND_CAP_M
+    local G = BG3AI.Guard
+    if G and G.jump_max then
+        local ok, m = pcall(G.jump_max, charUuid)
+        if ok and type(m) == "number" then cap = math.min(cap, m) end
+    end
+    local c, R = N.JUMPX_CELL_M, N.JUMPX_R_M
+    local n = math.floor(R / c)
+    local lo, hi = from[2] - 3 * N.JUMP_SAFE_DROP_M, from[2] + 3 * N.JUMP_UP_MAX_M
+    local grid = {}
+    local function floors(i, j)
+        local key = i * 4096 + j
+        local f = grid[key]
+        if f then return f end
+        f = {}
+        local x, z = from[1] + i * c, from[3] + j * c
+        local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+        for _, h in ipairs(ok and type(hs) == "table" and hs or {}) do
+            if type(h) == "number" and h >= lo and h <= hi then
+                local t = N.tileAt({ x, h, z })
+                if t and t.blocked and t.surface ~= "Chasm" then f.wall = f.wall or h -- a wall's foot, not open air
+                elseif not (t and (t.blocked or t.surface)) then f[#f + 1] = h end
+            end
+        end
+        grid[key] = f
+        return f
+    end
+    local function near(f, a, b) for _, h in ipairs(f) do if h >= a and h <= b then return h end end end
+    local goalD = function(x, z) return math.sqrt((x - goal[1]) ^ 2 + (z - goal[3]) ^ 2) end
+    local steps = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
+    local cands = {}
+    for i = -n, n do
+        for j = -n, n do
+            for _, ha in ipairs(floors(i, j)) do
+                local ax, az = from[1] + i * c, from[3] + j * c
+                for _, st in ipairs(steps) do
+                    local unit = c * math.sqrt(st[1] ^ 2 + st[2] ^ 2)
+                    local k, open = 1, 0
+                    while k * unit <= cap + 0.01 do
+                        local bi, bj = i + st[1] * k, j + st[2] * k
+                        if math.abs(bi) > n or math.abs(bj) > n then break end
+                        local f = floors(bi, bj)
+                        local land = near(f, ha - N.JUMP_SAFE_DROP_M, ha + N.JUMP_UP_MAX_M)
+                        if not land and (f.wall or near(f, ha + N.JUMP_UP_MAX_M, ha + N.JUMP_GAP_HEAD_M)) then
+                            break -- a wall or a building in the way, not a chasm
+                        end
+                        if land then
+                            if open >= 1 then
+                                local bx, bz = from[1] + bi * c, from[3] + bj * c
+                                local gain = goalD(ax, az) - goalD(bx, bz)
+                                if gain >= 1.0 then
+                                    cands[#cands + 1] = { a = { ax, ha, az }, b = { bx, land, bz }, gap = k * unit,
+                                        score = goalD(bx, bz) + 0.25 * hdist(from, { ax, ha, az }) }
+                                end
+                            end
+                            break
+                        end
+                        open = open + 1
+                        k = k + 1
+                    end
+                end
+            end
+        end
+    end
+    if #cands == 0 then return nil end
+    table.sort(cands, function(p, q) return p.score < q.score end)
+    local tries, seen = 0, {}
+    for _, cd in ipairs(cands) do
+        if tries >= N.JUMPX_TRIES then break end
+        local key = math.floor(cd.b[1]) .. "," .. math.floor(cd.b[3])
+        if not seen[key] then
+            seen[key] = true
+            tries = tries + 1
+            local rb = N.path(charUuid, cd.b)
+            if not (rb and rb.reachable and not rb.partial) then
+                local ra = N.path(charUuid, cd.a)
+                if ra and ra.reachable and not ra.partial then
+                    -- the grid's cells are 1.5 m: slide both ends to the real edges in 0.5 m steps (live 18:5x:
+                    -- the grid said 4.5 m, the broken stair's gap is ~3 m)
+                    local ux, uz = cd.b[1] - cd.a[1], cd.b[3] - cd.a[3]
+                    local L = math.sqrt(ux * ux + uz * uz)
+                    ux, uz = ux / L, uz / L
+                    local function floorNear(x, z, y)
+                        local okh, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+                        for _, h in ipairs(okh and type(hs) == "table" and hs or {}) do
+                            if type(h) == "number" and math.abs(h - y) <= N.JUMP_GAP_LEVEL_M then
+                                local t = N.tileAt({ x, h, z })
+                                if not (t and (t.blocked or t.surface)) then return h end
+                            end
+                        end
+                    end
+                    local a, b = cd.a, cd.b
+                    for _ = 1, 3 do
+                        local h = floorNear(a[1] + ux * 0.5, a[3] + uz * 0.5, a[2])
+                        if not h then break end
+                        a = { a[1] + ux * 0.5, h, a[3] + uz * 0.5 }
+                    end
+                    for _ = 1, 3 do
+                        local h = floorNear(b[1] - ux * 0.5, b[3] - uz * 0.5, b[2])
+                        if not h or hdist(a, { b[1] - ux * 0.5, h, b[3] - uz * 0.5 }) < 1.0 then break end
+                        b = { b[1] - ux * 0.5, h, b[3] - uz * 0.5 }
+                    end
+                    if hdist(a, b) < cd.gap then
+                        local rr = N.path(charUuid, a)
+                        if rr and rr.reachable and not rr.partial then ra = rr else a = cd.a end
+                        cd.gap = hdist(a, b)
+                    end
+                    cd.a, cd.b = a, b
+                    return { from = U.vec(cd.a, 1), to = U.vec(cd.b, 1), gap_m = round(cd.gap, 1),
+                        dy = round(cd.b[2] - cd.a[2], 1), walk_m = ra.length_m,
+                        to_goal_m = round(goalD(cd.b[1], cd.b[3]), 1) }
+                end
+            end
+        end
+    end
+    return nil
+end
+
 -- Everything above for one goal. {from, goal, straight_m, dir, dy,
 -- levels_here, levels_goal, reachable, length_m?, needs_jump?, legs?, links?,
 -- exposure?, straight_hazard?, closest?{..., legs, links}, connectors?,
@@ -1992,6 +2391,8 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
         elseif r and r.reachable == false then
             out.reachable = false
             out.straight_hazard = N.routeExposure({ from, goal })
+            local okj, jx = pcall(N.jumpAcross, charUuid, from, goal)
+            if okj and jx then out.jump = jx end
             local c = N.closestReach(charUuid, goal)
             if c then
                 local rc = N.path(charUuid, c.pos)
@@ -2208,7 +2609,9 @@ end
 
 -- ways(char, far, near, budgetMs, maxDirs) -> list of {dir, open_m, dy?} (searched
 -- directions, compass order), elapsed ms. maxDirs caps the new searches.
-function N.ways(charUuid, far, near, budgetMs, maxDirs)
+-- noJump (the warm-up): no jumpGap probe (its two sync searches); the entry is marked jump_pending and the next
+-- call without noJump (get_frontier, route) fills it in.
+function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump)
     far, near, budgetMs = far or 20, near or 8, budgetMs or 100
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
@@ -2236,7 +2639,14 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs)
     end
     local searched = 0
     for _, d in ipairs(N.WAYS_DIRS) do
-        if not c.by[d] then
+        local pend = c.by[d] and c.by[d].jump_pending and not noJump
+        if pend then
+            if Ext.Utils.MonotonicTime() - t0 > budgetMs then break end
+            local w = c.by[d]
+            w.jump_pending = nil
+            local okj, j = pcall(N.jumpGap, charUuid, from, DIR_VEC[d])
+            if okj and j then w.jump = j end
+        elseif not c.by[d] then
             if Ext.Utils.MonotonicTime() - t0 > budgetMs or (maxDirs and searched >= maxDirs) then break end
             searched = searched + 1
             local v = DIR_VEC[d]
@@ -2249,7 +2659,9 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs)
             end
             local w = { dir = d, open_m = m }
             if dy and math.abs(dy) >= 2 then w.dy = round(dy, 1) end
-            if m < far then
+            if m < far and noJump then
+                w.jump_pending = true
+            elseif m < far then
                 local okj, j = pcall(N.jumpGap, charUuid, from, v)
                 if okj and j then w.jump = j end
             end
@@ -2257,7 +2669,10 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs)
         end
     end
     local out = {}
-    for _, d in ipairs(N.WAYS_DIRS) do if c.by[d] then out[#out + 1] = c.by[d] end end
+    for _, d in ipairs(N.WAYS_DIRS) do
+        local w = c.by[d]
+        if w then out[#out + 1] = { dir = w.dir, open_m = w.open_m, dy = w.dy, jump = w.jump } end
+    end
     return out, Ext.Utils.MonotonicTime() - t0
 end
 
@@ -2269,7 +2684,7 @@ N.JUMP_GAP_MIN_M = 1.0      -- narrower: a step the walk crosses anyway
 N.JUMP_GAP_SCAN_M = 12.0
 N.JUMP_GAP_STEP_M = 0.5
 N.JUMP_GAP_LEVEL_M = 1.0    -- ground this near the edge's height continues the walk
-N.JUMP_GAP_DOWN_M = 3.0     -- a landing at most this far below the edge
+N.JUMP_GAP_DOWN_M = 4.0     -- a landing at most this far below the edge (= JUMP_SAFE_DROP_M: what jump_to lands on)
 N.JUMP_GAP_HEAD_M = 6.0     -- a surface 2.5..this above the edge inside the "gap" is a wall/building, not a chasm
 -- Live 14:15 (Blighted Village, S013 save): a house read as "jump: NW gap 3m": its columns had a floor 4.2 m up
 -- (the building) and the edge stood on a WalkBlock tile (the wall's foot); the walk stopped 3.6 m short and
@@ -2279,6 +2694,7 @@ local function tileBlocked(p)
     return t ~= nil and t.blocked
 end
 function N.jumpGap(charUuid, from, v)
+    if N.levelSlow() then return nil end -- kill switch: no extra searches on this level
     local cap = N.JUMP_LAND_CAP_M
     local G = BG3AI.Guard
     if G and G.jump_max then
@@ -2330,21 +2746,78 @@ function N.jumpGap(charUuid, from, v)
 end
 
 -- Tick: while the active character has stood still WAYS_WARM_STILL_MS (out of
--- combat), search one more direction of get_frontier's ways every
--- WAYS_WARM_EVERY_MS, so the next frontier/route reads them from the cache.
--- On arrival (a walk's end, a level load) all eight are warm ~0.8 s later, before
+-- combat), warm get_frontier's ways so the next frontier/route reads them from the cache.
+-- On arrival (a walk's end, a level load) all eight are warm ~0.5-1 s later, before
 -- the agent's next read (~2 s of think); interiors were ~100 ms cold (BACKLOG #7).
--- A step slower than WAYS_WARM_SLOW_MS (a failing search over a big level:
--- Tick max 410 ms) pauses the warm-up WAYS_WARM_BACKOFF_MS: one hitch, not one
--- per step; the frontier then searches the rest within its own budget.
+-- S038 20:48 (se's verdict): a synchronous FindPath never returned on the Shadowfell and took the RSS to 13 GB; the
+-- warm-up was one of the two searches started from that ledge. So the warm-up never searches on the server thread:
+-- each probe point of a direction (20 m, then 8 m) goes out as the engine's own async request
+-- (Ext.Level.BeginPathfinding, the per-frame-budgeted search NPC moves use), ONE at a time for the whole game. A
+-- request unanswered after WARM_ASYNC_TIMEOUT_MS is released, which takes it off the engine's list and ends that
+-- search; two of those on a level turn the level's kill switch on (N.killLevel). With every probe answered,
+-- N.ways(noJump) builds the direction from those answers (no engine search). No warm-up while a job runs (a walk,
+-- a jump, a cast), on a level the kill switch is on for, or over the Lua heap cap. If async answers never come at
+-- all (3 timeouts, none answered ever), the warm-up is off for the session.
 N.WAYS_WARM_STILL_MS = 300
 N.WAYS_WARM_EVERY_MS = 60
-N.WAYS_WARM_SLOW_MS = 40
-N.WAYS_WARM_BACKOFF_MS = 3000
+N.WARM_ASYNC_TIMEOUT_MS = 2000
+N.WARM_TIMEOUTS_KILL = 2
+N.WARM_ASYNC_BROKEN_AFTER = 3
 N.waysWarmState = N.waysWarmState or { t = 0 }
+N.warmAsync = N.warmAsync or { ok = 0, timeouts = 0, byLevel = {}, broken = false }
+
+local function jobRunning()
+    for _, j in pairs(RPC.jobs or {}) do if j.status == "running" then return true end end
+    return false
+end
+
+-- The next probe point of the first direction not warm yet at `from`, or nil when all eight are.
+local function warmNext(active, from, c)
+    for _, d in ipairs(N.WAYS_DIRS) do
+        if not c.by[d] then
+            local v = DIR_VEC[d]
+            local pending = false
+            for _, dd in ipairs({ 20, 8 }) do
+                local x, z = round(from[1] + v[1] * dd, 1), round(from[3] + v[2] * dd, 1)
+                local fy = floorAt(x, z, from[2])
+                if fy then
+                    local t = { x, round(fy, 1), z }
+                    local key = pathKey(active, t, from)
+                    local a = N.asyncPaths[key]
+                    if not a then return { pos = t, key = key } end
+                    local r = a.r
+                    if r.reachable and not r.partial and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then break end
+                end
+            end
+            if not pending then return { dir = d } end -- answered: N.ways can build it without a search
+        end
+    end
+    return nil
+end
+
 function N.waysWarm(now)
-    local st = N.waysWarmState
-    if now - st.t < N.WAYS_WARM_EVERY_MS or now < (st.pauseUntil or 0) then return end
+    local st, wa = N.waysWarmState, N.warmAsync
+    local req = st.req
+    if req then
+        if now - req.t <= N.WARM_ASYNC_TIMEOUT_MS then return end
+        pcall(Ext.Level.ReleasePath, req.path) -- ends the engine's search of it
+        st.req = nil
+        wa.timeouts = wa.timeouts + 1
+        local lv = tostring(req.level)
+        wa.byLevel[lv] = (wa.byLevel[lv] or 0) + 1
+        Ext.Utils.PrintWarning(string.format("[BG3AI] ways warm: async path to (%.1f,%.1f,%.1f) unanswered after %d ms",
+            req.pos[1], req.pos[2], req.pos[3], N.WARM_ASYNC_TIMEOUT_MS))
+        if wa.ok == 0 and wa.timeouts >= N.WARM_ASYNC_BROKEN_AFTER and not wa.broken then
+            wa.broken = true
+            Ext.Utils.PrintWarning("[BG3AI] ways warm: async path requests never answer here: warm-up off")
+        elseif wa.ok > 0 and wa.byLevel[lv] >= N.WARM_TIMEOUTS_KILL then
+            N.killLevel(req.level, "async path searches timed out " .. wa.byLevel[lv] .. "x")
+        end
+        if not st.req then N.inflight(nil) end
+        return
+    end
+    if wa.broken or not Ext.Level.BeginPathfinding then return end
+    if now - st.t < N.WAYS_WARM_EVERY_MS / 4 then return end
     st.t = now
     if Ext.Utils.GetGameState and tostring(Ext.Utils.GetGameState()) ~= "Running" then return end
     local ctx = V.context()
@@ -2359,8 +2832,39 @@ function N.waysWarm(now)
     end
     if now - st.since < N.WAYS_WARM_STILL_MS then return end
     if truthy(osi(Osi.IsInCombat, active)) then return end
-    local _, ms = N.ways(active, 20, 8, 1000, 1)
-    if ms and ms > N.WAYS_WARM_SLOW_MS then st.pauseUntil = now + N.WAYS_WARM_BACKOFF_MS end
+    local Mem = BG3AI.Mem
+    if Mem and Mem.paused() then return end -- over the Lua heap cap: no warm-up
+    if N.levelSlow() or jobRunning() then return end
+    local key = waysKey(active, p, 20, 8)
+    local c = N.waysCache[key]
+    if c and now - c.t > N.WAYS_TTL_MS then c = nil end
+    local nxt = warmNext(active, p, c or { by = {} })
+    if not nxt then return end
+    if nxt.dir then
+        N.ways(active, 20, 8, 1000, 1, true) -- every probe answered: built from the async answers
+        return
+    end
+    -- breadcrumb: S038 20:48 the server froze in a FindPath ~0.3 s after a walk ended (this, or nav.landing)
+    if Mem then Mem.crumb(string.format("ways warm @(%.1f,%.1f,%.1f)", p[1], p[2], p[3])) end
+    local from, target, level = { p[1], p[2], p[3] }, nxt.pos, currentLevel()
+    local okb, path = pcall(Ext.Level.BeginPathfinding, e, target, function(pv)
+        local cur = st.req
+        if not cur or cur.key ~= nxt.key then return end
+        st.req = nil
+        N.inflight(nil)
+        wa.ok = wa.ok + 1
+        local okr, r = pcall(readResult, pv, pv.GoalFound, from, target, N.PATH_END_TOL_M)
+        if not okr or type(r) ~= "table" then return end
+        r.ms = Ext.Utils.MonotonicTime() - cur.t
+        if N.asyncPathsN >= N.ASYNC_MAX then N.asyncPaths, N.asyncPathsN = {}, 0 end
+        N.asyncPaths[nxt.key] = { t = Ext.Utils.MonotonicTime(), r = r }
+        N.asyncPathsN = N.asyncPathsN + 1
+    end)
+    if not okb or not path then return end
+    pcall(function() path.IgnoreEntities = { e } end)
+    if N.PATH_HORIZON then pcall(function() path.SearchHorizon = N.PATH_HORIZON end) end
+    st.req = { path = path, key = nxt.key, pos = target, t = now, level = level }
+    N.inflight("ways warm", target)
 end
 
 -- Ways on and off a level a player spots by name even where they have
@@ -2578,10 +3082,26 @@ RPC.register("nav.landing", function(args)
     if not ctx.is_party[char] then error("not a party member", 0) end
     if type(args.pos) ~= "table" or #args.pos < 3 then error("need pos [x,y,z]", 0) end
     local t0 = Ext.Utils.MonotonicTime()
+    -- Breadcrumb (S038: the server hung in here and the log said nothing of where): one line per jump_to check,
+    -- and its time once it took long.
+    local p = args.pos
+    Ext.Utils.Print(string.format("[BG3AI] nav.landing (%s,%s,%s)", tostring(p[1]), tostring(p[2]), tostring(p[3])))
     local r, err = N.landing(char, args.pos)
     if not r then error(err, 0) end
     r.ms = Ext.Utils.MonotonicTime() - t0
+    if r.ms > 100 then Ext.Utils.Print(string.format("[BG3AI] nav.landing took %.0f ms", r.ms)) end
     return r
+end)
+
+-- nav.level_guard {clear?: true|level}: the levels the kill switch turned off ({slow = {level = {why, ms}}},
+-- warm = async warm-up counters); clear=true clears all, clear=<level> one.
+RPC.register("nav.level_guard", function(args)
+    local g = N.guardState()
+    if args.clear == true then g.slow = {} elseif type(args.clear) == "string" then g.slow[args.clear] = nil end
+    if args.clear ~= nil then pcall(Ext.IO.SaveFile, N.GUARD_FILE, Ext.Json.Stringify(g, { Beautify = false })) end
+    local wa = N.warmAsync
+    return { slow = g.slow, level = currentLevel(), here = N.levelSlow(),
+        warm = { ok = wa.ok, timeouts = wa.timeouts, broken = wa.broken } }
 end)
 
 -- nav.hazards {char?, radius?, limit?}: harmful patches the party sees nearby.
@@ -2659,6 +3179,34 @@ end
 
 local function inBox(b, x, z, m)
     return b and x >= b.x1 - m and x <= b.x2 + m and z >= b.z1 - m and z <= b.z2 + m
+end
+
+-- First point of a route (points from rawPath) on the invisible-floor layer:
+-- inside the helpers' box (+ HIDDEN_BOX_M, about half a platform) at the
+-- walkway height. A visible statue/platform ~1 m above that layer is not it.
+-- Returns {pos, at_m} or nil. Levels without helpers: one cached empty scan.
+N.HIDDEN_STEP_M = 3.0   -- a walk this long or shorter may step onto it (one platform)
+N.HIDDEN_BOX_M = 1.0
+function N.hiddenFloor(points)
+    if type(points) ~= "table" or #points < 2 or #N.helpers() == 0 then return nil end
+    local box = helperBox(points[1], 40)
+    if not box then return nil end
+    local layer = box.y + 0.2
+    local walked = 0
+    for i = 2, #points do
+        local a, b = points[i - 1], points[i]
+        local seg = U.dist(a, b)
+        local n = math.max(1, math.ceil(seg / 0.5))
+        for k = 1, n do
+            local f = k / n
+            local x, y, z = a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f
+            if inBox(box, x, z, N.HIDDEN_BOX_M) and math.abs(y - layer) <= N.HELPER_LAYER_M then
+                return { pos = U.vec({ x, y, z }, 1), at_m = round(walked + seg * f, 1) }
+            end
+        end
+        walked = walked + seg
+    end
+    return nil
 end
 
 local function tileFlags(t)
@@ -2750,7 +3298,7 @@ function N.mosaic(box)
     end
     local rows = {}
     for r = 1, h do rows[r] = (table.concat(grid[r]):gsub("%s+$", "")) end
-    return { rows = rows, x1 = x1, z2 = z2, cell = 1 }
+    return { rows = rows, x1 = x1, z2 = z2, cell = 1, y = round(box.y + 0.2, 1) } -- y: the walkway height (its ledge's)
 end
 
 function N.layout(char, radius, cell)

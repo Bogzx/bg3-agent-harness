@@ -65,7 +65,10 @@ MAX_KEEP_PLAYING_BLOCKS = 200    # autonomous mode: cap on "keep playing" stop b
 # accepted. S018-S025 of claude-run-2: the clock line said "0m/1m of play", the agent wrapped up, and every
 # session the hook bounced it 1-4 times ("Keep playing: 3 minutes left"); each bounce re-saved Sxxx-end and
 # re-edited HANDOFF.md, and S025 ended with its last save still writing.
-STOP_GRACE_S = 150
+# S036 (2026-10-10): wrapped up at 20:10:41 at a point of no return (the descent past the Pedestal of Reckoning),
+# 49 s before a 150 s grace, was bounced and killed ~2.5 min with get_status/wiki reads. An early exit costs no play:
+# the runner starts the next session at once (~1 min boundary), so a finished wrap-up counts from 5 min before WRAP UP.
+STOP_GRACE_S = 300
 
 
 def session_deadline() -> float | None:
@@ -482,7 +485,9 @@ def stop_decision(mem: Path, now: float | None = None) -> dict | None:
         # first, another save_game Sxxx-end + HANDOFF.md rewrite. A text-only message is what ends the turn, so
         # the reason asks for a game call next and says the early wrap-up need not be redone.
         again = (" You already wrapped up early: don't save Sxxx-end or rewrite HANDOFF.md again until the "
-                 "⏱ line says WRAP UP." if handoff_ready or keep else "")
+                 "⏱ line says WRAP UP. If the next step is a point of no return, do reversible work meanwhile "
+                 "(sell/stash, equip_best, level plans, loot nearby), never idle reads." if handoff_ready or keep
+                 else "")
         return {"decision": "block",
                 "reason": (f"Keep playing: {left} minutes left in this session. Your next message is a game "
                            f"tool call, not a summary (nobody reads it; a text-only message ends your turn). "

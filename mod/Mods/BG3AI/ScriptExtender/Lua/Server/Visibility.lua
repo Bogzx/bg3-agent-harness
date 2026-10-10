@@ -960,8 +960,10 @@ function V.indexTick()
     end
     local t = Ext.Utils.MonotonicTime()
     local x = V.index
-    if not x.ready or t - x.built > V.INDEX_REFRESH_MS
-        or (x.dirty and t - x.dirty >= V.INDEX_DIRTY_MS) then
+    -- over the Lua heap cap (Shared/Mem.lua) only a missing index or a new level rebuilds
+    local paused = BG3AI.Mem and BG3AI.Mem.paused()
+    if not x.ready or (not paused and (t - x.built > V.INDEX_REFRESH_MS
+        or (x.dirty and t - x.dirty >= V.INDEX_DIRTY_MS))) then
         V.indexStart()
         return
     end

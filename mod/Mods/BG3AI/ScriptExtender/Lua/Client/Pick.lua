@@ -165,28 +165,43 @@ RPC.register("ui.screen_pos", function(args)
     return out
 end)
 
--- Entities currently under the cursor according to the picking helper.
+-- Entities currently under the cursor according to the picking helper; also
+-- the raw GameObjects (an object with no Uuid component still counts when it
+-- is the target entity itself).
 function P.hovered()
     local ok, ph = pcall(Ext.UI.GetPickingHelper, 1)
-    if not ok or not ph then return {}, nil end
-    local out = {}
+    if not ok or not ph then return {}, nil, {} end
+    local out, objs = {}, {}
     pcall(function()
         local inner = ph.Inner.Inner
         for i = 1, #inner do
             local go = inner[i].GameObject
+            if go then objs[#objs + 1] = go end
             local u = go and entity_uuid(go)
             if u then out[#out + 1] = u end
         end
     end)
-    return out, ph
+    return out, ph, objs
 end
 
 RPC.register("ui.hover_check", function(args)
     local want = guid(args.uuid)
-    local list, ph = P.hovered()
+    local list, ph, objs = P.hovered()
     local res = { hovered = false }
     for _, u in ipairs(list) do
         if u == want then res.hovered = true end
+    end
+    if not res.hovered and #objs > #list then
+        -- S032 17:42: 90 aims at a Vault Door and the helper never named anything: an object without a Uuid
+        -- component (its client entity) is compared to the target's entity itself.
+        res.hover_nouuid = true
+        local okE, te = pcall(Ext.Entity.Get, want)
+        if okE and te then
+            for _, go in ipairs(objs) do
+                local okq, same = pcall(function() return go == te end)
+                if okq and same then res.hovered = true end
+            end
+        end
     end
     res.hover = list[1]
     if ph then

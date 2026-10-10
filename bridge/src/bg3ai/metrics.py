@@ -310,11 +310,101 @@ def client_state(game) -> str | None:
     return out if out and out not in ("?", "nil") else None
 
 
-def sampler_loop(rec: Recorder, game, stop: threading.Event, interval: float = 1.0) -> None:
+# Memory samples (S038 20:48: the game's RSS went 5 -> 13 GB in ~30 s and the OOM kill took every agent down; the
+# per-minute ramwatch line could not say whether it was our Lua or the engine):
+#   {"type":"mem", "t", "rss_mb", "lua_server_mb"?, "lua_client_mb"?, "high"?, "why"?}
+# every MEM_EVERY_S, and at once (why="rss_jump") when the game's RSS grew MEM_JUMP_MB since the last one; the RSS
+# is read from /proc every sample (one small file read), the Lua heaps from sys.mem in both contexts.
+MEM_EVERY_S = 60.0
+MEM_JUMP_MB = 1024
+GAME_COMM = "bg3"
+
+
+def game_pid(proc: Path = Path("/proc")) -> int | None:
+    """The running game's pid (its comm is "bg3"), or None."""
+    me = os.getuid()
+    try:
+        for d in proc.iterdir():
+            if not d.name.isdigit():
+                continue
+            try:
+                if d.stat().st_uid == me and (d / "comm").read_text().strip() == GAME_COMM:
+                    return int(d.name)
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return None
+
+
+def rss_mb(pid: int | None, proc: Path = Path("/proc")) -> int | None:
+    if not pid:
+        return None
+    try:
+        for line in (proc / str(pid) / "status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+class MemSampler:
+    """Decides when to write a mem record; rss() and lua(context) are injectable for tests."""
+
+    def __init__(self, rec: Recorder, game, every_s: float = MEM_EVERY_S, jump_mb: int = MEM_JUMP_MB,
+                 rss=None, now=time.time):
+        self.rec, self.game, self.every_s, self.jump_mb, self.now = rec, game, every_s, jump_mb, now
+        self._pid: int | None = None
+        self.rss = rss or self._game_rss
+        self.last_t = now()  # the first record a minute in (a fresh bridge's game is still loading)
+        self.last_rss: int | None = None
+
+    def _game_rss(self) -> int | None:
+        r = rss_mb(self._pid)
+        if r is None:
+            self._pid = game_pid()
+            r = rss_mb(self._pid)
+        return r
+
+    def lua(self, context: str) -> dict | None:
+        try:
+            r = self.game.rpc("sys.mem", context=context, timeout=2.0)
+        except Exception:  # noqa: BLE001 - an older mod, a load, or the game frozen
+            return None
+        return r if isinstance(r, dict) else None
+
+    def tick(self) -> dict | None:
+        t = self.now()
+        rss = self.rss()
+        jump = rss is not None and self.last_rss is not None and rss - self.last_rss >= self.jump_mb
+        if not jump and t - self.last_t < self.every_s:
+            return None
+        rec: dict = {"type": "mem", "t": round(t, 2), "rss_mb": rss}
+        if jump:
+            rec["why"] = "rss_jump"
+        for ctx in ("server", "client"):
+            m = self.lua(ctx)
+            if m and isinstance(m.get("lua_mb"), (int, float)):
+                rec[f"lua_{ctx}_mb"] = m["lua_mb"]
+                if m.get("high"):
+                    rec["high"] = True
+        self.last_t, self.last_rss = t, rss
+        self.rec.write(rec)
+        return rec
+
+
+def sampler_loop(rec: Recorder, game, stop: threading.Event, interval: float = 1.0, mem=None) -> None:
     """Poll nav.activity on a dedicated Game connection and record busy/idle samples; a load sample when the
-    client shows a loading screen (its game state is not play) or the server doesn't answer."""
+    client shows a loading screen (its game state is not play) or the server doesn't answer. Memory records
+    (MemSampler) ride along."""
     prev = None
+    mem = mem if mem is not None else MemSampler(rec, game)
     while not stop.wait(interval):
+        try:
+            mem.tick()
+        except Exception:  # noqa: BLE001 - never let a memory sample stop the activity sampler
+            pass
         gs = client_state(game)
         if gs is not None and gs not in PLAY_STATES:
             prev = None

@@ -151,6 +151,19 @@ class Cohesion(Base):
         self.assertEqual(self.g.ops("act.move_to"), [])
         self.assertEqual(self.chains(), [P3])
 
+    def test_regroup_leaves_a_member_on_its_own_queue(self):
+        # S035 19:28: regroup replaced Shadowheart's own move_to + jump_to queue with a travel_to that had no way up.
+        self.st = status({"chained": False})
+        self.g.watch["party"][1]["pos"] = [40, 0, 0]
+        q = server._queues()
+        orig = q.busy
+        q.busy = lambda u: u == P2
+        self.addCleanup(setattr, q, "busy", orig)
+        out = server.regroup()
+        self.assertIn("left on its own queue", out)
+        self.assertEqual(self.g.ops("act.move_to"), [])
+        self.assertEqual(self.chains(), [])
+
     def test_far_unchained_summon_is_left_alone(self):
         self.st = status({"chained": False, "pos": [34, 0, 0], "summon": True})
         self.assertNotIn("PARTY APART", server.get_status())

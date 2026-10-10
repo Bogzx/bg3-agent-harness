@@ -293,6 +293,19 @@ class TalkAndKill(unittest.TestCase):
         _, evs = P.diff(seen, self.with_events([dlg, died]))  # reloaded and did it again
         self.assertEqual(evs, [])
 
+    def test_quest_items_and_puzzle_doors_once_each(self):
+        """S036: all 4 Umbral Gems (the Gauntlet's trials) scored 0; 15.6 min 'stuck' crossing the Faith-Leap."""
+        seen, _ = P.diff(None, self.with_events(None))
+        gem = {"kind": "item_added", "data": {"owner": {"uuid": "u-claude", "name": "Claude"},
+                                              "item": {"uuid": "u-gem", "name": "Umbral Gem"}, "story": True}}
+        junk = {"kind": "item_added", "data": {"owner": {"uuid": "u-claude"}, "item": {"uuid": "u-cup", "name": "Tin Cup"}}}
+        door = {"kind": "door_opened", "data": {"item": {"uuid": "u-door", "name": "Bulky Door"}}}
+        seen, evs = P.diff(seen, self.with_events([gem, junk, door, door]))
+        self.assertEqual([(e["kind"], e["what"], e["points"]) for e in evs],
+                         [("key_item", "Umbral Gem", 5), ("puzzle", "Bulky Door opened", 2)])
+        _, evs = P.diff(seen, self.with_events([gem, door]))  # handed to Shadowheart, or reloaded and redone
+        self.assertEqual(evs, [])
+
     def test_party_member_speaker_is_not_a_talk(self):
         seen, _ = P.diff(None, self.with_events(None))
         w = self.with_events([{"kind": "dialogue_started", "data": {"speakers": [{"uuid": "u-sh", "name": "Shadowheart"}]}}])

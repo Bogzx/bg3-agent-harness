@@ -52,7 +52,7 @@ MAX_LOGS = 8                   # session logs named in the prompt (newest first 
 
 # What the keeper may change. Everything else in the memory dir is restored after the pass.
 WRITABLE_FILES = ["objectives.md", "quests.md", "npcs.md", "locations.md", "party-build.md", "strategy.md",
-                  "decisions.md", "hypotheses.md", "inventory-notes.md", "PLAYTHROUGH.md"]
+                  "decisions.md", "hypotheses.md", "inventory-notes.md", "PLAYTHROUGH.md", "lessons.md"]
 WRITABLE_DIRS = ["chapters"]
 SNAPSHOT_DIRS = ["chapters", "sessions"]   # plus every top-level file
 
@@ -195,6 +195,17 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         "and what they said or did, places visited and what's there). Keep the existing format.",
         "- party-build.md, strategy.md, decisions.md, hypotheses.md: only where the logs give something new "
         "(level-ups, builds, lessons, decisions, confirmed/refuted hypotheses).",
+        "- lessons.md (create it from the format below if missing): the bridge shows its lines at the next fight "
+        "with a matching enemy/race/place, so the next try goes better. From every `[fight]` debrief graded "
+        "costly, near_wipe, wipe or reloaded and every `[lesson]` note in the logs, write ONE line per lesson: "
+        "`- WHEN <trigger>, <trigger>: <what failed> → <what to do instead> (Sxxx) [seen]`. Triggers = words "
+        "the game shows (enemy name or name stem like Justiciar, race like Undead, region/place) or ambush, "
+        "escort, ranged, surrounded, boss. MERGE: a lesson for the same trigger and failure gets the new session "
+        "appended (S023, S033) and its advice sharpened, never a second line; a retry that WON with the advice "
+        "keeps it (add 'worked S034'); drop a lesson the logs show is wrong. ≤ 60 lessons, under `## Lessons`, "
+        "newest last. A clean fight gives no lesson; a `[lesson]` about a tool or the harness (how to call "
+        "combat_turn, a click quirk) is not a fight lesson: it belongs in strategy.md. Only facts from the logs "
+        "(fairness).",
         "- PLAYTHROUGH.md (it is shown to the player at every session start): keep the `Main thread:` line and "
         "`## Party` current (who is in the active party, in camp, gone). Leave the `Now:` line as the player "
         "wrote it.",

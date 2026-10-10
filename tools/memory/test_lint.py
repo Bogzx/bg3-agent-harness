@@ -26,6 +26,20 @@ class TemplateTest(MemoryTestCase):
         self.assertFalse(r.ok)
 
 
+class LessonsTest(MemoryTestCase):
+    def test_lesson_lines_parse_or_error(self):
+        self.write("lessons.md", "# Lessons\n<!-- - free text in a comment is fine -->\n## Lessons\n"
+                   "- WHEN Undead, Ghoul: claws paralysed Karlach → Turn Undead first (S023) [seen]\n")
+        self.assertEqual([e for e in L.lint(self.mem).errors if e[0] == "lessons"], [])
+        self.append("lessons.md", "- Undead are dangerous (S023)\n")
+        self.assertIn("lessons", kinds(L.lint(self.mem).errors))
+
+    def test_optional(self):
+        (self.mem / "lessons.md").unlink(missing_ok=True)
+        self.assertNotIn("lessons", kinds(L.lint(self.mem).errors))
+        self.assertNotIn("missing", kinds(L.lint(self.mem).errors))
+
+
 class BudgetTest(MemoryTestCase):
     def test_line_budget(self):
         self.write("objectives.md", "# Objectives\n" + "".join(f"- O-{i} goal\n" for i in range(90)))

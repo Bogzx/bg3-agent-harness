@@ -44,6 +44,7 @@ from bg3ai import metrics as latency  # noqa: E402  (stdlib only; doesn't import
 from bg3ai import progress as story  # noqa: E402  (stdlib only: story progress per hour, stuck signal)
 sys.path.insert(0, str(REPO / "runner"))
 import triage  # noqa: E402  (runner/triage.py: post-session Sxxx.triage.md)
+import ramwatch  # noqa: E402  (runner/ramwatch.py: RAM watchdog, RSS spikes with the last tool calls)
 sys.path.insert(0, str(REPO / "tools"))
 import steam_paths  # noqa: E402  (stdlib: Steam's offline state before any game launch)
 
@@ -83,6 +84,12 @@ AGENT_SILENT_MINUTES = float(os.environ.get("BG3AI_AGENT_SILENT_MIN", "4"))  # n
 CHECK_ALL_INTERVAL = 30 * 60   # tools/dev/check_all.py between sessions, at most this often (it takes ~25 s)
 CHECK_ALL_TIMEOUT = 240        # its own budget is 120 s plus the bridge import; past this it's killed
 STEAM_RETRY_S = 120            # Steam not offline: refuse to launch, retry this often (never give up)
+# Party ready checks (long_rest's "end the day?", region fast travel) stop working in a long-lived game process (se's
+# discriminator 2026-10-10 18:07-18:18, research/impl-se.md §6: the 12:48 process failed from S028 on, fresh processes
+# work with or without the mod). Between sessions the runner relaunches a game older than this (0 = never by age), or
+# one whose last session logged a ready-check failure, and loads the playthrough's newest save.
+GAME_MAX_AGE_H = float(os.environ.get("BG3AI_GAME_MAX_AGE_H", "2"))
+READY_FAIL_RE = re.compile(r"\b(?:ready_failed|end_day_failed)\b(?::\w+)?")
 GAME_FAULTS = ("crash", "hang")
 FAULTS = GAME_FAULTS + ("agent_hang",)
 KILLED_EXITS = (-2, -9, -15, 130, 137, 143)   # claude ended by a signal (SIGINT/KILL/TERM, raw or as 128+n)
@@ -257,6 +264,8 @@ def pick_save(saves: list[Save], handoff_label: str | None, owner: str | None,
     for s in saves:
         if s.folder in runner_saves:
             cands.append(s)
+        elif is_autosave(s.label):
+            continue  # AutoSave_N/QuickSave_N: the game's or a worker's test state (se 18:14 AutoSave_59), never ours
         elif owner is not None and s.owner != owner:
             continue
         elif handoff_label and label_matches(s.label, handoff_label, prefix):
@@ -270,6 +279,19 @@ def saves_since(saves: list[Save], t: float, owner: str | None, prefix: str = SA
     """AI-labelled saves written after t (by this playthrough's owner, when known)."""
     return sorted((s for s in saves if s.mtime >= t and is_ai_save(s, prefix)
                    and (owner is None or s.owner == owner)), key=lambda s: s.mtime)
+
+
+def relaunch_reason(started: float | None, now: float, last_log: str | None,
+                    max_age_h: float = GAME_MAX_AGE_H) -> str | None:
+    """Why the game process should be relaunched before the next session, or None: the last session's log shows a
+    party ready check failing (ready_failed / end_day_failed), or the process is max_age_h or more old."""
+    m = READY_FAIL_RE.search(last_log or "")
+    if m:
+        return f"the last session logged {m.group(0)} (ready checks break in a long-lived game process)"
+    if started and max_age_h > 0 and now - started >= max_age_h * 3600:
+        return f"the game process is {(now - started) / 3600:.1f} h old (relaunched at {max_age_h:g} h: ready checks " \
+               "break in a long-lived process)"
+    return None
 
 
 def is_autosave(label: str) -> bool:
@@ -319,6 +341,92 @@ def read_actions_since(t: float, path: Path | None = None, tail_bytes: int = 4_0
         if isinstance(rec, dict) and rec.get("t", 0) > t:
             out.append(rec)
     return out
+
+
+OOM_LINE = "killed by the OOM killer"
+OOM_SAVE_LIMIT = 2             # OOM kills in a row right after loading the same save → the runner refuses that save
+OOM_SPIKE_S = 180              # a ramwatch RSS spike this close before an OOM line in another unit = the game's OOM
+
+
+def game_scope(stamp: str) -> str:
+    """The systemd user scope runner/launch_game.sh runs the game in (its own cgroup, OOMPolicy=continue)."""
+    return f"bg3ai-game-{stamp}.scope"
+
+
+def find_game_oom(journal: str, stamp: str, spikes: list[dict]) -> str | None:
+    """Why the game died of an OOM, from `journalctl --user -o short-unix` lines since its launch, or None. A kill in
+    the game's own scope counts; one in another unit (a game launched before scopes, e.g. inside the multiplexer's unit) only
+    with a ramwatch RSS spike (runtime/ram_spikes.jsonl) within OOM_SPIKE_S before it."""
+    scope = game_scope(stamp)
+    for line in journal.splitlines():
+        if OOM_LINE not in line:
+            continue
+        head, _, rest = line.partition(" ")
+        try:
+            t = float(head)
+        except ValueError:
+            continue
+        unit = rest.split(": ")[-2].split()[-1] if ": " in rest else "?"
+        at = f"{datetime.fromtimestamp(t):%H:%M:%S}"
+        if unit == scope:
+            return f"the kernel OOM-killed the game at {at} (its scope {scope})"
+        spike = next((sp for sp in spikes if 0 <= t - sp.get("t", 0) <= OOM_SPIKE_S), None)
+        if spike:
+            return (f"the kernel OOM-killed the game at {at} (in {unit}; its RSS went {spike['from_mb']} → "
+                    f"{spike['to_mb']} MB in {spike['seconds']} s just before)")
+    return None
+
+
+def read_spikes(since: float, path: Path | None = None) -> list[dict]:
+    """runtime/ram_spikes.jsonl records (runner/ramwatch.py) with t >= since."""
+    out = []
+    try:
+        lines = (path or RUNTIME / "ram_spikes.jsonl").read_text().splitlines()
+    except OSError:
+        return out
+    for line in lines[-200:]:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and rec.get("t", 0) >= since:
+            out.append(rec)
+    return out
+
+
+def user_journal(since: float) -> str:
+    """systemd --user manager lines since `since` (where 'A process of this unit has been killed by the OOM killer'
+    lands; the kernel log needs root here). '' when journalctl isn't usable."""
+    try:
+        r = subprocess.run(["journalctl", "--user", "--no-pager", "-q", "-o", "short-unix", "--since",
+                            f"@{int(since)}", "_COMM=systemd"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return r.stdout
+
+
+def crash_tools_note(why: str, actions: list[dict], until: float, n: int = 3) -> str:
+    """The kickoff warning after a game crash: the last n tool calls (runtime/actions.jsonl) up to `until`, so the
+    next session doesn't walk straight back into it (S038: jump_to toward the Shadowfell ledge → OOM)."""
+    last = [a for a in actions if a.get("t", 0) <= until + 1][-n:]
+    if not last:
+        return (f"RUNNER NOTE: the last session ended in a game crash ({why}). No tool calls were logged just "
+                "before it; reconcile your notes with get_status.")
+    calls = "; ".join(
+        f"{datetime.fromtimestamp(a['t']):%H:%M:%S} {a.get('tool')} "
+        f"{json.dumps(a.get('args') or {}, separators=(',', ':'))[:140]} → "
+        f"{str(a.get('result') or '').splitlines()[0][:90] if a.get('result') else '?'}" for a in last)
+    return (f"RUNNER NOTE: the last session ended in a game crash ({why}). The last {len(last)} tool calls before it: "
+            f"{calls}. Treat the last one as the likely trigger: don't repeat it at the same spot (a jump: walk "
+            "there via route/WAYS instead; a spell/item: another one), and reconcile your notes with get_status.")
+
+
+def oom_streak_update(streak: dict | None, save: str | None, oom: str | None) -> dict | None:
+    """The consecutive-OOM record after a game death: same save again → n+1, another save → 1, no OOM → reset."""
+    if not oom or not save:
+        return None
+    n = streak["n"] + 1 if streak and streak.get("save") == save else 1
+    return {"save": save, "n": n, "why": oom, "t": time.time()}
 
 
 def game_started_at() -> float | None:
@@ -1294,6 +1402,7 @@ class Runner:
         self.game_proc = None
         self.watch = None
         self.state["game"] = None
+        self.state["game_killed_at"] = time.time()
         if pids_of_game():
             raise RuntimeError(f"bg3 processes survive SIGKILL: {pids_of_game()}")
         if port_open():
@@ -1374,10 +1483,82 @@ class Runner:
     def choose_save(self) -> Save | None:
         handoff = self.mem / "HANDOFF.md"
         label = parse_handoff_save(handoff.read_text()) if handoff.exists() else None
-        save = pick_save(list_saves(), label, self.state["save_owner"], set(self.state["runner_saves"]))
+        saves = list_saves()
+        save = pick_save(saves, label, self.state["save_owner"], set(self.state["runner_saves"]))
+        blocked = set(self.state["oom_blocked"] or [])
+        if save and save.folder in blocked:
+            save = self.refuse_oom_save(save, saves, blocked)
         if save and not self.state["save_owner"] and not self.opt.dry_run:
             self.state["save_owner"] = save.owner
         return save
+
+    def refuse_oom_save(self, save: Save, saves: list[Save], blocked: set[str]) -> Save:
+        """The newest save OOM-killed the game OOM_SAVE_LIMIT times in a row right after loading: load the newest
+        other save of the playthrough (loudly), or stop the runner when there is none (a crash loop needs a human)."""
+        alt = pick_save([s for s in saves if s.folder not in blocked], None, self.state["save_owner"],
+                        set(self.state["runner_saves"]))
+        streak = self.state["oom_streak"] or {}
+        why = streak.get("why", "OOM")
+        if alt is None:
+            raise LaunchGaveUp(f"save {save.folder} OOM-killed the game {OOM_SAVE_LIMIT}× in a row after loading "
+                               f"({why}) and there is no other save to load")
+        msg = (f"REFUSING TO RESUME from {save.folder}: it OOM-killed the game {OOM_SAVE_LIMIT}× in a row right after "
+               f"loading ({why}); loading the older {alt.folder} instead")
+        log(f"!!!!! {msg} !!!!!")
+        self.event("oom_save_refused", save=save.folder, instead=alt.folder, why=why[:300])
+        write_status(alert={"t": time.time(), "kind": "oom_save_refused", "msg": msg[:600]})
+        tools = streak.get("tools") or []
+        self.pending_notes.append(
+            f"RUNNER NOTE: the save \"{save.label}\" made the game run out of memory {OOM_SAVE_LIMIT} times in a row "
+            f"right after loading (the kernel killed it); the runner loaded the older save \"{alt.label}\" instead. "
+            "Progress after it is lost in the game: replay it, and fix HANDOFF.md/objectives. "
+            + (f"The last tool calls before the memory blow-up were: {' | '.join(tools[-5:])}. Avoid repeating "
+               "them exactly (another route or approach). " if tools else ""))
+        return alt
+
+    def note_game_gone(self, oom: str | None) -> None:
+        """The game is down at a session start and the runner didn't kill it after the last session: it crashed at
+        (or after) the end of that session. Warn the next session with the last tool calls before the end, once."""
+        last = next((h for h in reversed(self.state["history"] or []) if h.get("kind") == "play"), None)
+        if not last or not last.get("ended") or self.state["crash_noted"] == last.get("session"):
+            return
+        if (self.state["game_killed_at"] or 0) >= last["ended"] - 5:
+            return   # killed on purpose (age relaunch, recovery) after that session
+        self.state["crash_noted"] = last.get("session")
+        why = f"{last.get('session')}: the game was gone at the next session start" + (f"; {oom}" if oom else "")
+        log(f"game gone since {last.get('session')} ended: warning the next session with its last tool calls")
+        self.pending_notes.append(crash_tools_note(why, read_actions_since(last["ended"] - 600), last["ended"]))
+
+    def check_game_oom(self) -> str | None:
+        """After the game died (recover(), or a runner start finding it gone): did the kernel OOM-kill it? Updates
+        the consecutive-OOM streak for the save that game had loaded; at OOM_SAVE_LIMIT that save is blocked
+        (choose_save refuses it). Checked once per launch. -> the OOM reason, or None."""
+        g = self.state["game"] or {}
+        stamp, launched = g.get("stamp"), g.get("launched")
+        if not stamp or not launched or self.state["oom_checked"] == stamp:
+            return None
+        self.state["oom_checked"] = stamp
+        oom = find_game_oom(user_journal(launched), stamp, read_spikes(launched))
+        kills = [k for k in read_spikes(launched, RUNTIME / "ram_kills.jsonl") if k.get("kind") == "kill"]
+        if not oom and kills:
+            oom = (f"ramwatch killed the game at {datetime.fromtimestamp(kills[-1]['t']):%H:%M:%S} before the OOM "
+                   f"killer could: {kills[-1].get('why', '?')}")
+        save = self.state["loaded_save"]
+        streak = oom_streak_update(self.state["oom_streak"], save, oom)
+        if streak:
+            spikes = read_spikes(launched)
+            acts = read_actions_since(launched)
+            streak["tools"] = (spikes[-1].get("tools", []) if spikes else
+                               ramwatch.last_tools(acts[-1]["t"], RUNTIME / "actions.jsonl") if acts else [])
+        self.state["oom_streak"] = streak
+        if not oom:
+            return None
+        log(f"!!!!! GAME OOM: {oom}; save loaded before it: {save} (OOM {streak['n'] if streak else 1} in a row) !!!!!")
+        self.event("game_oom", why=oom[:300], save=save, streak=streak["n"] if streak else 1,
+                   tools=(streak or {}).get("tools", [])[-8:])
+        if streak and streak["n"] >= OOM_SAVE_LIMIT:
+            self.state["oom_blocked"] = sorted(set(self.state["oom_blocked"] or []) | {save})
+        return oom
 
     def foreign_use(self, save: Save) -> str | None:
         """foreign_use_since() for the running game; a relaunch counts only for a game this runner didn't start."""
@@ -1513,9 +1694,57 @@ class Runner:
         write_status(alert={"t": time.time(), "kind": "launch_gave_up",
                             "msg": f"runner stopped: the game crashes on every launch ({e})"[:600]})
 
+    def maybe_relaunch(self, first: bool) -> str | None:
+        """Between sessions: kill a game process that relaunch_reason() condemns, so ensure_game() launches a fresh
+        one with the newest save. Never kills when the relaunch can't happen (Steam not offline: the launch guard
+        would refuse) or would lose play (the newest save is older than the last session's start). -> the reason."""
+        if self.opt.dry_run or not port_open():
+            return None
+        if first and not (self.owns_game() or self.opt.take_over):
+            return None  # ensure_game decides about a game the runner didn't launch
+        hist = [h for h in self.state["history"] if h.get("kind") == "play"]
+        last = hist[-1] if hist else None
+        text = None
+        if last:
+            try:
+                text = (self.state.dir / f"{last['session']}.log").read_text(errors="replace")
+            except OSError:
+                text = None
+        g = self.state["game"] or {}
+        started = g.get("launched") if self.owns_game() and g.get("launched") else game_started_at()
+        why = relaunch_reason(started, time.time(), text)
+        if why is None:
+            if started:
+                log(f"game process {(time.time() - started) / 3600:.1f} h old, no ready-check failure last session: "
+                    f"kept (relaunch at {GAME_MAX_AGE_H:g} h)")
+            return None
+        save = self.choose_save()
+        if save is None:
+            log(f"game relaunch wanted ({why}) but this playthrough has no save to load: skipped")
+            return None
+        if last and save.mtime < last.get("started", 0):
+            log(f"game relaunch wanted ({why}) but the newest save {save.label} is older than {last['session']}'s "
+                "start: skipped (it would lose play)")
+            return None
+        ok, steam_why = steam_ready()
+        if not ok:
+            log(f"game relaunch wanted ({why}) but Steam is not offline ({steam_why}): keeping the running game")
+            self.event("game_relaunch_skipped", why=why, steam=steam_why)
+            return None
+        log(f"relaunching the game: {why}; then loading {save.folder}")
+        self.event("game_relaunch", why=why, save=save.folder)
+        self.kill_game()
+        self.state["loaded_save"] = None
+        return why
+
     def ensure_game(self, first: bool) -> str | None:
         """Make sure the game runs with this playthrough loaded. Returns the loaded save label, if any."""
         state = game_state() if port_open() else None
+        if state is not None and not self.owns_game():
+            last = next((h for h in reversed(self.state["history"] or []) if h.get("kind") == "play"), {})
+            started = game_started_at()
+            if started and last.get("ended") and started > last["ended"]:
+                self.note_game_gone(None)   # someone relaunched the game after the last session: it died then
         if state not in (None, *MENU_STATES, "Running"):
             # Mid-load or similar: settle at a menu or in-game; never wait for Running from the menu/splash.
             log(f"game is busy (state {state}); waiting for it to settle")
@@ -1533,6 +1762,8 @@ class Runner:
                 return None  # keep playing where the last session left off
         if port_open() and state is None:
             raise RuntimeError("debug port open but the game doesn't answer")
+        if state is None:
+            self.note_game_gone(self.check_game_oom())   # gone (e.g. 20:48: an OOM took the runner down with it)
         return self.load_save(self.choose_save())
 
     def apply_play_settings(self) -> None:
@@ -1591,13 +1822,19 @@ class Runner:
 
     def recover(self, why: str) -> None:
         log(f"recovering: {why}")
+        if not self.game_alive():
+            oom = self.check_game_oom()
+            if oom:
+                why = f"{why} (out of memory: {oom})"
+        crashed_at = time.time()
         self.kill_game()
         save = self.choose_save()
         label = self.load_save(save)
         self.pending_notes.append(
-            f"RUNNER NOTE: the game {why} at {datetime.now():%H:%M}; the runner restarted it and resumed from "
-            f"save \"{label or 'main menu'}\". Anything after that save is lost: reconcile your notes and the "
-            "session log against get_status before continuing.")
+            f"RUNNER NOTE: the game {why} at {datetime.fromtimestamp(crashed_at):%H:%M}; the runner restarted it and "
+            f"resumed from save \"{label or 'main menu'}\". Anything after that save is lost: reconcile your notes "
+            "and the session log against get_status before continuing.")
+        self.pending_notes.append(crash_tools_note(f"the game {why}", read_actions_since(crashed_at - 600), crashed_at))
 
     # ---------------------------------------------------------------- saves
 
@@ -2076,7 +2313,12 @@ class Runner:
     def play_session(self, minutes: float, first: bool) -> SessionResult:
         if self.opt.dry_run:
             return self.plan_dry_run(minutes)
+        relaunched = self.maybe_relaunch(first)
         loaded = self.ensure_game(first)
+        if relaunched:
+            self.pending_notes.append(
+                f"RUNNER NOTE: the runner relaunched the game before this session ({relaunched}) and loaded "
+                f"\"{loaded or 'the newest save'}\". long_rest / region fast travel ready checks should work again.")
         notes = list(self.pending_notes)
         self.pending_notes.clear()
 
@@ -2121,6 +2363,8 @@ class Runner:
         if res.reason == "dry_run":
             return res
         session_start, session_end = res.started, res.started + minutes * 60
+        if res.reason not in FAULTS and self.state["oom_streak"]:
+            self.state["oom_streak"] = None   # a whole session from that save without dying: not an OOM loop
 
         # Game crash or hang mid-session: relaunch, load the latest save, and resume the SAME claude conversation
         # for the time left (an hour-long session that crashes at minute 10 keeps its context and its 50 min).
@@ -2375,7 +2619,6 @@ def cmd_run(a) -> int:
     # (one skipper per game, runtime/skipper.lock).
     from bg3ai.skipper import start_background
     skip_stop = start_background(DEBUG_PORT, lambda m: log(f"autoskip: {m}"), RUNTIME / "skipper.lock")
-    import ramwatch   # free RAM per minute (runtime/ram.log), protects the game from the OOM killer
     ram_stop = ramwatch.start_background(log)
     log("ramwatch: started (free RAM per minute → runtime/ram.log)" if ram_stop is not None else
         "ramwatch: not started here: another watchdog holds runtime/ramwatch.lock (that one guards the game)")

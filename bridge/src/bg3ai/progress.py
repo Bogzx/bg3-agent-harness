@@ -28,6 +28,11 @@ Weights (points per event; deliberately simple, story-weighted):
                    automated barks; S015/S018: freeing Barcus, Dror, Zevlor scored nothing)
     kill        1  a visible non-party character died that never died before (events.since `died`; S018
                    spent 23 min killing the three goblin leaders and their camp for 0 points)
+    key_item    5  a quest item (story mark) came into the party's hands for the first time (item_added story;
+                   S036: the Gauntlet's trials won all 4 Umbral Gems and scored 10 points in 25 min, 15.6 min
+                   "stuck" while crossing the Faith-Leap Trial)
+    puzzle      2  a door/wall in view opened by the world, not by the party (door_opened: a lever, a trial won,
+                   the Grand Mausoleum's paintings), once per door
 
 Not progress: summons joining (Spiritual Weapon is in DB_PartyMembers, S017 scored it as a companion), the
 levels a recruit is caught up to on joining (S021: Karlach -> 2, 3, 4 = 24 points within 90 s), and an
@@ -56,7 +61,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 WEIGHTS = {"region": 15, "quest_done": 10, "level_up": 8, "waypoint": 5, "companion": 5, "quest_new": 3,
-           "area": 3, "quest_step": 2, "objective": 2, "obj_moved": 1, "explore": 1, "talk": 2, "kill": 1}
+           "area": 3, "quest_step": 2, "objective": 2, "obj_moved": 1, "explore": 1, "talk": 2, "kill": 1,
+           "key_item": 5, "puzzle": 2}
+EVENT_KINDS = ("died", "dialogue_started", "item_added", "door_opened")
 EXPLORE_CELLS = 8
 OBJ_MOVED_M = 10.0
 OBJ_POS_CAP = 20  # remembered spots per objective
@@ -112,10 +119,10 @@ def read_game(lua_eval: Callable[..., str]) -> dict | None:
         evs = [e for e in er.get("events") or [] if isinstance(e, dict)]
         if since is None or er["latest"] < since:
             # first call, or the mod's Lua restarted (seq began again): start from here
-            got["events"] = None if since is None else [e for e in evs if e.get("kind") in ("died", "dialogue_started")]
+            got["events"] = None if since is None else [e for e in evs if e.get("kind") in EVENT_KINDS]
             _events["seq"] = er["latest"] if since is None else max([e.get("seq", 0) for e in evs] + [0])
         else:
-            got["events"] = [e for e in evs if e.get("kind") in ("died", "dialogue_started")]
+            got["events"] = [e for e in evs if e.get("kind") in EVENT_KINDS]
             _events["seq"] = max([e.get("seq", since) for e in evs] + [since])
     try:
         r = json.loads(lua_eval(combined_code(["ui.state"]), "client"))[0]
@@ -132,7 +139,7 @@ def read_game(lua_eval: Callable[..., str]) -> dict | None:
 def empty_seen() -> dict:
     return {"regions": [], "areas": [], "waypoints": [], "quests": {}, "objectives_active": [],
             "objectives_done": [], "levels": {}, "explored": {}, "objective_pos": {}, "objective_moved_t": {},
-            "joined": {}, "talked": [], "killed": [], "baseline": False}
+            "joined": {}, "talked": [], "killed": [], "key_items": [], "puzzles": [], "baseline": False}
 
 
 def _quests(journal: Any) -> dict:
@@ -189,7 +196,8 @@ def _explored(seen: dict, ex: Any, add: Callable, silent: bool) -> None:
 
 
 def _game_events(seen: dict, evs: Any, add: Callable, party: set[str]) -> None:
-    """talk / kill from the mod's player-visible events (dialogue_started speakers, died)."""
+    """talk / kill / key_item / puzzle from the mod's player-visible events (dialogue_started speakers, died,
+    item_added story, door_opened)."""
     for e in evs if isinstance(evs, list) else []:
         d = e.get("data") if isinstance(e, dict) else None
         if not isinstance(d, dict):
@@ -199,6 +207,18 @@ def _game_events(seen: dict, evs: Any, add: Callable, party: set[str]) -> None:
             if u and u not in party and name not in party and u not in seen["killed"]:
                 seen["killed"].append(u)
                 add("kill", name or "someone")
+        elif e.get("kind") == "item_added" and d.get("story"):
+            it = d.get("item") if isinstance(d.get("item"), dict) else {}
+            u = it.get("uuid")
+            if u and u not in seen["key_items"]:
+                seen["key_items"].append(u)  # passed between members or reloaded: still once
+                add("key_item", str(it.get("name") or "a quest item"))
+        elif e.get("kind") == "door_opened":
+            it = d.get("item") if isinstance(d.get("item"), dict) else {}
+            u = it.get("uuid")
+            if u and u not in seen["puzzles"]:
+                seen["puzzles"].append(u)
+                add("puzzle", f"{it.get('name') or 'a door'} opened")
         elif e.get("kind") == "dialogue_started" and not d.get("automated"):
             for sp in d.get("speakers") or []:
                 u, name = (sp.get("uuid"), str(sp.get("name") or "")) if isinstance(sp, dict) else (None, "")

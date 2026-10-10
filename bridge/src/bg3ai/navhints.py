@@ -51,10 +51,20 @@ def jump_refusal(lnd: Any, asked: list[float]) -> str | None:
     if not isinstance(lnd, dict):
         return None
     plan = jump_plan_text(lnd.get("plan"))
+    if not plan and lnd.get("plan_skipped"):  # the level's kill switch (S038 OOM): no search for a plan here
+        plan = f" No jump plan: {lnd['plan_skipped']}; pick the landing from get_layout / a screenshot."
     if lnd.get("safe") is False and not lnd.get("suggest"):
         alt = (f" The nearest clear landing in reach is {P(lnd['nearest_clear'])}, "
                f"{N(lnd.get('nearest_clear_off_m', '?'))}m from it." if lnd.get("nearest_clear") and not plan else "")
-        tail = plan or " Pick another landing (get_frontier lists HAZARD patches) or force=true."
+        if plan:
+            tail = plan
+        elif lnd.get("surface") == "Chasm":
+            # S035 19:38 / S038 20:44: force=true into a Chasm was a fatal fall both times (the Chasm is the void
+            # around the floors; Feather Fall did not save it): never offer force for it.
+            tail = (" A Chasm has no floor in jumping height: a forced jump there is a fatal fall. Find the crossing"
+                    " with get_layout / route (a ledge in reach, a ladder, the story's own way across).")
+        else:
+            tail = " Pick another landing (get_frontier lists HAZARD patches) or force=true."
         return (f"jump_to: FAILED — the landing {P(asked)} {landing_bad_text(lnd)} and no clear spot within 3m of it "
                 f"is in reach ({N(lnd.get('reliable_m', '?'))}m).{alt}{tail}")
     if lnd.get("too_far") and not lnd.get("suggest"):

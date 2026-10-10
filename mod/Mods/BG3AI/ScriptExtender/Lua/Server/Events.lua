@@ -176,7 +176,14 @@ listen("CastedSpell", 5, function(caster, spell, _, _, _)
     local st = osi(Ext.Stats.Get, spell)
     local name = st and U.loca(st.DisplayName) or nil
     if not name then return end -- unnamed/technical casts are not shown in the log
-    RPC.push("cast", { caster = ref(u), spell = spell, name = name })
+    -- roll: how the spell lands (its stats: the tooltip's "Wisdom save" / attack roll), so a 0-damage result reads
+    -- as a save or a miss in the fight debrief rather than a resisted damage type.
+    local roll
+    pcall(function()
+        local r = tostring(st.SpellRoll and st.SpellRoll.Default or "")
+        roll = r:find("SavingThrow%(") and "save" or (r:find("Attack%(") and "attack") or nil
+    end)
+    RPC.push("cast", { caster = ref(u), spell = spell, name = name, roll = roll })
 end)
 
 ------------------------------------------------------------------------
@@ -293,6 +300,9 @@ listen("AddedTo", 3, function(item, holder, _)
     local data = { owner = ref(h), item = ref(u) }
     local n = osi(Osi.GetStackAmount, u)
     if n and n > 1 then data.count = n end
+    -- a quest item (the inventory's story mark, get_inventory "story"): progress.py scores the first one in hand
+    local ie = V.entity(u)
+    pcall(function() if ie and ie.ServerItem and ie.ServerItem.StoryItem then data.story = true end end)
     RPC.push("item_added", data)
 end)
 

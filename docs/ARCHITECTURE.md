@@ -107,3 +107,56 @@ agent's tool calls and its notes.
 | `play/` | where the playing agent runs: CLAUDE.md, hooks, `.mcp.json`, `knowledge/` (incl. `playbooks/`), `memory -> ../playthroughs/<name>/memory` |
 | `memory-template/`, `tools/memory/` | memory layout and tooling |
 | `runner/` | launcher, session runner, dashboard |
+
+## Learning from fights: debrief → lessons (act ↔ setup interface, proposed by setup 2026-10-10 19:0x)
+
+Fair: everything below comes from what the player saw (combat log events, our own action results, the combat
+read). Nothing from game files or hidden state.
+
+**1. Fight debrief (act builds it, bridge).** At combat end, at a wipe, or at a reload during combat:
+- **Result text** (combat-end result, ≤ 4 lines): `DEBRIEF <grade>: <summary>` plus key facts.
+- **Session-log line** via `_append_note(text, "fight")`. ONE line, fixed field order, `|`-separated, so the keeper
+  and grep can read it:
+  `- HH:MM [fight] <grade> @<region> vs <Enemy xN (race)>, … | rounds N | downed: <Member> by <Enemy> …
+  | dealt A / taken B | resisted: <Enemy>:<DamageType> … | unused: <item> … | <short summary>`
+- **Machine record**: one JSON line per fight in `runtime/sessions/<playthrough>/<Sxxx>.fights.jsonl`. The path is
+  `BG3AI_METRICS_PATH` with `.metrics.jsonl` → `.fights.jsonl`. The logs worker's retry metric reads it.
+  ```json
+  {"v": 1, "t": 1760111111.0, "session": "S033", "region": "Shadow-Cursed Lands",
+   "group": "justiciar avenger|justiciar soulhunter|umbral tremor",
+   "grade": "clean|costly|near_wipe|wipe|reloaded", "rounds": 8,
+   "enemies": [{"name": "Justiciar Soulhunter", "race": "Human", "n": 8, "killed": 3,
+                "used": ["Shadow Arrow"], "resisted": ["Necrotic"]}],
+   "party": [{"name": "Wyll", "dealt": 40, "taken": 70, "downed": 1, "downed_by": "Justiciar Soulhunter"}],
+   "ours": [{"ability": "Fireball", "casts": 2, "hits": 5, "misses": 1, "saves": 2}],
+   "position": ["surrounded"], "unused": ["Scroll of Revivify"], "summary": "≤ 200 chars"}
+  ```
+  `group` is the retry key: the sorted, lower-cased, de-duplicated enemy names (at most 4), joined with `|`.
+  A reload and the same fight again give the same group.
+- Grades: `clean` (nobody downed, taken < 30% of party max HP), `costly` (someone downed, or ≥ 30%),
+  `near_wipe` (≥ half the party downed, or one member left standing), `wipe` (all downed), `reloaded` (a reload
+  happened during the fight). act owns the exact thresholds.
+
+**2. Lessons store (setup): `memory/lessons.md`.** The keeper maintains it. It is distilled from `[fight]` and
+`[lesson]` log lines, deduplicated, and holds at most 60 lessons. One lesson per line:
+`- WHEN <trigger>, <trigger>, …: <what failed> → <what to do instead> (S033) [seen]`
+- Triggers are short terms the harness can match: enemy names (`Justiciar Soulhunter`), name stems (`Justiciar`),
+  races/creature kinds as the combat read shows them (`Undead`, `Githyanki`), regions/places
+  (`Gauntlet of Shar`, `Shadow-Cursed Lands`), or situations: `ambush`, `escort`, `ranged`, `surrounded`, `boss`,
+  `wipe`.
+- The player writes raw lessons with `note(tag='lesson')` in the same `WHEN …: … → …` shape. The keeper merges
+  them in.
+
+**3. Retrieval (setup, bridge `lessons.py`, no model calls).** When a fight starts (combat_started /
+COMBAT STARTED), a result carries `LESSONS:` with at most 3 matching lines. A trigger matches, as a
+case-insensitive whole word or phrase, any enemy name or race in the combat read, or the current region.
+A lesson is shown once per fight, and once per region entry (on a region change with no fight). The file is
+re-read when its mtime changes.
+
+**4. LAST ATTEMPT (act).** After a reload within ~10 min of a bad fight, load_game's result and the first
+get_status carry `LAST ATTEMPT: <summary> — plan a different approach (…)`. The first turn of the retried fight
+repeats 2-3 key facts. setup's LESSONS line is separate and comes from the store.
+
+**act implementation (2026-10-10 19:50):** debrief.py + server.py hooks, as specified above, with act's extra fields
+and the exact grade thresholds in research/fight-debrief.md (`t` is an ISO string; `ours[].saves` is null: events
+don't show saves). LAST ATTEMPT / RETRY / LAST TIME / WARNING lines as in 4.

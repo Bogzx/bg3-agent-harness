@@ -48,6 +48,7 @@ BUDGETS: dict[str, tuple[int, int | None]] = {
     "quests.md": (300, None),
     "party-build.md": (150, None),
     "inventory-notes.md": (100, None),
+    "lessons.md": (70, 12000),   # optional file; the bridge matches its WHEN lines at fight start
 }
 CHAPTER_MAX_LINES = 150
 SESSION_LOG_MAX_LINES = 300

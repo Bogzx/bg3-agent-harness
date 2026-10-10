@@ -38,6 +38,12 @@
 #   BG3AI_INPUT_LIB    the input shim (default <repo>/build/bg3sdl/libbg3sdl.so, from native/bg3sdl/build.sh)
 #   BG3LE_DEBUG_PORT   bg3le's Lua debug server port (default 9998)
 #   BG3AI_ALLOW_STEAM_ONLINE=1  launch even when Steam's last login was online (default: refuse; see below)
+#   BG3AI_GAME_SCOPE   1 (default): run the game in its own systemd user scope bg3ai-game-<stamp>.scope with
+#                      OOMPolicy=continue and a memory cap, so an OOM kills only the game, never the caller's unit
+#                      (20:48: the game hit 13.3 GB inside the multiplexer's unit, OOMPolicy=stop, and systemd killed every
+#                      agent). 0: no scope (and no cap).
+#   BG3AI_GAME_MEMORY_MAX / BG3AI_GAME_SWAP_MAX   the scope's MemoryMax / MemorySwapMax (default 10G / 2G; the
+#                      game normally peaks at ~6.3 GB RSS)
 set -euo pipefail
 
 # Never carry a flock fd into the game's lifetime: 10:52 the game was launched from inside a
@@ -191,7 +197,23 @@ done
 run_env=()
 [ ${#pv_fs[@]} -gt 0 ] && run_env+=("PRESSURE_VESSEL_FILESYSTEMS_RW=$(IFS=:; echo "${pv_fs[*]}")")
 
-launch=(env "${run_env[@]}" "$SNIPER_DIR/run" -- env "${env_args[@]}" ./bin/bg3 "${game_args[@]}")
+# Own cgroup for the game (see BG3AI_GAME_SCOPE). `systemd-run --scope` moves itself into the new scope and execs
+# the command, so $! below is still the game's launcher and the runner's process-group kill still reaches it.
+scope=()
+SCOPE_UNIT="bg3ai-game-$stamp.scope"
+if [ "${BG3AI_GAME_SCOPE:-1}" = 1 ]; then
+    if command -v systemd-run >/dev/null 2>&1 &&
+       systemd-run --user --scope --quiet --collect -p OOMPolicy=continue true >/dev/null 2>&1; then
+        scope=(systemd-run --user --scope --quiet --collect "--unit=$SCOPE_UNIT"
+               -p OOMPolicy=continue
+               -p "MemoryMax=${BG3AI_GAME_MEMORY_MAX:-10G}" -p "MemorySwapMax=${BG3AI_GAME_SWAP_MAX:-2G}")
+    else
+        echo "launch_game: warning: systemd-run --user --scope does not work here: the game shares the caller's" \
+             "cgroup (an OOM could take the caller's unit down)" >&2
+    fi
+fi
+
+launch=("${scope[@]}" env "${run_env[@]}" "$SNIPER_DIR/run" -- env "${env_args[@]}" ./bin/bg3 "${game_args[@]}")
 
 if [ "$dry_run" = 1 ]; then
     echo "cd $(printf '%q' "$GAME")"
@@ -218,6 +240,7 @@ echo "launch_game: game log $GAME_LOG" >&2
 cd "$GAME"
 "${launch[@]}" >> "$GAME_LOG" 2>&1 &
 pid=$!
+[ ${#scope[@]} -gt 0 ] && echo "launch_game: game cgroup $SCOPE_UNIT (OOMPolicy=continue, MemoryMax=${BG3AI_GAME_MEMORY_MAX:-10G})" >&2
 echo "launch_game: started (pid $pid); bg3le debug server will listen on 127.0.0.1:$PORT" >&2
 
 # If libsteam_api decides the game was not started by Steam it asks Steam to relaunch it and exits at once; the

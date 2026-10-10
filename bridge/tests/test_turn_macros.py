@@ -310,6 +310,15 @@ class CombatTurn(Base):
         self.assertNotIn("STOPPED", out)
         self.assertIn("end_turn: done", out)
 
+    def test_unknown_ability_keeps_the_turn_open(self):
+        # S035 19:33: action ["Shout_Dodge"] → "unknown action" (nothing spent), then end_turn threw the action away.
+        self.g.refuse_if = lambda op, a: ("unknown action Shout_Dodge (not an ability id; get_actions lists them)"
+                                          if a.get("spell") == "Shout_Dodge" else None)
+        out = server.combat_turn(self.plan(move=self.gob, action=["Shout_Dodge"]))
+        self.assertNotIn("act.end_turn", [o for o, _ in self.g.ops("act.")])
+        self.assertIn("BG3 has no Dodge action", out)
+        self.assertIn("turn NOT ended", out)
+
     def test_move_that_does_not_fit_walks_as_far_as_it_can(self):
         self.g.refuse_if = lambda op, a: ("destination is beyond remaining movement (path 14.2 m, 5.5 m left)"
                                           if op == "act.move_to" and a.get("target") else None)
@@ -450,6 +459,28 @@ class CombatTurn(Base):
         server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertEqual(self.g.ops("nav.los_spot"), [])
 
+    def test_touch_cast_in_reach_without_sight_seeks_a_spot(self):
+        # S033 18:49: Cure Wounds / Help on downed Shadowheart at 1.5 m: "no line of sight" twice, turn lost
+        self.g.combat = combat(gob_dist=1.5)
+        moved = []
+        self.g.on_start = lambda op, a: moved.append(a) if op == "act.move_to" else None
+        self.g.refuse_if = lambda op, a: ("no line of sight to target"
+                                          if op == "act.cast" and a.get("target") == GOB and not moved else None)
+        self.g.actions = [{"spell": "Target_CureWounds", "range": 1.5}]
+        self.g.los_spot = {"found": True, "pos": [1.0, 0.0, 1.0], "walk_m": 1.2}
+        out = server.combat_turn(self.plan(action={"ability": "Target_CureWounds", "target": self.gob}))
+        self.assertEqual(len(moved), 1)
+        self.assertIn("stepped 1.2m to see it", out)
+        self.assertIn(f"Target_CureWounds {self.gob}: done", out)
+
+    def test_heal_container_takes_its_biggest_heal(self):
+        # S033 18:47: Lay on Hands on Claude at 13/104 took SmallHeal
+        self.g.refuse_if = lambda op, a: ("choose a variant: Target_LayOnHands_SmallHeal, Target_LayOnHands_BigHeal, "
+                                          "Target_LayOnHands_Cure" if a.get("spell") == "Target_LayOnHands" else None)
+        out = server.combat_turn(self.plan(action={"ability": "Target_LayOnHands", "target": self.gob}))
+        self.assertEqual(self.casts(), ["Target_LayOnHands", "Target_LayOnHands_BigHeal"])
+        self.assertIn("took the biggest heal variant Target_LayOnHands_BigHeal", out)
+
     # S018 04:06: three combat_turns sent ahead waited 40+30+30 s while our own Spiritual Weapon had its turn.
     def test_sent_ahead_returns_at_once_when_another_party_member_must_act_first(self):
         self.g.combat["current"] = P2
@@ -460,6 +491,40 @@ class CombatTurn(Base):
         self.assertIn("(yours) must act first", out)
         self.assertIn(f"end_turn who={server.H.get(P2)}", out)
         self.assertEqual(self.g.ops("act.cast"), [])
+
+    # S035: three chains stopped 'not e6's turn (now e510 Spiritual Weapon)': up to 21.7 s waited + a re-send each.
+    def test_own_summon_first_is_played_then_the_plan(self):
+        p2 = next(o for o in self.g.combat["order"] if o["uuid"] == P2)
+        p2.update(name="Spiritual Weapon", summon=True)
+        self.g.combat["current"] = P2
+
+        def advance(op, args):  # the summon's end hands the turn to Claude, Claude's to the goblin
+            if op == "act.end_turn":
+                self.g.combat["current"] = P1 if self.g.combat["current"] == P2 else GOB
+        self.g.on_start = advance
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}),
+                                 who=server.H.get(P1), wait_turn=5)
+        self.assertIn("(your summon) had to act first", out)
+        self.assertNotIn("FAILED: it is not", out)
+        casts = [(a.get("spell"), a.get("caster") or a.get("who")) for _, a in self.g.ops("act.cast")]
+        self.assertEqual(len(casts), 2, casts)               # the summon's attack on the goblin, then Claude's
+        self.assertEqual(len(self.g.ops("act.end_turn")), 2)
+        self.assertEqual(self.g.ops("act.cast")[0][1].get("target"), GOB)
+        # in a list plan too; a heal on an ally is never the summon's target
+        self.g.combat["current"] = P2
+        n = len(self.g.ops("act.cast"))
+        out = server.combat_turn(json.dumps([{"who": server.H.get(P1), "plan": {
+            "action": {"ability": "Target_CureWounds", "target": server.H.get(P1)}}}]))
+        # no hostile named, none with a position: the summon's turn just ends; the one new cast is Claude's heal
+        self.assertEqual([a.get("spell") for _, a in self.g.ops("act.cast")[n:]], ["Target_CureWounds"])
+        self.assertIn("(your summon) had to act first", out)
+        self.assertNotIn("CHAIN STOPPED", out)
+
+    def test_other_member_first_still_hands_back(self):
+        self.g.combat["current"] = P2   # Lae'zel, not a summon: the player plans her turn
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        self.assertIn("(yours) must act first", out)
+        self.assertNotIn("your summon", out)
 
     # S018: end_turn on downed Claude / Shadowheart -> "FAILED: character is downed" (x2); combat_turn too.
     def test_downed_character_turn_is_skipped(self):

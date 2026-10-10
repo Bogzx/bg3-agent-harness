@@ -1706,6 +1706,27 @@ local function abilityPlan(v, max)
     return out
 end
 
+-- The multiclass list items render only "Lv N" (the next level of a class the character has) or nothing (a new
+-- class): their labels are not class names. Name them from the character's Classes component instead
+-- (S032 Wyll L6: "?/?/?/?/?/?/?/?/?/?/Lv 6/?" and class=Lv 6).
+local function classLabel(item)
+    local l = label(item)
+    local lv = l and tonumber(l:match("^Lv%.? ?(%d+)$"))
+    if not lv then return l end
+    local ent = P.levelUpUuid and try(Ext.Entity.Get, P.levelUpUuid)
+    local hit
+    for _, c in ipairs(ent and try(function() return ent.Classes.Classes end) or {}) do
+        if (c.Level or 0) + 1 == lv then
+            if hit ~= nil then return nil end -- two classes at that level: ambiguous
+            hit = c
+        end
+    end
+    if hit == nil then return nil end
+    local cd = try(Ext.StaticData.Get, hit.ClassUUID, "ClassDescription")
+    local h = cd and try(function() return cd.DisplayName.Handle.Handle end)
+    return (h and try(Ext.Loca.GetTranslatedString, h)) or (cd and try(function() return cd.Name end)) or nil
+end
+
 function P.luOptions(dc)
     local function sel(name) return UI.prop(dc, name) end
     local asi = {}
@@ -1718,8 +1739,7 @@ function P.luOptions(dc)
     local o = {
         step = str(UI.prop(dc, "LevelUpStep")),
         complete = UI.prop(dc, "IsLevelUpComplete"),
-        classes = view(UI.prop(dc, "SelectableMultiClasses"), sel("SelectedMultiClass")),
-        class = label(sel("SelectedMultiClass")),
+        class = sel("SelectedMultiClass") ~= nil and (classLabel(sel("SelectedMultiClass")) or label(sel("SelectedMultiClass"))) or nil,
         class_level = UI.path(dc, "SelectedMultiClass.Level"),
         can_multiclass = UI.prop(dc, "IsMulticlassEnabled"),
         subclasses = view(UI.prop(dc, "SelectableSubClasses"), sel("SelectedSubClass")),
@@ -1730,6 +1750,13 @@ function P.luOptions(dc)
         spells = spellsView(dc),
         ability_improvement = #asi > 0 and asi or nil,
     }
+    -- The class list only when it says something: unnamed items (a new class shows no text) are dropped.
+    local classes, items = {}, list(UI.prop(dc, "SelectableMultiClasses"))
+    for _, e in ipairs(view(UI.prop(dc, "SelectableMultiClasses"), sel("SelectedMultiClass"))) do
+        e.name = items[e.i] and classLabel(items[e.i]) or nil
+        if e.name then classes[#classes + 1] = e end
+    end
+    if #classes > 1 or (#classes == 1 and not classes[1].sel) then o.classes = classes end
     if o.can_feat then
         o.feats = view(UI.prop(dc, "SelectableFeats"), sel("SelectedFeat"))
         o.feat = label(sel("SelectedFeat"))
@@ -1741,7 +1768,8 @@ function P.luOptions(dc)
     end
     for _, t in ipairs({ "levelupTab", "classTab", "subClassTab", "deityTab", "featTab", "spellReplaceTab", "spellPrepTab" }) do
         local el = UI.cachedByName("CharacterLevelUp", t)
-        if el ~= nil and UI.prop(el, "IsSelected") == true then o.tab = t end
+        if el ~= nil and UI.prop(el, "IsSelected") == true and UI.prop(el, "Visibility") ~= "Collapsed"
+            and (t ~= "featTab" or o.can_feat == true) then o.tab = t end
     end
     return o
 end
@@ -1862,7 +1890,7 @@ RPC.register("ui.level_up", function(args)
             local dc = get()
             P.refreshLabels("CharacterLevelUp")
             if plan.class == nil then
-                ctx.result.set.class = label(UI.prop(dc, "SelectedMultiClass"))
+                ctx.result.set.class = classLabel(UI.prop(dc, "SelectedMultiClass")) or label(UI.prop(dc, "SelectedMultiClass"))
                 return "next", 0
             end
             local item = pick(UI.prop(dc, "SelectableMultiClasses"), plan.class)
@@ -1905,7 +1933,11 @@ RPC.register("ui.level_up", function(args)
         { "deity_tab", tabStage(ctx, "deityTab") },
         { "deity", selectStage(get, ctx, "deity", "SelectedDeity", "SelectableDeities", plan.deity, true) },
         { "deity?", verifyStage(get, ctx) },
-        { "feat_tab", tabStage(ctx, "featTab") },
+        -- Only on a feat level: elsewhere the (still shown) feat tab hides the spell list the bridge clicks in.
+        { "feat_tab", function()
+            if UI.prop(get(), "CanSelectFeat") ~= true then return "next", 0 end
+            return tabStage(ctx, "featTab")()
+        end },
         { "feat", function()
             local dc = get()
             if UI.prop(dc, "CanSelectFeat") ~= true then return "next", 0 end

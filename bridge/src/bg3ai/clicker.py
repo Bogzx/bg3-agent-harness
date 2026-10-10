@@ -39,8 +39,11 @@ EXPECT_SCREENS: dict[str, set[str]] = {
 # Pixel nudges tried around the projected point, then aim points: (aim height, metres along the entity's own
 # X axis). A door's origin is its hinge, so the leaf is ~0.5 m to one side of it (live S005: 9 hover misses).
 OFFSETS = [(0, 0), (0, -14), (0, 14), (-12, 0), (12, 0), (0, -30), (0, 28), (-24, -10), (24, -10)]
+# S032 17:42 (Vault Door e679, 90 tries, nothing ever under the cursor) and ~10 doors/chests S017-S026: a door's
+# origin is its hinge, so a wide (double/vault) door's leaf is 1-2 m along its X axis: aims at ±1.4 m too.
 AIMS: list[tuple[str, float]] = [("auto", 0.0), ("chest", 0.0), ("low", 0.0), ("feet", 0.0),
-                                 ("mid", 0.5), ("mid", -0.5), ("mid", 0.9), ("mid", -0.9)]
+                                 ("mid", 0.5), ("mid", -0.5), ("mid", 0.9), ("mid", -0.9),
+                                 ("mid", 1.4), ("mid", -1.4)]
 
 # Camera moves a player would make to look at the target (closed loop on ui.screen_pos): zoom out while the
 # target sits near/over an edge, rotate (middle-drag) toward it when it is far off to a side or behind.
@@ -186,6 +189,7 @@ def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadli
     w, h = inp.window_size()
     tries = 0
     last: dict = {}
+    done_aims: set = set()
     for aim, ox in AIMS:
         if deadline is not None and time.monotonic() >= deadline:
             last = {**last, "timed_out": True}
@@ -195,6 +199,10 @@ def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadli
         except GameError as e:
             last = {"error": str(e)}
             continue
+        key = (sp.get("aim") or aim, ox)   # an item's "auto" is "low": the same 9 points twice cost ~1 s
+        if key in done_aims:
+            continue
+        done_aims.add(key)
         if not sp.get("on_screen"):
             last = {"off_screen": True, **sp}
             continue
@@ -216,6 +224,8 @@ def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadli
                 return (x, y), tries, last
             if seen is not None and last.get("hover"):
                 seen[last["hover"]] = seen.get(last["hover"], 0) + 1
+            elif seen is not None and last.get("hover_nouuid"):
+                seen["(an object with no id)"] = seen.get("(an object with no id)", 0) + 1
             if deadline is not None and time.monotonic() >= deadline:
                 return None, tries, {**last, "timed_out": True}
     return None, tries, last

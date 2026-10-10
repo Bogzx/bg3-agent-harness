@@ -197,9 +197,16 @@ def _ability_mod(it: dict, m: dict | None) -> int:
         return 0
     if _slot(it) == "RangedMainHand":
         return md(m.get("dex"))
-    if it.get("finesse"):
-        return max(md(m.get("str")), md(m.get("dex")))
-    return md(m.get("str"))
+    best = max(md(m.get("str")), md(m.get("dex"))) if it.get("finesse") else md(m.get("str"))
+    if m.get("binds") == "pact":
+        best = max(best, md(m.get("cha")))  # Pact of the Blade: the bound melee weapon attacks with CHA
+    return best
+
+
+def _melee_caster(prof: set[str], mem: dict) -> bool:
+    """Fights with spells, so only magic counts in the weapon hand. A Pact of the Blade warlock has a caster's
+    proficiencies but fights with the pact weapon (S032 Wyll: Booming Blade, Deepened Pact extra attack)."""
+    return _caster(prof) and mem.get("binds") != "pact"
 
 
 def _score(it: dict, m: dict | None = None) -> float:
@@ -254,6 +261,10 @@ def upgrades(inv: dict) -> list[dict]:
                 cur = mine.get(slot)
             if cur and cur.get("story"):
                 continue  # a story item in the slot (Moonlantern): the agent put it there on purpose
+            if cur and cur.get("bound"):
+                continue  # pact/weapon-bond weapon: re-binding costs an action, a summoned pact weapon vanishes
+            if it.get("bound") and it.get("owner") != who:
+                continue  # bound to its owner (it returns to them): never handed to someone else
             if cur and _rar(cur) > _rar(it):
                 continue  # worn gear is magic (properties beyond AC/damage): never swapped for plainer stats
             if _spell_gear(it) and not _casts(mem, prof):
@@ -266,10 +277,10 @@ def upgrades(inv: dict) -> list[dict]:
             if slot == "MeleeMainHand":
                 if it.get("twohanded") and mine.get("MeleeOffHand", {}).get("shield"):
                     continue
-                if _caster(prof) and _rar(it) <= _rar(cur or {}):
+                if _melee_caster(prof, mem) and _rar(it) <= _rar(cur or {}):
                     continue  # casters fight with spells: only magic weapons are worth a swap
             gain = _score(it, mem) - (_score(cur, mem) if cur else 0)
-            if slot == "MeleeMainHand" and _caster(prof) and cur:
+            if slot == "MeleeMainHand" and _melee_caster(prof, mem) and cur:
                 # a caster fights with spells: only the magic counts, so a melee member wins a contested weapon
                 # (live 13:4x: STR-8 Gale's finesse bonus outbid Shadowheart for the +1 Syringe)
                 gain = min(gain, (_rar(it) - _rar(cur)) * 10)
@@ -277,8 +288,11 @@ def upgrades(inv: dict) -> list[dict]:
                 continue  # a plain hat in an empty slot is not worth a line
             if gain > 0:
                 offers.append({"who": who, "uuid": it["uuid"], "name": it.get("name"), "slot": slot,
-                               "holder": it.get("owner"), "why": _why(it, cur) + _prof_reason(it, prof), "gain": gain,
-                               "rarity": it.get("rarity"), "caster": _caster(prof)})
+                               "holder": it.get("owner"), "why": _why(it, cur) + _prof_reason(it, prof)
+                               + ("; bind it as the pact weapon (Bind Pact Weapon, 1 action) to attack with CHA"
+                                  if mem.get("binds") == "pact" and slot == "MeleeMainHand" and not it.get("bound")
+                                  else ""), "gain": gain,
+                               "rarity": it.get("rarity"), "caster": _melee_caster(prof, mem)})
     # Best gain first; on a tie a fighter gets the shield/weapon before a caster, then the one carrying it.
     offers.sort(key=lambda o: (-o["gain"], o["caster"] and o["slot"] in ("MeleeOffHand", "MeleeMainHand"),
                                o["holder"] != o["who"]))
@@ -318,7 +332,8 @@ def main_hands(inv: dict, name: Callable[[str], str]) -> str:
         kind = _kind(it)
         desc = " ".join(x for x in (f"+{ench}" if ench and kind else "", kind, dmg,
                                     "2-handed" if it.get("twohanded") else "",
-                                    str(it.get("rarity") or "") if _rar(it) else "") if x)
+                                    str(it.get("rarity") or "") if _rar(it) else "",
+                                    {"pact": "pact weapon", "weapon_bond": "bonded"}.get(it.get("bound") or "", "")) if x)
         out.append(f"{name(who)} {it.get('name')}" + (f" ({desc})" if desc else ""))
     return "MAIN HANDS " + " | ".join(out) if out else ""
 
@@ -342,13 +357,13 @@ def lantern_plan(inv: dict) -> dict | None:
     if not lant:
         return None
     frm = lant["owner"]
-    if _caster(set((members.get(frm) or {}).get("prof") or [])):
+    if _melee_caster(set((members.get(frm) or {}).get("prof") or []), members.get(frm) or {}):
         return None  # a caster already holds it: right holder
 
     def main_of(u: str) -> dict:
         return next((it for it in items if it.get("owner") == u and it.get("equipped_slot")
                      and _slot(it) == "MeleeMainHand"), {})
-    casters = [u for u, m in members.items() if u != frm and _caster(set((m or {}).get("prof") or []))]
+    casters = [u for u, m in members.items() if u != frm and _melee_caster(set((m or {}).get("prof") or []), m or {})]
     if not casters:
         return None
     to = min(casters, key=lambda u: (_rar(main_of(u)), _score(main_of(u)) if main_of(u) else 0))
