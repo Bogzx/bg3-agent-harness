@@ -227,6 +227,77 @@ class SummaryAndLive(unittest.TestCase):
         self.assertNotIn("last", row)
 
 
+class Overcounts(unittest.TestCase):
+    """S017: 'companion Spiritual Weapon'; S021: Karlach -> 2, 3, 4 on joining; S015: 'Volo moved on' 6x."""
+
+    def test_summon_is_not_a_companion(self):
+        seen, _ = P.diff(None, world(), now=0)
+        w = world()
+        w["status"]["party"].append({"name": "Spiritual Weapon", "level": 3, "summon": True})
+        _, evs = P.diff(seen, w, now=10)
+        self.assertEqual(evs, [])
+
+    def test_recruit_catch_up_levels_do_not_score(self):
+        seen, _ = P.diff(None, world(), now=0)
+        w = world()
+        w["status"]["party"].append({"name": "Karlach", "level": 1})
+        seen, evs = P.diff(seen, w, now=100)
+        self.assertEqual(kinds(evs), ["companion"])
+        for t, lvl in ((115, 2), (130, 3), (145, 4)):
+            w["status"]["party"][1]["level"] = lvl
+            seen, evs = P.diff(seen, w, now=t)
+            self.assertEqual(evs, [])
+        w["status"]["party"][1]["level"] = 5  # a real level-up later on
+        _, evs = P.diff(seen, w, now=100 + P.JOIN_GRACE_S + 1)
+        self.assertEqual(kinds(evs), ["level_up"])
+
+    def test_walking_npc_marker_scores_once_per_cooldown(self):
+        def at(x):
+            w = world()
+            w["markers"] = {"markers": [{"label": "Volo", "quest": "Rescue Volo", "pos": [x, 0, 0]}]}
+            return w
+        seen, _ = P.diff(None, at(0), now=0)
+        got = []
+        for i in range(1, 7):
+            seen, evs = P.diff(seen, at(15.0 * i), now=15 * i)
+            got += kinds(evs)
+        self.assertEqual(got, ["obj_moved"])
+        _, evs = P.diff(seen, at(200), now=15 + P.OBJ_MOVED_COOLDOWN_S)
+        self.assertEqual(kinds(evs), ["obj_moved"])
+
+
+class TalkAndKill(unittest.TestCase):
+    """S018: 23 min of goblin-leader fights and talks with Dror/Zevlor scored nothing."""
+
+    @staticmethod
+    def with_events(evs):
+        w = world()
+        w["status"]["party"] = [{"name": "Claude", "uuid": "u-claude", "level": 1}]
+        w["events"] = evs
+        return w
+
+    def test_talk_and_kill_once_each(self):
+        seen, _ = P.diff(None, self.with_events(None))
+        dlg = {"kind": "dialogue_started", "data": {"speakers": [{"uuid": "u-dror", "name": "Dror Ragzlin"}],
+                                                    "party": [{"uuid": "u-claude", "name": "Claude"}]}}
+        bark = {"kind": "dialogue_started", "data": {"speakers": [{"uuid": "u-gob", "name": "Goblin"}],
+                                                     "automated": True}}
+        died = {"kind": "died", "data": {"uuid": "u-dror", "name": "Dror Ragzlin"}}
+        me = {"kind": "died", "data": {"uuid": "u-claude", "name": "Claude"}}
+        seen, evs = P.diff(seen, self.with_events([dlg, bark, died, me]))
+        self.assertEqual([(e["kind"], e["what"], e["points"]) for e in evs],
+                         [("talk", "Dror Ragzlin", 2), ("kill", "Dror Ragzlin", 1)])
+        _, evs = P.diff(seen, self.with_events([dlg, died]))  # reloaded and did it again
+        self.assertEqual(evs, [])
+
+    def test_party_member_speaker_is_not_a_talk(self):
+        seen, _ = P.diff(None, self.with_events(None))
+        w = self.with_events([{"kind": "dialogue_started", "data": {"speakers": [{"uuid": "u-sh", "name": "Shadowheart"}]}}])
+        w["status"]["party"].append({"name": "Shadowheart", "uuid": "u-sh", "level": 1})
+        _, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs), ["companion"])
+
+
 class ReadGame(unittest.TestCase):
     def test_two_evals(self):
         calls = []
@@ -246,6 +317,32 @@ class ReadGame(unittest.TestCase):
         self.assertEqual(got["ui"]["region"], "Ship Hold")
         self.assertEqual(P.diff(None, got)[1], [])
         self.assertIn('"op":"nav.explored"', calls[0][0])
+
+    def test_event_cursor(self):
+        replies = []
+
+        def lua_eval(code: str, ctx: str) -> str:
+            if ctx == "client":
+                return json.dumps([{"ok": True, "result": {"screen": "game"}}])
+            replies.append(code)
+            ev = {"latest": 10, "events": []} if len(replies) == 1 else \
+                {"latest": 12, "events": [{"seq": 11, "kind": "damage", "data": {}},
+                                          {"seq": 12, "kind": "died", "data": {"uuid": "u", "name": "Gob"}}]}
+            if len(replies) == 3:
+                ev = {"latest": 3, "events": []}  # the mod's Lua restarted
+            return json.dumps([{"ok": True, "result": {"party": []}}] + [{"ok": True, "result": None}] * 4
+                              + [{"ok": True, "result": ev}])
+
+        P._events["seq"] = None
+        self.assertIsNone(P.read_game(lua_eval)["events"])  # first call: cursor only
+        self.assertEqual(P._events["seq"], 10)
+        got = P.read_game(lua_eval)
+        self.assertIn('"op":"events.since","args":{"seq":10,', replies[1])
+        self.assertEqual([e["kind"] for e in got["events"]], ["died"])
+        self.assertEqual(P._events["seq"], 12)
+        self.assertEqual(P.read_game(lua_eval)["events"], [])
+        self.assertEqual(P._events["seq"], 0)
+        P._events["seq"] = None
 
     def test_no_session(self):
         self.assertIsNone(P.read_game(lambda code, ctx: json.dumps([{"ok": False, "error": "no session"}] * 5)))

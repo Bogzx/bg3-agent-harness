@@ -24,6 +24,15 @@ Weights (points per event; deliberately simple, story-weighted):
                    S001 opened the first door and the "Escape Route" marker jumped 67 m on, scoring 0)
     explore     1  per EXPLORE_CELLS new explored 4x4 m cells on a level (the party's own breadcrumbs,
                    nav.explored; ~130 m2, a corridor of ~30 m)
+    talk        2  a conversation with an NPC the party never talked to (dialogue_started speakers, not
+                   automated barks; S015/S018: freeing Barcus, Dror, Zevlor scored nothing)
+    kill        1  a visible non-party character died that never died before (events.since `died`; S018
+                   spent 23 min killing the three goblin leaders and their camp for 0 points)
+
+Not progress: summons joining (Spiritual Weapon is in DB_PartyMembers, S017 scored it as a companion), the
+levels a recruit is caught up to on joining (S021: Karlach -> 2, 3, 4 = 24 points within 90 s), and an
+objective marker riding on a walking NPC (S015: "Volo moved on" 6x in 75 s; one obj_moved per marker per
+OBJ_MOVED_COOLDOWN_S).
 
 points/hour = points / session hours. A rough scale: the Nautiloid (~1 h for a human) is ~80-100 points.
 
@@ -47,10 +56,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 WEIGHTS = {"region": 15, "quest_done": 10, "level_up": 8, "waypoint": 5, "companion": 5, "quest_new": 3,
-           "area": 3, "quest_step": 2, "objective": 2, "obj_moved": 1, "explore": 1}
+           "area": 3, "quest_step": 2, "objective": 2, "obj_moved": 1, "explore": 1, "talk": 2, "kill": 1}
 EXPLORE_CELLS = 8
 OBJ_MOVED_M = 10.0
 OBJ_POS_CAP = 20  # remembered spots per objective
+OBJ_MOVED_COOLDOWN_S = 300.0
+JOIN_GRACE_S = 180.0  # level-ups of a party member within this long of joining are the game catching it up
+EVENTS_LIMIT = 500
 POLL_S = float(os.environ.get("BG3AI_PROGRESS_POLL_S", "15") or 15)
 STUCK_MIN = float(os.environ.get("BG3AI_STUCK_MINUTES", "15") or 15)
 STUCK_MIN_ACTIONS = 10
@@ -70,22 +82,41 @@ def _bracket(payload: str) -> str:
     return f"[{eq}[{payload}]{eq}]"
 
 
-def combined_code(ops: list[str]) -> str:
-    """One Lua expression running several BG3AI ops: returns a JSON array of their replies."""
-    parts = [f"R({_bracket(json.dumps({'op': op, 'args': {}}, separators=(',', ':')))})" for op in ops]
+def combined_code(ops: list) -> str:
+    """One Lua expression running several BG3AI ops (a name, or (name, args)): a JSON array of their replies."""
+    ops = [o if isinstance(o, tuple) else (o, {}) for o in ops]
+    parts = [f"R({_bracket(json.dumps({'op': op, 'args': a}, separators=(',', ':')))})" for op, a in ops]
     return "local R=Mods.BG3AI.BG3AI.rpc return '['.." + "..','..".join(parts) + "..']'"
 
 
+_events = {"seq": None}  # this process's cursor into the mod's event ring (events.since is non-destructive)
+
+
 def read_game(lua_eval: Callable[..., str]) -> dict | None:
-    """{status, journal, map, markers, ui} from two evals, or None when the game has no session.
-    lua_eval(code, context) -> str (the runner's or bridge's LuaDebug eval)."""
-    raw = lua_eval(combined_code([op for _, op in SERVER_OPS]), "server")
+    """{status, journal, map, markers, explored, events, ui} from two evals, or None when the game has no
+    session. events = the `died` / `dialogue_started` events since the last call (None on the first call,
+    which only sets the cursor). lua_eval(code, context) -> str (the runner's or bridge's LuaDebug eval)."""
+    since = _events["seq"]
+    ops: list = [op for _, op in SERVER_OPS]
+    ops.append(("events.since", {"seq": since if since is not None else 2 ** 31, "limit": EVENTS_LIMIT}))
+    raw = lua_eval(combined_code(ops), "server")
     replies = json.loads(raw) if raw and raw not in ("nil", "") else []
     got: dict[str, Any] = {}
     for (key, _), r in zip(SERVER_OPS, replies):
         got[key] = r.get("result") if isinstance(r, dict) and r.get("ok") else None
     if got.get("status") is None:
         return None
+    er = replies[len(SERVER_OPS)] if len(replies) > len(SERVER_OPS) else None
+    er = er.get("result") if isinstance(er, dict) and er.get("ok") else None
+    if isinstance(er, dict) and isinstance(er.get("latest"), int):
+        evs = [e for e in er.get("events") or [] if isinstance(e, dict)]
+        if since is None or er["latest"] < since:
+            # first call, or the mod's Lua restarted (seq began again): start from here
+            got["events"] = None if since is None else [e for e in evs if e.get("kind") in ("died", "dialogue_started")]
+            _events["seq"] = er["latest"] if since is None else max([e.get("seq", 0) for e in evs] + [0])
+        else:
+            got["events"] = [e for e in evs if e.get("kind") in ("died", "dialogue_started")]
+            _events["seq"] = max([e.get("seq", since) for e in evs] + [since])
     try:
         r = json.loads(lua_eval(combined_code(["ui.state"]), "client"))[0]
         got["ui"] = r.get("result") if r.get("ok") else None
@@ -100,7 +131,8 @@ def read_game(lua_eval: Callable[..., str]) -> dict | None:
 
 def empty_seen() -> dict:
     return {"regions": [], "areas": [], "waypoints": [], "quests": {}, "objectives_active": [],
-            "objectives_done": [], "levels": {}, "explored": {}, "objective_pos": {}, "baseline": False}
+            "objectives_done": [], "levels": {}, "explored": {}, "objective_pos": {}, "objective_moved_t": {},
+            "joined": {}, "talked": [], "killed": [], "baseline": False}
 
 
 def _quests(journal: Any) -> dict:
@@ -120,7 +152,7 @@ def _markers(m: Any) -> list[str] | None:
     return sorted({f"{x.get('label') or x.get('objective') or '?'}|{x.get('quest') or ''}" for x in ms if isinstance(x, dict)})
 
 
-def _objective_moves(seen: dict, m: Any, add: Callable, silent: bool) -> None:
+def _objective_moves(seen: dict, m: Any, add: Callable, silent: bool, now: float) -> None:
     """obj_moved: an objective marker of this level standing >= OBJ_MOVED_M from every spot it had before."""
     ms = m.get("markers") if isinstance(m, dict) else m
     if not isinstance(ms, list):
@@ -133,8 +165,9 @@ def _objective_moves(seen: dict, m: Any, add: Callable, silent: bool) -> None:
         spots = seen["objective_pos"].setdefault(key, [])
         here = [round(float(p[0]), 1), round(float(p[1]), 1), round(float(p[2]), 1)]
         if all(math.dist(here, s) >= OBJ_MOVED_M for s in spots):
-            if spots:
+            if spots and now - seen["objective_moved_t"].get(key, -1e18) >= OBJ_MOVED_COOLDOWN_S:
                 add("obj_moved", f"{key.split('|')[0]} moved on", silent)
+                seen["objective_moved_t"][key] = now
             spots.append(here)
             del spots[:-OBJ_POS_CAP]
 
@@ -155,8 +188,28 @@ def _explored(seen: dict, ex: Any, add: Callable, silent: bool) -> None:
     seen["explored"][lvl] = credited
 
 
-def diff(seen: dict, got: dict) -> tuple[dict, list[dict]]:
+def _game_events(seen: dict, evs: Any, add: Callable, party: set[str]) -> None:
+    """talk / kill from the mod's player-visible events (dialogue_started speakers, died)."""
+    for e in evs if isinstance(evs, list) else []:
+        d = e.get("data") if isinstance(e, dict) else None
+        if not isinstance(d, dict):
+            continue
+        if e.get("kind") == "died":
+            u, name = d.get("uuid"), str(d.get("name") or "")
+            if u and u not in party and name not in party and u not in seen["killed"]:
+                seen["killed"].append(u)
+                add("kill", name or "someone")
+        elif e.get("kind") == "dialogue_started" and not d.get("automated"):
+            for sp in d.get("speakers") or []:
+                u, name = (sp.get("uuid"), str(sp.get("name") or "")) if isinstance(sp, dict) else (None, "")
+                if u and u not in party and name not in party and u not in seen["talked"]:
+                    seen["talked"].append(u)
+                    add("talk", name or "someone")
+
+
+def diff(seen: dict, got: dict, now: float | None = None) -> tuple[dict, list[dict]]:
     """(new seen, events) for one poll. Events: {kind, what, points}. The first call is a silent baseline."""
+    now = time.time() if now is None else now
     seen = json.loads(json.dumps(seen or empty_seen()))
     # keys added after a playthrough started baseline silently on their first poll (no back-scoring)
     fresh = {k for k in empty_seen() if k not in seen}
@@ -183,17 +236,24 @@ def diff(seen: dict, got: dict) -> tuple[dict, list[dict]]:
         if key not in seen["areas"]:
             seen["areas"].append(key)
             add("area", str(sub))
+    party: set[str] = set()
     for c in st.get("party") or []:
         if not isinstance(c, dict) or not c.get("name"):
             continue
+        party.update(str(x) for x in (c.get("uuid"), c.get("name")) if x)
+        if c.get("summon"):
+            continue  # Spiritual Weapon, familiars: in DB_PartyMembers, never a companion
         name, lvl = str(c["name"]), c.get("level")
         old = seen["levels"].get(name)
         if old is None:
             add("companion", name)
             seen["levels"][name] = lvl
+            if not quiet:
+                seen["joined"][name] = now  # (the baseline party has been with us all along)
         elif isinstance(lvl, (int, float)) and isinstance(old, (int, float)) and lvl > old:
-            for n in range(int(old) + 1, int(lvl) + 1):
-                add("level_up", f"{name} -> level {n}")
+            if now - seen["joined"].get(name, -1e18) >= JOIN_GRACE_S:
+                for n in range(int(old) + 1, int(lvl) + 1):
+                    add("level_up", f"{name} -> level {n}")
             seen["levels"][name] = lvl
     mp = got.get("map")
     if isinstance(mp, dict):
@@ -225,8 +285,10 @@ def diff(seen: dict, got: dict) -> tuple[dict, list[dict]]:
                 seen["objectives_done"].append(k)
                 add("objective", k.split("|")[0])
         seen["objectives_active"] = ms
-    _objective_moves(seen, got.get("markers"), add, "objective_pos" in fresh)
+    _objective_moves(seen, got.get("markers"), add, "objective_pos" in fresh, now)
     _explored(seen, got.get("explored"), add, "explored" in fresh)
+    party.update(seen["levels"])
+    _game_events(seen, got.get("events"), add, party)
     seen["baseline"] = True
     return seen, ev
 
@@ -266,7 +328,7 @@ class Timeline:
             return []
         if self.polls % 10 == 1:
             self._write({"type": "poll", "t": now, "ok": True})
-        self.seen, evs = diff(self.seen, got)
+        self.seen, evs = diff(self.seen, got, now)
         try:
             self.state_path.write_text(json.dumps(self.seen, ensure_ascii=False))
         except OSError:

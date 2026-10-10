@@ -118,3 +118,16 @@ Story progress.
 Not verified yet: the exact `ui.menu` load argument (the runner passes the save folder name as `name`),
 `InjectKeyPress("F5")` as the quicksave fallback, and the stream-json event shapes beyond what
 `format_stream_event` handles. A real end-to-end run needs a game the runner may own.
+
+## Memory keeper (between sessions)
+
+After each play session the runner starts `runner/memory_keeper.py`: a `claude -p` pass (sonnet, effort low,
+≤5 min; `--keeper-model/--keeper-effort/--keeper-minutes`, off with `--no-memory-keeper`) that updates
+objectives/quests/npcs/locations/party-build/... from the session logs and HANDOFF.md and writes the chapter
+when compaction is due. It runs in a thread during the next session's prep (game check, mod reload, check_all:
+none write memory) and is joined before the next player starts, so it never races the player's edits.
+Sandbox: `--restricted --tools Read,Edit,Write,Glob,Grep`, cwd = the memory dir, knowledge read-only, no MCP,
+HANDOFF.md and sessions/ denied (and restored if touched). The runner lints afterwards: new errors get one
+resumed fix try, else all keeper edits roll back. Clean edits are committed as `Sxxx memory-keeper: <files>`
+(staleness counters reset). Log line `Sxxx memory keeper: <status> in N s; ...`, `memory_keeper` event in
+runner_events.jsonl, details in keeper_history.jsonl, transcript `Sxxx-keeper.jsonl`.

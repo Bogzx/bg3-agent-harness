@@ -985,6 +985,10 @@ class Options:
     fix_effort: str | None = "low"
     fallback_model: str | None = None
     allow_short: bool = False          # --allow-short-sessions: session-config minutes below MIN_SESSION_MINUTES too
+    keeper: bool = True                # memory-keeper pass between sessions (runner/memory_keeper.py)
+    keeper_model: str = "sonnet"
+    keeper_effort: str | None = "low"
+    keeper_minutes: float = 5.0
 
 
 def session_overrides(path: Path) -> dict:
@@ -1046,6 +1050,7 @@ class Runner:
         self.code_watch = CodeWatch()         # this process's repo code, for the self-restart between sessions
         self.bridge_hashes: dict | None = None  # bridge/src as the last session's MCP server ran it
         self.handover = read_handover()       # set when this process is the execv'd successor of the runner
+        self.keeper_thread: threading.Thread | None = None  # memory keeper overlapping the between-session prep
         if self.handover:
             self.pending_notes = list(self.handover.get("pending_notes") or [])
             self.quick_failures = int(self.handover.get("quick_failures") or 0)
@@ -1836,6 +1841,48 @@ class Runner:
                 f"RUNNER NOTE: memory lint still failed after {res.sid}; the session was left uncommitted. "
                 "Fix these lint errors early in this session:\n" + r.stdout[-2500:])
 
+    # ---------------------------------------------------------------- memory keeper
+
+    def start_keeper(self, sid: str, res: SessionResult) -> None:
+        """Starts the memory-keeper pass for the session that just ended (runner/memory_keeper.py). It runs in a
+        thread while the runner prepares the next session (game check, mod reload, settings, check_all: none of
+        them write memory) and is joined before the next player starts, so it never races the player's edits."""
+        if not self.opt.keeper or self.opt.dry_run or res.ended - res.started < 120:
+            return
+        import memory_keeper as K
+        n = int(sid[1:])
+        base = self.state.dir / f"{sid}-keeper"
+        model, effort, minutes = self.opt.keeper_model, self.opt.keeper_effort, self.opt.keeper_minutes
+
+        def work():
+            log(f"{sid}: memory keeper starting ({model}, effort {effort or 'default'}, ≤{minutes:g} min)")
+            r = K.run_keeper(self.mem, n, base, model, effort, minutes)
+            log(r.summary())
+            self.event("memory_keeper", session=sid, status=r.status, seconds=r.seconds, files=r.files,
+                       commit=r.commit, timed_out=r.timed_out, reverted=r.reverted, lint_errors=r.lint_errors[:5])
+            try:
+                with open(self.state.dir / "keeper_history.jsonl", "a") as f:
+                    f.write(json.dumps({"t": round(time.time(), 1), **r.__dict__}) + "\n")
+            except OSError as e:
+                log(f"keeper history write failed: {e}")
+
+        self.keeper_thread = threading.Thread(target=work, name="memory-keeper", daemon=True)
+        self.keeper_thread.start()
+
+    def join_keeper(self) -> None:
+        t, self.keeper_thread = getattr(self, "keeper_thread", None), None
+        if t is None:
+            return
+        if t.is_alive():
+            t0 = time.time()
+            t.join(self.opt.keeper_minutes * 60 + 60)  # run_keeper kills claude at its own deadline
+            log(f"waited {time.time() - t0:.0f} s for the memory keeper before the next session")
+        # A session left open by failed lint (e.g. stale objectives) may pass now that the keeper updated the files.
+        if self.memory_state().get("open"):
+            r = self.session_py("end")
+            if r.returncode == 0:
+                log("memory session committed after the keeper pass")
+
     # ---------------------------------------------------------------- one session
 
     def plan_dry_run(self, minutes: float) -> SessionResult:
@@ -1855,7 +1902,6 @@ class Runner:
         if self.opt.dry_run:
             return self.plan_dry_run(minutes)
         loaded = self.ensure_game(first)
-        sid = self.next_sid()
         notes = list(self.pending_notes)
         self.pending_notes.clear()
 
@@ -1887,6 +1933,10 @@ class Runner:
             self.between_sessions_check()  # after the reload: checks the Lua the next session plays with
         except Exception as e:  # noqa: BLE001 - checks never stop play
             log(f"check_all failed: {e}")
+        self.join_keeper()  # the keeper must be done (and committed) before the player touches memory
+        notes += self.pending_notes
+        self.pending_notes.clear()
+        sid = self.next_sid()
         start_sig = read_progress()
         prompt = build_kickoff(sid, self.opt.playthrough, time.time() + minutes * 60, loaded, notes)
         res = self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))
@@ -1939,6 +1989,7 @@ class Runner:
         if not crashed:
             self.ensure_save(res.started)
         self.close_memory_session(res)
+        self.start_keeper(sid, res)
         end_sig = read_progress()
         entry = {
             "kind": "play", "session": sid, "claude_session": res.claude_session, "reason": res.reason,
@@ -2006,6 +2057,7 @@ class Runner:
                 self.code_watch.hashes[f] = _sha1(f)
             return
         log(f"runner code changed: restarting ({', '.join(names)})")
+        self.join_keeper()
         raise RestartRunner(names)
 
     def handover_data(self, run_end: float | None, run_started: float) -> dict:
@@ -2097,6 +2149,7 @@ class Runner:
             stop_why = f"died: {type(e).__name__}: {e}"[:300]
             raise
         finally:
+            self.join_keeper()
             if not restarting:
                 (RUNTIME / "STOP").unlink(missing_ok=True)
                 write_status(session=None, deadline=None, runner_pid=None)
@@ -2133,7 +2186,8 @@ def cmd_run(a) -> int:
     (RUNTIME / "STOP").unlink(missing_ok=True)
     runner = Runner(Options(a.playthrough, a.hours, a.session_minutes, a.model, a.take_over, a.dry_run,
                             a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model,
-                            a.allow_short_sessions))
+                            a.allow_short_sessions, not a.no_memory_keeper, a.keeper_model, a.keeper_effort,
+                            a.keeper_minutes))
     # Cutscenes are always skipped, also while the runner waits on menus and loads (the New Game intro
     # plays during StartLoading) and between sessions; the play session's MCP server idles meanwhile
     # (one skipper per game, runtime/skipper.lock).
@@ -2247,6 +2301,11 @@ def main(argv: list[str] | None = None) -> int:
                    '{"model": ..., "effort": ...}, re-read before each session')
     r.add_argument("--fix-model", help="model for the fix-notes pass (default: --model)")
     r.add_argument("--fix-effort", choices=EFFORTS, default="low", help="effort for the fix-notes pass")
+    r.add_argument("--no-memory-keeper", action="store_true",
+                   help="skip the memory-keeper pass between sessions (runner/memory_keeper.py)")
+    r.add_argument("--keeper-model", default="sonnet", help="model for the memory-keeper pass")
+    r.add_argument("--keeper-effort", choices=EFFORTS, default="low", help="effort for the memory-keeper pass")
+    r.add_argument("--keeper-minutes", type=float, default=5.0, help="time cap of the memory-keeper pass")
     r.add_argument("--fallback-model", help="claude --fallback-model (used when the main model is overloaded)")
     r.add_argument("--save-owner", help="character name that prefixes this playthrough's save folders "
                    "('Claude' for Claude-<id>__<label>); default: learned from the first save, or $BG3AI_SAVE_OWNER")

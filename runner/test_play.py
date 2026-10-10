@@ -908,5 +908,49 @@ class SelfRestart(unittest.TestCase):
             self.assertTrue(second.endswith(" 1"))
             self.assertFalse(Path(d, "runner-handover.json").exists())
 
+class MemoryKeeperHook(unittest.TestCase):
+    """Runner.start_keeper/join_keeper: threaded pass, logged to events + keeper_history, joined before play."""
+
+    def test_start_and_join(self):
+        import memory_keeper as K
+        with tempfile.TemporaryDirectory() as d:
+            calls, events = [], []
+
+            class FakeState:
+                dir = Path(d)
+
+            class FakeRunner:
+                opt = P.Options("pt", None, 20, "opus")
+                state, mem, keeper_thread = FakeState(), Path(d) / "memory", None
+                def event(self, kind, **f): events.append((kind, f))
+                def memory_state(self): return {"open": False}
+                start_keeper = P.Runner.start_keeper
+                join_keeper = P.Runner.join_keeper
+
+            def fake_run(mem, n, base, model, effort, minutes):
+                calls.append((n, Path(base).name, model, effort, minutes))
+                time.sleep(0.2)
+                return K.KeeperResult("S007", status="ok", seconds=0.2, files=["quests.md"], commit="abc")
+
+            r = FakeRunner()
+            res = P.SessionResult("S007", "c", 0, "exited", 0.0, 1200.0)
+            with mock.patch.object(K, "run_keeper", fake_run):
+                r.start_keeper("S007", res)
+                self.assertTrue(r.keeper_thread.is_alive())
+                r.join_keeper()
+            self.assertIsNone(r.keeper_thread)
+            self.assertEqual(calls, [(7, "S007-keeper", "sonnet", "low", 5.0)])
+            self.assertEqual(events[0][0], "memory_keeper")
+            self.assertEqual(events[0][1]["status"], "ok")
+            hist = json.loads((Path(d) / "keeper_history.jsonl").read_text())
+            self.assertEqual(hist["files"], ["quests.md"])
+            # quick exits and --no-memory-keeper skip the pass
+            r.start_keeper("S008", P.SessionResult("S008", "c", 0, "exited", 0.0, 30.0))
+            self.assertIsNone(r.keeper_thread)
+            r.opt = P.Options("pt", None, 20, "opus", keeper=False)
+            r.start_keeper("S009", res)
+            self.assertIsNone(r.keeper_thread)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
