@@ -464,6 +464,30 @@ wj = run(ops["ui.waypoints"]({}).job, 6000)
 ok(wj.status == "failed" and #mapKeys == 3 and tostring(wj.error):find("pressed M,M,M over 3%.6s")
     and tostring(wj.error):find("Tooltip"), "never opens: " .. tostring(wj.error))
 swallow = 0
+-- a question box up instead of the map (vis live: a rest prompt during fast_travel): reported, not answered
+widgets, mapKeys = {}, {}
+swallow = 99
+local restAnswered = false
+W("Dialog_box", { "Long Rest", "Do you want to rest at camp?" }, { { "Yes", nil, function() restAnswered = true end },
+    { "No", nil, function() end } })
+wj = run(ops["ui.waypoints"]({}).job, 6000)
+ok(wj.status == "failed" and wj.result.unanswered and tostring(wj.error):find("not answered", 1, true)
+    and not restAnswered, "box instead of the map: reported, not answered: " .. tostring(wj.error))
+widgets = {}
+swallow = 0
+-- travelVeto: rest/camp questions are never answered by fast_travel; travel questions are
+ok(BG3AI.Services.travelVeto("Do you want to end the day?") ~= nil and BG3AI.Services.travelVeto("Long Rest") ~= nil,
+    "veto: rest questions")
+ok(BG3AI.Services.travelVeto("Travelling here will leave the region. Continue?") == nil
+    and BG3AI.Services.travelVeto("[ForceUpdate]") == nil
+    and BG3AI.Services.travelVeto("Leave the forest? Your interest awaits") == nil, "veto: travel/unreadable questions pass")
+W("Dialog_box", { "Long Rest", "Do you want to rest?" }, { { "Yes", nil, function() restAnswered = true end },
+    { "No", nil, function() end } })
+local vst = {}
+local vc, vres, verr = BG3AI.Services.handleConfirm(vst, {}, nil, BG3AI.Services.travelVeto)
+ok(vc == "failed" and vres.unanswered and not restAnswered and tostring(verr):find("decide with confirm", 1, true),
+    "handleConfirm with the veto leaves a rest question: " .. tostring(verr))
+widgets = {}
 -- fast_travel through the same path: swallowed press, then the waypoint is found and pressed
 widgets, mapKeys = {}, {}
 swallow = 1
@@ -503,6 +527,81 @@ local okl, el = pcall(ops["ui.fast_travel"], { waypoint = "Risen Road" })
 ok(not okl and tostring(el):find("can't fast travel now %(Location%)"), "other travel errors fail at once: " .. tostring(el))
 BG3AI.UI.path = _path
 BG3AI.UI.byName, BG3AI.UI.content, BG3AI.UI.findAll, BG3AI.UI.execute = _byName, _content, _findAll, _exec
+
+-- night camp (live 2026-10-10 11:1x): IsAtNightCamp + TravelError Unavailable for hours after a long rest whose
+-- night never ended. fast_travel says so at once; long_rest at night goes to sleep (CampTravel) and waits for the
+-- night to end; sleep_only refuses a fresh rest screen.
+local night = true
+inCamp = true
+local _path2 = BG3AI.UI.path
+BG3AI.UI.path = function(dc, p)
+    if p == "CurrentPlayer.IsAtNightCamp" then return night end
+    if p == "CurrentPlayer.TravelError" then return night and "Unavailable" or nil end
+    return _path2(dc, p)
+end
+local okn, en = pcall(ops["ui.fast_travel"], { waypoint = "Risen Road" })
+ok(not okn and tostring(en):find("night at camp", 1, true), "night camp: fast_travel says why at once: " .. tostring(en))
+local tb = ops["ui.travel_block"]({})
+ok(tb.night_camp == true and tb.error == "Unavailable", "travel_block reports night_camp")
+
+local _cmd = BG3AI.UI.command
+local sleeps = 0
+local sleepEnds = true
+BG3AI.UI.command = function(dc, name, param, dry)
+    if name == "CampTravel" and not dry then
+        sleeps = sleeps + 1
+        if sleepEnds then night = false end
+        return true
+    end
+    return _cmd(dc, name, param, dry)
+end
+clock = clock + 60000
+widgets = {}
+r = ops["ui.long_rest"]({})
+j = run(r.job, 3000)
+ok(sleeps == 1 and j.status == "done" and j.result.night_ended and j.result.rest == "night_finished",
+    "night camp: long_rest goes to sleep and ends the night: " .. tostring(j.status) .. " " .. tostring(j.error))
+
+-- the press does nothing: one retry after 4 s, then a failure that says travel stays blocked
+clock, night, sleeps, sleepEnds = clock + 60000, true, 0, false
+widgets = {}
+r = ops["ui.long_rest"]({})
+j = run(r.job, 40000)
+ok(sleeps == 2 and j.status == "failed" and tostring(j.error):find("didn't end", 1, true)
+    and tostring(j.error):find("blocked", 1, true), "night that won't end: 2 presses, then fails: " .. sleeps .. " "
+    .. tostring(j.status) .. " " .. tostring(j.error))
+
+-- a camp scene at night: done, and the note says to sleep after it
+clock, night, sleeps = clock + 60000, true, 0
+widgets = {}
+BG3AI.UI.command = function(dc, name, param, dry)
+    if name == "CampTravel" and not dry then sleeps = sleeps + 1 W("Dialogue", {}, {}) return true end
+    return _cmd(dc, name, param, dry)
+end
+r = ops["ui.long_rest"]({})
+j = run(r.job, 3000)
+ok(j.status == "done" and j.result.camp_scene and j.result.night_open and tostring(j.result.note):find("long_rest again"),
+    "night camp scene: done with a note: " .. tostring(j.status) .. " " .. tostring(j.result and j.result.note))
+
+-- sleep_only (the bridge before travelling): the rest screen that opens at night is rested through, partial allowed
+clock, sleeps = clock + 60000, 0
+widgets = {}
+local restCmds = {}
+BG3AI.UI.command = function(dc, name, param, dry)
+    if name == "CampTravel" and not dry then sleeps = sleeps + 1 W("MakeCamp", {}, {}).DataContext = { dc = "MakeCamp" } return true end
+    if dc and dc.dc == "MakeCamp" then
+        restCmds[#restCmds + 1] = name
+        if name == "ProcessRestCommand" then widgets.MakeCamp = nil night = false end
+        return true
+    end
+    return _cmd(dc, name, param, dry)
+end
+r = ops["ui.long_rest"]({ sleep_only = true })
+j = run(r.job, 30000)
+ok(j.status == "done" and restCmds[1] == "AutoSelectCommand" and restCmds[#restCmds] == "ProcessRestCommand",
+    "sleep_only: rests from the night rest screen: " .. tostring(j.status) .. " " .. tostring(j.error) .. " "
+    .. table.concat(restCmds, ","))
+BG3AI.UI.command, BG3AI.UI.path = _cmd, _path2
 
 print(("%d passed, %d failed"):format(passes, fails))
 os.exit(fails == 0 and 0 or 1)

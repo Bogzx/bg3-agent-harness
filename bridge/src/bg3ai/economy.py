@@ -247,6 +247,58 @@ def upgrades(inv: dict) -> list[dict]:
     return out
 
 
+def _is_lantern(it: dict) -> bool:
+    """A story light held in the main hand for its aura (the Moonlantern: Torch|Unstowable, SCL_MOONSHIELD on
+    everyone near the member who EQUIPS it; in a bag it does nothing, S025)."""
+    return bool(it.get("story") and (it.get("torch") or "lantern" in str(it.get("name") or "").lower()))
+
+
+def lantern_plan(inv: dict) -> dict | None:
+    """{lantern, name, frm, to} when a weapon user holds the story lantern in the main hand while a caster could
+    carry it: the aura works from whoever holds it, so the caster (who fights with spells) holds the light and
+    the fighter gets a real weapon back (S025-S027: Claude, a paladin, fought with the Moonlantern while the
+    Sword of Justice sat in a bag). Only when the fighter then has a weapon to equip (a spare one in the bags,
+    or the caster's own once it is freed)."""
+    items = [it for it in (inv or {}).get("items") or [] if isinstance(it, dict)]
+    members = (inv or {}).get("members") or {}
+    lant = next((it for it in items if _is_lantern(it) and _slot(it) == "MeleeMainHand"
+                 and it.get("equipped_slot") and it.get("owner") in members), None)
+    if not lant:
+        return None
+    frm = lant["owner"]
+    if _caster(set((members.get(frm) or {}).get("prof") or [])):
+        return None  # a caster already holds it: right holder
+
+    def main_of(u: str) -> dict:
+        return next((it for it in items if it.get("owner") == u and it.get("equipped_slot")
+                     and _slot(it) == "MeleeMainHand"), {})
+    casters = [u for u, m in members.items() if u != frm and _caster(set((m or {}).get("prof") or []))]
+    if not casters:
+        return None
+    to = min(casters, key=lambda u: (_rar(main_of(u)), _score(main_of(u)) if main_of(u) else 0))
+    after = apply_lantern(inv, {"lantern": lant["uuid"], "frm": frm, "to": to})
+    if not any(o["who"] == frm and o["slot"] == "MeleeMainHand" for o in upgrades(after)):
+        return None  # nothing to fight with instead: the lantern stays (a torch beats empty hands)
+    return {"lantern": lant["uuid"], "name": lant.get("name") or "Moonlantern", "frm": frm, "to": to}
+
+
+def apply_lantern(inv: dict, plan: dict) -> dict:
+    """The inventory after the plan's moves (lantern to the caster's main hand, the caster's weapon to their
+    bag, the fighter's main hand empty): what upgrades() then fills with the best weapon."""
+    items = []
+    for it in (inv or {}).get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        it = dict(it)
+        if it.get("uuid") == plan["lantern"]:
+            it["owner"], it["equipped_slot"] = plan["to"], "MeleeMainHand"
+        elif it.get("owner") == plan["to"] and it.get("equipped_slot") and _slot(it) == "MeleeMainHand":
+            it["slot_type"] = it.get("slot_type") or it.pop("equipped_slot")
+            it.pop("equipped_slot", None)
+        items.append(it)
+    return dict(inv, items=items)
+
+
 # --- alerts -------------------------------------------------------------------------------------------
 
 def alerts(status: dict | None, inv: dict | None, name: Callable[[str], str] = lambda u: u,
@@ -290,6 +342,11 @@ def alerts(status: dict | None, inv: dict | None, name: Callable[[str], str] = l
                     kg += ")"
                 out.append(f"{name(u)} {'Heavily ' if m['enc'] >= 2 else ''}Encumbered{kg} "
                            "(sell or stash junk: manage_inventory op=camp item=junk)")
+        lp = lantern_plan(inv)
+        if lp:
+            out.append(f"{name(lp['frm'])} fights with the {lp['name']} in the main hand: {name(lp['to'])} (caster) "
+                       "can hold the light for everyone (equip_best moves it and arms "
+                       f"{name(lp['frm'])})")
         ups = upgrades(inv)
         if ups:
             shown = "; ".join(f"{name(o['who'])}: {o['name']}" for o in ups[:3])
@@ -342,6 +399,10 @@ def short_rest_text(before: dict | None, after: dict | None, result: Any) -> str
 def gear_report(inv: dict, name: Callable[[str], str] = lambda u: u) -> list[str]:
     """Markdown bullet lines for the next session (inventory-notes / HANDOFF)."""
     lines = []
+    lp = lantern_plan(inv)
+    if lp:
+        lines.append(f"- {name(lp['to'])}: hold the {lp['name']} (its aura covers the party from any holder); "
+                     f"{name(lp['frm'])} fights with a weapon (equip_best)")
     for o in upgrades(inv):
         held = "" if o["holder"] == o["who"] else f" (in {name(o['holder'])}'s bag)"
         lines.append(f"- {name(o['who'])}: equip {o['name']}{held} in {o['slot']}: {o['why']}")
@@ -353,3 +414,142 @@ def gear_report(inv: dict, name: Callable[[str], str] = lambda u: u) -> list[str
     if supplies_text(inv):
         lines.append(f"- camp supplies: {supplies_text(inv)}")
     return lines
+
+
+# ---------------------------------------------------------------------------
+# Trade screen as text. S023-S026: every trade call (open, offer, request, confirm) returned one 4-6.6 KB line
+# (60 wares + 60 own items, unsorted, as compact() renders dicts); the agent scanned it for food by name. Now:
+# wares grouped (food with its supply value, consumables, gear by rarity, other), sorted, capped per group, with
+# totals; own items only when listing (top by price + the junk total, sell="junk" sells them); offer/confirm
+# calls show the table and the balance only.
+# ---------------------------------------------------------------------------
+
+TRADE_GROUP_MAX = 10
+TRADE_YOURS_MAX = 12
+_GEAR_NAME = re.compile(r"armou?r|mail|plate|shirt|robe|cloak|boots|gloves|gauntlets|bracers|helm|hat|circlet|"
+                        r"shield|ring\b|amulet|necklace|sword|axe|mace|hammer|dagger|bow\b|crossbow|staff|spear|"
+                        r"rapier|scimitar|flail|glaive|halberd|pike|club|sickle|trident|whip|javelin|morningstar|"
+                        r"quarterstaff|wand|rod\b", re.I)
+
+
+def _trade_rar(it: dict) -> int:
+    r = str(it.get("rarity") or "").lower().replace(" ", "_")
+    return _RARITY.get({"veryrare": "very_rare"}.get(r, r), 1 if r else 0)
+
+
+def trade_group(it: dict) -> str:
+    """food | consumable | gear | other, from the item's stats (supply, ModifierList kind, category) or name."""
+    if is_food(it):
+        return "food"
+    if is_consumable(it):
+        return "consumable"
+    if it.get("kind") in ("Armor", "Weapon") or _equipable(it) or _GEAR_NAME.search(it.get("name") or ""):
+        return "gear"
+    return "other"
+
+
+def _ware(it: dict, h: Callable[[dict], str]) -> str:
+    s = f"{h(it)} {it.get('name') or '?'}"
+    if _count(it) > 1:
+        s += f" x{_count(it)}"
+    s += f" {it.get('price') if it.get('price') is not None else '?'}g"
+    if it.get("supply"):
+        s += f" supply={it['supply'] * _count(it)}" + (f" ({it['supply']} each)" if _count(it) > 1 else "")
+    if it.get("stolen"):
+        s += " stolen"
+    if it.get("story"):
+        s += " story"
+    return s
+
+
+def _price(it: dict) -> int:
+    p = it.get("price")
+    return p if isinstance(p, (int, float)) else 0
+
+
+def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: bool = False) -> str:
+    """The trade screen for the agent. h(item) -> its handle (e12). listing: show wares and your items (opening or
+    trade() with no args); else only the table/balance. full: no caps."""
+    gmax = 10 ** 6 if full else TRADE_GROUP_MAX
+    lines = []
+    head = []
+    if res.get("party_gold") is not None:
+        head.append(f"your gold {res['party_gold']}")
+    if res.get("trader_gold") is not None:
+        head.append(f"trader gold {res['trader_gold']}")
+    if res.get("price_modifier_pct") is not None:
+        head.append(f"prices {res['price_modifier_pct']}% of value")
+    lines.append("TRADE " + " · ".join(head) + " (price = the whole stack)")
+    off = res.get("offer") or {}
+    you, them = off.get("you") or {}, off.get("trader") or {}
+    bal = res.get("balance") or {}
+
+    def side(s: dict) -> str:
+        items = [f"{h(it)} {it.get('name') or '?'}{' x' + str(_count(it)) if _count(it) > 1 else ''} "
+                 f"{_price(it)}g" for it in s.get("items") or [] if isinstance(it, dict)]
+        if s.get("gold"):
+            items.append(f"{s['gold']} gold")
+        return ", ".join(items) or "nothing"
+    if you.get("items") or them.get("items") or you.get("gold") or them.get("gold") or not listing:
+        give, get = bal.get("you_give") or 0, bal.get("you_get") or 0
+        lines.append(f"TABLE you give: {side(you)} (={give}g) | you get: {side(them)} (={get}g) | "
+                     + (f"short by {get - give}g (add items/gold or barter)" if get > give else
+                        f"you overpay {give - get}g" if give > get else "even"))
+    if res.get("feedback"):
+        lines.append(f"TRADER says: {res['feedback']}")
+    if res.get("declined"):
+        lines.append("DECLINED: the trader refuses this deal")
+    if res.get("can_confirm") is False:
+        lines.append("(the Trade button is disabled)")
+    if not listing:
+        lines.append("(wares/your items unchanged: trade() lists them)")
+        return "\n".join(lines)
+
+    wares = [w for w in res.get("wares") or [] if isinstance(w, dict)]
+    groups: dict[str, list[dict]] = {"food": [], "consumable": [], "gear": [], "other": []}
+    for w in wares:
+        groups[trade_group(w)].append(w)
+    groups["food"].sort(key=lambda w: (-(w.get("supply") or 0) * _count(w), _price(w)))
+    groups["consumable"].sort(key=lambda w: -_price(w))
+    groups["gear"].sort(key=lambda w: (-_trade_rar(w), -_price(w)))
+    groups["other"].sort(key=lambda w: -_price(w))
+    total = sum(_price(w) for w in wares)
+    more = " (+more on the screen)" if res.get("wares_more") else ""
+    lines.append(f"WARES {len(wares)} items, {total}g total{more}")
+    label = {"food": "food (supply = camp supplies; a long rest needs 40)", "consumable": "potions/scrolls/ammo",
+             "gear": "gear (best rarity first)", "other": "other"}
+    for g in ("food", "consumable", "gear", "other"):
+        items = groups[g]
+        if not items:
+            continue
+        shown = items[:gmax]
+        if g == "gear":
+            body = []
+            for it in shown:
+                r = it.get("rarity")
+                body.append((f"[{r}] " if r else "") + _ware(it, h))
+        else:
+            body = [_ware(it, h) for it in shown]
+        tail = f" | +{len(items) - len(shown)} more ({sum(_price(x) for x in items[len(shown):])}g)" \
+            if len(items) > len(shown) else ""
+        extra = ""
+        if g == "food":
+            extra = f" — {sum((x.get('supply') or 0) * _count(x) for x in items)} supplies for " \
+                    f"{sum(_price(x) for x in items)}g"
+        lines.append(f"  {label[g]}{extra}: " + " | ".join(body) + tail)
+
+    yours = [y for y in res.get("your_items") or [] if isinstance(y, dict)]
+    if yours:
+        ymax = 10 ** 6 if full else TRADE_YOURS_MAX
+        ys = sorted(yours, key=lambda y: -_price(y))
+        val = sum(_price(y) for y in yours)
+        tail = f" | +{len(ys) - ymax} more" if len(ys) > ymax else ""
+        more = "+" if res.get("your_items_more") else ""
+        lines.append(f"YOUR ITEMS {len(yours)}{more} sellable, {val}g{more} at these prices (top first; "
+                     f"trade(sell=\"junk\") sells the junk in one call): "
+                     + " | ".join(_ware(y, h) for y in ys[:ymax]) + tail)
+    if res.get("unmatched"):
+        lines.append(f"({res['unmatched']} item group(s) could not be named)")
+    if not full and (any(len(v) > gmax for v in groups.values()) or len(yours) > TRADE_YOURS_MAX):
+        lines.append("(trade(full=true) lists everything)")
+    return "\n".join(lines)

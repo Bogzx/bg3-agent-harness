@@ -67,6 +67,49 @@ class Flapping(unittest.TestCase):
                                                      KARLACH, "Moonshield")))
 
 
+class CrowdFlapping(unittest.TestCase):
+    """S026/S027 at Moonrise: Moonshield on/off on ~20 pilgrims, each once per call (no single target flaps)."""
+    PARTY = {GALE["uuid"], KARLACH["uuid"]}
+
+    def setUp(self) -> None:
+        self.t = [0.0]
+        self.flap = render.StatusFlap(clock=lambda: self.t[0])
+        self.npcs = [{"uuid": f"22222222-0000-0000-0000-0000000000{i:02d}", "name": f"Pilgrim {i}"} for i in range(8)]
+
+    def call(self, *evs, party=PARTY):
+        self.t[0] += 2.0
+        return render.render_events(list(evs), Handles(), flap=self.flap, party=party)
+
+    def wave(self, kind, ix):
+        return [ev(kind, self.npcs[i], "Moonshield", seq=i) for i in ix]
+
+    def test_bystanders_muted_party_kept(self):
+        first = self.call(*self.wave("status_applied", range(4)))
+        self.assertIn("on 4: Pilgrim 0", first)
+        second = self.call(*self.wave("status_removed", range(4)))
+        self.assertIn("status_flapping", second)
+        self.assertIn("muted for non-party", second)
+        self.assertNotIn("Pilgrim", second)
+        self.assertEqual(self.call(*self.wave("status_applied", range(2, 8))), "")
+        self.assertIn("Gale", self.call(*self.wave("status_removed", range(8)), ev("status_removed", GALE, "Moonshield")))
+
+    def test_mass_apply_without_removals_is_not_muted(self):
+        for _ in range(3):  # Frightened on many enemies, never lost: every line kept
+            out = self.call(*[ev("status_applied", self.npcs[i], "Frightened", seq=i) for i in range(5)])
+            self.assertIn("Frightened", out)
+            self.assertNotIn("status_flapping", out)
+
+    def test_party_unknown_keeps_old_behaviour(self):
+        self.call(*self.wave("status_applied", range(4)), party=None)
+        self.assertNotIn("status_flapping", self.call(*self.wave("status_removed", range(4)), party=None))
+
+    def test_mute_ends_after_quiet(self):
+        self.call(*self.wave("status_applied", range(4)))
+        self.call(*self.wave("status_removed", range(4)))
+        self.t[0] += 300
+        self.assertIn("Pilgrim 1", self.call(*self.wave("status_applied", range(1, 2))))
+
+
 class GroupStatuses(unittest.TestCase):
     def test_one_line_for_many_targets(self):
         npcs = [{"uuid": f"22222222-0000-0000-0000-00000000000{i}", "name": f"Pilgrim {i}"} for i in range(5)]

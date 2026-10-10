@@ -64,6 +64,24 @@ class RouteTool(Base):
             return orig(op, args, context, timeout)
         self.g.rpc = rpc
 
+    def test_go_travels_to_the_goal_or_the_closest_spot(self):
+        """S023-S026: route then travel_to the same goal (17x) or its closest walkable spot (12x)."""
+        seen = []
+        orig = server.travel_to
+        server.travel_to = lambda **kw: seen.append(kw) or "travel_to: started"
+        self.addCleanup(setattr, server, "travel_to", orig)
+        self.reply = WITH_CLIMB
+        out = server.route(x=HELM[0], y=HELM[1], z=HELM[2], go=True)
+        self.assertIn("GO travel_to: started", out)
+        self.assertEqual(seen[-1], {"who": None, "x": HELM[0], "y": HELM[1], "z": HELM[2]})
+        self.reply = UP_THERE
+        server.route(x=HELM[0], y=HELM[1], z=HELM[2], go=True)
+        self.assertEqual(seen[-1], {"who": None, "x": -33.0, "y": 9.0, "z": -356.0})
+        self.reply = dict(UP_THERE, closest=None)
+        self.assertIn("go: not started", server.route(x=1.0, y=2.0, z=3.0, go=True))
+        server.route(x=1.0, y=2.0, z=3.0)
+        self.assertEqual(len(seen), 2)
+
     def test_no_path_lists_the_open_directions(self):
         """S023 06:23: 8 guessed route calls across a chasm; the way on (a stone bridge) lay SW."""
         self.reply = dict(FIRE_MAZE, ways=[{"dir": "SW", "open_m": 20}, {"dir": "N", "open_m": 8, "dy": 3.1},

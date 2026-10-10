@@ -424,6 +424,44 @@ class ServerWiring(unittest.TestCase):
         self.assertIn("L5: level_up: done", out)
         self.assertEqual(jobs, ["act.leave_camp"])     # was away from camp: leaves again
 
+    def test_camp_member_missing_picks_stays_in_with_the_page_open(self):
+        """Live 11:14: Wyll L4 needed a cantrip + a spell the stored plan lacked; the swap back then failed."""
+        from bg3ai import server as S
+        wyll = {"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}
+        party = [{"uuid": f"u-{n}", "name": n.title(), "level": 5} for n in ("claude", "gale", "karlach", "sh")]
+        party[0]["avatar"] = True
+        state = {"in_combat": False, "party": list(party), "camp": [wyll]}
+        swaps, jobs = [], []
+
+        def fake_swap(into, out="", leave_camp=True):
+            swaps.append((into, out))
+            state["party"] = [r for r in state["party"] if r["name"] != out] + [dict(wyll)]
+            return "swap_party: done — joined"
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                if op == "state.status":
+                    return state
+                return {"region": "Shadow-Cursed Lands"} if op == "ui.state" else default
+
+            def run_job(self, op, args=None, wait_s=0, context="server"):
+                jobs.append(op)
+                return type("R", (), {"status": "done"})()
+
+        need = ("level_up: FAILED — finish: level up is not complete, not finishing: spell choice 'cantrips' needs 1 "
+                "more cantrip in plan.cantrips; can pick: Booming Blade")
+        saved = (S.game, S._level_up, S._who, S.swap_party)
+        S.game, S._level_up, S._who, S.swap_party = G(), (lambda u, p: need), (lambda ref: "u-wyll"), fake_swap
+        try:
+            out = S.level_up("Wyll", out="Gale")
+        finally:
+            S.game, S._level_up, S._who, S.swap_party = saved
+        self.assertEqual(swaps, [("Wyll", "Gale")])  # no swap back
+        self.assertEqual(jobs, [])                   # no leave camp with the page up
+        self.assertIn("Wyll stays in the party (Gale at camp) with the level-up page open", out)
+        self.assertIn('swap_party(into="Gale", out="Wyll")', out)
+        self.assertIn("can pick: Booming Blade", out)
+
     def test_camp_member_swap_failure_is_reported(self):
         from bg3ai import server as S
         st = dict(ST, camp=[{"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}])

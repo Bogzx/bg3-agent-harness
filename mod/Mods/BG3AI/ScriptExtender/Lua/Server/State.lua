@@ -587,6 +587,7 @@ local function itemStats(ie, o)
         o.prof = statField(st, "Proficiency Group")
         local wp = tostring(statField(st, "Weapon Properties") or "")
         if wp:find("Twohanded", 1, true) then o.twohanded = true end
+        if wp:find("Torch", 1, true) then o.torch = true end  -- a held light (Moonlantern: its aura needs it in a hand)
         local ench = tonumber(boosts:match("WeaponEnchantment%((%d+)%)"))
         if ench then o.ench = ench end
     end
@@ -817,6 +818,24 @@ local function combatEntityFor(uuid)
     return nil
 end
 
+-- The name of a story light (Moonlantern: Torch|Unstowable) in a member's melee main hand, else nil: it fights
+-- with torch damage while its aura shields the party (S025-S027 Claude).
+local function heldLight(u)
+    local name
+    pcall(function()
+        local it = osi(Osi.GetEquippedItem, u, "Melee Main Weapon")
+        if not it then return end
+        local ie = Ext.Entity.Get(it)
+        if not (ie and ie.ServerItem and ie.ServerItem.StoryItem) then return end
+        local st = Ext.Stats.Get(ie.Data.StatsId)
+        local wp = st and st["Weapon Properties"]
+        for _, p in pairs(type(wp) == "table" and wp or {}) do
+            if p == "Torch" then name = V.name(it) end
+        end
+    end)
+    return name
+end
+
 function S.combat(ctx)
     local ce
     for _, u in ipairs(ctx.party) do
@@ -878,6 +897,7 @@ function S.combat(ctx)
                             end)
                         end
                         if truthy(osi(Osi.IsDead, u)) then o.dead = true end
+                        if ctx.is_party[u] then o.light_in_hand = heldLight(u) end
                         o.concentration = concentration(me)
                         out.order[#out.order + 1] = o
                     else

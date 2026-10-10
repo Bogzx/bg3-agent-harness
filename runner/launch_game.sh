@@ -40,6 +40,16 @@
 #   BG3AI_ALLOW_STEAM_ONLINE=1  launch even when Steam's last login was online (default: refuse; see below)
 set -euo pipefail
 
+# Never carry a flock fd into the game's lifetime: 10:52 the game was launched from inside a
+# `flock runtime/live.lock …` hold, this script inherited fd 3 on live.lock and every worker's live test waited
+# behind it for the whole game session. Close any inherited *.lock fd (the game needs none of ours).
+for _fd in /proc/$$/fd/*; do
+    _n=${_fd##*/}
+    [[ $_n =~ ^[0-9]+$ && $_n -gt 2 ]] || continue
+    [[ $(readlink "$_fd" 2>/dev/null) == *.lock ]] && eval "exec $_n>&-"
+done
+unset _fd _n
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME="${BG3AI_RUNTIME:-$REPO/runtime}"
 GAME="$(python3 "$REPO/tools/steam_paths.py" game)"

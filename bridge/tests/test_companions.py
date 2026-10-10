@@ -188,6 +188,25 @@ class SwapParty(unittest.TestCase):
         server.time.sleep = lambda s: None
         self.addCleanup(setattr, server.time, "sleep", __import__("time").sleep)
 
+    def test_already_at_camp_refusal_is_not_a_failure(self):
+        """Live 11:14: the level-up page hid the camp from ui.state; go_to_camp answered 'already at camp'."""
+        menu = {"options": [{"i": 2, "text": "I'd like you to join me."}, {"i": 3, "text": "Leave."}]}
+        full = {"options": Pickers.FULL[:1] + [{"i": 2, "text": "Gale could do with a rest."}]}
+        fake = FakeGame([menu, full])
+        real = fake.run_job
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            if op == "act.go_to_camp":
+                fake.jobs.append((op, args))
+                fake.at_camp = True
+                return JobResult(status="refused", error="already at camp")
+            return real(op, args, context, wait_s, **kw)
+        fake.run_job = run_job
+        self.use(fake)
+        out = server.swap_party(into="Halsin", out="Gale", leave_camp=False)
+        self.assertIn("swap_party: done", out)
+        self.assertNotIn("FAILED at go to camp", out)
+
     def test_full_swap_from_the_field(self):
         menu = {"options": [{"i": 1, "text": "What do you think of Gale?"}, {"i": 2, "text": "I'd like you to join me."},
                             {"i": 3, "text": "Leave."}]}

@@ -223,6 +223,7 @@ function K.tick()
 
     if fast then
         st.nextMovie = now + K.FAST_MS
+        K.phase = "movie"
         if K.movieTick(now) then return end
     end
     if not slow then return end
@@ -230,6 +231,7 @@ function K.tick()
     -- A line's shim-SPACE request lives one dialogue tick: re-made below only while that line still plays.
     if K.want and K.want.reason == "line" then K.want = nil end
 
+    K.phase = "widgets"
     local widgets = UI.widgets()
     local wmap = {}
     for _, w in ipairs(widgets) do
@@ -241,6 +243,7 @@ function K.tick()
     end
 
     -- Dialogue lines
+    K.phase = "dialogue"
     local dw = wmap.Dialogue
     if not dw then st.line = nil return end
     local dc = try(function() return dw.el.DataContext end)
@@ -295,6 +298,24 @@ function K.tick()
     end
 end
 
+-- Slow ticks (bg3le logs "Dispatching event Tick (AutoSkip.lua) took 907 ms" at loads, 6.6 s once): which
+-- phase it was in, so the next one says whether it is ours. The load-time ones so far coincide with bg3le's
+-- stats discovery after StatsLoaded (string table re-indexing), i.e. time charged to whichever Tick handler runs.
+K.SLOW_MS = 50
+function K.noteSlow(ms)
+    if ms < K.SLOW_MS then return end
+    local s = K.slow or { n = 0, max = 0 }
+    K.slow = s
+    s.n = s.n + 1
+    if ms > s.max then
+        s.max, s.phase, s.gs = math.floor(ms), K.phase, tostring(try(Ext.Utils.GetGameState) or "")
+    end
+    if s.n <= 20 then
+        Ext.Utils.Print(string.format("[BG3AI] autoskip: slow tick %.0f ms in %s (gs %s)", ms,
+            tostring(K.phase), tostring(try(Ext.Utils.GetGameState) or "")))
+    end
+end
+
 function K.view()
     local cin = K.stats.cinematic or 0
     return { on = K.enabled(), skipped = K.stats.lines + K.stats.movies + cin, lines = K.stats.lines,
@@ -322,6 +343,7 @@ RPC.register("autoskip.status", function(args)
                                   age = now - K.state.line.since } or nil,
         stats = { lines = K.stats.lines, movies = K.stats.movies, seen = K.stats.seen, errors = K.errors or 0,
                   cinematic = K.stats.cinematic or 0, polled = K.polled },
+        slow = K.slow,
     }
     if type(args) == "table" and args.debug then
         res.gs = tostring(try(Ext.Utils.GetGameState) or "")
@@ -340,7 +362,10 @@ end)
 if not K.subscribed then
     K.subscribed = true
     Ext.Events.Tick:Subscribe(function()
+        K.phase = "enter"
+        local t0 = Ext.Utils.MonotonicTime()
         local ok, err = pcall(K.tick)
+        K.noteSlow(Ext.Utils.MonotonicTime() - t0)
         if not ok then
             K.errors = (K.errors or 0) + 1
             if K.errors <= 5 then Ext.Utils.PrintWarning("[BG3AI] autoskip: " .. tostring(err)) end

@@ -7,6 +7,7 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 
 from __future__ import annotations
 
+import time
 import unittest
 
 from bg3ai import party, server
@@ -205,6 +206,32 @@ class Cohesion(Base):
         out = self._trip(follower_moves=False)
         self.assertIn("can't keep up", out)
         self.assertNotIn("arrived", out)
+
+    def test_camp_walk_does_not_wait_for_companions_at_their_tents(self):
+        # Logs pass 4 #5: every Campsite walk stopped "e4 Karlach 37m … can't keep up" (companions idle at camp)
+        self.g.ui = {"region": "Campsite"}
+        out = self._trip(follower_moves=False)
+        self.assertNotIn("behind", out)
+        self.assertIn("arrived", out)
+        self.assertEqual([a for _, a in self.g.ops("act.move_to") if a.get("char") == P2], [])
+
+    def test_a_follower_still_closing_in_is_waited_for_not_walked_back(self):
+        # A running leader's 30 m leg: the follower trails 25 m behind, then follows at 8 m/s, so it needs ~1.6 s
+        # to come within STRAGGLER_M: past CATCH_UP_S (0.3 s here) it is still waited for, no walk back, no stop.
+        orig, t_arr = self.g.rpc, []
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            r = orig(op, args, context, timeout) if op != "state.status" else self.st
+            if op == "act.watch" and self.g.watch["party"][0]["pos"][0] >= 30.0:
+                if not t_arr:
+                    t_arr.append(time.monotonic())
+                self.g.watch["party"][1]["pos"][0] = min(30.0, 5.0 + 8.0 * (time.monotonic() - t_arr[0]))
+            return r
+        self.g.rpc = rpc
+        out = self._trip(follower_moves=False)
+        self.assertNotIn("can't keep up", out)
+        self.assertIn("caught up", out)
+        self.assertEqual([a for _, a in self.g.ops("act.move_to") if a.get("char") == P2], [])
 
     def test_staying_member_is_not_waited_for(self):
         server._stay.add(P2)

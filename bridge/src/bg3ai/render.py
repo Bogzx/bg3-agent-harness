@@ -419,19 +419,56 @@ class StatusFlap:
     FLAP_TOGGLES = 6
     FLAP_WINDOW_S = 60.0
     FLAP_MUTE_S = 120.0
+    # Bystanders: one status going on AND off on many non-party targets (S026/S027 Moonrise: Moonshield on/off on
+    # 20 pilgrims, each once per call, so no single target flaps: ~25 lines per wait_for). Muted by status name for
+    # non-party targets; the party's own statuses keep the per-target rule (Moonshield on Claude matters).
+    CROWD_EACH = 3      # >= this many applied and this many removed ...
+    CROWD_TARGETS = 3   # ... on >= this many distinct non-party targets within FLAP_WINDOW_S
 
     def __init__(self, clock=time.monotonic) -> None:
         self.clock = clock
         self.hist: dict[tuple, list[float]] = {}
         self.muted: dict[tuple, float] = {}  # key -> time of its last event while muted
+        self.crowd: dict[str, list[tuple[float, str, Any]]] = {}  # status name -> (t, kind, target)
+        self.crowd_muted: dict[str, float] = {}
 
-    def filter(self, evs: list[dict]) -> list[dict]:
+    def _bystander(self, e: dict, key: tuple, now: float, party: set | None) -> str:
+        """'' = not a bystander event (or party unknown); 'mute' = drop it; 'flap' = it just tipped the crowd rule."""
+        if party is None or key[0] in party:
+            return ""
+        name = key[1]
+        last = self.crowd_muted.get(name)
+        if last is not None and now - last < self.FLAP_MUTE_S:
+            self.crowd_muted[name] = now
+            return "mute"
+        self.crowd_muted.pop(name, None)
+        h = [x for x in self.crowd.get(name, []) if now - x[0] < self.FLAP_WINDOW_S] + [(now, e.get("kind"), key[0])]
+        self.crowd[name] = h
+        on = sum(1 for x in h if x[1] == "status_applied")
+        if on >= self.CROWD_EACH and len(h) - on >= self.CROWD_EACH and len({x[2] for x in h}) >= self.CROWD_TARGETS:
+            self.crowd_muted[name] = now
+            del self.crowd[name]
+            return "flap"
+        return ""
+
+    def filter(self, evs: list[dict], party: set | None = None) -> list[dict]:
+        """party: the party's uuids (their statuses are never crowd-muted); None = per-target rule only."""
         now = self.clock()
         out = []
         for e in evs:
             key = _status_key(e)
             if key is None:
                 out.append(e)
+                continue
+            b = self._bystander(e, key, now, party)
+            if b == "mute":
+                continue
+            if b == "flap":
+                out = [x for x in out if not ((k := _status_key(x)) and k[1] == key[1] and k[0] not in party)]
+                n = len({k[0] for x in evs if (k := _status_key(x)) and k[1] == key[1] and k[0] not in party})
+                out.append({"seq": e.get("seq"), "kind": "status_flapping",
+                            "data": {"name": key[1], "note": f"on/off on {max(n, self.CROWD_TARGETS)}+ others nearby "
+                                                             "(aura/light): muted for non-party"}})
                 continue
             last = self.muted.get(key)
             if last is not None and now - last < self.FLAP_MUTE_S:
@@ -452,6 +489,8 @@ class StatusFlap:
             out.append(e)
         if len(self.hist) > 500:  # bounded: forget keys quiet for a window
             self.hist = {k: v for k, v in self.hist.items() if now - v[-1] < self.FLAP_WINDOW_S}
+        if len(self.crowd) > 200:
+            self.crowd = {k: v for k, v in self.crowd.items() if v and now - v[-1][0] < self.FLAP_WINDOW_S}
         return out
 
 
@@ -495,13 +534,13 @@ def _group_statuses(evs: list[dict], H: Handles) -> list[dict]:
 
 
 def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", job: str | None = None,
-                  flap: StatusFlap | None = None) -> str:
+                  flap: StatusFlap | None = None, party: set | None = None) -> str:
     """EVENTS section. body: the tool result's own text, so events it already reports are left out
     (job: the job id a wait_for just returned). flap: the cross-call status mute (server passes FLAP)."""
     m = re.match(r"TURN (e\d+)", body or "")
     own = m.group(1) if m else None
     evs = [e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS and not _already_shown(e, H, body, own, job)]
-    evs = _drop_flicker(flap.filter(evs) if flap is not None else evs)
+    evs = _drop_flicker(flap.filter(evs, party) if flap is not None else evs)
     evs = _group_statuses(evs, H)
     if not evs:
         return ""
@@ -570,6 +609,7 @@ def render_combat(res: dict, H: Handles) -> str:
 
 # Unavailable only because that resource is spent this turn (the NOW line shows it): counted, not listed.
 _SPENT_REASONS = {"no action": "[A] ones", "no bonus action": "[B] ones", "no reaction": "[R] ones"}
+UNAVAILABLE_GROUP_MIN = 3  # other reasons shared by this many actions list the names once
 
 
 def render_actions(r: Any, H: Handles) -> str:
@@ -602,11 +642,24 @@ def render_actions(r: Any, H: Handles) -> str:
             if why in _SPENT_REASONS:  # the NOW line already says it is spent: count, don't list (S025: 60 entries)
                 spent[why] = spent.get(why, 0) + 1
             else:
-                no_lines.append(" ".join(bits) + (f" — {why}" if why else ""))
+                no_lines.append((why, str(a.get("name")), " ".join(bits) + (f" — {why}" if why else "")))
         else:
             ok_lines.append(" ".join(bits))
     out = head + ok_lines
-    no = [f"{why}: all {n} {_SPENT_REASONS[why]}" for why, n in spent.items()] + no_lines
+    no = [f"{why}: all {n} {_SPENT_REASONS[why]}" for why, n in spent.items()]
+    # One reason shared by many (S026: 13 "... [slot L3+A] 9m L3 — no spell slot of level 3+", ~1.2 KB per turn):
+    # names only, once ("no spell slot of level 3+: Speak with Dead, Beacon of Hope, ...").
+    by_why: dict[str, list[str]] = {}
+    for why, name, _ in no_lines:
+        by_why.setdefault(why, []).append(name)
+    grouped: set[str] = set()
+    for why, name, line in no_lines:
+        if why and len(by_why[why]) >= UNAVAILABLE_GROUP_MIN:
+            if why not in grouped:
+                grouped.add(why)
+                no.append(f"{why}: {', '.join(by_why[why])}")
+        else:
+            no.append(line)
     if no:
         out.append("UNAVAILABLE: " + "; ".join(no))
     return "\n".join(out)

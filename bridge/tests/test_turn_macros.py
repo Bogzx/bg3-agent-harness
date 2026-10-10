@@ -134,7 +134,19 @@ class FakeGame:
                 return {"active": P1, "level": "TUT", "party": [{"uuid": P1, "name": "Claude"},
                                                                  {"uuid": P2, "name": "Lae'zel"}]}
             if op == "state.combat":
-                return json.loads(json.dumps(self.combat))
+                # Like State.lua: unseen combatants are left out, dead ones carry dead=true.
+                cs = json.loads(json.dumps(self.combat))
+                order = []
+                for o in cs.get("order") or []:
+                    u = o.get("uuid")
+                    if o.get("relation") != "party" and u not in self.visible and u not in self.dead:
+                        continue
+                    if u in self.dead:
+                        o["dead"] = True
+                    order.append(o)
+                if "order" in cs:
+                    cs["order"] = order
+                return cs
             if op == "state.actions":
                 return json.loads(json.dumps(self.actions))
             if op == "nav.approach" and self.approach is not None:

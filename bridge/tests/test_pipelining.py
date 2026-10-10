@@ -52,9 +52,14 @@ class AsyncTravel(Base):
         self.assertLess(time.monotonic() - t0, 0.1)  # did not wait for the first 0.15 s leg
         self.assertIn("travel_to marker m1 Old well: started (50m)", out)
         self.assertIn("queued 1 step(s)", out)
+        real = self.g.try_rpc
+        self.g.try_rpc = lambda op, args=None, context="server", default=None: (
+            {"leads": [{"uuid": CHEST, "name": "Well", "kind": "usable", "dist": 3.0, "dir": "N", "unvisited": True}]}
+            if op == "nav.frontier" else real(op, args, context, default))
         done = server.wait_for("queue", timeout_s=5)
         self.assertIn("queue e", done)
         self.assertIn("done (1 steps)", done)
+        self.assertIn("LEADS (unvisited; get_frontier lists all): " + server.H.get(CHEST) + " Well <usable> 3m N", done)
         self.assertEqual([a["pos"][0] for _, a in self.g.ops("act.move_to")], [30.0, 50.0])
         self.assertTrue(any(e["kind"] == "queue_done" for e in self.g.events))
 
@@ -190,6 +195,28 @@ class EarlyWake(Base):
         self.assertIn("arriving", out)  # wakes once the ETA drops under 0.2 s
         self.assertGreater(time.monotonic() - t0, 0.6)
         self.assertEqual(self.g.jobs[int(h[1:])]["status"], "running")
+
+    def test_arrival_carries_unvisited_leads_and_ways(self):
+        real = self.g.try_rpc
+
+        def fake(op, args=None, context="server", default=None):
+            if op == "nav.frontier":
+                return {"leads": [{"uuid": CHEST, "name": "Door", "kind": "door", "dist": 15.3, "dir": "NW",
+                                   "dy": -2.4, "unvisited": True},
+                                  {"uuid": "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee", "name": "Crate",
+                                   "kind": "container", "dist": 2.0, "dir": "E"}],
+                        "ways": [{"dir": "N", "open_m": 20}, {"dir": "S", "open_m": 0}]}
+            return real(op, args, context, default)
+        self.g.try_rpc = fake
+        h = self.walk(0.3)
+        out = server.wait_for(h, timeout_s=5, lead_s=0)
+        self.assertIn("move_to: done", out)
+        self.assertIn(f"LEADS (unvisited; get_frontier lists all): {server.H.get(CHEST)} Door <door> 15.3m NW "
+                      "(2.4m down)", out)
+        self.assertNotIn("Crate", out)  # visited
+        self.assertIn("WAYS walkable: N 20m+ | blocked: S", out)
+        h = self.walk(0.8)
+        self.assertNotIn("LEADS", server.wait_for(h, timeout_s=5))  # early wake: still walking
 
     def test_not_in_combat(self):
         h = self.walk(0.5)

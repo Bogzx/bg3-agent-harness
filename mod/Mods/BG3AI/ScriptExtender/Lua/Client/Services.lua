@@ -96,7 +96,7 @@ end
 -- and keep each question for the result. args.confirm == false: leave it and
 -- fail with the question so the agent answers with ui.confirm.
 -- Returns nil (no box), true (handled: keep waiting) or "failed", nil, err.
-local function handleConfirm(job, args, max)
+local function handleConfirm(job, args, max, veto)
     local A = BG3AI.UIActions
     if not (A and A.confirmBox) then return nil end
     local box = A.confirmBox()
@@ -107,6 +107,12 @@ local function handleConfirm(job, args, max)
     if args.confirm == false then
         return "failed", nil, "the game asks: " .. q .. " [" .. table.concat(labels, "/") .. "]; answer with confirm"
     end
+    -- veto(q): a reason this op must not answer the question (vis live: fast_travel answered a rest prompt).
+    local why = veto and veto(q, box) or nil
+    if why then
+        return "failed", { question = q, buttons = labels, unanswered = true }, "the game asks: " .. q .. " ["
+            .. table.concat(labels, "/") .. "]: not answered (" .. why .. "); decide with confirm(...)"
+    end
     job.confirms = job.confirms or {}
     local now = RPC.now_ms()
     if now - (job.confirmAt or 0) < 700 then return true end -- the last press is still closing the box
@@ -115,7 +121,7 @@ local function handleConfirm(job, args, max)
     -- to the bridge for a hover-checked click instead of pressing again (needs_click).
     local sig = q .. "#" .. table.concat(labels, "|")
     if job.confirmSig == sig then
-        return "failed", { needs_click = "yes", confirmed = job.confirms },
+        return "failed", { needs_click = "yes", confirmed = job.confirms, question = q },
             "the Yes press didn't close the game's question: " .. q .. " [" .. table.concat(labels, "/") .. "]"
     end
     if #job.confirms >= (max or 3) then
@@ -123,7 +129,7 @@ local function handleConfirm(job, args, max)
     end
     local ok, view = A.answerConfirm("yes", false)
     job.confirmAt, job.confirmSig = now, sig
-    if not ok then return "failed", { needs_click = "yes" }, "couldn't answer the game's question (" .. q .. "): " .. tostring(view) end
+    if not ok then return "failed", { needs_click = "yes", question = q }, "couldn't answer the game's question (" .. q .. "): " .. tostring(view) end
     job.confirms[#job.confirms + 1] = (view.text or view.title or "?") .. " -> " .. tostring(view.pressed)
     return true
 end
@@ -360,6 +366,9 @@ local function itemView(slotRec, inv)
             local st = Ext.Stats.Get(e.Data.StatsId)
             local sv = st and tonumber(st.SupplyValue)
             if sv and sv > 0 then v.supply = sv end
+            -- Armor/Weapon/Object: the bridge groups wares (gear by rarity) from it
+            local kind = st and st.ModifierList
+            if kind == "Armor" or kind == "Weapon" then v.kind = kind end
         end)
     end
     if p.ItemType == "Gold" then return nil end
@@ -491,7 +500,7 @@ RPC.register("ui.trade", function(args)
     if not wantsChange then return SV.tradeState(dc, nil, tonumber(args.max)) end
 
     -- Barter mode shows both offers and keeps the deal explicit until confirm.
-    local phase, waitUntil = "mode", 0
+    local phase, waitUntil, balanceTries = "mode", 0, 0
     local moved, problems, confirmed = {}, {}, false
     if UI.prop(dc, "Mode") ~= "Barter" then
         check(UI.command(dc, "SetTradeMode", nil, false))
@@ -544,10 +553,31 @@ RPC.register("ui.trade", function(args)
             end
             -- Balance with gold the way the Balance button does, then barter.
             UI.command(live, "BalanceTrade", nil, false)
-            phase, waitUntil = "balanced", RPC.now_ms() + 250
+            phase, waitUntil, balanceTries = "balanced", RPC.now_ms() + 250, 1
             return nil
         end
         if phase == "balanced" then
+            -- S026 09:39: confirm right after an offer, with our items on the table and nothing coming
+            -- back (BalanceTrade not applied yet): the game asked to DONATE them, the job timed out, and the
+            -- agent balanced + bartered by hand. Never finish a one-sided deal: re-balance, else say why.
+            local ours = #vmSlots(UI.prop(live, "CharacterOffer"), 60)
+            local theirs = #vmSlots(UI.prop(live, "TraderOffer"), 60)
+            local tgold = tonumber(UI.prop(live, "TraderOfferGold")) or 0
+            if ours > 0 and theirs == 0 and tgold == 0 then
+                local has = tonumber(UI.prop(live, "TraderInventoryGold")) or 0
+                if has > 0 and balanceTries < 4 then
+                    UI.command(live, "BalanceTrade", nil, false)
+                    balanceTries = balanceTries + 1
+                    waitUntil = RPC.now_ms() + 300
+                    return nil
+                end
+                local st = SV.tradeState(live)
+                st.moved = moved
+                return "failed", st, has > 0 and "not confirmed: the Balance didn't add the trader's gold, so the "
+                    .. "game would take your items for nothing (donate): call trade(confirm=true) again"
+                    or "not confirmed: the trader has no gold left, so the game would take your items for nothing "
+                    .. "(donate): request wares of equal value instead (request=<ids>)"
+            end
             local param = UI.prop(live, "ActionCommandParameter")
             if not isNoesis(param) then param = nil end
             local ok, err = UI.command(live, "FinishBarter", param, false)
@@ -646,6 +676,17 @@ local REST_FOLLOWUP_MS = 10000  -- a long_rest job stopped at a box this recentl
 
 local function sinceTxt(ms) return ms and string.format("%.1fs ago", (RPC.now_ms() - ms) / 1000) or "never" end
 
+-- Night camp (live 2026-10-10 11:1x): CurrentPlayer.IsAtNightCamp=true, LongRest.IsActive=false and
+-- TravelError=Unavailable: a long rest whose night never ended (a camp scene ran, or our job returned
+-- 'done' 20 s after the rest screen closed). Until the day ends, camp leave fails "cannot travel right now"
+-- and fast travel says "Unavailable" (29/31 fast_travel failures 10:00-10:52). The camp's long rest command
+-- (CampTravel) at night opens the rest screen again (live 11:2x) or goes to sleep; resting ends the night.
+local function nightCamp(dc)
+    return UI.path(dc or hotbarDC(), "CurrentPlayer.IsAtNightCamp") == true
+end
+SV.nightCamp = nightCamp
+local NIGHT_END_MS = 30000      -- after the sleep press: the night must end within this
+
 RPC.register("ui.long_rest", function(args)
     local dc = hotbarDC()
     if selected(dc, "PlayerCharacterProperties.IsInCamp") ~= true then
@@ -665,6 +706,7 @@ RPC.register("ui.long_rest", function(args)
     local R = SV.rest
     local A = BG3AI.UIActions
     local presses, step, retried = 0, "open", false
+    local night = nightCamp(dc) and not visibleWidget("MakeCamp")
     local function pressCamp()
         check(UI.command(hotbarDC(), "CampTravel", nil, false))
         presses, R.pressAt = presses + 1, RPC.now_ms()
@@ -687,7 +729,52 @@ RPC.register("ui.long_rest", function(args)
     end
 
     local phase, sawActive, used, phaseStart = "open", false, nil, RPC.now_ms()
-    return waitJob("ui.long_rest", 85000, function(job)
+    if night then phase, step = "sleep", "at night camp: CampTravel = go to sleep" end
+    local sleepAt, sleepRetried = night and RPC.now_ms() or nil, false
+    -- The night ends (IsAtNightCamp false) after the sleep press; a camp scene or the rest screen may come first.
+    local function sleepTick(job, result)
+        local now = RPC.now_ms()
+        local c, cres, err = handleConfirm(job, args)
+        if c == "failed" then
+            R.boxAt = now
+            return "failed", cres, err
+        end
+        if c then sleepAt = now return nil end
+        result.confirmed = job.confirms
+        if not nightCamp() then
+            result.night_ended = true
+            return "done", result
+        end
+        if visibleWidget("Dialogue") then
+            result.camp_scene, result.night_open = true, true
+            result.note = "a camp scene started at night: finish it, then long_rest again to sleep (until the "
+                .. "night ends, camp leave and fast travel are blocked)"
+            return "done", result
+        end
+        if visibleWidget("MakeCamp") then return "rest_screen" end
+        if not sleepRetried and now - sleepAt > REST_QUIET_MS then
+            pressCamp()
+            sleepRetried, sleepAt = true, now
+            return nil
+        end
+        if now - sleepAt > NIGHT_END_MS then
+            result.step = "sleep"
+            return "failed", result, "the night at camp didn't end (still IsAtNightCamp " .. string.format("%.0f",
+                (now - sleepAt) / 1000) .. " s after going to sleep; CampTravel pressed " .. presses
+                .. "x). Camp leave and fast travel stay blocked until it does. On screen: " .. screenNow()
+        end
+        return nil
+    end
+
+    return waitJob("ui.long_rest", 85000 + NIGHT_END_MS, function(job)
+        if phase == "sleep" then
+            local st, res, err = sleepTick(job, { rest = night and "night_finished" or nil })
+            if st ~= "rest_screen" then return st, res, err end
+            -- Live 11:2x: at night camp the rest button opens the rest screen (supplies); resting from it ends the
+            -- night. sleep_only (the bridge before travelling: the night blocks all travel) rests even partially.
+            if args.sleep_only then args.partial = true end
+            phase, phaseStart = "open", RPC.now_ms()
+        end
         local w = visibleWidget("MakeCamp")
         -- "End the day?" comes before the rest screen opens; others may follow it, and
         -- a partial rest (too few supplies) may ask once more after Rest is pressed.
@@ -783,10 +870,29 @@ RPC.register("ui.long_rest", function(args)
         end
         if visibleWidget("Dialogue") then
             result.camp_scene = true
+            -- live 11:2x: after a rest at night the sleep cutscene is a short Dialogue and the night is already over
+            if night and not nightCamp() then result.night_ended = true end
+            if nightCamp() then
+                result.night_open = true
+                result.note = (result.note and (result.note .. "; ") or "") .. "after the camp scene, long_rest "
+                    .. "again to sleep (until the night ends, camp leave and fast travel are blocked)"
+            end
             return "done", result
         end
         if not w and (sawActive and not active or RPC.now_ms() - phaseStart > 20000) then
-            return "done", result
+            if not nightCamp() then
+                if night then result.night_ended = true end
+                return "done", result
+            end
+            -- the rest screen closed but the day didn't end: go to sleep (sleepTick finishes)
+            if not sleepAt then
+                pressCamp()
+                sleepAt = RPC.now_ms()
+                return nil
+            end
+            local st, res, err = sleepTick(job, result)
+            if st == "rest_screen" then return nil end
+            return st, res, err
         end
         if w and not sawActive and RPC.now_ms() - phaseStart > 10000 then
             result.step = "rest"
@@ -890,6 +996,18 @@ local function withMap(kind, timeout_ms, fn, pre)
         end
         if not state.ready then
             if not mapWidget() then
+                -- A question box up instead of the map (vis live: a rest prompt; M then "didn't open the map"):
+                -- report it, never answer it here.
+                local A = BG3AI.UIActions
+                local box = A and A.confirmBox and A.confirmBox()
+                if box then
+                    local labels = {}
+                    for _, b in ipairs(box.buttons or {}) do labels[#labels + 1] = b.label end
+                    local q = box.text or box.title or "?"
+                    return "failed", { question = q, buttons = labels, unanswered = true, keys = state.mapKeys },
+                        "the game asks: " .. q .. " [" .. table.concat(labels, "/") .. "] (instead of the map "
+                        .. "opening): not answered; decide with confirm(...), then try again"
+                end
                 if RPC.now_ms() - (state.mapPressT or 0) >= MAP_PRESS_MS then
                     if state.mapPresses >= MAP_PRESSES then
                         return "failed", { map_presses = state.mapPresses, keys = state.mapKeys },
@@ -1007,10 +1125,23 @@ RPC.register("ui.travel_block", function(args)
     return {
         error = travelError(dc),
         in_camp = selected(dc, "PlayerCharacterProperties.IsInCamp") == true,
+        night_camp = nightCamp(dc) or nil,
+        hud = visibleWidget("HotBar") ~= nil,   -- false during the morning transition after a rest (live 11:3x)
         dialogue = visibleWidget("Dialogue") ~= nil,
         screen = screenNow(),
     }
 end)
+
+-- Questions fast_travel must never answer itself: resting/camp decisions (vis live 2026-10-10: a rest prompt was
+-- answered during a fast travel). Box texts may read "[ForceUpdate]" (formatter-driven): those are answered as
+-- before but listed by name in the result.
+function SV.travelVeto(q)
+    local t = tostring(q or ""):lower()
+    for _, w in ipairs({ "rest", "sleep", "end the day", "camp", "supplies" }) do
+        if t:find("%f[%a]" .. w .. "%f[%A]") then return "a rest/camp decision is yours, not fast_travel's" end
+    end
+    return nil
+end
 
 -- Right after a load (live 2026-10-10, LIVETEST-se / -setup at the red-forest camp) TravelError reads
 -- "Unavailable" for a few seconds and then clears: wait it out instead of failing the call.
@@ -1021,6 +1152,10 @@ RPC.register("ui.fast_travel", function(args)
     local dc = hotbarDC()
     local err = travelError(dc)
     if err and err ~= "Unavailable" then error("can't fast travel now (" .. err .. ")", 0) end
+    if err and nightCamp(dc) then
+        error("can't fast travel now (Unavailable): the night at camp hasn't ended (a long rest that didn't "
+            .. "finish): long_rest goes to sleep and ends it", 0)
+    end
     if selected(dc, "CharacterMode") == "InCombat" then error("can't fast travel in combat", 0) end
     -- Live 2026-10-10: a fast travel from camp moved only the controlled character (companions and
     -- the camera stayed at the Campsite, PARTY APART 1800 m). The bridge leaves camp first.
@@ -1077,7 +1212,7 @@ RPC.register("ui.fast_travel", function(args)
             state.sent, state.target, state.t = true, wp, RPC.now_ms()
             return nil
         end
-        local c, cres, cerr = handleConfirm(state, args)
+        local c, cres, cerr = handleConfirm(state, args, nil, SV.travelVeto)
         if c == "failed" then
             if not (cres and cres.needs_click) then closeMap(opened) end
             return "failed", cres, cerr
@@ -1100,6 +1235,75 @@ RPC.register("ui.fast_travel", function(args)
         end
         return nil
     end, pre)
+end)
+
+------------------------------------------------------------------------
+-- Donate (Gale's magic-item hunger)
+------------------------------------------------------------------------
+-- ui.donate {item=uuid, dry?} -> job {donated=name}
+-- The "Donate" page (Donate.xaml, DC ls.DCDonate) opens from Gale's "Give Gale a magic artefact" answer. One
+-- ListBox "Inventory" per party member (ItemsSource = that member's sorted VMInventorySlots); selecting a slot
+-- copies the ListBox's SelectedItems into InventoryContainer.Tag, and DonateBtn runs DonateItemsCommand(Tag).
+-- So: match the item's VM slot (VM <-> ECS by slot index + weight, as trade does), select it in its ListBox
+-- (what a click does), then press DonateBtn. S020 04:45 / S023 06:14: 5-6 hand clicks + screenshots each.
+-- NOT tested live (the window only opens from Gale's story dialogue).
+local function donateGroups(dc)
+    local vms, seen = {}, {}
+    for _, src in UI.items(UI.prop(dc, "DonateSourceInventories"), 8) do
+        collectInventories(src, vms, seen, 0)
+    end
+    local pc, groups = partyInventories(), {}
+    for _, vm in ipairs(vms) do
+        local inv, slots = bestInventory(vm, pc)
+        groups[#groups + 1] = { vm = vm, inv = inv, slots = slots }
+    end
+    return groups
+end
+
+-- The visible "Inventory" ListBox holding vmItem and its 0-based index there.
+local function donateSlot(w, vmItem)
+    local key = tostring(vmItem)
+    for _, lb in ipairs(UI.findAll(w, function(e) return UI.name(e) == "Inventory" end, { prune = true })) do
+        local coll = UI.get(lb, "Items") or UI.get(lb, "ItemsSource")
+        for i, slot in UI.items(coll, 400) do
+            local obj = slot and UI.get(slot, "Object")
+            if obj ~= nil and tostring(obj) == key then return lb, i - 1 end
+        end
+    end
+    return nil
+end
+SV.donateSlot = donateSlot
+
+RPC.register("ui.donate", function(args)
+    local w = visibleWidget("Donate") or error("no donation window is open: it opens from Gale's dialogue "
+        .. "(answer 'Give Gale a magic artefact')", 0)
+    local dc = try(function() return w.DataContext end) or error("the donation window has no DataContext", 0)
+    local vmItem, err = memoized(function() return findVMItem(args.item, donateGroups(dc)) end)
+    if not vmItem then error(((err or "item not found"):gsub("the trade screen", "the donation window")), 0) end
+    local lb, idx = donateSlot(w, vmItem)
+    if not lb then error("the item is not listed in the donation window (Gale only takes magic items)", 0) end
+    local btn = UI.byName(w, "DonateBtn") or error("the donation window has no Donate button", 0)
+    if args.dry then return { can = true, index = idx } end
+    local phase, t = "select", 0
+    return waitJob("ui.donate", 8000, function(job)
+        if phase == "select" then
+            local ok, serr = pcall(lb.SetProperty, lb, "SelectedIndex", idx)
+            if not ok then return "failed", nil, "couldn't select the item: " .. tostring(serr) end
+            phase, t = "press", RPC.now_ms()
+            return nil
+        end
+        if phase == "press" then
+            if RPC.now_ms() - t < 150 then return nil end   -- the SelectionChanged trigger fills the Tag
+            local ok, perr = UI.press(btn)
+            if not ok then return "failed", nil, "selected the item, but Donate didn't work: " .. tostring(perr) end
+            phase, t = "wait", RPC.now_ms()
+            return nil
+        end
+        if not visibleWidget("Donate") or RPC.now_ms() - t > 1500 then
+            return "done", { donated = args.item, window_open = visibleWidget("Donate") ~= nil or nil }
+        end
+        return nil
+    end)
 end)
 
 return SV

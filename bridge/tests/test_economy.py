@@ -241,6 +241,64 @@ class RenderInventory(unittest.TestCase):
         self.assertIn("Sentinel Shield → MeleeOffHand", out)
 
 
+def lantern_inventory() -> dict:
+    """Live 2026-10-10 at camp: Claude (paladin) holds the Moonlantern + Sentinel Shield; a Ceremonial
+    Warhammer and a two-handed Greatclub sit in bags; Gale (wizard) wears a plain Quarterstaff."""
+    items = [
+        {"uuid": _u(40), "name": "Moonlantern", "owner": CLAUDE, "equipped_slot": "MeleeMainHand", "story": True,
+         "torch": True, "dmg": "1d4", "prof": "SimpleWeapons|Clubs"},
+        {"uuid": _u(41), "name": "Sentinel Shield", "owner": CLAUDE, "equipped_slot": "MeleeOffHand", "ac": 2,
+         "shield": True, "rarity": "rare"},
+        {"uuid": _u(42), "name": "Greatclub +1", "owner": CLAUDE, "slot_type": "MeleeMainHand", "dmg": "1d8",
+         "ench": 1, "twohanded": True, "prof": "SimpleWeapons|Greatclubs", "rarity": "uncommon"},
+        {"uuid": _u(43), "name": "Ceremonial Warhammer", "owner": GALE, "slot_type": "MeleeMainHand", "dmg": "1d8",
+         "prof": "MartialWeapons|Warhammers", "rarity": "uncommon"},
+        {"uuid": _u(21), "name": "Quarterstaff", "owner": GALE, "equipped_slot": "MeleeMainHand", "dmg": "1d6",
+         "prof": "SimpleWeapons|Quarterstaffs"},
+    ]
+    return {"items": items, "gold": 500, "supplies": 80,
+            "members": {CLAUDE: {"prof": PALADIN}, GALE: {"prof": WIZARD}}}
+
+
+class Lantern(unittest.TestCase):
+    def test_caster_holds_the_light_fighter_gets_a_one_handed_weapon(self):
+        inv = lantern_inventory()
+        plan = economy.lantern_plan(inv)
+        self.assertEqual((plan["frm"], plan["to"], plan["lantern"]), (CLAUDE, GALE, _u(40)))
+        ups = economy.upgrades(economy.apply_lantern(inv, plan))
+        main = [o for o in ups if o["who"] == CLAUDE and o["slot"] == "MeleeMainHand"]
+        self.assertEqual(main[0]["name"], "Ceremonial Warhammer")  # not the two-handed Greatclub: shield kept
+
+    def test_the_casters_freed_staff_is_enough(self):
+        inv = lantern_inventory()
+        inv["items"] = [it for it in inv["items"] if it["uuid"] not in (_u(42), _u(43))]
+        plan = economy.lantern_plan(inv)
+        self.assertIsNotNone(plan)
+        ups = economy.upgrades(economy.apply_lantern(inv, plan))
+        self.assertEqual([o["name"] for o in ups if o["who"] == CLAUDE], ["Quarterstaff"])
+
+    def test_no_plan_when_a_caster_holds_it_or_no_caster(self):
+        inv = lantern_inventory()
+        inv["items"][0]["owner"] = GALE
+        inv["items"] = [it for it in inv["items"] if it["uuid"] != _u(21)]
+        self.assertIsNone(economy.lantern_plan(inv))
+        inv = lantern_inventory()
+        inv["members"] = {CLAUDE: {"prof": PALADIN}, GALE: {"prof": PALADIN}}
+        self.assertIsNone(economy.lantern_plan(inv))
+
+    def test_light_note_once_per_fight(self):
+        server._light_noted.clear()
+        cs = {"active": True, "order": [{"uuid": CLAUDE, "light_in_hand": "Moonlantern"}, {"uuid": GALE}]}
+        self.assertIn("fights with the Moonlantern", server._light_note(cs))
+        self.assertEqual(server._light_note(cs), "")
+        server._light_note({"active": False})
+        self.assertIn("LIGHT:", server._light_note(cs))
+
+    def test_alert_names_the_move(self):
+        out = economy.alerts({"in_combat": False}, lantern_inventory(), name=lambda u: {CLAUDE: "Claude", GALE: "Gale"}[u])
+        self.assertTrue(any("Claude fights with the Moonlantern" in a and "Gale (caster)" in a for a in out), out)
+
+
 class FakeGame:
     def __init__(self, inv: dict, trade: dict | None = None, fail: set[str] | None = None):
         self.inv, self.trade, self.fail = inv, trade or {}, fail or set()
@@ -335,6 +393,37 @@ class Tools(unittest.TestCase):
         i = ops.index(("act.transfer", _u(3), CLAUDE))
         self.assertEqual(ops[i + 1], ("act.equip", _u(3), CLAUDE))
 
+    def test_equip_best_hands_the_lantern_to_the_caster_then_arms_the_fighter(self):
+        class G(FakeGame):
+            def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+                r = super().run_job(op, args, context, wait_s, **kw)
+                if op == "act.equip" and args["item"] == _u(40):  # the game's state after the three moves
+                    self.inv = economy.apply_lantern(self.inv, {"lantern": _u(40), "frm": CLAUDE, "to": GALE})
+                return r
+        g = self.use(G(lantern_inventory()))
+        out = server.equip_best()
+        ops = [(op, a.get("item"), a.get("char") or a.get("to")) for op, a in g.jobs]
+        self.assertEqual(ops[:3], [("act.unequip", _u(40), CLAUDE), ("act.transfer", _u(40), GALE),
+                                   ("act.equip", _u(40), GALE)])
+        self.assertIn(("act.equip", _u(43), CLAUDE), ops[3:])
+        self.assertIn("Moonlantern (light for the party", out)
+        self.assertIn("Ceremonial Warhammer", out)
+
+    def test_equip_best_lantern_give_fails_reequips_the_holder(self):
+        g = self.use(FakeGame(lantern_inventory()))
+        g.fail = set()
+        orig = g.run_job
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            if op == "act.transfer" and args["item"] == _u(40) and args["to"] == GALE:
+                g.jobs.append((op, args))
+                return JobResult(status="failed", error="refused")
+            return orig(op, args, context, wait_s, **kw)
+        g.run_job = run_job
+        out = server.equip_best()
+        self.assertIn(("act.equip", {"char": CLAUDE, "item": _u(40)}), g.jobs)
+        self.assertIn("transfer failed", out)
+
     def test_alerts_line_in_full_status_only_once_in_deltas(self):
         server.ALERTS.last = ()
         st, inv = STATUS, s026_inventory()
@@ -362,6 +451,85 @@ class Tools(unittest.TestCase):
 
     def test_alerts_line_never_raises(self):
         self.assertEqual(server._alerts_line(None, {"items": "bad"}), "")
+
+
+# S023 Lae'zel's shop (trimmed): one 4.7 KB line per call before.
+TRADE_S023 = {
+    "mode": "Trade", "trader_gold": 621, "party_gold": 178, "price_modifier_pct": 143,
+    "offer": {"you": {"gold": 0, "items": []}, "trader": {"gold": 0, "items": []}},
+    "balance": {"you_give": 0, "you_get": 0},
+    "wares": [
+        {"uuid": _u(101), "name": "Rogue's Morsel", "count": 2, "price": 6, "supply": 1},
+        {"uuid": _u(102), "name": "Supply Pack", "price": 56, "supply": 40},
+        {"uuid": _u(103), "name": "Leather Armour", "price": 56, "kind": "Armor"},
+        {"uuid": _u(104), "name": "Chain Mail +1", "price": 364, "rarity": "Uncommon", "kind": "Armor"},
+        {"uuid": _u(105), "name": "Gloves of Missile Snaring", "price": 224, "rarity": "Rare"},
+        {"uuid": _u(106), "name": "Potion of Healing", "count": 5, "price": 70},
+        {"uuid": _u(107), "name": "Scroll of Revivify", "count": 3, "price": 420, "rarity": "Uncommon"},
+        {"uuid": _u(108), "name": "Sea Green Dye", "count": 7, "price": 28, "rarity": "Uncommon"},
+    ] + [{"uuid": _u(200 + i), "name": f"Arrow of Fire {i}", "price": 14} for i in range(12)],
+    "your_items": [{"uuid": _u(300 + i), "name": f"Bottle {i}", "price": i} for i in range(20)],
+    "your_items_more": True,
+}
+
+
+class TradeText(unittest.TestCase):
+    def h(self, it):
+        return "e" + it["uuid"][-3:].lstrip("0")
+
+    def test_listing_groups_sorts_and_caps(self):
+        out = economy.trade_text(TRADE_S023, self.h)
+        self.assertLess(len(out), 2200, out)
+        lines = out.splitlines()
+        self.assertTrue(lines[0].startswith("TRADE your gold 178 · trader gold 621"), lines[0])
+        food = next(l for l in lines if "food (supply" in l)
+        self.assertLess(food.index("Supply Pack"), food.index("Rogue's Morsel"))  # most supplies first
+        self.assertIn("42 supplies for 62g", food)
+        gear = next(l for l in lines if "gear (best rarity" in l)
+        self.assertLess(gear.index("[Rare] e105 Gloves"), gear.index("[Uncommon] e104 Chain Mail +1"))
+        self.assertLess(gear.index("Chain Mail +1"), gear.index("Leather Armour"))
+        cons = next(l for l in lines if "potions/scrolls" in l)
+        self.assertTrue(cons.split(": ", 1)[1].startswith("e107 Scroll of Revivify x3 420g"), cons)
+        self.assertIn("more (", cons)  # 14 consumables capped at 10
+        self.assertIn("Sea Green Dye", next(l for l in lines if l.strip().startswith("other")))
+        yours = next(l for l in lines if l.startswith("YOUR ITEMS"))
+        self.assertTrue(yours.startswith("YOUR ITEMS 20+ sellable"), yours)
+        self.assertIn("e319 Bottle 19 19g", yours)
+        self.assertIn("+8 more", yours)
+        self.assertIn("trade(full=true)", out)
+        self.assertNotIn("TABLE", out)  # nothing on the table yet
+
+    def test_full_lists_everything(self):
+        out = economy.trade_text(TRADE_S023, self.h, full=True)
+        self.assertIn("Arrow of Fire 11", out)
+        self.assertNotIn("more (", out)
+
+    def test_offer_shows_table_and_balance_only(self):
+        res = dict(TRADE_S023, offer={"you": {"gold": 0, "items": [{"uuid": _u(301), "name": "Bottle 1", "price": 1}]},
+                                       "trader": {"gold": 0, "items": [{"uuid": _u(102), "name": "Supply Pack", "price": 56}]}},
+                   balance={"you_give": 1, "you_get": 56}, feedback="That's hardly a fair trade.")
+        out = economy.trade_text(res, self.h, listing=False)
+        self.assertIn("TABLE you give: e301 Bottle 1 1g (=1g) | you get: e102 Supply Pack 56g (=56g) | short by 55g", out)
+        self.assertIn("TRADER says: That's hardly a fair trade.", out)
+        self.assertNotIn("WARES", out)
+        self.assertLess(len(out), 400)
+
+    def test_tool_renders_through_trade_text(self):
+        class G(FakeGame):
+            def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+                self.jobs.append((op, args))
+                return JobResult(status="done", result=TRADE_S023)
+        saved = (server.H, server.game)
+        server.H, server.game = Handles(), G(s026_inventory())
+        self.addCleanup(lambda: (setattr(server, "H", saved[0]), setattr(server, "game", saved[1])))
+        out = server.trade()
+        self.assertTrue(out.startswith("trade: done\nTRADE "), out[:80])
+        self.assertIn("WARES 20 items", out)
+        out = server.trade(request="e1", confirm=True)
+        self.assertNotIn("WARES", out)
+        self.assertIn("wares/your items unchanged", out)
+        out = server.trade(full=True)
+        self.assertEqual(server.game.jobs[-1][1].get("max"), 500)
 
 
 if __name__ == "__main__":

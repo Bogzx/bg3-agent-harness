@@ -16,12 +16,14 @@ local widgets = {}      -- list of {name=, dc=, visible=}
 local quiet = false
 local commands = {}
 local dialogue = nil    -- what UIState.dialogue returns
+printed = {}
 
 Ext = {
     Utils = {
         MonotonicTime = function() return clock end,
         GetGameState = function() return gameState end,
         PrintWarning = function(m) print("WARN " .. m) end,
+        Print = function(m) printed[#printed + 1] = m end,
     },
     Input = { InjectKeyPress = function(k) keys[#keys + 1] = k end },
     Events = {
@@ -324,6 +326,18 @@ widgets = DLG
 dialogue = { speaker = "Lae'zel", text = "Go on.", continue = true }
 run(3000)
 check("continue: no skip", #commands == 0 and count(events, "dialogue_line") == 1)
+
+-- slow ticks are recorded with their phase (bg3le's 907 ms Tick at loads)
+K.slow = nil
+K.phase = "widgets"
+K.noteSlow(10)
+check("fast tick: not recorded", K.slow == nil)
+K.noteSlow(120)
+K.phase = "movie"
+K.noteSlow(80)
+check("slow tick: max + phase kept", K.slow and K.slow.n == 2 and K.slow.max == 120 and K.slow.phase == "widgets")
+check("slow tick: printed", #printed == 2 and printed[1]:find("120 ms in widgets", 1, true) ~= nil, printed[1])
+check("status carries slow", ops["autoskip.status"]({}).slow == K.slow)
 
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end

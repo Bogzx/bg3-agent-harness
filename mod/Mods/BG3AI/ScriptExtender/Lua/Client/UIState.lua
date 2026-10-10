@@ -46,6 +46,7 @@ S.SCREENS = {
     { "Dialogue", "dialogue" },
     { "CharacterLevelUp", "level_up" },
     { "Trade", "trade" },
+    { "Donate", "donate" },
     { "Pickpocket", "trade" },
     { "LongRest", "rest" },
     { "MakeCamp", "rest" },
@@ -72,7 +73,7 @@ S.SCREENS = {
 S.BLOCKING = {
     main_menu = true, loading = true, character_creation = true, reaction = true, roll = true,
     popup = true, tutorial = true, dialogue = true, level_up = true, trade = true, rest = true,
-    book = true, reward = true, learn_spells = true, tadpole_tree = true, save_load = true,
+    book = true, reward = true, donate = true, learn_spells = true, tadpole_tree = true, save_load = true,
     game_menu = true, options = true, game_over = true,
 }
 

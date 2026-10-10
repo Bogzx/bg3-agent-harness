@@ -14,6 +14,8 @@ APART_M = 15.0        # farther than this from the leader is "apart"
 FLOOR_M = 4.0         # ...or this far above/below it: another floor (S015: Gale left on a 5 m ledge 7 m away, no path)
 STRAGGLER_M = 12.0    # travel_to: a member this far behind after a leg gets waited for
 CATCH_UP_S = 4.0      # ...this long (following on its own), before it is walked back in legs
+CATCH_UP_GAIN_M = 0.5  # ...and longer while the gap still shrinks by this much per poll (trailing a run, not stuck)
+CATCH_UP_MAX_S = 15.0  # ...up to this long in all
 REGROUP_WAIT_S = 60.0  # regroup: the longest it waits for the walks back
 
 

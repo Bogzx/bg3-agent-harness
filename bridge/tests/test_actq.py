@@ -464,6 +464,7 @@ class WaitForNoop(Base):
         orig = server.METRICS.write
         server.METRICS.write = lambda rec: self.recs.append(rec)
         self.addCleanup(setattr, server.METRICS, "write", orig)
+        server._noop_waits["n"] = 0
 
     def timed(self, target: str, timeout_s: float = 5.0) -> tuple[str, float]:
         t0 = time.monotonic()
@@ -535,6 +536,23 @@ class WaitForNoop(Base):
             out, dt = self.timed("combat_started,dialogue_started", timeout_s=5)  # an ambush needs no job of ours
             self.assertGreater(dt, 0.35)
             self.assertIn("after 0.", out)
+        finally:
+            server.IDLE_EVENT_WAIT_S = old
+
+    def test_repeated_world_wait_with_only_reads_between_answers_at_once(self):
+        old, server.IDLE_EVENT_WAIT_S = server.IDLE_EVENT_WAIT_S, 0.4
+        try:
+            out, dt = self.timed("combat_started", timeout_s=5)
+            self.assertGreater(dt, 0.35)  # the first one still waits for an ambush
+            server.get_status()  # a read: nothing could have changed
+            out, dt = self.timed("combat_started", timeout_s=5)
+            self.assertLess(dt, 0.3)
+            self.assertIn("again: only reads ran since", out)
+            self.assertEqual(self.last_noop(), "repeat")
+            server.move_to(target=self.door)  # an action resets it
+            time.sleep(0.05)
+            out, dt = self.timed("combat_started", timeout_s=5)
+            self.assertNotIn("again", out)
         finally:
             server.IDLE_EVENT_WAIT_S = old
 

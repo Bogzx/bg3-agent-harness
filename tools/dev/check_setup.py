@@ -20,6 +20,10 @@ sys.path.insert(0, str(ROOT / "bridge" / "src"))
 _tmp = Path(tempfile.mkdtemp(prefix="bg3ai-setup-"))
 atexit.register(shutil.rmtree, _tmp, True)
 os.environ.setdefault("BG3AI_METRICS_PATH", str(_tmp / "metrics.jsonl"))
+# Live tests load their own LIVETEST-<worker> save first (game.lock rule); save/load is gated on these (11:14: a
+# load_game here FAILED "BG3AI_PLAYTHROUGH unset" and the script went on in whatever state the game was in).
+os.environ.setdefault("BG3AI_PLAYTHROUGH", "claude-run-2")
+os.environ.setdefault("BG3AI_SAVE_PREFIX", "Claude-")
 
 from bg3ai import server  # noqa: E402
 
