@@ -103,11 +103,13 @@ class NotesWindow(Base):
 
     def test_short_job_has_no_hint(self):
         server._async["j9"] = {"ctx": "server", "id": 1, "tool": "move_to", "t0": time.monotonic(), "eta": 3.0}
+        self.addCleanup(server._async.pop, "j9", None)
         self.g.jobs[1] = {"status": "running", "end": time.monotonic() + 5, "op": "act.move_to", "args": {}}
         self.assertEqual(server._notes_window(), "")
 
     def test_long_job_hint_from_its_eta(self):
         server._async["j9"] = {"ctx": "server", "id": 1, "tool": "move_to", "t0": time.monotonic(), "eta": 20.0}
+        self.addCleanup(server._async.pop, "j9", None)
         self.g.jobs[1] = {"status": "running", "end": time.monotonic() + 5, "op": "act.move_to", "args": {}}
         self.assertIn("NOTES WINDOW: ~20s", server._notes_window())
         self.assertEqual(server._notes_window(), "")

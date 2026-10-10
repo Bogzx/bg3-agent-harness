@@ -968,7 +968,8 @@ end
 -- 2nd press is reopened by the 3rd (normal opens + travel take 0.5 s in all).
 -- pre(job, state): runs each tick before the map is touched; nil = keep waiting, true = go on,
 -- or "failed", result, err (fast_travel waits out a TravelError that clears after a load).
-local MAP_PRESS_MS, MAP_PRESSES = 1200, 3
+-- 5 (was 3): live 11:4x, right after a camp leave M was ignored for >3.6 s (the leave's transition)
+local MAP_PRESS_MS, MAP_PRESSES = 1200, 5
 local function withMap(kind, timeout_ms, fn, pre)
     local state = { mapPresses = 0, mapKeys = {} }
     local function press()
@@ -1273,6 +1274,115 @@ local function donateSlot(w, vmItem)
     return nil
 end
 SV.donateSlot = donateSlot
+
+------------------------------------------------------------------------
+-- Pickpocket window (Pickpocket.xaml): the NPC's pockets (Container.Inventory, ListBox "inventoryListBox"),
+-- and for the selected item the game's own odds: Roll.Chance (0..1, the pie; -1 = none) and Roll.DifficultyCheck
+-- (the number in the target ring). Selecting an item is the player's click on it; StealBtn (TakeItemCommand,
+-- enabled by CanSteal) rolls Sleight of Hand: Roll.Finished, Roll.Success, Roll.RolledNumber.
+------------------------------------------------------------------------
+
+local function ppRoll(dc)
+    local function num(path) return tonumber(UI.path(dc, path)) end
+    local chance = num("Roll.Chance") or num("Chance")
+    return { chance = chance and chance >= 0 and math.floor(chance * 100 + 0.5) or nil,
+             dc = num("Roll.DifficultyCheck"), rolled = num("Roll.RolledNumber"),
+             finished = UI.path(dc, "Roll.Finished") == true, success = UI.path(dc, "Roll.Success") == true,
+             can_steal = UI.prop(dc, "CanSteal") ~= false }
+end
+
+-- {lb, rows = {{i (0-based ListBox index), view}}} for the shown pockets.
+local function ppRows(w, dc, npc)
+    local lb = UI.byName(w, "inventoryListBox")
+    if not lb then return nil, "the pickpocket window has no item list" end
+    local vmInv = UI.path(dc, "Container.Inventory")
+    local owner = entity(npc)
+    local inv = owner and vmInv and bestInventory(vmInv, inventoriesOf(owner)) or nil
+    local rows = {}
+    local coll = UI.get(lb, "Items") or UI.get(lb, "ItemsSource")
+    for i, slot in UI.items(coll, 200) do
+        local obj = slot and UI.get(slot, "Object")
+        if obj ~= nil then
+            -- itemView drops gold (trade lists it apart); here gold is a pocket like any other.
+            local v = itemView({ index = tonumber(UI.get(slot, "Index")), item = obj }, inv)
+                or { name = "Gold", count = tonumber(UI.get(obj, "Count")) }
+            rows[#rows + 1] = { i = i - 1, view = v }
+        end
+    end
+    -- Diagnostics for an empty list: occupied slots of the pockets VM (unfiltered) and whether names matched.
+    return { lb = lb, rows = rows, slots = vmInv and #vmSlots(vmInv) or nil, named = inv ~= nil }
+end
+
+local function ppMatch(v, want)
+    if v.uuid and v.uuid == want then return true end
+    local n, w = (v.name or ""):lower(), tostring(want):lower()
+    return n ~= "" and (n == w or n:find(w, 1, true) ~= nil)
+end
+
+-- ui.pickpocket {npc?, take? = item name or uuid, min_chance? (percent), max? = 20}
+-- Without take: every item with the shown chance/DC (each selected in turn, as a player clicks through them).
+-- With take: selects it, refuses below min_chance, presses Steal and reports the roll.
+RPC.register("ui.pickpocket", function(args)
+    local w = visibleWidget("Pickpocket") or error("no pickpocket window is open: pickpocket(npc) opens it", 0)
+    local dc = try(function() return w.DataContext end) or error("the pickpocket window has no DataContext", 0)
+    local got, err = memoized(function() return ppRows(w, dc, args.npc) end)
+    if not got then error(err, 0) end
+    local rows, lb = got.rows, got.lb
+    if args.take then
+        local row
+        for _, r in ipairs(rows) do if ppMatch(r.view, args.take) then row = r break end end
+        if not row then
+            local names = {}
+            for _, r in ipairs(rows) do names[#names + 1] = r.view.name or "?" end
+            error("no '" .. tostring(args.take) .. "' in their pockets; they carry: " .. table.concat(names, ", "), 0)
+        end
+        rows = { row }
+    end
+    local max = tonumber(args.max) or 20
+    local out, k, phase, t = {}, 0, "select", 0
+    return waitJob("ui.pickpocket", 6000 + 200 * math.min(#rows, max), function(job)
+        if phase == "select" then
+            k = k + 1
+            local r = rows[k]
+            if r == nil or k > max then
+                return "done", { items = out, more = #rows > max and (#rows - max) or nil, slots = got.slots,
+                                 named = got.named }
+            end
+            local ok, serr = pcall(lb.SetProperty, lb, "SelectedIndex", r.i)
+            if not ok then return "failed", nil, "couldn't select " .. tostring(r.view.name) .. ": " .. tostring(serr) end
+            phase, t = "read", RPC.now_ms()
+            return nil
+        end
+        if phase == "read" then
+            if RPC.now_ms() - t < 100 then return nil end   -- SelectionChanged → SelectItemCommand fills Roll
+            local r, roll = rows[k], ppRoll(dc)
+            r.view.chance, r.view.dc = roll.chance, roll.dc
+            out[#out + 1] = r.view
+            if not args.take then phase = "select" return nil end
+            if args.min_chance and roll.chance and roll.chance < tonumber(args.min_chance) then
+                return "failed", { item = r.view }, string.format("%s: %d%% chance (DC %s) is below min_chance %s; nothing taken",
+                    tostring(r.view.name), roll.chance, tostring(roll.dc), tostring(args.min_chance))
+            end
+            local btn = UI.byName(w, "StealBtn")
+            if not btn then return "failed", nil, "the pickpocket window has no Steal button" end
+            local ok, perr = UI.press(btn)
+            if not ok then return "failed", { item = r.view }, "Steal didn't work: " .. tostring(perr) end
+            phase, t = "roll", RPC.now_ms()
+            return nil
+        end
+        if phase == "roll" then
+            local roll = ppRoll(dc)
+            if roll.finished then
+                local v = rows[k].view
+                return "done", { item = v, success = roll.success, rolled = roll.rolled, dc = roll.dc, chance = v.chance }
+            end
+            if RPC.now_ms() - t > 5000 then
+                return "done", { item = rows[k].view, pending = true }
+            end
+            return nil
+        end
+    end)
+end)
 
 RPC.register("ui.donate", function(args)
     local w = visibleWidget("Donate") or error("no donation window is open: it opens from Gale's dialogue "

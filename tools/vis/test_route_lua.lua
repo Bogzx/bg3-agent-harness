@@ -469,6 +469,10 @@ test("fixtureRelation: a Button under a painting names it; lookalikes and far th
     eq(S.fixtureRelation(lone, { lone, { name = "Statue", p = { 5, 0, 50 } } }), nil, "nothing within 2 m")
     local lever = { name = "Lever", p = { 0, 0, 0 } }
     eq(S.fixtureRelation(lever, { lever, { name = "Gate", p = { 1, 0, 0 } } }), "by Gate", "beside")
+    -- live 11:3x: the flush button under General sits ~2.5 m off the 4 m painting helper's pivot
+    local gen = { name = "Button", p = { 0, 0, 0 } }
+    eq(S.fixtureRelation(gen, { gen, { name = "General", p = { 2.5, 2.0, 0 } } }), "under General", "2.5 m under a tall painting")
+    eq(S.fixtureRelation(gen, { gen, { name = "General", p = { 3.5, 2.0, 0 } } }), nil, "beyond 3 m")
 end)
 
 -- ---- inventory cache + rev (State.lua) ---------------------------------------------

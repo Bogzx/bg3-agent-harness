@@ -118,6 +118,7 @@ end
 
 local function reset()
     calls, osiv, stats = {}, {}, {}
+    Ext.System = nil
     party_rows = { P1 }
     world = {
         [P1] = { pos = { 0, 0, 0 }, comps = {} },
@@ -974,11 +975,21 @@ test("lockpick: a party member carries the key -> refused, points to interact", 
     eq(j.status, "failed", "status"); assert(j.error:find("use interact"), j.error)
 end)
 
-test("lockpick: engine Use first; StartedLockpicking -> done via engine, no click, no purge", function()
+-- The click's own request (NETMSG_CHARACTER_LOCKPICK -> LockpickingSystem.PickLockRequests).
+local function pick_system()
+    Ext.System = { ServerLockpicking = { PickLockRequests = {} } }
+    return Ext.System.ServerLockpicking.PickLockRequests
+end
+
+test("lockpick: engine request first; StartedLockpicking -> done via engine, no click, no purge", function()
     osiv[key("IsLocked", DOOR)] = 1
+    local reqs = pick_system()
     local j = job(op("lockpick", { char = P1, target = DOOR }))
+    eq(#reqs, 0, "no request before arriving")
     arrive(j, { 8.5, 0, 0 })
-    eq(#called("Use"), 1, "Use")
+    eq(#reqs, 1, "one PickLockRequest")
+    assert(reqs[1].Player and reqs[1].Target, "request has Player and Target entities")
+    eq(#called("Use"), 0, "no Osiris Use (it only 'uses' the lock)")
     A.dispatch("StartedLockpicking", { P1, DOOR })
     eq(j.status, "done", "status " .. tostring(j.error))
     eq(j.result.via, "engine", "via"); eq(j.result.needs_click, nil, "no click")
@@ -994,6 +1005,16 @@ test("lockpick: no StartedLockpicking -> falls back to the verified click", func
     eq(j.result.needs_click, DOOR, "needs_click"); eq(j.result.expect, "roll", "expect")
 end)
 
+test("lockpick: no lockpicking system (older runtime) -> the click at once", function()
+    osiv[key("IsLocked", DOOR)] = 1
+    Ext.System = nil
+    local j = job(op("lockpick", { char = P1, target = DOOR }))
+    arrive(j, { 8.5, 0, 0 })
+    tick(2)
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(j.result.needs_click, DOOR, "needs_click")
+end)
+
 test("lockpick: a lock with no lockpick difficulty (zero DC id) -> refused before walking, no Use/click", function()
     osiv[key("IsLocked", DOOR)] = 1
     world[DOOR].comps.Lock = { Key_M = "NO_KEY", LockDifficultyClassID = "00000000-0000-0000-0000-000000000000", LockDC = 0 }
@@ -1002,12 +1023,13 @@ test("lockpick: a lock with no lockpick difficulty (zero DC id) -> refused befor
     eq(#called("Use"), 0, "no Use"); eq(#called("CharacterMoveToPosition"), 0, "no walk")
 end)
 
-test("lockpick: a lock with a difficulty id -> proceeds (engine Use, then the click)", function()
+test("lockpick: a lock with a difficulty id -> proceeds (engine request, then the click)", function()
     osiv[key("IsLocked", DOOR)] = 1
     world[DOOR].comps.Lock = { Key_M = "NO_KEY", LockDifficultyClassID = "0d9484eb-0000-4000-8000-000000000001", LockDC = 0 }
+    local reqs = pick_system()
     local j = job(op("lockpick", { char = P1, target = DOOR }))
     arrive(j, { 8.5, 0, 0 })
-    eq(#called("Use"), 1, "Use")
+    eq(#reqs, 1, "PickLockRequest")
 end)
 
 -- ---- turn-based mode outside combat (S024-S026 Shadow Curse) ---------------

@@ -328,11 +328,40 @@ function V.itemVisible(ctx, uuid, e, pos)
     if not interact and kind ~= "door" and kind ~= "container" and kind ~= "ladder" and not isTrap then
         return false -- scenery: the game doesn't highlight it either
     end
-    if not V.perceived(ctx, uuid, pos) and not V.largePerceived(ctx, uuid, e, pos, kind)
-        and not V.fixturePerceived(ctx, uuid, e, pos, kind) then
-        return false
+    if V.perceived(ctx, uuid, pos) or V.largePerceived(ctx, uuid, e, pos, kind)
+        or V.fixturePerceived(ctx, uuid, e, pos, kind) then
+        if V.FIXTURE_KINDS[kind] and V.isNamedFixture(uuid) then
+            local host = V.osi(Osi.GetHostCharacter)
+            V.fixtureSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = host and V.osi(Osi.GetRegion, host) or nil }
+        end
+        return true, kind
     end
-    return true, kind
+    if V.FIXTURE_KINDS[kind] and V.fixtureRemembered(ctx, uuid, pos) then return true, kind end
+    return false
+end
+
+-- Puzzle fixtures by their shown name (State.FIXTURE_NAMES: Button, Lever, Switch, ...).
+function V.isNamedFixture(uuid)
+    local S = BG3AI.State
+    return type(S) == "table" and type(S.FIXTURE_NAMES) == "table" and S.FIXTURE_NAMES[V.name(uuid) or ""] == true
+end
+
+-- A fixture seen moments ago stays known (fixtures don't move; a player remembers the button): live 11:3x, Grand
+-- Mausoleum: after pressing the button under Moonrise Towers, the one under Grief (recessed, 12 m along the same
+-- wall) was hidden by the plinth and interact refused "target is not visible". Kept FIXTURE_REMEMBER_MS on the same
+-- level while a party member is within FIXTURE_REMEMBER_M.
+V.FIXTURE_REMEMBER_MS = 300000
+V.FIXTURE_REMEMBER_M = 30.0
+V.fixtureSeen = V.fixtureSeen or {}
+function V.fixtureRemembered(ctx, uuid, pos)
+    local m = V.fixtureSeen[uuid]
+    if not (m and pos) or Ext.Utils.MonotonicTime() - m.t > V.FIXTURE_REMEMBER_MS then return false end
+    local host = V.osi(Osi.GetHostCharacter)
+    if m.level ~= (host and V.osi(Osi.GetRegion, host) or nil) then return false end
+    for _, o in ipairs(ctx.observers) do
+        if o.pos and U.dist(o.pos, pos) <= V.FIXTURE_REMEMBER_M then return true end
+    end
+    return false
 end
 
 ------------------------------------------------------------------------

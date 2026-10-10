@@ -10,7 +10,7 @@ import json
 import unittest
 
 from bg3ai import macros, server
-from test_turn_macros import GOB, Base, combat
+from test_turn_macros import GOB, P1, P2, Base, combat
 
 
 class LegRules(unittest.TestCase):
@@ -95,6 +95,81 @@ class TravelLegs(Base):
         self.assertEqual([m[1]["pos"][0] for m in self.g.ops("act.move_to")], [55.0, 90.0])
         self.assertIn("leg 1: along the route (92m): move_to: done", out)
         self.assertIn("arrived", out)
+
+
+class InTheWay(Base):
+    """Live 11:12, Last Light Inn: after an Oak Door, four legs stopped short "path blocked" at one spot: someone
+    stood in the doorway. A companion there is stepped back; an NPC gets a moment to move; either way it is named."""
+    NPC = "77777777-0000-0000-0000-000000000001"
+
+    def setUp(self) -> None:
+        super().setUp()
+        server.SETTLE_S = 10.0
+        self.saved = server.BLOCKER_WAIT_S
+        server.BLOCKER_WAIT_S = 0.5
+        self.addCleanup(setattr, server, "BLOCKER_WAIT_S", self.saved)
+        self.leader_moves = 0
+
+        def result(op, a):
+            if op != "act.move_to":
+                return {}
+            if a.get("char") == P2:
+                return {"after": {"pos": a.get("pos")}}
+            self.leader_moves += 1
+            if self.leader_moves == 1:  # the first leg ends at the doorway
+                self.g.watch["party"][0]["pos"] = [10.0, 0.0, 0.0]
+                return {"stopped_short": True, "reason": "path blocked", "after": {"pos": [10.0, 0.0, 0.0]}}
+            self.g.watch["party"][0]["pos"] = list(a["pos"])
+            return {"after": {"pos": a.get("pos")}}
+        self.g.result_for = result
+
+        def reach(a):
+            x = self.g.watch["party"][0]["pos"][0]
+            return {"reachable": True, "pos": [min(30.0, x + 20.0), 0.0, 0.0], "verified": True}
+        self.g.reach = reach
+
+    def moves_of(self, who):
+        return [a for _, a in self.g.ops("act.move_to") if a.get("char") == who]
+
+    def test_companion_in_the_doorway_is_stepped_back(self):
+        self.g.watch["party"][1]["pos"] = [11.5, 0.0, 0.4]
+        out = server.travel_to(x=30.0, y=0.0, z=0.0, wait=True)
+        self.assertIn("in the way: ", out)
+        self.assertIn("stepped back behind", out)
+        self.assertEqual(self.moves_of(P2)[0]["pos"], [7.0, 0.0, 0.0])
+        self.assertIn("arrived", out)
+        self.assertNotIn("STOPPED", out)
+
+    def test_npc_that_moves_on_is_waited_for(self):
+        npc = {"uuid": self.NPC, "name": "Mattis", "pos": [11.0, 0.0, 0.0], "dist": 1.0}
+        self.g.nearby = {"characters": [npc], "items": []}
+        orig = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            r = orig(op, args, context, timeout)
+            if op == "state.nearby":
+                self.g.nearby["characters"][0]["pos"] = [11.0, 0.0, 5.0]  # steps aside after the first look
+            return r
+        self.g.rpc = rpc
+        out = server.travel_to(x=30.0, y=0.0, z=0.0, wait=True)
+        self.assertIn("Mattis: waited", out)
+        self.assertIn("arrived", out)
+        self.assertEqual(self.moves_of(P2), [])
+
+    def test_npc_that_stays_is_named_in_the_stop(self):
+        self.g.result_for = lambda op, a: ({"stopped_short": True, "reason": "path blocked",
+                                            "after": {"pos": [10.0, 0.0, 0.0]}} if op == "act.move_to" else {})
+        self.g.watch["party"][0]["pos"] = [10.0, 0.0, 0.0]
+        self.g.nearby = {"characters": [{"uuid": self.NPC, "name": "Mattis", "pos": [11.0, 0.0, 0.2]}], "items": []}
+        out = server.travel_to(x=30.0, y=0.0, z=0.0, wait=True)
+        self.assertIn("Mattis (stands in the path, didn't move", out)
+        self.assertIn("STOPPED", out)
+        self.assertEqual(out.count("didn't move"), 1)
+
+    def test_nobody_in_the_way_keeps_the_old_stall_rule(self):
+        self.assertEqual(server._in_the_way([0, 0, 0], [10, 0, 0], [{"uuid": "x", "pos": [-1, 0, 0]},
+                                                                     {"uuid": "y", "pos": [2, 0, 3]},
+                                                                     {"uuid": "z", "pos": [2, 5, 0]}], P1), [])
 
 
 class MeleeApproach(Base):

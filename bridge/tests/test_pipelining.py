@@ -313,7 +313,27 @@ class OtherFloor(Base):
         self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [20.0, -3.0, 0.0]))  # same floor: no probe
         self.assertEqual(len(self.g.ops("nav.route")), 1)
         self.route = {"too_far": True}
-        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [500.0, -62.0, 0.0]))
+        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [500.0, -12.0, 0.0]))  # not far below: walk
+
+    def test_far_interior_goal_names_the_entrance(self):
+        # Live 11:2x: the Mausoleum room is ~950 m off and 69 m below the gate in level coordinates (too far to
+        # preview); travel_to walked 115 m south to the House of Healing. An entrance 17 m away = the way in.
+        self.route = {"too_far": True, "straight_m": 954.6}
+        out = server._other_floor(P1, [0.0, 38.0, 0.0], [-100.0, -31.0, -950.0])
+        self.assertIn("REFUSED: the goal is 69m below you", out)
+        self.assertIn("likely inside an interior", out)
+        self.assertIn("Mausoleum Entrance <exit> 17.1m NW", out)
+
+    def test_far_goal_with_only_a_ladder_walks(self):
+        self.route = {"too_far": True}
+        real = self.g.try_rpc
+
+        def fake(op, args=None, context="server", default=None):
+            if op == "nav.frontier":
+                return {"leads": [{"uuid": CHEST, "name": "Ladder", "kind": "ladder", "dist": 10.0}]}
+            return real(op, args, context, default)
+        self.g.try_rpc = fake
+        self.assertIsNone(server._other_floor(P1, [0.0, 38.0, 0.0], [-100.0, -31.0, -950.0]))
 
 
 class SettleAndPace(Base):

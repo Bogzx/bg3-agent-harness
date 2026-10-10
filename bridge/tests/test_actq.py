@@ -623,3 +623,13 @@ class WatcherParty(unittest.TestCase):
         self.w.baseline()
         self.party(hp=19, surface="Fire")
         self.assertIsNone(self.w.check("move_to", None, ui=False))
+
+    def test_passive_rolls_and_noise_events_do_not_stop_a_walk(self):
+        """Roadside Cliffs 11:5x: passive Perception rolls (Claude, Gale) fired during a travel_to; only an
+        active roll on screen (screen=roll) is a decision. The walk's stop there was 'no walkable ground'."""
+        self.w.baseline()
+        self.g.push("roll_result", {"roller": {"name": "Claude"}, "success": True, "active": False})
+        self.g.push("roll_result", {"roller": {"name": "Gale"}, "success": False, "active": False})
+        self.g.push("status_applied", {"name": "Moonshield"})
+        self.g.push("spotted", {"kind": "trap"})
+        self.assertIsNone(self.w.check("travel_to", None, ui=True))

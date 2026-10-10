@@ -254,6 +254,7 @@ SCROLL_TRIES = 6
 WHEEL_NOTCHES = 3
 INTRO_CLICK = (0.5, 0.85)  # window fraction clicked to skip the level-up intro (empty floor under the character)
 INTRO_SKIP_TRIES = 2
+FROZEN_SWEEP = (0.5, 0.30, 0.75)   # a frozen page's list: centre column x, swept from y0 to y1 (window fractions)
 
 Rpc = Callable[[str, dict], dict]
 MEMO = Path(os.environ.get("BG3AI_RUNTIME", Path(__file__).resolve().parents[3] / "runtime")) / "levelup_clicks.json"
@@ -313,6 +314,7 @@ class SpellClicker:
         self.origin: tuple[float, float] | None = None   # centre of button 1 (window px)
         self.cell: float | None = None                   # button pitch (window px)
         self.probes = 0
+        self.frozen = False                              # page stuck in its intro, made hit-testable (centred)
         self.clock = clock
         self.deadline = clock() + budget_s
 
@@ -331,8 +333,11 @@ class SpellClicker:
         """The page opens with a "Level Up!" intro whose panels stay off-screen until LevelUpStep is IntroComplete;
         it never finished by itself in S021 (still up 10 s after level_up opened the page). A click skips it
         (UISkipDialog, what the player did by hand in S021). Only clicked while the intro is up."""
-        for _ in range(INTRO_SKIP_TRIES):
-            if not p.get("step") or p.get("step") == "IntroComplete" or p.get("placed"):
+        def done(q: dict) -> bool:
+            return not q.get("step") or q.get("step") == "IntroComplete" or bool(q.get("placed"))
+
+        for _ in range(0 if p.get("fade") else INTRO_SKIP_TRIES):
+            if done(p):
                 return p
             w, h = self.inp.window_size()
             self.log(f"level-up intro still up (step {p.get('step')}): clicking to skip it")
@@ -340,10 +345,19 @@ class SpellClicker:
             for _ in range(10):
                 self.inp.wait_frames(6)
                 p = self.probe(args)
-                if p.get("step") == "IntroComplete" or p.get("placed"):
+                if done(p):
                     self.inp.wait_frames(30)   # the panels slide in (LevelUpAfterItems storyboards)
                     return self.probe(args)
-        return p
+        if done(p):
+            return p
+        # Clicks did not end it: the page was opened during a screen fade and froze in its intro (live 2026-10-10,
+        # Wyll L4 right after swap_party's camp dialogue: fade at open, step stuck at Started, nothing hit-testable,
+        # clicks ignored; the mod now waits for the fade before opening). Make the frozen page hit-testable; its
+        # lists then sit centred under the banner (x 0.41-0.58, y 0.44), so the search sweeps the centre first.
+        self.log(f"level-up page frozen in its intro (step {p.get('step')}, fade {p.get('fade')}): making it clickable")
+        q = self.rpc("ui.level_up_spell_probe", dict(args, intro="hit"))
+        self.frozen = bool(q.get("hit_set"))
+        return self.probe(args)
 
     def ready(self, args: dict) -> dict:
         """Probe until the selector is shown and the spell's button exists (tab and sub-tab switches take frames)."""
@@ -392,6 +406,14 @@ class SpellClicker:
         (or SEARCH_FROM) until on a button or near the list, then button-sized steps around there."""
         w, h = self.inp.window_size()
         fx, fy = _last_hit.get(kind) or SEARCH_FROM
+        if self.frozen:
+            x, y = round(w * FROZEN_SWEEP[0]), h * FROZEN_SWEEP[1]
+            while y < h * FROZEN_SWEEP[2]:
+                self._check_time(f"spell {args['name']}: no spell button found under the cursor")
+                q = self.probe(args, (x, round(y)))
+                if q.get("hovered"):
+                    return (x, round(y)), q["hovered"]
+                y += guess * 0.8
         near_at = None
         for pt in spiral(fx * w, fy * h, guess * COARSE_STEP, w, h):
             self._check_time(f"spell {args['name']}: no spell button found under the cursor")
@@ -443,7 +465,8 @@ class SpellClicker:
         cell_units = float((p.get("cell") or {}).get("w") or 88.0)
         guess = cell_units * min(w / (DESIGN_H * 16 / 9), h / DESIGN_H)
         pt, k = self._find(args, kind, guess)
-        _last_hit[kind] = (pt[0] / w, pt[1] / h)
+        if not self.frozen:   # a frozen page's centred layout says nothing about where a normal page has its list
+            _last_hit[kind] = (pt[0] / w, pt[1] / h)
         cols = p.get("cols") or 1
         for _ in range(SCROLL_TRIES + 1):
             self._check_time(f"spell {args['name']}")

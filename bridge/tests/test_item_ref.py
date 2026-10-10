@@ -46,6 +46,9 @@ class ItemRef(unittest.TestCase):
         orig = server.game
         server.game = fake
         self.addCleanup(setattr, server, "game", orig)
+        # Fresh handles: other modules register their own "Gale"/"Simple Robe" (then names are ambiguous).
+        saved_h, server.H = server.H, server.render.Handles()
+        self.addCleanup(setattr, server, "H", saved_h)
         for u in (GALE, CLAUDE):
             server.H.get(u, "Gale" if u == GALE else "Claude")
         for it in items:

@@ -553,3 +553,43 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
     if not full and (any(len(v) > gmax for v in groups.values()) or len(yours) > TRADE_YOURS_MAX):
         lines.append("(trade(full=true) lists everything)")
     return "\n".join(lines)
+
+
+# --- pickpocket (Services.lua ui.pickpocket: the window's items with the game's shown odds) ---
+
+def _pocket(it: dict, h: Callable[[dict], str]) -> str:
+    s = f"{h(it)} {it.get('name') or '?'}".strip()
+    if _count(it) > 1:
+        s += f" x{_count(it)}"
+    if it.get("price") is not None:
+        s += f" {it['price']}g"
+    if it.get("chance") is not None:
+        s += f" {it['chance']}%" + (f" DC{it['dc']}" if it.get("dc") is not None else "")
+    if it.get("story"):
+        s += " story"
+    return s
+
+
+def pockets_text(res: dict, h: Callable[[dict], str]) -> str:
+    """'POCKETS (chance to steal, best odds first): e40 Gold x12 81% DC8 | e41 Dagger 2g 54% DC12 | …'."""
+    items = [it for it in (res or {}).get("items") or [] if isinstance(it, dict)]
+    if not items:
+        return "POCKETS: nothing to steal"
+    items.sort(key=lambda it: (-(it.get("chance") if isinstance(it.get("chance"), (int, float)) else -1), -_price(it)))
+    more = (res or {}).get("more")
+    return ("POCKETS (the game's chance to steal, DC; best odds first): " + " | ".join(_pocket(it, h) for it in items)
+            + (f" | +{more} more" if more else "")
+            + ' → pickpocket(npc, take="<name or id>"); press_key("ESCAPE") leaves with nothing')
+
+
+def steal_text(res: dict, h: Callable[[dict], str]) -> str:
+    it = (res or {}).get("item") or {}
+    what = _pocket({k: v for k, v in it.items() if k not in ("chance", "dc")}, h)
+    if res.get("pending"):
+        return f"stole? {what}: the roll had not finished after 5 s (get_inventory shows if it came)"
+    roll = f"rolled {res.get('rolled')} vs DC {res.get('dc')}" if res.get("rolled") is not None else ""
+    odds = f"{res.get('chance')}% chance" if res.get("chance") is not None else ""
+    tail = ", ".join(x for x in (odds, roll) if x)
+    if res.get("success"):
+        return f"stole {what}" + (f" ({tail})" if tail else "")
+    return f"CAUGHT? the steal of {what} failed" + (f" ({tail})" if tail else "") + ": the owner may notice (crime)"

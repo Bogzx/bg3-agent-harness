@@ -299,6 +299,9 @@ local function partyBrief(ctx, uuid, active)
     if not truthy(osi(Osi.IsOnStage, uuid)) then o.off_stage = true end
     o.concentration = concentration(e)
     o.level_up = levelUpTo(e)  -- bridge: "LEVEL UP: Gale (2)"
+    -- The "!" the game shows over a companion who wants to talk (eoc::tag::HasExclamationDialog; live
+    -- 2026-10-10: Wyll at camp). Bridge: "TALK: Wyll wants to talk" (S023 Gale, S026 Withers took screenshots).
+    if comp(e, "HasExclamationDialog") then o.wants_talk = true end
     -- Party cohesion (bridge party.py: PARTY APART, re-chain): the member's region (a member on another
     -- level has coordinates in another space) and whether it follows the active character.
     o.region = osi(Osi.GetRegion, uuid)
@@ -1064,7 +1067,7 @@ end
 -- screen: the button sits right under the named painting.
 S.FIXTURE_NAMES = { Button = true, Lever = true, Switch = true, Handle = true, ["Pressure Plate"] = true,
     ["Marble Plate"] = true, Keyhole = true, Valve = true, Pedestal = true, Socket = true }
-S.FIXTURE_NEAR_M = 2.0
+S.FIXTURE_NEAR_M = 3.0 -- live 11:3x: the flush button under General (a 4 m painting helper) went untagged at 2 m
 function S.fixtureRelation(it, all)
     if not S.FIXTURE_NAMES[it.name] then return nil end
     -- Landmarks only: a lookalike (3+ Candles) names nothing. Something above
@@ -1119,6 +1122,7 @@ function S.nearby(ctx, args)
                         o.can_talk = true
                     end
                     if not dead and truthy(osi(Osi.CanTrade, u)) then o.can_trade = true end
+                    if not dead and comp(e, "HasExclamationDialog") then o.wants_talk = true end  -- the "!" over them
                     tactical(ctx, u, p, o)
                     out.characters[#out.characters + 1] = o
                     shown[u] = true
@@ -1309,6 +1313,11 @@ function S.campRoster(ctx, full)
         local e = u and not ctx.is_party[u] and V.entity(u)
         if e and comp(e, "CampPresence") and not truthy(osi(Osi.IsDead, u)) then
             local o = { uuid = u, name = V.name(u), level = level(e), level_up = levelUpTo(e) }
+            -- Its "!" is seen only at camp (the party in the camp's region).
+            if comp(e, "HasExclamationDialog") then
+                local here = ctx.party[1] and osi(Osi.GetRegion, ctx.party[1])
+                if here and osi(Osi.GetRegion, u) == here then o.wants_talk = true end
+            end
             local cl = classes(e)
             if #cl > 0 then o.classes = cl end
             if full then

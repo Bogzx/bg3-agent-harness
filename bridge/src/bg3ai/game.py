@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import jobpush
 from .luadebug import LuaDebugClient, LuaDebugError
 
 RPC_EXPR = "return Mods.BG3AI.BG3AI.rpc([{eq}[{payload}]{eq}])"
@@ -51,6 +52,7 @@ class JobResult:
 
 
 POOL_MAX = max(1, int(os.environ.get("BG3AI_RPC_CONNS", "4")))
+JOB_PUSH = os.environ.get("BG3AI_JOB_PUSH", "1") != "0"  # wait on the mod's job-finished prints (jobpush.py)
 
 
 class Game:
@@ -87,6 +89,7 @@ class Game:
         self._tl = threading.local()
         # Optional metrics.Recorder: gets every RPC's and job's wall-clock interval (set by the MCP server).
         self.metrics = None
+        self.job_push = JOB_PUSH
 
     # ---- connection pool ----
 
@@ -445,8 +448,37 @@ class Game:
             self.metrics.job_done(op, t0, time.time(), r.status)
         return r
 
+    def _push(self) -> "jobpush.JobPush | None":
+        """The job-finished listener when it works (it has heard a mark), else None (plain polling)."""
+        if not self.job_push:
+            return None
+        jp = jobpush.shared(self.host, self.port)
+        jp.ensure()
+        return jp if jp.usable else None
+
+    def _wait_job(self, job_id: int, context: str, since: float, deadline: float, poll_s: float,
+                  wait: bool) -> tuple[JobResult | None, float]:
+        """(wait +) one poll: with push, block until the finish mark newer than `since` (or
+        PUSH_FALLBACK_S); without push, sleep poll_s. wait=False polls at once. Returns (the settled
+        result or None while running, the time just before the poll = the next `since`)."""
+        if wait:
+            push = self._push()
+            if push is not None:
+                push.wait(context, job_id, since, min(jobpush.PUSH_FALLBACK_S, max(0.0, deadline - time.monotonic())))
+            else:
+                time.sleep(poll_s)
+        polled_at = time.monotonic()
+        view = self.rpc("job.poll", {"id": job_id}, context)
+        if view["status"] != "running":
+            return JobResult(view["status"], view.get("result"), view.get("error"),
+                             elapsed_ms=view.get("elapsed_ms", 0)), polled_at
+        if time.monotonic() > deadline:
+            return JobResult("still_running", {"job": job_id}, elapsed_ms=view.get("elapsed_ms", 0)), polled_at
+        return None, polled_at
+
     def _run_job(self, op: str, args: dict, context: str, wait_s: float, poll_s: float,
                  on_start=None) -> JobResult:
+        since = time.monotonic()  # a finish mark after this is this job's (ids restart after a load)
         started = self.rpc(op, args, context)
         if not isinstance(started, dict) or "job" not in started:
             # Instant op: no job, just a result.
@@ -458,23 +490,24 @@ class Game:
         if on_start is not None:
             on_start(context, job_id)
         deadline = time.monotonic() + wait_s
+        # With push the first wait is for this job's mark (it may land before on_start even ran); without
+        # it, poll at once as before.
+        wait = self._push() is not None
         while True:
-            view = self.rpc("job.poll", {"id": job_id}, context)
-            if view["status"] != "running":
-                return JobResult(view["status"], view.get("result"), view.get("error"),
-                                 elapsed_ms=view.get("elapsed_ms", 0))
-            if time.monotonic() > deadline:
-                return JobResult("still_running", {"job": job_id}, elapsed_ms=view.get("elapsed_ms", 0))
-            time.sleep(poll_s)
+            r, since = self._wait_job(job_id, context, since, deadline, poll_s, wait)
+            if r is not None:
+                return r
+            wait = True
 
     def poll_job(self, job_id: int, context: str = "server", wait_s: float = 25.0) -> JobResult:
+        """Wait on a job someone else started (wait_for): the first poll is at once (it may be done)."""
         deadline = time.monotonic() + wait_s
+        since, wait = time.monotonic(), False
         while True:
-            view = self.rpc("job.poll", {"id": job_id}, context)
-            if view["status"] != "running" or time.monotonic() > deadline:
-                status = view["status"] if view["status"] != "running" else "still_running"
-                return JobResult(status, view.get("result"), view.get("error"), elapsed_ms=view.get("elapsed_ms", 0))
-            time.sleep(0.15)
+            r, since = self._wait_job(job_id, context, since, deadline, 0.15, wait)
+            if r is not None:
+                return r
+            wait = True
 
     # ---- readiness ----
 

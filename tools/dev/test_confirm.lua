@@ -461,7 +461,7 @@ widgets, mapKeys = {}, {}
 swallow = 99
 W("Tooltip", {}, {})
 wj = run(ops["ui.waypoints"]({}).job, 6000)
-ok(wj.status == "failed" and #mapKeys == 3 and tostring(wj.error):find("pressed M,M,M over 3%.6s")
+ok(wj.status == "failed" and #mapKeys == 5 and tostring(wj.error):find("pressed M,M,M,M,M over 6%.0s")
     and tostring(wj.error):find("Tooltip"), "never opens: " .. tostring(wj.error))
 swallow = 0
 -- a question box up instead of the map (vis live: a rest prompt during fast_travel): reported, not answered

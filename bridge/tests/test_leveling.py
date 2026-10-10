@@ -155,6 +155,8 @@ class FakeSpellPage:
         self.wheels: list[int] = []
         self.intro = False                 # the "Level Up!" intro is up: panels off-screen, nothing hoverable
         self.intro_clicks: list[tuple[int, int]] = []
+        self.intro_sticky = False          # clicks don't end the intro (live: Wyll L4 after swap_party)
+        self.intro_forced: list[str] = []
 
     def wheel(self, notches, x=None, y=None, sync=True):
         self.wheels.append(notches)
@@ -178,7 +180,7 @@ class FakeSpellPage:
     def click(self, x, y, button="L", count=1, sync=True):
         self.cursor = (x, y)
         if self.intro:
-            self.intro = False
+            self.intro = self.intro_sticky
             self.intro_clicks.append((x, y))
             return
         k = self.under()
@@ -207,6 +209,11 @@ class FakeSpellPage:
     def rpc(self, op, args):
         assert op == "ui.level_up_spell_probe"
         name = args["name"]
+        if args.get("intro"):
+            self.intro_forced.append(args["intro"])
+            self.intro = False          # hit-testable now (the step itself stays Started)
+            self.frozen_step = True
+            return {"hit_set": True, "step": "Started"}
         if name in self.picked:
             return {"placed": True}
         if name not in self.names:
@@ -218,7 +225,7 @@ class FakeSpellPage:
         h = self.under()
         out = {"index": idx, "n": len(self.visible()), "cols": self.cols, "cell": {"w": 88.0, "h": 88.0},
                "over": h == idx, "hovered": h, "enabled": self.open > 0, "open": self.open,
-               "step": "Intro" if self.intro else "IntroComplete"}
+               "step": "Intro" if self.intro or getattr(self, "frozen_step", False) else "IntroComplete"}
         if self.near_margin is not None:
             m, (x, y) = self.near_margin, self.cursor
             rows = self.rows_visible or -(-len(self.visible()) // self.cols)
@@ -253,6 +260,18 @@ class SpellClicks(unittest.TestCase):
         self.assertEqual(r["failed"], {})
         self.assertEqual(sorted(r["picked"]), ["Magic Missile", "Shield"])
         self.assertEqual(page.intro_clicks, [(960, 918)])
+
+    def test_frozen_intro_made_clickable_and_centre_swept(self):
+        # live 2026-10-10: Wyll's L4 page opened during a screen fade, sat at step Started (clicks ignored, nothing
+        # hit-testable) with its list centred at y 0.44, which the 176-px coarse steps from (0.25, 0.47) missed
+        LV._last_hit.clear()
+        page = FakeSpellPage(NAMES, origin=(802.0, 475.0), cols=8, switch_frames=0)
+        page.intro, page.intro_sticky = True, True
+        r = LV.click_spells(page.rpc, page, [{"name": "Shield"}])
+        self.assertEqual((r["failed"], r["picked"]), ({}, ["Shield"]))
+        self.assertEqual(len(page.intro_clicks), LV.INTRO_SKIP_TRIES)
+        self.assertEqual(page.intro_forced, ["hit"])
+        self.assertLess(r["probes"], 60)
 
     def test_far_list_found_through_near(self):
         # S018: the list far from where Gale's L2 page had it. `near` (over the list's scroll viewer) lets the

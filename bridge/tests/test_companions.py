@@ -52,6 +52,33 @@ class Table(unittest.TestCase):
         self.assertEqual(companions.matches(TABLE["gale"], "Wilderness", ["Rescue the Grand Duke"]), [])
 
 
+class Talk(unittest.TestCase):
+    """The "!" over a companion (State.lua wants_talk) as a TALK line; S023/S026 screenshotted it."""
+
+    def lab(self, u: str) -> str:
+        return {"w": "e5 Wyll", "g": "e3 Gale"}.get(u, u)
+
+    def test_party_and_camp(self) -> None:
+        st = {"party": [{"uuid": "g", "wants_talk": True}, {"uuid": "c"}], "camp": [{"uuid": "w", "wants_talk": True}]}
+        t = companions.TalkTracker()
+        text = t.line(st, self.lab)
+        self.assertIn("TALK: e3 Gale wants to talk", text)
+        self.assertIn("e5 Wyll (at camp) wants to talk", text)
+        self.assertEqual(t.line(st, self.lab), "")             # unchanged: said once
+        self.assertTrue(t.line(st, self.lab, force=True))      # full view repeats it
+
+    def test_quiet_in_combat_and_without(self) -> None:
+        t = companions.TalkTracker()
+        self.assertEqual(t.line({"party": [{"uuid": "g", "wants_talk": True}], "in_combat": True}, self.lab), "")
+        self.assertEqual(t.line({"party": [{"uuid": "g"}]}, self.lab), "")
+
+    def test_row_flag(self) -> None:
+        from bg3ai import render
+        H = render.Handles()
+        line = render.character_line({"uuid": "11111111-2222-3333-4444-555555555555", "name": "Wyll", "wants_talk": True}, H)
+        self.assertIn("wants to talk(!)", line)
+
+
 class Hint(unittest.TestCase):
     def test_halsin_tied_to_scl(self):
         bits = companions.hint(PARTY, CAMP, "Shadow-Cursed Lands", ["Lift the Shadow Curse"], TABLE)
@@ -185,8 +212,9 @@ class SwapParty(unittest.TestCase):
         orig = server.game
         server.game = fake
         self.addCleanup(setattr, server, "game", orig)
-        server.time.sleep = lambda s: None
-        self.addCleanup(setattr, server.time, "sleep", __import__("time").sleep)
+        real_sleep = server.time.sleep  # captured before patching: restoring time.sleep itself here
+        server.time.sleep = lambda s: None  # left it a no-op for every later module (test_saver failed)
+        self.addCleanup(setattr, server.time, "sleep", real_sleep)
 
     def test_already_at_camp_refusal_is_not_a_failure(self):
         """Live 11:14: the level-up page hid the camp from ui.state; go_to_camp answered 'already at camp'."""

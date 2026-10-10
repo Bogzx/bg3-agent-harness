@@ -215,6 +215,38 @@ class HintTracker:
         return text
 
 
+# --- TALK: the "!" over a companion who wants to talk (State.lua wants_talk: eoc HasExclamationDialog) -----
+# S023 (Gale) and S026 (Withers): the agent saw the "!" only on a screenshot. Party rows carry it always (they
+# stand by you), camp rows only while the party is at camp (where the player sees it).
+
+def talk_bits(st: Any, label: Callable[[str], str]) -> list[str]:
+    if not isinstance(st, dict) or st.get("in_combat") or st.get("in_dialogue"):
+        return []
+    out = []
+    for r in st.get("party") or []:
+        if isinstance(r, dict) and r.get("wants_talk") and not r.get("summon") and r.get("uuid"):
+            out.append(f"{label(r['uuid'])} wants to talk (the '!' over them)")
+    for c in st.get("camp") or []:
+        if isinstance(c, dict) and c.get("wants_talk") and c.get("uuid"):
+            out.append(f"{label(c['uuid'])} (at camp) wants to talk (the '!' over them)")
+    return out
+
+
+class TalkTracker:
+    """'TALK: e5 Wyll wants to talk … → talk_to(e5)' when the set changes or on a full view."""
+
+    def __init__(self) -> None:
+        self.text = ""
+
+    def line(self, st: Any, label: Callable[[str], str], force: bool = False) -> str:
+        bits = talk_bits(st, label)
+        text = ("TALK: " + " | ".join(bits) + " → talk_to(<id>) now (a companion's own scene; it may not wait)") if bits else ""
+        if text == self.text and not force:
+            return ""
+        self.text = text
+        return text
+
+
 # --- swap_party: the companion's own dialogue (the fair way a player swaps) ------------------------------
 # Live texts: a party member's menu "I need you to remain in the camp for a while, rather than on the road
 # with me." (S023, Gale); a recruit with a full party "Looks like your troop's all trooped up …" →

@@ -534,3 +534,75 @@ class TradeText(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Pickpocket(unittest.TestCase):
+    """pickpocket lists the pockets with the game's shown odds (Services.lua ui.pickpocket) and takes one."""
+
+    POCKETS = {"items": [{"name": "Gold", "count": 12, "chance": 81, "dc": 8},
+                         {"uuid": _u(31), "name": "Dagger", "price": 2, "chance": 54, "dc": 12},
+                         {"uuid": _u(32), "name": "Ring", "price": 90, "chance": 20, "dc": 18}]}
+
+    def setUp(self):
+        saved = (server.H, server.game, server._click_act)
+        server.H = Handles()
+        self.addCleanup(lambda: (setattr(server, "H", saved[0]), setattr(server, "game", saved[1]),
+                                 setattr(server, "_click_act", saved[2])))
+        self.jobs: list = []
+        self.window = False
+        test = self
+
+        class G:
+            def run_job(self, op, args, context="server", wait_s=25.0):
+                test.jobs.append((op, dict(args)))
+                if not test.window:
+                    return JobResult("failed", error="no pickpocket window is open: pickpocket(npc) opens it")
+                if args.get("take"):
+                    return JobResult("done", {"item": test.POCKETS["items"][1], "success": True, "rolled": 15,
+                                              "dc": 12, "chance": 54})
+                return JobResult("done", test.POCKETS)
+
+            def try_rpc(self, *a, **k):
+                return None
+
+            def drain_events(self, ctx):
+                return []
+
+            def rpc(self, op, *a, **k):
+                return {"active": _u(1), "party": [{"uuid": _u(1), "name": "Claude"}]}
+
+        server.game = G()
+
+        def click_act(tool, op, args, wait_s=40.0):
+            test.window = True
+            server._batch["last"] = "done"
+            return "pickpocket: done — opened pickpocket"
+        server._click_act = click_act
+        self.npc = server.H.get(_u(30), "Refugee")
+
+    def test_text_sorted_by_odds(self):
+        t = economy.pockets_text(self.POCKETS, lambda it: "")
+        self.assertTrue(t.startswith("POCKETS"))
+        self.assertLess(t.index("Gold x12 81% DC8"), t.index("Dagger 2g 54% DC12"))
+        self.assertLess(t.index("Dagger"), t.index("Ring 90g 20% DC18"))
+
+    def test_opens_then_lists(self):
+        out = server.pickpocket(self.npc)
+        self.assertIn("opened pickpocket", out)
+        self.assertIn("Ring 90g 20% DC18", out)
+        self.assertEqual([op for op, _ in self.jobs], ["ui.pickpocket", "ui.pickpocket"])
+        self.assertEqual(self.jobs[0][1]["npc"], _u(30))
+
+    def test_take_by_handle_in_one_call(self):
+        self.window = True
+        h = server.H.get(_u(31), "Dagger")
+        out = server.pickpocket(self.npc, take=h, min_chance=40)
+        self.assertIn("stole", out)
+        self.assertIn("rolled 15 vs DC 12", out)
+        take = self.jobs[-1][1]
+        self.assertEqual((take["take"], take["min_chance"]), (_u(31), 40))
+
+    def test_failed_steal_says_crime(self):
+        t = economy.steal_text({"item": {"name": "Ring"}, "success": False, "rolled": 3, "dc": 18, "chance": 20}, lambda it: "")
+        self.assertIn("CAUGHT?", t)
+        self.assertIn("rolled 3 vs DC 18", t)

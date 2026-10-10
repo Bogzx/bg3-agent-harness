@@ -1595,7 +1595,24 @@ reg("leave_camp", camp_travel("leave_camp", false))
 -- CharacterLootedCharacter fires when items are taken (Take All), as with a
 -- click. The story-DB gate below stays as a conservative extra.
 A.LOOT_ENGINE_SHORTCUT = true
-A.LOCKPICK_ENGINE_WAIT_MS = 2000 -- wait this long for StartedLockpicking after Use, then click
+A.LOCKPICK_ENGINE_WAIT_MS = 2000 -- wait this long for StartedLockpicking after the request, then click
+
+-- The engine's own lockpick request. A player's click on a lock sends
+-- NETMSG_CHARACTER_LOCKPICK; the server queues it as {Player, Target} in
+-- esv::lock::LockpickingSystem.PickLockRequests, then runs the same chain as
+-- for a click: RequestCanLockpick -> the story's crime/permission answer ->
+-- StartedLockpicking and the roll. Queuing that request ourselves needs no
+-- cursor on the lock (S017-S026: 0 successes, hover misses on doors). Osiris
+-- Use on the lock only "uses" it (live 10:50: no StartedLockpicking).
+function A.request_pick(char, target)
+    local sys = Ext.System and Ext.System.ServerLockpicking
+    if not sys then return false, "no lockpicking system" end
+    local p, t = Ext.Entity.Get(char), Ext.Entity.Get(target)
+    if not (p and t) then return false, "no entity" end
+    local reqs = sys.PickLockRequests
+    reqs[#reqs + 1] = { Player = p, Target = t }
+    return true
+end
 
 -- Walk next to `target` (verified approach point; in combat within the
 -- remaining Movement, which the walk is charged for), select `char`, then
@@ -1702,15 +1719,14 @@ reg("lockpick", function(args)
             .. "it opens with its key or a mechanism nearby (lever, button, puzzle), or force it if it is not Sturdy")
     end
     -- Engine path first (live S017-S021: the click path hover-missed this door
-    -- 144 times): Use on a locked item with Thieves' Tools is the same
-    -- interaction a click sends; the engine answers with StartedLockpicking and
-    -- the roll (UNVERIFIED live). Without that sign, fall back to the click.
+    -- 144 times): queue the request a click sends (A.request_pick); the engine
+    -- answers with StartedLockpicking and the roll. Without that sign within
+    -- A.LOCKPICK_ENGINE_WAIT_MS, fall back to the verified click.
     return approach("lockpick", char, target, function(job)
-        job.pick_ev = ev_name(job, "pick")
         job.osi_task = true
         job.used_at = RPC.now_ms()
-        local ok = pcall(G.osi, "Use", char, target, job.pick_ev)
-        if not ok then job.used_at = 0 end
+        local ok, queued = pcall(A.request_pick, char, target)
+        if not (ok and queued) then job.used_at = 0 end
     end, {
         osi = {
             StartedLockpicking = function(job, a)

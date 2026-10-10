@@ -77,10 +77,7 @@ function RPC.push(kind, data)
     for _, job in pairs(RPC.jobs) do
         if job.status == "running" and job.on_event then
             local okj, err = pcall(job.on_event, job, ev)
-            if not okj then
-                job.status = "failed"
-                job.error = tostring(err)
-            end
+            if not okj then RPC.finish_job(job, "failed", nil, tostring(err)) end
         end
     end
     return ev.seq
@@ -136,6 +133,9 @@ function RPC.finish_job(job, status, result, err)
     job.error = err
     job.finished = now_ms()
     if job.on_finish then pcall(job.on_finish, job) end
+    -- Push: bg3le sends every Lua print to each attached debugger, so the bridge's listener wakes the
+    -- waiting call at once instead of polling job.poll every 0.1 s (~45 polls per combat_turn, S022-S026).
+    pcall(Ext.Utils.Print, "BG3AI.job " .. CONTEXT .. " " .. tostring(job.id) .. " " .. tostring(status))
 end
 
 local function job_view(job)
@@ -190,8 +190,12 @@ end
 -- System ops
 ------------------------------------------------------------------------
 
+-- A new id per Lua state: a save load rebuilds the context, so load_game can tell that a load really happened.
+local BOOT = string.format("%d-%d", math.floor(now_ms()), math.random(1, 1000000000))
+RPC.BOOT = BOOT
+
 RPC.register("sys.ping", function()
-    return { context = CONTEXT, t = now_ms(), version = BG3AI.VERSION }
+    return { context = CONTEXT, t = now_ms(), version = BG3AI.VERSION, boot = BOOT }
 end)
 
 RPC.register("sys.info", function()

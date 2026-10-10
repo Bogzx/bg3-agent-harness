@@ -20,6 +20,17 @@ from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before impo
 
 from bg3ai import saver, server  # noqa: E402
 
+# Captured at import (test discovery, before any test runs). Other modules patch the global time.sleep to a
+# no-op for speed; if one ever leaks that patch, these timing tests would see menus that take no time at all.
+REAL_SLEEP = time.sleep
+
+
+def real_time(case: unittest.TestCase) -> None:
+    if time.sleep is not REAL_SLEEP:
+        leaked = time.sleep
+        time.sleep = REAL_SLEEP
+        case.addCleanup(setattr, time, "sleep", leaked)
+
 
 def write_save(root: Path, label: str, n: int = 1) -> Path:
     d = root / f"Claude-{n}__{label}"
@@ -67,6 +78,7 @@ class Rig:
 
 class SaverTest(unittest.TestCase):
     def setUp(self):
+        real_time(self)
         saved = (saver.DISK_WAIT_S, saver.DEFER_POLL_S, saver.STABLE_S)
         saver.DISK_WAIT_S, saver.DEFER_POLL_S, saver.STABLE_S = 2.0, 0.05, 0.05
         self.addCleanup(lambda: setattr(saver, "DISK_WAIT_S", saved[0]) or setattr(saver, "DEFER_POLL_S", saved[1])
@@ -195,6 +207,7 @@ class SaverTest(unittest.TestCase):
 class ServerSave(Base):
     def setUp(self):
         super().setUp()
+        real_time(self)
         self.rig = Rig(menu_s=0.2)
         saved = (server.SAVER, server._enable_save_gates, saver.STABLE_S)
         server.SAVER = self.rig.saver()

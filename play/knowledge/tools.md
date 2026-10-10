@@ -64,7 +64,7 @@ Lines a result may end with:
 
 ## Combat
 - `get_combat_state()` → turn order (visible), whose turn, round, the active character's remaining economy.
-- `use_ability(ability, target | x,y,z, who, upcast=0, targets="")` → attack, spell, item or action from `get_actions`; `targets` = comma list for multi-target spells.
+- `use_ability(ability, target | x,y,z, who, upcast=0, targets="")` → attack, spell, item or action from `get_actions`; `targets` = comma list for multi-target spells. `ability` = the name as the action list shows it (`"Fire Bolt"`, any case) or an id; lists show an id only where two actions share a name (then pass that id).
 - `ability_preview(ability, target, who)` → hit chance or save DC, damage, range, line of sight.
 - `react(use, which="")` → answer a reaction prompt (Shield, Counterspell, opportunity attack).
 - `end_turn(who, wait=true)` → end the turn; blocks through enemy turns until a party member can act, combat ends, or a reaction/roll prompt needs you (`wait=false` + `wait_for("my_turn")` to plan meanwhile).
@@ -87,7 +87,7 @@ tried in order until one works:
   (`action (auto fallback): Target_SacredFlame e15: done`; also for `extra` after a kill). `"retarget":false` turns it off.
 - **Downed ally:** no `bonus` in the plan and an ally at 0 HP within range: Healing Word on them if this
   character has it (`bonus (auto: ally downed): …`). `"auto_bonus":false` turns it off.
-- `action`, `bonus`: an ability id (`"Shout_Dash"`), or `{"ability","target" | "x","y","z","upcast","targets","if","unless","then_move"}`,
+- `action`, `bonus`: an ability name as listed (`"Dash"`) or id (`"Shout_Dash"`), or `{"ability","target" | "x","y","z","upcast","targets","if","unless","then_move"}`,
   or `{"tool":<any do_actions tool>,...}`. `"then_move":true` (Dash) walks the move again after it.
 - `extra`: a list of more slots, e.g. the Extra Attack: `[[{"ability":"Target_MainHandAttack","target":"e12"}]]`.
 - `reactions`: `{"Divine Smite":"always"}` sets reaction prompts before the turn. `on_reaction`: `"use"` or
@@ -106,6 +106,8 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
 
 ## Dialogue
 - `talk_to(npc, who)` → walk up (following them if they move) and start a conversation (`who` = the speaker).
+  get_status/look say `TALK: e5 Wyll wants to talk (the '!' over them)` when a companion (in the party, or at camp while you are there) or a nearby NPC shows the game's "!" (rows: `wants to talk(!)`): talk_to them; no screenshot needed.
+- `pickpocket(npc, who, take="", min_chance=0)` → sneak up and open the pickpocket window; the result lists their pockets with the game's own odds: `POCKETS …: e40 Gold x12 81% DC8 | e41 Dagger 2g 54% DC12 …` (best odds first). `take="<name or id>"` steals it (also in the first call), `min_chance=60` takes nothing below 60 %; the result says `stole …` or `CAUGHT? … failed` with the roll vs DC. A failed steal is a crime if they notice: sneak, stay unseen, save first. `press_key("ESCAPE")` leaves with nothing.
 - `get_dialogue()` → current line and numbered options with check tags. A tagged option shows the check and your speaker's bonus (`← Persuasion check: e2 +5 (party best e1 +6 …)`). Or the roll, reaction or popup on screen.
 - `choose_dialogue(option)` → pick answer N; clicks through the filler after it and returns the next real choice, roll or the end.
 - `roll_check(boosts="", reroll_on_fail=false)` → resolve the roll on screen (boosts as offered, e.g. "Guidance").

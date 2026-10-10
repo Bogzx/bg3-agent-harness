@@ -337,6 +337,27 @@ test("button beyond FIXTURE_RANGE is not perceived even with a clear ray", funct
     eq(visible("B"), false)
 end)
 
+test("a named fixture seen moments ago stays known when a plinth hides it (5 min, 30 m)", function()
+    -- live 11:3x: after pressing the button under Moonrise Towers, the Grief one 12 m along the wall was refused
+    setup(); button("B", { 7, 1, 0 })
+    V.fixtureSeen = {}
+    local oldState, oldName = BG3AI.State, V.name
+    BG3AI.State = { FIXTURE_NAMES = { Button = true } }
+    V.name = function(u) return u == "B" and "Button" or oldName(u) end
+    ray.fn = floorThen(function(a, b) return { Position = { b[1] - 0.3, b[2], b[3] }, Distance = 6.7 } end)
+    eq(visible("B"), true, "seen")
+    ray.fn = floorThen(function(a, b) return { Position = { b[1] - 2, b[2], b[3] }, Distance = 5 } end)
+    V.rayCache = {}
+    clock = clock + 60000
+    eq(visible("B"), true, "hidden by the plinth a minute later: remembered")
+    clock = clock + 300000
+    eq(visible("B"), false, "forgotten after 5 min")
+    BG3AI.State = nil
+    V.fixtureSeen = {}
+    eq(visible("B"), false, "an unnamed small usable (candle) is never remembered")
+    BG3AI.State, V.name = oldState, oldName
+end)
+
 test("undiscovered trap fixture (vent) stays hidden with a clear ray", function()
     setup(); button("T", { 5, 0, 0 })
     world.T.comps.ServerItem.CanUse = false

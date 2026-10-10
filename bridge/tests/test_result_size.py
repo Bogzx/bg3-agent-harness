@@ -71,15 +71,15 @@ class ActionsDelta(unittest.TestCase):
     def test_full_list_once_then_only_changes(self):
         many = [f"A{i}" for i in range(12)]
         first = server._actions_delta(U1, acts(*many, "Bless"))
-        self.assertIn("A0 (Target_A0)", first)
+        self.assertIn("\nA0 1.5m", first)
         again = server._actions_delta(U1, acts(*many, "Bless", slots=2))
-        self.assertNotIn("A0 (Target_A0)", again)
+        self.assertNotIn("\nA0 1.5m", again)
         self.assertIn("as listed before", again)
-        self.assertIn("+ Bless (Target_Bless)", again)    # changed uses: shown again, not as removed
+        self.assertIn("+ Bless 1.5m uses 2", again)    # changed uses: shown again, not as removed
         self.assertNotIn("- Bless", again)
         gone = server._actions_delta(U1, acts(*many[1:], "Bless", slots=2))
-        self.assertIn("- A0 (Target_A0)", gone)
-        self.assertIn("A5 (Target_A5)", server._actions_delta(U2, acts(*many)))  # per character
+        self.assertIn("- A0", gone)
+        self.assertIn("\nA5 1.5m", server._actions_delta(U2, acts(*many)))  # per character
 
     def test_spent_slot_level_is_one_line_not_also_removed(self):
         """S026 09:31: Shadowheart's last L3 slot spent: 13 L3 spells listed in '+ UNAVAILABLE' with full costs and
@@ -97,11 +97,27 @@ class ActionsDelta(unittest.TestCase):
         self.assertEqual(out.count("Third 5"), 1)
         self.assertNotIn("\n- ", out)
 
+    def test_names_only_mode_keeps_ids_for_shared_names(self):
+        from bg3ai import render
+        self.addCleanup(setattr, render, "ACTION_IDS", render.ACTION_IDS)
+        render.ACTION_IDS = False
+        a = acts("Fire Bolt", "Bless", *[f"A{i}" for i in range(10)])
+        a["actions"].append({"name": "Main Hand Attack", "spell": "Target_MainHandAttack", "cost": {"action": 1}})
+        a["actions"].append({"name": "Main Hand Attack", "spell": "Target_MainHandAttack_Lantern", "cost": {"action": 1}})
+        first = server._actions_delta(U1, a)
+        self.assertIn("\nFire Bolt 1.5m", first)
+        self.assertNotIn("Target_Fire Bolt", first)
+        self.assertIn("Main Hand Attack (Target_MainHandAttack_Lantern)", first)  # two share the name: ids kept
+        a["actions"][1]["uses"] = 2  # Bless used once: a '+', not also a '-'
+        again = server._actions_delta(U1, a)
+        self.assertIn("+ Bless", again)
+        self.assertNotIn("- Bless", again)
+
     def test_mostly_different_list_is_shown_whole(self):
         server._actions_delta(U1, acts("A", "B", "C", "D"))
         out = server._actions_delta(U1, acts("E", "F", "G", "D"))
         self.assertNotIn("as listed before", out)
-        self.assertIn("E (Target_E)", out)
+        self.assertIn("\nE 1.5m", out)
 
 
 if __name__ == "__main__":
@@ -219,7 +235,7 @@ class CombatTrim(unittest.TestCase):
         self.assertIn("UNAVAILABLE: no action: all 40 [A] ones; no bonus action: all 1 [B] ones; Bless", out)
         self.assertIn("no spell slots", out)
         self.assertNotIn("Spell 3", out)
-        self.assertIn("Dash (Shout_Dash)", out)
+        self.assertIn("Dash [0m]", out)
 
     def test_a_reason_shared_by_many_lists_names_once(self):
         acts = {"actions": [{"name": f"L3 Spell {i}", "spell": f"Target_L3_{i}", "cost": {"action": 1, "slot": 3},
@@ -229,5 +245,5 @@ class CombatTrim(unittest.TestCase):
                     "reason": "silenced"}]}
         out = render.render_actions(acts, render.Handles())
         self.assertIn("UNAVAILABLE: no spell slot of level 3+: L3 Spell 0, L3 Spell 1, L3 Spell 2, L3 Spell 3, "
-                      "L3 Spell 4; Shield (Shout_Shield) [R] — silenced", out)
+                      "L3 Spell 4; Shield [R] — silenced", out)
         self.assertNotIn("Target_L3_0", out)

@@ -199,6 +199,8 @@ def character_line(c: dict, H: Handles, me: str | None = None) -> str:
     for flag in ("downed", "dead", "in_combat", "can_talk", "is_trader", "sneaking", "is_current"):
         if c.get(flag):
             bits.append(flag)
+    if c.get("wants_talk"):  # the "!" over them (State.lua HasExclamationDialog)
+        bits.append("wants to talk(!)")
     if c.get("summon"):  # party row of a Spiritual Weapon, familiar...: an ally, not a companion
         bits.append(f"summon of {H.get(c['owner'])}" if c.get("owner") else "summon")
     return " ".join(bits)
@@ -609,6 +611,9 @@ def render_combat(res: dict, H: Handles) -> str:
 
 # Unavailable only because that resource is spent this turn (the NOW line shows it): counted, not listed.
 _SPENT_REASONS = {"no action": "[A] ones", "no bonus action": "[B] ones", "no reaction": "[R] ones"}
+# Spell ids in action lists ("Fire Bolt (Projectile_FireBolt)"): ~1/3 of a ~2.5 KB list. Off: use_ability and
+# combat_turn take the shown name (server._ability_id maps it back from the character's own list).
+ACTION_IDS = False
 UNAVAILABLE_GROUP_MIN = 3  # other reasons shared by this many actions list the names once
 
 
@@ -622,8 +627,13 @@ def render_actions(r: Any, H: Handles) -> str:
         head.append("NOW " + resources_text(r["resources"]))
     ok_lines, no_lines = [], []
     spent: dict[str, int] = {}
+    seen: dict[str, int] = {}
     for a in acts:
-        bits = [f"{a.get('name')} ({a.get('spell')})"]
+        seen[str(a.get("name"))] = seen.get(str(a.get("name")), 0) + 1
+    for a in acts:
+        # ACTION_IDS False: names only (use_ability takes the shown name), the id only where two share a name
+        show_id = ACTION_IDS or seen[str(a.get("name"))] > 1
+        bits = [f"{a.get('name')} ({a.get('spell')})" if show_id else str(a.get("name"))]
         c = _cost_text(a.get("cost"))
         if c:
             bits.append(f"[{c}]")

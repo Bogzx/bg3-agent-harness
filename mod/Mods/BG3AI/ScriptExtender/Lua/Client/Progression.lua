@@ -1572,6 +1572,18 @@ local function levelUpAvailable(vm)
 end
 
 -- Open the level-up page for a party member: the hotbar/portrait level-up button (DCHotBar.StartLevelUp).
+-- A screen fade (a conversation just ended: swap_party's camp dialogue) is up. A level-up page opened during it
+-- takes its fade-in template and stays frozen at LevelUpStep=Started: no animations, no skip input, nothing
+-- hit-testable (live 2026-10-10, Wyll L4 after swap_party: fade=true at open, 226-326 probes never hovered a
+-- button; S018/S021 likewise). So the page is opened only once the fade is over.
+function P.screenFade()
+    for _, name in ipairs({ "CharacterLevelUp", "HotBar", "PlayerPortraits" }) do
+        local v = UI.path(UI.dc(name), "CurrentPlayer.IsScreenFadeActive")
+        if v ~= nil then return v == true end
+    end
+    return nil
+end
+
 function P.openLevelUp(uuid)
     local vm, err = P.characterVM(uuid)
     if not vm then return false, err end
@@ -1585,6 +1597,7 @@ RPC.register("ui.level_up_open", function(args)
     if not args.uuid then error("uuid required") end
     P.levelUpUuid = args.uuid
     if P.luDC() then return { open = true } end
+    if P.screenFade() then return { opening = false, fade = true, how = "a screen fade is up: call again in a moment" } end
     local ok, err = P.openLevelUp(args.uuid)
     if not ok then error(err) end
     return { opening = true }
@@ -1738,16 +1751,29 @@ end)
 RPC.register("ui.level_up", function(args)
     local plan = args.plan or {}
     if args.uuid then P.levelUpUuid = args.uuid end
+    local openLater = false
     if not P.luDC() then
         if not args.uuid then error("uuid required when the level-up page is not open") end
-        local ok, err = P.openLevelUp(args.uuid)
-        if not ok then error(err) end
+        if P.screenFade() then
+            openLater = true
+        else
+            local ok, err = P.openLevelUp(args.uuid)
+            if not ok then error(err) end
+        end
     end
     local ctx = { result = { set = {}, problems = {} }, widget = "CharacterLevelUp" }
     local get = P.luDC
     local asi = { steps = 0 }
     local stages = {
         { "open", function()
+            if openLater then
+                if P.screenFade() then return "wait", 200 end
+                openLater = false
+                ctx.result.waited_fade = true
+                local ok, err = P.openLevelUp(args.uuid)
+                if not ok then return "fail", err end
+                return "wait", 300
+            end
             local dc = get()
             if dc and UI.prop(dc, "SelectedMultiClass") ~= nil then return "next", 1500 end
             return "wait", 300
@@ -2051,7 +2077,18 @@ RPC.register("ui.level_up_spell_probe", function(args)
     local out = { picked = st.picked, open = st.open, name = label(item), feat = s.source == "FeatDetails" or nil,
                   -- Until "IntroComplete" the page shows its "Level Up!" intro and the panels are off-screen, so no
                   -- button can be hovered (S018/S021: 0 hits in 226-400 probes). A click skips the intro.
-                  step = str(UI.prop(dc, "LevelUpStep")) }
+                  step = str(UI.prop(dc, "LevelUpStep")),
+                  -- The intro waits while a screen fade is up (CharacterLevelUp.xaml: LevelUpFadeInTemplate while
+                  -- LevelUpStep=Started and CurrentPlayer.IsScreenFadeActive): no skip binding, page not hit-testable.
+                  fade = UI.path(dc, "CurrentPlayer.IsScreenFadeActive") == true or nil }
+    if args.intro == "hit" and out.step ~= "IntroComplete" and w then
+        -- A page frozen in its intro (opened during a screen fade) never runs the triggers that make it
+        -- hit-testable (levelUp.IsHitTestVisible=True on SkipAnimation / sequence end). LevelUpStep itself is
+        -- read-only (live: "Property LevelUpStep of gui::DCCharacterLevelUp is read-only"); setting the flag
+        -- made the spell buttons hoverable live (IsMouseOver chain down to LSButton SelectAvailableSpell).
+        local lu = UI.findAll(w, function(e) return UI.name(e) == "levelUp" end, { prune = true, hidden = true, max = 80000 })[1]
+        out.hit_set = lu ~= nil and set(lu, "IsHitTestVisible", true) or false
+    end
     local tabOk, switched
     if s.source == "FeatDetails" then tabOk, switched = P.showFeatSelector(w, s.sel)
     else tabOk, switched = showClassSelector(w, s.sel) end
@@ -2082,6 +2119,42 @@ RPC.register("ui.level_up_spell_probe", function(args)
         end
     end
     out.n = n
+    return out
+end)
+
+-- ui.level_up_buttons {name?}: diagnostics for the spell-click search (tools/dev/check_levelup.py --dump):
+-- every widget with IsMouseOver (deepest last: what the cursor is really over), every spell select button with
+-- its item, size and visibility, and the selector sub-tabs.
+RPC.register("ui.level_up_buttons", function(args)
+    local w = visibleWidget("CharacterLevelUp")
+    if not w then error("level up is not open") end
+    local out = { over = {}, buttons = {}, tabs = {} }
+    for _, e in ipairs(UI.findAll(w, function(e) return UI.prop(e, "IsMouseOver") == true end, { max = 80000 })) do
+        if #out.over < 40 then
+            out.over[#out.over + 1] = (UI.typeName(e) or "?") .. ":" .. tostring(UI.name(e) or "")
+        end
+    end
+    for _, b in ipairs(UI.findAll(w, function(e)
+        local n = UI.name(e) or ""
+        return SPELL_BUTTONS[n] == true or (n:find("Spell", 1, true) ~= nil and n:find("Btn", 1, true) ~= nil)
+    end, { prune = true, max = 80000, hidden = args.hidden == true })) do
+        if #out.buttons < 60 then
+            local it = buttonItem(b)
+            out.buttons[#out.buttons + 1] = { name = UI.name(b), item = it and label(it) or nil,
+                w = UI.prop(b, "ActualWidth"), h = UI.prop(b, "ActualHeight"), vis = UI.isVisible(b),
+                enabled = UI.prop(b, "IsEnabled"), over = UI.prop(b, "IsMouseOver"), hit = UI.prop(b, "IsHitTestVisible") }
+        end
+    end
+    for _, lb in ipairs(UI.findAll(w, function(e) return UI.name(e) == "subTabsSpellsList" end, { max = 80000 })) do
+        for _, it in ipairs(UI.findAll(lb, function(e) return (UI.typeName(e) or ""):find("ListBoxItem", 1, true) ~= nil end,
+                                       { hidden = true, prune = true, max = 4000 })) do
+            local sel = UI.prop(it, "DataContext")
+            out.tabs[#out.tabs + 1] = { selected = UI.prop(it, "IsSelected"), vis = UI.isVisible(it),
+                cantrips = UI.prop(sel, "IsCantrips"), n = UI.count(UI.prop(sel, "Available")) }
+        end
+    end
+    out.feat_tab = tabSelected("featTab")
+    out.step = str(UI.prop(P.luDC(), "LevelUpStep"))
     return out
 end)
 

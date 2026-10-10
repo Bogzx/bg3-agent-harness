@@ -24,6 +24,10 @@ class Fake:
             return scr if isinstance(scr, dict) else {"screen": scr}
         if op == "ui.key":
             self.keys.append(args["key"])
+        if op == "ui.press":  # the game menu's Resume button
+            self.keys.append("RESUME:" + args["button"])
+            if getattr(self, "resume_closes", True):
+                self.screens = ["game"]
         return {}
 
     try_rpc = rpc
@@ -62,8 +66,21 @@ class PressEscape(unittest.TestCase):
     def test_menu_that_opens_is_closed_again(self):
         fake = self.use(["trade", "game_menu"])
         out = getattr(server.press_key, "fn", server.press_key)("ESCAPE")
-        self.assertEqual(fake.keys, ["ESCAPE", "ESCAPE"])
+        self.assertEqual(fake.keys, ["ESCAPE", "RESUME:Resume"])
         self.assertIn("closed it again", out)
+
+    def test_menu_that_stays_open_is_reported(self):
+        """Live 12:1x (Karlach's menu): a second ESCAPE key left the game menu open while the result said
+        'closed it again'. Resume first, then the key; if it is still up, say so, and that ESCAPE doesn't end a talk."""
+        fake = self.use(["dialogue", "game_menu"])
+        fake.resume_closes = False
+        server.time.sleep, real = (lambda s: None), server.time.sleep
+        self.addCleanup(setattr, server.time, "sleep", real)
+        out = getattr(server.press_key, "fn", server.press_key)("ESCAPE")
+        self.assertEqual(fake.keys, ["ESCAPE", "RESUME:Resume", "ESCAPE"])
+        self.assertIn("STILL OPEN", out)
+        self.assertNotIn("closed it again", out)
+        self.assertIn("choose_dialogue", out)
 
     def test_escape_on_game_menu_closes_it_once(self):
         fake = self.use(["game_menu", "game"])
@@ -257,6 +274,55 @@ class LoadCrash(unittest.TestCase):
         out = getattr(server.load_game, "fn", server.load_game)("LIVETEST-se")
         self.assertIn("didn't start a load", out)
         self.assertEqual(g.keys, ["ESCAPE", "ESCAPE"])
+
+
+
+class LoadVerified(unittest.TestCase):
+    """load_game is done only when a load really happened: a new server Lua state and no Load page."""
+
+    def run_load(self, boots, screens):
+        orig = (server.game, server.SAVE_DIR, server.SAVE_PREFIX, server.PLAYTHROUGH, server.time.sleep)
+        self.addCleanup(lambda: (setattr(server, "game", orig[0]), setattr(server, "SAVE_DIR", orig[1]),
+                                 setattr(server, "SAVE_PREFIX", orig[2]), setattr(server, "PLAYTHROUGH", orig[3]),
+                                 setattr(server.time, "sleep", orig[4])))
+        import tempfile
+        d = Path(tempfile.mkdtemp())
+        (d / "Claude-1__LIVETEST-se").mkdir()
+        server.SAVE_DIR, server.SAVE_PREFIX, server.PLAYTHROUGH = d, "Claude-", "t"
+        server.time.sleep = lambda s: None
+        boots = list(boots)
+        states = iter(["LoadSession"] + ["Running"] * 100)
+
+        class G(Fake):
+            def rpc(self, op, args=None, context="server", timeout=12.0):
+                if op == "sys.ping":
+                    return {"boot": boots.pop(0) if len(boots) > 1 else boots[0]}
+                return Fake.rpc(self, op, args, context)
+
+            try_rpc = rpc
+
+            def game_state(self):
+                return next(states)
+
+            def server_ready(self):
+                return True
+
+            def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+                return JobResult(status="done", result={"pressed": "Load"})
+
+        server.game = G(screens)
+        return getattr(server.load_game, "fn", server.load_game)("LIVETEST-se")
+
+    def test_new_boot_is_done(self):
+        self.assertIn("load_game: done", self.run_load(["a", "b"], ["game"]))
+
+    def test_same_boot_fails(self):
+        out = self.run_load(["a", "a"], ["game"])
+        self.assertIn("nothing was loaded", out)
+
+    def test_load_page_still_up_fails(self):
+        out = self.run_load(["a", "b"], ["save_load"])
+        self.assertIn("save load screen is still up", out)
 
 
 if __name__ == "__main__":
