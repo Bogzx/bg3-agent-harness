@@ -299,10 +299,10 @@ def c_saves(s: Session, actions: Path):
     bad = [r for r in recs if not r.get("ok")]
     slow = [r for r in recs if (r.get("menu_s") or 0) > SAVE_MENU_WARN_S]
     menus = [r.get("menu_s") for r in recs if r.get("menu_s") is not None]
-    v = "WARN" if bad or slow else "PASS"
+    v = "FAIL" if bad else "WARN" if slow else "PASS"  # a lost save breaks crash recovery: loud
     return v, "saves", f"{len(recs)} background saves, {len(bad)} failed, menu_s max {max(menus or [0]):.2f} s " \
-        f"(≲ {SAVE_MENU_WARN_S} s)" + (f"; not found on disk after {bad[-1].get('disk_s')} s (folder {bad[-1].get('folder')}): "
-                     f"{bad[-1].get('detail')}" if bad else "")
+        f"(≲ {SAVE_MENU_WARN_S} s)" + (f"; '{bad[-1].get('save')}' not found on disk after {bad[-1].get('disk_s')} s: "
+                     f"{bad[-1].get('detail')}" + (f"; seen: {bad[-1]['seen']}" if bad[-1].get("seen") else "") if bad else "")
 
 
 def runner_lines(s: Session, runner_log: Path) -> list[str]:

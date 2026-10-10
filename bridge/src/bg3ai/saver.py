@@ -53,6 +53,28 @@ def written_save(save_dir: Path, label: str, since: float) -> Path | None:
     return best[1] if best else None
 
 
+def on_disk(save_dir: Path, label: str, since: float) -> str:
+    """For a failed save: what IS on disk for this label, so a wrong check (S017: the .lsv is named after the
+    label, not the folder) shows at once instead of passing for a lost save."""
+    if not save_dir.is_dir():
+        return f"save dir missing: {save_dir}"
+    want = (lambda n: n.endswith("__" + label)) if label else (lambda n: "QuickSave" in n)
+    seen = []
+    for d in sorted((d for d in save_dir.iterdir() if d.is_dir() and want(d.name)),
+                    key=lambda d: d.stat().st_mtime, reverse=True)[:3]:
+        files = []
+        for f in sorted(d.iterdir()):
+            try:
+                st = f.stat()
+                files.append(f"{f.name} {st.st_size}B {st.st_mtime - since:+.0f}s")
+            except OSError:
+                files.append(f.name)
+        seen.append(f"{d.name}: [{', '.join(files) or 'empty'}]")
+    if not seen:
+        return f"no folder *__{label or 'QuickSave*'} in {save_dir}"
+    return "folders with this name (file, size, mtime vs save start): " + "; ".join(seen)
+
+
 class Saver:
     """One save at a time. Tools call enter()/leave() around their body (the _guard wrapper)."""
 
@@ -154,7 +176,7 @@ class Saver:
                 self.ui_busy = False
                 self.cv.notify_all()
             if not ok:
-                self._note(f"SAVE FAILED '{name}': {detail}; call save_game again")
+                self._note(f"⚠ SAVE FAILED '{name}': {detail}; call save_game again")
                 self.log({"save": name, "ok": False, "menu_s": round(menu_s, 2), "detail": detail})
                 return
             job["phase"] = "writing"
@@ -162,13 +184,19 @@ class Saver:
             found = self._wait_on_disk(job)
             disk_s = time.monotonic() - t_disk
             total = time.monotonic() - job["t0"]
-            self.log({"save": name, "ok": bool(found), "menu_s": round(menu_s, 2), "disk_s": round(disk_s, 2),
-                      "total_s": round(total, 2), "detail": detail, "folder": found.name if found else None})
+            rec = {"save": name, "ok": bool(found), "menu_s": round(menu_s, 2), "disk_s": round(disk_s, 2),
+                   "total_s": round(total, 2), "detail": detail, "folder": found.name if found else None}
+            if not found:
+                try:
+                    rec["seen"] = on_disk(self.save_dir(), job["label"], job["wall"])
+                except OSError as e:
+                    rec["seen"] = f"save dir unreadable: {e}"
+            self.log(rec)
             if found:
                 self._note(f"SAVED '{name}' ({total:.1f}s, on disk)")
             else:
-                self._note(f"SAVE FAILED '{name}': no save folder appeared within {DISK_WAIT_S:.0f}s "
-                           f"({detail}); call save_game again")
+                self._note(f"⚠ SAVE FAILED '{name}': no save folder appeared within {DISK_WAIT_S:.0f}s "
+                           f"({detail}). On disk: {rec['seen']}. Call save_game again")
         finally:
             with self.cv:
                 self.ui_busy = False
@@ -195,7 +223,7 @@ class Saver:
             time.sleep(DEFER_POLL_S)
         if job.get("cancel"):
             return False
-        self._note(f"SAVE FAILED '{job['label'] or 'quicksave'}': the game could not save for "
+        self._note(f"⚠ SAVE FAILED '{job['label'] or 'quicksave'}': the game could not save for "
                    f"{DEFER_MAX_S / 60:.0f} min ({why}); call save_game again")
         return False
 

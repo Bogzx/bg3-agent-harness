@@ -96,8 +96,9 @@ class SessionTest(unittest.TestCase):
     def test_bad_session_flags_each_item(self):
         got = self.verdicts(False)
         for name in ("first_call", "first_action", "session_clock", "toolsearch", "wait_for_noop", "pipelining",
-                     "wrapup", "ops", "pturn", "arrivals", "saves", "runner", "ui_leak"):
+                     "wrapup", "ops", "pturn", "arrivals", "runner", "ui_leak"):
             self.assertEqual(got[name][0], "WARN", (name, got[name]))
+        self.assertEqual(got["saves"][0], "FAIL")  # a lost save breaks crash recovery
         self.assertEqual(got["connections"][0], "FAIL")
         self.assertEqual(got["bg3le_crash"][0], "FAIL")
         self.assertIn("1 walk/interact results with the after=", got["arrivals"][1])

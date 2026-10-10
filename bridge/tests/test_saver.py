@@ -127,7 +127,23 @@ class SaverTest(unittest.TestCase):
         s = rig.saver()
         s.save("x")
         self.assertTrue(wait_until(lambda: s.pending is None))
-        self.assertIn("SAVE FAILED 'x': no save folder appeared", s.take_notes())
+        note = s.take_notes()
+        self.assertIn("SAVE FAILED 'x': no save folder appeared", note)
+        self.assertIn("On disk: no folder *__x in", note)
+
+    def test_s017_folder_lsv_layout_counts_and_a_miss_says_what_is_there(self):
+        # S017: 'Claude-25101260926__S017-pre-dror/S017-pre-dror.lsv' was on disk but the check looked for
+        # '<folder>.lsv' and reported 4/4 saves lost
+        root = Path(tempfile.mkdtemp())
+        t = time.time()
+        d = root / "Claude-25101260926__S017-pre-dror"
+        d.mkdir()
+        (d / "S017-pre-dror.lsv").write_bytes(b"x" * 100)
+        (d / "S017-pre-dror.WebP").write_bytes(b"x")
+        self.assertEqual(saver.written_save(root, "S017-pre-dror", t), d)
+        seen = saver.on_disk(root, "S017-pre-dror", t + 50)
+        self.assertIn("Claude-25101260926__S017-pre-dror: [S017-pre-dror.WebP 1B -50s, S017-pre-dror.lsv 100B -50s]", seen)
+        self.assertIn("save dir missing", saver.on_disk(root / "nope", "x", t))
 
     def test_one_save_at_a_time(self):
         rig = Rig(menu_s=0.3)
