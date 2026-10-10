@@ -288,8 +288,10 @@ def sec_trade() -> None:
     g0 = status().get("gold")
     out, dt = took("trade", sell="junk")
     g1 = status().get("gold")
-    ok = "FAILED" not in out and (isinstance(g0, int) and isinstance(g1, int) and g1 > g0 or "nothing" in out.lower())
-    item("trade sell=junk (one call)", "PASS" if ok else "FAIL", f"{dt:.1f}s; gold {g0}→{g1}; {first_line(out)}")
+    ok = out.startswith("trade: done") and (isinstance(g0, int) and isinstance(g1, int) and g1 > g0
+                                            or "nothing" in out.lower())
+    tail = " ".join(re.findall(r"(?m)^\((?:sold|\d+ barters)[^\n]*", out))   # "(3 barters of up to 25 items)" "(sold N …)"
+    item("trade sell=junk (one call)", "PASS" if ok else "FAIL", f"{dt:.1f}s; gold {g0}→{g1}; {first_line(out)} {tail}")
     esc = call("press_key", key="ESCAPE")
     load_verified(TRADE_SAVE)
 
@@ -792,15 +794,20 @@ def sec_setup() -> None:
     if need(q is not None, "scorer names the new journal step", "no quest with 3+ steps in the live journal"):
         import copy
         older = copy.deepcopy(got)
-        oq = next(x for x in (older["journal"].get("quests", older["journal"]) if isinstance(older["journal"], dict)
-                              else older["journal"]) if x.get("title") == q["title"])
-        gone = oq["steps"].pop(0)        # the quest's FIRST step: a count-based diff would name the last one
+        oqs = [x for x in (older["journal"].get("quests", older["journal"]) if isinstance(older["journal"], dict)
+                           else older["journal"]) if isinstance(x, dict) and x.get("title") == q["title"]]
+        # the quest's FIRST step (a count-based diff would name the last one), taken out of every quest with this
+        # title (Daughter of Darkness is two journal quests: the party's and Shadowheart's own)
+        gone = q["steps"][0]
+        for oq in oqs:
+            oq["steps"] = [x for x in oq["steps"] if progress._step_key(str(x)) != progress._step_key(str(gone))]
         seen, _ = progress.diff(None, older)
         _, evs = progress.diff(seen, got)
         whats = [e["what"] for e in evs if e["kind"] == "quest_step"]
-        want = f"{q['title']}: {progress._step_key(gone)}"
+        want = f"{q['title']}: {progress._step_key(str(gone))}"
         item("scorer names the new journal step", "PASS" if whats == [want] else "FAIL",
-             f"removed step 1 of '{q['title']}' ({len(q['steps'])} steps); events {whats[:3]}")
+             f"removed step 1 of '{q['title']}' ({len(q['steps'])} steps, {len(oqs)} quest(s) with that title); "
+             f"events {whats[:3]}")
     # 3. lessons: nearby characters' status names reach the lesson terms (a trigger with a plural/past ending)
     nb = S.game.try_rpc("state.nearby", {"kinds": ["characters"], "radius": 40}) or {}
     rows = [c for c in nb.get("characters") or [] if c.get("statuses")]

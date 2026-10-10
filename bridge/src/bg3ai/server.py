@@ -4186,6 +4186,9 @@ def _item_handle(it: dict) -> str:
     return H.get(u, it.get("name")) if isinstance(u, str) and u else "(no id)"
 
 
+SELL_CHUNK = 25
+
+
 def _sell_junk(keep: str = "") -> str:
     t0 = time.monotonic()
     inv = game.rpc("state.inventory", {})
@@ -4211,11 +4214,24 @@ def _sell_junk(keep: str = "") -> str:
                else "none of the junk is on this trade screen")
         return _finish("trade", {"sell": "junk"}, f"trade: done — nothing sold ({why})", t0)
     _EV_DROP.update(items={H._bare(u) for u in picked}, gold=True, until=0.0)
+    # Barters of SELL_CHUNK items: the job moves one item per tick (~0.2 s each, a stack's quantity box more), so
+    # acceptance 01:07's 72 junk items ran into the 15 s job timeout with nothing sold. A failed barter stops the rest.
+    chunks = [picked[i:i + SELL_CHUNK] for i in range(0, len(picked), SELL_CHUNK)]
+    done = 0
     try:
-        out = _act("trade", "ui.trade", {"offer": picked, "confirm": True}, context="client", wait_s=30)
+        for ch in chunks:
+            out = _act("trade", "ui.trade", {"offer": ch, "confirm": True}, context="client", wait_s=30)
+            if not out.startswith("trade: done"):
+                break
+            done += len(ch)
     finally:
         _EV_DROP["until"] = time.monotonic() + EV_DROP_TAIL_S  # late AddedTo events of this sale
+    if done < len(picked):
+        return out + (f"\n(sold {done} of {len(picked)} junk items in {done // SELL_CHUNK} barter(s) before this "
+                      f"one failed; trade sell=junk again sells the rest)" if done else "")
     left = len(on_screen) - len(picked)
+    if len(chunks) > 1:
+        out += f"\n({len(chunks)} barters of up to {SELL_CHUNK} items)"
     note = f"\n(sold {len(picked)} junk items, ~{total} g at the shown prices" + (
         f"; {left} more left: the trader ran out of gold, stash them with manage_inventory op=camp item=junk)" if left else ")")
     return out + note
@@ -6926,7 +6942,15 @@ def _wait_for_stragglers(char: str, here: Any, crew: set, outer: actq.Executor |
 def _floor_ways(within: float = 1e9) -> tuple[dict | None, list[dict]]:
     """(frontier, the 2 nearest ladders/stairs/exits in view within `within` m): the ways to another floor or an
     interior. Leads only: the open-direction searches cost ~100 ms."""
-    res = game.try_rpc("nav.frontier", {"ways": False})
+    # the frontier's own radius is 30 m: ask for `within` (acceptance 01:07: the Mausoleum Entrance 34 m from the
+    # ladder top was cut, so travel_to (-286,-31,-847.5) started a 934 m walk instead of naming the entrance)
+    args: dict[str, Any] = {"ways": False}
+    if within < 1e8:
+        args["radius"] = within
+        # ...and a way in the party saw minutes ago counts (live 01:4x: the entrance is out of sight from the
+        # Knotted Roots top, behind the cliff edge, 34 m off)
+        args["known"] = True
+    res = game.try_rpc("nav.frontier", args)
     leads = res.get("leads") if isinstance(res, dict) else None
     ups = sorted((l for l in leads or [] if l.get("uuid") and l.get("kind") in ("ladder", "stairs", "exit")
                   and (l.get("dist") or 0) <= within), key=lambda l: l.get("dist") or 1e9)[:2]
@@ -6936,7 +6960,8 @@ def _floor_ways(within: float = 1e9) -> tuple[dict | None, list[dict]]:
 def _ways_text(res: dict | None, ups: list[dict]) -> str:
     _remember_names(res)
     return ", ".join(f"{H.get(l['uuid'], l.get('name'))} {l.get('name', '?')} <{l.get('kind')}> "
-                     f"{render.num(l.get('dist', '?'))}m{(' ' + l['dir']) if l.get('dir') else ''}" for l in ups)
+                     f"{render.num(l.get('dist', '?'))}m{(' ' + l['dir']) if l.get('dir') else ''}"
+                     + (" (seen earlier, out of sight now)" if l.get("remembered") else "") for l in ups)
 
 
 def _climb_hint(here: list | None, dest: list | None) -> str:

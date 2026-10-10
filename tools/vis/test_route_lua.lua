@@ -306,6 +306,27 @@ test("nav.frontier: a ladder lead carries its height and way; leads on another l
     near(byId.D2.dy, 9, "door on the deck above")
 end)
 
+test("nav.frontier known=true: a remembered exit out of sight counts, a remembered barrel doesn't (live 01:4x Mausoleum)", function()
+    N.visited = function() return true end
+    N.waypointsHere = function() return {} end
+    Ext.Entity = { GetAllEntitiesWithComponent = function() return {} end }
+    item("X1", { 20, 0, 28 }, "usable", { visible = false, known = true })
+    item("B1", { 5, 0, 0 }, "usable", { visible = false, known = true })
+    local V = BG3AI.Visibility
+    local savedName, savedKnown = V.name, V.itemKnown
+    V.name = function(u) return u == "X1" and "Mausoleum Entrance" or "Barrel" end
+    V.itemKnown = function(ctx, u) local it = items[u]; return it and it.known == true, it and it.kind end
+    local ok, err = pcall(function()
+        local strict = RPC.ops["nav.frontier"]({ hazards = false, ways = false, radius = 40 })
+        eq(#strict.leads, 0, "strict: nothing in sight")
+        local r = RPC.ops["nav.frontier"]({ hazards = false, ways = false, radius = 40, known = true })
+        eq(#r.leads, 1, "only the exit"); eq(r.leads[1].uuid, "X1", "exit"); eq(r.leads[1].kind, "exit", "kind")
+        eq(r.leads[1].remembered, true, "marked remembered")
+    end)
+    V.name, V.itemKnown = savedName, savedKnown
+    if not ok then error(err, 0) end
+end)
+
 -- ---- jump gaps in the ways (setup: jump spots were only found from screenshots) ------------------------------
 
 local function chasm(x0, x1, below)

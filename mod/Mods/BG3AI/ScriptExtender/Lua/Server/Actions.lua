@@ -784,6 +784,10 @@ A.holder = holder
 
 A.LADDER_DY = 1.5         -- a climb ends on another floor at least this far up/down
 A.LADDER_CLIMB_MS = 10000 -- interact on a ladder: the longest it waits for the climb after the Use
+-- Acceptance 2026-10-11 01:00 (Knotted Roots, passed 10-10 14:48 with the same code): the Use answered success for
+-- all four and nobody climbed in 10 s. A player clicks the ladder again: one purge + re-Use when the actor hasn't
+-- moved vertically this long after the Use.
+A.LADDER_RETRY_MS = 3000
 
 -- In combat a carried potion is drunk as from the hotbar: on the drinker's turn, for the item's own UseCosts
 -- (a bonus action for Potion of Healing). S003/S017/S018/S023/S031: every in-combat potion was refused ("not
@@ -943,23 +947,50 @@ reg("interact", function(args)
                 -- the climb itself: the actor on another floor and still, or give up after A.LADDER_CLIMB_MS.
                 local lj, here = job.ladder, G.pos(char)
                 local now = RPC.now_ms()
+                -- Root cause (live probe 2026-10-11 01:5x, Knotted Roots): the Use stays in the Osiris queue after
+                -- the climb and climbs again from the other end (down/up/down, < 0.5 s at each end), so the actor
+                -- ended back where it started. Purged once the climb has begun (CLIMBING status, or 0.8 m along), the
+                -- climb runs to its end and the actor stays there (probe: 31.59 held for 5 s).
+                if not lj.purged and here and lj.y0 and (math.abs(here[2] - lj.y0) > 0.8
+                    or G.b(G.q("HasActiveStatus", char, "CLIMBING"))) then
+                    lj.purged = true
+                    pcall(G.osi, "PurgeOsirisQueue", char)
+                end
                 if here and lj.y0 then
                     -- Off the ladder = vertically still (stepping off moves sideways), on the other floor. Live
                     -- 14:2x: the Use re-climbs in a loop with ~0.5 s at each end; the job's end purges it.
                     local vy = lj.last and math.abs(here[2] - lj.last[2]) or 1
+                    lj.hmove = lj.last and math.sqrt((here[1] - lj.last[1]) ^ 2 + (here[3] - lj.last[3]) ^ 2) or 1
                     lj.still = (vy < 0.05) and (lj.still or now) or nil
                     lj.last = here
                     local dy = here[2] - lj.y0
-                    if math.abs(dy) >= A.LADDER_DY and lj.still and now - lj.still >= 200 then
+                    -- Live probe 2026-10-11 01:4x (Knotted Roots): the Use's loop now turns round at the foot in
+                    -- < 0.5 s (31.59 at one sample, climbing again at the next), so 200 ms of stillness there never
+                    -- came and the job failed with the actor back at the top. Arrived = on the other floor and not
+                    -- moving vertically for one tick, or at the ladder's foot going down (the item stands at its foot).
+                    local lp = G.pos(lj.item)
+                    local at_foot = dy < 0 and lp and math.abs(here[2] - lp[2]) <= 0.6
+                    if math.abs(dy) >= A.LADDER_DY and (lj.still or at_foot) then
                         RPC.finish_job(job, "done", with_key({ used = true, climbed = dy < 0 and "down" or "up",
                             dy = U.round(dy, 1) }))
                         return
                     end
                 end
+                if not lj.retried and not lj.purged and here and lj.y0 and math.abs(here[2] - lj.y0) < 0.3
+                    and (lj.hmove or 1) < 0.05
+                    and now - job.used_at > A.LADDER_RETRY_MS then -- standing still (not the Use's own walk)
+                    lj.retried = true
+                    pcall(G.osi, "PurgeOsirisQueue", char)
+                    G.osi("Use", char, target, job.use_ev)
+                    job.used_at = now
+                    return
+                end
                 if now - job.used_at > A.LADDER_CLIMB_MS then
-                    RPC.finish_job(job, "failed", { used = true, climbed = false },
+                    RPC.finish_job(job, "failed", { used = true, climbed = false, used_twice = lj.retried or nil },
                         "used the ladder but did not climb it (still on the same floor after "
-                        .. math.floor(A.LADDER_CLIMB_MS / 1000) .. " s)")
+                        .. math.floor(A.LADDER_CLIMB_MS / 1000) .. " s" .. (lj.retried and ", Used twice" or "")
+                        .. "): the game didn't start the climb; walk round by the route, or jump_to the ladder's foot"
+                        .. " if the drop is safe")
                 end
                 return
             end

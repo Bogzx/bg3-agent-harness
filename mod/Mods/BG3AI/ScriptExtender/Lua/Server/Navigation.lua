@@ -709,6 +709,7 @@ RPC.register("nav.frontier", function(args)
     local radius = tonumber(args.radius) or 30
     local limit = tonumber(args.limit) or 25
     local leads = {}
+    local remembering -- the item being added is remembered (args.known), not in sight
 
     local function add(kind, uuid, p, extra)
         local d = U.dist(center, p)
@@ -718,6 +719,7 @@ RPC.register("nav.frontier", function(args)
         local dy = p[2] - center[2]
         if math.abs(dy) >= 1.5 then o.dy = round(dy, 1) end -- on a ledge above / a floor below
         if extra then for k, v in pairs(extra) do o[k] = v end end
+        if remembering then o.remembered = true end
         leads[#leads + 1] = o
     end
 
@@ -729,6 +731,19 @@ RPC.register("nav.frontier", function(args)
         local p = e and V.pos(e)
         if p and U.dist(center, p) <= radius then
             local vis, kind = V.itemVisible(ctx, u, e, p)
+            -- known=true (travel_to's other-floor rule): a way in the party saw minutes ago counts too, as a
+            -- player remembers it (acceptance 01:31, live probe: the Mausoleum Entrance 34 m from the Knotted Roots
+            -- top is behind the cliff edge, so the 934 m walk started instead of naming it). Listings stay strict.
+            local remembered
+            if not vis and args.known and V.itemKnown then
+                vis, kind = V.itemKnown(ctx, u, e, p)
+                remembered = vis or nil
+            end
+            if vis and remembered and not ((kind == "usable" or kind == "item") and N.exitName(V.name(u)))
+                and kind ~= "ladder" and kind ~= "door" then
+                vis = false -- remembered: only the ways to another floor / an interior
+            end
+            remembering = remembered
             if vis then
                 if wpSet[u] then
                     add("waypoint", u, p, { waypoint = wpSet[u].name })
@@ -757,6 +772,7 @@ RPC.register("nav.frontier", function(args)
             end
         end
     end
+    remembering = nil
     -- Characters the party perceives but hasn't been near.
     local chars = V.characters and V.characters() or {}
     do

@@ -1218,6 +1218,24 @@ test("interact ladder: the job waits for the climb (no purge at the top), done o
     restore()
 end)
 
+test("interact ladder: a climb loop that turns round at the foot at once is done there (live probe 10-11 01:4x)", function()
+    local restore = with_tasks(1)
+    world[P1].pos = { 9.5, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    A.dispatch("UseFinished", { P1, LADDER, 1 })
+    tick()
+    local lp = world[LADDER].pos
+    world[LADDER].pos = { 10, -6, 0 }   -- live: the item stands at the ladder's foot
+    for _, y in ipairs({ -0.6, -2.1, -3.6 }) do world[P1].pos = { 9.9, y, 0 } tick() end
+    eq(j.status, "running", "climbing")
+    eq(#called("PurgeOsirisQueue"), 1, "the Use task purged once the climb began (no re-climb loop)")
+    world[P1].pos = { 9.9, -5.6, 0.3 } tick()   -- at the foot, still moving (no stillness before it climbs back)
+    world[LADDER].pos = lp
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.climbed, "down", "climbed")
+    eq(#called("PurgeOsirisQueue"), 1, "the loop is purged")
+    restore()
+end)
+
 test("interact ladder: a UseFinished during the walk to the top (before our Use) is ignored", function()
     world[P1].pos = { 0, 0, 0 }
     local j = job(op("interact", { char = P1, target = LADDER }))
@@ -1242,8 +1260,28 @@ test("interact ladder: no climb after the Use -> failed, says so", function()
     local j = job(op("interact", { char = P1, target = LADDER }))
     A.dispatch("UseFinished", { P1, LADDER, 1 })
     tick()
+    world[P1].pos = { 9.0, 0, 0 } clock = clock + A.LADDER_RETRY_MS + 1 tick() -- still walking: no re-Use
+    eq(#called("Use"), 1, "no re-Use while the Use walks")
+    tick()
+    eq(j.status, "running", "re-Used, not failed yet"); eq(#called("Use"), 2, "a second Use (acceptance 01:00)")
     clock = clock + A.LADDER_CLIMB_MS + 1 tick()
     eq(j.status, "failed", "status"); assert(j.error:find("did not climb"), j.error)
+    assert(j.error:find("Used twice", 1, true), j.error)
+end)
+
+test("interact ladder: the re-Use starts the climb -> done", function()
+    world[P1].pos = { 9.5, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    A.dispatch("UseFinished", { P1, LADDER, 1 })
+    tick()
+    clock = clock + A.LADDER_RETRY_MS + 1 tick() tick()
+    eq(#called("Use"), 2, "re-Used")
+    world[P1].pos = { 9.6, -3, 0 } tick()
+    world[P1].pos = { 9.7, -5.8, 0 } tick()
+    world[P1].pos = { 10.2, -5.8, 0.4 } clock = clock + 100 tick()
+    world[P1].pos = { 10.6, -5.8, 0.8 } clock = clock + 300 tick()
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.climbed, "down", "climbed")
+    eq(#called("Use"), 2, "one re-Use")
 end)
 
 test("move_to: a timed-out walk purges its CharacterMoveToPosition task", function()

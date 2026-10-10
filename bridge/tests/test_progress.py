@@ -81,6 +81,22 @@ class Diff(unittest.TestCase):
         seen, evs = P.diff(seen, w)
         self.assertEqual([e["what"] for e in evs], ["Escape the Nautiloid: Faith-Leap Trial done."])
 
+    def test_two_quests_with_one_title_are_one_row(self):
+        # acceptance 01:07: "Daughter of Darkness" is two journal quests (the party's + Shadowheart's "I …" one);
+        # keyed by title, the 2nd overwrote the 1st, so a new step of the 1st scored nothing.
+        seen, _ = P.diff(None, world())
+        w = world()
+        w["journal"] = [{"title": "Daughter", "steps": ["We met her."]},
+                        {"title": "Daughter", "steps": ["I felt pain.", "I hid it."], "done": True}]
+        seen, _ = P.diff(seen, w)
+        self.assertEqual(seen["quests"]["Daughter"]["texts"], ["We met her.", "I felt pain.", "I hid it."])
+        w["journal"][0]["steps"].append("We spared the Nightsong.")
+        seen, evs = P.diff(seen, w)
+        self.assertEqual([e["what"] for e in evs], ["Daughter: We spared the Nightsong."])  # no quest_done: one open
+        w["journal"][0]["done"] = True
+        _, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs), ["quest_done"])
+
     def test_state_without_step_texts_keeps_counting_then_switches_to_texts(self):
         seen, _ = P.diff(None, world())
         for q in seen["quests"].values():

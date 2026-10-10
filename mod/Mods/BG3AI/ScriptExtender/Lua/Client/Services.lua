@@ -548,7 +548,9 @@ RPC.register("ui.trade", function(args)
         check(UI.command(dc, "SetTradeMode", nil, false))
     end
 
-    return waitJob("ui.trade", 15000, function()
+    -- One move per tick (~0.2 s, a stack's quantity box more) + balance + finish: 15 s plus 0.35 s per item (the bridge
+    -- sells junk in barters of 25; acceptance 01:07 timed out moving 72 at once).
+    return waitJob("ui.trade", 15000 + 350 * (#offer + #request), function()
         local _, live = tradeWidget()
         if not live then
             if phase == "finishing" then

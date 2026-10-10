@@ -324,6 +324,21 @@ class OtherFloor(Base):
         self.assertIn("likely inside an interior", out)
         self.assertIn("Mausoleum Entrance <exit> 17.1m NW", out)
 
+    def test_entrance_past_the_frontier_default_radius_is_asked_for(self):
+        """acceptance 01:07: from the ladder top the Mausoleum Entrance was 34 m off, past nav.frontier's 30 m
+        default, and travel_to started a 934 m walk. The frontier is asked for FLOOR_WAY_M."""
+        self.route = {"too_far": True, "straight_m": 933.7}
+        asked = []
+        real = self.g.try_rpc
+
+        def fake(op, args=None, context="server", default=None):
+            if op == "nav.frontier":
+                asked.append(args)
+            return real(op, args, context, default)
+        self.g.try_rpc = fake
+        server._other_floor(P1, [0.0, 35.6, 0.0], [-100.0, -31.0, -950.0])
+        self.assertEqual(asked, [{"ways": False, "radius": server.FLOOR_WAY_M, "known": True}])
+
     def test_far_goal_with_only_a_ladder_walks(self):
         self.route = {"too_far": True}
         real = self.g.try_rpc

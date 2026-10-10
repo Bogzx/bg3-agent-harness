@@ -406,6 +406,41 @@ class Tools(unittest.TestCase):
         self.assertEqual(g.jobs[-1][1]["offer"], [_u(6)])
         self.assertIn("~24 g", out)
 
+    def test_sell_junk_in_barters_of_25(self):
+        # acceptance 01:07: 72 junk items in one barter → the job's 15 s timeout, nothing sold
+        inv = s026_inventory()
+        mine = [it for it in server.economy.junk(inv, set())]
+        trade = {"trader_gold": 10 ** 6, "your_items": [{"uuid": it["uuid"], "price": 1} for it in mine]}
+        g = self.use(FakeGame(inv, trade))
+        saved = server.SELL_CHUNK
+        server.SELL_CHUNK = 2
+        self.addCleanup(setattr, server, "SELL_CHUNK", saved)
+        out = server.trade(sell="junk")
+        offers = [a["offer"] for op, a in g.jobs if op == "ui.trade"]
+        self.assertEqual(sum(len(o) for o in offers), len(mine))
+        self.assertTrue(all(len(o) <= 2 for o in offers))
+        self.assertEqual(len(offers), (len(mine) + 1) // 2)
+        self.assertIn(f"sold {len(mine)} junk items", out)
+
+    def test_sell_junk_stops_after_a_failed_barter(self):
+        inv = s026_inventory()
+        mine = server.economy.junk(inv, set())
+        trade = {"trader_gold": 10 ** 6, "your_items": [{"uuid": it["uuid"], "price": 1} for it in mine]}
+        g = self.use(FakeGame(inv, trade))
+        saved = (server.SELL_CHUNK, server._act)
+        server.SELL_CHUNK = 2
+        n = []
+
+        def fake_act(tool, op, args, **kw):
+            n.append(args["offer"])
+            return "trade: done — confirmed" if len(n) == 1 else "trade: TIMEOUT — timed out"
+        server._act = fake_act
+        self.addCleanup(lambda: (setattr(server, "SELL_CHUNK", saved[0]), setattr(server, "_act", saved[1])))
+        out = server.trade(sell="junk")
+        self.assertEqual(len(n), 2)
+        self.assertIn("trade: TIMEOUT", out)
+        self.assertIn(f"sold 2 of {len(mine)} junk items in 1 barter(s) before this one failed", out)
+
     def test_sell_junk_nothing_on_screen(self):
         self.use(FakeGame(s026_inventory(), {"trader_gold": 500, "your_items": []}))
         self.assertIn("nothing sold (none of the junk is on this trade screen)", server.trade(sell="junk"))

@@ -153,12 +153,21 @@ def _step_key(text: str) -> str:
 
 def _quests(journal: Any) -> dict:
     qs = journal.get("quests", journal) if isinstance(journal, dict) else journal
-    out = {}
+    out: dict = {}
     for q in qs or []:
         if isinstance(q, dict) and q.get("title"):
             texts = [str(x) for x in q.get("steps") or []]
-            out[str(q["title"])] = {"steps": len(texts), "done": bool(q.get("done")),
-                                    "last": (texts or [""])[-1][:120], "texts": [_step_key(x) for x in texts]}
+            keys = [_step_key(x) for x in texts]
+            o = out.get(str(q["title"]))
+            if o is None:
+                out[str(q["title"])] = {"steps": len(texts), "done": bool(q.get("done")),
+                                        "last": (texts or [""])[-1][:120], "texts": keys}
+                continue
+            # Two journal quests with one title (Daughter of Darkness: the party's and Shadowheart's own "I …"
+            # entries; acceptance 01:07): one row, the union of their steps, done only when both are closed.
+            o["texts"] = o["texts"] + [k for k in keys if k not in o["texts"]]
+            o["steps"], o["done"] = len(o["texts"]), o["done"] and bool(q.get("done"))
+            o["last"] = (texts or [o["last"]])[-1][:120]
     return out
 
 
