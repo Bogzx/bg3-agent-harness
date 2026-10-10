@@ -150,6 +150,8 @@ class FakeSpellPage:
         self.scroll = 0.0                  # px scrolled down
         self.near_margin = near_margin     # px around the list where the probe says `near` (None: never)
         self.wheels: list[int] = []
+        self.intro = False                 # the "Level Up!" intro is up: panels off-screen, nothing hoverable
+        self.intro_clicks: list[tuple[int, int]] = []
 
     def wheel(self, notches, x=None, y=None, sync=True):
         self.wheels.append(notches)
@@ -172,6 +174,10 @@ class FakeSpellPage:
 
     def click(self, x, y, button="L", count=1, sync=True):
         self.cursor = (x, y)
+        if self.intro:
+            self.intro = False
+            self.intro_clicks.append((x, y))
+            return
         k = self.under()
         if k and self.open > 0:
             self.picked.append(self.visible()[k - 1])
@@ -182,6 +188,8 @@ class FakeSpellPage:
         return [n for n in self.names if n not in self.picked]
 
     def under(self):
+        if self.intro:
+            return None
         x, y = self.cursor
         top = self.origin[1] - self.cell / 2
         if self.rows_visible is not None and not (top <= y < top + self.rows_visible * self.cell):
@@ -206,7 +214,8 @@ class FakeSpellPage:
         idx = self.visible().index(name) + 1
         h = self.under()
         out = {"index": idx, "n": len(self.visible()), "cols": self.cols, "cell": {"w": 88.0, "h": 88.0},
-               "over": h == idx, "hovered": h, "enabled": self.open > 0, "open": self.open}
+               "over": h == idx, "hovered": h, "enabled": self.open > 0, "open": self.open,
+               "step": "Intro" if self.intro else "IntroComplete"}
         if self.near_margin is not None:
             m, (x, y) = self.near_margin, self.cursor
             rows = self.rows_visible or -(-len(self.visible()) // self.cols)
@@ -232,6 +241,15 @@ class SpellClicks(unittest.TestCase):
     def tearDown(self):
         LV.MEMO = self._memo
         LV._last_hit.clear()
+
+    def test_intro_skipped_before_search(self):
+        # S021: the page sat on its "Level Up!" intro, so 226-365 probes never hovered a button
+        page = FakeSpellPage(NAMES, switch_frames=0)
+        page.intro = True
+        r = LV.click_spells(page.rpc, page, [{"name": "Shield"}, {"name": "Magic Missile"}])
+        self.assertEqual(r["failed"], {})
+        self.assertEqual(sorted(r["picked"]), ["Magic Missile", "Shield"])
+        self.assertEqual(page.intro_clicks, [(960, 918)])
 
     def test_far_list_found_through_near(self):
         # S018: the list far from where Gale's L2 page had it. `near` (over the list's scroll viewer) lets the

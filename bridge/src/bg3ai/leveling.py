@@ -252,6 +252,8 @@ FINE_PROBES = 160        # button-sized steps around the coarse hit
 CLICK_BUDGET_S = 45.0    # all picks of one level_up call
 SCROLL_TRIES = 6
 WHEEL_NOTCHES = 3
+INTRO_CLICK = (0.5, 0.85)  # window fraction clicked to skip the level-up intro (empty floor under the character)
+INTRO_SKIP_TRIES = 2
 
 Rpc = Callable[[str, dict], dict]
 MEMO = Path(os.environ.get("BG3AI_RUNTIME", Path(__file__).resolve().parents[3] / "runtime")) / "levelup_clicks.json"
@@ -325,11 +327,29 @@ class SpellClicker:
             self.probes += 1
         return self.rpc("ui.level_up_spell_probe", args)
 
+    def skip_intro(self, args: dict, p: dict) -> dict:
+        """The page opens with a "Level Up!" intro whose panels stay off-screen until LevelUpStep is IntroComplete;
+        it never finished by itself in S021 (still up 10 s after level_up opened the page). A click skips it
+        (UISkipDialog, what the player did by hand in S021). Only clicked while the intro is up."""
+        for _ in range(INTRO_SKIP_TRIES):
+            if not p.get("step") or p.get("step") == "IntroComplete" or p.get("placed"):
+                return p
+            w, h = self.inp.window_size()
+            self.log(f"level-up intro still up (step {p.get('step')}): clicking to skip it")
+            self.inp.click(round(w * INTRO_CLICK[0]), round(h * INTRO_CLICK[1]))
+            for _ in range(10):
+                self.inp.wait_frames(6)
+                p = self.probe(args)
+                if p.get("step") == "IntroComplete" or p.get("placed"):
+                    self.inp.wait_frames(30)   # the panels slide in (LevelUpAfterItems storyboards)
+                    return self.probe(args)
+        return p
+
     def ready(self, args: dict) -> dict:
         """Probe until the selector is shown and the spell's button exists (tab and sub-tab switches take frames)."""
         p: dict = {}
         for _ in range(16):
-            p = self.probe(args)
+            p = self.skip_intro(args, self.probe(args))
             if p.get("placed") or p.get("index"):
                 return p
             self.inp.wait_frames(6)

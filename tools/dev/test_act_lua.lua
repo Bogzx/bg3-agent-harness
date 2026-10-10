@@ -57,10 +57,18 @@ local NPC = "bbbbbbbb-0000-0000-0000-000000000002"
 local DOOR = "cccccccc-0000-0000-0000-000000000003"
 local GEM = "dddddddd-0000-0000-0000-000000000004"
 local GOB = "eeeeeeee-0000-0000-0000-000000000005"
+local P2 = "ffffffff-0000-0000-0000-000000000006"
+local KEY = "abababab-0000-0000-0000-000000000007"
+local party_rows = { P1 }
 
 local usp_arity = 6 -- UseSpellAtPosition inputs the "game" accepts
 Osi = setmetatable({
-    DB_PartyMembers = { Get = function() return { { "S_Player_" .. P1 } } end },
+    DB_PartyMembers = { Get = function()
+        local rows = {}
+        for _, u in ipairs(party_rows) do rows[#rows + 1] = { "S_Player_" .. u } end
+        return rows
+    end },
+    Unlock = record("Unlock"),
     GetPosition = function(u)
         local w = world[u]
         if w then return w.pos[1], w.pos[2], w.pos[3] end
@@ -108,6 +116,7 @@ end
 
 local function reset()
     calls, osiv, stats = {}, {}, {}
+    party_rows = { P1 }
     world = {
         [P1] = { pos = { 0, 0, 0 }, comps = {} },
         [NPC] = { pos = { 10, 0, 0 }, comps = {} },
@@ -751,6 +760,121 @@ test("cast: a finished spell does not purge the queue", function()
     RPC.finish_job(j, "done", {})
     eq(#called("PurgeOsirisQueue"), 0, "no purge")
     restore()
+end)
+
+
+-- ---- locked doors: keys and lockpicking --------------------------------------
+
+-- `who` carries KEY (in a keychain bag) that fits DOOR's lock.
+local function keyed_door(who, door_key, key_name)
+    osiv[key("IsLocked", DOOR)] = 1
+    world[DOOR].comps.Lock = { Key_M = door_key or "PriestessKey" }
+    local key_e = { Key = { Key = key_name or "PriestessKey" }, Uuid = { EntityUuid = KEY } }
+    local chain = { Uuid = { EntityUuid = "12121212-0000-0000-0000-000000000008" },
+        InventoryOwner = { PrimaryInventory = { InventoryContainer = { Items = { { Item = key_e } } } } } }
+    local junk = { Uuid = { EntityUuid = GEM } }
+    world[who].comps.InventoryOwner = { PrimaryInventory = { InventoryContainer = {
+        Items = { { Item = junk }, { Item = chain } } } } }
+end
+
+local function add_p2(pos)
+    party_rows = { P1, P2 }
+    world[P2] = { pos = pos or { 1, 0, 0 }, comps = {} }
+    osiv[key("IsCharacter", P2)] = 1
+    osiv[key("IsOnStage", P2)] = 1
+end
+
+test("interact locked: nobody carries the key -> refused with the options", function()
+    osiv[key("IsLocked", DOOR)] = 1
+    world[DOOR].comps.Lock = { Key_M = "PriestessKey" }
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    eq(j.status, "failed", "status"); assert(j.error:find("nobody in the party carries its key"), j.error)
+    eq(#called("Unlock"), 0, "Unlock")
+end)
+
+test("interact locked: a key with another name does not fit", function()
+    keyed_door(P1, "PriestessKey", "PrisonKey")
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    eq(j.status, "failed", "status"); assert(j.error:find("carries its key"), j.error)
+end)
+
+test("interact locked: actor's own key (keychain) -> walk, Unlock, Use, reported", function()
+    keyed_door(P1)
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    eq(#called("Unlock"), 0, "no Unlock before arrival")
+    arrive(j, { 8.5, 0, 0 })
+    local ul = called("Unlock")
+    eq(#ul, 1, "Unlock after arrival"); eq(ul[1][2], DOOR, "door"); eq(ul[1][3], P1, "by")
+    eq(#called("Use"), 1, "Use")
+    osiv[key("IsLocked", DOOR)] = nil
+    osiv[key("IsOpened", DOOR)] = 1
+    tick()
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(j.result.opened, true, "opened"); assert(j.result.unlocked_with, "unlocked_with"); assert(j.result.key_holder, "holder")
+end)
+
+test("interact locked: another party member's key -> that member opens it", function()
+    add_p2({ 1, 0, 0 })
+    keyed_door(P2)
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    eq(j.char, P2, "the key holder acts")
+    local mv = called("CharacterMoveToPosition"); local d = mv[#mv]
+    for i = 1, 5 do world[P2].pos = { 1 + (d[3] - 1) * i / 5, d[4], d[5] * i / 5 }; tick() end
+    A.dispatch("EntityEvent", { P2, j.walk.ev })
+    assert(j.status == "running", tostring(j.status) .. " " .. tostring(j.error) .. " " .. tostring(j.phase))
+    local ul = called("Unlock")
+    eq(#ul, 1, "Unlock"); eq(ul[1][3], P2, "by the holder")
+    local use = called("Use"); eq(#use, 1, "Use"); eq(use[1][2], P2, "Use by the holder")
+end)
+
+test("interact locked: Use reports failure and it stays locked -> says the key did not open it", function()
+    keyed_door(P1)
+    world[DOOR].pos = { 1, 0, 0 }
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    eq(#called("Unlock"), 1, "Unlock in place")
+    A.dispatch("UseFinished", { P1, DOOR, 0 })
+    eq(j.status, "failed", "status"); assert(j.error:find("still locked"), j.error)
+end)
+
+test("guard: Unlock stays blocked through G.osi; unlock_with_key needs the key and adjacency", function()
+    local refused_or_error = pcall(G.osi, "Unlock", DOOR, P1)
+    eq(refused_or_error, false, "G.osi Unlock")
+    osiv[key("IsLocked", DOOR)] = 1
+    world[DOOR].comps.Lock = { Key_M = "PriestessKey" }
+    eq(pcall(G.unlock_with_key, DOOR, P1, 2.5), false, "no key")
+    keyed_door(P1)
+    eq(pcall(G.unlock_with_key, DOOR, P1, 2.5), false, "too far (10 m)")
+    world[DOOR].pos = { 1, 0, 0 }
+    eq(pcall(G.unlock_with_key, DOOR, P1, 2.5), true, "key + adjacent")
+    eq(#called("Unlock"), 1, "one Unlock")
+end)
+
+test("lockpick: a party member carries the key -> refused, points to interact", function()
+    keyed_door(P1)
+    local j = job(op("lockpick", { char = P1, target = DOOR }))
+    eq(j.status, "failed", "status"); assert(j.error:find("use interact"), j.error)
+end)
+
+test("lockpick: engine Use first; StartedLockpicking -> done via engine, no click, no purge", function()
+    osiv[key("IsLocked", DOOR)] = 1
+    local j = job(op("lockpick", { char = P1, target = DOOR }))
+    arrive(j, { 8.5, 0, 0 })
+    eq(#called("Use"), 1, "Use")
+    A.dispatch("StartedLockpicking", { P1, DOOR })
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(j.result.via, "engine", "via"); eq(j.result.needs_click, nil, "no click")
+    eq(#called("PurgeOsirisQueue"), 0, "lockpick task not purged")
+end)
+
+test("lockpick: no StartedLockpicking -> falls back to the verified click", function()
+    osiv[key("IsLocked", DOOR)] = 1
+    local j = job(op("lockpick", { char = P1, target = DOOR }))
+    arrive(j, { 8.5, 0, 0 })
+    tick(40)
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(j.result.needs_click, DOOR, "needs_click"); eq(j.result.expect, "roll", "expect")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

@@ -2040,7 +2040,10 @@ RPC.register("ui.level_up_spell_probe", function(args)
     if why == "placed" then return { placed = true } end
     if not item then error("spell " .. tostring(args.name) .. ": " .. tostring(why)) end
     local st = selectorState(s.sel)
-    local out = { picked = st.picked, open = st.open, name = label(item), feat = s.source == "FeatDetails" or nil }
+    local out = { picked = st.picked, open = st.open, name = label(item), feat = s.source == "FeatDetails" or nil,
+                  -- Until "IntroComplete" the page shows its "Level Up!" intro and the panels are off-screen, so no
+                  -- button can be hovered (S018/S021: 0 hits in 226-400 probes). A click skips the intro.
+                  step = str(UI.prop(dc, "LevelUpStep")) }
     local tabOk, switched
     if s.source == "FeatDetails" then tabOk, switched = P.showFeatSelector(w, s.sel)
     else tabOk, switched = showClassSelector(w, s.sel) end

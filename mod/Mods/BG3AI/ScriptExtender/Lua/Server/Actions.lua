@@ -727,8 +727,23 @@ reg("interact", function(args)
         end
         G.refuse("use act.talk to talk to characters")
     end
+    -- Locked: as in the game, a party member carrying its key opens it (the
+    -- player would select them and click). Otherwise refuse with the options.
+    local key_item, key_note
     if G.b(G.q("IsLocked", target)) then
-        G.refuse("it is locked")
+        local h, k = G.party_key(target, char)
+        if not h then
+            G.refuse("it is locked and nobody in the party carries its key (lockpick it, force it, or find the key)")
+        end
+        if not G.same(h, char) then
+            char = h
+            G.not_in_dialogue(char)
+            G.combat_gate(char, "no_combat")
+            G.within(char, target, G.MAX_INTERACT_DIST, "the key holder's target")
+        end
+        key_item = k
+        local function nm(u) local ok, n = pcall(function() return BG3AI.Visibility.name(u) end); return ok and n or u end
+        key_note = { unlocked_with = nm(k), key_holder = nm(char) }
     end
     local was_open = G.b(G.q("IsOpened", target))
     local openable = false
@@ -739,6 +754,10 @@ reg("interact", function(args)
 
     -- Doors/containers: report the open/closed state change. UseFinished lands
     -- a few frames before IsOpened flips, so wait (briefly) for the flip.
+    local function with_key(res)
+        if key_note then for kk, v in pairs(key_note) do res[kk] = v end end
+        return res
+    end
     local function state_result()
         local open = G.b(G.q("IsOpened", target))
         if open == was_open then return nil end
@@ -746,7 +765,7 @@ reg("interact", function(args)
         if open then
             pcall(function() if G.entity(target).ServerItem.IsContainer then res.container_open = true end end)
         end
-        return res
+        return with_key(res)
     end
 
     local plan = carried and { here = true, length_m = 0 } or G.approach_point(char, target, A.USE_REACH)
@@ -759,12 +778,13 @@ reg("interact", function(args)
             UseFinished = function(job, a)
                 if G.same(a[1], char) and G.same(a[2], target) then
                     if not G.b(a[3]) then
-                        RPC.finish_job(job, "failed", nil, "could not use that")
+                        RPC.finish_job(job, "failed", nil, key_note and G.b(G.q("IsLocked", target))
+                            and ("still locked: " .. key_note.unlocked_with .. " did not open it") or "could not use that")
                         return
                     end
                     local res = state_result()
                     if res then RPC.finish_job(job, "done", res)
-                    elseif not openable then RPC.finish_job(job, "done", { used = true })
+                    elseif not openable then RPC.finish_job(job, "done", with_key({ used = true }))
                     else job.used_at = RPC.now_ms() end
                 end
             end,
@@ -774,6 +794,13 @@ reg("interact", function(args)
         }),
         start = function(job)
             begin_approach(job, target, plan, A.USE_REACH, function(j)
+                if key_item then
+                    local ok, err = pcall(G.unlock_with_key, target, char, A.USE_REACH + 0.7)
+                    if not ok then
+                        RPC.finish_job(j, "failed", nil, "could not unlock it: " .. tostring(err))
+                        return
+                    end
+                end
                 j.use_ev = ev_name(j, "use")
                 j.use_track = {}
                 j.osi_task = true
@@ -793,7 +820,7 @@ reg("interact", function(args)
             if res then
                 RPC.finish_job(job, "done", res)
             elseif job.used_at and RPC.now_ms() - job.used_at > (openable and 1500 or 300) then
-                RPC.finish_job(job, "done", { used = true })
+                RPC.finish_job(job, "done", with_key({ used = true }))
             end
         end,
     })
@@ -1462,6 +1489,7 @@ reg("leave_camp", camp_travel("leave_camp", false))
 -- CharacterLootedCharacter fires when items are taken (Take All), as with a
 -- click. The story-DB gate below stays as a conservative extra.
 A.LOOT_ENGINE_SHORTCUT = true
+A.LOCKPICK_ENGINE_WAIT_MS = 2000 -- wait this long for StartedLockpicking after Use, then click
 
 -- Walk next to `target` (verified approach point; in combat within the
 -- remaining Movement, which the walk is charged for), select `char`, then
@@ -1558,8 +1586,39 @@ reg("lockpick", function(args)
     if not target or not G.b(G.q("IsItem", target)) then G.refuse("that cannot be lockpicked") end
     G.target_visible(target)
     if not G.b(G.q("IsLocked", target)) then G.refuse("it is not locked") end
-    return approach("lockpick", char, target, function(job) needs_click(job, target, "roll") end)
+    local h = G.party_key(target, char)
+    if h then
+        local ok, n = pcall(function() return BG3AI.Visibility.name(h) end)
+        G.refuse((ok and n or "a party member") .. " carries its key: use interact on it (opens it with the key)")
+    end
+    -- Engine path first (live S017-S021: the click path hover-missed this door
+    -- 144 times): Use on a locked item with Thieves' Tools is the same
+    -- interaction a click sends; the engine answers with StartedLockpicking and
+    -- the roll (UNVERIFIED live). Without that sign, fall back to the click.
+    return approach("lockpick", char, target, function(job)
+        job.pick_ev = ev_name(job, "pick")
+        job.osi_task = true
+        job.used_at = RPC.now_ms()
+        local ok = pcall(G.osi, "Use", char, target, job.pick_ev)
+        if not ok then job.used_at = 0 end
+    end, {
+        osi = {
+            StartedLockpicking = function(job, a)
+                if G.same(a[1], char) and G.same(a[2], target) then
+                    job.osi_task = nil -- the lockpick runs on as an engine task; don't purge it
+                    RPC.finish_job(job, "done", { opened = "roll", expect = "roll", via = "engine" })
+                end
+            end,
+        },
+        on_tick = function(job)
+            if job.used_at and RPC.now_ms() - job.used_at > A.LOCKPICK_ENGINE_WAIT_MS then
+                pcall(G.osi, "PurgeOsirisQueue", char)
+                needs_click(job, target, "roll")
+            end
+        end,
+    })
 end)
+listen("StartedLockpicking", 2)
 
 reg("disarm", function(args)
     local char = G.actor(args.char)

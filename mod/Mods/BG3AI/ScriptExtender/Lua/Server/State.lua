@@ -605,8 +605,11 @@ function S.inventory(ctx, args)
         local e = V.entity(u)
         local io = e and comp(e, "InventoryOwner")
         if io then
-            -- Bags (camp supplies, pouches) are collapsed unless expand=true.
-            inventoryItems(io.PrimaryInventory, u, out.items, args.expand and 1 or 0)
+            -- Bags (camp supplies, pouches) are collapsed unless expand=true or a
+            -- filter is given (live S020: filter "key" found only the Keychain bags).
+            local f = args.filter
+            local deep = args.expand or (type(f) == "string" and f ~= "")
+            inventoryItems(io.PrimaryInventory, u, out.items, deep and 1 or 0)
             pcall(function()
                 for _, inv in ipairs(io.Inventories) do
                     if tostring(inv.InventoryData.Type) == "Equipment" then

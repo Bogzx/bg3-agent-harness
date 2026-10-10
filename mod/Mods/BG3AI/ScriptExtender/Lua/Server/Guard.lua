@@ -538,6 +538,89 @@ function G.osi_forms(name, ...)
     error(last, 0)
 end
 
+------------------------------------------------------------------------
+-- Keys. A locked door/chest carries eoc::lock::LockComponent.Key_M; a key
+-- item carries eoc::lock::KeyComponent.Key with the same name. In the game,
+-- clicking a locked door with its key in your bags opens it (the engine raises
+-- Unlocked(item, char, key)). The player knows their own inventory, so the
+-- match is fair; the key name itself is never returned to the agent.
+------------------------------------------------------------------------
+
+function G.lock_key(item)
+    local k
+    pcall(function() k = G.entity(item).Lock.Key_M end)
+    k = k and tostring(k) or nil
+    if k == "" or k == "None" then return nil end
+    return k
+end
+
+local function item_key(ie)
+    local k
+    pcall(function() k = ie.Key.Key end)
+    k = k and tostring(k) or nil
+    if k == "" or k == "None" then return nil end
+    return k
+end
+
+local function find_in_inventory(inv, want, depth)
+    local found
+    pcall(function()
+        for _, it in pairs(inv.InventoryContainer.Items) do
+            local ie = it.Item
+            if item_key(ie) == want then
+                found = ie.Uuid.EntityUuid
+                return
+            end
+            if depth > 0 then
+                local io
+                pcall(function() io = ie.InventoryOwner end)
+                if io and io.PrimaryInventory then
+                    found = find_in_inventory(io.PrimaryInventory, want, depth - 1)
+                    if found then return end
+                end
+            end
+        end
+    end)
+    return found
+end
+
+-- Uuid of the key in `char`'s bags (keychain and other bags included) that opens `item`, or nil.
+function G.key_in(char, item)
+    local want = G.lock_key(item)
+    if not want then return nil end
+    local inv
+    pcall(function() inv = G.entity(char).InventoryOwner.PrimaryInventory end)
+    if not inv then return nil end
+    return G.guid(find_in_inventory(inv, want, 3))
+end
+
+-- The party member carrying `item`'s key, actor first: holder, key (or nil).
+function G.party_key(item, actor)
+    if not G.lock_key(item) then return nil end
+    local order = { actor }
+    for _, p in ipairs(G.party()) do
+        if not G.same(p, actor) then order[#order + 1] = p end
+    end
+    for _, p in ipairs(order) do
+        local k = p and G.key_in(p, item)
+        if k then return p, k end
+    end
+    return nil
+end
+
+-- The one sanctioned Unlock: `char` stands at `item` with its key in their bags,
+-- which is exactly when the game unlocks it on a click. Rechecks everything.
+function G.unlock_with_key(item, char, reach)
+    local k = G.key_in(char, item)
+    if not k then error("guard: no matching key carried; Unlock is not permitted", 0) end
+    local a, t = G.pos(char), G.pos(item)
+    if not a or not t or U.dist(a, t) > (reach or 2.5) then
+        error("guard: not next to the lock; Unlock is not permitted", 0)
+    end
+    Osi.Unlock(item, char)
+    return k
+end
+
 -- Does a story database have a row whose first column is `uuid`? Reading a
 -- DB is only used to choose an execution path, never returned to the agent.
 function G.db_has(name, arity, uuid, second)

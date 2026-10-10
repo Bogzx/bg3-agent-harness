@@ -1285,7 +1285,7 @@ def _far_move(char: str, target: str | None, pos: list | None) -> tuple[list, fl
 @mcp.tool()
 @_guard
 def interact(target: str, who: str | None = None, wait: bool = True) -> str:
-    """Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first. wait=false returns at once with a job id."""
+    """Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first. A locked door/chest opens when anyone in the party carries its key (that member walks up and opens it). wait=false returns at once with a job id."""
     return _act("interact", "act.interact", {"char": _who(who), "target": _uuid(target)}, wait=wait)
 
 
