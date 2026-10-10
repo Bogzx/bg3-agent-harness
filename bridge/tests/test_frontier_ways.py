@@ -41,6 +41,30 @@ class Ways(unittest.TestCase):
         self.assertEqual(lines[1], "WAYS walkable: N 20m+ | blocked: S")
         self.assertTrue(lines[2].startswith("HAZARD Fire"))
 
+    def test_lookalike_leads_fold(self):
+        # live 13:50 (jump edge 3): 3 Burlap Sacks + 4 Wooden Crates printed one by one
+        H = Handles()
+        sack = lambda i, d, dr="NW": {"uuid": f"u-s{i}", "name": "Burlap Sack", "kind": "usable", "dist": d, "dir": dr,
+                                      "unvisited": True}
+        crate = lambda i, d: {"uuid": f"u-c{i}", "name": "Wooden Crate", "kind": "item", "dist": d, "dir": "NW",
+                              "unvisited": True}
+        res = {"leads": [sack(1, 11.3), sack(2, 12.1), sack(3, 12.7, "W"), crate(1, 12.9),
+                         {"uuid": "u-candle", "name": "Candle", "kind": "usable", "dist": 13.5, "dir": "S", "dy": 3.4,
+                          "unvisited": True},
+                         crate(2, 13.5), crate(3, 14), crate(4, 15.2),
+                         {"uuid": "u-d1", "name": "Door", "kind": "door", "dist": 5, "dir": "N"},
+                         {"uuid": "u-d2", "name": "Door", "kind": "door", "dist": 6, "dir": "N"},
+                         {"uuid": "u-d3", "name": "Door", "kind": "door", "dist": 7, "dir": "N"},
+                         {"uuid": "u-w1", "name": "Wooden Crate", "kind": "item", "dist": 3, "dir": "E"}]}
+        lines = render.render_frontier(res, H).splitlines()
+        self.assertEqual(len([x for x in lines if "Burlap Sack" in x]), 1)
+        self.assertRegex(lines[0], r"^e\d+ Burlap Sack <usable> 11.3m NW unvisited \(\+2 more Burlap Sack up to 12.7m NW/W\)$")
+        crates = [x for x in lines if "Wooden Crate" in x]
+        self.assertEqual(len(crates), 2)  # the visited one stands apart from the 4 unvisited ones
+        self.assertIn("(+3 more Wooden Crate up to 15.2m)", crates[0])
+        self.assertEqual(len([x for x in lines if "Door" in x]), 3)  # doors are ways on: never folded
+        self.assertIn("Candle", "\n".join(lines))
+
 
 if __name__ == "__main__":
     unittest.main()

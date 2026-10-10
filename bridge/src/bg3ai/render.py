@@ -839,11 +839,29 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
     return "\n".join(lines)
 
 
+_LEAD_KEEP = ("exit", "door", "ladder", "waypoint")  # each one is a distinct way on: never folded
+
+
+def _lead_key(l: dict) -> tuple | None:
+    """Grouping key of a plain frontier lead (name, kind, unvisited); None when it must stay its own line."""
+    if l.get("kind") in _LEAD_KEEP or any(l.get(f) for f in ("locked", "waypoint", "relation", "height_m")):
+        return None
+    return (l.get("name"), l.get("kind"), bool(l.get("unvisited")))
+
+
 def render_frontier(res: Any, H: Handles) -> str:
     leads = res.get("leads") if isinstance(res, dict) else None
     if not isinstance(leads, list):
         return compact(res, H)
     out = []
+    # Plain lookalike leads (same name, kind and visited state; not an exit/door/ladder/waypoint) are one line:
+    # the nearest plus a count. Live 13:50: 3 Burlap Sacks + 4 Wooden Crates were 7 lines one by one.
+    groups: dict = {}
+    for l in leads:
+        k = _lead_key(l)
+        if k is not None:
+            groups.setdefault(k, []).append(l)
+    leads = [l for l in leads if len(groups.get(_lead_key(l), ())) < SAME_MIN or groups[_lead_key(l)][0] is l]
     for l in leads:
         h = H.get(l["uuid"], l.get("name")) if l.get("uuid") else "?"
         bits = [f"{h} {l.get('name', '?')} <{l.get('kind', '?')}> {num(l.get('dist', '?'))}m {l.get('dir', '')}"]
@@ -859,6 +877,15 @@ def render_frontier(res: Any, H: Handles) -> str:
                 bits.append(flag)
         if l.get("relation"):
             bits.append(str(l["relation"]))
+        g = groups.get(_lead_key(l)) if _lead_key(l) is not None else None
+        if g is not None and len(g) >= SAME_MIN:
+            far = max((o.get("dist") or 0) for o in g if isinstance(o.get("dist"), (int, float))) if any(
+                isinstance(o.get("dist"), (int, float)) for o in g) else None
+            dirs = [d for d in dict.fromkeys(str(o.get("dir") or "") for o in g) if d]
+            more = f"(+{len(g) - 1} more {l.get('name', '?')}" + (f" up to {num(far)}m" if far is not None else "")
+            if len(dirs) > 1:
+                more += " " + "/".join(dirs)
+            bits.append(more + ")")
         out.append(" ".join(bits))
     if isinstance(res, dict) and res.get("more"):
         out.append(f"(+{res['more']} more leads)")

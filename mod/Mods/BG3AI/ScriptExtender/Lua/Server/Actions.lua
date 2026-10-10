@@ -875,11 +875,13 @@ reg("interact", function(args)
                 local lj, here = job.ladder, G.pos(char)
                 local now = RPC.now_ms()
                 if here and lj.y0 then
-                    local moved = lj.last and U.dist(lj.last, here) or 1
-                    lj.still = (moved < 0.03) and (lj.still or now) or nil
+                    -- Off the ladder = vertically still (stepping off moves sideways), on the other floor. Live
+                    -- 14:2x: the Use re-climbs in a loop with ~0.5 s at each end; the job's end purges it.
+                    local vy = lj.last and math.abs(here[2] - lj.last[2]) or 1
+                    lj.still = (vy < 0.05) and (lj.still or now) or nil
                     lj.last = here
                     local dy = here[2] - lj.y0
-                    if math.abs(dy) >= A.LADDER_DY and lj.still and now - lj.still >= 300 then
+                    if math.abs(dy) >= A.LADDER_DY and lj.still and now - lj.still >= 200 then
                         RPC.finish_job(job, "done", with_key({ used = true, climbed = dy < 0 and "down" or "up",
                             dy = U.round(dy, 1) }))
                         return
@@ -1654,7 +1656,8 @@ A.LOOT_ENGINE_SHORTCUT = true
 -- call finish(job).
 local function approach(kind, char, target, finish, extra)
     G.within(char, target, G.MAX_INTERACT_DIST, "target")
-    local plan = G.approach_point(char, target, A.USE_REACH)
+    local reach = extra and extra.reach or A.USE_REACH
+    local plan = G.approach_point(char, target, reach)
     local budget, mv_before = combat_budget(char, plan.length_m)
     local spec = {
         eta_s = walk_eta(plan.length_m) + 0.5, route_m = plan.length_m,
@@ -1662,7 +1665,7 @@ local function approach(kind, char, target, finish, extra)
         interrupt = { combat = budget == nil, dialogue = true, attacked = budget == nil },
         osi = with_walk(extra and extra.osi),
         start = function(job)
-            begin_approach(job, target, plan, A.USE_REACH, function(j)
+            begin_approach(job, target, plan, reach, function(j)
                 pcall(G.osi, "MakePlayerActive", char)
                 finish(j)
             end, budget)
@@ -1783,6 +1786,9 @@ reg("pickpocket", function(args)
         job.requested_at = RPC.now_ms()
         G.osi("RequestPickpocket", char, npc)
     end, {
+        -- Live (setup 14:xx, Last Light Inn): every Harper behind the counter was "no walkable path" with the
+        -- 1.8 m use reach (rings 1.0/1.5 m only). Stand off like talk_to: the 2.2 m ring reaches over a counter.
+        reach = G.TALK_RANGE,
         on_tick = function(job)
             -- Server-side sign of the pickpocket screen: the ServerPickpocket
             -- component on the actor (UNVERIFIED); otherwise hand over to the

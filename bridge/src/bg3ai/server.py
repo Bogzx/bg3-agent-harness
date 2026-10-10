@@ -689,7 +689,7 @@ def _leave_turn_based_for_walk() -> str:
 
 
 def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
-         wait: bool = True, note: str = "") -> str:
+         wait: bool = True, note: str = "", post=None) -> str:
     t0 = time.monotonic()
     if _session_over():
         return _finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
@@ -715,6 +715,8 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
     if _batch["active"] and isinstance(r.result, dict) and "after" in r.result:
         # In a batch the per-step portrait summary is noise; the run ends with one NOW line + CHANGES.
         r = JobResult(r.status, {k: v for k, v in r.result.items() if k != "after"}, r.error, r.events, r.elapsed_ms)
+    if post is not None:  # a line from after the job (use_ability: did the opener start a fight?)
+        note = "\n".join(x for x in (post(r), note) if x)
     return _finish(tool, args, _job_text(tool, r, args.get("char")) + ("\n" + note if note else ""), t0)
 
 
@@ -2364,7 +2366,37 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
         args["pos"] = [x, y, z]
     if upcast:
         args["upcast"] = upcast
-    return _act("use_ability", "act.cast", args, wait_s=30, wait=wait)
+    opener = (wait and not _batch["active"] and "target" in args and args["target"] not in (_party_cached() or ())
+              and not (game.try_rpc("state.combat") or {}).get("active"))
+    post = (lambda r: _opener_combat(args["target"], r.result) if r.status == "done" else "") if opener else None
+    return _act("use_ability", "act.cast", args, wait_s=30, wait=wait, post=post)
+
+
+OPENER_WAIT_S = 1.0  # combat starts a few frames after the hit: how long an opener's result waits for it
+
+
+def _opener_combat(tu: str, res: Any) -> str:
+    """use_ability out of combat at a character: did it start a fight? Acceptance 13:3x: the first Ranged
+    Attack on a dormant Shadow did damage but no combat began, and nothing said so. '' for items."""
+    ts = game.try_rpc("act.target_state", {"uuid": tu}) or {}
+    if not isinstance(ts, dict) or "locked" in ts or "opened" in ts or ts.get("held"):
+        return ""
+    end = time.monotonic() + OPENER_WAIT_S
+    while True:
+        cs = game.try_rpc("state.combat") or {}
+        if cs.get("active"):
+            return ("COMBAT: the attack started a fight" + (f" (round {cs['round']})" if cs.get("round") else "")
+                    + ": play the turns with combat_turn (get_combat_state shows the order)")
+        if time.monotonic() >= end:
+            break
+        time.sleep(0.15)
+    if ts.get("dead") or (game.try_rpc("act.target_state", {"uuid": tu}) or {}).get("dead"):
+        return f"combat: none started ({_label(tu)} died)"
+    dmg = res.get("total_damage") if isinstance(res, dict) else None
+    if isinstance(dmg, (int, float)) and dmg > 0:
+        return (f"combat: NOT started — {_label(tu)} took {render.num(dmg)} damage but no fight began "
+                "(dormant or unaware; it acts only once combat starts): attack again or move on")
+    return f"combat: not started ({_label(tu)} took no damage)"
 
 
 @mcp.tool()
@@ -4024,6 +4056,13 @@ def _short_why(ap: dict | None) -> str:
     return ""
 
 
+# Why a melee move stopped short that a step-in during the action can't fix (an 'early' stop, bumped or
+# blocked with movement left, keeps the old path: the attack runs and steps into range itself).
+MELEE_OUT_SHORT = ("movement", "hazard", "route_end", "no_path")
+# Abilities that are melee even when get_actions has no range for them.
+MELEE_IDS = ("Target_MainHandAttack", "Target_OffhandAttack", "Target_UnarmedAttack")
+
+
 # A melee route that ends this close to the target ends at its body, not at a ledge (S024: "no walkable route
 # gets closer than 2.5m", then a step put Shadowheart in reach): try the spot beside it.
 MELEE_ROUTE_END_M = 4.0
@@ -4036,6 +4075,7 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
     reason ("movement" / "hazard" / "route_end" / "no_path" / "early") for combat_turn's fallbacks."""
     info = info if info is not None else {}
     info.pop("short", None)
+    info.pop("melee_out", None)
     fatal, why = _turn_check(who, None)
     if fatal:
         lines.append(f"move: {why}")
@@ -4061,6 +4101,21 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
     # "no walkable route gets closer than 2.5m" (the engine route stops at the target's body) and 22 melee
     # attacks were refused out of range.
     melee = tu is not None and (mv.within is None or mv.within <= turn.MELEE_RANGE_M)
+
+    def out_of_melee(d2: float | None, in_reach: Any = None) -> str:
+        """Acceptance 13:3x: 'out of movement (12m left, the route needs 12m)' ended 3.1 m away (9/9.3 m →
+        3.4 m: the real walk loses ~1.5 m to the route), and the melee attack then failed out of range.
+        A melee move that ends clearly out of reach (the mod's in_reach=false, or ≥ weapon reach + pad
+        centre to centre after a short walk) marks info["melee_out"]: the action slot skips melee
+        alternatives on that target with that reason and falls back (ranged / Dash) instead of a miss."""
+        if not melee:
+            return ""
+        want = mv.within if mv.within is not None else turn.MELEE_M
+        if in_reach is False or (info.get("short") in MELEE_OUT_SHORT and d2 is not None
+                                 and d2 > want + turn.MELEE_REACH_PAD):
+            info["melee_out"] = {"target": tu, "dist": d2}
+            return " — melee is out of reach this turn"
+        return ""
     if tu and mv.within is not None:
         d = dist_now()
         if d is not None and d <= mv.within:
@@ -4075,7 +4130,7 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
             if ap.get("reachable") is False or not ap.get("pos") or float(ap.get("walk_m") or 0) < 0.5:
                 info["short"] = "no_path" if ap.get("reachable") is False else (ap.get("limit") or "no_path")
                 lines.append(f"move {what}: stays put, {render.num(d) if d is not None else '?'}m away — "
-                             + (_short_why(ap) or "no way closer"))
+                             + (_short_why(ap) or "no way closer") + out_of_melee(d))
                 return "none"
             x, y, z = ap["pos"]
             step = actq.Step("move_to", {"x": x, "y": y, "z": z})
@@ -4108,6 +4163,9 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
             res = re.sub(r"\s*dist=[\d.]+", "", res).rstrip(" —")
             if d2 is not None:
                 res += f", now {render.num(d2)}m from {what}" + short_note(d2, ap)
+            res += out_of_melee(d2, lr.get("in_reach") if "target" in step.args else None)
+        elif melee:
+            res += out_of_melee(lr.get("dist"), lr.get("in_reach"))
         lines.append(f"move {what}: {res}")
         return "ok"
     text = text.split(": ", 1)[-1] if text.startswith("move_to:") else text
@@ -4145,6 +4203,9 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
                     res2 = re.sub(r"\s*dist=[\d.]+", "", res2).rstrip(" —")
                     if d2 is not None:
                         res2 += f", now {render.num(d2)}m from {what}" + short_note(d2, ap)
+                    if rep2.done:
+                        info["short"] = info.get("short") or "movement"
+                        res2 += out_of_melee(d2)
                 lines.append(f"move {what}: {text} → partial {render.num(budget)}m toward it: {res2}")
                 if rep2.done:
                     if tu is None:
@@ -4160,8 +4221,44 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
     return "none"
 
 
+def _ability_range(who: str, ability: Any, info: dict) -> float | None:
+    """An ability's range from get_actions (read once per turn into info["ranges"]); None when unknown."""
+    if "ranges" not in info:
+        acts = game.try_rpc("state.actions", {"uuid": who})
+        acts = acts.get("actions") if isinstance(acts, dict) else acts
+        info["ranges"] = {a.get("spell"): a.get("range") for a in acts or [] if isinstance(a, dict)}
+    rng = info["ranges"].get(ability)
+    return float(rng) if isinstance(rng, (int, float)) else None
+
+
+def _slot_skip(alt: turn.Alt, who: str, info: dict | None) -> str:
+    """Why combat_turn skips this alternative without asking the game ('' = try it): a melee attack on the
+    move's target after the move ended out of reach (said as 'out of range', so the auto fallback runs),
+    or a Dash that would walk on toward a move target that is gone."""
+    if not info:
+        return ""
+    a = alt.step.args
+    sp = a.get("ability")
+    if alt.then_move and info.get("move_lost") and alt.step.tool == "use_ability" and "Dash" in str(sp or ""):
+        return f"the move's target {info['move_lost']}: dashing would walk nowhere"
+    mo = info.get("melee_out")
+    if not mo or alt.step.tool != "use_ability" or not a.get("target"):
+        return ""
+    try:
+        if _uuid(str(a["target"])) != mo["target"]:
+            return ""
+    except ValueError:
+        return ""
+    rng = _ability_range(who, sp, info)
+    if (rng is None and sp not in MELEE_IDS) or (rng is not None and rng > turn.MELEE_RANGE_M):
+        return ""
+    d = mo.get("dist")
+    return (f"{_label(mo['target'])} is out of range for melee after the move"
+            + (f" ({render.num(d)}m)" if d is not None else ""))
+
+
 def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: list,
-               after: dict) -> tuple[str, bool]:
+               after: dict, info: dict | None = None) -> tuple[str, bool]:
     """Try a slot's alternatives in order. ('ok'|'none'|'stop', then_move of the one that worked)."""
     tried: list[str] = []
     for alt in alts:
@@ -4169,6 +4266,7 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
         if fatal:
             lines.append(f"{name}: " + " → ".join(tried + [why]))
             return "stop", False
+        why = why or _slot_skip(alt, who, info)
         if why:
             tried.append(f"{alt.step.short()}: skipped ({why})")
             continue
@@ -4339,10 +4437,59 @@ def _turn_auto_fallback(p: turn.TurnPlan, slot: str, planned: list, who: str, wa
         alts.append(turn.Alt(actq.Step("use_ability", {"ability": "Shout_Dash"}), then_move=True))
     if not alts:
         return "none"
-    res, then_move = _turn_slot(f"{slot} (auto fallback)", alts, who, watcher, lines, after)
+    res, then_move = _turn_slot(f"{slot} (auto fallback)", alts, who, watcher, lines, after, info)
     if res == "ok" and then_move and p.move:
         res = _turn_move(p.move, who, watcher, lines, after, info)
     return res
+
+
+def _retarget_lost(p: turn.TurnPlan, who: str, lines: list, info: dict) -> bool:
+    """combat_turn: the move's target is dead or out of sight (acceptance 13:3x: a Shadow vanished into
+    Shadow Blend during Claude's walk; both attacks were skipped 'not visible', then the Dash walked
+    nowhere and the turn ended with 9 m unused). Re-aim the move and every alternative aimed at it at the
+    nearest visible living hostile and say so; none in sight: say so and mark info["move_lost"] (a Dash
+    that would walk on is skipped). True when the plan was re-aimed. One state.combat read (left for the
+    next step check)."""
+    try:
+        lost = _uuid(str(p.move.target))
+    except ValueError:
+        return False
+    cs = _turn_cs.get("cs") or game.try_rpc("state.combat") or {}
+    _turn_cs["cs"] = cs
+    if not cs.get("active"):
+        return False
+    row = next((o for o in cs.get("order") or [] if o.get("uuid") == lost), None)
+    if row is not None:
+        if not row.get("dead"):
+            return False
+        why = "is dead"
+    else:
+        ts = game.try_rpc("act.target_state", {"uuid": lost}) or {}
+        if not isinstance(ts, dict) or (ts.get("visible") and not ts.get("dead")):
+            return False
+        why = "is dead" if ts.get("dead") else "is out of sight"
+    near = turn.hostiles_in_reach(cs, who, 1e6, {lost})
+    if not near:
+        info["move_lost"] = f"{_label(lost)} {why}"
+        lines.append(f"target: {_label(lost)} {why} and no other hostile is in sight: "
+                     "its move and attacks are skipped")
+        return False
+    new = near[0]
+    new_h = H.get(new)
+    p.move.target = new_h
+    for alts in [p.slots.get("action") or [], p.slots.get("bonus") or []] + list(p.slots.get("extra") or []):
+        for a in alts:
+            t = a.step.args.get("target")
+            try:
+                if t and _uuid(str(t)) == lost:
+                    a.step.args["target"] = new_h
+            except ValueError:
+                pass
+    d = turn.straight_dist(cs, who, new)
+    info.pop("move_lost", None)
+    lines.append(f"target: {_label(lost)} {why} → the plan now aims at the nearest visible hostile "
+                 f"{_label(new)}" + (f" ({render.num(d)}m)" if d is not None else "") + " (retarget:false keeps it)")
+    return True
 
 
 def _turn_auto_bonus(who: str, watcher: actq.Watcher, lines: list, after: dict) -> str:
@@ -4514,20 +4661,30 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     info: dict = {}
     stopped = False
     _turn_cs["cs"] = cs  # nothing ran since this read: the first step check reuses it
+    moved = False
     for slot in p.order:
+        if p.move and p.move.target and p.retarget and (slot == "move" or (moved and slot in ("action", "bonus"))):
+            # The move's target died or went out of sight (sent ahead / during the walk): aim the plan at the
+            # nearest visible hostile, and walk again if the move already ran and movement is left.
+            if _retarget_lost(p, char, lines, info) and slot != "move" and moved \
+                    and not (isinstance(after.get("movement"), (int, float)) and after["movement"] < 1.0):
+                if _turn_move(p.move, char, watcher, lines, after, info) == "stop":
+                    stopped = True
+                    break
         if slot == "move":
             res = _turn_move(p.move, char, watcher, lines, after, info) if p.move else "none"
+            moved = True
         elif slot == "extra":
             res = "none"
             for i, alts in enumerate(p.slots["extra"], 1):
-                res, _ = _turn_slot(f"extra {i}", alts, char, watcher, lines, after)
+                res, _ = _turn_slot(f"extra {i}", alts, char, watcher, lines, after, info)
                 if (res == "none" and alts and lines and lines[-1].startswith(f"extra {i}:")
                         and turn.missed_target(lines[-1])):
                     res = _turn_auto_fallback(p, f"extra {i}", alts, char, watcher, lines, after, info)
                 if res == "stop":
                     break
         else:
-            res, then_move = _turn_slot(slot, p.slots[slot], char, watcher, lines, after)
+            res, then_move = _turn_slot(slot, p.slots[slot], char, watcher, lines, after, info)
             if res == "ok" and then_move and p.move:
                 res = _turn_move(p.move, char, watcher, lines, after, info)
             elif (res == "none" and slot in ("action", "bonus") and p.slots[slot] and lines

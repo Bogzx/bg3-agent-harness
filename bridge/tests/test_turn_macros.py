@@ -574,9 +574,84 @@ class CombatTurn(Base):
         self.assertEqual(self.g.ops("nav.approach")[0][1]["within"], 1.5)
         self.assertEqual(self.g.ops("act.move_to")[0][1]["pos"], [-4.0, 0.0, 5.0])
         self.assertIn("now 9.9m from", out)
-        self.assertIn("stopped short of ≤1.5m: out of movement (9m left, the route needs 18.5m)", out)
-        self.assertEqual(self.casts(), ["Target_MainHandAttack", "Projectile_MainHandAttack"])
+        self.assertIn("stopped short of ≤1.5m: out of movement (9m left, the route needs 18.5m)"
+                      " — melee is out of reach this turn", out)
+        # acceptance 13:3x: no melee attack sent into a sure range miss; skipped, then the ranged fallback
+        self.assertEqual(self.casts(), ["Projectile_MainHandAttack"])
+        self.assertIn(f"skipped ({self.gob} Goblin is out of range for melee after the move (9.9m))", out)
         self.assertIn(f"action (auto fallback): Projectile_MainHandAttack {self.gob}: done", out)
+
+    def test_tight_route_short_by_a_metre_skips_melee_for_the_planned_ranged(self):
+        # acceptance 13:3x: "12m left, the route needs 12m" ended 3.1 m away; the plan's own ranged alt runs
+        self.g.combat = combat(gob_dist=13.9)
+        self.g.approach = {"reachable": True, "pos": [-4.0, 0.0, 5.0], "walk_m": 12.0, "need_m": 12.0,
+                           "limit": "movement", "movement_left": 12.0}
+        self._walk_to(3.1)
+        self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5},
+                          {"spell": "Projectile_MainHandAttack", "range": 18}]
+        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+                                           action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   {"ability": "Projectile_MainHandAttack", "target": self.gob}]))
+        self.assertEqual(self.casts(), ["Projectile_MainHandAttack"])
+        self.assertIn("melee is out of reach this turn", out)
+        self.assertNotIn("FAILED", out)
+
+    def test_melee_short_but_within_reach_pad_still_attacks(self):
+        # 1.5 m wanted, 2.2 m centre to centre: inside the edge-to-edge reach, the game decides
+        self.g.combat = combat(gob_dist=10.0)
+        self.g.approach = {"reachable": True, "pos": [-4.0, 0.0, 5.0], "walk_m": 8.0, "need_m": 8.7,
+                           "limit": "movement", "movement_left": 8.0}
+        self._walk_to(2.2)
+        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+                                           action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertEqual(self.casts(), ["Target_MainHandAttack"])
+        self.assertNotIn("melee is out of reach", out)
+
+    def test_move_target_vanished_retargets_the_plan(self):
+        # acceptance 13:3x: the Shadow went into Shadow Blend during Claude's walk: both attacks skipped
+        # 'not visible', the Dash walked nowhere, 9 m unused
+        def vanish(op, a):
+            if op == "act.move_to":
+                self.g.visible.discard(GOB)
+            if op == "act.end_turn":
+                self.g.combat["current"] = GOB
+        self.g.on_start = vanish
+        next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.8, 1]
+        out = server.combat_turn(self.plan(move=self.gob,
+                                           action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   "Shout_Dash"]))
+        self.assertIn(f"target: {self.gob} Goblin is out of sight → the plan now aims at the nearest visible "
+                      f"hostile {self.imp} Imp (1.8m)", out)
+        self.assertEqual([a.get("target") for _, a in self.g.ops("act.cast")], [IMP])
+        self.assertEqual(len(self.g.ops("act.move_to")), 2)  # walked on toward the imp (movement left)
+
+    def test_move_target_dead_before_the_turn_aims_at_the_nearest(self):
+        self.g.dead.add(GOB)
+        out = server.combat_turn(self.plan(move=self.gob,
+                                           action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertIn("is dead → the plan now aims at the nearest visible hostile", out)
+        self.assertEqual(self.g.ops("act.move_to")[0][1].get("target"), IMP)
+        self.assertEqual([a.get("target") for _, a in self.g.ops("act.cast")], [IMP])
+        server.H.get(GOB, "Goblin")
+
+    def test_move_target_gone_and_nobody_in_sight_skips_the_dash(self):
+        def vanish(op, a):
+            if op == "act.move_to":
+                self.g.visible.clear()
+            if op == "act.end_turn":
+                self.g.combat["current"] = GOB
+        self.g.on_start = vanish
+        out = server.combat_turn(self.plan(move=self.gob,
+                                           action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   "Shout_Dash", "Shout_Dodge"]))
+        self.assertIn("no other hostile is in sight", out)
+        self.assertIn("Shout_Dash: skipped (the move's target", out)
+        self.assertEqual(self.casts(), ["Shout_Dodge"])
+
+    def test_retarget_false_keeps_a_vanished_move_target(self):
+        self.g.dead.add(GOB)
+        out = server.combat_turn(self.plan(move=self.gob, action=["Shout_Dodge"], retarget=False))
+        self.assertNotIn("the plan now aims", out)
 
     def test_short_move_without_ranged_dashes_and_walks_on(self):
         self.g.combat = combat(gob_dist=16.0)
@@ -588,7 +663,7 @@ class CombatTurn(Base):
         self.g.actions = [{"spell": "Target_MainHandAttack"}, {"spell": "Shout_Dash"}]
         out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
                                            action={"ability": "Target_MainHandAttack", "target": self.gob}))
-        self.assertEqual(self.casts(), ["Target_MainHandAttack", "Shout_Dash"])
+        self.assertEqual(self.casts(), ["Shout_Dash"])  # melee skipped: out of reach after the move
         self.assertEqual(len(self.g.ops("act.move_to")), 2)
         self.assertIn("action (auto fallback): Shout_Dash: done", out)
 

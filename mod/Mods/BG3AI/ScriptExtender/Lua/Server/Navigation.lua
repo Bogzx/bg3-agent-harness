@@ -2244,6 +2244,14 @@ N.JUMP_GAP_SCAN_M = 12.0
 N.JUMP_GAP_STEP_M = 0.5
 N.JUMP_GAP_LEVEL_M = 1.0    -- ground this near the edge's height continues the walk
 N.JUMP_GAP_DOWN_M = 3.0     -- a landing at most this far below the edge
+N.JUMP_GAP_HEAD_M = 6.0     -- a surface 2.5..this above the edge inside the "gap" is a wall/building, not a chasm
+-- Live 14:15 (Blighted Village, S013 save): a house read as "jump: NW gap 3m": its columns had a floor 4.2 m up
+-- (the building) and the edge stood on a WalkBlock tile (the wall's foot); the walk stopped 3.6 m short and
+-- jump_to called the landing a blocked tile. A chasm has nothing at head height and a walkable edge and landing.
+local function tileBlocked(p)
+    local t = N.tileAt(p)
+    return t ~= nil and t.blocked
+end
 function N.jumpGap(charUuid, from, v)
     local cap = N.JUMP_LAND_CAP_M
     local G = BG3AI.Guard
@@ -2259,22 +2267,27 @@ function N.jumpGap(charUuid, from, v)
     local s = N.JUMP_GAP_STEP_M
     while s <= N.JUMP_GAP_SCAN_M do
         local x, z = from[1] + v[1] * s, from[3] + v[2] * s
-        local level, land
+        local level, land, head
         for _, h in ipairs(heightsAt(x, z)) do
             if type(h) == "number" then
                 if math.abs(h - y) <= N.JUMP_GAP_LEVEL_M then level = h end
                 if h >= y - N.JUMP_GAP_DOWN_M and h <= y + N.JUMP_UP_MAX_M and (not land or math.abs(h - y) < math.abs(land - y)) then land = h end
+                if h > y + N.JUMP_UP_MAX_M and h <= y + N.JUMP_GAP_HEAD_M then head = true end
             end
         end
         if not gapAt then
             if level then edge, y = { x, level, z, s }, level
             elseif land then return nil -- a step up/down, not a gap
             elseif not edge then return nil -- no ground at our feet's line (a wall right here)
+            elseif head or tileBlocked(edge) then return nil -- a wall/building (its foot is the "edge"), not a chasm
             else gapAt = s end
+        elseif head and not land then
+            return nil -- a wall or building inside the "gap", not open air
         elseif land then
             local gap = s - edge[4]
             if gap < N.JUMP_GAP_MIN_M or gap > cap + N.JUMP_GAP_STEP_M then return nil end
             local to = { x, land, z }
+            if tileBlocked(to) then return nil end -- lands on a wall top or inside a building
             local re = N.path(charUuid, { edge[1], edge[2], edge[3] })
             if not (re and re.reachable and not re.partial and re.length_m <= math.max(N.DETOUR * edge[4], edge[4] + 2.0)) then return nil end
             local rl = N.path(charUuid, to)

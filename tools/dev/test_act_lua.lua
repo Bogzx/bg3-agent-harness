@@ -196,6 +196,16 @@ test("approach: skips unreachable candidates", function()
     near(p.length_m, 12, "length")
 end)
 
+test("pickpocket: an NPC behind a counter is reached from the 2.2 m ring (setup 14:xx, Last Light Inn)", function()
+    local npc = world[NPC].pos
+    nav.fn = function(_, pos)  -- the counter: nothing walkable within 2 m of the NPC
+        if U.dist(pos, npc) >= 2.0 then return { reachable = true, length_m = U.dist(world[P1].pos, pos) } end
+        return { reachable = false }
+    end
+    local j = job(op("pickpocket", { char = P1, npc = NPC }))
+    eq(j.status, "running", "status " .. tostring(j.error)); eq(j.phase, "approach", "phase")
+end)
+
 test("approach: nothing reachable -> refused", function()
     nav.fn = function() return { reachable = false } end
     refused(function() G.approach_point(P1, NPC, 2.5) end, "no walkable path")
@@ -823,8 +833,8 @@ test("interact ladder: the job waits for the climb (no purge at the top), done o
     world[P1].pos = { 9.6, -3, 0 } tick()
     world[P1].pos = { 9.7, -5.8, 0 } tick()
     eq(j.status, "running", "moving")
-    clock = clock + 100 tick()
-    clock = clock + 400 tick()
+    world[P1].pos = { 10.2, -5.8, 0.4 } clock = clock + 100 tick() -- stepping off sideways
+    world[P1].pos = { 10.6, -5.8, 0.8 } clock = clock + 300 tick()
     eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.climbed, "down", "climbed")
     eq(#called("PurgeOsirisQueue"), 1, "purged after the climb")
     restore()

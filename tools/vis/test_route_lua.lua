@@ -12,6 +12,7 @@ local clock = 1000
 local P1 = "aaaaaaaa-0000-0000-0000-000000000001"
 local world, items                            -- uuid -> pos; uuid -> {kind, visible, height, locked}
 local fire, blocked, heights, nodesFor, portalAt
+local walkblock -- (x, z) -> true: the tile carries WalkBlock (a wall's foot); nil = none
 local osiCalls = 0
 local searches, budget = 0, nil
 
@@ -27,7 +28,8 @@ Ext = {
     Level = {
         GetHeightsAt = function(x, z) return heights(x, z) end,
         GetTileDebugInfo = function(p)
-            return { GroundSurface = fire(p[1], p[3]) and "Fire" or "None", CloudSurface = "None", Flags = {} }
+            return { GroundSurface = fire(p[1], p[3]) and "Fire" or "None", CloudSurface = "None",
+                Flags = (walkblock and walkblock(p[1], p[3])) and { "WalkBlock" } or {} }
         end,
         BeginPathfindingImmediate = mkpath,
         FindPath = function(path)
@@ -326,6 +328,22 @@ test("jumpGap: none when the far side is walkable, too wide, a wall, or a plain 
     eq(N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 }), nil, "a wall (no ground ahead at all)")
     heights = function(x) return { x >= 3 and -1.5 or 0.0 } end; blocked = function(x) return x >= 3 end
     eq(N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 }), nil, "a 1.5 m step down")
+end)
+
+test("jumpGap: none at a building (live 14:15 Blighted Village: floor 4.2 m up, WalkBlock edge/landing)", function()
+    -- the house: its columns carry its upper floor 4.2 m above the edge (nothing near the edge's height)
+    chasm(3, 5.6, -12)
+    heights = function(x) if x >= 3 and x <= 5.6 then return { 4.2, 10.5 } end return { 0.0 } end
+    eq(N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 }), nil, "a surface at head height inside the gap")
+    chasm(3, 5.6, -12); walkblock = function(x) return x >= 2.5 and x < 3 end
+    eq(N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 }), nil, "the edge stands on a WalkBlock tile")
+    walkblock = function(x) return x > 5.6 end
+    eq(N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 }), nil, "the landing is a blocked tile")
+    walkblock = nil
+    heights = function(x) if x >= 3 and x <= 5.6 then return { -12, 9.0 } end return { 0.0 } end
+    near(N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 }).gap_m, 3.5, "a bridge/roof high overhead does not hide a chasm")
+    heights = function(x) if x >= 3 and x <= 5.6 then return { -12 } end if x > 5.6 then return { 0.0, 3.4 } end return { 0.0 } end
+    near(N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 }).gap_m, 3.5, "a landing under a low roof is still a landing")
 end)
 
 test("ways: a blocked direction carries the jump across the chasm; open ones don't", function()

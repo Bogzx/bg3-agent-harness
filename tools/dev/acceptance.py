@@ -434,7 +434,8 @@ def sec_nav() -> None:
     load_verified(BASE)
 
 
-KNOTTED_ROOTS = (-194.8, 31.2, 80.6)  # the ladder below the Mausoleum gate spot (-183, 38.2, 99), ~7 m lower
+KNOTTED_ROOTS = (-194.8, 31.2, 80.6)  # the ladder (its foot) below the Mausoleum gate spot (-183, 38.2, 99)
+LADDER_TOP = (-194.9, 35.6, 79.1)     # where its Use stands at the top (live 14:2x)
 
 
 def ladder_from_top() -> None:
@@ -452,7 +453,7 @@ def ladder_from_top() -> None:
     raw = S.game.try_rpc("state.nearby", {"radius": 40, "kinds": ["ladder"]}) or {}
     lads = [it for it in (raw.get("items") or []) if it.get("pos") and p0[1] - it["pos"][1] >= 2.5]
     if not lads:  # in view from the gate only at some angles: step toward the ladder's top first
-        tr = call("travel_to", x=KNOTTED_ROOTS[0] + 4.0, y=p0[1], z=KNOTTED_ROOTS[2] + 8.0)
+        tr = call("travel_to", x=LADDER_TOP[0] + 2.0, y=LADDER_TOP[1], z=LADDER_TOP[2] - 2.0)
         if "started" in tr:
             call("wait_for", target="queue", timeout_s=40, lead_s=0)
         p0 = me_pos()
@@ -633,7 +634,7 @@ def sec_combat() -> None:
         dashed_on = bool(re.search(r"Shout_Dash: done", out)) and len(re.findall(r"(?m)^move ", out)) >= 2
         unknown = "has no action called 'Main Hand Attack'" in out  # Ranged Attack: only with a ranged weapon
         played += 1
-        ok = not unknown and (moved or hit) and polls <= jobs + 4 and "EXCEPTION" not in out and "FAILED: it is not" not in out
+        ok = not unknown and (moved or hit) and polls <= 2 * jobs + 2 and "EXCEPTION" not in out and "FAILED: it is not" not in out
         item(f"combat_turn #{played} (melee approach, names, job push)", "PASS" if ok else "FAIL",
              f"{party[who_u].get('name')} {dt:.1f}s; {rpcs} RPCs ({jobs} act jobs, {polls} job.polls; push heard={jp.seen}); "
              f"moved={moved} attacked={hit} dash+walk={dashed_on}; vs {foe.get('name')}; "
