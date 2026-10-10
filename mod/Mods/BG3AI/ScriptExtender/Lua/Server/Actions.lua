@@ -38,6 +38,7 @@ local TICK_MS = 50   -- post-condition polling; cheap queries, keeps chaining fa
 A.MOVE_REACH = 2.2   -- move_to {target}: stop within this of the entity (centres; melee reach is
                      -- weapon 1.5 + both radii, >= 2.2 m even for a tiny target, see G.check_cast)
 A.END_REQUEST_AFTER_MS = 1500 -- end_turn in a shared group: report the request as done after this
+A.CAST_WALK_MAX_REACH = 3.0 -- act.cast out of combat walks into range only for touch-range casts (Help, melee)
 A.MELEE_STOP_SLACK = 0.4 -- move_to {target, within}: stop this far inside the melee reach
 A.CAST_SETTLE_MS = 250       -- cast: report this long after CastedSpell / the last hit
 A.PROJECTILE_SETTLE_MS = 1500 -- cast: a projectile's hits can land this long after CastedSpell (no hit yet)
@@ -1077,43 +1078,76 @@ reg("cast", function(args)
     local upcast = args.upcast and tonumber(args.upcast)
     local bst = Ext.Stats.Get(base)
     if upcast and bst and upcast == (tonumber(bst.Level) or 0) then upcast = nil end
+    -- S030: Guiding Bolt upcast 2 was refused ("cannot be cast at that level"), a wasted call: the game data has
+    -- no Projectile_GuidingBolt_2 (nor Inflict Wounds / Chromatic Orb variants), and UseSpell has no slot-level
+    -- input. Cast it at its own level and say so.
+    local upcast_ignored
+    if upcast and bst and not Ext.Stats.Get(base .. "_" .. tostring(upcast)) then
+        upcast_ignored = "no level-" .. tostring(upcast) .. " form of this spell can be cast here: cast at level "
+            .. tostring(tonumber(bst.Level) or 0)
+        upcast = nil
+    end
 
     -- Validate the base spell (known/prepared/cooldown) and the cast itself;
     -- with an upcast, slots are checked at the upcast level (not the base
     -- level, which may be spent).
-    local check = G.check_cast(char, base, targets[1], pos, upcast)
-    if targets[2] then
-        G.target_visible(targets[2])
-        G.within(char, targets[2], G.MAX_INTERACT_DIST, "target")
-        if check.range and U.dist(G.pos(char), G.pos(targets[2])) > check.range + 0.5 then
-            G.refuse("second target is out of range: move closer first")
-        end
-    end
     local spell = resolve_spell(base, upcast)
-    if spell ~= base then
-        -- Resources for the upcast variant's own costs.
-        local vst = Ext.Stats.Get(spell)
-        check.costs = G.parse_costs(vst.UseCosts)
-        check.payers = {}
-        local in_combat = G.in_combat(char)
-        for _, c in ipairs(check.costs) do
-            local turn_res = c.name == "ActionPoint" or c.name == "BonusActionPoint"
-                or c.name == "Movement" or c.name == "ReactionActionPoint"
-            if in_combat or not turn_res then
-                local n, l = G.payer(check.snapshot, c)
-                if not n then G.refuse("not enough " .. G.friendly(c.name)) end
-                check.payers[#check.payers + 1] = { name = n, level = l, amount = c.amount }
+    local function prepare()
+        local c = G.check_cast(char, base, targets[1], pos, upcast)
+        if targets[2] then
+            G.target_visible(targets[2])
+            G.within(char, targets[2], G.MAX_INTERACT_DIST, "target")
+            if c.range and U.dist(G.pos(char), G.pos(targets[2])) > c.range + 0.5 then
+                G.refuse("second target is out of range: move closer first")
             end
         end
+        if spell ~= base then
+            -- Resources for the upcast variant's own costs.
+            local vst = Ext.Stats.Get(spell)
+            c.costs = G.parse_costs(vst.UseCosts)
+            c.payers = {}
+            local in_combat = G.in_combat(char)
+            for _, cc in ipairs(c.costs) do
+                local turn_res = cc.name == "ActionPoint" or cc.name == "BonusActionPoint"
+                    or cc.name == "Movement" or cc.name == "ReactionActionPoint"
+                if in_combat or not turn_res then
+                    local n, l = G.payer(c.snapshot, cc)
+                    if not n then G.refuse("not enough " .. G.friendly(cc.name)) end
+                    c.payers[#c.payers + 1] = { name = n, level = l, amount = cc.amount }
+                end
+            end
+        end
+        return c
+    end
+    -- Out of combat, a cast refused only for its range walks into range first, as a click on the ability
+    -- does in the game (S018-S028: ~1-3 per session, e.g. S028 Help on a downed Shadowheart 5 m away
+    -- stopped a do_actions batch). Our own verified walk, never the engine's (WithoutMove stays 1).
+    local ok, check = pcall(prepare)
+    local walk
+    if not ok then
+        local why = G.is_refusal(check) and check.reason or ""
+        if why:find("^target is out of range") and targets[1] and not targets[2] and not pos
+            and not G.in_combat(char) and not G.same(char, targets[1]) then
+            -- Touch range only (Help, Cure Wounds, a melee attack): approach_point stands beside the target. A
+            -- ranged cast keeps the refusal: closing in on a hostile is the agent's call (move_to within).
+            local rng, melee = G.spell_range(bst, char)
+            local reach = rng and (melee and G.melee_reach(char, targets[1], rng) - A.MELEE_STOP_SLACK or rng - 0.3)
+            if reach and reach <= A.CAST_WALK_MAX_REACH then
+                reach = math.max(1.2, reach)
+                walk = { plan = G.approach_point(char, targets[1], reach), reach = reach }
+            end
+        end
+        if not walk then error(check, 0) end
+        check = nil
     end
     local combat = G.in_combat(char)
     -- Never let the cast walk: the Osiris spell task's approach has no path
     -- check (teleports). The range was checked by G.check_cast whenever it is
     -- known; only an unknown range out of combat lets the engine walk into range.
-    local without_move = (combat or check.range) and 1 or 0
+    local without_move = (combat or walk or check.range) and 1 or 0
     local harmful = false
     pcall(function()
-        for _, f in ipairs(check.stats.SpellFlags) do if f == "IsHarmful" then harmful = true end end
+        for _, f in ipairs(bst.SpellFlags) do if f == "IsHarmful" then harmful = true end end
     end)
 
     local function matches(a)
@@ -1122,15 +1156,16 @@ reg("cast", function(args)
     -- A projectile (arrow, bolt, Fire Bolt) lands after CastedSpell: acceptance 14:5x, a Ranged Attack at
     -- 18 m reported no_damage while its 2 damage arrived later (the agent read a miss). Wait for its hits.
     local settle = A.CAST_SETTLE_MS
-    if base:find("^Projectile_") or (check.stats and check.stats.SpellType == "Projectile") then
+    if base:find("^Projectile_") or (bst and bst.SpellType == "Projectile") then
         settle = A.PROJECTILE_SETTLE_MS
     end
 
+    local walk_m = walk and walk.plan.length_m or 0
     return start("cast", char, {
-        eta_s = 2.0,
-        timeout_ms = 30000,
-        interrupt = { combat = false, dialogue = true, attacked = false },
-        osi = {
+        eta_s = 2.0 + (walk and walk_eta(walk_m) or 0),
+        timeout_ms = 30000 + (walk and walk_timeout(walk_m) or 0),
+        interrupt = { combat = walk ~= nil, dialogue = true, attacked = false },
+        osi = with_walk({
             CastedSpell = function(job, a)
                 if matches(a) and not job.casted then
                     -- Hits usually land before CastedSpell; give stragglers a
@@ -1163,14 +1198,16 @@ reg("cast", function(args)
                     end
                 end
             end,
-        },
+        }),
         on_tick = function(job)
+            if job.phase == "approach" then return approach_tick(job) end
             local now = job.casted and RPC.now_ms()
             -- Report CAST_SETTLE_MS after the cast once the hits are in (250 ms after the last one), at
             -- the latest `settle` after it (a projectile still in flight, or a miss).
             if now and now - job.casted >= A.CAST_SETTLE_MS
                 and ((job.last_hit and now - job.last_hit >= A.CAST_SETTLE_MS) or now - job.casted >= settle) then
-                local res = { cast = spell }
+                local res = { cast = spell, extra_attack = check.extra_attack, walked_into_range = job.walked,
+                    upcast_ignored = upcast_ignored }
                 if #job.hits > 0 then
                     res.damage = job.hits
                     local total = 0
@@ -1190,6 +1227,20 @@ reg("cast", function(args)
         end,
         start = function(job)
             job.hits, job.statuses = {}, {}
+            if walk then
+                return begin_approach(job, targets[1], walk.plan, walk.reach, function(j)
+                    local ok2, c = pcall(prepare)
+                    if not ok2 then
+                        RPC.finish_job(j, "failed", { walked = U.round(walk_m, 1) },
+                            G.is_refusal(c) and c.reason or tostring(c))
+                        return
+                    end
+                    check = c
+                    j.walked = U.round(walk_m, 1)
+                    j.osi_task = "spell"
+                    G.osi("UseSpell", char, spell, targets[1], NULL_GUID, without_move)
+                end)
+            end
             job.osi_task = "spell"
             if pos then
                 -- Engine form has 6 inputs (6th = WithoutMove), verified live
@@ -1610,12 +1661,16 @@ local function camp_travel(kind, want_in_camp)
         return start(kind, char, {
             timeout_ms = 30000,
             interrupt = { combat = true, dialogue = false, attacked = true },
+            -- Done when the ACTOR has arrived, not the first party member: S028 15:52:12 / 15:58:52 camp() returned
+            -- on Shadowheart's TeleportedToCamp, long_rest pressed CampTravel 40 ms later while Claude was still
+            -- on the way (its "teleported e4 to=camp" event came inside the long_rest result), and the rest
+            -- screen never opened.
             osi = {
                 TeleportedToCamp = function(job, a)
-                    if want_in_camp and G.is_party(a[1]) then RPC.finish_job(job, "done", { at_camp = true }) end
+                    if want_in_camp and G.same(a[1], char) then RPC.finish_job(job, "done", { at_camp = true }) end
                 end,
                 TeleportedFromCamp = function(job, a)
-                    if not want_in_camp and G.is_party(a[1]) then RPC.finish_job(job, "done", { at_camp = false }) end
+                    if not want_in_camp and G.same(a[1], char) then RPC.finish_job(job, "done", { at_camp = false }) end
                 end,
             },
             start = function(job) G.osi("TeleportToFromCamp", char) end,

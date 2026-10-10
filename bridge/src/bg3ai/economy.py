@@ -44,6 +44,20 @@ def _caster(prof: set[str]) -> bool:
     return bool(prof) and not prof & {"MartialWeapons", "MediumArmor", "HeavyArmor"}
 
 
+_SPELL_GEAR_NAME = re.compile(r"spellcrux|spell ?(save|slot|attack)", re.I)
+
+
+def _spell_gear(it: dict) -> bool:
+    """Gear that only helps a spellcaster (spell save DC / attack / slots): the mod's spellgear flag, or the name."""
+    return bool(it.get("spellgear") or _SPELL_GEAR_NAME.search(str(it.get("name") or "")))
+
+
+def _casts(mem: dict, prof: set[str]) -> bool:
+    """Has spell slots (the mod's caster flag); without it, a Wizard-like proficiency set."""
+    c = mem.get("caster")
+    return bool(c) if c is not None else _caster(prof)
+
+
 def _rar(it: dict) -> int:
     return _RARITY.get(it.get("rarity"), 1 if it.get("rarity") else 0)
 
@@ -242,6 +256,8 @@ def upgrades(inv: dict) -> list[dict]:
                 continue  # a story item in the slot (Moonlantern): the agent put it there on purpose
             if cur and _rar(cur) > _rar(it):
                 continue  # worn gear is magic (properties beyond AC/damage): never swapped for plainer stats
+            if _spell_gear(it) and not _casts(mem, prof):
+                continue  # S028: the Spellcrux Amulet (restores a spell slot) went to Karlach by rarity alone
             if slot == "MeleeOffHand":
                 if not it.get("shield") or (main and main.get("twohanded")):
                     continue
@@ -556,6 +572,17 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
         lines.append(f"TABLE you give: {side(you)} (={give}g) | you get: {side(them)} (={get}g) | "
                      + (f"short by {get - give}g (add items/gold or barter)" if get > give else
                         f"you overpay {give - get}g" if give > get else "even"))
+    if res.get("trader_gold") == 0 and "wares" in res:
+        # S028: Wulbren's hand-over (no wares, no gold) and a broke trader read like any shop until a confirm failed
+        if handover(res):
+            lines.append("HAND-OVER: they have no wares and no gold (a quest give, not a shop): "
+                         "trade(offer=<id>, confirm=true) gives the item")
+        else:
+            lines.append("TRADER HAS NO GOLD: selling would give your items away; swap for wares of equal value "
+                         "(offer=<ids>, request=<ids>) or sell elsewhere")
+    probs = [str(p) for p in res.get("problems") or [] if p]
+    if probs:  # S028 15:48: "some items couldn't be moved" said nothing about which or why (an equipped hammer)
+        lines.append("NOT MOVED: " + "; ".join(probs))
     if res.get("feedback"):
         lines.append(f"TRADER says: {res['feedback']}")
     if res.get("declined"):
@@ -622,6 +649,26 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
 _TRADE_ANSWER = [re.compile(p, re.I) for p in (
     r"\bwares\b", r"\[trade\]|\btrade\b|\bbarter\b",
     r"\b(what (do )?you (have|got|sell|offer)|show me what|let me (see|browse)|i('d| would) like to buy)\b")]
+
+
+def handover(res: dict | None) -> bool:
+    """A trade screen that is a quest hand-over, not a shop: the other side has no wares and no gold (S028 15:48:
+    Wulbren's "I have the tools you need - take them." opened it; giving anything there is a donation)."""
+    if not isinstance(res, dict) or res.get("wares_more"):
+        return False
+    wares = [w for w in res.get("wares") or [] if isinstance(w, dict)]
+    return not wares and res.get("trader_gold") in (0, None) and "wares" in res
+
+
+def equipped_offers(inv: dict | None, uuids: list[str], name_of: Callable[[str], str]) -> list[str]:
+    """Offered items someone wears: the trade screen lists only unequipped items, so they can't be moved."""
+    out = []
+    for it in (inv or {}).get("items") or []:
+        if isinstance(it, dict) and it.get("uuid") in uuids and it.get("equipped_slot"):
+            who = name_of(it["owner"]) if it.get("owner") else "someone"
+            out.append(f"{it.get('name') or '?'} is equipped by {who} ({it['equipped_slot']}): the trade screen lists "
+                       "only unequipped items; equip something else in that slot first, or offer another item")
+    return out
 
 
 def trade_answer(options: list) -> dict | None:

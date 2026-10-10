@@ -100,6 +100,10 @@ tried in order until one works:
 - `action`, `bonus`: an ability name as listed (`"Dash"`) or id (`"Shout_Dash"`), or `{"ability","target" | "x","y","z","upcast","targets","if","unless","then_move"}`,
   or `{"tool":<any do_actions tool>,...}`. `"then_move":true` walks the move again after it; a Dash does that by itself (`"then_move":false` to just Dash).
 - `extra`: a list of more slots, e.g. the Extra Attack: `[[{"ability":"Target_MainHandAttack","target":"e12"}]]`.
+  After the first weapon attack (a Main Hand Attack, Divine Smite, Reckless Attack) the next one costs no action,
+  as in the game; get_actions shows it as `[Extra Attack: free]`. Weapon actions (Lacerate, Cleave) and spells don't.
+- Summons (Spiritual Weapon) attack with their own action, e.g. "Greataxe Slash" (a bonus action). A plain
+  `Target_MainHandAttack` in a summon's plan is mapped to it.
 - `reactions`: `{"Divine Smite":"always"}` sets reaction prompts before the turn. `on_reaction`: `"use"` or
   `"skip"` answers reaction prompts that pop up mid-turn (default: stop and let you answer).
 - Before every step: still your turn? target still visible and alive? (if not: the next alternative). It stops,

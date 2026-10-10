@@ -720,6 +720,7 @@ function S.state(args)
         -- ui.dismiss may close it.
         if res.popup.buttons and #res.popup.buttons >= 2 then res.popup.decision = true
         else res.popup.dismissable = true end
+        if res.page == "SplitItem" then res.popup.split = true end  -- how many of a stack: confirm(amount=N)
     elseif scr == "tutorial" then
         res.tutorial = S.tutorial(wmap)
         if res.tutorial then res.tutorial.dismissable = true end

@@ -525,6 +525,7 @@ function S.actions(uuid)
         end
     end)
     local out = {}
+    local extra -- EXTRA_ATTACK on uuid (read once, on the first action-cost entry)
     for _, id in ipairs(order) do
         local info = byId[id].info
         local cost = parseCosts(info.use_costs)
@@ -539,7 +540,23 @@ function S.actions(uuid)
         if info.concentration then a.concentration = true end
         if upcasts[id] then table.sort(upcasts[id]); a.upcast = upcasts[id] end
         if variants[id] then a.variants = variants[id] end
-        local ok, why = canPay(cost, res)
+        local pay = cost
+        if cost.action and extra == nil then
+            local Gd = BG3AI.Guard
+            extra = (Gd and Gd.extra_attack_free and Gd.in_combat(uuid)
+                and U.truthy(Gd.q("HasActiveStatus", uuid, Gd.EXTRA_ATTACK_STATUS))) or false
+        end
+        if cost.action and extra then
+            -- Extra Attack: the next weapon attack costs no action (Guard.extra_attack_free), as on the hotbar
+            local flags, st = {}, Ext.Stats.Get(id)
+            pcall(function() for _, x in ipairs(st.SpellFlags) do flags[x] = true end end)
+            if st and BG3AI.Guard.extra_attack_free(uuid, st, flags) then
+                pay = {}
+                for k, v in pairs(cost) do if k ~= "action" then pay[k] = v end end
+                a.extra_attack = true
+            end
+        end
+        local ok, why = canPay(pay, res)
         if cds[id] then ok, why = false, "cooldown (" .. cds[id] .. ")" end
         a.available = ok
         if not ok then a.reason = why end
@@ -578,6 +595,11 @@ local function itemStats(ie, o)
     if tab and tab ~= "Auto" then o.tab = tostring(tab) end
     local kind = statField(st, "ModifierList")
     local boosts = (tostring(statField(st, "Boosts") or "")) .. ";" .. tostring(statField(st, "DefaultBoosts") or "")
+    -- Gear that only helps a spellcaster (S028: equip_best put the Spellcrux Amulet on Karlach by rarity alone)
+    local spelly = (boosts .. ";" .. tostring(statField(st, "PassivesOnEquip") or "")):lower()
+    for _, k in ipairs({ "spellsavedc", "spellattack", "spellslot", "spellcrux", "spelldc", "arcanerecovery" }) do
+        if spelly:find(k, 1, true) then o.spellgear = true break end
+    end
     if kind == "Armor" then
         o.ac = tonumber(statField(st, "ArmorClass")) or 0
         local plus = tonumber(boosts:match("AC%((%d+)%)"))
@@ -650,6 +672,10 @@ local function memberInfo(e)
         local t = {}
         for _, f in pairs(e.Proficiency.Flags) do t[#t + 1] = tostring(f) end
         m.prof = t
+    end)
+    pcall(function()  -- has spell slots (caster gear goes to them): Wizard, Cleric, Paladin, Warlock …
+        local r = resources(e)
+        m.caster = (r.SpellSlot ~= nil or r.WarlockSpellSlot ~= nil)
     end)
     local ab = abilityBlock(e)  -- weapon choice: STR weapons vs finesse/ranged (DEX)
     if ab then m.str, m.dex = ab.str, ab.dex end
@@ -1453,8 +1479,8 @@ timed("state.entity", function(args)
     if comp(e, "ServerCharacter") then
         if ctx.is_party[u] then return partyBrief(ctx, u, selectedCharacter(ctx.party)) end
         if not V.characterVisible(ctx, u, e) then
-            local m = V.memory[u]
-            if m then return { uuid = u, name = m.name, visible = false, last_pos = U.vec(m.pos, 1) } end
+            local m, seen = V.memory[u], V.lastSeen(u) -- this level only (a position elsewhere leads nowhere)
+            if m and seen then return { uuid = u, name = m.name, visible = false, last_pos = seen.pos, ago_s = seen.ago_s } end
             error("not visible", 0)
         end
         return S.examine(ctx, u, e)
@@ -1462,9 +1488,18 @@ timed("state.entity", function(args)
     if comp(e, "ServerItem") then
         local inv = comp(e, "InventoryMember")
         if inv then
-            -- Items carried by the party are always inspectable.
-            local ok, top = pcall(function() return V.entityUuid(e.InventoryTopOwner.TopOwner) end)
-            if not (ok and top and ctx.is_party[top]) then error("not visible", 0) end
+            -- Items carried by the party are always inspectable. Walk the inventory owners up (bags in bags):
+            -- e.InventoryTopOwner is nil on carried items (probe 15:5x), which made every look_at on an
+            -- inventory item "not visible" (S018, S025, S026).
+            local cur, top = u, nil
+            for _ = 1, 6 do
+                local o = osi(Osi.GetInventoryOwner, cur)
+                o = type(o) == "string" and o:match("%x+%-%x+%-%x+%-%x+%-%x+$") or nil
+                if not o then break end
+                if ctx.is_party[o] then top = o break end
+                cur = o
+            end
+            if not top then error("not visible", 0) end
         else
             local vis = V.itemVisible(ctx, u, e, V.pos(e))
             if not vis then error("not visible", 0) end

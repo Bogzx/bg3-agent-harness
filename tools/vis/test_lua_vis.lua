@@ -375,6 +375,38 @@ test("a ladder seen moments ago stays known from a spot where it is out of sight
     V.fixtureSeen = {}
 end)
 
+test("itemKnown: a static thing seen on this level stays a valid target (not listed) until gone/far/old/combat", function()
+    -- S025 Grand Mausoleum: route e992 (listed 10.8 m away one call before) and interact e996 refused "not visible"
+    setup(); door("D", { 10, 0, 0 })
+    V.staticSeen, V.fixtureSeen = {}, {}
+    local function known() V.ctxCache = nil; return (V.itemKnown(V.context(), "D")) == true end
+    ray.fn = floorThen(function() return nil end)
+    eq(visible("D"), true, "seen")
+    ray.fn = floorThen(function(a) return { Position = { a[1] + 5, a[2], a[3] }, Distance = 5 } end)
+    V.rayCache = {}
+    clock = clock + 120000
+    eq(visible("D"), false, "behind a wall now: not listed")
+    eq(known(), true, "but still a target 2 min later")
+    osiv[key("IsInCombat", "P1")] = 1
+    eq(known(), false, "in a fight: sight only")
+    osiv[key("IsInCombat", "P1")] = nil
+    world.P1.pos = { 55, 0, 0 }
+    eq(known(), false, "45 m away")
+    world.P1.pos = { 0, 0, 0 }
+    world.D.comps.InventoryMember = {}
+    eq(known(), false, "picked up / put away")
+    world.D.comps.InventoryMember = nil
+    osiv[key("GetRegion", "P1")] = "WLD_Main_A"
+    V.levelFrame = nil
+    eq(known(), false, "another level")
+    osiv[key("GetRegion", "P1")] = "TUT_Avernus_C"
+    clock = clock + V.SEEN_STATIC_MS
+    eq(known(), false, "forgotten after 10 min")
+    door("D2", { 8, 0, 0 })
+    eq((V.itemKnown(V.context(), "D2")) == true, false, "never seen, not in sight")
+    V.staticSeen = {}
+end)
+
 test("undiscovered trap fixture (vent) stays hidden with a clear ray", function()
     setup(); button("T", { 5, 0, 0 })
     world.T.comps.ServerItem.CanUse = false

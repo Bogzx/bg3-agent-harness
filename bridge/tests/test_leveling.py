@@ -541,6 +541,29 @@ class ServerWiring(unittest.TestCase):
         finally:
             S.game, S.H = saved
 
+    def test_npc_in_view_resolves_on_a_fresh_bridge(self):
+        """S029 16:04: talk_to(npc="Wulbren") as the session's first call failed "unknown target" with him in view."""
+        from bg3ai import server as S
+        from bg3ai.render import Handles
+        wu = "11111111-2222-3333-4444-555555555555"
+        reads = []
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                reads.append(op)
+                if op == "state.nearby":
+                    return {"characters": [{"uuid": wu, "name": "Wulbren Bongle"}], "items": []}
+                return {"party": []} if op == "state.status" else default
+        saved = (S.game, S.H)
+        S.game, S.H = G(), Handles()
+        try:
+            self.assertEqual(S._uuid("Wulbren"), wu)
+            self.assertEqual(reads, ["state.status", "state.nearby"])
+            with self.assertRaises(ValueError):
+                S._uuid("Nobody")
+        finally:
+            S.game, S.H = saved
+
     def test_camp_member_named_on_a_fresh_bridge(self):
         """Live 12:3x: level_up(who="Wyll") as a fresh bridge's first call failed "unknown target 'Wyll'" (only
         party names were known); the earlier tests stubbed _who and hid it."""

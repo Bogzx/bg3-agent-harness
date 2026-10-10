@@ -48,6 +48,33 @@ class Chain(unittest.TestCase):
         self.assertIn("CHAIN STOPPED after 1 of 3: Gale: not played — it is not e2 Gale's turn", out)
         self.assertIn("NOT PLAYED: Gale, Claude", out)
 
+    def test_member_that_already_ended_is_skipped(self):
+        # S028: [Karlach, Claude, ...] with Karlach done → "CHAIN STOPPED after 0 of 4"; now the rest play
+        def one(w):
+            if w == "Karlach":
+                raise GameError("e2 Karlach already ended its turn (now e4 Claude); waited 0.0s for the turn")
+            return f"TURN {w}"
+        out, calls = self.run_chain(self.PLANS, one)
+        self.assertEqual([c[0] for c in calls], ["Karlach", "Gale", "Claude"])
+        self.assertIn("Karlach: skipped — e2 Karlach already ended its turn", out)
+        self.assertNotIn("CHAIN STOPPED", out)
+        self.assertIn("TURN Gale", out)
+
+    def test_later_member_that_must_act_first_plays_first(self):
+        order = []
+
+        def one(w):
+            if w == "Karlach" and "Claude" not in order:
+                raise GameError("it is not e1 Karlach's turn (now e4 Claude); waited 0.0s for the turn (e4 Claude "
+                                "(yours) must act first: play that turn (combat_turn who=e4) or end it (end_turn who=e4))")
+            order.append(w)
+            return f"TURN {w}"
+        uu = {"e4": "U-claude", "Claude": "U-claude", "Gale": "U-gale", "Karlach": "U-karlach"}
+        with mock.patch.object(server, "_uuid", lambda h: uu[h]):
+            out, calls = self.run_chain(self.PLANS, one)
+        self.assertEqual(order, ["Claude", "Karlach", "Gale"])
+        self.assertNotIn("CHAIN STOPPED", out)
+
     def test_stops_on_interrupt(self):
         def fake(plan, who, end, wait_next, ignore, wait_turn):
             server._batch["last"] = "interrupted" if who == "Karlach" else "done"

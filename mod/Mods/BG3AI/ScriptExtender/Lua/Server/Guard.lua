@@ -315,7 +315,8 @@ function G.visible(target)
                 local e = G.entity(g)
                 if b(Osi.IsCharacter(g)) then return V.characterVisible(ctx, g, e) end
                 if type(V.itemVisible) == "function" then
-                    return (V.itemVisible(ctx, g, e)) == true
+                    -- itemKnown: also a static thing seen moments ago on this level (Visibility.lua)
+                    return ((V.itemKnown or V.itemVisible)(ctx, g, e)) == true
                 end
                 return fallback_visible(g)
             end)
@@ -991,6 +992,21 @@ end
 -- refused). An item that passed G.visible this close is in plain sight.
 G.ITEM_LOS_NEAR_M = 4.0
 
+-- Extra Attack (live stats, 2026-10-10): after a weapon attack the ExtraAttack passive applies EXTRA_ATTACK,
+-- whose boost is UnlockSpellVariant(ExtraAttackCheck(), ModifyUseCosts(Replace,ActionPoint,0,0,ActionPoint))
+-- and which goes on the next cast (RemoveEvents OnSpellCast): the next weapon attack costs no action. We
+-- checked the raw UseCosts (ActionPoint:1), so every Extra Attack was refused "not enough action" (S023-S028:
+-- 0 of 7). A weapon attack here = a Melee/RangedWeaponAttack roll that is not a weapon action (Lacerate,
+-- Cleave...): the main-hand attacks, Divine Smite, Reckless Attack.
+G.EXTRA_ATTACK_STATUS = "EXTRA_ATTACK"
+
+function G.extra_attack_free(char, st, flags)
+    local roll = ""
+    pcall(function() roll = tostring(st.SpellRoll and st.SpellRoll.Default or "") end)
+    if not roll:find("WeaponAttack") or flags.IsDefaultWeaponAction then return false end
+    return b(G.q("HasActiveStatus", char, G.EXTRA_ATTACK_STATUS))
+end
+
 -- Full pre-validation for an Osiris-originated cast. Returns
 -- {stats, costs, payers} or refuses with the reason the UI would show.
 function G.check_cast(char, spell, target, pos, upcast)
@@ -1022,6 +1038,12 @@ function G.check_cast(char, spell, target, pos, upcast)
     local costs = G.parse_costs(st.UseCosts, upcast)
     local payers = {}
     local in_combat = G.in_combat(char)
+    local extra_attack = in_combat and G.extra_attack_free(char, st, flags)
+    if extra_attack then
+        for i = #costs, 1, -1 do
+            if costs[i].name == "ActionPoint" then table.remove(costs, i) end
+        end
+    end
     for _, c in ipairs(costs) do
         -- Out of combat, action/bonus/movement points do not limit you.
         local turn_resource = (c.name == "ActionPoint" or c.name == "BonusActionPoint"
@@ -1072,7 +1094,8 @@ function G.check_cast(char, spell, target, pos, upcast)
                 U.dist(p, pos), range))
         end
     end
-    return { stats = st, costs = costs, payers = payers, snapshot = snap, level = level, range = range }
+    return { stats = st, costs = costs, payers = payers, snapshot = snap, level = level, range = range,
+        extra_attack = extra_attack or nil }
 end
 
 return G

@@ -403,7 +403,7 @@ RPC.register("nav.path", function(args)
         if not te then error("unknown target", 0) end
         local tp = V.pos(te)
         local visible = U.comp(te, "ServerCharacter") and V.characterVisible(ctx, args.target, te, tp)
-            or (U.comp(te, "ServerItem") and V.itemVisible(ctx, args.target, te, tp))
+            or (U.comp(te, "ServerItem") and (V.itemKnown or V.itemVisible)(ctx, args.target, te, tp))
         if not visible then error("not visible", 0) end
         target = tp
     end
@@ -1144,11 +1144,15 @@ end
 -- Only when the whole route is plain walking: a full path (not partial) of
 -- <= DIRECT_MAX_M, no jump link, and (avoid) no harmful surface on it. The
 -- leg ends at the goal when it is <= DIRECT_LEG_M away in a straight line
--- (Guard refuses moves past G.MAX_MOVE_DIST = 60 m), else at the farthest
--- route node within it, verified. Returns a reach_toward-shaped result with
--- direct=true, or nil, why.
-N.DIRECT_MAX_M = 150
+-- (Guard refuses moves past G.MAX_MOVE_DIST = 60 m), else at the last route
+-- node within it and within DIRECT_LEG_PATH_M of walking, verified. Returns
+-- a reach_toward-shaped result with direct=true, or nil, why.
+-- S029 16:07: Last Light -> Mausoleum was a 325 m route (2.4x the straight
+-- line, first legs SE away from the goal); the 150 m cap sent it to the
+-- straight-line sampler: "no walkable ground leads further", 2 min by hand.
+N.DIRECT_MAX_M = 600
 N.DIRECT_LEG_M = 55
+N.DIRECT_LEG_PATH_M = 70
 function N.directLeg(charUuid, toward, avoid)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
@@ -1161,22 +1165,39 @@ function N.directLeg(charUuid, toward, avoid)
     if (r.length_m or 0) > N.DIRECT_MAX_M then return nil, "long" end
     local pts = r.points
     if type(pts) ~= "table" or #pts < 2 then return nil, "no route" end
-    if avoid and (N.routeHazard(pts) or N.surfaceNear(goal)) then return nil, "hazard" end
-    local pos, walk = goal, r.length_m
+    local pos, walk, last = goal, r.length_m, #pts
     if U.dist(from, goal) > N.DIRECT_LEG_M then
         local walked, idx, acc = 0, nil, 0
         for i = 2, #pts do
             acc = acc + U.dist(pts[i - 1], pts[i])
+            if acc > N.DIRECT_LEG_PATH_M then break end -- a switchback node near us is not "along the way"
             if U.dist(from, pts[i]) <= N.DIRECT_LEG_M then idx, walked = i, acc end
         end
         if not idx or walked < 5 then return nil, "no node in reach" end
-        pos, walk = pts[idx], walked
-        local ok = N.verifyPoint(charUuid, pos)
-        if ok ~= true then return nil, "leg end unverified" end
+        pos, walk, last = pts[idx], walked, idx
     end
-    return { reachable = true, pos = U.vec(pos, 1), path_m = round(walk, 1), straight_m = round(U.dist(from, pos), 1),
-        route_m = r.length_m, direct = true, verified = true, dir = N.direction(from, pos),
+    -- Hazards on this leg only: one further along is the next leg's to deal with.
+    -- A leg that crosses one comes back as the 3rd value (with its exposure):
+    -- reach_toward avoid="least" falls back on it when no clear walk leads on
+    -- (S030 16:35 Soft-Step Trial: the only way crossed Grease; "no walkable
+    -- ground leads further" although route() had walked it).
+    local legPts = {}
+    for i = 1, last do legPts[i] = pts[i] end
+    if pos == goal and U.dist(legPts[#legPts], goal) > 0.5 then legPts[#legPts + 1] = goal end
+    local risky = nil
+    if avoid and (N.routeHazard(legPts) or (pos == goal and N.surfaceNear(goal))) then
+        risky = N.routeExposure(legPts) or { surface = N.surfaceNear(goal), m = 0, pos = U.vec(goal, 1), at_m = round(walk, 1) }
+    end
+    if pos ~= goal and N.verifyPoint(charUuid, pos) ~= true then return nil, "leg end unverified" end
+    local out = { reachable = true, pos = U.vec(pos, 1), path_m = round(walk, 1), straight_m = round(U.dist(from, pos), 1),
+        route_m = r.length_m, route_left_m = round(math.max((r.length_m or 0) - walk, 0), 1),
+        direct = true, verified = true, dir = N.direction(from, pos),
         whole = pos == goal or nil }
+    if risky then
+        out.exposure = risky
+        return nil, "hazard", out
+    end
+    return out
 end
 
 -- Nearest safe floor out of a harmful surface: rings of 8 directions at
@@ -2360,7 +2381,7 @@ RPC.register("nav.reach_toward", function(args)
         local tp = te and V.pos(te)
         if not tp then error("unknown target", 0) end
         local visible = U.comp(te, "ServerCharacter") and V.characterVisible(ctx, args.target, te, tp)
-            or (U.comp(te, "ServerItem") and V.itemVisible(ctx, args.target, te, tp))
+            or (U.comp(te, "ServerItem") and (V.itemKnown or V.itemVisible)(ctx, args.target, te, tp))
         if not visible then error("not visible", 0) end
         toward = tp
     end
@@ -2369,8 +2390,10 @@ RPC.register("nav.reach_toward", function(args)
     local t0 = Ext.Utils.MonotonicTime()
     -- direct=true (travel_to): the engine's own route in one long leg when the
     -- whole way is plain walking; else the sampled legs below.
+    local riskyDirect = nil
     if args.direct and toward and not args.alt then
-        local d, why = N.directLeg(char, toward, args.avoid ~= false)
+        local d, why, risky = N.directLeg(char, toward, args.avoid ~= false)
+        riskyDirect = risky
         if d then
             local under = N.harmfulUnder(char)
             if under then d.standing_in = under end
@@ -2400,11 +2423,20 @@ RPC.register("nav.reach_toward", function(args)
                 r.cross_samples = c.samples
             end
         end
+        -- Still nothing that gets on: the engine's own route across the surface
+        -- (the bridge weighs the exposure: crossing_ok by policy and HP).
+        if riskyDirect then
+            local g2 = (r.reachable and r.pos and from) and (U.dist(from, toward) - U.dist(r.pos, toward)) or 0
+            if g2 < 1.0 then
+                riskyDirect.straight = { reachable = r.reachable, hazard = r.hazard or r.hazard_beyond }
+                r = riskyDirect
+            end
+        end
     end
     -- travel_to: verify the exact leg end we hand out; when it fails, or the
     -- bridge asks for another leg after a failed walk (alt=true, exclude=that
     -- leg's end), take a verified alternative (N.altLeg).
-    if toward and (args.alt or (r.reachable and r.pos)) then
+    if toward and not (r.direct and r.verified) and (args.alt or (r.reachable and r.pos)) then
         local fine = nil
         -- reachToward searched this exact (0.1 m) point this frame: no second search
         if not args.alt then fine = r.searched or N.verifyPoint(char, r.pos) end
@@ -2445,7 +2477,7 @@ RPC.register("nav.approach", function(args)
         tpos = te and V.pos(te)
         if not tpos then error("unknown target", 0) end
         local visible = U.comp(te, "ServerCharacter") and V.characterVisible(ctx, args.target, te, tpos)
-            or (U.comp(te, "ServerItem") and V.itemVisible(ctx, args.target, te, tpos))
+            or (U.comp(te, "ServerItem") and (V.itemKnown or V.itemVisible)(ctx, args.target, te, tpos))
         if not visible then error("not visible", 0) end
         target = args.target
     end
@@ -2579,7 +2611,7 @@ RPC.register("nav.route", function(args)
         local tp = te and V.pos(te)
         if not tp then error("unknown target", 0) end
         local visible = U.comp(te, "ServerCharacter") and V.characterVisible(ctx, args.target, te, tp)
-            or (U.comp(te, "ServerItem") and V.itemVisible(ctx, args.target, te, tp))
+            or (U.comp(te, "ServerItem") and (V.itemKnown or V.itemVisible)(ctx, args.target, te, tp))
         if not visible then error("not visible", 0) end
         local ce = V.entity(char)
         goal = U.comp(te, "ServerItem") and N.ladderTop(ce and V.pos(ce), args.target, te) or tp

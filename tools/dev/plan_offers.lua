@@ -23,6 +23,15 @@ for _, u in ipairs(MEMBERS) do
     local e = Ext.Entity.Get(u)
     local m = { uuid = u, name = loca(Osi.GetDisplayName(u)) or u, classes = {}, known = {}, levels = {} }
     pcall(function() for _, s in pairs(e.SpellBook.Spells) do m.known[#m.known + 1] = (spellName(s.Id.Prototype)) end end)
+    -- Passives the character has (invocations, fighting styles): a later level's list still offers them (S028: the
+    -- keeper picked Agonising Blast for Wyll L7, taken at L5, and the check passed it). Same read as State.lua.
+    m.known_passives = {}
+    pcall(function()
+        for _, pe in ipairs(e.PassiveContainer.Passives) do
+            local id = pe.Passive and pe.Passive.PassiveId
+            if id then m.known_passives[#m.known_passives + 1] = passiveName(id) end
+        end
+    end)
     local total = 0
     for _, c in pairs(e.Classes.Classes) do
         local cd = Ext.StaticData.Get(c.ClassUUID, "ClassDescription")

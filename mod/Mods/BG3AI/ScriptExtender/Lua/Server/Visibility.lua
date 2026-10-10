@@ -298,6 +298,19 @@ function V.itemKind(uuid, e)
     return ok and r or "item"
 end
 
+-- The host's level, once per frame (V.itemVisible notes static things seen for every item a scan shows).
+function V.levelNow()
+    local f = V.frame()
+    if f and V.levelFrame == f then return V.levelCache end
+    local host = V.osi(Osi.GetHostCharacter)
+    V.levelCache, V.levelFrame = host and V.osi(Osi.GetRegion, host) or nil, f
+    return V.levelCache
+end
+
+-- Static things the party has seen stay valid targets (V.itemKnown), never listed again by this.
+V.STATIC_KINDS = { door = true, container = true, usable = true, ladder = true, object = true }
+V.staticSeen = V.staticSeen or {}
+
 -- Is item `uuid` perceivable, and is it something worth listing?
 -- Returns visible:boolean, kind:string.
 -- pos defaults to the item's own position (S021: Guard called this without
@@ -331,12 +344,44 @@ function V.itemVisible(ctx, uuid, e, pos)
     if V.perceived(ctx, uuid, pos) or V.largePerceived(ctx, uuid, e, pos, kind)
         or V.fixturePerceived(ctx, uuid, e, pos, kind) then
         if (V.FIXTURE_KINDS[kind] and V.isNamedFixture(uuid)) or kind == "ladder" then
-            local host = V.osi(Osi.GetHostCharacter)
-            V.fixtureSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = host and V.osi(Osi.GetRegion, host) or nil }
+            V.fixtureSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow() }
         end
+        if V.STATIC_KINDS[kind] then V.staticSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow() } end
         return true, kind
     end
     if (V.FIXTURE_KINDS[kind] or kind == "ladder") and V.fixtureRemembered(ctx, uuid, pos) then return true, kind end
+    return false
+end
+
+-- A target check for interact/route/travel_to/move_to: visible now, or a static thing (door, container, usable,
+-- ladder) the party saw on this level in the last SEEN_STATIC_MS, still there, with a party member within
+-- SEEN_STATIC_M. A player remembers the painting 10 m behind them and walks back to it. S025 Grand Mausoleum:
+-- route e992 (Moonrise Towers, listed 10.8 m away one call before) and interact e996 (Grief, 2.8 m) refused
+-- "not visible" as the party moved; S026: interact e444 the same; each cost a walk back + a retry. Listings
+-- (get_nearby, look) keep the strict rule: only V.itemVisible.
+V.SEEN_STATIC_MS = 600000
+V.SEEN_STATIC_M = 40.0
+function V.itemKnown(ctx, uuid, e, pos)
+    e = e or V.entity(uuid)
+    pos = pos or (e and V.pos(e))
+    local vis, kind = V.itemVisible(ctx, uuid, e, pos)
+    if vis then return true, kind end
+    local m = V.staticSeen[uuid]
+    if not (m and pos and e) or Ext.Utils.MonotonicTime() - m.t > V.SEEN_STATIC_MS or m.level ~= V.levelNow() then
+        return false
+    end
+    local host = V.osi(Osi.GetHostCharacter)
+    if host and truthy(V.osi(Osi.IsInCombat, host)) then return false end -- a fight targets what is in sight
+    -- gone since: picked up, destroyed, made invisible or hidden by a script
+    if U.comp(e, "InventoryMember") or scriptHidden(uuid) or truthy(V.osi(Osi.IsInvisible, uuid)) then return false end
+    local si = U.comp(e, "ServerItem")
+    if si then
+        local ok, gone = pcall(function() return si.Invisible or si.Invisible2 or si.Destroyed or si.OffStage end)
+        if ok and gone then return false end
+    end
+    for _, o in ipairs(ctx.observers or {}) do
+        if o.pos and U.dist(o.pos, pos) <= V.SEEN_STATIC_M then return true, V.itemKind(uuid, e) end
+    end
     return false
 end
 

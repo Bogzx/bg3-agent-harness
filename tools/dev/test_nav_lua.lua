@@ -739,5 +739,68 @@ test("exitName: hatches, stairs, gates; not lookalikes", function()
     end
 end)
 
+test("directLeg: a long winding route is walked along, in <= 70 m of route per leg (S029 16:07)", function()
+    reset()
+    -- 40 m W, 100 m N, 100 m E, 100 m S to a goal 60 m E: 340 m of route, first leg away from the goal.
+    nodesFor = function(from, t)
+        local pts, x, z = {}, 0, 0
+        local function go(dx, dz, n) for _ = 1, n do x, z = x + dx, z + dz; pts[#pts + 1] = { x, 0, z } end end
+        go(-5, 0, 8); go(0, 5, 20); go(5, 0, 20); go(0, -5, 20)
+        return pts
+    end
+    local saved = N.verifyPoint
+    N.verifyPoint = function() return true end
+    local d, why = N.directLeg(P1, { 60, 0, 0 }, false)
+    N.verifyPoint = saved
+    eq(why, nil, "no refusal")
+    eq(d.direct, true, "direct")
+    near(d.pos[1], -40, "leg end x"); near(d.pos[3], 30, "leg end z (70 m of route)")
+    near(d.route_left_m, 270, "route left")
+end)
+
+local function winding()
+    nodesFor = function(from, t)
+        local pts, x, z = {}, 0, 0
+        local function go(dx, dz, n) for _ = 1, n do x, z = x + dx, z + dz; pts[#pts + 1] = { x, 0, z } end end
+        go(-5, 0, 8); go(0, 5, 20); go(5, 0, 20); go(0, -5, 20)
+        return pts
+    end
+end
+
+test("directLeg: Fire on this leg -> refused, the leg comes back with its exposure (S030 16:35)", function()
+    reset(); winding()
+    fire = function(x, z) return x < -24 and x > -31 and math.abs(z) < 1 end
+    local saved = N.verifyPoint
+    N.verifyPoint = function() return true end
+    local d, why, risky = N.directLeg(P1, { 60, 0, 0 }, true)
+    N.verifyPoint = saved
+    eq(d, nil, "no clear leg"); eq(why, "hazard", "why")
+    assert(risky and risky.exposure and risky.exposure.surface == "Fire", "risky leg with its exposure")
+    eq(risky.direct, true, "direct")
+end)
+
+test("directLeg: Fire further along the route is the next leg's: this one is walked", function()
+    reset(); winding()
+    fire = function(x, z) return z > 80 and x > 10 and x < 20 end
+    local saved = N.verifyPoint
+    N.verifyPoint = function() return true end
+    local d = N.directLeg(P1, { 60, 0, 0 }, true)
+    N.verifyPoint = saved
+    assert(d and d.direct and not d.exposure, "a clear direct leg")
+end)
+
+test("nav.reach_toward avoid=least direct: nothing clear gets on -> the route across the surface", function()
+    reset(); winding()
+    fire = function(x, z) return x < -24 and x > -31 and math.abs(z) < 1 end
+    blocked = function(x, z) return x > 0.5 and x ~= 60 end
+    local saved = N.verifyPoint
+    N.verifyPoint = function() return true end
+    local r = RPC.ops["nav.reach_toward"]({ pos = { 60, 0, 0 }, max_m = 30, avoid = "least", direct = true })
+    N.verifyPoint = saved
+    eq(r.direct, true, "the engine's route")
+    assert(r.exposure and r.exposure.surface == "Fire", "exposure for the bridge to weigh")
+    assert(r.route_left_m and r.route_left_m > 200, "route left")
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

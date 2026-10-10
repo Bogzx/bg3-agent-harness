@@ -59,7 +59,9 @@ def check_level(lv: dict, plan: dict | None, known: set[str]) -> list[str]:
             probs.append(f"{key}: {have} of {need} picks")
     pass_opts = {_norm(o) for p in lv["passives"] for o in p["options"]}
     for name in plan.get("passives") or []:
-        if _norm(name) not in pass_opts:
+        if _norm(name) in k:
+            probs.append(f"passive {name}: already known")
+        elif _norm(name) not in pass_opts:
             probs.append(f"passive {name}: not offered")
     need = sum(p["amount"] for p in lv["passives"])
     if len(plan.get("passives") or []) < need:
@@ -76,7 +78,8 @@ def offer_text(lv: dict, known: set[str], cap: int = 24) -> str:
         names = [o["name"] for o in s["options"] if _norm(o["name"]) not in k]
         bits.append(f"pick {s['amount']} of {s['list']}: " + ", ".join(names[:cap]) + (" …" if len(names) > cap else ""))
     for p in lv["passives"]:
-        bits.append(f"pick {p['amount']} of {p['list']}: " + ", ".join(p["options"][:cap]))
+        names = [o for o in p["options"] if _norm(o) not in k]  # never offer what they already have (keeper input)
+        bits.append(f"pick {p['amount']} of {p['list']}: " + ", ".join(names[:cap]) + (" …" if len(names) > cap else ""))
     if lv["skills"]:
         bits.append(f"{lv['skills']} skill(s)")
     if lv["feat"]:
@@ -100,13 +103,13 @@ def main() -> int:
     bad = 0
     for m in offers(server.game, uuids, a.ahead):
         cls = ", ".join(f"{c.get('class')}/{c.get('sub') or '-'} {c.get('level')}" for c in m["classes"])
-        known = set(m["known"])
+        known = set(m["known"]) | set(m.get("known_passives") or [])
         for i, lv in enumerate(m["levels"]):
             plan = plans.get((m["name"].lower(), lv["level"]))
-            # a 2nd level ahead can't see the 1st's picks: count them as known
+            # a later level ahead can't see the earlier ones' picks: count them as known
             if i > 0:
                 prev = plans.get((m["name"].lower(), lv["level"] - 1)) or {}
-                known |= set(prev.get("spells") or []) | set(prev.get("cantrips") or [])
+                known |= set(prev.get("spells") or []) | set(prev.get("cantrips") or []) | set(prev.get("passives") or [])
             probs = check_level(lv, plan, known)
             bad += bool(probs)
             mark = "OK " if not probs else "BAD"

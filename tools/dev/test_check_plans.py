@@ -44,5 +44,23 @@ class CheckLevel(unittest.TestCase):
         self.assertTrue(CP.check_level(GALE6, None, set())[0].startswith("no plan line"))
 
 
+class KnownPassives(unittest.TestCase):
+    """S028: the keeper rewrote Wyll L7 as {"spells":["Banishment"],"passives":["Agonising Blast"]} from an offer list
+    that still showed Agonising Blast (taken at L5), and the check passed it."""
+    WYLL7 = {"level": 7, "feat": False, "skills": 0,
+             "spells": [{"amount": 1, "list": "Warlock Fiend SLevel 4", "options": [{"name": "Banishment", "level": 4}]}],
+             "passives": [{"amount": 1, "list": "Warlock invocations L7",
+                           "options": ["Agonising Blast", "Sculptor of Flesh", "Dreadful Word"]}]}
+
+    def test_known_passive_refused(self):
+        p = CP.check_level(self.WYLL7, {"spells": ["Banishment"], "passives": ["Agonising Blast"]}, {"Agonising Blast"})
+        self.assertIn("passive Agonising Blast: already known", p)
+
+    def test_offer_text_hides_known_passives(self):
+        t = CP.offer_text(self.WYLL7, {"Agonizing Blast"})
+        self.assertNotIn("Agonising Blast", t)
+        self.assertIn("Sculptor of Flesh", t)
+
+
 if __name__ == "__main__":
     unittest.main()

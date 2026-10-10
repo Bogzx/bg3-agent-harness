@@ -628,7 +628,165 @@ do
     roll.RollState, roll.starts, roll.accept_after = "WaitForStart", 0, 0
     jr = run(ops["ui.roll"]({}).job, 10000)
     ok(jr.status == "done" and roll.starts == 1 and jr.result.retriggered == nil, "ui.roll: one start when it takes")
+    ok(type(jr.result.phases) == "string" and jr.result.phases:find("ResultReady@", 1, true) ~= nil,
+        "ui.roll: the state timeline rides along for metrics: " .. tostring(jr.result.phases))
+
+    -- Inspiration reroll (S013-S026: 7/7 returned the first failed roll). RollAgainCommand leaves ResultReady a
+    -- few frames later for WaitForReRoll, where the dice wait to be thrown again (like WaitForStart).
+    local again = 0
+    BG3AI.UI.command = function(dc, name, param, dry)
+        if dc == roll and name == "RollAgainCommand" then
+            if dry then return true end
+            again = again + 1
+            roll.pending = 3   -- ticks until the game switches state
+            return true
+        end
+        if dc == roll and name == "UserTriggeredNextPhaseCommand" then
+            if dry then return true end
+            roll.starts = roll.starts + 1
+            if roll.RollState == "WaitForReRoll" then roll.RollState = "StartRoll" roll.pending = 4 end
+            return true
+        end
+        return _c(dc, name, param, dry)
+    end
+    BG3AI.UI.prop = function(e, k)
+        if e == roll then
+            if k == "RollState" and roll.pending then
+                roll.pending = roll.pending - 1
+                if roll.pending <= 0 then
+                    roll.pending = nil
+                    roll.RollState = (roll.RollState == "ResultReady") and "WaitForReRoll" or "ResultReady"
+                end
+            end
+            return roll[k]
+        end
+        return _p(e, k)
+    end
+    roll.RollState, roll.starts = "ResultReady", 0
+    jr = run(ops["ui.roll"]({ reroll = true }).job, 10000)
+    ok(jr.status == "done" and again == 1 and roll.starts == 1 and jr.result.rerolled == true
+        and roll.RollState == "ResultReady" and (jr.result.phases or ""):find("WaitForReRoll", 1, true) ~= nil,
+        "ui.roll reroll: waits out the old result, throws the dice again, returns the new result: "
+        .. tostring(jr.status) .. " starts=" .. roll.starts .. " " .. tostring(jr.result.phases))
+    -- the game ignores the reroll (state never leaves ResultReady): an honest reroll_ignored, no endless wait
+    BG3AI.UI.command = function(dc, name, param, dry)
+        if dc == roll and name == "RollAgainCommand" then return true end
+        return _c(dc, name, param, dry)
+    end
+    roll.RollState, roll.pending = "ResultReady", nil
+    jr = run(ops["ui.roll"]({ reroll = true }).job, 10000)
+    ok(jr.status == "done" and jr.result.reroll_ignored == true, "ui.roll reroll ignored by the game: reported")
+    -- entering at WaitForReRoll (a reroll pressed earlier) throws the dice like WaitForStart
+    roll.RollState, roll.starts = "WaitForReRoll", 0
+    BG3AI.UI.command = function(dc, name, param, dry)
+        if dc == roll and name == "UserTriggeredNextPhaseCommand" then
+            if dry then return true end
+            roll.starts = roll.starts + 1
+            roll.RollState = "ResultReady"
+            return true
+        end
+        return _c(dc, name, param, dry)
+    end
+    jr = run(ops["ui.roll"]({}).job, 10000)
+    ok(jr.status == "done" and roll.starts == 1 and roll.RollState == "ResultReady", "ui.roll at WaitForReRoll rolls")
+
+    -- boosts by name (S024: roll_check(boosts="Guidance") failed "attempt to concatenate a nil value")
+    local guidance = { Name = "Guidance" }
+    local _path = BG3AI.UI.path
+    BG3AI.UI.path = function(o, p)
+        if o == roll and p == "BoostModifierList.1" then return guidance end
+        if o == roll and p:match("^BoostModifierList%.") then return nil end
+        return _path(o, p)
+    end
+    local _p2 = BG3AI.UI.prop
+    BG3AI.UI.prop = function(e, k) if e == guidance then return guidance[k] end return _p2(e, k) end
+    local addedWith
+    BG3AI.UI.command = function(dc, name, param, dry)
+        if dc == roll and name == "AddModifierCommand" then addedWith = param return true end
+        if dc == roll and name == "UserTriggeredNextPhaseCommand" then roll.RollState = "ResultReady" return true end
+        return _c(dc, name, param, dry)
+    end
+    roll.RollState = "WaitForStart"
+    jr = run(ops["ui.roll"]({ boosts = { "guidance" } }).job, 10000)
+    ok(addedWith == guidance and jr.status == "done", "ui.roll boosts by name: Guidance added")
+    roll.RollState = "WaitForStart"
+    local okb, errb = pcall(ops["ui.roll"], { boosts = { "Bardic Inspiration" } })
+    ok(not okb and tostring(errb):find("offered: Guidance", 1, true) ~= nil,
+        "ui.roll unknown boost: names what is offered: " .. tostring(errb))
+    BG3AI.UI.path = _path
     BG3AI.UI.command, BG3AI.UI.prop = _c, _p
+    widgets = {}
+end
+
+-- Stack-split box (S028 15:51-15:52): confirm() answers it (amount sets TargetCount), the ops' automatic
+-- answers never do, and long_rest cancels a leftover one before pressing CampTravel.
+do
+    widgets = {}
+    local data = { ItemCount = 3, TargetCount = 1, Item = { Name = "Supply Pack" } }
+    data.SetProperty = function(self, k, v) self[k] = v end
+    local pressed = {}
+    local split = W("SplitItem", {}, {
+        { "Cancel", nil, function() pressed[#pressed + 1] = "Cancel" widgets.SplitItem = nil end },
+        { "", "ConfirmSplitButton", function() pressed[#pressed + 1] = "Confirm" widgets.SplitItem = nil end } })
+    split.DataContext = { dc = "SplitItem" }
+    local _path, _prop = BG3AI.UI.path, BG3AI.UI.prop
+    BG3AI.UI.path = function(dc, p)
+        if type(dc) == "table" and dc.dc == "SplitItem" and p == "CurrentPlayer.UIData.SplitItemData" then return data end
+        return _path(dc, p)
+    end
+    BG3AI.UI.prop = function(e, k)
+        if e == data or e == data.Item then return e[k] end
+        return _prop(e, k)
+    end
+    ok(A.confirmBox() == nil, "split box: not a question box (handleConfirm never confirms a quantity)")
+    local sb = A.splitBox()
+    ok(sb and sb.max == 3 and sb.title == "Supply Pack" and #sb.buttons == 2 and sb.buttons[2].label == "Confirm",
+        "split box read: Supply Pack 1/3, Cancel/Confirm")
+    local okr, err = pcall(ops["ui.confirm"], { answer = "yes", amount = 5 })
+    ok(not okr and tostring(err):find("out of range", 1, true) ~= nil, "split amount out of range refused: " .. tostring(err))
+    local r = ops["ui.confirm"]({ answer = "yes", amount = 2 })
+    local j = run(r.job, 4000)
+    ok(data.TargetCount == 2 and pressed[1] == "Confirm" and j.status == "done",
+        "confirm(yes, amount=2) on the split box: " .. tostring(data.TargetCount) .. " " .. tostring(pressed[1]))
+
+    -- a stale one (no Trade screen) before long_rest: cancelled, CampTravel pressed after it closed
+    pressed = {}
+    W("SplitItem", {}, {
+        { "Cancel", nil, function() pressed[#pressed + 1] = "Cancel" widgets.SplitItem = nil end },
+        { "", "ConfirmSplitButton", function() pressed[#pressed + 1] = "Confirm" end } }).DataContext = { dc = "SplitItem" }
+    W("Trade", {}, {})
+    ok(A.cancelStaleSplit() == nil and #pressed == 0, "split box under an open trade: left alone")
+    widgets.Trade = nil
+    commands = {}
+    local okl, rl = pcall(ops["ui.long_rest"], {})
+    ok(okl and pressed[1] == "Cancel" and #commands == 0,
+        "long_rest: a leftover split box is cancelled, CampTravel not pressed under it: " .. tostring(rl)
+        .. " pressed=" .. tostring(pressed[1]) .. " commands=" .. #commands)
+    if okl and rl and rl.job then
+        for _ = 1, 12 do clock = clock + 50 jobs[rl.job].on_tick(jobs[rl.job]) end
+        ok(commands[1] == "CampTravel", "long_rest: CampTravel pressed once the split box closed")
+    end
+    BG3AI.UI.path, BG3AI.UI.prop = _path, _prop
+    widgets = {}
+end
+
+-- The Long Rest button greyed out (EndTheDayState Disabled): refused at once, CampTravel not pressed (S028 15:53).
+do
+    widgets = {}
+    local _path = BG3AI.UI.path
+    local state = "Disabled"
+    BG3AI.UI.path = function(dc, p)
+        if p == "CurrentPlayer.EndTheDayState" then return state end
+        return _path(dc, p)
+    end
+    commands = {}
+    local okd, errd = pcall(ops["ui.long_rest"], {})
+    ok(not okd and tostring(errd):find("greyed out", 1, true) ~= nil and #commands == 0,
+        "long_rest with the button greyed out: refused, no CampTravel: " .. tostring(errd))
+    state = "Enabled"
+    local oke, re = pcall(ops["ui.long_rest"], {})
+    ok(oke and commands[1] == "CampTravel", "long_rest with the button enabled: CampTravel pressed")
+    BG3AI.UI.path = _path
     widgets = {}
 end
 

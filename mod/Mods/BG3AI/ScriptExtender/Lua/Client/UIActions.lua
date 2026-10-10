@@ -385,16 +385,68 @@ function A.pickConfirm(buttons, answer)
     return nil
 end
 
+-- The stack-split box (SplitItem.xaml: "how many?" slider over CurrentPlayer.UIData.SplitItemData.TargetCount
+-- 1..ItemCount, buttons Cancel / ConfirmSplitButton). ui.state calls it a POPUP and says "answer with confirm",
+-- but confirmBox() only knew question boxes: S028 15:51 confirm("Confirm") failed "no confirmation box is open"
+-- (the agent screenshotted and clicked the arrow + Confirm), and a stale one left from a closed trade blocked
+-- two long_rest calls ("the rest screen didn't open", nothing named). Not part of confirmBox(): the ops'
+-- automatic answers (handleConfirm) must never confirm a quantity; only the agent's confirm() answers it.
+function A.splitBox()
+    local w = UI.widget("SplitItem")
+    if not (w and UI.isVisible(w)) then return nil end
+    local box = { name = "SplitItem", el = w, buttons = {}, split = true }
+    local data = UI.path(try(function() return w.DataContext end), "CurrentPlayer.UIData.SplitItemData")
+    box.data = data
+    box.max = tonumber(UI.prop(data, "ItemCount"))
+    box.count = tonumber(UI.prop(data, "TargetCount"))
+    local item = UI.prop(data, "Item")
+    box.title = item and UI.prop(item, "Name") and tostring(UI.prop(item, "Name")) or "split a stack"
+    box.text = "how many? " .. tostring(box.count or "?") .. "/" .. tostring(box.max or "?")
+    for _, b in ipairs(UI.findAll(w, UI.isButton, { prune = true })) do
+        local label = UI.allText(b, " ", 120)
+        local name = UI.name(b)
+        if name == "ConfirmSplitButton" then label = label ~= nil and label ~= "" and label or "Confirm" end
+        if (label and label ~= "") or name then
+            box.buttons[#box.buttons + 1] = { el = b, label = label or name, name = name }
+        end
+    end
+    if #box.buttons == 0 then return nil end
+    return box
+end
+
+-- A split box nobody is using any more (its trade screen is gone): Cancel it, as a player closes it before
+-- going on. -> the item name when one was cancelled.
+function A.cancelStaleSplit()
+    local box = A.splitBox()
+    if not box then return nil end
+    local tr = UI.widget("Trade")
+    if tr and UI.isVisible(tr) then return nil end
+    local b = A.pickConfirm(box.buttons, "cancel")
+    if b and A.pressButton(b.el, false) then return box.title end
+    return nil
+end
+
 local function boxView(box)
     local labels = {}
     for _, b in ipairs(box.buttons) do labels[#labels + 1] = b.label end
     return { title = box.title, text = box.text, buttons = labels }
 end
 
--- Press the button for `answer` on the open box. -> ok, view|err
-function A.answerConfirm(answer, dry)
-    local box = A.confirmBox()
+-- Press the button for `answer` on the open box (a question box, else a stack-split box; amount = how many
+-- to take from the stack before Confirm). -> ok, view|err
+function A.answerConfirm(answer, dry, amount)
+    local box = A.confirmBox() or A.splitBox()
     if not box then return false, "no confirmation box is open" end
+    if box.split and amount ~= nil then
+        local n = math.floor(tonumber(amount) or 0)
+        if n < 1 or (box.max and n > box.max) then
+            return false, "amount " .. tostring(amount) .. " is out of range (1-" .. tostring(box.max or "?") .. ")"
+        end
+        if not dry then
+            local ok, err = pcall(box.data.SetProperty, box.data, "TargetCount", n)
+            if not ok then return false, "couldn't set the amount: " .. tostring(err) end
+        end
+    end
     local b = A.pickConfirm(box.buttons, answer)
     local view = boxView(box)
     if not b then
@@ -407,13 +459,13 @@ function A.answerConfirm(answer, dry)
 end
 
 RPC.register("ui.confirm", function(args)
-    local ok, view = A.answerConfirm(args.answer, args.dry)
+    local ok, view = A.answerConfirm(args.answer, args.dry, args.amount)
     check(ok, view)
     if args.dry then return view end
     local sig0 = table.concat({ view.title or "", view.text or "", table.concat(view.buttons, "|") }, "#")
     return waitJob("ui.confirm", 4000, function(job)
         if RPC.now_ms() - job.started < 150 then return nil end
-        local box = A.confirmBox()
+        local box = A.confirmBox() or A.splitBox()
         if not box then return "done", view end
         local v = boxView(box)
         if table.concat({ v.title or "", v.text or "", table.concat(v.buttons, "|") }, "#") ~= sig0 then
@@ -435,7 +487,7 @@ end)
 -- Is the cursor over the button that answers `answer`? The bridge's hover-checked click on a box whose
 -- button ignores its Command (boxclick.py) moves the cursor, probes, and clicks only when over = true.
 RPC.register("ui.confirm_probe", function(args)
-    local box = A.confirmBox()
+    local box = A.confirmBox() or A.splitBox()
     if not box then return { box = false } end
     local b = A.pickConfirm(box.buttons, args.answer)
     local view = boxView(box)
@@ -612,50 +664,98 @@ local function startRoll(dc)
     return ok, err
 end
 
-local function waitRollResult(kind, retrigger)
+-- The roll's state timeline (ms since the call) for the bridge's metrics log: where do the 7-10 s of a dialogue
+-- roll_check go (S010-S027: ~6.8 s from the start command to ResultReady, every time).
+local function notePhase(j, st)
+    if st ~= j.last_state then
+        j.last_state = st
+        j.phases = (j.phases and (j.phases .. " ") or "") .. st .. "@" .. (RPC.now_ms() - (j.t0 or RPC.now_ms()))
+    end
+end
+
+-- waitRollResult(kind, retrigger, reroll): done at ResultReady. WaitForReRoll is NOT a result: after
+-- RollAgainCommand (Inspiration) the panel waits there for the dice to be thrown again, like WaitForStart
+-- (ActiveRoll.xaml: same boost list / tools enabled). S013-S026: 7/7 reroll_on_fail calls returned the first
+-- (failed) result again, because ResultReady was still showing the frame after the command and WaitForReRoll
+-- counted as done; the bridge then pressed Continue on the failure.
+-- reroll=true: the old result must go away first (state leaves ResultReady); if it never does within
+-- ROLL_REROLL_LEAVE_MS, the game ignored the command: done with reroll_ignored.
+local ROLL_REROLL_LEAVE_MS = 3000
+local function waitRollResult(kind, retrigger, reroll)
     return waitJob(kind, 20000, function(j)
         local w, dc = rollWidget()
-        if not w then return "done", { closed = true } end
+        if not w then return "done", { closed = true, phases = j.phases } end
         local st = rollPhase(dc)
-        if st == "ResultReady" or st == "WaitForReRoll" then
+        notePhase(j, st)
+        if st ~= "ResultReady" then j.left_result = true end
+        if st == "ResultReady" and (j.left_result or not reroll) then
             local wmap = UI.widgetMap()
-            return "done", { roll = S.roll(wmap), retriggered = (j.retriggered or 0) > 0 and j.retriggered or nil }
+            return "done", { roll = S.roll(wmap), retriggered = (j.retriggered or 0) > 0 and j.retriggered or nil,
+                rerolled = reroll and true or nil, phases = j.phases }
         end
-        if retrigger and (st == "WaitForStart" or st == "IntroductionAnimation")
+        if st == "ResultReady" and RPC.now_ms() - j.t0 >= ROLL_REROLL_LEAVE_MS then
+            return "done", { roll = S.roll(UI.widgetMap()), reroll_ignored = true, phases = j.phases }
+        end
+        local waiting = st == "WaitForStart" or st == "WaitForReRoll"
+        if (retrigger or reroll) and (waiting or st == "IntroductionAnimation")
                 and RPC.now_ms() - (j.triggered_at or 0) >= ROLL_RETRIGGER_MS then
-            if j.triggered_at and st == "WaitForStart" then
+            -- After a reroll the dice wait to be thrown: throw them at once (no 1.2 s wait for the first one).
+            if waiting and (j.triggered_at or st == "WaitForReRoll") then
                 startRoll(dc)
-                j.retriggered = (j.retriggered or 0) + 1
+                if st == "WaitForStart" or j.rethrown then j.retriggered = (j.retriggered or 0) + 1 end
+                if st == "WaitForReRoll" then j.rethrown = true end
             end
             j.triggered_at = RPC.now_ms()
         end
-    end, function(j) j.triggered_at = RPC.now_ms() end)
+    end, function(j)
+        j.t0 = RPC.now_ms()
+        if not reroll then j.triggered_at = j.t0 end
+    end)
+end
+A.ROLL_REROLL_LEAVE_MS = ROLL_REROLL_LEAVE_MS
+
+-- A boost by its 1-based index in roll.boosts or by name ("Guidance", case-insensitive; the bridge sends names:
+-- S024 roll_check(boosts="Guidance") failed "attempt to concatenate a nil value" from tonumber("Guidance")).
+local function findBoost(dc, want)
+    local i = tonumber(want)
+    if i then return UI.path(dc, "BoostModifierList." .. i), i end
+    local key = tostring(want):lower()
+    local names = {}
+    for n = 1, 12 do
+        local vm = UI.path(dc, "BoostModifierList." .. n)
+        if not vm then break end
+        local name = UI.prop(vm, "Name") or UI.prop(vm, "Description")
+        name = name and tostring(name) or ""
+        names[#names + 1] = name
+        if name:lower() == key or name:lower():find(key, 1, true) then return vm, n end
+    end
+    return nil, nil, (#names > 0 and ("offered: " .. table.concat(names, ", ")) or "the roll offers no boosts")
 end
 
 RPC.register("ui.roll", function(args)
     local w, dc = rollWidget()
     if not w then error("no active roll on screen") end
     local st = rollPhase(dc)
-    if st == "WaitForStart" or st == "IntroductionAnimation" then
+    if st == "WaitForStart" or st == "IntroductionAnimation" or st == "WaitForReRoll" then
         local added = {}
         for _, bi in ipairs(args.boosts or {}) do
-            local boost = UI.path(dc, "BoostModifierList." .. tonumber(bi))
-            if not boost then error("no boost " .. tostring(bi)) end
+            local boost, idx, offered = findBoost(dc, bi)
+            if not boost then error("no boost '" .. tostring(bi) .. "' on this roll (" .. tostring(offered) .. ")") end
             -- XAML passes a PassThrough multi-binding here; the VM itself is
             -- the best available parameter on bg3le (untested live).
             local ok, err = UI.command(dc, "AddModifierCommand", boost, args.dry)
-            if not ok then error("boost " .. bi .. ": " .. tostring(err)) end
-            added[#added + 1] = bi
+            if not ok then error("boost " .. tostring(bi) .. ": " .. tostring(err)) end
+            added[#added + 1] = idx
         end
         local ok, err = UI.command(dc, "UserTriggeredNextPhaseCommand", nil, args.dry)
         if not ok then check(UI.command(dc, "TriggerNextPhaseCommand", nil, args.dry), err) end
         if args.dry then return { can = true } end
         return waitRollResult("ui.roll", true)
-    elseif st == "ResultReady" or st == "WaitForReRoll" then
+    elseif st == "ResultReady" then
         if args.reroll then
             check(UI.command(dc, "RollAgainCommand", nil, args.dry))
             if args.dry then return { can = true } end
-            return waitRollResult("ui.roll")
+            return waitRollResult("ui.roll", false, true)
         end
         local _, d0 = dialogueSnapshot()
         local before = sig(d0)

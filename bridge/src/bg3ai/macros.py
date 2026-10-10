@@ -157,13 +157,22 @@ class TravelProgress:
     def __init__(self, start: Any, dest: Any) -> None:
         self.dest = dest
         self.best = dist(start, dest)
+        self.best_route: float | None = None  # route metres left after the best leg along the engine's route
         self.stalls = 0
 
-    def leg(self, here: Any, stopped_short: bool = False) -> str | None:
-        """Record where a leg ended. Returns why to stop, or None to go on."""
+    def route_gain(self, route_left: float) -> bool:
+        """A leg along the engine's route that would leave fewer route metres than any leg so far."""
+        return self.best_route is None or route_left <= self.best_route - TRAVEL_PROGRESS_M
+
+    def leg(self, here: Any, stopped_short: bool = False, route_left: float | None = None) -> str | None:
+        """Record where a leg ended (route_left: a completed leg along the engine's route, which may head away
+        from the goal first and still be progress). Returns why to stop, or None to go on."""
         d = dist(here, self.dest)
-        if d <= self.best - TRAVEL_PROGRESS_M:
-            self.best = d
+        gained = route_left is not None and self.route_gain(route_left)
+        if gained:
+            self.best_route = route_left
+        if d <= self.best - TRAVEL_PROGRESS_M or gained:
+            self.best = min(self.best, d)
             self.stalls = 0
             return None
         self.stalls += 1
@@ -268,7 +277,9 @@ def crossing_ok(ex: dict, hp: Any, max_hp: Any, policy: str = "auto") -> tuple[b
         return False, "avoid_hazards=strict"
     if s in NEVER_CROSS:
         return False, f"{s} is deadly"
-    if float(ex.get("m") or 0) > CROSS_MAX_M:
+    harmless = s in SURFACE_COST and not any(SURFACE_COST[s][1:])  # Grease/ice/Acid: no damage at all
+    if float(ex.get("m") or 0) > CROSS_MAX_M and not (policy == "cross" and harmless):
+        # S030 Soft-Step Trial: 9 m of Grease was the only way on; cross = the agent accepts the slip
         return False, f"more than {CROSS_MAX_M:g}m of it"
     if policy == "cross":
         return True, ""

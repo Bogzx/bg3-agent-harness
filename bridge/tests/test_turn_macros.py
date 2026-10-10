@@ -364,6 +364,34 @@ class CombatTurn(Base):
         self.assertLess(time.monotonic() - t, 2.0)
         self.assertEqual(self.g.ops("act.cast"), [])
 
+    # S029: 5 sent-ahead turns stopped on an enemy attack's Shield Blow prompt; each cost get_dialogue + react
+    # + the same plan again. The plan's on_reaction now answers it while waiting; without one the prompt is named.
+    def test_waiting_for_the_turn_answers_a_reaction_by_policy(self):
+        self.g.combat["current"] = GOB
+        self.g.ui["screen"] = "reaction"
+
+        def answer(op, args):
+            if op == "ui.react":
+                self.g.ui["screen"] = "game"
+                threading.Timer(0.2, lambda: self.g.combat.update(current=P1)).start()
+        self.g.on_start = answer
+        out = server.combat_turn(self.plan(action="Shout_Dodge", on_reaction="skip"), who=server.H.get(P1),
+                                 wait_turn=5)
+        self.assertEqual(self.g.ops("ui.react")[0][1], {"use": False})
+        self.assertRegex(out, r"TURN .* — waited \d\.\ds for the turn — reaction prompt: declined")
+        self.assertEqual(self.casts(), ["Shout_Dodge"])
+
+    def test_waiting_for_the_turn_names_the_reaction_prompt(self):
+        self.g.combat["current"] = GOB
+        self.g.ui.update(screen="reaction", reaction={
+            "options": [{"i": 1, "decision": "Undecided"}],
+            "prompt": "Justiciar Avenger attacked Claude. | Choose how to react. | 72/88 | Shield Blow | Do Not React"})
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        self.assertIn("reaction on screen: Justiciar Avenger attacked Claude. | 72/88 | Shield Blow", out)
+        self.assertIn('react(use=true|false)', out)
+        self.assertIn('"on_reaction"', out)
+        self.assertEqual(self.g.ops("ui.react"), [])
+
     def test_combat_ending_while_waiting(self):
         self.g.combat["current"] = GOB
         threading.Timer(0.2, lambda: self.g.combat.update(active=False)).start()
@@ -696,6 +724,17 @@ class CombatTurn(Base):
         self.assertIn("Shout_Dash: skipped (the move's target", out)
         self.assertEqual(self.casts(), ["Shout_Dodge"])
 
+    def test_target_gone_before_the_turn_no_walk_one_line(self):
+        # S028: "target: e742 Shadow is out of sight ... skipped" x3, and the move still ran (FAILED not visible)
+        self.g.visible.clear()
+        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=GOB)
+        out = server.combat_turn(self.plan(move=self.gob,
+                                           action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   "Shout_Dodge"]))
+        self.assertEqual(out.count("no other hostile is in sight"), 1, out)
+        self.assertEqual(self.g.ops("act.move_to"), [])
+        self.assertEqual(self.casts(), ["Shout_Dodge"])
+
     def test_retarget_false_keeps_a_vanished_move_target(self):
         self.g.dead.add(GOB)
         out = server.combat_turn(self.plan(move=self.gob, action=["Shout_Dodge"], retarget=False))
@@ -792,6 +831,16 @@ class CombatTurn(Base):
         out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertIn("STOPPED: reaction on screen", out)
         self.assertEqual(self.g.ops("ui.react"), [])
+
+    # S018/S025/S029: Bless on 3 targets was refused ("more than two targets"): the action went to the fallback.
+    def test_three_targets_cast_on_the_first_two(self):
+        out = server.combat_turn(self.plan(action={"ability": "Target_Bless", "targets": f"{self.gob},{self.imp},Claude"}))
+        casts = [a for _, a in self.g.ops("act.cast")]
+        self.assertEqual(casts[0]["targets"], [GOB, IMP])
+        self.assertIn("targets: cast on the first 2 only", out)
+        self.assertIn("left out: ", out)
+        self.assertIn("action: Target_Bless", out)
+        self.assertNotIn("FAILED", out)
 
     def test_reactions_prep(self):
         server.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))

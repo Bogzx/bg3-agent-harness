@@ -466,6 +466,47 @@ local function findVMItem(uuid, groups)
     return nil, "item " .. (nameOf(e) or uuid) .. " isn't on this side of the trade screen"
 end
 
+-- The game's quantity box (SplitItem.xaml) for a stack moved on the trade screen: DataContext
+-- CurrentPlayer.UIData.SplitItemData {ItemCount, TargetCount}; Confirm runs the widget's ApplySplitCommand.
+-- S028 15:51: trade(request=Supply Pack x3) opened it, the tool moved nothing and said done; the agent clicked
+-- the slider arrow and Confirm by hand. -> nil (no box) | box, count (applied) | box, nil, err
+-- `want` = how many (default the whole stack, as trade's doc says: "a stack moves whole").
+SV.splitTries = 0
+function SV.answerSplit(want)
+    local w = visibleWidget("SplitItem")
+    if not w then SV.splitTries, SV.splitApplied = 0, nil; return nil end
+    if SV.splitApplied then  -- Confirm pressed: the box is closing, never press it twice
+        if RPC.now_ms() - SV.splitApplied < 2000 then return w, nil end
+        SV.splitApplied = nil
+        return w, nil, "the quantity box stayed open after its Confirm"
+    end
+    local wdc = try(function() return w.DataContext end)
+    local data = wdc and UI.path(wdc, "CurrentPlayer.UIData.SplitItemData")
+    local total = tonumber(data and UI.prop(data, "ItemCount"))
+    if not total then return w, nil, "a quantity box opened but its count is unreadable" end
+    local n = math.max(1, math.min(total, math.floor(tonumber(want) or total)))
+    SV.splitTries = SV.splitTries + 1
+    if SV.splitTries > 8 then
+        SV.splitTries = 0
+        UI.command(wdc, "CustomEvent", "SplitItemToggle", false)  -- its Cancel button
+        return w, nil, "the quantity box didn't take " .. n .. " of " .. total .. " (cancelled it)"
+    end
+    if tonumber(UI.prop(data, "TargetCount")) ~= n then
+        -- The VM first (as UIActions' confirm(amount=) does); else the box's slider (x:Name Slider, Value
+        -- TwoWay-bound to TargetCount).
+        if not pcall(data.SetProperty, data, "TargetCount", n) then pcall(function() data.TargetCount = n end) end
+        if tonumber(UI.prop(data, "TargetCount")) ~= n then
+            local sl = UI.byName(w, "Slider")
+            if sl then pcall(sl.SetProperty, sl, "Value", n) end
+        end
+        return w, nil  -- re-read next tick
+    end
+    local ok, err = UI.command(wdc, "ApplySplitCommand", nil, false)
+    if not ok then return w, nil, "the quantity box's Confirm: " .. tostring(err) end
+    SV.splitTries, SV.splitApplied, SV.splitCount = 0, RPC.now_ms(), n
+    return w, nil
+end
+
 RPC.register("ui.trade", function(args)
     local w, dc = tradeWidget()
     if args.npc then SV.trader = args.npc end
@@ -501,7 +542,8 @@ RPC.register("ui.trade", function(args)
 
     -- Barter mode shows both offers and keeps the deal explicit until confirm.
     local phase, waitUntil, balanceTries = "mode", 0, 0
-    local moved, problems, confirmed = {}, {}, false
+    SV.splitTries, SV.splitApplied, SV.splitCount = 0, nil, nil
+    local moved, problems, confirmed, queue = {}, {}, false, {}
     if UI.prop(dc, "Mode") ~= "Barter" then
         check(UI.command(dc, "SetTradeMode", nil, false))
     end
@@ -519,25 +561,44 @@ RPC.register("ui.trade", function(args)
         if phase == "mode" then
             if UI.prop(live, "Mode") ~= "Barter" then return nil end
             local layout = tradeLayout(live)
-            local function move(list, groups, side)
-                for _, u in ipairs(list) do
-                    local it, err, e = findVMItem(u, groups)
-                    if it then
-                        local ok, err2 = UI.command(live, "MoveTradeItem", it, false)
-                        if ok then
-                            SV.offered[tostring(it)] = { uuid = u, name = nameOf(e) }
-                            moved[#moved + 1] = { uuid = u, name = nameOf(e), side = side }
-                        else
-                            problems[#problems + 1] = (nameOf(e) or u) .. ": " .. tostring(err2)
-                        end
-                    else
-                        problems[#problems + 1] = err
-                    end
+            for _, u in ipairs(offer) do queue[#queue + 1] = { u = u, groups = layout.party, side = "you" } end
+            for _, u in ipairs(request) do queue[#queue + 1] = { u = u, groups = layout.trader, side = "trader" } end
+            phase = "moving"
+        end
+        if phase == "moving" then
+            -- One item per tick: a stack opens the game's quantity box (SplitItem), answered before the next move.
+            local sw, _, err = SV.answerSplit(args.count)
+            if sw then
+                if err then
+                    problems[#problems + 1] = err
+                    phase, waitUntil = "moved", RPC.now_ms() + 250
+                    return nil
                 end
+                waitUntil = RPC.now_ms() + 150
+                return nil
             end
-            move(offer, layout.party, "you")
-            move(request, layout.trader, "trader")
-            phase, waitUntil = "moved", RPC.now_ms() + 250
+            if SV.splitCount then  -- the box closed after its Confirm: that many of the last stack moved
+                if moved[#moved] then moved[#moved].count = SV.splitCount end
+                SV.splitCount = nil
+            end
+            local q = table.remove(queue, 1)
+            if not q then
+                phase, waitUntil = "moved", RPC.now_ms() + 250
+                return nil
+            end
+            local it, err2, e = findVMItem(q.u, q.groups)
+            if it then
+                local ok, err3 = UI.command(live, "MoveTradeItem", it, false)
+                if ok then
+                    SV.offered[tostring(it)] = { uuid = q.u, name = nameOf(e) }
+                    moved[#moved + 1] = { uuid = q.u, name = nameOf(e), side = q.side }
+                else
+                    problems[#problems + 1] = (nameOf(e) or q.u) .. ": " .. tostring(err3)
+                end
+            else
+                problems[#problems + 1] = err2
+            end
+            waitUntil = RPC.now_ms() + 200
             return nil
         end
         if phase == "moved" then
@@ -563,7 +624,7 @@ RPC.register("ui.trade", function(args)
             local ours = #vmSlots(UI.prop(live, "CharacterOffer"), 60)
             local theirs = #vmSlots(UI.prop(live, "TraderOffer"), 60)
             local tgold = tonumber(UI.prop(live, "TraderOfferGold")) or 0
-            if ours > 0 and theirs == 0 and tgold == 0 then
+            if ours > 0 and theirs == 0 and tgold == 0 and not args.donate then
                 local has = tonumber(UI.prop(live, "TraderInventoryGold")) or 0
                 if has > 0 and balanceTries < 4 then
                     UI.command(live, "BalanceTrade", nil, false)
@@ -576,7 +637,8 @@ RPC.register("ui.trade", function(args)
                 return "failed", st, has > 0 and "not confirmed: the Balance didn't add the trader's gold, so the "
                     .. "game would take your items for nothing (donate): call trade(confirm=true) again"
                     or "not confirmed: the trader has no gold left, so the game would take your items for nothing "
-                    .. "(donate): request wares of equal value instead (request=<ids>)"
+                    .. "(donate): request wares of equal value instead (request=<ids>), or give them on purpose "
+                    .. "with trade(offer=<ids>, confirm=true, donate=true)"
             end
             local param = UI.prop(live, "ActionCommandParameter")
             if not isNoesis(param) then param = nil end
@@ -587,6 +649,13 @@ RPC.register("ui.trade", function(args)
                 return "failed", st, "couldn't confirm the barter: " .. tostring(err)
             end
             phase, waitUntil = "finishing", RPC.now_ms() + 300
+            -- S028 15:48 (Wulbren's tools: a quest hand-over through the trade screen): a one-sided deal makes the
+            -- game ask "Donate these items?"; the bridge answers that box (trade donate=true), so stop here.
+            if args.donate and ours > 0 and theirs == 0 and tgold == 0 then
+                local st = SV.tradeState(live)
+                st.moved, st.donate_box = moved, true
+                return "done", st
+            end
             return nil
         end
         if phase == "finishing" then
@@ -655,6 +724,11 @@ local function screenNow()
         for _, b in ipairs(box.buttons) do labels[#labels + 1] = b.label end
         return "a question box: " .. tostring(box.text or box.title or "?") .. " [" .. table.concat(labels, "/") .. "]"
     end
+    local split = A and A.splitBox and A.splitBox()
+    if split then
+        return "a stack-split box: " .. tostring(split.title) .. " " .. tostring(split.text)
+            .. " [Cancel/Confirm]: answer it with confirm(\"yes\", amount=N) or confirm(\"no\")"
+    end
     local names = {}
     for _, w in ipairs(UI.widgets()) do
         if #names >= 12 then names[#names + 1] = "..." break end
@@ -703,8 +777,19 @@ RPC.register("ui.long_rest", function(args)
     if visibleWidget("Dialogue") and not visibleWidget("MakeCamp") then
         error("a conversation is open: finish it first (choose_dialogue / dialogue_advance), then long_rest", 0)
     end
+    -- The HUD's Long Rest item is greyed out when CurrentPlayer.EndTheDayState is Disabled/Unavailable
+    -- (HotBar.xaml LongRestItem), but CampTravel.CanExecute stays true and the press does nothing: S028 15:53
+    -- three long_rest calls "pressed CampTravel 2x, the rest screen didn't open", then screenshots and HUD
+    -- clicks. A player sees the greyed button: say it at once. (At night camp the sleep flow below handles it.)
+    local endDay = tostring(UI.path(dc, "CurrentPlayer.EndTheDayState") or "?")
+    if (endDay == "Disabled" or endDay == "Unavailable") and not nightCamp(dc) and not visibleWidget("MakeCamp") then
+        error("the game doesn't allow a long rest right now (the Long Rest button is greyed out: EndTheDayState="
+            .. endDay .. "); a story event may be blocking it: carry on and try again later", 0)
+    end
     local R = SV.rest
     local A = BG3AI.UIActions
+    -- S028 15:52: a Supply Pack split box left from a closed trade swallowed CampTravel twice.
+    local cancelledSplit = A and A.cancelStaleSplit and A.cancelStaleSplit()
     local presses, step, retried = 0, "open", false
     local night = nightCamp(dc) and not visibleWidget("MakeCamp")
     local function pressCamp()
@@ -712,8 +797,11 @@ RPC.register("ui.long_rest", function(args)
         presses, R.pressAt = presses + 1, RPC.now_ms()
     end
     local followup = R.boxAt and RPC.now_ms() - R.boxAt < REST_FOLLOWUP_MS
+    local pendingPress = false
     if visibleWidget("MakeCamp") then
         step = "screen already open"
+    elseif cancelledSplit then
+        pendingPress, step = true, "after closing a leftover '" .. tostring(cancelledSplit) .. "' split box"
     elseif followup and not (A and A.confirmBox and A.confirmBox()) then
         step = "after the question was answered (waiting for the screen, CampTravel not pressed again)"
     else
@@ -723,7 +811,9 @@ RPC.register("ui.long_rest", function(args)
 
     local function openFail(what)
         local res = { step = "open", camp_travel_presses = presses }
+        res.end_the_day = tostring(UI.path(hotbarDC(), "CurrentPlayer.EndTheDayState") or "?")
         return "failed", res, "the rest screen didn't open (" .. what .. "; step: " .. step
+            .. "; EndTheDayState " .. res.end_the_day
             .. "; CampTravel pressed " .. presses .. "x in this call, last " .. sinceTxt(R.pressAt)
             .. "; last question box " .. sinceTxt(R.boxAt) .. "). On screen: " .. screenNow()
     end
@@ -794,6 +884,14 @@ RPC.register("ui.long_rest", function(args)
             end
         end
         if phase == "open" then
+            if not w and pendingPress then
+                -- the split box takes a moment to close; a CampTravel pressed under it is swallowed
+                if RPC.now_ms() - phaseStart >= 400 then
+                    pressCamp()
+                    pendingPress, phaseStart = false, RPC.now_ms()
+                end
+                return nil
+            end
             if not w then
                 if visibleWidget("Dialogue") and (job.confirms or followup) then
                     local st, res, err = openFail("a dialogue started instead (a camp scene): finish it, then long_rest again")
@@ -860,6 +958,7 @@ RPC.register("ui.long_rest", function(args)
         local result = {
             rest = (used and required and used >= required) and "full" or "partial",
             supplies_used = used, supplies_required = required, confirmed = job.confirms,
+            closed_split_box = cancelledSplit,
         }
         if result.rest == "partial" then
             -- Below the requirement the game camps WITHOUT supplies ("Camp without supplies? You will not use

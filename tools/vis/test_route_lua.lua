@@ -584,5 +584,32 @@ test("combat: an undiscovered trap in the turn order is not listed; a discovered
     if not ok then error(err, 0) end
 end)
 
+-- ---- look_at on carried items (State.lua state.entity) ------------------------------
+
+test("look_at: an item the party carries (also in a bag) is inspectable; another's is not", function()
+    local V = BG3AI.Visibility
+    local saved = { V.entity, V.entityUuid, V.itemEffects, V.itemVisible }
+    local ITEM, BAGGED, BAG, FOREIGN = "i0000000-0000-0000-0000-000000000001", "i0000000-0000-0000-0000-000000000002",
+        "b0000000-0000-0000-0000-000000000003", "i0000000-0000-0000-0000-000000000004"
+    local NPC = "c0000000-0000-0000-0000-000000000005"
+    local owner = { [ITEM] = P1, [BAGGED] = BAG, [BAG] = P1, [FOREIGN] = NPC }
+    V.entity = function(u) return owner[u] and { uuid = u, ServerItem = {}, InventoryMember = {} } or nil end
+    V.entityUuid = function(e) return e.uuid end
+    V.itemEffects = function() return nil end
+    V.itemVisible = function() return true end -- a carried item never takes the world-visibility path
+    local oldOsi = Osi
+    Osi = setmetatable({ GetInventoryOwner = function(u) return owner[u] and ("Name_" .. owner[u]) or nil end },
+        { __index = oldOsi })
+    local ok, err = pcall(function()
+        eq(RPC.ops["state.entity"]({ uuid = ITEM }).uuid, ITEM, "carried")
+        eq(RPC.ops["state.entity"]({ uuid = BAGGED }).uuid, BAGGED, "in a bag")
+        local okf, ef = pcall(RPC.ops["state.entity"], { uuid = FOREIGN })
+        eq(okf, false, "another's item refused"); eq(tostring(ef):find("not visible", 1, true) ~= nil, true, "message")
+    end)
+    Osi = oldOsi
+    V.entity, V.entityUuid, V.itemEffects, V.itemVisible = saved[1], saved[2], saved[3], saved[4]
+    if not ok then error(err, 0) end
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

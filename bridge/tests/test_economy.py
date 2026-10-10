@@ -838,3 +838,238 @@ class ContestedWeapon(unittest.TestCase):
                           "ench": 1, "rarity": "uncommon", "finesse": True, "prof": "Daggers|SimpleWeapons"}]}
         ups = economy.upgrades(inv)
         self.assertEqual([(o["who"], o["name"]) for o in ups], [(sh, "Syringe")])
+
+
+class TradeHandover(unittest.TestCase):
+    """S028 15:48: Wulbren's 'I have the tools you need - take them.' opened a trade screen with no wares and no
+    gold; trade(offer, confirm) refused the donation, and the agent screenshotted, clicked Barter and confirmed the
+    'Donate these items?' box by hand (5 calls). An equipped hammer failed 'some items couldn't be moved' silently."""
+
+    MACE = "11111111-2222-3333-4444-5555555555ab"
+
+    def test_handover_screen(self):
+        self.assertTrue(economy.handover({"wares": [], "trader_gold": 0}))
+        self.assertFalse(economy.handover({"wares": [{"uuid": "x", "price": 3}], "trader_gold": 0}))
+        self.assertFalse(economy.handover({"wares": [], "trader_gold": 40}))
+        self.assertFalse(economy.handover({"wares": [], "trader_gold": 0, "wares_more": True}))
+        self.assertFalse(economy.handover(None))
+
+    def test_problems_rendered(self):
+        out = economy.trade_text({"problems": ["item Hammer isn't on this side of the trade screen"]},
+                                 lambda it: "e9", listing=False)
+        self.assertIn("NOT MOVED: item Hammer isn't on this side", out)
+
+    def test_equipped_offer_named(self):
+        inv = {"items": [{"uuid": "u1", "name": "Ceremonial Warhammer", "equipped_slot": "Melee Main Weapon",
+                          "owner": "c1"}, {"uuid": "u2", "name": "Mace"}]}
+        out = economy.equipped_offers(inv, ["u1", "u2"], lambda u: "Claude")
+        self.assertEqual(len(out), 1)
+        self.assertIn("Ceremonial Warhammer is equipped by Claude", out[0])
+
+    def _trade(self, screen: dict, job_result: dict, box: dict | None, **kw):
+        calls = []
+        ui = {"screen": "trade"}
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                calls.append((op, dict(args or {})))
+                if op == "ui.trade":
+                    return screen
+                if op == "ui.confirm":
+                    return box
+                if op == "ui.state":
+                    return ui
+                return default
+
+        def fake_act(tool, op, args, **k):
+            calls.append((op, dict(args)))
+            server._batch["result"] = job_result
+            return "trade: done"
+
+        def fake_box(tool, op, args, wait_s=8, rounds=3):
+            calls.append(("box:" + op, dict(args)))
+            ui["screen"] = "trade"
+            return "confirm: done — pressed=Yes"
+
+        def fake_esc():
+            calls.append(("escape", {}))
+            ui.update(screen="dialogue", dialogue={"speaker": "Wulbren Bongle", "options": []})
+            return "press_key: done"
+
+        saved = (server.game, server._act, server._box_act, server._press_escape, server._render_ui, server.H)
+        server.H = Handles()
+        server.H.get(self.MACE, "Crude Mace")
+        server.game, server._act, server._box_act, server._press_escape = G(), fake_act, fake_box, fake_esc
+        server._render_ui = lambda u, brief=False: [f"SCREEN {u.get('screen')}"]
+        try:
+            return server.trade(**kw), calls
+        finally:
+            (server.game, server._act, server._box_act, server._press_escape, server._render_ui, server.H) = saved
+
+    def test_handover_donates_answers_the_box_and_closes(self):
+        moved = [{"uuid": self.MACE, "name": "Crude Mace", "side": "you"}]
+        out, calls = self._trade({"wares": [], "trader_gold": 0}, {"donate_box": True, "moved": moved},
+                                 {"title": "Donate these items?", "buttons": ["Yes", "No"]},
+                                 offer="e1", confirm=True)
+        job = next(a for op, a in calls if op == "ui.trade" and a.get("confirm"))
+        self.assertTrue(job.get("donate"))
+        self.assertIn(("box:ui.confirm", {"answer": "Yes"}), calls)
+        self.assertIn("escape", [c[0] for c in calls])
+        self.assertIn("gave e1 Crude Mace (donated", out)
+        self.assertIn("closed the hand-over screen", out)
+        self.assertIn("SCREEN dialogue", out)
+
+    def test_shop_with_wares_does_not_donate(self):
+        out, calls = self._trade({"wares": [{"uuid": "w", "price": 5}], "trader_gold": 0},
+                                 {"offer": {}, "wares": []}, None, offer="e1", confirm=True)
+        job = next(a for op, a in calls if op == "ui.trade" and a.get("confirm"))
+        self.assertNotIn("donate", job)
+        self.assertNotIn("box:ui.confirm", [c[0] for c in calls])
+
+    def test_box_that_is_not_a_donation_is_left_to_the_agent(self):
+        out, calls = self._trade({"wares": [], "trader_gold": 0}, {"donate_box": True, "moved": []},
+                                 {"title": "Steal these items?", "buttons": ["Yes", "No"]}, offer="e1", confirm=True)
+        self.assertIn("STOPPED", out)
+        self.assertNotIn("box:ui.confirm", [c[0] for c in calls])
+
+
+class TradeSellOpens(unittest.TestCase):
+    def test_npc_with_sell_junk_opens_first(self):
+        calls = []
+        saved = (server._open_trade, server._sell_junk)
+        server._open_trade = lambda npc: calls.append(("open", npc)) or "(opened: talked to e5, picked 'Let's see your wares.')"
+        server._sell_junk = lambda keep="": calls.append(("sell", keep)) or "trade: done"
+        try:
+            out = server.trade(npc="e5", sell="junk")
+        finally:
+            server._open_trade, server._sell_junk = saved
+        self.assertEqual([c[0] for c in calls], ["open", "sell"])
+        self.assertIn("(opened: talked to e5", out)
+        self.assertIn("trade: done", out)
+
+
+class GiveEquipped(unittest.TestCase):
+    """S028 15:51: give of a worn amulet → 'unequip it first' → a 3-step batch. give unequips it itself now."""
+
+    def test_give_worn_item_unequips_then_gives(self):
+        amulet, karlach, gale = "11111111-2222-3333-4444-5555555555c1", "11111111-2222-3333-4444-5555555555c2", \
+            "11111111-2222-3333-4444-5555555555c3"
+        calls = []
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                if op == "state.inventory":
+                    return {"items": [{"uuid": amulet, "name": "Spellcrux Amulet", "owner": karlach,
+                                       "equipped_slot": "Amulet"}]}
+                return default
+
+            def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+                calls.append((op, dict(args)))
+                return JobResult(status="done", result={"unequipped": True})
+
+        results = iter(["manage_inventory: FAILED — unequip it first", "manage_inventory: done — amount=1 to=e3"])
+
+        def fake_act(tool, op, args, **kw):
+            calls.append((op, dict(args)))
+            return next(results)
+
+        saved = (server.game, server._act, server._item_uuid, server.H)
+        server.H = Handles()
+        server.H.get(amulet, "Spellcrux Amulet"), server.H.get(karlach, "Karlach"), server.H.get(gale, "Gale")
+        server.game, server._act = G(), fake_act
+        server._item_uuid = lambda item, who=None, worn=False: amulet
+        try:
+            out = server.manage_inventory("give", "e1", who="Karlach", to="Gale")
+        finally:
+            server.game, server._act, server._item_uuid, server.H = saved
+        self.assertEqual([c[0] for c in calls], ["act.transfer", "act.unequip", "act.transfer"])
+        self.assertEqual(calls[1][1], {"char": karlach, "item": amulet})
+        self.assertIn("manage_inventory: done", out)
+        self.assertIn("unequipped from", out)
+
+
+class SpellGear(unittest.TestCase):
+    """S028 15:51: equip_best put the Spellcrux Amulet (very rare, restores a spell slot) on Karlach (Barbarian,
+    no spell slots) by rarity alone; the agent moved it to Gale by hand."""
+    KARLACH = "11111111-0000-0000-0000-000000000003"
+    BARB = ["LightArmor", "MediumArmor", "Shields", "SimpleWeapons", "MartialWeapons"]
+
+    def inv(self, caster_flags=True):
+        items = [{"uuid": _u(70), "name": "Spellcrux Amulet", "owner": self.KARLACH, "slot_type": "Amulet",
+                  "rarity": "very_rare", "spellgear": True},
+                 {"uuid": _u(71), "name": "Aberration Hunters' Amulet", "owner": self.KARLACH,
+                  "equipped_slot": "Amulet", "rarity": "uncommon"}]
+        members = {self.KARLACH: {"prof": self.BARB}, GALE: {"prof": WIZARD}}
+        if caster_flags:
+            members[self.KARLACH]["caster"], members[GALE]["caster"] = False, True
+        return {"items": items, "members": members}
+
+    def test_spell_gear_goes_to_a_caster(self):
+        ups = {(u["who"], u["name"]) for u in economy.upgrades(self.inv())}
+        self.assertIn((GALE, "Spellcrux Amulet"), ups)
+        self.assertNotIn((self.KARLACH, "Spellcrux Amulet"), ups)
+
+    def test_name_fallback_without_the_flags(self):
+        inv = self.inv(caster_flags=False)
+        del inv["items"][0]["spellgear"]
+        ups = {(u["who"], u["name"]) for u in economy.upgrades(inv)}
+        self.assertNotIn((self.KARLACH, "Spellcrux Amulet"), ups)
+        self.assertIn((GALE, "Spellcrux Amulet"), ups)
+
+
+class StageMs(unittest.TestCase):
+    def test_stage_ms_logged_not_rendered(self):
+        import json as _json
+        r = JobResult(status="done", result={"set": {"feat": "x"}, "_stage_ms": "open=900 spells=4200"}, elapsed_ms=5100)
+        server._log_stage_ms("ui.level_up", r)
+        self.assertNotIn("_stage_ms", r.result)
+        lines = (server.RUNTIME / "stage_ms.jsonl").read_text().strip().splitlines()
+        self.assertEqual(_json.loads(lines[-1])["stages"], "open=900 spells=4200")
+
+
+class TradeNoGold(unittest.TestCase):
+    """S028 (vis review): a trader at 0 gold and sell=junk with no trade screen open."""
+
+    def test_broke_trader_and_handover_said(self):
+        h = lambda it: "e9"
+        t = economy.trade_text({"trader_gold": 0, "wares": [{"uuid": "w", "name": "Rope", "price": 3}]}, h)
+        self.assertIn("TRADER HAS NO GOLD", t)
+        t = economy.trade_text({"trader_gold": 0, "wares": []}, h)
+        self.assertIn("HAND-OVER", t)
+        self.assertNotIn("NO GOLD", economy.trade_text({"trader_gold": 50, "wares": []}, h))
+
+    def _sell(self, screen):
+        calls = []
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                return {"screen": screen} if op == "ui.state" else default
+
+        saved = (server.game, server._open_trade, server._sell_junk)
+        server.game = G()
+        server._open_trade = lambda npc: calls.append(("open", npc)) or "(opened: picked 'Let me see your wares.')"
+        server._sell_junk = lambda keep="": calls.append(("sell", keep)) or "trade: done"
+        try:
+            return server.trade(sell="junk"), calls
+        finally:
+            server.game, server._open_trade, server._sell_junk = saved
+
+    def test_sell_junk_without_a_screen_refuses_clearly(self):
+        out, calls = self._sell("game")
+        self.assertIn('trade(npc=<trader id>, sell="junk")', out)
+        self.assertEqual(calls, [])
+
+    def test_sell_junk_in_a_trader_conversation_opens_it(self):
+        out, calls = self._sell("dialogue")
+        self.assertEqual([c[0] for c in calls], ["open", "sell"])
+        self.assertEqual(calls[0][1], "")
+
+    def test_sell_junk_broke_trader_message(self):
+        g = FakeGame(s026_inventory(), {"trader_gold": 0, "your_items": [{"uuid": _u(6), "price": 30}]})
+        orig = server.game
+        server.game = g
+        try:
+            out = server.trade(sell="junk")
+        finally:
+            server.game = orig
+        self.assertIn("the trader has no gold left", out)

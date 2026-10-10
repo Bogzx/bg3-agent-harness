@@ -256,7 +256,7 @@ def _same_key(it: dict) -> tuple | None:
     return (it.get("name"), it.get("kind"))
 
 
-def render_nearby(n: dict, H: Handles, max_items: int = 30) -> str:
+def render_nearby(n: dict, H: Handles, max_items: int = 30, fold: bool = True) -> str:
     lines = []
     chars = n.get("characters") or []
     items = [it for it in (n.get("items") or []) if it.get("kind") != "object" or it.get("locked") or it.get("trap") or it.get("near")]
@@ -275,8 +275,10 @@ def render_nearby(n: dict, H: Handles, max_items: int = 30) -> str:
     items.sort(key=rank)
     # Plain lookalikes (same name and kind, no flag) are one line: the nearest, plus a count. S026 08:55: 25
     # Candle(s) filled the list and "+10 more items" hid the puzzle's Buttons the agent was looking for.
+    # fold=False: the agent searched by name (kinds="Thurible"), so it wants every id. S029 16:12: the fold
+    # "e549 Mystic Thurible (+5 more …)" hid the ids it had to cast at; it guessed ids with 22 look_at calls.
     groups: dict = {}
-    for it in items:
+    for it in items if fold else ():
         k = _same_key(it)
         if k is not None:
             groups.setdefault(k, []).append(it)
@@ -358,7 +360,12 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
     if p and ui.get("screen") == "book" and len(str(p.get("text") or "")) > BOOK_SHOWN:
         # a whole book in every status line while it is open: the start, the rest is kept for recall()
         p = {**p, "text": str(p["text"])[:BOOK_SHOWN] + f"… (+{len(str(p['text'])) - BOOK_SHOWN} chars: recall(\"<words>\") searches the whole text)"}
-    if p:
+    if p and p.get("split"):
+        # SplitItem (text "/3" = the stack size): S028 the agent clicked its arrow + Confirm by hand.
+        size = re.sub(r"\D", "", str(p.get("text") or "")) or "?"
+        lines.append(f"POPUP how many of the stack: {p.get('title') or '?'} (1-{size}) → confirm(\"yes\", amount=N) "
+                     "or confirm(\"no\")")
+    elif p:
         lines.append("POPUP " + compact(p, H) + (" → answer with confirm(\"yes\"|\"no\"|label)"
                                                  if p.get("decision") else ""))
     c = ui.get("container")
@@ -650,7 +657,9 @@ def render_actions(r: Any, H: Handles) -> str:
         show_id = ACTION_IDS or seen[str(a.get("name"))] > 1
         bits = [f"{a.get('name')} ({a.get('spell')})" if show_id else str(a.get("name"))]
         c = _cost_text(a.get("cost"))
-        if c:
+        if a.get("extra_attack"):
+            bits.append("[Extra Attack: free]")  # the EXTRA_ATTACK status: no action cost now (Guard.lua)
+        elif c:
             bits.append(f"[{c}]")
         if a.get("range") not in (None, "", 0):
             bits.append(f"{num(a['range']) if not isinstance(a['range'], str) else a['range']}m")

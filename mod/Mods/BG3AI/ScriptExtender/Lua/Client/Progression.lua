@@ -742,21 +742,35 @@ local function runJob(kind, stages, ctx, timeout_ms)
     job.waitUntil = 0
     job.stageStarted = RPC.now_ms()
     job.partial = ctx.result
+    -- Time per stage (incl. its waits), for the bridge's log only (it pops _stage_ms before rendering): S028 Wyll
+    -- L4+L5 at camp took 60 s and nothing said which stages.
+    local spent = {}
+    local function stamp(name, t)
+        spent[#spent + 1] = name .. "=" .. math.floor(t - job.stageStarted)
+    end
+    local function finish(j, status, err)
+        local st = stages[j.stage]
+        if st then stamp(st[1], RPC.now_ms()) end
+        ctx.result._stage_ms = table.concat(spent, " ")
+        RPC.finish_job(j, status, ctx.result, err)
+    end
     job.on_tick = function(j)
         local t = RPC.now_ms()
         if t < j.waitUntil then return end
         local st = stages[j.stage]
         if st == nil then
+            ctx.result._stage_ms = table.concat(spent, " ")
             RPC.finish_job(j, "done", ctx.result)
             return
         end
         local ok, r, a = pcall(st[2], ctx)
         if not ok then
             ctx.result.stage = st[1]
-            RPC.finish_job(j, "failed", ctx.result, st[1] .. ": " .. tostring(r))
+            finish(j, "failed", st[1] .. ": " .. tostring(r))
             return
         end
         if r == "next" or r == "done" then
+            stamp(st[1], t)
             if r == "done" then j.stage = #stages + 1 else j.stage = j.stage + 1 end
             j.waitUntil = t + (a or 250)
             j.stageStarted = t
@@ -765,7 +779,7 @@ local function runJob(kind, stages, ctx, timeout_ms)
             if t - j.stageStarted > limit then
                 ctx.result.stage = st[1]
                 ctx.result.pages = pages()
-                RPC.finish_job(j, "failed", ctx.result, st[1] .. ": still waiting after " .. limit .. " ms"
+                finish(j, "failed", st[1] .. ": still waiting after " .. limit .. " ms"
                     .. (a and type(a) == "string" and (" (" .. a .. ")") or ""))
                 return
             end
@@ -773,7 +787,7 @@ local function runJob(kind, stages, ctx, timeout_ms)
         else
             ctx.result.stage = st[1]
             ctx.result.pages = pages()
-            RPC.finish_job(j, "failed", ctx.result, st[1] .. ": " .. tostring(a))
+            finish(j, "failed", st[1] .. ": " .. tostring(a))
         end
         j.partial = ctx.result
     end

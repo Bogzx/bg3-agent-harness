@@ -140,5 +140,69 @@ ok(job.status == "done", "trade done: " .. tostring(job.status) .. " " .. tostri
 ok(job.result and job.result.confirmed == true, "confirmed")
 ok(fullReads == 1, "one full screen read in the job, got " .. fullReads)
 
+-- S028 15:48 hand-over (Wulbren: no wares, no gold): a one-sided offer is refused unless donate=true, which presses
+-- Barter and stops for the bridge to answer "Donate these items?"
+local function runOffer(args)
+    dc.TraderInventoryGold, dc.CharacterOffer, dc.TraderOffer = 0, vmInv({}), vmInv({})
+    local pressed = {}
+    local origCmd = BG3AI.UI.command
+    BG3AI.UI.command = function(d, name, param)
+        pressed[#pressed + 1] = name
+        if name == "MoveTradeItem" then d.CharacterOffer = vmInv({ [0] = param }) end
+        return true
+    end
+    Ext.Entity.Get = function(u) return u == "p-1" and partyItems[1] or nil end
+    partyItems[1].InventoryMember = { Inventory = partyInv, EquipmentSlot = 1 }
+    local j = jobs[ops["ui.trade"](args).job]
+    for _ = 1, 100 do
+        clock = clock + 50
+        if j.status ~= "running" then break end
+        j.on_tick(j)
+    end
+    BG3AI.UI.command = origCmd
+    return j, table.concat(pressed, ",")
+end
+local j1, p1 = runOffer({ offer = { "p-1" }, confirm = true })
+ok(j1.status == "failed" and tostring(j1.error):find("donate=true", 1, true), "one-sided refused: " .. tostring(j1.error))
+ok(not p1:find("FinishBarter", 1, true), "no Barter press when refused: " .. p1)
+local j2, p2 = runOffer({ offer = { "p-1" }, confirm = true, donate = true })
+ok(j2.status == "done" and j2.result and j2.result.donate_box == true, "donate stops at the box: " .. tostring(j2.status) .. " " .. tostring(j2.error))
+ok(p2:find("FinishBarter", 1, true) ~= nil, "donate pressed Barter: " .. p2)
+
+-- S028 15:51: a stack (Supply Pack x3) opens the quantity box; the job sets the whole stack and presses Confirm once
+do
+    dc.TraderInventoryGold, dc.CharacterOffer, dc.TraderOffer = 900, vmInv({}), vmInv({})
+    local split = { CurrentPlayer = { UIData = { SplitItemData = { ItemCount = 3, TargetCount = 1 } } } }
+    local sw = { DataContext = split, visible = false }
+    local applies, origW, origCmd = 0, BG3AI.UI.widget, BG3AI.UI.command
+    BG3AI.UI.widget = function(n) if n == "SplitItem" then return sw end return origW(n) end
+    BG3AI.UI.command = function(d, name, param)
+        if name == "MoveTradeItem" then sw.visible = true; split.CurrentPlayer.UIData.SplitItemData.TargetCount = 1; pendingItem = param end
+        if name == "ApplySplitCommand" then
+            applies = applies + 1
+            -- closes a tick later, with the chosen count on the table
+            pendingClose = split.CurrentPlayer.UIData.SplitItemData.TargetCount
+        end
+        if name == "FinishBarter" then d.CharacterOffer, d.TraderOffer = vmInv({}), vmInv({}) end
+        return true
+    end
+    Ext.Entity.Get = function(u) return u == "t-1" and traderItems[1] or nil end
+    local j = jobs[ops["ui.trade"]({ request = { "t-1" } }).job]
+    local closedWith
+    for _ = 1, 100 do
+        clock = clock + 50
+        if pendingClose and applies > 0 and not closedWith then
+            closedWith = pendingClose; sw.visible = false; dc.TraderOffer = vmInv({ [0] = pendingItem })
+        end
+        if j.status ~= "running" then break end
+        j.on_tick(j)
+    end
+    BG3AI.UI.widget, BG3AI.UI.command = origW, origCmd
+    ok(j.status == "done", "split trade done: " .. tostring(j.status) .. " " .. tostring(j.error))
+    ok(applies == 1, "Confirm pressed once: " .. applies)
+    ok(closedWith == 3, "whole stack chosen: " .. tostring(closedWith))
+    ok(j.result and j.result.moved and j.result.moved[1] and j.result.moved[1].count == 3, "moved count 3")
+end
+
 print(string.format("%d/%d passed", passes, passes + fails))
 if fails > 0 then os.exit(1) end

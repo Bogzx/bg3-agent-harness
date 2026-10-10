@@ -122,6 +122,47 @@ class TravelLegs(Base):
         self.assertIn("leg 1: along the route (92m): move_to: done", out)
         self.assertIn("arrived", out)
 
+    def test_route_heading_away_first_is_progress(self):
+        # S029 16:07: Last Light -> Mausoleum, a 325 m route (2.4x the straight line) whose first legs ran away
+        # from the goal; "no walkable ground leads further toward it" ended the trip, 2 min of hand-made legs.
+        legs = [[-40.0, 0.0, 0.0], [-40.0, 0.0, 60.0], [20.0, 0.0, 60.0], [60.0, 0.0, 60.0], [60.0, 0.0, 0.0]]
+        left = [180.0, 120.0, 60.0, 20.0, 0.0]
+
+        def reach(a):
+            n = len(self.g.ops("act.move_to"))
+            return {"reachable": True, "pos": legs[n], "direct": True, "verified": True,
+                    "route_m": left[n] + 40.0, "path_m": 40.0, "route_left_m": left[n]}
+        self.g.reach = reach
+        out = server.travel_to(x=60.0, y=0.0, z=0.0)
+        self.assertEqual([m[1]["pos"] for m in self.g.ops("act.move_to")], legs)
+        self.assertIn("arrived", out)
+        self.assertNotIn("no walkable ground", out)
+
+    def test_route_leg_across_a_surface_is_weighed_and_walked(self):
+        # S030 16:35 Soft-Step Trial: the only way crossed Grease; travel_to(avoid_hazards="cross") said "no walkable
+        # ground leads further". Lua now hands the route leg back with its exposure; crossing_ok decides.
+        def reach(a):
+            n = len(self.g.ops("act.move_to"))
+            pos = [[-20.0, 0.0, 10.0], [10.0, 0.0, 0.0]][min(n, 1)]
+            r = {"reachable": True, "pos": pos, "direct": True, "verified": True, "route_m": 45.0 - 25 * n,
+                 "path_m": 25.0, "route_left_m": 20.0 - 20 * n}
+            if n == 0:
+                r["exposure"] = {"surface": "Grease", "m": 3.0, "patches": 1, "pos": [-15.0, 0.0, 5.0], "at_m": 12}
+            return r
+        self.g.reach = reach
+        out = server.travel_to(x=10.0, y=0.0, z=0.0, avoid_hazards="cross")
+        self.assertIn("crossing 3m of Grease", out)
+        self.assertIn("arrived", out)
+
+    def test_route_legs_that_stop_gaining_still_stall(self):
+        def reach(a):
+            return {"reachable": True, "pos": [-40.0, 0.0, 0.0], "direct": True, "verified": True,
+                    "route_m": 220.0, "path_m": 40.0, "route_left_m": 180.0}
+        self.g.reach = reach
+        out = server.travel_to(x=60.0, y=0.0, z=0.0)
+        self.assertLessEqual(len(self.g.ops("act.move_to")), 2)
+        self.assertIn("no walkable ground leads further", out)
+
 
 class InTheWay(Base):
     """Live 11:12, Last Light Inn: after an Oak Door, four legs stopped short "path blocked" at one spot: someone

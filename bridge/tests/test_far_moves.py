@@ -84,6 +84,87 @@ class FarMoves(Base):
         self.assertTrue(h)
 
 
+class LastSeen(FarMoves):
+    """S025/S026: travel_to/route/talk_to on someone out of sight refused "not visible" (10x in two sessions); the
+    party remembers where it saw them on this level, so those calls go there instead."""
+    NPC = "dddddddd-2222-3333-4444-555555555555"
+    FAR = "eeeeeeee-2222-3333-4444-555555555555"
+
+    def setUp(self) -> None:
+        super().setUp()
+        real = self.g.rpc
+        self.route_args: list = []
+
+        def rpc(op, a=None, context="server", timeout=12.0):
+            if op == "state.entity" and (a or {}).get("uuid") == self.FAR:
+                return {"uuid": self.FAR, "name": "Bedroll", "pos": [50.0, 0.0, 0.0]}
+            if op == "state.entity" and (a or {}).get("uuid") == self.NPC:
+                return {"uuid": self.NPC, "name": "Mattis", "visible": False, "last_pos": [40.0, 0.0, 0.0], "ago_s": 95}
+            if op == "nav.route":
+                self.route_args.append(dict(a))
+                if "target" in a:
+                    raise server.GameError("not visible")
+                return {"reachable": True, "straight_m": 40.0, "path_m": 40.0, "legs": []}
+            return real(op, a, context, timeout)
+        self.g.rpc = rpc
+        self.h = server.H.get(self.NPC, "Mattis")
+
+    def test_travel_to_an_unseen_character_walks_to_where_they_were_seen(self):
+        out = server.travel_to(target=self.h)
+        self.assertIn(f"{self.h} is out of sight: going to where you last saw them 95s ago (40,0,0)", out)
+        server.wait_for("queue", timeout_s=5)
+        self.assertEqual(self.g.ops("act.move_to")[-1][1]["pos"], [40.0, 0.0, 0.0])
+
+    def test_route_to_an_unseen_character_routes_to_the_last_seen_spot(self):
+        out = server.route(target=self.h)
+        self.assertNotIn("FAILED", out)
+        self.assertIn("last saw them 95s ago", out)
+        self.assertEqual(self.route_args[-1].get("pos"), [40.0, 0.0, 0.0])
+
+    def test_talk_to_an_unseen_character_walks_there_and_talks_on_arrival(self):
+        self.g.refuse_if = lambda op, a: "target is not visible" if op == "act.talk" and len(self.g.ops("act.talk")) == 1 else None
+        out = server.talk_to(self.h)
+        self.assertIn("is out of sight: going to where you last saw them", out)
+        self.assertIn(f"then talk_to {self.h} on arrival", out)
+        server.wait_for("queue", timeout_s=5)
+        ops = [c[0] for c in self.g.calls if c[0] in ("act.move_to", "act.talk")]
+        self.assertEqual(ops[0], "act.talk")
+        self.assertEqual(ops[-1], "act.talk")  # after the walk
+        self.assertIn("act.move_to", ops[1:-1])
+
+    def test_interact_past_40m_walks_there_then_uses_it(self):
+        # S028 15:53: interact e649 (a camp bedroll) "target is too far away (40m from this character, max 40m)"
+        far = server.H.get(self.FAR, "Bedroll")
+        self.g.refuse_if = lambda op, a: ("target is too far away (50m from this character, max 40m)"
+                                          if op == "act.interact" and len(self.g.ops("act.interact")) == 1 else None)
+        out = server.interact(far)
+        self.assertIn(f"{far} is 50m away: walking there first; then interact {far} on arrival", out)
+        server.wait_for("queue", timeout_s=5)
+        ops = [c[0] for c in self.g.calls if c[0] in ("act.move_to", "act.interact")]
+        self.assertEqual((ops[0], ops[-1]), ("act.interact", "act.interact"))
+        self.assertEqual(self.g.ops("act.move_to")[-1][1]["pos"], [50.0, 0.0, 0.0])
+
+    def test_talk_to_past_40m_walks_there_first(self):
+        far = server.H.get(self.FAR, "Bedroll")
+        self.g.refuse_if = lambda op, a: ("character is too far away (47m from this character, max 40m)"
+                                          if op == "act.talk" and len(self.g.ops("act.talk")) == 1 else None)
+        out = server.talk_to(far)
+        self.assertIn("is 47m away: walking there first; then talk_to", out)
+
+    def test_inside_do_actions_a_refusal_stays_a_refusal(self):
+        self.g.refuse_if = lambda op, a: "target is too far away (50m from this character, max 40m)" if op == "act.interact" else None
+        out = server.do_actions(f'[{{"tool": "interact", "target": "{server.H.get(self.FAR, "Bedroll")}"}}]')
+        self.assertIn("too far away", out)
+        self.assertEqual(self.g.ops("act.move_to"), [])
+
+    def test_talk_to_in_combat_stays_a_refusal(self):
+        self.g.watch["combat"] = True
+        self.g.refuse_if = lambda op, a: "target is not visible" if op == "act.talk" else None
+        out = server.talk_to(self.h)
+        self.assertIn("not visible", out)
+        self.assertEqual(self.g.ops("act.move_to"), [])
+
+
 class NotesWindow(Base):
     def setUp(self) -> None:
         super().setUp()

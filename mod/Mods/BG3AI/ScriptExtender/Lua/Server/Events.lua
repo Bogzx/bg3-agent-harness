@@ -361,6 +361,25 @@ listen("TeleportedToCamp", 1, function(char)
     if ctx().is_party[u or ""] then RPC.push("teleported", { char = ref(u), to = "camp" }) end
 end)
 
+-- The camp's End-the-Day handshake (GLO_Camp.txt): HUD button -> EndTheDayRequested -> the engine's gather
+-- checks (RequestGatherAtCampSuccess/Fail) -> story checks -> RequestEndTheDay -> RequestEndTheDaySuccess/Fail ->
+-- night mode / rest screen. S028 15:52-15:59 + S029 16:04: long_rest "rest screen didn't open" x7 with no box and
+-- nothing on screen; these events say where the request died (a player sees the refusal notice the same way).
+local REST_FLOW = {
+    { "EndTheDayRequested", 1, "requested" }, { "RequestGatherAtCampFail", 1, "gather_failed" },
+    { "RequestGatherAtCampSuccess", 1, "gathered" }, { "RequestEndTheDayFail", 0, "end_day_failed" },
+    { "RequestEndTheDaySuccess", 0, "end_day_ok" }, { "LongRestStartFailed", 0, "rest_start_failed" },
+    { "LongRestCancelled", 0, "rest_cancelled" },
+}
+E.restFlow = E.restFlow or {}
+for _, ev in ipairs(REST_FLOW) do
+    listen(ev[1], ev[2], function()
+        E.restFlow[#E.restFlow + 1] = { step = ev[3], at = Ext.Utils.MonotonicTime() }
+        if #E.restFlow > 20 then table.remove(E.restFlow, 1) end
+        RPC.push("rest_flow", { step = ev[3] })
+    end)
+end
+
 listen("LongRestFinished", 0, function()
     RPC.push("rest", { type = "long" })
 end)
@@ -420,6 +439,21 @@ end
 
 RPC.register("state.open_container", function()
     return E.openContainer and { uuid = E.openContainer.uuid, name = V.name(E.openContainer.uuid) } or {}
+end)
+
+-- camp.rest_flow {since_ms?} -> {steps=[...], story={...}}: the End-the-Day handshake steps seen recently, plus
+-- the camp story flags (diagnostics for the bridge's metrics log, not shown to the agent).
+RPC.register("camp.rest_flow", function(args)
+    local since = Ext.Utils.MonotonicTime() - (tonumber(args and args.since_ms) or 30000)
+    local steps = {}
+    for _, f in ipairs(E.restFlow or {}) do if f.at >= since then steps[#steps + 1] = f.step end end
+    local story = {}
+    for _, n in ipairs({ "DB_GoingToCamp", "DB_CampRequestHandled", "DB_Camp_NightMode", "DB_CAMP_JustWokeUp",
+                         "DB_Camp_GoingToSleep", "DB_Camp_LongRest_CodeIsWaiting", "DB_PlayerInCamp" }) do
+        local ok, rows = pcall(function() return Osi[n]:Get(nil) end)
+        story[n] = ok and rows and #rows or -1
+    end
+    return { steps = steps, story = story }
 end)
 
 return E

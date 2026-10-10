@@ -478,6 +478,21 @@ class Lookalikes(unittest.TestCase):
         two = render.render_nearby({"characters": [], "items": items[:2]}, Handles())
         self.assertEqual(two.count("ITEM"), 2)  # below SAME_MIN: listed one by one
 
+    def test_name_search_lists_every_lookalike(self):
+        """S029 16:12: get_nearby kinds="Mystic Thurible" folded 6 thuribles into one line; the agent had to cast at
+        each and guessed their ids with 22 look_at calls (~3 min)."""
+        from unittest import mock
+        from bg3ai import server
+        items = [{"uuid": U(1600 + i), "name": "Mystic Thurible", "kind": "usable", "dist": 9 + i} for i in range(6)]
+        items += [{"uuid": U(1700 + i), "name": "Candles", "kind": "usable", "dist": 3 + i} for i in range(5)]
+        with mock.patch.object(server, "_read1", return_value={"characters": [], "items": items}):
+            text = server.get_nearby(radius=60, kinds="Mystic Thurible")
+            props = server.get_nearby(radius=60, kinds="props")
+        self.assertEqual(text.count("Mystic Thurible <usable>"), 6, text)
+        self.assertNotIn("more Mystic Thurible", text)
+        self.assertNotIn("Candles", text)
+        self.assertIn("(+4 more Candles", props)  # a props search still folds
+
 
 class Fixtures(unittest.TestCase):
     """S025/S026 Grand Mausoleum: the Buttons under the paintings were the puzzle; ~23 min lost over two sessions."""

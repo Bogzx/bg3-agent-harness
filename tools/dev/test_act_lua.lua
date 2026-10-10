@@ -484,11 +484,12 @@ test("cast at position: falls back to 5 arguments on a build without the 6th", f
     eq(called("UseSpellAtPosition")[1].n, 5, "arity")
 end)
 
-test("cast: out of range is refused out of combat too (no Osiris approach walk)", function()
+test("cast: a ranged cast out of range is refused out of combat too (no walk, no Osiris approach walk)", function()
     spell("Projectile_Bolt", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0 })
     world[NPC].pos = { 30, 0, 0 }
     local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
     eq(j.status, "failed", "status"); assert(j.error:find("out of range"), j.error)
+    eq(#called("CharacterMoveToPosition"), 0, "no walk"); eq(#called("UseSpell"), 0, "no engine cast")
 end)
 
 test("cast: in range uses UseSpell/5 with WithoutMove=1", function()
@@ -528,6 +529,75 @@ test("cast: a melee hit still reports at 250 ms", function()
     A.dispatch("CastedSpell", { P1, "Target_Hit" })
     tick(5)
     eq(j.status, "done", "miss status"); eq(j.result.no_damage, true, "miss")
+end)
+
+test("cast: Extra Attack (EXTRA_ATTACK status) makes the next weapon attack cost no action (S023-S028 0 of 7)", function()
+    combat_setup(9)
+    world[P1].comps.ActionResources.Resources.ActionPoint = { { Level = 0, Amount = 0 } } -- the first attack spent it
+    world[GOB].pos = { 1.2, 0, 0 }
+    spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" }, SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+    spell("Target_Smite_Divine", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        SpellFlags = { "IsMelee", "IsHarmful" }, SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+    spell("Target_Slash_New", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        SpellFlags = { "IsMelee", "IsHarmful", "IsDefaultWeaponAction" },
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+    spell("Projectile_FireBolt", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0,
+        SpellFlags = { "IsHarmful", "IsSpell" }, SpellRoll = { Default = "Attack(AttackType.RangedSpellAttack)" } })
+    local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "failed", "no status: refused"); assert(j.error:find("not enough action"), j.error)
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
+    for _, sp in ipairs({ "Target_MainHandAttack", "Target_Smite_Divine" }) do
+        j = job(op("cast", { char = P1, spell = sp, target = GOB }))
+        eq(j.status, "running", sp .. ": " .. tostring(j.error))
+        A.dispatch("CastedSpell", { P1, sp })
+        tick(10)
+        eq(j.status, "done", sp .. " done"); eq(j.result.extra_attack, true, sp .. " extra_attack")
+        eq(j.result.charged_by_guard, nil, sp .. ": no action charged")
+    end
+    for _, sp in ipairs({ "Target_Slash_New", "Projectile_FireBolt" }) do -- a weapon action, a spell attack
+        j = job(op("cast", { char = P1, spell = sp, target = GOB }))
+        eq(j.status, "failed", sp); assert(j.error:find("not enough action"), j.error)
+    end
+end)
+
+test("cast out of combat, out of range: walks into range on our walker, then casts (S028 Help at 5 m)", function()
+    spell("Target_Help", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        SpellFlags = {} })
+    world[NPC].pos = { 6, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Target_Help", target = NPC }))
+    eq(j.status, "running", "status " .. tostring(j.error)); eq(j.phase, "approach", "phase")
+    eq(#called("UseSpell"), 0, "no cast before arriving")
+    local mv = called("CharacterMoveToPosition")
+    eq(#mv, 1, "one walk")
+    arrive(j, { mv[1][3], mv[1][4], mv[1][5] })
+    local us = called("UseSpell")
+    eq(#us, 1, "cast after arriving"); eq(us[1][6], 1, "WithoutMove")
+    A.dispatch("CastedSpell", { P1, "Target_Help" })
+    tick(10)
+    eq(j.status, "done", "done " .. tostring(j.error)); assert(j.result.walked_into_range, "walked_into_range")
+end)
+
+test("cast out of range in combat (or a point target): refused as before, no walk", function()
+    spell("Target_Help", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        SpellFlags = {} })
+    world[NPC].pos = { 6, 0, 0 }
+    combat_setup(9)
+    local j = job(op("cast", { char = P1, spell = "Target_Help", target = NPC }))
+    eq(j.status, "failed", "status"); assert(j.error:find("move closer first"), j.error)
+    eq(#called("CharacterMoveToPosition"), 0, "no walk")
+end)
+
+test("cast out of combat: still out of reach after the walk -> fails with the guard's reason", function()
+    spell("Target_Help", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        SpellFlags = {} })
+    world[NPC].pos = { 6, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Target_Help", target = NPC }))
+    local mv = called("CharacterMoveToPosition")
+    world[NPC].pos = { 30, 0, 0 } -- it walked off: the approach re-plans or fails; never a cast from afar
+    arrive(j, { mv[1][3], mv[1][4], mv[1][5] })
+    tick(3)
+    eq(#called("UseSpell"), 0, "no cast out of reach")
 end)
 
 test("transfer: GetStackAmount's extra return values don't break tonumber (S018-S024 give/camp crash)", function()
@@ -578,6 +648,7 @@ test("cast: an item next to the caster needs no engine line of sight (S024 Knock
 end)
 
 test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Stand radii)", function()
+    combat_setup(9) -- the range refusal (out of combat the cast walks into range first)
     eq(G.radius(P1), 0.5, "fallback radius")
     world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.4 }, Hit = { Radius = 1.28 }, Stand = { Radius = 0.7 } } } }
     eq(G.radius(GOB), 0.7, "Stand radius")
@@ -593,6 +664,7 @@ test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Stand radii)", 
 end)
 
 test("cast: ranged weapon range from the equipped weapon's stats", function()
+    combat_setup(9) -- the range refusal (out of combat the cast walks into range first)
     spell("Projectile_RangedAttack", { TargetRadius = "RangedMainWeaponRange", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0 })
     osiv[key("GetEquippedItem", P1, "Ranged Main Weapon")] = "BOW"
     osiv[key("GetStatString", "BOW")] = "WPN_HandCrossbow"
@@ -609,6 +681,15 @@ test("cast: upcast checks slots at the upcast level", function()
     local j = job(op("cast", { char = P1, spell = "Target_Heal", target = NPC, upcast = 2 }))
     eq(j.status, "running", "status " .. tostring(j.error))
     eq(called("UseSpell")[1][3], "Target_Heal_2", "variant")
+end)
+
+test("cast: an upcast with no variant in the game data casts at the base level (S030 Guiding Bolt)", function()
+    spell("Projectile_Bolt", { TargetRadius = "18", SpellType = "Projectile", Level = 1,
+        UseCosts = "ActionPoint:1;SpellSlotsGroup:1:1:1" })
+    world[P1].comps.ActionResources = { Resources = { SpellSlot = { { Level = 1, Amount = 1 }, { Level = 2, Amount = 1 } } } }
+    local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC, upcast = 2 }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    eq(called("UseSpell")[1][3], "Projectile_Bolt", "base spell")
 end)
 
 test("sneak: UseSpell with the full 5 arguments", function()
@@ -734,6 +815,7 @@ end)
 -- ---- live bug S001 (claude-run-2): melee "range 0.0 m", shared turn groups -----
 
 test("cast: melee keyword wins over the stats' Range 0 (live: Target_MainHandAttack Range=0)", function()
+    combat_setup(9) -- the range refusal (out of combat the cast walks into range first)
     spell("Target_MainHandAttack", { TargetRadius = "MeleeMainWeaponRange", Range = 0, SpellType = "Target",
         UseCosts = "ActionPoint:1", Level = 0 })
     osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = "HAMMER"
