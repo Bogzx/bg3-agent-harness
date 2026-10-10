@@ -30,7 +30,7 @@ OUT = REPO / "runtime" / "acceptance"
 LOCK = REPO / "runtime" / "game.lock"
 BASE = "S027-start"            # the real playthrough state (after S026); loaded, never overwritten
 TRADE_SAVE = "S026-dammon-heat"  # Last Light Inn, Quartermaster Talli in view
-SECTIONS = ["reads", "rest", "trade", "gear", "swap", "nav", "loads", "combat", "setup", "se"]
+SECTIONS = ["reads", "rest", "trade", "gear", "swap", "nav", "loads", "combat", "setup", "se", "act", "vis"]
 
 RESULTS: list[dict] = []
 S = None  # bg3ai.server, imported in the section process
@@ -632,7 +632,7 @@ def sec_combat() -> None:
             call("wait", seconds=3)
             continue
         fh = S.H.get(foe["uuid"], foe.get("name"))
-        plan = json.dumps({"move": {"target": fh, "within": 1.5}, "on_reaction": "skip",
+        plan = json.dumps({"move": {"target": fh, "within": 1.5}, "on_reaction": "skip", "end": True,
                            "action": [{"ability": "Main Hand Attack", "target": fh},
                                       {"ability": "Ranged Attack", "target": fh}, "Dash"]})
         out, dt, counts = counted("combat_turn", plan=plan, who=S.H.get(who_u))
@@ -650,7 +650,8 @@ def sec_combat() -> None:
         lost_walk = "move " in out and "target is not visible; last seen" in out
         played += 1
         ok = (not unknown and (moved or hit) and polls <= 2 * jobs + 2 and "EXCEPTION" not in out
-              and "FAILED: it is not" not in out and not range_miss and not lost_walk)
+              and "FAILED: it is not" not in out and not range_miss and not lost_walk
+              and "unknown plan key" not in out)  # act 2026-10-11: "end" inside a plan (S041 22:36:18)
         if "melee is out of reach" in out or "the plan now aims at" in out:
             log("round-2 lines: " + " | ".join(l for l in out.splitlines()
                                                if "melee is out of reach" in l or "now aims" in l or "skipped (" in l))
@@ -817,6 +818,121 @@ def sec_setup() -> None:
 
 
 FUNCS["setup"] = sec_setup
+
+
+def lua_server(code: str) -> str:
+    return str(S.game.eval(code, context="server"))
+
+
+def sec_act() -> None:
+    """act overnight batch (2026-10-10/11): the hot-reloaded Lua is live (jump FELL report, CastSpellFailed reason,
+    missing ranged weapon named, one-decimal range refusal), react by name, swap_party's camp block answer."""
+    if not load_verified(BASE):
+        return
+    g = "local G=Mods.BG3AI.BG3AI.Guard local A=Mods.BG3AI.BG3AI.Actions "
+    # jump fall/death report + CastSpellFailed reason (S038 20:44:25 fall "done"; S024-S041 "the action failed")
+    v = lua_server(g + 'return tostring(A.JUMP_FALL_M).."|"..tostring(A.cast_failed_why and '
+                   'A.cast_failed_why(Osi.GetHostCharacter(), nil))')
+    item("act Lua live: jump FELL + cast refused reason",
+         "PASS" if v.startswith("4") and "the game refused the cast" in v else "FAIL", v[:200])
+    # Guard.within: one decimal when the distance rounds to the max (S028 "40m …, max 40m"). G.pos is wrapped for
+    # the call only, so a synthetic 40.3 m target needs no walk.
+    v = lua_server(g + 'local h=Osi.GetHostCharacter() local real=G.pos '
+                   'G.pos=function(u) local p=real(h) if u=="__far" then return {p[1]+40.3,p[2],p[3]} end return real(u) end '
+                   'local ok,e=pcall(G.within,h,"__far",40,"target") G.pos=real '
+                   'return ok and "no refusal" or (G.is_refusal(e) and e.reason or tostring(e))')
+    item("range refusal with one decimal at the max", "PASS" if "(40.3m from this character, max 40m)" in v else "FAIL",
+         v[:200])
+    # a missing Ranged Attack names the missing ranged weapon (S031 17:04 Gale)
+    rows = []
+    for r in status().get("party") or []:
+        u = r.get("uuid")
+        v = lua_server(g + f'local ok,e=pcall(G.known_spell,"{u}","Projectile_MainHandAttack") '
+                       'return ok and "has it" or (G.is_refusal(e) and e.reason or tostring(e))')
+        rows.append((r.get("name"), v))
+    missing = [(n, v) for n, v in rows if v != "has it"]
+    if not missing:
+        item("missing ranged weapon named", "SKIP", "every member has a ranged weapon: " + ", ".join(n for n, _ in rows))
+    else:
+        item("missing ranged weapon named", "PASS" if all("no ranged weapon equipped" in v for _, v in missing)
+             else "FAIL", "; ".join(f"{n}: {v[:90]}" for n, v in missing))
+    # react by name with no prompt: answers at once, no Lua error (S034 19:03:14 react(which="Shield"))
+    out, dt = took("react", use=True, which="Shield")
+    item("react by name", "PASS" if "no reaction prompt on screen" in out and dt < 3 else "FAIL",
+         f"{first_line(out)} ({dt:.1f}s)")
+    # swap_party where the camp button is greyed by the area: the reason at once (S039 21:48:34)
+    b = S.game.try_rpc("ui.travel_block", context="client") or {}
+    if b.get("error") != "Location":
+        item("swap_party camp block answers at once", "SKIP", f"camp travel allowed here (travel_block={b})")
+    else:
+        camp = [c.get("name") for c in status().get("camp") or []]
+        party = [r.get("name") for r in status().get("party") or [] if not r.get("avatar")]
+        out, dt = took("swap_party", into=camp[0] if camp else "Gale", out=party[-1] if party else "")
+        item("swap_party camp block answers at once",
+             "PASS" if "(Location)" in out and dt < 3 else "FAIL", f"{first_line(out)[:200]} ({dt:.1f}s)")
+    load_verified(BASE)
+
+
+FUNCS["act"] = sec_act
+
+
+def sec_vis() -> None:
+    """vis overnight batch (2026-10-10/11), read-only on the base save (no jump is cast): the drop extends the jump
+    reach, a climb of 10 m is refused, Feather Fall known, route to a point with no floor says why, o1 as a target,
+    an empty name search lists who is in view, the journal lists open quests the game never 'accepted'."""
+    if not load_verified(BASE):
+        return
+    g = "local G=Mods.BG3AI.BG3AI.Guard local N=Mods.BG3AI.BG3AI.Nav local h=Osi.GetHostCharacter() "
+    # 1. high-ground jump reach (S040: the game's jumps 18-28 m over 18-23 m drops; ours capped at 8.5 m)
+    v = lua_server(g + 'local p=G.pos(h) local r,flat=G.jump_reach(h,p,{p[1],p[2]-10,p[3]}) '
+                   'return string.format("%.1f|%.1f|%s", r, flat, tostring(G.HIGH_GROUND_JUMP_MULT))')
+    try:
+        r, flat, mult = v.split("|")
+        ok = abs(float(r) - float(flat) - 10) < 0.2
+    except ValueError:
+        ok = False
+    item("vis: jump reach grows with the drop", "PASS" if ok else "FAIL", f"reach|flat|mult for a 10 m drop = {v}")
+    # 2. a landing 10 m above the jumper is refused by the Guard (checked through check_cast, nothing is cast)
+    v = lua_server(g + 'local p=G.pos(h) local ok,e=pcall(G.check_cast,h,"Projectile_Jump",nil,{p[1]+2,p[2]+10,p[3]},nil,true) '
+                   'return ok and "no refusal" or (G.is_refusal(e) and e.reason or tostring(e))')
+    item("vis: jump 10 m up refused", "PASS" if v != "no refusal" and "attempt to" not in v else "FAIL", v[:200])
+    # 3. Feather Fall read (FEATHER_FALL; true only in the Shadowfell or under the spell)
+    v = lua_server(g + 'return tostring(N.featherFall(h)).."|"..tostring(N.safeDrop(h))')
+    item("vis: Feather Fall status read", "PASS" if re.fullmatch(r"(true\|60(\.0)?|false\|4(\.0)?)", v) else "FAIL", v)
+    # 4. route to a point with no floor near it: NO WALKABLE PATH says why (S039 21:44 "pathfinding unavailable")
+    p = (status().get("party") or [{}])[0].get("pos") or [0, 0, 0]
+    out, dt = took("route", x=p[0] + 4, y=p[1] + 60, z=p[2])
+    ok = "NO WALKABLE PATH: no" in out
+    item("vis: route to a point in the air says why", "PASS" if ok else "FAIL", f"{dt:.1f}s; {out[:200]}")
+    # 5. an objective handle as a target (S041 talk_to(npc="o1"))
+    call("get_map")
+    try:
+        u = S._uuid("o1")
+        item("vis: o1 as a target", "PASS", f"o1 -> {S.H.get(u)} ({S._name_of(u) if hasattr(S, '_name_of') else u})")
+    except ValueError as e:
+        item("vis: o1 as a target", "PASS" if "objective marker" in str(e) or "no objective o1" in str(e) else "FAIL",
+             str(e)[:200])
+    # 6. an empty name search names what was asked and who is in view (S042 kinds="Jaheira,characters")
+    out = call("get_nearby", radius=60, kinds="Zzyzxq,characters")
+    item("vis: empty name search says so", "PASS" if "No 'zzyzxq' in view within 60m" in out else "FAIL", out[:200])
+    # 7. journal: open quests without QuestIsAccepted (Find the Nightsong, companion quests) are listed
+    jt = call("get_journal")  # also loads State.quests
+    v = lua_server('local who=Osi.GetHostCharacter() local n,names=0,{} '
+                   'for _,q in ipairs(Mods.BG3AI.BG3AI.State.quests or {}) do '
+                   '  if q.visible and Osi.QuestIsAccepted(who,q.id)~=1 and Osi.QuestIsClosed(q.id)~=1 then '
+                   '    for _,st in ipairs(q.steps) do if st.id and Mods.BG3AI.BG3AI.State.stepUnlocked(who,q,st.id) then '
+                   '      n=n+1 names[#names+1]=Ext.Loca.GetTranslatedString(q.title) or q.id break end end end end '
+                   'return n.."|"..table.concat(names,";")')
+    n, _, names = v.partition("|")
+    if need(n.isdigit() and int(n) > 0, "vis: journal lists unaccepted open quests",
+            f"no open quest without QuestIsAccepted at the base save ({v[:120]})"):
+        first = names.split(";")[0]
+        item("vis: journal lists unaccepted open quests", "PASS" if first and first in jt else "FAIL",
+             f"{n} such quests ({names[:120]}); '{first}' in get_journal: {first in jt}")
+    load_verified(BASE)
+
+
+FUNCS["vis"] = sec_vis
 
 
 def run_section(name: str) -> int:

@@ -12,6 +12,7 @@ import os
 import sys
 import shutil
 import tempfile
+import re
 import unittest
 from typing import Any
 
@@ -185,6 +186,16 @@ class LookTool(Base):
         out = server.look().splitlines()
         self.assertTrue(out[0].startswith("PARTY moved ~"), out[0])
         self.assertFalse(any(" moved " in x for x in out[1:] if not x.startswith(("~", "+"))), out)
+
+    def test_followers_trailing_the_leader_are_one_range_line(self):
+        """S040: 'Wyll moved 12m SE, Karlach 11m S, Shadowheart 13m SE, Claude 21m SE' = 4 lines per walk result."""
+        server.look()
+        for i, c in enumerate(self.fake.w["status"]["party"]):
+            d = 21.0 if i == 0 else 12.0 + i
+            c["pos"] = [c["pos"][0] + d * 0.7, c["pos"][1], c["pos"][2] - d * 0.7 - (3.0 if i == 1 else 0.0)]
+        out = server.look().splitlines()
+        self.assertTrue(re.match(r"PARTY moved \d+-21m SE$", out[0]), out[0])
+        self.assertFalse(any(" moved " in x for x in out[1:]), out)
 
     def test_straggler_keeps_its_own_line(self):
         server.look()

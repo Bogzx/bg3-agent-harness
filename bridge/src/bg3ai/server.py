@@ -721,6 +721,44 @@ def _objective_ref(ref: str) -> str:
                          f"route(objective='{ref}', go=true) to get there, then use the eN from get_nearby") from None
 
 
+TELEPORT_SCROLLS = {"misty step": 18.0, "dimension door": 18.0}  # BG3 ranges (m, 3D)
+
+
+def _teleport_hint(res: Any) -> str:
+    """route: LOWER GROUND beyond a jump and a carried teleport scroll that covers it (S039: Misty Step and Dimension
+    Door scrolls sat in Claude's bags while the agent looked for a jump off the arrival island). One inventory read,
+    only in that case."""
+    if not isinstance(res, dict):
+        return ""
+    far = [lo for lo in res.get("lower") or [] if isinstance(lo, dict) and lo.get("from") and lo.get("to")
+           and isinstance(lo.get("gap_m"), (int, float)) and isinstance(lo.get("reach_m"), (int, float))
+           and lo["gap_m"] > lo["reach_m"]]
+    if not far:
+        return ""
+    inv = game.try_rpc("state.inventory", {}) or {}
+    scrolls = [it for it in (inv.get("items") or []) if isinstance(it, dict)
+               and any(k in str(it.get("name") or "").lower() for k in TELEPORT_SCROLLS)]
+    if not scrolls:
+        return ""
+    _remember_names(inv)
+
+    def rng(it: dict) -> float:
+        return next(r for k, r in TELEPORT_SCROLLS.items() if k in str(it.get("name")).lower())
+
+    best = max(scrolls, key=rng)
+    lines = []
+    for lo in far[:2]:
+        d3 = sum((a - b) ** 2 for a, b in zip(lo["from"], lo["to"])) ** 0.5
+        if d3 <= rng(best):
+            lines.append(f"TELEPORT: {H.get(best['uuid'], best.get('name'))} {best.get('name')} ({render.num(rng(best))}m)"
+                         f" reaches the floor {lo.get('dir') or ''} from the edge {render.pos(lo['from'])}"
+                         f" ({render.num(round(d3, 1))}m): move_to the edge, then use the scroll at {render.pos(lo['to'])}")
+        else:
+            lines.append(f"TELEPORT: the carried {best.get('name')} reaches {render.num(rng(best))}m; the floor "
+                         f"{lo.get('dir') or ''} is {render.num(round(d3, 1))}m from the edge: too far")
+    return ("\n" + "\n".join(lines)) if lines else ""
+
+
 def _uuid(ref: str) -> str:
     if re.fullmatch(r"o\d+", str(ref or "").strip().lower()):
         return _objective_ref(ref)
@@ -1818,8 +1856,9 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
         res = _read1("nav.route", args)
     _remember_names(res)
     ends = DEAD.for_goal(args.get("pos") or (res.get("goal") if isinstance(res, dict) else None))
+    tele = _teleport_hint(res)
     text = _finish("route", {"objective": objective, "target": target},
-                   seen_txt + route_text.render_route(res, H, what, ends), t0)
+                   seen_txt + route_text.render_route(res, H, what, ends) + tele, t0)
     if go and isinstance(res, dict):
         # S023-S026: route then travel_to the same goal (17x) or to its closest walkable spot (12x): 2 model turns.
         c = res.get("closest") if isinstance(res.get("closest"), dict) else {}
@@ -5565,6 +5604,7 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
         _after(rep, after)
         if not rep.done and rep.stop_kind in (None, "failed"):
             asked = alt.step.args.get("ability")
+            _step_note.clear()
             variant = _pick_variant(alt.step, text)
             step_in = (variant
                        or _step_into_range(who, alt.step, text, watcher, after)
@@ -5576,6 +5616,8 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
                 rep, text = _run_one(watcher, who, alt.step)
                 text = _outcome(alt.step, text)
                 _after(rep, after)
+            elif _step_note.get("why"):
+                text += f" (no step closer: {_step_note['why']})"
         if rep.done:
             lines.append(f"{name}: " + " → ".join(tried + [text]))
             return "ok", alt.then_move
@@ -5613,6 +5655,9 @@ def _pick_variant(step: actq.Step, text: str) -> str:
     return f"took the {'biggest heal' if big else 'first'} variant {first}"
 
 
+_step_note: dict = {}  # _step_into_range: why the melee step closer failed (shown on the slot's line)
+
+
 def _step_into_range(who: str, step: actq.Step, text: str, watcher: actq.Watcher, after: dict) -> str:
     """combat_turn: a cast just out of range (S002: Sacred Flame at 18.6 m, range 18 m) walks into range
     along the real route when the movement left covers it; the caller then casts again. Returns what it
@@ -5628,6 +5673,10 @@ def _step_into_range(who: str, step: actq.Step, text: str, watcher: actq.Watcher
         _after(rep, after)
         lr = rep.last_result if isinstance(rep.last_result, dict) else {}
         if not rep.done or lr.get("in_reach") is False:
+            # S042 r4: Karlach's melee at 2.7/4.0/3.2 m failed ×3 with 12 m of movement left and no word on why the
+            # step closer didn't happen: name it on the failed line
+            _step_note["why"] = (re.sub(r"^\S+ ", "", _text.split("\n")[0])[:140] if not rep.done
+                                 else f"the step ended {render.num(lr.get('dist', '?'))}m away, still out of reach")
             return ""
         return "stepped next to it" if not lr.get("already_there") else ""
     args: dict = {"char": who, "within": max(0.5, gap[1] - 0.3), "avoid": True}
@@ -6225,7 +6274,16 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
             if spent and p.slots["extra"]:
                 lines.append(f"extra: skipped (the action went to {spent}; Extra Attack only follows an attack)")
                 continue
-            for i, alts in enumerate(p.slots["extra"], 1):
+            # S042 round 4: the bonus slot's auto fallback fired a weapon attack that was the free Extra Attack
+            # ("bonus (auto fallback): Projectile_MainHandAttack e381: done … extra_attack"), then "extra 1: … FAILED —
+            # not enough action" ×3. An Extra Attack already taken this turn uses up the first extra slot.
+            used = [ln.split(":")[0] for ln in lines[1:] if not ln.startswith("extra")
+                    and re.search(r": done\b[^\n]*\bextra_attack\b", ln)]
+            extras = list(enumerate(p.slots["extra"], 1))
+            if used and extras:
+                lines.append(f"extra 1: skipped (the Extra Attack already went to the {used[0]} attack)")
+                extras = extras[len(used):]
+            for i, alts in extras:
                 res, _ = _turn_slot(f"extra {i}", alts, char, watcher, lines, after, info)
                 if (res == "none" and alts and lines and lines[-1].startswith(f"extra {i}:")
                         and turn.missed_target(lines[-1])):

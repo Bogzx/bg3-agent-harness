@@ -166,6 +166,19 @@ class Exploration(unittest.TestCase):
         _, evs = P.diff(seen, self.ship(-47.4, 31))
         self.assertEqual(sorted(kinds(evs)), ["explore", "obj_moved"])
 
+    def test_newly_listed_unaccepted_quests_do_not_score_once(self):
+        """23:3x the journal lists open quests QuestIsAccepted never marked (Find the Nightsong, companion quests)."""
+        seen, _ = P.diff(None, world())
+        seen.pop("quests_unaccepted")  # a playthrough from before the change
+        w = world()
+        w["journal"] = w["journal"] + [{"title": "Find the Nightsong", "steps": ["Search the temple."]},
+                                       {"title": "Daughter of Darkness", "steps": ["Shar punished me."]}]
+        seen, evs = P.diff(seen, w)
+        self.assertNotIn("quest_new", kinds(evs))
+        w["journal"] = w["journal"] + [{"title": "Really New", "steps": ["x"]}]
+        _, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs), ["quest_new"])
+
     def test_subregion_from_the_explored_reply(self):
         seen, _ = P.diff(None, world())
         w = world()

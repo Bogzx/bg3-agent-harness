@@ -150,6 +150,24 @@ class RouteJump(unittest.TestCase):
         self.assertIn("NEXT: move_to x,y,z = (-443.5,-6.7,-1416.3) (the edge), then jump_to x,y,z = (-455.5,-27.8,-1408.8)",
                       out)
 
+    def test_teleport_hint_for_lower_ground_beyond_a_jump(self):
+        """S039: Scrolls of Misty Step / Dimension Door in the bags while the agent looked for a jump off the island."""
+        from unittest import mock
+        lo = {"dir": "NW", "from": [-443.5, -6.7, -1416.3], "to": [-455.5, -10.8, -1408.8], "gap_m": 14.2,
+              "drop_m": 4.1, "reach_m": 8.5}
+        inv = {"items": [{"uuid": "11111111-0000-0000-0000-00000000aaaa", "name": "Scroll of Misty Step", "owner": P1}]}
+        g = mock.Mock()
+        g.try_rpc.return_value = inv
+        with mock.patch.object(server, "game", g):
+            out = server._teleport_hint({"lower": [lo]})
+            self.assertIn("TELEPORT:", out)
+            self.assertIn("Scroll of Misty Step (18m) reaches the floor NW", out)
+            lo2 = dict(lo, to=[-455.5, -27.8, -1408.8])  # 21 m down: 25 m in 3D
+            self.assertIn("too far", server._teleport_hint({"lower": [lo2]}))
+            self.assertEqual(server._teleport_hint({"lower": [dict(lo, reach_m=30)]}), "")  # a jump does it
+            g.try_rpc.return_value = {"items": []}
+            self.assertEqual(server._teleport_hint({"lower": [lo]}), "")
+
     def test_unknown_path_says_why(self):
         """S039 21:44: 'path unknown (pathfinding unavailable)' right after a jump onto a rock off the grid."""
         res = {"from": [-413, 1.1, -1441], "goal": [-516, -60, -1397], "straight_m": 127.3, "dir": "NW", "dy": -61.1,

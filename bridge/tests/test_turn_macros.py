@@ -997,6 +997,28 @@ class CombatTurn(Base):
         self.assertIsNone(turn.action_without_attack("action: Target_MainHandAttack e743: done — cast=x"))
         self.assertIsNone(turn.action_without_attack("action: Shout_Dash: FAILED — no"))
 
+    def test_melee_step_closer_failure_is_named(self):
+        # S042 r4: Karlach's melee "out of range (2.7 m, range 1.5 m)" ×3 with movement left, no word why
+        self.g.refuse_if = lambda op, a: (
+            "target is out of range (2.7 m, range 1.5 m): move closer first" if op == "act.cast"
+            else "no walkable path there (may need a jump or another route)" if op == "act.move_to" else None)
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertIn("(no step closer: ", out)
+        self.assertIn("no walkable path there", out)
+
+    def test_extra_attack_used_by_an_earlier_slot_skips_the_extra(self):
+        # S042 r4: "bonus (auto fallback): Projectile_MainHandAttack … done … extra_attack", then "extra 1: … not
+        # enough action" ×3
+        real = self.g.result_for
+        self.g.result_for = lambda op, a: ({"cast": a.get("spell"), "extra_attack": True}
+                                           if op == "act.cast" and a.get("spell") == "Projectile_MainHandAttack"
+                                           else real(op, a))
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+                                           bonus={"ability": "Projectile_MainHandAttack", "target": self.gob},
+                                           extra=[[{"ability": "Target_MainHandAttack", "target": self.gob}]]))
+        self.assertIn("extra 1: skipped (the Extra Attack already went to the bonus attack)", out)
+        self.assertEqual(self.casts(), ["Target_MainHandAttack", "Projectile_MainHandAttack"])
+
     def test_plan_errors(self):
         for bad, msg in (({"actoin": "x"}, "unknown plan key"),
                          ({"action": {"tool": "end_turn"}}, "can't be a turn step"),

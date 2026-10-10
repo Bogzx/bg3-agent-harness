@@ -229,6 +229,16 @@ def _ref(H: Handles, uuid: str, name: str) -> str:
 
 MOVE_GROUP_M = 3.0      # party members whose walks differ by at most this (or MOVE_GROUP_FRAC of it) moved together
 MOVE_GROUP_FRAC = 0.15
+MOVE_RANGE_FRAC = 0.5   # ...or a range "12-21m" when the shortest walk is at least half the longest
+
+
+def _dir_near(a: str, b: str) -> bool:
+    """Same compass direction or one step apart (SE vs S)."""
+    if a == b:
+        return True
+    if a not in _DIRS or b not in _DIRS:
+        return False
+    return (_DIRS.index(a) - _DIRS.index(b)) % 8 in (1, 7)
 
 
 def _party_lines(old: dict, new: dict, H: Handles) -> list[str]:
@@ -242,14 +252,23 @@ def _party_lines(old: dict, new: dict, H: Handles) -> list[str]:
             moves[u] = f"moved {render.num(round(raw[u][0]))}m {raw[u][1]}".rstrip()
     # The usual case: everyone followed the leader, give or take a few metres (S026: "moved 152m S", "146m S",
     # "152m S", "151m S" took 4 lines of wait_for CHANGES): one PARTY line.
-    together = len(np_) > 1 and len(raw) == len(np_) and len({d for _, d in raw.values()}) == 1
+    # S040: followers trail the leader ("Wyll moved 12m SE, Karlach 15m SE, Shadowheart 15m SE, Claude 21m SE",
+    # 4 lines per walk result, ~50-70 walks a session): a range on one line when everyone went the same way (one
+    # compass step apart at most) and nobody did less than MOVE_RANGE_FRAC of the longest walk (a straggler keeps
+    # its own line; PARTY APART says who is far behind).
+    dirs = [d for _, d in raw.values()]
+    main = max(set(dirs), key=dirs.count) if dirs else ""
+    together = len(np_) > 1 and len(raw) == len(np_) and bool(main) and all(_dir_near(d, main) for d in dirs)
     if together:
         ds = sorted(m for m, _ in raw.values())
         med = ds[len(ds) // 2]
-        together = ds[-1] - ds[0] <= max(MOVE_GROUP_M, MOVE_GROUP_FRAC * med)
-        if together:
+        if ds[-1] - ds[0] <= max(MOVE_GROUP_M, MOVE_GROUP_FRAC * med):
             approx = "~" if ds[-1] - ds[0] >= 1 else ""
-            out.append(f"PARTY moved {approx}{render.num(round(med))}m {next(iter(raw.values()))[1]}".rstrip())
+            out.append(f"PARTY moved {approx}{render.num(round(med))}m {main}".rstrip())
+        elif ds[0] >= MOVE_RANGE_FRAC * ds[-1]:
+            out.append(f"PARTY moved {render.num(round(ds[0]))}-{render.num(round(ds[-1]))}m {main}".rstrip())
+        else:
+            together = False
     for u in new.get("party_order") or []:
         n = np_[u]
         o = op.get(u)
