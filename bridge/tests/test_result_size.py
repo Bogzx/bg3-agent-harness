@@ -98,24 +98,46 @@ class AfterTrim(unittest.TestCase):
     AFTER = {"max_hp": 50, "movement": 9, "pos": [-175.4, 20, -331.9], "slots": {"1": 3}, "action": 1,
              "bonus": 1, "hp": 48, "reaction": 1}
 
-    def text(self, result):
-        from bg3ai.game import JobResult
-        return server._job_text("walk_toward", JobResult("done", result))
+    def setUp(self):
+        server._last_hp.clear()
 
-    def test_walk_outside_combat(self):
+    def text(self, result, tool="walk_toward", char="c1"):
+        from bg3ai.game import JobResult
+        return server._job_text(tool, JobResult("done", result), char)
+
+    def test_walk_outside_combat_has_no_stat_block(self):
+        # S015: walks/interacts still carried after={hp=34/55} every time the leader was hurt
         out = self.text({"dist": 0.1, "pos": [-175.4, 20, -331.9], "after": dict(self.AFTER)})
         self.assertEqual(out.count("@("), 1)
-        self.assertNotIn("movement", out)
-        self.assertNotIn("slots", out)
-        self.assertIn("hp=48/50", out)
+        self.assertNotIn("after", out)
+        self.assertNotIn("hp", out)
 
     def test_unhurt_outside_combat_has_no_after(self):
         out = self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, hp=50)})
         self.assertNotIn("after", out)
 
-    def test_interact_keeps_the_position(self):
-        out = self.text({"after": dict(self.AFTER, hp=50)})  # no position of its own
+    def test_interact_keeps_the_position_plain(self):
+        out = self.text({"used": True, "after": dict(self.AFTER, hp=50)}, tool="interact")  # no position of its own
         self.assertIn("@(-175.4,20,-331.9)", out)
+        self.assertNotIn("after", out)
+
+    def test_hp_change_is_one_short_field(self):
+        for tool in ("walk_toward", "move_to", "interact", "pick_up", "loot_corpse"):
+            server._last_hp.clear()
+            self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, hp=34)}, tool)
+            self.assertNotIn("hp", self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, hp=34)}, tool))
+            out = self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, hp=7)}, tool)
+            self.assertIn("hp=34->7/50", out, tool)
+            self.assertNotIn("after", out)
+
+    def test_hp_is_tracked_per_character(self):
+        self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, hp=34)}, char="c1")
+        out = self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, hp=7)}, char="c2")
+        self.assertNotIn("hp", out)  # first sight of c2: nothing to compare with
+
+    def test_other_tools_keep_hp_when_hurt(self):
+        out = self.text({"after": dict(self.AFTER)}, tool="use_ability")
+        self.assertIn("hp=48/50", out)
 
     def test_in_combat_keeps_the_economy_flat(self):
         out = self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, in_combat=True, my_turn=True)})

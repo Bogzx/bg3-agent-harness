@@ -47,6 +47,14 @@ class Pure(unittest.TestCase):
         st = status({"dead": True, "pos": [50, 0, 0]}, {"chained": None, "region": None})
         self.assertEqual(party.apart(st), [])
 
+    def test_member_on_another_floor_close_by(self):
+        # S015: Claude jumped 5 m down from a ledge; Gale stayed up there 7 m away with no path down
+        st = status({"pos": [5, 5.2, 4]}, {"pos": [2, 1.5, 0]})
+        line = party.apart_line(party.apart(st), self.label)
+        self.assertEqual(line, "PARTY APART: e2 Lae'zel 8m, 5m above → regroup()")
+        st = status({"pos": [30, -6, 0]})
+        self.assertEqual(party.apart_line(party.apart(st), self.label), "PARTY APART: e2 Lae'zel 31m, 6m below → regroup()")
+
     def test_stragglers(self):
         rows = [{"uuid": P2, "pos": [20, 0, 0]}, {"uuid": P3, "pos": [3, 0, 0]}, {"uuid": "x", "pos": [30, 0, 0], "downed": True}]
         self.assertEqual([u for u, _ in party.stragglers(rows, [0, 0, 0])], [P2])
@@ -78,6 +86,19 @@ class Cohesion(Base):
         self.assertEqual(self.chains(), [P2])
         self.assertIn("PARTY APART: ", out)
         self.assertIn("34m", out)
+        self.assertIn("re-chained to ", out)
+
+    def test_no_party_apart_at_camp(self):
+        # S014: companions idle at their tents 16-23 m away while long resting: not a split
+        self.st = status({"pos": [20, 0, 0]})
+        self.assertEqual(server._party_check(self.st, ui={"region": "Campsite"}), "")
+        self.assertIn("PARTY APART: ", server._party_check(self.st, ui={"region": "Blighted Village"}))
+
+    def test_floor_split_survives_rechain_filter(self):
+        self.st = status({"chained": False, "pos": [4, 5.5, 4]})
+        out = server._party_check(self.st)
+        self.assertEqual(self.chains(), [P2])
+        self.assertIn("6m above", out)
         self.assertIn("re-chained to ", out)
 
     def test_staying_member_is_left_alone(self):

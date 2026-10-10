@@ -167,7 +167,7 @@ read them all up front.
 | combat starts or is about to start (`INTERRUPTED — combat`, hostiles, you plan to attack) | `combat` |
 | a conversation opens or you're about to start one with a named NPC | `dialogue` |
 | out of combat and dialogue: where to go, looting, locks and traps, camp, trading | `exploration` |
-| a `LEVEL UP:` line (level up at the next out-of-combat moment, `level_up(who)` from your party-build.md plan), companion choice, spell preparation, a build revision | `party-and-leveling` |
+| a `LEVEL UP:` line (level up at the next out-of-combat moment, `level_up(who)` from your party-build.md plan), a `PARTY PLAN` line (write the plan lines / composition while walking), companion choice, spell preparation, a build revision | `party-and-leveling` |
 | the stuck criteria below | `stuck` |
 | the `⏱` line says WRAP UP, or a SESSION CLOCK reminder | `session-wrapup` |
 | the `⏱` line says "no story progress for N min" | `stuck` |

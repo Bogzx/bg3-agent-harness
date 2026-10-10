@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 APART_M = 15.0        # farther than this from the leader is "apart"
+FLOOR_M = 4.0         # ...or this far above/below it: another floor (S015: Gale left on a 5 m ledge 7 m away, no path)
 STRAGGLER_M = 12.0    # travel_to: a member this far behind after a leg gets waited for
 CATCH_UP_S = 4.0      # ...this long (following on its own), before it is walked back in legs
 REGROUP_WAIT_S = 60.0  # regroup: the longest it waits for the walks back
@@ -27,10 +28,19 @@ def leader_row(status: dict, leader: str | None = None) -> dict | None:
     return next((r for r in (status or {}).get("party") or [] if r.get("uuid") == lead), None)
 
 
-def apart(status: dict, leader: str | None = None, far_m: float = APART_M, stay: set | None = None) -> list[dict]:
-    """Members away from the leader: [{uuid, name, dist|None, other_level, unchained, downed, stay}].
+def _dy(a: Any, b: Any) -> float | None:
+    """Height of a over b (y is up), None without both positions."""
+    if not (isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)) and len(a) >= 3 and len(b) >= 3):
+        return None
+    return float(a[1]) - float(b[1])
+
+
+def apart(status: dict, leader: str | None = None, far_m: float = APART_M, stay: set | None = None,
+          floor_m: float = FLOOR_M) -> list[dict]:
+    """Members away from the leader: [{uuid, name, dist|None, dy|None, other_level, unchained, downed, stay}].
     status: state.status (party rows with pos, region, chained). Dead and off-stage members are left out;
-    an unchained member counts even when near (it won't follow the next walk)."""
+    an unchained member counts even when near (it won't follow the next walk), so does one on another floor
+    (more than floor_m above/below: a ledge or a drop it may have no path from)."""
     lead = leader_row(status, leader)
     if not lead:
         return []
@@ -41,9 +51,11 @@ def apart(status: dict, leader: str | None = None, far_m: float = APART_M, stay:
             continue
         other = bool(r.get("region") and lead.get("region") and r["region"] != lead["region"])
         d = None if other else _d(r.get("pos"), lead.get("pos"))
+        dy = None if other else _dy(r.get("pos"), lead.get("pos"))
+        floor = dy is not None and abs(dy) > floor_m
         unchained = r.get("chained") is False
-        if other or (d is not None and d > far_m) or unchained:
-            out.append({"uuid": u, "name": r.get("name"), "dist": d, "other_level": other,
+        if other or (d is not None and d > far_m) or unchained or floor:
+            out.append({"uuid": u, "name": r.get("name"), "dist": d, "dy": dy if floor else None, "other_level": other,
                         "unchained": unchained, "downed": bool(r.get("downed")), "stay": u in (stay or set())})
     return out
 
@@ -58,7 +70,9 @@ def apart_line(rows: list[dict], label: Callable[[str], str], far_m: float = APA
         elif r["dist"] is not None and r["dist"] > far_m:
             what = f"{round(r['dist'])}m"
         else:
-            what = "near"
+            what = "near" if not r.get("dy") else f"{round(r['dist'])}m"
+        if r.get("dy"):
+            what += f", {round(abs(r['dy']))}m {'above' if r['dy'] > 0 else 'below'}"
         if r["unchained"]:
             what += ", unchained"
         if r["downed"]:
@@ -66,7 +80,7 @@ def apart_line(rows: list[dict], label: Callable[[str], str], far_m: float = APA
         if r["stay"]:
             what += " (staying)"
         else:
-            fix = fix or r["other_level"] or (r["dist"] or 0) > far_m or r["unchained"]
+            fix = fix or r["other_level"] or (r["dist"] or 0) > far_m or r["unchained"] or bool(r.get("dy"))
         bits.append(f"{label(r['uuid'])} {what}")
     if not bits:
         return ""

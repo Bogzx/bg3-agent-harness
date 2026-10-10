@@ -1,14 +1,19 @@
 # Party and leveling
 
 **When:** Use when a level up is available (a `LEVEL UP:` line in get_status/look, or a `LEVEL UP pending`
-reminder), when choosing or swapping companions, at character creation, when preparing spells, or when a
+reminder), when a `PARTY PLAN` line asks for plan lines or a composition decision, when choosing or swapping companions, at character creation, when preparing spells, or when a
 build plan needs revising. Covers level_up, party-build.md plans, party composition, feats and ASIs, spells.
 Standard builds per class: `knowledge/builds.md`.
 
 ## Level ups: do them at once, in one call each
 A level up is free power: take it at the **next safe moment** (out of combat and dialogue), before the next
 fight. get_status/look print `LEVEL UP: e3 Gale (2) → level_up(who) now…` while one is pending; other tool
-results remind you every few minutes. In combat, finish the fight first.
+results say `LEVEL UP pending` as soon as the bridge sees it (it checks about once a minute). In combat,
+finish the fight first. Write plans **ahead**, not at the level up: a `NOTES WINDOW` (walking time) may carry
+`PARTY PLAN: no plan line yet for Gale L4, …; party lacks skills/locks/traps (Astarion)`. Write those lines
+then, so the level up itself is one instant call. Levels without required picks (a Paladin or Cleric level
+with no new subclass, feat, spell or passive) still go through with the game's defaults when no line exists,
+but the next feat or spell level will fail without one.
 1. **Plan line exists?** party-build.md has one line per character level under `## Level-up plans`:
    `- Gale L2: {"subclass": "Evocation", "spells": ["Sleep", "Thunderwave"]}`. If the LEVEL UP line says
    "no plan yet", write it first: look at `knowledge/builds.md` for the class and, if unsure what the screen
@@ -31,6 +36,10 @@ results remind you every few minutes. In combat, finish the fight first.
 
 ## Party composition: 4 roles
 Keep four active members covering these roles; fill gaps by recruiting, swap at camp when a region needs it.
+Write the current answer under `## Party composition` in party-build.md (who fills each role, the gap, the
+next recruit and where); older memories without that section or `## Level-up plans`: add both now (format:
+the comment at the top of a fresh party-build.md, `memory-template/party-build.md`). Re-check it at every
+level up, every companion met or lost, and before a region whose needs you know.
 | Role | Does | Good fits (companion: class) |
 |---|---|---|
 | **Frontline tank** | holds the line, high AC/HP, protects casters | Claude (Paladin), Lae'zel (Fighter), Karlach (Barbarian), Minsc (Ranger, Act 3) |

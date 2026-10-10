@@ -22,7 +22,8 @@ from bg3ai import saver, server  # noqa: E402
 def write_save(root: Path, label: str, n: int = 1) -> Path:
     d = root / f"Claude-{n}__{label}"
     d.mkdir(exist_ok=True)
-    (d / f"{d.name}.lsv").write_bytes(b"x" * 100)
+    (d / f"{label}.lsv").write_bytes(b"x" * 100)  # the game's layout: the .lsv is named after the label
+    (d / f"{label}.WebP").write_bytes(b"x")
     return d
 
 
@@ -160,7 +161,7 @@ class SaverTest(unittest.TestCase):
     def test_written_save_matches_label_quicksave_and_time(self):
         root = Path(tempfile.mkdtemp())
         old = write_save(root, "S009-end", 1)
-        os.utime(old / f"{old.name}.lsv", (time.time() - 100, time.time() - 100))
+        os.utime(old / "S009-end.lsv", (time.time() - 100, time.time() - 100))
         t = time.time()
         self.assertIsNone(saver.written_save(root, "S009-end", t))  # the old one doesn't count
         new = write_save(root, "S009-end", 2)

@@ -177,9 +177,10 @@ def check_hook(g: Game) -> None:
     try:
         st = lua(g, 'local f = Ext._Internal and Ext._Internal.UiSerialize\n'
                     'if not f then return \'{"patched":false}\' end\n'
-                    'local on, timeouts, ui, gen, leaked = f()\n'
+                    'local on, timeouts, ui, gen, leaked, parked, late = f()\n'
                     'return string.format(\'{"patched":true,"on":%s,"timeouts":%d,"ui_timeouts":%d,'
-                    '"generation":%d,"leaked":%d}\', tostring(on), timeouts, ui or -1, gen or -1, leaked or -1)')
+                    '"generation":%d,"leaked":%d,"parked":%d,"late":%d}\', tostring(on), timeouts, ui or -1, '
+                    'gen or -1, leaked or -1, parked or -1, late or -1)')
     except (GameError, NotReady) as e:
         report("FAIL", "hook.patched", f"client eval failed: {e}")
         st = None
@@ -187,6 +188,8 @@ def check_hook(g: Game) -> None:
         if st.get("patched"):
             detail = (f"UiSerialize on={st['on']}, Lua timeouts={st['timeouts']}, UI timeouts={st['ui_timeouts']}, "
                       f"generation={st['generation']}, leaked={st['leaked']}")
+            if st.get("parked", -1) >= 0:
+                detail += f", parked={st['parked']}, released late={st['late']}"
             if st["generation"] < 0:
                 report("WARN", "hook.patched", detail + " (bg3le without patch 0003: releases are not generation-gated)")
             elif not st["on"]:

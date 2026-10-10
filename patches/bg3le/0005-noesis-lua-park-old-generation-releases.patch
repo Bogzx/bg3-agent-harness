@@ -1,0 +1,371 @@
+bg3le Ext.UI: park the releases of older load generations instead of leaking them
+
+On top of 0001-0004. 0003 leaked every reference Lua let go of in a later UI
+generation than it was taken in; the generation moves on at every load, so in
+claude-run-2 S015 that was 0 -> 2474 over 4 loads (~600 a load): the client
+Lua state is closed at UnloadSession and its boxes are collected during the
+load, and what AutoSkip took under the menu and the loading screen is
+collected in play. Each is a Noesis object whose refcount never reaches zero,
+with whatever it references (children, view models, brushes).
+
+Only a View replacement makes a release unsafe (an element's teardown calls
+into its View: 0003's crash). So a reference now also records the View
+generation it was taken under (bumped only by "View replaced", once per
+launch); those still leak. Everything else from an older load generation, or
+let go of while the client is not settled, is parked on the UI thread and
+given back once the UI has been settled for 3 s in one generation under the
+same View, at most 256 a frame. BG3LE_UI_PARK=0 leaks them as before.
+
+The generation log line now says parked / released late / leaked, and the
+leaked classes; Ext._Internal.UiSerialize() returns two more values: parked
+now, released late.
+
+Against bg3le 3728a68 (v0.3.6) with 0001-0004. Applied by tools/build_bg3le.sh.
+---
+diff --git a/src/game_state.cpp b/src/game_state.cpp
+index 46c0777..c536199 100644
+--- a/src/game_state.cpp
++++ b/src/game_state.cpp
+@@ -126,7 +126,7 @@ std::uint64_t machine_update_hook(void* machine, void* a, void* b, void* c) {
+         logf("gamestate: client %s -> %s", last, now);
+         // Into or out of anything but play (a load, an unload, the menu's
+         // setup): the UI Lua holds references into may be torn down, so they
+-        // are never released (bg3le_noesis_lua.inl).
++        // are parked until it has settled (bg3le_noesis_lua.inl).
+         auto in_play = [](char const* s) {
+             return std::strcmp(s, "Running") == 0 || std::strcmp(s, "Save") == 0
+                 || std::strcmp(s, "Paused") == 0;
+diff --git a/src/noesis_ui.cpp b/src/noesis_ui.cpp
+index 4bfc34e..2caba7a 100644
+--- a/src/noesis_ui.cpp
++++ b/src/noesis_ui.cpp
+@@ -26,7 +26,7 @@ extern "C" std::size_t bg3le_noesis_resolve(void* (*find)(char const*));
+ extern "C" void bg3le_ui_drain_releases();
+ extern "C" bool bg3le_ui_frame_begin();
+ extern "C" void bg3le_ui_frame_end(bool taken);
+-extern "C" void bg3le_ui_new_generation(char const* why);
++extern "C" void bg3le_ui_view_replaced();
+ 
+ namespace bg3le {
+ namespace {
+@@ -67,7 +67,7 @@ void saw_view(void* view) {
+     } else if (expected != view && !is_view(expected)) {
+         g_view.store(view);  // the old one is gone
+         logf("noesis: View replaced, now at %p", view);
+-        bg3le_ui_new_generation("View replaced");
++        bg3le_ui_view_replaced();
+     }
+ }
+ 
+diff --git a/src/vendor/bg3le_noesis_lua.inl b/src/vendor/bg3le_noesis_lua.inl
+index 08e7e7d..d8c0eea 100644
+--- a/src/vendor/bg3le_noesis_lua.inl
++++ b/src/vendor/bg3le_noesis_lua.inl
+@@ -12,6 +12,7 @@
+ // DeferredUIEvents and UIEventHooks, which need upstream's Lua state. Both are
+ // by Norbyte and the bg3se contributors (https://github.com/Norbyte/bg3se).
+ 
++#include <algorithm>
+ #include <atomic>
+ #include <chrono>
+ #include <cstdlib>
+@@ -50,6 +51,7 @@ struct Held
+     BaseObject* Object;
+     bool Counted;  // a BaseComponent, holding a reference; Types are not counted
+     unsigned Generation;  // g_generation when the reference was taken
++    unsigned ViewGeneration;  // g_view_generation then
+ };
+ 
+ char const* const kHeldMeta = "bg3le.NoesisObject";
+@@ -60,26 +62,56 @@ bool plausible_object(BaseObject const* o);
+ // The last reference can only go on the UI's own thread: __gc queues it, and
+ // the View's Update hook drains the queue (noesis_ui.cpp).
+ //
+-// A reference is only given back in the UI generation it was taken in. The
+-// generation moves on when the View is replaced and when the client enters or
+-// leaves a load (bg3le_ui_new_generation, from game_state.cpp): by then the
+-// tree the object belonged to may be gone, and so may its View, which an
+-// element's own teardown still calls into (a TimerTrigger cancels its timer
+-// through AttachableObject::GetView(): a SIGSEGV on the freed View, the
+-// recovery reload's crash in the queue's drain). Those references are leaked
+-// instead, a few objects per load.
++// A reference is never given back into a View other than the one it was
++// taken under: an element's own teardown calls into its View (a TimerTrigger
++// cancels its timer through AttachableObject::GetView(): a SIGSEGV on the
++// freed View, the recovery reload's crash in the queue's drain). When the View
++// is replaced (once per launch, at the main menu's setup) the older references
++// are leaked instead.
++//
++// The generation moves on at every load, unload and menu setup too
++// (bg3le_ui_new_generation, from game_state.cpp): the tree an object belonged
++// to may be torn down then. Leaking those cost ~600 objects per load (the
++// client Lua state is closed at UnloadSession and its boxes are collected
++// during the load; what was taken under the loading screen is collected in
++// play), and a leaked element keeps whatever it references alive. They are
++// parked instead, and given back once the UI has been settled for
++// kParkSettleMs in one generation under the same View, at most
++// kParkedPerFrame a frame: by then the old tree is detached and its last
++// Release is the ordinary one Noesis gives a removed element.
++// BG3LE_UI_PARK=0 leaks them as before.
+ struct PendingRelease
+ {
+     BaseComponent* Object;
+     unsigned Generation;
++    unsigned ViewGeneration;
+ };
+ std::mutex g_release_lock;
+ std::vector<PendingRelease> g_releases;
++std::vector<PendingRelease> g_parked;  // the UI thread's own
+ std::atomic<unsigned> g_generation{ 1 };
++std::atomic<unsigned> g_view_generation{ 1 };
+ std::atomic<unsigned long long> g_leaked{ 0 };
++std::atomic<unsigned long long> g_released_late{ 0 };
++std::atomic<unsigned long long> g_parked_count{ 0 };
++constexpr int kParkSettleMs = 3000;
++constexpr std::size_t kParkedPerFrame = 256;
++
++// What was leaked, by class name, for the generation log line.
++std::mutex g_leak_lock;
++std::unordered_map<std::string, unsigned long long> g_leaked_types;
++
++bool park_enabled()
++{
++    static const bool on = [] {
++        char const* v = std::getenv("BG3LE_UI_PARK");
++        return v == nullptr || std::strcmp(v, "0") != 0;
++    }();
++    return on;
++}
+ 
+ // The states in which the UI is up and not being torn down; anything else
+-// (the loads, the unloads, the menus' setup) leaks rather than releases.
++// (the loads, the unloads, the menus' setup) parks rather than releases.
+ bool ui_settled()
+ {
+     char const* state = bg3le::client_game_state();
+@@ -90,35 +122,57 @@ bool ui_settled()
+     return false;
+ }
+ 
+-// The last Release, if it is still safe to give; else the reference leaks.
+-void release_now(PendingRelease const& r)
++void leak(PendingRelease const& r)
+ {
+-    if (r.Generation != g_generation.load() || !ui_settled() || !plausible_object(r.Object)) {
++    g_leaked.fetch_add(1, std::memory_order_relaxed);
++    if (!plausible_object(r.Object)) return;
++    char const* name = nullptr;
++    if (auto type = r.Object->GetClassType(); type != nullptr) name = type->GetName();
++    std::lock_guard<std::mutex> held(g_leak_lock);
++    ++g_leaked_types[name != nullptr ? name : "?"];
++}
++
++// The last Release, if the object still looks alive; else the reference leaks.
++void release_checked(PendingRelease const& r)
++{
++    if (!plausible_object(r.Object)) {
+         g_leaked.fetch_add(1, std::memory_order_relaxed);
+         return;
+     }
+     r.Object->Release();
+ }
+ 
+-void release_later(BaseComponent* o, unsigned generation)
++// Without the Update hook, on Lua's thread: only what is plainly safe.
++void release_now(PendingRelease const& r)
+ {
+-    if (generation != g_generation.load()) {
+-        g_leaked.fetch_add(1, std::memory_order_relaxed);
++    if (r.Generation != g_generation.load() || r.ViewGeneration != g_view_generation.load()
++        || !ui_settled()) {
++        leak(r);
++        return;
++    }
++    release_checked(r);
++}
++
++void release_later(BaseComponent* o, unsigned generation, unsigned view_generation)
++{
++    const PendingRelease r{ o, generation, view_generation };
++    if (view_generation != g_view_generation.load()) {
++        leak(r);
+         return;
+     }
+     if (!bg3le::noesis_update_hooked()) {
+-        release_now(PendingRelease{ o, generation });
++        release_now(r);
+         return;
+     }
+     std::lock_guard<std::mutex> held(g_release_lock);
+-    g_releases.push_back(PendingRelease{ o, generation });
++    g_releases.push_back(r);
+ }
+ 
+ int held_gc(lua_State* L)
+ {
+     auto h = static_cast<Held*>(luaL_checkudata(L, 1, kHeldMeta));
+     if (h->Object != nullptr && h->Counted) {
+-        release_later(static_cast<BaseComponent*>(h->Object), h->Generation);
++        release_later(static_cast<BaseComponent*>(h->Object), h->Generation, h->ViewGeneration);
+     }
+     h->Object = nullptr;
+     return 0;
+@@ -252,6 +306,7 @@ void push_object(lua_State* L, void const* p)
+     h->Object = o;
+     h->Counted = false;
+     h->Generation = g_generation.load();
++    h->ViewGeneration = g_view_generation.load();
+     if (luaL_newmetatable(L, kHeldMeta)) {
+         lua_pushcfunction(L, held_gc);
+         lua_setfield(L, -2, "__gc");
+@@ -333,7 +388,8 @@ int serialized(lua_State* L)
+ }
+ 
+ // UiSerialize([on]) -> on, Lua's lock timeouts, the UI thread's lock timeouts,
+-// the UI generation, the references leaked rather than released
++// the UI generation, the references leaked rather than released, those parked
++// now, those given back after parking
+ int l_serialize(lua_State* L)
+ {
+     if (!lua_isnoneornil(L, 1)) g_serialize.store(lua_toboolean(L, 1) != 0);
+@@ -342,7 +398,9 @@ int l_serialize(lua_State* L)
+     lua_pushinteger(L, (lua_Integer)g_ui_timeouts.load());
+     lua_pushinteger(L, (lua_Integer)g_generation.load());
+     lua_pushinteger(L, (lua_Integer)g_leaked.load());
+-    return 5;
++    lua_pushinteger(L, (lua_Integer)g_parked_count.load());
++    lua_pushinteger(L, (lua_Integer)g_released_late.load());
++    return 7;
+ }
+ 
+ // ---- values: ports of StoredValueHelpers ---------------------------------
+@@ -1454,33 +1512,113 @@ extern "C" void bg3le_ui_frame_end(bool taken)
+ }
+ 
+ // Drops the references Lua let go of; on the UI thread, from View::Update.
+-// Only those of the current generation, while the UI is settled.
++// Those of the current generation go at once while the UI is settled; the
++// rest are parked until the UI has been settled for kParkSettleMs in one
++// generation (see PendingRelease).
+ extern "C" void bg3le_ui_drain_releases()
+ {
+-    std::vector<Noesis::bg3le_ui::PendingRelease> now;
++    using namespace Noesis::bg3le_ui;
++    static unsigned settled_generation = 0;
++    static std::chrono::steady_clock::time_point settled_from;
++
++    std::vector<PendingRelease> now;
+     {
+-        std::lock_guard<std::mutex> held(Noesis::bg3le_ui::g_release_lock);
+-        if (Noesis::bg3le_ui::g_releases.empty()) return;
+-        now.swap(Noesis::bg3le_ui::g_releases);
++        std::lock_guard<std::mutex> held(g_release_lock);
++        if (g_releases.empty() && g_parked.empty()) return;
++        now.swap(g_releases);
+     }
+-    for (auto const& r : now) Noesis::bg3le_ui::release_now(r);
++    const unsigned generation = g_generation.load();
++    const unsigned view = g_view_generation.load();
++    const bool settled = ui_settled();
++    for (auto const& r : now) {
++        if (r.ViewGeneration != view) {
++            leak(r);
++        } else if (r.Generation == generation && settled) {
++            release_checked(r);
++        } else if (park_enabled()) {
++            g_parked.push_back(r);
++        } else {
++            leak(r);
++        }
++    }
++    if (g_parked.empty()) {
++        g_parked_count.store(0);
++        return;
++    }
++
++    const auto clock = std::chrono::steady_clock::now();
++    if (!settled) {
++        settled_generation = 0;
++    } else if (settled_generation != generation) {
++        settled_generation = generation;
++        settled_from = clock;
++    }
++    const bool ready = settled && settled_generation == generation
++        && clock - settled_from >= std::chrono::milliseconds(kParkSettleMs);
++    std::size_t given = 0;
++    std::size_t kept = 0;
++    for (std::size_t i = 0; i < g_parked.size(); ++i) {
++        auto const& r = g_parked[i];
++        if (r.ViewGeneration != view) {
++            leak(r);
++        } else if (ready && given < kParkedPerFrame) {
++            release_checked(r);
++            g_released_late.fetch_add(1, std::memory_order_relaxed);
++            ++given;
++        } else {
++            g_parked[kept++] = r;
++        }
++    }
++    g_parked.resize(kept);
++    g_parked_count.store(kept);
+ }
+ 
+-// The UI the held references belong to is going away (a new View, a load):
+-// what was taken before is never released, queued or not.
++// Leaked so far, the most common classes first: "Grid 12, TextBlock 9".
++static std::string leaked_types_summary(std::size_t top)
++{
++    using namespace Noesis::bg3le_ui;
++    std::vector<std::pair<std::string, unsigned long long>> types;
++    {
++        std::lock_guard<std::mutex> held(g_leak_lock);
++        types.assign(g_leaked_types.begin(), g_leaked_types.end());
++    }
++    std::sort(types.begin(), types.end(),
++              [](auto const& a, auto const& b) { return a.second > b.second; });
++    std::string out;
++    for (std::size_t i = 0; i < types.size() && i < top; ++i) {
++        if (!out.empty()) out += ", ";
++        out += types[i].first + " " + std::to_string(types[i].second);
++    }
++    return out.empty() ? "none" : out;
++}
++
++// The UI the held references belong to may be torn down (a load, an unload,
++// the menu's setup): what was taken before is parked when Lua lets it go.
+ extern "C" void bg3le_ui_new_generation(char const* why)
+ {
++    using namespace Noesis::bg3le_ui;
+     std::size_t queued = 0;
+     {
+-        std::lock_guard<std::mutex> held(Noesis::bg3le_ui::g_release_lock);
+-        queued = Noesis::bg3le_ui::g_releases.size();
+-        Noesis::bg3le_ui::g_releases.clear();
+-        Noesis::bg3le_ui::g_generation.fetch_add(1);
++        std::lock_guard<std::mutex> held(g_release_lock);
++        queued = g_releases.size();
++        g_generation.fetch_add(1);
+     }
+-    Noesis::bg3le_ui::g_leaked.fetch_add(queued, std::memory_order_relaxed);
+-    bg3le::logf("noesis: UI generation %u (%s); %zu queued releases dropped, %llu leaked in all",
+-         Noesis::bg3le_ui::g_generation.load(), why, queued,
+-         (unsigned long long)Noesis::bg3le_ui::g_leaked.load());
++    static std::atomic<unsigned long long> logged_leaks{ 0 };
++    const unsigned long long leaked = g_leaked.load();
++    std::string types;
++    if (logged_leaks.exchange(leaked) != leaked) types = "; leaked: " + leaked_types_summary(8);
++    bg3le::logf("noesis: UI generation %u (%s); %zu queued, %llu parked, %llu released late, "
++                "%llu leaked in all%s",
++                g_generation.load(), why, queued, (unsigned long long)g_parked_count.load(),
++                (unsigned long long)g_released_late.load(), leaked, types.c_str());
++}
++
++// A new View: every reference taken under the old one leaks (its elements'
++// teardown would call into the freed View).
++extern "C" void bg3le_ui_view_replaced()
++{
++    Noesis::bg3le_ui::g_view_generation.fetch_add(1);
++    bg3le_ui_new_generation("View replaced");
+ }
+ 
+ // Adds Ext.UI's C side to the table on top of the stack.

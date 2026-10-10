@@ -32,6 +32,26 @@ class SavesTest(unittest.TestCase):
             self.assertEqual(saves.load_args(root, "Claude-4__S001-end")["index"], 1)
             self.assertNotIn("index", saves.load_args(root, "Claude-9__gone"))
 
+    def test_save_file_and_mtime_from_the_lsv(self):
+        # 'Claude-4101260944__S017-pre-gut/S017-pre-gut.lsv': named after the label, not the folder
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            d = root / "Claude-4101260944__S017-pre-gut"
+            d.mkdir()
+            lsv = d / "S017-pre-gut.lsv"
+            lsv.write_bytes(b"x")
+            self.assertEqual(saves.save_file(d), lsv)
+            os.utime(lsv, (1000, 1000))
+            os.utime(d, (5000, 5000))
+            self.assertEqual(saves._mtime(d), 1000)
+            odd = root / "Claude-1__x"
+            odd.mkdir()
+            (odd / "renamed.lsv").write_bytes(b"x")
+            self.assertEqual(saves.save_file(odd).name, "renamed.lsv")
+            empty = root / "Claude-2__y"
+            empty.mkdir()
+            self.assertFalse(saves.save_file(empty).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

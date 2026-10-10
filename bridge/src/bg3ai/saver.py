@@ -4,7 +4,7 @@ S009 had 7 saves at ~2.75 s of tool time each (~4 s of agent idle with the turn 
 ~1.2 s of the mod driving the save menus (open the Save page, New save, name, accept, close the menus), then
 ~1.5 s of the bridge polling the save folder until the game had written it. Now:
 
-* the menu phase (~1 s) runs in a thread while the agent reads the result and thinks; the next tool call
+* the menu phase (~2 s with the game's ~1 s save freeze) runs in a thread while the agent reads the result and thinks; the next tool call
   waits for it only if it arrives sooner (the menus are on screen, so world/UI tools must not interleave);
 * the write phase (the folder appearing with a stable .lsv) is confirmed in the background; the agent gets
   one line on its next result: "SAVED 'S010-pre-kagha'" or "SAVE FAILED ...: call save_game again";
@@ -21,6 +21,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Callable
+
+from .saves import save_file
 
 UI_WAIT_S = 8.0        # the longest another tool waits for the save menus to close
 DISK_WAIT_S = 20.0     # the write must show up on disk within this
@@ -42,9 +44,8 @@ def written_save(save_dir: Path, label: str, since: float) -> Path | None:
             continue
         if not label and "QuickSave" not in d.name:
             continue
-        lsv = d / f"{d.name}.lsv"
         try:
-            st = lsv.stat()
+            st = save_file(d).stat()
         except OSError:
             continue
         if st.st_mtime >= since - 1.0 and st.st_size > 0 and (best is None or st.st_mtime > best[0]):
@@ -57,7 +58,7 @@ class Saver:
 
     def __init__(self, run_menu: Callable[[str], tuple[bool, str]], can_save: Callable[[], tuple[bool, str]],
                  save_dir: Callable[[], Path], log: Callable[[dict], None] | None = None) -> None:
-        self.run_menu = run_menu      # label -> (ok, detail): drives the save menus (blocking, ~1 s)
+        self.run_menu = run_menu      # label -> (ok, detail): drives the save menus until the game has saved (blocking, ~2 s)
         self.can_save = can_save      # () -> (ok, why not)
         self.save_dir = save_dir
         self.log = log or (lambda rec: None)
@@ -131,7 +132,7 @@ class Saver:
         self.thread = threading.Thread(target=self._run, args=(job,), name="saver", daemon=True)
         self.thread.start()
         if ok:
-            return (f"save_game: saving '{name}' in the background (~1 s of menus; your next call waits for "
+            return (f"save_game: saving '{name}' in the background (~2 s with the game's save freeze; your next call waits for "
                     "them). Keep playing; SAVED shows on a later result.")
         return (f"save_game: queued '{name}': the game can't save right now ({why}). It saves at the next "
                 "moment it can, between your calls; keep playing.")
@@ -205,7 +206,7 @@ class Saver:
             d = written_save(self.save_dir(), job["label"], job["wall"])
             if d is not None:
                 try:
-                    size = (d / f"{d.name}.lsv").stat().st_size
+                    size = save_file(d).stat().st_size
                 except OSError:
                     size = -1
                 if last == (d.name, size):

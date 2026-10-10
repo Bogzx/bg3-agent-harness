@@ -29,8 +29,8 @@ RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
 TOOLSEARCH_OK = 2            # act: ToolSearch preload, ~0-2 per session
 NOOP_SLOW_MS = 1500.0        # act: a no-op wait_for returns in ~0.1-0.5 s (+0.5 s grace after a job)
 CONNS_WARN, CONNS_FAIL = 40, 100   # act/se: bg3le debug clients should stay in the low tens
-LEAK_PER_LOAD_WARN = 50      # se: patch 0003, `leaked` grows by a few tens per load at most
-SAVE_MENU_WARN_S = 1.5       # se: background save, menu_s ≲ 1 s
+LEAK_PER_LOAD_WARN = 50      # se: patch 0005 parks old-generation releases; only a View replacement leaks
+SAVE_MENU_WARN_S = 3.0       # se: background save, menu_s ~2 s: ~1.2 s of menus + the game's ~1 s Save state (frozen)
 OPS_MS = {"nav.reach_toward": 30.0, "nav.frontier": 40.0, "nav.hazards": 10.0}  # vis: game-side read cost
 FIRST_ACTION_S = 60.0        # setup: session start ≤ 1 min to the first game action
 CLUTTER_RE = re.compile(r"^\s*\+ .*\b(Candle|Tin Cup|Stool|Bottle|Plate|Bowl|Cup|Mug)\b", re.M)
@@ -358,6 +358,9 @@ def bg3le_log_for(s: Session, logs: Path) -> Path | None:
 
 CONN_RE = re.compile(r"debug: client (?:attached \((\d+) connected\)|detached \((\d+) remaining\))")
 GEN_RE = re.compile(r"noesis: UI generation (\d+) \((\w+)\);.*?(\d+) leaked in all")
+# patch 0005: "...; 3 queued, 120 parked, 2300 released late, 11 leaked in all; leaked: Grid 4, ..."
+LATE_RE = re.compile(r"noesis: UI generation \d+ .*?(\d+) parked, (\d+) released late, \d+ leaked in all"
+                     r"(?:; leaked: (.*))?")
 
 
 def c_bg3le(s: Session, logs: Path) -> list[tuple[str, str, str]]:
@@ -382,8 +385,13 @@ def c_bg3le(s: Session, logs: Path) -> list[tuple[str, str, str]]:
     if len(gens) >= 2:
         per = (gens[-1][2] - gens[0][2]) / max(1, len(loads))
         v = "WARN" if per > LEAK_PER_LOAD_WARN else "PASS"
+        late = LATE_RE.findall(text)
+        extra = ""
+        if late:
+            parked, released, types = late[-1]
+            extra = f"; parked {parked}, released late {released}" + (f"; leaked: {types.strip()}" if types else "")
         out.append((v, "ui_leak", f"{len(gens)} UI generations, {len(loads)} loads, leaked {gens[0][2]} -> "
-                    f"{gens[-1][2]} ({per:.0f}/load, ≤ {LEAK_PER_LOAD_WARN})"))
+                    f"{gens[-1][2]} ({per:.0f}/load, ≤ {LEAK_PER_LOAD_WARN}){extra}"))
     hooked = re.search(r"noesis: (\d+) of (\d+) View input entry points hooked", text)
     if hooked:
         out.append(("PASS" if hooked.group(1) == hooked.group(2) else "WARN", "input_hooks",

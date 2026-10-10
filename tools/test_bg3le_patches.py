@@ -90,13 +90,18 @@ class PatchTest(unittest.TestCase):
         for needle in ("std::atomic<bool> g_serialize{ true };", '"BG3LE_UI_SERIALIZE"', '"UiSerialize"',
                        "try_lock_for(std::chrono::milliseconds(kUiWaitMs))"):
             self.assertIn(needle, inl)
-        # 0003: a release only in the generation its reference was taken in, else leaked; the
-        # generation moves on a View replacement and on loads
-        for needle in ("h->Generation = g_generation.load();", "r.Generation != g_generation.load()",
-                       "!ui_settled()", 'extern "C" void bg3le_ui_new_generation(char const* why)',
-                       "g_releases.clear();"):
+        # 0003 + 0005: the generation moves on a View replacement and on loads; a reference taken
+        # under an older View leaks, one of an older load generation is parked and given back once
+        # the UI has settled (BG3LE_UI_PARK=0: leaked)
+        for needle in ("h->Generation = g_generation.load();",
+                       "h->ViewGeneration = g_view_generation.load();",
+                       "r.ViewGeneration != view", "g_parked.push_back(r);", '"BG3LE_UI_PARK"',
+                       "clock - settled_from >= std::chrono::milliseconds(kParkSettleMs)",
+                       'extern "C" void bg3le_ui_new_generation(char const* why)',
+                       'bg3le_ui_new_generation("View replaced");', "return 7;"):
             self.assertIn(needle, inl)
-        self.assertIn('bg3le_ui_new_generation("View replaced");', ui)
+        self.assertNotIn("g_releases.clear();", inl)  # a new generation no longer drops the queue
+        self.assertIn("bg3le_ui_view_replaced();", ui)
         gs = (self.src / "src" / "game_state.cpp").read_text()
         self.assertIn("if (!in_play(last) || !in_play(now)) bg3le_ui_new_generation(now);", gs)
 

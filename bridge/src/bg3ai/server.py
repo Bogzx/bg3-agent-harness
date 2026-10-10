@@ -325,6 +325,9 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
                    "steps, look, plan, notes): the character acts while you think.")
         _pace["nudge"] = True
     if tool not in ("get_status", "look", "level_up"):
+        if _LEVEL_NUDGE.stale():  # XP arrives mid-play: one state.status read a minute finds the level up
+            _LEVEL_NUDGE.seen_at = time.time()  # also when the read fails (loading): no retry on every call
+            _LEVEL_NUDGE.observe(game.try_rpc("state.status"))
         lv = _LEVEL_NUDGE.text()
         if lv:
             out.append(lv)
@@ -456,13 +459,30 @@ def _remember_names(obj: Any) -> None:
             _remember_names(v)
 
 
-def _trim_after(res: Any) -> Any:
+# Outside combat, movement/interaction results carry no portrait block at all unless HP changed since the
+# last result for that character (then one short hp=34->7/55); the position becomes the plain @(..).
+_QUIET_AFTER = {"move_to", "walk_toward", "interact", "pick_up", "loot", "loot_corpse", "talk_to", "jump_to"}
+_last_hp: dict[str, Any] = {}
+
+
+def _trim_after(res: Any, tool: str = "", char: str | None = None) -> Any:
     """The mod's after={...} portrait summary, cut to what the agent can act on: no position when the result
     already has one (walks print it as dist=.. @(..)), and outside combat no action economy or slot table
     (always full there), only hp when hurt. Slots render flat (slots=1:3) so the {..} stays one level deep."""
     if not isinstance(res, dict) or not isinstance(res.get("after"), dict):
         return res
     a = res["after"]
+    prev = _last_hp.get(char or "?")
+    if a.get("hp") is not None:
+        _last_hp[char or "?"] = a["hp"]
+    if tool in _QUIET_AFTER and not a.get("in_combat"):
+        out = {k: v for k, v in res.items() if k != "after"}
+        if a.get("pos") is not None and res.get("pos") is None and res.get("position") is None:
+            out["pos"] = a["pos"]
+        hp, mx = a.get("hp"), a.get("max_hp")
+        if hp is not None and mx is not None and prev is not None and hp != prev:
+            out["hp"] = f"{render.num(prev)}->{render.num(hp)}/{render.num(mx)}"
+        return out
     if a.get("in_combat"):
         keep = {k: a[k] for k in ("hp", "max_hp", "action", "bonus", "reaction", "movement", "my_turn") if k in a}
         for k in ("slots", "pact_slots"):
@@ -482,8 +502,8 @@ def _trim_after(res: Any) -> Any:
     return out
 
 
-def _job_text(name: str, r: JobResult) -> str:
-    r = JobResult(r.status, _trim_after(r.result), r.error, r.events, r.elapsed_ms)
+def _job_text(name: str, r: JobResult, char: str | None = None) -> str:
+    r = JobResult(r.status, _trim_after(r.result, name, char), r.error, r.events, r.elapsed_ms)
     if r.status == "done":
         s = f"{name}: done"
         if r.result not in (None, {}, []):
@@ -520,7 +540,7 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
     if _batch["active"] and isinstance(r.result, dict) and "after" in r.result:
         # In a batch the per-step portrait summary is noise; the run ends with one NOW line + CHANGES.
         r = JobResult(r.status, {k: v for k, v in r.result.items() if k != "after"}, r.error, r.events, r.elapsed_ms)
-    return _finish(tool, args, _job_text(tool, r) + ("\n" + note if note else ""), t0)
+    return _finish(tool, args, _job_text(tool, r, args.get("char")) + ("\n" + note if note else ""), t0)
 
 
 # Async jobs started with wait=false: handle (j12) -> what the agent needs to follow them up.
@@ -537,7 +557,7 @@ def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> s
         r = JobResult(started["status"], started.get("result"), started.get("error"))
         _remember_names(r.result)
         _batch["last"] = r.status
-        return _finish(tool, args, _job_text(tool, r), t0)
+        return _finish(tool, args, _job_text(tool, r, args.get("char")), t0)
     h = f"j{started['job']}"
     _async[h] = {"ctx": "server", "id": started["job"], "tool": tool, "t0": time.monotonic(),
                  "eta": started.get("eta_s"), "char": args.get("char")}
@@ -551,7 +571,7 @@ def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> s
         r = JobResult(view["status"], view.get("result"), view.get("error"), elapsed_ms=view.get("elapsed_ms", 0))
         _remember_names(r.result)
         _batch["last"] = r.status
-        return _finish(tool, args, _job_text(tool, r) + ("\n" + note if note else ""), t0)
+        return _finish(tool, args, _job_text(tool, r, args.get("char")) + ("\n" + note if note else ""), t0)
     body = f"{tool}: started {h}"
     if started.get("eta_s") is not None:
         body += f", ETA {render.num(float(started['eta_s']))}s"
@@ -674,7 +694,7 @@ def get_status(full: bool = False) -> str:
             body += "\n" + "\n".join(obj)
     else:
         body = _delta_body(lines, ui)
-    apart = _party_check(st)
+    apart = _party_check(st, ui=ui)
     if apart:
         body += "\n" + apart
     lv = _level_up_line(st)
@@ -712,7 +732,7 @@ def look(full: bool = False) -> str:
         hz = _hazard_lines(got.get("hazards"))
     if hz:
         body += "\n" + "\n".join(hz)
-    apart = _party_check(st)
+    apart = _party_check(st, ui=got.get("ui"))
     if apart:
         body += "\n" + apart
     lv = _level_up_line(st)
@@ -753,10 +773,16 @@ def _rechain(members: list[str], leader: str) -> list[str]:
     return ok
 
 
-def _party_check(st: dict | None, rechain: bool = True) -> str:
+def _at_camp(ui: dict | None) -> bool:
+    """The minimap says Campsite: companions idle at their tents there (S014: PARTY APART 16-23 m x3 while
+    long resting, a false alarm). The camp is left with the camp tool, which brings everyone along."""
+    return isinstance(ui, dict) and str(ui.get("region") or "").strip().lower() == "campsite"
+
+
+def _party_check(st: dict | None, rechain: bool = True, ui: dict | None = None) -> str:
     """get_status/look: re-chain companions that drifted off the leader's group (unless told to stay, busy,
-    or in combat/dialogue), then the PARTY APART line ('' when everyone is together)."""
-    if not isinstance(st, dict):
+    or in combat/dialogue), then the PARTY APART line ('' when everyone is together or at camp)."""
+    if not isinstance(st, dict) or _at_camp(ui):
         return ""
     try:
         rows = party.apart(st, stay=_stay)
@@ -765,7 +791,7 @@ def _party_check(st: dict | None, rechain: bool = True) -> str:
             for r in rows:
                 if r["uuid"] in done:
                     r["unchained"] = False
-            rows = [r for r in rows if r["unchained"] or r["other_level"]
+            rows = [r for r in rows if r["unchained"] or r["other_level"] or r.get("dy")
                     or (r["dist"] is not None and r["dist"] > party.APART_M)]
             if done:
                 return (party.apart_line(rows, _label) + "\n" if rows else "") + \
@@ -1322,7 +1348,7 @@ def _click_act(tool: str, op: str, args: dict, wait_s: float = 40.0) -> str:
     r = run_click_action(game, _inp(), op, args, wait_s)
     _remember_names(r.result)
     _batch["last"] = r.status
-    return _finish(tool, args, _job_text(tool, r), t0)
+    return _finish(tool, args, _job_text(tool, r, args.get("char")), t0)
 
 
 @mcp.tool()
@@ -1689,6 +1715,10 @@ def level_up(who: str | None = None, plan: str = "") -> str:
         elif row:
             note = f"(no stored plan for {row['name']} L{row['to']}: game defaults)"
     out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
+    if out.startswith("level_up: FAILED") and "choices: #1" in out:
+        # The page had just opened and its list labels were not rendered yet (S009: "subclass: no 'Evocation';
+        # choices: #1, #2, ..." twice, the same plan right after went through): once more with the page open.
+        out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
     res = _batch.get("result")
     if out.startswith("level_up: FAILED") and isinstance(res, dict) and res.get("needs_clicks") and _inp() is not None:
         # Spell picks are mouse clicks (leveling.click_spells); then the same plan again finishes the page.
@@ -2046,8 +2076,10 @@ def _notes_window() -> str:
     if lr is None or lr[1] < NOTES_MIN_S or lr[0] in _notes_shown:
         return ""
     _notes_shown.add(lr[0])
+    plan = _LEVEL_NUDGE.plan_hint(MEMORY)
     return (f"NOTES WINDOW: ~{render.num(round(lr[1]))}s of walking left: write memory notes / plan now "
-            "(not after it ends, when the character would stand idle); queue_actions the arrival first")
+            "(not after it ends, when the character would stand idle); queue_actions the arrival first"
+            + ("\n" + plan if plan else ""))
 
 
 @mcp.tool()
@@ -2267,7 +2299,7 @@ def wait_for(target: str = "idle", timeout_s: float = 15.0, lead_s: float = LEAD
                 r = JobResult(jv["status"], jv.get("result"), jv.get("error"),
                               elapsed_ms=jv.get("elapsed_ms", 0))
                 _remember_names(r.result)
-                body = _job_text(info.get("tool") or low, r)
+                body = _job_text(info.get("tool") or low, r, info.get("char"))
                 noop = "job_done" if first else None
                 break
         else:

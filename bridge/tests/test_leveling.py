@@ -6,6 +6,7 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -76,6 +77,61 @@ class Leveling(unittest.TestCase):
         n.observe(ST)
         n.done("u-gale")
         self.assertEqual(n.text(now=9000), "")
+
+    def test_new_level_up_said_at_once(self):
+        # S010: Gale's L3 came 4 min after Wyll's was shown; it must not wait out the 5-min timer
+        n = LV.Nudge(every_s=300)
+        n.observe({"party": [{"uuid": "u-w", "name": "Wyll", "level": 2, "level_up": 3}]})
+        n.text(now=1000, shown=True)
+        n.observe({"party": [{"uuid": "u-w", "name": "Wyll", "level": 2, "level_up": 3},
+                             {"uuid": "u-gale", "name": "Gale", "level": 2, "level_up": 3}]})
+        self.assertIn("Gale (3)", n.text(now=1010))
+        self.assertEqual(n.text(now=1020), "")
+
+    def test_stale(self):
+        n = LV.Nudge(refresh_s=60)
+        self.assertTrue(n.stale(now=100))
+        n.observe(ST, now=100)
+        self.assertFalse(n.stale(now=150))
+        self.assertTrue(n.stale(now=161))
+
+
+RUN2 = {"party": [   # claude-run-2 after S010: no rogue, no plan lines, no composition section
+    {"uuid": "e1", "name": "Wyll", "level": 3, "classes": [{"class": "Warlock", "level": 3, "subclass": "The Fiend"}]},
+    {"uuid": "e2", "name": "Gale", "level": 3, "classes": [{"class": "Wizard", "level": 3}]},
+    {"uuid": "e3", "name": "Shadowheart", "level": 3, "classes": [{"class": "Cleric", "level": 3}]},
+    {"uuid": "e4", "name": "Claude", "level": 3, "classes": [{"class": "Paladin", "level": 3}]},
+]}
+
+
+class PlanHint(unittest.TestCase):
+    def setUp(self):
+        self.mem = Path(tempfile.mkdtemp(prefix="bg3lv-"))
+        (self.mem / "party-build.md").write_text("# Party build\n## Gale\n- Wizard, Evocation\n")
+
+    def test_composition(self):
+        self.assertEqual(LV.composition_gaps(RUN2["party"]), ["skills"])
+        self.assertEqual(LV.composition_gaps([{"name": "X", "level": 1}]), [])   # classes unknown: no claim
+
+    def test_hint(self):
+        n = LV.Nudge()
+        n.observe(RUN2)
+        h = n.plan_hint(self.mem, now=1000)
+        self.assertTrue(h.startswith("PARTY PLAN"), h)
+        for want in ("Wyll L4", "Gale L5", "Claude L4", "Astarion"):
+            self.assertIn(want, h)
+        self.assertEqual(n.plan_hint(self.mem, now=1100), "")      # at most every HINT_S
+        lines = "".join(f'- {m["name"]} L{lv}: {{}}\n' for m in RUN2["party"] for lv in (4, 5))
+        (self.mem / "party-build.md").write_text("## Party composition\n- skills: Astarion next\n"
+                                                 "## Level-up plans\n" + lines)
+        self.assertEqual(n.plan_hint(self.mem, now=5000), "")      # all written: silent
+        n.observe(dict(RUN2, in_combat=True))
+        self.assertEqual(LV.Nudge().plan_hint(self.mem, now=0), "")  # nothing observed yet
+
+    def test_level_12_cap(self):
+        n = LV.Nudge()
+        n.observe({"party": [{"uuid": "a", "name": "A", "level": 12, "classes": [{"class": "Rogue"}]}]})
+        self.assertNotIn("A L13", n.plan_hint(self.mem, now=0))
 
 
 class FakeSpellPage:
@@ -251,3 +307,46 @@ class ServerWiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ServerRetryAndRefresh(unittest.TestCase):
+    def test_unrendered_subclass_labels_retry_once(self):
+        from bg3ai import server as S
+
+        calls = []
+
+        def fake_act(tool, op, args, wait_s=25.0, context="server", wait=True, note=""):
+            calls.append(op)
+            S._batch["result"] = {}
+            if len(calls) == 1:
+                return "level_up: FAILED — subclass: no 'Evocation'; choices: #1, #2, #3 — stage=subclass"
+            return "level_up: done — finished complete"
+
+        saved = (S._act, S._who)
+        S._act, S._who = fake_act, (lambda ref: "u-gale")
+        try:
+            out = S.level_up("Gale", plan='{"subclass": "Evocation", "spells": ["Sleep"]}')
+            self.assertEqual((out, len(calls)), ("level_up: done — finished complete", 2))
+        finally:
+            S._act, S._who = saved
+
+    def test_finish_refreshes_status_for_a_new_level_up(self):
+        from bg3ai import server as S
+
+        reads = []
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                reads.append(op)
+                return ST if op == "state.status" else default
+
+        saved = (S.game, S._LEVEL_NUDGE)
+        S.game, S._LEVEL_NUDGE = G(), LV.Nudge()
+        try:
+            out = S._finish("save_game", {}, "save_game: done", time.monotonic(), events=False)
+            self.assertIn("LEVEL UP pending: Gale (2)", out)
+            n = reads.count("state.status")
+            S._finish("save_game", {}, "save_game: done", time.monotonic(), events=False)
+            self.assertEqual(reads.count("state.status"), n)    # fresh: no second read within REFRESH_S
+        finally:
+            S.game, S._LEVEL_NUDGE = saved

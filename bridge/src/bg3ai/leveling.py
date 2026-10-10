@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Callable
 
 NUDGE_S = 300.0
+REFRESH_S = 60.0   # re-read state.status for a new level up at most this often (one ~20 ms read)
+HINT_S = 600.0     # PARTY PLAN hint (missing plan lines, composition gap) at most this often
 PLAN_FILE = "party-build.md"
 PLAN_RE = re.compile(r"^\s*[-*]\s*(?P<name>[^:{}]+?)\s+L(?:evel\s*)?(?P<lvl>\d{1,2})\s*:\s*(?P<json>\{.*\})\s*$",
                      re.I)
@@ -91,19 +93,37 @@ def line(status: dict | None, label: Callable[[str], str], memory: Path | None =
 
 
 class Nudge:
-    """Remembers the last status seen and says 'LEVEL UP pending' on other tool results, at most every NUDGE_S."""
+    """Remembers the last status seen and says 'LEVEL UP pending' on other tool results, at most every NUDGE_S
+    (a level up that was not pending before is said at once). stale() asks the server to re-read state.status
+    every REFRESH_S: XP arrives mid-play (a quest reward, a fight) while the agent reads no status, and in S010
+    Claude's L3 went unnoticed until a screenshot, Gale's and Shadowheart's until the wrap-up look."""
 
-    def __init__(self, every_s: float = NUDGE_S):
+    def __init__(self, every_s: float = NUDGE_S, refresh_s: float = REFRESH_S):
         self.every_s = every_s
+        self.refresh_s = refresh_s
         self.rows: list[dict] = []
+        self.levels: list[dict] = []   # [{name, level, classes}] of the active party (plan_hint)
         self.busy = False
         self.last = 0.0
+        self.seen_at = 0.0
+        self.said: set[tuple] = set()  # (uuid, to) already reminded or shown
+        self.hint_at = 0.0
 
-    def observe(self, status: dict | None) -> None:
+    def stale(self, now: float | None = None) -> bool:
+        now = time.time() if now is None else now
+        return now - self.seen_at >= self.refresh_s
+
+    def observe(self, status: dict | None, now: float | None = None) -> None:
         if not isinstance(status, dict):
             return
+        self.seen_at = time.time() if now is None else now
         self.rows = pending(status)
         self.busy = bool(status.get("in_combat") or status.get("in_dialogue"))
+        lv = [{"name": str(r.get("name") or "?"), "level": r.get("level"), "classes": r.get("classes")}
+              for r in status.get("party") or [] if isinstance(r, dict) and not r.get("dead")
+              and not r.get("off_stage")]
+        if lv:
+            self.levels = lv
 
     def text(self, now: float | None = None, shown: bool = False) -> str:
         """The reminder ('' when nothing is pending, in combat/dialogue, or shown recently). shown=True: the
@@ -111,10 +131,13 @@ class Nudge:
         now = time.time() if now is None else now
         if not self.rows or self.busy:
             return ""
+        keys = {(r.get("uuid"), r["to"]) for r in self.rows}
+        fresh = bool(keys - self.said)
+        self.said |= keys
         if shown:
             self.last = now
             return ""
-        if now - self.last < self.every_s:
+        if not fresh and now - self.last < self.every_s:
             return ""
         self.last = now
         who = ", ".join(f"{r['name']} ({r['to']})" for r in self.rows)
@@ -122,6 +145,87 @@ class Nudge:
 
     def done(self, uuid: str) -> None:
         self.rows = [r for r in self.rows if r.get("uuid") != uuid]
+
+    def plan_hint(self, memory: Path | None, now: float | None = None) -> str:
+        """For a NOTES WINDOW (walking time): the missing party-build.md plan lines for the next two levels and
+        the composition gap, at most every HINT_S ('' when all is written or nothing is known yet)."""
+        now = time.time() if now is None else now
+        if memory is None or not self.levels or self.busy or now - self.hint_at < HINT_S:
+            return ""
+        text = hint_text(memory, self.levels)
+        if text:
+            self.hint_at = now
+        return text
+
+
+# Roles of knowledge/playbooks/party-and-leveling.md by class (a Paladin tanks, a Cleric heals, ...).
+ROLES = {
+    "frontline": {"paladin", "fighter", "barbarian", "monk"},
+    "healer": {"cleric", "druid"},
+    "arcane": {"wizard", "warlock", "sorcerer"},
+    "skills": {"rogue", "bard", "ranger"},
+}
+ROLE_FIX = {
+    "frontline": "frontline tank (Lae'zel, Karlach)",
+    "healer": "healer (Shadowheart, Jaheira, Halsin)",
+    "arcane": "arcane control (Gale, Wyll)",
+    "skills": "skills/locks/traps (Astarion)",
+}
+
+
+def _class_names(classes) -> list[str]:
+    out = []
+    for c in classes or []:
+        name = c.get("name") or c.get("class") if isinstance(c, dict) else c
+        if name:
+            out.append(re.split(r"[\s(\d]", str(name).strip(), maxsplit=1)[0].lower())
+    return out
+
+
+def composition_gaps(levels: list[dict]) -> list[str]:
+    """Roles no active member covers (by main class), in playbook order; [] when classes are unknown."""
+    have = set()
+    known = False
+    for m in levels:
+        names = _class_names(m.get("classes"))
+        known = known or bool(names)
+        for role, cls in ROLES.items():
+            if names and names[0] in cls:
+                have.add(role)
+    return [r for r in ROLES if r not in have] if known else []
+
+
+def hint_text(memory: Path, levels: list[dict]) -> str:
+    try:
+        text = (Path(memory) / PLAN_FILE).read_text()
+    except OSError:
+        text = ""
+    plans = load_plans(text)
+    missing = []
+    for m in levels:
+        lvl = m.get("level")
+        if not isinstance(lvl, (int, float)):
+            continue
+        key = m["name"].strip().lower()
+        for nxt in (int(lvl) + 1, int(lvl) + 2):
+            if nxt > 12:
+                continue
+            if (key, nxt) not in plans and not any(lv == nxt and (n.startswith(key) or key.startswith(n))
+                                                   for n, lv in plans):
+                missing.append(f"{m['name']} L{nxt}")
+    gaps = composition_gaps(levels)
+    has_comp = re.search(r"^##\s*Party composition", text, re.M | re.I) is not None
+    bits = []
+    if missing:
+        bits.append("no plan line yet for " + ", ".join(missing) + ' (write "- Gale L4: {json}" lines under '
+                    "## Level-up plans, from knowledge/builds.md)")
+    if gaps and not has_comp:
+        bits.append("party lacks " + ", ".join(ROLE_FIX[g] for g in gaps)
+                    + ": note who fills it under ## Party composition")
+    if not bits:
+        return ""
+    return "PARTY PLAN (party-build.md, now while walking): " + "; ".join(bits) + \
+        " (knowledge/playbooks/party-and-leveling.md)"
 
 
 # ---- spell picks on the level-up page (mouse clicks) ----

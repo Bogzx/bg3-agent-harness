@@ -954,6 +954,25 @@ local function savingIndicator()
     return panel ~= nil and UI.isVisible(panel)
 end
 
+-- The client's own Save state (~1 s: the game is frozen meanwhile) is when a
+-- save really happens: it starts 0.3-1 s after the name is accepted (live
+-- S015/S017). The driver is done once the game has been through it and is
+-- back; the SavingPanel overlay lingers ~3 s past it (S015: menu_s 4.5 s), and
+-- finishing before it (S017: 0.1 s before) let the agent act into the freeze.
+-- Seen from GameStateChanged (the job may not tick during Save) and polled.
+A.SAVE_STATE_WAIT_MS = 3000  -- no Save state this long after the accept: done anyway
+A.saveState = { started = 0, ended = 0 }
+local function clientState()
+    return tostring(try(Ext.Utils.GetGameState) or "")
+end
+pcall(function()
+    Ext.Events.GameStateChanged:Subscribe(function(e)
+        local from, to = tostring(e.FromState), tostring(e.ToState)
+        if to == "Save" then A.saveState.started = RPC.now_ms() end
+        if from == "Save" then A.saveState.ended = RPC.now_ms() end
+    end)
+end)
+
 local function saveDriver(name, kind)
     A.pendingSave = { name = name, started = RPC.now_ms() }
     local stage, stageSince, keyTries = nil, RPC.now_ms(), 0
@@ -1026,10 +1045,27 @@ local function saveDriver(name, kind)
             return nil
         end
         -- accept/overwrite/close passed and nothing is open: wait for the
-        -- saving indicator to clear. The write itself is confirmed by the
-        -- bridge on disk, in the background (S009: this floor was 600 ms of
-        -- ~1.2 s; 250 ms still lets the game menu come back between pages).
-        if savingIndicator() then enter("saving") return nil end
+        -- game's Save state to come and go (see A.saveState). The write itself
+        -- is confirmed by the bridge on disk, in the background (S009: this
+        -- floor was 600 ms of ~1.2 s; 250 ms still lets the game menu come
+        -- back between pages).
+        if clientState() == "Save" then
+            job.sawSave = true
+            enter("saving")
+            return nil
+        end
+        local accepted = t0 + (ms.accept or ms.overwrite or (now - t0))
+        local saved = job.sawSave or A.saveState.ended >= t0
+        if not saved then
+            if now - accepted < A.SAVE_STATE_WAIT_MS then
+                if savingIndicator() then enter("saving") end
+                return nil
+            end
+            job.noSaveState = true
+            if ms.no_save_state == nil then ms.no_save_state = now - t0 end
+        elseif ms.saved == nil then
+            ms.saved = now - t0
+        end
         if now - stageSince < 250 then return nil end
         -- leave the game menu (the save page returns to it) so the game is back
         if visible("GameMenu") then
@@ -1042,7 +1078,8 @@ local function saveDriver(name, kind)
         end
         A.pendingSave = nil
         ms.done = now - t0
-        return "done", { saved = true, name = name, typed = job.typed, ms = ms }
+        return "done", { saved = true, name = name, typed = job.typed, ms = ms,
+            no_save_state = job.noSaveState }
     end)
 end
 A.saveDriver = saveDriver

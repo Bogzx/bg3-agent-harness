@@ -18,10 +18,18 @@ def owner_of(folder: str) -> str:
     return head.rsplit("-", 1)[0] if "-" in head else head
 
 
+def save_file(d: Path) -> Path:
+    """The .lsv in a save folder: 'Claude-4101260944__S017-pre-gut/S017-pre-gut.lsv' (named after the part
+    after '__', not after the folder); any .lsv there if that one is missing."""
+    want = d / f"{d.name.split('__', 1)[-1]}.lsv"
+    if want.exists():
+        return want
+    return next(iter(sorted(d.glob("*.lsv"))), want)
+
+
 def _mtime(d: Path) -> float:
-    lsv = d / f"{d.name}.lsv"  # the save file itself (the runner uses it too); else the folder
     try:
-        return lsv.stat().st_mtime
+        return save_file(d).stat().st_mtime  # the save file itself; else the folder
     except OSError:
         return d.stat().st_mtime
 

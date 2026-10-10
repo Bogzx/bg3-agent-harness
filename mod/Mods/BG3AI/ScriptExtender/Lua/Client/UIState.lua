@@ -531,7 +531,13 @@ function S.state(args)
     local res = {}
     local gs = tostring(try(Ext.Utils.GetGameState) or "?")
     local wmap = UI.widgetMap()
-    if next(wmap) == nil or (gs ~= "Running" and gs ~= "Paused" and gs ~= "Menu") then
+    -- Our own background save (UIActions saveDriver), < 15 s old: its menus
+    -- and the game's ~1 s Save state show as the game underneath (below).
+    local SA = BG3AI.UIActions
+    local ps = SA and SA.pendingSave
+    local ourSave = ps ~= nil and RPC.now_ms() - (ps.started or 0) < 15000
+    if next(wmap) == nil
+        or (gs ~= "Running" and gs ~= "Paused" and gs ~= "Menu" and not (gs == "Save" and ourSave)) then
         res.screen = (gs == "Menu") and "main_menu" or "loading"
         -- A movie over the loading screen (the New Game intro): see AutoSkip.
         local K = BG3AI.AutoSkip
@@ -568,15 +574,14 @@ function S.state(args)
     res.screen = res.screen or "game"
 
     -- Our own background save drives these menus for ~1 s (UIActions
-    -- saveDriver): report the game underneath, so a running queue's watcher
+    -- saveDriver), then the game saves for ~1 s: report the game underneath, so a running queue's watcher
     -- doesn't take the save name box for a popup and stop the walk.
-    local SA = BG3AI.UIActions
-    local ps = SA and SA.pendingSave
-    if ps and RPC.now_ms() - (ps.started or 0) < 15000 and (res.screen == "save_load" or res.screen == "game_menu"
+    if ourSave and (res.screen == "save_load" or res.screen == "game_menu"
         or res.page == "SaveGamePopup" or res.page == "Dialog_box") then
         res.saving = { page = res.page }
         res.screen, res.page = "game", nil
     end
+    if ourSave and gs == "Save" then res.saving = res.saving or { state = "Save" } end
 
     -- Panels open besides the HUD.
     local panels = {}

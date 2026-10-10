@@ -74,7 +74,9 @@ class SessionTest(unittest.TestCase):
                          "[ 2.0] noesis: UI generation 2 (StartLoading); 0 queued releases dropped, 0 leaked in all\n"
                          f"[ 3.0] debug: client attached ({n} connected)\n"
                          "[ 4.0] debug: client detached (3 remaining)\n"
-                         f"[ 5.0] noesis: UI generation 3 (Init); 0 queued releases dropped, {20 if good else 900} leaked in all\n"
+                         + ("[ 5.0] noesis: UI generation 3 (Init); 0 queued, 40 parked, 1200 released late, "
+                            "20 leaked in all; leaked: Grid 12, TextBlock 8\n" if good else
+                            "[ 5.0] noesis: UI generation 3 (Init); 0 queued releases dropped, 900 leaked in all\n")
                          + ("" if good else "[ 9.0] crash: signal 11 at 0x30\n")).encode())
         return d, run
 
@@ -89,6 +91,7 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(bad, {})
         self.assertIn("check_all", got["runner"][1])
         self.assertIn("max 12, now 3", got["connections"][1])
+        self.assertIn("parked 40, released late 1200; leaked: Grid 12, TextBlock 8", got["ui_leak"][1])
 
     def test_bad_session_flags_each_item(self):
         got = self.verdicts(False)
