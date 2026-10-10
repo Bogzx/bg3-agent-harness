@@ -289,11 +289,24 @@ BG3AI.UI = {
         elseif name == "FinishLevelUp" then
             page.finished = true
             closePage()
+            if page.chain then  -- the game opens the next member's page by itself, in its intro (S029)
+                local spec = page.spec
+                local chain = page.chain
+                openPage(spec)
+                page.chain = chain
+                dc._p.LevelUpStep = "Started"
+                dc._p.LevelUpCharacter = chain
+            end
             return true
         elseif name == "TogglePassive" then
             arg._p.Value = arg._p.Value > 0 and 0.0 or 1.0
             return true
         elseif name == "SelectFirstUnusedClass" then
+            return true
+        elseif name == "CustomEvent" and arg == "CloseWidget" then
+            page.closes = (page.closes or 0) + 1
+            if page.chain then page.chain = nil end
+            closePage()
             return true
         end
         return false, "unknown command " .. name
@@ -568,6 +581,39 @@ j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "C
 dc._p.CanSelectFeat = false
 j = run({ uuid = "claude", plan = {} })
 check(j.status == "done" and j.result.set.abilities == nil, "next level on a reused page: no stale ability points")
+
+-- S029 16:23: four level_ups in a row; after Karlach's finish the game opened Gale's page by itself (in its frozen
+-- "Level Up!" intro), Shadowheart's call read Gale's wizard spells and Gale's spell clicks failed 3x.
+local other = obj("VMCharacter", { Stats = obj("Stats", { Health = obj("H", { Value = 30, Max = 40 }),
+                                                          Level = obj("Lv", { Value = 5, LevelUpAvailable = true }) }) })
+-- 30. another character's page is open: closed, this character's page opened, the level finished
+openPage(PAL)
+dc._p.LevelUpCharacter = other
+local before = opened
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and j.result.finished and opened == before + 1, "another character's page: closed and reopened")
+check(j.result.closed_page and j.result.closed_page:find("another character", 1, true), "closed_page names the case")
+-- 31. this character's page stuck in its intro (Started), not opened by this call: closed and reopened
+openPage(PAL)
+dc._p.LevelUpStep = "Started"
+dc._p.LevelUpCharacter = portrait
+before = opened
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and opened == before + 1 and j.result.closed_page == "a page stuck in its intro",
+      "page stuck in its intro: closed and reopened")
+-- 32. the same character's page open normally (Overview): reused, nothing closed
+openPage(PAL)
+dc._p.LevelUpCharacter = portrait
+before = opened
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and opened == before and j.result.closed_page == nil, "own page in Overview: reused")
+-- 33. after the finish the game opens another member's page in its intro: closed at once, no 4 s wait, no
+--     page_still_open
+openPage(PAL)
+page.chain = other
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and widget == nil and j.result.next_page_closed and not j.result.page_still_open,
+      "chained page after the finish: closed")
 
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

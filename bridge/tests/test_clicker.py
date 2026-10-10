@@ -2,6 +2,7 @@
 'the target is not on screen' x3 on a door 1.5 m away), the door-leaf aims and the off_screen/hover_miss split."""
 
 import unittest
+from unittest import mock
 
 from bg3ai import clicker
 
@@ -48,8 +49,10 @@ class FakeGame:
         self.rc = None                        # where the right-click opened the context menu
         self.cursor = (0, 0)
 
+    want_row = "Lockpick"
+
     def menu_row(self):
-        return self.menu.index("Lockpick") + 1 if "Lockpick" in self.menu else None
+        return self.menu.index(self.want_row) + 1 if self.want_row in self.menu else None
 
     def _row(self):
         """The menu row under the cursor: rows 27 px tall from 30 px below the right-click, 200 px wide."""
@@ -100,7 +103,7 @@ class FakeGame:
         if op == "ui.state":
             return {"screen": self.screen_after if self.clicked else "game"}
         if op == "act.target_state":
-            return {}
+            return dict(getattr(self, "target_state", {}))
         if op == "ui.context_menu":
             menu = getattr(self, "menu", None)
             is_open = menu is not None and self.rc is not None and not getattr(self, "menu_done", False)
@@ -180,6 +183,33 @@ class ClickEntity(unittest.TestCase):
         self.assertEqual(g._row(), 2)  # the left click landed on the Lockpick row
         self.assertEqual(g.pressed, {"item": "Lockpick"})
         self.assertEqual(r.detail.get("menu"), "Lockpick")
+
+    def test_disarm_is_done_only_when_the_trap_is(self):
+        """S031 17:10: a trapped bookcase (not locked) read 'unlocked' = done 3x while its trap stayed armed."""
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), screen_after="game")
+        g.menu, g.want_row = ["Open", "Disarm", "Attack: (Ranged Attack)", "Examine"], "Disarm"
+        g.target_state = {"visible": True, "locked": False, "opened": False, "trap_armed": True}
+        r = clicker.click_entity(g, inp, "shelf", button="R", expect="roll", verify_timeout=0.2, menu="Disarm")
+        self.assertFalse(r.ok, r)
+        self.assertEqual(r.reason, "no_effect")
+        self.assertEqual(r.detail.get("trap"), "still armed")
+        self.assertEqual(g.pressed, {"item": "Disarm"})
+        inp2 = FakeInput()
+        g2 = FakeGame(inp2, ndc=(0.0, 0.2), screen_after="game")
+        g2.menu, g2.want_row = ["Open", "Disarm", "Examine"], "Disarm"
+        g2.target_state = {"visible": True, "locked": False, "trap_armed": False}
+        r = clicker.click_entity(g2, inp2, "shelf", button="R", expect="roll", verify_timeout=0.2, menu="Disarm")
+        self.assertTrue(r.ok, r)
+        self.assertEqual(r.screen, "disarmed")
+        # a lockpick still counts an opened lock
+        inp3 = FakeInput()
+        g3 = FakeGame(inp3, ndc=(0.0, 0.2), screen_after="game")
+        g3.menu = ["Open (locked) (Claude)", "Lockpick", "Examine"]
+        g3.target_state = {"visible": True, "locked": False}
+        r = clicker.click_entity(g3, inp3, "door", button="R", expect="roll", verify_timeout=0.2, menu="Lockpick")
+        self.assertTrue(r.ok, r)
+        self.assertEqual(r.screen, "unlocked")
 
     def test_right_click_menu_without_the_entry(self):
         inp = FakeInput()
@@ -293,6 +323,16 @@ class ToolCheck(unittest.TestCase):
         self.assertEqual(g.jobs, ["act.lockpick"])  # the holder picks it instead
         self.assertEqual(r.status, "done")
         self.assertEqual(r.result.get("tool_holder"), "U2")
+
+    def test_disarm_still_armed_says_so(self):
+        g = self.Inv([{"name": "Trap Disarm Toolkit", "owner": "U1"}])
+        g.run_job = lambda op, args, wait_s=40.0: clicker.JobResult(
+            "done", {"needs_click": "T", "expect": "roll", "button": "R", "menu": "Disarm"})
+        with mock.patch.object(clicker, "finish_needs_click", lambda game, inp, res: {
+                "expect": "roll", "click": {"ok": False, "reason": "no_effect", "trap": "still armed"}}):
+            r = clicker.run_click_action(g, object(), "act.disarm", {"char": "U1", "target": "T"})
+        self.assertEqual(r.status, "failed")
+        self.assertIn("the trap is still armed after Disarm", r.error)
 
     def test_actor_has_tools_runs_the_job(self):
         g = self.Inv([{"name": "Thieves' Tools", "owner": "U1", "count": 2}])

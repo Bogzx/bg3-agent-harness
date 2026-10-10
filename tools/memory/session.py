@@ -478,13 +478,20 @@ def stop_decision(mem: Path, now: float | None = None) -> dict | None:
         st["keep_playing_blocks"] = keep + 1
         M.save_state(mem, st)
         left = max(1, int((deadline - now) // 60))
+        # S030: 7 early stops from 10 min left, each with a 1.3-2.1k-char session summary (6-9 s) and, after the
+        # first, another save_game Sxxx-end + HANDOFF.md rewrite. A text-only message is what ends the turn, so
+        # the reason asks for a game call next and says the early wrap-up need not be redone.
+        again = (" You already wrapped up early: don't save Sxxx-end or rewrite HANDOFF.md again until the "
+                 "⏱ line says WRAP UP." if handoff_ready or keep else "")
         return {"decision": "block",
-                "reason": (f"Keep playing: {left} minutes left in this session. Continue your current plan "
+                "reason": (f"Keep playing: {left} minutes left in this session. Your next message is a game "
+                           f"tool call, not a summary (nobody reads it; a text-only message ends your turn). "
+                           f"Continue your current plan "
                            f"(get_status if you lost track). Stuck is not a reason to stop: follow "
                            f"knowledge/playbooks/stuck.md (cancel_queue, reload the last save, move another party "
                            f"member, another objective). A HANDOFF.md written early is fine; rewrite it at "
                            f"wrap-up. Only stop after the session-wrapup playbook when the SESSION CLOCK "
-                           f"reminder appears (the ⏱ line in tool results says WRAP UP).")}
+                           f"reminder appears (the ⏱ line in tool results says WRAP UP).{again}")}
     blocks = int(st.get("stop_blocks") or 0)
     if not handoff_ready and os.environ.get("BG3AI_FIX_NOTES"):
         # No game in the fix-notes pass (S027 was killed before wrap-up): only the memory part of the wrap-up.

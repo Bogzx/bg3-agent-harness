@@ -339,6 +339,12 @@ end
 function G.last_seen_hint(target)
     local V = BG3AI.Visibility
     if type(V) ~= "table" or type(V.lastSeen) ~= "function" then return "" end
+    local okv, gone, mv = pcall(V.vanished or function() return false end, G.guid(target))
+    if okv and gone and type(mv) == "table" and type(mv.pos) == "table" then
+        return string.format("; it turned invisible %ds ago (last seen @(%.1f,%.1f,%.1f)): reveal it (See Invisibility, "
+            .. "Faerie Fire, or an area attack on that spot) or wait for it to show itself when it attacks", mv.ago_s or 0,
+            mv.pos[1], mv.pos[2], mv.pos[3])
+    end
     local ok, m = pcall(V.lastSeen, G.guid(target))
     if not ok or type(m) ~= "table" or type(m.pos) ~= "table" then return "" end
     return string.format("; last seen @(%.1f,%.1f,%.1f) %ds ago: travel_to that spot first",
@@ -903,7 +909,46 @@ function G.known_spell(char, spell)
         end)
         if ok and cooling then G.refuse("that action is on cooldown") end
     end
+    local key = G.item_cd_key(char, spell)
+    if key and G.item_uses()[key] then
+        G.refuse("that action is used up until the next " .. (G.item_uses()[key] == "short" and "short or long rest"
+            or "long rest") .. " (its item allows it once per rest)")
+    end
     return found
+end
+
+-- Item spells with a once-per-rest-per-item cooldown (Spellcrux Amulet's Spell Slot Restoration): Osi.UseSpell
+-- casts them without their item, so the engine records no cooldown. S030: Gale restored spell slots 3 times in a
+-- row for free (the agent flagged it as a game bug and stopped). The guard keeps the ledger itself, in
+-- PersistentVars so it travels with the save; a rest clears it (Events.lua).
+function G.item_cd_key(char, spell)
+    local st = type(spell) == "string" and Ext.Stats.Get(spell)
+    local cd = st and tostring(st.Cooldown or "") or ""
+    if not cd:find("Rest") or not cd:find("PerItem$") then return nil end
+    local root = tostring(st.SpellContainerID or "")
+    if root == "" then root = spell end
+    local u = G.guid(char)
+    return u and (u .. ":" .. root) or nil, cd:find("ShortRest") and "short" or "long"
+end
+
+function G.item_uses()
+    PersistentVars = PersistentVars or {}
+    PersistentVars.item_uses = PersistentVars.item_uses or {}
+    return PersistentVars.item_uses
+end
+
+function G.item_used(char, spell)
+    local key, kind = G.item_cd_key(char, spell)
+    if key then G.item_uses()[key] = kind end
+end
+
+-- kind "long": every entry; "short": the short-rest ones (of char, when given)
+function G.item_rest(kind, char)
+    local uses = G.item_uses()
+    local u = char and G.guid(char)
+    for k, v in pairs(uses) do
+        if kind == "long" or (v == "short" and (not u or k:sub(1, #u) == u)) then uses[k] = nil end
+    end
 end
 
 -- Range (m) of a weapon slot's equipped weapon from its stats (WeaponRange is

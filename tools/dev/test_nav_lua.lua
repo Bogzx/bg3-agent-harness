@@ -802,5 +802,55 @@ test("nav.reach_toward avoid=least direct: nothing clear gets on -> the route ac
     assert(r.route_left_m and r.route_left_m > 200, "route left")
 end)
 
+test("layout: walls and floor around the character, N up (S030 Soft-Step maze)", function()
+    reset()
+    wall = function(x, z) return x > 1 and x < 2 end -- a N-S wall 1.5 m E of us
+    local r = N.layout(P1, 6, 1.5)
+    eq(#r.rows, 2 * r.n + 1, "rows")
+    local mid = r.rows[r.n + 1]
+    eq(mid:sub(r.n + 1, r.n + 1), ".", "our cell is floor")
+    eq(mid:sub(r.n + 2, r.n + 2), "#", "the wall E of us")
+    eq(r.mosaic, nil, "no trial room here")
+end)
+
+test("layout: the Faith-Leap walkway layer is never floor; the mosaic shows it near the trial", function()
+    reset()
+    local savedH, savedE, savedHelper = Ext.Level.GetHeightsAt, Ext.Entity, BG3AI.Visibility.helperItem
+    -- chasm W of x=-3: the hidden walkway at -2.7 (helpers' top), the chasm bottom at -15; a statue platform at
+    -- -1.9 around x=-9 (visible, ~1 m above the walkway layer)
+    Ext.Level.GetHeightsAt = function(x, z)
+        if x < -3 then
+            if x < -8 and x > -10 and z > 1 and z < 3 then return { -1.9, -15 } end
+            return { -2.7, -15 }
+        end
+        return { 0.0 }
+    end
+    local cubes = {}
+    for i = 0, 5 do cubes["C" .. i] = { -4 - 2 * i, -2.9, 0 }; cubes["D" .. i] = { -4 - 2 * i, -2.9, 4 } end
+    Ext.Entity = { GetAllEntitiesWithComponent = function()
+        local out = {}
+        for u in pairs(cubes) do out[#out + 1] = { Uuid = { EntityUuid = u } } end
+        return out
+    end }
+    BG3AI.Visibility.helperItem = function(u) return cubes[u] ~= nil end
+    local savedPos = BG3AI.Visibility.pos
+    BG3AI.Visibility.pos = function(e) local p = cubes[e.uuid or e.Uuid and e.Uuid.EntityUuid] or world[e.uuid]; return p and { p[1], p[2], p[3] } end
+    N.helperCache = {}
+    local ok, err = pcall(function()
+        local r = N.layout(P1, 12, 1.5)
+        local mid = r.rows[r.n + 1]
+        eq(mid:sub(r.n - 2, r.n - 2), " ", "x=-4.5 on the walkway layer: no visible floor")
+        mid = r.rows[r.n - 0]  -- z = +1.5
+        eq(mid:sub(r.n - 5, r.n - 5), "v", "x=-9 the statue platform: a visible lower floor [" .. mid .. "]")
+        assert(r.mosaic and r.mosaic.rows, "the mosaic near the trial")
+        local all = table.concat(r.mosaic.rows, "\n")
+        assert(all:find("#####", 1, true), "the safe line drawn: " .. all)
+        assert(all:find("O", 1, true), "the statue platform drawn: " .. all)
+    end)
+    Ext.Level.GetHeightsAt, Ext.Entity, BG3AI.Visibility.helperItem, BG3AI.Visibility.pos = savedH, savedE, savedHelper, savedPos
+    N.helperCache = {}
+    if not ok then error(err, 0) end
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

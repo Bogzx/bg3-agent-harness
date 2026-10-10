@@ -298,7 +298,8 @@ ok(j.status == "failed" and j.result.needs_click == "yes", "the retry's box goes
 
 -- nothing at all opens: the failure names the step and what's on screen
 clock = clock + 60000
-widgets = { HotBar = { name = "HotBar", visible = true, texts = {}, buttons = {} } }
+widgets = { HotBar = { name = "HotBar", visible = true, texts = {}, buttons = {} },
+            NotificationWidget = { name = "NotificationWidget", visible = true, texts = {}, buttons = {} } }
 BG3AI.UI.command = (function(orig)
     return function(dc, name, param, dry)
         if name == "CampTravel" and not dry then commands[#commands + 1] = name return true end
@@ -311,8 +312,31 @@ j = run(r.job, 12000)
 local e = tostring(j.error)
 ok(j.status == "failed" and e:find("rest screen didn't open", 1, true), "no screen -> failed: " .. e)
 ok(e:find("CampTravel (retry)", 1, true) and e:find("pressed 2x", 1, true), "message says the step and presses: " .. e)
-ok(e:find("widgets=[HotBar]", 1, true), "message says what's on screen: " .. e)
+ok(e:find("widgets=[NotificationWidget] (+1 HUD layers)", 1, true), "message names the non-HUD widgets: " .. e)
 ok(#commands == nCamp + 2 and j.result.step == "open", "pressed twice, step=open")
+
+-- repress=false (the bridge decides, S030): one press, then fail after 4 s; a box that came and went is named
+clock = clock + 60000
+nCamp = #commands
+r = ops["ui.long_rest"]({ repress = false })
+j = jobs[r.job]
+for _ = 1, 10 do clock = clock + 50 j.on_tick(j) end
+widgets.Flash_box = { name = "Flash_box", visible = true, texts = {}, buttons = {} }
+for _ = 1, 10 do clock = clock + 50 j.on_tick(j) end
+widgets.Flash_box = nil
+j = run(r.job, 12000)
+e = tostring(j.error)
+ok(j.status == "failed" and #commands == nCamp + 1, "repress=false: pressed once, then failed: " .. e)
+ok(e:find("came and went: Flash_box", 1, true), "a widget that came and went is named: " .. e)
+ok(j.result.seen_widgets and j.result.seen_widgets[1] == "Flash_box", "seen_widgets in the result")
+
+-- no_press (the game's late yes): waits for the screen without pressing CampTravel
+clock = clock + 60000
+nCamp = #commands
+r = ops["ui.long_rest"]({ repress = false, no_press = true })
+j = run(r.job, 12000)
+ok(#commands == nCamp and tostring(j.error):find("late yes", 1, true), "no_press: no CampTravel press: "
+    .. tostring(j.error))
 
 -- a camp scene starts instead of the rest screen after the question
 clock = clock + 60000

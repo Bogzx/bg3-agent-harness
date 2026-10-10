@@ -16,7 +16,7 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from mcp.server.mcpserver import Image, MCPServer
 
@@ -377,7 +377,7 @@ NEXT_WALK = ("NEXT: queue_actions what to do on arrival, then look/plan/notes wh
 
 # Consecutive wait_for(<event kinds>) answers "nothing is running", with only these reads in between.
 _noop_waits = {"n": 0}
-_READ_TOOLS = {"look", "look_at", "get_status", "get_nearby", "get_frontier", "get_map", "session_clock", "wiki_page",
+_READ_TOOLS = {"look", "look_at", "get_status", "get_nearby", "get_frontier", "get_layout", "get_map", "session_clock", "wiki_page",
                "wiki_search", "get_party", "list_saves", "get_inventory", "screenshot", "zoom", "route", "get_journal",
                "get_combat_state", "get_dialogue", "ability_preview", "get_level_up_options", "recall"}
 
@@ -1453,6 +1453,20 @@ def get_frontier() -> str:
 
 @mcp.tool()
 @_guard
+def get_layout(radius: float = 12.0, who: str | None = None) -> str:
+    """The walls, openings and floor around you as a text map (what the overhead camera shows), N up, you = @: mazes, rooms, ledges, chasms. Marks the party (1-3), characters (E hostile, n other), doors (D), ladders (H), levers/buttons (L), containers (C). In a trial room with a floor mosaic it also prints the mosaic's picture. radius 4-20 m."""
+    t0 = time.monotonic()
+    char = _uuid(who) if who else _active()
+    lay = _read1("nav.layout", {"char": char, "radius": radius})
+    st = game.try_rpc("state.status") or {}
+    near = game.try_rpc("state.nearby", {"radius": min(max(radius, 4.0), 20.0) * 1.5}) or {}
+    _remember_names(near)
+    text = render.render_layout(lay if isinstance(lay, dict) else {}, H, near, st.get("party") or [], char)
+    return _finish("get_layout", {"radius": radius}, text, t0)
+
+
+@mcp.tool()
+@_guard
 def route(objective: str = "", target: str = "", x: float | None = None, y: float | None = None,
           z: float | None = None, who: str | None = None, connectors: bool = False, go: bool = False) -> str:
     """The way to a goal, read from the engine instead of a screenshot: objective (o1, or a map marker m1), a visible target id, or x,y,z.
@@ -1986,6 +2000,48 @@ def _pocket_handle(it: dict) -> str:
     return H.get(u, it.get("name")) if isinstance(u, str) and u else ""
 
 
+def _carried_scroll(char: str, ability: str) -> dict | None:
+    """A scroll (any carried item) named like `ability` ('Scroll of Invisibility' or just 'Invisibility'): the
+    character's own first, else a party member's. S030 16:34: use_ability(Shadowheart, "Scroll of Invisibility")
+    → "no action called", then manage_inventory use left the game waiting for a target (screenshot + hand click)."""
+    a = re.sub(r"\s+", " ", str(ability or "").strip().lower())
+    if not a:
+        return None
+    want = {a, a if a.startswith("scroll of ") else f"scroll of {a}"}
+    items = [it for it in ((game.try_rpc("state.inventory", {}) or {}).get("items") or [])
+             if isinstance(it, dict) and str(it.get("name") or "").strip().lower() in want and it.get("uuid")]
+    if not items:
+        return None
+    return next((it for it in items if it.get("owner") == char), items[0])
+
+
+def _use_scroll(char: str, it: dict, target: str) -> str:
+    """Read a scroll as a player does: use it from the bags (the game then waits for a target), then click the
+    target (default: the reader). A scroll on another member's bags is named, not taken."""
+    name = str(it.get("name"))
+    if it.get("owner") and it.get("owner") != char:
+        raise GameError(f"{_label(char)} has no action called that; {_label(it['owner'])} carries {name} "
+                        f"({H.get(it['uuid'])}): use_ability(who=\"{_name_of(it['owner'])}\", ability=\"{name}\", "
+                        f"target=...) or give it over first")
+    out = _act("use_ability", "act.interact", {"char": char, "target": it["uuid"]})
+    if _batch.get("last") != "done" or "drunk" in out.partition("\n")[0]:
+        return out  # a potion (in combat: for its bonus action) waits for no target
+    inp = _inp()
+    if inp is None:
+        return out + "\nthe game waits for the scroll's target: no input shim to click it (click_on <id>)"
+    from .clicker import click_entity
+    tgt = _uuid(target) if target else char
+    time.sleep(0.3)  # the targeting cursor comes up a few frames after the use
+    cr = click_entity(game, inp, tgt, "L")
+    head, _, rest = out.partition("\n")
+    if cr.ok:
+        head += f" ({name} read, cast on {_label(tgt)} by a click)"
+    else:
+        head += (f"; the game waits for {name}'s target but the click on {_label(tgt)} failed ({cr.reason}): "
+                 f"click_on <id>, or press_key ESCAPE to put it away")
+    return head + ("\n" + rest if rest else "")
+
+
 @mcp.tool()
 @_guard
 def click_on(target: str, button: str = "left") -> str:
@@ -2272,7 +2328,37 @@ def camp(action: str = "go") -> str:
         if "cannot travel right now" in out:
             out += _travel_block_text(_travel_block())
         return out
-    return _act("camp", "act.go_to_camp", {}, wait_s=60)
+    out = _act("camp", "act.go_to_camp", {}, wait_s=60)
+    if isinstance(out, str) and "cannot travel right now" in out:
+        out += _camp_block_text(_travel_block())
+    return out
+
+
+_CAMP_BLOCKS = {  # the HUD's TravelError (camp button greyed) → why, and the way out
+    "Combat": "a fight is on: finish it first (combat_turn), then camp()",
+    "Dialog": "a conversation is open: finish it first (choose_dialogue)",
+    "Condition": "a party member's condition blocks it (asleep after a rest, downed, ...): wait a few seconds, "
+                 "heal/raise the downed member, then camp() again",
+    "DangerZone": "this is a danger zone (enemies or a hostile area around): walk away from it, then camp() again",
+    "InDanger": "the party is in danger (hostiles close or aware of you): walk away, then camp() again",
+}
+
+
+def _camp_block_text(b: dict) -> str:
+    """camp() go failed: the game's own reason (what the greyed camp button says) and the way out. S030 16:46:
+    'cannot travel right now' inside the Gauntlet of Shar with no reason, and the agent gave up on resting."""
+    if b.get("dialogue"):
+        return " " + _CAMP_BLOCKS["Dialog"] + "."
+    err = b.get("error")
+    if err in _CAMP_BLOCKS:
+        return f" The game blocks camp travel ({err}): {_CAMP_BLOCKS[err]}."
+    if b.get("night_camp"):
+        return " It is night at camp: a long rest's night hasn't ended (long_rest goes to sleep and ends it)."
+    head = f" The game blocks camp travel here ({err})" if err else \
+        " The game gave no reason (the camp button isn't greyed)"
+    return (head + ": this area does not let the party go to camp (a dungeon or story area). Ways out: walk back "
+            "out the way you came (to where camp() last worked) or fast_travel to a waypoint, then camp(); here "
+            "short_rest, potions and healing spells are what's left.")
 
 
 SWAP_DIALOGUE_S = 25.0  # swap_party: the longest it drives the companion's dialogue
@@ -2569,9 +2655,25 @@ def react(use: bool, which: str = "") -> str:
 def use_ability(ability: str, target: str = "", x: float | None = None, y: float | None = None,
                 z: float | None = None, who: str | None = None, upcast: int = 0, targets: str = "",
                 wait: bool = True) -> str:
-    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: comma list for multi-target spells. Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target)."""
+    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: comma list for multi-target spells. Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): out of combat it is read and its target clicked (default: who)."""
     char = _who(who)
-    spell, note = _own_attack(char, _ability_id(char, ability))
+    try:
+        aid = _ability_id(char, ability)
+    except GameError as e:
+        if "has no action called" not in str(e):
+            raise
+        word = str(ability).strip().lower()
+        if word in ("disarm", "disarm trap") and target:
+            # S031 17:10: use_ability("Disarm") after a disarm the agent doubted → "no action called"; it is the
+            # disarm tool (the right-click menu entry), not a hotbar action.
+            return disarm(target, who)
+        if word in ("lockpick", "pick lock", "lock pick") and target:
+            return lockpick(target, who)
+        scroll = _carried_scroll(char, ability)
+        if scroll is None:
+            raise
+        return _use_scroll(char, scroll, target)
+    spell, note = _own_attack(char, aid)
     tail = ""
     args: dict[str, Any] = {"char": char, "spell": spell}
     if target:
@@ -2852,8 +2954,8 @@ def manage_inventory(op: str, item: str, who: str | None = None, to: str | None 
     if o == "unequip":
         return _act("manage_inventory", "act.unequip", {"char": _who(who), "item": _uuid(item)})
     if o == "use":
-        # Osiris Use on a carried item; out of combat only (it would skip the
-        # bonus-action cost: in combat use the item's action from get_actions).
+        # Osiris Use on a carried item. In combat only a potion, on the drinker's turn: the mod checks and
+        # charges the item's own cost (a bonus action), as the hotbar would.
         return _act("manage_inventory", "act.interact", {"char": _who(who), "target": _uuid(item)})
     if o == "give":
         targs = {"item": _uuid(item), "to": _uuid(to) if to else None}
@@ -2983,11 +3085,99 @@ def long_rest(confirm: bool = True, partial: bool = False) -> str:
     args: dict[str, Any] = {} if confirm else {"confirm": False}
     if partial:
         args["partial"] = True
+    refused = _rest_blocked()
+    if refused:
+        return refused
+    # No blind re-press after 4 s (S030: requested → gathered → requested, then the engine said no ~10 s after the
+    # first press: the re-press fell inside its answer window). The server's rest flow says whether the press
+    # reached the game; only a press that didn't is repeated.
+    args["repress"] = False
+    t0 = time.monotonic()
+
+    def since_ms() -> int:
+        return int((time.monotonic() - t0) * 1000) + 1500
+
     out = _box_act("long_rest", "ui.long_rest", args, wait_s=90)
     ALERTS.rested(_batch.get("result"))
     if "rest screen didn't open" in out:
-        out += "\n" + _rest_flow_hint()
+        flow = _rest_flow_answer(since=since_ms)
+        if isinstance(flow, dict) and not flow.get("steps"):
+            # the press never reached the story (S018: a press swallowed by a closing screen): press once more
+            out = _box_act("long_rest", "ui.long_rest", args, wait_s=90)
+            ALERTS.rested(_batch.get("result"))
+            if "rest screen didn't open" not in out:
+                return out
+            flow = _rest_flow_answer(since=since_ms)
+        if "end_day_ok" in (flow or {}).get("steps", []):
+            # the game said yes after the job's 4 s window: the rest screen is coming, carry on in this call
+            # without pressing again (a press at night is the story's "leave night mode")
+            out = _box_act("long_rest", "ui.long_rest", {**args, "no_press": True}, wait_s=90)
+            ALERTS.rested(_batch.get("result"))
+            if "rest screen didn't open" not in out:
+                return out
+            flow = game.try_rpc("camp.rest_flow", {"since_ms": since_ms()})
+        out += "\n" + _rest_flow_hint(flow)
     return out
+
+
+def _rest_flow_answer(wait_s: float = 8.0, since: Callable[[], int] = lambda: 20000) -> dict | None:
+    """S030: the engine answered the End-the-Day request ~10 s after the press, after ui.long_rest gave up.
+    When the party gathered and no answer came yet, wait for it (instead of a second long_rest call)."""
+    t_end = time.monotonic() + wait_s
+    while True:
+        flow = game.try_rpc("camp.rest_flow", {"since_ms": since()})
+        steps = (flow.get("steps") or []) if isinstance(flow, dict) else []
+        last_gather = max((i for i, x in enumerate(steps) if x == "gathered"), default=-1)
+        answered = last_gather < 0 or any(_rest_step(x) not in _REST_FLOW_PENDING for x in steps[last_gather:])
+        if answered or time.monotonic() >= t_end:
+            return flow if isinstance(flow, dict) else None
+        time.sleep(0.5)
+
+
+# The engine's long-rest validation per party member (CanDoRest.LongRestErrorFlags, Events.lua camp.can_rest):
+# the HUD greys the Long Rest button and its tooltip says why, so a player sees these reasons. S028-S030: 10
+# "rest screen didn't open" failures, 8 s each, with screenshots, HUD clicks and a save reload to work around.
+_REST_FLAG_TEXT = {
+    "Combat": "in combat",
+    "Dialog": "in a conversation (finish it first)",
+    "FTB": "turn-based mode is on (set_party(action=\"turn_based_off\"))",
+    "Script": "a story event blocks resting right now",
+    "GlobalDisabled": "resting is disabled here",
+    "DropInCCActive": "a character editor is open",
+    "DownedOrDead": "downed or dead",
+    "NotEnoughResources": "not enough camp supplies",
+    "Location": "not at a place where you can rest",
+}
+# Refused before pressing anything (sure blockers); the others only explain a failure.
+_REST_HARD_FLAGS = ("Combat", "Dialog", "FTB", "Script", "GlobalDisabled", "DropInCCActive")
+
+
+def _rest_reasons(can: Any, flags: tuple[str, ...] | None = None) -> str:
+    """'Karlach: turn-based mode is on (...); Gale: in combat' from camp.can_rest, limited to `flags`."""
+    if not isinstance(can, dict):
+        return ""
+    parts = []
+    for row in can.get("blocked") or []:
+        fl = [str(f) for f in row.get("flags") or [] if flags is None or str(f) in flags]
+        if fl:
+            parts.append(f"{row.get('name') or '?'}: " + ", ".join(_REST_FLAG_TEXT.get(f, f) for f in fl))
+    if (can.get("global_disabled") or 0) > 0 and (flags is None or "GlobalDisabled" in flags):
+        parts.append("resting is disabled for now (story)")
+    return "; ".join(parts)
+
+
+def _rest_blocked() -> str:
+    can = game.try_rpc("camp.can_rest")
+    METRICS.write({"type": "can_rest", "t": round(time.time(), 3), "can": can})
+    if not _rest_reasons(can, _REST_HARD_FLAGS):
+        return ""
+    time.sleep(0.5)  # a flag set for a moment (a teleport into camp, a closing conversation) must not refuse a rest
+    can = game.try_rpc("camp.can_rest")
+    why = _rest_reasons(can, _REST_HARD_FLAGS)
+    if not why:
+        return ""
+    METRICS.write({"type": "can_rest", "t": round(time.time(), 3), "can": can, "refused": True})
+    return f"long_rest: FAILED — the game doesn't allow a long rest now (the Long Rest button is greyed out): {why}"
 
 
 # S028 15:52-15:59 x5 + S029 16:04 x2: "rest screen didn't open" with nothing on screen, no box; screenshots and HUD
@@ -2999,22 +3189,42 @@ _REST_FLOW_TEXT = {
                  "or loading a save clears it; Larian bug GUS-150045)",
     "gather_failed": "the game refused to gather the party at camp (someone can't come: busy, in a conversation or "
                      "far away)",
-    "gathered": "the party gathered but the game didn't go on to end the day",
-    "end_day_failed": "the game refused to end the day (supplies or a ready check)",
+    "gathered": "the party gathered but the game didn't go on to end the day (S030: it answered no ~10 s later)",
+    "end_day_failed": "the game refused to end the day after gathering the party (its own rest check; reloading a "
+                      "save didn't help in S030)",
     "end_day_ok": "the game started the night: the rest screen should follow (call long_rest again)",
     "rest_start_failed": "the game could not start the rest",
     "rest_cancelled": "the rest was cancelled",
+    "rest_denied": "the game denied the rest",
+    "ready_failed": "the game's ready check (the \"End the day?\" question) failed",
 }
+# Steps that are not the game's final answer to the request (a ready check runs between gathered and the answer).
+_REST_FLOW_PENDING = ("requested", "gathered", "ready_ok", "rest_waiting")
 
 
-def _rest_flow_hint() -> str:
-    flow = game.try_rpc("camp.rest_flow", {"since_ms": 20000})
+def _rest_step(step: str) -> str:
+    return step.split(":", 1)[0]
+
+
+def _rest_flow_hint(flow: Any = None) -> str:
+    if flow is None:
+        flow = game.try_rpc("camp.rest_flow", {"since_ms": 20000})
     if not isinstance(flow, dict):
         return ""
     steps = [str(x) for x in flow.get("steps") or []]
-    METRICS.write({"type": "rest_flow", "t": round(time.time(), 3), "steps": steps, "story": flow.get("story")})
-    last = steps[-1] if steps else ""
-    return f"REST FLOW {' → '.join(steps) or 'nothing'}: {_REST_FLOW_TEXT.get(last, last)}"
+    METRICS.write({"type": "rest_flow", "t": round(time.time(), 3), "steps": steps, "step_ms": flow.get("step_ms"),
+                   "story": flow.get("story"), "can_rest": flow.get("can_rest")})
+    # The furthest step says most: a re-press after "gathered" is swallowed by the story (DB_GoingToCamp), so the
+    # last step alone misled S030 into a save reload ("requested: a stuck camp state ... loading a save clears it").
+    answers = [x for x in steps if _rest_step(x) not in _REST_FLOW_PENDING]
+    last = answers[-1] if answers else "gathered" if "gathered" in steps else steps[-1] if steps else ""
+    key = _rest_step(last)
+    text = _REST_FLOW_TEXT.get(key, key) + (f" ({last.split(':', 1)[1]})" if ":" in last else "")
+    if key == "gathered" and not any(_rest_step(x) in ("ready_ok", "ready_failed") for x in steps):
+        text += "; no ready-check result either (the \"End the day?\" question never showed or was never answered)"
+    out = f"REST FLOW {' → '.join(steps) or 'nothing'}: {text}"
+    why = _rest_reasons(flow.get("can_rest"))
+    return out + (f"\nthe game's rest check: {why}" if why else "")
 
 
 @mcp.tool()
@@ -4969,6 +5179,7 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     No line of sight to a ranged target: it first steps (within the movement left and the ability's range) to the nearest spot that sees it, then casts again. A downed character has no turn to play (it passes by itself); another of your characters (a summon too) acting first makes a sent-ahead plan return at once.
     Before each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore="" adds new hostiles in view).
     A slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off). A melee move that ends out of reach says "melee is out of reach this turn" and skips the melee attacks on that target (ranged / Dash next). The move's target dead or out of sight (Shadow Blend, killed first): the plan is re-aimed at the nearest visible hostile, and walks on if movement is left (retarget:false keeps it). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).
+    An empty plan {} just ends that character's turn (e.g. it already acted through single tools).
     end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn).
     Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), then plays it."""
     chain = _turn_chain(plan)

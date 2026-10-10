@@ -558,6 +558,9 @@ function S.actions(uuid)
         end
         local ok, why = canPay(pay, res)
         if cds[id] then ok, why = false, "cooldown (" .. cds[id] .. ")" end
+        local Gi = BG3AI.Guard
+        local ik = Gi and Gi.item_cd_key and Gi.item_cd_key(uuid, id)
+        if ik and Gi.item_uses()[ik] then ok, why = false, "used until the next rest (once per rest, its item)" end
         a.available = ok
         if not ok then a.reason = why end
         out[#out + 1] = a

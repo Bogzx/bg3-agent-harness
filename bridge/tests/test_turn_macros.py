@@ -272,6 +272,12 @@ class CombatTurn(Base):
     def plan(self, **kw) -> str:
         return json.dumps(kw)
 
+    def test_empty_plan_just_ends_the_turn(self):
+        # S031 17:07: {"plan":{}} for a member that had acted through do_actions stopped the chain
+        out = server.combat_turn(self.plan())
+        self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], ["act.end_turn"])
+        self.assertIn("end_turn: done", out)
+
     def test_whole_turn_in_one_call(self):
         out = server.combat_turn(self.plan(
             move=self.gob, action={"ability": "Target_MainHandAttack", "target": self.gob},
@@ -834,7 +840,7 @@ class CombatTurn(Base):
 
     # S018/S025/S029: Bless on 3 targets was refused ("more than two targets"): the action went to the fallback.
     def test_three_targets_cast_on_the_first_two(self):
-        out = server.combat_turn(self.plan(action={"ability": "Target_Bless", "targets": f"{self.gob},{self.imp},Claude"}))
+        out = server.combat_turn(self.plan(action={"ability": "Target_Bless", "targets": f"{self.gob},{self.imp},{server.H.get(P1)}"}))
         casts = [a for _, a in self.g.ops("act.cast")]
         self.assertEqual(casts[0]["targets"], [GOB, IMP])
         self.assertIn("targets: cast on the first 2 only", out)
@@ -860,7 +866,7 @@ class CombatTurn(Base):
         self.assertEqual(self.casts(), ["Shout_SecondWind", "Target_MainHandAttack", "Target_MainHandAttack"])
 
     def test_plan_errors(self):
-        for bad, msg in (({"actoin": "x"}, "unknown plan key"), ({}, "does nothing"),
+        for bad, msg in (({"actoin": "x"}, "unknown plan key"),
                          ({"action": {"tool": "end_turn"}}, "can't be a turn step"),
                          ({"action": {"tool": "save_game"}}, "can't be batched"),
                          ({"action": "Shout_Dodge", "on_reaction": "maybe"}, "on_reaction"),

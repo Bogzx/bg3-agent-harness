@@ -170,8 +170,8 @@ def parse_plan(raw: Any, allowed: set) -> TurnPlan:
         if o not in ("use", "skip"):
             raise PlanError('on_reaction: "use", "skip" or "stop" (default)')
         plan.on_reaction = o
-    if not (plan.move or any(plan.slots.values())):
-        raise PlanError("the plan does nothing: give move, action, bonus or extra")
+    # An empty plan ({}) passes: it only ends the turn. S031 17:07: Claude had acted through do_actions and the
+    # chain's {"who":"Claude","plan":{}} stopped everyone with "the plan does nothing" (an end_turn + re-send).
     return plan
 
 

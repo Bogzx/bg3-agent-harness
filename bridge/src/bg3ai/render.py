@@ -1044,3 +1044,68 @@ def render_hazards(hazards: Any, limit: int = 4) -> list[str]:
     if len(hazards) > limit:
         out.append(f"(+{len(hazards) - limit} more hazard patches)")
     return out
+
+
+# get_layout: the text grid around a character (Navigation.lua N.layout) with what the party sees on it.
+LAYOUT_KEY = ("# wall  . floor  ^ higher floor  v lower floor  : darkness  ~ harmful surface  (blank) no floor you can "
+              "see (drop, chasm)")
+_LAYOUT_MAX_LEGEND = 12
+
+
+def _layout_mark(o: dict, kind: str) -> str | None:
+    name = str(o.get("name") or "").lower()
+    if kind == "char":
+        if o.get("dead"):
+            return None
+        return "E" if o.get("relation") == "hostile" or o.get("hostile") else "n"
+    k = o.get("kind")
+    if k == "door":
+        return "D"
+    if k == "ladder":
+        return "H"
+    if "lever" in name or "button" in name:
+        return "L"
+    if k == "container":
+        return "C"
+    return None
+
+
+def render_layout(lay: dict, H: Handles, nearby: dict | None = None, party: list | None = None,
+                  me: str | None = None) -> str:
+    rows = [list(r) for r in (lay.get("rows") or [])]
+    if not rows:
+        return "no layout (no position?)"
+    n, cell = int(lay.get("n") or len(rows) // 2), float(lay.get("cell") or 1.5)
+    cx, cz = (lay.get("center") or [0, 0, 0])[0], (lay.get("center") or [0, 0, 0])[2]
+    legend: list[str] = []
+
+    def place(p: Any, mark: str) -> bool:
+        if not (isinstance(p, (list, tuple)) and len(p) >= 3):
+            return False
+        c, r = n + round((p[0] - cx) / cell), n - round((p[2] - cz) / cell)
+        if 0 <= r < len(rows) and 0 <= c < len(rows[r]) and (r, c) != (n, n):
+            rows[r][c] = mark
+            return True
+        return False
+
+    others = [m for m in (party or []) if m.get("uuid") != me]
+    for i, m in enumerate(others[:9], 1):
+        if place(m.get("pos"), str(i)):
+            legend.append(f"{i} {H.get(m['uuid'], m.get('name'))} {m.get('name', '')}".rstrip())
+    for kind, objs in (("char", (nearby or {}).get("characters") or []), ("item", (nearby or {}).get("items") or [])):
+        for o in objs:
+            mark = _layout_mark(o, kind)
+            if mark and place(o.get("pos"), mark) and len(legend) < _LAYOUT_MAX_LEGEND and o.get("uuid"):
+                extra = " locked" if o.get("locked") else ""
+                legend.append(f"{mark} {H.get(o['uuid'], o.get('name'))} {o.get('name', '?')}{extra}")
+    rows[n][n] = "@"
+    out = [f"LAYOUT {num(n * cell)}m around you (@), N up, 1 char = {num(cell)}m; {LAYOUT_KEY}"]
+    out += ["|" + "".join(r) + "|" for r in rows]
+    if legend:
+        out.append("ON IT: " + " | ".join(legend))
+    mo = lay.get("mosaic")
+    if isinstance(mo, dict) and mo.get("rows"):
+        out.append("MOSAIC on the floor of this room (the trial's picture: its safe lines from above, N up, 1 char = "
+                   "1m of the chasm; # line, O statue platform; the right edge is the chasm's edge on your side)")
+        out += ["|" + r for r in mo["rows"]]
+    return "\n".join(out)

@@ -34,6 +34,9 @@ class CrossingPolicy(unittest.TestCase):
 
     def test_harmless_surfaces_need_no_hp(self):
         self.assertTrue(macros.crossing_ok(dict(FIRE, surface="Grease"), 2, 22)[0])
+        # S030 Soft-Step Trial: 9 m of Grease was the only way on; cross takes it, auto still doesn't
+        self.assertTrue(macros.crossing_ok(dict(FIRE, surface="Grease", m=9.0), 22, 22, "cross")[0])
+        self.assertFalse(macros.crossing_ok(dict(FIRE, surface="Grease", m=9.0), 22, 22)[0])
 
 
 class TravelCrossing(Base):

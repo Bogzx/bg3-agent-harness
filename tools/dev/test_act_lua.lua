@@ -516,6 +516,27 @@ test("cast: a projectile's late hit is in the result, not no_damage (acceptance 
     eq(j.status, "done", "miss status"); eq(j.result.no_damage, true, "miss")
 end)
 
+test("cast: a once-per-rest item spell is refused after one use until a rest (S030 Spell Slot Restoration x3)", function()
+    PersistentVars = nil
+    spell("Shout_MAG_Restore", { SpellType = "Shout", UseCosts = "BonusActionPoint:1", Level = 0,
+        Cooldown = "OncePerRestPerItem", ContainerSpells = "Shout_MAG_Restore_1;Shout_MAG_Restore_2" })
+    spell("Shout_MAG_Restore_1", { SpellType = "Shout", UseCosts = "BonusActionPoint:1", Level = 0,
+        Cooldown = "OncePerRestPerItem", SpellContainerID = "Shout_MAG_Restore" })
+    spell("Shout_MAG_Restore_2", { SpellType = "Shout", UseCosts = "BonusActionPoint:1", Level = 0,
+        Cooldown = "OncePerRestPerItem", SpellContainerID = "Shout_MAG_Restore" })
+    local j = job(op("cast", { char = P1, spell = "Shout_MAG_Restore_2" }))
+    eq(j.status, "running", "first use " .. tostring(j.error))
+    A.dispatch("CastedSpell", { P1, "Shout_MAG_Restore_2" })
+    tick(10)
+    j = job(op("cast", { char = P1, spell = "Shout_MAG_Restore_1" }))
+    eq(j.status, "failed", "second use (another variant)"); assert(j.error:find("used up until the next long rest"), j.error)
+    BG3AI.Guard.item_rest("short", P1)
+    eq(job(op("cast", { char = P1, spell = "Shout_MAG_Restore_1" })).status, "failed", "a short rest keeps it used")
+    BG3AI.Guard.item_rest("long")
+    eq(job(op("cast", { char = P1, spell = "Shout_MAG_Restore_1" })).status, "running", "after a long rest")
+    PersistentVars = nil
+end)
+
 test("cast: a melee hit still reports at 250 ms", function()
     spell("Target_Hit", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
         SpellFlags = { "IsHarmful" } })
@@ -610,6 +631,32 @@ test("transfer: GetStackAmount's extra return values don't break tonumber (S018-
     assert(ok, tostring(r))
     eq(job(r).status, "running", "status " .. tostring(job(r).error))
     eq(#called("ToInventory"), 1, "ToInventory calls")
+end)
+
+test("transfer: a stack that arrives as new items finishes the give (S031 Potion of Healing e64 timeout)", function()
+    party_rows = { P1, NPC }
+    local NEW = "15151515-0000-0000-0000-00000000000b"
+    osiv[key("GetInventoryOwner", GEM)] = P1
+    osiv[key("GetTemplate", GEM)] = "POT_Healing_tpl"
+    osiv[key("GetTemplate", NEW)] = "POT_Healing_tpl"
+    local j = job(op("transfer", { item = GEM, to = NPC }))
+    tick()
+    eq(j.status, "running", "still with the giver")
+    A.dispatch("AddedTo", { "16161616-0000-0000-0000-00000000000c", NPC, "" }) -- another kind: not ours
+    eq(j.status, "running", "other template ignored")
+    A.dispatch("AddedTo", { NEW, NPC, "" })
+    eq(j.status, "done", "status " .. tostring(j.error))
+end)
+
+test("transfer: the whole stack merged away (original gone from the giver) is done on the tick", function()
+    party_rows = { P1, NPC }
+    osiv[key("GetInventoryOwner", GEM)] = P1
+    local j = job(op("transfer", { item = GEM, to = NPC }))
+    tick()
+    eq(j.status, "running", "still held")
+    osiv[key("GetInventoryOwner", GEM)] = nil -- merged into the receiver's stack and destroyed
+    tick()
+    eq(j.status, "done", "status " .. tostring(j.error))
 end)
 
 test("equip: a failed equip says why (S025: two-handed Sword of Justice; the Moonlantern does not block a shield)", function()
@@ -762,6 +809,24 @@ test("target not visible: names where the party last saw it (S026 09:02)", funct
         BG3AI.Visibility.lastSeen = function() return nil end
         refused(function() G.target_visible(NPC) end, "target is not visible")
         eq(G.last_seen_hint(NPC), "", "never seen: no hint")
+    end)
+    BG3AI.Visibility = nil
+    if not ok then error(err, 0) end
+end)
+
+test("target not visible: one that turned invisible says so (S030 Soft-Step Shadow 1.8 m away)", function()
+    BG3AI.Visibility = {
+        context = function() return { is_party = { [P1] = true } } end,
+        characterVisible = function() return false end,
+        itemVisible = function() return false end,
+        lastSeen = function() return { pos = { -806.7, -6.5, -746.3 }, ago_s = 2 } end,
+        vanished = function(u) if u == NPC then return true, { pos = { -806.7, -6.5, -746.3 }, ago_s = 2 } end return false end,
+    }
+    local ok, err = pcall(function()
+        refused(function() G.target_visible(NPC) end, "target is not visible; it turned invisible 2s ago")
+        assert(not G.last_seen_hint(NPC):find("travel_to"), "no walk advice for an invisible one")
+        BG3AI.Visibility.vanished = function() return false end
+        assert(G.last_seen_hint(NPC):find("travel_to that spot first"), "a plain out-of-sight one keeps the old hint")
     end)
     BG3AI.Visibility = nil
     if not ok then error(err, 0) end
@@ -1221,6 +1286,38 @@ test("act.turn_based off: ForceTurnBasedMode for every party member still in it"
     local m = RPC.ops["act.mode"]({})
     eq(m.ftb, true, "act.mode ftb"); eq(#m.ftb_members, 2, "members")
     eq(j.status, "running", "running until they leave it")
+end)
+
+test("interact: in combat a carried potion is drunk on the drinker's turn for its own cost (S031 at 7 HP)", function()
+    combat_setup(9)
+    local POT = "a0a0a0a0-0000-0000-0000-000000000009"
+    world[POT] = { pos = { 0, 0, 0 }, comps = { Data = { StatsId = "OBJ_Potion_Healing" } } }
+    osiv[key("IsItem", POT)] = 1
+    osiv[key("GetInventoryOwner", POT)] = P1
+    stats.OBJ_Potion_Healing = { ItemUseType = "Potion", UseCosts = "BonusActionPoint:1" }
+    world[P1].comps.ActionResources.Resources.BonusActionPoint = { { Level = 0, Amount = 1 } }
+    local j = job(op("interact", { char = P1, target = POT }))
+    eq(j.status, "running", "drinks: " .. tostring(j.error))
+    eq(#called("Use"), 1, "one Use")
+    A.dispatch("UseFinished", { P1, POT, 1 })
+    tick(10)
+    eq(j.status, "done", "done"); eq(j.result.drunk, true, "drunk")
+    eq(j.result.charged_by_guard[1].resource, "bonus action", "bonus charged")
+    eq(world[P1].comps.ActionResources.Resources.BonusActionPoint[1].Amount, 0, "bonus spent")
+    -- no bonus left: refused, no Use
+    j = job(op("interact", { char = P1, target = POT }))
+    eq(j.status, "failed", "no bonus"); assert(j.error:find("not enough bonus action", 1, true), j.error)
+    -- not this character's turn
+    world[P1].comps.ActionResources.Resources.BonusActionPoint[1].Amount = 1
+    world[P1].comps.TurnBased.IsActiveCombatTurn = false
+    j = job(op("interact", { char = P1, target = POT }))
+    eq(j.status, "failed", "not my turn"); assert(j.error:find("not this character's turn", 1, true), j.error)
+    -- a scroll (not a potion) stays out-of-combat only
+    world[P1].comps.TurnBased.IsActiveCombatTurn = true
+    stats.OBJ_Potion_Healing.ItemUseType = "Scroll"
+    j = job(op("interact", { char = P1, target = POT }))
+    eq(j.status, "failed", "scroll"); assert(j.error:find("during combat", 1, true), j.error)
+    eq(#called("Use"), 1, "still one Use")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

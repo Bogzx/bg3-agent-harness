@@ -311,6 +311,24 @@ end
 V.STATIC_KINDS = { door = true, container = true, usable = true, ladder = true, object = true }
 V.staticSeen = V.staticSeen or {}
 
+-- Level-design helpers a player never sees: the Faith-Leap Trial's safe path is
+-- ~80 "Cube 1x1x1" items of template UNI_SHA_InvisiblePlatform (probe S031:
+-- not flagged Invisible, kind "object", so a name search would have listed the
+-- hidden path). Cached per uuid (one Osi.GetTemplate per item ever).
+V.HELPER_TEMPLATES = { "InvisiblePlatform" }
+V.helperCache = V.helperCache or {}
+function V.helperItem(uuid)
+    local c = V.helperCache[uuid]
+    if c ~= nil then return c end
+    local tpl = tostring(V.osi(Osi.GetTemplate, uuid) or "")
+    c = false
+    for _, pat in ipairs(V.HELPER_TEMPLATES) do
+        if tpl:find(pat, 1, true) then c = true break end
+    end
+    V.helperCache[uuid] = c
+    return c
+end
+
 -- Is item `uuid` perceivable, and is it something worth listing?
 -- Returns visible:boolean, kind:string.
 -- pos defaults to the item's own position (S021: Guard called this without
@@ -326,6 +344,7 @@ function V.itemVisible(ctx, uuid, e, pos)
         if ok and hidden then return false end
     end
     if U.comp(e, "InventoryMember") then return false end -- carried / inside a container
+    if V.helperItem(uuid) then return false end
     local kind = V.itemKind(uuid, e)
     local interact = truthy(V.osi(Osi.GetCanInteract, uuid))
     local isTrap = truthy(V.osi(Osi.IsTrap, uuid))
@@ -1000,6 +1019,17 @@ function V.lastSeen(uuid)
     local m = uuid and V.memory[uuid]
     if not m or not m.pos or m.level ~= currentLevel() then return nil end
     return { pos = U.vec(m.pos, 1), ago_s = math.floor((Ext.Utils.MonotonicTime() - m.t) / 1000) }
+end
+
+-- A character the party saw on this level that is invisible now (not revealed):
+-- a player saw it vanish. S030 Soft-Step Trial: a Shadow 1.8 m away answered
+-- "target is not visible; last seen 2s ago: travel_to that spot" 3x.
+V.INVISIBLE_SEEN_S = 120
+function V.vanished(uuid)
+    if not uuid or not U.comp(V.entity(uuid), "ServerCharacter") then return false end
+    local m = V.lastSeen(uuid)
+    if not m or m.ago_s > V.INVISIBLE_SEEN_S then return false end
+    return truthy(V.osi(Osi.IsInvisible, uuid)) and not truthy(V.osi(Osi.IsDead, uuid)), m
 end
 
 function V.recall(exclude, around, radius)

@@ -2597,6 +2597,175 @@ RPC.register("nav.hazards", function(args)
     return out
 end)
 
+------------------------------------------------------------------------
+-- Local layout: the walls, openings and floor around a character as a text
+-- grid, what the overhead camera shows (S030 Gauntlet of Shar trials: 11 min
+-- and 16 screenshots in the Soft-Step maze and the Faith-Leap room).
+-- Cells from the AI grid tiles: '#' wall (WalkBlock), '.' floor at our level,
+-- '^'/'v' a floor > 1.2 m above/below, ':' inside a darkness cloud, '~' a
+-- harmful surface, ' ' no floor a player can see (drop, chasm).
+-- Fairness: the Faith-Leap safe path is a walkway layer of invisible-platform
+-- helpers (V.helperItem); that layer is never drawn as floor. What a player
+-- does see of it is the floor mosaic by the bowl, which depicts the safe
+-- lines ([wiki] "the full map of the safe lines is depicted on the mosaic"):
+-- N.mosaic draws that picture, only when the character is in that room.
+------------------------------------------------------------------------
+
+N.LAYOUT_R = 12
+N.LAYOUT_MAX_R = 20
+N.HELPER_LAYER_M = 0.6   -- a floor this close to a helper's top is the hidden walkway
+N.HELPER_MARGIN_M = 3.0  -- around the helpers' bounding box
+N.MOSAIC_NEAR_M = 20     -- the mosaic is shown from this close to the helpers' box
+N.MOSAIC_LINK_M = 2.3    -- helpers this close are one line of the picture
+N.helperCache = N.helperCache or {}
+
+-- Invisible-platform helper positions on this level (one scan per level).
+function N.helpers()
+    local lvl = currentLevel()
+    local c = N.helperCache
+    if c.level == lvl and c.list then return c.list end
+    local list = {}
+    local ok, all = pcall(function() return Ext.Entity.GetAllEntitiesWithComponent("ServerItem") end)
+    for _, e in ipairs(ok and all or {}) do
+        local u = e.Uuid and e.Uuid.EntityUuid
+        if u and V.helperItem and V.helperItem(u) then
+            local p = V.pos(e)
+            if p then list[#list + 1] = p end
+        end
+    end
+    c.level, c.list = lvl, list
+    return list
+end
+
+-- Bounding boxes of helper clusters near `from` (within `near` m), with the
+-- walkway layer height.
+local function helperBox(from, near)
+    local box
+    for _, p in ipairs(N.helpers()) do
+        if math.abs(p[1] - from[1]) <= near + 40 and math.abs(p[3] - from[3]) <= near + 40 then
+            if not box then box = { x1 = p[1], x2 = p[1], z1 = p[3], z2 = p[3], y = p[2], pts = {} } end
+            box.x1, box.x2 = math.min(box.x1, p[1]), math.max(box.x2, p[1])
+            box.z1, box.z2 = math.min(box.z1, p[3]), math.max(box.z2, p[3])
+            box.pts[#box.pts + 1] = p
+        end
+    end
+    return box
+end
+
+local function inBox(b, x, z, m)
+    return b and x >= b.x1 - m and x <= b.x2 + m and z >= b.z1 - m and z <= b.z2 + m
+end
+
+local function tileFlags(t)
+    local f = {}
+    pcall(function() for _, v in ipairs(t.Flags or {}) do f[tostring(v)] = true end end)
+    return f
+end
+
+function N.layoutCell(x, z, y0, box)
+    local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+    if not ok or type(hs) ~= "table" then return " " end
+    local best
+    for _, h in ipairs(hs) do
+        if type(h) == "number" and math.abs(h - y0) <= 4.0
+            and not (box and inBox(box, x, z, N.HELPER_MARGIN_M) and math.abs(h - (box.y + 0.2)) <= N.HELPER_LAYER_M)
+            and (not best or math.abs(h - y0) < math.abs(best - y0)) then
+            best = h
+        end
+    end
+    if not best then return " " end
+    local okt, t = pcall(Ext.Level.GetTileDebugInfo, { x, best, z })
+    if okt and t then
+        local f = tileFlags(t)
+        if f.WalkBlock then return "#" end
+        local g, cl = "", ""
+        pcall(function() g, cl = tostring(t.GroundSurface), tostring(t.CloudSurface) end)
+        if N.HARMFUL[g] or N.HARMFUL[cl] then return "~" end
+        if cl == "DarknessCloud" or g == "Darkness" then return ":" end
+    end
+    local dy = best - y0
+    if dy > 1.2 then return "^" end
+    if dy < -1.2 then return "v" end
+    return "."
+end
+
+-- The helpers' picture (the Faith-Leap mosaic): helpers linked when <= 2.3 m
+-- apart, drawn at 1 m per character, N up. Returns {rows, x1, z2} or nil.
+function N.mosaic(box)
+    if not box or #box.pts < 4 then return nil end
+    local x1, z2 = math.floor(box.x1), math.ceil(box.z2)
+    local w, h = math.ceil(box.x2) - x1 + 1, z2 - math.floor(box.z1) + 1
+    local grid = {}
+    for r = 1, h do grid[r] = {} for c = 1, w do grid[r][c] = " " end end
+    local function put(x, z)
+        local c, r = math.floor(x - x1 + 0.5) + 1, math.floor(z2 - z + 0.5) + 1
+        if grid[r] and grid[r][c] then grid[r][c] = "#" end
+    end
+    local pts = box.pts
+    for i = 1, #pts do
+        put(pts[i][1], pts[i][3])
+        for j = i + 1, #pts do
+            local d = U.dist({ pts[i][1], 0, pts[i][3] }, { pts[j][1], 0, pts[j][3] })
+            if d <= N.MOSAIC_LINK_M then
+                for k = 1, math.ceil(d / 0.5) do
+                    local f = k / math.ceil(d / 0.5)
+                    put(pts[i][1] + (pts[j][1] - pts[i][1]) * f, pts[i][3] + (pts[j][3] - pts[i][3]) * f)
+                end
+            end
+        end
+    end
+    -- The statue platforms (visible floor ~1 m above the walkway layer, in
+    -- the chasm): the boxes on the mosaic, seen across the chasm too.
+    for r = 1, h do
+        for c = 1, w do
+            if grid[r][c] == " " then
+                local ok, hs = pcall(Ext.Level.GetHeightsAt, x1 + c - 1, z2 - r + 1)
+                for _, hh in ipairs(ok and type(hs) == "table" and hs or {}) do
+                    if type(hh) == "number" and hh - box.y >= 0.6 and hh - box.y <= 1.6 then grid[r][c] = "O" break end
+                end
+            end
+        end
+    end
+    local rows = {}
+    for r = 1, h do rows[r] = (table.concat(grid[r]):gsub("%s+$", "")) end
+    return { rows = rows, x1 = x1, z2 = z2, cell = 1 }
+end
+
+function N.layout(char, radius, cell)
+    local e = V.entity(char)
+    local from = e and V.pos(e)
+    if not from then return nil, "no position" end
+    radius = math.max(4, math.min(tonumber(radius) or N.LAYOUT_R, N.LAYOUT_MAX_R))
+    cell = math.max(1, math.min(tonumber(cell) or 1.5, 3))
+    local n = math.floor(radius / cell + 0.5)
+    local box = helperBox(from, radius)
+    local rows = {}
+    for iz = n, -n, -1 do
+        local row = {}
+        for ix = -n, n do
+            row[#row + 1] = N.layoutCell(from[1] + ix * cell, from[3] + iz * cell, from[2], box)
+        end
+        rows[#rows + 1] = table.concat(row)
+    end
+    local out = { rows = rows, cell = cell, n = n, center = U.vec(from, 1) }
+    if box and inBox(box, from[1], from[3], N.MOSAIC_NEAR_M) and math.abs(from[2] - box.y) <= 6 then
+        out.mosaic = N.mosaic(box)
+    end
+    return out
+end
+
+-- nav.layout {char?, radius?=12, cell?=1.5}: N.layout.
+RPC.register("nav.layout", function(args)
+    local ctx = V.context()
+    local char = args.char or activeChar(ctx)
+    if not ctx.is_party[char] then error("not a party member", 0) end
+    local t0 = Ext.Utils.MonotonicTime()
+    local r, err = N.layout(char, args.radius, args.cell)
+    if not r then error(err, 0) end
+    r.ms = Ext.Utils.MonotonicTime() - t0
+    return r
+end)
+
 -- nav.route {char?, pos | target, connectors?}: the route ahead (N.routeAhead).
 -- A target must be visible; a pos is the agent's own goal (objective marker,
 -- map marker, coordinates it read). Ladders/doors are listed when there is no

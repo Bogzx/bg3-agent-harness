@@ -188,6 +188,31 @@ class NightCamp(unittest.TestCase):
         self.assertEqual([o for o, _ in fake.jobs], ["act.leave_camp"])
 
 
+    # S030 16:46: camp() inside the Gauntlet of Shar failed "cannot travel right now" with no reason.
+    def test_camp_go_failure_says_why_and_the_way_out(self):
+        fake = NightFake()
+        fake.night = False
+        base = fake.rpc
+
+        def rpc(op, args=None, context="server"):
+            if op == "ui.travel_block":
+                return {"hud": True, "error": fake.err}
+            return base(op, args, context)
+
+        fake.rpc = fake.try_rpc = rpc
+        fake.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult(
+            status="failed", result=None, error="cannot travel right now")
+        self.use(fake)
+        go = getattr(server.camp, "fn", server.camp)
+        fake.err = "DangerZone"
+        self.assertIn("(DangerZone): this is a danger zone", go())
+        fake.err = "Unavailable"
+        out = go()
+        self.assertIn("(Unavailable): this area does not let the party go to camp", out)
+        self.assertIn("walk back out the way you came", out)
+        fake.err = None
+        self.assertIn("The game gave no reason", go())
+
     def test_waits_for_the_party_to_wake_up(self):
         # Acceptance 12:16: long_rest returned with the party Sleeping (TravelError 'Condition', no night_camp);
         # fast_travel failed at once. Now it waits for the HUD + no error, then travels.

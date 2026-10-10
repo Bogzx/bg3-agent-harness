@@ -754,11 +754,30 @@ A.holder = holder
 A.LADDER_DY = 1.5         -- a climb ends on another floor at least this far up/down
 A.LADDER_CLIMB_MS = 10000 -- interact on a ladder: the longest it waits for the climb after the Use
 
+-- In combat a carried potion is drunk as from the hotbar: on the drinker's turn, for the item's own UseCosts
+-- (a bonus action for Potion of Healing). S003/S017/S018/S023/S031: every in-combat potion was refused ("not
+-- available during combat"), at 7 HP in S031. Returns the cost check, or nil when this is not such a drink.
+function A.combat_potion(char, target)
+    if not target or not G.in_combat(char) or not G.b(G.q("IsItem", target)) then return nil end
+    if not G.same(holder(target), char) then return nil end
+    local ok, st = pcall(function() return Ext.Stats.Get(G.entity(target).Data.StatsId) end)
+    if not ok or not st or st.ItemUseType ~= "Potion" then return nil end
+    G.combat_gate(char, "turn")
+    local snap, payers = G.resources(char), {}
+    for _, c in ipairs(G.parse_costs(st.UseCosts)) do
+        local n, l = G.payer(snap, c)
+        if not n then G.refuse("not enough " .. G.friendly(c.name) .. " to drink it") end
+        payers[#payers + 1] = { name = n, level = l, amount = c.amount }
+    end
+    return { snapshot = snap, payers = payers }
+end
+
 reg("interact", function(args)
     local char = G.actor(args.char)
     G.not_in_dialogue(char)
-    G.combat_gate(char, "no_combat")
     local target = G.guid(args.target)
+    local potion = A.combat_potion(char, target)
+    if not potion then G.combat_gate(char, "no_combat") end
     if not target then G.refuse("no target given") end
     -- An item in the actor's own bags (potion, scroll, book): use it in place.
     local carried = G.b(G.q("IsItem", target)) and holder(target)
@@ -820,7 +839,23 @@ reg("interact", function(args)
     return start("interact", char, {
         eta_s = walk_eta(plan.length_m) + 1.0, route_m = plan.length_m,
         timeout_ms = 30000 + walk_timeout(plan.length_m),
-        interrupt = { combat = true, dialogue = true, attacked = true },
+        interrupt = { combat = not potion, dialogue = true, attacked = not potion },
+        on_finish = potion and function(job)
+            if job.status ~= "done" then return end
+            -- Osiris Use skips the hotbar's cost: charge whatever the engine did not.
+            local after, charged = G.resources(char), {}
+            for _, p in ipairs(potion.payers) do
+                local owed = p.amount - (((potion.snapshot[p.name] or {})[p.level] or 0)
+                    - ((after[p.name] or {})[p.level] or 0))
+                if owed > 0.01 and G.deduct(char, p.name, p.level, owed) then
+                    charged[#charged + 1] = { resource = G.friendly(p.name), amount = owed }
+                end
+            end
+            if type(job.result) == "table" then
+                job.result.drunk = true
+                if #charged > 0 then job.result.charged_by_guard = charged end
+            end
+        end or nil,
         osi = with_walk({
             UseFinished = function(job, a)
                 if G.same(a[1], char) and G.same(a[2], target) then
@@ -1171,6 +1206,7 @@ reg("cast", function(args)
                     -- Hits usually land before CastedSpell; give stragglers a
                     -- short settle window (see on_tick), then report.
                     job.casted = RPC.now_ms()
+                    G.item_used(char, spell)
                 end
             end,
             CastSpellFailed = function(job, a)
@@ -1461,17 +1497,27 @@ reg("transfer", function(args)
 
     local to = G.actor(args.to)
     if G.same(to, from) then G.refuse("it is already there") end
+    -- A stack arrives as new items (S031 17:09: Claude's Potion of Healing stack e64 → Gale came in as e410 x2,
+    -- e411, e412 and merged; the job waited for e64 and timed out at 8 s, stopping the batch). So an AddedTo
+    -- of the same template to the receiver counts, and so does the original leaving the giver.
+    local tpl = tostring((G.q("GetTemplate", item)) or "")
+    local function same_kind(x)
+        return G.same(x, item) or (tpl ~= "" and tostring((G.q("GetTemplate", x)) or "") == tpl)
+    end
     return start("transfer", nil, {
         timeout_ms = 8000,
         osi = {
             AddedTo = function(job, a)
-                if G.same(a[1], item) and G.same(a[2], to) then RPC.finish_job(job, "done", { to = to, amount = amount }) end
+                if G.same(a[2], to) and same_kind(a[1]) then RPC.finish_job(job, "done", { to = to, amount = amount }) end
             end,
         },
         -- ShowNotification=1, ClearOriginalOwner=0 (never launder stolen goods).
         start = function() G.osi("ToInventory", item, to, amount, 1, 0) end,
         on_tick = function(job)
-            if G.same(holder(item), to) then RPC.finish_job(job, "done", { to = to, amount = amount }) end
+            local h = holder(item)
+            if G.same(h, to) or (amount >= stack and not G.same(h, from)) then
+                RPC.finish_job(job, "done", { to = to, amount = amount })
+            end
         end,
     })
 end)
@@ -1839,7 +1885,9 @@ reg("disarm", function(args)
         G.refuse("no known trap there")
     end
     G.target_visible(trap)
-    return approach("disarm", char, trap, function(job) needs_click(job, trap, "roll") end)
+    -- Right-click menu "Disarm", as for Lockpick (S031 17:10: three left-clicks on a trapped bookcase did nothing;
+    -- the agent's right-click -> Disarm by hand was the route).
+    return approach("disarm", char, trap, function(job) needs_click(job, trap, "roll", "Disarm") end)
 end)
 
 reg("pickpocket", function(args)

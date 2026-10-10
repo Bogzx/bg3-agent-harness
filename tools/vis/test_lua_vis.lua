@@ -122,6 +122,30 @@ test("door with no LOS but a clear ray is perceived", function()
     eq(visible("D"), true)
 end)
 
+test("an invisible-platform helper (the Faith-Leap path) is never perceived (S031 probe)", function()
+    setup(); door("CUBE1", { 10, 0, 0 })
+    osiv[key("GetTemplate", "CUBE1")] = "UNI_SHA_InvisiblePlatform_f8a25225-667f-48cf-853a-76a791a460"
+    ray.fn = floorThen(function() return nil end)
+    eq(visible("CUBE1"), false, "helper")
+    door("D2", { 10, 0, 0 })
+    eq(visible("D2"), true, "a plain door still is")
+end)
+
+test("vanished: a character seen moments ago that is invisible now (S030 Soft-Step Shadow)", function()
+    setup()
+    world.SH = { pos = { 2, 0, 0 }, comps = { ServerCharacter = {} } }
+    V.memory = {}
+    V.remember("SH", "Shadow", { 2, 0, 0 }, "neutral")
+    osiv[key("IsInvisible", "SH")] = 1
+    local gone, m = V.vanished("SH")
+    eq(gone, true, "vanished"); eq(m.ago_s, 0, "ago")
+    osiv[key("IsInvisible", "SH")] = 0
+    eq((V.vanished("SH")), false, "visible again (or just out of sight): not vanished")
+    osiv[key("IsInvisible", "SH")] = 1
+    clock = clock + (V.INVISIBLE_SEEN_S + 1) * 1000
+    eq((V.vanished("SH")), false, "seen too long ago")
+end)
+
 test("itemVisible without pos (Guard's call) uses the item's own position", function()
     setup(); door("D", { 10, 0, 0 })
     ray.fn = floorThen(function() return nil end)

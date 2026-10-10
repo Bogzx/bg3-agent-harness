@@ -1609,6 +1609,31 @@ function P.openLevelUp(uuid)
     return UI.command(hb, "StartLevelUp", vm)
 end
 
+-- Whose page is open: "same" / "other" / nil (unknown). The page binds LevelUpCharacter (CharacterLevelUp.xaml
+-- TooltipExtender.Owner); compared by proxy identity, else by the portrait fingerprint (HP, max HP, level).
+function P.pageOwner(dc, uuid)
+    local pv = dc and UI.prop(dc, "LevelUpCharacter")
+    if not isObj(pv) then return nil end
+    local want = P.characterVM(uuid)
+    if not want then return nil end
+    if same(pv, want) then return "same" end
+    local a1, a2, a3 = vmFingerprint(pv)
+    local b1, b2, b3 = vmFingerprint(want)
+    if a1 == nil or a2 == nil or a3 == nil or b1 == nil or b2 == nil or b3 == nil then return nil end
+    return (a1 == b1 and a2 == b2 and a3 == b3) and "same" or "other"
+end
+
+-- Close the level-up page without finishing it (its character keeps the level up): the page's close button
+-- (CloseLevelUpButton: CustomEvent "CloseWidget"), else ESCAPE (S029 16:26: ESCAPE closed a frozen page live).
+function P.closeLevelUp(useKey)
+    local w = visibleWidget("CharacterLevelUp")
+    if not w then return true end
+    if useKey then return pcall(Ext.Input.InjectKeyPress, "ESCAPE") end
+    local b = UI.byName(w, "CloseLevelUpButton", { hidden = true, max = 80000 })
+    if b and UI.press(b) then return true end
+    return UI.command(P.luDC(), "CustomEvent", "CloseWidget")
+end
+
 RPC.register("ui.level_up_open", function(args)
     if not args.uuid then error("uuid required") end
     P.levelUpUuid = args.uuid
@@ -1771,16 +1796,32 @@ RPC.register("ui.level_up", function(args)
     local plan = args.plan or {}
     if args.uuid then P.levelUpUuid = args.uuid end
     local openLater = false
-    if not P.luDC() then
+    local ctx = { result = { set = {}, problems = {} }, widget = "CharacterLevelUp" }
+    local cur = P.luDC()
+    if cur and args.uuid then
+        -- A page this call didn't open: another character's (S029 16:23: after Karlach's finish the game opened
+        -- Gale's page by itself; Shadowheart's level_up then read Gale's wizard spells), or one still in its
+        -- "Level Up!" intro (opened by the game during the finish fade: frozen, nothing hit-testable; Gale's spell
+        -- clicks failed 3x / 2.5 min). Close it and open this character's page once the fade is over.
+        local owner = P.pageOwner(cur, args.uuid)
+        local step = str(UI.prop(cur, "LevelUpStep"))
+        if owner == "other" or step == "Started" then
+            ctx.result.closed_page = owner == "other" and ("another character's page (" .. tostring(label(UI.prop(cur, "LevelUpCharacter")) or "?") .. ")")
+                or "a page stuck in its intro"
+            P.closeLevelUp()
+            ctx.closing = RPC.now_ms()
+            openLater = true
+        end
+    end
+    if not P.luDC() or ctx.closing then
         if not args.uuid then error("uuid required when the level-up page is not open") end
-        if P.screenFade() then
+        if ctx.closing or P.screenFade() then
             openLater = true
         else
             local ok, err = P.openLevelUp(args.uuid)
             if not ok then error(err) end
         end
     end
-    local ctx = { result = { set = {}, problems = {} }, widget = "CharacterLevelUp" }
     local get = P.luDC
     local asi = { steps = 0 }
     local stages = {
@@ -1795,6 +1836,14 @@ RPC.register("ui.level_up", function(args)
                 ctx.reopened, openLater = true, true
             end
             if openLater then
+                if ctx.closing and cur then
+                    -- The page being closed: its button first, then ESCAPE once after 1.5 s.
+                    if RPC.now_ms() - ctx.closing > 1500 and not ctx.escaped then
+                        ctx.escaped = true
+                        P.closeLevelUp(true)
+                    end
+                    return "wait", 200
+                end
                 if P.screenFade() then ctx.result.waited_fade = true return "wait", 200 end
                 openLater = false
                 local ok, err = P.openLevelUp(args.uuid)
@@ -2009,7 +2058,25 @@ RPC.register("ui.level_up", function(args)
             -- Still in its Finishing template (closing animation): keep waiting up to 9 s, so a following level_up
             -- doesn't work on this page (live 12:4x: Wyll L5 right after L4 read L4's feat panel: "the ability +/-
             -- buttons did nothing").
-            if RPC.now_ms() - ctx.closeWait > (step == "Finishing" and 9000 or 4000) then
+            -- A page in its intro after the finish is a new page the game opened by itself (the next level, or the
+            -- next party member with a level up: S029 Claude → Karlach → Gale), during the finish fade: frozen, so
+            -- the next level_up would read or click it in vain. Close it now (that character keeps its level up).
+            local owner = step == "Started" and args.uuid and P.pageOwner(get(), args.uuid)
+            local late = RPC.now_ms() - ctx.closeWait > (step == "Finishing" and 9000 or 4000)
+            if step == "Started" and (owner == "other" or late) and not ctx.closedNext then
+                ctx.closedNext = true
+                ctx.result.next_page_closed = owner == "other" and "the game opened another character's level-up page: closed it (level_up(who) opens it again)"
+                    or "the game opened a new level-up page: closed it; if this character has another level, call level_up again"
+                P.closeLevelUp()
+                ctx.closeWait = RPC.now_ms() - 2500  -- 1.5 s more for it to close, then ESCAPE below
+                return "wait", 300
+            end
+            if ctx.closedNext and not ctx.escapedNext and RPC.now_ms() - ctx.closeWait > 4000 then
+                ctx.escapedNext = true
+                P.closeLevelUp(true)
+                return "wait", 300
+            end
+            if late and (not ctx.closedNext or RPC.now_ms() - ctx.closeWait > 5500) then
                 ctx.result.page_still_open = "another level up may be pending: call level_up again"
                 ctx.result.close_step = step
                 return "done"

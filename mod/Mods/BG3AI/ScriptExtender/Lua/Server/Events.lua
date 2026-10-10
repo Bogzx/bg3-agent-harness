@@ -370,22 +370,34 @@ local REST_FLOW = {
     { "RequestGatherAtCampSuccess", 1, "gathered" }, { "RequestEndTheDayFail", 0, "end_day_failed" },
     { "RequestEndTheDaySuccess", 0, "end_day_ok" }, { "LongRestStartFailed", 0, "rest_start_failed" },
     { "LongRestCancelled", 0, "rest_cancelled" },
+    -- S031 17:15: can_rest clean, requested -> gathered, then no answer for 14 s and no "End the day?" box (the
+    -- engine's ready check, shown within ~1 s in every success S024-S026). Did a ready check run, how did it end,
+    -- and did the engine deny the rest with a reason? (arg 1 is kept: the check's id / the deny reason)
+    { "ReadyCheckPassed", 1, "ready_ok" }, { "ReadyCheckFailed", 1, "ready_failed" },
+    { "RequestLongRestDeny", 1, "rest_denied" }, { "RequestLongRestWaiting", 0, "rest_waiting" },
+    { "LongRestStarted", 0, "rest_started" },
 }
 E.restFlow = E.restFlow or {}
 for _, ev in ipairs(REST_FLOW) do
-    listen(ev[1], ev[2], function()
-        E.restFlow[#E.restFlow + 1] = { step = ev[3], at = Ext.Utils.MonotonicTime() }
+    listen(ev[1], ev[2], function(a1)
+        local step = ev[3]
+        if ev[2] == 1 and step ~= "requested" and step ~= "gathered" and step ~= "gather_failed" and a1 ~= nil then
+            step = step .. ":" .. tostring(a1):sub(1, 60)
+        end
+        E.restFlow[#E.restFlow + 1] = { step = step, at = Ext.Utils.MonotonicTime() }
         if #E.restFlow > 20 then table.remove(E.restFlow, 1) end
-        RPC.push("rest_flow", { step = ev[3] })
+        RPC.push("rest_flow", { step = step })
     end)
 end
 
 listen("LongRestFinished", 0, function()
+    if BG3AI.Guard and BG3AI.Guard.item_rest then BG3AI.Guard.item_rest("long") end
     RPC.push("rest", { type = "long" })
 end)
 
 listen("ShortRested", 1, function(char)
     local u = V.uuid(char)
+    if BG3AI.Guard and BG3AI.Guard.item_rest then BG3AI.Guard.item_rest("short", u) end
     if ctx().is_party[u or ""] then RPC.push("rest", { type = "short", char = ref(u) }) end
 end)
 
@@ -441,19 +453,63 @@ RPC.register("state.open_container", function()
     return E.openContainer and { uuid = E.openContainer.uuid, name = V.name(E.openContainer.uuid) } or {}
 end)
 
--- camp.rest_flow {since_ms?} -> {steps=[...], story={...}}: the End-the-Day handshake steps seen recently, plus
--- the camp story flags (diagnostics for the bridge's metrics log, not shown to the agent).
+-- The engine's own long-rest validation per party member: CanDoRest.LongRestErrorFlags (RestErrorFlags:
+-- GlobalDisabled, Script, Dialog, Combat, FTB, NotEnoughResources, DownedOrDead, DropInCCActive, Location). The HUD
+-- greys the Long Rest button and its tooltip names the reason, so a player sees these. S030 16:30: the
+-- End-the-Day handshake ran (requested -> gathered) and the engine answered RequestEndTheDayFail ~10 s later.
+local function flagList(f)
+    if type(f) ~= "table" and type(f) ~= "userdata" then return {} end
+    local out = {}
+    local ok = pcall(function() for _, n in ipairs(f) do out[#out + 1] = tostring(n) end end)
+    if not ok or #out == 0 then
+        local ok2, parsed = pcall(function() return Ext.Json.Parse(Ext.Json.Stringify(f)) end)
+        out = (ok2 and type(parsed) == "table") and parsed or {}
+    end
+    return out
+end
+E.flagList = flagList
+
+function E.canRest()
+    local blocked = {}
+    for _, u in ipairs(V.context().party) do
+        local e = V.entity(u)
+        local c = e and U.comp(e, "CanDoRest")
+        local flags = c and flagList(c.LongRestErrorFlags) or {}
+        if #flags > 0 then blocked[#blocked + 1] = { name = V.name(u), uuid = u, flags = flags } end
+    end
+    local ok, g = pcall(Ext.Entity.GetAllEntitiesWithComponent, "GlobalLongRestDisabled")
+    local states = {}
+    local ok2, ls = pcall(Ext.Entity.GetAllEntitiesWithComponent, "LongRestState")
+    if ok2 then
+        for _, e in ipairs(ls) do
+            pcall(function() states[#states + 1] = Ext.Json.Stringify(e.LongRestState, { Beautify = false,
+                MaxDepth = 2, IterateUserdata = true, AvoidRecursion = true }):sub(1, 300) end)
+        end
+    end
+    return { blocked = blocked, global_disabled = ok and #g or -1, long_rest_state = states }
+end
+
+-- camp.can_rest -> {blocked=[{name, flags}], global_disabled, long_rest_state}: asked before the rest button press.
+RPC.register("camp.can_rest", function() return E.canRest() end)
+
+-- camp.rest_flow {since_ms?} -> {steps=[...], step_ms=[...], story={...}, can_rest={...}}: the End-the-Day
+-- handshake steps seen recently (step_ms: how long ago each one fired), the camp story flags and the engine's
+-- rest validation (diagnostics for the bridge's metrics log; can_rest's reasons are shown to the agent).
 RPC.register("camp.rest_flow", function(args)
-    local since = Ext.Utils.MonotonicTime() - (tonumber(args and args.since_ms) or 30000)
-    local steps = {}
-    for _, f in ipairs(E.restFlow or {}) do if f.at >= since then steps[#steps + 1] = f.step end end
+    local now = Ext.Utils.MonotonicTime()
+    local since = now - (tonumber(args and args.since_ms) or 30000)
+    local steps, stepMs = {}, {}
+    for _, f in ipairs(E.restFlow or {}) do
+        if f.at >= since then steps[#steps + 1], stepMs[#stepMs + 1] = f.step, math.floor(now - f.at) end
+    end
     local story = {}
     for _, n in ipairs({ "DB_GoingToCamp", "DB_CampRequestHandled", "DB_Camp_NightMode", "DB_CAMP_JustWokeUp",
                          "DB_Camp_GoingToSleep", "DB_Camp_LongRest_CodeIsWaiting", "DB_PlayerInCamp" }) do
         local ok, rows = pcall(function() return Osi[n]:Get(nil) end)
         story[n] = ok and rows and #rows or -1
     end
-    return { steps = steps, story = story }
+    local okc, can = pcall(E.canRest)
+    return { steps = steps, step_ms = stepMs, story = story, can_rest = okc and can or nil }
 end)
 
 return E

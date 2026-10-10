@@ -729,12 +729,50 @@ local function screenNow()
         return "a stack-split box: " .. tostring(split.title) .. " " .. tostring(split.text)
             .. " [Cancel/Confirm]: answer it with confirm(\"yes\", amount=N) or confirm(\"no\")"
     end
-    local names = {}
+    -- The always-on HUD layers are left out: S028-S030 rest failures listed 12 of them and cut the list there,
+    -- so a box further down could never be named.
+    local names, hud = {}, 0
     for _, w in ipairs(UI.widgets()) do
-        if #names >= 12 then names[#names + 1] = "..." break end
-        if UI.isVisible(w.el) then names[#names + 1] = w.name end
+        if UI.isVisible(w.el) then
+            if SV.HUD_WIDGETS[w.name] then
+                hud = hud + 1
+            elseif #names >= 12 then
+                names[#names + 1] = "..."
+                break
+            else
+                names[#names + 1] = w.name
+            end
+        end
     end
-    return "widgets=[" .. table.concat(names, ", ") .. "]"
+    return "widgets=[" .. table.concat(names, ", ") .. "] (+" .. hud .. " HUD layers)"
+end
+
+-- Visible on every plain game screen (S0xx failure dumps): not worth naming in screenNow / restSeen.
+SV.HUD_WIDGETS = {}
+for _, n in ipairs({ "CrossplayOverlay", "ScreenFade", "Overlay", "AlwaysOnTopOverlay", "PassiveRoll",
+                     "PlayerPortraits", "OverheadInfo", "HudIndicator", "DragAndDropPreview", "CursorText",
+                     "CombatantsOverlay", "Minimap", "HotBar", "TurnModeInfo", "TargetInfo", "WorldTooltips" }) do
+    SV.HUD_WIDGETS[n] = true
+end
+
+-- Non-HUD widgets that became visible while a job waited (names added to `seen`, in order, once each). The rest
+-- flow's "End the day?" box showed within ~1 s in every success (S024-S026) and never in the failures since S028:
+-- this tells "no box at all" from "a box came and went" (closed by something, or under another name).
+function SV.noteWidgets(seen, base)
+    seen.set = seen.set or {}
+    for _, w in ipairs(UI.widgets()) do
+        if not SV.HUD_WIDGETS[w.name] and not base[w.name] and not seen.set[w.name] and UI.isVisible(w.el) then
+            seen.set[w.name] = true
+            seen[#seen + 1] = w.name
+        end
+    end
+end
+function SV.visibleNames()
+    local base = {}
+    for _, w in ipairs(UI.widgets()) do
+        if UI.isVisible(w.el) then base[w.name] = true end
+    end
+    return base
 end
 
 -- The rest flow across jobs. Live S018 (x4, every first long_rest of a camp visit):
@@ -804,18 +842,26 @@ RPC.register("ui.long_rest", function(args)
         pendingPress, step = true, "after closing a leftover '" .. tostring(cancelledSplit) .. "' split box"
     elseif followup and not (A and A.confirmBox and A.confirmBox()) then
         step = "after the question was answered (waiting for the screen, CampTravel not pressed again)"
+    elseif args.no_press and not (A and A.confirmBox and A.confirmBox()) then
+        -- the bridge saw the game's late yes (end_day_ok): the night is starting, and a press now would be the
+        -- story's "leave night mode" (GLO_Camp PROC_Camp_SwitchNightMode)
+        step = "after the game's late yes (waiting for the screen, CampTravel not pressed again)"
     else
         pressCamp()
         step = "after CampTravel"
     end
 
+    local seenBase, seen, seenAt = SV.visibleNames(), {}, 0
     local function openFail(what)
         local res = { step = "open", camp_travel_presses = presses }
         res.end_the_day = tostring(UI.path(hotbarDC(), "CurrentPlayer.EndTheDayState") or "?")
+        res.seen_widgets = seen
         return "failed", res, "the rest screen didn't open (" .. what .. "; step: " .. step
             .. "; EndTheDayState " .. res.end_the_day
             .. "; CampTravel pressed " .. presses .. "x in this call, last " .. sinceTxt(R.pressAt)
-            .. "; last question box " .. sinceTxt(R.boxAt) .. "). On screen: " .. screenNow()
+            .. "; last question box " .. sinceTxt(R.boxAt)
+            .. "; came and went: " .. (#seen > 0 and table.concat(seen, ", ") or "nothing")
+            .. "). On screen: " .. screenNow()
     end
 
     local phase, sawActive, used, phaseStart = "open", false, nil, RPC.now_ms()
@@ -893,13 +939,20 @@ RPC.register("ui.long_rest", function(args)
                 return nil
             end
             if not w then
+                if RPC.now_ms() - seenAt >= 250 then
+                    seenAt = RPC.now_ms()
+                    pcall(SV.noteWidgets, seen, seenBase)
+                end
                 if visibleWidget("Dialogue") and (job.confirms or followup) then
                     local st, res, err = openFail("a dialogue started instead (a camp scene): finish it, then long_rest again")
                     res.confirmed, res.camp_scene = job.confirms, true
                     return st, res, err
                 end
                 if RPC.now_ms() - phaseStart > REST_QUIET_MS then
-                    if not retried then
+                    -- repress=false (the bridge): S030's 4 s re-press landed inside the engine's ~10 s End-the-Day
+                    -- answer window (requested → gathered → requested → end_day_failed). The bridge reads the
+                    -- server's rest flow and re-presses only when the first press never reached the story.
+                    if not retried and args.repress ~= false then
                         -- nothing came of the last press/answer: press the camp button again, once
                         pressCamp()
                         retried, step, phaseStart = true, "after CampTravel (retry)", RPC.now_ms()

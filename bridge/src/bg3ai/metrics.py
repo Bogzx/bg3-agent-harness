@@ -741,7 +741,7 @@ def read_by_tool(reads: list[dict]) -> dict:
 
 
 # Observation reads for the calls/min mix (the round trips a result could have carried; 2026-10-10 task).
-OBS_READS = {"look", "get_nearby", "get_frontier", "screenshot", "zoom", "get_status", "route", "wiki_search",
+OBS_READS = {"look", "get_nearby", "get_frontier", "get_layout", "screenshot", "zoom", "get_status", "route", "wiki_search",
              "wiki_page", "look_at", "get_inventory", "get_combat_state", "get_dialogue", "get_journal", "get_map",
              "get_party", "recall", "ui_dump", "get_actions", "ability_preview", "get_level_up_options"}
 

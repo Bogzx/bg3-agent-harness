@@ -322,13 +322,19 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
         time.sleep(0.05)
     if expect == "roll":
         # A key in the party opens the lock without a roll; a trap kit may
-        # resolve instantly. Accept the visible state change instead.
+        # resolve instantly. Accept the visible state change instead: the one this click was for. S031 17:10:
+        # a trapped bookcase (never locked) read "unlocked" = done 3x while its trap stayed armed.
         try:
             ts = game.rpc("act.target_state", {"uuid": uuid})
         except GameError:
             ts = {}
-        if ts.get("locked") is False or ts.get("trap_armed") is False:
-            return ClickResult(True, None, "unlocked" if ts.get("locked") is False else "disarmed", pos, tries, extra)
+        trap = (menu or "").lower().startswith("disarm") or (menu is None and "trap_armed" in ts)
+        if trap and ts.get("trap_armed") is False:
+            return ClickResult(True, None, "disarmed", pos, tries, extra)
+        if not trap and ts.get("locked") is False:
+            return ClickResult(True, None, "unlocked", pos, tries, extra)
+        if trap and ts.get("trap_armed"):
+            extra["trap"] = "still armed"
     if st.get("notifications"):
         extra["notifications"] = st["notifications"]
     return ClickResult(False, "no_effect", st.get("screen"), pos, tries, extra)
@@ -436,6 +442,9 @@ def run_click_action(game: Game, inp: InputClient | None, op: str, args: dict, w
                     "hover_miss": "could not point at the target",
                     "no_effect": "nothing happened",
                     "no_menu_entry": "the right-click menu had no such entry"}.get(reason, reason)
+        if merged.get("click", {}).get("trap") == "still armed":
+            jr.error = ("the trap is still armed after Disarm (no roll and no change within 4 s; opening or using it now sets it "
+                        "off): try disarm again with whoever has the best Sleight of Hand, or leave it")
     return jr
 
 

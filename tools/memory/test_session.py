@@ -352,8 +352,12 @@ class AutonomousStopTest(MemoryTestCase):
         self.assertTrue(out["reason"].startswith("Keep playing: 39 minutes left") or
                         out["reason"].startswith("Keep playing: 40 minutes left"), out["reason"])
         self.assertIn("SESSION CLOCK", out["reason"])
+        self.assertIn("not a summary", out["reason"])
+        self.assertNotIn("already wrapped up", out["reason"])  # first block, no HANDOFF yet
         st = self.state()
         self.assertEqual(st["keep_playing_blocks"], 1)
+        # S030: the 2nd early stop re-saved Sxxx-end and rewrote HANDOFF.md; from the 2nd block on, it says not to.
+        self.assertIn("don't save Sxxx-end or rewrite HANDOFF.md again", S.stop_decision(self.mem)["reason"])
         self.assertNotIn("stop_blocks", st)  # counted separately from wrap-up blocks
 
     def test_keep_playing_cap(self):
@@ -385,6 +389,7 @@ class AutonomousStopTest(MemoryTestCase):
         self.assertEqual(out["decision"], "block")
         self.assertTrue(out["reason"].startswith("Keep playing"), out["reason"])
         self.assertIn("stuck.md", out["reason"])
+        self.assertIn("already wrapped up early", out["reason"])
         self.assertEqual(self.state()["keep_playing_blocks"], 1)
 
     def test_handoff_written_commits_once_wrap_due(self):

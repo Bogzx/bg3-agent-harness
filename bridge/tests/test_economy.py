@@ -1073,3 +1073,101 @@ class TradeNoGold(unittest.TestCase):
         finally:
             server.game = orig
         self.assertIn("the trader has no gold left", out)
+
+
+class ScrollUse(unittest.TestCase):
+    """S030 16:34: use_ability(Shadowheart, "Scroll of Invisibility") → "no action called"; manage_inventory use
+    → "done" with the game waiting for a target; screenshot + click_on by hand. The scroll is read and the target
+    clicked in one call now."""
+    SH, GALE, SCROLL = ("11111111-0000-0000-0000-0000000000a1", "11111111-0000-0000-0000-0000000000a2",
+                        "11111111-0000-0000-0000-0000000000a3")
+
+    def _run(self, who, ability, target="", owner=None, click_ok=True, name="Scroll of Invisibility",
+             res="use_ability: done — used"):
+        from bg3ai import clicker
+        calls, clicks = [], []
+        scroll, sh = self.SCROLL, self.SH
+        own = owner or sh
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                if op == "state.inventory":
+                    return {"items": [{"uuid": scroll, "name": name, "owner": own}]}
+                return default
+
+            def drain_events(self, ctx=None):
+                return []
+
+        def fake_act(tool, op, args, **kw):
+            calls.append((op, dict(args)))
+            server._batch["last"] = "done"
+            return res + "\nEVENTS\n  used item={name=" + name + "}"
+
+        def no_action(char, ability):
+            raise server.GameError(f"{char} has no action called '{ability}' (get_actions lists them)")
+
+        def fake_click(game, inp, uuid, button="L", **kw):
+            clicks.append(uuid)
+            return clicker.ClickResult(ok=click_ok, reason=None if click_ok else "hover_miss")
+
+        saved = (server.game, server._act, server._ability_id, server.H, server._inp, clicker.click_entity,
+                 server._who)
+        server.H = Handles()
+        for u, n in ((sh, "Shadowheart"), (self.GALE, "Gale"), (scroll, "Scroll of Invisibility")):
+            server.H.get(u, n)
+        server.game, server._act, server._ability_id = G(), fake_act, no_action
+        server._inp = lambda: object()
+        clicker.click_entity = fake_click
+        server._who = lambda w: {"Shadowheart": sh, "Gale": self.GALE}.get(w, w)
+        try:
+            out = server.use_ability(ability, target=server.H.get(target) if target else "", who=who)
+        except server.GameError as e:
+            out = "ERR " + str(e)
+        finally:
+            (server.game, server._act, server._ability_id, server.H, server._inp, clicker.click_entity,
+             server._who) = saved
+        return out, calls, clicks
+
+    def test_scroll_read_and_target_clicked(self):
+        out, calls, clicks = self._run("Shadowheart", "Scroll of Invisibility", target=self.SH)
+        self.assertEqual(calls, [("act.interact", {"char": self.SH, "target": self.SCROLL})])
+        self.assertEqual(clicks, [self.SH])
+        self.assertIn("Scroll of Invisibility read, cast on", out.split("\n")[0])
+
+    def test_spell_name_alone_finds_the_scroll_and_defaults_to_self(self):
+        out, calls, clicks = self._run("Shadowheart", "Invisibility")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(clicks, [self.SH])
+
+    def test_scroll_in_another_members_bags_is_named(self):
+        out, calls, clicks = self._run("Gale", "Invisibility", owner=self.SH)
+        self.assertTrue(out.startswith("ERR") or "FAILED" in out)
+        self.assertIn("carries Scroll of Invisibility", out)
+        self.assertIn('who="Shadowheart"', out)
+        self.assertEqual(calls, [])
+
+    def test_failed_click_says_what_to_do(self):
+        out, _, _ = self._run("Shadowheart", "Scroll of Invisibility", click_ok=False)
+        self.assertIn("press_key ESCAPE", out)
+
+    def test_potion_in_combat_is_drunk_without_a_click(self):
+        # S031 17:05: bonus "Potion of Healing" in combat_turn was refused at 7 HP; the mod now drinks it for its
+        # bonus action (result `drunk`), and no target click follows.
+        out, calls, clicks = self._run("Shadowheart", "Potion of Healing", name="Potion of Healing",
+                                       res="use_ability: done — drunk charged_by_guard=[resource=bonus action]")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(clicks, [])
+        self.assertIn("drunk", out.split("\n")[0])
+
+    def test_disarm_by_name_is_the_disarm_tool(self):
+        from unittest import mock
+        with mock.patch.object(server, "disarm", lambda t, w=None: f"disarm: done {t} {w}"):
+            out, calls, _ = self._run("Shadowheart", "Disarm", target=self.SH)
+        self.assertTrue(out.startswith("disarm: done"), out)
+        self.assertEqual(calls, [])
+
+    def test_no_scroll_keeps_the_refusal(self):
+        server_inv = None
+        out, calls, _ = self._run("Shadowheart", "Fireball")
+        self.assertIn("no action called", out)
+        self.assertEqual(calls, [])
