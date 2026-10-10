@@ -943,6 +943,91 @@ function N.approach(charUuid, target, tpos, within, budget, avoid)
     return out
 end
 
+-- A spot to cast from: reachable within budget_m of path, within `range` m of
+-- tpos, from which los(feet) says the target is in sight (S018: 14 casts
+-- refused "no line of sight", pillars in the Shattered Sanctum, a downed ally
+-- behind vines; the agent re-planned each by hand or lost the action).
+-- Candidates, cheapest walk first: points along the route to the target
+-- (1 m apart, known walk), then rings around the character (path-checked:
+-- full, no jump, within budget). los(feet) -> true|false|nil (nil: rays
+-- unusable -> nothing is found, the caller falls back). avoid skips spots
+-- in or behind a harmful surface.
+-- Returns {found=true, pos, walk_m, dist_m, via="route"|"ring", tried} or
+-- {found=false, reason, tried}.
+N.LOS_RINGS = { 1.5, 3, 4.5, 6, 8 }
+N.LOS_MAX_PATHS = 12
+N.LOS_MAX_RAYS = 40
+function N.losSpot(charUuid, target, tpos, range, budget, avoid, los)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from then return nil, "no position" end
+    budget = budget or 12
+    local tried, rays, paths = 0, 0, 0
+    local function sees(p) -- false once the ray cap is spent; nil: rays unusable
+        if rays >= N.LOS_MAX_RAYS then return false end
+        rays = rays + 1
+        return los(p)
+    end
+    local inRange = function(p) return U.dist(p, tpos) <= range end
+    -- 1. Along the route toward the target.
+    local r = N.path(charUuid, target)
+    if r and r.reachable == true and type(r.points) == "table" and #r.points >= 2 then
+        local h = avoid and N.routeHazard(r.points) or nil
+        local maxW = math.min(budget, r.length_m or budget)
+        if h then maxW = math.min(maxW, h.at_m - N.HAZARD_STEP_M - 0.2) end
+        local w = 1
+        while w <= maxW + 1e-6 do
+            local p = N.pointAlong(r.points, w)
+            if inRange(p) then
+                tried = tried + 1
+                local v = sees(p)
+                if v == nil then return { found = false, reason = "line-of-sight rays unavailable", tried = tried } end
+                if v then
+                    return { found = true, pos = U.vec(p, 2), walk_m = round(w, 1), dist_m = round(U.dist(p, tpos), 1),
+                        via = "route", tried = tried }
+                end
+            end
+            w = w + 1
+        end
+    end
+    -- 2. Rings around the character: sight-check first (cheap), then the path.
+    local cands = {}
+    for _, rad in ipairs(N.LOS_RINGS) do
+        if rad <= budget then
+            for _, dname in ipairs(DIRS) do
+                local v = DIR_VEC[dname]
+                local x, z = from[1] + v[1] * rad, from[3] + v[2] * rad
+                local fy = floorAt(x, z, from[2])
+                if fy then
+                    local p = { x, fy, z }
+                    if inRange(p) and not (avoid and N.surfaceNear(p)) then
+                        -- Same ring: nearer the target first (a short step round a pillar).
+                        cands[#cands + 1] = { p = p, rad = rad, key = rad * 100 + U.dist(p, tpos) }
+                    end
+                end
+            end
+        end
+    end
+    table.sort(cands, function(a, b) return a.key < b.key end)
+    for _, c in ipairs(cands) do
+        if paths >= N.LOS_MAX_PATHS or rays >= N.LOS_MAX_RAYS then break end
+        tried = tried + 1
+        local v = sees(c.p)
+        if v == nil then return { found = false, reason = "line-of-sight rays unavailable", tried = tried } end
+        if v then
+            paths = paths + 1
+            local pr = N.path(charUuid, c.p)
+            if pr and pr.reachable == true and not pr.partial and not pr.needs_jump and (pr.length_m or 1e9) <= budget
+                and not (avoid and N.routeHazard(pr.points)) then
+                return { found = true, pos = U.vec(c.p, 2), walk_m = round(pr.length_m, 1),
+                    dist_m = round(U.dist(c.p, tpos), 1), via = "ring", tried = tried }
+            end
+        end
+    end
+    return { found = false, reason = string.format("no spot in sight within %.1f m of walking and %.1f m of it", budget, range),
+        tried = tried }
+end
+
 -- Uncached check of the exact point `pos` from where the character stands
 -- now (N.path caches by a 0.1 m key, so a rounded leg end would hit the
 -- unrounded sample's entry). Returns reachable (true/false/nil), raw result.
@@ -2034,6 +2119,38 @@ RPC.register("nav.approach", function(args)
     local r, err = N.approach(char, target or tpos, tpos, math.max(0, tonumber(args.within) or N.APPROACH_M),
         budget, args.avoid ~= false)
     if not r then error(err, 0) end
+    if mv then r.movement_left = round(mv, 1) end
+    r.ms = Ext.Utils.MonotonicTime() - t0
+    return r
+end)
+
+-- nav.los_spot {char?, target, range, budget_m?, avoid?=true}: where to walk
+-- to have the target in sight and within range (see N.losSpot). Also says
+-- whether the engine sees it from where the character stands now
+-- (los_now). budget_m defaults to the movement left (in combat) minus 0.2.
+RPC.register("nav.los_spot", function(args)
+    local ctx = V.context()
+    local char = args.char or activeChar(ctx)
+    if not ctx.is_party[char] then error("not a party member", 0) end
+    local te = args.target and V.entity(args.target)
+    local tpos = te and V.pos(te)
+    if not tpos then error("unknown target", 0) end
+    local visible = U.comp(te, "ServerCharacter") and V.characterVisible(ctx, args.target, te, tpos)
+        or (U.comp(te, "ServerItem") and V.itemVisible(ctx, args.target, te, tpos))
+    if not visible then error("not visible", 0) end
+    local range = tonumber(args.range)
+    if not range or range <= 0 then error("need range (m)", 0) end
+    local mv = movementLeft(char)
+    local budget = tonumber(args.budget_m)
+    if mv and Osi.IsInCombat and truthy(osi(Osi.IsInCombat, char)) then
+        budget = math.min(budget or math.huge, math.max(0, mv - 0.2))
+    end
+    if budget == math.huge then budget = nil end
+    local t0 = Ext.Utils.MonotonicTime()
+    local r, err = N.losSpot(char, args.target, tpos, range, budget, args.avoid ~= false,
+        function(feet) return V.losFrom(ctx, args.target, te, tpos, feet) end)
+    if not r then error(err, 0) end
+    r.los_now = truthy(osi(Osi.HasLineOfSight, char, args.target))
     if mv then r.movement_left = round(mv, 1) end
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r

@@ -19,6 +19,7 @@ level_up(who) without a plan uses the stored line for the level being reached.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -232,18 +233,29 @@ def hint_text(memory: Path, levels: list[dict]) -> str:
 #
 # The spell buttons pass a MultiBinding (selector + spell) that the mod cannot build, so ui.level_up leaves
 # result.needs_clicks = [{name, cantrips}] and the level_up tool clicks them here, then reruns ui.level_up.
-# ui.level_up_spell_probe {name} shows the spell's selector and says which of its buttons the cursor is over
-# (index in the selector's visible buttons, row-major in `cols` columns of `cell` page units). One hovered button
-# plus its measured edges give the grid; every click is hover-checked first, and checked afterwards (the spell
-# must show as picked). The page lays out at 3840x2160 and is scaled to the window (88-unit buttons were 44 px
-# at 1920x1080, verified live), and the button list sits left of centre (Gale's Wizard 2 page: x 0.16-0.34,
-# y 0.42-0.54 of the window), where the search starts.
+# ui.level_up_spell_probe {name} shows the spell's selector (on a feat level it first goes back from the feat tab
+# to the overview; a feat's own selector opens on the feat tab) and says which of its buttons the cursor is over
+# (index in the selector's buttons, row-major in `cols` columns of `cell` page units), and `near` when the cursor
+# is over the list or one of its parents up to its scroll viewer. The page lays out at 3840x2160 and is scaled to
+# the window (88-unit buttons were 44 px at 1920x1080, verified live). The panel is centred by a transform that
+# depends on its width, so the list is not always where Gale's Wizard 2 page had it (x 0.16-0.34, y 0.42-0.54):
+# S018 (feat levels) never found it in 400 probes (~110 s, the MCP timeout). Now: big steps until the cursor is
+# near the list or on a button, then button-sized ones; the last place a button was found is remembered (also
+# across bridge restarts, in runtime/levelup_clicks.json); a target scrolled out of view is brought in with the
+# mouse wheel; and the whole thing stops at CLICK_BUDGET_S so level_up answers well inside the tool timeout.
 
 DESIGN_H = 2160.0
 SEARCH_FROM = (0.25, 0.47)
 MAX_SEARCH_PROBES = 400
+COARSE_STEP = 4.0        # coarse search step, in buttons (the whole 1080p window in ~66 probes)
+FINE_PROBES = 160        # button-sized steps around the coarse hit
+CLICK_BUDGET_S = 45.0    # all picks of one level_up call
+SCROLL_TRIES = 6
+WHEEL_NOTCHES = 3
 
 Rpc = Callable[[str, dict], dict]
+MEMO = Path(os.environ.get("BG3AI_RUNTIME", Path(__file__).resolve().parents[3] / "runtime")) / "levelup_clicks.json"
+_last_hit: dict[str, tuple[float, float]] = {}   # "spells"/"cantrips"/"feat" -> window fraction of the last button hit
 
 
 class SpellClickError(RuntimeError):
@@ -271,12 +283,40 @@ def spiral(cx: float, cy: float, step: float, w: int, h: int, limit: int = MAX_S
     return out
 
 
+def _load_memo(path: Path | None) -> None:
+    if path is None or _last_hit:
+        return
+    try:
+        data = json.loads(path.read_text())
+        for k, v in data.items():
+            if isinstance(v, list) and len(v) == 2:
+                _last_hit[k] = (float(v[0]), float(v[1]))
+    except (OSError, ValueError):
+        pass
+
+
+def _save_memo(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        path.write_text(json.dumps({k: list(v) for k, v in _last_hit.items()}))
+    except OSError:
+        pass
+
+
 class SpellClicker:
-    def __init__(self, rpc: Rpc, inp, log: Callable[[str], None] = lambda m: None):
+    def __init__(self, rpc: Rpc, inp, log: Callable[[str], None] = lambda m: None,
+                 budget_s: float = CLICK_BUDGET_S, clock: Callable[[], float] = time.monotonic):
         self.rpc, self.inp, self.log = rpc, inp, log
-        self.origin: tuple[float, float] | None = None   # centre of visible button 1 (window px)
+        self.origin: tuple[float, float] | None = None   # centre of button 1 (window px)
         self.cell: float | None = None                   # button pitch (window px)
         self.probes = 0
+        self.clock = clock
+        self.deadline = clock() + budget_s
+
+    def _check_time(self, what: str) -> None:
+        if self.clock() > self.deadline:
+            raise SpellClickError(f"{what}: out of time ({self.probes} probes)")
 
     def probe(self, args: dict, at: tuple[int, int] | None = None) -> dict:
         if at is not None:
@@ -286,9 +326,9 @@ class SpellClicker:
         return self.rpc("ui.level_up_spell_probe", args)
 
     def ready(self, args: dict) -> dict:
-        """Probe until the selector is shown and the spell's button exists (a sub-tab switch takes a few frames)."""
+        """Probe until the selector is shown and the spell's button exists (tab and sub-tab switches take frames)."""
         p: dict = {}
-        for _ in range(12):
+        for _ in range(16):
             p = self.probe(args)
             if p.get("placed") or p.get("index"):
                 return p
@@ -321,31 +361,43 @@ class SpellClicker:
         assert self.origin is not None and self.cell is not None
         return round(self.origin[0] + col * self.cell), round(self.origin[1] + row * self.cell)
 
-    def locate(self, args: dict, p: dict) -> tuple[int, int]:
-        """Window coordinates over the spell's button, hover-checked."""
-        if self.origin is not None:
-            at = self._target(p)
-            if self.probe(args, at).get("over"):
-                return at
-            self.origin = None   # the list moved (another selector, a scroll): search again
+    def _over(self, args: dict, at: tuple[int, int]) -> bool:
         w, h = self.inp.window_size()
-        cell_units = float((p.get("cell") or {}).get("w") or 88.0)
-        guess = cell_units * min(w / (DESIGN_H * 16 / 9), h / DESIGN_H)
-        hit = None
-        for pt in spiral(SEARCH_FROM[0] * w, SEARCH_FROM[1] * h, guess * 0.9, w, h):
+        if not (0 <= at[0] < w and 0 <= at[1] < h):
+            return False
+        return bool(self.probe(args, at).get("over"))
+
+    def _find(self, args: dict, kind: str, guess: float) -> tuple[tuple[int, int], int]:
+        """A point over one of the selector's buttons and that button's index: coarse steps from the last hit
+        (or SEARCH_FROM) until on a button or near the list, then button-sized steps around there."""
+        w, h = self.inp.window_size()
+        fx, fy = _last_hit.get(kind) or SEARCH_FROM
+        near_at = None
+        for pt in spiral(fx * w, fy * h, guess * COARSE_STEP, w, h):
+            self._check_time(f"spell {args['name']}: no spell button found under the cursor")
             q = self.probe(args, pt)
             if q.get("hovered"):
-                hit = (pt, q["hovered"])
+                return pt, q["hovered"]
+            if q.get("near"):
+                near_at = pt
                 break
-        if hit is None:
-            raise SpellClickError(f"spell {args['name']}: no spell button found under the cursor "
-                                  f"({self.probes} probes)")
-        (pt, k) = hit
+        seeds = [near_at] if near_at else []
+        seeds.append((round(fx * w), round(fy * h)))
+        for seed in seeds:
+            for pt in spiral(seed[0], seed[1], guess * 0.9, w, h, limit=FINE_PROBES):
+                self._check_time(f"spell {args['name']}: no spell button found under the cursor")
+                q = self.probe(args, pt)
+                if q.get("hovered"):
+                    return pt, q["hovered"]
+        raise SpellClickError(f"spell {args['name']}: no spell button found under the cursor ({self.probes} probes)")
+
+    def _grid(self, args: dict, p: dict, pt: tuple[int, int], k: int, guess: float) -> tuple[int, int] | None:
+        """Grid origin and pitch from hovered button k at pt; the target's spot if the cursor there is over it."""
         kc, kr = _cell_of(k, p.get("cols") or 1)
-        # Quick: the left and top edges of button k with the expected pitch; then the full measure if that misses.
         span = round(guess * 1.5) + 2
         left = self._edge(args, k, pt, (pt[0] - span, pt[1]))[0]
         top = self._edge(args, k, pt, (pt[0], pt[1] - span))[1]
+        at = None
         for attempt in ("edges", "measured"):
             if attempt == "edges":
                 self.cell, cx, cy = guess, left + guess / 2, top + guess / 2
@@ -354,23 +406,58 @@ class SpellClicker:
                 self.cell = width if abs(width - guess) < guess * 0.5 else guess
             self.origin = (cx - kc * self.cell, cy - kr * self.cell)
             at = self._target(p)
-            if self.probe(args, at).get("over"):
+            if self._over(args, at):
                 self.log(f"spell buttons: #{k} at ({cx:.0f},{cy:.0f}), pitch {self.cell:.1f}px, {p.get('cols')} "
                          f"columns ({attempt})")
                 return at
+        return None
+
+    def locate(self, args: dict, p: dict, kind: str = "spells") -> tuple[int, int]:
+        """Window coordinates over the spell's button, hover-checked."""
+        if self.origin is not None:
+            at = self._target(p)
+            if self._over(args, at):
+                return at
+            self.origin = None   # the list moved (another selector, a scroll): search again
+        w, h = self.inp.window_size()
+        cell_units = float((p.get("cell") or {}).get("w") or 88.0)
+        guess = cell_units * min(w / (DESIGN_H * 16 / 9), h / DESIGN_H)
+        pt, k = self._find(args, kind, guess)
+        _last_hit[kind] = (pt[0] / w, pt[1] / h)
+        cols = p.get("cols") or 1
+        for _ in range(SCROLL_TRIES + 1):
+            self._check_time(f"spell {args['name']}")
+            at = self._grid(args, p, pt, k, guess)
+            if at is not None:
+                return at
+            # The target is not where the grid says: a long list scrolled out of view. Wheel the list toward it
+            # (the cursor on button k, inside the list) and measure again from whatever button is under it now.
+            down = _cell_of(p["index"], cols)[1] > _cell_of(k, cols)[1]
+            self.inp.wheel(-WHEEL_NOTCHES if down else WHEEL_NOTCHES, pt[0], pt[1])
+            self.inp.wait_frames(4)
+            q = self.probe(args, pt)
+            k2 = q.get("hovered")
+            if not k2:
+                pt, k2 = self._find(args, kind, guess)
+            if k2 == k:
+                break   # the wheel moved nothing: the list does not scroll that way
+            self.log(f"spell buttons: scrolled {'down' if down else 'up'} (#{k} -> #{k2} under the cursor)")
+            k = k2
         self.origin = None
-        raise SpellClickError(f"spell {args['name']}: the computed spot {at} is not over its button")
+        raise SpellClickError(f"spell {args['name']}: its button is not under the computed spot (list scrolled?)")
 
     def pick(self, need: dict) -> None:
         args = {"name": need["name"]}
         if need.get("cantrips") is not None:
             args["cantrips"] = need["cantrips"]
+        self._check_time(f"spell {need['name']}")
         p = self.ready(args)
         if p.get("placed"):
             return
         if p.get("enabled") is False:
             raise SpellClickError(f"spell {need['name']}: its button is disabled (no open slot?)")
-        at = self.locate(args, p)
+        kind = "feat" if p.get("feat") else ("cantrips" if need.get("cantrips") else "spells")
+        at = self.locate(args, p, kind)
         self.inp.click(*at)
         self.inp.wait_frames(8)
         for _ in range(10):
@@ -381,9 +468,13 @@ class SpellClicker:
         raise SpellClickError(f"spell {need['name']}: clicked at {at} but it is not picked")
 
 
-def click_spells(rpc: Rpc, inp, needs: list[dict], log: Callable[[str], None] = lambda m: None) -> dict:
-    """Click each needed spell on the open level-up page. {picked: [...], failed: {name: why}, probes}."""
-    c = SpellClicker(rpc, inp, log)
+def click_spells(rpc: Rpc, inp, needs: list[dict], log: Callable[[str], None] = lambda m: None,
+                 budget_s: float = CLICK_BUDGET_S) -> dict:
+    """Click each needed spell on the open level-up page. {picked: [...], failed: {name: why}, probes, seconds}."""
+    memo = MEMO
+    _load_memo(memo)
+    t0 = time.monotonic()
+    c = SpellClicker(rpc, inp, log, budget_s=budget_s)
     picked, failed = [], {}
     for need in needs:
         try:
@@ -395,4 +486,6 @@ def click_spells(rpc: Rpc, inp, needs: list[dict], log: Callable[[str], None] = 
         inp.move(*(round(v / 2) for v in inp.window_size()))   # off the buttons (tooltips)
     except Exception:  # noqa: BLE001
         pass
-    return {"picked": picked, "failed": failed, "probes": c.probes}
+    if picked:
+        _save_memo(memo)
+    return {"picked": picked, "failed": failed, "probes": c.probes, "seconds": round(time.monotonic() - t0, 1)}

@@ -1588,6 +1588,13 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
     args = {"char": char}
     if _session_over():
         return _finish("end_turn", args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
+    cs = game.try_rpc("state.combat") or {}
+    if char in turn.downed(cs):
+        # S018: end_turn on downed Claude/Shadowheart -> "FAILED: character is downed" (x2).
+        body = f"end_turn {_label(char)}: skipped — {_downed_text(char)}"
+        if wait and not _batch["active"]:
+            body += "\n" + _wait_for_party_turn(80.0)
+        return _finish("end_turn", args, body, t0)
     r = game.run_job("act.end_turn", args, wait_s=15)
     _remember_names(r.result)
     _batch["last"] = r.status
@@ -2818,7 +2825,8 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
         text = _outcome(alt.step, text)
         _after(rep, after)
         if not rep.done and rep.stop_kind in (None, "failed"):
-            step_in = _step_into_range(who, alt.step, text, watcher, after)
+            step_in = (_step_into_range(who, alt.step, text, watcher, after)
+                       or _step_into_sight(who, alt.step, text, watcher, after))
             if step_in:
                 tried.append(f"{text} → {step_in}")
                 rep, text = _run_one(watcher, who, alt.step)
@@ -2865,6 +2873,34 @@ def _step_into_range(who: str, step: actq.Step, text: str, watcher: actq.Watcher
     rep, _text = _run_one(watcher, who, actq.Step("move_to", {"x": x, "y": y, "z": z}))
     _after(rep, after)
     return f"stepped {render.num(ap.get('walk_m', '?'))}m into range" if rep.done else ""
+
+
+def _step_into_sight(who: str, step: actq.Step, text: str, watcher: actq.Watcher, after: dict) -> str:
+    """combat_turn: a cast refused 'no line of sight' (S018: 14 casts, pillars in the Shattered Sanctum, a
+    downed ally behind vines) walks to the nearest spot, within the movement left and the ability's range,
+    from which a sight ray reaches the target (nav.los_spot); the caller then casts again, and the engine's
+    own line-of-sight check decides. Returns what it did ('stepped 2m to see it'), or '' (another failure,
+    a melee ability, no such spot, the walk failed)."""
+    if step.tool != "use_ability" or "line of sight" not in text.lower() or not step.args.get("target"):
+        return ""
+    try:
+        tu = _uuid(str(step.args["target"]))
+    except ValueError:
+        return ""
+    acts = game.try_rpc("state.actions", {"uuid": who})
+    acts = acts.get("actions") if isinstance(acts, dict) else acts
+    rng = next((a.get("range") for a in acts or [] if isinstance(a, dict)
+                and a.get("spell") == step.args.get("ability")), None)
+    if not isinstance(rng, (int, float)) or rng <= turn.MELEE_RANGE_M:
+        return ""  # melee: walking next to it is the move's job (out of range → step in)
+    sp = game.try_rpc("nav.los_spot", {"char": who, "target": tu, "range": max(1.0, float(rng) - 0.5),
+                                       "avoid": True})
+    if not (isinstance(sp, dict) and sp.get("found") and sp.get("pos")):
+        return ""
+    x, y, z = sp["pos"]
+    rep, _text = _run_one(watcher, who, actq.Step("move_to", {"x": x, "y": y, "z": z}))
+    _after(rep, after)
+    return f"stepped {render.num(sp.get('walk_m', '?'))}m to see it" if rep.done else ""
 
 
 AUTO_RANGED = ("Projectile_MainHandAttack", "Projectile_OffhandAttack")
@@ -2956,15 +2992,24 @@ def _turn_auto_bonus(who: str, watcher: actq.Watcher, lines: list, after: dict) 
     return _turn_slot("bonus (auto: ally downed)", alts, who, watcher, lines, after)[0]
 
 
-def _wait_turn(ready, max_s: float) -> tuple[dict, str]:
+def _downed_text(u: str) -> str:
+    return (f"{_label(u)} is downed: nothing to play, its turn passes by itself (the game rolls its death "
+            "saving throw). Get it up from an ally's turn: Healing Word, Help (adjacent) or a potion.")
+
+
+def _wait_turn(ready, max_s: float, blocked=None) -> tuple[dict, str]:
     """combat_turn sent ahead (planned while enemies act): poll until ready(combat) or combat ends, a prompt
-    needs an answer, or max_s passes. (last state.combat, why it stopped waiting or '')."""
+    needs an answer, blocked(combat) names why the turn can't come (another party member must act first),
+    or max_s passes. (last state.combat, why it stopped waiting or '')."""
     deadline = time.monotonic() + max_s
     n = 0
     while True:
         cs = game.try_rpc("state.combat") or {}
         if not cs.get("active") or ready(cs):
             return cs, ""
+        why = blocked(cs) if blocked else ""
+        if why:
+            return cs, why
         n += 1
         if n % 3 == 0:
             ui = game.try_rpc("ui.state", context="client") or {}
@@ -3011,6 +3056,7 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z]. Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).
     Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it (Dash), walk the move again.
     order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn (default: stop).
+    No line of sight to a ranged target: it first steps (within the movement left and the ability's range) to the nearest spot that sees it, then casts again. A downed character has no turn to play (it passes by itself); another of your characters (a summon too) acting first makes a sent-ahead plan return at once.
     Before each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore="" adds new hostiles in view).
     A slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).
     end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn).
@@ -3027,21 +3073,37 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     now = turn.acting(cs)
     waited = ""
     want = _uuid(who) if who else None
+    if want and want in turn.downed(cs):
+        return _finish("combat_turn", {"who": who}, _downed_text(want), t0)
     ready = (lambda c: want in turn.acting(c)) if want else (lambda c: bool(turn.party_acting(c, party)))
+
+    def blocked(c: dict) -> str:
+        if want and want in turn.downed(c):
+            return f"{_label(want)} is downed"
+        first = turn.blocking(c, party, want) if want else []
+        if not first:
+            return ""
+        return (", ".join(_label(u) for u in first) + " (yours) must act first: play that turn "
+                f"(combat_turn who={H.get(first[0])}) or end it (end_turn who={H.get(first[0])})")
+
     if not ready(cs) and wait_turn > 0:
         w0 = time.monotonic()
-        cs, why = _wait_turn(ready, wait_turn)
+        cs, why = _wait_turn(ready, wait_turn, blocked)
         _remember_names(cs)
         if not cs.get("active"):
             raise GameError("combat is over: loot, heal, then end_combat_report")
         now = turn.acting(cs)
         waited = f"waited {time.monotonic() - w0:.1f}s for the turn" + (f" ({why})" if why else "")
-    mine = [u for u in now if u in party]
+        if want and want in turn.downed(cs):
+            return _finish("combat_turn", {"who": who}, _downed_text(want), t0)
+    mine = turn.party_acting(cs, party)
     if who:
         char = want
     else:
         sel = _active()
         char = sel if sel in mine else (mine[0] if mine else sel)
+    if char in turn.downed(cs):
+        return _finish("combat_turn", {"who": who}, _downed_text(char), t0)
     if char not in now:
         ended = any(o.get("uuid") == char and o.get("ended") for o in cs.get("order") or [])
         why = f"{_label(char)} already ended its turn" if ended else f"it is not {_label(char)}'s turn"
@@ -3095,6 +3157,9 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
             lines.append(re.sub(r" — after=\{[^}]*\}| after=\{[^}]*\}", "", text))
             if isinstance(res, dict) and isinstance(res.get("after"), dict):
                 after.update(res["after"])
+    elif stopped and char in turn.downed(game.try_rpc("state.combat") or {}):
+        lines.append(f"{_label(char)} went down: its turn passes by itself (death saving throws); "
+                     "get it up with Healing Word / Help from an ally")
     elif stopped:
         lines.append("turn NOT ended: decide, then continue (combat_turn again, or single tools)")
     now = _now_line(after)

@@ -138,13 +138,26 @@ class FakeSpellPage:
     """The level-up spell grid as ui.level_up_spell_probe and the input shim see it: `names` in order, 8 columns
     of 44 px buttons (1920x1080) whose first centre is at `origin`; a click on a button picks its spell."""
 
-    def __init__(self, names, origin=(326.0, 475.0), cell=44.0, cols=8, open_slots=2, switch_frames=1):
+    def __init__(self, names, origin=(326.0, 475.0), cell=44.0, cols=8, open_slots=2, switch_frames=1,
+                 rows_visible=None, near_margin=None):
         self.names, self.origin, self.cell, self.cols = list(names), origin, cell, cols
         self.picked: list[str] = []
         self.open = open_slots
         self.cursor = (0, 0)
         self.switch = switch_frames   # probes that answer "switched" first (the sub-tab appears)
         self.moves = 0
+        self.rows_visible = rows_visible   # a scroll viewer showing this many rows (None: all)
+        self.scroll = 0.0                  # px scrolled down
+        self.near_margin = near_margin     # px around the list where the probe says `near` (None: never)
+        self.wheels: list[int] = []
+
+    def wheel(self, notches, x=None, y=None, sync=True):
+        self.wheels.append(notches)
+        if self.rows_visible is None:
+            return
+        rows = -(-len(self.visible()) // self.cols)
+        top = max(0.0, (rows - self.rows_visible) * self.cell)
+        self.scroll = min(top, max(0.0, self.scroll - notches * self.cell * 0.75))
 
     # input shim
     def window_size(self):
@@ -170,8 +183,11 @@ class FakeSpellPage:
 
     def under(self):
         x, y = self.cursor
+        top = self.origin[1] - self.cell / 2
+        if self.rows_visible is not None and not (top <= y < top + self.rows_visible * self.cell):
+            return None
         col = (x - (self.origin[0] - self.cell / 2)) // self.cell
-        row = (y - (self.origin[1] - self.cell / 2)) // self.cell
+        row = (y + self.scroll - top) // self.cell
         if col < 0 or col >= self.cols or row < 0:
             return None
         k = int(row * self.cols + col) + 1
@@ -189,8 +205,15 @@ class FakeSpellPage:
             return {"switched": True}
         idx = self.visible().index(name) + 1
         h = self.under()
-        return {"index": idx, "n": len(self.visible()), "cols": self.cols, "cell": {"w": 88.0, "h": 88.0},
-                "over": h == idx, "hovered": h, "enabled": self.open > 0, "open": self.open}
+        out = {"index": idx, "n": len(self.visible()), "cols": self.cols, "cell": {"w": 88.0, "h": 88.0},
+               "over": h == idx, "hovered": h, "enabled": self.open > 0, "open": self.open}
+        if self.near_margin is not None:
+            m, (x, y) = self.near_margin, self.cursor
+            rows = self.rows_visible or -(-len(self.visible()) // self.cols)
+            x0, y0 = self.origin[0] - self.cell / 2, self.origin[1] - self.cell / 2
+            if x0 - m <= x < x0 + self.cols * self.cell + m and y0 - m <= y < y0 + rows * self.cell + m:
+                out["near"] = 3
+        return out
 
 
 NAMES = ["Burning Hands", "Charm Person", "Chromatic Orb", "Colour Spray", "Disguise Self", "Expeditious Retreat",
@@ -200,6 +223,66 @@ NAMES = ["Burning Hands", "Charm Person", "Chromatic Orb", "Colour Spray", "Disg
 
 class SpellClicks(unittest.TestCase):
     """click_spells: hover-search the grid, measure one button, click each pick (hover-checked), confirm it took."""
+
+    def setUp(self):
+        self._memo = LV.MEMO
+        LV.MEMO = None
+        LV._last_hit.clear()
+
+    def tearDown(self):
+        LV.MEMO = self._memo
+        LV._last_hit.clear()
+
+    def test_far_list_found_through_near(self):
+        # S018: the list far from where Gale's L2 page had it. `near` (over the list's scroll viewer) lets the
+        # coarse search take big steps; without it the fine search alone would need hundreds of probes.
+        pg = FakeSpellPage(NAMES[:6], origin=(1500.0, 260.0), cols=6, near_margin=120)
+        r = LV.click_spells(pg.rpc, pg, [{"name": NAMES[3], "cantrips": True}])
+        self.assertEqual(r["failed"], {})
+        self.assertLess(r["probes"], 120)
+
+    def test_scrolled_out_of_view(self):
+        # a long list in a scroll viewer showing 3 rows: the target on row 5 is wheeled into view
+        names = [f"Spell {i}" for i in range(1, 31)]
+        pg = FakeSpellPage(names, cols=6, rows_visible=3)
+        r = LV.click_spells(pg.rpc, pg, [{"name": "Spell 27"}])
+        self.assertEqual((r["failed"], pg.picked), ({}, ["Spell 27"]))
+        self.assertTrue(pg.wheels and all(n < 0 for n in pg.wheels))
+
+    def test_out_of_time(self):
+        # nothing hoverable: it gives up at the budget, not after 400+ probes (S018: 110 s, the MCP timeout)
+        pg = FakeSpellPage(NAMES, origin=(-500.0, -500.0))
+        t = [0.0]
+
+        def clock():
+            t[0] += 0.28   # one probe's worth of time per look at the clock
+            return t[0]
+        c = LV.SpellClicker(pg.rpc, pg, budget_s=10.0, clock=clock)
+        with self.assertRaises(LV.SpellClickError) as e:
+            c.pick({"name": "Shield"})
+        self.assertIn("out of time", str(e.exception))
+        self.assertLess(c.probes, 60)
+
+    def test_last_hit_remembered(self):
+        pg = FakeSpellPage(NAMES, origin=(1200.0, 800.0))
+        r1 = LV.click_spells(pg.rpc, pg, [{"name": "Shield"}])
+        pg2 = FakeSpellPage(NAMES, origin=(1200.0, 800.0))
+        r2 = LV.click_spells(pg2.rpc, pg2, [{"name": "Shield"}])
+        self.assertEqual((r1["failed"], r2["failed"]), ({}, {}))
+        self.assertLess(r2["probes"], r1["probes"])
+
+    def test_memo_file(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            LV.MEMO = Path(d) / "levelup_clicks.json"
+            pg = FakeSpellPage(NAMES, origin=(1200.0, 800.0))
+            LV.click_spells(pg.rpc, pg, [{"name": "Shield"}])
+            self.assertTrue(LV.MEMO.exists())
+            LV._last_hit.clear()
+            pg2 = FakeSpellPage(NAMES, origin=(1200.0, 800.0))
+            r2 = LV.click_spells(pg2.rpc, pg2, [{"name": "Shield"}])
+            self.assertEqual(r2["failed"], {})
+            self.assertLess(r2["probes"], 30)
 
     def test_two_picks(self):
         pg = FakeSpellPage(NAMES)

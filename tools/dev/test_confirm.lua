@@ -1,6 +1,7 @@
 -- Offline tests for confirmation boxes (worker se): UIActions ui.confirm /
 -- pickConfirm / the ui.command "Yes" fallback, and Services' long rest
--- answering "End the day?" + "Someone wants to talk, rest anyway?" (live S005).
+-- answering "End the day?" + "Someone wants to talk, rest anyway?" (live S005), and the re-run after
+-- the bridge clicks a dead box (live S018: no second CampTravel while the rest screen opens).
 -- Ext, RPC, UI and UIState are stubbed.
 -- Run: tools/dev/test_confirm.sh  (Lua 5.3 + 5.4 in Docker)
 
@@ -233,6 +234,104 @@ W("MakeCamp", {}, {})
 local nCamp = #commands
 r = ops["ui.long_rest"]({})
 ok(#commands == nCamp, "re-run with the rest screen open doesn't ask CampTravel again")
+
+-- long rest, live S018 x4: the bridge clicked the dead box's Yes, the rest screen was opening (not yet
+-- visible), and the re-run 0.5 s later pressed CampTravel again, which cancelled it ("the rest screen
+-- didn't open"). Model: Yes -> MakeCamp shows 1 s later unless CampTravel is pressed meanwhile.
+local opening, cancelled
+local function clickYes() -- what boxclick does: the box closes, the screen starts opening
+    widgets.Dialog_box = nil
+    opening = clock + 1000
+end
+local function tickGame()
+    if opening and clock >= opening then opening = nil W("MakeCamp", {}, {}).DataContext = { dc = "MakeCamp" } end
+end
+BG3AI.UI.command = (function(orig)
+    return function(dc, name, param, dry)
+        if name == "CampTravel" and not dry and opening then
+            commands[#commands + 1] = name
+            opening, cancelled = nil, true -- a second press while it opens: nothing opens
+            return true
+        end
+        if dc and dc.dc == "MakeCamp" then commands[#commands + 1] = name return true end
+        return orig(dc, name, param, dry)
+    end
+end)(BG3AI.UI.command)
+local function runGame(id, ms)
+    local job = jobs[id]
+    for _ = 1, (ms or 8000) / 50 do
+        clock = clock + 50
+        tickGame()
+        if job.status ~= "running" then break end
+        job.on_tick(job)
+    end
+    return job
+end
+clock = clock + 60000
+widgets, opening, cancelled = {}, nil, nil
+r = ops["ui.long_rest"]({})
+j = run(r.job, 3000)
+ok(j.status == "failed" and j.result.needs_click == "yes", "S018: first job asks for a click: " .. tostring(j.error))
+clickYes()
+clock = clock + 500 -- the bridge sleeps 0.5 s, then runs long_rest again
+nCamp = #commands
+r = ops["ui.long_rest"]({})
+ok(#commands == nCamp, "S018: the re-run after the click doesn't press CampTravel again")
+j = runGame(r.job, 3000)
+ok(not cancelled and j.status ~= "failed", "S018: the rest screen opens and the rest proceeds: "
+    .. tostring(j.status) .. " " .. tostring(j.error))
+
+-- the click closed the box but nothing opened: after 4 s of nothing, CampTravel once more (a fresh box)
+clock = clock + 60000
+widgets, opening, cancelled = {}, nil, nil
+r = ops["ui.long_rest"]({})
+j = run(r.job, 3000)
+widgets.Dialog_box = nil -- clicked, but the game did nothing
+clock = clock + 500
+nCamp = #commands
+r = ops["ui.long_rest"]({})
+j = jobs[r.job]
+for _ = 1, 100 do clock = clock + 50 j.on_tick(j) if #commands > nCamp then break end end
+ok(#commands == nCamp + 1, "nothing after the click: CampTravel pressed again after ~4 s")
+j = run(r.job, 3000)
+ok(j.status == "failed" and j.result.needs_click == "yes", "the retry's box goes to the bridge again: " .. tostring(j.error))
+
+-- nothing at all opens: the failure names the step and what's on screen
+clock = clock + 60000
+widgets = { HotBar = { name = "HotBar", visible = true, texts = {}, buttons = {} } }
+BG3AI.UI.command = (function(orig)
+    return function(dc, name, param, dry)
+        if name == "CampTravel" and not dry then commands[#commands + 1] = name return true end
+        return orig(dc, name, param, dry)
+    end
+end)(BG3AI.UI.command)
+nCamp = #commands
+r = ops["ui.long_rest"]({})
+j = run(r.job, 12000)
+local e = tostring(j.error)
+ok(j.status == "failed" and e:find("rest screen didn't open", 1, true), "no screen -> failed: " .. e)
+ok(e:find("CampTravel (retry)", 1, true) and e:find("pressed 2x", 1, true), "message says the step and presses: " .. e)
+ok(e:find("widgets=[HotBar]", 1, true), "message says what's on screen: " .. e)
+ok(#commands == nCamp + 2 and j.result.step == "open", "pressed twice, step=open")
+
+-- a camp scene starts instead of the rest screen after the question
+clock = clock + 60000
+widgets = {}
+BG3AI.UI.command = (function(orig)
+    return function(dc, name, param, dry)
+        if name == "CampTravel" and not dry then
+            commands[#commands + 1] = name
+            W("Dialog_box", { "[ForceUpdate]" }, { { "Yes", nil, function() widgets.Dialog_box = nil W("Dialogue", {}, {}) end },
+                { "No", nil, function() widgets.Dialog_box = nil end } })
+            return true
+        end
+        return orig(dc, name, param, dry)
+    end
+end)(BG3AI.UI.command)
+r = ops["ui.long_rest"]({})
+j = run(r.job, 3000)
+ok(j.status == "failed" and tostring(j.error):find("dialogue started instead", 1, true) and j.result.camp_scene,
+    "camp scene before the rest screen is named: " .. tostring(j.error))
 
 -- ui.confirm on a dead box: still_open + needs_click
 widgets = {}

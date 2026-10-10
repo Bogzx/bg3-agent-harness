@@ -35,6 +35,11 @@ STATS = {
     RepellingBlast = { Name = "Repelling Blast" }, DevilsSight = { Name = "Devil's Sight" },
     FS_Archery = { Name = "Archery" }, FS_Defence = { Name = "Defence" }, FS_Duelling = { Name = "Duelling" },
     FS_Protection = { Name = "Protection" },
+    Target_TollTheDead = { Level = 0, SpellSchool = "Necromancy", Name = "Toll the Dead" },
+    Target_Light = { Level = 0, SpellSchool = "Evocation", Name = "Light" },
+    Target_Thaumaturgy = { Level = 0, SpellSchool = "Transmutation", Name = "Thaumaturgy" },
+    EA_Acid = { Name = "Elemental Adept: Acid" }, EA_Cold = { Name = "Elemental Adept: Cold" },
+    EA_Fire = { Name = "Elemental Adept: Fire" }, EA_Lightning = { Name = "Elemental Adept: Lightning" },
 }
 SPELL_LISTS = {
     wizard1 = { "Zone_BurningHands", "Target_CharmPerson", "Projectile_MagicMissile", "Shout_Shield_Wizard", "Target_Sleep" },
@@ -43,11 +48,15 @@ SPELL_LISTS = {
     warlock1 = { "Target_CharmPerson", "Shout_HellishRebuke", "Target_Hex" },
     -- the same level/school sequence as warlock1 with other spells: a page of 3 is ambiguous between these two
     other3 = { "Target_Bless", "Shout_HellishRebuke", "Target_Sleep" },
+    cleric0 = { "Target_TollTheDead", "Target_Light", "Target_Thaumaturgy" },
 }
 PASSIVE_LISTS = {
     invocations = { Name = "Warlock invocations", Passives = { "AgonizingBlast", "ArmorOfShadows", "RepellingBlast", "DevilsSight" } },
     styles = { Name = "Fighting styles", Passives = { "FS_Archery", "FS_Defence", "FS_Duelling", "FS_Protection" } },
+    elements = { Name = "Elemental Adept", Passives = { "EA_Acid", "EA_Cold", "EA_Fire", "EA_Lightning" } },
 }
+local FEATS = { featEA = { Name = "ElementalAdept", SelectPassives = { { UUID = "elements" } } },
+                featWM = { Name = "WeaponMaster", SelectPassives = { { UUID = "styles" } } } }
 local PROGRESSIONS = {
     warlock2 = { TableUUID = "tblWarlock", Level = 2, SelectPassives = { { UUID = "invocations" } } },
     fighter1 = { TableUUID = "tblFighter", Level = 1, SelectPassives = { { UUID = "styles" } } },
@@ -55,6 +64,18 @@ local PROGRESSIONS = {
 local CLASSES = { clsWarlock = { ProgressionTableUUID = "tblWarlock" }, clsWizard = { ProgressionTableUUID = "tblWizard" } }
 local function keys(t) local o = {} for k in pairs(t) do o[#o + 1] = k end table.sort(o) return o end
 local widget, dc, page        -- the open level-up page (nil = closed)
+-- Gameplay tabs: one selected at a time (ListBox), like the page's gameplayTabs.
+TABS = {}
+for _, n in ipairs({ "levelupTab", "classTab", "subClassTab", "deityTab", "featTab" }) do
+    local t = obj("Tab", { IsSelected = n == "levelupTab" })
+    function t.SetProperty(self, k, v)
+        if k == "IsSelected" and v == true then for _, o in pairs(TABS) do o._p.IsSelected = false end end
+        self._p[k] = v
+        if k == "IsSelected" and v then TAB_LOG[#TAB_LOG + 1] = n end
+    end
+    TABS[n] = t
+end
+TAB_LOG = {}
 
 -- page spec: {class, subclasses?, preselect?, feat_level?, primary?, scores?}
 local function openPage(spec)
@@ -63,27 +84,29 @@ local function openPage(spec)
         LevelUpStep = "Overview", IsMulticlassEnabled = true,
         SelectableMultiClasses = { item(spec.class) },
         SelectableSubClasses = {}, SelectableDeities = {}, CanSelectFeat = spec.feat_level == true,
-        SelectableFeats = {}, FeatDetails = obj("FeatDetails", { AbilitySelection = {} }),
+        SelectableFeats = {},
     }
     p.SelectedMultiClass = p.SelectableMultiClasses[1]
     for _, n in ipairs(spec.subclasses or {}) do p.SelectableSubClasses[#p.SelectableSubClasses + 1] = item(n) end
     if spec.preselect then p.SelectedSubClass = p.SelectableSubClasses[spec.preselect] end
     if spec.feat_level then
         p.SelectableFeats = { item("Ability Improvement"), item("Great Weapon Master"),
-            item("Heavy Armour Master", { IsRequirementsMet = false }) }
+            item("Heavy Armour Master", { IsRequirementsMet = false }), item("Athlete"), item("Elemental Adept"),
+            item("Alert") }
     end
     -- Spell selector (spec.spells = {list = spell list id, known = {index = true}, open = n}): VMs with no
     -- readable name, like the live page; only level and school.
     local cpd = { SpellSelectors = {}, NotSubPassiveSelectors = {} }
-    if spec.spells then
+    page.selectors = {}
+    local function spellSelector(sp, cantrips)
         local avail, adds = {}, {}
-        for i, sid in ipairs(SPELL_LISTS[spec.spells.list]) do
+        for i, sid in ipairs(SPELL_LISTS[sp.list]) do
             local st = STATS[sid]
-            avail[i] = obj("ls.VMSpellReference", { NotAvailable = (spec.spells.known or {})[i] == true, Selected = false,
+            avail[i] = obj("ls.VMSpellReference", { NotAvailable = (sp.known or {})[i] == true, Selected = false,
                 Spell = obj("ls.VMCharacterCreationSpell", { Level = st.Level, SpellSchool = st.SpellSchool }) })
         end
-        for i = 1, spec.spells.open do adds[i] = obj("ls.VMSpellReference", {}) end
-        local sel = obj("ls.VMSpellSelector", { Available = avail, Additions = adds, IsCantrips = false })
+        for i = 1, sp.open do adds[i] = obj("ls.VMSpellReference", {}) end
+        local sel = obj("ls.VMSpellSelector", { Available = avail, Additions = adds, IsCantrips = cantrips })
         function sel.GetProperty(self, k)
             if k == "IsComplete" then
                 for _, a in ipairs(self._p.Additions) do if a._p.Spell == nil then return false end end
@@ -91,9 +114,13 @@ local function openPage(spec)
             end
             return self._p[k]
         end
-        cpd.SpellSelectors = { sel }
-        page.spellSel = sel
+        sel.list = sp.list
+        page.selectors[#page.selectors + 1] = sel
+        cpd.SpellSelectors[#cpd.SpellSelectors + 1] = sel
+        return sel
     end
+    if spec.cantrips then page.cantripSel = spellSelector(spec.cantrips, true) end
+    if spec.spells then page.spellSel = spellSelector(spec.spells, false) end
     -- Passive selector (spec.passives = {list = passive list id, max = n}): VMs with Value 0/1, no names.
     if spec.passives then
         local items = {}
@@ -111,29 +138,55 @@ local function openPage(spec)
     end
     p.ClassProgressionDetails = obj("VMProgressionDetails", cpd)
     dc = obj("ls.DCCharacterLevelUp", p)
-    -- Selecting a feat fills FeatDetails.AbilitySelection (only Ability Improvement asks for abilities here).
+    -- Selecting a feat fills SelectedFeatDetails (the feat panel's DataContext, as on the live page):
+    -- FeatDetails.AbilitySelection + MaxSelectedAbilityCount (Ability Improvement 2 of six, Athlete 1 of Str/Dex),
+    -- FeatPassives (Elemental Adept: pick 1 element).
     function dc.SetProperty(self, k, v)
         self._p[k] = v
         if k == "SelectedFeat" then
-            local sel = {}
-            if v and v._p.Name == "Ability Improvement" then
-                for _, a in ipairs(ABIL) do
-                    sel[#sel + 1] = obj("VMAbility", { Ability = a, Value = (spec.scores or {})[a] or 14,
-                        Improvement = 0, IsPrimary = a == spec.primary })
-                end
+            local sel, max = {}, 0
+            local function abil(a)
+                sel[#sel + 1] = obj("VMAbility", { Ability = a, Value = (spec.scores or {})[a] or 14,
+                    Improvement = 0, IsPrimary = a == spec.primary })
             end
-            page.points = 0
-            self._p.FeatDetails = obj("FeatDetails", { AbilitySelection = sel })
+            local name = v and v._p.Name
+            if name == "Ability Improvement" then
+                for _, a in ipairs(ABIL) do abil(a) end
+                max = 2
+            elseif name == "Athlete" then
+                abil("Strength") abil("Dexterity")
+                max = 1
+            end
+            page.points, page.max = 0, max
+            local fp = {}
+            page.passiveFeat = nil
+            if name == "Elemental Adept" then
+                local items = {}
+                for i = 1, 4 do items[i] = obj("VMPassive", { Value = 0.0, Enabled = true, Blocked = false }) end
+                local ps = obj("VMPassiveSelector", { Passives = items, MaxSelectedPassiveCount = 1 })
+                function ps.GetProperty(self2, key)
+                    local n = 0
+                    for _, it in ipairs(self2._p.Passives) do if it._p.Value > 0 then n = n + 1 end end
+                    if key == "SelectedPassiveCount" then return n end
+                    if key == "IsComplete" then return n >= 1 end
+                    return self2._p[key]
+                end
+                fp = { ps }
+                page.passiveFeat = ps
+            end
+            page.fd = obj("FeatDetails", { AbilitySelection = sel, MaxSelectedAbilityCount = max })
+            self._p.SelectedFeatDetails = obj("VMSelectedFeat", { FeatDetails = page.fd, FeatPassives = fp })
         end
     end
     function dc.GetProperty(self, k)
         if k == "IsLevelUpComplete" then
             if #(self._p.SelectableSubClasses) > 0 and self._p.SelectedSubClass == nil then return false end
-            if page.spellSel and not page.spellSel:GetProperty("IsComplete") then return false end
+            for _, sl in ipairs(page.selectors) do if not sl:GetProperty("IsComplete") then return false end end
             if page.passiveSel and not page.passiveSel:GetProperty("IsComplete") then return false end
             if self._p.CanSelectFeat then
                 if self._p.SelectedFeat == nil then return false end
-                if #self._p.FeatDetails._p.AbilitySelection > 0 and page.points < 2 then return false end
+                if page.max > 0 and page.points < page.max then return false end
+                if page.passiveFeat and not page.passiveFeat:GetProperty("IsComplete") then return false end
             end
             return true
         end
@@ -164,6 +217,7 @@ Ext = { Entity = { Get = function(u) return { ClientControl = true, Health = { H
             GetAll = function(kind)
                 if kind == "SpellList" then return keys(SPELL_LISTS) end
                 if kind == "Progression" then return keys(PROGRESSIONS) end
+                if kind == "Feat" then return keys(FEATS) end
                 return {}
             end,
             Get = function(id, kind)
@@ -171,6 +225,7 @@ Ext = { Entity = { Get = function(u) return { ClientControl = true, Health = { H
                 if kind == "PassiveList" then return PASSIVE_LISTS[id] end
                 if kind == "Progression" then return PROGRESSIONS[id] end
                 if kind == "ClassDescription" then return CLASSES[id] end
+                if kind == "Feat" then return FEATS[id] end
             end,
         } }
 
@@ -201,7 +256,7 @@ BG3AI.UI = {
     widgets = function() return widget and { { name = "CharacterLevelUp", el = widget } } or {} end,
     widget = function() return widget end,
     isVisible = function() return true end,
-    cachedByName = function() return obj("Tab", {}) end,
+    cachedByName = function(_, name) return TABS[name] end,
     byName = function() return nil end,
     findAll = function() return {} end,
     items = function(coll)
@@ -223,7 +278,8 @@ BG3AI.UI = {
         end
         if o ~= dc then return false, "unexpected command target" end
         if name == "SelectAbility" then
-            if page.points >= 2 then return true end                  -- the page ignores a third point
+            if page.dead then return true end                         -- buttons that do nothing (stall test)
+            if page.points >= page.max then return true end           -- the page ignores a point past the limit
             arg._p.Improvement = arg._p.Improvement + 1
             page.points = page.points + 1
             return true
@@ -358,7 +414,7 @@ local GALE_SP = { class = "Wizard", subclasses = GALE.subclasses, spells = { lis
 openPage(GALE_SP)
 j = run({ uuid = "gale", plan = { subclass = "Evocation", spells = { "Magic Missile", "Shield" } } })
 local nc = j.result.needs_clicks or {}
-check(j.status == "failed" and tostring(j.error):find("need mouse clicks") and #nc == 2 and nc[1].name == "Magic Missile"
+check(j.status == "failed" and tostring(j.error):find("spell picks pending") and #nc == 2 and nc[1].name == "Magic Missile"
     and nc[2].name == "Shield" and not page.finished, "spells: needs_clicks for Magic Missile and Shield, not finished")
 check(dc._p.SelectedSubClass ~= nil, "spells: the subclass was still chosen")
 local ok13, o13 = pcall(handlers["ui.level_up_options"], { uuid = "gale" })
@@ -422,6 +478,88 @@ openPage(WYLL)
 j = run({ uuid = "wyll", plan = { allow_defaults = true, spells = { "Hex" } } })
 check(page.passiveSel._p.Passives[1]._p.Value == 1 and page.passiveSel._p.Passives[2]._p.Value == 1
     and table.concat(j.result.defaulted or {}, ","):find("Agonising Blast"), "allow_defaults: first invocations, reported")
+
+-- S018: feat levels. The feat panel lives under SelectedFeatDetails (the fake page is built that way above).
+-- 20. Ability Improvement +1/+1 as a list, read and spent through SelectedFeatDetails.FeatDetails
+openPage(PAL)
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = { "Strength", "Charisma" } } })
+check(j.status == "done" and j.result.set.abilities.Strength == 1 and j.result.set.abilities.Charisma == 1,
+    "feat: abilities as a list = +1 each")
+openPage(PAL)
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and j.result.set.abilities.Charisma == 2, "feat: abilities as one name = all points")
+
+-- 21. a half feat (Athlete: 1 point, Strength or Dexterity): defaults to the primary; with no primary it asks
+openPage(PAL)
+j = run({ uuid = "claude", plan = { feat = "Athlete" } })
+check(j.status == "done" and j.result.set.abilities.Strength == 1, "half feat: primary +1 by default")
+openPage({ class = "Wizard", feat_level = true, primary = "Intelligence" })
+j = run({ uuid = "gale", plan = { feat = "Athlete" } })
+check(j.status == "failed" and tostring(j.error):find("Athlete gives 1 ability point: pass plan.abilities", 1, true)
+    and tostring(j.error):find("can raise: Strength 14, Dexterity 14", 1, true) and not page.finished,
+    "half feat without a primary in its list: asks, listing what it can raise")
+j = run({ uuid = "gale", plan = { feat = "Athlete", abilities = { Dex = 1 } } })
+check(j.status == "done" and j.result.set.abilities.Dexterity == 1, "half feat: Dexterity +1 from the plan")
+
+-- 22. limits: too many points, past 20, an ability the feat can't raise
+openPage(PAL)
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = { Strength = 2, Dex = 1 } } })
+check(j.status == "failed" and tostring(j.error):find("spends 3 points", 1, true), "abilities: more points than the feat gives refused")
+openPage({ class = "Paladin", feat_level = true, primary = "Strength", scores = { Strength = 19 } })
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = { Strength = 2 } } })
+check(j.status == "failed" and tostring(j.error):find("past 20", 1, true), "abilities: past 20 refused")
+openPage(PAL)
+j = run({ uuid = "claude", plan = { feat = "Athlete", abilities = { Charisma = 1 } } })
+check(j.status == "failed" and tostring(j.error):find("can't raise Charisma", 1, true), "abilities: not offered by the feat refused")
+
+-- 23. one point planned out of two: not finished, and the error says what is left
+openPage(PAL)
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = { Strength = 1 } } })
+check(j.status == "failed" and tostring(j.error):find("1 of 2 ability points unspent", 1, true) and not page.finished,
+    "abilities: unspent point named in the finish refusal")
+
+-- 24. buttons that do nothing: a clear failure, not a loop or a silent finish
+openPage(PAL)
+page.dead = true
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = { Strength = 2 } } })
+check(j.status == "failed" and tostring(j.error):find("did nothing", 1, true), "abilities: dead +/- buttons reported")
+
+-- 25. a feat with its own passive choice (Elemental Adept): named from the Feat's SelectPassives list
+openPage(PAL)
+j = run({ uuid = "claude", plan = { feat = "Elemental Adept" } })
+local ea = j.result.options and j.result.options["Elemental Adept"]
+check(j.status == "failed" and ea and #ea == 4 and ea[3] == "Elemental Adept: Fire", "feat passives: options named, not finished")
+j = run({ uuid = "claude", plan = { feat = "Elemental Adept", passives = { "Fire" } } })
+check(j.status == "done" and page.passiveFeat._p.Passives[3]._p.Value == 1, "feat passives: Fire picked, finished")
+
+-- 26. Cleric 4 (S018 Shadowheart): feat + a cantrip. The cantrip is left for the bridge's clicks, the overview tab
+--     is shown again for them, and the refusal never asks the agent to click
+local SH = { class = "Cleric", feat_level = true, primary = "Wisdom", cantrips = { list = "cleric0", open = 1 } }
+openPage(SH)
+TAB_LOG = {}
+j = run({ uuid = "sh", plan = { feat = "Alert", cantrips = { "Toll the Dead" } } })
+nc = j.result.needs_clicks or {}
+check(j.status == "failed" and #nc == 1 and nc[1].name == "Toll the Dead" and nc[1].cantrips == true, "cantrips: Toll the Dead needs a click")
+check(TAB_LOG[#TAB_LOG] == "levelupTab" and TABS.levelupTab._p.IsSelected, "cantrips: back on the level-up overview after the feat tab")
+check(tostring(j.error):find("clicks these itself", 1, true) and not tostring(j.error):find("click them and", 1, true),
+    "cantrips: the refusal says the tool clicks")
+local missing = BG3AI.Progression.luMissing(dc)
+check(missing:find("1 cantrips", 1, true) and not missing:find("a feat", 1, true), "luMissing names the open cantrip slot")
+j = run({ uuid = "sh", plan = { feat = "Alert" } })
+check(j.status == "failed" and tostring(j.error):find("needs 1 more cantrip in plan.cantrips; can pick: Toll the Dead, Light, Thaumaturgy", 1, true),
+    "cantrips: no plan → the finish refusal lists the cantrips")
+
+-- 27. the probe on a feat level: the feat tab is shown → it goes back to the overview first (switched), then the
+--     selector's sub-tab
+TABS.featTab:SetProperty("IsSelected", true)
+okp, pr = pcall(handlers["ui.level_up_spell_probe"], { name = "Toll the Dead", cantrips = true })
+check(okp and pr.switched == true and TABS.levelupTab._p.IsSelected == true, "spell_probe: feat tab → overview first")
+okp, pr = pcall(handlers["ui.level_up_spell_probe"], { name = "Toll the Dead", cantrips = true })
+check(okp and pr.switched == nil and pr.name == "Toll the Dead" and pr.open == 1, "spell_probe: then probes the cantrip")
+
+-- 28. no feat chosen and nothing planned: luMissing says so
+openPage(SH)
+check(BG3AI.Progression.luMissing(dc):find("a feat (plan.feat)", 1, true), "luMissing: no feat")
 
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

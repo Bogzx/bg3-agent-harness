@@ -61,6 +61,7 @@ class FakeGame:
         self.combat: dict = {"active": False}
         self.reach: Any = None  # nav.reach_toward reply (or callable(args))
         self.approach: Any = None  # nav.approach reply (None: op unknown, like a mod not reloaded yet)
+        self.los_spot: Any = None  # nav.los_spot reply (or callable(args)); None: op unknown
         self.actions: list = [{"spell": "Target_MainHandAttack", "name": "Attack"}]
         self.path: dict = {"reachable": True, "movement_left": 0}
         self.safe: dict = {"safe": True}  # nav.safe_spot reply
@@ -136,6 +137,8 @@ class FakeGame:
                 return json.loads(json.dumps(self.actions))
             if op == "nav.approach" and self.approach is not None:
                 return self.approach(args) if callable(self.approach) else dict(self.approach)
+            if op == "nav.los_spot" and self.los_spot is not None:
+                return self.los_spot(args) if callable(self.los_spot) else dict(self.los_spot)
             if op == "nav.reach_toward":
                 r = self.reach(args) if callable(self.reach) else self.reach
                 return r if r is not None else {"reachable": False}
@@ -357,6 +360,85 @@ class CombatTurn(Base):
         out = server.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [GOB, IMP])
         self.assertIn(f"action (auto fallback): Target_SacredFlame {self.imp}: done", out)
+
+    # S018: 14 casts refused "no line of sight" (pillars, a downed ally behind vines): step to a spot that sees it.
+    def test_no_line_of_sight_steps_to_a_spot_in_sight_then_casts(self):
+        moved = []
+        self.g.on_start = lambda op, a: moved.append(a) if op == "act.move_to" else None
+        self.g.refuse_if = lambda op, a: ("no line of sight to target"
+                                          if op == "act.cast" and a.get("target") == GOB and not moved else None)
+        self.g.actions = [{"spell": "Projectile_FireBolt", "range": 18}]
+        self.g.los_spot = {"found": True, "pos": [2.0, 0.0, 1.5], "walk_m": 2.5, "dist_m": 7.0, "via": "ring"}
+        out = server.combat_turn(self.plan(action={"ability": "Projectile_FireBolt", "target": self.gob}))
+        self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [GOB, GOB])
+        self.assertEqual(len(moved), 1)
+        spot = self.g.ops("nav.los_spot")[0][1]
+        self.assertEqual((spot["target"], spot["range"]), (GOB, 17.5))
+        self.assertIn("no line of sight to target → stepped 2.5m to see it", out)
+        self.assertIn(f"Projectile_FireBolt {self.gob}: done", out)
+        self.assertNotIn("auto fallback", out)
+
+    def test_no_spot_in_sight_falls_back_to_retarget(self):
+        self.g.refuse_if = lambda op, a: "no line of sight to target" if a.get("target") == GOB else None
+        self.g.actions = [{"spell": "Target_SacredFlame", "range": 18}]
+        self.g.los_spot = {"found": False, "reason": "no spot in sight"}
+        out = server.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
+        self.assertEqual(self.g.ops("act.move_to"), [])
+        self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [GOB, IMP])
+        self.assertIn("(auto fallback)", out)
+
+    def test_melee_no_line_of_sight_does_not_seek_a_spot(self):
+        self.g.refuse_if = lambda op, a: "no line of sight to target" if a.get("target") == GOB else None
+        self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
+        self.g.los_spot = {"found": True, "pos": [2.0, 0.0, 1.5], "walk_m": 2.5}
+        server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertEqual(self.g.ops("nav.los_spot"), [])
+
+    # S018 04:06: three combat_turns sent ahead waited 40+30+30 s while our own Spiritual Weapon had its turn.
+    def test_sent_ahead_returns_at_once_when_another_party_member_must_act_first(self):
+        self.g.combat["current"] = P2
+        t = time.monotonic()
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        self.assertLess(time.monotonic() - t, 1.5)
+        self.assertIn("FAILED: it is not", out)
+        self.assertIn("(yours) must act first", out)
+        self.assertIn(f"end_turn who={server.H.get(P2)}", out)
+        self.assertEqual(self.g.ops("act.cast"), [])
+
+    # S018: end_turn on downed Claude / Shadowheart -> "FAILED: character is downed" (x2); combat_turn too.
+    def test_downed_character_turn_is_skipped(self):
+        p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
+        p1["hp_pct"] = 0
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1))
+        self.assertIn("is downed: nothing to play", out)
+        out = server.end_turn(who=server.H.get(P1), wait=False)
+        self.assertIn("skipped", out)
+        self.assertNotIn("FAILED", out)
+        self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], [])
+
+    def test_downed_member_is_not_who_acts(self):
+        p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
+        p1["hp_pct"] = 0
+        self.g.combat["turn_group"] = [P1, P2]
+        self.assertEqual(turn.party_acting(self.g.combat, {P1, P2}), [P2])
+
+    # S018 04:12: Wyll's and Shadowheart's turns (the heal for Claude) stopped on "e4 Claude is downed",
+    # though Claude was down before the turn started.
+    def test_ally_already_downed_does_not_stop_the_turn(self):
+        self.g.watch["party"][1]["downed"] = True
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertNotIn("STOPPED", out)
+        self.assertIn("end_turn: done", out)
+
+    def test_ally_going_down_mid_turn_still_stops_it(self):
+        def down(op, a):
+            if op == "act.cast":
+                self.g.watch["party"][1]["downed"] = True
+        self.g.on_start = down
+        self.g.dur["act.cast"] = 0.2
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertIn("is downed", out)
+        self.assertIn("turn NOT ended", out)
 
     # S002: the planned imp died before Shadowheart's cast -> "skipped (already dead)", action unused.
     def test_dead_target_retargets(self):

@@ -360,15 +360,18 @@ local SKILL_GROUPS = {
     { key = "class", path = "AllSkills.ClassProficientSkills" },
     { key = "race", path = "AllSkills.RaceProficientSkills" },
     { key = "expertise", path = "AllSkills.ExpertiseSkills" },
+    -- Level up: the feat panel is bound to SelectedFeatDetails (CCLib_k.xaml featsPanel); CC keeps FeatSkills.
+    { key = "feat", path = "SelectedFeatDetails.FeatSkills" },
     { key = "feat", path = "FeatSkills" },
 }
 
 local function skillGroups(dc)
-    local out = {}
+    local out, keys = {}, {}
     for _, g in ipairs(SKILL_GROUPS) do
-        local grp = UI.path(dc, g.path)
+        local grp = not keys[g.key] and UI.path(dc, g.path) or nil
         local skills = grp and UI.prop(grp, "Skills")
         if skills and UI.count(skills) > 0 then
+            keys[g.key] = true
             local m = meta(grp, { MaxSelectedSkillCount = true, SelectedSkillCount = true, IsComplete = true })
             out[#out + 1] = { key = g.key, grp = grp, skills = skills, max = m.MaxSelectedSkillCount,
                               selected = m.SelectedSkillCount, complete = m.IsComplete }
@@ -395,8 +398,10 @@ end
 local PASSIVE_PATHS = {
     "ClassProgressionDetails.NotSubPassiveSelectors", "ClassProgressionDetails.SubPassiveSelectors",
     "RaceProgressionDetails.NotSubPassiveSelectors", "RaceProgressionDetails.SubPassiveSelectors",
-    "FeatDetails.PassiveSelectors",
+    "FeatDetails.PassiveSelectors", "SelectedFeatDetails.FeatPassives",
 }
+
+P.featSel = P.featSel or {}   -- tostring(selector) -> the chosen feat's label, for feat passive selectors
 
 local function passiveSelectors(dc)
     local out, seen = {}, {}
@@ -404,6 +409,9 @@ local function passiveSelectors(dc)
         for _, sel in ipairs(list(UI.path(dc, path))) do
             if not seen[tostring(sel)] then
                 seen[tostring(sel)] = true
+                if path:find("Feat", 1, true) then
+                    P.featSel[tostring(sel)] = label(UI.prop(dc, "SelectedFeat")) or ""
+                end
                 out[#out + 1] = sel
             end
         end
@@ -455,6 +463,17 @@ local function passiveLists()
                 end
             end
         end
+        -- Feats' own choices (Elemental Adept's element, Weapon Master's weapons, ...): Feat resources carry
+        -- SelectPassives like progressions do.
+        passiveIndex.feats = {}
+        for _, fid in ipairs(try(Ext.StaticData.GetAll, "Feat") or {}) do
+            local f = try(Ext.StaticData.Get, fid, "Feat")
+            local fname = f and norm(try(function() return f.Name end))
+            for _, sp in ipairs(f and try(function() return f.SelectPassives end) or {}) do
+                local id = sp.UUID
+                if id then table.insert(passiveIndex.feats, { name = fname, id = id }) end
+            end
+        end
     end
     return passiveIndex
 end
@@ -493,8 +512,26 @@ function P.namePassives(sel)
         end
         return found
     end
-    local names = unique(characterPassiveLists(P.levelUpUuid))
-    if not names then
+    local feat = P.featSel[tostring(sel)]
+    local names
+    if feat then
+        -- A feat's choice: that feat's lists (Feat resource Name "ElementalAdept" = page "Elemental Adept"), else
+        -- a unique one among all feats' lists.
+        local mine, all = {}, {}
+        for _, e in ipairs(passiveLists().feats) do
+            all[#all + 1] = e.id
+            if e.name == norm(feat) then mine[#mine + 1] = e.id end
+        end
+        names = unique(mine)
+        if not names then
+            local amb
+            names, amb = unique(all)
+            if amb then names = nil end
+        end
+    else
+        names = unique(characterPassiveLists(P.levelUpUuid))
+    end
+    if not names and not feat then
         local amb
         names, amb = unique(passiveLists().all)
         if amb then names = nil end
@@ -524,16 +561,21 @@ local function passivesView(dc)
     return out
 end
 
-local SPELL_PATHS = { "ClassProgressionDetails.SpellSelectors", "RaceProgressionDetails.SpellSelectors",
-                      "FeatDetails.SpellSelectors" }
+-- { path, source }: the level-up feat panel's selectors sit under SelectedFeatDetails (Magic Initiate, ...).
+local SPELL_PATHS = {
+    { "ClassProgressionDetails.SpellSelectors", "ClassProgressionDetails" },
+    { "RaceProgressionDetails.SpellSelectors", "RaceProgressionDetails" },
+    { "FeatDetails.SpellSelectors", "FeatDetails" },
+    { "SelectedFeatDetails.FeatDetails.SpellSelectors", "FeatDetails" },
+}
 
 local function spellSelectors(dc)
     local out, seen = {}, {}
-    for _, path in ipairs(SPELL_PATHS) do
-        for _, sel in ipairs(list(UI.path(dc, path))) do
+    for _, e in ipairs(SPELL_PATHS) do
+        for _, sel in ipairs(list(UI.path(dc, e[1]))) do
             if not seen[tostring(sel)] then
                 seen[tostring(sel)] = true
-                out[#out + 1] = { sel = sel, source = path:match("^(%a+)") }
+                out[#out + 1] = { sel = sel, source = e[2] }
             end
         end
     end
@@ -591,6 +633,7 @@ P.spellLists = spellLists
 -- Forget the static-data name caches (offline tests; a data change).
 function P.clearNameCaches()
     spellListsByCount, passiveIndex, passiveNames = nil, nil, {}
+    P.featSel = {}
     P.vmNames, P.spellStats = {}, {}
 end
 
@@ -1547,12 +1590,73 @@ RPC.register("ui.level_up_open", function(args)
     return { opening = true }
 end)
 
+-- The feat panel (CCLib_k.xaml "featsPanel", the featTab) is bound to the page's SelectedFeatDetails: the chosen
+-- feat's ability points (FeatDetails.AbilitySelection: VMAbility with Value, Improvement, IsPrimary; the -/+
+-- buttons are DeselectAbility / SelectAbility(item) on the page DC, CommandParameter {Binding} = the item;
+-- FeatDetails.MaxSelectedAbilityCount / SelectedAbilityCount), FeatSkills, FeatPassives and
+-- FeatDetails.SpellSelectors. S018: the old read of dc.FeatDetails found nothing, so no point was ever spent.
+local function featDetails(dc)
+    local fd = UI.path(dc, "SelectedFeatDetails.FeatDetails")
+    if fd ~= nil and UI.count(UI.prop(fd, "AbilitySelection")) > 0 then return fd end
+    local root = UI.prop(dc, "FeatDetails")
+    if root ~= nil and UI.count(UI.prop(root, "AbilitySelection")) > 0 then return root end
+    return fd
+end
+P.featDetails = featDetails
+
+local function asiItems(dc)
+    local fd = featDetails(dc)
+    return fd and list(UI.prop(fd, "AbilitySelection")) or {}
+end
+
+-- Points the chosen feat gives (Ability Improvement 2, half feats 1) and how many are spent.
+local function asiPoints(dc, items)
+    local fd = featDetails(dc)
+    local spent = 0
+    for _, a in ipairs(items or asiItems(dc)) do spent = spent + (tonumber(UI.prop(a, "Improvement")) or 0) end
+    local max = fd and tonumber(UI.prop(fd, "MaxSelectedAbilityCount"))
+    if max == nil then
+        max = norm(label(UI.prop(dc, "SelectedFeat"))) == norm("Ability Improvement") and 2 or 1
+    end
+    return max, spent
+end
+
+local function canRaise(items)
+    local out = {}
+    for _, a in ipairs(items) do
+        local v = tonumber(UI.prop(a, "Value"))
+        if v == nil or v < 20 then out[#out + 1] = abilityOf(a) .. (v and (" " .. math.floor(v)) or "") end
+    end
+    return table.concat(out, ", ")
+end
+
+-- plan.abilities: {Strength = 2} | {str = 1, Cha = 1} | {"Strength", "Charisma"} (+1 each) | "Strength" or
+-- {"Strength"} (all points). -> {Ability = points}
+local function abilityPlan(v, max)
+    if v == nil then return nil end
+    if type(v) == "string" then return { [abilityName(v)] = max } end
+    if type(v) ~= "table" then return nil end
+    local out = {}
+    if v[1] ~= nil then
+        if #v == 1 then return { [abilityName(v[1])] = max } end
+        for _, a in ipairs(v) do
+            local n = abilityName(a)
+            out[n] = (out[n] or 0) + 1
+        end
+    else
+        for k, n in pairs(v) do out[abilityName(k)] = (out[abilityName(k)] or 0) + (tonumber(n) or 0) end
+    end
+    return out
+end
+
 function P.luOptions(dc)
     local function sel(name) return UI.prop(dc, name) end
     local asi = {}
-    for _, a in ipairs(list(UI.path(dc, "FeatDetails.AbilitySelection"))) do
+    local asiList = asiItems(dc)
+    for _, a in ipairs(asiList) do
         local p = UI.props(a)
-        asi[#asi + 1] = { a = abilityOf(a), v = p.Value, plus = p.Improvement ~= 0 and p.Improvement or nil }
+        asi[#asi + 1] = { a = abilityOf(a), v = p.Value, plus = (tonumber(p.Improvement) or 0) ~= 0 and p.Improvement or nil,
+                          primary = p.IsPrimary == true or nil }
     end
     local o = {
         step = str(UI.prop(dc, "LevelUpStep")),
@@ -1572,8 +1676,41 @@ function P.luOptions(dc)
     if o.can_feat then
         o.feats = view(UI.prop(dc, "SelectableFeats"), sel("SelectedFeat"))
         o.feat = label(sel("SelectedFeat"))
+        if #asiList > 0 then
+            local max, spent = asiPoints(dc, asiList)
+            o.ability_points = { max = max, spent = spent }
+        end
+        o.feat_panel = UI.prop(dc, "SelectedFeatDetails") ~= nil
+    end
+    for _, t in ipairs({ "levelupTab", "classTab", "subClassTab", "deityTab", "featTab", "spellReplaceTab", "spellPrepTab" }) do
+        local el = UI.cachedByName("CharacterLevelUp", t)
+        if el ~= nil and UI.prop(el, "IsSelected") == true then o.tab = t end
     end
     return o
+end
+
+-- What the page still needs, in words (the finish refusal's reason when no stage reported a problem).
+function P.luMissing(dc)
+    local out = {}
+    if UI.count(UI.prop(dc, "SelectableSubClasses")) > 0 and UI.prop(dc, "SelectedSubClass") == nil then
+        out[#out + 1] = "a subclass (plan.subclass)"
+    end
+    if UI.prop(dc, "CanSelectFeat") == true then
+        if UI.prop(dc, "SelectedFeat") == nil then out[#out + 1] = "a feat (plan.feat)" end
+        local items = asiItems(dc)
+        if #items > 0 then
+            local max, spent = asiPoints(dc, items)
+            if spent < max then out[#out + 1] = (max - spent) .. " ability point(s) (plan.abilities)" end
+        end
+    end
+    for _, sv in ipairs(spellsView(dc)) do
+        if sv.open > 0 then out[#out + 1] = sv.open .. " " .. sv.title .. " (plan." .. (sv.cantrips and "cantrips" or "spells") .. ")" end
+    end
+    for _, v in ipairs(passivesView(dc)) do
+        if v.complete == false then out[#out + 1] = "'" .. (v.title or "passives") .. "' (plan.passives)" end
+    end
+    if #out == 0 then return "the page shows nothing open (see get_level_up_options)" end
+    return "still to choose: " .. table.concat(out, ", ")
 end
 
 RPC.register("ui.level_up_options", function(args)
@@ -1686,50 +1823,103 @@ RPC.register("ui.level_up", function(args)
         { "feat?", verifyStage(get, ctx) },
         { "ability_improvement", function()
             local dc = get()
-            local items = list(UI.path(dc, "FeatDetails.AbilitySelection"))
+            local items = asiItems(dc)
             if #items == 0 then return "next", 0 end
-            asi.steps = asi.steps + 1
-            if asi.steps > 12 then return "next", 0 end
-            local want = plan.abilities
-            if want == nil then
-                -- Default: everything into the class's primary ability (the page marks it IsPrimary).
-                for _, a in ipairs(items) do
-                    if UI.prop(a, "IsPrimary") == true then want = { [abilityOf(a)] = 2 } end
-                end
-                if want then
+            local max = asiPoints(dc, items)
+            local featName = label(UI.prop(dc, "SelectedFeat")) or "this feat"
+            if asi.want == nil then
+                local want = abilityPlan(plan.abilities, max)
+                if want == nil then
+                    -- Default: all points into the class's primary ability (the page marks it IsPrimary).
+                    for _, a in ipairs(items) do
+                        local v = tonumber(UI.prop(a, "Value")) or 0
+                        if UI.prop(a, "IsPrimary") == true and v < 20 then want = { [abilityOf(a)] = math.min(max, 20 - v) } end
+                    end
+                    if want == nil then
+                        ctx.result.options = ctx.result.options or {}
+                        ctx.result.options.abilities = canRaise(items)
+                        return "fail", featName .. " gives " .. max .. " ability point" .. (max == 1 and "" or "s")
+                            .. ": pass plan.abilities, e.g. {\"" .. abilityOf(items[1]) .. "\": " .. max .. "}; can raise: "
+                            .. canRaise(items)
+                    end
                     ctx.result.defaulted = ctx.result.defaulted or {}
                     ctx.result.defaulted[#ctx.result.defaulted + 1] = "abilities"
-                    plan.abilities = want
-                else
-                    return "next", 0
+                end
+                local byName, total = {}, 0
+                for _, a in ipairs(items) do byName[abilityOf(a)] = a end
+                for k, n in pairs(want) do
+                    local a = byName[k]
+                    if a == nil and n > 0 then
+                        return "fail", featName .. " can't raise " .. tostring(k) .. "; can raise: " .. canRaise(items)
+                    end
+                    local v = a and tonumber(UI.prop(a, "Value")) or 0
+                    if a and n > 0 and v - (tonumber(UI.prop(a, "Improvement")) or 0) + n > 20 then
+                        return "fail", k .. " would go past 20 (now " .. math.floor(v) .. "); can raise: " .. canRaise(items)
+                    end
+                    total = total + n
+                end
+                if total > max then
+                    return "fail", "plan.abilities spends " .. total .. " points; " .. featName .. " gives " .. max
+                end
+                asi.want = want
+            end
+            -- A press past the page's limits is ignored; a press that changes nothing three times in a row means
+            -- the buttons don't take: say so instead of finishing on an incomplete page.
+            local sig = {}
+            for _, a in ipairs(items) do sig[#sig + 1] = tostring(UI.prop(a, "Improvement")) end
+            sig = table.concat(sig, ",")
+            if asi.pressed ~= nil then
+                if asi.pressed == sig then asi.stall = (asi.stall or 0) + 1 else asi.stall = 0 end
+                if asi.stall >= 3 then return "fail", "the ability +/- buttons did nothing (" .. asi.cmd .. " " .. asi.what .. ")" end
+            end
+            asi.steps = asi.steps + 1
+            if asi.steps > 24 then return "next", 0 end
+            local function target(a)
+                return tonumber(asi.want[abilityOf(a)]) or 0
+            end
+            -- Take points back first, then spend them.
+            for pass = 1, 2 do
+                for _, a in ipairs(items) do
+                    local have, want = tonumber(UI.prop(a, "Improvement")) or 0, target(a)
+                    local cmd = (pass == 1 and have > want) and "DeselectAbility" or ((pass == 2 and have < want) and "SelectAbility" or nil)
+                    if cmd then
+                        asi.pressed, asi.cmd, asi.what = sig, cmd, abilityOf(a)
+                        local ok, err = UI.command(dc, cmd, a)
+                        if not ok then return "fail", cmd .. " " .. abilityOf(a) .. ": " .. tostring(err) end
+                        return "wait", 150
+                    end
                 end
             end
-            for _, a in ipairs(items) do
-                local name = abilityOf(a)
-                local target = 0
-                for k, v in pairs(want) do if abilityName(k) == name then target = tonumber(v) or 0 end end
-                local have = tonumber(UI.prop(a, "Improvement")) or 0
-                if have < target then
-                    if UI.command(dc, "SelectAbility", a) then return "wait", 150 end
-                elseif have > target then
-                    if UI.command(dc, "DeselectAbility", a) then return "wait", 150 end
-                end
-            end
+            asi.pressed = nil
             return "next", 200
-        end },
+        end, 8000 },
         { "abilities?", function()
+            local dc = get()
+            local items = asiItems(dc)
             local out = {}
-            for _, a in ipairs(list(UI.path(get(), "FeatDetails.AbilitySelection"))) do
+            for _, a in ipairs(items) do
                 local plus = tonumber(UI.prop(a, "Improvement")) or 0
                 if plus ~= 0 then out[abilityOf(a)] = plus end
             end
             if next(out) then ctx.result.set.abilities = out end
+            if #items > 0 then
+                local max, spent = asiPoints(dc, items)
+                if spent < max then
+                    ctx.result.problems[#ctx.result.problems + 1] = (max - spent) .. " of " .. max
+                        .. " ability points unspent: plan.abilities; can raise: " .. canRaise(items)
+                end
+            end
             return "next", 0
         end },
         { "skills", skillsStage(get, ctx, plan.skills) },
         { "skills?", skillsReport(get, ctx) },
         { "passives", passivesStage(get, ctx, plan.passives, plan.allow_defaults) },
         { "passives?", passivesReport(get, ctx) },
+        { "levelup_tab", function()
+            -- Back to the level-up overview (its spell sub-tabs) after the feat tab, as a player would.
+            if UI.prop(get(), "CanSelectFeat") == true and selectTab(ctx.widget, "levelupTab") then return "next", 450 end
+            return "next", 0
+        end },
         { "spells", spellsStage("CharacterLevelUp", get, ctx, plan.spells, plan.cantrips) },
         { "spells?", spellsReport(get, ctx) },
         { "check", function()
@@ -1743,11 +1933,12 @@ RPC.register("ui.level_up", function(args)
             if ctx.result.needs_clicks then
                 local names = {}
                 for _, nd in ipairs(ctx.result.needs_clicks) do names[#names + 1] = nd.name end
-                return "fail", "spell picks need mouse clicks (" .. table.concat(names, ", ")
-                    .. "): the level_up tool clicks them and reruns"
+                return "fail", "spell picks pending (" .. table.concat(names, ", ")
+                    .. "): the level_up tool clicks these itself; nothing to click by hand"
             end
             if UI.prop(dc, "IsLevelUpComplete") == false then
-                return "fail", "level up is not complete; not finishing (see problems)"
+                local why = #ctx.result.problems > 0 and table.concat(ctx.result.problems, "; ") or P.luMissing(dc)
+                return "fail", "level up is not complete, not finishing: " .. why
             end
             -- The button passes "Overview" (a camera mode); bg3le can only pass Noesis objects, so nil.
             local ok, err = UI.command(dc, "FinishLevelUp", nil)
@@ -1794,6 +1985,53 @@ function P.showSelector(w, sel)
     return false, false
 end
 
+local function tabSelected(name)
+    local el = UI.cachedByName("CharacterLevelUp", name)
+    return el ~= nil and UI.prop(el, "IsSelected") == true
+end
+
+-- Feat spell selectors (Magic Initiate) are edited on the feat tab, in its SpellSelectorGrid, which the selector's
+-- edit toggle (ToggleButton "editSpellSelectorBtn", DataContext = the selector) opens (CCLib_k.xaml featsPanel).
+-- -> ok, switched
+function P.showFeatSelector(w, sel)
+    if not tabSelected("featTab") then
+        local ok = selectTab("CharacterLevelUp", "featTab")
+        return ok == true, ok == true
+    end
+    for _, b in ipairs(UI.findAll(w, function(e) return UI.name(e) == "editSpellSelectorBtn" end, { prune = true, max = 80000 })) do
+        if same(UI.prop(b, "DataContext"), sel) then
+            if UI.prop(b, "IsChecked") == true then return true, false end
+            return set(b, "IsChecked", true), true
+        end
+    end
+    return false, false
+end
+
+-- Class/race selectors are sub-tabs of the level-up overview. On a feat level the feat tab was shown last and its
+-- panel (and the LeftPanels centring, which depends on the panel width) moves everything: back to the overview first.
+local function showClassSelector(w, sel)
+    if tabSelected("featTab") then
+        local ok = selectTab("CharacterLevelUp", "levelupTab")
+        return ok == true, ok == true
+    end
+    return P.showSelector(w, sel)
+end
+
+-- How close the cursor is to the target's list: 1 = the button panel itself, 2.. = its ancestors up to the
+-- selector's scroll viewer (at most 8 levels). nil = not over any of them. The bridge searches with big steps
+-- until it is near, then with button-sized ones.
+local function nearness(cp)
+    local e = cp and try(function() return cp.VisualParent end)
+    for depth = 1, 8 do
+        if e == nil then return nil end
+        if UI.prop(e, "IsMouseOver") == true then return depth end
+        local t = UI.typeName(e) or ""
+        if t:find("ScrollViewer", 1, true) then return nil end
+        e = try(function() return e.VisualParent end)
+    end
+    return nil
+end
+
 RPC.register("ui.level_up_spell_probe", function(args)
     local dc = P.luDC()
     if not dc then error("level up is not open") end
@@ -1802,8 +2040,10 @@ RPC.register("ui.level_up_spell_probe", function(args)
     if why == "placed" then return { placed = true } end
     if not item then error("spell " .. tostring(args.name) .. ": " .. tostring(why)) end
     local st = selectorState(s.sel)
-    local out = { picked = st.picked, open = st.open, name = label(item) }
-    local tabOk, switched = P.showSelector(w, s.sel)
+    local out = { picked = st.picked, open = st.open, name = label(item), feat = s.source == "FeatDetails" or nil }
+    local tabOk, switched
+    if s.source == "FeatDetails" then tabOk, switched = P.showFeatSelector(w, s.sel)
+    else tabOk, switched = showClassSelector(w, s.sel) end
     if switched then out.switched = true return out end
     if not tabOk then out.tab = "no sub-tab for this selector" end
     local mine = {}
@@ -1826,6 +2066,7 @@ RPC.register("ui.level_up_spell_probe", function(args)
                 local pw = tonumber(UI.prop(panel, "ActualWidth")) or 0
                 out.cols = (cw > 0 and pw >= cw) and math.floor(pw / cw + 0.01) or 1
                 out.in_list = UI.prop(panel, "IsMouseOver") == true
+                out.near = nearness(cp)
             end
         end
     end

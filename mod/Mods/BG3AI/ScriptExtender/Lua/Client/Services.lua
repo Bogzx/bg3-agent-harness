@@ -560,33 +560,109 @@ RPC.register("ui.short_rest", function(args)
     end)
 end)
 
+-- What is on screen, for a failure message: the question box, else the visible
+-- widgets (names only, a dozen at most).
+local function screenNow()
+    local A = BG3AI.UIActions
+    local box = A and A.confirmBox and A.confirmBox()
+    if box then
+        local labels = {}
+        for _, b in ipairs(box.buttons) do labels[#labels + 1] = b.label end
+        return "a question box: " .. tostring(box.text or box.title or "?") .. " [" .. table.concat(labels, "/") .. "]"
+    end
+    local names = {}
+    for _, w in ipairs(UI.widgets()) do
+        if #names >= 12 then names[#names + 1] = "..." break end
+        if UI.isVisible(w.el) then names[#names + 1] = w.name end
+    end
+    return "widgets=[" .. table.concat(names, ", ") .. "]"
+end
+
+-- The rest flow across jobs. Live S018 (x4, every first long_rest of a camp visit):
+-- CampTravel -> "[ForceUpdate] Yes/No" whose Yes ignores its Command -> needs_click ->
+-- the bridge clicks Yes and runs ui.long_rest again 0.5 s later. That re-run saw no
+-- MakeCamp yet, pressed CampTravel a second time, and the rest screen never opened
+-- (the agent's own retry then worked). So: a re-run within a few seconds of our own
+-- question box waits for the screen instead of pressing CampTravel again, and only
+-- re-presses (once) after REST_QUIET_MS of nothing.
+SV.rest = SV.rest or {}
+local REST_QUIET_MS = 4000      -- nothing on screen this long after the last press/answer: press again / give up
+local REST_FOLLOWUP_MS = 10000  -- a long_rest job stopped at a box this recently: this call continues that flow
+
+local function sinceTxt(ms) return ms and string.format("%.1fs ago", (RPC.now_ms() - ms) / 1000) or "never" end
+
 RPC.register("ui.long_rest", function(args)
     local dc = hotbarDC()
     if selected(dc, "PlayerCharacterProperties.IsInCamp") ~= true then
         error("not at camp: travel to camp first (the camp tool), then long rest", 0)
     end
     local required = tonumber(UI.path(dc, "CurrentPlayer.RequiredPartySupplies"))
-    if not visibleWidget("MakeCamp") then
-        check(UI.command(dc, "CampTravel", nil, args.dry))
+    if args.dry then
+        if not visibleWidget("MakeCamp") then check(UI.command(dc, "CampTravel", nil, true)) end
+        return { can = true, supplies_required = required }
     end
-    if args.dry then return { can = true, supplies_required = required } end
+
+    local R = SV.rest
+    local A = BG3AI.UIActions
+    local presses, step, retried = 0, "open", false
+    local function pressCamp()
+        check(UI.command(hotbarDC(), "CampTravel", nil, false))
+        presses, R.pressAt = presses + 1, RPC.now_ms()
+    end
+    local followup = R.boxAt and RPC.now_ms() - R.boxAt < REST_FOLLOWUP_MS
+    if visibleWidget("MakeCamp") then
+        step = "screen already open"
+    elseif followup and not (A and A.confirmBox and A.confirmBox()) then
+        step = "after the question was answered (waiting for the screen, CampTravel not pressed again)"
+    else
+        pressCamp()
+        step = "after CampTravel"
+    end
+
+    local function openFail(what)
+        local res = { step = "open", camp_travel_presses = presses }
+        return "failed", res, "the rest screen didn't open (" .. what .. "; step: " .. step
+            .. "; CampTravel pressed " .. presses .. "x in this call, last " .. sinceTxt(R.pressAt)
+            .. "; last question box " .. sinceTxt(R.boxAt) .. "). On screen: " .. screenNow()
+    end
 
     local phase, sawActive, used, phaseStart = "open", false, nil, RPC.now_ms()
     return waitJob("ui.long_rest", 85000, function(job)
         local w = visibleWidget("MakeCamp")
-        -- "End the day?" comes before the rest screen opens; others may follow it.
-        if phase ~= "resting" then
+        -- "End the day?" comes before the rest screen opens; others may follow it, and
+        -- a partial rest (too few supplies) may ask once more after Rest is pressed.
+        if phase ~= "resting" or (w and not sawActive) then
             local c, cres, err = handleConfirm(job, args)
-            if c == "failed" then return "failed", cres or { confirmed = job.confirms }, err end
+            if c == "failed" then
+                R.boxAt = RPC.now_ms() -- the bridge clicks it (needs_click) or the agent answers, then calls again
+                cres = cres or {}
+                cres.confirmed, cres.step = cres.confirmed or job.confirms, phase
+                return "failed", cres, err
+            end
             if c then
-                if phase == "open" then phaseStart = RPC.now_ms() end
+                if phase == "open" then
+                    phaseStart, step = RPC.now_ms(), "after answering " .. tostring(job.confirms and job.confirms[#job.confirms])
+                end
                 return nil
             end
         end
         if phase == "open" then
             if not w then
-                if RPC.now_ms() - phaseStart > 5000 then
-                    return "failed", nil, "the rest screen didn't open" .. (popupText() and (": " .. popupText()) or "")
+                if visibleWidget("Dialogue") and (job.confirms or followup) then
+                    local st, res, err = openFail("a dialogue started instead (a camp scene): finish it, then long_rest again")
+                    res.confirmed, res.camp_scene = job.confirms, true
+                    return st, res, err
+                end
+                if RPC.now_ms() - phaseStart > REST_QUIET_MS then
+                    if not retried then
+                        -- nothing came of the last press/answer: press the camp button again, once
+                        pressCamp()
+                        retried, step, phaseStart = true, "after CampTravel (retry)", RPC.now_ms()
+                        return nil
+                    end
+                    local st, res, err = openFail("nothing for " .. string.format("%.1f", REST_QUIET_MS / 1000) .. "s")
+                    res.confirmed = job.confirms
+                    return st, res, err
                 end
                 return nil
             end
@@ -595,18 +671,29 @@ RPC.register("ui.long_rest", function(args)
             local sel = sv and UI.prop(sv, "SelectedItems") or nil
             if not isNoesis(sel) then sel = nil end
             local ok, err = UI.command(mdc, "AutoSelectCommand", sel, false)
-            if not ok then return "failed", nil, "Auto-Select failed: " .. tostring(err) end
+            if not ok then
+                return "failed", { step = "supplies" }, "the rest screen opened but Auto-Select (supplies) failed: "
+                    .. tostring(err) .. ". On screen: " .. screenNow()
+            end
+            R.boxAt = nil
             phase, phaseStart = "selected", RPC.now_ms()
             return nil
         end
         if phase == "selected" then
-            if not w then return "failed", nil, "the rest screen closed before resting" end
+            if not w then
+                return "failed", { step = "supplies", confirmed = job.confirms },
+                    "the rest screen closed after Auto-Select, before Rest was pressed. On screen: " .. screenNow()
+            end
             if RPC.now_ms() - phaseStart < 250 then return nil end
             local mdc = w.DataContext
             used = tonumber(UI.prop(mdc, "SelectedSuppliesAmount"))
             required = tonumber(UI.path(mdc, "CurrentPlayer.RequiredPartySupplies")) or required
             local ok, err = UI.command(mdc, "ProcessRestCommand", nil, false)
-            if not ok then return "failed", nil, "couldn't start the rest: " .. tostring(err) end
+            if not ok then
+                return "failed", { step = "rest", supplies_used = used, supplies_required = required },
+                    "supplies selected (" .. tostring(used) .. "/" .. tostring(required)
+                    .. ") but the Rest button didn't work: " .. tostring(err) .. ". On screen: " .. screenNow()
+            end
             phase, phaseStart = "resting", RPC.now_ms()
             return nil
         end
@@ -626,6 +713,11 @@ RPC.register("ui.long_rest", function(args)
         end
         if not w and (sawActive and not active or RPC.now_ms() - phaseStart > 20000) then
             return "done", result
+        end
+        if w and not sawActive and RPC.now_ms() - phaseStart > 10000 then
+            result.step = "rest"
+            return "failed", result, "Rest was pressed (supplies " .. tostring(used) .. "/" .. tostring(required)
+                .. ") but the rest didn't start in 10s. On screen: " .. screenNow()
         end
         return nil
     end)

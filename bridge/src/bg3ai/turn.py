@@ -171,6 +171,7 @@ def parse_plan(raw: Any, allowed: set) -> TurnPlan:
 
 # Failures that another target could fix (the planned one died, moved out of range or out of sight).
 TARGET_MISS = ("out of range", "line of sight", "already dead", "is dead", "not visible")
+MELEE_RANGE_M = 3.0  # an ability range this short is melee (weapon reach, Shove); longer ones are ranged
 MELEE_REACH_PAD = 1.0  # weapon range is edge to edge: add both bounding radii (0.5 m each, medium creatures)
 MAX_RETARGET = 3
 BONUS_HEALS = ("Target_HealingWord",)  # bonus-action heals that bring a downed ally back up
@@ -184,7 +185,7 @@ def missed_target(line: str) -> bool:
 def hostiles_in_reach(combat: dict, who: str, rng: float | None, skip: set) -> list[str]:
     """Living hostile combatants `who` can see, nearest first, within reach of an ability with range `rng`
     (None: unknown, only melee reach). A melee range (≤ 3 m) reaches edge to edge."""
-    reach = 1.5 + MELEE_REACH_PAD if rng is None else (rng + MELEE_REACH_PAD if rng <= 3 else rng)
+    reach = 1.5 + MELEE_REACH_PAD if rng is None else (rng + MELEE_REACH_PAD if rng <= MELEE_RANGE_M else rng)
     out = []
     for o in (combat or {}).get("order") or []:
         u = o.get("uuid")
@@ -257,8 +258,24 @@ def acting(combat: dict) -> list[str]:
     return [c["current"]] if c.get("current") else []
 
 
+def downed(combat: dict) -> set[str]:
+    """Party members at 0 HP and not dead: their turn is only the game's death saving throw (it passes by
+    itself; end_turn is refused 'character is downed', S018)."""
+    return {o["uuid"] for o in (combat or {}).get("order") or []
+            if o.get("uuid") and o.get("relation") == "party" and o.get("hp_pct") == 0 and not o.get("dead")}
+
+
 def party_acting(combat: dict, party: set) -> list[str]:
-    return [u for u in acting(combat) if u in party]
+    """Party members (summons too) who may act now; a downed one can't (its turn passes by itself)."""
+    down = downed(combat)
+    return [u for u in acting(combat) if u in party and u not in down]
+
+
+def blocking(combat: dict, party: set, want: str) -> list[str]:
+    """Party members acting now who must play (or end) their turn before `want` can act: the game waits for
+    the player. S018: three combat_turns sent ahead waited 40+30+30 s on our own Spiritual Weapon's turn."""
+    now = party_acting(combat, party)
+    return [] if want in now else now
 
 
 def next_up(combat: dict, party: set, label: Callable[[str], str], ended: str | None = None) -> tuple[str, str | None]:

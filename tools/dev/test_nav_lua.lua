@@ -390,6 +390,53 @@ test("nav.approach RPC: budget_m caps the walk", function()
     eq(r.limit, "movement", "limit"); near(r.pos[1], -6, "x")
 end)
 
+-- ---- losSpot: a spot to cast from (S018: 14 casts refused "no line of sight") ----
+
+-- A pillar: no sight from x in (-6, -2) with z < 1 to a target at (-12, 0, 0).
+local function pillarLOS(p) return not (p[1] < -2 and p[1] > -9 and p[3] < 1 and p[3] > -1) end
+
+test("losSpot: first point along the route with the target in sight and in range", function()
+    nodesFor = function(_, t) return { { 0, 0, 3 }, t } end -- the route bends north of the pillar
+    local r = N.losSpot(P1, { -12, 0, 0 }, { -12, 0, 0 }, 12.5, 9, true, pillarLOS)
+    eq(r.found, true, "found"); eq(r.via, "route", "via")
+    assert(r.dist_m <= 12.5, "in range: " .. r.dist_m)
+    assert(pillarLOS(r.pos), "in sight")
+    assert(r.walk_m <= 9, "within movement")
+end)
+
+test("losSpot: route stays behind the pillar -> a ring spot beside it", function()
+    local r = N.losSpot(P1, { -12, 0, 0 }, { -12, 0, 0 }, 18, 9, true, function(p)
+        return math.abs(p[3]) >= 1 -- a long wall along z=0 to the west: step sideways
+    end)
+    eq(r.found, true, "found"); eq(r.via, "ring", "via")
+    near(math.abs(r.pos[3]), 1.5, "smallest ring that clears", 0.5)
+end)
+
+test("losSpot: nothing within movement -> found=false with a reason", function()
+    local r = N.losSpot(P1, { -12, 0, 0 }, { -12, 0, 0 }, 18, 4, true, function() return false end)
+    eq(r.found, false, "found"); assert(r.reason:find("no spot in sight"), r.reason)
+end)
+
+test("losSpot: ring spot needing more path than the movement left is skipped", function()
+    -- every point has sight only north at z>=4; paths there detour 20 m.
+    nodesFor = function(_, t) return { { 10, 0, 0 }, { 10, 0, t[3] }, t } end
+    local r = N.losSpot(P1, { -12, 0, 0 }, { -12, 0, 0 }, 18, 9, true, function(p) return p[3] >= 4 end)
+    eq(r.found, false, "found")
+end)
+
+test("losSpot: rays unusable -> found=false (the caller falls back)", function()
+    local r = N.losSpot(P1, { -12, 0, 0 }, { -12, 0, 0 }, 18, 9, true, function() return nil end)
+    eq(r.found, false, "found"); eq(r.reason, "line-of-sight rays unavailable", "reason")
+end)
+
+test("losSpot: keeps out of fire", function()
+    fire = function(x, z) return z > 0.5 end
+    local r = N.losSpot(P1, { -12, 0, 0 }, { -12, 0, 0 }, 18, 9, true, function(p) return p[3] >= 1 end)
+    eq(r.found, false, "only burning spots see it")
+    r = N.losSpot(P1, { -12, 0, 0 }, { -12, 0, 0 }, 18, 9, false, function(p) return p[3] >= 1 end)
+    eq(r.found, true, "avoid=false")
+end)
+
 -- ---- RPC replies stay compact ------------------------------------------------------
 
 test("nav.path reply drops the route points and adds the hazard", function()

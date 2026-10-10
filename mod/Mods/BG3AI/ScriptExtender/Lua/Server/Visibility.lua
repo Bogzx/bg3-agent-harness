@@ -489,6 +489,30 @@ function V.pointSeen(ctx, pt, lift)
     return false
 end
 
+-- Would a character standing at `feet` see the entity (uuid, e, pos)? An
+-- unobstructed ray from its eye to one of the entity's sample points (body
+-- middle / top / sides). Planning only (combat_turn picking a spot to cast
+-- from): the cast itself is still refused by the engine's HasLineOfSight.
+-- A prone (downed) body is low: its bounds give the height. nil when the ray
+-- API is unusable.
+function V.losFrom(ctx, uuid, e, pos, feet)
+    if V.rayBroken or not (feet and pos) then return nil end
+    local o1 = ctx.observers and ctx.observers[1]
+    if not (o1 and o1.pos and V.rayCalibrated(o1)) then return nil end
+    local bd = e and V.bounds(e)
+    local h = math.max(bd and bd.height or 1.8, 0.4)
+    local r = math.max(bd and bd.radius or 0.5, 0.3)
+    local eye = { feet[1], feet[2] + V.EYE_H, feet[3] }
+    local ok, res = pcall(function()
+        for _, pt in ipairs(samplePoints(eye, pos, h, r)) do
+            if rayClear(uuid, eye, pt, 0.3) then return true end
+        end
+        return false
+    end)
+    if not ok then return nil end
+    return res
+end
+
 ------------------------------------------------------------------------
 -- Status filter: only what portraits / Examine show
 ------------------------------------------------------------------------

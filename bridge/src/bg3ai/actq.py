@@ -138,6 +138,7 @@ class Watcher:
         self._hp: dict[str, float] = {}
         self._surf: dict[str, str | None] = {}
         self._hostiles: set[str] = set()
+        self._downed: set[str] = set()
 
     def _watch(self) -> dict:
         w = self.game.try_rpc("act.watch") or {}
@@ -161,6 +162,9 @@ class Watcher:
                     self._hp[row.get("uuid")] = p
                 self._surf[row.get("uuid")] = row.get("surface")
             self._hostiles = {s.get("uuid") for s in self.start.get("seen") or [] if s.get("hostile")}
+            # Already down when the run started: not news (S018: every combat_turn, the one healing Claude
+            # too, stopped on its first step with "e4 Claude is downed").
+            self._downed = {row.get("uuid") for row in self.start.get("party") or [] if row.get("downed")}
 
     def settle(self) -> None:
         """After a step that was meant to change the screen (talk_to, choose_dialogue): accept it."""
@@ -192,8 +196,12 @@ class Watcher:
             self._surf[u] = surf
             if hit is None and surf and surf != was and "surface" not in self.ignore:
                 hit = "surface", f"{u} is standing in {surf}"
-            if row.get("downed") and "hp" not in self.ignore:
-                return "hp", f"{u} is downed"
+            if row.get("downed"):
+                if u not in self._downed and "hp" not in self.ignore:
+                    self._downed.add(u)
+                    return "hp", f"{u} is downed"
+                continue
+            self._downed.discard(u)  # back up: going down again is news
             if p is None:
                 continue
             before = self._hp.get(u, 100.0)

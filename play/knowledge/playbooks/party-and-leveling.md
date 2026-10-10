@@ -25,13 +25,20 @@ but the next feat or spell level will fail without one.
 3. **Subclass levels** (Wizard and Druid 2; Fighter, Rogue, Ranger, Barbarian, Monk, Bard 3; Cleric,
    Paladin, Warlock, Sorcerer pick at 1) refuse to run without `subclass` and list the choices: a subclass
    is permanent. **Feat levels** (4, 8, 12; Fighter also 6, Rogue also 10) default to +2 on the main ability.
+   `"feat": "Ability Improvement"` + `"abilities"`: `{"Strength":2}`, `{"Strength":1,"Charisma":1}` or
+   `["Strength","Charisma"]` (+1 each); max 20. Half feats (Athlete, Resilient, ...) give 1 point: the main
+   ability if the feat offers it, else name it (`"abilities":{"Dexterity":1}`). A feat's own choice (Elemental
+   Adept's element, ...) goes in `passives`. A feat level that also learns spells/cantrips (Cleric, Wizard,
+   Warlock at 4) needs those in the same plan: `{"feat":"Alert","cantrips":["Toll the Dead"]}`.
 4. **Spells, cantrips and passives have no default either**: a level that learns spells (Wizard 2 picks 2,
    Warlock 2 picks 1, ...) or picks passives (Warlock invocations at 2, fighting styles) fails until the plan
    names them, and the error lists exactly what can be picked (`can pick: ...`), so copy names from it.
    E.g. `- Wyll L2: {"passives": ["Agonizing Blast", "Repelling Blast"], "spells": ["Hex"]}`. Spells already
    known are not offered. British and US spellings both match ("Agonising"/"Agonizing").
 5. If the result lists problems (a spell not offered, choice incomplete), it did not finish: fix the plan
-   line from the problems and call again. Log `- HH:MM [level] Gale → L2: Evocation, Sleep, Thunderwave`.
+   line from the problems and call again. Never drive the level-up screen by hand (press_key, clicks): the
+   tool does every click itself. If it fails twice on the same plan, it is a harness bug: press_key ESCAPE,
+   note it in the session log, and keep playing (S018 lost ~10 min to hand-driving). Log `- HH:MM [level] Gale → L2: Evocation, Sleep, Thunderwave`.
 6. Several pending: level each one back to back (Claude, then the companions); no reads in between.
 
 ## Party composition: 4 roles
