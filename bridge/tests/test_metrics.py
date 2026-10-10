@@ -202,6 +202,23 @@ class Summary(unittest.TestCase):
         g1, _ = M.gaps(M.action_intervals(tools), samples)
         self.assertEqual(g1["s"], 23.0)
 
+    def test_loading_screens_are_not_idle(self):
+        # S015: a party wipe, then load_game took 23.7 s (and the loading screen ran on after it): that is
+        # not the agent idling. load_game's own time and the sampler's unanswered polls are left out.
+        tools = [tool("move_to", 0.0, 1.0), tool("load_game", 3.0, 20.0), tool("move_to", 30.0, 31.0)]
+        samples = [sample(t) for t in range(0, 3)] + [{"type": "sample", "t": T0 + t, "load": True}
+                                                       for t in (24.0, 28.0)] + [sample(29.0), sample(30.0)]
+        (g,) = M.gaps(M.action_intervals(tools), samples, tools)
+        # 29 s raw: load_game 3-20, load samples 20-24 (span 5 s, capped by the call) and 24-28
+        self.assertEqual((g["gap_s"], g["load_s"], g["s"]), (29.0, 25.0, 4.0))
+        s = M.summarize(tools, samples, [], start=T0, end=T0 + 31)
+        self.assertEqual(s["loading_s"], 25.0)
+        self.assertEqual(s["long_gaps"]["total"], 0)
+        self.assertEqual(s["samples"], 5)  # load samples are not activity samples
+        # the sampler writes them when nav.activity fails
+        rec = M.Recorder(None)
+        self.assertEqual(rec.load_sample(T0), {"type": "sample", "t": round(T0, 2), "load": True})
+
     def test_sample_pturn(self):
         rec = M.Recorder(None)
         self.assertNotIn("pturn", rec.sample(T0, False, 0, False, False, party_turn=False))  # out of combat

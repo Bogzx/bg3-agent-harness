@@ -23,6 +23,12 @@ Checks, in order (latency first, so nothing else is in flight while it measures)
   vis         tools/dev/check_vis.py (no --move/--reload; it toggles the ray rule and restores it)
   se          tools/dev/check_se.py --only hook,children,autoskip
   route       tools/dev/check_route.py
+  mod         the hot-reloaded mod Lua is the new one: Navigation.lua's connector budget/memo, the nav.waypoints
+              and act.watch ops answer, nav.activity carries party_turn in combat (research/live-todo.md)
+  reads       tools/dev/check_reads.py --rounds 3 --queue: its connections line (bridge pools within cap, no bg3le
+              debug slot without a client socket = the leak) decides; its strict read target (<30 ms) only WARNs
+  session     tools/dev/check_session.py: the newest finished session's own files (latency.json, transcript,
+              metrics, saves, runner.log, bg3le log) against the live-todo items they answer. No game access.
 
 Prints one PASS / WARN / FAIL table (one row per check, the worst line of a sub-script decides its row) and
 exits 1 on any FAIL, 2 when the game isn't reachable, 3 when a session is playing. -v prints the sub-scripts'
@@ -73,8 +79,10 @@ SCRIPTS = {
     "vis": (["check_vis.py"], 40, {}),
     "se": (["check_se.py", "--only", "hook,children,autoskip"], 25, {}),
     "route": (["check_route.py"], 25, {}),
+    "reads": (["check_reads.py", "--rounds", "3", "--queue"], 30, {}),
+    "session": (["check_session.py"], 20, {}),
 }
-ORDER = ["latency", "waypoints", "keys", "confirm", "smoke", "act", "vis", "se", "route"]
+ORDER = ["latency", "waypoints", "keys", "confirm", "smoke", "act", "vis", "se", "route", "mod", "reads", "session"]
 
 
 @dataclass
@@ -397,6 +405,76 @@ def check_waypoints(g) -> Row:
     return Row("waypoints", "PASS", detail)
 
 
+MOD_LUA = r"""
+local B = Mods.BG3AI.BG3AI
+local N, R = B.Nav, B.RPC
+out = { nav = N ~= nil, budget = N and N.CONNECT_BUDGET_MS or false,
+        memo = N ~= nil and type(N.connectFail) == "table",
+        ops = { ["nav.waypoints"] = R ~= nil and R.ops["nav.waypoints"] ~= nil,
+                ["act.watch"] = R ~= nil and R.ops["act.watch"] ~= nil,
+                ["nav.activity"] = R ~= nil and R.ops["nav.activity"] ~= nil } }
+"""
+
+
+def check_mod(g) -> Row:
+    """Markers of the mod Lua the live-todo items need (they only exist after the runner's hot reload)."""
+    raw = g.eval("local out\n" + MOD_LUA + "\nreturn Ext.Json.Stringify(out, { Beautify = false })", context="server")
+    res = json.loads(raw) if raw not in ("", "nil") else {}
+    bad, parts = [], []
+    if not res.get("nav"):
+        return Row("mod", "FAIL", "BG3AI.Nav missing on the server (mod not loaded?)")
+    if res.get("budget") != 40 or not res.get("memo"):
+        bad.append(f"FAIL Navigation.lua is old: CONNECT_BUDGET_MS={res.get('budget')}, connectFail={res.get('memo')}")
+    for op, ok in sorted((res.get("ops") or {}).items()):
+        if not ok:
+            bad.append(f"FAIL op {op} not registered (old mod Lua: hot reload)")
+    if not any(b.startswith("FAIL op nav.waypoints") for b in bad):
+        wp = g.try_rpc("nav.waypoints", {}, default=None)
+        if isinstance(wp, dict) and isinstance(wp.get("waypoints"), (list, dict)):
+            parts.append(f"nav.waypoints {len(wp['waypoints'])} unlocked here (level {wp.get('level')})")
+        else:
+            bad.append(f"WARN nav.waypoints answered {str(wp)[:80]}")
+    if not any(b.startswith("FAIL op act.watch") for b in bad):
+        w = g.try_rpc("act.watch", {}, default=None)
+        if isinstance(w, dict) and isinstance(w.get("party"), list):
+            seen = w.get("seen") or []
+            parts.append(f"act.watch party {len(w['party'])}, seen {len(seen)} "
+                         f"({sum(1 for x in seen if isinstance(x, dict) and x.get('hostile'))} hostile)")
+        else:
+            bad.append(f"WARN act.watch answered {str(w)[:80]}")
+    act = g.try_rpc("nav.activity", {}, default=None)
+    if isinstance(act, dict) and act.get("in_combat"):
+        if "party_turn" not in act:
+            bad.append("FAIL nav.activity has no party_turn in combat (old Navigation.lua)")
+        else:
+            parts.append(f"party_turn={act['party_turn']}")
+    elif isinstance(act, dict):
+        parts.append("out of combat (party_turn not exercised)")
+    v = worst([b.split()[0] for b in bad]) if bad else "PASS"
+    return Row("mod", v, (bad[0] + "; " if bad else "") + "; ".join(parts), lines=bad)
+
+
+READS_RE = re.compile(r"^(connections|ALL)\b.*->\s*(PASS|FAIL)")
+
+
+def summarize_reads(rc: int | None, out: str, secs: float) -> Row:
+    """check_reads prints `... -> PASS|FAIL` lines: the connections line decides (FAIL = a debug slot leak);
+    the ALL line's strict read target (< 30 ms) is a WARN here (check_all's latency row has the goal's FAIL)."""
+    lines = {m.group(1): (m.group(2), raw.strip()) for raw in out.splitlines() if (m := READS_RE.match(raw.strip()))}
+    if rc is None:
+        return Row("reads", "FAIL", f"timed out after {secs:.0f} s", secs)
+    if "connections" not in lines:
+        tail = (out.strip().splitlines() or ["no output"])[-1][:120]
+        return Row("reads", "FAIL" if rc not in (0, 1) else "WARN", f"exit {rc}: {tail}", secs)
+    conn_v, conn = lines["connections"]
+    all_v, allr = lines.get("ALL", ("PASS", "ALL: no records"))
+    v = worst([conn_v, "WARN" if all_v == "FAIL" else "PASS"])
+    bad = [f"{conn_v} {conn}"] if conn_v != "PASS" else []
+    if all_v == "FAIL":
+        bad.append(f"WARN {allr}")
+    return Row("reads", v, f"{conn[:90]}; {allr[:70]}", secs, bad)
+
+
 # ---------------------------------------------------------------------------------------- main
 
 def print_table(rows: list[Row], verbose: bool = False, out=None) -> None:
@@ -433,11 +511,13 @@ def run_all(names: list[str], g, tools_fn, calls: int, budget: float, verbose: b
                 row = check_keys(g)
             elif name == "confirm":
                 row = check_confirm(g)
+            elif name == "mod":
+                row = check_mod(g)
             else:
                 rc, out, secs = run_script(name, min(SCRIPTS[name][1], left), tmp, runner)
                 if verbose:
                     print(out.rstrip())
-                row = summarize(name, rc, out, secs)
+                row = summarize_reads(rc, out, secs) if name == "reads" else summarize(name, rc, out, secs)
         except Exception as e:  # noqa: BLE001 - one broken check must not hide the others
             row = Row(name, "FAIL", f"{type(e).__name__}: {str(e)[:140]}")
         row.secs = time.monotonic() - t0

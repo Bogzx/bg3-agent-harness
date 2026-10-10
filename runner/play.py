@@ -1693,6 +1693,7 @@ class Runner:
             f"(API {(summary.get('api') or {}).get('api_s_per_turn')}s/turn, "
             f"{(summary.get('api') or {}).get('ms_per_out_tok')} ms/out-tok), "
             f"apm {summary['apm']}, busy {summary['busy_pct']}%, pipelined {summary.get('pipelining_pct')}%, "
+            f"think overlap {summary.get('think_overlap_pct')}%, loading {summary.get('loading_s')}s (not idle), "
             f"wait_for noop {(summary.get('wait_for_noop') or {}).get('n')}/{(summary.get('wait_for_noop') or {}).get('of')}, "
             f"wrap-up {summary.get('wrapup_s')}s (not counted) | {verdict}")
         return summary

@@ -265,7 +265,7 @@ class GoalsTest(TmpCase):
         self.d = self.tmp / "sessions" / "pt"
         self.d.mkdir(parents=True)
         lat = {"start": 1000.0, "end": 1840.0, "minutes": 14.0, "apm": 10.3, "actions": 140, "busy_pct": 61.0,
-               "pipelining_pct": 35.0, "targets": {
+               "pipelining_pct": 35.0, "think_overlap_pct": 40.0, "targets": {
                    "median_idle_explore_s": {"value": 1.6, "target": 2.0, "pass": True},
                    "long_gaps_non_dialogue": {"value": 4, "target": 0, "pass": False},
                    "bridge_rt_median_ms": {"value": 94.0, "target": 100.0, "pass": True}}}
@@ -287,10 +287,10 @@ class GoalsTest(TmpCase):
         self.assertEqual([s["session"] for s in g["sessions"]], ["S001", "S002", "S003", "S003-r1"])
         s1, s2, s3 = g["sessions"][:3]
         self.assertEqual(s1["values"], {"idle": 1.6, "gaps": 4, "rt": 94.0, "apm": 10.3, "busy": 61.0,
-                                        "pipe": 35.0, "pts": 300.0})
+                                        "pipe": 35.0, "overlap": 40.0, "pts": 300.0})
         self.assertEqual(s1["pass"], {"idle": True, "gaps": False, "rt": True, "apm": True, "busy": True,
-                                      "pipe": True, "pts": True})
-        self.assertEqual((s1["passed"], s1["judged"]), (6, 7))
+                                      "pipe": True, "overlap": False, "pts": True})
+        self.assertEqual((s1["passed"], s1["judged"]), (6, 8))
         self.assertTrue(s2["short"])
         self.assertTrue(s3["live"])
         self.assertEqual(s3["values"]["pts"], 18.0)                        # 3 points in 10 live minutes

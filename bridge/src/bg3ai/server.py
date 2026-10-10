@@ -504,6 +504,9 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
     t0 = time.monotonic()
     if _session_over():
         return _finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
+    if not _batch["active"]:
+        held = _hold_for_early_walks(args.get("char"))
+        note = "\n".join(x for x in (held, note) if x)
     if not wait and not _batch["active"] and context == "server":
         return _start_async(tool, op, args, t0, note)
     ex = _batch["exec"]
@@ -1850,6 +1853,7 @@ def do_actions(actions: str, wait: bool = True, ignore: str = "") -> str:
         steps = actq.parse_steps(actions, _BATCHABLE)
     except actq.StepError as e:
         return f"FAILED: {e}"
+    _hold_for_early_walks(None)  # a batch issued in a walk's last seconds starts after the arrival
     ex = _make_executor(None, ignore)
     ex.watcher.baseline()
     it = iter(steps)
@@ -2124,11 +2128,107 @@ def _quiet(scr: str | None, view: dict) -> bool:
     return not _wait_combat(view).get("active") or bool(_wait_acting(view))
 
 
+# Early wake (impl-act "pipelining stuck"): in exploration the agent waits for arrival, then thinks ~2 s while
+# the character stands. wait_for on a walk returns when about one think time (lead_s) of it is left, so the
+# agent plans the next step during the last seconds; what it then issues for that character runs after the
+# walk arrives (_hold_for_early_walks), never cancelling it. Not in combat (the turn needs the real arrival).
+LEAD_S = 2.0          # default lead: the agent's typical think time
+EARLY_CHECK_S = 0.25  # how often wait_for looks at the remaining ETA (one act.watch per trip)
+EARLY_HOLD_S = 8.0    # an action issued after an early wake waits at most this long for the walk to end
+_early: dict[str, dict] = {}  # key -> {"char", "job"|"queue"} of walks whose early wake fired (hold their followers)
+_early_seen: set = set()      # keys that already woke a wait once (the next wait_for blocks to the end)
+
+
+def _walk_left(low: str) -> list[tuple[str, str | None, float, str, dict]]:
+    """For a wait target, the walks it waits on: (key, char, seconds left, label, gate entry). [] when it also
+    waits on something that is not a walk with a known ETA (no early wake then)."""
+    now = time.monotonic()
+    out = []
+    jobs: list[str] = []
+    if re.fullmatch(r"j\d+", low):
+        jobs = [low]
+    elif low == "idle":
+        jobs = _running_jobs()
+    for h in jobs:
+        info = _async.get(h)
+        if not info or info.get("tool") not in _WALKS or info.get("eta") is None:
+            return []
+        out.append((f"{h}@{info['t0']}", info.get("char"), float(info["eta"]) - (now - info["t0"]),
+                    f"{h} {info['tool']}", {"char": info.get("char"), "job": h}))
+    if low in ("idle", "queue") or low.startswith("queue:"):
+        who = _uuid(low.split(":", 1)[1]) if low.startswith("queue:") else None
+        for q in _queues().status():
+            if who is not None and q["who"] != who:
+                continue
+            trip = _trips.get(q["who"])
+            if not (q["running"] or "").startswith("travel_to") or q["waiting"] or not trip:
+                return []  # arrival steps still to run, or not a trip: the queue is not nearly done
+            tl = _trip_left(q["who"])
+            if tl is None or tl[1] is None:
+                return []
+            out.append((f"queue:{q['who']}@{trip['t0']}", q["who"], tl[1], f"queue {_label(q['who'])} travel_to",
+                        {"char": q["who"], "queue": True}))
+    return out
+
+
+def _early_wake(low: str, lead_s: float, view: dict) -> str | None:
+    """The wait_for answer when every walk it waits on has at most lead_s left (once per walk), else None."""
+    if lead_s <= 0:
+        return None
+    walks = _walk_left(low)
+    if not walks or max(w[2] for w in walks) > lead_s or any(w[0] in _early_seen for w in walks):
+        return None
+    if _wait_combat(view).get("active"):
+        return None
+    for key, _, _, _, gate in walks:
+        _early_seen.add(key)
+        _early[key] = gate
+    left = max(0.0, max(w[2] for w in walks))
+    who = sorted({_label(w[1]) for w in walks if w[1]})
+    return (f"{', '.join(w[3] for w in walks)}: arriving, ETA ~{render.num(round(left, 1))}s (early wake, "
+            f"lead_s={render.num(lead_s)}): plan the next step now. What you issue"
+            + (f" for {', '.join(who)}" if who else "") + " runs after the walk arrives (it does not cancel it);"
+            " wait_for again blocks to the end.")
+
+
+def _hold_for_early_walks(char: str | None) -> str:
+    """Before a direct action: if an early-woken walk of that character (any, if char is None) is still
+    going, wait for it to end, so the action queues after the walk instead of cancelling it. A note or ''."""
+    if not _early:
+        return ""
+    keys = [k for k, g in _early.items() if char is None or g.get("char") in (None, char)]
+    if not keys:
+        return ""
+    t0 = time.monotonic()
+
+    def going() -> bool:
+        for k in keys:
+            g = _early[k]
+            if g.get("job") and g["job"] in _running_jobs():
+                return True
+            if g.get("queue") and _queues().busy(g["char"]):
+                return True
+        return False
+
+    held = False
+    while going() and time.monotonic() - t0 < EARLY_HOLD_S:
+        held = True
+        time.sleep(0.1)
+    for k in keys:
+        _early.pop(k, None)
+    if not held:
+        return ""
+    return f"(waited {render.num(round(time.monotonic() - t0, 1))}s for the walk to arrive first)"
+
+
+
 @mcp.tool()
 @_guard
-def wait_for(target: str = "idle", timeout_s: float = 15.0) -> str:
-    """Block only until something happens, then report it plus events and CHANGES. target: a job id (j12) from an async action; 'queue' (all queues done) or 'queue:<who>'; 'idle' (no async job or queue running); 'my_turn' (a party member can act, or combat ended); or event kinds, comma-separated (e.g. 'combat_started,dialogue_started,job_finished'). Also returns early when a reaction/roll/dialogue/popup appears. Returns at once when the state already answers it or nothing running could cause it."""
+def wait_for(target: str = "idle", timeout_s: float = 15.0, lead_s: float = LEAD_S) -> str:
+    """Block only until something happens, then report it plus events and CHANGES. target: a job id (j12) from an async action; 'queue' (all queues done) or 'queue:<who>'; 'idle' (no async job or queue running); 'my_turn' (a party member can act, or combat ended); or event kinds, comma-separated (e.g. 'combat_started,dialogue_started,job_finished'). Also returns early when a reaction/roll/dialogue/popup appears. Returns at once when the state already answers it or nothing running could cause it. Outside combat, waiting on a walk/travel_to (job id, 'queue', 'idle') returns once when ~lead_s seconds of it are left (ETA line), so you plan while it finishes: what you issue then runs after the arrival, never cancelling it; lead_s=0 waits for the end."""
     t0 = time.monotonic()
+    lead_s = max(0.0, min(float(lead_s), 10.0))
+    early_at = 0.0
     timeout_s = max(0.1, min(float(timeout_s), 60.0))
     deadline = t0 + timeout_s
     tgt = (target or "idle").strip()
@@ -2174,6 +2274,12 @@ def wait_for(target: str = "idle", timeout_s: float = 15.0) -> str:
             body = _wait_state(low, tgt, kinds, ui, view)
             if body is not None:
                 noop = "already" if first else None
+                break
+        if not kinds and lead_s and not _batch["active"] and now - early_at >= EARLY_CHECK_S:
+            early_at = now
+            body = _early_wake(low, lead_s, view)
+            if body is not None:
+                noop = "early" if first else None
                 break
         if kinds:
             hit = _peek_events(kinds)
@@ -3398,13 +3504,13 @@ def _wait_for_stragglers(char: str, here: Any, crew: set, outer: actq.Executor |
 
 
 def _climb_hint(here: list | None, dest: list | None) -> str:
-    """travel_to stopped short of a destination on another deck: name the nearest ladders/stairs (the walker
+    """travel_to stopped short of a destination on another deck: name the nearest ladders/stairs/exits (the walker
     never climbs on its own; interact with the ladder does)."""
     if not (here and dest) or abs(dest[1] - here[1]) < 2.5:
         return ""
-    res = game.try_rpc("nav.frontier", {})
+    res = game.try_rpc("nav.frontier", {"ways": False})  # leads only: the open-direction searches cost ~100 ms
     leads = res.get("leads") if isinstance(res, dict) else None
-    ups = sorted((l for l in leads or [] if l.get("uuid") and l.get("kind") in ("ladder", "stairs")),
+    ups = sorted((l for l in leads or [] if l.get("uuid") and l.get("kind") in ("ladder", "stairs", "exit")),
                  key=lambda l: l.get("dist") or 1e9)[:2]
     side = "above" if dest[1] > here[1] else "below"
     hint = f"; it is {render.num(round(abs(dest[1] - here[1]), 1))}m {side} you"
@@ -3413,7 +3519,7 @@ def _climb_hint(here: list | None, dest: list | None) -> str:
     _remember_names(res)
     names = ", ".join(f"{H.get(l['uuid'], l.get('name'))} {l.get('name', '?')} {render.num(l.get('dist', '?'))}m"
                       for l in ups)
-    return hint + f": climb with interact on a ladder ({names}), then travel_to again"
+    return hint + f": climb with interact on a ladder/stairs/hatch ({names}), then travel_to again"
 
 
 def _pos_now(char: str) -> list | None:

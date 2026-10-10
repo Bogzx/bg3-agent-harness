@@ -204,6 +204,8 @@ class Base(unittest.TestCase):
         server._watch_game = self.g
         server._queue_mgr = None
         server._async.clear()
+        server._early.clear()
+        server._early_seen.clear()
         server._looted.clear()
         server.MEMORY = self.tmp
         server.delta.changes_text = lambda game, H: ""

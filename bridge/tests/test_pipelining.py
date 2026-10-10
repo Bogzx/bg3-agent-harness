@@ -18,6 +18,11 @@ from test_turn_macros import CHEST, P1, Base  # noqa: F401  (sets BG3AI_RUNTIME 
 from bg3ai import metrics, server  # noqa: E402
 
 
+def who() -> str:
+    """The party leader's label in queue lines ("e4 Claude"): handle numbering depends on setup order."""
+    return server._label(P1)
+
+
 def wait_until(cond, timeout: float = 5.0) -> bool:
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -113,14 +118,14 @@ class AsyncTravel(Base):
         self.assertLess(time.monotonic() - t0, 0.6)
         self.assertIn("travel_to marker m1 Old well: started (50m); 50m left", out)
         self.assertIn("wait=true ignored", out)
-        self.assertIn("RUNNING queue e3 Claude: travel_to", out)
+        self.assertIn(f"RUNNING queue {who()}: travel_to", out)
         self.assertIn("(queue_actions appends after it)", out)
         self.assertIn("NEXT: queue_actions", out)
 
     def test_a_trip_that_ends_in_the_settle_window_reports_now(self):
         server.SETTLE_S = 3.0
         out = server.travel_to(marker="m1")
-        self.assertIn("queue e3 Claude: done (1 steps)", out)
+        self.assertIn(f"queue {who()}: done (1 steps)", out)
         self.assertIn("arrived", out)
         self.assertNotIn("RUNNING", out)
         self.assertNotIn("NEXT:", out)
@@ -137,6 +142,112 @@ class AsyncTravel(Base):
         self.assertIn("arrived", out)
         self.assertIn("2. interact", out)
         self.assertEqual(len(self.g.ops("act.move_to")), 2)
+
+
+class EarlyWake(Base):
+    """wait_for on a walk returns when ~lead_s of it is left; what is issued then runs after the arrival."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.started: dict[str, float] = {}
+        self.g.on_start = lambda op, a: self.started.setdefault(op, time.monotonic())
+
+    def walk(self, dur: float) -> str:
+        self.g.dur["act.move_to"] = dur  # the fake's ETA is 1.0 s
+        out = server.move_to(x=5.0, y=0.0, z=0.0)
+        return out.split("started ", 1)[1].split(",")[0].split()[0]
+
+    def test_wakes_early_and_the_next_action_waits_for_the_walk(self):
+        h = self.walk(1.2)
+        t0 = time.monotonic()
+        out = server.wait_for(h, timeout_s=5)
+        self.assertLess(time.monotonic() - t0, 0.5)
+        self.assertIn(f"{h} move_to: arriving, ETA ~", out)
+        self.assertIn("runs after the walk arrives", out)
+        walk = self.g.jobs[int(h[1:])]
+        self.assertEqual(walk["status"], "running")
+        res = server.interact(target=server.H.get(CHEST))
+        self.assertIn("waited", res)
+        self.assertEqual(walk["status"], "done")  # not cancelled
+        self.assertGreaterEqual(self.started["act.interact"], walk["end"])
+
+    def test_once_per_walk_then_blocks_to_the_end(self):
+        h = self.walk(0.8)
+        self.assertIn("arriving", server.wait_for(h, timeout_s=5))
+        out = server.wait_for(h, timeout_s=5)
+        self.assertIn("move_to: done", out)
+        self.assertNotIn("arriving", out)
+
+    def test_lead_zero_waits_for_the_end(self):
+        h = self.walk(0.5)
+        out = server.wait_for(h, timeout_s=5, lead_s=0)
+        self.assertIn("move_to: done", out)
+
+    def test_far_from_arrival_blocks(self):
+        h = self.walk(1.5)
+        t0 = time.monotonic()
+        out = server.wait_for(h, timeout_s=5, lead_s=0.2)  # ETA 1.0 s: more than 0.2 s left at first
+        self.assertIn("arriving", out)  # wakes once the ETA drops under 0.2 s
+        self.assertGreater(time.monotonic() - t0, 0.6)
+        self.assertEqual(self.g.jobs[int(h[1:])]["status"], "running")
+
+    def test_not_in_combat(self):
+        h = self.walk(0.5)
+        self.g.combat = {"active": True, "current": server.H.get(P1)}
+        out = server.wait_for(h, timeout_s=5)
+        self.assertNotIn("arriving", out)
+        self.assertIn("move_to: done", out)
+        self.assertEqual(server._early, {})
+
+    def test_not_for_non_walks(self):
+        self.g.dur["act.interact"] = 0.5
+        out = server.interact(target=server.H.get(CHEST), wait=False)
+        h = out.split("started ", 1)[1].split(",")[0].split()[0]
+        self.assertNotIn("arriving", server.wait_for(h, timeout_s=5))
+
+    def test_trip_wakes_queue_wait_and_a_direct_action_follows_it(self):
+        (self.tmp / "markers.json").write_text(json.dumps([{"id": "m1", "label": "Old well", "pos": [50, 0, 0],
+                                                             "level": "TUT"}]))
+        self.g.reach = lambda a: {"reachable": True, "pos": [50.0, 0.0, 0.0]}
+        self.g.dur["act.move_to"] = 1.0
+        server.travel_to(marker="m1")
+        self.assertTrue(wait_until(lambda: self.g.ops("act.move_to")))
+        server._trips[P1] = {"dest": [50.0, 0.0, 0.0], "d0": 50.0, "t0": time.monotonic() - 4.0}
+        self.g.watch["party"][0]["pos"] = [45.0, 0.0, 0.0]  # 45 m in 4 s: ~0.4 s left
+        out = server.wait_for("queue", timeout_s=5)
+        self.assertIn(f"queue {who()} travel_to: arriving, ETA ~", out)
+        self.assertTrue(server._queues().busy(P1))
+        res = server.interact(target=server.H.get(CHEST))
+        self.assertIn("waited", res)
+        legs = [j for j in self.g.jobs.values() if j["op"] == "act.move_to"]
+        self.assertEqual({j["status"] for j in legs}, {"done"})  # the trip's leg was not cancelled
+
+    def test_queue_with_arrival_steps_waits_to_the_end(self):
+        self.g.dur["act.move_to"] = 0.3
+        self.g.dur["act.interact"] = 0.3
+        server.queue_actions(json.dumps([{"tool": "move_to", "x": 5, "y": 0, "z": 0},
+                                         {"tool": "interact", "target": server.H.get(CHEST)}]))
+        out = server.wait_for("queue", timeout_s=5)
+        self.assertNotIn("arriving", out)
+        self.assertIn("done (2 steps)", out)
+
+
+class ClimbHint(Base):
+    def test_asks_leads_only_and_names_exits(self):
+        seen = []
+
+        def frontier(op, args=None, context="server", default=None):
+            seen.append((op, args))
+            return {"leads": [{"uuid": CHEST, "name": "Trapdoor", "kind": "exit", "dist": 4.0},
+                              {"uuid": "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee", "name": "Crate", "kind": "container",
+                               "dist": 1.0}]}
+        self.g.try_rpc = frontier
+        out = server._climb_hint([0.0, 0.0, 0.0], [0.0, 5.0, 0.0])
+        self.assertEqual(seen, [("nav.frontier", {"ways": False})])
+        self.assertIn("5m above you", out)
+        self.assertIn("Trapdoor 4m", out)
+        self.assertNotIn("Crate", out)
+        self.assertEqual(server._climb_hint([0.0, 0.0, 0.0], [3.0, 1.0, 0.0]), "")  # same deck
 
 
 class SettleAndPace(Base):
@@ -195,7 +306,7 @@ class SettleAndPace(Base):
         self.g.dur["act.interact"] = 2.0
         out = server.queue_actions(json.dumps([{"tool": "interact", "target": server.H.get(CHEST)},
                                                {"tool": "interact", "target": server.H.get(CHEST)}]))
-        self.assertIn("RUNNING queue e3 Claude:", out)
+        self.assertIn(f"RUNNING queue {who()}:", out)
         self.assertIn("(queue_actions appends after it)", out)
 
     def test_wait_returns_on_the_first_event(self):
@@ -277,6 +388,44 @@ class PipeliningMetric(unittest.TestCase):
                    {"type": "sample", "t": 13.5, "moving": True, "job": 1}]
         p = metrics.summarize(tools, samples, [])["pipelining"]
         self.assertEqual((p["issued"], p["pipelined"], p["source"]), (3, 1, "samples"))
+
+    def test_dialogue_answers_left_out_and_enemy_turn_plans_count(self):
+        # S015: 33 of 101 issued calls answered dialogue (nothing can run there) and 13 combat turns were
+        # sent while enemies acted (they wait for the turn): the strict bg-only metric said 2%.
+        tools = [
+            {"type": "tool", "tool": "choose_dialogue", "t0": 1, "t1": 1.5, "ms": 500, "bg": 0},
+            {"type": "tool", "tool": "interact", "t0": 3, "t1": 4, "ms": 1000, "bg": 0},     # in dialogue
+            {"type": "tool", "tool": "combat_turn", "t0": 10, "t1": 20, "ms": 10000, "bg": 0},  # enemy turn
+            {"type": "tool", "tool": "combat_turn", "t0": 30, "t1": 35, "ms": 5000, "bg": 0},  # own turn
+            {"type": "tool", "tool": "move_to", "t0": 40, "t1": 41, "ms": 1000, "bg": 0, "async": True},
+            {"type": "tool", "tool": "interact", "t0": 42, "t1": 43, "ms": 1000, "bg": 1},
+        ]
+        samples = [{"type": "sample", "t": 2.5, "dlg": True},
+                   {"type": "sample", "t": 9.5, "combat": True, "pturn": False},
+                   {"type": "sample", "t": 29.5, "combat": True, "pturn": True},
+                   {"type": "sample", "t": 39.5}]
+        p = metrics.summarize(tools, samples, [])["pipelining"]
+        self.assertEqual((p["issued"], p["dialogue"], p["pipelined"], p["enemy_turn"]), (6, 2, 2, 1))
+        self.assertEqual((p["pct"], p["strict_pct"]), (50.0, 16.7))
+
+    def test_think_overlap(self):
+        # Out of combat/dialogue, samples while the agent works (between calls, or in a read) and how
+        # many had the party busy; time blocked in wait_for or a blocking action doesn't count.
+        tools = [
+            {"type": "tool", "tool": "move_to", "t0": 0, "t1": 1, "ms": 1000, "bg": 0, "async": True},
+            {"type": "tool", "tool": "look", "t0": 2, "t1": 2.2, "ms": 200, "bg": 1},
+            {"type": "tool", "tool": "wait_for", "t0": 3, "t1": 6, "ms": 3000, "bg": 1},
+            {"type": "tool", "tool": "interact", "t0": 9, "t1": 10, "ms": 1000, "bg": 0},
+        ]
+        samples = [{"type": "sample", "t": 1.5, "moving": True},
+                   {"type": "sample", "t": 2.1, "moving": True},          # in a read: counts
+                   {"type": "sample", "t": 4, "moving": True},            # in wait_for: not
+                   {"type": "sample", "t": 7},
+                   {"type": "sample", "t": 8, "combat": True},            # combat: not
+                   {"type": "sample", "t": 8.5, "dlg": True}]             # dialogue: not
+        s = metrics.summarize(tools, samples, [])
+        self.assertEqual(s["think_overlap"], {"samples": 3, "busy": 2, "pct": 66.7})
+        self.assertEqual(s["think_overlap_pct"], 66.7)
 
     def test_history_and_live_view_carry_it(self):
         import tempfile

@@ -36,6 +36,9 @@ class FakeGame:
         self.ui_list = [{"region": "Wilderness", "name": "Roadside Cliffs"}, {"region": "Wilderness", "name": "Emerald Grove"}]
         self.picks = None  # None: every wanted name/id resolves
         self.job = None
+        self.mod = {"nav": True, "budget": 40, "memo": True,
+                    "ops": {"nav.waypoints": True, "act.watch": True, "nav.activity": True}}
+        self.activity = {"in_combat": False, "pos": {}}
         self.calls: list[tuple] = []
         self.__dict__.update(kw)
 
@@ -56,6 +59,8 @@ class FakeGame:
             picks = self.picks if self.picks is not None else [[w, "x", 1] for w in wants]
             picks = [{"want": w, "got": got or False, "n": n} for w, got, n in picks]
             return json.dumps({"api": True, "picks": picks})
+        if "N.CONNECT_BUDGET_MS" in code:
+            return json.dumps(self.mod)
         raise AssertionError("unexpected eval: " + code[:80])
 
     def rpc(self, op, args=None, context="server", timeout=12.0):
@@ -71,6 +76,12 @@ class FakeGame:
     def try_rpc(self, op, args=None, context="server", default=None):
         if op == "ui.state":
             return {"screen": self.screen}
+        if op == "nav.waypoints":
+            return {"level": "WLD_Main_A", "waypoints": self.unlocked}
+        if op == "act.watch":
+            return {"party": [{"uuid": "u1"}], "seen": [{"uuid": "g1", "hostile": True}, {"uuid": "n1"}]}
+        if op == "nav.activity":
+            return self.activity
         return default
 
     def run_job(self, op, args, context="server", wait_s=25.0, poll_s=0.1, on_start=None):
@@ -289,6 +300,47 @@ class WaypointsTest(unittest.TestCase):
         self.assertIn("didn't open", r.detail)
 
 
+READS_OK = ("connections    pools within cap: True  bg3le slots without a client socket: 0  -> PASS\n"
+            "ALL            median 22.0 ms  p90 60.0 ms  -> PASS (<30 / <100)\n")
+READS = ("connections    pools within cap: True  bg3le slots without a client socket: 0  -> PASS\n"
+         "ALL            median 52.0 ms  p90 120.0 ms  -> FAIL (<30 / <100)\n")
+
+
+class ModTest(unittest.TestCase):
+    def test_pass(self):
+        r = C.check_mod(FakeGame())
+        self.assertEqual(r.verdict, "PASS", r.detail)
+        self.assertIn("nav.waypoints 2 unlocked", r.detail)
+        self.assertIn("seen 2 (1 hostile)", r.detail)
+
+    def test_old_navigation(self):
+        g = FakeGame()
+        g.mod.update(budget=False, memo=False)
+        g.mod["ops"]["nav.waypoints"] = False
+        r = C.check_mod(g)
+        self.assertEqual(r.verdict, "FAIL")
+        self.assertIn("Navigation.lua is old", r.detail)
+        self.assertNotIn(("nav.waypoints", {}), g.calls)
+
+    def test_party_turn_in_combat(self):
+        g = FakeGame(activity={"in_combat": True})
+        self.assertEqual(C.check_mod(g).verdict, "FAIL")
+        g.activity["party_turn"] = False
+        self.assertIn("party_turn=False", C.check_mod(g).detail)
+
+
+class ReadsTest(unittest.TestCase):
+    def test_verdicts(self):
+        self.assertEqual(C.summarize_reads(0, READS_OK, 3).verdict, "PASS")
+        self.assertEqual(C.summarize_reads(1, READS, 3).verdict, "WARN")  # slow reads only WARN here
+        leak = READS.replace("socket: 0  -> PASS", "socket: 5  -> FAIL")
+        r = C.summarize_reads(1, leak, 3)
+        self.assertEqual(r.verdict, "FAIL")
+        self.assertIn("socket: 5", r.lines[0])
+        self.assertEqual(C.summarize_reads(None, "", 30).verdict, "FAIL")
+        self.assertEqual(C.summarize_reads(2, "no records\n", 3).verdict, "FAIL")
+
+
 class RunAllTest(unittest.TestCase):
     def fake_runner(self, outputs):
         def run(cmd, cwd=None, env=None, capture_output=True, text=True, timeout=None):
@@ -306,13 +358,15 @@ class RunAllTest(unittest.TestCase):
 
     def test_table_and_exit(self):
         outputs = {"smoke.py": (0, SMOKE.replace("✗", "✓")), "check_act.py": (0, ACT), "check_vis.py": (0, VIS),
-                   "check_se.py": (1, SE), "check_route.py": (None, "[PASS] route: ok\n")}
+                   "check_se.py": (1, SE), "check_route.py": (None, "[PASS] route: ok\n"),
+                   "check_reads.py": (1, READS), "check_session.py": (0, "PASS first_call: look -> ok\nINFO ops: none\n")}
         tools = lambda: {"look": lambda: "ok"}  # noqa: E731
         with mock.patch("sys.stdout", io.StringIO()):
             rows = C.run_all(C.ORDER, FakeGame(), tools, 3, 120, False, self.tmp, self.fake_runner(outputs))
         got = {r.name: r.verdict for r in rows}
         self.assertEqual(got, {"latency": "PASS", "waypoints": "PASS", "keys": "PASS", "confirm": "PASS",
-                               "smoke": "PASS", "act": "WARN", "vis": "WARN", "se": "FAIL", "route": "FAIL"})
+                               "smoke": "PASS", "act": "WARN", "vis": "WARN", "se": "FAIL", "route": "FAIL",
+                               "mod": "PASS", "reads": "WARN", "session": "PASS"})
         args = {n: a for n, a, _, _ in self.seen}
         self.assertEqual(args["check_se.py"], ["--only", "hook,children,autoskip"])  # never the stress/leak checks
         self.assertEqual(args["check_act.py"], ["latency", "approach", "forms"])  # read-only checks only
@@ -323,7 +377,8 @@ class RunAllTest(unittest.TestCase):
         out = io.StringIO()
         C.print_table(rows, out=out)
         text = out.getvalue()
-        self.assertIn("5 PASS, 2 WARN, 2 FAIL", text)
+        self.assertIn("7 PASS, 3 WARN, 2 FAIL", text)
+        self.assertEqual(args["check_reads.py"], ["--rounds", "3", "--queue"])
         self.assertRegex(text, r"se\s+FAIL")
 
     def test_budget_skips(self):
@@ -343,7 +398,8 @@ class RunAllTest(unittest.TestCase):
     def test_main_end_to_end(self):
         outputs = {"smoke.py": (0, "✓ get_status 4 ms\n"), "check_act.py": (0, "PASS  a\n"),
                    "check_vis.py": (0, "[PASS] m: x\n"), "check_se.py": (0, "PASS hook: ok\n"),
-                   "check_route.py": (0, "[PASS] route: ok\n")}
+                   "check_route.py": (0, "[PASS] route: ok\n"), "check_reads.py": (0, READS_OK),
+                   "check_session.py": (0, "PASS wrapup: ok\n")}
         out = io.StringIO()
         with mock.patch.object(C, "session_blockers", return_value=[]), \
                 mock.patch("bg3ai.game.Game", lambda port=9998: FakeGame()), \
@@ -354,12 +410,13 @@ class RunAllTest(unittest.TestCase):
             outputs["check_vis.py"] = (1, "[FAIL] markers: unknown op\n")
             self.assertEqual(C.main(["--calls", "2", "--skip", "latency"]), 1)
             self.assertEqual(C.main(["--only", "keys,confirm"]), 0)
-        self.assertIn("9 PASS, 0 WARN, 0 FAIL", out.getvalue())
+        self.assertIn("12 PASS, 0 WARN, 0 FAIL", out.getvalue())
 
     def test_json_report(self):
         outputs = {"smoke.py": (0, "✓ get_status 4 ms\n"), "check_act.py": (0, "WARN  slow\n"),
                    "check_vis.py": (1, "[FAIL] markers: unknown op\n"), "check_se.py": (0, "PASS hook: ok\n"),
-                   "check_route.py": (0, "[PASS] route: ok\n")}
+                   "check_route.py": (0, "[PASS] route: ok\n"), "check_reads.py": (0, READS_OK),
+                   "check_session.py": (0, "PASS wrapup: ok\n")}
         with tempfile.TemporaryDirectory() as d, \
                 mock.patch.object(C, "session_blockers", return_value=[]), \
                 mock.patch("bg3ai.game.Game", lambda port=9998: FakeGame()), \
@@ -370,7 +427,7 @@ class RunAllTest(unittest.TestCase):
             self.assertEqual(C.main(["--calls", "2", "--json", str(path)]), 1)
             rep = json.loads(path.read_text())
         self.assertEqual(rep["exit"], 1)
-        self.assertEqual(rep["counts"], {"PASS": 7, "WARN": 1, "FAIL": 1, "SKIP": 0})
+        self.assertEqual(rep["counts"], {"PASS": 10, "WARN": 1, "FAIL": 1, "SKIP": 0})
         self.assertEqual([r["name"] for r in rep["rows"]], C.ORDER)
         self.assertEqual(next(r for r in rep["rows"] if r["name"] == "vis")["verdict"], "FAIL")
 

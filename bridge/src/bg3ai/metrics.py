@@ -12,9 +12,10 @@ Three record streams, all JSONL:
       doing something during the call. bg (top-level calls only) is how many background activities
       (async jobs, action queues) were already running when the call started; async marks a call that
       started one and returned while it runs (move_to, travel_to, queue_actions, wait=false...).
-    {"type":"sample", "t", "moving", "job", "dlg", "combat", "pturn"}
+    {"type":"sample", "t", "moving", "job", "dlg", "combat", "pturn"} / {"type":"sample", "t", "load": true}
       ~1/s from the activity sampler (nav.activity on its own connection). pturn (in combat only, newer mods):
       a party member has the active turn; false means enemies/NPCs are acting and the agent can only wait.
+      load: nav.activity did not answer (a loading screen: load_game, an area transition, a fast travel).
 * Sxxx.turns.jsonl (written by the runner from claude's stream-json, arrival times):
     {"type":"use", "t", "id", "name", "steps"} / {"type":"result", "t", "id"} / {"type":"assistant", "t"}
 * Sxxx.latency.json: summarize() at session end. One line per session is also appended to
@@ -30,7 +31,9 @@ Definitions:
   (enemy turns: a human waits through them too). So a combat gap's "s" is the party-turn idle, the agent's
   own think time on its turn; "gap_s" keeps the raw time. Whose turn: from the samples' pturn; for records
   without it, a top-level wait_for in combat that blocked >= WAIT_TURN_MIN_S counts the gap up to its end
-  as enemy turns (the agent ended its turn and waited for the next one).
+  as enemy turns (the agent ended its turn and waited for the next one). Loading screens are left out of
+  "s" the same way, in every kind of gap ("load_s"): the time of a top-level load_game call, and the time
+  the sampler got no answer (load samples, each vouching for up to LOAD_SPAN_S since the one before).
 * wrap-up: from the first "⏱ … WRAP UP NOW" (or "⏱ SESSION OVER") clock line in a tool result to the session end
   (a "wrapup" record in Sxxx.turns.jsonl). Gaps in it are kind "wrapup" (save + notes, not play): reported as
   idle_s.wrapup and wrapup_s, left out of idle_s.all, long gaps and the targets. A gap that straddles the
@@ -39,11 +42,17 @@ Definitions:
 * busy %: share of samples where a party member moved or a game job was running. Dialogue share is
   reported separately: the server can't tell playback from waiting on an answer.
 * pipelining %: share of the agent's own action calls (top level: action tools, macros, do_actions,
-  queue_actions) issued while another job or queue of the party was still running, i.e. the agent
-  planned and issued the next step while the character was busy, like a human clicking ahead. From the
-  bridge's bg field; for older records without it, from the activity samples (a busy sample in the
-  1.5 s before the call and after the previous top-level action ended). async % is the share of those
-  calls that returned at once while their own job kept running.
+  queue_actions) issued ahead, like a human clicking ahead: while another job or queue of the party was
+  still running (the bridge's bg field; for older records without it, a busy sample in the 1.5 s before
+  the call and after the previous top-level action ended), or, in combat, during an enemy turn (the
+  plan is sent while enemies act and waits for the party's turn: the last sample before the call has
+  pturn false). Dialogue answers (DIALOGUE_TOOLS, or the party in dialogue at the call) are left out:
+  the game waits on the agent there and nothing can run to overlap ("dialogue" counts them). strict_pct
+  is the older definition (bg only, over every issued call; S015: 2%, versus 23.5% with this one).
+  async % is the share of the issued calls that returned at once while their own job kept running.
+* think overlap %: of the agent's own working time out of combat and dialogue (from the end of one
+  top-level call to the start of the next, plus observation calls; not wait_for or blocking actions),
+  the share of samples where the party was busy: the character acts while the agent thinks.
 """
 
 from __future__ import annotations
@@ -81,6 +90,7 @@ PIPE_SAMPLE_S = 1.5  # fallback: a busy sample at most this long before the call
 LONG_GAP_S = 10.0
 SAMPLE_SPAN_S = 1.5  # a busy activity sample vouches for at most this long before it (sampler: 1 s)
 WAIT_TURN_MIN_S = 1.0  # fallback: an in-combat wait_for that blocked this long waited through enemy turns
+LOAD_SPAN_S = 5.0  # a load sample covers this long before it (a failed poll: up to its 3 s timeout + 1 s)
 MOVE_EPS_M = 0.25  # a party member moved at least this far since the previous sample → moving
 
 TARGETS = {
@@ -245,6 +255,14 @@ class Recorder:
         self.write(rec)
         return rec
 
+    def load_sample(self, t: float) -> dict:
+        """No answer from the game (loading screen): not idle time (see gaps)."""
+        with self.lock:
+            self.active_now = False
+        rec = {"type": "sample", "t": round(t, 2), "load": True}
+        self.write(rec)
+        return rec
+
     def sample(self, t: float, moving: bool, job: int, dlg: bool, combat: bool,
                party_turn: bool | None = None) -> dict:
         active = bool(moving or job)
@@ -280,6 +298,7 @@ def sampler_loop(rec: Recorder, game, stop: threading.Event, interval: float = 1
             a = game.rpc("nav.activity", context="server", timeout=3.0)
         except Exception:  # noqa: BLE001 - loading screens, reloads, old mod without the op
             prev = None
+            rec.load_sample(time.time())
             continue
         if not isinstance(a, dict):
             continue
@@ -511,9 +530,9 @@ def _samples_between(samples: list[dict], a: float, b: float) -> list[dict]:
     return [s for s in samples if a <= s.get("t", 0) <= b]
 
 
-def _spans(samples: list[dict], a: float, b: float, pred) -> list[tuple[float, float]]:
+def _spans(samples: list[dict], a: float, b: float, pred, span: float = SAMPLE_SPAN_S) -> list[tuple[float, float]]:
     """Parts of [a, b] vouched for by samples matching pred: a sample covers the time since the sample before
-    it, at most SAMPLE_SPAN_S."""
+    it, at most `span`."""
     out = []
     prev_t = None
     for s in samples:
@@ -521,12 +540,12 @@ def _spans(samples: list[dict], a: float, b: float, pred) -> list[tuple[float, f
         if t is None:
             continue
         if t > a and pred(s):
-            lo = max(t - min(t - prev_t if prev_t is not None else SAMPLE_SPAN_S, SAMPLE_SPAN_S), a)
+            lo = max(t - min(t - prev_t if prev_t is not None else span, span), a)
             hi = min(t, b)
             if hi > lo:
                 out.append((lo, hi))
         prev_t = t
-        if t >= b + SAMPLE_SPAN_S:
+        if t >= b + span:
             break
     return out
 
@@ -579,6 +598,8 @@ def gaps(actions: list[dict], samples: list[dict], tools: list[dict] | None = No
     samples = sorted((s for s in samples if "t" in s), key=lambda s: s["t"])
     waits = sorted((r for r in tools or () if r.get("tool") == "wait_for" and not r.get("nested") and "t0" in r),
                    key=lambda r: r["t0"])
+    loads = [(r["t0"], r["t1"]) for r in tools or () if r.get("tool") == "load_game" and not r.get("nested")
+             and "t0" in r]
     for prev, nxt in zip(actions, actions[1:]):
         a, b = prev["t1"], nxt["t0"]
         wrap = wrap_t is not None and a >= wrap_t
@@ -600,41 +621,88 @@ def gaps(actions: list[dict], samples: list[dict], tools: list[dict] | None = No
             kind = "explore"
         r = {"t": round(a, 2), "s": round(g - busy, 2), "gap_s": round(g, 2), "busy_s": round(busy, 2),
              "kind": kind, "next": nxt["tool"]}
-        if kind in ("combat", "dialogue"):
-            turn_sp = _enemy_turn_spans(samples, waits, a, b)
-            if turn_sp:
-                excl = min(_union_len(busy_sp + turn_sp), g)
-                r["turn_s"] = round(excl - busy, 2)  # enemy-turn seconds not already counted as busy
-                r["s"] = round(g - excl, 2)
+        turn_sp = _enemy_turn_spans(samples, waits, a, b) if kind in ("combat", "dialogue") else []
+        load_sp = [(max(lo, a), min(hi, b)) for lo, hi in loads if lo < b and hi > a] \
+            + _spans(samples, a, b, lambda s: s.get("load"), LOAD_SPAN_S)
+        if turn_sp:
+            excl = min(_union_len(busy_sp + turn_sp), g)
+            r["turn_s"] = round(excl - busy, 2)  # enemy-turn seconds not already counted as busy
+            r["s"] = round(g - excl, 2)
+        if load_sp:
+            excl = min(_union_len(busy_sp + turn_sp + load_sp), g)
+            r["load_s"] = round(excl - g + r["s"], 2)  # loading-screen seconds not already left out
+            r["s"] = round(g - excl, 2)
         if kind == "combat":
             r["own_s"] = r["s"]
         out.append(r)
     return out
 
 
+def _last_sample(samples: list[dict], t: float) -> dict:
+    """The newest activity sample before t ({} if none); samples sorted by t."""
+    last: dict = {}
+    for s in samples:
+        if s["t"] >= t:
+            break
+        last = s
+    return last
+
+
 def pipelining(tools: list[dict], samples: list[dict]) -> dict:
-    """How often the agent issued its next action while the party was still busy with an earlier one."""
+    """How often the agent issued its next action ahead: while the party was still busy with an earlier one,
+    or during an enemy turn (a combat turn planned while enemies act). Dialogue answers are left out."""
     top = sorted((r for r in tools if not r.get("nested") and "t0" in r), key=lambda r: r["t0"])
     issued = [r for r in top if r.get("tool") in ISSUE_TOOLS]
-    busy_t = sorted(s["t"] for s in samples if "t" in s and (s.get("moving") or s.get("job")))
-    n_pipe = n_async = 0
+    samples = sorted((s for s in samples if "t" in s), key=lambda s: s["t"])
+    busy_t = [s["t"] for s in samples if s.get("moving") or s.get("job")]
+    n_pipe = n_async = n_strict = n_dlg = n_ahead = 0
     source = "bridge" if any("bg" in r for r in issued) else "samples"
     prev_end = None
     for r in issued:
         if "bg" in r:
-            pipe = r["bg"] > 0
+            busy = r["bg"] > 0
         else:
             lo = max(r["t0"] - PIPE_SAMPLE_S, prev_end if prev_end is not None else float("-inf"))
-            pipe = any(lo < t < r["t0"] for t in busy_t)
-        n_pipe += bool(pipe)
-        n_async += bool(r.get("async"))
+            busy = any(lo < t < r["t0"] for t in busy_t)
         prev_end = r["t1"] if prev_end is None else max(prev_end, r["t1"])
+        n_strict += bool(busy)
+        n_async += bool(r.get("async"))
+        last = _last_sample(samples, r["t0"])
+        if r.get("tool") in DIALOGUE_TOOLS or last.get("dlg"):
+            n_dlg += 1
+            continue
+        ahead = bool(last.get("combat")) and last.get("pturn") is False
+        n_ahead += ahead and not busy
+        n_pipe += busy or ahead
     n = len(issued)
     pct = (lambda k: round(100.0 * k / n, 1)) if n else (lambda k: None)
-    return {"issued": n, "pipelined": n_pipe, "pct": pct(n_pipe), "async": n_async, "async_pct": pct(n_async),
+    m = n - n_dlg
+    return {"issued": n, "dialogue": n_dlg, "pipelined": n_pipe,
+            "pct": round(100.0 * n_pipe / m, 1) if m else None, "enemy_turn": n_ahead,
+            "strict_pct": pct(n_strict), "async": n_async, "async_pct": pct(n_async),
             "queue_calls": sum(1 for r in issued if r.get("tool") == QUEUE_TOOL),
             "batch_calls": sum(1 for r in issued if r.get("tool") in BATCH_TOOLS),
             "source": source}
+
+
+def think_overlap(tools: list[dict], samples: list[dict]) -> dict:
+    """Out of combat and dialogue: the samples taken while the agent was working (between top-level calls,
+    or in an observation call) and how many of them had the party busy."""
+    top = sorted((r for r in tools if not r.get("nested") and "t0" in r), key=lambda r: r["t0"])
+    blocked = [(r["t0"], r["t1"]) for r in top
+               if r.get("tool") in ACTION_TOOLS or r.get("tool") in BATCH_TOOLS or r.get("tool") in NOT_READ]
+    lo = top[0]["t0"] if top else 0.0
+    hi = top[-1]["t1"] if top else 0.0
+    n = n_busy = 0
+    for s in samples:
+        t = s.get("t")
+        if t is None or not lo <= t <= hi or s.get("combat") or s.get("dlg") or s.get("load"):
+            continue
+        if any(a <= t < b for a, b in blocked):
+            continue
+        n += 1
+        n_busy += bool(s.get("moving") or s.get("job"))
+    return {"samples": n, "busy": n_busy, "pct": round(100.0 * n_busy / n, 1) if n else None}
 
 
 def read_by_tool(reads: list[dict]) -> dict:
@@ -685,7 +753,7 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
     n_actions = sum(a.get("steps", 1) for a in acts if a["tool"] not in NOT_APM)
 
     tt = think_times(turns)
-    samp = [s for s in samples if s.get("type", "sample") == "sample"]
+    samp = [s for s in samples if s.get("type", "sample") == "sample" and not s.get("load")]
     busy = sum(1 for s in samp if s.get("moving") or s.get("job"))
     dlg = sum(1 for s in samp if s.get("dlg"))
     pct = (lambda n: round(100.0 * n / len(samp), 1)) if samp else (lambda n: None)
@@ -693,6 +761,7 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
     med_explore = percentile(by_kind["explore"], 50)
     read_med = percentile([r["ms"] for r in reads], 50)
     pipe = pipelining(tool_recs, samp)
+    overlap = think_overlap(tool_recs, samp)
     return {
         "start": round(start, 1), "end": round(end, 1), "minutes": round(minutes, 2),
         "source": source,
@@ -705,6 +774,7 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
         "wrapup_s": None if wrap_t is None else round(end - wrap_t, 1),
         "wrapup_at": None if wrap_t is None else round(wrap_t, 1),
         "enemy_turn_s": round(sum(g.get("turn_s", 0) for g in gl), 1),
+        "loading_s": round(sum(g.get("load_s", 0) for g in gl), 1),  # loading screens left out of idle
         "long_gaps": {"threshold_s": LONG_GAP_S, "total": len(long_), **long_kind,
                       "wrapup": sum(1 for g in wrap_gl if g["s"] > LONG_GAP_S),
                       "worst": sorted(long_, key=lambda g: -g["s"])[:5]},
@@ -727,6 +797,8 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
         "samples": len(samp),
         "pipelining": pipe,
         "pipelining_pct": pipe["pct"],
+        "think_overlap": overlap,
+        "think_overlap_pct": overlap["pct"],
         "targets": {
             "median_idle_explore_s": _target(None if med_explore is None else round(med_explore, 2),
                                              TARGETS["median_idle_explore_s"]),
@@ -769,6 +841,7 @@ def write_summary(summary: dict, out_path: Path, history_path: Path | None, sess
                "rt_read_median_ms": summary["tool_rt_ms"]["read"].get("median"),
                "rt_read_p90_ms": summary["tool_rt_ms"]["read"].get("p90"), "apm": summary.get("apm"),
                "busy_pct": summary.get("busy_pct"), "pipelining_pct": summary.get("pipelining_pct"),
+               "think_overlap_pct": summary.get("think_overlap_pct"),
                "pass": {k: v.get("pass") for k, v in t.items()}}
         with open(history_path, "a") as f:
             f.write(json.dumps(row, separators=(",", ":")) + "\n")
@@ -821,6 +894,7 @@ def live_view(tools: list[dict], samples: list[dict], turns: list[dict], now: fl
         "api_source": s["api"].get("source"),
         "rt_read_median_ms": s["tool_rt_ms"]["read"].get("median"), "rt_read_p90_ms": s["tool_rt_ms"]["read"].get("p90"),
         "apm": s["apm"], "busy_pct": s["busy_pct"], "pipelining_pct": s["pipelining_pct"],
+        "think_overlap_pct": s["think_overlap_pct"],
         "long_gaps": s["long_gaps"],
         "targets": s["targets"],
         "timeline": {"step_s": step, "buckets": buckets},

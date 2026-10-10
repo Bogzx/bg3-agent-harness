@@ -378,6 +378,8 @@ GOALS = [
     ("apm", "actions / min", "", ">=", 10.0, 1),
     ("busy", "busy (party acting)", "%", ">=", 60.0, 0),
     ("pipe", "pipelined actions", "%", ">=", 30.0, 0),
+    # out of combat/dialogue: share of the agent's working time with the party busy (metrics.think_overlap)
+    ("overlap", "think overlap (acting while it thinks)", "%", ">=", 50.0, 0),
     ("pts", "story points / hour", "", ">=", 90.0, 0),
 ]
 SESSION_FILE_RE = re.compile(r"^(S\d{3,}(?:-r\d+)?)\.(metrics\.jsonl|latency\.json|progress\.jsonl|progress\.json)$")
@@ -420,7 +422,8 @@ def goal_values(lat: dict | None, prog: dict | None) -> dict:
     return {"idle": v("median_idle_explore_s"),
             "gaps": v("long_gaps_non_dialogue") if (t.get("long_gaps_non_dialogue") or {}).get("pass") is not None else None,
             "rt": v("bridge_rt_median_ms"), "apm": lat.get("apm") if lat.get("actions") else None,
-            "busy": lat.get("busy_pct"), "pipe": lat.get("pipelining_pct"), "pts": prog.get("per_hour")}
+            "busy": lat.get("busy_pct"), "pipe": lat.get("pipelining_pct"),
+            "overlap": lat.get("think_overlap_pct"), "pts": prog.get("per_hour")}
 
 
 def goal_pass(op: str, value, target) -> bool | None:

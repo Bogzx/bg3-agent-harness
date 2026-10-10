@@ -422,7 +422,8 @@ function renderLatency(r) {
       + kpi(`read round trip med (<${T.bridge_rt_median_ms}ms)`, fmt(L.rt_read_median_ms, "ms", 0), pf(tg.bridge_rt_median_ms))
       + kpi("actions / min", fmt(L.apm, "", 1))
       + kpi("busy", fmt(L.busy_pct, "%", 0))
-      + kpi("pipelined", fmt(L.pipelining_pct, "%", 0));
+      + kpi("pipelined", fmt(L.pipelining_pct, "%", 0))
+      + kpi("think overlap", fmt(L.think_overlap_pct, "%", 0));
     const b = (L.timeline && L.timeline.buckets) || [];
     $("latTl").innerHTML = b.map((x) => `<i class="${x}"></i>`).join("");
   }
@@ -430,14 +431,14 @@ function renderLatency(r) {
   if (h.length) {
     const c = (p) => p == null ? "" : p ? "pass" : "fail";
     $("latHist").innerHTML = `<tr><th>session</th><th>min</th><th>idle med</th><th>p90</th><th>explore</th><th>&gt;10s</th>
-      <th>think</th><th title="API seconds per model turn">api s</th><th title="API ms per output token (slow API above ~18)">ms/tok</th><th>rt ms</th><th>apm</th><th>busy</th><th>pipe</th></tr>` + h.slice().reverse().map((x) => {
+      <th>think</th><th title="API seconds per model turn">api s</th><th title="API ms per output token (slow API above ~18)">ms/tok</th><th>rt ms</th><th>apm</th><th>busy</th><th>pipe</th><th title="out of combat: share of the agent's working time with the party busy">overlap</th></tr>` + h.slice().reverse().map((x) => {
       const p = x.pass || {};
       return `<tr><td>${esc(x.session)}</td><td>${fmt(x.minutes, "", 0)}</td><td>${fmt(x.idle_median_s)}</td><td>${fmt(x.idle_p90_s, "", 0)}</td>
         <td class="${c(p.median_idle_explore_s)}">${fmt(x.idle_explore_median_s)}</td>
         <td class="${c(p.long_gaps_non_dialogue)}">${x.long_gaps ?? "–"}${x.long_gaps_dialogue ? ` (${x.long_gaps_dialogue}d)` : ""}</td>
         <td>${fmt(x.think_median_s)}</td><td>${fmt(x.api_s_per_turn)}</td>
         <td class="${x.ms_per_out_tok > 18 ? "warn" : ""}">${fmt(x.ms_per_out_tok, "", 0)}</td><td class="${c(p.bridge_rt_median_ms)}">${fmt(x.rt_read_median_ms, "", 0)}</td>
-        <td>${fmt(x.apm)}</td><td>${fmt(x.busy_pct, "%", 0)}</td><td>${fmt(x.pipelining_pct, "%", 0)}</td></tr>`;
+        <td>${fmt(x.apm)}</td><td>${fmt(x.busy_pct, "%", 0)}</td><td>${fmt(x.pipelining_pct, "%", 0)}</td><td>${fmt(x.think_overlap_pct, "%", 0)}</td></tr>`;
     }).join("");
   }
 }
