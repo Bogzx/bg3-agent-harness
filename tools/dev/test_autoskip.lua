@@ -178,6 +178,39 @@ dialogue = { speaker = "Lae'zel", text = "Choose.", options = { {}, {} } }
 run(3000)
 check("answers: no skip", #commands == 0 and #keys == 0)
 
+-- 6b. S023: a cinematic line the skip command doesn't skip (Mizora, Halsin): command, then the engine
+--     SPACE, then shim SPACE requests (want reason=line) until it goes; a new line or answers clear it
+reset()
+widgets = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true } } }
+dialogue = { speaker = "Mizora", text = "Clause G, Section Nine." }
+run(600)
+check("stuck line: command first", count(commands, "SelectorSkipCommand") == 1 and #keys == 0, #keys)
+run(700)
+check("stuck line: then engine SPACE", count(keys, "SPACE") == 1, #keys)
+local sawWant = nil
+for _ = 1, 60 do
+    run(16)
+    local w = ops["autoskip.status"]().want
+    if w and w.reason == "line" then sawWant = w break end
+end
+check("stuck line: then a shim SPACE request", sawWant and sawWant.key == "SPACE" and sawWant.try == 3,
+    sawWant and sawWant.try)
+local st = ops["autoskip.status"]()
+check("stuck line: status carries the line", st.line and st.line.tries == 3 and st.movie == nil)
+check("stuck line: movie probe keeps the line request", K.want ~= nil)
+run(300)
+check("stuck line: request lives one tick", K.want == nil or K.want.try == 4, K.want and K.want.try)
+dialogue = { speaker = "Mizora", text = "Choose.", options = { {}, {} } }
+run(300)
+check("answers: line request cleared", K.want == nil)
+run(5000)
+check("answers: no more requests", K.want == nil and count(keys, "SPACE") == 1)
+reset()
+widgets = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true } } }
+dialogue = { speaker = "Halsin", text = "Oak father's blessings to you." }
+run(20000)
+check("stuck line: capped at LINE_MAX_TRIES", K.state.line.tries == K.LINE_MAX_TRIES, K.state.line.tries)
+
 -- 7. a movie over the loading screen (New Game intro: game state StartLoading, the Movie state's
 --    overlay above the loading screen "root"): engine ESCAPE, then shim requests every LOAD_RETRY_MS
 --    for as long as it lasts (past MAX_TRIES)
@@ -253,7 +286,7 @@ run(K.PERIOD_MS * 2)
 check("notext: skipped", count(commands, "SelectorSkipCommand") == 1, #commands)
 check("notext: no dialogue_line", count(events, "dialogue_line") == 0)
 run(K.NOTEXT_RETRY_MS * 5)
-check("notext: keeps skipping past MAX_TRIES", count(commands, "SelectorSkipCommand") > K.MAX_TRIES, #commands)
+check("notext: keeps skipping past MAX_TRIES (command and engine SPACE in turn)", count(commands, "SelectorSkipCommand") + count(keys, "SPACE") > K.MAX_TRIES and count(keys, "SPACE") >= 1, #commands)
 check("notext: stat", K.view().cinematic == 1 and ops["autoskip.status"]().line.notext == true)
 -- then the mind flayer's line appears: pushed and skipped like any line
 dialogue = { speaker = "Mind Flayer", text = "Thrall. Connect the nerves of the transponder.", listening = true }

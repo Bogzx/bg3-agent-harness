@@ -3,7 +3,10 @@
 **When:** only when the clock line in tool results says **WRAP UP NOW** (3 min before the end; or a
 SESSION CLOCK reminder in manual sessions) or the operator asks you to stop. Never earlier: "⏱ 5m left ·
 2m of play" means play 2 more minutes. Being stuck is not a reason (run `stuck`, section 0). Escaping
-danger is play. Don't save `Sxxx-end` or rewrite HANDOFF.md before WRAP UP NOW.
+danger is play. Don't save `Sxxx-end` or rewrite HANDOFF.md before WRAP UP NOW. Exception: when the ⏱ line
+says "1m of play" or "0m of play", start the wrap-up now; the Stop hook accepts a finished wrap-up from then on.
+**Do it once.** If the Stop hook still says "Keep playing", play on and do not redo the wrap-up: no second
+`Sxxx-end` save unless the party moved, no HANDOFF rewrite (one Edit to a line that changed is fine).
 
 Your notes were written during play (CLAUDE.md, Memory protocol), so wrap-up is just the following.
 No reading through files, no tidying.
@@ -15,7 +18,9 @@ No reading through files, no tidying.
 - Start nothing new.
 
 ## 2. Save
-`save_game(label="Sxxx-end")` (returns at once; `list_saves` then shows it, and a later result says SAVED). Save `Sxxx-end` once, not again after every note.
+`save_game(label="Sxxx-end")` once. It returns at once and saves in the background; a later result says
+SAVED, and "queued" (dialogue on screen) is fine too: it saves as soon as it can. Don't `list_saves` to check
+it and don't save again after every note (S025 saved Sxxx-end 4 times and checked list_saves 3 times).
 
 ## 3. Write (one call each, while nothing else runs)
 - **HANDOFF.md:** rewrite the whole file with one Write, using the template below.

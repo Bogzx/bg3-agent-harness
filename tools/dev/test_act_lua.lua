@@ -82,6 +82,8 @@ Osi = setmetatable({
     UseSpell = record("UseSpell"),
     MakePlayerActive = record("MakePlayerActive"),
     EndTurn = record("EndTurn"),
+    ToInventory = record("ToInventory"),
+    ForceTurnBasedMode = record("ForceTurnBasedMode"),
     UseSpellAtPosition = function(...)
         calls[#calls + 1] = { "UseSpellAtPosition?", n = select("#", ...) }
         if select("#", ...) ~= usp_arity then
@@ -225,6 +227,26 @@ test("approach: pathfinding unknown and far -> refused", function()
     refused(function() G.approach_point(P1, NPC, 2.5) end, "no walkable path")
 end)
 
+test("approach: a ladder seen from above is approached at its top (S025 08:03)", function()
+    world[P1].pos = { 10, 15, 0 }
+    world[NPC].pos = { 0, 0, 0 } -- the ladder's foot
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { 0.0, 15.0 } end
+    BG3AI.Nav.ladderTop = function(from, u) if u == NPC and from[2] > 2.5 then return { 0, 15, 0 } end end
+    nav.fn = function(_, pos) return { reachable = pos[2] > 10, length_m = 9 } end
+    local ok, err = pcall(function()
+        local p = G.approach_point(P1, NPC, 1.8)
+        near(p.pos[2], 15, "on the top floor")
+        near(p.tpos[2], 0, "tpos stays the foot (the walker's did-not-move check)")
+        world[P1].pos = { 1, 15, 0 }
+        eq(G.approach_point(P1, NPC, 1.8).here, true, "at the top: here")
+        world[P1].pos = { 10, 0, 0 } -- from below: the foot, as before
+        refused(function() G.approach_point(P1, NPC, 1.8) end, "no walkable path")
+    end)
+    Ext.Level.GetHeightsAt, BG3AI.Nav.ladderTop = heights, nil
+    if not ok then error(err, 0) end
+end)
+
 -- ---- move_to -------------------------------------------------------------
 
 test("move_to entity: walks to a verified point, never CharacterMoveTo", function()
@@ -250,6 +272,26 @@ test("move_to entity: already there -> done without walking", function()
     local j = job(op("move_to", { char = P1, target = NPC }))
     eq(j.status, "done", "status"); eq(j.result.already_there, true, "already_there")
     eq(#called("CharacterMoveToPosition"), 0, "moves")
+end)
+
+test("move_to entity within: stops inside the edge-to-edge melee reach (S025 Spiritual Weapon 2.4 m)", function()
+    world[NPC].pos = { 2.0, 0, 0 }
+    world[NPC].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.25 } } } }
+    -- 2.0 m is 'already there' for a plain move (2.2 m centres) but outside 1.5 + 0.5 + 0.25 - 0.4 = 1.85 m.
+    local j = job(op("move_to", { char = P1, target = NPC, within = 1.5 }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    local mv = called("CharacterMoveToPosition")
+    eq(#mv, 1, "move calls"); near(mv[1][3], 0.5, "dest x (ring 1.5 m on the actor's side)")
+    arrive(j, { 0.5, 0, 0 })
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.in_reach, true, "in_reach")
+    world[NPC].comps.Bound = nil
+end)
+
+test("move_to entity within: already in reach -> done, in_reach", function()
+    world[NPC].pos = { 1.8, 0, 0 }
+    local j = job(op("move_to", { char = P1, target = NPC, within = 1.5 }))
+    eq(j.status, "done", "status"); eq(j.result.already_there, true, "already_there")
+    eq(j.result.in_reach, true, "in_reach")
 end)
 
 test("move_to: teleport is detected and purged", function()
@@ -443,6 +485,53 @@ test("cast: in range uses UseSpell/5 with WithoutMove=1", function()
     eq(#c, 1, "calls"); eq(c[1].n, 5, "arity"); eq(c[1][6], 1, "WithoutMove")
 end)
 
+test("transfer: GetStackAmount's extra return values don't break tonumber (S018-S024 give/camp crash)", function()
+    party_rows = { P1, NPC }
+    osiv[key("GetInventoryOwner", GEM)] = P1
+    local real = rawget(Osi, "GetStackAmount")
+    rawset(Osi, "GetStackAmount", function() return 3, 3 end)
+    local ok, r = pcall(op, "transfer", { item = GEM, to = NPC })
+    rawset(Osi, "GetStackAmount", real)
+    assert(ok, tostring(r))
+    eq(job(r).status, "running", "status " .. tostring(job(r).error))
+    eq(#called("ToInventory"), 1, "ToInventory calls")
+end)
+
+test("equip: a failed equip says why (S025: two-handed Sword of Justice; the Moonlantern does not block a shield)", function()
+    local LANTERN, SHIELD = "12121212-0000-0000-0000-000000000008", "13131313-0000-0000-0000-000000000009"
+    local SWORD = "14141414-0000-0000-0000-00000000000a"
+    world[LANTERN] = { pos = { 0, 0, 0 }, comps = { Data = { StatsId = "Quest_GLO_Moonlantern" } } }
+    world[SWORD] = { pos = { 0, 0, 0 }, comps = { Data = { StatsId = "WPN_Greatsword_Justice" } } }
+    world[SHIELD] = { pos = { 0, 0, 0 }, comps = { Data = { StatsId = "ARM_Shield_Sentinel" } } }
+    stats.Quest_GLO_Moonlantern = { ["Weapon Properties"] = { "Torch", "Light", "Melee", "Unstowable", "Versatile" } }
+    stats.WPN_Greatsword_Justice = { ["Weapon Properties"] = { "Twohanded", "Heavy", "Melee" } }
+    stats.ARM_Shield_Sentinel = { Slot = "Melee Offhand Weapon" }
+    osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = LANTERN
+    osiv[key("GetInventoryOwner", SHIELD)] = P1
+    osiv[key("IsCharacter", P1)] = 1
+    osiv[key("IsProficientWith", P1, SHIELD)] = 1
+    eq(A.equip_why(P1, SHIELD), "cannot equip that", "live: a shield goes on beside the Moonlantern")
+    osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = SWORD
+    local why = A.equip_why(P1, SHIELD)
+    assert(why:find("two%-handed") and why:find("one%-handed weapon first"), why)
+    osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = nil
+end)
+
+test("cast: an item next to the caster needs no engine line of sight (S024 Knock on a door at 2 m)", function()
+    spell("Target_Knock", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    world[DOOR].pos = { 2.0, 0, 0 }
+    osiv[key("HasLineOfSight", P1, DOOR)] = 0
+    local j = job(op("cast", { char = P1, spell = "Target_Knock", target = DOOR }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    world[DOOR].pos = { 10, 0, 0 } -- far: the engine's check still decides
+    j = job(op("cast", { char = P1, spell = "Target_Knock", target = DOOR }))
+    eq(j.status, "failed", "far status"); assert(j.error:find("line of sight"), j.error)
+    world[GOB].pos = { 2.0, 0, 0 } -- a character this close still needs it
+    osiv[key("HasLineOfSight", P1, GOB)] = 0
+    j = job(op("cast", { char = P1, spell = "Target_Knock", target = GOB }))
+    eq(j.status, "failed", "char status"); assert(j.error:find("line of sight"), j.error)
+end)
+
 test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Stand radii)", function()
     eq(G.radius(P1), 0.5, "fallback radius")
     world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.4 }, Hit = { Radius = 1.28 }, Stand = { Radius = 0.7 } } } }
@@ -533,6 +622,23 @@ test("jump: capped at half the Strength score (UNVERIFIED formula), not TargetRa
     osiv[key("HasActiveStatus", P1, "ENHANCE_LEAP")] = 1
     j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 20, 0, 0 } }))
     eq(j.status, "running", "enhance leap " .. tostring(j.error))
+end)
+
+test("target not visible: names where the party last saw it (S026 09:02)", function()
+    BG3AI.Visibility = {
+        context = function() return { is_party = { [P1] = true } } end,
+        characterVisible = function() return false end,
+        itemVisible = function() return false end,
+        lastSeen = function(u) if u == NPC then return { pos = { -67.2, 28.2, 141.7 }, ago_s = 669 } end end,
+    }
+    local ok, err = pcall(function()
+        refused(function() G.target_visible(NPC) end, "target is not visible; last seen @(-67.2,28.2,141.7) 669s ago: travel_to")
+        BG3AI.Visibility.lastSeen = function() return nil end
+        refused(function() G.target_visible(NPC) end, "target is not visible")
+        eq(G.last_seen_hint(NPC), "", "never seen: no hint")
+    end)
+    BG3AI.Visibility = nil
+    if not ok then error(err, 0) end
 end)
 
 test("act.watch: party bars, mode, visible characters with hostility", function()
@@ -886,6 +992,51 @@ test("lockpick: no StartedLockpicking -> falls back to the verified click", func
     tick(40)
     eq(j.status, "done", "status " .. tostring(j.error))
     eq(j.result.needs_click, DOOR, "needs_click"); eq(j.result.expect, "roll", "expect")
+end)
+
+test("lockpick: a lock with no lockpick difficulty (zero DC id) -> refused before walking, no Use/click", function()
+    osiv[key("IsLocked", DOOR)] = 1
+    world[DOOR].comps.Lock = { Key_M = "NO_KEY", LockDifficultyClassID = "00000000-0000-0000-0000-000000000000", LockDC = 0 }
+    local j = job(op("lockpick", { char = P1, target = DOOR }))
+    eq(j.status, "failed", "status"); assert(j.error:find("cannot be picked"), j.error)
+    eq(#called("Use"), 0, "no Use"); eq(#called("CharacterMoveToPosition"), 0, "no walk")
+end)
+
+test("lockpick: a lock with a difficulty id -> proceeds (engine Use, then the click)", function()
+    osiv[key("IsLocked", DOOR)] = 1
+    world[DOOR].comps.Lock = { Key_M = "NO_KEY", LockDifficultyClassID = "0d9484eb-0000-4000-8000-000000000001", LockDC = 0 }
+    local j = job(op("lockpick", { char = P1, target = DOOR }))
+    arrive(j, { 8.5, 0, 0 })
+    eq(#called("Use"), 1, "Use")
+end)
+
+-- ---- turn-based mode outside combat (S024-S026 Shadow Curse) ---------------
+
+test("tb gate: a walk in turn-based mode outside combat is refused at once, no walk", function()
+    osiv[key("IsInForceTurnBasedMode", P1)] = 1
+    local j = job(op("move_to", { char = P1, pos = { 5, 0, 0 } }))
+    eq(j.status, "failed", "status"); assert(j.error:find("turn-based mode outside combat", 1, true), j.error)
+    eq(#called("CharacterMoveToPosition"), 0, "no walk")
+    j = job(op("interact", { char = P1, target = DOOR }))
+    eq(j.status, "failed", "interact status")
+end)
+
+test("tb gate: tb_ok (the agent's own turn-based mode) walks; in combat no gate", function()
+    osiv[key("IsInForceTurnBasedMode", P1)] = 1
+    local j = job(op("move_to", { char = P1, pos = { 5, 0, 0 }, tb_ok = true }))
+    eq(j.status, "running", "tb_ok status " .. tostring(j.error))
+end)
+
+test("act.turn_based off: ForceTurnBasedMode for every party member still in it", function()
+    party_rows = { P1, NPC }
+    osiv[key("IsInForceTurnBasedMode", P1)] = 1
+    osiv[key("IsInForceTurnBasedMode", NPC)] = 1
+    local j = job(op("turn_based", { on = false }))
+    tick(2)
+    eq(#called("ForceTurnBasedMode"), 2, "both members")
+    local m = RPC.ops["act.mode"]({})
+    eq(m.ftb, true, "act.mode ftb"); eq(#m.ftb_members, 2, "members")
+    eq(j.status, "running", "running until they leave it")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

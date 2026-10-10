@@ -33,6 +33,9 @@ from .game import GameError, NotReady
 DEFAULT_LOCK = Path(os.environ.get("BG3AI_RUNTIME", Path(__file__).resolve().parents[3] / "runtime")) / "skipper.lock"
 
 
+LINE_WANT_MS = 400  # AutoSkip.lua K.LINE_WANT_MS: only a fresh line request (the line may have ended since)
+
+
 class MovieSkipper:
     def __init__(self, game: Any, inp: Callable[[], Any], log: Callable[[str], None] = lambda m: None,
                  fast_s: float = 0.15, fallback_s: float = 2.0, lock_path: str | os.PathLike | None = None,
@@ -82,12 +85,12 @@ class MovieSkipper:
                 pass
             self._lock_file = None
 
-    def _press(self, reason: str) -> bool:
+    def _press(self, reason: str, key: str = "ESCAPE") -> bool:
         inp = self.inp()
         if inp is None:
             return False
         try:
-            inp.key("ESCAPE")
+            inp.key(key)
         except Exception:
             return False
         self.sent += 1
@@ -115,6 +118,12 @@ class MovieSkipper:
                 if isinstance(want, dict) and st.get("movie") and want.get("seq") != self.sent_seq:
                     self.sent_seq = want.get("seq")
                     self._press(f"movie skipped (ESCAPE via shim, try {want.get('try')})")
+                elif (isinstance(want, dict) and want.get("reason") == "line" and want.get("key") == "SPACE"
+                      and st.get("line") and not st.get("movie") and want.get("seq") != self.sent_seq
+                      and 0 <= (st.get("now") or 0) - (want.get("at") or 0) <= LINE_WANT_MS):
+                    # A voiced/cinematic line the page's skip command and the engine SPACE did not skip (S023).
+                    self.sent_seq = want.get("seq")
+                    self._press(f"line skipped (SPACE via shim, try {want.get('try')})", "SPACE")
                 return self.fast_s
             self.mode = "fallback"
             self.next_fast_probe = now + 30.0

@@ -28,6 +28,13 @@ class FakeScreen:
         self.clicks: list[tuple[int, int]] = []
         self.pressed = None
         self.next_box = None
+        self.keys: list[str] = []
+        self.enter_default = False  # RETURN answers the default (first) button
+
+    def key(self, keys, sync=True):
+        self.keys.append(keys)
+        if keys == "RETURN" and self.enter_default and self.box:
+            self.pressed, self.box = "Yes", False
 
     def window_size(self):
         return W, H
@@ -53,7 +60,8 @@ class FakeScreen:
         return x0 <= self.cur[0] <= x1 and y0 <= self.cur[1] <= y1
 
     def rpc(self, op, args):
-        assert op == "ui.confirm_probe", op
+        if op != "ui.confirm_probe":
+            return {}  # incidental reads (_finish's level-up nudge reads state.status once a minute)
         if not self.box:
             return {"box": False}
         want = "No" if str(args.get("answer")).lower() == "no" else "Yes"
@@ -105,7 +113,28 @@ class ClickBox(unittest.TestCase):
         s = FakeScreen(yes=(0, 0, 1, 1))
         r = boxclick.click_box(s.rpc, s, "yes", budget_s=0.5)
         self.assertIn("error", r)
+        self.assertIn("RETURN didn't answer", r["error"])
         self.assertEqual(s.clicks, [])
+        self.assertEqual(s.keys, ["RETURN"])
+
+    def test_no_hover_falls_back_to_return(self):
+        # S026 09:03: no cursor position read as over Yes (96 tries); RETURN answers the default button
+        s = FakeScreen(yes=(0, 0, 1, 1))
+        s.enter_default = True
+        r = boxclick.click_box(s.rpc, s, "yes", budget_s=0.5)
+        self.assertTrue(r["closed"], r)
+        self.assertEqual(r["via"], "key")
+        self.assertEqual(s.pressed, "Yes")
+        self.assertEqual(s.clicks, [])
+        self.assertIn("Yes (RETURN key)", boxclick.describe(r))
+
+    def test_no_answer_never_presses_return(self):
+        s = FakeScreen(no=(0, 0, 1, 1))
+        s.enter_default = True
+        r = boxclick.click_box(s.rpc, s, "no", budget_s=0.5)
+        self.assertIn("error", r)
+        self.assertEqual(s.keys, [])
+        self.assertTrue(s.box)
 
     def test_no_box(self):
         s = FakeScreen()

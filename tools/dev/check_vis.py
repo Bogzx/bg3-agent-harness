@@ -24,14 +24,18 @@ docs/HANDOFF.md §7).
 from __future__ import annotations
 
 import json
+import atexit
 import os
 import sys
+import shutil
 import tempfile
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "src"))
-os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-check-"))  # keep runtime/actions.jsonl clean
+if "BG3AI_RUNTIME" not in os.environ:  # keep runtime/actions.jsonl clean; removed at exit
+    os.environ["BG3AI_RUNTIME"] = tempfile.mkdtemp(prefix="bg3ai-check-")
+    atexit.register(shutil.rmtree, os.environ["BG3AI_RUNTIME"], True)
 
 from bg3ai import render  # noqa: E402
 from bg3ai import server as S  # noqa: E402

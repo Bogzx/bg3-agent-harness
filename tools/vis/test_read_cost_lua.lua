@@ -82,6 +82,7 @@ local function reset()
     heights = function() return { 0.0 } end
     calls = {}
     N.frame = (N.frame or 0) + 1
+    N.waysCache, N.waysCacheN, N.waysWarmState = {}, 0, { t = 0 }
 end
 local function test(name, fn)
     count = count + 1
@@ -227,16 +228,30 @@ end)
 
 -- ---- frontier ----------------------------------------------------------------------
 
-test("nav.frontier with hazards (radius 30, 15 m hazard scan): under target", function()
+local function frontierWorld()
     for k = 1, 25 do
         local u = string.format("item-%02d", k)
         world[u] = { k - 12, 0, (k % 5) * 3 }
         items[u] = { kind = k % 3 == 0 and "container" or "item" }
     end
     fire = function(x, z) if (x + 6) ^ 2 + (z - 4) ^ 2 <= 9 then return "Fire" end end
+end
+
+test("nav.frontier cold (ways not searched yet at this spot): reported", function()
+    frontierWorld()
     local r = RPC.ops["nav.frontier"]({})
-    eq(#r.leads > 0, true, "leads"); eq(#(r.hazards or {}), 1, "hazards")
-    under("nav.frontier (25 items, 1 fire)")
+    eq(#r.leads > 0, true, "leads"); eq(#(r.hazards or {}), 1, "hazards"); eq(#r.ways, 8, "ways")
+    under("nav.frontier cold (25 items, 1 fire)", 60)
+end)
+
+test("nav.frontier after standing still (ways warmed by the Tick): under target", function()
+    frontierWorld()
+    local now = 0
+    for _ = 1, 12 do now = now + 1000; N.waysWarm(now) end
+    calls = {}
+    local r = RPC.ops["nav.frontier"]({})
+    eq(#r.ways, 8, "ways from the cache")
+    under("nav.frontier warm (25 items, 1 fire)")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

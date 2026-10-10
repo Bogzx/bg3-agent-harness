@@ -47,6 +47,9 @@ AIMS: list[tuple[str, float]] = [("auto", 0.0), ("chest", 0.0), ("low", 0.0), ("
 EDGE = 0.85          # |ndc| beyond this counts as "at the edge" (hover may land on the HUD)
 CAMERA_STEPS = 6
 ROTATE_FRAC = 0.18   # middle-drag length as a fraction of the window width
+# Wall-clock cap on the whole hover search (both passes). 144 tries took 15-33 s in claude-run-2 S017-S024
+# and never found a door that the first ~20 tries missed; a player gives up on a fiddly door in seconds.
+HOVER_BUDGET_S = 8.0
 
 
 @dataclass
@@ -138,14 +141,19 @@ def bring_into_view(game: Game, inp: InputClient, uuid: str, steps: int = CAMERA
     return moves
 
 
-def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2) -> tuple[tuple[int, int] | None, int, dict]:
+def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadline: float | None = None,
+                seen: dict[str, int] | None = None) -> tuple[tuple[int, int] | None, int, dict]:
     """Move the virtual cursor until the engine's picking helper reports `uuid` under it.
 
+    Stops at `deadline` (time.monotonic()). `seen` counts the other entities the helper reported instead.
     Returns ((x, y) or None, tries, last hover_check)."""
     w, h = inp.window_size()
     tries = 0
     last: dict = {}
     for aim, ox in AIMS:
+        if deadline is not None and time.monotonic() >= deadline:
+            last = {**last, "timed_out": True}
+            break
         try:
             sp = _screen_pos(game, uuid, aim, ox)
         except GameError as e:
@@ -170,6 +178,10 @@ def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2) -> tup
                 continue
             if last.get("hovered"):
                 return (x, y), tries, last
+            if seen is not None and last.get("hover"):
+                seen[last["hover"]] = seen.get(last["hover"], 0) + 1
+            if deadline is not None and time.monotonic() >= deadline:
+                return None, tries, {**last, "timed_out": True}
     return None, tries, last
 
 
@@ -178,22 +190,29 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
     """Hover-verify then click `uuid`; if `expect` is given, wait until ui.state shows that screen."""
     before = _screen(game).get("screen")
     moves = bring_into_view(game, inp, uuid)
-    pos, tries, last = hover_point(game, inp, uuid)
-    if pos is None and not moves:
+    deadline = time.monotonic() + HOVER_BUDGET_S
+    seen: dict[str, int] = {}
+    pos, tries, last = hover_point(game, inp, uuid, deadline=deadline, seen=seen)
+    if pos is None and not moves and not last.get("timed_out"):
         # Every aim missed although the target looked in view: one more look from a wider angle.
         w, h = inp.window_size()
         inp.wheel(-2, w // 2, h // 2)
         inp.wait_frames(12)
         time.sleep(0.15)
         moves = ["zoom_out"]
-        pos, t2, last = hover_point(game, inp, uuid)
+        pos, t2, last = hover_point(game, inp, uuid, deadline=deadline, seen=seen)
         tries += t2
     extra: dict[str, Any] = {"camera": moves} if moves else {}
     if pos is None:
         # off_screen only when no aim point was ever in the window (tries counts the in-window points)
         reason = "off_screen" if tries == 0 and last.get("off_screen") else "hover_miss"
-        if last.get("hover"):
+        if seen:
+            # what the cursor kept landing on (an object in front of the target, or a bigger hit box)
+            extra["hovered_instead"] = sorted(seen, key=lambda u: -seen[u])[:3]
+        elif last.get("hover"):
             extra["hover"] = last["hover"]
+        if last.get("timed_out"):
+            extra["gave_up_after_s"] = HOVER_BUDGET_S
         return ClickResult(False, reason, before, None, tries, extra)
     inp.click(pos[0], pos[1], button=button)
     if not expect:
@@ -246,13 +265,11 @@ TOOL_NEEDED: dict[str, tuple[str, str, str]] = {
 }
 
 
-def tool_check(game: Game, op: str, char: str | None) -> str | None:
-    """None when the actor carries the tool op needs (or the op needs none, or the check can't be made);
-    otherwise why not, naming the party members who do carry one. Party inventory is on screen anyway."""
+def tool_owners(game: Game, op: str) -> list[str] | None:
+    """Party members carrying the tool op needs (None: no tool needed, or the inventory can't be read)."""
     need = TOOL_NEEDED.get(op)
-    if not need or not char:
+    if not need:
         return None
-    name, frag, instead = need
     try:
         inv = game.rpc("state.inventory", {"expand": True})
     except Exception:
@@ -261,9 +278,20 @@ def tool_check(game: Game, op: str, char: str | None) -> str | None:
         return None
     owners: list[str] = []
     for it in inv.get("items") or []:
-        if frag in str(it.get("name") or "").lower() and it.get("owner") and it["owner"] not in owners:
+        if need[1] in str(it.get("name") or "").lower() and it.get("owner") and it["owner"] not in owners:
             owners.append(it["owner"])
-    if char in owners:
+    return owners
+
+
+def tool_check(game: Game, op: str, char: str | None) -> str | None:
+    """None when the actor carries the tool op needs (or the op needs none, or the check can't be made);
+    otherwise why not, naming the party members who do carry one. Party inventory is on screen anyway."""
+    need = TOOL_NEEDED.get(op)
+    if not need or not char:
+        return None
+    name, frag, instead = need
+    owners = tool_owners(game, op)
+    if owners is None or char in owners:
         return None
     names = {}
     try:
@@ -278,14 +306,27 @@ def tool_check(game: Game, op: str, char: str | None) -> str | None:
     return f"nobody in the party carries {name}: {instead}"
 
 
+def _with_holder(jr: JobResult, holder: str | None) -> JobResult:
+    """Name the tool holder who stood in for the asked character (result tool_holder=...)."""
+    if holder:
+        jr.result = dict(jr.result, tool_holder=holder) if isinstance(jr.result, dict) else {"tool_holder": holder}
+    return jr
+
+
 def run_click_action(game: Game, inp: InputClient | None, op: str, args: dict, wait_s: float = 40.0) -> JobResult:
     """Run a click-on-entity server op end to end (approach, click, verify).
 
     The job's status is downgraded to "failed" if the click could not be completed."""
     why = tool_check(game, op, args.get("char"))
+    holder = None
     if why:
-        return JobResult("failed", error=why)
-    jr = game.run_job(op, args, wait_s=wait_s)
+        # S024/S026: "Karlach carries no Thieves' Tools; Claude does: run it again with who=Claude" cost a turn
+        # each time. A player just has the one with the tools do it (like a key holder opening a door).
+        holder = next(iter(tool_owners(game, op) or []), None)
+        if not holder:
+            return JobResult("failed", error=why)
+        args = dict(args, char=holder)
+    jr = _with_holder(game.run_job(op, args, wait_s=wait_s), holder)
     if jr.status != "done" or not isinstance(jr.result, dict) or not jr.result.get("needs_click"):
         return jr
     if inp is None:

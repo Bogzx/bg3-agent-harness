@@ -5,6 +5,7 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 import time
 import unittest
@@ -36,6 +37,7 @@ def label(u: str) -> str:
 class Leveling(unittest.TestCase):
     def setUp(self):
         self.mem = Path(tempfile.mkdtemp(prefix="bg3lv-"))
+        self.addCleanup(shutil.rmtree, self.mem, True)
         (self.mem / "party-build.md").write_text(BUILD)
 
     def test_pending(self):
@@ -107,6 +109,7 @@ RUN2 = {"party": [   # claude-run-2 after S010: no rogue, no plan lines, no comp
 class PlanHint(unittest.TestCase):
     def setUp(self):
         self.mem = Path(tempfile.mkdtemp(prefix="bg3lv-"))
+        self.addCleanup(shutil.rmtree, self.mem, True)
         (self.mem / "party-build.md").write_text("# Party build\n## Gale\n- Wizard, Evocation\n")
 
     def test_composition(self):
@@ -347,6 +350,7 @@ class ServerWiring(unittest.TestCase):
         from bg3ai import server as S
 
         mem = Path(tempfile.mkdtemp(prefix="bg3lv-"))
+        self.addCleanup(shutil.rmtree, mem, True)
         (mem / "party-build.md").write_text(BUILD)
         sent = {}
 

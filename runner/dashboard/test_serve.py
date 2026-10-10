@@ -77,6 +77,16 @@ class ServeTest(unittest.TestCase):
         self.assertEqual(r["path_id"], "S001.log")
         self.assertIn("[say] I will head north.", r["text"])
 
+    def test_story(self):
+        (TMP / "memory" / "decisions.md").write_text("## Decisions\n\n## D-01 Freed Shadowheart (S002)\n- Choice: opened the pod\n")
+        _, _, body = self.get("/api/story")
+        r = json.loads(body)
+        self.assertTrue(r["exists"])
+        self.assertEqual([d["id"] for d in r["decisions"]], ["D-01"])
+        self.assertEqual(r["chapters"], [])
+        code, _, body = self.get("/")
+        self.assertIn(b'id="storyTabs"', body)
+
     def test_screen_empty_and_404(self):
         code, _, _ = self.get("/api/screen")
         self.assertEqual(code, 204)

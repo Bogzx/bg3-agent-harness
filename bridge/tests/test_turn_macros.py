@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -16,7 +17,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-"))
+_RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit (/tmp filled up 2026-10-10)
+os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
 from bg3ai import actq, macros, server, turn  # noqa: E402
 from bg3ai.game import GameError, JobResult  # noqa: E402
@@ -33,7 +35,7 @@ LETTER = "b1111111-bbbb-cccc-dddd-eeeeeeeeeeee"
 POTION = "b2222222-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 UI_JOBS = {"ui.loot", "ui.dialogue_choose", "ui.react", "ui.short_rest", "ui.long_rest"}
-NOT_JOBS = {"act.watch", "act.note", "act.target_state"}
+NOT_JOBS = {"act.watch", "act.note", "act.target_state", "act.mode"}
 
 
 class FakeGame:
@@ -201,6 +203,7 @@ class Base(unittest.TestCase):
     def setUp(self) -> None:
         self.g = FakeGame()
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-mem-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         saved = (server.game, server._watch_game, server._queue_mgr, actq.WATCH_EVERY_S, actq.UI_EVERY_S,
                  server.MEMORY, server.delta.changes_text)
         server.game = self.g
@@ -510,7 +513,7 @@ class CombatTurn(Base):
 
     def test_not_in_combat(self):
         self.g.combat = {"active": False}
-        self.assertIn("FAILED: not in combat", server.combat_turn(self.plan(action="Shout_Dodge")))
+        self.assertIn("nothing to play — not in combat", server.combat_turn(self.plan(action="Shout_Dodge")))
 
     def test_hp_drop_stops_the_turn_without_ending_it(self):
         def hurt(op, args):
@@ -1071,6 +1074,7 @@ class ClockStuck(unittest.TestCase):
         saved = (server.DEADLINE, server.PROGRESS_PATH, dict(server._clock_shown), dict(server._stuck_cache))
         self.addCleanup(self._restore, saved)
         self.path = Path(tempfile.mkdtemp()) / "S005.progress.jsonl"
+        self.addCleanup(shutil.rmtree, self.path.parent, True)
         server.PROGRESS_PATH = str(self.path)
         server.DEADLINE = time.time() + 40 * 60
         server._clock_shown.update(at=time.time(), stuck=None)

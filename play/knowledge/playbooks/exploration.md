@@ -31,6 +31,8 @@ the region done in locations.md.
     nothing else to do. Never `wait()`, and never `wait=true` on a walk (see CLAUDE.md, pipelining).
   - The same `used <item>` event repeating, or a character ignoring orders: a harness loop → the
     `stuck` playbook, section 0.
+- Notes: put them on the walk itself, `travel_to(objective="o1", note="[quest] …")`, or `note("…")` while
+  it runs; never Read/Edit memory files while the party stands still.
 - Long distances: `travel_to(marker="m1" | objective="o1")` chains walks there and returns at once;
   append the arrival steps with `queue_actions` and plan meanwhile (it stops on an interrupt or when
   nothing leads further); `fast_travel(waypoint="<name>")` between unlocked
@@ -69,8 +71,25 @@ the region done in locations.md.
   and advances some story timers `[wiki]`. First check objectives for urgent items (someone in danger,
   "before nightfall" wording) and don't rest while one is pending. Afterwards, handle camp scenes as
   dialogues (`get_dialogue`), then `camp(action="leave")`.
+- **Camp supplies:** a full long rest needs 40; fewer gives only a partial rest (half HP and slots).
+  S025-S026 lost two rests and ~10 min hunting food at the last moment. Food lying around (bread,
+  apples, sausages, wine…) is free supplies: `pick_up` it when you pass, and buy food when a trader has
+  it while gold is plentiful. Keep the stock at 80+ so every rest is a full one (`get_inventory(filter="food")` shows supply per item).
 - At camp, talk to companions (`talk_to`) to change the active party or hear their stories. Use the camp
   chest and camp traders. For screens without a dedicated tool, `ui_dump` then `ui_action`.
+
+## Resources and economy (S025-S026: two partial rests, 34/88 HP into a puzzle, 93 g left, junk-full bags)
+- **HP:** below 50 % out of combat, `short_rest` before any fight or puzzle (2 per long rest; the ALERTS
+  line says how many are left). No short rest left → long rest (with 40+ supplies) or potions.
+- **Supplies:** have 40+ before `long_rest` (it refuses a partial rest unless `partial=true`). Pick up
+  food in passing; buy it (`trade` wares marked `supply=N`) whenever supplies < 80.
+- **Gold:** keep a 200 g reserve. Before paying a big sum (a key, a bribe), try the dialogue's Persuasion/
+  Intimidation/Deception option when the odds are good, or pickpocket/steal it if the oath allows and
+  nobody watches (fair game; save first). Paying 1000 of 1093 g (S026) left nothing for food.
+- **Sell junk at every trader:** `trade(sell="junk")` right after the trade screen opens (one call);
+  Encumbered with no trader near → `manage_inventory(op="camp", item="junk")`.
+- **Gear:** at session start and after loot, `equip_best()` (the gear check from the last session is in
+  the start context: snapshots/gear.md). Never leave a rare shield/armour in a bag.
 
 ## Inventory and trading (only when it matters)
 - `get_inventory(filter="equipped" | "consumables" | "<words>")` keeps reads small.

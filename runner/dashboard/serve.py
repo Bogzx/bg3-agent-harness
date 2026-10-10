@@ -15,7 +15,7 @@ Read-only toward the game: only state.status / events.since / sys.info RPCs and 
 share the Mesa layer's single control slot through the file lock in bridge/src/bg3ai/screen.py, and run
 only while someone has the page open.
 
-Endpoints: /  /api/state  /api/feed?after=N  /api/agentlog?after=N&path=ID  /api/screen  /api/latency  /api/progress  /api/goals
+Endpoints: /  /api/state  /api/feed?after=N  /api/agentlog?after=N&path=ID  /api/screen  /api/latency  /api/progress  /api/goals  /api/story
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "bridge" / "src"))
 import feeds as F  # noqa: E402
+import story as STORY  # noqa: E402
 
 RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
 VIEWER_IDLE_S = 30  # stop capturing/polling the game when nobody has looked for this long
@@ -235,6 +236,9 @@ def make_handler(hub: Hub):
                 if url.path == "/api/goals":
                     runner = F.read_json(RUNTIME / "runner.status.json")
                     return self._json(F.goals_payload(RUNTIME, runner))
+                if url.path == "/api/story":  # decisions, chapters, playthrough overview, party (memory files)
+                    runner = F.read_json(RUNTIME / "runner.status.json")
+                    return self._json(STORY.story_payload(F.resolve_memory(REPO, runner, hub.opt.memory_dir)))
                 if url.path == "/api/screen":
                     hub.viewed()
                     with hub.lock:

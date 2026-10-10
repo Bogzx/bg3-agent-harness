@@ -679,7 +679,8 @@ class Triage(unittest.TestCase):
             md = P.triage.write(base).read_text()
         self.assertIn("Idle gaps > 10 s between visible actions (1)", md)
         self.assertIn("**15.0 s** idle (combat; own turn 15.0 s of 34.0 s, enemy turns 19.0 s)", md)
-        self.assertIn("not counted: 1 combat gap(s)", md)
+        self.assertIn("not counted: 1 gap(s)", md)
+        self.assertIn("25 s = 19 s enemy + 6 s ours", md)  # the parts, not "25 s with 19 s enemy"
 
     def test_missing_files_still_write(self):
         with tempfile.TemporaryDirectory() as d:

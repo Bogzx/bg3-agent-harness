@@ -64,6 +64,14 @@ class RouteTool(Base):
             return orig(op, args, context, timeout)
         self.g.rpc = rpc
 
+    def test_no_path_lists_the_open_directions(self):
+        """S023 06:23: 8 guessed route calls across a chasm; the way on (a stone bridge) lay SW."""
+        self.reply = dict(FIRE_MAZE, ways=[{"dir": "SW", "open_m": 20}, {"dir": "N", "open_m": 8, "dy": 3.1},
+                                           {"dir": "E", "open_m": 0}])
+        out = server.route(x=-40.0, y=16.0, z=-431.0)
+        self.assertIn("NO WALKABLE PATH", out)
+        self.assertIn("WAYS walkable: SW 20m+, N 8m (3.1m up) | blocked: E", out)
+
     def test_goal_above_names_the_ladder_up(self):
         out = server.route(objective="o1")
         args = self.g.ops("nav.route")[0][1]

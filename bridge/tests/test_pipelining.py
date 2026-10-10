@@ -328,7 +328,7 @@ class AlwaysLoad(unittest.TestCase):
             self.assertEqual((tools[name].meta or {}).get("anthropic/alwaysLoad"), True, name)
         for name in ("wiki_page", "wiki_search", "load_game", "list_saves"):
             self.assertEqual((tools[name].meta or {}).get("anthropic/alwaysLoad"), True, name)
-        for name in ("new_game", "ui_dump", "fast_travel"):  # lockpick, click: preloaded since S002-S007
+        for name in ("new_game", "ui_dump"):  # lockpick, click: preloaded since S002-S007; fast_travel since S026
             self.assertFalse((tools[name].meta or {}).get("anthropic/alwaysLoad"), name)
 
     def test_movement_defaults_to_async(self):
@@ -428,9 +428,11 @@ class PipeliningMetric(unittest.TestCase):
         self.assertEqual(s["think_overlap_pct"], 66.7)
 
     def test_history_and_live_view_carry_it(self):
+        import shutil
         import tempfile
         from pathlib import Path
         d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
         tools = [{"type": "tool", "tool": "move_to", "t0": 0, "t1": 0.1, "ms": 100, "bg": 1}]
         s = metrics.summarize(tools, [], [])
         metrics.write_summary(s, d / "S1.latency.json", d / "h.jsonl", "S1")

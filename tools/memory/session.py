@@ -61,6 +61,11 @@ def session_minutes() -> float:
 
 WRAP_WINDOW_S = 3 * 60           # autonomous mode without $BG3AI_SESSION_WRAPUP: wrap-up window before the deadline
 MAX_KEEP_PLAYING_BLOCKS = 200    # autonomous mode: cap on "keep playing" stop blocks per session
+# Autonomous mode: a finished wrap-up (HANDOFF.md written for this session) this close to the wrap-up time is
+# accepted. S018-S025 of claude-run-2: the clock line said "0m/1m of play", the agent wrapped up, and every
+# session the hook bounced it 1-4 times ("Keep playing: 3 minutes left"); each bounce re-saved Sxxx-end and
+# re-edited HANDOFF.md, and S025 ended with its last save still writing.
+STOP_GRACE_S = 150
 
 
 def session_deadline() -> float | None:
@@ -174,7 +179,14 @@ def _status_block(mem: Path, budget: int = 700) -> str | None:
                      if l.strip() and not l.startswith("<!--") and not l.startswith("# Snapshot"))
     if not body:
         return None
-    return f"----- snapshots/status.md (game state at the end of the last session) -----\n{body[:budget]}"
+    out = f"----- snapshots/status.md (game state at the end of the last session) -----\n{body[:budget]}"
+    g = mem / "snapshots" / "gear.md"
+    if g.is_file():
+        gear = "\n".join(l for l in g.read_text().splitlines()
+                         if l.strip() and not l.startswith("<!--") and not l.startswith("# Snapshot"))
+        if gear and "nothing to change" not in gear:
+            out += f"\n----- snapshots/gear.md (do this first: equip_best, sell junk at the next trader) -----\n{gear[:600]}"
+    return out
 
 
 def build_context(mem: Path, source: str = "startup", notes: list[str] | None = None,
@@ -206,7 +218,9 @@ def build_context(mem: Path, source: str = "startup", notes: list[str] | None = 
         head.append("Resumed conversation: call get_status and check it matches what you remember.")
     elif source == "clear":
         head.append("Context was cleared: re-read objectives.md and your session log before acting.")
-    if cur and M.compaction_due(mem, cur):
+    # With the runner's memory keeper on, it compacts between sessions (S021 spent 11 Reads of old logs on it
+    # mid-play); the player compacts only without a keeper.
+    if cur and M.compaction_due(mem, cur) and os.environ.get("BG3AI_KEEPER") != "1":
         head.append(f"COMPACTION DUE: sessions after S{M.last_compacted_session(mem):03d} are not yet in "
                     f"a chapter. Run the compaction playbook this session (after session-start).")
     for n in notes or []:
@@ -438,7 +452,15 @@ def stop_decision(mem: Path, now: float | None = None) -> dict | None:
     # for once HANDOFF.md is written. Autonomous session: nobody is there to answer, so stopping before
     # the wrap-up window just wastes the session, even with HANDOFF.md already written (S001 of
     # claude-run-2 wrote it at 16 min left because it was stuck on a ladder, and the hook let it stop).
-    early = not wrap_due(st, now) if deadline else not handoff_ready and not wrap_due(st, now)
+    w = wrap_at()
+    if os.environ.get("BG3AI_FIX_NOTES"):
+        # The runner's fix-notes pass (play is over; memory edits only): never "keep playing" (S027-fix was bounced
+        # 4 times with "9 minutes left"); lint + commit, or the lint report.
+        early = False
+    elif deadline and handoff_ready and w is not None and now >= w - STOP_GRACE_S:
+        early = False
+    else:
+        early = not wrap_due(st, now) if deadline else not handoff_ready and not wrap_due(st, now)
     if early:
         if deadline is None:
             return None

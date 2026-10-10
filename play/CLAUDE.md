@@ -24,7 +24,7 @@ still while you think. The three patterns that cover most of the game outside co
    EVENTS shows `queue_done`, or `queue_interrupted` with why and what was left: handle that first.
 3. **Needing the outcome is not a reason to block.** Even when the next decision depends on the
    arrival (what's behind the door, did the route get through), issue the move async, **then do the
-   work that doesn't depend on it** (note the last event in the session log, `path_preview`/`get_frontier`
+   work that doesn't depend on it** (`note("…")` the last event, `path_preview`/`get_frontier`
    for the next leg, `look_at` something in view, a `wiki_page` you'll need), and only then
    `wait_for("queue")` / `wait_for("j12")`. It returns early on a prompt. A fast failure (no path, a
    hazard ahead) still comes back in the first result, so async costs you nothing.
@@ -55,7 +55,7 @@ runs) and `PACE: …` (you waited too soon): follow them. A combat move that end
 - Your own general BG3 knowledge is allowed, as a player who has read the wiki. Tag it `[wiki]` until
   you see it confirmed in this game. Patch differences are real.
 - If a tool ever reveals something the player couldn't see (hidden enemies, secret DCs, unrevealed
-  map), don't use it. Log `[note] fairness leak: …` for the operator.
+  map), don't use it. `note("[note] fairness leak: …")` for the operator.
 
 ## Efficiency (hard rule)
 - Anything the engine can tell you, read as text: `look`, `get_status`, `get_party`, `get_nearby`,
@@ -199,8 +199,9 @@ plans, reasons and lessons.
 **Write notes while the game works, never between two game actions.** Note-writing is slow (an Edit
 turn costs 5–15 s), so do it while the party walks, a queue runs or enemies take their turn: issue
 `travel_to` / `queue_actions` / `end_turn` first, then the Edit, then `wait_for`. A result that says
-`NOTES WINDOW: ~20s of walking left` is that moment: write the notes now. Collect a few events and
-write them in one Edit (one log line `- HH:MM [tag] …` each, plus the curated file if the plan changes);
+`NOTES WINDOW: ~20s of walking left` is that moment: write the notes now. Log lines go through
+`note("[tag] …")` (instant, no Read/Edit) or ride on the walk itself: `travel_to(…, note="[quest] …")`;
+Edit a curated file only when the plan changes (the memory keeper folds the log in between sessions);
 a note may lag the event by a few minutes, but not past the next walk or enemy turn. Write a note after
 any of these:
 - a quest update

@@ -125,12 +125,14 @@ listen("DownedChanged", 2, function(char, downed)
     if u then RPC.push(truthy(downed) and "downed" or "revived", ref(u)) end
 end)
 
--- StatusApplied(object, status, causee, storyActionID): displayable statuses only.
+-- StatusApplied(object, status, causee, storyActionID): displayable statuses only, by their shown name.
+-- Never the engine's status id: a player never sees it, and ids carry hints the name doesn't
+-- (MAG_MYRKULITES_UNDEAD_PRESENCE_BUFF = from a Myrkulite item; fairness audit S023-S027).
 listen("StatusApplied", 4, function(obj, status, causee, _)
     if not V.statusInfo(status) then return end
     local u = visibleChar(obj)
     if not u then return end
-    local data = { target = ref(u), status = status, name = V.statusInfo(status).name }
+    local data = { target = ref(u), name = V.statusInfo(status).name }
     local src = causee and visibleChar(causee)
     if src and src ~= u then data.source = ref(src) end
     RPC.push("status_applied", data)
@@ -139,7 +141,7 @@ end)
 listen("StatusRemoved", 4, function(obj, status, _, _)
     if not V.statusInfo(status) then return end
     local u = visibleChar(obj)
-    if u then RPC.push("status_removed", { target = ref(u), status = status, name = V.statusInfo(status).name }) end
+    if u then RPC.push("status_removed", { target = ref(u), name = V.statusInfo(status).name }) end
 end)
 
 -- CastedSpell(caster, spell, spellType, spellElement, storyActionID)
@@ -164,7 +166,7 @@ listen("RollResult", 6, function(_, roller, _, result, isActive, crit)
     local success = truthy(result)
     local active = truthy(isActive)
     if not active and not success and c.rules.HIDE_FAILED_PERCEPTION_ROLLS then return end
-    if not active and c.rules.DIALOGUE_PASSIVE_ROLL_HIDE and truthy(osi(Osi.IsInDialog, u)) then return end
+    if not active and c.rules.DIALOGUE_PASSIVE_ROLL_HIDE and V.inDialog(u) then return end
     local data = { roller = ref(u), success = success, active = active }
     -- Osiris criticality: 1 = natural 20, 2 = natural 1 (S009: a nat-1 Persuasion read as "critical=2").
     if crit and crit ~= 0 then data.critical = ({ [1] = "success", [2] = "fail" })[tonumber(crit)] or crit end
@@ -308,7 +310,8 @@ end)
 listen("LevelGameplayStarted", 2, function(level, _)
     ctxCache = nil
     E.trapsPrimed = false
-    RPC.push("level_changed", { level = level, region = BG3AI.State and BG3AI.State.REGION_NAMES[level] or level })
+    -- Fairness: the agent sees the region name a player sees (loading screen / map), not the level id.
+    RPC.push("level_changed", { region = BG3AI.State and BG3AI.State.REGION_NAMES[level] or level })
 end)
 
 listen("TeleportedToCamp", 1, function(char)

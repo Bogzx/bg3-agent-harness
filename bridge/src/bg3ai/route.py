@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import longnav, macros
+from . import longnav, macros, render
 from .render import Handles, num, pos
 
 
@@ -175,6 +175,8 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
             out.extend(_legs(c.get("legs"), 4))
             if c.get("exposure"):
                 out.append(f"  crosses {macros.exposure_text(c['exposure'])}")
+        if res.get("ways"):  # the open directions from here, as get_frontier says them
+            out.append(render.render_ways(res["ways"]))
     else:
         out.append("path unknown (pathfinding unavailable)")
     vn = res.get("visited_near")

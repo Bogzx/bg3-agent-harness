@@ -7,13 +7,15 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import threading
 import time
 import unittest
 from typing import Any
 
-os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-"))
+_RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit (/tmp filled up 2026-10-10)
+os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
 from bg3ai import actq, server  # noqa: E402
 from bg3ai.game import GameError, JobResult  # noqa: E402
@@ -212,6 +214,26 @@ class AsyncActions(Base):
         threading.Thread(target=later).start()
         out = server.wait_for("combat_started", timeout_s=3)
         self.assertIn("stopped waiting: reaction on screen", out)
+
+    def test_wait_for_stops_when_the_rest_screen_opens(self):
+        """S026 09:04: popup -> rest screen during a wait for dialogue_started (25 s, then 20 s more)."""
+        self.g.screen = "popup"
+
+        def later():
+            time.sleep(0.15)
+            self.g.screen = "rest"
+        threading.Thread(target=later).start()
+        t0 = time.monotonic()
+        out = server.wait_for("dialogue_started,combat_started", timeout_s=5)
+        self.assertLess(time.monotonic() - t0, 2.0)
+        self.assertIn("stopped waiting: the rest screen is open and waits on you: long_rest finishes it", out)
+
+    def test_wait_for_an_event_on_an_input_screen_answers_at_once(self):
+        self.g.screen = "rest"
+        t0 = time.monotonic()
+        out = server.wait_for("dialogue_started,combat_started", timeout_s=5)
+        self.assertLess(time.monotonic() - t0, 1.0)
+        self.assertIn("not waiting: the rest screen is open and waits on you", out)
 
     def test_wait_for_an_event_with_nothing_running_gives_up_early(self):
         old = server.IDLE_EVENT_WAIT_S

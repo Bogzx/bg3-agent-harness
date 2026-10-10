@@ -199,6 +199,33 @@ def hostiles_in_reach(combat: dict, who: str, rng: float | None, skip: set) -> l
     return [u for _, u in sorted(out)]
 
 
+def reach_line(combat: dict, who: str, movement: Any, label: Callable[[str], str]) -> str:
+    """'REACH e4 Claude (9m move): melee this turn e1018 7.6m, e1017 6.2m | with Dash e1019 12m | farther e1020 16m'.
+    S023-S025: 17 moves 'beyond remaining movement' (164 s) planned melee on hostiles 12-20 m away. Straight-line
+    distance (a path can be longer: '≈'), weapon reach edge to edge (1.5 m + pad). '' without movement data."""
+    if not isinstance(movement, (int, float)):
+        return ""
+    reach = 1.5 + MELEE_REACH_PAD
+    now, dash, far = [], [], []
+    for o in (combat or {}).get("order") or []:
+        u = o.get("uuid")
+        if not u or o.get("dead") or o.get("relation") != "hostile":
+            continue
+        d = (o.get("from") or {}).get(who)
+        if not (isinstance(d, (list, tuple)) and d and isinstance(d[0], (int, float))):
+            continue
+        dist = float(d[0])
+        bucket = now if dist <= movement + reach else dash if dist <= 2 * movement + reach else far
+        bucket.append((dist, f"{label(u)} {round(dist, 1):g}m"))
+    if not (now or dash or far):
+        return ""
+    parts = []
+    for name, b in (("melee this turn", now), ("with Dash", dash), ("farther (ranged only)", far)):
+        if b:
+            parts.append(name + " " + ", ".join(t for _, t in sorted(b)))
+    return f"REACH {label(who)} ({round(float(movement), 1):g}m move, ≈straight line): " + " | ".join(parts)
+
+
 def downed_allies(combat: dict, who: str, rng: float) -> list[str]:
     """Party members at 0 HP (downed, not dead) that `who` sees within `rng` m, nearest first."""
     out = []

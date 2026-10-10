@@ -213,7 +213,17 @@ function S.dialogueAnswers(widget, ad)
             local paired = S.pairRenderedWithVMs(items, vms, n)
             if paired then return paired, false end
         end
-        return out, #items > 0 or n > 0, { rendered = #items, vms = n }
+        -- S026 Karlach's companion menu (6 answers rendered in a scrolling list, 13 VMs; choose failed
+        -- twice, the agent clicked by hand): the list is virtualized, so never all rendered. When the game
+        -- says answers are shown, list the live VMs that have text, in the game's order (a text-less VM is a
+        -- hidden answer, S015), provided the rendered list is current (one of its texts is a VM's).
+        local texted = 0
+        if n > 0 and #items > 0 and props(ad).ShowAnswers == true then
+            local fromVM, current = S.textedAnswersFromVMs(vms, n, items)
+            texted = fromVM and #fromVM or 0
+            if fromVM and #fromVM >= #items and current then return fromVM, false end
+        end
+        return out, #items > 0 or n > 0, { rendered = #items, vms = n, show = props(ad).ShowAnswers, texted = texted }
     end
     for idx, item in ipairs(items) do
         local textEl = UI.byName(item, "AnswerText")
@@ -252,6 +262,34 @@ local function answerKey(text)
     local _, body = S.splitTags(text or "")
     body = clean(body)
     return body and (body:lower():gsub("[%s%p]+", " "))
+end
+
+-- Answers from the live VMs that have text (game order, renumbered), and whether
+-- any rendered answer's text is one of them (the rendered list is current).
+function S.textedAnswersFromVMs(vms, n, items)
+    local out, keys = {}, {}
+    for idx = 1, n do
+        local vm = try(vms.At, vms, idx)
+        local text = vm and try(S.answerTextFromVM, vm)
+        if text then
+            local tags, body = S.splitTags(text)
+            local a = { i = #out + 1, text = body, vm = vm }
+            if #tags > 0 then a.tags = tags end
+            addTags(a, try(S.answerTags, vm))
+            if props(vm).Enabled == false then a.off = true end
+            out[#out + 1] = a
+            local k = answerKey(text)
+            if k then keys[k] = true end
+        end
+    end
+    local current = false
+    for _, item in ipairs(items or {}) do
+        local textEl = UI.byName(item, "AnswerText")
+        local text = textEl and answerText(textEl) or UI.allText(item)
+        local k = text and answerKey(text)
+        if k and keys[k] then current = true break end
+    end
+    return #out > 0 and out or nil, current
 end
 
 -- Rendered answers in display order, each with the live VM whose text matches

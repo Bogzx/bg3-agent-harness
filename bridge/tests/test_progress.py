@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -149,6 +150,7 @@ class Exploration(unittest.TestCase):
 class TimelineTest(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp(prefix="bg3ai-prog-"))
+        self.addCleanup(shutil.rmtree, self.d, True)
 
     def test_records_progress_and_persists_seen(self):
         tl = P.Timeline(self.d / "S001.progress.jsonl", self.d / "state.json", started=1000.0)
@@ -221,6 +223,7 @@ class SummaryAndLive(unittest.TestCase):
         self.assertEqual(v["since_progress_min"], 10.0)
         self.assertEqual(v["recent"][0]["what"], "Wilderness")
         d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
         P.write_summary(P.summarize(self.RECS, 0.0, 3600.0), d / "S1.progress.json", d / "hist.jsonl", "S001")
         row = json.loads((d / "hist.jsonl").read_text())
         self.assertEqual((row["session"], row["points"]), ("S001", 18))

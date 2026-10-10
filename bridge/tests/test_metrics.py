@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
-os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-"))
+_RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit (/tmp filled up 2026-10-10)
+os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
 from bg3ai import metrics as M  # noqa: E402
 from bg3ai.game import Game  # noqa: E402
@@ -318,6 +320,44 @@ class Recording(unittest.TestCase):
         M.sampler_loop(rec, G(), stop, interval=0.001)
         self.assertEqual([(s[1], s[4], s[5]) for s in seen], [(False, False, None), (True, True, False),
                                                               (True, False, None)])
+
+
+    def test_sampler_loop_client_loading_screen(self):
+        """S023 06:29:38: the server answered nav.activity through a ~17 s loading screen; the client's game
+        state says it is loading, so those samples are load samples (not idle)."""
+        import threading
+
+        class G:
+            n = 0
+            states = ["Running", "SwapLevel", "LoadLevel", "Running"]
+
+            def eval(self, code, context="client", timeout=12.0):
+                assert context == "client"
+                return G.states[min(G.n, len(G.states) - 1)]
+
+            def rpc(self, op, args=None, context="server", timeout=3.0):
+                return {"pos": {}, "jobs": 0, "in_dialogue": False, "in_combat": False}
+
+        stop = threading.Event()
+        rec = M.Recorder(None)
+        kinds = []
+
+        def tick(kind):
+            kinds.append(kind)
+            G.n += 1
+            if G.n >= 4:
+                stop.set()
+        rec.sample = lambda *a: tick("sample")
+        rec.load_sample = lambda t: tick("load")
+        M.sampler_loop(rec, G(), stop, interval=0.001)
+        self.assertEqual(kinds, ["sample", "load", "load", "sample"])
+
+    def test_client_state_unknown(self):
+        class Boom:
+            def eval(self, *a, **k):
+                raise TimeoutError("no answer")
+        self.assertIsNone(M.client_state(object()))
+        self.assertIsNone(M.client_state(Boom()))
 
 
 class ServerHook(unittest.TestCase):

@@ -7,6 +7,7 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 import memlib as M
 import session as S
@@ -87,6 +88,8 @@ class ContextTest(MemoryTestCase):
         self.write("sessions/S010.md", "# Session S010\n")
         run_quiet(S.cmd_start, self.mem)  # opens S011
         self.assertIn("COMPACTION DUE", S.build_context(self.mem))
+        with mock.patch.dict(os.environ, {"BG3AI_KEEPER": "1"}):  # the keeper compacts between sessions
+            self.assertNotIn("COMPACTION DUE", S.build_context(self.mem))
 
     def test_lint_errors_surface_in_context(self):
         self.write("markers.json", "{nope")
@@ -121,6 +124,15 @@ class InjectionExtrasTest(MemoryTestCase):
 
     def test_no_news_file(self):
         self.assertEqual(S.harness_news("2026-10-10T01:00"), [])
+
+    def test_gear_check_injected_unless_nothing_to_change(self):
+        self.write("snapshots/status.md", "<!-- generated -->\n# Snapshot: status\n\nPARTY * Claude Paladin 3 HP 9/9\n")
+        self.write("snapshots/gear.md", "<!-- generated -->\n# Snapshot: gear\n\n## Gear check\n- Claude: equip Sentinel Shield in MeleeOffHand\n")
+        ctx = S._status_block(self.mem)
+        self.assertIn("snapshots/gear.md (do this first: equip_best", ctx)
+        self.assertIn("Sentinel Shield", ctx)
+        self.write("snapshots/gear.md", "## Gear check\n- nothing to change\n")
+        self.assertNotIn("gear.md", S._status_block(self.mem))
 
     def test_status_snapshot_and_stale_notes_injected(self):
         self.write("snapshots/status.md", "<!-- generated -->\n# Snapshot: status\n\nPARTY * Claude Paladin 3 HP 9/9\n")
@@ -263,6 +275,16 @@ class StopHookTest(MemoryTestCase):
         self.assertTrue(self.state()["open"])
         self.assertEqual(self.git_log(), ["S000 init test-run"])
 
+    def test_fix_notes_pass_never_keeps_playing(self):
+        # S027-fix: the runner's fix-notes pass inherits BG3AI_SESSION_DEADLINE; the hook said "Keep playing" 4x.
+        self.open_session(1, minutes_ago=3)
+        self.write("HANDOFF.md", self.good_handoff(1))
+        env = {"BG3AI_SESSION_DEADLINE": str(time.time() + 600), "BG3AI_FIX_NOTES": "1"}
+        with mock.patch.dict(os.environ, env):
+            out = S.stop_decision(self.mem)
+        self.assertNotIn("decision", out)
+        self.assertIn("committed", out["systemMessage"])
+
     def test_gives_up_after_max_blocks(self):
         self.open_session(1, minutes_ago=55)
         for _ in range(S.MAX_STOP_BLOCKS):
@@ -362,6 +384,16 @@ class AutonomousStopTest(MemoryTestCase):
         os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 4.4 * 60)  # wrap-up 3 min before the deadline
         self.assertTrue(S.stop_decision(self.mem)["reason"].startswith("Keep playing"))
         os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() - 1)
+        self.assertIn("committed", S.stop_decision(self.mem)["systemMessage"])
+
+    def test_finished_wrapup_just_before_wrap_time_accepted(self):
+        # S018-S025: "0m of play" on the clock line, the agent wrapped up, and the hook bounced it 1-4 times
+        # ("Keep playing: 3 minutes left"), each bounce re-saving Sxxx-end. Within STOP_GRACE_S it may stop.
+        self.open_session(1, minutes_ago=50)
+        self.set_deadline(5)
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 2 * 60)
+        self.assertTrue(S.stop_decision(self.mem)["reason"].startswith("Keep playing"))  # no HANDOFF yet
+        self.write("HANDOFF.md", self.good_handoff(1))
         self.assertIn("committed", S.stop_decision(self.mem)["systemMessage"])
 
     def test_wrapup_epoch_out_of_range_falls_back(self):

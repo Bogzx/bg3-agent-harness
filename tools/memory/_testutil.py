@@ -32,6 +32,7 @@ class MemoryTestCase(unittest.TestCase):
     def setUp(self) -> None:
         isolate_git()
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3mem-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.mem = self.tmp / "memory"
         NP.create_memory("test-run", self.mem)
 

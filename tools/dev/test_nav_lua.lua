@@ -59,6 +59,7 @@ BG3AI.Visibility = {
     party = function() return { P1 } end,
     uuid = function(u) return u end,
     context = function() return { party = { P1 }, is_party = { [P1] = true } } end,
+    inDialog = function() return false end,
 }
 dofile(LUA .. "/Server/Navigation.lua")
 local N, U, RPC = BG3AI.Nav, BG3AI.Util, BG3AI.RPC
@@ -74,6 +75,7 @@ local function reset()
     nodesFor = nil
     clock = clock + 1000
     N.frame = (N.frame or 0) + 1 -- new frame: drop the path cache
+    N.waysCache, N.waysCacheN, N.waysWarmState = {}, 0, { t = 0 }
 end
 local function test(name, fn)
     count = count + 1
@@ -317,6 +319,16 @@ end)
 test("landing: a guessed y with no floor near it is a jump into air (S021)", function()
     local r = N.landing(P1, { -4, 8, 0 })
     eq(r.safe, false, "safe"); eq(r.no_floor, true, "no_floor"); eq(r.floors[1], 0, "floor named")
+end)
+
+test("landing: no floor at the guessed y -> the floor there is the landing, unless far below (S024 07:14)", function()
+    world[P1] = { 0, 2, 0 }
+    local r = N.landing(P1, { -4, 9, 0 })
+    eq(r.no_floor, true, "no_floor")
+    assert(r.suggest and math.abs(r.suggest[2]) < 0.01, "suggests the real floor")
+    world[P1] = { 0, 20, 0 } -- the floor is 20 m below the jumper: never swapped in
+    r = N.landing(P1, { -4, 9, 0 })
+    eq(r.no_floor, true, "no_floor"); eq(r.suggest, nil, "no suggestion 20 m down")
 end)
 
 local function withJump(m, fn)
@@ -616,6 +628,106 @@ test("ways: the budget leaves the rest unknown", function()
     end)
     Ext.Level.FindPath = real
     assert(ok, err)
+end)
+
+test("ways: cached per spot, a budget-cut search continues on the next call (read latency)", function()
+    local real, n = Ext.Level.FindPath, 0
+    Ext.Level.FindPath = function(path) n = n + 1; clock = clock + 30; return real(path) end
+    local ok, err = pcall(function()
+        local first = N.ways(P1, 20, 8, 50)
+        assert(#first < 8, "cut by the budget")
+        N.frame = N.frame + 1
+        local second = N.ways(P1, 20, 8, 1000)
+        eq(#second, 8, "the rest searched"); eq(second[1].dir, "N", "compass order")
+        N.frame = N.frame + 1
+        local before = n
+        local third = N.ways(P1, 20, 8, 1000)
+        eq(#third, 8, "cached"); eq(n, before, "no new searches at the same spot")
+        world[P1] = { 5, 0, 0 } -- another spot: searched again
+        N.frame = N.frame + 1
+        N.ways(P1, 20, 8, 1000)
+        eq(n > before, true, "new spot searched")
+        world[P1] = { 0, 0, 0 }
+        clock = clock + N.WAYS_TTL_MS + 1 -- expired
+        N.frame = N.frame + 1
+        before = n
+        N.ways(P1, 20, 8, 1000)
+        eq(n > before, true, "expired entry searched again")
+    end)
+    Ext.Level.FindPath = real
+    assert(ok, err)
+end)
+
+test("waysWarm: one direction per step while the active character stands still, none while moving", function()
+    local real, n = Ext.Level.FindPath, 0
+    Ext.Level.FindPath = function(path) n = n + 1; return real(path) end
+    local ok, err = pcall(function()
+        N.waysWarm(clock) -- first sight of the spot
+        clock = clock + 200; N.waysWarm(clock)
+        eq(n, 0, "not still long enough")
+        world[P1] = { 1, 0, 0 } -- moved
+        clock = clock + 1000; N.waysWarm(clock)
+        eq(n, 0, "moving: nothing")
+        for _ = 1, 20 do clock = clock + N.WAYS_WARM_STILL_MS; N.frame = N.frame + 1; N.waysWarm(clock) end
+        local searched = n
+        eq(searched >= 8, true, "all eight warmed: " .. searched)
+        local ways = N.ways(P1, 20, 8, 0)
+        eq(#ways, 8, "frontier reads them from the cache")
+        eq(n, searched, "no search at read time")
+    end)
+    Ext.Level.FindPath = real
+    assert(ok, err)
+end)
+
+test("waysWarm: all eight warm within ~1 s of stopping (arrival); a slow step pauses the warm-up", function()
+    local real, n, cost = Ext.Level.FindPath, 0, 0
+    Ext.Level.FindPath = function(path) n = n + 1; clock = clock + cost; return real(path) end
+    local ok, err = pcall(function()
+        local t0 = clock
+        N.waysWarm(clock) -- arrival: first sight of the spot
+        while clock - t0 < 1000 do clock = clock + 16; N.frame = N.frame + 1; N.waysWarm(clock) end
+        eq(#N.ways(P1, 20, 8, 0), 8, "eight directions warm 1 s after arrival")
+        -- a new spot where every search is slow (a failing search over a big level)
+        N.waysCache, N.waysCacheN, N.waysWarmState = {}, 0, { t = 0 }
+        cost = 200
+        local t1 = clock
+        N.waysWarm(clock)
+        n = 0
+        while clock - t1 < 2000 do clock = clock + 16; N.frame = N.frame + 1; N.waysWarm(clock) end
+        eq(n <= 2, true, "one slow step (far+near), then paused: " .. n .. " searches")
+    end)
+    Ext.Level.FindPath = real
+    assert(ok, err)
+end)
+
+test("closestReach: the ring searches stop at the budget (S025: 2.3 s no-path route)", function()
+    local real, n = Ext.Level.FindPath, 0
+    Ext.Level.FindPath = function(path) n = n + 1; clock = clock + 40; return real(path) end
+    blocked = function(x) return x > 20 end -- nothing near the goal is walkable
+    local ok, err = pcall(function()
+        local t0 = clock
+        N.closestReach(P1, { 40, 0, 0 })
+        local rings = n
+        assert(clock - t0 <= N.CLOSEST_BUDGET_MS + 40 * 8, "bounded: " .. (clock - t0) .. " ms")
+        assert(rings < #N.NEAR_GOAL_RINGS * 8, "not every ring searched: " .. rings)
+    end)
+    Ext.Level.FindPath = real
+    assert(ok, err)
+end)
+
+test("ladderTop: from above the foot, the top end; at the foot or not a ladder, nil (S025 08:03)", function()
+    withConnectorWorld(function()
+        local V = BG3AI.Visibility
+        world[L1] = { 0, 22, 0 }
+        V.bounds = function() return { height = 10.9, radius = 0.5 } end
+        local top = N.ladderTop({ 3, 37.4, 0 }, L1) -- the landing is above the bounds top: the actor's height
+        near(top[2], 37.4, "top y raised to the actor's floor"); near(top[1], 0, "foot x")
+        near(N.ladderTop({ 3, 50, 0 }, L1)[2], 32.9, "far above: the bounds top")
+        eq(N.ladderTop({ 3, 23, 0 }, L1), nil, "at the foot's level")
+        eq(N.ladderTop({ 3, 37, 0 }, D1), nil, "a door")
+        V.bounds = function() return nil end
+        near(N.ladderTop({ 3, 30, 0 }, L1)[2], 30, "no bounds: the actor's height")
+    end)
 end)
 
 test("exitName: hatches, stairs, gates; not lookalikes", function()

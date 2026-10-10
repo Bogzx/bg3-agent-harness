@@ -59,6 +59,16 @@ function V.osi(fn, ...)
     return nil
 end
 
+-- In a dialogue (ServerCharacter.InDialog). Not Osi.IsInDialog: no such
+-- Osiris call in this build, and every lookup of a missing name costs
+-- ~1-10 ms (live 2026-10-10: nav.activity spent ~31 ms of its 1 Hz sample on
+-- it, and the Events passive-roll filter never saw a dialogue).
+function V.inDialog(uuid, e)
+    e = e or V.entity(uuid)
+    local ok, d = pcall(function() return e.ServerCharacter.InDialog end)
+    return ok and d == true
+end
+
 function V.entity(uuid)
     if not uuid then return nil end
     local ok, e = pcall(Ext.Entity.Get, uuid)
@@ -318,7 +328,10 @@ function V.itemVisible(ctx, uuid, e, pos)
     if not interact and kind ~= "door" and kind ~= "container" and kind ~= "ladder" and not isTrap then
         return false -- scenery: the game doesn't highlight it either
     end
-    if not V.perceived(ctx, uuid, pos) and not V.largePerceived(ctx, uuid, e, pos, kind) then return false end
+    if not V.perceived(ctx, uuid, pos) and not V.largePerceived(ctx, uuid, e, pos, kind)
+        and not V.fixturePerceived(ctx, uuid, e, pos, kind) then
+        return false
+    end
     return true, kind
 end
 
@@ -343,11 +356,24 @@ V.RAY_TYPE = 0x05          -- PhysicsType Static | Dynamic
 V.RAY_INCLUDE = 0xFFFFFFFF -- all PhysicsGroupFlags...
 V.RAY_EXCLUDE = 0x820200   -- ...except Character | CanSeeThrough | CanSeeThrough2
 V.RAY_CACHE_MS = 250
+-- A verdict is reused this long while no observer has moved (positions to
+-- 0.5 m): look, get_frontier and the delta after each action re-test the same
+-- items while the party stands still (S025/S026 live: ~0.85 ms of rays per
+-- unseen door/large item, 155 of them in a Shattered Sanctum frontier).
+V.RAY_STILL_MS = 2000
+-- Party members standing this close share an eye: their rays are not cast twice.
+V.OBSERVER_SAME_M = 0.75
 V.rayCache = V.rayCache or {}
 V.rayStats = V.rayStats or { ray = 0, blocked = 0, out_of_range = 0, errors = 0, uncalibrated = 0 }
 
 -- {height, radius} from the entity's AI bounds (Hit preferred), or nil.
-function V.bounds(e)
+-- Cached per entity uuid for BOUNDS_TTL_MS: reading AIBounds costs ~0.2-0.27 ms
+-- live, and every item in a look/frontier scan reads it twice (large and
+-- fixture checks): 286 items at camp = ~130 of a 140 ms frontier (2026-10-10).
+V.BOUNDS_TTL_MS = 30000
+V.boundsCache = V.boundsCache or {}
+V.boundsCacheN = V.boundsCacheN or 0
+local function readBounds(e)
     local b = U.comp(e, "Bound")
     if not b then return nil end
     local best
@@ -362,6 +388,21 @@ function V.bounds(e)
         end
     end)
     return best
+end
+
+function V.bounds(e)
+    local u = e and V.entityUuid(e)
+    if not u then return readBounds(e) end
+    local now = Ext.Utils.MonotonicTime()
+    local c = V.boundsCache[u]
+    if c and now - c.t < V.BOUNDS_TTL_MS then return c.v or nil end
+    local v = readBounds(e)
+    if not c then
+        V.boundsCacheN = V.boundsCacheN + 1
+        if V.boundsCacheN > 5000 then V.boundsCache, V.boundsCacheN = {}, 1 end
+    end
+    V.boundsCache[u] = { t = now, v = v or false }
+    return v
 end
 
 -- Sample points on the object as seen from `eye`: middle and upper body, the
@@ -429,6 +470,42 @@ function V.rayCalibrated(o)
     return V.calib.ok
 end
 
+-- The observers' positions (0.5 m grid), once per context (= per frame).
+local function observerFp(ctx)
+    if ctx.rayFp then return ctx.rayFp end
+    local parts = {}
+    for _, o in ipairs(ctx.observers or {}) do
+        if o.pos then
+            parts[#parts + 1] = math.floor(o.pos[1] * 2 + 0.5) .. "," .. math.floor(o.pos[2] * 2 + 0.5) .. ","
+                .. math.floor(o.pos[3] * 2 + 0.5)
+        end
+    end
+    ctx.rayFp = table.concat(parts, ";")
+    return ctx.rayFp
+end
+
+local function rayCacheGet(ctx, key, now)
+    local c = V.rayCache[key]
+    if not c then return nil end
+    if now - c.t < V.RAY_CACHE_MS or (c.fp == observerFp(ctx) and now - c.t < V.RAY_STILL_MS) then return c end
+    return nil
+end
+
+local function rayCachePut(ctx, key, now, v)
+    V.rayCacheN = (V.rayCacheN or 0) + 1
+    if V.rayCacheN > 4000 then V.rayCache, V.rayCacheN = {}, 0 end
+    V.rayCache[key] = { t = now, v = v, fp = observerFp(ctx) }
+end
+
+-- Was an eye within OBSERVER_SAME_M of `eye` already tried? (records it if not)
+local function eyeTried(tried, eye)
+    for _, t in ipairs(tried) do
+        if U.dist(t, eye) <= V.OBSERVER_SAME_M then return true end
+    end
+    tried[#tried + 1] = eye
+    return false
+end
+
 -- Is a large object perceived by an unobstructed ray from a party member?
 function V.largePerceived(ctx, uuid, e, pos, kind)
     if not pos or V.rayBroken then return false end
@@ -436,17 +513,17 @@ function V.largePerceived(ctx, uuid, e, pos, kind)
     local large = V.LARGE_KINDS[kind] or (bd and (bd.height >= V.LARGE_H or bd.radius >= V.LARGE_R))
     if not large then return false end
     local now = Ext.Utils.MonotonicTime()
-    local c = V.rayCache[uuid]
-    if c and now - c.t < V.RAY_CACHE_MS then return c.v end
+    local c = rayCacheGet(ctx, uuid, now)
+    if c then return c.v end
     local o1 = ctx.observers[1]
     if not (o1 and o1.pos and V.rayCalibrated(o1)) then return false end
     local h = math.max(bd and bd.height or 2.0, 1.0)
     local r = math.max(bd and bd.radius or 0.75, 0.3)
-    local v, inRange = false, false
+    local v, inRange, tried = false, false, {}
     for _, o in ipairs(ctx.observers) do
-        if o.pos and U.dist(o.pos, pos) <= o.sight then
+        local eye = o.pos and { o.pos[1], o.pos[2] + V.EYE_H, o.pos[3] }
+        if eye and U.dist(o.pos, pos) <= o.sight and not eyeTried(tried, eye) then
             inRange = true
-            local eye = { o.pos[1], o.pos[2] + V.EYE_H, o.pos[3] }
             local ok, res = pcall(function()
                 for _, pt in ipairs(samplePoints(eye, pos, h, r)) do
                     if rayClear(uuid, eye, pt, math.max(0.5, r)) then return true end
@@ -465,9 +542,57 @@ function V.largePerceived(ctx, uuid, e, pos, kind)
     end
     local st = V.rayStats
     if v then st.ray = st.ray + 1 elseif inRange then st.blocked = st.blocked + 1 else st.out_of_range = st.out_of_range + 1 end
-    V.rayCacheN = (V.rayCacheN or 0) + 1
-    if V.rayCacheN > 4000 then V.rayCache, V.rayCacheN = {}, 0 end
-    V.rayCache[uuid] = { t = now, v = v }
+    rayCachePut(ctx, uuid, now, v)
+    return v
+end
+
+-- Small wall/floor fixtures (puzzle buttons, levers, switches): usable, not
+-- pickable, not containers. They sit recessed in a wall or plinth, so
+-- CanSee/LOS to their center fail, and the ray hits the wall face ~0.3 m short
+-- of the center (S025/S026 Grand Mausoleum: the buttons under the paintings
+-- Moonrise Towers and Grief never listed; the one under General, flush with
+-- the wall, did). Perceived when a party member within FIXTURE_RANGE has an
+-- unobstructed ray that ends within FIXTURE_SLACK of the center (the front
+-- of the fixture). A wall between them stops the ray earlier.
+V.FIXTURE_RANGE = 12.0
+V.FIXTURE_SLACK = 0.45
+V.FIXTURE_MAX_H = 1.2
+V.FIXTURE_MAX_R = 0.6
+V.FIXTURE_KINDS = { usable = true, object = true }
+function V.fixturePerceived(ctx, uuid, e, pos, kind)
+    if not pos or V.rayBroken or not V.FIXTURE_KINDS[kind] then return false end
+    local bd = V.bounds(e)
+    if not bd or bd.height > V.FIXTURE_MAX_H or bd.radius > V.FIXTURE_MAX_R then return false end
+    local now = Ext.Utils.MonotonicTime()
+    local key = "fx:" .. uuid
+    local c = rayCacheGet(ctx, key, now)
+    if c then return c.v end
+    local o1 = ctx.observers[1]
+    if not (o1 and o1.pos and V.rayCalibrated(o1)) then return false end
+    local v, tried = false, {}
+    for _, o in ipairs(ctx.observers) do
+        local eye = o.pos and { o.pos[1], o.pos[2] + V.EYE_H, o.pos[3] }
+        if eye and U.dist(o.pos, pos) <= math.min(o.sight or V.FIXTURE_RANGE, V.FIXTURE_RANGE)
+            and not eyeTried(tried, eye) then
+            local ok, res = pcall(function()
+                for _, pt in ipairs({ { pos[1], pos[2] + bd.height * 0.5, pos[3] }, { pos[1], pos[2] + bd.height, pos[3] } }) do
+                    local hit = raycast(eye, pt)
+                    if not hit or hitEntityUuid(hit) == uuid then return true end
+                    local hp = hit.Position
+                    if hp and U.dist({ hp[1], hp[2], hp[3] }, pt) <= V.FIXTURE_SLACK then return true end
+                end
+                return false
+            end)
+            if not ok then
+                V.rayStats.errors = V.rayStats.errors + 1
+                V.rayBroken = true
+                Ext.Utils.PrintWarning("[BG3AI] fixture raycast disabled: " .. tostring(res))
+                return false
+            end
+            if res then v = true; break end
+        end
+    end
+    rayCachePut(ctx, key, now, v)
     return v
 end
 
@@ -494,13 +619,22 @@ function V.pointSeen(ctx, pt, lift)
     return false
 end
 
--- Would a character standing at `feet` see the entity (uuid, e, pos)? An
--- unobstructed ray from its eye to one of the entity's sample points (body
--- middle / top / sides). Planning only (combat_turn picking a spot to cast
--- from): the cast itself is still refused by the engine's HasLineOfSight.
--- A prone (downed) body is low: its bounds give the height. nil when the ray
--- API is unusable.
-function V.losFrom(ctx, uuid, e, pos, feet)
+-- Would a character standing at `feet` see the entity (uuid, e, pos)?
+-- Planning only (combat_turn picking a spot to cast from): the cast itself is
+-- still refused by the engine's HasLineOfSight. nil when the ray API is
+-- unusable.
+-- Characters: centre rays only, to the chest and the head, both clear. The
+-- side / near-face samples said "in sight" where the engine's
+-- HasLineOfSight did not (S023-S026: 4 of 5 los_spot steps, mostly ~1 m,
+-- still "no line of sight"; live probe 2026-10-10: the 5-point rule
+-- disagreed with the engine on 2 of 56 character pairs as a false yes, a
+-- centre ray at any eye/target height on 0). margin (m): also a parallel ray
+-- offset sideways by margin on each side must be clear (a spot that keeps
+-- seeing the target when the geometry is a bit off).
+-- Items: any of the body samples (middle / top / sides), as before.
+-- A prone (downed) body is low: its bounds give the height.
+V.LOS_SLACK = 0.3
+function V.losFrom(ctx, uuid, e, pos, feet, margin)
     if V.rayBroken or not (feet and pos) then return nil end
     local o1 = ctx.observers and ctx.observers[1]
     if not (o1 and o1.pos and V.rayCalibrated(o1)) then return nil end
@@ -508,11 +642,30 @@ function V.losFrom(ctx, uuid, e, pos, feet)
     local h = math.max(bd and bd.height or 1.8, 0.4)
     local r = math.max(bd and bd.radius or 0.5, 0.3)
     local eye = { feet[1], feet[2] + V.EYE_H, feet[3] }
+    local isChar = e and U.comp(e, "ServerCharacter") ~= nil
     local ok, res = pcall(function()
-        for _, pt in ipairs(samplePoints(eye, pos, h, r)) do
-            if rayClear(uuid, eye, pt, 0.3) then return true end
+        if not isChar then
+            for _, pt in ipairs(samplePoints(eye, pos, h, r)) do
+                if rayClear(uuid, eye, pt, V.LOS_SLACK) then return true end
+            end
+            return false
         end
-        return false
+        local chest = { pos[1], pos[2] + h * 0.5, pos[3] }
+        local head = { pos[1], pos[2] + h * 0.85, pos[3] }
+        if not (rayClear(uuid, eye, chest, V.LOS_SLACK) and rayClear(uuid, eye, head, V.LOS_SLACK)) then return false end
+        if margin and margin > 0 then
+            local dx, dz = pos[1] - eye[1], pos[3] - eye[3]
+            local len = math.sqrt(dx * dx + dz * dz)
+            if len > 0.01 then
+                local px, pz = -dz / len * margin, dx / len * margin
+                for _, sgn in ipairs({ 1, -1 }) do
+                    local e2 = { eye[1] + sgn * px, eye[2], eye[3] + sgn * pz }
+                    local c2 = { chest[1] + sgn * px, chest[2], chest[3] + sgn * pz }
+                    if not rayClear(uuid, e2, c2, V.LOS_SLACK) then return false end
+                end
+            end
+        end
+        return true
     end)
     if not ok then return nil end
     return res
@@ -678,6 +831,15 @@ V.MEMORY_CAP = 200
 
 function V.remember(uuid, name, pos, relation)
     V.memory[uuid] = { name = name, pos = pos, relation = relation, t = Ext.Utils.MonotonicTime(), level = currentLevel() }
+end
+
+-- The party's last sight of one character on this level: {pos, ago_s} or nil
+-- (what get_nearby lists as REMEMBERED; the refusal of an out-of-sight target
+-- names it, Guard.target_visible).
+function V.lastSeen(uuid)
+    local m = uuid and V.memory[uuid]
+    if not m or not m.pos or m.level ~= currentLevel() then return nil end
+    return { pos = U.vec(m.pos, 1), ago_s = math.floor((Ext.Utils.MonotonicTime() - m.t) / 1000) }
 end
 
 function V.recall(exclude, around, radius)

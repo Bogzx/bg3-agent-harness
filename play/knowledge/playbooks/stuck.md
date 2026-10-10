@@ -29,7 +29,7 @@ stop at the first rung that frees you:
 4. **Another objective:** park this one (objectives.md **Blocked**, what you tried, `place_marker`
    there) and go do something else from objectives.md, `get_frontier` or `get_journal`.
 Then add one line to strategy.md "Harness and tool quirks" (`<tool> <symptom> → <what worked>`) and a
-`[note] harness: …` line in the session log for the operator, and continue playing.
+`note("[note] harness: …")` line for the operator, and continue playing.
 
 ## 1. Stop and describe (write it in the session log)
 `- HH:MM [stuck] trying <X>; tried <A>, <B>, <C>; symptom <what happens>`

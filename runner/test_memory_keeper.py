@@ -37,6 +37,10 @@ elif mode == "out_of_bounds":
     app("HANDOFF.md", "\nkeeper scribble\n")
     app("sessions/S003.md", "\nkeeper scribble\n")
     Path("new-notes.md").write_text("x\n")
+elif mode == "handoff":
+    p = Path("HANDOFF.md")
+    p.write_text(p.read_text().replace("Save to load:", "Save to load: KEEPER") +
+                 "\n## From the logs (memory keeper)\n- S003 ended at the Priestess door; next: open it\n")
 elif mode == "bad_lint":
     app("npcs.md", "\n- Zevlor untagged bullet with no provenance\n")
 elif mode == "fixable":
@@ -96,22 +100,35 @@ class KeeperTest(MemoryTestCase):
         self.assertEqual(json.loads(self.calls.read_text().splitlines()[0])["cwd"], str(self.mem))
         settings = json.loads(args[args.index("--settings") + 1])
         deny = settings["permissions"]["deny"]
-        self.assertIn(f"Edit(/{self.mem.resolve()}/HANDOFF.md)", deny)
+        self.assertNotIn(f"Edit(/{self.mem.resolve()}/HANDOFF.md)", deny)  # its last section is the keeper's
         self.assertIn(f"Write(/{self.mem.resolve()}/sessions/**)", deny)
         self.assertIn("memlint", json.dumps(settings["hooks"]))
         prompt = args[args.index("-p") + 1]
         self.assertIn("sessions/S003.md", prompt)
-        self.assertIn("NEVER edit HANDOFF.md", prompt)
+        self.assertIn("nor HANDOFF.md above its last section", prompt)
+        self.assertIn("## From the logs (memory keeper)", prompt)
 
     def test_out_of_bounds_edits_are_reverted(self):
         handoff, log = self.read("HANDOFF.md"), self.read("sessions/S003.md")
         r = self.run_keeper("out_of_bounds")
         self.assertEqual(r.status, "ok", r.summary())
         self.assertEqual(r.files, ["quests.md"])
-        self.assertEqual(r.reverted, ["HANDOFF.md", "new-notes.md", "sessions/S003.md"])
+        self.assertEqual(r.reverted, ["HANDOFF.md (player part)", "new-notes.md", "sessions/S003.md"])
         self.assertEqual(self.read("HANDOFF.md"), handoff)
         self.assertEqual(self.read("sessions/S003.md"), log)
         self.assertFalse((self.mem / "new-notes.md").exists())
+
+    def test_keeper_section_kept_player_part_restored(self):
+        handoff = self.read("HANDOFF.md")
+        self.assertIn("Save to load:", handoff)
+        r = self.run_keeper("handoff")
+        self.assertEqual(r.status, "ok", r.summary())
+        self.assertIn("HANDOFF.md", r.files)
+        now = self.read("HANDOFF.md")
+        self.assertTrue(now.startswith(handoff.rstrip("\n")), now)  # player part byte for byte (Save line too)
+        self.assertNotIn("KEEPER", now)
+        self.assertTrue(now.endswith("## From the logs (memory keeper)\n- S003 ended at the Priestess door; "
+                                     "next: open it\n"), now)
 
     def test_new_lint_errors_roll_back_everything(self):
         npcs = self.read("npcs.md")
@@ -149,6 +166,19 @@ class KeeperTest(MemoryTestCase):
         self.assertEqual(r.status, "ok")
         st = M.git(self.mem, "status", "--porcelain").stdout
         self.assertIn("sessions/S003.md", st)
+
+    def test_commit_skips_paths_deleted_and_committed_elsewhere(self):
+        # S026: the orchestrator deleted + committed a chapter while the keeper ran; `git add -- <gone path>` died
+        # with exit 128 and the keeper's real edits were lost.
+        self.write("chapters/C01_old.md", "# C01\n")
+        self.commit("chapter")
+        (self.mem / "chapters/C01_old.md").unlink()
+        self.commit("rm chapter")
+        self.append("quests.md", "\n- Keeper edit [seen] (S003)\n")
+        h = K.commit(self.mem, ["chapters/C01_old.md", "quests.md"], "S003 memory-keeper: quests.md")
+        self.assertTrue(h)
+        self.assertIn("quests.md", M.git(self.mem, "show", "--stat", "HEAD").stdout)
+        self.assertIsNone(K.commit(self.mem, ["chapters/C01_old.md"], "nothing"))
 
     def test_compaction_prompt_when_due(self):
         for n in range(4, 13):

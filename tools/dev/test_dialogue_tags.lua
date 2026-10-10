@@ -211,5 +211,26 @@ do
     check("stale: no options", #out == 0)
 end
 
+-- 10. S026 Karlach's companion menu: a scrolling (virtualized) list, 6 of 13 answers rendered, one
+--     rendered text not pairable (markup differs), so neither the all-VMs rule (a text-less hidden VM)
+--     nor pairing applies: the live VMs with text, in game order.
+do
+    local items, vms = {}, {}
+    for k = 1, 13 do
+        local t = "Answer number " .. k .. "?"
+        if k <= 6 then items[k] = item({}, k == 3 and "So not only do you have this thing" or t) end
+        vms[#vms + 1] = vm({ { Text = k == 3 and "So not only do you have this <i>thing</i>, but..." or t } })
+        if k == 9 then vms[#vms + 1] = vm({}) end -- a hidden answer
+    end
+    local out, changing = S.dialogueAnswers(widget(items), ad(vms, true))
+    check("virtualized: not changing", changing == false)
+    check("virtualized: all 13 texted answers", #out == 13, #out)
+    check("virtualized: option 13 is the last VM, the hidden one skipped", out[13] and out[13].vm == vms[14])
+    -- the same while the game says a line still plays: no options
+    local out2, changing2, counts = S.dialogueAnswers(widget(items), ad(vms, false))
+    check("virtualized listening: changing", changing2 == true and #out2 == 0)
+    check("virtualized: counts carry the diagnostics", counts and counts.show == false and counts.texted == 0)
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end

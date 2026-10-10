@@ -332,8 +332,20 @@ function G.visible(target)
     return fallback_visible(g)
 end
 
+-- Out of sight but seen before (S026 09:02: talk_to Mattis, last seen 669 s
+-- earlier 40 m away: refused, then get_nearby, then a walk by hand): say where
+-- the party last saw it, so the next call is the walk there. "" otherwise.
+function G.last_seen_hint(target)
+    local V = BG3AI.Visibility
+    if type(V) ~= "table" or type(V.lastSeen) ~= "function" then return "" end
+    local ok, m = pcall(V.lastSeen, G.guid(target))
+    if not ok or type(m) ~= "table" or type(m.pos) ~= "table" then return "" end
+    return string.format("; last seen @(%.1f,%.1f,%.1f) %ds ago: travel_to that spot first",
+        m.pos[1], m.pos[2], m.pos[3], m.ago_s or 0)
+end
+
 function G.target_visible(target)
-    if not G.visible(target) then G.refuse("target is not visible") end
+    if not G.visible(target) then G.refuse("target is not visible" .. G.last_seen_hint(target)) end
 end
 
 -- Point targets: within reach of the actor, and (if Visibility offers it)
@@ -449,15 +461,30 @@ G.UNVERIFIED_APPROACH_M = 8.0
 --                               detector still applies)
 --   plan.dist                   straight distance actor -> target now
 -- Refuses when no candidate is reachable.
+-- A ladder seen from above is approached at its top end (BG3AI.Nav.ladderTop;
+-- its position is its foot, S025 08:03). The top landing can sit a few metres
+-- off the foot's x/z, so the rings reach out to 3 m there (the walker uses a
+-- target that did not move from the verified point, Actions walk_to_plan).
+G.LADDER_TOP_RADII = { 1.0, 1.5, 2.2, 3.0 }
+
+local function ladder_top(a, target)
+    local N = BG3AI.Nav
+    if type(N) ~= "table" or type(N.ladderTop) ~= "function" then return nil end
+    local ok, top = pcall(N.ladderTop, a, target)
+    return ok and type(top) == "table" and top or nil
+end
+
 function G.approach_point(char, target, reach)
-    local a, t = G.pos(char), G.pos(target)
-    if not a or not t then G.refuse("cannot locate target") end
+    local a, tpos = G.pos(char), G.pos(target)
+    if not a or not tpos then G.refuse("cannot locate target") end
+    local top = ladder_top(a, target)
+    local t = top or tpos -- where it is used from
     local d = U.dist(a, t)
-    if d <= reach then return { here = true, dist = d, length_m = 0, tpos = t } end
+    if d <= reach then return { here = true, dist = d, length_m = 0, tpos = tpos } end
     local base = math.atan(a[3] - t[3], a[1] - t[1]) -- angle from target toward actor
     local cands = {}
-    for _, r in ipairs(G.APPROACH_RADII) do
-        if r <= reach - 0.2 then
+    for _, r in ipairs(top and G.LADDER_TOP_RADII or G.APPROACH_RADII) do
+        if top or r <= reach - 0.2 then
             for i = 0, 7 do
                 local ang = base + i * math.pi / 4
                 local x, z = t[1] + r * math.cos(ang), t[3] + r * math.sin(ang)
@@ -476,7 +503,7 @@ function G.approach_point(char, target, reach)
             local r, info = G.reachable(char, p)
             if r ~= nil then known = true end
             if r == true and not info.needs_jump then
-                return { pos = p, length_m = info.length_m or U.dist(a, p), dist = d, tpos = t }
+                return { pos = p, length_m = info.length_m or U.dist(a, p), dist = d, tpos = tpos }
             end
             if r == true and info.needs_jump then jump_only = true end
         end
@@ -486,7 +513,7 @@ function G.approach_point(char, target, reach)
         -- No pathfinding answer at all (Nav missing, or nothing floor-like
         -- around a small target): a short walk toward something in plain
         -- sight is what a click would do; the teleport detector still guards.
-        return { pos = t, length_m = d, dist = d, unverified = true, tpos = t }
+        return { pos = t, length_m = d, dist = d, unverified = true, tpos = tpos }
     end
     G.refuse("no walkable path there (may need a jump or another route)" .. G.closest_hint(char, t))
 end
@@ -571,6 +598,19 @@ function G.lock_key(item)
     k = k and tostring(k) or nil
     if k == "" or k == "None" then return nil end
     return k
+end
+
+-- false when `item`'s lock has no lockpick difficulty (Lock.LockDifficultyClassID is the zero GUID:
+-- story locks, puzzle walls; the game answers a click with "locked" and never a roll), true when it has
+-- one, nil when there is no Lock component to read. Live probe S026 (SCL): the Mausoleum "Stone Wall"
+-- doors and every STORY_LOCK have the zero id; LockDC itself reads 0 on every lock.
+function G.lock_pickable(item)
+    local id
+    pcall(function() id = G.entity(item).Lock.LockDifficultyClassID end)
+    if id == nil then return nil end
+    id = tostring(id)
+    if id == "" or id:match("^[0%-]+$") then return false end
+    return true
 end
 
 local function item_key(ie)
@@ -921,6 +961,12 @@ function G.radius(uuid)
     return 0.5
 end
 
+-- Melee reach is edge to edge: the furthest centre distance at which a weapon
+-- (or Shove) with `range` m reaches `target` (the check_cast test below).
+function G.melee_reach(char, target, range)
+    return range + G.radius(char) + G.radius(target)
+end
+
 -- Jump distance (Projectile_Jump has no numeric range, so the guard caps it).
 -- Its stats TargetRadius is 4.5 (live, bg3le). BG3: about half the Strength
 -- score in metres; Enhance Leap triples it, Step of the Wind doubles it.
@@ -930,7 +976,7 @@ G.JUMP_MIN_M = 4.0
 G.JUMP_SLACK_M = 0.5
 G.JUMP_MULTIPLIERS = { ENHANCE_LEAP = 3, STEP_OF_THE_WIND = 2, STEP_OF_THE_WIND_DASH = 2 }
 function G.jump_max(char)
-    local str = tonumber(G.q("GetAbility", char, "Strength")) or 10
+    local str = tonumber((G.q("GetAbility", char, "Strength"))) or 10
     local m = math.max(G.JUMP_MIN_M, str / 2)
     local mult = 1
     for status, k in pairs(G.JUMP_MULTIPLIERS) do
@@ -938,6 +984,12 @@ function G.jump_max(char)
     end
     return m * mult
 end
+
+-- HasLineOfSight(char, item) is false for a door, chest or barricade the
+-- character stands next to (its own collision blocks the ray: S024/S025 Knock
+-- on 3 locked doors from 1.5-2 m, attacks on a barricade and a door, 10 casts
+-- refused). An item that passed G.visible this close is in plain sight.
+G.ITEM_LOS_NEAR_M = 4.0
 
 -- Full pre-validation for an Osiris-originated cast. Returns
 -- {stats, costs, payers} or refuses with the reason the UI would show.
@@ -994,12 +1046,13 @@ function G.check_cast(char, spell, target, pos, upcast)
         -- Melee (weapon or a short numeric reach like Shove) is edge to edge:
         -- centres may be both bounding radii farther apart than the reach
         -- (1.5 m warhammer + 0.5 + 0.49 for Claude vs an imp = 2.49 m).
-        local reach = range and (melee and range + G.radius(char) + G.radius(target) or range + 0.5)
+        local reach = range and (melee and G.melee_reach(char, target, range) or range + 0.5)
         if reach and not G.same(char, target) and d > reach then
             G.refuse(string.format("target is out of range (%.1f m, range %.1f m): move closer first", d, range))
         end
         if st_type ~= "Shout" and not G.same(char, target)
-            and not b(G.q("HasLineOfSight", char, target)) then
+            and not b(G.q("HasLineOfSight", char, target))
+            and not (d <= G.ITEM_LOS_NEAR_M and not b(G.q("IsCharacter", target))) then
             G.refuse("no line of sight to target")
         end
     elseif pos then

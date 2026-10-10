@@ -31,7 +31,7 @@ BRIDGE_SRC = M.REPO_ROOT / "bridge" / "src"
 sys.path.insert(0, str(BRIDGE_SRC))
 
 DEBUG_HOST = "127.0.0.1"
-SNAP_FILES = ("status", "party", "inventory", "journal", "map")
+SNAP_FILES = ("status", "party", "inventory", "journal", "map", "gear")
 
 
 def _render():
@@ -173,6 +173,20 @@ def render_inventory(inv: Any, names: dict[str, str] | None = None) -> str:
     return tidy(r.compact(inv, H))
 
 
+def render_gear(inv: Any, names: dict[str, str] | None = None) -> str:
+    """Between-session gear check (S026: Sentinel Shield left in a bag, Gale in a Simple Robe at L5, bags of
+    junk, supplies short): better gear per member, junk to sell, supplies. Injected at the next session start
+    (session.py) so the agent equips it first thing (equip_best)."""
+    from bg3ai import economy  # noqa: PLC0415
+
+    if not isinstance(inv, dict) or "items" not in inv:
+        return ""
+    lines = economy.gear_report(inv, lambda u: (names or {}).get(str(u).lower(), "other"))
+    if not lines:
+        return "## Gear check\n- nothing to change\n"
+    return "## Gear check (equip_best equips the upgrades; trade sell=junk at a trader)\n" + "\n".join(lines) + "\n"
+
+
 JOURNAL_STEPS = 3
 
 
@@ -262,7 +276,13 @@ def collect(rpc: Callable[..., Any], ops: set[str]) -> tuple[dict[str, str], lis
     for member in (status or {}).get("party") or []:
         if isinstance(member, dict) and member.get("uuid"):
             names[str(member["uuid"]).lower()] = member.get("name", "?")
-    for key, op, fn in (("inventory", "state.inventory", lambda inv: render_inventory(inv, names)),
+    def inventory(inv: Any) -> str:
+        gear = render_gear(inv, names)
+        if gear:
+            out["gear"] = tidy(gear)
+        return render_inventory(inv, names)
+
+    for key, op, fn in (("inventory", "state.inventory", inventory),
                         ("journal", "state.journal", render_journal),
                         ("map", "state.map", render_map)):
         try:

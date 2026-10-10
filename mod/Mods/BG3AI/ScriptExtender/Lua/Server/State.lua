@@ -549,6 +549,49 @@ end
 -- Inventory
 ------------------------------------------------------------------------
 
+-- What the item tooltip shows, from its stats entry: camp-supply value (food), category, armour class and
+-- type, weapon damage, the proficiency it needs. The bridge's economy.py uses these for supplies, junk
+-- selling and gear upgrades (S026: bags full of junk, Sentinel Shield unequipped, food unknown).
+local function statField(st, k)
+    local ok, v = pcall(function() return st[k] end)
+    if not ok or v == nil or v == "" then return nil end
+    if type(v) == "table" then
+        local t = {}
+        for _, x in ipairs(v) do t[#t + 1] = tostring(x) end
+        return #t > 0 and table.concat(t, "|") or nil
+    end
+    return v
+end
+
+local function itemStats(ie, o)
+    local st
+    pcall(function() st = Ext.Stats.Get(ie.Data.StatsId) end)
+    if not st then return end
+    local sv = tonumber(statField(st, "SupplyValue"))
+    if sv and sv > 0 then o.supply = sv end
+    local cat = statField(st, "ObjectCategory")
+    if type(cat) == "string" then o.cat = cat:match("^[^;]+") end
+    local tab = statField(st, "InventoryTab")
+    if tab and tab ~= "Auto" then o.tab = tostring(tab) end
+    local kind = statField(st, "ModifierList")
+    local boosts = (tostring(statField(st, "Boosts") or "")) .. ";" .. tostring(statField(st, "DefaultBoosts") or "")
+    if kind == "Armor" then
+        o.ac = tonumber(statField(st, "ArmorClass")) or 0
+        local plus = tonumber(boosts:match("AC%((%d+)%)"))
+        if plus then o.ac = o.ac + plus end
+        o.armor = statField(st, "ArmorType")
+        if statField(st, "Shield") == "Yes" then o.shield = true end
+        o.prof = statField(st, "Proficiency Group")
+    elseif kind == "Weapon" then
+        o.dmg = statField(st, "Damage")
+        o.prof = statField(st, "Proficiency Group")
+        local wp = tostring(statField(st, "Weapon Properties") or "")
+        if wp:find("Twohanded", 1, true) then o.twohanded = true end
+        local ench = tonumber(boosts:match("WeaponEnchantment%((%d+)%)"))
+        if ench then o.ench = ench end
+    end
+end
+
 local function itemView(ie, owner, slot)
     local u = V.entityUuid(ie)
     if not u then return nil end
@@ -570,8 +613,61 @@ local function itemView(ie, owner, slot)
     pcall(function() local t = ie.Equipable; if t then o.slot_type = tostring(t.Slot) end end)
     if slot then o.equipped_slot = slot end
     if comp(ie, "IsGold") then o.gold = true end
+    itemStats(ie, o)
     return o
 end
+
+-- Camp supplies the party carries (food, loose or in the Camp Supply Sacks), as the rest screen counts them.
+local function supplyTotal(invEntity, depth)
+    local n = 0
+    if not invEntity then return 0 end
+    pcall(function()
+        for _, it in pairs(invEntity.InventoryContainer.Items) do
+            local ie = it.Item
+            local o = {}
+            itemStats(ie, o)
+            if o.supply then
+                local u = V.entityUuid(ie)
+                n = n + o.supply * math.max(1, (u and osi(Osi.GetStackAmount, u)) or 1)
+            end
+            local io = depth > 0 and comp(ie, "InventoryOwner")
+            if io then n = n + supplyTotal(io.PrimaryInventory, depth - 1) end
+        end
+    end)
+    return n
+end
+
+-- Per member: proficiencies (what they can wear/wield without penalty) and encumbrance (0 none,
+-- 1 Encumbered, 2 Heavily Encumbered), carried weight, the unencumbered limit and the Heavily threshold (kg).
+local function memberInfo(e)
+    local m = {}
+    pcall(function()
+        local t = {}
+        for _, f in pairs(e.Proficiency.Flags) do t[#t + 1] = tostring(f) end
+        m.prof = t
+    end)
+    pcall(function() m.enc = tonumber(e.EncumbranceState.State) or 0 end)
+    pcall(function() m.kg = round((e.InventoryWeight.Weight or 0) / 1000, 1) end)
+    pcall(function() m.limit = round(e.EncumbranceStats.UnencumberedWeight / 1000, 1) end)
+    -- Above limit: Encumbered (state 1); above heavy: Heavily Encumbered (live probe 2026-10-10).
+    pcall(function() m.heavy = round(e.EncumbranceStats.EncumberedWeight / 1000, 1) end)
+    return m
+end
+
+-- Camp supplies in the camp chest (the rest screen counts them with the carried ones; food sent to camp
+-- lands there). DB_Camp_UserCampChest(player, chest); every player shares the first chest.
+local function campChestSupplies()
+    local n
+    pcall(function()
+        for _, row in ipairs(Osi.DB_Camp_UserCampChest:Get(nil, nil) or {}) do
+            local ce = V.entity(tostring(row[2]):match("(%x+%-%x+%-%x+%-%x+%-%x+)$"))
+            local io = ce and comp(ce, "InventoryOwner")
+            if io then n = supplyTotal(io.PrimaryInventory, 2); return end
+        end
+    end)
+    return n
+end
+S.campChestSupplies = campChestSupplies
 
 local function inventoryItems(invEntity, owner, out, depth, inContainer)
     if not invEntity then return end
@@ -597,14 +693,54 @@ local function inventoryItems(invEntity, owner, out, depth, inContainer)
     end)
 end
 
+-- Inventory cache for the default read (whole party, bags collapsed, no filter): ~55 ms and 40+ KB live
+-- (194 items), and look/get_status read it every call for the ALERTS line and the item delta. Item
+-- listeners bump S.invGen; the cache also expires after INV_TTL_MS, a backstop for anything they miss.
+-- args.rev = the rev of the copy the caller holds: when it is still current the reply is just
+-- { unchanged = true, rev, gold } (gold is always read fresh: it is one Osiris call).
+S.invGen = S.invGen or 0
+S.invRev = S.invRev or 0
+S.INV_TTL_MS = 20000
+function S.bumpInventory() S.invGen = (S.invGen or 0) + 1 end
+for _, ev in ipairs({ { "AddedTo", 3 }, { "RemovedFrom", 3 }, { "Equipped", 2 }, { "Unequipped", 2 },
+    { "UseFinished", 3 }, { "TemplateAddedTo", 4 }, { "TemplateRemovedFrom", 3 }, { "CharacterJoinedParty", 1 },
+    { "CharacterLeftParty", 1 }, { "LeveledUp", 1 }, { "LongRestFinished", 0 }, { "ShortRested", 1 },
+    { "SavegameLoaded", 0 }, { "LevelGameplayStarted", 2 }, { "Combined", 7 } }) do
+    if Ext.Osiris then pcall(Ext.Osiris.RegisterListener, ev[1], ev[2], "after", function() S.bumpInventory() end) end
+end
+
+local inventoryFull
 function S.inventory(ctx, args)
+    local plain = not args.uuid and not args.expand and not (type(args.filter) == "string" and args.filter ~= "")
+    local open = BG3AI.Events and BG3AI.Events.openContainer
+    if not plain or (open and open.uuid) then return inventoryFull(ctx, args) end
+    local key = S.invGen .. "|" .. table.concat(ctx.party, ",")
+    local c, t = S.invCache, Ext.Utils.MonotonicTime()
+    if not c or c.key ~= key or t - c.at > S.INV_TTL_MS then
+        S.invRev = (S.invRev or 0) + 1
+        c = { key = key, at = t, rev = S.invRev, out = inventoryFull(ctx, args) }
+        c.out.rev = c.rev
+        S.invCache = c
+    end
+    local gold = osi(Osi.PartyGetGold, ctx.party[1])
+    if args.rev ~= nil and tonumber(args.rev) == c.rev then
+        return { unchanged = true, rev = c.rev, gold = gold }
+    end
+    c.out.gold = gold
+    return c.out
+end
+
+function inventoryFull(ctx, args)
     local out = { items = {} }
     local owners = args.uuid and { args.uuid } or ctx.party
+    out.members, out.supplies = {}, 0
     for _, u in ipairs(owners) do
         if not ctx.is_party[u] then error("not a party member", 0) end
         local e = V.entity(u)
         local io = e and comp(e, "InventoryOwner")
+        if e then out.members[u] = memberInfo(e) end
         if io then
+            out.supplies = out.supplies + supplyTotal(io.PrimaryInventory, 1)
             -- Bags (camp supplies, pouches) are collapsed unless expand=true or a
             -- filter is given (live S020: filter "key" found only the Keychain bags).
             local f = args.filter
@@ -631,6 +767,7 @@ function S.inventory(ctx, args)
         end
         out.items = kept
     end
+    if not args.uuid then out.camp_supplies = campChestSupplies() end
     out.gold = osi(Osi.PartyGetGold, ctx.party[1])
     -- The container the party currently has open (contents are visible on screen).
     local open = BG3AI.Events and BG3AI.Events.openContainer
@@ -692,7 +829,11 @@ function S.combat(ctx)
                 local u = V.entityUuid(m.Entity)
                 local me = m.Entity
                 if u then
-                    if V.characterVisible(ctx, u, me) then
+                    -- Traps join combat too (S025: an undetected Tripwire on the turn order, initiative -20):
+                    -- an item member passes the item rules (undiscovered traps stay hidden), not the character ones.
+                    local seen
+                    if comp(me, "ServerItem") then seen = V.itemVisible(ctx, u) else seen = V.characterVisible(ctx, u, me) end
+                    if seen then
                         local tb = comp(me, "TurnBased")
                         local o = { uuid = u, name = V.name(u), relation = relation(ctx, u) }
                         if comp(me, "IsSummon") then o.summon = true end  -- ours or theirs: an ally, not a companion
@@ -857,8 +998,10 @@ function S.map(ctx)
             for _, w in pairs(list[1].PartyWaypoints.Waypoints) do
                 local name, area = prettyWaypoint(w.Name)
                 local real = BG3AI.Nav and BG3AI.Nav.waypointName(tostring(w.Name))
+                -- id/level stay internal (fast_travel takes the name); region is what the map shows.
                 out.waypoints[#out.waypoints + 1] = { id = tostring(w.Name), name = real or name, area = area,
-                    level = tostring(w.Level), here = tostring(w.Level) == lvl or nil }
+                    level = tostring(w.Level), region = S.REGION_NAMES[tostring(w.Level)] or tostring(w.Level),
+                    here = tostring(w.Level) == lvl or nil }
             end
         end)
     end
@@ -868,6 +1011,54 @@ end
 ------------------------------------------------------------------------
 -- Nearby
 ------------------------------------------------------------------------
+
+-- At most `limit` items, nearest first, but no name takes more than
+-- LIMIT_PER_NAME slots while other names are left out (S026 Grand Mausoleum:
+-- 25 Candles within 12 m filled the 40 slots and pushed the puzzle Buttons out).
+S.LIMIT_PER_NAME = 3
+function S.limitItems(items, limit)
+    if #items <= limit then return items end
+    local seen, pick, rest = {}, {}, {}
+    for _, it in ipairs(items) do
+        local k = tostring(it.name) .. "|" .. tostring(it.kind)
+        seen[k] = (seen[k] or 0) + 1
+        if seen[k] <= S.LIMIT_PER_NAME and #pick < limit then pick[#pick + 1] = it else rest[#rest + 1] = it end
+    end
+    for _, it in ipairs(rest) do
+        if #pick >= limit then break end
+        pick[#pick + 1] = it
+    end
+    table.sort(pick, function(a, b) return a.d < b.d end)
+    return pick
+end
+
+-- Generic puzzle fixtures get the visible thing they belong to: "under
+-- Moonrise Towers" (the painting above a Button). What a player sees on
+-- screen: the button sits right under the named painting.
+S.FIXTURE_NAMES = { Button = true, Lever = true, Switch = true, Handle = true, ["Pressure Plate"] = true,
+    ["Marble Plate"] = true, Keyhole = true, Valve = true, Pedestal = true, Socket = true }
+S.FIXTURE_NEAR_M = 2.0
+function S.fixtureRelation(it, all)
+    if not S.FIXTURE_NAMES[it.name] then return nil end
+    -- Landmarks only: a lookalike (3+ Candles) names nothing. Something above
+    -- the fixture (a painting, a statue) wins over a thing beside it.
+    local count = {}
+    for _, o in ipairs(all) do if o.name then count[o.name] = (count[o.name] or 0) + 1 end end
+    local best, bs
+    for _, o in ipairs(all) do
+        if o ~= it and o.name and o.name ~= it.name and not S.FIXTURE_NAMES[o.name] and count[o.name] < 3
+            and o.name ~= "Object" and o.name ~= "Unknown" then
+            local dx, dz = o.p[1] - it.p[1], o.p[3] - it.p[3]
+            local h = math.sqrt(dx * dx + dz * dz)
+            local score = h - ((o.p[2] - it.p[2] > 0.8) and 1.0 or 0)
+            if h <= S.FIXTURE_NEAR_M and (not bs or score < bs) then best, bs = o, score end
+        end
+    end
+    if not best then return nil end
+    local dy = best.p[2] - it.p[2]
+    local rel = dy > 0.8 and "under" or (dy < -0.8 and "above" or "by")
+    return rel .. " " .. best.name
+end
 
 function S.nearby(ctx, args)
     local radius = tonumber(args.radius) or 25
@@ -923,18 +1114,22 @@ function S.nearby(ctx, args)
                 if d <= radius then
                     local vis, kind = V.itemVisible(ctx, u, e, p)
                     -- "object" = non-pickup, non-usable scenery-like interactables; only on request.
-                    if vis and ((not kinds and kind ~= "object") or (kinds and (kinds[kind] or (kinds.items and kind ~= "object")))) then
+                    if vis and ((not kinds and (kind ~= "object" or S.FIXTURE_NAMES[V.name(u)])) or (kinds and (kinds[kind] or (kinds.items and kind ~= "object")))) then
                         items[#items + 1] = { u = u, e = e, p = p, d = d, kind = kind }
                     end
                 end
             end
         end
         table.sort(items, function(a, b) return a.d < b.d end)
-        for i, it in ipairs(items) do
-            if i > limit then out.more_items = #items - limit; break end
+        for _, it in ipairs(items) do it.name = V.name(it.u) end
+        local all = items
+        items = S.limitItems(items, limit)
+        if #all > #items then out.more_items = #all - #items end
+        for _, it in ipairs(items) do
             local u, e = it.u, it.e
-            local o = { uuid = u, name = V.name(u), kind = it.kind, pos = pos1(it.p), dist = round(it.d, 1) }
+            local o = { uuid = u, name = it.name, kind = it.kind, pos = pos1(it.p), dist = round(it.d, 1) }
             if o.name == "Object" or o.name == "Unknown" then goto continue end
+            o.near = S.fixtureRelation(it, all)
             if args.item_los then tactical(ctx, u, it.p, o) end
             if truthy(osi(Osi.IsLocked, u)) then o.locked = true end
             if comp(e, "HasOpened") then o.opened = true end
@@ -1048,16 +1243,81 @@ timed("state.status", function()
     out.in_combat = anyCombat
     out.turn_based = anyCombat or ftb
     local ae = V.entity(active)
-    local inDialog = false
-    pcall(function() inDialog = ae.ServerCharacter.InDialog == true end)
-    if not inDialog then inDialog = truthy(osi(Osi.IsInDialog, active)) end
-    out.in_dialogue = inDialog
+    out.in_dialogue = ae ~= nil and V.inDialog(active, ae)
     out.gold = host and osi(Osi.PartyGetGold, host)
     if anyCombat then
         local c = S.combat(ctx)
         out.combat = { round = c.round, current = c.current }
     end
+    out.camp = S.campRoster(ctx)
     return out
+end)
+
+-- Equipped items {slot = {uuid, name}} (the character sheet's paper doll).
+local function equipmentOf(e)
+    local eq = {}
+    pcall(function()
+        for _, inv in ipairs(e.InventoryOwner.Inventories) do
+            if tostring(inv.InventoryData.Type) == "Equipment" then
+                for slot, it in pairs(inv.InventoryContainer.Items) do
+                    local iu = V.entityUuid(it.Item)
+                    if iu then eq[tostring(Ext.Enums.ItemSlot[slot])] = { uuid = iu, name = V.name(iu) } end
+                end
+            end
+        end
+    end)
+    return eq
+end
+
+-- Companions waiting at camp (recruited, not in the party). The engine gives exactly those a CampPresence
+-- component (live 2026-10-10, SCL: Wyll and Halsin had it; party members and unrecruited origins such as
+-- Lae'zel, Astarion, Minsc did not). Fair: the player sees them at camp and knows whom they recruited.
+-- Rows: {uuid, name, level, classes, level_up}; full=true adds skills and equipment (state.camp).
+function S.campRoster(ctx, full)
+    local out = {}
+    local ok, rows = pcall(function() return Osi.DB_Origins:Get(nil) end)
+    if not ok or not rows then return out end
+    for _, r in ipairs(rows) do
+        local u = V.uuid(r[1])
+        local e = u and not ctx.is_party[u] and V.entity(u)
+        if e and comp(e, "CampPresence") and not truthy(osi(Osi.IsDead, u)) then
+            local o = { uuid = u, name = V.name(u), level = level(e), level_up = levelUpTo(e) }
+            local cl = classes(e)
+            if #cl > 0 then o.classes = cl end
+            if full then
+                o.skills = skills(e)
+                o.equipment = equipmentOf(e)
+                local okx, avail = pcall(function() return e.AvailableLevel.Level end)
+                if okx and avail and o.level and avail > o.level then o.can_reach = avail end
+                -- Where it stands when the party is in the same camp (a player sees the camp companions and walks
+                -- over to talk): swap_party walks up when it's past talk range (Halsin stood 66 m off, live).
+                local here = ctx.party[1] and osi(Osi.GetRegion, ctx.party[1])
+                if here and osi(Osi.GetRegion, u) == here then o.pos = pos1(V.pos(e)) end
+            end
+            out[#out + 1] = o
+        end
+    end
+    return out
+end
+
+-- state.camp {}: the camp roster with skills and gear, plus the party's skills (classes, level) so the
+-- bridge can tell what a swap would add (party hint: locks, face, perception).
+timed("state.camp", function()
+    local ctx = V.context()
+    local party, avatars = {}, {}
+    pcall(function()
+        for _, r in ipairs(Osi.DB_Avatars:Get(nil)) do avatars[V.uuid(r[1])] = true end
+    end)
+    for _, u in ipairs(ctx.party) do
+        local e = V.entity(u)
+        if e and not comp(e, "IsSummon") then
+            local cl = classes(e)
+            party[#party + 1] = { uuid = u, name = V.name(u), level = level(e), classes = #cl > 0 and cl or nil,
+                skills = skills(e), dead = truthy(osi(Osi.IsDead, u)) or nil,
+                avatar = avatars[u] }
+        end
+    end
+    return { camp = S.campRoster(ctx, true), party = party }
 end)
 
 timed("state.character", function(args)
@@ -1093,20 +1353,7 @@ timed("state.character", function(args)
     if sec("resources") then out.resources = resourcesView(resources(e)) end
     if sec("conditions") then out.statuses = V.statuses(e) end
     if sec("passives") then out.features = passives(e) end
-    if sec("equipment") then
-        local eq = {}
-        pcall(function()
-            for _, inv in ipairs(e.InventoryOwner.Inventories) do
-                if tostring(inv.InventoryData.Type) == "Equipment" then
-                    for slot, it in pairs(inv.InventoryContainer.Items) do
-                        local iu = V.entityUuid(it.Item)
-                        if iu then eq[tostring(Ext.Enums.ItemSlot[slot])] = { uuid = iu, name = V.name(iu) } end
-                    end
-                end
-            end
-        end)
-        out.equipment = eq
-    end
+    if sec("equipment") then out.equipment = equipmentOf(e) end
     if sec("xp") then
         pcall(function()
             local x = e.Experience

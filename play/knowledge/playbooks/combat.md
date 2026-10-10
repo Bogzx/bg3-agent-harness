@@ -60,6 +60,13 @@ shows it, `react(use=true, which="…")` or `react(use=false)` answers it, then 
 Check a tight or vertical route with `path_preview` first; a jump is `{"tool":"jump_to",…}` as an alternative.
 `do_actions` still works for odd turns (e.g. two characters' steps in one list), but `combat_turn` is the default.
 
+**Ids that fail every session (S023-S025):** spells with variants need the variant id, never the base
+one: `Target_SpiritualWeapon_Greatsword` (or _Maul, _Halberd…), `Shout_SpiritGuardians_Radiant`
+(or _Necrotic), likewise Chromatic Orb, Enhance Ability, Protection from Energy; `get_actions` lists
+them. Multi-target spells take at most two targets (`"targets":"e1,e3"`; Bless on 3 is refused).
+`combat_turn` works only once combat has started: to open a fight from exploration, attack with
+`do_actions([{"tool":"use_ability",…}])`, then play the turns with `combat_turn`.
+
 **Priorities each turn:**
 1. **Downed ally?** Healing Word (bonus action, ranged) or Help (action, adjacent) gets them up. A
    downed character makes death saves; damage while downed counts as failures.
@@ -84,7 +91,7 @@ character is below ~35% and in reach of enemies.
 - Two party members down and no healing → retreat, or use everything you have now (scrolls, potions,
   big spells). Leaving combat: Dash or Disengage away, break line of sight, or jump to unreachable
   ground.
-- **Party wipe** → `list_saves`, then `load_game(save="<folder of the pre-fight save>")`. Log `[death] wipe vs <enemy>; reloaded <save>`
+- **Party wipe** → `list_saves`, then `load_game(save="<folder of the pre-fight save>")`. `note("[death] wipe vs <enemy>; reloaded <save>")`
   and add a lesson about what to do differently. Don't repeat the identical opening.
 - If the same fight is lost twice: run the `stuck` playbook (a different approach: level up first, rest,
   other route, avoid, talk).
@@ -97,6 +104,6 @@ character is below ~35% and in reach of enemies.
    Be quick (see `exploration` for what to keep). `regroup()` if the party is scattered.
 3. Heal: `rest_if_needed()` (short rest if anyone is at or below half). Long rest when slots are low and
    nothing urgent is pending.
-4. Log `- HH:MM [combat] <enemy group> at <place>: won/lost, downs N`.
+4. `note("[combat] <enemy group> at <place>: won/lost, downs N")` (instant; or note= on your next walk).
 5. If a companion died: get a Scroll of Revivify, or recover them at camp later (the camp NPC resurrects
    for gold `[wiki]`). Note it in objectives.

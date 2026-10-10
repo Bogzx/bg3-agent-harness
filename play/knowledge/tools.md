@@ -20,6 +20,7 @@ Lines a result may end with:
 - `get_status(full=false)` → where you are, party HP/conditions, mode, what's on screen, objectives, recent events. Start here.
   After the first call it shows only changes (like `look`, without nearby/items); `full=true` for everything.
 - `get_party()` → each member's HP, AC, level, conditions, resources (slots, actions), concentration.
+  `get_party(camp=true)` → the companions waiting at camp: class, level, pending level up, best skills, weapons/armour.
 - `get_character(who, sections="")` → full sheet (party) or Examine view (others); e.g. `sections="resources,equipment"`.
 - `get_actions(who)` → usable actions/spells/items with costs and availability (ability ids for `use_ability`).
 - `get_nearby(radius=25, kinds="")` → visible characters and objects with ids, distance, relation, locked/opened.
@@ -28,7 +29,8 @@ Lines a result may end with:
 - `path_preview(target | x,y,z, who)` → walking distance, reachable?, needs a jump?, fits remaining movement?
 - `route(objective | target | x,y,z, who, connectors=false)` → the way to a goal as text, instead of a screenshot: distance and height (`9.2m above you`), `FLOORS` here and at the goal, the walk in legs (`1. 8m NW`, `2. CLIMB 9.2m up to (x,y,z)`, `3. 6m E`) with fire on it, or `NO WALKABLE PATH` + the `CLOSEST walkable spot` + `LADDERS/DOORS in view` ranked by how much they help (`climbs 9.4m up [interact to climb]`), and one `NEXT:` step. Far goals (80–400 m) get the engine's whole route too, or `NO WALKABLE PATH from here` when this side has none; then also `CLOSEST YOU HAVE BEEN`, `WAYPOINTS (unlocked, nearest the goal first)`, and `BLOCKED BEFORE (this session)` (spots where your trips toward it stopped; a ladder whose top is one says `LEADS TO A DEAD END`). After two stops at one spot, `NEXT:` says the side is closed: come from another side (a waypoint, the roads, the wiki), don't climb back up. `get_frontier` ladders also say `climbs 9m up/down`; leads on another floor say `(9m up)`.
 - `look_at(target)` → the Examine panel for a visible character or object.
-- `get_inventory(who, filter="")` → equipment, notable items, junk summary, and the OPEN container's contents; filter: equipped | consumables | all | words.
+- `get_inventory(who, filter="")` → equipment, notable items, junk summary, the OPEN container's contents, `CAMP SUPPLIES n/40 carried`, `BETTER GEAR IN BAGS` and `JUNK n items ~Xg`; filter: equipped | consumables | food (supply=N per item) | junk (what sell=junk sells) | gear (upgrades) | all | words.
+- **ALERTS** line (get_status, and look/get_status when it changes): low HP out of combat with the fix (`short rests left N: short_rest`, or `long rest needs 40 supplies, have X`), camp supplies < 40, gold < 200, Encumbered, better gear in bags (`equip_best`), last long rest PARTIAL. Act on it before the next fight or puzzle.
 - `get_journal(quest="")` → active quests with latest entry; `quest="<words>"` → all entries of one quest.
 - `get_map(full=false)` → (after the first call: only new waypoints/objectives, unless you changed area) region, unlocked waypoints, all active quest objectives (`OBJECTIVE o1 <label> 16m W [quest]`, or "(another area)"), your markers. `get_status()` shows the objectives in this area (max 3).
 - `get_events()` → never blocks: everything since your last call, plus `RUNNING` jobs/queues (what's still walking, what's queued).
@@ -47,6 +49,12 @@ Lines a result may end with:
 - `set_party(action, who, leader)` → select | chain | unchain | sneak_on | sneak_off | turn_based_on | turn_based_off.
 - `fast_travel(waypoint)` → to an unlocked waypoint (name or id); not in combat.
 - `camp(action="go")` → go | leave camp.
+- `swap_party(into="Halsin", out="Gale")` → one call from anywhere out of combat: camp, the companion's join
+  answer (and the full-party answer that sends `out` to camp), leave camp, everyone chained. `out` is needed
+  with 4 members (never your own character). A camp scene or an unknown answer stops it with the dialogue
+  shown: answer, then call it again. The newcomer's pending level up shows as `LEVEL UP` right after.
+  get_status/look print a `PARTY:` line when a swap pays off (a camp companion tied to this region or an
+  active quest, a missing role or skill) — the line is the harness's suggestion, the choice is yours.
 - `place_marker(label, target | x,y,z)` / `delete_marker(marker_id)` → your own persistent map markers.
 - `wait(seconds=3)` → let game time pass. Prefer `wait_for`, which returns as soon as the thing happens.
 
@@ -100,11 +108,14 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
 - Cutscenes are auto-skipped; their lines arrive as `dialogue_line` events. Answers are never auto-picked.
 
 ## Items
-- `manage_inventory(op, item, who, to)` → op: equip | unequip | use (drink/read/eat) | give (`to`=name) | camp (to the camp chest).
-- `trade(npc="", offer="", request="", confirm=false)` → `npc` opens the barter; offer and request are comma lists of ids; `confirm=true` closes the deal.
+- `manage_inventory(op, item, who, to)` → op: equip | unequip | use (drink/read/eat) | give (`to`=name) | camp (to the camp chest; `item="junk"` sends all junk at once, fixes Encumbered).
+- `equip_best(who="")` → equips every better item sitting in party bags (AC, weapon damage/enchantment, rarity; proficiency-aware; moves it from another member's bag first). Out of combat. `get_inventory(filter="gear")` previews.
+- `trade(npc="", offer="", request="", confirm=false, sell="", keep="")` → `npc` opens the barter; offer and request are comma lists of ids; `confirm=true` closes the deal. Wares marked `supply=N` are food. `sell="junk"` sells all junk in one call (never equipped/story/consumables/food/keys/tools/magic gear; `keep="e12,e15"` spares items), up to the trader's gold.
 
 ## Progression
-- `short_rest()` → 2 per long rest. `long_rest()` → at camp (`camp("go")` first); handle camp scenes as dialogue.
+- `short_rest()` → 2 per long rest (party-wide); restores HP and short-rest features. Result: `HP Claude 34→62/88, … · short rests left 1/2`.
+- `rest_if_needed(threshold=50, allow_long=false)` → short rest only if someone is downed or ≤ threshold % HP (see below).
+- `long_rest(confirm=true, partial=false)` → at camp (`camp("go")` first); handle camp scenes as dialogue. With < 40 supplies it STOPS before resting (a partial rest = half HP and slots): get food first, or `partial=true` to rest anyway; the rest screen stays open (`press_key("escape")`).
 - `get_level_up_options(who)` → what the level-up screen offers.
 - `level_up(who, plan?)` → one call per character level. No plan: uses the line `- <Name> L<n>: {json}` in memory/party-build.md. Plan JSON keys: `subclass`, `feat`, `abilities` (`{"Wisdom":2}`, `{"Wisdom":1,"Constitution":1}` or `["Wisdom","Constitution"]`; half feats 1 point), `spells`, `cantrips`, `skills`, `passives` (also a feat's own choice), `class` (multiclass only). A subclass level fails and lists the choices until `subclass` is given; so do spells/cantrips to learn and passives (invocations, fighting styles): the error says `can pick: …`. A feat level defaults to +2 main ability. Spell and cantrip picks are real clicks the tool does itself (a few seconds); never drive the level-up screen by hand. get_status/look show `LEVEL UP: <who> (<level>)` while one is pending (out of combat); other results say `LEVEL UP pending` within about a minute of the XP. A NOTES WINDOW may add `PARTY PLAN: no plan line yet for …; party lacks …`: write those in party-build.md while walking.
 - `new_game(difficulty="Explorer")` → from the main menu: Explorer | Balanced | Tactician, then character creation.
@@ -131,6 +142,11 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
 - `rest_if_needed(threshold=50, allow_long=false)` → short rest if anyone is downed or ≤ threshold % HP; with `allow_long=true`, camp + long rest when no short rest is left. HP only: judge spell slots yourself.
 
 ## Meta
+- `note(text, tag="note")` → appends `- HH:MM [tag] text` line(s) to your session log **at once** (no Read/Edit
+  of the file). One line per line of text; start a line with its own `[quest]`/`[npc]`/`[decision]`… tag.
+  `travel_to`, `queue_actions` and `do_actions` take `note="…"` too: the note rides on the action, zero extra
+  turns. The memory keeper folds the log into the curated files between sessions; Edit those yourself only
+  for plan changes you need this session.
 - `save_game(label="")` → named save (`Sxxx-<slug>`); empty = quicksave. Background: returns at once, SAVED / SAVE FAILED on a later result; queued if the game can't save now (conversation). `list_saves(limit=10)`. `load_game(save="latest")` → folder name from `list_saves`.
 - `confirm(answer="yes")` → answer an open Yes/No (OK/Cancel…) box: `"yes"`, `"no"`, a button label or its number (`POPUP decision … → answer with confirm`). `long_rest`/`short_rest`/`fast_travel` answer their own "End the day?"-type questions and list them (`long_rest(confirm=false)` stops at the first instead).
 - `ui_action(command, widget="", param="")` → run a UI command that `ui_dump` lists (screens with no dedicated tool).

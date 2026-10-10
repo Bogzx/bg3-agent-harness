@@ -39,6 +39,7 @@ own output too.
 from __future__ import annotations
 
 import argparse
+import atexit
 import fcntl
 import json
 import os
@@ -46,6 +47,7 @@ import re
 import statistics
 import subprocess
 import sys
+import shutil
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -565,6 +567,7 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     tmp = Path(tempfile.mkdtemp(prefix="bg3ai-checkall-"))
+    atexit.register(shutil.rmtree, tmp, True)  # /tmp filled up 2026-10-10 (133 leftovers)
     # Our own bridge import (latency) must not write the real runtime's actions/metrics logs.
     os.environ["BG3AI_RUNTIME"] = str(tmp)
     os.environ.setdefault("BG3AI_METRICS_PATH", str(tmp / "metrics.jsonl"))

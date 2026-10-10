@@ -13,8 +13,9 @@ starts. It overlaps only the runner's between-session game prep (ensure_game, mo
 check_all), which never writes memory; the runner joins it before the next `claude` starts. It never runs
 during play: the player edits the same curated files mid-session and its Stop hook commits `git add -A`,
 so a concurrent keeper would race both. HANDOFF.md (the runner reads its "Save to load" line during the
-prep) and sessions/ (append-only player logs) are read-only for the keeper: denied by its permissions and
-restored by the runner if touched anyway.
+prep) is the player's except its last section (HANDOFF_SECTION, the keeper's: what the next session needs
+from the logs); the runner restores the player's part byte for byte if touched. sessions/ (append-only player
+logs) is read-only for the keeper: denied by its permissions and restored by the runner if touched anyway.
 
 Fairness: it only reorganizes what the memory already says (the player's own notes); no new information.
 
@@ -55,8 +56,36 @@ WRITABLE_DIRS = ["chapters"]
 SNAPSHOT_DIRS = ["chapters", "sessions"]   # plus every top-level file
 
 
+# HANDOFF.md: the keeper owns only this last section (the player's own text above it, incl. the "Save to
+# load" line the runner reads, is kept byte for byte: see keep_handoff_head). It carries what the next session
+# needs from the logs, so the player never Reads old sessions/Sxxx.md mid-session (~19 s/session in S021-S026).
+HANDOFF_SECTION = "## From the logs (memory keeper)"
+
+
 def writable(rel: str) -> bool:
-    return rel in WRITABLE_FILES or any(rel.startswith(d + "/") for d in WRITABLE_DIRS)
+    return rel in WRITABLE_FILES or rel == "HANDOFF.md" or any(rel.startswith(d + "/") for d in WRITABLE_DIRS)
+
+
+def _handoff_split(text: str) -> tuple[str, str]:
+    i = text.find("\n" + HANDOFF_SECTION)
+    return (text, "") if i < 0 else (text[:i], text[i + 1:])
+
+
+def keep_handoff_head(mem: Path, before: dict[str, bytes]) -> bool:
+    """Puts back the player's part of HANDOFF.md (everything above HANDOFF_SECTION) if the keeper touched it;
+    keeps only the keeper's own section. True when something had to be put back."""
+    p = mem / "HANDOFF.md"
+    if "HANDOFF.md" not in before or not p.is_file():
+        return False
+    old = before["HANDOFF.md"].decode("utf-8", "replace")
+    new = p.read_text(encoding="utf-8", errors="replace")
+    old_head, _ = _handoff_split(old)
+    new_head, section = _handoff_split(new)
+    if new_head == old_head:
+        return False
+    merged = old_head.rstrip("\n") + ("\n\n" + section.rstrip("\n") + "\n" if section else "\n")
+    p.write_text(merged if section else old, encoding="utf-8")
+    return True
 
 
 # ---------------------------------------------------------------- snapshot / restore
@@ -121,6 +150,21 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         "and what they said or did, places visited and what's there). Keep the existing format.",
         "- party-build.md, strategy.md, decisions.md, hypotheses.md: only where the logs give something new "
         "(level-ups, builds, lessons, decisions, confirmed/refuted hypotheses).",
+        "- PLAYTHROUGH.md (it is shown to the player at every session start): keep the `Main thread:` line and "
+        "`## Party` current (who is in the active party, in camp, gone). Leave the `Now:` line as the player "
+        "wrote it.",
+        "- PRUNE what no longer helps the next session: a goal, lead or 'Blocked' item for a region or act the "
+        "party has left, or one the logs show is done or superseded, is removed from objectives.md (the "
+        "session logs keep the history) and becomes one line under '## Done' in quests.md with the session "
+        "it ended; never keep two entries for the same goal. "
+        "Stale advice costs the player turns (S025: objectives still listed an Act 1 door as Blocked).",
+        f"- HANDOFF.md, LAST: the player reads it at the start and must not need to Read old session logs "
+        f"mid-play. Write (or replace) ONE section at the very end, heading exactly `{HANDOFF_SECTION}`, "
+        "≤ 12 lines: what the logs record that HANDOFF's text above doesn't say and the next session needs. "
+        "If the last log has a later state than HANDOFF (e.g. 'session ended WITHOUT wrap-up'): where the party "
+        "was, what it was doing, the next concrete step. Also open leads with their exact names (doors, keys, "
+        "NPCs, passwords) and lessons the player looked up in old logs. Write 'nothing new' if nothing. "
+        "Don't change one character above that heading (the runner reads its Save to load line).",
         f"Files no session changed for a while (update them first): {stale_txt}. If such a file truly has "
         f"nothing new, add or refresh one line `- Last updated: {sid} (no change)`.",
         "",
@@ -129,7 +173,8 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         "no guesses presented as facts.",
         "- Every bullet in npcs/locations/quests/decisions/hypotheses needs a provenance tag: [seen] [told] "
         "[wiki] [guess] (copy the tag the log implies; [seen] for what the player observed).",
-        "- NEVER edit HANDOFF.md or anything in sessions/ (read-only; edits are reverted). Never delete facts "
+        "- NEVER edit anything in sessions/, nor HANDOFF.md above its last section (read-only; edits are "
+        "reverted). Never delete facts "
         "from decisions.md or npcs.md: condense them under '## Archive' and add a line 'ARCHIVE: <why>'.",
         "- Keep files within budget (objectives ≤80 lines, quests ≤300, npcs/locations ≤400, party-build ≤150).",
         "- A hook reports lint errors after each edit (silence = clean): fix them right away. The runner lints "
@@ -143,7 +188,8 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
             f"follow {KNOWLEDGE / 'playbooks' / 'compaction.md'} (step 1 and the pruning in step 2, skip its "
             f"logging step). Cover {M.session_id(last + 1)}-{M.session_id(min(last + 10, sid_n))} in "
             f"chapters/C<nn>_S{last + 1:03d}-S{min(last + 10, sid_n):03d}_<slug>.md; write the chapter in ONE "
-            "Write call once you have read those logs (a half-written chapter would be counted as done).",
+            "Write call once you have read those logs (a half-written chapter would be counted as done). "
+            "If a chapter file for these sessions already exists, update it instead of adding a second one.",
         ]
     lines += ["", "Current lint report:", lint_report[-3000:], "",
               "End with one line: what you updated (files) and anything you could not do."]
@@ -153,7 +199,7 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
 def keeper_settings(mem: Path, knowledge: Path = KNOWLEDGE) -> dict:
     m, k = mem.resolve(), knowledge.resolve()
     deny = [f"{tool}(/{p})" for tool in ("Edit", "Write") for p in
-            (f"{m}/HANDOFF.md", f"{m}/sessions/**", f"{m}/.git/**", f"{k}/**")]
+            (f"{m}/sessions/**", f"{m}/.git/**", f"{k}/**")]
     return {
         "permissions": {
             "defaultMode": "acceptEdits",
@@ -242,6 +288,12 @@ def commit(mem: Path, rels: list[str], message: str) -> str | None:
     """Commits only `rels` (the keeper's files), never the open session's other changes."""
     if not rels or not M.is_git_repo(mem):
         return None
+    # A path that is gone from disk and from the index (someone else deleted and committed it meanwhile, S026)
+    # makes `git add -- path` fail with "pathspec did not match": there's nothing of it left to commit.
+    tracked = set(M.git(mem, "ls-files", "--", *rels, check=False).stdout.splitlines())
+    rels = [r for r in rels if (mem / r).exists() or r in tracked]
+    if not rels:
+        return None
     M.git(mem, "add", "-A", "--", *rels)
     if M.git(mem, "diff", "--cached", "--quiet", "--", *rels, check=False).returncode == 0:
         return None
@@ -271,6 +323,8 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
             changed = changes(mem, snap)
             res.reverted = sorted(set(res.reverted) | {r for r in changed if not writable(r)})
             restore(mem, snap, [r for r in changed if not writable(r)])
+            if keep_handoff_head(mem, snap):
+                res.reverted = sorted(set(res.reverted) | {"HANDOFF.md (player part)"})
             new = [e for e in _errors(mem, sid_n + 1) if e not in before_errors]
             left = end - time.time()
             if not new or attempt == 1 or left < FIX_MIN_SECONDS or res.timed_out:

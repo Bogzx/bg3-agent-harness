@@ -38,7 +38,7 @@ but the next feat or spell level will fail without one.
 5. If the result lists problems (a spell not offered, choice incomplete), it did not finish: fix the plan
    line from the problems and call again. Never drive the level-up screen by hand (press_key, clicks): the
    tool does every click itself. If it fails twice on the same plan, it is a harness bug: press_key ESCAPE,
-   note it in the session log, and keep playing (S018 lost ~10 min to hand-driving). Log `- HH:MM [level] Gale → L2: Evocation, Sleep, Thunderwave`.
+   note it in the session log, and keep playing (S018 lost ~10 min to hand-driving). `note("[level] Gale → L2: Evocation, Sleep, Thunderwave")`.
 6. Several pending: level each one back to back (Claude, then the companions); no reads in between.
 
 ## Party composition: 4 roles
@@ -59,9 +59,24 @@ level up, every companion met or lost, and before a region whose needs you know.
   while locked chests, traps and stealth come up; switch to Karlach or Lae'zel for a hard melee fight.
 - Recruit every companion you meet (talk, accept): a full camp roster lets you cover any gap later.
   Lae'zel "left behind" is not gone: she can be recruited where she is, or waits at camp once recruited.
-- **Swapping at camp:** `camp(action="go")`, `talk_to` the companion → the add/remove party option,
-  `camp(action="leave")`. If no option appears, `ui_dump` → `ui_action`. Swap before a region whose needs
-  you know (traps and locks → rogue, big melee fights → second tank, talky areas → a high-CHA face).
+- **Swapping: `swap_party(into, out)`**, one call (camp → join answer → leave camp → regroup). Then
+  `level_up` the newcomer at once: camp companions gain XP but their level ups wait (`LEVEL UP` line).
+  `get_party(camp=true)` shows who waits at camp. **When to swap** (the `PARTY:` line in get_status/look
+  flags most of these; `knowledge/companions.md` is the table it uses):
+  1. **Their own story is here.** A camp companion tied to the region or an active quest: Halsin in the
+     Shadow-Cursed Lands (Thaniel, lifting the curse), Shadowheart at the Gauntlet of Shar, Karlach for
+     Dammon (her engine), Wyll for Mizora/Duke Ravengard, Lae'zel at the creche, Astarion for the Gur and
+     Cazador, Gale for Elminster. Their scenes, approval and rewards only happen with them present.
+  2. **A missing role** for the next known fight: no healer, no frontline, no ranged or area damage.
+  3. **A skill gap** for the area: many locks/traps (Sleight of Hand: Astarion), talky story checks (a
+     high-CHA face), hidden traps (Perception).
+  4. **A dead member** you can't revive yet: bring a camp companion until Withers/Revivify.
+  - **Swap back** when the reason ends (the quest step is done, you leave the region). Keep the strongest
+    four otherwise; never swap mid-dungeon just to try someone out (each swap is ~1 min of play).
+  - Note the reason: `note("[decision] swap Gale→Halsin: Thaniel quest in SCL")`.
+- **Still recruitable in Act 2** `[wiki]`: Halsin (if not yet; joins after the goblin leaders fall),
+  Jaheira (Last Light, after the Last Light/Moonrise events), Minthara (Moonrise, only if knocked out
+  in Act 1, not killed). Act 3: Minsc (with Jaheira). Recruit every one you can: a full camp covers gaps.
 - Companion approval matters for keeping them and for the ending: note reactions in npcs.md and avoid
   repeatedly angering one you rely on.
 - Respecs (Withers at camp, 100 gold `[wiki]`) only if a build is clearly failing; log it as a decision.

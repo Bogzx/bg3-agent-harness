@@ -17,6 +17,7 @@ GUID = "11111111-2222-3333-4444-555555555555"
 class TmpCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3dash-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)

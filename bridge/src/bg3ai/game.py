@@ -268,6 +268,23 @@ class Game:
                 if complete or not isinstance(res, dict):
                     return out
 
+    def drain_events_bounded(self, context: str, max_wait: float) -> list[dict]:
+        """drain_events() that waits at most max_wait s for the context's tick. A dialogue's end stalls the
+        server thread 0.6-0.9 s (S025/S026: events.since 650-934 ms inside dialogue_advance, the 1 Hz sampler
+        skipped a beat each time); the result needn't wait for it: a drain still running stashes its events
+        and the next tool's drain hands them out."""
+        fresh = self._fresh()
+        if context in fresh:
+            return self.drain_events(context)
+        self._drain_in_background(context)
+        with self._stash_lock:
+            t = self._bg_drain[context]
+        if t is not None:
+            t.join(max_wait)
+        with self._stash_lock:
+            out, self._stash[context] = self._stash[context], []
+        return out
+
     def stashed_events(self, context: str) -> list[dict]:
         """Events read() consumed that no drain_events() has handed out yet (peek, not consumed)."""
         with self._stash_lock:

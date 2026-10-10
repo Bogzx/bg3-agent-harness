@@ -118,8 +118,11 @@ class Preload(unittest.TestCase):
         for name in ("screenshot", "click", "click_on", "press_key", "dismiss_popups", "lockpick", "regroup",
                      "get_map", "get_party", "get_actions", "level_up", "short_rest", "long_rest", "camp"):
             self.assertIn(name, server.ALWAYS_LOAD)
-        for name in ("ui_dump", "ui_action", "path_preview", "fast_travel"):
+        for name in ("ui_dump", "ui_action", "path_preview"):
             self.assertNotIn(name, server.ALWAYS_LOAD)
+        # S018-S026: loaded by ToolSearch 6-18 times each
+        for name in ("manage_inventory", "trade", "fast_travel", "read_all", "get_journal", "stay", "set_party"):
+            self.assertIn(name, server.ALWAYS_LOAD)
         self.assertEqual(server._mark_always_load(), [])
 
 

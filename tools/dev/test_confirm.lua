@@ -333,6 +333,16 @@ j = run(r.job, 3000)
 ok(j.status == "failed" and tostring(j.error):find("dialogue started instead", 1, true) and j.result.camp_scene,
     "camp scene before the rest screen is named: " .. tostring(j.error))
 
+-- a conversation already on screen when long_rest is called: refused at once, CampTravel never pressed (S026)
+clock = clock + 60000
+widgets = {}
+W("Dialogue", {}, {})
+nCamp = #commands
+local okr, er = pcall(ops["ui.long_rest"], {})
+ok(not okr and tostring(er):find("conversation is open", 1, true) and #commands == nCamp,
+    "dialogue on screen -> refused, no CampTravel: " .. tostring(er))
+widgets = {}
+
 -- ui.confirm on a dead box: still_open + needs_click
 widgets = {}
 W("Dialog_box", { "[ForceUpdate]" }, { { "Yes", nil, function() end }, { "No", nil, function() end } })

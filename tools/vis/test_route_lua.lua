@@ -436,5 +436,96 @@ test("travel_to direct: fire on the route, a partial goal or no path -> the samp
     eq(r.direct, nil, "alt never takes the direct leg")
 end)
 
+
+-- ---- nearby: item limit per name, fixture relation (State.lua) ---------------------
+
+test("limitItems: 25 Candles don't push the Buttons out of the 40 slots", function()
+    local its = {}
+    for i = 1, 25 do its[#its + 1] = { name = "Candles", kind = "usable", d = i * 0.4 } end
+    for i = 1, 20 do its[#its + 1] = { name = "Vase" .. i, kind = "usable", d = 10 + i * 0.1 } end
+    its[#its + 1] = { name = "Button", kind = "usable", d = 13 }
+    its[#its + 1] = { name = "Button", kind = "usable", d = 14 }
+    table.sort(its, function(a, b) return a.d < b.d end)
+    local got = S.limitItems(its, 40)
+    eq(#got, 40, "limit")
+    local buttons = 0
+    for i, it in ipairs(got) do
+        if it.name == "Button" then buttons = buttons + 1 end
+        if i > 1 then eq(got[i - 1].d <= it.d, true, "sorted by distance") end
+    end
+    eq(buttons, 2, "both buttons kept")
+    eq(#S.limitItems({ { name = "a", d = 1 } }, 40), 1, "under the limit: unchanged")
+end)
+
+test("fixtureRelation: a Button under a painting names it; lookalikes and far things don't", function()
+    local btn = { name = "Button", p = { -286.3, -30.6, -848.8 } }
+    local all = { btn,
+        { name = "Moonrise Towers", p = { -286.2, -28.6, -849.2 } },
+        { name = "Gargoyle Head", p = { -284.2, -30.8, -848.3 } },
+        { name = "Candles", p = { -286.0, -30.6, -848.5 } }, { name = "Candles", p = { 0, 0, 0 } }, { name = "Candles", p = { 1, 0, 0 } } }
+    eq(S.fixtureRelation(btn, all), "under Moonrise Towers", "painting above")
+    eq(S.fixtureRelation(all[2], all), nil, "a painting is not a fixture")
+    local lone = { name = "Lever", p = { 0, 0, 50 } }
+    eq(S.fixtureRelation(lone, { lone, { name = "Statue", p = { 5, 0, 50 } } }), nil, "nothing within 2 m")
+    local lever = { name = "Lever", p = { 0, 0, 0 } }
+    eq(S.fixtureRelation(lever, { lever, { name = "Gate", p = { 1, 0, 0 } } }), "by Gate", "beside")
+end)
+
+-- ---- inventory cache + rev (State.lua) ---------------------------------------------
+
+test("inventory: a caller holding the current rev gets {unchanged}; item events and the TTL rebuild", function()
+    local ctx = BG3AI.Visibility.context()
+    local a = S.inventory(ctx, {})
+    eq(type(a.rev), "number", "full read carries a rev")
+    eq(a.unchanged, nil, "first read is full")
+    local b = S.inventory(ctx, { rev = a.rev })
+    eq(b.unchanged, true, "same rev: unchanged")
+    eq(b.rev, a.rev, "rev echoed")
+    eq(b.gold, 0, "gold read fresh")
+    eq(S.inventory(ctx, { rev = a.rev - 1 }).unchanged, nil, "an old rev gets the full list")
+    S.bumpInventory()
+    local c = S.inventory(ctx, { rev = a.rev })
+    eq(c.unchanged, nil, "after an item event: full")
+    eq(c.rev > a.rev, true, "new rev")
+    eq(S.inventory(ctx, { rev = c.rev, expand = true }).unchanged, nil, "expand is never cached")
+    eq(S.inventory(ctx, { rev = c.rev, filter = "key" }).unchanged, nil, "filter is never cached")
+    clock = clock + S.INV_TTL_MS + 1
+    eq(S.inventory(ctx, { rev = c.rev }).unchanged, nil, "TTL backstop: full")
+end)
+
+-- ---- combat order: traps that join combat pass the item rules (State.lua) ----------
+
+test("combat: an undiscovered trap in the turn order is not listed; a discovered one is", function()
+    local V = BG3AI.Visibility
+    local trapE = { ServerItem = {} }
+    local heroE = { CombatParticipant = {} }
+    local ce = { TurnOrder = { Round = 1, CurrentGroups = { { Members = { { Entity = heroE }, { Entity = trapE } } } } } }
+    heroE.CombatParticipant.CombatHandle = ce
+    local saved = { V.entity, V.entityUuid, V.characterVisible, V.itemVisible }
+    local discovered = false
+    V.entity = function(u) return u == P1 and heroE or nil end
+    V.entityUuid = function(e) return e == heroE and P1 or (e == trapE and "trap-1" or nil) end
+    V.characterVisible = function() return true end -- the old path: would list the trap
+    V.itemVisible = function(_, u) return u == "trap-1" and discovered end
+    local oldOsi = Osi
+    Osi = setmetatable({ IsInCombat = function() return 1 end }, { __index = oldOsi })
+    local ok, err = pcall(function()
+        local ctx = V.context()
+        ctx.observers = {}
+        ctx.rules = {}
+        local out = S.combat(ctx)
+        local names = {}
+        for _, o in ipairs(out.order) do names[#names + 1] = o.uuid end
+        eq(table.concat(names, ","), P1, "undiscovered trap hidden")
+        eq(out.unseen_combatants, true, "counted as unseen")
+        discovered = true
+        out = S.combat(ctx)
+        eq(#out.order, 2, "discovered trap listed")
+    end)
+    Osi = oldOsi
+    V.entity, V.entityUuid, V.characterVisible, V.itemVisible = saved[1], saved[2], saved[3], saved[4]
+    if not ok then error(err, 0) end
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

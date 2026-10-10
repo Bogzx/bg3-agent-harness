@@ -26,6 +26,7 @@ import json
 import os
 import signal
 import sys
+import shutil
 import tempfile
 import threading
 import time
@@ -138,6 +139,7 @@ class FakeGame:
 class CrashRecovery(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-crash-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         launch = self.tmp / "launch_game.sh"
         launch.write_text(FAKE_LAUNCH)
         launch.chmod(0o755)
@@ -357,6 +359,7 @@ class SteamGuard(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-steam-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.log = self.tmp / "steamui_login.txt"
         os.environ["BG3AI_STEAM_LOGIN_LOG"] = str(self.log)
         os.environ.pop("BG3AI_ALLOW_STEAM_ONLINE", None)
@@ -427,6 +430,7 @@ class RunLoop(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-loop-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.saved = {n: getattr(P, n) for n in ("RUNTIME", "STEAM_RETRY_S", "MAX_SETUP_FAILURES")}
         P.RUNTIME = self.tmp / "runtime"
         P.STEAM_RETRY_S = 0
@@ -525,6 +529,7 @@ class SplashMenu(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-splash-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.saved = {n: getattr(P, n) for n in self.NAMES}
         P.RUNTIME = self.tmp / "runtime"
         P.MENU_POLL, P.SPLASH_LOADMENU_S, P.LOAD_START_TIMEOUT = 0.01, 0.2, 1
@@ -585,6 +590,7 @@ class Watch(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-watch-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.saved = {n: getattr(P, n) for n in ("pids_of_game", "crash_reporter_pids", "port_open")}
         self.pids, self.reporters, self.port = [], [], False
         P.pids_of_game = lambda: list(self.pids)
@@ -642,6 +648,7 @@ class MemoryAfterCrash(unittest.TestCase):
 
     def runner(self, report: str):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-mem-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         P.RUNTIME = self.tmp / "runtime"
         r = P.Runner(P.Options("mem-test", None, 20, "opus"))
         r.memory_state = lambda: {"open": True, "current": 14}
@@ -685,9 +692,36 @@ class MemoryAfterCrash(unittest.TestCase):
         self.assertIn("written by S013", r.pending_notes[0])
 
 
+    def test_normal_end_fix_pass_runs_without_the_game(self):
+        r = self.runner(self.S014)
+        kw = []
+        r.run_claude = lambda *a, **k: kw.append(k)
+        r.close_memory_session(self.res("exited"))
+        self.assertEqual(kw[0].get("needs_game"), False)   # S027-fix was killed by the game's OOM death
+
+    def test_killed_session_is_treated_like_a_crash(self):
+        # S027: an outside SIGTERM (exit 143) 3 min in was taken for a clean exit → fix-notes pass for the handoff
+        self.assertEqual(P.exit_reason("exited", 143), "killed")
+        self.assertEqual(P.exit_reason("exited", -15), "killed")
+        self.assertEqual(P.exit_reason("exited", 0), "exited")
+        self.assertEqual(P.exit_reason("hard_stop", 143), "hard_stop")   # the runner's own signals
+        r = self.runner("ERROR  handoff     HANDOFF.md was written by S013, not by the current session S014.\n")
+        r.close_memory_session(self.res("killed"))
+        self.assertEqual((r.pending_notes, self.fix_runs), ([], []))
+        self.assertIn("ended by claude killed", (P.RUNTIME / "runner.log").read_text())
+
+    def test_no_fix_pass_once_a_stop_was_requested(self):
+        r = self.runner(self.S014)
+        r.stop_requested = True
+        r.close_memory_session(self.res("exited"))
+        self.assertEqual(self.fix_runs, [])
+        self.assertIn("written by S013", r.pending_notes[0])
+
+
 class LiveSessionLength(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-len-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.saved_rt = P.RUNTIME
         P.RUNTIME = self.tmp / "runtime"
 

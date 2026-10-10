@@ -1,0 +1,59 @@
+bg3le crash handler: log the fault before unwinding; add an unwinder-free stack scan
+
+On top of 0001-0006. claude-run-2 S024 (07:37:02, the Act 1 -> Shadow-Cursed Lands transition, client
+UnloadLevel) died with nothing in the bg3le log. The core shows why: the fault (a call through a freed
+Noesis object's vtable on a game worker thread, pc 0x2000000000, rcx = MultiBindingExpression vtable)
+entered crash_handler, whose first act was backtrace(); libgcc's _Unwind_Backtrace faulted on the
+corrupt stack inside the handler, SIGSEGV was blocked, and the kernel killed the game before logf ran.
+Now: signal/pc/registers/[rsp] words first, then a scan of 1024 stack words for bg3/libbg3le code
+addresses (an unwinder-free backtrace), then backtrace() last.
+
+diff --git a/src/stackdump.cpp b/src/stackdump.cpp
+index 722d8a5..35f51f8 100644
+--- a/src/stackdump.cpp
++++ b/src/stackdump.cpp
+@@ -103,8 +103,11 @@ std::atomic<bool> g_crashed{false};
+ void crash_handler(int sig, siginfo_t* info, void* context) {
+     if (!g_crashed.exchange(true)) {
+         log_mark_crash();
+-        void* frames[48];
+-        const int n = ::backtrace(frames, 48);
++        // backtrace() runs last: on a corrupt stack (a call through a freed
++        // object's vtable, S024) libgcc's unwinder faults inside this
++        // handler, the signal is blocked, and the kernel kills the game
++        // before a single line is written. Everything below it is plain
++        // memory reads and logf.
+         const std::uintptr_t bias = main_bias();
+         logf("crash: signal %d at %p on tid %ld (bias 0x%lx)", sig,
+              info != nullptr ? info->si_addr : nullptr,
+@@ -150,7 +153,30 @@ void crash_handler(int sig, siginfo_t* info, void* context) {
+                 std::snprintf(what, sizeof what, "[rsp+%d]", 8 * i);
+                 describe(what, word);
+             }
++            // The unwinder-free backtrace: every stack word that points into
++            // bg3 or libbg3le code, nearest first (return addresses, plus
++            // some stale ones; enough to place the caller when the
++            // unwinder can't run).
++            int found = 0;
++            for (int i = 0; i < 1024 && found < 40; ++i) {
++                std::uintptr_t word = 0;
++                std::memcpy(&word, reinterpret_cast<void*>(sp + 8 * i), 8);
++                Dl_info dl{};
++                if (word < 0x10000 || ::dladdr(reinterpret_cast<void*>(word), &dl) == 0
++                    || dl.dli_fname == nullptr) {
++                    continue;
++                }
++                const bool game = std::strstr(dl.dli_fname, "/bin/bg3") != nullptr;
++                if (!game && std::strstr(dl.dli_fname, "libbg3le") == nullptr) continue;
++                char what[24];
++                std::snprintf(what, sizeof what, "scan [rsp+%#x]", 8 * i);
++                describe(what, word);
++                ++found;
++            }
++            logf("crash: register dump and stack scan done; unwinding next");
+         }
++        void* frames[48];
++        const int n = ::backtrace(frames, 48);
+         for (int i = 0; i < n; ++i) {
+             Dl_info dl{};
+             const auto addr = reinterpret_cast<std::uintptr_t>(frames[i]);

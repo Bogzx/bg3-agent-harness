@@ -7,7 +7,9 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -41,6 +43,7 @@ class Rig:
 
     def __init__(self, menu_s=0.2, write_s=0.1, menu_ok=True, writes=True):
         self.dir = Path(tempfile.mkdtemp(prefix="bg3ai-saves-"))
+        atexit.register(shutil.rmtree, self.dir, True)
         self.menu_s, self.write_s, self.menu_ok, self.writes = menu_s, write_s, menu_ok, writes
         self.can = True
         self.menus: list[str] = []
@@ -135,6 +138,7 @@ class SaverTest(unittest.TestCase):
         # S017: 'Claude-25101260926__S017-pre-dror/S017-pre-dror.lsv' was on disk but the check looked for
         # '<folder>.lsv' and reported 4/4 saves lost
         root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
         t = time.time()
         d = root / "Claude-25101260926__S017-pre-dror"
         d.mkdir()
@@ -176,6 +180,7 @@ class SaverTest(unittest.TestCase):
 
     def test_written_save_matches_label_quicksave_and_time(self):
         root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
         old = write_save(root, "S009-end", 1)
         os.utime(old / "S009-end.lsv", (time.time() - 100, time.time() - 100))
         t = time.time()

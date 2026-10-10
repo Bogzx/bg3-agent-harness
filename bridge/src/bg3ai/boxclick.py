@@ -94,7 +94,32 @@ def click_box(rpc: Rpc, inp: Any, answer: str = "yes", budget_s: float = BUDGET_
             _hits[k] = (fx, fy)
         inp.move(w // 2, int(h * 0.2))  # off the box (no hover left on its buttons)
         return res
+    if k == "yes" and (first.get("buttons") or [None])[0] == first.get("label"):
+        return _press_default(rpc, inp, answer, str(first.get("label")), sig0, tries, (w, h))
     return {"error": f"no cursor position over the '{answer}' button found", "tries": tries}
+
+
+def _press_default(rpc: Rpc, inp: Any, answer: str, label: str, sig0: str, tries: int, wh: tuple[int, int]) -> dict:
+    """RETURN answers a box's default button, the affirmative one (Yes/Continue, drawn highlighted; live
+    2026-10-10 on the rest flow's "Camp without supplies?" box). The fallback when no cursor position
+    reads as over the button (S026 09:03: 96 tries, no hover). Same key a player would press."""
+    inp.move(wh[0] // 2, int(wh[1] * 0.2))  # nothing hovered while the key goes in
+    inp.wait_frames(2)
+    inp.key("RETURN")
+    inp.wait_frames(8)
+    res: dict = {"clicked": f"{label} (RETURN key)", "tries": tries, "closed": False, "via": "key"}
+    t1 = time.monotonic() + 1.5
+    while time.monotonic() < t1:
+        after = rpc("ui.confirm_probe", {"answer": answer})
+        if not isinstance(after, dict) or not after.get("box"):
+            res["closed"] = True
+            return res
+        if _sig(after) != sig0:
+            res["next"] = {kk: after.get(kk) for kk in ("title", "text", "buttons") if after.get(kk)}
+            return res
+        time.sleep(0.1)
+    return {"error": f"no cursor position over the '{answer}' button found, and RETURN didn't answer it either",
+            "tries": tries}
 
 
 def describe(res: dict) -> str:

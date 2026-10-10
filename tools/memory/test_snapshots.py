@@ -94,7 +94,8 @@ class CollectTest(unittest.TestCase):
     def test_all_ops(self):
         table = {"state.status": STATUS,
                  "state.character": lambda a: {"uuid": a["uuid"], "ac": 18, "abilities": {"WIS": 18}},
-                 "state.inventory": [{"name": "Rope", "owner": GUID_A}],
+                 "state.inventory": {"items": [{"name": "Rope", "owner": GUID_A, "uuid": GUID_B + "x"}],
+                                     "supplies": 12, "members": {}},
                  "state.journal": [{"title": "Q"}],
                  "state.map": {"region": "R", "waypoints": []}}
         docs, notes = SN.collect(fake_rpc(table), set(table))
@@ -103,6 +104,18 @@ class CollectTest(unittest.TestCase):
         self.assertIn("## Tav", docs["party"])
         self.assertIn("- ac: 18", docs["party"])
         self.assertNotRegex("".join(docs.values()), M.UUID_LIKE)
+
+    def test_gear_check_written(self):
+        inv = {"items": [{"uuid": "s1", "name": "Sentinel Shield", "owner": GUID_A, "slot_type": "MeleeOffHand",
+                          "ac": 2, "shield": True, "rarity": "rare"},
+                         {"uuid": "c1", "name": "Cup", "owner": GUID_A, "cat": "JunkArtificial", "tab": "Misc",
+                          "value": 1}],
+               "supplies": 27, "members": {GUID_A: {"prof": ["Shields"]}}}
+        out = SN.render_gear(inv, {GUID_A.lower(): "Tav"})
+        self.assertIn("- Tav: equip Sentinel Shield in MeleeOffHand", out)
+        self.assertIn("junk to sell: 1 items", out)
+        self.assertIn("camp supplies carried: 27/40", out)
+        self.assertIn("nothing to change", SN.render_gear({"items": [], "members": {}}))
 
     def test_missing_ops_degrade(self):
         docs, notes = SN.collect(fake_rpc({"state.status": STATUS}), {"state.status"})

@@ -63,7 +63,7 @@ SAVE_PREFIX = os.environ.get("BG3AI_SAVE_PREFIX", "")
 HARD_STOP_GRACE = 10 * 60      # deadline + this → SIGINT
 SIGINT_GRACE = 30              # then SIGTERM
 SIGTERM_GRACE = 15             # then SIGKILL
-KILL_GRACE = 10                # the game ignores SIGTERM: SIGKILL it after this many seconds
+KILL_GRACE = 3                 # the game ignores SIGTERM (S024: still up after 10 s): SIGKILL it after this many s
 KILL_CONFIRM = 30              # then wait this long for the processes and port 9998 to go away
 FIX_SESSION_MINUTES = 10
 MIN_SESSION_MINUTES = 20       # shortest session: --session-minutes below it is refused, and no session
@@ -83,6 +83,13 @@ CHECK_ALL_TIMEOUT = 240        # its own budget is 120 s plus the bridge import;
 STEAM_RETRY_S = 120            # Steam not offline: refuse to launch, retry this often (never give up)
 GAME_FAULTS = ("crash", "hang")
 FAULTS = GAME_FAULTS + ("agent_hang",)
+KILLED_EXITS = (-2, -9, -15, 130, 137, 143)   # claude ended by a signal (SIGINT/KILL/TERM, raw or as 128+n)
+
+
+def exit_reason(reason: str, returncode: int | None) -> str:
+    """'killed' when claude died of a signal the runner didn't send (S027: an outside SIGTERM at 3 min was taken
+    for a clean exit, so the end lint demanded a handoff and a fix-notes session ran); else `reason`."""
+    return "killed" if reason == "exited" and returncode in KILLED_EXITS else reason
 STUCK_SESSIONS = 2
 MAX_QUICK_FAILURES = 3         # claude exiting within a minute this many times in a row → give up
 MAX_RESUMES = 3                # game crashes per session that resume the same claude conversation
@@ -1015,7 +1022,7 @@ class SessionResult:
     sid: str
     claude_session: str
     exit_code: int | None
-    reason: str          # exited | hard_stop | crash | hang | agent_hang | aborted | dry_run
+    reason: str          # exited | hard_stop | crash | hang | agent_hang | aborted | killed | dry_run
     started: float
     ended: float
     notes: list[str] = field(default_factory=list)
@@ -1552,7 +1559,9 @@ class Runner:
         return cmd
 
     def run_claude(self, sid: str, prompt: str, minutes: float, claude_session: str,
-                   resume: bool = False, tag: str = "") -> SessionResult:
+                   resume: bool = False, tag: str = "", needs_game: bool = True) -> SessionResult:
+        """needs_game=False (the fix-notes pass edits memory only): a game crash meanwhile doesn't stop it (S027-fix
+        was killed 30 s in by the OOM kill of the game); the next session's setup relaunches the game."""
         start = time.time()
         deadline, hard_stop = deadlines(start, minutes)
         env = dict(os.environ,
@@ -1568,6 +1577,10 @@ class Runner:
                    CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
         base = self.state.dir / f"{sid}{tag}"
         env["BG3AI_METRICS_PATH"] = f"{base}.metrics.jsonl"  # the bridge's per-tool latency records
+        # the memory keeper compacts old logs between sessions: session.py then doesn't ask the player to
+        env["BG3AI_KEEPER"] = "1" if self.opt.keeper and not self.opt.dry_run else "0"
+        if not needs_game:
+            env["BG3AI_FIX_NOTES"] = "1"   # the Stop hook lints + commits instead of "keep playing"
         cmd = self.claude_cmd(prompt, claude_session, resume, tag)
         model, effort = self.model_for(tag)
         write_status(playthrough=self.opt.playthrough, session=sid + tag, claude_session=claude_session,
@@ -1628,7 +1641,7 @@ class Runner:
             if self.abort and reason == "exited":
                 reason = "aborted"
                 hard_stop = min(hard_stop, now)
-            if now >= next_health and reason == "exited":
+            if needs_game and now >= next_health and reason == "exited":
                 alive = self.game_alive()
                 ok = alive and game_state(HEALTH_EVAL_TIMEOUT) is not None
                 health.record(ok)
@@ -1661,6 +1674,10 @@ class Runner:
                 self._signal(proc, signal.SIGKILL)
                 signals_sent.append("kill")
         reader.join(timeout=10)
+        reason = exit_reason(reason, proc.returncode)
+        if reason == "killed":
+            detail = f"claude ended by a signal from outside the runner (exit {proc.returncode})"
+            log(f"{sid}{tag}: {detail}")
         poll_stop.set()
         poller.join(timeout=20)
         end = time.time()
@@ -1700,7 +1717,8 @@ class Runner:
             f"apm {summary['apm']}, busy {summary['busy_pct']}%, pipelined {summary.get('pipelining_pct')}%, "
             f"think overlap {summary.get('think_overlap_pct')}%, loading {summary.get('loading_s')}s (not idle), "
             f"wait_for noop {(summary.get('wait_for_noop') or {}).get('n')}/{(summary.get('wait_for_noop') or {}).get('of')}, "
-            f"wrap-up {summary.get('wrapup_s')}s (not counted) | {verdict}")
+            + (f"wrap-up {summary['wrapup_s']}s (not counted)" if summary.get('wrapup_s') is not None
+               else "no wrap-up phase") + f" | {verdict}")
         return summary
 
     def write_triage(self, session: str, base: Path) -> Path | None:
@@ -1814,26 +1832,27 @@ class Runner:
         if r.returncode == 0:
             log(f"{res.sid}: memory committed by session.py end")
             return
-        if res.reason in ("exited", "hard_stop") and res.claude_session:
+        if res.reason in ("exited", "hard_stop") and res.claude_session and not (self.stop_requested or self.abort):
             log(f"{res.sid}: memory lint failed; running a {FIX_SESSION_MINUTES}-minute fix-notes session")
             self.run_claude(res.sid, fix_notes_prompt(r.stdout), FIX_SESSION_MINUTES, res.claude_session,
-                            resume=True, tag="-fix")
+                            resume=True, tag="-fix", needs_game=False)
         if not self.memory_state().get("open"):
             return
         r = self.session_py("end")
         if r.returncode == 0:
             log(f"{res.sid}: memory committed after the fix-notes session")
-        elif res.reason in GAME_FAULTS:
+        elif res.reason in GAME_FAULTS + ("killed", "aborted"):
             # The game died before the agent's wrap-up, so the end lint's HANDOFF check ("written by the current
             # session") can't pass and no fix pass runs. session.py start reconciles the open session (S014: the
             # note below told the next session to rewrite HANDOFF as the crashed one). Pass on only other errors.
             other = memory_lint_errors(r.stdout, skip=("handoff",))
-            log(f"{res.sid}: ended by a game {res.reason} before wrap-up; memory left open for the next session"
+            why = f"a game {res.reason}" if res.reason in GAME_FAULTS else f"claude {res.reason}"
+            log(f"{res.sid}: ended by {why} before wrap-up; memory left open for the next session"
                 + (f" ({len(other)} other lint error(s))" if other else ""))
             if other:
                 self.pending_notes.append(
-                    f"RUNNER NOTE: {res.sid} ended in a game {res.reason} and its memory is uncommitted. Besides "
-                    "the missing handoff (the game crashed before wrap-up), fix these lint errors early:\n"
+                    f"RUNNER NOTE: {res.sid} ended by {why} and its memory is uncommitted. Besides "
+                    "the missing handoff (the session ended before wrap-up), fix these lint errors early:\n"
                     + "\n".join(other)[-2500:])
         else:
             log(f"{res.sid}: memory still fails lint; left open for the next session to reconcile")
@@ -2193,6 +2212,8 @@ def cmd_run(a) -> int:
     # (one skipper per game, runtime/skipper.lock).
     from bg3ai.skipper import start_background
     skip_stop = start_background(DEBUG_PORT, lambda m: log(f"autoskip: {m}"), RUNTIME / "skipper.lock")
+    import ramwatch   # free RAM per minute (runtime/ram.log), protects the game from the OOM killer
+    ram_stop = ramwatch.start_background(log)
 
     def on_signal(signum, _frame):
         if runner.stop_requested:
@@ -2212,6 +2233,8 @@ def cmd_run(a) -> int:
     finally:
         if skip_stop is not None:
             skip_stop.set()
+        if ram_stop is not None:
+            ram_stop.set()
 
 
 def exec_new_runner(lock, skip_stop, execv=os.execv) -> None:

@@ -65,8 +65,8 @@ _CLUTTER_KINDS = ("usable", "item", "object")
 
 def is_clutter(n: dict) -> bool:
     """A decoration-like prop worth a count, not a line: see _CLUTTER_WORDS."""
-    if n.get("kind") not in _CLUTTER_KINDS or n.get("story") or n.get("rarity"):
-        return False
+    if n.get("kind") not in _CLUTTER_KINDS or n.get("story") or n.get("rarity") or n.get("near"):
+        return False  # "near": a puzzle fixture ("Marble Plate" under a statue), never a prop
     if any(f in (n.get("flags") or ()) for f in ("locked", "trap")):
         return False
     return bool(_CLUTTER_RE.search(str(n.get("name") or "")))
@@ -167,7 +167,7 @@ _ITEM_FLAGS = ("locked", "opened", "trap", "owned")
 def _item_rec(it: dict) -> dict:
     return {"name": it.get("name", "?"), "kind": it.get("kind"), "dist": it.get("dist"),
             "flags": tuple(f for f in _ITEM_FLAGS if it.get(f)), "story": bool(it.get("story")),
-            "count": it.get("count"),
+            "count": it.get("count"), "near": it.get("near"),
             "rarity": it.get("rarity") if it.get("rarity") not in (None, "Common", "common") else None}
 
 
@@ -193,7 +193,7 @@ def snapshot(H: Handles, status: dict | None = None, ui: dict | None = None, nea
             if c.get("uuid"):
                 ents[c["uuid"]] = dict(_char_rec(c), kind="char")
         for it in nearby.get("items") or []:
-            if it.get("uuid") and (it.get("kind") != "object" or it.get("locked") or it.get("trap")):
+            if it.get("uuid") and (it.get("kind") != "object" or it.get("locked") or it.get("trap") or it.get("near")):
                 ents[it["uuid"]] = dict(_item_rec(it), kind=it.get("kind") or "item")
         snap["ents"] = ents
     if markers is not None:
@@ -293,6 +293,8 @@ def _appeared(H: Handles, u: str, n: dict) -> str:
             bits.append("story")
     if n.get("dist") is not None:
         bits.append(f"{render.num(n['dist'])}m")
+    if n.get("near"):
+        bits.append(f"({n['near']})")
     return " ".join(bits)
 
 
@@ -345,7 +347,7 @@ def _ent_lines(old: dict, new: dict, H: Handles) -> list[str]:
         appeared.append(f"(+{len(new_chars) - MAX_APPEARED_CHARS} more characters; get_nearby)")
     room = max(MAX_APPEARED - len(appeared), MIN_APPEARED_ITEMS)
     if len(new_items) > room:
-        new_items.sort(key=lambda u: (0 if ne[u].get("story") else render._KIND_RANK.get(str(ne[u]["kind"]), 4),
+        new_items.sort(key=lambda u: (0 if ne[u].get("story") or ne[u].get("near") else render._KIND_RANK.get(str(ne[u]["kind"]), 4),
                                       ne[u].get("dist") if ne[u].get("dist") is not None else 999, H.get(u)))
     appeared += [_appeared(H, u, ne[u]) for u in new_items[:room]]
     if len(new_items) > room or props:
@@ -525,20 +527,58 @@ def multi_rpc(game: Any, calls: list[tuple[str, dict]], context: str = "server",
     return [r.get("result") if isinstance(r, dict) and r.get("ok") else None for r in replies]
 
 
+class InvCache:
+    """The last full state.inventory (whole party, default args) and its rev. The mod caches that read
+    (~55 ms, 40+ KB live) until an item event; a call that names the rev it holds gets back
+    {unchanged, rev, gold} instead of the whole list, and merge() turns that into the held copy."""
+
+    def __init__(self) -> None:
+        self.data: dict | None = None
+
+    def args(self) -> dict:
+        rev = (self.data or {}).get("rev")
+        return {"rev": rev} if isinstance(rev, int) else {}
+
+    def merge(self, res: Any) -> Any:
+        if not isinstance(res, dict):
+            return res
+        if res.get("unchanged"):
+            held = self.data
+            if held is None or held.get("rev") != res.get("rev"):
+                self.data = None
+                return None  # not ours to reuse: treated like a failed read (the next one is full)
+            self.data = {**held, "gold": res.get("gold", held.get("gold"))}
+            return self.data
+        self.data = res if isinstance(res.get("rev"), int) else None
+        return res
+
+    def reset(self) -> None:
+        self.data = None
+
+
+INV = InvCache()
+
+
+def _op(part: str) -> tuple[str, dict]:
+    return ("state.inventory", INV.args()) if part == "inventory" else _OPS[part]
+
+
 def fetch(game: Any, parts: tuple = ACTION_PARTS, events: bool = False) -> dict:
     """{part: payload} for the requested parts (ui from the client context, the rest in one server eval).
     With a real Game both evals run in parallel (one game tick); events=True also drains both contexts'
     events in those evals, so the caller's EVENTS section costs no extra RPC."""
     server = [p for p in parts if p in _OPS]
     if hasattr(game, "read"):
-        sres, cres = game.read([_OPS[p] for p in server], [("ui.state", {})] if "ui" in parts else [], events=events)
+        sres, cres = game.read([_op(p) for p in server], [("ui.state", {})] if "ui" in parts else [], events=events)
         got = dict(zip(server, sres))
         if "ui" in parts:
             got["ui"] = cres[0] if cres else None
     else:
-        got = dict(zip(server, multi_rpc(game, [_OPS[p] for p in server]))) if server else {}
+        got = dict(zip(server, multi_rpc(game, [_op(p) for p in server]))) if server else {}
         if "ui" in parts:
             got["ui"] = game.try_rpc("ui.state", context="client")
+    if "inventory" in got:
+        got["inventory"] = INV.merge(got["inventory"])
     if "markers" in got:
         m = got["markers"]
         got["markers"] = m.get("markers") if isinstance(m, dict) and isinstance(m.get("markers"), list) else None

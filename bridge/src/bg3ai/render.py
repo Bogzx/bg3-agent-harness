@@ -222,6 +222,9 @@ def render_status(s: dict, ui: dict | None, H: Handles) -> str:
     lines.append(f"WHERE {where or '?'}" + (f" | {' '.join(mode)}" if mode else " | exploring"))
     if s.get("gold") is not None:
         lines[-1] += f" | gold {s['gold']}"
+    if s.get("turn_based") and not s.get("in_combat"):
+        lines.append("TURN-BASED outside combat (the game switched it on): walks leave it first by themselves (the "
+                     "HUD's Exit TB button); set_party(action='turn_based_off') leaves it now")
     me = s.get("active")
     for c in s.get("party") or []:
         lines.append("PARTY " + character_line(c, H, me))
@@ -239,10 +242,21 @@ _KIND_RANK = {"door": 0, "container": 0, "ladder": 0, "waypoint": 0, "lever": 0,
               "item": 2, "usable": 3, "object": 9}
 
 
+SAME_MIN = 3  # this many plain items with one name and kind are listed as one line
+_FLAGS = ("locked", "opened", "owned", "trap", "closed", "open", "story", "rarity", "count", "near")
+
+
+def _same_key(it: dict) -> tuple | None:
+    """Grouping key of a plain item (name, kind); None when a flag sets it apart."""
+    if any(it.get(f) not in (None, False, "Common", "common", 1) for f in _FLAGS):
+        return None
+    return (it.get("name"), it.get("kind"))
+
+
 def render_nearby(n: dict, H: Handles, max_items: int = 30) -> str:
     lines = []
     chars = n.get("characters") or []
-    items = [it for it in (n.get("items") or []) if it.get("kind") != "object" or it.get("locked") or it.get("trap")]
+    items = [it for it in (n.get("items") or []) if it.get("kind") != "object" or it.get("locked") or it.get("trap") or it.get("near")]
     for c in chars:
         line = "CHAR " + character_line(c, H)
         if c.get("pos") and not c.get("dead"):
@@ -251,11 +265,21 @@ def render_nearby(n: dict, H: Handles, max_items: int = 30) -> str:
 
     def rank(it: dict) -> tuple:
         k = _KIND_RANK.get(str(it.get("kind")), 4)
-        if it.get("story") or it.get("rarity") not in (None, "Common", "common"):
-            k = min(k, 1)
+        if it.get("story") or it.get("near") or it.get("rarity") not in (None, "Common", "common"):
+            k = min(k, 1)  # "near": a puzzle fixture (Button under a painting) ranks with the story items
         return (k, it.get("dist") or 0)
 
     items.sort(key=rank)
+    # Plain lookalikes (same name and kind, no flag) are one line: the nearest, plus a count. S026 08:55: 25
+    # Candle(s) filled the list and "+10 more items" hid the puzzle's Buttons the agent was looking for.
+    groups: dict = {}
+    for it in items:
+        k = _same_key(it)
+        if k is not None:
+            groups.setdefault(k, []).append(it)
+    items_total = len(items)
+    items = [it for it in items if len(groups.get(_same_key(it), ())) < SAME_MIN
+             or groups[_same_key(it)][0] is it]
     for it in items[:max_items]:
         h = H.get(it["uuid"], it.get("name")) if it.get("uuid") else "?"
         bits = [f"{h} {it.get('name', '?')}"]
@@ -271,9 +295,15 @@ def render_nearby(n: dict, H: Handles, max_items: int = 30) -> str:
                 bits.append(f"{flag}={compact(v, H)}")
         if it.get("count", 1) not in (1, None):
             bits.append(f"x{it['count']}")
+        if it.get("near"):
+            bits.append(f"({it['near']})")
+        g = groups.get(_same_key(it)) if _same_key(it) is not None else None
+        if g is not None and len(g) >= SAME_MIN:
+            far = max((o.get("dist") or 0) for o in g)
+            bits.append(f"(+{len(g) - 1} more {it.get('name', '?')} up to {num(far)}m)")
         lines.append("ITEM " + " ".join(bits))
     hidden = len(items) - min(len(items), max_items)
-    scenery = len(n.get("items") or []) - len(items)
+    scenery = len(n.get("items") or []) - items_total
     if hidden or scenery:
         lines.append(f"(+{hidden} more items, {scenery} scenery objects not listed; narrow with radius= or kinds=)")
     # Out of sight now, most recent first (the mod sends last_pos/ago_s). S009 printed 20 of these as
@@ -353,12 +383,32 @@ def _already_shown(e: dict, H: Handles, body: str, own: str | None, job: str | N
     return False
 
 
+def _drop_flicker(evs: list[dict]) -> list[dict]:
+    """A status gained and lost again (or lost and regained) by the same target within one EVENTS batch is no
+    change: S023-S027 printed ~200 Moonshield on/off lines a session as the party walked through lantern light."""
+    open_: dict[tuple, int] = {}
+    drop: set[int] = set()
+    for i, e in enumerate(evs):
+        kind, d = e.get("kind"), e.get("data")
+        if kind not in ("status_applied", "status_removed") or not isinstance(d, dict):
+            continue
+        t = d.get("target")
+        key = ((t.get("uuid") or t.get("name")) if isinstance(t, dict) else t, d.get("name") or d.get("status"))
+        j = open_.pop(key, None)
+        if j is not None and evs[j].get("kind") != kind:
+            drop.update((i, j))
+        else:
+            open_[key] = i
+    return [e for i, e in enumerate(evs) if i not in drop] if drop else evs
+
+
 def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", job: str | None = None) -> str:
     """EVENTS section. body: the tool result's own text, so events it already reports are left out
     (job: the job id a wait_for just returned)."""
     m = re.match(r"TURN (e\d+)", body or "")
     own = m.group(1) if m else None
-    evs = [e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS and not _already_shown(e, H, body, own, job)]
+    evs = _drop_flicker([e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS
+                         and not _already_shown(e, H, body, own, job)])
     if not evs:
         return ""
     shown = evs[-limit:]
@@ -452,6 +502,35 @@ def render_journal(quests: Any, H: Handles, quest: str = "") -> str:
     return "\n".join(lines)
 
 
+def render_map(m: Any, H: Handles) -> str:
+    """get_map's REGION + WAYPOINTS: the names a player reads on the map. Level/waypoint ids (WLD_Main_A,
+    WAYP_CHA_Top) stay internal (fairness #8); fast_travel/travel_to take these names."""
+    if not isinstance(m, dict):
+        return compact(m, H)
+    where = " · ".join(str(x) for x in (m.get("subregion"), m.get("region")) if x)
+    lines = [f"REGION {where or '?'}"]
+    here, other = [], {}
+    for w in m.get("waypoints") or []:
+        if not isinstance(w, dict) or not w.get("name"):
+            continue
+        if w.get("here"):
+            here.append(str(w["name"]))
+        else:
+            other.setdefault(str(w.get("region") or "elsewhere"), []).append(str(w["name"]))
+    if here or other:
+        lines.append("WAYPOINTS (fast_travel waypoint=<name>)")
+        if here:
+            lines.append("  here: " + ", ".join(here))
+        for reg, names in other.items():
+            lines.append(f"  {reg}: " + ", ".join(names))
+    else:
+        lines.append("WAYPOINTS none unlocked")
+    extra = {k: v for k, v in m.items() if k not in ("level", "region", "subregion", "waypoints")}
+    if extra:
+        lines.append(compact(extra, H))
+    return "\n".join(lines)
+
+
 _CONSUMABLE = re.compile(r"potion|elixir|scroll|arrow of|grenade|alchemist's fire|acid vial|bomb|oil of|"
                          r"thieves' tools|trap disarm|healing|antitoxin|camp suppl|key\b|lockpick|tools", re.I)
 _SKIP_SLOTS = {"Underwear", "VanityBody", "VanityBoots"}
@@ -468,7 +547,11 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
     owners: dict[str, list] = {}
     for it in items:
         owners.setdefault(it.get("owner") or "?", []).append(it)
-    lines = [f"GOLD {inv.get('gold', '?')}"]
+    from . import economy  # resources & economy (owner: setup): supply values, junk, gear upgrades
+
+    lines = [f"GOLD {inv.get('gold', '?')}"
+             + (f" · CAMP SUPPLIES {economy.supplies_text(inv)}" if economy.supplies_text(inv) else "")]
+    junk_ids = {it["uuid"] for it in economy.junk(inv)} if f in ("junk", "", "notable") else set()
     if inv.get("open_container"):
         lines.append("OPEN CONTAINER " + compact(inv["open_container"], H))
     for owner, its in owners.items():
@@ -492,6 +575,9 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
                 b.append(f"<{it['slot_type']}>")
             if it.get("value", 0) >= 50:
                 b.append(f"{it['value']}g")
+            if it.get("supply"):
+                b.append(f"supply={it['supply']}" + (f" (x{it['count']}={it['supply'] * it['count']})"
+                                                      if it.get("count", 1) not in (1, None) else ""))
             return " ".join(b)
 
         if f == "equipped":
@@ -504,6 +590,10 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
             sel_eq, sel = [], [it for it in rest if _CONSUMABLE.search(it.get("name", ""))]
         elif f == "all":
             sel_eq, sel = eq, rest
+        elif f in ("food", "supplies", "supply", "camp supplies"):
+            sel_eq, sel = [], [it for it in its if economy.is_food(it)]
+        elif f == "junk":
+            sel_eq, sel = [], [it for it in rest if it["uuid"] in junk_ids]
         else:
             words = f.split()
             sel_eq = []
@@ -522,6 +612,19 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
             junk = [it for it in rest if it not in sel]
             if junk:
                 lines.append(f"  (+{len(junk)} other items, {sum(i.get('value', 0) * (i.get('count') or 1) for i in junk)}g total; filter='all' to list)")
+    if f in ("", "notable", "gear", "equipped"):
+        ups = economy.upgrades(inv)
+        if ups:
+            lines.append("BETTER GEAR IN BAGS (equip_best equips all): " + "; ".join(
+                f"{H.names.get(H.get(u['who'])) or H.get(u['who'])}: {H.get(u['uuid'])} {u['name']} → {u['slot']} ({u['why']})"
+                for u in ups))
+        elif f == "gear":
+            lines.append("No better gear in the bags.")
+    if junk_ids and f in ("", "notable", "junk"):
+        js = [it for it in items if it["uuid"] in junk_ids]
+        lines.append(f"JUNK {len(js)} items ~{sum((i.get('value') or 0) * (i.get('count') or 1) for i in js)}g "
+                     f"{sum((i.get('weight') or 0) * (i.get('count') or 1) for i in js):.1f}kg: trade sell=junk at a "
+                     "trader, or manage_inventory op=camp item=junk")
     return "\n".join(lines)
 
 

@@ -24,6 +24,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 from bg3ai import metrics as latency  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fairness  # noqa: E402
+
 FAIL_PREFIXES = ("FAILED", "NOT READY", "REFUSED")  # the bridge's own failure markers (server.py)
 LONG_GAP_S = latency.LONG_GAP_S
 REPEAT_MIN = 3          # the same call (tool + args) this many times in a row = a stuck stretch
@@ -151,6 +154,14 @@ def failures_section(calls: list[dict]) -> list[str]:
     return out + [""]
 
 
+def _excused_parts(g: dict) -> str:
+    """"70 s = 45 s busy + 25 s enemy + 0 s ours": what a not-counted gap was made of. S025's triage said
+    "70 s with 25 s enemy", which read as if a gap with enemy turns were dropped whole."""
+    bits = [f"{g[k]:.0f} s {w}" for k, w in (("busy_s", "busy"), ("turn_s", "enemy"), ("load_s", "loading"))
+            if (g.get(k) or 0) >= 0.5]
+    return f"{g['gap_s']:.0f} s = " + " + ".join(bits + [f"{g['s']:.0f} s ours"])
+
+
 def gaps_section(metrics_path: Path, calls: list[dict], wrap_t: float | None = None) -> list[str]:
     recs = latency.read_jsonl(metrics_path)
     tools = [r for r in recs if r.get("type") == "tool"]
@@ -162,11 +173,12 @@ def gaps_section(metrics_path: Path, calls: list[dict], wrap_t: float | None = N
     if wrap_t is not None:
         out += [f"(not counted: the wrap-up phase from {hm(wrap_t)}, "
                 f"{sum(1 for g in all_gl if g['kind'] == 'wrapup')} gap(s))", ""]
-    excused = [g for g in gl if g["s"] <= LONG_GAP_S < g["gap_s"] - g["busy_s"] and g.get("turn_s")]
-    if excused:  # long only because of enemy turns: not idle (a human waits through them too)
-        out += [f"(not counted: {len(excused)} combat gap(s) over {LONG_GAP_S:.0f} s only because of enemy turns, "
-                + ", ".join(f"{hm(g['t'])} {g['gap_s']:.0f} s with {g['turn_s']:.0f} s enemy" for g in excused) + ")",
-                ""]
+    excused = [g for g in gl if g["s"] <= LONG_GAP_S < g["gap_s"] - g["busy_s"]
+               and (g.get("turn_s") or g.get("load_s"))]
+    if excused:  # long only because of enemy turns / loading screens: not idle (a human waits through them too)
+        out += [f"(not counted: {len(excused)} gap(s) over {LONG_GAP_S:.0f} s only because of enemy turns, "
+                "loading screens or a walk still running; ours = the agent's own time: "
+                + ", ".join(f"{hm(g['t'])} {_excused_parts(g)}" for g in excused) + ")", ""]
     if not long_:
         return out + ["none", ""]
     timed = [c for c in calls if c["t"] is not None]
@@ -252,6 +264,7 @@ def build(base: Path) -> str:
     lines += toolsearch_section(calls)
     lines += counts_section(calls)
     lines += stuck_section(Path(f"{base}.progress.jsonl"), calls)
+    lines += fairness.section(calls, hm)
     lines += ["## Last agent summary", "", (summary or "(none)").strip(), ""]
     return "\n".join(lines)
 

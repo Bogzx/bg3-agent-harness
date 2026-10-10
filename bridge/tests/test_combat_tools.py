@@ -6,11 +6,13 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import unittest
 from typing import Any
 
-os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-"))
+_RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit (/tmp filled up 2026-10-10)
+os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
 from bg3ai import server  # noqa: E402
 from bg3ai.game import JobResult  # noqa: E402
@@ -21,10 +23,12 @@ POTION = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
 class FakeGame:
-    def __init__(self, combat: list[dict], ui: list[dict] | None = None, job: str = "done"):
+    def __init__(self, combat: list[dict], ui: list[dict] | None = None, job: str = "done",
+                 error: str = "character is stunned"):
         self.combat = list(combat)  # successive state.combat replies (last one repeats)
         self.ui = list(ui or [{"screen": "game"}])
         self.job = job
+        self.error = error
         self.jobs: list[tuple[str, dict]] = []
 
     def rpc(self, op: str, args: dict | None = None, context: str = "server") -> Any:
@@ -42,7 +46,7 @@ class FakeGame:
     def run_job(self, op: str, args: dict, context: str = "server", wait_s: float = 25.0) -> JobResult:
         self.jobs.append((op, args))
         if self.job != "done":
-            return JobResult(status=self.job, error="it is not this character's turn")
+            return JobResult(status=self.job, error=self.error)
         return JobResult(status="done", result={"ended": True})
 
     def drain_events(self, ctx: str) -> list:
@@ -83,6 +87,28 @@ class EndTurn(unittest.TestCase):
         out = server.end_turn()
         self.assertIn("FAILED", out)
         self.assertNotIn("turn\n", out)
+
+    def test_already_ended_is_not_a_failure(self):
+        # S024: end_turn on Gale after combat_turn had ended its turn (shared group) -> FAILED x12.
+        fake = FakeGame([{"active": True, "current": PARTY, "turn_group": [PARTY]},
+                         {"active": True, "current": ENEMY}, {"active": True, "current": PARTY}],
+                        job="failed", error="this character already ended its turn (the rest ...)")
+        self.use(fake)
+        out = server.end_turn()
+        self.assertRegex(out, r"^end_turn \S+( \S+)?: nothing to end — its turn already ended")
+        self.assertNotIn("FAILED", out)
+        self.assertIn("(yours)", out)
+        self.assertEqual(server._batch["last"], "done")
+
+    def test_not_its_turn_names_who_acts_and_waits(self):
+        fake = FakeGame([{"active": True, "current": ENEMY}, {"active": True, "current": ENEMY},
+                         {"active": True, "current": PARTY}], job="failed", error="it is not this character's turn")
+        self.use(fake)
+        out = server.end_turn()
+        self.assertIn("nothing to end — it is not its turn; now", out)
+        self.assertIn("'s turn", out.splitlines()[1])
+        out = server.end_turn(wait=False)
+        self.assertEqual(len(out.split("\n")[0].split("now")), 2)
 
 
 class ManageInventory(unittest.TestCase):

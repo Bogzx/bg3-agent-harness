@@ -226,6 +226,125 @@ test("dev.perception_probe counts ray-only doors", function()
     eq(r.counts.large, 2); eq(r.counts.by_ray, 1); eq(r.counts.by_sight, 1); eq(r.calibrated, true)
 end)
 
+
+-- read latency (S025/S026: ~0.85 ms of rays per unseen door, 155 in one frontier)
+local function countingRays(f)
+    local n = { 0 }
+    ray.fn = floorThen(function(a, b) n[1] = n[1] + 1; return f(a, b) end)
+    return n
+end
+
+test("blocked door: the verdict is reused while the party stands still, re-cast after a move", function()
+    setup(); door("D", { 10, 0, 0 })
+    local n = countingRays(function(a) return { Position = { a[1] + 5, a[2], a[3] }, Distance = 5 } end)
+    eq(visible("D"), false)
+    local cast = n[1]
+    eq(cast > 0, true, "rays cast")
+    clock = clock + 1000; V.ctxCache = nil -- a later read (another frame), nobody moved
+    eq(visible("D"), false); eq(n[1], cast, "no new rays")
+    clock = clock + V.RAY_STILL_MS -- too old even standing still
+    V.ctxCache = nil
+    eq(visible("D"), false); eq(n[1] > cast, true, "re-cast after RAY_STILL_MS")
+    cast = n[1]
+    clock = clock + 1000; V.ctxCache = nil
+    world.P1.pos = { 2, 0, 0 } -- moved: the old verdict is stale
+    eq(visible("D"), false); eq(n[1] > cast, true, "re-cast after a move")
+end)
+
+test("party members standing together cast one set of rays", function()
+    setup(); door("D", { 10, 0, 0 })
+    world.P2 = { pos = { 0.3, 0, 0.2 }, comps = { Sight = { Sight = 18.5 } } }
+    world.P3 = { pos = { 0, 0, -4 }, comps = { Sight = { Sight = 18.5 } } }
+    osiv[key("IsOnStage", "P2")] = 1; osiv[key("IsOnStage", "P3")] = 1
+    local real = Osi.DB_PartyMembers
+    Osi.DB_PartyMembers = { Get = function() return { { "P1" }, { "P2" }, { "P3" } } end }
+    local ok, err = pcall(function()
+        local n = countingRays(function(a) return { Position = { a[1] + 5, a[2], a[3] }, Distance = 5 } end)
+        V.rayCalibrated(V.context().observers[1]); n[1] = 0
+        eq(visible("D"), false)
+        eq(n[1], 10, "P1 and P3: 5 sample points each, P2 shares P1's eye")
+    end)
+    Osi.DB_PartyMembers = real
+    assert(ok, err)
+end)
+
+-- ---- losFrom (los_spot planning) vs the engine's HasLineOfSight -------------------------
+
+local function enemy(u, pos)
+    world[u] = { pos = pos, comps = { ServerCharacter = {},
+        Bound = { Bound = { AIBounds = { Hit = { Height = 1.8, Radius = 0.5 } } } } } }
+end
+
+test("losFrom, character: a side of the body in view is not line of sight (centre rays only)", function()
+    setup(); enemy("G", { 10, 0, 0 })
+    -- a pillar on the centre line: rays ending on the centre line (z = 0) stop at 5 m; the side samples pass
+    ray.fn = floorThen(function(a, b)
+        if math.abs(b[3]) < 0.01 then return { Position = { 5, a[2], 0 }, Distance = 5 } end
+        return nil
+    end)
+    local ctx = V.context()
+    eq(V.losFrom(ctx, "G", V.entity("G"), { 10, 0, 0 }, { 0, 0, 0 }), false, "character")
+    world.G.comps.ServerCharacter = nil
+    eq(V.losFrom(ctx, "G", V.entity("G"), { 10, 0, 0 }, { 0, 0, 0 }), true, "an item keeps the side samples")
+end)
+
+test("losFrom, character: chest and head clear -> true; a margin needs the offset rays clear too", function()
+    setup(); enemy("G", { 10, 0, 0 })
+    ray.fn = floorThen(function(a, b)
+        if a[3] > 0.1 then return { Position = { 5, a[2], a[3] }, Distance = 5 } end -- cover on one side
+        return nil
+    end)
+    local ctx = V.context()
+    eq(V.losFrom(ctx, "G", V.entity("G"), { 10, 0, 0 }, { 0, 0, 0 }), true, "centre rays")
+    eq(V.losFrom(ctx, "G", V.entity("G"), { 10, 0, 0 }, { 0, 0, 0 }, 0.25), false, "margin ray blocked")
+    ray.fn = floorThen(function() return nil end)
+    eq(V.losFrom(ctx, "G", V.entity("G"), { 10, 0, 0 }, { 0, 0, 0 }, 0.25), true, "all clear")
+end)
+
+test("losFrom, character: head behind a ledge, chest clear -> false (both must be clear)", function()
+    setup(); enemy("G", { 10, 0, 0 })
+    ray.fn = floorThen(function(a, b)
+        if b[2] > 1.2 then return { Position = { 6, a[2], 0 }, Distance = 6 } end
+        return nil
+    end)
+    eq(V.losFrom(V.context(), "G", V.entity("G"), { 10, 0, 0 }, { 0, 0, 0 }), false)
+end)
+
+-- ---- small fixtures (puzzle buttons recessed in a wall) -----------------------
+
+local function button(u, pos)
+    world[u] = { pos = pos, comps = { ServerItem = { CanUse = true },
+        Bound = { Bound = { AIBounds = { Hit = { Height = 0.32, Radius = 0.12 } } } } } }
+    osiv[key("IsOnStage", u)] = 1
+    osiv[key("GetCanInteract", u)] = 1
+end
+
+test("recessed button: the ray stops 0.3 m short of its center (wall face) -> perceived", function()
+    setup(); button("B", { 7, 1, 0 })
+    ray.fn = floorThen(function(a, b) return { Position = { b[1] - 0.3, b[2], b[3] }, Distance = 6.7 } end)
+    eq(visible("B"), true)
+end)
+
+test("button behind a wall (ray stops 2 m short) is not perceived", function()
+    setup(); button("B", { 7, 1, 0 })
+    ray.fn = floorThen(function(a, b) return { Position = { b[1] - 2, b[2], b[3] }, Distance = 5 } end)
+    eq(visible("B"), false)
+end)
+
+test("button beyond FIXTURE_RANGE is not perceived even with a clear ray", function()
+    setup(); button("B", { 14, 1, 0 })
+    ray.fn = floorThen(function() return nil end)
+    eq(visible("B"), false)
+end)
+
+test("undiscovered trap fixture (vent) stays hidden with a clear ray", function()
+    setup(); button("T", { 5, 0, 0 })
+    world.T.comps.ServerItem.CanUse = false
+    osiv[key("IsTrap", "T")] = 1
+    ray.fn = floorThen(function() return nil end)
+    eq(visible("T"), false)
+end)
+
 -- ---- objective markers ----------------------------------------------------
 
 local function markerSetup(targetPos, viaOsi)
@@ -333,6 +452,21 @@ test("V.charactersNear: radius over the frame cache, nearest-center distance", f
     eq(#V.charactersNear({}, 10), 0, "no centers")
     eq(charScans, 1, "all queries share one scan this frame")
     world.C1, world.C2, world.C3, world.C4 = nil, nil, nil, nil
+end)
+
+test("bounds: read once per item within BOUNDS_TTL_MS (look/frontier read them twice per item)", function()
+    setup()
+    door("D9", { 5, 0, 0 })
+    local e = V.entity("D9")
+    eq(V.bounds(e).height, 3.0, "first read")
+    world.D9.comps.Bound = { Bound = { AIBounds = { Hit = { Height = 9.0, Radius = 1.0 } } } }
+    eq(V.bounds(V.entity("D9")).height, 3.0, "cached")
+    clock = clock + V.BOUNDS_TTL_MS + 1
+    eq(V.bounds(V.entity("D9")).height, 9.0, "re-read after the TTL")
+    world.D9.comps.Bound = nil
+    clock = clock + V.BOUNDS_TTL_MS + 1
+    eq(V.bounds(V.entity("D9")), nil, "no Bound component")
+    eq(V.bounds(V.entity("D9")), nil, "cached miss stays nil")
 end)
 
 print(("%d/%d passed"):format(count - failures, count))

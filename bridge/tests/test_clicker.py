@@ -41,6 +41,7 @@ class FakeGame:
         self.last_aim = None
         self.screen_after = screen_after
         self.clicked = False
+        self.hover_other = None               # what the picking helper reports instead of the target
 
     def _apply_moves(self):
         for ev in self.inp.log[self.seen:]:
@@ -70,7 +71,7 @@ class FakeGame:
             return {"ndc": [nx, ny], "on_screen": -1 <= nx <= 1 and -1 <= ny <= 1, "side": self.side}
         if op == "ui.hover_check":
             ok = self.hover_aims is None or self.last_aim in self.hover_aims
-            return {"hovered": ok}
+            return {"hovered": ok} if ok or not self.hover_other else {"hovered": False, "hover": self.hover_other}
         if op == "ui.state":
             return {"screen": self.screen_after if self.clicked else "game"}
         if op == "act.target_state":
@@ -139,6 +140,37 @@ class ClickEntity(unittest.TestCase):
         self.assertEqual(r.reason, "hover_miss")
         self.assertEqual(r.detail.get("camera"), ["zoom_out"])  # one wider look before giving up
 
+    def test_hover_miss_names_what_was_under_the_cursor(self):
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), hover_aims=set())
+        g.hover_other = "pillar"
+        r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.1)
+        self.assertEqual(r.reason, "hover_miss")
+        self.assertEqual(r.detail.get("hovered_instead"), ["pillar"])
+
+    def test_hover_search_gives_up_at_the_time_budget(self):
+        # live S017-S024: 144 tries = 15-33 s per failed lockpick; now capped at HOVER_BUDGET_S
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), hover_aims=set())
+        clock = [0.0]
+
+        def slow_check(op, args=None, context="server", _rpc=g.rpc):
+            if op == "ui.hover_check":
+                clock[0] += 0.5   # each hover check costs 0.5 s
+            return _rpc(op, args, context)
+
+        g.rpc = slow_check
+        real = clicker.time.monotonic
+        clicker.time.monotonic = lambda: clock[0]
+        try:
+            r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.0)
+        finally:
+            clicker.time.monotonic = real
+        self.assertEqual(r.reason, "hover_miss")
+        self.assertLessEqual(r.tries, int(clicker.HOVER_BUDGET_S / 0.5) + 1)
+        self.assertEqual(r.detail.get("gave_up_after_s"), clicker.HOVER_BUDGET_S)
+        self.assertNotIn("click", [e[0] for e in inp.log])
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -173,9 +205,12 @@ class ToolCheck(unittest.TestCase):
 
     def test_other_member_has_tools(self):
         g = self.Inv([{"name": "Thieves' Tools", "owner": "U2", "in": "Pouch"}])
+        self.assertIn("Claude carries no Thieves' Tools; Shadowheart does: run it again with who=Shadowheart",
+                      clicker.tool_check(g, "act.lockpick", "U1"))
         r = clicker.run_click_action(g, None, "act.lockpick", {"char": "U1", "target": "D"})
-        self.assertEqual(r.status, "failed")
-        self.assertIn("Claude carries no Thieves' Tools; Shadowheart does: run it again with who=Shadowheart", r.error)
+        self.assertEqual(g.jobs, ["act.lockpick"])  # the holder picks it instead
+        self.assertEqual(r.status, "done")
+        self.assertEqual(r.result.get("tool_holder"), "U2")
 
     def test_actor_has_tools_runs_the_job(self):
         g = self.Inv([{"name": "Thieves' Tools", "owner": "U1", "count": 2}])

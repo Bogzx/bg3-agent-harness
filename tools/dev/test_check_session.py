@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,6 +34,7 @@ def write_jsonl(p: Path, recs):
 class SessionTest(unittest.TestCase):
     def make(self, good=True):
         d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
         run = d / "sessions" / "claude-run-9"
         run.mkdir(parents=True)
         (d / "logs").mkdir()

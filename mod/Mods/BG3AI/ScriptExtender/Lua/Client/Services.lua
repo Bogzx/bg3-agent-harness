@@ -5,7 +5,7 @@
 -- JournalMap.xaml), so prices, supplies, travel restrictions and rest rules
 -- are the engine's. Every op takes dry=true to only check CanExecute.
 --
---   ui.trade {npc?, offer?:[uuid], request?:[uuid], confirm?, dry?}  -> job
+--   ui.trade {npc?, offer?:[uuid], request?:[uuid], confirm?, dry?, max?}  -> job
 --   ui.short_rest {dry?, confirm?}                                    -> job
 --   ui.long_rest {dry?, confirm?}                                     -> job
 --     confirm=false: stop at a game question ("End the day?") instead of
@@ -159,7 +159,11 @@ local function primaryInventory(owner)
 end
 
 -- slot -> item entity for an inventory entity.
+-- One container map per inventory while a trade read runs (SV.memo set by memoized()): itemView looked
+-- each slot's item up through a fresh map, O(n^2) pcalls on a 200-item trade screen.
 local function containerItems(inv)
+    local memo = SV.memo
+    if memo and memo[inv] then return memo[inv] end
     local out = {}
     local c = U.comp(inv, "InventoryContainer")
     if not c then return out end
@@ -167,7 +171,18 @@ local function containerItems(inv)
         local it = try(function() return rec.Item end)
         if it then out[tonumber(slot)] = it end
     end
+    if memo then memo[inv] = out end
     return out
+end
+
+-- fn(...) with the per-read container memo (nested calls share the outer one).
+local function memoized(fn, ...)
+    if SV.memo then return fn(...) end
+    SV.memo = {}
+    local res = table.pack(pcall(fn, ...))
+    SV.memo = nil
+    if not res[1] then error(res[2], 0) end
+    return table.unpack(res, 2, res.n)
 end
 
 -- An owner's inventory plus the inventories of containers (bags) inside it.
@@ -207,8 +222,9 @@ end
 local function vmSlots(vmInv, max)
     local out = {}
     for _, slot in UI.items(UI.prop(vmInv, "Slots"), max or 400) do
-        local p = UI.props(slot)
-        if p.Object ~= nil then out[#out + 1] = { index = tonumber(p.Index), item = p.Object } end
+        -- two named reads, not GetAllProperties (live: ~0.01 ms vs 0.4-1.7 ms per view model)
+        local obj = UI.get(slot, "Object")
+        if obj ~= nil then out[#out + 1] = { index = tonumber(UI.get(slot, "Index")), item = obj } end
     end
     return out
 end
@@ -225,7 +241,8 @@ local function matchScore(slots, inv)
     local hit, miss = 0, 0
     for _, s in ipairs(slots) do
         local e = s.index and items[s.index]
-        local w = vmWeight(s.item)
+        if s.w == nil then s.w = vmWeight(s.item) or false end
+        local w = s.w or nil
         if e and (w == nil or weightOf(e) == w) then hit = hit + 1 else miss = miss + 1 end
     end
     return hit - 3 * miss, hit
@@ -276,8 +293,8 @@ end
 
 -- Candidate ECS inventories for the trader: the named trader's, else any
 -- non-party inventory owner (matched by fingerprint).
-local function traderCandidates()
-    local t = entity(SV.trader)
+local function traderCandidates(any)
+    local t = not any and entity(SV.trader)
     if t then return inventoriesOf(t) end
     local party = {}
     for _, e in ipairs(try(Ext.Entity.GetAllEntitiesWithComponent, "PartyMember") or {}) do party[e] = true end
@@ -293,7 +310,7 @@ end
 
 -- The trade screen's inventories, each matched to an ECS inventory:
 -- { party = {{vm, inv, slots}}, trader = {{vm, inv, slots}} }
-local function tradeLayout(dc)
+local function tradeLayoutRaw(dc)
     local partyVMs, seen = {}, {}
     for _, pc in UI.items(UI.prop(dc, "PartyCharacterInventories"), 8) do
         collectInventories(pc, partyVMs, seen, 0)
@@ -306,17 +323,26 @@ local function tradeLayout(dc)
         local inv, slots = bestInventory(vm, pc)
         layout.party[#layout.party + 1] = { vm = vm, inv = inv, slots = slots }
     end
-    local tc = traderCandidates()
+    local tc, all = traderCandidates(), nil
     for _, vm in ipairs(traderVMs) do
         local inv, slots = bestInventory(vm, tc)
+        if not inv and #slots > 0 then
+            -- SV.trader is the last trader named with npc=..., not necessarily this one: S026 09:03 traded
+            -- with Talli (opened by talk_to) while SV.trader was still Mattis, so every ware came back
+            -- nameless ("price=26 count=2; …", unmatched=1). Match against every trader-like owner.
+            all = all or traderCandidates(true)
+            inv = bestInventory(vm, all)
+        end
         layout.trader[#layout.trader + 1] = { vm = vm, inv = inv, slots = slots }
     end
     return layout
 end
 
+local ITEM_PROPS = { "Count", "TradePrice", "Rarity", "IsStolen", "IsStoryItem", "ItemType" }
+
 local function itemView(slotRec, inv)
     local item = slotRec.item
-    local p = UI.props(item)
+    local p = UI.pick(item, ITEM_PROPS)
     local e = inv and slotRec.index and containerItems(inv)[slotRec.index] or nil
     local v = {
         uuid = e and uuidOf(e) or nil,
@@ -327,6 +353,14 @@ local function itemView(slotRec, inv)
         stolen = p.IsStolen == true or nil,
         story = p.IsStoryItem == true or nil,
     }
+    if e then
+        -- Food shows its camp-supply value (what a rest needs: 40), so the agent can buy food.
+        pcall(function()
+            local st = Ext.Stats.Get(e.Data.StatsId)
+            local sv = st and tonumber(st.SupplyValue)
+            if sv and sv > 0 then v.supply = sv end
+        end)
+    end
     if p.ItemType == "Gold" then return nil end
     return v
 end
@@ -334,7 +368,7 @@ end
 local function offerView(vmOffer)
     local out = {}
     for _, s in ipairs(vmSlots(vmOffer, 60)) do
-        local p = UI.props(s.item)
+        local p = UI.pick(s.item, ITEM_PROPS)
         local known = SV.offered[tostring(s.item)] or {}
         out[#out + 1] = {
             uuid = known.uuid, name = known.name,
@@ -347,12 +381,17 @@ end
 
 local function sumPrices(items)
     local t = 0
-    for _, it in ipairs(items) do t = t + (it.price or 0) * (it.count or 1) end
+    -- TradePrice is the whole stack's price (live 10:50 Talli: Supply Pack x3 = 156, Potion of Healing x5 = 40)
+    for _, it in ipairs(items) do t = t + (it.price or 0) end
     return t
 end
 
 -- Everything the trade screen shows, as data.
-function SV.tradeState(dc, layout, max)
+local function tradeLayout(dc) return memoized(tradeLayoutRaw, dc) end
+
+local tradeStateRaw
+function SV.tradeState(dc, layout, max) return memoized(tradeStateRaw, dc, layout, max) end
+function tradeStateRaw(dc, layout, max)
     max = max or 60
     layout = layout or tradeLayout(dc)
     local p = UI.props(dc)
@@ -447,7 +486,8 @@ RPC.register("ui.trade", function(args)
         st.problems = #problems > 0 and problems or nil
         return st
     end
-    if not wantsChange then return SV.tradeState(dc) end
+    -- max: items listed per side (default 60); sell=junk reads every slot (S026: 55 junk items + the rest).
+    if not wantsChange then return SV.tradeState(dc, nil, tonumber(args.max)) end
 
     -- Barter mode shows both offers and keeps the deal explicit until confirm.
     local phase, waitUntil = "mode", 0
@@ -519,10 +559,14 @@ RPC.register("ui.trade", function(args)
             return nil
         end
         if phase == "finishing" then
-            local p = UI.props(live)
+            -- Waiting for the offers to clear: two slot counts per tick, the full screen read only once
+            -- it settles (it was rebuilt every tick: job.poll waited 400-750 ms behind each, S023-S026).
+            local declined = UI.get(live, "TradeDeclined") == true
+            local pending = #vmSlots(UI.prop(live, "CharacterOffer"), 60) + #vmSlots(UI.prop(live, "TraderOffer"), 60)
+            if not declined and pending > 0 then return nil end
             local st = SV.tradeState(live)
             st.moved = moved
-            if p.TradeDeclined == true then
+            if declined then
                 return "failed", st, "the trader refused the offer"
             end
             if #st.offer.you.items == 0 and #st.offer.trader.items == 0 then
@@ -539,6 +583,16 @@ end)
 ------------------------------------------------------------------------
 -- Rest
 ------------------------------------------------------------------------
+
+-- Short rests left (party-wide, shown on the hotbar's rest button): the bridge's ALERTS line says
+-- "short rests left N: short_rest" when someone is hurt.
+RPC.register("ui.rest_info", function()
+    local dc = hotbarDC()
+    return {
+        short_rests_left = tonumber(selected(dc, "Stats.ShortRestPointsResource.Value")),
+        short_rests_max = tonumber(selected(dc, "Stats.ShortRestPointsResource.MaxValue")),
+    }
+end)
 
 RPC.register("ui.short_rest", function(args)
     local dc = hotbarDC()
@@ -602,6 +656,11 @@ RPC.register("ui.long_rest", function(args)
         return { can = true, supplies_required = required }
     end
 
+    -- A conversation on screen swallows CampTravel: live S026 09:07 pressed it twice over 8 s during
+    -- Karlach's camp talk, then failed with "rest screen didn't open". Say so at once instead.
+    if visibleWidget("Dialogue") and not visibleWidget("MakeCamp") then
+        error("a conversation is open: finish it first (choose_dialogue / dialogue_advance), then long_rest", 0)
+    end
     local R = SV.rest
     local A = BG3AI.UIActions
     local presses, step, retried = 0, "open", false
@@ -688,6 +747,16 @@ RPC.register("ui.long_rest", function(args)
             local mdc = w.DataContext
             used = tonumber(UI.prop(mdc, "SelectedSuppliesAmount"))
             required = tonumber(UI.path(mdc, "CurrentPlayer.RequiredPartySupplies")) or required
+            -- Too few supplies = a partial rest (half HP and slots). S025 and S026 rested partially twice
+            -- and went on at 34/88 HP: stop and say so unless the agent asked for it (partial=true).
+            if used and required and used < required and not args.partial then
+                return "failed", { step = "supplies", supplies_used = used, supplies_required = required,
+                                   partial_refused = true },
+                    "only " .. used .. "/" .. required .. " camp supplies: resting now is a PARTIAL rest (half HP "
+                    .. "and spell slots). Get food first (get_inventory filter=food; traders sell it: trade wares "
+                    .. "marked supply=N), or long_rest(partial=true) to rest anyway. The rest screen is still open "
+                    .. "(press_key escape closes it)"
+            end
             local ok, err = UI.command(mdc, "ProcessRestCommand", nil, false)
             if not ok then
                 return "failed", { step = "rest", supplies_used = used, supplies_required = required },
@@ -705,7 +774,11 @@ RPC.register("ui.long_rest", function(args)
             supplies_used = used, supplies_required = required, confirmed = job.confirms,
         }
         if result.rest == "partial" then
-            result.note = "not enough camp supplies: partial rest (half HP and spell slots, no short rests restored)"
+            -- Below the requirement the game camps WITHOUT supplies ("Camp without supplies? You will not use
+            -- any camp supplies", live 2026-10-10: 18 carried before and after): none were used.
+            result.supplies_used, result.supplies_carried = 0, used
+            result.note = "not enough camp supplies: partial rest without supplies (half HP and spell slots, no "
+                .. "short rests restored; the " .. tostring(used or 0) .. " supplies you carry were kept)"
         end
         if visibleWidget("Dialogue") then
             result.camp_scene = true

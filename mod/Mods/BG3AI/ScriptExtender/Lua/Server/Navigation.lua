@@ -191,6 +191,13 @@ if not N.tickSubscribed then
         local ok, err = pcall(record)
         if not ok then Ext.Utils.PrintWarning("[BG3AI] nav record: " .. tostring(err)) end
         local t = Ext.Utils.MonotonicTime()
+        if N.waysWarm then
+            local okw, errw = pcall(N.waysWarm, t)
+            if not okw and not N.waysWarmWarned then
+                N.waysWarmWarned = true
+                Ext.Utils.PrintWarning("[BG3AI] nav ways warm: " .. tostring(errw))
+            end
+        end
         if t - N.lastMirror > N.MIRROR_MS then N.lastMirror = t; pcall(mirror) end
     end)
 end
@@ -548,7 +555,8 @@ RPC.register("nav.frontier", function(args)
             for i = 1, math.min(#hz, 6) do out.hazards[i] = hz[i] end
         end
     end
-    -- Open directions (args.ways=false skips; ~25-100 ms of path searches).
+    -- Open directions (args.ways=false skips): from the per-spot cache the
+    -- Tick warms; a cold spot searches the missing ones (~12 ms each live).
     if args.ways ~= false then
         local ways = N.ways(active, tonumber(args.ways_far) or 20, 8, tonumber(args.ways_budget_ms) or 100)
         if ways and #ways > 0 then out.ways = ways end
@@ -1308,6 +1316,7 @@ end
 -- may fall short. Returns {safe, dist_m, reliable_m, max_m?, surface?,
 -- blocked?, short_pos?, suggest?, suggest_off_m?, suggest_dist_m?}.
 N.JUMP_LAND_CAP_M = 4.5
+N.JUMP_SAFE_DROP_M = 4.0  -- no_floor: a floor this far below the jumper is still a landing to look for
 N.JUMP_SUGGEST_OFF_M = 3.0
 function N.landing(charUuid, pos)
     local e = V.entity(charUuid)
@@ -1363,6 +1372,14 @@ function N.landing(charUuid, pos)
     end
     out.safe = false
     if why == "blocked" then out.blocked = true elseif why == "no_floor" then out.no_floor = true else out.surface = why end
+    -- A guessed y with no floor: look for landings (and the plan) on the floor
+    -- nearest that y instead, unless it lies more than JUMP_SAFE_DROP_M below
+    -- the jumper (S024 07:14: y 10 asked, the ground there at 17, 2 m above
+    -- the jumper; the reply said "pick another landing" and route() then
+    -- found a plain walk to it).
+    if why == "no_floor" and fl[1] and fl[1] >= from[2] - N.JUMP_SAFE_DROP_M then
+        pos = { pos[1], fl[1], pos[3] }
+    end
     -- the nearest clear landing to the target that this jump surely reaches
     local best, bd
     local function cand(x, z)
@@ -1698,16 +1715,22 @@ end
 -- The walkable spot nearest `goal`: rings around it (floors near its height,
 -- nearest ring first), else the farthest direct walk straight toward it.
 -- {pos, path_m, to_goal_m, dy_to_goal, via=near_goal|toward} or nil.
-function N.closestReach(charUuid, goal)
+-- The ring searches stop after CLOSEST_BUDGET_MS: a failing FindPath explores
+-- all the ground it can reach (S025 live: no-path routes of 1.6 and 2.3 s, the
+-- game frozen meanwhile); the walk toward the goal still runs after.
+N.CLOSEST_BUDGET_MS = 250
+function N.closestReach(charUuid, goal, budgetMs)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil end
+    local t0, budget = Ext.Utils.MonotonicTime(), budgetMs or N.CLOSEST_BUDGET_MS
     for _, rad in ipairs(N.NEAR_GOAL_RINGS) do
+        if Ext.Utils.MonotonicTime() - t0 > budget then break end
         local best, bd
         for _, dname in ipairs(DIRS) do
             local v = DIR_VEC[dname]
             local x, z = goal[1] + v[1] * rad, goal[3] + v[2] * rad
-            local fy = floorAt(x, z, goal[2])
+            local fy = Ext.Utils.MonotonicTime() - t0 <= budget and floorAt(x, z, goal[2])
             if fy then
                 local p = { x, fy, z }
                 local r = N.path(charUuid, p)
@@ -1728,6 +1751,29 @@ function N.closestReach(charUuid, goal)
             dy_to_goal = round(goal[2] - r.pos[2], 1), via = "toward" }
     end
     return nil
+end
+
+-- Ladders are used from either end, but a ladder's position is its foot
+-- (S024 07:12 Knotted Roots, S025 08:03 the Moonrise lobby ladder: from the
+-- upper floor, interact and route aimed 12-16 m below the actor, every try
+-- was refused "no walkable path", and the party split and fast-travelled
+-- round). For an actor at least LADDER_TOP_MIN_M above the foot: the top end,
+-- at the foot's x/z, y = foot + AI-bounds height, raised to the actor's own
+-- height when the actor stands up to LADDER_TOP_SLACK_M above that (bounds
+-- can fall short of the landing: e366 10.9 m, landing ~15 m up). nil when it
+-- is not a ladder or the actor is at the foot's level.
+N.LADDER_TOP_MIN_M = 2.5
+N.LADDER_TOP_SLACK_M = 6.0
+function N.ladderTop(from, uuid, ie)
+    ie = ie or V.entity(uuid)
+    local p = ie and V.pos(ie)
+    if not p or type(from) ~= "table" or from[2] - p[2] < N.LADDER_TOP_MIN_M then return nil end
+    if V.itemKind(uuid, ie) ~= "ladder" then return nil end
+    local b = V.bounds and V.bounds(ie)
+    local h = b and type(b.height) == "number" and b.height >= 1.5 and b.height or (from[2] - p[2])
+    local y = p[2] + h
+    if from[2] > y and from[2] - y <= N.LADDER_TOP_SLACK_M then y = from[2] end
+    return { p[1], y, p[3] }
 end
 
 -- Ladders and doors in view, ranked for reaching `goal` (or by distance):
@@ -2112,12 +2158,42 @@ end)
 -- direct (<= DETOUR x straight), the same test walk_toward uses. budget_ms caps
 -- the total; directions left unsearched are omitted (unknown).
 -- -> { {dir, open_m (0 = blocked within near), dy?}, ... }, ms
-function N.ways(charUuid, far, near, budgetMs)
+-- Open directions are cached per spot (level, character, 1 m cell) and filled
+-- in increments: a call searches the directions not done yet within its
+-- budget, and the Tick warms the cache while the active character stands
+-- still (N.waysWarm), so get_frontier / route usually answer from the cache
+-- (S025/S026 live: the 8-16 searches cost ~100 ms, the largest part of a
+-- 125-330 ms frontier). A result with fewer than 8 directions lists the ones
+-- searched so far.
+N.WAYS_DIRS = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" }
+N.WAYS_TTL_MS = 120000
+N.WAYS_CACHE_MAX = 200
+N.waysCache = N.waysCache or {}
+N.waysCacheN = N.waysCacheN or 0
+
+local function waysKey(charUuid, from, far, near)
+    return table.concat({ tostring(currentLevel()), charUuid, math.floor(from[1] + 0.5), math.floor(from[2] / 2 + 0.5),
+        math.floor(from[3] + 0.5), far, near }, ":")
+end
+
+-- ways(char, far, near, budgetMs, maxDirs) -> list of {dir, open_m, dy?} (searched
+-- directions, compass order), elapsed ms. maxDirs caps the new searches.
+function N.ways(charUuid, far, near, budgetMs, maxDirs)
     far, near, budgetMs = far or 20, near or 8, budgetMs or 100
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil end
     local t0 = Ext.Utils.MonotonicTime()
+    local key = waysKey(charUuid, from, far, near)
+    local c = N.waysCache[key]
+    if not c or t0 - c.t > N.WAYS_TTL_MS then
+        if not c then
+            N.waysCacheN = N.waysCacheN + 1
+            if N.waysCacheN > N.WAYS_CACHE_MAX then N.waysCache, N.waysCacheN = {}, 1 end
+        end
+        c = { t = t0, by = {} }
+        N.waysCache[key] = c
+    end
     local function open(v, dd)
         local x, z = round(from[1] + v[1] * dd, 1), round(from[3] + v[2] * dd, 1)
         local fy = floorAt(x, z, from[2])
@@ -2128,22 +2204,61 @@ function N.ways(charUuid, far, near, budgetMs)
         end
         return false
     end
-    local out = {}
-    for _, d in ipairs({ "N", "NE", "E", "SE", "S", "SW", "W", "NW" }) do
-        if Ext.Utils.MonotonicTime() - t0 > budgetMs then break end
-        local v = DIR_VEC[d]
-        local ok, dy = open(v, far)
-        local m = far
-        if not ok then
-            m = near
-            ok, dy = open(v, near)
-            if not ok then m = 0 end
+    local searched = 0
+    for _, d in ipairs(N.WAYS_DIRS) do
+        if not c.by[d] then
+            if Ext.Utils.MonotonicTime() - t0 > budgetMs or (maxDirs and searched >= maxDirs) then break end
+            searched = searched + 1
+            local v = DIR_VEC[d]
+            local ok, dy = open(v, far)
+            local m = far
+            if not ok then
+                m = near
+                ok, dy = open(v, near)
+                if not ok then m = 0 end
+            end
+            local w = { dir = d, open_m = m }
+            if dy and math.abs(dy) >= 2 then w.dy = round(dy, 1) end
+            c.by[d] = w
         end
-        local w = { dir = d, open_m = m }
-        if dy and math.abs(dy) >= 2 then w.dy = round(dy, 1) end
-        out[#out + 1] = w
     end
+    local out = {}
+    for _, d in ipairs(N.WAYS_DIRS) do if c.by[d] then out[#out + 1] = c.by[d] end end
     return out, Ext.Utils.MonotonicTime() - t0
+end
+
+-- Tick: while the active character has stood still WAYS_WARM_STILL_MS (out of
+-- combat), search one more direction of get_frontier's ways every
+-- WAYS_WARM_EVERY_MS, so the next frontier/route reads them from the cache.
+-- On arrival (a walk's end, a level load) all eight are warm ~0.8 s later, before
+-- the agent's next read (~2 s of think); interiors were ~100 ms cold (BACKLOG #7).
+-- A step slower than WAYS_WARM_SLOW_MS (a failing search over a big level:
+-- Tick max 410 ms) pauses the warm-up WAYS_WARM_BACKOFF_MS: one hitch, not one
+-- per step; the frontier then searches the rest within its own budget.
+N.WAYS_WARM_STILL_MS = 300
+N.WAYS_WARM_EVERY_MS = 60
+N.WAYS_WARM_SLOW_MS = 40
+N.WAYS_WARM_BACKOFF_MS = 3000
+N.waysWarmState = N.waysWarmState or { t = 0 }
+function N.waysWarm(now)
+    local st = N.waysWarmState
+    if now - st.t < N.WAYS_WARM_EVERY_MS or now < (st.pauseUntil or 0) then return end
+    st.t = now
+    if Ext.Utils.GetGameState and tostring(Ext.Utils.GetGameState()) ~= "Running" then return end
+    local ctx = V.context()
+    if not ctx.party or #ctx.party == 0 then return end
+    local active = activeChar(ctx)
+    local e = active and V.entity(active)
+    local p = e and V.pos(e)
+    if not p then return end
+    if not st.pos or st.who ~= active or U.dist(st.pos, p) > 0.3 then
+        st.pos, st.who, st.since = p, active, now
+        return
+    end
+    if now - st.since < N.WAYS_WARM_STILL_MS then return end
+    if truthy(osi(Osi.IsInCombat, active)) then return end
+    local _, ms = N.ways(active, 20, 8, 1000, 1)
+    if ms and ms > N.WAYS_WARM_SLOW_MS then st.pauseUntil = now + N.WAYS_WARM_BACKOFF_MS end
 end
 
 -- Ways on and off a level a player spots by name even where they have
@@ -2278,6 +2393,9 @@ RPC.register("nav.approach", function(args)
     return r
 end)
 
+N.LOS_MARGIN_M = 0.25
+N.LOS_MARGIN_WIDE_M = 0.5
+N.LOS_DISAGREE_MIN_M = 1.5
 -- nav.los_spot {char?, target, range, budget_m?, avoid?=true}: where to walk
 -- to have the target in sight and within range (see N.losSpot). Also says
 -- whether the engine sees it from where the character stands now
@@ -2301,10 +2419,24 @@ RPC.register("nav.los_spot", function(args)
     end
     if budget == math.huge then budget = nil end
     local t0 = Ext.Utils.MonotonicTime()
+    -- Spots with a sideways ray margin; a wider one, and no spot within
+    -- LOS_DISAGREE_MIN_M of here, when the rays already see the target from
+    -- where the engine says there is no line of sight (the model is off here).
+    local losNow = truthy(osi(Osi.HasLineOfSight, char, args.target))
+    local ce = V.entity(char)
+    local here = ce and V.pos(ce)
+    local margin, minStep = N.LOS_MARGIN_M, nil
+    if not losNow and here and V.losFrom(ctx, args.target, te, tpos, here) == true then
+        margin, minStep = N.LOS_MARGIN_WIDE_M, N.LOS_DISAGREE_MIN_M
+    end
     local r, err = N.losSpot(char, args.target, tpos, range, budget, args.avoid ~= false,
-        function(feet) return V.losFrom(ctx, args.target, te, tpos, feet) end)
+        function(feet)
+            if minStep and here and U.dist(feet, here) < minStep then return false end
+            return V.losFrom(ctx, args.target, te, tpos, feet, margin)
+        end)
     if not r then error(err, 0) end
-    r.los_now = truthy(osi(Osi.HasLineOfSight, char, args.target))
+    r.los_now = losNow
+    if minStep then r.model_off_here = true end
     if mv then r.movement_left = round(mv, 1) end
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r
@@ -2373,12 +2505,20 @@ RPC.register("nav.route", function(args)
         local visible = U.comp(te, "ServerCharacter") and V.characterVisible(ctx, args.target, te, tp)
             or (U.comp(te, "ServerItem") and V.itemVisible(ctx, args.target, te, tp))
         if not visible then error("not visible", 0) end
-        goal = tp
+        local ce = V.entity(char)
+        goal = U.comp(te, "ServerItem") and N.ladderTop(ce and V.pos(ce), args.target, te) or tp
     end
     if not goal then error("need pos [x,y,z] or target", 0) end
     local t0 = Ext.Utils.MonotonicTime()
     local r, err = N.routeAhead(ctx, char, goal, args.connectors == true)
     if not r then error(err, 0) end
+    -- No path: the open directions too, as get_frontier gives them (S023 06:23:
+    -- 8 guessed route/wiki/zoom calls across a chasm while the way on, a stone
+    -- bridge, lay SW).
+    if r.reachable == false and args.ways ~= false then
+        local ok, ways = pcall(N.ways, char, 20, 8, 80)
+        if ok and ways and #ways > 0 then r.ways = ways end
+    end
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r
 end)
@@ -2407,11 +2547,7 @@ RPC.register("nav.activity", function(args)
                     out.party_turn = ok and mine == true
                 end
             end
-            if not out.in_dialogue then
-                local d = false
-                pcall(function() d = e.ServerCharacter.InDialog == true end)
-                out.in_dialogue = d or truthy(osi(Osi.IsInDialog, u))
-            end
+            if not out.in_dialogue and e then out.in_dialogue = V.inDialog(u, e) end
         end
     end
     for _, j in pairs(RPC.jobs or {}) do

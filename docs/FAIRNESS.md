@@ -20,6 +20,10 @@ through a tool) is allowed, the way a player who read the wiki has it, and is ta
 Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendered frame.
 
 ## Auditing
+* **Per-session audit** (`runner/fairness.py`, a section of every `Sxxx.triage.md`): scans every game-tool result
+  the agent got for raw GUIDs, DCs outside the roll screen, passive-roll subjects, story-flag/template names and
+  engine status ids and waypoint/level ids (LEAK), and hidden-state words on entity lines (CHECK). Memory, wiki and
+  screenshot results are skipped. `python3 runner/fairness.py runtime/sessions/<run>/Sxxx` prints it alone.
 * `dev.fairness_probe` (server op) returns, for the current area, how many candidates each rule filtered.
   It returns counts only, never names.
 * Visibility probes and their live results are in `research/impl-vis.md`.
@@ -27,6 +31,9 @@ Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendere
   see. The runner surfaces these notes.
 
 ## Known judgment calls
+* Places are named as the map names them: get_map lists regions ("Shadow-Cursed Lands") and waypoint names
+  ("Last Light Inn"), level_changed carries the region, and fast_travel/travel_to take those names. Level
+  ids (WLD_Main_A) and waypoint ids (WAYP_CHA_Top) stay internal (decided 2026-10-10, BACKLOG #8).
 * "Perceived by any party member" is slightly *stricter* than a human with a free camera, who can pan to
   non-hidden NPCs far away. The screenshot tool covers that gap fairly.
 * Examine-panel data (HP, AC, ability scores, resistances) is exported for visible creatures because the

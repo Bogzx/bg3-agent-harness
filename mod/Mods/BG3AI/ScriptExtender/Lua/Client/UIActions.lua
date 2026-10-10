@@ -502,8 +502,9 @@ RPC.register("ui.dialogue_choose", function(args)
         i = tonumber(i) or error("i must be an option number")
         local answers, changing, counts = S.dialogueAnswers(w.el, S.activeDialogue(dc))
         if changing then
-            error(("dialogue is changing (%s answers rendered, %s in the game); read ui.state again"):format(
-                tostring(counts and counts.rendered), tostring(counts and counts.vms)))
+            error(("dialogue is changing (%s answers rendered, %s in the game, %s with text, ShowAnswers=%s); read ui.state again"):format(
+                tostring(counts and counts.rendered), tostring(counts and counts.vms),
+                tostring(counts and counts.texted), tostring(counts and counts.show)))
         end
         local a = answers[i] or error("no option " .. i .. " (" .. #answers .. " shown)")
         if a.off then error("option " .. i .. " is disabled") end
@@ -846,7 +847,12 @@ function MENU.load(args)
         if stage == "select" or stage == "verify" then
             if not pageUp then return "failed", { stage = stage, error = "the load page closed" } end
             local w, items, matched = loadItems(owner)
-            if #matched == 0 then return "failed", { stage = stage, error = "no playthrough named '" .. tostring(owner) .. "' on the load page" } end
+            if #matched == 0 then
+                -- S025 08:35: failed 1 s after the page opened, the same save loaded on the next call: the
+                -- playthrough list fills a few frames after the page shows. Wait like the save list below.
+                if now - since > 3000 then return "failed", { stage = stage, error = "no playthrough named '" .. tostring(owner) .. "' on the load page (after 3s)" } end
+                return nil
+            end
             if #items == 0 then
                 if now - since > 3000 then return "failed", { stage = stage, error = "no saves listed for '" .. tostring(owner) .. "'" } end
                 return nil -- expanding: items appear on the next frames

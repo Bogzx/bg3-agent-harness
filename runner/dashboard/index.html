@@ -150,6 +150,25 @@ table.goals svg { vertical-align: middle; }
 .milestones .m.ok { color: var(--ok); } .milestones .m.next { color: var(--warn); }
 .milestones .m small { color: var(--faint); }
 .hwrap { max-height: 220px; overflow: auto; }
+.story .body { max-height: 520px; overflow: auto; }
+.dcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+.dcard { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font-size: 13px; }
+.dcard h3 { margin: 0 0 6px; font-size: 13.5px; } .dcard h3 .id { color: var(--accent); margin-right: 6px; }
+.dcard h3 .s { color: var(--faint); font-weight: 400; font-size: 12px; margin-left: 4px; }
+.dcard .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-top: 5px; }
+.dcard ul { margin: 2px 0 0; padding-left: 16px; } .dcard li { margin: 1px 0; }
+.dcard .tag { font-size: 11px; color: var(--faint); margin-left: 4px; } .dcard .tag.seen { color: var(--ok); }
+.dcard .rev { margin-top: 6px; font-size: 12px; color: var(--warn); }
+.chap { margin-bottom: 14px; } .chap h3 { margin: 0 0 4px; color: var(--accent); font-size: 14px; }
+.chap h4 { margin: 8px 0 2px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.chap ul, .ov ul { margin: 0; padding-left: 18px; font-size: 13px; }
+.ov .now { font-size: 14px; margin-bottom: 8px; } .ov h4 { margin: 10px 0 3px; color: var(--muted); font-size: 12px; text-transform: uppercase; }
+.pcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.pcard { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font-size: 13px; }
+.pcard .hpbar { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; margin: 4px 0 6px; }
+.pcard .hpbar i { display: block; height: 100%; }
+.pcard .eq, .pcard .nb { font-size: 12px; color: var(--muted); } .pcard .r-uncommon { color: #4cc38a; }
+.pcard .r-rare { color: #5aa9ff; } .pcard .r-very { color: #c678dd; } .pcard .r-legendary { color: #d4a24c; } .pcard .r-story { color: #e6b450; }
 .banner { display: none; margin: 10px 16px 0; padding: 8px 12px; border-radius: 8px; background: #3a1c22; color: #ffb3ba; font-size: 13px; }
 </style>
 </head>
@@ -168,6 +187,13 @@ table.goals svg { vertical-align: middle; }
       <div class="milestones" id="goalMilestones"></div>
       <div class="milestones" id="goalUnattended"></div>
       <div class="milestones" id="checkAll"></div></div>
+  </section>
+</div>
+<div class="goalwrap">
+  <section class="card story">
+    <h2><span class="grow">Story</span><small id="storyNote"></small>
+      <span class="tabs" id="storyTabs"><button data-k="timeline" class="on">Decisions</button><button data-k="chapters">Chapters</button><button data-k="overview">Overview</button><button data-k="party">Party</button></span></h2>
+    <div class="body" id="storyBody"><div class="empty">No story yet.</div></div>
   </section>
 </div>
 <main>
@@ -567,6 +593,65 @@ async function pollGoals() {
   setTimeout(pollGoals, 15000);
 }
 
+/* ---------------- story (memory: decisions, chapters, PLAYTHROUGH.md, snapshots) ---------------- */
+let storyTab = "timeline", storyData = null;
+const ul = (xs, f = esc) => xs && xs.length ? `<ul>${xs.map((x) => `<li>${f(x)}</li>`).join("")}</ul>` : "";
+const tagged = (c) => `${esc(c.text)}${c.tag ? `<span class="tag ${/^seen/i.test(c.tag) ? "seen" : ""}">[${esc(c.tag)}]</span>` : ""}`;
+function storyTimeline(d) {
+  if (!d.decisions.length) return `<div class="empty">No decisions yet (decisions.md).</div>`;
+  return `<div class="dcards">${d.decisions.slice().reverse().map((c) => `<div class="dcard">
+    <h3><span class="id">${esc(c.id)}</span>${esc(c.title)}${c.session ? `<span class="s">${esc(c.session)}</span>` : ""}</h3>
+    ${c.choice.length ? `<div class="k">Choice</div>${ul(c.choice)}` : ""}
+    ${c.why.length ? `<div class="k">Why</div>${ul(c.why)}` : ""}
+    ${c.consequences.length ? `<div class="k">Consequences</div>${ul(c.consequences, tagged)}` : ""}
+    ${c.expected.length ? `<div class="k">Expected later</div>${ul(c.expected, tagged)}` : ""}
+    ${c.notes.length ? ul(c.notes) : ""}
+    ${c.reversible ? `<div class="rev">Reversible: ${esc(c.reversible)}</div>` : ""}</div>`).join("")}</div>`;
+}
+function storyChapters(d) {
+  if (!d.chapters.length) return `<div class="empty">No chapter summaries yet (memory/chapters/).</div>`;
+  return d.chapters.slice().reverse().map((c) => `<div class="chap"><h3>${esc(c.title)}</h3>${c.sections.map((s) =>
+    `${s.heading ? `<h4>${esc(s.heading)}</h4>` : ""}${ul(s.items)}`).join("")}</div>`).join("");
+}
+function storyOverview(d) {
+  const p = d.playthrough;
+  return `<div class="ov"><div class="now"><b>${esc(p.title || "")}</b><br>${esc(p.now || "")}</div>
+    ${p.header.map((h) => `<div>${esc(h)}</div>`).join("")}
+    ${p.main_thread ? `<h4>Main thread</h4><div>${esc(p.main_thread)}</div>` : ""}
+    ${p.party.length ? `<h4>Party &amp; companions</h4>${ul(p.party)}` : ""}
+    ${p.commitments.length ? `<h4>Standing commitments</h4>${ul(p.commitments)}` : ""}</div>`;
+}
+const itemHtml = (i) => `<span class="${i.story ? "r-story" : i.rarity ? "r-" + i.rarity.split(" ")[0] : ""}">${esc(i.name)}</span>`;
+function storyParty(d) {
+  const st = d.status, ms = st.party.concat(d.others.map((o) => ({...o, camp: true})));
+  if (!ms.length) return `<div class="empty">No party snapshot yet (memory/snapshots/).</div>`;
+  return `<div class="ov" style="margin-bottom:8px">${esc(st.where || "")}${st.mode ? " · " + esc(st.mode) : ""}${st.gold != null ? ` · <b>${st.gold}</b> gold` : ""}${st.when ? ` <small style="color:var(--faint)">snapshot ${esc(st.when)}</small>` : ""}</div>
+  <div class="pcards">${ms.map((m) => {
+    const p = m.max_hp ? m.hp / m.max_hp : null;
+    return `<div class="pcard"><b>${m.active ? "★ " : ""}${esc(m.name)}</b> <small style="color:var(--muted)">${esc(m.class || (m.camp ? "not in the party snapshot" : ""))}</small>
+      ${p != null ? `<div class="hpbar"><i style="width:${Math.round(p * 100)}%;background:${hpColor(p)}"></i></div><div>HP ${m.hp}/${m.max_hp}${m.statuses && m.statuses.length ? ` · <small>${esc(m.statuses.join(", "))}</small>` : ""}</div>` : ""}
+      ${m.equipped && m.equipped.length ? `<div class="eq">Equipped: ${m.equipped.map((i) => `${itemHtml(i)} <small>(${esc(i.slot)})</small>`).join(", ")}</div>` : ""}
+      ${m.notable && m.notable.length ? `<div class="nb">Bags: ${m.notable.map(itemHtml).join(", ")}</div>` : ""}</div>`;
+  }).join("")}</div>`;
+}
+function renderStory() {
+  const d = storyData; if (!d) return;
+  if (!d.exists) { $("storyBody").innerHTML = `<div class="empty">No memory directory at ${esc(d.dir)}</div>`; return; }
+  $("storyNote").textContent = `${d.decisions.length} decisions · ${d.chapters.length} chapters`;
+  const f = {timeline: storyTimeline, chapters: storyChapters, overview: storyOverview, party: storyParty}[storyTab];
+  $("storyBody").innerHTML = f(d);
+}
+async function pollStory() {
+  try { storyData = await getJSON("/api/story"); renderStory(); } catch (e) { /* ignore */ }
+  setTimeout(pollStory, 30000);
+}
+$("storyTabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  storyTab = b.dataset.k;
+  for (const x of $("storyTabs").children) x.classList.toggle("on", x === b);
+  renderStory();
+});
+
 /* ---------------- wiring ---------------- */
 $("memTabs").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
@@ -576,7 +661,7 @@ $("memTabs").addEventListener("click", (e) => {
 });
 $("saysOnly").addEventListener("change", (e) => $("agent").classList.toggle("says-only", e.target.checked));
 setInterval(renderClock, 1000);
-pollState(); pollFeed(); pollAgent(); pollLatency(); pollProgress(); pollGoals();
+pollState(); pollFeed(); pollAgent(); pollLatency(); pollProgress(); pollGoals(); pollStory();
 </script>
 </body>
 </html>

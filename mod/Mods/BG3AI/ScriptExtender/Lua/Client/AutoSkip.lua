@@ -61,6 +61,8 @@ K.MOVIE_CONFIRM_MS = 100 -- a movie seen on two probes is real, not a transition
 K.ENGINE_GRACE_MS = 200 -- after the engine ESCAPE, before asking the bridge for a shim key
 K.RETRY_MS = 700        -- between shim keys, and between line skips
 K.MAX_TRIES = 4
+K.LINE_MAX_TRIES = 8    -- a text line: command, engine SPACE, then shim SPACE (see lineTick)
+K.LINE_WANT_MS = 400    -- the skipper honours a line's shim-SPACE request only this fresh
 K.LOAD_RETRY_MS = 2000  -- load-time movies: shim ESCAPE at most this often, while it lasts
 K.LOAD_MAX_TRIES = 120  -- ~4 min of tries
 K.STALE_MS = 500        -- no tick for this long (loading may stall it): autoskip.status probes itself
@@ -174,7 +176,7 @@ function K.movieTick(now)
     local kind = K.probeMovie()
     if not kind then
         st.movie = nil
-        K.want = nil
+        if K.want and K.want.reason ~= "line" then K.want = nil end
         return false
     end
     local m = st.movie
@@ -225,6 +227,8 @@ function K.tick()
     end
     if not slow then return end
     st.next = now + K.PERIOD_MS
+    -- A line's shim-SPACE request lives one dialogue tick: re-made below only while that line still plays.
+    if K.want and K.want.reason == "line" then K.want = nil end
 
     local widgets = UI.widgets()
     local wmap = {}
@@ -265,15 +269,26 @@ function K.tick()
     -- Act only on a node seen unchanged on two consecutive ticks.
     local grace = line.notext and K.NOTEXT_GRACE_MS or K.LINE_GRACE_MS
     if now - line.since < math.max(grace, K.PERIOD_MS) then return end
-    local maxTries = line.notext and K.NOTEXT_MAX_TRIES or K.MAX_TRIES
+    local maxTries = line.notext and K.NOTEXT_MAX_TRIES or K.LINE_MAX_TRIES
     local gap = line.notext and K.NOTEXT_RETRY_MS or K.RETRY_MS
     if line.tries >= maxTries or now - line.last < gap then return end
     if isOurCombatTurn(dc) then return end
 
     line.tries = line.tries + 1
     line.last = now
-    local ok = UI.command(dc, "SelectorSkipCommand", nil, false)
-    if not ok then ok = press("SPACE") end
+    -- Escalate while the same line stays up (S023: Mizora's and Halsin's cinematic lines played at voice
+    -- pace: SelectorSkipCommand "succeeded" with no effect, so SPACE never came; ~4 min of waits): the
+    -- page's skip command, then the engine's SPACE, then SPACE through the bridge's input shim (real input).
+    local ok
+    if line.tries == 1 or (line.notext and line.tries % 2 == 1) then
+        ok = UI.command(dc, "SelectorSkipCommand", nil, false)
+        if not ok then ok = press("SPACE") end
+    elseif line.tries == 2 or line.notext then
+        ok = press("SPACE")
+    else
+        want("SPACE", "line", line.tries, now)
+        ok = true
+    end
     if ok and line.tries == 1 then
         if line.notext then K.stats.cinematic = (K.stats.cinematic or 0) + 1
         else K.stats.lines = K.stats.lines + 1 end

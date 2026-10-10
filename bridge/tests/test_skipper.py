@@ -62,6 +62,23 @@ class SkipperTest(unittest.TestCase):
         self.assertEqual(self.inp.keys, ["ESCAPE", "ESCAPE"])
         self.assertIn("try 3", self.logs[-1])
 
+    def test_stuck_dialogue_line_gets_one_shim_space_per_request(self):
+        # S023: cinematic lines the page's skip command and the engine SPACE did not skip.
+        want = {"seq": 5, "key": "SPACE", "reason": "line", "try": 3, "at": 1000}
+        self.game.status = {"on": True, "now": 1100, "line": {"tries": 3, "age": 1500}, "want": want}
+        for _ in range(3):
+            self.sk.step()
+        self.assertEqual(self.inp.keys, ["SPACE"])
+        self.assertIn("line skipped (SPACE via shim, try 3)", self.logs[-1])
+
+    def test_no_line_space_when_stale_or_the_line_is_gone(self):
+        want = {"seq": 6, "key": "SPACE", "reason": "line", "try": 3, "at": 1000}
+        self.game.status = {"on": True, "now": 1900, "line": {"tries": 3}, "want": want}  # stale request
+        self.sk.step()
+        self.game.status = {"on": True, "now": 1100, "want": dict(want, seq=7)}  # no line any more
+        self.sk.step()
+        self.assertEqual(self.inp.keys, [])
+
     def test_no_key_once_the_movie_is_gone(self):
         # A stale want without a movie in the same reply: a stray ESCAPE would open the game menu.
         self.game.status = {"on": True, "want": {"seq": 9, "key": "ESCAPE"}}

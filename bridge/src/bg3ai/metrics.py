@@ -290,10 +290,36 @@ def moved(prev: dict | None, cur: dict | None, eps: float = MOVE_EPS_M) -> bool:
     return False
 
 
+# Client game states that are play. Anything else (LoadLevel, LoadSession, Sync, ...) is a loading screen even
+# when the server still answers nav.activity (S023 06:29:38: ~17 s of the camp -> trail loading screen counted
+# as idle). "Save" is the ~1 s of a save (ours or the game's).
+PLAY_STATES = {"Running", "Paused", "Save"}
+_GS_CODE = "return tostring(Ext.Utils.GetGameState and Ext.Utils.GetGameState() or '?')"
+
+
+def client_state(game) -> str | None:
+    """The client's game state (None: unknown, e.g. an older Game object or no answer)."""
+    ev = getattr(game, "eval", None)
+    if ev is None:
+        return None
+    try:
+        out = ev(_GS_CODE, context="client", timeout=3.0)
+    except Exception:  # noqa: BLE001 - the caller treats it as unknown
+        return None
+    out = str(out or "").strip().strip('"')
+    return out if out and out not in ("?", "nil") else None
+
+
 def sampler_loop(rec: Recorder, game, stop: threading.Event, interval: float = 1.0) -> None:
-    """Poll nav.activity on a dedicated Game connection and record busy/idle samples."""
+    """Poll nav.activity on a dedicated Game connection and record busy/idle samples; a load sample when the
+    client shows a loading screen (its game state is not play) or the server doesn't answer."""
     prev = None
     while not stop.wait(interval):
+        gs = client_state(game)
+        if gs is not None and gs not in PLAY_STATES:
+            prev = None
+            rec.load_sample(time.time())
+            continue
         try:
             a = game.rpc("nav.activity", context="server", timeout=3.0)
         except Exception:  # noqa: BLE001 - loading screens, reloads, old mod without the op

@@ -17,10 +17,12 @@ show reads no longer wait behind it. Safe during setup's live work; don't run it
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 import re
 import statistics
 import sys
+import shutil
 import tempfile
 import threading
 import time
@@ -29,6 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "bridge" / "src"))
 _metrics = Path(tempfile.mkdtemp(prefix="bg3ai-reads-")) / "metrics.jsonl"
+atexit.register(shutil.rmtree, _metrics.parent, True)
 os.environ.setdefault("BG3AI_METRICS_PATH", str(_metrics))
 
 from bg3ai import metrics as M  # noqa: E402

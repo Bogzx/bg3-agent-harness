@@ -38,6 +38,7 @@ local TICK_MS = 50   -- post-condition polling; cheap queries, keeps chaining fa
 A.MOVE_REACH = 2.2   -- move_to {target}: stop within this of the entity (centres; melee reach is
                      -- weapon 1.5 + both radii, >= 2.2 m even for a tiny target, see G.check_cast)
 A.END_REQUEST_AFTER_MS = 1500 -- end_turn in a shared group: report the request as done after this
+A.MELEE_STOP_SLACK = 0.4 -- move_to {target, within}: stop this far inside the melee reach
 A.USE_REACH = 1.8    -- interact/pickup and the click ops: Use/Pickup/click from here
 
 ------------------------------------------------------------------------
@@ -294,11 +295,30 @@ local function walk_eta(m, speed) return 0.4 + (m or 0) / (speed == "Walk" and A
 
 -- Run guard checks; a refusal becomes a failed job (so the bridge sees the
 -- same shape for every outcome) and other errors propagate.
+-- Ops that walk: refused at once while the actor is in turn-based mode outside
+-- combat (S024-S026 Shadow Curse: walks failed "no path" with 0 movement after
+-- seconds). The bridge then leaves turn-based mode (the HUD's Exit TB button)
+-- and retries; tb_ok=true (the agent turned it on itself) walks anyway.
+A.WALK_KINDS = { move_to = true, interact = true, pickup = true, talk = true, loot_corpse = true, pickpocket = true }
+A.TB_REFUSAL = "turn-based mode outside combat"
+
+function A.tb_gate(kind, args)
+    if not A.WALK_KINDS[kind] or args.tb_ok then return end
+    local char = args.char and G.guid(args.char) or G.host()
+    if not char or G.in_combat(char) then return end
+    if G.b(G.q("IsInForceTurnBasedMode", char)) then
+        G.refuse(A.TB_REFUSAL .. " (the game switched it on): a walk gets only the turn's movement; leave it first")
+    end
+end
+
 local function guarded(kind, fn)
     return function(args)
         args = args or {}
         A.notify_next = args.notify == true -- read by start(); Lua runs one op at a time
-        local ok, res = pcall(fn, args)
+        local ok, res = pcall(function()
+            A.tb_gate(kind, args)
+            return fn(args)
+        end)
         A.notify_next = false
         if ok then return res end
         if G.is_refusal(res) then
@@ -314,7 +334,7 @@ local function reg(name, fn) RPC.register("act." .. name, guarded(name, fn)) end
 
 
 ------------------------------------------------------------------------
--- act.move_to {char, target | pos, run=true}
+-- act.move_to {char, target | pos, run=true, within?}  (within: a melee reach, target only)
 ------------------------------------------------------------------------
 
 local function movement_left(char)
@@ -333,7 +353,7 @@ local function begin_walk(job, opts)
     job.walk = {
         target = opts.target, pos = opts.pos, ev = ev_name(job, "mv"),
         last_pos = G.pos(job.char), still_ms = 0, travelled = 0,
-        tolerance = opts.tolerance or 1.5, reach = opts.reach, on_arrive = opts.on_arrive,
+        tolerance = opts.tolerance or 1.5, reach = opts.reach, melee = opts.melee, on_arrive = opts.on_arrive,
         move_id = opts.move_id or job.id,
     }
     local p = opts.pos
@@ -376,6 +396,7 @@ local function walk_arrived(job)
     end
     local res = { pos = pos_view(here), dist = (de or d) and U.round(de or d, 1) or nil }
     if w.target then res.target = w.target end
+    if w.melee and de then res.in_reach = de <= w.melee end
     if d and d > 1.5 and not w.target then
         -- Arrived short of a point destination: say so, with the reason if the
         -- pathfinder knows one (e.g. the spot is off the walkable mesh).
@@ -627,18 +648,24 @@ reg("move_to", function(args)
     G.combat_gate(char, "turn")
     local target = args.target and G.guid(args.target)
     local pos = args.pos
-    local route
+    local route, melee, reach
     if target then
         -- Entity targets: walk to a verified reachable point next to them.
         G.target_visible(target)
         G.within(char, target, G.MAX_MOVE_DIST, "destination")
-        local plan = G.approach_point(char, target, A.MOVE_REACH)
+        -- within (melee, combat_turn): stop inside the guard's own edge-to-edge reach, not at 2.2 m
+        -- centres (S023-S025: 22 melee attacks refused "out of range (2.5 m, range 1.5 m)" after a move
+        -- said done; a Spiritual Weapon is small, so 2.2-2.7 m was outside its reach).
+        melee = tonumber(args.within) and G.melee_reach(char, target, tonumber(args.within)) or nil
+        reach = melee and math.max(1.2, math.min(A.MOVE_REACH, melee - A.MELEE_STOP_SLACK)) or A.MOVE_REACH
+        local plan = G.approach_point(char, target, reach)
         if plan.here then
             return start("move_to", char, {
                 timeout_ms = 1000,
                 start = function(job)
                     RPC.finish_job(job, "done", { pos = pos_view(G.pos(char)), dist = U.round(plan.dist, 1),
-                        target = target, already_there = true })
+                        target = target, already_there = true,
+                        in_reach = melee and plan.dist <= melee or nil })
                 end,
             })
         end
@@ -661,7 +688,7 @@ reg("move_to", function(args)
         osi = WALK_OSI,
         start = function(job)
             begin_walk(job, { pos = pos, target = target, speed = speed,
-                tolerance = 1.5, reach = target and A.MOVE_REACH or nil })
+                tolerance = 1.5, reach = reach, melee = melee })
             job.walk.budget = budget
         end,
         on_tick = walk_tick,
@@ -1199,6 +1226,46 @@ local function party_item(item)
     return g, h
 end
 
+-- Why the engine refused an Equip (EquipFailed carries no reason). Live S025: the Sentinel and Studded
+-- Shields failed on Claude, whose main hand held the Moonlantern (Quest_GLO_Moonlantern: Torch, Light,
+-- Unstowable): a held light source or a two-handed weapon blocks the off hand.
+local function stats_of(uuid)
+    local ok, st = pcall(function()
+        local e = Ext.Entity.Get(uuid)
+        return Ext.Stats.Get(e.Data.StatsId)
+    end)
+    return ok and st or nil
+end
+
+local function has_prop(st, want)
+    local ok, props = pcall(function() return st["Weapon Properties"] end)
+    if not ok or type(props) ~= "table" then return false end
+    for _, p in pairs(props) do if p == want then return true end end
+    return false
+end
+
+function A.equip_why(char, item)
+    local why = {}
+    local ist = stats_of(item)
+    local slot = ""
+    pcall(function() slot = tostring(ist.Slot or "") end)
+    local offhand = slot:find("Offhand") ~= nil or slot:find("Shield") ~= nil
+    -- The melee main-hand slot itself (GetEquippedWeapon may answer another slot). Live 2026-10-10: the Moonlantern
+    -- (Torch/Unstowable) in the main hand does NOT block a shield (Sentinel Shield worn with it); S025's failure was
+    -- the two-handed Sword of Justice equipped one step earlier in the same batch.
+    local w = G.guid(G.q("GetEquippedItem", char, "Melee Main Weapon"))
+    local wst = w and stats_of(w)
+    if offhand and w and wst and not G.same(w, item) and has_prop(wst, "Twohanded") then
+        why[#why + 1] = ("the main hand holds a two-handed weapon (%s): equip a one-handed weapon first"):format(
+            name_of(w) or "a weapon")
+    end
+    local h = holder(item)
+    if h and not G.same(h, char) then why[#why + 1] = "it is in another member's bag (give it first)" end
+    if not G.b(G.q("IsProficientWith", char, item)) then why[#why + 1] = "not proficient with it" end
+    if #why == 0 then return "cannot equip that" end
+    return "cannot equip that: " .. table.concat(why, "; ")
+end
+
 reg("equip", function(args)
     local char = G.actor(args.char)
     G.not_in_dialogue(char)
@@ -1212,7 +1279,10 @@ reg("equip", function(args)
                 if G.same(a[1], item) and G.same(a[2], char) then RPC.finish_job(job, "done", { equipped = true }) end
             end,
             EquipFailed = function(job, a)
-                if G.same(a[1], item) then RPC.finish_job(job, "failed", nil, "cannot equip that") end
+                if G.same(a[1], item) then
+                    local ok, why = pcall(A.equip_why, char, item)
+                    RPC.finish_job(job, "failed", nil, ok and why or "cannot equip that")
+                end
             end,
         },
         -- Engine form is Equip/5 (verified live on bg3le): AddToMainInventoryOnFail,
@@ -1258,7 +1328,9 @@ reg("transfer", function(args)
     local item, from = party_item(args.item)
     if G.in_combat(from) then G.refuse("not available during combat through this action (use the UI)") end
     if G.b(G.q("IsEquipped", item)) then G.refuse("unequip it first") end
-    local stack = tonumber(G.q("GetStackAmount", item)) or 1
+    -- One value only: G.q returns three and tonumber(n, base) raised "bad argument #1 to 'tonumber'"
+    -- on every give/camp (S018-S024, 7 calls).
+    local stack = tonumber((G.q("GetStackAmount", item))) or 1
     local amount = math.max(1, math.min(stack, math.floor(tonumber(args.amount) or stack)))
 
     if args.to == "camp" then
@@ -1390,20 +1462,54 @@ reg("sneak", function(args)
 end)
 
 ------------------------------------------------------------------------
--- act.turn_based {on, char?}   (untested live)
+-- act.turn_based {on, char?}: Osiris ForceTurnBasedMode for every party
+-- member (or just char). The bridge prefers the HUD's own Enter/Exit TB
+-- button (ui.press HotBar ExitFTBButton) and falls back to this. S021: the
+-- host-only version timed out while the rest of the party stayed in TB.
+-- act.mode {}: the cheap read behind the bridge's "leave turn-based mode
+-- before a walk" reflex (S024-S026: the Shadow Curse forced the party into
+-- turn-based mode outside combat; every walk then failed with 0 movement).
 ------------------------------------------------------------------------
 
+function A.ftb_members(only)
+    local out = {}
+    for _, u in ipairs(only and { only } or G.party()) do
+        if G.b(G.q("IsInForceTurnBasedMode", u)) then out[#out + 1] = u end
+    end
+    return out
+end
+
+RPC.register("act.mode", function()
+    local combat = false
+    for _, u in ipairs(G.party()) do
+        if G.in_combat(u) then combat = true end
+    end
+    local ftb = A.ftb_members()
+    return { combat = combat, ftb = #ftb > 0, ftb_members = ftb }
+end)
+
 reg("turn_based", function(args)
-    local char = args.char and G.actor(args.char) or G.host()
-    if G.in_combat(char) then G.refuse("already in combat") end
+    local char = args.char and G.actor(args.char) or nil
+    if G.in_combat(char or G.host()) then G.refuse("already in combat") end
     local on = args.on ~= false
-    local function state() return G.b(G.q("IsInForceTurnBasedMode", char)) end
-    if state() == on then G.refuse(on and "already in turn-based mode" or "not in turn-based mode") end
+    local members = char and { char } or G.party()
+    local function pending()
+        local out = {}
+        for _, u in ipairs(members) do
+            if G.b(G.q("IsInForceTurnBasedMode", u)) ~= on then out[#out + 1] = u end
+        end
+        return out
+    end
+    if #pending() == 0 then G.refuse(on and "already in turn-based mode" or "not in turn-based mode") end
     return start("turn_based", nil, {
         timeout_ms = 5000,
-        start = function() G.osi("ForceTurnBasedMode", char, on and 1 or 0) end,
+        start = function()
+            for _, u in ipairs(pending()) do G.osi("ForceTurnBasedMode", u, on and 1 or 0) end
+        end,
         on_tick = function(job)
-            if state() == on then RPC.finish_job(job, "done", { turn_based = on }) end
+            local left = pending()
+            if #left == 0 then RPC.finish_job(job, "done", { turn_based = on }) end
+            job.partial = { still_turn_based = left }
         end,
     })
 end)
@@ -1590,6 +1696,10 @@ reg("lockpick", function(args)
     if h then
         local ok, n = pcall(function() return BG3AI.Visibility.name(h) end)
         G.refuse((ok and n or "a party member") .. " carries its key: use interact on it (opens it with the key)")
+    end
+    if G.lock_pickable(target) == false then
+        G.refuse("this lock cannot be picked (the game offers no lockpick roll for it, only 'locked'): "
+            .. "it opens with its key or a mechanism nearby (lever, button, puzzle), or force it if it is not Sturdy")
     end
     -- Engine path first (live S017-S021: the click path hover-missed this door
     -- 144 times): Use on a locked item with Thieves' Tools is the same

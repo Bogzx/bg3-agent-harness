@@ -18,12 +18,14 @@ to it (e.g. objectives.md before choosing a new goal, npcs.md before talking to 
   build, **named exactly as the operator configured (default "Claude")**. Record the build in
   PLAYTHROUGH.md and party-build.md, then play the prologue.
 - Dialogue or combat in progress: handle it first (the `dialogue` or `combat` playbook).
+- The injection has a **snapshots/gear.md** block, or get_status shows `ALERTS … better gear in bags`:
+  `equip_best()` (one call, out of combat). ALERTS low HP → `short_rest` before the first fight.
 
 ## 2. Start moving, then write the goal
 Issue the first action from HANDOFF "Next steps" #1 (e.g. `travel_to`). **While it runs**, make one
 Edit of `memory/sessions/Sxxx.md` that replaces only the `Goal: (write one line …)` line with one concrete
-sentence (`Goal: <sentence>`, nothing else in that Edit). Log lines always go at the **end** of the file,
-under `## Log` (S002 and S010 put them above it, next to the Goal). Then `save_game(label="Sxxx-start")`
+sentence (`Goal: <sentence>`, nothing else in that Edit). Every other log line goes through `note("[tag] …")`
+(or `note=` on travel_to/queue_actions/do_actions): instant, appended under `## Log`, no Read/Edit. Then `save_game(label="Sxxx-start")`
 at the next calm moment and log `- HH:MM [save] Sxxx-start at <region>`.
 
 If the injection says **STALE NOTES** with objectives.md in it: during the first long walk, rewrite
@@ -36,6 +38,8 @@ game works, like every other note.
 
 Extra cases:
 - The injection says the previous session ended WITHOUT wrap-up: its HANDOFF may be stale, so trust
-  `get_status` and read that session's log (`memory/sessions/S<prev>.md`) during your first walk.
-- It says COMPACTION DUE: run `compaction` during the first long walk or at the first calm moment.
+  `get_status`; HANDOFF's last section `## From the logs (memory keeper)` already has that log's last state
+  and next step. Don't Read old `sessions/Sxxx.md` logs during play (the keeper copies what you need into
+  HANDOFF, objectives.md and quests.md between sessions); read `S<prev>.md` only if that section is missing.
+- It says COMPACTION DUE (only when no memory keeper runs): run `compaction` during the first long walk.
 - A hypothesis is older than 3 sessions (lint warns): test or close it this session.

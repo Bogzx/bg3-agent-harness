@@ -15,6 +15,7 @@ class NewPlaythroughTest(unittest.TestCase):
     def setUp(self):
         isolate_git()
         self.root = Path(tempfile.mkdtemp(prefix="bg3root-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
         shutil.copytree(M.TEMPLATE_DIR, self.root / "memory-template")
         (self.root / "play").mkdir()
 

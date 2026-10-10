@@ -10,6 +10,7 @@ import io
 import json
 import subprocess
 import sys
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -396,6 +397,7 @@ class RunAllTest(unittest.TestCase):
     def setUp(self):
         self.seen = []
         self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
 
     def test_table_and_exit(self):
         outputs = {"smoke.py": (0, SMOKE.replace("✗", "✓")), "check_act.py": (0, ACT), "check_vis.py": (0, VIS),

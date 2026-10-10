@@ -6,11 +6,13 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import unittest
 from typing import Any
 
-os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-"))  # tool logs go here, not runtime/
+_RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit (/tmp filled up 2026-10-10)
+os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)  # tool logs go here, not runtime/
 
 from bg3ai import render, server  # noqa: E402
 from bg3ai.game import JobResult  # noqa: E402

@@ -10,11 +10,13 @@ import copy
 import json
 import os
 import sys
+import shutil
 import tempfile
 import unittest
 from typing import Any
 
-os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-"))
+_RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit (/tmp filled up 2026-10-10)
+os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
 from bg3ai import delta, server  # noqa: E402
 from bg3ai.render import Handles  # noqa: E402
@@ -154,6 +156,7 @@ class Base(unittest.TestCase):
         server.game = self.fake
         self.addCleanup(setattr, server, "game", orig)
         server.DELTA.reset()
+        delta.INV.reset()
         server._objectives["last"] = []
 
 
@@ -305,6 +308,51 @@ class MultiRpc(unittest.TestCase):
         self.assertIn("]=])..','..R([=[", code)
 
 
+class InventoryRev(Base):
+    """look sends the rev of the inventory it holds; the mod answers {unchanged} until an item event."""
+
+    def setUp(self):
+        super().setUp()
+        self.rev, self.sent = 1, []
+        inner = self.fake.rpc
+
+        def rpc(op, args=None, context="server"):
+            if op != "state.inventory":
+                return inner(op, args, context)
+            self.sent.append(dict(args or {}))
+            self.fake.calls.append(op)
+            if (args or {}).get("rev") == self.rev:
+                return {"unchanged": True, "rev": self.rev, "gold": self.fake.w["inventory"].get("gold")}
+            return {**copy.deepcopy(self.fake.w["inventory"]), "rev": self.rev}
+        self.fake.rpc = rpc
+
+    def test_second_look_reuses_the_held_inventory(self):
+        server.look()
+        self.assertEqual(self.sent[-1], {})
+        server.look()
+        self.assertEqual(self.sent[-1], {"rev": 1})
+        self.assertIsNotNone(delta.INV.data)
+        # gold rides on the unchanged reply; items come from the held copy, so no item lines
+        self.fake.w["inventory"]["gold"] = (self.fake.w["inventory"].get("gold") or 0) + 25
+        out = server.look()
+        self.assertIn("gold", out.lower())
+        self.assertNotIn("lost", out.lower())
+
+    def test_new_rev_sends_the_full_list_and_the_delta_sees_it(self):
+        server.look()
+        self.fake.w["inventory"]["items"].append({"uuid": U(901), "name": "Healing Potion", "owner": self.fake.w["status"]["party"][0]["uuid"]})
+        self.rev = 2  # an item event bumped the mod's cache
+        out = server.look()
+        self.assertIn("Healing Potion", out)
+        self.assertEqual(delta.INV.data["rev"], 2)
+
+    def test_foreign_unchanged_reply_is_not_reused(self):
+        self.assertIsNone(delta.INV.merge({"unchanged": True, "rev": 7, "gold": 1}))
+        delta.INV.merge({"items": [], "rev": 3, "gold": 5})
+        self.assertIsNone(delta.INV.merge({"unchanged": True, "rev": 4, "gold": 1}))
+        self.assertEqual(delta.INV.args(), {})
+
+
 class Helpers(unittest.TestCase):
     def test_direction_matches_lua(self):
         self.assertEqual(delta.direction([0, 0, 0], [10, 0, 0]), "E")
@@ -366,6 +414,62 @@ class Remembered(unittest.TestCase):
         self.assertEqual(text.count("REMEMBERED"), render.MAX_REMEMBERED)
         self.assertIn("last seen @(1,2,3) 10s ago", text)
         self.assertIn("(+3 more remembered out of sight: Npc 5, Npc 6, Npc 7)", text)
+
+
+class Lookalikes(unittest.TestCase):
+    def test_plain_lookalikes_are_one_line(self):
+        """S026 08:55: 25 Candle(s) filled get_nearby and '+10 more items' hid the puzzle's Buttons."""
+        from bg3ai import render
+        items = [{"uuid": U(600 + i), "name": "Candles", "kind": "usable", "dist": 4 + i} for i in range(40)]
+        items += [{"uuid": U(700), "name": "Button", "kind": "usable", "dist": 20},
+                  {"uuid": U(701), "name": "Candle", "kind": "item", "dist": 5},
+                  {"uuid": U(702), "name": "Candle", "kind": "item", "dist": 6, "locked": True}]
+        text = render.render_nearby({"characters": [], "items": items}, Handles())
+        self.assertIn("Candles <usable> 4m (+39 more Candles up to 43m)", text)
+        self.assertIn("Button <usable> 20m", text)
+        self.assertEqual(text.count("Candles"), 2)  # one line, named twice
+        self.assertIn("Candle <item> 6m locked", text)  # a flag sets it apart
+        self.assertNotIn("more items", text)
+        two = render.render_nearby({"characters": [], "items": items[:2]}, Handles())
+        self.assertEqual(two.count("ITEM"), 2)  # below SAME_MIN: listed one by one
+
+
+class Fixtures(unittest.TestCase):
+    """S025/S026 Grand Mausoleum: the Buttons under the paintings were the puzzle; ~23 min lost over two sessions."""
+
+    def test_near_is_shown_and_ranked_first(self):
+        from bg3ai import render
+        items = [{"uuid": U(800 + i), "name": f"Bottle {i}", "kind": "item", "dist": 1 + i} for i in range(30)]
+        items += [{"uuid": U(830), "name": "Button", "kind": "usable", "dist": 12, "near": "under Moonrise Towers"},
+                  {"uuid": U(831), "name": "Marble Plate", "kind": "object", "dist": 13, "near": "by Statue"},
+                  {"uuid": U(832), "name": "Rock", "kind": "object", "dist": 2}]
+        text = render.render_nearby({"characters": [], "items": items}, Handles(), max_items=5)
+        self.assertIn("Button <usable> 12m (under Moonrise Towers)", text)
+        self.assertIn("Marble Plate <object> 13m (by Statue)", text)  # an object, but a fixture: listed
+        self.assertNotIn("Rock", text)
+
+    def test_delta_fixture_is_not_a_prop(self):
+        H = Handles()
+        old = delta.snapshot(H, nearby={"characters": [], "items": []})
+        items = [{"uuid": U(900 + i), "name": "Candles", "kind": "usable", "dist": 1 + i} for i in range(20)]
+        items += [{"uuid": U(930), "name": "Marble Plate", "kind": "object", "dist": 3, "near": "under Grief"}]
+        new = delta.snapshot(H, nearby={"characters": [], "items": items})
+        text = "\n".join(delta.diff(old, new, H))
+        self.assertIn("Marble Plate <object> 3m (under Grief)", text)
+        self.assertIn("props 20", text)
+
+    def test_get_nearby_kinds_words(self):
+        self.assertEqual(server._nearby_kinds("doors,usable"), (["door", "usable"], []))
+        mod, words = server._nearby_kinds("Buttons,props")
+        self.assertEqual(words, ["buttons", "props"])
+        self.assertEqual(mod, ["characters", "items", "object"])
+        res = {"characters": [{"name": "Buttonmaker"}, {"name": "Isobel"}],
+               "items": [{"name": "Button", "kind": "usable"}, {"name": "Candles", "kind": "usable"},
+                         {"name": "Grief", "kind": "usable"}], "more_items": 3}
+        got = server._nearby_match(res, words)
+        self.assertEqual([i["name"] for i in got["items"]], ["Button", "Candles"])
+        self.assertEqual([c["name"] for c in got["characters"]], ["Buttonmaker"])
+        self.assertNotIn("more_items", got)
 
 
 def sizes() -> list[tuple[str, int, int, int]]:

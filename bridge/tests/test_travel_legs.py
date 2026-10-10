@@ -97,6 +97,78 @@ class TravelLegs(Base):
         self.assertIn("arrived", out)
 
 
+class MeleeApproach(Base):
+    """S023-S025: melee moves ended 2.3-2.9 m from the target ("no walkable route gets closer than 2.5m", or a
+    plain move's 2.2 m + slack) and 22 attacks were refused out of range; a later step got in reach."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.g.combat = combat(gob_dist=6.0)
+        self.g.watch["combat"] = True
+        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=GOB)
+
+    def test_route_ending_at_the_body_walks_beside_the_target(self):
+        self.g.approach = {"reachable": True, "pos": [3.5, 0.0, 0.0], "walk_m": 3.5, "limit": "route_end",
+                           "end_m": 2.5}
+        self.g.result_for = lambda op, a: ({"dist": 1.4, "target": a.get("target"), "in_reach": True}
+                                           if op == "act.move_to" else {})
+        out = server.combat_turn(json.dumps({"move": {"target": self.gob, "within": 1.5},
+                                             "action": ["Shout_Dodge"]}), end=False)
+        mv = self.g.ops("act.move_to")[0][1]
+        self.assertEqual((mv.get("target"), mv.get("within")), (GOB, 1.5))
+        self.assertNotIn("pos", mv)
+        self.assertNotIn("stopped short", out)
+
+    def test_plain_move_passes_the_melee_reach_and_says_when_short(self):
+        self.g.result_for = lambda op, a: ({"dist": 2.6, "target": a.get("target"), "in_reach": False}
+                                           if op == "act.move_to" else {})
+        out = server.combat_turn(json.dumps({"move": self.gob, "action": ["Shout_Dodge"]}), end=False)
+        self.assertEqual(self.g.ops("act.move_to")[0][1].get("within"), 1.5)
+        self.assertIn("stopped short of melee reach", out)
+
+    def test_far_ledge_still_stays_put(self):
+        self.g.approach = {"reachable": True, "pos": [0.0, 0.0, 0.0], "walk_m": 0.2, "limit": "route_end",
+                           "end_m": 7.8}
+        out = server.combat_turn(json.dumps({"move": {"target": self.gob, "within": 1.5},
+                                             "action": ["Shout_Dodge"]}), end=False)
+        self.assertEqual(self.g.ops("act.move_to"), [])
+        self.assertIn("stays put", out)
+
+    def test_melee_out_of_range_steps_beside_it_and_attacks(self):
+        n = {"fails": 1}
+
+        def refuse(op, a):
+            if op == "act.cast" and n["fails"] > 0:
+                n["fails"] -= 1
+                return "target is out of range (2.5 m, range 1.5 m): move closer first"
+            return None
+        self.g.refuse_if = refuse
+        self.g.result_for = lambda op, a: ({"dist": 1.3, "target": a.get("target"), "in_reach": True}
+                                           if op == "act.move_to" else {})
+        out = server.combat_turn(json.dumps({"action": {"ability": "Target_MainHandAttack", "target": self.gob}}))
+        self.assertEqual(self.g.ops("act.move_to")[0][1].get("within"), 1.5)
+        self.assertEqual(self.g.ops("nav.approach"), [])
+        self.assertIn("stepped next to it", out)
+        self.assertEqual(self.casts(), ["Target_MainHandAttack", "Target_MainHandAttack"])
+
+
+class CombatOver(Base):
+    def test_combat_turn_after_the_fight_is_not_a_failure(self):
+        self.g.combat = {"active": False}
+        out = server.combat_turn(json.dumps({"action": ["Shout_Dodge"]}))
+        self.assertTrue(out.startswith("combat_turn: nothing to play — not in combat"), out)
+        self.assertEqual(self.casts(), [])
+
+    def test_container_spell_takes_its_first_variant(self):
+        self.g.combat = combat()
+        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=GOB)
+        self.g.refuse_if = lambda op, a: ("choose a variant: Shout_SpiritGuardians_Radiant, Shout_SpiritGuardians_Necrotic"
+                                          if op == "act.cast" and a.get("spell") == "Shout_SpiritGuardians" else None)
+        out = server.combat_turn(json.dumps({"action": ["Shout_SpiritGuardians"]}))
+        self.assertEqual(self.casts(), ["Shout_SpiritGuardians", "Shout_SpiritGuardians_Radiant"])
+        self.assertIn("took the first variant Shout_SpiritGuardians_Radiant", out)
+
+
 class StepIntoRange(Base):
     def setUp(self) -> None:
         super().setUp()
