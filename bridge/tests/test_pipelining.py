@@ -245,9 +245,48 @@ class ClimbHint(Base):
         out = server._climb_hint([0.0, 0.0, 0.0], [0.0, 5.0, 0.0])
         self.assertEqual(seen, [("nav.frontier", {"ways": False})])
         self.assertIn("5m above you", out)
-        self.assertIn("Trapdoor 4m", out)
+        self.assertIn("Trapdoor <exit> 4m", out)
         self.assertNotIn("Crate", out)
         self.assertEqual(server._climb_hint([0.0, 0.0, 0.0], [3.0, 1.0, 0.0]), "")  # same deck
+
+
+class OtherFloor(Base):
+    """Live 10:45: travel_to toward the Mausoleum puzzle room (62 m below, an interior) walked 120 m the wrong way
+    with the Mausoleum Entrance 17 m away: no route + a way in in view = a fast refusal naming it."""
+    def setUp(self) -> None:
+        super().setUp()
+        self.route: dict = {"reachable": False}
+        real = self.g.try_rpc
+
+        def fake(op, args=None, context="server", default=None):
+            if op == "nav.route":
+                self.g.calls.append((op, args))
+                return dict(self.route)
+            if op == "nav.frontier":
+                return {"leads": [{"uuid": CHEST, "name": "Mausoleum Entrance", "kind": "exit", "dist": 17.1,
+                                   "dir": "NW"},
+                                  {"uuid": "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee", "name": "Far Ladder",
+                                   "kind": "ladder", "dist": 55.0}]}
+            return real(op, args, context, default)
+        self.g.try_rpc = fake
+
+    def test_refuses_fast_and_names_the_entrance(self):
+        out = server.travel_to(x=20.0, y=-62.0, z=0.0)
+        self.assertIn("REFUSED: the goal is 62m below you", out)
+        self.assertIn(f"{server.H.get(CHEST)} Mausoleum Entrance <exit> 17.1m NW", out)
+        self.assertNotIn("Far Ladder", out)  # past FLOOR_WAY_M
+        self.assertEqual(self.g.ops("act.move_to"), [])
+        self.assertFalse(server._queues().busy())
+
+    def test_walks_when_the_route_exists_or_the_goal_is_level(self):
+        self.g.reach = lambda a: {"reachable": True, "pos": [20.0, -62.0, 0.0]}
+        self.route = {"reachable": True}
+        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [20.0, -62.0, 0.0]))
+        self.route = {"reachable": False}
+        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [20.0, -3.0, 0.0]))  # same floor: no probe
+        self.assertEqual(len(self.g.ops("nav.route")), 1)
+        self.route = {"too_far": True}
+        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [500.0, -62.0, 0.0]))
 
 
 class SettleAndPace(Base):

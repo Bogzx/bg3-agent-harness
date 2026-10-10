@@ -114,7 +114,7 @@ class CollectTest(unittest.TestCase):
         out = SN.render_gear(inv, {GUID_A.lower(): "Tav"})
         self.assertIn("- Tav: equip Sentinel Shield in MeleeOffHand", out)
         self.assertIn("junk to sell: 1 items", out)
-        self.assertIn("camp supplies carried: 27/40", out)
+        self.assertIn("camp supplies: 27/40 carried", out)
         self.assertIn("nothing to change", SN.render_gear({"items": [], "members": {}}))
 
     def test_missing_ops_degrade(self):

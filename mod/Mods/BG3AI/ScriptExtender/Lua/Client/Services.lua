@@ -11,7 +11,8 @@
 --     confirm=false: stop at a game question ("End the day?") instead of
 --     answering Yes; result.confirmed lists the questions answered.
 --   ui.waypoints {}                                                   -> job (opens/closes the map)
---   ui.fast_travel {waypoint, dry?}                                   -> job
+--   ui.fast_travel {waypoint, dry?}                                   -> job (waits out "Unavailable"; refuses at camp)
+--   ui.travel_block {}                                                -> {error, in_camp, dialogue, screen}
 --
 -- Verified live on bg3le (2026-10-09, read-only on the user's save):
 --   * CurrentPlayer.TravelError ("None" when travel is allowed), the map's
@@ -859,8 +860,10 @@ end
 -- after a press -> press again (MAP_PRESSES in all). A game menu (a stray ESCAPE) eats M,
 -- so that press is an ESCAPE instead. A map that opens slowly and gets closed by the
 -- 2nd press is reopened by the 3rd (normal opens + travel take 0.5 s in all).
+-- pre(job, state): runs each tick before the map is touched; nil = keep waiting, true = go on,
+-- or "failed", result, err (fast_travel waits out a TravelError that clears after a load).
 local MAP_PRESS_MS, MAP_PRESSES = 1200, 3
-local function withMap(kind, timeout_ms, fn)
+local function withMap(kind, timeout_ms, fn, pre)
     local state = { mapPresses = 0, mapKeys = {} }
     local function press()
         local k = visibleWidget("GameMenu") and "ESCAPE" or "M"
@@ -869,11 +872,22 @@ local function withMap(kind, timeout_ms, fn)
         state.mapKeys[#state.mapKeys + 1] = k
     end
     local opened = false
-    if not mapWidget() then
-        press()
-        opened = true
+    local function begin()
+        state.begun = true
+        if not mapWidget() then
+            press()
+            opened = true
+        end
     end
+    if not pre then begin() end
     return waitJob(kind, timeout_ms, function(job)
+        if not state.begun then
+            local go, res, err = pre(job, state)
+            if go == "failed" then return "failed", res, err end
+            if not go then return nil end
+            begin()
+            return nil
+        end
         if not state.ready then
             if not mapWidget() then
                 if RPC.now_ms() - (state.mapPressT or 0) >= MAP_PRESS_MS then
@@ -985,16 +999,53 @@ local function waypointNames(list)
 end
 SV.waypointNames = waypointNames
 
+-- What blocks travel right now (camp leave / fast travel), read like the map's greyed-out button:
+-- {error = TravelError or nil, in_camp, dialogue, screen}. Live 2026-10-10 (LIVETEST-setup, a save taken
+-- right after a long rest): camp leave failed "cannot travel right now" with no reason given.
+RPC.register("ui.travel_block", function(args)
+    local dc = hotbarDC()
+    return {
+        error = travelError(dc),
+        in_camp = selected(dc, "PlayerCharacterProperties.IsInCamp") == true,
+        dialogue = visibleWidget("Dialogue") ~= nil,
+        screen = screenNow(),
+    }
+end)
+
+-- Right after a load (live 2026-10-10, LIVETEST-se / -setup at the red-forest camp) TravelError reads
+-- "Unavailable" for a few seconds and then clears: wait it out instead of failing the call.
+SV.FT_UNAVAILABLE_WAIT_MS = 8000
+
 RPC.register("ui.fast_travel", function(args)
     local want = args.waypoint or error("waypoint required")
     local dc = hotbarDC()
     local err = travelError(dc)
-    if err then error("can't fast travel now (" .. err .. ")", 0) end
+    if err and err ~= "Unavailable" then error("can't fast travel now (" .. err .. ")", 0) end
     if selected(dc, "CharacterMode") == "InCombat" then error("can't fast travel in combat", 0) end
-    if args.dry then return { can = true } end
+    -- Live 2026-10-10: a fast travel from camp moved only the controlled character (companions and
+    -- the camera stayed at the Campsite, PARTY APART 1800 m). The bridge leaves camp first.
+    if selected(dc, "PlayerCharacterProperties.IsInCamp") == true and not args.from_camp then
+        error("at camp: leave camp first (camp leave), then fast travel", 0)
+    end
+    if args.dry then return { can = true, waiting = err } end
 
-    local startPos = playerPos()
-    return withMap("ui.fast_travel", 58000, function(w, opened, state)
+    local startPos
+    local function pre(job, state)
+        local e = travelError()
+        if e == nil then
+            startPos = playerPos()
+            state.unavailableMs = err and (RPC.now_ms() - job.started) or nil
+            return true
+        end
+        if e ~= "Unavailable" then return "failed", nil, "can't fast travel now (" .. e .. ")" end
+        if RPC.now_ms() - job.started >= SV.FT_UNAVAILABLE_WAIT_MS then
+            return "failed", { travel_blocked = e }, "can't fast travel now (Unavailable for "
+                .. string.format("%.0f", SV.FT_UNAVAILABLE_WAIT_MS / 1000) .. " s: the game blocks travel here; "
+                .. "walk (travel_to) or try again after moving)"
+        end
+        return nil
+    end
+    return withMap("ui.fast_travel", 58000 + SV.FT_UNAVAILABLE_WAIT_MS, function(w, opened, state)
         if not state.sent then
             local list = mapWaypoints(w)
             -- The list fills a few frames after the map opens (live S007: an empty
@@ -1039,7 +1090,8 @@ RPC.register("ui.fast_travel", function(args)
         local moved = startPos and pos and U.dist(startPos, pos) > 3
         if moved or (state.loading and RPC.now_ms() - state.t > 2000) then
             if mapWidget() then Ext.Input.InjectKeyPress("ESCAPE") end
-            return "done", { arrived = state.target.name, region = state.target.region, confirmed = state.confirms }
+            return "done", { arrived = state.target.name, region = state.target.region, confirmed = state.confirms,
+                waited_unavailable_ms = state.unavailableMs }
         end
         local te = travelError()
         if te and RPC.now_ms() - state.t > 1000 then
@@ -1047,7 +1099,7 @@ RPC.register("ui.fast_travel", function(args)
             return "failed", nil, "travel refused (" .. te .. ")"
         end
         return nil
-    end)
+    end, pre)
 end)
 
 return SV

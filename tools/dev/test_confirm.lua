@@ -404,6 +404,13 @@ Ext.Loca = { GetTranslatedStringKey = function(id) return id == "WAYP_CHA_Top" a
 ok(pw("WAYP_CHA_Top") == "Roadside Cliffs", "get_map id via loca: " .. pw("WAYP_CHA_Top"))
 ok(BG3AI.Services.waypointNames(WPS):find("Roadside Cliffs %(Wilderness%)"), "names listed with region")
 
+-- fast_travel from camp moved only the controlled character (live 2026-10-10): refused, the bridge leaves camp
+widgets = {}
+inCamp = true
+local okc, ec = pcall(ops["ui.fast_travel"], { waypoint = "Roadside Cliffs" })
+ok(not okc and tostring(ec):find("at camp: leave camp first"), "at camp refused: " .. tostring(ec))
+inCamp = false
+
 -- fast_travel waits for the map's list to fill, then says so instead of "no waypoint named"
 widgets = {}
 W("JournalMap", {}, {})
@@ -472,6 +479,29 @@ local ftj2 = jobs[ops["ui.fast_travel"]({ waypoint = "Risen Road" }).job]
 for _ = 1, 60 do clock = clock + 50 ftj2.on_tick(ftj2) if executed then break end end
 ok(executed and ftj2.status == "running", "fast_travel pressed the waypoint after a swallowed M: "
     .. tostring(ftj2.status) .. " " .. tostring(ftj2.error))
+
+-- right after a load TravelError reads "Unavailable" for a few s (live 2026-10-10): wait, no M meanwhile,
+-- then travel; other errors and a lasting Unavailable still fail
+local travelErr = "Unavailable"
+local _path = BG3AI.UI.path
+BG3AI.UI.path = function(dc, p) if p == "CurrentPlayer.TravelError" then return travelErr end return _path(dc, p) end
+widgets, mapKeys, executed, swallow = {}, {}, false, 0
+local ftj3 = jobs[ops["ui.fast_travel"]({ waypoint = "Risen Road" }).job]
+for _ = 1, 40 do clock = clock + 100 ftj3.on_tick(ftj3) end
+ok(ftj3.status == "running" and #mapKeys == 0, "Unavailable: waits without pressing M (" .. table.concat(mapKeys, ",") .. ")")
+travelErr = nil
+for _ = 1, 60 do clock = clock + 50 ftj3.on_tick(ftj3) if executed then break end end
+ok(executed and mapKeys[1] == "M", "Unavailable cleared after 4 s: map opened, waypoint pressed")
+travelErr, mapKeys = "Unavailable", {}
+widgets = {}
+local ftj4 = jobs[ops["ui.fast_travel"]({ waypoint = "Risen Road" }).job]
+for _ = 1, 100 do clock = clock + 100 ftj4.on_tick(ftj4) if ftj4.status ~= "running" then break end end
+ok(ftj4.status == "failed" and tostring(ftj4.error):find("Unavailable for 8 s") and #mapKeys == 0,
+    "lasting Unavailable fails after 8 s: " .. tostring(ftj4.error))
+travelErr = "Location"
+local okl, el = pcall(ops["ui.fast_travel"], { waypoint = "Risen Road" })
+ok(not okl and tostring(el):find("can't fast travel now %(Location%)"), "other travel errors fail at once: " .. tostring(el))
+BG3AI.UI.path = _path
 BG3AI.UI.byName, BG3AI.UI.content, BG3AI.UI.findAll, BG3AI.UI.execute = _byName, _content, _findAll, _exec
 
 print(("%d passed, %d failed"):format(passes, fails))

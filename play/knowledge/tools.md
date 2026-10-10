@@ -57,6 +57,9 @@ Lines a result may end with:
   active quest, a missing role or skill) — the line is the harness's suggestion, the choice is yours.
 - `place_marker(label, target | x,y,z)` / `delete_marker(marker_id)` → your own persistent map markers.
 - `wait(seconds=3)` → let game time pass. Prefer `wait_for`, which returns as soon as the thing happens.
+- Never `wait_for("combat_started")` (or dialogue_started) to ask "did that start a fight?": the action's own
+  result already says so (mode line, CHANGES, EVENTS), and with nothing running the answer is "nothing is running
+  that would cause combat_started" (24 wasted round trips S023-S026). Just make your next move.
 
 ## Combat
 - `get_combat_state()` → turn order (visible), whose turn, round, the active character's remaining economy.

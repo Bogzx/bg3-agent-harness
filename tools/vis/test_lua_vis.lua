@@ -469,5 +469,53 @@ test("bounds: read once per item within BOUNDS_TTL_MS (look/frontier read them t
     eq(V.bounds(V.entity("D9")), nil, "cached miss stays nil")
 end)
 
+test("item index: built in <= INDEX_BUDGET_MS slices per tick, no closure per item; dirty and level rebuilds", function()
+    setup()
+    -- 1000 floor items, each read costs 0.05 ms of game thread
+    for i = 1, 1000 do
+        world["I" .. i] = { pos = { i % 50, 0, math.floor(i / 50) }, comps = { ServerItem = {} } }
+    end
+    local realGet = Ext.Entity.GetAllEntitiesWithComponent
+    Ext.Entity.GetAllEntitiesWithComponent = function(name)
+        local out = realGet(name)
+        if name == "ServerItem" then
+            for i, e in ipairs(out) do
+                out[i] = setmetatable({}, { __index = function(_, k) clock = clock + 0.05; return e[k] end })
+            end
+        end
+        return out
+    end
+    local ok, err = pcall(function()
+        V.index = { cells = {}, ready = false, built = 0 }
+        V.indexTick() -- starts a build
+        local ticks, worst = 0, 0
+        while V.index.building do
+            local t0 = clock
+            V.indexTick()
+            worst = math.max(worst, clock - t0)
+            ticks = ticks + 1
+            assert(ticks < 10000, "never finished")
+        end
+        eq(V.index.ready, true, "built")
+        assert(worst <= V.INDEX_BUDGET_MS + V.INDEX_CLOCK_EVERY * 0.15 + 0.01, "slice " .. worst .. " ms")
+        assert(ticks > 3, "several slices: " .. ticks)
+        eq(#V.itemsAround({ 25, 0, 10 }, 100), 1000, "every item indexed")
+        -- idle: no rebuild before INDEX_REFRESH_MS
+        clock = clock + 1000; V.indexTick(); eq(V.index.building, nil, "idle")
+        -- an item left an inventory: rebuild after INDEX_DIRTY_MS
+        V.indexDirty(); V.indexTick(); eq(V.index.building, nil, "not at once")
+        clock = clock + V.INDEX_DIRTY_MS; V.indexTick(); eq(V.index.building ~= nil, true, "dirty rebuild")
+        while V.index.building do V.indexTick() end
+        -- a level change is seen within INDEX_LEVEL_CHECK_MS
+        osiv[key("GetRegion", "P1")] = "WLD_Main_A"
+        clock = clock + V.INDEX_LEVEL_CHECK_MS; V.indexTick(); eq(V.index.building ~= nil, true, "level rebuild")
+        eq(#V.itemsAround({ 25, 0, 10 }, 100), 1000, "a query mid level-rebuild finishes it")
+        eq(V.index.building, nil, "finished"); eq(V.index.level, "WLD_Main_A", "new level")
+    end)
+    Ext.Entity.GetAllEntitiesWithComponent = realGet
+    for i = 1, 1000 do world["I" .. i] = nil end
+    assert(ok, err)
+end)
+
 print(("%d/%d passed"):format(count - failures, count))
 os.exit(failures == 0 and 0 or 1)

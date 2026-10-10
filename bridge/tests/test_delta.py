@@ -177,6 +177,25 @@ class LookTool(Base):
         self.assertFalse(any("Tadpole Pod 2" in x for x in out), "distance-only changes are not reported")
         self.assertFalse(any("OBJECTIVE" in x for x in out), "objective distance changes are not reported")
 
+    def test_long_walk_spread_is_one_party_line(self):
+        """S026: 152/146/152/151 m S took four lines; give or take a few metres it is one PARTY line."""
+        server.look()
+        for i, c in enumerate(self.fake.w["status"]["party"]):
+            c["pos"] = [c["pos"][0], c["pos"][1], c["pos"][2] - 150.0 + 2 * i]
+        out = server.look().splitlines()
+        self.assertTrue(out[0].startswith("PARTY moved ~"), out[0])
+        self.assertFalse(any(" moved " in x for x in out[1:] if not x.startswith(("~", "+"))), out)
+
+    def test_straggler_keeps_its_own_line(self):
+        server.look()
+        party = self.fake.w["status"]["party"]
+        for c in party:
+            c["pos"] = [c["pos"][0] - 12.0, c["pos"][1], c["pos"][2]]
+        party[0]["pos"][0] += 9.0
+        out = server.look().splitlines()
+        self.assertFalse(any(x.startswith("PARTY moved") for x in out), out)
+        self.assertEqual(sum(" moved " in x for x in out), len(party))
+
     def test_combat(self):
         server.look()
         combat(self.fake.w)

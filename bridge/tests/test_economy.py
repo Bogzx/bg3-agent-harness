@@ -113,6 +113,21 @@ class Upgrades(unittest.TestCase):
         self.assertEqual(u["holder"], GALE)
         self.assertEqual(u["slot"], "Breast")
 
+    def test_why_names_the_proficiency_that_makes_it_legal(self):
+        # S027: the agent undid Gale's Leather Armour + shield, believing a wizard can't wear them (Human can)
+        inv = s026_inventory()
+        inv["items"].append({"uuid": _u(24), "name": "Studded Leather", "owner": GALE, "slot_type": "Breast",
+                             "ac": 12, "armor": "StuddedLeather", "prof": "LightArmor", "value": 10})
+        u = self.ups(inv)[(GALE, "Studded Leather")]
+        self.assertIn("proficient: LightArmor", u["why"])
+        self.assertIn("proficient: Shields", self.ups()[(CLAUDE, "Sentinel Shield")]["why"])
+
+    def test_worn_magic_gear_never_swapped_for_plainer_stats(self):
+        inv = s026_inventory()
+        inv["items"][1].update(rarity="uncommon", name="Armour of Devotion +Wis")  # magic, AC 14
+        self.assertNotIn((CLAUDE, "Chain Mail"), self.ups(inv))  # AC 16 but plain
+        self.assertIn((CLAUDE, "Chain Mail"), self.ups())  # vs plain Scale Mail it is an upgrade
+
     def test_no_shield_with_a_two_handed_weapon(self):
         inv = s026_inventory()
         inv["items"][0].update(twohanded=True, name="Greatsword", dmg="2d6")

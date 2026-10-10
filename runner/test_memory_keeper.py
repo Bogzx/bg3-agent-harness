@@ -107,6 +107,8 @@ class KeeperTest(MemoryTestCase):
         self.assertIn("sessions/S003.md", prompt)
         self.assertIn("nor HANDOFF.md above its last section", prompt)
         self.assertIn("## From the logs (memory keeper)", prompt)
+        self.assertIn("HARNESS FIXES", prompt)  # the real harness-news.md: retire fixed quirks
+        self.assertIn("## Retired quirks", prompt)
 
     def test_out_of_bounds_edits_are_reverted(self):
         handoff, log = self.read("HANDOFF.md"), self.read("sessions/S003.md")

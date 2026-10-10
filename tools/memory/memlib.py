@@ -225,3 +225,17 @@ def git_commit_all(mem: Path, message: str) -> str | None:
         check=True, capture_output=True, text=True,
     )
     return git(mem, "rev-parse", "--short", "HEAD").stdout.strip()
+
+
+def reusable_session(mem: Path) -> int | None:
+    """The open session's number when its log is still the bare header (killed seconds after start, S016/S019/
+    S022: runner restarts): session.py start reuses that id instead of burning a new one."""
+    st = load_state(mem)
+    n = st.get("current") if st.get("open") else None
+    if not n:
+        return None
+    try:
+        text = (mem / "sessions" / f"{session_id(n)}.md").read_text()
+    except OSError:
+        return None
+    return n if "Goal: (write one line" in text and "\n- " not in text.split("## Log", 1)[-1] else None

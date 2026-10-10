@@ -729,8 +729,19 @@ end
 ------------------------------------------------------------------------
 
 V.CELL = 8.0
-V.INDEX_CHUNK = 400
-V.INDEX_REFRESH_MS = 15000
+-- Built in time slices: at most INDEX_BUDGET_MS of game-thread time per tick
+-- (the clock is read every INDEX_CLOCK_EVERY items). Was 400 items per tick
+-- through a closure + pcall each: 10-11 ms p50, 141 ms max, ~1.7x/s, 189 s of
+-- the game thread per 2 h run, and every RPC queued behind it waited (BACKLOG #5).
+-- Rebuilt on a level change, INDEX_DIRTY_MS after items leave an inventory
+-- (drops, loot thrown on the floor), else every INDEX_REFRESH_MS; candidates'
+-- positions are re-read at query time anyway.
+V.INDEX_CHUNK = 400 -- synchronous builds (indexEnsure) only
+V.INDEX_BUDGET_MS = 2
+V.INDEX_CLOCK_EVERY = 32
+V.INDEX_REFRESH_MS = 60000
+V.INDEX_DIRTY_MS = 2000
+V.INDEX_LEVEL_CHECK_MS = 500
 
 V.index = V.index or { cells = {}, ready = false, built = 0, building = nil, level = nil }
 
@@ -747,27 +758,41 @@ function V.indexStart()
     local ok, list = pcall(Ext.Entity.GetAllEntitiesWithComponent, "ServerItem")
     if not ok or not list then return end
     V.index.building = { list = list, i = 1, cells = {}, level = currentLevel() }
+    V.index.dirty = nil
 end
 
-local function indexStep(budget)
+-- Items left an inventory (dropped, thrown, spilled): rebuild soon.
+function V.indexDirty()
+    V.index.dirty = V.index.dirty or Ext.Utils.MonotonicTime()
+end
+
+-- No closure per item: one pcall of a file-level function.
+local function itemCell(e)
+    if e.InventoryMember then return nil end
+    return e.Transform.Transform.Translate, e.Uuid.EntityUuid
+end
+
+-- Index up to `budget` items, or until budgetMs have passed (when given).
+local function indexStep(budget, budgetMs)
     local b = V.index.building
     if not b then return end
     local list, n = b.list, #b.list
     local stop = math.min(n, b.i + budget - 1)
-    for i = b.i, stop do
-        local e = list[i]
-        local ok, p, u = pcall(function()
-            if e.InventoryMember then return nil end
-            return e.Transform.Transform.Translate, e.Uuid.EntityUuid
-        end)
+    local clock, t0 = Ext.Utils.MonotonicTime, budgetMs and Ext.Utils.MonotonicTime()
+    local every, cells = V.INDEX_CLOCK_EVERY, b.cells
+    local i = b.i
+    while i <= stop do
+        local ok, p, u = pcall(itemCell, list[i])
         if ok and p and u then
             local k = cellKey(p[1], p[3])
-            local cell = b.cells[k]
-            if not cell then cell = {}; b.cells[k] = cell end
+            local cell = cells[k]
+            if not cell then cell = {}; cells[k] = cell end
             cell[#cell + 1] = u
         end
+        i = i + 1
+        if t0 and i % every == 0 and clock() - t0 >= budgetMs then break end
     end
-    b.i = stop + 1
+    b.i = i
     if b.i > n then
         V.index.cells = b.cells
         V.index.level = b.level
@@ -780,19 +805,29 @@ end
 function V.indexTick()
     if Ext.Utils.GetGameState and tostring(Ext.Utils.GetGameState()) ~= "Running" then return end
     if V.index.building then
-        indexStep(V.INDEX_CHUNK)
+        indexStep(math.huge, V.INDEX_BUDGET_MS)
         return
     end
     local t = Ext.Utils.MonotonicTime()
-    local lvl = currentLevel()
-    if not V.index.ready or t - V.index.built > V.INDEX_REFRESH_MS or lvl ~= V.index.level then
+    local x = V.index
+    if not x.ready or t - x.built > V.INDEX_REFRESH_MS
+        or (x.dirty and t - x.dirty >= V.INDEX_DIRTY_MS) then
         V.indexStart()
+        return
+    end
+    -- the level (2 Osiris calls) at most every INDEX_LEVEL_CHECK_MS
+    if t - (x.levelChecked or 0) >= V.INDEX_LEVEL_CHECK_MS then
+        x.levelChecked = t
+        if currentLevel() ~= x.level then V.indexStart() end
     end
 end
 
 -- Synchronous build (first call only, when no index exists yet).
+-- Also finishes a rebuild for a new level at once: the time-sliced build takes
+-- seconds, and the old level's cells would answer in between.
 function V.indexEnsure()
-    if V.index.ready then return end
+    local b = V.index.building
+    if V.index.ready and not (b and b.level ~= V.index.level) then return end
     if not V.index.building then V.indexStart() end
     while V.index.building do indexStep(100000) end
 end

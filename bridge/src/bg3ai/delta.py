@@ -227,17 +227,29 @@ def _ref(H: Handles, uuid: str, name: str) -> str:
     return f"{H.get(uuid, name)} {name}"
 
 
+MOVE_GROUP_M = 3.0      # party members whose walks differ by at most this (or MOVE_GROUP_FRAC of it) moved together
+MOVE_GROUP_FRAC = 0.15
+
+
 def _party_lines(old: dict, new: dict, H: Handles) -> list[str]:
     out = []
     op, np_ = old.get("party") or {}, new.get("party") or {}
-    moves = {}
+    moves, raw = {}, {}
     for u in new.get("party_order") or []:
         o, n = op.get(u), np_[u]
         if o and o["pos"] and n["pos"] and _dist(o["pos"], n["pos"]) >= MOVE_MIN_M:
-            moves[u] = f"moved {render.num(round(_dist(o['pos'], n['pos'])))}m {direction(o['pos'], n['pos'])}".rstrip()
-    together = len(np_) > 1 and len(moves) == len(np_) and len(set(moves.values())) == 1
-    if together:  # the usual case: everyone followed the leader
-        out.append(f"PARTY {next(iter(moves.values()))}")
+            raw[u] = (_dist(o["pos"], n["pos"]), direction(o["pos"], n["pos"]))
+            moves[u] = f"moved {render.num(round(raw[u][0]))}m {raw[u][1]}".rstrip()
+    # The usual case: everyone followed the leader, give or take a few metres (S026: "moved 152m S", "146m S",
+    # "152m S", "151m S" took 4 lines of wait_for CHANGES): one PARTY line.
+    together = len(np_) > 1 and len(raw) == len(np_) and len({d for _, d in raw.values()}) == 1
+    if together:
+        ds = sorted(m for m, _ in raw.values())
+        med = ds[len(ds) // 2]
+        together = ds[-1] - ds[0] <= max(MOVE_GROUP_M, MOVE_GROUP_FRAC * med)
+        if together:
+            approx = "~" if ds[-1] - ds[0] >= 1 else ""
+            out.append(f"PARTY moved {approx}{render.num(round(med))}m {next(iter(raw.values()))[1]}".rstrip())
     for u in new.get("party_order") or []:
         n = np_[u]
         o = op.get(u)

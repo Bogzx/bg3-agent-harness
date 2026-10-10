@@ -60,7 +60,7 @@ class Hint(unittest.TestCase):
         self.assertNotIn('out="Shadowheart"', bits[0])
         self.assertNotIn('out="Claude"', bits[0])
         self.assertIn('into="Halsin"', bits[0])
-        self.assertIn("camp level-ups after a swap: Wyll L3→4", bits[-1])
+        self.assertIn("camp level-ups: Wyll L3→4 → level_up(who=\"Wyll\")", bits[-1])
 
     def test_nothing_in_the_wilderness_but_level_ups(self):
         bits = companions.hint(PARTY, [row(HALSIN, "Halsin", "Druid")], "Wilderness", [], TABLE)
@@ -119,6 +119,12 @@ class Pickers(unittest.TestCase):
         # live 2026-10-10, Halsin's camp menu: a chat question that says "with us"
         self.assertIsNone(companions.pick_join([{"i": 1, "text": "Still feeling at home here with us? The "
                                                  "surroundings are less bucolic, I must admit."}]))
+        gale = [{"i": 1, "text": "Is Mystra always such a demanding goddess?"},
+                {"i": 4, "text": "Join me, why don't you? There's plenty of adventure to be had."}, {"i": 5, "text": "Leave."}]
+        self.assertEqual(companions.pick_join(gale), 4)   # live 2026-10-10
+        wyll = [{"i": 4, "text": "How in the Hells did you get involved with Mizora?"},
+                {"i": 5, "text": "I'd like you to join me."}, {"i": 6, "text": "Leave."}]
+        self.assertEqual(companions.pick_join(wyll), 5)   # live 2026-10-10
 
 
 class FakeGame:

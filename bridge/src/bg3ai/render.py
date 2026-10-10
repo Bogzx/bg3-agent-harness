@@ -8,6 +8,7 @@ render as `key=value`, so the bridge keeps working while the mod's output shapes
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
@@ -402,13 +403,106 @@ def _drop_flicker(evs: list[dict]) -> list[dict]:
     return [e for i, e in enumerate(evs) if i not in drop] if drop else evs
 
 
-def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", job: str | None = None) -> str:
+def _status_key(e: dict) -> tuple | None:
+    kind, d = e.get("kind"), e.get("data")
+    if kind not in ("status_applied", "status_removed") or not isinstance(d, dict):
+        return None
+    t = d.get("target")
+    return ((t.get("uuid") or t.get("name")) if isinstance(t, dict) else t, d.get("name") or d.get("status"))
+
+
+class StatusFlap:
+    """Across calls: a status that goes on/off on one target FLAP_TOGGLES times within FLAP_WINDOW_S is an aura
+    or a light (S026-S027: SCL_MOONSHIELD on Scratch every tick, dozens of EVENTS lines per get_status, which
+    _drop_flicker misses when the on and the off land in different calls). Its events are replaced by one
+    status_flapping line and muted until it has been quiet for FLAP_MUTE_S."""
+    FLAP_TOGGLES = 6
+    FLAP_WINDOW_S = 60.0
+    FLAP_MUTE_S = 120.0
+
+    def __init__(self, clock=time.monotonic) -> None:
+        self.clock = clock
+        self.hist: dict[tuple, list[float]] = {}
+        self.muted: dict[tuple, float] = {}  # key -> time of its last event while muted
+
+    def filter(self, evs: list[dict]) -> list[dict]:
+        now = self.clock()
+        out = []
+        for e in evs:
+            key = _status_key(e)
+            if key is None:
+                out.append(e)
+                continue
+            last = self.muted.get(key)
+            if last is not None and now - last < self.FLAP_MUTE_S:
+                self.muted[key] = now
+                continue
+            self.muted.pop(key, None)
+            h = [t for t in self.hist.get(key, []) if now - t < self.FLAP_WINDOW_S] + [now]
+            self.hist[key] = h
+            if len(h) >= self.FLAP_TOGGLES:
+                self.muted[key] = now
+                del self.hist[key]
+                d = e["data"]
+                out = [x for x in out if _status_key(x) != key]
+                out.append({"seq": e.get("seq"), "kind": "status_flapping",
+                            "data": {"name": key[1], "target": d.get("target"),
+                                     "note": f"on/off {len(h)}x in {int(self.FLAP_WINDOW_S)}s (aura/light): muted"}})
+                continue
+            out.append(e)
+        if len(self.hist) > 500:  # bounded: forget keys quiet for a window
+            self.hist = {k: v for k, v in self.hist.items() if now - v[-1] < self.FLAP_WINDOW_S}
+        return out
+
+
+FLAP = StatusFlap()
+
+
+def _target_text(t: Any, H: Handles) -> str:
+    if isinstance(t, dict) and isinstance(t.get("uuid"), str):
+        return f"{t.get('name')} {H.get(t['uuid'], t.get('name'))}".strip()
+    return compact(t, H)
+
+
+STATUS_GROUP_MIN = 3  # the same status change on this many targets in one batch shares one line
+
+
+def _group_statuses(evs: list[dict], H: Handles) -> list[dict]:
+    """The same status gained (or lost) by many targets in one batch shares one line, targets listed (S026: 25
+    'status_applied status=SCL_MOONSHIELD name=Moonshield target={...}' lines on arriving at Moonrise, ~2 KB):
+    'status_applied name=Moonshield source=... on 9: Adept Dorikel e713, Brawler Weneg e714, ...'."""
+    groups: dict[tuple, list[int]] = {}
+    for i, e in enumerate(evs):
+        d = e.get("data")
+        if e.get("kind") in ("status_applied", "status_removed") and isinstance(d, dict) and d.get("target"):
+            rest = compact({k: v for k, v in d.items() if k != "target"}, H)
+            groups.setdefault((e["kind"], rest), []).append(i)
+    big = {ix[0]: (k, ix) for k, ix in groups.items() if len(ix) >= STATUS_GROUP_MIN}
+    if not big:
+        return evs
+    skip = {i for _, ix in big.values() for i in ix[1:]}
+    out = []
+    for i, e in enumerate(evs):
+        if i in skip:
+            continue
+        if i in big:
+            (kind, rest), ix = big[i]
+            who = ", ".join(_target_text(evs[j]["data"]["target"], H) for j in ix)
+            out.append({"seq": e.get("seq"), "kind": kind, "data": f"{rest} on {len(ix)}: {who}"})
+        else:
+            out.append(e)
+    return out
+
+
+def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", job: str | None = None,
+                  flap: StatusFlap | None = None) -> str:
     """EVENTS section. body: the tool result's own text, so events it already reports are left out
-    (job: the job id a wait_for just returned)."""
+    (job: the job id a wait_for just returned). flap: the cross-call status mute (server passes FLAP)."""
     m = re.match(r"TURN (e\d+)", body or "")
     own = m.group(1) if m else None
-    evs = _drop_flicker([e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS
-                         and not _already_shown(e, H, body, own, job)])
+    evs = [e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS and not _already_shown(e, H, body, own, job)]
+    evs = _drop_flicker(flap.filter(evs) if flap is not None else evs)
+    evs = _group_statuses(evs, H)
     if not evs:
         return ""
     shown = evs[-limit:]
@@ -445,6 +539,39 @@ def _cost_text(cost: Any) -> str:
     return "+".join(parts)
 
 
+# Items on the turn order (doors, candles, books: initiative -20) that matter in a fight keep their own line.
+_FIGHT_ITEMS = re.compile(r"trap|tripwire|barrel|explosive|powder|keg|oil|turret|vent|totem|statue|crystal", re.I)
+
+
+def _combat_object(o: dict) -> bool:
+    return bool(o.get("item") or (o.get("initiative") == -20 and o.get("relation") == "neutral")) \
+        and not _FIGHT_ITEMS.search(str(o.get("name") or ""))
+
+
+def render_combat(res: dict, H: Handles) -> str:
+    """state.combat as one line per combatant (was one ';'-joined blob); props on the turn order (S025: 22
+    candles, books and doors at initiative -20, ~2.5 KB with their distance matrices) folded into one
+    OBJECTS line of names."""
+    order = res.get("order") if isinstance(res.get("order"), list) else []
+    head = {k: v for k, v in res.items() if k not in ("order", "active")}
+    lines = ["COMBAT " + compact(head, H)] if head else ["COMBAT"]
+    objs: dict[str, int] = {}
+    for o in order:
+        if isinstance(o, dict) and _combat_object(o):
+            n = str(o.get("name") or "?")
+            objs[n] = objs.get(n, 0) + 1
+        else:
+            lines.append("  " + compact(o, H))
+    if objs:
+        lines.append("OBJECTS on the turn order (props): "
+                     + ", ".join(n + (f" x{c}" if c > 1 else "") for n, c in sorted(objs.items(), key=lambda x: -x[1])))
+    return "\n".join(lines)
+
+
+# Unavailable only because that resource is spent this turn (the NOW line shows it): counted, not listed.
+_SPENT_REASONS = {"no action": "[A] ones", "no bonus action": "[B] ones", "no reaction": "[R] ones"}
+
+
 def render_actions(r: Any, H: Handles) -> str:
     """One short line per action: `Name (spell_id) [A+slot L1] 18m entity`, unavailable ones last."""
     acts = r.get("actions") if isinstance(r, dict) else r
@@ -454,6 +581,7 @@ def render_actions(r: Any, H: Handles) -> str:
     if isinstance(r, dict) and r.get("resources"):
         head.append("NOW " + resources_text(r["resources"]))
     ok_lines, no_lines = [], []
+    spent: dict[str, int] = {}
     for a in acts:
         bits = [f"{a.get('name')} ({a.get('spell')})"]
         c = _cost_text(a.get("cost"))
@@ -470,12 +598,17 @@ def render_actions(r: Any, H: Handles) -> str:
         if a.get("uses") not in (None, ""):
             bits.append(f"uses {compact(a['uses'], H, 1)}")
         if a.get("available") is False:
-            no_lines.append(" ".join(bits) + (f" — {a['reason']}" if a.get("reason") else ""))
+            why = str(a.get("reason") or "")
+            if why in _SPENT_REASONS:  # the NOW line already says it is spent: count, don't list (S025: 60 entries)
+                spent[why] = spent.get(why, 0) + 1
+            else:
+                no_lines.append(" ".join(bits) + (f" — {why}" if why else ""))
         else:
             ok_lines.append(" ".join(bits))
     out = head + ok_lines
-    if no_lines:
-        out.append("UNAVAILABLE: " + "; ".join(no_lines))
+    no = [f"{why}: all {n} {_SPENT_REASONS[why]}" for why, n in spent.items()] + no_lines
+    if no:
+        out.append("UNAVAILABLE: " + "; ".join(no))
     return "\n".join(out)
 
 

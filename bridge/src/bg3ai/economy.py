@@ -150,6 +150,23 @@ def _proficient(it: dict, prof: set[str]) -> bool:
     return True
 
 
+def _prof_reason(it: dict, prof: set[str]) -> str:
+    """Which of the member's proficiencies (engine Proficiency.Flags: class AND race, e.g. a Human wizard has
+    LightArmor + Shields) makes the item legal, so the agent doesn't undo a right pick (S027: Gale)."""
+    if not prof:
+        return ""
+    if it.get("shield"):
+        need = "Shields"
+    elif "ac" in it and _slot(it) == "Breast":
+        need = _ARMOR_PROF.get(it.get("armor") or "") or next(iter(
+            (set((it.get("prof") or "").split("|")) - {""}) & {"LightArmor", "MediumArmor", "HeavyArmor"}), None)
+    elif "dmg" in it:
+        need = next(iter(sorted((set((it.get("prof") or "").split("|")) - {""}) & prof)), None)
+    else:
+        need = None
+    return f"; proficient: {need} (game's own flags, race included)" if need and need in prof else ""
+
+
 def _score(it: dict) -> float:
     """Comparable value of an item in its slot: armour/shield AC, weapon average damage + enchantment, else
     rarity; rarity always breaks ties."""
@@ -198,6 +215,8 @@ def upgrades(inv: dict) -> list[dict]:
                 cur = mine.get(slot)
             if cur and cur.get("story"):
                 continue  # a story item in the slot (Moonlantern): the agent put it there on purpose
+            if cur and _rar(cur) > _rar(it):
+                continue  # worn gear is magic (properties beyond AC/damage): never swapped for plainer stats
             if slot == "MeleeOffHand":
                 if not it.get("shield") or (main and main.get("twohanded")):
                     continue
@@ -213,7 +232,7 @@ def upgrades(inv: dict) -> list[dict]:
                 continue  # a plain hat in an empty slot is not worth a line
             if gain > 0:
                 offers.append({"who": who, "uuid": it["uuid"], "name": it.get("name"), "slot": slot,
-                               "holder": it.get("owner"), "why": _why(it, cur), "gain": gain,
+                               "holder": it.get("owner"), "why": _why(it, cur) + _prof_reason(it, prof), "gain": gain,
                                "rarity": it.get("rarity"), "caster": _caster(prof)})
     # Best gain first; on a tie a fighter gets the shield/weapon before a caster, then the one carrying it.
     offers.sort(key=lambda o: (-o["gain"], o["caster"] and o["slot"] in ("MeleeOffHand", "MeleeMainHand"),

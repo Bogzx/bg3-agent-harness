@@ -379,6 +379,68 @@ class ServerWiring(unittest.TestCase):
         finally:
             S.game, S._act, S.MEMORY, S._who = saved
 
+    def test_camp_member_is_swapped_in_levelled_and_swapped_back(self):
+        from bg3ai import server as S
+        wyll = {"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}
+        party = [{"uuid": f"u-{n}", "name": n.title(), "level": 5} for n in ("claude", "gale", "karlach", "sh")]
+        party[0]["avatar"] = True
+        state = {"in_combat": False, "party": list(party), "camp": [wyll]}
+        swaps, levels, jobs = [], [], []
+
+        def fake_swap(into, out="", leave_camp=True):
+            swaps.append((into, out, leave_camp))
+            if into == "Wyll":
+                state["party"] = [r for r in state["party"] if r["name"] != out] + [dict(wyll)]
+            else:
+                state["party"] = [r for r in state["party"] if r["name"] != "Wyll"] + [p for p in party if p["name"] == into]
+            return "swap_party: done — joined"
+
+        def fake_level(uuid, plan):
+            levels.append((uuid, plan))
+            w = next(r for r in state["party"] if r["uuid"] == "u-wyll")
+            w["level_up"] = 5 if w.get("level_up") == 4 else 0   # two levels waiting
+            return "level_up: done"
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                if op == "state.status":
+                    return state
+                return {"region": "Shadow-Cursed Lands"} if op == "ui.state" else default
+
+            def run_job(self, op, args=None, wait_s=0, context="server"):
+                jobs.append(op)
+                return type("R", (), {"status": "done"})()
+
+        saved = (S.game, S._level_up, S._who, S.swap_party)
+        S.game, S._level_up, S._who, S.swap_party = G(), fake_level, (lambda ref: "u-wyll"), fake_swap
+        try:
+            out = S.level_up("Wyll", out="Gale")
+        finally:
+            S.game, S._level_up, S._who, S.swap_party = saved
+        self.assertTrue(out.startswith("level_up: done — Wyll (camp member)"), out)
+        self.assertEqual(swaps, [("Wyll", "Gale", False), ("Gale", "Wyll", False)])
+        self.assertEqual(len(levels), 2)
+        self.assertIn("L4: level_up: done", out)
+        self.assertIn("L5: level_up: done", out)
+        self.assertEqual(jobs, ["act.leave_camp"])     # was away from camp: leaves again
+
+    def test_camp_member_swap_failure_is_reported(self):
+        from bg3ai import server as S
+        st = dict(ST, camp=[{"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}])
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                return st if op == "state.status" else {"region": "Campsite"}
+
+        saved = (S.game, S._who, S.swap_party)
+        S.game, S._who = G(), (lambda ref: "u-wyll")
+        S.swap_party = lambda **k: "swap_party: FAILED to talk to Wyll"
+        try:
+            out = S.level_up("Wyll")
+        finally:
+            S.game, S._who, S.swap_party = saved
+        self.assertIn("level_up: FAILED — Wyll is in camp and the swap-in did not finish", out)
+
     def test_level_up_clicks_spells_then_reruns(self):
         from bg3ai import server as S
 

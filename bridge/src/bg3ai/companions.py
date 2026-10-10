@@ -5,7 +5,7 @@ S.campRoster, the engine's CampPresence component) and state.camp the same with 
 party's skills. get_status/look print one PARTY line when it changes (a new region, quest, party or camp
 roster), e.g.
 
-    PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands / quest "Lift the Shadow Curse" → swap_party(out="Gale", into="Halsin") | no Sleight of Hand above +2: Astarion (camp) +7 | camp level-ups after a swap: Wyll L3→4
+    PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands / quest "Lift the Shadow Curse" → swap_party(out="Gale", into="Halsin") | no Sleight of Hand above +2: Astarion (camp) +7 | camp level-ups: Wyll L3→4 → level_up(who="Wyll") swaps in, levels, swaps back
 
 The ties come from play/knowledge/companions.md (one table row per companion: regions; quest keywords).
 """
@@ -161,9 +161,10 @@ def hint(party: list[dict], camp: list[dict], region: str, quests: list[str], ta
                 v, c = cands[0]
                 bits.append(f"party best {text} {best:+d}; {c.get('name')} (camp) {v:+d}")
     # (d) camp members waiting for their level-ups (done once they rejoin)
-    lv = [f"{c.get('name')} L{c.get('level')}→{c.get('level_up')}" for c in camp if c.get("level_up")]
+    lv = [c for c in camp if c.get("level_up")]
     if lv:
-        bits.append("camp level-ups after a swap: " + ", ".join(lv))
+        bits.append("camp level-ups: " + ", ".join(f"{c.get('name')} L{c.get('level')}→{c.get('level_up')}" for c in lv)
+                    + " → level_up(who=\"" + str(lv[0].get("name")) + "\") swaps in, levels, swaps back")
     return bits
 
 
@@ -228,13 +229,22 @@ def _opts(options: list[dict]) -> list[dict]:
     return [o for o in options or [] if isinstance(o, dict) and not o.get("off")]
 
 
+def _chat_question(text: str) -> bool:
+    """The join words sit mid-question: camp chat, not the request. Live 2026-10-10: Halsin's "Still feeling at
+    home here with us? ..." is chat; Gale's "Join me, why don't you? There's plenty of adventure to be had." joins."""
+    for sent in re.findall(r"[^.!?]*[.!?]?", text):
+        m = JOIN_RX.search(sent)
+        if m:
+            return sent.rstrip().endswith("?") and bool(sent[:m.start()].strip())
+    return False
+
+
 def pick_join(options: list[dict]) -> int | None:
     """The 'join my party' answer in a camp companion's menu: matches JOIN_RX, no skill check tag, and no
     stay/leave/camp words (so a party member's 'remain in the camp … on the road with me' never matches)."""
     for o in _opts(options):
         t = str(o.get("text") or "")
-        # a question is camp chat, not the request (Halsin live: "Still feeling at home here with us? ...")
-        if JOIN_RX.search(t) and not STAY_RX.search(t) and not o.get("tags") and "?" not in t:
+        if JOIN_RX.search(t) and not STAY_RX.search(t) and not o.get("tags") and not _chat_question(t):
             return int(o.get("i") or 0) or None
     return None
 

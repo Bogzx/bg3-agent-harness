@@ -112,7 +112,10 @@ if [ "$attach" = 1 ]; then
 else
     port_up && die "port $PORT is already in use (a game is running?): pass --attach, or stop it first"
     LAUNCH_LOG="$RUNTIME/logs/first_launch-$(date +%Y%m%d-%H%M%S).log"
-    setsid nohup "$REPO/runner/launch_game.sh" "${launch_args[@]}" > "$LAUNCH_LOG" 2>&1 < /dev/null &
+    # Close inherited fds > 2 first: run under `flock runtime/live.lock`, the launcher (which lives as long as the
+    # game) kept the lock fd and held the live lock for the whole game (2026-10-10 10:52, every worker blocked).
+    setsid nohup bash -c 'for f in /proc/$$/fd/*; do n=${f##*/}; [ "$n" -gt 2 ] 2>/dev/null && eval "exec $n>&-" 2>/dev/null; done; exec "$@"' \
+        _ "$REPO/runner/launch_game.sh" "${launch_args[@]}" > "$LAUNCH_LOG" 2>&1 < /dev/null &
     launcher=$!
     ok "runner/launch_game.sh started (launcher log: $LAUNCH_LOG)"
 fi

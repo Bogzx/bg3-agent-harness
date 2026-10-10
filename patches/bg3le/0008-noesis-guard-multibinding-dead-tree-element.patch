@@ -1,0 +1,152 @@
+bg3le Noesis: clear a MultiBindingExpression's destroyed tree element before it is called through
+
+On top of 0001-0007. Two crashes at client UnloadLevel (claude-run-2 S024 07:37, the Act 1 ->
+Shadow-Cursed Lands transition; 2026-10-10 10:40:53, a load_game reload) are the same use-after-free,
+now fully symbolized from 0007's crash log and the core (bg3 has a .symtab):
+
+  MultiBindingExpression::GetSourceValue+0x4a  call *0x3c8(%rax), rax = a heap free-list word
+  <- MultiBindingExpression::Evaluate <- PropertyListener::OnPropertyChanged <- ... <-
+  BindingExpression::OnDataContextChanged <- ContentControl::OnPropertyChanged <-
+  ItemContainerGenerator::RemoveAll <- ItemCollection::SetView <- ... <- BaseCollection::Clear
+
+The game clears a view-model collection during the unload; a container's DataContext change makes a
+MultiBinding re-evaluate. The expression (alive) belongs to a NoesisApp::InvokeCommandAction (refcount 1)
+owned by TriggerActionCollection <- EventTrigger <- StyleTriggerCollection <- Setter (behaviors applied
+through a Style). Its +0xb0 is the target's tree element, a raw pointer cached once by the constructor
+(FindTreeElement); that element was destroyed normally (refcount 0, DependencyObject base vtable left at
++0x10, free-list word at +0). Its two readers, GetSourceValue and BeforeSet, already handle null.
+
+Now a dead tree element (refcount 0, or a vtable whose first slot is not code of a loaded object) is
+cleared before either runs: GetSourceValue through its 2 direct call sites (hook_call_sites), BeforeSet
+through its MultiBindingExpression vtable slot (8). Both are refused unless the `mov 0xb0(%reg),%rdi`
+bytes are where this build has them. Logs the first 5 and every 100th; BG3LE_GUARD_BINDINGS=0 disables.
+
+Against bg3le 3728a68 (v0.3.6) with 0001-0007. Applied by tools/build_bg3le.sh.
+---
+diff --git a/src/noesis_ui.cpp b/src/noesis_ui.cpp
+--- a/src/noesis_ui.cpp
++++ b/src/noesis_ui.cpp
+@@ -8,8 +8,11 @@
+ 
+ #include "noesis_ui.h"
+ 
++#include <dlfcn.h>
++
+ #include <atomic>
+ #include <cstdint>
++#include <cstdlib>
+ #include <cstring>
+ #include <string>
+ #include <utility>
+@@ -200,6 +203,103 @@
+     return found;
+ }
+ 
++// A MultiBindingExpression caches the tree element of its target (+0xb0, set
++// once in its constructor from FindTreeElement, never ref-counted) and calls
++// through it in GetSourceValue (when that element is not connected to the
++// View) and BeforeSet. claude-run-2 S024 07:37 and the 2026-10-10 10:40:53
++// reload both died there at client UnloadLevel: a game-clear of a view-model
++// collection (ItemContainerGenerator::RemoveAll -> DataContext change) made
++// an InvokeCommandAction's MultiBinding re-evaluate, the action still owned
++// by a Style's StyleTriggerCollection, the element it had been applied to
++// already destroyed (refcount 0, heap free-list word where the vtable was):
++// a call through a freed vtable. Both readers already handle a null element,
++// so a dead one is cleared before they run, as if the binding never had one.
++// BG3LE_GUARD_BINDINGS=0 turns this off.
++constexpr std::size_t kTreeElementOffset = 0xb0;
++using SourceValueProc = void* (*)(void*, void const*);  // Ptr<> by sret, this
++using BeforeSetProc = std::uint64_t (*)(void*, void*, void const*, void const*, std::uint64_t);
++SourceValueProc g_source_value = nullptr;
++BeforeSetProc g_before_set = nullptr;
++std::atomic<unsigned long long> g_dead_tree_elements{0};
++
++// An object whose refcount is above zero and whose vtable's first slot is
++// code of the game or of a loaded library: what a destroyed one is not.
++bool looks_alive(void const* object) {
++    std::uintptr_t vt = 0;
++    std::uint32_t refs = 0;
++    std::uintptr_t slot0 = 0;
++    if (!safe_read(object, &vt, sizeof vt)
++        || !safe_read(static_cast<char const*>(object) + 8, &refs, sizeof refs)
++        || refs == 0 || vt == 0
++        || !safe_read(reinterpret_cast<void const*>(vt), &slot0, sizeof slot0)) {
++        return false;
++    }
++    std::uintptr_t text = 0;
++    std::size_t size = 0;
++    if (text_range(&text, &size) && slot0 - load_bias() - text < size) return true;
++    Dl_info info{};
++    return dladdr(reinterpret_cast<void*>(slot0), &info) != 0 && info.dli_fname != nullptr;
++}
++
++void forget_dead_tree_element(void const* expression, char const* where) {
++    auto slot = reinterpret_cast<void**>(
++        const_cast<char*>(static_cast<char const*>(expression)) + kTreeElementOffset);
++    void* element = nullptr;
++    if (!safe_read(slot, &element, sizeof element) || element == nullptr || looks_alive(element)) return;
++    *slot = nullptr;
++    const unsigned long long n = g_dead_tree_elements.fetch_add(1) + 1;
++    if (n <= 5 || n % 100 == 0) {
++        logf("noesis: MultiBindingExpression %p had a destroyed tree element %p (%s); cleared (%llu so far)",
++             expression, element, where, n);
++    }
++}
++
++void* source_value_hook(void* result, void const* self) {
++    forget_dead_tree_element(self, "GetSourceValue");
++    return g_source_value(result, self);
++}
++
++std::uint64_t before_set_hook(void* self, void* object, void const* property, void const* value,
++                              std::uint64_t coerce) {
++    forget_dead_tree_element(self, "BeforeSet");
++    return g_before_set(self, object, property, value, coerce);
++}
++
++// The two readers of +0xb0, checked against the build this was written for:
++// GetSourceValue loads it at +0x3f, BeforeSet at +0x75 (mov 0xb0(%reg),%rdi).
++void guard_multibinding_expressions() {
++    char const* off = std::getenv("BG3LE_GUARD_BINDINGS");
++    if (off != nullptr && std::strcmp(off, "0") == 0) return;
++    static const unsigned char kLoadR12[] = { 0x49, 0x8b, 0xbc, 0x24, 0xb0, 0x00, 0x00, 0x00 };
++    static const unsigned char kLoadRbx[] = { 0x48, 0x8b, 0xbb, 0xb0, 0x00, 0x00, 0x00 };
++    const auto source = reinterpret_cast<std::uintptr_t>(
++        resolve("_ZNK6Noesis22MultiBindingExpression14GetSourceValueEv"));
++    std::size_t sites = 0;
++    if (source != 0 && bytes_match(source - load_bias() + 0x3f, kLoadR12, sizeof kLoadR12)) {
++        void* original = nullptr;
++        sites = hook_call_sites(source - load_bias(), reinterpret_cast<void*>(&source_value_hook), &original);
++        if (sites != 0) g_source_value = reinterpret_cast<SourceValueProc>(original);
++    }
++    bool before = false;
++    const auto set = reinterpret_cast<std::uintptr_t>(resolve(
++        "_ZN6Noesis22MultiBindingExpression9BeforeSetEPNS_16DependencyObjectEPKNS_18DependencyPropertyEPKvb"));
++    void* vt = resolve("_ZTVN6Noesis22MultiBindingExpressionE");
++    if (set != 0 && vt != nullptr && bytes_match(set - load_bias() + 0x75, kLoadRbx, sizeof kLoadRbx)) {
++        for (std::size_t i = 0; i < 64 && !before; ++i) {
++            const std::uintptr_t slot = reinterpret_cast<std::uintptr_t>(vt) + 16 + i * 8;
++            std::uintptr_t entry = 0;
++            if (!safe_read(reinterpret_cast<void*>(slot), &entry, sizeof entry)) break;
++            if (entry != set) continue;
++            void* previous = nullptr;
++            before = hook_slot(slot - load_bias(), set - load_bias(),
++                               reinterpret_cast<void*>(&before_set_hook), &previous);
++            if (before) g_before_set = reinterpret_cast<BeforeSetProc>(previous);
++        }
++    }
++    logf("noesis: MultiBindingExpression guarded: GetSourceValue at %zu call sites, BeforeSet %s",
++         sites, before ? "hooked" : "not hooked");
++}
++
+ }  // namespace
+ 
+ void noesis_set_symbols(const SymbolTable* symbols) {
+@@ -213,6 +313,7 @@
+         && hook_view_slot("_ZThn16_N6Noesis4View6UpdateEd",
+                           reinterpret_cast<void*>(&update_thunk_hook), &g_update_thunk);
+     if (!g_hooked) logf("noesis: View::Update not hooked; Ext.UI will scan for the View");
++    guard_multibinding_expressions();
+     if (g_hooked) {
+         const std::size_t inputs = hook_input(std::make_index_sequence<kInputHooks>{});
+         logf("noesis: %zu of %zu View input entry points hooked", inputs, kInputHooks);

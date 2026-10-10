@@ -172,7 +172,7 @@ def _events_text(body: str = "", job: str | None = None, max_wait: float | None 
     for evs in _par(lambda: drain("server"), lambda: drain("client")):
         if evs:
             _note_dialogue_speaker(evs)
-            parts.append(render.render_events(evs, H, body=body, job=job))
+            parts.append(render.render_events(evs, H, body=body, job=job, flap=render.FLAP))
     return "\n".join(p for p in parts if p)
 
 
@@ -662,7 +662,10 @@ def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> s
     return _finish(tool, args, body, t0, issued=True)
 
 
-SETTLE_S = float(os.environ.get("BG3AI_SETTLE_S", "1.0") or 0)  # ≤1.5 s: the goal's live-feel budget
+# How long an action call waits on a just-started job before returning "started": refusals come back from the start
+# RPC itself, so this only catches jobs that end at once. 1.0 s blocked the agent ~45-60 s/session (logs review
+# 2026-10-10); a later failure still arrives as a job_finished event on the next result.
+SETTLE_S = float(os.environ.get("BG3AI_SETTLE_S", "0.3") or 0)
 _WALKS = ("move_to", "walk_toward", "travel_to")
 
 
@@ -1333,7 +1336,7 @@ def get_combat_state() -> str:
     if isinstance(res, dict) and not res.get("active", True) and len(res) <= 1:
         _acts_shown.clear()
         return _finish("get_combat_state", {}, "Not in combat.", t0)
-    body = render.compact(res, H)
+    body = render.render_combat(res, H) if isinstance(res, dict) else render.compact(res, H)
     # One read should be enough to plan the whole turn: add the acting party member's actions.
     st = game.try_rpc("state.status") or {}
     party = {c.get("uuid") for c in st.get("party") or []}
@@ -1686,11 +1689,76 @@ def set_party(action: str, who: str | None = None, leader: str | None = None) ->
     raise ValueError("unknown action")
 
 
+def _wait_running(max_s: float = 60.0) -> bool:
+    """After a teleport/load: the client back to Running and the server answering."""
+    deadline = time.monotonic() + max_s
+    while time.monotonic() < deadline:
+        try:
+            if game.game_state() == "Running" and game.server_ready():
+                return True
+        except (GameError, NotReady, OSError):
+            pass
+        time.sleep(0.4)
+    return False
+
+
+def _leave_camp_first() -> str | None:
+    """Live 2026-10-10: a fast travel started at camp moved only the controlled character (companions and the
+    camera stayed at the Campsite, PARTY APART 1800 m). ui.fast_travel refuses at camp, so leave it first, as the
+    camp tool does (everyone comes along). Returns the line to show, '' when not at camp, or 'FAILED …'."""
+    try:
+        game.rpc("ui.fast_travel", {"waypoint": "-", "dry": True}, context="client")
+        return ""
+    except GameError as e:
+        if "at camp" not in str(e):
+            return ""  # any other refusal: the real call reports it
+    _travel_block(TRAVEL_BLOCK_WAIT_S)
+    r = game.run_job("act.leave_camp", {}, wait_s=60)
+    if r.status != "done":
+        return "FAILED to leave camp first — " + _job_text("camp", r) + _travel_block_text(_travel_block())
+    if not _wait_running(60):
+        return "FAILED: left camp, but the game didn't come back to Running within 60 s"
+    return "left camp first (a fast travel from camp leaves your companions behind)"
+
+
 @mcp.tool()
 @_guard
 def fast_travel(waypoint: str) -> str:
-    """Travel to an unlocked waypoint (name or id from get_map). Not possible in combat."""
-    return _box_act("fast_travel", "ui.fast_travel", {"waypoint": waypoint}, wait_s=60)
+    """Travel to an unlocked waypoint (name or id from get_map). Not possible in combat. From camp it leaves camp
+    first (everyone comes along), then travels."""
+    left = _leave_camp_first()
+    if left.startswith("FAILED"):
+        _batch["last"] = "failed"
+        return _finish("fast_travel", {"waypoint": waypoint}, "fast_travel: " + left, time.monotonic())
+    out = _box_act("fast_travel", "ui.fast_travel", {"waypoint": waypoint}, wait_s=70)
+    return (left + "\n" + out) if left else out
+
+
+TRAVEL_BLOCK_WAIT_S = 8.0  # right after a load the game blocks travel ("Unavailable") for a few seconds
+
+
+def _travel_block(wait_s: float = 0.0) -> dict:
+    """ui.travel_block, polled up to wait_s while the game says travel is Unavailable (live 2026-10-10: transient
+    after a load). {} when the client can't say."""
+    deadline = time.monotonic() + wait_s
+    while True:
+        b = game.try_rpc("ui.travel_block", context="client") or {}
+        if not b.get("error") or b.get("dialogue") or time.monotonic() >= deadline:
+            return b
+        time.sleep(0.4)
+
+
+def _travel_block_text(b: dict) -> str:
+    """Why the game won't travel, from what a player sees (greyed map/camp button, an open conversation)."""
+    if not b:
+        return ""
+    if b.get("dialogue"):
+        return " A conversation is open: finish it first (choose_dialogue)."
+    if b.get("error"):
+        return (f" The game blocks travel here ({b['error']}): the camp and map travel buttons are greyed out."
+                f" On screen: {b.get('screen') or '?'}. Talk to whoever waits nearby, finish the camp scene, or walk"
+                f" (travel_to) and try again.")
+    return ""
 
 
 @mcp.tool()
@@ -1698,7 +1766,11 @@ def fast_travel(waypoint: str) -> str:
 def camp(action: str = "go") -> str:
     """action: go (travel to camp, like the camp button) | leave (return to where you were)."""
     if action == "leave":
-        return _act("camp", "act.leave_camp", {}, wait_s=60)
+        _travel_block(TRAVEL_BLOCK_WAIT_S)
+        out = _act("camp", "act.leave_camp", {}, wait_s=60)
+        if "cannot travel right now" in out:
+            out += _travel_block_text(_travel_block())
+        return out
     return _act("camp", "act.go_to_camp", {}, wait_s=60)
 
 
@@ -1714,7 +1786,8 @@ def _walk_up_to(char: str, uuid: str, name: str, pos: list | None = None) -> str
         out = travel_to(x=dest[0], y=dest[1], z=dest[2], who=H.get(char))   # who: a handle; runs async
         if "started" in out:
             wait_for(target="idle", timeout_s=60, lead_s=0)
-        return f"walked to {name} ({render.num(round(d))}m, legs): " + out.splitlines()[0][:160]
+        first = out.splitlines()[0] if out else ""
+        return f"walked to {name} ({render.num(round(d))}m)" + (f": {first[:160]}" if "FAILED" in first else "")
     dest = {"pos": list(pos[:3])} if pos else {"target": uuid}
     r = game.run_job("act.move_to", {"char": char, "run": True, **dest}, wait_s=45)
     return f"walked to {name}" + ("" if r.status == "done" else f" ({_job_text('move_to', r)[:120]})")
@@ -1723,7 +1796,7 @@ def _walk_up_to(char: str, uuid: str, name: str, pos: list | None = None) -> str
 @mcp.tool()
 @_guard
 def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
-    """Swap a companion waiting at camp into the active party in one call, out of combat, from anywhere: goes to camp, talks to `into`, picks its join answer (and, with a full party, the answer that sends `out` to camp), leaves camp and re-chains everyone to the leader. out: who goes to camp (required with 4 members; never your own character). get_party(camp=true) lists who waits at camp; get_status's PARTY line says when a swap pays off. A camp scene or an answer it can't recognise stops it and shows the dialogue: answer with choose_dialogue, then call it again."""
+    """Swap a companion waiting at camp into the active party in one call, out of combat, from anywhere: goes to camp, talks to `into`, picks its join answer (and, with a full party, the answer that sends `out` to camp), leaves camp and re-chains everyone to the leader. out: who goes to camp (required with 4 members; never your own character). get_party(camp=true) lists who waits at camp; get_status's PARTY line says when a swap pays off. A camp scene or an answer it can't recognise stops it and shows the dialogue: answer with choose_dialogue, then call it again. A companion whose menu has no join answer (the game's story state) is reported and left."""
     t0 = time.monotonic()
     args = {"into": into, "out": out}
 
@@ -2133,11 +2206,35 @@ def note(text: str, tag: str = "note") -> str:
 # act: items, rest, progression
 # ---------------------------------------------------------------------------
 
+
+def _item_uuid(item: str, who: str | None = None, worn: bool = False) -> str:
+    """_uuid, except that a name shared by identical party items (same name, rarity, slot, stats) picks one
+    instead of failing 'ambiguous' (S027: equip "Simple Robe" → ambiguous e14,e148,e165,e169, batch stopped).
+    Prefers the item in `who`'s bag, unworn (worn=True for unequip: a worn one)."""
+    try:
+        return _uuid(item)
+    except ValueError as e:
+        if "ambiguous" not in str(e):
+            raise
+        inv = game.try_rpc("state.inventory", {}) or {}
+        _remember_names(inv)
+        rows = [it for it in inv.get("items") or [] if isinstance(it, dict)
+                and str(it.get("name") or "").strip().lower() == str(item).strip().lower()]
+        key = lambda it: (it.get("rarity"), it.get("slot_type"), it.get("ac"), str(it.get("dmg")))  # noqa: E731
+        if len(rows) < 2 or len({key(it) for it in rows}) != 1:
+            raise
+        owner = _who(who)
+        rows.sort(key=lambda it: (bool(it.get("equipped_slot")) != worn, it.get("owner") != owner))
+        return rows[0]["uuid"]
+
+
 @mcp.tool()
 @_guard
 def manage_inventory(op: str, item: str, who: str | None = None, to: str | None = None) -> str:
     """op: equip | unequip | use (drink/read/eat) | give (to another party member: to=name) | camp (send to camp chest; item="junk" sends all junk at once: what trade sell=junk would sell)."""
     o = op.lower()
+    if o in ("equip", "unequip", "use", "give") or (o == "camp" and item.strip().lower() != "junk"):
+        item = H.get(_item_uuid(item, who if o != "give" else None, worn=o == "unequip"))
     if o == "equip":
         return _act("manage_inventory", "act.equip", {"char": _who(who), "item": _uuid(item)})
     if o == "unequip":
@@ -2251,9 +2348,70 @@ def get_level_up_options(who: str | None = None) -> str:
 
 @mcp.tool()
 @_guard
-def level_up(who: str | None = None, plan: str = "") -> str:
-    """Level a character up in one call (out of combat). With no plan it uses your stored line for that character and level in memory/party-build.md ("- Gale L2: {...}"). plan: JSON like {"subclass":"Evocation","feat":"Ability Improvement","abilities":{"Strength":2},"spells":["Magic Missile","Shield"],"cantrips":[],"skills":[],"passives":["Agonizing Blast"]}; omitted fields take the game's defaults, except choices with no default: a subclass, spells/cantrips to learn, and passives (invocations, fighting styles). Then it fails and lists what can be picked; add them to the plan and call again."""
+def level_up(who: str | None = None, plan: str = "", out: str = "") -> str:
+    """Level a character up in one call (out of combat). With no plan it uses your stored line for that character and level in memory/party-build.md ("- Gale L2: {...}"). plan: JSON like {"subclass":"Evocation","feat":"Ability Improvement","abilities":{"Strength":2},"spells":["Magic Missile","Shield"],"cantrips":[],"skills":[],"passives":["Agonizing Blast"]}; omitted fields take the game's defaults, except choices with no default: a subclass, spells/cantrips to learn, and passives (invocations, fighting styles). Then it fails and lists what can be picked; add them to the plan and call again.
+    A companion waiting at camp is levelled too (every level it has waiting): it swaps in for `out` (default: the member it replaces best), levels, and swaps back."""
     uuid = _who(who)
+    st = game.try_rpc("state.status") or {}
+    camp = next((c for c in st.get("camp") or [] if isinstance(c, dict) and c.get("uuid") == uuid), None)
+    if camp is not None:
+        # S026: Wyll (camp, L4 pending since S021) → "character is not in the party portraits"; the advice to
+        # swap by hand was never followed (S026-S027): do the swap, level, swap back in this call.
+        return _level_camp_member(camp, plan, out, st)
+    with _LEVEL_LOCK:  # one level-up page at a time: parallel calls (S010 x3, S024 x2) shared one UI
+        return _level_up(uuid, plan)
+
+
+def _level_camp_member(row: dict, plan: str, out: str, st: dict) -> str:
+    name = str(row.get("name") or "?")
+    if not row.get("level_up"):
+        return f"level_up: nothing to do — {name} (camp) has no level up waiting"
+    if st.get("in_combat") or st.get("in_dialogue"):
+        return f"level_up: REFUSED — {name} is in camp: swapping them in needs no combat/conversation"
+    party = [r for r in st.get("party") or [] if isinstance(r, dict) and not r.get("summon")]
+    if out:
+        outr = companions.find_row(party, out, _uuid)
+    elif len(party) >= 4:
+        live = [r for r in party if not r.get("dead")]
+        outr = companions.swap_out(live, [r for r in live if not r.get("avatar")], row)
+    else:
+        outr = None
+    outname = str((outr or {}).get("name") or "")
+    if len(party) >= 4 and not outname:
+        return f"level_up: FAILED — {name} is in camp and nobody can make room: level_up(who=\"{name}\", out=<companion>)"
+    was_at_camp = _at_camp(game.try_rpc("ui.state", context="client"))
+    steps = []
+    sw = swap_party(into=name, out=outname, leave_camp=False)
+    if "swap_party: done" not in sw:
+        return f"level_up: FAILED — {name} is in camp and the swap-in did not finish:\n{sw}"
+    steps.append(f"swapped in {name}" + (f" for {outname}" if outname else ""))
+    results, first = [], True
+    for _ in range(6):  # every level waiting (a camp member may be 2 behind)
+        row2 = next((r for r in leveling.pending(game.try_rpc("state.status")) if r["uuid"] == row.get("uuid")), None)
+        if row2 is None:
+            break
+        with _LEVEL_LOCK:
+            r = _level_up(str(row["uuid"]), plan if first else "")
+        first = False
+        results.append(f"L{row2['to']}: {r}")
+        if not r.startswith("level_up: done"):
+            break
+    ok = bool(results) and all(": level_up: done" in r for r in results)
+    back = swap_party(into=outname, out=name, leave_camp=False) if outname else ""
+    if outname:
+        steps.append(f"swapped back ({outname} in, {name} at camp)" if "swap_party: done" in back
+                     else f"swap back FAILED: {back}")
+    if not was_at_camp:
+        rj = game.run_job("act.leave_camp", {}, wait_s=60)
+        steps.append("left camp" if rj.status == "done" else "leave camp: " + _job_text("camp", rj))
+    head = "level_up: done" if ok else "level_up: FAILED"
+    return f"{head} — {name} (camp member): " + "; ".join(steps) + "\n" + "\n".join(results or ["no level up waiting after the swap"])
+
+
+_LEVEL_LOCK = threading.Lock()
+
+
+def _level_up(uuid: str, plan: str) -> str:
     args: dict[str, Any] = {"uuid": uuid}
     note = ""
     if plan:
@@ -2556,6 +2714,9 @@ def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, 
         if ft:
             pre.append(ft[0])
             dist_m = ft[1] if ft[1] is not None else dist_m
+        floor = _other_floor(char, _pos_now(char) if ft else me.get("pos"), dest)
+        if floor:
+            return _finish("travel_to", {"to": what}, "".join(p + "\n" for p in pre) + f"travel_to {what}: {floor}", t0)
         warn = longnav.start_warning(DEAD.for_goal(dest))
         if warn:
             pre.append(warn)
@@ -2587,7 +2748,10 @@ def _fast_travel_first(char: str, dest: list, dist_m: float | None) -> tuple[str
     wp = longnav.pick_waypoint(here, dest, wps) if here else None
     if not wp:
         return None
-    r = game.run_job("ui.fast_travel", {"waypoint": wp["name"]}, context="client", wait_s=60)
+    left = _leave_camp_first()
+    if left.startswith("FAILED"):
+        return (f"fast travel to {wp['name']}: {left}: walking instead", None)
+    r = game.run_job("ui.fast_travel", {"waypoint": wp["name"]}, context="client", wait_s=70)
     if r.status != "done":
         return (f"fast travel to {wp['name']} failed ({r.error or r.status}): walking instead", None)
     now = None
@@ -4283,23 +4447,57 @@ def _wait_for_stragglers(char: str, here: Any, crew: set, outer: actq.Executor |
             "or stay(who) to leave them on purpose")
 
 
+def _floor_ways(within: float = 1e9) -> tuple[dict | None, list[dict]]:
+    """(frontier, the 2 nearest ladders/stairs/exits in view within `within` m): the ways to another floor or an
+    interior. Leads only: the open-direction searches cost ~100 ms."""
+    res = game.try_rpc("nav.frontier", {"ways": False})
+    leads = res.get("leads") if isinstance(res, dict) else None
+    ups = sorted((l for l in leads or [] if l.get("uuid") and l.get("kind") in ("ladder", "stairs", "exit")
+                  and (l.get("dist") or 0) <= within), key=lambda l: l.get("dist") or 1e9)[:2]
+    return res, ups
+
+
+def _ways_text(res: dict | None, ups: list[dict]) -> str:
+    _remember_names(res)
+    return ", ".join(f"{H.get(l['uuid'], l.get('name'))} {l.get('name', '?')} <{l.get('kind')}> "
+                     f"{render.num(l.get('dist', '?'))}m{(' ' + l['dir']) if l.get('dir') else ''}" for l in ups)
+
+
 def _climb_hint(here: list | None, dest: list | None) -> str:
     """travel_to stopped short of a destination on another deck: name the nearest ladders/stairs/exits (the walker
     never climbs on its own; interact with the ladder does)."""
     if not (here and dest) or abs(dest[1] - here[1]) < 2.5:
         return ""
-    res = game.try_rpc("nav.frontier", {"ways": False})  # leads only: the open-direction searches cost ~100 ms
-    leads = res.get("leads") if isinstance(res, dict) else None
-    ups = sorted((l for l in leads or [] if l.get("uuid") and l.get("kind") in ("ladder", "stairs", "exit")),
-                 key=lambda l: l.get("dist") or 1e9)[:2]
+    res, ups = _floor_ways()
     side = "above" if dest[1] > here[1] else "below"
     hint = f"; it is {render.num(round(abs(dest[1] - here[1]), 1))}m {side} you"
     if not ups:
         return hint + ": find a ladder or stairs (get_frontier) or jump_to"
-    _remember_names(res)
-    names = ", ".join(f"{H.get(l['uuid'], l.get('name'))} {l.get('name', '?')} {render.num(l.get('dist', '?'))}m"
-                      for l in ups)
-    return hint + f": climb with interact on a ladder/stairs/hatch ({names}), then travel_to again"
+    return hint + f": climb with interact on a ladder/stairs/hatch ({_ways_text(res, ups)}), then travel_to again"
+
+
+FLOOR_DY_M = 6.0      # travel_to: a goal this far above/below gets one route probe before the trip starts
+FLOOR_WAY_M = 40.0    # ... and an entrance/ladder/stairs this near is named as the way there
+
+
+def _other_floor(char: str, here: list | None, dest: list | None) -> str | None:
+    """A goal on another floor or inside an interior that no walk reaches (the engine's route says so) while a way
+    in/up/down is in view: the refusal naming it (None: walk as usual). Live 10:45: travel_to toward the
+    Mausoleum puzzle room, 62 m below, walked 120 m the wrong way to stop at "no walkable ground", with the
+    Mausoleum Entrance 17 m away. Costs one nav.route (+ a leads-only frontier) only for goals >= 6 m up/down."""
+    if not (here and dest) or abs(dest[1] - here[1]) < FLOOR_DY_M:
+        return None
+    r = game.try_rpc("nav.route", {"char": char, "pos": list(dest), "ways": False})
+    if not isinstance(r, dict) or r.get("reachable") is not False:
+        return None  # walkable, too far to probe, or unknown: walk as before
+    res, ups = _floor_ways(FLOOR_WAY_M)
+    if not ups:
+        return None
+    side = "above" if dest[1] > here[1] else "below"
+    first = H.get(ups[0]["uuid"], ups[0].get("name"))
+    return (f"REFUSED: the goal is {render.num(round(abs(dest[1] - here[1])))}m {side} you and no walk on this floor "
+            f"reaches it (inside/under/over something). The way there is likely: {_ways_text(res, ups)}. "
+            f"interact {first} (or queue_actions [interact {first}, travel_to ...]), then travel_to again")
 
 
 def _pos_now(char: str) -> list | None:

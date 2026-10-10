@@ -1947,8 +1947,16 @@ RPC.register("ui.level_up", function(args)
             return "next", 500
         end },
         { "closed", function()
-            if get() then return "wait", 300 end
-            return "done"
+            if not get() then return "done" end
+            -- FinishLevelUp went through on a complete page, but a page is still up after 4 s: the next pending
+            -- level (Karlach x3 in S021) or the closing animation. The level was applied either way; S003/S021/S024
+            -- reported these as FAILED ("closed: still waiting after 10000 ms … finished complete").
+            ctx.closeWait = ctx.closeWait or RPC.now_ms()
+            if RPC.now_ms() - ctx.closeWait > 4000 then
+                ctx.result.page_still_open = "another level up may be pending: call level_up again"
+                return "done"
+            end
+            return "wait", 300
         end, 10000 },
     }
     return runJob("ui.level_up", stages, ctx, 90000)

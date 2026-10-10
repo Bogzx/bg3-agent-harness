@@ -131,6 +131,15 @@ def logs_to_read(mem: Path, sid_n: int) -> list[int]:
     return nums[-MAX_LOGS:]
 
 
+def harness_news(knowledge_dir: Path = KNOWLEDGE, last: int = 12) -> list[str]:
+    """The newest harness-news.md entries ('- YYYY-MM-DD HH:MM …'), at most `last`."""
+    try:
+        text = (knowledge_dir / "harness-news.md").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return [ln for ln in text.splitlines() if ln.startswith("- 20")][-last:]
+
+
 def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: float) -> str:
     logs = ", ".join(f"sessions/{M.session_id(n)}.md" for n in logs_to_read(mem, sid_n)) or "(none)"
     stale = L.stale_files(mem, sid_n + 1)
@@ -180,6 +189,19 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         "- A hook reports lint errors after each edit (silence = clean): fix them right away. The runner lints "
         "after you and rolls back ALL your edits if you leave new errors.",
     ]
+    news = harness_news(knowledge_dir=KNOWLEDGE)
+    if news:
+        lines += [
+            "",
+            "HARNESS FIXES (operator's harness-news.md, newest last). Memory that prescribes a hand workaround "
+            "for something below is now WRONG and costs the player turns (S026: skipped giving an amulet "
+            "because 'give is bugged'; clicked rest/trade buttons by coordinates). In strategy.md '## Harness and "
+            "tool quirks' and in objectives.md: move each quirk or workaround a fix below retires to strategy.md "
+            "'## Retired quirks (fixed in the harness; don't use the old workaround)' as ONE line "
+            "'- RETIRED: <what works now> (<date>) [harness-news]'; drop click coordinates and screenshot+click "
+            "steps for things a tool now does. Keep quirks no entry addresses.",
+            *news,
+        ]
     if M.compaction_due(mem, sid_n + 1):
         last = M.last_compacted_session(mem)
         lines += [

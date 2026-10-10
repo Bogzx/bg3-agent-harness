@@ -35,6 +35,55 @@ class Flicker(unittest.TestCase):
         self.assertEqual(render.render_events(evs, Handles()).count("Moonshield"), 2)
 
 
+class Flapping(unittest.TestCase):
+    """S026-S027: Moonshield on/off on Scratch every tick, split across calls (the in-batch flicker drop misses it)."""
+    def setUp(self) -> None:
+        self.t = [0.0]
+        self.flap = render.StatusFlap(clock=lambda: self.t[0])
+
+    def call(self, *evs):
+        self.t[0] += 2.0
+        return render.render_events(list(evs), Handles(), flap=self.flap)
+
+    def test_flapping_is_muted_after_one_line(self):
+        outs = []
+        for i in range(10):
+            outs.append(self.call(ev("status_applied" if i % 2 == 0 else "status_removed", GALE, "Moonshield")))
+        self.assertTrue(all("Moonshield" in o for o in outs[:5]))
+        self.assertIn("status_flapping", outs[5])
+        self.assertTrue(all(o == "" for o in outs[6:]))
+        self.assertIn("Shadow Curse", self.call(ev("status_applied", GALE, "Shadow Curse")))  # others unaffected
+
+    def test_mute_ends_after_quiet(self):
+        for i in range(6):
+            self.call(ev("status_applied" if i % 2 == 0 else "status_removed", GALE, "Moonshield"))
+        self.t[0] += 200
+        self.assertIn("status_removed", self.call(ev("status_removed", GALE, "Moonshield")))
+
+    def test_slow_changes_never_mute(self):
+        for i in range(10):
+            self.t[0] += 30
+            self.assertIn("Moonshield", self.call(ev("status_applied" if i % 2 == 0 else "status_removed",
+                                                     KARLACH, "Moonshield")))
+
+
+class GroupStatuses(unittest.TestCase):
+    def test_one_line_for_many_targets(self):
+        npcs = [{"uuid": f"22222222-0000-0000-0000-00000000000{i}", "name": f"Pilgrim {i}"} for i in range(5)]
+        evs = [ev("status_applied", n, "Moonshield", seq=i) for i, n in enumerate(npcs)]
+        evs.append(ev("status_applied", GALE, "Shadow Curse", seq=9))
+        out = render.render_events(evs, Handles())
+        self.assertEqual(out.count("Moonshield"), 1)
+        self.assertIn("on 5: Pilgrim 0 e", out)
+        self.assertIn("Pilgrim 4", out)
+        self.assertIn("Shadow Curse", out)
+        self.assertEqual(len(out.splitlines()), 3)
+
+    def test_two_targets_stay_separate(self):
+        evs = [ev("status_applied", GALE, "Moonshield"), ev("status_applied", KARLACH, "Moonshield")]
+        self.assertEqual(render.render_events(evs, Handles()).count("Moonshield"), 2)
+
+
 class ExamineStatuses(unittest.TestCase):
     def test_look_at_drops_status_ids(self):
         from bg3ai import server

@@ -170,3 +170,37 @@ class ClutterInChanges(unittest.TestCase):
         gone = "\n".join(delta.diff(new, old, H))
         self.assertNotIn("Tin Cup", gone)
         self.assertIn("Door", gone)
+
+
+class CombatTrim(unittest.TestCase):
+    """S025: get_combat_state listed 22 props (initiative -20) with distance matrices, and a spent turn listed
+    ~60 '— no action' entries."""
+    def test_props_fold_into_one_line(self):
+        H = render.Handles()
+        order = [{"uuid": "33333333-0000-0000-0000-000000000001", "name": "Shadowheart", "relation": "party",
+                  "initiative": 5, "is_current": True, "hp_pct": 100},
+                 {"uuid": "33333333-0000-0000-0000-000000000002", "name": "Winged Horror", "relation": "hostile",
+                  "initiative": 3, "hp_pct": 40, "from": {"e1": [4.9, 1]}}]
+        order += [{"uuid": f"44444444-0000-0000-0000-0000000000{i:02d}", "name": "Candles", "relation": "neutral",
+                   "initiative": -20, "hp_pct": 100, "from": {"e1": [9.1, 0], "e2": [8.0, 1]}} for i in range(6)]
+        order.append({"uuid": "55555555-0000-0000-0000-000000000001", "name": "Explosive Barrel",
+                      "relation": "neutral", "initiative": -20, "item": True})
+        out = render.render_combat({"active": True, "round": 2, "order": order, "current": order[0]["uuid"]}, H)
+        self.assertIn("Winged Horror", out)
+        self.assertIn("Explosive Barrel", out.split("OBJECTS")[0])  # a prop that matters keeps its line
+        self.assertIn("OBJECTS on the turn order (props): Candles x6", out)
+        self.assertEqual(out.count("Candles"), 1)
+
+    def test_spent_resources_are_counted_not_listed(self):
+        acts = {"actions": [{"name": f"Spell {i}", "spell": f"Target_S{i}", "cost": {"action": 1},
+                             "available": False, "reason": "no action"} for i in range(40)]
+                + [{"name": "Shove", "spell": "Target_Shove", "cost": {"bonus": 1}, "available": False,
+                    "reason": "no bonus action"},
+                   {"name": "Bless", "spell": "Target_Bless", "cost": {"action": 1, "slot": 1}, "available": False,
+                    "reason": "no spell slots"},
+                   {"name": "Dash", "spell": "Shout_Dash", "cost": {"movement": 0}}]}
+        out = render.render_actions(acts, render.Handles())
+        self.assertIn("UNAVAILABLE: no action: all 40 [A] ones; no bonus action: all 1 [B] ones; Bless", out)
+        self.assertIn("no spell slots", out)
+        self.assertNotIn("Spell 3", out)
+        self.assertIn("Dash (Shout_Dash)", out)

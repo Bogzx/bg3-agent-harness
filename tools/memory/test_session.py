@@ -52,6 +52,7 @@ class StartTest(MemoryTestCase):
 
     def test_unclosed_previous_session_is_flagged(self):
         run_quiet(S.cmd_start, self.mem)
+        S.append_log(self.mem, 1, "- 10:00 [note] played")  # an empty one would be reused instead
         _, out = run_quiet(S.cmd_start, self.mem)
         self.assertEqual(self.state()["current"], 2)
         self.assertIn("S001 ended without wrap-up", out)
@@ -284,6 +285,27 @@ class StopHookTest(MemoryTestCase):
             out = S.stop_decision(self.mem)
         self.assertNotIn("decision", out)
         self.assertIn("committed", out["systemMessage"])
+
+    def test_empty_killed_session_reuses_its_id(self):
+        run_quiet(S.cmd_start, self.mem)  # S001, killed before anything was logged
+        self.assertEqual(S.M.reusable_session(self.mem), 1)  # what runner/play.py next_sid predicts
+        run_quiet(S.cmd_start, self.mem)
+        self.assertEqual(self.state()["current"], 1)
+        self.assertNotIn("WITHOUT wrap-up", self.read("sessions/S001.md"))
+        S.append_log(self.mem, 1, "- 10:00 [note] played")
+        self.assertIsNone(S.M.reusable_session(self.mem))
+        run_quiet(S.cmd_start, self.mem)
+        self.assertEqual(self.state()["current"], 2)
+        self.assertIn("WITHOUT wrap-up", self.read("sessions/S001.md"))
+
+    def test_fix_notes_without_handoff_asks_no_game_save(self):
+        self.open_session(1, minutes_ago=3)
+        env = {"BG3AI_SESSION_DEADLINE": str(time.time() + 600), "BG3AI_FIX_NOTES": "1"}
+        with mock.patch.dict(os.environ, env):
+            out = S.stop_decision(self.mem)
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("no game now", out["reason"])
+        self.assertNotIn("save the game", out["reason"])
 
     def test_gives_up_after_max_blocks(self):
         self.open_session(1, minutes_ago=55)

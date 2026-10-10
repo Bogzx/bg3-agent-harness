@@ -189,6 +189,46 @@ class TravelTrips(Base):
         out = server.travel_to(x=463.0, y=0.0, z=0.0)
         self.assertIn("fast travel to Grove failed (in dialogue): walking instead", out)
 
+    def test_fast_travel_from_camp_leaves_camp_first(self):
+        # live 2026-10-10: a fast travel from camp moved only Claude (companions stayed at the Campsite)
+        seen, at_camp = [], {"on": True}
+        orig_rpc, orig_job, orig_wait = self.g.rpc, self.g.run_job, server._wait_running
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "ui.fast_travel" and (args or {}).get("dry"):
+                seen.append("dry")
+                if at_camp["on"]:
+                    raise GameError("at camp: leave camp first (camp leave), then fast travel")
+                return {"can": True}
+            return orig_rpc(op, args, context, timeout)
+
+        def run_job(op, args, context="server", wait_s=25.0, poll_s=0.01, on_start=None):
+            if op == "act.leave_camp":
+                seen.append("leave")
+                at_camp["on"] = False
+                return JobResult("done", {"at_camp": False})
+            if op == "ui.fast_travel":
+                seen.append("travel")
+                return JobResult("done", {"arrived": args["waypoint"]})
+            return orig_job(op, args, context, wait_s, poll_s, on_start)
+        self.g.rpc, self.g.run_job = rpc, run_job
+        server._wait_running = lambda max_s=60.0: True
+        try:
+            out = server.fast_travel("Last Light Inn")
+            self.assertEqual(seen, ["dry", "leave", "travel"])
+            self.assertIn("left camp first", out)
+            seen.clear()
+            server.fast_travel("Last Light Inn")  # not at camp: no leave
+            self.assertEqual(seen, ["dry", "travel"])
+            at_camp["on"] = True
+            self.g.run_job = lambda op, args, **kw: (seen.append(op), JobResult("failed", None, "cannot travel right now"))[1]
+            seen.clear()
+            out = server.fast_travel("Last Light Inn")
+            self.assertIn("FAILED to leave camp first", out)
+            self.assertNotIn("ui.fast_travel", seen)
+        finally:
+            server._wait_running = orig_wait
+
     def test_route_tool_shows_this_sessions_dead_ends(self):
         server.DEAD.record([60.0, 0.0, 0.0], [10.0, 0.0, 0.0], 50.0)
         orig = self.g.rpc

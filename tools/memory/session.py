@@ -276,14 +276,16 @@ def cmd_start(mem: Path, quiet: bool = False) -> int:
     notes = []
     now = M.now_local()
     news_since = st.get("started")
-    if st.get("open") and st.get("current"):
+    # Killed seconds after start with nothing logged: reuse its id (runner/play.py next_sid predicts the same).
+    reuse = M.reusable_session(mem)
+    if reuse is None and st.get("open") and st.get("current"):
         prev = st["current"]
         append_log(mem, prev, f"- {now:%H:%M} [note] (harness) session ended WITHOUT wrap-up; "
                               f"work continues in {M.session_id(max(M.session_numbers(mem) + [prev]) + 1)}")
         notes.append(f"WARNING: previous session {M.session_id(prev)} ended without wrap-up: HANDOFF.md may "
                      f"be stale and its notes are uncommitted. Read memory/sessions/{M.session_id(prev)}.md "
                      f"and reconcile everything against live state.")
-    n = max(M.session_numbers(mem) + [st.get("current") or 0]) + 1
+    n = reuse or max(M.session_numbers(mem) + [st.get("current") or 0]) + 1
     (mem / "sessions").mkdir(exist_ok=True)
     started = now.isoformat(timespec="seconds")
     (mem / "sessions" / f"{M.session_id(n)}.md").write_text(log_header(n, now.strftime("%Y-%m-%d %H:%M %z")))
@@ -480,7 +482,13 @@ def stop_decision(mem: Path, now: float | None = None) -> dict | None:
                            f"wrap-up. Only stop after the session-wrapup playbook when the SESSION CLOCK "
                            f"reminder appears (the ⏱ line in tool results says WRAP UP).")}
     blocks = int(st.get("stop_blocks") or 0)
-    if not handoff_ready:
+    if not handoff_ready and os.environ.get("BG3AI_FIX_NOTES"):
+        # No game in the fix-notes pass (S027 was killed before wrap-up): only the memory part of the wrap-up.
+        reason = (f"HANDOFF.md isn't written for {sid} (the session ended before wrap-up). There is no game now: "
+                  f"don't save or call game tools. Rewrite HANDOFF.md from the session log with the heading "
+                  f"'# Handoff {sid} → {M.session_id(n + 1)}' (keep its Save to load line, or name the newest "
+                  f"{sid}-* save the log mentions), then stop again.")
+    elif not handoff_ready:
         reason = (f"Wrap-up is due for {sid} but HANDOFF.md hasn't been rewritten for it yet. Run the "
                   f"session-wrapup playbook: save the game as {sid}-end, update memory, write HANDOFF.md "
                   f"with the heading '# Handoff {sid} → {M.session_id(n + 1)}', then stop again.")

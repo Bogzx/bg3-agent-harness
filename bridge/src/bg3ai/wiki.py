@@ -367,6 +367,8 @@ class Wiki:
             s = sections[i]
             end = next((t.start for t in sections[i + 1:] if t.level <= s.level), len(text))
             text, anchor, sec_title = text[s.start:end].strip(), s.anchor, s.title
+        else:
+            text = _skip_sections(text, sections)
         truncated = len(text) > max_chars
         if truncated:
             cut = text.rfind("\n", 0, max_chars)
@@ -377,6 +379,23 @@ class Wiki:
             "sections": [f"{i + 1}. {'  ' * (s.level - 2)}{s.title}" for i, s in enumerate(sections)],
             "license": LICENSE,
         }
+
+
+# Whole-page reads leave these out (still listed in Sections, readable with section=): stat blocks for the
+# difficulties we don't play and the technical ids (S026: Dammon's page was 3 KB of per-difficulty infobox,
+# truncated before "Involvement"/"Items sold", the parts that mattered).
+SKIP_SECTIONS = re.compile(r"^(explorer|tactician|honour) difficulty stats$|^technical$|^gallery$", re.I)
+
+
+def _skip_sections(text: str, sections: list[Section]) -> str:
+    cuts = []
+    for i, sc in enumerate(sections):
+        if SKIP_SECTIONS.match(sc.title.strip()):
+            end = next((t.start for t in sections[i + 1:] if t.level <= sc.level), len(text))
+            cuts.append((sc.start, end))
+    for a, b in sorted(cuts, reverse=True):
+        text = text[:a] + text[b:]
+    return text
 
 
 def _pick_section(sections: list[Section], want: str | int) -> int | None:
@@ -420,11 +439,54 @@ def format_search(results: list[dict]) -> str:
     return "\n".join(f"- {r['title']} <{r['url']}>: {r['snippet']}" for r in results)
 
 
+SHORT_LINE = 12      # infobox cells ("STR", "10", "(0)"): runs of these lines are joined into one
+SHORT_RUN = 4
+SECTIONS_SHOWN = 40  # the Sections list: at most this many, nesting depth <= 2, repeated titles once
+
+
+def _join_short_lines(text: str) -> str:
+    """Infobox tables render one cell per line (S026 Dammon: the ability-score table took ~30 lines): join runs
+    of SHORT_RUN+ short lines with spaces."""
+    out, run = [], []
+
+    def flush():
+        if len(run) >= SHORT_RUN:
+            out.append(" ".join(run))
+        else:
+            out.extend(run)
+        run.clear()
+    for line in text.split("\n"):
+        if line and len(line) <= SHORT_LINE and not line.startswith(("#", "-", "[")):
+            run.append(line)
+        else:
+            flush()
+            out.append(line)
+    flush()
+    return "\n".join(out)
+
+
+def _sections_text(sections: list[str]) -> str:
+    """'1. Overview | 2. Entrance | ...': the first two nesting levels, each title once (S026: Dammon's list
+    repeated Level/HP/AC/... per difficulty, 73 entries, ~1.3 KB). The numbers still pick sections."""
+    seen, out = set(), []
+    for s in sections:
+        num, _, rest = s.partition(". ")
+        depth = (len(rest) - len(rest.lstrip(" "))) // 2
+        title = rest.strip()
+        if depth > 1 or title.lower() in seen:
+            continue
+        seen.add(title.lower())
+        out.append(f"{num}. {title}")
+    more = len(out) - SECTIONS_SHOWN
+    return " | ".join(out[:SECTIONS_SHOWN]) + (f" | (+{more} more)" if more > 0 else "")
+
+
 def format_page(p: dict) -> str:
     head = f"# {p['title']}" + (f" > {p['section']}" if p["section"] else "")
-    parts = [head, f"Source: {p['url']} ({p['license']})", "", p["text"]]
+    body = re.sub(r"(?m)^#{2,5} ([^\n]{1,30})\n([^\n#\[][^\n]{0,30})$", r"\1: \2", p["text"])  # "### HP\n10" -> "HP: 10"
+    parts = [head, f"Source: {p['url']} ({p['license']})", "", _join_short_lines(body)]
     if p["truncated"] or not p["section"]:
-        parts += ["", "Sections: " + " | ".join(s.strip() for s in p["sections"])]
+        parts += ["", "Sections: " + _sections_text(p["sections"])]
     return "\n".join(parts)
 
 

@@ -1101,6 +1101,9 @@ class Runner:
 
     def next_sid(self) -> str:
         import memlib as M
+        reuse = M.reusable_session(self.mem)  # an empty killed session's id is reused by session.py start
+        if reuse:
+            return session_id(reuse)
         return session_id(predict_session_number(M.session_numbers(self.mem), self.memory_state().get("current")))
 
     # ---------------------------------------------------------------- game lifecycle

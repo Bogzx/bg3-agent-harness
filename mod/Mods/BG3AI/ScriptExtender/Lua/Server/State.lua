@@ -708,6 +708,12 @@ for _, ev in ipairs({ { "AddedTo", 3 }, { "RemovedFrom", 3 }, { "Equipped", 2 },
     { "SavegameLoaded", 0 }, { "LevelGameplayStarted", 2 }, { "Combined", 7 } }) do
     if Ext.Osiris then pcall(Ext.Osiris.RegisterListener, ev[1], ev[2], "after", function() S.bumpInventory() end) end
 end
+-- An item that left an inventory may lie on the floor now: the item index rebuilds soon (Visibility.lua).
+for _, ev in ipairs({ { "RemovedFrom", 3 }, { "TemplateRemovedFrom", 3 } }) do
+    if Ext.Osiris then
+        pcall(Ext.Osiris.RegisterListener, ev[1], ev[2], "after", function() if V.indexDirty then V.indexDirty() end end)
+    end
+end
 
 local inventoryFull
 function S.inventory(ctx, args)
@@ -837,6 +843,7 @@ function S.combat(ctx)
                         local tb = comp(me, "TurnBased")
                         local o = { uuid = u, name = V.name(u), relation = relation(ctx, u) }
                         if comp(me, "IsSummon") then o.summon = true end  -- ours or theirs: an ally, not a companion
+                        if comp(me, "ServerItem") then o.item = true end  -- a prop/trap on the turn order
                         local p = V.pos(me)
                         if p then o.pos = pos1(p); tactical(ctx, u, p, o) end
                         pcall(function() if m.Initiative then o.initiative = m.Initiative end end)
