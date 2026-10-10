@@ -498,6 +498,38 @@ test("cast: in range uses UseSpell/5 with WithoutMove=1", function()
     eq(#c, 1, "calls"); eq(c[1].n, 5, "arity"); eq(c[1][6], 1, "WithoutMove")
 end)
 
+test("cast: a projectile's late hit is in the result, not no_damage (acceptance 14:5x Ranged Attack at 18 m)", function()
+    spell("Projectile_Bolt", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0,
+        SpellFlags = { "IsHarmful" } })
+    local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    A.dispatch("CastedSpell", { P1, "Projectile_Bolt" })
+    tick(8) -- 480 ms: the bolt is still in flight
+    eq(j.status, "running", "still waiting for the bolt")
+    A.dispatch("AttackedBy", { NPC, P1, P1, "Piercing", 2, "", 0 })
+    tick(5)
+    eq(j.status, "done", "status")
+    eq(j.result.total_damage, 2, "damage"); eq(j.result.no_damage, nil, "no_damage")
+    j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    A.dispatch("CastedSpell", { P1, "Projectile_Bolt" })
+    tick(30) -- 1.8 s, no hit: a miss
+    eq(j.status, "done", "miss status"); eq(j.result.no_damage, true, "miss")
+end)
+
+test("cast: a melee hit still reports at 250 ms", function()
+    spell("Target_Hit", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        SpellFlags = { "IsHarmful" } })
+    world[NPC].pos = { 1.5, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Target_Hit", target = NPC }))
+    A.dispatch("AttackedBy", { NPC, P1, P1, "Slashing", 5, "", 0 })
+    A.dispatch("CastedSpell", { P1, "Target_Hit" })
+    tick(5)
+    eq(j.status, "done", "status"); eq(j.result.total_damage, 5, "damage")
+    j = job(op("cast", { char = P1, spell = "Target_Hit", target = NPC }))
+    A.dispatch("CastedSpell", { P1, "Target_Hit" })
+    tick(5)
+    eq(j.status, "done", "miss status"); eq(j.result.no_damage, true, "miss")
+end)
+
 test("transfer: GetStackAmount's extra return values don't break tonumber (S018-S024 give/camp crash)", function()
     party_rows = { P1, NPC }
     osiv[key("GetInventoryOwner", GEM)] = P1

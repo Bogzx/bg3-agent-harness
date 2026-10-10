@@ -1,0 +1,82 @@
+"""combat_turn list form: several party members' turns in one call (round-trip fold, 2026-10-10)."""
+import json
+import unittest
+from unittest import mock
+
+from bg3ai import server
+from bg3ai.game import GameError
+
+TC = getattr(server.combat_turn, "fn", server.combat_turn)
+
+
+class Chain(unittest.TestCase):
+    def run_chain(self, plans, one):
+        calls = []
+
+        def fake(plan, who, end, wait_next, ignore, wait_turn):
+            calls.append((who, json.loads(plan), wait_turn))
+            server._batch["last"] = "done"
+            return one(who) + "\n⏱ 12:00 · 40m left"
+        with mock.patch.object(server, "_combat_turn_one", fake):
+            out = TC(json.dumps(plans))
+        return out, calls
+
+    PLANS = [{"who": "Karlach", "plan": {"action": [{"ability": "Attack", "target": "e7"}]}},
+             {"who": "Gale", "plan": {"action": [{"ability": "Fire Bolt", "target": "e7"}]}},
+             {"who": "Claude", "plan": {}}]
+
+    def test_all_played_one_clock_line(self):
+        out, calls = self.run_chain(self.PLANS, lambda w: f"TURN {w}\nend_turn: done")
+        self.assertEqual([c[0] for c in calls], ["Karlach", "Gale", "Claude"])
+        self.assertEqual(calls[0][2], 30.0)
+        self.assertTrue(all(0 < c[2] <= 30.0 for c in calls[1:]))   # later members wait too, within the budget
+        self.assertEqual(out.count("⏱"), 1)
+        self.assertNotIn("CHAIN STOPPED", out)
+
+    def test_budget_spent_no_more_waiting(self):
+        with mock.patch.object(server, "CHAIN_BUDGET_S", 0.0):
+            _, calls = self.run_chain(self.PLANS, lambda w: f"TURN {w}")
+        self.assertEqual([c[2] for c in calls], [30.0, 0.0, 0.0])
+
+    def test_stops_when_a_member_cant_act_now(self):
+        def one(w):
+            if w == "Gale":
+                raise GameError("it is not e2 Gale's turn (now e9 Goblin)")
+            return f"TURN {w}"
+        out, calls = self.run_chain(self.PLANS, one)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("CHAIN STOPPED after 1 of 3: Gale: not played — it is not e2 Gale's turn", out)
+        self.assertIn("NOT PLAYED: Gale, Claude", out)
+
+    def test_stops_on_interrupt(self):
+        def fake(plan, who, end, wait_next, ignore, wait_turn):
+            server._batch["last"] = "interrupted" if who == "Karlach" else "done"
+            return f"TURN {who}\nturn NOT ended"
+        with mock.patch.object(server, "_combat_turn_one", fake):
+            out = TC(json.dumps(self.PLANS))
+        self.assertIn("Karlach's turn was interrupted", out)
+        self.assertIn("NOT PLAYED: Gale, Claude", out)
+
+    def test_single_plan_unchanged(self):
+        with mock.patch.object(server, "_combat_turn_one", return_value="TURN x") as m:
+            self.assertEqual(TC('{"action":[]}', who="Gale"), "TURN x")
+        m.assert_called_once()
+
+    def test_bad_list(self):
+        self.assertIn("a list plan is", TC('[{"plan": {}}]'))
+        self.assertIn("ends each turn", TC(json.dumps(self.PLANS), end=False))
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class AutoCombat(unittest.TestCase):
+    def test_fight_start_carries_the_combat_state(self):
+        with mock.patch.object(server, "_combat_state_text", return_value="ROUND 1 order: e1 Karlach, e9 Goblin\nYOUR ACTIONS (e1)"):
+            out = server._auto_combat("move_to", "move_to: done", "EVENTS\n  combat_started {}")
+            self.assertTrue(out.startswith("COMBAT STARTED (no get_combat_state needed):"))
+            self.assertIn("YOUR ACTIONS (e1)", out)
+            self.assertEqual(server._auto_combat("combat_turn", "TURN e1", "EVENTS\n  combat_started {}"), "")
+            self.assertEqual(server._auto_combat("move_to", "move_to: done", "EVENTS\n  died {}"), "")
+            self.assertEqual(server._auto_combat("move_to", "x\nYOUR ACTIONS (e1)", "  combat_started"), "")

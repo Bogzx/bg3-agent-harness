@@ -451,3 +451,21 @@ class ApiSpeed(unittest.TestCase):
             (Path(d) / "S001.turns.jsonl").write_text("\n".join(json.dumps(r) for r in turns) + "\n")
             s = M.summarize_files(None, Path(d) / "S001.turns.jsonl", T0, T0 + 20)
             self.assertEqual(s["wrapup_s"], 15.0)
+
+
+class CallRates(unittest.TestCase):
+    def test_rates_from_stream_uses_wrapup_excluded(self):
+        from bg3ai import metrics as M
+        turns = [{"type": "use", "t": 10.0, "name": "travel_to"}, {"type": "use", "t": 20.0, "name": "wait_for"},
+                 {"type": "use", "t": 30.0, "name": "get_frontier"}, {"type": "use", "t": 40.0, "name": "Read"},
+                 {"type": "use", "t": 50.0, "name": "combat_turn"}, {"type": "use", "t": 70.0, "name": "look"}]
+        r = M.call_rates(turns, [], 0.0, 60.0)   # wrap-up from 60 s: the look is left out
+        self.assertEqual((r["calls"], r["reads"], r["action_calls"]), (5, 1, 2))
+        self.assertEqual((r["calls_pm"], r["reads_pm"], r["actions_pm"]), (5.0, 1.0, 2.0))
+        self.assertEqual(r["reads_by"], {"get_frontier": 1})
+
+    def test_bridge_fallback(self):
+        from bg3ai import metrics as M
+        tools = [{"tool": "look", "t0": 5.0}, {"tool": "move_to", "t0": 6.0}, {"tool": "look", "t0": 7.0, "nested": True}]
+        r = M.call_rates([], tools, 0.0, 60.0)
+        self.assertEqual((r["source"], r["calls"], r["reads"], r["action_calls"]), ("bridge", 2, 1, 1))

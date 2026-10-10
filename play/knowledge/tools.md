@@ -68,11 +68,11 @@ Lines a result may end with:
 
 ## Combat
 - `get_combat_state()` → turn order (visible), whose turn, round, the active character's remaining economy.
-- `use_ability(ability, target | x,y,z, who, upcast=0, targets="")` → attack, spell, item or action from `get_actions`; `targets` = comma list for multi-target spells. `ability` = the name as the action list shows it (`"Fire Bolt"`, any case) or an id; lists show an id only where two actions share a name (then pass that id).
+- `use_ability(ability, target | x,y,z, who, upcast=0, targets="")` → attack, spell, item or action from `get_actions`; `targets` = comma list for multi-target spells. `ability` = the name as the action list shows it (`"Fire Bolt"`, any case) or an id; lists show an id only where two actions share a name (then pass that id). Out of combat at a creature it says whether the hit started a fight: `COMBAT: the attack started a fight …` or `combat: NOT started — e24 Shadow took 3 damage but no fight began` (dormant/unaware: it won't act until combat starts).
 - `ability_preview(ability, target, who)` → hit chance or save DC, damage, range, line of sight.
 - `react(use, which="")` → answer a reaction prompt (Shield, Counterspell, opportunity attack).
 - `end_turn(who, wait=true)` → end the turn; blocks through enemy turns until a party member can act, combat ends, or a reaction/roll prompt needs you (`wait=false` + `wait_for("my_turn")` to plan meanwhile).
-- `combat_turn(plan, who, end=true, wait_next=false, ignore="hostile", wait_turn=30)` → **a whole turn in one call** (see below). Returns at once after ending the turn with `NEXT …, then <ally> (yours)`, or `NOW <ally>'s turn` plus their actions: plan that turn while the enemies act and **send it at once**: a plan sent before the turn comes waits for it (up to `wait_turn` s; stops on a prompt), so no `wait_for("my_turn")` is needed. Party members with equal initiative share one turn (any order; each needs its own `combat_turn(who=…)` or `end_turn(who=…)`).
+- `combat_turn(plan, who, end=true, wait_next=false, ignore="hostile", wait_turn=30)` → **a whole turn in one call** (see below). Returns at once after ending the turn with `NEXT …, then <ally> (yours)`, or `NOW <ally>'s turn` plus their actions: plan that turn while the enemies act and **send it at once**: a plan sent before the turn comes waits for it (up to `wait_turn` s; stops on a prompt), so no `wait_for("my_turn")` is needed. Party members with equal initiative share one turn (any order): plan them all in one call with a list, `plan='[{"who":"Karlach","plan":{…}},{"who":"Gale","plan":{…}}]'` (a later member's plan waits for their turn like a sent-ahead plan, ≤80 s in all; it stops and lists who was NOT played when a turn is interrupted or a turn doesn't come in time). The action that starts a fight already shows `COMBAT STARTED` with the turn order and your actions: no `get_combat_state` after it.
 - `end_combat_report(what_worked, what_to_change, next_goal)` → required after every fight; goes to your session log.
 
 ### `combat_turn` plans
@@ -84,8 +84,14 @@ tried in order until one works:
   It follows the real route (stairs, detours) and keeps out of fire on the way (`"avoid":false` walks through).
   A move that ends out of reach says so and why: `now 9.9m from e12 — stopped short of ≤1.5m: out of
   movement (9m left, the route needs 18.5m)` / `kept out of Fire on the route 4m ahead` / `no walkable
-  route gets closer than 7m (raised/blocked …)`. If then every action alternative is out of range, it
-  tries the ranged weapon attack itself (`action (auto fallback): …`), else Dash + walk on (out of movement only).
+  route gets closer than 7m (raised/blocked …)`. A melee move that ends clearly out of reach adds
+  `— melee is out of reach this turn` and the melee attacks on that target are skipped (no wasted try): the
+  plan's ranged alternative runs, else the ranged weapon attack itself (`action (auto fallback): …`), else
+  Dash + walk on (out of movement only). A route that needs ≈ all your movement often ends ~1.5 m short:
+  plan a ranged alternative or a Dash for it.
+- **Lost move target:** the move's target died or went out of sight (Shadow Blend, killed by an ally first):
+  `target: e24 Shadow is out of sight → the plan now aims at the nearest visible hostile e70 Wraith (12m)`,
+  and it walks on if movement is left. Nobody in sight: its attacks and a walk-on Dash are skipped.
 - **Retarget:** when every alternative of a slot missed its target (dead, out of range, no line of sight),
   the plan's own targeted abilities are tried on the nearest other visible hostile in reach
   (`action (auto fallback): Target_SacredFlame e15: done`; also for `extra` after a kill). `"retarget":false` turns it off.

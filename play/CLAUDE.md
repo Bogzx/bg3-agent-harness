@@ -70,8 +70,19 @@ runs) and `PACE: …` (you waited too soon): follow them. A combat move that end
   covers, use `ui_dump` (text) then `ui_action`, before considering `screenshot` + `click`.
 - Targets are short ids from the observation tools (`e12`) or party names. Ids last one session; write
   names, not ids, in your notes.
-- Action tools return a result line plus EVENTS (what happened since your last call). Read it instead
-  of re-querying.
+- **Trust the result; don't re-read.** Every call is a ~2 s round trip (S023-S026: 11 calls/min, a third
+  of them reads that repeated what the last result said). Each result already carries:
+  - a walk's end (`wait_for` on it, a queue's result): `LEADS` (unvisited things in view) + `WAYS walkable`
+    → no `get_frontier` / `get_nearby` / `look` after arriving.
+  - `route(..., go=true)` checks and starts the trip → no `route` then `travel_to`.
+  - `talk_to`: the opening lines and the first real choice → no `get_dialogue`.
+  - an action that starts a fight: `COMBAT STARTED` with turn order + your actions → no `get_combat_state`.
+    `combat_turn`'s result ends with `NOW <who>'s turn: plan it; also <b>, <c>` → plan them all in ONE
+    `combat_turn` with a list: `[{"who":"Karlach","plan":{…}},{"who":"Gale","plan":{…}}]`.
+  - EVENTS: items gained, gold, statuses, damage, deaths, approvals, level-ups → no `get_inventory` /
+    `get_party` / `get_status` to check them.
+  - `note()` and `note="…"` on travel_to/queue_actions/do_actions → no Edit of the session log mid-walk.
+  Re-read only when a result says something failed, or a decision needs a fact no result showed.
 - `screenshot`/`zoom` are **only** for:
   - real ambiguity the text can't resolve
   - visual puzzles and spatial layouts the text doesn't describe

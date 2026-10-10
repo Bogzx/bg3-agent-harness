@@ -740,6 +740,33 @@ def read_by_tool(reads: list[dict]) -> dict:
     return dict(sorted(out.items(), key=lambda kv: -kv[1]["median"]))
 
 
+# Observation reads for the calls/min mix (the round trips a result could have carried; 2026-10-10 task).
+OBS_READS = {"look", "get_nearby", "get_frontier", "screenshot", "zoom", "get_status", "route", "wiki_search",
+             "wiki_page", "look_at", "get_inventory", "get_combat_state", "get_dialogue", "get_journal", "get_map",
+             "get_party", "recall", "ui_dump", "get_actions", "ability_preview", "get_level_up_options"}
+
+
+def call_rates(turns: list[dict], tools: list[dict], start: float, end: float) -> dict:
+    """Round trips per minute of play (wrap-up left out): every model tool call (Read/Edit/ToolSearch too: each is
+    a think+call round trip), observation reads, action calls (incl. batches/queues). From the stream's tool uses;
+    the bridge's top-level calls when there is no stream."""
+    uses = [{"name": r.get("name"), "t": r["t"]} for r in turns if r.get("type") == "use" and "t" in r]
+    src = "stream"
+    if not uses:
+        uses, src = [{"name": r["tool"], "t": r["t0"]} for r in tools if not r.get("nested")], "bridge"
+    uses = [u for u in uses if start <= u["t"] < end]
+    mins = max((end - start) / 60.0, 1e-9)
+    reads = [u["name"] for u in uses if u["name"] in OBS_READS]
+    acts = [u for u in uses if u["name"] in ACTION_TOOLS or u["name"] in BATCH_TOOLS or u["name"] == QUEUE_TOOL]
+    by: dict[str, int] = {}
+    for n in reads:
+        by[n] = by.get(n, 0) + 1
+    return {"source": src, "minutes": round(mins, 2), "calls": len(uses), "reads": len(reads), "action_calls": len(acts),
+            "calls_pm": round(len(uses) / mins, 2), "reads_pm": round(len(reads) / mins, 2),
+            "actions_pm": round(len(acts) / mins, 2),
+            "reads_by": dict(sorted(by.items(), key=lambda kv: -kv[1])[:8])}
+
+
 def _target(value, limit, lower_is_better=True):
     if value is None:
         return {"value": None, "target": limit, "pass": None}
@@ -816,6 +843,7 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
                           "by": {k: sum(1 for r in waits if r.get("noop") == k)
                                  for k in sorted({r["noop"] for r in waits if r.get("noop")})}},
         "tool_calls": len(top),
+        "rates": call_rates(turns, tool_recs, start, wrap_t if wrap_t is not None else end),
         "actions": n_actions,
         "apm": round(n_actions / minutes, 2),
         "busy_pct": pct(busy), "dialogue_pct": pct(dlg), "busy_or_dialogue_pct": pct(
@@ -868,6 +896,9 @@ def write_summary(summary: dict, out_path: Path, history_path: Path | None, sess
                "rt_read_p90_ms": summary["tool_rt_ms"]["read"].get("p90"), "apm": summary.get("apm"),
                "busy_pct": summary.get("busy_pct"), "pipelining_pct": summary.get("pipelining_pct"),
                "think_overlap_pct": summary.get("think_overlap_pct"),
+               "calls_pm": (summary.get("rates") or {}).get("calls_pm"),
+               "reads_pm": (summary.get("rates") or {}).get("reads_pm"),
+               "actions_pm": (summary.get("rates") or {}).get("actions_pm"),
                "pass": {k: v.get("pass") for k, v in t.items()}}
         with open(history_path, "a") as f:
             f.write(json.dumps(row, separators=(",", ":")) + "\n")
@@ -921,6 +952,7 @@ def live_view(tools: list[dict], samples: list[dict], turns: list[dict], now: fl
         "rt_read_median_ms": s["tool_rt_ms"]["read"].get("median"), "rt_read_p90_ms": s["tool_rt_ms"]["read"].get("p90"),
         "apm": s["apm"], "busy_pct": s["busy_pct"], "pipelining_pct": s["pipelining_pct"],
         "think_overlap_pct": s["think_overlap_pct"],
+        "calls_pm": s["rates"]["calls_pm"], "reads_pm": s["rates"]["reads_pm"], "actions_pm": s["rates"]["actions_pm"],
         "long_gaps": s["long_gaps"],
         "targets": s["targets"],
         "timeline": {"step_s": step, "buckets": buckets},

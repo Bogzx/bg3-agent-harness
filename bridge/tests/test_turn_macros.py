@@ -120,6 +120,8 @@ class FakeGame:
                 return {"ok": True}
             if op == "act.target_state":
                 u = args["uuid"]
+                if u in (CHEST, LOCKED, OWNED, BOOK, LETTER, POTION):  # items: like Actions.lua, no dead
+                    return {"visible": u in self.visible, "locked": u == LOCKED, "opened": False}
                 return {"visible": u in self.visible or u in self.dead, "dead": u in self.dead or None}
             if op == "events.since":
                 evs = [e for e in self.events if e["seq"] > int(args.get("seq", 0))][: int(args.get("limit", 200))]
@@ -596,6 +598,34 @@ class CombatTurn(Base):
         self.assertIn("melee is out of reach this turn", out)
         self.assertNotIn("FAILED", out)
 
+    def test_route_ends_short_skips_a_useless_dash(self):
+        # live 14:5x: "no walkable route gets closer than 2.5m", in_reach=false; Dash + walk on stood still
+        self.g.combat = combat(gob_dist=8.0)
+        self.g.approach = {"reachable": True, "pos": [-4.0, 0.0, 5.0], "walk_m": 5.0, "limit": "route_end",
+                           "end_m": 2.5}
+        self.g.result_for = lambda op, a: ({"dist": 2.9, "target": GOB, "in_reach": False} if op == "act.move_to"
+                                           else {"dist": 1.0})
+        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+                                           action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   "Shout_Dash", "Shout_Dodge"]))
+        self.assertIn("melee is out of reach this turn", out)
+        self.assertIn("Shout_Dash: skipped (more movement gets no closer", out)
+        self.assertEqual(self.casts(), ["Shout_Dodge"])
+
+    def test_blocked_melee_walk_skips_melee_and_the_dash(self):
+        # live 15:1x: "move e74: FAILED — could not get closer to the destination — dist=3.5"
+        self.g.approach = {"reachable": True, "pos": [-4.0, 0.0, 5.0], "walk_m": 4.0, "need_m": 4.0,
+                           "limit": "in_range", "movement_left": 9.0}
+        self.g.refuse_if = lambda op, a: ("could not get closer to the destination — dist=3.5"
+                                          if op == "act.move_to" else None)
+        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+                                           action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   "Shout_Dash", "Shout_Dodge"]))
+        self.assertIn("melee is out of reach this turn", out)
+        self.assertIn("is out of range for melee after the move (3.5m)", out)
+        self.assertIn("Shout_Dash: skipped (more movement gets no closer", out)
+        self.assertEqual(self.casts(), ["Shout_Dodge"])
+
     def test_melee_short_but_within_reach_pad_still_attacks(self):
         # 1.5 m wanted, 2.2 m centre to centre: inside the edge-to-edge reach, the game decides
         self.g.combat = combat(gob_dist=10.0)
@@ -624,6 +654,24 @@ class CombatTurn(Base):
                       f"hostile {self.imp} Imp (1.8m)", out)
         self.assertEqual([a.get("target") for _, a in self.g.ops("act.cast")], [IMP])
         self.assertEqual(len(self.g.ops("act.move_to")), 2)  # walked on toward the imp (movement left)
+
+    def test_retarget_without_movement_skips_melee_on_the_far_new_target(self):
+        def vanish(op, a):
+            if op == "act.move_to":
+                self.g.visible.discard(GOB)
+            if op == "act.end_turn":
+                self.g.combat["current"] = GOB
+        self.g.on_start = vanish
+        self.g.result_for = lambda op, a: {"dist": 1.0, "after": {"movement": 0, "action": 1}}
+        self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5},
+                          {"spell": "Projectile_MainHandAttack", "range": 18}]
+        out = server.combat_turn(self.plan(move=self.gob,
+                                           action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   {"ability": "Projectile_MainHandAttack", "target": self.gob}]))
+        self.assertEqual(len(self.g.ops("act.move_to")), 1)  # no movement left: no walk on
+        self.assertEqual([(a.get("spell"), a.get("target")) for _, a in self.g.ops("act.cast")],
+                         [("Projectile_MainHandAttack", IMP)])
+        self.assertIn(f"{self.imp} Imp is out of range for melee after the move (12m)", out)
 
     def test_move_target_dead_before_the_turn_aims_at_the_nearest(self):
         self.g.dead.add(GOB)
@@ -769,6 +817,36 @@ class CombatTurn(Base):
                          ({"action": "Shout_Dodge", "on_reaction": "maybe"}, "on_reaction"),
                          ({"action": "Shout_Dodge", "order": "action,fly"}, "order")):
             self.assertIn(msg, server.combat_turn(json.dumps(bad)), bad)
+
+
+class OpenerCombat(Base):
+    """acceptance 13:3x: a Ranged Attack on a dormant Shadow did damage, no combat began, nothing said so."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        saved, server.OPENER_WAIT_S = server.OPENER_WAIT_S, 0.05
+        self.addCleanup(setattr, server, "OPENER_WAIT_S", saved)
+        self.g.result_for = lambda op, a: ({"total_damage": 3, "target": GOB} if op == "act.cast" else {})
+
+    def test_damage_without_a_fight_says_so(self):
+        out = server.use_ability("Projectile_MainHandAttack", target=self.gob)
+        self.assertIn(f"combat: NOT started — {self.gob} Goblin took 3 damage but no fight began", out)
+
+    def test_fight_started_says_so(self):
+        def start(op, a):
+            if op == "act.cast":
+                self.g.combat = combat()
+        self.g.on_start = start
+        out = server.use_ability("Projectile_MainHandAttack", target=self.gob)
+        self.assertIn("COMBAT: the attack started a fight (round 2)", out)
+
+    def test_items_party_and_in_combat_add_nothing(self):
+        out = server.use_ability("Projectile_MainHandAttack", target=self.chest)
+        self.assertNotIn("combat:", out.lower())
+        self.g.combat = combat()
+        out = server.use_ability("Projectile_MainHandAttack", target=self.gob)
+        self.assertNotIn("combat: NOT", out)
+        self.assertNotIn("started a fight", out)
 
 
 class NextUp(unittest.TestCase):

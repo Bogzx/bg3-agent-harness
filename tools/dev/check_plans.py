@@ -88,11 +88,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--offers", action="store_true", help="print each level's offers")
     ap.add_argument("--ahead", type=int, default=2)
+    ap.add_argument("--json", help="also write [{name, level, plan, problems, offers}] for every checked line here")
+    ap.add_argument("--memory", help="memory dir (default: playthroughs/$BG3AI_PLAYTHROUGH/memory)")
     a = ap.parse_args()
     from bg3ai import server
     st = server.game.rpc("state.status")
     uuids = [r["uuid"] for r in (st.get("party") or []) + (st.get("camp") or []) if isinstance(r, dict) and r.get("uuid")]
-    mem = ROOT / "playthroughs" / os.environ["BG3AI_PLAYTHROUGH"] / "memory"
+    mem = Path(a.memory) if a.memory else ROOT / "playthroughs" / os.environ["BG3AI_PLAYTHROUGH"] / "memory"
+    rows = []
     plans = leveling.load_plans((mem / leveling.PLAN_FILE).read_text())
     bad = 0
     for m in offers(server.game, uuids, a.ahead):
@@ -111,6 +114,10 @@ def main() -> int:
                   + (f"\n    problems: {'; '.join(probs)}" if probs else ""))
             if a.offers or probs:
                 print(f"    offers: {offer_text(lv, known)}")
+            rows.append({"name": m["name"], "level": lv["level"], "plan": plan, "problems": probs,
+                         "offers": offer_text(lv, known, cap=40)})
+    if a.json:
+        Path(a.json).write_text(json.dumps(rows))
     return 1 if bad else 0
 
 

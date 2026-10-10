@@ -307,6 +307,27 @@ class Misc(unittest.TestCase):
             self.assertEqual(r.model_for(), ("opus", "medium"))
             self.assertEqual(r.model_for("-fix"), ("sonnet", "low"))
 
+    def test_autocompact(self):
+        import tempfile
+        from types import SimpleNamespace
+        r = P.Runner.__new__(P.Runner)
+        r.opt = P.Options("pt", None, 30, "opus")
+        with tempfile.TemporaryDirectory() as d:
+            r.state = SimpleNamespace(dir=Path(d))
+            self.assertNotIn("--autocompact", r.claude_cmd("go", "1", resume=False))  # Claude Code's default
+            r.opt = P.Options("pt", None, 30, "opus", autocompact=350_000)
+            cmd = r.claude_cmd("go", "1", resume=False)
+            self.assertEqual(cmd[cmd.index("--autocompact") + 1], "350000")
+            self.assertNotIn("--autocompact", r.claude_cmd("fix", "1", resume=True, tag="-fix"))
+            # session-config.json switches it live (A/B); out-of-range / non-int values are ignored
+            (Path(d) / "session-config.json").write_text('{"autocompact": 200000}')
+            cmd = r.claude_cmd("go", "1", resume=False)
+            self.assertEqual(cmd[cmd.index("--autocompact") + 1], "200000")
+            for bad in ('{"autocompact": 5000}', '{"autocompact": "200k"}', '{"autocompact": true}'):
+                (Path(d) / "session-config.json").write_text(bad)
+                cmd = r.claude_cmd("go", "1", resume=False)
+                self.assertEqual(cmd[cmd.index("--autocompact") + 1], "350000")
+
     def test_cli_effort(self):
         with self.assertRaises(SystemExit):
             P.main(["run", "--playthrough", "x", "--effort", "turbo"])
@@ -969,12 +990,13 @@ class MemoryKeeperHook(unittest.TestCase):
                     "Devil's Sight\n(plan: Wyll L5 from memory/party-build.md)"}
             with mock.patch.object(K, "run_keeper", fake_run), \
                     mock.patch.object(P, "read_actions_since", lambda t, *a, **k: [wyll]):
-                r.start_keeper("S007", res)
+                r.start_keeper("S007", res, [{"name": "Gale", "level": 8, "problems": "check_plans …: no plan line"},
+                                             {"name": "wyll", "level": 5, "problems": "dup of the refused line"}])
                 self.assertTrue(r.keeper_thread.is_alive())
                 r.join_keeper()
             self.assertIsNone(r.keeper_thread)
             self.assertEqual(calls, [(7, "S007-keeper", "sonnet", "low", 5.0)])
-            self.assertEqual([(x["name"], x["level"]) for x in got_refused[0]], [("Wyll", 5)])
+            self.assertEqual([(x["name"], x["level"]) for x in got_refused[0]], [("Wyll", 5), ("Gale", 8)])
             self.assertEqual(events[0][0], "memory_keeper")
             self.assertEqual(events[0][1]["status"], "ok")
             hist = json.loads((Path(d) / "keeper_history.jsonl").read_text())
@@ -983,8 +1005,35 @@ class MemoryKeeperHook(unittest.TestCase):
             r.start_keeper("S008", P.SessionResult("S008", "c", 0, "exited", 0.0, 30.0))
             self.assertIsNone(r.keeper_thread)
             r.opt = P.Options("pt", None, 20, "opus", keeper=False)
-            r.start_keeper("S009", res)
+            r.pending_notes = []
+            r.start_keeper("S009", res, [{"name": "Gale", "level": 8, "problems": "no plan line"}])
             self.assertIsNone(r.keeper_thread)
+            self.assertIn("Gale L8: no plan line", r.pending_notes[0])  # no keeper: the player gets the note
+
+
+class PlanCheck(unittest.TestCase):
+    ROWS = [{"name": "Gale", "level": 6, "plan": {"spells": ["Haste", "Slow"]}, "problems": [], "offers": "pick 2"},
+            {"name": "Wyll", "level": 5, "plan": {"passives": ["Thirsting Blade"]},
+             "problems": ["passive Thirsting Blade: not offered", "spells: 0 of 1 picks"],
+             "offers": "pick 1 of Warlock invocations L5: Devil's Sight, Fiendish Vigour"}]
+
+    def test_all_valid(self):
+        text, bad = P.plan_check_result(self.ROWS[:1])
+        self.assertEqual(bad, [])
+        self.assertIn("1 checked, all valid", text)
+
+    def test_invalid_line_goes_to_keeper_format(self):
+        text, bad = P.plan_check_result(self.ROWS)
+        self.assertIn("1 of 2 INVALID: Wyll L5: passive Thirsting Blade: not offered", text)
+        self.assertEqual((bad[0]["name"], bad[0]["level"]), ("Wyll", 5))
+        self.assertIn("Fiendish Vigour", bad[0]["problems"])
+        self.assertIn('"Thirsting Blade"', bad[0]["problems"])
+        self.assertIn("Wyll L5:", P.plan_note(bad))
+
+    def test_cmd_points_at_memory(self):
+        cmd = P.check_plans_cmd(Path("/tmp/x.json"), Path("/m"))
+        self.assertEqual(cmd[-4:], ["--json", "/tmp/x.json", "--memory", "/m"])
+        self.assertTrue(cmd[-5].endswith("check_plans.py"))
 
 
 if __name__ == "__main__":

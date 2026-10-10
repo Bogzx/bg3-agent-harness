@@ -569,6 +569,7 @@ def sec_combat() -> None:
         if "still waiting" not in w:
             break
     cs = S.game.try_rpc("state.combat") or {}
+    opener_u = None
     if not cs.get("active"):
         # The pack doesn't notice a party walking up (live 12:5x): open the fight like a player, with an attack.
         nb = S.game.try_rpc("state.nearby", {"radius": 40}) or {}
@@ -576,9 +577,14 @@ def sec_combat() -> None:
         log("in view: " + "; ".join(f"{c.get('name')} {c.get('relation')} dead={c.get('dead')}" for c in chars[:12]))
         foes = [c for c in chars if c.get("relation") == "hostile" and not c.get("dead")]
         if foes:
+            opener_u = foes[0]["uuid"]
             fh = S.H.get(foes[0]["uuid"], foes[0].get("name"))
             for _ in range(3):
-                call("use_ability", ability="Ranged Attack", target=fh, who="Claude")
+                ua = call("use_ability", ability="Ranged Attack", target=fh, who="Claude")
+                said = re.search(r"(?m)^(COMBAT: the attack started a fight.*|combat: (NOT started|none|not started).*)$", ua)
+                if "FAILED" not in first_line(ua):
+                    item("opener says whether combat started", "PASS" if said else "FAIL",
+                         said.group(1)[:160] if said else first_line(ua))
                 time.sleep(2.0)
                 cs = S.game.try_rpc("state.combat") or {}
                 dbg = S.game.eval(f'local h=Osi.GetHostCharacter() local u="{foes[0]["uuid"]}" return "host combat="'
@@ -615,11 +621,16 @@ def sec_combat() -> None:
         who_u = now[0]
         nb = S.game.try_rpc("state.nearby", {"radius": 40}) or {}
         foes = [c for c in nb.get("characters") or [] if c.get("relation") == "hostile" and not c.get("dead")]
-        if not foes:
+        here = party[who_u].get("pos") or [0, 0, 0]
+        if foes:
+            foe = min(foes, key=lambda c: sum((a - b) ** 2 for a, b in zip(c.get("pos") or [9e9] * 3, here)))
+        elif opener_u:
+            # Nothing in view (a Shadow in Shadow Blend): plan on the opener's target anyway, like an agent
+            # planning on what it last saw; combat_turn must re-aim or say nobody is in sight (round 2).
+            foe = {"uuid": opener_u, "name": "opener target (unseen)"}
+        else:
             call("wait", seconds=3)
             continue
-        here = party[who_u].get("pos") or [0, 0, 0]
-        foe = min(foes, key=lambda c: sum((a - b) ** 2 for a, b in zip(c.get("pos") or [9e9] * 3, here)))
         fh = S.H.get(foe["uuid"], foe.get("name"))
         plan = json.dumps({"move": {"target": fh, "within": 1.5}, "on_reaction": "skip",
                            "action": [{"ability": "Main Hand Attack", "target": fh},
@@ -633,11 +644,19 @@ def sec_combat() -> None:
         hit = bool(re.search(r"(MainHandAttack|Main Hand Attack|Ranged Attack) e\d+: done", out))
         dashed_on = bool(re.search(r"Shout_Dash: done", out)) and len(re.findall(r"(?m)^move ", out)) >= 2
         unknown = "has no action called 'Main Hand Attack'" in out  # Ranged Attack: only with a ranged weapon
+        # round 2 fixes: no melee sent into a sure range miss after a short move; no Dash walking toward a target
+        # that vanished (re-aimed at the nearest visible hostile instead)
+        range_miss = bool(re.search(r"MainHandAttack \S+: FAILED — target is out of range", out))
+        lost_walk = "move " in out and "target is not visible; last seen" in out
         played += 1
-        ok = not unknown and (moved or hit) and polls <= 2 * jobs + 2 and "EXCEPTION" not in out and "FAILED: it is not" not in out
+        ok = (not unknown and (moved or hit) and polls <= 2 * jobs + 2 and "EXCEPTION" not in out
+              and "FAILED: it is not" not in out and not range_miss and not lost_walk)
+        if "melee is out of reach" in out or "the plan now aims at" in out:
+            log("round-2 lines: " + " | ".join(l for l in out.splitlines()
+                                               if "melee is out of reach" in l or "now aims" in l or "skipped (" in l))
         item(f"combat_turn #{played} (melee approach, names, job push)", "PASS" if ok else "FAIL",
              f"{party[who_u].get('name')} {dt:.1f}s; {rpcs} RPCs ({jobs} act jobs, {polls} job.polls; push heard={jp.seen}); "
-             f"moved={moved} attacked={hit} dash+walk={dashed_on}; vs {foe.get('name')}; "
+             f"moved={moved} attacked={hit} dash+walk={dashed_on} range_miss={range_miss} lost_walk={lost_walk}; vs {foe.get('name')}; "
              + " | ".join(l for l in out.splitlines()[:4]))
     if not played:
         item("combat_turn on a safe fight", "SKIP", "the fight ended before a party turn")

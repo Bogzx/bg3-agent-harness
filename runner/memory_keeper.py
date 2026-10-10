@@ -236,7 +236,8 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         lines += [
             "",
             "REFUSED LEVEL-UP PLAN LINES (do this FIRST, in party-build.md): the game refused these stored lines this "
-            "session. Rewrite each `- <Name> L<n>: {json}` line so level_up completes next time: remove picks the game "
+            "session, or the between-sessions check found them invalid or missing against the game's offers. Write or "
+            "rewrite each `- <Name> L<n>: {json}` line so level_up completes next time: remove picks the game "
             "says are 'not offered' or 'already known', and fill every choice it says 'needs N more' with picks from "
             "ITS list ('can pick: …' / 'options={…}'), keeping the build's intent from the rest of party-build.md. "
             "Valid JSON, same keys (subclass, feat, abilities, spells, cantrips, skills, passives). Then add one line "

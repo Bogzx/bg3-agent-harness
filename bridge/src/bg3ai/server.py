@@ -408,6 +408,9 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
             ev = _events_text()
             if ev:
                 out.append(ev)
+        fight = _auto_combat(tool, body, ev)
+        if fight:
+            out.append(fight)
     _running_memo.update(on=True, keys=None, out=None, watch=None)
     try:
         if "RUNNING " not in body:  # what still runs, so the agent appends (queue_actions) instead of waiting
@@ -474,6 +477,23 @@ def _auto_dialogue(tool: str, body: str, ev: str) -> str:
         return ""  # no dialogue on screen (ambient banter, a plain door): nothing to add
     return "\n".join(([f"auto-advanced {n} opening filler line(s):"] if n else []) + lines
                      + ([f"STOPPED: {stop}"] if stop else []))
+
+
+# Tools whose own result already shows the fight (no extra combat read after them).
+_NO_AUTO_COMBAT = {"get_combat_state", "combat_turn", "end_turn", "screenshot", "zoom", "session_clock",
+                   "end_combat_report", "note"}
+
+
+def _auto_combat(tool: str, body: str, ev: str) -> str:
+    """When this call's events say a fight started, show what get_combat_state would (turn order, shared turn,
+    the acting member's actions) right here: S023-S026 the agent read get_combat_state after the action or
+    wait_for that started a fight (20 reads). One state.combat + state.actions read (~50 ms), once per fight."""
+    if tool in _NO_AUTO_COMBAT or "combat_started" not in (ev or "") or "YOUR ACTIONS" in body:
+        return ""
+    try:
+        return "COMBAT STARTED (no get_combat_state needed):\n" + _combat_state_text()
+    except GameError:
+        return ""
 
 
 def _next_walk_hint() -> str:
@@ -1507,12 +1527,16 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
 def get_combat_state() -> str:
     """Turn order (visible combatants), whose turn it is, round, and the active character's remaining action economy."""
     t0 = time.monotonic()
+    return _finish("get_combat_state", {}, _combat_state_text(), t0)
+
+
+def _combat_state_text() -> str:
     res = game.rpc("state.combat")
     _remember_names(res)
     if isinstance(res, dict) and not res.get("active", True) and len(res) <= 1:
         _acts_shown.clear()
         _light_noted.clear()
-        return _finish("get_combat_state", {}, "Not in combat.", t0)
+        return "Not in combat."
     body = render.render_combat(res, H) if isinstance(res, dict) else render.compact(res, H)
     # One read should be enough to plan the whole turn: add the acting party member's actions.
     st = game.try_rpc("state.status") or {}
@@ -1533,7 +1557,7 @@ def get_combat_state() -> str:
             body += "\nYOUR ACTIONS (" + H.get(cur) + ")\n" + render.render_actions(acts, H)
             _acts_shown[cur] = set(render.render_actions(acts, H).splitlines()[1:])
     body += _light_note(res)
-    return _finish("get_combat_state", {}, body, t0)
+    return body
 
 
 _light_noted: set[str] = set()  # members told this combat that they fight with the lantern
@@ -2355,7 +2379,7 @@ def react(use: bool, which: str = "") -> str:
 def use_ability(ability: str, target: str = "", x: float | None = None, y: float | None = None,
                 z: float | None = None, who: str | None = None, upcast: int = 0, targets: str = "",
                 wait: bool = True) -> str:
-    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: comma list for multi-target spells. Costs and rules are the game's."""
+    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: comma list for multi-target spells. Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target)."""
     char = _who(who)
     args: dict[str, Any] = {"char": char, "spell": _ability_id(char, ability)}
     if target:
@@ -2396,7 +2420,7 @@ def _opener_combat(tu: str, res: Any) -> str:
     if isinstance(dmg, (int, float)) and dmg > 0:
         return (f"combat: NOT started — {_label(tu)} took {render.num(dmg)} damage but no fight began "
                 "(dormant or unaware; it acts only once combat starts): attack again or move on")
-    return f"combat: not started ({_label(tu)} took no damage)"
+    return f"combat: not started (no hit on {_label(tu)} seen)"
 
 
 @mcp.tool()
@@ -4217,6 +4241,12 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
                 return "none"
     if turn.move_too_long(text):
         info["short"] = "movement"
+    elif melee and "could not get closer" in text:
+        # live 15:1x: Shadowheart's walk to the spot beside a Wraith failed 3.5 m away; the melee was still sent
+        # (range miss) and the Dash walked on to 3 m. A blocked walk is a route that ends short.
+        m = re.search(r"dist=([\d.]+)", text)
+        info["short"] = "route_end"
+        text += out_of_melee(float(m.group(1)) if m else dist_now())
     lines.append(f"move {what}: {text}")
     return "none"
 
@@ -4239,9 +4269,14 @@ def _slot_skip(alt: turn.Alt, who: str, info: dict | None) -> str:
         return ""
     a = alt.step.args
     sp = a.get("ability")
-    if alt.then_move and info.get("move_lost") and alt.step.tool == "use_ability" and "Dash" in str(sp or ""):
-        return f"the move's target {info['move_lost']}: dashing would walk nowhere"
     mo = info.get("melee_out")
+    if alt.then_move and alt.step.tool == "use_ability" and "Dash" in str(sp or ""):
+        if info.get("move_lost"):
+            return f"the move's target {info['move_lost']}: dashing would walk nowhere"
+        if mo and info.get("short") not in (None, "movement", "early"):
+            # live 14:5x: Shadowheart's route ended 2.9 m from a Wraith (no walkable route closer); the Dash
+            # walked on to the same spot and the action was lost
+            return "more movement gets no closer (the route ends short, not the movement)"
     if not mo or alt.step.tool != "use_ability" or not a.get("target"):
         return ""
     try:
@@ -4487,6 +4522,9 @@ def _retarget_lost(p: turn.TurnPlan, who: str, lines: list, info: dict) -> bool:
                 pass
     d = turn.straight_dist(cs, who, new)
     info.pop("move_lost", None)
+    if (p.move.within is None or p.move.within <= turn.MELEE_RANGE_M) and d is not None \
+            and d > (p.move.within or turn.MELEE_M) + turn.MELEE_REACH_PAD:
+        info["melee_out"] = {"target": new, "dist": d}  # a walk on (movement left) re-checks it
     lines.append(f"target: {_label(lost)} {why} → the plan now aims at the nearest visible hostile "
                  f"{_label(new)}" + (f" ({render.num(d)}m)" if d is not None else "") + " (retarget:false keeps it)")
     return True
@@ -4577,16 +4615,75 @@ def _turn_next(who: str, party: set) -> str:
 @_guard
 def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: bool = False,
                 ignore: str = "hostile", wait_turn: float = 30.0) -> str:
-    """A WHOLE combat turn in one call: move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Disengage). If every action alternative is out of range, it tries the ranged weapon attack itself, else Dash + walk on when the move ran out of movement. A move that ends out of reach says how far it got and why (out of movement / fire on the route / no route closer).
+    """A WHOLE combat turn in one call — or the turns of SEVERAL party members acting now: plan = JSON list
+    [{"who":"Karlach","plan":{...}},{"who":"Gale","plan":{...}}] plays them in order (each as below, each turn ended);
+    a later member's plan waits for its turn like a sent-ahead plan (the chain waits ≤80 s in all); it stops and
+    hands back as soon as a turn is interrupted, a member's turn doesn't come in time, or the fight ends, and lists
+    who was NOT played. Use it when the result
+    says `NOW <a>'s turn: plan it; also <b>, <c>` (S023-S026: 175 back-to-back combat_turn calls, one per member).
+    Single turn:  move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Disengage). If every action alternative is out of range, it tries the ranged weapon attack itself, else Dash + walk on when the move ran out of movement. A move that ends out of reach says how far it got and why (out of movement / fire on the route / no route closer).
     plan: JSON, e.g. {"move":{"target":"e12","within":1.5},"action":[{"ability":"Target_MainHandAttack","target":"e12"},{"ability":"Projectile_MainHandAttack","target":"e12"},{"ability":"Shout_Dash","then_move":true},"Shout_Disengage"],"bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"},"extra":[[{"ability":"Target_MainHandAttack","target":"e12"}]]}
     move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z]. Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).
     Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it, walk the move again (a Dash does this by default; then_move:false turns it off).
     order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn (default: stop).
     No line of sight to a ranged target: it first steps (within the movement left and the ability's range) to the nearest spot that sees it, then casts again. A downed character has no turn to play (it passes by itself); another of your characters (a summon too) acting first makes a sent-ahead plan return at once.
     Before each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore="" adds new hostiles in view).
-    A slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).
+    A slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off). A melee move that ends out of reach says "melee is out of reach this turn" and skips the melee attacks on that target (ranged / Dash next). The move's target dead or out of sight (Shadow Blend, killed first): the plan is re-aimed at the nearest visible hostile, and walks on if movement is left (retarget:false keeps it). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).
     end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn).
     Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), then plays it."""
+    chain = _turn_chain(plan)
+    if chain is None:
+        return _combat_turn_one(plan, who, end, wait_next, ignore, wait_turn)
+    if not end:
+        raise ValueError("a list of member plans ends each turn: send end=false plans one at a time")
+    outs: list[str] = []
+    played = 0
+    stop = ""
+    c0 = time.monotonic()
+    for i, (w, pl) in enumerate(chain):
+        # each member waits for its turn like a sent-ahead plan does, all within CHAIN_BUDGET_S (MCP timeout 110 s)
+        wt = wait_turn if i == 0 else max(0.0, min(wait_turn, CHAIN_BUDGET_S - (time.monotonic() - c0)))
+        try:
+            txt = _combat_turn_one(pl, w, True, wait_next and i == len(chain) - 1, ignore, wt)
+        except (GameError, ValueError) as e:
+            why = re.sub(r'\[string "[^"]*"\]:\d+: ', "", str(e))
+            stop = f"{w}: not played — {why}"
+            break
+        outs.append(txt)
+        played += 1
+        if _batch.get("last") == "interrupted":
+            stop = f"{w}'s turn was interrupted (above)"
+            break
+        if txt.startswith("combat_turn: nothing to play") or "combat is over" in txt:
+            stop = "the fight is over"
+            break
+    # one clock line, at the end
+    outs = [re.sub(r"\n⏱[^\n]*$", "", o) for o in outs[:-1]] + outs[-1:]
+    if played < len(chain):
+        rest = [w for w, _ in chain[played:]]
+        outs.append(f"CHAIN STOPPED after {played} of {len(chain)}: {stop or 'stopped'}. NOT PLAYED: {', '.join(rest)}"
+                    " — plan them from this state (combat_turn again).")
+    return "\n\n".join(outs)
+
+
+CHAIN_BUDGET_S = 80.0  # a list of member plans: total time the later members may wait for their turns
+
+
+def _turn_chain(plan: str) -> list[tuple[str, str]] | None:
+    """combat_turn's list form → [(who, plan JSON)]; None for a single plan."""
+    if not isinstance(plan, str) or not plan.lstrip().startswith("["):
+        return None
+    try:
+        items = json.loads(plan)
+    except ValueError:
+        return None
+    if not isinstance(items, list) or not items or not all(isinstance(x, dict) and x.get("who") and "plan" in x
+                                                            for x in items):
+        raise ValueError('a list plan is [{"who": "<member>", "plan": {...}}, ...] (one entry per member acting now)')
+    return [(str(x["who"]), x["plan"] if isinstance(x["plan"], str) else json.dumps(x["plan"])) for x in items]
+
+
+def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ignore: str, wait_turn: float) -> str:
     t0 = time.monotonic()
     if _session_over():
         return _finish("combat_turn", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)

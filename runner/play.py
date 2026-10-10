@@ -53,6 +53,8 @@ RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
 SESSION_PY = REPO / "tools" / "memory" / "session.py"
 LAUNCH_SH = REPO / "runner" / "launch_game.sh"
 CHECK_ALL = REPO / "tools" / "dev" / "check_all.py"
+CHECK_PLANS = REPO / "tools" / "dev" / "check_plans.py"   # party-build.md plan lines vs the game's level-up offers
+CHECK_PLANS_TIMEOUT = 90
 SAVE_DIR = Path(os.environ.get(
     "BG3AI_SAVE_DIR",
     Path.home() / ".local/share/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public/Savegames/Story"))
@@ -953,6 +955,31 @@ def check_all_cmd(json_path: Path) -> list[str]:
     return py + [str(CHECK_ALL), "--json", str(json_path)]
 
 
+def check_plans_cmd(json_path: Path, mem: Path) -> list[str]:
+    uv = shutil.which("uv")
+    py = [uv, "run", "--quiet", "--project", str(REPO / "bridge"), "python"] if uv else [sys.executable]
+    return py + [str(CHECK_PLANS), "--json", str(json_path), "--memory", str(mem)]
+
+
+def plan_check_result(rows: list[dict]) -> tuple[str, list[dict]]:
+    """check_plans rows → (log text, bad lines in the keeper's refused-line format {name, level, problems})."""
+    bad = [r for r in rows if r.get("problems")]
+    out = [{"name": r["name"], "level": r["level"],
+            "problems": (f"check_plans between sessions (the game's offers): {'; '.join(r['problems'])} | stored line: "
+                         f"{json.dumps(r.get('plan')) if r.get('plan') is not None else '(none)'} | offers: {r.get('offers')}")[:1500]}
+           for r in bad]
+    if not bad:
+        return f"plan lines: {len(rows)} checked, all valid against the game's offers", out
+    return (f"plan lines: {len(bad)} of {len(rows)} INVALID: "
+            + "; ".join(f"{r['name']} L{r['level']}: {', '.join(r['problems'])}" for r in bad))[:600], out
+
+
+def plan_note(bad: list[dict]) -> str:
+    return ("RUNNER NOTE: these level-up plan lines in memory/party-build.md don't match what the game will offer; "
+            "fix each line (picks only from the offers listed) before that level-up:\n"
+            + "\n".join(f"- {b['name']} L{b['level']}: {b['problems']}" for b in bad))
+
+
 def check_all_due(last: float | None, now: float, interval: float = CHECK_ALL_INTERVAL) -> bool:
     return last is None or now - last >= interval
 
@@ -1053,6 +1080,13 @@ class Options:
     keeper_model: str = "sonnet"
     keeper_effort: str | None = "low"
     keeper_minutes: float = 5.0
+    autocompact: int | None = None     # claude --autocompact <tokens> (play sessions); None = Claude Code's default
+
+
+# claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
+# compaction is a ~1-2 min summary stall (a >10 s gap) and a generic summary, so shorter sessions with our own
+# handoff are the default lever; this is an opt-in safety net / A-B switch (e.g. 350000 with 30-min sessions).
+AUTOCOMPACT_MIN, AUTOCOMPACT_MAX = 100_000, 1_000_000
 
 
 def session_overrides(path: Path) -> dict:
@@ -1071,6 +1105,9 @@ def session_overrides(path: Path) -> dict:
         m = raw.get("minutes")
         if isinstance(m, (int, float)) and not isinstance(m, bool) and 0 < m <= 24 * 60:
             out["minutes"] = float(m)
+        ac = raw.get("autocompact")
+        if isinstance(ac, int) and not isinstance(ac, bool) and AUTOCOMPACT_MIN <= ac <= AUTOCOMPACT_MAX:
+            out["autocompact"] = ac
     return out
 
 
@@ -1624,6 +1661,12 @@ class Runner:
             cmd += ["--effort", effort]
         if self.opt.fallback_model:
             cmd += ["--fallback-model", self.opt.fallback_model]
+        if tag != "-fix":
+            state = getattr(self, "state", None)
+            ac = (session_overrides(state.dir / "session-config.json") if state else {}).get(
+                "autocompact", self.opt.autocompact)
+            if ac:
+                cmd += ["--autocompact", str(ac)]
         cmd += ["--resume", claude_session] if resume else ["--session-id", claude_session]
         return cmd
 
@@ -1783,7 +1826,9 @@ class Runner:
             f"{summary['long_gaps']['total']} gaps >10s, think median {summary['think_s'].get('median')}s "
             f"(API {(summary.get('api') or {}).get('api_s_per_turn')}s/turn, "
             f"{(summary.get('api') or {}).get('ms_per_out_tok')} ms/out-tok), "
-            f"apm {summary['apm']}, busy {summary['busy_pct']}%, pipelined {summary.get('pipelining_pct')}%, "
+            f"apm {summary['apm']}, calls/min {(summary.get('rates') or {}).get('calls_pm')} "
+            f"(reads {(summary.get('rates') or {}).get('reads_pm')}, actions {(summary.get('rates') or {}).get('actions_pm')}), "
+            f"busy {summary['busy_pct']}%, pipelined {summary.get('pipelining_pct')}%, "
             f"think overlap {summary.get('think_overlap_pct')}%, loading {summary.get('loading_s')}s (not idle), "
             f"wait_for noop {(summary.get('wait_for_noop') or {}).get('n')}/{(summary.get('wait_for_noop') or {}).get('of')}, "
             + (f"wrap-up {summary['wrapup_s']}s (not counted)" if summary.get('wrapup_s') is not None
@@ -1929,13 +1974,39 @@ class Runner:
                 f"RUNNER NOTE: memory lint still failed after {res.sid}; the session was left uncommitted. "
                 "Fix these lint errors early in this session:\n" + r.stdout[-2500:])
 
+    def check_plan_lines(self, when: str, dry: bool = False) -> list[dict]:
+        """tools/dev/check_plans.py (reads only, ~3 s): the stored plan lines for each member's next 2 levels vs the
+        game's Progression offers. Logs one line; returns the invalid lines (keeper refused-line format). Needs the
+        game Running with the party loaded and no bridge in use (between sessions). Never raises."""
+        if (self.opt.dry_run and not dry) or not port_open():
+            return []
+        try:
+            if game_state() != "Running":
+                return []
+            json_path = RUNTIME / "check_plans.json"
+            json_path.unlink(missing_ok=True)
+            env = dict(os.environ, BG3AI_PLAYTHROUGH=self.opt.playthrough)
+            p = subprocess.run(check_plans_cmd(json_path, self.mem), capture_output=True, text=True, cwd=REPO,
+                               env=env, timeout=CHECK_PLANS_TIMEOUT)
+            rows = json.loads(json_path.read_text())
+        except Exception as e:  # noqa: BLE001 - a probe failure never stops play
+            tail = (getattr(locals().get("p"), "stderr", "") or "")[-300:]
+            log(f"plan check ({when}) skipped: {type(e).__name__}: {e} {tail}".rstrip())
+            return []
+        text, bad = plan_check_result(rows)
+        log(f"{when}: {text}")
+        self.event("plan_check", when=when, checked=len(rows), invalid=[f"{b['name']} L{b['level']}" for b in bad])
+        return bad
+
     # ---------------------------------------------------------------- memory keeper
 
-    def start_keeper(self, sid: str, res: SessionResult) -> None:
+    def start_keeper(self, sid: str, res: SessionResult, plan_bad: list[dict] | None = None) -> None:
         """Starts the memory-keeper pass for the session that just ended (runner/memory_keeper.py). It runs in a
         thread while the runner prepares the next session (game check, mod reload, settings, check_all: none of
         them write memory) and is joined before the next player starts, so it never races the player's edits."""
         if not self.opt.keeper or self.opt.dry_run or res.ended - res.started < 120:
+            if plan_bad:   # no keeper pass to fix them: the next player gets the note
+                self.pending_notes.append(plan_note(plan_bad))
             return
         import memory_keeper as K
         n = int(sid[1:])
@@ -1949,6 +2020,8 @@ class Runner:
             except Exception as e:  # noqa: BLE001 - never stops the keeper
                 refused = []
                 log(f"{sid}: refused plan lines not read: {e!r}")
+            seen = {(x["name"].lower(), x["level"]) for x in refused}
+            refused += [b for b in plan_bad or [] if (b["name"].lower(), b["level"]) not in seen]
             if refused:
                 log(f"{sid}: refused plan lines for the keeper: {', '.join(x['name'] + ' L' + str(x['level']) for x in refused)}")
             r = K.run_keeper(self.mem, n, base, model, effort, minutes, refused=refused)
@@ -1992,6 +2065,10 @@ class Runner:
             touched = self.foreign_use(save)
             print(f"take-over:      {'reload ' + save.label + ' (' + touched + ')' if touched else 'play on from the running game'}")
         print(f"stuck:          {is_stuck(self.state['history'])}")
+        k = self.opt
+        print(f"memory keeper:  {'on (' + k.keeper_model + ', effort ' + str(k.keeper_effort) + ', ≤' + format(k.keeper_minutes, 'g') + ' min) after each session' if k.keeper else 'OFF (--no-memory-keeper)'}")
+        print("plan check:     tools/dev/check_plans.py at each session end (→ keeper) and in the prep (→ RUNNER NOTE); now:")
+        self.check_plan_lines("dry run", dry=True)
         prompt = build_kickoff(sid, self.opt.playthrough, time.time() + minutes * 60,
                                save.label if save else None, list(self.pending_notes))
         return self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))
@@ -2032,6 +2109,9 @@ class Runner:
         except Exception as e:  # noqa: BLE001 - checks never stop play
             log(f"check_all failed: {e}")
         self.join_keeper()  # the keeper must be done (and committed) before the player touches memory
+        bad = self.check_plan_lines("prep")  # after the keeper: what is still invalid goes to the player
+        if bad:
+            notes.append(plan_note(bad))
         notes += self.pending_notes
         self.pending_notes.clear()
         sid = self.next_sid()
@@ -2087,7 +2167,8 @@ class Runner:
         if not crashed:
             self.ensure_save(res.started)
         self.close_memory_session(res)
-        self.start_keeper(sid, res)
+        plan_bad = [] if crashed else self.check_plan_lines(f"{sid} end")   # the keeper rewrites invalid lines
+        self.start_keeper(sid, res, plan_bad)
         end_sig = read_progress()
         entry = {
             "kind": "play", "session": sid, "claude_session": res.claude_session, "reason": res.reason,
@@ -2277,6 +2358,9 @@ def cmd_run(a) -> int:
         print(f"refusing --session-minutes {a.session_minutes:g}: sessions under {MIN_SESSION_MINUTES} min are "
               "all start-up and wrap-up (use 60; --allow-short-sessions for harness tests)", file=sys.stderr)
         return 2
+    if a.autocompact is not None and not AUTOCOMPACT_MIN <= a.autocompact <= AUTOCOMPACT_MAX:
+        print(f"refusing --autocompact {a.autocompact}: claude takes {AUTOCOMPACT_MIN}-{AUTOCOMPACT_MAX} tokens")
+        return 2
     if a.session_minutes < MIN_SESSION_MINUTES:
         log(f"WARNING: {a.session_minutes:g}-min sessions (wrap-up at {wrap_minutes(a.session_minutes):.1f} min); "
             "expect little play")
@@ -2285,7 +2369,7 @@ def cmd_run(a) -> int:
     runner = Runner(Options(a.playthrough, a.hours, a.session_minutes, a.model, a.take_over, a.dry_run,
                             a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model,
                             a.allow_short_sessions, not a.no_memory_keeper, a.keeper_model, a.keeper_effort,
-                            a.keeper_minutes))
+                            a.keeper_minutes, a.autocompact))
     # Cutscenes are always skipped, also while the runner waits on menus and loads (the New Game intro
     # plays during StartLoading) and between sessions; the play session's MCP server idles meanwhile
     # (one skipper per game, runtime/skipper.lock).
@@ -2293,6 +2377,8 @@ def cmd_run(a) -> int:
     skip_stop = start_background(DEBUG_PORT, lambda m: log(f"autoskip: {m}"), RUNTIME / "skipper.lock")
     import ramwatch   # free RAM per minute (runtime/ram.log), protects the game from the OOM killer
     ram_stop = ramwatch.start_background(log)
+    log("ramwatch: started (free RAM per minute → runtime/ram.log)" if ram_stop is not None else
+        "ramwatch: not started here: another watchdog holds runtime/ramwatch.lock (that one guards the game)")
 
     def on_signal(signum, _frame):
         if runner.stop_requested:
@@ -2409,6 +2495,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--keeper-effort", choices=EFFORTS, default="low", help="effort for the memory-keeper pass")
     r.add_argument("--keeper-minutes", type=float, default=5.0, help="time cap of the memory-keeper pass")
     r.add_argument("--fallback-model", help="claude --fallback-model (used when the main model is overloaded)")
+    r.add_argument("--autocompact", type=int, default=None,
+                   help=f"claude --autocompact <tokens> for play sessions ({AUTOCOMPACT_MIN}-{AUTOCOMPACT_MAX}); "
+                        "default: Claude Code's own window. session-config.json \"autocompact\" overrides it")
     r.add_argument("--save-owner", help="character name that prefixes this playthrough's save folders "
                    "('Claude' for Claude-<id>__<label>); default: learned from the first save, or $BG3AI_SAVE_OWNER")
     r.add_argument("--take-over", action="store_true",

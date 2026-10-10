@@ -39,6 +39,8 @@ A.MOVE_REACH = 2.2   -- move_to {target}: stop within this of the entity (centre
                      -- weapon 1.5 + both radii, >= 2.2 m even for a tiny target, see G.check_cast)
 A.END_REQUEST_AFTER_MS = 1500 -- end_turn in a shared group: report the request as done after this
 A.MELEE_STOP_SLACK = 0.4 -- move_to {target, within}: stop this far inside the melee reach
+A.CAST_SETTLE_MS = 250       -- cast: report this long after CastedSpell / the last hit
+A.PROJECTILE_SETTLE_MS = 1500 -- cast: a projectile's hits can land this long after CastedSpell (no hit yet)
 A.USE_REACH = 1.8    -- interact/pickup and the click ops: Use/Pickup/click from here
 
 ------------------------------------------------------------------------
@@ -1117,6 +1119,12 @@ reg("cast", function(args)
     local function matches(a)
         return G.same(a[1], char) and (a[2] == spell or a[2] == base)
     end
+    -- A projectile (arrow, bolt, Fire Bolt) lands after CastedSpell: acceptance 14:5x, a Ranged Attack at
+    -- 18 m reported no_damage while its 2 damage arrived later (the agent read a miss). Wait for its hits.
+    local settle = A.CAST_SETTLE_MS
+    if base:find("^Projectile_") or (check.stats and check.stats.SpellType == "Projectile") then
+        settle = A.PROJECTILE_SETTLE_MS
+    end
 
     return start("cast", char, {
         eta_s = 2.0,
@@ -1140,6 +1148,7 @@ reg("cast", function(args)
                     if tgt and G.visible(tgt) then
                         job.hits[#job.hits + 1] = { target = tgt, name = name_of(tgt),
                             amount = tonumber(a[5]), type = a[4] ~= "None" and a[4] or nil }
+                        job.last_hit = RPC.now_ms()
                     end
                 end
             end,
@@ -1156,7 +1165,11 @@ reg("cast", function(args)
             end,
         },
         on_tick = function(job)
-            if job.casted and RPC.now_ms() - job.casted >= 250 then
+            local now = job.casted and RPC.now_ms()
+            -- Report CAST_SETTLE_MS after the cast once the hits are in (250 ms after the last one), at
+            -- the latest `settle` after it (a projectile still in flight, or a miss).
+            if now and now - job.casted >= A.CAST_SETTLE_MS
+                and ((job.last_hit and now - job.last_hit >= A.CAST_SETTLE_MS) or now - job.casted >= settle) then
                 local res = { cast = spell }
                 if #job.hits > 0 then
                     res.damage = job.hits

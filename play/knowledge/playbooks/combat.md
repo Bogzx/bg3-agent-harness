@@ -17,7 +17,8 @@
 
 ## Each turn (loop)
 ```
-s = get_combat_state()      # whose turn, action/bonus/movement/reaction left, initiative order,
+s = get_combat_state()      # ONLY when no result has shown the fight yet (the action that started it says
+                            # COMBAT STARTED with all of this; combat_turn ends with NOW/NEXT + actions). Shows: whose turn, action/bonus/movement/reaction left, initiative order,
                             # visible enemies (health as the UI shows it, distance, line of sight), allies,
                             # and the acting character's actions (ids for use_ability, range, costs)
 → plan the WHOLE turn from this one read, with a fallback for each slot
@@ -34,8 +35,10 @@ s = get_combat_state()      # whose turn, action/bonus/movement/reaction left, i
    ("NOW Lae'zel's turn" + her actions = she is up already: send her combat_turn at once.)
    **Shared turn:** party members with equal initiative act in the same turn, in any order
    ("SHARED TURN" in get_combat_state, "then Lae'zel + Claude (yours, shared turn)"). Give each one its
-   own `combat_turn(who=…)`; the enemies move only after every one of them has ended. A member that
-   ended can't act again this round.
+   own plan — in ONE call: `combat_turn(plan='[{"who":"Lae'zel","plan":{…}},{"who":"Claude","plan":{…}}]')`
+   plays them in order and stops (listing who was NOT played) if a turn is interrupted or a turn doesn't come within
+   ~80 s; the enemies move only after every one of them has ended. A member that ended can't act again this
+   round.
 → if it says STOPPED / "turn NOT ended": read why, then finish the turn (combat_turn with what's left)
 ```
 One observation, one call per turn: that's the target pace. Think during the enemy turns, not during yours.
