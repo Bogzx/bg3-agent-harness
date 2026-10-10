@@ -1320,5 +1320,47 @@ test("interact: in combat a carried potion is drunk on the drinker's turn for it
     eq(#called("Use"), 1, "still one Use")
 end)
 
+test("cast: Oath of Devotion refuses a killing blow on a Temporarily Hostile target unless force (S026/S028)", function()
+    combat_setup(9)
+    world[GOB].pos = { 1.2, 0, 0 }
+    spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" }, SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+    world[P1].comps.PassiveContainer = { Passives = { { Passive = { PassiveId = "Oath_Devotion_Tenents" } },
+        { Passive = { PassiveId = "NonLethal", Disabled = true } } } }
+    world[GOB].comps.Health = { Hp = 2, MaxHp = 67 }
+    osiv[key("HasActiveStatus", GOB, "TEMPORARILY_HOSTILE")] = 1
+    osiv[key("IsEnemy", P1, GOB)] = 1
+    local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "failed", "refused"); assert(j.error:find("Oath of Devotion", 1, true), j.error)
+    eq(#called("UseSpell"), 0, "no cast")
+    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB, force = true }))
+    eq(j.status, "running", "force: " .. tostring(j.error))
+    RPC.jobs[j.id] = nil; A.active[P1] = nil
+    -- healthy target: no risk yet
+    world[GOB].comps.Health = { Hp = 50, MaxHp = 67 }
+    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "running", "healthy target: " .. tostring(j.error))
+    RPC.jobs[j.id] = nil; A.active[P1] = nil
+    -- a real enemy at 2 HP: fine
+    world[GOB].comps.Health = { Hp = 2, MaxHp = 67 }
+    osiv[key("HasActiveStatus", GOB, "TEMPORARILY_HOSTILE")] = nil
+    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "running", "enemy: " .. tostring(j.error))
+    RPC.jobs[j.id] = nil; A.active[P1] = nil
+    -- a neutral at 2 HP: refused; Non-Lethal Attacks on: allowed
+    osiv[key("IsEnemy", P1, GOB)] = nil
+    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "failed", "neutral"); assert(j.error:find("neutral", 1, true), j.error)
+    world[P1].comps.PassiveContainer.Passives[2].Passive.Disabled = false
+    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "running", "non-lethal on: " .. tostring(j.error))
+    RPC.jobs[j.id] = nil; A.active[P1] = nil
+    -- not a Devotion paladin: never refused
+    world[P1].comps.PassiveContainer.Passives[2].Passive.Disabled = true
+    world[P1].comps.PassiveContainer.Passives[1].Passive.PassiveId = "Something_Else"
+    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "running", "not devotion: " .. tostring(j.error))
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

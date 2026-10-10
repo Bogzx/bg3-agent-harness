@@ -1054,7 +1054,43 @@ end
 
 -- Full pre-validation for an Osiris-originated cast. Returns
 -- {stats, costs, payers} or refuses with the reason the UI would show.
-function G.check_cast(char, spell, target, pos, upcast)
+-- Oath of Devotion: a killing blow on a Temporarily Hostile (guards turned on you mid-scene) or a neutral
+-- character breaks the oath (PALADIN_OATH_BROKEN; restoring it costs 2000 gold at camp). S028 12:44: Claude's bow
+-- finished The Warden (Temporarily Hostile, 2 HP) → Oath Broken, the 2nd time (S026 too). A player knows the
+-- tenets and leaves the kill to someone else: a harmful cast by a Devotion paladin on such a target that is low
+-- enough to die is refused unless force (or Non-Lethal Attacks is on, or the oath is already broken).
+G.OATH_LOW_HP = 20       -- target HP at or below this...
+G.OATH_LOW_FRAC = 0.3    -- ...or at or below this share of its max: one hit may kill it
+-- The character's passive entry `id` (its .Disabled is a toggle's off state, read live: NonLethal), or nil.
+local function passive(char, id)
+    local found
+    pcall(function()
+        for _, pe in ipairs(G.entity(char).PassiveContainer.Passives) do
+            if pe.Passive and pe.Passive.PassiveId == id then found = pe.Passive end
+        end
+    end)
+    return found
+end
+function G.oath_risk(char, st, flags, target)
+    if not target or G.same(char, target) or G.is_party(target) or not b(G.q("IsCharacter", target)) then return end
+    if not (flags.IsHarmful or tostring((st.SpellRoll or {}).Default or ""):find("Attack%(")) then return end
+    if not passive(char, "Oath_Devotion_Tenents") or b(G.q("HasActiveStatus", char, "PALADIN_OATH_BROKEN")) then
+        return
+    end
+    local nl = passive(char, "NonLethal")
+    if nl and nl.Disabled == false then return end -- Non-Lethal Attacks on: the blow knocks out
+    local temp = b(G.q("HasActiveStatus", target, "TEMPORARILY_HOSTILE"))
+    if not temp and b(G.q("IsEnemy", char, target)) then return end
+    local hp, max
+    pcall(function() local h = G.entity(target).Health; hp, max = h.Hp, h.MaxHp end)
+    if not hp or hp <= 0 then return end
+    if hp > G.OATH_LOW_HP and not (max and max > 0 and hp <= max * G.OATH_LOW_FRAC) then return end
+    G.refuse(string.format("Oath of Devotion: killing this %s character (%d HP left) would break the oath "
+        .. "(restoring it costs 2000 gold): let another party member finish it, or force=true to strike anyway",
+        temp and "Temporarily Hostile" or "neutral", hp))
+end
+
+function G.check_cast(char, spell, target, pos, upcast, force)
     if type(spell) ~= "string" or spell == "" then G.refuse("no action given") end
     local st = Ext.Stats.Get(spell)
     if not st then G.refuse("unknown action") end
@@ -1117,6 +1153,7 @@ function G.check_cast(char, spell, target, pos, upcast)
         if reach and not G.same(char, target) and d > reach then
             G.refuse(string.format("target is out of range (%.1f m, range %.1f m): move closer first", d, range))
         end
+        if not force then G.oath_risk(char, st, flags, target) end
         if st_type ~= "Shout" and not G.same(char, target)
             and not b(G.q("HasLineOfSight", char, target))
             and not (d <= G.ITEM_LOS_NEAR_M and not b(G.q("IsCharacter", target))) then

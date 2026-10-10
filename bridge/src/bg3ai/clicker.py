@@ -60,6 +60,11 @@ CENTER_KEY = "Home"
 CENTER_WAIT_S = 1.5
 
 
+# Screens that cover the world: a click can't reach an entity behind them, and camera moves don't help.
+COVERING_SCREENS = {"book", "dialogue", "trade", "donate", "level_up", "learn_spells", "tadpole_tree", "game_menu",
+                    "options", "save_load", "map", "rest", "reward", "character_creation", "main_menu", "loading"}
+
+
 @dataclass
 class ClickResult:
     ok: bool
@@ -276,6 +281,9 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
     """Hover-verify then click `uuid`; with `menu`, right-click and pick that context-menu entry (a player's
     right-click -> Lockpick). If `expect` is given, wait until ui.state shows that screen."""
     before = _screen(game).get("screen")
+    if before in COVERING_SCREENS:
+        # S031 17:13: click_on under an open book page turned the camera 6x and said off_screen.
+        return ClickResult(False, "covered", before, None, 0, {})
     centered = center_on_actor(game, inp, uuid)
     moves = bring_into_view(game, inp, uuid)
     deadline = time.monotonic() + HOVER_BUDGET_S
@@ -438,7 +446,8 @@ def run_click_action(game: Game, inp: InputClient | None, op: str, args: dict, w
     if not merged.get("click", {}).get("ok"):
         jr.status = "failed"
         reason = merged.get("click", {}).get("reason", "click failed")
-        jr.error = {"off_screen": "the target is not on screen",
+        jr.error = {"covered": f"the {merged.get('click', {}).get('screen')} screen covers the world (press_key ESCAPE first)",
+                    "off_screen": "the target is not on screen",
                     "hover_miss": "could not point at the target",
                     "no_effect": "nothing happened",
                     "no_menu_entry": "the right-click menu had no such entry"}.get(reason, reason)

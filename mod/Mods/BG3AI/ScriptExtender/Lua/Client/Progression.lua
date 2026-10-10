@@ -1805,7 +1805,10 @@ RPC.register("ui.level_up", function(args)
         -- clicks failed 3x / 2.5 min). Close it and open this character's page once the fade is over.
         local owner = P.pageOwner(cur, args.uuid)
         local step = str(UI.prop(cur, "LevelUpStep"))
-        if owner == "other" or step == "Started" then
+        -- keep_page: the bridge's rerun right after it clicked spell picks on this very page (S032 17:28: Wyll L6,
+        -- 4 calls: the page froze at Started, the click placed Hunger of Hadar, the rerun closed the page as "stuck
+        -- in its intro" and the reopened page had lost the pick). This character's page is reused as it is.
+        if owner == "other" or (step == "Started" and not args.keep_page) then
             ctx.result.closed_page = owner == "other" and ("another character's page (" .. tostring(label(UI.prop(cur, "LevelUpCharacter")) or "?") .. ")")
                 or "a page stuck in its intro"
             P.closeLevelUp()

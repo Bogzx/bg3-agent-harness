@@ -13,7 +13,7 @@ class Chain(unittest.TestCase):
     def run_chain(self, plans, one):
         calls = []
 
-        def fake(plan, who, end, wait_next, ignore, wait_turn):
+        def fake(plan, who, end, wait_next, ignore, wait_turn, **kw):
             calls.append((who, json.loads(plan), wait_turn))
             server._batch["last"] = "done"
             return one(who) + "\n⏱ 12:00 · 40m left"
@@ -76,7 +76,7 @@ class Chain(unittest.TestCase):
         self.assertNotIn("CHAIN STOPPED", out)
 
     def test_stops_on_interrupt(self):
-        def fake(plan, who, end, wait_next, ignore, wait_turn):
+        def fake(plan, who, end, wait_next, ignore, wait_turn, **kw):
             server._batch["last"] = "interrupted" if who == "Karlach" else "done"
             return f"TURN {who}\nturn NOT ended"
         with mock.patch.object(server, "_combat_turn_one", fake):
@@ -107,3 +107,54 @@ class AutoCombat(unittest.TestCase):
             self.assertEqual(server._auto_combat("combat_turn", "TURN e1", "EVENTS\n  combat_started {}"), "")
             self.assertEqual(server._auto_combat("move_to", "move_to: done", "EVENTS\n  died {}"), "")
             self.assertEqual(server._auto_combat("move_to", "x\nYOUR ACTIONS (e1)", "  combat_started"), "")
+
+
+class WaitTurn(unittest.TestCase):
+    """S031 17:04: a sent-ahead plan timed out after 30 s in the middle of a long enemy phase and was re-sent."""
+
+    def run_wait(self, states, max_s, extend_s, step=1.0):
+        clock = [0.0]
+        seq = iter(states)
+        last = [None]
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                if op == "state.combat":
+                    last[0] = next(seq, last[0])
+                    return last[0]
+                return {}
+
+        with mock.patch.object(server, "game", G()), \
+                mock.patch.object(server.time, "monotonic", lambda: clock[0]), \
+                mock.patch.object(server.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + step)):
+            cs, why = server._wait_turn(lambda c: c.get("current") == "me", max_s, None, None, extend_s)
+        return cs, why, clock[0]
+
+    def enemy(self, n):
+        return {"active": True, "round": 3, "current": f"enemy{n}"}
+
+    def test_progressing_enemies_extend_the_wait(self):
+        # a new enemy every 5 s for 40 s, then our turn: max 30 + extend 30 → played, no time out
+        states = [self.enemy(i // 5) for i in range(40)] + [{"active": True, "round": 3, "current": "me"}]
+        cs, why, t = self.run_wait(states, 30.0, 30.0)
+        self.assertEqual(why, "")
+        self.assertEqual(cs["current"], "me")
+
+    def test_stalled_enemy_times_out_at_max(self):
+        states = [self.enemy(0)] * 100
+        _, why, t = self.run_wait(states, 30.0, 30.0)
+        self.assertEqual(why, "timed out")
+        self.assertLess(t, 32.0)
+
+    def test_no_extension_without_extend_s(self):
+        states = [self.enemy(i // 5) for i in range(100)]
+        _, why, t = self.run_wait(states, 30.0, 0.0)
+        self.assertEqual(why, "timed out")
+        self.assertLess(t, 32.0)
+
+    def test_extension_is_capped(self):
+        states = [self.enemy(i // 5) for i in range(200)]
+        _, why, t = self.run_wait(states, 30.0, 30.0)
+        self.assertEqual(why, "timed out")
+        self.assertLess(t, 62.0)
+

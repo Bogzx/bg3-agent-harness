@@ -49,6 +49,7 @@ Lines a result may end with:
 - `set_party(action, who, leader)` → select | chain | unchain | sneak_on | sneak_off | turn_based_on | turn_based_off.
 - `fast_travel(waypoint)` → to an unlocked waypoint (name or id); not in combat. From camp it leaves camp first; if a long rest's night is still running (night at camp blocks all travel) it goes to sleep first and says so.
 - `feed_gale(item)` → in the donation window Gale's dialogue opens ("Give Gale a magic artefact"; screen=donate): picks the magic item and presses Donate. item: name or handle from get_inventory.
+- `insert_item(item=None, into=None, who=None)` → an "Insert Item" panel (pedestal, plaque, socket; screen=insert): puts the item in the slot (what a drag does) and presses Insert. `into=<object>` opens its panel first (interact). Without item it lists the slot and the items the panel can take (the opener's bag): `INSERT panel Riddle of the Night: slot(s) empty … items it can take: e53 Teachings of Loss: …`. The opener defaults to the item's carrier. Story pedestals can punish a wrong item (a trap): choose by the riddle. Result `inserted … (panel closed)`, or `FAILED — the panel refused … (reason)`. No hand drags or clicks.
 - `camp(action="go")` → go | leave camp.
 - `swap_party(into="Halsin", out="Gale")` → one call from anywhere out of combat: camp, the companion's join
   answer (and the full-party answer that sends `out` to camp), leave camp, everyone chained. `out` is needed

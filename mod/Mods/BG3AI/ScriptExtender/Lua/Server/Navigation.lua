@@ -2060,7 +2060,8 @@ local function stepObjectives()
             local qe = s:find('<node id="Quest">', qs + 10, true) or (#s + 1)
             local block = s:sub(qs, qe - 1)
             local qid = block:match('id="QuestID" type="FixedString" value="([^"]*)"')
-            local q = { id = qid, title = block:match('id="QuestTitle" type="TranslatedString" handle="([^"]*)"'), steps = {} }
+            local q = { id = qid, title = block:match('id="QuestTitle" type="TranslatedString" handle="([^"]*)"'),
+                parent = block:match('id="ParentQuestID" type="FixedString" value="([^"]*)"'), steps = {} }
             for st in block:gmatch('<node id="QuestStep">(.-)</node>') do
                 q.steps[#q.steps + 1] = {
                     id = st:match('id="ID" type="FixedString" value="([^"]*)"'),
@@ -2098,7 +2099,11 @@ local function activeObjectives(who)
         if truthy(osi(Osi.QuestIsAccepted, who, q.id)) and not truthy(osi(Osi.QuestIsClosed, q.id)) then
             local current
             for _, st in ipairs(q.steps) do
-                if st.id and truthy(osi(Osi.QuestUpdateIsUnlocked, who, q.id, st.id)) then current = st end
+                -- a sub-quest's steps are unlocked under its parent quest (State.stepUnlocked)
+                if st.id and (truthy(osi(Osi.QuestUpdateIsUnlocked, who, q.id, st.id))
+                    or (q.parent and q.parent ~= "" and truthy(osi(Osi.QuestUpdateIsUnlocked, who, q.parent, st.id)))) then
+                    current = st
+                end
             end
             if current and current.objective then list[#list + 1] = { quest = q, objective = current.objective } end
         end
@@ -2662,16 +2667,33 @@ local function tileFlags(t)
     return f
 end
 
+-- A floor this far below with nothing nearer is a drop, drawn "_" (S032 17:32: the Gauntlet's broken staircase
+-- drew blank like the chasm beside it while route said the floor lay 9.4 m below; the agent tried two jumps into
+-- the chasm and parked Yurgir). Deeper than DROP_MAX_M stays blank (the Faith-Leap chasm bottom is ~11.7 m down).
+N.DROP_MIN_M, N.DROP_MAX_M = 4.0, 10.0
 function N.layoutCell(x, z, y0, box)
     local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
     if not ok or type(hs) ~= "table" then return " " end
-    local best
+    local best, drop
+    local helperHere = box and inBox(box, x, z, N.HELPER_MARGIN_M)
     for _, h in ipairs(hs) do
-        if type(h) == "number" and math.abs(h - y0) <= 4.0
-            and not (box and inBox(box, x, z, N.HELPER_MARGIN_M) and math.abs(h - (box.y + 0.2)) <= N.HELPER_LAYER_M)
-            and (not best or math.abs(h - y0) < math.abs(best - y0)) then
-            best = h
+        if type(h) == "number" and not (helperHere and math.abs(h - (box.y + 0.2)) <= N.HELPER_LAYER_M) then
+            if math.abs(h - y0) <= N.DROP_MIN_M then
+                if not best or math.abs(h - y0) < math.abs(best - y0) then best = h end
+            elseif y0 - h <= N.DROP_MAX_M and (not drop or h > drop) then
+                drop = h
+            end
         end
+    end
+    if not best and drop and not helperHere then
+        local okt, t = pcall(Ext.Level.GetTileDebugInfo, { x, drop, z })
+        if not (okt and t) then return " " end
+        local f = tileFlags(t)
+        if f.WalkBlock then return " " end
+        local g, cl = "", ""
+        pcall(function() g, cl = tostring(t.GroundSurface), tostring(t.CloudSurface) end)
+        if N.HARMFUL[g] or N.HARMFUL[cl] then return " " end
+        return "_"
     end
     if not best then return " " end
     local okt, t = pcall(Ext.Level.GetTileDebugInfo, { x, best, z })

@@ -2032,6 +2032,14 @@ def _use_scroll(char: str, it: dict, target: str) -> str:
     from .clicker import click_entity
     tgt = _uuid(target) if target else char
     time.sleep(0.3)  # the targeting cursor comes up a few frames after the use
+    scr = (game.try_rpc("ui.state", context="client") or {}).get("screen")
+    if scr == "book":
+        # S031 17:12: use_ability(book, target=pedestal) read the book (its page opened) and the click then turned
+        # the camera 6x behind the page: a book is read, not cast on anything.
+        head, _, rest = out.partition("\n")
+        head += (f" ({name} opened for reading: it has no target; press_key ESCAPE closes the page. To put it on a "
+                 f"pedestal or in a slot: insert_item(item, into))")
+        return head + ("\n" + rest if rest else "")
     cr = click_entity(game, inp, tgt, "L")
     head, _, rest = out.partition("\n")
     if cr.ok:
@@ -2053,7 +2061,8 @@ def click_on(target: str, button: str = "left") -> str:
     if inp is None:
         raise GameError("input shim not available")
     cr = click_entity(game, inp, _uuid(target), "R" if button.lower().startswith("r") else "L")
-    return _finish("click_on", {"target": target}, ("clicked" if cr.ok else f"FAILED: {cr.reason}") + " — " + render.compact(cr.as_dict(), H), t0)
+    tail = f"\nthe {cr.screen} screen covers the world: press_key ESCAPE first" if cr.reason == "covered" else ""
+    return _finish("click_on", {"target": target}, ("clicked" if cr.ok else f"FAILED: {cr.reason}") + " — " + render.compact(cr.as_dict(), H) + tail, t0)
 
 
 def _act_click_roll(tool: str, op: str, args: dict) -> str:
@@ -2443,12 +2452,16 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
                                             f"then swap_party(into=\"{inc.get('name')}\", out=\"{out}\") again"]
                                    + _render_ui(ui)))
     leader = st.get("active") or _active()
-    r = game.run_job("act.talk", {"char": leader, "npc": inc["uuid"]}, wait_s=40)
+    # The join menu is the player's own character's (S032 17:27: Shadowheart was in control, Wyll: "I'm all chatted
+    # out ... I may have a word with the chief", no window, swap FAILED; the agent then walked Claude over by hand,
+    # ~55 s). Talk as the avatar; the leader is the fallback when no avatar row is known.
+    talker = next((r["uuid"] for r in party_rows if r.get("avatar") and r.get("uuid") and not r.get("dead")), leader)
+    r = game.run_job("act.talk", {"char": talker, "npc": inc["uuid"]}, wait_s=40)
     if r.status != "done" and any(w in _job_text("talk_to", r) for w in ("too far away", "not visible")):
         # Live 2026-10-10: Halsin stood 66 m from the camp arrival point, out of view (talk is capped at 40 m and
         # needs sight): walk up to where state.camp says it stands first.
-        steps.append(_walk_up_to(leader, inc["uuid"], str(inc.get("name")), inc.get("pos")))
-        r = game.run_job("act.talk", {"char": leader, "npc": inc["uuid"]}, wait_s=40)
+        steps.append(_walk_up_to(talker, inc["uuid"], str(inc.get("name")), inc.get("pos")))
+        r = game.run_job("act.talk", {"char": talker, "npc": inc["uuid"]}, wait_s=40)
     if r.status != "done":
         return done("\n".join(steps + ["swap_party: FAILED to talk to " + str(inc.get("name")) + " — " + _job_text("talk_to", r)]))
     picked, stop = [], None
@@ -2654,8 +2667,8 @@ def react(use: bool, which: str = "") -> str:
 @_guard
 def use_ability(ability: str, target: str = "", x: float | None = None, y: float | None = None,
                 z: float | None = None, who: str | None = None, upcast: int = 0, targets: str = "",
-                wait: bool = True) -> str:
-    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: comma list for multi-target spells. Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): out of combat it is read and its target clicked (default: who)."""
+                wait: bool = True, force: bool = False) -> str:
+    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: comma list for multi-target spells. Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): out of combat it is read and its target clicked (default: who). A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
     char = _who(who)
     try:
         aid = _ability_id(char, ability)
@@ -2692,6 +2705,8 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
         args["pos"] = [x, y, z]
     if upcast:
         args["upcast"] = upcast
+    if force:
+        args["force"] = True
     opener = (wait and not _batch["active"] and "target" in args and args["target"] not in (_party_cached() or ())
               and not (game.try_rpc("state.combat") or {}).get("active"))
     post = (lambda r: _opener_combat(args["target"], r.result) if r.status == "done" else "") if opener else None
@@ -2940,6 +2955,88 @@ def _item_uuid(item: str, who: str | None = None, worn: bool = False) -> str:
 def feed_gale(item: str) -> str:
     """Give Gale a magic item to absorb, in the donation window his dialogue opens ('Give Gale a magic artefact'): selects the item and presses Donate. item: name or handle from get_inventory (one in a party bag)."""
     return _act("feed_gale", "ui.donate", {"item": _uuid(H.get(_item_uuid(item)))}, context="client", wait_s=15)
+
+
+def _insert_job(args: dict, wait_s: float = 15) -> JobResult:
+    """ui.insert as a JobResult; its refusals (no panel open) come back as failed, not raised."""
+    try:
+        return game.run_job("ui.insert", args, context="client", wait_s=wait_s)
+    except Exception as e:  # noqa: BLE001
+        return JobResult("failed", error=str(e))
+
+
+def _insert_listing(res: dict) -> str:
+    slots = ", ".join(x if x else "empty" for x in res.get("slots") or []) or "?"
+    rows = []
+    for it in res.get("items") or []:
+        u = it.get("uuid")
+        h = H.get(u, it.get("name")) if isinstance(u, str) and u else "?"
+        rows.append(f"{h} {it.get('name') or '?'}" + (" (in the slot)" if it.get("selected") else ""))
+    return (f"INSERT panel {res.get('panel') or '?'}: slot(s) {slots}; state {res.get('state') or '?'}\n"
+            + ("items it can take: " + "; ".join(rows[:40]) if rows else "no items listed (the panel shows the selected character's bag)"))
+
+
+@mcp.tool()
+@_guard
+def insert_item(item: str | None = None, into: str | None = None, who: str | None = None) -> str:
+    """Put an item into an "Insert Item" panel (pedestal, plaque, socket: what a player drags into the slot) and press Insert. into: the object (opens its panel with interact when none is open; walks there). item: name or handle; without item it opens the panel and lists the slot and the items it can take. who: who opens/inserts (default: the item's carrier, else the active character). Some story pedestals punish a wrong item: choose by the riddle/notes."""
+    t0 = time.monotonic()
+    args = {"item": item, "into": into, "who": who}
+    u_item = _uuid(H.get(_item_uuid(item))) if item else None
+    char = _uuid(who) if who else None
+    if char is None and u_item:
+        inv = game.try_rpc("state.inventory", {}) or {}
+        _remember_names(inv)
+        row = next((it for it in inv.get("items") or [] if isinstance(it, dict) and it.get("uuid") == u_item), None)
+        char = row.get("owner") if row else None
+    char = char or _active()
+    note = ""
+    r = _insert_job({})
+    if r.status == "failed" and "no Insert Item panel" in str(r.error):
+        if not into:
+            return _finish("insert_item", args, "insert_item: FAILED — no Insert Item panel is open: pass into=<the pedestal/socket> (interact opens it)", t0)
+        out = _act("interact", "act.interact", {"char": char, "target": _uuid(into)}, wait_s=40)
+        walked = _walk_first("interact", out, char, who, into, actq.Step("interact", {"target": into}))
+        if walked:  # far / out of sight: the walk runs, the interact is queued for the arrival
+            return _finish("insert_item", args, walked + "\ncall insert_item again when the panel is open", t0)
+        deadline = time.monotonic() + 4.0
+        while True:
+            r = _insert_job({})
+            if r.status != "failed" or "no Insert Item panel" not in str(r.error) or time.monotonic() > deadline:
+                break
+            time.sleep(0.25)
+        if r.status == "failed" and "no Insert Item panel" not in str(r.error):
+            return _finish("insert_item", args, f"insert_item: FAILED — {r.error}", t0)
+        if r.status == "failed":
+            return _finish("insert_item", args, f"insert_item: FAILED — no Insert Item panel opened ({out.splitlines()[0] if out else 'interact'}); "
+                           "not every pedestal takes items: look at it (get_nearby / screenshot)", t0)
+        note = f"opened the panel by {_name_of(char)}"
+    elif r.status == "failed":
+        return _finish("insert_item", args, f"insert_item: FAILED — {r.error}", t0)
+    listing = dict(r.result) if isinstance(r.result, dict) else {}
+    if not listing.get("panel") and into:  # the panel's own VM carries no name (live 17:5x)
+        listing["panel"] = _name_of(_uuid(into))
+    if not u_item:
+        return _finish("insert_item", args, "insert_item: done — " + (note + "\n" if note else "") + _insert_listing(listing)
+                       + "\ninsert_item(item=<handle>) puts one in and presses Insert", t0)
+    r = _insert_job({"item": u_item})
+    if r.status != "done":
+        body = f"insert_item: FAILED — {r.error or r.status}\n" + _insert_listing(listing)
+        return _finish("insert_item", args, body, t0)
+    res = r.result or {}
+    name = res.get("item") or res.get("inserted") or _name_of(u_item)
+    if res.get("state") == "Fail":
+        why = res.get("fail_reason") or "no reason given"
+        body = f"insert_item: FAILED — the panel refused {name} ({why}); it is still open"
+        if why == "Interrupted":
+            # Live 2026-10-10 17:5x (S031-pre-riddle): the game answers Interrupted to a real mouse drag + Insert click
+            # too, the same game-side block as long_rest's missing ready check. Retrying or hand clicks won't help.
+            body += ("\nthe game interrupted the insert (a real drag and click get the same answer now): don't retry "
+                     "by hand; note it and play on elsewhere")
+    else:
+        body = f"insert_item: done — inserted {name} into {listing.get('panel') or 'the panel'}" + (
+            " (panel closed)" if res.get("closed") else f" (state {res.get('state')}; the panel is still open: ESCAPE closes it)")
+    return _finish("insert_item", args, body + ("\n" + note if note else ""), t0)
 
 
 @mcp.tool()
@@ -3338,7 +3435,9 @@ def _level_up(uuid: str, plan: str) -> str:
         clicks = leveling.click_spells(lambda op, a: game.rpc(op, a, context="client"), _inp(), res["needs_clicks"])
         note = (note + " " if note else "") + f"(clicked spells: {', '.join(clicks['picked']) or 'none'}" + (
             f"; failed: {clicks['failed']})" if clicks["failed"] else ")")
-        out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
+        # keep_page: the picks live on this page; S032 the rerun closed the (frozen, Started) page and lost them.
+        out = _act("level_up", "ui.level_up", dict(args, keep_page=bool(clicks["picked"])), context="client",
+                   wait_s=60, note=note)
     if out.startswith("level_up: done"):
         _LEVEL_NUDGE.done(uuid)
     return out
@@ -3942,6 +4041,7 @@ _INPUT_SCREENS_WAIT = {
     "rest": "long_rest finishes it", "level_up": "level_up", "learn_spells": "level_up",
     "trade": "trade, or press_key ESCAPE to close it", "tutorial": "dismiss_popups", "reward": "dismiss_popups",
     "tadpole_tree": "press_key ESCAPE to close it", "donate": "feed_gale(item)",
+    "insert": "insert_item(item) (insert_item() lists what it takes), or press_key ESCAPE to close it",
 }
 
 
@@ -4770,6 +4870,28 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
                     lines.append(f"STOPPED: {_label(rep2.stopped or '')}")
                     return "stop"
                 return "none"
+    if melee and "could not get closer" in text and "target" in step.args:
+        # S032 17:44: after a Dash (9 m left) Claude's walk to the spot beside a Soulhunter 5.7 m away ended where
+        # it started ("could not get closer", movement unspent) while Karlach reached the same target along the
+        # route. The spot beside the target is one guess; walk the real route (nav.approach) once before giving up.
+        ap2 = _approach(who, tu, mv, mv.within if mv.within is not None else turn.MELEE_M)
+        if ap2 is not None and ap2.get("reachable") is not False and ap2.get("pos") \
+                and float(ap2.get("walk_m") or 0) >= 0.5:
+            x, y, z = ap2["pos"]
+            rep2, text2 = _run_one(watcher, who, actq.Step("move_to", {"x": x, "y": y, "z": z}))
+            _after(rep2, after)
+            if rep2.done:
+                d2 = dist_now()
+                res2 = re.sub(r"\s*dist=[\d.]+", "", text2.split(': ', 1)[-1]).rstrip(" —")
+                if d2 is not None:
+                    res2 += f", now {render.num(d2)}m from {what}" + short_note(d2, ap2)
+                res2 += out_of_melee(d2)
+                lines.append(f"move {what}: {text} → along the route: {res2}")
+                return "ok"
+            if rep2.stop_kind not in (None, "failed"):
+                lines.append(f"move {what}: {text}")
+                lines.append(f"STOPPED: {_label(rep2.stopped or '')}")
+                return "stop"
     if turn.move_too_long(text):
         info["short"] = "movement"
     elif melee and "could not get closer" in text:
@@ -4907,6 +5029,16 @@ def _step_into_range(who: str, step: actq.Step, text: str, watcher: actq.Watcher
         args["pos"] = [float(a[k]) for k in "xyz"]
     else:
         return ""
+    if args.get("target"):
+        # S032 17:45: "out of range (19.6 m, range 18.0 m) → stepped 2.2m into range → FAILED — no line of
+        # sight": the route point in range was behind cover. A spot in range AND in sight (nav.los_spot) first.
+        sp = game.try_rpc("nav.los_spot", {"char": who, "target": args["target"], "range": args["within"],
+                                           "avoid": True})
+        if isinstance(sp, dict) and sp.get("found") and sp.get("pos"):
+            x, y, z = sp["pos"]
+            rep, _text = _run_one(watcher, who, actq.Step("move_to", {"x": x, "y": y, "z": z}))
+            _after(rep, after)
+            return f"stepped {render.num(sp.get('walk_m', '?'))}m into range and sight" if rep.done else ""
     ap = game.try_rpc("nav.approach", args)  # budget: the movement left (the op's default in combat)
     if not (isinstance(ap, dict) and ap.get("reachable") and ap.get("limit") == "in_range" and ap.get("pos")):
         return ""
@@ -5092,17 +5224,25 @@ def _downed_text(u: str) -> str:
             "saving throw). Get it up from an ally's turn: Healing Word, Help (adjacent) or a potion.")
 
 
-def _wait_turn(ready, max_s: float, blocked=None, on_prompt=None) -> tuple[dict, str]:
+def _wait_turn(ready, max_s: float, blocked=None, on_prompt=None, extend_s: float = 0.0) -> tuple[dict, str]:
     """combat_turn sent ahead (planned while enemies act): poll until ready(combat) or combat ends, a prompt
     needs an answer, blocked(combat) names why the turn can't come (another party member must act first),
-    or max_s passes. on_prompt(ui) answers a prompt itself (returns True: keep waiting). (last state.combat,
-    why it stopped waiting or '')."""
-    deadline = time.monotonic() + max_s
+    or max_s passes. on_prompt(ui) answers a prompt itself (returns True: keep waiting). Past max_s it waits up
+    to extend_s more while the enemies' turns still move on (a turn changed in the last TURN_PROGRESS_S).
+    (last state.combat, why it stopped waiting or '')."""
+    t0 = time.monotonic()
+    deadline = t0 + max_s
     n = 0
+    seen, moved = None, float("-inf")  # moved: when the acting combatant last changed during the wait
     while True:
         cs = game.try_rpc("state.combat") or {}
         if not cs.get("active") or ready(cs):
             return cs, ""
+        key = (cs.get("round"), tuple(turn.acting(cs)))
+        if key != seen:
+            if seen is not None:
+                moved = time.monotonic()
+            seen = key
         why = blocked(cs) if blocked else ""
         if why:
             return cs, why
@@ -5113,8 +5253,12 @@ def _wait_turn(ready, max_s: float, blocked=None, on_prompt=None) -> tuple[dict,
                 if on_prompt and on_prompt(ui):
                     continue
                 return cs, _prompt_why(ui)
-        if time.monotonic() > deadline:
-            return cs, "timed out"
+        t = time.monotonic()
+        if t > deadline:
+            # S031 17:04: a 30 s wait timed out mid enemy phase (8 ghosts), the plan came back "not played" and
+            # was sent again (another 5 s of thinking + 34 s of waiting). Enemies still taking turns: wait on.
+            if not (t - moved < TURN_PROGRESS_S and t < t0 + max_s + extend_s):
+                return cs, "timed out"
         time.sleep(0.3)
 
 
@@ -5174,17 +5318,17 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     plan: JSON, e.g. {"move":{"target":"e12","within":1.5},"action":[{"ability":"Target_MainHandAttack","target":"e12"},{"ability":"Projectile_MainHandAttack","target":"e12"},{"ability":"Shout_Dash","then_move":true},"Shout_Disengage"],"bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"},"extra":[[{"ability":"Target_MainHandAttack","target":"e12"}]]}
     move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z]. Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).
     Abilities: the shown name or the id; a weapon attack the character doesn't have (a summon's) becomes its own weapon attack. Extra Attack: after the first weapon attack, an "extra" slot attack costs no action (the game's rule).
-    Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it, walk the move again (a Dash does this by default; then_move:false turns it off).
+    Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","force","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it, walk the move again (a Dash does this by default; then_move:false turns it off).
     order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn and while a sent-ahead plan waits (default: stop).
     No line of sight to a ranged target: it first steps (within the movement left and the ability's range) to the nearest spot that sees it, then casts again. A downed character has no turn to play (it passes by itself); another of your characters (a summon too) acting first makes a sent-ahead plan return at once.
     Before each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore="" adds new hostiles in view).
     A slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off). A melee move that ends out of reach says "melee is out of reach this turn" and skips the melee attacks on that target (ranged / Dash next). The move's target dead or out of sight (Shadow Blend, killed first): the plan is re-aimed at the nearest visible hostile, and walks on if movement is left (retarget:false keeps it). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).
     An empty plan {} just ends that character's turn (e.g. it already acted through single tools).
     end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn).
-    Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), then plays it."""
+    Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), up to 30 s longer while enemies are still taking turns, then plays it."""
     chain = _turn_chain(plan)
     if chain is None:
-        return _combat_turn_one(plan, who, end, wait_next, ignore, wait_turn)
+        return _combat_turn_one(plan, who, end, wait_next, ignore, wait_turn, extend_s=TURN_EXTEND_S)
     if not end:
         raise ValueError("a list of member plans ends each turn: send end=false plans one at a time")
     outs: list[str] = []
@@ -5199,7 +5343,8 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
         # each member waits for its turn like a sent-ahead plan does, all within CHAIN_BUDGET_S (MCP timeout 110 s)
         wt = wait_turn if i == 0 else max(0.0, min(wait_turn, CHAIN_BUDGET_S - (time.monotonic() - c0)))
         try:
-            txt = _combat_turn_one(pl, w, True, wait_next and i == len(chain) - 1, ignore, wt)
+            txt = _combat_turn_one(pl, w, True, wait_next and i == len(chain) - 1, ignore, wt,
+                                   extend_s=TURN_EXTEND_S if i == 0 else 0.0)
         except (GameError, ValueError) as e:
             why = re.sub(r'\[string "[^"]*"\]:\d+: ', "", str(e))
             if "already ended its turn" in why:
@@ -5237,6 +5382,8 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
 
 
 CHAIN_BUDGET_S = 80.0  # a list of member plans: total time the later members may wait for their turns
+TURN_EXTEND_S = 30.0  # the first (or only) plan: extra wait past wait_turn while enemy turns still progress
+TURN_PROGRESS_S = 10.0  # ... "progress" = the acting combatant changed this recently
 
 
 def _chain_first(why: str, later: list[tuple[str, str]]) -> int | None:
@@ -5272,7 +5419,8 @@ def _turn_chain(plan: str) -> list[tuple[str, str]] | None:
     return [(str(x["who"]), x["plan"] if isinstance(x["plan"], str) else json.dumps(x["plan"])) for x in items]
 
 
-def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ignore: str, wait_turn: float) -> str:
+def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ignore: str, wait_turn: float,
+                     extend_s: float = 0.0) -> str:
     t0 = time.monotonic()
     if _session_over():
         return _finish("combat_turn", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
@@ -5317,7 +5465,7 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
 
     if not ready(cs) and wait_turn > 0:
         w0 = time.monotonic()
-        cs, why = _wait_turn(ready, wait_turn, blocked, on_prompt)
+        cs, why = _wait_turn(ready, wait_turn, blocked, on_prompt, extend_s)
         _remember_names(cs)
         if not cs.get("active"):
             raise GameError("combat is over: loot, heal, then end_combat_report")
@@ -5387,6 +5535,13 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
             moved = True
         elif slot == "extra":
             res = "none"
+            # S032 17:44: Karlach's action went to Dash, then "extra 1: Target_MainHandAttack: FAILED — not enough
+            # action": Extra Attack only follows the Attack action. Say so instead of a failure.
+            act_line = next((ln for ln in reversed(lines) if ln.startswith("action")), "")
+            spent = turn.action_without_attack(act_line) if p.slots.get("action") else None
+            if spent and p.slots["extra"]:
+                lines.append(f"extra: skipped (the action went to {spent}; Extra Attack only follows an attack)")
+                continue
             for i, alts in enumerate(p.slots["extra"], 1):
                 res, _ = _turn_slot(f"extra {i}", alts, char, watcher, lines, after, info)
                 if (res == "none" and alts and lines and lines[-1].startswith(f"extra {i}:")

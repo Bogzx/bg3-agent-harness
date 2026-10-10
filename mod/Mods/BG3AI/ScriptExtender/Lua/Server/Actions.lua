@@ -1128,7 +1128,7 @@ reg("cast", function(args)
     -- level, which may be spent).
     local spell = resolve_spell(base, upcast)
     local function prepare()
-        local c = G.check_cast(char, base, targets[1], pos, upcast)
+        local c = G.check_cast(char, base, targets[1], pos, upcast, args.force)
         if targets[2] then
             G.target_visible(targets[2])
             G.within(char, targets[2], G.MAX_INTERACT_DIST, "target")

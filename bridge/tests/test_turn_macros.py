@@ -272,6 +272,11 @@ class CombatTurn(Base):
     def plan(self, **kw) -> str:
         return json.dumps(kw)
 
+    def test_force_reaches_the_cast(self):
+        # Oath of Devotion guard (S026/S028): force=true on an alternative goes to act.cast
+        server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob, "force": True}))
+        self.assertEqual([a.get("force") for _, a in self.g.ops("act.cast")], [True])
+
     def test_empty_plan_just_ends_the_turn(self):
         # S031 17:07: {"plan":{}} for a member that had acted through do_actions stopped the chain
         out = server.combat_turn(self.plan())
@@ -660,6 +665,23 @@ class CombatTurn(Base):
         self.assertIn("Shout_Dash: skipped (more movement gets no closer", out)
         self.assertEqual(self.casts(), ["Shout_Dodge"])
 
+    def test_blocked_spot_beside_target_walks_the_route_instead(self):
+        # S032 17:44: post-Dash walk to the spot beside e743 ended where it started (5.7 m, 9 m unspent)
+        self.g.combat = combat(gob_dist=5.7)
+        self.g.approach = {"reachable": True, "pos": [-4.0, 0.0, 5.0], "walk_m": 4.5, "need_m": 4.5,
+                           "limit": "in_range", "movement_left": 9.0}
+        self.g.refuse_if = lambda op, a: ("could not get closer to the destination — dist=5.7"
+                                          if op == "act.move_to" and a.get("target") else None)
+        self._walk_to(1.2)
+        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+                                           action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        moves = self.g.ops("act.move_to")
+        self.assertEqual(moves[-1][1]["pos"], [-4.0, 0.0, 5.0])
+        self.assertIn("→ along the route: done", out)
+        self.assertIn("now 1.2m from", out)
+        self.assertNotIn("melee is out of reach", out)
+        self.assertEqual(self.casts(), ["Target_MainHandAttack"])
+
     def test_melee_short_but_within_reach_pad_still_attacks(self):
         # 1.5 m wanted, 2.2 m centre to centre: inside the edge-to-edge reach, the game decides
         self.g.combat = combat(gob_dist=10.0)
@@ -864,6 +886,17 @@ class CombatTurn(Base):
                                      extra=[[{"ability": "Target_MainHandAttack", "target": self.gob}]],
                                      order="bonus,action,extra"))
         self.assertEqual(self.casts(), ["Shout_SecondWind", "Target_MainHandAttack", "Target_MainHandAttack"])
+
+    def test_extra_attack_skipped_after_a_dash(self):
+        # S032 17:44: "extra 1: Target_MainHandAttack e743: FAILED — not enough action" after the action went to Dash
+        out = server.combat_turn(self.plan(action="Shout_Dash",
+                                           extra=[[{"ability": "Target_MainHandAttack", "target": self.gob}]]))
+        self.assertEqual(self.casts(), ["Shout_Dash"])
+        self.assertIn("extra: skipped (the action went to Shout_Dash", out)
+        self.assertEqual(turn.action_without_attack(
+            "action: use_ability e743: skipped (out of range) → Shout_Dash: done — statuses=[]"), "Shout_Dash")
+        self.assertIsNone(turn.action_without_attack("action: Target_MainHandAttack e743: done — cast=x"))
+        self.assertIsNone(turn.action_without_attack("action: Shout_Dash: FAILED — no"))
 
     def test_plan_errors(self):
         for bad, msg in (({"actoin": "x"}, "unknown plan key"),

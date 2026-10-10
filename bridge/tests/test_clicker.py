@@ -235,6 +235,17 @@ class ClickEntity(unittest.TestCase):
         self.assertEqual(r.detail.get("camera"), ["center"])   # no zoom/rotate needed after the center key
         self.assertEqual([e for e in inp.log if e[0] == "key"], [("key", "Home")])
 
+    def test_a_covering_screen_is_named_without_camera_moves(self):
+        """S031 17:13: click_on under an open book page: 6 rotations, then off_screen."""
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(3.0, 0.1))
+        g.rpc_orig = g.rpc
+        g.rpc = lambda op, args=None, context="server": {"screen": "book"} if op == "ui.state" else g.rpc_orig(op, args, context)
+        r = clicker.click_entity(g, inp, "pedestal")
+        self.assertFalse(r.ok)
+        self.assertEqual((r.reason, r.screen), ("covered", "book"))
+        self.assertEqual([e for e in inp.log if e[0] in ("drag", "wheel", "key", "click")], [])
+
     def test_target_already_in_view_no_center_key(self):
         inp = FakeInput()
         g = FakeGame(inp, ndc=(0.0, 0.2), screen_after="roll")

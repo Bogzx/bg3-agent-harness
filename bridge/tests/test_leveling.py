@@ -719,3 +719,28 @@ class ServerRetryAndRefresh(unittest.TestCase):
             self.assertEqual(reads.count("state.status"), n)    # fresh: no second read within REFRESH_S
         finally:
             S.game, S._LEVEL_NUDGE = saved
+
+    def test_rerun_after_spell_clicks_keeps_the_page(self):
+        """S032 17:28: the rerun after the spell clicks closed this character's frozen (Started) page and lost the
+        pick, 4x. The rerun now passes keep_page; the first call never does."""
+        from bg3ai import server as S
+
+        calls = []
+
+        def fake_act(tool, op, args, **kw):
+            calls.append(dict(args))
+            if len(calls) == 1:
+                S._batch["result"] = {"needs_clicks": [{"name": "Fireball"}]}
+                return "level_up: FAILED — finish: spell picks pending (Fireball)"
+            return "level_up: done — finished complete"
+
+        saved = (S._act, S._inp, LV.click_spells)
+        S._act, S._inp = fake_act, (lambda: object())
+        LV.click_spells = lambda rpc, inp, needs, **kw: {"picked": ["Fireball"], "failed": {}}
+        try:
+            out = S._level_up("u-wyll", '{"spells": ["Fireball"]}')
+            self.assertTrue(out.startswith("level_up: done"))
+            self.assertNotIn("keep_page", calls[0])
+            self.assertTrue(calls[1]["keep_page"])
+        finally:
+            S._act, S._inp, LV.click_spells = saved

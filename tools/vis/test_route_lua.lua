@@ -394,6 +394,22 @@ test("journal: the cache expires after JOURNAL_TTL_MS and is per host", function
     eq(osiCalls > 0, true, "another host")
 end)
 
+test("journal: a sub-quest's steps are read under its parent quest (S032 probe: Ketheric's Relic)", function()
+    local unlocked = { ["GLO_Moonrise:Relic_FoundGem"] = 1 }
+    rawset(Osi, "QuestUpdateIsUnlocked", function(who, q, st) return unlocked[q .. ":" .. st] end)
+    S.quests = { { id = "GLO_Moonrise_SUB_Relic", title = "hR", visible = true, parent = "GLO_Moonrise",
+        steps = { { id = "Relic_FoundGem", desc = "dGem" }, { id = "Relic_Other", desc = "dOther" } } } }
+    S.journalCache = nil
+    local ok, err = pcall(function()
+        local a = S.journal({ party = { P1 } })
+        eq(#a, 1, "listed"); eq(#a[1].steps, 1, "the parent-unlocked step"); eq(a[1].steps[1], "T:dGem", "its text")
+        eq(S.stepUnlocked(P1, { id = "Q", parent = "" }, "Relic_FoundGem"), false, "no parent: own id only")
+    end)
+    rawset(Osi, "QuestUpdateIsUnlocked", nil)
+    S.quests, S.journalCache = nil, nil
+    if not ok then error(err, 0) end
+end)
+
 test("nav.markers objectives share the quest generation (no 2 s re-walk)", function()
     eq(N.MARKER_GEN_TTL_MS >= 10000, true, "long ttl with generations")
 end)

@@ -373,3 +373,17 @@ class TurnWatcher(actq.Watcher):
                 self._screen = "game"
             return None
         return hit
+
+
+# Actions that spend the Action without attacking: Extra Attack can't follow them (the game's rule).
+NO_ATTACK_ACTIONS = ("Shout_Dash", "Shout_Disengage", "Shout_Dodge", "Shout_Hide", "Target_Help")
+
+
+def action_without_attack(line: str) -> str | None:
+    """The action slot's line ('action: … → Shout_Dash: done — …'): the non-attack ability that took the action
+    (None: an attack, a spell, or nothing done)."""
+    done = re.findall(r"(?:^action(?: \(auto fallback\))?: |→ )([A-Za-z_]+)(?: [^:]*)?: done\b", line)
+    if not done:
+        return None
+    last = done[-1]
+    return last if any(last == a or last.startswith(a + "_") for a in NO_ATTACK_ACTIONS) else None

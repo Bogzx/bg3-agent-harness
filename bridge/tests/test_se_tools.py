@@ -394,3 +394,84 @@ class LoadVerified(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InsertFake:
+    """ui.insert: no panel until act.interact opens it; lists one book; inserting reports Success."""
+    BOOK = "cccccccc-0000-0000-0000-0000000000b5"
+    ME = "cccccccc-0000-0000-0000-0000000000a1"
+
+    def __init__(self, open_=False, state="Success"):
+        self.open, self.state, self.jobs = open_, state, []
+
+    def rpc(self, op, args=None, context="server"):
+        if op == "state.inventory":
+            return {"items": [{"uuid": self.BOOK, "name": "Teachings of Loss: The Nightsinger", "owner": self.ME}]}
+        if op == "state.status":
+            return {"active": self.ME}
+        return {}
+
+    try_rpc = rpc
+
+    def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+        self.jobs.append((op, dict(args), context))
+        if op == "act.interact":
+            self.open = True
+            return JobResult(status="done", result={})
+        if op == "ui.insert":
+            if not self.open:
+                return JobResult(status="failed", error="no Insert Item panel is open: interact with the pedestal/socket opens it")
+            if not args.get("item"):
+                return JobResult(status="done", result={"panel": "Riddle of the Night", "state": "Empty", "slots": [False],
+                                                         "items": [{"uuid": self.BOOK, "name": "Teachings of Loss: The Nightsinger"}]})
+            return JobResult(status="done", result={"item": "Teachings of Loss: The Nightsinger", "state": self.state,
+                                                     "fail_reason": "Invalid" if self.state == "Fail" else None})
+        return JobResult(status="done", result={})
+
+    def drain_events(self, ctx):
+        return []
+
+
+class InsertItem(unittest.TestCase):
+    def use(self, fake):
+        orig = server.game
+        server.game = fake
+        self.addCleanup(setattr, server, "game", orig)
+        server.H.get(InsertFake.ME, "Claude")
+        self.ped = server.H.get("cccccccc-0000-0000-0000-0000000000c1", "Riddle of the Night")
+        self.book = server.H.get(InsertFake.BOOK, "Teachings of Loss: The Nightsinger")
+        return fake
+
+    def call(self, **kw):
+        return getattr(server.insert_item, "fn", server.insert_item)(**kw)
+
+    def test_opens_the_panel_by_the_carrier_and_inserts(self):
+        fake = self.use(InsertFake())
+        out = self.call(item=self.book, into=self.ped)
+        ops = [(o, a) for o, a, _ in fake.jobs]
+        self.assertEqual(ops[0], ("ui.insert", {}))
+        self.assertEqual(ops[1][0], "act.interact")
+        self.assertEqual(ops[1][1]["char"], InsertFake.ME)
+        self.assertIn(("ui.insert", {"item": InsertFake.BOOK}), ops)
+        self.assertTrue(all(c == "client" for o, _, c in fake.jobs if o == "ui.insert"))
+        self.assertIn("insert_item: done — inserted Teachings of Loss: The Nightsinger into Riddle of the Night", out)
+
+    def test_no_item_lists_what_the_panel_takes(self):
+        fake = self.use(InsertFake(open_=True))
+        out = self.call()
+        self.assertIn("INSERT panel Riddle of the Night: slot(s) empty", out)
+        self.assertIn(f"{self.book} Teachings of Loss: The Nightsinger", out)
+        self.assertEqual([o for o, _, _ in fake.jobs], ["ui.insert"])
+
+    def test_no_panel_and_no_target_says_how(self):
+        self.use(InsertFake())
+        out = self.call(item=self.book)
+        self.assertIn("pass into=", out)
+
+    def test_refused_insert_is_a_failure_with_the_reason(self):
+        self.use(InsertFake(open_=True, state="Fail"))
+        out = self.call(item=self.book)
+        self.assertIn("FAILED — the panel refused Teachings of Loss: The Nightsinger (Invalid)", out)
+
+    def test_insert_screen_hint(self):
+        self.assertIn("insert_item", server._input_screen_text("insert"))

@@ -251,6 +251,20 @@ class SwapParty(unittest.TestCase):
         self.assertIn("Halsin joined", out)
         self.assertIn("Gale waits at camp", out)
 
+    def test_talks_as_the_avatar_not_the_controlled_member(self):
+        # S032 17:27: Shadowheart in control talked to Wyll: "I may have a word with the chief", no menu, FAILED
+        menu = {"options": [{"i": 2, "text": "I'd like you to join me."}]}
+        full = {"options": [{"i": 2, "text": "Gale could do with a rest."}]}
+        fake = FakeGame([menu, full])
+        real = fake.rpc
+        fake.rpc = lambda op, args=None, context="server": (dict(real(op, args, context), active=SH)
+                                                            if op == "state.status" else real(op, args, context))
+        self.use(fake)
+        out = server.swap_party(into="Halsin", out="Gale")
+        talks = [a for op, a in fake.jobs if op == "act.talk"]
+        self.assertEqual(talks[0]["char"], CLAUDE)
+        self.assertIn("swap_party: done", out)
+
     def test_walks_up_to_a_companion_past_talk_range(self):
         # live 2026-10-10: Halsin stood 66 m from the camp arrival point, out of view
         menu = {"options": [{"i": 1, "text": "I'd like you to join me."}]}

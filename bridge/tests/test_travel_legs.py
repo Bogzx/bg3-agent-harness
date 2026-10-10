@@ -369,6 +369,17 @@ class StepIntoRange(Base):
         self.assertIn("stepped 0.8m into range", out)
         self.assertIn(f"Target_SacredFlame {self.gob}: done", out)
 
+    def test_prefers_a_spot_in_range_and_sight(self):
+        # S032 17:45: "stepped 2.2m into range → FAILED — no line of sight" (the route point was behind cover)
+        self.g.los_spot = {"found": True, "pos": [1.5, 0.0, 2.0], "walk_m": 2.5}
+        self.g.approach = {"reachable": True, "pos": [0.8, 0.0, 0.0], "walk_m": 0.8, "limit": "in_range"}
+        out = self.turn()
+        self.assertEqual(self.g.ops("nav.los_spot")[0][1]["range"], 17.7)
+        self.assertEqual(self.g.ops("nav.approach"), [])
+        self.assertEqual(self.g.ops("act.move_to")[0][1]["pos"], [1.5, 0.0, 2.0])
+        self.assertIn("stepped 2.5m into range and sight", out)
+        self.assertEqual(self.casts(), ["Target_SacredFlame", "Target_SacredFlame"])
+
     def test_not_enough_movement_stays_put(self):
         self.g.approach = {"reachable": True, "pos": [0.3, 0.0, 0.0], "walk_m": 0.3, "limit": "movement"}
         out = self.turn()

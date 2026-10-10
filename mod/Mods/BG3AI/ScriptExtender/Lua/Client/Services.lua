@@ -699,8 +699,12 @@ RPC.register("ui.short_rest", function(args)
     local before = tonumber(selected(dc, "Stats.ShortRestPointsResource.Value"))
     local max = tonumber(selected(dc, "Stats.ShortRestPointsResource.MaxValue"))
     if selected(dc, "PlayerCharacterProperties.IsShortRestAvailable") == false then
+        -- One reason, not both: "0/2 left; not possible in combat" read as a combat block at 0 left.
+        if before == 0 then
+            error("no short rests left (0/" .. tostring(max or "?") .. "): a long rest restores them", 0)
+        end
         error("short rest isn't available now (" .. tostring(before or "?") .. "/" .. tostring(max or "?")
-            .. " short rests left; not possible in combat)", 0)
+            .. " left): the game blocks it here (in combat, or in a dialogue/cutscene)", 0)
     end
     check(UI.command(dc, "ShortRest", nil, args.dry))
     if args.dry then return { can = true, short_rests_left = before } end
@@ -1572,6 +1576,126 @@ RPC.register("ui.donate", function(args)
         end
         if not visibleWidget("Donate") or RPC.now_ms() - t > 1500 then
             return "done", { donated = args.item, window_open = visibleWidget("Donate") ~= nil or nil }
+        end
+        return nil
+    end)
+end)
+
+------------------------------------------------------------------------
+-- Insert Item panels (Insert.xaml, ls:UIWidget "Insert", DC gui::DCCombine): pedestals, plaques, sockets
+-- that take one item (Silent Library "Riddle of the Night": the story takes one book, any other book fires a
+-- trap). The panel opens from interact on the object. DC: BaseItem (the object), Ingredients (the slots),
+-- CurrentState (Ready enables the Insert button) / FailReason, StartActionCommand (the Insert button; the
+-- controller page runs it with no parameter), ToggleItemCommand(VM item) (the controller page's "Add"/"Remove"
+-- on an inventory item: what a mouse drag into a slot does, DropSlotCommand(slot index) needs a drag in
+-- progress and an int parameter bg3le can't pass), CharacterInventory.Slots (the selected character's bag).
+-- S031 17:12-17:14: ~25 hand clicks/screenshots, the agent gave up ("no tool can drag").
+-- ui.insert {item=uuid?, dry?} -> list (no item) | job {inserted=name, state, fail_reason}
+------------------------------------------------------------------------
+local function insertVMItems(dc)
+    -- {vm=VM item, uuid, name} for every item in the panel's inventory (CharacterInventory: the selected
+    -- character's bag). Live 17:5x: its VM items carry no name/uuid (EntityHandle is an ls.EntityRef), so the
+    -- entity comes from the slot index + weight, as trade matches them. Not collectInventories(dc): the DC is the
+    -- whole player VM (a number-valued "Inventory"-like property raised in UI.prop).
+    local out = {}
+    local ci = UI.prop(dc, "CharacterInventory")
+    if ci == nil then return out end
+    local inv, slots = bestInventory(ci, partyInventories())
+    local items = inv and containerItems(inv) or {}
+    for _, s in ipairs(slots) do
+        local e = s.index and items[s.index] or nil
+        out[#out + 1] = { vm = s.item, uuid = e and uuidOf(e) or nil, name = e and nameOf(e) or nil,
+                          selected = UI.get(s.item, "IsSelected") == true }
+    end
+    return out
+end
+SV.insertVMItems = insertVMItems
+
+local function insertSlots(dc)
+    local out = {}
+    for _, x in UI.items(UI.prop(dc, "Ingredients"), 8) do
+        out[#out + 1] = x ~= nil and (UI.get(x, "Name") or "?") or false
+    end
+    return out
+end
+
+local function insertView(dc)
+    local bi = UI.prop(dc, "BaseItem")
+    return { panel = bi and UI.get(bi, "Name") or nil, state = UI.prop(dc, "CurrentState"),
+             fail_reason = UI.prop(dc, "FailReason"), slots = insertSlots(dc) }
+end
+
+local function insertMatch(it, want)
+    if it.uuid and it.uuid == want then return true end
+    local n, w = (it.name or ""):lower(), tostring(want or ""):lower()
+    return w ~= "" and n ~= "" and (n == w or n:find(w, 1, true) ~= nil)
+end
+
+RPC.register("ui.insert", function(args)
+    local w = visibleWidget("Insert") or error("no Insert Item panel is open: interact with the pedestal/socket opens it", 0)
+    local dc = try(function() return w.DataContext end) or error("the Insert panel has no DataContext", 0)
+    local items = memoized(insertVMItems, dc)
+    local view = insertView(dc)
+    if not args.item then
+        local list = {}
+        for _, it in ipairs(items) do list[#list + 1] = { uuid = it.uuid, name = it.name, selected = it.selected or nil } end
+        view.items = list
+        return view
+    end
+    local hit
+    for _, it in ipairs(items) do if insertMatch(it, args.item) then hit = it break end end
+    if not hit then
+        local names = {}
+        for _, it in ipairs(items) do names[#names + 1] = it.name or "?" end
+        error("the Insert panel doesn't list that item (it shows the selected character's bag: "
+            .. (#names > 0 and table.concat(names, ", ", 1, math.min(#names, 25)) or "nothing") .. ")", 0)
+    end
+    local ok, err = UI.command(dc, "ToggleItemCommand", hit.vm, true)
+    if not ok and not hit.selected then error("the panel won't take " .. tostring(hit.name) .. ": " .. tostring(err), 0) end
+    if args.dry then return { can = true, item = hit.name, panel = view.panel } end
+    local phase, t, t0 = hit.selected and "ready" or "toggle", 0, RPC.now_ms()
+    return waitJob("ui.insert", 10000, function(job)
+        local now = RPC.now_ms()
+        if not visibleWidget("Insert") then
+            if phase == "pressed" then return "done", { inserted = hit.name, uuid = hit.uuid, state = job.last_state, closed = true } end
+            return "failed", nil, "the Insert panel closed before Insert was pressed"
+        end
+        local st = UI.prop(dc, "CurrentState")
+        job.last_state = st
+        if phase == "toggle" then
+            local okt, terr = UI.command(dc, "ToggleItemCommand", hit.vm)
+            if not okt then return "failed", nil, "couldn't put " .. tostring(hit.name) .. " in the slot: " .. tostring(terr) end
+            phase, t = "ready", now
+            return nil
+        end
+        if phase == "ready" then
+            if st == "Ready" then
+                local okp, perr = UI.command(dc, "StartActionCommand", nil)
+                if not okp then
+                    local btn = UI.byName(w, "ButtonInsert")
+                    okp, perr = UI.press(btn)
+                end
+                if not okp then return "failed", nil, "the item is in the slot, but Insert didn't work: " .. tostring(perr) end
+                phase, t = "pressed", now
+                return nil
+            end
+            if now - t > 2500 then
+                local v = insertView(dc)
+                return "failed", nil, "the item didn't make the panel ready (state " .. tostring(st) .. ", fail "
+                    .. tostring(v.fail_reason) .. ", slots " .. table.concat((function() local o = {} for _, x in ipairs(v.slots) do o[#o + 1] = x or "empty" end return o end)(), ", ") .. ")"
+            end
+            return nil
+        end
+        -- pressed: Success / Fail (FailReason), then the panel closes by itself or stays.
+        if st == "Success" or st == "Fail" or now - t > 4000 then
+            if st == "Fail" or now - t > 4000 then
+                return "done", { inserted = st ~= "Fail" and hit.name or nil, item = hit.name, uuid = hit.uuid, state = st,
+                    fail_reason = UI.prop(dc, "FailReason"), panel_open = true }
+            end
+            job.success_at = job.success_at or now
+            if now - job.success_at > 1500 then
+                return "done", { inserted = hit.name, uuid = hit.uuid, state = st, panel_open = true }
+            end
         end
         return nil
     end)

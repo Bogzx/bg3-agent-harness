@@ -1001,6 +1001,16 @@ for _, ev in ipairs({ { "QuestAccepted", 2 }, { "QuestUpdateUnlocked", 3 }, { "Q
     if Ext.Osiris then pcall(Ext.Osiris.RegisterListener, ev[1], ev[2], "after", function() S.bumpQuests() end) end
 end
 
+-- A sub-quest's steps are unlocked under its PARENT quest (probe S032: Find
+-- Ketheric Thorm's Relic = GLO_Moonrise_SUB_Relic: QuestUpdateIsUnlocked(who,
+-- sub, step) = nil, (who, "GLO_Moonrise", step) = 1). Asking only the sub-quest
+-- left every sub-quest without steps, objectives and map markers (S030/S031: the
+-- agent read the Gauntlet's gem markers off the map screen by hand).
+function S.stepUnlocked(who, q, stepId)
+    if truthy(osi(Osi.QuestUpdateIsUnlocked, who, q.id, stepId)) then return true end
+    return q.parent ~= nil and q.parent ~= "" and truthy(osi(Osi.QuestUpdateIsUnlocked, who, q.parent, stepId)) or false
+end
+
 local journalWalk
 function S.journal(ctx)
     local who = ctx.party[1]
@@ -1018,7 +1028,7 @@ journalWalk = function(who)
         if q.visible and truthy(osi(Osi.QuestIsAccepted, who, q.id)) then
             local steps = {}
             for _, st in ipairs(q.steps) do
-                if st.id and truthy(osi(Osi.QuestUpdateIsUnlocked, who, q.id, st.id)) then
+                if st.id and S.stepUnlocked(who, q, st.id) then
                     local text = U.loca(st.desc)
                     if text then steps[#steps + 1] = text end
                 end

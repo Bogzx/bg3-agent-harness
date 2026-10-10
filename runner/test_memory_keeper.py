@@ -222,6 +222,15 @@ class KeeperTest(MemoryTestCase):
         self.assertEqual([(x["name"], x["level"]) for x in K.refused_plans([{"tool": "level_up", "result": mixed}])],
                          [("Wyll", 5)])
 
+    def test_harness_click_failure_is_not_a_refused_plan(self):
+        # S032 17:28: Wyll L6's valid pick was lost by the tool ("spell picks pending"); the keeper was told to rewrite it
+        lost = ("level_up: FAILED \u2014 finish: spell picks pending (Hunger of Hadar): the level_up tool clicks these "
+                "itself; nothing to click by hand \u2014 waited_fade closed_page=a page stuck in its intro\n"
+                "(plan: Wyll L6 from memory/party-build.md) (clicked spells: Hunger of Hadar)")
+        self.assertEqual(K.refused_plans([{"tool": "level_up", "result": lost}]), [])
+        self.assertEqual([(x["name"], x["level"]) for x in K.refused_plans([{"tool": "level_up", "result": self.WYLL_FAIL}])],
+                         [("Wyll", 5)])
+
     def test_logs_to_read_since_stalest_file(self):
         self.assertEqual(K.logs_to_read(self.mem, 3), [1, 2, 3])
         for n in range(4, 15):

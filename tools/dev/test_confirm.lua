@@ -814,5 +814,90 @@ do
     widgets = {}
 end
 
+-- Insert Item panel (ui.insert): lists the selected character's items, ToggleItemCommand(VM item) fills the
+-- slot, StartActionCommand (no parameter) presses Insert, Success is done (S031 Silent Library pedestal).
+do
+    widgets = {}
+    local saved = {}
+    for _, k in ipairs({ "get", "prop", "props", "items", "count", "command" }) do saved[k] = BG3AI.UI[k] end
+    -- VM items carry no name/uuid (live 17:5x): the entity comes from the party inventory slot (index 1, 2).
+    local book = { IsSelected = false }
+    local other = { IsSelected = false }
+    local slots = { { Index = 1, Object = other }, { Index = 2, Object = book }, { Index = 3 } }
+    local function ent(u, n) return { Uuid = { EntityUuid = u }, DisplayName = { NameKey = { Handle = { Handle = n } } } } end
+    local INV = { InventoryContainer = { Items = { [1] = { Item = ent("uuid-other", "Sharran Initiate's Notes") },
+                                                   [2] = { Item = ent("uuid-book", "Teachings of Loss: The Nightsinger") } } } }
+    local P = { InventoryOwner = { PrimaryInventory = INV } }
+    local _comp, _loca, _entity = BG3AI.Util.comp, BG3AI.Util.loca, Ext.Entity
+    BG3AI.Util.comp = function(e, c) return type(e) == "table" and e[c] or nil end
+    BG3AI.Util.loca = function(h) return h end
+    Ext.Entity = { GetAllEntitiesWithComponent = function() return { P } end, Get = function() return nil end }
+    local dc = { CurrentState = "Empty", Ingredients = { false }, BaseItem = { Name = "Riddle of the Night" } }
+    dc.CharacterInventory = { Slots = slots }
+    local cmds = {}
+    BG3AI.UI.get = function(o, k) if type(o) == "table" then local v = o[k] if v == false then return nil end return v end end
+    BG3AI.UI.prop = BG3AI.UI.get
+    BG3AI.UI.props = function(o) return type(o) == "table" and o or {} end
+    BG3AI.UI.count = function(c) return type(c) == "table" and #c or 0 end
+    BG3AI.UI.items = function(c, max)
+        local i = 0
+        return function()
+            i = i + 1
+            if type(c) ~= "table" or i > #c or (max and i > max) then return nil end
+            local v = c[i]
+            if v == false then v = nil end
+            return i, v
+        end
+    end
+    BG3AI.UI.command = function(o, name, param, dry)
+        if o ~= dc then return false, "wrong object" end
+        if dry then return true end
+        cmds[#cmds + 1] = name
+        if name == "ToggleItemCommand" then
+            param.IsSelected = true
+            dc.Ingredients = { param }
+            dc.CurrentState = "Ready"
+            return true
+        end
+        if name == "StartActionCommand" then
+            if param ~= nil then return false, "param" end
+            dc.CurrentState = dc.willFail and "Fail" or "Success"
+            dc.FailReason = dc.willFail and "Invalid" or nil
+            return true
+        end
+        return false, "no command '" .. name .. "'"
+    end
+    local okn, errn = pcall(ops["ui.insert"], {})
+    ok(not okn and tostring(errn):find("no Insert Item panel", 1, true), "insert: no panel → says how to open it: " .. tostring(errn))
+    widgets.Insert = { name = "Insert", visible = true, DataContext = dc, buttons = {}, texts = {} }
+    local okl, lst = pcall(ops["ui.insert"], {})
+    ok(okl and lst.panel == "Riddle of the Night" and #lst.items == 2 and lst.items[2].name == "Teachings of Loss: The Nightsinger"
+        and lst.items[2].uuid == "uuid-book" and lst.slots[1] == false, "insert: list names the panel, the items and the empty slot")
+    local okm, errm = pcall(ops["ui.insert"], { item = "uuid-missing" })
+    ok(not okm and tostring(errm):find("Sharran Initiate's Notes", 1, true), "insert: unknown item → the bag's names: " .. tostring(errm))
+    local oki, ri = pcall(ops["ui.insert"], { item = "uuid-book" })
+    ok(oki and ri.job ~= nil, "insert: a job")
+    if oki and ri.job then
+        clock = clock + 1
+        local j = run(ri.job, 5000)
+        ok(j.status == "done" and j.result.inserted == "Teachings of Loss: The Nightsinger" and j.result.state == "Success",
+            "insert: done with Success: " .. tostring(j.status) .. " " .. tostring(j.error))
+        ok(cmds[1] == "ToggleItemCommand" and cmds[2] == "StartActionCommand", "insert: toggle then Insert: " .. table.concat(cmds, ","))
+    end
+    -- a refused item: Fail + FailReason, reported (not "inserted")
+    book.IsSelected, dc.CurrentState, dc.Ingredients, dc.willFail, cmds = false, "Empty", { false }, true, {}
+    local okf, rf = pcall(ops["ui.insert"], { item = "Nightsinger" })
+    if okf and rf.job then
+        local j = run(rf.job, 5000)
+        ok(j.status == "done" and j.result.inserted == nil and j.result.state == "Fail" and j.result.fail_reason == "Invalid",
+            "insert: refused → Fail + reason, by name match")
+    else
+        ok(false, "insert by name: " .. tostring(rf))
+    end
+    for k, v in pairs(saved) do BG3AI.UI[k] = v end
+    BG3AI.Util.comp, BG3AI.Util.loca, Ext.Entity = _comp, _loca, _entity
+    widgets = {}
+end
+
 print(("%d passed, %d failed"):format(passes, fails))
 os.exit(fails == 0 and 0 or 1)

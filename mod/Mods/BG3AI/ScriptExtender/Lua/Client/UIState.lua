@@ -47,6 +47,7 @@ S.SCREENS = {
     { "CharacterLevelUp", "level_up" },
     { "Trade", "trade" },
     { "Donate", "donate" },
+    { "Insert", "insert" },
     { "Pickpocket", "trade" },
     { "LongRest", "rest" },
     { "MakeCamp", "rest" },

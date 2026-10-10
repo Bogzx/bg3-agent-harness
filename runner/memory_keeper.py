@@ -143,6 +143,10 @@ def harness_news(knowledge_dir: Path = KNOWLEDGE, last: int = 12) -> list[str]:
 
 _PLAN_NOTE = re.compile(r"\(plan: (?P<name>[^()]+?) L(?P<lvl>\d{1,2}) from memory/party-build\.md\)")
 _REFUSED = re.compile(r"not offered|already known|needs -?\d+ more|FAILED", re.I)
+# The harness failing to click, not the game refusing the plan (S032: Wyll L6 "spell picks pending (Hunger of
+# Hadar)" was a valid pick the tool lost; the keeper was told to rewrite the line).
+_HARNESS_FAIL = re.compile(r"spell picks pending|no spell button|stuck in its intro|TIMEOUT|screen fade", re.I)
+_PLAN_FAIL = re.compile(r"not offered|already known|needs -?\d+ more", re.I)
 REFUSED_MAX_CHARS = 1500
 
 
@@ -164,6 +168,8 @@ def refused_plans(actions: list[dict]) -> list[dict]:
             done = "level_up: done" in chunk and not re.search(r"not offered|already known", chunk)
             if done:
                 last.pop(key, None)
+            elif _HARNESS_FAIL.search(chunk) and not _PLAN_FAIL.search(chunk):
+                continue
             elif _REFUSED.search(chunk):
                 last[key] = {"name": key[0], "level": key[1], "problems": chunk.strip()[-REFUSED_MAX_CHARS:]}
     return list(last.values())

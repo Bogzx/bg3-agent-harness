@@ -429,6 +429,17 @@ test("itemKnown: a static thing seen on this level stays a valid target (not lis
     door("D2", { 8, 0, 0 })
     eq((V.itemKnown(V.context(), "D2")) == true, false, "never seen, not in sight")
     V.staticSeen = {}
+    clock = clock + 1
+    world.D.pos = { 10, 0, 0 }
+    V.staticSeen = {}
+    ray.fn = floorThen(function() return nil end)
+    V.rayCache = {}
+    eq(visible("D"), true, "seen again")
+    world.D.pos = { 13, 0, 0 }
+    ray.fn = floorThen(function(a) return { Position = { a[1] + 5, a[2], a[3] }, Distance = 5 } end)
+    V.rayCache = {}
+    eq(known(), false, "moved 3 m since (carried off and dropped): not where it was seen")
+    V.staticSeen = {}
 end)
 
 test("undiscovered trap fixture (vent) stays hidden with a clear ray", function()
@@ -474,6 +485,15 @@ test("nav.markers: other level -> no position", function()
     N.journalData.markers.M1.level = "WLD_Main_A"
     local m = BG3AI.RPC.ops["nav.markers"]({}).markers[1]
     eq(m.here, nil); eq(m.dist, nil)
+end)
+
+test("nav.markers: a sub-quest's step unlocked under its parent gives its markers (S030/S031 Gauntlet)", function()
+    markerSetup({ -16, 0, 0 })
+    N.stepObjectives = { { id = "Q1_SUB_Relic", parent = "Q1", title = "hQ", steps = { { id = "Start", objective = "OBJ1" } } } }
+    osiv[key("QuestIsAccepted", "P1", "Q1_SUB_Relic")] = 1
+    -- the step is unlocked under the parent "Q1" only (markerSetup), never under the sub-quest id
+    local r = BG3AI.RPC.ops["nav.markers"]({})
+    eq(#r.markers, 1, "marker"); eq(r.markers[1].label, "Escape the ship")
 end)
 
 test("nav.markers: closed quest -> nothing", function()

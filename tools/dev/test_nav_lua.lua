@@ -813,6 +813,30 @@ test("layout: walls and floor around the character, N up (S030 Soft-Step maze)",
     eq(r.mosaic, nil, "no trial room here")
 end)
 
+test("layout: a floor 4-10 m below is a drop '_', a chasm or a deeper floor stays blank (S032 broken staircase)", function()
+    reset()
+    local savedH, savedT = Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo
+    Ext.Level.GetHeightsAt = function(x, z)
+        if x > 1 and x < 4 then return { -9.4 } end    -- E: the stairs' floor 9.4 m down
+        if x < -1 and x > -4 then return { -9.4 } end   -- W: the same depth but a Chasm surface
+        if z > 1 and z < 4 then return { -12 } end      -- N: too deep
+        return { 0.0 }
+    end
+    Ext.Level.GetTileDebugInfo = function(p)
+        return { Flags = {}, GroundSurface = (p[1] < -1 and p[2] < -5) and "Chasm" or "None", CloudSurface = "None" }
+    end
+    local ok, err = pcall(function()
+        local r = N.layout(P1, 6, 1.5)
+        local mid = r.rows[r.n + 1]
+        eq(mid:sub(r.n + 1, r.n + 1), ".", "our cell")
+        eq(mid:sub(r.n + 3, r.n + 3), "_", "x=3 a floor 9.4 m below [" .. mid .. "]")
+        eq(mid:sub(r.n - 1, r.n - 1), " ", "x=-3 a chasm [" .. mid .. "]")
+        eq(r.rows[r.n - 1]:sub(r.n + 1, r.n + 1), " ", "z=3 12 m down: blank")
+    end)
+    Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo = savedH, savedT
+    if not ok then error(err, 0) end
+end)
+
 test("layout: the Faith-Leap walkway layer is never floor; the mosaic shows it near the trial", function()
     reset()
     local savedH, savedE, savedHelper = Ext.Level.GetHeightsAt, Ext.Entity, BG3AI.Visibility.helperItem

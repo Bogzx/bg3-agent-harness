@@ -1083,7 +1083,7 @@ class ScrollUse(unittest.TestCase):
                         "11111111-0000-0000-0000-0000000000a3")
 
     def _run(self, who, ability, target="", owner=None, click_ok=True, name="Scroll of Invisibility",
-             res="use_ability: done — used"):
+             res="use_ability: done — used", screen=None):
         from bg3ai import clicker
         calls, clicks = [], []
         scroll, sh = self.SCROLL, self.SH
@@ -1093,6 +1093,8 @@ class ScrollUse(unittest.TestCase):
             def try_rpc(self, op, args=None, context="server", default=None):
                 if op == "state.inventory":
                     return {"items": [{"uuid": scroll, "name": name, "owner": own}]}
+                if op == "ui.state" and screen:
+                    return {"screen": screen}
                 return default
 
             def drain_events(self, ctx=None):
@@ -1145,6 +1147,14 @@ class ScrollUse(unittest.TestCase):
         self.assertIn("carries Scroll of Invisibility", out)
         self.assertIn('who="Shadowheart"', out)
         self.assertEqual(calls, [])
+
+    def test_a_book_opens_for_reading_and_nothing_is_clicked(self):
+        # S031 17:12: use_ability(book, target=pedestal) → the Book page opened, the click turned the camera 6x.
+        out, calls, clicks = self._run("Shadowheart", "Teachings of Loss: The Nightsinger", target=self.GALE,
+                                       name="Teachings of Loss: The Nightsinger", screen="book")
+        self.assertEqual(clicks, [])
+        self.assertIn("opened for reading", out.split("\n")[0])
+        self.assertIn("insert_item", out.split("\n")[0])
 
     def test_failed_click_says_what_to_do(self):
         out, _, _ = self._run("Shadowheart", "Scroll of Invisibility", click_ok=False)

@@ -308,7 +308,10 @@ function V.levelNow()
 end
 
 -- Static things the party has seen stay valid targets (V.itemKnown), never listed again by this.
-V.STATIC_KINDS = { door = true, container = true, usable = true, ladder = true, object = true }
+-- "item" too (S032 17:34: a Gilded Chest you can pick up, kind item, listed 12 m away on arrival, then "target is
+-- not visible" to interact 4 min later from the next room); V.itemKnown drops one that moved since.
+V.STATIC_KINDS = { door = true, container = true, usable = true, ladder = true, object = true, item = true }
+V.SEEN_MOVED_M = 1.0
 V.staticSeen = V.staticSeen or {}
 
 -- Level-design helpers a player never sees: the Faith-Leap Trial's safe path is
@@ -365,7 +368,9 @@ function V.itemVisible(ctx, uuid, e, pos)
         if (V.FIXTURE_KINDS[kind] and V.isNamedFixture(uuid)) or kind == "ladder" then
             V.fixtureSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow() }
         end
-        if V.STATIC_KINDS[kind] then V.staticSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow() } end
+        if V.STATIC_KINDS[kind] then
+            V.staticSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow(), pos = pos and { pos[1], pos[2], pos[3] } }
+        end
         return true, kind
     end
     if (V.FIXTURE_KINDS[kind] or kind == "ladder") and V.fixtureRemembered(ctx, uuid, pos) then return true, kind end
@@ -393,6 +398,7 @@ function V.itemKnown(ctx, uuid, e, pos)
     if host and truthy(V.osi(Osi.IsInCombat, host)) then return false end -- a fight targets what is in sight
     -- gone since: picked up, destroyed, made invisible or hidden by a script
     if U.comp(e, "InventoryMember") or scriptHidden(uuid) or truthy(V.osi(Osi.IsInvisible, uuid)) then return false end
+    if m.pos and U.dist(m.pos, pos) > V.SEEN_MOVED_M then return false end -- moved since: not where the party saw it
     local si = U.comp(e, "ServerItem")
     if si then
         local ok, gone = pcall(function() return si.Invisible or si.Invisible2 or si.Destroyed or si.OffStage end)

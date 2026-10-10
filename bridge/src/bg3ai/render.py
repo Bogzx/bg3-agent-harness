@@ -1047,8 +1047,8 @@ def render_hazards(hazards: Any, limit: int = 4) -> list[str]:
 
 
 # get_layout: the text grid around a character (Navigation.lua N.layout) with what the party sees on it.
-LAYOUT_KEY = ("# wall  . floor  ^ higher floor  v lower floor  : darkness  ~ harmful surface  (blank) no floor you can "
-              "see (drop, chasm)")
+LAYOUT_KEY = ("# wall  . floor  ^ higher floor  v lower floor  _ floor 4-10m below (a drop; jump_to checks the landing)  : darkness  "
+              "~ harmful surface  (blank) no floor you can see (chasm, deep drop)")
 _LAYOUT_MAX_LEGEND = 12
 
 

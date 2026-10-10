@@ -601,6 +601,21 @@ before = opened
 j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
 check(j.status == "done" and opened == before + 1 and j.result.closed_page == "a page stuck in its intro",
       "page stuck in its intro: closed and reopened")
+-- 31b. the same page in its intro right after the bridge clicked its spell picks (keep_page): reused, not closed
+openPage(PAL)
+dc._p.LevelUpStep = "Started"
+dc._p.LevelUpCharacter = portrait
+before = opened
+j = run({ uuid = "claude", keep_page = true, plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and opened == before and j.result.closed_page == nil, "keep_page: own Started page reused")
+-- 31c. keep_page never keeps another character's page
+openPage(PAL)
+dc._p.LevelUpStep = "Started"
+dc._p.LevelUpCharacter = other
+before = opened
+j = run({ uuid = "claude", keep_page = true, plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(opened == before + 1 and j.result.closed_page and j.result.closed_page:find("another character", 1, true),
+      "keep_page: another character's page still closed")
 -- 32. the same character's page open normally (Overview): reused, nothing closed
 openPage(PAL)
 dc._p.LevelUpCharacter = portrait
