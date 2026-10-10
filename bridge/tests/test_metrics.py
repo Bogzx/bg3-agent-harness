@@ -283,6 +283,17 @@ class Recording(unittest.TestCase):
             self.assertEqual([x["type"] for x in lines], ["tool", "sample", "tool"])
             self.assertIsNone(rec.tool_done("autoskip", 0))
 
+    def test_failed_nested_call_keeps_its_ops(self):
+        # S038: jump_to inside do_actions hung in nav.landing; the failed nested record named no op.
+        with tempfile.TemporaryDirectory() as d:
+            rec = M.Recorder(Path(d) / "m.jsonl")
+            rec.rpc_done("nav.landing", T0 + 0.1, T0 + 10.1)
+            r = rec.tool_done("jump_to", 12000, nested=True, ok=False, t1=T0 + 12)
+            self.assertEqual(r["ops"][0][0], "nav.landing")
+            rec.rpc_done("state.status", T0 + 20.1, T0 + 20.2)
+            r2 = rec.tool_done("get_status", 200, nested=True, t1=T0 + 20.3)
+            self.assertNotIn("ops", r2)  # a nested call that worked stays lean
+
     def test_game_rpc_hook(self):
         g = Game()
         rec = M.Recorder(None)

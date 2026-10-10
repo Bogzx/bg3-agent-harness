@@ -238,6 +238,17 @@ class RenderInventory(unittest.TestCase):
         self.assertNotIn("Potion of Healing", out)
         self.assertRegex(out, r"JUNK 5 items ~\d+g")
 
+    def test_name_filter_alternatives_and_no_match_line(self):
+        # S039 21:43: filter "leap,misty,jump,dimension,feather" was one word and matched nothing, silently
+        out = render.render_inventory(s026_inventory(), self.H, "misty,potion healing,cup")
+        self.assertIn("Potion of Healing", out)
+        self.assertIn("Cup", out)
+        self.assertNotIn("No item", out)
+        out = render.render_inventory(s026_inventory(), self.H, "leap,misty,jump")
+        self.assertIn("No item in the party's bags matches 'leap,misty,jump'", out)
+        out = render.render_inventory(s026_inventory(), self.H, "food")
+        self.assertNotIn("No item", out)
+
     def test_default_view_lists_gear_upgrades(self):
         out = render.render_inventory(s026_inventory(), self.H, "")
         self.assertIn("BETTER GEAR IN BAGS (equip_best equips all):", out)

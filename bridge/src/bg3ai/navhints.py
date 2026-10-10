@@ -62,7 +62,8 @@ def jump_refusal(lnd: Any, asked: list[float]) -> str | None:
             # S035 19:38 / S038 20:44: force=true into a Chasm was a fatal fall both times (the Chasm is the void
             # around the floors; Feather Fall did not save it): never offer force for it.
             tail = (" A Chasm has no floor in jumping height: a forced jump there is a fatal fall. Find the crossing"
-                    " with get_layout / route (a ledge in reach, a ladder, the story's own way across).")
+                    " with route (its LOWER GROUND lines: floors below you can jump down to) / get_layout (a ledge in reach, a"
+                    " ladder, the story's own way across).")
         else:
             tail = " Pick another landing (get_frontier lists HAZARD patches) or force=true."
         return (f"jump_to: FAILED — the landing {P(asked)} {landing_bad_text(lnd)} and no clear spot within 3m of it "

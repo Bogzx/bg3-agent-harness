@@ -91,6 +91,11 @@ def _next(res: dict, H: Handles, ends: list | None = None) -> str:
     if res.get("reachable") is False and isinstance(jx, dict) and jx.get("to"):
         return (f"NEXT: travel_to x,y,z = {pos(jx['from'])} (the edge), then jump_to x,y,z = {pos(jx['to'])}, "
                 f"then route again")
+    lo = next((x for x in res.get("lower") or [] if isinstance(x, dict) and x.get("toward") and x.get("to")
+               and isinstance(x.get("reach_m"), (int, float)) and (x.get("gap_m") or 0) <= x["reach_m"]), None)
+    if res.get("reachable") is False and lo:
+        return (f"NEXT: move_to x,y,z = {pos(lo['from'])} (the edge), then jump_to x,y,z = {pos(lo['to'])} "
+                f"({_m(lo.get('drop_m'))} down: a fall that deep hurts without Feather Fall), then route again")
     wp = route_waypoint(res)
     if wp and (res.get("reachable") is False or (res.get("length_m") or 0) > (wp.get("to_goal_m") or 0) + 60):
         return (f"NEXT: travel_to waypoint=\"{wp['name']}\" ({_m(wp.get('to_goal_m'))} from the goal, you are "
@@ -185,10 +190,25 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
             hd = f", {_m(abs(dy))} {'down' if dy < 0 else 'up'}" if abs(dy) >= 1 else ""
             out.append(f"JUMP ACROSS: from {pos(jx['from'])} (walk {_m(jx.get('walk_m'))}) over a {_m(jx.get('gap_m'))} "
                        f"gap{hd} to {pos(jx['to'])}, {_m(jx.get('to_goal_m'))} from the goal")
+        for lo in (res.get("lower") or [])[:3]:  # S038/S039 Shadowfell: the way down is islands far below the ledge
+            if not isinstance(lo, dict) or not lo.get("to"):
+                continue
+            line = (f"LOWER GROUND {lo.get('dir') or ''}: a floor {_m(lo.get('drop_m'))} below at {pos(lo['to'])}, "
+                    f"{_m(lo.get('gap_m'))} out from the edge at {pos(lo.get('from'))}")
+            if lo.get("to_goal_m") is not None:
+                line += f", {_m(lo['to_goal_m'])} from the goal"
+            reach = lo.get("reach_m")
+            if isinstance(reach, (int, float)) and isinstance(lo.get("gap_m"), (int, float)):
+                line += (f"; jumping down from there reaches ~{_m(reach)}: move_to the edge, then jump_to {pos(lo['to'])}"
+                         if lo["gap_m"] <= reach else f"; beyond a jump from there (~{_m(reach)})")
+            out.append(line)
         if res.get("ways"):  # the open directions from here, as get_frontier says them
             out.append(render.render_ways(res["ways"]))
     else:
-        out.append("path unknown (pathfinding unavailable)")
+        why = res.get("unknown_reason")  # S039 21:44: after a jump onto a rock off the walkable grid ("midair")
+        out.append(f"path unknown: {why}" + ("; step onto plain ground (move_to a floor near you) and route again"
+                                             if "no floor under" in str(why) else "")
+                   if why else "path unknown (pathfinding unavailable)")
     vn = res.get("visited_near")
     if isinstance(vn, dict) and vn.get("pos") and (vn.get("to_goal_m") or 0) < (res.get("straight_m") or 0) - 5:
         out.append(f"CLOSEST YOU HAVE BEEN: {pos(vn['pos'])}, {_m(vn.get('to_goal_m'))} from it")

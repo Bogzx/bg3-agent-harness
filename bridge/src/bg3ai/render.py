@@ -779,6 +779,7 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
     junk_ids = {it["uuid"] for it in economy.junk(inv)} if f in ("junk", "", "notable") else set()
     if inv.get("open_container"):
         lines.append("OPEN CONTAINER " + compact(inv["open_container"], H))
+    matched, by_name = 0, False
     for owner, its in owners.items():
         oname = H.names.get(H.get(owner)) if owner != "?" else "?"
         head = f"== {H.get(owner) if owner != '?' else '?'} {oname or ''}".rstrip()
@@ -820,9 +821,13 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
         elif f == "junk":
             sel_eq, sel = [], [it for it in rest if it["uuid"] in junk_ids]
         else:
-            words = f.split()
+            # "leap,misty,jump" (S039 21:43: one comma-joined word matched nothing, read as "no Misty Step"):
+            # commas or | separate alternatives, spaces inside one must all match ("potion healing")
+            alts = [a.split() for a in re.split(r"[,|]", f) if a.strip()]
             sel_eq = []
-            sel = [it for it in its if all(w in it.get("name", "").lower() for w in words)]
+            sel = [it for it in its
+                   if any(all(w in it.get("name", "").lower() for w in ws) for ws in alts)]
+            matched, by_name = matched + len(sel), True
         if not (sel_eq or sel):
             continue
         lines.append(head)
@@ -850,6 +855,9 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
         lines.append(f"JUNK {len(js)} items ~{sum((i.get('value') or 0) * (i.get('count') or 1) for i in js)}g "
                      f"{sum((i.get('weight') or 0) * (i.get('count') or 1) for i in js):.1f}kg: trade sell=junk at a "
                      "trader, or manage_inventory op=camp item=junk")
+    if by_name and not matched:
+        lines.append(f"No item in the party's bags matches {filter.strip()!r} (names; separate alternatives with "
+                     "commas: 'misty,scroll').")
     return "\n".join(lines)
 
 
@@ -1052,8 +1060,8 @@ def render_hazards(hazards: Any, limit: int = 4) -> list[str]:
 
 
 # get_layout: the text grid around a character (Navigation.lua N.layout) with what the party sees on it.
-LAYOUT_KEY = ("# wall  . floor  ^ higher floor  v lower floor  _ floor 4-10m below (a drop; jump_to checks the landing)  : darkness  "
-              "~ harmful surface  (blank) no floor you can see (chasm, deep drop)")
+LAYOUT_KEY = ("# wall  . floor  ^ higher floor  v lower floor  _ floor 4-10m below (a drop; jump_to checks the landing)  , ground 14m+ below "
+              "(an island/ledge far down; route lists LOWER GROUND)  : darkness  ~ harmful surface  (blank) no floor you can see (chasm, void)")
 _LAYOUT_MAX_LEGEND = 12
 
 

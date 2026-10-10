@@ -1588,7 +1588,10 @@ function N.landing(charUuid, pos)
     if not from then return nil, "no position" end
     local G = BG3AI.Guard
     local maxM
-    if G and G.jump_max then
+    if G and G.jump_reach then -- the drop to the landing extends it (high ground)
+        local ok, m = pcall(G.jump_reach, charUuid, from, pos)
+        if ok and type(m) == "number" then maxM = m end
+    elseif G and G.jump_max then
         local ok, m = pcall(G.jump_max, charUuid)
         if ok and type(m) == "number" then maxM = m end
     end
@@ -2348,6 +2351,86 @@ function N.jumpAcross(charUuid, from, goal)
     return nil
 end
 
+-- Lower ground in view when the goal lies far below and no walk leads there (S038/S039, Nightsong's Prison: the
+-- way down is islands 20-30 m below the arrival ledge, 15+ m out over the void; get_layout drew them blank, route
+-- said only "find a ladder/ledge", and the agent spent 2 sessions on screenshots, map clicks and ~15 jump guesses).
+-- A height scan of the disc around the character (no path search): the floors at our level (the ledge) and the
+-- clear floors LOWER_MIN_M..LOWER_MAX_M below; for each lower floor the nearest ledge cell. Best per compass
+-- direction (from the character to the lower floor), toward the goal first. Returns a list of
+-- {dir, from (the ledge cell), to, gap_m (horizontal), drop_m, to_goal_m, toward (gets nearer the goal)} or nil.
+N.LOWER_R_M = 40
+N.LOWER_CELL_M = 1.5
+N.LOWER_MIN_M = 10    -- a drop below this the layout's "_" and jumpGap already cover
+N.LOWER_MAX_M = 120
+N.LOWER_LEDGE_M = 3   -- a floor this near our height is the ledge we stand on
+N.LOWER_SHOWN = 3
+function N.lowerGround(charUuid, from, goal)
+    local n = math.floor(N.LOWER_R_M / N.LOWER_CELL_M)
+    local c = N.LOWER_CELL_M
+    local ledge, low = {}, {}
+    local function clear(p)
+        local t = N.tileAt(p)
+        return t and not t.blocked and not t.surface
+    end
+    for i = -n, n do
+        for j = -n, n do
+            if i * i + j * j <= n * n then
+                local x, z = from[1] + i * c, from[3] + j * c
+                local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+                local lh, dh
+                for _, h in ipairs(ok and type(hs) == "table" and hs or {}) do
+                    if type(h) == "number" then
+                        if math.abs(h - from[2]) <= N.LOWER_LEDGE_M then lh = lh or h
+                        elseif from[2] - h >= N.LOWER_MIN_M and from[2] - h <= N.LOWER_MAX_M and (not dh or h > dh) then
+                            dh = h -- the highest lower floor: what you'd land on first
+                        end
+                    end
+                end
+                if lh and clear({ x, lh, z }) then ledge[#ledge + 1] = { x, lh, z }
+                elseif dh and not lh and clear({ x, dh, z }) then low[#low + 1] = { x, dh, z } end
+            end
+        end
+    end
+    if #ledge == 0 or #low == 0 then return nil end
+    local function gd(p) return goal and hdist(p, goal) or 0 end
+    local here = gd(from)
+    local best = {}
+    for _, b in ipairs(low) do
+        local a, ad
+        for _, l in ipairs(ledge) do
+            local d = hdist(l, b)
+            if not ad or d < ad then a, ad = l, d end
+        end
+        local dir = N.direction(from, b)
+        local toward = gd(b) < here - 1
+        local cur = best[dir]
+        -- per direction: toward the goal first, then the narrowest gap
+        if not cur or (toward and not cur.toward) or (toward == cur.toward and ad < cur.gap) then
+            best[dir] = { dir = dir, from = a, to = b, gap = ad, toward = toward }
+        end
+    end
+    local out = {}
+    local G = BG3AI.Guard
+    for _, v in pairs(best) do
+        local reach
+        if G and G.jump_reach then
+            local okr, r = pcall(G.jump_reach, charUuid, v.from, v.to)
+            if okr and type(r) == "number" then reach = round(r, 1) end
+        end
+        out[#out + 1] = { dir = v.dir, from = U.vec(v.from, 1), to = U.vec(v.to, 1), gap_m = round(v.gap, 1),
+            drop_m = round(v.from[2] - v.to[2], 1), to_goal_m = goal and round(gd(v.to), 1) or nil,
+            toward = v.toward or nil, reach_m = reach }
+    end
+    table.sort(out, function(p, q)
+        if (p.toward or false) ~= (q.toward or false) then return p.toward == true end
+        if math.abs(p.gap_m - q.gap_m) > 0.75 then return p.gap_m < q.gap_m end
+        if (p.to_goal_m or 0) ~= (q.to_goal_m or 0) then return (p.to_goal_m or 0) < (q.to_goal_m or 0) end
+        return p.dir < q.dir
+    end)
+    while #out > N.LOWER_SHOWN do table.remove(out) end
+    return out
+end
+
 -- Everything above for one goal. {from, goal, straight_m, dir, dy,
 -- levels_here, levels_goal, reachable, length_m?, needs_jump?, legs?, links?,
 -- exposure?, straight_hazard?, closest?{..., legs, links}, connectors?,
@@ -2365,6 +2448,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
     elseif U.dist(from, goal) > N.PATH_MAX_M then
         out.far = true
         local r = farPath(charUuid, goal)
+        if r and r.reachable == nil and r.reason then out.unknown_reason = r.reason end
         if r and r.reachable then
             out.reachable = true
             out.length_m, out.needs_jump = r.length_m, r.needs_jump
@@ -2382,6 +2466,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
         -- there shows), never for a far, unexplored spot.
         out.levels_goal = N.levelsAt(goal[1], goal[3], from[2])
         local r = N.path(charUuid, goal)
+        if r and r.reachable == nil and r.reason then out.unknown_reason = r.reason end
         if r and r.reachable then
             out.reachable = true
             out.length_m, out.needs_jump = r.length_m, r.needs_jump
@@ -2403,6 +2488,10 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
                 out.closest = c
             end
         end
+    end
+    if out.reachable == false and goal[2] - from[2] <= -N.LOWER_MIN_M then
+        local okl, lower = pcall(N.lowerGround, charUuid, from, goal)
+        if okl and lower and #lower > 0 then out.lower = lower end
     end
     if withConnectors or not out.reachable then
         out.connectors = N.connectors(ctx, charUuid, goal, N.CONNECT_M, N.CONNECT_MAX)
@@ -3219,10 +3308,14 @@ end
 -- drew blank like the chasm beside it while route said the floor lay 9.4 m below; the agent tried two jumps into
 -- the chasm and parked Yurgir). Deeper than DROP_MAX_M stays blank (the Faith-Leap chasm bottom is ~11.7 m down).
 N.DROP_MIN_M, N.DROP_MAX_M = 4.0, 10.0
+-- Deeper still, "," = deep ground DEEP_MIN_M..DEEP_MAX_M below (S039, Nightsong's Prison: the islands of the way down
+-- lie 20-30 m below the arrival ledge and drew blank, like the void). From 14 m, so the Faith-Leap chasm bottom
+-- (~11.7 m) stays blank.
+N.DEEP_MIN_M, N.DEEP_MAX_M = 14.0, 120.0
 function N.layoutCell(x, z, y0, box)
     local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
     if not ok or type(hs) ~= "table" then return " " end
-    local best, drop
+    local best, drop, deep
     local helperHere = box and inBox(box, x, z, N.HELPER_MARGIN_M)
     for _, h in ipairs(hs) do
         if type(h) == "number" and not (helperHere and math.abs(h - (box.y + 0.2)) <= N.HELPER_LAYER_M) then
@@ -3230,18 +3323,22 @@ function N.layoutCell(x, z, y0, box)
                 if not best or math.abs(h - y0) < math.abs(best - y0) then best = h end
             elseif y0 - h <= N.DROP_MAX_M and (not drop or h > drop) then
                 drop = h
+            elseif y0 - h >= N.DEEP_MIN_M and y0 - h <= N.DEEP_MAX_M and (not deep or h > deep) then
+                deep = h
             end
         end
     end
-    if not best and drop and not helperHere then
-        local okt, t = pcall(Ext.Level.GetTileDebugInfo, { x, drop, z })
+    local low, mark = drop, "_"
+    if not drop and deep then low, mark = deep, "," end
+    if not best and low and not helperHere then
+        local okt, t = pcall(Ext.Level.GetTileDebugInfo, { x, low, z })
         if not (okt and t) then return " " end
         local f = tileFlags(t)
         if f.WalkBlock then return " " end
         local g, cl = "", ""
         pcall(function() g, cl = tostring(t.GroundSurface), tostring(t.CloudSurface) end)
         if N.HARMFUL[g] or N.HARMFUL[cl] then return " " end
-        return "_"
+        return mark
     end
     if not best then return " " end
     local okt, t = pcall(Ext.Level.GetTileDebugInfo, { x, best, z })

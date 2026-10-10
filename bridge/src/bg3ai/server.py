@@ -7291,6 +7291,10 @@ ALWAYS_LOAD = (
     # S018-S026: 80 ToolSearch calls loaded these (manage_inventory 18, trade 12, fast_travel 12, read_all 9,
     # get_journal 9, stay 6, set_party 6), each a ~2 s turn mid-play
     "manage_inventory", "trade", "fast_travel", "read_all", "get_journal", "stay", "set_party", "equip_best",
+    # S027-S039: still ~1-2 ToolSearch turns a session (get_layout 4, path_preview 4, swap_party 3, zoom 2,
+    # insert_item, get_explored, disarm); S039 opened with one at the Shadowfell ledge. ui_dump/ui_action
+    # stay deferred: hand UI work should cost a step.
+    "get_layout", "path_preview", "swap_party", "zoom", "insert_item", "get_explored", "disarm", "pickpocket",
 )
 ALWAYS_LOAD_META = {"anthropic/alwaysLoad": True}
 

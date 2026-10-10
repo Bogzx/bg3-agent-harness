@@ -1045,6 +1045,21 @@ function G.jump_max(char)
     return m * mult
 end
 
+-- Jumping down may carry further: Projectile_Jump has the HasHighGroundRangeExtension flag, and the game's Data.txt
+-- has HighGroundThreshold 2.3 / HighGroundRangeMultiplier 1. OFF (mult 0) until verified live: S039 21:43 the game's
+-- own jump cursor said "Target is too far!" over the Shadowfell's islands 20 m below / 14 m out, and an Osiris jump
+-- must never reach what the player's cursor refuses (fairness). Turn on only after comparing with the cursor.
+G.HIGH_GROUND_THRESHOLD_M = 2.3
+G.HIGH_GROUND_JUMP_MULT = 0
+function G.jump_reach(char, from, pos)
+    local m = G.jump_max(char)
+    if from and pos then
+        local drop = from[2] - pos[2]
+        if drop > G.HIGH_GROUND_THRESHOLD_M then return m + drop * G.HIGH_GROUND_JUMP_MULT, m end
+    end
+    return m, m
+end
+
 -- HasLineOfSight(char, item) is false for a door, chest or barricade the
 -- character stands next to (its own collision blocks the ray: S024/S025 Knock
 -- on 3 locked doors from 1.5-2 m, attacks on a barricade and a door, 10 casts
@@ -1178,9 +1193,13 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         local p = G.pos(char)
         if spell == G.JUMP_SPELL and p then
             local dx, dz = pos[1] - p[1], pos[3] - p[3]
-            local d, maxd = math.sqrt(dx * dx + dz * dz), G.jump_max(char)
+            local d = math.sqrt(dx * dx + dz * dz)
+            local maxd, flat = G.jump_reach(char, p, pos)
             if d > maxd + G.JUMP_SLACK_M then
-                G.refuse(string.format("too far to jump (%.1f m, this character can jump %.1f m)", d, maxd))
+                G.refuse(maxd > flat + 0.05
+                    and string.format("too far to jump (%.1f m, this character can jump %.1f m, %.1f m down to there)",
+                        d, maxd, p[2] - pos[2])
+                    or string.format("too far to jump (%.1f m, this character can jump %.1f m)", d, maxd))
             end
         end
         -- Projectile_Jump has TargetRadius 4.5 (live), below a strong

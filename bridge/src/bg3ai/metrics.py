@@ -241,8 +241,9 @@ class Recorder:
                "job_ms": round(max(job_ms, 0.0), 1), "busy": bool(busy)}
         if nested:
             rec["nested"] = True
-        elif rpc and len(rpc) <= OPS_MAX:
-            # Which evals the call made (ops joined by + ran in one eval), for read-latency triage.
+        if rpc and len(rpc) <= OPS_MAX and (not nested or not ok):
+            # Which evals the call made (ops joined by + ran in one eval), for read-latency triage. A failed
+            # nested call keeps them too: S038's jump_to inside do_actions hung in nav.landing unnamed.
             rec["ops"] = [[op[:60], round((b - a) * 1000, 1)] for a, b, op in rpc]
         if not ok:
             rec["ok"] = False

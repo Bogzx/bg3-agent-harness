@@ -1334,5 +1334,92 @@ test("jump plan: the in-flight marker is set during its searches and cleared aft
     eq(marks[1], "in:jump plan", "set first"); eq(marks[#marks], "clear", "cleared after")
 end)
 
+-- ---- S039: the Shadowfell's way down (lower ground far below, deep floors in the layout, route's unknown reason) --
+
+-- The arrival ledge at y 0 for x > -3, the void (a Chasm 200 m down) to x -15, an island 22 m below past it.
+local function withIslands(fn)
+    local savedH, savedT, savedG = Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo, BG3AI.Guard
+    Ext.Level.GetHeightsAt = function(x)
+        if x > -3 then return { 0.0 } end
+        if x > -15 then return { -200.0 } end
+        return { -22.0 }
+    end
+    Ext.Level.GetTileDebugInfo = function(p)
+        local chasm = p[2] < -100
+        return { GroundSurface = chasm and "Chasm" or "None", CloudSurface = "None", Flags = chasm and { "WalkBlock" } or {} }
+    end
+    BG3AI.Guard = { jump_max = function() return 8.5 end,
+        jump_reach = function(c, a, b) return 8.5, 8.5 end }
+    blocked = function(x) return x < -3 end
+    local ok, err = pcall(fn)
+    Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo, BG3AI.Guard = savedH, savedT, savedG
+    if not ok then error(err, 0) end
+end
+
+test("lowerGround: the island 22 m below, 12+ m out from the ledge, toward the goal (S039 Nightsong's Prison)", function()
+    withIslands(function()
+        local lo = N.lowerGround(P1, { 0, 0, 0 }, { -200, -140, 0 })
+        assert(lo and #lo >= 1, "found")
+        eq(lo[1].dir, "W", "dir"); eq(lo[1].toward, true, "toward the goal")
+        near(lo[1].drop_m, 22, "drop"); assert(lo[1].gap_m >= 12 and lo[1].gap_m <= 13.6, "gap " .. lo[1].gap_m)
+        assert(lo[1].from[1] > -3 and lo[1].to[1] <= -15, "edge -> island")
+        eq(lo[1].reach_m, 8.5, "flat reach (no high-ground model)")
+    end)
+end)
+
+test("lowerGround: nothing below -> nil; the Chasm bottom is no ground", function()
+    local savedH = Ext.Level.GetHeightsAt
+    withIslands(function()
+        Ext.Level.GetHeightsAt = function(x) if x > -3 then return { 0.0 } end return { -200.0 } end
+        eq(N.lowerGround(P1, { 0, 0, 0 }, { -200, -140, 0 }), nil, "only void")
+    end)
+    Ext.Level.GetHeightsAt = savedH
+end)
+
+test("routeAhead: no walk to a goal far below -> lower ground listed; a level goal -> none", function()
+    withIslands(function()
+        local savedIA = BG3AI.Visibility.itemsAround
+        BG3AI.Visibility.itemsAround = function() return {} end
+        local ctx = { party = { P1 }, is_party = { [P1] = true } }
+        local ok, r = pcall(N.routeAhead, ctx, P1, { -40, -22, 0 })
+        local ok2, r2 = pcall(N.routeAhead, ctx, P1, { -40, -2, 0 })
+        BG3AI.Visibility.itemsAround = savedIA
+        assert(ok, tostring(r)); assert(ok2, tostring(r2))
+        eq(r.reachable, false, "no walk"); assert(r.lower and r.lower[1].dir == "W", "lower ground W")
+        eq(r2.lower, nil, "a goal 2 m down: no lower-ground list")
+    end)
+end)
+
+test("layoutCell: ground 14 m+ below is ',' ; the Faith-Leap bottom (11.7 m) stays blank; 4-10 m is '_'", function()
+    local savedH, savedT = Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo
+    local h = -22
+    Ext.Level.GetHeightsAt = function() return { h } end
+    Ext.Level.GetTileDebugInfo = function() return { GroundSurface = "None", CloudSurface = "None", Flags = {} } end
+    local ok, err = pcall(function()
+        eq(N.layoutCell(0, 0, 0), ",", "22 m down")
+        h = -11.7; eq(N.layoutCell(0, 0, 0), " ", "11.7 m down")
+        h = -8; eq(N.layoutCell(0, 0, 0), "_", "8 m down")
+        h = -130; eq(N.layoutCell(0, 0, 0), " ", "130 m down")
+        h = -22
+        Ext.Level.GetTileDebugInfo = function() return { GroundSurface = "Chasm", CloudSurface = "None", Flags = {} } end
+        eq(N.layoutCell(0, 0, 0), " ", "a Chasm far below is void")
+    end)
+    Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo = savedH, savedT
+    if not ok then error(err, 0) end
+end)
+
+test("routeAhead: standing off the walkable grid -> unknown_reason says so (S039 21:44 'pathfinding unavailable')", function()
+    local savedH = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { -20.0 } end
+    local savedIA = BG3AI.Visibility.itemsAround
+    BG3AI.Visibility.itemsAround = function() return {} end
+    local ok, r = pcall(N.routeAhead, { party = { P1 }, is_party = { [P1] = true } }, P1, { -10, -20, 0 })
+    BG3AI.Visibility.itemsAround = savedIA
+    Ext.Level.GetHeightsAt = savedH
+    assert(ok, tostring(r))
+    eq(r.reachable, nil, "unknown")
+    assert(r.unknown_reason and r.unknown_reason:find("no floor under"), tostring(r.unknown_reason))
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

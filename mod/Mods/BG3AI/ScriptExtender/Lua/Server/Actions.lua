@@ -45,6 +45,11 @@ A.CAST_WALK_MAX_REACH = 3.0 -- act.cast out of combat walks into range only for 
 A.MELEE_STOP_SLACK = 0.4 -- move_to {target, within}: stop this far inside the melee reach
 A.CAST_SETTLE_MS = 250       -- cast: report this long after CastedSpell / the last hit
 A.PROJECTILE_SETTLE_MS = 1500 -- cast: a projectile's hits can land this long after CastedSpell (no hit yet)
+-- S038-S039: jump_to "done" 4x while the character landed back where it stood (moved 0.6 m, the landing 9 m away):
+-- the engine shortens a landing it can't reach. A jump ending this far (horizontally) from its landing reports it.
+A.JUMP_OFF_M = 3.0
+A.JUMP_NOWHERE_M = 1.0 -- ... and one that moved less than this went nowhere: failed
+A.JUMP_AIRBORNE_MAX_MS = 3000 -- wait up to this long after the settle for a still-moving jumper to land
 A.USE_REACH = 1.8    -- interact/pickup and the click ops: Use/Pickup/click from here
 
 ------------------------------------------------------------------------
@@ -1264,8 +1269,32 @@ reg("cast", function(args)
             -- the latest `settle` after it (a projectile still in flight, or a miss).
             if now and now - job.casted >= A.CAST_SETTLE_MS
                 and ((job.last_hit and now - job.last_hit >= A.CAST_SETTLE_MS) or now - job.casted >= settle) then
+                local landing
+                if base == "Projectile_Jump" and pos and job.ordered_pos then
+                    local p = G.pos(char)
+                    local last = job.jump_last
+                    job.jump_last = p
+                    -- still in the air (moved since the last tick): wait for the landing, up to a cap
+                    if p and (not last or U.dist(p, last) > 0.05) and now - job.casted < settle + A.JUMP_AIRBORNE_MAX_MS then
+                        return
+                    end
+                    if p then
+                        local function flat(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[3] - b[3]) ^ 2) end
+                        local off, moved = flat(p, pos), flat(p, job.ordered_pos)
+                        if off > A.JUMP_OFF_M and moved < A.JUMP_NOWHERE_M then
+                            RPC.finish_job(job, "failed", { cast = spell, moved_m = U.round(moved, 1) },
+                                string.format("the jump went nowhere: moved %.1fm, the landing is still %.1fm away"
+                                    .. " (the game shortens a landing it can't reach: too far or too high, no clear arc,"
+                                    .. " or no floor there): pick a nearer, lower spot on solid floor (get_layout)",
+                                    moved, off))
+                            return
+                        elseif off > A.JUMP_OFF_M then
+                            landing = U.round(off, 1)
+                        end
+                    end
+                end
                 local res = { cast = spell, extra_attack = check.extra_attack, walked_into_range = job.walked,
-                    upcast_ignored = upcast_ignored }
+                    upcast_ignored = upcast_ignored, landed_m_from_target = landing }
                 if #job.hits > 0 then
                     res.damage = job.hits
                     local total = 0

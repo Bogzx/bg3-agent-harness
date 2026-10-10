@@ -69,12 +69,15 @@ def failures(name: str, block: dict, text: str) -> list[tuple[str, str]]:
     if block.get("is_error") or t.startswith("<tool_use_error>"):
         return [(name, t)]
     out = []
-    for line in t.splitlines():
-        line = line.strip()
+    lines = [ln.strip() for ln in t.splitlines()]
+    for i, line in enumerate(lines):
         if not line or line.startswith(("STOPPED", "EVENTS", "CHANGES", "NOW")):
             continue
         m = _STEP_FAIL.search(line)
         if m:
+            # "equip_best: FAILED" with the reason on the next "FAILED: …" line: one failure, not a bare one + it
+            if not m.group(3).strip() and i + 1 < len(lines) and lines[i + 1].startswith(FAIL_PREFIXES):
+                continue
             out.append((m.group(1), f"{m.group(2)}: {m.group(3)}"))
         elif line.startswith(FAIL_PREFIXES) or re.match(r"^\d+\.\s*(FAILED|TIMEOUT)\b", line):
             m = _ANY_FAIL.search(line)

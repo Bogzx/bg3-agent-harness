@@ -130,6 +130,30 @@ class RouteJump(unittest.TestCase):
         self.assertIn("JUMP ACROSS: from (-689,1.3,-786) (walk 16.4m) over a 3m gap, 2.5m down to (-686,-1.2,-786)", out)
         self.assertIn("NEXT: travel_to x,y,z = (-689,1.3,-786) (the edge), then jump_to x,y,z = (-686,-1.2,-786)", out)
 
+    def test_lower_ground_listed_beyond_a_jump(self):
+        """S038/S039 Nightsong's Prison: the islands 21 m below, 14 m out; route said only 'find a ladder/ledge'."""
+        res = {"from": [-442, -6.7, -1422], "goal": [-611, -142, -1427], "straight_m": 237.6, "dir": "W", "dy": -135.3,
+               "reachable": False, "far": True,
+               "lower": [{"dir": "NW", "from": [-443.5, -6.7, -1416.3], "to": [-455.5, -27.8, -1408.8], "gap_m": 14.2,
+                          "drop_m": 21.1, "to_goal_m": 156.8, "toward": True, "reach_m": 8.5}],
+               "closest": {"pos": [-427.7, -2.3, -1432.1], "to_goal_m": 230.6, "dy_to_goal": -139.7, "path_m": 7.7}}
+        out = route.render_route(res, render.Handles(), "objective Balthazar")
+        self.assertIn("LOWER GROUND NW: a floor 21.1m below at (-455.5,-27.8,-1408.8), 14.2m out from the edge at "
+                      "(-443.5,-6.7,-1416.3), 156.8m from the goal; beyond a jump from there (~8.5m)", out)
+        self.assertNotIn("then jump_to x,y,z = (-455.5", out)  # out of reach: no jump suggested
+        res["lower"][0]["reach_m"] = 30.0
+        out = route.render_route(res, render.Handles(), "objective Balthazar")
+        self.assertIn("jumping down from there reaches ~30m: move_to the edge, then jump_to (-455.5,-27.8,-1408.8)", out)
+        self.assertIn("NEXT: move_to x,y,z = (-443.5,-6.7,-1416.3) (the edge), then jump_to x,y,z = (-455.5,-27.8,-1408.8)",
+                      out)
+
+    def test_unknown_path_says_why(self):
+        """S039 21:44: 'path unknown (pathfinding unavailable)' right after a jump onto a rock off the grid."""
+        res = {"from": [-413, 1.1, -1441], "goal": [-516, -60, -1397], "straight_m": 127.3, "dir": "NW", "dy": -61.1,
+               "far": True, "unknown_reason": "no floor under the character (mid-jump or falling)"}
+        out = route.render_route(res, render.Handles(), "it")
+        self.assertIn("path unknown: no floor under the character (mid-jump or falling); step onto plain ground", out)
+
 
 class TravelTrips(Base):
     def setUp(self) -> None:

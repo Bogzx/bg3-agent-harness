@@ -817,6 +817,12 @@ class Triage(unittest.TestCase):
         self.assertIn("not counted: 1 gap(s)", md)
         self.assertIn("25 s = 19 s enemy + 6 s ours", md)  # the parts, not "25 s with 19 s enemy"
 
+    def test_bare_failed_header_takes_the_next_line(self):
+        # S034/S037: "equip_best: FAILED\nFAILED: Claude: …" grouped as a bare "FAILED:" plus the real reason
+        text = "equip_best: FAILED\nFAILED: Claude: e599 Boots (rare vs common): in a conversation\nMAIN HANDS x"
+        self.assertEqual(P.triage.failures("equip_best", {}, text),
+                         [("equip_best", "FAILED: Claude: e599 Boots (rare vs common): in a conversation")])
+
     def test_missing_files_still_write(self):
         with tempfile.TemporaryDirectory() as d:
             md = P.triage.write(Path(d) / "S001").read_text()

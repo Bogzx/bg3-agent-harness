@@ -816,6 +816,37 @@ test("jump: capped at half the Strength score (UNVERIFIED formula), not TargetRa
     eq(j.status, "running", "enhance leap " .. tostring(j.error))
 end)
 
+test("jump: a jump that went nowhere fails, a short landing says how far off (S039 jump_to done x3, moved 0.6 m)", function()
+    stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
+    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
+    osiv[key("GetAbility", P1, "Strength")] = 16
+    world[P1].pos = { 0, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 6, -8, 0 } }))
+    A.dispatch("CastSpell", { P1, "Projectile_Jump", "Projectile", "None", 0 })
+    world[P1].pos = { 0.5, 0, 0 }
+    A.dispatch("CastedSpell", { P1, "Projectile_Jump" })
+    tick(40)
+    eq(j.status, "failed", "went nowhere"); assert(j.error:find("went nowhere: moved 0.5m"), j.error)
+    -- landed 4 m short: done, with the distance
+    world[P1].pos = { 0, 0, 0 }
+    j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 8, 0, 0 } }))
+    A.dispatch("CastSpell", { P1, "Projectile_Jump", "Projectile", "None", 0 })
+    world[P1].pos = { 4, 0, 0 }
+    A.dispatch("CastedSpell", { P1, "Projectile_Jump" })
+    tick(40)
+    eq(j.status, "done", "short"); eq(j.result.landed_m_from_target, 4, "off")
+    -- still in the air at the settle: waits for the landing, then a clean done
+    world[P1].pos = { 0, 0, 0 }
+    j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 6, 0, 0 } }))
+    A.dispatch("CastSpell", { P1, "Projectile_Jump", "Projectile", "None", 0 })
+    A.dispatch("CastedSpell", { P1, "Projectile_Jump" })
+    for i = 1, 30 do world[P1].pos = { i * 0.2, 0, 0 }; tick() end -- 1.8 s, flying
+    eq(j.status, "running", "airborne")
+    tick(5)
+    eq(j.status, "done", "landed"); eq(j.result.landed_m_from_target, nil, "on target (6 m)")
+    world[P1].pos = { 0, 0, 0 }
+end)
+
 test("target not visible: names where the party last saw it (S026 09:02)", function()
     BG3AI.Visibility = {
         context = function() return { is_party = { [P1] = true } } end,
