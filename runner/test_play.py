@@ -226,6 +226,27 @@ class StuckDetection(unittest.TestCase):
         self.assertTrue(P.made_progress(a, P.progress_signature(xp, self.journal)))
         self.assertIsNone(P.made_progress(None, a))
 
+    def test_session_progress_counts_points_and_far_moves(self):
+        a = P.progress_signature(self.status, self.journal)
+        # S040: islands descent + Balthazar (32 pts), wipe, reload: same save signature, still progress
+        self.assertEqual(P.session_progress(a, dict(a), 32), (True, "32 story points"))
+        self.assertEqual(P.session_progress(a, dict(a), 2)[0], False)            # S039: 2 explore points
+        here = dict(self.status, party=[{"level": 6, "xp": 100, "pos": [0, 0, 0]}, {"level": 6, "xp": 90}])
+        near = dict(here, party=[{"level": 6, "xp": 100, "pos": [20, 0, 0]}, {"level": 6, "xp": 90}])
+        far = dict(here, party=[{"level": 6, "xp": 100, "pos": [0, -30, 70]}, {"level": 6, "xp": 90}])
+        s0 = P.progress_signature(here, self.journal)
+        self.assertEqual(s0["pos"], [0.0, 0.0, 0.0])
+        self.assertFalse(P.made_progress(s0, P.progress_signature(near, self.journal)))   # a step isn't progress
+        self.assertEqual(P.session_progress(s0, P.progress_signature(near, self.journal), 0)[0], False)
+        ok, why = P.session_progress(s0, P.progress_signature(far, self.journal), 0)
+        self.assertTrue(ok)
+        self.assertIn("moved 76 m", why)
+        ok, why = P.session_progress(a, dict(a, subregion="Reithwin Town"), 0)
+        self.assertEqual((ok, why), (True, "changed subregion"))
+        self.assertEqual(P.session_progress(None, a, 12), (True, "12 story points"))   # points alone tell it
+        self.assertEqual(P.session_progress(None, a, 3), (None, "unknown"))
+        self.assertEqual(P.session_progress(a, a, None)[0], False)
+
     def test_is_stuck(self):
         h = lambda p, kind="play": {"progress": p, "kind": kind}  # noqa: E731
         self.assertFalse(P.is_stuck([]))

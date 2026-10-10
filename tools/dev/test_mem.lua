@@ -125,5 +125,34 @@ test("the Tick checks at most every CHECK_MS", function()
     assert(n == 2, "checks: " .. n)
 end)
 
+test("client: Noesis counters on the minute line, a line when parking starts and when it drains", function()
+    local parked = 0
+    Ext.IsServer = function() return false end
+    Ext._Internal = { UiSerialize = function() return true, 0, 0, 68, 10, parked, 5000, 0 end }
+    dofile(LUA .. "/Shared/Mem.lua")
+    M.heap_mb = function() return heap end
+    reset()
+    M.check(clock, 40)                       -- first read: no transition line
+    parked = 2700
+    M.check(clock + 1000, 40)
+    assert(printed[#printed]:find("parking started: noesis gen 68 parked 2700 leaked 10", 1, true), printed[#printed])
+    local n = #printed
+    M.check(clock + 2000, 40)                -- still parked: nothing new until the minute
+    assert(#printed == n, "no repeat line")
+    M.check(clock + M.LOG_EVERY_MS, 40)
+    assert(printed[#printed]:find("client lua 40.0 MB (peak 40.0) | noesis gen 68 parked 2700", 1, true), printed[#printed])
+    parked = 0
+    M.check(clock + M.LOG_EVERY_MS + 1000, 40)
+    assert(printed[#printed]:find("parked drained: noesis gen 68 parked 0", 1, true), printed[#printed])
+    local m = RPC.ops["sys.mem"]({})
+    assert(m.context == "client" and m.noesis and m.noesis.parked == 0 and m.noesis.leaked == 10, "sys.mem noesis")
+    Ext._Internal = nil
+    assert(M.noesis() == nil, "no bg3le patch: nil")
+    Ext.IsServer = function() return true end
+    dofile(LUA .. "/Shared/Mem.lua")
+    M.heap_mb = function() return heap end
+    assert(M.noesis() == nil, "server: nil")
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

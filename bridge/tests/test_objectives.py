@@ -123,6 +123,23 @@ class ServerTools(unittest.TestCase):
         self.assertIn("OBJECTIVES", out)
         self.assertIn("OBJECTIVE o3 Rescue Shadowheart (another area)", out)
 
+    def test_objective_handle_as_a_target(self):
+        """S041 22:24 talk_to(npc="o1") for the Balthazar marker: 'unknown target'. o1 resolves by its label."""
+        balth = "99999999-2222-3333-4444-555555555555"
+        self.fake.markers = [{"label": "Balthazar", "quest": "Find the Nightsong", "pos": [-5.0, 0, 0], "dist": 5.0,
+                              "dir": "W", "here": True}] + MARKERS
+        server.H.get(balth, "Balthazar")
+        self.assertEqual(server._uuid("o1"), balth)
+        orig = self.fake.try_rpc
+        self.fake.try_rpc = lambda op, args=None, context="server": {} if op == "state.nearby" else orig(op, args, context)
+        with self.assertRaises(ValueError) as cm:
+            server._uuid("o2")  # "Escape the ship": nothing in view by that name
+        self.assertIn("o2 is the objective marker 'Escape the ship'", str(cm.exception))
+        self.assertIn("route(objective='o2', go=true)", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            server._uuid("o9")
+        self.assertIn("no objective o9 now", str(cm.exception))
+
     def test_walk_toward_direction(self):
         out = server.walk_toward(direction="w", wait=True)
         reach = [a for op, a in self.fake.calls if op == "nav.reach_toward"][0]

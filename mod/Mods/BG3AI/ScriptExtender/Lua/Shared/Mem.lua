@@ -12,6 +12,10 @@
 --   * M.crumb(label) prints a breadcrumb before risky work (bridge ops that pathfind, the warm-up), deduped, so a
 --     hang leaves the last thing the server started as the log's last [BG3AI] line;
 --   * sys.mem returns the numbers (the bridge's sampler writes them into Sxxx.metrics.jsonl each minute).
+--   * client only: the Noesis release counters (bg3le's UiSerialize: UI generation, leaked, parked, released late)
+--     ride on the minute line, and a line is logged at once when parking starts or drains to 0. Before, they were
+--     printed only per UI generation (S028: 2393 parked at the Running line, nothing after), so "parked returns
+--     to 0 within a minute of Running" (SESSION-WATCH) could not be judged.
 
 BG3AI = BG3AI or {}
 local M = BG3AI.Mem or {}
@@ -31,6 +35,22 @@ local function now_ms() return Ext.Utils.MonotonicTime() end
 local function fmt(x) return string.format("%.1f", x) end
 
 function M.heap_mb() return collectgarbage("count") / 1024 end
+
+-- {gen, leaked, parked, late} from bg3le's UiSerialize (no argument = read only: atomic loads, no UI lock), or nil
+-- on the server / an unpatched bg3le.
+function M.noesis()
+    if CONTEXT ~= "client" then return nil end
+    local f = Ext._Internal and Ext._Internal.UiSerialize
+    if type(f) ~= "function" then return nil end
+    local ok, _, _, _, gen, leaked, parked, late = pcall(f)
+    if not ok or type(parked) ~= "number" then return nil end
+    return { gen = gen, leaked = leaked, parked = parked, late = late }
+end
+
+local function noesisText(n)
+    return string.format("noesis gen %s parked %s leaked %s released_late %s", tostring(n.gen), tostring(n.parked),
+        tostring(n.leaked), tostring(n.late))
+end
 
 -- true while the heap is over the cap: callers skip work nobody asked for.
 function M.paused() return M.state.high == true end
@@ -76,10 +96,19 @@ function M.check(t, mb)
         st.high = false
         Ext.Utils.Print(string.format("[BG3AI] MEMGUARD: %s Lua heap back to %s MB: resumed", CONTEXT, fmt(mb)))
     end
+    local n = M.noesis()
+    if n then
+        local was = st.parked
+        st.parked = n.parked
+        if was ~= nil and (was > 0) ~= (n.parked > 0) then
+            Ext.Utils.Print("[BG3AI] mem: " .. (n.parked > 0 and "parking started: " or "parked drained: ")
+                .. noesisText(n))
+        end
+    end
     if t - st.logged >= M.LOG_EVERY_MS then
         st.logged = t
-        Ext.Utils.Print(string.format("[BG3AI] mem: %s lua %s MB (peak %s)%s", CONTEXT, fmt(mb), fmt(st.peak),
-            st.high and " PAUSED" or ""))
+        Ext.Utils.Print(string.format("[BG3AI] mem: %s lua %s MB (peak %s)%s%s", CONTEXT, fmt(mb), fmt(st.peak),
+            st.high and " PAUSED" or "", n and (" | " .. noesisText(n)) or ""))
     end
     return st
 end
@@ -100,7 +129,7 @@ if BG3AI.RPC then
         local st = M.state
         return { context = CONTEXT, lua_mb = math.floor(M.heap_mb() * 10 + 0.5) / 10,
             peak_mb = math.floor(st.peak * 10 + 0.5) / 10, high = st.high or nil, trips = st.trips,
-            cap_mb = M.CAP_MB }
+            cap_mb = M.CAP_MB, noesis = M.noesis() }
     end)
 end
 

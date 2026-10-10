@@ -901,6 +901,21 @@ class CombatTurn(Base):
                             server._BATCHABLE)
         self.assertEqual([a.then_move for a in p.slots["action"]], [False, True, True, False])
 
+    def test_point_target_becomes_xyz(self):
+        # S034 Balthazar: Fireball {"target": "-828,8.5,-783"} → "unknown target" ×N, the agent's lesson said
+        # combat_turn can't aim point spells
+        p = turn.parse_plan(json.dumps({"action": [{"ability": "Fireball", "target": "-828,8.5,-783"},
+                                                   {"ability": "Fireball", "target": [1, 2, 3]},
+                                                   {"ability": "Fireball", "pos": [4, 5, 6]},
+                                                   {"ability": "Fireball", "x,y,z": "7,8,9"}]}),
+                            server._BATCHABLE)
+        args = [a.step.args for a in p.slots["action"]]
+        self.assertEqual((args[0].get("x"), args[0].get("y"), args[0].get("z")), (-828.0, 8.5, -783.0))
+        self.assertNotIn("target", args[0])
+        self.assertEqual((args[1]["x"], args[2]["z"], args[3]["y"]), (1.0, 6.0, 8.0))
+        server.combat_turn(self.plan(action={"ability": "Shout_Dodge", "target": "1,0,1"}))
+        self.assertEqual([a.get("pos") for _, a in self.g.ops("act.cast")][:1], [[1.0, 0.0, 1.0]])
+
     def test_reaction_prompt_answered_by_policy(self):
         self.g.dur["act.cast"] = 0.4
 
@@ -938,6 +953,25 @@ class CombatTurn(Base):
     def test_reactions_prep(self):
         server.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
         self.assertEqual(self.g.ops("ui.reactions")[0][1], {"char": P1, "set": {"Divine Smite": "always"}})
+
+    # S041 22:41:22: the server said P1 is active (host fallback) but the client's ClientControl was elsewhere.
+    def test_reactions_prep_selects_and_retries_on_client_refusal(self):
+        from bg3ai.game import GameError
+        orig, refused = self.g.rpc, []
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "ui.reactions" and not refused:
+                refused.append(1)
+                self.g.calls.append((op, args))
+                raise GameError('[string "BG3AI/Client/UISettings.lua"]:192: char is not the selected character; '
+                                'select it first (act.select)')
+            return orig(op, args, context, timeout)
+        self.g.rpc = rpc
+        out = server.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
+        self.assertEqual(len(self.g.ops("ui.reactions")), 2)
+        self.assertIn(("act.select", {"char": P1}), [(o, a) for o, a in self.g.calls if o == "act.select"])
+        self.assertIn("reactions set: Divine Smite=always", out)
+        self.assertNotIn("reactions: FAILED", out)
 
     def test_next_party_member_already_up_gets_actions(self):
         self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
@@ -1058,6 +1092,21 @@ class LootArea(Base):
         out = server.loot_area()
         self.assertIn("STOPPED: combat started; not reached: ", out)
         self.assertEqual(self.corpses, [])
+
+    def test_an_open_loot_window_is_taken_before_stopping(self):
+        # S042 22:51:18: a damage stop right after opening a corpse left its loot window unlooted
+        def opened(op, a):
+            if op == "act.interact":
+                self.g.watch["party"] = [{"uuid": P1, "hp": 50, "max_hp": 104, "pos": [0, 0, 0]}]
+        self.g.watch["party"] = [{"uuid": P1, "hp": 104, "max_hp": 104, "pos": [0, 0, 0]}]
+        self.g.dur["act.interact"] = 0.0   # opened at once; the damage shows at the check after the step
+        self.g.on_start = opened
+        out = server.loot_area()
+        self.assertIn("STOPPED: ", out)
+        self.assertIn("took damage outside combat", out)
+        self.assertEqual(self.g.ops("ui.loot")[:1], [("ui.loot", {"all": True})], (self.g.ops("ui.loot"), out))  # Take All ran
+        self.assertIn(CHEST, server._looted, out)
+        self.assertEqual(self.corpses, [])                       # the next target was not started
 
     def test_refused_in_combat(self):
         self.g.watch["combat"] = True

@@ -543,7 +543,12 @@ function G.within(char, target, maxd, what)
     local a, t = G.pos(char), G.pos(target)
     if not a or not t then G.refuse("cannot locate " .. (what or "target")) end
     local d = U.dist(a, t)
-    if d > maxd then G.refuse(string.format("%s is too far away (%.0fm from this character, max %.0fm)", what or "target", d, maxd)) end
+    if d > maxd then
+        -- S028 15:53: "40m from this character, max 40m" read as a contradiction; one decimal when it rounds to the max
+        local fmt = (math.floor(d + 0.5) <= maxd) and "%s is too far away (%.1fm from this character, max %.0fm)"
+            or "%s is too far away (%.0fm from this character, max %.0fm)"
+        G.refuse(string.format(fmt, what or "target", d, maxd))
+    end
     return d
 end
 
@@ -888,7 +893,15 @@ function G.known_spell(char, spell)
             if found then spell = parent end
         end
     end
-    if not found then G.refuse("the character does not have that action") end
+    if not found then
+        -- S031 17:04: Gale's Projectile_MainHandAttack "does not have that action": a ranged weapon attack exists
+        -- only with a ranged weapon equipped (a melee weapon attack only with a melee one): say which is missing
+        if spell == "Projectile_MainHandAttack" or spell == "Projectile_OffhandAttack" then
+            G.refuse("the character does not have that action: no ranged weapon equipped (Ranged Attack needs a bow"
+                .. " or crossbow in the ranged slot); use a cantrip, Throw, or the melee attack")
+        end
+        G.refuse("the character does not have that action")
+    end
 
     -- Prepared check: the SpellBookPrepares component lists what is prepared.
     -- Entries that are always prepared (cantrips, class actions, item spells)
@@ -1045,12 +1058,15 @@ function G.jump_max(char)
     return m * mult
 end
 
--- Jumping down may carry further: Projectile_Jump has the HasHighGroundRangeExtension flag, and the game's Data.txt
--- has HighGroundThreshold 2.3 / HighGroundRangeMultiplier 1. OFF (mult 0) until verified live: S039 21:43 the game's
--- own jump cursor said "Target is too far!" over the Shadowfell's islands 20 m below / 14 m out, and an Osiris jump
--- must never reach what the player's cursor refuses (fairness). Turn on only after comparing with the cursor.
+-- Jumping down carries further: Projectile_Jump has the HasHighGroundRangeExtension flag, and the game's Data.txt
+-- has HighGroundThreshold 2.3 / HighGroundRangeMultiplier 1, so the reach grows by the drop. PROVED S040 (22:02-22:10,
+-- the game's own jump, Z + click): (-443.7,-6.9,-1416.5) -> ~(-470,-30,-1405) = 28 m out, 23 m down, Str 17 (flat
+-- 8.5); (-489.2,-38.6,-1383.7) -> ~(-507,-56.5,-1385) = 18 m out, 18 m down. Our 8.5 m cap refused both ("too far to
+-- jump (18.1 m, this character can jump 8.5 m)"), and the agent hand-clicked 33 jumps. (S039's "Target is too far!"
+-- cursor reading over the same gap was a hover at the void.) jump_floor_ok still refuses void/air landings.
+G.JUMP_UP_LIMIT_M = 6.0 -- generous (N.JUMP_UP_MAX_M 2.5 is the planner's UNVERIFIED climb); only absurd climbs refused
 G.HIGH_GROUND_THRESHOLD_M = 2.3
-G.HIGH_GROUND_JUMP_MULT = 0
+G.HIGH_GROUND_JUMP_MULT = 1
 function G.jump_reach(char, from, pos)
     local m = G.jump_max(char)
     if from and pos then
@@ -1216,6 +1232,12 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         if spell == G.JUMP_SPELL and p then
             local dx, dz = pos[1] - p[1], pos[3] - p[3]
             local d = math.sqrt(dx * dx + dz * dz)
+            -- a jump climbs a little, never 20 m (S039 21:53: jump_to (-414,20,-1447), 20 m above the jumper, froze
+            -- the engine; the void check catches that one, this catches a floor high above too)
+            if pos[2] - p[2] > G.JUMP_UP_LIMIT_M then
+                G.refuse(string.format("the landing is %.1f m above you: a jump climbs at most ~%.0f m; find a ladder,"
+                    .. " stairs or a ramp (route)", pos[2] - p[2], G.JUMP_UP_LIMIT_M))
+            end
             local maxd, flat = G.jump_reach(char, p, pos)
             if d > maxd + G.JUMP_SLACK_M then
                 G.refuse(maxd > flat + 0.05

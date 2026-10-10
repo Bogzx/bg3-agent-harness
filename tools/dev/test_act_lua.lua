@@ -172,6 +172,13 @@ local function arrive(j, to)
     A.dispatch("EntityEvent", { P1, j.walk.ev })
 end
 
+test("within: a distance that rounds to the max shows one decimal (S028 15:53 '40m ..., max 40m')", function()
+    world[NPC].pos = { 40.3, 0, 0 }
+    refused(function() G.within(P1, NPC, 40, "target") end, "(40.3m from this character, max 40m)")
+    world[NPC].pos = { 47, 0, 0 }
+    refused(function() G.within(P1, NPC, 40, "target") end, "(47m from this character, max 40m)")
+end)
+
 -- ---- G.approach_point --------------------------------------------------------
 
 test("approach: already within reach -> here", function()
@@ -816,6 +823,42 @@ test("jump: capped at half the Strength score (UNVERIFIED formula), not TargetRa
     eq(j.status, "running", "enhance leap " .. tostring(j.error))
 end)
 
+test("jump: a drop extends the reach (high ground, S040 the game's own jumps 18-28 m out over 18-23 m drops)", function()
+    stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
+    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
+    osiv[key("GetAbility", P1, "Strength")] = 17
+    world[P1].pos = { 0, 0, 0 }
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { 0.0, -18.0 } end
+    local ok, err = pcall(function()
+        local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 18, -18, 0 } }))
+        eq(j.status, "running", "18 m out, 18 m down " .. tostring(j.error))
+        j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 18, 0, 0 } }))
+        eq(j.status, "failed", "18 m flat"); assert(j.error:find("too far to jump"), j.error)
+        j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 30, -18, 0 } }))
+        eq(j.status, "failed", "30 m out"); assert(j.error:find("18.0 m down"), j.error)
+    end)
+    Ext.Level.GetHeightsAt = heights
+    if not ok then error(err, 0) end
+end)
+
+test("jump: a landing far above the jumper is refused (S039 21:53 jump_to 20 m up froze the game)", function()
+    stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
+    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
+    osiv[key("GetAbility", P1, "Strength")] = 17
+    world[P1].pos = { 0, 0, 0 }
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { 0.0, 10.0, 2.0 } end
+    local ok, err = pcall(function()
+        local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 3, 10, 0 }, force = true }))
+        eq(j.status, "failed", "10 m up"); assert(j.error:find("above you"), j.error)
+        j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 3, 2, 0 } }))
+        eq(j.status, "running", "2 m up ok " .. tostring(j.error))
+    end)
+    Ext.Level.GetHeightsAt = heights
+    if not ok then error(err, 0) end
+end)
+
 test("jump: a jump that went nowhere fails, a short landing says how far off (S039 jump_to done x3, moved 0.6 m)", function()
     stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
     world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
@@ -847,6 +890,51 @@ test("jump: a jump that went nowhere fails, a short landing says how far off (S0
     eq(j.status, "running", "airborne")
     tick(5)
     eq(j.status, "done", "landed"); eq(j.result.landed_m_from_target, nil, "on target (6 m)")
+    world[P1].pos = { 0, 0, 0 }
+end)
+
+test("known_spell: a missing Ranged Attack names the missing ranged weapon (S031 17:04 Gale)", function()
+    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Target_MainHandAttack" } } } }
+    refused(function() G.known_spell(P1, "Projectile_MainHandAttack") end, "no ranged weapon equipped")
+    refused(function() G.known_spell(P1, "Target_Fireball_X") end, "does not have that action")
+end)
+
+test("cast: the engine's CastSpellFailed says why (S024-S041 'the action failed' x12)", function()
+    osiv[key("HasLineOfSight", P1, GOB)] = 1
+    eq(A.cast_failed_why(P1, nil), "the game refused the cast (no reason given)", "no target")
+    assert(A.cast_failed_why(P1, GOB):find("path is blocked", 1, true))
+    osiv[key("HasLineOfSight", P1, GOB)] = 0
+    assert(A.cast_failed_why(P1, GOB):find("no line of sight to the target now", 1, true))
+    osiv[key("IsDead", GOB)] = 1
+    assert(A.cast_failed_why(P1, GOB):find("already dead", 1, true))
+    osiv[key("IsDead", GOB)] = 0
+end)
+
+test("jump: a landing far below the aim is a FALL; a death says DIED, not done (S038 20:44:25)", function()
+    stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
+    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
+    osiv[key("GetAbility", P1, "Strength")] = 16
+    world[P1].pos = { 0, 0, 0 }
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { 0.0, -1.0 } end
+    local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 6, 0, 0 } }))
+    A.dispatch("CastSpell", { P1, "Projectile_Jump", "Projectile", "None", 0 })
+    world[P1].pos = { 6, -47, 0 }
+    A.dispatch("CastedSpell", { P1, "Projectile_Jump" })
+    osiv[key("IsDead", P1)] = 1
+    tick(60)
+    eq(j.status, "failed", "dead"); assert(j.error:find("FELL 47.0m below the landing", 1, true), j.error)
+    assert(j.error:find("DIED", 1, true), j.error)
+    -- alive after a fall: done, with fell_m
+    osiv[key("IsDead", P1)] = 0
+    world[P1].pos = { 0, 0, 0 }
+    j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 6, 0, 0 } }))
+    A.dispatch("CastSpell", { P1, "Projectile_Jump", "Projectile", "None", 0 })
+    world[P1].pos = { 6, -6, 0 }
+    A.dispatch("CastedSpell", { P1, "Projectile_Jump" })
+    tick(60)
+    Ext.Level.GetHeightsAt = heights
+    eq(j.status, "done", "alive " .. tostring(j.error)); eq(j.result.fell_m, 6, "fell_m")
     world[P1].pos = { 0, 0, 0 }
 end)
 
@@ -959,6 +1047,21 @@ test("act.watch: party bars, mode, visible characters with hostility", function(
     eq(#w.seen, 1, "seen"); eq(w.seen[1].uuid, GOB, "goblin"); eq(w.seen[1].hostile, true, "hostile")
     eq(scans, 1, "one shared radius query")
     world.FAR = nil
+end)
+
+test("act.watch: Chasm underfoot is no surface interrupt (S040: the queue cancelled two jumps over a gap)", function()
+    local savedNav = BG3AI.Nav
+    local under = "Chasm"
+    BG3AI.Nav = setmetatable({ surfaceAt = function() return under end }, { __index = savedNav })
+    local ok, err = pcall(function()
+        local w = RPC.ops["act.watch"]({})
+        eq(w.party[1].surface, nil, "Chasm not reported")
+        under = "Fire"
+        w = RPC.ops["act.watch"]({})
+        eq(w.party[1].surface, "Fire", "fire still reported")
+    end)
+    BG3AI.Nav = savedNav
+    if not ok then error(err, 0) end
 end)
 
 test("act.note: only queue_* kinds reach the event stream", function()

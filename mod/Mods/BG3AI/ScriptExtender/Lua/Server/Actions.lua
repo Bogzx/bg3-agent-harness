@@ -50,7 +50,30 @@ A.PROJECTILE_SETTLE_MS = 1500 -- cast: a projectile's hits can land this long af
 A.JUMP_OFF_M = 3.0
 A.JUMP_NOWHERE_M = 1.0 -- ... and one that moved less than this went nowhere: failed
 A.JUMP_AIRBORNE_MAX_MS = 3000 -- wait up to this long after the settle for a still-moving jumper to land
+-- S038 20:44:25: a forced jump into the Shadowfell chasm aimed at y=-12 landed at y=-59.4 and Claude died of the
+-- fall, yet jump_to said "done". Landing this far below the aimed height is a fall: report it (and a death).
+A.JUMP_FALL_M = 4.0
+A.JUMP_FALL_CHECK_MS = 600 -- after a fall, wait this long for the fall damage before reading dead/downed
 A.USE_REACH = 1.8    -- interact/pickup and the click ops: Use/Pickup/click from here
+
+-- The engine's CastSpellFailed carries no reason. S024-S041: ~12 "the action failed — purged_tasks=1" in
+-- combat_turn (Toll the Dead, Ranged Attack extra attacks, Spiritual Weapon attacks), each read as a mystery.
+-- Say what a player would see at that moment: the target gone, no line of sight, or the projectile's blocked path.
+function A.cast_failed_why(char, target)
+    local why = "the game refused the cast (no reason given)"
+    if not target or G.same(char, target) then return why end
+    local ok, txt = pcall(function()
+        if G.is_dead(target) then return "the target was already dead when it fired" end
+        if not G.visible(target) then return "the target is out of sight now (hidden, invisible or behind cover)" end
+        if not G.b(G.q("HasLineOfSight", char, target)) then
+            return "no line of sight to the target now (it or something moved into the way)"
+        end
+        return nil
+    end)
+    if ok and txt then return why .. ": " .. txt end
+    return why .. ": usually the shot's path is blocked (cover, a ledge, a creature in the way) though the target"
+        .. " is in sight; try another target or step to a clearer spot"
+end
 
 ------------------------------------------------------------------------
 -- Osiris listeners: one registration per event per Lua state, dispatching to
@@ -1221,7 +1244,7 @@ reg("cast", function(args)
                 end
             end,
             CastSpellFailed = function(job, a)
-                if matches(a) then RPC.finish_job(job, "failed", nil, "the action failed") end
+                if matches(a) then RPC.finish_job(job, "failed", nil, A.cast_failed_why(char, targets[1])) end
             end,
             -- AttackedBy(defender, attackerOwner, attacker, damageType, amount, cause, storyActionId)
             AttackedBy = function(job, a)
@@ -1291,10 +1314,26 @@ reg("cast", function(args)
                         elseif off > A.JUMP_OFF_M then
                             landing = U.round(off, 1)
                         end
+                        local drop = (pos[2] or p[2]) - p[2]
+                        if drop > A.JUMP_FALL_M then
+                            job.fell_ms = job.fell_ms or now
+                            if now - job.fell_ms < A.JUMP_FALL_CHECK_MS then return end -- the fall damage lands
+                            local dead, downed = G.is_dead(char), G.is_downed(char)
+                            if dead or downed then
+                                RPC.finish_job(job, "failed", { cast = spell, fell_m = U.round(drop, 1) },
+                                    string.format("FELL %.1fm below the landing (to y=%.1f) and %s: the landing had no"
+                                        .. " floor at that height (a chasm or a drop). %s Never jump there again; walk"
+                                        .. " (route / get_layout) or aim at solid floor at your own height",
+                                        drop, p[2], dead and "DIED" or "is DOWNED",
+                                        dead and "Load a save or revive them." or "Help them up."))
+                                return
+                            end
+                            job.fell_m = U.round(drop, 1)
+                        end
                     end
                 end
                 local res = { cast = spell, extra_attack = check.extra_attack, walked_into_range = job.walked,
-                    upcast_ignored = upcast_ignored, landed_m_from_target = landing }
+                    upcast_ignored = upcast_ignored, landed_m_from_target = landing, fell_m = job.fell_m }
                 if #job.hits > 0 then
                     res.damage = job.hits
                     local total = 0
@@ -2014,7 +2053,9 @@ RPC.register("act.watch", function(args)
         local N = BG3AI.Nav
         if row.pos and type(N) == "table" and type(N.surfaceAt) == "function" then
             local ok, sf = pcall(N.surfaceAt, G.pos(u))
-            if ok and sf then row.surface = sf end
+            -- not Chasm: a jumper over a gap reads Chasm in the air, and the queue cancelled the jump ("STOPPED: e4
+            -- Claude is standing in Chasm", S040 22:04:40 / 22:06:25: two Shadowfell jumps; the same jump_to alone landed)
+            if ok and sf and sf ~= "Chasm" then row.surface = sf end
         end
         if G.in_combat(u) then out.combat = true end
         if G.in_dialogue(u) then out.dialogue = true end

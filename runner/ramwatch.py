@@ -47,6 +47,11 @@ FAST_GROWTH_MB = 300
 # 9.5 GB: above the 6.3 GB normal peak and just under launch_game.sh's MemoryMax=10G, so a runaway dies here, with
 # the bg3le crumbs and last tool calls logged, rather than at the cgroup cap or the global OOM killer.
 KILL_GAME_MB = 9500
+# … or above KILL_ANON_SWAP_MB of anonymous memory incl. what is swapped out (RssAnon + VmSwap of all bg3 processes).
+# S039 21:53: RSS 4.8 → 7.9 GB in 18 s, then the kernel OOM-killed bg3 at the scope's 10G cap: the scope swapped the
+# runaway's pages out (MemorySwapMax=2G), so the RSS never reached 9.5 GB. Normal play: anon ~5.4 GB + swap ~0.2 GB;
+# the scope's memory.current (~9.2 GB) is mostly reclaimable file cache, so it is no kill signal.
+KILL_ANON_SWAP_MB = 9000
 KILL_AVAIL_MB = 700            # … or when RAM available drops below this and no test run is left to kill
 KILLS = RUNTIME / "ram_kills.jsonl"   # the runner's OOM crash-loop guard counts these like kernel OOM kills
 SPIKE_MB = 2048                # RSS growth within SPIKE_WINDOW_S that gets logged with the last tool calls
@@ -108,6 +113,18 @@ def rss_mb(pid: int) -> int:
     except OSError:
         pass
     return 0
+
+
+def anon_swap_mb(pid: int) -> int:
+    """Anonymous memory incl. its swapped-out part (RssAnon + VmSwap): what the game really holds."""
+    total = 0
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+            if line.startswith(("RssAnon:", "VmSwap:")):
+                total += int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return total // 1024
 
 
 def get_adj(pid: int) -> int | None:
@@ -186,6 +203,7 @@ class RamWatch:
         self.samples: collections.deque[tuple[float, int]] = collections.deque()   # (t, game RSS MB)
         self.spike_at = 0.0
         self.actions, self.spikes, self.kills, self.logs = ACTIONS, SPIKES, KILLS, RUNTIME / "logs"
+        self.last_anon_swap = 0
         self.fast = False            # the RSS grew fast at the last sample: sample every FAST_SAMPLE_S
         self.tests_killed_at = 0.0
 
@@ -203,7 +221,8 @@ class RamWatch:
         avail = mem.get("MemAvailable", 0)
         games = game_pids(procs)
         out = {"avail_mb": avail, "swap_free_mb": mem.get("SwapFree", 0),
-               "game_rss_mb": sum(rss_mb(p) for p in games), "game_adj": [get_adj(p) for p in games],
+               "game_rss_mb": sum(rss_mb(p) for p in games),
+               "game_anon_swap_mb": sum(anon_swap_mb(p) for p in games), "game_adj": [get_adj(p) for p in games],
                "action": ""}
         tests = test_pids(procs, self.exclude) if avail < self.warn_mb else []
         if avail < self.kill_mb and tests:
@@ -223,6 +242,7 @@ class RamWatch:
                          "run fewer tests in parallel")
         self.low = avail < self.warn_mb
         self._write(f"avail={avail}MB swap_free={out['swap_free_mb']}MB game_rss={out['game_rss_mb']}MB "
+                    f"anon+swap={out['game_anon_swap_mb']}MB "
                     f"game_adj={out['game_adj']} {out['action']}".rstrip())
         return out
 
@@ -234,26 +254,30 @@ class RamWatch:
             pass
 
     def sample(self, now: float | None = None, rss: int | None = None, avail: int | None = None,
-               pids: list[int] | None = None) -> dict | None:
-        """One game RSS sample. Kills bg3 (SIGKILL) above KILL_GAME_MB RSS, or below KILL_AVAIL_MB available once no
-        test run is left to kill; logs growth > SPIKE_MB within SPIKE_WINDOW_S (once per window). Returns the kill
+               pids: list[int] | None = None, anon_swap: int | None = None) -> dict | None:
+        """One game RSS sample. Kills bg3 (SIGKILL) above KILL_GAME_MB RSS or KILL_ANON_SWAP_MB anon+swap, or below
+        KILL_AVAIL_MB available once no test run is left to kill; logs growth > SPIKE_MB within SPIKE_WINDOW_S (once per window). Returns the kill
         record ({"kind": "kill", …}), the spike record ({"kind": "spike", …}) or None."""
         now = time.time() if now is None else now
         if pids is None:
             pids = game_pids()
         if rss is None:
             rss = sum(rss_mb(p) for p in pids)
+        if anon_swap is None:
+            anon_swap = sum(anon_swap_mb(p) for p in pids)
         q = self.samples
         if rss <= 0:          # no game (or it just died): a new game starts a new baseline
             q.clear()
             self.fast = False
+            self.last_anon_swap = 0
             return None
         if avail is None:
             try:
                 avail = meminfo().get("MemAvailable", 0)
             except OSError:
                 avail = 1 << 30
-        self.fast = bool(q) and rss - q[-1][1] > FAST_GROWTH_MB
+        self.fast = bool(q) and (rss - q[-1][1] > FAST_GROWTH_MB or anon_swap - self.last_anon_swap > FAST_GROWTH_MB)
+        self.last_anon_swap = anon_swap
         q.append((now, rss))
         while q and q[0][0] < now - SPIKE_WINDOW_S:
             q.popleft()
@@ -272,6 +296,8 @@ class RamWatch:
                     self._write(f"only {avail} MB available (game {rss} MB): SIGTERM to test runs {tests[:8]}")
                     return None
             return self._kill_game(now, pids, rss, avail, low, t0)
+        if anon_swap >= KILL_ANON_SWAP_MB:
+            return self._kill_game(now, pids, rss, avail, low, t0, anon_swap)
         if rss - low <= SPIKE_MB or now - self.spike_at < SPIKE_WINDOW_S:
             return None
         self.spike_at = now
@@ -285,8 +311,11 @@ class RamWatch:
         self._append(self.spikes, rec)
         return rec
 
-    def _kill_game(self, now: float, pids: list[int], rss: int, avail: int, low: int, t0: float) -> dict:
+    def _kill_game(self, now: float, pids: list[int], rss: int, avail: int, low: int, t0: float,
+                   anon_swap: int | None = None) -> dict:
         why = (f"game RSS {rss} MB >= {KILL_GAME_MB} MB" if rss >= KILL_GAME_MB
+               else f"game anon+swap {anon_swap} MB >= {KILL_ANON_SWAP_MB} MB (RSS {rss} MB; the rest is swapped out)"
+               if anon_swap is not None
                else f"only {avail} MB RAM available (< {KILL_AVAIL_MB} MB, game {rss} MB)")
         for pid in pids:
             try:
@@ -294,7 +323,7 @@ class RamWatch:
             except OSError:
                 pass
         rec = {"kind": "kill", "t": now, "why": why, "rss_mb": rss, "to_mb": rss, "avail_mb": avail, "from_mb": low,
-               "seconds": round(now - t0), "pids": pids, "tools": last_tools(now, self.actions),
+               "seconds": round(now - t0), "anon_swap_mb": anon_swap, "pids": pids, "tools": last_tools(now, self.actions),
                "bg3le": bg3le_crumbs(self.logs)}
         msg = (f"KILLED bg3 {pids} (SIGKILL): {why}; RSS {low} → {rss} MB in {rec['seconds']} s. Last tool calls: "
                + (" | ".join(rec["tools"]) or "none in the last 2 min")

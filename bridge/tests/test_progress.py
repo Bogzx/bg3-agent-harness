@@ -65,6 +65,34 @@ class Diff(unittest.TestCase):
         _, evs = P.diff(seen, later)  # and redo it
         self.assertEqual(evs, [])
 
+    def test_new_step_named_by_text_not_journal_order(self):
+        # S036-S042: The Chosen of Shar's steps come in the quest's order, so the last one ("Soft-Step Trial")
+        # named every new Shar step; a step that unlocks before it in that order is the new one.
+        seen, _ = P.diff(None, world())
+        w = world()
+        w["journal"][0]["steps"] = ["Find the helm.", "Soft-Step Trial done."]
+        seen, evs = P.diff(seen, w)
+        self.assertEqual([e["what"] for e in evs if e["kind"] == "quest_step"], ["Escape the Nautiloid: Soft-Step Trial done."])
+        w["journal"][0]["steps"] = ["Find the helm.", "Self-Same Trial done.", "Soft-Step Trial done."]
+        seen, evs = P.diff(seen, w)
+        self.assertEqual([e["what"] for e in evs], ["Escape the Nautiloid: Self-Same Trial done."])
+        # a reload loses a step while another one unlocks: the other one still scores (a count would miss it)
+        w["journal"][0]["steps"] = ["Find the helm.", "Faith-Leap Trial done.", "Soft-Step Trial done."]
+        seen, evs = P.diff(seen, w)
+        self.assertEqual([e["what"] for e in evs], ["Escape the Nautiloid: Faith-Leap Trial done."])
+
+    def test_state_without_step_texts_keeps_counting_then_switches_to_texts(self):
+        seen, _ = P.diff(None, world())
+        for q in seen["quests"].values():
+            del q["texts"]                     # a playthrough state from before texts were kept
+        w = world()
+        w["journal"][0]["steps"] = ["Find the helm.", "Reach the helm."]
+        seen, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs), ["quest_step"])
+        self.assertEqual(seen["quests"]["Escape the Nautiloid"]["texts"], ["Find the helm.", "Reach the helm."])
+        _, evs = P.diff(seen, w)
+        self.assertEqual(evs, [])
+
     def test_missing_parts_do_not_score_or_clear(self):
         seen, _ = P.diff(None, world())
         w = world()
@@ -289,9 +317,12 @@ class TalkAndKill(unittest.TestCase):
         me = {"kind": "died", "data": {"uuid": "u-claude", "name": "Claude"}}
         seen, evs = P.diff(seen, self.with_events([dlg, bark, died, me]))
         self.assertEqual([(e["kind"], e["what"], e["points"]) for e in evs],
-                         [("talk", "Dror Ragzlin", 2), ("kill", "Dror Ragzlin", 1)])
+                         [("talk", "Dror Ragzlin", 2), ("story_kill", "Dror Ragzlin", 5)])
         _, evs = P.diff(seen, self.with_events([dlg, died]))  # reloaded and did it again
         self.assertEqual(evs, [])
+        mook = {"kind": "died", "data": {"uuid": "u-skel", "name": "Apostate Defender"}}
+        _, evs = P.diff(seen, self.with_events([mook]))         # never talked to: a plain kill
+        self.assertEqual([(e["kind"], e["points"]) for e in evs], [("kill", 1)])
 
     def test_quest_items_and_puzzle_doors_once_each(self):
         """S036: all 4 Umbral Gems (the Gauntlet's trials) scored 0; 15.6 min 'stuck' crossing the Faith-Leap."""

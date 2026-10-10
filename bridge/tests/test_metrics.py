@@ -398,6 +398,24 @@ class Recording(unittest.TestCase):
         self.assertIsNone(ms.tick())
         self.assertEqual(len(out), 2)
 
+    def test_mem_sampler_noesis_counters(self):
+        """BACKLOG [se] Noesis parked: the client's sys.mem carries bg3le's counters; the mem record keeps them."""
+        class G:
+            def rpc(self, op, args=None, context="server", timeout=3.0):
+                if context == "client":
+                    return {"context": "client", "lua_mb": 2.1, "noesis": {"gen": 68, "parked": 2707, "leaked": 10,
+                                                                          "late": 5000}}
+                return {"context": "server", "lua_mb": 3.5}
+
+        rec = M.Recorder(None)
+        rec.write = lambda r: None
+        clock = [0.0]
+        ms = M.MemSampler(rec, G(), rss=lambda: 5000, now=lambda: clock[0])
+        clock[0] += 61
+        r = ms.tick()
+        self.assertEqual((r["noesis_parked"], r["noesis_leaked"], r["noesis_gen"], r["lua_client_mb"]),
+                         (2707, 10, 68, 2.1))
+
     def test_rss_from_proc(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:

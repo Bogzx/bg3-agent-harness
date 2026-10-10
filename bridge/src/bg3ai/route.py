@@ -169,6 +169,8 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
             out.append(f"  crosses {macros.exposure_text(ex)} at {_m(ex.get('at_m'))} @{pos(ex.get('pos'))}")
     elif res.get("reachable") is False:
         line = "NO WALKABLE PATH" + (" from here: the engine finds no way there from this side" if res.get("far") else "")
+        if res.get("no_path_reason"):  # the goal itself: no ground there (the void) / a Chasm (S039 21:44)
+            line += f": {res['no_path_reason']}"
         if res.get("straight_hazard"):
             sh = res["straight_hazard"]
             line += f" (the straight line crosses {macros.exposure_text(sh)} at {_m(sh.get('at_m'))})"
@@ -201,6 +203,10 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
             if isinstance(reach, (int, float)) and isinstance(lo.get("gap_m"), (int, float)):
                 line += (f"; jumping down from there reaches ~{_m(reach)}: move_to the edge, then jump_to {pos(lo['to'])}"
                          if lo["gap_m"] <= reach else f"; beyond a jump from there (~{_m(reach)})")
+                # the drop extends the reach (S040), but a long fall hurts unless the jumper has Feather Fall
+                if lo["gap_m"] <= reach and isinstance(lo.get("drop_m"), (int, float)) and lo["drop_m"] >= 6 \
+                        and not res.get("feather_fall"):
+                    line += f" (a {_m(lo['drop_m'])} fall: fall damage unless the jumper has Feather Fall)"
             out.append(line)
         if res.get("ways"):  # the open directions from here, as get_frontier says them
             out.append(render.render_ways(res["ways"]))

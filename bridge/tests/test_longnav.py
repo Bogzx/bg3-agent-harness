@@ -144,6 +144,9 @@ class RouteJump(unittest.TestCase):
         res["lower"][0]["reach_m"] = 30.0
         out = route.render_route(res, render.Handles(), "objective Balthazar")
         self.assertIn("jumping down from there reaches ~30m: move_to the edge, then jump_to (-455.5,-27.8,-1408.8)", out)
+        self.assertIn("(a 21.1m fall: fall damage unless the jumper has Feather Fall)", out)
+        res["feather_fall"] = True  # FEATHER_FALL on the jumper: no fall damage, no warning
+        self.assertNotIn("fall damage", route.render_route(res, render.Handles(), "objective Balthazar"))
         self.assertIn("NEXT: move_to x,y,z = (-443.5,-6.7,-1416.3) (the edge), then jump_to x,y,z = (-455.5,-27.8,-1408.8)",
                       out)
 
@@ -153,6 +156,14 @@ class RouteJump(unittest.TestCase):
                "far": True, "unknown_reason": "no floor under the character (mid-jump or falling)"}
         out = route.render_route(res, render.Handles(), "it")
         self.assertIn("path unknown: no floor under the character (mid-jump or falling); step onto plain ground", out)
+
+    def test_no_path_to_the_void_says_so(self):
+        """S039 21:44 route (-516,-60,-1397): a goal with no ground at all is 'no ground there', not 'unknown'."""
+        res = {"from": [-413, 1.1, -1441], "goal": [-516, -60, -1397], "straight_m": 127.3, "dir": "NW", "dy": -61.1,
+               "far": True, "reachable": False, "no_path_reason": "no walkable ground at the target"}
+        out = route.render_route(res, render.Handles(), "it")
+        self.assertIn("NO WALKABLE PATH from here: the engine finds no way there from this side: no walkable ground at "
+                      "the target", out)
 
 
 class TravelTrips(Base):

@@ -126,6 +126,13 @@ class JumpLanding(Base):
         self.assertIn("landing (-672,-1,-859) is in Chasm: the floor there is at y -3.2, jumping to (-672,-3.2,-859)", out)
         self.assertEqual(self.g.ops("act.cast")[0][1]["pos"], [-672.0, -3.2, -859.0])
 
+    def test_chasm_refusal_names_the_full_reach(self):
+        # S040 22:10:24: "no clear spot within 3m of it is in reach (4.5m)" for a 6.9 m jump the agent then made by hand
+        self.g.landing = {"safe": False, "surface": "Chasm", "dist_m": 6.9, "reliable_m": 4.5, "reach_m": 12.1}
+        out = server.jump_to(-599.5, -142.0, -1431.0)
+        self.assertIn("is in reach (12.1m)", out)
+        self.assertEqual(self.g.ops("act.cast"), [])
+
     def test_long_jump_that_may_fall_short(self):
         self.g.landing = {"safe": False, "surface": "Fire", "dist_m": 7.8, "reliable_m": 4.5, "short_pos": [-4.5, 0, 0],
                           "suggest": [-2.0, 0.0, 0.0], "suggest_off_m": 5.8, "suggest_dist_m": 2.0}

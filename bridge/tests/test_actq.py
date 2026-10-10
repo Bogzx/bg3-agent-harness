@@ -591,6 +591,18 @@ class WatcherParty(unittest.TestCase):
         self.assertEqual(kind, "damage")
         self.assertIn("HP 19/20", why)
 
+    def test_trivial_damage_outside_combat_does_not_stop_until_it_adds_up(self):
+        # S042 22:51:18: loot_area stopped on 2 HP of 104 (Holy Fire) and skipped 8 corpses
+        self.g.watch["party"] = [{"uuid": P1, "hp": 104, "max_hp": 104}]
+        self.w.baseline()
+        for hp in (102, 100, 98, 96):  # 2 HP chips: 1.9 % each
+            self.g.watch["party"] = [{"uuid": P1, "hp": hp, "max_hp": 104}]
+            self.assertIsNone(self.w.check("loot_corpse", None, ui=False), hp)
+        self.g.watch["party"] = [{"uuid": P1, "hp": 94, "max_hp": 104}]  # 9.6 % in all: a burn that keeps ticking
+        kind, why = self.w.check("loot_corpse", None, ui=False)
+        self.assertEqual(kind, "damage")
+        self.assertIn("HP 94/104", why)
+
     def test_damage_in_combat_is_not_an_interrupt_above_the_threshold(self):
         self.g.watch["combat"] = True
         self.w.baseline()

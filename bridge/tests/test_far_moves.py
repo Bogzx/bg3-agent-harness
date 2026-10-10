@@ -144,6 +144,11 @@ class LastSeen(FarMoves):
         self.assertEqual((ops[0], ops[-1]), ("act.interact", "act.interact"))
         self.assertEqual(self.g.ops("act.move_to")[-1][1]["pos"], [50.0, 0.0, 0.0])
 
+    def test_too_far_refusal_with_one_decimal_still_walks(self):
+        # Guard.within now says "40.3m ..., max 40m" when the distance rounds to the max
+        m = server._TOO_FAR_RX.search("target is too far away (40.3m from this character, max 40m)")
+        self.assertEqual(m.group(1), "40.3")
+
     def test_talk_to_past_40m_walks_there_first(self):
         far = server.H.get(self.FAR, "Bedroll")
         self.g.refuse_if = lambda op, a: ("character is too far away (47m from this character, max 40m)"

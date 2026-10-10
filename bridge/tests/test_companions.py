@@ -163,6 +163,7 @@ class FakeGame:
         self.joins = joins
         self.swapped = False
         self.far = False
+        self.block: dict = {}  # ui.travel_block's answer
         self.talking = at_camp  # at_camp tests: a dialogue already up is the companion's (test sets it so)
         self.jobs: list[tuple[str, dict]] = []
 
@@ -178,6 +179,8 @@ class FakeGame:
                     "region": "Shadow-Cursed Lands"}
         if op == "state.camp":
             return {"party": self.party(), "camp": [dict(c) for c in CAMP]}
+        if op == "ui.travel_block":
+            return dict(self.block)
         if op == "ui.state":
             if self.dialogue and self.talking:
                 return {"screen": "dialogue", "dialogue": self.dialogue[0], "region": "Campsite" if self.at_camp else "x"}
@@ -309,6 +312,31 @@ class SwapParty(unittest.TestCase):
         self.assertIn(("ui.dialogue_choose", {"i": 3}), fake.jobs)
         self.assertIn("act.leave_camp", [j[0] for j in fake.jobs])
         self.assertIn(HALSIN, server._no_join)
+
+    def test_camp_block_fails_at_once_with_the_reason(self):
+        # S039 21:48:34 Nightsong's Prison: "FAILED at go to camp — camp: FAILED — cannot travel right now", no reason
+        fake = FakeGame([])
+        fake.block = {"hud": True, "error": "Location"}
+        self.use(fake)
+        out = server.swap_party(into="Halsin", out="Gale")
+        self.assertIn("FAILED at go to camp — cannot travel right now", out)
+        self.assertIn("(Location): this area does not let the party go to camp", out)
+        self.assertNotIn("act.go_to_camp", [j[0] for j in fake.jobs])
+
+    def test_camp_job_failure_appends_the_reason(self):
+        fake = FakeGame([])
+        real = fake.run_job
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            if op == "act.go_to_camp":
+                fake.block = {"hud": True, "error": "DangerZone"}
+                return JobResult(status="failed", error="cannot travel right now")
+            return real(op, args, context, wait_s, **kw)
+        fake.run_job = run_job
+        self.use(fake)
+        out = server.swap_party(into="Halsin", out="Gale")
+        self.assertIn("FAILED at go to camp", out)
+        self.assertIn("(DangerZone): this is a danger zone", out)
 
     def test_full_party_needs_out(self):
         self.use(FakeGame([]))

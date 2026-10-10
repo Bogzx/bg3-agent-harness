@@ -562,6 +562,45 @@ class ServerWiring(unittest.TestCase):
         finally:
             S.game, S.H = saved
 
+    def test_who_two_summons_one_name_takes_the_one_in_the_fight(self):
+        """S034 19:17:15: 'Spiritual Weapon' is ambiguous: e328 (an earlier cast's, gone), e612 (now)."""
+        from bg3ai import server as S
+        from bg3ai.render import Handles
+        old, new = "aaaaaaaa-0000-0000-0000-000000000328", "aaaaaaaa-0000-0000-0000-000000000612"
+        order = [{"uuid": new, "summon": True, "relation": "party"}]
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                if op == "state.combat":
+                    return {"active": True, "current": new, "order": order}
+                return {"party": []} if op == "state.status" else default
+        saved = (S.game, S.H)
+        S.game, S.H = G(), Handles()
+        try:
+            S.H.get(old, "Spiritual Weapon"); S.H.get(new, "Spiritual Weapon")
+            self.assertEqual(S._who_uuid("Spiritual Weapon"), new)
+            order.append({"uuid": old, "summon": True, "relation": "party"})   # both in the fight: the acting one
+            self.assertEqual(S._who_uuid("Spiritual Weapon"), new)
+            order[0]["dead"] = True
+            self.assertEqual(S._who_uuid("Spiritual Weapon"), old)
+        finally:
+            S.game, S.H = saved
+
+    def test_react_by_name_maps_to_the_option_number(self):
+        """S034 19:03:14: react(which="Shield") → "no reaction option Shield (3 shown)"; options had no names."""
+        from bg3ai import server as S
+        r = {"prompt": "Justiciar Soulhunter used Ranged Attack on Gale. They rolled 17. | Choose how to react. | "
+                       "76/81 | Shield | II | Shield | II | III | Shield | III | Do Not React",
+             "options": [{"i": 1, "decision": "Undecided"}, {"i": 2}, {"i": 3}]}
+        self.assertEqual(S._reaction_index(r, "Shield"), 1)
+        r2 = {"prompt": "Choose how to react. | Counterspell | III | Shield | I", "options": [{"i": 1}, {"i": 2}]}
+        self.assertEqual(S._reaction_index(r2, "shield"), 2)
+        self.assertEqual(S._reaction_index({"options": [{"i": 1, "name": "Divine Smite"}, {"i": 2, "name": "Shield"}]},
+                                           "Shield"), 2)
+        why = S._reaction_index(r2, "Hellish Rebuke")
+        self.assertIn("1=Counterspell, 2=Shield", why)
+        self.assertIn("no reaction prompt", S._reaction_index(None, "Shield"))
+
     def test_npc_in_view_resolves_on_a_fresh_bridge(self):
         """S029 16:04: talk_to(npc="Wulbren") as the session's first call failed "unknown target" with him in view."""
         from bg3ai import server as S
@@ -719,6 +758,36 @@ class ServerRetryAndRefresh(unittest.TestCase):
             self.assertEqual((out, len(calls)), ("level_up: done — finished complete", 2))
         finally:
             S._act, S._who = saved
+
+    def test_ambiguous_portrait_selects_the_member_and_retries(self):
+        # S042 23:11: "cannot tell this character's portrait apart; select it first (act.select)" ×2 (Shadowheart).
+        from bg3ai import server as S
+
+        calls, selects = [], []
+
+        def fake_act(tool, op, args, wait_s=25.0, context="server", wait=True, note=""):
+            calls.append(op)
+            S._batch["result"] = {}
+            if len(calls) == 1:
+                return ("level_up: FAILED — open: cannot tell this character's portrait apart; select it first "
+                        "(act.select) and retry")
+            return "level_up: done — finished complete"
+
+        class G:
+            def run_job(self, op, args, wait_s=5):
+                selects.append((op, args["char"]))
+
+            def try_rpc(self, *a, **k):
+                return None
+
+        saved = (S._act, S._who, S._active, S.game)
+        S._act, S._who, S._active, S.game = fake_act, (lambda ref: "u-sh"), (lambda: "u-claude"), G()
+        try:
+            out = S.level_up("Shadowheart", plan='{"spells": ["Bless"]}')
+            self.assertEqual((out, len(calls)), ("level_up: done — finished complete", 2))
+            self.assertEqual(selects, [("act.select", "u-sh"), ("act.select", "u-claude")])   # control given back
+        finally:
+            S._act, S._who, S._active, S.game = saved
 
     def test_finish_refreshes_status_for_a_new_level_up(self):
         from bg3ai import server as S

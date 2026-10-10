@@ -60,11 +60,13 @@ def _norm(s: str) -> str:
 def _hits(trigger: str, terms: list[str]) -> bool:
     """Whole-word (or whole-phrase) match of a trigger in any term: 'Justiciar' matches 'Justiciar Soulhunter';
     'Undead' matches race 'Undead'; 'Gauntlet of Shar' matches region 'Gauntlet of Shar'. Never substring of a word
-    ('Imp' does not match 'Imperial')."""
+    ('Imp' does not match 'Imperial'); a plural/past ending is
+    allowed ('mirror' matches 'Mirrored')."""
     t = _norm(trigger)
     if not t:
         return False
-    pat = re.compile(r"(?:^| )" + re.escape(t) + r"(?: |$)")
+    # the last word may carry a plural/past ending: 'mirror' matches the status 'Mirrored', 'Imp' matches 'Imps'
+    pat = re.compile(r"(?:^| )" + re.escape(t) + r"(?:s|es|d|ed)?(?: |$)")
     return any(pat.search(_norm(x)) for x in terms if x)
 
 
@@ -114,12 +116,14 @@ class Store:
 
     def fight_lines(self, enemies: list[dict], places: list[str]) -> str:
         """'LESSONS (from past fights):\n- WHEN …' for a fight that just started; '' when nothing new matches.
-        enemies: combat-read rows ({name, race}). Called once per fight start; fight_over() resets."""
+        enemies: combat-read rows ({name, race, statuses: [names]}; S035's Self-Same mirrors are named like the
+        party and only their [Mirrored] status tells them apart). Called once per fight start; fight_over() resets."""
         # S035 19:32: the fight start dropped the trial subregion (WHERE Self-Same Trial · Shadow-Cursed Lands ->
         # Shadow-Cursed Lands), so the place the party stood in before the fight counts too.
         before = [p.strip() for p in (self.region or "").split("·")]
         where = [p for p in places + before if p]
         terms = [str(e.get(k) or "") for e in enemies for k in ("name", "race")] + where
+        terms += [str(x) for e in enemies for x in e.get("statuses") or []]
         new = [ls for ls in match(self.lessons(), terms, limit=len(self._lessons) or 1, places=where)
                if ls.line not in self.shown_fight][:MAX_SHOWN]
         self.in_fight = True

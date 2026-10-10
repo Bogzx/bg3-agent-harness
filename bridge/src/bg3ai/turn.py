@@ -87,6 +87,7 @@ def _alt(v: Any, allowed: set, where: str) -> Alt:
     # action): a Dash walks the move on unless the plan says then_move:false.
     then_move = bool(v.pop("then_move", _DASH.match(str(v.get("ability") or "")) is not None))
     v.setdefault("tool", "use_ability")
+    _point_target(v)
     if v["tool"] in ("end_turn", "do_actions", "combat_turn"):
         raise PlanError(f"{where}: '{v['tool']}' can't be a turn step (end_turn comes last by itself)")
     try:
@@ -96,6 +97,27 @@ def _alt(v: Any, allowed: set, where: str) -> Alt:
     if step.tool == "use_ability" and not step.args.get("ability"):
         raise PlanError(f"{where}: use_ability needs an ability")
     return Alt(step, then_move)
+
+
+_XYZ = re.compile(r"^\s*\(?\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)?\s*$")
+
+
+def _point_target(v: dict) -> None:
+    """S034 Balthazar: Fireball planned as {"target": "-828,8.5,-783"} failed "unknown target" ×N and the agent wrote a
+    [lesson] that combat_turn can't aim point spells. A point target ("x,y,z", [x,y,z], or "pos": [x,y,z]) becomes
+    the step's x/y/z, as use_ability takes it."""
+    t = v.get("target", v.get("pos", v.get("x,y,z")))  # S034 19:02:12: {"x,y,z": "-815.7,8.6,-796.2"} (the doc's words)
+    xyz = None
+    if isinstance(t, (list, tuple)) and len(t) == 3 and all(isinstance(c, (int, float)) for c in t):
+        xyz = [float(c) for c in t]
+    elif isinstance(t, str) and _XYZ.match(t):
+        xyz = [float(c) for c in _XYZ.match(t).groups()]
+    if xyz is None:
+        return
+    v.pop("target", None)
+    v.pop("pos", None)
+    v.pop("x,y,z", None)
+    v["x"], v["y"], v["z"] = xyz
 
 
 def _alts(v: Any, allowed: set, where: str) -> list[Alt]:
@@ -137,6 +159,9 @@ def parse_plan(raw: Any, allowed: set) -> TurnPlan:
         raise PlanError("plan must be JSON") from None
     if not isinstance(p, dict):
         raise PlanError('plan must be a JSON object like {"move":..., "action":[...], "bonus":...}')
+    # S041 22:36:18: {"end": ...} inside the plan (it is combat_turn's own argument): accepted and ignored here,
+    # the turn ends per the call's end= (default true); a whole wasted call before
+    p = {k: v for k, v in p.items() if k != "end"}
     unknown = set(p) - set(SLOT_NAMES) - {"order", "reactions", "on_reaction", "retarget", "auto_bonus"}
     if unknown:
         raise PlanError(f"unknown plan key(s) {', '.join(sorted(unknown))}; use move, action, bonus, extra, "

@@ -11,6 +11,8 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ramwatch as R  # noqa: E402
 
+REAL_ANON_SWAP_MB = R.anon_swap_mb
+
 PROCS = [
     (100, "bg3", "./bin/bg3 -continueGame"),
     (200, "python3", "python3 -m unittest discover -s tests -p test_*.py"),
@@ -27,6 +29,9 @@ class RamWatchTest(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-test-ram"))
         self.logs = []
         self.w = R.RamWatch(self.logs.append, logfile=self.tmp / "ram.log")
+        patcher = mock.patch.object(R, "anon_swap_mb", return_value=0)   # never read the real game's /proc
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         import shutil
@@ -110,6 +115,27 @@ class RamWatchTest(unittest.TestCase):
         self.assertIn("jump_to", rec["tools"][0])
         self.assertTrue(any("KILLED bg3" in m and "Tick took" in m for m in self.logs))
         self.assertTrue(self.w.kills.exists())
+
+    def test_kills_game_on_anon_plus_swap_when_rss_stays_low(self):
+        # S039 21:53: RSS 4.8 → 7.9 GB, the scope swapped the rest out and the kernel OOM-killed bg3 at the 10G cap
+        # before the RSS limit fired. Anon + swap catches it.
+        self._kill_setup()
+        with mock.patch.object(R.os, "kill") as k:
+            self.assertIsNone(self.w.sample(90.0, 5800, 6000, [100], anon_swap=5500))   # normal play
+            self.assertIsNone(self.w.sample(91.0, 7000, 4000, [100], anon_swap=7400))
+            self.assertTrue(self.w.fast)
+            rec = self.w.sample(92.0, 7900, 3000, [100], anon_swap=R.KILL_ANON_SWAP_MB + 100)
+        self.assertEqual(rec["kind"], "kill")
+        self.assertEqual(k.call_args_list[-1].args, (100, R.signal.SIGKILL))
+        self.assertIn("anon+swap", rec["why"])
+        self.assertEqual(rec["anon_swap_mb"], R.KILL_ANON_SWAP_MB + 100)
+
+    def test_anon_swap_from_proc_status(self):
+        st = self.tmp / "status"
+        st.write_text("VmRSS:\t 5894116 kB\nRssAnon:\t 5400000 kB\nRssFile:\t 490000 kB\nVmSwap:\t 135824 kB\n")
+        with mock.patch.object(R, "Path", return_value=st):
+            self.assertEqual(REAL_ANON_SWAP_MB(1), (5400000 + 135824) // 1024)
+        self.assertEqual(REAL_ANON_SWAP_MB(-1), 0)                     # no such process
 
     def test_low_avail_kills_tests_first_then_game(self):
         self._kill_setup()

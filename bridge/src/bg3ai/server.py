@@ -620,7 +620,7 @@ _WHERE_MOVED_RE = re.compile(r"^\s+WHERE .*? -> ([^\n]+)$", re.M)
 def _lessons_text(tool: str, body: str, ev: str) -> str:
     """memory/lessons.md lines matching a fight that just started (enemy names/races, the place) or a place just
     entered (docs/ARCHITECTURE.md "Learning from fights"). Once per fight / place; one combat + one status read
-    per fight start, none otherwise."""
+    per fight start (+ one nearby read for the enemies' statuses), none otherwise."""
     ev = ev or ""
     if "combat_ended" in ev or tool == "load_game":
         LESSONS.fight_over()
@@ -635,7 +635,16 @@ def _lessons_text(tool: str, body: str, ev: str) -> str:
     st = game.try_rpc("state.status") or {}
     enemies = [o for o in cs.get("order") or [] if isinstance(o, dict) and o.get("relation") == "hostile"
                and not o.get("item")]
-    return LESSONS.fight_lines(enemies, [st.get("subregion") or "", st.get("region") or ""])
+    return LESSONS.fight_lines(_with_statuses(enemies), [st.get("subregion") or "", st.get("region") or ""])
+
+
+def _with_statuses(rows: list[dict]) -> list[dict]:
+    """Character rows + the status names the examine panel shows ([Mirrored]): the combat rows don't carry them,
+    the nearby read does (one read)."""
+    nb = game.try_rpc("state.nearby", {"kinds": ["characters"]}) or {}
+    st_of = {c.get("uuid"): [x.get("name") for x in c.get("statuses") or [] if isinstance(x, dict) and x.get("name")]
+             for c in nb.get("characters") or [] if isinstance(c, dict) and c.get("uuid")}
+    return [{**o, "statuses": st_of.get(o.get("uuid")) or []} for o in rows]
 
 
 def _next_walk_hint() -> str:
@@ -694,7 +703,27 @@ def _guard(fn):
 _SAVE_UNGATED = {"list_saves", "session_clock", "wiki_page", "wiki_search"}
 
 
+def _objective_ref(ref: str) -> str:
+    """o1/o2 (an objective marker) as a target: the name it is labelled with (S041 22:24 talk_to(npc="o1") for the
+    Balthazar marker failed "unknown target 'o1'"). Not an objective handle: ref unchanged."""
+    m = re.fullmatch(r"o(\d+)", str(ref or "").strip().lower())
+    if not m:
+        return ref
+    ms = _objective_markers(max_age=600)
+    i = int(m.group(1))
+    if not 1 <= i <= len(ms) or not isinstance(ms[i - 1], dict):
+        raise ValueError(f"unknown target '{ref}': no objective {ref} now (get_map lists them)")
+    label = render.objective_label(ms[i - 1])
+    try:
+        return _uuid(label)
+    except ValueError:
+        raise ValueError(f"{ref} is the objective marker '{label}', not something in view by that name: "
+                         f"route(objective='{ref}', go=true) to get there, then use the eN from get_nearby") from None
+
+
 def _uuid(ref: str) -> str:
+    if re.fullmatch(r"o\d+", str(ref or "").strip().lower()):
+        return _objective_ref(ref)
     try:
         return H.resolve(ref)
     except ValueError as e:
@@ -737,6 +766,16 @@ def _who_uuid(ref: str) -> str:
         mine = [H.by_handle[h] for h in H.matches(ref) if H.by_handle.get(h) in party]
         if len(mine) == 1:
             return mine[0]
+        # S034 19:17:15: two summons named Spiritual Weapon (e328 from an earlier cast, e612 now) stopped a chain
+        # "is ambiguous". In a fight, the one in the turn order, alive, and acting now if several are, is meant.
+        cs = game.try_rpc("state.combat") or {}
+        cands = set(mine) or {H.by_handle.get(h) for h in H.matches(ref)}
+        rows = [o for o in cs.get("order") or [] if isinstance(o, dict) and o.get("uuid") in cands
+                and not o.get("dead") and o.get("relation") != "hostile"]
+        now = set(turn.acting(cs)) if cs.get("active") else set()
+        pick = [o["uuid"] for o in rows if o["uuid"] in now] or [o["uuid"] for o in rows]
+        if len(pick) == 1 or (pick and len({o["uuid"] for o in rows if o["uuid"] in now}) == 1):
+            return pick[0]
         raise
 
 
@@ -943,7 +982,7 @@ def _log_stage_ms(op: str, r: JobResult) -> None:
 
 
 def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
-         wait: bool = True, note: str = "", post=None) -> str:
+         wait: bool = True, note: str = "", post=None, on_start=None) -> str:
     t0 = time.monotonic()
     if _session_over():
         return _finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
@@ -957,7 +996,8 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
     ex = _batch["exec"]
     if _batch["active"]:
         wait_s = max(wait_s, 120.0)  # a batch/queue step runs to completion (interrupts cancel it)
-    kw = {"on_start": ex.track} if ex is not None else {}
+    starts = [f for f in (ex.track if ex is not None else None, on_start) if f is not None]
+    kw = {"on_start": (lambda ctx, jid: [f(ctx, jid) for f in starts])} if starts else {}
     r = game.run_job(op, args, context=context, wait_s=wait_s, **kw)
     if op in _WALK_OPS and _tb_refused(r.status, r.error):
         tb = _leave_turn_based_for_walk()
@@ -1578,6 +1618,19 @@ def _nearby_match(res: dict, words: list[str]) -> dict:
     return out
 
 
+def _nearby_miss_text(full: dict, words: list[str], radius: float) -> str:
+    """A name search that matched nothing: what was asked, then the characters in view (names + ids)."""
+    names = ", ".join(repr(w) for w in words)
+    chars = [c for c in full.get("characters") or [] if isinstance(c, dict) and c.get("uuid")]
+    out = f"No {names} in view within {render.num(radius)}m (a name match, part of a name is enough)."
+    if chars:
+        shown = [f"{H.get(c['uuid'], c.get('name'))} {c.get('name') or '?'}" for c in chars[:8]]
+        out += " Characters in view: " + ", ".join(shown) + (f" (+{len(chars) - 8} more)" if len(chars) > 8 else "")
+    else:
+        out += " No characters in view."
+    return out + " Someone out of sight: get_map / the journal for where they went, or route to their last place."
+
+
 @mcp.tool()
 @_guard
 def get_nearby(radius: float = 25.0, kinds: str = "") -> str:
@@ -1591,7 +1644,12 @@ def get_nearby(radius: float = 25.0, kinds: str = "") -> str:
             args["item_limit"] = 400
     res = _read1("state.nearby", args)
     if words and isinstance(res, dict):
-        res = _nearby_match(res, words)
+        full, res = res, _nearby_match(res, words)
+        if not any(res.get(k) for k in ("characters", "items", "remembered")):
+            # S042 22:51 kinds="Jaheira,characters" → "Nothing visible in range." while 9 corpses and the party stood
+            # there: say the name search found nothing, and who IS in view
+            _remember_names(full)
+            return _finish("get_nearby", args, _nearby_miss_text(full, words, radius), t0)
     elif kinds and "characters" not in args["kinds"] and isinstance(res, dict):
         # Remembered = characters out of sight: noise in a search for doors/items (S018-S035: 65 of 123 such calls
         # carried ~4 REMEMBERED lines each, e.g. the Self-Same mirrors in every gem search)
@@ -2148,13 +2206,13 @@ def _inp():
     return _inp_client["c"]
 
 
-def _box_act(tool: str, op: str, args: dict, wait_s: float, rounds: int = 3) -> str:
+def _box_act(tool: str, op: str, args: dict, wait_s: float, rounds: int = 3, on_start=None) -> str:
     """_act for the client jobs that answer the game's Yes/No box (rests, fast travel, confirm). When the mod
     says its button press didn't land (needs_click; live S013/S014 "[ForceUpdate] Yes/No" stayed open), click
     the button with a hover-checked mouse click (boxclick) and run the op again from where it stopped."""
     from . import boxclick
 
-    out = _act(tool, op, args, context="client", wait_s=wait_s)
+    out = _act(tool, op, args, context="client", wait_s=wait_s, on_start=on_start)
     notes: list[str] = []
     for _ in range(rounds):
         res = _batch.get("result")
@@ -2378,7 +2436,7 @@ def talk_to(npc: str, who: str | None = None, wait: bool = True) -> str:
     return _walk_first("talk_to", out, char, who, npc, actq.Step("talk_to", {"npc": npc})) or out
 
 
-_TOO_FAR_RX = re.compile(r"is too far away \((\d+)m from this character, max \d+m\)")
+_TOO_FAR_RX = re.compile(r"is too far away \((\d+(?:\.\d+)?)m from this character, max \d+m\)")
 
 
 def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, step) -> str | None:
@@ -2570,7 +2628,18 @@ def fast_travel(waypoint: str) -> str:
                        "(Location): this area does not allow travel (a dungeon or story area; camp() is blocked "
                        "too). Walk out the way you came (travel_to the spot where camp/fast_travel last worked), "
                        "then fast_travel.", time.monotonic())
-    out = _box_act("fast_travel", "ui.fast_travel", {"waypoint": waypoint}, wait_s=70)
+    watch = _ReadyCheckWatch()
+    with watch:
+        out = _box_act("fast_travel", "ui.fast_travel", {"waypoint": waypoint}, wait_s=70, on_start=watch.on_start)
+    if watch.failed is not None:
+        if _ui_screen()[0] == "map":
+            game.try_rpc("ui.key", {"key": "ESCAPE"}, context="client")
+        _batch["last"] = "failed"
+        return _finish("fast_travel", {"waypoint": waypoint}, (left + "\n" if left else "") + (
+            f"fast_travel: FAILED — the game's party ready check for the trip failed ({watch.failed}); stopped "
+            f"waiting at once (S032: 66 s each). A broken ready check comes with a long-lived game process (the "
+            f"runner relaunches the game between sessions); until then walk (travel_to) or try a waypoint in this "
+            f"region"), time.monotonic())
     if out.rstrip().endswith("travelling"):
         # The box needed a mouse click (region change): the mod's job had stopped there, so nothing watched the
         # trip. Live 11:4x: "travelling" came back mid-load and the next reads saw the loading screen.
@@ -2578,6 +2647,59 @@ def fast_travel(waypoint: str) -> str:
             arrived = _wait_running(120) and _settle_hud(20)
             out += "; arrived" if arrived else "; still not back in the game 2 min later (wait_for idle)"
     return (left + "\n" + out) if left else out
+
+
+class _ReadyCheckWatch:
+    """While a fast travel runs, watch the server's rest_flow events (Events.lua REST_FLOW) for the party ready
+    check failing and cancel the client job then. S032 17:23:43 / 17:24:57: `ready_failed:WaypointTravel_RegionSwap`
+    came at once, but ui.fast_travel (a client job: it can't see Osiris) waited out its 66 s each time."""
+
+    POLL_S = 0.5
+
+    def __init__(self) -> None:
+        self.job: tuple[str, int] | None = None
+        self.failed: str | None = None
+        self._stop = threading.Event()
+        self._t: threading.Thread | None = None
+
+    def on_start(self, context: str, job_id: int) -> None:
+        self.job = (context, job_id)
+
+    def __enter__(self) -> "_ReadyCheckWatch":
+        self._seq = int((getattr(game, "event_seq", None) or {}).get("server", 0) or 0)
+        self._t = threading.Thread(target=self._run, daemon=True, name="ready-check-watch")
+        self._t.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._stop.set()
+        if self._t is not None:
+            self._t.join(2.0)
+
+    def check(self, res: Any) -> bool:
+        """One events.since answer; True when the ready check failed (sets self.failed)."""
+        for e in (res or {}).get("events") or [] if isinstance(res, dict) else []:
+            self._seq = max(self._seq, int(e.get("seq") or 0))
+            step = str((e.get("data") or {}).get("step") or "") if isinstance(e.get("data"), dict) else ""
+            if e.get("kind") == "rest_flow" and step.startswith("ready_failed"):
+                self.failed = step.split(":", 1)[1] if ":" in step else "ready check"
+                return True
+        return False
+
+    def _run(self) -> None:
+        wg = _watch_conn()
+        while not self._stop.wait(self.POLL_S):
+            try:
+                res = wg.rpc("events.since", {"seq": self._seq, "limit": 200}, context="server", timeout=3.0)
+            except Exception:  # noqa: BLE001 - a load or a busy server: try again next beat
+                continue
+            if self.check(res):
+                if self.job is not None:
+                    try:
+                        wg.rpc("job.cancel", {"id": self.job[1]}, context=self.job[0], timeout=3.0)
+                    except Exception:  # noqa: BLE001 - the job may have just ended
+                        pass
+                return
 
 
 NIGHT_SLEEP_WAIT_S = 30.0  # after a night's rest: TravelError 'Condition' while the party has Sleeping
@@ -2737,10 +2859,19 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
     ui = game.try_rpc("ui.state", context="client") or {}
     went = False
     if not _at_camp(ui):
+        # S039 21:48:34 (Nightsong's Prison): "FAILED at go to camp — camp: FAILED — cannot travel right now" with no
+        # reason. Same area pre-check as camp(): a greyed camp button (Location) answers at once, with the way out.
+        b = _travel_block()
+        if b.get("error") == "Location":
+            return done("swap_party: FAILED at go to camp — cannot travel right now —" + _camp_block_text(b)
+                        + " Swap once camp() works again.")
         r = game.run_job("act.go_to_camp", {}, wait_s=60)
         if r.status != "done" and "already at camp" not in str(r.error or ""):
             # (live 11:14: with the level-up page up the UI didn't say "camp" while the story's DB did: not a failure)
-            return done("swap_party: FAILED at go to camp — " + _job_text("camp", r))
+            text = _job_text("camp", r)
+            if "cannot travel right now" in text:
+                text += _camp_block_text(_travel_block())
+            return done("swap_party: FAILED at go to camp — " + text)
         went = r.status == "done"
         steps.append("went to camp" if went else "at camp")
         time.sleep(1.0)
@@ -2963,7 +3094,41 @@ def react(use: bool, which: str = "") -> str:
     args: dict[str, Any] = {"use": use}
     if which:
         args["which"] = which
+        if use and not str(which).strip().isdigit():
+            ui = game.try_rpc("ui.state", context="client") or {}
+            i = _reaction_index(ui.get("reaction") if isinstance(ui, dict) else None, str(which))
+            if isinstance(i, str):
+                return _finish("react", args, "react: FAILED — " + i, time.monotonic())
+            args["which"] = i
     return _act("react", "ui.react", args, context="client", wait_s=15)
+
+
+_ROMAN = re.compile(r"^(?:I|II|III|IV|V|VI|VII|VIII|IX)$")
+
+
+def _reaction_index(r: dict | None, name: str) -> int | str:
+    """react(which="Shield"): the option's number. S034 19:03:14: "no reaction option Shield (3 shown)" — ui.react
+    takes a number and the options carried no names (decision=Undecided i=1..3); the prompt text named them
+    ("… | 76/81 | Shield | II | Shield | II | III | Shield | III | Do Not React"). Named options first, else the
+    reaction names in the prompt text in display order (slot-level numerals and HP left out). str = why not."""
+    if not isinstance(r, dict):
+        return "no reaction prompt on screen"
+    opts = [o for o in r.get("options") or [] if isinstance(o, dict)]
+    want = name.strip().lower()
+    for o in opts:
+        if want and want in str(o.get("name") or "").lower():
+            return int(o.get("i") or 1)
+    toks = [t.strip() for t in str(r.get("prompt") or "").split("|")]
+    if any("choose how to react" in t.lower() for t in toks):
+        toks = toks[next(k for k, t in enumerate(toks) if "choose how to react" in t.lower()) + 1:]
+    names = [t for t in toks if t and not _ROMAN.match(t) and not re.fullmatch(r"[\d/ ]+", t)
+             and t.lower() != "do not react"]
+    hits = [k for k, t in enumerate(names) if want and want in t.lower()]
+    if hits and (len(names) == len(opts) or len(set(n.lower() for n in names)) == 1):
+        return hits[0] + 1
+    shown = ", ".join(f"{k + 1}={t}" for k, t in enumerate(names)) or "no names shown"
+    return (f"no reaction option {name!r} on this prompt ({len(opts)} options: {shown}); "
+            "answer with its number, react(use=true, which=\"1\"), or react(use=false)")
 
 
 # ---------------------------------------------------------------------------
@@ -3800,6 +3965,22 @@ def _level_up(uuid: str, plan: str) -> str:
         elif row:
             note = f"(no stored plan for {row['name']} L{row['to']}: game defaults)"
     out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
+    if out.startswith("level_up: FAILED") and "portrait apart" in out:
+        # Two members with the same HP, max HP and level (S042 23:11 Shadowheart ×2): the client finds the selected
+        # member's portrait exactly, so select it (as the error asks), retry, then give the control back.
+        prev = None
+        try:
+            prev = _active()
+            game.run_job("act.select", {"char": uuid}, wait_s=5)
+            time.sleep(0.2)  # the client's ClientControl follows the selection a frame or two later
+        except GameError:
+            pass
+        out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
+        if prev and prev != uuid:
+            try:
+                game.run_job("act.select", {"char": prev}, wait_s=5)
+            except GameError:
+                pass
     if out.startswith("level_up: FAILED") and "choices: #1" in out:
         # The page had just opened and its list labels were not rendered yet (S009: "subclass: no 'Evocation';
         # choices: #1, #2, ..." twice, the same plan right after went through): once more with the page open.
@@ -4038,7 +4219,41 @@ def confirm(answer: str = "yes", amount: int = 0) -> str:
     args: dict[str, Any] = {"answer": answer}
     if amount:
         args["amount"] = int(amount)
+    if str(answer).strip().lower() not in ("no", "cancel", "decline", "2") and \
+            (game.try_rpc("ui.state", context="client") or {}).get("screen") == "reward":
+        # S042 22:50:08: confirm("Accept") on Selûne's Reward panel (screen=reward) failed "no confirmation box is
+        # open"; a player clicks its Accept button, which is what dismiss_popups' GetRewardsAndClose does.
+        t0 = time.monotonic()
+        res = game.rpc("ui.dismiss", {}, context="client")
+        return _finish("confirm", {"answer": answer}, "confirm: done — the Reward panel: " + render.compact(res, H), t0)
     return _box_act("confirm", "ui.confirm", args, wait_s=8)
+
+
+def _reactions_rpc(char: str, args: dict) -> Any:
+    """ui.reactions works on the HUD's selected character (the client's ClientControl). The server's `active` falls
+    back to the host when no party member holds ClientControl, so "already selected" can be wrong (S025; S041
+    22:41:22 combat_turn "reactions: FAILED — char is not the selected character"): select first when the server
+    disagrees, and on the client's refusal select and retry once."""
+    try:
+        if _active() != char:
+            game.run_job("act.select", {"char": char}, wait_s=5)
+    except GameError:
+        pass
+    try:
+        return game.rpc("ui.reactions", args, context="client")
+    except GameError as e:
+        if "not the selected character" not in str(e):
+            raise
+    game.run_job("act.select", {"char": char}, wait_s=5)
+    for _ in range(5):  # the client's ClientControl follows the selection a frame or two later
+        time.sleep(0.1)
+        try:
+            return game.rpc("ui.reactions", args, context="client")
+        except GameError as e:
+            if "not the selected character" not in str(e):
+                raise
+            last = e
+    raise GameError(f"{last} (selected {_label(char)} and retried)")
 
 
 @mcp.tool()
@@ -4049,7 +4264,7 @@ def set_reactions(who: str | None = None, settings: str = "") -> str:
     if settings:
         args["set"] = json.loads(settings)
     t0 = time.monotonic()
-    res = game.rpc("ui.reactions", args, context="client")
+    res = _reactions_rpc(args["char"], args)
     _remember_names(res)
     return _finish("set_reactions", {"who": who}, render.compact(res, H), t0)
 
@@ -4117,15 +4332,27 @@ def _press_escape() -> str:
 @mcp.tool()
 @_guard
 def click(x: float, y: float, button: str = "left") -> str:
-    """Last-resort mouse click at a screen position given as fractions 0-1 of the latest screenshot."""
+    """Last-resort mouse click at a screen position given as fractions 0-1 of the latest screenshot.
+    button: "left", "right", or "none" (= hover: only moves the cursor there, nothing is clicked; for a tooltip or
+    the cursor text of a targeting mode, then take a screenshot)."""
     t0 = time.monotonic()
+    b = (button or "left").strip().lower()
+    kind = {"left": "L", "l": "L", "right": "R", "r": "R", "none": "", "hover": "", "move": ""}.get(b)
+    if kind is None:
+        # S039 21:47:42: an unknown button used to commit a LEFT click (with the Jump targeting on: a 5 m jump)
+        raise GameError(f"unknown button {button!r}: use left, right, or none (= hover, no click)")
     inp = _inp()
     if inp is None:
         raise GameError("input shim not available")
     w, h = inp.window_size()
-    inp.click(int(x * w), int(y * h), "R" if button.lower().startswith("r") else "L")
+    px, py = int(x * w), int(y * h)
+    if not kind:
+        inp.move(px, py)
+        time.sleep(0.3)
+        return _finish("click", {"x": x, "y": y, "button": "none"}, f"hovered at {px},{py} (nothing clicked)", t0)
+    inp.click(px, py, kind)
     time.sleep(0.3)
-    return _finish("click", {"x": x, "y": y}, f"clicked {button} at {int(x * w)},{int(y * h)}", t0)
+    return _finish("click", {"x": x, "y": y}, f"clicked {'right' if kind == 'R' else 'left'} at {px},{py}", t0)
 
 
 
@@ -5337,11 +5564,15 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
         text = _outcome(alt.step, text)
         _after(rep, after)
         if not rep.done and rep.stop_kind in (None, "failed"):
-            step_in = (_pick_variant(alt.step, text)
+            asked = alt.step.args.get("ability")
+            variant = _pick_variant(alt.step, text)
+            step_in = (variant
                        or _step_into_range(who, alt.step, text, watcher, after)
                        or _step_into_sight(who, alt.step, text, watcher, after))
             if step_in:
-                tried.append(f"{text} → {step_in}")
+                # S040-S041: "FAILED: choose a variant: … → took …" read (and triaged) as a failure; the variant pick
+                # is the player's quick click on the container's entry, not a failure: name it plainly
+                tried.append(f"{asked}: {step_in}" if variant else f"{text} → {step_in}")
                 rep, text = _run_one(watcher, who, alt.step)
                 text = _outcome(alt.step, text)
                 _after(rep, after)
@@ -5387,7 +5618,8 @@ def _step_into_range(who: str, step: actq.Step, text: str, watcher: actq.Watcher
     along the real route when the movement left covers it; the caller then casts again. Returns what it
     did ('stepped 0.9m into range'), or '' (not a range failure, too far, no route, not enough movement)."""
     gap = macros.range_gap(text) if step.tool == "use_ability" else None
-    if not gap or gap[0] - gap[1] > macros.STEP_INTO_RANGE_M:
+    if not gap or gap[0] - gap[1] > (macros.STEP_INTO_RANGE_RANGED_M if gap[1] > turn.MELEE_RANGE_M
+                                     else macros.STEP_INTO_RANGE_M):
         return ""
     a = step.args
     if gap[1] <= turn.MELEE_RANGE_M and a.get("target"):
@@ -5714,6 +5946,7 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), up to 30 s longer while enemies are still taking turns, then plays it."""
     chain = _turn_chain(plan)
     if chain is None:
+        end = _plan_end(plan, end)
         try:
             return _combat_turn_one(plan, who, end, wait_next, ignore, wait_turn, extend_s=TURN_EXTEND_S)
         except (GameError, ValueError) as e:
@@ -5776,6 +6009,17 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
         outs.append(f"CHAIN STOPPED after {played} of {len(chain)}: {stop or 'stopped'}. NOT PLAYED: {', '.join(rest)}"
                     " — plan them from this state (combat_turn again).")
     return "\n\n".join(outs)
+
+
+def _plan_end(plan: str, end: bool) -> bool:
+    """S041 22:36:18: {"end": false} written inside a single plan (it is combat_turn's argument) failed the whole call
+    'unknown plan key(s) end'. Inside a single plan it means the same as the argument (turn.parse_plan drops it;
+    a chain's member plans always end their turns)."""
+    try:
+        v = json.loads(plan).get("end") if isinstance(plan, str) else None
+    except (ValueError, AttributeError):
+        return end
+    return v if isinstance(v, bool) else end
 
 
 CHAIN_BUDGET_S = 80.0  # a list of member plans: total time the later members may wait for their turns
@@ -5947,9 +6191,7 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
     lines += notes
     if p.reactions:
         try:
-            if _active() != char:  # S025: "reactions: FAILED — char is not the selected character" (the HUD's list)
-                game.run_job("act.select", {"char": char}, wait_s=5)
-            game.rpc("ui.reactions", {"char": char, "set": p.reactions}, context="client")
+            _reactions_rpc(char, {"char": char, "set": p.reactions})
             lines.append("reactions set: " + ", ".join(f"{k}={v}" for k, v in p.reactions.items()))
         except GameError as e:
             lines.append(f"reactions: FAILED — {e}")
@@ -6071,6 +6313,9 @@ def _retry_after_dialogue(watcher: actq.Watcher, who: str | None, step: actq.Ste
             return rep, text, None
 
 
+_LOOT_HARD_STOPS = {"combat", "dialogue", "prompt"}  # _macro_groups: these stop before an open loot window's take
+
+
 def _macro_groups(who: str | None, groups: list, ignore: set | None = None,
                   done: list | None = None) -> tuple[list[str], str | None, list[str]]:
     """Run groups of steps [(label, [Step])] in order. A failed step skips the rest of its group (that
@@ -6091,6 +6336,16 @@ def _macro_groups(who: str | None, groups: list, ignore: set | None = None,
                     return lines, why, [g[0] for g in groups[gi:]]
             parts.append(text)
             if rep.stop_kind not in (None, "failed"):
+                rest = steps[steps.index(step) + 1:]
+                if rep.done and rest and rest[0].tool == "loot" and rep.stop_kind not in _LOOT_HARD_STOPS:
+                    # S042 22:51:18: the corpse's loot window was OPEN when a 2 HP tick stopped loot_area; it
+                    # closed itself unlooted. A player takes what's in the open window first (one click), then reacts.
+                    quiet = actq.Watcher(_watch_conn(), ignore=set(actq.INTERRUPT_KINDS))
+                    quiet.baseline()
+                    rep2, text2 = _run_one(quiet, who, rest[0])
+                    parts.append(text2)
+                    if rep2.done and done is not None and len(rest) == 1:
+                        done.append(gi)
                 lines.append(f"{label}: " + "; ".join(parts))
                 return lines, _label(rep.stopped or rep.stop_kind or ""), [g[0] for g in groups[gi + 1:]]
             if not rep.done:
@@ -6979,15 +7234,20 @@ def list_saves(limit: int = 10) -> str:
     return _finish("list_saves", {}, body or "No saves.", t0, events=False)
 
 
-def _game_process_alive() -> bool | None:
-    """Whether a process named bg3 runs on this machine (None when /proc can't be read)."""
+GAME_ALIVE_MIN_MB = 256  # the Steam runtime's `bg3` parent is ~60 MB; the game itself is GBs once at the menu
+
+
+def _game_process_alive(proc: Path = Path("/proc")) -> bool | None:
+    """Whether the game runs on this machine (None when /proc can't be read). The Steam runtime starts two "bg3"
+    processes, a ~60 MB parent and the game as its child: only a bg3 of GAME_ALIVE_MIN_MB+ counts, so a dead game
+    child with a lingering parent takes the crash fast path instead of waiting out the load."""
     try:
-        for d in os.scandir("/proc"):
+        for d in proc.iterdir():
             if d.name.isdigit():
                 try:
-                    with open(f"/proc/{d.name}/comm") as f:
-                        if f.read().strip() == "bg3":
-                            return True
+                    if (d / "comm").read_text().strip() == "bg3" and \
+                            (metrics.rss_mb(int(d.name), proc) or 0) >= GAME_ALIVE_MIN_MB:
+                        return True
                 except OSError:
                     continue
         return False

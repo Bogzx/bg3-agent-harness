@@ -18,7 +18,8 @@ Weights (points per event; deliberately simple, story-weighted):
     companion   5  a new party member
     quest_new   3  a new journal quest
     area        3  a new minimap subregion ("Ship Hold", "Blighted Village")
-    quest_step  2  a new journal entry in a known quest
+    quest_step  2  a new journal entry in a known quest (by its text: steps come in the quest's order, not
+                   the order they unlocked; a reload that loses a step and redoes it never scores twice)
     objective   2  an active quest objective marker disappeared (done or superseded)
     obj_moved   1  an objective marker moved >= OBJ_MOVED_M to a spot it never had (the next leg of it:
                    S001 opened the first door and the "Escape Route" marker jumped 67 m on, scoring 0)
@@ -28,6 +29,8 @@ Weights (points per event; deliberately simple, story-weighted):
                    automated barks; S015/S018: freeing Barcus, Dror, Zevlor scored nothing)
     kill        1  a visible non-party character died that never died before (events.since `died`; S018
                    spent 23 min killing the three goblin leaders and their camp for 0 points)
+    story_kill  5  … instead of kill: someone the party has talked to (S040/S041: Balthazar scored 1 point, like
+                   each of his 20 skeletons)
     key_item    5  a quest item (story mark) came into the party's hands for the first time (item_added story;
                    S036: the Gauntlet's trials won all 4 Umbral Gems and scored 10 points in 25 min, 15.6 min
                    "stuck" while crossing the Faith-Leap Trial)
@@ -62,7 +65,7 @@ from typing import Any, Callable
 
 WEIGHTS = {"region": 15, "quest_done": 10, "level_up": 8, "waypoint": 5, "companion": 5, "quest_new": 3,
            "area": 3, "quest_step": 2, "objective": 2, "obj_moved": 1, "explore": 1, "talk": 2, "kill": 1,
-           "key_item": 5, "puzzle": 2}
+           "key_item": 5, "puzzle": 2, "story_kill": 5}
 EVENT_KINDS = ("died", "dialogue_started", "item_added", "door_opened")
 EXPLORE_CELLS = 8
 OBJ_MOVED_M = 10.0
@@ -70,6 +73,7 @@ OBJ_POS_CAP = 20  # remembered spots per objective
 OBJ_MOVED_COOLDOWN_S = 300.0
 JOIN_GRACE_S = 180.0  # level-ups of a party member within this long of joining are the game catching it up
 EVENTS_LIMIT = 500
+STEP_KEY_LEN = 100  # journal steps are remembered by their first 100 characters
 POLL_S = float(os.environ.get("BG3AI_PROGRESS_POLL_S", "15") or 15)
 STUCK_MIN = float(os.environ.get("BG3AI_STUCK_MINUTES", "15") or 15)
 STUCK_MIN_ACTIONS = 10
@@ -139,7 +143,12 @@ def read_game(lua_eval: Callable[..., str]) -> dict | None:
 def empty_seen() -> dict:
     return {"regions": [], "areas": [], "waypoints": [], "quests": {}, "objectives_active": [],
             "objectives_done": [], "levels": {}, "explored": {}, "objective_pos": {}, "objective_moved_t": {},
-            "joined": {}, "talked": [], "killed": [], "key_items": [], "puzzles": [], "baseline": False}
+            "joined": {}, "talked": [], "killed": [], "key_items": [], "puzzles": [], "baseline": False,
+            "quests_unaccepted": True}
+
+
+def _step_key(text: str) -> str:
+    return " ".join(text.split())[:STEP_KEY_LEN]
 
 
 def _quests(journal: Any) -> dict:
@@ -147,8 +156,9 @@ def _quests(journal: Any) -> dict:
     out = {}
     for q in qs or []:
         if isinstance(q, dict) and q.get("title"):
-            out[str(q["title"])] = {"steps": len(q.get("steps") or []), "done": bool(q.get("done")),
-                                    "last": str((q.get("steps") or [""])[-1])[:120]}
+            texts = [str(x) for x in q.get("steps") or []]
+            out[str(q["title"])] = {"steps": len(texts), "done": bool(q.get("done")),
+                                    "last": (texts or [""])[-1][:120], "texts": [_step_key(x) for x in texts]}
     return out
 
 
@@ -206,7 +216,8 @@ def _game_events(seen: dict, evs: Any, add: Callable, party: set[str]) -> None:
             u, name = d.get("uuid"), str(d.get("name") or "")
             if u and u not in party and name not in party and u not in seen["killed"]:
                 seen["killed"].append(u)
-                add("kill", name or "someone")
+                # someone the party has talked to (Balthazar, a camp leader): a story beat, not a mook
+                add("story_kill" if u in seen["talked"] else "kill", name or "someone")
         elif e.get("kind") == "item_added" and d.get("story"):
             it = d.get("item") if isinstance(d.get("item"), dict) else {}
             u = it.get("uuid")
@@ -283,18 +294,30 @@ def diff(seen: dict, got: dict, now: float | None = None) -> tuple[dict, list[di
                 seen["waypoints"].append(n)
                 add("waypoint", n)
     if got.get("journal") is not None:
+        # 2026-10-10 23:3x the journal started listing open quests the game never "accepted" (Find the Nightsong,
+        # the companions' quests): an old playthrough's first poll since takes them in silently (no 30-point burst)
+        jq = "quests_unaccepted" in fresh
         for t, q in _quests(got["journal"]).items():
             old = seen["quests"].get(t)
             if old is None:
-                add("quest_new", t)
-                seen["quests"][t] = {"steps": q["steps"], "done": q["done"]}
+                add("quest_new", t, jq)
+                seen["quests"][t] = {"steps": q["steps"], "done": q["done"], "texts": q["texts"]}
                 if q["done"]:
-                    add("quest_done", t)
+                    add("quest_done", t, jq)
                 continue
-            if q["steps"] > old["steps"]:
+            if "texts" in old:
+                # By text: the journal lists steps in the quest's own order, not the order they unlocked, so
+                # the last one is often an old step (S036-S042 named "Soft-Step Trial" for every Shar step).
+                new = [k for k in q["texts"] if k not in old["texts"]]
+                for k in new:
+                    add("quest_step", f"{t}: {k}")
+                old["texts"] = old["texts"] + new
+            elif q["steps"] > old["steps"]:
                 for _ in range(q["steps"] - old["steps"]):
                     add("quest_step", f"{t}: {q['last']}")
-                old["steps"] = q["steps"]
+            if "texts" not in old:
+                old["texts"] = q["texts"]  # (a playthrough from before texts were kept: from here on)
+            old["steps"] = max(old["steps"], q["steps"])
             if q["done"] and not old["done"]:
                 add("quest_done", t)
                 old["done"] = True

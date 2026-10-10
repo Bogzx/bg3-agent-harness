@@ -339,7 +339,17 @@ class CombatOver(Base):
                                           if op == "act.cast" and a.get("spell") == "Shout_SpiritGuardians" else None)
         out = server.combat_turn(json.dumps({"action": ["Shout_SpiritGuardians"]}))
         self.assertEqual(self.casts(), ["Shout_SpiritGuardians", "Shout_SpiritGuardians_Radiant"])
-        self.assertIn("took the first variant Shout_SpiritGuardians_Radiant", out)
+        self.assertIn("Shout_SpiritGuardians: took the first variant Shout_SpiritGuardians_Radiant", out)
+        self.assertNotIn("choose a variant", out)  # S040-S041: read and triaged as a FAILED step
+
+    def test_end_inside_the_plan_is_the_end_argument(self):
+        # S041 22:36:18: {"end": false} in the plan failed the call "unknown plan key(s) end"
+        self.g.combat = combat()
+        out = server.combat_turn(json.dumps({"action": ["Shout_Dodge"], "end": False}))
+        self.assertNotIn("unknown plan key", out)
+        self.assertEqual(self.g.ops("act.end_turn"), [])
+        self.assertEqual(server._plan_end('{"end": true}', False), True)
+        self.assertEqual(server._plan_end('{"action": []}', False), False)
 
 
 class StepIntoRange(Base):
@@ -386,6 +396,23 @@ class StepIntoRange(Base):
         self.assertEqual(self.g.ops("act.move_to"), [])
         self.assertEqual(self.casts(), ["Target_SacredFlame"])
         self.assertIn("out of range (18.6 m, range 18.0 m)", out)
+
+    def test_a_ranged_cast_5m_short_steps_in(self):
+        # S041 22:35:03: Sacred Flame + Guiding Bolt at 22.9 m (range 18) failed, Shadowheart's move unused
+        self.g.refuse_if = lambda op, a: ("target is out of range (22.9 m, range 18.0 m): move closer first"
+                                          if op == "act.cast" and self.fails > 0 and not self.__setattr__(
+                                              "fails", self.fails - 1) else None)
+        self.g.approach = {"reachable": True, "pos": [5.0, 0.0, 0.0], "walk_m": 5.0, "limit": "in_range"}
+        out = self.turn()
+        self.assertIn("stepped 5m into range", out)
+        self.assertEqual(self.casts(), ["Target_SacredFlame", "Target_SacredFlame"])
+        self.fails = 1  # beyond the ranged cap: left to the fallbacks
+        self.g.combat = combat(gob_dist=18.6)  # our turn again (the first turn's end_turn handed it on)
+        self.g.refuse_if = lambda op, a: ("target is out of range (26.0 m, range 18.0 m): move closer first"
+                                          if op == "act.cast" else None)
+        n = len(self.g.ops("nav.approach"))
+        self.turn()
+        self.assertEqual(len(self.g.ops("nav.approach")), n)
 
     def test_far_out_of_range_is_left_to_the_fallbacks(self):
         self.fails = 0

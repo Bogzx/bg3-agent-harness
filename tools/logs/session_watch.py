@@ -46,7 +46,7 @@ ITEMS = [
     ("talk_to no window", r"mcp__bg3__talk_to", r"\(no conversation window opened[^\"]{0,80}", r"NOMATCH^"),
     ("look_at carried item", r"mcp__bg3__look_at", r"NOMATCH^", r"look_at[^\"]{0,60}FAILED: not visible"),
     ("out-of-sight character", r"out of sight|not visible", r"is out of sight: going to where you last saw them[^\"]{0,120}", r"talk_to: FAILED — target is not visible[^\"]{0,80}"),
-    ("far talk_to/interact", r"away|too far", r"away: walking there first[^\"]{0,120}", r"is too far away \(\d+m from this character, max 40m\)"),
+    ("far talk_to/interact", r"away|too far", r"away: walking there first[^\"]{0,120}", r"is too far away \(\d+(?:\.\d+)?m from this character, max 40m\)"),
     ("static targets remembered", r"mcp__bg3__interact|mcp__bg3__route", r"interact: done[^\"]{0,60}", r"interact: FAILED — target is not visible|route[^\"]{0,80}not visible"),
     ("trade hand-over (donate)", r"donat", r"trade: done — gave[^\"]{0,120}donated[^\"]{0,60}", r"not confirmed: the trader has no gold left[^\"]{0,60}"),
     ("give a worn item", r"op\\?\": ?\\?\"give", r"unequipped from [^\"]{0,40} first", r"unequip it first"),

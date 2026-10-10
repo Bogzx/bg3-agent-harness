@@ -516,6 +516,21 @@ class Lookalikes(unittest.TestCase):
         self.assertIn("Karlach", plain)
 
 
+    def test_name_search_with_no_match_says_so(self):
+        """S042 22:51: get_nearby kinds="Jaheira,characters" answered "Nothing visible in range." (she was not there)."""
+        from unittest import mock
+        from bg3ai import server
+        chars = [{"uuid": U(1900), "name": "Isobel", "dist": 5}, {"uuid": U(1901), "name": "Harper Donner", "dist": 8}]
+        with mock.patch.object(server, "_read1", return_value={"characters": chars, "items": []}), \
+                mock.patch.object(server, "_finish", lambda name, args, text, t0: text):
+            text = server.get_nearby(radius=60, kinds="Jaheira,characters")
+            hit = server.get_nearby(radius=60, kinds="isobel")
+        self.assertIn("No 'jaheira' in view within 60m", text)
+        self.assertIn("Characters in view:", text)
+        self.assertIn("Isobel", text); self.assertIn("Harper Donner", text)
+        self.assertNotIn("Nothing visible", text)
+        self.assertIn("Isobel", hit); self.assertNotIn("No 'isobel'", hit)
+
 class Fixtures(unittest.TestCase):
     """S025/S026 Grand Mausoleum: the Buttons under the paintings were the puzzle; ~23 min lost over two sessions."""
 

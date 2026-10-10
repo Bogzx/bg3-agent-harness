@@ -24,6 +24,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -448,6 +449,9 @@ def progress_signature(status: dict | None, journal: list | dict | None) -> dict
         sig["subregion"] = status.get("subregion")
         party = status.get("party") or []
         sig["party_levels"] = sorted(str(p.get("level")) for p in party if isinstance(p, dict))
+        pos = next((p.get("pos") for p in party if isinstance(p, dict) and isinstance(p.get("pos"), list)), None)
+        if pos and len(pos) >= 3:
+            sig["pos"] = [round(float(x), 1) for x in pos[:3]]   # not compared as is: see session_progress
         xp = [p.get("xp") for p in party if isinstance(p, dict) and p.get("xp") is not None]
         if xp:
             sig["xp"] = sum(xp)
@@ -465,10 +469,36 @@ def progress_signature(status: dict | None, journal: list | dict | None) -> dict
 
 
 def made_progress(start_sig: dict | None, end_sig: dict | None) -> bool | None:
-    """True/False, or None when it can't be told (a signature is missing)."""
+    """True/False, or None when it can't be told (a signature is missing). The position is left out: any step
+    would count (session_progress counts a far move)."""
     if start_sig is None or end_sig is None:
         return None
-    return start_sig != end_sig
+    strip = lambda d: {k: v for k, v in d.items() if k != "pos"}  # noqa: E731
+    return strip(start_sig) != strip(end_sig)
+
+
+# A session also made progress when it scored this many story points (seen-sets only grow: a reload never scores
+# twice) or ended this far from where it started on the same level. S040 descended the Shadowfell islands, met
+# Nightsong and fought Balthazar (32 pts), wiped and reloaded: same save signature → "no progress" → CHANGE APPROACH.
+PROGRESS_MIN_POINTS = 10
+PROGRESS_MOVE_M = 60.0
+
+
+def session_progress(start_sig: dict | None, end_sig: dict | None, points: int | None) -> tuple[bool | None, str]:
+    """(progress, why): the save signature changed, or >= PROGRESS_MIN_POINTS story points, or a move of
+    >= PROGRESS_MOVE_M; False only when it can be told; None when nothing is known (a crash, no reads)."""
+    sig = made_progress(start_sig, end_sig)
+    if sig:
+        changed = [k for k in end_sig if k != "pos" and start_sig.get(k) != end_sig.get(k)]
+        return True, "changed " + ", ".join(changed)
+    if isinstance(points, (int, float)) and points >= PROGRESS_MIN_POINTS:
+        return True, f"{points:g} story points"
+    a, b = (start_sig or {}).get("pos"), (end_sig or {}).get("pos")
+    if sig is False and a and b and math.dist(a, b) >= PROGRESS_MOVE_M:
+        return True, f"moved {math.dist(a, b):.0f} m"
+    if sig is None:
+        return None, "unknown"
+    return False, f"same save state, {points if points is not None else '?'} story points"
 
 
 def story_points(summary_path: Path) -> int | None:
@@ -558,7 +588,8 @@ def fix_notes_prompt(lint_report: str) -> str:
 
 STUCK_DIRECTIVE = (
     "RUNNER DIRECTIVE, CHANGE APPROACH: the last {n} sessions ended with no measurable progress "
-    "(same level, region, party levels/XP and journal: {what}). What you've been doing isn't working. "
+    f"(same level, region, party levels/XP and journal, under {PROGRESS_MIN_POINTS} story points, no far move: "
+    "{what}). What you've been doing isn't working. "
     "Before anything else: run the stuck playbook, write three approaches in hypotheses.md that are "
     "genuinely different from the ones in your recent session logs, and pick one you haven't tried. "
     "Consider parking the blocked objective and pursuing a different quest, region or main-story lead.")
@@ -2419,10 +2450,13 @@ class Runner:
             "exit": res.exit_code, "started": res.started, "ended": res.ended,
             "model": res.model, "effort": res.effort,
             "minutes": round((res.ended - res.started) / 60, 1), "start_sig": start_sig, "end_sig": end_sig,
-            "progress": None if crashed else made_progress(start_sig, end_sig),
+            "progress": None, "progress_why": "crashed",
             "started_at_game_over": screen == "game_over", "resumes": resumes,
             "story_points": story_points(self.state.dir / f"{sid}.progress.json"),
         }
+        if not crashed:
+            entry["progress"], entry["progress_why"] = session_progress(start_sig, end_sig, entry["story_points"])
+        log(f"{sid}: session progress {entry['progress']} ({entry['progress_why']})")
         early = early_exit_minutes(res.reason, res.started, res.ended, minutes)
         if early is not None:
             entry["early_exit_min"] = early

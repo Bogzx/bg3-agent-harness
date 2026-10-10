@@ -44,6 +44,7 @@ class Parse(unittest.TestCase):
         hit = lessons.match(ls, ["Justiciar Soulhunter", "Human"])
         self.assertEqual([l.triggers[0] for l in hit], ["Justiciar Soulhunter"])
         self.assertEqual(lessons.match(ls, ["Imperial Guard"]), [])          # 'Imp' never inside a word
+        self.assertEqual(len(lessons.match(ls, ["Imps"])), 1)                 # a plural ending is fine
         self.assertEqual([l.triggers[0] for l in lessons.match(ls, ["Imp"])], ["Imp"])
         self.assertEqual([l.triggers[0] for l in lessons.match(ls, ["Ghoul", "undead"])], ["Undead"])  # case
 
@@ -130,11 +131,30 @@ class ServerHook(unittest.TestCase):
         self.assertIn("Soulhunter", out)
         self.assertIn("antechamber", out)          # the place matches too
         self.assertNotIn("Undead", out)
-        self.assertEqual(self.reads, ["state.combat", "state.status"])
+        self.assertEqual(self.reads, ["state.combat", "state.status", "state.nearby"])
         self.assertEqual(server._lessons_text("combat_turn", "TURN …", ""), "")
-        self.assertEqual(len(self.reads), 2)       # no reads while the fight runs
+        self.assertEqual(len(self.reads), 3)       # no reads while the fight runs
         server._lessons_text("combat_turn", "…", "EVENTS\n  combat_ended")
         self.assertIn("Soulhunter", server._lessons_text("get_combat_state", "COMBAT round=1", ""))
+
+    def test_enemy_status_matches_a_trigger_stem(self):
+        # S035 Self-Same Trial: the mirrors are named like the party; only [Mirrored] (status) tells them apart.
+        server.LESSONS.path.write_text(
+            LESSONS_MD + "- WHEN mirror, Sacrificial Bowl: mirrors copy our gear → strip it first (S035) [seen]\n")
+        self.status = {"region": "Shadow-Cursed Lands", "subregion": None}
+        orig = server.game.try_rpc
+
+        def try_rpc(op, args=None, **kw):
+            if op == "state.combat":
+                return {"active": True, "order": [{"uuid": "u-k2", "name": "Karlach", "relation": "hostile",
+                                                   "race": "Tiefling"}]}
+            if op == "state.nearby":
+                return {"characters": [{"uuid": "u-k2", "name": "Karlach",
+                                        "statuses": [{"id": "SELF_SAME_MIRRORED", "name": "Mirrored"}]}]}
+            return orig(op, args, **kw)
+        server.game.try_rpc = try_rpc
+        out = server._lessons_text("use_ability", "use_ability: done", "EVENTS\n  combat_started")
+        self.assertIn("strip it first", out)
 
     def test_no_reads_without_a_fight(self):
         self.assertEqual(server._lessons_text("move_to", "move_to: done", ""), "")

@@ -1581,6 +1581,17 @@ end
 -- blocked?, short_pos?, suggest?, suggest_off_m?, suggest_dist_m?}.
 N.JUMP_LAND_CAP_M = 4.5
 N.JUMP_SAFE_DROP_M = 4.0  -- no_floor: a floor this far below the jumper is still a landing to look for
+-- FEATHER_FALL = IgnoreFallDamage() (setup's live probe S039 21:42; the Shadowfell gives it to everyone): with it a
+-- deep floor is a landing too (the drop is reach, not damage: S040 jumps 18-25 m down).
+N.FEATHER_FALL_STATUS = "FEATHER_FALL"
+N.FEATHER_SAFE_DROP_M = 60.0
+function N.featherFall(charUuid)
+    local ok, v = pcall(Osi.HasActiveStatus, charUuid, N.FEATHER_FALL_STATUS)
+    return ok and (v == 1 or v == true)
+end
+function N.safeDrop(charUuid)
+    return N.featherFall(charUuid) and N.FEATHER_SAFE_DROP_M or N.JUMP_SAFE_DROP_M
+end
 N.JUMP_SUGGEST_OFF_M = 3.0
 function N.landing(charUuid, pos)
     local e = V.entity(charUuid)
@@ -1595,9 +1606,14 @@ function N.landing(charUuid, pos)
         local ok, m = pcall(G.jump_max, charUuid)
         if ok and type(m) == "number" then maxM = m end
     end
+    -- cap: where a long jump may fall short (S001: a 7.8 m jump landed 4.8 m out); reach: where a landing may be
+    -- (S040: jump_to 6.7 m landed on the spot, the game's own jumps 9-28 m; "no clear spot within 3m of it is in
+    -- reach (4.5m)" refused 3 jumps the agent then made by hand).
     local cap = math.min(N.JUMP_LAND_CAP_M, maxM or N.JUMP_LAND_CAP_M)
+    local reach = math.max(cap, maxM or cap)
+    local safeDrop = N.safeDrop(charUuid)
     local d = hdist(from, pos)
-    local out = { dist_m = round(d, 1), reliable_m = cap, max_m = maxM and round(maxM, 1) or nil }
+    local out = { dist_m = round(d, 1), reliable_m = cap, reach_m = round(reach, 1), max_m = maxM and round(maxM, 1) or nil }
     local function bad(p)
         local s = N.surfaceNear(p, 0.5)
         if s then return s end
@@ -1631,12 +1647,12 @@ function N.landing(charUuid, pos)
     if why and why ~= "no_floor" then
         local alt
         for _, h in ipairs(fl) do
-            if math.abs(h - pos[2]) > 0.5 and h <= from[2] + N.JUMP_UP_MAX_M and h >= from[2] - N.JUMP_SAFE_DROP_M
+            if math.abs(h - pos[2]) > 0.5 and h <= from[2] + N.JUMP_UP_MAX_M and h >= from[2] - safeDrop
                 and not bad({ pos[1], h, pos[3] }) and (not alt or math.abs(h - pos[2]) < math.abs(alt - pos[2])) then
                 alt = h
             end
         end
-        if alt and d <= cap + 0.3 then
+        if alt and d <= reach + 0.3 then
             out.safe, out.surface, out.blocked = false, why ~= "blocked" and why or nil, why == "blocked" or nil
             out.suggest, out.suggest_off_m, out.suggest_dist_m = U.vec({ pos[1], alt, pos[3] }, 1), 0, round(d, 1)
             out.floor_y = round(alt, 1)
@@ -1668,7 +1684,7 @@ function N.landing(charUuid, pos)
     -- the jumper (S024 07:14: y 10 asked, the ground there at 17, 2 m above
     -- the jumper; the reply said "pick another landing" and route() then
     -- found a plain walk to it).
-    if why == "no_floor" and fl[1] and fl[1] >= from[2] - N.JUMP_SAFE_DROP_M then
+    if why == "no_floor" and fl[1] and fl[1] >= from[2] - safeDrop then
         pos = { pos[1], fl[1], pos[3] }
     end
     -- the nearest clear landing to the target that this jump surely reaches
@@ -1678,7 +1694,7 @@ function N.landing(charUuid, pos)
         if not fy or math.abs(fy - pos[2]) > 2.5 then return end
         local p = { x, fy, z }
         local r = hdist(from, p)
-        if r < 1.5 or r > cap + 0.05 or bad(p) then return end
+        if r < 1.5 or r > reach + 0.05 or bad(p) then return end
         local off = hdist(p, pos)
         if not bd or off < bd then best, bd = p, off end
     end
@@ -1689,7 +1705,7 @@ function N.landing(charUuid, pos)
         end
     end
     if d > 0.1 then
-        local k = math.min(d, cap)
+        local k = math.min(d, reach)
         while k >= 1.5 do
             cand(from[1] + (pos[1] - from[1]) * k / d, from[3] + (pos[3] - from[3]) * k / d)
             k = k - 0.5
@@ -2461,6 +2477,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
             out.legs, out.links = N.routeLegs(r.points, r.portals)
         elseif r and r.reachable == false then
             out.reachable = false
+            if (r.no_floor or r.chasm) and r.reason then out.no_path_reason = r.reason end
             local t = N.reachToward(charUuid, nil, goal, N.CONNECT_M, 2, false)
             if t and t.reachable and t.pos and (t.straight_m or 0) >= 1 then
                 out.closest = { pos = t.pos, path_m = t.path_m, to_goal_m = round(U.dist(t.pos, goal), 1),
@@ -2473,6 +2490,8 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
         out.levels_goal = N.levelsAt(goal[1], goal[3], from[2])
         local r = N.path(charUuid, goal)
         if r and r.reachable == nil and r.reason then out.unknown_reason = r.reason end
+        -- S039 21:44: route to a point in the void said "path unknown"; the precheck knows (no ground / Chasm there)
+        if r and r.reachable == false and (r.no_floor or r.chasm) and r.reason then out.no_path_reason = r.reason end
         if r and r.reachable then
             out.reachable = true
             out.length_m, out.needs_jump = r.length_m, r.needs_jump
@@ -2497,7 +2516,10 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
     end
     if out.reachable == false and goal[2] - from[2] <= -N.LOWER_MIN_M then
         local okl, lower = pcall(N.lowerGround, charUuid, from, goal)
-        if okl and lower and #lower > 0 then out.lower = lower end
+        if okl and lower and #lower > 0 then
+            out.lower = lower
+            if N.featherFall(charUuid) then out.feather_fall = true end -- no fall damage: route drops its warning
+        end
     end
     if withConnectors or not out.reachable then
         out.connectors = N.connectors(ctx, charUuid, goal, N.CONNECT_M, N.CONNECT_MAX)
@@ -2592,7 +2614,8 @@ local function activeObjectives(who)
     if c and c.who == who and c.gen == gen and now - c.t < ttl then return c.list end
     local list = {}
     for _, q in ipairs(stepObjectives()) do
-        if truthy(osi(Osi.QuestIsAccepted, who, q.id)) and not truthy(osi(Osi.QuestIsClosed, q.id)) then
+        -- not only accepted quests: an unlocked step is enough (State.journal: SHA_Nightsong, companion quests)
+        if not truthy(osi(Osi.QuestIsClosed, q.id)) then
             local current
             for _, st in ipairs(q.steps) do
                 -- a sub-quest's steps are unlocked under its parent quest (State.stepUnlocked)

@@ -30,7 +30,7 @@ OUT = REPO / "runtime" / "acceptance"
 LOCK = REPO / "runtime" / "game.lock"
 BASE = "S027-start"            # the real playthrough state (after S026); loaded, never overwritten
 TRADE_SAVE = "S026-dammon-heat"  # Last Light Inn, Quartermaster Talli in view
-SECTIONS = ["reads", "rest", "trade", "gear", "swap", "nav", "loads", "combat"]
+SECTIONS = ["reads", "rest", "trade", "gear", "swap", "nav", "loads", "combat", "setup", "se"]
 
 RESULTS: list[dict] = []
 S = None  # bg3ai.server, imported in the section process
@@ -663,8 +663,160 @@ def sec_combat() -> None:
     load_verified(BASE)
 
 
+def party_pos() -> dict:
+    return {r.get("uuid"): r.get("pos") for r in status().get("party") or [] if r.get("pos")}
+
+
+def moved_m(a: dict, b: dict) -> float:
+    return max((sum((x - y) ** 2 for x, y in zip(a[u], b[u])) ** 0.5 for u in a if u in b), default=0.0)
+
+
+def close_targeting() -> str:
+    """Leave a targeting mode (or an accidental game menu) with ESCAPE, by ui.key: the guarded press_key refuses it."""
+    for _ in range(3):
+        S.game.try_rpc("ui.key", {"key": "ESCAPE"}, context="client")
+        time.sleep(0.5)
+        if ui_screen() != "game_menu":
+            break
+    return ui_screen()
+
+
+def sec_se() -> None:
+    """se overnight batch (2026-10-10 23:xx): click hover/unknown button, reactions on an unselected member, the
+    game-process check of load_game, Noesis counters, and a read-only CursorText probe in the Jump targeting."""
+    if not load_verified(BASE):
+        return
+    # click(button="none"): S039 21:47:42 it committed a left click (a 5 m jump under Z)
+    p0 = party_pos()
+    out, dt = took("click", x=0.5, y=0.62, button="none")
+    time.sleep(1.5)
+    mv, scr = moved_m(p0, party_pos()), ui_screen()
+    item("click button=none hovers only", "PASS" if "nothing clicked" in out and mv < 0.5 and scr == "game" else "FAIL",
+         f"{first_line(out)} ({dt:.1f}s); party moved {mv:.1f} m; screen={scr}")
+    p0 = party_pos()
+    out, _ = took("click", x=0.5, y=0.62, button="middle")
+    time.sleep(1.0)
+    mv = moved_m(p0, party_pos())
+    item("click unknown button refused", "PASS" if "unknown button" in out and mv < 0.5 else "FAIL",
+         f"{first_line(out)}; party moved {mv:.1f} m")
+
+    # set_reactions on a member that is not selected (S041 22:41:22 "char is not the selected character")
+    st = status()
+    sel = st.get("active")
+    other = next((r for r in st.get("party") or [] if r.get("uuid") != sel), None)
+    if need(other is not None, "reactions on an unselected member", "party of one"):
+        out, dt = took("set_reactions", who=other.get("name"))
+        ok = "not the selected character" not in out and "FAILED" not in out and "EXCEPTION" not in out
+        item("reactions on an unselected member", "PASS" if ok else "FAIL",
+             f"{other.get('name')} (selected was {sel}): {first_line(out)[:160]} ({dt:.1f}s)")
+        if sel:
+            S.game.run_job("act.select", {"char": sel}, wait_s=5)
+
+    # load_game's crash fast path: the 60 MB Steam-runtime parent must not count, the game must
+    from bg3ai import metrics as MX
+    pid = MX.game_pid()
+    rss = MX.rss_mb(pid)
+    alive_now = S._game_process_alive()
+    item("load_game game-process check", "PASS" if alive_now and (rss or 0) >= S.GAME_ALIVE_MIN_MB else "FAIL",
+         f"_game_process_alive={alive_now}; biggest bg3 pid={pid} rss={rss} MB (min {S.GAME_ALIVE_MIN_MB})")
+
+    # Noesis parked/leaked: sys.mem (client) + the bg3le minute line
+    m = S.game.try_rpc("sys.mem", context="client") or {}
+    nz = m.get("noesis") if isinstance(m, dict) else None
+    lg = bg3le_log()
+    line = ""
+    for _ in range(14):  # the minute line: up to ~70 s
+        txt = lg.read_text(errors="replace") if lg else ""
+        hits = re.findall(r".*mem: client lua .*\| noesis gen.*", txt)
+        if hits:
+            line = hits[-1]
+            break
+        time.sleep(5)
+    ok = isinstance(nz, dict) and isinstance(nz.get("parked"), int) and bool(line)
+    item("Noesis parked observable", "PASS" if ok else "FAIL",
+         f"sys.mem noesis={nz}; log: {line.strip()[:140] or 'no minute line with noesis (' + (lg.name if lg else 'no log') + ')'}")
+
+    # CursorText probe for the hand-aimed jumps item (BACKLOG [se] M): what does the game's own cursor text say
+    # while the Jump targeting (Z) hovers a near and a far point? Read-only: hover, read, ESCAPE; nothing is cast.
+    out = call("press_key", key="Z")
+    time.sleep(0.8)
+    reads = []
+    for x, y in ((0.55, 0.6), (0.9, 0.2)):
+        call("click", x=x, y=y, button="none")
+        time.sleep(0.6)
+        d = S.game.try_rpc("ui.dump", {"root": "CursorText", "hidden": True, "max": 20}, context="client")
+        pr = S.game.try_rpc("ui.props", {"widget": "CursorText"}, context="client")
+        reads.append(f"@{x},{y}: dump={json.dumps(d)[:300]} props={json.dumps(pr)[:300]}")
+    p0 = party_pos()
+    after = close_targeting()
+    time.sleep(1.0)
+    mv = moved_m(p0, party_pos())
+    for r in reads:
+        log("CursorText " + r)
+    txt = " ".join(reads)
+    got = bool(re.search(r'"(?:Text|text|t)"\s*:\s*"[^"]+"', txt))
+    item("CursorText probe (Jump targeting)", "PASS" if got and mv < 0.5 else ("FAIL" if mv >= 0.5 else "INFO"),
+         f"text read={got}; party moved {mv:.1f} m; screen after={after}; {reads[0][:200]}")
+    load_verified(BASE)
+
+
 FUNCS = {"reads": sec_reads, "rest": sec_rest, "trade": sec_trade, "gear": sec_gear, "swap": sec_swap,
-         "nav": sec_nav, "loads": sec_loads, "combat": sec_combat}
+         "nav": sec_nav, "loads": sec_loads, "combat": sec_combat, "se": sec_se}
+
+
+def sec_setup() -> None:
+    """setup's overnight fixes (impl-setup parts 34-35), read-only on the loaded base save: ramwatch's anon+swap kill
+    signal, the story scorer naming a new journal step by its text, enemy statuses as lesson terms."""
+    sys.path.insert(0, str(REPO / "runner"))
+    import ramwatch
+    from bg3ai import lessons, progress
+    # 1. ramwatch: the watchdog that holds runtime/ramwatch.lock writes anon+swap (else it runs old code)
+    pids = ramwatch.game_pids()
+    a_s, rss = sum(ramwatch.anon_swap_mb(p) for p in pids), sum(ramwatch.rss_mb(p) for p in pids)
+    try:
+        last = (REPO / "runtime" / "ram.log").read_text(errors="replace").strip().splitlines()[-1]
+    except (OSError, IndexError):
+        last = ""
+    fresh = "anon+swap=" in last and time.time() - os.path.getmtime(REPO / "runtime" / "ram.log") < 180
+    item("ramwatch anon+swap kill signal", "PASS" if (a_s > 1000 and fresh) else "FAIL",
+         f"game pids {pids}: anon+swap {a_s} MB, RSS {rss} MB (kill at {ramwatch.KILL_ANON_SWAP_MB}); ram.log: {last[-110:]}")
+    if not load_verified(BASE):
+        return
+    # 2. scorer: drop one journal step from a baseline built on the live journal → that step's text is the event
+    progress._events["seq"] = None
+    got = progress.read_game(lambda code, ctx: S.game.eval(code, context=ctx))
+    quests = (got or {}).get("journal")
+    qs = quests.get("quests", quests) if isinstance(quests, dict) else quests
+    q = next((q for q in qs or [] if isinstance(q, dict) and len(q.get("steps") or []) >= 3), None)
+    if need(q is not None, "scorer names the new journal step", "no quest with 3+ steps in the live journal"):
+        import copy
+        older = copy.deepcopy(got)
+        oq = next(x for x in (older["journal"].get("quests", older["journal"]) if isinstance(older["journal"], dict)
+                              else older["journal"]) if x.get("title") == q["title"])
+        gone = oq["steps"].pop(0)        # the quest's FIRST step: a count-based diff would name the last one
+        seen, _ = progress.diff(None, older)
+        _, evs = progress.diff(seen, got)
+        whats = [e["what"] for e in evs if e["kind"] == "quest_step"]
+        want = f"{q['title']}: {progress._step_key(gone)}"
+        item("scorer names the new journal step", "PASS" if whats == [want] else "FAIL",
+             f"removed step 1 of '{q['title']}' ({len(q['steps'])} steps); events {whats[:3]}")
+    # 3. lessons: nearby characters' status names reach the lesson terms (a trigger with a plural/past ending)
+    nb = S.game.try_rpc("state.nearby", {"kinds": ["characters"], "radius": 40}) or {}
+    rows = [c for c in nb.get("characters") or [] if c.get("statuses")]
+    if need(bool(rows), "enemy statuses as lesson terms", "no character with a status in view at the base save"):
+        c = rows[0]
+        sname = next(x.get("name") for x in c["statuses"] if x.get("name"))
+        enemies = S._with_statuses([{"uuid": c["uuid"], "name": c.get("name"), "relation": "hostile"}])
+        tmp = OUT / "rt" / "lessons-accept.md"
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        trig = re.sub(r"(ed|es|s)$", "", sname) if len(sname) > 5 else sname   # 'Mirrored' → 'Mirror'
+        tmp.write_text(f"- WHEN {trig}: acceptance → status term (S999) [seen]\n")
+        out = lessons.Store(tmp).fight_lines(enemies, [])
+        item("enemy statuses as lesson terms", "PASS" if "acceptance" in out else "FAIL",
+             f"{c.get('name')} statuses {enemies[0]['statuses'][:4]}; trigger '{trig}' → {first_line(out) or 'no LESSONS'}")
+
+
+FUNCS["setup"] = sec_setup
 
 
 def run_section(name: str) -> int:

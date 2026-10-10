@@ -193,5 +193,42 @@ class BoxAct(Base):
         self.assertIn("pressed=Yes", out)
 
 
+class ClickButton(Base):
+    """click(button=...): "none" hovers only (S039 21:47:42 it committed a left click = a 5 m jump under Z)."""
+
+    def setUp(self):
+        super().setUp()
+        self.ops = []
+        test = self
+
+        class Inp:
+            def window_size(self):
+                return 1000, 500
+
+            def move(self, x, y, sync=True):
+                test.ops.append(("move", x, y))
+
+            def click(self, x, y, button="L", count=1, sync=True):
+                test.ops.append(("click", button, x, y))
+        saved = server._inp
+        server._inp = lambda: Inp()
+        self.addCleanup(setattr, server, "_inp", saved)
+
+    def test_none_only_hovers(self):
+        out = server.click(0.5, 0.5, "none")
+        self.assertEqual(self.ops, [("move", 500, 250)])
+        self.assertIn("nothing clicked", out)
+
+    def test_left_and_right(self):
+        server.click(0.1, 0.2)
+        server.click(0.1, 0.2, "Right")
+        self.assertEqual(self.ops, [("click", "L", 100, 100), ("click", "R", 100, 100)])
+
+    def test_unknown_button_refused(self):
+        out = server.click(0.1, 0.2, "middle")
+        self.assertEqual(self.ops, [])
+        self.assertIn("unknown button", out)
+
+
 if __name__ == "__main__":
     unittest.main()

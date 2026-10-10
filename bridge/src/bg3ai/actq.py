@@ -28,6 +28,11 @@ from typing import Any, Callable
 
 MAX_STEPS = 20
 HP_BELOW_PCT = 35  # default "HP below" interrupt, percent of max HP
+# S042 22:51:18: loot_area stopped on 2 HP of 104 (a Holy Fire tick) right after opening a corpse: the container was
+# left unlooted and 8 corpses skipped. Outside combat, a chip below DAMAGE_MIN_PCT of max HP is not an interrupt;
+# chips add up, and DAMAGE_SUM_PCT of them in one run (a burn that keeps ticking) stops it.
+DAMAGE_MIN_PCT = 4.0
+DAMAGE_SUM_PCT = 8.0
 WATCH_EVERY_S = 0.3  # act.watch + events poll while a step runs
 UI_EVERY_S = 1.0  # ui.state (client) poll: kept slow, Noesis reads are the risky part
 
@@ -143,6 +148,7 @@ class Watcher:
         self._screen = "game"
         self._ui_at = 0.0
         self._hp: dict[str, float] = {}
+        self._chip: dict[str, float] = {}  # trivial damage outside combat this run, percent of max HP
         self._surf: dict[str, str | None] = {}
         self._hostiles: set[str] = set()
         self._downed: set[str] = set()
@@ -219,6 +225,11 @@ class Watcher:
             if p < before - 0.1:
                 if p < self.hp_below and "hp" not in self.ignore:
                     return "hp", f"{u} HP {row.get('hp')}/{row.get('max_hp')}"
+                chip = self._chip.get(u, 0.0) + (before - p)
+                if before - p < DAMAGE_MIN_PCT and chip < DAMAGE_SUM_PCT:
+                    self._chip[u] = chip
+                    continue
+                self._chip[u] = 0.0
                 if not w.get("combat") and "damage" not in self.ignore and hit is None:
                     hit = "damage", f"{u} took damage outside combat (HP {row.get('hp')}/{row.get('max_hp')})" \
                         + (f" in {surf}" if surf else "")

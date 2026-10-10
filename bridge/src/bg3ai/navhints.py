@@ -72,7 +72,7 @@ def jump_refusal(lnd: Any, asked: list[float]) -> str | None:
         else:
             tail = " Pick another landing (get_frontier lists HAZARD patches) or force=true."
         return (f"jump_to: FAILED — the landing {P(asked)} {landing_bad_text(lnd)} and no clear spot within 3m of it "
-                f"is in reach ({N(lnd.get('reliable_m', '?'))}m).{alt}{tail}")
+                f"is in reach ({N(lnd.get('reach_m') or lnd.get('reliable_m', '?'))}m).{alt}{tail}")
     if lnd.get("too_far") and not lnd.get("suggest"):
         tail = plan or " No walk gets within jumping distance of it: route() for a ladder or another way."
         return (f"jump_to: FAILED — too far to jump ({N(lnd.get('dist_m', '?'))} m, this character can jump "

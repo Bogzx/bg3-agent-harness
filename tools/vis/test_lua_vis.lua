@@ -496,6 +496,15 @@ test("nav.markers: a sub-quest's step unlocked under its parent gives its marker
     eq(#r.markers, 1, "marker"); eq(r.markers[1].label, "Escape the ship")
 end)
 
+test("nav.markers: an unlocked step without QuestIsAccepted counts (SHA_Nightsong, companion quests: probe 23:3x)", function()
+    markerSetup({ -16, 0, 0 })
+    osiv[key("QuestIsAccepted", "P1", "Q1")] = 0
+    eq(#BG3AI.RPC.ops["nav.markers"]({}).markers, 1, "marker shown")
+    osiv[key("QuestUpdateIsUnlocked", "P1", "Q1", "Start")] = 0
+    N.activeCache = nil
+    eq(#BG3AI.RPC.ops["nav.markers"]({}).markers, 0, "no step unlocked: nothing")
+end)
+
 test("nav.markers: closed quest -> nothing", function()
     markerSetup({ 5, 0, 0 })
     osiv[key("QuestIsClosed", "Q1")] = 1

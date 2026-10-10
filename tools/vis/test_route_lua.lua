@@ -410,6 +410,22 @@ test("journal: a sub-quest's steps are read under its parent quest (S032 probe: 
     if not ok then error(err, 0) end
 end)
 
+test("journal: an unlocked step without QuestIsAccepted lists the quest (SHA_Nightsong 'Find the Nightsong', probe 23:3x)", function()
+    local unlocked = { ["SHA_Nightsong:SearchTemple"] = 1 }
+    rawset(Osi, "QuestIsAccepted", function() return 0 end)
+    rawset(Osi, "QuestUpdateIsUnlocked", function(who, q, st) return unlocked[q .. ":" .. st] end)
+    S.quests = { { id = "SHA_Nightsong", title = "hN", visible = true, steps = { { id = "SearchTemple", desc = "dS" } } },
+        { id = "Q_Never", title = "hX", visible = true, steps = { { id = "a", desc = "dA" } } } }
+    S.journalCache = nil
+    local ok, err = pcall(function()
+        local a = S.journal({ party = { P1 } })
+        eq(#a, 1, "only the quest with an unlocked step"); eq(a[1].title, "T:hN", "Find the Nightsong")
+    end)
+    rawset(Osi, "QuestIsAccepted", nil); rawset(Osi, "QuestUpdateIsUnlocked", nil)
+    S.quests, S.journalCache = nil, nil
+    if not ok then error(err, 0) end
+end)
+
 test("nav.markers objectives share the quest generation (no 2 s re-walk)", function()
     eq(N.MARKER_GEN_TTL_MS >= 10000, true, "long ttl with generations")
 end)

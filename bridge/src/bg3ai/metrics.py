@@ -398,6 +398,11 @@ class MemSampler:
                 rec[f"lua_{ctx}_mb"] = m["lua_mb"]
                 if m.get("high"):
                     rec["high"] = True
+                nz = m.get("noesis")
+                if isinstance(nz, dict):  # client: bg3le's Noesis release counters (BACKLOG "parked" watch)
+                    for k in ("parked", "leaked", "gen"):
+                        if isinstance(nz.get(k), (int, float)):
+                            rec[f"noesis_{k}"] = nz[k]
         self.last_t, self.last_rss = t, rss
         self.rec.write(rec)
         return rec

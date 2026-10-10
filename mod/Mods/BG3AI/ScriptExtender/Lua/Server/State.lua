@@ -1062,14 +1062,20 @@ end
 journalWalk = function(who)
     local out = {}
     for _, q in ipairs(loadQuests()) do
-        if q.visible and truthy(osi(Osi.QuestIsAccepted, who, q.id)) then
-            local steps = {}
+        -- Open = accepted OR any journal step unlocked: the Act 2 main quest SHA_Nightsong ("Find the Nightsong"),
+        -- the companions' own quests (Daughter of Darkness, The Wizard of Waterdeep, ...) have unlocked steps the
+        -- journal shows while QuestIsAccepted stays 0 (probe 23:3x: 10 such quests; S030/S031 the agent read the
+        -- Gauntlet's markers off the map by hand). A full step scan of 167 quests costs ~9 ms live.
+        local steps = {}
+        if q.visible then
             for _, st in ipairs(q.steps) do
                 if st.id and S.stepUnlocked(who, q, st.id) then
                     local text = U.loca(st.desc)
                     if text then steps[#steps + 1] = text end
                 end
             end
+        end
+        if q.visible and (#steps > 0 or truthy(osi(Osi.QuestIsAccepted, who, q.id))) then
             local entry = { title = U.loca(q.title) or q.id, category = q.category ~= "" and q.category or nil, steps = steps }
             if q.parent and q.parent ~= "" then entry.parent = q.parent end
             entry.id = q.id

@@ -291,6 +291,163 @@ def _game_alive(test):
     server._game_process_alive = lambda: True
 
 
+class WorldUuid(unittest.TestCase):
+    """S035 19:37: click_on("Umbral Gem") was "ambiguous: e55, e257", both gems in party bags."""
+
+    def use(self, inv, nearby):
+        test = self
+
+        class G:
+            def try_rpc(self, op, args=None, context="server"):
+                return {"state.inventory": {"items": inv}, "state.nearby": nearby}.get(op)
+        orig = (server.game, server.H)
+        server.game, server.H = G(), server.Handles()
+        self.addCleanup(lambda: (setattr(server, "game", orig[0]), setattr(server, "H", orig[1])))
+        return test
+
+    def test_carried_namesakes_skipped(self):
+        self.use([{"uuid": "g1", "name": "Umbral Gem", "owner": P1}, {"uuid": "g2", "name": "Umbral Gem", "owner": P1}],
+                 {"items": [{"uuid": "g3", "name": "Umbral Gem"}]})
+        server.H.get("g1", "Umbral Gem"), server.H.get("g2", "Umbral Gem"), server.H.get("g3", "Umbral Gem")
+        self.assertEqual(server._world_uuid("Umbral Gem"), "g3")
+
+    def test_only_carried_says_who_holds_it(self):
+        self.use([{"uuid": "g1", "name": "Umbral Gem", "owner": P1}], {"items": []})
+        server.H.get("g1", "Umbral Gem")
+        with self.assertRaises(ValueError) as cm:
+            server._world_uuid("Umbral Gem")
+        self.assertIn("the party carries it", str(cm.exception))
+
+
+class ConfirmReward(unittest.TestCase):
+    """S042 22:50:08: confirm("Accept") on the Reward panel failed "no confirmation box is open"."""
+
+    def use(self, screen):
+        calls = []
+
+        class G:
+            def try_rpc(self, op, args=None, context="server"):
+                calls.append(op)
+                return {"screen": screen} if op == "ui.state" else None
+
+            def rpc(self, op, args=None, context="server"):
+                calls.append(op)
+                return {"closed": [{"page": "RewardPanel", "how": "GetRewardsAndClose"}]}
+
+            def drain_events(self, ctx):
+                return []
+        orig = server.game
+        server.game = G()
+        self.addCleanup(setattr, server, "game", orig)
+        return calls
+
+    def test_accept_takes_the_reward(self):
+        calls = self.use("reward")
+        out = server.confirm("Accept")
+        self.assertIn("ui.dismiss", calls)
+        self.assertIn("confirm: done — the Reward panel", out)
+
+    def test_no_leaves_it(self):
+        calls = self.use("reward")
+        orig = server._box_act
+        server._box_act = lambda *a, **k: "FAILED: no confirmation box is open"
+        self.addCleanup(setattr, server, "_box_act", orig)
+        server.confirm("no")
+        self.assertNotIn("ui.dismiss", calls)
+
+
+class FastTravelReadyCheck(unittest.TestCase):
+    """S032 17:23:43 / 17:24:57: `ready_failed:WaypointTravel_RegionSwap` came at once, fast_travel waited 66 s."""
+
+    def run_with(self, fail: bool):
+        import threading
+        cancelled, keys = threading.Event(), []
+
+        class G:
+            event_seq = {"server": 5, "client": 0}
+            port = 0
+
+            def rpc(self, op, args=None, context="server", timeout=3.0):
+                if op == "events.since":
+                    evs = [{"seq": 6, "kind": "rest_flow", "data": {"step": "requested"}}]
+                    if fail:
+                        evs.append({"seq": 7, "kind": "rest_flow",
+                                    "data": {"step": "ready_failed:WaypointTravel_RegionSwap"}})
+                    return {"latest": evs[-1]["seq"], "events": [e for e in evs if e["seq"] > args["seq"]]}
+                if op == "job.cancel":
+                    assert (args["id"], context) == (7, "client")
+                    cancelled.set()
+                return {}
+
+            def try_rpc(self, op, args=None, context="server"):
+                if op == "ui.key":
+                    keys.append(args["key"])
+                return {"screen": "map"} if op == "ui.state" else {}
+
+            def run_job(self, op, args, context="server", wait_s=25.0, on_start=None, **kw):
+                on_start(context, 7)
+                if cancelled.wait(3.0 if fail else 0.6):
+                    return JobResult("interrupted", None, "cancelled")
+                return JobResult("done", {"arrived": "Moonrise Towers"})
+
+            def drain_events(self, ctx):
+                return []
+        g = G()
+        saved = (server.game, server._watch_game, server._leave_camp_first, server._travel_block)
+        self.addCleanup(lambda: (setattr(server, "game", saved[0]), setattr(server, "_watch_game", saved[1]),
+                                 setattr(server, "_leave_camp_first", saved[2]), setattr(server, "_travel_block", saved[3])))
+        server.game, server._watch_game = g, g
+        server._leave_camp_first = lambda: ""
+        server._travel_block = lambda *a, **k: {}
+        t0 = time.monotonic()
+        out = server.fast_travel("Waukeen's Rest")
+        return out, time.monotonic() - t0, keys
+
+    def test_ready_check_failure_ends_the_wait(self):
+        out, took, keys = self.run_with(fail=True)
+        self.assertIn("FAILED — the game's party ready check for the trip failed (WaypointTravel_RegionSwap)", out)
+        self.assertLess(took, 2.5)
+        self.assertEqual(keys, ["ESCAPE"])  # the map the job opened is closed
+
+    def test_success_untouched(self):
+        out, _, keys = self.run_with(fail=False)
+        self.assertIn("fast_travel: done", out)
+        self.assertEqual(keys, [])
+
+    def test_check_ignores_other_steps(self):
+        w = server._ReadyCheckWatch()
+        w._seq = 0
+        self.assertFalse(w.check({"events": [{"seq": 1, "kind": "rest_flow", "data": {"step": "ready_ok:X"}}]}))
+        self.assertTrue(w.check({"events": [{"seq": 2, "kind": "rest_flow", "data": {"step": "ready_failed:Y"}}]}))
+        self.assertEqual((w.failed, w._seq), ("Y", 2))
+
+
+class GameProcessAlive(unittest.TestCase):
+    """load_game's crash fast path: the Steam runtime's ~60 MB `bg3` parent alone is no running game."""
+
+    def _proc(self, procs):
+        import tempfile
+        d = Path(tempfile.mkdtemp())
+        for pid, comm, mb in procs:
+            (d / str(pid)).mkdir()
+            (d / str(pid) / "comm").write_text(comm + "\n")
+            (d / str(pid) / "status").write_text(f"Name:\t{comm}\n" + (f"VmRSS:\t{mb * 1024} kB\n" if mb is not None else ""))
+        (d / "self").mkdir()
+        return d
+
+    def test_parent_and_game(self):
+        self.assertTrue(server._game_process_alive(self._proc([(10, "bg3", 60), (11, "bg3", 4800), (12, "bash", 5)])))
+
+    def test_lingering_parent_only(self):
+        self.assertFalse(server._game_process_alive(self._proc([(10, "bg3", 60), (12, "bash", 5)])))
+
+    def test_zombie_game_child(self):
+        self.assertFalse(server._game_process_alive(self._proc([(10, "bg3", 60), (11, "bg3", None)])))
+
+    def test_no_proc(self):
+        self.assertIsNone(server._game_process_alive(Path("/nonexistent-proc")))
+
+
 class LoadCrash(unittest.TestCase):
     def test_process_gone_fails_at_once(self):
         alive = iter([True] + [False] * 50)

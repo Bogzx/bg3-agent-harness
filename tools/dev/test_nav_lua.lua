@@ -355,6 +355,16 @@ test("landing: no floor at the guessed y -> the floor there is the landing, unle
     eq(r.no_floor, true, "no_floor"); eq(r.suggest, nil, "no suggestion 20 m down")
 end)
 
+test("landing: with Feather Fall a floor 20 m below is a landing (S040 Shadowfell, FEATHER_FALL = no fall damage)", function()
+    world[P1] = { 0, 20, 0 }
+    Osi.HasActiveStatus = function(_, st) return st == "FEATHER_FALL" and 1 or 0 end
+    local ok, r = pcall(N.landing, P1, { -4, 9, 0 })
+    Osi.HasActiveStatus = nil
+    assert(ok, tostring(r))
+    eq(r.no_floor, true, "no_floor")
+    assert(r.suggest and math.abs(r.suggest[2]) < 0.01, "suggests the floor 20 m down")
+end)
+
 test("landing: a guessed y over the chasm around a floor -> that floor (S032 Gauntlet broken staircase)", function()
     world[P1] = { 0, 1, 0 }
     local savedH, savedT = Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo
@@ -413,6 +423,29 @@ test("jumpAcross: no walk to the goal -> the jump over the chasm toward it (S032
         eq(N.jumpAcross(P1, { 0, 0, 0 }, { -20, -2, 0 }), nil, "a wall in between is no jump")
     end)
     Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo = savedH, savedT
+    if not ok then error(err, 0) end
+end)
+
+test("landing: a Chasm guess past the 4.5 m 'reliable' cap finds the floor beyond, in full reach (S040 22:03/22:10)", function()
+    -- S040: jump_to (-599.5,-142,-1431) from 6.9 m away -> "no clear spot within 3m of it is in reach (4.5m)" x3,
+    -- then the same jump by hand landed. Jumper on a ledge, Chasm for -7.5 < x < -2, a clear floor 4 m down beyond.
+    world[P1] = { 0, 1, 0 }
+    local savedH, savedT, savedG = Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo, BG3AI.Guard
+    Ext.Level.GetHeightsAt = function(x) if x <= -7.5 then return { -3.0 } elseif x < -2 then return { -3.0 } end return { 1.0 } end
+    Ext.Level.GetTileDebugInfo = function(p)
+        local void = p[1] < -2 and p[1] > -7.5
+        return { GroundSurface = void and "Chasm" or "None", CloudSurface = "None", Flags = {} }
+    end
+    BG3AI.Guard = { jump_reach = function(c, a, b) local m = 8.5; local dr = a[2] - b[2]
+        if dr > 2.3 then return m + dr, m end return m, m end }
+    local ok, err = pcall(function()
+        local r = N.landing(P1, { -7, -3, 0 })
+        eq(r.safe, false, "safe"); eq(r.surface, "Chasm", "surface")
+        assert(r.suggest, "suggests the floor past the chasm")
+        assert(r.suggest[1] <= -7.5, "beyond the chasm: " .. r.suggest[1]); near(r.suggest[2], -3, "floor y")
+        near(r.reach_m, 12.5, "reach grows by the 4 m drop"); eq(r.reliable_m, 4.5, "short-landing cap unchanged")
+    end)
+    Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo, BG3AI.Guard = savedH, savedT, savedG
     if not ok then error(err, 0) end
 end)
 
@@ -1419,6 +1452,19 @@ test("routeAhead: standing off the walkable grid -> unknown_reason says so (S039
     assert(ok, tostring(r))
     eq(r.reachable, nil, "unknown")
     assert(r.unknown_reason and r.unknown_reason:find("no floor under"), tostring(r.unknown_reason))
+end)
+
+test("routeAhead: a goal in the void -> no_path_reason (S039 21:44 route (-516,-60,-1397))", function()
+    local savedH = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function(x) if x < -5 then return {} end return { 0.0 } end
+    local savedIA = BG3AI.Visibility.itemsAround
+    BG3AI.Visibility.itemsAround = function() return {} end
+    local ok, r = pcall(N.routeAhead, { party = { P1 }, is_party = { [P1] = true } }, P1, { -10, -20, 0 })
+    BG3AI.Visibility.itemsAround = savedIA
+    Ext.Level.GetHeightsAt = savedH
+    assert(ok, tostring(r))
+    eq(r.reachable, false, "no path")
+    eq(r.no_path_reason, "no walkable ground at the target", "reason")
 end)
 
 test("landing: a column with no ground at all is never a landing (S038/S039 void jumps froze the game)", function()
