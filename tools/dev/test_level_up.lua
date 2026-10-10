@@ -561,5 +561,13 @@ check(okp and pr.switched == nil and pr.name == "Toll the Dead" and pr.open == 1
 openPage(SH)
 check(BG3AI.Progression.luMissing(dc):find("a feat (plan.feat)", 1, true), "luMissing: no feat")
 
+-- 29. the next level on the same page (live 12:5x: Wyll L5 right after L4): the view model still carries the last
+--     feat's panel, but this level has no feat: no ability points are read or pressed
+openPage(PAL)
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" }, finish = false })
+dc._p.CanSelectFeat = false
+j = run({ uuid = "claude", plan = {} })
+check(j.status == "done" and j.result.set.abilities == nil, "next level on a reused page: no stale ability points")
+
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

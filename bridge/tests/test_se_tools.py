@@ -188,6 +188,30 @@ class NightCamp(unittest.TestCase):
         self.assertEqual([o for o, _ in fake.jobs], ["act.leave_camp"])
 
 
+    def test_waits_for_the_party_to_wake_up(self):
+        # Acceptance 12:16: long_rest returned with the party Sleeping (TravelError 'Condition', no night_camp);
+        # fast_travel failed at once. Now it waits for the HUD + no error, then travels.
+        fake = NightFake()
+        fake.night = False
+        polls = {"n": 0}
+        base = fake.rpc
+
+        def rpc(op, args=None, context="server"):
+            if op == "ui.travel_block":
+                polls["n"] += 1
+                return {"in_camp": True, "error": "Condition", "hud": True} if polls["n"] <= 3 else {"hud": True}
+            return base(op, args, context)
+
+        fake.rpc = fake.try_rpc = rpc
+        self.use(fake)
+        orig = server.time.sleep
+        server.time.sleep = lambda s: None
+        self.addCleanup(setattr, server.time, "sleep", orig)
+        out = getattr(server.fast_travel, "fn", server.fast_travel)("Last Light Inn")
+        self.assertIn("ui.fast_travel", [o for o, _ in fake.jobs])
+        self.assertIn("for the party to wake up", out)
+        self.assertGreater(polls["n"], 3)
+
 
 class BootErrors(unittest.TestCase):
     """Pass 4: raw Lua errors from a game still loading reached the agent; now NotReady."""
@@ -267,31 +291,36 @@ class LoadCrash(unittest.TestCase):
                 return True
 
             def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+                self.presses = getattr(self, "presses", 0) + 1
                 return JobResult(status="done", result={"pressed": "Load"})
 
         g = G(["save_load"])
         server.game = g
         out = getattr(server.load_game, "fn", server.load_game)("LIVETEST-se")
         self.assertIn("didn't start a load", out)
-        self.assertEqual(g.keys, ["ESCAPE", "ESCAPE"])
+        self.assertEqual(g.presses, 1 + server.LOAD_RETRIES)  # pressed again before giving up
+        self.assertEqual(g.keys, ["ESCAPE", "ESCAPE"])  # the page is closed only at the end
 
 
 
 class LoadVerified(unittest.TestCase):
     """load_game is done only when a load really happened: a new server Lua state and no Load page."""
 
-    def run_load(self, boots, screens):
-        orig = (server.game, server.SAVE_DIR, server.SAVE_PREFIX, server.PLAYTHROUGH, server.time.sleep)
+    def run_load(self, boots, screens, states=None):
+        orig = (server.game, server.SAVE_DIR, server.SAVE_PREFIX, server.PLAYTHROUGH, server.time.sleep,
+                server.LOAD_START_S)
         self.addCleanup(lambda: (setattr(server, "game", orig[0]), setattr(server, "SAVE_DIR", orig[1]),
                                  setattr(server, "SAVE_PREFIX", orig[2]), setattr(server, "PLAYTHROUGH", orig[3]),
-                                 setattr(server.time, "sleep", orig[4])))
+                                 setattr(server.time, "sleep", orig[4]), setattr(server, "LOAD_START_S", orig[5])))
+        server.LOAD_START_S = 0.3
         import tempfile
         d = Path(tempfile.mkdtemp())
         (d / "Claude-1__LIVETEST-se").mkdir()
         server.SAVE_DIR, server.SAVE_PREFIX, server.PLAYTHROUGH = d, "Claude-", "t"
         server.time.sleep = lambda s: None
         boots = list(boots)
-        states = iter(["LoadSession"] + ["Running"] * 100)
+        import itertools
+        states = itertools.chain(states or ["LoadSession"], itertools.repeat("Running"))
 
         class G(Fake):
             def rpc(self, op, args=None, context="server", timeout=12.0):
@@ -308,9 +337,11 @@ class LoadVerified(unittest.TestCase):
                 return True
 
             def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+                self.presses = getattr(self, "presses", 0) + 1
                 return JobResult(status="done", result={"pressed": "Load"})
 
-        server.game = G(screens)
+        self.g = G(screens)
+        server.game = self.g
         return getattr(server.load_game, "fn", server.load_game)("LIVETEST-se")
 
     def test_new_boot_is_done(self):
@@ -322,7 +353,18 @@ class LoadVerified(unittest.TestCase):
 
     def test_load_page_still_up_fails(self):
         out = self.run_load(["a", "b"], ["save_load"])
-        self.assertIn("save load screen is still up", out)
+        self.assertIn("nothing was loaded", out)  # page still up, then a 2nd press that didn't start either
+        self.assertEqual(self.g.presses, 1 + server.LOAD_RETRIES)
+        self.assertEqual(self.g.keys, ["ESCAPE", "ESCAPE"])
+
+    def test_press_that_did_nothing_is_pressed_again(self):
+        # Acceptance 12:13: the first press left the Load page up (same Lua state); the second press loaded.
+        # ui.state reads: 1st attempt 10x save_load (gives up), then game; boots: before, same, new.
+        out = self.run_load(["a", "b"], ["save_load"] * 10 + ["game"],
+                            states=["LoadSession", "Running", "LoadSession"])
+        self.assertIn("load_game: done", out)
+        self.assertEqual(self.g.presses, 2)
+        self.assertEqual(self.g.keys, [])
 
 
 if __name__ == "__main__":

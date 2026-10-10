@@ -267,6 +267,21 @@ class SwapParty(unittest.TestCase):
         self.assertIn("walked to Halsin", out)
         self.assertIn("swap_party: done", out)
 
+    def test_far_walk_up_stops_short_of_the_companion(self):
+        # acceptance 12:2x: the 59 m walk to Wyll ended on his spot, then a 3.4 m second leg; stop short instead
+        seen = {}
+        orig = (server._far_move, server._ent_pos, server.travel_to, server.wait_for)
+        self.addCleanup(lambda: (setattr(server, "_far_move", orig[0]), setattr(server, "_ent_pos", orig[1]),
+                                 setattr(server, "travel_to", orig[2]), setattr(server, "wait_for", orig[3])))
+        server._far_move = lambda *a: ([60.0, 1.0, 0.0], 60.0)
+        server._ent_pos = lambda u: [0.0, 1.0, 0.0]
+        server.travel_to = lambda **kw: seen.update(kw) or "travel_to: started (58m)"
+        server.wait_for = lambda **kw: "idle"
+        out = server._walk_up_to("me", "wyll", "Wyll", [60.0, 1.0, 0.0])
+        self.assertAlmostEqual(seen["x"], 60.0 - server.WALK_UP_SHORT_M)
+        self.assertEqual((seen["y"], seen["z"]), (1.0, 0.0))
+        self.assertIn("walked to Wyll (60m)", out)
+
     def test_no_join_answer_leaves_and_mutes_the_hint(self):
         # live 2026-10-10 SCL camp: Halsin's menu had no join answer at all
         menu = {"options": [{"i": 1, "text": "How will the grove fare without you?"},

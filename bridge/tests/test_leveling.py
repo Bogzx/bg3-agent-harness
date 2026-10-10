@@ -63,6 +63,8 @@ class Leveling(unittest.TestCase):
         self.assertIn("no plan yet for Gale L2", LV.line(ST, label, self.mem))
         self.assertEqual(LV.line(dict(ST, in_combat=True), label, self.mem), "")   # not in combat
         self.assertEqual(LV.line({"party": [{"uuid": "a", "name": "A", "level": 3}]}, label), "")
+        camp = LV.line({"party": [], "camp": [{"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}]}, label)
+        self.assertTrue(camp.startswith("LEVEL UP: ") and "(4, at camp)" in camp, camp)  # level_up swaps them in
 
     def test_nudge(self):
         n = LV.Nudge(every_s=300)
@@ -442,6 +444,126 @@ class ServerWiring(unittest.TestCase):
         self.assertIn("L4: level_up: done", out)
         self.assertIn("L5: level_up: done", out)
         self.assertEqual(jobs, ["act.leave_camp"])     # was away from camp: leaves again
+
+    def test_camp_member_second_level_fails_says_partly_done(self):
+        """Live 12:4x: Wyll L4 went through, L5 failed on the closing page: not a bare FAILED."""
+        from bg3ai import server as S
+        wyll = {"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}
+        party = [{"uuid": f"u-{n}", "name": n.title(), "level": 5} for n in ("claude", "gale", "karlach", "sh")]
+        state = {"in_combat": False, "party": list(party), "camp": [wyll]}
+
+        def fake_swap(into, out="", leave_camp=True):
+            if into == "Wyll":
+                state["party"] = [r for r in state["party"] if r["name"] != out] + [dict(wyll)]
+            return "swap_party: done — joined"
+
+        def fake_level(uuid, plan):
+            w = next(r for r in state["party"] if r["uuid"] == "u-wyll")
+            if w.get("level_up") == 4:
+                w["level_up"] = 5
+                return "level_up: done"
+            return "level_up: FAILED — the ability +/- buttons did nothing"
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                return state if op == "state.status" else ({"region": "Campsite"} if op == "ui.state" else default)
+
+            def run_job(self, op, args=None, wait_s=0, context="server"):
+                return type("R", (), {"status": "done"})()
+
+        saved = (S.game, S._level_up, S._who, S.swap_party)
+        S.game, S._level_up, S._who, S.swap_party = G(), fake_level, (lambda ref: "u-wyll"), fake_swap
+        try:
+            out = S.level_up("Wyll", out="Gale")
+        finally:
+            S.game, S._level_up, S._who, S.swap_party = saved
+        self.assertTrue(out.startswith("level_up: partly done (1 of 2 levels) — Wyll (camp member)"), out)
+
+    def test_camp_member_second_level_needs_picks_says_partly_done(self):
+        """Live 12:2x: Wyll L4 done, L5's stored plan lacked an invocation + a spell: he stays in with the page
+        open (no swap back), and the headline still says a level went through."""
+        from bg3ai import server as S
+        wyll = {"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}
+        party = [{"uuid": f"u-{n}", "name": n.title(), "level": 5} for n in ("claude", "gale", "karlach", "sh")]
+        state = {"in_combat": False, "party": list(party), "camp": [wyll]}
+        swaps = []
+
+        def fake_swap(into, out="", leave_camp=True):
+            swaps.append(into)
+            if into == "Wyll":
+                state["party"] = [r for r in state["party"] if r["name"] != out] + [dict(wyll)]
+            return "swap_party: done — joined"
+
+        def fake_level(uuid, plan):
+            w = next(r for r in state["party"] if r["uuid"] == "u-wyll")
+            if w.get("level_up") == 4:
+                w["level_up"] = 5
+                return "level_up: done"
+            return "level_up: FAILED — finish: spell choice 'spells' needs 1 more spell in plan.spells; can pick: Fear"
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                return state if op == "state.status" else ({"region": "Campsite"} if op == "ui.state" else default)
+
+        saved = (S.game, S._level_up, S._who, S.swap_party)
+        S.game, S._level_up, S._who, S.swap_party = G(), fake_level, (lambda ref: "u-wyll"), fake_swap
+        try:
+            out = S.level_up("Wyll", out="Gale")
+        finally:
+            S.game, S._level_up, S._who, S.swap_party = saved
+        self.assertTrue(out.startswith("level_up: partly done (1 of 2 levels) — Wyll (camp member)"), out)
+        self.assertIn("stays in the party", out)
+        self.assertEqual(swaps, ["Wyll"])
+
+    def test_party_name_resolves_on_a_fresh_bridge(self):
+        """Live 12:3x: pickpocket(who="Shadowheart") as a fresh bridge's first call: "unknown target"."""
+        from bg3ai import server as S
+        from bg3ai.render import Handles
+        su = "c774d764-4a17-48dc-b470-32ace9ce4471"
+        reads = []
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                reads.append(op)
+                return {"party": [{"uuid": su, "name": "Shadowheart"}]} if op == "state.status" else default
+        saved = (S.game, S.H)
+        S.game, S.H = G(), Handles()
+        try:
+            self.assertEqual(S._uuid("Shadowheart"), su)
+            self.assertEqual(reads, ["state.status"])
+            self.assertEqual(S._uuid("shadowheart"), su)          # known now: no second read
+            self.assertEqual(reads, ["state.status"])
+            with self.assertRaises(ValueError):
+                S._uuid("e99")                                   # a stale handle never triggers a read
+            self.assertEqual(reads, ["state.status"])
+            with self.assertRaises(ValueError):
+                S._uuid("Nobody")
+        finally:
+            S.game, S.H = saved
+
+    def test_camp_member_named_on_a_fresh_bridge(self):
+        """Live 12:3x: level_up(who="Wyll") as a fresh bridge's first call failed "unknown target 'Wyll'" (only
+        party names were known); the earlier tests stubbed _who and hid it."""
+        from bg3ai import server as S
+        from bg3ai.render import Handles
+        wu = "c774d764-4a17-48dc-b470-32ace9ce447d"
+        state = {"in_combat": False, "active": "11111111-2222-3333-4444-555555555555",
+                 "party": [{"uuid": "11111111-2222-3333-4444-555555555555", "name": "Claude", "level": 5}],
+                 "camp": [{"uuid": wu, "name": "Wyll", "level": 4}]}
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                return state if op == "state.status" else default
+
+            def rpc(self, op, *a, **k):
+                return state
+        saved = (S.game, S.H)
+        S.game, S.H = G(), Handles()
+        try:
+            out = S.level_up("Wyll")
+        finally:
+            S.game, S.H = saved
+        self.assertEqual(out, "level_up: nothing to do — Wyll (camp) has no level up waiting")
 
     def test_camp_member_missing_picks_stays_in_with_the_page_open(self):
         """Live 11:14: Wyll L4 needed a cantrip + a spell the stored plan lacked; the swap back then failed."""

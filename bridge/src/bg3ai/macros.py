@@ -22,6 +22,7 @@ TRAVEL_MAX_LEGS = 12
 TRAVEL_PROGRESS_M = 1.0  # a leg that gets less than this much closer is a stall
 TRAVEL_STALL_LEGS = 2    # stalls in a row before travel_to gives up (S001 retried in place while burning)
 TRAVEL_LEG_RETRIES = 2   # failed legs per trip that get an alternative leg instead of ending it (S002)
+TRAVEL_MIN_GAIN_M = 5.0  # a plain leg gaining less (acceptance 12:xx: 4 m / 2 m legs) asks for a longer one first
 STEP_INTO_RANGE_M = 3.0  # combat_turn: a cast this far past its range steps in first (S002: 18.6 m vs 18 m)
 REGROUP_NEAR_M = 6.0
 DIALOGUE_MAX = 12
@@ -114,8 +115,9 @@ def dialogue_filler(d: dict | None, strict: bool = False) -> tuple[bool, int, st
     opts = [o for o in d.get("options") or [] if not o.get("off")]
     if not opts:
         return (True, 0, "") if d.get("continue") else (False, 0, "no options yet")
-    if len(opts) > 1:
-        return False, 0, f"a real choice ({len(opts)} options)"
+    if len(opts) > 1:  # + the rows outside a long list's visible window (live: Karlach 6 shown of 10)
+        n = len(opts) + int(d.get("more_below") or 0) + int(d.get("more_above") or 0)
+        return False, 0, f"a real choice ({n} options)"
     o = opts[0]
     text = str(o.get("text") or "").strip()
     if o.get("tags"):
@@ -197,7 +199,8 @@ def leg_stopped_short(result: Any) -> bool:
 
 
 # A walk that failed on the ground itself (not an interrupt, a conversation or the game state): another leg may work.
-_LEG_PATH_FAIL = re.compile(r"no walkable path|could not get closer|path blocked|not reachable|stopped_short|"
+# "no path to the destination": Actions.lua's walk stood still 5 s (live 13:09: from a ladder's top toward its foot)
+_LEG_PATH_FAIL = re.compile(r"no walkable path|no path to the destination|could not get closer|path blocked|not reachable|stopped_short|"
                             r"needs a jump|teleport", re.I)
 _LEG_NOT_PATH = re.compile(r"interrupted|conversation|in combat|dialogue|cancel|downed|dead|timed out", re.I)
 

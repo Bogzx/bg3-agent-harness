@@ -1136,7 +1136,9 @@ local function passivesReport(getDC, ctx)
             local title = v.title or "passives"
             out[#out + 1] = { title = v.title, picked = v.picked }
             if v.complete == false then
-                local more = (tonumber(v.max) or 1) - #v.picked
+                -- picked can hold already-known entries (live: Wyll L5 invocations "needs -1 more"): an incomplete
+                -- choice always needs at least one
+                local more = math.max(1, (tonumber(v.max) or 1) - #v.picked)
                 ctx.result.problems[#ctx.result.problems + 1] = "passive choice '" .. title .. "' needs " .. more
                     .. " more in plan.passives; can pick: " .. table.concat(v.options, ", ")
                 ctx.result.options = ctx.result.options or {}
@@ -1618,6 +1620,9 @@ end
 P.featDetails = featDetails
 
 local function asiItems(dc)
+    -- Only a feat level has ability points. The next level's page reuses the view model and still carries the
+    -- last feat's panel (live 12:5x: Wyll L5 right after L4 "the ability +/- buttons did nothing").
+    if UI.prop(dc, "CanSelectFeat") ~= true then return {} end
     local fd = featDetails(dc)
     return fd and list(UI.prop(fd, "AbilitySelection")) or {}
 end
@@ -1766,10 +1771,18 @@ RPC.register("ui.level_up", function(args)
     local asi = { steps = 0 }
     local stages = {
         { "open", function()
+            local cur = get()
+            if cur and not openLater and str(UI.prop(cur, "LevelUpStep")) == "Finishing" then
+                -- The previous level's page is still closing: wait for it, then open this level's page.
+                ctx.result.waited_finish = true
+                return "wait", 300
+            end
+            if not cur and ctx.result.waited_finish and not ctx.reopened then
+                ctx.reopened, openLater = true, true
+            end
             if openLater then
-                if P.screenFade() then return "wait", 200 end
+                if P.screenFade() then ctx.result.waited_fade = true return "wait", 200 end
                 openLater = false
-                ctx.result.waited_fade = true
                 local ok, err = P.openLevelUp(args.uuid)
                 if not ok then return "fail", err end
                 return "wait", 300
@@ -1978,8 +1991,13 @@ RPC.register("ui.level_up", function(args)
             -- level (Karlach x3 in S021) or the closing animation. The level was applied either way; S003/S021/S024
             -- reported these as FAILED ("closed: still waiting after 10000 ms … finished complete").
             ctx.closeWait = ctx.closeWait or RPC.now_ms()
-            if RPC.now_ms() - ctx.closeWait > 4000 then
+            local step = str(UI.prop(get(), "LevelUpStep"))
+            -- Still in its Finishing template (closing animation): keep waiting up to 9 s, so a following level_up
+            -- doesn't work on this page (live 12:4x: Wyll L5 right after L4 read L4's feat panel: "the ability +/-
+            -- buttons did nothing").
+            if RPC.now_ms() - ctx.closeWait > (step == "Finishing" and 9000 or 4000) then
                 ctx.result.page_still_open = "another level up may be pending: call level_up again"
+                ctx.result.close_step = step
                 return "done"
             end
             return "wait", 300

@@ -21,7 +21,7 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, delta, economy, leveling, macros, metrics, party, render, saver, saves, turn
-from . import companions, longnav, navhints
+from . import companions, longnav, lore, navhints
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -157,6 +157,30 @@ DIALOGUE_DRAIN_MAX_S = 0.25
 _DIALOGUE_TOOLS = frozenset({"dialogue_advance", "choose_dialogue", "talk_to"})
 
 
+# Events a result already reports in its own words (set by the tool for its one call): item uuids whose item_added
+# is noise, and whether the gold stack's item_added is (sell=junk: the game moves each member's sold items to the
+# trading character first — acceptance 12:21: 5 "item_added … owner=Claude" lines + "Gold count=799").
+# The window stays open ~10 s after the call ("until"): the game's AddedTo for a big sale (54 items) trickles in after
+# the trade job ends and would otherwise land in the next tool's result.
+_EV_DROP: dict[str, Any] = {"items": set(), "gold": False, "until": 0.0}
+EV_DROP_TAIL_S = 10.0
+
+
+def _drop_events(evs: list | None) -> list:
+    if _EV_DROP["until"] and time.monotonic() > _EV_DROP["until"]:
+        _EV_DROP.update(items=set(), gold=False, until=0.0)
+    items, gold = _EV_DROP["items"], _EV_DROP["gold"]
+    if not evs or not (items or gold):
+        return evs or []
+    def noise(e) -> bool:
+        if not isinstance(e, dict) or e.get("kind") != "item_added":
+            return False
+        it = (e.get("data") or {}).get("item") or {}
+        u = it.get("uuid") if isinstance(it, dict) else it
+        return (isinstance(u, str) and H._bare(u) in items) or (gold and isinstance(it, dict) and it.get("name") == "Gold")
+    return [e for e in evs if not noise(e)]
+
+
 def _events_text(body: str = "", job: str | None = None, max_wait: float | None = None) -> str:
     """Drained events, minus those the result's own text (body) already reports."""
     def drain(ctx):
@@ -170,6 +194,7 @@ def _events_text(body: str = "", job: str | None = None, max_wait: float | None 
 
     parts = []
     for evs in _par(lambda: drain("server"), lambda: drain("client")):
+        evs = _drop_events(evs)
         if evs:
             _note_dialogue_speaker(evs)
             parts.append(render.render_events(evs, H, body=body, job=job, flap=render.FLAP, party=_party_cached()))
@@ -255,12 +280,67 @@ def _annotate_checks(ui: dict) -> dict:
     return ui
 
 
+# Answers read by scrolling, per dialogue node: (speaker, line, total) -> {i: option}.
+_answer_pages: dict = {}
+
+
+def _complete_answers(ui: dict) -> dict:
+    """A long answer list shows only a window of its rows (live: 6 of Karlach's 10). Wheel it like a player and
+    list every answer (texts of rows outside the window show only when scrolled). Cached per node."""
+    d = ui.get("dialogue") if isinstance(ui, dict) else None
+    if not d or not d.get("options") or not (d.get("more_below") or d.get("more_above")):
+        return ui
+    total = len(d["options"]) + int(d.get("more_below") or 0) + int(d.get("more_above") or 0)
+    key = (d.get("speaker"), d.get("text"), total)
+    got = _answer_pages.get(key)
+    why = None
+    if got is None or len(got) < total:
+        inp = _inp()
+        if inp is None:
+            return ui
+
+        def read() -> list:
+            u = game.try_rpc("ui.state", context="client") or {}
+            dd = u.get("dialogue") if isinstance(u, dict) else None
+            return list((dd or {}).get("options") or [])
+
+        from . import clicker
+        got, why = clicker.read_answer_list(game, inp, read)
+        if len(_answer_pages) > 50:
+            _answer_pages.clear()
+        _answer_pages[key] = got
+    for o in d["options"]:
+        got.setdefault(o["i"], o)
+    d = dict(d, options=[got[i] for i in sorted(got)])
+    left = total - len(got)
+    d.pop("more_above", None)
+    d["more_below"] = left if left > 0 else None
+    if why:
+        d["scroll_note"] = why
+    return dict(ui, dialogue=d)
+
+
 def _render_ui(ui: dict, brief: bool = False) -> list[str]:
+    _keep_read(ui)
+    try:
+        ui = _complete_answers(ui)
+    except Exception:  # best effort: the visible window still renders
+        pass
     try:
         ui = _annotate_checks(ui)
     except Exception:  # best effort: a missing sheet never hides the dialogue itself
         pass
     return render.render_ui(ui, H, brief=brief)
+
+
+def _keep_read(ui: Any) -> None:
+    """A book/note/letter panel on screen: keep its text for recall() (what the party has read)."""
+    pop = ui.get("popup") if isinstance(ui, dict) and ui.get("screen") == "book" else None
+    if isinstance(pop, dict) and pop.get("text"):
+        try:
+            lore.remember(MEMORY, H.scrub(str(pop.get("title") or "")), H.scrub(str(pop["text"])))
+        except Exception:  # best effort: never breaks a read
+            pass
 
 
 class _BatchState(threading.local):
@@ -297,7 +377,7 @@ NEXT_WALK = ("NEXT: queue_actions what to do on arrival, then look/plan/notes wh
 _noop_waits = {"n": 0}
 _READ_TOOLS = {"look", "look_at", "get_status", "get_nearby", "get_frontier", "get_map", "session_clock", "wiki_page",
                "wiki_search", "get_party", "list_saves", "get_inventory", "screenshot", "zoom", "route", "get_journal",
-               "get_combat_state", "get_dialogue", "ability_preview", "get_level_up_options"}
+               "get_combat_state", "get_dialogue", "ability_preview", "get_level_up_options", "recall"}
 
 
 def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, issued: bool = False,
@@ -451,7 +531,15 @@ _SAVE_UNGATED = {"list_saves", "session_clock", "wiki_page", "wiki_search"}
 
 
 def _uuid(ref: str) -> str:
-    return H.resolve(ref)
+    try:
+        return H.resolve(ref)
+    except ValueError as e:
+        # Live 12:3x: pickpocket(who="Shadowheart") / level_up(who="Wyll") as a fresh bridge's first calls failed
+        # "unknown target": names are learnt from reads. A party/camp name is worth one status read.
+        if "unknown target" not in str(e) or re.fullmatch(r"e\d+", str(ref or "").strip().lower()):
+            raise
+        _remember_names(game.try_rpc("state.status"))
+        return H.resolve(ref)
 
 
 def _active() -> str:
@@ -1156,7 +1244,7 @@ def _nearby_match(res: dict, words: list[str]) -> dict:
 @mcp.tool()
 @_guard
 def get_nearby(radius: float = 25.0, kinds: str = "") -> str:
-    """Visible characters and interactable objects near the party (ids, distance, relation, HP, locked/opened...), plus remembered last-seen positions. kinds: optional filter: characters, items, door, container, item, ladder, usable, trap, props (decoration), or words to match names (e.g. "button,lever")."""
+    """Visible characters and interactable objects near the party (ids, distance, relation, HP, locked/opened, [lit]/[glowing] = an object's visible puzzle state, e.g. a painting lit by its button), plus remembered last-seen positions. kinds: optional filter: characters, items, door, container, item, ladder, usable, trap, props (decoration), or words to match names (e.g. "button,lever")."""
     t0 = time.monotonic()
     args: dict[str, Any] = {"radius": radius}
     words: list[str] = []
@@ -1704,32 +1792,59 @@ def disarm(trap: str, who: str | None = None) -> str:
 
 @mcp.tool()
 @_guard
-def pickpocket(npc: str, who: str | None = None, take: str = "", min_chance: int = 0) -> str:
-    """Sneak up to a visible NPC and open the pickpocket window (best while sneaking and unseen); the result lists their pockets with the game's own odds per item (chance %, DC). take: steal that item (name or id) in the same call (the window is opened first if needed); min_chance: take nothing below this %. A failed steal is a crime if they notice. press_key("ESCAPE") closes the window."""
+def pickpocket(npc: str, who: str | None = None, take: str = "", min_chance: int = 0, leave: bool = False) -> str:
+    """Sneak up to a visible NPC and open the pickpocket window (best while sneaking and unseen); the result lists their pockets with the game's own odds per item (chance %, DC). take: steal that item (name or id) in the same call (the window is opened first if needed); min_chance: take nothing below this %. A failed steal is a crime if they notice. leave=true closes the window."""
     t0 = time.monotonic()
     target = _uuid(npc)
     args: dict[str, Any] = {"npc": target}
-    out = ""
-    try:
-        listing = game.run_job("ui.pickpocket", args, context="client", wait_s=15)
-    except Exception as e:  # noqa: BLE001
-        listing = JobResult("failed", error=str(e))
+    if leave:
+        r = _pockets(dict(args, leave=True))
+        gone = r.status != "done" and "no pickpocket window" in str(r.error or "")   # it had closed itself (live 12:4x)
+        return _finish("pickpocket", {"npc": npc, "leave": True},
+                       "pickpocket: left (window closed)" if r.status == "done" else
+                       "pickpocket: left (no window was open)" if gone else _job_text("pickpocket", r), t0)
+    out = sel = ""
+    listing = _pockets(args)
     if listing.status != "done" and "no pickpocket window" in str(listing.error or ""):
-        out = _click_act("pickpocket", "act.pickpocket", {"char": _who(who), "target": target})
+        char = _who(who)
+        if who and char != (game.try_rpc("state.status") or {}).get("active"):
+            # Live 12:3x: who=Shadowheart while Claude was controlled: the engine opened the window, but the client
+            # shows it only for the controlled character ("no pickpocket window" after 3 s). Take control, as a player
+            # does before stealing with someone else.
+            r = game.run_job("act.select", {"char": char}, wait_s=5)
+            sel = f"(took control of {who}: the window shows for the controlled character)" if r.status == "done" else ""
+        out = _click_act("pickpocket", "act.pickpocket", {"char": char, "target": target})
         if _batch.get("last") != "done":
             return out
-        listing = game.run_job("ui.pickpocket", args, context="client", wait_s=15)
+        # The engine says opened before the client widget shows (live 12:5x: Dammon's window up ~1 s later).
+        deadline = time.monotonic() + 3.0
+        listing = _pockets(args)
+        def early(r: JobResult) -> bool:   # widget not up yet, or up with its slots not filled yet (live 12:5x)
+            if r.status == "done":
+                return not (r.result or {}).get("items")
+            return "no pickpocket window" in str(r.error or "")
+        while early(listing) and time.monotonic() < deadline:
+            time.sleep(0.25)
+            listing = _pockets(args)
     if listing.status != "done":
         return _finish("pickpocket", args, (out + "\n" if out else "") + _job_text("pickpocket", listing), t0)
     _remember_names(listing.result)
     text = economy.pockets_text(listing.result, _pocket_handle)
     if take:
         tk = _uuid(take) if re.fullmatch(r"e\d+", take.strip()) else take   # a handle from the listing, else a name
-        r = game.run_job("ui.pickpocket", dict(args, take=tk, min_chance=min_chance or None), context="client", wait_s=15)
+        r = _pockets(dict(args, take=tk, min_chance=min_chance or None))
         _remember_names(r.result)
         text = (economy.steal_text(r.result, _pocket_handle) if r.status == "done" else _job_text("pickpocket", r)) + "\n" + text
     head = out.split("\n", 1)[0] + "\n" if out else ""
-    return _finish("pickpocket", {"npc": npc, "take": take}, head + text, t0)
+    return _finish("pickpocket", {"npc": npc, "take": take}, head + text + ("\n" + sel if sel else ""), t0)
+
+
+def _pockets(args: dict) -> JobResult:
+    """ui.pickpocket as a JobResult; its refusals (no window open) come back as failed, not raised."""
+    try:
+        return game.run_job("ui.pickpocket", args, context="client", wait_s=15)
+    except Exception as e:  # noqa: BLE001
+        return JobResult("failed", error=str(e))
 
 
 def _pocket_handle(it: dict) -> str:
@@ -1887,6 +2002,18 @@ def _end_night_first() -> str:
             + first[:300])
 
 
+def _wake_first() -> str:
+    """Acceptance 12:16: long_rest returned 3.6 s in with the party still Sleeping (a camp scene, TravelError
+    'Condition', no night_camp flag) and the next fast_travel failed in 0.1 s 'can't fast travel now (Condition)'.
+    A player waits for the morning: wait for the HUD and no travel error. '' when nothing to wait for."""
+    b = game.try_rpc("ui.travel_block", context="client")
+    if not (isinstance(b, dict) and b.get("error") == "Condition" and not b.get("dialogue")):
+        return ""
+    t = time.monotonic()
+    ok = _settle_hud(NIGHT_SLEEP_WAIT_S)
+    return f"waited {time.monotonic() - t:.0f}s for the party to wake up after the rest" + ("" if ok else " (still blocked)")
+
+
 def _leave_camp_first() -> str | None:
     """Live 2026-10-10: a fast travel started at camp moved only the controlled character (companions and the
     camera stayed at the Campsite, PARTY APART 1800 m). ui.fast_travel refuses at camp, so leave it first, as the
@@ -1894,6 +2021,7 @@ def _leave_camp_first() -> str | None:
     night = _end_night_first()
     if night.startswith("FAILED"):
         return night
+    night = "\n".join(x for x in (night, _wake_first()) if x)
     try:
         game.rpc("ui.fast_travel", {"waypoint": "-", "dry": True}, context="client")
         return night
@@ -1967,6 +2095,7 @@ def camp(action: str = "go") -> str:
         night = _end_night_first()
         if night.startswith("FAILED"):
             return _finish("camp", {"action": action}, "camp: " + night, time.monotonic())
+        night = "\n".join(x for x in (night, _wake_first()) if x)
         _travel_block(TRAVEL_BLOCK_WAIT_S)
         out = _act("camp", "act.leave_camp", {}, wait_s=60)
         if _batch.get("last") == "done":
@@ -1981,12 +2110,21 @@ def camp(action: str = "go") -> str:
 SWAP_DIALOGUE_S = 25.0  # swap_party: the longest it drives the companion's dialogue
 
 
+WALK_UP_SHORT_M = 2.0  # _walk_up_to stops this far short of the character (act.talk's approach covers the rest)
+
+
 def _walk_up_to(char: str, uuid: str, name: str, pos: list | None = None) -> str:
     """Walks `char` next to a character too far to talk to (one walk, or travel_to's legs past MOVE_CAP_M).
     pos: where it stands when it isn't in view (state.camp rows carry it for the camp companions)."""
     far = _far_move(char, None if pos else uuid, pos)
     if far:
         dest, d = far
+        here = _ent_pos(char)
+        if here and d > WALK_UP_SHORT_M:
+            # Acceptance 12:2x (swap to Wyll, 59 m): the walk ended on his spot and travel_to added a 3.4 m second leg
+            # (1.6 s). Stop short of him on the way in: the talk job walks the last metres itself.
+            k = (d - WALK_UP_SHORT_M) / d
+            dest = [here[0] + (dest[0] - here[0]) * k, dest[1], here[2] + (dest[2] - here[2]) * k]
         out = travel_to(x=dest[0], y=dest[1], z=dest[2], who=H.get(char))   # who: a handle; runs async
         if "started" in out:
             wait_for(target="idle", timeout_s=60, lead_s=0)
@@ -2526,7 +2664,9 @@ def equip_best(who: str | None = None) -> str:
     if who:
         ups = [u for u in ups if u["who"] == _uuid(who)]
     if not ups and not done and not failed:
-        return _finish("equip_best", {"who": who}, "equip_best: done — nothing better in the bags", t0)
+        hands = economy.main_hands(inv, _name_of)
+        return _finish("equip_best", {"who": who}, "equip_best: done — nothing better in the bags"
+                       + (f"\n{hands}" if hands else ""), t0)
     for u in ups:
         tag = f"{_name_of(u['who'])}: {H.get(u['uuid'])} {u['name']} ({u['why']})"
         if u["holder"] != u["who"]:
@@ -2541,6 +2681,9 @@ def equip_best(who: str | None = None) -> str:
         body += " — equipped " + "; ".join(done)
     if failed:
         body += "\nFAILED: " + "; ".join(failed)
+    hands = economy.main_hands(game.try_rpc("state.inventory", {}) or inv, _name_of)   # after the swaps
+    if hands:
+        body += "\n" + hands
     return _finish("equip_best", {"who": who}, body, t0)
 
 
@@ -2637,7 +2780,9 @@ def _level_camp_member(row: dict, plan: str, out: str, st: dict) -> str:
         keep = (f"{name} stays in the party" + (f" ({outname} at camp)" if outname else "") +
                 f" with the level-up page open: call level_up(who=\"{name}\", plan=...) with the picks below"
                 + (f", then swap_party(into=\"{outname}\", out=\"{name}\") to bring {outname} back" if outname else ""))
-        return f"level_up: FAILED — {name} (camp member): " + "; ".join(steps + [keep]) + "\n" + "\n".join(results)
+        ndone = sum(1 for r in results if ": level_up: done" in r)   # live 12:2x: L4 done, L5 lacked picks → said FAILED
+        head = f"level_up: partly done ({ndone} of {len(results)} levels)" if ndone else "level_up: FAILED"
+        return f"{head} — {name} (camp member): " + "; ".join(steps + [keep]) + "\n" + "\n".join(results)
     back = swap_party(into=outname, out=name, leave_camp=False) if outname else ""
     if outname:
         steps.append(f"swapped back ({outname} in, {name} at camp)" if "swap_party: done" in back
@@ -2645,7 +2790,10 @@ def _level_camp_member(row: dict, plan: str, out: str, st: dict) -> str:
     if not was_at_camp:
         rj = game.run_job("act.leave_camp", {}, wait_s=60)
         steps.append("left camp" if rj.status == "done" else "leave camp: " + _job_text("camp", rj))
-    head = "level_up: done" if ok else "level_up: FAILED"
+    # Live 12:4x: Wyll L4 done (spells clicked, leveled_up), then L5 failed on the closing L4 page: the headline
+    # said FAILED as if nothing had happened. A level that went through is said first.
+    ndone = sum(1 for r in results if ": level_up: done" in r)
+    head = "level_up: done" if ok else (f"level_up: partly done ({ndone} of {len(results)} levels)" if ndone else "level_up: FAILED")
     return f"{head} — {name} (camp member): " + "; ".join(steps) + "\n" + "\n".join(results or ["no level up waiting after the swap"])
 
 
@@ -2686,7 +2834,7 @@ def _level_up(uuid: str, plan: str) -> str:
 @_guard
 def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = False, sell: str = "",
           keep: str = "", full: bool = False) -> str:
-    """Barter with a trader. Open with npc=<id> (starts the conversation's trade), then list items via get_inventory; offer/request: comma lists of item ids to move; confirm=true to finish the deal. price is for the whole stack (price=156 count=3: 52 each; a stack moves whole). Wares marked supply=N are food (camp supplies per item; a long rest needs 40).
+    """Barter with a trader. Open with npc=<id> (talks to them and picks the conversation's trade answer, e.g. 'Let me see your wares.'; if none is offered yet it stops at the conversation), then list items via get_inventory; offer/request: comma lists of item ids to move; confirm=true to finish the deal. price is for the whole stack (price=156 count=3: 52 each; a stack moves whole). Wares marked supply=N are food (camp supplies per item; a long rest needs 40).
     sell="junk": sell everything a player sells at every trader in one call (not equipped, story, consumables, food, keys/tools, magic gear, or keep=<comma ids>), up to the trader's gold; get_inventory(filter="junk") previews it.
     Opening or trade() with no args lists the wares grouped (food with supply, potions/scrolls, gear by rarity) and your best-priced items, capped per group; full=true lists everything. offer/request/confirm calls show the table and the balance only."""
     if sell:
@@ -2694,8 +2842,13 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
             raise ValueError('sell must be "junk" (or use offer=<ids> for specific items)')
         return _sell_junk(keep)
     args: dict[str, Any] = {"confirm": confirm}
+    head = ""
     if npc:
         args["npc"] = _uuid(npc)
+        opened = _open_trade(npc)
+        if opened.startswith("trade: FAILED") or opened.startswith("FAILED") or "\nSTOPPED" in opened:
+            return opened
+        head = opened
     if offer:
         args["offer"] = [_uuid(i) for i in offer.split(",") if i.strip()]
     if request:
@@ -2703,7 +2856,49 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
     _trade_view.update(listing=not (offer or request or confirm), full=full)
     if full:
         args["max"] = 500
-    return _act("trade", "ui.trade", args, context="client", wait_s=20)
+    out = _act("trade", "ui.trade", args, context="client", wait_s=20)
+    return (head + "\n" + out) if head else out
+
+
+def _open_trade(npc: str) -> str:
+    """trade(npc) with no trade screen up: talk to them and pick the conversation's trade answer, as a player does
+    ('Let me see your wares.'). '' = it was already open; a short note when this call opened it; else the reason
+    (FAILED / the conversation, for the agent to choose). The dialogue's Trade button (btnTrade → StartTrade) runs but
+    opens nothing from bg3le (live 12:4x, Dammon): its entity parameter doesn't get through."""
+    def ui() -> dict:
+        return game.try_rpc("ui.state", context="client") or {}
+
+    def wait(pred, s: float) -> dict:
+        end, u = time.monotonic() + s, ui()
+        while not pred(u) and time.monotonic() < end:
+            time.sleep(0.2)
+            u = ui()
+        return u
+
+    u = ui()
+    if u.get("screen") == "trade":
+        return ""
+    talked = ""
+    if u.get("screen") != "dialogue":
+        talked = talk_to(npc)
+        if "FAILED" in talked.split("\n", 1)[0]:
+            return f"trade: FAILED — could not start the conversation: {talked}"
+        u = wait(lambda x: bool((x.get("dialogue") or {}).get("options")) or x.get("screen") not in ("dialogue", "game"), 3.0)
+    d = u.get("dialogue") or {}
+    pick = economy.trade_answer(d.get("options") or [])
+    if pick is None:
+        opts = "; ".join(f"{o.get('i')}. {o.get('text')}" for o in d.get("options") or [] if isinstance(o, dict))
+        return (f"trade: no trade answer in the conversation with {npc} yet ({opts or 'no answers shown'})\n"
+                + (talked + "\n" if talked else "")
+                + "STOPPED: pick an answer with choose_dialogue (the trade one may come later), then trade()")
+    r = game.run_job("ui.dialogue_choose", {"i": pick["i"]}, context="client", wait_s=20)
+    if r.status != "done":
+        return f"trade: FAILED — picking '{pick.get('text')}': " + _job_text("choose_dialogue", r)
+    u = wait(lambda x: x.get("screen") == "trade", 4.0)
+    if u.get("screen") != "trade":
+        return (f"trade: FAILED — picked '{pick.get('text')}' but no trade screen opened (screen={u.get('screen')})\n"
+                + "\n".join(_render_ui(u)))
+    return f"(opened: talked to {npc}, picked '{pick.get('text')}')"
 
 
 _trade_view: dict[str, bool] = {"listing": True, "full": False}  # how the next trade result is rendered
@@ -2735,7 +2930,11 @@ def _sell_junk(keep: str = "") -> str:
         why = ("no junk in the bags" if not junk else
                f"the trader has only {budget} gold" if on_screen else "none of the junk is on this trade screen")
         return _finish("trade", {"sell": "junk"}, f"trade: done — nothing sold ({why})", t0)
-    out = _act("trade", "ui.trade", {"offer": picked, "confirm": True}, context="client", wait_s=30)
+    _EV_DROP.update(items={H._bare(u) for u in picked}, gold=True, until=0.0)
+    try:
+        out = _act("trade", "ui.trade", {"offer": picked, "confirm": True}, context="client", wait_s=30)
+    finally:
+        _EV_DROP["until"] = time.monotonic() + EV_DROP_TAIL_S  # late AddedTo events of this sale
     left = len(on_screen) - len(picked)
     note = f"\n(sold {len(picked)} junk items, ~{total} g at the shown prices" + (
         f"; {left} more left: the trader ran out of gold, stash them with manage_inventory op=camp item=junk)" if left else ")")
@@ -2914,7 +3113,7 @@ def do_actions(actions: str, wait: bool = True, ignore: str = "", note: str = ""
     [{"tool":"move_to","target":"e12"},{"tool":"use_ability","ability":"Target_MainHandAttack","target":"e12","unless":"hp_below:30"},{"tool":"use_ability","ability":"Shout_SecondWind","if":"hp_below:50"},{"tool":"end_turn"}]
     Allowed: move_to, walk_toward, interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
     Optional per step: "if"/"unless" with in_combat, in_dialogue, my_turn, hp_below:<pct>, item_present:<id>, target_visible:<id> (a failed condition skips the step).
-    Stops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a blocked teleport, or a failed step. ignore="hostile,hp" disables some (combat, dialogue, prompt, hostile, hp, damage, surface, teleport).
+    Stops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a trap spotted on the way, a blocked teleport, or a failed step. ignore="hostile,hp" disables some (combat, dialogue, prompt, hostile, hp, damage, surface, teleport, trap).
     Returns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions).
     note: memory log line(s) appended to your session log at once, as note() does (no extra turn)."""
     t0 = time.monotonic()
@@ -3011,7 +3210,9 @@ def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, 
             pre.append(ft[0])
             dist_m = ft[1] if ft[1] is not None else dist_m
         floor = _other_floor(char, _pos_now(char) if ft else me.get("pos"), dest)
-        if floor:
+        if floor and not floor.startswith("REFUSED"):
+            pre.append(floor)
+        elif floor:
             return _finish("travel_to", {"to": what}, "".join(p + "\n" for p in pre) + f"travel_to {what}: {floor}", t0)
         warn = longnav.start_warning(DEAD.for_goal(dest))
         if warn:
@@ -4230,7 +4431,7 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     """A WHOLE combat turn in one call: move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Disengage). If every action alternative is out of range, it tries the ranged weapon attack itself, else Dash + walk on when the move ran out of movement. A move that ends out of reach says how far it got and why (out of movement / fire on the route / no route closer).
     plan: JSON, e.g. {"move":{"target":"e12","within":1.5},"action":[{"ability":"Target_MainHandAttack","target":"e12"},{"ability":"Projectile_MainHandAttack","target":"e12"},{"ability":"Shout_Dash","then_move":true},"Shout_Disengage"],"bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"},"extra":[[{"ability":"Target_MainHandAttack","target":"e12"}]]}
     move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z]. Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).
-    Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it (Dash), walk the move again.
+    Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it, walk the move again (a Dash does this by default; then_move:false turns it off).
     order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn (default: stop).
     No line of sight to a ranged target: it first steps (within the movement left and the ability's range) to the nearest spot that sees it, then casts again. A downed character has no turn to play (it passes by itself); another of your characters (a summon too) acting first makes a sent-ahead plan return at once.
     Before each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore="" adds new hostiles in view).
@@ -4676,8 +4877,16 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                         + "): try get_frontier, a door, or a jump")
                 if isinstance(r, dict) and r.get("hazard_beyond"):
                     stop += f"; ahead: {macros.hazard_text(r['hazard_beyond'])}"
-                stop += _climb_hint(here, dest)
                 break
+            # A plain sampled leg that gains only a few metres on a long trip (acceptance: 30 m, 2 m, 29 m legs; the
+            # sampler stopped at an obstacle edge): one verified alternative leg first, kept when it gets clearly further.
+            if (failed_end is None and not r.get("direct") and not r.get("exposure") and not r.get("detour")
+                    and d > macros.TRAVEL_MIN_GAIN_M + macros.TRAVEL_ARRIVE_M
+                    and d - macros.dist(r["pos"], dest) < macros.TRAVEL_MIN_GAIN_M):
+                a2 = game.try_rpc("nav.reach_toward", {**args, "alt": True, "exclude": r["pos"]})
+                if (isinstance(a2, dict) and a2.get("reachable") and a2.get("pos") and not a2.get("exposure")
+                        and macros.dist(a2["pos"], dest) < macros.dist(r["pos"], dest) - 2.0):
+                    r = a2
             ex = r.get("exposure")
             leg_w, note = watcher, ""
             if isinstance(ex, dict) and ex.get("surface"):
@@ -4756,6 +4965,9 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
         if outer_w is not None:
             outer_w.ignore -= added
     if longnav.ground_stop(stop, lines):
+        # Every ground stop (no ground ahead, stalled legs, a blocked leg) names the way up/down: the stall stops
+        # never did, so the ladder was named only by some stops (se 12:3x).
+        stop += _climb_hint(_pos_now(char) or here, dest)
         stop += _dead_end_note(char, here, dest, what)
     return _macro_finish("travel_to", {"to": what}, lines, stop, [], t0)
 
@@ -4942,6 +5154,8 @@ def _climb_hint(here: list | None, dest: list | None) -> str:
 FLOOR_DY_M = 6.0      # travel_to: a goal this far above/below gets one route probe before the trip starts
 FLOOR_WAY_M = 40.0    # ... and an entrance/ladder/stairs this near is named as the way there
 FLOOR_FAR_DY_M = 20.0  # a goal too far to preview this far up/down + an entrance here = an interior (refused)
+FLOOR_DETOUR_X = 3.0   # a route this many times the straight distance (and FLOOR_DETOUR_ADD_M longer) to a goal on
+FLOOR_DETOUR_ADD_M = 40.0  # another floor, with a ladder/stairs in view: the trip walks, the start names the climb
 
 
 def _other_floor(char: str, here: list | None, dest: list | None) -> str | None:
@@ -4955,6 +5169,8 @@ def _other_floor(char: str, here: list | None, dest: list | None) -> str | None:
     dy = abs(dest[1] - here[1])
     if not isinstance(r, dict):
         return None
+    if r.get("reachable") is True:
+        return _floor_detour_note(r, here, dest, dy)
     if r.get("reachable") is not False:
         # Too far for the engine to preview: an interior (the Grand Mausoleum's rooms sit ~950 m off and 69 m
         # below its gate in level coordinates; live 11:2x travel_to walked off toward them) when far below/above
@@ -4972,6 +5188,27 @@ def _other_floor(char: str, here: list | None, dest: list | None) -> str | None:
            else f"{render.num(round(macros.dist(here, dest)))}m off and too far to preview: likely inside an interior")
     return (f"REFUSED: the goal is {render.num(round(dy))}m {side} you and {why}. The way there is likely: {_ways_text(res, ups)}. "
             f"interact {first} (or queue_actions [interact {first}, travel_to ...]), then travel_to again")
+
+
+def _floor_detour_note(r: dict, here: list, dest: list, dy: float) -> str | None:
+    """A walkable route to a goal on another floor that winds far around (se 12:3x, Roadside Cliffs: locks 9-16 m
+    below a ledge, the ladder 13 m N named only by some stops) while a ladder/stairs is in view: a note naming the
+    climb (the walk still starts; never a refusal: the long way may be the only one the agent knows)."""
+    length, straight = r.get("length_m"), macros.dist(here, dest)
+    # The engine's route climbs/drops on its own (live 13:08: the 60 m route to a goal 10 m up went up the 11 m ladder
+    # 2.6 m away, "used Ladder"): nothing to add.
+    if any(isinstance(lk, dict) and lk.get("kind") in ("climb", "drop") for lk in r.get("links") or []):
+        return None
+    if not isinstance(length, (int, float)) or length < max(FLOOR_DETOUR_X * straight, straight + FLOOR_DETOUR_ADD_M):
+        return None
+    res, ups = _floor_ways(FLOOR_WAY_M)
+    ups = [u for u in ups if u.get("kind") in ("ladder", "stairs")]
+    if not ups:
+        return None
+    side = "above" if dest[1] > here[1] else "below"
+    return (f"note: the goal is {render.num(round(dy))}m {side} you and the walk there winds {render.num(round(length))}m "
+            f"for {render.num(round(straight))}m straight; shorter: {_ways_text(res, ups)} "
+            f"(cancel, interact {H.get(ups[0]['uuid'], ups[0].get('name'))}, then travel_to again)")
 
 
 def _pos_now(char: str) -> list | None:
@@ -5105,6 +5342,8 @@ def read_all(who: str | None = None, max_items: int = 6) -> str:
         txt = ""
         if page:
             txt = " — ".join(str(page[k]) for k in ("title", "text") if page.get(k))
+            if page.get("text"):
+                lore.remember(MEMORY, H.scrub(str(page.get("title") or it.get("name") or "")), H.scrub(str(page["text"])))
             game.try_rpc("ui.dismiss", {}, context="client")
             end = time.monotonic() + 1.5  # let the panel close, so the next book's text isn't this one's
             while time.monotonic() < end and (game.try_rpc("ui.state", context="client") or {}).get("screen") == "book":
@@ -5120,6 +5359,15 @@ def read_all(who: str | None = None, max_items: int = 6) -> str:
     left = [f"{H.get(it['uuid'])} {it.get('name')}" for it in items if it["uuid"] not in seen]
     head = f"read_all: {len(items)} unread"
     return _macro_finish("read_all", {}, [head] + lines, stop, left if stop else [], t0)
+
+
+@mcp.tool()
+@_guard
+def recall(query: str = "", max_chars: int = 3000) -> str:
+    """Search what the party has READ (books, notes, letters, inscriptions shown on screen, read_all) and its journal steps, by words: the puzzle hints a player remembers (e.g. "mausoleum order", "painting", "password"). Empty query: the titles read so far. Only texts the game showed you; read nearby books/notes first (interact) when nothing matches."""
+    t0 = time.monotonic()
+    journal = game.try_rpc("state.journal") if query.strip() else None
+    return _finish("recall", {"query": query}, lore.search(MEMORY, query, journal, max(500, min(int(max_chars), 8000))), t0)
 
 
 @mcp.tool()
@@ -5270,7 +5518,7 @@ def _load_not_done(boot0: str | None) -> str:
         return f"the game is Running but the {scr.replace('_', ' ')} screen is still up: the save did not load"
     boot = _server_boot()
     if boot0 and boot and boot == boot0:
-        return "the game is Running but nothing was loaded (the same session as before the call): try again"
+        return "the game is Running but nothing was loaded (the same session as before the call)"
     return ""
 
 
@@ -5285,6 +5533,56 @@ def _load_started(max_s: float) -> bool:
             return True
         time.sleep(0.25)
     return False
+
+
+LOAD_RETRIES = 1  # extra Load presses when a press didn't start a load
+
+
+def _load_once(save: str, boot0: str | None, alive_at_start: bool | None) -> tuple[JobResult, bool]:
+    """One select+press of the save and the wait for it. (result, True) when the press didn't start a load
+    (worth pressing again); a crash, a timeout or a real load is final."""
+    # The mod selects the save on the Load page (by playthrough, position and date) and presses Load; the
+    # load then resets the mod's Lua, so a poll may fail mid-way: wait for the game to be Running again.
+    try:
+        r = game.run_job("ui.menu", saves.load_args(SAVE_DIR, save), context="client", wait_s=40)
+        if r.status == "failed" and isinstance(r.result, dict) and r.result.get("needs_key") and _inp() is not None:
+            _inp().key(r.result["needs_key"])
+            r = JobResult("done", {"loading": True, "via": "shim"})
+    except (GameError, NotReady) as e:
+        r = JobResult("done", {"loading": True, "note": str(e)[:80]})
+    if r.status == "done" and not (isinstance(r.result, dict) and r.result.get("loading")):
+        # Live 11:2x: during the post-rest sleep the Load press did nothing, the page stayed open and the old check
+        # (Running + server answering) said "done" after 1.7 s. A real load leaves Running within a few seconds.
+        if not _load_started(LOAD_START_S):
+            return JobResult("failed", None, "the Load press didn't start a load (no loading screen within "
+                             f"{LOAD_START_S:.0f} s, pressed {LOAD_RETRIES + 1} times; the game may be mid-transition, "
+                             "e.g. the long rest's sleep): nothing was loaded"), True
+    if r.status != "done":
+        return r, False
+    deadline, ok, dead = time.monotonic() + 120, False, False
+    time.sleep(1.0)
+    # Pass 4 10:40: the game SIGSEGV'd 1 s into a load and this waited the full 120 s: a gone process ends it.
+    while time.monotonic() < deadline and not ok:
+        if alive_at_start and _game_process_alive() is False:
+            dead = True
+            break
+        try:
+            ok = game.game_state() == "Running" and game.server_ready()
+        except (GameError, NotReady, OSError):
+            ok = False
+        if not ok:
+            time.sleep(0.5)
+    # vis/se live: a "done" with nothing loaded broke every later step. Running again is not enough: the
+    # server Lua state must be a new one (a load rebuilds it) and the Load page must be gone.
+    why = _load_not_done(boot0) if ok else ""
+    if why:
+        return JobResult("failed", None, why), True
+    if ok:
+        return JobResult("done", {"loaded": save.split("__", 1)[-1]}), False
+    if dead:
+        return JobResult("failed", None, "the game CRASHED during the load (its process is gone; the bg3le log in "
+                         "runtime/logs has the crash): it has to be restarted"), False
+    return JobResult("failed", None, "the game did not come back to Running within 120 s"), False
 
 
 @mcp.tool()
@@ -5306,58 +5604,26 @@ def load_game(save: str = "latest") -> str:
         save = next(d.name for d in mine if d.name == save or d.name.endswith("__" + save))
     alive_at_start = _game_process_alive()
     boot0 = _server_boot()
-    # The mod selects the save on the Load page (by playthrough, position and date) and presses Load; the
-    # load then resets the mod's Lua, so a poll may fail mid-way: wait for the game to be Running again.
-    try:
-        r = game.run_job("ui.menu", saves.load_args(SAVE_DIR, save), context="client", wait_s=40)
-        if r.status == "failed" and isinstance(r.result, dict) and r.result.get("needs_key") and _inp() is not None:
-            _inp().key(r.result["needs_key"])
-            r = JobResult("done", {"loading": True, "via": "shim"})
-    except (GameError, NotReady) as e:
-        r = JobResult("done", {"loading": True, "note": str(e)[:80]})
-    started = True
-    if r.status == "done" and not (isinstance(r.result, dict) and r.result.get("loading")):
-        # Live 11:2x: during the post-rest sleep the Load press did nothing, the page stayed open and the old check
-        # (Running + server answering) said "done" after 1.7 s. A real load leaves Running within a few seconds.
-        started = _load_started(LOAD_START_S)
-        if not started:
-            ui = game.try_rpc("ui.state", context="client") or {}
-            scr = ui.get("screen") if isinstance(ui, dict) else None
-            if scr in ("save_load", "game_menu"):
-                for _ in range(2):  # close the Load page and the game menu under it
-                    game.try_rpc("ui.key", {"key": "ESCAPE"}, context="client")
-                    time.sleep(0.4)
-            r = JobResult("failed", None, "the Load press didn't start a load (no loading screen within "
-                          f"{LOAD_START_S:.0f} s; the game may be mid-transition, e.g. the long rest's sleep): "
-                          "nothing was loaded; try again in a few seconds")
-    if r.status == "done":
-        deadline, ok, dead = time.monotonic() + 120, False, False
+    retried = 0
+    while True:
+        r, retry = _load_once(save, boot0, alive_at_start)
+        if not retry or retried >= LOAD_RETRIES or _game_process_alive() is False:
+            break
+        # Acceptance 12:13: once the Load press did nothing (the page stayed up, "try again" after 7.7 s) and the
+        # next call loaded fine. Press again here: the job reuses an open Load page, reselects and presses.
+        retried += 1
         time.sleep(1.0)
-        # Pass 4 10:40: the game SIGSEGV'd 1 s into a load and this waited the full 120 s: a gone process ends it.
-        while time.monotonic() < deadline and not ok:
-            if alive_at_start and _game_process_alive() is False:
-                dead = True
-                break
-            try:
-                ok = game.game_state() == "Running" and game.server_ready()
-            except (GameError, NotReady, OSError):
-                ok = False
-            if not ok:
-                time.sleep(0.5)
-        # vis/se live: a "done" with nothing loaded broke every later step. Running again is not enough: the
-        # server Lua state must be a new one (a load rebuilds it) and the Load page must be gone.
-        why = _load_not_done(boot0) if ok else ""
-        if why:
-            r = JobResult("failed", None, why)
-        elif ok:
-            r = JobResult("done", {"loaded": save.split("__", 1)[-1]})
-        elif dead:
-            r = JobResult("failed", None, "the game CRASHED during the load (its process is gone; the bg3le log in "
-                          "runtime/logs has the crash): it has to be restarted")
-        else:
-            r = JobResult("failed", None, "the game did not come back to Running within 120 s")
+    if retry:  # still not loading: close the Load page and the game menu under it, so the game view is back
+        ui = game.try_rpc("ui.state", context="client") or {}
+        if isinstance(ui, dict) and ui.get("screen") in ("save_load", "game_menu"):
+            for _ in range(2):
+                game.try_rpc("ui.key", {"key": "ESCAPE"}, context="client")
+                time.sleep(0.4)
+    elif retried and r.status == "done" and isinstance(r.result, dict):
+        r.result["pressed"] = f"{retried + 1} times (the first press didn't start a load)"
     game.event_seq = {"server": 0, "client": 0}
     DELTA.reset()  # a loaded save is a new world: the next look is a full one
+    delta.INV.reset()  # and its inventory: the mod's rev restarts with its Lua state (stale gear/gold after a load)
     return _finish("load_game", {"save": save}, _job_text("load_game", r) + (f"\n{dropped}" if dropped else ""),
                    t0, events=False)
 
@@ -5488,7 +5754,7 @@ ALWAYS_LOAD = (
     "look", "get_status", "get_nearby", "get_frontier", "route", "get_combat_state", "look_at", "session_clock",
     "save_game",
     # S001 spent 7 ToolSearch turns loading these mid-play
-    "wiki_page", "wiki_search", "load_game", "list_saves",
+    "wiki_page", "wiki_search", "recall", "load_game", "list_saves",
     # memory notes without a Read/Edit round trip (S023-S026: 20-30 s/session of idle memory I/O)
     "note",
     # S002-S007: 26 ToolSearch calls (10 in S005) loaded these mid-play; each tool here was used in 2+

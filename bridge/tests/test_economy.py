@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 import unittest
 from typing import Any
 
@@ -186,6 +187,8 @@ class Alerts(unittest.TestCase):
         self.assertEqual(economy.short_rest_text(STATUS, after, {"short_rests_left": 1, "of": 2}),
                          "HP Claude 34→62/88 · short rests left 1/2")
         self.assertEqual(economy.short_rest_text(STATUS, STATUS, None), "HP unchanged")
+        self.assertEqual(economy.short_rest_text(STATUS, STATUS, {"short_rests_left": 1.0, "of": 2.0}),
+                         "HP unchanged · short rests left 1/2")  # live: the mod sends floats
 
     def test_no_hp_alert_in_combat(self):
         st = dict(STATUS, in_combat=True)
@@ -363,6 +366,26 @@ class Tools(unittest.TestCase):
         self.assertIn("sold 2 junk items, ~31 g", out)
         self.assertIn("1 more left", out)
         self.assertGreaterEqual(g.trade_reads[0].get("max", 0), 500)  # every slot, not the screen's first 60
+
+    def test_sell_junk_drops_the_sale_s_own_item_events(self):
+        """Acceptance 12:21: every sold item of another member came back as 'item_added … owner=Claude' (the game
+        moves it to the trader-facing character first) plus 'Gold count=799'; other item events stay."""
+        trade = {"trader_gold": 40, "your_items": [{"uuid": _u(6), "price": 30}, {"uuid": _u(4), "price": 1}]}
+        g = self.use(FakeGame(s026_inventory(), trade))
+        claude = {"uuid": _u(1), "name": "Claude"}
+        evs = [{"kind": "item_added", "data": {"owner": claude, "item": {"uuid": _u(6), "name": "Crude Mace"}}},
+               {"kind": "item_added", "data": {"owner": claude, "item": {"uuid": _u(90), "name": "Gold"}, "count": 799}},
+               {"kind": "item_added", "data": {"owner": claude, "item": {"uuid": _u(91), "name": "Strange Key"}}}]
+        g.drain_events = lambda ctx: evs if ctx == "server" else []
+        out = server.trade(sell="junk")
+        self.assertNotIn("Crude Mace", out)
+        self.assertNotIn("count=799", out)
+        self.assertIn("Strange Key", out)
+        # late events of the sale are still dropped in the next call, then the window closes
+        self.assertEqual(server._drop_events([evs[0]]), [])
+        server._EV_DROP["until"] = time.monotonic() - 1
+        self.assertEqual(server._drop_events([evs[0]]), [evs[0]])
+        self.assertEqual(server._EV_DROP["items"], set())
 
     def test_sell_junk_stack_price_is_whole_stack(self):
         # TradePrice is the stack's price (live: Cup x3 = 24): 24 fits in 30, never 24 x 3 = 72
@@ -555,6 +578,8 @@ class Pickpocket(unittest.TestCase):
         class G:
             def run_job(self, op, args, context="server", wait_s=25.0):
                 test.jobs.append((op, dict(args)))
+                if op == "act.select":
+                    return JobResult("done", {})
                 if not test.window:
                     return JobResult("failed", error="no pickpocket window is open: pickpocket(npc) opens it")
                 if args.get("take"):
@@ -562,14 +587,14 @@ class Pickpocket(unittest.TestCase):
                                               "dc": 12, "chance": 54})
                 return JobResult("done", test.POCKETS)
 
-            def try_rpc(self, *a, **k):
-                return None
+            def try_rpc(self, op, *a, **k):
+                return self.rpc(op) if op == "state.status" else None
 
             def drain_events(self, ctx):
                 return []
 
             def rpc(self, op, *a, **k):
-                return {"active": _u(1), "party": [{"uuid": _u(1), "name": "Claude"}]}
+                return {"active": _u(1), "party": [{"uuid": _u(1), "name": "Claude"}, {"uuid": _u(2), "name": "Shadowheart"}]}
 
         server.game = G()
 
@@ -586,12 +611,32 @@ class Pickpocket(unittest.TestCase):
         self.assertLess(t.index("Gold x12 81% DC8"), t.index("Dagger 2g 54% DC12"))
         self.assertLess(t.index("Dagger"), t.index("Ring 90g 20% DC18"))
 
+    def test_unread_odds_are_not_zero(self):
+        t = economy.pockets_text({"items": [{"name": "Club", "chance": 0, "dc": 0}, {"name": "Bow", "chance": 45, "dc": 12},
+                                            {"name": "Mail", "chance": 0, "dc": 26}]}, lambda it: "")
+        self.assertIn("Club odds ?", t)
+        self.assertIn("Mail 0% DC26", t)
+        self.assertLess(t.index("Bow 45%"), t.index("Club odds ?"))
+
     def test_opens_then_lists(self):
         out = server.pickpocket(self.npc)
         self.assertIn("opened pickpocket", out)
         self.assertIn("Ring 90g 20% DC18", out)
         self.assertEqual([op for op, _ in self.jobs], ["ui.pickpocket", "ui.pickpocket"])
         self.assertEqual(self.jobs[0][1]["npc"], _u(30))
+
+    def test_other_member_takes_control_first(self):
+        """Live 12:3x: who=Shadowheart while Claude was controlled: the window never showed (client UI follows the
+        controlled character)."""
+        server.H.get(_u(2), "Shadowheart")
+        out = server.pickpocket(self.npc, who="Shadowheart")
+        self.assertEqual([op for op, _ in self.jobs], ["ui.pickpocket", "act.select", "ui.pickpocket"])
+        self.assertEqual(self.jobs[1][1], {"char": _u(2)})
+        self.assertIn("took control of Shadowheart", out)
+        self.jobs.clear()
+        self.window = False
+        server.pickpocket(self.npc, who="Claude")                  # already controlled: no select
+        self.assertNotIn("act.select", [op for op, _ in self.jobs])
 
     def test_take_by_handle_in_one_call(self):
         self.window = True
@@ -602,7 +647,179 @@ class Pickpocket(unittest.TestCase):
         take = self.jobs[-1][1]
         self.assertEqual((take["take"], take["min_chance"]), (_u(31), 40))
 
+    def test_window_that_never_opens(self):
+        # live 12:3x: pickpocket on an Ox: the open step said done but no window came; the 2nd read raised
+        test = self
+
+        def click_act(tool, op, args, wait_s=40.0):
+            server._batch["last"] = "done"
+            return "pickpocket: done — opened=pickpocket via=engine"
+        server._click_act = click_act
+
+        class Raising:
+            def run_job(self, op, args, context="server", wait_s=25.0):
+                test.jobs.append((op, dict(args)))
+                raise server.GameError("no pickpocket window is open: pickpocket(npc) opens it")
+
+            def drain_events(self, ctx):
+                return []
+
+            def try_rpc(self, *a, **k):
+                return None
+
+            def rpc(self, op, *a, **k):
+                return {"active": _u(1), "party": [{"uuid": _u(1), "name": "Claude"}]}
+        server.game = Raising()
+        out = server.pickpocket(self.npc)
+        self.assertIn("no pickpocket window", out)
+        self.assertGreaterEqual(len(self.jobs), 2)   # read, open, then polls ~3 s for the widget
+
     def test_failed_steal_says_crime(self):
         t = economy.steal_text({"item": {"name": "Ring"}, "success": False, "rolled": 3, "dc": 18, "chance": 20}, lambda it: "")
         self.assertIn("CAUGHT?", t)
         self.assertIn("rolled 3 vs DC 18", t)
+
+
+class TradeOpen(unittest.TestCase):
+    """S020/S025/S026: trade(npc) FAILED 'no trade screen is open' every time; the agent then talked and picked
+    'Let me see your wares.' by hand. trade(npc) now does that itself."""
+
+    DAMMON = [{"i": 1, "text": "Would you be able to take a look at Karlach's heart?"},
+              {"i": 2, "text": "Let me see your wares."}, {"i": 3, "text": "Leave."}]
+
+    def test_trade_answer(self):
+        self.assertEqual(economy.trade_answer(self.DAMMON)["i"], 2)
+        self.assertEqual(economy.trade_answer([{"i": 1, "text": "What do you have for sale?"}])["i"], 1)
+        self.assertEqual(economy.trade_answer([{"i": 4, "text": "[TRADE] Show me."}])["i"], 4)
+        self.assertIsNone(economy.trade_answer([{"i": 1, "text": "Who are you?"}, {"i": 2, "text": "Leave."}]))
+        self.assertIsNone(economy.trade_answer([{"i": 1, "text": "Let me see your wares.", "off": True}]))
+
+    def run_trade(self, ui_seq: list, dialogue_opts=None, opens=True):
+        calls = []
+        state = {"ui": ui_seq[0]}
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                return state["ui"] if op == "ui.state" else default
+
+            def run_job(self, op, args=None, context="server", wait_s=0, **kw):
+                calls.append((op, args))
+                if op == "ui.dialogue_choose" and opens:
+                    state["ui"] = {"screen": "trade"}
+                return JobResult(status="done", result={})
+
+        def fake_talk(npc, who=None, wait=True):
+            calls.append(("talk_to", npc))
+            state["ui"] = {"screen": "dialogue", "dialogue": {"options": dialogue_opts or []}}
+            return "talk_to: done — dialogue"
+
+        saved = (server.game, server.talk_to, server._act, server.H)
+        server.H = Handles()
+        server.H.get("11111111-2222-3333-4444-5555555555aa", "Dammon")
+        server.game, server.talk_to = G(), fake_talk
+        server._act = lambda tool, op, args, **kw: calls.append((op, args)) or "trade: done — wares=[…]"
+        try:
+            return server.trade(npc="e1"), calls
+        finally:
+            server.game, server.talk_to, server._act, server.H = saved
+
+    def test_trade_npc_talks_and_picks_the_wares_answer(self):
+        out, calls = self.run_trade([{"screen": "game"}], self.DAMMON)
+        self.assertEqual([c[0] for c in calls], ["talk_to", "ui.dialogue_choose", "ui.trade"])
+        self.assertEqual(calls[1][1], {"i": 2})
+        self.assertIn("picked 'Let me see your wares.'", out)
+        self.assertIn("trade: done", out)
+
+    def test_trade_npc_already_open_lists_at_once(self):
+        out, calls = self.run_trade([{"screen": "trade"}])
+        self.assertEqual([c[0] for c in calls], ["ui.trade"])
+        self.assertTrue(out.startswith("trade: done"), out)
+
+    def test_trade_npc_without_a_trade_answer_stops_at_the_conversation(self):
+        out, calls = self.run_trade([{"screen": "game"}], [{"i": 1, "text": "Who are you?"}, {"i": 2, "text": "Leave."}])
+        self.assertEqual([c[0] for c in calls], ["talk_to"])
+        self.assertIn("no trade answer", out)
+        self.assertIn("1. Who are you?", out)
+
+    def test_trade_npc_answer_that_opens_nothing_fails_clearly(self):
+        out, calls = self.run_trade([{"screen": "game"}], self.DAMMON, opens=False)
+        self.assertIn("no trade screen opened", out)
+        self.assertNotIn("ui.trade", [c[0] for c in calls])
+
+
+class MainHands(unittest.TestCase):
+    """Acceptance 12:2x: equip_best 'left Shadowheart with a Syringe': it is MAG_Surgeon_Syringe, a +1 finesse dagger
+    (1d4+1, +1 to hit) — her best one-hander beside her shield (Mace/Handaxe 1d6 plain; Greatclub +1 is 2-handed)."""
+    SH, CL = _u(3), _u(4)
+
+    def inv(self):
+        return {"members": {self.SH: {"prof": ["SimpleWeapons", "Shields", "MediumArmor", "LightArmor"]},
+                            self.CL: {"prof": ["MartialWeapons", "SimpleWeapons"]}},
+                "items": [
+                    {"uuid": _u(10), "name": "Syringe", "owner": self.SH, "equipped_slot": "MeleeMainHand",
+                     "slot_type": "MeleeMainHand", "dmg": "1d4", "ench": 1, "rarity": "uncommon", "prof": "Daggers|SimpleWeapons"},
+                    {"uuid": _u(11), "name": "Shield", "owner": self.SH, "equipped_slot": "MeleeOffHand",
+                     "slot_type": "MeleeOffHand", "ac": 2, "shield": True},
+                    {"uuid": _u(12), "name": "Mace", "owner": self.SH, "slot_type": "MeleeMainHand", "dmg": "1d6",
+                     "prof": "Maces|SimpleWeapons"},
+                    {"uuid": _u(13), "name": "Greatclub +1", "owner": self.CL, "slot_type": "MeleeMainHand", "dmg": "1d8",
+                     "ench": 1, "rarity": "uncommon", "twohanded": True, "prof": "SimpleWeapons|Greatclubs"},
+                    {"uuid": _u(14), "name": "Moonlantern", "owner": self.CL, "equipped_slot": "MeleeMainHand",
+                     "slot_type": "MeleeMainHand", "dmg": "1d4", "story": True, "torch": True, "prof": "Clubs|SimpleWeapons"}]}
+
+    def test_syringe_stays_and_reads_as_a_weapon(self):
+        inv = self.inv()
+        self.assertFalse([o for o in economy.upgrades(inv) if o["who"] == self.SH and o["slot"] == "MeleeMainHand"])
+        line = economy.main_hands(inv, {self.SH: "Shadowheart", self.CL: "Claude"}.get)
+        self.assertEqual(line, "MAIN HANDS Shadowheart Syringe (+1 dagger 1d4+1 uncommon) | Claude Moonlantern (light)")
+
+
+class WeaponRanking(unittest.TestCase):
+    """Task (acceptance): rank weapons by proficiency, damage, magic and the wielder's STR/DEX; never a torch/tool."""
+    A = _u(5)
+
+    def inv(self, member: dict, items: list[dict]) -> dict:
+        return {"members": {self.A: member}, "items": items}
+
+    def mh(self, n: int, name: str, dmg: str, prof: str, worn=False, **kw) -> dict:
+        it = {"uuid": _u(n), "name": name, "owner": self.A, "slot_type": "MeleeMainHand", "dmg": dmg, "prof": prof, **kw}
+        if worn:
+            it["equipped_slot"] = "MeleeMainHand"
+        return it
+
+    def test_torch_never_a_weapon(self):
+        inv = self.inv({"prof": ["SimpleWeapons"], "str": 14},
+                       [self.mh(10, "Torch", "1d4", "Clubs|SimpleWeapons", torch=True)])
+        self.assertEqual(economy.upgrades(inv), [])
+
+    def test_real_weapon_replaces_a_held_torch(self):
+        inv = self.inv({"prof": ["SimpleWeapons", "MediumArmor"], "str": 10},
+                       [self.mh(10, "Torch", "1d4", "Clubs|SimpleWeapons", worn=True, torch=True),
+                        self.mh(11, "Club", "1d4", "Clubs|SimpleWeapons")])
+        self.assertEqual([o["name"] for o in economy.upgrades(inv)], ["Club"])
+
+    def test_no_group_is_not_a_weapon(self):
+        inv = self.inv({"prof": []}, [self.mh(10, "Frying Pan", "1d4", "")])
+        self.assertEqual(economy.upgrades(inv), [])
+
+    def test_dex_fighter_prefers_finesse(self):
+        # STR 8 DEX 18: Rapier 1d8 finesse (4.5+4) beats Longsword 1d8 (4.5-1); STR build the other way round.
+        items = [self.mh(10, "Longsword", "1d8", "Longswords|MartialWeapons", worn=True),
+                 self.mh(11, "Rapier", "1d8", "Rapiers|MartialWeapons", finesse=True)]
+        dex = self.inv({"prof": ["MartialWeapons"], "str": 8, "dex": 18}, items)
+        self.assertEqual([o["name"] for o in economy.upgrades(dex)], ["Rapier"])
+        items[0], items[1] = dict(items[0]), dict(items[1])
+        items[0].pop("equipped_slot"); items[1]["equipped_slot"] = "MeleeMainHand"
+        st = self.inv({"prof": ["MartialWeapons"], "str": 18, "dex": 8}, items)
+        self.assertEqual(economy.upgrades(st), [])  # equal: no churn
+
+    def test_plus_one_dagger_beats_plain_mace_at_equal_str_dex(self):
+        inv = self.inv({"prof": ["SimpleWeapons", "MediumArmor"], "str": 13, "dex": 13},
+                       [self.mh(10, "Mace", "1d6", "Maces|SimpleWeapons", worn=True),
+                        self.mh(11, "Syringe", "1d4", "Daggers|SimpleWeapons", ench=1, rarity="uncommon", finesse=True)])
+        self.assertEqual([o["name"] for o in economy.upgrades(inv)], ["Syringe"])
+
+    def test_unproficient_martial_skipped(self):
+        inv = self.inv({"prof": ["SimpleWeapons"], "str": 16},
+                       [self.mh(10, "Greatsword", "2d6", "Greatswords|MartialWeapons", twohanded=True)])
+        self.assertEqual(economy.upgrades(inv), [])

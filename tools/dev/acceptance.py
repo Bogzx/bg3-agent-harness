@@ -198,30 +198,6 @@ def sec_reads() -> None:
     talk = grab(r"^TALK:.*$", st_full)
     item("TALK line ('!' companion)", "PASS" if talk else "SKIP", talk or "no companion has a '!' in this save")
 
-    # Job push: count RPCs per op on a short walk (state reverts with the reload at the end).
-    from bg3ai import jobpush
-    counts: dict[str, int] = {}
-    orig = S.game.rpc
-
-    def counting(op, *a, **k):
-        counts[op] = counts.get(op, 0) + 1
-        return orig(op, *a, **k)
-
-    me = st.get("party")[0]
-    pos = me.get("pos") or [0, 0, 0]
-    jp = jobpush.shared(S.game.host, S.game.port)
-    jp.ensure()
-    S.game.rpc = counting
-    try:
-        t = time.monotonic()
-        out = call("move_to", x=pos[0] + 2.0, y=pos[1], z=pos[2], wait=True)
-        dt = time.monotonic() - t
-    finally:
-        S.game.rpc = orig
-    polls = counts.get("job.poll", 0)
-    ok = jp.seen and polls <= 4 and "done" in out
-    item("job push latency", "PASS" if ok else ("WARN" if "done" in out else "FAIL"),
-         f"move_to 2 m {dt:.2f}s, job.poll x{polls}, rpcs={sum(counts.values())}, listener heard marks={jp.seen}; {first_line(out)}")
     load_verified(BASE)
 
 
@@ -231,13 +207,13 @@ def sec_rest() -> None:
     st0 = status()
     out, dt = took("short_rest")
     if "done" in out:
-        hp = grab(r"(?i)^.*HP.*→.*$", out)
+        hp = grab(r"^HP (unchanged|\w+ \d+→).*$", out)
         item("short_rest (HP before→after)", "PASS" if hp else "FAIL", f"{dt:.1f}s; {hp or first_line(out)}")
     else:
         item("short_rest (HP before→after)", "FAIL" if "short rest" not in out.lower() else "SKIP", f"{dt:.1f}s; {first_line(out)}")
 
     out, dt = took("camp", action="go")
-    if "FAILED" in out:
+    if "FAILED" in out and "already at camp" not in out:
         item("camp go", "FAIL", f"{dt:.1f}s; {first_line(out)}")
         load_verified(BASE)
         return
@@ -279,6 +255,17 @@ def sec_trade() -> None:
         return
     lk = call("look", full=True)
     m = re.search(r"(e\d+) Quartermaster Talli", lk)
+    if not m:  # Talli stands ~33 m S of the save spot, inside the inn (S02x logs: (-31.3,27.5,130.2))
+        tr, dt = took("travel_to", x=-31.0, y=27.5, z=132.5)
+        w = ""
+        for _ in range(3):
+            w = call("wait_for", target="queue", timeout_s=60, lead_s=0)
+            if "still waiting" not in w:
+                break
+        lk = call("look", full=True)
+        m = re.search(r"(e\d+) Quartermaster Talli", lk)
+        item("travel_to indoors (Last Light Inn, to Talli)", "PASS" if m else "FAIL",
+             f"{dt:.1f}s to start; {first_line(tr)} | {first_line(w)}; Talli in view={bool(m)}")
     if not need(bool(m), "trade names + sell junk", "Talli not in view in " + TRADE_SAVE):
         return
     out = call("talk_to", npc=m.group(1))
@@ -290,7 +277,7 @@ def sec_trade() -> None:
         load_verified(TRADE_SAVE)
         return
     wares = call("choose_dialogue", option=int(opt.group(1)))
-    if "trade" not in wares.lower():
+    if len(wares) < 400:  # choose_dialogue says only "screen=trade": list the wares
         wares = call("trade")
     nameless = re.findall(r"(?m)^\s*-?\s*(?:e\d+ )?price=\d+", wares)
     sup = grab(r"supply=\d+", wares)
@@ -315,7 +302,27 @@ def sec_gear() -> None:
              'return table.concat(o,"; ")')
     before = S.game.eval(hands, context="server")
     gear = call("get_inventory", filter="gear")
-    out, dt = took("equip_best")
+    # Job push: equip_best runs several short jobs; with the push each needs ~1 job.poll (was ~10 per 1 s job).
+    from bg3ai import jobpush
+    counts: dict[str, int] = {}
+    orig = S.game.rpc
+
+    def counting(op, *a, **k):
+        counts[op] = counts.get(op, 0) + 1
+        return orig(op, *a, **k)
+
+    jp = jobpush.shared(S.game.host, S.game.port)
+    jp.ensure()
+    S.game.rpc = counting
+    try:
+        out, dt = took("equip_best")
+    finally:
+        S.game.rpc = orig
+    jobs = sum(v for k, v in counts.items() if k.startswith("act."))
+    polls = counts.get("job.poll", 0)
+    ok = jp.seen and jobs and polls <= jobs + 3
+    item("job push latency", "PASS" if ok else "FAIL",
+         f"equip_best {dt:.2f}s: {jobs} jobs, {polls} job.polls, {sum(counts.values())} RPCs; listener heard marks={jp.seen}")
     time.sleep(1.5)
     after = S.game.eval(hands, context="server")
     holder = re.search(r"(\w+)=Moonlantern", after or "")
@@ -343,7 +350,7 @@ def sec_swap() -> None:
     item("swap_party in/out", "PASS" if ok1 and ok2 else "FAIL",
          f"in {dt:.1f}s → {p1}; back {dt2:.1f}s → {p2}; {first_line(out)} | {first_line(out2)}")
     st_full = call("get_status", full=True)
-    item("PARTY hint after swaps", "INFO", grab(r"^PARTY.*$", st_full) or "no PARTY line")
+    item("PARTY hint after swaps", "INFO", grab(r"^PARTY:.*$", st_full) or "no PARTY line")
     load_verified(BASE)
 
 
@@ -376,31 +383,23 @@ def sec_nav() -> None:
         item("travel_to multi-leg", "PASS" if ok else "FAIL",
              f"{((q[0]-p[0])**2+(q[2]-p[2])**2)**0.5:.0f} m trip, {left:.1f} m left at the end; {first_line(out)} | {first_line(w)}")
 
-    # Ladder from the top: a ladder within 40 m whose foot is >= 2.5 m below the leader.
-    call("get_nearby", radius=40, kinds="ladder")
-    raw = S.game.try_rpc("state.nearby", {"radius": 40, "kinds": ["ladder"]}) or {}
-    me = (status().get("party") or [{}])[0]
-    y0 = (me.get("pos") or [0, 0, 0])[1]
-    lads = [it for it in (raw.get("items") or []) if "ladder" in str(it.get("name", "")).lower() and it.get("pos")]
-    below = [it for it in lads if y0 - it["pos"][1] >= 2.5]
-    if need(bool(below), "ladder from the top", f"no ladder foot >= 2.5 m below the party within 40 m ({len(lads)} ladders seen)"):
-        h = S.H.get(below[0]["uuid"], below[0].get("name"))
-        out, dt = took("interact", target=h)
-        y1 = (status().get("party") or [{}])[0].get("pos", [0, 0, 0])[1]
-        item("ladder from the top", "PASS" if "FAILED" not in out and y1 < y0 - 2 else "FAIL",
-             f"{dt:.1f}s; y {y0:.1f}->{y1:.1f}; {first_line(out)}")
-
     # Interior via entrance: the Mausoleum room from its gate is REFUSED naming the entrance, then interact.
     ft, dt = took("fast_travel", waypoint="Moonrise Towers")
     if not need("FAILED" not in ft, "travel_to into an interior via entrance", "fast_travel Moonrise Towers failed: " + first_line(ft)):
         load_verified(BASE)
         return
+    t = time.monotonic()
     out = call("travel_to", x=-183.0, y=38.0, z=99.0)
     end = time.monotonic() + 240
     while time.monotonic() < end:
         w = call("wait_for", target="queue", timeout_s=60, lead_s=0)
         if "still waiting" not in w:
             break
+    legs = len(re.findall(r"(?m)^leg \d+:", w))
+    arr = grab(r"arrived \([\d.]+m from it\)", w)
+    item("travel_to multi-leg (waypoint → Mausoleum gate)", "PASS" if arr and legs >= 2 else "FAIL",
+         f"{first_line(out)}; {legs} legs, {arr or first_line(w)} in {time.monotonic() - t:.0f}s")
+    ladder_from_top()
     if S.game.try_rpc("state.combat", {}) and (S.game.try_rpc("state.combat") or {}).get("active"):
         item("travel_to into an interior via entrance", "SKIP", "a fight started on the way (reloaded)")
         load_verified(BASE)
@@ -427,11 +426,56 @@ def sec_nav() -> None:
         if d < 15:
             nb = call("get_nearby", radius=25, kinds="button")
             tags = re.findall(r"\(under ([^)]+)\)", nb)
-            item("buttons listed (Mausoleum)", "PASS" if len(tags) >= 2 else "FAIL",
-                 f"{len(re.findall(r'Button', nb))} buttons, tags={tags[:4]}")
+            trap = "TRAP spotted" in w  # a perception roll: the walk stops short and fewer buttons are in sight
+            item("buttons listed (Mausoleum)", "PASS" if len(tags) >= (1 if trap else 2) else "FAIL",
+                 f"{len(re.findall(r'Button', nb))} buttons, tags={tags[:4]}" + ("; the walk stopped at a spotted trap" if trap else ""))
         else:
             item("buttons listed (Mausoleum)", "SKIP", "did not reach the puzzle room")
     load_verified(BASE)
+
+
+KNOTTED_ROOTS = (-194.8, 31.2, 80.6)  # the ladder below the Mausoleum gate spot (-183, 38.2, 99), ~7 m lower
+
+
+def ladder_from_top() -> None:
+    """At the Mausoleum gate: the Knotted Roots ladder's foot is ~7 m below; interact climbs down from the top."""
+    me = (status().get("party") or [{}])[0]
+    p0 = me.get("pos") or [0, 0, 0]
+    raw = S.game.try_rpc("state.nearby", {"radius": 40, "kinds": ["ladder"]}) or {}
+    lads = [it for it in (raw.get("items") or []) if it.get("pos") and p0[1] - it["pos"][1] >= 2.5]
+    if not lads:  # in view from the gate only at some angles: step toward the ladder's top first
+        tr = call("travel_to", x=KNOTTED_ROOTS[0] + 4.0, y=p0[1], z=KNOTTED_ROOTS[2] + 8.0)
+        if "started" in tr:
+            call("wait_for", target="queue", timeout_s=40, lead_s=0)
+        me = (status().get("party") or [{}])[0]
+        p0 = me.get("pos") or p0
+        raw = S.game.try_rpc("state.nearby", {"radius": 40, "kinds": ["ladder"]}) or {}
+        lads = [it for it in (raw.get("items") or []) if it.get("pos") and p0[1] - it["pos"][1] >= 2.5]
+    if not need(bool(lads), "ladder from the top", f"no ladder foot >= 2.5 m below the party at {p0} "
+                f"({len(raw.get('items') or [])} ladders seen)"):
+        return
+    lad = min(lads, key=lambda it: (it["pos"][0] - p0[0]) ** 2 + (it["pos"][2] - p0[2]) ** 2)
+    h = S.H.get(lad["uuid"], lad.get("name"))
+    def lead_y() -> float:
+        return float(((status().get("party") or [{}])[0].get("pos") or [0, 0, 0])[1])
+
+    out, dt = took("interact", target=h)
+    ys = [lead_y()]
+    for _ in range(16):  # the climb animation runs on after the interact job ends
+        if ys[-1] < p0[1] - 2:
+            break
+        time.sleep(0.5)
+        ys.append(lead_y())
+    y1 = ys[-1]
+    ok = "FAILED" not in out and "REFUSED" not in out and y1 < p0[1] - 2
+    item("ladder from the top", "PASS" if ok else "FAIL",
+         f"{lad.get('name')} (foot y {lad['pos'][1]:.1f}) {dt:.1f}s + {0.5 * (len(ys) - 1):.1f}s; y {p0[1]:.1f}->{y1:.1f}; "
+         f"{first_line(out)}")
+    # back to the gate for the entrance check (up the ladder or round by the path)
+    call("travel_to", x=-183.0, y=38.0, z=99.0)
+    for _ in range(3):
+        if "still waiting" not in call("wait_for", target="queue", timeout_s=40, lead_s=0):
+            break
 
 
 def bg3le_log() -> Path | None:
@@ -472,15 +516,123 @@ def grep_crash(lg: Path | None) -> str:
     return m[-1][:120] if m else ""
 
 
+SHADOW_PACK = (-236.0, 31.0, 12.0)  # Wraith, Shadow Mastiff, Shadows and Shadow-Cursed townsfolk W of the Moonrise road
+
+
+def counted(name: str, **kw) -> tuple[str, float, dict]:
+    """A tool call with every RPC it makes counted by op (job push: one job.poll per short job)."""
+    counts: dict[str, int] = {}
+    orig = S.game.rpc
+
+    def counting(op, *a, **k):
+        counts[op] = counts.get(op, 0) + 1
+        return orig(op, *a, **k)
+
+    S.game.rpc = counting
+    try:
+        out, dt = took(name, **kw)
+    finally:
+        S.game.rpc = orig
+    return out, dt, counts
+
+
 def sec_combat() -> None:
+    """A real fight (reloaded after): the shadow pack W of the Moonrise road. Opens it by walking into their sight,
+    then plays party turns with combat_turn: melee approach + attack by the SHOWN ability name, the RPC count with
+    the job push, and the names in the action lists."""
     if not load_verified(BASE):
         return
+    from bg3ai import jobpush
+    jp = jobpush.shared(S.game.host, S.game.port)
+    jp.ensure()
+    ft = call("fast_travel", waypoint="Moonrise Towers")
+    if not need("FAILED" not in ft, "combat_turn on a safe fight", "fast_travel Moonrise Towers failed: " + first_line(ft)):
+        load_verified(BASE)
+        return
+    call("travel_to", x=SHADOW_PACK[0] + 18.0, y=SHADOW_PACK[1], z=SHADOW_PACK[2] + 18.0)
+    end = time.monotonic() + 120
+    cs = {}
+    while time.monotonic() < end:
+        cs = S.game.try_rpc("state.combat") or {}
+        if cs.get("active"):
+            break
+        w = call("wait_for", target="queue", timeout_s=20, lead_s=0)
+        if "still waiting" not in w:
+            break
     cs = S.game.try_rpc("state.combat") or {}
-    nb = S.game.try_rpc("state.nearby", {"radius": 30}) or {}
-    hostiles = [c.get("name") for c in (nb.get("characters") or []) if c.get("relation") == "hostile" and not c.get("dead")]
-    item("combat_turn on a safe fight", "SKIP",
-         f"no safe fight in reach of {BASE} (combat active={bool(cs.get('active'))}, visible hostiles={hostiles[:4]}); "
-         "starting one would change story state: verify at the next session's first fight")
+    if not cs.get("active"):
+        # The pack doesn't notice a party walking up (live 12:5x): open the fight like a player, with an attack.
+        nb = S.game.try_rpc("state.nearby", {"radius": 40}) or {}
+        chars = nb.get("characters") or []
+        log("in view: " + "; ".join(f"{c.get('name')} {c.get('relation')} dead={c.get('dead')}" for c in chars[:12]))
+        foes = [c for c in chars if c.get("relation") == "hostile" and not c.get("dead")]
+        if foes:
+            fh = S.H.get(foes[0]["uuid"], foes[0].get("name"))
+            for _ in range(3):
+                call("use_ability", ability="Ranged Attack", target=fh, who="Claude")
+                time.sleep(2.0)
+                cs = S.game.try_rpc("state.combat") or {}
+                dbg = S.game.eval(f'local h=Osi.GetHostCharacter() local u="{foes[0]["uuid"]}" return "host combat="'
+                                  '..tostring(Osi.IsInCombat(h)).." foe combat="..tostring(Osi.IsInCombat(u))'
+                                  '.." enemy="..tostring(Osi.IsEnemy(u,h)).." hp="..tostring(Osi.GetHitpoints(u))'
+                                  '.." canfight="..tostring(Osi.CanFight and Osi.CanFight(u))', context="server")
+                log(f"after the attack: state.combat active={cs.get('active')}; {dbg}")
+                if cs.get("active"):
+                    break
+    if not need(bool(cs.get("active")), "combat_turn on a safe fight", "no fight started walking to the shadow pack"):
+        load_verified(BASE)
+        return
+    gc = call("get_combat_state")
+    ids = re.findall(r"\((?:Target|Projectile|Shout|Zone|Rush)_\w+\)", gc)
+    named = re.findall(r"(?m)^\s*(?:ACTIONS|actions).*$", gc)
+    item("ability names in the action lists", "PASS" if not ids else "FAIL",
+         f"{len(gc)} chars, ids shown={ids[:4]}; {named[0][:160] if named else first_line(gc)}")
+    from bg3ai import turn as T
+    played = 0
+    end = time.monotonic() + 150
+    while time.monotonic() < end and played < 3:
+        cs = S.game.try_rpc("state.combat") or {}
+        if not cs.get("active"):
+            break
+        if ui_screen() == "reaction":
+            call("react", use=False)
+            continue
+        st = status()
+        party = {r.get("uuid"): r for r in st.get("party") or []}
+        now = [u for u in T.acting(cs) if u in party]
+        if not now:  # enemies acting
+            time.sleep(0.5)
+            continue
+        who_u = now[0]
+        nb = S.game.try_rpc("state.nearby", {"radius": 40}) or {}
+        foes = [c for c in nb.get("characters") or [] if c.get("relation") == "hostile" and not c.get("dead")]
+        if not foes:
+            call("wait", seconds=3)
+            continue
+        here = party[who_u].get("pos") or [0, 0, 0]
+        foe = min(foes, key=lambda c: sum((a - b) ** 2 for a, b in zip(c.get("pos") or [9e9] * 3, here)))
+        fh = S.H.get(foe["uuid"], foe.get("name"))
+        plan = json.dumps({"move": {"target": fh, "within": 1.5}, "on_reaction": "skip",
+                           "action": [{"ability": "Main Hand Attack", "target": fh},
+                                      {"ability": "Ranged Attack", "target": fh}, "Dash"]})
+        out, dt, counts = counted("combat_turn", plan=plan, who=S.H.get(who_u))
+        log(f"RPCs by op: {dict(sorted(counts.items(), key=lambda kv: -kv[1]))}")
+        jobs = sum(v for k, v in counts.items() if k.startswith("act."))
+        polls = counts.get("job.poll", 0)
+        rpcs = sum(counts.values())
+        moved = bool(re.search(r"(?m)^move \S+: done", out))
+        hit = bool(re.search(r"(MainHandAttack|Main Hand Attack|Ranged Attack) e\d+: done", out))
+        dashed_on = bool(re.search(r"Shout_Dash: done", out)) and len(re.findall(r"(?m)^move ", out)) >= 2
+        unknown = "has no action called 'Main Hand Attack'" in out  # Ranged Attack: only with a ranged weapon
+        played += 1
+        ok = not unknown and (moved or hit) and polls <= jobs + 4 and "EXCEPTION" not in out and "FAILED: it is not" not in out
+        item(f"combat_turn #{played} (melee approach, names, job push)", "PASS" if ok else "FAIL",
+             f"{party[who_u].get('name')} {dt:.1f}s; {rpcs} RPCs ({jobs} act jobs, {polls} job.polls; push heard={jp.seen}); "
+             f"moved={moved} attacked={hit} dash+walk={dashed_on}; vs {foe.get('name')}; "
+             + " | ".join(l for l in out.splitlines()[:4]))
+    if not played:
+        item("combat_turn on a safe fight", "SKIP", "the fight ended before a party turn")
+    load_verified(BASE)
 
 
 FUNCS = {"reads": sec_reads, "rest": sec_rest, "trade": sec_trade, "gear": sec_gear, "swap": sec_swap,

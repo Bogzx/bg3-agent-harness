@@ -215,6 +215,17 @@ class LookTool(Base):
         self.assertRegex(out, r"ITEM \+ e\d+ Potion of Healing x2 \(Claude\)")
         self.assertRegex(out, r"ITEM \+ e\d+ Rusty Key \(Claude\)")
 
+    def test_painting_lights_up(self):  # Grand Mausoleum: a button press lights its painting (puzzle state)
+        server.look()
+        ch = self.fake.w["nearby"]["items"][0]
+        ch["effect"] = "lit"
+        self.assertRegex(server.look(), r"~ e\d+ Chest now lit")
+        ch.pop("effect")
+        self.assertRegex(server.look(), r"~ e\d+ Chest no longer lit")
+        self.fake.w["nearby"]["items"].append({"uuid": U(701), "name": "General", "kind": "usable", "dist": 3.6,
+                                               "effect": "lit"})
+        self.assertRegex(server.look(), r"\+ e\d+ General <usable> 3.6m \[lit\]")
+
     def test_dialogue_and_reminder(self):
         server.look()
         dialogue(self.fake.w)
@@ -416,6 +427,21 @@ class Arrival(unittest.TestCase):
         lines = self.arrive(2, 3)
         self.assertEqual(len(lines), 7)
         self.assertFalse(any(ln.startswith("(+") for ln in lines))
+
+    def test_lookalikes_fold_onto_the_nearest(self):
+        # live 13:01, Mausoleum gate: 10 "+ eN Skeleton <usable>" lines then "+28 more"
+        H = Handles()
+        tr = delta.Tracker(H)
+        tr.observe(delta.snapshot(H, nearby={"characters": [], "items": []}))
+        items = [{"uuid": U(800 + i), "name": "Skeleton", "kind": "usable", "dist": 1.5 + i} for i in range(12)]
+        items += [{"uuid": U(850), "name": "Black Oleander", "kind": "item", "dist": 4.7},
+                  {"uuid": U(851), "name": "Skeleton", "kind": "container", "dist": 3.0}]
+        lines = tr.observe(delta.snapshot(H, nearby={"characters": [], "items": items}))
+        sk = [ln for ln in lines if "Skeleton <usable>" in ln]
+        self.assertEqual(len(sk), 1)
+        self.assertIn("1.5m (+11 more Skeleton up to 12.5m)", sk[0])
+        self.assertTrue(any("Black Oleander" in ln for ln in lines))
+        self.assertTrue(any("Skeleton <container>" in ln for ln in lines))  # another kind stays its own line
 
     def test_character_cap(self):
         lines = self.arrive(delta.MAX_APPEARED_CHARS + 3, 0)

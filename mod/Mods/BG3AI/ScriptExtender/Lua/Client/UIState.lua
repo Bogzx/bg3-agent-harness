@@ -224,6 +224,28 @@ function S.dialogueAnswers(widget, ad)
             texted = fromVM and #fromVM or 0
             if fromVM and #fromVM >= #items and current then return fromVM, false end
         end
+        -- Live 12:1x (Karlach's camp menu, 10 VMs, 6 rows rendered): no VM had text at all (CtxAnswer's
+        -- one Text param carries no Text), so nothing above matched and get_dialogue showed no options
+        -- (dialogue_advance then waited 15 s on "line still playing"). The list shows Answers in order from
+        -- its top, so the rendered rows are VMs 1..#items: pair them by position (texts from the rows only,
+        -- never a row's DataContext) and say how many more sit below the visible part of the list.
+        -- Live 13:4x (Karlach, 10 answers, 6 rows): the list is a scrolled window of rows. Its ScrollViewer says
+        -- which: the first realized row is answer floor(VerticalOffset / row height) + 1 (true at offsets 0, 48,
+        -- 144, 216, 350), and ExtentHeight / row height counts every answer. When that count is the VM count,
+        -- the rows pair with VMs by position whatever texts the VMs have (with one texted VM, e.g. "Leave.",
+        -- the rule above found none and get_dialogue showed no options at all).
+        if n > #items and #items > 0 and props(ad).ShowAnswers == true then
+            local win = S.listWindow(list, items)
+            if win and win.total == n then
+                local byPos = S.pairRenderedByPosition(items, vms, win.first)
+                if byPos then
+                    return byPos, false, { below = n - (win.first - 1) - #items, above = win.first - 1 }
+                end
+            elseif not win and texted == 0 then -- no scroll info: the list's top rows (live 12:1x)
+                local byPos = S.pairRenderedByPosition(items, vms, 1)
+                if byPos then return byPos, false, { below = n - #items } end
+            end
+        end
         return out, #items > 0 or n > 0, { rendered = #items, vms = n, show = props(ad).ShowAnswers, texted = texted }
     end
     for idx, item in ipairs(items) do
@@ -325,6 +347,42 @@ function S.pairRenderedWithVMs(items, vms, n)
     return out
 end
 
+-- The scrolled window of an answer list: { first = answer number of the first
+-- realized row, total = answers in the whole list, offset, scrollable } from
+-- its ScrollViewer (named reads only) and the rows' height. nil when unread.
+function S.listWindow(list, items)
+    local sv = UI.find(list, function(e) return (UI.typeName(e) or ""):find("ScrollViewer", 1, true) ~= nil end,
+        { hidden = true, max = 400 })
+    local p = sv and UI.pick(sv, { "VerticalOffset", "ExtentHeight", "ScrollableHeight" })
+    local rowH = items[1] and tonumber(UI.get(items[1], "ActualHeight"))
+    local off, ext = p and tonumber(p.VerticalOffset), p and tonumber(p.ExtentHeight)
+    if not (off and ext and rowH and rowH > 1) then return nil end
+    return { first = math.floor(off / rowH + 0.001) + 1, total = math.floor(ext / rowH + 0.5), offset = off,
+        scrollable = tonumber(p.ScrollableHeight) }
+end
+
+-- Rendered rows paired with VMs first..first+#items-1 by position (the list's
+-- visible window; first = 1 at the top). nil unless every row has text.
+function S.pairRenderedByPosition(items, vms, first)
+    local out = {}
+    first = first or 1
+    for k, item in ipairs(items) do
+        local textEl = UI.byName(item, "AnswerText")
+        local text = textEl and answerText(textEl) or UI.allText(item)
+        if not clean(text) then return nil end
+        local idx = first + k - 1
+        local vm = try(vms.At, vms, idx)
+        if not vm then return nil end
+        local tags, body = S.splitTags(text)
+        local a = { i = idx, text = body, vm = vm }
+        if #tags > 0 then a.tags = tags end
+        addTags(a, try(S.answerTags, vm))
+        if props(vm).Enabled == false then a.off = true end
+        out[#out + 1] = a
+    end
+    return out
+end
+
 -- The continue answer VM (ActiveDialogue.ContinueAnswer) when present.
 function S.continueVM(ad)
     return ad and props(ad).ContinueAnswer or nil
@@ -346,6 +404,10 @@ function S.dialogue(wmap)
     if w then
         local answers, changing, counts = S.dialogueAnswers(w.el, ad)
         if changing then d.changing = true; d.answer_counts = counts end
+        if not changing and counts and counts.below then
+            d.more_below = counts.below
+            if (counts.above or 0) > 0 then d.more_above = counts.above end
+        end
         if #answers > 0 then
             d.options = {}
             for _, a in ipairs(answers) do
@@ -681,5 +743,23 @@ function S.state(args)
 end
 
 RPC.register("ui.state", function(args) return S.state(args or {}) end)
+
+-- ui.answer_list -> {over, first, total, offset, scrollable} of the open dialogue's answer list: the bridge
+-- finds the list under the cursor (over) and wheels it to read the rows below the fold (a player scrolls).
+RPC.register("ui.answer_list", function()
+    local w = UI.widgetMap().Dialogue
+    local list = w and UI.isVisible(w.el) and UI.byName(w.el, "answerList")
+    if not list then return { open = false } end
+    local items = UI.findAll(list, function(e)
+        local ty = UI.typeName(e)
+        return ty == "ls.LSListBoxItem" or ty == "ListBoxItem"
+    end, { prune = true })
+    local out = { open = true, over = UI.get(list, "IsMouseOver") == true, rows = #items }
+    local win = #items > 0 and S.listWindow(list, items)
+    if win then
+        out.first, out.total, out.offset, out.scrollable = win.first, win.total, win.offset, win.scrollable
+    end
+    return out
+end)
 
 return S

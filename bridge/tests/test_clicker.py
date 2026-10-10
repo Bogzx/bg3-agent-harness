@@ -23,10 +23,13 @@ class FakeInput:
         self.log.append(("move", x, y))
 
     def click(self, x, y, button="L", count=1, sync=True):
-        self.log.append(("click", x, y))
+        self.log.append(("click", x, y, button))
+        self.buttons = getattr(self, "buttons", []) + [button]
 
     def wait_frames(self, n, sync=True):
         pass
+    def key(self, k, sync=True):
+        self.log.append(("key", k))
 
 
 class FakeGame:
@@ -42,6 +45,19 @@ class FakeGame:
         self.screen_after = screen_after
         self.clicked = False
         self.hover_other = None               # what the picking helper reports instead of the target
+        self.rc = None                        # where the right-click opened the context menu
+        self.cursor = (0, 0)
+
+    def menu_row(self):
+        return self.menu.index("Lockpick") + 1 if "Lockpick" in self.menu else None
+
+    def _row(self):
+        """The menu row under the cursor: rows 27 px tall from 30 px below the right-click, 200 px wide."""
+        dx, dy = self.cursor[0] - self.rc[0], self.cursor[1] - self.rc[1]
+        if not (10 <= dx <= 210 and dy >= 30):
+            return None
+        i = int((dy - 30) // 27) + 1
+        return i if i <= len(self.menu) else None
 
     def _apply_moves(self):
         for ev in self.inp.log[self.seen:]:
@@ -55,7 +71,16 @@ class FakeGame:
                 else:
                     self.ndc[0] += self.rotate_gain * (1 if ev[2] > 0 else -1)
             elif ev[0] == "click":
-                self.clicked = True
+                if getattr(self, "menu", None) is None:
+                    self.clicked = True
+                elif ev[3] == "R":
+                    self.rc = (ev[1], ev[2])   # the context menu opens at the cursor
+                elif self.rc and self._row() == self.menu_row():
+                    self.clicked = self.menu_done = True
+            elif ev[0] == "move":
+                self.cursor = (ev[1], ev[2])
+            elif ev[0] == "key" and ev[1] == clicker.CENTER_KEY and getattr(self, "home_ndc", None):
+                self.ndc, self.behind = list(self.home_ndc), False   # the camera jumps back to the actor
         self.seen = len(self.inp.log)
 
     def rpc(self, op, args=None, context="server"):
@@ -76,6 +101,18 @@ class FakeGame:
             return {"screen": self.screen_after if self.clicked else "game"}
         if op == "act.target_state":
             return {}
+        if op == "ui.context_menu":
+            menu = getattr(self, "menu", None)
+            is_open = menu is not None and self.rc is not None and not getattr(self, "menu_done", False)
+            if not args.get("item"):
+                return {"open": is_open, "items": menu}
+            self.pressed = args
+            if not is_open:
+                raise clicker.GameError("the context menu is not open")
+            if args["item"] not in menu:
+                raise clicker.GameError(f"no '{args['item']}' entry in the context menu ({', '.join(menu)})")
+            i = self.menu_row()
+            return {"open": True, "items": menu, "match": i, "over": self._row() == i}
         raise AssertionError(op)
 
 
@@ -131,6 +168,51 @@ class ClickEntity(unittest.TestCase):
         self.assertTrue(r.ok, r)
         self.assertEqual(r.screen, "roll")
         self.assertIn("zoom_out", r.detail.get("camera", []))
+
+    def test_right_click_menu_lockpick(self):
+        """S024 07:23: the hand route right-click -> Lockpick got the roll where left-clicks did nothing."""
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), screen_after="roll")
+        g.menu = ["Open (locked) (Claude)", "Lockpick", "Attack: (Main Hand Attack)", "Examine"]
+        r = clicker.click_entity(g, inp, "door", button="R", expect="roll", verify_timeout=0.2, menu="Lockpick")
+        self.assertTrue(r.ok, r)
+        self.assertEqual(inp.buttons, ["R", "L"])
+        self.assertEqual(g._row(), 2)  # the left click landed on the Lockpick row
+        self.assertEqual(g.pressed, {"item": "Lockpick"})
+        self.assertEqual(r.detail.get("menu"), "Lockpick")
+
+    def test_right_click_menu_without_the_entry(self):
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), screen_after="roll")
+        g.menu = ["Examine"]
+        old, clicker.MENU_WAIT_S = clicker.MENU_WAIT_S, 0.2
+        try:
+            r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.2, menu="Lockpick")
+        finally:
+            clicker.MENU_WAIT_S = old
+        self.assertFalse(r.ok)
+        self.assertEqual(r.reason, "no_menu_entry")
+        self.assertIn("no 'Lockpick' entry", r.detail.get("menu"))
+        self.assertIn(("key", "ESCAPE"), inp.log)  # the menu is closed again
+
+    def test_camera_on_a_companion_centers_on_the_actor_first(self):
+        """lockpick live 12:3x: the camera followed the companions, the lock was off screen (tries=0)."""
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(-2.6, 25.0), screen_after="roll")
+        g.home_ndc = (0.05, 0.1)
+        r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.2)
+        self.assertTrue(r.ok, r)
+        self.assertEqual(r.detail.get("camera"), ["center"])   # no zoom/rotate needed after the center key
+        self.assertEqual([e for e in inp.log if e[0] == "key"], [("key", "Home")])
+
+    def test_target_already_in_view_no_center_key(self):
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), screen_after="roll")
+        g.home_ndc = (0.5, 0.5)
+        r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.2)
+        self.assertTrue(r.ok, r)
+        self.assertNotIn(("key", "Home"), inp.log)
+        self.assertIsNone(r.detail.get("camera"))
 
     def test_in_view_but_never_hovered_is_hover_miss(self):
         inp = FakeInput()
@@ -228,3 +310,56 @@ class ToolCheck(unittest.TestCase):
             def rpc(self, op, args=None, context="server"):
                 raise RuntimeError("no save loaded")
         self.assertIsNone(clicker.tool_check(Broken([]), "act.lockpick", "U1"))
+
+
+class AnswerList(unittest.TestCase):
+    """Live 13:4x Karlach: 10 answers, 6 rows of 84 px visible, 1 wheel notch = 48 px, scrollable 350."""
+
+    class G:
+        def __init__(self, inp):
+            self.inp, self.off, self.seen = inp, 0.0, 0
+            self.texts = [f"answer {k}" for k in range(1, 11)]
+
+        def _apply(self):
+            for ev in self.inp.log[self.seen:]:
+                if ev[0] == "wheel":
+                    self.off = min(350.0, max(0.0, self.off - 48.0 * ev[1]))
+                elif ev[0] == "move":
+                    self.cursor = (ev[1], ev[2])
+            self.seen = len(self.inp.log)
+
+        def first(self):
+            return int(self.off // 84) + 1
+
+        def options(self):
+            self._apply()
+            f = self.first()
+            return [{"i": k, "text": self.texts[k - 1]} for k in range(f, min(f + 6, 11))]
+
+        def rpc(self, op, args=None, context="server"):
+            self._apply()
+            assert op == "ui.answer_list", op
+            c = getattr(self, "cursor", (0, 0))
+            return {"open": True, "over": 700 <= c[1] <= 1000 and 700 <= c[0] <= 1200, "first": self.first(),
+                    "total": 10, "offset": self.off, "scrollable": 350.0}
+
+    def test_reads_every_answer_and_scrolls_back(self):
+        clicker._list_hit["at"] = None
+        inp = FakeInput()
+        g = self.G(inp)
+        got, why = clicker.read_answer_list(g, inp, g.options)
+        self.assertIsNone(why)
+        self.assertEqual(sorted(got), list(range(1, 11)))
+        self.assertEqual(got[10]["text"], "answer 10")
+        g._apply()
+        self.assertEqual(g.off, 0.0)  # back at the top
+        self.assertIsNotNone(clicker._list_hit["at"])  # remembered for the next list
+
+    def test_list_not_found(self):
+        clicker._list_hit["at"] = None
+        inp = FakeInput()
+        g = self.G(inp)
+        g.rpc = lambda op, args=None, context="server": {"open": True, "over": False, "total": 10}
+        got, why = clicker.read_answer_list(g, inp, g.options)
+        self.assertEqual(why, "could not point at the answer list")
+        self.assertEqual(sorted(got), list(range(1, 7)))

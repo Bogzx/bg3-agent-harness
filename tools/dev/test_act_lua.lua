@@ -851,6 +851,18 @@ test("loop watchdog: uses far apart, other items or no tasks are not a loop", fu
     restore()
 end)
 
+test("walk: a 0-damage trap puff doesn't interrupt; damage or a character attacker does", function()
+    local NULL = "NULL_00000000-0000-0000-0000-000000000000"
+    local j = job(op("move_to", { char = P1, pos = { 5, 0, 0 } }))
+    A.dispatch("AttackedBy", { P1, NULL, GEM, "None", 0, "", 0 })  -- Mausoleum vent: Blinded, 0 dmg
+    eq(j.status, "running", "trap puff")
+    A.dispatch("AttackedBy", { P1, NULL, GEM, "Force", 5, "", 0 })
+    eq(j.status, "interrupted", "trap damage"); assert(j.error:find("attacked"), j.error)
+    local k = job(op("move_to", { char = P1, pos = { 5, 0, 0 } }))
+    A.dispatch("AttackedBy", { P1, GOB, GOB, "None", 0, "", 0 })    -- a goblin's miss
+    eq(k.status, "interrupted", "character miss")
+end)
+
 test("loop watchdog: a running job routed through a ladder loop is interrupted", function()
     local restore = with_tasks(1)
     A.use_streak = {}
@@ -981,38 +993,15 @@ local function pick_system()
     return Ext.System.ServerLockpicking.PickLockRequests
 end
 
-test("lockpick: engine request first; StartedLockpicking -> done via engine, no click, no purge", function()
+test("lockpick (default): no engine request; right-click -> context menu 'Lockpick' (S024 hand route)", function()
     osiv[key("IsLocked", DOOR)] = 1
     local reqs = pick_system()
     local j = job(op("lockpick", { char = P1, target = DOOR }))
-    eq(#reqs, 0, "no request before arriving")
     arrive(j, { 8.5, 0, 0 })
-    eq(#reqs, 1, "one PickLockRequest")
-    assert(reqs[1].Player and reqs[1].Target, "request has Player and Target entities")
-    eq(#called("Use"), 0, "no Osiris Use (it only 'uses' the lock)")
-    A.dispatch("StartedLockpicking", { P1, DOOR })
     eq(j.status, "done", "status " .. tostring(j.error))
-    eq(j.result.via, "engine", "via"); eq(j.result.needs_click, nil, "no click")
-    eq(#called("PurgeOsirisQueue"), 0, "lockpick task not purged")
-end)
-
-test("lockpick: no StartedLockpicking -> falls back to the verified click", function()
-    osiv[key("IsLocked", DOOR)] = 1
-    local j = job(op("lockpick", { char = P1, target = DOOR }))
-    arrive(j, { 8.5, 0, 0 })
-    tick(40)
-    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(#reqs, 0, "no PickLockRequest (live: never consumed, stale ones pile up)")
     eq(j.result.needs_click, DOOR, "needs_click"); eq(j.result.expect, "roll", "expect")
-end)
-
-test("lockpick: no lockpicking system (older runtime) -> the click at once", function()
-    osiv[key("IsLocked", DOOR)] = 1
-    Ext.System = nil
-    local j = job(op("lockpick", { char = P1, target = DOOR }))
-    arrive(j, { 8.5, 0, 0 })
-    tick(2)
-    eq(j.status, "done", "status " .. tostring(j.error))
-    eq(j.result.needs_click, DOOR, "needs_click")
+    eq(j.result.button, "R", "right-click"); eq(j.result.menu, "Lockpick", "menu item")
 end)
 
 test("lockpick: a lock with no lockpick difficulty (zero DC id) -> refused before walking, no Use/click", function()
@@ -1023,13 +1012,14 @@ test("lockpick: a lock with no lockpick difficulty (zero DC id) -> refused befor
     eq(#called("Use"), 0, "no Use"); eq(#called("CharacterMoveToPosition"), 0, "no walk")
 end)
 
-test("lockpick: a lock with a difficulty id -> proceeds (engine request, then the click)", function()
+test("lockpick: a lock with a difficulty id -> proceeds to the right-click, no engine request", function()
     osiv[key("IsLocked", DOOR)] = 1
     world[DOOR].comps.Lock = { Key_M = "NO_KEY", LockDifficultyClassID = "0d9484eb-0000-4000-8000-000000000001", LockDC = 0 }
     local reqs = pick_system()
     local j = job(op("lockpick", { char = P1, target = DOOR }))
     arrive(j, { 8.5, 0, 0 })
-    eq(#reqs, 1, "PickLockRequest")
+    eq(#reqs, 0, "no PickLockRequest (it corrupts the game's array: crash 12:35)")
+    eq(j.result.needs_click, DOOR, "needs_click"); eq(j.result.menu, "Lockpick", "menu")
 end)
 
 -- ---- turn-based mode outside combat (S024-S026 Shadow Curse) ---------------

@@ -65,8 +65,8 @@ _CLUTTER_KINDS = ("usable", "item", "object")
 
 def is_clutter(n: dict) -> bool:
     """A decoration-like prop worth a count, not a line: see _CLUTTER_WORDS."""
-    if n.get("kind") not in _CLUTTER_KINDS or n.get("story") or n.get("rarity") or n.get("near"):
-        return False  # "near": a puzzle fixture ("Marble Plate" under a statue), never a prop
+    if n.get("kind") not in _CLUTTER_KINDS or n.get("story") or n.get("rarity") or n.get("near") or n.get("effect"):
+        return False  # "near": a puzzle fixture ("Marble Plate" under a statue), never a prop; "effect": a lit painting
     if any(f in (n.get("flags") or ()) for f in ("locked", "trap")):
         return False
     return bool(_CLUTTER_RE.search(str(n.get("name") or "")))
@@ -167,7 +167,7 @@ _ITEM_FLAGS = ("locked", "opened", "trap", "owned")
 def _item_rec(it: dict) -> dict:
     return {"name": it.get("name", "?"), "kind": it.get("kind"), "dist": it.get("dist"),
             "flags": tuple(f for f in _ITEM_FLAGS if it.get(f)), "story": bool(it.get("story")),
-            "count": it.get("count"), "near": it.get("near"),
+            "count": it.get("count"), "near": it.get("near"), "effect": it.get("effect"),
             "rarity": it.get("rarity") if it.get("rarity") not in (None, "Common", "common") else None}
 
 
@@ -288,6 +288,9 @@ def _flag_bits(old: tuple, new: tuple, flags: tuple) -> list[str]:
     return out
 
 
+LOOKALIKE_FOLD = 3  # this many plain new items sharing a name+kind print as one line
+
+
 def _appeared(H: Handles, u: str, n: dict) -> str:
     bits = [f"+ {_ref(H, u, n['name'])}"]
     if n["kind"] == "char":
@@ -307,6 +310,8 @@ def _appeared(H: Handles, u: str, n: dict) -> str:
         bits.append(f"{render.num(n['dist'])}m")
     if n.get("near"):
         bits.append(f"({n['near']})")
+    if n.get("effect"):
+        bits.append(f"[{n['effect']}]")
     return " ".join(bits)
 
 
@@ -345,6 +350,8 @@ def _ent_lines(old: dict, new: dict, H: Handles) -> list[str]:
                     bits.append({"locked": "unlocked", "opened": "closed", "trap": "trap gone"}.get(f, f"not {f}"))
             if n.get("count") != o.get("count") and n.get("count") is not None:
                 bits.append(f"x{o.get('count') or 1}->{n['count']}")
+            if n.get("effect") != o.get("effect"):
+                bits.append(f"now {n['effect']}" if n.get("effect") else f"no longer {o.get('effect')}")
         if bits:
             changed.append(f"~ {_ref(H, u, n['name'])} " + ", ".join(bits))
     for u in sorted((u for u in oe if u not in ne and not is_clutter(oe[u])), key=order):
@@ -361,7 +368,29 @@ def _ent_lines(old: dict, new: dict, H: Handles) -> list[str]:
     if len(new_items) > room:
         new_items.sort(key=lambda u: (0 if ne[u].get("story") or ne[u].get("near") else render._KIND_RANK.get(str(ne[u]["kind"]), 4),
                                       ne[u].get("dist") if ne[u].get("dist") is not None else 999, H.get(u)))
-    appeared += [_appeared(H, u, ne[u]) for u in new_items[:room]]
+    # Lookalikes (a crypt's 10 Skeletons, a cellar's barrels) fold onto their nearest one, as look's ITEM rows do
+    # (live 13:01, Mausoleum gate: 10 "Skeleton <usable>" lines + "+28 more").
+    plain = lambda n: not (n["flags"] or n.get("story") or n.get("near") or n.get("effect"))  # noqa: E731
+    groups: dict[tuple, list[str]] = {}
+    for u in new_items:
+        if plain(ne[u]):
+            groups.setdefault((ne[u]["name"], ne[u]["kind"]), []).append(u)
+    folded: dict[str, list[str]] = {}
+    for g in groups.values():
+        if len(g) >= LOOKALIKE_FOLD:
+            g.sort(key=lambda u: ne[u].get("dist") if ne[u].get("dist") is not None else 999)
+            folded[g[0]] = g[1:]
+    hidden = {u for rest in folded.values() for u in rest}
+    new_items = [u for u in new_items if u not in hidden]
+
+    def shown(u: str) -> str:
+        line = _appeared(H, u, ne[u])
+        rest = folded.get(u)
+        if rest:
+            far = max((ne[r].get("dist") or 0) for r in rest)
+            line += f" (+{len(rest)} more {ne[u]['name']} up to {render.num(far)}m)"
+        return line
+    appeared += [shown(u) for u in new_items[:room]]
     if len(new_items) > room or props:
         kinds: dict[str, int] = {}
         for u in new_items[room:]:

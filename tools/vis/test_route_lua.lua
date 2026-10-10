@@ -300,7 +300,42 @@ test("nav.frontier: a ladder lead carries its height and way; leads on another l
     local byId = {}
     for _, l in ipairs(r.leads) do byId[l.uuid] = l end
     near(byId.L1.height_m, 9.2, "height"); eq(byId.L1.leads, "up", "up"); eq(byId.L1.dy, nil, "same floor")
+    near(byId.L1.to[2], 9.2, "leads to its top"); eq(byId.L1.to_unvisited, true, "the top is unexplored")
     near(byId.D2.dy, 9, "door on the deck above")
+end)
+
+-- ---- jump gaps in the ways (setup: jump spots were only found from screenshots) ------------------------------
+
+local function chasm(x0, x1, below)
+    heights = function(x) if x >= x0 and x <= x1 then return below and { below } or {} end return { 0.0 } end
+    blocked = function(x) return x >= x0 end -- no walk reaches the far side
+end
+
+test("jumpGap: a 3 m chasm E: takeoff edge, landing, gap width", function()
+    chasm(3, 5.6, -12)
+    local j = N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 })
+    near(j.gap_m, 3.5, "gap"); near(j.from[1], 2.5, "edge"); near(j.to[1], 6, "landing"); eq(j.dy, nil, "level")
+end)
+
+test("jumpGap: none when the far side is walkable, too wide, a wall, or a plain step down", function()
+    chasm(3, 5.6, -12); blocked = function() return false end
+    eq(N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 }), nil, "a walk reaches the far side")
+    chasm(3, 9.6)
+    eq(N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 }), nil, "7 m: wider than a jump")
+    heights = function() return { 6.0 } end
+    eq(N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 }), nil, "a wall (no ground ahead at all)")
+    heights = function(x) return { x >= 3 and -1.5 or 0.0 } end; blocked = function(x) return x >= 3 end
+    eq(N.jumpGap(P1, { 0, 0, 0 }, { 1, 0 }), nil, "a 1.5 m step down")
+end)
+
+test("ways: a blocked direction carries the jump across the chasm; open ones don't", function()
+    N.waysCache, N.waysCacheN = {}, 0
+    chasm(3, 5.6, -12)
+    local ways = N.ways(P1, 20, 8, 1000)
+    local by = {}
+    for _, w in ipairs(ways) do by[w.dir] = w end
+    eq(by.E.open_m, 0, "E blocked"); near(by.E.jump.gap_m, 3.5, "E jump")
+    eq(by.W.jump, nil, "W open: no jump")
 end)
 
 -- ---- journal cache (State.lua) -----------------------------------------------------

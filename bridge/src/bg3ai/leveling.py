@@ -79,12 +79,13 @@ def plan_for(memory: Path, name: str, level: int) -> dict | None:
 def line(status: dict | None, label: Callable[[str], str], memory: Path | None = None) -> str:
     """'LEVEL UP: e3 Gale (2) …' outside combat, '' otherwise or when nobody can level."""
     st = status or {}
-    rows = pending(st)
+    rows = pending(st) + [dict(r, camp=True) for r in pending({"party": st.get("camp")})]
     if not rows or st.get("in_combat"):
         return ""
     bits, missing = [], []
     for r in rows:
-        bits.append(f"{label(r['uuid']) if r.get('uuid') else r['name']} ({r['to']})")
+        # Camp members too (acceptance 11:47: Wyll L4 pending at camp since S021, no line): level_up swaps them in.
+        bits.append(f"{label(r['uuid']) if r.get('uuid') else r['name']} ({r['to']}{', at camp' if r.get('camp') else ''})")
         if memory is not None and plan_for(memory, r["name"], r["to"]) is None:
             missing.append(f"{r['name']} L{r['to']}")
     tail = " → level_up(who) now, one call each, from your plan in memory/party-build.md"

@@ -267,6 +267,55 @@ RPC.register("ui.press", function(args)
 end)
 
 ------------------------------------------------------------------------
+-- The right-click context menu (WorldContextMenu.xaml). Its LSEntityObject
+-- "WorldContextEntity" opens an ls.ContextMenu popup, outside the widget's
+-- visual tree, with one ls.ContextMenuItem row per entry the engine offers
+-- for the right-clicked entity (Talk, Pickpocket, Lockpick, Attack, Examine;
+-- a crime shows red). Each row has a Command, but pressing it does nothing
+-- (live 13:3x: the menu stayed open): the bridge moves the cursor onto the
+-- row (closed loop on its IsMouseOver) and clicks, as a player does.
+--
+--   ui.context_menu {item?} -> {open, items = {texts}, match?, over?}
+--     item: an entry's label (case-insensitive prefix, e.g. "Lockpick");
+--     match = its row number, over = the cursor is on that row now.
+------------------------------------------------------------------------
+
+function A.contextMenuRows()
+    local wm = UI.widgetMap().WorldContextMenu
+    local ent = wm and UI.byName(wm.el, "WorldContextEntity", { hidden = true })
+    local cm = ent and UI.get(ent, "ContextMenu")
+    if not cm or UI.get(cm, "IsOpen") ~= true then return nil end
+    local rows = {}
+    for _, e in ipairs(UI.findAll(cm, function(e)
+        return (UI.typeName(e) or ""):find("ContextMenuItem", 1, true) ~= nil
+    end, { hidden = true, prune = true })) do
+        local text = UI.allText(e, " ", 80)
+        if text then rows[#rows + 1] = { el = e, text = text } end
+    end
+    return rows
+end
+
+RPC.register("ui.context_menu", function(args)
+    local rows = A.contextMenuRows()
+    if not rows then
+        if args.item then error("the context menu is not open") end
+        return { open = false }
+    end
+    local out = { open = true, items = {} }
+    local want = args.item and tostring(args.item):lower()
+    for i, r in ipairs(rows) do
+        out.items[#out.items + 1] = r.text
+        if want and not out.match and r.text:lower():sub(1, #want) == want then
+            out.match, out.over = i, UI.get(r.el, "IsMouseOver") == true
+        end
+    end
+    if want and not out.match then
+        error("no '" .. tostring(args.item) .. "' entry in the context menu (" .. table.concat(out.items, ", ") .. ")")
+    end
+    return out
+end)
+
+------------------------------------------------------------------------
 -- Confirmation boxes (ls.DCMessageBox in "Dialog_box": "End the day?",
 -- "Someone wants to talk, rest anyway?", "Leave party members behind?").
 -- The box's title can read "[ForceUpdate]" (an unresolved handle), so the
@@ -506,7 +555,16 @@ RPC.register("ui.dialogue_choose", function(args)
                 tostring(counts and counts.rendered), tostring(counts and counts.vms),
                 tostring(counts and counts.texted), tostring(counts and counts.show)))
         end
-        local a = answers[i] or error("no option " .. i .. " (" .. #answers .. " shown)")
+        local a = answers[i]
+        if not a and counts and counts.below and i > #answers and i <= #answers + counts.below then
+            -- An answer below the visible rows of a long list (companion menus): the live VM at that
+            -- position in Answers, the order the list shows them in.
+            local vms = UI.prop(S.activeDialogue(dc), "Answers")
+            local vm = vms and try(vms.At, vms, i)
+            if vm then a = { i = i, vm = vm, off = UI.prop(vm, "Enabled") == false } end
+        end
+        a = a or error("no option " .. i .. " (" .. #answers .. " shown"
+            .. (counts and counts.below and (", " .. counts.below .. " more below") or "") .. ")")
         if a.off then error("option " .. i .. " is disabled") end
         local ok, err = UI.command(dc, "SelectAnswerCommand", a.vm, args.dry)
         if not ok then

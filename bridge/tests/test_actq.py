@@ -618,6 +618,58 @@ class WatcherParty(unittest.TestCase):
         self.party(surface="Fire")  # back in
         self.assertEqual(self.w.check("move_to", None, ui=False)[0], "surface")
 
+    TRAP = "11111111-2222-3333-4444-555555555555"
+
+    def walk(self, *xs):
+        for x in xs:
+            self.party(pos=[x, 0, 0])
+            hit = self.w.check("travel_to", None, ui=False)
+            if hit:
+                return hit
+        return None
+
+    def spot(self, pos):
+        self.g.push("spotted", {"kind": "trap", "item": {"uuid": self.TRAP, "name": "Vent"}, "pos": pos})
+
+    def test_trap_spotted_on_the_way_stops_the_walk(self):
+        """S021/S025: 'spotted kind=trap' fired during walks and only showed in EVENTS; a player stops."""
+        self.party(pos=[0, 0, 0])
+        self.w.baseline()
+        self.spot([8, 0.2, 1.0])  # 8 m ahead, 1 m to the side
+        kind, why = self.walk(1, 2)
+        self.assertEqual(kind, "trap")
+        self.assertIn("TRAP spotted on the way", why)
+        self.assertIn(self.TRAP, why)
+
+    def test_trap_off_the_way_behind_or_on_another_floor_does_not_stop(self):
+        self.party(pos=[0, 0, 0])
+        self.w.baseline()
+        self.spot([-6, 0, 0])  # behind
+        self.assertIsNone(self.walk(1, 2, 3))
+        self.g.push("spotted", {"kind": "trap", "item": {"uuid": "aaaaaaaa-2222-3333-4444-555555555555"},
+                                "pos": [9, 0, 6]})  # 6 m to the side
+        self.g.push("spotted", {"kind": "trap", "item": {"uuid": "bbbbbbbb-2222-3333-4444-555555555555"},
+                                "pos": [8, 9, 0]})  # a floor above
+        self.assertIsNone(self.walk(4, 5))
+
+    def test_trap_close_by_stops_even_when_standing(self):
+        self.party(pos=[0, 0, 0])
+        self.w.baseline()
+        self.spot([1.5, 0, 0])
+        self.assertEqual(self.w.check("interact", None, ui=False)[0], "trap")
+
+    def test_trap_stop_once_and_not_for_disarm_or_ignore(self):
+        self.party(pos=[0, 0, 0])
+        self.w.baseline()
+        self.spot([1.0, 0, 0])
+        self.assertIsNone(self.w.check("disarm", None, ui=False))
+        self.assertEqual(self.w.check("move_to", None, ui=False)[0], "trap")
+        self.assertIsNone(self.w.check("move_to", None, ui=False))  # reported once
+        self.w = actq.Watcher(self.g, ignore={"trap"})
+        self.w.baseline()
+        self.spot([1.0, 0, 0])
+        self.assertIsNone(self.w.check("move_to", None, ui=False))
+
     def test_ignore_damage_and_surface(self):
         self.w = actq.Watcher(self.g, ignore={"damage", "surface"})
         self.w.baseline()

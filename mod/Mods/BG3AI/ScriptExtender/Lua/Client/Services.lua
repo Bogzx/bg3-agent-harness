@@ -1299,7 +1299,10 @@ local function ppRows(w, dc, npc)
     local owner = entity(npc)
     local inv = owner and vmInv and bestInventory(vmInv, inventoriesOf(owner)) or nil
     local rows = {}
-    local coll = UI.get(lb, "Items") or UI.get(lb, "ItemsSource")
+    -- The ListBox lists every slot (empty cells too: the grid), in Container.Inventory.Slots order, so a slot's
+    -- position there is its ListBox index. Read the Slots themselves; the ListBox's own Items as a fallback.
+    local coll = vmInv and UI.prop(vmInv, "Slots")
+    if UI.count(coll) == 0 then coll = UI.get(lb, "Items") or UI.get(lb, "ItemsSource") end
     for i, slot in UI.items(coll, 200) do
         local obj = slot and UI.get(slot, "Object")
         if obj ~= nil then
@@ -1325,6 +1328,12 @@ end
 RPC.register("ui.pickpocket", function(args)
     local w = visibleWidget("Pickpocket") or error("no pickpocket window is open: pickpocket(npc) opens it", 0)
     local dc = try(function() return w.DataContext end) or error("the pickpocket window has no DataContext", 0)
+    if args.leave then
+        -- The window's Close button (CloseWidgetCommand, no parameter).
+        local ok, err = UI.command(dc, "CloseWidgetCommand", nil)
+        if not ok then error("couldn't close the pickpocket window: " .. tostring(err), 0) end
+        return { left = true }
+    end
     local got, err = memoized(function() return ppRows(w, dc, args.npc) end)
     if not got then error(err, 0) end
     local rows, lb = got.rows, got.lb

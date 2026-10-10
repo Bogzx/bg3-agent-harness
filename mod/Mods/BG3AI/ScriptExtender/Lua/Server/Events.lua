@@ -128,7 +128,31 @@ end)
 -- StatusApplied(object, status, causee, storyActionID): displayable statuses only, by their shown name.
 -- Never the engine's status id: a player never sees it, and ids carry hints the name doesn't
 -- (MAG_MYRKULITES_UNDEAD_PRESENCE_BUFF = from a Myrkulite item; fairness audit S023-S027).
+-- An item near the party (≤ ITEM_EFFECT_M from a member) whose look changes: a painting lighting up.
+E.ITEM_EFFECT_M = 30
+local function nearParty(u, m)
+    local e = V.entity(u)
+    local p = e and V.pos(e)
+    if not p then return nil end
+    for _, o in ipairs(ctx().observers) do
+        if o.pos and U.dist(o.pos, p) <= m then return e end
+    end
+    return nil
+end
+
+local function itemEffectEvent(obj, status, on)
+    local t = V.itemEffect(status)
+    if not t then return false end
+    if not on and t:find("^flashing") then return true end -- the flash ending says nothing new
+    local u = V.uuid(obj)
+    if u and nearParty(u, E.ITEM_EFFECT_M) then
+        RPC.push("item_effect", { item = ref(u), state = on and t or ("no longer " .. t:gsub(" %(.*", "")) })
+    end
+    return true
+end
+
 listen("StatusApplied", 4, function(obj, status, causee, _)
+    if itemEffectEvent(obj, status, true) then return end
     if not V.statusInfo(status) then return end
     local u = visibleChar(obj)
     if not u then return end
@@ -139,6 +163,7 @@ listen("StatusApplied", 4, function(obj, status, causee, _)
 end)
 
 listen("StatusRemoved", 4, function(obj, status, _, _)
+    if itemEffectEvent(obj, status, false) then return end
     if not V.statusInfo(status) then return end
     local u = visibleChar(obj)
     if u then RPC.push("status_removed", { target = ref(u), name = V.statusInfo(status).name }) end
@@ -271,10 +296,27 @@ listen("AddedTo", 3, function(item, holder, _)
     RPC.push("item_added", data)
 end)
 
+-- Doors/walls opening in view: by a script too (Grand Mausoleum: the 3rd right press opens two
+-- Stone Walls, PROC_ItemUnlockAndOpen). A player sees and hears them slide.
+-- One the party opened itself is in the interact result already ("done — opened").
+E.DOOR_OPEN_M = 30
+E.partyUse = E.partyUse or {}
+listen("UseStarted", 2, function(char, item)
+    local c = V.uuid(char)
+    if ctx().is_party[c or ""] then E.partyUse[V.uuid(item) or ""] = Ext.Utils.MonotonicTime() end
+end)
+
 listen("Opened", 1, function(item)
     local u = V.uuid(item)
     local e = V.entity(u)
     if not e then return end
+    if V.itemKind(u, e) == "door" then
+        local used = E.partyUse[u]
+        E.partyUse[u] = nil
+        if used and Ext.Utils.MonotonicTime() - used < 15000 then return end
+        if nearParty(u, E.DOOR_OPEN_M) and V.itemVisible(ctx(), u, e) then RPC.push("door_opened", { item = ref(u) }) end
+        return
+    end
     local c = ctx()
     -- Only containers the party opened near itself are "on screen".
     local p = V.pos(e)

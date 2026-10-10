@@ -358,6 +358,23 @@ test("a named fixture seen moments ago stays known when a plinth hides it (5 min
     BG3AI.State, V.name = oldState, oldName
 end)
 
+test("a ladder seen moments ago stays known from a spot where it is out of sight (5 min, 30 m)", function()
+    -- se 12:3x Roadside Cliffs: the ladder 13 m N was named in one travel_to stop and missing from the next
+    setup(); door("L", { 10, 0, 0 })
+    world.L.comps.ServerItem = { IsLadder = true }
+    V.fixtureSeen = {}
+    ray.fn = floorThen(function() return nil end)
+    eq(visible("L"), true, "seen")
+    ray.fn = floorThen(function(a) return { Position = { a[1] + 5, a[2], a[3] }, Distance = 5 } end)
+    V.rayCache = {}
+    clock = clock + 60000
+    eq(visible("L"), true, "behind the cliff edge a minute later: remembered")
+    world.P1.pos = { 50, 0, 0 }
+    V.ctxCache = nil
+    eq(visible("L"), false, "40 m away: not remembered")
+    V.fixtureSeen = {}
+end)
+
 test("undiscovered trap fixture (vent) stays hidden with a clear ray", function()
     setup(); button("T", { 5, 0, 0 })
     world.T.comps.ServerItem.CanUse = false
@@ -535,6 +552,36 @@ test("item index: built in <= INDEX_BUDGET_MS slices per tick, no closure per it
     end)
     Ext.Entity.GetAllEntitiesWithComponent = realGet
     for i = 1, 1000 do world["I" .. i] = nil end
+    assert(ok, err)
+end)
+
+test("item effects: Mausoleum mural states named, generic glow only when asked, %%% EMPTY is no name", function()
+    local stats = {
+        SHA_MAUSOLEUM_MURAL_INPROGRESS = { StatusType = "EFFECT", StatusEffect = "a809", DisplayName = "h1;1" },
+        VFX_ONLY = { StatusType = "EFFECT", StatusEffect = "b1", DisplayName = "h2;1" },
+        NAMED = { StatusType = "EFFECT", StatusEffect = "c1", DisplayName = "h3;1" },
+        NO_VFX = { StatusType = "EFFECT", StatusEffect = "", DisplayName = "h2;1" },
+    }
+    local realStats = Ext.Stats
+    Ext.Stats = { Get = function(n) return stats[n] end }
+    loca.h1, loca.h2, loca.h3 = "%%% EMPTY", "%%% EMPTY", "Burning"
+    V.itemEffectCache = {}
+    local ok, err = pcall(function()
+        eq(BG3AI.Util.loca("h2;1"), nil, "%%% EMPTY")
+        eq(BG3AI.Util.loca("h3;1"), "Burning", "a real name")
+        eq(V.itemEffect("SHA_MAUSOLEUM_MURAL_INPROGRESS"), "lit", "known")
+        eq(V.itemEffect("SHA_MAUSOLEUM_MURAL_WRONGORDER"), "flashing (wrong order: resets)", "known 2")
+        eq(V.itemEffect("VFX_ONLY"), nil, "generic not asked")
+        eq(V.itemEffect("VFX_ONLY", true), "glowing", "generic")
+        eq(V.itemEffect("NAMED", true), nil, "a named status is a status, not a glow")
+        eq(V.itemEffect("NO_VFX", true), nil, "no visual effect")
+        world.M = { pos = { 1, 0, 0 }, comps = { StatusContainer = { Statuses = {
+            [{}] = "SHA_MAUSOLEUM_MURAL_INPROGRESS", [{}] = "NAMED" } } } }
+        eq(V.itemEffects(V.entity("M"), true), "lit", "entity")
+        world.N = { pos = { 1, 0, 0 }, comps = {} }
+        eq(V.itemEffects(V.entity("N"), true), nil, "no container")
+    end)
+    Ext.Stats = realStats
     assert(ok, err)
 end)
 

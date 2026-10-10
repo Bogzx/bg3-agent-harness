@@ -51,6 +51,13 @@ BG3AI = {
             return hit[1]
         end,
         findAll = function(root, pred) return findAll(root, pred) end,
+        find = function(root, pred) return findAll(root, pred)[1] end,
+        get = function(o, k) return o and o._props and o._props[k] end,
+        pick = function(o, names)
+            local out = {}
+            for _, k in ipairs(names) do if o and o._props and o._props[k] ~= nil then out[k] = o._props[k] end end
+            return out
+        end,
         text = function(el) return clean(el._tostring) or (el._props.Inlines and clean(inlineText(el._props.Inlines))) end,
         inlineText = inlineText,
         allText = function() return nil end,
@@ -230,6 +237,67 @@ do
     local out2, changing2, counts = S.dialogueAnswers(widget(items), ad(vms, false))
     check("virtualized listening: changing", changing2 == true and #out2 == 0)
     check("virtualized: counts carry the diagnostics", counts and counts.show == false and counts.texted == 0)
+end
+
+-- 11. Live 12:1x Karlach's camp menu: 10 VMs whose one Text param has no Text, 6 rows rendered at the top of
+--     the list. The rows pair with VMs 1..6 by position; 4 more sit below the visible part.
+do
+    local texts = { "It sounds like all we need to do to fix your engine is find some infernal iron.",
+        "What does that infernal engine do to you?", "That fight at the tollhouse really... heated you up, didn't it?",
+        "You mentioned a boss who gave you up to Zariel. Who was it?",
+        "In your expert opinion, what's the best way to kill a devil?", "You and Mizora seem to know each other. How?" }
+    local items, vms = {}, {}
+    for k = 1, 10 do
+        if texts[k] then items[k] = item({}, texts[k]) end
+        vms[k] = vm({ { Type = "Text" } })
+    end
+    local out, changing, counts = S.dialogueAnswers(widget(items), ad(vms, true))
+    check("textless: not changing", changing == false)
+    check("textless: the 6 visible rows", #out == 6 and out[6].text == texts[6], #out)
+    check("textless: row k is VM k", out[1].vm == vms[1] and out[6].vm == vms[6] and out[6].i == 6)
+    check("textless: 4 below", counts and counts.below == 4)
+    -- a line still playing (ShowAnswers false): nothing, still changing
+    local out2, changing2 = S.dialogueAnswers(widget(items), ad(vms, false))
+    check("textless listening: changing", changing2 == true and #out2 == 0)
+end
+
+-- 12. Live 13:4x Karlach's menu scrolled to the bottom (VerticalOffset 350 of ExtentHeight 840, rows 84 high):
+--     the 6 realized rows are answers 5-10; VM 10 ("Leave.") has text, the others none (that made the rule
+--     above give no options at all). Rows pair with VMs from floor(offset / row height) + 1.
+do
+    local all = { "a1", "a2", "a3", "a4", "In your expert opinion, what's the best way to kill a devil?",
+        "You and Mizora seem to know each other. How?", "So you had a friend in Avernus. You never said.",
+        "Tell me again why you want to collect soul coins.", "You'll need to stay behind in camp for now.", "Leave." }
+    local function rows(first, n)
+        local out = {}
+        for k = first, first + n - 1 do
+            local it = item({}, all[k]); it._props = { ActualHeight = 84.0 }; out[#out + 1] = it
+        end
+        return out
+    end
+    local vms = {}
+    for k = 1, 10 do vms[k] = vm({ k == 10 and { Type = "Text", Text = "Leave." } or { Type = "Text" } }) end
+    local function scrolled(items, off)
+        local sv = { Type = "ls.LSScrollViewer", _props = { VerticalOffset = off, ExtentHeight = 840.0, ScrollableHeight = 350.0 },
+            _children = items }
+        return { _children = { { _name = "answerList", _children = { sv } } } }
+    end
+    local out, changing, counts = S.dialogueAnswers(scrolled(rows(5, 6), 350.0), ad(vms, true))
+    check("window: not changing", changing == false)
+    check("window: rows are answers 5-10", #out == 6 and out[1].i == 5 and out[6].i == 10 and out[6].text == "Leave.", #out)
+    check("window: row k is VM first+k-1", out[1].vm == vms[5] and out[6].vm == vms[10])
+    check("window: 4 above, 0 below", counts and counts.above == 4 and counts.below == 0)
+    -- at the top (offset 0, 6 rows): answers 1-6, 4 below
+    local out2, _, c2 = S.dialogueAnswers(scrolled(rows(1, 6), 0.0), ad(vms, true))
+    check("window top: 1-6, 4 below", #out2 == 6 and out2[1].i == 1 and c2 and c2.below == 4 and c2.above == 0)
+    -- part way (offset 144 = 1.7 rows): the first realized row is answer 2
+    local out3 = S.dialogueAnswers(scrolled(rows(2, 6), 144.0), ad(vms, true))
+    check("window mid: first row is answer 2", out3[1] and out3[1].i == 2)
+    -- the list holds more rows than VMs (a hidden answer, S015): no positional pairing
+    local vms9 = {}
+    for k = 1, 9 do vms9[k] = vms[k] end
+    local out4, changing4 = S.dialogueAnswers(scrolled(rows(5, 6), 350.0), ad(vms9, true))
+    check("window: extent != VMs -> not paired by position", #out4 == 0 and changing4 == true, #out4)
 end
 
 print(string.format("%d passed, %d failed", passed, failures))

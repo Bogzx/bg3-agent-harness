@@ -330,13 +330,13 @@ function V.itemVisible(ctx, uuid, e, pos)
     end
     if V.perceived(ctx, uuid, pos) or V.largePerceived(ctx, uuid, e, pos, kind)
         or V.fixturePerceived(ctx, uuid, e, pos, kind) then
-        if V.FIXTURE_KINDS[kind] and V.isNamedFixture(uuid) then
+        if (V.FIXTURE_KINDS[kind] and V.isNamedFixture(uuid)) or kind == "ladder" then
             local host = V.osi(Osi.GetHostCharacter)
             V.fixtureSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = host and V.osi(Osi.GetRegion, host) or nil }
         end
         return true, kind
     end
-    if V.FIXTURE_KINDS[kind] and V.fixtureRemembered(ctx, uuid, pos) then return true, kind end
+    if (V.FIXTURE_KINDS[kind] or kind == "ladder") and V.fixtureRemembered(ctx, uuid, pos) then return true, kind end
     return false
 end
 
@@ -349,7 +349,8 @@ end
 -- A fixture seen moments ago stays known (fixtures don't move; a player remembers the button): live 11:3x, Grand
 -- Mausoleum: after pressing the button under Moonrise Towers, the one under Grief (recessed, 12 m along the same
 -- wall) was hidden by the plinth and interact refused "target is not visible". Kept FIXTURE_REMEMBER_MS on the same
--- level while a party member is within FIXTURE_REMEMBER_M.
+-- level while a party member is within FIXTURE_REMEMBER_M. Ladders too (se 12:3x, Roadside Cliffs: the ladder 13 m N
+-- of a ledge was named in one travel_to stop and missing from the next, depending on where the walk ended).
 V.FIXTURE_REMEMBER_MS = 300000
 V.FIXTURE_REMEMBER_M = 30.0
 V.fixtureSeen = V.fixtureSeen or {}
@@ -725,6 +726,56 @@ function V.statusInfo(id)
     end
     V.statusCache[id] = info
     return info or nil
+end
+
+-- Item effect states a player sees on the object itself (a painting lights up) but that have no
+-- name in the UI: unnamed EFFECT statuses with a visual effect. Grand Mausoleum mural puzzle
+-- (Story Act2_SHA_Mausoleum): a pressed button lights its painting (INPROGRESS) until the 3rd
+-- press resolves the order: all glow (RIGHTORDER, walls open) or flash 3 s with the fail sound
+-- (WRONGORDER: the vents fire and every painting goes dark = reset). Live 11:40: no way to tell a
+-- painting lit by an earlier session's press, so the "right" order hit the trap.
+V.ITEM_EFFECTS = {
+    SHA_MAUSOLEUM_MURAL_INPROGRESS = "lit",
+    SHA_MAUSOLEUM_MURAL_RIGHTORDER = "glowing (solved)",
+    SHA_MAUSOLEUM_MURAL_WRONGORDER = "flashing (wrong order: resets)",
+}
+V.itemEffectCache = V.itemEffectCache or {}
+
+-- Shown text of item status `id`, or nil. generic: unnamed EFFECT statuses with a visual effect
+-- read "glowing" (only asked for puzzle landmarks, where a glow is the state).
+function V.itemEffect(id, generic)
+    if V.ITEM_EFFECTS[id] then return V.ITEM_EFFECTS[id] end
+    if not generic then return nil end
+    local c = V.itemEffectCache[id]
+    if c == nil then
+        c = false
+        local ok, st = pcall(Ext.Stats.Get, id)
+        if ok and st then
+            local okv, r = pcall(function()
+                return st.StatusType == "EFFECT" and st.StatusEffect ~= nil and st.StatusEffect ~= ""
+                    and not U.loca(st.DisplayName)
+            end)
+            if okv and r then c = "glowing" end
+        end
+        V.itemEffectCache[id] = c
+    end
+    return c or nil
+end
+
+-- Effect states on item entity e: "lit" / "glowing (solved)" / nil.
+function V.itemEffects(e, generic)
+    local sc = U.comp(e, "StatusContainer")
+    if not sc then return nil end
+    local out, seen = {}, {}
+    pcall(function()
+        for _, id in pairs(sc.Statuses) do
+            local t = V.itemEffect(tostring(id), generic)
+            if t and not seen[t] then seen[t] = true; out[#out + 1] = t end
+        end
+    end)
+    if #out == 0 then return nil end
+    table.sort(out)
+    return table.concat(out, ", ")
 end
 
 -- Visible statuses of entity e: [{id, name, turns?}]

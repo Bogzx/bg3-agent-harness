@@ -270,6 +270,63 @@ def saves_since(saves: list[Save], t: float, owner: str | None, prefix: str = SA
                    and (owner is None or s.owner == owner)), key=lambda s: s.mtime)
 
 
+def is_autosave(label: str) -> bool:
+    return re.match(r"(?i)^(auto|quick)save_\d+$", label) is not None
+
+
+def foreign_use_since(save: Save, saves: list[Save], actions: list[dict], game_started: float | None,
+                      runner_saves: set[str], prefix: str = SAVE_PREFIX) -> str | None:
+    """Why the running game may no longer be at `save` (this playthrough's newest save), or None.
+
+    --take-over plays on from the running game; that's only right if nobody else used it since. Workers' live tests
+    load and save their own saves (LIVETEST-*) or older playthrough saves, and a relaunch by tools/dev/first_launch.sh
+    --continue loads the newest save of any kind. Any of these after `save` was written → load `save` instead."""
+    for s in saves:
+        if (s.mtime > save.mtime and s.owner == save.owner and s.folder not in runner_saves
+                and not is_autosave(s.label) and not is_ai_save(s, prefix)):
+            return f"save '{s.label}' was written after {save.label}"
+    for a in actions:
+        if a.get("t", 0) <= save.mtime or a.get("tool") != "load_game":
+            continue
+        args = a.get("args") or {}
+        m = re.search(r"loaded=(\S+)", str(a.get("result") or ""))
+        got = m.group(1) if m else str(args.get("save") or args.get("label") or "")
+        if got not in (save.label, save.folder):
+            return f"load_game '{got}' ran after {save.label} was written"
+    if game_started and game_started > save.mtime:
+        return f"the game was relaunched after {save.label} was written (it loads its newest save, not ours)"
+    return None
+
+
+def read_actions_since(t: float, path: Path | None = None, tail_bytes: int = 4_000_000) -> list[dict]:
+    """runtime/actions.jsonl records (the MCP server's tool log) with t > `t`; reads only the file's tail."""
+    path = path or RUNTIME / "actions.jsonl"
+    out = []
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - tail_bytes))
+            data = f.read()
+    except OSError:
+        return out
+    for line in data.splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and rec.get("t", 0) > t:
+            out.append(rec)
+    return out
+
+
+def game_started_at() -> float | None:
+    """When the running game was launched (runtime/game.pid is written at each launch), or None."""
+    try:
+        return (RUNTIME / "game.pid").stat().st_mtime
+    except OSError:
+        return None
+
+
 def progress_signature(status: dict | None, journal: list | dict | None) -> dict | None:
     """What counts as progress: level/region/subregion, party levels and XP, journal steps."""
     if status is None and journal is None:
@@ -1285,6 +1342,12 @@ class Runner:
             self.state["save_owner"] = save.owner
         return save
 
+    def foreign_use(self, save: Save) -> str | None:
+        """foreign_use_since() for the running game; a relaunch counts only for a game this runner didn't start."""
+        started = None if self.owns_game() else game_started_at()
+        return foreign_use_since(save, list_saves(), read_actions_since(save.mtime), started,
+                                 set(self.state["runner_saves"]))
+
     def load_save(self, save: Save | None) -> str | None:
         """Bring the game to this playthrough's latest save (or the main menu for a new game)."""
         ui_load = "ui.menu" in available_ops("client") if port_open() else False
@@ -1314,9 +1377,12 @@ class Runner:
             # from here instead of reloading (a reload only loses the minutes since the last save).
             host = host_character_name()
             owner = self.state.data.get("save_owner") or save.owner
-            if host and owner and host.casefold() == owner.casefold():
+            touched = self.foreign_use(save)
+            if host and owner and host.casefold() == owner.casefold() and not touched:
                 log(f"--take-over: the running game is '{host}' (this playthrough): playing on from here")
                 return None
+            if touched:
+                log(f"--take-over: not playing on from the running game: {touched}")
         log(f"loading save {save.folder}")
         if port_open() and ui_load:
             state = game_state()
@@ -1915,6 +1981,9 @@ class Runner:
         print(f"memory:         {self.mem}")
         print(f"save to load:   {save.folder if save else '(none: new game from the main menu)'}")
         print(f"game:           {'up, state ' + str(game_state()) if port_open() else 'not running'}")
+        if save and self.opt.take_over and port_open():
+            touched = self.foreign_use(save)
+            print(f"take-over:      {'reload ' + save.label + ' (' + touched + ')' if touched else 'play on from the running game'}")
         print(f"stuck:          {is_stuck(self.state['history'])}")
         prompt = build_kickoff(sid, self.opt.playthrough, time.time() + minutes * 60,
                                save.label if save else None, list(self.pending_notes))

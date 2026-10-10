@@ -336,6 +336,50 @@ class OtherFloor(Base):
         self.assertIsNone(server._other_floor(P1, [0.0, 38.0, 0.0], [-100.0, -31.0, -950.0]))
 
 
+class FloorDetour(Base):
+    """se 12:3x, Roadside Cliffs: locks 9-16 m below a ledge, the ladder 13 m N named by some travel_to stops and not
+    by others. A walkable route that winds far around names the ladder at the start (the walk still runs)."""
+    LADDER = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.route: dict = {"reachable": True, "length_m": 140.0}
+        real = self.g.try_rpc
+
+        def fake(op, args=None, context="server", default=None):
+            if op == "nav.route":
+                return dict(self.route)
+            if op == "nav.frontier":
+                return {"leads": [{"uuid": self.LADDER, "name": "Ladder", "kind": "ladder", "dist": 13.0, "dir": "N"},
+                                  {"uuid": CHEST, "name": "Oak Door", "kind": "door", "dist": 5.0}]}
+            return real(op, args, context, default)
+        self.g.try_rpc = fake
+
+    def test_long_detour_names_the_ladder(self):
+        out = server._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0])
+        self.assertFalse(out.startswith("REFUSED"))
+        self.assertIn("12m below you", out)
+        self.assertIn("winds 140m for 19m straight", out)
+        self.assertIn("Ladder <ladder> 13m N", out)
+        self.assertNotIn("Oak Door", out)
+
+    def test_short_route_or_no_ladder_says_nothing(self):
+        self.route = {"reachable": True, "length_m": 40.0}
+        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0]))
+        self.route = {"reachable": True}
+        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0]))
+        # live 13:08: the long route climbs the ladder itself (a climb/drop link): no note
+        self.route = {"reachable": True, "length_m": 140.0, "links": [{"kind": "drop", "dy": -11.0}]}
+        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0]))
+
+    def test_travel_to_walks_with_the_note_first(self):
+        self.g.reach = lambda a: {"reachable": True, "pos": [15.0, -12.0, 0.0]}
+        out = server.travel_to(x=15.0, y=-12.0, z=0.0)
+        self.assertIn("note: the goal is 12m below you", out)
+        self.assertNotIn("REFUSED", out)
+        self.assertTrue(wait_until(lambda: self.g.ops("act.move_to")))
+
+
 class SettleAndPace(Base):
     def setUp(self) -> None:
         super().setUp()

@@ -78,12 +78,22 @@ local INTERRUPTS = {
             interrupt(job, "a conversation started")
         end
     end,
+    -- AttackedBy(defender, attackerOwner, attacker, damageType, amount, cause, storyActionId).
+    -- A 0-damage puff from a disarmed trap object (Grand Mausoleum vents: Blinded, source "Someone",
+    -- live 11:40) doesn't stop the walk; any hit that hurts, or anything from a character (a
+    -- hostile's miss too), does.
     AttackedBy = function(job, a)
-        if job.interrupt.attacked and G.same(a[1], job.char) then
+        if job.interrupt.attacked and G.same(a[1], job.char)
+            and ((tonumber(a[5]) or 0) > 0 or A.is_character(a[3]) or A.is_character(a[2])) then
             interrupt(job, "attacked")
         end
     end,
 }
+
+function A.is_character(u)
+    local g = G.guid(u)
+    return g ~= nil and G.b(G.q("IsCharacter", g)) == true
+end
 
 -- Number of queued Osiris tasks on a character (0 if unknown).
 local function osi_tasks(char)
@@ -1595,24 +1605,11 @@ reg("leave_camp", camp_travel("leave_camp", false))
 -- CharacterLootedCharacter fires when items are taken (Take All), as with a
 -- click. The story-DB gate below stays as a conservative extra.
 A.LOOT_ENGINE_SHORTCUT = true
-A.LOCKPICK_ENGINE_WAIT_MS = 2000 -- wait this long for StartedLockpicking after the request, then click
-
--- The engine's own lockpick request. A player's click on a lock sends
--- NETMSG_CHARACTER_LOCKPICK; the server queues it as {Player, Target} in
--- esv::lock::LockpickingSystem.PickLockRequests, then runs the same chain as
--- for a click: RequestCanLockpick -> the story's crime/permission answer ->
--- StartedLockpicking and the roll. Queuing that request ourselves needs no
--- cursor on the lock (S017-S026: 0 successes, hover misses on doors). Osiris
--- Use on the lock only "uses" it (live 10:50: no StartedLockpicking).
-function A.request_pick(char, target)
-    local sys = Ext.System and Ext.System.ServerLockpicking
-    if not sys then return false, "no lockpicking system" end
-    local p, t = Ext.Entity.Get(char), Ext.Entity.Get(target)
-    if not (p and t) then return false, "no entity" end
-    local reqs = sys.PickLockRequests
-    reqs[#reqs + 1] = { Player = p, Target = t }
-    return true
-end
+-- No engine lockpick request: SE's esv::lock::LockpickingSystem.PickLockRequests is mapped 8 bytes off on
+-- this build. Two pushes (live 12:2x, "0 -> 1 -> 2") wrote {capacity 2, size 2} over the game's own buffer
+-- pointer (0x0000000200000002); the game's next real request (the right-click at 12:35) grew the array and
+-- freed that pointer: SIGSEGV bg3+0x218f104 (core 1137503, impl-se 2026-10-10 crash analysis). Never write
+-- engine system arrays through Ext.System. The right-click menu below is the S024 07:23 hand route.
 
 -- Walk next to `target` (verified approach point; in combat within the
 -- remaining Movement, which the walk is charged for), select `char`, then
@@ -1641,8 +1638,8 @@ local function approach(kind, char, target, finish, extra)
     return start(kind, char, spec)
 end
 
-local function needs_click(job, target, expect)
-    RPC.finish_job(job, "done", { needs_click = target, expect = expect, button = "L" })
+local function needs_click(job, target, expect, menu)
+    RPC.finish_job(job, "done", { needs_click = target, expect = expect, button = menu and "R" or "L", menu = menu })
 end
 
 -- Read-only follow-up for the bridge after a click: what a player sees on the
@@ -1718,31 +1715,7 @@ reg("lockpick", function(args)
         G.refuse("this lock cannot be picked (the game offers no lockpick roll for it, only 'locked'): "
             .. "it opens with its key or a mechanism nearby (lever, button, puzzle), or force it if it is not Sturdy")
     end
-    -- Engine path first (live S017-S021: the click path hover-missed this door
-    -- 144 times): queue the request a click sends (A.request_pick); the engine
-    -- answers with StartedLockpicking and the roll. Without that sign within
-    -- A.LOCKPICK_ENGINE_WAIT_MS, fall back to the verified click.
-    return approach("lockpick", char, target, function(job)
-        job.osi_task = true
-        job.used_at = RPC.now_ms()
-        local ok, queued = pcall(A.request_pick, char, target)
-        if not (ok and queued) then job.used_at = 0 end
-    end, {
-        osi = {
-            StartedLockpicking = function(job, a)
-                if G.same(a[1], char) and G.same(a[2], target) then
-                    job.osi_task = nil -- the lockpick runs on as an engine task; don't purge it
-                    RPC.finish_job(job, "done", { opened = "roll", expect = "roll", via = "engine" })
-                end
-            end,
-        },
-        on_tick = function(job)
-            if job.used_at and RPC.now_ms() - job.used_at > A.LOCKPICK_ENGINE_WAIT_MS then
-                pcall(G.osi, "PurgeOsirisQueue", char)
-                needs_click(job, target, "roll")
-            end
-        end,
-    })
+    return approach("lockpick", char, target, function(job) needs_click(job, target, "roll", "Lockpick") end)
 end)
 listen("StartedLockpicking", 2)
 

@@ -167,13 +167,37 @@ def _prof_reason(it: dict, prof: set[str]) -> str:
     return f"; proficient: {need} (game's own flags, race included)" if need and need in prof else ""
 
 
-def _score(it: dict) -> float:
-    """Comparable value of an item in its slot: armour/shield AC, weapon average damage + enchantment, else
-    rarity; rarity always breaks ties."""
+def _is_weapon(it: dict) -> bool:
+    """A real weapon: weapon stats in a Simple/Martial proficiency group. A torch (Clubs group, the engine's
+    'Torch' property) or a weapon-stat item with no group is a tool/improvised: never ranked as a weapon."""
+    groups = set(str(it.get("prof") or "").split("|"))
+    return "dmg" in it and not it.get("torch") and bool(groups & {"SimpleWeapons", "MartialWeapons"})
+
+
+def _ability_mod(it: dict, m: dict | None) -> int:
+    """The member's attack/damage modifier with this weapon: DEX for ranged, the better of STR/DEX for finesse,
+    else STR (5e/BG3 rule). 0 when the scores are unknown."""
+    def md(v: Any) -> int:
+        return (v - 10) // 2 if isinstance(v, int) else 0
+    if not m:
+        return 0
+    if _slot(it) == "RangedMainHand":
+        return md(m.get("dex"))
+    if it.get("finesse"):
+        return max(md(m.get("str")), md(m.get("dex")))
+    return md(m.get("str"))
+
+
+def _score(it: dict, m: dict | None = None) -> float:
+    """Comparable value of an item in its slot: armour/shield AC, weapon average damage + enchantment (counted
+    twice: it adds to hit and damage) + the wielder's ability modifier, else rarity; rarity always breaks ties.
+    A torch or other non-weapon in a weapon slot scores like an empty hand."""
     if "ac" in it and (it.get("ac") or it.get("shield") or _slot(it) == "Breast"):
         return (it.get("ac") or 0) * 10 + _rar(it)
     if "dmg" in it:
-        return (_dice_avg(it.get("dmg")) + 2 * (it.get("ench") or 0)) * 10 + _rar(it) * 3
+        if not _is_weapon(it):
+            return 0
+        return (_dice_avg(it.get("dmg")) + 2 * (it.get("ench") or 0) + _ability_mod(it, m)) * 10 + _rar(it) * 3
     return _rar(it) * 10
 
 
@@ -201,13 +225,14 @@ def upgrades(inv: dict) -> list[dict]:
              and _slot(it) not in ("", "Underwear", "VanityBody", "VanityBoots", "MusicalInstrument")]
     offers: list[dict] = []
     for who in members:
-        prof = set((members.get(who) or {}).get("prof") or [])
+        mem = members.get(who) or {}
+        prof = set(mem.get("prof") or [])
         mine = worn.get(who, {})
         main = mine.get("MeleeMainHand")
         for it in spare:
             slot = _slot(it)
-            if not _proficient(it, prof):
-                continue
+            if not _proficient(it, prof) or ("dmg" in it and not _is_weapon(it)):
+                continue  # never a torch/tool as a weapon
             if slot == "Ring":
                 cands = [mine.get("Ring"), mine.get("Ring2")]
                 cur = None if None in cands else min(cands, key=_score)
@@ -227,7 +252,7 @@ def upgrades(inv: dict) -> list[dict]:
                     continue
                 if _caster(prof) and _rar(it) <= _rar(cur or {}):
                     continue  # casters fight with spells: only magic weapons are worth a swap
-            gain = _score(it) - (_score(cur) if cur else 0)
+            gain = _score(it, mem) - (_score(cur, mem) if cur else 0)
             if cur is None and "ac" not in it and "dmg" not in it and _rar(it) == 0:
                 continue  # a plain hat in an empty slot is not worth a line
             if gain > 0:
@@ -245,6 +270,37 @@ def upgrades(inv: dict) -> list[dict]:
         taken_slots.add((o["who"], o["slot"]))
         out.append(o)
     return out
+
+
+def _kind(it: dict) -> str:
+    """'dagger' from the weapon's proficiency groups ('Daggers|SimpleWeapons')."""
+    groups = [g for g in str(it.get("prof") or "").split("|") if g and not g.endswith("Weapons")]
+    g = groups[0] if groups else ""
+    return (g[:-1] if g.endswith("s") else g).lower()
+
+
+def main_hands(inv: dict, name: Callable[[str], str]) -> str:
+    """'MAIN HANDS Gale Moonlantern (light) | Shadowheart Syringe +1 dagger 1d4+1 uncommon | …': what each member
+    fights with, so an odd name reads as the weapon it is (acceptance 12:2x: Shadowheart's Syringe is a +1 finesse
+    dagger, her best one-hander beside the shield, but looked like junk left in her hand)."""
+    items = [it for it in (inv or {}).get("items") or [] if isinstance(it, dict)]
+    out = []
+    for who in (inv or {}).get("members") or {}:
+        it = next((i for i in items if i.get("owner") == who and i.get("equipped_slot") == "MeleeMainHand"), None)
+        if it is None:
+            out.append(f"{name(who)} (empty)")
+            continue
+        if _is_lantern(it):
+            out.append(f"{name(who)} {it.get('name')} (light)")
+            continue
+        ench = it.get("ench") or 0
+        dmg = f"{it.get('dmg')}{f'+{ench}' if ench else ''}" if it.get("dmg") else ""
+        kind = _kind(it)
+        desc = " ".join(x for x in (f"+{ench}" if ench and kind else "", kind, dmg,
+                                    "2-handed" if it.get("twohanded") else "",
+                                    str(it.get("rarity") or "") if _rar(it) else "") if x)
+        out.append(f"{name(who)} {it.get('name')}" + (f" ({desc})" if desc else ""))
+    return "MAIN HANDS " + " | ".join(out) if out else ""
 
 
 def _is_lantern(it: dict) -> bool:
@@ -392,7 +448,8 @@ def short_rest_text(before: dict | None, after: dict | None, result: Any) -> str
     parts = [f"{a[u][0]} {b[u][1]}→{a[u][1]}/{a[u][2]}" for u in a if u in b and a[u][1] != b[u][1]]
     out = "HP " + ", ".join(parts) if parts else "HP unchanged"
     if isinstance(result, dict) and result.get("short_rests_left") is not None:
-        out += f" · short rests left {result['short_rests_left']}" + (f"/{result['of']}" if result.get("of") else "")
+        n = lambda v: int(v) if isinstance(v, float) and v.is_integer() else v  # the mod sends 1.0/2.0
+        out += f" · short rests left {n(result['short_rests_left'])}" + (f"/{n(result['of'])}" if result.get("of") else "")
     return out
 
 
@@ -555,6 +612,24 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
     return "\n".join(lines)
 
 
+# --- trade(npc) opens the trade itself: the conversation's trade answer (S020 Arron, S025 Lann Tarv, S026 Mattis:
+# trade(npc) FAILED "no trade screen is open", then talk_to + choose_dialogue "Let me see your wares.") ---
+
+_TRADE_ANSWER = [re.compile(p, re.I) for p in (
+    r"\bwares\b", r"\[trade\]|\btrade\b|\bbarter\b",
+    r"\b(what (do )?you (have|got|sell|offer)|show me what|let me (see|browse)|i('d| would) like to buy)\b")]
+
+
+def trade_answer(options: list) -> dict | None:
+    """The answer a player picks to open a trader's shop ('Let me see your wares.'), or None."""
+    opts = [o for o in options or [] if isinstance(o, dict) and isinstance(o.get("i"), int) and not o.get("off")]
+    for rx in _TRADE_ANSWER:
+        for o in opts:
+            if rx.search(str(o.get("text") or "")):
+                return o
+    return None
+
+
 # --- pickpocket (Services.lua ui.pickpocket: the window's items with the game's shown odds) ---
 
 def _pocket(it: dict, h: Callable[[dict], str]) -> str:
@@ -563,23 +638,32 @@ def _pocket(it: dict, h: Callable[[dict], str]) -> str:
         s += f" x{_count(it)}"
     if it.get("price") is not None:
         s += f" {it['price']}g"
-    if it.get("chance") is not None:
+    if _odds_unread(it):
+        s += " odds ?"
+    elif it.get("chance") is not None:
         s += f" {it['chance']}%" + (f" DC{it['dc']}" if it.get("dc") is not None else "")
     if it.get("story"):
         s += " story"
     return s
 
 
+def _odds_unread(it: dict) -> bool:
+    """DC 0 is no check the game shows: the roll fields weren't filled when the item was read (live 12:4x,
+    Shadowheart's window: 16 of 20 items '0% DC0' next to 45% DC12 ones)."""
+    return it.get("dc") == 0 and not it.get("chance")
+
+
 def pockets_text(res: dict, h: Callable[[dict], str]) -> str:
     """'POCKETS (chance to steal, best odds first): e40 Gold x12 81% DC8 | e41 Dagger 2g 54% DC12 | …'."""
     items = [it for it in (res or {}).get("items") or [] if isinstance(it, dict)]
     if not items:
-        return "POCKETS: nothing to steal"
-    items.sort(key=lambda it: (-(it.get("chance") if isinstance(it.get("chance"), (int, float)) else -1), -_price(it)))
+        return "POCKETS: nothing to steal (pickpocket(npc, leave=true) closes the window)"
+    items.sort(key=lambda it: (-(it.get("chance") if isinstance(it.get("chance"), (int, float)) and not _odds_unread(it)
+                                 else -1), -_price(it)))
     more = (res or {}).get("more")
     return ("POCKETS (the game's chance to steal, DC; best odds first): " + " | ".join(_pocket(it, h) for it in items)
             + (f" | +{more} more" if more else "")
-            + ' → pickpocket(npc, take="<name or id>"); press_key("ESCAPE") leaves with nothing')
+            + ' → pickpocket(npc, take="<name or id>"); pickpocket(npc, leave=true) leaves with nothing')
 
 
 def steal_text(res: dict, h: Callable[[dict], str]) -> str:

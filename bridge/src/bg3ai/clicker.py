@@ -50,6 +50,14 @@ ROTATE_FRAC = 0.18   # middle-drag length as a fraction of the window width
 # Wall-clock cap on the whole hover search (both passes). 144 tries took 15-33 s in claude-run-2 S017-S024
 # and never found a door that the first ~20 tries missed; a player gives up on a fiddly door in seconds.
 HOVER_BUDGET_S = 8.0
+# A right-click opens the world context menu (WorldContextMenu.xaml) at the cursor; its entries are made by the
+# engine for the hovered entity. The menu takes a few frames to appear.
+MENU_WAIT_S = 2.0
+# The game's CameraCenter key: the camera jumps back onto the selected character (the server op selected the
+# actor next to the target). Live 2026-10-10: camera panned away (Claude at ndc y 25) -> Home -> (0.00, 0.08)
+# in ~1 s. Without it the camera may still follow a companion (lockpick 12:3x: off_screen, tries=0).
+CENTER_KEY = "Home"
+CENTER_WAIT_S = 1.5
 
 
 @dataclass
@@ -141,6 +149,29 @@ def bring_into_view(game: Game, inp: InputClient, uuid: str, steps: int = CAMERA
     return moves
 
 
+def center_on_actor(game: Game, inp: InputClient, uuid: str) -> bool:
+    """When `uuid` is not well inside the window, press the game's center-camera key (the camera returns to the
+    selected character, who stands next to the target) and wait for it to settle. True if the key was pressed."""
+    try:
+        if _centered(_screen_pos(game, uuid)):
+            return False
+    except GameError:
+        return False
+    inp.key(CENTER_KEY)
+    end = time.monotonic() + CENTER_WAIT_S
+    prev = None
+    while time.monotonic() < end:
+        inp.wait_frames(6)
+        try:
+            nd = _screen_pos(game, uuid).get("ndc")
+        except GameError:
+            break
+        if nd is not None and prev is not None and abs(nd[0] - prev[0]) + abs(nd[1] - prev[1]) < 0.01:
+            break   # the camera stopped easing
+        prev = nd
+    return True
+
+
 def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadline: float | None = None,
                 seen: dict[str, int] | None = None) -> tuple[tuple[int, int] | None, int, dict]:
     """Move the virtual cursor until the engine's picking helper reports `uuid` under it.
@@ -185,10 +216,67 @@ def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadli
     return None, tries, last
 
 
+MENU_SCAN_PX = (6, 320, 6)   # cursor offsets below the right-click point that are tried, in window px
+MENU_SCAN_X = (60, 140)      # and to its right (the menu opens at the cursor, rows run down from it)
+
+
+def _menu(game: Game, item: str) -> dict:
+    return game.rpc("ui.context_menu", {"item": item}, context="client") or {}
+
+
+def _press_menu(game: Game, inp: InputClient, item: str, at: tuple[int, int]) -> str | None:
+    """Pick `item` in the context menu a right-click at `at` opened: move the cursor down the menu until that row
+    is under it (its IsMouseOver), then click it, as a player does (the row's own command does nothing, live).
+    None when clicked, else why not; a menu left open is closed again (ESCAPE)."""
+    deadline = time.monotonic() + MENU_WAIT_S
+    why = "the context menu did not open"
+    while True:
+        try:
+            _menu(game, item)
+            why = None
+            break
+        except GameError as e:
+            if "not open" not in str(e):
+                why = str(e)
+                break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
+    if why is None:
+        w, h = inp.window_size()
+        why = f"could not point at '{item}' in the context menu"
+        for ox in MENU_SCAN_X:
+            for oy in range(*MENU_SCAN_PX):
+                x, y = at[0] + ox, at[1] + oy
+                if not (0 <= x < w and 0 <= y < h):
+                    continue
+                inp.move(x, y)
+                inp.wait_frames(2)
+                try:
+                    m = _menu(game, item)
+                except GameError as e:
+                    why = str(e)
+                    break
+                if m.get("over"):
+                    inp.click(x, y, button="L")
+                    return None
+            else:
+                continue
+            break
+    try:
+        if (game.rpc("ui.context_menu", {}, context="client") or {}).get("open"):
+            inp.key("ESCAPE")
+    except GameError:
+        pass
+    return why
+
+
 def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", expect: str | None = None,
-                 verify_timeout: float = 4.0) -> ClickResult:
-    """Hover-verify then click `uuid`; if `expect` is given, wait until ui.state shows that screen."""
+                 verify_timeout: float = 4.0, menu: str | None = None) -> ClickResult:
+    """Hover-verify then click `uuid`; with `menu`, right-click and pick that context-menu entry (a player's
+    right-click -> Lockpick). If `expect` is given, wait until ui.state shows that screen."""
     before = _screen(game).get("screen")
+    centered = center_on_actor(game, inp, uuid)
     moves = bring_into_view(game, inp, uuid)
     deadline = time.monotonic() + HOVER_BUDGET_S
     seen: dict[str, int] = {}
@@ -202,6 +290,7 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
         moves = ["zoom_out"]
         pos, t2, last = hover_point(game, inp, uuid, deadline=deadline, seen=seen)
         tries += t2
+    moves = (["center"] if centered else []) + moves
     extra: dict[str, Any] = {"camera": moves} if moves else {}
     if pos is None:
         # off_screen only when no aim point was ever in the window (tries counts the in-window points)
@@ -214,7 +303,12 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
         if last.get("timed_out"):
             extra["gave_up_after_s"] = HOVER_BUDGET_S
         return ClickResult(False, reason, before, None, tries, extra)
-    inp.click(pos[0], pos[1], button=button)
+    inp.click(pos[0], pos[1], button="R" if menu else button)
+    if menu:
+        why = _press_menu(game, inp, menu, pos)
+        if why:
+            return ClickResult(False, "no_menu_entry", before, pos, tries, dict(extra, menu=why))
+        extra["menu"] = menu
     if not expect:
         return ClickResult(True, None, None, pos, tries, extra)
     wanted = EXPECT_SCREENS.get(expect, {expect})
@@ -244,8 +338,9 @@ def finish_needs_click(game: Game, inp: InputClient, result: dict | None) -> dic
     """If a server job result asks for a click, perform it and merge the outcome into the result."""
     if not isinstance(result, dict) or not result.get("needs_click"):
         return result
-    cr = click_entity(game, inp, result["needs_click"], result.get("button", "L"), result.get("expect"))
-    out = {k: v for k, v in result.items() if k not in ("needs_click", "button")}
+    cr = click_entity(game, inp, result["needs_click"], result.get("button", "L"), result.get("expect"),
+                      menu=result.get("menu"))
+    out = {k: v for k, v in result.items() if k not in ("needs_click", "button", "menu")}
     out["click"] = cr.as_dict()
     if cr.ok:
         out["opened"] = cr.screen
@@ -339,5 +434,76 @@ def run_click_action(game: Game, inp: InputClient | None, op: str, args: dict, w
         reason = merged.get("click", {}).get("reason", "click failed")
         jr.error = {"off_screen": "the target is not on screen",
                     "hover_miss": "could not point at the target",
-                    "no_effect": "nothing happened"}.get(reason, reason)
+                    "no_effect": "nothing happened",
+                    "no_menu_entry": "the right-click menu had no such entry"}.get(reason, reason)
     return jr
+
+
+# ---------------------------------------------------------------------------
+# Long dialogue answer lists: the rows below (or above) the visible window
+# ---------------------------------------------------------------------------
+
+# Where the answer list sits: tried until ui.answer_list says the cursor is over it (live 13:4x at 1920x1080:
+# (0.5, 0.72) on the first try). The last hit is tried first.
+LIST_FX = (0.5, 0.42, 0.58)
+LIST_FY = tuple(0.62 + 0.025 * i for i in range(14))
+WHEEL_STEP = 3          # notches per scroll step (live: 1 notch = ~48 px, a row is 84 px)
+SCROLL_STEPS = 8
+_list_hit: dict = {"at": None}
+
+
+def _answer_list(game: Game) -> dict:
+    try:
+        r = game.rpc("ui.answer_list", {}, context="client")
+    except GameError:
+        return {}
+    return r if isinstance(r, dict) else {}
+
+
+def _over_list(game: Game, inp: InputClient) -> tuple[int, int] | None:
+    w, h = inp.window_size()
+    pts = [(int(w * fx), int(h * fy)) for fy in LIST_FY for fx in LIST_FX]
+    if _list_hit["at"]:
+        pts.insert(0, _list_hit["at"])
+    for x, y in pts:
+        inp.move(x, y)
+        inp.wait_frames(2)
+        if _answer_list(game).get("over"):
+            _list_hit["at"] = (x, y)
+            return x, y
+    return None
+
+
+def read_answer_list(game: Game, inp: InputClient, read_options) -> tuple[dict, str | None]:
+    """Scroll a dialogue's answer list with the mouse wheel, as a player does, and collect every row's text.
+    read_options() -> the dialogue's options now ([{i, text, ...}], i = answer number). Returns ({i: option},
+    None) or (what was read, why it stopped short). The list is wheeled back to the top afterwards."""
+    got: dict = {o["i"]: o for o in read_options() if isinstance(o.get("i"), int)}
+    info = _answer_list(game)
+    total = info.get("total")
+    if not total:
+        return got, "the answer list's size could not be read"
+    at = _over_list(game, inp)
+    if at is None:
+        return got, "could not point at the answer list"
+    why = None
+    for _ in range(SCROLL_STEPS):
+        if len(got) >= total:
+            break
+        inp.wheel(-WHEEL_STEP, at[0], at[1])
+        inp.wait_frames(6)
+        time.sleep(0.1)
+        for o in read_options():
+            if isinstance(o.get("i"), int):
+                got.setdefault(o["i"], o)
+        info = _answer_list(game)
+        if info.get("scrollable") is not None and info.get("offset", 0) >= info["scrollable"] - 0.5 \
+                and len(got) < total:
+            why = f"read {len(got)} of {total} answers at the bottom of the list"
+            break
+    else:
+        if len(got) < total:
+            why = f"read {len(got)} of {total} answers"
+    inp.wheel(WHEEL_STEP * SCROLL_STEPS, at[0], at[1])  # back to the top, where the game opened it
+    inp.wait_frames(2)
+    return got, why

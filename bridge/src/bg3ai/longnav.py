@@ -30,7 +30,8 @@ DEAD_GOAL_M = 15.0    # trips toward goals this close together share their dead 
 DEAD_SPOT_M = 8.0     # stops this close together are the same dead end
 DEAD_REPEAT = 2       # this many stops at one spot: "tried twice: blocked"
 
-_GROUND = re.compile(r"no walkable ground|the way is blocked|no walkable path|could not get closer|path blocked", re.I)
+_GROUND = re.compile(r"no walkable ground|the way is blocked|no walkable path|no path to the destination|could not get closer|"
+                     r"path blocked", re.I)
 
 
 def pick_waypoint(here: Any, dest: Any, wps: Any, min_m: float = FT_MIN_M, save_m: float = FT_SAVE_M,

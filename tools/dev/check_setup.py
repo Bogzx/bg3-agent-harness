@@ -1,7 +1,7 @@
 """Live checks for setup's economy tools. Read-only unless an action is named.
 
   uv run --project bridge python tools/dev/check_setup.py status            # get_status full + ALERTS, inventory filters
-  flock -w 1800 runtime/live.lock uv run --project bridge python tools/dev/check_setup.py call <tool> '<json args>'
+  flock -w 1800 runtime/game.lock uv run --project bridge python tools/dev/check_setup.py call <tool> '<json args>'
 """
 
 from __future__ import annotations

@@ -627,6 +627,25 @@ class CombatTurn(Base):
         self.assertIn("action: Shout_Dash: done", out)
         self.assertTrue(out.index("action:") < out.rindex(f"move {self.gob}: done"))
 
+    def test_plain_dash_walks_the_move_on(self):
+        # acceptance 12:5x: "Dash" (no then_move) after a move out of movement dashed and stood still
+        n = {"moves": 0}
+
+        def refuse(op, a):
+            if op == "act.move_to":
+                n["moves"] += 1
+                return "no movement left" if n["moves"] == 1 else None
+            return None
+        self.g.refuse_if = refuse
+        server.combat_turn(self.plan(move=self.gob, action=["Shout_Dash"]))
+        self.assertEqual(len(self.g.ops("act.move_to")), 2)
+
+    def test_dash_then_move_false_stays(self):
+        p = turn.parse_plan(json.dumps({"move": "e1", "action": [{"ability": "Dash", "then_move": False}, "Dash",
+                                                                  "Shout_Dash_CunningAction", "Shout_Dodge"]}),
+                            server._BATCHABLE)
+        self.assertEqual([a.then_move for a in p.slots["action"]], [False, True, True, False])
+
     def test_reaction_prompt_answered_by_policy(self):
         self.g.dur["act.cast"] = 0.4
 

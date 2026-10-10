@@ -149,6 +149,34 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertFalse(P.is_ai_save(P.parse_save_folder("Ilse-1__S010-end"), "pt1-"))
         self.assertFalse(P.is_ai_save(P.parse_save_folder("Tav-12__S001-end"), "Claude-"))
 
+    def test_pick_skips_worker_saves(self):
+        # 2026-10-10 live-test break: workers saved LIVETEST-* after S027-start; the playthrough's save stays the pick
+        saves = [P.parse_save_folder("Claude-48__S027-start", 100), P.parse_save_folder("Claude-14__LIVETEST-act", 200),
+                 P.parse_save_folder("Claude-12__LIVETEST-vis-open", 300), P.parse_save_folder("Claude-13__AutoSave_42", 250)]
+        self.assertEqual(P.pick_save(saves, "S027-start", "Claude", set(), "Claude-").folder, "Claude-48__S027-start")
+
+    def test_foreign_use_since(self):
+        best = P.parse_save_folder("Claude-48__S027-start", 100)
+        mine = [best, P.parse_save_folder("Claude-13__AutoSave_42", 150), P.parse_save_folder("Claude-9__S026-end", 90)]
+        f = lambda saves=mine, acts=(), started=None, rs=set(): P.foreign_use_since(best, saves, list(acts), started, rs, "Claude-")
+        self.assertIsNone(f())
+        self.assertIn("LIVETEST-setup", f(mine + [P.parse_save_folder("Claude-21__LIVETEST-setup", 120)]))
+        self.assertIsNone(f(mine + [P.parse_save_folder("Claude-21__LIVETEST-setup", 80)]))   # older: not a sign
+        self.assertIsNone(f(mine + [P.parse_save_folder("Claude-5__QuickSave_1", 130)], rs={"Claude-5__QuickSave_1"}))
+        load = {"t": 130, "tool": "load_game", "args": {"save": "Claude-9__S026-end"}, "result": "load_game: done — loaded=S026-end"}
+        self.assertIn("S026-end", f(acts=[load]))                  # a worker loaded an older playthrough save
+        self.assertIsNone(f(acts=[dict(load, t=90)]))              # before our save: irrelevant
+        self.assertIsNone(f(acts=[dict(load, result="load_game: done — loaded=S027-start")]))
+        self.assertIn("relaunched", f(started=110))
+        self.assertIsNone(f(started=95))
+
+    def test_read_actions_since(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "actions.jsonl"
+            p.write_text('{"t": 5, "tool": "a"}\nnot json\n{"t": 15, "tool": "load_game"}\n')
+            self.assertEqual([r["tool"] for r in P.read_actions_since(10, p)], ["load_game"])
+            self.assertEqual(P.read_actions_since(10, Path(d) / "missing"), [])
+
     def test_pick_never_takes_foreign_saves(self):
         saves = self._saves()
         self.assertIsNone(P.pick_save(saves, None, None, set(), ""))

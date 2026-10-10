@@ -166,3 +166,14 @@ class MapNames(unittest.TestCase):
                                    Handles())
         self.assertIn("region=Shadow-Cursed Lands", out)
         self.assertNotIn("_Main_", out)
+
+
+class NearbyEffect(unittest.TestCase):
+    def test_lit_painting_and_button(self):
+        H = Handles()
+        n = {"items": [{"uuid": "u1", "name": "Button", "kind": "usable", "dist": 1.8, "near": "under General"},
+                       {"uuid": "u2", "name": "General", "kind": "usable", "dist": 3.6, "effect": "lit"},
+                       {"uuid": "u3", "name": "Candle", "kind": "item", "dist": 4.0}]}
+        out = render.render_nearby(n, H)
+        self.assertRegex(out, r"ITEM e\d+ General <usable> 3.6m \[lit\]")
+        self.assertNotIn("Button <usable> 1.8m (under General) [", out)

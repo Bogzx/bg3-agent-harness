@@ -505,8 +505,12 @@ RPC.register("nav.frontier", function(args)
                     local b, extra = V.bounds and V.bounds(e), nil
                     if b and type(b.height) == "number" and b.height >= 1.5 then
                         local top = p[2] + b.height
-                        extra = { height_m = round(b.height, 1),
-                            leads = math.abs(center[2] - top) < math.abs(center[2] - p[2]) and "down" or "up" }
+                        local down = math.abs(center[2] - top) < math.abs(center[2] - p[2])
+                        local to = down and { p[1], p[2], p[3] } or { p[1], top, p[3] }
+                        -- where it leads: the other end, and whether the party has been there (climbables: vines,
+                        -- roots and ladders are all IsLadder items)
+                        extra = { height_m = round(b.height, 1), leads = down and "down" or "up", to = U.vec(to, 1),
+                            to_unvisited = not N.visited(lvl, to, 3) or nil }
                     end
                     add("ladder", u, p, extra)
                 elseif kind == "container" and not U.comp(e, "HasOpened") then
@@ -2219,12 +2223,71 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs)
             end
             local w = { dir = d, open_m = m }
             if dy and math.abs(dy) >= 2 then w.dy = round(dy, 1) end
+            if m < far then
+                local okj, j = pcall(N.jumpGap, charUuid, from, v)
+                if okj and j then w.jump = j end
+            end
             c.by[d] = w
         end
     end
     local out = {}
     for _, d in ipairs(N.WAYS_DIRS) do if c.by[d] then out[#out + 1] = c.by[d] end end
     return out, Ext.Utils.MonotonicTime() - t0
+end
+
+-- A gap a jump crosses in a direction the walk can't go (setup's screenshot reason: ledges, jump chains, the burnt
+-- bridge, S021/S023/S024): the floor heights along the line (what a player sees: the ground stops, a chasm, ground
+-- again) give the edge and the far side; the edge must be walkable from here and the far side not (or only by a
+-- route with a jump link). -> {gap_m, from (takeoff), to (landing), dy?} or nil. Cost: ~25 height reads + 2 paths.
+N.JUMP_GAP_MIN_M = 1.0      -- narrower: a step the walk crosses anyway
+N.JUMP_GAP_SCAN_M = 12.0
+N.JUMP_GAP_STEP_M = 0.5
+N.JUMP_GAP_LEVEL_M = 1.0    -- ground this near the edge's height continues the walk
+N.JUMP_GAP_DOWN_M = 3.0     -- a landing at most this far below the edge
+function N.jumpGap(charUuid, from, v)
+    local cap = N.JUMP_LAND_CAP_M
+    local G = BG3AI.Guard
+    if G and G.jump_max then
+        local ok, m = pcall(G.jump_max, charUuid)
+        if ok and type(m) == "number" then cap = math.min(cap, m) end
+    end
+    local y, edge, gapAt = from[2], nil, nil
+    local function heightsAt(x, z)
+        local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+        return ok and type(hs) == "table" and hs or {}
+    end
+    local s = N.JUMP_GAP_STEP_M
+    while s <= N.JUMP_GAP_SCAN_M do
+        local x, z = from[1] + v[1] * s, from[3] + v[2] * s
+        local level, land
+        for _, h in ipairs(heightsAt(x, z)) do
+            if type(h) == "number" then
+                if math.abs(h - y) <= N.JUMP_GAP_LEVEL_M then level = h end
+                if h >= y - N.JUMP_GAP_DOWN_M and h <= y + N.JUMP_UP_MAX_M and (not land or math.abs(h - y) < math.abs(land - y)) then land = h end
+            end
+        end
+        if not gapAt then
+            if level then edge, y = { x, level, z, s }, level
+            elseif land then return nil -- a step up/down, not a gap
+            elseif not edge then return nil -- no ground at our feet's line (a wall right here)
+            else gapAt = s end
+        elseif land then
+            local gap = s - edge[4]
+            if gap < N.JUMP_GAP_MIN_M or gap > cap + N.JUMP_GAP_STEP_M then return nil end
+            local to = { x, land, z }
+            local re = N.path(charUuid, { edge[1], edge[2], edge[3] })
+            if not (re and re.reachable and not re.partial and re.length_m <= math.max(N.DETOUR * edge[4], edge[4] + 2.0)) then return nil end
+            local rl = N.path(charUuid, to)
+            if rl and rl.reachable and not rl.partial and not rl.needs_jump and rl.length_m <= 2 * s + 5 then return nil end -- walkable around
+            local out = { gap_m = round(gap, 1), from = U.vec({ edge[1], edge[2], edge[3] }, 1), to = U.vec(to, 1) }
+            if math.abs(land - from[2]) >= 1 then out.dy = round(land - from[2], 1) end
+            return out
+        elseif s - gapAt > cap + N.JUMP_GAP_STEP_M then
+            return nil -- wider than a jump
+        end
+        s = s + N.JUMP_GAP_STEP_M
+    end
+    return nil
 end
 
 -- Tick: while the active character has stood still WAYS_WARM_STILL_MS (out of

@@ -10,7 +10,7 @@ import json
 import unittest
 
 from bg3ai import macros, server
-from test_turn_macros import GOB, P1, P2, Base, combat
+from test_turn_macros import CHEST, GOB, P1, P2, Base, combat
 
 
 class LegRules(unittest.TestCase):
@@ -23,6 +23,8 @@ class LegRules(unittest.TestCase):
         self.assertFalse(macros.leg_retryable("failed", "step 1 move_to interrupted",
                                               "move_to: INTERRUPTED — a conversation started"))
         self.assertFalse(macros.leg_retryable("dialogue", "a conversation started", "no walkable path there"))
+        # live 13:09: from a ladder's top toward its foot the walk stood still ("no path to the destination")
+        self.assertTrue(macros.leg_retryable("failed", f, "move_to: FAILED — no path to the destination — travelled=0"))
 
     def test_range_gap(self):
         self.assertEqual(macros.range_gap("FAILED: target is out of range (18.6 m, range 18.0 m): move closer first"),
@@ -80,6 +82,30 @@ class TravelLegs(Base):
         out = server.travel_to(x=50.0, y=0.0, z=0.0)
         self.assertEqual(len(self.g.ops("act.move_to")), 1)
         self.assertIn("leg 1 failed", out)
+
+    def test_tiny_sampled_leg_takes_a_longer_alternative(self):
+        # Acceptance (nav.log): legs of 30 m, 2.2 m, 29 m; the sampler stopped at an edge.
+        def reach(a):
+            moves = self.g.ops("act.move_to")
+            x = moves[-1][1]["pos"][0] if moves else 0.0
+            if a.get("alt"):
+                return {"reachable": True, "pos": [x + 25.0, 0.0, 0.0], "alt": "route", "verified": True}
+            return {"reachable": True, "pos": [x + 2.0, 0.0, 0.0], "verified": True}
+        self.g.reach = reach
+        out = server.travel_to(x=50.0, y=0.0, z=0.0)
+        self.assertEqual([m[1]["pos"][0] for m in self.g.ops("act.move_to")], [25.0, 50.0])
+        self.assertIn("arrived", out)
+
+    def test_short_leg_kept_when_no_better_one(self):
+        def reach(a):
+            moves = self.g.ops("act.move_to")
+            x = moves[-1][1]["pos"][0] if moves else 0.0
+            if a.get("alt"):
+                return {"reachable": False, "alt_failed": True}
+            return {"reachable": True, "pos": [min(50.0, x + 4.0), 0.0, 0.0], "verified": True}
+        self.g.reach = reach
+        server.travel_to(x=12.0, y=0.0, z=0.0)
+        self.assertEqual([m[1]["pos"][0] for m in self.g.ops("act.move_to")][:2], [4.0, 8.0])
 
     def test_direct_route_is_one_leg(self):
         # S005 (the beach): a reachable goal 90 m off is walked along the engine's route in <= 55 m legs.
@@ -166,7 +192,38 @@ class InTheWay(Base):
         self.assertIn("STOPPED", out)
         self.assertEqual(out.count("didn't move"), 1)
 
-    def test_nobody_in_the_way_keeps_the_old_stall_rule(self):
+    def test_stalled_trip_to_a_lower_floor_names_the_ladder(self):
+        # se 12:3x: only the "no walkable ground" stop named the ladder; a stall (legs that get nowhere) did not.
+        self.g.reach = lambda a: {"reachable": True, "pos": [10.0, 0.0, 0.0], "verified": True}
+        self.g.result_for = lambda op, a: {"after": {"pos": [0.0, 0.0, 0.0]}} if op == "act.move_to" else {}
+        real = self.g.try_rpc
+
+        def fake(op, args=None, context="server", default=None):
+            if op == "nav.frontier":
+                return {"leads": [{"uuid": CHEST, "name": "Ladder", "kind": "ladder", "dist": 13.0, "dir": "N"}]}
+            return real(op, args, context, default)
+        self.g.try_rpc = fake
+        out = server.travel_to(x=30.0, y=-12.0, z=0.0, wait=True)
+        self.assertIn("STOPPED", out)
+        self.assertIn("12m below you: climb with interact on a ladder", out)
+        self.assertIn("Ladder <ladder> 13m N", out)
+
+    def test_failed_legs_toward_a_lower_floor_name_the_ladder(self):
+        # live 13:09: "leg 1 failed" (no path to the destination) ended the trip without naming the ladder 0 m away
+        self.g.reach = lambda a: {"reachable": True, "pos": [10.0, -11.0, 0.0], "direct": True, "route_m": 27.6}
+        self.g.refuse_if = lambda op, a: "no path to the destination" if op == "act.move_to" else None
+        real = self.g.try_rpc
+
+        def fake(op, args=None, context="server", default=None):
+            if op == "nav.frontier":
+                return {"leads": [{"uuid": CHEST, "name": "Ladder", "kind": "ladder", "dist": 1.0, "dir": "E"}]}
+            return real(op, args, context, default)
+        self.g.try_rpc = fake
+        out = server.travel_to(x=10.0, y=-11.0, z=0.0, wait=True)
+        self.assertIn("11m below you: climb with interact on a ladder", out)
+        self.assertGreater(len(self.g.ops("act.move_to")), 1)  # retried another way first
+
+
         self.assertEqual(server._in_the_way([0, 0, 0], [10, 0, 0], [{"uuid": "x", "pos": [-1, 0, 0]},
                                                                      {"uuid": "y", "pos": [2, 0, 3]},
                                                                      {"uuid": "z", "pos": [2, 5, 0]}], P1), [])

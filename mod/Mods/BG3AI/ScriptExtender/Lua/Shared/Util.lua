@@ -11,7 +11,10 @@ function U.loca(handle)
     if handle == nil or handle == "" then return nil end
     local h = tostring(handle):gsub(";%d+$", "")
     local ok, s = pcall(Ext.Loca.GetTranslatedString, h)
-    if ok and s and s ~= "" then return s end
+    -- "%%% EMPTY": the game's text for a handle with no string (unnamed statuses)
+    -- trimmed: some names end in a space ("Empty Bloodbank Bottle ", live 13:10)
+    if ok and type(s) == "string" then s = s:gsub("^%s+", ""):gsub("%s+$", "") end
+    if ok and s and s ~= "" and not s:find("^%%%%%% EMPTY") then return s end
     return nil
 end
 

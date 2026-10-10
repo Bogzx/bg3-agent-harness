@@ -24,6 +24,7 @@ what the player sees: still this character's turn, the target still visible and 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from itertools import takewhile as _takewhile
 from typing import Any, Callable
@@ -41,6 +42,9 @@ FATAL = ("not this character's turn", "session is over", "no active character", 
 # Failures of a move that a shorter walk can fix.
 MELEE_M = 1.5  # a plain move to a target means "next to it"
 MOVE_SHORT = ("beyond remaining movement", "no movement left", "not enough movement")
+
+
+_DASH = re.compile(r"(?i)\s*(shout_dash\w*|dash|dash \(shout_dash\w*\))\s*$")
 
 
 class PlanError(ValueError):
@@ -79,7 +83,9 @@ def _alt(v: Any, allowed: set, where: str) -> Alt:
     if not isinstance(v, dict):
         raise PlanError(f"{where}: an alternative must be an ability id or an object")
     v = dict(v)
-    then_move = bool(v.pop("then_move", False))
+    # Acceptance 12:5x: a plain "Dash" after a move that ran out of movement dashed and stood still (a wasted
+    # action): a Dash walks the move on unless the plan says then_move:false.
+    then_move = bool(v.pop("then_move", _DASH.match(str(v.get("ability") or "")) is not None))
     v.setdefault("tool", "use_ability")
     if v["tool"] in ("end_turn", "do_actions", "combat_turn"):
         raise PlanError(f"{where}: '{v['tool']}' can't be a turn step (end_turn comes last by itself)")

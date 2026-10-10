@@ -246,7 +246,7 @@ _KIND_RANK = {"door": 0, "container": 0, "ladder": 0, "waypoint": 0, "lever": 0,
 
 
 SAME_MIN = 3  # this many plain items with one name and kind are listed as one line
-_FLAGS = ("locked", "opened", "owned", "trap", "closed", "open", "story", "rarity", "count", "near")
+_FLAGS = ("locked", "opened", "owned", "trap", "closed", "open", "story", "rarity", "count", "near", "effect")
 
 
 def _same_key(it: dict) -> tuple | None:
@@ -300,6 +300,8 @@ def render_nearby(n: dict, H: Handles, max_items: int = 30) -> str:
             bits.append(f"x{it['count']}")
         if it.get("near"):
             bits.append(f"({it['near']})")
+        if it.get("effect"):  # a painting lit by its button press (puzzle state)
+            bits.append(f"[{it['effect']}]")
         g = groups.get(_same_key(it)) if _same_key(it) is not None else None
         if g is not None and len(g) >= SAME_MIN:
             far = max((o.get("dist") or 0) for o in g)
@@ -336,6 +338,13 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
             tags = "".join(f"[{t}]" for t in (o.get("tags") or []))
             chk = f"  ← {o['check']}" if o.get("check") else ""
             lines.append(f"  {o.get('i')}. {tags}{' ' if tags else ''}{H.scrub(str(o.get('text', '')))}{chk}")
+        below, above = d.get("more_below"), d.get("more_above")
+        if above and d.get("options"):
+            lines.append(f"  (+{above} more answers above the visible part of this list, 1-{above})")
+        if below and d.get("options"):
+            last = max(int(o.get("i") or 0) for o in d["options"]) + int(below)
+            lines.append(f"  (+{below} more answers below the visible part of this list, up to {last}: "
+                         f"their texts show only when scrolled; the last one, {last}, is usually the exit/Leave)")
     r = ui.get("roll")
     if r:
         lines.append("ROLL " + compact(r, H))
@@ -361,7 +370,7 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
 # Event kinds that only duplicate what an action's own result already says.
 _REDUNDANT_EVENTS = {"moved_done"}
 # Consecutive events of these kinds share one line ("turn_ended Claude e4; Wyll e1; ...").
-_RUN_EVENTS = {"turn_ended", "turn_started"}
+_RUN_EVENTS = {"turn_ended", "turn_started", "item_effect"}
 
 
 def _ref_handle(x: Any, H: Handles) -> str | None:
@@ -836,7 +845,9 @@ def render_frontier(res: Any, H: Handles) -> str:
         if isinstance(dy, (int, float)) and abs(dy) >= 1.5:
             bits.append(f"({num(abs(dy))}m {'up' if dy > 0 else 'down'})")
         if l.get("kind") == "ladder" and l.get("height_m") and l.get("leads"):
-            bits.append(f"climbs {num(l['height_m'])}m {l['leads']}")
+            bits.append(f"climbs {num(l['height_m'])}m {l['leads']}"
+                        + (f" to {pos(l['to'])}" if l.get("to") else "")
+                        + (" (unexplored)" if l.get("to_unvisited") else ""))
         for flag in ("unvisited", "locked", "waypoint"):
             if l.get(flag):
                 bits.append(flag)
@@ -876,6 +887,16 @@ def render_ways(ways: Any, far: float = 20.0) -> str:
     line = "WAYS walkable: " + (", ".join(open_) if open_ else "none")
     if blocked:
         line += " | blocked: " + " ".join(blocked)
+    # Gaps a jump crosses where the walk stops (nav: the ground ends, a chasm, ground again within jump range).
+    jumps = []
+    for w in ways:
+        j = w.get("jump") if isinstance(w, dict) else None
+        if isinstance(j, dict) and j.get("to"):
+            dy = j.get("dy")
+            jumps.append(f"{w['dir']} gap {num(j.get('gap_m', '?'))}m from {pos(j.get('from'))} to {pos(j['to'])}"
+                         + (f" ({num(abs(dy))}m {'up' if dy > 0 else 'down'})" if isinstance(dy, (int, float)) else ""))
+    if jumps:
+        line += " | jump: " + "; ".join(jumps) + " (jump_to the far side from the edge)"
     return line
 
 

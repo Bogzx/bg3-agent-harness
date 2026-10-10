@@ -591,6 +591,7 @@ local function itemStats(ie, o)
         local wp = tostring(statField(st, "Weapon Properties") or "")
         if wp:find("Twohanded", 1, true) then o.twohanded = true end
         if wp:find("Torch", 1, true) then o.torch = true end  -- a held light (Moonlantern: its aura needs it in a hand)
+        if wp:find("Finesse", 1, true) then o.finesse = true end  -- STR or DEX, whichever is higher
         local ench = tonumber(boosts:match("WeaponEnchantment%((%d+)%)"))
         if ench then o.ench = ench end
     end
@@ -650,6 +651,8 @@ local function memberInfo(e)
         for _, f in pairs(e.Proficiency.Flags) do t[#t + 1] = tostring(f) end
         m.prof = t
     end)
+    local ab = abilityBlock(e)  -- weapon choice: STR weapons vs finesse/ranged (DEX)
+    if ab then m.str, m.dex = ab.str, ab.dex end
     pcall(function() m.enc = tonumber(e.EncumbranceState.State) or 0 end)
     pcall(function() m.kg = round((e.InventoryWeight.Weight or 0) / 1000, 1) end)
     pcall(function() m.limit = round(e.EncumbranceStats.UnencumberedWeight / 1000, 1) end)
@@ -703,7 +706,9 @@ end
 -- args.rev = the rev of the copy the caller holds: when it is still current the reply is just
 -- { unchanged = true, rev, gold } (gold is always read fresh: it is one Osiris call).
 S.invGen = S.invGen or 0
-S.invRev = S.invRev or 0
+-- A load rebuilds this Lua state; a rev restarting at 0 matched the bridge's held rev of the previous save (live
+-- 12:3x: ALERTS/get_inventory kept the other save's gear after load_game). Monotonic ms never repeats in a process.
+S.invRev = S.invRev or math.floor(Ext.Utils.MonotonicTime())
 S.INV_TTL_MS = 20000
 function S.bumpInventory() S.invGen = (S.invGen or 0) + 1 end
 for _, ev in ipairs({ { "AddedTo", 3 }, { "RemovedFrom", 3 }, { "Equipped", 2 }, { "Unequipped", 2 },
@@ -1156,11 +1161,18 @@ function S.nearby(ctx, args)
         local all = items
         items = S.limitItems(items, limit)
         if #all > #items then out.more_items = #all - #items end
+        -- Puzzle landmarks (the painting over a Button): their unnamed glow is the puzzle state.
+        local near, landmark = {}, {}
+        for _, it in ipairs(items) do
+            near[it] = S.fixtureRelation(it, all)
+            if near[it] then landmark[near[it]:gsub("^%a+ ", "")] = true end
+        end
         for _, it in ipairs(items) do
             local u, e = it.u, it.e
             local o = { uuid = u, name = it.name, kind = it.kind, pos = pos1(it.p), dist = round(it.d, 1) }
             if o.name == "Object" or o.name == "Unknown" then goto continue end
-            o.near = S.fixtureRelation(it, all)
+            o.near = near[it]
+            o.effect = V.itemEffects(e, landmark[o.name] or S.FIXTURE_NAMES[o.name])
             if args.item_los then tactical(ctx, u, it.p, o) end
             if truthy(osi(Osi.IsLocked, u)) then o.locked = true end
             if comp(e, "HasOpened") then o.opened = true end
@@ -1464,6 +1476,7 @@ timed("state.entity", function(args)
         end)
         if okd and desc then o.description = desc end
         if truthy(osi(Osi.IsLocked, u)) then o.locked = true end
+        o.effect = V.itemEffects(e, true)
         return o
     end
     error("not visible", 0)
