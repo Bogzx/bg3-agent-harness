@@ -198,6 +198,8 @@ def character_line(c: dict, H: Handles, me: str | None = None) -> str:
     for flag in ("downed", "dead", "in_combat", "can_talk", "is_trader", "sneaking", "is_current"):
         if c.get(flag):
             bits.append(flag)
+    if c.get("summon"):  # party row of a Spiritual Weapon, familiar...: an ally, not a companion
+        bits.append(f"summon of {H.get(c['owner'])}" if c.get("owner") else "summon")
     return " ".join(bits)
 
 

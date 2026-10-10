@@ -210,8 +210,8 @@ def summarize(name: str, rc: int | None, out: str, secs: float) -> Row:
     if n == 0:
         return Row(name, "WARN" if rc == 0 else "FAIL", "no PASS/WARN/FAIL lines in its output", secs, bad)
     detail = f"{n} lines, {verdicts.count('FAIL')} FAIL, {verdicts.count('WARN')} WARN"
-    if bad:
-        detail += ": " + bad[0][:110]
+    if bad:  # quote the first FAIL line: a leading WARN hid the real failure in the runner log
+        detail += ": " + next((b for b in bad if b.startswith(("FAIL", "[FAIL", "✗"))), bad[0])[:110]
     return Row(name, v, detail, secs, bad)
 
 
@@ -265,9 +265,9 @@ def check_latency(tools: dict[str, Callable[[], str]], calls: int) -> Row:
 
 
 def lua_str(s: str) -> str:
-    """A Lua long-bracket literal for s."""
+    """A Lua long-bracket literal for s (a trailing ']' would merge with the closing bracket: '[[[1]]]')."""
     n = 0
-    while f"]{'=' * n}]" in s:
+    while f"]{'=' * n}]" in s + "]":
         n += 1
     return f"[{'=' * n}[{s}]{'=' * n}]"
 

@@ -98,22 +98,48 @@ class PatchTest(unittest.TestCase):
                        "r.ViewGeneration != view", "g_parked.push_back(r);", '"BG3LE_UI_PARK"',
                        "clock - settled_from >= std::chrono::milliseconds(kParkSettleMs)",
                        'extern "C" void bg3le_ui_new_generation(char const* why)',
-                       'bg3le_ui_new_generation("View replaced");', "return 7;"):
+                       'bg3le_ui_new_generation("View replaced");'):
             self.assertIn(needle, inl)
         self.assertNotIn("g_releases.clear();", inl)  # a new generation no longer drops the queue
         self.assertIn("bg3le_ui_view_replaced();", ui)
         gs = (self.src / "src" / "game_state.cpp").read_text()
         self.assertIn("if (!in_play(last) || !in_play(now)) bg3le_ui_new_generation(now);", gs)
+        # 0006 (S017's SIGSEGV at 0x100 in push_boxed_or_object): a property value is checked before
+        # it is boxed, stored values are copied out with safe reads, a DependencyObject's values are
+        # enumerated by key (looked up again each) and only under the UI lock; counted in UiSerialize
+        for needle in ("bool plausible_vtable(void const* o)", 'bad_value("push_boxed_or_object", name, val);',
+                       "if (val != nullptr && !plausible_vtable(val)) {",
+                       "!bg3le::safe_read(o, vbuf, sizeof(vbuf))",
+                       "!bg3le::safe_read(v.value.complex, cbuf, sizeof(cbuf))",
+                       "for (auto& entry : dep->mValues) keys.push_back(entry.key);",
+                       "push_dependency(L, dep, key);", "thread_local bool t_framed = false;",
+                       "t_framed = held.owns_lock();", 'if (which != "direct" && t_framed',
+                       "lua_pushinteger(L, (lua_Integer)g_bad_values.load());", "return 8;"):
+            self.assertIn(needle, inl)
+        self.assertNotIn("push_stored(L, entry.key->GetType(), entry.value, type, &name);", inl)
 
-    def test_partly_applied_is_refused(self):
-        # Only the first patch in place (an older checkout of patches/): neither state, so a stop.
+    def test_prefix_applied_gets_the_rest(self):
+        # The series up to the newest patch in place (a patch was added since the last build): the
+        # rest is applied, giving the same tree as a fresh apply; --unpatch reverts a prefix too.
         if len(PATCHES) < 2:
             self.skipTest("one patch")
-        git("apply", str(PATCHES[0]), cwd=self.src)
+        self.assertEqual(self.run_script("--patch").returncode, 0)
+        full = git("diff", cwd=self.src)
+        self.assertEqual(self.run_script("--unpatch").returncode, 0)
+        for p in PATCHES[:-1]:
+            git("apply", str(p), cwd=self.src)
         res = self.run_script("--patch")
-        self.assertNotEqual(res.returncode, 0)
-        self.assertIn("does not apply", res.stderr)
-        self.assertNotEqual(self.run_script("--unpatch").returncode, 0)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(f"patches already applied: {len(PATCHES) - 1} of {len(PATCHES)}", res.stdout)
+        self.assertEqual(res.stdout.count("patch applied:"), 1, res.stdout)
+        self.assertEqual(git("diff", cwd=self.src), full)
+
+        self.assertEqual(self.run_script("--unpatch").returncode, 0)
+        git("apply", str(PATCHES[0]), cwd=self.src)
+        back = self.run_script("--unpatch")
+        self.assertEqual(back.returncode, 0, back.stderr)
+        self.assertIn("reverted 1 patch(es)", back.stdout)
+        self.assertEqual(git("status", "--porcelain", cwd=self.src), "")
 
 
 if __name__ == "__main__":

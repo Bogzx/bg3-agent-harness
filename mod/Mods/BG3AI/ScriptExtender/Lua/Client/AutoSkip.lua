@@ -101,7 +101,8 @@ local MOVIE_OK = {
 }
 
 local function isOurCombatTurn(dc)
-    local p = UI.props(UI.prop(dc, "CurrentPlayer"))
+    -- Two named reads, not GetAllProperties of the whole player VM every tick.
+    local p = UI.pick(UI.prop(dc, "CurrentPlayer"), { "IsCurrentTurn", "CanEndTurn" })
     return p.IsCurrentTurn == true or p.CanEndTurn == true
 end
 

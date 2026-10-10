@@ -2481,7 +2481,7 @@ def _rechain_after(who: str) -> None:
         if not lead or lead == who or st.get("in_combat") or st.get("in_dialogue"):
             return
         row = next((r for r in st.get("party") or [] if r.get("uuid") == who), None)
-        if row and row.get("chained") is False and not row.get("dead") and not row.get("downed"):
+        if row and row.get("chained") is False and not (row.get("dead") or row.get("downed") or row.get("summon")):
             _rechain([who], lead)
     except (GameError, ValueError, TypeError):
         pass
@@ -3490,7 +3490,7 @@ def _trip_crew(char: str, lines: list) -> set | None:
     return {r.get("uuid") for r in st.get("party") or []
             if r.get("uuid") != char and (r.get("chained") is True or r.get("uuid") in took)
             and r.get("uuid") not in _stay and r.get("uuid") not in other
-            and not (r.get("dead") or r.get("off_stage") or r.get("downed"))}
+            and not (r.get("dead") or r.get("off_stage") or r.get("downed") or r.get("summon"))}
 
 
 def _wait_for_stragglers(char: str, here: Any, crew: set, outer: actq.Executor | None) -> tuple[str, str | None]:
@@ -3580,7 +3580,8 @@ def regroup(leader: str | None = None, near_m: float = macros.REGROUP_NEAR_M, ch
     lreg = (info.get(lead) or {}).get("region")
     far, lines, skip = [], [], set()
     for u, r in rows.items():
-        if u == lead:
+        if u == lead or (info.get(u) or {}).get("summon"):
+            skip.add(u)  # summons: not companions, they come and go with their spell
             continue
         _stay.discard(u)
         reg = (info.get(u) or {}).get("region")

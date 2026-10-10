@@ -60,6 +60,30 @@ class Pure(unittest.TestCase):
         self.assertEqual([u for u, _ in party.stragglers(rows, [0, 0, 0])], [P2])
         self.assertEqual(party.stragglers(rows, [0, 0, 0], stay={P2}), [])
 
+    def test_summons_are_never_apart(self):
+        # S017 probe: a chained `Spiritual Weapon` row in the party; unchained and far after combat
+        st = status({"pos": [40, 0, 0], "chained": False, "summon": True, "owner": P1}, {"pos": [3, 9, 0]})
+        rows = party.apart(st)
+        self.assertEqual([r["uuid"] for r in rows], [P3])
+        self.assertEqual(party.rechain_candidates(rows, lambda u: False), [])
+        self.assertEqual(party.summons(st), {P2})
+
+    def test_summon_leader_reports_nothing(self):
+        st = status({"pos": [40, 0, 0]})
+        st["party"][0]["summon"] = True
+        self.assertEqual(party.apart(st), [])
+
+    def test_stragglers_skip_summons(self):
+        rows = [{"uuid": P2, "pos": [20, 0, 0]}, {"uuid": P3, "pos": [25, 0, 0], "summon": True}]
+        self.assertEqual([u for u, _ in party.stragglers(rows, [0, 0, 0])], [P2])
+        self.assertEqual(party.stragglers(rows, [0, 0, 0], skip={P2}), [])
+
+    def test_party_line_tags_summon(self):
+        H = server.render.Handles()
+        H.get(P1, "Claude")
+        line = server.render.character_line({"uuid": P2, "name": "Spiritual Weapon", "summon": True, "owner": P1}, H)
+        self.assertTrue(line.endswith("summon of " + H.get(P1)), line)
+
 
 class Cohesion(Base):
     def setUp(self) -> None:
@@ -125,6 +149,28 @@ class Cohesion(Base):
         self.assertIn("on another level (TUT)", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
         self.assertEqual(self.chains(), [P3])
+
+    def test_far_unchained_summon_is_left_alone(self):
+        self.st = status({"chained": False, "pos": [34, 0, 0], "summon": True})
+        self.assertNotIn("PARTY APART", server.get_status())
+        self.assertEqual(self.chains(), [])
+        server._on_queue_report(P2, server.actq.Report(done=1))
+        self.assertEqual(self.chains(), [])
+
+    def test_regroup_does_not_walk_or_chain_a_summon(self):
+        self.st = status({"chained": False, "summon": True}, {"chained": False})
+        self.g.watch["party"][1]["pos"] = [40, 0, 0]
+        self.g.watch["party"].append({"uuid": P3, "hp": 20, "max_hp": 20, "pos": [2, 0, 0]})
+        server.H.get(P3, "Gale")
+        server.regroup()
+        self.assertEqual([a["char"] for _, a in self.g.ops("act.move_to")], [])
+        self.assertEqual(self.chains(), [P3])
+
+    def test_leader_trip_does_not_wait_for_a_summon(self):
+        self.st = status({"summon": True})
+        out = self._trip(follower_moves=False)
+        self.assertNotIn("behind", out)
+        self.assertIn("arrived", out)
 
     def _trip(self, follower_moves: bool) -> str:
         server.SETTLE_S = 10.0

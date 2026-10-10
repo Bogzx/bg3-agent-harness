@@ -303,6 +303,17 @@ local function partyBrief(ctx, uuid, active)
     -- level has coordinates in another space) and whether it follows the active character.
     o.region = osi(Osi.GetRegion, uuid)
     if active and uuid ~= active then o.chained = truthy(osi(Osi.InSamePartyGroup, uuid, active)) end
+    -- Summons (Spiritual Weapon, Find Familiar, Mage Hand...) sit in DB_PartyMembers too: tagged so the
+    -- bridge keeps them out of PARTY APART / re-chain / regroup but shows them as allies in combat.
+    local sc = comp(e, "IsSummon")
+    if sc or truthy(osi(Osi.IsSummon, uuid)) then
+        o.summon = true
+        if sc then
+            local ow
+            pcall(function() ow = V.entityUuid(sc.Owner) or V.entityUuid(sc.Summoner) end)
+            o.owner = ow
+        end
+    end
     return o
 end
 
@@ -681,6 +692,7 @@ function S.combat(ctx)
                     if V.characterVisible(ctx, u, me) then
                         local tb = comp(me, "TurnBased")
                         local o = { uuid = u, name = V.name(u), relation = relation(ctx, u) }
+                        if comp(me, "IsSummon") then o.summon = true end  -- ours or theirs: an ally, not a companion
                         local p = V.pos(me)
                         if p then o.pos = pos1(p); tactical(ctx, u, p, o) end
                         pcall(function() if m.Initiative then o.initiative = m.Initiative end end)

@@ -28,6 +28,13 @@ def leader_row(status: dict, leader: str | None = None) -> dict | None:
     return next((r for r in (status or {}).get("party") or [] if r.get("uuid") == lead), None)
 
 
+def summons(status: dict) -> set:
+    """Uuids of summoned party rows (Spiritual Weapon, Find Familiar, Mage Hand...: the mod tags them
+    summon=true). They are allies in combat but not companions: never apart, re-chained, waited for or
+    walked back (S017 probe: a chained `Spiritual Weapon` row)."""
+    return {r.get("uuid") for r in (status or {}).get("party") or [] if r.get("summon")}
+
+
 def _dy(a: Any, b: Any) -> float | None:
     """Height of a over b (y is up), None without both positions."""
     if not (isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)) and len(a) >= 3 and len(b) >= 3):
@@ -40,14 +47,15 @@ def apart(status: dict, leader: str | None = None, far_m: float = APART_M, stay:
     """Members away from the leader: [{uuid, name, dist|None, dy|None, other_level, unchained, downed, stay}].
     status: state.status (party rows with pos, region, chained). Dead and off-stage members are left out;
     an unchained member counts even when near (it won't follow the next walk), so does one on another floor
-    (more than floor_m above/below: a ledge or a drop it may have no path from)."""
+    (more than floor_m above/below: a ledge or a drop it may have no path from). Summons are left out,
+    and nothing is apart from a summon leader (the last combat_turn may have selected one)."""
     lead = leader_row(status, leader)
-    if not lead:
+    if not lead or lead.get("summon"):
         return []
     out = []
     for r in status.get("party") or []:
         u = r.get("uuid")
-        if u == lead.get("uuid") or r.get("dead") or r.get("off_stage"):
+        if u == lead.get("uuid") or r.get("dead") or r.get("off_stage") or r.get("summon"):
             continue
         other = bool(r.get("region") and lead.get("region") and r["region"] != lead["region"])
         d = None if other else _d(r.get("pos"), lead.get("pos"))
@@ -94,13 +102,14 @@ def rechain_candidates(rows: list[dict], busy: Callable[[str], bool]) -> list[st
             if r["unchained"] and not r["stay"] and not r["downed"] and not r["other_level"] and not busy(r["uuid"])]
 
 
-def stragglers(rows: list[dict], leader_pos: Any, far_m: float = STRAGGLER_M, stay: set | None = None) -> list[tuple[str, float]]:
-    """From act.watch party rows: (uuid, metres behind) of members (not staying, not downed) farther than
-    far_m from the leader's position."""
+def stragglers(rows: list[dict], leader_pos: Any, far_m: float = STRAGGLER_M, stay: set | None = None,
+               skip: set | None = None) -> list[tuple[str, float]]:
+    """From act.watch party rows: (uuid, metres behind) of members (not staying, not downed, not in skip:
+    the summons, which act.watch doesn't tag) farther than far_m from the leader's position."""
     out = []
     for r in rows or []:
         u = r.get("uuid")
-        if u in (stay or set()) or r.get("downed"):
+        if u in (stay or set()) or u in (skip or set()) or r.get("downed") or r.get("summon"):
             continue
         d = _d(r.get("pos"), leader_pos)
         if d is not None and d > far_m:

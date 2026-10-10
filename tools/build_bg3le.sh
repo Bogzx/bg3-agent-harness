@@ -34,49 +34,58 @@ PATCHES="$REPO/patches/bg3le"
 shopt -s nullglob
 patches=("$PATCHES"/*.patch)
 
-# The files the series touches, and what they look like with every patch applied to the pinned
-# commit (built in a scratch copy). The submodule's copies must match either the commit (apply the
-# series) or that result (already applied); anything else is a stop, since it means the submodule
-# moved or someone edited it by hand. (git apply cannot check overlapping patches as a series.)
+# The files the series touches, and what they look like after each patch of the series is applied
+# to the pinned commit (built in scratch copies). The submodule's copies must match the commit, the
+# whole series (already applied), or a prefix of it (a patch was added since the last build: the
+# rest is applied); anything else is a stop, since it means the submodule moved or someone edited it
+# by hand. (git apply cannot check overlapping patches as a series.)
 touched=()
 if [ ${#patches[@]} -gt 0 ]; then
     mapfile -t touched < <(sed -n 's|^+++ b/||p' "${patches[@]}" | sort -u)
 fi
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
+matches_scratch() {
+    local f
+    for f in "${touched[@]}"; do
+        cmp -s "$SRC/$f" "$scratch/$f" || return 1
+    done
+}
+# applied = how many patches of the series the submodule has (0..n), or -1 for something else
+applied=-1
 if [ ${#touched[@]} -gt 0 ]; then
     git -C "$SRC" archive HEAD -- "${touched[@]}" | tar -x -C "$scratch"
     git -C "$scratch" init -q
-    for p in "${patches[@]}"; do
+    git -C "$SRC" diff --quiet HEAD -- "${touched[@]}" && applied=0
+    for i in "${!patches[@]}"; do
+        p="${patches[$i]}"
         git -C "$scratch" apply "$p" || { echo "patch does not apply to the pinned commit: $p" >&2; exit 1; }
+        matches_scratch && applied=$((i + 1))
     done
 fi
-patched_state() {  # 0 = all applied, 1 = pristine, 2 = something else
-    local f same=1 clean=1
-    for f in "${touched[@]}"; do
-        cmp -s "$SRC/$f" "$scratch/$f" || same=0
-    done
-    git -C "$SRC" diff --quiet HEAD -- "${touched[@]}" || clean=0
-    if [ $same = 1 ]; then return 0; elif [ $clean = 1 ]; then return 1; else return 2; fi
-}
 
 if [ ${#touched[@]} -gt 0 ]; then
-    state=0; patched_state || state=$?
+    n=${#patches[@]}
     if [ "${1:-}" = "--unpatch" ]; then
-        case $state in
-            0) git -C "$SRC" checkout -- "${touched[@]}"; echo "reverted ${#patches[@]} patch(es)" ;;
-            1) echo "not patched" ;;
-            *) echo "refusing to revert: $SRC has edits that are not patches/bg3le" >&2; exit 1 ;;
-        esac
+        if [ $applied = 0 ]; then
+            echo "not patched"
+        elif [ $applied -gt 0 ]; then
+            git -C "$SRC" checkout -- "${touched[@]}"; echo "reverted $applied patch(es)"
+        else
+            echo "refusing to revert: $SRC has edits that are not patches/bg3le" >&2; exit 1
+        fi
         exit 0
     fi
-    case $state in
-        0) echo "patches already applied: ${#patches[@]}" ;;
-        1) for p in "${patches[@]}"; do git -C "$SRC" apply "$p"; echo "patch applied: $(basename "$p")"; done ;;
-        *) echo "patch does not apply to $SRC (pinned commit changed, or local edits):" >&2
-           git -C "$SRC" diff --stat HEAD -- "${touched[@]}" >&2
-           exit 1 ;;
-    esac
+    if [ $applied = "$n" ]; then
+        echo "patches already applied: $n"
+    elif [ $applied -ge 0 ]; then
+        [ $applied -gt 0 ] && echo "patches already applied: $applied of $n"
+        for p in "${patches[@]:$applied}"; do git -C "$SRC" apply "$p"; echo "patch applied: $(basename "$p")"; done
+    else
+        echo "patch does not apply to $SRC (pinned commit changed, or local edits):" >&2
+        git -C "$SRC" diff --stat HEAD -- "${touched[@]}" >&2
+        exit 1
+    fi
 elif [ "${1:-}" = "--unpatch" ]; then
     exit 0
 fi

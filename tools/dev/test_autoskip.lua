@@ -51,6 +51,7 @@ BG3AI = {
         quiet = function() return quiet end,
         command = function(dc, name) commands[#commands + 1] = name return true end,
         props = function() return {} end,
+        pick = function() return {} end,
         prop = function() return nil end,
     },
     UIState = {

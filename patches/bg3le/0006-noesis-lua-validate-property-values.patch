@@ -1,0 +1,221 @@
+bg3le Ext.UI: validate property values before boxing; enumerate a DependencyObject's values safely
+
+On top of 0001-0005. claude-run-2 S017 ended at 32 min in a SIGSEGV
+(bg3le-20261010-025152.log.528429): signal 11 at 0x100, pc
+push_boxed_or_object+0x30, the first `obj->GetClassType()`, with
+val = r12 = 0x100. Caller: l_properties+0x3b0, the DependencyObject branch
+(the mValues loop; push_stored and push_value inlined/tail-called), from
+GetAllProperties on the client tick. The game was in choose_dialogue
+"Sever your connection with Ragzlin" (Dror Ragzlin / dead mind flayer); the
+dialogue job re-reads the rendered answers each tick, and UI.inlineText
+called GetAllProperties on every Run of every answer text while the answer
+list was being re-templated. One of a Run's stored values held 0x100 where
+its property's type said BaseObject: not an object pointer (a freed or
+replaced StoredValue/ComplexValue block, or the values table changing under
+the walk), boxed without a check.
+
+- push_boxed_or_object checks the value with plausible_object (safe reads of
+  its vtable and first slots, which must be code of the game or bg3le) and
+  pushes nil otherwise; so does push_value for an ICommand (plausible_vtable)
+  before its virtual GetBaseObject. Counted (UiSerialize's 8th result) and
+  logged (the first 20, then at powers of two) with the property's name.
+- push_stored copies the StoredValue entry and its ComplexValue block out with
+  safe reads (into raw buffers: StoredValue's constructor is the game's, and a
+  ComplexValue copy would release its Ptr<Expression>).
+- UiProperties copies a DependencyObject's keys first and looks each up again
+  (push_dependency) before reading it: pushing allocates, a collection can run
+  __gc, and the hash table is never walked across that. The owner is held
+  (arg 1 is a box with a reference).
+- UiProperties enumerates those values only when the call holds the UI lock
+  (serialized() records it; 0002 runs a call unserialized after a 50 ms wait):
+  otherwise the caller gets the plain properties only.
+
+The mod side stops calling GetAllProperties on live elements (Client/UI.lua:
+UI.get / UI.pick read named properties; inlineText, press, pressButton use
+them).
+
+diff --git a/src/vendor/bg3le_noesis_lua.inl b/src/vendor/bg3le_noesis_lua.inl
+index d8c0eea..4d7aab5 100644
+--- a/src/vendor/bg3le_noesis_lua.inl
++++ b/src/vendor/bg3le_noesis_lua.inl
+@@ -234,8 +234,9 @@ CodeRange game_code()
+ // A live object's vtable holds code: its destructors and GetClassType are
+ // functions of the game's Noesis or of bg3le. Memory that has been freed and
+ // reused reads as anything (the crash this guards against jumped into
+-// .data.rel.ro).
+-bool plausible_object(BaseObject const* o)
++// .data.rel.ro). The same holds for an interface pointer (ICommand): its
++// first slots are functions too.
++bool plausible_vtable(void const* o)
+ {
+     static const CodeRange game = game_code();
+     static const CodeRange own = own_code();
+@@ -252,6 +253,26 @@ bool plausible_object(BaseObject const* o)
+     return true;
+ }
+ 
++bool plausible_object(BaseObject const* o)
++{
++    return plausible_vtable(o);
++}
++
++// Property values that were not objects where an object was due, pushed as
++// nil instead (UiSerialize's 8th result). S017's crash: a DependencyObject's
++// stored value read 0x100 where its property's type said BaseObject, and
++// push_boxed_or_object called GetClassType through it.
++std::atomic<unsigned long long> g_bad_values{ 0 };
++
++void bad_value(char const* where, Symbol const* name, void const* value)
++{
++    auto n = g_bad_values.fetch_add(1, std::memory_order_relaxed);
++    if (n < 20 || (n & (n - 1)) == 0) {  // the first 20, then at powers of two
++        ERR("Ext.UI: %s: property %s holds no live object (%p); read as nil (%llu so far)", where,
++            name != nullptr ? name->Str() : "?", value, n + 1);
++    }
++}
++
+ // A pushed object, or a light userdata from before (still accepted); this
+ // catches the unmapped and the reused-as-something-else cases, and the
+ // reference a box holds the rest.
+@@ -375,21 +396,35 @@ std::atomic<unsigned long long> g_ui_timeouts{ 0 };
+ constexpr int kFrameWaitMs = 50;
+ constexpr int kUiWaitMs = 16;
+ 
++// Whether the call running on this thread holds g_frame (or serializing is
++// off): UiProperties enumerates a DependencyObject's values only then.
++thread_local bool t_framed = false;
++
+ int serialized(lua_State* L)
+ {
+     auto fn = lua_tocfunction(L, lua_upvalueindex(1));
+-    if (!g_serialize.load(std::memory_order_relaxed)) return fn(L);
++    struct Framed
++    {
++        bool Was = t_framed;
++        ~Framed() { t_framed = Was; }
++    } restore;
++    if (!g_serialize.load(std::memory_order_relaxed)) {
++        t_framed = true;
++        return fn(L);
++    }
+     std::unique_lock<std::recursive_timed_mutex> held(g_frame, std::defer_lock);
+     if (!held.try_lock_for(std::chrono::milliseconds(kFrameWaitMs))) {
+         g_serialize_timeouts.fetch_add(1, std::memory_order_relaxed);
+     }
++    t_framed = held.owns_lock();
+     // Lua is built as C++: a Lua error unwinds through here and unlocks.
+     return fn(L);
+ }
+ 
+ // UiSerialize([on]) -> on, Lua's lock timeouts, the UI thread's lock timeouts,
+ // the UI generation, the references leaked rather than released, those parked
+-// now, those given back after parking
++// now, those given back after parking, property values read as nil because
++// they held no live object
+ int l_serialize(lua_State* L)
+ {
+     if (!lua_isnoneornil(L, 1)) g_serialize.store(lua_toboolean(L, 1) != 0);
+@@ -400,7 +435,8 @@ int l_serialize(lua_State* L)
+     lua_pushinteger(L, (lua_Integer)g_leaked.load());
+     lua_pushinteger(L, (lua_Integer)g_parked_count.load());
+     lua_pushinteger(L, (lua_Integer)g_released_late.load());
+-    return 7;
++    lua_pushinteger(L, (lua_Integer)g_bad_values.load());
++    return 8;
+ }
+ 
+ // ---- values: ports of StoredValueHelpers ---------------------------------
+@@ -476,6 +512,11 @@ void push_boxed_or_object(lua_State* L, Type const* type, void* val, Type const*
+         lua_pushnil(L);
+         return;
+     }
++    if (!plausible_object(obj)) {
++        bad_value("push_boxed_or_object", name, val);
++        lua_pushnil(L);
++        return;
++    }
+ 
+     // Upstream hands out no command of these data contexts.
+     if (objectType != nullptr && name != nullptr
+@@ -568,6 +609,11 @@ void push_value(lua_State* L, Type const* type, void* val, Type const* objectTyp
+     } else if (type == types.String.Type) {
+         lua_pushstring(L, static_cast<String const*>(val)->Str());
+     } else if (type == types.ICommand.Type) {
++        if (val != nullptr && !plausible_vtable(val)) {
++            bad_value("push_value", name, val);
++            lua_pushnil(L);
++            return;
++        }
+         push_object(L, val != nullptr ? static_cast<ICommand*>(val)->GetBaseObject() : nullptr);
+     } else if (type == types.IValueConverter.Type || type == types.IMultiValueConverter.Type) {
+         lua_pushnil(L);  // upstream: unsupported
+@@ -583,18 +629,37 @@ void push_value(lua_State* L, Type const* type, void* val, Type const* objectTyp
+     }
+ }
+ 
++// The entry and its complex block are copied out with safe reads: an entry
++// can be replaced while its element is re-templated, and the old block's
++// memory then reads as anything (push_boxed_or_object checks what it points
++// to).
+ void push_stored(lua_State* L, Type const* type, StoredValue const* o, Type const* objectType, Symbol const* name)
+ {
+-    if (!o->flags.isInitialized) {
++    // Raw copies: StoredValue's constructor is the game's, and ComplexValue's
++    // Ptr<Expression> would be released on the way out.
++    alignas(StoredValue) unsigned char vbuf[sizeof(StoredValue)];
++    auto const& v = *reinterpret_cast<StoredValue const*>(vbuf);
++    if (o == nullptr || !bg3le::safe_read(o, vbuf, sizeof(vbuf))) {
++        bad_value("push_stored", name, o);
+         lua_pushnil(L);
+-    } else if (o->flags.isComplex) {
+-        if (o->flags.isExpression) {
++        return;
++    }
++    if (!v.flags.isInitialized) {
++        lua_pushnil(L);
++    } else if (v.flags.isComplex) {
++        alignas(StoredValue::ComplexValue) unsigned char cbuf[sizeof(StoredValue::ComplexValue)];
++        auto const& c = *reinterpret_cast<StoredValue::ComplexValue const*>(cbuf);
++        if (v.flags.isExpression) {
++            lua_pushnil(L);
++        } else if (v.value.complex == nullptr
++                   || !bg3le::safe_read(v.value.complex, cbuf, sizeof(cbuf))) {
++            bad_value("push_stored", name, v.value.complex);
+             lua_pushnil(L);
+         } else {
+-            push_value(L, type, o->value.complex->base, objectType, name);
++            push_value(L, type, c.base, objectType, name);
+         }
+     } else {
+-        push_value(L, type, o->value.simple, objectType, name);
++        push_value(L, type, v.value.simple, objectType, name);
+     }
+ }
+ 
+@@ -1206,12 +1271,22 @@ int l_properties(lua_State* L)
+     std::string which = luaL_optstring(L, 2, "all");
+     auto type = o->GetClassType();
+     lua_newtable(L);
+-    if (which != "direct" && TypeHelpers::IsDescendantOf(type, gStaticSymbols.TypeClasses.DependencyObject.Type)) {
++    // The DependencyObject's own values (S017's crash was here). The object is
++    // held: arg 1 is a box with a reference. Its keys are copied first, and
++    // each is looked up again before its value is read: pushing allocates,
++    // a collection can run __gc, and the table must not be walked across
++    // that. Not at all when the UI lock was not had (a timeout): the UI thread
++    // may be rewriting the table; the caller gets the plain properties only.
++    if (which != "direct" && t_framed
++        && TypeHelpers::IsDescendantOf(type, gStaticSymbols.TypeClasses.DependencyObject.Type)) {
+         auto dep = static_cast<DependencyObject const*>(o);
+-        for (auto& entry : dep->mValues) {
+-            auto name = entry.key->GetName();
++        std::vector<DependencyProperty const*> keys;
++        keys.reserve(32);
++        for (auto& entry : dep->mValues) keys.push_back(entry.key);
++        for (auto key : keys) {
++            auto name = key->GetName();
+             lua_pushstring(L, name.Str());
+-            push_stored(L, entry.key->GetType(), entry.value, type, &name);
++            push_dependency(L, dep, key);
+             lua_settable(L, -3);
+         }
+     }

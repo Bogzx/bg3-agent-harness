@@ -229,8 +229,7 @@ A.BOUND_KEYS = { UIAccept = "RETURN", UICancel = "ESCAPE", ToggleInGameMenu = "E
 function A.pressButton(el, dry)
     local ok, err = UI.press(el, dry)
     if ok then return true, "command" end
-    local p = UI.props(el)
-    local key = A.BOUND_KEYS[tostring(p.BoundEvent or "")]
+    local key = A.BOUND_KEYS[tostring(UI.get(el, "BoundEvent") or "")]
     if key and tostring(err):find("parameter is a") then
         if dry then return true, "key:" .. key end
         Ext.Input.InjectKeyPress(key)

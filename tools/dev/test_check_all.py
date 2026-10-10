@@ -187,6 +187,22 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(C.summarize("act", 0, "hello\n", 1).verdict, "WARN")  # no verdict lines
 
 
+
+class LuaStrTest(unittest.TestCase):
+    def test_long_bracket_never_closes_early(self):
+        # check_all FAIL waypoints at 03:32: a JSON list ends in ']' and '[[...]]]' closed one ']' early
+        for s, want in [('["a","b"]', '[=[["a","b"]]=]'), ("x", "[[x]]"), ("a]]b", "[=[a]]b]=]"),
+                        ("a]=", "[[a]=]]"), ("a]]]=", "[==[a]]]=]==]"), ("[[1]]", "[=[[[1]]]=]")]:
+            self.assertEqual(C.lua_str(s), want)
+
+
+    def test_summary_quotes_the_fail_line(self):
+        out = "WARN toolsearch: 3 ToolSearch calls\nPASS a: ok\nFAIL memory: lint failed\n"
+        row = C.summarize("session", 1, out, 1.0)
+        self.assertEqual(row.verdict, "FAIL")
+        self.assertIn("FAIL memory: lint failed", row.detail)
+
+
 class LatencyTest(unittest.TestCase):
     def test_fast_pass_slow_warn_fail(self):
         import time as T

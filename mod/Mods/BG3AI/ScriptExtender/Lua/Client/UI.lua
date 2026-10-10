@@ -21,7 +21,9 @@
 --     UI.widgetByDC(typeName)       -> element, DC of the first page whose DC type matches
 --   Properties / view models
 --     UI.prop(obj, name)            -> value (only for names known to exist: unknown names log an error)
---     UI.props(obj)                 -> table of all reflected properties (safe for optional names)
+--     UI.props(obj)                 -> table of all reflected properties (view models only, never elements)
+--     UI.get(obj, name)             -> one property, nil when missing (no error log); for elements
+--     UI.pick(obj, names)           -> { name = value } for just these names; for elements
 --     UI.path(obj, "A.B.2.C")       -> dotted walk; numbers index collections (1-based)
 --     UI.items(coll[, max])         -> iterator i, item over a Noesis collection
 --     UI.count(coll)                -> collection Count
@@ -50,7 +52,14 @@
 --     plain Text. Formatted text (dialogue, answers) lives in TextBlock.Inlines
 --     (Span/Run/Italic) and ToString() is empty: UI.text() walks the inlines.
 --   * GetProperty(name) logs an error for unknown names, so optional
---     properties go through props() (GetAllProperties) instead.
+--     properties go through get()/pick() (proxy indexing: an unknown name is
+--     a Lua error, caught, not logged) or props() (GetAllProperties).
+--   * Never props() a live element (Run, Button, any DependencyObject):
+--     GetAllProperties enumerates its stored values table, and S017 crashed
+--     the game there (SIGSEGV in push_boxed_or_object: a stored value read
+--     0x100 while a dialogue answer list was being re-templated). Read the
+--     names you need with get()/pick(). View models are not
+--     DependencyObjects; props() on them reads their reflected properties only.
 --   * Collections: GetProperty("Count") and :At(i) (1-based).
 --   * Many game view models expose no names on bg3le: ls.VMItem, ls.Character
 --     have no Name, ls.EntityRef has no fields, ls.VMWaypoint(Group) has no
@@ -85,10 +94,30 @@ function UI.prop(obj, name)
     return try(obj.GetProperty, obj, name)
 end
 
--- All properties as a Lua table (no error log for missing names).
+-- All properties as a Lua table (no error log for missing names). For view
+-- models; elements go through UI.get/UI.pick (see the S017 note above).
 function UI.props(obj)
     if obj == nil then return {} end
     return try(obj.GetAllProperties, obj) or {}
+end
+
+-- One property by name, nil when the object has none (proxy indexing raises a
+-- Lua error for an unknown name, without logging it). Reads that one value:
+-- safe on live elements.
+function UI.get(obj, name)
+    if obj == nil then return nil end
+    return try(function() return obj[name] end)
+end
+
+-- Just these properties, as { name = value }.
+function UI.pick(obj, names)
+    local out = {}
+    if obj == nil then return out end
+    for _, k in ipairs(names) do
+        local v = UI.get(obj, k)
+        if v ~= nil then out[k] = v end
+    end
+    return out
 end
 
 function UI.typeName(obj)
@@ -173,11 +202,14 @@ function UI.inlineText(inlines, depth)
     if inlines == nil or depth > 8 then return "" end
     local parts = {}
     for _, x in UI.items(inlines, 200) do
-        local p = UI.props(x)
-        if type(p.Text) == "string" then
-            parts[#parts + 1] = p.Text
-        elseif p.Inlines ~= nil then
-            parts[#parts + 1] = UI.inlineText(p.Inlines, depth + 1)
+        -- Named reads only: these Runs are live elements (S017's crash was a
+        -- GetAllProperties on one while the answer list was re-templated).
+        local text = UI.get(x, "Text")
+        local sub = type(text) ~= "string" and UI.get(x, "Inlines") or nil
+        if type(text) == "string" then
+            parts[#parts + 1] = text
+        elseif sub ~= nil then
+            parts[#parts + 1] = UI.inlineText(sub, depth + 1)
         elseif UI.typeName(x) == "LineBreak" then
             parts[#parts + 1] = " "
         end
@@ -487,7 +519,7 @@ end
 -- "Click" a button element: run its Command with its CommandParameter.
 function UI.press(el, dry)
     if not el then return false, "no element" end
-    local p = UI.props(el)
+    local p = UI.pick(el, { "Command", "IsEnabled", "CommandParameter" })
     local cmd = p.Command
     if cmd == nil then return false, "element has no Command (" .. tostring(UI.name(el) or UI.typeName(el)) .. ")" end
     if p.IsEnabled == false then return false, "button is disabled" end

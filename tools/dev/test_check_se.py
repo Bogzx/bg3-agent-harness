@@ -71,6 +71,13 @@ class LogVerdictTest(unittest.TestCase):
 class ChildrenAndLootTest(unittest.TestCase):
     def test_children_verdicts(self):
         self.assertEqual(C.children_verdict(None)[0], "FAIL")
+        v, d = C.children_verdict({"ui": False, "mod": False})
+        self.assertEqual(v, "FAIL")
+        self.assertIn("not loaded", d)
+        v, d = C.children_verdict({"ui": False, "mod": True})
+        self.assertEqual(v, "FAIL")
+        self.assertIn("UI.lua", d)
+        self.assertIn("Mods.BG3AI.BG3AI", C.CHILDREN_LUA)  # evals run in the global env: no bare BG3AI there
         self.assertEqual(C.children_verdict({"ui": True, "patched": False})[0], "WARN")
         st = {"ui": True, "patched": True, "cr": "Grid", "count": 25, "collection": 50, "visual": 3}
         self.assertEqual(C.children_verdict(st)[0], "PASS")

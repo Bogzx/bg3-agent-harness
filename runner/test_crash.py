@@ -669,6 +669,7 @@ class MemoryAfterCrash(unittest.TestCase):
         r.close_memory_session(self.res("crash"))
         self.assertEqual((r.pending_notes, self.fix_runs), ([], []))
         self.assertIn("memory left open for the next session", (P.RUNTIME / "runner.log").read_text())
+        self.assertNotIn("fix-notes session", (P.RUNTIME / "runner.log").read_text())  # none runs after a crash
 
     def test_crash_passes_on_other_errors_only(self):
         r = self.runner(self.S014)

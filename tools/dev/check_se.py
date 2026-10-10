@@ -177,10 +177,10 @@ def check_hook(g: Game) -> None:
     try:
         st = lua(g, 'local f = Ext._Internal and Ext._Internal.UiSerialize\n'
                     'if not f then return \'{"patched":false}\' end\n'
-                    'local on, timeouts, ui, gen, leaked, parked, late = f()\n'
+                    'local on, timeouts, ui, gen, leaked, parked, late, bad = f()\n'
                     'return string.format(\'{"patched":true,"on":%s,"timeouts":%d,"ui_timeouts":%d,'
-                    '"generation":%d,"leaked":%d,"parked":%d,"late":%d}\', tostring(on), timeouts, ui or -1, '
-                    'gen or -1, leaked or -1, parked or -1, late or -1)')
+                    '"generation":%d,"leaked":%d,"parked":%d,"late":%d,"bad":%d}\', tostring(on), timeouts, '
+                    'ui or -1, gen or -1, leaked or -1, parked or -1, late or -1, bad or -1)')
     except (GameError, NotReady) as e:
         report("FAIL", "hook.patched", f"client eval failed: {e}")
         st = None
@@ -190,10 +190,15 @@ def check_hook(g: Game) -> None:
                       f"generation={st['generation']}, leaked={st['leaked']}")
             if st.get("parked", -1) >= 0:
                 detail += f", parked={st['parked']}, released late={st['late']}"
+            if st.get("bad", -1) >= 0:
+                detail += f", bad property values={st['bad']}"
             if st["generation"] < 0:
                 report("WARN", "hook.patched", detail + " (bg3le without patch 0003: releases are not generation-gated)")
             elif not st["on"]:
                 report("WARN", "hook.patched", detail + " (serializing is off: BG3LE_UI_SERIALIZE=0?)")
+            elif st.get("bad", -1) > 0:
+                report("WARN", "hook.patched", detail + " (patch 0006 read non-objects as nil: grep the "
+                       "bg3le log for 'holds no live object')")
             else:
                 report("PASS", "hook.patched", detail)
         else:
@@ -324,8 +329,10 @@ def check_stress(g: Game, seconds: float, answer: bool, serialize: bool) -> None
 
 
 CHILDREN_LUA = r"""
-local UI = BG3AI and BG3AI.UI
-if not UI then return '{"ui":false}' end
+local B = Mods and Mods.BG3AI and Mods.BG3AI.BG3AI
+if not B then return '{"ui":false,"mod":false}' end
+local UI = B.UI
+if not UI then return '{"ui":false,"mod":true}' end
 local cr = UI.contentRoot()
 local n = 0
 for _ in ipairs(UI.widgets()) do n = n + 1 end
@@ -337,8 +344,12 @@ return string.format('{"ui":true,"cr":"%s","count":%d,"collection":%d,"visual":%
 
 def children_verdict(st: dict | None) -> tuple[str, str]:
     """PASS when ContentRoot is a stock panel read through its Children collection."""
-    if not st or not st.get("ui"):
-        return "FAIL", "no BG3AI.UI in the client context"
+    if not st:
+        return "FAIL", "the client eval returned nothing"
+    if st.get("mod") is False:
+        return "FAIL", "the BG3AI mod is not loaded in the client context (Mods.BG3AI.BG3AI is nil)"
+    if not st.get("ui"):
+        return "FAIL", "the BG3AI mod is loaded but BG3AI.UI is missing (Client/UI.lua failed to load? see the SE log)"
     if not st.get("patched"):
         return "WARN", "the game runs a mod without UI.childReads (hot-reload the mod Lua)"
     detail = (f"ContentRoot is {st['cr']} with {st['count']} pages; child reads so far "
