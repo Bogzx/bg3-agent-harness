@@ -59,6 +59,7 @@ local GEM = "dddddddd-0000-0000-0000-000000000004"
 local GOB = "eeeeeeee-0000-0000-0000-000000000005"
 local P2 = "ffffffff-0000-0000-0000-000000000006"
 local KEY = "abababab-0000-0000-0000-000000000007"
+local LADDER = "acacacac-0000-0000-0000-000000000008"
 local party_rows = { P1 }
 
 local usp_arity = 6 -- UseSpellAtPosition inputs the "game" accepts
@@ -124,13 +125,14 @@ local function reset()
         [P1] = { pos = { 0, 0, 0 }, comps = {} },
         [NPC] = { pos = { 10, 0, 0 }, comps = {} },
         [DOOR] = { pos = { 10, 0, 0 }, comps = { ServerItem = { IsDoor = true } } },
+        [LADDER] = { pos = { 10, 0, 0 }, comps = { ServerItem = { IsLadder = true } } },
         [GEM] = { pos = { 10, 0, 0 }, comps = {} },
         [GOB] = { pos = { 2.4, 0, 0 }, comps = {} },
     }
     for _, u in ipairs({ P1, NPC, GOB }) do osiv[key("IsCharacter", u)] = 1 end
-    for _, u in ipairs({ DOOR, GEM }) do osiv[key("IsItem", u)] = 1 end
+    for _, u in ipairs({ DOOR, GEM, LADDER }) do osiv[key("IsItem", u)] = 1 end
     osiv[key("IsOnStage", P1)] = 1
-    for _, u in ipairs({ NPC, DOOR, GEM, GOB }) do
+    for _, u in ipairs({ NPC, DOOR, GEM, GOB, LADDER }) do
         osiv[key("IsOnStage", u)] = 1
         osiv[key("CanSee", P1, u)] = 1
         osiv[key("HasLineOfSight", P1, u)] = 1
@@ -808,6 +810,52 @@ test("interact: a ladder Use that keeps climbing after UseFinished is purged whe
     eq(j.status, "done", "status " .. tostring(j.error))
     eq(#called("PurgeOsirisQueue"), 1, "purged"); eq(j.result.purged_tasks, 1, "purged_tasks")
     restore()
+end)
+
+test("interact ladder: the job waits for the climb (no purge at the top), done once down and still", function()
+    local restore = with_tasks(1)
+    world[P1].pos = { 9.5, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    eq(#called("Use"), 1, "Use right away")
+    A.dispatch("UseFinished", { P1, LADDER, 1 })
+    tick()
+    eq(j.status, "running", "still climbing " .. tostring(j.error)); eq(#called("PurgeOsirisQueue"), 0, "no purge yet")
+    world[P1].pos = { 9.6, -3, 0 } tick()
+    world[P1].pos = { 9.7, -5.8, 0 } tick()
+    eq(j.status, "running", "moving")
+    clock = clock + 100 tick()
+    clock = clock + 400 tick()
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.climbed, "down", "climbed")
+    eq(#called("PurgeOsirisQueue"), 1, "purged after the climb")
+    restore()
+end)
+
+test("interact ladder: a UseFinished during the walk to the top (before our Use) is ignored", function()
+    world[P1].pos = { 0, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    eq(j.phase, "approach", "phase")
+    A.dispatch("UseFinished", { P1, LADDER, 1 })
+    tick()
+    eq(j.status, "running", "status " .. tostring(j.error)); eq(#called("PurgeOsirisQueue"), 0, "no purge")
+end)
+
+test("interact ladder: the loop watchdog leaves a climb in progress alone (several UseFinished)", function()
+    local restore = with_tasks(1)
+    world[P1].pos = { 9.5, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    for _ = 1, 4 do A.dispatch("UseFinished", { P1, LADDER, 1 }) end
+    tick()
+    eq(j.status, "running", "status " .. tostring(j.error))
+    restore()
+end)
+
+test("interact ladder: no climb after the Use -> failed, says so", function()
+    world[P1].pos = { 9.5, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    A.dispatch("UseFinished", { P1, LADDER, 1 })
+    tick()
+    clock = clock + A.LADDER_CLIMB_MS + 1 tick()
+    eq(j.status, "failed", "status"); assert(j.error:find("did not climb"), j.error)
 end)
 
 test("move_to: a timed-out walk purges its CharacterMoveToPosition task", function()

@@ -122,8 +122,11 @@ function A.loop_watch(char, item)
         A.use_streak[char] = s
     end
     if s.n < A.LOOP_USES or osi_tasks(char) == 0 then return end
-    A.use_streak[char] = nil
     local job = A.active[char]
+    -- One ladder climb fires several UseFinished (live 14:1x: interrupted mid-climb). A ladder interact awaiting
+    -- its climb has its own deadline (A.LADDER_CLIMB_MS, then failed + purge), so it is not a loop yet.
+    if job and job.status == "running" and job.ladder and G.same(job.ladder.item, item) then return end
+    A.use_streak[char] = nil
     RPC.push("loop_stopped", { uuid = char, item = item, uses = s.n, job = job and job.id or nil })
     if job and job.status == "running" then
         interrupt(job, "stuck: the character kept using the same item (" .. s.n
@@ -745,6 +748,9 @@ A.holder = holder
 -- act.interact {char, target}: doors, levers, containers, books, ladders...
 ------------------------------------------------------------------------
 
+A.LADDER_DY = 1.5         -- a climb ends on another floor at least this far up/down
+A.LADDER_CLIMB_MS = 10000 -- interact on a ladder: the longest it waits for the climb after the Use
+
 reg("interact", function(args)
     local char = G.actor(args.char)
     G.not_in_dialogue(char)
@@ -783,10 +789,11 @@ reg("interact", function(args)
         key_note = { unlocked_with = nm(k), key_holder = nm(char) }
     end
     local was_open = G.b(G.q("IsOpened", target))
-    local openable = false
+    local openable, ladder = false, false
     pcall(function()
         local si = G.entity(target).ServerItem
         openable = si.IsDoor or si.IsContainer or false
+        ladder = si.IsLadder or false
     end)
 
     -- Doors/containers: report the open/closed state change. UseFinished lands
@@ -814,13 +821,19 @@ reg("interact", function(args)
         osi = with_walk({
             UseFinished = function(job, a)
                 if G.same(a[1], char) and G.same(a[2], target) then
+                    if ladder and not job.ladder then return end -- not our Use yet (see below)
                     if not G.b(a[3]) then
                         RPC.finish_job(job, "failed", nil, key_note and G.b(G.q("IsLocked", target))
                             and ("still locked: " .. key_note.unlocked_with .. " did not open it") or "could not use that")
                         return
                     end
                     local res = state_result()
-                    if res then RPC.finish_job(job, "done", res)
+                    if ladder then
+                        -- Acceptance 14:0x: the walk to a ladder's top fires a UseFinished of its own before our
+                        -- Use: ending the job there purged the queue and cancelled the climb. Only our Use counts,
+                        -- and its climb is awaited in on_tick.
+                        if job.ladder then job.used_at = job.used_at or RPC.now_ms() end
+                    elseif res then RPC.finish_job(job, "done", res)
                     elseif not openable then RPC.finish_job(job, "done", with_key({ used = true }))
                     else job.used_at = RPC.now_ms() end
                 end
@@ -841,6 +854,7 @@ reg("interact", function(args)
                 j.use_ev = ev_name(j, "use")
                 j.use_track = {}
                 j.osi_task = true
+                if ladder then j.ladder = { y0 = (G.pos(char) or {})[2], item = target } end
                 G.osi("Use", char, target, j.use_ev)
             end)
         end,
@@ -854,6 +868,30 @@ reg("interact", function(args)
                 return not t or U.dist(prev, t) > A.USE_REACH + 0.7
             end) then return end
             local res = state_result()
+            if job.ladder and job.used_at then
+                -- Acceptance 13:4x: "done — used" 300 ms after the Use, and the job's end purges the task queue: the
+                -- climb was cancelled at the top (the active character stayed up, followers went down). Wait for
+                -- the climb itself: the actor on another floor and still, or give up after A.LADDER_CLIMB_MS.
+                local lj, here = job.ladder, G.pos(char)
+                local now = RPC.now_ms()
+                if here and lj.y0 then
+                    local moved = lj.last and U.dist(lj.last, here) or 1
+                    lj.still = (moved < 0.03) and (lj.still or now) or nil
+                    lj.last = here
+                    local dy = here[2] - lj.y0
+                    if math.abs(dy) >= A.LADDER_DY and lj.still and now - lj.still >= 300 then
+                        RPC.finish_job(job, "done", with_key({ used = true, climbed = dy < 0 and "down" or "up",
+                            dy = U.round(dy, 1) }))
+                        return
+                    end
+                end
+                if now - job.used_at > A.LADDER_CLIMB_MS then
+                    RPC.finish_job(job, "failed", { used = true, climbed = false },
+                        "used the ladder but did not climb it (still on the same floor after "
+                        .. math.floor(A.LADDER_CLIMB_MS / 1000) .. " s)")
+                end
+                return
+            end
             if res then
                 RPC.finish_job(job, "done", res)
             elseif job.used_at and RPC.now_ms() - job.used_at > (openable and 1500 or 300) then

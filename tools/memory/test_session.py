@@ -123,6 +123,15 @@ class InjectionExtrasTest(MemoryTestCase):
         self.assertNotIn("old fix", out)
         self.assertNotIn("HARNESS CHANGES", S.build_context(self.mem, "compact"))
 
+    def test_news_overflow_points_to_the_file(self):
+        lines = "".join(f"- 2026-10-10 1{i}:00 change {i}\n" for i in range(9))
+        (self.kdir / "harness-news.md").write_text("# news\n" + lines)
+        news = S.harness_news("2026-10-10T09:00")
+        self.assertEqual(len(news), S.NEWS_MAX + 1)
+        self.assertIn("+3 older changes", news[0])
+        self.assertIn("harness-news.md", news[0])
+        self.assertEqual(news[-1], "- 2026-10-10 18:00 change 8")
+
     def test_no_news_file(self):
         self.assertEqual(S.harness_news("2026-10-10T01:00"), [])
 

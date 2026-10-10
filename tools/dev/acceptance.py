@@ -438,17 +438,24 @@ KNOTTED_ROOTS = (-194.8, 31.2, 80.6)  # the ladder below the Mausoleum gate spot
 
 
 def ladder_from_top() -> None:
-    """At the Mausoleum gate: the Knotted Roots ladder's foot is ~7 m below; interact climbs down from the top."""
-    me = (status().get("party") or [{}])[0]
-    p0 = me.get("pos") or [0, 0, 0]
+    """At the Mausoleum gate: the Knotted Roots ladder's foot is ~7 m below; interact climbs down from the top.
+    The ACTIVE character must be the one who climbs (vis 13:3x: Gale climbed instead of Claude)."""
+    def heights() -> tuple[str, dict]:
+        st = status()
+        return st.get("active"), {r.get("name"): float((r.get("pos") or [0, 0, 0])[1]) for r in st.get("party") or []}
+
+    def me_pos() -> list:
+        st = status()
+        return next((r.get("pos") for r in st.get("party") or [] if r.get("uuid") == st.get("active")), None) or [0, 0, 0]
+
+    p0 = me_pos()
     raw = S.game.try_rpc("state.nearby", {"radius": 40, "kinds": ["ladder"]}) or {}
     lads = [it for it in (raw.get("items") or []) if it.get("pos") and p0[1] - it["pos"][1] >= 2.5]
     if not lads:  # in view from the gate only at some angles: step toward the ladder's top first
         tr = call("travel_to", x=KNOTTED_ROOTS[0] + 4.0, y=p0[1], z=KNOTTED_ROOTS[2] + 8.0)
         if "started" in tr:
             call("wait_for", target="queue", timeout_s=40, lead_s=0)
-        me = (status().get("party") or [{}])[0]
-        p0 = me.get("pos") or p0
+        p0 = me_pos()
         raw = S.game.try_rpc("state.nearby", {"radius": 40, "kinds": ["ladder"]}) or {}
         lads = [it for it in (raw.get("items") or []) if it.get("pos") and p0[1] - it["pos"][1] >= 2.5]
     if not need(bool(lads), "ladder from the top", f"no ladder foot >= 2.5 m below the party at {p0} "
@@ -456,21 +463,22 @@ def ladder_from_top() -> None:
         return
     lad = min(lads, key=lambda it: (it["pos"][0] - p0[0]) ** 2 + (it["pos"][2] - p0[2]) ** 2)
     h = S.H.get(lad["uuid"], lad.get("name"))
-    def lead_y() -> float:
-        return float(((status().get("party") or [{}])[0].get("pos") or [0, 0, 0])[1])
-
+    act, y0 = heights()
+    name = next((r.get("name") for r in status().get("party") or [] if r.get("uuid") == act), "?")
     out, dt = took("interact", target=h)
-    ys = [lead_y()]
-    for _ in range(16):  # the climb animation runs on after the interact job ends
-        if ys[-1] < p0[1] - 2:
+    foot = float(lad["pos"][1])
+    ys, t_c = y0, time.monotonic()
+    for _ in range(24):  # the climb runs on after the interact job ends (followers climb too)
+        _, ys = heights()
+        if ys.get(name, 99) < foot + 1.5:
             break
         time.sleep(0.5)
-        ys.append(lead_y())
-    y1 = ys[-1]
-    ok = "FAILED" not in out and "REFUSED" not in out and y1 < p0[1] - 2
-    item("ladder from the top", "PASS" if ok else "FAIL",
-         f"{lad.get('name')} (foot y {lad['pos'][1]:.1f}) {dt:.1f}s + {0.5 * (len(ys) - 1):.1f}s; y {p0[1]:.1f}->{y1:.1f}; "
-         f"{first_line(out)}")
+    t_c = time.monotonic() - t_c
+    climbed = [n for n in ys if ys[n] < foot + 1.5]
+    ok = "FAILED" not in out and "REFUSED" not in out and name in climbed
+    item("ladder from the top (active character climbs)", "PASS" if ok else "FAIL",
+         f"{lad.get('name')} (foot y {foot:.1f}) {dt:.1f}s + {t_c:.1f}s; active={name}; at the foot={climbed}; heights "
+         + ", ".join(f"{n} {y0.get(n, 0):.1f}->{ys[n]:.1f}" for n in ys) + f"; {first_line(out)}")
     # back to the gate for the entrance check (up the ladder or round by the path)
     call("travel_to", x=-183.0, y=38.0, z=99.0)
     for _ in range(3):

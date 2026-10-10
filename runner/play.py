@@ -1944,7 +1944,14 @@ class Runner:
 
         def work():
             log(f"{sid}: memory keeper starting ({model}, effort {effort or 'default'}, ≤{minutes:g} min)")
-            r = K.run_keeper(self.mem, n, base, model, effort, minutes)
+            try:   # stored level-up plan lines the game refused this session: the keeper rewrites them
+                refused = K.refused_plans(read_actions_since(res.started))
+            except Exception as e:  # noqa: BLE001 - never stops the keeper
+                refused = []
+                log(f"{sid}: refused plan lines not read: {e!r}")
+            if refused:
+                log(f"{sid}: refused plan lines for the keeper: {', '.join(x['name'] + ' L' + str(x['level']) for x in refused)}")
+            r = K.run_keeper(self.mem, n, base, model, effort, minutes, refused=refused)
             log(r.summary())
             self.event("memory_keeper", session=sid, status=r.status, seconds=r.seconds, files=r.files,
                        commit=r.commit, timed_out=r.timed_out, reverted=r.reverted, lint_errors=r.lint_errors[:5])

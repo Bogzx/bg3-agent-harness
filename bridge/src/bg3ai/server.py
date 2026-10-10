@@ -338,7 +338,9 @@ def _keep_read(ui: Any) -> None:
     pop = ui.get("popup") if isinstance(ui, dict) and ui.get("screen") == "book" else None
     if isinstance(pop, dict) and pop.get("text"):
         try:
-            lore.remember(MEMORY, H.scrub(str(pop.get("title") or "")), H.scrub(str(pop["text"])))
+            text = H.scrub(str(pop["text"]))
+            title = str(pop.get("title") or "") or (text[:60].rsplit(" ", 1)[0] + "…" if len(text) > 60 else text)
+            lore.remember(MEMORY, H.scrub(title), text)
         except Exception:  # best effort: never breaks a read
             pass
 
@@ -5702,8 +5704,8 @@ def wiki_search(query: str, limit: int = 5) -> str:
 
 
 @mcp.tool()
-def wiki_page(title: str, section: str = "", max_chars: int = 5000) -> str:
-    """Read a bg3.wiki page (or one section) as plain text."""
+def wiki_page(title: str, section: str = "", max_chars: int = 2500) -> str:
+    """Read a bg3.wiki page (or one section) as plain text. A whole page is cut at max_chars and lists its sections: read the one you need with section= (S018-S027 pages ran ~2.5 KB median, most of it unread). For a puzzle, recall(query) and get_nearby(kinds="props") first."""
     from .wiki import format_page, wiki_page as wp
 
     try:

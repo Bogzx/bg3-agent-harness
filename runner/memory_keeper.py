@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -140,7 +141,36 @@ def harness_news(knowledge_dir: Path = KNOWLEDGE, last: int = 12) -> list[str]:
     return [ln for ln in text.splitlines() if ln.startswith("- 20")][-last:]
 
 
-def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: float) -> str:
+_PLAN_NOTE = re.compile(r"\(plan: (?P<name>[^()]+?) L(?P<lvl>\d{1,2}) from memory/party-build\.md\)")
+_REFUSED = re.compile(r"not offered|already known|needs -?\d+ more|FAILED", re.I)
+REFUSED_MAX_CHARS = 1500
+
+
+def refused_plans(actions: list[dict]) -> list[dict]:
+    """[{name, level, problems}] for stored party-build.md plan lines the game refused this session (level_up
+    results, runtime/actions.jsonl) and that no later call completed. level_up's result already carries what the
+    game offered ("can pick: …", "options={…}"): the keeper rewrites the line from it, so the next level_up
+    completes instead of failing once per refused line (live 12:2x: Wyll L5 "Thirsting Blade: not offered")."""
+    last: dict[tuple[str, int], dict] = {}
+    for rec in actions:
+        if rec.get("tool") != "level_up" or not isinstance(rec.get("result"), str):
+            continue
+        text = rec["result"]
+        start = 0
+        for m in _PLAN_NOTE.finditer(text):   # a camp member's result holds one chunk per level: "L4: … (plan: …)"
+            chunk = text[start:m.start()]
+            start = m.end()
+            key = (m.group("name").strip(), int(m.group("lvl")))
+            done = "level_up: done" in chunk and not re.search(r"not offered|already known", chunk)
+            if done:
+                last.pop(key, None)
+            elif _REFUSED.search(chunk):
+                last[key] = {"name": key[0], "level": key[1], "problems": chunk.strip()[-REFUSED_MAX_CHARS:]}
+    return list(last.values())
+
+
+def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: float,
+                 refused: list[dict] | None = None) -> str:
     logs = ", ".join(f"sessions/{M.session_id(n)}.md" for n in logs_to_read(mem, sid_n)) or "(none)"
     stale = L.stale_files(mem, sid_n + 1)
     stale_txt = ", ".join(f"{rel} ({age} sessions)" for rel, age in stale) or "none"
@@ -202,6 +232,18 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
             "steps for things a tool now does. Keep quirks no entry addresses.",
             *news,
         ]
+    if refused:
+        lines += [
+            "",
+            "REFUSED LEVEL-UP PLAN LINES (do this FIRST, in party-build.md): the game refused these stored lines this "
+            "session. Rewrite each `- <Name> L<n>: {json}` line so level_up completes next time: remove picks the game "
+            "says are 'not offered' or 'already known', and fill every choice it says 'needs N more' with picks from "
+            "ITS list ('can pick: …' / 'options={…}'), keeping the build's intent from the rest of party-build.md. "
+            "Valid JSON, same keys (subclass, feat, abilities, spells, cantrips, skills, passives). Then add one line "
+            f"`- NOTE {sid}: <Name> L<n> line rewritten from the game's offer list` under it.",
+        ]
+        for r in refused:
+            lines.append(f"- {r['name']} L{r['level']}: {r['problems']}")
     if M.compaction_due(mem, sid_n + 1):
         last = M.last_compacted_session(mem)
         lines += [
@@ -325,7 +367,8 @@ def commit(mem: Path, rels: list[str], message: str) -> str | None:
 
 
 def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL, effort: str | None = KEEPER_EFFORT,
-               minutes: float = KEEPER_MINUTES, claude: str = "claude", knowledge: Path = KNOWLEDGE) -> KeeperResult:
+               minutes: float = KEEPER_MINUTES, claude: str = "claude", knowledge: Path = KNOWLEDGE,
+               refused: list[dict] | None = None) -> KeeperResult:
     """One keeper pass for the session that just ended (number sid_n). Never raises."""
     sid = M.session_id(sid_n)
     res = KeeperResult(sid)
@@ -337,7 +380,7 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
         snap = snapshot(mem)
         log_path = Path(f"{log_base}.jsonl")
         sess = str(uuid.uuid4())
-        prompt = build_prompt(mem, sid, sid_n, report, minutes)
+        prompt = build_prompt(mem, sid, sid_n, report, minutes, refused)
         rc, res.timed_out = _run_claude(keeper_cmd(prompt, mem, model, effort, sess, False, claude, knowledge),
                                         mem, log_path, end - time.time())
         res.exit_code = rc

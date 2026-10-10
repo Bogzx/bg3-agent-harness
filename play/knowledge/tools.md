@@ -34,7 +34,7 @@ Lines a result may end with:
 - `get_journal(quest="")` → active quests with latest entry; `quest="<words>"` → all entries of one quest.
 - `get_map(full=false)` → (after the first call: only new waypoints/objectives, unless you changed area) region, unlocked waypoints, all active quest objectives (`OBJECTIVE o1 <label> 16m W [quest]`, or "(another area)"), your markers. `get_status()` shows the objectives in this area (max 3).
 - `get_events()` → never blocks: everything since your last call, plus `RUNNING` jobs/queues (what's still walking, what's queued).
-- `wiki_search(query, limit=5)` / `wiki_page(title, section="", max_chars=5000)` → bg3.wiki; tag it `[wiki]`.
+- `wiki_search(query, limit=5)` / `wiki_page(title, section="", max_chars=2500)` → bg3.wiki; tag it `[wiki]`. A whole page is cut at max_chars and lists its sections: ask for the one you need with `section=`. For a puzzle, `recall(query)` (what you read) and `get_nearby(kinds="props")` come first.
 - `screenshot(scale=0.5)` / `zoom(x, y, w, h)` → pixels: only when text can't answer (zoom crops the last screenshot; fractions 0-1).
 - `ui_dump(text_only=true)` → text and buttons of the current UI screen; cheaper than a screenshot.
 - `session_clock()` → time left in the session.
@@ -56,6 +56,10 @@ Lines a result may end with:
   shown: answer, then call it again. The newcomer's pending level up shows as `LEVEL UP` right after.
   get_status/look print a `PARTY:` line when a swap pays off (a camp companion tied to this region or an
   active quest, a missing role or skill) — the line is the harness's suggestion, the choice is yours.
+- `lockpick(target, who)` / `disarm(trap, who)` → pick a visible lock (Thieves' Tools) / disarm a DISCOVERED trap (Trap Disarm Toolkit): opens the roll, then `roll_check`. Your best Sleight of Hand member (`who`) gets the best odds.
+- `set_reactions(who, settings="")` → list or change a member's reaction prompts (`{"Shield": "always", "Opportunity Attack": "ask"}`).
+- `dismiss_popups()` → close info popups (tutorials, reward/book panels); decision boxes are never closed (answer them with `confirm`).
+- `click_on(target, button="left")` → last resort before `click`: verified-hover click on a visible entity no other tool covers. Log each use.
 - `place_marker(label, target | x,y,z)` / `delete_marker(marker_id)` → your own persistent map markers.
 - `wait(seconds=3)` → let game time pass. Prefer `wait_for`, which returns as soon as the thing happens.
 - Never `wait_for("combat_started")` (or dialogue_started) to ask "did that start a fight?": the action's own

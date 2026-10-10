@@ -327,6 +327,9 @@ def render_nearby(n: dict, H: Handles, max_items: int = 30) -> str:
     return "\n".join(lines)
 
 
+BOOK_SHOWN = 2500  # chars of an open book shown per result
+
+
 def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
     lines = []
     d = ui.get("dialogue")
@@ -352,6 +355,9 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
     if rx:
         lines.append("REACTION " + compact(rx, H))
     p = ui.get("popup")
+    if p and ui.get("screen") == "book" and len(str(p.get("text") or "")) > BOOK_SHOWN:
+        # a whole book in every status line while it is open: the start, the rest is kept for recall()
+        p = {**p, "text": str(p["text"])[:BOOK_SHOWN] + f"… (+{len(str(p['text'])) - BOOK_SHOWN} chars: recall(\"<words>\") searches the whole text)"}
     if p:
         lines.append("POPUP " + compact(p, H) + (" → answer with confirm(\"yes\"|\"no\"|label)"
                                                  if p.get("decision") else ""))

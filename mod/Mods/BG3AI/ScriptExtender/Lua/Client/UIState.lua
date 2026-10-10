@@ -556,6 +556,20 @@ function S.popup(el)
     return p
 end
 
+-- An open book/note/letter: its text is not in TextBlocks (S.popup only saw the page number "1"); the
+-- ls.LSBookPage elements carry the whole text in their Text property (live 13:4x, Ghustil Stornugoss'
+-- Research Notes). Named reads only (no GetAllProperties on live elements).
+function S.book(wmap)
+    local w = wmap.Book and wmap.Book.el
+    if not w then return nil end
+    for _, nm in ipairs({ "PART_LeftPage", "PART_RightPage" }) do
+        local e = UI.byName(w, nm, { hidden = true })
+        local t = e and UI.clean(UI.get(e, "Text"))
+        if t then return { text = t } end
+    end
+    return nil
+end
+
 function S.tutorial(wmap)
     local w = wmap.ModalTutorial or wmap.TutorialPopup
     if not w then return nil end
@@ -714,6 +728,8 @@ function S.state(args)
     elseif scr == "game_menu" or scr == "main_menu" or scr == "save_load" or scr == "book"
         or scr == "reward" or scr == "options" then
         res.popup = S.popup(wmap[res.page].el)
+        local b = scr == "book" and S.book(wmap)
+        if b then res.popup.title, res.popup.text = nil, b.text end -- the popup's "title" was the page number
     end
 
     -- A dialogue can sit under a roll or popup: keep its context.

@@ -158,7 +158,11 @@ def harness_news(since: str | None) -> list[str]:
     cut = (since or "")[:16].replace("T", " ")
     new = [e for e in entries if e[0] > cut] if cut else entries
     new.sort()
-    return [f"- {t} {text}" for t, text in new[-NEWS_MAX:]]
+    out = [f"- {t} {text}" for t, text in new[-NEWS_MAX:]]
+    if len(new) > NEWS_MAX:  # after a long break 15+ entries: say the rest exist instead of dropping them silently
+        out.insert(0, f"- (+{len(new) - NEWS_MAX} older changes since your last session, from {new[0][0]}: "
+                      "Read play/knowledge/harness-news.md once now)")
+    return out
 
 
 def memory_health(mem: Path, current: int | None) -> str | None:

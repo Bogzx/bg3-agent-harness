@@ -11,8 +11,13 @@
 3. `get_journal()` for what the game says to do (`get_journal(quest="<words>")` shows a quest's full
    history). `get_map()` lists waypoints and your own markers.
 4. In-region leads from locations.md ("Unexplored: …").
-5. Need the wiki (a quest, a puzzle, an item)? Start a walk or queue first (toward the likeliest lead),
-   then `wiki_search`/`wiki_page` while it runs; never stand still to read.
+5. A puzzle (paintings, statues, plates, a door with no handle, a password)? First what you have SEEN:
+   `recall("<words>")` (every book/note/letter you opened + the journal: the order, the password, the hint
+   is usually there) and `get_nearby(kinds="props")` (the puzzle pieces' names and visible states, e.g.
+   `[lit]`). Only then the wiki.
+6. Need the wiki (a quest, a puzzle, an item)? Start a walk or queue first (toward the likeliest lead),
+   then `wiki_search` → `wiki_page(title, section="<the part you need>")` while it runs (a whole page is cut
+   at 2500 chars and lists its sections); never stand still to read.
 Don't try to uncover every corner. Once `get_frontier` shows nothing new that matters, move on and mark
 the region done in locations.md.
 

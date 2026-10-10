@@ -823,3 +823,18 @@ class WeaponRanking(unittest.TestCase):
         inv = self.inv({"prof": ["SimpleWeapons"], "str": 16},
                        [self.mh(10, "Greatsword", "2d6", "Greatswords|MartialWeapons", twohanded=True)])
         self.assertEqual(economy.upgrades(inv), [])
+
+
+class ContestedWeapon(unittest.TestCase):
+    def test_melee_member_beats_a_caster_for_a_magic_weapon(self):
+        sh, gale = _u(3), _u(7)
+        inv = {"members": {sh: {"prof": ["SimpleWeapons", "MediumArmor", "Shields"], "str": 13, "dex": 13},
+                           gale: {"prof": ["Daggers", "Quarterstaffs", "LightArmor"], "str": 8, "dex": 13}},
+               "items": [{"uuid": _u(10), "name": "Mace", "owner": sh, "equipped_slot": "MeleeMainHand",
+                          "slot_type": "MeleeMainHand", "dmg": "1d6", "prof": "Maces|SimpleWeapons"},
+                         {"uuid": _u(11), "name": "Quarterstaff", "owner": gale, "equipped_slot": "MeleeMainHand",
+                          "slot_type": "MeleeMainHand", "dmg": "1d6", "prof": "Quarterstaffs|SimpleWeapons"},
+                         {"uuid": _u(12), "name": "Syringe", "owner": gale, "slot_type": "MeleeMainHand", "dmg": "1d4",
+                          "ench": 1, "rarity": "uncommon", "finesse": True, "prof": "Daggers|SimpleWeapons"}]}
+        ups = economy.upgrades(inv)
+        self.assertEqual([(o["who"], o["name"]) for o in ups], [(sh, "Syringe")])

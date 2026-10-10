@@ -50,6 +50,13 @@ class KeepFromScreen(unittest.TestCase):
         try:
             server._keep_read({"screen": "book", "popup": {"title": "Note", "text": "Press them in order."}})
             server._keep_read({"screen": "dialogue", "popup": {"title": "X", "text": "not a book"}})
+            long = "[A massive compendium of notes on illithid parasites.] Sample 231 Observations: " + "x " * 2000
+            server._keep_read({"screen": "book", "popup": {"text": long}})  # live: book panels have no title
+            self.assertIn("READ [A massive compendium of notes on illithid parasites.]…", lore.search(d, "compendium"))
+            from bg3ai import render
+            shown = "\n".join(render.render_ui({"screen": "book", "popup": {"text": long}}, server.H))
+            self.assertLess(len(shown), render.BOOK_SHOWN + 200)
+            self.assertIn("recall(", shown)
             self.assertIn("READ Note: Press them in order.", lore.search(d, "order"))
             self.assertNotIn("not a book", (d / lore.FILE).read_text())
         finally:

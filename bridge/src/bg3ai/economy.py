@@ -253,6 +253,10 @@ def upgrades(inv: dict) -> list[dict]:
                 if _caster(prof) and _rar(it) <= _rar(cur or {}):
                     continue  # casters fight with spells: only magic weapons are worth a swap
             gain = _score(it, mem) - (_score(cur, mem) if cur else 0)
+            if slot == "MeleeMainHand" and _caster(prof) and cur:
+                # a caster fights with spells: only the magic counts, so a melee member wins a contested weapon
+                # (live 13:4x: STR-8 Gale's finesse bonus outbid Shadowheart for the +1 Syringe)
+                gain = min(gain, (_rar(it) - _rar(cur)) * 10)
             if cur is None and "ac" not in it and "dmg" not in it and _rar(it) == 0:
                 continue  # a plain hat in an empty slot is not worth a line
             if gain > 0:

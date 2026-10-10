@@ -191,6 +191,37 @@ class KeeperTest(MemoryTestCase):
         self.assertIn("S001-S010", p)
         self.assertNotIn("COMPACTION DUE", K.build_prompt(self.mem, "S003", 3, "", 5))
 
+    # Live 12:2x (runtime/actions.jsonl): Wyll's stored L5 line refused, then the camp path's two-level result.
+    WYLL_FAIL = ("level_up: FAILED \u2014 finish: level up is not complete, not finishing: passive Thirsting Blade: not "
+                 "offered; passive choice 'Warlock invocations L5' needs 1 more in plan.passives; can pick: Mire the Mind, "
+                 "Devil's Sight, Fiendish Vigour; spell choice 'spells' needs 1 more spell in plan.spells; can pick: "
+                 "Counterspell, Fireball, Hypnotic Pattern \u2014 options={Warlock invocations L5=[Mire the Mind,Devil's "
+                 "Sight,Fiendish Vigour]}\n(plan: Wyll L5 from memory/party-build.md)")
+    CAMP_OK = ("level_up: done \u2014 Wyll (camp member): swapped in\nL4: level_up: done \u2014 complete\n(plan: Wyll L4 "
+               "from memory/party-build.md) (clicked spells: Booming Blade)\nL5: level_up: done \u2014 finished complete\n"
+               "(plan: Wyll L5 from memory/party-build.md)")
+
+    def test_refused_plans_from_level_up_results(self):
+        acts = [{"tool": "get_status", "result": "x"},
+                {"tool": "level_up", "result": self.WYLL_FAIL},
+                {"tool": "level_up", "result": "level_up: done \u2014 complete\n(plan: Gale L5 from memory/party-build.md)"}]
+        r = K.refused_plans(acts)
+        self.assertEqual([(x["name"], x["level"]) for x in r], [("Wyll", 5)])
+        self.assertIn("Thirsting Blade: not offered", r[0]["problems"])
+        self.assertIn("can pick: Mire the Mind", r[0]["problems"])
+        p = K.build_prompt(self.mem, "S012", 12, "", 5, r)
+        self.assertIn("REFUSED LEVEL-UP PLAN LINES", p)
+        self.assertIn("- Wyll L5: level_up: FAILED", p)
+        self.assertNotIn("REFUSED LEVEL-UP", K.build_prompt(self.mem, "S012", 12, "", 5))
+
+    def test_refused_line_completed_later_is_dropped(self):
+        acts = [{"tool": "level_up", "result": self.WYLL_FAIL}, {"tool": "level_up", "result": self.CAMP_OK}]
+        self.assertEqual(K.refused_plans(acts), [])
+        # each chunk of a camp result is its own level: a refused L5 after a done L4 is still reported
+        mixed = self.CAMP_OK.split("\nL5:")[0] + "\nL5: " + self.WYLL_FAIL
+        self.assertEqual([(x["name"], x["level"]) for x in K.refused_plans([{"tool": "level_up", "result": mixed}])],
+                         [("Wyll", 5)])
+
     def test_logs_to_read_since_stalest_file(self):
         self.assertEqual(K.logs_to_read(self.mem, 3), [1, 2, 3])
         for n in range(4, 15):

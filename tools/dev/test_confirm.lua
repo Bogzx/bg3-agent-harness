@@ -603,5 +603,34 @@ ok(j.status == "done" and restCmds[1] == "AutoSelectCommand" and restCmds[#restC
     .. table.concat(restCmds, ","))
 BG3AI.UI.command, BG3AI.UI.path = _cmd, _path2
 
+-- ui.roll: a start command sent while the roll panel is still opening is dropped (live 2026-10-10 lockpick:
+-- WaitForStart for 20 s, timeout). The job sends it again until the roll starts.
+do
+    local roll = { RollState = "WaitForStart", starts = 0, accept_after = 2 }
+    widgets = { ActiveRoll = { name = "ActiveRoll", visible = true, DataContext = roll } }
+    local _c, _p = BG3AI.UI.command, BG3AI.UI.prop
+    BG3AI.UI.prop = function(e, k) if e == roll then return roll[k] end return _p(e, k) end
+    BG3AI.UI.command = function(dc, name, param, dry)
+        if dc == roll and name == "UserTriggeredNextPhaseCommand" then
+            if dry then return true end
+            roll.starts = roll.starts + 1
+            if roll.starts > roll.accept_after then roll.RollState = "ResultReady" end   -- the first ones are dropped
+            return true
+        end
+        return _c(dc, name, param, dry)
+    end
+    BG3AI.UI.widgetMap = BG3AI.UI.widgetMap or function() return { ActiveRoll = { el = widgets.ActiveRoll } } end
+    BG3AI.UIState.roll = BG3AI.UIState.roll or function() return { phase = "result" } end
+    local jr = run(ops["ui.roll"]({}).job, 10000)
+    ok(jr.status == "done" and roll.starts == 3 and jr.result.retriggered == 2,
+        "ui.roll re-sends the start until the roll starts: " .. tostring(jr.status) .. " starts=" .. roll.starts)
+    -- an accepted first command: no re-send
+    roll.RollState, roll.starts, roll.accept_after = "WaitForStart", 0, 0
+    jr = run(ops["ui.roll"]({}).job, 10000)
+    ok(jr.status == "done" and roll.starts == 1 and jr.result.retriggered == nil, "ui.roll: one start when it takes")
+    BG3AI.UI.command, BG3AI.UI.prop = _c, _p
+    widgets = {}
+end
+
 print(("%d passed, %d failed"):format(passes, fails))
 os.exit(fails == 0 and 0 or 1)

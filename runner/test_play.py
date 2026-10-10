@@ -956,19 +956,25 @@ class MemoryKeeperHook(unittest.TestCase):
                 start_keeper = P.Runner.start_keeper
                 join_keeper = P.Runner.join_keeper
 
-            def fake_run(mem, n, base, model, effort, minutes):
+            def fake_run(mem, n, base, model, effort, minutes, refused=None):
                 calls.append((n, Path(base).name, model, effort, minutes))
+                got_refused.append(refused)
                 time.sleep(0.2)
                 return K.KeeperResult("S007", status="ok", seconds=0.2, files=["quests.md"], commit="abc")
 
             r = FakeRunner()
             res = P.SessionResult("S007", "c", 0, "exited", 0.0, 1200.0)
-            with mock.patch.object(K, "run_keeper", fake_run):
+            got_refused = []
+            wyll = {"tool": "level_up", "result": "level_up: FAILED — passive Thirsting Blade: not offered; can pick: "
+                    "Devil's Sight\n(plan: Wyll L5 from memory/party-build.md)"}
+            with mock.patch.object(K, "run_keeper", fake_run), \
+                    mock.patch.object(P, "read_actions_since", lambda t, *a, **k: [wyll]):
                 r.start_keeper("S007", res)
                 self.assertTrue(r.keeper_thread.is_alive())
                 r.join_keeper()
             self.assertIsNone(r.keeper_thread)
             self.assertEqual(calls, [(7, "S007-keeper", "sonnet", "low", 5.0)])
+            self.assertEqual([(x["name"], x["level"]) for x in got_refused[0]], [("Wyll", 5)])
             self.assertEqual(events[0][0], "memory_keeper")
             self.assertEqual(events[0][1]["status"], "ok")
             hist = json.loads((Path(d) / "keeper_history.jsonl").read_text())

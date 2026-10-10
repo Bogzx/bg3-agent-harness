@@ -602,16 +602,34 @@ local function rollPhase(dc)
     return st
 end
 
-local function waitRollResult(kind)
-    return waitJob(kind, 20000, function()
+-- A start command sent while the panel is still opening is dropped: live 2026-10-10 a lockpick roll_check ~1 s
+-- after the roll screen appeared sat in WaitForStart for 20 s (timeout); the same command 2 s later rolled.
+-- So while the roll has not started, the start command is sent again every ROLL_RETRIGGER_MS.
+local ROLL_RETRIGGER_MS = 1200
+local function startRoll(dc)
+    local ok, err = UI.command(dc, "UserTriggeredNextPhaseCommand", nil)
+    if not ok then ok, err = UI.command(dc, "TriggerNextPhaseCommand", nil) end
+    return ok, err
+end
+
+local function waitRollResult(kind, retrigger)
+    return waitJob(kind, 20000, function(j)
         local w, dc = rollWidget()
         if not w then return "done", { closed = true } end
         local st = rollPhase(dc)
         if st == "ResultReady" or st == "WaitForReRoll" then
             local wmap = UI.widgetMap()
-            return "done", { roll = S.roll(wmap) }
+            return "done", { roll = S.roll(wmap), retriggered = (j.retriggered or 0) > 0 and j.retriggered or nil }
         end
-    end)
+        if retrigger and (st == "WaitForStart" or st == "IntroductionAnimation")
+                and RPC.now_ms() - (j.triggered_at or 0) >= ROLL_RETRIGGER_MS then
+            if j.triggered_at and st == "WaitForStart" then
+                startRoll(dc)
+                j.retriggered = (j.retriggered or 0) + 1
+            end
+            j.triggered_at = RPC.now_ms()
+        end
+    end, function(j) j.triggered_at = RPC.now_ms() end)
 end
 
 RPC.register("ui.roll", function(args)
@@ -632,7 +650,7 @@ RPC.register("ui.roll", function(args)
         local ok, err = UI.command(dc, "UserTriggeredNextPhaseCommand", nil, args.dry)
         if not ok then check(UI.command(dc, "TriggerNextPhaseCommand", nil, args.dry), err) end
         if args.dry then return { can = true } end
-        return waitRollResult("ui.roll")
+        return waitRollResult("ui.roll", true)
     elseif st == "ResultReady" or st == "WaitForReRoll" then
         if args.reroll then
             check(UI.command(dc, "RollAgainCommand", nil, args.dry))
