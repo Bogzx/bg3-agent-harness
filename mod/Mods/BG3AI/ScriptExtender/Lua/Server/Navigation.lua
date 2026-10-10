@@ -1614,11 +1614,17 @@ function N.landing(charUuid, pos)
         for _, h in ipairs(hs) do if type(h) == "number" then fl[#fl + 1] = round(h, 1) end end
     end
     local why = bad(pos)
-    if not why and #fl > 0 and not floorAt(pos[1], pos[3], pos[2]) then
+    if not why and #fl == 0 and okh then
+        -- S038 20:48 / S039 21:53: a column with no AI-grid floor at all (the Shadowfell's void) was "safe", and the
+        -- jump cast there froze the engine (13 GB, OOM) both times. Never a landing.
+        why, out.void = "no_floor", true
+    elseif not why and #fl > 0 and not floorAt(pos[1], pos[3], pos[2]) then
         why = "no_floor"
         table.sort(fl, function(a, b2) return math.abs(a - pos[2]) < math.abs(b2 - pos[2]) end)
         out.floors = fl
     end
+    local slowLevel = N.levelSlow()
+    if slowLevel then out.level_off = tostring(slowLevel.why) end
     -- A guessed y over a chasm with a real floor in the same column (S032 17:32 / 17:35, the Gauntlet's broken
     -- staircase, the wiki's "jump over it": y -1 and -2 asked, both "in Chasm", Yurgir parked): the Chasm is the void
     -- around the floor, so jump to that floor when it is in jumping height (up JUMP_UP_MAX_M, down JUMP_SAFE_DROP_M).

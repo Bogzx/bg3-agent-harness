@@ -322,20 +322,23 @@ GAME_COMM = "bg3"
 
 
 def game_pid(proc: Path = Path("/proc")) -> int | None:
-    """The running game's pid (its comm is "bg3"), or None."""
+    """The running game's pid (its comm is "bg3"), or None. The Steam runtime starts two "bg3" processes, a ~60 MB
+    parent and the real game as its child (S039: the mem records said rss_mb 59 for a 5 GB game): the biggest wins."""
     me = os.getuid()
+    best: tuple[int, int] | None = None
     try:
         for d in proc.iterdir():
             if not d.name.isdigit():
                 continue
             try:
                 if d.stat().st_uid == me and (d / "comm").read_text().strip() == GAME_COMM:
-                    return int(d.name)
+                    cand = (rss_mb(int(d.name), proc) or 0, int(d.name))
+                    best = cand if best is None or cand > best else best
             except OSError:
                 continue
     except OSError:
         pass
-    return None
+    return best[1] if best else None
 
 
 def rss_mb(pid: int | None, proc: Path = Path("/proc")) -> int | None:
@@ -350,6 +353,9 @@ def rss_mb(pid: int | None, proc: Path = Path("/proc")) -> int | None:
     return None
 
 
+PID_RECHECK_S = 60.0
+
+
 class MemSampler:
     """Decides when to write a mem record; rss() and lua(context) are injectable for tests."""
 
@@ -357,14 +363,16 @@ class MemSampler:
                  rss=None, now=time.time):
         self.rec, self.game, self.every_s, self.jump_mb, self.now = rec, game, every_s, jump_mb, now
         self._pid: int | None = None
+        self._pid_t = 0.0
         self.rss = rss or self._game_rss
         self.last_t = now()  # the first record a minute in (a fresh bridge's game is still loading)
         self.last_rss: int | None = None
 
     def _game_rss(self) -> int | None:
         r = rss_mb(self._pid)
-        if r is None:
-            self._pid = game_pid()
+        if r is None or self.now() - self._pid_t >= PID_RECHECK_S:
+            # again now and then: at a game start the parent can be the bigger one for a moment
+            self._pid, self._pid_t = game_pid(), self.now()
             r = rss_mb(self._pid)
         return r
 

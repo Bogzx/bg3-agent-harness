@@ -1421,5 +1421,21 @@ test("routeAhead: standing off the walkable grid -> unknown_reason says so (S039
     assert(r.unknown_reason and r.unknown_reason:find("no floor under"), tostring(r.unknown_reason))
 end)
 
+test("landing: a column with no ground at all is never a landing (S038/S039 void jumps froze the game)", function()
+    local savedH = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function(x) if x > 2 then return {} end return { 0.0 } end
+    local ok, err = pcall(function()
+        local r = N.landing(P1, { 4, 20, 0 })
+        eq(r.safe, false, "not safe"); eq(r.no_floor, true, "no_floor"); eq(r.void, true, "void")
+        onLevel("SCL_Main_A", function()
+            N.killLevel(nil, "the game died twice")
+            r = N.landing(P1, { 4, 20, 0 })
+        end)
+        eq(r.level_off, "the game died twice", "says planning is off")
+    end)
+    Ext.Level.GetHeightsAt = savedH
+    if not ok then error(err, 0) end
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

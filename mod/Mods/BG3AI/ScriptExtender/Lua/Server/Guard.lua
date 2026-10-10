@@ -1060,6 +1060,27 @@ function G.jump_reach(char, from, pos)
     return m, m
 end
 
+-- A jump landing must have ground under it near its height, even with force: S038 20:48 and S039 21:53 the game
+-- froze (an engine allocation to 13 GB, OOM-killed) on a jump cast at a column with no AI-grid floor at all (the
+-- Shadowfell's void, (-408.5,1,-1437) and (-414,20,-1447)); a forced jump into the air over a Chasm was a fatal fall
+-- (S035/S038). The player's cursor refuses both.
+G.JUMP_FLOOR_SLACK_M = 4.0
+function G.jump_floor_ok(pos)
+    local ok, hs = pcall(Ext.Level.GetHeightsAt, pos[1], pos[3])
+    if not ok or type(hs) ~= "table" then return end -- can't tell
+    local near
+    for _, h in ipairs(hs) do
+        if type(h) == "number" and math.abs(h - pos[2]) <= G.JUMP_FLOOR_SLACK_M then near = true end
+    end
+    if #hs == 0 then
+        G.refuse(string.format("no ground at all under (%.1f,%.1f,%.1f) (the void): a jump there froze the game"
+            .. " twice; pick a landing on a floor you can see (get_layout / route)", pos[1], pos[2], pos[3]))
+    elseif not near then
+        G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in the air: no floor within %.0f m of that height;"
+            .. " give the floor's own y (get_layout / route)", pos[1], pos[2], pos[3], G.JUMP_FLOOR_SLACK_M))
+    end
+end
+
 -- HasLineOfSight(char, item) is false for a door, chest or barricade the
 -- character stands next to (its own collision blocks the ray: S024/S025 Knock
 -- on 3 locked doors from 1.5-2 m, attacks on a barricade and a door, 10 casts
@@ -1191,6 +1212,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     elseif pos then
         G.point_ok(char, pos)
         local p = G.pos(char)
+        if spell == G.JUMP_SPELL then G.jump_floor_ok(pos) end
         if spell == G.JUMP_SPELL and p then
             local dx, dz = pos[1] - p[1], pos[3] - p[3]
             local d = math.sqrt(dx * dx + dz * dz)

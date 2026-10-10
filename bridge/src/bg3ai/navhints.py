@@ -36,6 +36,8 @@ def landing_bad_text(lnd: dict) -> str:
         fl = lnd.get("floors") or []
         if fl:
             return f"is in the air: no floor at that height (the ground there is at y {N(fl[0])})"
+        if lnd.get("void"):  # S038 20:48 / S039 21:53: a jump cast at such a column froze the game (OOM) twice
+            return "is over the void: no ground at all under that spot (a jump there freezes the game)"
         return "is in the air: no floor at that height"
     bad = f"in {lnd['surface']}" if lnd.get("surface") else "on a blocked tile (wall or hole)"
     if lnd.get("short_pos") and not lnd.get("blocked"):
@@ -53,6 +55,9 @@ def jump_refusal(lnd: Any, asked: list[float]) -> str | None:
     plan = jump_plan_text(lnd.get("plan"))
     if not plan and lnd.get("plan_skipped"):  # the level's kill switch (S038 OOM): no search for a plan here
         plan = f" No jump plan: {lnd['plan_skipped']}; pick the landing from get_layout / a screenshot."
+    elif not plan and lnd.get("level_off"):  # S039 21:53: the 2nd crash on this level
+        plan = (f" No jump plan: jump planning is off on this level ({lnd['level_off']}); land only on a floor you can"
+                f" see (get_layout '.'/'_'), within jump reach.")
     if lnd.get("safe") is False and not lnd.get("suggest"):
         alt = (f" The nearest clear landing in reach is {P(lnd['nearest_clear'])}, "
                f"{N(lnd.get('nearest_clear_off_m', '?'))}m from it." if lnd.get("nearest_clear") and not plan else "")

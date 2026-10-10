@@ -1331,6 +1331,11 @@ reg("cast", function(args)
             end
             job.osi_task = "spell"
             job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
+            -- S039 21:53: the engine froze inside a jump cast and the crash left no trace: mark it in flight, so a
+            -- crash during the jump turns this level's jump planning off at the next start (Navigation.lua guard)
+            if pos and base == "Projectile_Jump" and BG3AI.Nav and BG3AI.Nav.inflight then
+                job.jump_marked = pcall(BG3AI.Nav.inflight, "jump", pos)
+            end
             if pos then
                 -- Engine form has 6 inputs (6th = WithoutMove), verified live
                 -- on bg3le; the 5-input form is kept as a fallback for builds
@@ -1342,6 +1347,7 @@ reg("cast", function(args)
             end
         end,
         on_finish = function(job)
+            if job.jump_marked then pcall(BG3AI.Nav.inflight, nil) end
             if not job.casted then return end
             -- Resource audit: charge whatever the engine did not.
             local after = G.resources(char)

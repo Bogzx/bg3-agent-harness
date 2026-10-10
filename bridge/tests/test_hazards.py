@@ -186,6 +186,13 @@ class JumpLanding(Base):
         self.assertIn("STOPPED", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
 
+    # S038 20:48 / S039 21:53: both freezes were a jump cast at a column with no ground at all.
+    def test_void_landing_is_refused(self):
+        self.g.landing = {"safe": False, "no_floor": True, "void": True, "dist_m": 7.0, "reliable_m": 4.5}
+        out = server.jump_to(-414.0, 20.0, -1447.0)
+        self.assertIn("is over the void: no ground at all under that spot", out)
+        self.assertEqual(self.g.ops("act.cast"), [])
+
     # S038 OOM: on a level the nav kill switch turned off, the refusal says why there is no plan.
     def test_too_far_on_a_killed_level_says_planning_is_off(self):
         self.g.landing = {"safe": True, "too_far": True, "dist_m": 11.0, "max_m": 8.5, "reliable_m": 4.5,

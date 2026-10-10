@@ -821,7 +821,10 @@ test("jump: a jump that went nowhere fails, a short landing says how far off (S0
     world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
     osiv[key("GetAbility", P1, "Strength")] = 16
     world[P1].pos = { 0, 0, 0 }
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { 0.0, -8.0 } end -- a floor at the landing's height (Guard.jump_floor_ok)
     local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 6, -8, 0 } }))
+    Ext.Level.GetHeightsAt = heights
     A.dispatch("CastSpell", { P1, "Projectile_Jump", "Projectile", "None", 0 })
     world[P1].pos = { 0.5, 0, 0 }
     A.dispatch("CastedSpell", { P1, "Projectile_Jump" })
@@ -845,6 +848,49 @@ test("jump: a jump that went nowhere fails, a short landing says how far off (S0
     tick(5)
     eq(j.status, "done", "landed"); eq(j.result.landed_m_from_target, nil, "on target (6 m)")
     world[P1].pos = { 0, 0, 0 }
+end)
+
+test("jump: never at the void or into the air, even forced (S038 20:48 / S039 21:53: two OOM freezes)", function()
+    stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
+    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
+    osiv[key("GetAbility", P1, "Strength")] = 16
+    world[P1].pos = { 0, 0, 0 }
+    local heights = Ext.Level.GetHeightsAt
+    local ok, err = pcall(function()
+        Ext.Level.GetHeightsAt = function() return {} end
+        local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 4, 20, 0 }, force = true }))
+        eq(j.status, "failed", "void"); assert(j.error:find("no ground at all"), j.error)
+        Ext.Level.GetHeightsAt = function() return { -155.0 } end
+        j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 4, -12, 0 } }))
+        eq(j.status, "failed", "air over a chasm"); assert(j.error:find("is in the air"), j.error)
+        Ext.Level.GetHeightsAt = function() return { 0.0 } end
+        j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 4, 0, 0 } }))
+        eq(j.status, "running", "a floor: goes " .. tostring(j.error))
+    end)
+    Ext.Level.GetHeightsAt = heights
+    if not ok then error(err, 0) end
+end)
+
+test("jump: the cast runs under the nav in-flight marker, cleared at the end (a crash inside kills the level)", function()
+    stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
+    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
+    osiv[key("GetAbility", P1, "Strength")] = 16
+    world[P1].pos = { 0, 0, 0 }
+    local marks = {}
+    BG3AI.Nav.inflight = function(o) marks[#marks + 1] = o or "clear" end
+    local ok, err = pcall(function()
+        local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 4, 0, 0 } }))
+        eq(marks[1], "jump", "marked at the order")
+        A.dispatch("CastSpell", { P1, "Projectile_Jump", "Projectile", "None", 0 })
+        world[P1].pos = { 4, 0, 0 }
+        A.dispatch("CastedSpell", { P1, "Projectile_Jump" })
+        tick(60)
+        eq(j.status, "done", "landed " .. tostring(j.error))
+        eq(marks[#marks], "clear", "cleared at the end")
+    end)
+    BG3AI.Nav.inflight = nil
+    world[P1].pos = { 0, 0, 0 }
+    if not ok then error(err, 0) end
 end)
 
 test("target not visible: names where the party last saw it (S026 09:02)", function()

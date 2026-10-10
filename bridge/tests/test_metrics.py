@@ -408,6 +408,11 @@ class Recording(unittest.TestCase):
             (proc / "self").mkdir()
             self.assertEqual(M.game_pid(proc), 4242)
             self.assertEqual(M.rss_mb(4242, proc), 5120)
+            # S039: the Steam runtime's ~60 MB "bg3" parent (a lower pid) must not win over the game
+            (proc / "4200").mkdir()
+            (proc / "4200" / "comm").write_text("bg3\n")
+            (proc / "4200" / "status").write_text("Name:\tbg3\nVmRSS:\t 61256 kB\n")
+            self.assertEqual(M.game_pid(proc), 4242)
             self.assertIsNone(M.rss_mb(99, proc))
             self.assertIsNone(M.rss_mb(None, proc))
 
