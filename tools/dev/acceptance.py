@@ -30,6 +30,7 @@ OUT = REPO / "runtime" / "acceptance"
 LOCK = REPO / "runtime" / "game.lock"
 BASE = "S027-start"            # the real playthrough state (after S026); loaded, never overwritten
 TRADE_SAVE = "S026-dammon-heat"  # Last Light Inn, Quartermaster Talli in view
+DOOR_SAVE = "S050-end"         # Lower City, beside the locked Steel Watch Foundry door (S050 04:12 lockpick hover_miss x4)
 SECTIONS = ["reads", "rest", "trade", "gear", "swap", "nav", "loads", "combat", "setup", "se", "act", "vis"]
 
 RESULTS: list[dict] = []
@@ -761,11 +762,28 @@ def sec_se() -> None:
             sub[k] = S.game.try_rpc("ui.props", {"widget": "CursorText", "path": k}, context="client")
         return {"props": pr, "objects": sub}
 
+    # 04:30 run: IsScreenFadeActive was still true right after the load: wait for the fade, else Z may do nothing.
+    def player_vals() -> dict:
+        out = {}
+        for path in ("CurrentPlayer", "CurrentPlayer.SelectedCharacter"):
+            pr = S.game.try_rpc("ui.props", {"widget": "CursorText", "path": path}, context="client")
+            for k, v in ((pr or {}).get("values") or {}).items() if isinstance(pr, dict) else []:
+                out[f"{path}.{k}"] = v
+        return out
+
+    for _ in range(20):
+        if not player_vals().get("CurrentPlayer.IsScreenFadeActive"):
+            break
+        time.sleep(0.5)
     before = texts()
+    vals0 = player_vals()
     call("press_key", key="Z")
     time.sleep(0.8)
+    vals1 = player_vals()
+    changed = {k: [vals0.get(k), v] for k, v in vals1.items() if vals0.get(k) != v}
     log("PROBE ui.state after Z (is the Jump targeting on?): "
         + json.dumps(S.game.try_rpc("ui.state", context="client"))[:1500])
+    log(f"PROBE player/selected values changed by Z: {json.dumps(changed)}")
     new_texts = []
     for x, y in ((0.55, 0.6), (0.9, 0.2)):
         call("click", x=x, y=y, button="none")
@@ -775,6 +793,13 @@ def sec_se() -> None:
         fresh = {w: ts for w, ts in fresh.items() if ts}
         new_texts.append(f"@{x},{y}: {json.dumps(fresh)[:400]}")
         log(f"PROBE new widget texts while targeting @{x},{y}: {json.dumps(fresh)}")
+        try:  # what a person sees there (is the jump arc / cursor text on?)
+            img = getattr(S.screenshot, "fn", S.screenshot)(scale=0.5)
+            shot = OUT / f"se-jump-probe-{x}-{y}.jpg"
+            shot.write_bytes(img.data)
+            log(f"PROBE screenshot {shot}")
+        except Exception as e:  # noqa: BLE001
+            log(f"PROBE screenshot failed: {e}")
         log(f"PROBE CursorText props @{x},{y}: {json.dumps(cursor_props())}")
         log(f"PROBE CursorText dump @{x},{y}: " + json.dumps(S.game.try_rpc(
             "ui.dump", {"root": "CursorText", "hidden": True, "text_only": False, "depth": 30, "max": 300},
@@ -788,6 +813,23 @@ def sec_se() -> None:
          f"new texts while targeting={got}; party moved {mv:.1f} m; screen after={after}; " + " | ".join(new_texts)[:220]
          + " (full: se.log PROBE lines)")
     load_verified(BASE)
+    # Lockpick on the S050 door (S050 04:11-04:12 + S051: 8x "hover_miss hovered_instead=[(an object with no id)]";
+    # S047 02:57: "nothing happened" while the game walked the actor to its lockpick spot). Opens the roll only:
+    # ESCAPE, then the base save is reloaded; nothing is rolled or saved.
+    if load_verified(DOOR_SAVE):
+        near = call("get_nearby", kinds="door", radius=20)
+        doors = re.findall(r"^\+?\s*(e\d+) ([^<\n]+?) <door>[^\n]*\blocked\b", near, re.M)
+        if need(bool(doors), "lockpick a door (no-id hover, walk wait)", f"no locked door within 20 m of {DOOR_SAVE}"):
+            h, name = doors[0]
+            out, dt = took("lockpick", target=h)
+            ok = "opened=roll" in out or "unlocked" in out
+            ev = (f"{h} {name.strip()}: {first_line(out)[:200]} ({dt:.1f}s) "
+                  + grab(r"hover_via=\w+|no_id_objects=\[[^\]]*\]|walked_m=[\d.]+", out))
+            item("lockpick a door (no-id hover, walk wait)", "PASS" if ok else "FAIL", ev)
+            if ui_screen() == "roll":
+                call("press_key", key="ESCAPE")
+        load_verified(BASE)
+
 
 
 FUNCS = {"reads": sec_reads, "rest": sec_rest, "trade": sec_trade, "gear": sec_gear, "swap": sec_swap,
@@ -967,6 +1009,17 @@ def sec_vis() -> None:
     ids = sorted(set(re.findall(r"\b[A-Z]{3}_Main(?:_A)?\b|\bTUT_Avernus_C\b", ex + la)))
     item("vis: no level ids in get_explored / look_at", "PASS" if not ids and ex else "FAIL",
          f"ids={ids}; explored: {first_line(ex)[:120]}; look_at: {first_line(la)[:80]}")
+    # 6c. the nav kill list: the current level not on it unless a jump really crashed the game (04:39 relaunch
+    #     false positive on CTY_Main_A); nav.route in budget on an unreachable goal far below (check_all 03:50 258 ms)
+    g = S.game.try_rpc("nav.level_guard", {}) or {}
+    here = g.get("here")
+    item("vis: current level not on the nav kill list", "PASS" if not here or "jump" in str(here.get("why")) else "FAIL",
+         f"level={g.get('level')} here={here} slow={list((g.get('slow') or {}) or [])}")
+    p = (status().get("party") or [{}])[0].get("pos") or [0, 0, 0]
+    r = S.game.try_rpc("nav.route", {"pos": [p[0] + 60, p[1] - 40, p[2]], "connectors": True}) or {}
+    ms = r.get("ms") or 0
+    item("vis: nav.route on a far-below goal in budget", "PASS" if ms < 150 else "FAIL",
+         f"{ms} ms; reachable={r.get('reachable')} lower={'yes' if r.get('lower') else 'no'} skipped={r.get('lower_skipped')}")
     # 7. journal: open quests without QuestIsAccepted (Find the Nightsong, companion quests) are listed
     jt = call("get_journal")  # also loads State.quests
     v = lua_server('local who=Osi.GetHostCharacter() local n,names=0,{} '

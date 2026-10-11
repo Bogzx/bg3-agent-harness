@@ -306,6 +306,7 @@ BG3AI.UI = {
             return true
         elseif name == "CustomEvent" and arg == "CloseWidget" then
             page.closes = (page.closes or 0) + 1
+            if page.sticky then return true end                     -- a page that ignores the close
             if page.chain then page.chain = nil end
             closePage()
             return true
@@ -322,6 +323,7 @@ local function run(args)
     for _ = 1, 2000 do
         if j.status then break end
         now = now + 100
+        if page and page.on_tick then page.on_tick() end   -- the game moving on by itself (an intro ending)
         j.on_tick(j)
     end
     return j
@@ -600,8 +602,46 @@ dc._p.LevelUpStep = "Started"
 dc._p.LevelUpCharacter = portrait
 before = opened
 j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
-check(j.status == "done" and opened == before + 1 and j.result.closed_page == "a page stuck in its intro",
-      "page stuck in its intro: closed and reopened")
+check(j.status == "done" and opened == before + 1 and tostring(j.result.closed_page):find("a page stuck in its intro", 1, true),
+      "page stuck in its intro: closed and reopened (after the intro wait)")
+-- 31d. S047/S048 (Act 3, L8, 12 failures): this character's page in its NORMAL intro (Started for ~2 s after the
+--      player's/game's Level Up click): waited for, then reused; never closed
+openPage(PAL)
+dc._p.LevelUpStep = "Started"
+dc._p.LevelUpCharacter = portrait
+local t31 = now
+page.on_tick = function() if now - t31 >= 2000 and dc then dc._p.LevelUpStep = "Overview" end end
+before = opened
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and opened == before and j.result.closed_page == nil and (j.result.waited_intro_ms or 0) >= 2000,
+      "own page in its normal intro: waited for and reused (" .. tostring(j.result.waited_intro_ms) .. " ms)")
+-- 31f. S047/S048: the page this call opens starts in its intro (Started ~1.5 s): the run waits for it instead of
+--      running the stages against it (tabs unselectable, no feat list → failure → rerun → 15 s timeout)
+closePage()
+page = nil
+local startedAt
+local origOpen = openPage
+openPage = function(spec)
+    origOpen(spec)
+    dc._p.LevelUpStep = "Started"
+    startedAt = now
+    page.on_tick = function() if dc and now - startedAt >= 1500 then dc._p.LevelUpStep = "Overview" end end
+end
+page = { spec = PAL }
+before = opened
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+openPage = origOpen
+check(j.status == "done" and opened == before + 1 and j.result.closed_page == nil and (j.result.waited_intro_ms or 0) >= 1000,
+      "own open: waits for the intro before the stages (" .. tostring(j.result.waited_intro_ms) .. " ms, " .. tostring(j.error) .. ")")
+-- 31e. a frozen intro page that ignores the close (button and ESCAPE): used as it is after the give-up, no timeout
+openPage(PAL)
+dc._p.LevelUpStep = "Started"
+dc._p.LevelUpCharacter = portrait
+page.sticky = true
+before = opened
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and opened == before and j.result.close_ignored == true,
+      "frozen page that ignores the close: reused after the give-up (" .. tostring(j.status) .. " " .. tostring(j.error) .. ")")
 -- 31b. the same page in its intro right after the bridge clicked its spell picks (keep_page): reused, not closed
 openPage(PAL)
 dc._p.LevelUpStep = "Started"

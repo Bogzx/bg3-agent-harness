@@ -1592,6 +1592,9 @@ end
 -- takes its fade-in template and stays frozen at LevelUpStep=Started: no animations, no skip input, nothing
 -- hit-testable (live 2026-10-10, Wyll L4 after swap_party: fade=true at open, 226-326 probes never hovered a
 -- button; S018/S021 likewise). So the page is opened only once the fade is over.
+P.INTRO_WAIT_MS = 5000     -- a Started page of this character this long before it counts as frozen
+P.CLOSE_GIVEUP_MS = 6000   -- a close (button + ESCAPE) ignored this long: use this character's page as it is
+
 function P.screenFade()
     for _, name in ipairs({ "CharacterLevelUp", "HotBar", "PlayerPortraits" }) do
         local v = UI.path(UI.dc(name), "CurrentPlayer.IsScreenFadeActive")
@@ -1836,12 +1839,18 @@ RPC.register("ui.level_up", function(args)
         -- keep_page: the bridge's rerun right after it clicked spell picks on this very page (S032 17:28: Wyll L6,
         -- 4 calls: the page froze at Started, the click placed Hunger of Hadar, the rerun closed the page as "stuck
         -- in its intro" and the reopened page had lost the pick). This character's page is reused as it is.
-        if owner == "other" or (step == "Started" and not args.keep_page) then
-            ctx.result.closed_page = owner == "other" and ("another character's page (" .. tostring(label(UI.prop(cur, "LevelUpCharacter")) or "?") .. ")")
-                or "a page stuck in its intro"
+        if owner == "other" then
+            ctx.result.closed_page = "another character's page (" .. tostring(label(UI.prop(cur, "LevelUpCharacter")) or "?") .. ")"
             P.closeLevelUp()
             ctx.closing = RPC.now_ms()
             openLater = true
+        elseif step == "Started" and not args.keep_page then
+            -- Started is also the normal "Level Up!" intro of a page that just opened (the player's own Level Up
+            -- click, or the game's). S047/S048 (Act 3, L8): closing it at once failed 12x ("still waiting after
+            -- 15000 ms — closed_page=a page stuck in its intro": the page ignores the close during its intro),
+            -- while the agent's hand click + 3 s wait + level_up worked. Give it P.INTRO_WAIT_MS to move on and
+            -- reuse it; only a page still in Started after that is the frozen one (S029) and gets closed.
+            ctx.intro = RPC.now_ms()
         end
     end
     if not P.luDC() or ctx.closing then
@@ -1858,6 +1867,23 @@ RPC.register("ui.level_up", function(args)
     local stages = {
         { "open", function()
             local cur = get()
+            if ctx.intro then
+                local still = cur and str(UI.prop(cur, "LevelUpStep")) == "Started"
+                if still and RPC.now_ms() - ctx.intro < P.INTRO_WAIT_MS then return "wait", 200 end
+                if still then
+                    ctx.result.closed_page = "a page stuck in its intro (" .. P.INTRO_WAIT_MS // 1000 .. " s)"
+                    P.closeLevelUp()
+                    ctx.closing = RPC.now_ms()
+                    openLater = true
+                elseif cur then
+                    ctx.result.waited_intro_ms = RPC.now_ms() - ctx.intro
+                end
+                ctx.intro = nil
+                if not cur and not ctx.closing then
+                    openLater = true  -- it closed by itself: open it again
+                end
+                return "wait", 100
+            end
             if cur and not openLater and str(UI.prop(cur, "LevelUpStep")) == "Finishing" then
                 -- The previous level's page is still closing: wait for it, then open this level's page.
                 ctx.result.waited_finish = true
@@ -1873,6 +1899,12 @@ RPC.register("ui.level_up", function(args)
                         ctx.escaped = true
                         P.closeLevelUp(true)
                     end
+                    if RPC.now_ms() - ctx.closing > P.CLOSE_GIVEUP_MS and P.pageOwner(cur, args.uuid) ~= "other" then
+                        -- It won't close (button and ESCAPE ignored): this character's page is the one to use.
+                        ctx.result.close_ignored = true
+                        ctx.closing, openLater = nil, false
+                        return "wait", 100
+                    end
                     return "wait", 200
                 end
                 if P.screenFade() then ctx.result.waited_fade = true return "wait", 200 end
@@ -1882,9 +1914,21 @@ RPC.register("ui.level_up", function(args)
                 return "wait", 300
             end
             local dc = get()
-            if dc and UI.prop(dc, "SelectedMultiClass") ~= nil then return "next", 1500 end
+            if dc and UI.prop(dc, "SelectedMultiClass") ~= nil then
+                -- S047/S048 (Act 3, L8 feat level): the page we just opened was still in its "Level Up!" intro
+                -- (Started: no tab selectable, the feat list not built) and the run failed at the feat; the rerun then
+                -- closed it as stuck. Wait for the intro to end; a page frozen in it (S029) goes on after the wait.
+                if str(UI.prop(dc, "LevelUpStep")) == "Started" then
+                    ctx.introWait = ctx.introWait or RPC.now_ms()
+                    if RPC.now_ms() - ctx.introWait < P.INTRO_WAIT_MS then return "wait", 200 end
+                    ctx.result.intro_timeout = true
+                elseif ctx.introWait then
+                    ctx.result.waited_intro_ms = RPC.now_ms() - ctx.introWait
+                end
+                return "next", 1500
+            end
             return "wait", 300
-        end, 15000 },
+        end, 25000 },
         { "class_tab", tabStage(ctx, "classTab") },
         { "class", function()
             local dc = get()

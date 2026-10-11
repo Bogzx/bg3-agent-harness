@@ -213,7 +213,10 @@ test("routeAhead: no ring spot reachable -> the farthest straight walk toward it
     blocked = function(x) return x < -6 end
     local r = N.routeAhead(BG3AI.Visibility.context(), P1, { -20, 0, 0 })
     eq(r.reachable, false, "unreachable"); eq(r.closest.via, "toward", "via")
-    near(r.closest.to_goal_m, 14, "6 m along, 14 m short")
+    -- route's budgeted closestReach walks toward it in 4 m steps (check_all 03:50: 258 ms in Lower City)
+    near(r.closest.to_goal_m, 16, "4 m along (route's coarse step), 16 m short")
+    N.frame = N.frame + 1
+    near(N.closestReach(P1, { -20, 0, 0 }).to_goal_m, 14, "full budget: 6 m along, 14 m short")
 end)
 
 test("routeAhead: the straight line's fire is reported when there is no path", function()

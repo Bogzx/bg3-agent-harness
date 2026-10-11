@@ -94,6 +94,7 @@ local function reset()
     nodesFor = nil
     clock = clock + 1000
     N.frame = (N.frame or 0) + 1 -- new frame: drop the path cache
+    N.lowerMemo = nil
     N.waysCache, N.waysCacheN, N.waysWarmState = {}, 0, { t = 0 }
     N.slowPaths, N.slowPathsN = {}, 0
     N.asyncPaths, N.asyncPathsN = {}, 0
@@ -1352,6 +1353,26 @@ test("kill switch: a crash during a jump plan (marker left in the file) turns th
     if not ok then error(err, 0) end
 end)
 
+test("kill switch: one stop during a ways warm is a strike, not a kill (04:39 relaunch put the Lower City off)", function()
+    local realL, realP, realS = Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile
+    local file = { slow = {}, inflight = { level = "CTY_Main_A", op = "ways warm" } }
+    Ext.IO.LoadFile = function(p) if p == N.GUARD_FILE then return "x" end end
+    Ext.Json.Parse = function() return file end
+    Ext.IO.SaveFile = function() end
+    local ok, err = pcall(function()
+        N.guardReset()
+        eq(N.levelSlow("CTY_Main_A"), nil, "first stop: not killed")
+        eq(N.guardState().strikes.CTY_Main_A, 1, "one strike")
+        file = { slow = {}, strikes = { CTY_Main_A = 1 }, inflight = { level = "CTY_Main_A", op = "ways warm" } }
+        N.guardReset()
+        local sl = N.levelSlow("CTY_Main_A")
+        assert(sl and sl.why:find("ways warm"), "second stop on the same level: killed")
+    end)
+    Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile = realL, realP, realS
+    N.guardReset()
+    if not ok then error(err, 0) end
+end)
+
 test("jump plan: the in-flight marker is set during its searches and cleared after", function()
     local marks = {}
     local realS, realJ = Ext.IO.SaveFile, Ext.Json.Stringify
@@ -1397,6 +1418,29 @@ test("lowerGround: the island 22 m below, 12+ m out from the ledge, toward the g
         near(lo[1].drop_m, 22, "drop"); assert(lo[1].gap_m >= 12 and lo[1].gap_m <= 13.6, "gap " .. lo[1].gap_m)
         assert(lo[1].from[1] > -3 and lo[1].to[1] <= -15, "edge -> island")
         eq(lo[1].reach_m, 8.5, "flat reach (no high-ground model)")
+    end)
+end)
+
+test("lowerGround: memoized 30 s per spot and goal; route skips it once its budget is spent (check_all 03:50, 258 ms)", function()
+    withIslands(function()
+        local a = N.lowerGround(P1, { 0, 0, 0 }, { -200, -140, 0 })
+        assert(a and #a >= 1, "found")
+        local savedH, calls = Ext.Level.GetHeightsAt, 0
+        Ext.Level.GetHeightsAt = function(...) calls = calls + 1; return savedH(...) end
+        local b = N.lowerGround(P1, { 0.5, 0, 0.5 }, { -200, -140, 0 })
+        Ext.Level.GetHeightsAt = savedH
+        eq(b, a, "same result"); eq(calls, 0, "no height reads")
+        clock = clock + N.LOWER_MEMO_MS + 1
+        N.lowerMemo = nil
+        local savedB = N.ROUTE_BUDGET_MS
+        N.ROUTE_BUDGET_MS = -1
+        local savedIA = BG3AI.Visibility.itemsAround
+        BG3AI.Visibility.itemsAround = function() return {} end
+        local ok, r = pcall(N.routeAhead, { party = { P1 }, is_party = { [P1] = true } }, P1, { -200, -140, 0 })
+        BG3AI.Visibility.itemsAround = savedIA
+        N.ROUTE_BUDGET_MS = savedB
+        assert(ok, tostring(r))
+        if r.reachable == false then eq(r.lower_skipped, true, "skipped"); eq(r.lower, nil, "no scan") end
     end)
 end)
 

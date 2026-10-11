@@ -85,6 +85,8 @@ Osi = setmetatable({
     EndTurn = record("EndTurn"),
     ToInventory = record("ToInventory"),
     ForceTurnBasedMode = record("ForceTurnBasedMode"),
+    DetachFromPartyGroup = record("DetachFromPartyGroup"),
+    AttachToPartyGroup = record("AttachToPartyGroup"),
     UseSpellAtPosition = function(...)
         calls[#calls + 1] = { "UseSpellAtPosition?", n = select("#", ...) }
         if select("#", ...) ~= usp_arity then
@@ -1693,6 +1695,32 @@ test("go_to_camp: a dead selected character doesn't block the party's camp butto
     -- an explicit char is still checked
     j = job(op("go_to_camp", { char = P1 }))
     eq(j.status, "failed", "explicit dead char"); assert(j.error:find("character is dead", 1, true), j.error)
+end)
+
+test("interact ladder: chained followers settle, are held for the climb and re-chained after (acceptance 04:31)", function()
+    add_p2({ 1, 0, 0 })
+    osiv[key("InSamePartyGroup", P1, P2)] = 1
+    world[P1].pos = { 0, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    world[P1].pos = { 9.3, 0, 0 }
+    A.dispatch("EntityEvent", { P1, j.walk.ev })
+    tick()
+    for i = 1, 5 do world[P2].pos = { 8.0 + i * 0.1, 0, 0 } tick() end   -- the follower still arriving
+    clock = clock + A.LADDER_SETTLE_MS + 1
+    world[P2].pos = { 8.6, 0, 0 } tick()
+    eq(#called("Use"), 0, "no Use while a follower moves")
+    tick() clock = clock + A.LADDER_SETTLE_MS + 1 tick()
+    eq(#called("Use"), 1, "Use once everyone stands")
+    local d = called("DetachFromPartyGroup")
+    eq(#d, 1, "the follower detached for the climb"); eq(d[1][2], P2, "who")
+    A.dispatch("UseFinished", { P1, LADDER, 1 })
+    osiv[key("InSamePartyGroup", P1, P2)] = 0
+    world[P1].pos = { 9.6, -3, 0 } tick()
+    world[P1].pos = { 9.7, -5.8, 0 } tick()
+    world[P1].pos = { 10.2, -5.8, 0.4 } tick() tick()
+    eq(j.status, "done", "status " .. tostring(j.error))
+    local a = called("AttachToPartyGroup")
+    eq(#a, 1, "re-chained"); eq(a[1][2], P2, "follower"); eq(a[1][3], P1, "to the climber")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

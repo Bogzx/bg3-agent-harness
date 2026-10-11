@@ -808,6 +808,7 @@ A.LADDER_RETRY_MS = 3000
 -- LADDER_SETTLE_MS (at most LADDER_SETTLE_MAX_MS); the retry steps LADDER_STEP_M back from the ladder and walks in
 -- again before the re-Use (probe C: walk, then Use → climbed).
 A.LADDER_SETTLE_MS = 700
+A.LADDER_FOLLOWER_M = 20.0 -- chained followers this close to the actor must stand still too before the Use
 A.LADDER_SETTLE_MAX_MS = 3000
 A.LADDER_STEP_M = 1.5
 A.LADDER_STEP_MAX_MS = 3000
@@ -828,6 +829,32 @@ function A.combat_potion(char, target)
         payers[#payers + 1] = { name = n, level = l, amount = c.amount }
     end
     return { snapshot = snap, payers = payers }
+end
+
+-- Ladder, 3rd look (acceptance 04:31 still FAIL from the Mausoleum gate after the settle): every passing climb had
+-- the followers already standing; every failing one had them still arriving, and all four "used" the ladder (the
+-- engine sends the chained followers through the leader's Use). Only the actor climbs: the chained followers are
+-- detached (and their own ladder orders purged) for the climb and re-chained to the actor when the job ends; they
+-- then follow as usual (a player's followers take the ladder after the leader).
+function A.ladder_followers(char)
+    local out = {}
+    for _, p in ipairs(G.party()) do
+        if not G.same(p, char) and G.b(G.q("InSamePartyGroup", char, p)) then out[#out + 1] = p end
+    end
+    return out
+end
+function A.ladder_hold(char)
+    local held = A.ladder_followers(char)
+    for _, p in ipairs(held) do
+        pcall(G.osi, "DetachFromPartyGroup", p)
+        pcall(G.osi, "PurgeOsirisQueue", p)
+    end
+    return held
+end
+function A.ladder_release(char, held)
+    for _, p in ipairs(held or {}) do
+        if not G.b(G.q("InSamePartyGroup", char, p)) then pcall(G.osi, "AttachToPartyGroup", p, char) end
+    end
 end
 
 reg("interact", function(args)
@@ -898,8 +925,9 @@ reg("interact", function(args)
         eta_s = walk_eta(plan.length_m) + 1.0, route_m = plan.length_m,
         timeout_ms = 30000 + walk_timeout(plan.length_m),
         interrupt = { combat = not potion, dialogue = true, attacked = not potion },
-        on_finish = potion and function(job)
-            if job.status ~= "done" then return end
+        on_finish = (potion or ladder) and function(job)
+            if job.ladder and job.ladder.held then A.ladder_release(char, job.ladder.held) end
+            if not potion or job.status ~= "done" then return end
             -- Osiris Use skips the hotbar's cost: charge whatever the engine did not.
             local after, charged = G.resources(char), {}
             for _, p in ipairs(potion.payers) do
@@ -954,9 +982,11 @@ reg("interact", function(args)
                     j.ladder = { y0 = (G.pos(char) or {})[2], item = target }
                     if j.walk then -- walked here: settle first (on_tick sends the Use)
                         j.ladder.settle_from = RPC.now_ms()
+                        j.ladder.followers = A.ladder_followers(char)
                         return
                     end
                     j.ladder.used = true
+                    j.ladder.held = A.ladder_hold(char)
                 end
                 G.osi("Use", char, target, j.use_ev)
             end)
@@ -976,11 +1006,22 @@ reg("interact", function(args)
                 local lj, here, now = job.ladder, G.pos(char), RPC.now_ms()
                 local moved = here and lj.settle_last and U.dist(here, lj.settle_last) or 1
                 lj.settle_last = here
+                -- the chained followers settle too (they were still arriving in every failed climb)
+                lj.fpos = lj.fpos or {}
+                for _, p in ipairs(lj.followers or {}) do
+                    local fp = G.pos(p)
+                    if fp and here and U.dist(fp, here) <= A.LADDER_FOLLOWER_M then
+                        local was = lj.fpos[p]
+                        moved = math.max(moved, was and U.dist(fp, was) or 1)
+                    end
+                    lj.fpos[p] = fp
+                end
                 lj.still_since = (moved < 0.03) and (lj.still_since or now) or nil
                 if lj.stepping and now - lj.stepping < A.LADDER_STEP_MAX_MS and not lj.still_since then return end
                 if (lj.still_since and now - lj.still_since >= A.LADDER_SETTLE_MS)
                     or now - lj.settle_from >= A.LADDER_SETTLE_MAX_MS + (lj.stepping and A.LADDER_STEP_MAX_MS or 0) then
                     if lj.stepping then pcall(G.osi, "PurgeOsirisQueue", char) end -- the step's walk, if still queued
+                    if not lj.held then lj.held = A.ladder_hold(char) end
                     lj.used, lj.y0 = true, here and here[2] or lj.y0
                     G.osi("Use", char, target, job.use_ev)
                     job.used_at = job.used_at and now or nil -- a re-Use restarts the climb deadline

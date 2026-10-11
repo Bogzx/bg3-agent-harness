@@ -286,6 +286,36 @@ def _press_menu(game: Game, inp: InputClient, item: str, at: tuple[int, int]) ->
     return why
 
 
+ROLL_WALK_EXTRA_S = 6.0   # extra wait for a lockpick/disarm roll while the game still walks the actor up
+WALK_EPS_M = 0.15
+
+
+class _WalkWatch:
+    """Party positions (nav.activity) between polls: is anyone still moving after the click, and how far they went."""
+
+    def __init__(self, game: Game) -> None:
+        self.game, self.walked_m = game, 0.0
+        self.last = self._pos()
+
+    def _pos(self) -> dict | None:
+        try:
+            a = self.game.rpc("nav.activity", {})
+        except Exception:  # noqa: BLE001 - an older mod, or a fake: no walk info
+            return None
+        return a.get("pos") if isinstance(a, dict) and isinstance(a.get("pos"), dict) else None
+
+    def moving(self) -> bool:
+        time.sleep(0.25)
+        now = self._pos()
+        if now is None or self.last is None:
+            return False
+        step = max((sum((a - b) ** 2 for a, b in zip(now[u], self.last[u])) ** 0.5
+                    for u in now if u in self.last), default=0.0)
+        self.last = now
+        self.walked_m += step
+        return step > WALK_EPS_M
+
+
 def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", expect: str | None = None,
                  verify_timeout: float = 4.0, menu: str | None = None) -> ClickResult:
     """Hover-verify then click `uuid`; with `menu`, right-click and pick that context-menu entry (a player's
@@ -320,7 +350,12 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
             extra["hover"] = last["hover"]
         if last.get("timed_out"):
             extra["gave_up_after_s"] = HOVER_BUDGET_S
+        if last.get("nouuid"):
+            # why the no-id object under the cursor wasn't taken for the target (Pick.same_entity: m = origin distance)
+            extra["no_id_objects"] = last["nouuid"]
         return ClickResult(False, reason, before, None, tries, extra)
+    if last.get("via") in ("handle", "origin"):
+        extra["hover_via"] = last["via"]   # a no-id object matched the target (S050/S051 doors)
     inp.click(pos[0], pos[1], button="R" if menu else button)
     if menu:
         why = _press_menu(game, inp, menu, pos)
@@ -330,14 +365,26 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
     if not expect:
         return ClickResult(True, None, None, pos, tries, extra)
     wanted = EXPECT_SCREENS.get(expect, {expect})
-    deadline = time.monotonic() + verify_timeout
+    t_click = time.monotonic()
+    deadline = t_click + verify_timeout
     st: dict = {}
-    while time.monotonic() < deadline:
+    walk = _WalkWatch(game) if expect == "roll" else None
+    while True:
         st = _screen(game)
         scr = st.get("screen")
         if (wanted and scr in wanted) or (not wanted and scr != before):
+            if walk and walk.walked_m > 0.3:
+                extra["walked_m"] = round(walk.walked_m, 1)
             return ClickResult(True, None, scr, pos, tries, extra)
+        now = time.monotonic()
+        if now >= deadline:
+            # S047 02:57:54: the Lockpick row made the game walk the actor ~1 m to its own lockpick spot first; the
+            # fixed 4 s ran out ("nothing happened"). While the party still moves, the roll may yet come.
+            if walk is None or not walk.moving() or now - t_click >= verify_timeout + ROLL_WALK_EXTRA_S:
+                break
         time.sleep(0.05)
+    if walk and walk.walked_m > 0.3:
+        extra["walked_m"] = round(walk.walked_m, 1)
     if expect == "roll":
         # A key in the party opens the lock without a roll; a trap kit may
         # resolve instantly. Accept the visible state change instead: the one this click was for. S031 17:10:

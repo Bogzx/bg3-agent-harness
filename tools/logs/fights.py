@@ -75,7 +75,7 @@ def load_session(run, sid):
                     calls[c["tool_use_id"]]["t1"] = t_res.get(c["tool_use_id"])
     calls = [c for c in calls.values() if c["t"]]
     calls.sort(key=lambda c: c["t"])
-    spans, cur = [], None
+    spans, cur, last_t = [], None, 0.0
     with open(sd / f"{sid}.metrics.jsonl") as f:
         for line in f:
             try:
@@ -84,17 +84,30 @@ def load_session(run, sid):
                 continue
             if e.get("type") != "sample":
                 continue
+            last_t = max(last_t, e.get("t", 0))
             if e.get("combat"):
                 if cur and e["t"] - cur[1] <= GAP_S:
                     cur[1] = e["t"]
                 else:
                     cur = [e["t"], e["t"]]
                     spans.append(cur)
-    return calls, spans
+    return calls, spans, last_t
+
+
+def outcome_of(reloaded, downed_all, killed, cut):
+    """reload / wipe / unfinished (still in combat when the session's samples stop: S045 Ketheric try 2 was called
+    "won") / won (enemies died) / ended."""
+    if reloaded:
+        return "reload"
+    if downed_all:
+        return "wipe"
+    if cut:
+        return "unfinished"
+    return "won" if killed else "ended"
 
 
 def mine(run, sid):
-    calls, spans = load_session(run, sid)
+    calls, spans, last_t = load_session(run, sid)
     party = set()
     ours = set()
     for c in calls:
@@ -153,7 +166,8 @@ def mine(run, sid):
         after = [c for c in calls if end < c["t"] <= end + RELOAD_AFTER_S]
         reload_c = next((c for c in inside + after if c["tool"] == "load_game"), None)
         downed_all = len(party) and len(downs) >= min(4, len(party)) and not enemies
-        outcome = "reload" if reload_c else ("wipe" if downed_all else "won" if sum(enemies.values()) else "ended")
+        cut = last_t - end <= GAP_S  # combat still on at the last sample: the session ended mid-fight
+        outcome = outcome_of(bool(reload_c), downed_all, sum(enemies.values()) > 0, cut)
         flags = {k: bool(rx.search(text + "\n".join(c["res"] for c in after))) for k, rx in FLAGS.items()}
         key = ", ".join(sorted(enemy_names[:3])) or "?"  # enemy group; the place is shown per attempt
         fights.append({

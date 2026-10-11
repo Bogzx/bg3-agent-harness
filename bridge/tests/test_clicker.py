@@ -303,6 +303,56 @@ class ClickEntity(unittest.TestCase):
         r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.1)
         self.assertEqual(r.detail.get("hovered_instead"), ["(an object with no id)"])
 
+    def test_no_id_miss_carries_the_diagnostics(self):
+        # S050/S051: 8 lockpicks on doors "hovered_instead=[(an object with no id)]": say why it wasn't the target
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), hover_aims=set())
+        real = g.rpc
+        g.rpc = lambda op, args=None, context="server": (
+            {"hovered": False, "hover_nouuid": True, "nouuid": [{"m": 2.4, "t": "table"}]}
+            if op == "ui.hover_check" else real(op, args, context))
+        r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.1)
+        self.assertEqual(r.detail.get("no_id_objects"), [{"m": 2.4, "t": "table"}])
+
+    def test_no_id_match_is_named(self):
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), screen_after="roll")
+        real = g.rpc
+        g.rpc = lambda op, args=None, context="server": (
+            {"hovered": True, "hover_nouuid": True, "via": "origin"} if op == "ui.hover_check" else real(op, args, context))
+        r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.5)
+        self.assertTrue(r.ok)
+        self.assertEqual(r.detail.get("hover_via"), "origin")
+
+    def _walking(self, steps_moving, roll_after):
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2))
+        g.menu = ["Examine", "Lockpick"]
+        real, n = g.rpc, [0]
+
+        def rpc(op, args=None, context="server"):
+            if op == "nav.activity":
+                n[0] += 1
+                x = 0.5 * min(n[0], steps_moving)
+                return {"pos": {"claude": [90.0 + x, 40.5, 16.0]}}
+            if op == "ui.state" and getattr(g, "menu_done", False):
+                return {"screen": "roll" if n[0] >= roll_after else "game"}
+            return real(op, args, context)
+        g.rpc = rpc
+        return clicker.click_entity(g, inp, "chest", expect="roll", verify_timeout=0.1, menu="Lockpick"), n[0]
+
+    def test_roll_waits_while_the_game_walks_the_actor(self):
+        # S047 02:57:54: Lockpick row pressed, the game walked the actor ~1 m first; the 4 s ran out ("nothing happened")
+        r, polls = self._walking(steps_moving=4, roll_after=4)
+        self.assertTrue(r.ok, r)
+        self.assertEqual(r.screen, "roll")
+        self.assertGreaterEqual(r.detail.get("walked_m", 0), 1.0)
+
+    def test_roll_wait_ends_when_nobody_moves(self):
+        r, polls = self._walking(steps_moving=0, roll_after=99)
+        self.assertEqual(r.reason, "no_effect")
+        self.assertLessEqual(polls, 2)   # one baseline + one still check: no extra wait
+
     def test_hover_search_gives_up_at_the_time_budget(self):
         # live S017-S024: 144 tries = 15-33 s per failed lockpick; now capped at HOVER_BUDGET_S
         inp = FakeInput()

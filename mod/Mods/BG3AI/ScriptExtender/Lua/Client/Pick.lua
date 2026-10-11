@@ -184,6 +184,42 @@ function P.hovered()
     return out, ph, objs
 end
 
+-- A picked object without a Uuid component is the target when it is the same entity (by handle: bg3le's entity
+-- __eq only fires between two entity proxies, and the helper's GameObject may be a raw handle) or, failing that,
+-- an object at the target's own origin (within SAME_ORIGIN_M). S050 04:11-04:12 + S051 04:47-04:56: lockpick on
+-- the Steel Watch Foundry / Security Office doors gave up 8x "hover_miss hovered_instead=[(an object with no id)]"
+-- (23-33 aims, 8 s each) while the `go == te` test never held.
+P.SAME_ORIGIN_M = 0.3
+
+local function handle_bits(x)
+    local ok, b = pcall(Ext.Utils.HandleToInteger, x)
+    return ok and b or nil
+end
+
+local function origin(x)
+    if type(x) == "number" then
+        local ok, e = pcall(Ext.Utils.IntegerToHandle, x)
+        x = ok and e or nil
+    end
+    local ok, t = pcall(function() return x.Transform.Transform.Translate end)
+    return ok and t and { t[1], t[2], t[3] } or nil
+end
+
+-- (same, how, metres) for a picked no-Uuid object vs the target entity te.
+function P.same_entity(go, te)
+    local okq, eq = pcall(function() return go == te end)
+    if okq and eq then return true, "eq", 0 end
+    local a, b = handle_bits(go), handle_bits(te)
+    if a and b and a == b then return true, "handle", 0 end
+    local pa, pb = origin(go), origin(te)
+    if pa and pb then
+        local d = math.sqrt((pa[1] - pb[1]) ^ 2 + (pa[2] - pb[2]) ^ 2 + (pa[3] - pb[3]) ^ 2)
+        if d <= P.SAME_ORIGIN_M then return true, "origin", d end
+        return false, nil, d
+    end
+    return false
+end
+
 RPC.register("ui.hover_check", function(args)
     local want = guid(args.uuid)
     local list, ph, objs = P.hovered()
@@ -197,10 +233,21 @@ RPC.register("ui.hover_check", function(args)
         res.hover_nouuid = true
         local okE, te = pcall(Ext.Entity.Get, want)
         if okE and te then
+            local seen = {}
             for _, go in ipairs(objs) do
-                local okq, same = pcall(function() return go == te end)
-                if okq and same then res.hovered = true end
+                if not entity_uuid(go) then
+                    local same, how, d = P.same_entity(go, te)
+                    if same then
+                        res.hovered, res.via = true, how
+                        break
+                    end
+                    if #seen < 3 then
+                        seen[#seen + 1] = { m = d and U.round(d, 2) or nil, h = handle_bits(go) and true or nil,
+                            t = type(go) }
+                    end
+                end
             end
+            if not res.hovered and #seen > 0 then res.nouuid = seen end  -- why it isn't the target (next failure)
         end
     end
     res.hover = list[1]

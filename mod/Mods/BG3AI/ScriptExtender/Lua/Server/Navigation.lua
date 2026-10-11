@@ -349,6 +349,7 @@ end
 -- nav.level_guard {clear=true}.
 N.GUARD_FILE = "BG3AI/nav_guard.json"
 N.PATH_LEVEL_KILL_MS = 800
+N.WARM_DEATH_STRIKES = 2
 local guard
 local function guardSave()
     pcall(Ext.IO.SaveFile, N.GUARD_FILE, Ext.Json.Stringify(guard, { Beautify = false }))
@@ -361,11 +362,23 @@ local function guardState()
         local okp, d = pcall(Ext.Json.Parse, txt)
         if okp and type(d) == "table" then
             guard.slow = type(d.slow) == "table" and d.slow or {}
+            guard.strikes = type(d.strikes) == "table" and d.strikes or {}
             local f = d.inflight
             if type(f) == "table" and f.level then
-                guard.slow[f.level] = guard.slow[f.level] or { why = "the game died during " .. tostring(f.op), ms = -1 }
-                Ext.Utils.PrintError(string.format("[BG3AI] nav guard: the game died during %s on %s @%s: warm-ups"
-                    .. " and jump planning are off on that level", tostring(f.op), tostring(f.level), tostring(f.at)))
+                -- A background warm-up request is in flight most of the time the party stands still, so a planned
+                -- game kill (the runner's 2 h relaunch, 2026-10-11 04:39) left its marker and the next start put
+                -- the whole Lower City on the kill list. Warm-ups need N.WARM_DEATH_STRIKES deaths on a level; a
+                -- jump cast / jump plan (the real S038/S039 OOMs) still kills it at once.
+                local n = (tonumber(guard.strikes[f.level]) or 0) + 1
+                guard.strikes[f.level] = n
+                if f.op ~= "ways warm" or n >= N.WARM_DEATH_STRIKES then
+                    guard.slow[f.level] = guard.slow[f.level] or { why = "the game died during " .. tostring(f.op), ms = -1 }
+                    Ext.Utils.PrintError(string.format("[BG3AI] nav guard: the game died during %s on %s @%s: warm-ups"
+                        .. " and jump planning are off on that level", tostring(f.op), tostring(f.level), tostring(f.at)))
+                else
+                    Ext.Utils.PrintWarning(string.format("[BG3AI] nav guard: the game stopped during %s on %s (strike %d of"
+                        .. " %d; a relaunch also does this)", tostring(f.op), tostring(f.level), n, N.WARM_DEATH_STRIKES))
+                end
                 guardSave()
             end
         end
@@ -2082,7 +2095,9 @@ function N.closestReach(charUuid, goal, budgetMs)
                 dy_to_goal = round(goal[2] - best.pos[2], 1), via = "near_goal" }
         end
     end
-    local r = N.reachToward(charUuid, nil, goal, math.min(U.dist(from, goal), N.CONNECT_M), 2, false)
+    -- a caller with a tighter budget (nav.route) gets a coarser walk toward it (half the path searches)
+    local step = budget < N.CLOSEST_BUDGET_MS and 4 or 2
+    local r = N.reachToward(charUuid, nil, goal, math.min(U.dist(from, goal), N.CONNECT_M), step, false)
     if r and r.reachable and r.pos and (r.straight_m or 0) >= 1 then
         return { pos = r.pos, path_m = r.path_m, to_goal_m = round(U.dist(r.pos, goal), 1),
             dy_to_goal = round(goal[2] - r.pos[2], 1), via = "toward" }
@@ -2402,10 +2417,17 @@ N.LOWER_MIN_M = 10    -- a drop below this the layout's "_" and jumpGap already 
 N.LOWER_MAX_M = 120
 N.LOWER_LEDGE_M = 3   -- a floor this near our height is the ledge we stand on
 N.LOWER_SHOWN = 3
+N.LOWER_MEMO_MS = 30000
 function N.lowerGround(charUuid, from, goal)
     local n = math.floor(N.LOWER_R_M / N.LOWER_CELL_M)
     local c = N.LOWER_CELL_M
+    -- memo: check_all FAIL 03:50 (Lower City, Bhaal Temple below): nav.route 258 ms, lowerGround alone ~115 ms
+    local mkey = string.format("%s|%d|%d|%d|%d|%d", tostring(currentLevel()), math.floor(from[1] / 3),
+        math.floor(from[3] / 3), math.floor(from[2]), goal and math.floor(goal[1] / 10) or 0, goal and math.floor(goal[3] / 10) or 0)
+    local mm = N.lowerMemo
+    if mm and mm.key == mkey and Ext.Utils.MonotonicTime() - mm.t < N.LOWER_MEMO_MS then return mm.v end
     local ledge, low = {}, {}
+    local ledgeAt, lowAt = {}, {}
     local function clear(p)
         local t = N.tileAt(p)
         return t and not t.blocked and not t.surface
@@ -2424,12 +2446,23 @@ function N.lowerGround(charUuid, from, goal)
                         end
                     end
                 end
-                if lh and clear({ x, lh, z }) then ledge[#ledge + 1] = { x, lh, z }
-                elseif dh and not lh and clear({ x, dh, z }) then low[#low + 1] = { x, dh, z } end
+                if lh and clear({ x, lh, z }) then ledgeAt[i * 1000 + j] = { x, lh, z }
+                elseif dh and not lh and clear({ x, dh, z }) then lowAt[i * 1000 + j] = { x, dh, z } end
             end
         end
     end
-    if #ledge == 0 or #low == 0 then return nil end
+    -- Only edge cells matter (the narrowest gap is edge to edge): a cell with a 4-neighbour outside its own set.
+    -- Matching every lower cell against every ledge cell was O(n^2) (~1e6 distances in a dense city).
+    local function edges(set, outList)
+        for k, p in pairs(set) do
+            if not (set[k + 1] and set[k - 1] and set[k + 1000] and set[k - 1000]) then outList[#outList + 1] = p end
+        end
+    end
+    edges(ledgeAt, ledge); edges(lowAt, low)
+    if #ledge == 0 or #low == 0 then
+        N.lowerMemo = { key = mkey, t = Ext.Utils.MonotonicTime(), v = nil }
+        return nil
+    end
     local function gd(p) return goal and hdist(p, goal) or 0 end
     local here = gd(from)
     local best = {}
@@ -2466,6 +2499,7 @@ function N.lowerGround(charUuid, from, goal)
         return p.dir < q.dir
     end)
     while #out > N.LOWER_SHOWN do table.remove(out) end
+    N.lowerMemo = { key = mkey, t = Ext.Utils.MonotonicTime(), v = out }
     return out
 end
 
@@ -2474,7 +2508,13 @@ end
 -- exposure?, straight_hazard?, closest?{..., legs, links}, connectors?,
 -- standing_in?, far? (beyond PATH_MAX_M: probed, no detail), too_far? (beyond
 -- ROUTE_FAR_M: not probed), waypoints? and visited_near? (far or no path)}.
+-- check_all FAIL 03:50 (Lower City → the Bhaal Temple far below, no walk): nav.route 258 ms = closestReach (rings +
+-- the walk toward it) ~90 + lowerGround ~115 + connectors ~55. Route gives closestReach ROUTE_CLOSEST_BUDGET_MS and
+-- skips the lower-ground scan once ROUTE_BUDGET_MS is spent (lower_skipped).
+N.ROUTE_CLOSEST_BUDGET_MS = 80
+N.ROUTE_BUDGET_MS = 140
 function N.routeAhead(ctx, charUuid, goal, withConnectors)
+    local t0 = Ext.Utils.MonotonicTime()
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil, "no position" end
@@ -2519,7 +2559,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
             out.straight_hazard = N.routeExposure({ from, goal })
             local okj, jx = pcall(N.jumpAcross, charUuid, from, goal)
             if okj and jx then out.jump = jx end
-            local c = N.closestReach(charUuid, goal)
+            local c = N.closestReach(charUuid, goal, N.ROUTE_CLOSEST_BUDGET_MS)
             if c then
                 local rc = N.path(charUuid, c.pos)
                 if rc and rc.reachable then
@@ -2530,7 +2570,10 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
             end
         end
     end
-    if out.reachable == false and goal[2] - from[2] <= -N.LOWER_MIN_M then
+    if out.reachable == false and goal[2] - from[2] <= -N.LOWER_MIN_M
+        and Ext.Utils.MonotonicTime() - t0 > N.ROUTE_BUDGET_MS then
+        out.lower_skipped = true
+    elseif out.reachable == false and goal[2] - from[2] <= -N.LOWER_MIN_M then
         local okl, lower = pcall(N.lowerGround, charUuid, from, goal)
         if okl and lower and #lower > 0 then
             out.lower = lower
@@ -3231,7 +3274,11 @@ end)
 -- warm = async warm-up counters); clear=true clears all, clear=<level> one.
 RPC.register("nav.level_guard", function(args)
     local g = N.guardState()
-    if args.clear == true then g.slow = {} elseif type(args.clear) == "string" then g.slow[args.clear] = nil end
+    if args.clear == true then g.slow, g.strikes = {}, {}
+    elseif type(args.clear) == "string" then
+        g.slow[args.clear] = nil
+        if g.strikes then g.strikes[args.clear] = nil end
+    end
     if args.clear ~= nil then pcall(Ext.IO.SaveFile, N.GUARD_FILE, Ext.Json.Stringify(g, { Beautify = false })) end
     local wa = N.warmAsync
     return { slow = g.slow, level = currentLevel(), here = N.levelSlow(),
