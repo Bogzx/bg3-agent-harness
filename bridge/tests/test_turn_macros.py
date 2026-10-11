@@ -537,6 +537,59 @@ class CombatTurn(Base):
         self.assertNotIn("FAILED", out)
         self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], [])
 
+    def test_mid_fight_lines_are_waited_out(self):
+        # S045 Ketheric: 6 steps "character is in a conversation (InDialog)" while his lines played
+        n = {"left": 2}
+
+        def refuse(op, a):
+            if op == "act.cast" and n["left"] > 0:
+                n["left"] -= 1
+                return "character is in a conversation (InDialog)"
+            return None
+        self.g.refuse_if = refuse
+        self.g.ui = {"screen": "dialogue", "dialogue": {"text": "Ketheric: ...", "listening": True}}
+        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        self.assertIn("Shout_Dodge: done", out)
+        self.assertIn("for the mid-fight lines)", out)
+        # an answer on screen: handed back at once
+        n["left"] = 99
+        self.g.combat = combat()
+        self.g.ui = {"screen": "dialogue", "dialogue": {"text": "?", "options": [{"i": 1, "text": "Never."}]}}
+        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        self.assertIn("needs your answer", out)
+
+    def test_ignored_end_turn_presses_the_hud_end_turn(self):
+        # S044/S045: Osiris EndTurn ignored for our Spiritual Weapon / during Ketheric's lines: 10 s TIMEOUT ×9
+        self.g.refuse_if = lambda op, a: server.END_IGNORED if op == "act.end_turn" else None
+        self.g.on_start = None   # (the class's hook hands the turn on at the order: here the game ignores it)
+        real = self.g.rpc
+        pressed = []
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "ui.command":
+                pressed.append(args)
+                self.g.combat["current"] = GOB
+                return {"done": True}
+            return real(op, args, context, timeout)
+        self.g.rpc = rpc
+        out = server.end_turn(who=server.H.get(P1), wait=False)
+        self.assertEqual(pressed, [{"widget": "*", "command": "EndTurn"}])
+        self.assertIn("the HUD's End Turn", out)
+        self.assertNotIn("FAILED", out)
+        # the HUD doesn't end it either: says so
+        self.g.combat["current"] = P1
+        saved, server.END_HUD_WAIT_S = server.END_HUD_WAIT_S, 0.3
+        self.addCleanup(setattr, server, "END_HUD_WAIT_S", saved)
+        def stuck(op, args=None, context="server", timeout=12.0):
+            if op == "ui.command":
+                return {"done": True}
+            if op == "state.combat":
+                self.g.combat["current"] = P1   # the turn never moves on
+            return real(op, args, context, timeout)
+        self.g.rpc = stuck
+        out = server.end_turn(who=server.H.get(P1), wait=False)
+        self.assertIn("didn't end it either", out, (out, self.g.combat))
+
     def test_downed_member_is_not_who_acts(self):
         p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
         p1["hp_pct"] = 0

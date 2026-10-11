@@ -168,7 +168,8 @@ def _item_rec(it: dict) -> dict:
     return {"name": it.get("name", "?"), "kind": it.get("kind"), "dist": it.get("dist"),
             "flags": tuple(f for f in _ITEM_FLAGS if it.get(f)), "story": bool(it.get("story")),
             "count": it.get("count"), "near": it.get("near"), "effect": it.get("effect"),
-            "rarity": it.get("rarity") if it.get("rarity") not in (None, "Common", "common") else None}
+            "rarity": it.get("rarity") if it.get("rarity") not in (None, "Common", "common") else None,
+            "ihp": (it.get("hp"), it["max_hp"]) if isinstance(it.get("max_hp"), (int, float)) else None}
 
 
 def snapshot(H: Handles, status: dict | None = None, ui: dict | None = None, nearby: dict | None = None,
@@ -325,6 +326,8 @@ def _appeared(H: Handles, u: str, n: dict) -> str:
         bits += list(n["flags"])
         if n.get("story"):
             bits.append("story")
+        if n.get("ihp") and not is_clutter(n):  # breakable: S044 the colony's Membrane (6 HP) read as "Viscera"
+            bits.append(f"HP {render.num(n['ihp'][0])}/{render.num(n['ihp'][1])}")
     if n.get("dist") is not None:
         bits.append(f"{render.num(n['dist'])}m")
     if n.get("near"):

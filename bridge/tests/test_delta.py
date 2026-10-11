@@ -542,6 +542,16 @@ class Lookalikes(unittest.TestCase):
         self.assertNotIn("Nothing visible", text)
         self.assertIn("Isobel", hit); self.assertNotIn("No 'isobel'", hit)
 
+    def test_breakable_usable_shows_its_hp(self):
+        """S044 23:51: the colony's Membrane (6 HP in the game's hover) read only as 'Viscera <usable>'."""
+        from bg3ai import render
+        H = Handles()
+        it = {"uuid": U(2000), "name": "Viscera", "kind": "usable", "dist": 1.7, "hp": 6, "max_hp": 6}
+        self.assertIn("Viscera <usable> 1.7m HP 6/6", render.render_nearby({"characters": [], "items": [it]}, H))
+        old = delta.snapshot(H, nearby={"characters": [], "items": []})
+        new = delta.snapshot(H, nearby={"characters": [], "items": [it]})
+        self.assertIn("HP 6/6", "\n".join(delta.diff(old, new, H)))
+
 class Fixtures(unittest.TestCase):
     """S025/S026 Grand Mausoleum: the Buttons under the paintings were the puzzle; ~23 min lost over two sessions."""
 

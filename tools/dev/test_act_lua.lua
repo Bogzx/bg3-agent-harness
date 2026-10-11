@@ -229,6 +229,25 @@ test("approach / point move: no path -> names the closest walkable spot (S021)",
     refused(function() G.point_reachable(P1, { 5, 0, 0 }) end, "may need a jump or another route)")
 end)
 
+test("approach: a big target is used from its rim (S044 23:50 the Hollow Tower: closest spot 3.0 m from it)", function()
+    nav.fn = function() return { reachable = false } end -- every ring point lies over the hole
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ bounds = function() return { radius = 2.0, height = 1 } end }, { __index = savedV })
+    BG3AI.Nav.closestReach = function(_, goal)
+        return { pos = { goal[1] - 3, goal[2], goal[3] }, path_m = 6, to_goal_m = 3.0, dy_to_goal = 0 }
+    end
+    local ok, err = pcall(function()
+        local p = G.approach_point(P1, NPC, 1.5)
+        eq(p.rim, true, "rim"); near(p.length_m, 6, "walk")
+        BG3AI.Nav.closestReach = function(_, goal)  -- far from the rim: still refused
+            return { pos = { goal[1] - 8, goal[2], goal[3] }, path_m = 6, to_goal_m = 8.0, dy_to_goal = 0 }
+        end
+        refused(function() G.approach_point(P1, NPC, 1.5) end, "no walkable path")
+    end)
+    BG3AI.Visibility, BG3AI.Nav.closestReach = savedV, nil
+    if not ok then error(err, 0) end
+end)
+
 test("approach: only with a jump -> refused, says jump", function()
     nav.fn = function() return { reachable = true, length_m = 5, needs_jump = true } end
     refused(function() G.approach_point(P1, NPC, 2.5) end, "needs a jump")
@@ -907,6 +926,7 @@ test("cast: the engine's CastSpellFailed says why (S024-S041 'the action failed'
     assert(A.cast_failed_why(P1, GOB):find("no line of sight to the target now", 1, true))
     osiv[key("IsDead", GOB)] = 1
     assert(A.cast_failed_why(P1, GOB):find("already dead", 1, true))
+    assert(A.cast_failed_why(P1, GOB, "Target_Revivify"):find("won't bring this one back", 1, true))
     osiv[key("IsDead", GOB)] = 0
 end)
 
@@ -1120,6 +1140,15 @@ local function group_setup()
     return function() Osi.DB_PartyMembers = saved end
 end
 
+test("end_turn: an EndTurn the game ignores fails after END_IGNORED_MS (S044/S045 summon, 10 s TIMEOUT x9)", function()
+    world[P1].comps.TurnBased = { IsActiveCombatTurn = true, RequestedEndTurn = false }
+    osiv[key("IsInCombat", P1)] = 1
+    local j = job(op("end_turn", { char = P1 }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    clock = clock + A.END_IGNORED_MS tick()
+    eq(j.status, "failed", "status"); eq(j.error, A.END_IGNORED, "error")
+end)
+
 test("end_turn in a shared turn group: done on RequestedEndTurn, lists who is still to act", function()
     local restore = group_setup()
     local j = job(op("end_turn", { char = P1 }))
@@ -1263,7 +1292,12 @@ test("interact ladder: no climb after the Use -> failed, says so", function()
     world[P1].pos = { 9.0, 0, 0 } clock = clock + A.LADDER_RETRY_MS + 1 tick() -- still walking: no re-Use
     eq(#called("Use"), 1, "no re-Use while the Use walks")
     tick()
-    eq(j.status, "running", "re-Used, not failed yet"); eq(#called("Use"), 2, "a second Use (acceptance 01:00)")
+    eq(#called("CharacterMoveToPosition"), 1, "stepped back from the ladder first (probe C: walk, then Use)")
+    local mv = called("CharacterMoveToPosition")[1]
+    near(mv[3], 9.0 - A.LADDER_STEP_M, "1.5 m away from the ladder")
+    eq(#called("Use"), 1, "no in-place re-Use (probe B did nothing)")
+    tick(2) clock = clock + A.LADDER_SETTLE_MS + 1 tick()
+    eq(j.status, "running", "re-Used, not failed yet"); eq(#called("Use"), 2, "a second Use after the settle")
     clock = clock + A.LADDER_CLIMB_MS + 1 tick()
     eq(j.status, "failed", "status"); assert(j.error:find("did not climb"), j.error)
     assert(j.error:find("Used twice", 1, true), j.error)
@@ -1275,6 +1309,7 @@ test("interact ladder: the re-Use starts the climb -> done", function()
     A.dispatch("UseFinished", { P1, LADDER, 1 })
     tick()
     clock = clock + A.LADDER_RETRY_MS + 1 tick() tick()
+    tick() clock = clock + A.LADDER_SETTLE_MS + 1 tick()
     eq(#called("Use"), 2, "re-Used")
     world[P1].pos = { 9.6, -3, 0 } tick()
     world[P1].pos = { 9.7, -5.8, 0 } tick()
@@ -1282,6 +1317,52 @@ test("interact ladder: the re-Use starts the climb -> done", function()
     world[P1].pos = { 10.6, -5.8, 0.8 } clock = clock + 300 tick()
     eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.climbed, "down", "climbed")
     eq(#called("Use"), 2, "one re-Use")
+end)
+
+test("interact ladder: after a walk to the top, the Use waits until the actor stands still (acceptance 01:5x)", function()
+    world[P1].pos = { 0, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    eq(j.phase, "approach", "walks first")
+    world[P1].pos = { 9.3, 0, 0 }
+    A.dispatch("EntityEvent", { P1, j.walk.ev })   -- the walk's arrival
+    eq(#called("Use"), 0, "no Use at the walk's arrival")
+    world[P1].pos = { 9.4, 0, 0 } tick()            -- still settling
+    eq(#called("Use"), 0, "no Use while moving")
+    tick() clock = clock + A.LADDER_SETTLE_MS + 1 tick()
+    eq(#called("Use"), 1, "Use once still")
+    A.dispatch("UseFinished", { P1, LADDER, 1 })
+    tick()
+    eq(j.status, "running", "climb awaited")
+end)
+
+test("interact ladder: a UseFinished before our settled Use is not ours", function()
+    world[P1].pos = { 0, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    world[P1].pos = { 9.3, 0, 0 }
+    A.dispatch("EntityEvent", { P1, j.walk.ev })
+    A.dispatch("UseFinished", { P1, LADDER, 1 })
+    tick()
+    eq(j.used_at, nil, "not counted"); eq(j.status, "running", "status " .. tostring(j.error))
+end)
+
+test("pickup: an order gone from the queue is re-sent, not a 40 s timeout (S043 batch step 2 x3)", function()
+    world[P1].pos = { 9, 0, 0 }   -- next to the gem: no walk (the 2nd pick_up of a batch)
+    local j = job(op("pickup", { char = P1, item = GEM }))
+    eq(#called("Pickup"), 1, "ordered")
+    tick()
+    eq(#called("Pickup"), 1, "not at once")
+    clock = clock + A.PICKUP_REORDER_MS tick()
+    eq(#called("Pickup"), 2, "re-sent: no task left, nothing picked")
+    osiv[key("GetInventoryOwner", GEM)] = P1
+    tick()
+    eq(j.status, "done", "status " .. tostring(j.error))
+    -- a running task (walking/animating) is left alone
+    osiv[key("GetInventoryOwner", GEM)] = nil
+    local restore = with_tasks(1)
+    j = job(op("pickup", { char = P1, item = GEM }))
+    clock = clock + A.PICKUP_REORDER_MS * 3 tick()
+    eq(#called("Pickup"), 3, "no re-send while its task runs")
+    restore()
 end)
 
 test("move_to: a timed-out walk purges its CharacterMoveToPosition task", function()

@@ -392,12 +392,36 @@ def apply_lantern(inv: dict, plan: dict) -> dict:
 
 # --- alerts -------------------------------------------------------------------------------------------
 
+def revive_scrolls(inv: dict | None) -> int:
+    """Scrolls of Revivify in the party's bags (stack counts)."""
+    n = 0
+    for it in (inv or {}).get("items") or [] if isinstance(inv, dict) else []:
+        if isinstance(it, dict) and "revivify" in str(it.get("name") or "").lower():
+            n += int(it.get("count") or 1)
+    return n
+
+
 def alerts(status: dict | None, inv: dict | None, name: Callable[[str], str] = lambda u: u,
-           partial_rest: str | None = None, short_rests: int | None = None) -> list[str]:
+           partial_rest: str | None = None, short_rests: int | None = None,
+           dead_allies: list[dict] | None = None) -> list[str]:
     """Short alert phrases, most urgent first. status: state.status; inv: state.inventory; short_rests: the
-    party's short rests left (ui.rest_info), None when unknown."""
+    party's short rests left (ui.rest_info), None when unknown; dead_allies: allied NPCs that died ({uuid, name},
+    debrief.Tracker.dead_allies) and were not revived."""
     out: list[str] = []
     st = status if isinstance(status, dict) else {}
+    # Deaths first (S043 Jaheira, S045 Aylin died with 5 Scrolls of Revivify in the bags, never mentioned again).
+    dead = [m for m in st.get("party") or [] if isinstance(m, dict) and m.get("dead") and not m.get("summon")]
+    if dead or dead_allies:
+        n = revive_scrolls(inv) if isinstance(inv, dict) and "items" in inv else None
+        have = (f"{n} Scroll(s) of Revivify in the bags" if n else "no Scroll of Revivify in the bags" if n == 0
+                else "Scroll of Revivify")
+        if dead:
+            out.append("DEAD " + ", ".join(m.get("name") or name(m.get("uuid", "?")) for m in dead)
+                       + f" (revive: {have} on the body, a Revivify spell, or Withers at camp for 200 g)")
+        if dead_allies:
+            out.append("ally DIED " + ", ".join(f"{name(a['uuid'])}" if a.get("uuid") else str(a.get("name"))
+                                                for a in dead_allies)
+                       + f" (revive: {have} on the body before leaving; Withers can't raise an ally; or reload)")
     if not st.get("in_combat"):
         low = []
         for m in st.get("party") or []:

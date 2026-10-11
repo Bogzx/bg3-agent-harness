@@ -247,6 +247,12 @@ class StuckDetection(unittest.TestCase):
         self.assertEqual(P.session_progress(None, a, 3), (None, "unknown"))
         self.assertEqual(P.session_progress(a, a, None)[0], False)
 
+    def test_boundary_s(self):
+        h = [{"kind": "play", "ended": 1000.0}, {"kind": "fix", "ended": 1100.0}]
+        self.assertEqual(P.boundary_s(h, 1045.0), 45.0)          # fix entries are no play boundary
+        self.assertIsNone(P.boundary_s(h, 1000.0 + P.BOUNDARY_MAX_S + 1))   # the runner was stopped
+        self.assertIsNone(P.boundary_s([], 5.0))
+
     def test_is_stuck(self):
         h = lambda p, kind="play": {"progress": p, "kind": kind}  # noqa: E731
         self.assertFalse(P.is_stuck([]))

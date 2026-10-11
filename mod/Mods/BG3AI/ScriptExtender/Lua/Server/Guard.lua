@@ -473,6 +473,8 @@ end
 G.APPROACH_RADII = { 1.0, 1.5, 2.2 }
 G.APPROACH_MAX_TRIES = 16   -- pathfinder queries per resolve (each ~ms)
 G.UNVERIFIED_APPROACH_M = 8.0
+G.RIM_SLACK_M = 0.5         -- a big target used from its rim: reach + bounds radius + this
+G.RIM_DY_M = 2.5            -- ... with the rim spot at most this far above/below the target's position
 
 -- approach_point(char, target, reach) -> plan
 --   plan.here = true            already within `reach` of the target (no walk)
@@ -527,6 +529,25 @@ function G.approach_point(char, target, reach)
                 return { pos = p, length_m = info.length_m or U.dist(a, p), dist = d, tpos = tpos }
             end
             if r == true and info.needs_jump then jump_only = true end
+        end
+    end
+    -- A big target (a hole, a wide hatch) is used from its rim: the rings within `reach` of its centre all lie over
+    -- it (S044 23:50: interact on the Hollow Tower refused "no walkable path … closest walkable spot … 3.0m from it
+    -- (walk 1m)"; a click on it worked at once). The closest walkable spot counts when it is within reach of the
+    -- object's own edge (AI bounds radius) on about the same floor.
+    if not top and not jump_only then
+        local N, V = BG3AI.Nav, BG3AI.Visibility
+        local rad = 0
+        if type(V) == "table" and V.bounds then
+            local okb, bb = pcall(V.bounds, G.entity(target))
+            if okb and type(bb) == "table" and type(bb.radius) == "number" then rad = bb.radius end
+        end
+        if rad > 0 and type(N) == "table" and type(N.closestReach) == "function" then
+            local okc, c = pcall(N.closestReach, char, t)
+            if okc and type(c) == "table" and c.pos and (c.to_goal_m or 1e9) <= reach + rad + G.RIM_SLACK_M
+                and math.abs(c.dy_to_goal or 0) <= G.RIM_DY_M then
+                return { pos = c.pos, length_m = c.path_m or U.dist(a, c.pos), dist = d, tpos = tpos, rim = true }
+            end
         end
     end
     if jump_only then G.refuse("needs a jump: use jump_to") end

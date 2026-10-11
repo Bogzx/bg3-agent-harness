@@ -176,6 +176,27 @@ class Alerts(unittest.TestCase):
         self.assertIn("Encumbered 162.0/159.0kg (drop 3.0kg)", al)
         self.assertIn("Sentinel Shield", al)
 
+    def test_deaths_come_first_with_revive_options(self):
+        # S043 Jaheira, S045 Aylin (allies) died with Scrolls of Revivify in the bags; nothing said so afterwards.
+        inv = s026_inventory()
+        inv["items"].append({"uuid": "u-rev", "name": "Scroll of Revivify", "count": 5, "owner": CLAUDE})
+        st = {"in_combat": False, "party": [dict(STATUS["party"][0]), dict(STATUS["party"][1], dead=True, hp=0)]}
+        al = economy.alerts(st, inv, dead_allies=[{"uuid": "u-j", "name": "Jaheira"}], name=lambda u: "e9 Jaheira")
+        self.assertTrue(al[0].startswith("DEAD Gale (revive: 5 Scroll(s) of Revivify in the bags on the body"), al[0])
+        self.assertIn("Withers at camp", al[0])
+        self.assertTrue(al[1].startswith("ally DIED e9 Jaheira (revive: 5 Scroll(s) of Revivify"), al[1])
+        self.assertIn("Withers can't raise an ally", al[1])
+        self.assertNotIn("DEAD", " | ".join(economy.alerts(STATUS, inv)))
+
+    def test_dead_allies_reach_the_alerts_line(self):
+        import time as _t
+        tr = server._fights()
+        saved = list(tr.dead_allies)
+        self.addCleanup(setattr, tr, "dead_allies", saved)
+        tr.dead_allies = [{"uuid": "u-j", "name": "Jaheira", "t": _t.time()},
+                          {"uuid": "u-old", "name": "Old", "t": _t.time() - server.DEAD_ALLY_ALERT_S - 1}]
+        self.assertEqual([a["name"] for a in server._dead_allies()], ["Jaheira"])
+
     def test_low_hp_says_how_to_heal(self):
         al = " | ".join(economy.alerts(STATUS, s026_inventory(), short_rests=2))
         self.assertIn("low HP Claude 34/88 (short rests left 2: short_rest)", al)

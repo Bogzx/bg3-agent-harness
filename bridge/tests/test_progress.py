@@ -195,6 +195,42 @@ class Exploration(unittest.TestCase):
         _, evs = P.diff(seen, w)
         self.assertEqual(kinds(evs), ["quest_new"])
 
+    def test_migration_poll_does_not_score_old_steps_of_a_known_title(self):
+        """S044 t=0: 32 quest_step events (64 points) from quests sharing a known title (Daughter of Darkness)."""
+        seen, _ = P.diff(None, world())
+        seen.pop("quests_unaccepted")
+        w = world()
+        w["journal"] = [{"title": "Escape the Nautiloid", "steps": ["Find the helm.", "An old step of a twin quest."]}]
+        seen, evs = P.diff(seen, w)
+        self.assertNotIn("quest_step", kinds(evs))
+        w["journal"][0]["steps"].append("A real new step.")
+        _, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs), ["quest_step"])
+
+    def test_won_fights_score_and_a_refight_does_not(self):
+        """S041: the Balthazar fight (Balthazar + 21 skeletons, won on try 4) scored 28/h: kills only."""
+        def ev(kind, **d):
+            return {"kind": kind, "data": d}
+        seen, _ = P.diff(None, world())
+        w = world()
+        w["events"] = [ev("dialogue_started", speakers=[{"uuid": "B", "name": "Balthazar"}])]
+        seen, _ = P.diff(seen, w)
+        fight = [ev("combat_started")] + [ev("died", uuid=f"s{i}", name="Skeleton") for i in range(4)] \
+            + [ev("died", uuid="B", name="Balthazar"), ev("combat_ended")]
+        w["events"] = fight
+        seen, evs = P.diff(seen, w)
+        self.assertIn("boss_fight", kinds(evs))
+        self.assertNotIn("fight_won", kinds(evs))
+        w["events"] = fight  # the same fight after a reload: nobody new dies
+        seen, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs), [])
+        w["events"] = [ev("combat_started")] + [ev("died", uuid=f"g{i}", name="Gnoll") for i in range(3)] + [ev("combat_ended")]
+        seen, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs).count("fight_won"), 1)
+        w["events"] = [ev("combat_started"), ev("died", uuid="x1", name="Rat"), ev("combat_ended")]
+        _, evs = P.diff(seen, w)
+        self.assertNotIn("fight_won", kinds(evs))
+
     def test_subregion_from_the_explored_reply(self):
         seen, _ = P.diff(None, world())
         w = world()

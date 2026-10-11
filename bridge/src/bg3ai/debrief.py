@@ -54,6 +54,7 @@ class Fight:
         self.max_down = 0
         self.downs: list[dict] = []
         self.died: set[str] = set()
+        self.ally_died: list[dict] = []               # allied NPCs (Jaheira S043, Aylin S045) that died: {uuid, name, round}
         self.casting: dict[str, str] = {}             # party caster uuid -> current ability name
         self.rolls: dict[tuple, str] = {}             # (caster name, ability) -> "save" / "attack" (the cast event)
         self.last_cast: tuple[str, str] | None = None  # the party's latest cast (caster uuid, ability)
@@ -77,6 +78,8 @@ class Tracker:
         self.history: list[dict] = list(history or [])[-HISTORY_MAX:]
         self.last: dict | None = None        # the last closed debrief
         self.last_t = 0.0
+        self.allies: set[str] = set()        # allied non-party characters seen on any turn order (kept across fights)
+        self.dead_allies: list[dict] = []    # {uuid, name, t}: ally deaths until revived (server's ALERTS line)
 
     # ---- input ----
 
@@ -95,6 +98,8 @@ class Tracker:
                     continue
                 r0 = int(d.get("round") or 0) if k == "round_started" else 0
                 self.cur = Fight(now, r0 if r0 > 1 else None)
+            if k == "revived":
+                self.dead_allies = [a for a in self.dead_allies if a["uuid"] != _ref(d)[0]]
             f = self.cur
             if f is None:
                 continue
@@ -121,11 +126,17 @@ class Tracker:
                                         "by": f.last_hit_by.get(u)})
                         if first:
                             warns += self._first_down_warning(f, f.name(u))
+                elif k == "died" and u in self.allies:
+                    # S043 Jaheira, S045 Aylin: an allied NPC's death was counted as a kill in a "clean" fight
+                    f.ally_died.append({"uuid": u, "name": f.name(u), "round": f.round})
+                    self.dead_allies = [a for a in self.dead_allies if a["uuid"] != u] + [
+                        {"uuid": u, "name": f.name(u), "t": now}]
                 elif k == "died":
                     f.killed.add(u)
             elif k == "revived":
                 u, _ = _ref(d)
                 f.downed_now.discard(u)
+                self.dead_allies = [a for a in self.dead_allies if a["uuid"] != u]
             elif k == "cast":
                 u, n = _ref(d.get("caster"))
                 if not u:
@@ -220,6 +231,8 @@ class Tracker:
         for o in rows:
             if o.get("uuid") and o.get("name"):
                 f.names[o["uuid"]] = o["name"]
+            if o.get("relation") == "ally" and o.get("uuid") and not o.get("summon") and o["uuid"] not in party:
+                self.allies.add(o["uuid"])
             if o.get("relation") == "hostile" and o.get("uuid"):
                 f.enemies.add(o["uuid"])
                 if o.get("race"):
@@ -352,10 +365,11 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
     taken = sum(f.taken.values())
     n_party = max(1, len(party_u))
     # Thresholds (act owns them; docs/ARCHITECTURE.md "Learning from fights"): near_wipe = a member died, half the
-    # party down at once, or one member left standing; costly = someone downed or ≥ 30 % of the party's max HP taken.
+    # party down at once, one member left standing, or an allied NPC died (a story ally can be gone for good);
+    # costly = someone downed or ≥ 30 % of the party's max HP taken.
     if f.max_down >= n_party:
         grade = "wipe"
-    elif f.died or (f.max_down >= 2 and (f.max_down * 2 >= n_party or f.max_down >= n_party - 1)):
+    elif f.died or f.ally_died or (f.max_down >= 2 and (f.max_down * 2 >= n_party or f.max_down >= n_party - 1)):
         grade = "near_wipe"
     elif f.downs or (max_hp and taken >= 0.3 * max_hp):
         grade = "costly"
@@ -369,7 +383,8 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
     rec = {"v": 1, "session": meta.get("session"), "t": f.wall0, "region": meta.get("region"),
            "grade": "reloaded" if reloaded else grade, "reloaded": reloaded, "rounds": f.round,
            "duration_s": int(now - f.t0), "enemies": sorted(enemies.values(), key=lambda e: (-e["count"], -e["dmg_to_us"], e["name"])),
-           "party": party, "downed": [{"name": d["name"], "round": d["round"], "by": foe(d["by"])} for d in f.downs],
+           "party": party, "allies_died": [{"name": a["name"], "round": a["round"]} for a in f.ally_died],
+           "downed": [{"name": d["name"], "round": d["round"], "by": foe(d["by"])} for d in f.downs],
            "abilities": abilities[:8], "dmg_types": dmg_types,
            "consumables": {"used": sorted(f.used), "unused": list(unused)[:6]}}
     # setup's interface fields (docs/ARCHITECTURE.md): group = the retry key; per-enemy n/used/resisted; per-member
@@ -399,6 +414,10 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
     return rec
 
 
+REVIVE_HINT = ("revive now: Scroll of Revivify / Revivify on the body; Withers (camp) raises only party members; "
+               "or reload before the fight")
+
+
 def _enemy_list(rec: dict, n: int = 4) -> str:
     es = rec.get("enemies") or []
     out = ", ".join(e["name"] + (f" x{e['count']}" if e["count"] > 1 else "") for e in es[:n])
@@ -416,6 +435,11 @@ def _rounds(rec: dict) -> str:
 
 def key_facts(rec: dict) -> list[str]:
     facts = []
+    dead = [p["name"] for p in rec.get("party") or [] if p.get("died")]
+    if dead:
+        facts.append("DIED: " + ", ".join(dead))
+    if rec.get("allies_died"):
+        facts.append("ally DIED: " + ", ".join(f"{a['name']} (r{a['round']})" for a in rec["allies_died"]))
     downs = rec.get("downed") or []
     if downs:
         d = downs[0]
@@ -462,6 +486,11 @@ def render(rec: dict) -> str:
     gone = total - killed if rec.get("grade") in ("clean", "costly", "near_wipe") else 0
     lines.append(f"  killed {killed}/{total}" + (f" ({gone} gone at the end)" if gone else "") + " · dealt " + ", ".join(f"{p['name']} {p['dealt']}" for p in ps)
                  + " · took " + ", ".join(f"{p['name']} {p['taken']}" for p in ps))
+    dead = [p["name"] for p in ps if p.get("died")]
+    if dead or rec.get("allies_died"):
+        # first after the header: a death is the one thing the next fight must not repeat (S043 Jaheira: "clean")
+        lines.insert(1, "  DIED: " + ", ".join(dead + [f"{a['name']} (ally, r{a['round']})" for a in rec.get("allies_died") or []])
+                     + " — " + REVIVE_HINT)
     if rec.get("downed"):
         lines.append("  downed: " + ", ".join(f"{d['name']} r{d['round']}" + (f" by {d['by']}" if d.get("by") else "")
                                              for d in rec["downed"]))
@@ -494,6 +523,8 @@ def render(rec: dict) -> str:
 
 def last_attempt(rec: dict) -> str:
     tips = []
+    if rec.get("allies_died"):
+        tips.append(f"keep {rec['allies_died'][0]['name']} alive (heal/shield first, pull the enemies off them)")
     downs = rec.get("downed") or []
     if downs:
         tips.append(f"protect {downs[0]['name']} (pre-buff, keep back, heal first)")

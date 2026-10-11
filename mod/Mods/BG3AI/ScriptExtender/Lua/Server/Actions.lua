@@ -38,6 +38,8 @@ local TICK_MS = 50   -- post-condition polling; cheap queries, keeps chaining fa
 A.MOVE_REACH = 2.2   -- move_to {target}: stop within this of the entity (centres; melee reach is
                      -- weapon 1.5 + both radii, >= 2.2 m even for a tiny target, see G.check_cast)
 A.END_REQUEST_AFTER_MS = 1500 -- end_turn in a shared group: report the request as done after this
+A.END_IGNORED_MS = 3000 -- end_turn: the game ignored EndTurn (no group pending) this long: failed (bridge: HUD button)
+A.END_IGNORED = "the game ignored the end-turn order"
 -- S035 19:28-19:30: three jump_to calls each ran 25 s "still running" while Shadowheart never moved: the engine
 -- dropped UseSpellAtPosition without CastSpellFailed. No CastSpell and no step this long after the order: fail.
 A.CAST_NO_START_MS = 8000
@@ -55,13 +57,24 @@ A.JUMP_AIRBORNE_MAX_MS = 3000 -- wait up to this long after the settle for a sti
 A.JUMP_FALL_M = 4.0
 A.JUMP_FALL_CHECK_MS = 600 -- after a fall, wait this long for the fall damage before reading dead/downed
 A.USE_REACH = 1.8    -- interact/pickup and the click ops: Use/Pickup/click from here
+A.PICKUP_REORDER_MS = 1500 -- pickup: an order gone from the task queue (nothing picked) is re-sent after this
 
 -- The engine's CastSpellFailed carries no reason. S024-S041: ~12 "the action failed — purged_tasks=1" in
 -- combat_turn (Toll the Dead, Ranged Attack extra attacks, Spiritual Weapon attacks), each read as a mystery.
 -- Say what a player would see at that moment: the target gone, no line of sight, or the projectile's blocked path.
-function A.cast_failed_why(char, target)
+function A.cast_failed_why(char, target, spell)
     local why = "the game refused the cast (no reason given)"
     if not target or G.same(char, target) then return why end
+    -- S043: Revivify on Jaheira (an allied NPC, dead) refused with no reason: a spell meant for the dead
+    local revive = false
+    pcall(function()
+        local st = spell and Ext.Stats.Get(spell)
+        revive = tostring(spell):find("Revivify") ~= nil or tostring(st and st.TargetConditions or ""):find("Dead%(%)") ~= nil
+    end)
+    if revive then
+        return why .. ": the game won't bring this one back (story deaths and some allies who are not in your party"
+            .. " can't be revived; a party member can: Revivify / Scroll of Revivify, or Withers at camp)"
+    end
     local ok, txt = pcall(function()
         if G.is_dead(target) then return "the target was already dead when it fired" end
         if not G.visible(target) then return "the target is out of sight now (hidden, invisible or behind cover)" end
@@ -788,6 +801,16 @@ A.LADDER_CLIMB_MS = 10000 -- interact on a ladder: the longest it waits for the 
 -- all four and nobody climbed in 10 s. A player clicks the ladder again: one purge + re-Use when the actor hasn't
 -- moved vertically this long after the Use.
 A.LADDER_RETRY_MS = 3000
+-- 2nd cause (acceptance 01:07/01:5x: from the Mausoleum gate the job walked to the top landing and Used at the walk's
+-- arrival, and nothing climbed, 2 of 2; from a standing start the same Use climbs, and a raw Use 1 s after a walk
+-- climbs). A Use sent while the walk (and the chained followers behind it) is still settling, and a re-Use sent in place
+-- after a purge (probe B: tasks 1→0, no climb), do nothing. So: after a walk, Use only once the actor stood still
+-- LADDER_SETTLE_MS (at most LADDER_SETTLE_MAX_MS); the retry steps LADDER_STEP_M back from the ladder and walks in
+-- again before the re-Use (probe C: walk, then Use → climbed).
+A.LADDER_SETTLE_MS = 700
+A.LADDER_SETTLE_MAX_MS = 3000
+A.LADDER_STEP_M = 1.5
+A.LADDER_STEP_MAX_MS = 3000
 
 -- In combat a carried potion is drunk as from the hotbar: on the drinker's turn, for the item's own UseCosts
 -- (a bonus action for Potion of Healing). S003/S017/S018/S023/S031: every in-combat potion was refused ("not
@@ -894,7 +917,7 @@ reg("interact", function(args)
         osi = with_walk({
             UseFinished = function(job, a)
                 if G.same(a[1], char) and G.same(a[2], target) then
-                    if ladder and not job.ladder then return end -- not our Use yet (see below)
+                    if ladder and not (job.ladder and job.ladder.used) then return end -- not our Use yet (see below)
                     if not G.b(a[3]) then
                         RPC.finish_job(job, "failed", nil, key_note and G.b(G.q("IsLocked", target))
                             and ("still locked: " .. key_note.unlocked_with .. " did not open it") or "could not use that")
@@ -927,7 +950,14 @@ reg("interact", function(args)
                 j.use_ev = ev_name(j, "use")
                 j.use_track = {}
                 j.osi_task = true
-                if ladder then j.ladder = { y0 = (G.pos(char) or {})[2], item = target } end
+                if ladder then
+                    j.ladder = { y0 = (G.pos(char) or {})[2], item = target }
+                    if j.walk then -- walked here: settle first (on_tick sends the Use)
+                        j.ladder.settle_from = RPC.now_ms()
+                        return
+                    end
+                    j.ladder.used = true
+                end
                 G.osi("Use", char, target, j.use_ev)
             end)
         end,
@@ -941,6 +971,22 @@ reg("interact", function(args)
                 return not t or U.dist(prev, t) > A.USE_REACH + 0.7
             end) then return end
             local res = state_result()
+            if job.ladder and not job.ladder.used then
+                -- settling after the walk (or the retry's step back): Use once still, or at the cap
+                local lj, here, now = job.ladder, G.pos(char), RPC.now_ms()
+                local moved = here and lj.settle_last and U.dist(here, lj.settle_last) or 1
+                lj.settle_last = here
+                lj.still_since = (moved < 0.03) and (lj.still_since or now) or nil
+                if lj.stepping and now - lj.stepping < A.LADDER_STEP_MAX_MS and not lj.still_since then return end
+                if (lj.still_since and now - lj.still_since >= A.LADDER_SETTLE_MS)
+                    or now - lj.settle_from >= A.LADDER_SETTLE_MAX_MS + (lj.stepping and A.LADDER_STEP_MAX_MS or 0) then
+                    if lj.stepping then pcall(G.osi, "PurgeOsirisQueue", char) end -- the step's walk, if still queued
+                    lj.used, lj.y0 = true, here and here[2] or lj.y0
+                    G.osi("Use", char, target, job.use_ev)
+                    job.used_at = job.used_at and now or nil -- a re-Use restarts the climb deadline
+                end
+                return
+            end
             if job.ladder and job.used_at then
                 -- Acceptance 13:4x: "done — used" 300 ms after the Use, and the job's end purges the task queue: the
                 -- climb was cancelled at the top (the active character stayed up, followers went down). Wait for
@@ -981,7 +1027,21 @@ reg("interact", function(args)
                     and now - job.used_at > A.LADDER_RETRY_MS then -- standing still (not the Use's own walk)
                     lj.retried = true
                     pcall(G.osi, "PurgeOsirisQueue", char)
-                    G.osi("Use", char, target, job.use_ev)
+                    -- step back from the ladder and walk in again (probe C), then the settle above re-Uses
+                    local lp = G.pos(target)
+                    local dx, dz = lp and here[1] - lp[1] or 0, lp and here[3] - lp[3] or 0
+                    local n = math.sqrt(dx * dx + dz * dz)
+                    local back
+                    if n > 0.1 then
+                        local x, z = here[1] + dx / n * A.LADDER_STEP_M, here[3] + dz / n * A.LADDER_STEP_M
+                        local y = G.floor_at(x, z, here[2])
+                        if y and math.abs(y - here[2]) < 0.6 then back = { x, y, z } end
+                    end
+                    if back then
+                        G.osi("CharacterMoveToPosition", char, back[1], back[2], back[3], "Walk", ev_name(job, "lstep"))
+                        lj.stepping = now
+                    end
+                    lj.used, lj.settle_from, lj.still_since, lj.settle_last = false, now, nil, nil
                     job.used_at = now
                     return
                 end
@@ -1050,6 +1110,7 @@ reg("pickup", function(args)
                 j.use_track = {}
                 -- ForcePickUpOnFailure = 0: never teleport the item into the bag.
                 j.osi_task = true
+                j.picked_order = RPC.now_ms()
                 G.osi("Pickup", char, item, ev_name(j, "pick"), 0)
             end)
         end,
@@ -1057,6 +1118,17 @@ reg("pickup", function(args)
             if job.phase == "approach" then return approach_tick(job) end
             if job.phase ~= "act" then return end
             if picked(job) then return end
+            -- S043 23:32-23:34 (×3): in a do_actions batch, step 1 ended with its leftover task purged and step 2's
+            -- Pickup, sent at once, never ran (no task, travelled=0) until the 40 s timeout. An order that is gone
+            -- from the queue with nothing picked is sent again (A.PICKUP_REORDER_MS after it, up to twice).
+            local now = RPC.now_ms()
+            if job.picked_order and now - job.picked_order >= A.PICKUP_REORDER_MS and osi_tasks(char) == 0
+                and (job.reorders or 0) < 2 then
+                job.reorders = (job.reorders or 0) + 1
+                job.picked_order = now
+                G.osi("Pickup", char, item, ev_name(job, "pick"), 0)
+                return
+            end
             teleport_check(job, job.use_track, function(prev)
                 local t = G.pos(item)
                 return t ~= nil and U.dist(prev, t) > A.USE_REACH + 0.7
@@ -1275,7 +1347,7 @@ reg("cast", function(args)
                 end
             end,
             CastSpellFailed = function(job, a)
-                if matches(a) then RPC.finish_job(job, "failed", nil, A.cast_failed_why(char, targets[1])) end
+                if matches(a) then RPC.finish_job(job, "failed", nil, A.cast_failed_why(char, targets[1], spell)) end
             end,
             -- AttackedBy(defender, attackerOwner, attacker, damageType, amount, cause, storyActionId)
             AttackedBy = function(job, a)
@@ -1485,6 +1557,12 @@ reg("end_turn", function(args)
             if RPC.now_ms() - job.started >= A.END_REQUEST_AFTER_MS and #group_waiting(char) > 0 then
                 G.end_requested[char] = G.now_ms()
                 finish(job, true)
+                return
+            end
+            -- S044/S045: our Spiritual Weapon's EndTurn (×4) and turns during Ketheric's mid-fight lines (×5) were
+            -- ignored: 10 s TIMEOUT each. Hand back early so the bridge presses the HUD's End Turn instead.
+            if RPC.now_ms() - job.started >= A.END_IGNORED_MS then
+                RPC.finish_job(job, "failed", { still_my_turn = true }, A.END_IGNORED)
             end
         end,
         on_timeout = function(job)

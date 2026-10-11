@@ -405,7 +405,8 @@ class FastTravelReadyCheck(unittest.TestCase):
 
     def test_ready_check_failure_ends_the_wait(self):
         out, took, keys = self.run_with(fail=True)
-        self.assertIn("FAILED — the game's party ready check for the trip failed (WaypointTravel_RegionSwap)", out)
+        self.assertIn("FAILED — the game's party ready check for the trip failed (travel to another region)", out)
+        self.assertNotIn("WaypointTravel_RegionSwap", out)
         self.assertLess(took, 2.5)
         self.assertEqual(keys, ["ESCAPE"])  # the map the job opened is closed
 

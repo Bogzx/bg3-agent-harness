@@ -36,6 +36,9 @@ Weights (points per event; deliberately simple, story-weighted):
                    "stuck" while crossing the Faith-Leap Trial)
     puzzle      2  a door/wall in view opened by the world, not by the party (door_opened: a lever, a trial won,
                    the Grand Mausoleum's paintings), once per door
+    fight_won   6  a fight ended (combat_ended) with >= FIGHT_WON_KILLS first-time kills in it
+    boss_fight 15  … instead of fight_won: someone the party had talked to died in it (S041: the Balthazar fight,
+                   won on try 4, scored 28/h; a refight after a reload kills nobody new, so it never scores twice)
 
 Not progress: summons joining (Spiritual Weapon is in DB_PartyMembers, S017 scored it as a companion), the
 levels a recruit is caught up to on joining (S021: Karlach -> 2, 3, 4 = 24 points within 90 s), and an
@@ -65,8 +68,9 @@ from typing import Any, Callable
 
 WEIGHTS = {"region": 15, "quest_done": 10, "level_up": 8, "waypoint": 5, "companion": 5, "quest_new": 3,
            "area": 3, "quest_step": 2, "objective": 2, "obj_moved": 1, "explore": 1, "talk": 2, "kill": 1,
-           "key_item": 5, "puzzle": 2, "story_kill": 5}
-EVENT_KINDS = ("died", "dialogue_started", "item_added", "door_opened")
+           "key_item": 5, "puzzle": 2, "story_kill": 5, "fight_won": 6, "boss_fight": 15}
+EVENT_KINDS = ("died", "dialogue_started", "item_added", "door_opened", "combat_started", "combat_ended")
+FIGHT_WON_KILLS = 3
 EXPLORE_CELLS = 8
 OBJ_MOVED_M = 10.0
 OBJ_POS_CAP = 20  # remembered spots per objective
@@ -144,7 +148,8 @@ def empty_seen() -> dict:
     return {"regions": [], "areas": [], "waypoints": [], "quests": {}, "objectives_active": [],
             "objectives_done": [], "levels": {}, "explored": {}, "objective_pos": {}, "objective_moved_t": {},
             "joined": {}, "talked": [], "killed": [], "key_items": [], "puzzles": [], "baseline": False,
-            "quests_unaccepted": True}
+            "quests_unaccepted": True,
+            "fight": {"kills": 0, "story": ""}}
 
 
 def _step_key(text: str) -> str:
@@ -217,16 +222,28 @@ def _explored(seen: dict, ex: Any, add: Callable, silent: bool) -> None:
 def _game_events(seen: dict, evs: Any, add: Callable, party: set[str]) -> None:
     """talk / kill / key_item / puzzle from the mod's player-visible events (dialogue_started speakers, died,
     item_added story, door_opened)."""
+    fight = seen.setdefault("fight", {"kills": 0, "story": ""})
     for e in evs if isinstance(evs, list) else []:
         d = e.get("data") if isinstance(e, dict) else None
         if not isinstance(d, dict):
             continue
-        if e.get("kind") == "died":
+        if e.get("kind") == "combat_started":
+            fight.update(kills=0, story="")
+        elif e.get("kind") == "combat_ended":
+            if fight.get("story"):
+                add("boss_fight", f"fight won ({fight['story']})")
+            elif fight.get("kills", 0) >= FIGHT_WON_KILLS:
+                add("fight_won", f"fight won ({fight['kills']} down)")
+            fight.update(kills=0, story="")
+        elif e.get("kind") == "died":
             u, name = d.get("uuid"), str(d.get("name") or "")
             if u and u not in party and name not in party and u not in seen["killed"]:
                 seen["killed"].append(u)
                 # someone the party has talked to (Balthazar, a camp leader): a story beat, not a mook
                 add("story_kill" if u in seen["talked"] else "kill", name or "someone")
+                fight["kills"] = fight.get("kills", 0) + 1
+                if u in seen["talked"]:
+                    fight["story"] = name or "someone"
         elif e.get("kind") == "item_added" and d.get("story"):
             it = d.get("item") if isinstance(d.get("item"), dict) else {}
             u = it.get("uuid")
@@ -319,7 +336,9 @@ def diff(seen: dict, got: dict, now: float | None = None) -> tuple[dict, list[di
                 # the last one is often an old step (S036-S042 named "Soft-Step Trial" for every Shar step).
                 new = [k for k in q["texts"] if k not in old["texts"]]
                 for k in new:
-                    add("quest_step", f"{t}: {k}")
+                    # (the migration poll: a newly listed quest can share its title with a known one, S044 t=0:
+                    # 32 old steps of "Daughter of Darkness"/"The Chosen of Shar"/... scored 64 points)
+                    add("quest_step", f"{t}: {k}", jq)
                 old["texts"] = old["texts"] + new
             elif q["steps"] > old["steps"]:
                 for _ in range(q["steps"] - old["steps"]):

@@ -202,7 +202,12 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         "the game shows (enemy name or name stem like Justiciar, race like Undead, region/place) or ambush, "
         "escort, ranged, surrounded, boss. MERGE: a lesson for the same trigger and failure gets the new session "
         "appended (S023, S033) and its advice sharpened, never a second line; a retry that WON with the advice "
-        "keeps it (add 'worked S034'); drop a lesson the logs show is wrong. ≤ 60 lessons, under `## Lessons`, "
+        "keeps it (add 'worked S034'); drop a lesson the logs show is wrong. A death always gets a lesson: a "
+        "`[fight]` line with `DIED:` (party member) or `ally DIED:` (an allied NPC such as Jaheira or Aylin: a "
+        "story ally may be gone for good) → `- WHEN <enemy>, <place>: <who> died (how) → protect them (heal/shield "
+        "first, keep them back) and revive at once (Scroll of Revivify on the body; Withers only for party "
+        "members) (Sxxx) [seen]`; in PLAYTHROUGH.md `## Party` and npcs.md note a dead ally that wasn't revived. "
+        "≤ 60 lessons, under `## Lessons`, "
         "newest last. A clean fight gives no lesson; a `[lesson]` about a tool or the harness (how to call "
         "combat_turn, a click quirk) is not a fight lesson: it belongs in strategy.md. Only facts from the logs "
         "(fairness).",

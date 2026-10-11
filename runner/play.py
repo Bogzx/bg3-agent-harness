@@ -167,6 +167,22 @@ def early_exit_minutes(reason: str, started: float, ended: float, session_minute
     return round(left, 1) if left > threshold else None
 
 
+# Early exits are kept (decided 2026-10-11 from S040-S046): a session ending 6-7 min early at a milestone costs only
+# the boundary (previous claude end → next claude start: 29-86 s, median ~45 s, mostly the memory keeper's 25-51 s),
+# which a full-length session pays too: play stays ~97 % of the wall clock either way, while bouncing a finished
+# wrap-up turned into idle filler (S036). boundary_s is kept per session to watch that cost.
+BOUNDARY_MAX_S = 15 * 60   # a longer gap is a runner stop, not a boundary
+
+
+def boundary_s(history: list[dict], started: float) -> float | None:
+    """Seconds from the previous play session's end to this one's claude start (None: first, or a runner stop)."""
+    prev = next((h for h in reversed(history) if h.get("kind", "play") == "play" and h.get("ended")), None)
+    if prev is None:
+        return None
+    gap = started - prev["ended"]
+    return round(gap, 1) if 0 <= gap <= BOUNDARY_MAX_S else None
+
+
 def detect_budget_s(kind: str) -> float:
     """Worst case from a fault to claude stopped and recovery starting, with the current constants.
     crash/port lost: next health check; game hang: HEALTH_FAILURES slow evals; agent hang: the silence limit.
@@ -2457,11 +2473,14 @@ class Runner:
         if not crashed:
             entry["progress"], entry["progress_why"] = session_progress(start_sig, end_sig, entry["story_points"])
         log(f"{sid}: session progress {entry['progress']} ({entry['progress_why']})")
+        b = boundary_s(self.state["history"], res.started)
+        if b is not None:
+            entry["boundary_s"] = b
         early = early_exit_minutes(res.reason, res.started, res.ended, minutes)
         if early is not None:
             entry["early_exit_min"] = early
             log(f"{sid}: early exit: claude ended with {early:g} of {minutes:g} min left (exit {res.exit_code}); "
-                f"starting the next session now")
+                f"starting the next session now" + (f" (boundary before this session: {b:g} s)" if b is not None else ""))
         self.state["history"] = self.state["history"] + [entry]
         self.new_game = False  # from here on the game has a character: confirm by name
         if is_stuck(self.state["history"]):

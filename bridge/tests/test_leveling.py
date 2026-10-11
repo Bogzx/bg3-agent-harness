@@ -601,6 +601,27 @@ class ServerWiring(unittest.TestCase):
         self.assertIn("1=Counterspell, 2=Shield", why)
         self.assertIn("no reaction prompt", S._reaction_index(None, "Shield"))
 
+    def test_name_by_a_whole_word_and_an_ally_in_the_fight(self):
+        """S045 00:15 look_at("Aylin") for "Dame Aylin"; S043 23:15 talk_to("Jaheira"), an ally only in the turn
+        order: both "unknown target"."""
+        from bg3ai import server as S
+        from bg3ai.render import Handles
+        ay, ja = "aaaaaaaa-0000-0000-0000-00000000a71e", "aaaaaaaa-0000-0000-0000-00000000da01"
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                if op == "state.combat":
+                    return {"active": True, "order": [{"uuid": ja, "name": "Jaheira", "relation": "ally"}]}
+                return {"party": []} if op == "state.status" else ({"characters": []} if op == "state.nearby" else default)
+        saved = (S.game, S.H)
+        S.game, S.H = G(), Handles()
+        try:
+            S.H.get(ay, "Dame Aylin")
+            self.assertEqual(S._uuid("Aylin"), ay)
+            self.assertEqual(S._uuid("Jaheira"), ja)
+        finally:
+            S.game, S.H = saved
+
     def test_npc_in_view_resolves_on_a_fresh_bridge(self):
         """S029 16:04: talk_to(npc="Wulbren") as the session's first call failed "unknown target" with him in view."""
         from bg3ai import server as S

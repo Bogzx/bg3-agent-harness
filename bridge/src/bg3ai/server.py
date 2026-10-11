@@ -780,7 +780,20 @@ def _uuid(ref: str) -> str:
             if "unknown target" not in str(e2):
                 raise
             _remember_names(game.try_rpc("state.nearby", {"radius": 40, "kinds": ["characters", "items"]}))
-            return H.resolve(ref)
+            try:
+                return H.resolve(ref)
+            except ValueError as e3:
+                # S043 23:15 talk_to("Jaheira"), an ally fighting with the party: the fight's turn order names her
+                if "unknown target" not in str(e3):
+                    raise
+                try:
+                    cs = game.try_rpc("state.combat") or {}
+                except Exception:  # noqa: BLE001 - an optional read; the refusal below stands
+                    cs = {}
+                if not cs.get("active"):
+                    raise e3 from None
+                _remember_names(cs)
+                return H.resolve(ref)
 
 
 def _active() -> str:
@@ -1266,13 +1279,23 @@ def _name_of(u: str) -> str:
     return H.names.get(h) or h
 
 
+DEAD_ALLY_ALERT_S = 20 * 60   # an ally's death stays in ALERTS this long (or until a `revived` event)
+
+
+def _dead_allies() -> list[dict]:
+    tr = _FIGHTS.get("tr")
+    now = time.time()
+    return [a for a in getattr(tr, "dead_allies", None) or [] if now - a.get("t", 0) < DEAD_ALLY_ALERT_S]
+
+
 def _alerts_line(st: Any, inv: Any, force: bool = False) -> str:
     """'ALERTS low HP Claude 34/88 | camp supplies 27/40 … | gold 93 < 200 …' (economy.alerts); shown with a
     full status and whenever the alerts change. Never raises: an observation must not fail on it."""
     try:
         if isinstance(inv, dict):
             _remember_names(inv)
-        return ALERTS.line(economy.alerts(st, inv, _name_of, ALERTS.partial_rest, ALERTS.short_rests), force=force)
+        return ALERTS.line(economy.alerts(st, inv, _name_of, ALERTS.partial_rest, ALERTS.short_rests,
+                                          _dead_allies()), force=force)
     except Exception:  # noqa: BLE001
         return ""
 
@@ -1705,7 +1728,7 @@ def look_at(target: str) -> str:
     t0 = time.monotonic()
     res = _read1("state.entity", {"uuid": _uuid(target)})
     _remember_names(res)
-    return _finish("look_at", {"target": target}, render.compact(_shown_statuses(res), H), t0)
+    return _finish("look_at", {"target": target}, render.compact(render.public_levels(_shown_statuses(res)), H), t0)
 
 
 def _shown_statuses(res: Any) -> Any:
@@ -1879,7 +1902,7 @@ def get_explored() -> str:
     """Where the party has been in this area (your own breadcrumbs): size of explored region and recent named places."""
     t0 = time.monotonic()
     res = _read1("nav.explored", {})
-    return _finish("get_explored", {}, render.compact(res, H), t0)
+    return _finish("get_explored", {}, render.compact(render.public_levels(res), H), t0)
 
 
 @mcp.tool()
@@ -2675,7 +2698,7 @@ def fast_travel(waypoint: str) -> str:
             game.try_rpc("ui.key", {"key": "ESCAPE"}, context="client")
         _batch["last"] = "failed"
         return _finish("fast_travel", {"waypoint": waypoint}, (left + "\n" if left else "") + (
-            f"fast_travel: FAILED — the game's party ready check for the trip failed ({watch.failed}); stopped "
+            f"fast_travel: FAILED — the game's party ready check for the trip failed ({_ready_label(watch.failed)}); stopped "
             f"waiting at once (S032: 66 s each). A broken ready check comes with a long-lived game process (the "
             f"runner relaunches the game between sessions); until then walk (travel_to) or try a waypoint in this "
             f"region"), time.monotonic())
@@ -3254,6 +3277,34 @@ def _opener_combat(tu: str, res: Any) -> str:
     return f"combat: not started (no hit on {_label(tu)} seen)"
 
 
+END_IGNORED = "the game ignored the end-turn order"  # Actions.lua A.END_IGNORED
+END_HUD_WAIT_S = 3.0
+
+
+def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
+    """The game ignored Osiris EndTurn (S044/S045: our Spiritual Weapon ×4, turns during Ketheric's mid-fight lines
+    ×5, 10 s TIMEOUT each): select that character and press the HUD's End Turn (the shared EndTurn command a player
+    clicks), then check the turn moved on."""
+    cs = game.try_rpc("state.combat") or {}
+    if not cs.get("active") or char not in turn.acting(cs):   # it ended after all (a late read): never press twice
+        return JobResult("done", {"ended": True}, None, r.events, r.elapsed_ms)
+    try:
+        if _active() != char:
+            game.run_job("act.select", {"char": char}, wait_s=5)
+        game.rpc("ui.command", {"widget": "*", "command": "EndTurn"}, context="client")
+    except GameError as e:
+        return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn failed too: {e}", r.events, r.elapsed_ms)
+    deadline = time.monotonic() + END_HUD_WAIT_S
+    while time.monotonic() < deadline:
+        cs = game.try_rpc("state.combat") or {}
+        if not cs.get("active") or char not in turn.acting(cs):
+            return JobResult("done", {"ended": True, "via": "the HUD's End Turn (the game ignored the order)"},
+                             None, r.events, r.elapsed_ms)
+        time.sleep(0.2)
+    return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn didn't end it either (a cutscene or line "
+                     "may be holding the turn: wait_for, then end_turn again)", r.events, r.elapsed_ms)
+
+
 @mcp.tool()
 @_guard
 def end_turn(who: str | None = None, wait: bool = True) -> str:
@@ -3280,6 +3331,8 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
             body += "\n" + _wait_for_party_turn(80.0)
         return _finish("end_turn", args, body, t0)
     r = game.run_job("act.end_turn", args, wait_s=15)
+    if r.status == "failed" and END_IGNORED in str(r.error or ""):
+        r = _end_turn_by_hud(char, r)
     _remember_names(r.result)
     _batch["last"] = r.status
     nothing = _nothing_to_end(r)
@@ -3882,6 +3935,21 @@ def _rest_step(step: str) -> str:
     return step.split(":", 1)[0]
 
 
+# The ready check's engine id (Events.lua keeps it after the step) is no player-visible name: S044 23:50:48 look showed
+# `ready_ok:MOO_Assault_ReadyCheck` (fairness LEAK). The agent reads what the check was for, in words.
+_READY_CHECK_LABELS = {"ReadyCheckContent_GoToNight": "end the day", "WaypointTravel_RegionSwap": "travel to another region"}
+
+
+def _ready_label(rid: str) -> str:
+    return _READY_CHECK_LABELS.get(rid, "a story ready check" if rid else "the ready check")
+
+
+def _plain_step(step: str) -> str:
+    """A rest_flow step as the agent sees it: the engine id after ':' becomes words (ready checks) or goes."""
+    key, _, rid = step.partition(":")
+    return f"{key} ({_ready_label(rid)})" if key in ("ready_ok", "ready_failed") and rid else key
+
+
 def _rest_flow_hint(flow: Any = None) -> str:
     if flow is None:
         flow = game.try_rpc("camp.rest_flow", {"since_ms": 20000})
@@ -3895,10 +3963,11 @@ def _rest_flow_hint(flow: Any = None) -> str:
     answers = [x for x in steps if _rest_step(x) not in _REST_FLOW_PENDING]
     last = answers[-1] if answers else "gathered" if "gathered" in steps else steps[-1] if steps else ""
     key = _rest_step(last)
-    text = _REST_FLOW_TEXT.get(key, key) + (f" ({last.split(':', 1)[1]})" if ":" in last else "")
+    text = _REST_FLOW_TEXT.get(key, key) + (f" ({_ready_label(last.split(':', 1)[1])})"
+                                            if ":" in last and key in ("ready_ok", "ready_failed") else "")
     if key == "gathered" and not any(_rest_step(x) in ("ready_ok", "ready_failed") for x in steps):
         text += "; no ready-check result either (the \"End the day?\" question never showed or was never answered)"
-    out = f"REST FLOW {' → '.join(steps) or 'nothing'}: {text}"
+    out = f"REST FLOW {' → '.join(_plain_step(x) for x in steps) or 'nothing'}: {text}"
     why = _rest_reasons(flow.get("can_rest"))
     return out + (f"\nthe game's rest check: {why}" if why else "")
 
@@ -5380,6 +5449,29 @@ MELEE_IDS = ("Target_MainHandAttack", "Target_OffhandAttack", "Target_UnarmedAtt
 MELEE_ROUTE_END_M = 4.0
 
 
+TURN_CONVO_WAIT_S = 20.0  # combat_turn: a step refused "in a conversation" waits this long for mid-fight lines
+
+
+def _turn_run(watcher: actq.Watcher, who: str, step: actq.Step) -> tuple[actq.Report, str]:
+    """A combat_turn step. S045 (Ketheric): 6 steps "character is in a conversation (InDialog)" while his mid-fight
+    lines played ("line still playing" ×18), each a failed alternative and a re-plan. Lines with nothing to answer:
+    wait for them (re-trying the step), up to TURN_CONVO_WAIT_S; an answer on screen is the agent's: say so."""
+    rep, text = _run_one(watcher, who, step)
+    if rep.done or rep.stop_kind not in (None, "failed") or _IN_CONVO not in text:
+        return rep, text
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < TURN_CONVO_WAIT_S:
+        ui = game.try_rpc("ui.state", context="client") or {}
+        d = (ui.get("dialogue") or {}) if isinstance(ui, dict) and ui.get("screen") == "dialogue" else {}
+        if [o for o in d.get("options") or [] if isinstance(o, dict) and not o.get("off")]:
+            return rep, text + " — a mid-fight conversation needs your answer: choose_dialogue, then combat_turn again"
+        time.sleep(0.5)
+        rep, text = _run_one(watcher, who, step)
+        if rep.done or rep.stop_kind not in (None, "failed") or _IN_CONVO not in text:
+            return rep, text + f" (after waiting {time.monotonic() - t0:.0f}s for the mid-fight lines)"
+    return rep, text + f" (still in a conversation after {TURN_CONVO_WAIT_S:g}s of lines)"
+
+
 def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, after: dict,
                info: dict | None = None) -> str:
     """The move slot: 'ok', 'none' (couldn't move; the turn goes on, fallbacks may still work) or 'stop'.
@@ -5460,7 +5552,7 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
                                      "within": mv.within if mv.within is not None else turn.MELEE_M})
     if step is None:
         step = actq.Step("move_to", {"target": mv.target} if mv.target else dict(zip("xyz", mv.pos)))
-    rep, text = _run_one(watcher, who, step)
+    rep, text = _turn_run(watcher, who, step)
     _after(rep, after)
     if rep.done:
         res = text.split(': ', 1)[-1]
@@ -5615,7 +5707,7 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
         if why:
             tried.append(f"{alt.step.short()}: skipped ({why})")
             continue
-        rep, text = _run_one(watcher, who, alt.step)
+        rep, text = _turn_run(watcher, who, alt.step)
         text = _outcome(alt.step, text)
         _after(rep, after)
         if not rep.done and rep.stop_kind in (None, "failed"):

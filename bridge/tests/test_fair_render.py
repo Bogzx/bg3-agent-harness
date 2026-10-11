@@ -35,6 +35,32 @@ class Flicker(unittest.TestCase):
         self.assertEqual(render.render_events(evs, Handles()).count("Moonshield"), 2)
 
 
+class RestFlowHidden(unittest.TestCase):
+    def test_rest_flow_diagnostics_are_not_shown(self):
+        """S044 23:50:48 look: `rest_flow step=ready_ok:MOO_Assault_ReadyCheck` (an engine id, fairness LEAK)."""
+        evs = [{"kind": "rest_flow", "data": {"step": "ready_ok:MOO_Assault_ReadyCheck"}},
+               ev("status_applied", GALE, "Shadow Curse")]
+        out = render.render_events(evs, Handles())
+        self.assertNotIn("MOO_", out)
+        self.assertNotIn("rest_flow", out)
+        self.assertIn("Shadow Curse", out)
+
+
+class LevelIds(unittest.TestCase):
+    def test_level_ids_become_map_names(self):
+        """S040 get_explored `level=SCL_Main_A`, S046 look_at `region=SCL_Main_A` (fairness LEAK judged_id)."""
+        ex = {"level": "SCL_Main_A", "cells": 2200, "recent": [{"subregion": "Nightsong's Prison"}]}
+        out = render.compact(render.public_levels(ex), Handles())
+        self.assertNotIn("SCL_Main_A", out)
+        self.assertIn("Shadow-Cursed Lands", out)
+        ent = {"name": "Claude", "level": 7, "region": "SCL_Main_A", "statuses": [{"name": "Bless"}]}
+        got = render.public_levels(ent)
+        self.assertEqual(got["region"], "Shadow-Cursed Lands")
+        self.assertEqual(got["level"], 7)  # a character level stays
+        self.assertEqual(render.public_levels({"region": "XYZ_Main_A"})["region"], "another area")
+        self.assertEqual(render.public_levels({"note": "MAG_SHADOW_OBSCURITY"})["note"], "MAG_SHADOW_OBSCURITY")
+
+
 class Flapping(unittest.TestCase):
     """S026-S027: Moonshield on/off on Scratch every tick, split across calls (the in-batch flicker drop misses it)."""
     def setUp(self) -> None:

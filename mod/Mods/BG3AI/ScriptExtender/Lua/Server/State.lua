@@ -1264,6 +1264,12 @@ function S.nearby(ctx, args)
                 o.kind = it.kind == "object" and "trap" or it.kind
             end
             pcall(function() if e.ServerItem.StoryItem then o.story = true end end)
+            -- the hover shows a breakable thing's HP (S044 23:51: "Membrane (6 HP)" blocking the colony tunnel was
+            -- listed only as "Viscera <usable>"; the agent attacked it for 0, then clicked it by hand)
+            if it.kind == "usable" or it.kind == "door" then
+                local h = health(e)
+                if h and type(h.max_hp) == "number" and h.max_hp > 0 then o.hp, o.max_hp = h.hp, h.max_hp end
+            end
             out.items[#out.items + 1] = o
             ::continue::
         end

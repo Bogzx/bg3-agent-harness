@@ -110,6 +110,13 @@ class KeeperTest(MemoryTestCase):
         self.assertIn("HARNESS FIXES", prompt)  # the real harness-news.md: retire fixed quirks
         self.assertIn("## Retired quirks", prompt)
 
+    def test_deaths_always_become_lessons(self):
+        # S043 Jaheira / S045 Aylin: an ally's death in a fight must reach lessons.md (and the party notes)
+        p = K.build_prompt(self.mem, "S012", 12, "", 5)
+        self.assertIn("A death always gets a lesson", p)
+        self.assertIn("`ally DIED:`", p)
+        self.assertIn("Scroll of Revivify", p)
+
     def test_lessons_md_is_the_keepers(self):
         # fight debriefs → lessons.md (docs/ARCHITECTURE.md "Learning from fights"): writable, a new file survives
         self.assertTrue(K.writable("lessons.md"))

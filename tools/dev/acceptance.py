@@ -233,6 +233,7 @@ def sec_rest() -> None:
     item("long_rest no-click", "PASS" if ok else "FAIL", f"{dt:.1f}s; {first_line(out)} {grab(r'(?i)^.*(supplies|partial|full).*$', out)}")
     al = grab(r"^ALERTS.*$", call("get_status", full=True))
     item("ALERTS after rest", "PASS" if al else "INFO", al or "no ALERTS (all healthy)")
+    rest_texts = out + "\n" + call("look")
 
     st = status()
     night = S.game.try_rpc("ui.travel_block", context="client")
@@ -247,6 +248,10 @@ def sec_rest() -> None:
     ok = "FAILED" not in out and str(ui.get("region", "")).lower() != "campsite" and spread < 25
     item("fast_travel + camp leave (night camp)", "PASS" if ok else "FAIL",
          f"{dt:.1f}s; {first_line(out)}; region={ui.get('region')} party spread={spread:.0f} m")
+    # S044 23:50:48 fairness LEAK: `rest_flow step=ready_ok:MOO_Assault_ReadyCheck` in look EVENTS (se/vis 02:5x)
+    leak = re.findall(r"rest_flow|\w*ReadyCheck\w*|WaypointTravel_\w+", rest_texts + "\n" + out)
+    item("no ready-check ids in rest/travel results", "PASS" if not leak else "FAIL",
+         f"leaks={sorted(set(leak))[:5]}" if leak else "long_rest, look and fast_travel texts carry no rest_flow line/engine id")
     load_verified(BASE)
 
 
@@ -739,27 +744,49 @@ def sec_se() -> None:
     item("Noesis parked observable", "PASS" if ok else "FAIL",
          f"sys.mem noesis={nz}; log: {line.strip()[:140] or 'no minute line with noesis (' + (lg.name if lg else 'no log') + ')'}")
 
-    # CursorText probe for the hand-aimed jumps item (BACKLOG [se] M): what does the game's own cursor text say
+    # CursorText probe for the hand-aimed jumps item (BACKLOG [se] M): what does the game show next to the cursor
     # while the Jump targeting (Z) hovers a near and a far point? Read-only: hover, read, ESCAPE; nothing is cast.
-    out = call("press_key", key="Z")
+    # 01:06 run: CursorText had no text items and the props log was cut at 300 chars → now: every visible widget's
+    # texts before Z vs while hovering (whatever widget holds "Too far"/"Invalid" shows up as NEW), and the full
+    # CursorText props one level down, unshortened, in se.log.
+    def texts() -> dict:
+        d = S.game.try_rpc("ui.dump", {"text_only": True, "max": 400}, context="client") or {}
+        return {w.get("w"): [x.get("t") for x in w.get("items") or [] if isinstance(x, dict) and x.get("t")]
+                for w in (d.get("widgets") or []) if isinstance(w, dict)}
+
+    def cursor_props() -> dict:
+        pr = S.game.try_rpc("ui.props", {"widget": "CursorText", "commands": True}, context="client") or {}
+        sub = {}
+        for k in list((pr.get("objects") or {}) if isinstance(pr, dict) else {})[:15]:
+            sub[k] = S.game.try_rpc("ui.props", {"widget": "CursorText", "path": k}, context="client")
+        return {"props": pr, "objects": sub}
+
+    before = texts()
+    call("press_key", key="Z")
     time.sleep(0.8)
-    reads = []
+    log("PROBE ui.state after Z (is the Jump targeting on?): "
+        + json.dumps(S.game.try_rpc("ui.state", context="client"))[:1500])
+    new_texts = []
     for x, y in ((0.55, 0.6), (0.9, 0.2)):
         call("click", x=x, y=y, button="none")
         time.sleep(0.6)
-        d = S.game.try_rpc("ui.dump", {"root": "CursorText", "hidden": True, "max": 20}, context="client")
-        pr = S.game.try_rpc("ui.props", {"widget": "CursorText"}, context="client")
-        reads.append(f"@{x},{y}: dump={json.dumps(d)[:300]} props={json.dumps(pr)[:300]}")
+        now = texts()
+        fresh = {w: [t for t in ts if t not in (before.get(w) or [])] for w, ts in now.items()}
+        fresh = {w: ts for w, ts in fresh.items() if ts}
+        new_texts.append(f"@{x},{y}: {json.dumps(fresh)[:400]}")
+        log(f"PROBE new widget texts while targeting @{x},{y}: {json.dumps(fresh)}")
+        log(f"PROBE CursorText props @{x},{y}: {json.dumps(cursor_props())}")
+        log(f"PROBE CursorText dump @{x},{y}: " + json.dumps(S.game.try_rpc(
+            "ui.dump", {"root": "CursorText", "hidden": True, "text_only": False, "depth": 30, "max": 300},
+            context="client")))
     p0 = party_pos()
     after = close_targeting()
     time.sleep(1.0)
     mv = moved_m(p0, party_pos())
-    for r in reads:
-        log("CursorText " + r)
-    txt = " ".join(reads)
-    got = bool(re.search(r'"(?:Text|text|t)"\s*:\s*"[^"]+"', txt))
+    got = any(t.split(": ", 1)[1] != "{}" for t in new_texts)
     item("CursorText probe (Jump targeting)", "PASS" if got and mv < 0.5 else ("FAIL" if mv >= 0.5 else "INFO"),
-         f"text read={got}; party moved {mv:.1f} m; screen after={after}; {reads[0][:200]}")
+         f"new texts while targeting={got}; party moved {mv:.1f} m; screen after={after}; " + " | ".join(new_texts)[:220]
+         + " (full: se.log PROBE lines)")
     load_verified(BASE)
 
 
@@ -867,6 +894,17 @@ def sec_act() -> None:
     out, dt = took("react", use=True, which="Shield")
     item("react by name", "PASS" if "no reaction prompt on screen" in out and dt < 3 else "FAIL",
          f"{first_line(out)} ({dt:.1f}s)")
+    # a name by one whole word ("Aylin" for "Dame Aylin", S045 00:15) resolves
+    nb = S.game.try_rpc("state.nearby", {"radius": 40, "kinds": ["characters"]}) or {}
+    two = [c for c in nb.get("characters") or [] if len(str(c.get("name") or "").split()) >= 2]
+    if not two:
+        item("name by a whole word", "SKIP", "no character with a two-word name in view")
+    else:
+        c = two[0]
+        word = str(c["name"]).split()[-1].strip("'")
+        out = call("look_at", target=word)
+        item("name by a whole word", "PASS" if "unknown target" not in out else "FAIL",
+             f"look_at({word!r}) for {c['name']!r}: {first_line(out)[:160]}")
     # swap_party where the camp button is greyed by the area: the reason at once (S039 21:48:34)
     b = S.game.try_rpc("ui.travel_block", context="client") or {}
     if b.get("error") != "Location":
@@ -922,6 +960,13 @@ def sec_vis() -> None:
     # 6. an empty name search names what was asked and who is in view (S042 kinds="Jaheira,characters")
     out = call("get_nearby", radius=60, kinds="Zzyzxq,characters")
     item("vis: empty name search says so", "PASS" if "No 'zzyzxq' in view within 60m" in out else "FAIL", out[:200])
+    # 6b. no level ids in get_explored / look_at (S040 `level=SCL_Main_A`, S046 look_at `region=SCL_Main_A`)
+    ex = call("get_explored")
+    me_id = S.H.get((status().get("party") or [{}])[0].get("uuid") or "", None)
+    la = call("look_at", target=me_id) if me_id else ""
+    ids = sorted(set(re.findall(r"\b[A-Z]{3}_Main(?:_A)?\b|\bTUT_Avernus_C\b", ex + la)))
+    item("vis: no level ids in get_explored / look_at", "PASS" if not ids and ex else "FAIL",
+         f"ids={ids}; explored: {first_line(ex)[:120]}; look_at: {first_line(la)[:80]}")
     # 7. journal: open quests without QuestIsAccepted (Find the Nightsong, companion quests) are listed
     jt = call("get_journal")  # also loads State.quests
     v = lua_server('local who=Osi.GetHostCharacter() local n,names=0,{} '

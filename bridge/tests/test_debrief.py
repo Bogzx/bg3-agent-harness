@@ -171,6 +171,37 @@ class Build(unittest.TestCase):
         rec = tr.close(ROWS, reloaded=True)
         self.assertEqual((rec["grade"], rec["grade_before"]), ("reloaded", "near_wipe"))
 
+    def test_ally_death_is_no_clean_fight(self):
+        # S043: Jaheira (allied NPC on the turn order) died and the debrief said "clean"; S045 Aylin the same.
+        J, NEC = "u-jaheira", "u-nec"
+        tr = debrief.Tracker()
+        tr.feed([ev("combat_started"), ev("round_started", round=1)], PARTY, now=10.0)
+        tr.observe({"order": [{"uuid": C, "name": "Claude", "relation": "party"},
+                              {"uuid": J, "name": "Jaheira", "relation": "ally"},
+                              {"uuid": "u-sw", "name": "Spiritual Weapon", "relation": "ally", "summon": True},
+                              {"uuid": NEC, "name": "Necromite", "relation": "hostile"}]}, PARTY)
+        tr.feed([ev("round_started", round=3), ev("died", **ref(J, "Jaheira")), ev("died", **ref(NEC, "Necromite")),
+                 ev("died", **ref("u-sw", "Spiritual Weapon")), ev("combat_ended")], PARTY, now=20.0)
+        rec = tr.close(ROWS)
+        self.assertEqual(rec["grade"], "near_wipe")
+        self.assertEqual(rec["allies_died"], [{"name": "Jaheira", "round": 3}])
+        self.assertEqual(sum(e["killed"] for e in rec["enemies"]), 1)       # Jaheira is no kill
+        self.assertIn("ally DIED: Jaheira (r3)", rec["key_facts"][0])
+        out = debrief.render(rec)
+        self.assertIn("DIED: Jaheira (ally, r3) — revive now: Scroll of Revivify", out.splitlines()[1])
+        self.assertIn("keep Jaheira alive", debrief.last_attempt(rec))
+        self.assertEqual([a["name"] for a in tr.dead_allies], ["Jaheira"])   # for the ALERTS line
+        tr.feed([ev("revived", **ref(J, "Jaheira"))], PARTY)                  # revived outside a fight
+        self.assertEqual(tr.dead_allies, [])
+
+    def test_party_death_is_named_first(self):
+        tr = debrief.Tracker()
+        tr.feed([ev("combat_started"), ev("downed", **ref(SH, "Shadowheart")), ev("died", **ref(SH, "Shadowheart")),
+                 ev("combat_ended")], PARTY)
+        rec = tr.close(ROWS)
+        self.assertEqual(rec["key_facts"][0], "DIED: Shadowheart")
+        self.assertIn("DIED: Shadowheart — revive now", debrief.render(rec).splitlines()[1])
+
     def test_retry_window(self):
         tr, rec, _ = self.run_fight()
         self.assertIs(tr.retry_of(now=220.0 + 300), rec)

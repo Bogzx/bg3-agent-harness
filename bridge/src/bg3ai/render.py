@@ -61,7 +61,12 @@ class Handles:
         """Handles whose name equals ref (or, failing that, starts with it), case-insensitive."""
         low = str(ref).strip().lower()
         out = [h for h, n in self.names.items() if n and n.lower() == low]
-        return out or [h for h, n in self.names.items() if n and n.lower().startswith(low)]
+        out = out or [h for h, n in self.names.items() if n and n.lower().startswith(low)]
+        if out or len(low) < 3:
+            return out
+        # S045 00:15: look_at("Aylin") for "Dame Aylin" → unknown target: a whole word of the name matches too
+        return [h for h, n in self.names.items()
+                if n and low in re.findall(r"[\w'-]+", n.lower().replace("'", " "))]
 
     def scrub(self, text: str) -> str:
         """Replace any GUID that slipped into free text with its handle."""
@@ -305,6 +310,8 @@ def render_nearby(n: dict, H: Handles, max_items: int = 30, fold: bool = True) -
                 bits.append(f"{flag}={compact(v, H)}")
         if it.get("count", 1) not in (1, None):
             bits.append(f"x{it['count']}")
+        if isinstance(it.get("max_hp"), (int, float)) and not _clutter(it):  # breakable (a membrane, a door)
+            bits.append(f"HP {num(it.get('hp'))}/{num(it['max_hp'])}")
         if it.get("near"):
             bits.append(f"({it['near']})")
         if it.get("effect"):  # a painting lit by its button press (puzzle state)
@@ -385,8 +392,46 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
     return lines
 
 
-# Event kinds that only duplicate what an action's own result already says.
-_REDUNDANT_EVENTS = {"moved_done"}
+def _clutter(it: dict) -> bool:
+    from . import delta  # (delta imports render)
+    return delta.is_clutter(it)
+
+
+# Level ids → the names the game's map shows (State.lua S.REGION_NAMES). A tool result never prints a level id
+# (fairness audit LEAK judged_id: S038/S040 get_explored `level=SCL_Main_A`, S046 look_at `region=SCL_Main_A`).
+LEVEL_NAMES = {
+    "TUT_Avernus_C": "Nautiloid", "WLD_Main_A": "Wilderness", "CRE_Main_A": "Rosymorn Monastery",
+    "SCL_Main_A": "Shadow-Cursed Lands", "INT_Main_A": "Last Light / Moonrise interlude",
+    "BGO_Main_A": "Rivington & Wyrm's Crossing", "CTY_Main_A": "Lower City", "IRN_Main_A": "Iron Throne",
+    "END_Main": "Upper City", "SYS_CC_I": "Character creation",
+}
+_LEVEL_ID = re.compile(r"^[A-Z]{3}_[A-Za-z]+(?:_[A-Za-z0-9]+)?$")
+
+
+def public_levels(x: Any) -> Any:
+    """x with every level id value (a whole string such as "SCL_Main_A") replaced by its map name; a "level" key
+    becomes "region" (dropped when a region is already there)."""
+    if isinstance(x, dict):
+        out = {}
+        for k, v in x.items():
+            v = public_levels(v)
+            if k == "level" and isinstance(v, str):
+                if "region" not in x:
+                    out["region"] = v
+                continue
+            out[k] = v
+        return out
+    if isinstance(x, list):
+        return [public_levels(v) for v in x]
+    if isinstance(x, str) and _LEVEL_ID.match(x) and (x in LEVEL_NAMES or x.endswith(("_Main_A", "_Main"))):
+        return LEVEL_NAMES.get(x, "another area")
+    return x
+
+
+# Event kinds that only duplicate what an action's own result already says. rest_flow: the End-the-Day diagnostics
+# (Events.lua REST_FLOW; long_rest/fast_travel read them themselves): their ready-check ids leaked an engine name
+# (S044 23:50:48 look: `rest_flow step=ready_ok:MOO_Assault_ReadyCheck`, fairness audit LEAK template).
+_REDUNDANT_EVENTS = {"moved_done", "rest_flow"}
 # Consecutive events of these kinds share one line ("turn_ended Claude e4; Wyll e1; ...").
 _RUN_EVENTS = {"turn_ended", "turn_started", "item_effect"}
 
