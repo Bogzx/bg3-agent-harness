@@ -87,6 +87,9 @@ def route_waypoint(res: dict) -> dict | None:
 
 def _next(res: dict, H: Handles, ends: list | None = None) -> str:
     """One concrete suggestion."""
+    wd = res.get("wedged")
+    if res.get("reachable") is False and isinstance(wd, dict) and wd.get("to"):
+        return f"NEXT: jump_to x,y,z = {pos(wd['to'])} (out of the nook), then route again"
     jx = res.get("jump")
     if res.get("reachable") is False and isinstance(jx, dict) and jx.get("to"):
         return (f"NEXT: travel_to x,y,z = {pos(jx['from'])} (the edge), then jump_to x,y,z = {pos(jx['to'])}, "
@@ -100,6 +103,10 @@ def _next(res: dict, H: Handles, ends: list | None = None) -> str:
     if wp and (res.get("reachable") is False or (res.get("length_m") or 0) > (wp.get("to_goal_m") or 0) + 60):
         return (f"NEXT: travel_to waypoint=\"{wp['name']}\" ({_m(wp.get('to_goal_m'))} from the goal, you are "
                 f"{_m(res.get('straight_m'))}), then route again")
+    dr = res.get("drop")
+    if res.get("reachable") and isinstance(dr, dict) and dr.get("pos"):
+        return (f"NEXT: travel_to x,y,z = {pos(dr['pos'])} (the edge of the {_m(dr.get('m'))} drop), then jump_to the "
+                f"floor below (jump_to checks the landing), or find a ladder/stairs")
     if res.get("reachable"):
         links = res.get("links") or []
         if links:
@@ -139,6 +146,15 @@ def _next(res: dict, H: Handles, ends: list | None = None) -> str:
     return "NEXT: get_frontier for doors/exits, or walk_toward another direction"
 
 
+def wedged_text(w: Any) -> str:
+    """nav.wedged / route's res['wedged'] -> '; you are wedged: ...' (S058 08:00), '' when not wedged."""
+    if not isinstance(w, dict) or not w.get("wedged") or not w.get("to"):
+        return ""  # no member to land next to: maybe a small balcony whose way out is the ladder (S059 08:52)
+    return (f"; you are wedged: no walkable ground leads out from where you stand: jump_to x,y,z = {pos(w['to'])} "
+            f"next to {w.get('near') or 'a party member'} ({_m(w.get('dist_m'))})"
+            + (" if it is in reach" if w.get("in_reach") is False else "") + ", then try again")
+
+
 def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = None) -> str:
     """ends: this session's dead ends toward this goal (longnav.DeadEnds.for_goal)."""
     if not isinstance(res, dict):
@@ -164,6 +180,10 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
             line += ", with " + ", ".join(f"a {l.get('kind')} ({_link_size(l)}) at {_m(l.get('at_m'))}" for l in res["links"][:3])
         out.append(line)
         out.extend(_legs(res.get("legs")))
+        dr = res.get("drop")
+        if isinstance(dr, dict) and dr.get("pos"):  # S053 05:49: PATH shown, then travel_to's leg refused the drop
+            out.append(f"  DROPS {_m(dr.get('m'))} at {pos(dr['pos'])} (fall damage): walks stop there; take a ladder/"
+                       f"stairs (get_frontier), or move_to that edge and jump_to the floor below on purpose")
         if res.get("exposure"):
             ex = res["exposure"]
             out.append(f"  crosses {macros.exposure_text(ex)} at {_m(ex.get('at_m'))} @{pos(ex.get('pos'))}")
@@ -210,6 +230,9 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
             out.append(line)
         if res.get("ways"):  # the open directions from here, as get_frontier says them
             out.append(render.render_ways(res["ways"]))
+        wt = wedged_text(res.get("wedged"))
+        if wt:
+            out.append("WEDGED" + wt[len("; you are wedged"):])
     else:
         why = res.get("unknown_reason")  # S039 21:44: after a jump onto a rock off the walkable grid ("midair")
         out.append(f"path unknown: {why}" + ("; step onto plain ground (move_to a floor near you) and route again"
@@ -244,6 +267,9 @@ def hint_text(res: Any, H: Handles) -> str:
     if isinstance(c, dict) and c.get("pos") and (c.get("to_goal_m") or 0) >= 2:
         bits.append(f"closest walkable spot {pos(c['pos'])} is {_m(c.get('to_goal_m'))} from it")
     out = ["ROUTE: " + "; ".join(bits)] if bits else []
+    wt = wedged_text(res.get("wedged"))
+    if wt:
+        out.append(wt.lstrip("; "))
     best = next((x for x in res.get("connectors") or [] if not x.get("unreachable")), None)
     if best:
         out.append(_connector(best, H).strip())

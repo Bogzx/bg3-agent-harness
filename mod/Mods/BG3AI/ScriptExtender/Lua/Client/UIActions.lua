@@ -1124,9 +1124,18 @@ local function saveNameBox()
     return box, pop
 end
 
+-- The box's Text property. Not UI.text: a TextBox's ToString() is its class name, so S056/S057 read
+-- 'ls.LSTextBox' back and every save failed "the save name box keeps reading 'ls.LSTextBox'". nil = unreadable.
+local function boxText(box)
+    if box == nil then return nil end
+    local v = UI.prop(box, "Text")
+    if type(v) ~= "string" and UI.get then v = UI.get(box, "Text") end
+    if type(v) ~= "string" then return nil end
+    return v
+end
+
 local function saveNameNow()
-    local box = saveNameBox()
-    return box and (UI.text(box) or UI.clean(UI.prop(box, "Text"))) or nil
+    return boxText((saveNameBox()))
 end
 
 local function setSaveName(name)
@@ -1135,7 +1144,7 @@ local function setSaveName(name)
     local ok = pcall(box.SetProperty, box, "Text", name)
     local dc = try(function() return pop.DataContext end)
     if dc then pcall(dc.SetProperty, dc, "SavegameNameInput", name) end
-    local now = UI.text(box) or UI.clean(UI.prop(box, "Text"))
+    local now = boxText(box)
     if not ok then return false, "could not set the name" end
     return true, now
 end
@@ -1171,8 +1180,11 @@ pcall(function()
     end)
 end)
 
-local function saveDriver(name, kind)
-    A.pendingSave = { name = name, started = RPC.now_ms() }
+-- opts.probe: name check only (acceptance): open, set the name, read the box back after the settle, then ESCAPE
+-- out without accepting; nothing is written. Result {probe=true, read=<box text>, matches=<read == name>}.
+local function saveDriver(name, kind, opts)
+    local probe = opts and opts.probe
+    if not probe then A.pendingSave = { name = name, started = RPC.now_ms() } end
     local stage, stageSince, keyTries = nil, RPC.now_ms(), 0
     local t0 = RPC.now_ms()
     local ms = {}  -- stage -> ms since start (returned as result.ms: where a save's time goes)
@@ -1188,6 +1200,38 @@ local function saveDriver(name, kind)
         local page = visible("SaveGame")
         local box = visible("Dialog_box")
         job.partial = { stage = stage, name = name }
+        local function esc()
+            if now - (job.lastEsc or 0) > 900 then
+                job.lastEsc = now
+                job.escTries = (job.escTries or 0) + 1
+                pcall(Ext.Input.InjectKeyPress, "ESCAPE")
+            end
+            if (job.escTries or 0) > 6 then
+                if job.failRes then
+                    job.failRes.error = job.failRes.error .. " (and the save menu did not close)"
+                    return "failed", job.failRes
+                end
+                return "failed", { probe = true, stage = stage, read = job.probeRead, error = "the save menu did not close" }
+            end
+            return nil
+        end
+        -- S056 07:17: a failed name check left the save page open; the agent finished it by hand (ui_dump, RETURN
+        -- x3) and the save landed later anyway. A failure closes our menus first, then reports.
+        local function failClosed(res)
+            job.failRes = res
+            enter("fail_close")
+            return esc()
+        end
+        if stage == "fail_close" then
+            if popup or page or visible("GameMenu") then return esc() end
+            A.pendingSave = nil
+            return "failed", job.failRes
+        end
+        if stage == "probe_close" then
+            if popup or page or visible("GameMenu") then return esc() end
+            return "done", { probe = true, name = name, read = job.probeRead, matches = job.probeRead == name,
+                renamed = job.renamed, ms = ms }
+        end
         local function key(k)
             -- one in-game RETURN per stage (retried once); then ask the bridge
             if now - stageSince > 2500 then
@@ -1216,7 +1260,7 @@ local function saveDriver(name, kind)
         if popup then
             if stage ~= "accept" then
                 local ok, err = setSaveName(name)
-                if not ok then return "failed", { stage = "name", error = err } end
+                if not ok then return failClosed({ stage = "name", error = err }) end
                 job.typed = err
                 job.nameAt, job.nameSets = now, 1
                 enter("accept")
@@ -1225,8 +1269,8 @@ local function saveDriver(name, kind)
             local cur = saveNameNow()
             if cur ~= nil and cur ~= name then
                 if job.nameSets >= A.SAVE_NAME_TRIES then
-                    return "failed", { stage = "name", name = name, typed = cur,
-                        error = "the save name box keeps reading '" .. tostring(cur) .. "' instead of '" .. name .. "'" }
+                    return failClosed({ stage = "name", name = name, typed = cur,
+                        error = "the save name box keeps reading '" .. tostring(cur) .. "' instead of '" .. name .. "'" })
                 end
                 setSaveName(name)
                 job.nameAt, job.nameSets = now, job.nameSets + 1
@@ -1235,6 +1279,11 @@ local function saveDriver(name, kind)
                 return nil
             end
             if now - job.nameAt < A.SAVE_NAME_SETTLE_MS then return nil end
+            if probe then
+                job.probeRead = cur
+                enter("probe_close")
+                return esc()
+            end
             return key("RETURN")
         end
         if page then
@@ -1298,11 +1347,14 @@ end
 A.saveDriver = saveDriver
 
 function MENU.save(args)
-    if not args.dry and not A.SAVE_ENABLED then error("saving is disabled (UIActions.SAVE_ENABLED=false)") end
+    if not args.dry and not args.probe and not A.SAVE_ENABLED then error("saving is disabled (UIActions.SAVE_ENABLED=false)") end
     local name = args.name
     if args.dry then
         check(UI.command(UI.anyDC(), "OpenSaveGameDialogCommand", nil, true))
         return { can = true }
+    end
+    if args.probe then
+        return saveDriver(tostring(name or "probe"):gsub("[^%w%-_ ]", "_"):sub(1, 40), "ui.menu.save", { probe = true })
     end
     if not name or name == "" then
         check(UI.command(UI.anyDC(), "OpenSaveGameDialogCommand", nil, false))

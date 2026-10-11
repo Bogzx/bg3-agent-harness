@@ -1052,7 +1052,7 @@ def render_objectives(markers: Any, here_only: bool = False, limit: int | None =
             elsewhere += 1
             continue
         label = objective_label(m)
-        s = f"OBJECTIVE o{i} {label}"
+        s = f"OBJECTIVE o{m.get('oid') or i} {label}"
         if here:
             s += f" {num(m['dist'])}m {m.get('dir') or ''}".rstrip()
         else:
@@ -1075,6 +1075,12 @@ def find_objective(markers: Any, ref: str) -> dict:
     m_id = re.fullmatch(r"o?(\d+)", r)
     if m_id:
         i = int(m_id.group(1))
+        if any("oid" in m for m in ms):  # persistent ids (server._set_objectives): o3 = the one shown as o3
+            hit = next((m for m in ms if m.get("oid") == i), None)
+            if hit is not None:
+                return hit
+            raise ValueError(f"no objective o{i} now (done or gone); current: "
+                             + ", ".join(f"o{m.get('oid')} {objective_label(m)}" for m in ms[:6]))
         if 1 <= i <= len(markers):
             return markers[i - 1]
         raise ValueError(f"no objective o{i}; there are {len(markers)}")
@@ -1085,7 +1091,15 @@ def find_objective(markers: Any, ref: str) -> dict:
         return hits[0]
     if not hits:
         raise ValueError(f"no objective matches '{ref}'")
-    raise ValueError(f"'{ref}' matches {len(hits)} objectives; use an id like o1")
+    # one marker under several quests (S059: o2 Gortash [Servant of None], o3 Gortash [Get Gortash's Netherstone])
+    p0 = hits[0].get("pos")
+    if isinstance(p0, (list, tuple)) and len(p0) >= 3 and all(
+            isinstance(h.get("pos"), (list, tuple)) and len(h["pos"]) >= 3
+            and sum((a - b) ** 2 for a, b in zip(h["pos"][:3], p0[:3])) <= 4.0 for h in hits):
+        return hits[0]
+    raise ValueError(f"'{ref}' matches {len(hits)} objectives: "
+                     + ", ".join(f"o{h.get('oid') or ms.index(h) + 1} {objective_label(h)} [{h.get('quest') or ''}]"
+                                 for h in hits[:5]) + "; use the id")
 
 
 def render_hazards(hazards: Any, limit: int = 4) -> list[str]:

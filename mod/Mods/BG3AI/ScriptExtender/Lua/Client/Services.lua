@@ -1207,6 +1207,21 @@ RPC.register("ui.waypoints", function(args)
     end)
 end)
 
+-- screenshot(map=true) (S055 x2, S056 x3: M, screenshot, ESCAPE by hand; S056 07:17 a 2nd M closed the map and the
+-- ESCAPE after it was refused): open the map like ui.waypoints does and leave it open for the picture;
+-- ui.map_close closes it again (only if we opened it: the bridge passes that back).
+RPC.register("ui.map_show", function(args)
+    return withMap("ui.map_show", 8000, function(w, opened, state)
+        return "done", { opened = opened, map_presses = state.mapPresses }
+    end)
+end)
+
+RPC.register("ui.map_close", function(args)
+    local had = mapWidget() ~= nil
+    closeMap(true)
+    return { closed = had }
+end)
+
 -- "Waypoint: Roadside-Cliffs" -> "roadside cliffs"
 local function wpNorm(s)
     s = tostring(s or ""):lower():gsub("^%s*waypoint%s*[:%-]?%s*", ""):gsub("^wayp_", "")

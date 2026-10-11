@@ -17,6 +17,10 @@ from pathlib import Path
 
 MAX_SHOWN = 3
 LINE_CHARS = 320
+# A lesson about the ground, not a fight (S035: walk_toward off the Faith-Leap chasm edge; S038: a forced jump into
+# the Chasm): the keeper adds the trigger `fall`. Shown when the party enters the place, never at a fight start
+# (it is no tactic), and the keyword itself matches nothing.
+TERRAIN_TRIGGERS = {"fall", "terrain"}
 
 _LESSON_RE = re.compile(r"^\s*[-*]\s*WHEN\s+(?P<trig>[^:]+?)\s*:\s*(?P<body>.+?)\s*$", re.I)
 
@@ -26,6 +30,10 @@ class Lesson:
     triggers: list[str]
     body: str
     line: str
+
+    @property
+    def terrain(self) -> bool:
+        return any(_norm(t) in TERRAIN_TRIGGERS for t in self.triggers)
 
     def text(self) -> str:
         t = f"WHEN {', '.join(self.triggers)}: {self.body}"
@@ -77,12 +85,16 @@ def _place_in(trigger: str, places: list[str]) -> bool:
 
 
 def match(lessons: list[Lesson], terms: list[str], limit: int = MAX_SHOWN,
-          places: list[str] = ()) -> list[Lesson]:
+          places: list[str] = (), fight: bool = False) -> list[Lesson]:
     """Lessons with a trigger matching any of `terms` (enemy names, races, region) or containing one of `places`,
-    most matching triggers first, then the newest (later in the file) first."""
+    most matching triggers first, then the newest (later in the file) first. fight=True leaves out terrain lessons
+    (a `fall` trigger)."""
     scored = []
     for i, ls in enumerate(lessons):
-        n = sum(1 for t in ls.triggers if _hits(t, terms) or _place_in(t, list(places)))
+        if fight and ls.terrain:
+            continue
+        n = sum(1 for t in ls.triggers if _norm(t) not in TERRAIN_TRIGGERS
+                and (_hits(t, terms) or _place_in(t, list(places))))
         if n:
             scored.append((-n, -i, ls))
     scored.sort(key=lambda x: (x[0], x[1]))
@@ -124,7 +136,8 @@ class Store:
         where = [p for p in places + before if p]
         terms = [str(e.get(k) or "") for e in enemies for k in ("name", "race")] + where
         terms += [str(x) for e in enemies for x in e.get("statuses") or []]
-        new = [ls for ls in match(self.lessons(), terms, limit=len(self._lessons) or 1, places=where)
+        new = [ls for ls in match(self.lessons(), terms, limit=len(self._lessons) or 1, places=where,
+                                 fight=True)
                if ls.line not in self.shown_fight][:MAX_SHOWN]
         self.in_fight = True
         if not new:

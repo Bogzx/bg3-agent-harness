@@ -928,8 +928,48 @@ test("cast: the engine's CastSpellFailed says why (S024-S041 'the action failed'
     assert(A.cast_failed_why(P1, GOB):find("no line of sight to the target now", 1, true))
     osiv[key("IsDead", GOB)] = 1
     assert(A.cast_failed_why(P1, GOB):find("already dead", 1, true))
-    assert(A.cast_failed_why(P1, GOB, "Target_Revivify"):find("won't bring this one back", 1, true))
+    stats.Teleportation_Revivify = { SpellType = "Teleportation", OriginTargetConditions = "Dead()", TargetRadius = "9" }
+    local w = A.cast_failed_why(P1, GOB, "Teleportation_Revivify")
+    assert(w:find("two-step cast", 1, true) and w:find("Scroll of Revivify", 1, true), w)
+    assert(w:find("not a party member", 1, true), w) -- GOB has no PLAYABLE tag
     osiv[key("IsDead", GOB)] = 0
+end)
+
+test("cast: Revivify is two-step: the body, then the ground beside it (S057/S058 0 of 14 casts)", function()
+    spell("Teleportation_Revivify", { SpellType = "Teleportation", OriginTargetConditions = "Dead() and Tagged('PLAYABLE')",
+        TargetConditions = "not Character()", TargetRadius = "9", UseCosts = "ActionPoint:1", Level = 0 })
+    stats.Projectile_Bolt = stats.Projectile_Bolt or { SpellType = "Projectile" }
+    eq(A.two_step_spell("Teleportation_Revivify"), true, "two-step")
+    eq(A.two_step_spell("Projectile_Bolt"), false, "one-step")
+    eq(A.two_step_spell("No_Such_Spell"), false, "unknown")
+    local tasks = {}
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = tasks } }
+    local orig = Osi.UseSpell
+    Osi.UseSpell = function(c, sp, ...)
+        tasks[#tasks + 1] = { Spell = { OriginatorPrototype = sp } }
+        return orig(c, sp, ...)
+    end
+    osiv[key("IsDead", NPC)] = 1
+    world[NPC].pos = { 4, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Teleportation_Revivify", target = NPC }))
+    Osi.UseSpell = orig
+    eq(j.status, "running", "status " .. tostring(j.error))
+    local p = tasks[1] and tasks[1].TargetPos2
+    assert(p, "TargetPos2 set on the queued task")
+    eq(p[1], 4 - A.PLACE_M, "spot beside the body, toward the caster"); eq(p[3], 0, "z")
+    eq(A.last_place_why, nil, "no placement error")
+    osiv[key("IsDead", NPC)] = 0
+    A.dispatch("CastedSpell", { P1, "Teleportation_Revivify" })
+    tick(10)
+    eq(j.status, "done", "status"); eq(j.result.revived, true, "revived")
+    world[P1].comps.ServerCharacter = nil
+end)
+
+test("cast: two-step spell without a queued task names the reason", function()
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = {} } }
+    local ok, why = A.set_task_pos2(P1, "Teleportation_Revivify", { 1, 0, 1 })
+    eq(ok, nil, "not set"); assert(why:find("no queued spell task", 1, true), why)
+    world[P1].comps.ServerCharacter = nil
 end)
 
 test("jump: a landing far below the aim is a FALL; a death says DIED, not done (S038 20:44:25)", function()

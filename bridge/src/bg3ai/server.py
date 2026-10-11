@@ -710,10 +710,11 @@ def _objective_ref(ref: str) -> str:
     if not m:
         return ref
     ms = _objective_markers(max_age=600)
-    i = int(m.group(1))
-    if not 1 <= i <= len(ms) or not isinstance(ms[i - 1], dict):
-        raise ValueError(f"unknown target '{ref}': no objective {ref} now (get_map lists them)")
-    label = render.objective_label(ms[i - 1])
+    try:  # by the persistent id the agent was shown (server._set_objectives)
+        hit = render.find_objective(ms, f"o{int(m.group(1))}")
+    except ValueError:
+        raise ValueError(f"unknown target '{ref}': no objective {ref} now (get_map lists them)") from None
+    label = render.objective_label(hit)
     try:
         return _uuid(label)
     except ValueError:
@@ -802,6 +803,15 @@ def _active() -> str:
     a = st.get("active")
     if not a:
         raise GameError("no active character")
+    # S057 07:48:52/07:49:14: with `who` left out, use_ability/move_to acted as the selected Shadowheart, dead →
+    # "FAILED — character is dead" twice. A player clicks a living portrait: the first living, on-stage member.
+    rows = [r for r in st.get("party") or [] if isinstance(r, dict) and r.get("uuid")]
+    me = next((r for r in rows if r["uuid"] == a), None)
+    if me and me.get("dead"):
+        alive = [r["uuid"] for r in rows if not r.get("dead") and not r.get("off_stage") and not r.get("summon")
+                 and not r.get("downed")]
+        if alive:
+            return alive[0]
     return a
 
 
@@ -1059,14 +1069,15 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
         # was still up (get_dialogue + ESCAPE, 2 more calls). Walking off closes a trade for a player: close, rerun.
         note = "\n".join(x for x in ("(closed the trade window first)", note) if x)
         r = game.run_job(op, args, context=context, wait_s=wait_s, **kw)
-    if context == "server" and r.status == "failed" and _IN_CONVO in str(r.error or "") and not _batch["active"]:
+    if context == "server" and r.status == "failed" and _convo_refused(r.error) and not _batch["active"]:
         # S055 06:44:08-14: pickpocket ×3 "character is in a conversation" right after choose_dialogue ended it (the
         # flag a moment stale). With no dialogue on screen, retry for up to CONVO_WAIT_S, as the macros do.
+        # Also camp's "cannot do that during a conversation" (S053 05:48:09, S057 07:40:25 ×2: a trader's goodbye line).
         end = time.monotonic() + CONVO_WAIT_S
         while time.monotonic() < end and _ui_screen()[0] != "dialogue":
             time.sleep(0.4)
             r = game.run_job(op, args, context=context, wait_s=wait_s, **kw)
-            if not (r.status == "failed" and _IN_CONVO in str(r.error or "")):
+            if not (r.status == "failed" and _convo_refused(r.error)):
                 break
     _log_stage_ms(op, r)
     _remember_names(r.result)
@@ -1181,8 +1192,27 @@ _objectives: dict[str, Any] = {"last": [], "at": 0.0}  # markers as last shown (
 MARKERS_TTL_S = 5.0  # route/travel_to reuse markers fetched this recently (a marker's position doesn't move)
 
 
+_objective_ids: dict[tuple, int] = {}  # (label, quest, objective, nth) -> the oN it was first shown as, this session
+
+
 def _set_objectives(ms: list) -> None:
+    """Remember the markers and give each a persistent id ('oid'): o3 stays the objective first shown as o3 while
+    the list re-sorts by distance as the party moves (S059 08:53: route(objective="o3") meant Gortash, the
+    re-sorted list's o3 was the Ordination Ceremony, and the agent walked the wrong way)."""
+    seen: dict[tuple, int] = {}
+    for m in ms:
+        if not isinstance(m, dict):
+            continue
+        base = (str(m.get("label") or ""), str(m.get("quest") or ""), str(m.get("objective") or ""))
+        seen[base] = seen.get(base, 0) + 1
+        key = base + (seen[base],)
+        if key not in _objective_ids:
+            _objective_ids[key] = max(_objective_ids.values(), default=0) + 1
+        m["oid"] = _objective_ids[key]
     _objectives["last"], _objectives["at"] = ms, time.monotonic()
+
+
+delta.MARKER_HOOK = _set_objectives
 
 
 def _objective_markers(max_age: float = 0.0) -> list:
@@ -1903,7 +1933,10 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
     if go and isinstance(res, dict):
         # S023-S026: route then travel_to the same goal (17x) or to its closest walkable spot (12x): 2 model turns.
         c = res.get("closest") if isinstance(res.get("closest"), dict) else {}
-        if res.get("reachable"):
+        dr = res.get("drop") if isinstance(res.get("drop"), dict) else {}
+        if res.get("reachable") and isinstance(dr.get("pos"), (list, tuple)) and len(dr["pos"]) >= 3:
+            dest = {"x": dr["pos"][0], "y": dr["pos"][1], "z": dr["pos"][2]}  # walks refuse the drop: to its edge
+        elif res.get("reachable"):
             dest = {"target": target} if target and "pos" not in args else {"x": args["pos"][0], "y": args["pos"][1],
                                                                              "z": args["pos"][2]}
         elif isinstance(c.get("pos"), (list, tuple)) and len(c["pos"]) >= 3:
@@ -1954,6 +1987,16 @@ def _route_hint(args: dict) -> str:
     return route_text.hint_text(res, H)
 
 
+def _wedged_hint(char: str | None) -> str:
+    """'; you are wedged: ... jump_to (x,y,z) next to Wyll (2.8m)' when no floor around the walker is walkable
+    (nav.wedged, S058 08:00: stuck in a nook after a pick_up, 6 calls to guess the jump out), else ''."""
+    try:  # a hint only: never let it break the failure it decorates
+        w = game.try_rpc("nav.wedged", {"char": char} if char else {})
+    except Exception:  # noqa: BLE001 (an old mod without the op, a test fake)
+        return ""
+    return route_text.wedged_text(w)
+
+
 @mcp.tool()
 @_guard
 def walk_toward(direction: str = "", objective: str = "", target: str = "", max_m: float = 30.0,
@@ -2002,6 +2045,8 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
                 + (f" ({n} spots checked)" if n is not None else ""))
         hint = _route_hint(args)  # toward an objective/target only (a direction has no goal)
         others = navhints.other_dirs_text(res.get("others") if isinstance(res, dict) else None)
+        if not hint and not others:
+            hint = _wedged_hint(args.get("char")).lstrip("; ")
         return _finish("walk_toward", args, body + ("\n" + hint if hint else others + "." if others else
                                                     ". Try another direction, get_frontier, or a door."), t0)
     head = f"heading {res.get('dir') or ''} toward {what}: {render.num(res.get('straight_m', 0))}m"
@@ -2150,18 +2195,33 @@ def get_events() -> str:
 
 @mcp.tool()
 @_guard
-def screenshot(scale: float = 0.5) -> Image | str:
-    """Picture of the game screen exactly as the player sees it. Costly: use only when text tools can't answer (layout, puzzles, unknown popups). scale: 0.25-1.0 of 2560px width."""
+def screenshot(scale: float = 0.5, map: bool = False) -> Image | str:
+    """Picture of the game screen exactly as the player sees it. Costly: use only when text tools can't answer (layout, puzzles, unknown popups). scale: 0.25-1.0 of 2560px width. map=true: opens the map, takes the picture and closes the map again, in one call (no M / ESCAPE by hand)."""
     global _screen, _last_full_frame
     from .screen import ScreenCapture
 
     if _screen is None:
         _screen = ScreenCapture(RUNTIME / "shots")
     width = int(2560 * max(0.25, min(scale, 1.0)))
-    jpg, full = _screen.capture(max_width=width)
+    opened = False
+    if map:
+        # S055 x2, S056 x3: M + screenshot + ESCAPE by hand (S056 07:17: a 2nd M closed it, the ESCAPE was refused)
+        r = game.run_job("ui.map_show", {}, context="client", wait_s=12)
+        if r.status != "done":
+            return f"screenshot: FAILED — the map didn't open: {r.error or r.status}"
+        opened = bool((r.result or {}).get("opened")) if isinstance(r.result, dict) else False
+        time.sleep(MAP_SHOT_SETTLE_S)  # the map's first frames draw its tiles in
+    try:
+        jpg, full = _screen.capture(max_width=width)
+    finally:
+        if opened:
+            game.try_rpc("ui.map_close", context="client")
     _last_full_frame = full
-    _log("screenshot", {"scale": scale}, f"{full.size}", 0)
+    _log("screenshot", {"scale": scale, "map": map}, f"{full.size}", 0)
     return Image(data=jpg, format="jpeg")
+
+
+MAP_SHOT_SETTLE_S = 0.8
 
 
 @mcp.tool()
@@ -2434,6 +2494,11 @@ def _use_scroll(char: str, it: dict, target: str) -> str:
         raise GameError(f"{_label(char)} has no action called that; {_label(it['owner'])} carries {name} "
                         f"({H.get(it['uuid'])}): use_ability(who=\"{_name_of(it['owner'])}\", ability=\"{name}\", "
                         f"target=...) or give it over first")
+    tgt0 = _uuid(target) if target else char
+    if _two_step_scroll(name) and tgt0 != char:
+        far = _body_far(char, tgt0)
+        if far:
+            raise GameError(far)
     out = _act("use_ability", "act.interact", {"char": char, "target": it["uuid"]})
     if _batch.get("last") != "done" or "drunk" in out.partition("\n")[0]:
         return out  # a potion (in combat: for its bonus action) waits for no target
@@ -2453,12 +2518,71 @@ def _use_scroll(char: str, it: dict, target: str) -> str:
         return head + ("\n" + rest if rest else "")
     cr = click_entity(game, inp, tgt, "L")
     head, _, rest = out.partition("\n")
-    if cr.ok:
+    if cr.ok and _two_step_scroll(name) and tgt != char:
+        head += _revive_spot(inp, name, char, tgt)
+    elif cr.ok:
         head += f" ({name} read, cast on {_label(tgt)} by a click)"
     else:
         head += (f"; the game waits for {name}'s target but the click on {_label(tgt)} failed ({cr.reason}): "
                  f"click_on <id>, or press_key ESCAPE to put it away")
     return head + ("\n" + rest if rest else "")
+
+
+REVIVE_WAIT_S = 4.0   # Revivify: the body stands up this long after the second click at most
+
+
+def _two_step_scroll(name: str) -> bool:
+    """A scroll whose spell takes two clicks: the body, then the spot it stands up on (Teleportation_Revivify_Scroll,
+    Resurrection: SpellType Teleportation with OriginTargetConditions in the game data)."""
+    return bool(re.search(r"revivify|resurrection", str(name or ""), re.I))
+
+
+def _is_dead(uuid: str) -> bool | None:
+    st = game.try_rpc("state.status") or {}
+    for r in st.get("party") or []:
+        if isinstance(r, dict) and r.get("uuid") == uuid:
+            return bool(r.get("dead"))
+    return None
+
+
+REVIVE_REACH_M = 9.0  # Revivify's range (Teleportation_Resurrection TargetRadius)
+
+
+def _body_far(char: str, tgt: str) -> str | None:
+    """A body out of the scroll's reach, before the scroll is read (S058 07:52: read at camp, the bodies were back
+    in the Audience Hall: the click failed off_screen). None when near or unknown."""
+    st = game.try_rpc("state.status") or {}
+    pos = {r.get("uuid"): r.get("pos") for r in st.get("party") or [] if isinstance(r, dict)}
+    a, b = pos.get(char), pos.get(tgt)
+    if not (isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)) and len(a) >= 3 and len(b) >= 3):
+        return None
+    d = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
+    if d <= REVIVE_REACH_M:
+        return None
+    return (f"{_name_of(tgt)}'s body is {d:.0f} m away (it stays where they died; camp doesn't have it): walk within "
+            f"{REVIVE_REACH_M:.0f} m first (move_to target={_label(tgt)} within=3), then read the scroll. Not read")
+
+
+def _revive_spot(inp, name: str, char: str, tgt: str) -> str:
+    """S057/S058: 7 Scrolls of Revivify 'cast on Shadowheart by a click' and nobody stood up: the game then waits for
+    the spot the body stands up on. Click the ground beside the body, then say whether they came back."""
+    from .clicker import click_spot
+    time.sleep(0.3)   # the second step's cursor comes up a few frames after the first click
+    sc = click_spot(game, inp, tgt, char, "L")
+    if not sc.ok:
+        return (f"; {name}: the body {_label(tgt)} was clicked, but the spot to stand them up on was not "
+                f"({sc.reason}): the game still waits for it (click the ground beside the body, or press_key ESCAPE)")
+    end = time.monotonic() + REVIVE_WAIT_S
+    dead = _is_dead(tgt)
+    while dead and time.monotonic() < end:
+        time.sleep(0.4)
+        dead = _is_dead(tgt)
+    if dead is None:
+        return f" ({name} read: clicked the body {_label(tgt)} and the ground beside it; not a party member, so not checked)"
+    if dead:
+        return (f" ({name} read: clicked the body {_label(tgt)} and the ground beside it, but {_name_of(tgt)} is "
+                f"STILL DEAD after {REVIVE_WAIT_S:.0f} s)")
+    return f" ({name} read: {_name_of(tgt)} REVIVED (clicked the body, then the ground beside it))"
 
 
 @mcp.tool()
@@ -3520,10 +3644,14 @@ def _item_uuid(item: str, who: str | None = None, worn: bool = False) -> str:
     except ValueError as e:
         if "ambiguous" not in str(e):
             raise
-        inv = game.try_rpc("state.inventory", {}) or {}
+        inv = game.try_rpc("state.inventory", {"expand": True}) or {}
         _remember_names(inv)
-        rows = [it for it in inv.get("items") or [] if isinstance(it, dict)
+        rows = [it for it in inv.get("items") or [] if isinstance(it, dict) and it.get("uuid")
                 and str(it.get("name") or "").strip().lower() == str(item).strip().lower()]
+        # S057 07:49: "'Potion of Superior Healing' is ambiguous: e239, e460" with one in the bags and the other a
+        # trader's stock seen earlier: the bags hold the only one this tool can use.
+        if len(rows) == 1:
+            return rows[0]["uuid"]
         key = lambda it: (it.get("rarity"), it.get("slot_type"), it.get("ac"), str(it.get("dmg")))  # noqa: E731
         if len(rows) < 2 or len({key(it) for it in rows}) != 1:
             raise
@@ -3913,9 +4041,28 @@ def _rest_reasons(can: Any, flags: tuple[str, ...] | None = None) -> str:
     return "; ".join(parts)
 
 
+def _dead_blockers(can: Any) -> list[str]:
+    """Dead party members (not summons) that the game's rest check already flags before the press. S058 07:58: Wyll +
+    Shadowheart dead at camp, both flagged Location → requested → gather_failed 4 s later, a quicksave, then a save
+    reload by the agent. Refused before pressing; _rest_dead_note says what to do."""
+    flagged = {str(r.get("name")) for r in (can.get("blocked") or []) if isinstance(r, dict) and r.get("flags")} \
+        if isinstance(can, dict) else set()
+    if not flagged:
+        return []
+    st = game.try_rpc("state.status")
+    party = st.get("party") or [] if isinstance(st, dict) else []
+    return [str(r.get("name")) for r in party if isinstance(r, dict) and r.get("dead") and not r.get("summon")
+            and str(r.get("name")) in flagged]
+
+
 def _rest_blocked() -> str:
     can = game.try_rpc("camp.can_rest")
     METRICS.write({"type": "can_rest", "t": round(time.time(), 3), "can": can})
+    dead = _dead_blockers(can)
+    if dead:
+        METRICS.write({"type": "can_rest", "t": round(time.time(), 3), "can": can, "refused": True, "dead": dead})
+        return ("long_rest: FAILED — not pressed: the game's rest check blocks on dead party members "
+                f"({_rest_reasons(can)})" + _rest_dead_note(can))
     if not _rest_reasons(can, _REST_HARD_FLAGS):
         return ""
     time.sleep(0.5)  # a flag set for a moment (a teleport into camp, a closing conversation) must not refuse a rest
@@ -3987,7 +4134,24 @@ def _rest_flow_hint(flow: Any = None) -> str:
         text += "; no ready-check result either (the \"End the day?\" question never showed or was never answered)"
     out = f"REST FLOW {' → '.join(_plain_step(x) for x in steps) or 'nothing'}: {text}"
     why = _rest_reasons(flow.get("can_rest"))
-    return out + (f"\nthe game's rest check: {why}" if why else "")
+    return out + (f"\nthe game's rest check: {why}" if why else "") + _rest_dead_note(flow.get("can_rest"))
+
+
+def _rest_dead_note(can: Any) -> str:
+    """S058 07:58: long_rest(partial) failed with gather_failed and 'Wyll: not at a place where you can rest;
+    Shadowheart: …' — both were dead (the party member's portrait shows it); the hint said 'busy, in a conversation
+    or far away' and the agent spent 45 s guessing. Name the dead members the rest check blocks on."""
+    st = game.try_rpc("state.status") or {}
+    dead = [str(r.get("name") or "?") for r in st.get("party") or []
+            if isinstance(r, dict) and r.get("dead") and not r.get("summon")]
+    if not dead:
+        return ""
+    blocked = {str(r.get("name")) for r in (can or {}).get("blocked") or [] if isinstance(r, dict)} \
+        if isinstance(can, dict) else set()
+    hit = [n for n in dead if n in blocked] or dead
+    return (f"\nDEAD: {', '.join(hit)} — the game won't gather a dead party member at camp, so the rest fails on "
+            "them: revive them first (Revivify or a Scroll of Revivify aimed at the character, or Withers at camp), "
+            "or swap them out of the party (swap_party)")
 
 
 @mcp.tool()
@@ -6474,6 +6638,14 @@ _looted: set[str] = set()  # containers/corpses loot_area already emptied this b
 
 
 _IN_CONVO = "in a conversation"  # Guard's refusal: "character is in a conversation (InDialog)"
+
+
+def _convo_refused(err: Any) -> bool:
+    """A refusal for a conversation: the Guard's 'character is in a conversation (...)' or camp_travel's 'cannot do
+    that during a conversation' ('in a conversation' is no substring of that one)."""
+    e = str(err or "")
+    return _IN_CONVO in e or "during a conversation" in e
+
 CONVO_WAIT_S = 4.0  # a step refused for a conversation with none on screen: retry this long (banter, a stale flag)
 
 
@@ -6796,6 +6968,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                 stop = (f"no walkable ground leads further toward it ({render.num(round(d, 1))}m left"
                         + (", no other leg either" if failed_end is not None else "")
                         + "): try get_frontier, a door, or a jump")
+                stop += _wedged_hint(char)
                 if isinstance(r, dict) and r.get("hazard_beyond"):
                     stop += f"; ahead: {macros.hazard_text(r['hazard_beyond'])}"
                 hid = r.get("hidden_floor") or r.get("hidden_beyond") if isinstance(r, dict) else None

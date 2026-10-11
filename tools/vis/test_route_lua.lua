@@ -667,5 +667,84 @@ test("look_at: an item the party carries (also in a bag) is inspectable; another
     if not ok then error(err, 0) end
 end)
 
+test("look_at: a door seen minutes ago (V.itemKnown) is examinable, marked out of sight; an unknown one is not", function()
+    local V = BG3AI.Visibility
+    local saved = { V.entity, V.entityUuid, V.itemEffects, V.itemVisible, V.itemKnown }
+    local DOOR, OTHER = "d0000000-0000-0000-0000-000000000001", "d0000000-0000-0000-0000-000000000002"
+    world[DOOR], world[OTHER] = { 12, 0, -5 }, { 30, 0, 0 }
+    V.entity = function(u) return (u == DOOR or u == OTHER) and { uuid = u, ServerItem = {} } or nil end
+    V.entityUuid = function(e) return e.uuid end
+    V.itemEffects = function() return nil end
+    V.itemVisible = function() return false end -- behind the wall now (S056 e603)
+    V.itemKnown = function(_, u) return u == DOOR, "door" end
+    local ok, err = pcall(function()
+        local o = RPC.ops["state.entity"]({ uuid = DOOR })
+        eq(o.out_of_sight, true, "seen earlier: examinable, out of sight")
+        local okf, ef = pcall(RPC.ops["state.entity"], { uuid = OTHER })
+        eq(okf, false, "never seen: refused"); eq(tostring(ef):find("not visible", 1, true) ~= nil, true, "message")
+    end)
+    V.entity, V.entityUuid, V.itemEffects, V.itemVisible, V.itemKnown = saved[1], saved[2], saved[3], saved[4], saved[5]
+    if not ok then error(err, 0) end
+end)
+
+test("routeAhead: a path with an 8 m drop carries it (walks refuse it; S053 05:49)", function()
+    world[P1] = { 0, 8, 0 }
+    heights = function(x) return x < -6 and { 0.0 } or { 8.0 } end
+    nodesFor = function(from, t) return { { -3, 8, 0 }, { -6, 8, 0 }, { -7, 0, 0 }, { -14, 0, 0 } } end
+    local r = N.routeAhead(BG3AI.Visibility.context(), P1, { -14, 0, 0 })
+    eq(r.reachable, true, "a path"); eq(r.drop ~= nil, true, "drop carried"); near(r.drop.m, 8, "8 m")
+    near(r.drop.pos[1], -6, "at the edge")
+end)
+
+-- ---- wedged (S058 08:00: stuck in a nook after a pick_up) ----------------------
+
+local P2 = "aaaaaaaa-0000-0000-0000-000000000002"
+local function withParty(fn)
+    local V = BG3AI.Visibility
+    local sp, sc = V.party, V.context
+    V.party = function() return { P1, P2 } end
+    V.context = function() return { party = { P1, P2 }, is_party = { [P1] = true, [P2] = true } } end
+    local ok, err = pcall(fn)
+    V.party, V.context = sp, sc
+    if not ok then error(err, 0) end
+end
+
+test("wedged: no floor around is walkable -> jump_to next to the nearest party member", function()
+    withParty(function()
+        world[P2] = { 5, 0, 0 }
+        blocked = function() return true end
+        local w = N.wedged(P1)
+        eq(w and w.wedged, true, "wedged")
+        near(w.to[1], 3.8, "1.2 m short of Wyll"); near(w.to[3], 0, "z"); eq(w.near, "N:" .. P2, "who")
+        near(w.dist_m, 3.8, "dist")
+        local r = N.routeAhead(BG3AI.Visibility.context(), P1, { 0, 0, 18 })
+        eq(r.reachable, false, "no path"); eq(r.closest, nil, "no closest"); eq(r.wedged and r.wedged.wedged, true, "route says so")
+    end)
+end)
+
+test("wedged: open ground around -> not wedged (the goal is just unreachable)", function()
+    withParty(function()
+        world[P2] = { 5, 0, 0 }
+        blocked = function(x, y, z) return z > 10 end
+        eq(N.wedged(P1), nil, "not wedged")
+        local r = N.routeAhead(BG3AI.Visibility.context(), P1, { 0, 0, 18 })
+        eq(r.wedged, nil, "no wedged line")
+    end)
+end)
+
+test("wedged: no floor around at all (a pillar top) is not 'wedged'; no member near -> no jump spot", function()
+    blocked = function() return true end
+    heights = function(x, z) return (math.abs(x) < 1 and math.abs(z) < 1) and { 0.0 } or {} end
+    eq(N.wedged(P1), nil, "pillar: route's LOWER GROUND/jump lines cover it")
+    heights = function() return { 0.0 } end
+    N.frame = N.frame + 1
+    local w = N.wedged(P1)
+    eq(w and w.wedged, true, "wedged"); eq(w.to, nil, "nobody to jump next to")
+end)
+
+test("nav.wedged rpc: not wedged -> {wedged=false}", function()
+    eq(RPC.ops["nav.wedged"]({ char = P1 }).wedged, false, "open ground")
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

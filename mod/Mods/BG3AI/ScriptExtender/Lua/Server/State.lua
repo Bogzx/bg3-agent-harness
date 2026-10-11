@@ -1270,7 +1270,15 @@ function S.nearby(ctx, args)
             o.effect = V.itemEffects(e, landmark[o.name] or S.FIXTURE_NAMES[o.name])
             if args.item_los then tactical(ctx, u, it.p, o) end
             if truthy(osi(Osi.IsLocked, u)) then o.locked = true end
-            if comp(e, "HasOpened") then o.opened = true end
+            if it.kind == "door" then
+                -- S054 05:54:51: get_nearby said "Control Centre <door> 4.5m"; the door stood open, interact closed
+                -- it (a scene started) and the agent had to reopen it. A player sees whether a door is open.
+                -- (HasOpened = ever opened: meaningless on a door.)
+                local op = osi(Osi.IsOpened, u)
+                if op ~= nil then
+                    if truthy(op) then o.open = true else o.closed = true end
+                end
+            elseif comp(e, "HasOpened") then o.opened = true end
             if comp(e, "IsOwned") or comp(e, "InventoryIsOwned") then o.owned = true end
             if truthy(osi(Osi.IsTrap, u)) and truthy(osi(Osi.IsTrapDiscovered, u)) then
                 o.trap = { armed = truthy(osi(Osi.IsTrapArmed, u)) }
@@ -1577,11 +1585,17 @@ timed("state.entity", function(args)
                 cur = o
             end
             if not top then error("not visible", 0) end
-        else
-            local vis = V.itemVisible(ctx, u, e, V.pos(e))
-            if not vis then error("not visible", 0) end
+        end
+        -- A door/container/usable the party saw on this level minutes ago is still examinable, the rule interact and
+        -- route already follow (V.itemKnown). S055 e1174, S056 e603: doors listed in LEADS 10-20 s before, look_at
+        -- "not visible", interact on e1174 then worked.
+        local outOfSight = false
+        if not inv and not V.itemVisible(ctx, u, e, V.pos(e)) then
+            if not (V.itemKnown and V.itemKnown(ctx, u, e, V.pos(e))) then error("not visible", 0) end
+            outOfSight = true
         end
         local o = itemView(e, nil)
+        if outOfSight then o.out_of_sight = true end
         local okd, desc = pcall(function()
             local st = Ext.Stats.Get(e.Data.StatsId)
             return st and U.loca(st.Description) or nil

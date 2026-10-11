@@ -65,15 +65,16 @@ A.PICKUP_REORDER_MS = 1500 -- pickup: an order gone from the task queue (nothing
 function A.cast_failed_why(char, target, spell)
     local why = "the game refused the cast (no reason given)"
     if not target or G.same(char, target) then return why end
-    -- S043: Revivify on Jaheira (an allied NPC, dead) refused with no reason: a spell meant for the dead
-    local revive = false
-    pcall(function()
-        local st = spell and Ext.Stats.Get(spell)
-        revive = tostring(spell):find("Revivify") ~= nil or tostring(st and st.TargetConditions or ""):find("Dead%(%)") ~= nil
-    end)
-    if revive then
-        return why .. ": the game won't bring this one back (story deaths and some allies who are not in your party"
-            .. " can't be revived; a party member can: Revivify / Scroll of Revivify, or Withers at camp)"
+    -- S043/S057/S058: Revivify 0 of 14 live. The game data makes it a two-step cast (Teleportation_Revivify:
+    -- OriginTargetConditions = the body, then a spot on the ground to stand them up), which a one-target
+    -- UseSpell can't express. Party members CAN be revived: say so, and what the cast lacked.
+    if A.two_step_spell(spell) then
+        local playable = G.b(G.q("IsTagged", target, "PLAYABLE_25bf5042-5bf6-4360-8df8-ab107ccb0d37"))
+        return why .. ": " .. tostring(spell) .. " is a two-step cast (the body, then the spot they stand up on)"
+            .. (A.last_place_why and (" and the spot could not be given (" .. A.last_place_why .. ")") or "")
+            .. (playable and "" or "; this one is not a party member: only party members come back")
+            .. ". Read a Scroll of Revivify by name (use_ability ability=\"Scroll of Revivify\" target=<the body>:"
+            .. " it clicks the body, then the ground beside it), or Withers at camp"
     end
     local ok, txt = pcall(function()
         if G.is_dead(target) then return "the target was already dead when it fired" end
@@ -1239,6 +1240,51 @@ end)
 -- act.cast {char, spell, target? | pos? | targets?, upcast?}   (untested live)
 ------------------------------------------------------------------------
 
+-- A spell picked on one creature, then aimed at a ground spot (Teleportation with OriginTargetConditions:
+-- Revivify and its scroll, Resurrection, Dimension Door on an ally...). The UI asks for two clicks.
+function A.two_step_spell(spell)
+    local ok, r = pcall(function()
+        local st = spell and Ext.Stats.Get(spell)
+        return st ~= nil and tostring(st.SpellType) == "Teleportation"
+            and tostring(st.OriginTargetConditions or "") ~= "" and tostring(st.TeleportSelf or "") ~= "Yes"
+    end)
+    return ok and r or false
+end
+
+-- The ground spot for a two-step cast: beside the body, A.PLACE_M toward the caster (the body itself is a
+-- character, and the second step's TargetConditions are "not Character()").
+A.PLACE_M = 1.2
+function A.place_spot(char, target)
+    local a, b = G.pos(target), G.pos(char)
+    if not a then return nil end
+    if not b then return { a[1], a[2], a[3] } end
+    local dx, dz = b[1] - a[1], b[3] - a[3]
+    local d = math.sqrt(dx * dx + dz * dz)
+    if d < 0.01 then return { a[1], a[2], a[3] } end
+    local k = math.min(A.PLACE_M, d) / d
+    return { a[1] + dx * k, a[2], a[3] + dz * k }
+end
+
+-- Give the queued UseSpell task its second target (OsirisUseSpellTask.TargetPos2, bg3se OsirisTask.h). Returns
+-- true, or nil + why. Read-checked before the write; any proxy error is caught.
+function A.set_task_pos2(char, spell, p)
+    local ok, err = pcall(function()
+        local tasks = Ext.Entity.Get(char).ServerCharacter.OsirisController.Tasks
+        local t
+        for i = #tasks, 1, -1 do
+            local ok2, sp = pcall(function() return tasks[i].Spell end)
+            local id = ok2 and sp and (type(sp) == "string" and sp or sp.OriginatorPrototype or sp.Prototype)
+            if id == spell then t = tasks[i] break end
+        end
+        if not t then error("no queued spell task", 0) end
+        t.TargetPos2 = { p[1], p[2], p[3] }
+        local q = t.TargetPos2
+        if not q or math.abs((q[1] or 0) - p[1]) > 0.01 then error("the task kept no TargetPos2", 0) end
+    end)
+    if ok then return true end
+    return nil, tostring(err)
+end
+
 local function name_of(uuid)
     local V = BG3AI.Visibility
     if V and V.name then
@@ -1491,6 +1537,10 @@ reg("cast", function(args)
                 if targets[1] and not G.same(targets[1], char) and G.visible(targets[1]) then
                     res.target = { uuid = targets[1], dead = G.is_dead(targets[1]) or nil,
                         downed = G.is_downed(targets[1]) or nil }
+                    if job.place then
+                        res.placed_at = job.place
+                        res.revived = not res.target.dead or nil
+                    end
                 end
                 RPC.finish_job(job, "done", res)
             end
@@ -1527,6 +1577,14 @@ reg("cast", function(args)
                     { char, spell, pos[1], pos[2], pos[3] })
             else
                 G.osi("UseSpell", char, spell, targets[1], targets[2] or NULL_GUID, without_move)
+                if not targets[2] and targets[1] and A.two_step_spell(spell) then
+                    -- Revivify: the body is the first target; the spot beside it is the second.
+                    local p = A.place_spot(char, targets[1])
+                    local ok2, why = nil, "the body's position is unknown"
+                    if p then ok2, why = A.set_task_pos2(char, spell, p) end
+                    A.last_place_why = (not ok2) and why or nil
+                    job.place = p and { U.round(p[1], 1), U.round(p[2], 1), U.round(p[3], 1) } or nil
+                end
             end
         end,
         on_finish = function(job)

@@ -299,6 +299,15 @@ def sec_trade() -> None:
     tail = " ".join(re.findall(r"(?m)^\((?:sold|\d+ barters)[^\n]*", out))   # "(3 barters of up to 25 items)" "(sold N …)"
     item("trade sell=junk (one call)", "PASS" if ok else "FAIL", f"{dt:.1f}s; gold {g0}→{g1}; {first_line(out)} {tail}")
     esc = call("press_key", key="ESCAPE")
+    # [se] S057 07:40:25: camp() right after closing a trade failed "cannot do that during a conversation" ×2 (the
+    # trader's goodbye line); camp now waits ≤ 6 s for a line with no dialogue window, then goes. Reloaded after.
+    out, dt = took("camp")
+    if "during a conversation" in out or "camp: done" in out or "at_camp" in out:
+        ok = "during a conversation" not in out and "FAILED" not in out
+        item("camp right after closing a trade (goodbye line)", "PASS" if ok else "FAIL",
+             f"{first_line(out)[:200]} ({dt:.1f}s; ESCAPE before: {first_line(esc)[:60]})")
+    else:
+        item("camp right after closing a trade (goodbye line)", "SKIP", f"camp blocked otherwise: {first_line(out)[:200]}")
     load_verified(TRADE_SAVE)
 
 
@@ -726,6 +735,20 @@ def sec_se() -> None:
     hover_check("click button=none hovers only", "none", "nothing clicked")
     hover_check("click unknown button refused", "middle", "unknown button")
 
+    # Save name box read-back (S056 ×4, S057: every save_game FAILED "the save name box keeps reading 'ls.LSTextBox'":
+    # the check read ToString(), a TextBox's class name). ui.menu save probe: open, set the name, read the Text
+    # property back after the settle, ESCAPE out; nothing is written (checked on disk too).
+    t = time.time()
+    r = S.game.run_job("ui.menu", {"action": "save", "name": "acc-name-probe", "probe": True}, context="client", wait_s=25)
+    time.sleep(1.0)
+    res = r.result if isinstance(r.result, dict) else {}
+    scr = ui_screen()
+    stray = [d.name for d in S.SAVE_DIR.iterdir() if d.stat().st_mtime >= t] if S.SAVE_DIR.is_dir() else []
+    ok = r.status == "done" and res.get("matches") is True and scr == "game" and not stray
+    item("save name box reads our name (probe, no save)", "PASS" if ok else "FAIL",
+         f"{r.status} {r.error or ''}; read={res.get('read')!r} matches={res.get('matches')} renamed={res.get('renamed')}; "
+         f"screen after={scr}; save folders written={stray or 'none'}")
+
     # set_reactions on a member that is not selected (S041 22:41:22 "char is not the selected character")
     st = status()
     sel = st.get("active")
@@ -782,7 +805,10 @@ def sec_se() -> None:
     # 04:30 run: IsScreenFadeActive was still true right after the load: wait for the fade, else Z may do nothing.
     def player_vals() -> dict:
         out = {}
-        for path in ("CurrentPlayer", "CurrentPlayer.SelectedCharacter"):
+        # 09:0x read-only probe in S059: CurrentPlayer.UIData.Cursor (Distance, CursorObscuredState, …) and
+        # UIData.CastInfo (a collection, empty outside targeting) are where a targeting verdict could live.
+        for path in ("CurrentPlayer", "CurrentPlayer.SelectedCharacter", "CurrentPlayer.UIData",
+                     "CurrentPlayer.UIData.Cursor", "CurrentPlayer.UIData.CastInfo.1", "CurrentPlayer.UIData.HitChanceDesc"):
             pr = S.game.try_rpc("ui.props", {"widget": "CursorText", "path": path}, context="client")
             for k, v in ((pr or {}).get("values") or {}).items() if isinstance(pr, dict) else []:
                 out[f"{path}.{k}"] = v
@@ -827,6 +853,9 @@ def sec_se() -> None:
             log(f"PROBE screenshot {shot}")
         except Exception as e:  # noqa: BLE001
             log(f"PROBE screenshot failed: {e}")
+        hv = player_vals()
+        log(f"PROBE UIData/Cursor/CastInfo values changed while hovering @{x},{y}: "
+            + json.dumps({k: [vals1.get(k), v] for k, v in hv.items() if vals1.get(k) != v}))
         log(f"PROBE CursorText props @{x},{y}: {json.dumps(cursor_props())}")
         log(f"PROBE CursorText dump @{x},{y}: " + json.dumps(S.game.try_rpc(
             "ui.dump", {"root": "CursorText", "hidden": True, "text_only": False, "depth": 30, "max": 300},
@@ -857,7 +886,30 @@ def sec_se() -> None:
         item("map opens once in the Lower City (slow map)", "PASS" if ok else "FAIL",
              f"{r.status} {r.error or ''} in {dt:.1f}s; waypoints={n} map_presses={res.get('map_presses')}; "
              f"screen 1.5 s after closing={scr}")
+        # screenshot(map=true) (S055 x2, S056 x3: M + screenshot + ESCAPE by hand): one call opens, shoots, closes.
+        # Judged on the map (opened, closed after); a frame that doesn't present (08:0x: the acceptance window's
+        # screenshots failed) is reported, not failed.
+        t = time.monotonic()
+        try:
+            img = getattr(S.screenshot, "fn", S.screenshot)(scale=0.25, map=True)
+            shot = "map image" if not isinstance(img, str) else img
+        except Exception as e:  # noqa: BLE001
+            shot = f"capture error: {e}"
+        dt = time.monotonic() - t
+        time.sleep(1.0)
+        scr = ui_screen()
+        if isinstance(shot, str) and "didn't open" in shot:
+            item("screenshot(map=true) opens + closes the map", "FAIL", f"{shot[:200]} ({dt:.1f}s)")
+        else:
+            item("screenshot(map=true) opens + closes the map", "PASS" if scr == "game" else "FAIL",
+                 f"{shot[:160]} in {dt:.1f}s; screen 1 s after={scr} (game = closed again)")
         near = call("get_nearby", kinds="door", radius=20)
+        # S054 05:54:51: no open/closed on doors → interact closed an open door (a scene started). State.lua: doors
+        # carry open/closed (Osi.IsOpened); the locked Foundry door must read "closed".
+        drows = re.findall(r"^.*<door>.*$", near, re.M)
+        ok = bool(drows) and all(re.search(r"\b(open|closed)\b", r) for r in drows)
+        item("doors show open/closed in get_nearby", "PASS" if ok else ("SKIP" if not drows else "FAIL"),
+             " | ".join(drows)[:240] or "no door within 20 m")
         doors = re.findall(r"^(?:ITEM\s+|\+\s*)?(e\d+) ([^<\n]+?) <door>[^\n]*\blocked\b", near, re.M)  # "ITEM e8 Steel … <door> 1.6m locked"
         if need(bool(doors), "lockpick a door (no-id hover, walk wait)", f"no locked door within 20 m of {DOOR_SAVE}"):
             h, name = doors[0]
@@ -953,7 +1005,8 @@ def lua_server(code: str) -> str:
 
 def sec_act() -> None:
     """act overnight batch (2026-10-10/11): the hot-reloaded Lua is live (jump FELL report, CastSpellFailed reason,
-    missing ranged weapon named, one-decimal range refusal), react by name, swap_party's camp block answer."""
+    missing ranged weapon named, one-decimal range refusal), react by name, swap_party's camp block answer,
+    Revivify's two-step spot."""
     if not load_verified(BASE):
         return
     g = "local G=Mods.BG3AI.BG3AI.Guard local A=Mods.BG3AI.BG3AI.Actions "
@@ -998,6 +1051,17 @@ def sec_act() -> None:
         out = call("look_at", target=word)
         item("name by a whole word", "PASS" if "unknown target" not in out else "FAIL",
              f"look_at({word!r}) for {c['name']!r}: {first_line(out)[:160]}")
+    # Revivify is two-step (S057/S058 0 of 14): the live stats say so, and the queued UseSpell task takes the
+    # ground spot (TargetPos2). Probe on a living companion: the task is queued, given its spot, then purged.
+    v = lua_server(g + 'local h=Osi.GetHostCharacter() local o '
+                   'for _,r in pairs(Osi.DB_PartyMembers:Get(nil)) do if not G.same(r[1],h) then o=G.guid(r[1]) break end end '
+                   'if not A.two_step_spell then return "no A.two_step_spell" end '
+                   'if not A.two_step_spell("Teleportation_Revivify") then return "stats: not two-step" end '
+                   'if not o then return "no companion" end '
+                   'Osi.UseSpell(h,"Teleportation_Revivify",o,"NULL_00000000-0000-0000-0000-000000000000",1) '
+                   'local ok,why=A.set_task_pos2(h,"Teleportation_Revivify",A.place_spot(h,o)) '
+                   'Osi.PurgeOsirisQueue(h) return ok and "set" or ("not set: "..tostring(why))')
+    item("revivify two-step spot set", "PASS" if v == "set" else "FAIL", v[:200])
     # swap_party where the camp button is greyed by the area: the reason at once (S039 21:48:34)
     b = S.game.try_rpc("ui.travel_block", context="client") or {}
     if b.get("error") != "Location":
@@ -1085,6 +1149,38 @@ def sec_vis() -> None:
         first = names.split(";")[0]
         item("vis: journal lists unaccepted open quests", "PASS" if first and first in jt else "FAIL",
              f"{n} such quests ({names[:120]}); '{first}' in get_journal: {first in jt}")
+    # 8. wedged (S058 08:00, stuck in a nook after a pick_up): on open ground nav.wedged says no; with every path
+    #    refused (N.path stubbed for one call, restored at once) it names a jump spot next to a party member
+    w = S.game.try_rpc("nav.wedged", {}) or {}
+    v = lua_server(g + 'local P=N.path N.path=function() return {reachable=false} end '
+                   'local ok,w=pcall(N.wedged,h,500) N.path=P '
+                   'if not ok then return "error "..tostring(w) end if not w then return "nil" end '
+                   'return tostring(w.wedged).."|"..tostring(w.near).."|"..tostring(w.dist_m).."|"..tostring(w.in_reach)')
+    parts = v.split("|")
+    ok = w.get("wedged") is False and parts[0] == "true"  # near=nil only when no member stands within 12 m
+    item("vis: wedged detection (open ground no; all paths refused -> jump next to a member)",
+         "PASS" if ok else "FAIL", f"open ground: {w}; stubbed: {v[:160]}")
+    # 9. look_at on a door/container listed a moment ago and now out of sight (S055 e1174, S056 e603): examinable,
+    #    out_of_sight (V.itemVisible stubbed false for one call, restored at once)
+    fr = call("get_frontier")
+    ids = re.findall(r"\b(e\d+) [^<\n]*<(?:door|container)>", fr)
+    if need(bool(ids), "vis: look_at on a door seen a moment ago", "no door/container in get_frontier at the base save"):
+        u = S._uuid(ids[0])
+        v = lua_server('local B=Mods.BG3AI.BG3AI local V=B.Visibility local f=V.itemVisible '
+                       'V.itemVisible=function() return false end '
+                       f'local ok,o=pcall(B.RPC.ops["state.entity"],{{uuid="{u}"}}) V.itemVisible=f '
+                       'if not ok then return "error "..tostring(o) end return "out_of_sight="..tostring(o.out_of_sight)')
+        item("vis: look_at on a door seen a moment ago", "PASS" if v == "out_of_sight=true" else "FAIL",
+             f"{ids[0]}: {v[:160]}")
+    # 10. objective ids survive a re-sort (S059 08:53 route(objective="o3") walked to another objective): the live
+    #     markers fetched, then the same list in reverse order (as after the party moved): o<first> is still it
+    ms = S._objective_markers()
+    if need(len(ms) >= 2, "vis: objective ids survive a re-sort", f"{len(ms)} objective markers at the base save"):
+        oid, label = ms[0].get("oid"), S.render.objective_label(ms[0])
+        S._set_objectives(list(reversed([{k: v for k, v in m.items() if k != "oid"} for m in ms])))
+        got = S.render.objective_label(S.render.find_objective(S._objectives["last"], f"o{oid}"))
+        item("vis: objective ids survive a re-sort", "PASS" if got == label else "FAIL",
+             f"o{oid} = {label!r} before, {got!r} after the reverse; ids {[m.get('oid') for m in S._objectives['last']]}")
     load_verified(BASE)
 
 

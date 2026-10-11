@@ -2105,6 +2105,62 @@ function N.closestReach(charUuid, goal, budgetMs)
     return nil
 end
 
+-- Wedged (S058 08:00 Wyrm's Rock mess hall): after a pick_up off a table Claude stood in a nook the AI grid
+-- doesn't connect to; interact, travel_to, walk_toward and route all said "no walkable path" (WAYS none, no closest
+-- spot) and the agent guessed a jump out next to Wyll after 6 calls (~35 s). Wedged = no floor WEDGE_RING_M around
+-- is walkable; the way out is a jump next to the nearest party member in WEDGE_PARTY_M (they stand on walkable
+-- ground). nil = not wedged (or unknown: out of budget); {wedged=true, to?, near?, dist_m?, in_reach?}.
+N.WEDGE_RING_M = 3.0
+N.WEDGE_PARTY_M = 12.0
+N.WEDGE_SHORT_M = 1.2 -- land this far short of the member (not on top of them)
+N.WEDGE_BUDGET_MS = 80
+function N.wedged(charUuid, budgetMs)
+    local e = V.entity(charUuid)
+    local from = e and V.pos(e)
+    if not from then return nil end
+    local t0, budget = Ext.Utils.MonotonicTime(), budgetMs or N.WEDGE_BUDGET_MS
+    local floors = 0
+    for _, dname in ipairs(DIRS) do
+        if Ext.Utils.MonotonicTime() - t0 > budget then return nil end
+        local v = DIR_VEC[dname]
+        local x, z = from[1] + v[1] * N.WEDGE_RING_M, from[3] + v[2] * N.WEDGE_RING_M
+        local fy = floorAt(x, z, from[2])
+        if fy then
+            floors = floors + 1
+            local r = N.path(charUuid, { x, fy, z })
+            if r == nil or r.reachable == nil then return nil end -- pathfinding can't say: not a verdict
+            if r.reachable and not r.partial then return nil end
+        end
+    end
+    if floors == 0 then return nil end -- a ledge/pillar top with no floor around: route's LOWER GROUND/jump lines
+    local best
+    for _, u in ipairs(V.party()) do
+        local pe = u ~= charUuid and V.entity(u)
+        local p = pe and V.pos(pe)
+        local dead = pe and V.osi(Osi.IsDead, u)
+        if p and dead ~= 1 and dead ~= true then
+            local d = hdist(from, p)
+            if d >= N.WEDGE_SHORT_M + 0.5 and d <= N.WEDGE_PARTY_M and math.abs(p[2] - from[2]) <= 4
+                and (not best or d < best.d) then
+                best = { u = u, p = p, d = d }
+            end
+        end
+    end
+    local out = { wedged = true }
+    if best then
+        local k = (best.d - N.WEDGE_SHORT_M) / best.d
+        local to = { from[1] + (best.p[1] - from[1]) * k, best.p[2], from[3] + (best.p[3] - from[3]) * k }
+        to[2] = floorAt(to[1], to[3], best.p[2]) or best.p[2]
+        out.to, out.near, out.dist_m = U.vec(to, 1), V.name(best.u), round(hdist(from, to), 1)
+        local G = BG3AI.Guard
+        if G and G.jump_reach then
+            local ok, m = pcall(G.jump_reach, charUuid, from, to)
+            if ok and type(m) == "number" then out.in_reach = hdist(from, to) <= m end
+        end
+    end
+    return out
+end
+
 -- Ladders are used from either end, but a ladder's position is its foot
 -- (S024 07:12 Knotted Roots, S025 08:03 the Moonrise lobby ladder: from the
 -- upper floor, interact and route aimed 12-16 m below the actor, every try
@@ -2534,6 +2590,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
             out.reachable = true
             out.length_m, out.needs_jump = r.length_m, r.needs_jump
             out.legs, out.links = N.routeLegs(r.points, r.portals)
+            out.drop = r.drop -- walks refuse it (S053 05:49: route said PATH, travel_to's leg "drops 8.4m")
         elseif r and r.reachable == false then
             out.reachable = false
             if (r.no_floor or r.chasm) and r.reason then out.no_path_reason = r.reason end
@@ -2556,6 +2613,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
             out.length_m, out.needs_jump = r.length_m, r.needs_jump
             if r.partial then out.end_off_m = r.end_off end -- the goal itself is off the walkable ground
             out.legs, out.links = N.routeLegs(r.points, r.portals)
+            out.drop = r.drop
             out.exposure = N.routeExposure(r.points)
         elseif r and r.reachable == false then
             out.reachable = false
@@ -2570,6 +2628,9 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
                     c.exposure = N.routeExposure(rc.points)
                 end
                 out.closest = c
+            else
+                local okw, w = pcall(N.wedged, charUuid)
+                if okw and w then out.wedged = w end
             end
         end
     end
@@ -3534,6 +3595,14 @@ end)
 -- A target must be visible; a pos is the agent's own goal (objective marker,
 -- map marker, coordinates it read). Ladders/doors are listed when there is no
 -- path, or always with connectors=true.
+-- nav.wedged {char?}: N.wedged for walk_toward/travel_to failures (route carries it as r.wedged).
+RPC.register("nav.wedged", function(args)
+    local ctx = V.context()
+    local char = args.char or activeChar(ctx)
+    if not ctx.is_party[char] then error("not a party member", 0) end
+    return N.wedged(char) or { wedged = false }
+end)
+
 RPC.register("nav.route", function(args)
     local ctx = V.context()
     local char = args.char or activeChar(ctx)

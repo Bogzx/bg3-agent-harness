@@ -38,6 +38,7 @@ from . import render
 from .render import Handles
 
 # What an action result gets appended by default (cheap ops only; inventory/journal wait for `look`).
+MARKER_HOOK = None  # set by server: called with every fetched marker list (persistent objective ids)
 ACTION_PARTS = ("status", "nearby", "markers", "ui")
 LOOK_PARTS = ("status", "nearby", "markers", "inventory", "journal", "ui", "hazards")
 STATUS_PARTS = ("status", "markers", "ui")
@@ -202,7 +203,7 @@ def snapshot(H: Handles, status: dict | None = None, ui: dict | None = None, nea
         for i, m in enumerate(markers, 1):
             if isinstance(m, dict):
                 key = (render.objective_label(m), str(m.get("quest") or ""))
-                objs[key] = {"i": i, "here": bool(m.get("here") and m.get("dist") is not None),
+                objs[key] = {"i": m.get("oid") or i, "here": bool(m.get("here") and m.get("dist") is not None),
                              "dist": m.get("dist"), "dir": m.get("dir")}
         snap["objs"] = objs
     if inventory is not None and isinstance(inventory, dict):
@@ -645,6 +646,8 @@ def fetch(game: Any, parts: tuple = ACTION_PARTS, events: bool = False) -> dict:
     if "markers" in got:
         m = got["markers"]
         got["markers"] = m.get("markers") if isinstance(m, dict) and isinstance(m.get("markers"), list) else None
+        if got["markers"] is not None and MARKER_HOOK:
+            MARKER_HOOK(got["markers"])  # server._set_objectives: persistent o-ids on every fetched list
     if "hazards" in got:
         h = got["hazards"]
         got["hazards"] = h.get("hazards") if isinstance(h, dict) and isinstance(h.get("hazards"), list) else None

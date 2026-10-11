@@ -7,6 +7,7 @@ Run: cd bridge && uv run python -m unittest tests.test_lessons
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -84,6 +85,38 @@ class Store(unittest.TestCase):
     def test_missing_file_is_quiet(self):
         s = lessons.Store(self.d / "nope.md")
         self.assertEqual(s.fight_lines([{"name": "Ghoul", "race": "Undead"}], []), "")
+
+
+class TerrainLessons(unittest.TestCase):
+    """BACKLOG [setup]: the S035 Faith-Leap fall (walk_toward off the chasm edge) is no tactic: shown on entering the
+    place, never at a fight start; the `fall` keyword itself matches nothing."""
+    MD = ("- WHEN Faith-Leap, Gauntlet of Shar, fall: walk_toward walked Claude off the chasm edge → short move_to "
+          "steps (S035) [seen]\n"
+          "- WHEN Umbral Tremor, Gauntlet of Shar: waves → kill the Tremors first (S033) [seen]\n")
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        self.p = self.d / "lessons.md"
+        self.p.write_text(self.MD)
+        self.s = lessons.Store(self.p)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_not_at_a_fight_start(self):
+        out = self.s.fight_lines([{"name": "Umbral Tremor", "race": "Shadow"}], ["Gauntlet of Shar"])
+        self.assertIn("Tremor", out)
+        self.assertNotIn("chasm", out)
+
+    def test_on_entering_the_place(self):
+        out = self.s.region_lines(["Faith-Leap Trial", "Gauntlet of Shar"])
+        self.assertIn("chasm", out)
+
+    def test_the_keyword_matches_nothing(self):
+        ls = lessons.parse(self.MD)
+        self.assertTrue(ls[0].terrain)
+        self.assertFalse(ls[1].terrain)
+        self.assertEqual(lessons.match(ls, ["Fall"], places=["Falls"]), [])
 
 
 class PlaceInsideTrigger(unittest.TestCase):

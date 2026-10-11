@@ -44,8 +44,8 @@ class FakeGame:
                     "party": [{"uuid": PARTY, "name": "Claude", "hp": 12, "max_hp": 12}]}
         if op == "state.map":
             return {"region": "Nautiloid"}
-        if op == "nav.markers":
-            return {"markers": self.markers, "ms": 1}
+        if op == "nav.markers":  # copies: server._set_objectives tags each with its oid
+            return {"markers": [dict(m) for m in self.markers], "ms": 1}
         if op == "nav.reach_toward":
             return self.reach
         if op == "act.watch":  # in combat: wait=true still blocks (the blocking path these tests check)
@@ -107,6 +107,7 @@ class ServerTools(unittest.TestCase):
         self._orig = server.game
         server.game = self.fake
         server._objectives["last"] = []
+        server._objective_ids.clear()
         server.DELTA.reset()  # each test starts with no previous look (full views)
         self.addCleanup(setattr, server, "game", self._orig)
 
@@ -156,6 +157,36 @@ class ServerTools(unittest.TestCase):
         server.walk_toward(objective="o1", wait=True)
         reach = [a for op, a in self.fake.calls if op == "nav.reach_toward"][-1]
         self.assertEqual(reach["pos"], [-16.0, 0.0, 0.0])
+
+    def test_objective_ids_survive_a_resort(self):
+        """S059 08:53: route(objective="o3") meant Gortash; the list re-sorted by distance and o3 was the Ordination."""
+        ms = [dict(m) for m in MARKERS]
+        self.fake.markers = ms
+        server.get_map()
+        self.fake.markers = [ms[1], ms[0], ms[2]]  # the party moved: the helm is nearest now
+        server._objectives["at"] = 0.0  # stale: the next use fetches the re-sorted list
+        pos, what = server._travel_dest("", "o1", None, None, None)
+        self.assertEqual(pos, [-16.0, 0.0, 0.0])
+        self.assertIn("Escape the ship", what)
+        out = server.get_map(full=True)
+        self.assertIn("OBJECTIVE o2 Find the helm", out)
+        self.assertIn("OBJECTIVE o1 Escape the ship", out)
+        self.fake.markers = [ms[1], ms[2]]  # "Escape the ship" done: o1 is gone, not the helm
+        server._objectives["at"] = 0.0
+        with self.assertRaises(ValueError) as cm:
+            server._travel_dest("", "o1", None, None, None)
+        self.assertIn("no objective o1 now (done or gone); current: o2 Find the helm", str(cm.exception))
+
+    def test_one_marker_under_two_quests_is_not_ambiguous(self):
+        """S059 08:53:12 route(objective="Gortash"): 'matches 3 objectives' for one marker in two quests."""
+        g = [-34.8, 64.5, 200.3]
+        ms = [{"label": "Gortash", "quest": "Servant of None", "pos": g, "dist": 22.2, "here": True},
+              {"label": "Gortash", "quest": "Get Gortash's Netherstone", "pos": list(g), "dist": 22.2, "here": True}]
+        self.assertIs(render.find_objective(ms, "gortash"), ms[0])
+        ms[1]["pos"] = [10.0, 0.0, 0.0]
+        with self.assertRaises(ValueError) as cm:
+            render.find_objective(ms, "gortash")
+        self.assertIn("o1 Gortash [Servant of None], o2 Gortash [Get Gortash's Netherstone]; use the id", str(cm.exception))
 
     def test_walk_toward_objective_elsewhere_refused(self):
         out = server.walk_toward(objective="shadowheart")

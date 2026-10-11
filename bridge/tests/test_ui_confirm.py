@@ -214,6 +214,59 @@ class Confirm(Base):
         self.assertIn("the game's rest check: Claude: not at a place where you can rest", out)
         self.assertNotIn("loading a save clears it", out)
 
+    def test_long_rest_failure_names_dead_members(self):
+        # S058 07:58: gather_failed + "Wyll: not at a place where you can rest" — Wyll and Shadowheart were dead.
+        self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult(
+            "failed", {"step": "open"}, "the rest screen didn't open (nothing for 4.0s)")
+        orig = self.g.try_rpc
+        dead = [True]
+
+        def try_rpc(op, args=None, **kw):
+            if op == "camp.can_rest":
+                return {"blocked": []}
+            if op == "camp.rest_flow":
+                return {"steps": ["requested", "gather_failed"],
+                        "can_rest": {"blocked": [{"name": "Wyll", "flags": ["Location"]}]}}
+            if op == "state.status":
+                return {"party": [{"name": "Claude"}, {"name": "Wyll", "dead": dead[0]},
+                                  {"name": "Spiritual Weapon", "dead": True, "summon": True}]}
+            return orig(op, args, **kw)
+        self.g.try_rpc = try_rpc
+        with mock.patch.object(server.time, "sleep"):
+            out = server.long_rest()
+        self.assertIn("gather_failed", out)
+        self.assertIn("DEAD: Wyll — the game won't gather a dead party member", out)
+        self.assertNotIn("Spiritual Weapon", out)
+        dead[0] = False
+        with mock.patch.object(server.time, "sleep"):
+            self.assertNotIn("DEAD:", server.long_rest())
+
+    def test_long_rest_refused_before_pressing_on_dead_members(self):
+        # S058 07:58: can_rest flagged dead Wyll + Shadowheart (Location) before the press; the press then failed
+        # gather_failed after 4 s. Now: refused at once, nothing pressed, the dead named with what to do.
+        seen = []
+        self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: (
+            seen.append(op) or JobResult("done", {"rest": "full"}))
+        orig = self.g.try_rpc
+        party = [{"name": "Claude"}, {"name": "Wyll", "dead": True}, {"name": "Shadowheart", "dead": True}]
+
+        def try_rpc(op, args=None, **kw):
+            if op == "camp.can_rest":
+                return {"blocked": [{"name": "Wyll", "flags": ["Location"]},
+                                    {"name": "Shadowheart", "flags": ["Location"]}], "global_disabled": 0}
+            if op == "state.status":
+                return {"party": party}
+            return orig(op, args, **kw)
+        self.g.try_rpc = try_rpc
+        out = server.long_rest(partial=True)
+        self.assertIn("not pressed", out)
+        self.assertIn("DEAD: Wyll, Shadowheart", out)
+        self.assertEqual(seen, [])
+        # alive but flagged Location (soft): pressed as before
+        party[1:] = [{"name": "Wyll"}, {"name": "Shadowheart"}]
+        self.assertIn("done", server.long_rest())
+        self.assertEqual(seen, ["ui.long_rest"])
+
     def test_long_rest_presses_again_only_when_the_press_never_arrived(self):
         # S030: the job's own 4 s re-press landed in the engine's ~10 s answer window. Now the bridge re-presses
         # only when the server's rest flow shows nothing for this call.

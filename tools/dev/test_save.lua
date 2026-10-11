@@ -59,7 +59,8 @@ local function frame()
                 if saveStarts then saveAt = clock + 500 end
             elseif widgets.SaveGame then show("SaveGamePopup") end
         elseif k == "ESCAPE" then
-            if widgets.SaveGame then hide("SaveGame")
+            if widgets.SaveGamePopup then hide("SaveGamePopup")
+            elseif widgets.SaveGame then hide("SaveGame")
             elseif widgets.GameMenu then hide("GameMenu") end
         end
     end
@@ -93,10 +94,13 @@ BG3AI = {
         end,
         isVisible = function(el) return el.visible ~= false end,
         byName = function(w, n) if n == "SaveName" then
-            return { SetProperty = function(_, k, v) if k == "Text" then nameBox.t = v end end } end end,
-        text = function() return nameBox.t end,
+            return { isNameBox = true, SetProperty = function(_, k, v)
+                if k == "Text" and not nameBox.stuck then nameBox.t = v end end } end end,
+        -- live (S056): a TextBox's ToString() is its class name; only the Text property holds the name
+        text = function() return "ls.LSTextBox" end,
         clean = function(v) return v end,
-        prop = function() return nil end,
+        prop = function(obj, k) if obj and obj.isNameBox and k == "Text" then return nameBox.t end return nil end,
+        get = function() return nil end,
         props = function() return {} end,
         findButton = function() return nil end,
         findAll = function() return {} end,
@@ -129,8 +133,8 @@ end
 
 -- one save, driven frame by frame; ui.state sampled on every frame. While
 -- the game is in its Save state the job doesn't tick (as live may).
-local function runSave(name)
-    local r = ops["ui.menu"]({ action = "save", name = name })
+local function runSave(name, probe)
+    local r = ops["ui.menu"]({ action = "save", name = name, probe = probe })
     local job = jobs[r.job]
     local seen = { screens = {}, saving = false, doneState = nil }
     for _ = 1, 400 do
@@ -174,6 +178,34 @@ defaultName = nil
 ok(job.status == "done" and savedAs == "S052-lab-fight2" and (job.result.renamed or 0) >= 1,
     "default name overwritten back before the accept: saved as " .. tostring(savedAs) .. ", renamed="
     .. tostring(job.result and job.result.renamed))
+
+-- name probe (acceptance): sets the name, reads it back through the Text property, ESCAPEs out, writes nothing
+savedAs = nil
+A.SAVE_ENABLED = false
+job = runSave("probe-name", true)
+A.SAVE_ENABLED = true
+ok(job.status == "done" and job.result.probe and job.result.read == "probe-name" and job.result.matches == true,
+    "probe reads our name back: " .. tostring(job.status) .. " read=" .. tostring(job.result and job.result.read)
+    .. " err=" .. tostring(job.error))
+ok(savedAs == nil and saveAt == nil, "probe wrote no save")
+ok(widgets.SaveGamePopup == nil and widgets.SaveGame == nil and widgets.GameMenu == nil, "probe closed the menus")
+defaultName = "Steel Watch Foundry - Lab Level - 16h 14m"
+job = runSave("probe-name2", true)
+defaultName = nil
+ok(job.status == "done" and job.result.matches == true and (job.result.renamed or 0) >= 1,
+    "probe re-sets over the dialog's default name: read=" .. tostring(job.result and job.result.read))
+
+-- S056 07:17: the name never sticks → failed, and the save menus are closed first (the agent finished one by hand)
+nameBox.stuck = true
+savedAs = nil
+job = runSave("S056-stuck")
+nameBox.stuck = nil
+ok(job.status == "failed" and tostring(job.error):find("keeps reading", 1, true) ~= nil,
+    "a name that never sticks fails, saying so: " .. tostring(job.status) .. " " .. tostring(job.error))
+ok(widgets.SaveGamePopup == nil and widgets.SaveGame == nil and widgets.GameMenu == nil,
+    "a failed save closes its menus (popup/page/game menu)")
+ok(savedAs == nil, "a failed name check writes no save")
+ok(A.pendingSave == nil, "pending save cleared after the failure")
 
 -- the SavingPanel overlay lingering after the Save state doesn't hold it (S015: 3 s)
 show("AlwaysOnTopOverlay")

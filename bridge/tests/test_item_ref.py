@@ -65,6 +65,20 @@ class ItemRef(unittest.TestCase):
         with self.assertRaises(ValueError):
             server._item_uuid("Simple Robe", "Gale")
 
+    def test_one_carried_namesake_wins_over_a_traders_stock(self):
+        # S057 07:49: e239 in the bags, e460 a trader's stack seen in the trade window (not in state.inventory)
+        pot = lambda u: {"uuid": u, "name": "Potion of Superior Healing", "owner": CLAUDE, "rarity": "uncommon"}  # noqa: E731
+        fake = self.use([pot(R[0])])
+        server.H.get(R[1], "Potion of Superior Healing")
+        self.assertEqual(server._item_uuid("Potion of Superior Healing", "Claude"), R[0])
+
+    def test_nothing_carried_stays_ambiguous(self):
+        self.use([])
+        server.H.get(R[0], "Potion of Superior Healing")
+        server.H.get(R[1], "Potion of Superior Healing")
+        with self.assertRaises(ValueError):
+            server._item_uuid("Potion of Superior Healing", "Claude")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -918,3 +919,115 @@ class LeftTrade(Base):
         out = server._act("move_to", "act.move_to", {"char": P1, "pos": [5, 0, 0]})
         self.assertIn("in a conversation", out)
         self.assertEqual([c for c in self.g.calls if c[0] == "ui.key"], [])
+
+
+class CampAfterClosingTalk(Base):
+    """S057 07:40:25: camp() right after a trade closed failed 'cannot do that during a conversation' ×2 (the trader's
+    goodbye line). _act's conversation retry (CONVO_WAIT_S, no dialogue on screen) covers camp's refusal text too."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        saved = (server._travel_block, server.CONVO_WAIT_S)
+        server._travel_block = lambda *a, **k: {}
+        self.addCleanup(lambda: (setattr(server, "_travel_block", saved[0]), setattr(server, "CONVO_WAIT_S", saved[1])))
+        self.jobs, self.fails, self.screen = [], [2], "game"
+        orig = self.g.try_rpc
+
+        def try_rpc(op, args=None, context="server", **kw):
+            if op == "ui.state":
+                return {"screen": self.screen}
+            return orig(op, args, context=context, **kw)
+        self.g.try_rpc = try_rpc
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            self.jobs.append(op)
+            if op == "act.go_to_camp" and self.fails[0] > 0:
+                self.fails[0] -= 1
+                return JobResult(status="failed", error="cannot do that during a conversation")
+            return JobResult(status="done", result={"at_camp": True})
+        self.g.run_job = run_job
+
+    def test_waits_for_the_goodbye_line_then_goes(self):
+        with unittest.mock.patch.object(server.time, "sleep"):
+            out = server.camp()
+        self.assertNotIn("FAILED", out)
+        self.assertEqual(self.jobs.count("act.go_to_camp"), 3)
+
+    def test_open_dialogue_window_fails_at_once(self):
+        self.screen = "dialogue"
+        out = server.camp()
+        self.assertIn("during a conversation", out)
+        self.assertEqual(self.jobs.count("act.go_to_camp"), 1)
+
+
+class ScreenshotMap(Base):
+    """screenshot(map=true): open the map, capture, close it (S055/S056: M + screenshot + ESCAPE by hand)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from PIL import Image as PILImage
+        order = self.order = []
+
+        class Cap:
+            def capture(self, max_width):
+                order.append("capture")
+                return b"jpg", PILImage.new("RGB", (8, 8))
+        saved = (server._screen, server.MAP_SHOT_SETTLE_S)
+        server._screen, server.MAP_SHOT_SETTLE_S = Cap(), 0.0
+        self.addCleanup(lambda: (setattr(server, "_screen", saved[0]), setattr(server, "MAP_SHOT_SETTLE_S", saved[1])))
+        self.opened = True
+        orig = self.g.try_rpc
+
+        def try_rpc(op, args=None, context="server", **kw):
+            if op == "ui.map_close":
+                order.append("close")
+                return {"closed": True}
+            return orig(op, args, context=context, **kw)
+        self.g.try_rpc = try_rpc
+        self.status = "done"
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            order.append(op)
+            if self.status != "done":
+                return JobResult(status="failed", error="the map didn't open (pressed M,M over 3.0s)")
+            return JobResult(status="done", result={"opened": self.opened, "map_presses": 1})
+        self.g.run_job = run_job
+
+    def fn(self, **kw):
+        f = getattr(server.screenshot, "fn", server.screenshot)
+        return f(**kw)
+
+    def test_opens_captures_closes(self):
+        out = self.fn(map=True)
+        self.assertNotIsInstance(out, str)
+        self.assertEqual(self.order, ["ui.map_show", "capture", "close"])
+
+    def test_map_already_open_is_left_open(self):
+        self.opened = False
+        self.fn(map=True)
+        self.assertEqual(self.order, ["ui.map_show", "capture"])
+
+    def test_map_that_does_not_open_says_so(self):
+        self.status = "failed"
+        out = self.fn(map=True)
+        self.assertIn("the map didn't open", out)
+        self.assertNotIn("capture", self.order)
+
+    def test_plain_screenshot_unchanged(self):
+        self.fn()
+        self.assertEqual(self.order, ["capture"])
+
+
+class DoorOpenState(unittest.TestCase):
+    """S054 05:54:51: 'Control Centre <door> 4.5m' gave no open/closed state; interact closed the open door."""
+
+    def test_door_shows_open_or_closed(self):
+        from bg3ai import render
+        H = server.H
+        n = {"items": [{"uuid": "d00r0000-0000-0000-0000-000000000001", "name": "Control Centre", "kind": "door",
+                        "dist": 4.5, "open": True},
+                       {"uuid": "d00r0000-0000-0000-0000-000000000002", "name": "Cell Door", "kind": "door",
+                        "dist": 6.0, "closed": True, "locked": True}]}
+        out = render.render_nearby(n, H)
+        self.assertRegex(out, r"Control Centre <door> 4\.5m open")
+        self.assertRegex(out, r"Cell Door <door> 6m locked closed")
