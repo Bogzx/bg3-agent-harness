@@ -363,16 +363,34 @@ local function guardState()
         if okp and type(d) == "table" then
             guard.slow = type(d.slow) == "table" and d.slow or {}
             guard.strikes = type(d.strikes) == "table" and d.strikes or {}
+            -- kills by the old rule (any 2 stops during a warm-up, stuck or not: BGO_Main_A 2026-10-11) are dropped;
+            -- a stuck warm-up's kill reads "a stuck ways warm"
+            for lv, v in pairs(guard.slow) do
+                if type(v) == "table" and v.why == "the game died during ways warm" then
+                    guard.slow[lv], guard.strikes[lv] = nil, nil
+                    Ext.Utils.PrintWarning("[BG3AI] nav guard: " .. tostring(lv) .. " back on (an old warm-up strike rule)")
+                end
+            end
             local f = d.inflight
             if type(f) == "table" and f.level then
                 -- A background warm-up request is in flight most of the time the party stands still, so a planned
                 -- game kill (the runner's 2 h relaunch, 2026-10-11 04:39) left its marker and the next start put
                 -- the whole Lower City on the kill list. Warm-ups need N.WARM_DEATH_STRIKES deaths on a level; a
                 -- jump cast / jump plan (the real S038/S039 OOMs) still kills it at once.
-                local n = (tonumber(guard.strikes[f.level]) or 0) + 1
-                guard.strikes[f.level] = n
-                if f.op ~= "ways warm" or n >= N.WARM_DEATH_STRIKES then
-                    guard.slow[f.level] = guard.slow[f.level] or { why = "the game died during " .. tostring(f.op), ms = -1 }
+                -- 2026-10-11: a 2 h relaunch (09:08) + S060's crash in a debug-port eval (09:11, se) were 2 strikes
+                -- and put all of Act 3's BGO_Main_A off (S058 08:04 "No jump plan … the game died during ways warm").
+                -- A warm-up only strikes when its request was STUCK (unanswered past N.WARM_STUCK_MS, marked by the
+                -- Tick): a fresh request (answered in ~ms) out when the game was killed or crashed elsewhere is no clue.
+                local n = tonumber(guard.strikes[f.level]) or 0
+                local counts = f.op ~= "ways warm" or f.stuck == true
+                if counts then n = n + 1 end
+                guard.strikes[f.level] = n > 0 and n or nil
+                if not counts then
+                    Ext.Utils.PrintWarning(string.format("[BG3AI] nav guard: the game stopped during a fresh %s on %s"
+                        .. " (a kill or a crash elsewhere): no strike", tostring(f.op), tostring(f.level)))
+                elseif f.op ~= "ways warm" or n >= N.WARM_DEATH_STRIKES then
+                    guard.slow[f.level] = guard.slow[f.level] or { why = "the game died during "
+                        .. (f.op == "ways warm" and "a stuck ways warm" or tostring(f.op)), ms = -1 }
                     Ext.Utils.PrintError(string.format("[BG3AI] nav guard: the game died during %s on %s @%s: warm-ups"
                         .. " and jump planning are off on that level", tostring(f.op), tostring(f.level), tostring(f.at)))
                 else
@@ -406,6 +424,25 @@ function N.inflight(op, at)
     local g = guardState()
     g.inflight = op and { level = currentLevel(), op = op, at = at and U.vec(at, 1) and table.concat(U.vec(at, 1), ",") } or nil
     guardSave()
+end
+-- The in-flight warm-up is stuck (unanswered past N.WARM_STUCK_MS): a death from here on is a strike.
+N.WARM_STUCK_MS = 1000
+function N.inflightStuck()
+    local g = guardState()
+    if g.inflight and not g.inflight.stuck then g.inflight.stuck = true; guardSave() end
+end
+-- Answered warm-ups on a level since this load; N.WARM_CLEAN_RESET of them clear its old strikes (minutes of
+-- healthy searches: an old strike was a kill, not this level's searches).
+N.WARM_CLEAN_RESET = 100
+N.warmClean = N.warmClean or {}
+function N.warmAnswered(level)
+    if not level then return end
+    local n = (N.warmClean[level] or 0) + 1
+    N.warmClean[level] = n
+    if n == N.WARM_CLEAN_RESET then
+        local g = guardState()
+        if g.strikes and g.strikes[level] and not g.slow[level] then g.strikes[level] = nil; guardSave() end
+    end
 end
 
 -- Cheap checks before a search (se's S038 point 1): no engine search for a goal it can't walk to. A goal column with
@@ -772,7 +809,7 @@ RPC.register("nav.frontier", function(args)
                         -- where it leads: the other end, and whether the party has been there (climbables: vines,
                         -- roots and ladders are all IsLadder items)
                         extra = { height_m = round(b.height, 1), leads = down and "down" or "up", to = U.vec(to, 1),
-                            to_unvisited = not N.visited(lvl, to, 3) or nil }
+                            to_unvisited = not N.visited(lvl, to, 3) or nil, raised_m = N.ladderRaised(p) }
                     end
                     add("ladder", u, p, extra)
                 elseif kind == "container" and not U.comp(e, "HasOpened") then
@@ -2172,6 +2209,31 @@ end
 -- is not a ladder or the actor is at the foot's level.
 N.LADDER_TOP_MIN_M = 2.5
 N.LADDER_TOP_SLACK_M = 6.0
+-- A ladder pulled up out of reach (S059 08:56-09:00 Wyrm's Rock: e683's foot hung 5.7 m above the scaffold
+-- room's floor; frontier said "climbs 6.5m up", interact refused "no walkable path … move_to that, then a
+-- ladder/jump_to", 2 Dimension Doors and a screenshot later the agent saw it raised; a lever on top lowers it).
+-- The foot's gap above the nearest floor at/below it (the foot and 4 points LADDER_RAISED_PROBE_M around it;
+-- the side against the wall reads the wall top or the floor behind it), or nil: a floor at the foot, or no
+-- AI-grid heights there (can't tell). What a player sees: the ladder hanging above the floor.
+N.LADDER_RAISED_MIN_M = 2.5
+N.LADDER_RAISED_PROBE_M = 0.8
+function N.ladderRaised(p)
+    if type(p) ~= "table" then return nil end
+    local best
+    local r = N.LADDER_RAISED_PROBE_M
+    for _, o in ipairs({ { 0, 0 }, { r, 0 }, { -r, 0 }, { 0, r }, { 0, -r } }) do
+        local ok, hs = pcall(Ext.Level.GetHeightsAt, p[1] + o[1], p[3] + o[2])
+        if ok and type(hs) == "table" then
+            for _, h in ipairs(hs) do
+                local g = type(h) == "number" and p[2] - h
+                if g and g >= -1.0 and (not best or g < best) then best = g end
+            end
+        end
+    end
+    if best and best >= N.LADDER_RAISED_MIN_M then return round(best, 1) end
+    return nil
+end
+
 function N.ladderTop(from, uuid, ie)
     ie = ie or V.entity(uuid)
     local p = ie and V.pos(ie)
@@ -2232,6 +2294,7 @@ function N.connectors(ctx, charUuid, goal, radius, limit, budgetMs)
                     far, o.leads = top, "up"
                 end
                 o.far_dy = round(far[2] - from[2], 1)
+                o.raised_m = N.ladderRaised(p)
             end
         elseif truthy(osi(Osi.IsLocked, u)) then
             o.locked = true
@@ -2263,7 +2326,7 @@ function N.connectors(ctx, charUuid, goal, radius, limit, budgetMs)
         out[#out + 1] = o
     end
     local function score(o)
-        return (o.unreachable and 1000 or 0) + (o.path_m or o.dist) + (o.to_goal_m or 0) + (o.locked and 20 or 0)
+        return ((o.unreachable or (o.raised_m and o.leads == "up")) and 1000 or 0) + (o.path_m or o.dist) + (o.to_goal_m or 0) + (o.locked and 20 or 0)
     end
     table.sort(out, function(a, b) return score(a) < score(b) end)
     while #out > (limit or N.CONNECT_MAX) do table.remove(out) end
@@ -3042,6 +3105,7 @@ function N.waysWarm(now)
     local st, wa = N.waysWarmState, N.warmAsync
     local req = st.req
     if req then
+        if now - req.t >= N.WARM_STUCK_MS and not req.stuck then req.stuck = true; N.inflightStuck() end
         if now - req.t <= N.WARM_ASYNC_TIMEOUT_MS then return end
         pcall(Ext.Level.ReleasePath, req.path) -- ends the engine's search of it
         st.req = nil
@@ -3096,6 +3160,7 @@ function N.waysWarm(now)
         st.req = nil
         N.inflight(nil)
         wa.ok = wa.ok + 1
+        N.warmAnswered(level)
         local okr, r = pcall(readResult, pv, pv.GoalFound, from, target, N.PATH_END_TOL_M)
         if not okr or type(r) ~= "table" then return end
         r.ms = Ext.Utils.MonotonicTime() - cur.t

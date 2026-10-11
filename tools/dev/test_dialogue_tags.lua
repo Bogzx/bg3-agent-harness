@@ -61,6 +61,7 @@ BG3AI = {
         text = function(el) return clean(el._tostring) or (el._props.Inlines and clean(inlineText(el._props.Inlines))) end,
         inlineText = inlineText,
         allText = function() return nil end,
+        quiet = function() return QUIET == true end,
     },
 }
 
@@ -296,8 +297,29 @@ do
     -- the list holds more rows than VMs (a hidden answer, S015): no positional pairing
     local vms9 = {}
     for k = 1, 9 do vms9[k] = vms[k] end
-    local out4, changing4 = S.dialogueAnswers(scrolled(rows(5, 6), 350.0), ad(vms9, true))
-    check("window: extent != VMs -> not paired by position", #out4 == 0 and changing4 == true, #out4)
+    local out4, changing4, c4 = S.dialogueAnswers(scrolled(rows(5, 6), 350.0), ad(vms9, true))
+    check("window: extent != VMs -> not paired by position", out4[1] and out4[1].vm == nil, #out4)
+    -- S063 10:53: that case showed no options at all (choose refused "changing", ~70 s by hand). Now the rows
+    -- the player sees, numbered by the window, no VM claimed (choose presses the row: a.row)
+    check("S063 rows only: not changing", changing4 == false)
+    check("S063 rows only: answers 5-10 as rendered", #out4 == 6 and out4[1].i == 5 and out4[6].i == 10
+        and out4[6].text == "Leave." and out4[1].row == 1 and out4[6].row == 6, #out4)
+    check("S063 rows only: 4 above, flagged", c4 and c4.above == 4 and c4.rows_only == true and c4.below == nil)
+    -- at the top of the list: 1-6 and the rest below (the bridge wheels the list to read them)
+    local out5, _, c5 = S.dialogueAnswers(scrolled(rows(1, 6), 0.0), ad(vms9, true))
+    check("S063 rows only top: 1-6, 4 below", #out5 == 6 and out5[1].i == 1 and c5 and c5.below == 4, c5 and c5.below)
+    -- right after one of our commands (rows of the answered node may still be in the tree): nothing, changing
+    QUIET = true
+    local out6, changing6 = S.dialogueAnswers(scrolled(rows(5, 6), 350.0), ad(vms9, true))
+    QUIET = false
+    check("S063 rows only: not while our command settles", #out6 == 0 and changing6 == true)
+    -- a line still playing (ShowAnswers false): nothing
+    local out7, changing7 = S.dialogueAnswers(scrolled(rows(5, 6), 350.0), ad(vms9, false))
+    check("S063 rows only: not while listening", #out7 == 0 and changing7 == true)
+    -- fewer VMs than rendered rows (a stale list from a longer node): nothing
+    local vms3 = { vms[1], vms[2], vms[3] }
+    local out8, changing8 = S.dialogueAnswers(scrolled(rows(5, 6), 350.0), ad(vms3, true))
+    check("S063 rows only: not with fewer VMs than rows", #out8 == 0 and changing8 == true)
 end
 
 print(string.format("%d passed, %d failed", passed, failures))

@@ -263,6 +263,8 @@ RPC.register("ui.hover_check", function(args)
                 end
             end
             if not res.hovered and #seen > 0 then res.nouuid = seen end  -- why it isn't the target (next failure)
+        else
+            res.nouuid_why = "the target has no client entity to compare with"
         end
     end
     res.hover = list[1]

@@ -76,6 +76,14 @@ class Handles:
         return UUID_RE.sub(lambda m: self.get(m.group(0)), text)
 
 
+
+def raised_ladder(l: dict) -> str:
+    """A ladder pulled up out of reach (Navigation.lua N.ladderRaised; S059 08:56 Wyrm's Rock e683)."""
+    gap = num(l.get("raised_m"))
+    if l.get("leads") == "up":
+        return f"PULLED UP: its foot hangs {gap}m above the floor, can't be climbed from below (lowered from above)"
+    return f"(its foot hangs {gap}m above the floor below)"
+
 def num(x: Any) -> str:
     if isinstance(x, float):
         return f"{x:.1f}".rstrip("0").rstrip(".")
@@ -941,6 +949,8 @@ def render_frontier(res: Any, H: Handles) -> str:
             bits.append(f"climbs {num(l['height_m'])}m {l['leads']}"
                         + (f" to {pos(l['to'])}" if l.get("to") else "")
                         + (" (unexplored)" if l.get("to_unvisited") else ""))
+        if l.get("kind") == "ladder" and l.get("raised_m"):
+            bits.append(raised_ladder(l))
         for flag in ("unvisited", "locked", "waypoint"):
             if l.get(flag):
                 bits.append(flag)

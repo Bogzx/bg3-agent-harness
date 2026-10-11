@@ -374,5 +374,28 @@ class ReachLine(unittest.TestCase):
         self.assertEqual(turn.reach_line(cs, "me", None, str), "")
 
 
+
+class SetPartyAlready(unittest.TestCase):
+    """S062 10:00: set_party unchain on a member already alone → "FAILED: already unchained" ×3 (the state wanted)."""
+
+    def run_party(self, action: str, out: str) -> str:
+        saved = (server._act, server._who, server._active)
+        server._act = lambda tool, op, args, **k: out
+        server._who, server._active = (lambda ref: "u-k"), (lambda: "u-c")
+        try:
+            return server.set_party(action, who="Karlach")
+        finally:
+            server._act, server._who, server._active = saved
+
+    def test_already_is_done(self):
+        self.assertEqual(self.run_party("unchain", "set_party: FAILED — already unchained\n⏱ 10:00"),
+                         "set_party: done — Karlach already walks alone (unchained)\n⏱ 10:00")
+        self.assertTrue(self.run_party("chain", "set_party: FAILED — already chained together")
+                        .startswith("set_party: done — Karlach is already chained"))
+
+    def test_other_failures_stay(self):
+        self.assertEqual(self.run_party("unchain", "set_party: FAILED — character is dead"),
+                         "set_party: FAILED — character is dead")
+
 if __name__ == "__main__":
     unittest.main()

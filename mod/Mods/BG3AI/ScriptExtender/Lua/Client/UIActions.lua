@@ -607,7 +607,10 @@ RPC.register("ui.dialogue_choose", function(args)
                 tostring(counts and counts.rendered), tostring(counts and counts.vms),
                 tostring(counts and counts.texted), tostring(counts and counts.show)))
         end
-        local a = answers[i]
+        local a
+        for _, x in ipairs(answers) do
+            if x.i == i then a = x break end
+        end
         if not a and counts and counts.below and i > #answers and i <= #answers + counts.below then
             -- An answer below the visible rows of a long list (companion menus): the live VM at that
             -- position in Answers, the order the list shows them in.
@@ -618,12 +621,13 @@ RPC.register("ui.dialogue_choose", function(args)
         a = a or error("no option " .. i .. " (" .. #answers .. " shown"
             .. (counts and counts.below and (", " .. counts.below .. " more below") or "") .. ")")
         if a.off then error("option " .. i .. " is disabled") end
-        local ok, err = UI.command(dc, "SelectAnswerCommand", a.vm, args.dry)
+        local ok, err = false, "no answer VM (rendered row only)"
+        if a.vm then ok, err = UI.command(dc, "SelectAnswerCommand", a.vm, args.dry) end
         if not ok then
-            -- Fallback: the answer's own button (same command and parameter).
+            -- Fallback: the answer's own button (same command and parameter); a.row = its row in the window.
             local item = UI.findAll(UI.byName(w.el, "answerList") or w.el, function(e)
                 return UI.typeName(e) == "ls.LSListBoxItem" or UI.typeName(e) == "ListBoxItem"
-            end, { prune = true })[i]
+            end, { prune = true })[a.row or i]
             local btn = item and UI.find(item, UI.isButton)
             check(btn and UI.press(btn, args.dry), err)
         end

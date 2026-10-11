@@ -219,9 +219,10 @@ function S.dialogueAnswers(widget, ad)
         -- twice, the agent clicked by hand): the list is virtualized, so never all rendered. When the game
         -- says answers are shown, list the live VMs that have text, in the game's order (a text-less VM is a
         -- hidden answer, S015), provided the rendered list is current (one of its texts is a VM's).
-        local texted = 0
+        local texted, current = 0, false
         if n > 0 and #items > 0 and props(ad).ShowAnswers == true then
-            local fromVM, current = S.textedAnswersFromVMs(vms, n, items)
+            local fromVM
+            fromVM, current = S.textedAnswersFromVMs(vms, n, items)
             texted = fromVM and #fromVM or 0
             if fromVM and #fromVM >= #items and current then return fromVM, false end
         end
@@ -245,6 +246,24 @@ function S.dialogueAnswers(widget, ad)
             elseif not win and texted == 0 then -- no scroll info: the list's top rows (live 12:1x)
                 local byPos = S.pairRenderedByPosition(items, vms, 1)
                 if byPos then return byPos, false, { below = n - #items } end
+            end
+        end
+        -- S063 10:53 (Karlach's camp menu again: 6 rows on screen, "Come on, we're heading out" 8th): none of the
+        -- pairings above held, so get_dialogue showed no options at all, choose refused "changing", swap_party
+        -- stalled 25 s and the agent scrolled with DOWN and clicked by hand (~70 s). When the game says answers
+        -- are shown, every rendered row has text, and no command of ours is still settling (rows of the node we
+        -- just answered stay in the tree for a layout pass), list the rows as the player sees them, numbered by
+        -- the list's window; choose presses the row's own button (rows_only: no VM pairing is claimed). A list
+        -- whose texts match none of the VMs that have text is the previous node's: still changing.
+        if #items > 0 and n >= #items and props(ad).ShowAnswers == true and not UI.quiet(6)
+            and (texted == 0 or current) then
+            local win = S.listWindow(list, items)
+            local first = win and win.first or 1
+            local rows = S.renderedRows(items, first)
+            if rows then
+                local below = (win and win.total or n) - (first - 1) - #items
+                return rows, false, { below = below > 0 and below or nil, above = first > 1 and first - 1 or nil,
+                    rows_only = true }
             end
         end
         return out, #items > 0 or n > 0, { rendered = #items, vms = n, show = props(ad).ShowAnswers, texted = texted }
@@ -375,10 +394,26 @@ function S.pairRenderedByPosition(items, vms, first)
         local vm = try(vms.At, vms, idx)
         if not vm then return nil end
         local tags, body = S.splitTags(text)
-        local a = { i = idx, text = body, vm = vm }
+        local a = { i = idx, text = body, vm = vm, row = k }
         if #tags > 0 then a.tags = tags end
         addTags(a, try(S.answerTags, vm))
         if props(vm).Enabled == false then a.off = true end
+        out[#out + 1] = a
+    end
+    return out
+end
+
+-- Rendered rows as answers without VMs (texts from the rows only, never their
+-- DataContext): { i = first + k - 1, text, row = k }. nil unless every row has text.
+function S.renderedRows(items, first)
+    local out = {}
+    for k, item in ipairs(items) do
+        local textEl = UI.byName(item, "AnswerText")
+        local text = textEl and answerText(textEl) or UI.allText(item)
+        if not clean(text) then return nil end
+        local tags, body = S.splitTags(text)
+        local a = { i = (first or 1) + k - 1, text = body, row = k }
+        if #tags > 0 then a.tags = tags end
         out[#out + 1] = a
     end
     return out

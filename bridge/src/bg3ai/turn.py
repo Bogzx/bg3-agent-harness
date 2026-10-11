@@ -162,12 +162,18 @@ def parse_plan(raw: Any, allowed: set) -> TurnPlan:
     # S041 22:36:18: {"end": ...} inside the plan (it is combat_turn's own argument): accepted and ignored here,
     # the turn ends per the call's end= (default true); a whole wasted call before
     p = {k: v for k, v in p.items() if k != "end"}
+    # S061: {"avoid": false} beside "move" (our own refusal says "move avoid:false walks through") → "unknown plan
+    # key(s) avoid", a wasted call mid-fight. It belongs to the move: fold it (and "partial") in.
+    lift = {k: p.pop(k) for k in ("avoid", "partial") if k in p}
     unknown = set(p) - set(SLOT_NAMES) - {"order", "reactions", "on_reaction", "retarget", "auto_bonus"}
     if unknown:
         raise PlanError(f"unknown plan key(s) {', '.join(sorted(unknown))}; use move, action, bonus, extra, "
                         "order, reactions, on_reaction, retarget, auto_bonus")
     plan = TurnPlan(move=_move(p.get("move")), retarget=p.get("retarget") is not False,
                     auto_bonus=p.get("auto_bonus") is not False)
+    for k, v in lift.items():  # a key inside the move itself wins
+        if plan.move is not None and not (isinstance(p["move"], dict) and k in p["move"]):
+            setattr(plan.move, k, bool(v))
     plan.slots["action"] = _alts(p.get("action"), allowed, "action")
     plan.slots["bonus"] = _alts(p.get("bonus"), allowed, "bonus")
     extra = p.get("extra") or []

@@ -542,6 +542,29 @@ class Lookalikes(unittest.TestCase):
         self.assertNotIn("Nothing visible", text)
         self.assertIn("Isobel", hit); self.assertNotIn("No 'isobel'", hit)
 
+    def test_name_search_finds_party_members(self):
+        """S057 07:49 / S058 07:52: kinds="Shadowheart,Wyll" → "No 'shadowheart', 'wyll' in view" ×4 while both lay dead
+        nearby (state.nearby lists only others); the agent took screenshots to find the bodies for a Revivify."""
+        from unittest import mock
+        from bg3ai import server
+        st = {"active": U(2101), "party": [
+            {"uuid": U(2101), "name": "Claude", "hp": 41, "max_hp": 157, "pos": [0, 0, 0]},
+            {"uuid": U(2102), "name": "Shadowheart", "hp": 0, "max_hp": 132, "dead": True, "pos": [-5, 0, 0]},
+            {"uuid": U(2103), "name": "Karlach", "hp": 5, "max_hp": 177, "pos": [0, 0, 3]}]}
+        chars = [{"uuid": U(2104), "name": "Patriar", "dist": 5}]
+        real = server.game.try_rpc
+        with mock.patch.object(server, "_read1", return_value={"characters": chars, "items": []}), \
+                mock.patch.object(server.game, "try_rpc", lambda op, *a, **k: st if op == "state.status" else real(op, *a, **k)), \
+                mock.patch.object(server, "_finish", lambda name, args, text, t0: text):
+            text = server.get_nearby(radius=25, kinds="Shadowheart,Wyll")
+            both = server.get_nearby(radius=25, kinds="karlach,patriar")
+            door = server.get_nearby(radius=25, kinds="door")
+        sh = server.H.get(U(2102), "Shadowheart")
+        self.assertIn(f"PARTY {sh} Shadowheart dead (its body) 5m W (your party: target it by this id)", text)
+        self.assertNotIn("No 'shadowheart'", text)
+        self.assertIn("PARTY", both); self.assertIn("HP 5/177", both); self.assertIn("Patriar", both)
+        self.assertNotIn("PARTY", door)
+
     def test_breakable_usable_shows_its_hp(self):
         """S044 23:51: the colony's Membrane (6 HP in the game's hover) read only as 'Viscera <usable>'."""
         from bg3ai import render

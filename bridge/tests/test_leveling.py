@@ -809,9 +809,49 @@ class ServerRetryAndRefresh(unittest.TestCase):
         try:
             out = S.level_up("Shadowheart", plan='{"spells": ["Bless"]}')
             self.assertEqual((out, len(calls)), ("level_up: done — finished complete", 2))
-            self.assertEqual(selects, [("act.select", "u-sh"), ("act.select", "u-claude")])   # control given back
+            # selected up front, once more on the ambiguity, then the control given back
+            self.assertEqual(selects, [("act.select", "u-sh"), ("act.select", "u-sh"), ("act.select", "u-claude")])
         finally:
             S._act, S._who, S._active, S.game = saved
+
+    def test_member_selected_before_the_page_opens(self):
+        # S062 10:17-10:23: Shadowheart and Wyll level_up unselected: open waited 25 s ("closed_page=another
+        # character's page"), spell clicks found no button ×4; worked at once after a hand select. Now the tool
+        # selects first; a FAILED keeps the member selected (the retry's page), the active member needs no select.
+        from bg3ai import server as S
+
+        selects, order, results = [], [], ["level_up: FAILED — finish: spell picks pending (Light)",
+                                           "level_up: done — finished complete"]
+
+        def fake_act(tool, op, args, wait_s=25.0, context="server", wait=True, note=""):
+            order.append("act")
+            S._batch["result"] = {}
+            return results.pop(0)
+
+        class G:
+            def run_job(self, op, args, wait_s=5):
+                selects.append(args["char"])
+                order.append("select")
+
+            def try_rpc(self, *a, **k):
+                return None
+
+        saved = (S._act, S._who, S._active, S.game, S._inp)
+        S._act, S._who, S._active, S.game, S._inp = fake_act, (lambda ref: "u-sh"), (lambda: "u-claude"), G(), (lambda: None)
+        try:
+            out = S.level_up("Shadowheart", plan='{"cantrips": ["Light"]}')
+            self.assertTrue(out.startswith("level_up: FAILED"))
+            self.assertEqual((selects, order), (["u-sh"], ["select", "act"]))   # no give-back after a failure
+            out = S.level_up("Shadowheart", plan='{"cantrips": ["Light"]}')
+            self.assertEqual(out, "level_up: done — finished complete")
+            self.assertEqual(selects, ["u-sh", "u-sh", "u-claude"])
+            selects.clear()
+            results.append("level_up: done — finished complete")
+            S._who = lambda ref: "u-claude"
+            S.level_up("Claude", plan="{}")
+            self.assertEqual(selects, [])   # already the active member
+        finally:
+            S._act, S._who, S._active, S.game, S._inp = saved
 
     def test_finish_refreshes_status_for_a_new_level_up(self):
         from bg3ai import server as S

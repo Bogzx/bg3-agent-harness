@@ -64,6 +64,15 @@ A.PICKUP_REORDER_MS = 1500 -- pickup: an order gone from the task queue (nothing
 -- Say what a player would see at that moment: the target gone, no line of sight, or the projectile's blocked path.
 function A.cast_failed_why(char, target, spell)
     local why = "the game refused the cast (no reason given)"
+    -- S059 08:57-08:59: Dimension Door refused x3 with "the shot's path is blocked". It is a two-step teleport:
+    -- the one who goes (the caster or an ally beside them), then the spot they land on.
+    if A.two_step_spell(spell) and not A.revive_spell(spell) then
+        return why .. ": " .. tostring(spell) .. " is a two-step teleport (who goes, then the landing spot"
+            .. (A.last_place_why and (", which could not be given: " .. A.last_place_why) or "") .. "). The landing"
+            .. " must be a spot the caster can SEE and stand on: a floor above you (behind its own ceiling/ledge) or"
+            .. " behind a wall is out of sight; stand where you can see the landing (e.g. at the foot of an open"
+            .. " drop, or on the far side of a gap), or climb/walk (route)"
+    end
     if not target or G.same(char, target) then return why end
     -- S043/S057/S058: Revivify 0 of 14 live. The game data makes it a two-step cast (Teleportation_Revivify:
     -- OriginTargetConditions = the body, then a spot on the ground to stand them up), which a one-target
@@ -1251,6 +1260,49 @@ function A.two_step_spell(spell)
     return ok and r or false
 end
 
+-- A two-step cast that stands a body up (Revivify, Resurrection): its first pick must be dead/downed.
+function A.revive_spell(spell)
+    local ok, r = pcall(function()
+        local st = spell and Ext.Stats.Get(spell)
+        return st ~= nil and tostring(st.OriginTargetConditions or ""):find("Dead()", 1, true) ~= nil
+    end)
+    return ok and r or false
+end
+
+-- How far a two-step teleport's landing may be (stats AreaRadius; Dimension Door 50, Revivify 9). nil = unknown.
+function A.landing_range(spell)
+    local ok, r = pcall(function() return tonumber(Ext.Stats.Get(spell).AreaRadius) end)
+    return ok and r and r > 0 and r or nil
+end
+
+-- The landing of a two-step teleport (Dimension Door): within its range and on a floor (stats TargetConditions
+-- CanStand; the game's cursor shows no landing in the air). Refuses with what to do.
+A.LANDING_FLOOR_SLACK_M = 2.0
+function A.landing_ok(char, spell, dest)
+    G.point_ok(char, dest)
+    local p, rng = G.pos(char), A.landing_range(spell)
+    if p and rng and U.dist(p, dest) > rng + 0.5 then
+        G.refuse(string.format("the landing is out of range (%.1f m, range %.1f m): move closer first",
+            U.dist(p, dest), rng))
+    end
+    local ok, hs = pcall(Ext.Level.GetHeightsAt, dest[1], dest[3])
+    if not ok or type(hs) ~= "table" then return end -- can't tell
+    for _, h in ipairs(hs) do
+        if type(h) == "number" and math.abs(h - dest[2]) <= A.LANDING_FLOOR_SLACK_M then return end
+    end
+    if #hs == 0 then
+        G.refuse(string.format("no ground at all under the landing (%.1f,%.1f,%.1f): pick a floor you can see",
+            dest[1], dest[2], dest[3]))
+    end
+    local best
+    for _, h in ipairs(hs) do
+        if type(h) == "number" and (not best or math.abs(h - dest[2]) < math.abs(best - dest[2])) then best = h end
+    end
+    G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in the air: no floor within %.0f m of that height"
+        .. "%s; give the floor's own y", dest[1], dest[2], dest[3], A.LANDING_FLOOR_SLACK_M,
+        best and string.format(" (the nearest floor there is at y=%.1f)", best) or ""))
+end
+
 -- The ground spot for a two-step cast: beside the body, A.PLACE_M toward the caster (the body itself is a
 -- character, and the second step's TargetConditions are "not Character()").
 A.PLACE_M = 1.2
@@ -1283,6 +1335,18 @@ function A.set_task_pos2(char, spell, p)
     end)
     if ok then return true end
     return nil, tostring(err)
+end
+
+-- After UseSpell(first pick): a two-step cast's second pick goes into the queued task. Revivify: the spot beside
+-- the body; a teleport (Dimension Door): the landing given.
+function A.give_second_pick(job, char, spell, targets, landing)
+    if targets[2] or not targets[1] or not A.two_step_spell(spell) then return end
+    local p = landing or A.place_spot(char, targets[1])
+    local ok2, why = nil, "the body's position is unknown"
+    if p then ok2, why = A.set_task_pos2(char, spell, p) end
+    A.last_place_why = (not ok2) and why or nil
+    job.place = p and { U.round(p[1], 1), U.round(p[2], 1), U.round(p[3], 1) } or nil
+    job.teleport = landing and true or nil
 end
 
 local function name_of(uuid)
@@ -1324,6 +1388,16 @@ reg("cast", function(args)
         -- e.g. Shout_Dodge: BG3 has no Dodge action (live: no such stats entry).
         G.refuse("unknown action " .. base .. " (not an ability id; get_actions lists them)")
     end
+    -- S059 08:57-08:59, Dimension Door x3 (targets=Claude + a point, or a point alone): a two-step teleport picks
+    -- who goes (an ally within its TargetRadius 2 m, or the caster), then the landing (AreaRadius). The point is the
+    -- landing, never the first pick: it was checked against the 2 m pick range and cast at a position with nobody
+    -- to send (the game refused), or replaced by the Revivify spot beside the ally.
+    local landing
+    if pos and A.two_step_spell(base) and not A.revive_spell(base) then
+        landing, pos = pos, nil
+        if #targets == 0 then targets[1] = char end -- nobody named: the caster goes alone
+        if #targets > 1 then G.refuse("a teleport takes one who goes (the caster or an ally beside them), then the landing") end
+    end
     if #targets == 0 and not pos then
         local st = Ext.Stats.Get(base)
         if tostring(st.SpellType) ~= "Shout" then G.refuse("this action needs a target") end
@@ -1349,7 +1423,15 @@ reg("cast", function(args)
     -- level, which may be spent).
     local spell = resolve_spell(base, upcast)
     local function prepare()
-        local c = G.check_cast(char, base, targets[1], pos, upcast, args.force)
+        local ok0, c = pcall(G.check_cast, char, base, targets[1], pos, upcast, args.force)
+        if not ok0 then
+            if landing and G.is_refusal(c) and c.reason:find("^target is out of range") then
+                G.refuse(c.reason .. " (the ally who goes with the caster must stand beside them; leave targets"
+                    .. " empty to go alone)")
+            end
+            error(c, 0)
+        end
+        if landing then A.landing_ok(char, base, landing) end
         if targets[2] then
             G.target_visible(targets[2])
             G.within(char, targets[2], G.MAX_INTERACT_DIST, "target")
@@ -1533,11 +1615,21 @@ reg("cast", function(args)
                     res.no_damage = true -- missed, saved, or no damage component
                 end
                 if #job.statuses > 0 then res.statuses = job.statuses end
+                if job.teleport and job.place then
+                    -- Dimension Door: where the caster stands now vs the landing asked for.
+                    local p = G.pos(char)
+                    res.landing = job.place
+                    if p then
+                        res.now_at = { U.round(p[1], 1), U.round(p[2], 1), U.round(p[3], 1) }
+                        res.landed_m_from_target = U.round(U.dist(p, job.place), 1)
+                        res.teleported = (job.ordered_pos and U.dist(p, job.ordered_pos) > 1.0) or false
+                    end
+                end
                 -- Target state as the target's health bar shows it (if visible).
                 if targets[1] and not G.same(targets[1], char) and G.visible(targets[1]) then
                     res.target = { uuid = targets[1], dead = G.is_dead(targets[1]) or nil,
                         downed = G.is_downed(targets[1]) or nil }
-                    if job.place then
+                    if job.place and not job.teleport then
                         res.placed_at = job.place
                         res.revived = not res.target.dead or nil
                     end
@@ -1560,6 +1652,7 @@ reg("cast", function(args)
                     j.osi_task = "spell"
                     j.ordered_ms, j.ordered_pos = RPC.now_ms(), G.pos(char)
                     G.osi("UseSpell", char, spell, targets[1], NULL_GUID, without_move)
+                    A.give_second_pick(j, char, spell, targets, landing)
                 end)
             end
             job.osi_task = "spell"
@@ -1577,14 +1670,7 @@ reg("cast", function(args)
                     { char, spell, pos[1], pos[2], pos[3] })
             else
                 G.osi("UseSpell", char, spell, targets[1], targets[2] or NULL_GUID, without_move)
-                if not targets[2] and targets[1] and A.two_step_spell(spell) then
-                    -- Revivify: the body is the first target; the spot beside it is the second.
-                    local p = A.place_spot(char, targets[1])
-                    local ok2, why = nil, "the body's position is unknown"
-                    if p then ok2, why = A.set_task_pos2(char, spell, p) end
-                    A.last_place_why = (not ok2) and why or nil
-                    job.place = p and { U.round(p[1], 1), U.round(p[2], 1), U.round(p[3], 1) } or nil
-                end
+                A.give_second_pick(job, char, spell, targets, landing)
             end
         end,
         on_finish = function(job)
@@ -1888,12 +1974,16 @@ reg("chain", function(args)
     local char = G.actor(args.char)
     local leader = G.actor(args.leader)
     if G.same(char, leader) then G.refuse("cannot chain a character to themselves") end
-    if G.b(G.q("InSamePartyGroup", char, leader)) then G.refuse("already chained together") end
+    -- S062 10:00:20: set_party unchain x3 on members already alone came back FAILED: already in the asked state
+    -- is done (a player's click on a linked chain does nothing either), not a failure the agent has to read.
+    local already = G.b(G.q("InSamePartyGroup", char, leader))
     return start("chain", char, {
         timeout_ms = 3000,
-        start = function() G.osi("AttachToPartyGroup", char, leader) end,
+        start = function() if not already then G.osi("AttachToPartyGroup", char, leader) end end,
         on_tick = function(job)
-            if G.b(G.q("InSamePartyGroup", char, leader)) then RPC.finish_job(job, "done", { chained = true }) end
+            if G.b(G.q("InSamePartyGroup", char, leader)) then
+                RPC.finish_job(job, "done", { chained = true, already = already or nil })
+            end
         end,
     })
 end)
@@ -1904,15 +1994,14 @@ reg("unchain", function(args)
     for _, p in ipairs(G.party()) do
         if p ~= char and G.b(G.q("InSamePartyGroup", char, p)) then alone = false break end
     end
-    if alone then G.refuse("already unchained") end
     return start("unchain", char, {
         timeout_ms = 3000,
-        start = function() G.osi("DetachFromPartyGroup", char) end,
+        start = function() if not alone then G.osi("DetachFromPartyGroup", char) end end,
         on_tick = function(job)
             for _, p in ipairs(G.party()) do
                 if p ~= char and G.b(G.q("InSamePartyGroup", char, p)) then return end
             end
-            RPC.finish_job(job, "done", { unchained = true })
+            RPC.finish_job(job, "done", { unchained = true, already = alone or nil })
         end,
     })
 end)

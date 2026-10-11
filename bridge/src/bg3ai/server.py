@@ -1740,6 +1740,32 @@ def _nearby_miss_text(full: dict, words: list[str], radius: float) -> str:
     return out + " Someone out of sight: get_map / the journal for where they went, or route to their last place."
 
 
+def _nearby_party_lines(words: list[str]) -> list[str]:
+    """Party members a name search names (state.nearby lists only others): S057 07:49 / S058 07:52-07:54
+    get_nearby kinds="Shadowheart,Wyll" → "No 'shadowheart', 'wyll' in view" ×4 while both lay dead nearby; the
+    agent took screenshots to find the bodies for a Revivify. One line each: id, name, dead/HP, distance + way."""
+    words = [w for w in words if w not in ("props", "characters", "items")]
+    if not words:
+        return []
+    st = game.try_rpc("state.status") or {}
+    rows = [c for c in st.get("party") or [] if isinstance(c, dict) and c.get("uuid")]
+    me = next((c for c in rows if c.get("uuid") == st.get("active")), rows[0] if rows else None)
+    out = []
+    for c in rows:
+        name = str(c.get("name") or "").lower()
+        if not any(w in name for w in words):
+            continue
+        bits = [f"PARTY {H.get(c['uuid'], c.get('name'))} {c.get('name') or '?'}"]
+        if c.get("dead"):
+            bits.append("dead (its body)")
+        elif c.get("hp") is not None:
+            bits.append(f"HP {c.get('hp')}/{c.get('max_hp')}")
+        if me and me is not c and me.get("pos") and c.get("pos"):
+            bits.append(f"{render.num(round(macros.dist(me['pos'], c['pos']), 1))}m {delta.direction(me['pos'], c['pos'])}")
+        out.append(" ".join(bits) + " (your party: target it by this id)")
+    return out
+
+
 @mcp.tool()
 @_guard
 def get_nearby(radius: float = 25.0, kinds: str = "") -> str:
@@ -1752,9 +1778,13 @@ def get_nearby(radius: float = 25.0, kinds: str = "") -> str:
         if words:
             args["item_limit"] = 400
     res = _read1("state.nearby", args)
+    party_lines: list[str] = []
     if words and isinstance(res, dict):
         full, res = res, _nearby_match(res, words)
+        party_lines = _nearby_party_lines(words)
         if not any(res.get(k) for k in ("characters", "items", "remembered")):
+            if party_lines:
+                return _finish("get_nearby", args, "\n".join(party_lines), t0)
             # S042 22:51 kinds="Jaheira,characters" → "Nothing visible in range." while 9 corpses and the party stood
             # there: say the name search found nothing, and who IS in view
             _remember_names(full)
@@ -1766,7 +1796,8 @@ def get_nearby(radius: float = 25.0, kinds: str = "") -> str:
     _remember_names(res)
     if radius == 25.0 and not kinds and isinstance(res, dict):
         DELTA.observe(delta.snapshot(H, nearby=res))  # the agent has now seen these; look() won't repeat them
-    return _finish("get_nearby", args, render.render_nearby(res, H, fold=not [w for w in words if w != "props"]), t0)
+    text = render.render_nearby(res, H, fold=not [w for w in words if w != "props"])
+    return _finish("get_nearby", args, "\n".join(party_lines + [text]) if party_lines else text, t0)
 
 
 @mcp.tool()
@@ -2702,6 +2733,15 @@ def jump_to(x: float, y: float, z: float, who: str | None = None, wait: bool = T
     return f"{note}\n{body}" if note else body
 
 
+
+def _already_ok(out: str, refusal: str, done: str) -> str:
+    """A set_party refusal that only says the party is already as asked → a done result (first line only)."""
+    head, _, rest = out.partition("\n")
+    if "FAILED" in head and refusal in head:
+        return f"set_party: done — {done}" + (f"\n{rest}" if rest else "")
+    return out
+
+
 @mcp.tool()
 @_guard
 def set_party(action: str, who: str | None = None, leader: str | None = None) -> str:
@@ -2710,9 +2750,12 @@ def set_party(action: str, who: str | None = None, leader: str | None = None) ->
     if a == "select":
         return _act("set_party", "act.select", {"char": _who(who)})
     if a == "chain":
-        return _act("set_party", "act.chain", {"char": _who(who), "leader": _who(leader) if leader else _active()})
+        out = _act("set_party", "act.chain", {"char": _who(who), "leader": _who(leader) if leader else _active()})
+        return _already_ok(out, "already chained together", f"{who} is already chained to the leader")
     if a == "unchain":
-        return _act("set_party", "act.unchain", {"char": _who(who)})
+        out = _act("set_party", "act.unchain", {"char": _who(who)})
+        # S062 10:00 ×3: unchaining a member who already walks alone is the wanted state, not a failure
+        return _already_ok(out, "already unchained", f"{who} already walks alone (unchained)")
     if a in ("sneak_on", "sneak_off"):
         return _act("set_party", "act.sneak", {"char": _who(who), "on": a == "sneak_on"})
     if a in ("turn_based_on", "turn_based_off"):
@@ -3344,7 +3387,7 @@ def _reaction_index(r: dict | None, name: str) -> int | str:
 def use_ability(ability: str, target: str = "", x: float | None = None, y: float | None = None,
                 z: float | None = None, who: str | None = None, upcast: int = 0, targets: str = "",
                 wait: bool = True, force: bool = False) -> str:
-    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: comma list for multi-target spells. Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): out of combat it is read and its target clicked (default: who). A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
+    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: comma list for multi-target spells. Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). A teleport (Dimension Door): x,y,z = the landing (a spot the caster can see), targets = an ally beside you to bring (omit to go alone). A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): out of combat it is read and its target clicked (default: who). A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
     char = _who(who)
     try:
         aid = _ability_id(char, ability)
@@ -4254,23 +4297,44 @@ def _level_up(uuid: str, plan: str) -> str:
             note = f"(plan: {row['name']} L{row['to']} from memory/party-build.md)"
         elif row:
             note = f"(no stored plan for {row['name']} L{row['to']}: game defaults)"
-    out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
-    if out.startswith("level_up: FAILED") and "portrait apart" in out:
-        # Two members with the same HP, max HP and level (S042 23:11 Shadowheart ×2): the client finds the selected
-        # member's portrait exactly, so select it (as the error asks), retry, then give the control back.
-        prev = None
-        try:
-            prev = _active()
-            game.run_job("act.select", {"char": uuid}, wait_s=5)
-            time.sleep(0.2)  # the client's ClientControl follows the selection a frame or two later
-        except GameError:
-            pass
-        out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
-        if prev and prev != uuid:
+    # Select the member first, as a player clicks their portrait before Level Up. Unselected, the client finds the
+    # member's portrait only by its HP/level fingerprint: S042 "cannot tell this character's portrait apart" ×2, and
+    # S062 10:17-10:23 Shadowheart and Wyll (after Claude's finish): open waited 25 s ("closed_page=another
+    # character's page"), then spell clicks found no button ×4, ~6 min until the agent selected each one by hand.
+    prev = _select_for_level_up(uuid)
+    out = _level_up_steps(uuid, args, note)
+    if out.startswith("level_up: done"):
+        _LEVEL_NUDGE.done(uuid)
+        if prev and prev != uuid:  # give the control back; after a FAILED the member stays selected for the retry
             try:
                 game.run_job("act.select", {"char": prev}, wait_s=5)
             except GameError:
                 pass
+    return out
+
+
+def _select_for_level_up(uuid: str) -> str | None:
+    """Make `uuid` the controlled character (no-op when it already is). -> the previously active member, or None."""
+    try:  # best effort: an unselected member still levels when its portrait fingerprint is unique
+        prev = _active()
+        if prev != uuid:
+            game.run_job("act.select", {"char": uuid}, wait_s=5)
+            time.sleep(0.2)  # the client's ClientControl follows the selection a frame or two later
+        return prev
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _level_up_steps(uuid: str, args: dict, note: str) -> str:
+    out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
+    if out.startswith("level_up: FAILED") and "portrait apart" in out:
+        # Still ambiguous (the selection didn't land in time): select again and retry once.
+        try:
+            game.run_job("act.select", {"char": uuid}, wait_s=5)
+            time.sleep(0.3)
+        except GameError:
+            pass
+        out = _act("level_up", "ui.level_up", args, context="client", wait_s=60, note=note)
     if out.startswith("level_up: FAILED") and "choices: #1" in out:
         # The page had just opened and its list labels were not rendered yet (S009: "subclass: no 'Evocation';
         # choices: #1, #2, ..." twice, the same plan right after went through): once more with the page open.
@@ -4284,8 +4348,6 @@ def _level_up(uuid: str, plan: str) -> str:
         # keep_page: the picks live on this page; S032 the rerun closed the (frozen, Started) page and lost them.
         out = _act("level_up", "ui.level_up", dict(args, keep_page=bool(clicks["picked"])), context="client",
                    wait_s=60, note=note)
-    if out.startswith("level_up: done"):
-        _LEVEL_NUDGE.done(uuid)
     return out
 
 
@@ -7235,7 +7297,9 @@ def _floor_ways(within: float = 1e9) -> tuple[dict | None, list[dict]]:
         args["known"] = True
     res = game.try_rpc("nav.frontier", args)
     leads = res.get("leads") if isinstance(res, dict) else None
+    # a ladder pulled up out of reach is no way up (S059 08:57 e683, Navigation.lua N.ladderRaised)
     ups = sorted((l for l in leads or [] if l.get("uuid") and l.get("kind") in ("ladder", "stairs", "exit")
+                  and not (l.get("raised_m") and l.get("leads") == "up")
                   and (l.get("dist") or 0) <= within), key=lambda l: l.get("dist") or 1e9)[:2]
     return res, ups
 

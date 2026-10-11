@@ -972,6 +972,97 @@ test("cast: two-step spell without a queued task names the reason", function()
     world[P1].comps.ServerCharacter = nil
 end)
 
+local DD = { SpellType = "Teleportation", TargetRadius = "2", AreaRadius = "50",
+    TargetConditions = "CanStand('') and not Character()",
+    OriginTargetConditions = "Ally() and not Grounded() and (Tagged('WEIGHT_MEDIUM') or Tagged('WEIGHT_SMALL'))",
+    TeleportSelf = "No", UseCosts = "ActionPoint:1", Level = 0 }
+
+test("cast: Dimension Door alone: the caster goes, the point is the landing (S059 08:59:47 'range 2.0 m')", function()
+    spell("Teleportation_DimensionDoor", DD)
+    eq(A.revive_spell("Teleportation_DimensionDoor"), false, "not a revive")
+    local tasks = {}
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = tasks } }
+    local orig = Osi.UseSpell
+    Osi.UseSpell = function(c, sp, ...)
+        tasks[#tasks + 1] = { Spell = { OriginatorPrototype = sp } }
+        return orig(c, sp, ...)
+    end
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { 0.0, 13.0 } end
+    local j = job(op("cast", { char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 13.1, 5 } }))
+    Osi.UseSpell, Ext.Level.GetHeightsAt = orig, heights
+    eq(j.status, "running", "status " .. tostring(j.error))
+    eq(#called("UseSpellAtPosition"), 0, "not cast at a bare position")
+    local c = called("UseSpell")
+    eq(c[1][2], P1, "caster"); eq(c[1][4], P1, "first pick: the caster")
+    local p = tasks[1] and tasks[1].TargetPos2
+    assert(p, "TargetPos2 = the landing")
+    eq(p[1], 0); eq(p[2], 13.1); eq(p[3], 5)
+    A.dispatch("CastedSpell", { P1, "Teleportation_DimensionDoor" })
+    world[P1].pos = { 0, 13.0, 5 }
+    tick(10)
+    eq(j.status, "done", "status"); eq(j.result.teleported, true, "teleported")
+    eq(j.result.revived, nil, "no revive flag"); near(j.result.landed_m_from_target, 0.1, "landed")
+    world[P1].comps.ServerCharacter = nil
+end)
+
+test("cast: Dimension Door with an ally: the ally is the first pick, the landing the second (S059 08:57:42)", function()
+    spell("Teleportation_DimensionDoor", DD)
+    local tasks = {}
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = tasks } }
+    world[GOB].pos = { 1.5, 0, 0 }
+    local orig = Osi.UseSpell
+    Osi.UseSpell = function(c, sp, ...)
+        tasks[#tasks + 1] = { Spell = { OriginatorPrototype = sp } }
+        return orig(c, sp, ...)
+    end
+    local j = job(op("cast", { char = P1, spell = "Teleportation_DimensionDoor", targets = { GOB }, pos = { 8, 0, 8 } }))
+    Osi.UseSpell = orig
+    eq(j.status, "running", "status " .. tostring(j.error))
+    eq(called("UseSpell")[1][4], GOB, "first pick: the ally")
+    local p = tasks[1].TargetPos2
+    eq(p[1], 8, "landing x, not the Revivify spot beside the ally"); eq(p[3], 8, "landing z")
+    world[P1].comps.ServerCharacter = nil
+end)
+
+test("cast: Dimension Door landing checks: range from AreaRadius, a landing in the air names the floor", function()
+    spell("Teleportation_DimensionDoor", DD)
+    local function fails(args, pat)
+        local ok, r = pcall(op, "cast", args)
+        local msg = (not ok) and (G.is_refusal(r) and r.reason or tostring(r)) or tostring(job(r).error)
+        assert(msg:find(pat, 1, true), msg)
+    end
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 0, 55 } },
+        "the landing is out of range (55.0 m, range 50.0 m)")
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { 0.0, 13.0 } end
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "nearest floor there is at y=")
+    Ext.Level.GetHeightsAt = heights
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", targets = { GOB, NPC }, pos = { 0, 0, 5 } }, "one who goes")
+end)
+
+test("cast: a refused Dimension Door says the landing must be in sight, not 'the shot's path is blocked'", function()
+    stats.Teleportation_DimensionDoor = DD
+    A.last_place_why = nil
+    local w = A.cast_failed_why(P1, P1, "Teleportation_DimensionDoor")
+    assert(w:find("two-step teleport", 1, true) and w:find("SEE", 1, true), w)
+    assert(not w:find("path is blocked", 1, true), w)
+    assert(not A.cast_failed_why(P1, GOB, "Teleportation_DimensionDoor"):find("Revivify", 1, true))
+end)
+
+test("set_party: unchain/chain already in that state is done, not FAILED (S062 10:00:20 x3)", function()
+    local j = job(op("unchain", { char = P1 }))
+    tick(1)
+    eq(j.status, "done", "unchain status " .. tostring(j.error)); eq(j.result.already, true, "already")
+    eq(#called("DetachFromPartyGroup"), 0, "no order sent")
+    osiv[key("InSamePartyGroup", P1, GOB)] = 1
+    party_rows = { P1, GOB }
+    local c = job(op("chain", { char = P1, leader = GOB }))
+    tick(1)
+    eq(c.status, "done", "chain status " .. tostring(c.error)); eq(c.result.already, true, "already")
+    eq(#called("AttachToPartyGroup"), 0, "no order sent")
+end)
+
 test("jump: a landing far below the aim is a FALL; a death says DIED, not done (S038 20:44:25)", function()
     stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
     world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
@@ -1783,6 +1874,23 @@ test("interact ladder: chained followers settle, are held for the climb and re-c
     eq(j.status, "done", "status " .. tostring(j.error))
     local a = called("AttachToPartyGroup")
     eq(#a, 1, "re-chained"); eq(a[1][2], P2, "follower"); eq(a[1][3], P1, "to the climber")
+end)
+
+test("interact on a pulled-up ladder from below: says it hangs out of reach (S059 08:56 e683)", function()
+    world[LADDER].pos = { 10, 5.7, 0 }
+    nav.fn = function() return { reachable = false } end
+    local savedV, savedR = BG3AI.Visibility, BG3AI.Nav.ladderRaised
+    BG3AI.Visibility = { itemKind = function(u) return u == LADDER and "ladder" or "item" end }
+    BG3AI.Nav.ladderRaised = function(p) return p[2] > 2.5 and 5.7 or nil end
+    local ok, err = pcall(G.approach_point, P1, LADDER, 1.5)
+    local ok2, err2 = pcall(G.approach_point, P1, DOOR, 1.5)
+    world[P1].pos = { 10, 12, 0 }
+    local ok3 = pcall(G.raised_ladder_refuse, LADDER, world[P1].pos)
+    BG3AI.Visibility, BG3AI.Nav.ladderRaised = savedV, savedR
+    eq(ok, false, "refused")
+    eq(tostring(err):find("pulled up: its foot hangs 5.7m", 1, true) ~= nil, true, "names the raised foot: " .. tostring(err))
+    eq(ok2, false, "door refused too"); eq(tostring(err2):find("pulled up", 1, true), nil, "the door: no ladder text")
+    eq(ok3, true, "from above: no refusal")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

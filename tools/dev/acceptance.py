@@ -704,6 +704,24 @@ def sec_se() -> None:
     game-process check of load_game, Noesis counters, and a read-only CursorText probe in the Jump targeting."""
     if not load_verified(BASE):
         return
+    # patch 0009 (S060 09:11 crash): the first Ext.StaticData read finds the resource manager; a false positive at
+    # region offset 0xeb5xx killed the game twice (`index < size_`). PASS = the read answers, the game lives, and the
+    # manager the log names is the real one (0x15axxx / "recorded offset") with no crash after it.
+    lg = bg3le_log()
+    try:
+        out = lua_server('local ok, all = pcall(Ext.StaticData.GetAll, "ActionResource") '
+                         'return tostring(ok) .. " " .. tostring(ok and all and #all or all)')
+    except Exception as e:  # noqa: BLE001
+        out = f"eval error {e}"
+    txt = lg.read_text(errors="replace") if lg else ""
+    found = re.findall(r"static data: resource manager (?:at (0x[0-9a-f]+)(.*)|not found.*)", txt)
+    where = found[-1] if found else None
+    real = bool(where) and (where[0][-5:-3] == "5a" or "recorded offset" in where[1])
+    crash = grep_crash(lg)
+    item("static data manager is the real one (patch 0009)",
+         "PASS" if alive() and out.startswith("true") and real and not crash else "FAIL",
+         f"GetAll(ActionResource) → {out[:80]}; log: {('at ' + where[0] + where[1][:40]) if where else 'no find line'}"
+         f" ({lg.name if lg else 'no log'}){'; ' + crash if crash else ''}")
     # click(button="none"): S039 21:47:42 it committed a left click (a 5 m jump under Z). 06:27 FAIL was the load's
     # settle (hover 2.3 s after load_game, `level_changed` in the same result; 0.0 m 1 s later): wait until the party
     # stands still, then judge the controlled character only (the one a click would move); followers are evidence.
@@ -929,7 +947,7 @@ FUNCS = {"reads": sec_reads, "rest": sec_rest, "trade": sec_trade, "gear": sec_g
 
 
 def sec_setup() -> None:
-    """setup's overnight fixes (impl-setup parts 34-35), read-only on the loaded base save: ramwatch's anon+swap kill
+    """setup's fixes (impl-setup parts 34-35, 41) on the loaded base save: ramwatch's anon+swap kill
     signal, the story scorer naming a new journal step by its text, enemy statuses as lesson terms."""
     sys.path.insert(0, str(REPO / "runner"))
     import ramwatch
@@ -994,6 +1012,26 @@ def sec_setup() -> None:
         out = lessons.Store(tmp).fight_lines(enemies, [])
         item("enemy statuses as lesson terms", "PASS" if "acceptance" in out else "FAIL",
              f"{c.get('name')} statuses {enemies[0]['statuses'][:4]}; trigger '{trig}' → {first_line(out) or 'no LESSONS'}")
+
+    # 5. set_party: unchaining a member who already walks alone is done, not FAILED (S062 ×3); chained back after
+    rows = [r for r in status().get("party") or [] if isinstance(r, dict) and not r.get("summon") and not r.get("avatar")
+            and not r.get("dead")]
+    if need(bool(rows), "set_party unchain twice = done", "no living companion in the party"):
+        who = rows[0].get("name")
+        first, again = call("set_party", action="unchain", who=who), call("set_party", action="unchain", who=who)
+        back = call("set_party", action="chain", who=who)
+        item("set_party unchain twice = done", "PASS" if again.startswith("set_party: done") and "already" in again
+             else "FAIL", f"{who}: 1st {first_line(first)[:80]} | 2nd {first_line(again)[:80]} | chain {first_line(back)[:60]}")
+    # 6. level_up selects the member first (S062): the helper makes a companion the controlled one; given back after
+    if rows:
+        who = rows[0].get("uuid")
+        prev = S._active()
+        got = S._select_for_level_up(who)
+        now = S._active()
+        S.game.run_job("act.select", {"char": prev}, wait_s=5)
+        time.sleep(0.3)
+        item("level_up selects the member first", "PASS" if got == prev and now == who and S._active() == prev
+             else "FAIL", f"active {prev} → helper returned {got}, active then {now} (want {who}), back {S._active()}")
 
 
 FUNCS["setup"] = sec_setup
@@ -1062,6 +1100,17 @@ def sec_act() -> None:
                    'local ok,why=A.set_task_pos2(h,"Teleportation_Revivify",A.place_spot(h,o)) '
                    'Osi.PurgeOsirisQueue(h) return ok and "set" or ("not set: "..tostring(why))')
     item("revivify two-step spot set", "PASS" if v == "set" else "FAIL", v[:200])
+    # Dimension Door is a two-step teleport (S059 x3 refused): who goes (the caster / an ally within 2 m), then the
+    # landing (AreaRadius). Live stats agree, and a landing in the air above the host is refused with a reason.
+    v = lua_server(g + 'local h=Osi.GetHostCharacter() local sp="Teleportation_DimensionDoor" '
+                   'if not A.landing_ok then return "no A.landing_ok" end '
+                   'if not A.two_step_spell(sp) then return "stats: not two-step" end '
+                   'if A.revive_spell(sp) then return "stats: read as a revive" end '
+                   'local r=A.landing_range(sp) local p=G.pos(h) '
+                   'local ok,e=pcall(A.landing_ok,h,sp,{p[1],p[2]+30,p[3]}) '
+                   'return "range="..tostring(r).." air="..(ok and "accepted" or (G.is_refusal(e) and e.reason or tostring(e)))')
+    item("dimension door two-step landing", "PASS" if v.startswith("range=") and "air=accepted" not in v
+         and "range=nil" not in v else "FAIL", v[:200])
     # swap_party where the camp button is greyed by the area: the reason at once (S039 21:48:34)
     b = S.game.try_rpc("ui.travel_block", context="client") or {}
     if b.get("error") != "Location":
@@ -1181,6 +1230,33 @@ def sec_vis() -> None:
         got = S.render.objective_label(S.render.find_objective(S._objectives["last"], f"o{oid}"))
         item("vis: objective ids survive a re-sort", "PASS" if got == label else "FAIL",
              f"o{oid} = {label!r} before, {got!r} after the reverse; ids {[m.get('oid') for m in S._objectives['last']]}")
+    # 11. pulled-up ladder (S059 08:56 e683, foot 5.7 m above the floor): N.ladderRaised reads the floor under a foot
+    #     6 m above the party's feet as raised ~6 m and the party's own spot as not raised; no ladder in view whose
+    #     foot a walk reaches is flagged (false positive)
+    v = lua_server(g + 'local p=G.pos(h) return tostring(N.ladderRaised({p[1],p[2]+6,p[3]}))'
+                   '.."|"..tostring(N.ladderRaised(p))')
+    up, _, here = v.partition("|")
+    try:
+        ok = abs(float(up) - 6) <= 0.7 and here == "nil"
+    except ValueError:
+        ok = False
+    fr = S.game.try_rpc("nav.frontier", {"ways": False, "hazards": False, "radius": 40}) or {}
+    bad = []
+    for l in fr.get("leads") or []:
+        if l.get("kind") == "ladder" and l.get("raised_m"):
+            r = S.game.try_rpc("nav.path", {"pos": l.get("pos")}) or {}  # the foot itself
+            if r.get("reachable") is True:
+                bad.append(f"{l.get('name')} raised {l['raised_m']} but walkable")
+    lads = [l for l in fr.get("leads") or [] if l.get("kind") == "ladder"]
+    item("vis: pulled-up ladder read (foot above the floor)", "PASS" if ok and not bad else "FAIL",
+         f"6 m up -> {up}, here -> {here}; ladders in view {len(lads)}, false raised: {bad}")
+    # 12. a name search finds party members (S057 07:49 / S058 07:52 kinds="Shadowheart,Wyll" → "No 'shadowheart'"
+    #     while both lay dead nearby): the last party member's name → a PARTY line with its id
+    rows = status().get("party") or []
+    nm = (rows[-1].get("name") or "") if rows else ""
+    if need(bool(nm), "vis: name search finds party members", "no party in state.status"):
+        out = call("get_nearby", radius=25, kinds=nm)
+        item("vis: name search finds party members", "PASS" if f"PARTY " in out and nm in out else "FAIL", out[:200])
     load_verified(BASE)
 
 

@@ -1355,7 +1355,7 @@ end)
 
 test("kill switch: one stop during a ways warm is a strike, not a kill (04:39 relaunch put the Lower City off)", function()
     local realL, realP, realS = Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile
-    local file = { slow = {}, inflight = { level = "CTY_Main_A", op = "ways warm" } }
+    local file = { slow = {}, inflight = { level = "CTY_Main_A", op = "ways warm", stuck = true } }
     Ext.IO.LoadFile = function(p) if p == N.GUARD_FILE then return "x" end end
     Ext.Json.Parse = function() return file end
     Ext.IO.SaveFile = function() end
@@ -1363,10 +1363,41 @@ test("kill switch: one stop during a ways warm is a strike, not a kill (04:39 re
         N.guardReset()
         eq(N.levelSlow("CTY_Main_A"), nil, "first stop: not killed")
         eq(N.guardState().strikes.CTY_Main_A, 1, "one strike")
-        file = { slow = {}, strikes = { CTY_Main_A = 1 }, inflight = { level = "CTY_Main_A", op = "ways warm" } }
+        file = { slow = {}, strikes = { CTY_Main_A = 1 }, inflight = { level = "CTY_Main_A", op = "ways warm", stuck = true } }
         N.guardReset()
         local sl = N.levelSlow("CTY_Main_A")
-        assert(sl and sl.why:find("ways warm"), "second stop on the same level: killed")
+        assert(sl and sl.why:find("stuck ways warm"), "second stop on the same level: killed")
+        -- an old-rule kill is dropped at load
+        file = { slow = { BGO_Main_A = { why = "the game died during ways warm", ms = -1 } }, strikes = { BGO_Main_A = 2 } }
+        N.guardReset()
+        eq(N.levelSlow("BGO_Main_A"), nil, "old-rule kill dropped"); eq(N.guardState().strikes.BGO_Main_A, nil, "strikes too")
+    end)
+    Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile = realL, realP, realS
+    N.guardReset()
+    if not ok then error(err, 0) end
+end)
+
+test("kill switch: a stop during a FRESH warm-up is no strike (09:08 relaunch + 09:11 eval crash put BGO_Main_A off)", function()
+    local realL, realP, realS = Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile
+    local file = { slow = {}, strikes = { BGO_Main_A = 1 }, inflight = { level = "BGO_Main_A", op = "ways warm" } }
+    Ext.IO.LoadFile = function(p) if p == N.GUARD_FILE then return "x" end end
+    Ext.Json.Parse = function() return file end
+    Ext.IO.SaveFile = function() end
+    local ok, err = pcall(function()
+        N.guardReset()
+        eq(N.levelSlow("BGO_Main_A"), nil, "not killed")
+        eq(N.guardState().strikes.BGO_Main_A, 1, "no new strike")
+        eq(N.guardState().inflight, nil, "marker cleared")
+        -- a stuck one marks the file; N.WARM_CLEAN_RESET answered warm-ups clear an old strike
+        N.inflight("ways warm", { 1, 2, 3 })
+        N.inflightStuck()
+        eq(N.guardState().inflight.stuck, true, "stuck marked")
+        N.inflight(nil)
+        N.warmClean = {}
+        for _ = 1, N.WARM_CLEAN_RESET - 1 do N.warmAnswered("BGO_Main_A") end
+        eq(N.guardState().strikes.BGO_Main_A, 1, "not yet")
+        N.warmAnswered("BGO_Main_A")
+        eq(N.guardState().strikes.BGO_Main_A, nil, "cleared after healthy warm-ups")
     end)
     Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile = realL, realP, realS
     N.guardReset()

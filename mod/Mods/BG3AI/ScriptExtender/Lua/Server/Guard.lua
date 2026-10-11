@@ -458,6 +458,22 @@ function G.wedged_hint(char)
         w.in_reach == false and " if it is in reach" or "")
 end
 
+-- A ladder pulled up out of reach, used from below (Navigation.lua N.ladderRaised, S059 08:56): say so instead of
+-- "closest walkable spot … then a ladder/jump_to", which sent the agent under it and into Dimension Door tries.
+function G.raised_ladder_refuse(target, from)
+    local N, V = BG3AI.Nav, BG3AI.Visibility
+    if type(N) ~= "table" or type(N.ladderRaised) ~= "function" or type(V) ~= "table" or not V.itemKind then return end
+    local okk, kind = pcall(V.itemKind, target, G.entity(target))
+    if not okk or kind ~= "ladder" then return end
+    local p = G.pos(target)
+    if not p or not from or from[2] > p[2] + 1.0 then return end -- on top of it: not this case
+    local okr, gap = pcall(N.ladderRaised, p)
+    if not okr or type(gap) ~= "number" then return end
+    G.refuse(string.format("this ladder is pulled up: its foot hangs %.1fm above the floor, out of reach from below"
+        .. " (a player can't climb it from here; it is lowered from above, often by a lever up there): find another"
+        .. " way up (route connectors=true, get_frontier)", gap))
+end
+
 function G.closest_hint(char, goal)
     local N = BG3AI.Nav
     if type(N) ~= "table" or type(N.closestReach) ~= "function" or not goal then return "" end
@@ -592,6 +608,7 @@ function G.approach_point(char, target, reach)
         end
     end
     if jump_only then G.refuse("needs a jump: use jump_to") end
+    G.raised_ladder_refuse(target, a)
     if not known and d <= G.UNVERIFIED_APPROACH_M and b(G.q("HasLineOfSight", char, target)) then
         -- No pathfinding answer at all (Nav missing, or nothing floor-like
         -- around a small target): a short walk toward something in plain

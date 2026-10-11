@@ -585,6 +585,73 @@ class SplashMenu(unittest.TestCase):
         self.assertNotIn("waiting for game state Running", (P.RUNTIME / "runner.log").read_text())
 
 
+class RestartDrift(unittest.TestCase):
+    """S059 08:45 / S063 10:51: a runner restart (test cycle) kept the running game, but acceptance had loaded its own
+    saves in between; claude started on an Act-2 fixture. Now a restart compares the game with the last session's
+    end_sig and loads the newest save when it moved; an unchanged game is kept (no reload)."""
+
+    END = {"level": "BGO_Main_A", "region": "R", "party_levels": ["9"], "pos": [15.3, 46.4, 224.3],
+           "journal": "921b6e07b9fa", "journal_steps": 413}
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-drift-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        names = SplashMenu.NAMES + ("read_progress",)
+        self.saved = {n: getattr(P, n) for n in names}
+        self.addCleanup(lambda: [setattr(P, n, v) for n, v in self.saved.items()])
+        P.RUNTIME = self.tmp / "runtime"
+        P.MENU_POLL, P.SPLASH_LOADMENU_S, P.LOAD_START_TIMEOUT = 0.01, 0.2, 1
+
+    def run_restart(self, now_sig: dict | None, take_over: bool = True, owned: bool = True):
+        g = FakeMenuGame(splash=False)
+        g.running = True
+        orig_rpc = g.rpc
+
+        def rpc(op, args=None, context="server", timeout=0):
+            if op == "ui.menu":
+                g.running = False   # an in-game load: Running → loading → Running
+            return orig_rpc(op, args, context, timeout)
+        P.port_open = lambda *a, **k: True
+        P.game_state, P.rpc, P.press_menu_key = g.game_state, rpc, g.press
+        P.available_ops = lambda ctx: {"ui.state", "ui.menu"}
+        P.server_ready = lambda: g.running
+        P.host_character_name = lambda: "Claude"
+        P.read_progress = lambda: now_sig
+        P.list_saves = lambda: [P.Save("Claude-1__S062-end", "Claude", "S062-end", time.time() - 60)]
+        r = P.Runner(P.Options("drift-test", None, 20, "opus", save_owner="Claude", take_over=take_over))
+        r.mem = self.tmp / "memory"
+        r.owns_game = lambda: owned
+        r.state["loaded_save"] = "Claude-1__S062-end" if owned else None
+        r.state["history"] = [{"kind": "play", "session": "S062", "ended": time.time() - 600, "end_sig": self.END}]
+        label = r.ensure_game(first=True)
+        logf = P.RUNTIME / "runner.log"
+        return g, label, logf.read_text() if logf.exists() else ""
+
+    def test_fixture_loaded_in_between_reloads_the_newest_save(self):
+        act2 = dict(self.END, level="SCL_Main_A", journal="79e1e111a061", journal_steps=219, pos=[635.3, 18.8, -1499.8])
+        g, label, log = self.run_restart(act2)
+        self.assertEqual((label, len(g.loads)), ("S062-end", 1))
+        self.assertIn("the running game moved since the last session (level SCL_Main_A", log)
+
+    def test_take_over_of_a_foreign_game_also_reloads(self):
+        g, label, _log = self.run_restart(dict(self.END, pos=[115.3, 46.4, 224.3]), owned=False)
+        self.assertEqual((label, len(g.loads)), ("S062-end", 1))
+
+    def test_same_place_is_kept(self):
+        g, label, log = self.run_restart(dict(self.END, pos=[16.0, 46.4, 226.0], party_levels=["1", "9"]))
+        self.assertEqual((label, len(g.loads)), (None, 0))
+        self.assertNotIn("moved since", log)
+
+    def test_unknown_state_is_kept(self):
+        g, label, _log = self.run_restart(None)
+        self.assertEqual((label, len(g.loads)), (None, 0))
+
+    def test_state_drift(self):
+        self.assertIsNone(P.state_drift(None, self.END))
+        self.assertIn("journal_steps 414", P.state_drift(self.END, dict(self.END, journal_steps=414)))
+        self.assertIn("40 m from", P.state_drift(self.END, dict(self.END, pos=[55.3, 46.4, 224.3])))
+
+
 class Watch(unittest.TestCase):
     """LaunchWatch: each crash sign, read from fakes (no real processes or ports)."""
 

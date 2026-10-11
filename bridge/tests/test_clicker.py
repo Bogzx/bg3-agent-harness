@@ -314,6 +314,30 @@ class ClickEntity(unittest.TestCase):
         r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.1)
         self.assertEqual(r.detail.get("no_id_objects"), [{"m": 2.4, "t": "table"}])
 
+    def test_no_id_diagnostics_survive_a_last_empty_aim(self):
+        # S063 10:57:47: 51 aims at a door, hovered_instead=[(an object with no id)] but no no_id_objects: the
+        # last aim hovered nothing. The no-id details of any earlier aim are kept.
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2), hover_aims=set())
+        real = g.rpc
+        n = {"k": 0}
+
+        def rpc(op, args=None, context="server"):
+            if op != "ui.hover_check":
+                return real(op, args, context)
+            n["k"] += 1
+            if n["k"] == 3:
+                return {"hovered": False, "hover_nouuid": True, "nouuid": [{"m": 1.1, "t": "userdata"}]}
+            if n["k"] == 4:
+                return {"hovered": False, "hover_nouuid": True,
+                        "nouuid_why": "the target has no client entity to compare with"}
+            return {"hovered": False}
+        g.rpc = rpc
+        r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.1)
+        self.assertEqual(r.detail.get("hovered_instead"), ["(an object with no id)"])
+        self.assertEqual(r.detail.get("no_id_objects"), [{"m": 1.1, "t": "userdata"}])
+        self.assertEqual(r.detail.get("no_id_why"), "the target has no client entity to compare with")
+
     def test_no_id_match_is_named(self):
         inp = FakeInput()
         g = FakeGame(inp, ndc=(0.0, 0.2), screen_after="roll")

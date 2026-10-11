@@ -976,6 +976,15 @@ class CombatTurn(Base):
                             server._BATCHABLE)
         self.assertEqual([a.then_move for a in p.slots["action"]], [False, True, True, False])
 
+    def test_plan_level_avoid_folds_into_move(self):
+        # S061: {"move": ..., "avoid": false} → "unknown plan key(s) avoid" (our refusal says "move avoid:false")
+        p = turn.parse_plan(json.dumps({"move": "e1", "avoid": False, "action": ["Dash"]}), server._BATCHABLE)
+        self.assertFalse(p.move.avoid)
+        p = turn.parse_plan(json.dumps({"move": {"target": "e1", "avoid": True}, "avoid": False}), server._BATCHABLE)
+        self.assertTrue(p.move.avoid)  # the move's own key wins
+        p = turn.parse_plan(json.dumps({"avoid": False, "action": ["Dash"]}), server._BATCHABLE)
+        self.assertIsNone(p.move)
+
     def test_point_target_becomes_xyz(self):
         # S034 Balthazar: Fireball {"target": "-828,8.5,-783"} → "unknown target" ×N, the agent's lesson said
         # combat_turn can't aim point spells

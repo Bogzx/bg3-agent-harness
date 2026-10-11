@@ -94,6 +94,23 @@ class RouteTool(Base):
         self.assertIn("NO WALKABLE PATH", out)
         self.assertIn("WAYS walkable: SW 20m+, N 8m (3.1m up) | blocked: E", out)
 
+    def test_pulled_up_ladder_is_no_way_up(self):
+        # S059 08:56 Wyrm's Rock: e683's foot hung 5.7 m above the floor; route/frontier said "climbs 6.5m up"
+        import copy
+        res = copy.deepcopy(UP_THERE)
+        res["connectors"][0]["raised_m"] = 5.7
+        res["connectors"][1].pop("locked")
+        out = route.render_route(res, server.H, "it")
+        lad = server.H.get(LADDER, "Arterial Mesh")
+        self.assertIn(f"{lad} Arterial Mesh <ladder> 2.5m N climbs 9.4m up PULLED UP: its foot hangs 5.7m above the "
+                      "floor, can't be climbed from below (lowered from above) walk 2.7m", out)
+        self.assertNotIn(f"NEXT: interact {lad}", out)
+        self.assertIn("NEXT: open", out)  # the door that helps
+        fr = {"leads": [{"uuid": LADDER, "name": "Ladder", "kind": "ladder", "dist": 9.3, "dir": "S", "dy": 5.8,
+                         "height_m": 6.5, "leads": "up", "to": [-23, 73.2, 190.1], "raised_m": 5.7}]}
+        self.assertIn("climbs 6.5m up to (-23,73.2,190.1) PULLED UP: its foot hangs 5.7m",
+                      render.render_frontier(fr, server.H))
+
     def test_goal_above_names_the_ladder_up(self):
         out = server.route(objective="o1")
         args = self.g.ops("nav.route")[0][1]

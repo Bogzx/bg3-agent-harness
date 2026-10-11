@@ -60,7 +60,10 @@ def _connector(c: dict, H: Handles, ends: list | None = None) -> str:
     if c.get("kind") == "ladder":
         if c.get("leads") and c.get("height_m"):
             bits.append(f"climbs {_m(c['height_m'])} {c['leads']}")
-        bits.append("[interact to climb]")
+        if c.get("raised_m"):
+            bits.append(render.raised_ladder(c))
+        if not (c.get("raised_m") and c.get("leads") == "up"):
+            bits.append("[interact to climb]")
     if c.get("locked"):
         bits.append("LOCKED")
     if c.get("unreachable"):
@@ -121,6 +124,7 @@ def _next(res: dict, H: Handles, ends: list | None = None) -> str:
                 + "): don't walk it again. Come from another side: explore along the roads (get_map), "
                   "wiki_search how to reach it, or another objective first")
     cons = [c for c in res.get("connectors") or [] if not c.get("unreachable") and not c.get("locked")
+            and not (c.get("raised_m") and c.get("leads") == "up")  # pulled up out of reach (S059 e683)
             and not longnav.connector_dead(c, ends or [])]
     up = res.get("dy") or 0
     if abs(up) >= 2.5:

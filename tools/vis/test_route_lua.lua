@@ -746,5 +746,34 @@ test("nav.wedged rpc: not wedged -> {wedged=false}", function()
     eq(RPC.ops["nav.wedged"]({ char = P1 }).wedged, false, "open ground")
 end)
 
+-- ---- raised ladders (S059 08:56 Wyrm's Rock: e683's foot 5.7 m above the floor) ------------------------------
+test("ladderRaised: a foot on the floor is nil; a foot 5.7 m above the floor is 5.7; no heights is nil", function()
+    eq(N.ladderRaised({ 0, 0, 0 }), nil, "on the floor")
+    eq(N.ladderRaised({ 0, 0.4, 0 }), nil, "a step above the floor")
+    near(N.ladderRaised({ 0, 5.7, 0 }), 5.7, "hangs")
+    -- the wall side reads the floor above (the deck the ladder leads to): ignored
+    heights = function(x) if x > 0.5 then return { 12.2 } end return { 0.0 } end
+    near(N.ladderRaised({ 0, 5.7, 0 }), 5.7, "wall side ignored")
+    -- one probe point on a floor at the foot: not raised (a foot against a ledge)
+    heights = function(x) if x < -0.5 then return { 5.5 } end return { 0.0 } end
+    eq(N.ladderRaised({ 0, 5.7, 0 }), nil, "a floor at the foot")
+    heights = function() return {} end
+    eq(N.ladderRaised({ 0, 5.7, 0 }), nil, "no AI grid: can't tell")
+end)
+
+test("nav.frontier + routeAhead: a pulled-up ladder carries raised_m and ranks after a walkable way up", function()
+    N.visited = function() return false end
+    N.waypointsHere = function() return {} end
+    Ext.Entity = { GetAllEntitiesWithComponent = function() return {} end }
+    item("LR", { -3, 5.7, 2 }, "ladder", { height = 6.5 })
+    item("L1", { 6, 0, 2 }, "ladder", { height = 12 })
+    local r = RPC.ops["nav.frontier"]({ hazards = false, ways = false })
+    local byId = {}
+    for _, l in ipairs(r.leads) do byId[l.uuid] = l end
+    near(byId.LR.raised_m, 5.7, "raised"); eq(byId.LR.leads, "up", "up"); eq(byId.L1.raised_m, nil, "normal")
+    local ra = N.routeAhead(BG3AI.Visibility.context(), P1, { -3, 12.2, 2 }, true)
+    eq(ra.connectors[1].uuid, "L1", "the walkable ladder first"); near(ra.connectors[2].raised_m, 5.7, "raised listed")
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

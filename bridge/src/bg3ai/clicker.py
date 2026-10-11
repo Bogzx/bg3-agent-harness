@@ -191,6 +191,13 @@ def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadli
     tries = 0
     last: dict = {}
     done_aims: set = set()
+    # why a no-id object under the cursor wasn't the target, from whichever aim saw one: the final aim usually hovers
+    # nothing, so S063 10:57:47 (door, 51 aims, hovered_instead=[(an object with no id)]) reported no no_id_objects
+    nouuid: dict = {}
+
+    def sticky(d: dict) -> dict:
+        return {**nouuid, **d} if nouuid and not d.get("nouuid") else d
+
     for aim, ox in AIMS:
         if deadline is not None and time.monotonic() >= deadline:
             last = {**last, "timed_out": True}
@@ -223,13 +230,16 @@ def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadli
                 continue
             if last.get("hovered"):
                 return (x, y), tries, last
+            for k in ("nouuid", "nouuid_why"):
+                if last.get(k):
+                    nouuid[k] = last[k]
             if seen is not None and last.get("hover"):
                 seen[last["hover"]] = seen.get(last["hover"], 0) + 1
             elif seen is not None and last.get("hover_nouuid"):
                 seen["(an object with no id)"] = seen.get("(an object with no id)", 0) + 1
             if deadline is not None and time.monotonic() >= deadline:
-                return None, tries, {**last, "timed_out": True}
-    return None, tries, last
+                return None, tries, sticky({**last, "timed_out": True})
+    return None, tries, sticky(last)
 
 
 MENU_SCAN_PX = (6, 320, 6)   # cursor offsets below the right-click point that are tried, in window px
@@ -330,6 +340,11 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
     deadline = time.monotonic() + HOVER_BUDGET_S
     seen: dict[str, int] = {}
     pos, tries, last = hover_point(game, inp, uuid, deadline=deadline, seen=seen)
+    passes_diag: dict = {}   # no-id details from an earlier pass (a later pass may never hover the object)
+
+    def keep_diag(d: dict) -> None:
+        passes_diag.update({k: d[k] for k in ("nouuid", "nouuid_why") if d.get(k)})
+    keep_diag(last)
     if pos is None and not moves and not last.get("timed_out"):
         # Every aim missed although the target looked in view: one more look from a wider angle.
         w, h = inp.window_size()
@@ -339,6 +354,7 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
         moves = ["zoom_out"]
         pos, t2, last = hover_point(game, inp, uuid, deadline=deadline, seen=seen)
         tries += t2
+        keep_diag(last)
     if pos is None and seen:
         # Something in front keeps taking the cursor (S053 05:45:31 Metal Crate: 31 aims all on an object 3.2 m from
         # it, no_id_objects m=3.2): turn the camera as a player does, one step each way, and look again.
@@ -351,6 +367,7 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
             moves.append(name)
             pos, t2, last = hover_point(game, inp, uuid, deadline=time.monotonic() + OCCLUDED_PASS_S, seen=seen)
             tries += t2
+            keep_diag(last)
             if pos is not None:
                 break
     moves = (["center"] if centered else []) + moves
@@ -365,9 +382,12 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
             extra["hover"] = last["hover"]
         if last.get("timed_out"):
             extra["gave_up_after_s"] = HOVER_BUDGET_S
-        if last.get("nouuid"):
+        diag = {**passes_diag, **{k: last[k] for k in ("nouuid", "nouuid_why") if last.get(k)}}
+        if diag.get("nouuid"):
             # why the no-id object under the cursor wasn't taken for the target (Pick.same_entity: m = origin distance)
-            extra["no_id_objects"] = last["nouuid"]
+            extra["no_id_objects"] = diag["nouuid"]
+        if diag.get("nouuid_why"):
+            extra["no_id_why"] = diag["nouuid_why"]
         return ClickResult(False, reason, before, None, tries, extra)
     if last.get("via") in ("handle", "origin"):
         extra["hover_via"] = last["via"]   # a no-id object matched the target (S050/S051 doors)

@@ -517,6 +517,26 @@ def session_progress(start_sig: dict | None, end_sig: dict | None, points: int |
     return False, f"same save state, {points if points is not None else '?'} story points"
 
 
+# A runner restart keeps a running game only if it still shows where the last session ended: between runs the
+# orchestrator's acceptance tests load their own saves (S059 08:45 and S063 10:51 started on an Act-2 fixture /
+# another save and the agent had to reload by itself). Party levels/XP are left out (summons and level-ups jitter).
+DRIFT_KEYS = ("level", "journal", "journal_steps")
+DRIFT_MOVE_M = 15.0
+
+
+def state_drift(end_sig: dict | None, now_sig: dict | None) -> str | None:
+    """Why the running game is not where the last session left it (end_sig), or None (same place, or unknown)."""
+    if not end_sig or not now_sig:
+        return None
+    for k in DRIFT_KEYS:
+        if k in end_sig and k in now_sig and end_sig[k] != now_sig[k]:
+            return f"{k} {now_sig[k]} (the last session ended at {end_sig[k]})"
+    a, b = end_sig.get("pos"), now_sig.get("pos")
+    if a and b and math.dist(a, b) > DRIFT_MOVE_M:
+        return f"the party stands {math.dist(a, b):.0f} m from where the last session ended"
+    return None
+
+
 def story_points(summary_path: Path) -> int | None:
     """Story progress points of a finished session (Sxxx.progress.json), or None."""
     try:
@@ -1613,8 +1633,16 @@ class Runner:
         return foreign_use_since(save, list_saves(), read_actions_since(save.mtime), started,
                                  set(self.state["runner_saves"]))
 
-    def load_save(self, save: Save | None) -> str | None:
-        """Bring the game to this playthrough's latest save (or the main menu for a new game)."""
+    def restart_drift(self) -> str | None:
+        """state_drift() between the last play session's end and the running game (a runner restart only)."""
+        last = next((h for h in reversed(self.state["history"] or []) if h.get("kind") == "play"), None)
+        if not last or not last.get("end_sig"):
+            return None
+        return state_drift(last["end_sig"], read_progress())
+
+    def load_save(self, save: Save | None, force: bool = False) -> str | None:
+        """Bring the game to this playthrough's latest save (or the main menu for a new game). force: load it even
+        when --take-over would play on from the running game (restart_drift found it elsewhere)."""
         ui_load = "ui.menu" in available_ops("client") if port_open() else False
         self.new_game = save is None
         if save is None:
@@ -1637,7 +1665,7 @@ class Runner:
                 # Saves are matched to this playthrough by the character's name: a "Tav" breaks that.
                 self.pending_notes.append(new_game_note(owner))
             return None
-        if port_open() and game_state() == "Running" and server_ready() and self.opt.take_over:
+        if port_open() and game_state() == "Running" and server_ready() and self.opt.take_over and not force:
             # The operator says: take over the game as it is. If it's this playthrough's character, play on
             # from here instead of reloading (a reload only loses the minutes since the last save).
             host = host_character_name()
@@ -1805,6 +1833,14 @@ class Runner:
                 raise SystemExit("the game is running with a save loaded that the runner didn't load "
                                  "(maybe your own playthrough). Quit to the main menu, close the game, or "
                                  "pass --take-over.")
+            drift = self.restart_drift() if first else None
+            if drift:
+                save = self.choose_save()
+                log(f"runner restart: the running game moved since the last session ({drift}): "
+                    f"loading {save.folder if save else 'nothing (no save)'}")
+                self.event("restart_drift", why=drift, save=save.folder if save else None)
+                if save is not None:
+                    return self.load_save(save, force=True)
             if not first or owned:
                 return None  # keep playing where the last session left off
         if port_open() and state is None:

@@ -1,0 +1,208 @@
+bg3le static data: reject a false-positive resource manager; never look banks up through bg3se's asserting HashMap
+
+On top of 0001-0008. Two crashes on the first Ext.StaticData read of a run (2026-10-10 18:03:13 log
+.1796575; claude-run-2 S060 2026-10-11 09:11:00, 30 s after the 2 h relaunch, log .2717933 l. 729-770):
+`static data: resource manager at 0x...eb548 (scanned ...)` -> `Assertion failed: index < size_` -> SIGILL in
+bg3se::AssertionFailed <- bg3le_resource_bank <- bg3le_resource_get <- lua_eval_in (debug-port eval).
+
+All 20 logged finds: 18 at region offset 0x15a200 (2 more at 0x15a3c0/0x15aa40) = the real manager; both
+crashes found a map at 0xeb5xx, 0x6f000 earlier, whose Keys and Values passed looks_like_manager but whose
+HashKeys (bucket heads) point past its Keys, so Definitions.try_get asserted. The recorded offset 0x15a940
+never matched, so every run fell back to the scan.
+
+- looks_like_manager also checks the hash structure: every bucket head and NextIds link is -1 or a key index,
+  the chains reach every key exactly once (no cycle), NextIds.size == Keys.size, keys distinct.
+- bank lookup / count / bank_at read Keys and Values with safe_read and scan the keys (<= 400) instead of
+  calling Definitions.try_get / keys() / values()[i] (bg3se asserts = kills the game on a bad index).
+- recorded offset 0x15a940 -> 0x15a200.
+
+Offline: tools/test_bg3le_static_data.py compiles hash_chains_hold + read_definitions from the patched source.
+Against bg3le 3728a68 (v0.3.6) with 0001-0008. Applied by tools/build_bg3le.sh.
+---
+diff --git a/src/vendor/static_data.cpp b/src/vendor/static_data.cpp
+index b7b998d..7eee2b6 100644
+--- a/src/vendor/static_data.cpp
++++ b/src/vendor/static_data.cpp
+@@ -28,6 +28,7 @@
+ #include <vector>
+ #include <unordered_map>
+ #include <string>
++#include <algorithm>
+ 
+ #include "../ecs_types.h"
+ #include "../log.h"
+@@ -47,12 +48,16 @@ using bg3se::resource::GuidResourceManager;
+ // HashMap's layout, which the string table search already relies on:
+ // HashKeys (StaticArray, 16), NextIds (Array, 16), Keys (Array, 16), then
+ // Values (UninitializedStaticArray, 16).
++constexpr std::size_t kHashKeysOffset = 0;
++constexpr std::size_t kNextIdsOffset = 16;
+ constexpr std::size_t kKeysOffset = 32;
+ constexpr std::size_t kValuesOffset = 48;
+ 
+ // Within an Array: buffer, capacity, size.
+ constexpr std::size_t kArrayBuffer = 0;
+ constexpr std::size_t kArraySize = 12;
++// Within a StaticArray: buffer, size.
++constexpr std::size_t kStaticArraySize = 8;
+ 
+ static_assert(sizeof(GuidResourceManager) == 64,
+               "the manager is expected to be one HashMap");
+@@ -98,6 +103,58 @@ bool looks_like_vtable(unsigned long long p) {
+     return p >= range.From && p < range.To;
+ }
+ 
++// Whether a HashMap's bucket heads (HashKeys) and chains (NextIds) are
++// consistent with its Keys: every head and link is -1 or a key index, the
++// chains visit every key exactly once with no cycle, and no key repeats.
++//
++// Keys and Values alone were not enough. Twice (2026-10-10 18:03, claude-run-2
++// S060 2026-10-11 09:11) the scan stopped at a map 0x6f000 bytes before the
++// real one whose Keys and Values passed but whose HashKeys pointed past its
++// Keys, so the first try_get died on bg3se's `index < size_` assertion
++// (SIGILL) inside a debug-port eval. A map the engine can actually look things
++// up in passes this; a stale or half-built copy does not.
++bool hash_chains_hold(char const* base, void const* keyBuf,
++                      std::uint32_t keyCount) {
++    void* headBuf = nullptr;
++    std::uint32_t headCount = 0;
++    void* nextBuf = nullptr;
++    std::uint32_t nextCount = 0;
++    if (!read_as(base + kHashKeysOffset + kArrayBuffer, &headBuf)) return false;
++    if (!read_as(base + kHashKeysOffset + kStaticArraySize, &headCount)) return false;
++    if (!read_as(base + kNextIdsOffset + kArrayBuffer, &nextBuf)) return false;
++    if (!read_as(base + kNextIdsOffset + kArraySize, &nextCount)) return false;
++    if (headBuf == nullptr || nextBuf == nullptr) return false;
++    if (headCount == 0 || headCount > 8192) return false;
++    if (nextCount != keyCount) return false;
++
++    std::vector<std::int32_t> heads(headCount);
++    std::vector<std::int32_t> next(keyCount);
++    std::vector<std::int32_t> keys(keyCount);
++    if (!safe_read(headBuf, heads.data(), headCount * sizeof(std::int32_t))) return false;
++    if (!safe_read(nextBuf, next.data(), keyCount * sizeof(std::int32_t))) return false;
++    if (!safe_read(keyBuf, keys.data(), keyCount * sizeof(std::int32_t))) return false;
++
++    const auto in_range = [&](std::int32_t i) {
++        return i == -1 || (i >= 0 && (std::uint32_t)i < keyCount);
++    };
++    std::vector<bool> seen(keyCount, false);
++    std::uint32_t visited = 0;
++    for (std::int32_t head : heads) {
++        if (!in_range(head)) return false;
++        for (std::int32_t i = head; i >= 0; i = next[(std::uint32_t)i]) {
++            if (seen[(std::uint32_t)i]) return false;  // cycle or shared tail
++            seen[(std::uint32_t)i] = true;
++            ++visited;
++            if (!in_range(next[(std::uint32_t)i])) return false;
++        }
++    }
++    if (visited != keyCount) return false;
++
++    std::vector<std::int32_t> sorted(keys);
++    std::sort(sorted.begin(), sorted.end());
++    return std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end();
++}
++
+ // Whether a candidate address holds the resource manager's Definitions map.
+ //
+ // Every check here is against something known independently: the key set comes
+@@ -136,16 +193,17 @@ bool looks_like_manager(void const* candidate) {
+         if (!read_as((void const*)bank, &vtable)) return false;
+         if (!looks_like_vtable(vtable)) return false;
+     }
+-    return true;
++    return hash_chains_hold(base, keyBuf, keyCount);
+ }
+ 
+ void* g_manager = nullptr;
+ bool g_searched = false;
+ 
+-// Where the manager has sat inside its region in every run of this build:
+-// the region moves, the offset does not. Tried in each region first, and
+-// checked like any other candidate.
+-constexpr unsigned long long kRecordedRegionOffset = 0x15a940;
++// Where the manager has sat inside its region in most runs of this build:
++// the region moves, the offset mostly does not (18 of 20 logged finds were
++// at 0x15a200; 0x15a940, recorded earlier, never matched since). Tried in
++// each region first, and checked like any other candidate.
++constexpr unsigned long long kRecordedRegionOffset = 0x15a200;
+ 
+ void* search_for_manager() {
+     std::FILE* maps = std::fopen("/proc/self/maps", "r");
+@@ -269,6 +327,24 @@ void* find_resource(void* bank, void const* guid, std::size_t resourceSize) {
+     return (char*)valueBuf + (std::size_t)found->second * resourceSize;
+ }
+ 
++// The manager's type indices and banks, read with fault-tolerant reads and
++// never through bg3se's Array accessors, which assert on a bad index.
++bool read_definitions(void const* manager, std::vector<std::int32_t>* keys,
++                      std::vector<void*>* banks) {
++    auto const* base = (char const*)manager;
++    void* keyBuf = nullptr;
++    std::uint32_t keyCount = 0;
++    void* valueBuf = nullptr;
++    if (!read_as(base + kKeysOffset + kArrayBuffer, &keyBuf)) return false;
++    if (!read_as(base + kKeysOffset + kArraySize, &keyCount)) return false;
++    if (!read_as(base + kValuesOffset + kArrayBuffer, &valueBuf)) return false;
++    if (keyBuf == nullptr || valueBuf == nullptr || keyCount > 400) return false;
++    keys->resize(keyCount);
++    banks->resize(keyCount);
++    return safe_read(keyBuf, keys->data(), keyCount * sizeof(std::int32_t))
++        && safe_read(valueBuf, banks->data(), keyCount * sizeof(void*));
++}
++
+ }  // namespace
+ 
+ // Found on first use and cached, for the same reason as the string table: the
+@@ -288,10 +364,16 @@ extern "C" void* bg3le_resource_bank(std::int32_t typeIndex) {
+     void* manager = bg3le_resource_manager();
+     if (manager == nullptr || typeIndex < 0) return nullptr;
+ 
+-    auto* map = reinterpret_cast<GuidResourceManager*>(manager);
+-    auto* bank = map->Definitions.try_get(
+-        (bg3se::resource::StaticDataTypeIndex)typeIndex);
+-    return bank != nullptr ? *bank : nullptr;
++    // A scan of Keys rather than Definitions.try_get: try_get trusts the
++    // bucket heads and asserts (SIGILL) if one is out of range, and this runs
++    // inside the game. A hundred-odd int compares cost nothing.
++    std::vector<std::int32_t> keys;
++    std::vector<void*> banks;
++    if (!read_definitions(manager, &keys, &banks)) return nullptr;
++    for (std::size_t i = 0; i < keys.size(); ++i) {
++        if (keys[i] == typeIndex) return banks[i];
++    }
++    return nullptr;
+ }
+ 
+ // How many banks the manager holds, and the index of the i'th, so the set can
+@@ -300,8 +382,9 @@ extern "C" std::size_t bg3le_resource_bank_count() {
+     const CacheLock lock(resource_cache_lock());
+     void* manager = bg3le_resource_manager();
+     if (manager == nullptr) return 0;
+-    return reinterpret_cast<GuidResourceManager*>(manager)
+-        ->Definitions.keys().size();
++    std::vector<std::int32_t> keys;
++    std::vector<void*> banks;
++    return read_definitions(manager, &keys, &banks) ? keys.size() : 0;
+ }
+ 
+ // The bank's ResourceGuidsByMod, a HashMap<Guid, Array<Guid>>: each mod and
+@@ -399,12 +482,12 @@ extern "C" bool bg3le_resource_bank_at(std::size_t i, std::int32_t* typeIndex,
+     void* manager = bg3le_resource_manager();
+     if (manager == nullptr) return false;
+ 
+-    auto* map = reinterpret_cast<GuidResourceManager*>(manager);
+-    auto const& keys = map->Definitions.keys();
+-    if (i >= keys.size()) return false;
++    std::vector<std::int32_t> keys;
++    std::vector<void*> banks;
++    if (!read_definitions(manager, &keys, &banks) || i >= keys.size()) return false;
+ 
+-    *typeIndex = (std::int32_t)keys[(std::uint32_t)i];
+-    *bank = map->Definitions.values()[i];
++    *typeIndex = keys[i];
++    *bank = banks[i];
+     return true;
+ }
+ 
