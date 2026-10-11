@@ -39,7 +39,8 @@ def check_level(lv: dict, plan: dict | None, known: set[str]) -> list[str]:
     """Problems of one plan line against one level's offers ([] = valid)."""
     if plan is None:
         need = [f"{s['amount']} from {s['list'] or 'spells'}" for s in lv["spells"]] + \
-               [f"{p['amount']} from {p['list'] or 'passives'}" for p in lv["passives"]]
+               [f"{p['amount']} from {p['list'] or 'passives'}" for p in lv["passives"]] + \
+               (["a feat"] if lv.get("feat") else []) + ([f"{lv['skills']} skill(s)"] if lv.get("skills") else [])
         return [f"no plan line (picks needed: {'; '.join(need)})"] if need else []
     probs = []
     k = {_norm(x) for x in known}
@@ -68,6 +69,12 @@ def check_level(lv: dict, plan: dict | None, known: set[str]) -> list[str]:
         probs.append(f"passives: {len(plan.get('passives') or [])} of {need} picks")
     if plan.get("feat") and not lv["feat"]:
         probs.append(f"feat {plan['feat']}: this level has no feat")
+    # S053: placeholder lines ({} "assuming no picks") passed; a feat level or skill picks left out of the line are
+    # decisions the game would take by default (Ability Improvement +2 on the primary ability, the first skills).
+    if lv.get("feat") and not plan.get("feat"):
+        probs.append('feat: this level picks a feat (plan.feat: a feat name, or "Ability Improvement" + abilities)')
+    if lv.get("skills") and len(plan.get("skills") or []) < lv["skills"]:
+        probs.append(f"skills: {len(plan.get('skills') or [])} of {lv['skills']} picks")
     return probs
 
 

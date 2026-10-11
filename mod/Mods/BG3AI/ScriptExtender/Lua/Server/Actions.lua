@@ -1579,8 +1579,36 @@ reg("end_turn", function(args)
             -- The game applies it when the rest of the group ends; until then the guard counts it as ended.
             res.requested = true
         end
-        local w = group_waiting(char)
+        local resent = {}
+        if not requested then
+            -- This member's end went through. Members whose earlier group end the game dropped (S052-S055 "stuck
+            -- shared turn": still active, no RequestedEndTurn, only our pending flag) get their EndTurn again once
+            -- nobody else in the group is really acting.
+            local stale, others = {}, false
+            for _, m in ipairs(G.party()) do
+                if not G.same(m, char) then
+                    local a, r = G.tb_flags(m)
+                    if a and not r then
+                        if G.end_requested[G.guid(m) or m] then stale[#stale + 1] = m else others = true end
+                    end
+                end
+            end
+            if not others then
+                for _, m in ipairs(stale) do
+                    pcall(G.osi, "EndTurn", m)
+                    G.end_requested[G.guid(m) or m] = G.now_ms()
+                    resent[#resent + 1] = m
+                end
+            end
+        end
+        local w = {}
+        for _, m in ipairs(group_waiting(char)) do
+            local again = false
+            for _, x in ipairs(resent) do if G.same(x, m) then again = true end end
+            if not again then w[#w + 1] = m end
+        end
         if #w > 0 then res.still_to_act = w end
+        if #resent > 0 then res.ended_again = resent end
         RPC.finish_job(job, "done", res)
     end
     return start("end_turn", char, {

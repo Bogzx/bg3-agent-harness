@@ -151,6 +151,21 @@ class Upgrades(unittest.TestCase):
         self.assertIn("rare vs empty slot", ups[(GALE, "Evasive Shoes")]["why"])
         self.assertFalse(any(name == "Amulet" for _, name in ups))  # plain common amulet: not worth a line
 
+    def test_temporary_follower_is_neither_dressed_nor_stripped(self):
+        # S053: equip_best put Ketheric's Shield on Zanner Toobin (a quest follower); moved back by hand
+        inv = s026_inventory()
+        base = economy.upgrades(inv)
+        self.assertTrue(base)
+        for u in list(inv["members"]):
+            inv["members"][u] = dict(inv["members"][u], follower=True)
+        self.assertEqual(economy.upgrades(inv), [])
+        inv = s026_inventory()
+        who = base[0]["who"]
+        inv["members"][who] = dict(inv["members"][who], follower=True)
+        ups = economy.upgrades(inv)
+        self.assertNotIn(who, {o["who"] for o in ups})
+        self.assertNotIn(who, {o["holder"] for o in ups})
+
     def test_each_item_goes_to_one_member(self):
         ups = economy.upgrades(s026_inventory())
         ids = [u["uuid"] for u in ups]

@@ -309,6 +309,9 @@ local function partyBrief(ctx, uuid, active)
     -- Summons (Spiritual Weapon, Find Familiar, Mage Hand...) sit in DB_PartyMembers too: tagged so the
     -- bridge keeps them out of PARTY APART / re-chain / regroup but shows them as allies in combat.
     local sc = comp(e, "IsSummon")
+    if not sc and not truthy(osi(Osi.IsSummon, uuid)) and S.isFollower and S.isFollower(uuid, e) then
+        o.follower = true  -- temporary (Zanner Toobin S053): not dressed by equip_best
+    end
     if sc or truthy(osi(Osi.IsSummon, uuid)) then
         o.summon = true
         if sc then
@@ -703,8 +706,18 @@ end
 
 -- Per member: proficiencies (what they can wear/wield without penalty) and encumbrance (0 none,
 -- 1 Encumbered, 2 Heavily Encumbered), carried weight, the unencumbered limit and the Heavily threshold (kg).
-local function memberInfo(e)
+-- A temporary follower (S053: Zanner Toobin in the party for a quest) is no permanent member: equip_best must not dress
+-- it. Osiris IsPartyFollower, else no Origin and no Avatar component (origins and the custom avatar have Origin;
+-- live probe 2026-10-11 07:1x on Claude/Wyll/Karlach/Shadowheart).
+local function isFollower(u, e)
+    if u and truthy(osi(Osi.IsPartyFollower, u)) then return true end
+    return e ~= nil and not comp(e, "Origin") and not comp(e, "Avatar")
+end
+S.isFollower = isFollower
+
+local function memberInfo(e, u)
     local m = {}
+    if isFollower(u, e) then m.follower = true end
     pcall(function()
         local t = {}
         for _, f in pairs(e.Proficiency.Flags) do t[#t + 1] = tostring(f) end
@@ -817,7 +830,7 @@ function inventoryFull(ctx, args)
         if not ctx.is_party[u] then error("not a party member", 0) end
         local e = V.entity(u)
         local io = e and comp(e, "InventoryOwner")
-        if e then out.members[u] = memberInfo(e) end
+        if e then out.members[u] = memberInfo(e, u) end
         if io then
             out.supplies = out.supplies + supplyTotal(io.PrimaryInventory, 1)
             -- Bags (camp supplies, pouches) are collapsed unless expand=true or a

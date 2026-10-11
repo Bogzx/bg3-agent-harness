@@ -618,6 +618,9 @@ class ServerWiring(unittest.TestCase):
         try:
             S.H.get(ay, "Dame Aylin")
             self.assertEqual(S._uuid("Aylin"), ay)
+            zt = "aaaaaaaa-0000-0000-0000-00000000c0de"
+            S.H.get(zt, "Gondian Zanner Toobin")   # S055 06:41 who='Zanner Toobin'
+            self.assertEqual(S._uuid("Zanner Toobin"), zt)
             self.assertEqual(S._uuid("Jaheira"), ja)
         finally:
             S.game, S.H = saved

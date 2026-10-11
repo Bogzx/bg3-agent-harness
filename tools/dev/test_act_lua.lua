@@ -1151,6 +1151,28 @@ test("end_turn: an EndTurn the game ignores fails after END_IGNORED_MS (S044/S04
     eq(j.status, "failed", "status"); eq(j.error, A.END_IGNORED, "error")
 end)
 
+test("stuck shared turn (S052-S055): a dropped group end is forgotten once nobody else acts, and re-sent", function()
+    local restore = group_setup()
+    osiv[key("IsInCombat", P1)] = 1
+    osiv[key("IsInCombat", P2)] = 1
+    -- P1 ends while P2 still acts: requested (the guard remembers it)
+    local j = job(op("end_turn", { char = P1 }))
+    clock = clock + A.END_REQUEST_AFTER_MS + 1 tick()
+    eq(j.status, "done", "requested " .. tostring(j.error)); eq(j.result.requested, true, "requested")
+    eq(G.is_my_turn(P1), false, "pending while P2 acts")
+    -- P2 ends; the game dropped P1's request (P1 still active, no RequestedEndTurn)
+    local j2 = job(op("end_turn", { char = P2 }))
+    world[P2].comps.TurnBased.RequestedEndTurn = true
+    A.dispatch("TurnEnded", { P2 })
+    eq(j2.status, "done", "last member " .. tostring(j2.error))
+    local ends = called("EndTurn")
+    eq(ends[#ends][2], P1, "P1's EndTurn sent again by the last member")
+    -- nobody else acting: the guard no longer blocks P1 (it can act or end its turn)
+    eq(G.is_my_turn(P1), true, "the game's open turn is P1's again")
+    eq(G.turn_requested_end(P1), false, "not 'already ended'")
+    restore()
+end)
+
 test("end_turn in a shared turn group: done on RequestedEndTurn, lists who is still to act", function()
     local restore = group_setup()
     local j = job(op("end_turn", { char = P1 }))

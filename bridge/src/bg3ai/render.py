@@ -65,8 +65,10 @@ class Handles:
         if out or len(low) < 3:
             return out
         # S045 00:15: look_at("Aylin") for "Dame Aylin" → unknown target: a whole word of the name matches too
+        # S055 06:41 "Zanner Toobin" for "Gondian Zanner Toobin": whole words in a row match too
+        words = " ".join(re.findall(r"[\w-]+", low))
         return [h for h, n in self.names.items()
-                if n and low in re.findall(r"[\w'-]+", n.lower().replace("'", " "))]
+                if n and words and f" {words} " in " " + " ".join(re.findall(r"[\w-]+", n.lower())) + " "]
 
     def scrub(self, text: str) -> str:
         """Replace any GUID that slipped into free text with its handle."""

@@ -1116,11 +1116,22 @@ local function visible(name)
     return w ~= nil and UI.isVisible(w), w
 end
 
-local function setSaveName(name)
+local function saveNameBox()
     local _, pop = visible("SaveGamePopup")
-    if not pop then return false, "save name dialog not open" end
+    if not pop then return nil, nil, "save name dialog not open" end
     local box = UI.byName(pop, "SaveName", { hidden = true })
-    if not box then return false, "no SaveName box" end
+    if not box then return nil, pop, "no SaveName box" end
+    return box, pop
+end
+
+local function saveNameNow()
+    local box = saveNameBox()
+    return box and (UI.text(box) or UI.clean(UI.prop(box, "Text"))) or nil
+end
+
+local function setSaveName(name)
+    local box, pop, why = saveNameBox()
+    if not box then return false, why end
     local ok = pcall(box.SetProperty, box, "Text", name)
     local dc = try(function() return pop.DataContext end)
     if dc then pcall(dc.SetProperty, dc, "SavegameNameInput", name) end
@@ -1128,6 +1139,12 @@ local function setSaveName(name)
     if not ok then return false, "could not set the name" end
     return true, now
 end
+
+-- S052 05:21:17: 'S052-lab-fight2' was written as '…__Steel Watch Foundry - Lab Level - 16h 14m': the name was set
+-- once when the dialog appeared and RETURN followed; the dialog filled in its default name after us. Before each
+-- RETURN the box must read our name (set again otherwise) and have held it SAVE_NAME_SETTLE_MS.
+A.SAVE_NAME_SETTLE_MS = 150
+A.SAVE_NAME_TRIES = 5
 
 local function savingIndicator()
     local w = UI.widget("AlwaysOnTopOverlay")
@@ -1201,8 +1218,23 @@ local function saveDriver(name, kind)
                 local ok, err = setSaveName(name)
                 if not ok then return "failed", { stage = "name", error = err } end
                 job.typed = err
+                job.nameAt, job.nameSets = now, 1
                 enter("accept")
+                return nil
             end
+            local cur = saveNameNow()
+            if cur ~= nil and cur ~= name then
+                if job.nameSets >= A.SAVE_NAME_TRIES then
+                    return "failed", { stage = "name", name = name, typed = cur,
+                        error = "the save name box keeps reading '" .. tostring(cur) .. "' instead of '" .. name .. "'" }
+                end
+                setSaveName(name)
+                job.nameAt, job.nameSets = now, job.nameSets + 1
+                job.renamed = (job.renamed or 0) + 1
+                stageSince = now   -- the RETURN timeout counts from the last good name
+                return nil
+            end
+            if now - job.nameAt < A.SAVE_NAME_SETTLE_MS then return nil end
             return key("RETURN")
         end
         if page then
@@ -1260,7 +1292,7 @@ local function saveDriver(name, kind)
         A.pendingSave = nil
         ms.done = now - t0
         return "done", { saved = true, name = name, typed = job.typed, ms = ms,
-            no_save_state = job.noSaveState }
+            no_save_state = job.noSaveState, renamed = job.renamed }
     end)
 end
 A.saveDriver = saveDriver

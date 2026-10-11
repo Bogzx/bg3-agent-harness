@@ -488,6 +488,33 @@ wj = run(ops["ui.waypoints"]({}).job, 6000)
 ok(wj.status == "failed" and #mapKeys == 5 and tostring(wj.error):find("pressed M,M,M,M,M over 6%.0s")
     and tostring(wj.error):find("Tooltip"), "never opens: " .. tostring(wj.error))
 swallow = 0
+-- S055 06:46:20: the Act 3 map shows ~2.5 s after M; the 1.2 s re-press closed it again ("pressed M,M,M,M,M").
+-- A JournalMap that appeared after our press but isn't visible yet is opening: wait, one M only.
+do
+    widgets, mapKeys = {}, {}
+    local shownAt
+    local _inj2 = Ext.Input.InjectKeyPress
+    Ext.Input.InjectKeyPress = function(k)
+        mapKeys[#mapKeys + 1] = k
+        if k == "M" then
+            if widgets.JournalMap then widgets.JournalMap = nil shownAt = nil
+            else W("JournalMap", {}, {}).visible = false shownAt = clock + 2500 end
+        elseif k == "ESCAPE" and widgets.JournalMap then widgets.JournalMap = nil end
+    end
+    local _wid = BG3AI.UI.widget
+    BG3AI.UI.widget = function(n)
+        local w = widgets[n]
+        if w and n == "JournalMap" and shownAt and clock >= shownAt then w.visible = true end
+        return w
+    end
+    local sj = run(ops["ui.waypoints"]({}).job, 8000)
+    ok(sj.status == "done" and sj.result.map_presses == 1 and mapKeys[1] == "M" and mapKeys[2] ~= "M",
+        "slow map: one M, waited for it: " .. tostring(sj.status) .. " " .. tostring(sj.error) .. " keys="
+        .. table.concat(mapKeys, ","))
+    BG3AI.UI.widget = _wid
+    Ext.Input.InjectKeyPress = _inj2
+    widgets = {}
+end
 -- a question box up instead of the map (vis live: a rest prompt during fast_travel): reported, not answered
 widgets, mapKeys = {}, {}
 swallow = 99

@@ -41,6 +41,10 @@ _HIDDEN_STATE = re.compile(r"\b(?:invisible|hidden|sneaking|stealthed|ambushing)
 _HANDLE = re.compile(r"\be\d+\b")
 # The roll screen shows the DC: roll_check results and ROLL/roll={...} data are fair.
 _ROLL_SCREEN = re.compile(r"^\s*ROLL\b|\broll=\{|\bphase=(?:intro|result|reroll)\b|context=DialogCheck")
+# The agent's own memory printed back (LESSONS / LAST ATTEMPT / RETRY lines, "- WHEN …: …" lesson rows): a DC the agent
+# read off a roll screen and wrote down is not a leak (S051-S055: 13+ false "dc_outside_roll" hits, all
+# "- WHEN Aelis …: failed Deception DC18 on Aelis started a fight").
+_MEMORY_LINE = re.compile(r"^\s*(?:-\s*)?WHEN\b|\bLESSONS?\b|\bLAST ATTEMPT\b|^\s*RETRY\b")
 # (Traps: listings tag "trap" only once the engine says it's discovered, so a text rule can't tell; the
 # mod's gate is tested offline: tools/vis/test_route_lua.lua "combat: an undiscovered trap ...".)
 _ROLL_SUBJECT = re.compile(r"roll_result[^|\n]*\b(?:subject|event|vs)=")
@@ -79,7 +83,7 @@ def audit_calls(calls: list[dict]) -> dict[str, list[tuple[dict, str]]]:
             clean = _FILE_PATH.sub("", line)
             for m in _GUID.finditer(clean):
                 hit("guid", c, clean, m)
-            if name != "roll_check" and not _ROLL_SCREEN.search(clean):
+            if name != "roll_check" and not _ROLL_SCREEN.search(clean) and not _MEMORY_LINE.search(clean):
                 for m in _DC.finditer(clean):
                     hit("dc_outside_roll", c, clean, m)
             for m in _ROLL_SUBJECT.finditer(clean):

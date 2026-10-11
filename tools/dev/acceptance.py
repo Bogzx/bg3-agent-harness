@@ -695,19 +695,36 @@ def sec_se() -> None:
     game-process check of load_game, Noesis counters, and a read-only CursorText probe in the Jump targeting."""
     if not load_verified(BASE):
         return
-    # click(button="none"): S039 21:47:42 it committed a left click (a 5 m jump under Z)
-    p0 = party_pos()
-    out, dt = took("click", x=0.5, y=0.62, button="none")
-    time.sleep(1.5)
-    mv, scr = moved_m(p0, party_pos()), ui_screen()
-    item("click button=none hovers only", "PASS" if "nothing clicked" in out and mv < 0.5 and scr == "game" else "FAIL",
-         f"{first_line(out)} ({dt:.1f}s); party moved {mv:.1f} m; screen={scr}")
-    p0 = party_pos()
-    out, _ = took("click", x=0.5, y=0.62, button="middle")
-    time.sleep(1.0)
-    mv = moved_m(p0, party_pos())
-    item("click unknown button refused", "PASS" if "unknown button" in out and mv < 0.5 else "FAIL",
-         f"{first_line(out)}; party moved {mv:.1f} m")
+    # click(button="none"): S039 21:47:42 it committed a left click (a 5 m jump under Z). 06:27 FAIL was the load's
+    # settle (hover 2.3 s after load_game, `level_changed` in the same result; 0.0 m 1 s later): wait until the party
+    # stands still, then judge the controlled character only (the one a click would move); followers are evidence.
+    def still_party(max_s: float = 8.0) -> dict:
+        prev, calm, end = party_pos(), 0, time.monotonic() + max_s
+        while time.monotonic() < end and calm < 2:
+            time.sleep(0.5)
+            now = party_pos()
+            calm = calm + 1 if moved_m(prev, now) <= 0.05 else 0
+            prev = now
+        return prev
+
+    def per_member(a: dict, b: dict) -> str:
+        names = {r.get("uuid"): r.get("name") for r in status().get("party") or []}
+        return ", ".join(f"{names.get(u, u[:6])} {moved_m({u: a[u]}, {u: b[u]}):.1f}" for u in a if u in b)
+
+    def hover_check(name: str, button: str, want: str) -> None:
+        sel = status().get("active")
+        p0 = still_party()
+        out, dt = took("click", x=0.5, y=0.62, button=button)
+        time.sleep(1.5)
+        p1 = party_pos()
+        mv = moved_m({sel: p0[sel]}, {sel: p1[sel]}) if sel in p0 and sel in p1 else moved_m(p0, p1)
+        scr = ui_screen()
+        ok = want in out and mv < 0.3 and scr == "game"
+        item(name, "PASS" if ok else "FAIL", f"{first_line(out)} ({dt:.1f}s); controlled character moved {mv:.1f} m "
+             f"(all: {per_member(p0, p1)}); screen={scr}")
+
+    hover_check("click button=none hovers only", "none", "nothing clicked")
+    hover_check("click unknown button refused", "middle", "unknown button")
 
     # set_reactions on a member that is not selected (S041 22:41:22 "char is not the selected character")
     st = status()
@@ -781,6 +798,16 @@ def sec_se() -> None:
     time.sleep(0.8)
     vals1 = player_vals()
     changed = {k: [vals0.get(k), v] for k, v in vals1.items() if vals0.get(k) != v}
+    if not changed:
+        # 06:27: press_key Z (the mod's InjectKeyPress) changed nothing: try the real SDL key through the input shim
+        try:
+            S._inp().key("Z")
+            time.sleep(0.8)
+            vals1 = player_vals()
+            changed = {k: [vals0.get(k), v] for k, v in vals1.items() if vals0.get(k) != v}
+            log(f"PROBE shim key Z: changed {json.dumps(changed)}")
+        except Exception as e:  # noqa: BLE001
+            log(f"PROBE shim key Z failed: {e}")
     log("PROBE ui.state after Z (is the Jump targeting on?): "
         + json.dumps(S.game.try_rpc("ui.state", context="client"))[:1500])
     log(f"PROBE player/selected values changed by Z: {json.dumps(changed)}")
@@ -817,8 +844,21 @@ def sec_se() -> None:
     # S047 02:57: "nothing happened" while the game walked the actor to its lockpick spot). Opens the roll only:
     # ESCAPE, then the base save is reloaded; nothing is rolled or saved.
     if load_verified(DOOR_SAVE):
+        # S055 06:46:20 Lower City: "the map didn't open (pressed M,M,M,M,M over 6.2s)" (the Act 3 map shows slowly;
+        # the 1.2 s re-press closed it) + check_all "screen map after closing the map (left open?)".
+        t = time.monotonic()
+        r = S.game.run_job("ui.waypoints", {}, context="client", wait_s=20)
+        dt = time.monotonic() - t
+        time.sleep(1.5)
+        res = r.result if isinstance(r.result, dict) else {}
+        scr = ui_screen()
+        n = len(res.get("waypoints") or [])
+        ok = r.status == "done" and n > 0 and res.get("map_presses") == 1 and scr == "game"
+        item("map opens once in the Lower City (slow map)", "PASS" if ok else "FAIL",
+             f"{r.status} {r.error or ''} in {dt:.1f}s; waypoints={n} map_presses={res.get('map_presses')}; "
+             f"screen 1.5 s after closing={scr}")
         near = call("get_nearby", kinds="door", radius=20)
-        doors = re.findall(r"^\+?\s*(e\d+) ([^<\n]+?) <door>[^\n]*\blocked\b", near, re.M)
+        doors = re.findall(r"^(?:ITEM\s+|\+\s*)?(e\d+) ([^<\n]+?) <door>[^\n]*\blocked\b", near, re.M)  # "ITEM e8 Steel … <door> 1.6m locked"
         if need(bool(doors), "lockpick a door (no-id hover, walk wait)", f"no locked door within 20 m of {DOOR_SAVE}"):
             h, name = doors[0]
             out, dt = took("lockpick", target=h)
@@ -877,6 +917,17 @@ def sec_setup() -> None:
         item("scorer names the new journal step", "PASS" if whats == [want] else "FAIL",
              f"removed step 1 of '{q['title']}' ({len(q['steps'])} steps, {len(oqs)} quest(s) with that title); "
              f"events {whats[:3]}")
+    # 4. temporary followers (S053 Zanner Toobin): the flag never marks the permanent party (it would stop equip_best
+    #    dressing them); a follower, if one is in the party, carries it in both reads
+    inv = S.game.try_rpc("state.inventory", {}) or {}
+    rows = [r for r in status().get("party") or [] if isinstance(r, dict) and not r.get("summon")]
+    flagged = [r.get("name") for r in rows if r.get("follower")]
+    mem_flag = [u for u, m in (inv.get("members") or {}).items() if (m or {}).get("follower")]
+    origins = {"Claude", "Shadowheart", "Karlach", "Wyll", "Gale", "Astarion", "Lae'zel", "Halsin", "Minthara",
+               "Jaheira", "Minsc"}
+    wrong = [n for n in flagged if n in origins]
+    item("temporary followers flagged, the party not", "PASS" if not wrong and len(mem_flag) == len(flagged) else "FAIL",
+         f"party {[r.get('name') for r in rows]}; follower-flagged {flagged or 'none'} (members read {len(mem_flag)})")
     # 3. lessons: nearby characters' status names reach the lesson terms (a trigger with a plural/past ending)
     nb = S.game.try_rpc("state.nearby", {"kinds": ["characters"], "radius": 40}) or {}
     rows = [c for c in nb.get("characters") or [] if c.get("statuses")]

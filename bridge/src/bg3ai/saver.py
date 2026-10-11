@@ -53,6 +53,25 @@ def written_save(save_dir: Path, label: str, since: float) -> Path | None:
     return best[1] if best else None
 
 
+def stray_save(save_dir: Path, label: str, since: float) -> Path | None:
+    """A named save written since `since` under ANOTHER name: S052 05:21 'S052-lab-fight2' landed as
+    '…__Steel Watch Foundry - Lab Level - 16h 14m' (the game's default name: the typed name didn't take). Newest
+    first; quick/auto saves don't count."""
+    if not label or not save_dir.is_dir():
+        return None
+    best = None
+    for d in save_dir.iterdir():
+        if not d.is_dir() or d.name.endswith("__" + label) or "QuickSave" in d.name or "AutoSave" in d.name:
+            continue
+        try:
+            st = save_file(d).stat()
+        except OSError:
+            continue
+        if st.st_mtime >= since - 1.0 and st.st_size > 0 and (best is None or st.st_mtime > best[0]):
+            best = (st.st_mtime, d)
+    return best[1] if best else None
+
+
 def on_disk(save_dir: Path, label: str, since: float) -> str:
     """For a failed save: what IS on disk for this label, so a wrong check (S017: the .lsv is named after the
     label, not the folder) shows at once instead of passing for a lost save."""
@@ -186,14 +205,23 @@ class Saver:
             total = time.monotonic() - job["t0"]
             rec = {"save": name, "ok": bool(found), "menu_s": round(menu_s, 2), "disk_s": round(disk_s, 2),
                    "total_s": round(total, 2), "detail": detail, "folder": found.name if found else None}
+            stray = None
             if not found:
                 try:
                     rec["seen"] = on_disk(self.save_dir(), job["label"], job["wall"])
+                    stray = stray_save(self.save_dir(), job["label"], job["wall"])
                 except OSError as e:
                     rec["seen"] = f"save dir unreadable: {e}"
+                if stray is not None:
+                    rec["stray"] = stray.name
             self.log(rec)
             if found:
                 self._note(f"SAVED '{name}' ({total:.1f}s, on disk)")
+            elif stray is not None:
+                shown = stray.name.split("__", 1)[-1]
+                self._note(f"⚠ SAVED UNDER ANOTHER NAME: '{name}' was written as '{shown}' (the game's default name: "
+                           f"the typed name didn't take). It is a good save: load_game(save=\"{shown}\") loads it; "
+                           f"save_game('{name}') again if you want the name")
             else:
                 self._note(f"⚠ SAVE FAILED '{name}': no save folder appeared within {DISK_WAIT_S:.0f}s "
                            f"({detail}). On disk: {rec['seen']}. Call save_game again")

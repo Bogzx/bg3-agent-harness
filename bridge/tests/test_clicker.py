@@ -353,6 +353,31 @@ class ClickEntity(unittest.TestCase):
         self.assertEqual(r.reason, "no_effect")
         self.assertLessEqual(polls, 2)   # one baseline + one still check: no extra wait
 
+    def test_occluded_target_turns_the_camera(self):
+        # S053 05:45:31: 31 aims on a Metal Crate all landed on another object 3.2 m away; a player turns the camera
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2))
+        real = g.rpc
+        clock = [0.0]
+
+        def rpc(op, args=None, context="server"):
+            if op == "ui.hover_check":
+                clock[0] += 0.3
+                turned = sum(1 for e in inp.log if e[0] == "drag" and e[1] == "M")
+                if turned >= 2:   # visible from the other side only
+                    return {"hovered": True}
+                return {"hovered": False, "hover_nouuid": True, "nouuid": [{"m": 3.2}]}
+            return real(op, args, context)
+        g.rpc = rpc
+        mono = clicker.time.monotonic
+        clicker.time.monotonic = lambda: clock[0]
+        try:
+            r = clicker.click_entity(g, inp, "crate", verify_timeout=0.0)
+        finally:
+            clicker.time.monotonic = mono
+        self.assertTrue(r.ok, r)
+        self.assertEqual(r.detail.get("camera")[-2:], ["rotate_occluded_right", "rotate_occluded_left"])
+
     def test_hover_search_gives_up_at_the_time_budget(self):
         # live S017-S024: 144 tries = 15-33 s per failed lockpick; now capped at HOVER_BUDGET_S
         inp = FakeInput()

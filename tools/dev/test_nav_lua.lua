@@ -1444,6 +1444,15 @@ test("lowerGround: memoized 30 s per spot and goal; route skips it once its budg
     end)
 end)
 
+test("lowerGround: a passed deadline stops the scan (acceptance 06:27: route 151 ms)", function()
+    withIslands(function()
+        local lo, why = N.lowerGround(P1, { 0, 0, 0 }, { -200, -140, 0 }, clock - 1)
+        eq(lo, nil, "no partial answer"); eq(why, "budget", "says why")
+        eq(N.lowerMemo, nil, "a partial scan is not memoized")
+        assert(N.lowerGround(P1, { 0, 0, 0 }, { -200, -140, 0 }), "full scan without a deadline")
+    end)
+end)
+
 test("lowerGround: nothing below -> nil; the Chasm bottom is no ground", function()
     local savedH = Ext.Level.GetHeightsAt
     withIslands(function()

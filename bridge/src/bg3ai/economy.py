@@ -235,8 +235,11 @@ def _why(it: dict, cur: dict | None) -> str:
 def upgrades(inv: dict) -> list[dict]:
     """[{who, uuid, name, slot, holder, why, gain}] best first: an item in a party bag that beats what a
     member wears in that slot and that the member is proficient with. Each item goes to one member."""
-    items = [it for it in (inv or {}).get("items") or [] if isinstance(it, dict)]
     members = (inv or {}).get("members") or {}
+    # A temporary follower (S053: Zanner Toobin got Ketheric's Shield) is neither dressed nor stripped.
+    temp = {u for u, m in members.items() if (m or {}).get("follower")}
+    members = {u: m for u, m in members.items() if u not in temp}
+    items = [it for it in (inv or {}).get("items") or [] if isinstance(it, dict) and it.get("owner") not in temp]
     worn: dict[str, dict[str, dict]] = {}
     for it in items:
         if it.get("equipped_slot") and it.get("owner"):
@@ -363,7 +366,8 @@ def lantern_plan(inv: dict) -> dict | None:
     def main_of(u: str) -> dict:
         return next((it for it in items if it.get("owner") == u and it.get("equipped_slot")
                      and _slot(it) == "MeleeMainHand"), {})
-    casters = [u for u, m in members.items() if u != frm and _melee_caster(set((m or {}).get("prof") or []), m or {})]
+    casters = [u for u, m in members.items() if u != frm and not (m or {}).get("follower")
+               and _melee_caster(set((m or {}).get("prof") or []), m or {})]   # never to a temporary follower
     if not casters:
         return None
     to = min(casters, key=lambda u: (_rar(main_of(u)), _score(main_of(u)) if main_of(u) else 0))

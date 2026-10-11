@@ -161,6 +161,25 @@ class SaverTest(unittest.TestCase):
         self.assertIn("Claude-25101260926__S017-pre-dror: [S017-pre-dror.WebP 1B -50s, S017-pre-dror.lsv 100B -50s]", seen)
         self.assertIn("save dir missing", saver.on_disk(root / "nope", "x", t))
 
+    def test_stray_save_under_the_default_name(self):
+        # S052 05:21: 'S052-lab-fight2' was written as '…__Steel Watch Foundry - Lab Level - 16h 14m'
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        t = time.time()
+        old = root / "Claude-1__S052-lab-fight"
+        old.mkdir()
+        (old / "S052-lab-fight.lsv").write_bytes(b"x")
+        os.utime(old / "S052-lab-fight.lsv", (t - 100, t - 100))
+        q = root / "Claude-2__QuickSave_1"
+        q.mkdir()
+        (q / "QuickSave_1.lsv").write_bytes(b"x")
+        self.assertIsNone(saver.stray_save(root, "S052-lab-fight2", t))   # older saves and quicksaves don't count
+        d = root / "Claude-21111262918__Steel Watch Foundry - Lab Level - 16h 14m"
+        d.mkdir()
+        (d / "Steel Watch Foundry - Lab Level - 16h 14m.lsv").write_bytes(b"x" * 10)
+        self.assertEqual(saver.stray_save(root, "S052-lab-fight2", t), d)
+        self.assertIsNone(saver.stray_save(root, "", t))
+
     def test_one_save_at_a_time(self):
         rig = Rig(menu_s=0.3)
         s = rig.saver()

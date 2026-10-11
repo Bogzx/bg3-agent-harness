@@ -36,6 +36,19 @@ class CheckLevel(unittest.TestCase):
         self.assertEqual(CP.check_level(SH4, {"feat": "Ability Improvement"}, set()), ["cantrips: 0 of 1 picks"])
         self.assertIn("feat Alert: this level has no feat", CP.check_level(GALE6, {"feat": "Alert", "spells": ["Haste", "Slow"]}, set()))
 
+    def test_placeholder_on_a_feat_or_skill_level_is_refused(self):
+        # S053: "Karlach L10: {}" placeholders "assuming no picks" passed the end check
+        feat_lv = {"level": 12, "feat": True, "skills": 0, "spells": [], "passives": []}
+        self.assertEqual(CP.check_level(feat_lv, {}, set()),
+                         ['feat: this level picks a feat (plan.feat: a feat name, or "Ability Improvement" + abilities)'])
+        self.assertEqual(CP.check_level(feat_lv, {"feat": "Great Weapon Master"}, set()), [])
+        skill_lv = {"level": 3, "feat": False, "skills": 1, "spells": [], "passives": []}
+        self.assertEqual(CP.check_level(skill_lv, {}, set()), ["skills: 0 of 1 picks"])
+        self.assertEqual(CP.check_level(skill_lv, {"skills": ["Stealth"]}, set()), [])
+        self.assertEqual(CP.check_level({"level": 10, "feat": False, "skills": 0, "spells": [], "passives": []}, {}, set()),
+                         [])                                          # a level with no choices: {} is right
+        self.assertIn("a feat", CP.check_level(feat_lv, None, set())[0])
+
     def test_spelling_variants(self):
         self.assertEqual(CP.check_level(WYLL5, {"passives": ["Agonizing Blast"], "spells": ["fireball"]}, set()), [])
 

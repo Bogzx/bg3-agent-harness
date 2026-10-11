@@ -2133,7 +2133,7 @@ end
 -- ladder's top when we stand at its foot, from its AI bounds). Each: {uuid,
 -- name, kind, pos, dist, dir, dy, path_m?|unreachable?, height_m?, leads?
 -- (up|down), far_dy?, to_goal_m?, helps?, locked?}.
-function N.connectors(ctx, charUuid, goal, radius, limit)
+function N.connectors(ctx, charUuid, goal, radius, limit, budgetMs)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return {} end
@@ -2155,7 +2155,7 @@ function N.connectors(ctx, charUuid, goal, radius, limit)
     table.sort(cands, function(a, b) return a.d < b.d end)
     local out = {}
     local now = Ext.Utils.MonotonicTime()
-    local deadline = now + N.CONNECT_BUDGET_MS
+    local deadline = now + math.min(N.CONNECT_BUDGET_MS, budgetMs or N.CONNECT_BUDGET_MS)
     for k, f in pairs(N.connectFail) do
         if now - f.t > N.CONNECT_FAIL_TTL_MS then N.connectFail[k] = nil end
     end
@@ -2418,7 +2418,7 @@ N.LOWER_MAX_M = 120
 N.LOWER_LEDGE_M = 3   -- a floor this near our height is the ledge we stand on
 N.LOWER_SHOWN = 3
 N.LOWER_MEMO_MS = 30000
-function N.lowerGround(charUuid, from, goal)
+function N.lowerGround(charUuid, from, goal, deadline)
     local n = math.floor(N.LOWER_R_M / N.LOWER_CELL_M)
     local c = N.LOWER_CELL_M
     -- memo: check_all FAIL 03:50 (Lower City, Bhaal Temple below): nav.route 258 ms, lowerGround alone ~115 ms
@@ -2433,6 +2433,8 @@ function N.lowerGround(charUuid, from, goal)
         return t and not t.blocked and not t.surface
     end
     for i = -n, n do
+        -- nav.route's deadline (acceptance 06:27: 151 ms with the scan finding nothing): a partial scan says so
+        if deadline and Ext.Utils.MonotonicTime() > deadline then return nil, "budget" end
         for j = -n, n do
             if i * i + j * j <= n * n then
                 local x, z = from[1] + i * c, from[3] + j * c
@@ -2512,7 +2514,8 @@ end
 -- the walk toward it) ~90 + lowerGround ~115 + connectors ~55. Route gives closestReach ROUTE_CLOSEST_BUDGET_MS and
 -- skips the lower-ground scan once ROUTE_BUDGET_MS is spent (lower_skipped).
 N.ROUTE_CLOSEST_BUDGET_MS = 80
-N.ROUTE_BUDGET_MS = 140
+N.ROUTE_BUDGET_MS = 110          -- the whole route (check_route: < 150 ms in the mod)
+N.ROUTE_CONNECT_RESERVE_MS = 25  -- kept for the connectors' path probes after the lower-ground scan
 function N.routeAhead(ctx, charUuid, goal, withConnectors)
     local t0 = Ext.Utils.MonotonicTime()
     local e = V.entity(charUuid)
@@ -2570,18 +2573,20 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
             end
         end
     end
-    if out.reachable == false and goal[2] - from[2] <= -N.LOWER_MIN_M
-        and Ext.Utils.MonotonicTime() - t0 > N.ROUTE_BUDGET_MS then
+    local lowerBy = t0 + N.ROUTE_BUDGET_MS - N.ROUTE_CONNECT_RESERVE_MS
+    if out.reachable == false and goal[2] - from[2] <= -N.LOWER_MIN_M and Ext.Utils.MonotonicTime() > lowerBy then
         out.lower_skipped = true
     elseif out.reachable == false and goal[2] - from[2] <= -N.LOWER_MIN_M then
-        local okl, lower = pcall(N.lowerGround, charUuid, from, goal)
+        local okl, lower, why = pcall(N.lowerGround, charUuid, from, goal, lowerBy)
+        if okl and why == "budget" then out.lower_skipped = true end
         if okl and lower and #lower > 0 then
             out.lower = lower
             if N.featherFall(charUuid) then out.feather_fall = true end -- no fall damage: route drops its warning
         end
     end
     if withConnectors or not out.reachable then
-        out.connectors = N.connectors(ctx, charUuid, goal, N.CONNECT_M, N.CONNECT_MAX)
+        out.connectors = N.connectors(ctx, charUuid, goal, N.CONNECT_M, N.CONNECT_MAX,
+            math.max(10, t0 + N.ROUTE_BUDGET_MS - Ext.Utils.MonotonicTime()))
     end
     if out.far or out.too_far or out.reachable == false then
         local wps = N.unlockedWaypointsHere(goal, from)

@@ -214,6 +214,17 @@ local function now_ms()
 end
 G.now_ms = now_ms
 
+-- The game's own turn flags, without our pending bookkeeping.
+local function tb_flags(uuid)
+    local e = G.entity(uuid)
+    local tb = e and U.comp(e, "TurnBased")
+    if not tb then return nil end
+    local ok, active, req = pcall(function() return tb.IsActiveCombatTurn == true, tb.RequestedEndTurn == true end)
+    if not ok then return nil end
+    return active, req
+end
+G.tb_flags = tb_flags
+
 function G.end_pending(uuid)
     local g = G.guid(uuid) or uuid
     local t = g and G.end_requested[g]
@@ -221,6 +232,24 @@ function G.end_pending(uuid)
     if now_ms() - t > G.END_REQUEST_TTL_MS or not G.in_combat(g) then
         G.end_requested[g] = nil
         return false
+    end
+    -- S052-S055 "stuck shared turn" (Titan fight every round; 11 save+reloads): an end requested inside a turn group
+    -- is only ours to remember while the rest of the group still acts. When nobody else in the group is acting and
+    -- the game still shows this turn open (active, no RequestedEndTurn), the game dropped the request: forget it, or
+    -- the guard refuses both acting ("not this character's turn") and ending ("already ended") forever.
+    local active, req = tb_flags(g)
+    if active and not req then
+        local others = false
+        for _, m in ipairs(G.party()) do
+            if not G.same(m, g) and not G.end_requested[G.guid(m) or m] then
+                local a2, r2 = tb_flags(m)
+                if a2 and not r2 then others = true break end
+            end
+        end
+        if not others then
+            G.end_requested[g] = nil
+            return false
+        end
     end
     return true
 end

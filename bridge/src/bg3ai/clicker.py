@@ -53,6 +53,7 @@ ROTATE_FRAC = 0.18   # middle-drag length as a fraction of the window width
 # Wall-clock cap on the whole hover search (both passes). 144 tries took 15-33 s in claude-run-2 S017-S024
 # and never found a door that the first ~20 tries missed; a player gives up on a fiddly door in seconds.
 HOVER_BUDGET_S = 8.0
+OCCLUDED_PASS_S = 2.5   # each look after turning the camera past an object that takes the cursor
 # A right-click opens the world context menu (WorldContextMenu.xaml) at the cursor; its entries are made by the
 # engine for the hovered entity. The menu takes a few frames to appear.
 MENU_WAIT_S = 2.0
@@ -338,6 +339,20 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
         moves = ["zoom_out"]
         pos, t2, last = hover_point(game, inp, uuid, deadline=deadline, seen=seen)
         tries += t2
+    if pos is None and seen:
+        # Something in front keeps taking the cursor (S053 05:45:31 Metal Crate: 31 aims all on an object 3.2 m from
+        # it, no_id_objects m=3.2): turn the camera as a player does, one step each way, and look again.
+        w, h = inp.window_size()
+        cx, cy = w // 2, h // 2
+        for mult, name in ((1, "rotate_occluded_right"), (-2, "rotate_occluded_left")):
+            inp.drag(cx, cy, cx - int(w * ROTATE_FRAC) * mult, cy, button="M", steps=10)
+            inp.wait_frames(12)
+            time.sleep(0.15)
+            moves.append(name)
+            pos, t2, last = hover_point(game, inp, uuid, deadline=time.monotonic() + OCCLUDED_PASS_S, seen=seen)
+            tries += t2
+            if pos is not None:
+                break
     moves = (["center"] if centered else []) + moves
     extra: dict[str, Any] = {"camera": moves} if moves else {}
     if pos is None:

@@ -1128,10 +1128,16 @@ end
 -- or "failed", result, err (fast_travel waits out a TravelError that clears after a load).
 -- 5 (was 3): live 11:4x, right after a camp leave M was ignored for >3.6 s (the leave's transition)
 local MAP_PRESS_MS, MAP_PRESSES = 1200, 5
+-- S055 06:46:20: fast_travel "the map didn't open (pressed M,M,M,M,M over 6.2s)" in the Lower City, and check_all's
+-- "screen map after closing the map (left open?)" before S052/S055: the Act 3 map takes longer than 1.2 s to show,
+-- so the next M closed it again. A JournalMap widget that appeared after our press but isn't visible yet is the map
+-- opening: wait for it up to MAP_OPENING_MS before pressing again.
+SV.MAP_OPENING_MS = 4000
 local function withMap(kind, timeout_ms, fn, pre)
     local state = { mapPresses = 0, mapKeys = {} }
     local function press()
         local k = visibleWidget("GameMenu") and "ESCAPE" or "M"
+        if state.preexist == nil then state.preexist = UI.widget("JournalMap") ~= nil end
         Ext.Input.InjectKeyPress(k)
         state.mapPresses, state.mapPressT = state.mapPresses + 1, RPC.now_ms()
         state.mapKeys[#state.mapKeys + 1] = k
@@ -1167,9 +1173,11 @@ local function withMap(kind, timeout_ms, fn, pre)
                         "the game asks: " .. q .. " [" .. table.concat(labels, "/") .. "] (instead of the map "
                         .. "opening): not answered; decide with confirm(...), then try again"
                 end
-                if RPC.now_ms() - (state.mapPressT or 0) >= MAP_PRESS_MS then
+                local opening = not state.preexist and UI.widget("JournalMap") ~= nil
+                if opening then state.opening = true end
+                if RPC.now_ms() - (state.mapPressT or 0) >= (opening and SV.MAP_OPENING_MS or MAP_PRESS_MS) then
                     if state.mapPresses >= MAP_PRESSES then
-                        return "failed", { map_presses = state.mapPresses, keys = state.mapKeys },
+                        return "failed", { map_presses = state.mapPresses, keys = state.mapKeys, opening = state.opening },
                             "the map didn't open (pressed " .. table.concat(state.mapKeys, ",") .. " over " .. string.format("%.1f", (RPC.now_ms() - job.started) / 1000)
                             .. "s). On screen: " .. screenNow()
                     end

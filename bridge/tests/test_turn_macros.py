@@ -348,7 +348,7 @@ class CombatTurn(Base):
                                            action={"ability": "Projectile_RangedAttack", "target": self.gob}))
         self.assertEqual(self.g.ops("act.move_to"), [])
         self.assertIn("no walkable ground toward it", out)
-        self.assertIn("action: Projectile_RangedAttack", out)
+        self.assertIn("action: Projectile_MainHandAttack", out)  # the invented id is aliased (S051)
 
     def test_dead_target_skips_to_the_next_alternative(self):
         self.g.dead.add(GOB)
@@ -536,6 +536,28 @@ class CombatTurn(Base):
         self.assertIn("skipped", out)
         self.assertNotIn("FAILED", out)
         self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], [])
+
+    def test_stale_conversation_flag_retried_for_a_single_tool(self):
+        # S055 06:44: pickpocket ×3 "character is in a conversation" right after the conversation ended
+        saved, server.CONVO_WAIT_S = server.CONVO_WAIT_S, 2.0
+        self.addCleanup(setattr, server, "CONVO_WAIT_S", saved)
+        n = {"left": 2}
+
+        def refuse(op, a):
+            if op == "act.pickpocket" and n["left"] > 0:
+                n["left"] -= 1
+                return "character is in a conversation (dialog 1995725312 res=e411)"
+            return None
+        self.g.refuse_if = refuse
+        self.g.ui = {"screen": "game"}
+        out = server._act("pickpocket", "act.pickpocket", {"char": P1, "npc": GOB})
+        self.assertIn("pickpocket: done", out)
+        self.assertEqual(len(self.g.ops("act.pickpocket")), 3)
+
+    def test_invented_ranged_attack_id_is_aliased(self):
+        # S051 ×2: "Projectile_RangedAttack" → "unknown action", a failed alternative each time
+        self.assertEqual(server._ability_id(P1, "Projectile_RangedAttack"), "Projectile_MainHandAttack")
+        self.assertEqual(server._ability_id(P1, "Target_MeleeAttack"), "Target_MainHandAttack")
 
     def test_mid_fight_lines_are_waited_out(self):
         # S045 Ketheric: 6 steps "character is in a conversation (InDialog)" while his lines played

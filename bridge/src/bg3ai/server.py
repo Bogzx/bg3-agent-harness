@@ -1059,6 +1059,15 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
         # was still up (get_dialogue + ESCAPE, 2 more calls). Walking off closes a trade for a player: close, rerun.
         note = "\n".join(x for x in ("(closed the trade window first)", note) if x)
         r = game.run_job(op, args, context=context, wait_s=wait_s, **kw)
+    if context == "server" and r.status == "failed" and _IN_CONVO in str(r.error or "") and not _batch["active"]:
+        # S055 06:44:08-14: pickpocket ×3 "character is in a conversation" right after choose_dialogue ended it (the
+        # flag a moment stale). With no dialogue on screen, retry for up to CONVO_WAIT_S, as the macros do.
+        end = time.monotonic() + CONVO_WAIT_S
+        while time.monotonic() < end and _ui_screen()[0] != "dialogue":
+            time.sleep(0.4)
+            r = game.run_job(op, args, context=context, wait_s=wait_s, **kw)
+            if not (r.status == "failed" and _IN_CONVO in str(r.error or "")):
+                break
     _log_stage_ms(op, r)
     _remember_names(r.result)
     _batch["last"] = r.status
@@ -1557,6 +1566,13 @@ def _learn_actions(who: str | None, acts: Any) -> None:
     _ability_ids[who] = names
 
 
+# Ids the agent invents that the game spells differently (S051 ×2: "Projectile_RangedAttack" → unknown action, a
+# failed alternative each time; the bow/crossbow attack is Projectile_MainHandAttack).
+_ID_ALIASES = {"Projectile_RangedAttack": "Projectile_MainHandAttack", "Target_RangedAttack": "Projectile_MainHandAttack",
+               "Projectile_RangedWeaponAttack": "Projectile_MainHandAttack", "Target_MeleeAttack": "Target_MainHandAttack",
+               "Target_MeleeWeaponAttack": "Target_MainHandAttack", "Target_Attack": "Target_MainHandAttack"}
+
+
 def _ability_id(who: str, ability: str) -> str:
     """An ability id from what the agent wrote: an id as is, 'Fire Bolt (Projectile_FireBolt)' → the id, or a
     shown name ('Fire Bolt', any case) → the id from who's action list (read once on a miss)."""
@@ -1564,6 +1580,8 @@ def _ability_id(who: str, ability: str) -> str:
     m = re.fullmatch(r".*\((" + _ABILITY_ID.pattern + r")\)\s*", a)
     if m:
         return m.group(1)
+    if a in _ID_ALIASES:
+        return _ID_ALIASES[a]
     if _ABILITY_ID.fullmatch(a) or not a:
         return a
     ids = (_ability_ids.get(who) or {}).get(a.lower())

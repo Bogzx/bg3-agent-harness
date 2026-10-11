@@ -23,7 +23,14 @@ local function setState(to)
     for _, h in ipairs(stateHandlers) do h({ FromState = from, ToState = to }) end
 end
 
-local function show(n) widgets[n] = { name = n, visible = true } end
+local nameBox = { t = "" }    -- the popup's SaveName box
+local defaultName = nil       -- S052: the dialog writes its default name this many frames after it opens
+local overwriteIn = nil
+local savedAs = nil           -- the name the game saved with (the box's text at the accepting RETURN)
+local function show(n)
+    widgets[n] = { name = n, visible = true }
+    if n == "SaveGamePopup" then nameBox.t = "" overwriteIn = defaultName and 9 or nil end  -- ~145 ms: after our first set (80 ms polls), before the accept
+end
 local function hide(n) widgets[n] = nil end
 
 Ext = {
@@ -36,6 +43,10 @@ Ext = {
 
 -- the game's menus: a key lands one frame later
 local function frame()
+    if overwriteIn then
+        overwriteIn = overwriteIn - 1
+        if overwriteIn <= 0 then nameBox.t = defaultName overwriteIn = nil end
+    end
     if saveAt and clock >= saveAt and gameState == "Running" then setState("Save") end
     if saveAt and clock >= saveAt + 1000 and gameState == "Save" then setState("Running") saveAt = nil end
     local ks = pendingKey
@@ -43,6 +54,7 @@ local function frame()
     for _, k in ipairs(ks) do
         if k == "RETURN" then
             if widgets.SaveGamePopup then
+                savedAs = nameBox.t
                 hide("SaveGamePopup") hide("SaveGame")  -- saved: back to the game menu
                 if saveStarts then saveAt = clock + 500 end
             elseif widgets.SaveGame then show("SaveGamePopup") end
@@ -80,8 +92,9 @@ BG3AI = {
             return m
         end,
         isVisible = function(el) return el.visible ~= false end,
-        byName = function(w, n) if n == "SaveName" then return { SetProperty = function() end } end end,
-        text = function() return "typed" end,
+        byName = function(w, n) if n == "SaveName" then
+            return { SetProperty = function(_, k, v) if k == "Text" then nameBox.t = v end end } end end,
+        text = function() return nameBox.t end,
         clean = function(v) return v end,
         prop = function() return nil end,
         props = function() return {} end,
@@ -151,6 +164,16 @@ ok(only, "ui.state shows the game throughout our own save")
 ok(seen.saving, "ui.state flags saving")
 ok(widgets.GameMenu == nil and widgets.SaveGame == nil, "menus closed afterwards")
 ok(A.pendingSave == nil, "pending save cleared")
+
+ok(savedAs == "S010-pre-kagha", "the game saved under our name: " .. tostring(savedAs))
+
+-- S052 05:21:17: the dialog wrote its default name after ours; RETURN saved '…Lab Level - 16h 14m'
+defaultName = "Steel Watch Foundry - Lab Level - 16h 14m"
+job = runSave("S052-lab-fight2")
+defaultName = nil
+ok(job.status == "done" and savedAs == "S052-lab-fight2" and (job.result.renamed or 0) >= 1,
+    "default name overwritten back before the accept: saved as " .. tostring(savedAs) .. ", renamed="
+    .. tostring(job.result and job.result.renamed))
 
 -- the SavingPanel overlay lingering after the Save state doesn't hold it (S015: 3 s)
 show("AlwaysOnTopOverlay")

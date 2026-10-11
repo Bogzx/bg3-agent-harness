@@ -40,6 +40,7 @@ class Rules(unittest.TestCase):
             call("look_at", "hp=11 statuses=[name=Magic Allergy id=GREMISHKA_MAGICALLERGY_AURA] relation=hostile"),
             call("wait_for", "status_applied name=Undead Ward status=MAG_MYRKULITES_UNDEAD_PRESENCE_BUFF target={e9 name=Ghoul}"),
             call("get_nearby", "e12 Chest <container> 3m (lock DC 15)"),
+            call("get_status", "LESSONS (yours, for this fight)\n- WHEN Aelis, Lower City Sewers: failed Deception DC18 on Aelis started a fight [seen]"),
             call("look", "e7 cc51df85-792b-4d9a-8ec5-eff598720e5e Goblin"),
             call("wait_for", "roll_result roller={e1 name=Karlach} subject=e55 success"),
             call("get_nearby", "e30 S_GOB_DrowCommander_abc <character> 8m"),
