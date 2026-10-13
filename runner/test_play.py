@@ -1671,6 +1671,21 @@ class SeriesRuns(unittest.TestCase):
         exc = next(f for f in fails if f["kind"] == "tool_exception")
         self.assertEqual((exc["n"], exc["detail"][:10]), (2, "S001: look"))       # grouped, FAILED: not counted
 
+    def test_failed_tools_and_hand_input_are_unknown(self):
+        d = self.tmp / "h"
+        d.mkdir()
+        s = _stream(d / "S001.jsonl",
+                    _use("1", "mcp__bg3__create_character", {}), _res("1", "FAILED: the name box never reported"),
+                    _use("2", "mcp__bg3__create_character", {}), _res("2", "FAILED: the name box never reported"),
+                    _use("3", "mcp__bg3__click", {"x": 0.5, "y": 0.5}), _res("3", "clicked left at 960,540"),
+                    _use("4", "mcp__bg3__move_to", {}), _res("4", "FAILED: destination is beyond remaining movement"),
+                    _use("5", "mcp__bg3__combat_turn", {}), _res("5", "1. move: FAILED: no path\n2. attack: done"))
+        fails = P.runs.stream_failures(s)
+        self.assertEqual(sorted(self.kinds(fails)), [("hand_input", "unknown"), ("tool_failed", "unknown")])
+        tf = next(f for f in fails if f["kind"] == "tool_failed")
+        self.assertEqual((tf["n"], tf["detail"][:21]), (2, "S001: create_characte"))
+        self.assertTrue(P.runs.is_clean("reached", fails, []))   # unknown never breaks "clean"
+
     def test_stalls_reloads_and_the_outcome(self):
         p = _stream(self.tmp / "S001.progress.jsonl", {"type": "stuck", "t": 50, "idle_min": 12.0, "actions": 40},
                     {"type": "stuck", "t": 200, "idle_min": 15.0, "actions": 60}, {"type": "unstuck", "t": 300})

@@ -23,8 +23,9 @@ class FakePage:
     after the page was shown once (`lazy_box` more polls), a click focuses the box and selects its text."""
 
     def __init__(self, text="Tav", readable=False, box=(1150, 1190), can_edit=True, focus_on_click=True,
-                 typing_works=True, lazy_box=1):
+                 typing_works=True, lazy_box=1, popup=False):
         self.text = text
+        self.popup = popup   # "Reset Tutorials" over the page: no hover reaches the box until it closes
         self.name = text if readable else HANDLE
         self.readable = readable
         self.box, self.can_edit = box, can_edit
@@ -33,6 +34,9 @@ class FakePage:
         self.page, self.cursor, self.focused = 0, (0, 0), False
         self.finished = False
         self.calls: list[tuple[str, dict]] = []
+
+    def on_dont_reset(self, x, y):
+        return 2000 <= x <= 2300 and 760 <= y <= 800   # (0.56, 0.54) of 3840x1440
 
     def over(self, x, y):
         return self.box[0] <= y <= self.box[1] and 1500 <= x <= 2300
@@ -45,7 +49,8 @@ class FakePage:
         text = self.text if has_box else None
         v = {"name": name, "name_handle": None if self.readable else HANDLE, "text": text,
              "can_edit": self.can_edit, "page": self.page, "on_naming_page": self.page == 3, "box": has_box,
-             "focused": self.focused, "hover_box": has_box and self.page == 3 and self.over(*self.cursor),
+             "focused": self.focused,
+             "hover_box": has_box and self.page == 3 and not self.popup and self.over(*self.cursor),
              "complete": True}
         if want is not None:
             v.update(want=want, confirmed=name == want, ok=text == want and name in (None, want))
@@ -62,6 +67,12 @@ class FakePage:
             if moved:
                 v["moved"] = True
             return v
+        if op == "ui.confirm_probe":
+            if not self.popup:
+                return {"box": False}
+            x, y = self.cursor
+            return {"box": True, "title": "Reset Tutorials", "buttons": ["Reset Tutorials", "Don't Reset"],
+                    "label": "Don't Reset", "over": self.on_dont_reset(x, y)}
         if op == "ui.cc_finish":
             v = self.view(args.get("name"))
             if args.get("name") is not None and not v["ok"]:
@@ -93,6 +104,8 @@ class FakeInput:
     def click(self, x, y, button="L", count=1, sync=True):
         self.page.cursor = (x, y)
         self.clicks.append((x, y))
+        if self.page.popup and self.page.on_dont_reset(x, y):
+            self.page.popup = False
         if self.page.focus_on_click and self.page.over(x, y):
             self.page.focused = self.selected = True
 
@@ -198,6 +211,17 @@ class EnsureName(unittest.TestCase):
             name_and_finish(page.rpc, FakeInput(page), "Claude")
         self.assertFalse(page.finished)
         self.assertNotIn("ui.cc_finish", [op for op, _ in page.calls])
+
+
+class ResetTutorials(unittest.TestCase):
+    def test_popup_over_the_naming_page_is_dismissed_first(self):
+        page = FakePage(popup=True)
+        logs = []
+        name_and_finish(page.rpc, FakeInput(page), "Brannoch Vael", logs.append)
+        self.assertFalse(page.popup)
+        self.assertTrue(page.finished)
+        self.assertEqual(page.text, "Brannoch Vael")
+        self.assertTrue(any("Reset Tutorials" in m for m in logs), logs)
 
 
 class ProbePoints(unittest.TestCase):

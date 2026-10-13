@@ -807,7 +807,7 @@ def character_creation_note(profile: dict, name: str | None) -> str:
     c = profile.get("character") or {}
     lines = [
         "RUNNER NOTE: PHASE 0, CHARACTER CREATION. This is a new game and the playthrough has a character brief. "
-        "Before any play, Read knowledge/playbooks/character-creation.md and follow it in order: new_game at the "
+        "Before any play, memory_read knowledge/playbooks/character-creation.md and follow it in order: new_game at the "
         "difficulty below, design the build and the persona from the brief, write memory/CHARACTER.md and the build "
         "plan in party-build.md, create_character with the name, read name/race/class back with get_status, then "
         "the first save, save_game(label=\"S001-start\"): the runner learns the character's name from it. Then keep playing as that character following CLAUDE.md.",

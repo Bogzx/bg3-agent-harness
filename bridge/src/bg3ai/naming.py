@@ -11,7 +11,8 @@ nothing. Writing the box's Text from Lua could not be verified to reach the char
     1. ui.cc_name {name}                  the box already shows the name               -> done
     2. ui.cc_name {page}                  go to the naming page (flowPage item 3, what Proceed does), then
                                           poll until the box exists
-    3. hover-probe the box                move the shim cursor down the screen's centre line until the
+    3. hover-probe the box                close a message box over the page first (Reset Tutorials, see
+                                          dismiss_popup); move the shim cursor down the screen's centre line until the
                                           box reports IsMouseOver, then centre on it
     4. click, check `focused`, END + BACKSPACE x (MAX_LEN + 2), text, RETURN
     5. ui.cc_name {name}                  the box shows the name (and the character's name is it, or is
@@ -109,6 +110,25 @@ def locate_box(rpc: Rpc, inp, log: Callable[[str], None] = lambda m: None) -> tu
     return at
 
 
+def dismiss_popup(rpc: Rpc, inp, log: Callable[[str], None] = lambda m: None) -> dict | None:
+    """A message box over the naming page blocks every hover probe: on a profile that has played before, a new
+    game shows "Reset Tutorials" (buttons Reset Tutorials / Don't Reset) right there (naut S001 and naut-r2 S001,
+    2026-10-13: create_character FAILED twice each, then the agent clicked "Don't Reset" by hand). Its button
+    ignores its command, so it gets the hover-checked shim click; the negative answer (last button) changes
+    nothing. -> the click result, or None when no box is open."""
+    from bg3ai.boxclick import click_box, describe
+    try:
+        probe = rpc("ui.confirm_probe", {"answer": "no"})
+    except Exception:
+        return None
+    if not isinstance(probe, dict) or not probe.get("box"):
+        return None
+    res = click_box(rpc, inp, "no")
+    log(f"naming page: {probe.get('title') or 'a message box'} was open ({describe(res)})")
+    time.sleep(0.3)
+    return res
+
+
 def _clear_and_type(inp, name: str) -> None:
     inp.key("END")
     for _ in range(MAX_LEN + 2):
@@ -142,6 +162,7 @@ def ensure_name(rpc: Rpc, inp, name: str, log: Callable[[str], None] = lambda m:
         v = _view(rpc)
     if v.get("moved"):
         time.sleep(0.8)  # page transition
+    dismiss_popup(rpc, inp, log)
     x, y = locate_box(rpc, inp, log)
 
     for attempt in range(2):

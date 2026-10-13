@@ -262,6 +262,10 @@ def progress_failures(paths: list[Path], since: float) -> list[dict]:
     return out
 
 
+HAND_INPUT = ("click", "press_key", "ui_action")   # raw UI input tools
+MOVE_TOOLS = ("move", "move_to", "walk_toward", "travel_to")   # "FAILED: beyond remaining movement" is routine
+
+
 def stream_failures(stream: Path) -> list[dict]:
     """One play stream (Sxxx.jsonl / Sxxx-rN.jsonl): MCP server not connected, claude API/usage errors, tool
     exceptions and timeouts, fairness-guard blocks, fairness leaks, Game Over. Same-kind failures of one tool and
@@ -302,11 +306,19 @@ def stream_failures(stream: Path) -> list[dict]:
                 kind = "tool_timeout" if TIMEOUT_RE.search(msg) else "tool_exception"
             elif TIMEOUT_RE.search(msg.split(":", 1)[0]) or msg.startswith("TIMEOUT"):
                 kind = "tool_timeout"
+            elif step == name and msg.startswith("FAILED") and name not in MOVE_TOOLS:
+                # the tool's own result failed (not a step inside a macro, not a walk cut short): usually the
+                # agent's call, sometimes our gap (naut S001: create_character FAILED twice on the name box);
+                # listed as unknown, never breaks "clean"
+                kind = "tool_failed"
             else:
-                continue   # FAILED / NOT READY / REFUSED: the game said no (the agent's call), not our bug
+                continue   # a macro step, a partial walk, NOT READY / REFUSED / a rejected call: the game said no
             groups.setdefault((kind, step, triage.error_key(msg)), []).append(c)
+        if name in HAND_INPUT:
+            # raw clicks and keys: the agent working around a tool (the definition of done wants 0 hand clicks)
+            groups.setdefault(("hand_input", name, ""), []).append(c)
     for (kind, tool, key), cs in groups.items():
-        cls = AGENT if kind == "fairness_block" else HARNESS
+        cls = AGENT if kind == "fairness_block" else UNKNOWN if kind in ("tool_failed", "hand_input") else HARNESS
         out.append(failure(cs[0].get("t") or t_end, kind, cls, f"{sid}: {tool}: {key}", len(cs)))
     if wipe is not None:
         out.append(failure(wipe.get("t") or t_end, "party_wipe", AGENT, f"{sid}: Game Over ({wipe['name']})"))
