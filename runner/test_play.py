@@ -91,6 +91,14 @@ class DeadlineMath(unittest.TestCase):
         self.assertTrue(k.index("NOTE A") < k.index("NOTE B"))
         self.assertNotIn("already loaded", P.build_kickoff("S001", "pt1", t, None, []))
 
+    def test_kickoff_leads_with_the_memory_briefing(self):
+        t = time.time() + 3600
+        k = P.build_kickoff("S004", "pt1", t, None, [], "=== BG3 PLAYTHROUGH MEMORY — session S004 ===\n...")
+        self.assertTrue(k.startswith("=== BG3 PLAYTHROUGH MEMORY — session S004"))
+        self.assertIn("briefing (PLAYTHROUGH.md and HANDOFF.md) is above", k)
+        self.assertIn("end_session", k)
+        self.assertIn("First call session_start", P.build_kickoff("S004", "pt1", t, None, []))
+
 
 class HandoffAndSaves(unittest.TestCase):
     def test_load_menu_args(self):
@@ -312,6 +320,33 @@ class Misc(unittest.TestCase):
         self.assertNotIn("--effort", cmd)  # Claude Code's default unless asked
         for flag in P.CLAUDE_FLAGS:
             self.assertIn(flag, cmd)
+
+    def test_builtin_tools_disabled(self):
+        # The playing agent gets only the bg3 MCP tools (+ ToolSearch to load their schemas): files, memory and the
+        # sandbox are the server's (memtools.py); no built-in file, shell, web or agent tool exists in the session.
+        r = P.Runner.__new__(P.Runner)
+        r.opt = P.Options("pt", None, 60, "opus")
+        for cmd in (r.claude_cmd("go", "1", resume=False), r.claude_cmd("fix", "1", resume=True, tag="-fix")):
+            tools = cmd[cmd.index("--tools") + 1]
+            self.assertEqual(tools, "ToolSearch")
+            self.assertIn("--strict-mcp-config", cmd)
+            self.assertIn("--disable-slash-commands", cmd)
+        settings = json.loads((P.PLAY_DIR / ".claude" / "settings.json").read_text())
+        self.assertNotIn("hooks", settings)                  # nothing a client must run for correctness
+        self.assertEqual(settings["permissions"]["allow"], ["mcp__bg3__*"])
+        for tool in ("Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "Agent"):
+            self.assertIn(tool, settings["permissions"]["deny"])
+
+    def test_keeper_model_default_is_the_play_model(self):
+        self.assertEqual(P.Options("pt", None, 60, "opus").keeper_model, "same")
+        self.assertEqual(P.keeper_model("same", "opus"), "opus")
+        self.assertEqual(P.keeper_model(None, "fable"), "fable")
+        self.assertEqual(P.keeper_model("sonnet", "opus"), "sonnet")   # an explicit override
+        with mock.patch.object(P, "cmd_run", lambda a: (a.keeper_model, a.no_memory_keeper)):
+            self.assertEqual(P.main(["run", "--playthrough", "x"]), ("same", False))
+            self.assertEqual(P.main(["run", "--playthrough", "x", "--no-keeper", "--keeper-model", "haiku"]),
+                             ("haiku", True))
+            self.assertEqual(P.main(["run", "--playthrough", "x", "--no-memory-keeper"])[1], True)
 
     def test_model_and_effort(self):
         import tempfile
@@ -1188,6 +1223,44 @@ class SelfRestart(unittest.TestCase):
             self.assertTrue(second.endswith(" 1"))
             self.assertFalse(Path(d, "runner-handover.json").exists())
 
+class MemorySessionWithoutHooks(unittest.TestCase):
+    """The runner opens the memory session and makes the stop check itself (were the SessionStart and Stop hooks),
+    through the real tools/memory/session.py on a real memory repo."""
+
+    def test_open_then_stop_check(self):
+        import _testutil as TU
+        import memlib as M
+        import new_playthrough as NP
+        TU.isolate_git()
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(P, "log", lambda msg: None):
+            r = P.Runner.__new__(P.Runner)
+            r.opt = P.Options("pt", None, 30, "opus")
+            r.mem = Path(d) / "memory"
+            NP.create_memory("pt", r.mem)
+            deadline = time.time() + 30 * 60
+            sid, brief = r.open_memory_session(deadline, 30)
+            self.assertEqual(sid, "S001")
+            self.assertTrue(brief.startswith("=== BG3 PLAYTHROUGH MEMORY — session S001 ==="))
+            self.assertIn("Autonomous session: deadline", brief)
+            self.assertIn("Keep playing: 29 minutes left", r.stop_check(sid, deadline, 30))
+            near = time.time() + 120   # inside the last 3 minutes: wrap-up is due
+            self.assertIn("HANDOFF.md hasn't been rewritten", r.stop_check(sid, near, 30))
+            (r.mem / "HANDOFF.md").write_text("# Handoff S001 → S002\nSave to load: \"S001-end\" — camp\n\n"
+                                              "## Doing right now\nResting.\n\n## Next steps\n1. Go north.\n")
+            (r.mem / "objectives.md").write_text("# Objectives\n## Main\n- reach camp [seen S001]\n")
+            self.assertIsNone(r.stop_check(sid, near, 30))     # ends: linted and committed
+            self.assertFalse(M.load_state(r.mem)["open"])
+            self.assertEqual(M.git(r.mem, "log", "-1", "--format=%s").stdout.strip(), "S001")
+
+    def test_no_memory_falls_back_to_session_start(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(P, "log", lambda msg: None):
+            r = P.Runner.__new__(P.Runner)
+            r.opt = P.Options("pt", None, 30, "opus")
+            r.mem = Path(d) / "missing"
+            self.assertEqual(r.open_memory_session(time.time() + 1800, 30), (None, ""))
+            self.assertIsNone(r.stop_check("S001", time.time() + 1800, 30))
+
+
 class MemoryKeeperHook(unittest.TestCase):
     """Runner.start_keeper/join_keeper: threaded pass, logged to events + keeper_history, joined before play."""
 
@@ -1225,12 +1298,13 @@ class MemoryKeeperHook(unittest.TestCase):
                 self.assertTrue(r.keeper_thread.is_alive())
                 r.join_keeper()
             self.assertIsNone(r.keeper_thread)
-            self.assertEqual(calls, [(7, "S007-keeper", "sonnet", "low", 5.0)])
+            self.assertEqual(calls, [(7, "S007-keeper", "opus", "low", 5.0)])   # default: the play model
             self.assertEqual([(x["name"], x["level"]) for x in got_refused[0]], [("Wyll", 5), ("Gale", 8)])
             self.assertEqual(events[0][0], "memory_keeper")
             self.assertEqual(events[0][1]["status"], "ok")
             hist = json.loads((Path(d) / "keeper_history.jsonl").read_text())
             self.assertEqual(hist["files"], ["quests.md"])
+            self.assertEqual((hist["model"], events[0][1]["model"]), ("opus", "opus"))
             # quick exits and --no-memory-keeper skip the pass
             r.start_keeper("S008", P.SessionResult("S008", "c", 0, "exited", 0.0, 30.0))
             self.assertIsNone(r.keeper_thread)
@@ -1390,6 +1464,327 @@ class OomGuard(unittest.TestCase):
             r.state["game"] = {"stamp": "s", "launched": 1.0}
             self.assertIsNone(r.check_game_oom())
             self.assertIsNone(r.state["oom_streak"])
+
+
+def _stream(path: Path, *events) -> Path:
+    path.write_text("".join(json.dumps(e) + "\n" for e in events))
+    return path
+
+
+def _use(i: str, name: str, inp: dict) -> dict:
+    return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": i, "name": name, "input": inp}]}}
+
+
+def _res(i: str, text: str, is_error: bool = False) -> dict:
+    return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": i, "is_error": is_error,
+                                                     "content": [{"type": "text", "text": text}]}]}}
+
+
+class SeriesRuns(unittest.TestCase):
+    """run --until M --runs N: naming, fresh memory and the same profile per run, the per-run reset (saves, the nav
+    kill list, knowledge/), failure classes, the clean flag and the runs table."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-series-"))
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
+        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "PLAYTHROUGHS", "SE_BG3AI_DIR", "KNOWLEDGE_DIR",
+                                                 "PLAY_DIR", "list_saves", "read_actions_since")}
+        self.addCleanup(lambda: [setattr(P, n, v) for n, v in self.saved.items()])
+        P.RUNTIME, P.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
+        P.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"
+        P.PLAY_DIR = self.tmp / "play"
+        P.KNOWLEDGE_DIR = P.PLAY_DIR / "knowledge"
+        P.read_actions_since = lambda t, path=None: []
+
+    # ---------------------------------------------------------------- naming, memory, profile
+
+    def test_run_names_and_the_next_run(self):
+        self.assertEqual([P.runs.run_name("naut", k) for k in (1, 2, 3)], ["naut", "naut-r2", "naut-r3"])
+        f = self.tmp / "runs.jsonl"
+        self.assertEqual(P.runs.next_run_index(P.runs.series_records(f, "naut")), 1)    # no file yet
+        f.write_text("".join(json.dumps(r) + "\n" for r in (
+            {"playthrough": "naut", "milestone": "nautiloid_escaped"},                   # a plain --until run
+            {"series": "naut", "run": 2, "playthrough": "naut-r2", "outcome": "timeout"},
+            {"series": "other", "run": 7, "playthrough": "other-r7"})) + "not json\n")
+        recs = P.runs.series_records(f, "naut")
+        self.assertEqual([r["playthrough"] for r in recs], ["naut", "naut-r2"])
+        self.assertEqual(P.runs.next_run_index(recs), 3)
+
+    def test_each_run_gets_a_fresh_memory_and_the_series_profile(self):
+        prof = {"character": {"brief": "a dwarf cleric", "roleplay": "strict"}, "difficulty": "Explorer"}
+        P.freeze_series("naut", 3, "nautiloid_escaped", prof)
+        P.freeze_series("naut", 3, "nautiloid_escaped", {"changed": True})                # frozen once
+        # run 1 adopted the name its agent chose: run 2 still gets the brief without it
+        (P.PLAYTHROUGHS / "naut").mkdir(parents=True)
+        (P.PLAYTHROUGHS / "naut" / "profile.json").write_text(json.dumps(
+            {**prof, "character": {**prof["character"], "name": "Mira"}}))
+        P.prepare_series_run("naut", "naut", 1)
+        P.prepare_series_run("naut", "naut-r2", 2)
+        for pt in ("naut", "naut-r2"):
+            mem = P.PLAYTHROUGHS / pt / "memory"
+            self.assertTrue((mem / "HANDOFF.md").is_file(), pt)
+            self.assertTrue((mem / ".git").is_dir(), pt)
+            self.assertIn(pt, (mem / "PLAYTHROUGH.md").read_text())
+        self.assertEqual(json.loads((P.PLAYTHROUGHS / "naut-r2" / "profile.json").read_text()), prof)
+        self.assertEqual(P.load_profile(P.PLAYTHROUGHS / "naut-r2" / "profile.json")["character"]["brief"],
+                         "a dwarf cleric")
+        # a resumed run keeps what it has
+        (P.PLAYTHROUGHS / "naut-r2" / "memory" / "lessons.md").write_text("kept\n")
+        P.prepare_series_run("naut", "naut-r2", 2)
+        self.assertEqual((P.PLAYTHROUGHS / "naut-r2" / "memory" / "lessons.md").read_text(), "kept\n")
+
+    # ---------------------------------------------------------------- per-run reset
+
+    def _series_runner(self, pt="naut-r2", k=2) -> P.Runner:
+        return P.Runner(P.Options(pt, None, 20, "opus", save_owner="Claude", until="nautiloid_escaped",
+                                  series="naut", run_index=k))
+
+    def test_a_fresh_run_resets_the_nav_kill_list_saves_and_snapshots_knowledge(self):
+        P.SE_BG3AI_DIR.mkdir(parents=True)
+        (P.SE_BG3AI_DIR / "nav_guard.json").write_text('{"slow":{"TUT_Avernus_C":{"why":"slow"}}}')
+        (P.SE_BG3AI_DIR / "nav_1234.json").write_text('{"levels":{}}')
+        (P.SE_BG3AI_DIR / "other.json").write_text("{}")
+        P.KNOWLEDGE_DIR.mkdir(parents=True)
+        (P.KNOWLEDGE_DIR / "builds.md").write_text("builds\n")
+        r = self._series_runner()
+        t0 = time.time()
+        self.assertEqual(r.begin_run(t0), t0)
+        self.assertEqual(sorted(p.name for p in P.SE_BG3AI_DIR.iterdir()), ["other.json"])   # only nav state moved
+        self.assertEqual(sorted(p.name for p in (r.state.dir / "reset").iterdir()), ["nav_1234.json", "nav_guard.json"])
+        self.assertEqual(json.loads((r.state.dir / "knowledge_snapshot.json").read_text()), {"builds.md": "builds\n"})
+        self.assertEqual(r.state["run"]["reset"], {"nav_files": ["nav_1234.json", "nav_guard.json"],
+                                                   "knowledge_files": 1})
+        self.assertEqual(r.state["saves_after"], t0)
+        # saves older than the run (run 1's, same character name) are never this run's
+        P.list_saves = lambda: [P.Save("Claude-1__S009-escaped", "Claude", "S009-escaped", t0 - 60),
+                                P.Save("Claude-2__S001-start", "Claude", "S001-start", t0 + 60)]
+        self.assertEqual(r.choose_save().folder, "Claude-2__S001-start")
+        self.assertEqual(r.save_env()["BG3AI_SAVES_AFTER"], str(int(t0)))
+        P.list_saves = lambda: [P.Save("Claude-1__S009-escaped", "Claude", "S009-escaped", t0 - 60)]
+        self.assertIsNone(r.choose_save())                                        # → a new game
+        # a restart of the same run keeps its start and doesn't reset again
+        (P.SE_BG3AI_DIR / "nav_guard.json").write_text("{}")
+        r2 = self._series_runner()
+        self.assertEqual(r2.begin_run(t0 + 500), t0)
+        self.assertTrue((P.SE_BG3AI_DIR / "nav_guard.json").exists())
+
+    def test_no_reset_outside_a_series_or_for_a_playthrough_that_already_played(self):
+        P.SE_BG3AI_DIR.mkdir(parents=True)
+        (P.SE_BG3AI_DIR / "nav_guard.json").write_text("{}")
+        r = P.Runner(P.Options("solo", None, 20, "opus", until="nautiloid_escaped"))
+        r.begin_run(time.time())
+        r2 = self._series_runner("played", 1)
+        r2.state["history"] = [{"kind": "play", "session": "S001"}]
+        r2.begin_run(time.time())
+        self.assertTrue((P.SE_BG3AI_DIR / "nav_guard.json").exists())
+        self.assertIsNone(r.state["saves_after"])
+        self.assertNotIn("BG3AI_SAVES_AFTER", r.save_env())
+
+    def test_agent_knowledge_edits_are_put_back_and_others_reported(self):
+        P.KNOWLEDGE_DIR.mkdir(parents=True)
+        (P.KNOWLEDGE_DIR / "builds.md").write_text("builds\n")
+        (P.KNOWLEDGE_DIR / "tools.md").write_text("tools\n")
+        r = self._series_runner()
+        t0 = time.time() - 5
+        r.begin_run(t0)
+        (P.KNOWLEDGE_DIR / "builds.md").write_text("builds\nthe answer to the nautiloid\n")    # the agent
+        (P.KNOWLEDGE_DIR / "new.md").write_text("cached answers\n")                           # the agent
+        (P.KNOWLEDGE_DIR / "tools.md").write_text("tools v2\n")                               # an operator
+        _stream(r.state.dir / "S001.jsonl",
+                _use("a", "Edit", {"file_path": str(P.KNOWLEDGE_DIR / "builds.md")}),
+                _use("b", "Write", {"file_path": "knowledge/new.md"}),                     # relative to play/
+                _use("c", "Edit", {"file_path": "memory/lessons.md"}))
+        k = r.restore_knowledge(t0)
+        self.assertEqual(k["agent_edits"], ["builds.md (changed)", "new.md (added)"])
+        self.assertEqual(k["other_changes"], ["tools.md (changed)"])
+        self.assertEqual((P.KNOWLEDGE_DIR / "builds.md").read_text(), "builds\n")
+        self.assertFalse((P.KNOWLEDGE_DIR / "new.md").exists())
+        self.assertEqual((P.KNOWLEDGE_DIR / "tools.md").read_text(), "tools v2\n")
+        self.assertIn("nautiloid", (r.state.dir / "knowledge_edits" / "builds.md").read_text())   # kept
+        self.assertEqual((r.state.dir / "knowledge_edits" / "new.md").read_text(), "cached answers\n")
+
+    # ---------------------------------------------------------------- failure classes
+
+    def kinds(self, fails) -> list[tuple[str, str]]:
+        return [(f["kind"], f["class"]) for f in fails]
+
+    def test_runner_events(self):
+        fails, ops = P.runs.event_failures([
+            {"t": 1, "kind": "runner_start"},
+            {"t": 2, "kind": "fault", "fault": "crash", "session": "S001", "detail": "game process exited"},
+            {"t": 3, "kind": "recovered", "fault": "crash"},
+            {"t": 4, "kind": "fault", "fault": "hang", "session": "S001"},
+            {"t": 5, "kind": "fault", "fault": "agent_hang", "session": "S002", "detail": "no claude output"},
+            {"t": 6, "kind": "game_oom", "why": "oom-kill"},
+            {"t": 7, "kind": "setup_failed", "error": "the main menu never came up"},
+            {"t": 8, "kind": "launch_failed", "error": "crash: signal 11"},
+            {"t": 9, "kind": "load_refused", "error": "gate"},
+            {"t": 10, "kind": "launch_gave_up", "error": "3 launches"},
+            {"t": 11, "kind": "recovery_failed", "error": "x"},
+            {"t": 12, "kind": "steam_refused", "why": "online"},
+            {"t": 13, "kind": "runner_restart", "files": ["runner/play.py"]},
+            {"t": 14, "kind": "runner_stop", "why": "stopped"},
+            {"t": 15, "kind": "runner_start"},
+            {"t": 16, "kind": "milestone", "milestone": "nautiloid_escaped"}])
+        self.assertEqual(self.kinds(fails), [
+            ("game_crash", "harness"), ("game_hang", "harness"), ("agent_hang", "unknown"), ("game_oom", "harness"),
+            ("setup_failed", "harness"), ("launch_failed", "harness"), ("load_refused", "harness"),
+            ("launch_gave_up", "harness"), ("recovery_failed", "harness"), ("steam_refused", "harness")])
+        self.assertIn("game process exited", fails[0]["detail"])
+        self.assertEqual([o["t"] for o in ops], [13, 14, 15])          # self-restart, operator stop, manual start
+
+    def test_session_history(self):
+        fails = P.runs.history_failures([
+            {"session": "S001", "reason": "exited", "started": 0, "ended": 20, "exit": 1},
+            {"session": "S002", "reason": "killed", "started": 100, "ended": 900},
+            {"session": "S003", "reason": "exited", "started": 1000, "ended": 3000, "early_exit_min": 12.5},
+            {"session": "S004", "reason": "hard_stop", "started": 4000, "ended": 8000, "started_at_game_over": True},
+            {"session": "S005", "reason": "milestone", "started": 9000, "ended": 9030}])   # quick, but the goal
+        self.assertEqual(self.kinds(fails), [("claude_quick_exit", "harness"), ("claude_killed", "unknown"),
+                                             ("early_exit", "agent"), ("party_wipe", "agent")])
+
+    def test_stream_failures(self):
+        d = self.tmp / "s"
+        d.mkdir()
+        s = _stream(d / "S001.jsonl",
+                    {"type": "system", "subtype": "init", "mcp_servers": [{"name": "bg3", "status": "failed"}]},
+                    _use("1", "mcp__bg3__move_to", {"x": 1}), _res("1", "FAILED: no path to the destination"),
+                    _use("2", "mcp__bg3__look", {}), _res("2", "Error executing tool look: KeyError 'pos'", True),
+                    _use("3", "mcp__bg3__look", {}), _res("3", "Error executing tool look: KeyError 'pos'", True),
+                    _use("4", "mcp__bg3__travel_to", {}), _res("4", "MCP error -32001: Request timed out", True),
+                    _use("5", "mcp__bg3__combat_turn", {}), _res("5", "2. end_turn: TIMEOUT — still my turn"),
+                    _use("6", "Read", {"file_path": "../runner/play.py"}),
+                    _res("6", "Blocked by the sandbox/fairness rule: Read outside memory/", True),
+                    _use("7", "mcp__bg3__get_status", {}), _res("7", "HP 0/12 ... screen=game_over"),
+                    _use("8", "mcp__bg3__look", {}),
+                    _res("8", "e3 goblin 7f0c6a1e-1111-2222-3333-444455556666 hp 7"),
+                    _use("9", "mcp__bg3__talk_to", {}), _res("9", "<tool_use_error>InputValidationError: npc</tool_use_error>",
+                                                            True),
+                    {"type": "assistant", "message": {"content": [{"type": "text", "text": "API Error: 529 overloaded"}]}},
+                    {"type": "result", "is_error": True, "result": "Claude AI usage limit reached|1760000000"})
+        fails = P.runs.stream_failures(s)
+        got = sorted(self.kinds(fails))
+        self.assertEqual(got, sorted([
+            ("mcp_failed", "harness"), ("claude_api", "harness"), ("claude_api", "harness"),
+            ("tool_exception", "harness"), ("tool_timeout", "harness"), ("tool_timeout", "harness"),
+            ("fairness_block", "agent"), ("party_wipe", "agent"), ("fairness_leak", "harness")]))
+        exc = next(f for f in fails if f["kind"] == "tool_exception")
+        self.assertEqual((exc["n"], exc["detail"][:10]), (2, "S001: look"))       # grouped, FAILED: not counted
+
+    def test_stalls_reloads_and_the_outcome(self):
+        p = _stream(self.tmp / "S001.progress.jsonl", {"type": "stuck", "t": 50, "idle_min": 12.0, "actions": 40},
+                    {"type": "stuck", "t": 200, "idle_min": 15.0, "actions": 60}, {"type": "unstuck", "t": 300})
+        self.assertEqual(self.kinds(P.runs.progress_failures([p], 100)), [("stall", "agent")])
+        self.assertEqual(self.kinds(P.runs.reload_failures([{"t": 1, "tool": "load_game", "args": {"save": "latest"}},
+                                                            {"t": 2, "tool": "look"}])), [("reload", "agent")])
+        harness = [{"class": "harness"}]
+        self.assertEqual(self.kinds(P.runs.outcome_failure("timeout", "", 9, [])), [("timeout", "agent")])
+        self.assertEqual(self.kinds(P.runs.outcome_failure("timeout", "", 9, harness)), [("timeout", "unknown")])
+        self.assertEqual(self.kinds(P.runs.outcome_failure("gave_up", "setup", 9, [])), [("gave_up", "harness")])
+        self.assertEqual(self.kinds(P.runs.outcome_failure("runner_error", "x", 9, [])), [("runner_error", "harness")])
+        self.assertEqual(P.runs.outcome_failure("reached", "", 9, harness), [])
+
+    def test_clean(self):
+        agent = [{"class": "agent", "kind": "reload"}, {"class": "unknown", "kind": "agent_hang"}]
+        self.assertTrue(P.runs.is_clean("reached", agent, []))
+        self.assertFalse(P.runs.is_clean("reached", agent + [{"class": "harness", "kind": "game_crash"}], []))
+        self.assertFalse(P.runs.is_clean("reached", [], [{"what": "runner stopped by the operator"}]))
+        self.assertFalse(P.runs.is_clean("timeout", [], []))
+
+    def test_run_record_tags_the_whole_run(self):
+        d = P.RUNTIME / "sessions" / "naut"
+        d.mkdir(parents=True)
+        t0 = time.time() - 3600
+        _stream(d / "S001.jsonl", _use("1", "mcp__bg3__look", {}), _res("1", "Error executing tool look: boom", True),
+                {"type": "result", "num_turns": 3, "total_cost_usd": 1.0, "usage": {"output_tokens": 5}})
+        _stream(d / "S001.progress.jsonl", {"type": "stuck", "t": t0 + 60, "idle_min": 11, "actions": 30})
+        _stream(d / "runner_events.jsonl", {"t": t0 - 10, "kind": "fault", "fault": "crash"},     # before the run
+                {"t": t0 + 1, "kind": "runner_start"}, {"t": t0 + 5, "kind": "fault", "fault": "crash"})
+        P.read_actions_since = lambda t, path=None: [{"t": t0 + 30, "tool": "load_game", "args": {"save": "latest"}}]
+        hist = [{"kind": "play", "session": "S001", "reason": "milestone", "started": t0 + 2, "ended": t0 + 3000,
+                 "minutes": 50}]
+        rec = P.run_record(d, t0, t0 + 3600, {"id": "nautiloid_escaped", "label": "Nautiloid escaped",
+                                              "session": "S001"}, "naut", hist)
+        self.assertEqual((rec["outcome"], rec["clean"], rec["crashes"], rec["reloads"]), ("reached", False, 1, 1))
+        self.assertEqual(sorted(self.kinds(rec["failures"])), [("game_crash", "harness"), ("reload", "agent"),
+                                                               ("stall", "agent"), ("tool_exception", "harness")])
+        self.assertEqual((rec["harness_failures"], rec["agent_failures"], rec["unknown_failures"]), (2, 2, 0))
+        self.assertEqual(rec["operator"], [])
+        rec = P.run_record(d, t0, t0 + 3600, {}, "naut", hist, "timeout", "time cap used up", take_over=True)
+        self.assertEqual((rec["outcome"], rec["milestone"], rec["clean"]), ("timeout", None, False))
+        self.assertEqual(rec["failures"][-1]["kind"], "timeout")
+        self.assertIn("--take-over", rec["operator"][0]["what"])
+
+    # ---------------------------------------------------------------- the table
+
+    def test_runs_table_and_streak(self):
+        recs = [{"series": "naut", "run": 1, "playthrough": "naut", "outcome": "reached", "clean": False,
+                 "wall_min": 80, "sessions": 2, "cost_usd": 12.5,
+                 "failures": [{"kind": "game_crash", "class": "harness"}, {"kind": "reload", "class": "agent"}]},
+                {"series": "naut", "run": 2, "playthrough": "naut-r2", "outcome": "reached", "clean": True,
+                 "wall_min": 60, "sessions": 1, "cost_usd": 9,
+                 "failures": [{"kind": "stall", "class": "agent", "n": 2}]},
+                {"series": "naut", "run": 3, "playthrough": "naut-r3", "outcome": "reached", "clean": True,
+                 "wall_min": 55, "sessions": 1, "cost_usd": 8, "failures": []}]
+        self.assertEqual((P.runs.clean_streak(recs), P.runs.best_streak(recs)), (2, 2))
+        self.assertEqual(P.runs.clean_streak(recs + [{"clean": False}]), 0)
+        out = P.runs.runs_table(recs)
+        lines = out.splitlines()
+        self.assertTrue(lines[0].startswith("run  playthrough  outcome"))
+        self.assertIn("naut-r2", lines[3])
+        self.assertIn("stall(a)×2", lines[3])
+        self.assertIn("game_crash(h)", lines[2])
+        self.assertTrue(out.endswith("3 run(s), 2 clean; 2 clean in a row (latest), best streak 2"))
+
+    def test_runs_command(self):
+        d = P.RUNTIME / "sessions" / "naut"
+        d.mkdir(parents=True)
+        (d / "runs.jsonl").write_text(json.dumps({"series": "naut", "run": 1, "playthrough": "naut",
+                                                  "outcome": "timeout", "why": "time cap used up", "clean": False,
+                                                  "wall_min": 240, "sessions": 4, "cost_usd": 30,
+                                                  "failures": [{"t": time.time(), "kind": "timeout", "class": "agent",
+                                                                "detail": "time cap used up"}],
+                                                  "operator": [{"what": "runner stopped by the operator"}]}) + "\n")
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(P.main(["runs", "--playthrough", "naut", "--failures"]), 0)
+        out = buf.getvalue()
+        self.assertIn("0 clean in a row", out)
+        self.assertIn("agent    timeout: time cap used up", out)
+        self.assertIn("operator: runner stopped by the operator", out)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(P.main(["runs", "--playthrough", "nothing"]), 1)
+
+    def test_cli_refuses_runs_without_until(self):
+        import contextlib
+        import io
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(P.main(["run", "--playthrough", "x", "--runs", "3"]), 2)
+            self.assertEqual(P.main(["run", "--playthrough", "x", "--until", "nautiloid_escaped", "--runs", "0"]), 2)
+            self.assertEqual(P.main(["run", "--playthrough", "x", "--run-hours", "2"]), 2)
+        self.assertIn("--until", err.getvalue())
+
+
+class InflightStuck(unittest.TestCase):
+    """A hung game's in-flight background search is marked stuck by the runner (the mod's Tick froze with it)."""
+
+    def test_marks_fresh_inflight_once(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "nav_guard.json"
+            f.write_text(json.dumps({"strikes": [], "inflight": {"level": "SCL_Main_A", "op": "ways warm"}}))
+            self.assertEqual(P.mark_inflight_stuck(f), "SCL_Main_A")
+            self.assertTrue(json.loads(f.read_text())["inflight"]["stuck"])
+            self.assertIsNone(P.mark_inflight_stuck(f))          # already stuck
+
+    def test_nothing_in_flight_or_no_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "nav_guard.json"
+            self.assertIsNone(P.mark_inflight_stuck(f))
+            f.write_text(json.dumps({"strikes": {}}))
+            self.assertIsNone(P.mark_inflight_stuck(f))
+            self.assertNotIn("inflight", json.loads(f.read_text()))
 
 
 if __name__ == "__main__":

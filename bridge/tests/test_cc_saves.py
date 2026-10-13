@@ -229,6 +229,16 @@ class Saves(Base):
         self.assertEqual(self.loaded, ["Claude-3__LIVETEST-x"])
         self.assertIn("not one of this playthrough's saves", server.load_game("S010-end"))
 
+    def test_a_series_run_never_sees_an_earlier_runs_saves(self):
+        # run --runs: every run's character may be "Claude"; BG3AI_SAVES_AFTER (the run's start) keeps run 1's out
+        self.save("Claude-1__S004-end", 10)                   # run 1
+        with mock.patch.object(server, "SAVES_AFTER", self.t + 50):
+            self.assertIn("no Sxxx- save", server.load_game("latest"))
+            self.assertNotIn("S004-end", server.list_saves())
+            self.save("Claude-2__S001-start", 60)             # run 2's own
+            server.load_game("latest")
+        self.assertEqual(self.loaded, ["Claude-2__S001-start"])
+
     def test_prefix_from_the_owner(self):
         self.assertEqual(server._env_prefix({"BG3AI_SAVE_OWNER": "Ilse"}), "Ilse-")
         self.assertEqual(server._env_prefix({"BG3AI_SAVE_OWNER": "Ilse", "BG3AI_SAVE_PREFIX": "Ilse-4"}), "Ilse-4")

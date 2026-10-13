@@ -4,9 +4,13 @@
     runner/play.py run --playthrough NAME [--hours N] [--session-minutes 60] [--model opus] [--effort medium]
     runner/play.py status [--playthrough NAME]
     runner/play.py stop                  # finish the current session, then exit
+    runner/play.py run --playthrough NAME --until nautiloid_escaped --runs 3 [--run-hours 4]   # benchmark series
+    runner/play.py runs --playthrough NAME [--failures]   # its runs: outcome, clean, failures by class
 
-Per session: make sure the game is up with this playthrough's save loaded, launch `claude -p` in play/
-(the SessionStart hook opens the memory session, the Stop hook lints and commits it), stream its output
+Per session: make sure the game is up with this playthrough's save loaded, open the memory session (session.py
+start; its briefing leads the kickoff), launch `claude -p` in play/ with only the bg3 MCP tools (the server owns
+memory, the sandbox and end_session; after claude exits the stop check may resume it with "keep playing" or
+"finish the wrap-up", and lints and commits the memory when it may end; no client hooks), stream its output
 to runtime/sessions/<playthrough>/Sxxx.{jsonl,log}, enforce the deadline, then make sure a save exists,
 close the memory session (with a short "fix your notes" pass if lint fails), and update the stuck
 detector. Game crashes and hangs are recovered by relaunching and reloading the last save; a claude process
@@ -49,6 +53,7 @@ from bg3ai.luadebug import LuaDebugError  # noqa: E402  (stdlib only: the game r
 sys.path.insert(0, str(REPO / "runner"))
 import triage  # noqa: E402  (runner/triage.py: post-session Sxxx.triage.md)
 import ramwatch  # noqa: E402  (runner/ramwatch.py: RAM watchdog, RSS spikes with the last tool calls)
+import runs  # noqa: E402  (runner/runs.py: run --runs naming, per-run resets, failure tagging, the runs table)
 sys.path.insert(0, str(REPO / "tools"))
 import steam_paths  # noqa: E402  (stdlib: Steam's offline state before any game launch)
 import bg3le_buildinfo  # noqa: E402  (stdlib: is build/bg3le/dist built with every patches/bg3le patch?)
@@ -67,6 +72,11 @@ SAVE_DIR = Path(os.environ.get(
 DEBUG_HOST = "127.0.0.1"
 DEBUG_PORT = int(os.environ.get("BG3LE_DEBUG_PORT", "9998"))
 SAVE_PREFIX = os.environ.get("BG3AI_SAVE_PREFIX", "")
+MEMORY_TEMPLATE = REPO / "memory-template"
+KNOWLEDGE_DIR = PLAY_DIR / "knowledge"   # agent-writable outside playbooks/ (FAIR-2): snapshot + restore per --runs run
+# The mod's Ext.IO files (nav_guard.json: the per-level navigation kill list; nav_<host uuid>.json: breadcrumb mirrors)
+SE_BG3AI_DIR = Path(os.environ.get(
+    "BG3AI_SE_DIR", Path.home() / ".local/share/Larian Studios/Baldur's Gate 3/Script Extender")) / "BG3AI"
 
 HARD_STOP_GRACE = 10 * 60      # deadline + this → SIGINT
 SIGINT_GRACE = 30              # then SIGTERM
@@ -125,8 +135,14 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # operator's user-level settings (hooks, plugins) stay out of the playing agent.
 # No skills at all (bundled, synced or project): the playing agent's procedures are read-only playbooks in
 # play/knowledge/playbooks/, which play/CLAUDE.md says when to read.
+# No built-in tools but ToolSearch (it loads the deferred MCP tools' schemas): files, memory, the session's start and
+# end and the sandbox are the bg3 MCP server's (bridge/src/bg3ai/memtools.py), so the agent has only mcp__bg3__*
+# and no client hook is needed for correctness. play/.claude/settings.json denies the rest again (defence in depth).
+PLAY_TOOLS = "ToolSearch"
 CLAUDE_FLAGS = ["--exclude-dynamic-system-prompt-sections", "--setting-sources", "project,local",
-                "--disable-slash-commands"]
+                "--disable-slash-commands", "--tools", PLAY_TOOLS]
+MAX_STOP_RESUMES = 6           # claude ended its turn but the stop check says "keep playing"/"finish the wrap-up":
+                               # resume it with the reason at most this often per session (was the Stop hook's block)
 
 
 def log(msg: str) -> None:
@@ -342,6 +358,25 @@ def foreign_use_since(save: Save, saves: list[Save], actions: list[dict], game_s
     if game_started and game_started > save.mtime:
         return f"the game was relaunched after {save.label} was written (it loads its newest save, not ours)"
     return None
+
+
+def mark_inflight_stuck(guard_file: Path) -> str | None:
+    """After the runner killed a hung game: marks the mod's in-flight background search (nav_guard.json "inflight")
+    stuck, so the next start counts it as a strike on that level. The mod marks it from its own Tick, which runs on
+    the server thread that froze (2026-10-13: a ways warm froze SCL_Main_A for 30 min; the marker stayed fresh, no
+    strike, and the next load froze again). Returns the level, or None when there was nothing in flight."""
+    try:
+        d = json.loads(guard_file.read_text())
+        f = d.get("inflight") if isinstance(d, dict) else None
+        if not isinstance(f, dict) or not f.get("level") or f.get("stuck"):
+            return None
+        f["stuck"] = True
+        guard_file.write_text(json.dumps(d))
+    except (OSError, ValueError) as e:
+        log(f"nav guard: couldn't mark the in-flight search stuck: {e}")
+        return None
+    log(f"nav guard: the game hung during {f.get('op')} on {f['level']}: marked stuck (a strike at the next start)")
+    return f["level"]
 
 
 def read_actions_since(t: float, path: Path | None = None, tail_bytes: int = 4_000_000) -> list[dict]:
@@ -568,9 +603,12 @@ CLAUDE_STREAM_RE = re.compile(r"^S\d{3,}(?:-[\w-]+)?\.jsonl$")   # Sxxx.jsonl, S
 
 
 def run_record(state_dir: Path, run_started: float, now: float, hit: dict, playthrough: str,
-               history: list[dict]) -> dict:
+               history: list[dict], outcome: str | None = None, why: str = "", take_over: bool = False) -> dict:
     """One runs.jsonl line for an --until run: wall time, sessions, claude cost and tokens (the stream's result
-    events, the [end] lines), crashes/hangs and recoveries (runner_events.jsonl), agent reloads (actions.jsonl)."""
+    events, the [end] lines), crashes/hangs and recoveries (runner_events.jsonl), agent reloads (actions.jsonl);
+    the outcome (reached | timeout | gave_up | runner_error), every failure tagged harness/agent/unknown
+    (runner/runs.py), the operator actions, and `clean` (reached, no harness failure, no operator action)."""
+    outcome = outcome or ("reached" if hit.get("id") else "timeout")
     sessions = [h for h in history if h.get("kind") == "play" and (h.get("started") or 0) >= run_started]
     cost, turns, tokens = 0.0, 0, {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     for f in state_dir.iterdir() if state_dir.is_dir() else []:
@@ -600,12 +638,23 @@ def run_record(state_dir: Path, run_started: float, now: float, hit: dict, playt
                 e = json.loads(ln)
             except ValueError:
                 continue
-            if e.get("t", 0) >= run_started:
+            if e.get("t", 0) >= run_started - 1:   # event times are rounded to 0.1 s
                 events.append(e)
     except OSError:
         pass
-    reloads = [a for a in read_actions_since(run_started) if a.get("tool") == "load_game"]
-    return {"t": round(now, 1), "playthrough": playthrough, "milestone": hit.get("id"), "label": hit.get("label"),
+    actions = [a for a in read_actions_since(run_started) if a.get("t", now) <= now + 1]
+    reloads = [a for a in actions if a.get("tool") == "load_game"]
+    failures = runs.classify_run(state_dir, run_started, now, sessions, events, actions, outcome, why)
+    _, operator = runs.event_failures(events)
+    if take_over:
+        operator.append({"t": round(run_started, 1), "what": "--take-over (the run may have started from a game "
+                                                              "it didn't set up)"})
+    counts = runs.class_counts(failures)
+    return {"t": round(now, 1), "playthrough": playthrough, "outcome": outcome, "why": why[:300],
+            "clean": runs.is_clean(outcome, failures, operator),
+            "harness_failures": counts[runs.HARNESS], "agent_failures": counts[runs.AGENT],
+            "unknown_failures": counts[runs.UNKNOWN],
+            "milestone": hit.get("id"), "label": hit.get("label"),
             "reached_in": hit.get("session"), "reached_at": hit.get("t"),
             "started": round(run_started, 1), "wall_min": round((now - run_started) / 60, 1),
             "sessions": len(sessions), "play_min": round(sum(h.get("minutes") or 0 for h in sessions), 1),
@@ -614,7 +663,13 @@ def run_record(state_dir: Path, run_started: float, now: float, hit: dict, playt
             "agent_hangs": sum(1 for e in events if e.get("kind") == "fault" and e.get("fault") == "agent_hang"),
             "recoveries": sum(1 for e in events if e.get("kind") == "recovered"),
             "setup_failures": sum(1 for e in events if e.get("kind") == "setup_failed"),
-            "reloads": len(reloads)}
+            "reloads": len(reloads), "failures": failures, "operator": operator}
+
+
+def keeper_model(option: str | None, play_model: str) -> str:
+    """The memory keeper's model: --keeper-model, where "same" (the default) is the session's play model. A
+    benchmark run then measures one model end to end, its own note-keeping included (BENCHMARK-BIAS.md)."""
+    return play_model if not option or option == "same" else option
 
 
 def is_stuck(history: list[dict], n: int = STUCK_SESSIONS) -> bool:
@@ -632,7 +687,7 @@ PACE_PREFLIGHT = """PACE PRE-FLIGHT (read before your first game action):
   depend on it, then react to its result. For example:
     travel_to(objective="o1")                      -> started, returns at once
     queue_actions('[{"tool":"interact","target":"e15"}]')   -> what to do on arrival
-    look() / get_frontier() / Edit your session log  -> while it walks
+    look() / get_frontier() / note("[tag] ...")      -> while it walks
     wait_for("queue")                              -> only now, if nothing else is left to do
 - Never pass wait=true to move_to, walk_toward or travel_to, not even after a walk stopped or
   failed (failures come back at once anyway), and not because you did it earlier this session. Never
@@ -643,18 +698,24 @@ PACE_PREFLIGHT = """PACE PRE-FLIGHT (read before your first game action):
 
 
 def build_kickoff(sid: str, playthrough: str, deadline: float, loaded_save: str | None,
-                  notes: list[str]) -> str:
+                  notes: list[str], briefing: str = "") -> str:
+    """The first message of a session. `briefing` is session.py start's memory injection (the runner opened the
+    session): it leads the message, where the SessionStart hook used to put it. Without it (the runner couldn't open
+    the session) the agent calls session_start."""
     end = datetime.fromtimestamp(deadline).strftime("%H:%M")
     lines = [
         f"This is session {sid} of the BG3 playthrough '{playthrough}', started by the autonomous runner.",
-        "Your memory injection (PLAYTHROUGH.md and HANDOFF.md) is above. Run the session-start playbook (Read "
-        "knowledge/playbooks/session-start.md), then "
-        "play following CLAUDE.md.",
+        ("Your memory briefing (PLAYTHROUGH.md and HANDOFF.md) is above. " if briefing else
+         "First call session_start: it shows your memory briefing (PLAYTHROUGH.md and HANDOFF.md). ")
+        + "Run the session-start playbook (memory_read knowledge/playbooks/session-start.md), then "
+        "play following CLAUDE.md. Your notes are files under memory/: use the memory_* tools and note.",
         f"Session deadline: {end} local time (the session_clock tool shows the time left). Run the "
-        "session-wrapup playbook when the SESSION CLOCK reminder appears, and end your turn when it reports "
-        "the commit. Nobody will answer questions: decide yourself and write down why.",
+        "session-wrapup playbook when the ⏱ line says WRAP UP; its last step is end_session, and you end your "
+        "turn when that reports the commit. Nobody will answer questions: decide yourself and write down why.",
         PACE_PREFLIGHT,
     ]
+    if briefing:
+        lines.insert(0, briefing)
     if loaded_save:
         lines.append(f"The runner has already loaded save \"{loaded_save}\". Don't reload it; verify state "
                      "with get_status.")
@@ -679,6 +740,12 @@ def agent_resume_prompt(deadline: float, notes: list[str]) -> str:
              f"and resumed you; the game kept running. Same session (deadline still {end}). Call get_status, then "
              "keep playing following CLAUDE.md; keep each step short (no tool call or think longer than a minute)."]
     return "\n\n".join(lines + notes)
+
+
+def stop_resume_prompt(reason: str) -> str:
+    """The message that resumes a session whose claude ended its turn while the stop check (session.py stop, the old
+    Stop hook) still blocks: keep playing, finish the wrap-up, or fix lint errors."""
+    return f"RUNNER: you ended your turn, but this session can't end yet. {reason}"
 
 
 def new_game_note(owner: str) -> str:
@@ -762,8 +829,9 @@ def character_creation_note(profile: dict, name: str | None) -> str:
 
 def fix_notes_prompt(lint_report: str) -> str:
     return ("The session is over, but `session.py end` refused to commit your memory because lint "
-            "failed. Do NOT play or touch the game. Only fix the memory files so lint passes, then end your "
-            f"turn. You have {FIX_SESSION_MINUTES} minutes.\n\nLint report:\n{lint_report[-6000:]}")
+            "failed. Do NOT play or touch the game. Only fix the memory files so lint passes (memory_read, "
+            "memory_edit, memory_write: each result shows the file's remaining lint errors), then call end_session "
+            f"and end your turn. You have {FIX_SESSION_MINUTES} minutes.\n\nLint report:\n{lint_report[-6000:]}")
 
 
 STUCK_DIRECTIVE = (
@@ -1429,7 +1497,7 @@ class Options:
     fallback_model: str | None = None
     allow_short: bool = False          # --allow-short-sessions: session-config minutes below MIN_SESSION_MINUTES too
     keeper: bool = True                # memory-keeper pass between sessions (runner/memory_keeper.py)
-    keeper_model: str = "sonnet"
+    keeper_model: str = "same"         # "same" = the session's play model (a benchmark compares one model end to end)
     keeper_effort: str | None = "low"
     keeper_minutes: float = 5.0
     autocompact: int | None = None     # claude --autocompact <tokens> (play sessions); None = Claude Code's default
@@ -1437,6 +1505,10 @@ class Options:
     character_brief: str | None = None  # run --character-brief: written to profile.json (CHAR-1 phase 0)
     roleplay: str | None = None        # run --roleplay strict|light (profile.json character.roleplay)
     difficulty: str | None = None      # run --difficulty (profile.json difficulty, phase 0's new_game)
+    run_hours: float | None = None     # run --run-hours: cap of one --until run (then it ends as a timeout)
+    series: str | None = None          # run --runs: the series (the base playthrough); its runs.jsonl gets the records
+    run_index: int | None = None       # run --runs: this run's number in the series (1 = the base playthrough)
+    series_end: float | None = None    # run --runs --hours: the whole series' end (epoch s)
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -1521,6 +1593,10 @@ class Runner:
             self.bridge_hashes = self.handover.get("bridge_hashes")
             lt = self.handover.get("last_triage")
             self.last_triage = (lt[0], Path(lt[1])) if lt else None
+            if self.handover.get("series_end"):
+                self.opt.series_end = self.handover["series_end"]
+        self.outcome: str | None = None      # how run() ended: reached|timeout|gave_up|runner_error|stopped (--until)
+        self.fatal = False                   # run() ended on something a next --runs run can't fix (needs a human)
         g = self.state["game"] or {}
         # The game a previous run of the runner launched: keep watching its bg3le logs.
         self.watch = LaunchWatch(g["stamp"], RUNTIME / "logs", g.get("launched")) if g.get("stamp") else None
@@ -1785,10 +1861,17 @@ class Runner:
         return (self.wait_for("game state Running", running, 600, MENU_POLL)
                 and self.wait_for("server context", server_ready, 120, 3))
 
+    def own_saves(self) -> list[Save]:
+        """list_saves() minus saves older than this playthrough's run start (runner.json saves_after, set for a
+        --runs run): a series reuses one character name, and run 2 must never load run 1's saves."""
+        after = self.state["saves_after"]
+        saves = list_saves()
+        return [s for s in saves if s.mtime >= after] if after else saves
+
     def choose_save(self) -> Save | None:
         handoff = self.mem / "HANDOFF.md"
         label = parse_handoff_save(handoff.read_text()) if handoff.exists() else None
-        saves = list_saves()
+        saves = self.own_saves()
         save = pick_save(saves, label, self.state["save_owner"], set(self.state["runner_saves"]))
         blocked = set(self.state["oom_blocked"] or [])
         if save and save.folder in blocked:
@@ -1967,7 +2050,7 @@ class Runner:
     def previous_good_save(self, failed: set[str]) -> Save | None:
         """The fallback when a save keeps crashing the game on load: the last save the runner loaded successfully,
         else this playthrough's newest other save. None = nothing else to try."""
-        saves = [s for s in list_saves() if s.folder not in failed]
+        saves = [s for s in self.own_saves() if s.folder not in failed]
         good = self.state["loaded_save"]
         hit = next((s for s in saves if s.folder == good), None)
         return hit or pick_save(saves, None, self.state["save_owner"], set(self.state["runner_saves"]))
@@ -2171,6 +2254,8 @@ class Runner:
                 why = f"{why} (out of memory: {oom})"
         crashed_at = time.time()
         self.kill_game()
+        if why == "stopped responding":
+            mark_inflight_stuck(SE_BG3AI_DIR / "nav_guard.json")
         save = self.choose_save()
         label = self.load_save(save)
         self.pending_notes.append(
@@ -2254,7 +2339,9 @@ class Runner:
         """The MCP server's save identity and gates: BG3AI_SAVE_OWNER/PREFIX (save_identity) and BG3AI_SAVE_GATES."""
         state = getattr(self, "state", None)
         owner, prefix = save_identity(self.opt.save_owner or (state["save_owner"] if state else None))
-        return {"BG3AI_SAVE_OWNER": owner, "BG3AI_SAVE_PREFIX": prefix, **gates_env(getattr(self, "gates", None))}
+        after = state["saves_after"] if state else None   # a --runs run: the server's saves start at the run
+        return {"BG3AI_SAVE_OWNER": owner, "BG3AI_SAVE_PREFIX": prefix, **gates_env(getattr(self, "gates", None)),
+                **({"BG3AI_SAVES_AFTER": str(int(after))} if after else {})}
 
     def run_claude(self, sid: str, prompt: str, minutes: float, claude_session: str,
                    resume: bool = False, tag: str = "", needs_game: bool = True) -> SessionResult:
@@ -2276,10 +2363,11 @@ class Runner:
         env.update(self.save_env())
         base = self.state.dir / f"{sid}{tag}"
         env["BG3AI_METRICS_PATH"] = f"{base}.metrics.jsonl"  # the bridge's per-tool latency records
+        env["BG3AI_SESSION"] = sid   # the runner opened this memory session: the MCP server attaches, never opens one
         # the memory keeper compacts old logs between sessions: session.py then doesn't ask the player to
         env["BG3AI_KEEPER"] = "1" if self.opt.keeper and not self.opt.dry_run else "0"
         if not needs_game:
-            env["BG3AI_FIX_NOTES"] = "1"   # the Stop hook lints + commits instead of "keep playing"
+            env["BG3AI_FIX_NOTES"] = "1"   # the stop check lints + commits instead of "keep playing"; no game I/O
         cmd = self.claude_cmd(prompt, claude_session, resume, tag)
         model, effort = self.model_for(tag)
         write_status(playthrough=self.opt.playthrough, session=sid + tag, claude_session=claude_session,
@@ -2523,19 +2611,110 @@ class Runner:
             self.event("milestone", milestone=hit["id"], session=session)
         return self.until_hit if hit else None
 
-    def write_run_record(self, run_started: float) -> dict:
-        """runs.jsonl in the playthrough's runtime dir: one line per --until run (the benchmark's raw score)."""
+    def runs_path(self) -> Path:
+        """runs.jsonl of this run: the series' (runtime/sessions/<base>/) for --runs, else the playthrough's."""
+        return RUNTIME / "sessions" / self.opt.series / "runs.jsonl" if self.opt.series else self.state.dir / "runs.jsonl"
+
+    def write_run_record(self, run_started: float, outcome: str = "reached", why: str = "") -> dict:
+        """runs.jsonl: one line per --until run (the benchmark's raw score), whatever the outcome. A --runs run also
+        gets its knowledge/ edits put back (FAIR-2) and noted in the record."""
         rec = run_record(self.state.dir, run_started, time.time(), self.until_hit or {}, self.opt.playthrough,
-                         self.state["history"] or [])
+                         self.state["history"] or [], outcome, why, self.opt.take_over)
+        play = self.model_for()[0]
+        rec.update(model=play, effort=self.model_for()[1],
+                   keeper_model=keeper_model(self.opt.keeper_model, play) if self.opt.keeper else None)
+        if self.opt.series:
+            rec = {"series": self.opt.series, "run": self.opt.run_index, **rec}
+            run = self.state["run"] or {}
+            if run.get("reset"):
+                rec["reset"] = run["reset"]
+            k = self.restore_knowledge(run_started)
+            if k is not None:
+                rec["knowledge"] = k
+        path = self.runs_path()
         try:
-            with open(self.state.dir / "runs.jsonl", "a") as f:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a") as f:
                 f.write(json.dumps(rec) + "\n")
         except OSError as e:
             log(f"run record write failed: {e}")
-        log(f"run record: {rec['milestone']} in {rec['wall_min']} min, {rec['sessions']} session(s), "
-            f"${rec['cost_usd']:.2f}, {rec['crashes']} game crash(es)/hang(s), {rec['recoveries']} recoveries, "
-            f"{rec['reloads']} agent reload(s) → {self.state.dir / 'runs.jsonl'}")
+        self.state["run"] = None   # this run is over; a later --until run of the playthrough starts its own
+        log(f"run record: {outcome} ({rec['milestone'] or why or '-'}) in {rec['wall_min']} min, {rec['sessions']} "
+            f"session(s), ${rec['cost_usd']:.2f}, {rec['crashes']} game crash(es)/hang(s), {rec['recoveries']} "
+            f"recoveries, {rec['reloads']} agent reload(s); failures harness {rec['harness_failures']} / agent "
+            f"{rec['agent_failures']} / unknown {rec['unknown_failures']}; clean={rec['clean']} → {path}")
         return rec
+
+    # ---------------------------------------------------------------- benchmark runs (--until / --runs)
+
+    def begin_run(self, now: float) -> float:
+        """--until: the run's start, kept in runner.json "run" across runner restarts until its record is written.
+        A --runs run on a fresh playthrough first gets reset_for_run()."""
+        cur = self.state["run"]
+        if cur and cur.get("started"):
+            return cur["started"]
+        rec = {"started": now, "series": self.opt.series, "index": self.opt.run_index}
+        if self.opt.series and not self.state["history"] and not self.opt.dry_run:
+            rec["reset"] = self.reset_for_run(now)
+        if not self.opt.dry_run:
+            self.state["run"] = rec
+        return now
+
+    def reset_for_run(self, now: float) -> dict:
+        """Before a --runs run's first session: nothing a new playthrough would inherit from an earlier one.
+        - saves: only saves written from now on are this playthrough's (saves_after; runner and MCP server)
+        - the mod's navigation kill list and breadcrumb mirrors (Script Extender/BG3AI/nav_*.json) are moved
+          into runtime/sessions/<pt>/reset/ (NAV-3)
+        - play/knowledge is snapshotted; the agent's edits are put back after the run (FAIR-2)
+        The game process itself is restarted between runs (end_run_game)."""
+        self.state["saves_after"] = now
+        moved = runs.archive_nav_state(SE_BG3AI_DIR, self.state.dir / "reset")
+        snap = runs.snapshot_tree(KNOWLEDGE_DIR)
+        try:
+            (self.state.dir / "knowledge_snapshot.json").write_text(json.dumps(snap))
+        except OSError as e:
+            log(f"knowledge snapshot failed: {e}")
+        log(f"run {self.opt.run_index} of {self.opt.series}: fresh start for {self.opt.playthrough} (saves from "
+            f"{datetime.fromtimestamp(now):%H:%M:%S} on; nav state moved aside: {', '.join(moved) or 'none'}; "
+            f"knowledge/ snapshot of {len(snap)} files)")
+        self.event("run_reset", nav_files=moved, knowledge_files=len(snap))
+        return {"nav_files": moved, "knowledge_files": len(snap)}
+
+    def restore_knowledge(self, run_started: float) -> dict | None:
+        """FAIR-2: knowledge/ files the agent edited during the run go back to the snapshot (its versions are kept
+        in runtime/sessions/<pt>/knowledge_edits/); other changes are only reported. None: no snapshot."""
+        try:
+            snap = json.loads((self.state.dir / "knowledge_snapshot.json").read_text())
+        except (OSError, ValueError):
+            return None
+        streams = []
+        for f in sorted(self.state.dir.glob("S*.jsonl")):
+            try:
+                if runs.CLAUDE_STREAM_RE.match(f.name) and f.stat().st_mtime >= run_started:
+                    streams.append(f)
+            except OSError:
+                continue
+        res = runs.restore_agent_edits(KNOWLEDGE_DIR, snap, runs.agent_written(streams, KNOWLEDGE_DIR, PLAY_DIR),
+                                       self.state.dir / "knowledge_edits")
+        if res["agent_edits"] or res["other_changes"]:
+            log(f"knowledge/ after the run: agent edits put back: {', '.join(res['agent_edits']) or 'none'}; "
+                f"other changes (not reverted): {', '.join(res['other_changes']) or 'none'}")
+        return res
+
+    def end_run_game(self) -> None:
+        """--runs, between runs: stop the game the run played, so the next run starts a new game in a fresh process
+        (the mod's Lua state, the kill list in memory included). A game the runner doesn't own is left alone."""
+        if not port_open() and not self.owns_game():
+            return
+        if not (self.owns_game() or self.opt.take_over):
+            log("between runs: the game up is not one this runner launched; left running (the next run needs the "
+                "main menu)")
+            return
+        try:
+            self.kill_game()
+            log("between runs: game stopped; the next run launches a new one")
+        except Exception as e:  # noqa: BLE001 - the next run's setup retries (and records it)
+            log(f"between runs: stopping the game failed: {e}")
 
     def write_progress(self, session: str, base: Path, start: float, end: float) -> dict | None:
         """Sxxx.progress.json + a line in progress_history.jsonl."""
@@ -2560,12 +2739,51 @@ class Runner:
 
     def session_py(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, str(SESSION_PY), *args, "--memory-dir", str(self.mem)],
-                              capture_output=True, text=True, cwd=PLAY_DIR)
+                              capture_output=True, text=True, cwd=PLAY_DIR, stdin=subprocess.DEVNULL)
+
+    def session_env(self, deadline: float, minutes: float) -> dict:
+        """The clock env session.py sees for a session (what run_claude gives claude and the MCP server)."""
+        return dict(os.environ, BG3AI_SESSION_DEADLINE=str(int(deadline)),
+                    BG3AI_SESSION_WRAPUP=str(int(deadline - wrapup_minutes(minutes) * 60)),
+                    BG3_SESSION_MINUTES=str(minutes), BG3_WRAP_MINUTES=str(wrap_minutes(minutes)),
+                    BG3AI_KEEPER="1" if self.opt.keeper and not self.opt.dry_run else "0")
+
+    def session_cmd(self, args: list[str], env: dict) -> subprocess.CompletedProcess:
+        """session.py <args> with the session's clock env; never reads the runner's stdin."""
+        return subprocess.run([sys.executable, str(SESSION_PY), *args, "--memory-dir", str(self.mem)],
+                              capture_output=True, text=True, cwd=PLAY_DIR, env=env, stdin=subprocess.DEVNULL)
+
+    def open_memory_session(self, deadline: float, minutes: float) -> tuple[str | None, str]:
+        """session.py start (was the SessionStart hook): opens sessions/Sxxx.md. Returns (sid, the memory briefing for
+        the kickoff), or (None, "") when it couldn't (the agent then calls session_start)."""
+        try:
+            r = self.session_cmd(["start"], self.session_env(deadline, minutes))
+            st = self.memory_state()
+        except (OSError, ValueError) as e:
+            log(f"memory session not opened: {e}")
+            return None, ""
+        if r.returncode != 0 or not st.get("open") or not st.get("current"):
+            log(f"memory session not opened (session.py start exit {r.returncode}): {(r.stdout or r.stderr)[-300:]}")
+            return None, ""
+        return session_id(st["current"]), r.stdout.strip()
+
+    def stop_check(self, sid: str, deadline: float, minutes: float) -> str | None:
+        """session.py stop after claude ended its turn (was the Stop hook): the reason the session can't end yet
+        (keep playing, write the handoff, fix lint), or None (it ended; on success the memory is committed)."""
+        try:
+            r = self.session_cmd(["stop"], self.session_env(deadline, minutes))
+            out = json.loads(r.stdout) if r.stdout.strip() else {}
+        except (OSError, ValueError) as e:
+            log(f"{sid}: stop check failed: {e}")
+            return None
+        if out.get("systemMessage"):
+            log(f"{sid}: stop check: {out['systemMessage']}")
+        return out.get("reason") if out.get("decision") == "block" else None
 
     def close_memory_session(self, res: SessionResult) -> None:
         st = self.memory_state()
         if not st.get("open"):
-            log(f"{res.sid}: memory already committed by the Stop hook")
+            log(f"{res.sid}: memory already committed (end_session or the stop check)")
             return
         r = self.session_py("end")
         if r.returncode == 0:
@@ -2637,7 +2855,8 @@ class Runner:
         import memory_keeper as K
         n = int(sid[1:])
         base = self.state.dir / f"{sid}-keeper"
-        model, effort, minutes = self.opt.keeper_model, self.opt.keeper_effort, self.opt.keeper_minutes
+        model = keeper_model(self.opt.keeper_model, res.model or self.opt.model)
+        effort, minutes = self.opt.keeper_effort, self.opt.keeper_minutes
 
         def work():
             log(f"{sid}: memory keeper starting ({model}, effort {effort or 'default'}, ≤{minutes:g} min)")
@@ -2653,10 +2872,12 @@ class Runner:
             r = K.run_keeper(self.mem, n, base, model, effort, minutes, refused=refused)
             log(r.summary())
             self.event("memory_keeper", session=sid, status=r.status, seconds=r.seconds, files=r.files,
-                       commit=r.commit, timed_out=r.timed_out, reverted=r.reverted, lint_errors=r.lint_errors[:5])
+                       commit=r.commit, timed_out=r.timed_out, reverted=r.reverted, lint_errors=r.lint_errors[:5],
+                       model=model)
             try:
                 with open(self.state.dir / "keeper_history.jsonl", "a") as f:
-                    f.write(json.dumps({"t": round(time.time(), 1), **r.__dict__}) + "\n")
+                    f.write(json.dumps({"t": round(time.time(), 1), "model": model, "effort": effort,
+                                        **r.__dict__}) + "\n")
             except OSError as e:
                 log(f"keeper history write failed: {e}")
 
@@ -2692,7 +2913,7 @@ class Runner:
             print(f"take-over:      {'reload ' + save.label + ' (' + touched + ')' if touched else 'play on from the running game'}")
         print(f"stuck:          {is_stuck(self.state['history'])}")
         k = self.opt
-        print(f"memory keeper:  {'on (' + k.keeper_model + ', effort ' + str(k.keeper_effort) + ', ≤' + format(k.keeper_minutes, 'g') + ' min) after each session' if k.keeper else 'OFF (--no-memory-keeper)'}")
+        print(f"memory keeper:  {'on (' + keeper_model(k.keeper_model, self.model_for()[0]) + ', effort ' + str(k.keeper_effort) + ', ≤' + format(k.keeper_minutes, 'g') + ' min) after each session' if k.keeper else 'OFF (--no-keeper)'}")
         print("plan check:     tools/dev/check_plans.py at each session end (→ keeper) and in the prep (→ RUNNER NOTE); now:")
         self.check_plan_lines("dry run", dry=True)
         prompt = build_kickoff(sid, self.opt.playthrough, time.time() + minutes * 60,
@@ -2745,9 +2966,14 @@ class Runner:
             notes.append(plan_note(bad))
         notes += self.pending_notes
         self.pending_notes.clear()
-        sid = self.next_sid()
+        predicted = self.next_sid()
         start_sig = read_progress()
-        prompt = build_kickoff(sid, self.opt.playthrough, time.time() + minutes * 60, loaded, notes)
+        deadline = time.time() + minutes * 60
+        opened, briefing = self.open_memory_session(deadline, minutes)   # was the SessionStart hook
+        sid = opened or predicted
+        if opened and opened != predicted:
+            log(f"session.py start opened {opened} (predicted {predicted})")
+        prompt = build_kickoff(sid, self.opt.playthrough, deadline, loaded, notes, briefing)
         res = self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))
         if res.reason == "dry_run":
             return res
@@ -2758,9 +2984,25 @@ class Runner:
         # Game crash or hang mid-session: relaunch, load the latest save, and resume the SAME claude conversation
         # for the time left (an hour-long session that crashes at minute 10 keeps its context and its 50 min).
         # Agent hang (claude silent too long): the game is fine, so only claude is restarted (resumed).
-        resumes = 0
+        # Claude ended its turn on its own: the stop check (session.py stop, which was the Stop hook) may send it back
+        # (keep playing until wrap-up, write the handoff, fix lint) by resuming the conversation with the reason.
+        resumes = stop_resumes = 0
         gave_up: LaunchGaveUp | None = None
-        while res.reason in FAULTS:
+        while True:
+            if res.reason not in FAULTS:
+                if (res.reason != "exited" or res.exit_code != 0 or stop_resumes >= MAX_STOP_RESUMES or self.abort
+                        or time.time() > session_end + HARD_STOP_GRACE - 60):
+                    break
+                why = self.stop_check(sid, session_end, minutes)
+                if not why:
+                    break
+                stop_resumes += 1
+                left = (session_end - time.time()) / 60
+                log(f"{sid}: claude ended its turn but the session can't end yet ({left:.0f} min left); resuming it "
+                    f"(-c{stop_resumes}): {why[:160]}")
+                res = self.run_claude(sid, stop_resume_prompt(why), left, res.claude_session, resume=True,
+                                      tag=f"-c{stop_resumes}")
+                continue
             fault, fault_at = res.reason, res.fault_at or res.ended
             game_ok = fault == "agent_hang" and self.game_alive() and game_state(HEALTH_EVAL_TIMEOUT) is not None
             why = {"crash": "crashed", "hang": "stopped responding"}.get(fault, "was unreachable after the agent hang")
@@ -2799,6 +3041,10 @@ class Runner:
         res = replace(res, started=session_start)
         if not crashed:
             self.ensure_save(res.started)
+        try:   # was the SessionEnd hook: commit a finished wrap-up, else log that the session ended before it
+            self.session_cmd(["session-end"], self.session_env(session_end, minutes))
+        except OSError as e:
+            log(f"{sid}: session-end failed: {e}")
         self.close_memory_session(res)
         plan_bad = [] if crashed else self.check_plan_lines(f"{sid} end")   # the keeper rewrites invalid lines
         self.start_keeper(sid, res, plan_bad)
@@ -2807,6 +3053,8 @@ class Runner:
             "kind": "play", "session": sid, "claude_session": res.claude_session, "reason": res.reason,
             "exit": res.exit_code, "started": res.started, "ended": res.ended,
             "model": res.model, "effort": res.effort,
+            "keeper_model": keeper_model(self.opt.keeper_model, res.model or self.opt.model) if self.opt.keeper else None,
+            "stop_resumes": stop_resumes,
             "minutes": round((res.ended - res.started) / 60, 1), "start_sig": start_sig, "end_sig": end_sig,
             "progress": None, "progress_why": "crashed",
             "started_at_game_over": screen == "game_over", "resumes": resumes,
@@ -2882,38 +3130,54 @@ class Runner:
         return {"run_end": run_end, "run_started": run_started, "pending_notes": self.pending_notes,
                 "quick_failures": self.quick_failures, "new_game": self.new_game,
                 "bridge_hashes": self.bridge_hashes,
+                "series_end": getattr(getattr(self, "opt", None), "series_end", None),
                 "last_triage": [self.last_triage[0], str(self.last_triage[1])] if self.last_triage else None}
+
+    def run_end(self, now: float) -> float | None:
+        """When this run stops starting sessions: the earliest of --hours (one run), the series' end (--runs
+        --hours) and --run-hours from now."""
+        ends = [t for t in (now + self.opt.hours * 3600 if self.opt.hours else None, self.opt.series_end,
+                            now + self.opt.run_hours * 3600 if self.opt.run_hours else None) if t]
+        return min(ends) if ends else None
 
     def run(self) -> int:
         self.check_memory()
         h = self.handover or {}
-        run_started = h.get("run_started") or time.time()
+        now = time.time()
+        run_started = h.get("run_started") or now
         if h:   # same run, new code: keep its --hours budget; the game is the one this run was playing
             run_end = h.get("run_end")
             log(f"runner restarted in place with the new code (pid {os.getpid()})")
             self.event("runner_restarted", pid=os.getpid())
         else:
-            run_end = time.time() + self.opt.hours * 3600 if self.opt.hours else None
+            run_end = self.run_end(now)
             self.event("runner_start", pid=os.getpid())
         write_status(playthrough=self.opt.playthrough, runner_pid=os.getpid(), run_end=run_end,
-                     session=None, deadline=None, run_started=run_started, heartbeat=time.time(), alert=None)
+                     session=None, deadline=None, run_started=run_started, heartbeat=time.time(), alert=None,
+                     series=self.opt.series, run_index=self.opt.run_index)
         first = not h
         setup_failures = 0
         stop_why = "stopped"
+        outcome = None   # --until: how the run ended, when that ending writes a record (not a stop or a restart)
         restarting = False
         try:
             if self.opt.until and self.check_until(read_seen(self.state.dir), None):
                 log(f"--until {self.opt.until}: already reached in this playthrough; nothing to play")
                 stop_why = f"--until {self.opt.until}: already reached"
+                outcome = "already_reached"   # no record: that run was recorded when it got there
                 return 0
+            if self.opt.until:
+                run_started = self.begin_run(run_started)
             while not self.stop_requested and not (RUNTIME / "STOP").exists():
                 self.code_update_check()
                 session_minutes = self.session_minutes()
                 minutes = session_budget(time.time(), run_end, session_minutes,
                                          min(MIN_SESSION_MINUTES, session_minutes))
                 if minutes is None:
-                    log("--hours budget used up")
-                    stop_why = "--hours budget used up"
+                    stop_why = ("time cap used up (--run-hours/--hours)" if self.opt.run_hours or self.opt.series_end
+                                else "--hours budget used up")
+                    log(stop_why)
+                    outcome = "timeout"
                     break
                 try:
                     res = self.play_session(minutes, first)
@@ -2933,6 +3197,7 @@ class Runner:
                     if setup_failures >= MAX_SETUP_FAILURES:
                         log(f"{setup_failures} setup failures in a row; giving up")
                         stop_why = "gave up: setup failures"
+                        outcome = "gave_up"
                         return 1
                     try:
                         self.recover(f"failed to start ({e})")
@@ -2951,14 +3216,15 @@ class Runner:
                 if res.reason == "dry_run":
                     break
                 if self.until_hit:
-                    self.write_run_record(run_started)
                     stop_why = f"--until {self.opt.until}: reached in {self.until_hit.get('session')}"
+                    outcome = "reached"
                     break
                 if res.ended - res.started < 60 and res.reason == "exited":
                     self.quick_failures += 1
                     if self.quick_failures >= MAX_QUICK_FAILURES:
                         log("claude exited within a minute 3 times in a row; stopping (see the session logs)")
                         stop_why = "gave up: claude exits at once"
+                        outcome = "gave_up"
                         return 1
                     time.sleep(30 * self.quick_failures)
                 else:
@@ -2971,18 +3237,28 @@ class Runner:
         except LaunchGaveUp as e:
             self.give_up_launch(e)
             stop_why = "gave up: the game crashes on every launch"
+            outcome = "gave_up"
             return 1
         except Bg3leStale as e:
             stop_why = f"stale bg3le build: run {bg3le_buildinfo.REBUILD} ({e})"[:300]
+            outcome, self.fatal = "gave_up", True
             return 1
         except BaseException as e:
             stop_why = f"died: {type(e).__name__}: {e}"[:300]
+            if not isinstance(e, KeyboardInterrupt):
+                outcome, self.fatal = "runner_error", True
             if not isinstance(e, (SystemExit, KeyboardInterrupt)):   # a SystemExit carries its own reason
                 log("runner died:\n" + traceback.format_exc().rstrip())
             raise
         finally:
             self.join_keeper()
+            self.outcome = outcome or ("stopped" if self.opt.until and not restarting else None)
             if not restarting:
+                if self.opt.until and outcome in runs.OUTCOMES and not self.opt.dry_run:
+                    try:
+                        self.write_run_record(run_started, outcome, "" if outcome == "reached" else stop_why)
+                    except Exception as e:  # noqa: BLE001 - a failed record never hides why the runner stopped
+                        log(f"run record failed: {type(e).__name__}: {e}")
                 (RUNTIME / "STOP").unlink(missing_ok=True)
                 write_status(session=None, deadline=None, runner_pid=None)
                 self.event("runner_stop", why=stop_why)
@@ -3014,16 +3290,27 @@ def cmd_run(a) -> int:
     if a.autocompact is not None and not AUTOCOMPACT_MIN <= a.autocompact <= AUTOCOMPACT_MAX:
         print(f"refusing --autocompact {a.autocompact}: claude takes {AUTOCOMPACT_MIN}-{AUTOCOMPACT_MAX} tokens")
         return 2
+    if a.runs is not None and (a.runs < 1 or not a.until):
+        print("refusing --runs: it needs N >= 1 and --until MILESTONE (each run ends there)", file=sys.stderr)
+        return 2
+    if a.run_hours is not None and (a.run_hours <= 0 or not a.until):
+        print("refusing --run-hours: it needs a positive value and --until MILESTONE", file=sys.stderr)
+        return 2
     if a.session_minutes < MIN_SESSION_MINUTES:
         log(f"WARNING: {a.session_minutes:g}-min sessions (wrap-up at {wrap_minutes(a.session_minutes):.1f} min); "
             "expect little play")
     lock = acquire_lock()  # held for the process lifetime (released only to exec the new runner code)
     (RUNTIME / "STOP").unlink(missing_ok=True)
-    runner = Runner(Options(a.playthrough, a.hours, a.session_minutes, a.model, a.take_over, a.dry_run,
-                            a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model,
-                            a.allow_short_sessions, not a.no_memory_keeper, a.keeper_model, a.keeper_effort,
-                            a.keeper_minutes, a.autocompact, until=a.until, character_brief=a.character_brief,
-                            roleplay=a.roleplay, difficulty=a.difficulty))
+    opt = Options(a.playthrough, a.hours, a.session_minutes, a.model, a.take_over, a.dry_run,
+                  a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model,
+                  a.allow_short_sessions, not a.no_memory_keeper, a.keeper_model, a.keeper_effort,
+                  a.keeper_minutes, a.autocompact, until=a.until, character_brief=a.character_brief,
+                  roleplay=a.roleplay, difficulty=a.difficulty)
+    opt = replace(opt, run_hours=a.run_hours)
+    if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
+        opt = replace(opt, hours=None, series=a.playthrough,
+                      series_end=time.time() + a.hours * 3600 if a.hours else None)
+    current: dict = {"runner": None, "stop": False}   # the run playing now (a series has one Runner per run)
     # Cutscenes are always skipped, also while the runner waits on menus and loads (the New Game intro
     # plays during StartLoading) and between sessions; the play session's MCP server idles meanwhile
     # (one skipper per game, runtime/skipper.lock).
@@ -3034,17 +3321,23 @@ def cmd_run(a) -> int:
         "ramwatch: not started here: another watchdog holds runtime/ramwatch.lock (that one guards the game)")
 
     def on_signal(signum, _frame):
-        if runner.stop_requested:
+        runner = current["runner"]
+        if runner is not None and runner.stop_requested:
             log("second signal: interrupting the current session")
             runner.abort = True
             return
         log(f"signal {signum}: stopping after the current session (send again to interrupt it)")
-        runner.stop_requested = True
+        current["stop"] = True
+        if runner is not None:
+            runner.stop_requested = True
 
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
     try:
-        return runner.run()
+        if a.runs:
+            return run_series(opt, a.runs, current)
+        current["runner"] = Runner(opt)
+        return current["runner"].run()
     except RestartRunner:
         exec_new_runner(lock, skip_stop)
         raise  # not reached
@@ -3053,6 +3346,83 @@ def cmd_run(a) -> int:
             skip_stop.set()
         if ram_stop is not None:
             ram_stop.set()
+
+
+def series_profile(base: str) -> dict | None:
+    """The character brief every run of a series plays (runtime/sessions/<base>/series.json "profile"), frozen when
+    the series started: run 1 later adds the name its agent chose to its own profile.json, and run 2 must not get
+    that name forced on it."""
+    try:
+        return json.loads((RUNTIME / "sessions" / base / "series.json").read_text()).get("profile")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def freeze_series(base: str, n: int, until: str | None, profile: dict) -> None:
+    path = RUNTIME / "sessions" / base / "series.json"
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"series": base, "runs": n, "until": until, "profile": profile,
+                                "created": round(time.time(), 1)}, indent=1, ensure_ascii=False) + "\n")
+
+
+def prepare_series_run(base: str, pt: str, k: int) -> None:
+    """Run k's playthrough before its Runner exists: the series' profile.json (k > 1) and a fresh memory from
+    memory-template/ (tools/memory/new_playthrough.py), unless they're there already (a resumed run)."""
+    from new_playthrough import create_memory
+    prof_path = PLAYTHROUGHS / pt / "profile.json"
+    prof = series_profile(base)
+    if prof is None and k > 1:
+        prof = load_profile(PLAYTHROUGHS / base / "profile.json") or None
+    if k > 1 and prof and not prof_path.exists():
+        prof_path.parent.mkdir(parents=True, exist_ok=True)
+        prof_path.write_text(json.dumps(prof, indent=1, ensure_ascii=False) + "\n")
+        log(f"{pt}: profile.json copied from series {base}")
+    mem = PLAYTHROUGHS / pt / "memory"
+    if not mem.is_dir() or not any(mem.iterdir()):
+        h = create_memory(pt, mem, MEMORY_TEMPLATE)
+        log(f"{pt}: new memory {mem} from memory-template (commit {h[:8]})")
+
+
+def run_series(opt: Options, n: int, current: dict) -> int:
+    """run --until M --runs N: runs 1..N of the series opt.series, each a new playthrough (runs.run_name) and a new
+    game, one runs.jsonl record per run in runtime/sessions/<base>/. Resumes at the first run without a record (a
+    restart, by hand or on changed code, continues the series). Between runs the game is stopped (end_run_game).
+    Stops early on an operator stop or on something a next run can't fix (stale bg3le, a runner error)."""
+    from new_playthrough import SetupError
+    base = opt.series
+    path = RUNTIME / "sessions" / base / "runs.jsonl"
+    rc, prev = 0, None
+    while not current["stop"]:
+        k = runs.next_run_index(runs.series_records(path, base))
+        if k > n:
+            break
+        if prev is not None:
+            prev.end_run_game()
+        pt = runs.run_name(base, k)
+        try:
+            prepare_series_run(base, pt, k)
+        except (SetupError, OSError) as e:
+            log(f"series {base}: can't set up run {k} ({pt}): {e}")
+            return 1
+        r = current["runner"] = Runner(replace(opt, playthrough=pt, run_index=k))
+        if current["stop"]:
+            r.stop_requested = True
+        freeze_series(base, n, opt.until, r.profile)
+        opt = replace(opt, series_end=r.opt.series_end)   # a self-restart's handover keeps the series budget
+        log(f"series {base}: run {k}/{n} ({pt}, --until {opt.until})")
+        rc = r.run()
+        if r.outcome not in runs.OUTCOMES or r.fatal or r.stop_requested:
+            log(f"series {base}: stopping after run {k} ({r.outcome or 'no outcome'}"
+                + ("; needs a human" if r.fatal else "") + ")")
+            break
+        prev = r
+    recs = runs.series_records(path, base)
+    if recs:
+        log(f"series {base}: {len(recs)}/{n} run(s) recorded, {sum(1 for x in recs if x.get('clean'))} clean, "
+            f"{runs.clean_streak(recs)} clean in a row (python3 runner/play.py runs --playthrough {base})")
+    return rc
 
 
 def exec_new_runner(lock, skip_stop, execv=os.execv) -> None:
@@ -3126,6 +3496,29 @@ def cmd_status(a) -> int:
     return 0
 
 
+def cmd_runs(a) -> int:
+    """The runs table of a series (or of one playthrough's --until runs) and its clean streak."""
+    recs = runs.series_records(RUNTIME / "sessions" / a.playthrough / "runs.jsonl", a.playthrough)
+    if not recs:
+        print(f"no run records for {a.playthrough} ({RUNTIME / 'sessions' / a.playthrough / 'runs.jsonl'})")
+        return 1
+    print(runs.runs_table(recs))
+    if a.failures:
+        for r in recs:
+            print(f"\nrun {r.get('run') or 1} ({r.get('playthrough')}): {r.get('outcome')}"
+                  + (f" ({r['why']})" if r.get("why") else ""))
+            for f in r.get("failures") or []:
+                when = datetime.fromtimestamp(f["t"]).strftime("%H:%M:%S") if f.get("t") else "--:--:--"
+                print(f"  {when} {f.get('class', '?'):8} {f.get('kind')}{' x%d' % f['n'] if f.get('n') else ''}: "
+                      f"{f.get('detail')}")
+            for o in r.get("operator") or []:
+                print(f"  operator: {o.get('what')}")
+            k = r.get("knowledge") or {}
+            if k.get("agent_edits"):
+                print(f"  knowledge/ edits put back: {', '.join(k['agent_edits'])}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -3142,9 +3535,10 @@ def main(argv: list[str] | None = None) -> int:
                    '{"model": ..., "effort": ...}, re-read before each session')
     r.add_argument("--fix-model", help="model for the fix-notes pass (default: --model)")
     r.add_argument("--fix-effort", choices=EFFORTS, default="low", help="effort for the fix-notes pass")
-    r.add_argument("--no-memory-keeper", action="store_true",
+    r.add_argument("--no-keeper", "--no-memory-keeper", dest="no_memory_keeper", action="store_true",
                    help="skip the memory-keeper pass between sessions (runner/memory_keeper.py)")
-    r.add_argument("--keeper-model", default="sonnet", help="model for the memory-keeper pass")
+    r.add_argument("--keeper-model", default="same",
+                   help="model for the memory-keeper pass; 'same' (default) = the session's play model")
     r.add_argument("--keeper-effort", choices=EFFORTS, default="low", help="effort for the memory-keeper pass")
     r.add_argument("--keeper-minutes", type=float, default=5.0, help="time cap of the memory-keeper pass")
     r.add_argument("--fallback-model", help="claude --fallback-model (used when the main model is overloaded)")
@@ -3156,6 +3550,12 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--until", choices=[m[0] for m in milestones.MILESTONES], metavar="MILESTONE",
                    help="stop at this story milestone (bridge/src/bg3ai/milestones.py, e.g. nautiloid_escaped, "
                         "crash_site) and append a run record to runtime/sessions/<pt>/runs.jsonl")
+    r.add_argument("--runs", type=int, metavar="N",
+                   help="with --until: play N runs in a row, each a new playthrough and a new game: <pt>, <pt>-r2, "
+                        "... (fresh memory, the same profile.json, per-run reset); records in "
+                        "runtime/sessions/<pt>/runs.jsonl, --hours caps the whole series. Re-running resumes it")
+    r.add_argument("--run-hours", type=float, metavar="H",
+                   help="with --until: cap one run at H hours; then it ends as a timeout (a failure) and the next starts")
     r.add_argument("--character-brief", metavar="TEXT",
                    help="who the character is, in your words: written to playthroughs/<pt>/profile.json; a new game "
                         "then starts with a character-creation phase that designs the build and persona from it")
@@ -3169,8 +3569,11 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("status", help="summary of the runner, game and last session")
     s.add_argument("--playthrough")
     sub.add_parser("stop", help="finish the current session, then exit")
+    rs = sub.add_parser("runs", help="table of a series' --until runs: outcome, clean, failures by class")
+    rs.add_argument("--playthrough", required=True, help="the series (run --runs) or playthrough (run --until)")
+    rs.add_argument("--failures", action="store_true", help="also list every run's failures")
     a = ap.parse_args(argv)
-    return {"run": cmd_run, "status": cmd_status, "stop": cmd_stop}[a.cmd](a)
+    return {"run": cmd_run, "status": cmd_status, "stop": cmd_stop, "runs": cmd_runs}[a.cmd](a)
 
 
 if __name__ == "__main__":

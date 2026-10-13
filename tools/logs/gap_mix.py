@@ -11,7 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 GAP_RX = re.compile(r"^- (\d\d:\d\d:\d\d) \*\*([\d.]+) s\*\* idle \((\w+)")
 
 CATS = [
-    ("memory", lambda c: c["mem"] or c["tool"] in ("note", "session_clock")),
+    ("memory", lambda c: c["mem"] or c["tool"] in ("note", "session_clock", "session_start", "end_session")),
     ("hand_ui", lambda c: c["tool"] in ("click", "press_key", "screenshot", "zoom", "camera")),
     ("wiki", lambda c: c["tool"].startswith("wiki")),
     ("nav_reads", lambda c: c["tool"] in ("route", "get_frontier", "get_map", "look", "get_nearby", "look_at", "get_status", "get_party", "get_inventory", "get_journal", "get_dialogue", "get_combat_state")),

@@ -1,7 +1,7 @@
 # Harness news (operator-written; the agent reads, never edits)
 
 <!--
-Changes to the tools/bridge/mod that make older notes or lessons wrong. The session-start hook
+Changes to the tools/bridge/mod that make older notes or lessons wrong. The session start
 (tools/memory/session.py) injects the entries newer than the previous session's start, at most 6.
 One line each: "- YYYY-MM-DD HH:MM <what changed; which old lesson it retires>". Newest last.
 -->
@@ -43,3 +43,4 @@ One line each: "- YYYY-MM-DD HH:MM <what changed; which old lesson it retires>".
 - 2026-10-11 05:00 level_up no longer fails "open: still waiting after 15000 ms — closed_page=a page stuck in its intro" (S047/S048, Act 3): it waits for the page's "Level Up!" intro to end instead of running against it or closing it. Call level_up(who) directly; the hand workaround (click the game's Level Up button, wait 3 s, then level_up) is no longer needed. If it still fails that way, note it once and use the workaround.
 - 2026-10-11 11:05 level_up now selects the member itself before opening its page (as a player clicks the portrait); no `set_party select` first. S062 Shadowheart/Wyll "closed_page=another character's page" + "no spell button found" was this; retires the "select first, then level_up" lesson/HANDOFF note. Also: after a runner restart (test cycles) the runner loads your newest save itself when the game was left elsewhere; the kickoff then says "already loaded".
 - 2026-10-11 11:10 get_frontier/route mark a ladder pulled up out of reach (`PULLED UP: its foot hangs N m above the floor`; S059 Wyrm's Rock e683): it can't be climbed from below, look for another way up. get_nearby kinds=<a companion's name> now lists that party member (`PARTY e3 Shadowheart dead (its body) 5m W`), e.g. to find a body to revive. Jump planning is back on in Rivington & Wyrm's Crossing (incl. Wyrm's Rock; it was switched off by mistake).
+- 2026-10-13 16:00 Your notes are now reached only through bg3 tools: memory_read / memory_search / memory_list, memory_write / memory_edit / memory_append (results show lint), note for the log. Read, Edit, Write, Grep and Glob are gone. knowledge/ is read-only. The wrap-up ends with end_session (it commits); a SessionStart/Stop "hook" in older notes means session_start / end_session now.

@@ -28,7 +28,9 @@ python3 runner/play.py run --playthrough claude-run-1     # autonomous sessions
 python3 runner/dashboard/serve.py --port 8765             # watch it play: http://localhost:8765
 ```
 
-Manual play session: `cd play && claude` (the `bg3` MCP server, rules, skills and hooks are configured there).
+Manual play session: `cd play && claude --tools ToolSearch` (the `bg3` MCP server and the rules are configured
+there; memory, the sandbox and the session's start and end are bg3 tools, so any MCP client works the same way).
+A client in a container reaches the server over HTTP: `tools/container/README.md`.
 
 ## Rules the system enforces
 

@@ -20,18 +20,19 @@ Offline: tools/test_bg3le_static_data.py compiles hash_chains_hold + read_defini
 Against bg3le 3728a68 (v0.3.6) with 0001-0008. Applied by tools/build_bg3le.sh.
 ---
 diff --git a/src/vendor/static_data.cpp b/src/vendor/static_data.cpp
-index b7b998d..7eee2b6 100644
+index b7b998d..7a7e6b0 100644
 --- a/src/vendor/static_data.cpp
 +++ b/src/vendor/static_data.cpp
-@@ -28,6 +28,7 @@
+@@ -28,6 +28,8 @@
  #include <vector>
  #include <unordered_map>
  #include <string>
 +#include <algorithm>
++#include <chrono>
  
  #include "../ecs_types.h"
  #include "../log.h"
-@@ -47,12 +48,16 @@ using bg3se::resource::GuidResourceManager;
+@@ -47,12 +49,16 @@ using bg3se::resource::GuidResourceManager;
  // HashMap's layout, which the string table search already relies on:
  // HashKeys (StaticArray, 16), NextIds (Array, 16), Keys (Array, 16), then
  // Values (UninitializedStaticArray, 16).
@@ -48,7 +49,7 @@ index b7b998d..7eee2b6 100644
  
  static_assert(sizeof(GuidResourceManager) == 64,
                "the manager is expected to be one HashMap");
-@@ -98,6 +103,58 @@ bool looks_like_vtable(unsigned long long p) {
+@@ -98,6 +104,65 @@ bool looks_like_vtable(unsigned long long p) {
      return p >= range.From && p < range.To;
  }
  
@@ -83,8 +84,15 @@ index b7b998d..7eee2b6 100644
 +    if (!safe_read(nextBuf, next.data(), keyCount * sizeof(std::int32_t))) return false;
 +    if (!safe_read(keyBuf, keys.data(), keyCount * sizeof(std::int32_t))) return false;
 +
++    // A head is -1 (empty bucket) or a key index. A link ends its chain with
++    // any negative value: the live map (2026-10-13) stores -2, -3, ... -122 in
++    // NextIds, so "-1 only" rejected the real manager and sent every run into
++    // the whole-memory scan below (the server thread froze for good).
 +    const auto in_range = [&](std::int32_t i) {
 +        return i == -1 || (i >= 0 && (std::uint32_t)i < keyCount);
++    };
++    const auto link_ok = [&](std::int32_t i) {
++        return i < 0 || (std::uint32_t)i < keyCount;
 +    };
 +    std::vector<bool> seen(keyCount, false);
 +    std::uint32_t visited = 0;
@@ -94,7 +102,7 @@ index b7b998d..7eee2b6 100644
 +            if (seen[(std::uint32_t)i]) return false;  // cycle or shared tail
 +            seen[(std::uint32_t)i] = true;
 +            ++visited;
-+            if (!in_range(next[(std::uint32_t)i])) return false;
++            if (!link_ok(next[(std::uint32_t)i])) return false;
 +        }
 +    }
 +    if (visited != keyCount) return false;
@@ -107,7 +115,7 @@ index b7b998d..7eee2b6 100644
  // Whether a candidate address holds the resource manager's Definitions map.
  //
  // Every check here is against something known independently: the key set comes
-@@ -136,16 +193,17 @@ bool looks_like_manager(void const* candidate) {
+@@ -136,16 +201,20 @@ bool looks_like_manager(void const* candidate) {
          if (!read_as((void const*)bank, &vtable)) return false;
          if (!looks_like_vtable(vtable)) return false;
      }
@@ -127,10 +135,42 @@ index b7b998d..7eee2b6 100644
 +// at 0x15a200; 0x15a940, recorded earlier, never matched since). Tried in
 +// each region first, and checked like any other candidate.
 +constexpr unsigned long long kRecordedRegionOffset = 0x15a200;
++
++// Wall-clock cap of the fallback scan (a 32 MB region took ~1-2 s before 0009).
++constexpr int kScanBudgetSeconds = 15;
  
  void* search_for_manager() {
      std::FILE* maps = std::fopen("/proc/self/maps", "r");
-@@ -269,6 +327,24 @@ void* find_resource(void* bank, void const* guid, std::size_t resourceSize) {
+@@ -165,9 +234,20 @@ void* search_for_manager() {
+     }
+     std::rewind(maps);
+ 
++    // The scan runs on the thread that asked (the server's story thread for a
++    // server-side Ext.StaticData call), one safe read per word: a miss over the
++    // whole address space froze the game for good (2026-10-13). A bounded scan
++    // gives up instead; Ext.StaticData then stays unavailable.
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kScanBudgetSeconds);
+     std::size_t regions = 0;
+     std::size_t scanned = 0;
+     while (std::fgets(line, sizeof(line), maps) != nullptr) {
++        if (std::chrono::steady_clock::now() > deadline) {
++            std::fclose(maps);
++            logf("static data: resource manager not found within %ds (scanned %zu bytes over %zu regions); "
++                 "Ext.StaticData stays unavailable", kScanBudgetSeconds, scanned, regions);
++            return nullptr;
++        }
+         unsigned long long from = 0;
+         unsigned long long to = 0;
+         if (!bg3le_scannable_region(line, &from, &to)) continue;
+@@ -178,6 +258,7 @@ void* search_for_manager() {
+ 
+         for (unsigned long long addr = from;
+              addr + sizeof(GuidResourceManager) <= to; addr += 8) {
++            if ((addr & 0xfffff) == 0 && std::chrono::steady_clock::now() > deadline) break;
+             if (!looks_like_manager((void const*)addr)) continue;
+ 
+             std::fclose(maps);
+@@ -269,6 +350,24 @@ void* find_resource(void* bank, void const* guid, std::size_t resourceSize) {
      return (char*)valueBuf + (std::size_t)found->second * resourceSize;
  }
  
@@ -155,7 +195,7 @@ index b7b998d..7eee2b6 100644
  }  // namespace
  
  // Found on first use and cached, for the same reason as the string table: the
-@@ -288,10 +364,16 @@ extern "C" void* bg3le_resource_bank(std::int32_t typeIndex) {
+@@ -288,10 +387,16 @@ extern "C" void* bg3le_resource_bank(std::int32_t typeIndex) {
      void* manager = bg3le_resource_manager();
      if (manager == nullptr || typeIndex < 0) return nullptr;
  
@@ -176,7 +216,7 @@ index b7b998d..7eee2b6 100644
  }
  
  // How many banks the manager holds, and the index of the i'th, so the set can
-@@ -300,8 +382,9 @@ extern "C" std::size_t bg3le_resource_bank_count() {
+@@ -300,8 +405,9 @@ extern "C" std::size_t bg3le_resource_bank_count() {
      const CacheLock lock(resource_cache_lock());
      void* manager = bg3le_resource_manager();
      if (manager == nullptr) return 0;
@@ -188,7 +228,7 @@ index b7b998d..7eee2b6 100644
  }
  
  // The bank's ResourceGuidsByMod, a HashMap<Guid, Array<Guid>>: each mod and
-@@ -399,12 +482,12 @@ extern "C" bool bg3le_resource_bank_at(std::size_t i, std::int32_t* typeIndex,
+@@ -399,12 +505,12 @@ extern "C" bool bg3le_resource_bank_at(std::size_t i, std::int32_t* typeIndex,
      void* manager = bg3le_resource_manager();
      if (manager == nullptr) return false;
  

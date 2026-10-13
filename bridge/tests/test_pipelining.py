@@ -418,7 +418,7 @@ class SettleAndPace(Base):
         out = server.move_to(x=5.0, y=0.0, z=0.0, wait=True)
         self.assertLess(time.monotonic() - t0, 0.8)
         self.assertTrue(out.startswith("move_to: started j1, ETA"), out)
-        self.assertIn("\n(wait=true ignored outside combat", out.split("RUNNING")[0])  # before the status lines
+        self.assertIn("\n(pace guard: wait=true ignored outside combat", out.split("RUNNING")[0])  # before the status lines
         self.assertIn("RUNNING j1 move_to", out)
 
     def test_wait_true_blocks_in_combat(self):

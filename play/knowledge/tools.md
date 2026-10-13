@@ -178,11 +178,25 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
 - `rest_if_needed(threshold=50, allow_long=false)` → short rest if anyone is downed or ≤ threshold % HP; with `allow_long=true`, camp + long rest when no short rest is left. HP only: judge spell slots yourself.
 
 ## Meta
-- `note(text, tag="note")` → appends `- HH:MM [tag] text` line(s) to your session log **at once** (no Read/Edit
-  of the file). One line per line of text; start a line with its own `[quest]`/`[npc]`/`[decision]`… tag.
+- `note(text, tag="note")` → appends `- HH:MM [tag] text` line(s) to your session log **at once** (no
+  memory_read/memory_edit of the file). One line per line of text; start a line with its own `[quest]`/`[npc]`/`[decision]`… tag.
   `travel_to`, `queue_actions` and `do_actions` take `note="…"` too: the note rides on the action, zero extra
-  turns. The memory keeper folds the log into the curated files between sessions; Edit those yourself only
+  turns. The memory keeper folds the log into the curated files between sessions; edit those yourself only
   for plan changes you need this session.
+- Memory files (your notes; the only file access you have). Paths are `memory/<file>` (read-write) or
+  `knowledge/<file>` (read-only reference notes and playbooks); a bare name means `memory/`. Hidden and git files,
+  symlinks, `snapshots/` (generated) and `markers.json` (place_marker) are out of bounds; session logs are
+  append-only; CHARACTER.md takes only appended development lines once committed.
+  - `memory_list(path="memory")` → the files of a folder with line counts.
+  - `memory_read(path, start_line=1, max_lines=400)` → a file's text, in pages for long files.
+  - `memory_search(query, path="memory", regex=false)` → every matching line as `file:line: text`.
+  - `memory_write(path, content)` → create or rewrite a whole `.md` file. `memory_edit(path, old_text, new_text,
+    replace_all=false)` → replace exact text (must match once). `memory_append(path, text)` → add lines at the end.
+    Each ends with `lint: ok` or the lint errors about that file: fix them.
+- `session_start()` → your memory briefing (CHARACTER.md, PLAYTHROUGH.md, HANDOFF.md, last game state). Your
+  first message normally has it already; call it if it doesn't, and after a context compaction.
+- `end_session()` → the last wrap-up step: checks wrap-up time, HANDOFF.md for this session and lint, then commits
+  the memory. `NOT ENDED. …` says what to do first (keep playing, write the handoff, fix lint).
 - `save_game(label="")` → named save (`Sxxx-<slug>`); empty = quicksave. Background: returns at once, SAVED / SAVE FAILED on a later result; queued if the game can't save now (conversation). `list_saves(limit=10)` → this playthrough's saves (the character's folders), `<- latest` marks what "latest" loads. `load_game(save="latest")` → folder name from `list_saves`; "latest" = your newest `Sxxx-` save or save_game quicksave, never a `LIVETEST-*`, AutoSave or someone else's QuickSave. Refused (FAILED) when the runner closed the save/load gates for this game (not your character).
 - `confirm(answer="yes")` → answer an open Yes/No (OK/Cancel…) box: `"yes"`, `"no"`, a button label or its number (`POPUP decision … → answer with confirm`). `long_rest`/`short_rest`/`fast_travel` answer their own "End the day?"-type questions and list them (`long_rest(confirm=false)` stops at the first instead).
 - `ui_action(command, widget="", param="")` → run a UI command that `ui_dump` lists (screens with no dedicated tool).

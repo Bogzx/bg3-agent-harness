@@ -88,7 +88,8 @@ def main(argv: list[str] | None = None) -> int:
     except SetupError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    print("next: start Claude Code inside play/ (the SessionStart hook opens session S001)")
+    print("next: runner/play.py run --playthrough <name> (it opens session S001); manually, any MCP client on the "
+          "bg3 server in play/ (its first tool call or session_start opens S001)")
     return 0
 
 

@@ -76,8 +76,8 @@ class ContextTest(MemoryTestCase):
         run_quiet(S.cmd_start, self.mem)
         out = S.build_context(self.mem)
         self.assertLessEqual(len(out), S.HOOK_CHAR_LIMIT)
-        self.assertIn("truncated; Read memory/PLAYTHROUGH.md", out)
-        self.assertIn("truncated; Read memory/HANDOFF.md", out)
+        self.assertIn("truncated; memory_read memory/PLAYTHROUGH.md", out)
+        self.assertIn("truncated; memory_read memory/HANDOFF.md", out)
 
     def test_compact_source_message(self):
         run_quiet(S.cmd_start, self.mem)

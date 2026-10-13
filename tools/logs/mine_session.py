@@ -133,7 +133,7 @@ def mine(run, sid):
                 "id": tid, "tool": name, "t0": t0, "dur": round(t1 - t0, 2) if t0 and t1 else None,
                 "think": think.get(tid), "failed": failed, "step_fails": step_fails,
                 "args": json.dumps(inp, ensure_ascii=False)[:300], "res": head,
-                "mem": name in ("Read", "Edit", "Write", "Glob", "Grep") and bool(MEM_RX.search(json.dumps(inp))),
+                "mem": (name in ("Read", "Edit", "Write", "Glob", "Grep") and bool(MEM_RX.search(json.dumps(inp)))) or name.startswith("memory_"),
                 "hand": name in HAND_TOOLS, "said": said.get(tid, ""),
             }
             calls.append(rec)

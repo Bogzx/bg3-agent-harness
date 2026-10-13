@@ -51,6 +51,8 @@ int main() {
     check("read_definitions reads it", read_definitions(&m, &k, &b) && k == keys && b == vals, true); }
   { auto h = heads; h[2] = 10;  // the S060 shape: a head past Keys
     Map m = make(h, next, keys); check("head past Keys rejected", hash_chains_hold((char const*)&m, m.kb, m.kn), false); }
+  { auto n = next; for (auto& v : n) if (v == -1) v = -2 - (&v - n.data());  // the live map: chain ends -2, -3, ...
+    Map m = make(heads, n, keys); check("negative chain ends pass (live layout 2026-10-13)", hash_chains_hold((char const*)&m, m.kb, m.kn), true); }
   { auto n = next; n[9] = 1;   // cycle / shared tail
     Map m = make(heads, n, keys); check("chain cycle rejected", hash_chains_hold((char const*)&m, m.kb, m.kn), false); }
   { auto h = heads; h[3] = -1;  // keys unreachable

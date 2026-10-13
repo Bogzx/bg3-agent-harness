@@ -1232,10 +1232,10 @@ def sec_vis() -> None:
          f"ids={ids}; explored: {first_line(ex)[:120]}; look_at: {first_line(la)[:80]}")
     # 6c. the nav kill list: the current level not on it unless a jump really crashed the game (04:39 relaunch
     #     false positive on CTY_Main_A); nav.route in budget on an unreachable goal far below (check_all 03:50 258 ms)
-    g = S.game.try_rpc("nav.level_guard", {}) or {}
-    here = g.get("here")
+    lg = S.game.try_rpc("nav.level_guard", {}) or {}
+    here = lg.get("here")
     item("vis: current level not on the nav kill list", "PASS" if not here or "jump" in str(here.get("why")) else "FAIL",
-         f"level={g.get('level')} here={here} slow={list((g.get('slow') or {}) or [])}")
+         f"level={lg.get('level')} here={here} slow={list((lg.get('slow') or {}) or [])}")
     p = (status().get("party") or [{}])[0].get("pos") or [0, 0, 0]
     r = S.game.try_rpc("nav.route", {"pos": [p[0] + 60, p[1] - 40, p[2]], "connectors": True}) or {}
     ms = r.get("ms") or 0

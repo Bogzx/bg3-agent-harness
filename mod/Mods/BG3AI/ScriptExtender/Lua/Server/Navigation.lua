@@ -3415,10 +3415,12 @@ RPC.register("nav.landing", function(args)
     return r
 end)
 
--- nav.level_guard {clear?: true|level}: the levels the kill switch turned off ({slow = {level = {why, ms}}},
--- warm = async warm-up counters); clear=true clears all, clear=<level> one.
+-- nav.level_guard {clear?: true|level, kill?: level, why?}: the levels the kill switch turned off ({slow = {level =
+-- {why, ms}}}, warm = async warm-up counters); clear=true clears all, clear=<level> one; kill=<level> turns one off
+-- by hand (a level known to freeze the engine's searches, e.g. SCL_Main_A for tests on Act 2 saves).
 RPC.register("nav.level_guard", function(args)
     local g = N.guardState()
+    if type(args.kill) == "string" then N.killLevel(args.kill, args.why or "turned off by hand") end
     if args.clear == true then g.slow, g.strikes = {}, {}
     elseif type(args.clear) == "string" then
         g.slow[args.clear] = nil

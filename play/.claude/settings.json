@@ -3,24 +3,25 @@
   "autoMemoryEnabled": false,
   "includeGitInstructions": false,
   "permissions": {
-    "defaultMode": "acceptEdits",
     "allow": [
-      "mcp__bg3__*",
-      "Read(/memory/**)",
-      "Edit(/memory/**)",
-      "Write(/memory/**)",
-      "Read(/knowledge/**)",
-      "Edit(/knowledge/**)",
-      "Write(/knowledge/**)"
+      "mcp__bg3__*"
     ],
     "deny": [
       "Bash",
       "Monitor",
       "PowerShell",
+      "Read",
+      "Edit",
+      "MultiEdit",
+      "Write",
+      "Glob",
+      "Grep",
+      "NotebookEdit",
       "WebFetch",
       "WebSearch",
-      "NotebookEdit",
       "Agent",
+      "Task",
+      "Skill",
       "CronCreate",
       "CronDelete",
       "CronList",
@@ -34,115 +35,7 @@
       "ScheduleWakeup",
       "SendMessage",
       "TaskStop",
-      "Workflow",
-      "Read(~/.local/share/Steam/**)",
-      "Read(~/.steam/**)",
-      "Read(~/.local/share/Larian Studios/**)",
-      "Read(/../bridge/**)",
-      "Read(/../runner/**)",
-      "Read(/../third_party/**)",
-      "Read(/../research/**)",
-      "Read(/../tools/**)",
-      "Edit(~/.local/share/Larian Studios/**)",
-      "Edit(~/.local/share/Steam/**)",
-      "Edit(/knowledge/playbooks/**)",
-      "Write(/knowledge/playbooks/**)",
-      "MultiEdit(/knowledge/playbooks/**)",
-      "Read(/memory/**/.git/**)",
-      "Read(/memory/**/.git*)",
-      "Read(/../playthroughs/**/.git/**)",
-      "Read(/../playthroughs/**/.git*)",
-      "Edit(/memory/**/.git/**)",
-      "Edit(/memory/**/.git*)",
-      "Edit(/../playthroughs/**/.git/**)",
-      "Edit(/../playthroughs/**/.git*)",
-      "Write(/memory/**/.git/**)",
-      "Write(/memory/**/.git*)",
-      "Write(/../playthroughs/**/.git/**)",
-      "Write(/../playthroughs/**/.git*)",
-      "Skill"
-    ],
-    "additionalDirectories": [
-      "../playthroughs"
-    ]
-  },
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/../tools/memory/session.py\" hook --memory-dir \"$CLAUDE_PROJECT_DIR/memory\"",
-            "timeout": 30
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "^(?!mcp__bg3__).*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/fairness_guard.py\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "^mcp__bg3__(move_to|walk_toward|travel_to)$",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/pace_guard.py\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "mcp__bg3__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/../tools/memory/session.py\" clock --memory-dir \"$CLAUDE_PROJECT_DIR/memory\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|MultiEdit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/../tools/memory/session.py\" memlint --memory-dir \"$CLAUDE_PROJECT_DIR/memory\"",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/../tools/memory/session.py\" stop --memory-dir \"$CLAUDE_PROJECT_DIR/memory\"",
-            "timeout": 60
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/../tools/memory/session.py\" session-end --memory-dir \"$CLAUDE_PROJECT_DIR/memory\"",
-            "timeout": 60
-          }
-        ]
-      }
+      "Workflow"
     ]
   }
 }

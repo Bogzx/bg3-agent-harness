@@ -2,8 +2,8 @@
 
 <!--
 Written by tools/memory/snapshots.py from LIVE, PLAYER-VISIBLE game state (the mod's state.* ops,
-rendered by bridge/src/bg3ai/render.py). It runs at session end: the Stop/SessionEnd hooks, via
-session.py, and the runner. It's best effort: a file whose op is unavailable keeps its previous content.
+rendered by bridge/src/bg3ai/render.py). It runs at session end (session.py, from end_session or the
+runner's stop check). It's best effort: a file whose op is unavailable keeps its previous content.
 These files are the source of truth for anything the game itself tracks.
 - Files: status.md, party.md, inventory.md, journal.md (last 3 entries per active quest), map.md
 - First line of each file: an HTML comment reading

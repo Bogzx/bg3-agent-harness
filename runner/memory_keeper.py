@@ -2,7 +2,7 @@
 
 The playing agent logs every session (sessions/Sxxx.md) but rarely updates the curated files (claude-run-2:
 quests/npcs/locations unchanged for 8 sessions, objectives for 3, compaction due since S010). So after each
-session the runner gives that job to a cheap model (sonnet, low effort, ≤5 min) that sees ONLY the memory
+session the runner gives that job to a model (the play model by default, low effort, ≤5 min) that sees ONLY the memory
 dir and the read-only knowledge dir: no game, no bg3 MCP tools, no shell, no web. It reads the session logs
 and HANDOFF.md and updates objectives/quests/npcs/locations/party-build/strategy, compacts old sessions into
 a chapter when due, and the runner commits its edits as "<sid> memory-keeper: ..." so lint's staleness
@@ -11,7 +11,7 @@ counters reset.
 When it runs (and why no write conflicts): after the session's memory is closed and BEFORE the next player
 starts. It overlaps only the runner's between-session game prep (ensure_game, mod hot reload, settings,
 check_all), which never writes memory; the runner joins it before the next `claude` starts. It never runs
-during play: the player edits the same curated files mid-session and its Stop hook commits `git add -A`,
+during play: the player edits the same curated files mid-session and its session end commits `git add -A`,
 so a concurrent keeper would race both. HANDOFF.md (the runner reads its "Save to load" line during the
 prep) is the player's except its last section (HANDOFF_SECTION, the keeper's: what the next session needs
 from the logs); the runner restores the player's part byte for byte if touched. sessions/ (append-only player
@@ -44,7 +44,7 @@ import memlib as M  # noqa: E402
 SESSION_PY = REPO / "tools" / "memory" / "session.py"
 KNOWLEDGE = REPO / "play" / "knowledge"
 
-KEEPER_MODEL = "sonnet"
+KEEPER_MODEL = "sonnet"         # run_keeper's own default; the runner passes the play model (--keeper-model same)
 KEEPER_EFFORT = "low"
 KEEPER_MINUTES = 5.0
 FIX_MIN_SECONDS = 45           # less than this left after the pass: no lint-fix retry
@@ -348,8 +348,8 @@ def keeper_settings(mem: Path, knowledge: Path = KNOWLEDGE) -> dict:
 
 def keeper_cmd(prompt: str, mem: Path, model: str, effort: str | None, session_uuid: str, resume: bool,
                claude: str = "claude", knowledge: Path = KNOWLEDGE) -> list[str]:
-    # --restricted: no Bash/web tools, user/project/local settings ignored (so none of play/'s hooks: its
-    # SessionStart hook would open a memory session), file tools confined to cwd (the memory dir) + --add-dir.
+    # --restricted: no Bash/web tools, user/project/local settings ignored (none of play/'s settings),
+    # file tools confined to cwd (the memory dir) + --add-dir. The keeper still uses Claude Code's file tools.
     cmd = [claude, "-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose",
            "--restricted", "--tools", "Read,Edit,Write,Glob,Grep", "--strict-mcp-config",
            "--disable-slash-commands", "--add-dir", str(knowledge.resolve()),

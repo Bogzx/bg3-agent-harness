@@ -156,8 +156,8 @@ ok "sys.info: $summary"
 
 # ---------------------------------------------------------------- 5 health
 step "5 health"
-blog="$(find "$RUNTIME/logs" -name 'bg3le-*.log.*' -newermt "@$((since - 5))" 2>/dev/null | head -50)"
-[ "$attach" = 1 ] && blog="$(ls -t "$RUNTIME"/logs/bg3le-*.log.* 2>/dev/null | head -3)"
+blog="$(find "$RUNTIME/logs" -name 'bg3le-*.log.*' -newermt "@$((since - 5))" 2>/dev/null | head -50 || true)"
+[ "$attach" = 1 ] && blog="$(ls -t "$RUNTIME"/logs/bg3le-*.log.* 2>/dev/null | head -3 || true)"  # || true: ls gets SIGPIPE (pipefail, set -e)
 if [ -z "$blog" ]; then
     warn "no bg3le log found under $RUNTIME/logs"
 elif n="$(cat $blog | grep -c 'WARNING: resolve:' || true)"; [ "$n" -gt 0 ]; then

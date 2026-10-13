@@ -46,7 +46,7 @@ FAKE_CLAUDE = r"""
 import json, os, sys, time
 log = os.environ["FAKE_CLAUDE_LOG"]
 with open(log, "a") as f:
-    env = {k: os.environ.get(k) for k in ("BG3AI_SAVE_OWNER", "BG3AI_SAVE_PREFIX", "BG3AI_SAVE_GATES")}
+    env = {k: os.environ.get(k) for k in ("BG3AI_SAVE_OWNER", "BG3AI_SAVE_PREFIX", "BG3AI_SAVE_GATES", "BG3AI_SESSION")}
     f.write(json.dumps({"argv": sys.argv[1:], "t": time.time(), "env": env}) + "\n")
 resume = "--resume" in sys.argv
 if os.environ.get("FAKE_CLAUDE_HANG") and not resume:
@@ -188,6 +188,7 @@ class FakeRunBase(unittest.TestCase):
         r = P.Runner(opt)
         r.next_sid = lambda: "S001"
         r.close_memory_session = lambda res: None
+        r.between_sessions_check = lambda: None   # tools/dev/check_all.py would probe the real port 9998
         r.mem = self.tmp / "memory"
         real_cmd = r.claude_cmd
         r.claude_cmd = lambda *a, **k: [sys.executable, str(self.claude)] + real_cmd(*a, **k)[1:]
@@ -363,8 +364,49 @@ class CrashRecovery(FakeRunBase):
         self.assertTrue(any("RUNNER NOTE: the game crashed" in n for n in self.r.pending_notes))
 
 
-class NewRuns(FakeRunBase):
-    """RUN-2 (run --until stops at a milestone with a run record) and CHAR-1 (phase 0 from a character brief)."""
+class StopCheck(FakeRunBase):
+    """claude ends its turn while the session can't end yet: the stop check (session.py stop, which was the Stop hook)
+    resumes the same conversation with the reason, a bounded number of times."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["FAKE_CLAUDE_FIRST_S"] = "1"
+        os.environ["FAKE_CLAUDE_RESUME_S"] = "0.5"
+        saved = P.MAX_STOP_RESUMES
+        self.addCleanup(setattr, P, "MAX_STOP_RESUMES", saved)
+
+    def test_keep_playing_resumes_the_same_conversation(self):
+        reasons = ["Keep playing: 18 minutes left in this session.", None]
+        calls = []
+
+        def check(sid, deadline, minutes):
+            calls.append((sid, minutes, deadline > time.time()))
+            return reasons.pop(0) if reasons else None
+
+        self.r.stop_check = check
+        res = self.r.play_session(20, first=True)
+        runs = self.claude_runs()
+        self.assertEqual(len(runs), 2, runs)
+        self.assertEqual(runs[1][runs[1].index("--resume") + 1], runs[0][runs[0].index("--session-id") + 1])
+        self.assertIn("this session can't end yet. Keep playing: 18 minutes",
+                      runs[1][runs[1].index("-p") + 1])
+        self.assertEqual(calls, [("S001", 20, True)] * 2)   # the session's own deadline, not the resume's
+        self.assertEqual(res.reason, "exited")
+        h = self.r.state["history"][-1]
+        self.assertEqual((h["stop_resumes"], h["keeper_model"]), (1, "opus"))
+        self.assertTrue((self.r.state.dir / "S001-c1.log").exists())
+        self.assertEqual([e["BG3AI_SESSION"] for e in self.claude_envs()], ["S001", "S001"])
+
+    def test_capped(self):
+        P.MAX_STOP_RESUMES = 2
+        self.r.stop_check = lambda *a: "Keep playing: 10 minutes left in this session."
+        self.r.play_session(20, first=True)
+        self.assertEqual(len(self.claude_runs()), 3)
+        self.assertEqual(self.r.state["history"][-1]["stop_resumes"], 2)
+
+
+class NautiloidBase(FakeRunBase):
+    """A progress feed: the Nautiloid, then its quest done once self.escaped is set."""
 
     def setUp(self):
         super().setUp()
@@ -387,6 +429,10 @@ class NewRuns(FakeRunBase):
         r.code_update_check = lambda: None          # other workers edit the tree meanwhile: no self-restart here
         r.between_sessions_check = lambda: None     # no tools/dev/check_all.py, check_plans.py
         r.check_plan_lines = lambda *a, **k: []
+
+
+class NewRuns(NautiloidBase):
+    """RUN-2 (run --until stops at a milestone with a run record) and CHAR-1 (phase 0 from a character brief)."""
 
     def test_until_milestone_stops_the_run_with_a_record(self):
         r = self.r
@@ -429,6 +475,7 @@ class NewRuns(FakeRunBase):
         self.wire(P.Options("brief-test", None, 20, "opus", character_brief=brief, roleplay="light",
                             difficulty="Balanced"), [])
         r = self.r
+        self.quiet(r)   # a real check_all before the session took ~5 s: the "mid-session" save came before it
         prof = json.loads((P.PLAYTHROUGHS / "brief-test" / "profile.json").read_text())
         self.assertEqual(prof, {"character": {"brief": brief, "roleplay": "light"}, "difficulty": "Balanced"})
 
@@ -448,7 +495,7 @@ class NewRuns(FakeRunBase):
         self.assertNotIn("Claude", prompt.split("PHASE 0", 1)[1])                  # no forced name
         self.assertNotIn("Name your character exactly", prompt)
         self.assertEqual(self.claude_envs()[0], {"BG3AI_SAVE_OWNER": "", "BG3AI_SAVE_PREFIX": "",
-                                                 "BG3AI_SAVE_GATES": "1"})          # new game: gates open
+                                                 "BG3AI_SAVE_GATES": "1", "BG3AI_SESSION": "S001"})   # new game: gates open
         # I3: the created name is the save owner from now on, persisted, and the prefix follows
         self.assertEqual(r.state["save_owner"], "Mira")
         self.assertEqual(P.RunnerState("brief-test")["save_owner"], "Mira")
@@ -465,6 +512,77 @@ class NewRuns(FakeRunBase):
         self.assertIn('Name your character exactly "Claude"', prompt)
         self.assertNotIn("PHASE 0", prompt)
         self.assertEqual(self.claude_envs()[0]["BG3AI_SAVE_PREFIX"], "Claude-")      # RUN-5: from --save-owner alone
+
+
+class Series(NautiloidBase):
+    """run --until nautiloid_escaped --runs 2 end to end: two playthroughs, two new games, two records."""
+
+    def setUp(self):
+        super().setUp()
+        for n in ("PLAY_DIR", "KNOWLEDGE_DIR", "SE_BG3AI_DIR"):
+            self.saved[n] = getattr(P, n)
+        P.PLAY_DIR = self.tmp / "play"                  # check_memory links play/memory here, not in the repo
+        P.KNOWLEDGE_DIR = P.PLAY_DIR / "knowledge"
+        P.KNOWLEDGE_DIR.mkdir(parents=True)
+        (P.KNOWLEDGE_DIR / "builds.md").write_text("builds\n")
+        P.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"
+        P.SE_BG3AI_DIR.mkdir(parents=True)
+        (P.SE_BG3AI_DIR / "nav_guard.json").write_text('{"slow":{"TUT_Avernus_C":{}}}')
+        os.environ["FAKE_CLAUDE_FIRST_S"] = "60"
+
+        def feed(_lua):   # every game escapes the Nautiloid 3 s after it was launched (a new game included)
+            if not self.g.alive():
+                return None
+            done = time.time() - (self.r.state["game"] or {}).get("launched", time.time()) > 3
+            return {"status": {"region": "Nautiloid", "party": [{"name": "Claude", "level": 1}]},
+                    "journal": {"quests": [{"title": "Escape the Nautiloid", "done": done,
+                                            "steps": ["Get off the nautiloid"]}]}}
+        P.story.read_game = feed
+        test, orig = self, P.Runner.__init__
+
+        def init(r, opt):   # every Runner the series makes plays on the fake game with the fake claude
+            orig(r, opt)
+            r.next_sid = lambda: "S001"
+            r.close_memory_session = lambda res: None
+            real_cmd = r.claude_cmd
+            r.claude_cmd = lambda *a, **k: [sys.executable, str(test.claude)] + real_cmd(*a, **k)[1:]
+            r.code_update_check = lambda: None
+            r.between_sessions_check = lambda: None
+            r.check_plan_lines = lambda *a, **k: []
+            test.g.r = test.r = r
+        P.Runner.__init__ = init
+        self.addCleanup(setattr, P.Runner, "__init__", orig)
+
+    def test_two_runs_in_a_row(self):
+        opt = P.Options("naut", None, 20, "opus", save_owner="Claude", until="nautiloid_escaped", keeper=False,
+                        character_brief="a dwarf cleric", series="naut")
+        self.r.game_proc = None
+        t0 = time.time()
+        self.assertEqual(P.run_series(opt, 2, {"runner": None, "stop": False}), 0)
+        self.assertLess(time.time() - t0, 90)
+        self.assertEqual(len(self.claude_runs()), 2)
+        recs = [json.loads(ln) for ln in (P.RUNTIME / "sessions" / "naut" / "runs.jsonl").read_text().splitlines()]
+        self.assertEqual([(r["run"], r["playthrough"], r["outcome"]) for r in recs],
+                         [(1, "naut", "reached"), (2, "naut-r2", "reached")])
+        self.assertTrue(all(r["clean"] for r in recs), [r["failures"] for r in recs])
+        self.assertEqual(recs[0]["reset"]["nav_files"], ["nav_guard.json"])     # the kill list moved aside, once
+        self.assertEqual(recs[1]["reset"]["nav_files"], [])
+        for pt in ("naut", "naut-r2"):
+            self.assertTrue((P.PLAYTHROUGHS / pt / "memory" / "HANDOFF.md").is_file())
+            prof = json.loads((P.PLAYTHROUGHS / pt / "profile.json").read_text())
+            self.assertEqual(prof["character"]["brief"], "a dwarf cleric")
+        # run 2 started a new game: no --load of run 1's saves (same character name), and its own MCP save window
+        launches = [e for e in self.claude_envs()]
+        self.assertEqual(len(launches), 2)
+        prompt2 = self.claude_runs()[1][self.claude_runs()[1].index("-p") + 1]
+        self.assertIn("PHASE 0, CHARACTER CREATION", prompt2)
+        self.assertNotIn("--load", self.g.r.game_proc.args if self.g.r.game_proc else [])
+        log = (P.RUNTIME / "runner.log").read_text()
+        self.assertIn("between runs: game stopped", log)
+        self.assertIn("series naut: 2/2 run(s) recorded, 2 clean, 2 clean in a row", log)
+        # re-running the finished series plays nothing
+        self.assertEqual(P.run_series(opt, 2, {"runner": None, "stop": False}), 0)
+        self.assertEqual(len(self.claude_runs()), 2)
 
 
 class StaleBg3le(FakeRunBase):

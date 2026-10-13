@@ -3,7 +3,7 @@
 **When:** Use whenever a conversation is open (talk_to result, INTERRUPTED — dialogue, dialogue_line events, a cutscene ending in choices) or before starting one with a named NPC. Covers playing your character (CHARACTER.md, roleplay strict/light), get_dialogue/choose_dialogue/roll_check, batching obvious answers with do_actions, skill checks, approval, lies, and recording promises and decisions.
 
 ## Before you talk to a named NPC
-- `Grep` for the name with path `memory` (npcs.md, decisions.md, quests.md). Check decisions.md for related
+- `memory_search("<name>")` (it searches npcs.md, decisions.md, quests.md and the rest of memory/). Check decisions.md for related
   threads and objectives.md for what you need from them.
 - Big or risky conversation (an NPC who might turn hostile, a faction leader, a boss)? **Save first**
   (`save_game(label="Sxxx-pre-<name>")`).

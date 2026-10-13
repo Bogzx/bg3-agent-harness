@@ -7,9 +7,9 @@ the curated files. Facts from decisions.md and npcs.md are archived, never delet
 
 ## 1. Write the chapter
 - The sessions to cover are those after the last chapter file and before the current session. The
-  injection names the last compacted session; `Glob` with path `memory` and pattern `chapters/*.md` or
-  `sessions/S*.md` lists the files.
-- Read those `sessions/Sxxx.md` logs in order.
+  briefing names the last compacted session; `memory_list("memory/chapters")` and
+  `memory_list("memory/sessions")` list the files.
+- `memory_read` those `sessions/Sxxx.md` logs in order.
 - Create `memory/chapters/C<nn>_S<first>-S<last>_<slug>.md`, e.g.
   `C03_S021-S030_act1-underdark.md`. The `S<first>-S<last>` part is required: tools use it to know what
   has been compacted.
@@ -41,6 +41,6 @@ the curated files. Facts from decisions.md and npcs.md are archived, never delet
 - **PLAYTHROUGH.md:** refresh the index lines, standing commitments, and top 3 lessons.
 
 ## 3. Check and log
-- The lint hook reports problems after each edit. Fix every error it shows.
+- Each memory_write/memory_edit result shows the lint errors about that file. Fix every error it shows.
 - Log `- HH:MM [note] compaction: wrote chapters/C<nn>_…; archived N NPCs; collapsed N regions`.
 - Continue with normal play. The commit happens at wrap-up.

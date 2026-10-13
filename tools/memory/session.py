@@ -5,17 +5,22 @@
   session.py context   print the context injection for the current session (no new session)
   session.py end       lint (wrap-up phase), close the session, `git add -A && git commit -m Sxxx`
   session.py status    one-line status: session, elapsed minutes, wrap-up/compaction flags
-  session.py hook      SessionStart hook entry point: reads the hook JSON on stdin;
-                       source=startup → start, otherwise (resume/clear/compact/fork) → context
-  session.py clock     PostToolUse hook (mcp__bg3__*): wrap-up reminder once the session passes
-                       $BG3_WRAP_MINUTES (default 50) minutes
-  session.py memlint   PostToolUse hook (Edit/Write): reports lint errors about the edited file
-  session.py stop      Stop hook: once wrap-up is due or HANDOFF.md is written for this session,
-                       lint; on errors block the stop (Claude gets the report and fixes it), on
+  session.py hook      SessionStart-hook entry point (JSON on stdin): source=startup → start, otherwise
+                       (resume/clear/compact/fork) → context. Kept for manual Claude Code use; the play
+                       harness needs no client hooks.
+  session.py clock     wrap-up reminder once the session passes $BG3_WRAP_MINUTES (default 50) minutes, as
+                       PostToolUse-hook JSON. The MCP server appends the same reminder to its results.
+  session.py memlint   lint errors about one edited file, as PostToolUse-hook JSON (the memory keeper's hook)
+  session.py stop      the stop check: once wrap-up is due or HANDOFF.md is written for this session,
+                       lint; on errors block the stop (the agent gets the report and fixes it), on
                        success close + commit the session. Gives up after a few blocked attempts.
-  session.py session-end  SessionEnd hook: commit the session if it lints clean, else leave it open
+                       Prints {"decision": "block", "reason": ...}, {"systemMessage": ...} or nothing.
+                       The runner runs it after claude exits and resumes claude with the reason; the MCP
+                       server's end_session tool makes the same check (stop_decision).
+  session.py session-end  commit the session if it lints clean, else leave it open (the runner, at the end)
 
-The playing agent has no shell: it never runs these itself; hooks do.
+The playing agent has no shell: it never runs these itself. The runner and the bg3 MCP server do
+(bridge/src/bg3ai/memtools.py imports this module).
 
 The memory dir is --memory-dir, else $BG3_MEMORY_DIR, else $CLAUDE_PROJECT_DIR/memory, else ./memory.
 Session state lives in <memory>/.session.json (git-ignored):
@@ -137,7 +142,7 @@ def _file_block(mem: Path, name: str, budget: int) -> str:
         return f"----- {name} (MISSING) -----"
     body = _clean(p.read_text())
     if len(body) > budget:
-        body = body[: max(0, budget - 80)].rstrip() + f"\n[... truncated; Read memory/{name} for the rest]"
+        body = body[: max(0, budget - 80)].rstrip() + f"\n[... truncated; memory_read memory/{name} for the rest]"
     return f"----- {name} -----\n{body}"
 
 
@@ -154,7 +159,7 @@ def _character_block(mem: Path, budget: int = CHARACTER_BUDGET) -> str | None:
     title = "----- CHARACTER.md (who you are: play as this character; the Roleplay line says how strictly) -----"
     core = core.strip()
     if len(core) > budget - 200:
-        core = core[: budget - 280].rstrip() + f"\n[... truncated; Read memory/{L.CHARACTER_FILE} for the rest]"
+        core = core[: budget - 280].rstrip() + f"\n[... truncated; memory_read memory/{L.CHARACTER_FILE} for the rest]"
     lines = [ln for ln in dev.strip().splitlines()[1:] if ln.strip()]
     room = budget - len(core) - len(L.CHARACTER_DEV_HEADING) - 80
     kept: list[str] = []
@@ -192,7 +197,7 @@ def harness_news(since: str | None) -> list[str]:
     out = [f"- {t} {text}" for t, text in new[-NEWS_MAX:]]
     if len(new) > NEWS_MAX:  # after a long break 15+ entries: say the rest exist instead of dropping them silently
         out.insert(0, f"- (+{len(new) - NEWS_MAX} older changes since your last session, from {new[0][0]}: "
-                      "Read play/knowledge/harness-news.md once now)")
+                      "memory_read knowledge/harness-news.md once now)")
     return out
 
 
@@ -254,6 +259,9 @@ def build_context(mem: Path, source: str = "startup", notes: list[str] | None = 
         head.append("Resumed conversation: call get_status and check it matches what you remember.")
     elif source == "clear":
         head.append("Context was cleared: re-read objectives.md and your session log before acting.")
+    elif source == "repeat":  # session_start called again in an open session (e.g. after a context compaction)
+        head.append("Session already open: this is your memory again. If your context was compacted, re-read "
+                    f"memory/sessions/{sid}.md and memory/objectives.md (memory_read), then call get_status.")
     # With the runner's memory keeper on, it compacts between sessions (S021 spent 11 Reads of old logs on it
     # mid-play); the player compacts only without a keeper.
     if cur and M.compaction_due(mem, cur) and os.environ.get("BG3AI_KEEPER") != "1":
@@ -315,9 +323,17 @@ def append_log(mem: Path, n: int, line: str) -> None:
 
 
 def cmd_start(mem: Path, quiet: bool = False) -> int:
+    ok, text = start_session(mem)
+    if not quiet or not ok:
+        print(text)
+    return 0 if ok else 1
+
+
+def start_session(mem: Path) -> tuple[bool, str]:
+    """Open the next session (sessions/Sxxx.md) and return (ok, the context injection). The runner puts the
+    text at the top of its kickoff; the MCP server's session_start tool returns it."""
     if not mem.is_dir():
-        print(no_memory_message(mem))
-        return 1
+        return False, no_memory_message(mem)
     st = M.load_state(mem)
     notes = []
     now = M.now_local()
@@ -329,7 +345,7 @@ def cmd_start(mem: Path, quiet: bool = False) -> int:
         append_log(mem, prev, f"- {now:%H:%M} [note] (harness) session ended WITHOUT wrap-up; "
                               f"work continues in {M.session_id(max(M.session_numbers(mem) + [prev]) + 1)}")
         notes.append(f"WARNING: previous session {M.session_id(prev)} ended without wrap-up: HANDOFF.md may "
-                     f"be stale and its notes are uncommitted. Read memory/sessions/{M.session_id(prev)}.md "
+                     f"be stale and its notes are uncommitted. memory_read memory/sessions/{M.session_id(prev)}.md "
                      f"and reconcile everything against live state.")
     n = reuse or max(M.session_numbers(mem) + [st.get("current") or 0]) + 1
     (mem / "sessions").mkdir(exist_ok=True)
@@ -337,9 +353,7 @@ def cmd_start(mem: Path, quiet: bool = False) -> int:
     (mem / "sessions" / f"{M.session_id(n)}.md").write_text(log_header(n, now.strftime("%Y-%m-%d %H:%M %z")))
     M.save_state(mem, {"current": n, "open": True, "started": started, "started_epoch": time.time(),
                        "warned_epoch": None})
-    if not quiet:
-        print(build_context(mem, "startup", notes, news_since))
-    return 0
+    return True, build_context(mem, "startup", notes, news_since)
 
 
 def cmd_context(mem: Path, source: str = "startup") -> int:
@@ -602,12 +616,17 @@ def memlint_message(mem: Path, edited: str) -> str | None:
         return None
     if rel.startswith(".."):
         return None
-    st = M.load_state(mem)
-    r = L.lint(mem, "any", st.get("current") if st.get("open") else None)
-    mine = [(k, m) for k, m in r.errors if m.startswith(rel)]
+    mine = memlint_findings(mem, rel)
     if not mine:
         return None
     return "Memory lint, " + rel + ":\n" + "\n".join(f"- {k}: {m}" for k, m in mine[:10])
+
+
+def memlint_findings(mem: Path, rel: str) -> list[tuple[str, str]]:
+    """Lint errors about one memory file (`rel`, relative to the memory dir), as (kind, message)."""
+    st = M.load_state(mem)
+    r = L.lint(mem, "any", st.get("current") if st.get("open") else None)
+    return [(k, m) for k, m in r.errors if m.startswith(rel)]
 
 
 def cmd_memlint(mem: Path) -> int:

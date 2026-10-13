@@ -37,7 +37,7 @@ the region done in locations.md.
   - The same `used <item>` event repeating, or a character ignoring orders: a harness loop → the
     `stuck` playbook, section 0.
 - Notes: put them on the walk itself, `travel_to(objective="o1", note="[quest] …")`, or `note("…")` while
-  it runs; never Read/Edit memory files while the party stands still.
+  it runs; never read or edit memory files while the party stands still.
 - Long distances: `travel_to(marker="m1" | objective="o1")` chains walks there and returns at once;
   append the arrival steps with `queue_actions` and plan meanwhile (it stops on an interrupt or when
   nothing leads further); `fast_travel(waypoint="<name>")` between unlocked

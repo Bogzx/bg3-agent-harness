@@ -1,6 +1,6 @@
 # BG3 AI: architecture
 
-Goal: an AI agent (Claude Code) plays Baldur's Gate 3 from start to finish through a mod that (1) exposes
+Goal: an AI agent (any MCP client; `claude -p` by default) plays Baldur's Gate 3 from start to finish through a mod that (1) exposes
 everything the player can see, (2) lets it take every action a player can, (3) gives it the real screen
 when needed, and (4) keeps a Markdown memory of the playthrough across ~1-hour sessions. Two hard rules
 apply throughout:
@@ -20,14 +20,16 @@ apply throughout:
 The research behind every decision is in `research/` (01–06; this document is the synthesis).
 
 ```
-┌──────────────── Claude Code session (play/, ~1 h) ───────────────────────┐
-│ CLAUDE.md rules · playbooks (knowledge/playbooks, read on demand) · hooks│
-│ memory/ (git)  ← Read/Edit/Write only here; no Bash, no web               │
+┌──────────────── MCP client session (play/, claude -p by default, ~1 h) ──┐
+│ CLAUDE.md rules · playbooks (knowledge/playbooks, read on demand)        │
+│ built-in tools off (--tools ToolSearch): only mcp__bg3__*, no hooks      │
 └───────────────┬──────────────────────────────────────────────────────────┘
-                │ MCP (stdio)
+                │ MCP (stdio; streamable HTTP for a client in a container)
 ┌───────────────▼──────────── bridge/ : bg3 MCP server (Python) ───────────┐
-│ ~45 tools · short handles (e12) instead of GUIDs · narrated text · event  │
+│ ~93 tools · short handles (e12) instead of GUIDs · narrated text · event  │
 │ deltas · blocking actions with interrupts · session clock · wiki · shots  │
+│ memory/ (git, read-write) + knowledge/ (read-only): memory_* tools, the   │
+│ sandbox, lint, session_start/end_session (memtools.py)                    │
 └──────┬──────────────────────────────┬────────────────────┬──────────────┘
        │ LuaDebug TCP :9998           │ \0bg3ai-shot        │ \0bg3ai-input
 ┌──────▼──────── BG3 (native Linux, Vulkan, inside Steam's sniper runtime) ─┐
@@ -69,9 +71,18 @@ only deltas after actions.
 ### 2. Playthrough memory (Markdown, multi-session)
 `memory-template/`, `tools/memory/` (`new_playthrough.py`, `session.py`, `lint.py`, `snapshots.py`), and
 the playbooks `session-start`, `session-wrapup` and `compaction` in `play/knowledge/playbooks/` (read-only
-for the agent; it runs with `--disable-slash-commands`, so it has no skills). A SessionStart hook
-injects PLAYTHROUGH.md and HANDOFF.md. A clock in every tool result forces wrap-up at T-10 min. The Stop
-hook lints and commits.
+for the agent; it runs with `--disable-slash-commands`, so it has no skills). Since 2026-10-13 the whole harness
+is the MCP server's (`bridge/src/bg3ai/memtools.py`), not the client's, so any MCP client gets it and the server
+enforces the sandbox:
+* The agent reaches its notes only through `memory_list/read/search/write/edit/append` (and `note`), confined to
+  `memory/` and read-only `knowledge/` (no `..`, symlinks, `.git*`, snapshots, markers.json; session logs
+  append-only; CHARACTER.md append-only once committed). Every write's result carries the lint errors about it.
+* The runner opens the session (`session.py start`) and leads its kickoff with the briefing (CHARACTER.md,
+  PLAYTHROUGH.md, HANDOFF.md). Without the runner the server's first tool call opens it; `session_start` shows it.
+* A ⏱ clock in every tool result forces wrap-up near the deadline (manual sessions: an elapsed-time reminder).
+* `end_session` lints and commits, or says what is missing (keep playing, the handoff, lint). When the client
+  ends anyway, the runner makes the same check and resumes the conversation with the reason.
+* The pace guard (`wait=true` ignored on walks outside combat) is in the move tools.
 
 ### 3. Hands: verified actions and navigation
 `Server/Guard.lua`, `Server/Actions.lua`, `Client/UIActions.lua` and `native/bg3sdl`. Actions are jobs
@@ -80,8 +91,8 @@ replaces walking pixel by pixel, the biggest cost in the Pokémon agents. Map ma
 
 ### 4. Autonomy: runner, recovery and observability
 `runner/launch_game.sh` launches with all injections and no Steam config changes. `runner/play.py` runs
-sessions in a loop: it starts the game, loads the playthrough's save, starts Claude Code in `play/` with a
-deadline, then saves, snapshots and commits. It also recovers from crashes, hangs and game overs, and
+sessions in a loop: it starts the game, loads the playthrough's save, opens the memory session, starts the
+client (`claude -p`, built-in tools off) in `play/` with a deadline, then saves, snapshots and commits. It also recovers from crashes, hangs and game overs, and
 detects stalls across sessions. `runner/dashboard/` is a live web view of the game screen, party, the
 agent's tool calls and its notes.
 
@@ -93,7 +104,7 @@ agent's tool calls and its notes.
   save with no clicks. `Ext.Input.InjectKeyPress("SPACE")` passed the splash screen.
 * Osiris (`GetHostCharacter`, `DB_PartyMembers`, `GetDisplayName` + `Ext.Loca`) on a loaded save.
 * Mesa layer capture of the real game (5120×1440 in 0.4 s including JPEG encode).
-* MCP server: 43 tools registered. Saves and wiki work end to end.
+* MCP server: 43 tools registered then (93 on 2026-10-13). Saves and wiki work end to end.
 
 ## Repo map
 | Path | What |
@@ -103,8 +114,9 @@ agent's tool calls and its notes.
 | `third_party/bg3le` | pinned submodule; `tools/build_bg3le.sh` builds it into `build/bg3le/dist/` |
 | `mod/Mods/BG3AI` | the Lua mod (loose folder, loaded via `BG3LE_MOD_PATH`; `tools/pak.py create` packs it) |
 | `native/bg3sdl` | SDL input shim |
-| `bridge/` | Python: `luadebug.py` (TCP client), `game.py` (RPC), `render.py`, `server.py` (MCP), `screen.py`, `input.py`, `wiki.py` |
-| `play/` | where the playing agent runs: CLAUDE.md, hooks, `.mcp.json`, `knowledge/` (incl. `playbooks/`), `memory -> ../playthroughs/<name>/memory` |
+| `bridge/` | Python: `luadebug.py` (TCP client), `game.py` (RPC), `render.py`, `server.py` (MCP), `memtools.py` (memory sandbox + session lifecycle), `screen.py`, `input.py`, `wiki.py` |
+| `play/` | where the playing agent runs: CLAUDE.md, `.mcp.json`, `.claude/settings.json` (defence in depth, no hooks), `knowledge/` (incl. `playbooks/`), `memory -> ../playthroughs/<name>/memory` |
+| `tools/container/` | recipe: an MCP client in a container whose network reaches only the bg3 server (HTTP) |
 | `memory-template/`, `tools/memory/` | memory layout and tooling |
 | `runner/` | launcher, session runner, dashboard |
 

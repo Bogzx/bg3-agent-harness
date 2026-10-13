@@ -7,7 +7,7 @@ agent, whatever layer produced it.
 triage.py adds the section to every Sxxx.triage.md. Two severities:
     LEAK   information a player can't have (fix the layer that let it through)
     CHECK  judgment calls worth a look (internal ids the UI never shows, hidden-state words on a listing)
-Results of the agent's own memory and wiki tools (Read, Grep, wiki_page, ...) are not game observations and
+Results of the agent's own memory and wiki tools (memory_read, memory_search, wiki_page, ...) are not game observations and
 are skipped; so are screenshots (the rendered frame is fair by construction).
 """
 from __future__ import annotations
@@ -19,7 +19,9 @@ from pathlib import Path
 
 # Tools whose results are not game observations (memory, wiki, harness meta).
 NOT_GAME = {"Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "TodoWrite", "ToolSearch", "Task", "Agent",
-            "wiki_page", "wiki_search", "note", "session_clock", "screenshot", "zoom"}
+            "wiki_page", "wiki_search", "note", "session_clock", "screenshot", "zoom",
+            "memory_list", "memory_read", "memory_search", "memory_write", "memory_edit", "memory_append",
+            "session_start", "end_session"}
 
 _GUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
 _FILE_PATH = re.compile(r"(?:/[\w.\-]+)+\.(?:jpg|png|jsonl?|txt)")

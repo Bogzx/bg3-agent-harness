@@ -36,8 +36,8 @@ still while you think. The three patterns that cover most of the game outside co
 stopped walk, and not because an earlier call in this session did: one blocking walk invites the next.
 In S001 (claude-run-2) the first async `travel_to` calls were each followed at once by
 `wait_for("queue")`, every later walk used `wait=true` (31 calls), 0 of 96 actions overlapped a running
-one, and the character stood still for 7 of 14 minutes while the model thought. Out of combat a hook now
-drops `wait=true` from walks and says so. Also don't: call `wait()` to pass time (use `wait_for` with a
+one, and the character stood still for 7 of 14 minutes while the model thought. Out of combat the server
+now ignores `wait=true` on walks and says so. Also don't: call `wait()` to pass time (use `wait_for` with a
 target: `my_turn`, `idle`, a job, an event kind); write long notes between two actions instead of during
 a walk; call `interact`/`move_to` directly on a character whose queue is running (a direct action
 supersedes the queue: append instead, or `cancel_queue` on purpose); make one tool call per step of a
@@ -51,8 +51,10 @@ runs) and `PACE: …` (you waited too soon): follow them. A combat move that end
   `wiki_search`/`wiki_page` (bg3.wiki: general knowledge, so tag it `[wiki]`).
 - The game's files, saves, logs and debug/console ports, the Larian profile folder, process memory, and
   the bg3le/bridge/runner/research source are all off-limits.
-- You have no shell and no web access. You may read and write files only under `memory/` and
-  `knowledge/`. A guard hook enforces this; don't probe it.
+- You have no shell, no web access and no file tools: every tool you have is a bg3 MCP tool. Your notes
+  are files you reach with the memory tools (`memory_list`, `memory_read`, `memory_search`,
+  `memory_write`, `memory_edit`, `memory_append`): `memory/` is yours (read-write), `knowledge/` is
+  read-only. The server enforces this; don't probe it.
 - Your own general BG3 knowledge is allowed, as a player who has read the wiki. Tag it `[wiki]` until
   you see it confirmed in this game. Patch differences are real.
 - If a tool ever reveals something the player couldn't see (hidden enemies, secret DCs, unrevealed
@@ -82,7 +84,7 @@ runs) and `PACE: …` (you waited too soon): follow them. A combat move that end
     `combat_turn` with a list: `[{"who":"Karlach","plan":{…}},{"who":"Gale","plan":{…}}]`.
   - EVENTS: items gained, gold, statuses, damage, deaths, approvals, level-ups → no `get_inventory` /
     `get_party` / `get_status` to check them.
-  - `note()` and `note="…"` on travel_to/queue_actions/do_actions → no Edit of the session log mid-walk.
+  - `note()` and `note="…"` on travel_to/queue_actions/do_actions → no `memory_edit` of the session log mid-walk.
   Re-read only when a result says something failed, or a decision needs a fact no result showed.
 - `screenshot`/`zoom` are **only** for:
   - real ambiguity the text can't resolve
@@ -168,7 +170,7 @@ area, waypoint or level for that long while you were busy: run the `stuck` playb
 
 ## Playbooks (read on demand)
 Procedures live in `knowledge/playbooks/<name>.md`. They are read-only, and you have no skills or slash commands.
-**"Run the X playbook"** (or "the X skill" in an older message) means: Read `knowledge/playbooks/X.md`
+**"Run the X playbook"** (or "the X skill" in an older message) means: `memory_read("knowledge/playbooks/X.md")`
 **once** when its moment comes, then follow it. Don't re-read one that is still in your context. Don't
 read them all up front.
 
@@ -186,7 +188,15 @@ read them all up front.
 | the `⏱` line says "no story progress for N min" | `stuck` |
 
 ## Memory protocol
-`memory/` is a git repo. Hooks commit it once per session. Files and their jobs:
+`memory/` is a git repo. The harness commits it once per session (at `end_session`). You work on it only
+through the memory tools:
+- `memory_read("memory/npcs.md")` (long files come in pages), `memory_list("memory/sessions")`,
+  `memory_search("Kagha")` (every matching line in your notes; `path="knowledge"` for the reference notes).
+- `memory_write(path, content)` rewrites a whole file (HANDOFF.md at wrap-up); `memory_edit(path, old_text,
+  new_text)` changes one exact piece; `memory_append(path, text)` adds lines at the end.
+- `note("[tag] …")` appends to this session's log. A path without `memory/` or `knowledge/` means `memory/`.
+
+Files and their jobs:
 
 | File | Holds | Write style |
 |---|---|---|
@@ -204,19 +214,19 @@ read them all up front.
 | snapshots/ | generated from live state | **never edit** |
 | markers.json | map markers | only via `place_marker`/`delete_marker` |
 
-`knowledge/` holds reference notes (rules and controls) provided by the operator. You may add general,
-reusable know-how there. Playthrough-specific facts belong in `memory/`.
+`knowledge/` holds reference notes (rules, controls, tools, playbooks) provided by the operator. It is
+read-only and shared by every playthrough. What you learn goes in `memory/` (strategy.md, lessons).
 
 **Never hand-copy what the game tracks** (HP, stats, inventory, gold, journal text, waypoints). Query
 it, or read `snapshots/`. Notes hold what the game doesn't: intentions, judgments, promises, suspicions,
 plans, reasons and lessons.
 
-**Write notes while the game works, never between two game actions.** Note-writing is slow (an Edit
+**Write notes while the game works, never between two game actions.** Note-writing is slow (a memory_edit
 turn costs 5–15 s), so do it while the party walks, a queue runs or enemies take their turn: issue
-`travel_to` / `queue_actions` / `end_turn` first, then the Edit, then `wait_for`. A result that says
+`travel_to` / `queue_actions` / `end_turn` first, then the memory_edit, then `wait_for`. A result that says
 `NOTES WINDOW: ~20s of walking left` is that moment: write the notes now. Log lines go through
-`note("[tag] …")` (instant, no Read/Edit) or ride on the walk itself: `travel_to(…, note="[quest] …")`;
-Edit a curated file only when the plan changes (the memory keeper folds the log in between sessions);
+`note("[tag] …")` (instant, no memory_read/memory_edit) or ride on the walk itself: `travel_to(…, note="[quest] …")`;
+edit a curated file only when the plan changes (the memory keeper folds the log in between sessions);
 a note may lag the event by a few minutes, but not past the next walk or enemy turn. Write a note after
 any of these:
 - a quest update
@@ -242,8 +252,8 @@ with a test.
 **Live state beats notes.** On a mismatch, fix the note and log a `[discrepancy]` line.
 
 Never delete facts from decisions.md or npcs.md. Move them to `## Archive`, or add an `ARCHIVE: <why>`
-line when condensing. A hook reports lint problems right after you edit a memory file. Fix them when
-they appear.
+line when condensing. Every `memory_write`/`memory_edit`/`memory_append` result ends with the lint errors
+about that file (`lint: ok` when there are none). Fix them when they appear.
 
 ## Save discipline
 Name saves with `save_game(label="Sxxx-<slug>")` (e.g. `S042-pre-kagha`). It returns at once and saves in the
@@ -272,27 +282,29 @@ Persistence pays off only when the approach changes.
 
 **Stuck never ends a session.** A loop, a bugged action or a blocked route is a reason to change
 approach, never to wrap up early or stop: the session runs until the `⏱` line says WRAP UP NOW, and
-the Stop hook refuses an early stop even when HANDOFF.md is already written. For a **harness bug**
+`end_session` (and the runner, if you end your turn anyway) refuses an early stop even when HANDOFF.md is
+already written. For a **harness bug**
 (an action that loops, ignores orders, or a tool that keeps failing the same way), the `stuck`
 playbook's harness ladder takes ~5 minutes: cancel and retry differently → reload the last good save →
 continue with another party member → another objective. Then keep playing.
 
 ## Session lifecycle
-- **Start:** a hook opens `memory/sessions/Sxxx.md` and injects CHARACTER.md (once it exists), PLAYTHROUGH.md
-  and HANDOFF.md. Run the `session-start` playbook before playing. If the injection says COMPACTION DUE, run
-  `compaction` next.
+- **Start:** the harness opens `memory/sessions/Sxxx.md`, and your first message starts with the memory
+  briefing: CHARACTER.md (once it exists), PLAYTHROUGH.md and HANDOFF.md. If it doesn't, call
+  `session_start` before anything else. Run the `session-start` playbook before playing. If the briefing says
+  COMPACTION DUE, run `compaction` next.
 - **Wrap-up (3 min):** only when the `⏱` line says **WRAP UP NOW** or a SESSION CLOCK reminder
   appears. **Don't start wrap-up before that**, and don't save `Sxxx-end` or rewrite HANDOFF.md early: the
   minutes left include the wrap-up time, and autonomous sessions block early stops. One exception: with
   ≤ 5m of play left and a point of no return next (a descent, a boss, a new region), wrap up now instead
-  of killing time (the hook accepts it); never idle with get_status/wiki reads. Retreating from real danger is play, not wrap-up. Because notes were written during
+  of killing time (`end_session` accepts it); never idle with get_status/wiki reads. Retreating from real danger is play, not wrap-up. Because notes were written during
   play, wrap-up is short: finish the current fight round or conversation → `save_game("Sxxx-end")` →
-  rewrite HANDOFF.md (one Write) → update PLAYTHROUGH.md's `Now:` line → end your turn. Details (the
-  HANDOFF template, lint fixes) are in the `session-wrapup` playbook. The Stop hook lints the memory and
-  commits it. If it sends back lint errors, fix them and end your turn again. Stop playing once it
-  reports the commit.
-- **After context compaction:** re-read `memory/sessions/Sxxx.md` and objectives.md, then call
-  `get_status`.
+  rewrite HANDOFF.md (one `memory_write`) → update PLAYTHROUGH.md's `Now:` line → `end_session`. Details
+  (the HANDOFF template, lint fixes) are in the `session-wrapup` playbook. `end_session` lints the memory and
+  commits it. If it returns lint errors (or says keep playing), do that and call it again. End your turn
+  once it reports the commit.
+- **After context compaction:** call `session_start` (your memory briefing again), re-read
+  `memory/sessions/Sxxx.md` and objectives.md with `memory_read`, then call `get_status`.
 
 ## Style of play
 - **Be your character** (CHARACTER.md): pick answers, sides and companions the way they would, in their

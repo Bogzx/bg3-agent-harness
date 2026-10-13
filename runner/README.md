@@ -19,8 +19,9 @@ nothing.
 
 Options: `--session-minutes 60` (wrap-up starts 3 min before the end), `--hours N` (total
 budget; no new session starts with less than 20 min left), `--model`, `--save-owner NAME`,
-`--take-over` (see Safety), `--until MILESTONE`, `--character-brief TEXT [--roleplay strict|light]
-[--difficulty Explorer|Balanced|Tactician]` (both below).
+`--take-over` (see Safety), `--until MILESTONE [--runs N] [--run-hours H]`, `--character-brief TEXT [--roleplay
+strict|light] [--difficulty Explorer|Balanced|Tactician]` (all below). `play.py runs --playthrough PT [--failures]`
+prints a series' run table.
 
 `--save-owner` (or `$BG3AI_SAVE_OWNER`) is the player character's name, which starts every save folder
 of the playthrough: `Claude` for `Claude-<id>__<label>`. Without it, the runner learns the owner from the
@@ -45,7 +46,59 @@ Without a brief, a new game is named after `--save-owner` as before.
 (SIGINT; the fix-notes pass closes the memory), the runner quicksaves if needed and appends a run record to
 `runtime/sessions/<pt>/runs.jsonl` (wall/play minutes, sessions, cost, turns and tokens from claude's result events,
 game crashes/hangs, agent hangs, recoveries, setup failures, agent reloads), then exits. A playthrough already past
-it doesn't play. (`--runs N`, the next playthrough and a new game, isn't there yet: loop the command in a shell.)
+it doesn't play. Every way an `--until` run ends writes a record (not a `stop`, which leaves the run to resume),
+and `--run-hours H` caps one run: past it the run ends as a timeout.
+
+**Benchmark series (`--runs N`).** The launch bar is 3 unattended Nautiloid runs in a row:
+
+```bash
+python3 runner/play.py run --playthrough naut --until nautiloid_escaped --runs 3 --run-hours 4 \
+    --character-brief "a pious, short-tempered dwarf cleric who distrusts mind flayers"
+python3 runner/play.py runs --playthrough naut [--failures]    # the table and "N clean in a row"
+```
+
+Run 1 is the playthrough itself (`naut`), run k is `naut-r<k>`. Each run gets a fresh memory from
+`memory-template/` (`tools/memory/new_playthrough.py`, created by the runner) and the same `profile.json`: the
+series' brief is frozen in `runtime/sessions/naut/series.json` when it starts, so the name run 1's agent chose isn't
+forced on run 2. Between runs the runner stops the game it launched; the next run launches it again to the main
+menu and plays a new game (phase 0 with a brief, else the `--save-owner` name). `--hours` caps the whole series,
+`--run-hours` each run. All records go to `runtime/sessions/naut/runs.jsonl` (`series`, `run`). Re-running the same
+command resumes the series at the first run without a record (also after the runner's self-restart). The series
+stops early on `stop`/Ctrl-C, a stale bg3le build or a runner error; it goes on after a timeout or a give-up.
+
+What a run doesn't inherit (reset before its first session, listed in the record's `reset`):
+
+| State | Reset |
+|---|---|
+| saves (every run's character may have one name) | `runner.json` `saves_after` = the run's start: the runner and the MCP server (`BG3AI_SAVES_AFTER`, `list_saves`/`load_game`) ignore older saves |
+| the navigation per-level kill list `Script Extender/BG3AI/nav_guard.json` (NAV-3) and the breadcrumb mirrors `nav_<host uuid>.json` | moved into `runtime/sessions/<run>/reset/` (`$BG3AI_SE_DIR` overrides the Script Extender dir) |
+| the mod's Lua state (kill list in memory, warm-up counters, guards) | the game process is stopped between runs |
+| `play/knowledge/` (agent-writable outside playbooks/, FAIR-2) | snapshotted at the run start; after the run every file the agent's Edit/Write calls changed is put back (its version kept in `runtime/sessions/<run>/knowledge_edits/`); other changes (an operator's) are reported, not reverted; the record's `knowledge` lists both |
+| memory, `runner.json` history, progress seen-state, session logs | per playthrough already (a new playthrough per run) |
+| travel_to dead ends | per MCP server process (per session) already |
+
+Kept on purpose: `runtime/levelup_clicks.json` (UI click calibration), the wiki cache, `bg3ai/config.json`
+(the runner sets it every session), `runtime/actions.jsonl` (read by time window).
+
+**Run record** (`runs.jsonl`, one line per run): `outcome` (`reached` | `timeout` | `gave_up` | `runner_error`),
+`why`, `clean`, counts and cost as above, `failures` (each `{t, kind, class, detail, n?}`), `operator` (each
+`{t, what}`). Classes (`runner/runs.py`):
+
+- **harness** (ours): `game_crash`, `game_hang`, `game_oom`, `setup_failed`, `launch_failed`, `launch_gave_up`,
+  `load_refused`, `recovery_failed`, `bg3le_stale`, `steam_refused`, `oom_save_refused` (runner_events.jsonl);
+  `mcp_failed` (claude's init shows the bg3 server not connected), `claude_api` (API/usage/overload errors),
+  `claude_quick_exit` (claude exited within a minute), `tool_exception` (an uncaught bridge exception, "Error
+  executing tool"), `tool_timeout` (an MCP timeout or a `TIMEOUT` step), `fairness_leak` (runner/fairness.py LEAK in a
+  game-tool result: the agent saw what a player can't), `gave_up` (the runner gave up), `runner_error`.
+- **agent**: `stall` (the progress poller's stuck record: no story progress for 10+ min while acting), `party_wipe`
+  (Game Over), `reload` (every load_game it called), `early_exit`, `fairness_block` (the sandbox guard blocked its
+  file call), `timeout` (the run's time ran out; `unknown` when harness failures hit the run).
+- **unknown**: `agent_hang` (claude silent for minutes: a slow turn or a stalled API), `claude_killed` (claude
+  ended by a signal from outside the runner).
+
+A game-tool `FAILED:`/`NOT READY`/`REFUSED` result is the game refusing the agent's call, not a failure.
+**Operator actions**: a second `runner_start` in the run (restarted by hand), a self-restart on changed code, a
+stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
 
 ## What one session does
 
@@ -58,18 +111,26 @@ it doesn't play. (`--runs N`, the next playthrough and a new game, isn't there y
    `Sxxx-...` saves by this playthrough's save owner (the character prefix of the save folder, recorded
    the first time), and quicksaves the runner itself made. Nothing else is ever loaded. With no save yet
    (a new playthrough) the game is left at the main menu.
-3. **Claude.** It runs `claude -p <kickoff> --model M --output-format stream-json --verbose --strict-mcp-config
-   --mcp-config play/.mcp.json --session-id <uuid>` in `play/` with:
+3. **Claude.** It first opens the memory session itself (`session.py start`: `sessions/Sxxx.md`; its output, the
+   memory briefing, leads the kickoff). Then it runs `claude -p <kickoff> --model M --output-format stream-json
+   --verbose --strict-mcp-config --mcp-config play/.mcp.json --tools ToolSearch --session-id <uuid>` in `play/`.
+   `--tools ToolSearch` removes every built-in tool (files, shell, web, agents): the agent has only `mcp__bg3__*`,
+   whose memory tools are sandboxed by the server (bridge/src/bg3ai/memtools.py). Env:
    - `BG3AI_SESSION_DEADLINE`: epoch seconds, for the MCP session clock
-   - `BG3_SESSION_MINUTES` / `BG3_WRAP_MINUTES`: for the memory hooks
+   - `BG3AI_SESSION`: the session the runner opened; the MCP server attaches to it and never opens one
+   - `BG3_SESSION_MINUTES` / `BG3_WRAP_MINUTES`: for session.py's clock
    - `BG3AI_PLAYTHROUGH`
    - `BG3AI_SAVE_OWNER` / `BG3AI_SAVE_PREFIX`: the save owner, and `$BG3AI_SAVE_PREFIX` or else `<owner>-`; both
      empty for a new game whose character isn't named yet (the server takes the name create_character types)
    - `BG3AI_SAVE_GATES`: `1`/`0` when the runner opened/closed the save/load gates for this game (absent when
      it couldn't tell); the MCP server follows it
 
-   The play/ hooks open the memory session (SessionStart) and lint and commit it (Stop). The runner does
-   not call `session.py start` itself, since that would open two sessions. Output goes to
+   There are no client hooks. When claude ends its turn, the runner makes the stop check (`session.py stop`, the
+   old Stop hook): before wrap-up time, or with HANDOFF.md not written for this session, or with lint errors, it
+   resumes the same conversation with the reason (`Sxxx-c1`, at most `MAX_STOP_RESUMES`); when the session may
+   end, it lints and commits the memory. The agent's own `end_session` tool makes the same check from inside the
+   session, so a well-behaved agent never needs the resume. Then `session.py session-end` (the old SessionEnd
+   hook). Output goes to
    `runtime/sessions/<playthrough>/Sxxx.jsonl` (raw) and `Sxxx.log` (readable: `[say]`, `[tool]`,
    `[result]`, `[end]`).
 4. **Deadline.** At deadline + 10 min Claude gets SIGINT, then SIGTERM 30 s later, then SIGKILL. If Claude
@@ -123,7 +184,7 @@ it doesn't play. (`--runs N`, the next playthrough and a new game, isn't there y
   (create_character types and checks it before "Venture forth").
 - `--session-minutes` below 20 is refused (`--allow-short-sessions` for harness tests): start-up (≤1 min)
   and wrap-up (3 min) need room. Wrap-up starts 3 min before the end (a third of a tiny session), passed to
-  the MCP clock line and the Stop hook as `BG3AI_SESSION_WRAPUP`, so both switch at the same moment.
+  the MCP clock line and the stop check as `BG3AI_SESSION_WRAPUP`, so both switch at the same moment.
 
 ## Files
 
@@ -132,7 +193,9 @@ it doesn't play. (`--runs N`, the next playthrough and a new game, isn't there y
 | `runtime/runner.log` | runner decisions, one line each |
 | `runtime/runner.status.json` | live status for `play.py status` |
 | `runtime/sessions/<pt>/runner.json` | save owner, runner quicksaves, per-session history and progress signatures |
-| `runtime/sessions/<pt>/runs.jsonl` | one record per `--until` run |
+| `runtime/sessions/<pt>/runs.jsonl` | one record per `--until` run (a `--runs` series: all its runs, in the base's dir) |
+| `runtime/sessions/<pt>/series.json` | a `--runs` series: its frozen profile, N, the milestone |
+| `runtime/sessions/<run>/reset/`, `knowledge_snapshot.json`, `knowledge_edits/` | a `--runs` run's moved nav files, knowledge/ snapshot, the agent's knowledge/ edits that were put back |
 | `playthroughs/<pt>/profile.json` | the character brief, roleplay mode, difficulty (`--character-brief`) |
 | `runtime/sessions/<pt>/Sxxx.{jsonl,log}` | Claude's stream (raw and readable); `Sxxx-fix.*` for fix-notes passes |
 | `runtime/STOP` | created by `play.py stop` |
@@ -151,8 +214,9 @@ Not verified yet: the exact `ui.menu` load argument (the runner passes the save 
 
 ## Memory keeper (between sessions)
 
-After each play session the runner starts `runner/memory_keeper.py`: a `claude -p` pass (sonnet, effort low,
-≤5 min; `--keeper-model/--keeper-effort/--keeper-minutes`, off with `--no-memory-keeper`) that updates
+After each play session the runner starts `runner/memory_keeper.py`: a `claude -p` pass (the session's play model,
+effort low, ≤5 min; `--keeper-model <model>` overrides `same`, `--keeper-effort/--keeper-minutes`, off with
+`--no-keeper`; the model is recorded in the session history, keeper_history.jsonl and runs.jsonl) that updates
 objectives/quests/npcs/locations/party-build/... from the session logs and HANDOFF.md and writes the chapter
 when compaction is due. It runs in a thread during the next session's prep (game check, mod reload, check_all:
 none write memory) and is joined before the next player starts, so it never races the player's edits.

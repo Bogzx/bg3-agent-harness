@@ -21,7 +21,7 @@ from typing import Any, Callable
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, delta, economy, leveling, macros, metrics, party, render, saver, saves, turn
-from . import companions, debrief, lessons, longnav, lore, naming, navhints
+from . import companions, debrief, lessons, longnav, lore, memtools, naming, navhints
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -30,6 +30,7 @@ REPO = Path(__file__).resolve().parents[3]
 RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
 PLAY_DIR = Path(os.environ.get("BG3AI_PLAY_DIR", REPO / "play"))
 MEMORY = Path(os.environ.get("BG3AI_MEMORY_DIR", PLAY_DIR / "memory"))
+KNOWLEDGE = Path(os.environ.get("BG3_KNOWLEDGE_DIR") or PLAY_DIR / "knowledge")
 SAVE_DIR = Path.home() / ".local/share/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public/Savegames/Story"
 DEADLINE = float(os.environ.get("BG3AI_SESSION_DEADLINE", "0") or 0)
 WRAPUP_S = 10 * 60
@@ -43,9 +44,15 @@ queue entry: keep planning while the character walks; wait_for only when the nex
 arrival. Other action tools block until they settle; pass wait=false to return at once.
 In combat, combat_turn plays a whole turn (with fallbacks) in one call and says who acts next. Chores are
 one call each: loot_area, dialogue_advance, travel_to, regroup, read_all, rest_if_needed.
-Use screenshot only when the text tools can't tell you something (spatial layout, puzzles, unknown popups)."""
+Use screenshot only when the text tools can't tell you something (spatial layout, puzzles, unknown popups).
+Memory: your notes live in memory/ (read and write with memory_list, memory_read, memory_search, memory_write,
+memory_edit, memory_append; note appends to the session log). knowledge/ holds read-only reference notes and the
+playbooks. Session: if your first message doesn't show your memory briefing, call session_start first; at the end
+of the wrap-up call end_session and end your turn only when it reports the commit."""
 
 mcp = MCPServer("bg3", instructions=INSTRUCTIONS)
+SANDBOX = memtools.Sandbox(lambda: MEMORY, lambda: KNOWLEDGE)  # memory/ + read-only knowledge/ (memtools.py)
+LIFE = memtools.Lifecycle(lambda: MEMORY)  # opens/ends the memory session without client hooks
 game = Game(port=int(os.environ.get("BG3LE_DEBUG_PORT", "9998")))
 H = Handles()
 DELTA = delta.TRACKER.bind(H)  # the agent's last look; get_status/look/get_map diff against it
@@ -485,7 +492,8 @@ NEXT_WALK = ("NEXT: queue_actions what to do on arrival, then look/plan/notes wh
 _noop_waits = {"n": 0}
 _READ_TOOLS = {"look", "look_at", "get_status", "get_nearby", "get_frontier", "get_layout", "get_map", "session_clock", "wiki_page",
                "wiki_search", "get_party", "list_saves", "get_inventory", "screenshot", "zoom", "route", "get_journal",
-               "get_combat_state", "get_dialogue", "ability_preview", "get_level_up_options", "recall"}
+               "get_combat_state", "get_dialogue", "ability_preview", "get_level_up_options", "recall",
+               "memory_list", "memory_read", "memory_search", "session_start"}
 
 
 def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, issued: bool = False,
@@ -546,7 +554,7 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
         if lv:
             out.append(lv)
     out.append(SAVER.take_notes())  # SAVED / SAVE FAILED from a background save
-    c = _clock_line()
+    c = _clock_line() or LIFE.clock()  # LIFE.clock: manual sessions' elapsed-time reminder (no runner deadline)
     if c:
         out.append(c)
     text = H.scrub("\n".join(x for x in out if x))
@@ -683,12 +691,21 @@ def _guard(fn):
     @functools.wraps(fn)
     def wrapper(*a, **kw):
         t0 = time.monotonic()
+        try:
+            LIFE.ensure()  # manual mode: the first call opens the memory session (was the SessionStart hook)
+        except Exception as e:  # noqa: BLE001 - a memory problem never blocks a game tool
+            _log("session_start", {}, f"session not opened: {type(e).__name__}: {e}", 0)
         getattr(game, "begin_tool", lambda: None)()
         gated = fn.__name__ not in _SAVE_UNGATED
         if gated:
             SAVER.enter()  # a background save has the menus up for ~1 s: don't interleave with it
         try:
-            return fn(*a, **kw)
+            out = fn(*a, **kw)
+            if LIFE.pending and isinstance(out, str):  # the briefing rides on the first text result
+                out = LIFE.take_pending() + "\n\n=== the result of your call ===\n" + out
+            return out
+        except memtools.Refused as e:
+            return _finish(fn.__name__, kw, str(e), t0, events=False)
         except NotReady as e:
             return _finish(fn.__name__, kw, f"NOT READY: {e}", t0, events=False)
         except (GameError, ValueError) as e:
@@ -700,7 +717,8 @@ def _guard(fn):
 
 
 # Tools that don't touch the game screen, so they run while a background save has the menus up.
-_SAVE_UNGATED = {"list_saves", "session_clock", "wiki_page", "wiki_search"}
+_SAVE_UNGATED = {"list_saves", "session_clock", "wiki_page", "wiki_search", "memory_list", "memory_read",
+                 "memory_search", "memory_write", "memory_edit", "memory_append", "session_start", "end_session"}
 
 
 def _objective_ref(ref: str) -> str:
@@ -1172,15 +1190,22 @@ def _settle(poll, limit: float | None = None) -> dict | None:
         time.sleep(0.1)
 
 
+PACE_GUARD_NOTE = ("(pace guard: wait=true ignored outside combat: the walk runs while you plan. Do something that "
+                   "doesn't depend on the arrival (notes, look, the next leg), then wait_for(\"queue\" | job id) only "
+                   "if you still need the outcome. Don't pass wait=true to walks.)")
+
+
 def _walk_wait(wait: bool) -> tuple[bool, str]:
-    """wait=true on a walk blocks only in combat (moving before an attack). Outside it the walk runs while the
-    agent plans: S001 learned wait=true from its own results and pipelined 0% (impl-setup part 5)."""
+    """The pace guard (move_to, walk_toward; travel_to never blocks): wait=true on a walk blocks only in combat
+    (moving before an attack). Outside it the walk runs while the agent plans: S001 learned wait=true from its own
+    results and pipelined 0% (impl-setup part 5). Until 2026-10-13 a client PreToolUse hook (pace_guard.py) also
+    rewrote the call; the server's check is the one that holds for any client."""
     if not wait or _batch["active"]:
         return wait, ""
     w = game.try_rpc("act.watch")
     if not isinstance(w, dict) or w.get("combat"):
         return True, ""  # in combat, or unknown: keep the old blocking behaviour
-    return False, "(wait=true ignored outside combat: the walk runs while you plan)"
+    return False, PACE_GUARD_NOTE
 
 
 # ---------------------------------------------------------------------------
@@ -3673,6 +3698,87 @@ def note(text: str, tag: str = "note") -> str:
     else:
         body = f"Noted {n} line{'s' if n != 1 else ''} in {path.name}."
     return _finish("note", {}, body, t0)
+
+
+# Memory files and the session lifecycle (memtools.py): the sandbox is enforced here, not by the client.
+
+def _mem_finish(tool: str, args: dict, body: str, t0: float) -> str:
+    """A memory tool's result: like any tool's (events, RUNNING, the clock) while a game runs; in the runner's
+    fix-notes pass (no game) only the text."""
+    if os.environ.get("BG3AI_FIX_NOTES"):
+        text = H.scrub(body.rstrip())
+        _log(tool, args, text, (time.monotonic() - t0) * 1000)
+        return text
+    return _finish(tool, args, body, t0)
+
+
+@mcp.tool()
+@_guard
+def memory_list(path: str = "memory") -> str:
+    """List a folder of your notes: memory/ (yours, read-write), memory/sessions, memory/chapters, knowledge/ (read-only reference notes), knowledge/playbooks. Shows each file's line count."""
+    t0 = time.monotonic()
+    return _mem_finish("memory_list", {"path": path}, memtools.list_files(SANDBOX, path), t0)
+
+
+@mcp.tool()
+@_guard
+def memory_read(path: str, start_line: int = 1, max_lines: int = 400) -> str:
+    """Read a note file: "memory/<file>" (e.g. memory/npcs.md, memory/sessions/S012.md) or "knowledge/<file>" (e.g. knowledge/playbooks/combat.md, knowledge/tools.md). A bare name means memory/. Long files come in pages: start_line for the next one."""
+    t0 = time.monotonic()
+    return _mem_finish("memory_read", {"path": path, "start_line": start_line},
+                       memtools.read_file(SANDBOX, path, start_line, max_lines), t0)
+
+
+@mcp.tool()
+@_guard
+def memory_search(query: str, path: str = "memory", regex: bool = False) -> str:
+    """Find a name or word in your notes (case-insensitive): every matching line as file:line: text. path narrows it (memory/npcs.md, memory/sessions, knowledge). regex=true for a regular expression."""
+    t0 = time.monotonic()
+    return _mem_finish("memory_search", {"query": query, "path": path},
+                       memtools.search(SANDBOX, query, path, regex), t0)
+
+
+@mcp.tool()
+@_guard
+def memory_write(path: str, content: str) -> str:
+    """Create or rewrite a whole memory file (memory/HANDOFF.md at wrap-up, memory/objectives.md, ...). Markdown only. Not for session logs (append-only: note) or snapshots/ (generated); knowledge/ is read-only. The result shows memory lint errors about the file: fix them."""
+    t0 = time.monotonic()
+    return _mem_finish("memory_write", {"path": path, "chars": len(content or "")},
+                       memtools.write_file(SANDBOX, path, content or ""), t0)
+
+
+@mcp.tool()
+@_guard
+def memory_edit(path: str, old_text: str, new_text: str, replace_all: bool = False) -> str:
+    """Replace exact text in a memory file (old_text must match once, whitespace included; replace_all=true for every match). For one changed line or section instead of a rewrite. The result shows memory lint errors about the file: fix them."""
+    t0 = time.monotonic()
+    return _mem_finish("memory_edit", {"path": path, "chars": len(new_text or "")},
+                       memtools.edit_file(SANDBOX, path, old_text or "", new_text or "", replace_all), t0)
+
+
+@mcp.tool()
+@_guard
+def memory_append(path: str, text: str) -> str:
+    """Append lines at the end of a memory file (decisions.md entries, a CHARACTER.md development line, a new npcs.md bullet). For the session log use note (it adds the time and tag)."""
+    t0 = time.monotonic()
+    return _mem_finish("memory_append", {"path": path, "chars": len(text or "")},
+                       memtools.append_file(SANDBOX, path, text or ""), t0)
+
+
+@mcp.tool()
+@_guard
+def session_start() -> str:
+    """Your memory briefing for this session: the session log it opened, CHARACTER.md, PLAYTHROUGH.md, HANDOFF.md, the last game state and harness notes. Call it first if your first message doesn't already show it, and again after your context was compacted."""
+    t0 = time.monotonic()
+    return _mem_finish("session_start", {}, LIFE.briefing(), t0)
+
+
+@mcp.tool()
+@_guard
+def end_session() -> str:
+    """The last step of the wrap-up: checks the session can end (wrap-up time reached, HANDOFF.md written for this session, memory lint clean) and commits the memory. If it says NOT ENDED, do what it says (keep playing, or fix and call it again). End your turn only when it reports the commit."""
+    t0 = time.monotonic()
+    return _mem_finish("end_session", {}, LIFE.end(), t0)
 
 
 # ---------------------------------------------------------------------------
@@ -7816,6 +7922,12 @@ SAVE_PREFIX = _env_prefix()
 PLAYTHROUGH = os.environ.get("BG3AI_PLAYTHROUGH", "")
 # "1": the runner opened the save/load gates for this game, "0": it closed them (not our character); unset: hand-run.
 SAVE_GATES = os.environ.get("BG3AI_SAVE_GATES")
+# Epoch seconds: a `run --runs` playthrough's saves are only those written since its run started (the runs of a
+# series share one character name, so the folder prefix alone would let run 2 load run 1's saves).
+try:
+    SAVES_AFTER = float(os.environ.get("BG3AI_SAVES_AFTER") or 0)
+except ValueError:
+    SAVES_AFTER = 0.0
 AI_LABEL = re.compile(r"S\d{3}-")
 
 
@@ -7860,10 +7972,11 @@ def _latest_ok(folder: str) -> bool:
 
 
 def _my_saves() -> list[Path]:
-    """This playthrough's save folders, newest first."""
+    """This playthrough's save folders, newest first (none older than SAVES_AFTER)."""
     if not SAVE_DIR.is_dir():
         return []
-    return sorted((d for d in SAVE_DIR.iterdir() if d.is_dir() and _is_mine(d.name)),
+    return sorted((d for d in SAVE_DIR.iterdir() if d.is_dir() and _is_mine(d.name)
+                   and d.stat().st_mtime >= SAVES_AFTER),
                   key=lambda d: d.stat().st_mtime, reverse=True)
 
 
@@ -8284,6 +8397,9 @@ ALWAYS_LOAD = (
     # insert_item, get_explored, disarm); S039 opened with one at the Shadowfell ledge. ui_dump/ui_action
     # stay deferred: hand UI work should cost a step.
     "get_layout", "path_preview", "swap_party", "zoom", "insert_item", "get_explored", "disarm", "pickpocket",
+    # memory and session (2026-10-13: were the client's Read/Edit/Write and hooks; now the server's)
+    "memory_list", "memory_read", "memory_search", "memory_write", "memory_edit", "memory_append",
+    "session_start", "end_session",
 )
 ALWAYS_LOAD_META = {"anthropic/alwaysLoad": True}
 
@@ -8304,9 +8420,20 @@ if os.environ.get("BG3AI_ALWAYS_LOAD", "1") != "0":  # 0: everything deferred (A
     _mark_always_load()
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    import argparse
     import threading
 
+    ap = argparse.ArgumentParser(prog="bg3ai-mcp", description="bg3 MCP server")
+    ap.add_argument("--transport", choices=["stdio", "http"], default="stdio",
+                    help="stdio (one client, the default) or http (MCP streamable HTTP at /mcp, e.g. for a client in "
+                         "a container: tools/container/README.md)")
+    ap.add_argument("--host", default="127.0.0.1", help="http: address to bind (the docker network's gateway "
+                    "address for a container client)")
+    ap.add_argument("--port", type=int, default=8770, help="http: port (the dashboard has 8765)")
+    a = ap.parse_args(argv)
+    # Serving a client: without the runner the first tool call opens the memory session (never on a plain import).
+    LIFE.auto = os.environ.get("BG3AI_AUTO_SESSION", "1") != "0"
     stop = threading.Event()
     if os.environ.get("BG3AI_MOVIE_SKIP", "1") != "0":
         threading.Thread(target=_movie_skipper, args=(stop,), name="movie-skipper", daemon=True).start()
@@ -8315,9 +8442,25 @@ def main() -> None:
         threading.Thread(target=metrics.sampler_loop, args=(METRICS, Game(port=game.port), stop, sample_s),
                          name="activity-sampler", daemon=True).start()
     try:
-        mcp.run("stdio")
+        if a.transport == "http":
+            mcp.run("streamable-http", **http_options(a.host, a.port))
+        else:
+            mcp.run("stdio")
     finally:
         stop.set()
+
+
+def http_options(host: str, port: int) -> dict:
+    """streamable-http settings. The SDK's DNS-rebinding guard accepts only localhost Host headers by default; a
+    container reaches the server by the bind address, so that host:port is allowed too."""
+    opts: dict[str, Any] = {"host": host, "port": port}
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        from mcp.server.transport_security import TransportSecuritySettings
+        hosts = [f"{host}:{port}", f"127.0.0.1:{port}", f"localhost:{port}"]
+        opts["transport_security"] = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True, allowed_hosts=hosts,
+            allowed_origins=[f"http://{h}" for h in hosts])
+    return opts
 
 
 if __name__ == "__main__":

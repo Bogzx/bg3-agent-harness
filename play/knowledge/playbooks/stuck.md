@@ -6,8 +6,8 @@ Loops are the biggest time sink for game-playing agents. The fix is a **differen
 more tries of the same one.
 
 **Stuck never ends the session.** Being stuck is not a reason to wrap up, write HANDOFF.md or stop.
-The session runs until the `⏱` line says WRAP UP NOW (the Stop hook refuses an earlier stop, even with
-HANDOFF.md written). Whatever happens below, the last step is always: **keep playing**.
+The session runs until the `⏱` line says WRAP UP NOW (`end_session` and the runner refuse an earlier stop,
+even with HANDOFF.md written). Whatever happens below, the last step is always: **keep playing**.
 
 ## 0. Harness stuck: the 5-minute ladder
 Use this first when the *tools or the game* misbehave rather than the puzzle being hard: an action
