@@ -39,7 +39,7 @@ but the next feat or spell level will fail without one.
    line from the problems and call again. Never drive the level-up screen by hand (press_key, clicks): the
    tool does every click itself. If it fails twice on the same plan, it is a harness bug: press_key ESCAPE,
    note it in the session log, and keep playing (S018 lost ~10 min to hand-driving). `note("[level] Gale → L2: Evocation, Sleep, Thunderwave")`.
-6. Several pending: level each one back to back (Claude, then the companions); no reads in between.
+6. Several pending: level each one back to back (your PC, then the companions); no reads in between.
 
 ## Party composition: 4 roles
 Keep four active members covering these roles; fill gaps by recruiting, swap at camp when a region needs it.
@@ -49,11 +49,11 @@ the comment at the top of a fresh party-build.md, `memory-template/party-build.m
 level up, every companion met or lost, and before a region whose needs you know.
 | Role | Does | Good fits (companion: class) |
 |---|---|---|
-| **Frontline tank** | holds the line, high AC/HP, protects casters | Claude (Paladin), Lae'zel (Fighter), Karlach (Barbarian), Minsc (Ranger, Act 3) |
+| **Frontline tank** | holds the line, high AC/HP, protects casters | your PC (default Paladin), Lae'zel (Fighter), Karlach (Barbarian), Minsc (Ranger, Act 3) |
 | **Healer / support** | Healing Word, Bless, Spirit Guardians, revives | Shadowheart (Cleric), Jaheira or Halsin (Druid, Act 2) |
 | **Arcane damage / control** | area damage, crowd control (Sleep, Web, Hold, Fireball, Hypnotic Pattern) | Gale (Wizard), Wyll (Warlock) |
 | **Skills / rogue-ish** | locks, traps, Perception, Sleight of Hand, stealth, ranged | Astarion (Rogue), a Bard or Ranger |
-- **Now (Act 1):** Claude (Paladin, tank + face) · Shadowheart (healer) · Gale (control) · the 4th slot is
+- **Now (Act 1):** your PC (default Paladin: tank + face) · Shadowheart (healer) · Gale (control) · the 4th slot is
   the gap: **recruit Astarion** (skills/locks/traps; on the beach near the crash site `[wiki]`) or Lae'zel
   (second frontliner; she joins again if found and talked to) / Karlach (Act 1, later). Prefer Astarion
   while locked chests, traps and stealth come up; switch to Karlach or Lae'zel for a hard melee fight.
@@ -90,7 +90,9 @@ Take builds from `knowledge/builds.md` unless there's a reason (gear found, part
 update the plan and say why in one line.
 
 ## Character creation (first session only)
-Follow the build and name in `knowledge/setup.md` if present. Tools: `new_game(difficulty="Balanced")` →
+With a character brief in the kickoff, follow the `character-creation` playbook. Without one, follow the
+default build and name in `knowledge/setup.md`. Tools: `new_game(difficulty="Explorer")` (setup.md; the
+kickoff's difficulty wins) →
 `character_creation_options()` → `create_character(plan='{"race":"…","class":"…","subclass":"…","background":"…","abilities":"recommended","name":"…"}')`.
 Choose something robust (Paladin, Cleric, Fighter), main stat 16–17, CON 14+. Write the build plan in
 party-build.md right away.

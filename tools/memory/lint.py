@@ -10,6 +10,7 @@ Checks:
     added line contains "ARCHIVE:"; session logs are append-only
   * staleness: curated files no session has changed for a while (objectives.md: an error at wrap-up),
     hand-copied class levels in PLAYTHROUGH.md's party lines
+  * CHARACTER.md (the persona): optional until committed, then required; header lines, sections, core budget
   * warnings: stale open hypotheses, oversized session logs, compaction due, screenshot bloat
 
 Exit status: 0 = no errors (warnings allowed), 1 = errors, 2 = usage problem.
@@ -292,6 +293,51 @@ def check_lessons(mem: Path, r: Report) -> None:
                                f"<what to do instead> (Sxxx) [seen]'): {ln.strip()[:120]}")
 
 
+# CHARACTER.md, the persona written in the character-creation phase (memory-template/CHARACTER.md; interface I6).
+# Kept here, not in memlib, like the lesson format above.
+CHARACTER_FILE = "CHARACTER.md"
+CHARACTER_DEV_HEADING = "## Character development"
+CHARACTER_HEADER = ["Name", "Race", "Class", "Background", "Deity", "Roleplay"]
+CHARACTER_SECTIONS = ["Look", "Voice", "Backstory", "Values", "Flaws", "Goals", "Won't do", "How they decide",
+                      "Character development"]
+CHARACTER_CORE_MAX_CHARS = 1600   # above CHARACTER_DEV_HEADING, comments and blank lines excluded
+ROLEPLAY_RE = re.compile(r"^Roleplay:\s*(strict|light)\s*$", re.MULTILINE | re.IGNORECASE)
+
+
+def character_split(text: str) -> tuple[str, str]:
+    """(core, development section incl. its heading) of a CHARACTER.md text."""
+    i = text.find("\n" + CHARACTER_DEV_HEADING)
+    return (text, "") if i < 0 else (text[:i + 1], text[i + 1:])
+
+
+def check_character(mem: Path, r: Report) -> None:
+    p = mem / CHARACTER_FILE
+    if not p.is_file():
+        if M.is_git_repo(mem) and M.has_head(mem) and tracked_in_head(mem, CHARACTER_FILE):
+            r.error("deletion", f"{CHARACTER_FILE} was deleted; it is who you play: restore it (the operator can "
+                                f"restore it from git)")
+        return
+    text = M.strip_comments(p.read_text())
+    for key in CHARACTER_HEADER:
+        m = re.search(rf"^{key}:[ \t]*(\S.*)?$", text, re.MULTILINE)
+        if not m or not m.group(1) or m.group(1).startswith("("):
+            r.error("character", f"{CHARACTER_FILE}: header line '{key}: …' is missing, empty or still the "
+                                 f"template's placeholder")
+    if re.search(r"^Roleplay:", text, re.MULTILINE) and not ROLEPLAY_RE.search(text):
+        r.error("character", f"{CHARACTER_FILE}: 'Roleplay:' must be strict or light")
+    headings = [h.strip().lower() for h in re.findall(r"^##\s+(.+)$", text, re.MULTILINE)]
+    for sec in CHARACTER_SECTIONS:
+        if sec.lower() not in headings:
+            r.error("character", f"{CHARACTER_FILE}: section '## {sec}' is missing")
+    if headings and headings[-1] != "character development":
+        r.error("character", f"{CHARACTER_FILE}: '{CHARACTER_DEV_HEADING}' must be the last section")
+    core, _ = character_split(text)
+    chars = sum(len(ln) + 1 for ln in M.content_lines(core))
+    if chars > CHARACTER_CORE_MAX_CHARS:
+        r.error("budget", f"{CHARACTER_FILE}: {chars} content chars above '{CHARACTER_DEV_HEADING}' > "
+                          f"{CHARACTER_CORE_MAX_CHARS}. It is injected at every session start; shorten it.")
+
+
 LEVEL_COPY_RE = re.compile(
     r"\b(?:(?:Paladin|Cleric|Wizard|Warlock|Fighter|Rogue|Ranger|Bard|Druid|Monk|Sorcerer|Barbarian)\s*\d+"
     r"|L\d+\b|level \d+)", re.IGNORECASE)
@@ -349,6 +395,7 @@ def lint(mem: Path, phase: str = "any", session: int | None = None,
     check_staleness(mem, r, phase, session)
     check_misc(mem, r, session)
     check_lessons(mem, r)
+    check_character(mem, r)
     return r
 
 

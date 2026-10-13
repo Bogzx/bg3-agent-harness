@@ -94,6 +94,18 @@ function A.cast_failed_why(char, target, spell)
         return nil
     end)
     if ok and txt then return why .. ": " .. txt end
+    -- ACT-3 (S065 x9): the first melee swing right after combat_turn's move was refused here and read as "the
+    -- shot's path is blocked". A swing has no path: say how far it swung from and the reach our guard allowed
+    -- (the engine's own melee reach is unmeasured: tools/dev/acceptance.py "melee reach probe").
+    local okm, mel = pcall(function()
+        local range, melee = G.spell_range(spell and Ext.Stats.Get(spell), char)
+        local p, q = G.pos(char), G.pos(target)
+        if not (range and melee and p and q) then return nil end
+        return string.format("a melee swing from %.1f m centre to centre (our reach %.1f m: range %.1f m + both"
+            .. " bounding radii), probably just outside the engine's reach: step closer (within 1 m) and swing again",
+            U.dist(p, q), G.melee_reach(char, target, range), range)
+    end)
+    if okm and mel then return why .. ": " .. mel end
     return why .. ": usually the shot's path is blocked (cover, a ledge, a creature in the way) though the target"
         .. " is in sight; try another target or step to a clearer spot"
 end

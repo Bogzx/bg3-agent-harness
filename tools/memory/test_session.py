@@ -11,7 +11,7 @@ from unittest import mock
 
 import memlib as M
 import session as S
-from _testutil import MemoryTestCase
+from _testutil import MemoryTestCase, character_text
 
 SESSION_PY = str(Path(__file__).resolve().parent / "session.py")
 
@@ -96,6 +96,43 @@ class ContextTest(MemoryTestCase):
         self.write("markers.json", "{nope")
         run_quiet(S.cmd_start, self.mem)
         self.assertIn("markers:", S.build_context(self.mem))
+
+
+class CharacterInjectionTest(MemoryTestCase):
+    def test_injected_before_playthrough_at_start_and_after_compaction(self):
+        self.write("CHARACTER.md", character_text())
+        _, out = run_quiet(S.cmd_hook, self.mem, stdin=json.dumps({"source": "startup"}))
+        self.assertIn("----- CHARACTER.md", out)
+        self.assertLess(out.index("----- CHARACTER.md"), out.index("----- PLAYTHROUGH.md"))
+        self.assertIn("Name: Mira", out)
+        self.assertIn("Roleplay: strict", out)
+        self.assertIn("- S002: distrusts mind flayers", out)
+        self.assertNotIn("WHO YOU PLAY", out)                       # template comments stripped
+        _, out = run_quiet(S.cmd_hook, self.mem, stdin=json.dumps({"source": "compact"}))
+        self.assertIn("CONTEXT WAS COMPACTED", out)
+        self.assertIn("Stay in character", out)
+        self.assertLess(out.index("----- CHARACTER.md"), out.index("----- PLAYTHROUGH.md"))
+
+    def test_absent_before_character_creation(self):
+        _, out = run_quiet(S.cmd_hook, self.mem, stdin=json.dumps({"source": "startup"}))
+        self.assertNotIn("CHARACTER.md", out)
+        self.assertFalse((self.mem / "CHARACTER.md").exists())     # new_playthrough doesn't copy the template
+
+    def test_own_budget_keeps_core_and_newest_development(self):
+        dev = tuple(f"- S{n:03d}: development line number {n} " + "x" * 60 + " [seen]" for n in range(2, 60))
+        self.write("CHARACTER.md", character_text(dev))
+        self.write("PLAYTHROUGH.md", "# P\n" + ("p" * 99 + "\n") * 200)
+        self.write("HANDOFF.md", "# Handoff S000 → S001\n" + ("h" * 99 + "\n") * 200)
+        run_quiet(S.cmd_start, self.mem)
+        out = S.build_context(self.mem)
+        self.assertLessEqual(len(out), S.HOOK_CHAR_LIMIT)
+        block = out[out.index("----- CHARACTER.md"):out.index("----- PLAYTHROUGH.md")]
+        self.assertLessEqual(len(block), S.CHARACTER_BUDGET + 100)
+        self.assertIn("## How they decide", block)                 # the whole core
+        self.assertIn("S059: development", block)                  # the newest development line
+        self.assertNotIn("S002: development", block)
+        self.assertIn("older lines in memory/CHARACTER.md", block)
+        self.assertIn("----- HANDOFF.md", out)
 
 
 class InjectionExtrasTest(MemoryTestCase):

@@ -33,6 +33,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -43,11 +44,14 @@ sys.path.insert(0, str(REPO / "bridge" / "src"))
 sys.path.insert(0, str(REPO / "tools" / "memory"))
 from bg3ai import metrics as latency  # noqa: E402  (stdlib only; doesn't import the MCP server)
 from bg3ai import progress as story  # noqa: E402  (stdlib only: story progress per hour, stuck signal)
+from bg3ai import milestones  # noqa: E402  (stdlib only: story milestones, for run --until)
+from bg3ai.luadebug import LuaDebugError  # noqa: E402  (stdlib only: the game refused or failed an eval)
 sys.path.insert(0, str(REPO / "runner"))
 import triage  # noqa: E402  (runner/triage.py: post-session Sxxx.triage.md)
 import ramwatch  # noqa: E402  (runner/ramwatch.py: RAM watchdog, RSS spikes with the last tool calls)
 sys.path.insert(0, str(REPO / "tools"))
 import steam_paths  # noqa: E402  (stdlib: Steam's offline state before any game launch)
+import bg3le_buildinfo  # noqa: E402  (stdlib: is build/bg3le/dist built with every patches/bg3le patch?)
 
 PLAY_DIR = REPO / "play"
 PLAYTHROUGHS = Path(os.environ.get("BG3AI_PLAYTHROUGHS", REPO / "playthroughs"))
@@ -112,6 +116,7 @@ SPLASH_LOADMENU_S = 10         # LoadMenu this long without the main menu = the 
 MENU_TIMEOUT = 180             # debug port up → main menu (splash pressed past), else wait_menu fails
 MENU_POLL = 3                  # seconds between menu/splash checks
 LOAD_START_TIMEOUT = 60        # ui.menu load → the game leaves the menu, else the load never started
+STALE_EXIT_WITHIN_S = 30       # launch_game.sh exiting STALE_EXIT this soon after the launch = its stale-bg3le refusal
 PORT_DEAD_S = 60               # bg3 up this long with port 9998 refusing = dead (bg3le listens ~1 s after start)
 BG3_APP_ENV = b"SteamAppId=1086940"
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -545,6 +550,73 @@ def story_points(summary_path: Path) -> int | None:
         return None
 
 
+def until_reached(seen: dict | None, milestone: str) -> dict | None:
+    """{id, label} when milestones.status(seen) has `milestone` reached (the progress seen-state), else None."""
+    item = next((i for i in milestones.status(seen or {})["items"] if i["id"] == milestone), None)
+    return {"id": item["id"], "label": item["label"]} if item and item["reached"] else None
+
+
+def read_seen(state_dir: Path) -> dict | None:
+    """The playthrough's persistent progress seen-state (bg3ai.progress Timeline), or None."""
+    try:
+        return json.loads((state_dir / "progress_state.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+CLAUDE_STREAM_RE = re.compile(r"^S\d{3,}(?:-[\w-]+)?\.jsonl$")   # Sxxx.jsonl, Sxxx-r1/-fix/-keeper.jsonl
+
+
+def run_record(state_dir: Path, run_started: float, now: float, hit: dict, playthrough: str,
+               history: list[dict]) -> dict:
+    """One runs.jsonl line for an --until run: wall time, sessions, claude cost and tokens (the stream's result
+    events, the [end] lines), crashes/hangs and recoveries (runner_events.jsonl), agent reloads (actions.jsonl)."""
+    sessions = [h for h in history if h.get("kind") == "play" and (h.get("started") or 0) >= run_started]
+    cost, turns, tokens = 0.0, 0, {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+    for f in state_dir.iterdir() if state_dir.is_dir() else []:
+        try:
+            if not CLAUDE_STREAM_RE.match(f.name) or f.stat().st_mtime < run_started:
+                continue
+            lines = f.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        for ln in lines:
+            if '"type": "result"' not in ln and '"type":"result"' not in ln:
+                continue
+            try:
+                ev = json.loads(ln)
+            except ValueError:
+                continue
+            cost += float(ev.get("total_cost_usd") or 0)
+            turns += int(ev.get("num_turns") or 0)
+            u = ev.get("usage") or {}
+            for k, src in (("input", "input_tokens"), ("output", "output_tokens"),
+                           ("cache_read", "cache_read_input_tokens"), ("cache_write", "cache_creation_input_tokens")):
+                tokens[k] += int(u.get(src) or 0)
+    events = []
+    try:
+        for ln in (state_dir / "runner_events.jsonl").read_text().splitlines():
+            try:
+                e = json.loads(ln)
+            except ValueError:
+                continue
+            if e.get("t", 0) >= run_started:
+                events.append(e)
+    except OSError:
+        pass
+    reloads = [a for a in read_actions_since(run_started) if a.get("tool") == "load_game"]
+    return {"t": round(now, 1), "playthrough": playthrough, "milestone": hit.get("id"), "label": hit.get("label"),
+            "reached_in": hit.get("session"), "reached_at": hit.get("t"),
+            "started": round(run_started, 1), "wall_min": round((now - run_started) / 60, 1),
+            "sessions": len(sessions), "play_min": round(sum(h.get("minutes") or 0 for h in sessions), 1),
+            "cost_usd": round(cost, 4), "turns": turns, "tokens": tokens,
+            "crashes": sum(1 for e in events if e.get("kind") == "fault" and e.get("fault") in GAME_FAULTS),
+            "agent_hangs": sum(1 for e in events if e.get("kind") == "fault" and e.get("fault") == "agent_hang"),
+            "recoveries": sum(1 for e in events if e.get("kind") == "recovered"),
+            "setup_failures": sum(1 for e in events if e.get("kind") == "setup_failed"),
+            "reloads": len(reloads)}
+
+
 def is_stuck(history: list[dict], n: int = STUCK_SESSIONS) -> bool:
     """The last n finished sessions each ended with no progress (unknowns don't count as stuck)."""
     recent = [h for h in history if h.get("kind", "play") == "play"][-n:]
@@ -611,9 +683,81 @@ def agent_resume_prompt(deadline: float, notes: list[str]) -> str:
 
 def new_game_note(owner: str) -> str:
     return (f"RUNNER NOTE: this is a new game. Name your character exactly \"{owner}\" (create_character plan "
-            f"\"name\": \"{owner}\"; it is set and verified before Venture forth). Saves are matched to this "
-            "playthrough by that name; if create_character reports the name wasn't set, don't finish character "
-            "creation another way.")
+            f"\"name\": \"{owner}\"; create_character types it and verifies it before Venture forth). Saves are "
+            "matched to this playthrough by that name.")
+
+
+ROLEPLAY_MODES = ("strict", "light")
+DIFFICULTIES = ("Explorer", "Balanced", "Tactician")   # new_game's
+ROLEPLAY_TEXT = {
+    "strict": "Roleplay: strict. Play as this character for the whole game: dialogue, companions, moral choices and "
+              "combat style follow CHARACTER.md; odds, safety and approval only break ties between in-character "
+              "options.",
+    "light": "Roleplay: light. Keep the persona in dialogue and big choices; odds, safety and approval weigh as much "
+             "as the character does.",
+}
+
+
+def load_profile(path: Path) -> dict:
+    """playthroughs/<pt>/profile.json: {"character": {"brief", "name"?, "constraints"?, "roleplay"}, "difficulty"?}.
+    A missing or broken file, or a character without a brief, means today's flow (no character block)."""
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out = dict(raw)
+    c = raw.get("character")
+    if isinstance(c, dict) and isinstance(c.get("brief"), str) and c["brief"].strip():
+        out["character"] = dict(c, roleplay=c.get("roleplay") if c.get("roleplay") in ROLEPLAY_MODES else "strict")
+    else:
+        out.pop("character", None)
+    if out.get("difficulty") not in DIFFICULTIES:
+        out.pop("difficulty", None)
+    return out
+
+
+def update_profile(profile: dict, brief: str | None = None, roleplay: str | None = None,
+                   difficulty: str | None = None) -> dict:
+    """The profile with run --character-brief/--roleplay/--difficulty applied; other keys are kept."""
+    out = json.loads(json.dumps(profile))
+    c = dict(out.get("character") or {})
+    if brief and brief.strip():
+        c["brief"] = brief.strip()
+    if roleplay:
+        c["roleplay"] = roleplay
+    if c.get("brief"):
+        c.setdefault("roleplay", "strict")
+        out["character"] = c
+    if difficulty:
+        out["difficulty"] = difficulty
+    return out
+
+
+def character_creation_note(profile: dict, name: str | None) -> str:
+    """Phase 0 (CHAR-1): the first session of a new game with a character brief designs and creates the character."""
+    c = profile.get("character") or {}
+    lines = [
+        "RUNNER NOTE: PHASE 0, CHARACTER CREATION. This is a new game and the playthrough has a character brief. "
+        "Before any play, Read knowledge/playbooks/character-creation.md and follow it in order: new_game at the "
+        "difficulty below, design the build and the persona from the brief, write memory/CHARACTER.md and the build "
+        "plan in party-build.md, create_character with the name, read name/race/class back with get_status, then "
+        "the first save, save_game(label=\"S001-start\"): the runner learns the character's name from it. Then keep playing as that character following CLAUDE.md.",
+        "Character brief (the operator's words):\n> " + c.get("brief", "").strip().replace("\n", "\n> "),
+    ]
+    if c.get("constraints"):
+        lines.append(f"Constraints: {c['constraints']}")
+    lines.append(ROLEPLAY_TEXT[c.get("roleplay") if c.get("roleplay") in ROLEPLAY_TEXT else "strict"])
+    d = profile.get("difficulty")
+    lines.append(f"Difficulty: new_game(\"{d or 'Explorer'}\")" + ("." if d else " (the default; the profile sets none)."))
+    if name:
+        lines.append(f"Name: exactly \"{name}\" (create_character plan \"name\"); saves are matched to this "
+                     "playthrough by it.")
+    else:
+        lines.append("Name: yours to choose, to fit the brief (create_character plan \"name\"). Make it distinctive: "
+                     "it becomes this playthrough's save owner.")
+    return "\n".join(lines)
 
 
 def fix_notes_prompt(lint_report: str) -> str:
@@ -688,6 +832,21 @@ def gates_decision(char_name: str | None, owner: str | None, new_game: bool) -> 
     if not char_name or not owner:
         return None
     return char_name.strip().casefold() == owner.strip().casefold()
+
+
+def save_identity(owner: str | None, env_prefix: str = SAVE_PREFIX) -> tuple[str, str]:
+    """(BG3AI_SAVE_OWNER, BG3AI_SAVE_PREFIX) for the MCP server. The prefix is the runner's own $BG3AI_SAVE_PREFIX,
+    else the owner plus the dash the game adds (`Claude-` for `Claude-<n>__<label>`). The <n> is per save, not per
+    playthrough, so the folder name can't tell two playthroughs of one name apart. No owner yet (a new game before
+    character creation): both empty, and the server adopts the name create_character typed."""
+    owner = (owner or "").strip()
+    return owner, env_prefix or (f"{owner}-" if owner else "")
+
+
+def gates_env(allow: bool | None) -> dict:
+    """BG3AI_SAVE_GATES for the MCP server: "1"/"0" = gates_decision opened/closed the save/load gates for this game
+    (the server's _enable_save_gates follows it); absent when the runner couldn't tell (the server's own default)."""
+    return {} if allow is None else {"BG3AI_SAVE_GATES": "1" if allow else "0"}
 
 
 PLAY_SETTINGS = [
@@ -863,8 +1022,13 @@ class HealthTracker:
 
 # ======================================================================== game I/O
 
-class RpcError(Exception):
-    pass
+class RpcError(RuntimeError):
+    """The mod refused an op or answered garbage. A RuntimeError: at a session boundary it is a setup failure
+    (relaunch and retry), never the runner's death (RUN-3: a refused ui.menu load killed the run)."""
+
+
+# What a session's setup or recovery may raise when the game or the mod misbehaves: retried, never fatal.
+SETUP_ERRORS = (RuntimeError, OSError, TimeoutError, LuaDebugError)
 
 
 class SteamNotOffline(RuntimeError):
@@ -873,6 +1037,11 @@ class SteamNotOffline(RuntimeError):
 
 class GameDied(RuntimeError):
     """The game died while the runner waited on it (crash, crash reporter, bg3 gone, dead debug port, launcher exit)."""
+
+
+class Bg3leStale(Exception):
+    """The bg3le build lacks a patches/bg3le patch (UI-1): never launch it. Not a RuntimeError: a stale build never
+    fixes itself, so no retry loop may swallow it; the runner stops until tools/build_bg3le.sh is run."""
 
 
 class LaunchGaveUp(Exception):
@@ -894,6 +1063,14 @@ def steam_ready() -> tuple[bool, str]:
         # libsteam_api would start Steam itself, maybe online
         return False, f"Steam isn't running ({why})"
     return True, why
+
+
+def bg3le_problems() -> list[str]:
+    """Why the bg3le build launch_game.sh would preload is stale ([] = current, or $BG3AI_ALLOW_STALE_BG3LE=1)."""
+    if os.environ.get("BG3AI_ALLOW_STALE_BG3LE") == "1":
+        return []
+    lib = Path(os.environ.get("BG3AI_BG3LE_LIB", bg3le_buildinfo.DIST / "libbg3le.so"))
+    return bg3le_buildinfo.problems(lib.parent)
 
 
 def port_open(host: str = DEBUG_HOST, port: int = DEBUG_PORT, timeout: float = 1.0) -> bool:
@@ -1256,6 +1433,10 @@ class Options:
     keeper_effort: str | None = "low"
     keeper_minutes: float = 5.0
     autocompact: int | None = None     # claude --autocompact <tokens> (play sessions); None = Claude Code's default
+    until: str | None = None           # run --until <milestone id> (bg3ai.milestones): stop there, write runs.jsonl
+    character_brief: str | None = None  # run --character-brief: written to profile.json (CHAR-1 phase 0)
+    roleplay: str | None = None        # run --roleplay strict|light (profile.json character.roleplay)
+    difficulty: str | None = None      # run --difficulty (profile.json difficulty, phase 0's new_game)
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -1291,7 +1472,7 @@ class SessionResult:
     sid: str
     claude_session: str
     exit_code: int | None
-    reason: str          # exited | hard_stop | crash | hang | agent_hang | aborted | killed | dry_run
+    reason: str          # exited | hard_stop | crash | hang | agent_hang | aborted | killed | milestone | dry_run
     started: float
     ended: float
     notes: list[str] = field(default_factory=list)
@@ -1308,6 +1489,10 @@ class Runner:
         self.opt = opt
         self.mem = PLAYTHROUGHS / opt.playthrough / "memory"
         self.state = RunnerState(opt.playthrough)
+        self.profile_path = PLAYTHROUGHS / opt.playthrough / "profile.json"
+        self.profile = load_profile(self.profile_path)
+        if opt.character_brief or opt.roleplay or opt.difficulty:
+            self.set_profile(update_profile(self.profile, opt.character_brief, opt.roleplay, opt.difficulty))
         owner = opt.save_owner or os.environ.get("BG3AI_SAVE_OWNER")
         if owner and self.state["save_owner"] != owner:
             if self.state["save_owner"]:
@@ -1322,6 +1507,8 @@ class Runner:
         self.pending_notes: list[str] = []
         self.quick_failures = 0
         self.new_game = False
+        self.gates: bool | None = None       # gates_decision for the game this session plays (BG3AI_SAVE_GATES)
+        self.until_hit: dict | None = None   # the --until milestone, once the progress poller saw it reached
         self.last_triage: tuple[str, Path] | None = None  # (session, Sxxx.triage.md) of the last claude run
         self.code_watch = CodeWatch()         # this process's repo code, for the self-restart between sessions
         self.bridge_hashes: dict | None = None  # bridge/src as the last session's MCP server ran it
@@ -1337,6 +1524,37 @@ class Runner:
         g = self.state["game"] or {}
         # The game a previous run of the runner launched: keep watching its bg3le logs.
         self.watch = LaunchWatch(g["stamp"], RUNTIME / "logs", g.get("launched")) if g.get("stamp") else None
+
+    def set_profile(self, profile: dict) -> None:
+        """Write profile.json (not in a dry run) and use it."""
+        if profile == self.profile:
+            return
+        if self.state["history"]:
+            log(f"profile.json changed for {self.opt.playthrough}, which already played: the character brief only "
+                "matters for a new game (phase 0)")
+        self.profile = profile
+        if self.opt.dry_run:
+            return
+        try:
+            self.profile_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.profile_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(profile, indent=1, ensure_ascii=False) + "\n")
+            tmp.replace(self.profile_path)
+            log(f"profile written: {self.profile_path}")
+        except OSError as e:
+            log(f"profile write failed: {e}")
+
+    def adopt_owner(self, owner: str) -> None:
+        """I3: the character's name (from this playthrough's first Sxxx- save) becomes its save owner: runner.json,
+        and profile.json's character.name; the MCP server's prefix follows (save_identity)."""
+        if self.opt.dry_run:
+            self.state.data["save_owner"] = owner
+            return
+        self.state["save_owner"] = owner
+        log(f"save owner for {self.opt.playthrough}: {owner} (learned from its saves)")
+        c = self.profile.get("character")
+        if c and not c.get("name"):
+            self.set_profile(dict(self.profile, character=dict(c, name=owner)))
 
     # ---------------------------------------------------------------- unattended-run events
 
@@ -1407,6 +1625,7 @@ class Runner:
                 "(Steam > Go Offline...) and leave it running; the runner keeps retrying. !!!!!")
             self.event("steam_refused", why=why)
             raise SteamNotOffline(why)
+        self.refuse_stale_bg3le(bg3le_problems())
         if port_open():
             raise RuntimeError(f"port {DEBUG_PORT} is still in use; can't launch another game")
         args = [str(LAUNCH_SH)] + (["--load", load_folder] if load_folder else [])
@@ -1424,6 +1643,19 @@ class Runner:
         self.state["game"] = {"pgid": self.game_proc.pid, "launched": now, "load": load_folder, "stamp": stamp}
         self.state["mod_hashes"] = mod_tree_hashes()  # a fresh game loads the mod as it is now
         write_status(game_pgid=self.game_proc.pid)
+
+    def refuse_stale_bg3le(self, bad: list[str]) -> None:
+        """A stale bg3le build (bg3le_problems, or launch_game.sh's exit 4): status, event, loud log, Bg3leStale."""
+        write_status(bg3le_stale=bad or None)
+        if not bad:
+            return
+        msg = "; ".join(bad)
+        log(f"!!!!! REFUSING TO LAUNCH BG3: stale bg3le build ({msg}). Run {bg3le_buildinfo.REBUILD} (with the game "
+            "closed), then restart the runner; BG3AI_ALLOW_STALE_BG3LE=1 launches it anyway. !!!!!")
+        self.event("bg3le_stale", problems=bad)
+        write_status(alert={"t": time.time(), "kind": "bg3le_stale",
+                            "msg": f"runner stopped: stale bg3le build ({msg})"[:600]})
+        raise Bg3leStale(msg)
 
     def kill_game(self) -> None:
         """Stop the game: SIGTERM, then SIGKILL after KILL_GRACE s (bg3 ignores SIGTERM), on both the
@@ -1482,6 +1714,12 @@ class Runner:
         while time.time() < end:
             report.tick()
             if self.game_proc is not None and self.game_proc.poll() is not None:
+                launched = (self.state["game"] or {}).get("launched") or 0
+                if (self.game_proc.returncode == bg3le_buildinfo.STALE_EXIT
+                        and time.time() - launched < STALE_EXIT_WITHIN_S):
+                    # launch_game.sh's own stale-build refusal (the backstop of the check in launch_game)
+                    self.refuse_stale_bg3le([f"runner/launch_game.sh exited {bg3le_buildinfo.STALE_EXIT} "
+                                             f"(stale bg3le build, see {RUNTIME}/launch-*.out)"])
                 raise GameDied(f"game exited (status {self.game_proc.returncode}) while waiting for {what}")
             if self.abort:
                 raise RuntimeError(f"aborted while waiting for {what}")
@@ -1556,7 +1794,7 @@ class Runner:
         if save and save.folder in blocked:
             save = self.refuse_oom_save(save, saves, blocked)
         if save and not self.state["save_owner"] and not self.opt.dry_run:
-            self.state["save_owner"] = save.owner
+            self.adopt_owner(save.owner)
         return save
 
     def refuse_oom_save(self, save: Save, saves: list[Save], blocked: set[str]) -> Save:
@@ -1661,7 +1899,11 @@ class Runner:
             if not self.wait_menu():
                 raise RuntimeError("the main menu never came up")
             owner = self.opt.save_owner or self.state["save_owner"]
-            if owner:
+            char = self.profile.get("character")
+            if char:
+                # CHAR-1 phase 0: the agent designs the character from the brief; a name only when one is given.
+                self.pending_notes.append(character_creation_note(self.profile, char.get("name") or owner))
+            elif owner:
                 # Saves are matched to this playthrough by the character's name: a "Tav" breaks that.
                 self.pending_notes.append(new_game_note(owner))
             return None
@@ -1677,19 +1919,36 @@ class Runner:
             if touched:
                 log(f"--take-over: not playing on from the running game: {touched}")
         log(f"loading save {save.folder}")
-        if port_open() and ui_load:
+        use_menu = port_open() and ui_load
+        if use_menu:
             state = game_state()
             if state != "Running" and not self.wait_menu():   # splash included: press past it first
                 raise RuntimeError(f"the main menu never came up (state {game_state()})")
-            # ui.menu load works from the main menu and from in-game (it opens the load screen itself).
-            rpc("ui.menu", load_menu_args(save, list_saves()), context="client", timeout=30)
-            # Wait for Running only once the load really started. From in-game the state stays Running until the
-            # load begins (S002's agent started mid-load); from the menu a load that never starts is an error,
-            # not a 10-minute wait.
-            here = ("Running",) if state == "Running" else MENU_STATES
-            if not self.wait_for("the load to start", lambda: game_state() not in here, LOAD_START_TIMEOUT, 0.5):
-                raise RuntimeError(f"the load of {save.folder} never started (state {game_state()})")
-        else:
+            # The mod refuses a load while its persisted load gate is off (the default on a fresh profile). This
+            # is this playthrough's own save, which is exactly when the gates may open; apply_play_settings
+            # re-decides them by the loaded character's name.
+            try:
+                rpc("ui.config", {"save_enabled": True, "load_enabled": True}, context="client")
+            except Exception as e:  # noqa: BLE001 - a refusal below falls back to a relaunch
+                log(f"opening the save/load gates before the load failed: {e}")
+            try:
+                # ui.menu load works from the main menu and from in-game (it opens the load screen itself).
+                rpc("ui.menu", load_menu_args(save, list_saves()), context="client", timeout=30)
+            except (RpcError, LuaDebugError) as e:
+                # Refused (gate, no such playthrough or date on the page) or the eval failed: restart the game
+                # with -loadSaveGame, which needs neither the gate nor the Load page.
+                log(f"ui.menu load of {save.folder} refused ({e}); relaunching the game with --load instead")
+                self.event("load_refused", save=save.folder, error=str(e)[:300])
+                use_menu = False
+            if use_menu:
+                # Wait for Running only once the load really started. From in-game the state stays Running until
+                # the load begins (S002's agent started mid-load); from the menu a load that never starts is an
+                # error, not a 10-minute wait.
+                here = ("Running",) if state == "Running" else MENU_STATES
+                if not self.wait_for("the load to start", lambda: game_state() not in here, LOAD_START_TIMEOUT,
+                                     0.5):
+                    raise RuntimeError(f"the load of {save.folder} never started (state {game_state()})")
+        if not use_menu:
             if port_open():
                 if not (self.owns_game() or self.opt.take_over or game_state() in MENU_STATES):
                     raise SystemExit("would have to restart a game the runner didn't launch; "
@@ -1851,6 +2110,7 @@ class Runner:
 
     def apply_play_settings(self) -> None:
         """Best effort, never fatal: autoskip, no tutorials, dismiss popups, then the save/load gates."""
+        self.gates = None
         for op, args in PLAY_SETTINGS:
             try:
                 rpc(op, args, context="client")
@@ -1862,7 +2122,7 @@ class Runner:
             if name is None:
                 log("play settings: couldn't read the avatar's name")
         owner = self.opt.save_owner or self.state["save_owner"]
-        allow = gates_decision(name, owner, self.new_game)
+        allow = self.gates = gates_decision(name, owner, self.new_game)
         if allow is None:
             log(f"save/load gates left unchanged (character {name!r}, save owner {owner!r})")
             return
@@ -1926,7 +2186,7 @@ class Runner:
         new = saves_since(list_saves(), since, owner)
         if new:
             if not owner:
-                self.state["save_owner"] = new[-1].owner
+                self.adopt_owner(new[-1].owner)
             log(f"session saved: {new[-1].folder}")
             return
         others = [s.folder for s in list_saves() if s.mtime >= since and is_ai_label(s.label, "")]
@@ -1990,6 +2250,12 @@ class Runner:
         cmd += ["--resume", claude_session] if resume else ["--session-id", claude_session]
         return cmd
 
+    def save_env(self) -> dict:
+        """The MCP server's save identity and gates: BG3AI_SAVE_OWNER/PREFIX (save_identity) and BG3AI_SAVE_GATES."""
+        state = getattr(self, "state", None)
+        owner, prefix = save_identity(self.opt.save_owner or (state["save_owner"] if state else None))
+        return {"BG3AI_SAVE_OWNER": owner, "BG3AI_SAVE_PREFIX": prefix, **gates_env(getattr(self, "gates", None))}
+
     def run_claude(self, sid: str, prompt: str, minutes: float, claude_session: str,
                    resume: bool = False, tag: str = "", needs_game: bool = True) -> SessionResult:
         """needs_game=False (the fix-notes pass edits memory only): a game crash meanwhile doesn't stop it (S027-fix
@@ -1999,7 +2265,6 @@ class Runner:
         env = dict(os.environ,
                    BG3AI_SESSION_DEADLINE=str(int(deadline)),
                    BG3AI_PLAYTHROUGH=self.opt.playthrough,
-                   BG3AI_SAVE_PREFIX=SAVE_PREFIX,
                    BG3_SESSION_MINUTES=str(minutes),
                    BG3_WRAP_MINUTES=str(wrap_minutes(minutes)),
                    # when the MCP clock line switches to WRAP UP (epoch seconds); play until then
@@ -2007,6 +2272,8 @@ class Runner:
                    # The playthrough has its own memory system; Claude Code's auto-memory would add a second one
                    # (and a per-machine path in the prompt).
                    CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
+        env.pop("BG3AI_SAVE_GATES", None)
+        env.update(self.save_env())
         base = self.state.dir / f"{sid}{tag}"
         env["BG3AI_METRICS_PATH"] = f"{base}.metrics.jsonl"  # the bridge's per-tool latency records
         # the memory keeper compacts old logs between sessions: session.py then doesn't ask the player to
@@ -2030,8 +2297,13 @@ class Runner:
         human = open(f"{base}.log", "a", buffering=1)
         human.write(f"===== {sid}{tag} {datetime.now():%Y-%m-%d %H:%M:%S} claude session {claude_session}\n")
         human.write("[prompt] " + _short(prompt, 4000) + "\n")
-        proc = subprocess.Popen(cmd, cwd=PLAY_DIR, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, start_new_session=True, text=True, bufsize=1)
+        try:
+            proc = subprocess.Popen(cmd, cwd=PLAY_DIR, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, start_new_session=True, text=True, bufsize=1)
+        except OSError:
+            human.close()
+            jsonl.close()
+            raise
 
         timing = latency.StreamTiming(Path(f"{base}.turns.jsonl"))
         last_output = [time.time()]  # the agent-hang watchdog: any stream line counts as alive
@@ -2082,6 +2354,11 @@ class Runner:
                 if not alive or health.hung:
                     reason = "crash" if not alive else "hang"
                     detail, fault_at = self.fault_detail(health), now
+            if needs_game and reason == "exited" and self.until_hit:
+                reason = "milestone"
+                human.write(f"{datetime.now():%H:%M:%S} [runner] milestone {self.until_hit['id']} reached; "
+                            "stopping claude (--until)\n")
+                hard_stop = min(hard_stop, now)
             silent = now - last_output[0]
             if reason == "exited" and silent >= AGENT_SILENT_MINUTES * 60:
                 reason, fault_at = "agent_hang", now
@@ -2229,8 +2506,36 @@ class Runner:
                         human.write(f"{stamp} [progress] STUCK: no progress for {story.STUCK_MIN:.0f}+ min while active\n")
                 if tl.stuck_since is not None and not was_stuck:
                     log(f"{session}: stuck signal: no story progress for {story.STUCK_MIN:.0f}+ min while active")
+                hit = self.check_until(tl.seen, session)
+                if hit and human is not None:
+                    human.write(f"{stamp} [runner] milestone {hit['id']} ({hit['label']}) reached: --until stop\n")
             except Exception as e:  # noqa: BLE001 - progress never breaks a session
                 log(f"{session}: progress poll failed: {e}")
+
+    def check_until(self, seen: dict | None, session: str | None) -> dict | None:
+        """run --until: the milestone, the first time milestones.status() says it's reached (else None)."""
+        if not self.opt.until or self.until_hit:
+            return None
+        hit = until_reached(seen, self.opt.until)
+        if hit:
+            self.until_hit = dict(hit, session=session, t=round(time.time(), 1))
+            log(f"{session or 'runner'}: milestone {hit['id']} ({hit['label']}) reached: stopping (--until)")
+            self.event("milestone", milestone=hit["id"], session=session)
+        return self.until_hit if hit else None
+
+    def write_run_record(self, run_started: float) -> dict:
+        """runs.jsonl in the playthrough's runtime dir: one line per --until run (the benchmark's raw score)."""
+        rec = run_record(self.state.dir, run_started, time.time(), self.until_hit or {}, self.opt.playthrough,
+                         self.state["history"] or [])
+        try:
+            with open(self.state.dir / "runs.jsonl", "a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except OSError as e:
+            log(f"run record write failed: {e}")
+        log(f"run record: {rec['milestone']} in {rec['wall_min']} min, {rec['sessions']} session(s), "
+            f"${rec['cost_usd']:.2f}, {rec['crashes']} game crash(es)/hang(s), {rec['recoveries']} recoveries, "
+            f"{rec['reloads']} agent reload(s) → {self.state.dir / 'runs.jsonl'}")
+        return rec
 
     def write_progress(self, session: str, base: Path, start: float, end: float) -> dict | None:
         """Sxxx.progress.json + a line in progress_history.jsonl."""
@@ -2266,7 +2571,8 @@ class Runner:
         if r.returncode == 0:
             log(f"{res.sid}: memory committed by session.py end")
             return
-        if res.reason in ("exited", "hard_stop") and res.claude_session and not (self.stop_requested or self.abort):
+        if res.reason in ("exited", "hard_stop", "milestone") and res.claude_session and not (self.stop_requested
+                                                                                              or self.abort):
             log(f"{res.sid}: memory lint failed; running a {FIX_SESSION_MINUTES}-minute fix-notes session")
             self.run_claude(res.sid, fix_notes_prompt(r.stdout), FIX_SESSION_MINUTES, res.claude_session,
                             resume=True, tag="-fix", needs_game=False)
@@ -2466,7 +2772,7 @@ class Runner:
                     self.event("recovery_failed", fault=fault, session=sid, error=str(e)[:300])
                     gave_up = e
                     break
-                except (RuntimeError, OSError, TimeoutError) as e:
+                except SETUP_ERRORS as e:
                     log(f"recovery after {sid} failed: {e}; the next session setup retries")
                     self.event("recovery_failed", fault=fault, session=sid, error=str(e)[:300])
                     break
@@ -2596,6 +2902,10 @@ class Runner:
         stop_why = "stopped"
         restarting = False
         try:
+            if self.opt.until and self.check_until(read_seen(self.state.dir), None):
+                log(f"--until {self.opt.until}: already reached in this playthrough; nothing to play")
+                stop_why = f"--until {self.opt.until}: already reached"
+                return 0
             while not self.stop_requested and not (RUNTIME / "STOP").exists():
                 self.code_update_check()
                 session_minutes = self.session_minutes()
@@ -2603,6 +2913,7 @@ class Runner:
                                          min(MIN_SESSION_MINUTES, session_minutes))
                 if minutes is None:
                     log("--hours budget used up")
+                    stop_why = "--hours budget used up"
                     break
                 try:
                     res = self.play_session(minutes, first)
@@ -2613,8 +2924,8 @@ class Runner:
                         break
                     time.sleep(STEAM_RETRY_S)
                     continue
-                except (RuntimeError, OSError, TimeoutError) as e:
-                    log(f"session setup failed: {e}")
+                except SETUP_ERRORS as e:
+                    log(f"session setup failed: {type(e).__name__}: {e}")
                     self.event("setup_failed", error=str(e)[:300])
                     if self.abort:
                         break
@@ -2627,7 +2938,7 @@ class Runner:
                         self.recover(f"failed to start ({e})")
                         self.event("recovered", fault="setup", how=f"game relaunched, loaded "
                                    f"{self.state['loaded_save'] or 'main menu'}")
-                    except LaunchGaveUp:
+                    except (LaunchGaveUp, Bg3leStale):
                         raise
                     except Exception as e2:  # noqa: BLE001
                         log(f"recovery failed: {e2}; waiting 2 minutes")
@@ -2638,6 +2949,10 @@ class Runner:
                 first = False
                 setup_failures = 0
                 if res.reason == "dry_run":
+                    break
+                if self.until_hit:
+                    self.write_run_record(run_started)
+                    stop_why = f"--until {self.opt.until}: reached in {self.until_hit.get('session')}"
                     break
                 if res.ended - res.started < 60 and res.reason == "exited":
                     self.quick_failures += 1
@@ -2657,8 +2972,13 @@ class Runner:
             self.give_up_launch(e)
             stop_why = "gave up: the game crashes on every launch"
             return 1
+        except Bg3leStale as e:
+            stop_why = f"stale bg3le build: run {bg3le_buildinfo.REBUILD} ({e})"[:300]
+            return 1
         except BaseException as e:
             stop_why = f"died: {type(e).__name__}: {e}"[:300]
+            if not isinstance(e, (SystemExit, KeyboardInterrupt)):   # a SystemExit carries its own reason
+                log("runner died:\n" + traceback.format_exc().rstrip())
             raise
         finally:
             self.join_keeper()
@@ -2666,7 +2986,7 @@ class Runner:
                 (RUNTIME / "STOP").unlink(missing_ok=True)
                 write_status(session=None, deadline=None, runner_pid=None)
                 self.event("runner_stop", why=stop_why)
-        log("runner stopped")
+                log(f"runner stopped ({stop_why})")   # every exit path: tools/orchestrator/test_cycle.sh waits for it
         return 0
 
 
@@ -2702,7 +3022,8 @@ def cmd_run(a) -> int:
     runner = Runner(Options(a.playthrough, a.hours, a.session_minutes, a.model, a.take_over, a.dry_run,
                             a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model,
                             a.allow_short_sessions, not a.no_memory_keeper, a.keeper_model, a.keeper_effort,
-                            a.keeper_minutes, a.autocompact))
+                            a.keeper_minutes, a.autocompact, until=a.until, character_brief=a.character_brief,
+                            roleplay=a.roleplay, difficulty=a.difficulty))
     # Cutscenes are always skipped, also while the runner waits on menus and loads (the New Game intro
     # plays during StartLoading) and between sessions; the play session's MCP server idles meanwhile
     # (one skipper per game, runtime/skipper.lock).
@@ -2832,6 +3153,15 @@ def main(argv: list[str] | None = None) -> int:
                         "default: Claude Code's own window. session-config.json \"autocompact\" overrides it")
     r.add_argument("--save-owner", help="character name that prefixes this playthrough's save folders "
                    "('Claude' for Claude-<id>__<label>); default: learned from the first save, or $BG3AI_SAVE_OWNER")
+    r.add_argument("--until", choices=[m[0] for m in milestones.MILESTONES], metavar="MILESTONE",
+                   help="stop at this story milestone (bridge/src/bg3ai/milestones.py, e.g. nautiloid_escaped, "
+                        "crash_site) and append a run record to runtime/sessions/<pt>/runs.jsonl")
+    r.add_argument("--character-brief", metavar="TEXT",
+                   help="who the character is, in your words: written to playthroughs/<pt>/profile.json; a new game "
+                        "then starts with a character-creation phase that designs the build and persona from it")
+    r.add_argument("--roleplay", choices=ROLEPLAY_MODES,
+                   help="how strictly the agent plays its character (profile.json; default strict)")
+    r.add_argument("--difficulty", choices=DIFFICULTIES, help="difficulty of a new game (profile.json)")
     r.add_argument("--take-over", action="store_true",
                    help="allow using a game that is already in a save the runner didn't load")
     r.add_argument("--dry-run", action="store_true", help="prepare the first session and print the claude "

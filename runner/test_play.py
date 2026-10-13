@@ -544,7 +544,117 @@ class Gates(unittest.TestCase):
                 self.assertEqual(gates, [], name)
             else:
                 self.assertEqual(gates, [{"save_enabled": expected, "load_enabled": expected}], name)
+            # UI-2: the MCP server follows the same decision (its _enable_save_gates used to reopen closed gates)
+            self.assertEqual(r.save_env().get("BG3AI_SAVE_GATES"), {True: "1", False: "0", None: None}[expected])
             P.rpc, P.lua_eval, P.log = self.saved
+
+
+class SaveIdentity(unittest.TestCase):
+    """RUN-5 / I1: the MCP server gets BG3AI_SAVE_OWNER and a BG3AI_SAVE_PREFIX derived from --save-owner alone (the
+    README quick start sets no prefix; an empty one meant "No saves." and no reload after a wipe)."""
+
+    def test_pure(self):
+        self.assertEqual(P.save_identity("Claude", ""), ("Claude", "Claude-"))
+        self.assertEqual(P.save_identity("Claude", "Claude-"), ("Claude", "Claude-"))
+        self.assertEqual(P.save_identity("Claude", "pt1-"), ("Claude", "pt1-"))   # the operator's own prefix wins
+        self.assertEqual(P.save_identity(None, ""), ("", ""))                     # new game, no name yet
+        self.assertEqual(P.gates_env(None), {})
+
+    def test_run_claude_env_from_save_owner_alone(self):
+        tmp = Path(tempfile.mkdtemp(prefix="bg3ai-env-"))
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        envs = []
+
+        def popen(cmd, **kw):
+            envs.append(kw["env"])
+            raise OSError("stop here")
+        with mock.patch.multiple(P, RUNTIME=tmp, SAVE_PREFIX="", log=lambda m: None), \
+                mock.patch.object(P.subprocess, "Popen", popen), \
+                mock.patch.dict(P.os.environ, {"BG3AI_SAVE_GATES": "1", "BG3AI_SAVE_OWNER": "Stale"}):
+            r = P.Runner(P.Options("env-test", None, 60, "opus", save_owner="Claude"))
+            r.gates = False
+            with self.assertRaises(OSError):
+                r.run_claude("S001", "go", 60, "c")
+            P.os.environ.pop("BG3AI_SAVE_OWNER")
+            r2 = P.Runner(P.Options("env-new", None, 60, "opus"))
+            with self.assertRaises(OSError):
+                r2.run_claude("S001", "go", 60, "c")
+        self.assertEqual((envs[0]["BG3AI_SAVE_OWNER"], envs[0]["BG3AI_SAVE_PREFIX"], envs[0]["BG3AI_SAVE_GATES"]),
+                         ("Claude", "Claude-", "0"))
+        self.assertEqual((envs[1]["BG3AI_SAVE_OWNER"], envs[1]["BG3AI_SAVE_PREFIX"]), ("", ""))
+        self.assertNotIn("BG3AI_SAVE_GATES", envs[1])                     # not decided: no stale value passes
+
+
+class Profile(unittest.TestCase):
+    """CHAR-1 / I4 / I5: profile.json and the phase 0 kickoff block."""
+
+    def test_load(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "profile.json"
+            self.assertEqual(P.load_profile(f), {})                                    # missing: today's flow
+            f.write_text("{broken")
+            self.assertEqual(P.load_profile(f), {})
+            f.write_text(json.dumps({"character": {"brief": "  "}, "difficulty": "Hard"}))
+            self.assertEqual(P.load_profile(f), {})                                    # no brief, bad difficulty
+            f.write_text(json.dumps({"character": {"brief": "a dwarf cleric", "roleplay": "x"}, "rules": {}}))
+            self.assertEqual(P.load_profile(f), {"character": {"brief": "a dwarf cleric", "roleplay": "strict"},
+                                                 "rules": {}})                         # strict by default
+
+    def test_update(self):
+        p = P.update_profile({}, "a dwarf cleric")
+        self.assertEqual(p, {"character": {"brief": "a dwarf cleric", "roleplay": "strict"}})
+        p = P.update_profile(dict(p, character=dict(p["character"], name="Mira")), roleplay="light",
+                             difficulty="Tactician")
+        self.assertEqual(p, {"character": {"brief": "a dwarf cleric", "roleplay": "light", "name": "Mira"},
+                             "difficulty": "Tactician"})
+        self.assertEqual(P.update_profile({}, roleplay="light"), {})                   # no brief: no character
+
+    def test_note(self):
+        prof = {"character": {"brief": "pious\nshort-tempered", "constraints": "no Dark Urge", "roleplay": "strict"}}
+        n = P.character_creation_note(prof, None)
+        self.assertIn("character-creation.md", n)
+        self.assertIn("> pious\n> short-tempered", n)
+        self.assertIn("Constraints: no Dark Urge", n)
+        self.assertIn("Roleplay: strict", n)
+        self.assertIn('Difficulty: new_game("Explorer") (the default', n)
+        self.assertIn("CHARACTER CREATION", n)                 # play/CLAUDE.md's playbook trigger
+        self.assertIn('save_game(label="S001-start")', n)
+        self.assertIn("Name: yours to choose", n)
+        self.assertIn('Name: exactly "Ilse"', P.character_creation_note(prof, "Ilse"))
+
+
+class UntilMilestone(unittest.TestCase):
+    """RUN-2: run --until <milestone> and its runs.jsonl record."""
+
+    def test_until_reached(self):
+        self.assertIsNone(P.until_reached(None, "nautiloid_escaped"))
+        seen = {"regions": ["Nautiloid"], "quests": {"Escape the Nautiloid": {"done": False}}}
+        self.assertIsNone(P.until_reached(seen, "nautiloid_escaped"))
+        self.assertEqual(P.until_reached(seen, "nautiloid")["label"], "Aboard the Nautiloid")
+        seen["quests"]["Escape the Nautiloid"]["done"] = True
+        self.assertEqual(P.until_reached(seen, "nautiloid_escaped"),
+                         {"id": "nautiloid_escaped", "label": "Nautiloid escaped"})
+
+    def test_run_record(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            res = lambda cost, out: json.dumps({"type": "result", "num_turns": 2, "total_cost_usd": cost,
+                                                "usage": {"output_tokens": out, "input_tokens": 1}})
+            (d / "S004.jsonl").write_text('{"type":"assistant"}\n' + res(1.5, 10) + "\n")
+            (d / "S004-r1.jsonl").write_text(res(0.5, 5) + "\n")
+            (d / "S004-keeper.jsonl").write_text(res(0.1, 1) + "\n")
+            (d / "S004.metrics.jsonl").write_text(res(99, 99) + "\n")                  # not a claude stream
+            ev = [{"t": 50, "kind": "fault", "fault": "crash"}, {"t": 150, "kind": "fault", "fault": "crash"},
+                  {"t": 160, "kind": "recovered"}, {"t": 170, "kind": "fault", "fault": "agent_hang"}]
+            (d / "runner_events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in ev))
+            hist = [{"kind": "play", "started": 90, "minutes": 30}, {"kind": "play", "started": 110, "minutes": 20}]
+            with mock.patch.object(P, "read_actions_since", lambda t: [{"tool": "load_game"}, {"tool": "look"}]):
+                rec = P.run_record(d, 100, 100 + 3600, {"id": "crash_site", "label": "Reached the surface",
+                                                        "session": "S004", "t": 3000}, "pt", hist)
+        self.assertEqual((rec["milestone"], rec["reached_in"], rec["wall_min"]), ("crash_site", "S004", 60.0))
+        self.assertEqual((rec["sessions"], rec["play_min"]), (1, 20))
+        self.assertEqual((rec["cost_usd"], rec["turns"], rec["tokens"]["output"]), (2.1, 6, 16))
+        self.assertEqual((rec["crashes"], rec["agent_hangs"], rec["recoveries"], rec["reloads"]), (1, 1, 1, 1))
 
 
 class ClaudeSaves(unittest.TestCase):
@@ -631,6 +741,7 @@ class Progress(unittest.TestCase):
 
             class FakeRunner:
                 state = type("S", (), {"dir": d})()
+                check_until = lambda self, seen, session: None   # noqa: E731 - no run --until here
 
             orig_read, orig_poll = P.story.read_game, P.story.POLL_S
             P.story.read_game, P.story.POLL_S = fake_read, 0.001

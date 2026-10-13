@@ -935,6 +935,17 @@ test("cast: the engine's CastSpellFailed says why (S024-S041 'the action failed'
     osiv[key("IsDead", GOB)] = 0
 end)
 
+test("cast: a refused melee swing says how far it swung from and our reach (ACT-3, S065 x9)", function()
+    osiv[key("HasLineOfSight", P1, GOB)] = 1
+    stats.Target_MainHandAttack = { SpellType = "Target", TargetRadius = "MeleeMainWeaponRange" }
+    world[GOB].pos = { 2.1, 0, 0 }
+    local w = A.cast_failed_why(P1, GOB, "Target_MainHandAttack")
+    assert(w:find("no reason given", 1, true) and w:find("melee swing from 2.1 m centre to centre", 1, true), w)
+    assert(w:find("our reach 2.5 m: range 1.5 m", 1, true) and not w:find("path is blocked", 1, true), w)
+    stats.Projectile_Bolt = { SpellType = "Projectile", TargetRadius = "18" }
+    assert(A.cast_failed_why(P1, GOB, "Projectile_Bolt"):find("path is blocked", 1, true)) -- ranged: unchanged
+end)
+
 test("cast: Revivify is two-step: the body, then the ground beside it (S057/S058 0 of 14 casts)", function()
     spell("Teleportation_Revivify", { SpellType = "Teleportation", OriginTargetConditions = "Dead() and Tagged('PLAYABLE')",
         TargetConditions = "not Character()", TargetRadius = "9", UseCosts = "ActionPoint:1", Level = 0 })

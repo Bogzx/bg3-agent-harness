@@ -93,10 +93,20 @@ tried in order until one works:
   plan a ranged alternative or a Dash for it.
 - **Lost move target:** the move's target died or went out of sight (Shadow Blend, killed by an ally first):
   `target: e24 Shadow is out of sight → the plan now aims at the nearest visible hostile e70 Wraith (12m)`,
-  and it walks on if movement is left. Nobody in sight: its attacks and a walk-on Dash are skipped.
+  and it walks on if movement is left. Nobody in sight: its attacks and a walk-on Dash are skipped. Only a
+  hostile move target is re-aimed: a move to an ally (a dead one you revive) stays on that ally.
 - **Retarget:** when every alternative of a slot missed its target (dead, out of range, no line of sight),
   the plan's own targeted abilities are tried on the nearest other visible hostile in reach
   (`action (auto fallback): Target_SacredFlame e15: done`; also for `extra` after a kill). `"retarget":false` turns it off.
+  Fallbacks keep to the planned target's side: an ability aimed at an ally is never re-aimed at a hostile (a heal
+  may go to another downed party member in reach), the ranged-attack fallback only hits a hostile target, and a
+  revive (Revivify, its scroll) is never re-aimed; a dead target is no miss for a revive.
+- **Melee refused without a reason** (`the game refused the cast (no reason given): a melee swing from 2.1 m …`):
+  with movement left it steps within 1 m of the target once and swings again (`stepped closer for the swing`).
+- **`who`:** required when `NOW` lists more than one of your characters (a shared turn). Left out there, the
+  plan goes to the only one acting whose actions cover every ability it names, else it is refused (`give
+  who=`). A plan sent ahead without `who` waits for the character selected when it was sent (or the only one
+  of yours with its abilities), never for whichever party turn comes first.
 - **Downed ally:** no `bonus` in the plan and an ally at 0 HP within range: Healing Word on them if this
   character has it (`bonus (auto: ally downed): …`). `"auto_bonus":false` turns it off.
 - `action`, `bonus`: an ability name as listed (`"Dash"`) or id (`"Shout_Dash"`), or `{"ability","target" | "x","y","z","upcast","targets","if","unless","then_move"}`,
@@ -145,7 +155,7 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
 - `level_up(who, plan?)` → one call per character level. No plan: uses the line `- <Name> L<n>: {json}` in memory/party-build.md. Plan JSON keys: `subclass`, `feat`, `abilities` (`{"Wisdom":2}`, `{"Wisdom":1,"Constitution":1}` or `["Wisdom","Constitution"]`; half feats 1 point), `spells`, `cantrips`, `skills`, `passives` (also a feat's own choice), `class` (multiclass only). A subclass level fails and lists the choices until `subclass` is given; so do spells/cantrips to learn and passives (invocations, fighting styles): the error says `can pick: …`. A feat level defaults to +2 main ability. Spell and cantrip picks are real clicks the tool does itself (a few seconds); never drive the level-up screen by hand. Several members: one level_up per member; calls in the same message are run one after another (a page the game opens by itself for the next member is closed and reopened properly). get_status/look show `LEVEL UP: <who> (<level>)` while one is pending (out of combat); other results say `LEVEL UP pending` within about a minute of the XP. A NOTES WINDOW may add `PARTY PLAN: no plan line yet for …; party lacks …`: write those in party-build.md while walking.
 - `new_game(difficulty="Explorer")` → from the main menu: Explorer | Balanced | Tactician, then character creation.
 - `character_creation_options()` → what the creation screen offers now.
-- `create_character(plan)` → JSON, e.g. `{"race":"Half-Orc","class":"Paladin","subclass":"Oath of Devotion","background":"Soldier","abilities":"recommended","name":"Claude"}` or `{"origin":"Lae'zel"}`.
+- `create_character(plan)` → JSON with your build, e.g. `{"race":"Elf","subrace":"High Elf","class":"Wizard","subclass":"School of Evocation","background":"Sage","abilities":"recommended","name":"Ilse"}` or `{"origin":"Lae'zel"}`. Applies the plan, types the name on the naming page, presses "Venture forth" and checks the name in the world. It returns within ~95 s: if the world is still loading it says so (the name is set; check get_status later, don't call it again). "still applying the plan" → call it again. `name` (≤20 chars) is required for a custom character unless the playthrough has a save owner (then it must be that name; leaving it out uses it). A naming failure never finishes: fix the cause and call it again. From then on your saves are this character's (`list_saves`/`load_game` work in the same session).
 
 ## Think while acting
 - `queue_actions(actions, who, replace=false, ignore="")` → append steps to that character's queue and **return at once**; they run back to back while you keep observing and planning. Same steps as `do_actions`. The end arrives as a `queue_done` / `queue_interrupted {why, left}` event; `wait_for("queue")` blocks until then. Each character has its own queue (two can act at once).
@@ -173,7 +183,7 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
   `travel_to`, `queue_actions` and `do_actions` take `note="…"` too: the note rides on the action, zero extra
   turns. The memory keeper folds the log into the curated files between sessions; Edit those yourself only
   for plan changes you need this session.
-- `save_game(label="")` → named save (`Sxxx-<slug>`); empty = quicksave. Background: returns at once, SAVED / SAVE FAILED on a later result; queued if the game can't save now (conversation). `list_saves(limit=10)`. `load_game(save="latest")` → folder name from `list_saves`.
+- `save_game(label="")` → named save (`Sxxx-<slug>`); empty = quicksave. Background: returns at once, SAVED / SAVE FAILED on a later result; queued if the game can't save now (conversation). `list_saves(limit=10)` → this playthrough's saves (the character's folders), `<- latest` marks what "latest" loads. `load_game(save="latest")` → folder name from `list_saves`; "latest" = your newest `Sxxx-` save or save_game quicksave, never a `LIVETEST-*`, AutoSave or someone else's QuickSave. Refused (FAILED) when the runner closed the save/load gates for this game (not your character).
 - `confirm(answer="yes")` → answer an open Yes/No (OK/Cancel…) box: `"yes"`, `"no"`, a button label or its number (`POPUP decision … → answer with confirm`). `long_rest`/`short_rest`/`fast_travel` answer their own "End the day?"-type questions and list them (`long_rest(confirm=false)` stops at the first instead).
 - `ui_action(command, widget="", param="")` → run a UI command that `ui_dump` lists (screens with no dedicated tool).
 - `press_key(key)` / `click(x, y, button="left")` → last resort (SDL key names; fractions of the last screenshot). Log each use. `press_key("escape")` with nothing open is refused (it would open the game menu); tools close the panels they open.

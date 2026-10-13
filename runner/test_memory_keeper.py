@@ -51,6 +51,17 @@ elif mode == "fixable":
 elif mode == "hang":
     app("quests.md", "\n- Partial [seen]\n")
     time.sleep(60)
+elif mode == "character":
+    p = Path("CHARACTER.md")
+    p.write_text(p.read_text().replace("Mercy first.", "Profit first.") + "- S003: swore to free the tieflings [seen]\n")
+elif mode == "character_append":
+    app("CHARACTER.md", "- S003: swore to free the tieflings [seen]\n")
+elif mode == "character_new":
+    Path("CHARACTER.md").write_text("# Character: Keeper\n")
+elif mode == "git_meta":
+    app("quests.md", "\n- Rescue Halsin [told] (S003)\n")
+    Path(".gitattributes").write_text("* filter=evil\n")
+    Path("chapters/.gitattributes").write_text("* filter=evil\n")
 elif mode == "fail":
     sys.exit(3)
 print(json.dumps({"type": "result", "subtype": "success"}))
@@ -134,6 +145,54 @@ class KeeperTest(MemoryTestCase):
         self.assertEqual(self.read("HANDOFF.md"), handoff)
         self.assertEqual(self.read("sessions/S003.md"), log)
         self.assertFalse((self.mem / "new-notes.md").exists())
+
+    CHARACTER = ("# Character: Mira\n\nName: Mira\nRace: Dwarf / Gold Dwarf\nClass: Cleric / Life Domain\n"
+                 "Background: Acolyte\nDeity: Moradin\nRoleplay: strict\n\n## Look\nShort, scarred.\n\n## Voice\nBlunt.\n\n"
+                 "## Backstory\nTemple orphan.\n\n## Values\nMercy first.\n\n## Flaws\nTemper.\n\n## Goals\nGo home.\n\n"
+                 "## Won't do\nAbandon the weak.\n\n## How they decide\nThe weak first, then the odds.\n\n"
+                 "## Character development\n- S002: distrusts mind flayers more after the nautiloid [seen]\n")
+
+    def test_character_core_reverted_append_kept(self):
+        self.write("CHARACTER.md", self.CHARACTER)
+        self.commit("S002")
+        r = self.run_keeper("character")
+        self.assertEqual(r.status, "ok", r.summary())
+        self.assertIn("CHARACTER.md (core)", r.reverted)
+        now = self.read("CHARACTER.md")
+        self.assertTrue(now.startswith(self.CHARACTER), now)        # core and older development lines as they were
+        self.assertNotIn("Profit first", now)
+        self.assertTrue(now.endswith("- S003: swore to free the tieflings [seen]\n"), now)
+        self.assertIn("CHARACTER.md", r.files)
+        self.assertEqual(K.L.lint(self.mem, "any", 4).errors, [])
+
+    def test_character_pure_append_kept(self):
+        self.write("CHARACTER.md", self.CHARACTER)
+        self.commit("S002")
+        r = self.run_keeper("character_append")
+        self.assertEqual(r.status, "ok", r.summary())
+        self.assertEqual(r.reverted, [])
+        self.assertEqual(self.read("CHARACTER.md"), self.CHARACTER + "- S003: swore to free the tieflings [seen]\n")
+        self.assertEqual(self.git_log()[0], "S003 memory-keeper: CHARACTER.md")
+
+    def test_keeper_never_creates_character(self):
+        r = self.run_keeper("character_new")
+        self.assertIn("CHARACTER.md (core)", r.reverted)
+        self.assertFalse((self.mem / "CHARACTER.md").exists())
+
+    def test_git_control_files_reverted_and_denied(self):
+        r = self.run_keeper("git_meta")
+        self.assertEqual(r.status, "ok", r.summary())
+        self.assertEqual(r.files, ["quests.md"])
+        self.assertIn(".gitattributes", r.reverted)
+        self.assertIn("chapters/.gitattributes", r.reverted)
+        self.assertFalse((self.mem / ".gitattributes").exists())
+        self.assertFalse((self.mem / "chapters" / ".gitattributes").exists())
+        self.assertTrue((self.mem / ".gitignore").exists())          # the template's own, untouched
+        deny = K.keeper_settings(self.mem)["permissions"]["deny"]
+        m = self.mem.resolve()
+        for tool in ("Read", "Edit", "Write"):
+            self.assertIn(f"{tool}(/{m}/.git/**)", deny)
+            self.assertIn(f"{tool}(/{m}/**/.git*)", deny)
 
     def test_keeper_section_kept_player_part_restored(self):
         handoff = self.read("HANDOFF.md")

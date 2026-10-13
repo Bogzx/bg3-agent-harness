@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -24,6 +25,19 @@ def isolate_git() -> None:
     for var in ("BG3_MEMORY_DIR", "CLAUDE_PROJECT_DIR", "BG3_WRAP_MINUTES", "BG3_SESSION_MINUTES",
                 "BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP"):
         os.environ.pop(var, None)
+
+
+CHARACTER_HEADER = {"Name": "Mira", "Race": "Dwarf / Gold Dwarf", "Class": "Cleric / Life Domain",
+                    "Background": "Acolyte", "Deity": "Moradin", "Roleplay": "strict"}
+
+
+def character_text(dev: tuple[str, ...] = ("- S002: distrusts mind flayers more after the nautiloid [seen]",)) -> str:
+    """memory-template/CHARACTER.md filled in (header values and one line per section), like the playbook makes it."""
+    t = (M.TEMPLATE_DIR / "CHARACTER.md").read_text().replace("# Character: (name)", "# Character: Mira")
+    for key, val in CHARACTER_HEADER.items():
+        t = re.sub(rf"^{key}:.*$", f"{key}: {val}", t, flags=re.MULTILINE)
+    t = re.sub(r"^(## (?!Character development).+)$", r"\1\nA short line.", t, flags=re.MULTILINE)
+    return t.rstrip("\n") + "\n" + "".join(d + "\n" for d in dev)
 
 
 class MemoryTestCase(unittest.TestCase):

@@ -212,11 +212,33 @@ MELEE_RANGE_M = 3.0  # an ability range this short is melee (weapon reach, Shove
 MELEE_REACH_PAD = 1.0  # weapon range is edge to edge: add both bounding radii (0.5 m each, medium creatures)
 MAX_RETARGET = 3
 BONUS_HEALS = ("Target_HealingWord",)  # bonus-action heals that bring a downed ally back up
+# S063 11:13: Healing Word planned on an ally was re-aimed at an ENEMY. A heal re-aims only at a downed party
+# member; a revive (its first pick is a body) is never re-aimed, and a dead target is what it is for.
+HEAL = re.compile(r"(?i)heal|cure|layonhands|lay_on_hands|goodberry")
+REVIVE = re.compile(r"(?i)reviv|resurrect|raise_?dead")
 
 
 def missed_target(line: str) -> bool:
     low = line.lower()
     return any(m in low for m in TARGET_MISS)
+
+
+def side(combat: dict, uuid: str | None, party: set, seen: dict | None = None) -> str | None:
+    """'party' | 'ally' | 'hostile' | 'neutral' for a combatant, as the turn order shows it (dead ones keep
+    their row); `seen` (uuid -> relation from an earlier read) covers one out of sight now; None: unknown."""
+    if not uuid:
+        return None
+    if uuid in party:
+        return "party"
+    for o in (combat or {}).get("order") or []:
+        if o.get("uuid") == uuid and o.get("relation"):
+            return o["relation"]
+    return (seen or {}).get(uuid)
+
+
+def sides(combat: dict) -> dict:
+    """uuid -> relation of every combatant on a turn order read (side()'s `seen`)."""
+    return {o["uuid"]: o["relation"] for o in (combat or {}).get("order") or [] if o.get("uuid") and o.get("relation")}
 
 
 def hostiles_in_reach(combat: dict, who: str, rng: float | None, skip: set) -> list[str]:
@@ -263,12 +285,13 @@ def reach_line(combat: dict, who: str, movement: Any, label: Callable[[str], str
     return f"REACH {label(who)} ({round(float(movement), 1):g}m move, ≈straight line): " + " | ".join(parts)
 
 
-def downed_allies(combat: dict, who: str, rng: float) -> list[str]:
+def downed_allies(combat: dict, who: str, rng: float, skip: set | None = None) -> list[str]:
     """Party members at 0 HP (downed, not dead) that `who` sees within `rng` m, nearest first."""
     out = []
     for o in (combat or {}).get("order") or []:
         u = o.get("uuid")
-        if not u or u == who or o.get("dead") or o.get("relation") != "party" or o.get("hp_pct") != 0:
+        if not u or u == who or u in (skip or ()) or o.get("dead") or o.get("relation") != "party" \
+                or o.get("hp_pct") != 0:
             continue
         d = (o.get("from") or {}).get(who)
         if isinstance(d, (list, tuple)) and len(d) >= 2 and isinstance(d[0], (int, float)) and d[1] and d[0] <= rng:

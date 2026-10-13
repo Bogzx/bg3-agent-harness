@@ -813,6 +813,49 @@ test("waysWarm: all eight warm within ~1 s of stopping (arrival), with no search
     assert(ok, err)
 end)
 
+-- NAV-1: the ways cache entry (WAYS_TTL_MS) outlives N.path's async answers (ASYNC_TTL_MS); a warm-up after a long
+-- stand-still used to read the stale answers as "answered" and let N.ways search them synchronously.
+test("waysWarm: after standing still past WAYS_TTL_MS the re-warm asks async again, no sync FindPath", function()
+    local realF, realB, sync, pumping = Ext.Level.FindPath, Ext.Level.BeginPathfindingImmediate, 0, false
+    local realPump = pumpPaths
+    pumpPaths = function() pumping = true; realPump(); pumping = false end
+    Ext.Level.FindPath = function(path) if not pumping then sync = sync + 1 end; return realF(path) end
+    Ext.Level.BeginPathfindingImmediate = function(...) sync = sync + 1; return realB(...) end
+    local ok, err = pcall(function()
+        local t0 = clock
+        N.waysWarm(clock)
+        while clock - t0 < 1000 do clock = clock + 16; N.frame = N.frame + 1; pumpPaths(); N.waysWarm(clock) end
+        eq(#N.ways(P1, 20, 8, 0), 8, "warm")
+        eq(sync, 0, "no sync search warming")
+        clock = clock + 121000 -- the party stands still (the agent thinks, a dialogue, a menu)
+        local asked = #asyncQ
+        for _ = 1, 20 do clock = clock + 16; N.frame = N.frame + 1; N.waysWarm(clock) end
+        eq(sync, 0, "no sync search re-warming from stale answers")
+        eq(#asyncQ > asked, true, "a stale answer is asked again async")
+        local t1 = clock
+        while clock - t1 < 1000 do clock = clock + 16; N.frame = N.frame + 1; pumpPaths(); N.waysWarm(clock) end
+        eq(sync, 0, "no sync search")
+        eq(#N.ways(P1, 20, 8, 0), 8, "warm again")
+        eq(sync, 0, "the frontier read the fresh answers")
+    end)
+    Ext.Level.FindPath, Ext.Level.BeginPathfindingImmediate, pumpPaths = realF, realB, realPump
+    assert(ok, err)
+end)
+
+test("ways noSearch: only async answers; a direction without one is left out and not cached", function()
+    local realB, sync = Ext.Level.BeginPathfindingImmediate, 0
+    Ext.Level.BeginPathfindingImmediate = function(...) sync = sync + 1; return realB(...) end
+    local ok, err = pcall(function()
+        local w = N.ways(P1, 20, 8, 1000, 8, true, true)
+        eq(#w, 0, "nothing answered: nothing built")
+        eq(sync, 0, "no sync search")
+        eq(#N.ways(P1, 20, 8, 1000, 8, true), 8, "a normal call still searches them")
+        eq(sync > 0, true, "searched")
+    end)
+    Ext.Level.BeginPathfindingImmediate = realB
+    assert(ok, err)
+end)
+
 test("waysWarm: nothing while the Lua heap is over the cap (Shared/Mem.lua); a crumb names the spot", function()
     local real, n = Ext.Level.FindPath, 0
     local crumbs, paused = {}, true

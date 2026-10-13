@@ -19,15 +19,33 @@ nothing.
 
 Options: `--session-minutes 60` (wrap-up starts 3 min before the end), `--hours N` (total
 budget; no new session starts with less than 20 min left), `--model`, `--save-owner NAME`,
-`--take-over` (see Safety).
+`--take-over` (see Safety), `--until MILESTONE`, `--character-brief TEXT [--roleplay strict|light]
+[--difficulty Explorer|Balanced|Tactician]` (both below).
 
 `--save-owner` (or `$BG3AI_SAVE_OWNER`) is the player character's name, which starts every save folder
 of the playthrough: `Claude` for `Claude-<id>__<label>`. Without it, the runner learns the owner from the
-first save it picks. For `claude-run-1`:
+first `Sxxx-` save (a new game: the name the agent gave its character) and keeps it in `runner.json`. The
+`<id>` differs per save, so two playthroughs with one character name can't be told apart by folder: give each
+playthrough its own name. For `claude-run-1`:
 
 ```bash
 python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hours 8
 ```
+
+**Character brief (phase 0).** `run --character-brief "a pious, short-tempered dwarf cleric who distrusts mind
+flayers"` writes `playthroughs/<pt>/profile.json` (`{"character": {"brief", "name"?, "constraints"?, "roleplay"},
+"difficulty"?}`; roleplay defaults to strict, difficulty to Explorer). A new game of that playthrough then starts
+with a `PHASE 0, CHARACTER CREATION` kickoff: the agent follows `knowledge/playbooks/character-creation.md`, designs
+the build and persona from the brief, names the character itself (unless `character.name` or `--save-owner` sets
+one) and saves `S001-start`; the runner adopts that name as the save owner (`runner.json`, `character.name`).
+Without a brief, a new game is named after `--save-owner` as before.
+
+**Stop at a milestone.** `run --until nautiloid_escaped` (ids in `bridge/src/bg3ai/milestones.py`: `crash_site`,
+`beach`, ...) checks the progress poller's seen-state every poll; when the milestone is reached it stops claude
+(SIGINT; the fix-notes pass closes the memory), the runner quicksaves if needed and appends a run record to
+`runtime/sessions/<pt>/runs.jsonl` (wall/play minutes, sessions, cost, turns and tokens from claude's result events,
+game crashes/hangs, agent hangs, recoveries, setup failures, agent reloads), then exits. A playthrough already past
+it doesn't play. (`--runs N`, the next playthrough and a new game, isn't there yet: loop the command in a shell.)
 
 ## What one session does
 
@@ -45,7 +63,10 @@ python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hour
    - `BG3AI_SESSION_DEADLINE`: epoch seconds, for the MCP session clock
    - `BG3_SESSION_MINUTES` / `BG3_WRAP_MINUTES`: for the memory hooks
    - `BG3AI_PLAYTHROUGH`
-   - `BG3AI_SAVE_PREFIX`
+   - `BG3AI_SAVE_OWNER` / `BG3AI_SAVE_PREFIX`: the save owner, and `$BG3AI_SAVE_PREFIX` or else `<owner>-`; both
+     empty for a new game whose character isn't named yet (the server takes the name create_character types)
+   - `BG3AI_SAVE_GATES`: `1`/`0` when the runner opened/closed the save/load gates for this game (absent when
+     it couldn't tell); the MCP server follows it
 
    The play/ hooks open the memory session (SessionStart) and lint and commit it (Stop). The runner does
    not call `session.py start` itself, since that would open two sessions. Output goes to
@@ -64,7 +85,7 @@ python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hour
 ## Recovery
 
 - **Stopping the game:** the native `bg3` ignores SIGTERM. The runner sends SIGTERM to the launcher's
-  process group and to every `pgrep -x bg3` process, then SIGKILL after 10 s. It relaunches only once no
+  process group and to every `pgrep -x bg3` process, then SIGKILL after 3 s. It relaunches only once no
   `bg3` process remains and port 9998 is free.
 - **Crash or hang:** the game process or port disappears, or 3 consecutive liveness evals fail at 30-s
   intervals. The runner stops Claude, kills the game, relaunches it (`launch_game.sh --load`), and reloads
@@ -80,8 +101,14 @@ python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hour
   journal titles and step counts (server `state.status` + `state.journal`). After 2 consecutive sessions
   with no change, the next kickoff carries a "change approach" directive. Until those ops exist, progress
   is unknown and the detector stays quiet.
+- **Refused load:** before a `ui.menu` load of its own save the runner opens the save/load gates (a fresh
+  profile has them off); if the mod still refuses (or the eval fails) it relaunches the game with
+  `--load <folder>` instead. Any mod refusal during setup is a setup failure (relaunch, retry), never fatal.
 - **Give-ups:** Claude exiting within a minute 3 times in a row (auth or config problems), or 5
-  consecutive game setup failures, stops the runner. Check `runtime/runner.log`.
+  consecutive game setup failures, stops the runner. A stale bg3le build (`tools/bg3le_buildinfo.py`: the
+  dist lacks a `patches/bg3le` patch, or `launch_game.sh` exits 4) stops it before any launch: run
+  `tools/build_bg3le.sh` (`BG3AI_ALLOW_STALE_BG3LE=1` launches anyway). Every exit logs
+  `runner stopped (<why>)`; an unexpected error also logs its traceback. Check `runtime/runner.log`.
 
 ## Safety
 
@@ -91,8 +118,9 @@ python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hour
 - Only one runner at a time (`runtime/runner.lock`).
 - `BG3AI_SAVE_PREFIX` marks this playthrough's saves. The runner accepts it as a folder prefix (`Claude-`:
   the character name plus the game's dash, what the MCP server and docs/HANDOFF.md use; the agent's
-  `Sxxx-` labels stay plain) or as a label prefix (`pt1-S010-end`). Use `--save-owner` for the character
-  name; new games name the character with it (bg3ai/naming.py checks it before "Venture forth").
+  `Sxxx-` labels stay plain) or as a label prefix (`pt1-S010-end`). It is optional: without it the runner
+  passes `<owner>-`. Use `--save-owner` for the character name; new games name the character with it
+  (create_character types and checks it before "Venture forth").
 - `--session-minutes` below 20 is refused (`--allow-short-sessions` for harness tests): start-up (≤1 min)
   and wrap-up (3 min) need room. Wrap-up starts 3 min before the end (a third of a tiny session), passed to
   the MCP clock line and the Stop hook as `BG3AI_SESSION_WRAPUP`, so both switch at the same moment.
@@ -104,6 +132,8 @@ python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hour
 | `runtime/runner.log` | runner decisions, one line each |
 | `runtime/runner.status.json` | live status for `play.py status` |
 | `runtime/sessions/<pt>/runner.json` | save owner, runner quicksaves, per-session history and progress signatures |
+| `runtime/sessions/<pt>/runs.jsonl` | one record per `--until` run |
+| `playthroughs/<pt>/profile.json` | the character brief, roleplay mode, difficulty (`--character-brief`) |
 | `runtime/sessions/<pt>/Sxxx.{jsonl,log}` | Claude's stream (raw and readable); `Sxxx-fix.*` for fix-notes passes |
 | `runtime/STOP` | created by `play.py stop` |
 

@@ -141,6 +141,34 @@ def _file_block(mem: Path, name: str, budget: int) -> str:
     return f"----- {name} -----\n{body}"
 
 
+CHARACTER_BUDGET = 1900   # CHARACTER.md: its core (lint: <= 1600 chars) + the newest development lines
+
+
+def _character_block(mem: Path, budget: int = CHARACTER_BUDGET) -> str | None:
+    """CHARACTER.md (the persona) for the injection, or None before character creation wrote it. The core is kept
+    whole when it fits; of "## Character development" the newest lines that fit (the older ones stay in the file)."""
+    p = mem / L.CHARACTER_FILE
+    if not p.is_file():
+        return None
+    core, dev = L.character_split(_clean(p.read_text()))
+    title = "----- CHARACTER.md (who you are: play as this character; the Roleplay line says how strictly) -----"
+    core = core.strip()
+    if len(core) > budget - 200:
+        core = core[: budget - 280].rstrip() + f"\n[... truncated; Read memory/{L.CHARACTER_FILE} for the rest]"
+    lines = [ln for ln in dev.strip().splitlines()[1:] if ln.strip()]
+    room = budget - len(core) - len(L.CHARACTER_DEV_HEADING) - 80
+    kept: list[str] = []
+    for ln in reversed(lines):
+        if room - len(ln) - 1 < 0:
+            break
+        kept.insert(0, ln)
+        room -= len(ln) + 1
+    if len(kept) < len(lines):
+        kept.insert(0, f"(+{len(lines) - len(kept)} older lines in memory/{L.CHARACTER_FILE})")
+    body = core + (f"\n\n{L.CHARACTER_DEV_HEADING}\n" + "\n".join(kept) if dev.strip() else "")
+    return f"{title}\n{body}"
+
+
 NEWS_RE = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s+(.*\S)")
 NEWS_MAX = 6
 
@@ -220,7 +248,8 @@ def build_context(mem: Path, source: str = "startup", notes: list[str] | None = 
                     f"conversation; the operator starts a fresh session.")
     if source == "compact":
         head.append("CONTEXT WAS COMPACTED: before acting, re-read memory/sessions/"
-                    f"{sid}.md and memory/objectives.md, then call get_status.")
+                    f"{sid}.md and memory/objectives.md, then call get_status."
+                    + (" Stay in character: CHARACTER.md below." if (mem / L.CHARACTER_FILE).is_file() else ""))
     elif source in ("resume", "fork"):
         head.append("Resumed conversation: call get_status and check it matches what you remember.")
     elif source == "clear":
@@ -246,10 +275,20 @@ def build_context(mem: Path, source: str = "startup", notes: list[str] | None = 
     header = "\n".join(head)
 
     status = _status_block(mem)
-    remaining = HOOK_CHAR_LIMIT - len(header) - 200 - (len(status) + 2 if status else 0)
+    character = _character_block(mem)   # before PLAYTHROUGH.md, with its own budget (interface I6)
+    remaining = (HOOK_CHAR_LIMIT - len(header) - 200 - (len(status) + 2 if status else 0)
+                 - (len(character) + 2 if character else 0))
     pt_budget = min(5200, int(remaining * 0.58))
+    # A short file leaves its unused share to the other (CHARACTER.md takes ~1.9 KB of the same 9.5 KB).
+    pt_len, ho_len = (len(_clean((mem / n).read_text())) if (mem / n).is_file() else 0
+                      for n in ("PLAYTHROUGH.md", "HANDOFF.md"))
+    if pt_len < pt_budget:
+        pt_budget = pt_len + 40
+    elif ho_len < remaining - pt_budget:
+        pt_budget = min(5200, remaining - ho_len - 40)
     ho_budget = remaining - pt_budget
-    parts = [header, _file_block(mem, "PLAYTHROUGH.md", pt_budget), _file_block(mem, "HANDOFF.md", ho_budget)]
+    parts = [header, *([character] if character else []), _file_block(mem, "PLAYTHROUGH.md", pt_budget),
+             _file_block(mem, "HANDOFF.md", ho_budget)]
     if status:
         parts.append(status)
     parts.append("=== end of memory injection ===")

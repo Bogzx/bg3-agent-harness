@@ -97,5 +97,32 @@ class ChildrenAndLootTest(unittest.TestCase):
         near["items"] = near["items"][1:]
         self.assertIsNone(C.loot_target(near, [0, 0, 0]))
 
+class BuildCheckTest(unittest.TestCase):
+    """hook.build (UI-1): a dist whose BUILDINFO lacks a patches/bg3le patch FAILs."""
+
+    def run_check(self, text: str | None) -> tuple[str, str, str]:
+        with tempfile.TemporaryDirectory() as d:
+            if text is not None:
+                Path(d, "BUILDINFO").write_text(text)
+            C.results.clear()
+            C.check_build(Path(d))
+            return C.results[-1]
+
+    def test_missing_patch_fails(self):
+        names = sorted(p.name for p in C.bg3le_buildinfo.PATCHES.glob("*.patch"))
+        text = "".join(f"patch: {n} {C.bg3le_buildinfo.repo_patches()[n]}\n" for n in names[:-1])
+        v, name, detail = self.run_check(text)
+        self.assertEqual((v, name), ("FAIL", "hook.build"))
+        self.assertIn(f"missing {names[-1]}", detail)
+        self.assertIn("tools/build_bg3le.sh", detail)
+
+    def test_current_passes(self):
+        text = "".join(f"patch: {n} {h}\n" for n, h in C.bg3le_buildinfo.repo_patches().items())
+        self.assertEqual(self.run_check(text)[0], "PASS")
+
+    def test_no_buildinfo_fails(self):
+        self.assertEqual(self.run_check(None)[0], "FAIL")
+
+
 if __name__ == "__main__":
     unittest.main()

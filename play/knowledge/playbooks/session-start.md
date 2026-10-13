@@ -14,8 +14,9 @@ to it (e.g. objectives.md before choosing a new goal, npcs.md before talking to 
 - At the main menu, or somewhere other than HANDOFF says: `load_game(save="<Save to load>")` (fall back
   to the newest `S<prev>-*` save, then `"latest"`).
 - **Brand-new playthrough** (PLAYTHROUGH.md says "Character: (not created yet)" and `list_saves` has
-  none): `new_game` with the difficulty from `knowledge/setup.md`, then `create_character` with that
-  build, **named exactly as the operator configured (default "Claude")**. Record the build in
+  none): with a character brief in the kickoff (CHARACTER CREATION), run the `character-creation` playbook
+  now. Without one: `new_game` with the difficulty from `knowledge/setup.md` (Explorer), then
+  `create_character` with that default build, **named exactly as the kickoff says**. Record the build in
   PLAYTHROUGH.md and party-build.md, then play the prologue.
 - Dialogue or combat in progress: handle it first (the `dialogue` or `combat` playbook).
 - The injection has a **snapshots/gear.md** block, or get_status shows `ALERTS … better gear in bags`:

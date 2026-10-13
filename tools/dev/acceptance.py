@@ -678,7 +678,64 @@ def sec_combat() -> None:
              + " | ".join(l for l in out.splitlines()[:4]))
     if not played:
         item("combat_turn on a safe fight", "SKIP", "the fight ended before a party turn")
+    melee_probe()
     load_verified(BASE)
+
+
+MELEE_PROBE_M = (2.4, 2.1, 1.9, 1.6)  # centre-to-centre distances swung from, one party turn each
+
+
+def melee_probe() -> None:
+    """ACT-3 (S065 ×9 'first melee refused, no reason given'): the centre distance the engine accepts for a melee
+    swing cast WithoutMove (use_ability in combat). Our guard lets one through up to weapon range + both Stand radii
+    (2.5 m for two medium creatures); combat_turn's melee move stops at ≤2.1 m. One swing per party turn: walk to d m
+    from the nearest visible hostile (on the line toward it), measure, swing, end the turn. Record-only (PASS when
+    measured): the rows say where the engine's reach really ends; set G.radius / A.MELEE_STOP_SLACK from them."""
+    from bg3ai import turn as T
+    rows: list[str] = []
+    todo = list(MELEE_PROBE_M)
+    end = time.monotonic() + 150
+    while todo and time.monotonic() < end:
+        cs = S.game.try_rpc("state.combat") or {}
+        if not cs.get("active"):
+            break
+        if ui_screen() == "reaction":
+            call("react", use=False)
+            continue
+        party = {r.get("uuid"): r for r in status().get("party") or []}
+        now = [u for u in T.acting(cs) if u in party and not party[u].get("summon")]
+        if not now:
+            time.sleep(0.5)
+            continue
+        who_u, wh = now[0], S.H.get(now[0])
+        here = party[who_u].get("pos")
+        nb = S.game.try_rpc("state.nearby", {"radius": 30}) or {}
+        foes = [c for c in nb.get("characters") or [] if c.get("relation") == "hostile" and not c.get("dead")
+                and c.get("pos")]
+        if not here or not foes:
+            call("end_turn", who=wh, wait=False)
+            continue
+        foe = min(foes, key=lambda c: sum((a - b) ** 2 for a, b in zip(c["pos"], here)))
+        fp, fh = foe["pos"], S.H.get(foe["uuid"], foe.get("name"))
+        d = todo[0]
+        flat = ((here[0] - fp[0]) ** 2 + (here[2] - fp[2]) ** 2) ** 0.5 or 1.0
+        spot = (fp[0] + (here[0] - fp[0]) * d / flat, here[1], fp[2] + (here[2] - fp[2]) * d / flat)
+        call("move_to", x=spot[0], y=spot[1], z=spot[2], who=wh, wait=True)
+        me = next((r.get("pos") for r in status().get("party") or [] if r.get("uuid") == who_u), None)
+        nb2 = S.game.try_rpc("state.nearby", {"radius": 30}) or {}
+        fp2 = next((c.get("pos") for c in nb2.get("characters") or [] if c.get("uuid") == foe["uuid"]), fp)
+        dist = sum((a - b) ** 2 for a, b in zip(me or here, fp2)) ** 0.5
+        out = call("use_ability", ability="Target_MainHandAttack", target=fh, who=wh)
+        first = first_line(out)
+        verdict = ("swung" if ": done" in first or "done —" in first else
+                   "ENGINE-REFUSED" if "no reason given" in out else
+                   "guard-refused" if "out of range" in out else "other: " + first[:80])
+        rows.append(f"aimed {d}m measured {dist:.2f}m centre → {verdict}")
+        log(f"melee probe: {rows[-1]} ({party[who_u].get('name')} vs {foe.get('name')})")
+        todo.pop(0)
+        call("end_turn", who=wh, wait=False)
+    item("melee reach probe (engine-accepted centre distance, ACT-3)", "PASS" if rows else "SKIP",
+         "; ".join(rows) if rows else "no party turn with a hostile in view")
 
 
 def party_pos() -> dict:

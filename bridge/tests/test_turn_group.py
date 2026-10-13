@@ -84,13 +84,15 @@ class SharedTurn(Base):
         self.assertIn(f"TURN {self.e46}", out)
         self.assertEqual(self.g.ops("act.cast")[0][1]["char"], P2)
 
-    def test_default_actor_is_the_selected_member(self):
-        # current names Lae'zel (listed first) but the selected character Claude is in the group too.
+    def test_no_default_actor_in_a_shared_turn(self):
+        # ACT-2 (S065): who left out used to pick the selected member (Claude) though the plan could be either's;
+        # a plan both members can play is refused before anything runs.
         out = server.combat_turn(self.plan(action="Shout_Disengage"))
-        self.assertIn(f"TURN {self.e1}", out)
+        self.assertIn("REFUSED: several of your characters can act now", out)
+        self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], [])
 
     def test_ending_one_member_hands_over_to_the_other(self):
-        out = server.combat_turn(self.plan(action="Shout_Disengage"))
+        out = server.combat_turn(self.plan(action="Shout_Disengage"), who=self.e1)
         self.assertIn("end_turn: done", out)
         self.assertIn(f"NOW {self.e46} Lae'zel's turn: plan it", out)
         self.assertIn("YOUR ACTIONS", out)

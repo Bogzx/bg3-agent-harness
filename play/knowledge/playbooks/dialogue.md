@@ -1,6 +1,6 @@
 # Dialogue
 
-**When:** Use whenever a conversation is open (talk_to result, INTERRUPTED — dialogue, dialogue_line events, a cutscene ending in choices) or before starting one with a named NPC. Covers get_dialogue/choose_dialogue/roll_check, batching obvious answers with do_actions, skill checks, approval, lies, and recording promises and decisions.
+**When:** Use whenever a conversation is open (talk_to result, INTERRUPTED — dialogue, dialogue_line events, a cutscene ending in choices) or before starting one with a named NPC. Covers playing your character (CHARACTER.md, roleplay strict/light), get_dialogue/choose_dialogue/roll_check, batching obvious answers with do_actions, skill checks, approval, lies, and recording promises and decisions.
 
 ## Before you talk to a named NPC
 - `Grep` for the name with path `memory` (npcs.md, decisions.md, quests.md). Check decisions.md for related
@@ -20,6 +20,22 @@
   of combat, so do it for every named-NPC talk where memory or the wiki expects a check. (Through S014 it
   was never used.)
 - `look_at(target)` first if you need to know who someone is (the Examine panel, nothing hidden).
+
+## Playing your character
+With a `memory/CHARACTER.md` (injected at session start), every real choice is made **as that character**:
+first ask which answers they could say (Values, Won't do, Voice, How they decide), then use the rules below
+(odds of a check, safety, companion approval) to choose among those. Its `Roleplay:` line sets the weight:
+- **strict** (the default): in-character first. The odds, safety and approval rules are **tie-breakers among
+  in-character answers**. Never pick an answer the character wouldn't give because its check has better odds or
+  a companion would approve; if every in-character answer is risky, save first and take the best of them. An
+  answer that breaks a `Won't do` line is out, whatever it gains.
+- **light**: the persona is one weight among equals: weigh in-character fit, odds, safety and approval together
+  and take the best overall; still never break a `Won't do` line.
+- A choice the character makes that a careful player wouldn't is fine: log it, live with the result (no
+  reload to undo it).
+- Each `[decision]` note and decisions.md entry gives the **in-character reason**:
+  `note("[decision] Mira refused the tadpole power: she never lets a mind flayer in her head")`.
+- Without CHARACTER.md (the default build), use the rules below as they stand.
 
 ## In the conversation
 Only filler is clicked for you: a Continue prompt or a bare "…"/End. The `talk_to` result (or any
@@ -53,8 +69,9 @@ text) in the tool results. Don't `wait` for or watch cutscenes, and don't screen
 picked automatically: every choice is yours.
 - **Read every option** before choosing. Options that end the conversation early ("Leave", "Attack",
   "[Illithid]") are often irreversible.
-- **Look for the check options first.** [Persuasion]/[Intimidation]/[Deception], ability checks and class or
-  race options usually give the better outcome. Examples: a fight avoided, a better price, extra
+- **Look for the check options first** (among in-character answers when roleplay is strict).
+  [Persuasion]/[Intimidation]/[Deception], ability checks and class or race options usually give the better
+  outcome. Examples: a fight avoided, a better price, extra
   information, inspiration and XP, companion approval `[wiki]`. Take one when the odds are good:
   - a bonus of +3 or more on a routine check (most early DCs are 10–15 `[wiki]`);
   - or Guidance or Bardic Inspiration is available (the roll screen offers it: `roll_check(boosts="Guidance")`);
@@ -66,7 +83,8 @@ picked automatically: every choice is yours.
 - Natural 20 always succeeds and natural 1 always fails on dialogue checks `[wiki]`. Inspiration points
   allow one reroll (`reroll_on_fail=true`). Use it on checks that matter.
 - **Think harder on story choices.** For companions, factions, sparing or killing, [Illithid] and promises,
-  read every option and check memory (decisions.md, npcs.md). Write the decisions.md entry first. Routine
+  read every option and check memory (decisions.md, npcs.md) and CHARACTER.md (How they decide). Write the
+  decisions.md entry first, with the in-character reason. Routine
   answers (greetings, asking questions) deserve no more than a moment.
 - **Reload policy:** don't reload to reroll a failed check (CLAUDE.md). Accept it, log it, adapt.
 - **Insight / History / Arcana** options reveal information cheaply. Usually take them first.

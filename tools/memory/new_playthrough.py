@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lint as L  # noqa: E402
 import memlib as M  # noqa: E402
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -36,7 +37,8 @@ def create_memory(name: str, dest: Path, template: Path = M.TEMPLATE_DIR) -> str
     if dest.exists() and any(dest.iterdir()):
         raise SetupError(f"{dest} already exists and is not empty; pick another name or --memory-dir")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(template, dest, dirs_exist_ok=True)
+    # CHARACTER.md is written in the character-creation phase (its format is in the playbook): no stub.
+    shutil.copytree(template, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns(L.CHARACTER_FILE))
     created = M.now_local().strftime("%Y-%m-%d")
     for p in dest.rglob("*.md"):
         t = p.read_text()

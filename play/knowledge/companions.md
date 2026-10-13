@@ -20,7 +20,7 @@ and on active quest titles/objective names. From bg3.wiki; check `wiki_page` bef
 
 ## Skill needs (what the PARTY hint checks)
 - **Locks and traps**: Sleight of Hand (Astarion, any Rogue). Below +4 in the party → many locks fail.
-- **Face**: Persuasion / Deception / Intimidation (CHA: Claude-Paladin, Wyll, a Bard). Story checks hinge on it.
+- **Face**: Persuasion / Deception / Intimidation (CHA: a Paladin PC, Wyll, a Bard). Story checks hinge on it.
 - **Perception**: hidden traps, secret doors (Wisdom: Shadowheart, Halsin, Jaheira, Astarion).
 - **Composition**: one healer (Cleric/Druid/Bard), one frontline (Fighter/Barbarian/Paladin), ranged
   damage (Warlock, Ranger, Wizard, Rogue), area control (Wizard, Druid, Sorcerer, Cleric).

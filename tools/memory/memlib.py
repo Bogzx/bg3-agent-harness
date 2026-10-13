@@ -49,6 +49,7 @@ BUDGETS: dict[str, tuple[int, int | None]] = {
     "party-build.md": (150, None),
     "inventory-notes.md": (100, None),
     "lessons.md": (70, 12000),   # optional file; the bridge matches its WHEN lines at fight start
+    "CHARACTER.md": (90, None),  # optional until written; its core has its own budget (lint.check_character)
 }
 CHAPTER_MAX_LINES = 150
 SESSION_LOG_MAX_LINES = 300
@@ -61,7 +62,7 @@ META_LABELS = {
     "why", "reversible", "next", "kill criterion", "role", "todo",
 }
 # Files guarded against bulk deletion (lines lost vs git HEAD).
-GUARDED_FILES = ["decisions.md", "npcs.md"]
+GUARDED_FILES = ["decisions.md", "npcs.md", "CHARACTER.md"]
 ARCHIVE_MARKER = "ARCHIVE:"
 DEFAULT_MAX_DELETED = 10
 
@@ -172,10 +173,61 @@ def compaction_due(mem: Path, current: int) -> bool:
 GIT_FALLBACK_IDENTITY = ["-c", "user.name=bg3-agent", "-c", "user.email=bg3-agent@localhost"]
 
 
+# The memory repo sits inside the playing agent's sandbox, but its git runs on the host from hooks. Nothing in the
+# repo is trusted to make git run a program (FAIR-1): the fairness guard keeps the agent out of .git/ and the
+# .git* files, and every call here also overrides what git would execute from repo config or hooks.
+GIT_SAFE_CONFIG = [
+    "core.hooksPath=/dev/null",          # .git/hooks/* (pre-commit, post-commit, post-index-change, ...)
+    "core.fsmonitor=false",              # a fsmonitor command runs on status/add/diff
+    "log.showSignature=false",           # gpg.program on log/show
+    "commit.gpgsign=false",
+    "gc.auto=0",                         # no auto-gc (pre-auto-gc hook) after commits
+    "maintenance.auto=false",
+    "submodule.recurse=false",           # a submodule has its own config and hooks
+    "diff.ignoreSubmodules=all",
+    "status.submoduleSummary=false",
+]
+GIT_SAFE_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat", "GIT_EDITOR": "true", "GIT_ASKPASS": "true"}
+# Filter commands, named by .gitattributes (filter=x) and defined in any config scope. Diff programs
+# (diff.external, diff.x.command, diff.x.textconv) are off by flag instead: an empty one is run as "".
+_FILTER_CMD_RE = re.compile(r"^filter\..+\.(?:clean|smudge|process)$", re.IGNORECASE)
+GIT_DIFF_FLAGS = ["--no-ext-diff", "--no-textconv"]
+GIT_DIFF_COMMANDS = {"diff", "show", "log"}
+
+
+def _git_filter_overrides(mem: Path) -> list[str]:
+    """`-c <key>=` for every filter command configured (repo, includes, global): an empty command means no
+    filter, so a .gitattributes line can't make add/status/diff run one."""
+    p = subprocess.run(["git", "-C", str(mem), "config", "--null", "--name-only", "--get-regexp",
+                        r"^filter\..+\.(clean|smudge|process)$"],
+                       capture_output=True, text=True, env=dict(os.environ, **GIT_SAFE_ENV))
+    out = []
+    for key in p.stdout.split("\0"):
+        if key and _FILTER_CMD_RE.match(key):
+            # a "required" filter with no command would fail the add instead
+            out += ["-c", f"{key}=", "-c", key.rsplit(".", 1)[0] + ".required=false"]
+    return out
+
+
+def git_argv(mem: Path, *args: str) -> list[str]:
+    """The git command line for `args` in the memory repo, with repo-local hooks and commands disabled.
+    The git dir and work tree are given explicitly (a core.worktree in the repo config can't point elsewhere).
+    `args` may start with -c options (git_identity_args)."""
+    base = ["git", "-C", str(mem)]
+    if args[:1] != ("init",):
+        base += [f"--git-dir={Path(mem).resolve() / '.git'}", f"--work-tree={Path(mem).resolve()}"]
+    for kv in GIT_SAFE_CONFIG:
+        base += ["-c", kv]
+    if args[:1] != ("init",):
+        base += _git_filter_overrides(mem)
+    if args[:1] and args[0] in GIT_DIFF_COMMANDS:
+        args = (args[0], *GIT_DIFF_FLAGS, *args[1:])
+    return [*base, *args]
+
+
 def git(mem: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", "-C", str(mem), *args], check=check, capture_output=True, text=True
-    )
+    return subprocess.run(git_argv(mem, *args), check=check, capture_output=True, text=True,
+                          env=dict(os.environ, **GIT_SAFE_ENV))
 
 
 def git_identity_args(mem: Path) -> list[str]:
@@ -192,7 +244,7 @@ def git_identity_args(mem: Path) -> list[str]:
 
 
 def is_git_repo(mem: Path) -> bool:
-    return (mem / ".git").exists()
+    return (mem / ".git").is_dir()  # a .git file ("gitdir: elsewhere") is not ours
 
 
 def has_head(mem: Path) -> bool:
@@ -221,10 +273,7 @@ def git_commit_all(mem: Path, message: str) -> str | None:
         if has_head(mem):
             return None
         extra = ["--allow-empty"]
-    subprocess.run(
-        ["git", *git_identity_args(mem), "-C", str(mem), "commit", "-q", *extra, "-m", message],
-        check=True, capture_output=True, text=True,
-    )
+    git(mem, *git_identity_args(mem), "commit", "-q", "--no-verify", *extra, "-m", message)
     return git(mem, "rev-parse", "--short", "HEAD").stdout.strip()
 
 

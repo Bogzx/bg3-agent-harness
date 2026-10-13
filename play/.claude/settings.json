@@ -48,6 +48,18 @@
       "Edit(/knowledge/playbooks/**)",
       "Write(/knowledge/playbooks/**)",
       "MultiEdit(/knowledge/playbooks/**)",
+      "Read(/memory/**/.git/**)",
+      "Read(/memory/**/.git*)",
+      "Read(/../playthroughs/**/.git/**)",
+      "Read(/../playthroughs/**/.git*)",
+      "Edit(/memory/**/.git/**)",
+      "Edit(/memory/**/.git*)",
+      "Edit(/../playthroughs/**/.git/**)",
+      "Edit(/../playthroughs/**/.git*)",
+      "Write(/memory/**/.git/**)",
+      "Write(/memory/**/.git*)",
+      "Write(/../playthroughs/**/.git/**)",
+      "Write(/../playthroughs/**/.git*)",
       "Skill"
     ],
     "additionalDirectories": [

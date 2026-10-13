@@ -63,8 +63,14 @@ SNAPSHOT_DIRS = ["chapters", "sessions"]   # plus every top-level file
 HANDOFF_SECTION = "## From the logs (memory keeper)"
 
 
+GIT_NAMES = {".git", ".gitattributes", ".gitignore", ".gitmodules"}   # never the keeper's (FAIR-1)
+
+
 def writable(rel: str) -> bool:
-    return rel in WRITABLE_FILES or rel == "HANDOFF.md" or any(rel.startswith(d + "/") for d in WRITABLE_DIRS)
+    if any(part.lower() in GIT_NAMES for part in rel.split("/")):
+        return False
+    return (rel in WRITABLE_FILES or rel in ("HANDOFF.md", L.CHARACTER_FILE)
+            or any(rel.startswith(d + "/") for d in WRITABLE_DIRS))
 
 
 def _handoff_split(text: str) -> tuple[str, str]:
@@ -89,13 +95,45 @@ def keep_handoff_head(mem: Path, before: dict[str, bytes]) -> bool:
     return True
 
 
+def keep_character_core(mem: Path, before: dict[str, bytes]) -> bool:
+    """CHARACTER.md (the persona) is the player's, except that lines may be appended to its "## Character
+    development" section. Anything else the keeper did to it (a rewritten core or older development lines, a new
+    or deleted file) is put back, keeping only the appended lines. True when something had to be put back."""
+    p = mem / L.CHARACTER_FILE
+    old = before.get(L.CHARACTER_FILE)
+    new = p.read_bytes() if p.is_file() else None
+    if new == old:
+        return False
+    if old is None:            # written in the character-creation phase only, never by the keeper
+        p.unlink()
+        return True
+    if new is None:
+        p.write_bytes(old)
+        return True
+    old_t, new_t = old.decode("utf-8", "replace"), new.decode("utf-8", "replace")
+    old_core, old_dev = L.character_split(old_t)
+    new_core, new_dev = L.character_split(new_t)
+    old_lines, new_lines = old_dev.splitlines(), new_dev.splitlines()
+    if new_core == old_core and new_lines[:len(old_lines)] == old_lines:
+        return False           # a pure append
+    added = [ln for ln in new_lines[1:] if ln.strip() and ln not in old_lines]
+    merged = old_t.rstrip("\n") + "\n"
+    if added:
+        if not old_dev:
+            merged += f"\n{L.CHARACTER_DEV_HEADING}\n"
+        merged += "\n".join(added) + "\n"
+    p.write_text(merged, encoding="utf-8")
+    return True
+
+
 # ---------------------------------------------------------------- snapshot / restore
 
 def snapshot(mem: Path) -> dict[str, bytes]:
-    """Contents of the memory files the keeper could touch: top-level files, chapters/, sessions/."""
+    """Contents of the memory files the keeper could touch: top-level files (and the .git* control files, so a
+    keeper-written .gitattributes is reverted), chapters/, sessions/."""
     out: dict[str, bytes] = {}
     for p in mem.iterdir():
-        if p.is_file() and not p.name.startswith("."):
+        if p.is_file() and (not p.name.startswith(".") or p.name.lower() in GIT_NAMES):
             out[p.name] = p.read_bytes()
     for d in SNAPSHOT_DIRS:
         if (mem / d).is_dir():
@@ -215,6 +253,9 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         "newest last. A clean fight gives no lesson; a `[lesson]` about a tool or the harness (how to call "
         "combat_turn, a click quirk) is not a fight lesson: it belongs in strategy.md. Only facts from the logs "
         "(fairness).",
+        f"- {L.CHARACTER_FILE} (if it exists: the character the player roleplays): never change it above "
+        f"`{L.CHARACTER_DEV_HEADING}` (reverted). When the logs show the character changed (a vow kept or broken, a "
+        "bond formed, a belief shaken), APPEND one line at the end: `- Sxxx: <what changed and why> [seen]`.",
         "- PLAYTHROUGH.md (it is shown to the player at every session start): keep the `Main thread:` line and "
         "`## Party` current (who is in the active party, in camp, gone). Leave the `Now:` line as the player "
         "wrote it.",
@@ -289,8 +330,10 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
 
 def keeper_settings(mem: Path, knowledge: Path = KNOWLEDGE) -> dict:
     m, k = mem.resolve(), knowledge.resolve()
-    deny = [f"{tool}(/{p})" for tool in ("Edit", "Write") for p in
-            (f"{m}/sessions/**", f"{m}/.git/**", f"{k}/**")]
+    deny = [f"{tool}(/{p})" for tool in ("Edit", "Write") for p in (f"{m}/sessions/**", f"{k}/**")]
+    # The memory repo's git dir and git control files: never read or written (FAIR-1; git runs on them in hooks).
+    deny += [f"{tool}(/{p})" for tool in ("Read", "Edit", "Write") for p in
+             (f"{m}/.git/**", f"{m}/**/.git/**", f"{m}/**/.git*", f"{k}/**/.git*")]
     return {
         "permissions": {
             "defaultMode": "acceptEdits",
@@ -388,8 +431,7 @@ def commit(mem: Path, rels: list[str], message: str) -> str | None:
     M.git(mem, "add", "-A", "--", *rels)
     if M.git(mem, "diff", "--cached", "--quiet", "--", *rels, check=False).returncode == 0:
         return None
-    subprocess.run(["git", *M.git_identity_args(mem), "-C", str(mem), "commit", "-q", "-m", message, "--", *rels],
-                   check=True, capture_output=True, text=True)
+    M.git(mem, *M.git_identity_args(mem), "commit", "-q", "--no-verify", "-m", message, "--", *rels)
     return M.git(mem, "rev-parse", "--short", "HEAD").stdout.strip()
 
 
@@ -417,6 +459,8 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
             restore(mem, snap, [r for r in changed if not writable(r)])
             if keep_handoff_head(mem, snap):
                 res.reverted = sorted(set(res.reverted) | {"HANDOFF.md (player part)"})
+            if keep_character_core(mem, snap):
+                res.reverted = sorted(set(res.reverted) | {f"{L.CHARACTER_FILE} (core)"})
             new = [e for e in _errors(mem, sid_n + 1) if e not in before_errors]
             left = end - time.time()
             if not new or attempt == 1 or left < FIX_MIN_SECONDS or res.timed_out:

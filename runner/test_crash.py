@@ -46,7 +46,8 @@ FAKE_CLAUDE = r"""
 import json, os, sys, time
 log = os.environ["FAKE_CLAUDE_LOG"]
 with open(log, "a") as f:
-    f.write(json.dumps({"argv": sys.argv[1:], "t": time.time()}) + "\n")
+    env = {k: os.environ.get(k) for k in ("BG3AI_SAVE_OWNER", "BG3AI_SAVE_PREFIX", "BG3AI_SAVE_GATES")}
+    f.write(json.dumps({"argv": sys.argv[1:], "t": time.time(), "env": env}) + "\n")
 resume = "--resume" in sys.argv
 if os.environ.get("FAKE_CLAUDE_HANG") and not resume:
     import signal
@@ -59,8 +60,11 @@ print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", 
 try:
     time.sleep(float(os.environ["FAKE_CLAUDE_RESUME_S" if resume else "FAKE_CLAUDE_FIRST_S"]))
 except KeyboardInterrupt:
+    print(json.dumps({"type": "result", "subtype": "error_during_execution", "num_turns": 7, "total_cost_usd": 0.25,
+                      "usage": {"input_tokens": 100, "output_tokens": 50}}), flush=True)
     sys.exit(130)
-print(json.dumps({"type": "result", "subtype": "success", "result": "done"}), flush=True)
+print(json.dumps({"type": "result", "subtype": "success", "result": "done", "num_turns": 3, "total_cost_usd": 0.5,
+                  "usage": {"input_tokens": 10, "output_tokens": 5}}), flush=True)
 """
 
 
@@ -136,7 +140,9 @@ class FakeGame:
         os.killpg(self.r.game_proc.pid, signal.SIGKILL)
 
 
-class CrashRecovery(unittest.TestCase):
+class FakeRunBase(unittest.TestCase):
+    """The real Runner on a fake game (a stub process) and a fake claude; see the module docstring."""
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-crash-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -153,7 +159,7 @@ class CrashRecovery(unittest.TestCase):
                  "port_open", "game_state", "lua_eval", "rpc",
                  "server_ready", "available_ops", "host_character_name", "ui_screen", "read_progress",
                  "pids_of_game", "list_saves", "RESUME_MIN_MINUTES", "steam_ready", "crash_reporter_pids",
-                 "LAUNCH_BACKOFF")
+                 "LAUNCH_BACKOFF", "PLAYTHROUGHS", "press_menu_key", "MENU_POLL", "bg3le_problems")
         self.saved = {n: getattr(P, n) for n in names}
         os.environ.pop("FAKE_CLAUDE_HANG", None)
         P.RUNTIME = self.tmp / "runtime"
@@ -166,17 +172,26 @@ class CrashRecovery(unittest.TestCase):
         P.steam_ready = lambda: (True, "test: offline")
         P.crash_reporter_pids = lambda: []   # never a real reporter (kill_game would kill it)
         P.LAUNCH_BACKOFF = (0.2, 0.2)
+        P.PLAYTHROUGHS = self.tmp / "playthroughs"     # profile.json
+        P.press_menu_key = lambda: "fake key"          # never the real input shim
+        P.bg3le_problems = lambda: []                  # the real dist may be stale on a dev machine (UI-1)
+        P.MENU_POLL = 0.05
 
-        r = P.Runner(P.Options("crash-test", None, 20, "opus", save_owner="Claude"))
+        self.claude = claude
+        now = time.time()
+        self.wire(P.Options("crash-test", None, 20, "opus", save_owner="Claude"),
+                  [P.Save("Claude-1__S001-start", "Claude", "S001-start", now - 300),
+                   P.Save("Claude-2__S001-before-imps", "Claude", "S001-before-imps", now - 100),
+                   P.Save("Tav-3__my own game", "Tav", "my own game", now - 10)])   # newer, not ours
+
+    def wire(self, opt: P.Options, saves: list[P.Save]) -> None:
+        r = P.Runner(opt)
         r.next_sid = lambda: "S001"
         r.close_memory_session = lambda res: None
         r.mem = self.tmp / "memory"
         real_cmd = r.claude_cmd
-        r.claude_cmd = lambda *a, **k: [sys.executable, str(claude)] + real_cmd(*a, **k)[1:]
-        now = time.time()
-        g = FakeGame(r, [P.Save("Claude-1__S001-start", "Claude", "S001-start", now - 300),
-                         P.Save("Claude-2__S001-before-imps", "Claude", "S001-before-imps", now - 100),
-                         P.Save("Tav-3__my own game", "Tav", "my own game", now - 10)])   # newer, not ours
+        r.claude_cmd = lambda *a, **k: [sys.executable, str(self.claude)] + real_cmd(*a, **k)[1:]
+        g = FakeGame(r, saves)
         P.port_open, P.game_state, P.lua_eval, P.rpc = g.port_open, g.game_state, g.lua_eval, g.rpc
         P.server_ready = lambda: g.port_open() and not g.hung and g.loaded() is not None
         P.available_ops = lambda ctx: set()
@@ -196,6 +211,9 @@ class CrashRecovery(unittest.TestCase):
 
     def claude_runs(self) -> list[list[str]]:
         return [json.loads(ln)["argv"] for ln in self.claude_log.read_text().splitlines()]
+
+    def claude_envs(self) -> list[dict]:
+        return [json.loads(ln)["env"] for ln in self.claude_log.read_text().splitlines()]
 
     def crash_after(self, s: float, hang: bool = False, port_lost: bool = False, load_crashes=None) -> None:
         def go():
@@ -224,6 +242,9 @@ class CrashRecovery(unittest.TestCase):
         self.assertLessEqual(rec[0]["t"] - faults[0]["t"], within_s)
         return rec[0]
 
+
+
+class CrashRecovery(FakeRunBase):
     def test_crash_relaunches_loads_latest_own_save_and_resumes_claude(self):
         self.crash_after(4)
         res = self.r.play_session(20, first=True)
@@ -340,6 +361,145 @@ class CrashRecovery(unittest.TestCase):
         self.assertEqual(self.r.state["history"][-1]["resumes"], 0)
         self.assertEqual(self.g.loaded(), "Claude-2__S001-before-imps")       # recovered for the next session
         self.assertTrue(any("RUNNER NOTE: the game crashed" in n for n in self.r.pending_notes))
+
+
+class NewRuns(FakeRunBase):
+    """RUN-2 (run --until stops at a milestone with a run record) and CHAR-1 (phase 0 from a character brief)."""
+
+    def setUp(self):
+        super().setUp()
+        self.saved_story = (P.story.read_game, P.story.POLL_S)
+        self.addCleanup(lambda: (setattr(P.story, "read_game", self.saved_story[0]),
+                                 setattr(P.story, "POLL_S", self.saved_story[1])))
+        P.story.POLL_S = 0.3
+        self.escaped = False
+
+        def feed(_lua):   # the progress poller's journal/status read: the Nautiloid, then its quest done
+            if not self.g.loaded():
+                return None
+            return {"status": {"region": "Nautiloid", "party": [{"name": "Claude", "level": 1}]},
+                    "journal": {"quests": [{"title": "Escape the Nautiloid", "done": self.escaped,
+                                            "steps": ["Get off the nautiloid"]}]}}
+        P.story.read_game = feed
+
+    def quiet(self, r: P.Runner) -> None:
+        r.check_memory = lambda: None
+        r.code_update_check = lambda: None          # other workers edit the tree meanwhile: no self-restart here
+        r.between_sessions_check = lambda: None     # no tools/dev/check_all.py, check_plans.py
+        r.check_plan_lines = lambda *a, **k: []
+
+    def test_until_milestone_stops_the_run_with_a_record(self):
+        r = self.r
+        r.opt.until = "nautiloid_escaped"
+        self.quiet(r)
+
+        def escape():
+            time.sleep(4)
+            self.escaped = True
+        threading.Thread(target=escape, daemon=True).start()
+        t0 = time.time()
+        self.assertEqual(r.run(), 0)
+        self.assertLess(time.time() - t0, 40)                      # not the fake claude's 60 s
+        self.assertEqual(len(self.claude_runs()), 1)                # no second session
+        h = r.state["history"][-1]
+        self.assertEqual((h["session"], h["reason"]), ("S001", "milestone"))
+        recs = [json.loads(ln) for ln in (r.state.dir / "runs.jsonl").read_text().splitlines()]
+        self.assertEqual(len(recs), 1)
+        rec = recs[0]
+        self.assertEqual((rec["milestone"], rec["label"], rec["reached_in"]),
+                         ("nautiloid_escaped", "Nautiloid escaped", "S001"))
+        self.assertEqual((rec["sessions"], rec["crashes"], rec["recoveries"]), (1, 0, 0))
+        self.assertEqual((rec["cost_usd"], rec["turns"], rec["tokens"]["output"]), (0.25, 7, 50))   # the [end] event
+        self.assertGreater(rec["wall_min"], 0)
+        log = (P.RUNTIME / "runner.log").read_text()
+        self.assertIn("milestone nautiloid_escaped (Nautiloid escaped) reached: stopping (--until)", log)
+        self.assertIn("runner stopped (--until nautiloid_escaped: reached in S001)", log)
+        self.assertIn("[runner] milestone nautiloid_escaped reached; stopping claude",
+                      (r.state.dir / "S001.log").read_text())
+        # a second run of the same playthrough doesn't play past it
+        r2 = P.Runner(P.Options("crash-test", None, 20, "opus", save_owner="Claude", until="nautiloid_escaped"))
+        r2.check_memory = lambda: None
+        self.assertEqual(r2.run(), 0)
+        self.assertEqual(len(self.claude_runs()), 1)
+        self.assertIn("already reached in this playthrough", (P.RUNTIME / "runner.log").read_text())
+
+    def test_new_playthrough_with_a_brief_runs_phase_0_and_adopts_the_created_name(self):
+        brief = "a pious, short-tempered dwarf cleric who distrusts mind flayers"
+        os.environ["FAKE_CLAUDE_FIRST_S"] = "4"
+        self.wire(P.Options("brief-test", None, 20, "opus", character_brief=brief, roleplay="light",
+                            difficulty="Balanced"), [])
+        r = self.r
+        prof = json.loads((P.PLAYTHROUGHS / "brief-test" / "profile.json").read_text())
+        self.assertEqual(prof, {"character": {"brief": brief, "roleplay": "light"}, "difficulty": "Balanced"})
+
+        def first_save():   # the agent's create_character + first save, mid-session
+            time.sleep(2)
+            self.g.saves.append(P.Save("Mira-4810126690__S001-start", "Mira", "S001-start", time.time()))
+        threading.Thread(target=first_save, daemon=True).start()
+        self.r.play_session(20, first=True)
+
+        prompt = self.claude_runs()[0][self.claude_runs()[0].index("-p") + 1]
+        self.assertIn("PHASE 0, CHARACTER CREATION", prompt)
+        self.assertIn("knowledge/playbooks/character-creation.md", prompt)
+        self.assertIn("> " + brief, prompt)
+        self.assertIn("Roleplay: light", prompt)
+        self.assertIn('new_game("Balanced")', prompt)
+        self.assertIn("Name: yours to choose", prompt)
+        self.assertNotIn("Claude", prompt.split("PHASE 0", 1)[1])                  # no forced name
+        self.assertNotIn("Name your character exactly", prompt)
+        self.assertEqual(self.claude_envs()[0], {"BG3AI_SAVE_OWNER": "", "BG3AI_SAVE_PREFIX": "",
+                                                 "BG3AI_SAVE_GATES": "1"})          # new game: gates open
+        # I3: the created name is the save owner from now on, persisted, and the prefix follows
+        self.assertEqual(r.state["save_owner"], "Mira")
+        self.assertEqual(P.RunnerState("brief-test")["save_owner"], "Mira")
+        self.assertEqual((r.save_env()["BG3AI_SAVE_OWNER"], r.save_env()["BG3AI_SAVE_PREFIX"]), ("Mira", "Mira-"))
+        prof = json.loads((P.PLAYTHROUGHS / "brief-test" / "profile.json").read_text())
+        self.assertEqual(prof["character"]["name"], "Mira")
+        self.assertEqual(r.choose_save().folder, "Mira-4810126690__S001-start")
+
+    def test_new_game_without_a_brief_keeps_todays_forced_name(self):
+        os.environ["FAKE_CLAUDE_FIRST_S"] = "2"
+        self.wire(P.Options("nobrief-test", None, 20, "opus", save_owner="Claude"), [])
+        self.r.play_session(20, first=True)
+        prompt = self.claude_runs()[0][self.claude_runs()[0].index("-p") + 1]
+        self.assertIn('Name your character exactly "Claude"', prompt)
+        self.assertNotIn("PHASE 0", prompt)
+        self.assertEqual(self.claude_envs()[0]["BG3AI_SAVE_PREFIX"], "Claude-")      # RUN-5: from --save-owner alone
+
+
+class StaleBg3le(FakeRunBase):
+    """UI-1: a bg3le build without every patches/bg3le patch is never launched, and the runner stops (no retry)."""
+
+    def test_stale_build_stops_the_runner_before_any_launch(self):
+        P.bg3le_problems = lambda: ["missing 0009-noesis-uaf.patch"]
+        r = self.r
+        r.check_memory = lambda: None
+        r.code_update_check = lambda: None
+        self.assertEqual(r.run(), 1)
+        self.assertIsNone(r.game_proc)                                         # nothing launched
+        self.assertFalse(self.claude_log.exists())
+        log = (P.RUNTIME / "runner.log").read_text()
+        self.assertIn("REFUSING TO LAUNCH BG3: stale bg3le build (missing 0009-noesis-uaf.patch)", log)
+        self.assertIn("tools/build_bg3le.sh", log)
+        self.assertIn("runner stopped (stale bg3le build", log)
+        self.assertNotIn("setup failed", log)
+        st = json.loads((P.RUNTIME / "runner.status.json").read_text())
+        self.assertEqual((st["bg3le_stale"], st["alert"]["kind"]), (["missing 0009-noesis-uaf.patch"], "bg3le_stale"))
+        self.assertIn("bg3le_stale", [e["kind"] for e in self.events()])
+
+    def test_launch_scripts_exit_4_is_the_same_stop(self):
+        stale = self.tmp / "launch_stale.sh"
+        stale.write_text("#!/bin/sh\necho 'launch_game: REFUSING TO LAUNCH: STALE bg3le build'\nexit 4\n")
+        stale.chmod(0o755)
+        P.LAUNCH_SH = stale
+        r = self.r
+        r.check_memory = lambda: None
+        r.code_update_check = lambda: None
+        self.assertEqual(r.run(), 1)
+        log = (P.RUNTIME / "runner.log").read_text()
+        self.assertIn("launch_game.sh exited 4", log)
+        self.assertNotIn("launch 1/3", log)                                    # not retried as a crash
+        self.assertEqual([e["kind"] for e in self.events()].count("bg3le_stale"), 1)
 
 
 class DetectionBudget(unittest.TestCase):
@@ -479,6 +639,49 @@ class RunLoop(unittest.TestCase):
         r2.stop_requested = True
         r2.run()
         self.assertIsNone(json.loads((P.RUNTIME / "runner.status.json").read_text())["alert"])
+        self.assertIn("runner stopped (gave up: the game crashes on every launch)",
+                      (P.RUNTIME / "runner.log").read_text())
+
+    def test_mod_refusals_are_setup_failures_not_the_runners_death(self):
+        # RUN-3: an RpcError / LuaDebugError from the session setup (a refused ui.menu load, a failed eval) used to
+        # miss the run loop's except and kill the unattended runner. Now: setup failure → recover → next session.
+        P.MAX_SETUP_FAILURES = 3
+        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
+        r.check_memory = lambda: None
+        recovered, calls = [], []
+        r.recover = lambda why: recovered.append(why)
+
+        def play(minutes, first):
+            calls.append(first)
+            if len(calls) == 1:
+                raise P.RpcError("ui.menu: loading is disabled (bg3ai/config.json)")
+            if len(calls) == 2:
+                raise P.LuaDebugError("EVAL_ENGINE_NOT_READY")
+            r.stop_requested = True
+            return P.SessionResult("S001", "c", 0, "exited", time.time() - 600, time.time())
+        r.play_session = play
+        self.assertEqual(r.run(), 0)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(recovered), 2)
+        self.assertIn("loading is disabled", recovered[0])
+        kinds = [json.loads(ln)["kind"] for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
+        self.assertEqual(kinds.count("setup_failed"), 2)
+        log = (P.RUNTIME / "runner.log").read_text()
+        self.assertIn("session setup failed: RpcError: ui.menu: loading is disabled", log)
+        self.assertIn("runner stopped (stopped)", log)
+
+    def test_any_other_death_is_logged_with_its_traceback(self):
+        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
+        r.check_memory = lambda: None
+
+        def play(minutes, first):
+            raise KeyError("boom")
+        r.play_session = play
+        with self.assertRaises(KeyError):
+            r.run()
+        log = (P.RUNTIME / "runner.log").read_text()
+        self.assertIn("runner died:\nTraceback", log)
+        self.assertIn("runner stopped (died: KeyError: 'boom')", log)
 
 
 class FakeMenuGame:
@@ -488,6 +691,8 @@ class FakeMenuGame:
     def __init__(self, splash: bool = True, flip: bool = True, load_starts: bool = True):
         self.splash, self.flip, self.load_starts = splash, flip, load_starts
         self.polls, self.presses, self.loads, self.loading, self.running = 0, 0, [], 0, False
+        self.load_gate = True   # the mod's persisted load gate (ui.config load_enabled)
+        self.refuse = None      # ui.menu load raises this RpcError text
 
     def game_state(self, timeout: float = 0):
         self.polls += 1
@@ -506,9 +711,15 @@ class FakeMenuGame:
             if self.running:
                 return {"screen": "game"}
             return {"screen": "game", "panels_open": ["SplashScreen"]} if self.splash else {"screen": "main_menu"}
+        if op == "ui.config" and "load_enabled" in (args or {}):
+            self.load_gate = args["load_enabled"]
         if op == "ui.menu":
             if self.splash:
                 raise P.RpcError("ui.menu: not at the main menu")
+            if self.refuse:
+                raise P.RpcError(self.refuse)
+            if not self.load_gate:
+                raise P.RpcError("ui.menu: loading is disabled")
             self.loads.append(args)
             self.loading = 3 if self.load_starts else 0
             return {}
@@ -575,6 +786,41 @@ class SplashMenu(unittest.TestCase):
         g = FakeMenuGame(splash=False)
         _r, label, _secs, _log = self.run_ensure(g)
         self.assertEqual((label, g.presses, len(g.loads)), ("S014-start", 0, 1))
+
+    def test_load_gates_open_before_the_menu_load(self):
+        # RUN-3: the mod refuses ui.menu load while its persisted load gate is off (a fresh profile's default)
+        g = FakeMenuGame(splash=False)
+        g.load_gate = False
+        _r, label, _secs, _log = self.run_ensure(g)
+        self.assertEqual((label, len(g.loads)), ("S014-start", 1))
+        self.assertTrue(g.load_gate)
+
+    def test_a_refused_menu_load_relaunches_the_game_with_the_save(self):
+        # RUN-3: any refusal (gate, playthrough not on the page, eval failure) → kill + launch_and_load
+        # (-loadSaveGame needs no gate), not a dead runner.
+        g = FakeMenuGame(splash=False)
+        g.refuse = "ui.menu: loading is disabled (bg3ai/config.json load_enabled=false)"
+        relaunched = []
+        real_runner = P.Runner
+
+        class R(real_runner):
+            def kill_game(self):
+                relaunched.append("kill")
+
+            def launch_and_load(self, save):
+                relaunched.append(save.folder)
+                return save
+        P.Runner = R
+        try:
+            r, label, _secs, log = self.run_ensure(g)
+        finally:
+            P.Runner = real_runner
+        self.assertEqual(label, "S014-start")
+        self.assertEqual(relaunched, ["kill", "Claude-1__S014-start"])
+        self.assertEqual(r.state["loaded_save"], "Claude-1__S014-start")
+        self.assertIn("refused (ui.menu: loading is disabled", log)
+        ev = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
+        self.assertEqual(ev[-1]["kind"], "load_refused")
 
     def test_a_load_that_never_starts_fails_fast_instead_of_waiting_for_running(self):
         g = FakeMenuGame(load_starts=False)

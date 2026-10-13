@@ -4,7 +4,7 @@ import unittest
 from contextlib import redirect_stdout
 
 import lint as L
-from _testutil import MemoryTestCase
+from _testutil import MemoryTestCase, character_text
 
 
 def kinds(items):
@@ -24,6 +24,46 @@ class TemplateTest(MemoryTestCase):
     def test_missing_memory_dir(self):
         r = L.lint(self.tmp / "nope")
         self.assertFalse(r.ok)
+
+
+class CharacterTest(MemoryTestCase):
+    def test_optional_until_committed_then_required(self):
+        self.assertNotIn("character", kinds(L.lint(self.mem).errors))
+        self.write("CHARACTER.md", character_text())
+        self.assertEqual(L.lint(self.mem).errors, [], L.lint(self.mem).render(self.mem))
+        self.commit("S001")
+        (self.mem / "CHARACTER.md").unlink()
+        errs = L.lint(self.mem).errors
+        self.assertTrue(any(k == "deletion" and m.startswith("CHARACTER.md") for k, m in errs), errs)
+
+    def test_sections_header_and_budget(self):
+        self.write("CHARACTER.md", character_text().replace("## Flaws\n", "## Weaknesses\n"))
+        self.assertTrue(any("'## Flaws'" in m for _, m in L.lint(self.mem).errors))
+        self.write("CHARACTER.md", character_text().replace("Roleplay: strict", "Roleplay: sometimes"))
+        self.assertTrue(any("strict or light" in m for _, m in L.lint(self.mem).errors))
+        self.write("CHARACTER.md", character_text().replace("Deity: Moradin", "Deity: (deity, or none)"))
+        self.assertTrue(any("'Deity: …'" in m for _, m in L.lint(self.mem).errors))
+        self.write("CHARACTER.md", character_text().replace("## Backstory\n", "## Backstory\n" + "b" * 1700 + "\n"))
+        self.assertTrue(any(k == "budget" and m.startswith("CHARACTER.md") for k, m in L.lint(self.mem).errors))
+        # the development section grows without counting against the core budget
+        self.write("CHARACTER.md", character_text(tuple(f"- S{n:03d}: " + "d" * 80 for n in range(2, 30))))
+        self.assertEqual(L.lint(self.mem).errors, [])
+
+    def test_template_and_playbook_format_match_lint(self):
+        import re
+        import memlib as M
+        playbook = (M.REPO_ROOT / "play" / "knowledge" / "playbooks" / "character-creation.md").read_text()
+        skeleton = playbook.split("## CHARACTER.md format", 1)[1].split("```")[1]
+        template = M.strip_comments((M.TEMPLATE_DIR / "CHARACTER.md").read_text())
+        for text in (skeleton, template):
+            self.assertEqual(re.findall(r"^## (.+)$", text, re.MULTILINE), L.CHARACTER_SECTIONS)
+            self.assertEqual(re.findall(r"^(\w+):", text, re.MULTILINE), L.CHARACTER_HEADER)
+
+    def test_guarded_against_bulk_deletion(self):
+        self.write("CHARACTER.md", character_text(tuple(f"- S{n:03d}: grew [seen]" for n in range(2, 20))))
+        self.commit("S020")
+        self.write("CHARACTER.md", character_text(()))
+        self.assertTrue(any(k == "deletion" and m.startswith("CHARACTER.md") for k, m in L.lint(self.mem).errors))
 
 
 class LessonsTest(MemoryTestCase):

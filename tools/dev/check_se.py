@@ -6,8 +6,9 @@
 
 Prints one PASS / WARN / FAIL line per check (plus details) and exits 1 if anything FAILed.
 
-  hook         the running bg3 loaded build/bg3le/dist/libbg3le.so (sha256 = BUILDINFO), the patched
-               Ext.UI is in it (Ext._Internal.UiSerialize), and its log shows View::Update hooked
+  hook         build/bg3le/dist was built with every patches/bg3le patch (hook.build: BUILDINFO's "patch:" lines;
+               checked even with no game running), the running bg3 loaded build/bg3le/dist/libbg3le.so
+               (sha256 = BUILDINFO), the patched Ext.UI is in it (Ext._Internal.UiSerialize), and its log shows View::Update hooked
                ("noesis: View at"), no "not hooked" line, and no crash.
   stress       the S001 crash repro: ui.state / ui.dump in a tight loop on one connection while the input
                shim opens and closes panels (i, m, l, ESCAPE) and dialogue lines are advanced; the game must
@@ -52,6 +53,9 @@ sys.path.insert(0, str(REPO / "bridge" / "src"))
 
 from bg3ai.game import Game, GameError, NotReady  # noqa: E402
 from bg3ai import macros  # noqa: E402
+
+sys.path.insert(0, str(REPO / "tools"))
+import bg3le_buildinfo  # noqa: E402
 
 NO_KEYS = ("dialogue", "main_menu", "loading", "movie", "game_over", "?")
 RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
@@ -157,6 +161,15 @@ return string.format('{"kb":%d,"boxes":%d}', math.floor(collectgarbage("count"))
 
 
 # ---- checks ----------------------------------------------------------------------------------------------
+
+def check_build(dist: Path = DIST) -> None:
+    bad = bg3le_buildinfo.problems(dist)
+    if bad:
+        report("FAIL", "hook.build", f"stale bg3le build: {'; '.join(bad)}; rebuild with the game down: "
+               f"{bg3le_buildinfo.REBUILD}")
+    else:
+        report("PASS", "hook.build", f"{dist.name} has every patches/bg3le patch")
+
 
 def check_hook(g: Game) -> None:
     pid = game_pid()
@@ -620,6 +633,8 @@ def main() -> int:
     only = set(a.only.split(","))
 
     g = Game(port=a.port)
+    if "hook" in only:
+        check_build()
     if not alive(game_pid()):
         report("FAIL", "game", "bg3 is not running (runner/launch_game.sh, then load a save)")
         return 1

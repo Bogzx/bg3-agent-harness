@@ -564,7 +564,9 @@ local floorAt -- defined below
 
 -- deadline (MonotonicTime ms, optional): the approach ring stops there; the
 -- result is then r.unfinished (reachable unknown) and not cached.
-function N.path(charUuid, target, deadline)
+-- noSearch (the ways warm-up): answer only from the frame cache, the prechecks and a fresh async answer; never an
+-- engine search on the server thread -> nil, "no async answer" otherwise.
+function N.path(charUuid, target, deadline, noSearch)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil, "no position" end
@@ -588,10 +590,12 @@ function N.path(charUuid, target, deadline)
         r = {}
         for k, v in pairs(a.r) do r[k] = v end
         r.async = true
+    elseif noSearch then
+        return nil, "no async answer"
     else
         r = gatedPath(e, from, tpos, not isEntity and N.PATH_END_TOL_M or nil)
     end
-    if isEntity and r.reachable == false then
+    if isEntity and r.reachable == false and not noSearch then
         local t0 = Ext.Utils.MonotonicTime()
         for _, d in ipairs(RING) do
             if deadline and Ext.Utils.MonotonicTime() > deadline then
@@ -2917,7 +2921,9 @@ end
 -- directions, compass order), elapsed ms. maxDirs caps the new searches.
 -- noJump (the warm-up): no jumpGap probe (its two sync searches); the entry is marked jump_pending and the next
 -- call without noJump (get_frontier, route) fills it in.
-function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump)
+-- noSearch (the warm-up): built only from N.waysWarm's async answers (N.path noSearch); a direction with a probe
+-- unanswered is left out (not cached), so the warm-up asks it again instead of searching on the server thread.
+function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump, noSearch)
     far, near, budgetMs = far or 20, near or 8, budgetMs or 100
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
@@ -2933,11 +2939,13 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump)
         c = { t = t0, by = {} }
         N.waysCache[key] = c
     end
+    -- true (open), false, or nil (noSearch: no answer yet)
     local function open(v, dd)
         local x, z = round(from[1] + v[1] * dd, 1), round(from[3] + v[2] * dd, 1)
         local fy = floorAt(x, z, from[2])
         if not fy then return false end
-        local r = N.path(charUuid, { x, round(fy, 1), z })
+        local r = N.path(charUuid, { x, round(fy, 1), z }, nil, noSearch)
+        if not r and noSearch then return nil end
         if r and r.reachable and not r.partial and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then
             return true, fy - from[2]
         end
@@ -2958,11 +2966,12 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump)
             local v = DIR_VEC[d]
             local ok, dy = open(v, far)
             local m = far
-            if not ok then
+            if ok == false then
                 m = near
                 ok, dy = open(v, near)
-                if not ok then m = 0 end
+                if ok == false then m = 0 end
             end
+            if ok == nil then goto nextDir end
             local w = { dir = d, open_m = m }
             if dy and math.abs(dy) >= 2 then w.dy = round(dy, 1) end
             if m < far and noJump then
@@ -2973,6 +2982,7 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump)
             end
             c.by[d] = w
         end
+        ::nextDir::
     end
     local out = {}
     for _, d in ipairs(N.WAYS_DIRS) do
@@ -3077,12 +3087,13 @@ local function jobRunning()
     return false
 end
 
--- The next probe point of the first direction not warm yet at `from`, or nil when all eight are.
-local function warmNext(active, from, c)
+-- The next probe point of the first direction not warm yet at `from`, or nil when all eight are. An answer older
+-- than ASYNC_TTL_MS is no answer (N.path wouldn't use it): it is dropped and asked again (NAV-1: the ways entry
+-- outlives the answers, WAYS_TTL_MS > ASYNC_TTL_MS, and a re-warm after 2 min still read them as answered).
+local function warmNext(active, from, c, now)
     for _, d in ipairs(N.WAYS_DIRS) do
         if not c.by[d] then
             local v = DIR_VEC[d]
-            local pending = false
             for _, dd in ipairs({ 20, 8 }) do
                 local x, z = round(from[1] + v[1] * dd, 1), round(from[3] + v[2] * dd, 1)
                 local fy = floorAt(x, z, from[2])
@@ -3090,12 +3101,15 @@ local function warmNext(active, from, c)
                     local t = { x, round(fy, 1), z }
                     local key = pathKey(active, t, from)
                     local a = N.asyncPaths[key]
+                    if a and now - a.t > N.ASYNC_TTL_MS then
+                        N.asyncPaths[key], N.asyncPathsN, a = nil, N.asyncPathsN - 1, nil
+                    end
                     if not a then return { pos = t, key = key } end
                     local r = a.r
                     if r.reachable and not r.partial and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then break end
                 end
             end
-            if not pending then return { dir = d } end -- answered: N.ways can build it without a search
+            return { dir = d } -- answered: N.ways can build it without a search
         end
     end
     return nil
@@ -3145,10 +3159,10 @@ function N.waysWarm(now)
     local key = waysKey(active, p, 20, 8)
     local c = N.waysCache[key]
     if c and now - c.t > N.WAYS_TTL_MS then c = nil end
-    local nxt = warmNext(active, p, c or { by = {} })
+    local nxt = warmNext(active, p, c or { by = {} }, now)
     if not nxt then return end
     if nxt.dir then
-        N.ways(active, 20, 8, 1000, 1, true) -- every probe answered: built from the async answers
+        N.ways(active, 20, 8, 1000, 1, true, true) -- every probe answered: built from the async answers, never a search
         return
     end
     -- breadcrumb: S038 20:48 the server froze in a FindPath ~0.3 s after a walk ended (this, or nav.landing)

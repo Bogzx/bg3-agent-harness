@@ -21,7 +21,7 @@ from typing import Any, Callable
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, delta, economy, leveling, macros, metrics, party, render, saver, saves, turn
-from . import companions, debrief, lessons, longnav, lore, navhints
+from . import companions, debrief, lessons, longnav, lore, naming, navhints
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -2115,6 +2115,8 @@ def get_combat_state() -> str:
 def _combat_state_text() -> str:
     res = game.rpc("state.combat")
     _remember_names(res)
+    if isinstance(res, dict):
+        _seen_sides(res)  # the side of a target planned from this read that is out of sight by its turn
     if isinstance(res, dict) and not res.get("active", True) and len(res) <= 1:
         _acts_shown.clear()
         _light_noted.clear()
@@ -4749,8 +4751,92 @@ def character_creation_options() -> str:
 @mcp.tool()
 @_guard
 def create_character(plan: str) -> str:
-    """Fill in character creation and finish it. plan: JSON, e.g. {"race":"Half-Orc","class":"Paladin","subclass":"Oath of Devotion","background":"Soldier","abilities":"recommended","name":"Claude"}; or {"origin":"Lae'zel"}. Omitted fields keep the game's defaults/recommendations."""
-    return _act("create_character", "ui.cc_apply", {"plan": json.loads(plan)}, context="client", wait_s=110)
+    """Fill in character creation, type the character's name, finish it ("Venture forth") and check the name in game. plan: JSON with your build, e.g. {"race":"Elf","subrace":"High Elf","class":"Wizard","subclass":"School of Evocation","background":"Sage","abilities":"recommended","name":"Ilse"}; or {"origin":"Lae'zel"}. "name" is required for a custom character unless the playthrough already has a save owner (then it must be that name). Omitted fields keep the game's defaults/recommendations."""
+    if not PLAYTHROUGH:
+        raise GameError("create_character is only available in an AI playthrough session")
+    t0 = time.monotonic()
+    if _session_over():
+        return _finish("create_character", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
+    p = json.loads(plan)
+    if not isinstance(p, dict):
+        raise GameError("plan must be a JSON object, e.g. {\"class\":\"Wizard\",\"name\":\"Ilse\"}")
+    want = (str(p["name"]).strip() or None) if p.get("name") is not None else None
+    if want and SAVE_OWNER and want.casefold() != SAVE_OWNER.casefold():
+        raise GameError(f"this playthrough's saves belong to '{SAVE_OWNER}': name the character '{SAVE_OWNER}' "
+                        "(or leave \"name\" out)")
+    want = want or SAVE_OWNER or None
+    if want is None and not p.get("origin"):
+        raise GameError("the plan has no \"name\" and the playthrough has no save owner: put the character's "
+                        "name in the plan (\"name\": \"...\", at most 20 characters)")
+    if want is not None:
+        try:
+            naming.check_name(want)
+        except naming.NamingError as e:
+            raise GameError(str(e)) from None
+        p["name"] = want
+    try:
+        r = game.run_job("ui.cc_apply", {"plan": p, "finish": False}, context="client",
+                         wait_s=max(0.5, CC_BUDGET_S - CC_NAMING_S - (time.monotonic() - t0)))
+    except GameError as e:
+        r = JobResult("failed", None, str(e))
+    _log_stage_ms("ui.cc_apply", r)
+    if r.status == "failed" and "character creation is not open" in str(r.error or ""):
+        done = _avatar_name(0, want)
+        return _finish("create_character", {"plan": p}, (
+            f"REFUSED: character creation isn't open: the character is already created ('{done}'; see get_status). "
+            "Don't call create_character again" if done else
+            "REFUSED: character creation isn't open (from the main menu: new_game first)"), t0)
+    if r.status != "done":
+        return _finish("create_character", {"plan": p}, _job_text("create_character", r)
+                       + "\ncharacter creation NOT finished" + (
+                           " (still applying the plan: call create_character again in a moment)"
+                           if r.status == "still_running" else ""), t0)
+    try:
+        naming.name_and_finish(lambda op, a: game.rpc(op, a, context="client"), _inp() if want else None, want)
+    except naming.NamingError as e:
+        raise GameError(f"{e}; character creation NOT finished (call create_character again)") from None
+    before = (SAVE_OWNER, SAVE_PREFIX)
+    if want:
+        _set_save_owner(want)  # now, before the wait: a client timeout during the load mustn't lose it (I3)
+    left = max(0.0, CC_BUDGET_S - (time.monotonic() - t0))
+    got = _avatar_name(left, want)
+    if got is not None and want is not None and got.casefold() != want.casefold():
+        _restore_save_owner(before)
+        raise GameError(f"character creation finished, but the character in the world is called '{got}', not "
+                        f"'{want}': its saves won't match this playthrough. Say so in your notes and stop")
+    who = got or want
+    if who:
+        _set_save_owner(who)
+    body = (f"character created and finished: '{who}' (name checked in game)" if got else
+            f"character created and finished: '{who}' (the name was set on the naming page, but the world hadn't "
+            "loaded yet to check it: check get_status once it has; don't call create_character again)")
+    return _finish("create_character", {"plan": p}, body, t0)
+
+
+CC_BUDGET_S = 95.0  # the whole tool, under play/.mcp.json's 110 s MCP timeout (a client timeout invites a retry)
+CC_NAMING_S = 25.0  # kept for naming + finish after cc_apply
+
+
+def _avatar_name(timeout: float, want: str | None = None) -> str | None:
+    """The created character's name once the world has loaded (state.status's party: on the Nautiloid only the
+    avatar), or None if nothing readable came within `timeout`. With `want`, a party member of that name wins.
+    Only on the game view: on the CC page (right after "Venture forth") the party is the page's dummy."""
+    end = time.monotonic() + timeout
+    while True:
+        st = None
+        try:
+            if game.game_state() == "Running" and _ui_screen()[0] == "game":
+                st = game.try_rpc("state.status", context="server")
+        except (GameError, NotReady, OSError):
+            st = None
+        names = [str(b.get("name")) for b in (st or {}).get("party") or []
+                 if isinstance(b, dict) and b.get("name") not in (None, "", "Unknown")]
+        if names:
+            hit = [n for n in names if want is not None and n.casefold() == want.casefold()]
+            return (hit or names)[0]
+        if time.monotonic() >= end:
+            return None
+        time.sleep(2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -5619,6 +5705,19 @@ def _party_set() -> set:
 # combat_turn's own state.combat read, reused by the first step check (no step ran in between): one round
 # trip instead of two at the start of every turn.
 _turn_cs: dict = {}
+# uuid -> relation from combat_turn's turn order reads: the side of a planned target that is out of sight now.
+_turn_sides: dict = {}
+
+
+def _seen_sides(cs: dict) -> None:
+    if len(_turn_sides) > 2000:
+        _turn_sides.clear()
+    _turn_sides.update(turn.sides(cs))
+
+
+def _side(cs: dict, u: str | None, party: set | None) -> str | None:
+    """turn.side with what earlier reads saw (ACT-1: a fallback keeps to the planned target's side)."""
+    return turn.side(cs, u, party if party is not None else (_party_cached() or set()), _turn_sides)
 
 
 def _turn_check(who: str, step: actq.Step | None) -> tuple[bool, str]:
@@ -5642,7 +5741,8 @@ def _turn_check(who: str, step: actq.Step | None) -> tuple[bool, str]:
         ts = ({"visible": True, "dead": row.get("dead")} if row is not None
               else game.try_rpc("act.target_state", {"uuid": u}))
         if isinstance(ts, dict):
-            if ts.get("dead"):
+            # a revive's target is a body (S063: Revivify on dead Shadowheart was skipped, then re-aimed at a foe)
+            if ts.get("dead") and not turn.REVIVE.search(str(step.args.get("ability") or "")):
                 return False, f"{_label(u)} is already dead"
             if not ts.get("visible"):
                 return False, f"{_label(u)} is not visible"
@@ -5960,7 +6060,8 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
             variant = _pick_variant(alt.step, text)
             step_in = (variant
                        or _step_into_range(who, alt.step, text, watcher, after)
-                       or _step_into_sight(who, alt.step, text, watcher, after))
+                       or _step_into_sight(who, alt.step, text, watcher, after)
+                       or _step_in_melee(who, alt.step, text, watcher, after))
             if step_in:
                 # S040-S041: "FAILED: choose a variant: … → took …" read (and triaged) as a failure; the variant pick
                 # is the player's quick click on the container's entry, not a failure: name it plainly
@@ -6095,6 +6196,45 @@ def _step_into_sight(who: str, step: actq.Step, text: str, watcher: actq.Watcher
     return f"stepped {render.num(sp.get('walk_m', '?'))}m to see it" if rep.done else ""
 
 
+MELEE_STEP_IN_M = 1.0  # a melee swing the engine refused without a reason: walk this close (move_to within), swing again
+# A CastSpellFailed reason that walking closer can't fix (A.cast_failed_why's words).
+NOT_A_REACH_MISS = ("dead", "out of sight", "line of sight", "two-step")
+
+
+def _step_in_melee(who: str, step: actq.Step, text: str, watcher: actq.Watcher, after: dict) -> str:
+    """combat_turn ACT-3 (S065 ×9, S062): the first melee swing right after the move came back CastSpellFailed 'no
+    reason given'; later swings, after a step, landed. The move stops ~2.1 m centre to centre (inside our guard's
+    edge-to-edge reach, maybe not the engine's) and the cast runs WithoutMove, so the engine never closes the gap.
+    With movement left: walk within MELEE_STEP_IN_M of the target once; the caller swings again. Returns what it
+    did, or '' (another failure, not melee, no movement, already that close, the walk failed)."""
+    if step.tool != "use_ability" or "no reason given" not in text or not step.args.get("target"):
+        return ""
+    low = text.lower()
+    if any(w in low for w in NOT_A_REACH_MISS):
+        return ""
+    mv = after.get("movement")
+    if isinstance(mv, (int, float)) and mv < 0.3:
+        return ""
+    sp = step.args.get("ability")
+    if sp not in MELEE_IDS:
+        acts = game.try_rpc("state.actions", {"uuid": who})
+        acts = acts.get("actions") if isinstance(acts, dict) else acts
+        rng = next((a.get("range") for a in acts or [] if isinstance(a, dict) and a.get("spell") == sp), None)
+        if not isinstance(rng, (int, float)) or rng > turn.MELEE_RANGE_M:
+            return ""
+    rep, _text = _run_one(watcher, who, actq.Step("move_to", {"target": step.args["target"],
+                                                              "within": MELEE_STEP_IN_M}))
+    _after(rep, after)
+    lr = rep.last_result if isinstance(rep.last_result, dict) else {}
+    if not rep.done:
+        _step_note["why"] = re.sub(r"^\S+ ", "", _text.split("\n")[0])[:140]
+        return ""
+    if lr.get("already_there"):
+        return ""
+    d = lr.get("dist")
+    return "stepped closer for the swing" + (f" ({render.num(d)}m from it)" if isinstance(d, (int, float)) else "")
+
+
 AUTO_RANGED = ("Projectile_MainHandAttack", "Projectile_OffhandAttack")
 
 
@@ -6102,10 +6242,13 @@ def _turn_auto_fallback(p: turn.TurnPlan, slot: str, planned: list, who: str, wa
                         lines: list, after: dict, info: dict) -> str:
     """Every alternative of a slot missed its target (claude-run-2: S002 the move toward Zhalk stopped short,
     S002 the planned imp died first, S007 two casts with no line of sight wasted the action):
-      1. out of range: the ranged weapon attack on the same target if it is within its range;
-      2. retarget: the plan's own targeted abilities on the nearest other hostile in sight and in reach;
+      1. out of range: the ranged weapon attack on the same target if it is within its range and hostile;
+      2. retarget: the plan's own targeted abilities on the nearest other hostile in sight and in reach, for an
+         alternative aimed at a hostile; a heal aimed at our side: a downed party member in reach; a revive: never;
       3. action slot, the move ran out of movement: Dash and walk on.
-    Only abilities the character has available; retarget=false in the plan turns 2 off."""
+    Only abilities the character has available; retarget=false in the plan turns 2 off. ACT-1 (S063 11:00/11:13):
+    Lay on Hands on ally e3 became a Ranged Attack on e3, Healing Word on an ally went to an enemy: each fallback
+    keeps to the side of the target it replaces."""
     miss = lines[-1] if lines else ""
     tgt = (p.move.target if p.move else None) or next(
         (a.step.args.get("target") for a in planned if a.step.args.get("target")), None)
@@ -6120,8 +6263,10 @@ def _turn_auto_fallback(p: turn.TurnPlan, slot: str, planned: list, who: str, wa
     avail = {a.get("spell"): a for a in acts or [] if isinstance(a, dict) and a.get("available") is not False}
     tried = {a.step.args.get("ability") for a in planned}
     cs = game.try_rpc("state.combat") or {}
+    _seen_sides(cs)
+    party = info.get("party")
     alts: list[turn.Alt] = []
-    if tu and "out of range" in miss:
+    if tu and "out of range" in miss and _side(cs, tu, party) == "hostile":
         d = turn.straight_dist(cs, who, tu)
         for sp in AUTO_RANGED:
             rng = (avail.get(sp) or {}).get("range")
@@ -6140,12 +6285,24 @@ def _turn_auto_fallback(p: turn.TurnPlan, slot: str, planned: list, who: str, wa
         used: set = set()
         for a in planned:
             sp, t = a.step.args.get("ability"), a.step.args.get("target")
-            if a.step.tool != "use_ability" or not sp or not t or sp in used or sp not in avail:
+            if a.step.tool != "use_ability" or not sp or not t or sp in used or sp not in avail \
+                    or turn.REVIVE.search(str(sp)):
                 continue
-            used.add(sp)
+            try:
+                was = _side(cs, _uuid(str(t)), party)
+            except ValueError:
+                continue
             rng = avail[sp].get("range")
-            for u in turn.hostiles_in_reach(cs, who, rng if isinstance(rng, (int, float)) else None,
-                                            planned_targets)[:2]:
+            rng = rng if isinstance(rng, (int, float)) else None
+            if was in ("hostile", None):  # None: never seen on a turn order (ours are always known)
+                near = turn.hostiles_in_reach(cs, who, rng, planned_targets)
+            elif was in ("party", "ally") and turn.HEAL.search(str(sp)):
+                reach = 18.0 if rng is None else (rng + turn.MELEE_REACH_PAD if rng <= turn.MELEE_RANGE_M else rng)
+                near = turn.downed_allies(cs, who, reach, planned_targets)
+            else:
+                continue  # a buff on an ally, an unknown side: no other target is "the same"
+            used.add(sp)
+            for u in near[:2]:
                 args = {k: v for k, v in a.step.args.items() if k not in ("target", "targets", "x", "y", "z")}
                 alts.append(turn.Alt(actq.Step("use_ability", {**args, "target": H.get(u)})))
         alts = alts[:1 + turn.MAX_RETARGET]
@@ -6166,7 +6323,8 @@ def _retarget_lost(p: turn.TurnPlan, who: str, lines: list, info: dict) -> bool:
     nowhere and the turn ended with 9 m unused). Re-aim the move and every alternative aimed at it at the
     nearest visible living hostile and say so; none in sight: say so and mark info["move_lost"] (a Dash
     that would walk on is skipped). True when the plan was re-aimed. One state.combat read (left for the
-    next step check)."""
+    next step check). Only a hostile move target is re-aimed (ACT-1: "move to dead Shadowheart, Revivify her"
+    walked to the nearest enemy and cast Revivify on it); one never seen counts as hostile (ours are always known)."""
     try:
         lost = _uuid(str(p.move.target))
     except ValueError:
@@ -6174,6 +6332,8 @@ def _retarget_lost(p: turn.TurnPlan, who: str, lines: list, info: dict) -> bool:
     cs = _turn_cs.get("cs") or game.try_rpc("state.combat") or {}
     _turn_cs["cs"] = cs
     if not cs.get("active"):
+        return False
+    if _side(cs, lost, info.get("party")) not in ("hostile", None):
         return False
     row = next((o for o in cs.get("order") or [] if o.get("uuid") == lost), None)
     if row is not None:
@@ -6341,7 +6501,8 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn and while a sent-ahead plan waits (default: stop).
     No line of sight to a ranged target: it first steps (within the movement left and the ability's range) to the nearest spot that sees it, then casts again. A downed character has no turn to play (it passes by itself); another of your characters acting first makes a sent-ahead plan return at once; your summon (Spiritual Weapon …) acting first and not in the plan: its turn is played for it (its weapon attack on the plan's first target, else the nearest hostile) and then the plan.
     Before each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore="" adds new hostiles in view).
-    A slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off). A melee move that ends out of reach says "melee is out of reach this turn" and skips the melee attacks on that target (ranged / Dash next). The move's target dead or out of sight (Shadow Blend, killed first): the plan is re-aimed at the nearest visible hostile, and walks on if movement is left (retarget:false keeps it). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).
+    who: required when NOW lists more than one of your characters; left out, the plan goes to the only one acting whose actions cover every ability it names (else REFUSED), and a plan sent ahead waits for the character selected when it was sent.
+    A slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off); fallbacks keep to the planned target's side (an ally-aimed heal only re-aims at a downed party member, a revive never). A melee swing the game refused without a reason steps within 1 m once and swings again. A melee move that ends out of reach says "melee is out of reach this turn" and skips the melee attacks on that target (ranged / Dash next). The move's target (a hostile) dead or out of sight (Shadow Blend, killed first): the plan is re-aimed at the nearest visible hostile, and walks on if movement is left (retarget:false keeps it). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).
     An empty plan {} just ends that character's turn (e.g. it already acted through single tools).
     end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn).
     Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), up to 30 s longer while enemies are still taking turns, then plays it."""
@@ -6502,6 +6663,39 @@ def _turn_chain(plan: str) -> list[tuple[str, str]] | None:
     return [(str(x["who"]), x["plan"] if isinstance(x["plan"], str) else json.dumps(x["plan"])) for x in items]
 
 
+def _plan_abilities(p: turn.TurnPlan) -> list[str]:
+    """The abilities a plan names (as written), in order, once each."""
+    out: list[str] = []
+    for alt in [a for k in ("action", "bonus") for a in p.slots.get(k) or []] + \
+            [a for slot in p.slots.get("extra") or [] for a in slot]:
+        a = alt.step.args.get("ability") if alt.step.tool == "use_ability" else None
+        if a and str(a) not in out:
+            out.append(str(a))
+    return out
+
+
+def _plan_fits(u: str, abilities: list[str]) -> bool:
+    """Whether `u` has every ability the plan names (its own action list, read now)."""
+    acts = game.try_rpc("state.actions", {"uuid": u})
+    _learn_actions(u, acts)
+    rows = acts.get("actions") if isinstance(acts, dict) else acts
+    have = {a.get("spell") for a in rows or [] if isinstance(a, dict)}
+    for a in abilities:
+        try:
+            if _ability_id(u, a) not in have:
+                return False
+        except (GameError, ValueError):
+            return False
+    return True
+
+
+def _plan_actor(p: turn.TurnPlan, cands: list[str]) -> list[str]:
+    """ACT-2 (S065: Claude's turn "skipped" twice): with `who` left out, the candidates whose actions cover every
+    ability the plan names. A plan with no ability (a move, {}) fits all of them."""
+    abilities = _plan_abilities(p)
+    return [u for u in cands if _plan_fits(u, abilities)] if abilities else list(cands)
+
+
 def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ignore: str, wait_turn: float,
                      extend_s: float = 0.0) -> str:
     t0 = time.monotonic()
@@ -6516,9 +6710,36 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
         # S025: sent as the last enemy died; nothing to play is not a failure. Opening a fight is a plain attack.
         return _finish("combat_turn", {"who": who}, "combat_turn: nothing to play — not in combat (combat is over, "
                        "or start a fight with use_ability / do_actions)", t0)
+    _seen_sides(cs)
     now = turn.acting(cs)
     waited = ""
     want = _who_uuid(who) if who else None
+    inferred = ""
+    if not want:
+        # ACT-2: who left out. Several of ours acting (a shared turn group) or a plan sent ahead: the member the
+        # plan's abilities fit; acting now and no single fit → refused; sent ahead → the one selected now (the
+        # first party turn that comes, a summon's or another member's, used to take the plan and end its turn).
+        mine0 = turn.party_acting(cs, party)
+        if len(mine0) > 1:
+            fits = _plan_actor(p, mine0)
+            if len(fits) != 1:
+                names = ", ".join(_label(u) for u in mine0)
+                why = (f"the plan fits {', '.join(_label(u) for u in fits)}" if fits
+                       else "the plan's abilities fit none of them alone")
+                return _finish("combat_turn", {}, f"REFUSED: several of your characters can act now ({names}) and "
+                               f"{why}: give who=<member> (or a list plan, one entry per member)", t0)
+            want, inferred = fits[0], "the only one acting whose actions the plan fits"
+        elif not mine0:
+            rows = [r for r in st0.get("party") or [] if isinstance(r, dict) and r.get("uuid")
+                    and not r.get("dead") and not r.get("off_stage") and not r.get("downed")]
+            fits = _plan_actor(p, [r["uuid"] for r in rows]) if _plan_abilities(p) else []
+            if len(fits) == 1:
+                want, inferred = fits[0], "sent ahead: the only one of yours whose actions the plan fits"
+            else:
+                try:
+                    want, inferred = _active(), "sent ahead: the character selected when it was sent"
+                except GameError:
+                    want = None
     if want and want in turn.downed(cs):
         return _finish("combat_turn", {"who": who}, _downed_text(want), t0)
     ready = (lambda c: want in turn.acting(c)) if want else (lambda c: bool(turn.party_acting(c, party)))
@@ -6550,6 +6771,7 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
         w0 = time.monotonic()
         cs, why = _wait_turn(ready, wait_turn, blocked, on_prompt, extend_s)
         _remember_names(cs)
+        _seen_sides(cs)
         if not cs.get("active"):
             raise GameError("combat is over: loot, heal, then end_combat_report")
         now = turn.acting(cs)
@@ -6559,7 +6781,7 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
         if want and want in turn.downed(cs):
             return _finish("combat_turn", {"who": who}, _downed_text(want), t0)
     mine = turn.party_acting(cs, party)
-    if who:
+    if want:
         char = want
     else:
         sel = st0.get("active") if not waited else None
@@ -6574,6 +6796,8 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
         raise GameError(f"{why} (now {', '.join(_label(u) for u in now) or '?'})" + (f"; {waited}" if waited else ""))
     lines = [f"TURN {_label(char)}" + (f" (round {cs['round']})" if cs.get("round") is not None else "")
              + (f" — {waited}" if waited else "") + _light_note(cs)]
+    if inferred:
+        lines.append(f"who: {_label(char)} ({inferred}; give who= to choose)")
     fight_hint = _fight_hint(cs, party)   # the first turn of a fight: a retry's key facts / past debriefs' warnings
     if fight_hint:
         lines.append(fight_hint)
@@ -6599,7 +6823,7 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
     watcher = turn.TurnWatcher(_watch_conn(), p.on_reaction, _answer_reaction, ignore=_parse_ignore(ignore))
     watcher.baseline()
     after: dict = {}
-    info: dict = {}
+    info: dict = {"party": party}
     stopped = False
     _turn_cs["cs"] = cs  # nothing ran since this read: the first step check reuses it
     moved = False
@@ -7580,15 +7804,79 @@ def rest_if_needed(threshold: float = 50.0, allow_long: bool = False) -> str:
 # meta: saves, waiting, markers, wiki, clock
 # ---------------------------------------------------------------------------
 
-SAVE_PREFIX = os.environ.get("BG3AI_SAVE_PREFIX", "")
+# Save identity (runner I1): folders are "<character name>-<number>__<label>"; this playthrough's start with the prefix.
+def _env_prefix(env=os.environ) -> str:
+    """BG3AI_SAVE_PREFIX, else the owner's name and the dash the game adds."""
+    owner = env.get("BG3AI_SAVE_OWNER", "")
+    return env.get("BG3AI_SAVE_PREFIX", "") or (f"{owner}-" if owner else "")
+
+
+SAVE_OWNER = os.environ.get("BG3AI_SAVE_OWNER", "")
+SAVE_PREFIX = _env_prefix()
 PLAYTHROUGH = os.environ.get("BG3AI_PLAYTHROUGH", "")
+# "1": the runner opened the save/load gates for this game, "0": it closed them (not our character); unset: hand-run.
+SAVE_GATES = os.environ.get("BG3AI_SAVE_GATES")
+AI_LABEL = re.compile(r"S\d{3}-")
+
+
+def _set_save_owner(name: str) -> None:
+    """After create_character (I3): a new playthrough's saves are the new character's, from this session on."""
+    global SAVE_OWNER, SAVE_PREFIX
+    SAVE_OWNER = SAVE_OWNER or name
+    SAVE_PREFIX = SAVE_PREFIX or f"{name}-"
+
+
+def _restore_save_owner(before: tuple[str, str]) -> None:
+    global SAVE_OWNER, SAVE_PREFIX
+    SAVE_OWNER, SAVE_PREFIX = before
+
+
+def _is_mine(folder: str) -> bool:
+    """A save folder of this playthrough's character: the prefix, then only the game's number (so prefix
+    'Claude-' doesn't take 'Claude-Two-123__…', another character)."""
+    if not SAVE_PREFIX or not folder.startswith(SAVE_PREFIX):
+        return False
+    rest = folder.split("__", 1)[0][len(SAVE_PREFIX):].lstrip("-")
+    return rest == "" or rest.isdigit()
+
+
+def _save_record() -> Path | None:
+    return RUNTIME / "saves" / (re.sub(r"[^A-Za-z0-9_.-]", "_", PLAYTHROUGH) + ".txt") if PLAYTHROUGH else None
+
+
+def _recorded_saves() -> set[str]:
+    """Folders this playthrough's save_game wrote (quicksaves and saves under the game's default name included)."""
+    f = _save_record()
+    try:
+        return set(f.read_text().split("\n")) - {""} if f is not None else set()
+    except OSError:
+        return set()
+
+
+def _latest_ok(folder: str) -> bool:
+    """What load_game("latest") may pick: the agent's Sxxx- saves and what save_game wrote for this playthrough;
+    never a worker's LIVETEST-*, the game's AutoSave_N or a QuickSave_N someone else made."""
+    return bool(AI_LABEL.match(folder.split("__", 1)[-1])) or folder in _recorded_saves()
+
+
+def _my_saves() -> list[Path]:
+    """This playthrough's save folders, newest first."""
+    if not SAVE_DIR.is_dir():
+        return []
+    return sorted((d for d in SAVE_DIR.iterdir() if d.is_dir() and _is_mine(d.name)),
+                  key=lambda d: d.stat().st_mtime, reverse=True)
 
 
 def _enable_save_gates() -> None:
     """Saving/loading is gated off in the mod by default (protects a human's own playthrough). The runner
-    sets BG3AI_PLAYTHROUGH only for the AI's own game, so only then does the agent get save/load."""
+    sets BG3AI_PLAYTHROUGH only for the AI's own game, and BG3AI_SAVE_GATES to what it decided for the game
+    that is up (0: not this playthrough's character): the gates open only for the AI's own game."""
     if not PLAYTHROUGH:
         raise GameError("saving/loading is disabled outside an AI playthrough session (BG3AI_PLAYTHROUGH unset)")
+    if SAVE_GATES == "0":
+        game.try_rpc("ui.config", {"save_enabled": False, "load_enabled": False}, context="client")
+        raise GameError("saving/loading is disabled for this game: the runner closed the gates (the loaded "
+                        "character is not this playthrough's)")
     game.rpc("ui.config", {"save_enabled": True, "load_enabled": True}, context="client")
 
 
@@ -7631,6 +7919,11 @@ def _save_log(rec: dict) -> None:
         RUNTIME.mkdir(parents=True, exist_ok=True)
         with open(RUNTIME / "actions.jsonl", "a") as f:
             f.write(json.dumps({"t": time.time(), "tool": "save_game.bg", **rec}) + "\n")
+        folder, rf = rec.get("folder") or rec.get("stray"), _save_record()
+        if folder and rf is not None:
+            rf.parent.mkdir(parents=True, exist_ok=True)
+            with open(rf, "a") as f:
+                f.write(folder + "\n")
     except OSError:
         pass
 
@@ -7652,15 +7945,19 @@ def save_game(label: str = "") -> str:
 @mcp.tool()
 @_guard
 def list_saves(limit: int = 10) -> str:
-    """Your most recent saves (as the load menu shows them)."""
+    """Your most recent saves (as the load menu shows them); "latest" marks the one load_game("latest") loads."""
     t0 = time.monotonic()
-    rows = []
-    if SAVE_DIR.is_dir():
-        for d in SAVE_DIR.iterdir():
-            if d.is_dir() and (d.name.startswith(SAVE_PREFIX) if SAVE_PREFIX else not PLAYTHROUGH):
-                rows.append((d.stat().st_mtime, d.name))
-    rows.sort(reverse=True)
-    body = "\n".join(f"{time.strftime('%m-%d %H:%M', time.localtime(t))}  {n.split('__', 1)[-1]}  [{n}]" for t, n in rows[:limit])
+    if SAVE_PREFIX:
+        dirs = _my_saves()
+    elif not PLAYTHROUGH and SAVE_DIR.is_dir():  # a hand-run server: every save
+        dirs = sorted((d for d in SAVE_DIR.iterdir() if d.is_dir()), key=lambda d: d.stat().st_mtime, reverse=True)
+    else:
+        dirs = []
+    latest = next((d.name for d in dirs if _latest_ok(d.name)), None) if SAVE_PREFIX else None
+    body = "\n".join(f"{time.strftime('%m-%d %H:%M', time.localtime(d.stat().st_mtime))}  {d.name.split('__', 1)[-1]}  "
+                     f"[{d.name}]{'  <- latest' if d.name == latest else ''}" for d in dirs[:limit])
+    if not body and PLAYTHROUGH and not SAVE_PREFIX:
+        body = "No saves (this playthrough's character isn't known yet: create it, or save once the runner knows it)."
     return _finish("list_saves", {}, body or "No saves.", t0, events=False)
 
 
@@ -7780,12 +8077,14 @@ def load_game(save: str = "latest") -> str:
     t0 = time.monotonic()
     _enable_save_gates()
     dropped = SAVER.settle()  # a background save finishes writing first; a queued one is dropped
-    mine = sorted((d for d in SAVE_DIR.iterdir() if d.is_dir() and SAVE_PREFIX and d.name.startswith(SAVE_PREFIX)),
-                  key=lambda d: d.stat().st_mtime, reverse=True) if SAVE_DIR.is_dir() else []
+    mine = _my_saves()
     if save == "latest":
-        if not mine:
-            raise GameError("no saves of this playthrough found (BG3AI_SAVE_PREFIX unset or no saves yet)")
-        save = mine[0].name
+        ours = [d for d in mine if _latest_ok(d.name)]
+        if not ours:
+            raise GameError("no Sxxx- save of this playthrough found " + (
+                f"(folders {SAVE_PREFIX}*; name one from list_saves)" if SAVE_PREFIX else
+                "(its character isn't known: BG3AI_SAVE_OWNER/BG3AI_SAVE_PREFIX unset)"))
+        save = ours[0].name
     elif not any(d.name == save or d.name.endswith("__" + save) for d in mine):
         raise GameError(f"'{save}' is not one of this playthrough's saves; see list_saves")
     else:

@@ -38,6 +38,8 @@
 #   BG3AI_INPUT_LIB    the input shim (default <repo>/build/bg3sdl/libbg3sdl.so, from native/bg3sdl/build.sh)
 #   BG3LE_DEBUG_PORT   bg3le's Lua debug server port (default 9998)
 #   BG3AI_ALLOW_STEAM_ONLINE=1  launch even when Steam's last login was online (default: refuse; see below)
+#   BG3AI_ALLOW_STALE_BG3LE=1   launch even when the bg3le build lacks a patches/bg3le patch (default: refuse,
+#                      exit 4, also with --dry-run; tools/bg3le_buildinfo.py compares BUILDINFO next to the library)
 #   BG3AI_GAME_SCOPE   1 (default): run the game in its own systemd user scope bg3ai-game-<stamp>.scope with
 #                      OOMPolicy=continue and a memory cap, so an OOM kills only the game, never the caller's unit
 #                      (20:48: the game hit 13.3 GB inside the multiplexer's unit, OOMPolicy=stop, and systemd killed every
@@ -109,6 +111,20 @@ done
 if [ "$use_bg3le" = 1 ] && [ ! -f "$LIB" ]; then
     [ "$dry_run" = 1 ] || die "no bg3le library at $LIB; run tools/build_bg3le.sh"
     echo "launch_game: warning: no bg3le library at $LIB yet" >&2
+fi
+# A library built before a crash patch was added (UI-1: this laptop's dist predated all nine) passes every other
+# check. Its BUILDINFO's "patch:" lines must name every patches/bg3le/*.patch with the same hash.
+if [ "$use_bg3le" = 1 ] && [ -f "$LIB" ]; then
+    if ! stale="$(python3 "$REPO/tools/bg3le_buildinfo.py" --dist "$(dirname "$LIB")")"; then
+        if [ "${BG3AI_ALLOW_STALE_BG3LE:-0}" = 1 ]; then
+            echo "launch_game: WARNING !!! launching a STALE bg3le (BG3AI_ALLOW_STALE_BG3LE=1): crash fixes missing !!!" >&2
+            echo "$stale" | sed 's/^/launch_game:   /' >&2
+        else
+            echo "$stale" | sed "1s/^/launch_game: REFUSING TO LAUNCH: /; 2,\$s/^/launch_game: /" >&2
+            echo "launch_game: (BG3AI_ALLOW_STALE_BG3LE=1 launches it anyway)" >&2
+            exit 4
+        fi
+    fi
 fi
 if [ "$use_input" = 1 ] && [ ! -f "$INPUT_LIB" ]; then
     [ "$dry_run" = 1 ] || die "no input shim at $INPUT_LIB; run native/bg3sdl/build.sh (or pass --no-input-shim)"

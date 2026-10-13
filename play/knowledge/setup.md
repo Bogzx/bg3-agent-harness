@@ -5,7 +5,8 @@ operator's instructions say otherwise, follow those instead.
 
 ## Difficulty
 
-- **Explorer.** Enemies have less HP, the player side gets a bonus, and every timer is longest (Iron Throne: 8
+- **Explorer** is the default for a new game (`new_game` uses it), unless the kickoff gives the profile's
+  difficulty. Enemies have less HP, the player side gets a bonus, and every timer is longest (Iron Throne: 8
   turns vs 6 on Balanced). Long rests cost 40 camp supplies.
 - **Karmic Dice: on** (Options → Gameplay). It smooths out streaks of bad rolls.
 - **Never** Honour mode, and never Custom with "Honour single save". A party wipe would end the run.
@@ -15,6 +16,10 @@ operator's instructions say otherwise, follow those instead.
   throws" on (downed allies stay stable), camp cost ×1.
 
 ## Main character (Tav)
+
+**With a character brief** (the kickoff says CHARACTER CREATION), the character is yours to design from it:
+follow `playbooks/character-creation.md`; the build below is only the fallback for what the brief leaves open.
+**Without a brief**, create this default build, named as the kickoff says:
 
 - **Tav, not the Dark Urge.** The Urge adds forced events and extra irreversible choices.
 - **Half-Orc Paladin, Oath of Devotion.** Heavy armour, Lay on Hands for emergency healing, Divine Smite for
@@ -33,7 +38,7 @@ operator's instructions say otherwise, follow those instead.
 
 | Slot | Companion | Role | Why |
 |---|---|---|---|
-| PC | Paladin | front line, face, emergency heals | see above |
+| PC | your character (default: Paladin) | front line, face, emergency heals | see above |
 | 2 | **Lae'zel** (Fighter, Battle Master or Champion) | damage and tank | simple to play, hits hard |
 | 3 | **Shadowheart** (Cleric, Life domain) | healer and support | Healing Word, Bless, Spirit Guardians, revives |
 | 4 | **Astarion** (Rogue, Thief) with a bow | ranged damage, locks, traps | lockpicking, disarming traps, Sleight of Hand, Perception |

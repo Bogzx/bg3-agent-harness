@@ -65,6 +65,7 @@ class FakeGame:
         self.approach: Any = None  # nav.approach reply (None: op unknown, like a mod not reloaded yet)
         self.los_spot: Any = None  # nav.los_spot reply (or callable(args)); None: op unknown
         self.actions: list = [{"spell": "Target_MainHandAttack", "name": "Attack"}]
+        self.actions_by: dict = {}  # state.actions per uuid (else self.actions for everyone)
         self.path: dict = {"reachable": True, "movement_left": 0}
         self.safe: dict = {"safe": True}  # nav.safe_spot reply
         self.landing: dict | None = None  # nav.landing reply (None: op unknown, like a mod not reloaded yet)
@@ -150,7 +151,7 @@ class FakeGame:
                     cs["order"] = order
                 return cs
             if op == "state.actions":
-                return json.loads(json.dumps(self.actions))
+                return json.loads(json.dumps(self.actions_by.get(args.get("uuid"), self.actions)))
             if op == "nav.approach" and self.approach is not None:
                 return self.approach(args) if callable(self.approach) else dict(self.approach)
             if op == "nav.los_spot" and self.los_spot is not None:
@@ -238,6 +239,8 @@ class Base(unittest.TestCase):
         self.gob = server.H.get(GOB, "Goblin")
         self.imp = server.H.get(IMP, "Imp")
         self.chest = server.H.get(CHEST, "Chest")
+        server._turn_sides.clear()
+        server._ability_ids.clear()
         server.H.get(P1, "Claude")
         server.H.get(P2, "Lae'zel")
 
@@ -1102,6 +1105,186 @@ class CombatTurn(Base):
                                            extra=[[{"ability": "Target_MainHandAttack", "target": self.gob}]]))
         self.assertIn("extra 1: skipped (the Extra Attack already went to the bonus attack)", out)
         self.assertEqual(self.casts(), ["Target_MainHandAttack", "Projectile_MainHandAttack"])
+
+    # ---- ACT-1: fallbacks keep to the planned target's side (S063 11:00 / 11:13) ----
+
+    def _ally_at(self, dist: float, **kw) -> dict:
+        lae = next(o for o in self.g.combat["order"] if o["uuid"] == P2)
+        lae.update(**{"from": {P1: [dist, 1]}}, **kw)
+        self.g.visible.add(P2)
+        return lae
+
+    def test_heal_on_an_ally_out_of_range_never_becomes_an_attack_on_it(self):
+        # (a) Lay on Hands on ally e3 stopped short → "auto fallback: Projectile_MainHandAttack e3 … damage"
+        self._ally_at(9.0)
+        self.g.actions = [{"spell": "Target_LayOnHands", "range": 1.5},
+                          {"spell": "Projectile_MainHandAttack", "range": 18}]
+        self.g.refuse_if = lambda op, a: ("target is out of range (9.0 m, range 1.5 m): move closer first"
+                                          if a.get("spell") == "Target_LayOnHands" else None)
+        p2 = server.H.get(P2)
+        out = server.combat_turn(self.plan(action={"ability": "Target_LayOnHands", "target": p2}))
+        self.assertEqual(self.casts(), ["Target_LayOnHands"])
+        self.assertNotIn("auto fallback", out)
+
+    def test_heal_on_an_ally_out_of_range_is_never_retargeted_at_a_hostile(self):
+        # (b) Healing Word (L3 slot) planned on an ally went to ENEMY Devastator Stropes
+        self._ally_at(20.0)
+        self.g.actions = [{"spell": "Target_HealingWord", "range": 18}]
+        self.g.refuse_if = lambda op, a: ("target is out of range (20.0 m, range 18.0 m): move closer first"
+                                          if a.get("spell") == "Target_HealingWord" and a.get("target") == P2 else None)
+        out = server.combat_turn(self.plan(action={"ability": "Target_HealingWord", "target": server.H.get(P2)}))
+        self.assertEqual([a.get("target") for _, a in self.g.ops("act.cast")], [P2])
+        self.assertNotIn(GOB, [a.get("target") for _, a in self.g.ops("act.cast")])
+        self.assertNotIn("auto fallback", out)
+        # a heal may re-aim at another (downed) party member in reach
+        p3 = "33333333-2222-3333-4444-555555555555"
+        server.H.get(p3, "Gale")
+        self.g.combat["order"].append({"uuid": p3, "name": "Gale", "relation": "party", "hp_pct": 0,
+                                       "from": {P1: [5.0, 1]}})
+        self.g.combat["current"] = P1
+        n = len(self.g.ops("act.cast"))
+        out = server.combat_turn(self.plan(action={"ability": "Target_HealingWord", "target": server.H.get(P2)},
+                                           auto_bonus=False))
+        self.assertEqual([a.get("target") for _, a in self.g.ops("act.cast")][n:], [P2, p3])
+        self.assertIn("(auto fallback)", out)
+
+    def test_attack_on_a_hostile_still_retargets_hostiles(self):
+        self.g.dead.add(GOB)
+        self._ally_at(3.0)
+        self.g.actions = [{"spell": "Target_SacredFlame", "range": 18}]
+        server.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
+        self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [IMP])
+
+    def test_revive_on_a_dead_ally_is_cast_and_never_reaimed(self):
+        # (c) _turn_check skipped every dead target, then the retarget aimed Revivify at the nearest hostile
+        self._ally_at(1.2)
+        self.g.dead.add(P2)
+        next(o for o in self.g.combat["order"] if o["uuid"] == GOB)["from"][P1] = [1.8, 1]
+        self.g.actions = [{"spell": "Teleportation_Revivify", "range": 1.5}]
+        out = server.combat_turn(self.plan(action={"ability": "Teleportation_Revivify", "target": server.H.get(P2)}))
+        self.assertEqual([(a.get("spell"), a.get("target")) for _, a in self.g.ops("act.cast")],
+                         [("Teleportation_Revivify", P2)])
+        self.assertNotIn("already dead", out)
+        self.g.refuse_if = lambda op, a: ("no line of sight to target" if op == "act.cast" else None)
+        self.g.combat["current"] = P1
+        server.combat_turn(self.plan(action={"ability": "Teleportation_Revivify", "target": server.H.get(P2)}))
+        self.assertEqual({a.get("target") for _, a in self.g.ops("act.cast")}, {P2})
+
+    def test_move_to_a_dead_ally_is_not_reaimed_at_a_hostile(self):
+        # (d) "move to dead Shadowheart, Revivify her" walked toward the nearest enemy and cast Revivify on it
+        self._ally_at(4.0)
+        self.g.dead.add(P2)
+        self.g.actions = [{"spell": "Teleportation_Revivify", "range": 1.5}]
+        p2 = server.H.get(P2)
+        out = server.combat_turn(self.plan(move=p2, action={"ability": "Teleportation_Revivify", "target": p2}))
+        self.assertNotIn("now aims at", out)
+        self.assertEqual([a.get("target") for _, a in self.g.ops("act.move_to")], [P2])
+        self.assertEqual({a.get("target") for _, a in self.g.ops("act.cast")}, {P2})
+
+    def test_side(self):
+        cs = self.g.rpc("state.combat")
+        party = {P1, P2}
+        self.assertEqual(turn.side(cs, P2, party), "party")
+        self.assertEqual(turn.side(cs, GOB, party), "hostile")
+        self.assertIsNone(turn.side(cs, CHEST, party))
+        self.assertEqual(turn.side(cs, CHEST, party, {CHEST: "neutral"}), "neutral")
+        self.g.visible.discard(GOB)  # out of sight now: what an earlier read saw
+        self.assertEqual(turn.side(self.g.rpc("state.combat"), GOB, party, turn.sides(cs)), "hostile")
+
+    # ---- ACT-2: who left out (S065: Claude's turn "skipped" twice) ----
+
+    def _shared_group(self) -> None:
+        self.g.combat["turn_group"] = [P1, P2]
+        attack = {"spell": "Target_MainHandAttack", "name": "Attack"}
+        self.g.actions_by = {P1: [attack], P2: [attack, {"spell": "Shout_ActionSurge", "name": "Action Surge"}]}
+
+    def test_shared_turn_without_who_plays_the_member_the_plan_fits(self):
+        self._shared_group()  # Claude (P1) is selected; only Lae'zel has Action Surge
+        out = server.combat_turn(self.plan(action="Action Surge"))
+        self.assertEqual([(a.get("spell"), a.get("char")) for _, a in self.g.ops("act.cast")],
+                         [("Shout_ActionSurge", P2)])
+        self.assertEqual([a.get("char") for _, a in self.g.ops("act.end_turn")], [P2])
+        self.assertIn("who: ", out)
+        self.assertIn("Lae'zel (the only one acting", out)
+
+    def test_shared_turn_without_who_refuses_a_plan_both_could_play(self):
+        self._shared_group()
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertIn("REFUSED: several of your characters can act now", out)
+        self.assertIn("give who=", out)
+        self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], [])
+        out = server.combat_turn(self.plan())  # an empty plan would end an unknown member's turn
+        self.assertIn("REFUSED", out)
+        self.assertEqual(self.g.ops("act.end_turn"), [])
+
+    def test_sent_ahead_without_who_is_not_taken_by_another_member(self):
+        self.g.combat["current"] = GOB
+        threading.Timer(0.3, lambda: self.g.combat.update(current=P2)).start()
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}),
+                                 wait_turn=3)
+        self.assertEqual(self.g.ops("act.cast"), [])  # Lae'zel's turn came first: not hers to take
+        self.assertIn("(yours) must act first", out)
+        # the selected member's own turn plays it
+        self.g.combat["current"] = GOB
+        threading.Timer(0.3, lambda: self.g.combat.update(current=P1)).start()
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}),
+                                 wait_turn=3)
+        self.assertEqual([a.get("char") for _, a in self.g.ops("act.cast")], [P1])
+        self.assertIn("sent ahead: the character selected when it was sent", out)
+
+    def test_sent_ahead_without_who_infers_the_only_member_with_the_ability(self):
+        self.g.actions_by = {P1: [{"spell": "Target_MainHandAttack", "name": "Attack"}],
+                             P2: [{"spell": "Shout_ActionSurge", "name": "Action Surge"}]}
+        self.g.combat["current"] = GOB
+        threading.Timer(0.3, lambda: self.g.combat.update(current=P2)).start()
+        out = server.combat_turn(self.plan(action="Shout_ActionSurge"), wait_turn=3)
+        self.assertEqual([a.get("char") for _, a in self.g.ops("act.cast")], [P2])
+        self.assertIn("the only one of yours whose actions the plan fits", out)
+
+    # ---- ACT-3: a melee swing refused without a reason steps closer once (S065 ×9) ----
+
+    NO_REASON = ("the game refused the cast (no reason given): a melee swing from 2.1 m centre to centre "
+                 "(our reach 2.5 m: range 1.5 m + both bounding radii), probably just outside the engine's reach")
+
+    def test_melee_refused_without_a_reason_steps_in_and_swings_again(self):
+        n = {"cast": 0}
+
+        def refuse(op, a):
+            if op == "act.cast":
+                n["cast"] += 1
+                return self.NO_REASON if n["cast"] == 1 else None
+            return None
+        self.g.refuse_if = refuse
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS],
+                         ["act.cast", "act.move_to", "act.cast", "act.end_turn"])
+        mv = self.g.ops("act.move_to")[0][1]
+        self.assertEqual((mv.get("target"), mv.get("within")), (GOB, server.MELEE_STEP_IN_M))
+        self.assertIn("stepped closer for the swing", out)
+        self.assertIn(f"Target_MainHandAttack {self.gob}: done", out)
+
+    def test_melee_refused_steps_in_only_once_and_not_for_other_reasons(self):
+        self.g.refuse_if = lambda op, a: self.NO_REASON if op == "act.cast" else None
+        server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+                                     retarget=False))
+        self.assertEqual(len(self.g.ops("act.move_to")), 1)
+        self.assertEqual(len(self.g.ops("act.cast")), 2)
+        for why in ("the game refused the cast (no reason given): the target is out of sight now",
+                    "the game refused the cast (no reason given): no line of sight to the target now"):
+            self.g.combat["current"] = P1
+            self.g.refuse_if = lambda op, a, why=why: why if op == "act.cast" else None
+            n = len(self.g.ops("act.move_to"))
+            server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+                                         retarget=False))
+            self.assertEqual(len(self.g.ops("act.move_to")), n, why)
+        # a ranged ability refused without a reason: no step in
+        self.g.combat["current"] = P1
+        self.g.actions = [{"spell": "Projectile_FireBolt", "range": 18}]
+        self.g.refuse_if = lambda op, a: "the game refused the cast (no reason given): usually the shot's path" \
+            if op == "act.cast" else None
+        n = len(self.g.ops("act.move_to"))
+        server.combat_turn(self.plan(action={"ability": "Projectile_FireBolt", "target": self.gob}, retarget=False))
+        self.assertEqual(len(self.g.ops("act.move_to")), n)
 
     def test_plan_errors(self):
         for bad, msg in (({"actoin": "x"}, "unknown plan key"),
