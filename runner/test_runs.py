@@ -525,7 +525,7 @@ class Judging(TmpDir):
             rec = r.write_run_record(t0, "reached")
         self.assertEqual(rec["persona"]["status"], "judge_failed")
         self.assertIn("boom", rec["persona"]["error"])
-        self.assertEqual(rec["persona"]["cost_usd"], 0.0)           # judge.py: an is_error answer's cost is lost
+        self.assertGreater(rec["persona"]["cost_usd"], 0.0)         # an is_error answer's cost is still counted
         self.assertEqual(R.series_records(self.dir / "runs.jsonl", "naut")[-1]["persona"], rec["persona"])
         with mock.patch.object(P.judge, "judge_run", side_effect=RuntimeError("bug")):
             p = P.judge_record(self.dir, rec, "judge-x")

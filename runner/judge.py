@@ -397,6 +397,14 @@ def build_prompt(character: str, decisions: list[dict], dropped: int = 0) -> str
                          dropped=f"; {dropped} more not shown" if dropped else "")
 
 
+class JudgeError(ValueError):
+    """A failed judge answer that still cost money (an is_error result): the cost is kept in the persona field."""
+
+    def __init__(self, msg: str, cost_usd: float = 0.0):
+        super().__init__(msg)
+        self.cost_usd = cost_usd
+
+
 class ClaudeCLI:
     """The default judge client: `claude -p` with no tools, no MCP servers, no settings or slash commands, no saved
     session, the prompt on stdin, run in an empty temp dir (no CLAUDE.md). Another provider = another class with
@@ -416,7 +424,8 @@ class ClaudeCLI:
         if not isinstance(ev, dict):
             raise ValueError("claude printed no result object")
         if ev.get("is_error"):
-            raise ValueError(f"claude error: {_clip(ev.get('result') or ev.get('subtype'), 200)}")
+            raise JudgeError(f"claude error: {_clip(ev.get('result') or ev.get('subtype'), 200)}",
+                             float(ev.get("total_cost_usd") or 0))
         return str(ev.get("result") or ""), {"cost_usd": float(ev.get("total_cost_usd") or 0)}
 
 
@@ -479,6 +488,7 @@ def judge_chunk(client, character: str, decisions: list[dict], dropped: int = 0,
             return dict(v, cost_usd=cost, attempts=k)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as e:
             err = f"{type(e).__name__}: {e}"
+            cost += getattr(e, "cost_usd", 0.0)
     return {"error": err, "cost_usd": cost, "attempts": attempts}
 
 
