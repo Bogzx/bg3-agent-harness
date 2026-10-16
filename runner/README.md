@@ -20,9 +20,11 @@ nothing.
 Options: `--session-minutes 60` (wrap-up starts 3 min before the end), `--hours N` (total
 budget; no new session starts with less than 20 min left), `--model`, `--save-owner NAME`,
 `--take-over` (see Safety), `--until MILESTONE [--runs N] [--run-hours H] [--max-cost USD] [--max-tokens N]
-[--allow-version-drift] [--allow-cap-change]`, `--character-brief TEXT [--roleplay strict|light] [--difficulty
+[--allow-version-drift] [--allow-cap-change] [--judge|--no-judge] [--judge-model M] [--allow-judge-change]`,
+`--character-brief TEXT [--roleplay strict|light] [--difficulty
 Explorer|Balanced|Tactician]`, `--scenario NAME` (all below). `play.py runs --playthrough PT [--failures]` prints a
-series' run table and its summary; `play.py scenarios` lists `scenarios/*.json` and whether each is ready.
+series' run table and its summary; `play.py judge --playthrough PT [--run K]` (re-)scores runs' persona into their
+records; `play.py scenarios` lists `scenarios/*.json` and whether each is ready.
 
 `--save-owner` (or `$BG3AI_SAVE_OWNER`) is the player character's name, which starts every save folder
 of the playthrough: `Claude` for `Claude-<id>__<label>`. Without it, the runner learns the owner from the
@@ -89,6 +91,20 @@ next run):
   difference (exit 2, `REFUSING run k: versions differ ...`, then `runner stopped`) unless `--allow-version-drift`
   (then recorded in `version_drift`). A run already under way (the runner's self-restart) keeps the pins it started
   with. So: commit, or at least don't edit code, between the runs of a series.
+- `judge_model`, the persona judge's model (below): `--judge-model` / `$BG3AI_JUDGE_MODEL` left out takes it; a
+  different one is refused (exit 2) unless `--allow-judge-change` (recorded in `judge_change`). Frozen by the first
+  judged run, or by the first `play.py judge` of a series from before it.
+
+**Persona judge** (`runner/judge.py`). After a run's record is written (any outcome), `--judge` scores the run's
+in-character decisions (dialogue choices with their stated reasons, `[decision]` notes, CHARACTER.md development)
+against the playthrough's CHARACTER.md with a fixed judge model (`claude -p`, no tools, never the model under test:
+`run` refuses that pairing) and merges `persona` into the record in place: `{status (ok | judge_failed |
+no_decisions | no_character), score 0-10, judge_model, decisions, dropped, summary, cost_usd, out_of_character?,
+error?}`. On by default for `--runs`/`--scenario` series, off for a single `--until` run. It has a 15-min budget
+(`JUDGE_TIMEOUT_S`), a second Ctrl-C cuts it short, and a failure is only a `judge_failed` persona, never a failed
+run. Its cost is `persona.cost_usd`, never in the run's `cost_usd` nor its `--max-cost` cap. `play.py judge
+--playthrough PT --run K` re-judges one record (for runs from before the judge, e.g. naut 1-3); without `--run` every
+record without a score (`--all`: scored ones too); it also fills a missing `model_time`.
 
 **Scenarios (`--scenario NAME`).** A fixed start point as a file, `scenarios/<name>.json` (format, the drafts and
 how to make a start save: `scenarios/README.md`): the start (a new game, or a start save), the `--until` milestone,
@@ -122,7 +138,7 @@ Kept on purpose: `runtime/levelup_clicks.json` (UI click calibration), the wiki 
 **Run record** (`runs.jsonl`, one line per run): `outcome` (`reached` | `timeout` | `over_budget` | `gave_up` |
 `runner_error`), `cap` (`time` | `cost` | `tokens` when a cap ended it), `why`, `clean`, counts, cost and `tokens`
 as above, `failures` (each `{t, kind, class, detail, n?}`), `operator` (each `{t, what}`), `caps`, `pins`,
-`version_drift`, `cap_changes`, and the benchmark metrics (`runs.run_metrics`, pure functions over the run's files):
+`version_drift`, `cap_changes`, `persona` and `judge_change` (above), and the benchmark metrics (`runs.run_metrics`, pure functions over the run's files):
 
 | Field | What | From |
 |---|---|---|
@@ -132,10 +148,13 @@ as above, `failures` (each `{t, kind, class, detail, n?}`), `operator` (each `{t
 | `latency` | `{sessions, idle_median_s, idle_p90_s, gaps_over_10s, read_rt_median_ms}` | the play sessions' `Sxxx.latency.json`; over several sessions each value is the sample-weighted median of the per-session values (exact for one session); null without latency files |
 | `story` | `{points, events, sessions, by_kind}` gained in the run | `progress_history.jsonl` |
 | `milestones_reached` | milestones reached in the playthrough at the end | `bg3ai.milestones.status` |
+| `model_time` | the run's model vs harness time: `model_s`, `harness_s`, the wall split, idle-gap attribution, TTFT, output speed, and `adjusted_model_s` (model time at the reference API speed `ref`, so providers/hours compare) | `runner/model_time.py` over the run's play streams, turns and metrics (its constant field lists left out) |
 
-`play.py runs` prints the per-run table (now with time to the milestone, tokens and the idle median) and a series
+`play.py runs` prints the per-run table (now with time to the milestone, tokens, the idle median, the persona score
+(`fail` / `n/d` no decisions / `n/c` no character when unscored) and the API-adjusted model minutes) and a series
 summary: n, reached, and n/min/max/mean/stddev (sample) of wall time, time to the milestone (reached runs), cost,
-tokens and the idle median; plus any version drift and caps that differ between runs. Records from before a field
+tokens, the idle median, the persona score, the adjusted model minutes and the judge's cost; plus any version drift,
+caps and judge models that differ between runs. Records from before a field
 show `-` (time to the milestone is derived from `reached_at - started`).
 
 Classes (`runner/runs.py`):
@@ -251,7 +270,7 @@ stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
 | `runtime/runner.status.json` | live status for `play.py status` |
 | `runtime/sessions/<pt>/runner.json` | save owner, runner quicksaves, per-session history and progress signatures |
 | `runtime/sessions/<pt>/runs.jsonl` | one record per `--until` run (a `--runs` series: all its runs, in the base's dir) |
-| `runtime/sessions/<pt>/series.json` | a `--runs` series: its frozen profile, N, the milestone, version pins and caps (and the scenario) |
+| `runtime/sessions/<pt>/series.json` | a `--runs` series: its frozen profile, N, the milestone, version pins, caps and judge model (and the scenario) |
 | `scenarios/<name>.json` | `run --scenario` start points (`scenarios/README.md`) |
 | `runtime/sessions/<run>/reset/`, `knowledge_snapshot.json`, `knowledge_edits/` | a `--runs` run's moved nav files, knowledge/ snapshot, the agent's knowledge/ edits that were put back |
 | `playthroughs/<pt>/profile.json` | the character brief, roleplay mode, difficulty (`--character-brief`) |

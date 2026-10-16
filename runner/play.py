@@ -6,6 +6,7 @@
     runner/play.py stop                  # finish the current session, then exit
     runner/play.py run --playthrough NAME --until nautiloid_escaped --runs 3 [--run-hours 4]   # benchmark series
     runner/play.py runs --playthrough NAME [--failures]   # its runs: outcome, clean, failures by class
+    runner/play.py judge --playthrough NAME [--run K]     # (re-)score runs' in-character decisions (runner/judge.py)
 
 Per session: make sure the game is up with this playthrough's save loaded, open the memory session (session.py
 start; its briefing leads the kickoff), launch `claude -p` in play/ with only the bg3 MCP tools (the server owns
@@ -54,6 +55,8 @@ sys.path.insert(0, str(REPO / "runner"))
 import triage  # noqa: E402  (runner/triage.py: post-session Sxxx.triage.md)
 import ramwatch  # noqa: E402  (runner/ramwatch.py: RAM watchdog, RSS spikes with the last tool calls)
 import runs  # noqa: E402  (runner/runs.py: run --runs naming, per-run resets, failure tagging, the runs table)
+import judge  # noqa: E402  (runner/judge.py: the persona judge, a run record's `persona`)
+import model_time  # noqa: E402  (runner/model_time.py: model vs harness time, a run record's `model_time`)
 sys.path.insert(0, str(REPO / "tools"))
 import steam_paths  # noqa: E402  (stdlib: Steam's offline state before any game launch)
 import bg3le_buildinfo  # noqa: E402  (stdlib: is build/bg3le/dist built with every patches/bg3le patch?)
@@ -108,6 +111,7 @@ GAME_MAX_AGE_H = float(os.environ.get("BG3AI_GAME_MAX_AGE_H", "2"))
 READY_FAIL_RE = re.compile(r"\b(?:ready_failed|end_day_failed)\b(?::\w+)?")
 GAME_FAULTS = ("crash", "hang")
 FAULTS = GAME_FAULTS + ("agent_hang",)
+JUDGE_TIMEOUT_S = 15 * 60      # the persona judge's whole budget after a run (two chunks, a retry each, fit)
 KILLED_EXITS = (-2, -9, -15, 130, 137, 143)   # claude ended by a signal (SIGINT/KILL/TERM, raw or as 128+n)
 
 
@@ -650,6 +654,27 @@ def run_record(state_dir: Path, run_started: float, now: float, hit: dict, playt
             "reloads": len(reloads), "failures": failures, "operator": operator, "cap": cap,
             **runs.run_metrics(state_dir, run_started, hit.get("t"), failures),
             "milestones_reached": milestones.status(read_seen(state_dir))["reached"]}
+
+
+def judge_record(state_dir: Path, rec: dict, model: str, timeout: float = JUDGE_TIMEOUT_S, client=None,
+                 stop=lambda: False) -> dict:
+    """A run record's `persona` (judge.persona_field of judge.judge_run) within `timeout` seconds overall; stop():
+    give up now (a second operator signal). Never raises: a failed or late judge is a judge_failed persona. Its
+    cost is persona.cost_usd, apart from the run's capped cost_usd (the judge runs in a temp dir, not state_dir)."""
+    deadline = time.time() + timeout
+
+    def call(c, prompt):
+        left = deadline - time.time()
+        if stop():
+            raise RuntimeError("judge interrupted (operator signal)")
+        if left < 1:
+            raise RuntimeError(f"judge timed out ({timeout:g} s)")
+        return judge.call_client(c, prompt, timeout=min(judge.TIMEOUT_S, left))
+    try:
+        res = judge.judge_run(state_dir, rec, client=client or judge.ClaudeCLI(model), call=call)
+    except Exception as e:  # noqa: BLE001 - judge_run never raises; a judge never fails the run all the same
+        res = {"status": judge.FAILED, "score": None, "judge_model": model, "error": f"{type(e).__name__}: {e}"}
+    return judge.persona_field(res)
 
 
 def keeper_model(option: str | None, play_model: str) -> str:
@@ -1522,6 +1547,9 @@ class Options:
     cap_changes: list | None = None    # --allow-cap-change: the caps that differ from series.json
     scenario: str | None = None        # run --scenario NAME: scenarios/<name>.json (frozen in series.json)
     start_save: str | None = None      # its start save folder: loaded for the first session, kept out of saves_after
+    judge: bool = False                # run --judge (default with --runs): score the run's persona after its record
+    judge_model: str | None = None     # the judge's model (series.json "judge_model" for a series)
+    judge_change: str | None = None    # --allow-judge-change: the judge model differs from series.json's
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -2685,6 +2713,10 @@ class Runner:
                    cap_changes=self.opt.cap_changes or None)
         if self.opt.scenario:
             rec["scenario"] = self.opt.scenario
+        rec["model_time"] = runs.model_time_field(model_time.model_time(self.state.dir, since=run_started,
+                                                                         until=rec["t"]))
+        if self.opt.judge_change:
+            rec["judge_change"] = self.opt.judge_change
         if self.opt.series:
             rec = {"series": self.opt.series, "run": self.opt.run_index, **rec}
             run = self.state["run"] or {}
@@ -2705,7 +2737,19 @@ class Runner:
             f"session(s), ${rec['cost_usd']:.2f}, {rec['crashes']} game crash(es)/hang(s), {rec['recoveries']} "
             f"recoveries, {rec['reloads']} agent reload(s); failures harness {rec['harness_failures']} / agent "
             f"{rec['agent_failures']} / unknown {rec['unknown_failures']}; clean={rec['clean']} → {path}")
+        if self.opt.judge:   # last: it costs time and money, and the record above is already safe on disk
+            self.judge_run_record(path, rec)
         return rec
+
+    def judge_run_record(self, path: Path, rec: dict) -> None:
+        """--judge: the persona judge on the run just recorded, merged into its runs.jsonl line. Never raises."""
+        model = self.opt.judge_model or judge.DEFAULT_MODEL
+        log(f"persona judge ({model}) on run {rec.get('run') or 1} ({rec['playthrough']}) ...")
+        rec["persona"] = judge_record(self.state.dir, rec, model, stop=lambda: self.abort)
+        if not runs.update_record(path, rec, {"persona": rec["persona"]}):
+            log(f"persona: could not update the record in {path} (play.py judge --playthrough "
+                f"{self.opt.series or self.opt.playthrough} redoes it)")
+        log("persona: " + persona_line(rec["persona"]))
 
     # ---------------------------------------------------------------- benchmark runs (--until / --runs)
 
@@ -3431,6 +3475,22 @@ def cmd_run(a) -> int:
         if err:
             print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
             return 2
+    use_judge = bool(a.runs) if a.judge is None else a.judge   # on for a series (--runs / --scenario)
+    if use_judge and not a.until:
+        print("refusing --judge: it scores a run's record, which needs --until MILESTONE", file=sys.stderr)
+        return 2
+    judge_model, judge_change = a.judge_model or os.environ.get("BG3AI_JUDGE_MODEL") or judge.DEFAULT_MODEL, None
+    if use_judge and a.runs:   # a series' judge is fixed like its caps: scores by another judge don't compare
+        judge_model, err, judge_change = runs.series_judge_model(
+            series_meta(a.playthrough).get("judge_model"), a.judge_model or os.environ.get("BG3AI_JUDGE_MODEL"),
+            judge.DEFAULT_MODEL, a.allow_judge_change)
+        if err:
+            print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
+            return 2
+    if use_judge and judge.same_model(judge_model, a.model):
+        print(f"refusing --judge: the judge model {judge_model} is the model under test ({a.model}); pick another "
+              "with --judge-model (fixed for the whole benchmark) or pass --no-judge", file=sys.stderr)
+        return 2
     if a.session_minutes < MIN_SESSION_MINUTES:
         log(f"WARNING: {a.session_minutes:g}-min sessions (wrap-up at {wrap_minutes(a.session_minutes):.1f} min); "
             "expect little play")
@@ -3443,7 +3503,8 @@ def cmd_run(a) -> int:
                   roleplay=a.roleplay, difficulty=a.difficulty, scenario=scenario["name"] if scenario else None,
                   start_save=scenario["start"].get("save") if scenario else None)
     opt = replace(opt, run_hours=caps["run_hours"], max_cost=caps["max_cost"], max_tokens=caps["max_tokens"],
-                  cap_changes=cap_changes or None, pins=current_pins() if a.until and not a.runs else None)
+                  cap_changes=cap_changes or None, pins=current_pins() if a.until and not a.runs else None,
+                  judge=use_judge, judge_model=judge_model if use_judge else None, judge_change=judge_change)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
@@ -3485,6 +3546,13 @@ def cmd_run(a) -> int:
             ram_stop.set()
 
 
+def persona_line(p: dict) -> str:
+    """One log line for a record's persona."""
+    what = f"score {p['score']:g}/10" if p.get("score") is not None else p.get("status", "?")
+    return (f"{what} by {p.get('judge_model')} on {p.get('decisions', 0)} decision(s), ${p.get('cost_usd') or 0:.2f}"
+            + (f": {p['error']}" if p.get("error") else ""))
+
+
 def series_meta(base: str) -> dict:
     """runtime/sessions/<base>/series.json ({} when there is none yet)."""
     try:
@@ -3502,13 +3570,14 @@ def series_profile(base: str) -> dict | None:
 
 
 def freeze_series(base: str, n: int, until: str | None, profile: dict, pins: dict | None = None,
-                  caps: dict | None = None, scenario: dict | None = None) -> None:
-    """series.json, written once by the first run: the profile, N, the milestone, the version pins and the caps
-    every later run is held to, and the scenario (runs.scenario_freeze) of a run --scenario series. A series from
-    before pins/caps gets them from the first run that has them."""
+                  caps: dict | None = None, scenario: dict | None = None, judge_model: str | None = None) -> None:
+    """series.json, written once by the first run: the profile, N, the milestone, the version pins, the caps and
+    the persona judge's model every later run is held to, and the scenario (runs.scenario_freeze) of a run
+    --scenario series. A series from before pins/caps/judge gets them from the first run that has them."""
     path = RUNTIME / "sessions" / base / "series.json"
     meta = series_meta(base)
-    if path.exists() and ("pins" in meta or pins is None) and ("caps" in meta or caps is None):
+    if path.exists() and ("pins" in meta or pins is None) and ("caps" in meta or caps is None) and \
+            ("judge_model" in meta or judge_model is None):
         return
     if not path.exists():
         meta = {"series": base, "runs": n, "until": until, "profile": profile, "created": round(time.time(), 1)}
@@ -3518,6 +3587,8 @@ def freeze_series(base: str, n: int, until: str | None, profile: dict, pins: dic
         meta.setdefault("pins", pins)
     if caps is not None:
         meta.setdefault("caps", caps)
+    if judge_model is not None:
+        meta.setdefault("judge_model", judge_model)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n")
 
@@ -3602,7 +3673,8 @@ def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, s
             r.stop_requested = True
         pins = current_pins()
         freeze_series(base, n, opt.until, r.profile, pins, {k_: getattr(opt, k_) for k_ in runs.CAP_KEYS},
-                      runs.scenario_freeze(scenario, save_sha1) if scenario else None)
+                      runs.scenario_freeze(scenario, save_sha1) if scenario else None,
+                      opt.judge_model if opt.judge else None)
         refusal = gate_series_run(base, r, pins, allow_drift)
         if refusal:
             log(refusal)
@@ -3719,6 +3791,44 @@ def cmd_runs(a) -> int:
     return 0
 
 
+def cmd_judge(a) -> int:
+    """Re-judge records of a series (or a playthrough's --until runs) in place: --run K, else every record without
+    a scored persona. Also fills a missing `model_time`. The judge model: series.json's, else --judge-model /
+    $BG3AI_JUDGE_MODEL / judge.DEFAULT_MODEL (then frozen into an existing series.json)."""
+    path = RUNTIME / "sessions" / a.playthrough / "runs.jsonl"
+    recs = runs.series_records(path, a.playthrough)
+    if a.run is not None:
+        recs = [r for r in recs if int(r.get("run") or 1) == a.run]
+    elif not a.all:
+        recs = [r for r in recs if runs.record_persona(r) is None]
+    if not recs:
+        print(f"no run {'%d ' % a.run if a.run is not None else 'to judge '}in {path}", file=sys.stderr)
+        return 1
+    frozen = series_meta(a.playthrough).get("judge_model")
+    model, err, change = runs.series_judge_model(frozen, a.judge_model or os.environ.get("BG3AI_JUDGE_MODEL"),
+                                                 judge.DEFAULT_MODEL, a.allow_judge_change)
+    if err:
+        print(f"refusing to judge {a.playthrough}: {err}", file=sys.stderr)
+        return 2
+    if frozen is None and (RUNTIME / "sessions" / a.playthrough / "series.json").exists():
+        freeze_series(a.playthrough, 0, None, {}, judge_model=model)
+    rc = 0
+    for r in recs:
+        state_dir = RUNTIME / "sessions" / (r.get("playthrough") or a.playthrough)
+        fields = {"persona": judge_record(state_dir, r, model, a.timeout)}
+        if change:
+            fields["judge_change"] = change
+        if "model_time" not in r:
+            end = r.get("t")
+            fields["model_time"] = runs.model_time_field(model_time.model_time(
+                state_dir, since=r.get("started"), until=end + model_time.WINDOW_SLACK_S if end else None))
+        ok = runs.update_record(path, r, fields)
+        print(f"run {r.get('run') or 1} ({r.get('playthrough')}): {persona_line(fields['persona'])}"
+              + ("" if ok else f" (NOT written: the record is gone from {path})"))
+        rc = rc if ok and fields["persona"].get("status") in (judge.OK, judge.NO_DECISIONS) else 1
+    return rc
+
+
 def cmd_scenarios(_a) -> int:
     """scenarios/*.json with their status: ready, needs a start save, or invalid."""
     paths = sorted(SCENARIOS.glob("*.json"))
@@ -3787,6 +3897,14 @@ def main(argv: list[str] | None = None) -> int:
                    help="with --until: cap one run's claude tokens (input + output + cache reads + cache writes)")
     r.add_argument("--allow-cap-change", action="store_true",
                    help="--runs: let --run-hours/--max-cost/--max-tokens differ from series.json (recorded)")
+    r.add_argument("--judge", action=argparse.BooleanOptionalAction, default=None,
+                   help="with --until: after each run, score its in-character decisions against CHARACTER.md "
+                        "(runner/judge.py; the judge's cost is recorded apart, never capped). Default: on with --runs "
+                        "and --scenario, off for a single run")
+    r.add_argument("--judge-model", help="the judge's model (default $BG3AI_JUDGE_MODEL or "
+                   f"{judge.DEFAULT_MODEL}); never the model under test. A series keeps its first one (series.json)")
+    r.add_argument("--allow-judge-change", action="store_true",
+                   help="--runs: let --judge-model / $BG3AI_JUDGE_MODEL differ from series.json (recorded)")
     r.add_argument("--allow-version-drift", action="store_true",
                    help="--runs: play a run although the game build, bg3le, the mod or the repo differ from the "
                         "series' first run (series.json pins); the drift is recorded")
@@ -3807,9 +3925,16 @@ def main(argv: list[str] | None = None) -> int:
     rs.add_argument("--playthrough", required=True, help="the series (run --runs) or playthrough (run --until)")
     rs.add_argument("--failures", action="store_true", help="also list every run's failures")
     sub.add_parser("scenarios", help="list scenarios/*.json: ready, or needs a start save")
+    j = sub.add_parser("judge", help="(re-)score runs' in-character decisions into their runs.jsonl records")
+    j.add_argument("--playthrough", required=True, help="the series (run --runs) or playthrough (run --until)")
+    j.add_argument("--run", type=int, help="this run only (default: every run without a persona score)")
+    j.add_argument("--all", action="store_true", help="re-judge every run, scored ones too")
+    j.add_argument("--judge-model", help="default: series.json's, else $BG3AI_JUDGE_MODEL or " + judge.DEFAULT_MODEL)
+    j.add_argument("--allow-judge-change", action="store_true", help="judge with another model than series.json's")
+    j.add_argument("--timeout", type=float, default=JUDGE_TIMEOUT_S, help="seconds per run (default %(default)s)")
     a = ap.parse_args(argv)
     return {"run": cmd_run, "status": cmd_status, "stop": cmd_stop, "runs": cmd_runs,
-            "scenarios": cmd_scenarios}[a.cmd](a)
+            "scenarios": cmd_scenarios, "judge": cmd_judge}[a.cmd](a)
 
 
 if __name__ == "__main__":

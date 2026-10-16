@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Unit tests for the benchmark fields of runner/runs.py and their play.py wiring: version pins and the series'
 drift refusal, the cost/token caps, the run metrics (time to the milestone, deaths, fairness flags, latency, story
-points) and the series summary. Never launches claude or the game.
+points), the series summary, and the persona judge / model time in the run record (a fake judge client: a python
+one-liner in place of `claude -p`). Never launches claude or the game.
 
     python3 -m unittest runner/test_runs.py
 """
@@ -16,11 +17,13 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import play as P  # noqa: E402
 import runs as R  # noqa: E402
 from test_play import _res, _stream, _use  # noqa: E402
+import test_judge as TJ  # noqa: E402  (its stream builders and CHARACTER.md fixture)
 
 
 def _git(answers: dict):
@@ -373,6 +376,257 @@ class Wiring(TmpDir):
             self.assertEqual(P.main(["runs", "--playthrough", "naut"]), 0)
         self.assertIn("series: n=3, reached 2/3", buf.getvalue())
         self.assertIn("to milestone min", buf.getvalue())
+
+
+# ======================================================================== persona judge + model time in the record
+
+REAL_CLAUDE_CLI = P.judge.ClaudeCLI   # its output parser; the tests patch judge.ClaudeCLI with FakeJudgeCLI
+
+
+class FakeJudgeCLI:
+    """A judge client in judge.ClaudeCLI's shape whose command is a python one-liner printing a `claude -p
+    --output-format json` result: the verdict, a cost, optionally after a sleep or as an error. Counts its calls."""
+
+    def __init__(self, model="judge-x", verdict=None, cost=0.02, sleep=0.0, fail=False, log: Path | None = None):
+        self.model, self.verdict, self.cost, self.sleep, self.fail, self.log = model, verdict, cost, sleep, fail, log
+
+    def command(self) -> list[str]:
+        out = json.dumps({"type": "result", "is_error": self.fail, "total_cost_usd": self.cost,
+                          "result": "boom" if self.fail else self.verdict})
+        return [sys.executable, "-c", f"import sys, time; p = sys.stdin.read(); time.sleep({self.sleep}); "
+                f"open({str(self.log)!r}, 'a').write('call\\n') if {self.log is not None} else None; "
+                f"print({out!r})"]
+
+    def parse(self, stdout: str):
+        return REAL_CLAUDE_CLI.parse(self, stdout)
+
+
+class Judging(TmpDir):
+    T0 = 1_000_000.0
+    VERDICT = TJ._verdict(7.5, {1: 7.5})
+
+    def setUp(self):
+        super().setUp()
+        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "PLAYTHROUGHS", "read_actions_since")}
+        self.addCleanup(lambda: [setattr(P, n, v) for n, v in self.saved.items()])
+        P.RUNTIME, P.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
+        P.read_actions_since = lambda t, path=None: []
+        for name, value in (("PLAYTHROUGHS", P.PLAYTHROUGHS), ("DEFAULT_MODEL", "judge-x")):
+            patcher = mock.patch.object(P.judge, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.calls = self.tmp / "judge-calls.log"
+        (P.PLAYTHROUGHS / "naut" / "memory").mkdir(parents=True)
+        (P.PLAYTHROUGHS / "naut" / "memory" / "CHARACTER.md").write_text(TJ.CHARACTER)
+        self.dir = P.RUNTIME / "sessions" / "naut"
+        self.dir.mkdir(parents=True)
+
+    def play(self, t0: float) -> None:
+        """S001 in naut: one in-character choice inside a run started at t0."""
+        TJ._write(self.dir, "S001", [
+            TJ._use("b", "dialogue_advance", {}), TJ._res("b", TJ.LAEZEL),
+            TJ._say("Asking for her plan, like a sergeant would."),
+            TJ._use("c", "choose_dialogue", {"option": 2}), TJ._res("c", "conversation ended"),
+        ], {"b": t0 + 2, "c": t0 + 3})
+
+    def fake(self, **kw):
+        kw.setdefault("verdict", self.VERDICT)
+        return mock.patch.object(P.judge, "ClaudeCLI", lambda model: FakeJudgeCLI(model, log=self.calls, **kw))
+
+    def runner(self, **kw) -> P.Runner:
+        return P.Runner(P.Options("naut", None, 20, "opus", save_owner="Claude", until="nautiloid_escaped",
+                                  series="naut", **{"run_index": 1, **kw}))
+
+    def n_calls(self) -> int:
+        return len(self.calls.read_text().splitlines()) if self.calls.exists() else 0
+
+    # ---------------------------------------------------------------- runs.py
+
+    def test_update_record_in_place(self):
+        path = self.tmp / "runs.jsonl"
+        recs = [{"run": 1, "playthrough": "naut", "started": 1.0}, {"run": 2, "playthrough": "naut-r2", "started": 2.0}]
+        path.write_text(json.dumps(recs[0]) + "\nnot json\n" + json.dumps(recs[1]) + "\n")
+        self.assertTrue(R.update_record(path, recs[1], {"persona": {"score": 5}}))
+        lines = path.read_text().splitlines()
+        self.assertEqual(lines[:2], [json.dumps(recs[0]), "not json"])                # the rest byte for byte
+        self.assertEqual(json.loads(lines[2]), {**recs[1], "persona": {"score": 5}})
+        self.assertFalse(R.update_record(path, {"run": 3, "playthrough": "naut-r3", "started": 3.0}, {"x": 1}))
+        self.assertFalse(R.update_record(self.tmp / "missing.jsonl", recs[0], {"x": 1}))
+        self.assertFalse((self.tmp / "runs.jsonl.tmp").exists())
+
+    def test_series_judge_model(self):
+        self.assertEqual(R.series_judge_model(None, None, "d", False), ("d", None, None))      # first run: default
+        self.assertEqual(R.series_judge_model(None, "j1", "d", False), ("j1", None, None))
+        self.assertEqual(R.series_judge_model("j1", None, "d", False), ("j1", None, None))     # frozen rules
+        self.assertEqual(R.series_judge_model("j1", "j1", "d", False), ("j1", None, None))
+        model, err, change = R.series_judge_model("j1", "j2", "d", False)
+        self.assertIn("--allow-judge-change", err)
+        self.assertEqual(change, "judge_model: j1 → j2")
+        self.assertEqual(R.series_judge_model("j1", "j2", "d", True), ("j2", None, "judge_model: j1 → j2"))
+
+    def test_table_and_summary_show_persona_and_model_time(self):
+        recs = [dict(Summary.RECS[0], persona={"status": "ok", "score": 8.0, "judge_model": "j", "cost_usd": 0.1},
+                     model_time={"adjusted_model_s": 300.0, "model_s": 400.0}),
+                dict(Summary.RECS[1], persona={"status": "judge_failed", "judge_model": "j", "cost_usd": 0.05},
+                     model_time={"adjusted_model_s": 420.0}),
+                dict(Summary.RECS[2], persona={"status": "ok", "score": 6.0, "judge_model": "k", "cost_usd": 0.1})]
+        lines = R.runs_table(recs).splitlines()
+        self.assertIn("persona  adj model min", lines[0])
+        cells = [ln.split() for ln in lines[2:5]]
+        self.assertEqual((cells[0][13:15], cells[1][13:15]), (["8", "5.0"], ["fail", "7.0"]))
+        self.assertIn("6  ", lines[4][lines[0].index("persona"):])
+        self.assertIn("-", lines[4][lines[0].index("adj model min"):].split()[0])
+        self.assertEqual(R.persona_cell({}), "-")
+        out = R.series_summary(recs)
+        row = {ln.split("  ")[0]: ln.split() for ln in out.splitlines()[3:11]}
+        self.assertEqual(row["persona score"][-5:], ["2", "6.0", "8.0", "7.0", "1.4"])          # failed: not a score
+        self.assertEqual(row["adj model min"][-5:], ["2", "5.0", "7.0", "6.0", "1.4"])
+        self.assertEqual(row["judge $"][-5:-3], ["3", "0.05"])
+        self.assertIn("judge models differ between runs (scores don't compare): j | k", out)
+
+    def test_model_time_field_drops_the_constant_lists(self):
+        mt = R.model_time_field({"sessions": 1, "model_s": 3.0, "measured": ["a"], "estimated": ["b"],
+                                 "not_separable": ["c"]})
+        self.assertEqual(mt, {"sessions": 1, "model_s": 3.0})
+
+    # ---------------------------------------------------------------- the runner
+
+    def test_the_record_gets_persona_and_model_time_after_it_is_written(self):
+        t0 = time.time() - 60
+        self.play(t0)
+        r = self.runner(judge=True, judge_model="judge-x")
+        r.begin_run(t0)
+        with self.fake(cost=0.03):
+            rec = r.write_run_record(t0, "timeout", "time cap used up")
+        on_disk = R.series_records(self.dir / "runs.jsonl", "naut")
+        self.assertEqual(len(on_disk), 1)
+        self.assertEqual(on_disk[0], rec)
+        p = rec["persona"]
+        self.assertEqual((p["status"], p["score"], p["judge_model"], p["decisions"], p["cost_usd"]),
+                         ("ok", 7.5, "judge-x", 1, 0.03))
+        self.assertEqual(rec["cost_usd"], 0)                       # the judge's cost is not the run's (capped) cost
+        self.assertIn("model_time", rec)
+        self.assertNotIn("measured", rec["model_time"])
+        self.assertEqual(self.n_calls(), 1)
+
+    def test_judge_off_and_judge_failure_never_fail_the_run(self):
+        t0 = time.time() - 60
+        self.play(t0)
+        r = self.runner()                                          # judge off (a single run's default)
+        r.begin_run(t0)
+        with self.fake():
+            rec = r.write_run_record(t0, "reached")
+        self.assertNotIn("persona", rec)
+        self.assertIn("model_time", rec)
+        self.assertEqual(self.n_calls(), 0)
+        r = self.runner(judge=True, judge_model="judge-x", run_index=2)
+        r.begin_run(t0)
+        with self.fake(fail=True, cost=0.01):
+            rec = r.write_run_record(t0, "reached")
+        self.assertEqual(rec["persona"]["status"], "judge_failed")
+        self.assertIn("boom", rec["persona"]["error"])
+        self.assertEqual(rec["persona"]["cost_usd"], 0.0)           # judge.py: an is_error answer's cost is lost
+        self.assertEqual(R.series_records(self.dir / "runs.jsonl", "naut")[-1]["persona"], rec["persona"])
+        with mock.patch.object(P.judge, "judge_run", side_effect=RuntimeError("bug")):
+            p = P.judge_record(self.dir, rec, "judge-x")
+        self.assertEqual((p["status"], p["error"]), ("judge_failed", "RuntimeError: bug"))
+
+    def test_the_judge_has_an_overall_timeout(self):
+        t0 = time.time() - 60
+        self.play(t0)
+        rec = {"playthrough": "naut", "started": t0, "t": time.time(), "model": "opus"}
+        t = time.time()
+        with self.fake(sleep=5):
+            p = P.judge_record(self.dir, rec, "judge-x", timeout=1.5)
+        self.assertLess(time.time() - t, 4)
+        self.assertEqual(p["status"], "judge_failed")
+        self.assertIn("timed out", p["error"])
+        with self.fake():
+            p = P.judge_record(self.dir, rec, "judge-x", stop=lambda: True)
+        self.assertIn("interrupted", p["error"])
+        self.assertEqual(self.n_calls(), 0)
+
+    # ---------------------------------------------------------------- the CLI
+
+    def cli(self, *args) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = P.main(list(args))
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_play_judge_rejudges_a_record_in_place(self):
+        t0 = time.time() - 600
+        self.play(t0)
+        old = [{"series": "naut", "run": 1, "playthrough": "naut", "started": round(t0, 1), "t": round(t0 + 60, 1),
+                "model": "opus", "cost_usd": 4.0},
+               {"series": "naut", "run": 2, "playthrough": "naut-r2", "started": round(t0 + 100, 1),
+                "t": round(t0 + 160, 1), "model": "opus", "cost_usd": 4.0}]
+        (self.dir / "runs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in old))
+        (self.dir / "series.json").write_text(json.dumps({"series": "naut", "profile": {}}))
+        with self.fake():
+            rc, out, err = self.cli("judge", "--playthrough", "naut", "--run", "1")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("run 1 (naut): score 7.5/10 by judge-x on 1 decision(s), $0.02", out)
+        recs = R.series_records(self.dir / "runs.jsonl", "naut")
+        self.assertEqual((recs[0]["persona"]["score"], recs[0]["cost_usd"]), (7.5, 4.0))
+        self.assertIn("model_time", recs[0])
+        self.assertNotIn("persona", recs[1])
+        self.assertEqual(P.series_meta("naut")["judge_model"], "judge-x")          # frozen from now on
+        # no --run: only the runs without a score; another judge model is refused
+        with self.fake():
+            rc, out, _ = self.cli("judge", "--playthrough", "naut")
+        self.assertEqual(rc, 1)                                                     # run 2: no CHARACTER.md
+        self.assertNotIn("run 1", out)
+        self.assertIn("run 2 (naut-r2): no_character", out)
+        with self.fake():
+            rc, _, err = self.cli("judge", "--playthrough", "naut", "--run", "1", "--judge-model", "other")
+        self.assertEqual(rc, 2)
+        self.assertIn("judge_model: judge-x → other", err)
+        self.assertEqual(self.cli("judge", "--playthrough", "naut", "--run", "9")[0], 1)
+        rc, out, _ = self.cli("runs", "--playthrough", "naut")
+        self.assertIn("persona score", out)
+        self.assertEqual(self.n_calls(), 1)
+
+    def test_run_flags(self):
+        calls = []
+        patches = [mock.patch.object(P, "acquire_lock", lambda: None), mock.patch.object(P, "current_pins", dict),
+                   mock.patch.object(P, "run_series", lambda *a: calls.append(a) or 0),
+                   mock.patch.object(P, "Runner", lambda opt: mock.Mock(run=lambda: calls.append((opt,)) or 0)),
+                   mock.patch("bg3ai.skipper.start_background", return_value=None),
+                   mock.patch.object(P.ramwatch, "start_background", return_value=None),
+                   mock.patch.object(P.signal, "signal"), mock.patch.dict(P.os.environ, {}, clear=False)]
+        for pt in patches:
+            pt.start()
+            self.addCleanup(pt.stop)
+        P.os.environ.pop("BG3AI_JUDGE_MODEL", None)
+        series = ("run", "--playthrough", "naut", "--until", "nautiloid_escaped", "--runs", "3")
+        self.assertEqual(self.cli(*series)[0], 0)
+        self.assertEqual((calls[-1][0].judge, calls[-1][0].judge_model), (True, "judge-x"))   # on for a series
+        self.assertEqual(self.cli(*series, "--no-judge")[0], 0)
+        self.assertEqual((calls[-1][0].judge, calls[-1][0].judge_model), (False, None))
+        self.assertEqual(self.cli("run", "--playthrough", "x", "--until", "nautiloid_escaped")[0], 0)
+        self.assertFalse(calls[-1][0].judge)                                                 # off for one run
+        self.assertEqual(self.cli("run", "--playthrough", "x", "--until", "nautiloid_escaped", "--judge",
+                                  "--judge-model", "j2")[0], 0)
+        self.assertEqual((calls[-1][0].judge, calls[-1][0].judge_model), (True, "j2"))
+        n = len(calls)
+        for args, want in ((("run", "--playthrough", "x", "--judge"), "needs --until"),
+                           ((*series, "--judge-model", "claude-opus-5-5"), "is the model under test")):
+            rc, _, err = self.cli(*args)
+            self.assertEqual(rc, 2, args)
+            self.assertIn(want, err)
+        # a series' judge model is frozen like its caps
+        P.freeze_series("naut", 3, "nautiloid_escaped", {}, judge_model="judge-x")
+        rc, _, err = self.cli(*series, "--judge-model", "j2")
+        self.assertEqual(rc, 2)
+        self.assertIn("judge_model: judge-x → j2", err)
+        with mock.patch.dict(P.os.environ, {"BG3AI_JUDGE_MODEL": "j3"}):
+            self.assertIn("judge_model: judge-x → j3", self.cli(*series)[2])
+        self.assertEqual(len(calls), n)
+        self.assertEqual(self.cli(*series, "--judge-model", "j2", "--allow-judge-change")[0], 0)
+        self.assertEqual((calls[-1][0].judge_model, calls[-1][0].judge_change), ("j2", "judge_model: judge-x → j2"))
+        P.freeze_series("naut", 3, "nautiloid_escaped", {}, judge_model="other")
+        self.assertEqual(P.series_meta("naut")["judge_model"], "judge-x")                  # written once
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ a run with any of them is not clean.
 
 Benchmark comparability: every run record carries its version pins (game build, bg3le, mod, repo) and caps (time,
 cost, tokens); a series freezes both in series.json from its first run (play.py refuses a drifted later run unless
---allow-version-drift / --allow-cap-change).
+--allow-version-drift / --allow-cap-change), and the persona judge's model with them (--allow-judge-change).
 """
 from __future__ import annotations
 
@@ -96,6 +96,38 @@ def series_records(path: Path, base: str) -> list[dict]:
         if isinstance(r, dict) and r.get("series", r.get("playthrough")) == base:
             out.append(r)
     return out
+
+
+def same_record(a: dict, b: dict) -> bool:
+    """The same run: same playthrough, run number and start time (a record's identity in runs.jsonl)."""
+    return all(a.get(k) == b.get(k) for k in ("playthrough", "run", "started"))
+
+
+def update_record(path: Path, record: dict, fields: dict) -> bool:
+    """Merge fields into the runs.jsonl line of `record` (same_record), in place: the other lines stay byte for
+    byte, the file is replaced atomically. False when the record isn't there or the file can't be written."""
+    try:
+        lines = path.read_text().splitlines(keepends=True)
+    except OSError:
+        return False
+    hit = False
+    for i, ln in enumerate(lines):
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        if isinstance(r, dict) and not hit and same_record(r, record):
+            lines[i] = json.dumps({**r, **fields}) + "\n"
+            hit = True
+    if not hit:
+        return False
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text("".join(lines))
+        tmp.replace(path)
+    except OSError:
+        return False
+    return True
 
 
 def next_run_index(records: list[dict]) -> int:
@@ -521,6 +553,27 @@ def series_caps(frozen: dict | None, cli: dict, allow_change: bool) -> tuple[dic
     return caps, None, changes
 
 
+def series_judge_model(frozen: str | None, wanted: str | None, default: str,
+                       allow_change: bool) -> tuple[str, str | None, str | None]:
+    """(judge model for this run, error, change): like series_caps for the persona judge. wanted: --judge-model or
+    $BG3AI_JUDGE_MODEL (None: neither set, the frozen one or the default). Scores by another judge don't compare."""
+    if frozen is None or wanted is None or wanted == frozen:
+        return frozen or wanted or default, None, None
+    change = f"judge_model: {frozen} → {wanted}"
+    if not allow_change:
+        return wanted, (f"the series' judge model is fixed in series.json ({change}): drop --judge-model / "
+                        "BG3AI_JUDGE_MODEL, or pass --allow-judge-change to record the change"), change
+    return wanted, None, change
+
+
+MODEL_TIME_DOCS = ("measured", "estimated", "not_separable")   # model_time's constant field lists: not per record
+
+
+def model_time_field(mt: dict) -> dict:
+    """The `model_time` of a run record: runner/model_time.model_time() without its constant documentation lists."""
+    return {k: v for k, v in (mt or {}).items() if k not in MODEL_TIME_DOCS}
+
+
 TOKEN_FIELDS = (("input", "input_tokens"), ("output", "output_tokens"), ("cache_read", "cache_read_input_tokens"),
                 ("cache_write", "cache_creation_input_tokens"))
 
@@ -762,7 +815,7 @@ def best_streak(records: list[dict]) -> int:
 def runs_table(records: list[dict]) -> str:
     """Plain-text table of a series' runs (play.py runs --playthrough <base>)."""
     head = ("run", "playthrough", "outcome", "clean", "wall min", "to M min", "sessions", "harness", "agent",
-            "unknown", "cost $", "tokens M", "idle med s", "top failures")
+            "unknown", "cost $", "tokens M", "idle med s", "persona", "adj model min", "top failures")
     rows = []
     for r in records:
         c = class_counts(r.get("failures"))
@@ -771,13 +824,14 @@ def runs_table(records: list[dict]) -> str:
             kinds[f"{f.get('kind')}({f.get('class', '?')[0]})"] += int(f.get("n") or 1)
         top = ", ".join(f"{k}×{n}" if n > 1 else k for k, n in kinds.most_common(4))
         outcome = r.get("outcome") or ("reached" if r.get("milestone") else "?")
-        ttm, idle = record_ttm(r), record_idle(r)
+        ttm, idle, adj = record_ttm(r), record_idle(r), record_adjusted_model_s(r)
         outcome += f" ({r['cap']})" if r.get("cap") and outcome != "timeout" else ""
         rows.append((str(r.get("run") or 1), str(r.get("playthrough") or ""), outcome,
                      "yes" if r.get("clean") else "no", f"{r.get('wall_min', 0):g}",
                      "-" if ttm is None else f"{ttm / 60:.1f}", str(r.get("sessions", "")),
                      str(c[HARNESS]), str(c[AGENT]), str(c[UNKNOWN]), f"{r.get('cost_usd', 0):.2f}",
-                     f"{token_total(r.get('tokens')) / 1e6:.2f}", "-" if idle is None else f"{idle:g}", top))
+                     f"{token_total(r.get('tokens')) / 1e6:.2f}", "-" if idle is None else f"{idle:g}",
+                     persona_cell(r), "-" if adj is None else f"{adj / 60:.1f}", top))
     widths = [max(len(x) for x in col) for col in zip(head, *rows)] if rows else [len(h) for h in head]
     lines = ["  ".join(v.ljust(w) for v, w in zip(row, widths)).rstrip() for row in [head, *rows]]
     lines.insert(1, "  ".join("-" * w for w in widths))
@@ -801,6 +855,28 @@ def record_idle(r: dict) -> float | None:
     return ((r.get("latency") or {}).get("idle_median_s"))
 
 
+PERSONA_SHORT = {"judge_failed": "fail", "no_decisions": "n/d", "no_character": "n/c"}
+
+
+def record_persona(r: dict) -> float | None:
+    """The persona judge's 0-10 score of a record (None: not judged, or the judge didn't score it)."""
+    p = r.get("persona") or {}
+    return p.get("score") if p.get("status") == "ok" else None
+
+
+def persona_cell(r: dict) -> str:
+    p = r.get("persona")
+    if not p:
+        return "-"
+    score = record_persona(r)
+    return f"{score:g}" if score is not None else PERSONA_SHORT.get(p.get("status"), str(p.get("status") or "?"))
+
+
+def record_adjusted_model_s(r: dict) -> float | None:
+    """The run's model time normalised to the reference API speed (model_time.adjusted_model_s)."""
+    return (r.get("model_time") or {}).get("adjusted_model_s")
+
+
 def stats(values: list) -> dict | None:
     """{n, min, max, mean, stddev (sample; 0 for one value)} of the non-None values, or None."""
     v = [float(x) for x in values if x is not None]
@@ -816,12 +892,17 @@ SUMMARY_METRICS = (   # (label, value of a record, format)
     ("cost $", lambda r: r.get("cost_usd"), "{:.2f}"),
     ("tokens M", lambda r: token_total(r.get("tokens")) / 1e6 if r.get("tokens") else None, "{:.2f}"),
     ("idle median s", record_idle, "{:.2f}"),
+    ("persona score", record_persona, "{:.1f}"),
+    ("adj model min", lambda r: None if record_adjusted_model_s(r) is None else record_adjusted_model_s(r) / 60,
+     "{:.1f}"),
+    ("judge $", lambda r: (r.get("persona") or {}).get("cost_usd"), "{:.2f}"),
 )
 
 
 def series_summary(records: list[dict]) -> str:
     """The series in numbers (play.py runs): n, reached, and min/max/mean/stddev of wall time, time to the
-    milestone (reached runs only), cost, tokens and the idle-gap median; the pins and caps when they vary."""
+    milestone (reached runs only), cost, tokens, the idle-gap median, the persona score, the API-adjusted model
+    time and the judge's cost (apart from the run's); the pins, caps and judge models when they vary."""
     reached = sum(1 for r in records if (r.get("outcome") or ("reached" if r.get("milestone") else "")) == "reached")
     lines = [f"series: n={len(records)}, reached {reached}/{len(records)}"]
     head = ("metric", "n", "min", "max", "mean", "stddev")
@@ -839,6 +920,9 @@ def series_summary(records: list[dict]) -> str:
     caps = {json.dumps(r.get("caps"), sort_keys=True) for r in records if r.get("caps")}
     if len(caps) > 1:
         lines += ["caps differ between runs: " + " | ".join(sorted(caps))]
+    judges = {(r.get("persona") or {}).get("judge_model") for r in records} - {None}
+    if len(judges) > 1:
+        lines += ["judge models differ between runs (scores don't compare): " + " | ".join(sorted(judges))]
     return "\n".join(lines)
 
 
