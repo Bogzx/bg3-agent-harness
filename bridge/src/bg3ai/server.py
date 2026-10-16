@@ -21,7 +21,7 @@ from typing import Any, Callable
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, delta, economy, leveling, macros, metrics, party, render, saver, saves, turn
-from . import companions, debrief, lessons, longnav, lore, memtools, naming, navhints
+from . import companions, debrief, lessons, longnav, lore, memtools, naming, navhints, rules
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -50,7 +50,9 @@ memory_edit, memory_append; note appends to the session log). knowledge/ holds r
 playbooks. Session: if your first message doesn't show your memory briefing, call session_start first; at the end
 of the wrap-up call end_session and end your turn only when it reports the commit."""
 
-mcp = MCPServer("bg3", instructions=INSTRUCTIONS)
+# play/CLAUDE.md for clients other than Claude Code (rules.py): in `instructions` and on the first briefing.
+RULES = rules.Once(rules.load(Path(os.environ.get("BG3AI_RULES_PATH") or PLAY_DIR / "CLAUDE.md")))
+mcp = MCPServer("bg3", instructions=rules.instructions(INSTRUCTIONS, RULES.rules))
 SANDBOX = memtools.Sandbox(lambda: MEMORY, lambda: KNOWLEDGE)  # memory/ + read-only knowledge/ (memtools.py)
 LIFE = memtools.Lifecycle(lambda: MEMORY)  # opens/ends the memory session without client hooks
 game = Game(port=int(os.environ.get("BG3LE_DEBUG_PORT", "9998")))
@@ -695,6 +697,9 @@ def _guard(fn):
             LIFE.ensure()  # manual mode: the first call opens the memory session (was the SessionStart hook)
         except Exception as e:  # noqa: BLE001 - a memory problem never blocks a game tool
             _log("session_start", {}, f"session not opened: {type(e).__name__}: {e}", 0)
+        refused = rules.stop_refusal(fn.__name__, DEADLINE, _READ_TOOLS)  # deadline + grace: for any client
+        if refused:
+            return _finish(fn.__name__, kw, refused, t0, events=False)
         getattr(game, "begin_tool", lambda: None)()
         gated = fn.__name__ not in _SAVE_UNGATED
         if gated:
@@ -702,7 +707,7 @@ def _guard(fn):
         try:
             out = fn(*a, **kw)
             if LIFE.pending and isinstance(out, str):  # the briefing rides on the first text result
-                out = LIFE.take_pending() + "\n\n=== the result of your call ===\n" + out
+                out = RULES.wrap(LIFE.take_pending(), _session_key()) + "\n\n=== the result of your call ===\n" + out
             return out
         except memtools.Refused as e:
             return _finish(fn.__name__, kw, str(e), t0, events=False)
@@ -3767,10 +3772,31 @@ def memory_append(path: str, text: str) -> str:
 
 @mcp.tool()
 @_guard
-def session_start() -> str:
-    """Your memory briefing for this session: the session log it opened, CHARACTER.md, PLAYTHROUGH.md, HANDOFF.md, the last game state and harness notes. Call it first if your first message doesn't already show it, and again after your context was compacted."""
+def session_start(rules: bool = False) -> str:
+    """Your memory briefing for this session: the session log it opened, CHARACTER.md, PLAYTHROUGH.md, HANDOFF.md, the last game state and harness notes. Call it first if your first message doesn't already show it, and again after your context was compacted. The first call of a session also starts with the rules of play; rules=true shows them again."""
     t0 = time.monotonic()
-    return _mem_finish("session_start", {}, LIFE.briefing(), t0)
+    briefing = LIFE.briefing()  # opens the session in manual mode: the key after it
+    return _mem_finish("session_start", {"rules": rules}, RULES.wrap(briefing, _session_key(), force=rules), t0)
+
+
+def _session_key() -> str:
+    """The memory session the rules were last served for (rules.Once)."""
+    try:
+        return os.environ.get("BG3AI_SESSION") or str(memtools.M.load_state(MEMORY).get("current") or "")
+    except (OSError, ValueError):
+        return ""
+
+
+@mcp.prompt(name="rules", title="Rules of play", description="How to play through this server: play/CLAUDE.md, "
+            "the rules Claude Code loads by itself (also in the instructions and the first session_start).")
+def rules_prompt() -> str:
+    return RULES.rules or "No rules file found (play/CLAUDE.md, $BG3AI_RULES_PATH)."
+
+
+@mcp.resource(rules.URI, name="rules", title="Rules of play", mime_type="text/markdown",
+              description="play/CLAUDE.md as served to MCP clients.")
+def rules_resource() -> str:
+    return rules_prompt()
 
 
 @mcp.tool()

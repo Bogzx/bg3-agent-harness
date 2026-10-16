@@ -74,6 +74,37 @@ play model (`--keeper-model same`).
 The 2026-10-13 change moved memory, the sandbox, session start/end and the pace guard from Claude Code hooks into
 the MCP server, so those now work the same for any client. The text above did not change.
 
+## How another client gets the rules (2026-10-16)
+
+Claude Code reads play/CLAUDE.md itself. Any other MCP client gets the same file from the server
+(`bridge/src/bg3ai/rules.py`): appended to the `instructions` of the initialize result, prepended to the first
+briefing of each session (`session_start`, or the first tool result in manual mode, for a client that ignores
+`instructions`), and as the `rules` prompt and the `bg3://rules` resource. `session_start(rules=true)` shows them
+again (after a context compaction). `$BG3AI_RULES_PATH` overrides the file; `BG3AI_SERVE_RULES=0` (set for Claude
+Code, which already has the file) turns off the instructions and briefing copies.
+
+The server also stops the session for any client: after the deadline + `$BG3AI_STOP_GRACE_S` (default 5 min;
+the runner's hard stop is at + 10 min), every tool except reads, memory tools, `note`, `save_game`, `list_saves`
+and the session tools is refused with "call end_session now".
+
+**Rewritten at serve time** (`rules.ADAPT`; a test fails when play/CLAUDE.md stops matching):
+- the tool-names paragraph: the `mcp__bg3__` prefix, "a call to the bare name fails", which tools are loaded up
+  front, and ToolSearch. Served as: the bare names, "your client may show them with a prefix", call them directly.
+
+**Served as written, still Claude-Code-flavoured** (harmless or roughly true for other clients; candidates for the
+rules/coaching split above):
+- "End your turn once it reports the commit", "if you end your turn anyway": Claude Code's turn model. For a
+  client without turns it means "stop calling tools".
+- "your first message starts with the memory briefing": true only under the runner's kickoff; elsewhere the
+  first `session_start` (or first tool result) carries it.
+- "the runner" in the clock and stop text, and the SESSION CLOCK reminder (was a Claude Code hook; now the clock
+  line in results).
+- "You have no shell, no web access and no file tools": true in the runner's Claude Code config; for another client
+  it is a rule to follow, and only the container recipe (`tools/container/`) enforces it.
+- "context compaction": Claude Code's name for it; other clients may truncate or summarise differently.
+- The session anecdotes (S001, S005, S009, S023–S026 …) stay in the served text, so other models read Claude's
+  history as their own (see above).
+
 ## What a fair cross-model benchmark should do
 
 1. **Freeze the harness.** Tag one version of the code and every agent-facing text before measuring. No fixes

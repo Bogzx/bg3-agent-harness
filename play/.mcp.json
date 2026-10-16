@@ -4,7 +4,7 @@
       "type": "stdio",
       "command": "uv",
       "args": ["run", "--project", "../bridge", "bg3ai-mcp"],
-      "env": {},
+      "env": {"BG3AI_SERVE_RULES": "0"},
       "timeout": 110000
     }
   }

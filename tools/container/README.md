@@ -31,6 +31,11 @@ HTTP server can serve session after session.
 
 ## A real agent client
 
+The client needs no files from the repo: the server serves the rules of play (play/CLAUDE.md) in its MCP
+`instructions`, at the top of the first `session_start` of each session, and as the `rules` prompt and the
+`bg3://rules` resource. With `BG3AI_SESSION_DEADLINE` set, it also refuses game actions 5 minutes after the
+deadline (`BG3AI_STOP_GRACE_S`) and tells the agent to call `end_session` (docs/BENCHMARK-BIAS.md).
+
 Put the agent in the same image (or one like it) and point its MCP config at `http://172.30.99.1:8770/mcp`
 (streamable HTTP). The model API is outside the internal network: give the container a second network to an
 egress proxy that allows only the API host (not part of this recipe). Without it the client can talk to nothing but
