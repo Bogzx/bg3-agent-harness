@@ -1,0 +1,27 @@
+{
+ "name": "act2_last_light",
+ "title": "Act 2 entry → Last Light Inn",
+ "about": "Act 2 opening: from the edge of the Shadow-Cursed Lands to the Last Light Inn (Jaheira's Harpers, the only light in the curse).",
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "note": {
+   "where": "Shadow-Cursed Lands, Ruined Battlefield, just arrived from the mountain pass, out of combat, no dialogue open.",
+   "objective": "Travel to Moonrise Towers.",
+   "party": ["Claude (Paladin)", "Karlach (Barbarian)", "Shadowheart (Cleric)", "Gale (Wizard)"],
+   "journal": ["Find a Cure", "Travel to Moonrise Towers", "Daughter of Darkness", "The Wizard of Waterdeep", "The Blade of Frontiers", "Our Fiery Friend", "The Hellion's Heart", "Rescue the Grand Duke", "Rescue Volo", "Discover the Artefact's Secrets"]
+  }
+ },
+ "until": "last_light",
+ "runs": 3,
+ "caps": {"run_hours": 2, "max_cost": 50, "max_tokens": null},
+ "profile": {
+  "character": {
+   "name": "Claude",
+   "brief": "Claude, the start save's Oath of Devotion paladin: honest, protects the innocent, keeps their word; the oath's tenets are hard rules.",
+   "roleplay": "strict"
+  },
+  "difficulty": "Explorer"
+ }
+}

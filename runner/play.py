@@ -73,6 +73,7 @@ DEBUG_HOST = "127.0.0.1"
 DEBUG_PORT = int(os.environ.get("BG3LE_DEBUG_PORT", "9998"))
 SAVE_PREFIX = os.environ.get("BG3AI_SAVE_PREFIX", "")
 MEMORY_TEMPLATE = REPO / "memory-template"
+SCENARIOS = Path(os.environ.get("BG3AI_SCENARIOS", REPO / "scenarios"))   # scenarios/<name>.json (run --scenario)
 KNOWLEDGE_DIR = PLAY_DIR / "knowledge"   # agent-writable outside playbooks/ (FAIR-2): snapshot + restore per --runs run
 # The mod's Ext.IO files (nav_guard.json: the per-level navigation kill list; nav_<host uuid>.json: breadcrumb mirrors)
 SE_BG3AI_DIR = Path(os.environ.get(
@@ -812,6 +813,26 @@ def character_creation_note(profile: dict, name: str | None) -> str:
     return "\n".join(lines)
 
 
+def scenario_start_note(scenario: str | None, profile: dict, loaded: str | None) -> str:
+    """The first session of a scenario run that starts from a save: no new game, the character is the save's."""
+    c = profile.get("character") or {}
+    lines = [
+        f"RUNNER NOTE: SCENARIO START ({scenario}). This run starts mid-game from a fixed save, not a new game: the "
+        f"runner loaded \"{loaded or 'the start save'}\". The character"
+        + (f" ({c['name']})" if c.get("name") else "") + " is the save's: name, race, class, level, party, gear and "
+        "journal are what the game shows. Your memory is new; HANDOFF.md holds the harness's short start note. "
+        "Before playing on: get_status and get_party, then write memory/CHARACTER.md (the format in "
+        "knowledge/playbooks/character-creation.md; header lines from the game) with the persona from the brief "
+        "below, the party in party-build.md and the Character line in PLAYTHROUGH.md. Never start a new game.",
+    ]
+    if c.get("brief"):
+        lines.append("Character brief (the operator's words):\n> " + c["brief"].strip().replace("\n", "\n> "))
+    if c.get("constraints"):
+        lines.append(f"Constraints: {c['constraints']}")
+    lines.append(ROLEPLAY_TEXT[c.get("roleplay") if c.get("roleplay") in ROLEPLAY_TEXT else "strict"])
+    return "\n".join(lines)
+
+
 def fix_notes_prompt(lint_report: str) -> str:
     return ("The session is over, but `session.py end` refused to commit your memory because lint "
             "failed. Do NOT play or touch the game. Only fix the memory files so lint passes (memory_read, "
@@ -1499,6 +1520,8 @@ class Options:
     pins: dict | None = None           # version pins this run plays with (runs.version_pins), recorded in runs.jsonl
     version_drift: list | None = None  # --allow-version-drift: the pins that differ from the series' first run
     cap_changes: list | None = None    # --allow-cap-change: the caps that differ from series.json
+    scenario: str | None = None        # run --scenario NAME: scenarios/<name>.json (frozen in series.json)
+    start_save: str | None = None      # its start save folder: loaded for the first session, kept out of saves_after
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -1858,13 +1881,18 @@ class Runner:
         --runs run): a series reuses one character name, and run 2 must never load run 1's saves."""
         after = self.state["saves_after"]
         saves = list_saves()
-        return [s for s in saves if s.mtime >= after] if after else saves
+        return [s for s in saves if s.mtime >= after or s.folder == self.opt.start_save] if after else saves
+
+    def ours(self) -> set[str]:
+        """Save folders pick_save takes whatever their label: the runner's quicksaves and a scenario's start save
+        (older than every save of the run, so the agent's first save supersedes it)."""
+        return set(self.state["runner_saves"]) | ({self.opt.start_save} if self.opt.start_save else set())
 
     def choose_save(self) -> Save | None:
         handoff = self.mem / "HANDOFF.md"
         label = parse_handoff_save(handoff.read_text()) if handoff.exists() else None
         saves = self.own_saves()
-        save = pick_save(saves, label, self.state["save_owner"], set(self.state["runner_saves"]))
+        save = pick_save(saves, label, self.state["save_owner"], self.ours())
         blocked = set(self.state["oom_blocked"] or [])
         if save and save.folder in blocked:
             save = self.refuse_oom_save(save, saves, blocked)
@@ -1875,8 +1903,7 @@ class Runner:
     def refuse_oom_save(self, save: Save, saves: list[Save], blocked: set[str]) -> Save:
         """The newest save OOM-killed the game OOM_SAVE_LIMIT times in a row right after loading: load the newest
         other save of the playthrough (loudly), or stop the runner when there is none (a crash loop needs a human)."""
-        alt = pick_save([s for s in saves if s.folder not in blocked], None, self.state["save_owner"],
-                        set(self.state["runner_saves"]))
+        alt = pick_save([s for s in saves if s.folder not in blocked], None, self.state["save_owner"], self.ours())
         streak = self.state["oom_streak"] or {}
         why = streak.get("why", "OOM")
         if alt is None:
@@ -2045,7 +2072,7 @@ class Runner:
         saves = [s for s in self.own_saves() if s.folder not in failed]
         good = self.state["loaded_save"]
         hit = next((s for s in saves if s.folder == good), None)
-        return hit or pick_save(saves, None, self.state["save_owner"], set(self.state["runner_saves"]))
+        return hit or pick_save(saves, None, self.state["save_owner"], self.ours())
 
     def sleep(self, seconds: float) -> None:
         end = time.time() + seconds
@@ -2328,12 +2355,14 @@ class Runner:
         return cmd
 
     def save_env(self) -> dict:
-        """The MCP server's save identity and gates: BG3AI_SAVE_OWNER/PREFIX (save_identity) and BG3AI_SAVE_GATES."""
+        """The MCP server's save identity and gates: BG3AI_SAVE_OWNER/PREFIX (save_identity) and BG3AI_SAVE_GATES;
+        a --runs run's BG3AI_SAVES_AFTER, and a scenario's BG3AI_START_SAVE (older than the run, still its save)."""
         state = getattr(self, "state", None)
         owner, prefix = save_identity(self.opt.save_owner or (state["save_owner"] if state else None))
         after = state["saves_after"] if state else None   # a --runs run: the server's saves start at the run
         return {"BG3AI_SAVE_OWNER": owner, "BG3AI_SAVE_PREFIX": prefix, **gates_env(getattr(self, "gates", None)),
-                **({"BG3AI_SAVES_AFTER": str(int(after))} if after else {})}
+                **({"BG3AI_SAVES_AFTER": str(int(after))} if after else {}),
+                **({"BG3AI_START_SAVE": start} if (start := getattr(self.opt, "start_save", None)) else {})}
 
     def run_claude(self, sid: str, prompt: str, minutes: float, claude_session: str,
                    resume: bool = False, tag: str = "", needs_game: bool = True) -> SessionResult:
@@ -2654,6 +2683,8 @@ class Runner:
         rec.update(caps=self.caps(), pins=cur.get("pins") or self.opt.pins,
                    version_drift=cur.get("version_drift", self.opt.version_drift) or None,
                    cap_changes=self.opt.cap_changes or None)
+        if self.opt.scenario:
+            rec["scenario"] = self.opt.scenario
         if self.opt.series:
             rec = {"series": self.opt.series, "run": self.opt.run_index, **rec}
             run = self.state["run"] or {}
@@ -2957,6 +2988,8 @@ class Runner:
             return self.plan_dry_run(minutes)
         relaunched = self.maybe_relaunch(first)
         loaded = self.ensure_game(first)
+        if self.opt.start_save and not any(h.get("kind") == "play" for h in self.state["history"] or []):
+            self.pending_notes.append(scenario_start_note(self.opt.scenario, self.profile, loaded))
         if relaunched:
             self.pending_notes.append(
                 f"RUNNER NOTE: the runner relaunched the game before this session ({relaunched}) and loaded "
@@ -3320,7 +3353,57 @@ def acquire_lock():
     return f
 
 
+def load_scenario_file(name: str) -> dict:
+    """scenarios/<name>.json, validated (runs.load_scenario); runs.ScenarioError when missing or invalid."""
+    path = SCENARIOS / f"{name}.json"
+    if not path.exists():
+        have = ", ".join(sorted(p.stem for p in SCENARIOS.glob("*.json"))) or "none"
+        raise runs.ScenarioError(f"no scenario {name!r} in {SCENARIOS} (have: {have})")
+    return runs.load_scenario(path, [m[0] for m in milestones.MILESTONES], ROLEPLAY_MODES, DIFFICULTIES)
+
+
+def scenario_status(sc: dict, saves: list[Save] | None = None) -> tuple[str, str]:
+    """runs.scenario_status against the save folder (read only: the start save's .lsv is hashed, never written)."""
+    folders = {s.folder for s in (list_saves() if saves is None else saves)}
+    return runs.scenario_status(sc, folders, lambda f: runs.save_digest(SAVE_DIR, f))
+
+
+def apply_scenario(a, sc: dict) -> tuple[str | None, str | None]:
+    """run --scenario: the scenario's values into the parsed args (a flag left out takes the scenario's; one that
+    contradicts it is refused). -> (refusal, the start save's sha1)."""
+    conflicts = runs.scenario_cli_conflicts(sc, {"until": a.until, "character_brief": a.character_brief,
+                                                 "roleplay": a.roleplay, "difficulty": a.difficulty,
+                                                 "save_owner": a.save_owner})
+    if conflicts:
+        return "; ".join(conflicts) + " (drop the flag: the scenario fixes it)", None
+    status, detail = scenario_status(sc)
+    if status != runs.READY:
+        return f"{status}: {detail}", None
+    a.playthrough = a.playthrough or sc["name"]
+    a.until, a.runs = sc["until"], a.runs or sc["runs"]
+    a.character_brief = a.roleplay = a.difficulty = None   # profile.json comes from the scenario (prepare_series_run)
+    sha1 = None
+    if sc["start"]["kind"] == "save":
+        a.save_owner = sc["profile"]["character"]["name"]
+        sha1 = runs.save_digest(SAVE_DIR, sc["start"]["save"])
+    return runs.scenario_series_check(series_meta(a.playthrough), sc, a.playthrough, sha1), sha1
+
+
 def cmd_run(a) -> int:
+    scenario = save_sha1 = None
+    if a.scenario:
+        try:
+            scenario = load_scenario_file(a.scenario)
+        except runs.ScenarioError as e:
+            print(f"refusing --scenario: {e}", file=sys.stderr)
+            return 2
+        refusal, save_sha1 = apply_scenario(a, scenario)
+        if refusal:
+            print(f"refusing --scenario {a.scenario}: {refusal}", file=sys.stderr)
+            return 2
+    elif not a.playthrough:
+        print("run needs --playthrough (or --scenario NAME)", file=sys.stderr)
+        return 2
     if a.session_minutes < MIN_SESSION_MINUTES and not a.allow_short_sessions:
         # S001/S002 ran 15-min sessions and both wrapped up within 3 min: start and wrap-up playbooks
         # alone take ~13 min, so a short session is all overhead.
@@ -3342,8 +3425,9 @@ def cmd_run(a) -> int:
             return 2
     caps = {"run_hours": a.run_hours, "max_cost": a.max_cost, "max_tokens": a.max_tokens}
     cap_changes: list[str] = []
-    if a.runs:   # a series' caps are fixed by its first run (series.json)
-        caps, err, cap_changes = runs.series_caps(series_meta(a.playthrough).get("caps"), caps, a.allow_cap_change)
+    if a.runs:   # a series' caps are fixed by its first run (series.json), a scenario's by the scenario
+        frozen = series_meta(a.playthrough).get("caps") or (scenario["caps"] if scenario else None)
+        caps, err, cap_changes = runs.series_caps(frozen, caps, a.allow_cap_change)
         if err:
             print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
             return 2
@@ -3356,7 +3440,8 @@ def cmd_run(a) -> int:
                   a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model,
                   a.allow_short_sessions, not a.no_memory_keeper, a.keeper_model, a.keeper_effort,
                   a.keeper_minutes, a.autocompact, until=a.until, character_brief=a.character_brief,
-                  roleplay=a.roleplay, difficulty=a.difficulty)
+                  roleplay=a.roleplay, difficulty=a.difficulty, scenario=scenario["name"] if scenario else None,
+                  start_save=scenario["start"].get("save") if scenario else None)
     opt = replace(opt, run_hours=caps["run_hours"], max_cost=caps["max_cost"], max_tokens=caps["max_tokens"],
                   cap_changes=cap_changes or None, pins=current_pins() if a.until and not a.runs else None)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
@@ -3387,7 +3472,7 @@ def cmd_run(a) -> int:
     signal.signal(signal.SIGTERM, on_signal)
     try:
         if a.runs:
-            return run_series(opt, a.runs, current, a.allow_version_drift)
+            return run_series(opt, a.runs, current, a.allow_version_drift, scenario, save_sha1)
         current["runner"] = Runner(opt)
         return current["runner"].run()
     except RestartRunner:
@@ -3417,15 +3502,18 @@ def series_profile(base: str) -> dict | None:
 
 
 def freeze_series(base: str, n: int, until: str | None, profile: dict, pins: dict | None = None,
-                  caps: dict | None = None) -> None:
+                  caps: dict | None = None, scenario: dict | None = None) -> None:
     """series.json, written once by the first run: the profile, N, the milestone, the version pins and the caps
-    every later run is held to. A series from before pins/caps gets them from the first run that has them."""
+    every later run is held to, and the scenario (runs.scenario_freeze) of a run --scenario series. A series from
+    before pins/caps gets them from the first run that has them."""
     path = RUNTIME / "sessions" / base / "series.json"
     meta = series_meta(base)
     if path.exists() and ("pins" in meta or pins is None) and ("caps" in meta or caps is None):
         return
     if not path.exists():
         meta = {"series": base, "runs": n, "until": until, "profile": profile, "created": round(time.time(), 1)}
+        if scenario is not None:
+            meta["scenario"] = scenario
     if pins is not None:
         meta.setdefault("pins", pins)
     if caps is not None:
@@ -3460,25 +3548,35 @@ def gate_series_run(base: str, r: Runner, pins: dict, allow_drift: bool) -> str 
     return None
 
 
-def prepare_series_run(base: str, pt: str, k: int) -> None:
-    """Run k's playthrough before its Runner exists: the series' profile.json (k > 1) and a fresh memory from
-    memory-template/ (tools/memory/new_playthrough.py), unless they're there already (a resumed run)."""
+def prepare_series_run(base: str, pt: str, k: int, scenario: dict | None = None) -> None:
+    """Run k's playthrough before its Runner exists: the series' profile.json (k > 1, or every run of a scenario:
+    its profile) and a fresh memory from memory-template/ (tools/memory/new_playthrough.py), unless they're there
+    already (a resumed run). A scenario that starts from a save also gets its start note as HANDOFF.md
+    (runs.start_note: the harness's neutral text, never another playthrough's memory)."""
     from new_playthrough import create_memory
+    import memlib
     prof_path = PLAYTHROUGHS / pt / "profile.json"
     prof = series_profile(base)
+    if prof is None and scenario is not None:
+        prof = scenario["profile"]
     if prof is None and k > 1:
         prof = load_profile(PLAYTHROUGHS / base / "profile.json") or None
-    if k > 1 and prof and not prof_path.exists():
+    if (k > 1 or scenario is not None) and prof and not prof_path.exists():
         prof_path.parent.mkdir(parents=True, exist_ok=True)
         prof_path.write_text(json.dumps(prof, indent=1, ensure_ascii=False) + "\n")
-        log(f"{pt}: profile.json copied from series {base}")
+        log(f"{pt}: profile.json " + (f"from scenario {scenario['name']}" if scenario else f"copied from series {base}"))
     mem = PLAYTHROUGHS / pt / "memory"
     if not mem.is_dir() or not any(mem.iterdir()):
         h = create_memory(pt, mem, MEMORY_TEMPLATE)
         log(f"{pt}: new memory {mem} from memory-template (commit {h[:8]})")
+        if scenario is not None and scenario["start"]["kind"] == "save":
+            (mem / "HANDOFF.md").write_text(runs.start_note(scenario))
+            h = memlib.git_commit_all(mem, f"S000 scenario {scenario['name']}: start note") or h
+            log(f"{pt}: HANDOFF.md = the start note of scenario {scenario['name']} (commit {h[:8]})")
 
 
-def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False) -> int:
+def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, scenario: dict | None = None,
+               save_sha1: str | None = None) -> int:
     """run --until M --runs N: runs 1..N of the series opt.series, each a new playthrough (runs.run_name) and a new
     game, one runs.jsonl record per run in runtime/sessions/<base>/. Resumes at the first run without a record (a
     restart, by hand or on changed code, continues the series). Between runs the game is stopped (end_run_game).
@@ -3495,7 +3593,7 @@ def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False) -
             prev.end_run_game()
         pt = runs.run_name(base, k)
         try:
-            prepare_series_run(base, pt, k)
+            prepare_series_run(base, pt, k, scenario)
         except (SetupError, OSError) as e:
             log(f"series {base}: can't set up run {k} ({pt}): {e}")
             return 1
@@ -3503,7 +3601,8 @@ def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False) -
         if current["stop"]:
             r.stop_requested = True
         pins = current_pins()
-        freeze_series(base, n, opt.until, r.profile, pins, {k_: getattr(opt, k_) for k_ in runs.CAP_KEYS})
+        freeze_series(base, n, opt.until, r.profile, pins, {k_: getattr(opt, k_) for k_ in runs.CAP_KEYS},
+                      runs.scenario_freeze(scenario, save_sha1) if scenario else None)
         refusal = gate_series_run(base, r, pins, allow_drift)
         if refusal:
             log(refusal)
@@ -3620,11 +3719,35 @@ def cmd_runs(a) -> int:
     return 0
 
 
+def cmd_scenarios(_a) -> int:
+    """scenarios/*.json with their status: ready, needs a start save, or invalid."""
+    paths = sorted(SCENARIOS.glob("*.json"))
+    if not paths:
+        print(f"no scenarios in {SCENARIOS}")
+        return 1
+    saves = list_saves()
+    for path in paths:
+        try:
+            sc = load_scenario_file(path.stem)
+        except runs.ScenarioError as e:
+            print(f"{path.stem:20} {runs.INVALID}: {e}")
+            continue
+        status, detail = scenario_status(sc, saves)
+        caps = ", ".join(f"{k}={v:g}" for k, v in sc["caps"].items() if v is not None)
+        print(f"{sc['name']:20} {status:18} --until {sc['until']}, {sc['runs']} run(s), {caps}; {detail}"
+              + (f"\n{'':20} {sc['title']}" if sc.get("title") else ""))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="play sessions until stopped")
-    r.add_argument("--playthrough", required=True)
+    r.add_argument("--playthrough", help="the playthrough (a series: its base name); default with --scenario: the "
+                   "scenario's name")
+    r.add_argument("--scenario", metavar="NAME",
+                   help="play scenarios/<NAME>.json as a --runs series: its start (new game or start save), --until "
+                        "milestone, caps and profile, frozen in series.json; a flag that contradicts it is refused")
     r.add_argument("--hours", type=float, help="total wall-clock budget (default: until stopped)")
     r.add_argument("--session-minutes", type=float, default=60,
                    help='per-session override, live: session-config.json {"minutes": 60}, re-read before each session')
@@ -3683,8 +3806,10 @@ def main(argv: list[str] | None = None) -> int:
     rs = sub.add_parser("runs", help="table of a series' --until runs: outcome, clean, failures by class")
     rs.add_argument("--playthrough", required=True, help="the series (run --runs) or playthrough (run --until)")
     rs.add_argument("--failures", action="store_true", help="also list every run's failures")
+    sub.add_parser("scenarios", help="list scenarios/*.json: ready, or needs a start save")
     a = ap.parse_args(argv)
-    return {"run": cmd_run, "status": cmd_status, "stop": cmd_stop, "runs": cmd_runs}[a.cmd](a)
+    return {"run": cmd_run, "status": cmd_status, "stop": cmd_stop, "runs": cmd_runs,
+            "scenarios": cmd_scenarios}[a.cmd](a)
 
 
 if __name__ == "__main__":

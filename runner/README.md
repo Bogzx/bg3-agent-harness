@@ -21,8 +21,8 @@ Options: `--session-minutes 60` (wrap-up starts 3 min before the end), `--hours 
 budget; no new session starts with less than 20 min left), `--model`, `--save-owner NAME`,
 `--take-over` (see Safety), `--until MILESTONE [--runs N] [--run-hours H] [--max-cost USD] [--max-tokens N]
 [--allow-version-drift] [--allow-cap-change]`, `--character-brief TEXT [--roleplay strict|light] [--difficulty
-Explorer|Balanced|Tactician]` (all below). `play.py runs --playthrough PT [--failures]` prints a series' run table
-and its summary.
+Explorer|Balanced|Tactician]`, `--scenario NAME` (all below). `play.py runs --playthrough PT [--failures]` prints a
+series' run table and its summary; `play.py scenarios` lists `scenarios/*.json` and whether each is ready.
 
 `--save-owner` (or `$BG3AI_SAVE_OWNER`) is the player character's name, which starts every save folder
 of the playthrough: `Claude` for `Claude-<id>__<label>`. Without it, the runner learns the owner from the
@@ -90,15 +90,30 @@ next run):
   (then recorded in `version_drift`). A run already under way (the runner's self-restart) keeps the pins it started
   with. So: commit, or at least don't edit code, between the runs of a series.
 
+**Scenarios (`--scenario NAME`).** A fixed start point as a file, `scenarios/<name>.json` (format, the drafts and
+how to make a start save: `scenarios/README.md`): the start (a new game, or a start save), the `--until` milestone,
+the caps, the profile and the per-run resets. `run --scenario NAME [--runs N] [--playthrough SERIES]` plays it as a
+`--runs` series (N and the series name default to the scenario's), refused unless `play.py scenarios` shows it
+`ready`. Flags that contradict it are refused (exit 2): `--until`, `--character-brief`, `--roleplay`,
+`--difficulty`, `--save-owner` must be left out or equal; the caps follow the series' caps rule (a different value
+needs `--allow-cap-change`). series.json gets `scenario` (`name`, `digest`, `start_save_sha1`, `spec`): a later run
+is refused when the scenario file or the start save's `.lsv` changed, or the series is another scenario's. Every run
+gets the scenario's profile.json. A save start also gets: the save owner = `profile.character.name` (it must be the
+save's character); the start save as a candidate of the save choice although it is older than the run
+(`Runner.ours`, so the first session loads it and the agent's first save supersedes it; `BG3AI_START_SAVE` for the
+MCP server); a fresh memory whose `HANDOFF.md` is the harness's neutral start note (`runs.start_note`, a pure
+function of the scenario's fixed `start.note`; never another playthrough's memory); and a `SCENARIO START` note in
+the first kickoff (`scenario_start_note`). Run records carry `scenario`.
+
 What a run doesn't inherit (reset before its first session, listed in the record's `reset`):
 
 | State | Reset |
 |---|---|
-| saves (every run's character may have one name) | `runner.json` `saves_after` = the run's start: the runner and the MCP server (`BG3AI_SAVES_AFTER`, `list_saves`/`load_game`) ignore older saves |
+| saves (every run's character may have one name) | `runner.json` `saves_after` = the run's start: the runner and the MCP server (`BG3AI_SAVES_AFTER`, `list_saves`/`load_game`) ignore older saves (a scenario's start save excepted, in the runner) |
 | the navigation per-level kill list `Script Extender/BG3AI/nav_guard.json` (NAV-3) and the breadcrumb mirrors `nav_<host uuid>.json` | moved into `runtime/sessions/<run>/reset/` (`$BG3AI_SE_DIR` overrides the Script Extender dir) |
 | the mod's Lua state (kill list in memory, warm-up counters, guards) | the game process is stopped between runs |
 | `play/knowledge/` (agent-writable outside playbooks/, FAIR-2) | snapshotted at the run start; after the run every file the agent's Edit/Write calls changed is put back (its version kept in `runtime/sessions/<run>/knowledge_edits/`); other changes (an operator's) are reported, not reverted; the record's `knowledge` lists both |
-| memory, `runner.json` history, progress seen-state, session logs | per playthrough already (a new playthrough per run) |
+| memory, `runner.json` history, progress seen-state, session logs | per playthrough already (a new playthrough per run); a scenario's save start adds its start note as HANDOFF.md |
 | travel_to dead ends | per MCP server process (per session) already |
 
 Kept on purpose: `runtime/levelup_clicks.json` (UI click calibration), the wiki cache, `bg3ai/config.json`
@@ -236,13 +251,15 @@ stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
 | `runtime/runner.status.json` | live status for `play.py status` |
 | `runtime/sessions/<pt>/runner.json` | save owner, runner quicksaves, per-session history and progress signatures |
 | `runtime/sessions/<pt>/runs.jsonl` | one record per `--until` run (a `--runs` series: all its runs, in the base's dir) |
-| `runtime/sessions/<pt>/series.json` | a `--runs` series: its frozen profile, N, the milestone, version pins and caps |
+| `runtime/sessions/<pt>/series.json` | a `--runs` series: its frozen profile, N, the milestone, version pins and caps (and the scenario) |
+| `scenarios/<name>.json` | `run --scenario` start points (`scenarios/README.md`) |
 | `runtime/sessions/<run>/reset/`, `knowledge_snapshot.json`, `knowledge_edits/` | a `--runs` run's moved nav files, knowledge/ snapshot, the agent's knowledge/ edits that were put back |
 | `playthroughs/<pt>/profile.json` | the character brief, roleplay mode, difficulty (`--character-brief`) |
 | `runtime/sessions/<pt>/Sxxx.{jsonl,log}` | Claude's stream (raw and readable); `Sxxx-fix.*` for fix-notes passes |
 | `runtime/STOP` | created by `play.py stop` |
 
-Tests (pure logic only, nothing is launched): `python3 runner/test_play.py`. Crash recovery end to end with
+Tests (pure logic only, nothing is launched): `python3 runner/test_play.py`, `runner/test_runs.py`,
+`runner/test_scenarios.py`. Crash recovery end to end with
 stubs (no game, no claude, temp dirs only): `python3 runner/test_crash.py`.
 
 Dashboard: `/api/goals` + the **Goal scorecard** card (every session's goal metrics side by side with

@@ -1,0 +1,27 @@
+{
+ "name": "act1_underdark",
+ "title": "Act 1, goblin camp done → the Underdark",
+ "about": "Late Act 1: the goblin leaders are dealt with; find a way down into the Underdark.",
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "note": {
+   "where": "Shattered Sanctum (goblin camp), the leaders' rooms cleared, out of combat, no dialogue open.",
+   "objective": "Travel through the Underdark toward Moonrise Towers: find a way down.",
+   "party": ["Claude (Paladin)", "Shadowheart (Cleric)", "Gale (Wizard)", "Wyll (Warlock)"],
+   "journal": ["Find a Cure", "Travel to Moonrise Towers", "Travel through the Underdark", "Travel through the Mountain Pass", "Daughter of Darkness", "The Wizard of Waterdeep", "The Blade of Frontiers", "Rescue Volo", "Explore the Ruins", "Discover the Artefact's Secrets"]
+  }
+ },
+ "until": "underdark",
+ "runs": 3,
+ "caps": {"run_hours": 3, "max_cost": 75, "max_tokens": null},
+ "profile": {
+  "character": {
+   "name": "Claude",
+   "brief": "Claude, the start save's Oath of Devotion paladin: honest, protects the innocent, keeps their word; the oath's tenets are hard rules.",
+   "roleplay": "strict"
+  },
+  "difficulty": "Explorer"
+ }
+}

@@ -1,0 +1,27 @@
+{
+ "name": "crash_site_grove",
+ "title": "Crash site → Emerald Grove",
+ "about": "Act 1 opening on the surface: from the beach after the crash to the Emerald Grove (the druids' grove behind the gate).",
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "note": {
+   "where": "Ravaged Beach, just south of the Nautiloid wreck, out of combat, no dialogue open.",
+   "objective": "Find a Cure: find someone who can remove the tadpole.",
+   "party": ["Claude (Paladin)", "Shadowheart (Cleric)", "Lae'zel (Fighter)"],
+   "journal": ["Find a Cure"]
+  }
+ },
+ "until": "grove",
+ "runs": 3,
+ "caps": {"run_hours": 2, "max_cost": 50, "max_tokens": null},
+ "profile": {
+  "character": {
+   "name": "Claude",
+   "brief": "Claude, the start save's Oath of Devotion paladin: honest, protects the innocent, keeps their word; the oath's tenets are hard rules.",
+   "roleplay": "strict"
+  },
+  "difficulty": "Explorer"
+ }
+}
