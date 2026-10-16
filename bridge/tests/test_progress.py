@@ -119,6 +119,85 @@ class Diff(unittest.TestCase):
         self.assertEqual(evs, [])
         self.assertEqual(seen2["objectives_active"], seen["objectives_active"])
 
+    @staticmethod
+    def _two_objectives() -> dict:
+        w = world()
+        w["journal"].append({"title": "Find a Cure", "steps": ["Find a healer."]})
+        w["markers"] = {"markers": [{"label": "Find the helm", "quest": "Escape the Nautiloid"},
+                                    {"label": "Find a healer", "quest": "Find a Cure"}]}
+        return w
+
+    def test_empty_marker_read_is_not_every_objective_done(self):
+        # NAV-11: nav.markers answers {markers = {}} for an empty party and {markers = {}, error = "no marker
+        # index"} when its index fails to load; both scored every active objective done (and never again).
+        for bad in ({"markers": []}, {"markers": {}}, {"markers": [], "error": "no marker index"}, [], None):
+            with self.subTest(markers=bad):
+                seen, _ = P.diff(None, self._two_objectives())
+                w = self._two_objectives()
+                w["markers"] = bad
+                seen2, evs = P.diff(seen, w)
+                self.assertEqual(evs, [])
+                self.assertEqual(seen2["objectives_active"], seen["objectives_active"])
+                self.assertEqual(seen2["objectives_done"], [])
+                seen2, evs = P.diff(seen2, self._two_objectives())  # the read recovers: nothing happened
+                self.assertEqual(evs, [])
+                later = self._two_objectives()  # and a real completion still scores
+                later["markers"]["markers"] = later["markers"]["markers"][1:]
+                _, evs = P.diff(seen2, later)
+                self.assertEqual([(e["kind"], e["what"]) for e in evs], [("objective", "Find the helm")])
+
+    def test_empty_marker_list_scores_what_the_journal_confirms(self):
+        # an empty list is real when the journal backs it: the quest closed (or advanced) in the same poll
+        seen, _ = P.diff(None, self._two_objectives())
+        w = self._two_objectives()
+        w["journal"][0]["done"] = True
+        w["markers"] = {"markers": []}
+        seen, evs = P.diff(seen, w)
+        self.assertEqual(sorted((e["kind"], e["what"]) for e in evs),
+                         [("objective", "Find the helm"), ("quest_done", "Escape the Nautiloid")])
+        self.assertEqual(seen["objectives_active"], ["Find a healer|Find a Cure"])  # unconfirmed: still active
+        w["markers"] = {"markers": [], "error": "no marker index"}
+        w["journal"][1]["done"] = True  # a failed read is no evidence, even with the quest closed
+        seen, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs), ["quest_done"])
+        self.assertEqual(seen["objectives_active"], ["Find a healer|Find a Cure"])
+
+    def test_empty_marker_list_with_a_new_quest_is_no_evidence(self):
+        # a quest listed for the first time says nothing about the objectives already active
+        seen, _ = P.diff(None, self._two_objectives())
+        w = self._two_objectives()
+        w["journal"].append({"title": "The Blade of Frontiers", "steps": ["Find Wyll."]})
+        w["markers"] = {"markers": []}
+        seen, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs), ["quest_new"])
+        self.assertEqual(len(seen["objectives_active"]), 2)
+
+    def test_failed_baseline_read_baselines_silently_later(self):
+        # the baseline poll's journal/map read failed (None): the first good read is not 30 quests' and every
+        # waypoint's worth of points
+        w = world()
+        w["journal"], w["map"] = None, None
+        seen, _ = P.diff(None, w)
+        later = world()
+        later["journal"].append({"title": "Find a Cure", "steps": ["Find a healer."], "done": True})
+        later["map"]["waypoints"] = [{"name": "Roadside Cliffs"}]
+        seen, evs = P.diff(seen, later)
+        self.assertEqual(evs, [])
+        self.assertEqual(sorted(seen["quests"]), ["Escape the Nautiloid", "Find a Cure"])
+        self.assertEqual(seen["waypoints"], ["Roadside Cliffs"])
+        later["journal"].append({"title": "The Blade of Frontiers", "steps": ["Find Wyll."]})  # from then on: scores
+        later["map"]["waypoints"].append({"name": "Blighted Village"})
+        _, evs = P.diff(seen, later)
+        self.assertEqual(sorted(kinds(evs)), ["quest_new", "waypoint"])
+
+    def test_old_seen_without_unread_scores_as_before(self):
+        seen, _ = P.diff(None, world())
+        del seen["unread"]  # a playthrough's state from before the key
+        w = world()
+        w["map"]["waypoints"] = [{"name": "Roadside Cliffs"}]
+        _, evs = P.diff(seen, w)
+        self.assertEqual(kinds(evs), ["waypoint"])
+
     def test_same_subregion_name_in_another_region_counts(self):
         seen, _ = P.diff(None, world())
         w = world()

@@ -148,7 +148,7 @@ def empty_seen() -> dict:
     return {"regions": [], "areas": [], "waypoints": [], "quests": {}, "objectives_active": [],
             "objectives_done": [], "levels": {}, "explored": {}, "objective_pos": {}, "objective_moved_t": {},
             "joined": {}, "talked": [], "killed": [], "key_items": [], "puzzles": [], "baseline": False,
-            "quests_unaccepted": True,
+            "quests_unaccepted": True, "unread": ["journal", "map"],
             "fight": {"kills": 0, "story": ""}}
 
 
@@ -177,6 +177,10 @@ def _quests(journal: Any) -> dict:
 
 
 def _markers(m: Any) -> list[str] | None:
+    """The active objective keys ("label|quest"), or None when the read failed (no reply, or the mod's
+    {markers = {}, error = "no marker index"})."""
+    if isinstance(m, dict) and m.get("error"):
+        return None
     ms = m.get("markers") if isinstance(m, dict) else m
     if not isinstance(ms, list):
         return None
@@ -272,6 +276,8 @@ def diff(seen: dict, got: dict, now: float | None = None) -> tuple[dict, list[di
     fresh = {k for k in empty_seen() if k not in seen}
     for k, v in empty_seen().items():
         seen.setdefault(k, v)
+    if "unread" in fresh and seen["baseline"]:
+        seen["unread"] = []  # (a playthrough from before this was kept read both long ago)
     ev: list[dict] = []
     quiet = not seen["baseline"]
 
@@ -312,19 +318,28 @@ def diff(seen: dict, got: dict, now: float | None = None) -> tuple[dict, list[di
                 for n in range(int(old) + 1, int(lvl) + 1):
                     add("level_up", f"{name} -> level {n}")
             seen["levels"][name] = lvl
+    # A section whose read failed on the baseline poll (None) baselines silently on its first good read, else
+    # that read scores everything the playthrough already had (every quest, every waypoint) as new.
     mp = got.get("map")
     if isinstance(mp, dict):
+        first = "map" in seen["unread"]
         for w in mp.get("waypoints") or []:
             n = str(w.get("name") or w.get("id")) if isinstance(w, dict) else str(w)
             if n not in seen["waypoints"]:
                 seen["waypoints"].append(n)
-                add("waypoint", n)
+                add("waypoint", n, first)
+        seen["unread"] = [x for x in seen["unread"] if x != "map"]
+    moved: set[str] = set()  # quests this poll's journal shows closed or advanced (evidence for NAV-11 below)
     if got.get("journal") is not None:
         # 2026-10-10 23:3x the journal started listing open quests the game never "accepted" (Find the Nightsong,
         # the companions' quests): an old playthrough's first poll since takes them in silently (no 30-point burst)
-        jq = "quests_unaccepted" in fresh
+        jq = "quests_unaccepted" in fresh or "journal" in seen["unread"]
+        seen["unread"] = [x for x in seen["unread"] if x != "journal"]
         for t, q in _quests(got["journal"]).items():
             old = seen["quests"].get(t)
+            if old is not None and (q["done"] or q["steps"] > old["steps"]
+                                    or any(k not in old.get("texts", q["texts"]) for k in q["texts"])):
+                moved.add(t)
             if old is None:
                 add("quest_new", t, jq)
                 seen["quests"][t] = {"steps": q["steps"], "done": q["done"], "texts": q["texts"]}
@@ -350,6 +365,13 @@ def diff(seen: dict, got: dict, now: float | None = None) -> tuple[dict, list[di
                 add("quest_done", t)
                 old["done"] = True
     ms = _markers(got.get("markers"))
+    if ms == [] and seen["objectives_active"]:
+        # NAV-11: an empty list after a non-empty one is mostly a bad read (nav.markers answers {} for an empty
+        # party or a loading screen), not every objective done at once; scoring it burned them all into
+        # objectives_done, so their real completion never scored. Only an objective whose quest this poll's
+        # journal shows done or advanced is gone; the rest stay active until a non-empty list (or the journal)
+        # settles them.
+        ms = [k for k in seen["objectives_active"] if k.rsplit("|", 1)[-1] not in moved]
     if ms is not None:
         for k in seen["objectives_active"]:
             if k not in ms and k not in seen["objectives_done"]:
