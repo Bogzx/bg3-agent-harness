@@ -1,6 +1,6 @@
 # Combat
 
-**When:** Use whenever combat starts or is about to start (a result says INTERRUPTED — combat, enemies turn hostile, or you plan to attack). Covers pre-fight setup, the one-call turn loop (get_combat_state + get_actions → combat_turn), path_preview, reactions, 5e tactics, downed allies, retreat, and the post-combat report.
+**When:** combat starts or is about to start (INTERRUPTED — combat, enemies turn hostile, you plan to attack).
 
 ## Before a fight you choose to start
 0. **Lessons:** a `LESSONS:` block in a result (at a fight start, or on entering a place) holds your own past
@@ -20,10 +20,9 @@
 
 ## Each turn (loop)
 ```
-s = get_combat_state()      # ONLY when no result has shown the fight yet (the action that started it says
-                            # COMBAT STARTED with all of this; combat_turn ends with NOW/NEXT + actions). Shows: whose turn, action/bonus/movement/reaction left, initiative order,
-                            # visible enemies (health as the UI shows it, distance, line of sight), allies,
-                            # and the acting character's actions (ids for use_ability, range, costs)
+s = get_combat_state()      # ONLY when no result has shown the fight yet (COMBAT STARTED and combat_turn's
+                            # NOW/NEXT already carry it): turn order, resources left, enemies (health,
+                            # distance, line of sight), allies, the acting character's actions
 → plan the WHOLE turn from this one read, with a fallback for each slot
    path_preview(target=…)   # only if the move might not fit remaining movement or needs a jump
    ability_preview(ability, target)  # only if a hit chance or save DC decides between options
@@ -33,15 +32,12 @@ s = get_combat_state()      # ONLY when no result has shown the fight yet (the a
                                "Shout_Disengage"],
                      "bonus":{"ability":"<bonus action id>","if":"hp_below:50"}}')
 → it returns right after end_turn: "NEXT e14 Goblin, e15 Imp, then Lae'zel (yours)".
-   Plan Lae'zel's turn NOW, while the enemies act, and send it right away: combat_turn waits for her turn
-   (wait_turn, 30 s) and plays it the moment it comes. No wait_for("my_turn") round trip.
-   ("NOW Lae'zel's turn" + her actions = she is up already: send her combat_turn at once.)
-   **Shared turn:** party members with equal initiative act in the same turn, in any order
-   ("SHARED TURN" in get_combat_state, "then Lae'zel + Claude (yours, shared turn)"). Give each one its
-   own plan — in ONE call: `combat_turn(plan='[{"who":"Lae'zel","plan":{…}},{"who":"Claude","plan":{…}}]')`
-   plays them in order and stops (listing who was NOT played) if a turn is interrupted or a turn doesn't come within
-   ~80 s; the enemies move only after every one of them has ended. A member that ended can't act again this
-   round.
+   Plan Lae'zel's turn NOW, while the enemies act, and send it at once: combat_turn waits for her turn
+   (30 s) and plays it the moment it comes (no wait_for("my_turn")). "NOW Lae'zel's turn" = she is up already.
+   **Several members acting now** (a shared turn, "then Lae'zel + Claude (yours, shared turn)", or adjacent
+   initiative): ONE call, `combat_turn(plan='[{"who":"Lae'zel","plan":{…}},{"who":"Claude","plan":{…}}]')`.
+   It plays them in order and stops, listing who was NOT played, if a turn is interrupted or doesn't come
+   within ~80 s. A member that ended can't act again this round; `"plan":{}` just ends its turn.
 → if it says STOPPED / "turn NOT ended": read why, then finish the turn (combat_turn with what's left)
 ```
 One observation, one call per turn: that's the target pace. Think during the enemy turns, not during yours.
@@ -56,8 +52,6 @@ Still plan a bonus action every turn (Healing Word for a downed ally is automati
 at all if already in range); keep casters out of melee.
 **Extra Attack** (level 5 martials): add `"extra":[[{"ability":"Target_MainHandAttack","target":"e12"},
 {"ability":"Target_MainHandAttack","target":"e15"}]]`.
-Several party members may act in a row when their initiative is adjacent: one `combat_turn` each, with
-`who=`.
 **Reaction prompts** (Shield, Counterspell, Divine Smite, opportunity attacks): decide them up front.
 `"reactions":{"Divine Smite":"always"}` sets the game's own prompt setting; `"on_reaction":"use"` or
 `"skip"` answers prompts that appear during this turn. Otherwise a prompt stops the turn: `get_dialogue`

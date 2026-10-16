@@ -21,6 +21,7 @@ with small pixel offsets and different aim heights.
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -64,6 +65,23 @@ MENU_WAIT_S = 2.0
 CENTER_KEY = "Home"
 CENTER_WAIT_S = 1.5
 
+# The faster search (naut-r2 S001 16:54-16:55: click_on off_screen x2 at 7 s each, then 83 tries in 12.6 s). Revert
+# with BG3AI_HOVER_V2=0 (or clicker.HOVER_V2 = False):
+#  - each try settles on the picking helper's own cursor (hover_check `cursor` == the point moved to) instead of a
+#    fixed 2-frame wait: ~2 frames a try instead of ~4 (the 83 tries were ~135 ms each, RPCs only 1.1 s of 12.6 s);
+#  - the first aim's 9 points (the probe: 61/77 hits in the log are within them), then every other aim's centre
+#    (5 more hits are try 10 = the 2nd aim's centre), then the remaining offsets; when nearly all of the probe
+#    hovered something else, the camera turns at once instead of after the 8 s budget (e126 the nerve: an 8 s pass
+#    on an occluder, then the 2nd rotation found it);
+#  - a rotation that carried a point behind the camera across to the other side (or from the front to behind) was
+#    the wrong way: the drag direction flips and is remembered (the off_screen calls: left,left,right,left,right,left
+#    with the target behind, where the |x| check never fires).
+HOVER_V2 = os.environ.get("BG3AI_HOVER_V2", "1") != "0"
+PROBE_OCCLUDED_FRAC = 0.75   # share of the probe's tries that hovered something else for "occluded: turn now"
+PROBE_MIN_TRIES = 6
+DEDUPE_PX = 3                # a point this close to one already tried is skipped (aims that project together)
+_drag = {"flip": False}      # the learned middle-drag direction (v2)
+
 
 # Screens that cover the world: a click can't reach an entity behind them, and camera moves don't help.
 COVERING_SCREENS = {"book", "dialogue", "trade", "donate", "level_up", "learn_spells", "tadpole_tree", "game_menu",
@@ -97,7 +115,10 @@ def _screen(game: Game) -> dict:
         return {}
 
 
-def _screen_pos(game: Game, uuid: str, aim: str = "auto", ox: float = 0.0) -> dict:
+def _screen_pos(game: Game, uuid: str | None, aim: str = "auto", ox: float = 0.0, pos=None) -> dict:
+    """ui.screen_pos of an entity's aim point, or of a world point `pos` (x, y, z) when given."""
+    if pos is not None:
+        return game.rpc("ui.screen_pos", {"pos": [float(v) for v in pos]}, context="client") or {}
     args: dict[str, Any] = {"uuid": uuid, "aim": aim}
     if ox:
         args["ox"] = ox
@@ -120,22 +141,42 @@ def camera_move(sp: dict) -> str | None:
     return "zoom_out"
 
 
-def bring_into_view(game: Game, inp: InputClient, uuid: str, steps: int = CAMERA_STEPS) -> list[str]:
-    """Move the camera like a player would until `uuid` is well inside the window. Returns the moves made."""
+def bring_into_view(game: Game, inp: InputClient, uuid: str | None = None, steps: int = CAMERA_STEPS,
+                    pos=None, out: dict | None = None) -> list[str]:
+    """Move the camera like a player would until `uuid` (or the world point `pos` = (x, y, z): a ground spot) is
+    well inside the window. Returns the moves made; `out` receives the last ui.screen_pos read ({"error"} if one
+    failed)."""
     moves: list[str] = []
-    flip = False          # set when a rotation made things worse: the drag direction is the other way
+    v2 = HOVER_V2
+    flip = _drag["flip"] if v2 else False   # set when a rotation made things worse: the drag direction is the other way
     prev_x: float | None = None
     prev_edge: float | None = None
+    prev_behind, prev_side = False, None
     for _ in range(steps):
         try:
-            sp = _screen_pos(game, uuid)
-        except GameError:
+            sp = _screen_pos(game, uuid, pos=pos)
+        except GameError as e:
+            if out is not None:
+                out.clear()
+                out["error"] = str(e)
             break
+        if out is not None:
+            out.clear()
+            out.update(sp)
         mv = camera_move(sp)
         nd = sp.get("ndc")
-        if moves and moves[-1].startswith("rotate") and nd is not None and prev_x is not None \
-                and abs(nd[0]) > abs(prev_x) + 0.05:
+        behind, side = bool(sp.get("behind")), sp.get("side")
+        rotated = bool(moves) and moves[-1].startswith("rotate")
+        if rotated and nd is not None and prev_x is not None and abs(nd[0]) > abs(prev_x) + 0.05:
             flip = not flip
+            if v2:
+                _drag["flip"] = flip
+        elif v2 and rotated and behind and prev_side is not None and \
+                ((prev_behind and side != prev_side) or (not prev_behind and side == prev_side)):
+            # behind: crossed the back to the other side, or turned from the front to behind on the same side
+            flip = not flip
+            _drag["flip"] = flip
+        prev_behind, prev_side = behind, side
         edge = max(abs(nd[0]), abs(nd[1])) if nd is not None else None
         if moves and moves[-1] == "zoom_out" and mv == "zoom_out" and edge is not None and prev_edge is not None \
                 and edge > prev_edge - 0.02:
@@ -154,9 +195,58 @@ def bring_into_view(game: Game, inp: InputClient, uuid: str, steps: int = CAMERA
             inp.drag(cx, cy, cx + dx, cy, button="M", steps=10)
             inp.move(cx, cy)
         moves.append(mv)
-        inp.wait_frames(12)   # the camera eases into place
-        time.sleep(0.15)
+        settle_camera(game, inp, uuid, pos)   # the camera eases into place
+    else:
+        if out is not None and moves:
+            try:   # the steps ran out: the read after the last move
+                out.clear()
+                out.update(_screen_pos(game, uuid, pos=pos))
+            except GameError as e:
+                out["error"] = str(e)
     return moves
+
+
+def view_point(game: Game, inp: InputClient, pos, steps: int = CAMERA_STEPS) -> tuple[dict, list[str]]:
+    """bring_into_view for a world point: (the last ui.screen_pos of it, the moves made)."""
+    out: dict = {}
+    moves = bring_into_view(game, inp, None, steps=steps, pos=pos, out=out)
+    return out, moves
+
+
+SETTLE_MIN_FRAMES = 3     # v2: a camera move is settled when the target's projection stops changing
+SETTLE_POLL_FRAMES = 2
+SETTLE_EPS = 0.004        # ndc between two polls
+SETTLE_MAX_S = 0.9        # never longer than the old fixed wait (12 frames + 0.15 s) by much
+
+
+def _ndc_key(sp: dict) -> tuple | None:
+    nd = sp.get("ndc")
+    if nd is not None:
+        return ("in", float(nd[0]), float(nd[1]))
+    return ("behind", sp.get("side")) if sp.get("behind") else None
+
+
+def settle_camera(game: Game, inp: InputClient, uuid: str | None, pos=None) -> None:
+    """After a camera move: the old fixed ease wait (12 frames + 0.15 s), or with HOVER_V2 until the target's
+    projection is still between two polls (a point behind the camera: the same side twice)."""
+    if not HOVER_V2:
+        inp.wait_frames(12)
+        time.sleep(0.15)
+        return
+    end = time.monotonic() + SETTLE_MAX_S
+    inp.wait_frames(SETTLE_MIN_FRAMES)
+    prev = None
+    while time.monotonic() < end:
+        try:
+            k = _ndc_key(_screen_pos(game, uuid, pos=pos))
+        except GameError:
+            return
+        if prev is not None and k is not None and k[0] == prev[0] and \
+                (k[0] == "behind" and k[1] == prev[1] or
+                 k[0] == "in" and abs(k[1] - prev[1]) + abs(k[2] - prev[2]) < SETTLE_EPS):
+            return
+        prev = k
+        inp.wait_frames(SETTLE_POLL_FRAMES)
 
 
 def center_on_actor(game: Game, inp: InputClient, uuid: str) -> bool:
@@ -170,15 +260,20 @@ def center_on_actor(game: Game, inp: InputClient, uuid: str) -> bool:
     inp.key(CENTER_KEY)
     end = time.monotonic() + CENTER_WAIT_S
     prev = None
+    prev_k = None
     while time.monotonic() < end:
         inp.wait_frames(6)
         try:
-            nd = _screen_pos(game, uuid).get("ndc")
+            sp = _screen_pos(game, uuid)
         except GameError:
             break
+        nd = sp.get("ndc")
         if nd is not None and prev is not None and abs(nd[0] - prev[0]) + abs(nd[1] - prev[1]) < 0.01:
             break   # the camera stopped easing
-        prev = nd
+        k = _ndc_key(sp)
+        if HOVER_V2 and k is not None and k[0] == "behind" and k == prev_k:
+            break   # still behind the camera, same side: bring_into_view turns it (v1 waited the whole 1.5 s)
+        prev, prev_k = nd, k
     return True
 
 
@@ -240,6 +335,137 @@ def hover_point(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadli
                 seen["(an object with no id)"] = seen.get("(an object with no id)", 0) + 1
             if deadline is not None and time.monotonic() >= deadline:
                 return None, tries, sticky({**last, "timed_out": True})
+    return None, tries, sticky(last)
+
+
+def _cursor_scale(inp: InputClient) -> tuple[float, float] | None:
+    """drawable / window size: the picking helper's cursor may be in either space."""
+    try:
+        st = inp.status()
+        (ww, wh), (dw, dh) = st["size"], st["drawable"]
+        return (dw / ww, dh / wh) if ww and wh and dw and dh else None
+    except Exception:  # noqa: BLE001 - a fake or an older shim: window coords only
+        return None
+
+
+def _at(hc: dict, x: int, y: int, scale: tuple[float, float] | None) -> bool | None:
+    """Is the picking helper's cursor at (x, y)? None when it reports no cursor."""
+    c = hc.get("cursor") if isinstance(hc, dict) else None
+    if not (isinstance(c, (list, tuple)) and len(c) >= 2):
+        return None
+    try:
+        cx, cy = float(c[0]), float(c[1])
+    except (TypeError, ValueError):
+        return None
+    if abs(cx - x) <= 1.5 and abs(cy - y) <= 1.5:
+        return True
+    return bool(scale) and abs(cx - x * scale[0]) <= 2 and abs(cy - y * scale[1]) <= 2
+
+
+def hover_search(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadline: float | None = None,
+                 seen: dict[str, int] | None = None, early: bool = True,
+                 info: dict | None = None) -> tuple[tuple[int, int] | None, int, dict]:
+    """hover_point's faster order and settle (HOVER_V2): the first aim's 9 points, every other aim's centre, then
+    the remaining offsets; each try reads hover_check as soon as the helper's cursor is at the point (at most
+    `frames` frames). With `early`, stops after the first aim's points when nearly all of them hovered something
+    else (last "occluded": True: the caller turns the camera). `info` collects {"settle": "cursor"|"frames"} across passes."""
+    w, h = inp.window_size()
+    info = info if info is not None else {}
+    scale = info.get("scale", _cursor_scale(inp))
+    info["scale"] = scale
+    tries, other = 0, 0
+    last: dict = {}
+    nouuid: dict = {}
+    tried: list[tuple[int, int]] = []
+    proj: list[tuple[float, float] | None] = []   # per AIMS entry: base point, None = off screen/duplicate aim
+    keys: set = set()
+
+    def sticky(d: dict) -> dict:
+        return {**nouuid, **d} if nouuid and not d.get("nouuid") else d
+
+    def project(i: int) -> tuple[float, float] | None:
+        nonlocal last
+        while len(proj) <= i:
+            aim, ox = AIMS[len(proj)]
+            try:
+                sp = _screen_pos(game, uuid, aim, ox)
+            except GameError as e:
+                last = {"error": str(e)}
+                proj.append(None)
+                continue
+            key = (sp.get("aim") or aim, ox)
+            if key in keys or not sp.get("on_screen"):
+                if not sp.get("on_screen") and key not in keys:
+                    last = {"off_screen": True, **sp}
+                keys.add(key)
+                proj.append(None)
+                continue
+            keys.add(key)
+            nx, ny = sp["ndc"]
+            proj.append(((nx * 0.5 + 0.5) * w, (ny * 0.5 + 0.5) * h))
+        return proj[i]
+
+    def order():
+        rest = [(i, o) for i in range(1, len(AIMS)) for o in OFFSETS[1:]]
+        yield from ((0, o) for o in OFFSETS)
+        yield "probe_done"
+        yield from ((i, OFFSETS[0]) for i in range(1, len(AIMS)))
+        yield from rest
+
+    def check(x: int, y: int) -> dict:
+        mode = info.get("settle")
+        if mode != "cursor":
+            inp.wait_frames(frames)
+            hc = game.rpc("ui.hover_check", {"uuid": uuid}, context="client") or {}
+            if mode is None:   # first try: the full wait, then learn whether the helper reports the cursor here
+                info["settle"] = "cursor" if _at(hc, x, y, scale) else "frames"
+            return hc
+        hc = game.rpc("ui.hover_check", {"uuid": uuid}, context="client") or {}
+        waited = 0
+        while not _at(hc, x, y, scale) and waited < frames:
+            inp.wait_frames(1)
+            waited += 1
+            hc = game.rpc("ui.hover_check", {"uuid": uuid}, context="client") or {}
+        if hc.get("hovered") and waited < frames:
+            # the hit decides the click: one more frame and a second look (a pick one frame behind the cursor)
+            inp.wait_frames(1)
+            hc = game.rpc("ui.hover_check", {"uuid": uuid}, context="client") or {}
+        return hc
+
+    for step in order():
+        if step == "probe_done":
+            if early and tries >= PROBE_MIN_TRIES and other >= PROBE_OCCLUDED_FRAC * tries:
+                return None, tries, sticky({**last, "occluded": True})
+            continue
+        if deadline is not None and time.monotonic() >= deadline:
+            return None, tries, sticky({**last, "timed_out": True})
+        i, (dx, dy) = step
+        base = project(i)
+        if base is None:
+            continue
+        x, y = int(round(base[0] + dx)), int(round(base[1] + dy))
+        if not (0 <= x < w and 0 <= y < h) or any(abs(x - a) <= DEDUPE_PX and abs(y - b) <= DEDUPE_PX
+                                                    for a, b in tried):
+            continue
+        tried.append((x, y))
+        tries += 1
+        inp.move(x, y)
+        try:
+            last = check(x, y)
+        except GameError as e:
+            last = {"error": str(e)}
+            continue
+        if last.get("hovered"):
+            return (x, y), tries, last
+        for k in ("nouuid", "nouuid_why"):
+            if last.get(k):
+                nouuid[k] = last[k]
+        if last.get("hover") or last.get("hover_nouuid"):
+            other += 1
+        if seen is not None and last.get("hover"):
+            seen[last["hover"]] = seen.get(last["hover"], 0) + 1
+        elif seen is not None and last.get("hover_nouuid"):
+            seen["(an object with no id)"] = seen.get("(an object with no id)", 0) + 1
     return None, tries, sticky(last)
 
 
@@ -338,13 +564,67 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
         return ClickResult(False, "covered", before, None, 0, {})
     centered = center_on_actor(game, inp, uuid)
     moves = bring_into_view(game, inp, uuid)
-    deadline = time.monotonic() + HOVER_BUDGET_S
     seen: dict[str, int] = {}
-    pos, tries, last = hover_point(game, inp, uuid, deadline=deadline, seen=seen)
     passes_diag: dict = {}   # no-id details from an earlier pass (a later pass may never hover the object)
 
     def keep_diag(d: dict) -> None:
         passes_diag.update({k: d[k] for k in ("nouuid", "nouuid_why") if d.get(k)})
+    if HOVER_V2:
+        pos, tries, last = _search_v2(game, inp, uuid, moves, seen, keep_diag)
+    else:
+        pos, tries, last = _search_v1(game, inp, uuid, moves, seen, keep_diag)
+    return _finish_click(game, inp, uuid, button, expect, verify_timeout, menu, before, centered, moves, seen,
+                         passes_diag, pos, tries, last)
+
+
+def _turn(game: Game, inp: InputClient, uuid: str, mult: int) -> None:
+    """One occluded-pass camera turn: a middle-drag of `mult` x ROTATE_FRAC of the width, then let it ease."""
+    w, h = inp.window_size()
+    cx, cy = w // 2, h // 2
+    inp.drag(cx, cy, cx - int(w * ROTATE_FRAC) * mult, cy, button="M", steps=10)
+    settle_camera(game, inp, uuid)
+
+
+def _search_v2(game: Game, inp: InputClient, uuid: str, moves: list[str], seen: dict[str, int],
+               keep_diag) -> tuple[tuple[int, int] | None, int, dict]:
+    """HOVER_V2: probe the view; occluded -> turn right, then left, each probed; the last view (or an unoccluded
+    one) gets the full search. Whole search within HOVER_BUDGET_S."""
+    deadline = time.monotonic() + HOVER_BUDGET_S
+    info: dict = {}
+    pos, tries, last = hover_search(game, inp, uuid, deadline=deadline, seen=seen, info=info)
+    keep_diag(last)
+    if pos is None and not moves and not last.get("timed_out") and not last.get("occluded"):
+        w, h = inp.window_size()   # every aim missed with nothing in front: one more look from a wider angle
+        inp.wheel(-2, w // 2, h // 2)
+        settle_camera(game, inp, uuid)
+        moves.append("zoom_out")
+        pos, t2, last = hover_search(game, inp, uuid, deadline=deadline, seen=seen, info=info)
+        tries += t2
+        keep_diag(last)
+    if pos is None and seen:
+        turns = ((1, "rotate_occluded_right"), (-2, "rotate_occluded_left"))
+        for n, (mult, name) in enumerate(turns):
+            if time.monotonic() >= deadline:
+                break
+            _turn(game, inp, uuid, mult)
+            moves.append(name)
+            final = n == len(turns) - 1
+            pos, t2, last = hover_search(game, inp, uuid, deadline=deadline if final else
+                                         min(deadline, time.monotonic() + OCCLUDED_PASS_S), seen=seen,
+                                         early=not final, info=info)
+            tries += t2
+            keep_diag(last)
+            if pos is not None:
+                break
+    if info.get("settle"):
+        last = {**last, "settle": info["settle"]}
+    return pos, tries, last
+
+
+def _search_v1(game: Game, inp: InputClient, uuid: str, moves: list[str], seen: dict[str, int],
+               keep_diag) -> tuple[tuple[int, int] | None, int, dict]:
+    deadline = time.monotonic() + HOVER_BUDGET_S
+    pos, tries, last = hover_point(game, inp, uuid, deadline=deadline, seen=seen)
     keep_diag(last)
     if pos is None and not moves and not last.get("timed_out"):
         # Every aim missed although the target looked in view: one more look from a wider angle.
@@ -352,7 +632,7 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
         inp.wheel(-2, w // 2, h // 2)
         inp.wait_frames(12)
         time.sleep(0.15)
-        moves = ["zoom_out"]
+        moves.append("zoom_out")
         pos, t2, last = hover_point(game, inp, uuid, deadline=deadline, seen=seen)
         tries += t2
         keep_diag(last)
@@ -371,8 +651,16 @@ def click_entity(game: Game, inp: InputClient, uuid: str, button: str = "L", exp
             keep_diag(last)
             if pos is not None:
                 break
+    return pos, tries, last
+
+
+def _finish_click(game: Game, inp: InputClient, uuid: str, button: str, expect: str | None, verify_timeout: float,
+                  menu: str | None, before: str | None, centered: bool, moves: list[str], seen: dict[str, int],
+                  passes_diag: dict, pos: tuple[int, int] | None, tries: int, last: dict) -> ClickResult:
     moves = (["center"] if centered else []) + moves
     extra: dict[str, Any] = {"camera": moves} if moves else {}
+    if tries > 1 and last.get("settle"):
+        extra["settle"] = last["settle"]   # live check: "cursor" = the per-try settle on the helper's cursor works
     if pos is None:
         # off_screen only when no aim point was ever in the window (tries counts the in-window points)
         reason = "off_screen" if tries == 0 and last.get("off_screen") else "hover_miss"

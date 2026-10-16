@@ -58,6 +58,10 @@ class CompactedResults(unittest.TestCase):
         self.assertEqual(fights.casts_of(new), {"Target_MainHandAttack": 1})
         self.assertEqual(fights.casts_of(chained), {"Projectile_FireBolt": 1})
         self.assertEqual(fights.casts_of("move e32: done — target=e32"), {})
+        # compact.py ACTION_DUPS: the cast= beside a bonus action's own id is gone too
+        bonus = "bonus: Target_PommelStrike e67: done — statuses=[e67 Dazed] damage=[e67 Lesser Imp 4 Bludgeoning]"
+        self.assertEqual(fights.casts_of(bonus), {"Target_PommelStrike": 1})
+        self.assertEqual(fights.casts_of("action: Shout_Dash: done — statuses=[e2 Dash]"), {"Shout_Dash": 1})
 
     @unittest.skipUnless(GOLDEN.exists(), "golden naut results missing")
     def test_golden_replay_same_deaths_and_casts(self):

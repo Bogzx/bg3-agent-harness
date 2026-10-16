@@ -1,38 +1,28 @@
 # Session wrap-up (target: ≤ 3 minutes)
 
-**When:** only when the clock line in tool results says **WRAP UP NOW** (3 min before the end; or a
-SESSION CLOCK reminder in manual sessions) or the operator asks you to stop. Never earlier: "⏱ 5m left ·
-2m of play" means play 2 more minutes. Being stuck is not a reason (run `stuck`, section 0). Escaping
-danger is play. Don't save `Sxxx-end` or rewrite HANDOFF.md before WRAP UP NOW. Exception: when the ⏱ line
-says "5m of play" or less and the next step is a point of no return or won't finish in time (a descent, a boss
-fight, a long trip, a new region), start the wrap-up now; `end_session` accepts a finished wrap-up from then on.
-Never kill time with repeated get_status/wiki reads (S036 idled ~2.5 min "waiting for the wrap-up mark"): with
-minutes left and no safe next step, either wrap up, or do reversible useful work (sell/stash junk, equip_best,
-level plans, loot nearby, notes).
-**Do it once.** If `end_session` (or the runner) still says "Keep playing", play on and do not redo the wrap-up: no
-second `Sxxx-end` save unless the party moved, no HANDOFF rewrite (one `memory_edit` to a line that changed is fine).
-
-Your notes were written during play (CLAUDE.md, Memory protocol), so wrap-up is just the following.
-No reading through files, no tidying.
+**When:** only when the `⏱` line says **WRAP UP NOW** (or a SESSION CLOCK reminder, or the operator asks).
+"⏱ 5m left · 2m of play" means play 2 more minutes; stuck is not a reason (run `stuck`); escaping danger is
+play. One exception: with "5m of play" or less and a point of no return next (a descent, a boss, a long trip, a
+new region), wrap up now (`end_session` accepts it). Never kill time with get_status/wiki reads (S036 idled
+~2.5 min): wrap up, or do reversible useful work (sell/stash junk, equip_best, level plans, loot nearby, notes).
+**Do it once.** If `end_session` or the runner says "Keep playing", play on: no second `Sxxx-end` save unless the
+party moved, no HANDOFF rewrite (one `memory_edit` of a changed line is fine). No reading through files, no tidying.
 
 ## 1. Safe state (≤ 1 min)
-- **Combat:** finish the current round. If the fight goes on, save anyway (if the game allows) and write
-  the situation precisely in HANDOFF.
-- **Dialogue:** finish the conversation (the `dialogue` playbook rules still apply).
-- Start nothing new.
+- **Combat:** finish the current round. If the fight goes on, save anyway (if the game allows) and write the
+  situation precisely in HANDOFF.
+- **Dialogue:** finish the conversation (`dialogue` playbook rules apply). Start nothing new.
 
 ## 2. Save
-`save_game(label="Sxxx-end")` once. It returns at once and saves in the background; a later result says
-SAVED, and "queued" (dialogue on screen) is fine too: it saves as soon as it can. Don't `list_saves` to check
-it and don't save again after every note (S025 saved Sxxx-end 4 times and checked list_saves 3 times).
+`save_game(label="Sxxx-end")` once. A later result says SAVED ("queued" with a dialogue on screen is fine: it
+saves as soon as it can). No `list_saves` check, no re-save after notes (S025 saved 4 times, checked 3 times).
 
-## 3. Write (one call each, while nothing else runs)
-- **HANDOFF.md:** rewrite the whole file with one `memory_write("memory/HANDOFF.md", …)`, using the template below.
-- **PLAYTHROUGH.md:** the `Now:` line (act, region, `Last session: Sxxx`, `Save: Sxxx-end`), plus party
-  lines only if they changed.
-- **objectives.md** if a goal finished or changed and you haven't noted it yet, and in any case when it
-  is 3 sessions old (lint then refuses the wrap-up until it is current). Same for decisions.md
-  (irreversible choices this session need an entry).
+## 3. Write (one call each)
+- **HANDOFF.md:** one `memory_write("memory/HANDOFF.md", …)` with the template below.
+- **PLAYTHROUGH.md:** the `Now:` line (act, region, `Last session: Sxxx`, `Save: Sxxx-end`); party lines only if
+  they changed.
+- **objectives.md** if a goal finished or changed and isn't noted yet, and in any case when it is 3 sessions
+  old (lint refuses the wrap-up until it is current). decisions.md: an entry per irreversible choice this session.
 - One log line: `- HH:MM [save] Sxxx-end at <region>`.
 
 ```
@@ -49,19 +39,16 @@ Save to load: "Sxxx-end" — <where the party stands; in or out of combat; anyth
 ## Watch out
 - <dangers, resources low, harness quirks seen this session> [tag]
 ```
-Lint requires the heading with *this* session's number, the `Save to load:` line, and the
-`## Doing right now` and `## Next steps` sections. Stay ≤ 60 lines and ≤ 3500 characters.
+≤ 60 lines and ≤ 3500 characters.
 
 ## 4. end_session, then end your turn
-Call `end_session`. It lints the memory and commits it ("Memory for Sxxx committed … Session over: end your
-turn now"). Then end your turn with a one-line summary and take no further game actions. If it returns a lint
-report instead, fix each error and call `end_session` again:
-- **handoff:** the heading must name this session; `Save to load:`, `## Doing right now` and
-  `## Next steps` must be there.
+`end_session` lints and commits ("Memory for Sxxx committed … Session over: end your turn now"); then end your
+turn with a one-line summary, no more game actions. A lint report instead: fix each error, call it again:
+- **handoff:** the heading names this session; `Save to load:`, `## Doing right now`, `## Next steps` present.
 - **budget:** condense; move detail out of always-loaded files.
 - **provenance:** add the missing tag (`[seen Sxxx]`, `[told Sxxx]`, `[wiki]`, `[guess]`) to each listed line.
-- **deletion:** you removed lines from decisions.md or npcs.md. Put the quoted lines back, condensed
-  under `## Archive`, or add an `ARCHIVE: <why>` line if condensing is intended.
-- **append-only:** you changed an old session-log line. Restore the quoted original exactly.
+- **deletion:** lines removed from decisions.md or npcs.md: put them back, condensed under `## Archive`, or add
+  an `ARCHIVE: <why>` line.
+- **append-only:** an old session-log line changed: restore the quoted original exactly.
 
 After 4 failed attempts it gives up and leaves the session open for the operator.

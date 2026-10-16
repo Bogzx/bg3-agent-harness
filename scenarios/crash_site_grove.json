@@ -1,7 +1,7 @@
 {
  "name": "crash_site_grove",
  "title": "Crash site → Emerald Grove",
- "about": "Act 1 opening on the surface: from the beach after the crash to the Emerald Grove (the druids' grove behind the gate).",
+ "about": "Act 1 opening on the surface: from the beach after the crash to the Emerald Grove, behind the gate (the minimap's Emerald Grove / The Hollow; the Emerald Grove Environs approach outside the gate doesn't count).",
  "start": {
   "kind": "save",
   "save": null,

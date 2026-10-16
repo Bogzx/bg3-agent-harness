@@ -50,6 +50,12 @@ A.CAST_NO_START_MS = 8000
 -- In combat the cast never walks (WithoutMove): a cast the engine takes starts within a second, so 8 s of nothing
 -- was ~6 s of a turn lost per dropped order (S062 Target_MainHandAttack ×2, audit ACT-11). A jump keeps the 8 s.
 A.CAST_NO_START_COMBAT_MS = 3000
+-- act.cast {ui=true} (audit ACT-8, the hotbar N-target route): the bridge clicks the hotbar cell and each target as a
+-- player does, after this job started; the job only checks the cast and watches CastSpell/CastedSpell. The clicks
+-- take ~1 s + 0.5 s per target (hotbar.py budget, hard cap 3x + 4 s): no start this long = failed (the bridge cancels
+-- earlier on its own failure).
+A.CAST_UI_NO_START_MS = 15000
+A.CAST_UI_MAX_TARGETS = 10 -- darts/beams/allies one hotbar cast can name (Magic Missile at level 9 = 11 is not ours)
 A.CAST_WALK_MAX_REACH = 3.0 -- act.cast out of combat walks into range only for touch-range casts (Help, melee)
 A.MELEE_STOP_SLACK = 0.4 -- move_to {target, within}: stop this far inside the melee reach
 A.CAST_SETTLE_MS = 250       -- cast: report this long after CastedSpell / the last hit
@@ -1410,8 +1416,16 @@ end
 
 -- After UseSpell(first pick): a two-step cast's second pick goes into the queued task. Revivify: the spot beside
 -- the body; a teleport (Dimension Door): the landing given.
-function A.give_second_pick(job, char, spell, targets, landing)
+-- clicked: the hotbar route (act.cast ui=true) gives the second pick by a click, nothing is written; only the
+-- result's landing / revive report is set up.
+function A.give_second_pick(job, char, spell, targets, landing, clicked)
     if targets[2] or not targets[1] or not A.two_step_spell(spell) then return end
+    if clicked then
+        job.place = landing and { U.round(landing[1], 1), U.round(landing[2], 1), U.round(landing[3], 1) } or nil
+        job.teleport = landing and true or nil
+        job.revive = (not landing and A.revive_spell(spell)) or nil
+        return
+    end
     local p = landing or A.place_spot(char, targets[1])
     local ok2, why = nil, "the body's position is unknown"
     if p then ok2, why = A.set_task_pos2(char, spell, p) end
@@ -1452,7 +1466,25 @@ reg("cast", function(args)
     local targets = {}
     if args.target then targets[1] = G.guid(args.target) end
     for _, t in ipairs(args.targets or {}) do targets[#targets + 1] = G.guid(t) end
-    if #targets > 2 then G.refuse("more than two targets is not supported yet") end
+    -- ui: the player's route (hotbar cell, one click per target, the tick), clicked by the bridge once this job runs
+    local ui = args.ui == true
+    if ui then
+        -- a two-step spell (ACT-9's player route): Revivify = the body, then the ground beside it; Dimension Door =
+        -- who goes (the caster when nobody is named), then the landing given as pos. The bridge clicks both.
+        local two = A.two_step_spell(base)
+        local tele_land = two and args.pos ~= nil and not A.revive_spell(base)
+        if #targets < 1 and not tele_land then G.refuse("a hotbar cast needs its targets") end
+        if #targets > A.CAST_UI_MAX_TARGETS then
+            G.refuse("more than " .. A.CAST_UI_MAX_TARGETS .. " targets in one cast")
+        end
+        if args.pos and not tele_land then G.refuse("a hotbar cast clicks characters, not a position") end
+        if args.upcast then G.refuse("an upcast through the hotbar's level picker is not built yet") end
+        if two and A.revive_spell(base) and #targets ~= 1 then
+            G.refuse(tostring(base) .. " through the hotbar clicks one body, then the ground beside it")
+        end
+    elseif #targets > 2 then
+        G.refuse("more than two targets is not supported yet")
+    end
     for _, t in ipairs(targets) do if not t then G.refuse("bad target") end end
     local pos = args.pos
     if not Ext.Stats.Get(base) then
@@ -1471,7 +1503,7 @@ reg("cast", function(args)
     end
     -- ACT-9: with the second-pick write off, a two-step cast would be ordered with its first pick only: the game
     -- then waits for the second click (or refuses), and the next action cancels it. Refused before any cost.
-    if A.two_step_spell(base) and not targets[2] and not A.TASK_POS2 then
+    if A.two_step_spell(base) and not targets[2] and not A.TASK_POS2 and not ui then
         if A.revive_spell(base) then
             G.refuse(tostring(base) .. " is a two-step cast (the body, then the spot they stand up on) and this"
                 .. " action can't give its second pick yet. Read a Scroll of Revivify by name (use_ability"
@@ -1515,11 +1547,13 @@ reg("cast", function(args)
             error(c, 0)
         end
         if landing then A.landing_ok(char, base, landing) end
-        if targets[2] then
-            G.target_visible(targets[2])
-            G.within(char, targets[2], G.MAX_INTERACT_DIST, "target")
-            if c.range and U.dist(G.pos(char), G.pos(targets[2])) > c.range + 0.5 then
-                G.refuse("second target is out of range: move closer first")
+        for i = 2, #targets do
+            -- every later pick passes the first one's checks (seen, near, in range); a repeat = another dart/beam
+            local t = targets[i]
+            G.target_visible(t)
+            G.within(char, t, G.MAX_INTERACT_DIST, "target")
+            if c.range and U.dist(G.pos(char), G.pos(t)) > c.range + 0.5 then
+                G.refuse((i == 2 and "second" or ("target " .. i)) .. " is out of range: move closer first")
             end
         end
         if spell ~= base then
@@ -1547,7 +1581,7 @@ reg("cast", function(args)
     local walk
     if not ok then
         local why = G.is_refusal(check) and check.reason or ""
-        if why:find("^target is out of range") and targets[1] and not targets[2] and not pos
+        if why:find("^target is out of range") and targets[1] and not targets[2] and not pos and not ui
             and not G.in_combat(char) and not G.same(char, targets[1]) then
             -- Touch range only (Help, Cure Wounds, a melee attack): approach_point stands beside the target. A
             -- ranged cast keeps the refusal: closing in on a hostile is the agent's call (move_to within).
@@ -1583,11 +1617,18 @@ reg("cast", function(args)
 
     local no_start_ms = (combat and without_move == 1 and base ~= "Projectile_Jump") and A.CAST_NO_START_COMBAT_MS
         or A.CAST_NO_START_MS
+    if ui then no_start_ms = A.CAST_UI_NO_START_MS end
     local walk_m = walk and walk.plan.length_m or 0
     return start("cast", char, {
         eta_s = 2.0 + (walk and walk_eta(walk_m) or 0),
         timeout_ms = 30000 + (walk and walk_timeout(walk_m) or 0),
         interrupt = { combat = walk ~= nil, dialogue = true, attacked = false },
+        -- a hotbar cast cancelled by the bridge after the game began it (a late start): say so (the bridge then never
+        -- casts it again by Osiris) and leave the player's own cast alone (no purge)
+        on_cancel = ui and function(job)
+            job.stopping = true
+            if job.began then RPC.finish_job(job, "interrupted", { began = true, cast = spell }, "cancelled") end
+        end or nil,
         osi = with_walk({
             CastSpell = function(job, a)
                 if matches(a) then job.began = true end
@@ -1690,7 +1731,8 @@ reg("cast", function(args)
                     end
                 end
                 local res = { cast = spell, extra_attack = check.extra_attack, walked_into_range = job.walked,
-                    upcast_ignored = upcast_ignored, landed_m_from_target = landing, fell_m = job.fell_m }
+                    upcast_ignored = upcast_ignored, landed_m_from_target = landing, fell_m = job.fell_m,
+                    via = ui and "hotbar" or nil, targets_n = ui and #targets or nil }
                 if #job.hits > 0 then
                     res.damage = job.hits
                     local total = 0
@@ -1717,6 +1759,8 @@ reg("cast", function(args)
                     if job.place and not job.teleport then
                         res.placed_at = job.place
                         res.revived = not res.target.dead or nil
+                    elseif job.revive then
+                        res.revived = not res.target.dead or nil
                     end
                 end
                 RPC.finish_job(job, "done", res)
@@ -1740,6 +1784,13 @@ reg("cast", function(args)
                     A.give_second_pick(j, char, spell, targets, landing)
                 end)
             end
+            if ui then
+                -- no order: the bridge clicks the hotbar now (the player's input); CastSpell/CastedSpell tell the rest
+                job.ui = true
+                job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
+                A.give_second_pick(job, char, spell, targets, landing, true)
+                return
+            end
             job.osi_task = "spell"
             job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
             -- S039 21:53: the engine froze inside a jump cast and the crash left no trace: mark it in flight, so a
@@ -1761,6 +1812,8 @@ reg("cast", function(args)
         on_finish = function(job)
             if job.jump_marked then pcall(BG3AI.Nav.inflightDone, "jump") end -- NAV-7: only its own marker
             if not job.casted then return end
+            -- A hotbar cast is the player's own: the game charged it (nothing extra from us).
+            if job.ui then return end
             -- Resource audit: charge whatever the engine did not.
             local after = G.resources(char)
             local charged = {}

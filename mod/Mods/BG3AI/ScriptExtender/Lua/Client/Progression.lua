@@ -1007,7 +1007,12 @@ local function selectStage(getDC, ctx, key, prop, collection, want, required)
         local since = RPC.now_ms() - (ctx.tabAt or -1e9)
         local early = ctx.fast and since < P.CC_TAB_MS + P.CC_PICK_MS - P.CC_SETTLE_MS
         if UI.count(coll) == 0 then
-            if early and since < P.CC_SETTLE_MS then return "wait", P.CC_POLL_MS end
+            -- empty: final after one settle, unless the plan wants an item (the old pick's list may not be rebuilt
+            -- yet: wait to the cap) or the page needs one (a default: at least the old pick wait since the last pick)
+            if early and (want ~= nil or since < P.CC_SETTLE_MS
+                          or (required and RPC.now_ms() - (ctx.lastPickAt or -1e9) < P.CC_PICK_MS)) then
+                return "wait", P.CC_POLL_MS
+            end
             return "next", 0
         end
         local after = ctx.fast and P.CC_SETTLE_MS or 300
@@ -1028,6 +1033,7 @@ local function selectStage(getDC, ctx, key, prop, collection, want, required)
                         ctx.result.defaulted = ctx.result.defaulted or {}
                         ctx.result.defaulted[#ctx.result.defaulted + 1] = key
                         ctx.pending = { key = key, prop = prop, item = it, at = RPC.now_ms() }
+                        ctx.lastPickAt = RPC.now_ms()
                         break
                     end
                 end
@@ -1046,6 +1052,7 @@ local function selectStage(getDC, ctx, key, prop, collection, want, required)
             if not ok then return "fail", serr end
         end
         ctx.pending = { key = key, prop = prop, item = item, at = RPC.now_ms() }
+        ctx.lastPickAt = RPC.now_ms()
         return "next", after
     end
 end

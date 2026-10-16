@@ -551,3 +551,37 @@ class CallRates(unittest.TestCase):
         tools = [{"tool": "look", "t0": 5.0}, {"tool": "move_to", "t0": 6.0}, {"tool": "look", "t0": 7.0, "nested": True}]
         r = M.call_rates([], tools, 0.0, 60.0)
         self.assertEqual((r["source"], r["calls"], r["reads"], r["action_calls"]), ("bridge", 2, 1, 1))
+
+
+class ResultTokens(unittest.TestCase):
+    """The per-session "result tokens" line: latency.json result_tokens, latency_history.jsonl result_tok."""
+
+    def test_stream_result_records_carry_tokens(self):
+        from bg3ai import metrics as M, compact_check as cc
+        text = "TURN e28 Lae'zel (round 1)\nmove e32: done — in_reach dist=1.5"
+        ev = {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "u1", "content": [{"type": "text", "text": text}]},
+            {"type": "tool_result", "tool_use_id": "u2", "content": [
+                {"type": "text", "text": json.dumps({"result": text})}, {"type": "image", "source": {}}]}]}}
+        recs = M.stream_records(ev, 10.0)
+        self.assertEqual([r["tok"] for r in recs], [cc.est_tokens(text)] * 2)  # the {"result"} copy unwrapped
+        self.assertEqual([r.get("img") for r in recs], [None, True])
+        st = M.result_token_stats(recs)
+        self.assertEqual((st["total"], st["n"], st["images"]), (2 * cc.est_tokens(text), 2, 1))
+        summary = M.summarize([], [], recs, 0.0, 60.0)
+        self.assertEqual(summary["result_tokens"]["total"], 2 * cc.est_tokens(text))
+        with tempfile.TemporaryDirectory() as d:
+            hist = Path(d) / "h.jsonl"
+            M.write_summary(summary, Path(d) / "S001.latency.json", hist, "S001")
+            self.assertEqual(json.loads(hist.read_text())["result_tok"], 2 * cc.est_tokens(text))
+
+    def test_old_turns_files_backfill_from_the_stream(self):
+        from bg3ai import metrics as M
+        with tempfile.TemporaryDirectory() as d:
+            turns, stream = Path(d) / "S001.turns.jsonl", Path(d) / "S001.jsonl"
+            turns.write_text(json.dumps({"type": "result", "t": 1.0, "id": "u1"}) + "\n")
+            stream.write_text(json.dumps({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "u1", "content": "WHERE Nautiloid"}]}}) + "\n")
+            self.assertIsNone(M.result_token_stats(M.read_jsonl(turns))["total"])
+            s = M.summarize_files(None, turns)
+            self.assertEqual((s["result_tokens"]["total"] > 0, s["result_tokens"]["source"]), (True, "stream"))

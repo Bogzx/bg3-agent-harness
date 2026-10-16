@@ -1,9 +1,7 @@
 # Party and leveling
 
-**When:** Use when a level up is available (a `LEVEL UP:` line in get_status/look, or a `LEVEL UP pending`
-reminder), when a `PARTY PLAN` line asks for plan lines or a composition decision, when choosing or swapping companions, at character creation, when preparing spells, or when a
-build plan needs revising. Covers level_up, party-build.md plans, party composition, feats and ASIs, spells.
-Standard builds per class: `knowledge/builds.md`.
+**When:** a `LEVEL UP:` line or `LEVEL UP pending` reminder, a `PARTY PLAN` line (plan lines or composition),
+choosing or swapping companions, preparing spells, revising a build. Standard builds per class: `knowledge/builds.md`.
 
 ## Level ups: do them at once, in one call each
 A level up is free power: take it at the **next safe moment** (out of combat and dialogue), before the next

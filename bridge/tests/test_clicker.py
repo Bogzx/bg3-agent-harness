@@ -163,7 +163,60 @@ class BringIntoView(unittest.TestCase):
         self.assertEqual(inp.log, [])
 
 
+class PointIntoView(unittest.TestCase):
+    """act's two-step route (a ground landing spot): bring_into_view(pos=(x, y, z)) / view_point."""
+
+    def calls(self, g):
+        seen = []
+        real = g.rpc
+
+        def rpc(op, args=None, context="server"):
+            if op == "ui.screen_pos":
+                seen.append(dict(args or {}))
+            return real(op, args, context)
+        g.rpc = rpc
+        return seen
+
+    @mock.patch.dict(clicker._drag, {"flip": False})
+    def test_pos_behind_rotates_until_centred(self):
+        inp = FakeInput()
+        g = FakeGame(inp, behind=True, side="left")
+        seen = self.calls(g)
+        sp, moves = clicker.view_point(g, inp, (1.0, 2.0, 3.0))
+        self.assertTrue(moves and moves[0] == "rotate_left", moves)
+        self.assertTrue(clicker._centered(sp), sp)
+        self.assertTrue(seen and all(a == {"pos": [1.0, 2.0, 3.0]} for a in seen), seen)
+
+    def test_pos_in_view_no_moves(self):
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.1, 0.2))
+        sp, moves = clicker.view_point(g, inp, [0, 0, 0])
+        self.assertEqual((moves, sp["ndc"]), ([], [0.1, 0.2]))
+
+    def test_out_after_the_last_step_and_on_error(self):
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.2, 1.15), zoom_gain=0.05)
+        out: dict = {}
+        moves = clicker.bring_into_view(g, inp, pos=(0, 0, 0), steps=2, out=out)
+        self.assertEqual(len(moves), 2)
+        self.assertAlmostEqual(out["ndc"][1], 1.15 * 0.95 * 0.95, places=4)   # the read after the 2nd zoom
+
+        def bad(op, args=None, context="server"):
+            raise clicker.GameError("no client")
+        g.rpc = bad
+        sp, moves = clicker.view_point(g, inp, (0, 0, 0))
+        self.assertEqual((sp, moves), ({"error": "no client"}, []))
+
+    def test_uuid_path_unchanged(self):
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.2, 1.15))
+        seen = self.calls(g)
+        clicker.bring_into_view(g, inp, "u")
+        self.assertTrue(all(a.get("uuid") == "u" and "pos" not in a for a in seen), seen)
+
+
 class ClickEntity(unittest.TestCase):
+    @mock.patch.object(clicker, "HOVER_V2", False)   # FakeGame hovers by aim, every aim on one pixel: the v1 order
     def test_door_hit_on_its_leaf_after_zoom(self):
         inp = FakeInput()
         g = FakeGame(inp, ndc=(0.2, 1.15), hover_aims={("mid", -0.5)}, screen_after="roll")
@@ -279,6 +332,7 @@ class ClickEntity(unittest.TestCase):
         r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=0.1)
         self.assertTrue(r.ok)
 
+    @mock.patch.object(clicker, "HOVER_V2", False)   # v1 pass count (v2 also skips same-pixel points)
     def test_duplicate_resolved_aim_is_skipped(self):
         inp = FakeInput()
         g = FakeGame(inp, ndc=(0.0, 0.2), hover_aims=set())

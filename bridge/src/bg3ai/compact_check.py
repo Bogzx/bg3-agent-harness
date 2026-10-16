@@ -30,7 +30,12 @@ IGNORED = {"name", "type", "amount", "target", "resource", "max_hp", "spell", "c
            # combat rows ("init 4 hp 100% current"), a total_damage equal to its one damage entry
            "initiative", "hp_pct", "relation", "race", "is_current", "total_damage",
            # an event whose fact CHANGES states in the same result (DEAD, +Status, -Status)
-           "died", "status_applied", "status_removed"}
+           "died", "status_applied", "status_removed",
+           # combat narrative (COMBAT_NARRATIVE / TURN_WORDS): "turn e86: Main Hand Attack (attack) -> e67 12 Slashing"
+           # stands for its turn_started/cast/damage events; "round 2" for round_started
+           "damage", "turn_started", "round_started",
+           # statuses=[target=e2 status=Dash] -> statuses=[e2 Dash] (ACTION_DUPS)
+           "status"}
 _FROM = re.compile(r"(e\d+)=\[(-?[\d.]+),([01])\]")
 _CAST_SPELL = re.compile(r"^(\s+cast\b.*?) spell=\S+(.*name=.*)$")
 _PIECE = re.compile(r"[A-Za-z]{1,8}|\d{1,3}|[^\sA-Za-z\d]|\n")
@@ -46,6 +51,17 @@ def est_tokens(text: str) -> int:
 
 def strip_hints(text: str) -> str:
     """The original with each hint's instruction text replaced by its fact groups (and spell ids next to a name)."""
+    lines = text.split("\n")
+    # combat equivalences: a partial walk's outcome stands for the FAILED before it, a duplicate "Xm left" (MOVE_PHRASES);
+    # a turn_ended in a block that starts the next turn (TURN_ENDS)
+    if compact.MOVE_PHRASES:
+        lines = [compact.move_phrases(ln) for ln in lines]
+    if compact.TURN_ENDS:
+        lines = compact.implied_turn_ends(compact._merge_blocks(lines))
+    # a spent turn's leftover action/bonus/movement after "end_turn: done" (ENDED_RESOURCES)
+    if compact.ENDED_RESOURCES:
+        lines = compact.ended_resources(lines)
+    text = "\n".join(lines)
     for _key, rx, _short in compact._HINTS:
         text = rx.sub(lambda m: " " + " ".join(v for v in m.groupdict().values() if v) + " ", text)
     # equivalences: a from= pair's line-of-sight flag is a word ("no-LOS") when 0; reported positions are rounded
@@ -53,9 +69,12 @@ def strip_hints(text: str) -> str:
     lines = [compact.coords(ln) for ln in text.split("\n")]
     # harness bookkeeping (compact.HARNESS_FIELDS): not a player-visible fact
     text = "\n".join(compact.harness_fields(lines))
+    # a combat turn's move lines carry no end position (COMBAT_MOVE_POS: CHANGES says who moved how far)
+    if compact.COMBAT_MOVE_POS:
+        text = "\n".join(compact.combat_move_pos(text.split("\n")))
     # a PATH leg's ordinal ("  2. 19.5m W") is a label, not a fact: merged legs keep the first and last
     text = re.sub(r"^  \d+\. (?=[\d.]+m [NESW]{1,2}$)", "  ", text, flags=re.M)
-    for rx, _r in compact._PHRASES:
+    for rx, _r in compact.phrases():
         text = rx.sub(lambda m: " " + " ".join(v for v in m.groups() if v) + " ", text)
     return "\n".join(_CAST_SPELL.sub(r"\1\2", ln) for ln in text.split("\n"))
 

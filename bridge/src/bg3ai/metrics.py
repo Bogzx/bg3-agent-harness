@@ -20,7 +20,9 @@ Three record streams, all JSONL:
       a party member has the active turn; false means enemies/NPCs are acting and the agent can only wait.
       load: nav.activity did not answer (a loading screen: load_game, an area transition, a fast travel).
 * Sxxx.turns.jsonl (written by the runner from claude's stream-json, arrival times):
-    {"type":"use", "t", "id", "name", "steps"} / {"type":"result", "t", "id"} / {"type":"assistant", "t"}
+    {"type":"use", "t", "id", "name", "steps"} / {"type":"result", "t", "id", "tok", "img"} / {"type":"assistant", "t"}
+      tok: the tool result's text in estimated model tokens (compact_check.est_tokens; the "result tokens" metric),
+      img: it carried an image (a screenshot, ~1.35k tokens, not in tok).
 * Sxxx.latency.json: summarize() at session end. One line per session is also appended to
   runtime/sessions/<playthrough>/latency_history.jsonl.
 
@@ -112,6 +114,49 @@ def _result_text(c: dict) -> str:
     if isinstance(body, list):
         return " ".join(b.get("text", "") for b in body if isinstance(b, dict) and isinstance(b.get("text"), str))
     return body if isinstance(body, str) else ""
+
+
+def _has_image(c: dict) -> bool:
+    body = c.get("content")
+    return isinstance(body, list) and any(isinstance(b, dict) and b.get("type") == "image" for b in body)
+
+
+def result_tokens(c: dict) -> int:
+    """A tool_result block's text in estimated model tokens (the structured {"result": ..} copy unwrapped), with
+    the estimator tools/vis/obs_size.py uses (bg3ai.compact_check.est_tokens: 1.6 x pieces)."""
+    from .compact_check import est_tokens  # stdlib only, like this module
+    text = _result_text(c)
+    try:
+        inner = json.loads(text)
+        if isinstance(inner, dict) and isinstance(inner.get("result"), str):
+            text = inner["result"]
+    except ValueError:
+        pass
+    return est_tokens(text)
+
+
+def result_token_stats(turns: list[dict]) -> dict:
+    """Per session: the tool results' text in estimated tokens ("result tokens"; research/impl-vis.md
+    "Observation size"): total, results counted, mean per result, results with an image. total None = the
+    turns file predates the tok field (summarize_files backfills it from the stream)."""
+    rs = [r for r in turns if r.get("type") == "result"]
+    have = [r for r in rs if isinstance(r.get("tok"), int)]
+    total = sum(r["tok"] for r in have) if have or not rs else None
+    return {"total": total, "n": len(have), "per_result": round(total / len(have), 1) if have else None,
+            "images": sum(1 for r in rs if r.get("img"))}
+
+
+def result_tokens_from_stream(stream_path: Path | None) -> list[dict]:
+    """Backfill for sessions recorded before the tok field: the result records' tokens from the raw stream."""
+    out = []
+    for ev in read_jsonl(stream_path) if stream_path else []:
+        if ev.get("type") == "user":
+            content = (ev.get("message") or {}).get("content")
+            for c in content if isinstance(content, list) else []:
+                if isinstance(c, dict) and c.get("type") == "tool_result":
+                    out.append({"type": "result", "id": c.get("tool_use_id"), "tok": result_tokens(c),
+                                **({"img": True} if _has_image(c) else {})})
+    return out
 
 
 def _bare(name: str) -> str:
@@ -524,7 +569,10 @@ def stream_records(ev: dict, t: float) -> list[dict]:
         content = (ev.get("message") or {}).get("content")
         for c in content if isinstance(content, list) else []:
             if isinstance(c, dict) and c.get("type") == "tool_result":
-                out.append({"type": "result", "t": round(t, 3), "id": c.get("tool_use_id")})
+                rec = {"type": "result", "t": round(t, 3), "id": c.get("tool_use_id"), "tok": result_tokens(c)}
+                if _has_image(c):
+                    rec["img"] = True
+                out.append(rec)
                 if WRAPUP_RE.search(_result_text(c)):
                     out.append({"type": "wrapup", "t": round(t, 3)})
     elif typ == "system" and ev.get("subtype") == "thinking_tokens":
@@ -995,6 +1043,8 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
                           "by": {k: sum(1 for r in waits if r.get("noop") == k)
                                  for k in sorted({r["noop"] for r in waits if r.get("noop")})}},
         "tool_calls": len(top),
+        # the model side of live feel: every later turn re-reads these (research/impl-vis.md "Observation size")
+        "result_tokens": result_token_stats(turns),
         "rates": call_rates(turns, tool_recs, start, wrap_t if wrap_t is not None else end),
         "actions": n_actions,
         "apm": round(n_actions / minutes, 2),
@@ -1027,6 +1077,11 @@ def summarize_files(metrics_path: Path | None, turns_path: Path | None,
         stream = Path(str(turns_path).removesuffix(".turns.jsonl") + ".jsonl")
         if stream != Path(turns_path):
             turns += wrapup_from_stream(stream, turns)
+            if result_token_stats(turns)["total"] is None:  # older turns files: no tok on result records
+                summary = summarize(tools, samples, turns, start, end)
+                summary["result_tokens"] = dict(result_token_stats(result_tokens_from_stream(stream)),
+                                                source="stream")
+                return summary
     return summarize(tools, samples, turns, start, end)
 
 
@@ -1048,6 +1103,7 @@ def write_summary(summary: dict, out_path: Path, history_path: Path | None, sess
                "rt_read_p90_ms": summary["tool_rt_ms"]["read"].get("p90"), "apm": summary.get("apm"),
                "busy_pct": summary.get("busy_pct"), "pipelining_pct": summary.get("pipelining_pct"),
                "think_overlap_pct": summary.get("think_overlap_pct"),
+               "result_tok": (summary.get("result_tokens") or {}).get("total"),
                "calls_pm": (summary.get("rates") or {}).get("calls_pm"),
                "reads_pm": (summary.get("rates") or {}).get("reads_pm"),
                "actions_pm": (summary.get("rates") or {}).get("actions_pm"),

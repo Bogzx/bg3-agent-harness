@@ -23,9 +23,11 @@ class FakePage:
     after the page was shown once (`lazy_box` more polls), a click focuses the box and selects its text."""
 
     def __init__(self, text="Tav", readable=False, box=(1150, 1190), can_edit=True, focus_on_click=True,
-                 typing_works=True, lazy_box=1, popup=False):
-        self.text = text
+                 typing_works=True, lazy_box=1, popup=False, popup_after=None, xs=(1500, 2300)):
+        self.text, self.xs = text, xs
         self.popup = popup   # "Reset Tutorials" over the page: no hover reaches the box until it closes
+        self.popup_after = popup_after   # the popup opens after this many cc_name reads on the naming page
+        self.reads = 0
         self.name = text if readable else HANDLE
         self.readable = readable
         self.box, self.can_edit = box, can_edit
@@ -39,9 +41,13 @@ class FakePage:
         return 2000 <= x <= 2300 and 760 <= y <= 800   # (0.56, 0.54) of 3840x1440
 
     def over(self, x, y):
-        return self.box[0] <= y <= self.box[1] and 1500 <= x <= 2300
+        return self.box[0] <= y <= self.box[1] and self.xs[0] <= x <= self.xs[1]
 
     def view(self, want=None):
+        if self.page == 3:
+            self.reads += 1
+            if self.popup_after is not None and self.reads > self.popup_after:
+                self.popup, self.popup_after = True, None
         has_box = self.shown and self.lazy_box <= 0
         if self.shown and self.lazy_box > 0:
             self.lazy_box -= 1
@@ -134,17 +140,23 @@ class FakeInput:
 
 @mock.patch.object(naming.time, "sleep", lambda s: None)
 class EnsureName(unittest.TestCase):
+    def setUp(self):
+        naming._last_at.clear()
+
     def test_already_named(self):
         page = FakePage(text="Claude", lazy_box=0)
         page.shown = True
         self.assertEqual(ensure_name(page.rpc, None, "Claude")["via"], "already")
         self.assertEqual(len(page.calls), 1)
 
+    @mock.patch.dict(naming.os.environ, {"BG3AI_CC_PACED": "1"})
     def test_typed_over_unreadable_handle(self):
         # The live case: the character's name is a handle, the box shows Tav; the box appears late.
+        # Paced (the old route): scan + centring walk.
         page = FakePage(lazy_box=3)
         inp = FakeInput(page)
         res = ensure_name(page.rpc, inp, "Claude")
+        self.assertEqual((res["how"], res["pacing"]), ("scan", "fixed"))
         self.assertEqual(res["via"], "typed")
         self.assertEqual(page.text, "Claude")
         self.assertEqual(inp.typed, ["<END>", f"<BACKSPACE{naming.MAX_LEN + 2}>", "Claude", "<RETURN>"])
@@ -213,7 +225,98 @@ class EnsureName(unittest.TestCase):
         self.assertNotIn("ui.cc_finish", [op for op, _ in page.calls])
 
 
+def _reads(page):
+    return sum(1 for op, a in page.calls if op == "ui.cc_name")
+
+
+@mock.patch.object(naming.time, "sleep", lambda s: None)
+class StateWaits(unittest.TestCase):
+    """The default pacing: hover where the box is predicted/cached, wait on state, no fixed sleeps or centring."""
+
+    def setUp(self):
+        naming._last_at.clear()
+
+    def test_predicted_point_no_centring_walk(self):
+        # live 2026-10-08: the box was at 960,891 on 1920x1080, exactly probe_points' first point
+        page = FakePage(box=(860, 920), xs=(700, 1220))
+        inp = FakeInput(page, size=(1920, 1080))
+        res = ensure_name(page.rpc, inp, "Orsen Vale")
+        self.assertEqual((res["how"], res["pacing"], res["at"]), ("predicted", "state", [960, 891]))
+        self.assertEqual(page.text, "Orsen Vale")
+        self.assertEqual(inp.clicks, [(960, 891)])
+        self.assertLessEqual(_reads(page), 10)
+        naming._last_at.clear()
+        with mock.patch.dict(naming.os.environ, {"BG3AI_CC_PACED": "1"}):
+            page2 = FakePage(box=(860, 920), xs=(700, 1220))
+            ensure_name(page2.rpc, FakeInput(page2, size=(1920, 1080)), "Orsen Vale")
+        self.assertGreater(_reads(page2), 3 * _reads(page))  # the centring walk: ~2x12 more hovers
+
+    def test_cached_point_first(self):
+        # the box sits off the layout's prediction: the first call scans, the next one goes straight there
+        page = FakePage(box=(700, 760), xs=(700, 1220))
+        inp = FakeInput(page, size=(1920, 1080))
+        self.assertEqual(ensure_name(page.rpc, inp, "Ilse")["how"], "scan")
+        page2 = FakePage(box=(700, 760), xs=(700, 1220))
+        res = ensure_name(page2.rpc, FakeInput(page2, size=(1920, 1080)), "Ilse")
+        self.assertEqual(res["how"], "cached")
+        self.assertLessEqual(_reads(page2), 10)
+
+    def test_popup_opens_after_the_page(self):
+        # Reset Tutorials opening a moment after the naming page: the first popup check sees nothing, the quick
+        # hover comes up empty, the popup is re-checked and closed, attempt 1 succeeds
+        page = FakePage(popup_after=1)
+        res = ensure_name(page.rpc, FakeInput(page), "Brannoch Vael")
+        self.assertEqual(page.text, "Brannoch Vael")
+        self.assertFalse(page.popup)
+        self.assertEqual(res["popups"], 1)
+
+    def test_popup_opens_after_the_box_was_found(self):
+        page = FakePage()
+        inp = FakeInput(page)
+        real_click = inp.click
+
+        def click(x, y, *a, **k):   # the popup lands just before the first click on the box
+            if not inp.clicks:
+                page.popup = True
+                inp.clicks.append((x, y))
+                return
+            real_click(x, y, *a, **k)
+        inp.click = click
+        res = ensure_name(page.rpc, inp, "Claude")
+        self.assertEqual(page.text, "Claude")
+        self.assertEqual(res["popups"], 1)
+
+    def test_popup_that_never_closes_still_fails_loudly(self):
+        # runs 1-2 of the naut series before dismiss_popup: no hover reaches the box -> NamingError, no hang
+        page = FakePage(popup=True)
+        page.on_dont_reset = lambda x, y: False
+        with mock.patch("bg3ai.boxclick.click_box", lambda rpc, inp, a: {"pressed": False}), \
+                mock.patch("bg3ai.boxclick.describe", lambda r: "not pressed"):
+            with self.assertRaisesRegex(NamingError, "never reported the cursor"):
+                ensure_name(page.rpc, FakeInput(page), "Claude")
+        self.assertFalse(page.finished)
+
+    def test_paced_switch_keeps_the_old_sleeps(self):
+        sleeps = []
+        page = FakePage(popup=True)
+        with mock.patch.dict(naming.os.environ, {"BG3AI_CC_PACED": "1"}), \
+                mock.patch.object(naming.time, "sleep", sleeps.append):
+            ensure_name(page.rpc, FakeInput(page), "Claude")
+        for s in (naming.PAGE_SETTLE_S, naming.POPUP_SETTLE_S, naming.FOCUS_SETTLE_S, 0.3):
+            self.assertIn(s, sleeps)
+
+    def test_state_waits_sleep_only_polls(self):
+        sleeps = []
+        page = FakePage(popup=True)
+        with mock.patch.object(naming.time, "sleep", sleeps.append):
+            ensure_name(page.rpc, FakeInput(page), "Claude")
+        self.assertTrue(all(s <= 0.1 for s in sleeps), sleeps)
+
+
 class ResetTutorials(unittest.TestCase):
+    def setUp(self):
+        naming._last_at.clear()
+
     def test_popup_over_the_naming_page_is_dismissed_first(self):
         page = FakePage(popup=True)
         logs = []

@@ -32,8 +32,9 @@ PARTY_RE = re.compile(r"PARTY \*?(e\d+) ([A-Z][\w'-]*)")
 WHERE_RE = re.compile(r"WHERE ([^|\n·]+)")
 ABIL_RE = re.compile(r'"ability\\?"\s*:\s*\\?"([^"\\]+)')
 CAST_RE = re.compile(r"cast=([A-Za-z_]+)")
-# compacted action lines drop "cast=X" when X is the action id: "action: Target_MainHandAttack e31: done — target=.."
-ACTION_DONE_RE = re.compile(r"(?:action: |→ )([A-Z][A-Za-z]*_\w+)(?: e\d+)?: done\b(?![^\n]*cast=)")
+# compacted action lines drop "cast=X" when X is the action id: "action: Target_MainHandAttack e31: done — target=..",
+# "bonus: Target_PommelStrike e67: done — statuses=[..]"
+ACTION_DONE_RE = re.compile(r"(?:(?:action|bonus): |→ )([A-Z][A-Za-z]*_\w+)(?: e\d+)?: done\b(?![^\n]*cast=)")
 FLAGS = {"debrief": re.compile(r"(?i)debrief"), "last_attempt": re.compile(r"LAST ATTEMPT"),
          "lesson": re.compile(r"(?i)\blessons?\b"), "repeat_warning": re.compile(r"(?i)repeated mistake|same as last time")}
 

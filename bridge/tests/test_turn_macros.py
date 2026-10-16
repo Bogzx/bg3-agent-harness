@@ -77,6 +77,9 @@ class FakeGame:
         self.sheets: dict[str, dict] = {}  # state.character replies by uuid
         self.activity: dict | None = None  # nav.activity reply (None: op unknown, like a mod not reloaded yet)
         self.autoskip: dict | None = None  # autoskip.status reply (None: op unknown, an old mod)
+        self.active = P1  # state.status active (the selected character); act.select moves it
+        # Actions.lua start(): a new action job for a character interrupts its running one (opt-in: review H1)
+        self.supersede = False
 
     def push(self, kind: str, data: Any = None) -> None:
         with self.lock:
@@ -108,6 +111,12 @@ class FakeGame:
                 if err:
                     self.jobs[jid] = {"status": "failed", "error": err, "end": 0, "op": op, "args": args}
                     return {"job": jid, "status": "failed", "error": err}
+                if self.supersede and args.get("char"):
+                    for j in self.jobs.values():
+                        if j["status"] == "running" and j["args"].get("char") == args["char"]:
+                            j["status"], j["error"] = "interrupted", "superseded by a new action"
+                if op == "act.select":
+                    self.active = args["char"]
                 self.jobs[jid] = {"status": "running", "end": time.monotonic() + self.dur.get(op, 0.02),
                                   "op": op, "args": args}
                 return {"job": jid, "eta_s": 1.0, "route_m": 4.0}
@@ -140,7 +149,7 @@ class FakeGame:
             if op in ("ui.dismiss", "ui.reactions"):
                 return {"ok": True}
             if op == "state.status":
-                return {"active": P1, "level": "TUT", "party": [{"uuid": P1, "name": "Claude"},
+                return {"active": self.active, "level": "TUT", "party": [{"uuid": P1, "name": "Claude"},
                                                                  {"uuid": P2, "name": "Lae'zel"}]}
             if op == "state.combat":
                 # Like State.lua: unseen combatants are left out, dead ones carry dead=true.
@@ -1602,15 +1611,27 @@ class CombatTurnBackgroundEnd(Base):
         return json.dumps(kw)
 
     def test_returns_before_the_end_finishes_and_reports_it_later(self):
+        # The end is the character's queue step: its worker thread sends act.end_turn after combat_turn returned (or
+        # just before). Flaky under full-suite load when this asserted the op at once (se, 2026-10-16: 0 != 1 in 1 of
+        # 4 full runs, 10/10 alone): wait for it, bounded; the end's job lasts 1.5 s so "returned first" is not a race.
+        self.g.dur["act.end_turn"] = 1.5
         t = time.monotonic()
         out = server.combat_turn(self.plan(action="Shout_Dodge"))
-        self.assertLess(time.monotonic() - t, 0.5)
+        self.assertLess(time.monotonic() - t, 1.2)
         self.assertIn("end_turn: ending in the background", out)
         self.assertIn(f"NEXT {self.gob} Goblin", out)
         self.assertIn("RUNNING queue", out)
+        until = time.monotonic() + 3.0
+        while not self.g.ops("act.end_turn") and time.monotonic() < until:
+            time.sleep(0.01)
         self.assertEqual(len(self.g.ops("act.end_turn")), 1)
-        time.sleep(0.8)
-        self.assertIn("queue_done", server.get_events())
+        evs = ""
+        until = time.monotonic() + 5.0
+        while "queue_done" not in evs and time.monotonic() < until:
+            time.sleep(0.1)
+            evs += server.get_events()
+        self.assertIn("queue_done", evs)
+        self.assertEqual(len(self.g.ops("act.end_turn")), 1)
 
     def test_next_combat_turn_waits_for_the_background_end(self):
         server.combat_turn(self.plan(action="Shout_Dodge"))
@@ -1625,6 +1646,39 @@ class CombatTurnBackgroundEnd(Base):
         server.combat_turn(self.plan(action="Shout_Dodge"))
         out = server.use_ability("Shout_Dodge")
         self.assertIn("turn end to finish first", out)
+
+    def test_review_m4_queued_steps_wait_and_get_their_own_interrupts(self):
+        # the end's executor ignores every interrupt: steps queued for that character during it must not run in it
+        server.combat_turn(self.plan(action="Shout_Dodge"))
+        out = server.queue_actions(json.dumps([{"tool": "use_ability", "ability": "Shout_Dodge"}]),
+                                   who=server.H.get(P1))
+        self.assertIn("turn end to finish first", out)
+        ex = server._queues().queues[P1].executor
+        self.assertEqual(ex.watcher.ignore, set())               # not the end's all-kinds set
+        ends = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.end_turn"]
+        casts = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.cast"]
+        self.assertLess(ends[0], casts[-1])
+
+    def test_review_m5_cancel_queue_never_cancels_the_end_half_way(self):
+        self.g.dur["act.end_turn"] = 2.0
+        server.combat_turn(self.plan(action="Shout_Dodge"))
+        until = time.monotonic() + 3.0
+        while not self.g.ops("act.end_turn") and time.monotonic() < until:
+            time.sleep(0.01)
+        out = server.cancel_queue()
+        self.assertIn("turn end to finish first", out)
+        self.assertEqual(self.g.ops("job.cancel"), [])
+        end = next(j for j in self.g.jobs.values() if j["op"] == "act.end_turn")
+        server.game.rpc("job.poll", {"id": next(k for k, j in self.g.jobs.items() if j is end)})
+        self.assertEqual(end["status"], "done")
+
+    def test_review_m5_replace_waits_for_the_end_too(self):
+        server.combat_turn(self.plan(action="Shout_Dodge"))
+        out = server.queue_actions(json.dumps([{"tool": "use_ability", "ability": "Shout_Dodge"}]),
+                                   who=server.H.get(P1), replace=True)
+        self.assertIn("turn end to finish first", out)
+        self.assertFalse([j for j in self.g.jobs.values() if j["op"] == "act.end_turn"
+                          and j["status"] == "interrupted"])
 
     def test_a_shared_turn_group_member_left_ends_inline(self):
         self.g.combat["turn_group"] = [P1, P2]

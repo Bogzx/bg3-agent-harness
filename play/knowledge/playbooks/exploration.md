@@ -1,6 +1,6 @@
 # Exploration
 
-**When:** Use out of combat and outside dialogue - choosing where to go (get_frontier), moving, looting, locks/traps, fast travel, camp and resting, inventory upkeep, trading, and map markers.
+**When:** out of combat and dialogue: where to go, moving, looting, locks/traps, camp and rests, inventory, trading.
 
 ## Pick where to go
 1. Current objective (objectives.md Main first; a Side objective if it's in this region). The game's own
@@ -32,12 +32,9 @@ the region done in locations.md.
   - `FAILED — <reason>` / `TIMEOUT`: check `get_nearby` for the obstacle (closed door, gap). Try
     `interact` on the door, `jump_to(x, y, z)`, another point, or another route. One `screenshot` only
     if the text doesn't explain the block.
-  - `started jN` / `still running`: keep going (plan, note, look); `wait_for("jN")` only once you have
-    nothing else to do. Never `wait()`, and never `wait=true` on a walk (see CLAUDE.md, pipelining).
+  - `started jN` / `still running`: keep going (plan, note, look); `wait_for("jN")` only when out of work.
   - The same `used <item>` event repeating, or a character ignoring orders: a harness loop → the
     `stuck` playbook, section 0.
-- Notes: put them on the walk itself, `travel_to(objective="o1", note="[quest] …")`, or `note("…")` while
-  it runs; never read or edit memory files while the party stands still.
 - Long distances: `travel_to(marker="m1" | objective="o1")` chains walks there and returns at once;
   append the arrival steps with `queue_actions` and plan meanwhile (it stops on an interrupt or when
   nothing leads further); `fast_travel(waypoint="<name>")` between unlocked
@@ -58,7 +55,6 @@ the region done in locations.md.
   nearest-first, take all). For a hand-picked sweep, one `queue_actions`/`do_actions` call:
   interact corpse 1 → loot → interact chest → loot → pick_up the item on the floor.
 - `read_all()` reads every new book, note and letter in your bags and returns their text.
-- `rest_if_needed()` short-rests only when someone is at or below half HP.
 - Locked: try a found key first, then lockpicking (the best Sleight of Hand character via `who=`), then
   another entrance. Log failures as dead ends. Lockpicking needs Thieves' Tools in that character's own
   bags: `lockpick` says at once who carries them, or that nobody does (then force it, Knock, another way in,
@@ -76,18 +72,16 @@ the region done in locations.md.
   and advances some story timers `[wiki]`. First check objectives for urgent items (someone in danger,
   "before nightfall" wording) and don't rest while one is pending. Afterwards, handle camp scenes as
   dialogues (`get_dialogue`), then `camp(action="leave")`.
-- **Camp supplies:** a full long rest needs 40; fewer gives only a partial rest (half HP and slots).
-  S025-S026 lost two rests and ~10 min hunting food at the last moment. Food lying around (bread,
-  apples, sausages, wine…) is free supplies: `pick_up` it when you pass, and buy food when a trader has
-  it while gold is plentiful. Keep the stock at 80+ so every rest is a full one (`get_inventory(filter="food")` shows supply per item).
+- **Camp supplies:** a full long rest needs 40 (fewer = a partial rest: half HP and slots; S025-S026 lost two
+  rests and ~10 min hunting food). `get_inventory(filter="food")` shows supply per item.
 - At camp, talk to companions (`talk_to`) to change the active party or hear their stories. Use the camp
   chest and camp traders. For screens without a dedicated tool, `ui_dump` then `ui_action`.
 
 ## Resources and economy (S025-S026: two partial rests, 34/88 HP into a puzzle, 93 g left, junk-full bags)
 - **HP:** below 50 % out of combat, `short_rest` before any fight or puzzle (2 per long rest; the ALERTS
   line says how many are left). No short rest left → long rest (with 40+ supplies) or potions.
-- **Supplies:** have 40+ before `long_rest` (it refuses a partial rest unless `partial=true`). Pick up
-  food in passing; buy it (`trade` wares marked `supply=N`) whenever supplies < 80.
+- **Supplies:** keep 80+ so every rest is full (`long_rest` refuses a partial one unless `partial=true`). Pick
+  up food in passing (bread, apples, wine…: free supplies); buy it (`trade` wares marked `supply=N`) below 80.
 - **Gold:** keep a 200 g reserve. Before paying a big sum (a key, a bribe), try the dialogue's Persuasion/
   Intimidation/Deception option when the odds are good, or pickpocket/steal it if the oath allows and
   nobody watches (fair game; save first). Paying 1000 of 1093 g (S026) left nothing for food.

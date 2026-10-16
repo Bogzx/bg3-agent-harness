@@ -74,6 +74,35 @@ class Rules(unittest.TestCase):
         self.assertEqual(got.get("hidden_state"), 1)
 
 
+    def test_compacted_combat_forms(self):
+        # compact.py COMBAT_NARRATIVE / KIND_GROUP / ACTION_DUPS lines: no hidden-state or id hits of their own
+        got = self.rules(
+            call("combat_turn", "  turn e86 Commander Zhalk: Main Hand Attack (attack) -> e67 12 Slashing + 3 Fire"),
+            call("combat_turn", "  cast e44: Invisibility -> e2 0\n  + neutral dead: e30 Imp 4.6m, e33 Imp 15.3m"),
+            call("combat_turn", "action: Shout_Dash: done — statuses=[e2 Dash]\nend_turn: done (still to act: e2)"),
+        )
+        self.assertEqual(got, {})
+
+    @unittest.skipUnless((Path(__file__).resolve().parents[1] / "bridge/tests/golden/naut_results.jsonl.gz").exists(),
+                         "golden naut results missing")
+    def test_golden_compacted_same_audit(self):
+        """The naut results compacted as the bridge does give the same audit as the raw ones."""
+        import gzip
+        repo = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(repo / "bridge/src"))
+        from bg3ai import compact
+        by: dict[str, list] = {}
+        with gzip.open(repo / "bridge/tests/golden/naut_results.jsonl.gz", "rt", encoding="utf-8") as f:
+            for line in f:
+                r = json.loads(line)
+                by.setdefault(r["session"], []).append(r)
+        for sess, rows in by.items():
+            c = compact.Compactor(clock=lambda: 0.0)
+            raw = [call(r["tool"], r["text"]) for r in rows]
+            comp = [call(r["tool"], c.apply(r["tool"], r["text"])) for r in rows]
+            self.assertEqual(self.rules(*raw), self.rules(*comp), sess)
+
+
 class TriageSection(unittest.TestCase):
     def test_section_in_triage_report(self):
         with tempfile.TemporaryDirectory() as d:

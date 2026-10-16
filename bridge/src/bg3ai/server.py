@@ -22,6 +22,7 @@ from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, compact, delta, economy, leveling, macros, metrics, party, render, saver, saves, turn
 from . import companions, debrief, lessons, longnav, lore, memtools, naming, navhints, rules
+from . import hotbar, twostep
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -1150,7 +1151,7 @@ def _log_stage_ms(op: str, r: JobResult) -> None:
 
 
 def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
-         wait: bool = True, note: str = "", post=None, on_start=None) -> str:
+         wait: bool = True, note: str = "", post=None, on_start=None, redo=None) -> str:
     t0 = time.monotonic()
     if _session_over():
         return _finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
@@ -1170,6 +1171,15 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
     starts = [f for f in (ex.track if ex is not None else None, on_start) if f is not None]
     kw = {"on_start": (lambda ctx, jid: [f(ctx, jid) for f in starts])} if starts else {}
     r = game.run_job(op, args, context=context, wait_s=wait_s, **kw)
+    if redo is not None:
+        # redo(r) -> (args, note) or None: run the op once more another way (use_ability: a hotbar cast that failed
+        # before anything was cast goes again as an Osiris cast); the caller's on_start is not run again
+        again = redo(r)
+        if again is not None:
+            args, why = again
+            note = "\n".join(x for x in (why, note) if x)
+            kw = {"on_start": ex.track} if ex is not None else {}
+            r = game.run_job(op, args, context=context, wait_s=wait_s, **kw)
     if op in _WALK_OPS and _tb_refused(r.status, r.error):
         tb = _leave_turn_based_for_walk()
         note = "\n".join(x for x in (tb, note) if x)
@@ -2764,6 +2774,7 @@ def _revive_spot(inp, name: str, char: str, tgt: str) -> str:
 @_guard
 def click_on(target: str, button: str = "left") -> str:
     """Last-resort: point the mouse at a visible entity (verified hover) and click it, for interactions no other tool covers. Logged."""
+    from . import clicker
     from .clicker import click_entity
 
     t0 = time.monotonic()
@@ -2771,9 +2782,17 @@ def click_on(target: str, button: str = "left") -> str:
     if inp is None:
         raise GameError("input shim not available")
     u, btn = _world_uuid(target), "R" if button.lower().startswith("r") else "L"
-    cr = click_entity(game, inp, u, btn)
     head = ""
-    if not cr.ok and cr.reason == "off_screen":
+    if clicker.HOVER_V2 and _click_off_view(u):
+        # select the member beside it BEFORE the first look (naut-r2: the off_screen pass cost 7 s before the retry)
+        try:
+            near = _click_selects(u)
+        except Exception:  # noqa: BLE001 - only a shortcut: the retry after off_screen still covers it
+            near = None
+        if near and game.run_job("act.select", {"char": near}, wait_s=4).status == "done":
+            head = f"selected {_label(near)} first (next to it; the camera follows the selected character)\n"
+    cr = click_entity(game, inp, u, btn)
+    if not cr.ok and cr.reason == "off_screen" and not head:
         near = _click_selects(u)
         if near and game.run_job("act.select", {"char": near}, wait_s=4).status == "done":
             head = f"selected {_label(near)} first (next to it; the camera follows the selected character)\n"
@@ -2783,6 +2802,16 @@ def click_on(target: str, button: str = "left") -> str:
 
 
 CLICK_SELECT_M = 12.0   # click_on off_screen: a party member at most this near the target is selected, then retried
+
+
+def _click_off_view(uuid: str) -> bool:
+    """click_on: the target is not well inside the window now (one ui.screen_pos; False when it can't be read)."""
+    from .clicker import _centered
+    try:
+        sp = game.rpc("ui.screen_pos", {"uuid": uuid}, context="client")
+    except Exception:  # noqa: BLE001 - no client / an older mod: the retry after off_screen still covers it
+        return False
+    return isinstance(sp, dict) and "on_screen" in sp and not _centered(sp)
 
 
 def _click_selects(uuid: str) -> str | None:
@@ -3601,7 +3630,7 @@ def _reaction_index(r: dict | None, name: str) -> int | str:
 def use_ability(ability: str, target: str = "", x: float | None = None, y: float | None = None,
                 z: float | None = None, who: str | None = None, upcast: int = 0, targets: str | list[str] = "",
                 wait: bool = True, force: bool = False) -> str:
-    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: a list (or comma list) for multi-target spells; at most 2 per cast. Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells (Dimension Door, the Revivify spell) are refused for now: read a Scroll of Revivify instead. A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): out of combat it is read and its target clicked (default: who). A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
+    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: a list (or comma list) for multi-target spells, in click order (the same id twice = 2 darts/beams); a cast may use only the first 2 (the result then says \"cast on the first 2 only\"). Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells: Dimension Door takes x,y,z = the landing (target = an ally beside you to bring, else you go alone); the Revivify spell takes target = the body; while their route is off they are refused: read a Scroll of Revivify instead. A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): out of combat it is read and its target clicked (default: who). A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
     char = _who(who)
     try:
         aid = _ability_id(char, ability)
@@ -3624,32 +3653,202 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
     args: dict[str, Any] = {"char": char, "spell": spell}
     if target:
         args["target"] = _uuid(target)
+    picks: list[str] = []
     if targets:
         # a list (["e1","e2"], as a plan or a client sends it) or a comma list: the list reached targets.split and
         # failed the step "'list' object has no attribute 'split'" (audit ACT-8)
         names = targets.split(",") if isinstance(targets, str) else [str(t) for t in targets]
         args["targets"] = [_uuid(t.strip()) for t in names if t.strip()]
-        keep = 2 - (1 if "target" in args else 0)
-        if len(args["targets"]) > keep:
-            # S018/S025/S029: Bless on 3 was refused ("more than two targets"), losing the whole action (the
-            # game's cast call takes 2 targets). Cast it on the first two and say who was left out.
-            left = args["targets"][keep:]
-            args["targets"] = args["targets"][:keep]
-            tail = (f"targets: cast on the first 2 only (a cast takes at most 2 here); left out: "
-                    f"{', '.join(_label(u) for u in left)}")
+        picks = ([args["target"]] if "target" in args else []) + args["targets"]
     if None not in (x, y, z):
         args["pos"] = [x, y, z]
     if upcast:
         args["upcast"] = upcast
     if force:
         args["force"] = True
+    if hotbar.HOTBAR_CAST_ENABLED and twostep.is_two_step(spell) and not upcast and len(picks) <= 1:
+        # ACT-9: Revivify (the body, then the ground beside it) and Dimension Door (who goes, then the landing) by
+        # the player's clicks; with the route off the mod refuses them (its TargetPos2 write is off)
+        return _twostep_use(char, spell, args, note)
+    hb_on = hotbar.HOTBAR_CAST_ENABLED and "pos" not in args and not upcast
+    if len(picks) > 2 and hb_on:
+        # ACT-8: Bless on 3, Magic Missile darts, Scorching Ray / Eldritch Blast beams: the player's route (hotbar
+        # cell, one click per target, the tick); the mod checks the cast first and watches it like an Osiris cast
+        return _hotbar_use(char, spell, picks, args, note)
+    if len(picks) > 2:
+        # S018/S025/S029: Bless on 3 was refused ("more than two targets"), losing the whole action (the game's
+        # cast call takes 2 targets). Cast it on the first two and say who was left out.
+        keep = 2 - (1 if "target" in args else 0)
+        args["targets"] = args["targets"][:keep]
+        tail = _two_only(picks, "the hotbar route for more is off" if not hotbar.HOTBAR_CAST_ENABLED
+                         else "an upcast or a position goes by the 2-target cast")
     opener = (wait and not _batch["active"] and "target" in args and args["target"] not in (_party_cached() or ())
               and not (game.try_rpc("state.combat") or {}).get("active"))
     post = (lambda r: _opener_combat(args["target"], r.result) if r.status == "done" else "") if opener else None
     out = _act("use_ability", "act.cast", args, wait_s=30, wait=wait, post=post)
+    return _with_tail(out, tail, note)
+
+
+def _two_only(picks: list[str], why: str) -> str:
+    return (f"targets: cast on the first 2 only, {len(picks) - 2} of {len(picks)} NOT targeted ({why}); left out: "
+            f"{', '.join(_label(u) for u in picks[2:])}")
+
+
+def _with_tail(out: Any, tail: str, note: str) -> Any:
     if tail and isinstance(out, str):
         out = re.sub(r"(\n⏱[^\n]*)?$", lambda m: f"\n{tail}" + (m.group(0) or ""), out, count=1)
     return f"{note}\n{out}" if note and isinstance(out, str) else out
+
+
+def _hotbar_use(char: str, spell: str, picks: list[str], args: dict, note: str) -> str:
+    """use_ability on >2 picks through the hotbar (bg3ai.hotbar.hotbar_cast). act.cast {ui=true} checks the cast as
+    for an Osiris order (our turn, known/prepared, each pick seen and in range) and then only watches it
+    (CastSpell/CastedSpell, hits, statuses; the game charges it, the guard adds nothing). Once that job runs, the
+    clicks go in (on_start). If the route fails before anything was cast (every failure cancels the spell in
+    hand), the job is cancelled and the first 2 picks are cast by Osiris, as with the route off. Always waits:
+    the clicks need the tool's thread (wait=false is ignored here)."""
+    hb_args = {k: v for k, v in args.items() if k not in ("target", "targets")}
+    hb_args.update(targets=picks, ui=True)
+    hb: dict[str, Any] = {}
+    sel = _select_for_clicks(char)
+    stop = _click_stop()
+
+    def clicks(ctx: str, jid: int) -> None:
+        try:
+            res = hotbar.hotbar_cast(game, _inp(), char, spell, picks, select=False, should_stop=stop)
+        except GameError as e:
+            res = hotbar.HotbarCastResult(False, reason="error", stage="slot", detail={"why": str(e)})
+        except Exception as e:  # noqa: BLE001 - review M2: an input-shim error mid-clicks (stage unknown: no redo)
+            res = _click_error(char, e)
+        hb["res"] = res
+        if not res.ok and res.reason != "fired_early":
+            game.try_rpc("job.cancel", {"id": jid}, context=ctx)
+
+    def redo(r: JobResult):
+        res = hb.get("res")
+        if res is None or res.ok or res.reason == "fired_early":
+            return None   # refused before the clicks (the mod's own checks), or the cast went off: no second try
+        if res.stage not in HOTBAR_REDO_STAGES or res.reason == "cancelled" or r.status == "done" \
+                or (isinstance(r.result, dict) and r.result.get("began")):
+            # review M3: past the cell (targets clicked) the cast may have started: never a second cast
+            hb["tail"] = (f"hotbar: the route failed at {res.stage} ({res.detail.get('why') or res.reason}); "
+                          "not cast again by Osiris (the cast may have started: check the NOW line / CHANGES)")
+            return None
+        two = {k: v for k, v in args.items() if k not in ("target", "targets")}
+        two.update(target=picks[0], targets=picks[1:2])
+        why = res.detail.get("why") or res.reason
+        hb["tail"] = _two_only(picks, f"the hotbar route failed at {res.stage}: {why}")
+        return two, ""
+
+    out = _act("use_ability", "act.cast", hb_args, wait_s=30, wait=True, on_start=clicks, redo=redo)
+    res = hb.get("res")
+    tail = "\n".join(x for x in (sel, hb.get("tail", "")) if x)
+    if res is not None and not hb.get("tail"):
+        d = res.as_dict()
+        tail = (sel + "\n" if sel else "") + (f"hotbar: {res.picked} of {len(picks)} targets clicked in {d['elapsed_s']:g}s"
+                + (f" (OVER the {d['budget_s']:g}s budget)" if d.get("over_budget") else ""))
+        if res.reason == "fired_early":
+            tail += f"; the game cast after {res.picked} (the spell's max), the rest left out"
+    if res is not None:
+        _log_hotbar(spell, res)
+    return _with_tail(out, tail, note)
+
+
+def _twostep_use(char: str, spell: str, args: dict, note: str) -> str:
+    """use_ability on a two-step spell through the hotbar (bg3ai.twostep.twostep_cast): act.cast {ui=true} checks
+    the cast (the body / who goes seen and in range, the landing in range and on a floor) and watches it; once that
+    job runs, the clicks go in. A failed route cancels the spell in hand and the job; there is no Osiris fallback
+    (the second pick can't be given that way). Always waits (the clicks need the tool's thread)."""
+    ui_args = {k: v for k, v in args.items() if k not in ("targets",)}
+    if args.get("targets") and "target" not in ui_args:
+        ui_args["target"] = args["targets"][0]
+    ui_args["ui"] = True
+    landing = ui_args.get("pos") if not twostep.is_revive(spell) else None
+    first = ui_args.get("target") or (char if landing is not None else None)
+    hb: dict[str, Any] = {}
+    sel = _select_for_clicks(char)
+    stop = _click_stop()
+
+    def clicks(ctx: str, jid: int) -> None:
+        if not first:
+            return
+        try:
+            res = twostep.twostep_cast(game, _inp(), char, spell, first, landing=landing, select=False,
+                                       should_stop=stop)
+        except GameError as e:
+            res = hotbar.HotbarCastResult(False, reason="error", stage="slot", detail={"why": str(e)})
+        except Exception as e:  # noqa: BLE001 - review M2
+            res = _click_error(char, e)
+        hb["res"] = res
+        if not res.ok:
+            game.try_rpc("job.cancel", {"id": jid}, context=ctx)
+
+    out = _act("use_ability", "act.cast", ui_args, wait_s=30, wait=True, on_start=clicks)
+    res = hb.get("res")
+    tail = sel
+    if res is not None:
+        d = res.as_dict()
+        what = "who goes + the landing" if landing is not None else "the body + the ground beside it"
+        tail = tail + "\n" if tail else ""
+        if res.ok:
+            tail += (f"hotbar: {what} clicked in {d['elapsed_s']:g}s"
+                    + (f" (OVER the {d['budget_s']:g}s budget)" if d.get("over_budget") else ""))
+        else:
+            tail += (f"hotbar: the two-step route failed at {res.stage} ({d.get('why') or res.reason}); nothing was"
+                    " cast" + ("" if landing is not None else
+                               ": a Scroll of Revivify by name, or Withers at camp, also bring a body back"))
+        _log_hotbar(spell, res)
+    return _with_tail(out, tail, note)
+
+
+# review M3: a failed hotbar route is cast again by Osiris only from these stages (nothing clicked past the cell)
+HOTBAR_REDO_STAGES = ("slot", "locate", "arm")
+
+
+def _select_for_clicks(char: str) -> str:
+    """Review H1: the click routes need the caster selected (the hotbar shows the selected character). Select it BEFORE
+    act.cast {ui=true} starts: an act.select inside its on_start is a new action for that character, and the mod's
+    start() interrupts the running ui job ("superseded by a new action") while the clicks cast for real. A note."""
+    st = game.try_rpc("state.status") or {}
+    if not isinstance(st, dict) or st.get("active") == char:
+        return ""
+    r = game.run_job("act.select", {"char": char}, wait_s=5)
+    return f"selected {_label(char)} first (the hotbar shows the selected character)" if r.status == "done" \
+        else f"could not select {_label(char)} first ({r.error or r.status})"
+
+
+def _click_stop() -> Callable[[], bool]:
+    """Review M1: the click routes stop between clicks once the step running them is cancelled or interrupted
+    (the queue/batch executor's flags; a plain use_ability has none)."""
+    ex = _batch["exec"]
+    if ex is None:
+        return lambda: False
+    return lambda: bool(ex.interrupt or ex.stop.is_set())
+
+
+def _click_error(char: str, e: Exception) -> Any:
+    """Review M2: an input-shim error mid-clicks: put a spell in hand back (best effort) and say what happened."""
+    how = None
+    try:
+        inp = _inp()
+        if inp is not None:
+            how = hotbar.cancel(game, inp, char)
+    except Exception:  # noqa: BLE001 - the shim itself may be gone
+        how = "failed"
+    detail: dict[str, Any] = {"why": f"{type(e).__name__}: {e}"}
+    if how:
+        detail["cancelled"] = how
+    return hotbar.HotbarCastResult(False, reason="error", stage="error", detail=detail)
+
+
+def _log_hotbar(spell: str, res: Any) -> None:
+    """Each hotbar cast's stages and time (runtime/hotbar_cast.jsonl): the live acceptance item and the latency
+    watch read it, the agent never does."""
+    try:
+        with open(RUNTIME / "hotbar_cast.jsonl", "a") as f:
+            f.write(json.dumps({"t": round(time.time(), 1), "spell": spell, **res.as_dict()}, default=str) + "\n")
+    except (OSError, AttributeError):
+        pass
 
 
 OPENER_WAIT_S = 1.0  # combat starts a few frames after the hit: how long an opener's result waits for it
@@ -3681,6 +3880,24 @@ def _opener_combat(tu: str, res: Any) -> str:
 
 END_IGNORED = "the game ignored the end-turn order"  # Actions.lua A.END_IGNORED
 END_HUD_WAIT_S = 3.0
+# Proposal "ignored EndTurn -> HUD at once" (naut runs 1/3, ~12 s/run): in a shared turn group, after a companion's
+# end was requested, every Osiris EndTurn on the avatar was ignored (3 s Lua timeout, then the HUD ended it in ~0.4 s).
+# On: when another party member of the current group has already ended, press the HUD's End Turn at once (the Osiris
+# order stays the fallback). OFF until acceptance sec_combat "end_turn after a companion's request (probe)" confirms;
+# flip live: BG3AI_END_HUD_FIRST=1 (bridge restart) or server.END_HUD_FIRST = True.
+END_HUD_FIRST = os.environ.get("BG3AI_END_HUD_FIRST", "0") == "1"
+
+
+def _peer_requested(cs: dict, char: str) -> str | None:
+    """A party member of char's current turn group who already ended its turn (requested; the group still runs)."""
+    party = _party_set()
+    if char not in turn.acting(cs):
+        return None
+    for o in cs.get("order") or []:
+        u = o.get("uuid")
+        if u and u != char and u in party and o.get("is_current") and o.get("ended") and not o.get("dead"):
+            return u
+    return None
 
 
 def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
@@ -3734,9 +3951,17 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
         if wait and not _batch["active"]:
             body += "\n" + _wait_for_party_turn(80.0)
         return _finish("end_turn", args, pre + body, t0)
-    r = game.run_job("act.end_turn", args, wait_s=15)
-    if r.status == "failed" and END_IGNORED in str(r.error or ""):
-        r = _end_turn_by_hud(char, r)
+    peer = _peer_requested(cs, char) if END_HUD_FIRST and cs.get("active") else None
+    r = None
+    if peer:
+        hud = _end_turn_by_hud(char, JobResult("failed", None, f"after {_label(peer)}'s end", [], 0))
+        if hud.status == "done":
+            r = JobResult("done", {"ended": True, "via": f"the HUD's End Turn at once ({_label(peer)} had ended first)"},
+                          None, hud.events, hud.elapsed_ms)
+    if r is None:
+        r = game.run_job("act.end_turn", args, wait_s=15)
+        if r.status == "failed" and END_IGNORED in str(r.error or ""):
+            r = _end_turn_by_hud(char, r)
     _remember_names(r.result)
     _batch["last"] = r.status
     nothing = _nothing_to_end(r)
@@ -5113,8 +5338,11 @@ def create_character(plan: str) -> str:
         except naming.NamingError as e:
             raise GameError(str(e)) from None
         p["name"] = want
+    cc_args: dict = {"plan": p, "finish": False}
+    if naming.paced():
+        cc_args["paced"] = True  # BG3AI_CC_PACED=1: cc_apply's old fixed tab/pick waits too
     try:
-        r = game.run_job("ui.cc_apply", {"plan": p, "finish": False}, context="client",
+        r = game.run_job("ui.cc_apply", cc_args, context="client",
                          wait_s=max(0.5, CC_BUDGET_S - CC_NAMING_S - (time.monotonic() - t0)))
     except GameError as e:
         r = JobResult("failed", None, str(e))
@@ -5130,15 +5358,27 @@ def create_character(plan: str) -> str:
                        + "\ncharacter creation NOT finished" + (
                            " (still applying the plan: call create_character again in a moment)"
                            if r.status == "still_running" else ""), t0)
+    t_apply = time.monotonic()
+    notes: list[str] = []
+    timing = {"apply_ms": round((t_apply - t0) * 1000), "pacing": "fixed" if naming.paced() else "state"}
     try:
-        naming.name_and_finish(lambda op, a: game.rpc(op, a, context="client"), _inp() if want else None, want)
+        nf = naming.name_and_finish(lambda op, a: game.rpc(op, a, context="client"), _inp() if want else None,
+                                    want, notes.append)
     except naming.NamingError as e:
+        _log_cc_timing(dict(timing, ok=False, naming_ms=round((time.monotonic() - t_apply) * 1000),
+                            error=str(e)[:200], notes=notes[-4:]))
         raise GameError(f"{e}; character creation NOT finished (call create_character again)") from None
+    t_named = time.monotonic()
+    nm = nf.get("name") or {}
+    timing.update(naming_ms=round((t_named - t_apply) * 1000), via=nm.get("via"), how=nm.get("how"),
+                  popups=nm.get("popups"), naming_stages=nm.get("ms"), notes=notes[-4:])
     before = (SAVE_OWNER, SAVE_PREFIX)
     if want:
         _set_save_owner(want)  # now, before the wait: a client timeout during the load mustn't lose it (I3)
     left = max(0.0, CC_BUDGET_S - (time.monotonic() - t0))
     got = _avatar_name(left, want)
+    _log_cc_timing(dict(timing, ok=got is not None, world_ms=round((time.monotonic() - t_named) * 1000),
+                        total_ms=round((time.monotonic() - t0) * 1000)))
     if got is not None and want is not None and got.casefold() != want.casefold():
         _restore_save_owner(before)
         raise GameError(f"character creation finished, but the character in the world is called '{got}', not "
@@ -5154,6 +5394,17 @@ def create_character(plan: str) -> str:
 
 CC_BUDGET_S = 95.0  # the whole tool, under play/.mcp.json's 110 s MCP timeout (a client timeout invites a retry)
 CC_NAMING_S = 25.0  # kept for naming + finish after cc_apply
+CC_WORLD_POLL_S = 0.25  # the loaded-world check after "Venture forth" (was 2 s: ~1-3 s late; BG3AI_CC_PACED=1 -> 2 s)
+
+
+def _log_cc_timing(rec: dict) -> None:
+    """create_character's own phases (cc_apply, naming, finish + world load) to runtime/stage_ms.jsonl as op
+    "create_character": SESSION-WATCH / acceptance read time and attempts from there (never shown)."""
+    try:
+        with open(RUNTIME / "stage_ms.jsonl", "a") as f:
+            f.write(json.dumps({"t": round(time.time(), 1), "op": "create_character", **rec}) + "\n")
+    except OSError:
+        pass
 
 
 def _avatar_name(timeout: float, want: str | None = None) -> str | None:
@@ -5175,7 +5426,7 @@ def _avatar_name(timeout: float, want: str | None = None) -> str | None:
             return (hit or names)[0]
         if time.monotonic() >= end:
             return None
-        time.sleep(2.0)
+        time.sleep(2.0 if naming.paced() else CC_WORLD_POLL_S)
 
 
 # ---------------------------------------------------------------------------
@@ -5252,6 +5503,9 @@ def queue_actions(actions: str, who: str | None = None, replace: bool = False, i
 
 def _enqueue(char: str, steps: list, replace: bool = False, ignore: str | None = "") -> str:
     """Add steps to char's queue (ignore=None keeps the queue's current interrupt settings)."""
+    # review M4/M5: a background end still running for char: wait for it, so these steps get their own executor (the
+    # end's ignores every interrupt) and a replace doesn't cancel the end
+    held = _hold_for_bg_end(char) if char in _bg_ends else ""
     if ignore is not None or char not in _queue_ignore:
         _queue_ignore[char] = _parse_ignore(ignore or "")
     n, mine = len(steps), []
@@ -5265,7 +5519,7 @@ def _enqueue(char: str, steps: list, replace: bool = False, ignore: str | None =
     with _queues().lock:
         waiting = len(q.steps)
     after = f", after {'/'.join(mine)} arrives" if mine else ""
-    return f"queued {n} step(s) for {_label(char)} ({waiting} waiting{after})"
+    return (held + "\n" if held else "") + f"queued {n} step(s) for {_label(char)} ({waiting} waiting{after})"
 
 
 def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, x, y, z, t0: float,
@@ -5430,10 +5684,13 @@ def _notes_window() -> str:
 def cancel_queue(who: str | None = None) -> str:
     """Stop a character's queue (who) or every queue (who empty): the running step is cancelled and the rest dropped."""
     t0 = time.monotonic()
-    out = _queues().cancel(_who_uuid(who) if who else None)
+    wu = _who_uuid(who) if who else None
+    held = _hold_for_bg_end(wu)  # review M5: a background turn end is never cancelled half-way
+    out = _queues().cancel(wu)
     if not out:
-        return _finish("cancel_queue", {}, "no queue was running", t0)
-    lines = [f"cancelled {_label(w)}: " + (f"stopped {run}, " if run else "") + f"dropped {n}" for w, n, run in out]
+        return _finish("cancel_queue", {}, (held + "\n" if held else "") + "no queue was running", t0)
+    lines = ([held] if held else []) + [f"cancelled {_label(w)}: " + (f"stopped {run}, " if run else "")
+                                        + f"dropped {n}" for w, n, run in out]
     return _finish("cancel_queue", {}, "\n".join(lines), t0)
 
 

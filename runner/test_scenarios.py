@@ -72,12 +72,15 @@ class TmpDir(unittest.TestCase):
         return P.load_scenario_file(sc["name"])
 
     def make_save(self, folder: str = START, data: bytes = b"lsv", mtime: float | None = None) -> None:
+        # The game's layout (a real folder: Claude-33912620918__S003-beach/{S003-beach.lsv, S003-beach.WebP}).
         d = P.SAVE_DIR / folder
         d.mkdir(parents=True, exist_ok=True)
-        (d / f"{folder}.lsv").write_bytes(data)
+        label = folder.split("__", 1)[1]
+        (d / f"{label}.lsv").write_bytes(data)
+        (d / f"{label}.WebP").write_bytes(b"webp")
         if mtime:
             import os
-            os.utime(d / f"{folder}.lsv", (mtime, mtime))
+            os.utime(d / f"{label}.lsv", (mtime, mtime))
 
 
 # ======================================================================== format
@@ -222,10 +225,19 @@ class Checks(unittest.TestCase):
     def test_save_digest_reads_the_lsv(self):
         tmp = Path(tempfile.mkdtemp(prefix="bg3ai-scen-"))
         self.addCleanup(shutil.rmtree, tmp, True)
+        label = START.split("__", 1)[1]
         (tmp / START).mkdir()
-        (tmp / START / f"{START}.lsv").write_bytes(b"abc")
+        (tmp / START / f"{label}.lsv").write_bytes(b"abc")   # <owner>-<id>__<label>/<label>.lsv, as the game writes
+        (tmp / START / f"{label}.WebP").write_bytes(b"webp")
         self.assertEqual(R.save_digest(tmp, START), "a9993e364706816aba3e25717850c26c9cd0d89d")
         self.assertIsNone(R.save_digest(tmp, "Claude-1__nope"))
+        # a label the game rewrote (a default-name save): the folder's only .lsv
+        odd = "Claude-2__SCN-x"
+        (tmp / odd).mkdir()
+        (tmp / odd / "Some Area - 1h 2m.lsv").write_bytes(b"abc")
+        self.assertEqual(R.save_digest(tmp, odd), "a9993e364706816aba3e25717850c26c9cd0d89d")
+        (tmp / odd / "another.lsv").write_bytes(b"x")
+        self.assertIsNone(R.save_digest(tmp, odd))   # ambiguous: two .lsv and none named after the label
 
 
 # ======================================================================== play.py wiring

@@ -13,9 +13,10 @@ click, the HUD's tick button) checked by what the HUD shows (client ops in Clien
     res = hotbar_cast(Game(), InputClient(), caster, "Target_Bless", [a, b, c])
     res.ok, res.reason, res.stage, res.as_dict()
 
-Not wired into use_ability yet: act routes >2 targets here once HOTBAR_CAST_ENABLED is True (after the acceptance
-item "hotbar cast: Bless on 3 allies (ACT-8)" passes). The caller owns the fairness checks it already makes for an
-Osiris cast (our turn in combat, the spell known and prepared, targets seen); this module adds the UI's own proof.
+Wired into use_ability (server._hotbar_use, act 2026-10-16): >2 targets come here when HOTBAR_CAST_ENABLED is True
+(off until acceptance se "use_ability Bless on 3 via the hotbar route (ACT-8 wiring)" passes); the mod's act.cast
+{ui=true} job makes the fairness checks of an Osiris cast first (our turn in combat, the spell known and prepared,
+each target seen and in range) and watches the cast; this module adds the UI's own proof.
 
 bg3le has no Visual.PointToScreen, so the cell's screen spot is found with the cursor: the cell under it (its
 IsMouseOver) tells where we are, and the deck grid (column-first, HotBar.xaml LSGrid Orientation=Vertical) tells
@@ -375,12 +376,92 @@ def _wait(game: Game, char: str | None, pred, timeout: float) -> tuple[bool, dic
         time.sleep(0.03)
 
 
+def arm(game: Game, inp: InputClient, caster: str, spell: str, res: HotbarCastResult,
+        select: bool = True, should_stop=None) -> tuple[dict | None, dict]:
+    """The hotbar half every UI cast shares: find the caster's cell (select the caster, page the deck), click it and
+    prove the spell is in hand. Returns (None, cast_state) once armed, else (failure, {}) where failure holds
+    done()'s stage/reason/why/cancel_it (+ extra). Fills res.detail: cell, probes, paging, cell_pos, arm_s."""
+
+    def fail(stage: str, reason: str, why: str | None, cancel_it: bool = False, **extra) -> tuple[dict, dict]:
+        return dict(stage=stage, reason=reason, why=why, cancel_it=cancel_it, **extra), {}
+
+    scr = clicker._screen(game).get("screen")
+    if scr in clicker.COVERING_SCREENS:
+        return fail("slot", "covered", f"the {scr} screen covers the hotbar (press_key ESCAPE first)")
+    try:
+        want = _slot(game, spell, caster)
+    except GameError as e:
+        return fail("slot", "no_hotbar", str(e))
+    if want.get("selected") is False and select:
+        # the hotbar shows the selected character: select the caster first, as a player clicks its portrait
+        game.run_job("act.select", {"char": caster}, wait_s=5)
+        try:
+            want = _slot(game, spell, caster)
+        except GameError as e:
+            return fail("slot", "no_hotbar", str(e))
+    if want.get("selected") is False:
+        return fail("slot", "not_selected", "the caster is not the selected character")
+    if not want.get("found"):
+        return fail("slot", "not_on_hotbar", want.get("why") or "not on the hotbar")
+    for k in ("deck", "index", "rows", "cols"):
+        if want.get(k) is not None:
+            res.detail.setdefault("cell", {})[k] = want[k]
+    if want.get("upcast"):
+        return fail("slot", "upcast", "an upcast through the hotbar's level picker is not built yet")
+    if want.get("container"):
+        return fail("slot", "container", "the spell sits in a container slot (its variants' sub-bar is not built yet)")
+    if want.get("can_use") is False:
+        return fail("slot", "cannot_use", "the hotbar shows the spell greyed out (no slot/resource, or not now)")
+
+    pre = cast_state(game, caster)
+    if pre.get("armed"):
+        res.detail["cleared_before"] = cancel(game, inp, caster)
+
+    pos, last = (None, {}) if want.get("rendered") is False else locate_cell(game, inp, spell, caster, want)
+    res.detail["probes"] = last.get("probes")
+    if pos is None and want.get("shown_deck") != want.get("deck"):
+        # paging: the deck is collapsed (no button for the cell) or squeezed in the concertina (no hover)
+        paged, pinfo = show_deck(game, inp, spell, caster, want)
+        res.detail["paging"] = pinfo
+        if paged:
+            want = _slot(game, spell, caster)
+            pos, last = locate_cell(game, inp, spell, caster, want)
+            res.detail["probes"] = (res.detail.get("probes") or 0) + (last.get("probes") or 0)
+    if pos is None:
+        if want.get("rendered") is False:
+            return fail("locate", "not_rendered",
+                        f"the {want.get('deck')} deck does not show the cell (deck tab {want.get('deck_button')})")
+        return fail("locate", "cell_not_found", "could not point at the hotbar cell", at=last.get("at"))
+    if should_stop is not None and should_stop():
+        return fail("arm", "cancelled", "the step was cancelled or interrupted before the cell click")
+    t_click = time.monotonic()
+    inp.click(pos[0], pos[1], button="L")
+    sp_lower = spell.lower()
+
+    def in_hand(st: dict) -> bool:
+        s = (st.get("spell") or (st.get("cast") or {}).get("spell") or "")
+        return bool(st.get("armed")) and (not s or s.lower() == sp_lower)
+
+    armed_ok, st = _wait(game, caster, in_hand, ARM_WAIT_S)
+    res.detail["cell_pos"] = pos
+    if not armed_ok:
+        if st.get("armed"):
+            # another spell in hand: the click landed on the wrong cell (a stale cached spot); forget the spot
+            _geom["cells"].pop((want.get("deck"), want.get("index")), None)
+            return fail("arm", "wrong_spell", f"the cell click put {st.get('spell')} in hand",
+                        cancel_it=True, state=st)
+        return fail("arm", "not_armed", "the cell click did not put the spell in hand", state=st)
+    res.detail["arm_s"] = round(time.monotonic() - t_click, 2)
+    return None, st
+
+
 def hotbar_cast(game: Game, inp: InputClient | None, caster: str, spell: str, targets: list[str],
-                select: bool = True) -> HotbarCastResult:
+                select: bool = True, should_stop=None) -> HotbarCastResult:
     """Cast `spell` from `caster`'s hotbar on `targets` (uuids, in click order; the same uuid twice = 2 darts or
     beams). Steps: the cell (ui.hotbar_slot; the deck's tab first when it is collapsed) -> click it, prove the spell
     is in hand -> per target a hover-verified click and a counter read -> the tick when fewer than the max -> proof
-    the cast started. Any failure after the cell click cancels, so no spell stays in hand."""
+    the cast started. Any failure after the cell click cancels, so no spell stays in hand. should_stop() -> True
+    (the step was cancelled / interrupted, audit review M1): no more clicks, the spell in hand is cancelled."""
     t0 = time.monotonic()
     budget = BUDGET_BASE_S + BUDGET_PER_TARGET_S * len(targets)
     res = HotbarCastResult(False, budget_s=budget, detail={"spell": spell, "targets": len(targets)})
@@ -402,72 +483,11 @@ def hotbar_cast(game: Game, inp: InputClient | None, caster: str, spell: str, ta
         return done(False, "slot", "no_input", "input shim not available for the clicks")
     if not targets:
         return done(False, "slot", "no_targets", "no targets")
-    scr = clicker._screen(game).get("screen")
-    if scr in clicker.COVERING_SCREENS:
-        return done(False, "slot", "covered", f"the {scr} screen covers the hotbar (press_key ESCAPE first)")
-    try:
-        want = _slot(game, spell, caster)
-    except GameError as e:
-        return done(False, "slot", "no_hotbar", str(e))
-    if want.get("selected") is False and select:
-        # the hotbar shows the selected character: select the caster first, as a player clicks its portrait
-        game.run_job("act.select", {"char": caster}, wait_s=5)
-        try:
-            want = _slot(game, spell, caster)
-        except GameError as e:
-            return done(False, "slot", "no_hotbar", str(e))
-    if want.get("selected") is False:
-        return done(False, "slot", "not_selected", "the caster is not the selected character")
-    if not want.get("found"):
-        return done(False, "slot", "not_on_hotbar", want.get("why") or "not on the hotbar")
-    for k in ("deck", "index", "rows", "cols"):
-        if want.get(k) is not None:
-            res.detail.setdefault("cell", {})[k] = want[k]
-    if want.get("upcast"):
-        return done(False, "slot", "upcast", "an upcast through the hotbar's level picker is not built yet")
-    if want.get("container"):
-        return done(False, "slot", "container", "the spell sits in a container slot (its variants' sub-bar is not built yet)")
-    if want.get("can_use") is False:
-        return done(False, "slot", "cannot_use", "the hotbar shows the spell greyed out (no slot/resource, or not now)")
-
-    pre = cast_state(game, caster)
-    if pre.get("armed"):
-        res.detail["cleared_before"] = cancel(game, inp, caster)
-
-    pos, last = (None, {}) if want.get("rendered") is False else locate_cell(game, inp, spell, caster, want)
-    res.detail["probes"] = last.get("probes")
-    if pos is None and want.get("shown_deck") != want.get("deck"):
-        # paging: the deck is collapsed (no button for the cell) or squeezed in the concertina (no hover)
-        paged, pinfo = show_deck(game, inp, spell, caster, want)
-        res.detail["paging"] = pinfo
-        if paged:
-            want = _slot(game, spell, caster)
-            pos, last = locate_cell(game, inp, spell, caster, want)
-            res.detail["probes"] = (res.detail.get("probes") or 0) + (last.get("probes") or 0)
-    if pos is None:
-        if want.get("rendered") is False:
-            return done(False, "locate", "not_rendered",
-                        f"the {want.get('deck')} deck does not show the cell (deck tab {want.get('deck_button')})")
-        return done(False, "locate", "cell_not_found", "could not point at the hotbar cell", at=last.get("at"))
+    fail, st = arm(game, inp, caster, spell, res, select, should_stop)
+    if fail:
+        return done(False, **fail)
+    stop = should_stop or (lambda: False)
     hard = t0 + budget * HARD_CAP_FACTOR + LOCATE_BUDGET_S
-    t_click = time.monotonic()
-    inp.click(pos[0], pos[1], button="L")
-    sp_lower = spell.lower()
-
-    def in_hand(st: dict) -> bool:
-        s = (st.get("spell") or (st.get("cast") or {}).get("spell") or "")
-        return bool(st.get("armed")) and (not s or s.lower() == sp_lower)
-
-    armed_ok, st = _wait(game, caster, in_hand, ARM_WAIT_S)
-    res.detail["cell_pos"] = pos
-    if not armed_ok:
-        if st.get("armed"):
-            # another spell in hand: the click landed on the wrong cell (a stale cached spot); forget the spot
-            _geom["cells"].pop((want.get("deck"), want.get("index")), None)
-            return done(False, "arm", "wrong_spell", f"the cell click put {st.get('spell')} in hand",
-                        cancel_it=True, state=st)
-        return done(False, "arm", "not_armed", "the cell click did not put the spell in hand", state=st)
-    res.detail["arm_s"] = round(time.monotonic() - t_click, 2)
     for i, uuid in enumerate(targets):
         last_one = i == len(targets) - 1
         if time.monotonic() >= hard:
@@ -480,6 +500,8 @@ def hotbar_cast(game: Game, inp: InputClient | None, caster: str, spell: str, ta
             reason = "off_screen" if tries == 0 and hc.get("off_screen") else "hover_miss"
             return done(False, "target", reason, f"could not point at target {i + 1} ({uuid})",
                         cancel_it=True, target=uuid)
+        if stop():
+            return done(False, "target", "cancelled", "the step was cancelled or interrupted", cancel_it=True)
         inp.click(tpos[0], tpos[1], button="L")
         res.picked = i + 1   # provisional; reset below when the game did not take it
         took, st = _wait(game, caster, lambda s: _progress(before, s) or _started(s), PICK_WAIT_S)
@@ -492,6 +514,8 @@ def hotbar_cast(game: Game, inp: InputClient | None, caster: str, spell: str, ta
             return done(False, "target", "fired_early",
                         f"the cast went off after {i + 1} of {len(targets)} targets (the spell's max)", state=st)
     if not _started(st):
+        if stop():
+            return done(False, "confirm", "cancelled", "the step was cancelled or interrupted", cancel_it=True)
         if st.get("armed") and st.get("can_force"):
             try:
                 _rpc(game, "ui.cast_confirm", {})
@@ -499,6 +523,10 @@ def hotbar_cast(game: Game, inp: InputClient | None, caster: str, spell: str, ta
             except GameError as e:
                 return done(False, "confirm", "confirm_failed", str(e), cancel_it=True)
         started, st = _wait(game, caster, _started, START_WAIT_S)
+        if not started:
+            # review M3: a late start (past START_WAIT_S) is still a cast: one more read before calling it a failure
+            st = cast_state(game, caster) or st
+            started = _started(st)
         if not started:
             return done(False, "start", "not_started", "the cast did not start after the last target",
                         cancel_it=True, state=st)

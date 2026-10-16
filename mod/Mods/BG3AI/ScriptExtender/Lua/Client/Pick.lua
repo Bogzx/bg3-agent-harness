@@ -2,8 +2,9 @@
 -- (client context; owner: worker "act").
 --
 -- ops:
---   ui.screen_pos  {uuid, aim?="auto"|"feet"|"low"|"mid"|"chest", dy?, ox?, toward?, dist?}
---       -> {x, y, on_screen, ndc=[x,y], depth, size=[w,h], aim, side}
+--   ui.screen_pos  {uuid, aim?="auto"|"feet"|"low"|"mid"|"chest", dy?, ox?, toward?, dist?} | {pos=[x,y,z]}
+--       -> {x, y, on_screen, ndc=[x,y], depth, size=[w,h], aim, side, world=[x,y,z]}
+--       pos: a world point (a ground spot: a two-step cast's landing); world: the point projected.
 --       ox: metres along the entity's own X axis (a door's origin is its
 --       hinge; +-0.5 aims at the leaf). side: "left"|"right" = where the
 --       point is relative to the view direction (also when behind).
@@ -13,6 +14,13 @@
 --       -> {hovered, hover?=uuid, cursor=[x,y], world?=[x,y,z]}
 --       What the picking helper says is under the cursor right now
 --       (PlayerPickingHelper.Inner.Inner[1|2].GameObject).
+--   ui.ground_check {pos?, tol?=1.0, avoid?=[uuid], no_chars?}
+--       -> {world?, d_m?, near?, hover?, on_avoid, cursor?, overlay?, warning?}
+--       A ground click's proof before it is made (two-step casts, act 2026-10-16): the cursor's world point
+--       (picking helper WorldPosition) and its flat distance to pos, whether a uuid in `avoid` (with no_chars:
+--       any character; both spells' second pick is "not Character()") is under it,
+--       and the cursor the player sees (ecl::CursorControl RequestedCursor: "Cast" on a spot the spell takes,
+--       "CastWarning" on one it doesn't; GUESS T1, acceptance act "Dimension Door 10 m via the hotbar" reads it).
 --
 -- Camera: the active ls::CameraComponent's Controller.Camera View and
 -- Projection matrices (glm, column-major).
@@ -146,11 +154,24 @@ function P.aim_point(uuid, aim, dy, ox)
     return p, aim
 end
 
+local function vec3(t)
+    if type(t) ~= "table" then return nil end
+    local x, y, z = tonumber(t[1]), tonumber(t[2]), tonumber(t[3])
+    if not (x and y and z) then return nil end
+    return { x, y, z }
+end
+
 RPC.register("ui.screen_pos", function(args)
+    local p, aim
     local uuid = guid(args.uuid)
-    if not uuid then error("bad uuid") end
-    local p, aim = P.aim_point(uuid, args.aim, args.dy, args.ox)
-    if not p then error(aim) end
+    if not uuid and args.pos ~= nil then
+        p, aim = vec3(args.pos), "point"
+        if not p then error("bad pos") end
+    else
+        if not uuid then error("bad uuid") end
+        p, aim = P.aim_point(uuid, args.aim, args.dy, args.ox)
+        if not p then error(aim) end
+    end
     -- toward + dist: a ground spot beside the entity, dist metres toward another (Revivify's second click:
     -- the spot the body stands up on, which must not be a character)
     local tw = guid(args.toward)
@@ -168,10 +189,11 @@ RPC.register("ui.screen_pos", function(args)
     end
     local r, err = P.project(p)
     if not r then error(err) end
-    if r.behind then return { on_screen = false, behind = true, side = r.side } end
+    local world = { U.round(p[1], 2), U.round(p[2], 2), U.round(p[3], 2) }
+    if r.behind then return { on_screen = false, behind = true, side = r.side, world = world } end
     local w, h = P.screen_size()
     local out = { ndc = { U.round(r.ndc[1], 4), U.round(r.ndc[2], 4) }, on_screen = r.on_screen,
-        depth = U.round(r.depth, 2), aim = aim, side = r.side }
+        depth = U.round(r.depth, 2), aim = aim, side = r.side, world = world }
     if w then
         out.size = { w, h }
         out.x = math.floor((r.ndc[1] * 0.5 + 0.5) * w + 0.5)
@@ -272,6 +294,85 @@ RPC.register("ui.hover_check", function(args)
         pcall(function() res.cursor = { ph.WindowCursorPos[1], ph.WindowCursorPos[2] } end)
         pcall(function() res.world = U.vec(ph.Inner.WorldPosition, 1) end)
     end
+    return res
+end)
+
+-- The cursor the player sees (bg3se Enumerations CursorType): every "...Warning" cursor is the game's "can't do
+-- that here" (CastWarning on a spot a spell won't take). bg3le may hand the enum as its name or its number.
+P.WARNING_CURSORS = { [3] = true, [5] = true, [8] = true, [0xB] = true, [0xD] = true, [0xF] = true, [0x15] = true,
+    [0x17] = true, [0x19] = true, [0x1B] = true, [0x1D] = true, [0x20] = true, [0x23] = true, [0x25] = true,
+    [0x29] = true, [0x2B] = true, [0x2D] = true, [0x30] = true }
+P.CURSOR_NAMES = { [0xC] = "Cast", [0xD] = "CastWarning", [0x2C] = "Walk", [0x2D] = "WalkWarning", [2] = "Arrow" }
+
+local function cursor_name(v)
+    if v == nil then return nil end
+    if type(v) == "number" then return P.CURSOR_NAMES[v] or tostring(v), P.WARNING_CURSORS[v] == true end
+    local s = tostring(v)
+    return s, s:find("Warning", 1, true) ~= nil
+end
+
+-- {cursor, overlay, warning} from an ecl::CursorControl (nil fields when unreadable). GUESS T1: RequestedCursor is
+-- the shown cursor while a spell is in hand.
+function P.cursor_info(cc)
+    local out = {}
+    if cc == nil then return out end
+    local okr, req = pcall(function() return cc.RequestedCursor end)
+    local name, warn = cursor_name(okr and req or nil)
+    if name then out.cursor, out.warning = name, warn end
+    local oko, ov = pcall(function() return cc.CurrentOverlay end)
+    local oname, owarn = cursor_name(oko and ov or nil)
+    if oname and oname ~= "None" and oname ~= "0" then
+        out.overlay = oname
+        if owarn then out.warning = true end
+    end
+    return out
+end
+
+-- Flat (x/z) distance: a landing's height is the floor's, the cursor's world point sits on it.
+function P.flat_dist(a, b)
+    return math.sqrt((a[1] - b[1]) ^ 2 + (a[3] - b[3]) ^ 2)
+end
+
+-- The ground_check verdict from its reads (pure; tested offline).
+function P.ground_verdict(want, tol, world, hovered, avoid, cur, is_char)
+    local res = { on_avoid = false }
+    for k, v in pairs(cur or {}) do res[k] = v end
+    if world then res.world = { U.round(world[1], 2), U.round(world[2], 2), U.round(world[3], 2) } end
+    for _, u in ipairs(hovered or {}) do
+        res.hover = res.hover or u
+        for _, a in ipairs(avoid or {}) do
+            if u == a then res.on_avoid = true end
+        end
+        if is_char and is_char(u) then res.on_avoid = true end
+    end
+    if want and world then
+        res.d_m = U.round(P.flat_dist(world, want), 2)
+        res.near = P.flat_dist(world, want) <= (tonumber(tol) or 1.0)
+    end
+    return res
+end
+
+RPC.register("ui.ground_check", function(args)
+    local want = args.pos ~= nil and vec3(args.pos) or nil
+    if args.pos ~= nil and not want then error("bad pos") end
+    local list, ph = P.hovered()
+    local world
+    if ph then
+        pcall(function()
+            local wp = ph.Inner.WorldPosition
+            world = vec3({ wp[1], wp[2], wp[3] })
+        end)
+    end
+    local avoid = {}
+    for _, a in ipairs(args.avoid or {}) do avoid[#avoid + 1] = guid(a) end
+    local cc
+    pcall(function() cc = Ext.UI.GetCursorControl() end)
+    local is_char = args.no_chars and function(u)
+        local ok, e = pcall(Ext.Entity.Get, u)
+        return ok and e ~= nil and U.comp(e, "ClientCharacter") ~= nil
+    end or nil
+    local res = P.ground_verdict(want, args.tol, world, list, avoid, P.cursor_info(cc), is_char)
+    if ph then pcall(function() res.at = { ph.WindowCursorPos[1], ph.WindowCursorPos[2] } end) end
     return res
 end)
 

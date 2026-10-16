@@ -16,7 +16,7 @@ python3 runner/play.py runs --playthrough nautiloid           # the runs table, 
 |---|---|---|---|---|
 | `nautiloid` | new game (phase 0 from the brief) | `nautiloid_escaped` | 4 h | ready (the launch-bar series) |
 | `crash_site_grove` | the beach after the crash | `grove` | 2 h, $50 | needs a start save |
-| `act1_underdark` | goblin camp leaders dealt with | `underdark` | 3 h, $75 | needs a start save |
+| `act1_underdark` | goblin camp leaders dealt with | `underdark` (unverified, below) | 3 h, $75 | needs a start save |
 | `act2_last_light` | just arrived in the Shadow-Cursed Lands | `last_light` | 2 h, $50 | needs a start save |
 
 The drafts' caps are guesses from claude-run-2's pace (crash site → grove took it ~40 min of play, the Shadow-Cursed
@@ -33,7 +33,7 @@ series starts: a series refuses a changed scenario file.
  "start": {"kind": "new_game"}               // or:
  "start": {"kind": "save",
            "save": "Claude-<id>__SCN-crash_site_grove",   // the save folder; null = placeholder (needs a start save)
-           "save_sha1": null,                // optional: sha1 of <folder>/<folder>.lsv; a changed save is refused
+           "save_sha1": null,                // optional: sha1 of the folder's .lsv (<folder>/<label>.lsv); a changed save is refused
            "note": {"where": "...", "objective": "...", "party": ["..."], "journal": ["..."]}},
  "until": "grove",                           // a milestone id of bridge/src/bg3ai/milestones.py
  "runs": 3,                                  // the default N (--runs overrides it)
@@ -114,14 +114,21 @@ Steps for each scenario (the runner stopped; Steam offline as always; don't touc
    `last_light` must not be on the screen's area names or in the journal as done). If it isn't a clean moment, walk
    a few steps to one (no story progress).
 3. Save it under the scenario's own label (the agent's tools, from the repo root):
-   `cd bridge/src && BG3AI_SAVE_PREFIX=Claude- python3 -c "from bg3ai import server as S; print(S.save_game('SCN-<name>'))"`,
-   then wait ~10 s and find the new folder: `ls -t "$HOME/.local/share/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public/Savegames/Story" | grep SCN-<name>`.
+   ```bash
+   cd bridge/src && BG3AI_PLAYTHROUGH=scn-setup BG3AI_SAVE_PREFIX=Claude- BG3AI_SESSION_DEADLINE=1 \
+     uv run --project .. python -c "from bg3ai import server as S; print(S.save_game('SCN-<name>'))"
+   ```
+   `BG3AI_PLAYTHROUGH` opens the save gates (`save_game` refuses outside an AI playthrough); a session deadline in
+   the past makes the save synchronous (otherwise it runs in a background thread that dies with the `python -c`
+   process). It prints the outcome once the .lsv is on disk (`SAVED …` / `done`, or `FAILED — …`; side effect:
+   `runtime/saves/scn-setup.txt` records it). Check: `ls -t "$HOME/.local/share/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public/Savegames/Story" | grep SCN-<name>`.
+   The same env works for the read tools of step 4 (`S.get_status()`, `S.get_party()`, `S.get_journal()`).
 4. Write the start note from the game's screens into the scenario's `start.note`: `where` (area, out of combat),
    `objective` (the journal's current main objective, as worded there), `party` (names and classes),
    `journal` (the active quest titles). The drafts hold claude-run-2's journal titles at those times as a starting
    point: correct them to what the save shows.
 5. Put the folder into `start.save`, and optionally `save_sha1`:
-   `sha1sum ".../Story/<folder>/<folder>.lsv"`. Check the profile name equals the folder's owner (`Claude`).
+   `sha1sum ".../Story/<folder>/SCN-<name>.lsv"` (the game names the .lsv after the label, next to a `.WebP`). Check the profile name equals the folder's owner (`Claude`).
 6. `python3 runner/play.py scenarios` shows it `ready`. Quit the game (the runner launches its own).
 7. First series: `python3 runner/play.py run --scenario <name> --runs 1 --session-minutes 30` supervised; check the
    first session's kickoff has the SCENARIO START note, the runner log says `loading save <folder>`, the
@@ -129,12 +136,15 @@ Steps for each scenario (the runner stopped; Steam offline as always; don't touc
 
 ## Not live-tested yet
 
+- `act1_underdark`'s until: the `underdark` milestone is an area pattern, and the Underdark has no region name
+  (it is inside `WLD_Main_A`), so it fires only if a minimap area name contains "Underdark". No run has been
+  there yet. Before its first series, walk into the Underdark once from the start save, read the area name
+  (`get_status`), reload without saving; if no area says "Underdark", the milestone needs another fact first.
+
 - Loading a start save older than the run in a series (`ui.menu` load of a save the runner didn't make; the Load
   page index comes from all of the owner's saves).
-- The MCP server's `list_saves`/`load_game` still hide the start save (`BG3AI_SAVES_AFTER`): an agent that wipes
-  before its first own save can't reload it itself (the runner reloads it at the next session's Game Over). The
-  runner already passes `BG3AI_START_SAVE=<folder>`; the server needs one line to keep that folder
-  (`bridge/src/bg3ai/server.py` `_my_saves`: `d.stat().st_mtime >= SAVES_AFTER or d.name == START_SAVE`); then
-  `load_game("<folder>")` works (`"latest"` takes `Sxxx-` saves only, so not an `SCN-` one).
+- The MCP server keeping the start save visible (6e473a6, offline): the runner passes `BG3AI_START_SAVE=<folder>`
+  and `_my_saves` keeps that folder although it predates the run, so `load_game("<folder>")` works for an agent
+  wiped before its first own save (`"latest"` takes `Sxxx-` saves only, so not an `SCN-` one).
 - Whether `progress`'s silent baseline at the start save counts milestones the save already has (it should: a
   milestone already true at the first poll is "reached" with no time). That's why step 2 checks `until` is unseen.

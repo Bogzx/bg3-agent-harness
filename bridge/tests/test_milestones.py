@@ -28,6 +28,15 @@ class Milestones(unittest.TestCase):
         self.assertEqual((st["reached"], st["act"], st["next"]), (7, 1, "Emerald Grove"))
         self.assertTrue(all(i["session"] is None for i in st["items"]))   # no events: "before tracking"
 
+    def test_grove_is_behind_the_gate(self):
+        # claude-run-2 S007: waypoint "Emerald Grove Environs" 00:12:37 (outside the gate), area "Emerald Grove" 00:13:52
+        def grove(*areas):
+            return {i["id"]: i["reached"] for i in MS.status(dict(SEEN, areas=list(areas)))["items"]}["grove"]
+        self.assertFalse(grove("Wilderness|Emerald Grove Environs"))
+        self.assertFalse(grove("Wilderness|Forest", "Wilderness|Chapel Entrance"))
+        for a in ("Emerald Grove", "The Hollow", "Druids' Chambers"):
+            self.assertTrue(grove("Wilderness|" + a), a)
+
     def test_first_session_from_events(self):
         sessions = [("S002", [ev("companion", "Shadowheart", 10)]),
                     ("S003", [ev("region", "Wilderness", 20), ev("level_up", "Claude -> level 2", 21),

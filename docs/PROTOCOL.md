@@ -133,8 +133,12 @@ All take `{char: uuid, ...}` and return `{job}`. A job finishes `done` (with a s
 began), or `timeout`.
 `act.move_to{char, target:uuid | pos:[x,y,z], run=true}` · `act.interact{char, target}` (doors, levers,
 containers, corpses, books, ladders, waypoints) · `act.pickup{char, item}` · `act.talk{char, npc}` ·
-`act.cast{char, spell, target?:uuid, pos?, targets?:[], upcast?}` (attacks, spells, Jump, Shove, Dash,
-Hide, Throw, consumables) · `act.end_turn{char}` · `act.equip{char,item}` / `act.unequip` ·
+`act.cast{char, spell, target?:uuid, pos?, targets?:[], upcast?, ui?}` (attacks, spells, Jump, Shove, Dash,
+Hide, Throw, consumables; at most 2 targets, or with `ui=true` up to 10: the hotbar route, where the job checks the
+cast as usual, issues no order and only watches CastSpell/CastedSpell while the bridge clicks the hotbar; the game
+charges it, the guard adds nothing; no pos/upcast; no start in 15 s = failed; a two-step spell (audit ACT-9) takes
+one pick: Revivify the body, Dimension Door `pos` = the landing + `target` = who goes (default the caster), the bridge
+clicks the pick and the ground, `bg3ai/twostep.py`; the result says `revived` / `teleported` + `landed_m_from_target`) · `act.end_turn{char}` · `act.equip{char,item}` / `act.unequip` ·
 `act.transfer{item, to:uuid|"camp"}` · `act.select{char}` · `act.chain{char, leader}` / `act.unchain{char}` ·
 `act.sneak{char, on}` · `act.turn_based{on}` · `act.go_to_camp{}`.
 `Guard.lua` enforces visibility, legality, combat gating and the cheat blocklist
@@ -220,6 +224,10 @@ checked by acceptance se "hotbar widget tree (ACT-8, read-only)" / "hotbar cast:
 | `ui.cast_state` | C | `{char?}` | `{armed, spell?, remaining?, can_force, counter, targeting?, preview?, upcast_open?, cast?:{spell, phase, picked, index, previewing}}`: the spell in hand, the cursor's target counter, the tick button, the client cast entity |
 | `ui.cast_confirm` | C | `{}` | `{done}`: the multi-target tick button (`ForceCastCommand`), only while armed and enabled |
 | `ui.cast_cancel` | C | `{}` | `{done, was_armed}`: `CancelTaskCommand`, the bridge's last resort after ESCAPE and a right click |
+| `ui.ground_check` | C | `{pos?, tol?=1.0, avoid?:[uuid], no_chars?}` | `{world?, d_m?, near?, hover?, on_avoid, cursor?, overlay?, warning?, at?}`: a ground click's proof before it is made (act, ACT-9 two-step route, `Client/Pick.lua`): the cursor's world point and its flat distance to `pos`, a character under it, the cursor shape (`ecl::CursorControl`: `Cast` / `CastWarning`, GUESS T1) |
+
+`ui.screen_pos` (`Client/Pick.lua`) also takes `{pos:[x,y,z]}` (a ground point) instead of `uuid`, and returns `world`
+(the point projected).
 
 Widget names are the XAML root `x:Name`, e.g. `ContainerWidget`, `Dialog_box` (MessageBox), `ModalTutorial`,
 `NotificationWidget`, `JournalQuest`, `DMSettings`. Character creation, new game and level-up live in `Client/Progression.lua`

@@ -195,7 +195,10 @@ def harness_news(since: str | None) -> list[str]:
     new = [e for e in entries if e[0] > cut] if cut else entries
     new.sort()
     out = [f"- {t} {text}" for t, text in new[-NEWS_MAX:]]
-    if len(new) > NEWS_MAX:  # after a long break 15+ entries: say the rest exist instead of dropping them silently
+    # after a long break 15+ entries: say the rest exist instead of dropping them silently. Not for a new
+    # playthrough (no previous start): it has no older notes for the old entries to correct (naut-r3 S001 read
+    # the whole file, ~8k tokens, on that pointer)
+    if len(new) > NEWS_MAX and cut:
         out.insert(0, f"- (+{len(new) - NEWS_MAX} older changes since your last session, from {new[0][0]}: "
                       "memory_read knowledge/harness-news.md once now)")
     return out

@@ -1210,11 +1210,28 @@ def scenario_digest(sc: dict) -> str:
     return hashlib.sha1(json.dumps(sc, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
 
 
+def save_lsv(save_dir: Path, folder: str) -> Path | None:
+    """A save folder's .lsv: the game names it after the label, <owner>-<id>__<label>/<label>.lsv (+ <label>.WebP);
+    else the folder's only .lsv (a label the game rewrote). None when there's none, or several."""
+    d = save_dir / folder
+    label = save_label_of(folder)
+    if label and (d / f"{label}.lsv").is_file():
+        return d / f"{label}.lsv"
+    try:
+        found = [p for p in d.iterdir() if p.suffix == ".lsv" and p.is_file()]
+    except OSError:
+        return None
+    return found[0] if len(found) == 1 else None
+
+
 def save_digest(save_dir: Path, folder: str) -> str | None:
-    """sha1 of a save's <folder>/<folder>.lsv (read only); None when it isn't there."""
+    """sha1 of a save's .lsv (save_lsv; read only); None when it isn't there."""
+    lsv = save_lsv(save_dir, folder)
+    if lsv is None:
+        return None
     h = hashlib.sha1()
     try:
-        with open(save_dir / folder / f"{folder}.lsv", "rb") as f:
+        with open(lsv, "rb") as f:
             for chunk in iter(lambda: f.read(1 << 20), b""):
                 h.update(chunk)
     except OSError:

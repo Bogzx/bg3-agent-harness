@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import math
 import os
 import re
 import subprocess
@@ -40,7 +41,14 @@ DOOR_SAVE = "S050-end"         # Lower City, beside the locked Steel Watch Found
 SECTIONS = ["reads", "setup", "act", "vis", "gear", "swap", "rest", "trade", "nav", "combat", "loads", "se"]
 # Estimated seconds per section (the 2026-10-11/13 full runs on the test machine: max seen, + today's new items), for the plan.
 EST_S = {"reads": 60, "setup": 30, "act": 60, "vis": 75, "gear": 60, "swap": 85, "rest": 85, "trade": 135,
-         "nav": 195, "combat": 210, "loads": 80, "se": 260}
+         "nav": 195, "combat": 220, "loads": 80, "se": 350}
+# Who fixes a section's FAILs (docs/ORCHESTRATOR.md ownership): tools/dev/live_window.py prints the failures per owner.
+# An item dict may carry its own "owner" to override this.
+SECTION_OWNERS = {"reads": "vis", "setup": "setup", "act": "act", "vis": "vis", "gear": "act", "swap": "act",
+                  "rest": "act", "trade": "act", "nav": "vis", "combat": "act", "loads": "se", "se": "se"}
+# tools/dev/live_window.py holds runtime/game.lock for its whole window and sets this: the sections then run without
+# their own flock (a second flock on the same file would wait for the window's hold forever).
+LOCK_HELD_ENV = "BG3AI_GAME_LOCK_HELD"
 # What each save must be for its sections (checked offline by --check from the save's SaveInfo.json).
 SAVE_NEEDS = {
     BASE: {"level": "SCL_Main_A", "party_has": ["Claude", "Gale", "Shadowheart"], "party_not": ["Wyll"],
@@ -655,6 +663,8 @@ def sec_combat() -> None:
     played = 0
     bg_ends: list[tuple] = []  # (who, combat_turn s, background end s after it returned, queue text, turn passed)
     rts: list[tuple] = []  # (metrics record, single state.combat RPCs, FAILED lines) per combat_turn (batched checks)
+    ct_raw: list[str] = []  # the raw combat_turn results (vis combat compaction check)
+    probed = False
     end = time.monotonic() + 150
     while time.monotonic() < end and played < 3:
         cs = S.game.try_rpc("state.combat") or {}
@@ -669,6 +679,10 @@ def sec_combat() -> None:
         if not now:  # enemies acting
             time.sleep(0.5)
             continue
+        if not probed and len(now) >= 2:
+            probed = end_turn_probe(cs, now, party)
+            if probed:
+                continue
         who_u = now[0]
         nb = S.game.try_rpc("state.nearby", {"radius": 40}) or {}
         foes = [c for c in nb.get("characters") or [] if c.get("relation") == "hostile" and not c.get("dead")]
@@ -701,6 +715,7 @@ def sec_combat() -> None:
             S.METRICS.tool_done = orig_td
         if recs:
             rts.append((recs[-1], counts.get("state.combat", 0), out.count("FAILED")))
+        ct_raw.append(out)
         log(f"RPCs by op: {dict(sorted(counts.items(), key=lambda kv: -kv[1]))}")
         if "end_turn: ending in the background" in out:  # latency round 2026-10-16 (S.END_ASYNC)
             b0 = time.monotonic()
@@ -734,6 +749,9 @@ def sec_combat() -> None:
              + " | ".join(l for l in out.splitlines()[:4]))
     if not played:
         item("combat_turn on a safe fight", "SKIP", "the fight ended before a party turn")
+    if not probed:
+        item("end_turn after a companion's request (probe)", "SKIP", "no shared turn group with the avatar in the "
+             "turns played (the party's initiatives differed)")
     # latency (2026-10-16): the party's last end before enemy turns runs in the background; it must still end the turn
     # ("end_turn: done", incl. the HUD fallback) and the turn must pass. The numbers = what the agent no longer waits.
     if not bg_ends:
@@ -754,8 +772,77 @@ def sec_combat() -> None:
              f"BATCH_CHECKS={actq.BATCH_CHECKS}; " + "; ".join(
                  f"rt_n={r.get('rt_n')} rpc_n={r.get('rpc_n')} watch_n={r.get('watch_n', 0)} single state.combat={n} "
                  f"failed={f} ms-job={r['ms'] - r.get('job_ms', 0):.0f}" for r, n, f in rts))
+    combat_compaction_check([gc] + ct_raw)
     melee_probe()
     load_verified(BASE)
+
+
+def combat_compaction_check(raws: list[str]) -> None:
+    """vis 2026-10-16 combat compaction (compact.py COMBAT_NARRATIVE .. KIND_GROUP) on this fight's live results:
+    0 lost facts (compact_check), smaller, an enemy turn's cast + damage on one line, no @(x,y,z) on move lines."""
+    from bg3ai import compact, compact_check as cc
+    comp, shown, probs, a, b, outs = compact.Compactor(), [], [], 0, 0, []
+    for i, raw in enumerate(r for r in raws if r):
+        tool = "get_combat_state" if i == 0 else "combat_turn"
+        out = comp.apply(tool, raw)
+        probs += [f"#{i} {p}" for p in cc.check(raw, out, comp.elided, "\n".join(shown))]
+        shown.append(out)
+        outs.append(out)
+        a, b = a + cc.est_tokens(raw), b + cc.est_tokens(out)
+    if len(outs) < 2:
+        item("vis: combat compaction keeps every fact (live)", "SKIP", "no combat_turn result")
+        return
+    text = "\n".join(outs[1:])
+    narr = re.findall(r"(?m)^\s+(?:turn|cast) e\d+[^:\n]*: [^\n]* -> e\d+[^\n]*$", text)
+    pos = [ln for ln in text.split("\n") if ln.startswith("move ") and "@(" in ln] if compact.COMBAT_MOVE_POS else []
+    item("vis: combat compaction keeps every fact (live)", "PASS" if not probs and b < a and not pos else "FAIL",
+         f"{len(outs) - 1} combat_turn: tokens ~{a}->~{b} ({(b - a) / max(1, a):+.0%}); narrative lines "
+         f"{len(narr)} e.g. {narr[:2]}; move lines with @: {pos[:1]}; problems {probs[:3]}")
+
+
+def end_turn_probe(cs: dict, now: list[str], party: dict) -> bool:
+    """act proposal "ignored EndTurn -> HUD at once" (naut runs 1/3: after Lae'zel's end was requested every Osiris
+    EndTurn on the avatar was ignored: 3 s Lua timeout, then the HUD's End Turn in ~0.4 s; run 2's opposite order
+    worked). In a shared turn group with the avatar: end a companion first, then the avatar by Osiris EndTurn alone
+    (act.end_turn, no HUD fallback): ignored or not, how long; if ignored, the HUD ends it (timed). With
+    BG3AI_END_HUD_FIRST=1 the end_turn tool itself must press the HUD at once. Decision for the live window:
+    ignored -> flip END_HUD_FIRST on (server.END_HUD_FIRST / env), else keep it off. False: no shared group here."""
+    from bg3ai.game import JobResult
+    host = str(S.game.eval("return tostring(Osi.GetHostCharacter())", context="server") or "")[-36:]
+    if host not in now:
+        log(f"end_turn probe: the group {[party[u].get('name') for u in now]} has no avatar ({host})")
+        return False
+    comp = next(u for u in now if u != host)
+    cn, an = party[comp].get("name"), party[host].get("name")
+    t = time.monotonic()
+    r1 = S.game.run_job("act.end_turn", {"char": comp}, wait_s=15)
+    d1 = time.monotonic() - t
+    r1s = f"{cn} end {r1.status} {d1:.1f}s requested={(r1.result or {}).get('requested')}"
+    if r1.status != "done":
+        item("end_turn after a companion's request (probe)", "FAIL", f"{r1s}: {r1.error}")
+        return True
+    cs1 = S.game.try_rpc("state.combat") or {}
+    peer = S._peer_requested(cs1, host)
+    if S.END_HUD_FIRST:
+        out, dt = took("end_turn", who=S.H.get(host), wait=False)
+        ok = "the HUD's End Turn at once" in out and "FAILED" not in out
+        item("end_turn after a companion's request (probe)", "PASS" if ok else "FAIL",
+             f"END_HUD_FIRST on; {r1s}; peer seen={bool(peer)}; {an} end_turn {dt:.1f}s: {first_line(out)[:160]}")
+        return True
+    t = time.monotonic()
+    r2 = S.game.run_job("act.end_turn", {"char": host}, wait_s=15)
+    d2 = time.monotonic() - t
+    ignored = r2.status == "failed" and S.END_IGNORED in str(r2.error or "")
+    hud = ""
+    if ignored:
+        t = time.monotonic()
+        r3 = S._end_turn_by_hud(host, JobResult("failed", None, r2.error))
+        hud = f"; HUD End Turn {r3.status} {time.monotonic() - t:.1f}s"
+    decision = ("IGNORED: flip END_HUD_FIRST on (BG3AI_END_HUD_FIRST=1), saves ~3 s per such end" if ignored
+                else "not ignored: keep END_HUD_FIRST off")
+    item("end_turn after a companion's request (probe)", "PASS" if r2.status == "done" or ignored else "FAIL",
+         f"{r1s}; peer seen={bool(peer)}; {an} Osiris EndTurn {r2.status} {d2:.1f}s ({r2.error or 'ok'}){hud} -> {decision}")
+    return True
 
 
 MELEE_PROBE_M = (2.4, 2.1, 1.9, 1.6)  # centre-to-centre distances swung from, one party turn each
@@ -909,6 +996,123 @@ def hotbar_probe() -> None:
             close_targeting()
     if sel:
         S.game.run_job("act.select", {"char": sel}, wait_s=5)
+
+
+HOTBAR_ITEM = "use_ability Bless on 3 via the hotbar route (ACT-8 wiring)"
+
+
+def hotbar_use_ability() -> bool:
+    """act 2026-10-16, audit ACT-8 wiring: use_ability with 3 targets goes the hotbar route (act.cast {ui=true} checks
+    and watches the cast, hotbar.hotbar_cast clicks it). HOTBAR_CAST_ENABLED is off by default: turned on for this one
+    call, only after se's direct item passed. PASS = 'use_ability: done' with via=hotbar, 'hotbar: 3 of 3', BLESS on
+    all 3, nothing charged by the guard, nothing in hand. Decision for the live window: PASS -> set
+    hotbar.HOTBAR_CAST_ENABLED = True. True = it cast (the caller reloads)."""
+    from bg3ai import hotbar as HB
+    se_ok = any(r["item"] == "hotbar cast: Bless on 3 allies (ACT-8)" and r["verdict"] == "PASS" for r in RESULTS)
+    if not need(se_ok, HOTBAR_ITEM, "se's 'hotbar cast: Bless on 3 allies (ACT-8)' did not PASS"):
+        return False
+    st = status()
+    party = [r.get("uuid") for r in st.get("party") or []]
+    caster = None
+    for u in party:
+        r = S.game.try_rpc("ui.hotbar_slot", {"spell": "Target_Bless", "char": u}, context="client") or {}
+        if r.get("found") and r.get("can_use") is not False:
+            caster = u
+            break
+    if not need(caster is not None and len(party) >= 3, HOTBAR_ITEM, f"caster={caster}, party={len(party)}"):
+        return False
+    targets = ([caster] + [u for u in party if u != caster])[:3]
+    saved, HB.HOTBAR_CAST_ENABLED = HB.HOTBAR_CAST_ENABLED, True
+    try:
+        out, dt = took("use_ability", ability="Target_Bless", targets=[S.H.get(u) for u in targets], who=S.H.get(caster))
+    finally:
+        HB.HOTBAR_CAST_ENABLED = saved
+    time.sleep(1.0)
+    blessed = [lua_server(f'return tostring(Osi.HasActiveStatus("{u}", "BLESS"))') == "1" for u in targets]
+    cs = HB.cast_state(S.game, caster)
+    ok = ("use_ability: done" in out and "via=hotbar" in out and "hotbar: 3 of 3" in out and all(blessed)
+          and "charged_by_guard" not in out and not cs.get("armed") and ui_screen() == "game")
+    item(HOTBAR_ITEM, "PASS" if ok else "FAIL",
+         f"{dt:.1f}s; BLESS on {blessed}; in hand={cs.get('armed')}; "
+         + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar", "targets")))[:200])
+    if not ok:
+        close_targeting()
+    return True
+
+
+TWOSTEP_ITEM = "Dimension Door 10 m via the hotbar (ACT-9 two-step route)"
+DD_SPELL = "Teleportation_DimensionDoor"
+
+
+def twostep_dd_probe() -> bool:
+    """act 2026-10-16, audit ACT-9: a two-step spell by the player's clicks (bridge twostep.py: hotbar cell, who goes =
+    the caster, then the landing on the ground, the cursor checked by ui.ground_check before the click). Out of
+    combat in BASE, to a floor point ~10 m from the caster that is on screen. HOTBAR_CAST_ENABLED is on for this one
+    call, only after se's read-only hotbar item passed. PASS = 'use_ability: done', the caster now <= 1.5 m from the
+    landing, nothing in hand, screen game. The PROBE line logs ui.ground_check at the landing (GUESS T1: cursor
+    "Cast"/"CastWarning"). SKIP when nobody has Dimension Door on the hotbar. True = it cast (the caller reloads)."""
+    from bg3ai import hotbar as HB
+    ro_ok = any(r["item"] == "hotbar widget tree (ACT-8, read-only)" and r["verdict"] == "PASS" for r in RESULTS)
+    if not need(ro_ok, TWOSTEP_ITEM, "se's 'hotbar widget tree (ACT-8, read-only)' did not PASS"):
+        return False
+    st = status()
+    if not need(not (S.game.try_rpc("state.combat") or {}).get("active"), TWOSTEP_ITEM, "in combat"):
+        return False
+    party = {r.get("uuid"): r for r in st.get("party") or [] if r.get("uuid")}
+    caster = None
+    for u in party:
+        r = S.game.try_rpc("ui.hotbar_slot", {"spell": DD_SPELL, "char": u}, context="client") or {}
+        if r.get("found") and r.get("can_use") is not False:
+            caster = u
+            break
+    if caster is None:
+        item(TWOSTEP_ITEM, "SKIP", f"nobody in the party has {DD_SPELL} usable on the hotbar (level 7+ Gale, or "
+             "a save with it): run SESSION-WATCH 'two-step by the hotbar' instead")
+        return False
+    if S.game.try_rpc("ui.hotbar_slot", {"spell": DD_SPELL, "char": caster}, context="client").get("selected") is False:
+        S.game.run_job("act.select", {"char": caster}, wait_s=5)
+    p0 = party[caster].get("pos")
+    land = None
+    for k in range(8):   # a floor point at the caster's height, 10 m away, on screen
+        a = k * math.pi / 4
+        q = [p0[0] + 10 * math.cos(a), p0[1], p0[2] + 10 * math.sin(a)]
+        hs = lua_server(f"local ok,h=pcall(Ext.Level.GetHeightsAt,{q[0]},{q[2]}) "
+                        "if not ok or type(h)~='table' then return '' end local o={} "
+                        "for _,v in ipairs(h) do o[#o+1]=string.format('%.2f',v) end return table.concat(o,',')")
+        ys = [float(v) for v in hs.split(",") if v.strip()] if hs and "error" not in hs else []
+        y = min(ys, key=lambda v: abs(v - p0[1]), default=None)
+        if y is None or abs(y - p0[1]) > 1.0:
+            continue
+        sp = S.game.try_rpc("ui.screen_pos", {"pos": [q[0], y, q[2]]}, context="client") or {}
+        nd = sp.get("ndc") or [9, 9]
+        if sp.get("on_screen") and abs(nd[0]) < 0.8 and abs(nd[1]) < 0.8:
+            land = [round(q[0], 2), round(y, 2), round(q[2], 2)]
+            break
+    if not need(land is not None, TWOSTEP_ITEM, "no floor point 10 m away on screen around the caster"):
+        return False
+    sp = S.game.try_rpc("ui.screen_pos", {"pos": land}, context="client") or {}
+    log(f"PROBE twostep landing {land} screen {json.dumps(sp)}")
+    saved, HB.HOTBAR_CAST_ENABLED = HB.HOTBAR_CAST_ENABLED, True
+    try:
+        out, dt = took("use_ability", ability=DD_SPELL, x=land[0], y=land[1], z=land[2], who=S.H.get(caster))
+    finally:
+        HB.HOTBAR_CAST_ENABLED = saved
+    time.sleep(1.0)
+    p1 = party_pos().get(caster) or p0
+    off = math.dist([p1[0], p1[2]], [land[0], land[2]])
+    cs = HB.cast_state(S.game, caster)
+    try:
+        rows = (S.RUNTIME / "hotbar_cast.jsonl").read_text().splitlines()
+        log(f"PROBE twostep result {rows[-1] if rows else '-'}")
+    except OSError:
+        pass
+    ok = "use_ability: done" in out and off <= 1.5 and not cs.get("armed") and ui_screen() == "game"
+    item(TWOSTEP_ITEM, "PASS" if ok else "FAIL",
+         f"{dt:.1f}s; now {off:.1f} m from the landing (moved {math.dist(p0, p1):.1f} m); in hand={cs.get('armed')}; "
+         + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar")))[:220])
+    if not ok:
+        close_targeting()
+    return True
 
 
 def strict_lock_probe() -> None:
@@ -1178,6 +1382,10 @@ def sec_se() -> None:
          + " (full: se.log PROBE lines)")
     hotbar_probe()   # audit ACT-8 rest: hotbar cell + Bless x3 (spends a slot: after the probes, reloaded right below)
     load_verified(BASE)
+    if hotbar_use_ability():   # the same Bless x3 through use_ability (act's wiring): reloaded again
+        load_verified(BASE)
+    if twostep_dd_probe():   # ACT-9: Dimension Door by the clicks (spends a slot, moves the caster): reloaded
+        load_verified(BASE)
     # Lockpick on the S050 door (S050 04:11-04:12 + S051: 8x "hover_miss hovered_instead=[(an object with no id)]";
     # S047 02:57: "nothing happened" while the game walked the actor to its lockpick spot). Opens the roll only:
     # ESCAPE, then the base save is reloaded; nothing is rolled or saved.
@@ -1220,6 +1428,8 @@ def sec_se() -> None:
         item("doors show open/closed in get_nearby", "PASS" if ok else ("SKIP" if not drows else "FAIL"),
              " | ".join(drows)[:240] or "no door within 20 m")
         doors = re.findall(r"^(?:ITEM\s+|\+\s*)?(e\d+) ([^<\n]+?) <door>[^\n]*\blocked\b", near, re.M)  # "ITEM e8 Steel … <door> 1.6m locked"
+        if doors:
+            click_search_probe(doors[0][0], doors[0][1].strip())
         if need(bool(doors), "lockpick a door (no-id hover, walk wait)", f"no locked door within 20 m of {DOOR_SAVE}"):
             h, name = doors[0]
             out, dt = took("lockpick", target=h)
@@ -1233,13 +1443,85 @@ def sec_se() -> None:
     strict_lock_probe()  # last: process-wide mode, restored in a finally; nothing runs after it in this section
 
 
+def click_search_probe(h: str, name: str) -> None:
+    """se click_on latency (naut-r2 S001: 83 tries 12.6 s; off_screen x2 7 s): the hover search on the S050 door, new
+    (HOVER_V2) then old, hover only (nothing is clicked). PASS = the new search finds the door, in no more time than
+    the old one (+0.3 s) or within 2 s. The evidence names the settle mode: "cursor" = the per-try settle on the
+    picking helper's cursor works live (~2 frames a try); "frames" = WindowCursorPos never matched (units?), so
+    only the order/early-turn gains apply -> BACKLOG for se with the cursor values from a ui.hover_check."""
+    from bg3ai import clicker
+    inp = S._inp()
+    name_ = "click_on hover search: new vs old (tries, s, settle)"
+    if not need(inp is not None, name_, "input shim not available"):
+        return
+    u = S._world_uuid(h)
+    saved, got = clicker.HOVER_V2, {}
+    try:
+        for v2 in (True, False):
+            clicker.HOVER_V2 = v2
+            t = time.monotonic()
+            centered = clicker.center_on_actor(S.game, inp, u)
+            moves = clicker.bring_into_view(S.game, inp, u)
+            fn = clicker._search_v2 if v2 else clicker._search_v1
+            pos, tries, last = fn(S.game, inp, u, moves, {}, lambda d: None)
+            got[v2] = (pos, tries, time.monotonic() - t, last.get("settle"), (["center"] if centered else []) + moves)
+            w, hh = inp.window_size()
+            inp.move(w // 2, hh - 8)   # off the door before the next search
+            time.sleep(0.3)
+    except Exception as e:  # noqa: BLE001
+        item(name_, "FAIL", f"{h} {name}: {type(e).__name__}: {e}")
+        return
+    finally:
+        clicker.HOVER_V2 = saved
+    (p2, t2, s2, st2, m2), (p1, t1, s1, _, m1) = got[True], got[False]
+    ok = p2 is not None and (s2 <= s1 + 0.3 or s2 <= 2.0)
+    item(name_, "PASS" if ok else "FAIL",
+         f"{h} {name}: new {'hit' if p2 else 'MISS'} {t2} tries {s2:.2f}s settle={st2} camera={m2}; "
+         f"old {'hit' if p1 else 'MISS'} {t1} tries {s1:.2f}s camera={m1}")
+
+
 FUNCS = {"reads": sec_reads, "rest": sec_rest, "trade": sec_trade, "gear": sec_gear, "swap": sec_swap,
          "nav": sec_nav, "loads": sec_loads, "combat": sec_combat, "se": sec_se}
 
 
+# create_character targets after the CC pacing round (impl-setup part 45; naut 2026-10-13 run 3: cc_apply 6.1 s,
+# naming 5.2 s, 22.1 s in all; runs 1-2 needed 3 calls). The world load (~7.6 s) is game time.
+CC_MAX_APPLY_MS, CC_MAX_NAMING_MS, CC_MAX_TOTAL_MS = 3000, 2500, 15000
+
+
+def cc_verdict(recs: list[dict]) -> tuple[str, str]:
+    """The last character creation's create_character records (runtime/stage_ms.jsonl op "create_character", one
+    per call; a creation = the calls within 15 min of the last one) -> (verdict, evidence)."""
+    recs = [r for r in recs if r.get("op") == "create_character" and "pacing" in r]
+    if not recs:
+        return "SKIP", "no create_character since the CC pacing round: needs a naut-style run (new game + CC)"
+    last = [r for r in recs if r.get("t", 0) >= recs[-1].get("t", 0) - 900]
+    ok = [r for r in last if r.get("ok")]
+    fin = ok[-1] if ok else last[-1]
+    ev = (f"{len(last)} call(s) ({sum(1 for r in last if not r.get('ok'))} failed"
+          + "".join(f"; {str(r.get('error'))[:60]}" for r in last if not r.get("ok"))
+          + f"), pacing {fin.get('pacing')}: cc_apply {fin.get('apply_ms')} ms, naming {fin.get('naming_ms')} ms "
+          f"({fin.get('how')}, {fin.get('popups')} popup(s), {fin.get('naming_stages')}), finish+world "
+          f"{fin.get('world_ms')} ms, total {fin.get('total_ms')} ms")
+    good = (len(last) == 1 and bool(ok) and (fin.get("apply_ms") or 1e9) <= CC_MAX_APPLY_MS
+            and (fin.get("naming_ms") or 1e9) <= CC_MAX_NAMING_MS and (fin.get("total_ms") or 1e9) <= CC_MAX_TOTAL_MS)
+    return ("PASS" if good else "FAIL"), ev
+
+
 def sec_setup() -> None:
-    """setup's fixes (impl-setup parts 34-35, 41) on the loaded base save: ramwatch's anon+swap kill
-    signal, the story scorer naming a new journal step by its text, enemy statuses as lesson terms."""
+    """setup's fixes (impl-setup parts 34-35, 41, 45) on the loaded base save: ramwatch's anon+swap kill
+    signal, the story scorer naming a new journal step by its text, enemy statuses as lesson terms; and the last
+    character creation's time and attempts (read from runtime/stage_ms.jsonl, no game action)."""
+    recs = []
+    try:
+        for ln in (REPO / "runtime" / "stage_ms.jsonl").read_text(errors="replace").splitlines():
+            try:
+                recs.append(json.loads(ln))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    item("create_character: 1 attempt, time (last CC)", *cc_verdict(recs))
     sys.path.insert(0, str(REPO / "runner"))
     import ramwatch
     from bg3ai import lessons, progress
@@ -1631,6 +1913,33 @@ def sec_vis() -> None:
     item("vis: MCP results compacted plain text", "PASS" if getattr(tool.fn, "__compacted__", False)
          and tool.output_schema is None else "FAIL", f"wrapped={getattr(tool.fn, '__compacted__', False)} "
          f"output_schema={tool.output_schema}")
+    # 18. EventEcho (render.py): a door interact's second UseFinished (`used`) is not shown again in the next result
+    # (naut golden 21-22, 128-129: one door use = 2 identical `used` events, the 2nd in the next result)
+    raw = S.game.try_rpc("state.nearby", {"radius": 8, "kinds": ["door"]}) or {}
+    doors = [it for it in (raw.get("items") or []) if it.get("uuid")]
+    if doors:
+        h = S.H.get(doors[0]["uuid"], doors[0].get("name"))
+        outs = [call("interact", target=h), call("look"), call("interact", target=h), call("look")]
+        used = [ln.strip() for o in outs for ln in o.split("\n") if re.match(rf"\s+used\b.*\b{h}\b", ln)]
+        item("vis: door use shows one `used` event per interact (EventEcho)", "PASS" if len(used) <= 2 else "FAIL",
+             f"{h} {doors[0].get('name')}: {len(used)} used lines over 2 interacts + 2 looks: {used[:4]}; "
+             f"interacts: {first_line(outs[0])} / {first_line(outs[2])}")
+    else:
+        item("vis: door use shows one `used` event per interact (EventEcho)", "INFO", "no door within 8 m of BASE")
+    # 19. a queue_interrupted event whose last step result is multi-line arrives as ONE EVENTS line through the mod
+    # (naut-r2 golden 129: `last=1. travel_to ..` then a stray `STOPPED: leg 1 failed` and a fake CHANGES block)
+    who = next((r.get("uuid") for r in status().get("party") or [] if r.get("uuid")), None)
+    if who:
+        call("look")
+        step = ("1. travel_to (1,2,3): 68m\nleg 1: move_to: FAILED — acceptance probe\nSTOPPED: leg 1 failed\n"
+                "CHANGES\n  e2 Probe moved 3m W")
+        S._on_queue_report(who, S.actq.Report(done=0, stopped="acceptance probe", lines=[step]))
+        out = call("look")
+        ev = [ln for ln in out.split("\n") if "queue_interrupted" in ln]
+        stray = [ln for ln in out.split("\n") if ln.startswith("STOPPED: leg 1")]
+        item("vis: queue_interrupted event on one line (live mod event path)",
+             "PASS" if len(ev) == 1 and "FAILED — acceptance probe" in ev[0] and "done=0" in ev[0] and not stray
+             else "FAIL", f"{ev[:1]} stray={stray[:1]}")
     load_verified(BASE)
 
 
@@ -1702,24 +2011,30 @@ def main() -> int:
     died = ""
     for name in names:
         if died:  # the game is gone: the rest can't run; say so instead of N "the game is not running" FAILs
-            rows.append({"item": f"section {name}", "verdict": "SKIP",
+            rows.append({"section": name, "item": f"section {name}", "verdict": "SKIP",
                          "evidence": f"not run: the game died during section {died} (relaunch, then --only {name},…)"})
             continue
         print(f"--- section {name} (~{EST_S.get(name, 60)} s): waiting for {LOCK.name} ({time.strftime('%H:%M:%S')})",
               flush=True)
         t = time.monotonic()
-        subprocess.run(["flock", "-w", "1800", str(LOCK), "timeout", "900", sys.executable, __file__, "--section", name])
+        started = time.time() - 1   # a result file older than this is a previous run's
+        lock = [] if os.environ.get(LOCK_HELD_ENV) == "1" else ["flock", "-w", "1800", str(LOCK)]
+        subprocess.run(lock + ["timeout", "900", sys.executable, __file__, "--section", name])
         print(f"--- section {name} took {time.monotonic() - t:.0f} s (est. {EST_S.get(name, 60)} s)", flush=True)
         f = OUT / f"{name}.json"
-        rows += json.loads(f.read_text()) if f.exists() else [{"item": f"section {name}", "verdict": "FAIL", "evidence": "no result file"}]
+        if f.exists() and f.stat().st_mtime >= started:
+            rows += [dict(r, section=name) for r in json.loads(f.read_text())]
+        else:   # killed by the timeout, or crashed before writing: an older file is a previous run's
+            rows.append({"section": name, "item": f"section {name}", "verdict": "FAIL", "evidence": "no result file"})
         if not alive():
             died = name
-            rows.append({"item": f"game alive after section {name}", "verdict": "FAIL",
+            rows.append({"section": name, "item": f"game alive after section {name}", "verdict": "FAIL",
                          "evidence": "bg3 is gone: collect runtime/logs/bg3le-*.log (crash: lines) + "
                                      f"runtime/acceptance/{name}.log"})
     table = ["| item | verdict | evidence |", "|---|---|---|"] + [
         f"| {r['item']} | {r['verdict']} | {r['evidence'].replace('|', '/')} |" for r in rows]
     (OUT / "table.md").write_text("\n".join(table) + "\n")
+    (OUT / "results.json").write_text(json.dumps(rows, indent=1))   # with each row's section (live_window.py)
     print("\n".join(table))
     return sum(r["verdict"] == "FAIL" for r in rows)
 

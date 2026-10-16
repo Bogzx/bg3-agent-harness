@@ -627,6 +627,61 @@ test("cast in combat (ACT-11): a dropped order fails after CAST_NO_START_COMBAT_
     eq(j.status, "running", "began")
 end)
 
+test("cast ui=true (ACT-8 hotbar route): 3 targets checked, no Osiris order, CastedSpell finishes, nothing charged", function()
+    combat_setup(9)
+    spell("Target_Bless", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 1 })
+    -- without ui: still refused over 2
+    local j = job(op("cast", { char = P1, spell = "Target_Bless", targets = { P1, NPC, GOB } }))
+    eq(j.status, "failed", "osiris >2"); assert(j.error:find("more than two"), j.error)
+    j = job(op("cast", { char = P1, spell = "Target_Bless", targets = { P1, NPC, GOB }, ui = true }))
+    eq(j.status, "running", "ui started: " .. tostring(j.error))
+    eq(#called("UseSpell"), 0, "no UseSpell: the bridge clicks the hotbar")
+    tick(60) -- 3.6 s: past the combat no-start (3 s), the clicks are still going
+    eq(j.status, "running", "ui no-start is longer")
+    A.dispatch("CastSpell", { P1, "Target_Bless", "Target", "None", 0 })
+    A.dispatch("CastedSpell", { P1, "Target_Bless" })
+    tick(10)
+    eq(j.status, "done", "done " .. tostring(j.error))
+    eq(j.result.via, "hotbar", "via"); eq(j.result.targets_n, 3, "targets_n")
+    eq(j.result.charged_by_guard, nil, "the game charged it (the action point stays as the game left it)")
+    eq(world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount, 1, "no extra charge")
+end)
+
+test("cast ui=true cancelled: after CastSpell it says began (no Osiris redo), before it a plain cancel; no purge", function()
+    combat_setup(9)
+    spell("Target_Bless", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 1 })
+    local j = job(op("cast", { char = P1, spell = "Target_Bless", targets = { P1, NPC, GOB }, ui = true }))
+    eq(j.status, "running", "ui started: " .. tostring(j.error))
+    local purged = #called("PurgeOsirisQueue")
+    RPC.ops["job.cancel"]({ id = j.id })
+    eq(j.status, "interrupted", "cancelled"); eq(j.result and j.result.began, nil, "nothing began")
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    j = job(op("cast", { char = P1, spell = "Target_Bless", targets = { P1, NPC, GOB }, ui = true }))
+    A.dispatch("CastSpell", { P1, "Target_Bless", "Target", "None", 0 })
+    RPC.ops["job.cancel"]({ id = j.id })
+    eq(j.status, "interrupted", "late cancel"); eq(j.error, "cancelled", "why")
+    eq(j.result and j.result.began, true, "began reported")
+    eq(#called("PurgeOsirisQueue"), purged, "a ui cast is never purged on cancel")
+end)
+
+test("cast ui=true: every later target is checked; a repeat is a 2nd dart; no position / upcast; no-start backstop", function()
+    combat_setup(9)
+    spell("Projectile_MagicMissile", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 1 })
+    world[GOB].pos = { 30, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Projectile_MagicMissile", targets = { NPC, NPC, GOB }, ui = true }))
+    eq(j.status, "failed", "3rd out of range"); assert(j.error:find("target 3 is out of range"), j.error)
+    world[GOB].pos = { 2.4, 0, 0 }
+    j = job(op("cast", { char = P1, spell = "Projectile_MagicMissile", targets = { NPC, NPC, GOB }, ui = true }))
+    eq(j.status, "running", "darts: " .. tostring(j.error))
+    tick(260) -- 15.6 s, nothing cast: the backstop
+    eq(j.status, "failed", "backstop"); assert(j.error:find("never started it %(15 s"), j.error)
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    j = job(op("cast", { char = P1, spell = "Projectile_MagicMissile", targets = { NPC }, pos = { 5, 0, 0 }, ui = true }))
+    eq(j.status, "failed", "pos"); assert(j.error:find("not a position"), j.error)
+    j = job(op("cast", { char = P1, spell = "Projectile_MagicMissile", targets = { NPC }, upcast = 2, ui = true }))
+    eq(j.status, "failed", "upcast"); assert(j.error:find("level picker"), j.error)
+end)
+
 test("cast: a once-per-rest item spell is refused after one use until a rest (S030 Spell Slot Restoration x3)", function()
     PersistentVars = nil
     spell("Shout_MAG_Restore", { SpellType = "Shout", UseCosts = "BonusActionPoint:1", Level = 0,
@@ -1145,6 +1200,67 @@ test("cast: Dimension Door landing checks: range from AreaRadius, a landing in t
     fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "nearest floor there is at y=")
     Ext.Level.GetHeightsAt = heights
     fails({ char = P1, spell = "Teleportation_DimensionDoor", targets = { GOB, NPC }, pos = { 0, 0, 5 } }, "one who goes")
+end)
+
+test("cast ui=true (ACT-9 player route): Dimension Door alone/with an ally, no order and no task write", function()
+    eq(A.TASK_POS2, false, "the write stays off")
+    spell("Teleportation_DimensionDoor", DD)
+    local tasks = { { Spell = { OriginatorPrototype = "Teleportation_DimensionDoor" } } }
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = tasks } }
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { 0.0 } end
+    local j = job(op("cast", { char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 0, 10 }, ui = true }))
+    eq(j.status, "running", "alone: " .. tostring(j.error))
+    eq(#called("UseSpell"), 0, "no UseSpell: the bridge clicks"); eq(#called("UseSpellAtPosition"), 0, "no position cast")
+    eq(tasks[1].TargetPos2, nil, "nothing written")
+    A.dispatch("CastSpell", { P1, "Teleportation_DimensionDoor", "Target", "None", 0 })
+    A.dispatch("CastedSpell", { P1, "Teleportation_DimensionDoor" })
+    world[P1].pos = { 0, 0, 9.8 }
+    tick(10)
+    eq(j.status, "done", "done " .. tostring(j.error)); eq(j.result.via, "hotbar", "via")
+    eq(j.result.teleported, true, "teleported"); near(j.result.landed_m_from_target, 0.2, "landed")
+    eq(j.result.landing[3], 10, "landing reported")
+    world[P1].pos = { 0, 0, 0 }
+    world[GOB].pos = { 1.5, 0, 0 }
+    j = job(op("cast", { char = P1, spell = "Teleportation_DimensionDoor", targets = { GOB }, pos = { 0, 0, 10 }, ui = true }))
+    eq(j.status, "running", "with an ally: " .. tostring(j.error))
+    local function fails(args, pat)
+        local ok, r = pcall(op, "cast", args)
+        local msg = (not ok) and (G.is_refusal(r) and r.reason or tostring(r)) or tostring(job(r).error)
+        assert(msg:find(pat, 1, true), msg)
+    end
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 0, 55 }, ui = true }, "the landing is out of range")
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", targets = { GOB, NPC }, pos = { 0, 0, 5 }, ui = true }, "one who goes")
+    Ext.Level.GetHeightsAt = heights
+    world[P1].comps.ServerCharacter = nil
+end)
+
+test("cast ui=true (ACT-9 player route): Revivify clicks one body; the result says revived; no write", function()
+    spell("Teleportation_Revivify", { SpellType = "Teleportation", OriginTargetConditions = "Dead() and Tagged('PLAYABLE')",
+        TargetConditions = "not Character()", TargetRadius = "9", UseCosts = "ActionPoint:1", Level = 0 })
+    local tasks = { { Spell = { OriginatorPrototype = "Teleportation_Revivify" } } }
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = tasks } }
+    osiv[key("IsDead", NPC)] = 1
+    world[NPC].pos = { 4, 0, 0 }
+    local function fails(args, pat)
+        local ok, r = pcall(op, "cast", args)
+        local msg = (not ok) and (G.is_refusal(r) and r.reason or tostring(r)) or tostring(job(r).error)
+        assert(msg:find(pat, 1, true), msg)
+    end
+    fails({ char = P1, spell = "Teleportation_Revivify", target = NPC, pos = { 3, 0, 0 }, ui = true }, "not a position")
+    fails({ char = P1, spell = "Teleportation_Revivify", targets = { NPC, GOB }, ui = true }, "one body")
+    local j = job(op("cast", { char = P1, spell = "Teleportation_Revivify", target = NPC, ui = true }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    eq(#called("UseSpell"), 0, "no UseSpell"); eq(tasks[1].TargetPos2, nil, "nothing written")
+    osiv[key("IsDead", NPC)] = 0
+    A.dispatch("CastedSpell", { P1, "Teleportation_Revivify" })
+    tick(10)
+    eq(j.status, "done", "done " .. tostring(j.error)); eq(j.result.revived, true, "revived")
+    eq(j.result.via, "hotbar", "via"); eq(j.result.teleported, nil, "not a teleport")
+    -- without ui, still ACT-9's refusal
+    osiv[key("IsDead", NPC)] = 1
+    fails({ char = P1, spell = "Teleportation_Revivify", target = NPC }, "Scroll of Revivify")
+    world[P1].comps.ServerCharacter = nil
 end)
 
 test("cast: a refused Dimension Door says the landing must be in sight, not 'the shot's path is blocked'", function()

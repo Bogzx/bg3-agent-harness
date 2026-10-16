@@ -8,19 +8,27 @@ the rest spent on syntax: `{name=Lae'zel e29}`, `type= amount=0`, an engine spel
 `Compactor.apply(tool, text)` rewrites a finished result (server._guard, once per top-level call) with rules that
 drop no fact a player sees:
 * shorter syntax for the same facts (REFS, EMPTIES, CAST_IDS, NUMBERS, GONE_GROUP, REPEATS, MERGE_BLOCKS);
+* combat text (the naut gap, research/impl-vis.md "combat compaction"): an actor's cast and its damage on one line
+  with its turn start (COMBAT_NARRATIVE, TURN_ENDS, TURN_WORDS), MOVE_PHRASES / COMBAT_PHRASES / ACTION_DUPS
+  (COMBAT_MOVE_POS, no end positions on combat move lines, is off), the spent turn's leftover resources
+  (ENDED_RESOURCES), RESOURCES_LINE, TURN_NAMES, NEXT_ORDER, KIND_GROUP;
 * text this session already showed in full, said again only as a short form: hints after HINT_FULL_TIMES
   showings, the advisory ALERTS/PARTY lines while unchanged ("(unchanged)"), the layout legend, a clock line
   identical to the last one, a dialogue line the same result (or the previous one) already quoted.
-Each rule has its own constant; BG3AI_COMPACT=0 turns all of it off. `self.elided` lists, per call, the text a
+Each rule has its own constant; BG3AI_COMPACT=0 turns all of it off, BG3AI_COMPACT_OFF=RULE1,RULE2 single rules
+(both read at bridge start; unknown names are warned in the log). `self.elided` lists, per call, the text a
 rule left out because the agent saw it before: tools/vis/obs_size.py's fact checker verifies each was shown
 verbatim earlier and that every fact of the original result survives in the result or in those fragments.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
+
+log = logging.getLogger(__name__)
 
 COMPACT = os.environ.get("BG3AI_COMPACT", "1") != "0"
 
@@ -31,6 +39,9 @@ NUMBERS = True       # hp=21 max_hp=24 -> hp=21/24; damage=[target=e33 type=Slas
 GONE_GROUP = True    # GONE e16 Pod, e18 Pod, e19 Pod -> GONE e16/e18/e19 Pod
 SAME_GROUP = True    # "  + e80 Dead Thrall neutral dead 16.8m" x3 -> "  + Dead Thrall neutral dead: e80 16.8m, e82 19.2m, ..";
                      # "ITEM + e44 Camp Supply Sack (Lae'zel)" x10 -> "ITEM + (Lae'zel): e44 Camp Supply Sack, .."
+KIND_GROUP = True    # CHANGES "+" lines of one tag (<item>, <usable>, <door>, neutral dead, ..) on one line:
+                     # "  + e113 Mucoid Shell <item> 22.9m" / "  + e114 Caustic Bulb <item> 23.2m" ->
+                     # "  + <item>: e113 Mucoid Shell 22.9m, e114 Caustic Bulb 23.2m" (living characters keep their rows)
 REPEATS = True       # the same line twice in a row -> "line (x2)"
 MERGE_BLOCKS = True  # CHANGES ... CHANGES (back to back) -> one block; same for EVENTS
 HINTS = True         # instructions in results: full text HINT_FULL_TIMES times per session, then the short form
@@ -49,6 +60,9 @@ COMBAT_ROWS = True   # "initiative=4 hp_pct=100 e28 can_act @(..) name=Lae'zel f
                      # -> "e28 Lae'zel party init 4 hp 100% can_act @(..) from e2 1.6m" (los 0 -> "no-LOS")
 COORD_DECIMALS = 0   # positions reported as "@(x,y,z)" (where someone got to) rounded to this many decimals;
                      # None keeps them. Positions offered as targets ("closest walkable spot (x,y,z)") keep 0.1 m.
+COORD_OWN = True     # ..except the acting character's own position (a tool's own outcome line: "interact: done ..
+                     # @(..)", "move ..", "leg 1: ..", "2. jump_to: ..", "STOPPED: ..", job_finished): it keeps 0.1 m
+                     # (naut: jump_to targets and lesson notes were built from it; research/impl-vis.md audit)
 DUP_FIELDS = True    # "move e32: done — target=e32", "total_damage=9" next to the one damage=[.. 9 ..]
 EVENTS_VS_CHANGES = True  # "died e32" / "status_applied e2: Burning" when CHANGES of the same result says DEAD / +Burning;
                           # handles CHANGES already named lose their names in EVENTS (NAMES_ONCE)
@@ -58,6 +72,31 @@ ACTIONS_MIN_LINES = 8  # only whole lists (a short spent-action variant is cheap
 # finished walk leg's end position + arrival error when a later leg follows (the last position stays).
 HARNESS_FIELDS = True
 PATH_LEGS = True     # route's "  1. 17.6m W" / "  2. 19.5m W" -> "  1-2. 17.6m, 19.5m W" (same heading, nothing else)
+# --- combat (combat_turn / end_turn / wait_for text in a fight) ---
+COMBAT_NARRATIVE = True  # EVENTS: an actor's cast and the damage it dealt on one line, its turn_started folded in:
+                         # "turn_started e86 / damage e86 -> e67 12 Slashing / damage e86 -> e67 3 Fire / cast e86: Main
+                         # Hand Attack (attack)" -> "turn e86: Main Hand Attack (attack) -> e67 12 Slashing + 3 Fire"
+TURN_ENDS = True     # "turn_ended X" in an EVENTS block that starts a turn (each end is followed by the next start),
+                     # unless it is the only line of the result naming one of its handles
+TURN_WORDS = True    # "turn_started e28; e2" -> "turn e28; e2", "round_started 2" -> "round 2"
+COMBAT_MOVE_POS = False  # True: no @(x,y,z) on the move lines of a combat turn (CHANGES says who moved how far).
+                         # Off since the naut audit: the agent built combat waypoints from those end positions
+MOVE_PHRASES = True  # "FAILED — beyond movement (path 7.6 m, 1.5 m left) → partial 1.2m: done — .. short of ≤1.5m: out
+                     # of movement (1.5m left, route needs 8.5m)" -> "beyond movement (..) → partial 1.2m: done — ..
+                     # short of ≤1.5m, route needs 8.5m" (the partial walk's outcome stays; "left" said once)
+COMBAT_PHRASES = True  # "end_turn: done — requested still_to_act=[e2] ended" -> "end_turn: done (still to act: e2)"
+ACTION_DUPS = True   # "→ Projectile_FireBolt e68: done — cast=Projectile_FireBolt"; "target=e32 dead damage=[e32 ..]";
+                     # "statuses=[target=e2 status=Dash]" -> "statuses=[e2 Dash]"; a damage list names its target once
+                     # -> "damage=[e32 ..] dead"
+ENDED_RESOURCES = True  # "NOW e28 hp=24/24 action=0 bonus=1 movement=0.3 reaction=1" right after "end_turn: done": the
+                        # spent turn's leftover action/bonus/movement (gone from the HUD once the turn passes) is not
+                        # said; hp and the reaction (usable in the enemies' turns) stay: "NOW e28 hp=24/24 reaction=1"
+RESOURCES_LINE = True  # "YOUR ACTIONS (e2)" + "NOW Action 1/1 · Bonus 1/1 · Move 9/9m · Reaction 1/1" -> one line
+                       # "YOUR ACTIONS (e2) NOW full: Action 1 · Bonus 1 · Move 9m · Reaction 1" (full when all n/n);
+                       # the same full line as that member's last one -> "YOUR ACTIONS (e2) NOW full (as last turn)"
+TURN_NAMES = True    # "NOW e2 Corran Vell's turn" when the result already said "turn=e2 Corran Vell" -> "NOW e2's turn"
+NEXT_ORDER = True    # NEXT turn order: a combatant named earlier in the result is its handle alone; the same order as
+                     # the last NEXT shown -> "NEXT (order as before), then e28 Lae'zel (yours)"
 # Results quoting files or pages (markdown the agent or the wiki wrote): only the clock rule applies.
 PROSE_TOOLS = {"memory_read", "memory_search", "memory_list", "memory_write", "memory_edit", "memory_append",
                "wiki_page", "wiki_search", "recall", "session_start", "end_session"}
@@ -100,6 +139,8 @@ HINT_RULES: list[tuple[str, str, str]] = [
     ("floors_rel", r" \(m, relative to you\)", ""),
     ("walks_it", r"^NEXT: travel_to/move_to walks it$", ""),
     ("flapping", r" note=on/off on 3\+ others nearby \(aura/light\): muted for non-party", " (muted)"),
+    ("hud_end", r"(?:'s End Turn)? \(the game ignored the order\)", ""),
+    ("plan_it", r"(?<=\S)'s turn: plan it$", "'s turn"),
 ]
 _HINTS = [(k, re.compile(p, re.M), r) for k, p, r in HINT_RULES]
 
@@ -110,12 +151,28 @@ PHRASE_RULES: list[tuple[str, str]] = [
     (r"stopped short of ", "short of "),
     (r"the route needs ", "route needs "),
     (r" — melee is out of reach this turn", " — no melee this turn"),
-    (r"the plan now aims at the nearest visible hostile", "retargets the nearest visible hostile"),
+    (r"the plan now aims at the nearest visible hostile", "nearest visible hostile"),
     (r"ended via=the HUD's End Turn \(the game ignored the order\)", "ended via the HUD (the game ignored the order)"),
     (r"(DEAD), no longer in_combat", r"\1"),
     (r"turn NOT ended: decide, then continue \(combat_turn again, or single tools\)", "turn NOT ended: decide, then continue"),
 ]
-_PHRASES = [(re.compile(p), r) for p, r in PHRASE_RULES]
+_PHRASES_BASE = [(re.compile(p), r) for p, r in PHRASE_RULES]
+
+# Combat wording said shorter every time (COMBAT_PHRASES; same contract as PHRASE_RULES).
+COMBAT_PHRASE_RULES: list[tuple[str, str]] = [
+    (r"^(end_turn: done) — requested still_to_act=\[([^\]]*)\] ended$", r"\1 (still to act: \2)"),
+    (r"^(target: e\d+ [^→\n]*?) is dead → ", r"\1 dead → "),
+    (r"^(end_turn: done) — still_to_act=\[([^\]]*)\] ended requested$", r"\1 (still to act: \2)"),
+]
+_COMBAT_PHRASES = [(re.compile(p, re.M), r) for p, r in COMBAT_PHRASE_RULES]
+
+
+def phrases() -> list:
+    """The active (pattern, short form) rewrites: PHRASES and COMBAT_PHRASES."""
+    return (_PHRASES_BASE if PHRASES else []) + (_COMBAT_PHRASES if COMBAT_PHRASES else [])
+
+
+_PHRASES = _PHRASES_BASE
 
 _LAYOUT_RE = re.compile(r"^(LAYOUT [^;\n]*; )(# wall .*)$")
 _CLOCK_RE = re.compile(r"^⏱ \d\d:\d\d · \d+m left$")
@@ -222,9 +279,13 @@ def _round(v: str, nd: int) -> str:
     return "0" if t in ("-0", "-0.0") else t
 
 
+# a tool's own outcome line (where the acting character got to), not a row about someone else
+_OWN_POS = re.compile(r"^(?:\d+\. )?(?:move |leg \d|[a-z_]+(?: e\d+[^:\n]*)?: |STOPPED: )|^\s+job_finished ")
+
+
 def coords(line: str, nd: int | None = None) -> str:
     nd = COORD_DECIMALS if nd is None else nd
-    if nd is None:
+    if nd is None or COORD_OWN and _OWN_POS.match(line):
         return line
     return _AT.sub(lambda m: "@(" + ",".join(_round(v, nd) for v in m.groups()) + ")", line)
 
@@ -343,9 +404,10 @@ def _rewrite(line: str) -> str:
     if COMBAT_ROWS:
         line = combat_row(line)
     line = coords(line)
-    if PHRASES:
-        for rx, r in _PHRASES:
-            line = rx.sub(r, line)
+    for rx, r in phrases():
+        line = rx.sub(r, line)
+    if MOVE_PHRASES:
+        line = move_phrases(line)
     return line
 
 
@@ -524,11 +586,262 @@ def _same_group(lines: list[str]) -> list[str]:
     return [repl.get(i, ln) for i, ln in enumerate(lines) if i not in drop]
 
 
+_KIND = re.compile(r"^(\s*)\+ (e\d+ [^<\n]+?) (<[\w ]+>|(?:neutral|hostile|ally) dead)((?: [^\n]*)?)$")
+
+
+def kind_group(lines: list[str]) -> list[str]:
+    """KIND_GROUP over each CHANGES block (and look's unindented delta): '+' lines sharing a tag said once with the
+    list (2 or more)."""
+    groups: dict[tuple, list[int]] = {}
+    block = -1
+    for i, ln in enumerate(lines):
+        if ln in _HEADERS:
+            block = i
+        elif not ln.startswith("  "):
+            block = -1
+        m = _KIND.match(ln)
+        if m and (block >= 0 and lines[block] == "CHANGES" or not m.group(1)):
+            groups.setdefault((block if m.group(1) else -1, m.group(1), m.group(3)), []).append(i)
+    repl: dict[int, str] = {}
+    drop: set[int] = set()
+    for (_b, ind, tag), idx in groups.items():
+        if len(idx) < 2:
+            continue
+        items = [_KIND.match(lines[i]) for i in idx]
+        repl[idx[0]] = f"{ind}+ {tag}: " + ", ".join(m.group(2) + m.group(4) for m in items)
+        drop.update(idx[1:])
+    return [repl.get(i, ln) for i, ln in enumerate(lines) if i not in drop]
+
+
 # an action list line: "Fire Bolt [A] 18m", "Jump [3m+B] 4.5m", "UNAVAILABLE: ...", "Main Hand Attack (id) [A] 1.5m"
 _ACTION_LINE = re.compile(r"^(?:UNAVAILABLE: .*|[^\s\[][^\[\n]*\[[^\]\n]*\].*)$")
 
 
 _DLG_EVENT = re.compile(r"^\s+dialogue_line speaker=(.*?) text=(.+)$")
+
+
+# --- combat text (COMBAT_* rules) ---------------------------------------------------------------------------------
+_TURN_HDR = re.compile(r"^TURN e\d+ ")
+_AT_FIELD = re.compile(r" @\([^)]*\)")
+
+
+def combat_move_pos(lines: list[str]) -> list[str]:
+    """COMBAT_MOVE_POS: a combat turn's move lines without the @(x,y,z) the walk ended at."""
+    if not any(_TURN_HDR.match(ln) for ln in lines):
+        return lines
+    return [_AT_FIELD.sub("", ln).replace("—,", "—") if ln.startswith("move ") else ln for ln in lines]
+
+
+_MOVE_FAIL = re.compile(r"FAILED — ((?:destination is beyond remaining|beyond) movement \(path [\d.]+ m, [\d.]+ m left\)"
+                        r" → partial [\d.]+m(?: toward it)?: )")
+_PATH_LEFT = re.compile(r"\(path [\d.]+ m, ([\d.]+) m left\)")
+_SHORT_LEFT = re.compile(r"((?:stopped )?short of ≤[\d.]+m): out of movement \(([\d.]+)m left, ((?:the )?route needs "
+                         r"[\d.]+m)\)")
+
+
+def move_phrases(line: str) -> str:
+    """MOVE_PHRASES: the partial walk's outcome stands for the FAILED before it; a 'left' said twice is said once."""
+    if not line.startswith("move "):
+        return line
+    line = _MOVE_FAIL.sub(r"\1", line)
+    m = _PATH_LEFT.search(line)
+    if m:
+        left = float(m.group(1))
+        line = _SHORT_LEFT.sub(lambda s: f"{s.group(1)}, {s.group(3)}" if float(s.group(2)) == left else s.group(0),
+                               line)
+    return line
+
+
+_ARROW_CAST = re.compile(r"(?:^(?:action|bonus): |→ )(\w+)(?: e\d+)?: done — ")
+_STATUSES = re.compile(r"statuses=\[((?:target=e\d+ status=[^;\]]+(?:; )?)+)\]")
+_TARGET_DMG = re.compile(r"\btarget=(e\d+) (?:(dead|downed) )?(damage=\[\1 [^\]]*\])")
+
+
+def action_dups(line: str) -> str:
+    """ACTION_DUPS: cast=X beside the action X that ran; target=eN beside damage=[eN ..]."""
+    for m in _ARROW_CAST.finditer(line):
+        head, tail = line[:m.end()], line[m.end():]
+        line = head + re.sub(r"(?:^| )cast=" + re.escape(m.group(1)) + r"(?= |$)", "", tail, count=1).lstrip(" ")
+    line = _STATUSES.sub(lambda m: "statuses=[" + re.sub(r"target=(e\d+) status=", r"\1 ", m.group(1)) + "]", line)
+    line = _DMG.sub(_dmg_names_once, line)
+    return _TARGET_DMG.sub(lambda m: m.group(3) + (f" {m.group(2)}" if m.group(2) else ""), line)
+
+
+def _dmg_names_once(m: re.Match) -> str:
+    """damage=[e67 Lesser Imp 0; e67 Lesser Imp 4 Bludgeoning] -> damage=[e67 Lesser Imp 0; e67 4 Bludgeoning]"""
+    seen: set[str] = set()
+    parts = []
+    for e in m.group(1).split("; "):
+        h = re.match(r"(e\d+) ([^\d;]+?) (?=\d)", e)
+        if h and h.group(1) in seen:
+            e = h.group(1) + " " + e[h.end():]
+        elif h:
+            seen.add(h.group(1))
+        parts.append(e)
+    return "damage=[" + "; ".join(parts) + "]"
+
+
+def implied_turn_ends(lines: list[str]) -> list[str]:
+    """TURN_ENDS: in an EVENTS block that starts a turn, the turn_ended lines (each end is followed by a start)."""
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if lines[i] != "EVENTS":
+            out.append(lines[i])
+            i += 1
+            continue
+        j = i + 1
+        while j < len(lines) and lines[j].startswith("  "):
+            j += 1
+        block = lines[i + 1:j]
+        if any(re.match(r"^\s+turn_started\b", ln) for ln in block):
+            ends = {k for k, ln in enumerate(block) if re.match(r"^\s+turn_ended\b", ln)}
+            named = set(_NAMED.findall("\n".join(ln for k, ln in enumerate(lines)
+                                                 if not i < k <= j - 1 or k - i - 1 not in ends)))
+            keep = set()
+            for k in sorted(ends):  # the only line naming a handle stays (else the handle is bare everywhere)
+                new = set(_NAMED.findall(block[k])) - named
+                if new:
+                    keep.add(k)
+                    named |= new
+            block = [ln for k, ln in enumerate(block) if k not in ends or k in keep]
+        out += [lines[i]] + block
+        i = j
+    return out
+
+
+_N_CAST = re.compile(r"^(\s+)cast (e\d+)((?: [^:]+)?): (.+)$")
+_N_DMG = re.compile(r"^(\s+)damage (e\d+)((?: [^>]+?)?) -> (e\d+)((?: [^;]+?)?) (\d+)(?: ([A-Z]\w*))?$")
+_N_TURN = re.compile(r"^(\s+)turn_started (e\d+)((?: [^;]+)?)$")
+_N_BOUND = re.compile(r"^\s+(?:turn_started|round_started)\b")
+
+
+def _narrate(block: list[str]) -> list[str]:
+    """COMBAT_NARRATIVE over one EVENTS block's lines (already in EVENT_LINES form)."""
+    segs: list[list[int]] = [[]]
+    for i, ln in enumerate(block):
+        if _N_BOUND.match(ln):
+            segs.append([])
+        segs[-1].append(i)
+    repl: dict[int, str] = {}
+    drop: set[int] = set()
+    for seg in segs:
+        casts: dict[str, list[int]] = {}
+        dmg: dict[str, list[int]] = {}
+        for i in seg:
+            m = _N_CAST.match(block[i])
+            if m:
+                casts.setdefault(m.group(2), []).append(i)
+                continue
+            m = _N_DMG.match(block[i])
+            if m:
+                dmg.setdefault(m.group(2), []).append(i)
+        turn = _N_TURN.match(block[seg[0]]) if seg else None
+        first_cast = min((ix[0] for ix in casts.values()), default=None)
+        for who, ix in casts.items():
+            if len(ix) != 1:
+                continue
+            c = _N_CAST.match(block[ix[0]])
+            ind, name, spell = c.group(1), c.group(3), c.group(4)
+            hits: dict[str, list] = {}
+            for d in dmg.get(who, []):
+                dm = _N_DMG.match(block[d])
+                name = name or dm.group(3)
+                h = hits.setdefault(dm.group(4), [dm.group(5), []])
+                h[0] = h[0] or dm.group(5)
+                h[1].append(dm.group(6) + (f" {dm.group(7)}" if dm.group(7) else ""))
+                drop.add(d)
+            tail = (" -> " + "; ".join(f"{t}{n} " + " + ".join(a) for t, (n, a) in hits.items())) if hits else ""
+            if turn and turn.group(2) == who and ix[0] == first_cast:
+                repl[seg[0]] = f"{ind}turn {who}{name or turn.group(3)}: {spell}{tail}"
+                drop.add(ix[0])
+            elif tail:
+                at = min([ix[0]] + dmg[who])
+                repl[at] = f"{ind}cast {who}{name}: {spell}{tail}"
+                drop |= {ix[0], *dmg[who]} - {at}
+    out = []
+    for i, ln in enumerate(block):
+        if i in repl:
+            out.append(repl[i])
+        elif i not in drop:
+            out.append(ln)
+    return out
+
+
+def _turn_words(line: str) -> str:
+    return re.sub(r"^(\s+)(turn|round)_started ", r"\1\2 ", line)
+
+
+def combat_events(lines: list[str]) -> list[str]:
+    """COMBAT_NARRATIVE and TURN_WORDS over every EVENTS block (TURN_ENDS ran before the names were placed)."""
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if lines[i] != "EVENTS":
+            out.append(lines[i])
+            i += 1
+            continue
+        j = i + 1
+        while j < len(lines) and lines[j].startswith("  "):
+            j += 1
+        block = _narrate(lines[i + 1:j]) if COMBAT_NARRATIVE else lines[i + 1:j]
+        out += [lines[i]] + ([_turn_words(ln) for ln in block] if TURN_WORDS else block)
+        i = j
+    return out
+
+
+_ENDED_NOW = re.compile(r"^(NOW e\d+ hp=\d+(?:/\d+| max_hp=\d+)) action=\S+ bonus=\S+ movement=\S+ (reaction=\S+)$")
+
+
+def ended_resources(lines: list[str]) -> list[str]:
+    """ENDED_RESOURCES: after "end_turn: done", the member's NOW line keeps hp and reaction only."""
+    return [_ENDED_NOW.sub(r"\1 \2", ln) if i and lines[i - 1].startswith("end_turn: done") else ln
+            for i, ln in enumerate(lines)]
+
+
+_RES_FULL = re.compile(r"^NOW Action (\d+)/\1 · Bonus (\d+)/\2 · Move ([\d.]+)/\3m · Reaction (\d+)/\4$")
+
+
+def resources_line(lines: list[str], shown: dict[str, str] | None = None, elided: list[str] | None = None) -> list[str]:
+    """RESOURCES_LINE: the YOUR ACTIONS header and its NOW resources on one line, 'full' when nothing is spent; with
+    `shown` (handle -> the last full line shown), a full line identical to that member's last one is said short."""
+    out: list[str] = []
+    for ln in lines:
+        h = re.fullmatch(r"YOUR ACTIONS \((e\d+)\)", out[-1]) if out and ln.startswith("NOW Action ") else None
+        if not h:
+            out.append(ln)
+            continue
+        m = _RES_FULL.match(ln)
+        if not m:
+            out[-1] += " " + ln
+            continue
+        full = (f"{out[-1]} NOW full: Action {m.group(1)} · Bonus {m.group(2)} · Move {m.group(3)}m · Reaction "
+                f"{m.group(4)}")
+        if shown is not None and shown.get(h.group(1)) == full:
+            elided.append(full)
+            out[-1] += " NOW full (as last turn)"
+            continue
+        if shown is not None:
+            shown[h.group(1)] = full
+        out[-1] = full
+    return out
+
+
+_NOW_TURN = re.compile(r"^NOW (e\d+) ([^\n]+?)'s turn")
+
+
+def turn_names(lines: list[str]) -> list[str]:
+    """TURN_NAMES: a NOW line naming whose turn it is drops the name a line above already gave that handle."""
+    out: list[str] = []
+    for ln in lines:
+        m = _NOW_TURN.match(ln)
+        if m and any(f"{m.group(1)} {m.group(2)}" in x for x in out):
+            ln = f"NOW {m.group(1)}" + ln[m.end(2):]
+        out.append(ln)
+    return out
+
+
+_NEXT = re.compile(r"^NEXT ((?:e\d+ [^,]+?|\+\d+ more)(?:, (?:e\d+ [^,]+?|\+\d+ more))*)(, then .*|\..*|:.*)?$")
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +859,8 @@ class Compactor:
         self.quests: dict[str, int] = {}  # quest text -> the call that showed it
         self.calls = 0
         self.actions: dict[str, list[list[str]]] = {}  # handle -> the full YOUR ACTIONS lists shown
+        self.resources: dict[str, str] = {}  # handle -> its last full YOUR ACTIONS line shown
+        self.last_next: tuple[str, str] = ("", "")  # the last NEXT line: (as rendered, as shown)
         self.elided: list[str] = []  # this call's left-out fragments (shown verbatim earlier)
 
     def apply(self, tool: str, text: str) -> str:
@@ -561,12 +876,24 @@ class Compactor:
             lines = _merge_blocks(lines)
         if HARNESS_FIELDS:
             lines = harness_fields(lines)
+        if ACTION_DUPS:
+            lines = [action_dups(ln) for ln in lines]
+        if COMBAT_MOVE_POS:
+            lines = combat_move_pos(lines)
+        if ENDED_RESOURCES:
+            lines = ended_resources(lines)
         if PATH_LEGS:
             lines = path_legs(lines)
+        if TURN_ENDS:
+            lines = implied_turn_ends(lines)
         if EVENT_LINES:
             lines = _events(lines)
+            if COMBAT_NARRATIVE or TURN_WORDS:
+                lines = combat_events(lines)
         if SAME_GROUP:
             lines = _same_group(lines)
+        if KIND_GROUP:
+            lines = kind_group(lines)
         if REPEATS:
             lines = _repeats(lines)
         if QUEST_DEDUP:
@@ -584,6 +911,12 @@ class Compactor:
             lines = [self._legend(ln) for ln in lines]
         if ACTIONS_AGAIN:
             lines = self._actions(lines)
+        if RESOURCES_LINE:
+            lines = resources_line(lines, self.resources, self.elided)
+        if TURN_NAMES:
+            lines = turn_names(lines)
+        if NEXT_ORDER:
+            lines = self._next(lines)
         if CLOCK:
             lines = self._clock(lines)
         out = "\n".join(lines)
@@ -634,6 +967,25 @@ class Compactor:
                     shown.append(body)
                 out += body
             i = k
+        return out
+
+    def _next(self, lines: list[str]) -> list[str]:
+        out: list[str] = []
+        for ln in lines:
+            m = _NEXT.match(ln)
+            if not m:
+                out.append(ln)
+                continue
+            order, rest = m.group(1), m.group(2) or ""
+            if ln == self.last_next[0]:
+                self.elided.append(self.last_next[1])
+                out.append(f"NEXT (order as before){rest}")
+                continue
+            named = set(_NAMED.findall("\n".join(out)))
+            shown = ", ".join(re.sub(r"^(e\d+) .+$", r"\1", it) if it.split(" ")[0] in named else it
+                              for it in order.split(", "))
+            self.last_next = (ln, f"NEXT {shown}{rest}")
+            out.append(self.last_next[1])
         return out
 
     def _quest(self, line: str) -> str:
@@ -702,6 +1054,31 @@ def _quotes(text: str, said: str) -> bool:
     """`said` appears in text as a quoted line: after "Speaker: " (DIALOGUE) or "text=" (lines=[...], events)."""
     return any(f"{pre}{said}" in text for pre in (": ", "text="))
 
+
+def switch_off(spec: str) -> list[str]:
+    """BG3AI_COMPACT_OFF=RULE1,RULE2: those rules off (COORD_DECIMALS: positions kept). Returns the unknown names."""
+    unknown = []
+    for name in (n.strip().upper() for n in spec.split(",")):
+        if not name:
+            continue
+        if name == "COORD_DECIMALS":
+            globals()[name] = None
+        elif isinstance(globals().get(name), bool) and name != "COMPACT" and not name.startswith("_"):
+            globals()[name] = False
+        else:
+            unknown.append(name)
+    if unknown:
+        log.warning("BG3AI_COMPACT_OFF: unknown rule(s) %s (ignored; rules: %s)", ", ".join(unknown), ", ".join(rules()))
+    return unknown
+
+
+def rules() -> list[str]:
+    """The rule switches BG3AI_COMPACT_OFF accepts."""
+    return [k for k, v in globals().items() if k.isupper() and not k.startswith("_") and k != "COMPACT"
+            and (isinstance(v, bool) or k == "COORD_DECIMALS")]
+
+
+switch_off(os.environ.get("BG3AI_COMPACT_OFF", ""))  # read at bridge start
 
 DEFAULT = Compactor()
 

@@ -50,18 +50,27 @@ class GoldenReplay(unittest.TestCase):
             bad = [(i, r["tool"], r["problems"]) for i, r in enumerate(rows) if r["problems"]]
             self.assertEqual(bad, [], s)
 
-    def test_game_results_shrink_at_least_23_percent(self):
+    # floors after the naut audit (combat move positions + own positions at 0.1 m kept): game -27..-30 %,
+    # combat_turn -33..-40 %, all -20..-25 %
+    def test_game_results_shrink_at_least_26_percent(self):
         for s, rows in self.sessions.items():
             game = [r for r in rows if r["tool"] not in compact.PROSE_TOOLS]
             a = sum(cc.est_tokens(r["orig"]) for r in game)
             b = sum(cc.est_tokens(r["out"]) for r in game)
-            self.assertLess(b, a * 0.77, f"{s}: {a} -> {b}")
+            self.assertLess(b, a * 0.74, f"{s}: {a} -> {b}")
 
-    def test_all_results_shrink_at_least_17_percent(self):
+    def test_combat_turn_results_shrink_at_least_30_percent(self):
+        for s, rows in self.sessions.items():
+            ct = [r for r in rows if r["tool"] == "combat_turn"]
+            a = sum(cc.est_tokens(r["orig"]) for r in ct)
+            b = sum(cc.est_tokens(r["out"]) for r in ct)
+            self.assertLess(b, a * 0.70, f"{s}: {a} -> {b}")
+
+    def test_all_results_shrink_at_least_20_percent(self):
         for s, rows in self.sessions.items():
             a = sum(cc.est_tokens(r["orig"]) for r in rows)
             b = sum(cc.est_tokens(r["out"]) for r in rows)
-            self.assertLess(b, a * 0.83, f"{s}: {a} -> {b}")
+            self.assertLess(b, a * 0.80, f"{s}: {a} -> {b}")
 
     def test_prose_untouched_but_the_clock(self):
         for rows in self.sessions.values():
@@ -235,8 +244,28 @@ class Rules(unittest.TestCase):
                          "  e29 Lae'zel party init 4 hp 100% current can_act @(-45,3,-404) from e1 1.6m")
 
     def test_reported_positions_round_offered_targets_do_not(self):
-        line = "move_to: done — @(-36.6,15.2,-432.3); closest walkable spot (-46.2,5.1,-361.8)"
-        self.assertEqual(compact.coords(line), "move_to: done — @(-37,15,-432); closest walkable spot (-46.2,5.1,-361.8)")
+        line = "REMEMBERED e5 Imp last seen @(-36.6,15.2,-432.3) 38s ago; closest walkable spot (-46.2,5.1,-361.8)"
+        self.assertEqual(compact.coords(line),
+                         "REMEMBERED e5 Imp last seen @(-37,15,-432) 38s ago; closest walkable spot (-46.2,5.1,-361.8)")
+        for other in ("CHAR e124 Lesser Imp hostile HP 4/4 1.4m in_combat @(-79.2,18.2,-388.2)",
+                      "  initiative=8 hp_pct=87 e86 @(-53.5,17,-391.6) relation=hostile",
+                      "  crosses 2.5m of Fire at 40.5m @(-19,17.9,-428.6)"):
+            self.assertNotIn(".", compact.coords(other).split("@(")[1].split(")")[0], other)
+
+    def test_own_position_keeps_its_decimetre(self):
+        own = ["move_to: done — @(-36.6,15.2,-432.3) dist=1.3", "interact: done — used climbed=up dy=2.9 @(-42.6,7.5,-361.7)",
+               "jump_to: done — cast=Projectile_Jump @(-41.7,8,-357.7)", "leg 1: move_to: done — dist=0.2 @(-9.6,17.2,-424.3)",
+               "2. interact: INTERRUPTED — stuck — travelled=4.5 @(-43.1,4.6,-363.7)",
+               "move e32: done — in_reach dist=1.5 @(-40.1,3.2,-399.4)",
+               "set_party: done — selected after={hp=10/24 my_turn @(-80.2,18.4,-389.2)}",
+               "end_turn e2 Corran Vell: done — ended after={hp=24 @(-48.8,2.4,-397.4)}",
+               "STOPPED: the way on crosses Fire 1m ahead @(-36.2,5.2,-362.1) (17.2m left)",
+               "  job_finished @(-80.2,18.2,-389.5) op=act.move_to dist=0.8 status=done job=j96"]
+        for ln in own:
+            self.assertEqual(compact.coords(ln), ln)
+        self.addCleanup(setattr, compact, "COORD_OWN", compact.COORD_OWN)
+        compact.COORD_OWN = False
+        self.assertEqual(compact.coords(own[0]), "move_to: done — @(-37,15,-432) dist=1.3")
 
     def test_harness_fields(self):
         lines = ["action: X e1: done — charged_by_guard=[action 1] damage=[e1 Imp 9 Slashing]",
@@ -276,6 +305,204 @@ class Rules(unittest.TestCase):
         md = "# Title\n\nitem_added x= \n- a\n- a\n⏱ 16:38 · 25m left"
         self.assertEqual(c.apply("memory_read", md), md)
         self.assertEqual(c.apply("memory_read", md), md.rsplit("\n", 1)[0])  # the repeated clock only
+
+
+class CombatRules(unittest.TestCase):
+    """The combat rules (COMBAT_NARRATIVE, TURN_ENDS, TURN_WORDS, COMBAT_MOVE_POS, MOVE_PHRASES, COMBAT_PHRASES,
+    ACTION_DUPS, ENDED_RESOURCES, RESOURCES_LINE, TURN_NAMES, NEXT_ORDER, KIND_GROUP), each checked for 0 lost facts."""
+
+    ENEMY_TURNS = (
+        "TURN e28 Lae'zel (round 5)\nend_turn: done — requested still_to_act=[e2] ended\nEVENTS\n"
+        "  damage target={e86 name=Commander Zhalk} source={e67 name=Mind Flayer} type=Psychic amount=15\n"
+        "  cast caster={e67 name=Mind Flayer} spell=Target_Tentacles_MindFlayer_NoStun roll=attack name=Tentacle Lash\n"
+        "  turn_started e124 name=Lesser Imp\n  turn_ended e67 name=Mind Flayer\n"
+        "  damage target={e2 name=Brannoch Vael} source={e124 name=Lesser Imp} type=Fire amount=3\n"
+        "  cast caster={e124 name=Lesser Imp} spell=Projectile_Generic_Imp roll=attack name=Fiery Bolt\n"
+        "  round_started round=5\n  turn_started e86 name=Commander Zhalk\n  turn_ended e124 name=Lesser Imp\n"
+        "  damage target={e67 name=Mind Flayer} source={e86 name=Commander Zhalk} type=Slashing amount=13\n"
+        "  damage target={e67 name=Mind Flayer} source={e86 name=Commander Zhalk} type=Fire amount=4\n"
+        "  cast caster={e86 name=Commander Zhalk} spell=Target_MainHandAttack roll=attack name=Main Hand Attack\n"
+        "  turn_started e28 name=Lae'zel\n  turn_ended e86 name=Commander Zhalk\n"
+        "  damage target={e28 name=Lae'zel} source={e122 name=Lesser Hellsboar} type= amount=0\n"
+        "  cast caster={e122 name=Lesser Hellsboar} spell=Target_Tusk_Boar_Weak roll=attack name=Tusk Attack\n"
+        "  turn_started e2 name=Brannoch Vael")
+
+    def checked(self, c, tool, text, shown=""):
+        out = c.apply(tool, text)
+        self.assertEqual(cc.check(text, out, list(c.elided), shown), [], out)
+        return out
+
+    def test_enemy_turn_cast_and_damage_on_one_line(self):
+        out = self.checked(fresh(), "combat_turn", self.ENEMY_TURNS)
+        ev = out.split("EVENTS\n", 1)[1].split("\n")
+        self.assertEqual(ev, [
+            "  cast e67 Mind Flayer: Tentacle Lash (attack) -> e86 Commander Zhalk 15 Psychic",
+            "  turn e124 Lesser Imp: Fiery Bolt (attack) -> e2 Brannoch Vael 3 Fire",
+            "  round 5",
+            "  turn e86: Main Hand Attack (attack) -> e67 13 Slashing + 4 Fire",
+            "  turn e28",  # named by the TURN header above
+            "  cast e122 Lesser Hellsboar: Tusk Attack (attack) -> e28 0",  # a reaction in e28's turn
+            "  turn e2"])
+        self.assertIn("end_turn: done (still to act: e2)", out)
+
+    def test_each_rule_has_its_own_switch(self):
+        for flag, gone in (("COMBAT_NARRATIVE", "turn e124 Lesser Imp: Fiery Bolt"), ("TURN_ENDS", "turn_ended"),
+                           ("TURN_WORDS", "  round 5"), ("COMBAT_PHRASES", "(still to act: e2)")):
+            self.addCleanup(setattr, compact, flag, getattr(compact, flag))
+            setattr(compact, flag, False)
+            out = self.checked(fresh(), "combat_turn", self.ENEMY_TURNS)
+            if flag == "TURN_ENDS":
+                self.assertIn("turn_ended", out)
+            else:
+                self.assertNotIn(gone, out, flag)
+            setattr(compact, flag, True)
+
+    def test_turn_ends_kept_without_a_turn_start(self):
+        out = self.checked(fresh(), "wait_for", "EVENTS\n  turn_ended e28 name=Lae'zel\n  combat_ended")
+        self.assertIn("turn_ended e28 Lae'zel", out)
+
+    def test_turn_end_naming_a_handle_alone_is_kept(self):
+        # naut #90: e28 was named only in the turn_ended line, so "now e28's and e2's turn" was bare
+        text = ("end_turn e2 Brannoch Vael: done — ended\nnow e28's and e2's turn (shared turn group)\nEVENTS\n"
+                "  turn_started e67 name=Mind Flayer\n  turn_ended e28 name=Lae'zel; e2 name=Brannoch Vael\n"
+                "  turn_started e124 name=Lesser Imp\n  turn_ended e67 name=Mind Flayer")
+        out = self.checked(fresh(), "end_turn", text)
+        self.assertIn("  turn_ended e28 Lae'zel; e2", out)  # the only naming of e28 stays (e2 bare: named above)
+        self.assertNotIn("turn_ended e67", out)  # e67 is named by its turn start
+        self.assertEqual(out.count("turn_ended"), 1)
+
+    def test_two_casts_by_one_actor_stay_apart(self):
+        text = ("EVENTS\n  turn_started e9 name=Imp\n  cast caster={e9 name=Imp} spell=X roll=attack name=Claw\n"
+                "  damage target={e2 name=Tav} source={e9 name=Imp} type=Slashing amount=2\n"
+                "  cast caster={e9 name=Imp} spell=X roll=attack name=Claw")
+        out = self.checked(fresh(), "wait_for", text)
+        self.assertIn("damage e9 -> e2 Tav 2 Slashing", out)  # which cast hit is not known: left as it was
+        self.assertIn("  turn e9 Imp", out)
+
+    def test_combat_move_lines(self):
+        text = ("TURN e28 Lae'zel (round 1)\n"
+                "move e31: FAILED — destination is beyond remaining movement (path 7.6 m, 1.5 m left) → partial 1.2m "
+                "toward it: done — @(-40.9,2.4,-398), now 8.7m from e31 — stopped short of ≤1.5m: out of movement "
+                "(1.5m left, the route needs 8.5m) — melee is out of reach this turn\n"
+                "move e32: done — in_reach target=e32 dist=1.5 @(-40.1,3.2,-399.4)\n"
+                "move (-79,18,-390): FAILED — destination is beyond remaining movement (path 9.9 m, 9.0 m left) → "
+                "partial 8.7m toward it: done — @(-43,1,-390), now 3.2m from e34 — stopped short of ≤1.5m: out of "
+                "movement (9m left, the route needs 10.7m) — melee is out of reach this turn")
+        out = self.checked(fresh(), "combat_turn", text).split("\n")
+        # positions stay, at 0.1 m (naut-r2: the agent built waypoints from them; COMBAT_MOVE_POS off)
+        self.assertEqual(out[1], "move e31: beyond movement (path 7.6 m, 1.5 m left) → partial 1.2m: done — "
+                                 "@(-40.9,2.4,-398), now 8.7m from e31 — short of ≤1.5m, route needs 8.5m — no melee "
+                                 "this turn")
+        self.assertEqual(out[2], "move e32: done — in_reach dist=1.5 @(-40.1,3.2,-399.4)")
+        self.assertIn("short of ≤1.5m, route needs 10.7m", out[3])  # 9.0 m left == 9m left
+        self.addCleanup(setattr, compact, "COMBAT_MOVE_POS", compact.COMBAT_MOVE_POS)
+        compact.COMBAT_MOVE_POS = True  # the old rule, still switchable
+        out = self.checked(fresh(), "combat_turn", text).split("\n")
+        self.assertEqual(out[2], "move e32: done — in_reach dist=1.5")
+        self.assertNotIn("@(", "\n".join(out))
+
+    def test_different_left_is_kept(self):
+        line = ("move e1: FAILED — beyond movement (path 9.9 m, 9.0 m left) → partial 8.7m: done — short of ≤1.5m: out "
+                "of movement (0.3m left, route needs 10.7m)")
+        self.assertIn("out of movement (0.3m left", compact.move_phrases(line))
+
+    def test_action_dups(self):
+        self.assertEqual(compact.action_dups("action: Use e34: skipped (far) → Projectile_FireBolt e68: done — "
+                                             "cast=Projectile_FireBolt target=e68 dead damage=[e68 Hellsboar 5 Fire]"),
+                         "action: Use e34: skipped (far) → Projectile_FireBolt e68: done — damage=[e68 Hellsboar 5 Fire] dead")
+        self.assertEqual(compact.action_dups("action: Shout_Dash: done — statuses=[target=e2 status=Dash] cast=Shout_Dash"),
+                         "action: Shout_Dash: done — statuses=[e2 Dash]")
+        self.assertEqual(compact.action_dups("bonus: P e67: done — damage=[e67 Lesser Imp 0; e67 Lesser Imp 4 Bludgeoning]"),
+                         "bonus: P e67: done — damage=[e67 Lesser Imp 0; e67 4 Bludgeoning]")
+        other = "action: A e1: done — cast=B target=e1 damage=[e2 Imp 3]"
+        self.assertEqual(compact.action_dups(other), other)  # another spell, another target: both said
+
+    def test_ended_turn_resources_and_turn_names(self):
+        text = ("TURN e28 Lae'zel (round 1)\nend_turn: done — requested still_to_act=[e2] ended\n"
+                "NOW e28 hp=24 max_hp=24 action=0 bonus=1 movement=0.3 reaction=1\nCHANGES\n"
+                "  TURN round 1 turn=e2 Brannoch Vael\nNOW e2 Brannoch Vael's turn: plan it\nYOUR ACTIONS (e2)\n"
+                "NOW Action 1/1 · Bonus 1/1 · Move 9/9m · Reaction 1/1\nHide [A] self")
+        c = fresh()
+        out = self.checked(c, "combat_turn", text).split("\n")
+        self.assertEqual(out[2], "NOW e28 hp=24/24 reaction=1")
+        self.assertEqual(out[5], "NOW e2's turn: plan it")
+        self.assertEqual(out[6], "YOUR ACTIONS (e2) NOW full: Action 1 · Bonus 1 · Move 9m · Reaction 1")
+        first = "\n".join(out)
+        again = self.checked(c, "combat_turn", text, first).split("\n")
+        self.assertEqual(again[5], "NOW e2's turn")  # the hint is said once
+        self.assertEqual(again[6], "YOUR ACTIONS (e2) NOW full (as last turn)")
+        spent = text.replace("Action 1/1", "Action 0/1")
+        self.assertIn("YOUR ACTIONS (e2) NOW Action 0/1 · Bonus 1/1", c.apply("combat_turn", spent))
+        live = "NOW e28 hp=24 max_hp=24 action=1 bonus=1 movement=9 reaction=1"
+        self.assertIn("action=1 bonus=1 movement=9", fresh().apply("combat_turn", live))  # no end_turn above: kept
+
+    def test_next_order(self):
+        c = fresh()
+        text = ("CHANGES\n  TURN round 4 turn=e67 Mind Flayer\nNEXT e67 Mind Flayer, e124 Lesser Imp, +2 more, then "
+                "e28 Lae'zel (yours): send its combat_turn now")
+        first = self.checked(c, "combat_turn", text)
+        self.assertIn("NEXT e67, e124 Lesser Imp, +2 more, then e28 Lae'zel (yours)", first)
+        again = self.checked(c, "combat_turn", text, first)
+        self.assertIn("NEXT (order as before), then e28 Lae'zel (yours)", again)
+        other = self.checked(c, "combat_turn", text.replace("+2 more", "+3 more"), first + again)
+        self.assertIn("+3 more", other)
+
+    def test_kind_group(self):
+        lines = ["CHANGES", "  + e113 Mucoid Shell <item> 22.9m", "  + e68 Hellsboar hostile HP 5/5 1.5m",
+                 "  + e114 Caustic Bulb <item> 23.2m (+2 more Caustic Bulb up to 24m)", "  + e48 Thrall neutral dead 17m",
+                 "  + e30 Imp neutral dead 4.6m", "  + e35 Aquarium <usable> HP 4/4 13.6m"]
+        self.assertEqual(compact.kind_group(lines), [
+            "CHANGES", "  + <item>: e113 Mucoid Shell 22.9m, e114 Caustic Bulb 23.2m (+2 more Caustic Bulb up to 24m)",
+            "  + e68 Hellsboar hostile HP 5/5 1.5m", "  + neutral dead: e48 Thrall 17m, e30 Imp 4.6m",
+            "  + e35 Aquarium <usable> HP 4/4 13.6m"])
+        look = ["+ e1 A <door> 3m", "+ e2 B <door> 7m"]
+        self.assertEqual(compact.kind_group(look), ["+ <door>: e1 A 3m, e2 B 7m"])
+        events = ["EVENTS", "  + e1 A <door> 3m", "  + e2 B <door> 7m"]
+        self.assertEqual(compact.kind_group(events), events)  # only CHANGES / look's delta
+
+    def test_off_is_identity_for_combat_text(self):
+        self.addCleanup(setattr, compact, "COMPACT", compact.COMPACT)
+        compact.COMPACT = False
+        self.assertEqual(fresh().apply("combat_turn", self.ENEMY_TURNS), self.ENEMY_TURNS)
+
+
+class SwitchOff(unittest.TestCase):
+    """BG3AI_COMPACT_OFF=RULE1,RULE2 (read at bridge start): single rules off without a code edit."""
+
+    def setUp(self):
+        saved = {k: getattr(compact, k) for k in compact.rules()}
+        self.addCleanup(lambda: [setattr(compact, k, v) for k, v in saved.items()])
+
+    def test_named_rules_go_off(self):
+        self.assertEqual(compact.switch_off(" next_order,COMBAT_NARRATIVE ,, COORD_DECIMALS"), [])
+        self.assertFalse(compact.NEXT_ORDER)
+        self.assertFalse(compact.COMBAT_NARRATIVE)
+        self.assertIsNone(compact.COORD_DECIMALS)
+        self.assertTrue(compact.TURN_ENDS)  # the others stay
+        out = fresh().apply("combat_turn", CombatRules.ENEMY_TURNS)
+        self.assertIn("cast e124: Fiery Bolt (attack)", out)
+
+    def test_unknown_names_are_warned_and_ignored(self):
+        with self.assertLogs("bg3ai.compact", "WARNING") as logs:
+            self.assertEqual(compact.switch_off("NO_SUCH_RULE,HINTS,COMPACT,HINT_FULL_TIMES"),
+                             ["NO_SUCH_RULE", "COMPACT", "HINT_FULL_TIMES"])
+        self.assertIn("NO_SUCH_RULE", logs.output[0])
+        self.assertFalse(compact.HINTS)
+        self.assertTrue(compact.COMPACT)  # all-off stays BG3AI_COMPACT=0's job
+
+    def test_every_rule_constant_is_switchable(self):
+        for k in ("REFS", "COMBAT_MOVE_POS", "COORD_OWN", "TURN_ENDS", "NAMES_ONCE", "COORD_DECIMALS", "PHRASES"):
+            self.assertIn(k, compact.rules())
+
+    def test_read_from_the_env_at_import(self):
+        import os
+        import subprocess
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        r = subprocess.run([sys.executable, "-c", "from bg3ai import compact; print(compact.REFS, compact.HINTS)"],
+                           env={**os.environ, "PYTHONPATH": src, "BG3AI_COMPACT_OFF": "REFS,BOGUS"},
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.stdout.strip(), "False True")
+        self.assertIn("BOGUS", r.stderr)
 
 
 class ServerWiring(unittest.TestCase):

@@ -39,6 +39,7 @@ import sys
 import threading
 import time
 import traceback
+import types
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -1369,9 +1370,9 @@ def list_saves() -> list[Save]:
     for e in entries:
         if not e.is_dir():
             continue
-        lsv = Path(e.path) / f"{e.name}.lsv"
+        lsv = runs.save_lsv(SAVE_DIR, e.name)   # <folder>/<label>.lsv
         try:
-            mtime = lsv.stat().st_mtime if lsv.exists() else e.stat().st_mtime
+            mtime = lsv.stat().st_mtime if lsv is not None else e.stat().st_mtime
         except OSError:
             continue
         s = parse_save_folder(e.name, mtime)
@@ -3906,6 +3907,8 @@ def cmd_run(a) -> int:
             log(msg)
             log("runner stopped (sandbox mode differs from the series: run refused)")
             return 2
+    if a.plan:   # after every refusal above, before the lock: nothing written, nothing launched
+        return plan_run(a, scenario, save_sha1, caps, use_judge, judge_model, client)
     lock = acquire_lock()  # held for the process lifetime (released only to exec the new runner code)
     box = None
     if a.sandbox == "container":   # once per runner: docker, network, images, firewall, egress proxy
@@ -3976,6 +3979,95 @@ def cmd_run(a) -> int:
         runs.unlock_tree(KNOWLEDGE_DIR, KNOWLEDGE_LOCK)
 
 
+PLAN_PROMPT = "<KICKOFF: built at the session start from the run's memory briefing>"
+
+
+def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_judge: bool, judge_model: str,
+             client_name: str) -> int:
+    """run --plan: what `run` would do next, read-only (no runner lock, no game, no playthrough/memory/series files;
+    the Runner isn't built: its RunnerState makes the session dir and read_handover consumes a pending handover)."""
+    base = a.playthrough
+    print(f"plan for `run` (nothing launched or written; {time.strftime('%Y-%m-%d %H:%M')})")
+    k, pt = 1, base
+    if a.runs:
+        recs = runs.series_records(RUNTIME / "sessions" / base / "runs.jsonl", base)
+        k = runs.next_run_index(recs)
+        pt = runs.run_name(base, k)
+        print(f"series:         {base}: run {k}/{a.runs} next ({pt}), {len(recs)} recorded"
+              + ("; ALL DONE: run would exit at once" if k > a.runs else ""))
+        prof = series_profile(base) or (scenario["profile"] if scenario else None)
+        if prof is None:
+            prof = load_profile(PLAYTHROUGHS / (base if k <= 1 else pt) / "profile.json")
+        prof = update_profile(prof, a.character_brief, a.roleplay, a.difficulty) \
+            if (a.character_brief or a.roleplay or a.difficulty) else prof
+        pins = current_pins()
+        meta = series_freeze(base, a.runs, a.until, prof, pins, caps,
+                             runs.scenario_freeze(scenario, save_sha1) if scenario else None,
+                             judge_model if use_judge else None, client_name,
+                             runs.sandbox_mode(a.sandbox, bool(a.sandbox_unfirewalled)))
+        path = RUNTIME / "sessions" / base / "series.json"
+        if meta is None:
+            print(f"series.json:    {path} exists with every key (frozen; this run is held to it):")
+            print(json.dumps(series_meta(base), indent=1, ensure_ascii=False))
+        else:
+            print(f"series.json:    {'NEW ' if not path.exists() else 'keys added to '}{path} would be:")
+            print(json.dumps(meta, indent=1, ensure_ascii=False))
+        drift = runs.pin_drift(series_meta(base).get("pins"), pins) if path.exists() else []
+        if drift:
+            print(f"version drift:  {'; '.join(drift)} -> run {k} "
+                  + ("plays with it (recorded)" if a.allow_version_drift else "REFUSED (--allow-version-drift)"))
+        if os.environ.get("BG3AI_KNOWLEDGE_LOCK", "1") != "0":
+            print(f"knowledge:      {KNOWLEDGE_DIR} read-only for the series (BG3AI_KNOWLEDGE_LOCK=0 skips)")
+    else:
+        print(f"playthrough:    {pt} (not a series)")
+    req_off, why = steam_paths.offline_required()
+    off, owhy = steam_paths.steam_offline()
+    print(f"steam:          offline required: {req_off} ({why}); offline now: {off} ({owhy})"
+          + ("  -> THE RUNNER WOULD REFUSE TO LAUNCH" if req_off and not off else ""))
+    bad = bg3le_buildinfo.problems()
+    print("bg3le:          " + ("STALE: " + "; ".join(bad) + " -> the runner would stop" if bad else "dist has every patch"))
+    game = pids_of_game()
+    print(f"game:           {'harness bg3 up: ' + str(game) if game else 'not running: the runner launches it'}"
+          + (f"; a user's own bg3 runs {foreign_bg3_pids()}: the runner won't launch beside it"
+             if foreign_bg3_pids() else ""))
+    holder = (RUNTIME / "runner.lock").exists() and not _lock_free(RUNTIME / "runner.lock")
+    print(f"runner lock:    {'HELD: another runner is active (run would refuse)' if holder else 'free'}")
+    keeper = keeper_model(a.keeper_model, a.model) if not a.no_memory_keeper else "OFF"
+    print(f"play:           client {client_name}, model {a.model}, effort {a.effort or 'default'}, "
+          f"{a.session_minutes:g}-min sessions, keeper {keeper}, judge {judge_model if use_judge else 'off'}, "
+          f"sandbox {a.sandbox}, caps {caps}, --hours {a.hours}")
+    sid = "S001"
+    deadline = time.time() + a.session_minutes * 60
+    owner, prefix = save_identity(a.save_owner or os.environ.get("BG3AI_SAVE_OWNER"))
+    env = {"BG3AI_PLAYTHROUGH": pt, "BG3AI_SESSION": sid, "BG3_SESSION_MINUTES": str(a.session_minutes),
+           "BG3_WRAP_MINUTES": str(wrap_minutes(a.session_minutes)), "BG3AI_SAVE_OWNER": owner,
+           "BG3AI_SAVE_PREFIX": prefix, "BG3AI_KEEPER": "0" if a.no_memory_keeper else "1",
+           **({"BG3AI_START_SAVE": scenario["start"]["save"]} if scenario and scenario["start"].get("save") else {})}
+    opt = types.SimpleNamespace(sandbox=a.sandbox, client=client_name)
+    cl = make_client(opt)
+    req = clients.Request(PLAN_PROMPT, a.model, RUNTIME / "sessions" / pt, session=str(uuid.uuid4()), resume=False,
+                          effort=a.effort, fallback_model=a.fallback_model, autocompact=a.autocompact, env=env,
+                          tag=sid)
+    cmd = cl.command(req)
+    print(f"first session:  {sid} of {pt} in {PLAY_DIR} (deadline in {a.session_minutes:g} min; the session env "
+          "adds the deadlines, metrics path and BG3AI_* of the runner's env)")
+    print(json.dumps({"cmd": cmd, "cwd": str(PLAY_DIR), "env": env}, indent=1, ensure_ascii=False))
+    if a.sandbox == "container":
+        print("sandbox:        the command runs inside the container (box.run_argv), the bg3 server over http")
+    return 0
+
+
+def _lock_free(path: Path) -> bool:
+    """Nobody holds an flock on path (probed with a separate open; released at once)."""
+    with open(path, "a") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        fcntl.flock(f, fcntl.LOCK_UN)
+    return True
+
+
 def persona_line(p: dict) -> str:
     """One log line for a record's persona."""
     what = f"score {p['score']:g}/10" if p.get("score") is not None else p.get("status", "?")
@@ -4007,11 +4099,24 @@ def freeze_series(base: str, n: int, until: str | None, profile: dict, pins: dic
     to, and the scenario (runs.scenario_freeze) of a run --scenario series. A series from before
     pins/caps/judge/client gets them from the first run that has them; one from before the sandbox key never gets
     it (it played without a sandbox: runs.series_sandbox reads a missing key as "none")."""
+    meta = series_freeze(base, n, until, profile, pins, caps, scenario, judge_model, client, box)
+    if meta is None:
+        return
+    path = RUNTIME / "sessions" / base / "series.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n")
+
+
+def series_freeze(base: str, n: int, until: str | None, profile: dict, pins: dict | None = None,
+                  caps: dict | None = None, scenario: dict | None = None, judge_model: str | None = None,
+                  client: str | None = None, box: dict | None = None) -> dict | None:
+    """What freeze_series would write to series.json (None: nothing, it has every key already). Writes nothing
+    (run --plan prints it)."""
     path = RUNTIME / "sessions" / base / "series.json"
     meta = series_meta(base)
     if path.exists() and ("pins" in meta or pins is None) and ("caps" in meta or caps is None) and \
             ("judge_model" in meta or judge_model is None) and ("client" in meta or client is None):
-        return
+        return None
     new = not path.exists()
     if not path.exists():
         meta = {"series": base, "runs": n, "until": until, "profile": profile, "created": round(time.time(), 1)}
@@ -4027,8 +4132,7 @@ def freeze_series(base: str, n: int, until: str | None, profile: dict, pins: dic
         meta.setdefault("client", client)
     if new and box is not None:
         meta.update(box)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n")
+    return meta
 
 
 def current_pins() -> dict:
@@ -4381,6 +4485,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--difficulty", choices=DIFFICULTIES, help="difficulty of a new game (profile.json)")
     r.add_argument("--take-over", action="store_true",
                    help="allow using a game that is already in a save the runner didn't load")
+    r.add_argument("--plan", action="store_true", help="print the series.json a series would freeze, its next "
+                   "run and the first session's command, then exit: no lock, no game, no files written")
     r.add_argument("--dry-run", action="store_true", help="prepare the first session and print the claude "
                    "command instead of running it (still starts the game and loads the save)")
     s = sub.add_parser("status", help="summary of the runner, game and last session")

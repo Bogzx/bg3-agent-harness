@@ -26,7 +26,9 @@ MILESTONES: list[tuple[str, int, str, str, Any]] = [
     ("beach", 1, "Reached the beach", "area", r"beach|crash site"),
     ("first_camp", 1, "First camp", "area", r"\bcamp(site)?\b"),
     ("level_2", 1, "Party level 2", "level", 2),
-    ("grove", 1, "Emerald Grove", "area", r"emerald grove|druid"),
+    # Behind the gate: the minimap's "Emerald Grove" (then The Hollow, Druids' Chambers...); "Emerald Grove Environs"
+    # (the waypoint/approach outside the gate, where the goblin raid is fought) doesn't count.
+    ("grove", 1, "Emerald Grove", "area", r"emerald grove(?! environs)|the hollow|druids'? chambers?"),
     ("blighted_village", 1, "Blighted Village", "area", r"blighted village"),
     ("level_4", 1, "Party level 4", "level", 4),
     ("goblin_camp", 1, "Goblin camp (Shattered Sanctum)", "area", r"shattered sanctum|goblin camp"),

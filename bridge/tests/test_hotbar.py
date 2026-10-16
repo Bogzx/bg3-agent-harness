@@ -262,6 +262,47 @@ class HotbarCast(unittest.TestCase):
         self.assertIsNone(self.w.armed)
         self.assertEqual(self.w.cast_done, [])
 
+    def test_should_stop_between_clicks_cancels(self):
+        # review M1: the step was cancelled after the first target: no more clicks, the spell put back
+        inp = FakeInput(self.w)
+        with mock.patch.object(hotbar.time, "sleep"):
+            r = hotbar.hotbar_cast(self.w, inp, "caster", "Target_Bless", ["a", "b", "c"],
+                                   should_stop=lambda: len(self.w.picked) >= 1)
+        self.assertFalse(r.ok)
+        self.assertEqual((r.stage, r.reason), ("target", "cancelled"))
+        self.assertIsNone(self.w.armed)
+        self.assertEqual(self.w.cast_done, [])
+        self.assertEqual(len([c for c in inp.log if c[0] == "click" and c[3] == "L"]), 2)   # cell + target 1
+
+    def test_should_stop_before_the_cell_click(self):
+        inp = FakeInput(self.w)
+        with mock.patch.object(hotbar.time, "sleep"):
+            r = hotbar.hotbar_cast(self.w, inp, "caster", "Target_Bless", ["a"], should_stop=lambda: True)
+        self.assertEqual((r.stage, r.reason), ("arm", "cancelled"))
+        self.assertFalse([c for c in inp.log if c[0] == "click"])
+
+    def test_late_start_is_a_cast(self):
+        # review M3: the tick's cast starts after START_WAIT_S: one more read says it went, not "not_started"
+        w = self.w
+        real = w.rpc
+        fire_after = {"n": None}
+
+        def rpc(op, args=None, context="server"):
+            if op == "ui.cast_confirm":
+                fire_after["n"] = 2
+                w.confirms += 1
+                return {"done": True}
+            if op == "ui.cast_state" and fire_after["n"] is not None:
+                fire_after["n"] -= 1
+                if fire_after["n"] == 0:
+                    w.fire()
+            return real(op, args, context)
+        w.rpc = rpc
+        with mock.patch.object(hotbar, "START_WAIT_S", 0.0):
+            r, _ = _cast(w, targets=["a", "b"])
+        self.assertTrue(r.ok, r.as_dict())
+        self.assertEqual(w.cast_done, [("Target_Bless", ["a", "b"])])
+
     def test_off_screen_target_cancels(self):
         r, _ = _cast(self.w, targets=["a", "far", "c"])
         self.assertFalse(r.ok)

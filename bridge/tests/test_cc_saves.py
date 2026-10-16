@@ -44,7 +44,7 @@ class CCGame(FakeGame):
         return "Running"
 
     def rpc(self, op, args=None, context="server", timeout=12.0):
-        if op in ("ui.cc_name", "ui.cc_finish"):
+        if op in ("ui.cc_name", "ui.cc_finish", "ui.confirm_probe"):
             return self.page.rpc(op, args or {})
         if op == "ui.config":
             self.config.append(dict(args or {}))
@@ -165,6 +165,50 @@ class CreateCharacter(Base):
         self.assertIn("'Lae'zel' (name checked in game)", out)
         self.assertEqual(inp.typed, [])
         self.assertEqual(server.SAVE_PREFIX, "Lae'zel-")
+
+    def _timing(self) -> list[dict]:
+        f = server.RUNTIME / "stage_ms.jsonl"
+        if not f.exists():
+            return []
+        return [r for r in map(json.loads, f.read_text().splitlines()) if r.get("op") == "create_character"]
+
+    def test_timing_record_per_attempt(self):
+        # SESSION-WATCH "create_character time + attempts" reads these: one record per call, ok or not
+        n0 = len(self._timing())
+        self.use(FakePage(focus_on_click=False))
+        server.create_character(json.dumps({"name": "Ilse"}))
+        g, _ = self.use(FakePage(popup=True))
+        self.assertIn("name checked in game", server.create_character(json.dumps({"name": "Ilse"})))
+        recs = self._timing()[n0:]
+        self.assertEqual([r["ok"] for r in recs], [False, True])
+        self.assertIn("didn't focus", recs[0]["error"])
+        ok = recs[1]
+        self.assertEqual((ok["pacing"], ok["via"], ok["popups"]), ("state", "typed", 1))
+        for k in ("apply_ms", "naming_ms", "world_ms", "total_ms"):
+            self.assertIsInstance(ok[k], int, k)
+        self.assertEqual(set(ok["naming_stages"]), {"page", "popup", "locate", "focus", "type"})
+        self.assertTrue(any("Reset Tutorials" in m for m in ok["notes"]), ok["notes"])
+        self.assertNotIn("paced", g.applied[0])  # cc_apply's state waits (the mod's default)
+
+    def test_paced_switch_reaches_cc_apply_and_the_world_poll(self):
+        sleeps: list[float] = []
+        with mock.patch.dict(server.os.environ, {"BG3AI_CC_PACED": "1"}), \
+                mock.patch.object(naming.time, "sleep", sleeps.append):
+            server.CC_BUDGET_S = 2.5
+            g, _ = self.use(FakePage(), world_name=None)
+            server.create_character(json.dumps({"name": "Ilse"}))
+        self.assertTrue(g.applied[0]["paced"])
+        self.assertIn(2.0, sleeps)              # the old world poll
+        self.assertEqual(self._timing()[-1]["pacing"], "fixed")
+
+    def test_world_poll_is_quick_by_default(self):
+        sleeps: list[float] = []
+        with mock.patch.object(naming.time, "sleep", sleeps.append):
+            server.CC_BUDGET_S = 0.5
+            self.use(FakePage(), world_name=None)
+            server.create_character(json.dumps({"name": "Ilse"}))
+        self.assertIn(server.CC_WORLD_POLL_S, sleeps)
+        self.assertNotIn(2.0, sleeps)
 
     def test_only_in_a_playthrough(self):
         server.PLAYTHROUGH = ""

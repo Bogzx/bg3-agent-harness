@@ -1,0 +1,277 @@
+"""The player's own two-step cast: hotbar cell click -> the first pick -> a ground click (audit ACT-9, act).
+
+Revivify / Resurrection (the spell) and Dimension Door take two picks, which Osiris UseSpell can't give without the
+TargetPos2 engine write (off: an unproven struct mapping, HANDOFF §7). A player gives them with two clicks:
+
+    Revivify        the body (a dead ally, its corpse or tombstone), then the ground beside it (not a character)
+    Dimension Door  who goes (the caster to go alone, or the ally beside them), then the landing on the ground
+
+Everything is a player's input (cursor moves, left clicks, ESCAPE / a right click to put the spell back) checked by
+what the player sees: the hotbar cell and the spell in hand (hotbar.arm), the engine's picking helper on the first
+pick (clicker.hover_point), and for the ground click the cursor's world point, the character under it and the
+cursor shape (client op ui.ground_check: "Cast" vs "CastWarning"), then the spell state after the click (the pick
+taken, the cast started).
+
+    from bg3ai.twostep import twostep_cast
+    res = twostep_cast(Game(), InputClient(), caster, "Teleportation_DimensionDoor", caster, landing=[x, y, z])
+    res = twostep_cast(Game(), InputClient(), caster, "Teleportation_Revivify", body)
+
+Wired into use_ability (server._twostep_use) behind hotbar.HOTBAR_CAST_ENABLED (off): the mod's act.cast {ui=true}
+job makes the fairness checks first (our turn, known/prepared, the body / ally seen and in range, the landing in
+range and on a floor) and watches the cast; when off, the mod's ACT-9 refusal stands.
+
+GUESSES (unverified live; acceptance act "Dimension Door 10 m via the hotbar (ACT-9)" and SESSION-WATCH "Revivify
+via the hotbar" check them): T1 the cursor reads "CastWarning" on a spot the spell won't take (Pick.lua); T2 the
+game asks who goes first, then the landing (game data OriginTargetConditions; if the first click is not taken, the
+landing is tried first once, DD_ORDER); T3 a taken first pick shows in ui.cast_state (the counter, the cast entity's
+picked/index) or the cursor leaving the first step; T4 a ground click on a spot the game refuses leaves the spell
+in hand (we then try the next spot).
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from typing import Any
+
+from . import clicker, hotbar
+from .game import Game, GameError
+from .hotbar import HotbarCastResult
+from .input import InputClient
+
+BUDGET_S = 3.0                 # cell + 2 clicks, a player's pace (reported; over_budget when exceeded)
+HARD_CAP_S = 12.0              # past this the cast is cancelled
+PICK_WAIT_S = 0.8              # first pick click -> the state moves
+LAND_WAIT_S = 1.2              # ground click -> the cast started
+GROUND_TOL_M = 0.8             # the cursor's world point this close (flat) to the spot we aim at
+SPOT_DISTS = (1.2, 1.8, 2.4)   # Revivify: the ground this far from the body toward the caster
+LAND_NUDGES_M = ((0.0, 0.0), (0.4, 0.0), (-0.4, 0.0), (0.0, 0.4), (0.0, -0.4))   # around a landing the game refused
+MAX_GROUND_CLICKS = 3
+VIEW_STEPS = 4                 # camera moves to bring a ground point into view
+DD_ORDER = ("who", "landing")  # GUESS T2
+
+_TWO_STEP = re.compile(r"revivify|resurrection|dimensiondoor|dimension_door", re.I)
+
+
+def is_two_step(spell: str) -> bool:
+    """A spell the game picks in two clicks (the mod's A.two_step_spell reads the stats; this is its name form for
+    routing before any call)."""
+    return bool(_TWO_STEP.search(str(spell or "")))
+
+
+def is_revive(spell: str) -> bool:
+    return bool(re.search(r"revivify|resurrection", str(spell or ""), re.I))
+
+
+def _rpc(game: Game, op: str, args: dict) -> dict:
+    r = game.rpc(op, args, context="client")
+    return r if isinstance(r, dict) else {}
+
+
+def ground_check(game: Game, pos: list[float] | None, avoid: list[str] | None = None,
+                 tol: float = GROUND_TOL_M) -> dict:
+    args: dict[str, Any] = {"tol": tol, "no_chars": True}
+    if pos is not None:
+        args["pos"] = list(pos)
+    if avoid:
+        args["avoid"] = list(avoid)
+    try:
+        return _rpc(game, "ui.ground_check", args)
+    except GameError as e:
+        return {"error": str(e)}
+
+
+def ground_ok(gc: dict) -> tuple[bool, str | None]:
+    """May a ground click go in here? The cursor on our spot, no avoided character under it, no warning cursor.
+    An unreadable cursor shape (no T1 read) does not block: the post-click state proves it then."""
+    if gc.get("error"):
+        return False, f"ground_check: {gc['error']}"
+    if gc.get("on_avoid"):
+        return False, f"a character is under the cursor ({gc.get('hover')})"
+    if gc.get("near") is False:
+        return False, f"the cursor's ground point is {gc.get('d_m')} m off"
+    if gc.get("warning"):
+        return False, f"the game shows a {gc.get('cursor') or gc.get('overlay')} cursor there"
+    return True, None
+
+
+def _took(before: dict, now: dict) -> bool:
+    """The first pick was taken (GUESS T3): the counter / the cast entity moved, or the cast already started."""
+    if hotbar._progress(before, now) or hotbar._started(now):
+        return True
+    bi, ni = (before.get("cast") or {}).get("index"), (now.get("cast") or {}).get("index")
+    if isinstance(bi, int) and isinstance(ni, int) and ni != bi:
+        return True
+    bt, nt = before.get("targeting"), now.get("targeting")
+    return bool(bt and nt and bt != nt)
+
+
+class _Run:
+    def __init__(self, game: Game, inp: InputClient, caster: str, spell: str, first: str,
+                 landing: list[float] | None, should_stop=None):
+        self.stop = should_stop or (lambda: False)
+        self.game, self.inp, self.caster, self.spell = game, inp, caster, spell
+        self.first, self.landing = first, landing
+        self.t0 = time.monotonic()
+        self.hard = self.t0 + HARD_CAP_S
+        self.res = HotbarCastResult(False, budget_s=BUDGET_S,
+                                    detail={"spell": spell, "targets": 2, "two_step": "revive" if landing is None
+                                            else "teleport"})
+        self.st: dict = {}
+
+    def done(self, ok: bool, stage: str | None = None, reason: str | None = None, why: str | None = None,
+             cancel_it: bool = False, **extra) -> HotbarCastResult:
+        if cancel_it:
+            how = hotbar.cancel(self.game, self.inp, self.caster)
+            if how:
+                extra["cancelled"] = how
+        self.res.ok, self.res.stage, self.res.reason = ok, stage, reason
+        if why:
+            extra["why"] = why
+        self.res.detail.update(extra)
+        self.res.elapsed_s = time.monotonic() - self.t0
+        return self.res
+
+    # --- the first pick: a character, hover-verified
+    def pick_first(self) -> tuple[bool, dict]:
+        clicker.bring_into_view(self.game, self.inp, self.first, steps=3)
+        deadline = min(self.hard, time.monotonic() + hotbar.TARGET_HOVER_S)
+        tpos, tries, hc = clicker.hover_point(self.game, self.inp, self.first, deadline=deadline)
+        if tpos is None:
+            reason = "off_screen" if tries == 0 and hc.get("off_screen") else "hover_miss"
+            return False, {"reason": reason, "why": f"could not point at {self.first}"}
+        if self.stop():
+            return False, {"reason": "cancelled", "why": "the step was cancelled or interrupted"}
+        before = self.st
+        self.inp.click(tpos[0], tpos[1], button="L")
+        took, st = hotbar._wait(self.game, self.caster, lambda s: _took(before, s), PICK_WAIT_S)
+        self.st = st
+        if not took:
+            return False, {"reason": "not_picked", "state": st,
+                           "why": "the game did not take the first pick (not a valid target, out of range or sight)"}
+        self.res.picked += 1
+        self.res.detail["first_s"] = round(time.monotonic() - self.t0, 2)
+        return True, {}
+
+    # --- the ground click: candidate world points, each cursor-checked, then the state after the click
+    def spots(self) -> list[tuple[list[float], tuple[int, int]] | dict]:
+        out: list = []
+        if self.landing is not None:
+            for dx, dz in LAND_NUDGES_M:
+                p = [self.landing[0] + dx, self.landing[1], self.landing[2] + dz]
+                out.append(("pos", p))
+        else:
+            for d in SPOT_DISTS:
+                out.append(("beside", d))
+        return out
+
+    def project(self, spot) -> dict:
+        kind, v = spot
+        if kind == "pos":
+            return _rpc(self.game, "ui.screen_pos", {"pos": v})
+        return _rpc(self.game, "ui.screen_pos", {"uuid": self.first, "aim": "feet", "toward": self.caster,
+                                                 "dist": v})
+
+    def click_ground(self, done_when) -> tuple[bool, dict]:
+        """Click candidate spots until `done_when(state)` holds. Never clicks on a warning cursor or a character."""
+        if self.landing is not None:
+            sp0, moves = clicker.view_point(self.game, self.inp, self.landing, VIEW_STEPS)
+            if moves:
+                self.res.detail["camera"] = moves
+            if sp0.get("error"):
+                return False, {"reason": "error", "why": sp0["error"]}
+        avoid = [self.first] if self.landing is None else [self.first, self.caster]
+        w, h = self.inp.window_size()
+        clicks, looks = 0, []
+        last: dict = {}
+        for spot in self.spots():
+            if time.monotonic() >= self.hard or clicks >= MAX_GROUND_CLICKS:
+                break
+            try:
+                sp = self.project(spot)
+            except GameError as e:
+                last = {"reason": "error", "why": str(e)}
+                continue
+            if not sp.get("on_screen") or sp.get("x") is None:
+                last = {"reason": "off_screen", "why": "the ground spot is off screen"}
+                continue
+            x, y = int(sp["x"]), int(sp["y"])
+            if not (0 <= x < w and 0 <= y < h):
+                continue
+            want = sp.get("world") or (spot[1] if spot[0] == "pos" else None)
+            self.inp.move(x, y)
+            self.inp.wait_frames(2)
+            gc = ground_check(self.game, want, avoid)
+            ok, why = ground_ok(gc)
+            looks.append({k: gc.get(k) for k in ("d_m", "cursor", "warning", "on_avoid") if gc.get(k) is not None})
+            if not ok:
+                last = {"reason": "ground_refused", "why": why, "ground": gc}
+                continue
+            if self.stop():
+                return False, {"reason": "cancelled", "why": "the step was cancelled or interrupted"}
+            before = self.st
+            self.inp.click(x, y, button="L")
+            clicks += 1
+            took, st = hotbar._wait(self.game, self.caster, lambda s: done_when(before, s), LAND_WAIT_S)
+            self.st = st
+            if took:
+                self.res.picked += 1
+                self.res.detail.update(ground_clicks=clicks, ground_at=want, looks=looks)
+                return True, {}
+            if not st.get("armed"):
+                # the spell left the hand without a cast (the game dropped it): nothing more to click
+                return False, {"reason": "dropped", "why": "the spell left the hand after the ground click",
+                               "state": st, "looks": looks}
+            last = {"reason": "not_taken", "why": "the game did not take the ground click (T4)", "state": st}
+        self.res.detail["looks"] = looks
+        return False, last or {"reason": "no_spot", "why": "no ground spot to click"}
+
+
+def twostep_cast(game: Game, inp: InputClient | None, caster: str, spell: str, first: str,
+                 landing: list[float] | None = None, select: bool = True, should_stop=None) -> HotbarCastResult:
+    """Cast a two-step `spell` from `caster`'s hotbar: `first` is the body (Revivify) or who goes (Dimension Door:
+    the caster to go alone); `landing` [x, y, z] the teleport's landing (None = Revivify: the ground beside the
+    body, toward the caster). Every failure after the cell click cancels, so no spell stays in hand."""
+    if inp is None:
+        return HotbarCastResult(False, reason="no_input", stage="slot", budget_s=BUDGET_S,
+                                detail={"why": "input shim not available for the clicks"})
+    run = _Run(game, inp, caster, spell, first, landing, should_stop)
+    fail, st = hotbar.arm(game, inp, caster, spell, run.res, select, should_stop)
+    if fail:
+        return run.done(False, **fail)
+    run.st = st
+    if landing is not None and DD_ORDER[0] == "landing":
+        return _landing_first(run)
+    ok, info = run.pick_first()
+    if not ok and landing is not None and info["reason"] == "not_picked" and run.st.get("armed"):
+        # GUESS T2 wrong? the game may want the landing first: that order, once
+        run.res.detail["order_flipped"] = True
+        return _landing_first(run)
+    if not ok:
+        return _fail(run, "first", info)
+    ok, info = run.click_ground(lambda before, s: hotbar._started(s))
+    if not ok:
+        return _fail(run, "ground", info)
+    return run.done(True, phase=(run.st.get("cast") or {}).get("phase"))
+
+
+def _fail(run: _Run, stage: str, info: dict) -> HotbarCastResult:
+    reason, why = info.pop("reason", "failed"), info.pop("why", None)
+    # "dropped": the spell already left the hand; an ESCAPE now would open the game menu
+    return run.done(False, stage, reason, why, cancel_it=reason != "dropped", **info)
+
+
+def _landing_first(run: _Run) -> HotbarCastResult:
+    ok, info = run.click_ground(_took)
+    if not ok:
+        return _fail(run, "ground", info)
+    if not hotbar._started(run.st):
+        ok, info = run.pick_first()
+        if not ok:
+            return _fail(run, "first", info)
+        if not hotbar._started(run.st):
+            ok, run.st = hotbar._wait(run.game, run.caster, hotbar._started, LAND_WAIT_S)
+            if not ok:
+                return _fail(run, "start", {"reason": "not_started", "why": "the cast did not start after both picks",
+                                            "state": run.st})
+    return run.done(True, phase=(run.st.get("cast") or {}).get("phase"))

@@ -1,13 +1,10 @@
 # Getting unstuck
 
-**When:** Use when progress has stalled - three failed attempts at the same thing, ~15 minutes without objective progress, looping between the same places or dialogue, a tool repeatedly returning blocked/timeout, a fight lost twice, or not knowing what to do next.
+**When:** three failed attempts at the same thing, ~15 minutes without objective progress, looping between the
+same places or dialogue, a tool repeatedly blocked/timing out, a fight lost twice, or no idea what to do next.
 
-Loops are the biggest time sink for game-playing agents. The fix is a **different approach**, not
-more tries of the same one.
-
-**Stuck never ends the session.** Being stuck is not a reason to wrap up, write HANDOFF.md or stop.
-The session runs until the `⏱` line says WRAP UP NOW (`end_session` and the runner refuse an earlier stop,
-even with HANDOFF.md written). Whatever happens below, the last step is always: **keep playing**.
+The fix is a **different approach**, not more tries of the same one. Stuck never ends the session (no wrap-up,
+no HANDOFF before WRAP UP NOW): whatever happens below, the last step is always **keep playing**.
 
 ## 0. Harness stuck: the 5-minute ladder
 Use this first when the *tools or the game* misbehave rather than the puzzle being hard: an action

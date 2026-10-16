@@ -169,6 +169,14 @@ class InjectionExtrasTest(MemoryTestCase):
         self.assertIn("harness-news.md", news[0])
         self.assertEqual(news[-1], "- 2026-10-10 18:00 change 8")
 
+    def test_new_playthrough_gets_the_newest_without_the_read_pointer(self):
+        lines = "".join(f"- 2026-10-10 1{i}:00 change {i}\n" for i in range(9))
+        (self.kdir / "harness-news.md").write_text("# news\n" + lines)
+        news = S.harness_news(None)
+        self.assertEqual(len(news), S.NEWS_MAX)
+        self.assertNotIn("older changes", "\n".join(news))
+        self.assertEqual(news[-1], "- 2026-10-10 18:00 change 8")
+
     def test_no_news_file(self):
         self.assertEqual(S.harness_news("2026-10-10T01:00"), [])
 

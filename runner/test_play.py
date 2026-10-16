@@ -2093,6 +2093,61 @@ class SeriesRuns(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(P.main(["runs", "--playthrough", "nothing"]), 1)
 
+    def _plan(self, *argv: str) -> str:
+        import contextlib
+        import io
+        from unittest import mock
+        pins = {"game_build": "25605617", "repo": {"commit": "abc", "dirty": False, "diff": None}}
+        buf = io.StringIO()
+        with mock.patch.object(P, "acquire_lock", side_effect=AssertionError("--plan took the runner lock")), \
+                mock.patch.object(P, "Runner", side_effect=AssertionError("--plan built a Runner")), \
+                mock.patch.object(P, "current_pins", lambda: pins), \
+                mock.patch.object(P.steam_paths, "offline_required", lambda: (True, "marker")), \
+                mock.patch.object(P.steam_paths, "steam_offline", lambda: (False, "last login online")), \
+                mock.patch.object(P.bg3le_buildinfo, "problems", lambda: []), \
+                mock.patch.object(P, "pids_of_game", lambda: []), \
+                mock.patch.object(P, "foreign_bg3_pids", lambda: []), \
+                contextlib.redirect_stdout(buf):
+            self.assertEqual(P.main(["run", *argv, "--plan"]), 0)
+        return buf.getvalue()
+
+    def test_plan_prints_the_freeze_and_the_command_and_writes_nothing(self):
+        out = self._plan("--playthrough", "np", "--until", "nautiloid_escaped", "--runs", "3", "--model", "opus",
+                         "--effort", "medium", "--session-minutes", "30", "--character-brief", "A watch sergeant",
+                         "--roleplay", "strict")
+        self.assertIn("series:         np: run 1/3 next (np), 0 recorded", out)
+        start = out.index("would be:") + len("would be:")
+        frozen = json.loads(out[start:out.index("\n}\n", start) + 3])
+        self.assertEqual((frozen["series"], frozen["runs"], frozen["until"]), ("np", 3, "nautiloid_escaped"))
+        self.assertEqual(frozen["profile"]["character"], {"brief": "A watch sergeant", "roleplay": "strict"})
+        self.assertEqual((frozen["client"], frozen["sandbox"], frozen["judge_model"]),
+                         ("claude", "none", P.judge.DEFAULT_MODEL))
+        self.assertEqual(frozen["pins"]["game_build"], "25605617")
+        self.assertIn("THE RUNNER WOULD REFUSE TO LAUNCH", out)   # Steam online where offline is required
+        cmd = json.loads(out[out.index('{\n "cmd"'):])
+        self.assertEqual(cmd["cmd"][cmd["cmd"].index("--model") + 1], "opus")
+        self.assertEqual(cmd["cmd"][cmd["cmd"].index("--effort") + 1], "medium")
+        self.assertEqual(cmd["env"]["BG3AI_PLAYTHROUGH"], "np")
+        self.assertEqual(cmd["env"]["BG3_SESSION_MINUTES"], "30.0")
+        written = [x for d in (P.RUNTIME, P.PLAYTHROUGHS) if d.exists() for x in d.rglob("*")]
+        self.assertEqual(written, [])
+
+    def test_plan_of_a_frozen_series_shows_the_next_run_and_drift(self):
+        d = P.RUNTIME / "sessions" / "np"
+        d.mkdir(parents=True)
+        meta = {"series": "np", "runs": 3, "until": "nautiloid_escaped", "profile": {}, "created": 1.0,
+                "pins": {"game_build": "1"}, "caps": {}, "judge_model": "j", "client": "claude"}
+        (d / "series.json").write_text(json.dumps(meta))
+        (d / "runs.jsonl").write_text(json.dumps({"series": "np", "run": 1, "playthrough": "np",
+                                                  "outcome": "reached"}) + "\n")
+        before = sorted(P.RUNTIME.rglob("*"))
+        out = self._plan("--playthrough", "np", "--until", "nautiloid_escaped", "--runs", "3", "--judge-model", "j",
+                         "--allow-judge-change")
+        self.assertIn("run 2/3 next (np-r2), 1 recorded", out)
+        self.assertIn("exists with every key (frozen", out)
+        self.assertIn("REFUSED (--allow-version-drift)", out)
+        self.assertEqual(sorted(P.RUNTIME.rglob("*")), before)
+
     def test_cli_refuses_runs_without_until(self):
         import contextlib
         import io

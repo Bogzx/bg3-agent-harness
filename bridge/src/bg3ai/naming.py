@@ -22,9 +22,18 @@ nothing. Writing the box's Text from Lua could not be verified to reach the char
 
 `rpc(op, args)` is any callable that runs a client-context op and returns its result (raising on error):
 Game.rpc with context="client", or tools/dev/test_new_game.py's Driver.rpc.
+
+Pacing (naut series, 2026-10-13: naming took 3.6-5.2 s, mostly hover probes and fixed sleeps). By default each
+step waits for the state it needs, the old fixed delay kept as its cap: the box is tried first where it was last
+found (this process) or where the layout puts it (live: exactly there, 960,891 at 1920x1080), two hovers in a row
+there within the old 0.8 s page-transition sleep, no centring walk; the scan + centring is the fallback, and a
+message box is re-checked when a probe or a click comes up empty (it may open after the page). The click waits for
+`focused`, the typing for the box to show the name, the popup click for the box to close. BG3AI_CC_PACED=1 brings
+back the fixed sleeps and the full scan + centring (`paced()`).
 """
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Callable
 
@@ -36,6 +45,19 @@ DESIGN_W = 3840
 # NamingContent: VerticalAlignment=Bottom, Margin bottom 280, the box frame is 196 high: its centre sits
 # about 378 design px above the bottom edge.
 BOX_FROM_BOTTOM = 378
+
+
+PAGE_SETTLE_S = 0.8     # the old fixed page-transition sleep: now the cap of the quick hover
+POPUP_SETTLE_S = 0.3    # the old sleep after closing a message box: now the cap of the wait for it to close
+FOCUS_SETTLE_S = 0.2    # the old sleep after the click: now the cap of the wait for `focused`
+POLL_S = 0.03
+
+_last_at: dict[tuple[int, int], tuple[int, int]] = {}   # window size -> where the box was found (this process)
+
+
+def paced() -> bool:
+    """BG3AI_CC_PACED=1: the fixed sleeps and the full hover scan of before (read per call)."""
+    return os.environ.get("BG3AI_CC_PACED", "").strip() not in ("", "0")
 
 
 class NamingError(RuntimeError):
@@ -82,6 +104,39 @@ def _hover(inp, rpc: Rpc, x: int, y: int) -> bool:
     return bool(_view(rpc).get("hover_box"))
 
 
+def quick_box(rpc: Rpc, inp, cap: float) -> tuple[tuple[int, int], str] | None:
+    """The box where it was last found or where the layout puts it, if the cursor there reports it twice in a row
+    (a page still sliding in can't), retried until `cap` s. -> ((x, y), "cached"|"predicted") or None."""
+    w, h = inp.window_size()
+    pts: list[tuple[tuple[int, int], str]] = []
+    if (w, h) in _last_at:
+        pts.append((_last_at[(w, h)], "cached"))
+    p = probe_points(w, h)[0]
+    if all(q != p for q, _ in pts):
+        pts.append((p, "predicted"))
+    end = time.monotonic() + cap
+    while True:
+        for (x, y), how in pts:
+            if _hover(inp, rpc, x, y) and _hover(inp, rpc, x, y):
+                return (x, y), how
+        if time.monotonic() >= end:
+            return None
+        time.sleep(POLL_S)
+
+
+def _wait_view(rpc: Rpc, name: str | None, ok: Callable[[dict], bool], cap: float) -> dict:
+    """ui.cc_name until ok(view) or `cap` s (paced: sleep the cap, then one read)."""
+    if paced():
+        time.sleep(cap)
+        return _view(rpc, name)
+    end = time.monotonic() + cap
+    while True:
+        v = _view(rpc, name)
+        if ok(v) or time.monotonic() >= end:
+            return v
+        time.sleep(POLL_S)
+
+
 def locate_box(rpc: Rpc, inp, log: Callable[[str], None] = lambda m: None) -> tuple[int, int]:
     """Window coordinates of the name box's centre, found by hover probing. Raises NamingError."""
     w, h = inp.window_size()
@@ -125,7 +180,18 @@ def dismiss_popup(rpc: Rpc, inp, log: Callable[[str], None] = lambda m: None) ->
         return None
     res = click_box(rpc, inp, "no")
     log(f"naming page: {probe.get('title') or 'a message box'} was open ({describe(res)})")
-    time.sleep(0.3)
+    if paced():
+        time.sleep(POPUP_SETTLE_S)
+        return res
+    end = time.monotonic() + POPUP_SETTLE_S
+    while time.monotonic() < end:
+        try:
+            gone = not (rpc("ui.confirm_probe", {"answer": "no"}) or {}).get("box")
+        except Exception:
+            gone = True
+        if gone:
+            break
+        time.sleep(POLL_S)
     return res
 
 
@@ -153,34 +219,72 @@ def ensure_name(rpc: Rpc, inp, name: str, log: Callable[[str], None] = lambda m:
     if inp is None:
         raise NamingError(f"name '{name}' needs typing and the input shim is not available")
 
+    slow = paced()
+    t0 = time.monotonic()
+    ms: dict[str, int] = {}
+
+    def lap(k: str) -> None:
+        ms[k] = round((time.monotonic() - t0) * 1000) - sum(ms.values())
+
     v = _view(rpc, page=True)
+    moved = bool(v.get("moved"))
     deadline = time.monotonic() + box_timeout
     while not v.get("box"):  # created when the page is first shown
         if time.monotonic() > deadline:
             raise NamingError(f"no name box on the naming page after {box_timeout:.0f} s")
-        time.sleep(0.2)
+        time.sleep(0.2 if slow else 0.05)
         v = _view(rpc)
-    if v.get("moved"):
-        time.sleep(0.8)  # page transition
-    dismiss_popup(rpc, inp, log)
-    x, y = locate_box(rpc, inp, log)
+        moved = moved or bool(v.get("moved"))
+    lap("page")
+    popups = 0
+    if slow:
+        if moved:
+            time.sleep(PAGE_SETTLE_S)  # page transition
+        popups += dismiss_popup(rpc, inp, log) is not None
+        lap("popup")
+        x, y = locate_box(rpc, inp, log)
+        how = "scan"
+    else:
+        popups += dismiss_popup(rpc, inp, log) is not None
+        lap("popup")
+        hit = quick_box(rpc, inp, PAGE_SETTLE_S if moved else 0.1)
+        if hit is None and dismiss_popup(rpc, inp, log) is not None:  # opened after the page did
+            popups += 1
+            hit = quick_box(rpc, inp, 0.1)
+        if hit is not None:
+            (x, y), how = hit
+            log(f"name box at {(x, y)} ({how})")
+        else:
+            how = "scan"
+            try:
+                x, y = locate_box(rpc, inp, log)
+            except NamingError:
+                if dismiss_popup(rpc, inp, log) is None:
+                    raise
+                popups += 1
+                x, y = locate_box(rpc, inp, log)
+    lap("locate")
 
     for attempt in range(2):
         inp.click(x, y)
-        time.sleep(0.2)
-        v = _view(rpc, name)
+        v = _wait_view(rpc, name, lambda vv: bool(vv.get("focused")), FOCUS_SETTLE_S)
         if v.get("focused"):
             break
+        if not slow and dismiss_popup(rpc, inp, log) is not None:  # a box opened over the page meanwhile
+            popups += 1
     else:
         raise NamingError(f"clicking the name box at {x},{y} didn't focus it")
+    lap("focus")
     _clear_and_type(inp, name)
-    time.sleep(settle)
-    v = _view(rpc, name)
+    v = _wait_view(rpc, name, lambda vv: bool(vv.get("ok")), settle)
+    lap("type")
     if not v.get("ok"):
         raise NamingError(f"typed '{name}', but the box shows {v.get('text')!r} and the character is "
                           f"{v.get('name') or v.get('name_handle')!r}")
+    _last_at[inp.window_size()] = (x, y)
     log(f"name '{name}' typed (box {v.get('text')!r}, character {v.get('name') or 'unreadable'})")
-    return {"via": "typed", "view": v, "at": [x, y]}
+    return {"via": "typed", "view": v, "at": [x, y], "how": how, "popups": popups, "ms": ms,
+            "pacing": "fixed" if slow else "state"}
 
 
 def finish(rpc: Rpc, name: str | None) -> dict:

@@ -7,6 +7,7 @@ Run: cd bridge && uv run python -m unittest discover -s tests -p 'test_nav_audit
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from test_turn_macros import CHEST, P1, P2, Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
@@ -78,6 +79,7 @@ class ClickOffScreen(Base):
 
             def as_dict(self):
                 return {"ok": self.ok}
+        self.CR = CR
 
         saved_ce, saved_inp = clicker.click_entity, server._inp
         clicker.click_entity = lambda game, inp, u, b: self.clicks.append(u) or CR(next(tries))
@@ -100,6 +102,38 @@ class ClickOffScreen(Base):
         self.assertIn(("act.select", {"char": P2}), [(op, a) for op, a in self.g.calls if op == "act.select"])
         self.assertIn("selected", out)
         self.assertIn("clicked", out)
+
+    def test_selects_before_the_first_look_when_off_view(self):
+        # se click_on latency: the target behind the camera -> the select comes first, one click_entity, no 7 s pass
+        real = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "ui.screen_pos":
+                return {"on_screen": False, "behind": True, "side": "left"}
+            return real(op, args, context, timeout)
+        self.g.rpc = rpc
+        self.tries = iter([True])
+        import bg3ai.clicker as clicker
+        clicker.click_entity = lambda game, inp, u, b: self.clicks.append(u) or self.CR(next(self.tries))
+        server.H.get(CHEST, "Touch")
+        out = server.click_on(server.H.get(CHEST))
+        self.assertEqual(len(self.clicks), 1, out)
+        self.assertIn(("act.select", {"char": P2}), [(op, a) for op, a in self.g.calls if op == "act.select"])
+        self.assertTrue(out.startswith("selected"), out)
+
+    def test_no_early_select_when_in_view_or_switch_off(self):
+        import bg3ai.clicker as clicker
+        real = self.g.rpc
+        sp = {"on_screen": True, "ndc": [0.1, 0.2]}
+        self.g.rpc = lambda op, args=None, context="server", timeout=12.0: \
+            sp if op == "ui.screen_pos" else real(op, args, context, timeout)
+        self.assertFalse(server._click_off_view(CHEST))
+        sp = {"on_screen": False, "behind": True}
+        self.assertTrue(server._click_off_view(CHEST))
+        with mock.patch.object(clicker, "HOVER_V2", False):
+            server.H.get(CHEST, "Touch")
+            out = server.click_on(server.H.get(CHEST))
+        self.assertEqual(len(self.clicks), 2, out)   # v1: off_screen first, then select + retry
 
     def test_no_select_when_the_selected_one_is_nearest(self):
         self.g.watch["party"] = [{"uuid": P1, "pos": [11, 0, 0]}, {"uuid": P2, "pos": [0, 0, 0]}]
