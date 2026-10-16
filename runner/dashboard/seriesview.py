@@ -27,6 +27,9 @@ TOP_TOOLS = 3
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$")   # a series name from the query string (no paths)
 # The live-feel goals the page colours by (bridge/src/bg3ai/metrics.TARGETS; idle median: the explore goal)
 TARGETS = {"idle_median_s": 2.0, "gaps_over_10s": 0, "read_rt_median_ms": 100.0}
+RESULT_TOK_BASELINE = {"series": "naut", "runs": R.RESULT_TOK_BASELINE, "total": R.RESULT_TOK_BASELINE_TOTAL,
+                       "per_result": R.RESULT_TOK_BASELINE_PER_RESULT,
+                       "better": R.RESULT_TOK_BETTER, "worse": R.RESULT_TOK_WORSE}
 LIVE_STALE_S = 180   # a status file with a dead runner_pid and no heartbeat for this long: no live row
 
 
@@ -85,6 +88,40 @@ def latency_view(lat: dict | None) -> dict | None:
             "gaps_over_10s": lat.get("gaps_over_10s"), "read_rt_median_ms": _r(lat.get("read_rt_median_ms"))}
 
 
+_RT_CACHE: dict = {}   # (state dir, started, t) → result_tokens_summary of a record without the field
+
+
+def result_tokens_view(rt: dict | None) -> dict | None:
+    """A run's result tokens (runs.result_tokens_summary) graded against the naut baseline (fewer is better)."""
+    if not rt or rt.get("total") is None:
+        return None
+    return {"total": rt["total"], "n": rt.get("n"), "per_result": rt.get("per_result"), "images": rt.get("images"),
+            "source": rt.get("source"),
+            "grade_total": R.result_tok_grade(rt["total"], R.RESULT_TOK_BASELINE_TOTAL),
+            "grade_per_result": R.result_tok_grade(rt.get("per_result"), R.RESULT_TOK_BASELINE_PER_RESULT)}
+
+
+def record_result_tokens(rec: dict, runtime: Path | None) -> dict | None:
+    """The record's result_tokens; a record written before the field: computed read-only from its playthrough's
+    files over the run's window (as `play.py runs --backfill` would write it), cached per record."""
+    rt = R.record_result_tokens(rec)
+    if rt is not None or runtime is None or "result_tokens" in rec:
+        return rt
+    pt, started, end = rec.get("playthrough"), rec.get("started"), rec.get("t")
+    if not pt or not NAME_RE.match(str(pt)) or not isinstance(started, (int, float)):
+        return None
+    until = end + R.BACKFILL_SLACK_S if isinstance(end, (int, float)) else None
+    key = (str(runtime), pt, started, until)
+    if key not in _RT_CACHE:
+        _RT_CACHE[key] = R.result_tokens_summary(runtime / "sessions" / pt, started, until)
+    return _RT_CACHE[key]
+
+
+def with_result_tokens(recs: list[dict], runtime: Path) -> list[dict]:
+    """The records, older ones given their result_tokens (copies; runs.jsonl is not written) for the spread."""
+    return [r if "result_tokens" in r else dict(r, result_tokens=record_result_tokens(r, runtime)) for r in recs]
+
+
 def failure_view(failures: list[dict] | None) -> dict:
     c = R.class_counts(failures)
     kinds = Counter()
@@ -94,8 +131,8 @@ def failure_view(failures: list[dict] | None) -> dict:
             "top": [{"kind": k, "n": n} for k, n in kinds.most_common(4)]}
 
 
-def row(rec: dict) -> dict:
-    """One run record as the page's row."""
+def row(rec: dict, runtime: Path | None = None) -> dict:
+    """One run record as the page's row (runtime: where to backfill the result tokens of an older record)."""
     outcome = rec.get("outcome") or ("reached" if rec.get("milestone") else "?")
     ttm = R.record_ttm(rec)
     p = rec.get("persona") or {}
@@ -109,6 +146,7 @@ def row(rec: dict) -> dict:
         "persona": {"score": R.record_persona(rec), "cell": R.persona_cell(rec), "status": p.get("status"),
                     "summary": p.get("summary"), "judge_model": p.get("judge_model")} if p else None,
         "latency": latency_view(rec.get("latency")), "model_time": model_time_view(rec.get("model_time")),
+        "result_tokens": result_tokens_view(record_result_tokens(rec, runtime)),
         "sandbox": rec.get("sandbox") or "none", "sandbox_unfirewalled": bool(rec.get("sandbox_unfirewalled")),
         "client": rec.get("client") or "claude", "model": rec.get("model"), "effort": rec.get("effort"),
         "story_points": (rec.get("story") or {}).get("points"), "deaths": rec.get("deaths"),
@@ -215,6 +253,7 @@ def live_row(runtime: Path, base: str, status: dict, records: list[dict], now: f
         "cost_usd": usage["cost_usd"], "tokens_m": usage["tokens_m"], "usage_estimated": usage["estimated"],
         "story_points": story["points"],
         "latency": latency_view(R.latency_summary(d, started)), "latency_session": live_lat,
+        "result_tokens": result_tokens_view(R.result_tokens_summary(d, started)),   # its finished sessions
         "model_time": model_time_view(MT.model_time(d, since=started, until=now)),
         "alert": status.get("alert"), "sandbox": status.get("sandbox"),
         "run_end": status.get("run_end"),
@@ -246,5 +285,6 @@ def series_payload(runtime: Path, base: str | None, status: dict, now: float | N
     lat = latency_live() if callable(latency_live) and status.get("series") == base else \
         (None if callable(latency_live) else latency_live)
     return {"now": now, "series": base, "available": available, "frozen": frozen if meta else None,
-            "rows": [row(r) for r in recs], "spread": spread(recs),
-            "live": live_row(runtime, base, status, recs, now, lat, pid_alive), "targets": TARGETS}
+            "rows": [row(r, runtime) for r in recs], "spread": spread(with_result_tokens(recs, runtime)),
+            "live": live_row(runtime, base, status, recs, now, lat, pid_alive), "targets": TARGETS,
+            "result_tok_baseline": RESULT_TOK_BASELINE}

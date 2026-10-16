@@ -1150,8 +1150,52 @@ def _log_stage_ms(op: str, r: JobResult) -> None:
         pass
 
 
+# Review M7: a background end's HUD fallback (queue thread: act.select A, then the HUD's End Turn, which ends whoever is
+# selected) raced with input from the MCP thread (click_on, press_key, a select, the hotbar clicks for B): the press
+# could land on B. Both sides take this lock around their selection/click input; the HUD phase holds it ~0.5 s.
+_INPUT_LOCK = threading.RLock()
+INPUT_LOCK_WAIT_S = 10.0  # never wait longer than this for the other side (then go on, as before)
+_INPUT_OPS = {"act.select"}  # plus every client ui.* op
+
+
+class _InputHeld:
+    """with _InputHeld(): selection/click input that must not interleave with another thread's (M7)."""
+
+    def __enter__(self):
+        self.got = _INPUT_LOCK.acquire(timeout=INPUT_LOCK_WAIT_S)
+        return self
+
+    def __exit__(self, *exc):
+        if self.got:
+            _INPUT_LOCK.release()
+        return False
+
+
+def _input_exclusive(fn):
+    """A tool/helper whose whole run selects or clicks (click_on, the hotbar routes): held against the HUD end."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*a, **kw):
+        _hold_for_bg_end()  # first (unlocked): the end may need the lock for its HUD fallback
+        with _InputHeld():
+            return fn(*a, **kw)
+    return wrapper
+
+
 def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
          wait: bool = True, note: str = "", post=None, on_start=None, redo=None) -> str:
+    if op in _INPUT_OPS or (context == "client" and op.startswith("ui.")):
+        if args.get("char"):  # its own background end first, unlocked (_act_run's hold then finds it done)
+            held = _hold_for_bg_end(args["char"])
+            note = "\n".join(x for x in (held, note) if x)
+        with _InputHeld():
+            return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo)
+    return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo)
+
+
+def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
+             wait: bool = True, note: str = "", post=None, on_start=None, redo=None) -> str:
     t0 = time.monotonic()
     if _session_over():
         return _finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
@@ -1193,8 +1237,10 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
         # S055 06:44:08-14: pickpocket ×3 "character is in a conversation" right after choose_dialogue ended it (the
         # flag a moment stale). With no dialogue on screen, retry for up to CONVO_WAIT_S, as the macros do.
         # Also camp's "cannot do that during a conversation" (S053 05:48:09, S057 07:40:25 ×2: a trader's goodbye line).
+        # Live window 2026-10-16 18:40 (trade → ESCAPE → camp): the goodbye line ("Take care now.") is a dialogue
+        # screen with no answers, so this retry never ran (0.1 s FAILED). Only answers on screen stop it.
         end = time.monotonic() + CONVO_WAIT_S
-        while time.monotonic() < end and _ui_screen()[0] != "dialogue":
+        while time.monotonic() < end and not _dialogue_needs_answer():
             time.sleep(0.4)
             r = game.run_job(op, args, context=context, wait_s=wait_s, **kw)
             if not (r.status == "failed" and _convo_refused(r.error)):
@@ -2772,6 +2818,7 @@ def _revive_spot(inp, name: str, char: str, tgt: str) -> str:
 
 @mcp.tool()
 @_guard
+@_input_exclusive
 def click_on(target: str, button: str = "left") -> str:
     """Last-resort: point the mouse at a visible entity (verified hover) and click it, for interactions no other tool covers. Logged."""
     from . import clicker
@@ -3700,6 +3747,7 @@ def _with_tail(out: Any, tail: str, note: str) -> Any:
     return f"{note}\n{out}" if note and isinstance(out, str) else out
 
 
+@_input_exclusive
 def _hotbar_use(char: str, spell: str, picks: list[str], args: dict, note: str) -> str:
     """use_ability on >2 picks through the hotbar (bg3ai.hotbar.hotbar_cast). act.cast {ui=true} checks the cast as
     for an Osiris order (our turn, known/prepared, each pick seen and in range) and then only watches it
@@ -3754,6 +3802,7 @@ def _hotbar_use(char: str, spell: str, picks: list[str], args: dict, note: str) 
     return _with_tail(out, tail, note)
 
 
+@_input_exclusive
 def _twostep_use(char: str, spell: str, args: dict, note: str) -> str:
     """use_ability on a two-step spell through the hotbar (bg3ai.twostep.twostep_cast): act.cast {ui=true} checks
     the cast (the body / who goes seen and in range, the landing in range and on a floor) and watches it; once that
@@ -3908,9 +3957,10 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
     if not cs.get("active") or char not in turn.acting(cs):   # it ended after all (a late read): never press twice
         return JobResult("done", {"ended": True}, None, r.events, r.elapsed_ms)
     try:
-        if _active() != char:
-            game.run_job("act.select", {"char": char}, wait_s=5)
-        game.rpc("ui.command", {"widget": "*", "command": "EndTurn"}, context="client")
+        with _InputHeld():  # M7: no click/select from the MCP thread between this select and the press
+            if _active() != char:
+                game.run_job("act.select", {"char": char}, wait_s=5)
+            game.rpc("ui.command", {"widget": "*", "command": "EndTurn"}, context="client")
     except GameError as e:
         return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn failed too: {e}", r.events, r.elapsed_ms)
     deadline = time.monotonic() + END_HUD_WAIT_S
@@ -3944,6 +3994,12 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
     args = {"char": char}
     if _session_over():
         return _finish("end_turn", args, pre + "REFUSED: the session is over. Save and write your handoff notes.", t0)
+    if _bg_end_running(char):
+        # review L1: an end still running after the hold (END_BG_HOLD_S): a second order would race its HUD press
+        _batch["last"] = "done"
+        return _finish("end_turn", args, pre + f"end_turn {_label(char)}: its turn end is still running in the "
+                       "background (the game is slow to hand the turn on): wait_for(target=\"queue\"), don't end it "
+                       "again", t0)
     cs = game.try_rpc("state.combat") or {}
     if char in turn.downed(cs):
         # S018: end_turn on downed Claude/Shadowheart -> "FAILED: character is downed" (x2).
@@ -6117,6 +6173,9 @@ def _report_text(rep: actq.Report, n: int) -> str:
 
 def _on_queue_report(who: str, rep: actq.Report) -> None:
     METRICS.bg_end(f"queue:{who}")
+    # review L2: the run that reports is the background end (_enqueue holds new steps for it): forget it now, or a later
+    # unrelated queue for this character (an out-of-combat travel_to) made every hold wait for that walk
+    _bg_ends.pop(who, None)
     data: dict[str, Any] = {"who": who, "done": rep.done}
     if rep.skipped:
         data["skipped"] = rep.skipped
@@ -6334,10 +6393,11 @@ def _cs_keep(cs: Any) -> dict:
 
 def _cs_cached() -> dict | None:
     """The kept state.combat read, if still valid (no step ran since, not older than TURN_CS_MAX_S)."""
-    cs = _turn_cs.get("cs")
+    kept = dict(_turn_cs)  # review L3: one snapshot (the monitor thread's reaction answer may clear it meanwhile)
+    cs = kept.get("cs")
     if cs is None:
         return None
-    if actq.BATCH_CHECKS and time.monotonic() - _turn_cs.get("t", time.monotonic()) > TURN_CS_MAX_S:
+    if actq.BATCH_CHECKS and time.monotonic() - kept.get("t", 0.0) > TURN_CS_MAX_S:  # no time: expired
         _turn_cs.clear()
         return None
     return cs
@@ -6486,7 +6546,13 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
     ap = None
 
     def dist_now() -> float | None:
-        return turn.straight_dist(game.try_rpc("state.combat") or {}, who, tu) if tu else None
+        # Live window 2026-10-16 ("batched step checks" FAIL, single state.combat 4 > 3 and 6 > 5): this read ran
+        # after every move with a target; the watcher's read after that move step (post_ops) already holds it.
+        if not tu:
+            return None
+        cs = ((_cs_cached() or _cs_keep(game.try_rpc("state.combat"))) if _turn_batch()
+              else game.try_rpc("state.combat") or {})
+        return turn.straight_dist(cs, who, tu)
 
     def short_note(d2: float | None, ap2: dict | None) -> str:
         want = mv.within if mv.within is not None else turn.MELEE_M
@@ -6702,6 +6768,20 @@ def _hp_held(watcher: actq.Watcher, lines: list) -> bool:
     return True
 
 
+def _hp_pending(watcher: actq.Watcher) -> bool:
+    """An HP drop held during a step of this slot (review M6): peeked before every further spend inside a slot (the
+    next alternative, a step-in walk's re-cast, then_move, the auto fallback); _hp_held then says it and stops."""
+    return bool(getattr(watcher, "hp_hit", None))
+
+
+def _slot_hp_stop(name: str, tried: list, watcher: actq.Watcher, lines: list) -> tuple[str, bool]:
+    """_turn_slot: stop inside the slot for a held HP drop: the slot's line so far, then the STOPPED line."""
+    if tried:
+        lines.append(f"{name}: " + " → ".join(tried))
+    _hp_held(watcher, lines)
+    return "stop", False
+
+
 def _reaim_gone(alt: turn.Alt, who: str, why: str, info: dict) -> str | None:
     """combat_turn: an alternative aimed at a hostile that is dead or gone (left the turn order) is re-aimed
     at once at the nearest living hostile in sight within the ability's reach, instead of being skipped (S033
@@ -6729,9 +6809,51 @@ def _reaim_gone(alt: turn.Alt, who: str, why: str, info: dict) -> str | None:
     if not near:
         return None
     a["target"] = H.get(near[0])
-    for k in ("targets", "x", "y", "z"):
+    for k in ("x", "y", "z"):
         a.pop(k, None)
+    picks = _picks(a.get("targets"))
+    if picks:
+        # review L4: replace only the lost pick (a Magic Missile on 3 stays on 3)
+        new: list = []
+        for t in picks:
+            try:
+                tu = _uuid(str(t))
+            except ValueError:
+                tu = None
+            new.append(H.get(near[0]) if tu == lost else t)  # Magic Missile / Scorching Ray may repeat a pick
+        a["targets"] = new if isinstance(a.get("targets"), list) else ",".join(new)
     return near[0]
+
+
+def _picks(targets: Any) -> list[str]:
+    """A step's `targets` as a list (a plan list, or the comma string the turn plan keeps)."""
+    if isinstance(targets, str):
+        return [t.strip() for t in targets.split(",") if t.strip()]
+    return [str(t) for t in targets] if isinstance(targets, list) else []
+
+
+def _drop_dead_targets(step: actq.Step) -> tuple[str, bool]:
+    """combat_turn (review L4): picks in `targets` the kept turn-order read shows dead are dropped (the mod refuses a
+    whole multi-target cast for one dead pick). (note, nothing left). Only with BATCH_CHECKS' kept read (no extra RPC)."""
+    tl = _picks(step.args.get("targets"))
+    if (not tl or turn.REVIVE.search(str(step.args.get("ability") or ""))
+            or not _turn_batch()):
+        return "", False
+    cs = _cs_cached() or {}
+    dead_rows = {o.get("uuid") for o in cs.get("order") or [] if o.get("dead")}
+    keep, dead = [], []
+    for t in tl:
+        try:
+            u = _uuid(str(t))
+        except ValueError:
+            u = None
+        (dead if u and u in dead_rows else keep).append(u if u and u in dead_rows else t)
+    if not dead:
+        return "", False
+    if not keep:
+        return "every pick is already dead (" + ", ".join(_label(u) for u in dead) + ")", True
+    step.args["targets"] = keep if isinstance(step.args.get("targets"), list) else ",".join(keep)
+    return "dropped dead " + ", ".join(_label(u) for u in dead) + " from the picks", False
 
 
 def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: list,
@@ -6739,6 +6861,8 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
     """Try a slot's alternatives in order. ('ok'|'none'|'stop', then_move of the one that worked)."""
     tried: list[str] = []
     for alt in alts:
+        if _hp_pending(watcher):  # M6: a drop during the last alternative (or the step-in walk) spends nothing more
+            return _slot_hp_stop(name, tried, watcher, lines)
         fatal, why = _turn_check(who, alt.step)
         if fatal:
             lines.append(f"{name}: " + " → ".join(tried + [why]))
@@ -6751,6 +6875,12 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
                 if fatal:
                     lines.append(f"{name}: " + " → ".join(tried + [why]))
                     return "stop", False
+        if not why:
+            dropped, empty = _drop_dead_targets(alt.step)
+            if empty:
+                why = dropped
+            elif dropped:
+                tried.append(dropped)
         why = why or _slot_skip(alt, who, info)
         if why:
             tried.append(f"{alt.step.short()}: skipped ({why})")
@@ -6770,6 +6900,8 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
                 # S040-S041: "FAILED: choose a variant: … → took …" read (and triaged) as a failure; the variant pick
                 # is the player's quick click on the container's entry, not a failure: name it plainly
                 tried.append(f"{asked}: {step_in}" if variant else f"{text} → {step_in}")
+                if _hp_pending(watcher):  # M6: the walk in provoked an attack: no re-cast
+                    return _slot_hp_stop(name, tried, watcher, lines)
                 rep, text = _run_one(watcher, who, alt.step)
                 text = _outcome(alt.step, text)
                 _after(rep, after)
@@ -6966,7 +7098,9 @@ def _turn_auto_fallback(p: turn.TurnPlan, slot: str, planned: list, who: str, wa
     acts = acts.get("actions") if isinstance(acts, dict) else acts
     avail = {a.get("spell"): a for a in acts or [] if isinstance(a, dict) and a.get("available") is not False}
     tried = {a.step.args.get("ability") for a in planned}
-    cs = game.try_rpc("state.combat") or {}
+    # a skipped melee (out of reach after the move) ran no step since the move's read: reuse it (live window 2026-10-16)
+    cs = ((_cs_cached() or _cs_keep(game.try_rpc("state.combat"))) if _turn_batch()
+          else game.try_rpc("state.combat") or {})
     _seen_sides(cs)
     party = info.get("party")
     alts: list[turn.Alt] = []
@@ -7017,7 +7151,7 @@ def _turn_auto_fallback(p: turn.TurnPlan, slot: str, planned: list, who: str, wa
         return "none"
     res, then_move = _turn_slot(f"{slot} (auto fallback)", alts, who, watcher, lines, after, info)
     if res == "ok" and then_move and p.move:
-        res = _turn_move(p.move, who, watcher, lines, after, info)
+        res = "stop" if _hp_held(watcher, lines) else _turn_move(p.move, who, watcher, lines, after, info)
     return res
 
 
@@ -7329,6 +7463,11 @@ def _end_in_background(char: str) -> bool:
     return True
 
 
+def _bg_end_running(char: str) -> bool:
+    """char's background turn end is still running (past any hold), seen from outside the queue worker."""
+    return char in _bg_ends and not _in_queue_worker() and _queues().busy(char)
+
+
 def _hold_for_bg_end(char: str | None = None) -> str:
     """Before an action: a background end (of char, or of anyone when None) still running? Wait for it (≤
     END_BG_HOLD_S), so the next turn's steps never land in the turn being ended. A note or ''."""
@@ -7532,6 +7671,9 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
         first = turn.blocking(c, party, want) if want else []
         if not first:
             return ""
+        if _bg_end_running(first[0]):  # review L1: not "end it" while its end still runs (a 2nd order races it)
+            return (f"{_label(first[0])}'s turn end is still running in the background: wait_for(target=\"queue\"), "
+                    "then send this again")
         return (", ".join(_label(u) for u in first) + " (yours) must act first: play that turn "
                 f"(combat_turn who={H.get(first[0])}) or end it (end_turn who={H.get(first[0])})")
 
@@ -7665,7 +7807,7 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
         else:
             res, then_move = _turn_slot(slot, p.slots[slot], char, watcher, lines, after, info)
             if res == "ok" and then_move and p.move:
-                res = _turn_move(p.move, char, watcher, lines, after, info)
+                res = "stop" if _hp_held(watcher, lines) else _turn_move(p.move, char, watcher, lines, after, info)
             elif (res == "none" and slot in ("action", "bonus") and p.slots[slot] and lines
                   and lines[-1].startswith(f"{slot}:") and turn.missed_target(lines[-1])):
                 res = _turn_auto_fallback(p, slot, p.slots[slot], char, watcher, lines, after, info)
@@ -7685,8 +7827,8 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
     if not stopped and _hp_held(watcher, lines):
         stopped = True
     if not stopped and p.auto_bonus and not p.slots["bonus"]:
-        if _turn_auto_bonus(char, watcher, lines, after) == "stop":
-            stopped = True
+        if _turn_auto_bonus(char, watcher, lines, after) == "stop" or _hp_held(watcher, lines):
+            stopped = True  # M6: a drop during the automatic bonus: "decide the rest", not an end_turn
     lines.extend(watcher.answered)
     if end and not stopped:
         fatal, why = _turn_check(char, None)
@@ -7753,7 +7895,20 @@ def _convo_refused(err: Any) -> bool:
     e = str(err or "")
     return _IN_CONVO in e or "during a conversation" in e
 
-CONVO_WAIT_S = 4.0  # a step refused for a conversation with none on screen: retry this long (banter, a stale flag)
+CONVO_WAIT_S = 6.0  # a step refused for a conversation with none to answer: retry this long (banter, a stale flag,
+# a trader's goodbye line; 4.0 until 2026-10-16: a voiced closing line runs 2-5 s)
+
+
+def _dialogue_needs_answer(ui: Any = None) -> bool:
+    """A conversation the agent must answer is on screen: a dialogue screen showing answers (or one we can't read).
+    A dialogue screen with no answers (a trader's goodbye after the trade closed, a line still being voiced, a
+    closing line) ends by itself: callers wait it out instead of failing (live window 2026-10-16, trade → camp)."""
+    if ui is None:
+        ui = game.try_rpc("ui.state", context="client")
+    if not isinstance(ui, dict) or ui.get("screen") != "dialogue":
+        return False
+    d = ui.get("dialogue")
+    return not isinstance(d, dict) or bool(d.get("options"))
 
 
 def _retry_after_dialogue(watcher: actq.Watcher, who: str | None, step: actq.Step, rep: actq.Report,
@@ -7764,8 +7919,7 @@ def _retry_after_dialogue(watcher: actq.Watcher, who: str | None, step: actq.Ste
     dialogue ended): retry the step until the game lets it, up to CONVO_WAIT_S."""
     end = time.monotonic() + CONVO_WAIT_S
     while True:
-        ui = game.try_rpc("ui.state", context="client") or {}
-        if isinstance(ui, dict) and ui.get("screen") == "dialogue":
+        if _dialogue_needs_answer():
             return rep, text, "a conversation is open: answer it (choose_dialogue), then run this again"
         if time.monotonic() >= end:
             return rep, text, (f"still in a conversation after {CONVO_WAIT_S:g}s with no dialogue on screen "
@@ -8922,6 +9076,10 @@ def _load_once(save: str, boot0: str | None, alive_at_start: bool | None) -> tup
             return JobResult("failed", None, "the Load press didn't start a load (no loading screen within "
                              f"{LOAD_START_S:.0f} s, pressed {LOAD_RETRIES + 1} times; the game may be mid-transition, "
                              "e.g. the long rest's sleep): nothing was loaded"), True
+    if r.status == "failed" and isinstance(r.result, dict) and r.result.get("loading"):
+        # live window #1 (10-16 18:34): load_game right after a launch met the loading screen. The mod's job waits
+        # for it (25 s) without pressing anything; still up: worth one more job (nothing was pressed or loaded).
+        return r, True
     if r.status != "done":
         return r, False
     deadline, ok, dead = time.monotonic() + 120, False, False

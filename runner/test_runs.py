@@ -270,6 +270,31 @@ class Metrics(TmpDir):
         self.assertEqual(got, {"sessions": 3, "idle_median_s": 1.0, "idle_p90_s": 4.0, "gaps_over_10s": 3,
                                "read_rt_median_ms": 80.0})
 
+    def test_result_tokens_summary(self):
+        t0 = time.time() - 10
+        self.assertIsNone(R.result_tokens_summary(self.tmp, t0))
+        (self.tmp / "S001.latency.json").write_text(json.dumps(
+            {"result_tokens": {"total": 3000, "n": 10, "per_result": 300.0, "images": 1}}))
+        self.assertEqual(R.result_tokens_summary(self.tmp, t0), {"sessions": 1, "total": 3000, "n": 10,
+                                                                 "per_result": 300.0, "images": 1, "source": "turns"})
+        # a session from before the field: backfilled from its raw stream (S002.jsonl next to it)
+        (self.tmp / "S002.latency.json").write_text(json.dumps({"idle_s": {}}))
+        _stream(self.tmp / "S002.jsonl", _use("1", "mcp__bg3__look", {}), _res("1", "a goblin " * 40),
+                _use("2", "mcp__bg3__look", {}), _res("2", "ok"))
+        got = R.result_tokens_summary(self.tmp, t0)
+        self.assertEqual((got["sessions"], got["n"], got["images"], got["source"]), (2, 12, 1, "stream+turns"))
+        self.assertGreater(got["total"], 3000)
+        self.assertEqual(got["per_result"], round(got["total"] / 12, 1))
+        (self.tmp / "S002-fix.latency.json").write_text(json.dumps({"result_tokens": {"total": 9999, "n": 1}}))
+        (self.tmp / "S003.latency.json").write_text(json.dumps({}))        # no field and no stream: skipped
+        self.assertEqual(R.result_tokens_summary(self.tmp, t0), got)        # -fix is not a play session
+
+    def test_result_tok_grade_vs_naut(self):
+        self.assertEqual((R.RESULT_TOK_BASELINE_TOTAL, R.RESULT_TOK_BASELINE_PER_RESULT), (42075.3, 393.2))
+        self.assertEqual([R.result_tok_grade(v, 1000) for v in (900, 950, 1099, 1100, None)],
+                         ["better", "same", "same", "worse", None])
+        self.assertIsNone(R.result_tok_grade(5, None))
+
     def test_story_gained(self):
         _stream(self.tmp / "progress_history.jsonl",
                 {"session": "S000", "t": 50, "points": 999, "events": 9},
@@ -323,6 +348,21 @@ class Summary(unittest.TestCase):
         self.assertIn("over_budget (cost)", lines[4])
         self.assertIn("11.6", lines[2])            # time to the milestone of an old record (reached_at - started)
         self.assertIn("6.63", lines[2])            # tokens, millions
+
+    def test_result_tokens_in_the_table_and_summary(self):
+        recs = [dict(self.RECS[0], result_tokens={"total": 41944, "n": 115, "per_result": 364.7}),
+                dict(self.RECS[1], result_tokens={"total": 30000, "n": 100, "per_result": 300.0}),
+                self.RECS[2]]                                        # run 3: no field
+        lines = R.runs_table(recs).splitlines()
+        self.assertIn("result tok k (/res)", lines[0])
+        self.assertIn("41.9 (365)", lines[2])
+        self.assertIn("30.0 (300)", lines[3])
+        out = R.series_summary(recs)
+        row = {ln.split("  ")[0]: ln.split() for ln in out.splitlines()}
+        self.assertEqual(row["result tok k"][-5:], ["2", "30.0", "41.9", "36.0", "8.4"])
+        self.assertIn("result tokens vs the naut baseline (42.1k/run, 393/result): run 1 same/same, "
+                      "run 2 better/better (total/per result; ±10 % = same)", out)
+        self.assertNotIn("result tokens vs", R.series_summary(self.RECS))
 
 
 # ======================================================================== play.py wiring
@@ -422,6 +462,7 @@ class Wiring(TmpDir):
         self.assertEqual(rec["fairness_flags"]["kinds"], {"dc_outside_roll": 1})
         self.assertEqual(rec["latency"]["idle_median_s"], 0.4)
         self.assertEqual(rec["story"]["points"], 42)
+        self.assertEqual((rec["result_tokens"]["n"], rec["result_tokens"]["source"]), (1, "stream"))   # S001.jsonl
         self.assertEqual(rec["milestones_reached"], 0)
         self.assertNotIn("sandbox_change", rec)
         line = json.loads((P.RUNTIME / "sessions" / "naut" / "runs.jsonl").read_text().splitlines()[-1])

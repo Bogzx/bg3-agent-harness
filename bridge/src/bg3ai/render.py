@@ -226,6 +226,34 @@ def character_line(c: dict, H: Handles, me: str | None = None) -> str:
     return " ".join(bits)
 
 
+def camp_text(camp: Any, H: Handles) -> str:
+    """state.status camp roster as "e5 Wyll Warlock3(The Fiend) level 3 (level up to 4 ready), wants to talk;
+    e6 Halsin Druid5 level 5" (it was the generic dump `[Warlock3(The Fiend) level=3 e5 wants_talk level_up=4
+    name=Wyll; ..]`, live 20261016)."""
+    if not isinstance(camp, list):
+        return compact(camp, H)
+    out = []
+    for c in camp:
+        if not isinstance(c, dict):
+            out.append(compact(c, H))
+            continue
+        bits = [H.get(c["uuid"], c.get("name")) if c.get("uuid") else "", str(c.get("name") or "")]
+        if isinstance(c.get("classes"), list) and c["classes"]:
+            bits.append(classes_text(c["classes"]))
+        lv = c.get("level")
+        if lv is not None:
+            up = c.get("level_up")
+            bits.append(f"level {num(lv)}" + (f" (level up to {num(up)} ready)" if up and up != lv else ""))
+        t = " ".join(b for b in bits if b)
+        if c.get("wants_talk"):
+            t += ", wants to talk"
+        rest = {k: v for k, v in c.items() if k not in ("uuid", "name", "classes", "level", "level_up", "wants_talk")}
+        if rest:
+            t += " " + compact(rest, H)
+        out.append(t)
+    return "; ".join(out) + " (at camp, not in the party)"
+
+
 def render_status(s: dict, ui: dict | None, H: Handles) -> str:
     lines = []
     sub = s.get("subregion") or (ui or {}).get("region")
@@ -253,6 +281,9 @@ def render_status(s: dict, ui: dict | None, H: Handles) -> str:
         lines.append("PARTY " + character_line(c, H, me))
     extra = {k: v for k, v in s.items() if k not in ("region", "subregion", "level", "in_combat", "combat",
                                                      "turn_based", "in_dialogue", "gold", "active", "party")}
+    camp = extra.pop("camp", None)
+    if camp:
+        lines.append("CAMP " + camp_text(camp, H))
     if extra:
         lines.append("ALSO " + compact(extra, H))
     if ui:
@@ -1109,6 +1140,7 @@ def render_objectives(markers: Any, here_only: bool = False, limit: int | None =
     if not isinstance(markers, list):
         return []
     lines, elsewhere = [], 0
+    ids: list[list[str]] = []  # per line: the ids it stands for
     for i, m in enumerate(markers, 1):
         if not isinstance(m, dict):
             continue
@@ -1116,11 +1148,8 @@ def render_objectives(markers: Any, here_only: bool = False, limit: int | None =
         if here_only and not here:
             elsewhere += 1
             continue
-        if limit is not None and len(lines) >= limit:
-            elsewhere += 1
-            continue
         label = objective_label(m)
-        s = f"OBJECTIVE o{m.get('oid') or i} {label}"
+        s = label
         if here:
             s += f" {num(m['dist'])}m {m.get('dir') or ''}".rstrip()
         else:
@@ -1128,7 +1157,16 @@ def render_objectives(markers: Any, here_only: bool = False, limit: int | None =
         quest = m.get("quest")
         if quest and quest != label:
             s += f" [{quest}]"
+        # two markers of one target (live 20261016: o1, o2 both "Zariel's Asset 1508.9m N"): one line, both ids
+        if s in lines:
+            ids[lines.index(s)].append(f"o{m.get('oid') or i}")
+            continue
+        if limit is not None and len(lines) >= limit:
+            elsewhere += 1
+            continue
         lines.append(s)
+        ids.append([f"o{m.get('oid') or i}"])
+    lines = [f"OBJECTIVE {'/'.join(d)} {s}" for d, s in zip(ids, lines)]
     if elsewhere:
         lines.append(f"(+{elsewhere} more objective{'s' if elsewhere != 1 else ''}; get_map lists all)")
     return lines

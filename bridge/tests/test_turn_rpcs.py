@@ -132,8 +132,28 @@ def background_end(r) -> str:
     return server.combat_turn(r.plan(action={"ability": "Target_MainHandAttack", "target": r.gob}))
 
 
+def approach_short(r) -> str:
+    # live window 2026-10-16 (Shadowheart, Gale): a move {target, within 1.5} along the route stops short, out of
+    # movement; the "now 9.9m from" distance before and after the walk read state.combat on their own (+2 per turn)
+    r.g.combat = T.combat(gob_dist=16.0)
+    r.g.approach = {"reachable": True, "pos": [-4.0, 0.0, 5.0], "walk_m": 8.8, "need_m": 18.5,
+                    "route_m": 20.0, "limit": "movement", "movement_left": 9.0, "end_m": 9.9}
+
+    def advance(op, a):
+        if op == "act.move_to":
+            next(o for o in r.g.combat["order"] if o["uuid"] == GOB)["from"][P1] = [9.9, 1]
+        if op == "act.end_turn":
+            r.g.combat["current"] = GOB
+    r.g.on_start = advance
+    r.g.refuse_if = lambda op, a: ("target is out of range (9.9 m, range 1.5 m): move closer first"
+                                   if a.get("spell") == "Target_MainHandAttack" else None)
+    r.g.actions = [{"spell": "Target_MainHandAttack"}, {"spell": "Projectile_MainHandAttack", "range": 18}]
+    return server.combat_turn(r.plan(move={"target": r.gob, "within": 1.5},
+                                     action={"ability": "Target_MainHandAttack", "target": r.gob}))
+
+
 SHAPES = {"whole_turn": whole_turn, "ranged_fallback": ranged_fallback, "dies_mid_turn": dies_mid_turn,
-          "dead_alternative": dead_alternative, "background_end": background_end}
+          "dead_alternative": dead_alternative, "background_end": background_end, "approach_short": approach_short}
 
 
 class SerialRoundTrips(unittest.TestCase):
@@ -163,6 +183,14 @@ class SerialRoundTrips(unittest.TestCase):
         self.assertEqual(sum("events.since+act.watch+state.combat" in t for t in trips), 3, trips)
         self.assertEqual([t for t in trips if t == "state.combat"], ["state.combat", "state.combat"], trips)
         # (left: end_turn's own read, the NEXT line's read after the end — both after the game moved on)
+
+    def test_move_distance_lines_reuse_the_kept_read(self):
+        """Live window 2026-10-16: single state.combat 4 > 3 (Shadowheart) and 6 > 5 (Gale): dist_now() read it
+        before and after each move with a target. Now the start read / the read after the move step carry it."""
+        out, _, trips = play(True, approach_short)
+        self.assertIn("now 9.9m from", out)
+        self.assertIn("melee is out of reach this turn", out)
+        self.assertEqual([t for t in trips if t == "state.combat"], ["state.combat", "state.combat"], trips)
 
     def test_a_stale_kept_read_is_read_again(self):
         server._cs_keep({"active": True, "order": []})

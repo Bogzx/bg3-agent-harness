@@ -7,6 +7,7 @@ local U = BG3AI.Util
 
 -- Server modules: fair state (visibility-filtered), events, guarded actions.
 for _, path in ipairs({
+    "Shared/HotbarMap.lua", -- worker se: op hotbar.map, the hotbar slot -> spell id fallback (ACT-8)
     "Server/Visibility.lua",
     "Server/State.lua",
     "Server/Events.lua",

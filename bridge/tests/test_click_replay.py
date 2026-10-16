@@ -203,7 +203,12 @@ class Replay(unittest.TestCase):
         self.assertEqual(r.detail["camera"], ["rotate_occluded_right", "rotate_occluded_left"])
         self.assertEqual(r.detail.get("settle"), "cursor")
         print(f"\n  e126 replay: old {r_old.tries} tries {s_old:.1f} s -> new {r.tries} tries {s:.1f} s")
-        self.assertLessEqual(r.tries, r_old.tries // 2)
+        # 36 -> 44 tries since live window #1: the first view's probe also takes every aim's centre (the door fix).
+        # The replay runs on the simulated clock only (clicker.time = Clock, frames = clock steps): the counts are
+        # exact, not load-dependent. vis's 52 / 36 runs were the tree mid-edit (52 = centres in every probe, 36 =
+        # before the door fix). A change here means the search order changed: update these numbers on purpose.
+        self.assertEqual((r_old.tries, r.tries), (82, 44))
+        self.assertLessEqual(r.tries, int(r_old.tries * 0.55))
         self.assertLessEqual(s, s_old / 2.5)
         self.assertLessEqual(s, 5.5)
 
@@ -230,6 +235,34 @@ class Replay(unittest.TestCase):
         r, _ = run(scene, v2=True)
         self.assertTrue(r_old.ok and r.ok, (r_old, r))
         self.assertEqual(r.pos, r_old.pos)
+
+    def test_door_hinge_ring_on_the_frame_no_camera_turn(self):
+        # live window #1 (10-16 S050 Foundry door e7): the "auto" aim is the hinge; its 9 points hover the frame
+        # (no-id), the leaf answers at another aim's centre. v2 turned the camera twice (19 tries, 1.6 s) first.
+        door = {"views": [(True, box_at(0, 0, "mid", 0.9))]}
+        r_old, s_old = run(door, v2=False)
+        r, s = run(door, v2=True)
+        self.assertTrue(r_old.ok and r.ok, (r_old, r))
+        self.assertEqual(r.pos, r_old.pos)
+        self.assertNotIn("camera", r.detail)            # no rotate_occluded_*
+        self.assertLessEqual(r.tries, 9 + len(clicker.AIMS) - 1)
+        self.assertLess(r.tries, r_old.tries)
+        self.assertLess(s, s_old)
+
+    def test_never_worse_than_old_on_the_first_ring_or_a_centre(self):
+        # the same view, everything else a no-id occluder: a hit the old path makes on the first aim's ring or any
+        # aim's centre, the new path makes in no more tries and with no camera turn
+        spots = [box_at(dx, dy) for dx, dy in clicker.OFFSETS]
+        spots += [box_at(0, 0, aim, ox) for aim, ox in clicker.AIMS[1:] if aim != "low"]
+        for box in spots:
+            scene = {"views": [(True, box)]}
+            r_old, _ = run(scene, v2=False)
+            r, _ = run(scene, v2=True)
+            self.assertTrue(r.ok, (box, r))
+            if not r_old.ok:   # a far aim's centre: the old ring-by-ring order runs out of its 8 s first
+                continue
+            self.assertLessEqual(r.tries, r_old.tries, box)
+            self.assertNotIn("camera", r.detail, box)
 
     def test_behind_old_path_oscillates(self):
         r, s = run(BEHIND, v2=False)

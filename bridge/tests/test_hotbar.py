@@ -74,6 +74,9 @@ class FakeWorld:
         self.rpcs: list[str] = []
         self.jobs: list[str] = []
         self.confirms = 0
+        self.no_ids = False
+        self.server_map = {"ClassHotBar": {"12": "Target_Bless"}}
+        self.map_calls = 0
 
     # --- layout
     def cell_at(self, x, y):
@@ -127,7 +130,16 @@ class FakeWorld:
         if op == "ui.state":
             return {"screen": self.screen}
         if op == "ui.hotbar_slot":
+            if self.no_ids and not args.get("map"):
+                # live window #1: the slot VMs carry no spell id and the client entity has no hotbar component
+                return {"selected": self.selected, "found": False, "ids": "none",
+                        "why": "not on the hotbar (7 slots in 2 decks; no spell ids: no HotbarContainer)"}
             return self.slot(args)
+        if op == "hotbar.map":
+            self.map_calls += 1
+            if self.server_map is None:
+                return {"why": "no HotbarContainer"}
+            return {"map": self.server_map, "bars": 2}
         if op == "ui.cast_state":
             st = {"armed": self.armed is not None, "can_force": bool(self.armed and self.picked),
                   "counter": self.armed is not None}
@@ -200,6 +212,7 @@ class HotbarCast(unittest.TestCase):
     def setUp(self):
         hotbar._geom.update(size=None, cells={})
         hotbar._tabs.update(size=None, at={})
+        hotbar._maps.clear()
         self.w = FakeWorld()
         self.w.targets = {"a": (500, 500), "b": (700, 480), "c": (900, 520), "far": None}
 
@@ -398,6 +411,30 @@ class HotbarCast(unittest.TestCase):
         d = r.as_dict()
         self.assertEqual(d["budget_s"], 2.5)
         self.assertIn("elapsed_s", d)
+
+    def test_no_ids_on_the_client_uses_the_server_map_once(self):
+        # live window #1 (2026-10-16): ui.hotbar_slot said ids=none -> hotbar.map (server), then the read again
+        hotbar._maps.clear()
+        self.w.no_ids = True
+        r, _ = _cast(self.w)
+        self.assertTrue(r.ok, r.as_dict())
+        self.assertEqual(self.w.cast_done, [("Target_Bless", ["a", "b", "c"])])
+        self.assertEqual(self.w.map_calls, 1)            # cached: the locator's probes pass the map along
+
+    def test_no_ids_and_no_server_map_fails_not_on_hotbar(self):
+        hotbar._maps.clear()
+        self.w.no_ids, self.w.server_map = True, None
+        r, _ = _cast(self.w)
+        self.assertFalse(r.ok)
+        self.assertEqual(r.reason, "not_on_hotbar")
+        self.assertIn("no spell ids", r.as_dict().get("why") or "")
+        self.assertEqual(self.w.cast_done, [])
+
+    def test_ids_on_the_client_skip_the_server(self):
+        hotbar._maps.clear()
+        r, _ = _cast(self.w)
+        self.assertTrue(r.ok)
+        self.assertEqual(self.w.map_calls, 0)
 
     def test_flag_off_by_default(self):
         self.assertFalse(hotbar.HOTBAR_CAST_ENABLED)

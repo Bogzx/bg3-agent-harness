@@ -115,10 +115,19 @@ function lat(l) {
           `<td class="${cls(l.gaps_over_10s, TG.gaps_over_10s)}">${l.gaps_over_10s ?? "-"}</td>`,
           `<td class="${cls(l.read_rt_median_ms, TG.read_rt_median_ms)}">${num(l.read_rt_median_ms, 0)}</td>`];
 }
+const GR = {better: "ok", same: "", worse: "bad"};
+let RB = null;   // the naut result-token baseline (/api/series result_tok_baseline)
+function rtok(rt) {
+  if (!rt || rt.total === null || rt.total === undefined) return '<td class="muted">-</td>';
+  const t = `${rt.n} results, ${rt.images ?? 0} with an image${rt.source === "stream" ? " (from the raw stream)" : ""}` +
+    (RB ? ` · naut baseline ${(RB.total / 1000).toFixed(1)}k/run, ${Math.round(RB.per_result)}/result` : "");
+  return `<td title="${esc(t)}"><span class="${GR[rt.grade_total] ?? ""}">${(rt.total / 1000).toFixed(1)}</span>` +
+    ` <span class="small ${GR[rt.grade_per_result] ?? ""}">(${num(rt.per_result, 0)})</span></td>`;
+}
 const sandbox = (r) => esc(r.sandbox || "none") + (r.sandbox_unfirewalled ? ' <span class="warn">unfw</span>' : "");
 
 const HEAD = ["run", "outcome", "clean", "to M min", "wall min", "cost $", "tok M", "fail H/A/U", "persona",
-  "idle med/p90 s", "gaps>10s", "read rt ms", "harness / model / overlap", "top harness tools", "sandbox", "model", "notes"];
+  "idle med/p90 s", "gaps>10s", "read rt ms", "result tok k (/res)", "harness / model / overlap", "top harness tools", "sandbox", "model", "notes"];
 const LEFT = new Set(["outcome", "harness / model / overlap", "top harness tools", "sandbox", "model", "notes"]);
 
 function runRow(r) {
@@ -133,7 +142,7 @@ function runRow(r) {
   return `<tr><td>${r.run}</td><td class="l"><span class="badge ${out}">${esc(r.outcome)}${r.cap ? " (" + esc(r.cap) + ")" : ""}</span></td>` +
     `<td class="${r.clean ? "ok" : "bad"}">${r.clean ? "yes" : "no"}</td><td>${num(r.to_milestone_min)}</td><td>${num(r.wall_min)}</td>` +
     `<td>${num(r.cost_usd, 2)}</td><td>${num(r.tokens_m, 2)}</td>` +
-    `<td class="${(f.harness || 0) + (f.unknown || 0) ? "warn" : ""}">${fc}</td><td>${pc}</td>${lat(r.latency).join("")}` +
+    `<td class="${(f.harness || 0) + (f.unknown || 0) ? "warn" : ""}">${fc}</td><td>${pc}</td>${lat(r.latency).join("")}${rtok(r.result_tokens)}` +
     `<td class="l">${split(r.model_time)}</td><td class="l small">${tools(r.model_time)}</td>` +
     `<td class="l">${sandbox(r)}</td><td class="l small">${esc(r.client)}/${esc(r.model || "?")}</td>` +
     `<td class="l small" style="white-space:normal;min-width:180px">${notes}</td></tr>`;
@@ -149,14 +158,16 @@ function liveRow(r) {
   return `<tr class="live"><td>${r.run}</td><td class="l"><span class="badge running">${esc(r.outcome)}</span></td>` +
     `<td class="muted">…</td><td class="muted">-</td><td>${num(r.elapsed_min)}</td>` +
     `<td>${r.usage_estimated ? "≈" : ""}${num(r.cost_usd, 2)}</td><td>${num(r.tokens_m, 2)}</td><td class="muted">-</td><td class="muted">-</td>` +
-    `${lat(l).join("")}<td class="l">${split(r.model_time)}</td><td class="l small">${tools(r.model_time)}</td>` +
+    `${lat(l).join("")}${rtok(r.result_tokens)}<td class="l">${split(r.model_time)}</td><td class="l small">${tools(r.model_time)}</td>` +
     `<td class="l">${esc(r.sandbox || "?")}</td><td class="l small">${r.sessions} session(s)</td>` +
     `<td class="l small" style="white-space:normal;min-width:180px">${note}${cur}</td></tr>`;
 }
 
 function render(d) {
   if (d.targets) TG = d.targets;
-  $("tg").textContent = `goals: idle median ≤ ${TG.idle_median_s} s · gaps>10s = ${TG.gaps_over_10s} · read rt ≤ ${TG.read_rt_median_ms} ms`;
+  if (d.result_tok_baseline) RB = d.result_tok_baseline;
+  $("tg").textContent = `goals: idle median ≤ ${TG.idle_median_s} s · gaps>10s = ${TG.gaps_over_10s} · read rt ≤ ${TG.read_rt_median_ms} ms` +
+    (RB ? ` · result tokens vs naut ${(RB.total / 1000).toFixed(1)}k/run, ${Math.round(RB.per_result)}/result (green ≤ ${Math.round(RB.better * 100)} %, red ≥ ${Math.round(RB.worse * 100)} %)` : "");
   const pick = $("pick");
   const names = (d.available || []).map((a) => a.name);
   if (d.series && !names.includes(d.series)) names.unshift(d.series);
@@ -177,7 +188,8 @@ function render(d) {
   const m = Object.fromEntries((s.metrics || []).map((x) => [x.metric, x]));
   const mean = (k, dg) => m[k] && m[k].n ? `${Number(m[k].mean).toFixed(dg)} <span class="small">±${Number(m[k].stddev).toFixed(dg)}</span>` : "-";
   big.push([mean("to milestone min", 1), "to milestone min", ""], [mean("cost $", 2), "cost $", ""],
-           [mean("idle median s", 2), "idle median s", ""], [mean("persona score", 1), "persona", ""]);
+           [mean("idle median s", 2), "idle median s", ""], [mean("persona score", 1), "persona", ""],
+           [mean("result tok k", 1), "result tok k / run", ""]);
   $("big").innerHTML = big.map(([n, l, c]) => `<div class="kv"><span class="n ${c}">${n}</span><span class="l">${l}</span></div>`).join("");
   $("line").textContent = (d.error ? d.error + " · " : "") + (s.line || "");
   const rows = (d.rows || []).map(runRow);

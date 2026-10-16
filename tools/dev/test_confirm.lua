@@ -1024,5 +1024,55 @@ do
     widgets = {}
 end
 
+-- live window #1 (10-16 18:34): load_game right after the launch hit the loading screen ("no command
+-- 'OpenLoadGameDialog' on ls.LoadingScreen"): the load job now waits for the loading screen, then opens the page
+do
+    local _cmd, _get = BG3AI.UI.command, BG3AI.UI.get
+    local opened = 0
+    BG3AI.UI.get = function(o, k) return type(o) == "table" and o[k] or nil end
+    BG3AI.UI.command = function(dc, name, param, dry)
+        if name == "OpenLoadGameDialog" and not dry then
+            if widgets.root then return false, "no command 'OpenLoadGameDialog' on ls.LoadingScreen" end
+            opened = opened + 1
+            W("LoadGame", {}, {})
+        end
+        return true
+    end
+    local _le = A.LOAD_ENABLED
+    A.LOAD_ENABLED = true
+    widgets = {}
+    W("root", {}, {})                       -- the loading screen (AutoSkip: widget "root", DC ls.LoadingScreen)
+    ok(A.loadingScreenUp() == true, "loading screen seen")
+    local r = ops["ui.menu"]({ action = "load", name = "Claude-4810126690__S027-start" })
+    local j = run(r.job, 6000)
+    ok(j.status == "running" and opened == 0 and j.partial and j.partial.waiting == "loading screen",
+        "load waits while the loading screen is up (no press): " .. tostring(j.status) .. " " .. tostring(j.error))
+    widgets.root = nil
+    j = run(r.job, 1000)
+    ok(opened == 1 and j.partial and j.partial.stage == "select", "loading screen gone -> load page opened, select stage")
+    -- a loading screen that never goes: a clear failure, still no press
+    widgets, opened = {}, 0
+    W("root", {}, {})
+    r = ops["ui.menu"]({ action = "load", name = "Claude-4810126690__S027-start" })
+    j = run(r.job, 29000)
+    ok(j.status == "failed" and opened == 0 and j.result and j.result.loading == true
+        and tostring(j.error):find("loading screen stayed up", 1, true), "loading screen stuck -> failed loading=true: " .. tostring(j.error))
+    -- the DC: never the loading screen's
+    widgets = {}
+    W("root", {}, {}).DataContext = { CurrentPlayer = {}, OpenLoadGameDialog = {} }
+    W("HUD", {}, {}).DataContext = { CurrentPlayer = {}, OpenLoadGameDialog = { hud = true } }
+    local _ws = BG3AI.UI.widgets
+    BG3AI.UI.widgets = function()
+        local out = _ws()
+        for _, w in ipairs(out) do if w.name == "root" then w.dc = "ls.LoadingScreen" end end
+        return out
+    end
+    local dc = A.commandDC("OpenLoadGameDialog")
+    ok(dc and dc.OpenLoadGameDialog.hud == true, "commandDC skips the loading screen's DC")
+    BG3AI.UI.widgets = _ws
+    widgets = {}
+    A.LOAD_ENABLED, BG3AI.UI.command, BG3AI.UI.get = _le, _cmd, _get
+end
+
 print(("%d passed, %d failed"):format(passes, fails))
 os.exit(fails == 0 and 0 or 1)

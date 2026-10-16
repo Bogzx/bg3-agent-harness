@@ -196,6 +196,25 @@ class TwoStepCast(unittest.TestCase):
         body = self.w.targets["body"]
         self.assertNotIn(body, clicks(inp)[2:])                  # the ground click is not on the body
 
+    def test_l5_a_one_step_cast_by_the_first_pick_gets_no_ground_click(self):
+        """Review L5: routed by the name regex, a spell the game casts on the first pick (one-step) got a ground
+        click with nothing in hand: a plain move order. The cast started: done, no ground click."""
+        w = self.w
+        base = w.on_click
+
+        def on_click(x, y, button):
+            if button == "L" and w.armed and not w.picked and w.char_at(x, y) in w.first_ok:
+                w.picked.append(w.char_at(x, y))
+                w.fire()
+                return
+            return base(x, y, button)
+        w.on_click = on_click
+        r, inp = _cast(w, REV, "body")
+        self.assertTrue(r.ok, r.as_dict())
+        self.assertTrue(r.detail.get("one_step"), r.as_dict())
+        self.assertIsNone(w.ground_at)
+        self.assertNotIn("ui.ground_check", w.rpcs)
+
     def test_m1_should_stop_before_the_ground_click(self):
         inp = FakeInput(self.w)
         with mock.patch.object(hotbar.time, "sleep"), mock.patch.object(twostep.time, "sleep"):

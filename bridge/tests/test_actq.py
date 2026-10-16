@@ -652,6 +652,23 @@ class WatcherParty(unittest.TestCase):
         self.party(hp=3)
         self.assertEqual(self.w.check("move_to", None, ui=False)[0], "hp")
 
+    def test_l7_one_drop_below_the_threshold_still_moves_every_row_on(self):
+        """Review L7: _party_check returned at the first row below the threshold, so the other members' baselines were
+        not updated that tick (a second, stale hit on the next check)."""
+        self.g.watch["party"] = [{"uuid": P1, "hp": 20, "max_hp": 20}, {"uuid": P2, "hp": 20, "max_hp": 20}]
+        self.w.baseline()
+        self.g.watch["party"] = [{"uuid": P1, "hp": 3, "max_hp": 20}, {"uuid": P2, "hp": 4, "max_hp": 20}]
+        kind, why = self.w.check("move_to", None, ui=False)
+        self.assertEqual(kind, "hp")
+        self.assertIn(P1, why)
+        self.assertIsNone(self.w.check("move_to", None, ui=False))  # P2's drop was taken in the same tick
+
+    def test_l7_an_hp_drop_does_not_hide_a_new_hostile_in_the_same_check(self):
+        self.w.baseline()
+        self.party(hp=3)
+        self.g.watch["seen"] = [{"uuid": "99999999-2222-3333-4444-555555555555", "hostile": True}]
+        self.assertEqual(self.w.check("move_to", None, ui=False)[0], "hostile")
+
     def test_stepping_into_a_surface(self):
         self.w.baseline()
         self.party(surface="Acid")

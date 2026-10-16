@@ -261,7 +261,8 @@ def check_turn() -> None:
     out = S.combat_turn(json.dumps(plan))
     dt = time.monotonic() - t0
     print(out)
-    ok = out.startswith("TURN") and ("end_turn: done" in out or "turn NOT ended" in out)
+    ok = out.startswith("TURN") and ("end_turn: done" in out or "turn NOT ended" in out
+                                     or "end_turn: ending in the background" in out)  # END_ASYNC (review L6)
     say("PASS" if ok else "FAIL", f"combat_turn ran ({dt:.1f} s)")
     say("PASS" if ("NEXT " in out or "NOW " in out or "combat is over" in out) else "FAIL",
         "combat_turn says who acts next")

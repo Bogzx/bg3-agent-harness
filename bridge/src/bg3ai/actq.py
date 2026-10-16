@@ -247,7 +247,7 @@ class Watcher:
         """HP (downed, below the threshold, any damage outside combat) and harmful surfaces underfoot.
         Surface: only stepping INTO one (or into a different one) counts, so a walk that starts in a fire
         to get out of it is not stopped by it."""
-        hit = None
+        hit = low = None  # review L7: a drop below the threshold no longer stops the loop (every row's baselines move on)
         for row in w.get("party") or []:
             u, p = row.get("uuid"), _pct(row)
             surf, was = row.get("surface"), self._surf.get(u)
@@ -266,7 +266,8 @@ class Watcher:
             self._hp[u] = p
             if p < before - 0.1:
                 if p < self.hp_below and "hp" not in self.ignore:
-                    return "hp", f"{u} HP {row.get('hp')}/{row.get('max_hp')}"
+                    low = low or ("hp", f"{u} HP {row.get('hp')}/{row.get('max_hp')}")
+                    continue
                 chip = self._chip.get(u, 0.0) + (before - p)
                 if before - p < DAMAGE_MIN_PCT and chip < DAMAGE_SUM_PCT:
                     self._chip[u] = chip
@@ -275,7 +276,7 @@ class Watcher:
                 if not w.get("combat") and "damage" not in self.ignore and hit is None:
                     hit = "damage", f"{u} took damage outside combat (HP {row.get('hp')}/{row.get('max_hp')})" \
                         + (f" in {surf}" if surf else "")
-        return hit
+        return low or hit
 
     def _trap_check(self, w: dict, tool: str | None) -> tuple[str, str] | None:
         """A trap spotted during this run that lies on a walker's way (see TRAP_AHEAD_M)."""
@@ -309,6 +310,7 @@ class Watcher:
         with self._lock:
             handled = {tool, next_tool}
             got = scr = None
+            hp_hit = None  # review L7: an HP drop is returned last, after the trap/hostile/prompt tests of this check
             want_ui = bool(ui or (ui is None and time.monotonic() - self._ui_at >= UI_EVERY_S))
             if BATCH_CHECKS:
                 post = list(self.post_ops) if ui is False else []
@@ -345,7 +347,11 @@ class Watcher:
                 self.last = w
                 if w.get("combat") and not self.start.get("combat") and "combat" not in self.ignore:
                     return "combat", "combat started"
-                hit = self._party_check(w) or self._trap_check(w, tool)
+                hit = self._party_check(w)
+                if hit and hit[0] == "hp" and not hit[1].endswith(" is downed"):
+                    # TurnWatcher holds such a drop (it never stops the step): the rest of this check still runs
+                    hp_hit, hit = hit, None
+                hit = hit or self._trap_check(w, tool)
                 if hit:
                     return hit
                 if "hostile" not in self.ignore:
@@ -363,7 +369,7 @@ class Watcher:
                     return "prompt", f"{scr} on screen"
                 if scr not in PROMPTS:
                     self._screen = scr
-        return None
+        return hp_hit
 
 
 # ---------------------------------------------------------------------------

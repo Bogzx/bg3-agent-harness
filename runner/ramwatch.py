@@ -192,6 +192,25 @@ def bg3le_crumbs(logs: Path | None = None, n: int = 12, tail_bytes: int = 65536)
     return [ln.rstrip()[:200] for ln in data.splitlines() if ln.strip()][-n:]
 
 
+def last_tick(path: Path = LOG, tail_bytes: int = 16384) -> tuple[float, str] | None:
+    """The newest periodic tick line of ram.log ("… anon+swap=…MB …") and its time (epoch s), or None. Spike, kill
+    and test-kill lines are written between ticks, so the file's last line (and its mtime) is not always a tick."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - tail_bytes))
+            lines = fh.read().decode(errors="replace").splitlines()
+    except OSError:
+        return None
+    for ln in reversed(lines):
+        if "anon+swap=" in ln and " avail=" in ln:
+            try:
+                return datetime.strptime(ln[:19], "%Y-%m-%d %H:%M:%S").timestamp(), ln.strip()
+            except ValueError:
+                continue
+    return None
+
+
 class RamWatch:
     def __init__(self, log=None, logfile: Path = LOG, warn_mb: int = WARN_MB, kill_mb: int = KILL_MB,
                  exclude: set[int] | None = None):

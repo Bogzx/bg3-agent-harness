@@ -69,10 +69,10 @@ CENTER_WAIT_S = 1.5
 # with BG3AI_HOVER_V2=0 (or clicker.HOVER_V2 = False):
 #  - each try settles on the picking helper's own cursor (hover_check `cursor` == the point moved to) instead of a
 #    fixed 2-frame wait: ~2 frames a try instead of ~4 (the 83 tries were ~135 ms each, RPCs only 1.1 s of 12.6 s);
-#  - the first aim's 9 points (the probe: 61/77 hits in the log are within them), then every other aim's centre
-#    (5 more hits are try 10 = the 2nd aim's centre), then the remaining offsets; when nearly all of the probe
-#    hovered something else, the camera turns at once instead of after the 8 s budget (e126 the nerve: an 8 s pass
-#    on an occluder, then the 2nd rotation found it);
+#  - the first aim's 9 points (61/77 hits in the log are within them), then every other aim's centre (5 more hits
+#    are try 10 = the 2nd aim's centre), then the remaining offsets; when nearly all of the probe (the first aim's
+#    ring + every aim's centre) hovered something else, the camera turns at once instead of after the 8 s budget
+#    (e126 the nerve: an 8 s pass on an occluder, then the 2nd rotation found it);
 #  - a rotation that carried a point behind the camera across to the other side (or from the front to behind) was
 #    the wrong way: the drag direction flips and is remembered (the off_screen calls: left,left,right,left,right,left
 #    with the target behind, where the |x| check never fires).
@@ -364,11 +364,11 @@ def _at(hc: dict, x: int, y: int, scale: tuple[float, float] | None) -> bool | N
 
 def hover_search(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadline: float | None = None,
                  seen: dict[str, int] | None = None, early: bool = True,
-                 info: dict | None = None) -> tuple[tuple[int, int] | None, int, dict]:
+                 info: dict | None = None, centres: bool = True) -> tuple[tuple[int, int] | None, int, dict]:
     """hover_point's faster order and settle (HOVER_V2): the first aim's 9 points, every other aim's centre, then
     the remaining offsets; each try reads hover_check as soon as the helper's cursor is at the point (at most
-    `frames` frames). With `early`, stops after the first aim's points when nearly all of them hovered something
-    else (last "occluded": True: the caller turns the camera). `info` collects {"settle": "cursor"|"frames"} across passes."""
+    `frames` frames). With `early`, stops after the first aim's points and every aim's centre when nearly all of
+    them hovered something else (last "occluded": True: the caller turns the camera). `info` collects {"settle": "cursor"|"frames"} across passes."""
     w, h = inp.window_size()
     info = info if info is not None else {}
     scale = info.get("scale", _cursor_scale(inp))
@@ -408,8 +408,15 @@ def hover_search(game: Game, inp: InputClient, uuid: str, frames: int = 2, deadl
     def order():
         rest = [(i, o) for i in range(1, len(AIMS)) for o in OFFSETS[1:]]
         yield from ((0, o) for o in OFFSETS)
+        # live window #1 (10-16, S050 Foundry door e7): a door's "auto" aim is its hinge, so all 9 first points
+        # hovered the frame and the camera turned twice (19 tries 1.6 s) before trying the leaf. The first view's
+        # probe (`centres`) also takes every other aim's centre (+<=9 tries) before it may call the target
+        # occluded; a turned view's quick probe stays the first aim's ring (the centres missed already).
+        if centres:
+            yield from ((i, OFFSETS[0]) for i in range(1, len(AIMS)))
         yield "probe_done"
-        yield from ((i, OFFSETS[0]) for i in range(1, len(AIMS)))
+        if not centres:
+            yield from ((i, OFFSETS[0]) for i in range(1, len(AIMS)))
         yield from rest
 
     def check(x: int, y: int) -> dict:
@@ -611,7 +618,7 @@ def _search_v2(game: Game, inp: InputClient, uuid: str, moves: list[str], seen: 
             final = n == len(turns) - 1
             pos, t2, last = hover_search(game, inp, uuid, deadline=deadline if final else
                                          min(deadline, time.monotonic() + OCCLUDED_PASS_S), seen=seen,
-                                         early=not final, info=info)
+                                         early=not final, info=info, centres=final)
             tries += t2
             keep_diag(last)
             if pos is not None:

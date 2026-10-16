@@ -466,6 +466,65 @@ class CombatRules(unittest.TestCase):
         self.assertEqual(fresh().apply("combat_turn", self.ENEMY_TURNS), self.ENEMY_TURNS)
 
 
+class BlockAgain(unittest.TestCase):
+    """get_nearby right after look full=true (live 20261016-183253): the same CHAR/ITEM lines once."""
+
+    LOOK = ("WHERE Campsite · Shadow-Cursed Lands | exploring | gold 43\n"
+            "CHAR e7 Withers neutral HP 1/1 1.2m [Moonshield] can_talk @(687,19,-1483)\n"
+            "CHAR e8 Arabella neutral HP 3/3 2.2m can_talk @(687,20,-1481)\n"
+            "CHAR e10 Scratch neutral HP 7/7 23.3m can_talk @(666,19,-1496)\n"
+            "ITEM e11 Wooden Crate <item> 7.8m\nITEM e14 Mug <item> 13.4m (+2 more Mug up to 21.2m)\n"
+            "ITEM e12 Traveller's Chest <usable> 12.8m\nLEVEL UP: e5 Wyll (4, at camp)")
+    BLOCK = LOOK.split("\n")[1:-1]
+
+    def test_identical_block_is_one_line(self):
+        c = fresh()
+        shown = c.apply("look", self.LOOK)
+        c.now["t"] = 5
+        raw = "\n".join(self.BLOCK)
+        out = c.apply("get_nearby", raw)
+        self.assertEqual(out, "(same as the look a moment ago: 6 lines)")
+        self.assertEqual(cc.check(raw, out, c.elided, shown), [])
+
+    def test_changed_lines_stay(self):
+        c = fresh()
+        shown = c.apply("look", self.LOOK)
+        raw = "\n".join(self.BLOCK).replace("23.3m can_talk @(666,", "23.6m can_talk @(667,") + "\nITEM e20 Bedroll <item> 18.3m"
+        out = c.apply("get_nearby", raw)
+        self.assertEqual(out.split("\n")[0], "(5 lines same as the look a moment ago; changed or new:)")
+        self.assertIn("e10 Scratch neutral HP 7/7 23.6m", out)
+        self.assertIn("ITEM e20 Bedroll <item> 18.3m", out)
+        self.assertEqual(cc.check(raw, out, c.elided, shown), [])
+
+    def test_window_and_minimum(self):
+        c = fresh()
+        c.apply("look", self.LOOK)
+        c.now["t"] = compact.BLOCK_AGAIN_S + 1
+        raw = "\n".join(self.BLOCK)
+        self.assertEqual(c.apply("get_nearby", raw), raw)  # too old: in full, the clock restarts
+        c.now["t"] += 10
+        self.assertTrue(c.apply("look", raw).startswith("(same as get_nearby a moment ago"))
+        few = "\n".join(self.BLOCK[:compact.BLOCK_AGAIN_MIN_LINES - 1])
+        self.assertEqual(c.apply("get_nearby", few), few)
+
+    def test_a_reference_never_points_at_a_reference(self):
+        c = fresh()
+        c.apply("look", self.LOOK)
+        raw = "\n".join(self.BLOCK)
+        c.now["t"] = 40
+        self.assertTrue(c.apply("get_nearby", raw).startswith("(same as"))
+        c.now["t"] = 70  # 70 s after the full showing, 30 s after the reference: in full again
+        self.assertEqual(c.apply("get_nearby", raw), raw)
+
+    def test_off(self):
+        self.addCleanup(setattr, compact, "BLOCK_AGAIN", compact.BLOCK_AGAIN)
+        compact.BLOCK_AGAIN = False
+        c = fresh()
+        c.apply("look", self.LOOK)
+        raw = "\n".join(self.BLOCK)
+        self.assertEqual(c.apply("get_nearby", raw), raw)
+
+
 class SwitchOff(unittest.TestCase):
     """BG3AI_COMPACT_OFF=RULE1,RULE2 (read at bridge start): single rules off without a code edit."""
 

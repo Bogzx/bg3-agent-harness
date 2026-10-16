@@ -242,8 +242,27 @@ local function tb_flags(uuid)
 end
 G.tb_flags = tb_flags
 
+-- Live window 2026-10-16 (combat, S027-start): the group's TurnEnded had fired (Karlach + Claude), yet for a moment
+-- the game still showed Claude's turn open (IsActiveCombatTurn, no RequestedEndTurn) and end_requested was already
+-- cleared, so a 9 m move passed the guard out of turn (the next round started with 0.4 m). After TurnEnded a turn is
+-- over until that character's own TurnStarted, or until the game shows it inactive, or TURN_OVER_TTL_MS.
+G.turn_over = G.turn_over or {}
+G.TURN_OVER_TTL_MS = 90000
+function G.turn_is_over(uuid)
+    local g = G.guid(uuid) or uuid
+    local t = g and G.turn_over[g]
+    if not t then return false end
+    local active = G.tb_flags(g)
+    if not active or now_ms() - t > G.TURN_OVER_TTL_MS or not G.in_combat(g) then
+        G.turn_over[g] = nil
+        return false
+    end
+    return true
+end
+
 function G.end_pending(uuid)
     local g = G.guid(uuid) or uuid
+    if g and G.turn_is_over(g) then return true end
     local t = g and G.end_requested[g]
     if not t then return false end
     if now_ms() - t > G.END_REQUEST_TTL_MS or not G.in_combat(g) then

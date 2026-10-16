@@ -124,6 +124,7 @@ local function reset()
     Ext.System = nil
     party_rows = { P1 }
     if A then A.TASK_POS2 = false end
+    if G then G.turn_over = {} end -- TurnEnded's marker (turn over until TurnStarted) is per test
     -- the stub world moves in synthetic multi-metre steps per 60 ms tick: NAV-8's small-step rule off (own tests)
     if A then A.TELEPORT_SMALL_M = 1e9 end
     world = {
@@ -1583,7 +1584,9 @@ test("end_turn in a group whose EndTurn stays pending: done {requested} after EN
     local j2 = job(op("end_turn", { char = P1 }))
     eq(j2.status, "failed", "second end_turn refused at once")
     A.dispatch("TurnEnded", { "S_Player_" .. P1 })
-    eq(G.is_my_turn(P1), true, "TurnEnded clears the request (next round)")
+    eq(G.is_my_turn(P1), false, "TurnEnded: the turn is over (until the next TurnStarted; live window 2026-10-16)")
+    A.dispatch("TurnStarted", { "S_Player_" .. P1 })
+    eq(G.is_my_turn(P1), true, "the next round's TurnStarted: P1 acts again")
     restore()
 end)
 
@@ -1604,6 +1607,33 @@ test("end_turn: done when the turn passes (IsActiveCombatTurn drops), no group l
     world[P1].comps.TurnBased.IsActiveCombatTurn = false
     tick(3)
     eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.still_to_act, nil, "nobody left")
+    restore()
+end)
+
+test("turn over (live window 2026-10-16): after TurnEnded the stale open-turn flags don't let a move through", function()
+    local restore = group_setup()
+    -- both members ended; the game fired TurnEnded for the group but still shows the turn open for a moment
+    A.dispatch("TurnEnded", { "S_Player_" .. P1 })
+    A.dispatch("TurnEnded", { P2 })
+    eq(G.is_my_turn(P1), false, "turn over until P1's next TurnStarted")
+    eq(G.end_pending(P1), true, "counts as ended (state.combat marks it ended)")
+    local j = job(op("move_to", { char = P1, pos = { 3, 0, 0 } }))
+    eq(j.status, "failed", "move refused"); assert(j.error:find("not this character's turn"), j.error)
+    eq(#called("CharacterMoveToPosition"), 0, "no move order sent")
+    -- the game shows the turn inactive: the marker goes (the next active flag is a new turn)
+    world[P1].comps.TurnBased.IsActiveCombatTurn = false
+    eq(G.turn_is_over(P1), false, "cleared once inactive")
+    world[P1].comps.TurnBased.IsActiveCombatTurn = true
+    eq(G.is_my_turn(P1), true, "the next turn is P1's")
+    -- TurnStarted clears it too (a turn that never showed inactive between the two)
+    A.dispatch("TurnEnded", { P2 })
+    eq(G.is_my_turn(P2), false, "P2 over")
+    A.dispatch("TurnStarted", { P2 })
+    eq(G.is_my_turn(P2), true, "P2's TurnStarted: its turn")
+    -- the TTL is the last safety
+    A.dispatch("TurnEnded", { P2 })
+    clock = clock + G.TURN_OVER_TTL_MS + 1
+    eq(G.is_my_turn(P2), true, "TTL")
     restore()
 end)
 

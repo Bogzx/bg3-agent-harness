@@ -249,6 +249,10 @@ def twostep_cast(game: Game, inp: InputClient | None, caster: str, spell: str, f
         return _landing_first(run)
     if not ok:
         return _fail(run, "first", info)
+    if hotbar._started(run.st):
+        # review L5: the first pick already cast it (a one-step spell the name regex routed here): no ground click,
+        # which with no spell in hand would be a plain move order (movement spent in combat)
+        return run.done(True, phase=(run.st.get("cast") or {}).get("phase"), one_step=True)
     ok, info = run.click_ground(lambda before, s: hotbar._started(s))
     if not ok:
         return _fail(run, "ground", info)

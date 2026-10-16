@@ -100,13 +100,46 @@ def _rpc(game: Game, op: str, args: dict | None = None) -> dict:
     return r if isinstance(r, dict) else {}
 
 
+MAP_TTL_S = 20.0   # the server's hotbar map (op hotbar.map) is reused this long per character
+_maps: dict[str | None, tuple[float, dict]] = {}
+
+
+def server_map(game: Game, char: str | None) -> dict | None:
+    """The caster's hotbar slot -> spell id map from the server's HotbarContainer (Shared/HotbarMap.lua), cached
+    MAP_TTL_S. Live window #1: the HUD's slot VMs expose no spell id and the client entity may lack the component."""
+    hit = _maps.get(char)
+    if hit and time.monotonic() - hit[0] < MAP_TTL_S:
+        return hit[1]
+    if not char:
+        return None
+    try:
+        r = game.rpc("hotbar.map", {"char": char}, context="server")
+    except GameError:
+        return None
+    m = r.get("map") if isinstance(r, dict) else None
+    if isinstance(m, dict) and m:
+        _maps[char] = (time.monotonic(), m)
+        return m
+    return None
+
+
 def _slot(game: Game, spell: str, char: str | None, tabs: bool = False) -> dict:
     args: dict[str, Any] = {"spell": spell}
     if char:
         args["char"] = char
     if tabs:
         args["tabs"] = True
-    return _rpc(game, "ui.hotbar_slot", args)
+    hit = _maps.get(char)
+    if hit and time.monotonic() - hit[0] < MAP_TTL_S:
+        args["map"] = hit[1]
+    r = _rpc(game, "ui.hotbar_slot", args)
+    if "map" not in args and r.get("ids") == "none" and not r.get("found"):
+        # neither the slot VMs nor the client entity named the spells: the server's map, then the same read again
+        m = server_map(game, char)
+        if m:
+            args["map"] = m
+            r = _rpc(game, "ui.hotbar_slot", args)
+    return r
 
 
 def cast_state(game: Game, char: str | None) -> dict:

@@ -6,6 +6,6 @@ L=mod/Mods/BG3AI/ScriptExtender/Lua
 for img in nickblah/lua:5.3 nickblah/lua:5.4; do
   echo "== $img"
   docker run --rm -v "$PWD":/repo:ro -w /repo "$img" sh -c "
-    luac -p $L/Client/Hotbar.lua $L/BootstrapClient.lua || exit 1
+    luac -p $L/Client/Hotbar.lua $L/Shared/HotbarMap.lua $L/BootstrapClient.lua $L/BootstrapServer.lua || exit 1
     lua tools/dev/test_hotbar.lua $L"
 done

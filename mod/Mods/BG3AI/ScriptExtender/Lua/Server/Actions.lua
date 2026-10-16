@@ -221,7 +221,10 @@ end
 function A.dispatch(event, args)
     if event == "TurnEnded" and args[1] then
         local g = G.guid(args[1]) or args[1]
-        if g then G.end_requested[g] = nil end
+        if g then G.end_requested[g] = nil; G.turn_over[g] = G.now_ms() end
+    elseif event == "TurnStarted" and args[1] then
+        local g = G.guid(args[1]) or args[1]
+        if g then G.turn_over[g] = nil; G.end_requested[g] = nil end
     end
     if event == "UseFinished" then
         local ok, err = pcall(A.loop_watch, args[1], args[2])
@@ -256,7 +259,7 @@ for event, arity in pairs({
     UseFinished = 3, Opened = 1, Closed = 1,
     DialogStarted = 2, DialogActorJoined = 4, DialogRequestFailed = 2,
     CastSpell = 5, CastedSpell = 5, CastSpellFailed = 5,
-    AttackedBy = 7, EnteredCombat = 2, TurnEnded = 1,
+    AttackedBy = 7, EnteredCombat = 2, TurnEnded = 1, TurnStarted = 1,
     PickupFailed = 2, AddedTo = 3,
     Equipped = 2, EquipFailed = 2, Unequipped = 2, UnequipFailed = 2,
     CharacterSelectedForUser = 2, AttachedToPartyGroup = 1, DetachedFromPartyGroup = 1,

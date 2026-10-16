@@ -14,7 +14,8 @@ drop no fact a player sees:
   (ENDED_RESOURCES), RESOURCES_LINE, TURN_NAMES, NEXT_ORDER, KIND_GROUP;
 * text this session already showed in full, said again only as a short form: hints after HINT_FULL_TIMES
   showings, the advisory ALERTS/PARTY lines while unchanged ("(unchanged)"), the layout legend, a clock line
-  identical to the last one, a dialogue line the same result (or the previous one) already quoted.
+  identical to the last one, a dialogue line the same result (or the previous one) already quoted, CHAR/ITEM
+  listing lines shown in full in the last minute (BLOCK_AGAIN).
 Each rule has its own constant; BG3AI_COMPACT=0 turns all of it off, BG3AI_COMPACT_OFF=RULE1,RULE2 single rules
 (both read at bridge start; unknown names are warned in the log). `self.elided` lists, per call, the text a
 rule left out because the agent saw it before: tools/vis/obs_size.py's fact checker verifies each was shown
@@ -97,6 +98,12 @@ RESOURCES_LINE = True  # "YOUR ACTIONS (e2)" + "NOW Action 1/1 · Bonus 1/1 · M
 TURN_NAMES = True    # "NOW e2 Corran Vell's turn" when the result already said "turn=e2 Corran Vell" -> "NOW e2's turn"
 NEXT_ORDER = True    # NEXT turn order: a combatant named earlier in the result is its handle alone; the same order as
                      # the last NEXT shown -> "NEXT (order as before), then e28 Lae'zel (yours)"
+BLOCK_AGAIN = True   # CHAR/ITEM listing lines shown in full in the last BLOCK_AGAIN_S (get_nearby right after a
+                     # look full=true, live 20261016: the same 13 lines) -> "(same as the look a moment ago: 13 lines)";
+                     # lines that changed (a distance, a new one) stay in full under it
+BLOCK_AGAIN_S = 60.0
+BLOCK_AGAIN_MIN_LINES = 4  # fewer same lines are cheaper to repeat than to look up
+_BLOCK_PREFIXES = ("CHAR ", "ITEM ")
 # Results quoting files or pages (markdown the agent or the wiki wrote): only the clock rule applies.
 PROSE_TOOLS = {"memory_read", "memory_search", "memory_list", "memory_write", "memory_edit", "memory_append",
                "wiki_page", "wiki_search", "recall", "session_start", "end_session"}
@@ -862,6 +869,7 @@ class Compactor:
         self.resources: dict[str, str] = {}  # handle -> its last full YOUR ACTIONS line shown
         self.last_next: tuple[str, str] = ("", "")  # the last NEXT line: (as rendered, as shown)
         self.elided: list[str] = []  # this call's left-out fragments (shown verbatim earlier)
+        self.block_lines: dict[str, tuple[float, str]] = {}  # CHAR/ITEM line -> (when shown in full, by which tool)
 
     def apply(self, tool: str, text: str) -> str:
         self.elided = []
@@ -917,6 +925,8 @@ class Compactor:
             lines = turn_names(lines)
         if NEXT_ORDER:
             lines = self._next(lines)
+        if BLOCK_AGAIN:
+            lines = self._block_again(tool, lines)
         if CLOCK:
             lines = self._clock(lines)
         out = "\n".join(lines)
@@ -1011,6 +1021,41 @@ class Compactor:
             return pre + "(unchanged)"
         self.static[pre] = (line, now)
         return line
+
+    def _block_again(self, tool: str, lines: list[str]) -> list[str]:
+        """A run of CHAR/ITEM lines: those shown in full in the last BLOCK_AGAIN_S -> one reference line, the rest
+        (changed or new) kept in order under it. A line's clock starts when it is shown in full, so a reference never
+        points at another reference."""
+        now = self.clock()
+        self.block_lines = {k: v for k, v in self.block_lines.items() if now - v[0] < BLOCK_AGAIN_S}
+        out: list[str] = []
+        i = 0
+        while i < len(lines):
+            if not lines[i].startswith(_BLOCK_PREFIXES):
+                out.append(lines[i])
+                i += 1
+                continue
+            j = i
+            while j < len(lines) and lines[j].startswith(_BLOCK_PREFIXES):
+                j += 1
+            run = lines[i:j]
+            same = [ln for ln in run if ln in self.block_lines]
+            if len(same) >= BLOCK_AGAIN_MIN_LINES:
+                src = self.block_lines[same[0]][1]
+                src = "the look" if src == "look" else src
+                rest = [ln for ln in run if ln not in self.block_lines]
+                self.elided += same
+                out.append(f"(same as {src} a moment ago: {len(same)} lines)" if not rest else
+                           f"({len(same)} lines same as {src} a moment ago; changed or new:)")
+                out += rest
+                for ln in rest:
+                    self.block_lines[ln] = (now, tool)
+            else:
+                out += run
+                for ln in run:
+                    self.block_lines[ln] = (now, tool)
+            i = j
+        return out
 
     def _legend(self, line: str) -> str:
         m = _LAYOUT_RE.match(line)

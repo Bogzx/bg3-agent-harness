@@ -89,6 +89,23 @@ class RenderObjectives(unittest.TestCase):
         self.assertEqual(render.render_objectives([]), [])
         self.assertEqual(render.render_objectives([{"objective": "x"}]), ["OBJECTIVE o1 x (another area)"])
 
+    def test_two_markers_of_one_target_one_line(self):
+        # live 20261016-183253: o1 and o2 both "Zariel's Asset 1508.9m N [The Blade of Frontiers]"
+        z = {"label": "Zariel's Asset", "quest": "The Blade of Frontiers", "here": True, "dist": 1508.9, "dir": "N"}
+        ms = [dict(z, oid=1), dict(z, oid=2), {"label": "Path to Crèche Y'llek", "quest": "The Githyanki Warrior",
+                                                "here": True, "dist": 1547.2, "dir": "N", "oid": 3}]
+        self.assertEqual(render.render_objectives(ms, limit=2), [
+            "OBJECTIVE o1/o2 Zariel's Asset 1508.9m N [The Blade of Frontiers]",
+            "OBJECTIVE o3 Path to Crèche Y'llek 1547.2m N [The Githyanki Warrior]"])
+        # a merged marker takes no limit slot and is not counted as "more"
+        self.assertEqual(render.render_objectives(ms, limit=1), [
+            "OBJECTIVE o1/o2 Zariel's Asset 1508.9m N [The Blade of Frontiers]",
+            "(+1 more objective; get_map lists all)"])
+        # the same label elsewhere on the map stays its own line; both ids still resolve
+        far = dict(z, oid=4, dist=30)
+        self.assertEqual(render.render_objectives(ms + [far])[-1], "OBJECTIVE o4 Zariel's Asset 30m N [The Blade of Frontiers]")
+        self.assertEqual(render.find_objective(ms, "o2")["oid"], 2)
+
     def test_find(self):
         self.assertIs(render.find_objective(MARKERS, "o2"), MARKERS[1])
         self.assertIs(render.find_objective(MARKERS, "2"), MARKERS[1])

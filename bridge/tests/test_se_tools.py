@@ -1040,6 +1040,32 @@ class CampAfterClosingTalk(Base):
         self.assertIn("during a conversation", out)
         self.assertEqual(self.jobs.count("act.go_to_camp"), 1)
 
+    def test_goodbye_line_on_a_dialogue_screen_is_waited_out(self):
+        """Live window 2026-10-16 18:40: trade → ESCAPE → camp FAILED in 0.1 s: the goodbye line ("Take care now.")
+        is a dialogue screen with no answers. Only answers on screen stop the retry."""
+        self.screen = "dialogue"
+        orig = self.g.try_rpc
+
+        def try_rpc(op, args=None, context="server", **kw):
+            if op == "ui.state":
+                return {"screen": "dialogue", "dialogue": {"speaker": "Quartermaster Talli", "text": "Take care now.",
+                                                           "listening": True}}
+            return orig(op, args, context=context, **kw)
+        self.g.try_rpc = try_rpc
+        with unittest.mock.patch.object(server.time, "sleep"):
+            out = server.camp()
+        self.assertNotIn("FAILED", out)
+        self.assertEqual(self.jobs.count("act.go_to_camp"), 3)
+
+    def test_answers_on_screen_still_fail_at_once(self):
+        orig = self.g.try_rpc
+        self.g.try_rpc = lambda op, args=None, context="server", **kw: (
+            {"screen": "dialogue", "dialogue": {"options": [{"i": 1, "text": "Leave."}]}} if op == "ui.state"
+            else orig(op, args, context=context, **kw))
+        out = server.camp()
+        self.assertIn("during a conversation", out)
+        self.assertEqual(self.jobs.count("act.go_to_camp"), 1)
+
 
 class ScreenshotMap(Base):
     """screenshot(map=true): open the map, capture, close it (S055/S056: M + screenshot + ESCAPE by hand)."""

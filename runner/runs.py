@@ -879,6 +879,67 @@ def latency_summary(state_dir: Path, since: float, until: float | None = None) -
             "gaps_over_10s": gaps, "read_rt_median_ms": _weighted_median(rt)}
 
 
+# The naut series (3 runs, Claude, before observation compaction): result tokens per run (vis, research/impl-vis.md
+# "Result tokens metric"; raw stream backfill). A run is coloured against their mean (total, and per result).
+RESULT_TOK_BASELINE = {"naut": 41944, "naut-r2": 38027, "naut-r3": 46255}
+RESULT_TOK_BASELINE_N = {"naut": 115, "naut-r2": 111, "naut-r3": 95}   # results counted
+RESULT_TOK_BASELINE_TOTAL = round(sum(RESULT_TOK_BASELINE.values()) / len(RESULT_TOK_BASELINE), 1)      # 42075.3
+RESULT_TOK_BASELINE_PER_RESULT = round(sum(RESULT_TOK_BASELINE.values()) / sum(RESULT_TOK_BASELINE_N.values()), 1)
+# … 393.2 (pooled: all results of the three runs)
+RESULT_TOK_BETTER, RESULT_TOK_WORSE = 0.9, 1.1   # ratio to the baseline mean: ≤ better (green), ≥ worse (red)
+
+
+def result_tokens_summary(state_dir: Path, since: float, until: float | None = None) -> dict | None:
+    """The tool results' size in estimated model tokens over the run's play sessions (Sxxx.latency.json
+    "result_tokens", bg3ai.metrics; research/impl-vis.md): total, results counted, mean per result, results with an
+    image. Sessions written before the field are backfilled from their raw stream (Sxxx.jsonl next to it,
+    source "stream"). None: no latency files."""
+    total = n = images = sessions = 0
+    sources = set()
+    for f in _recent(state_dir, since, LATENCY_RE, until):
+        try:
+            d = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        rt = d.get("result_tokens") if isinstance(d.get("result_tokens"), dict) else {}
+        if rt.get("total") is None:
+            stream = f.with_name(f.name.removesuffix(".latency.json") + ".jsonl")
+            rt = dict(triage.latency.result_token_stats(triage.latency.result_tokens_from_stream(stream)),
+                      source="stream") if stream.is_file() else {}
+            if not rt.get("n"):
+                continue
+        sessions += 1
+        total += int(rt.get("total") or 0)
+        n += int(rt.get("n") or 0)
+        images += int(rt.get("images") or 0)
+        sources.add(rt.get("source") or "turns")
+    if not sessions:
+        return None
+    return {"sessions": sessions, "total": total, "n": n, "per_result": round(total / n, 1) if n else None,
+            "images": images, "source": "+".join(sorted(sources))}
+
+
+def record_result_tokens(r: dict) -> dict | None:
+    return r.get("result_tokens") if isinstance(r.get("result_tokens"), dict) else None
+
+
+def result_tok_cell(r: dict) -> str:
+    """runs_table's cell: total k (mean per result), "-" when the record has no result_tokens (play.py runs
+    --backfill adds them to older records from the streams)."""
+    rt = record_result_tokens(r)
+    if not rt or rt.get("total") is None:
+        return "-"
+    return f"{rt['total'] / 1000:.1f}" + (f" ({rt['per_result']:.0f})" if rt.get("per_result") is not None else "")
+
+
+def result_tok_grade(value: float | None, baseline: float | None) -> str | None:
+    """"better" / "same" / "worse" against the naut baseline (fewer tokens is better); None: nothing to compare."""
+    if value is None or not baseline:
+        return None
+    ratio = value / baseline
+    return "better" if ratio <= RESULT_TOK_BETTER else "worse" if ratio >= RESULT_TOK_WORSE else "same"
+
+
 def story_gained(state_dir: Path, since: float, until: float | None = None) -> dict:
     """Story progress points the run's sessions gained (progress_history.jsonl, bg3ai.progress: one line per
     session) and their events by kind."""
@@ -903,10 +964,11 @@ def run_metrics(state_dir: Path, run_started: float, reached_at: float | None, f
             "deaths": death_counts(state_dir, run_started, failures, until),
             "fairness_flags": fairness_flags(streams),
             "latency": latency_summary(state_dir, run_started, until),
-            "story": story_gained(state_dir, run_started, until)}
+            "story": story_gained(state_dir, run_started, until),
+            "result_tokens": result_tokens_summary(state_dir, run_started, until)}
 
 
-METRIC_FIELDS = ("time_to_milestone_s", "deaths", "fairness_flags", "latency", "story")   # run_metrics' keys
+METRIC_FIELDS = ("time_to_milestone_s", "deaths", "fairness_flags", "latency", "story", "result_tokens")   # run_metrics' keys
 BACKFILL_SLACK_S = 5.0   # as model_time.WINDOW_SLACK_S: a run's last files are written a little before its record
 
 
@@ -953,7 +1015,8 @@ def best_streak(records: list[dict]) -> int:
 def runs_table(records: list[dict]) -> str:
     """Plain-text table of a series' runs (play.py runs --playthrough <base>)."""
     head = ("run", "playthrough", "outcome", "clean", "wall min", "to M min", "sessions", "harness", "agent",
-            "unknown", "cost $", "tokens M", "idle med s", "persona", "adj model min", "top failures")
+            "unknown", "cost $", "tokens M", "idle med s", "persona", "adj model min", "result tok k (/res)",
+            "top failures")
     rows = []
     for r in records:
         c = class_counts(r.get("failures"))
@@ -969,7 +1032,7 @@ def runs_table(records: list[dict]) -> str:
                      "-" if ttm is None else f"{ttm / 60:.1f}", str(r.get("sessions", "")),
                      str(c[HARNESS]), str(c[AGENT]), str(c[UNKNOWN]), f"{r.get('cost_usd', 0):.2f}",
                      f"{token_total(r.get('tokens')) / 1e6:.2f}", "-" if idle is None else f"{idle:g}",
-                     persona_cell(r), "-" if adj is None else f"{adj / 60:.1f}", top))
+                     persona_cell(r), "-" if adj is None else f"{adj / 60:.1f}", result_tok_cell(r), top))
     widths = [max(len(x) for x in col) for col in zip(head, *rows)] if rows else [len(h) for h in head]
     lines = ["  ".join(v.ljust(w) for v, w in zip(row, widths)).rstrip() for row in [head, *rows]]
     lines.insert(1, "  ".join("-" * w for w in widths))
@@ -1034,6 +1097,9 @@ SUMMARY_METRICS = (   # (label, value of a record, format)
     ("adj model min", lambda r: None if record_adjusted_model_s(r) is None else record_adjusted_model_s(r) / 60,
      "{:.1f}"),
     ("judge $", lambda r: (r.get("persona") or {}).get("cost_usd"), "{:.2f}"),
+    ("result tok k", lambda r: (record_result_tokens(r) or {}).get("total", 0) / 1000 if record_result_tokens(r)
+     else None, "{:.1f}"),
+    ("tok/result", lambda r: (record_result_tokens(r) or {}).get("per_result"), "{:.0f}"),
 )
 
 
@@ -1058,6 +1124,13 @@ def series_summary(records: list[dict]) -> str:
     caps = {json.dumps(r.get("caps"), sort_keys=True) for r in records if r.get("caps")}
     if len(caps) > 1:
         lines += ["caps differ between runs: " + " | ".join(sorted(caps))]
+    graded = [(r.get("run") or 1, record_result_tokens(r)) for r in records if record_result_tokens(r)]
+    if graded:
+        lines += [f"result tokens vs the naut baseline ({RESULT_TOK_BASELINE_TOTAL / 1000:.1f}k/run, "
+                  f"{RESULT_TOK_BASELINE_PER_RESULT:.0f}/result): " + ", ".join(
+                      f"run {k} {result_tok_grade(rt.get('total'), RESULT_TOK_BASELINE_TOTAL)}/"
+                      f"{result_tok_grade(rt.get('per_result'), RESULT_TOK_BASELINE_PER_RESULT)}"
+                      for k, rt in graded) + " (total/per result; ±10 % = same)"]
     judges = {(r.get("persona") or {}).get("judge_model") for r in records} - {None}
     if len(judges) > 1:
         lines += ["judge models differ between runs (scores don't compare): " + " | ".join(sorted(judges))]

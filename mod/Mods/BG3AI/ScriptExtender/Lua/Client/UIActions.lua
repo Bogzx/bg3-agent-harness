@@ -1087,12 +1087,41 @@ local function dateMatches(p, want)
     return math.abs(a - b) <= 1
 end
 
+-- Live window #1 (10-16 18:34, right after the launch): load_game failed at once with "no command
+-- 'OpenLoadGameDialog' on ls.LoadingScreen": the loading screen (widget "root", DC ls.LoadingScreen, see AutoSkip)
+-- was still up and UI.anyDC() handed its DC out. Wait for it to go, then use a DC that has the command.
+function A.loadingScreenUp()
+    for _, w in ipairs(UI.widgets()) do
+        if w.name == "root" or w.dc == "ls.LoadingScreen" then return true end
+    end
+    return false
+end
+
+-- A DataContext that can run `cmd` now: MainMenu's, else any page's but a loading screen's. nil when none.
+-- Named reads (UI.get): an unknown name on GetProperty logs an error.
+function A.commandDC(cmd)
+    local function can(dc)
+        local c = dc and UI.get(dc, cmd)
+        return c ~= nil and UI.execute(c, nil, true)
+    end
+    local mm = UI.dc("MainMenu")
+    if can(mm) then return mm end
+    for _, w in ipairs(UI.widgets()) do
+        local dc = w.dc ~= "ls.LoadingScreen" and w.name ~= "root" and try(function() return w.el.DataContext end) or nil
+        if dc and UI.get(dc, "CurrentPlayer") ~= nil and can(dc) then return dc end
+    end
+    return nil
+end
+
+A.LOADING_WAIT_MS = 25000   -- the job's own limit is 30 s
+
 function MENU.load(args)
     if not args.dry and not A.LOAD_ENABLED then error("loading is disabled (UIActions.LOAD_ENABLED=false)") end
     local name = args.name
     if args.dry or not name or name == "" then
         if not UI.widget("LoadGame") or not UI.isVisible(UI.widget("LoadGame")) then
-            check(UI.command(UI.dc("MainMenu") or UI.anyDC(), "OpenLoadGameDialog", nil, args.dry))
+            if A.loadingScreenUp() then error("a loading screen is up: the load page can't open yet", 0) end
+            check(UI.command(A.commandDC("OpenLoadGameDialog") or UI.dc("MainMenu") or UI.anyDC(), "OpenLoadGameDialog", nil, args.dry))
         end
         return { done = not args.dry, can = true, note = (not args.dry) and "load page opened (no save named)" or nil }
     end
@@ -1109,9 +1138,19 @@ function MENU.load(args)
         local pageUp = page ~= nil and UI.isVisible(page)
         if stage == "open" then
             if pageUp then enter("select") return nil end
+            if tries == 0 and A.loadingScreenUp() then
+                -- not pressed yet: wait for the loading screen (the 4 s page timer starts after it)
+                if now - since > A.LOADING_WAIT_MS then
+                    return "failed", { stage = stage, loading = true,
+                        error = "a loading screen stayed up " .. math.floor(A.LOADING_WAIT_MS / 1000) .. " s: the load page can't open" }
+                end
+                job.partial.waiting = "loading screen"
+                return nil
+            end
             if tries == 0 then
-                tries = 1
-                local ok, err = UI.command(UI.dc("MainMenu") or UI.anyDC(), "OpenLoadGameDialog", nil, false)
+                tries, since = 1, now
+                local dc = A.commandDC("OpenLoadGameDialog") or UI.dc("MainMenu") or UI.anyDC()
+                local ok, err = UI.command(dc, "OpenLoadGameDialog", nil, false)
                 if not ok then return "failed", { stage = stage, error = "could not open the load page: " .. tostring(err) } end
             elseif now - since > 4000 then
                 return "failed", { stage = stage, error = "the load page did not open" }

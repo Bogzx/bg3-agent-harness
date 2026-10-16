@@ -154,6 +154,23 @@ class RamWatchTest(unittest.TestCase):
         self.assertIsNone(self.w.sample(t + 400, 0, 6000))          # the game died: baseline reset
         self.assertIsNone(self.w.sample(t + 405, 6000, 6000))       # a new game's first sample (0 → 6 GB)
 
+    def test_last_tick_skips_spike_lines(self):
+        # live window 20261016-183253: setup ran 10 s after a save-load spike, the log's last line was the SPIKE
+        log = self.tmp / "ram.log"
+        self.assertIsNone(R.last_tick(log))                          # no log yet
+        log.write_text(
+            "2026-10-16 18:33:57 avail=7344MB swap_free=2764MB game_rss=2564MB anon+swap=1780MB game_adj=[0, 0]\n"
+            "2026-10-16 18:34:33 RSS SPIKE: game 2527 → 4688 MB in 56 s (RAM available 5110 MB); last tool calls: "
+            "none in the last 2 min\n")
+        t, ln = R.last_tick(log)
+        self.assertIn("anon+swap=1780MB", ln)
+        self.assertEqual(t, R.datetime(2026, 10, 16, 18, 33, 57).timestamp())
+        log.write_text("2026-10-16 18:33:57 avail=7344MB game_rss=2564MB game_adj=[0, 0]\n")   # pre-anon+swap code
+        self.assertIsNone(R.last_tick(log))
+        self.w._write("x")
+        self.w.tick({"MemAvailable": 9000, "SwapFree": 100}, procs=[])   # the watchdog's own tick line parses
+        self.assertLess(abs(R.last_tick(log)[0] - R.time.time()), 5)
+
     def test_lock_single_instance(self):
         a = R.take_lock(self.tmp / "l")
         self.assertIsNotNone(a)

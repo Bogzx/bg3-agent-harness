@@ -7,6 +7,7 @@ local U = BG3AI.Util
 
 -- Client modules: Noesis UI reading (what is on screen) and UI commands.
 for _, path in ipairs({
+    "Shared/HotbarMap.lua", -- worker se: hotbar slot -> spell id from the engine component (ACT-8)
     "Client/UI.lua",
     "Client/UIState.lua",
     "Client/UIActions.lua",

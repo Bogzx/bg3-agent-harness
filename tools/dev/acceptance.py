@@ -104,6 +104,35 @@ def first_line(s: str) -> str:
     return (s or "").strip().splitlines()[0] if (s or "").strip() else ""
 
 
+# Spots a past run's route reached on foot (leg end dist<=0.2), per region, for the multi-leg item when no lead is
+# 40-160 m away: ladder_probe2/cycle-0414/cycle-0819 "leg 3: along the route (108.5m): move_to: done @(-155.7,31.5,50.3)"
+# on the Moonrise -> Mausoleum walk; 137 m from the S027-start camp exit at the Last Light Inn (-54.2,27.5,141.8).
+KNOWN_WALK = {"Shadow-Cursed Lands": [(-155.7, 31.5, 50.3)]}
+
+
+def far_walk_target(p, leads, region: str = "", lo: float = 40.0, hi: float = 160.0):
+    """A walk target lo-hi m away (flat distance) from p: a KNOWN_WALK spot of the region (a route reached it before:
+    the item stays the same run to run), else the frontier lead with a pos nearest 100 m (doors, exits and
+    waypoints first: on the walkable mesh); None when none fits."""
+    def d(q):
+        return math.hypot(q[0] - p[0], q[2] - p[2])
+    known = [q for key, qs in KNOWN_WALK.items() if key.lower() in (region or "").lower() for q in qs if lo < d(q) < hi]
+    if known:
+        return min(known, key=lambda q: abs(d(q) - 100))
+    rows = []
+    for l in leads or []:
+        q = l.get("pos") if isinstance(l, dict) else None
+        if isinstance(q, (list, tuple)) and len(q) >= 3 and lo < d(q) < hi:
+            rows.append((l.get("kind") not in ("door", "exit", "waypoint"), abs(d(q) - 100), tuple(float(x) for x in q[:3])))
+    return min(rows)[2] if rows else None
+
+
+def static_lead_ids(text: str) -> list[str]:
+    """Ids of the doors/containers, then usables, listed in a get_frontier/look result (look_at out-of-sight item)."""
+    ids = re.findall(r"\b(e\d+) [^<\n]*<(?:door|container)>", text or "")
+    return ids + [i for i in re.findall(r"\b(e\d+) [^<\n]*<usable>", text or "") if i not in ids]
+
+
 def grab(pattern: str, s: str, flags=re.M) -> str:
     m = re.search(pattern, s or "", flags)
     return m.group(0) if m else ""
@@ -408,12 +437,13 @@ def sec_nav() -> None:
         call("camp", action="leave")
     me = (status().get("party") or [{}])[0]
     p = me.get("pos") or [0, 0, 0]
-    # Multi-leg walk: an explored spot ~80-150 m away (route's closest-visited answer), else the waypoint list.
+    # Multi-leg walk: a lead 40-160 m away (raw nav.frontier positions: get_frontier's text has none), else a
+    # spot a past run's route reached in this region (window 20261016-183253: only doors 10-17 m at the inn exit).
     fr = call("get_frontier")
-    pts = [(float(a), float(b), float(c)) for a, b, c in re.findall(r"\((-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+)\)", fr)]
-    far = [q for q in pts if 40 < ((q[0] - p[0]) ** 2 + (q[2] - p[2]) ** 2) ** 0.5 < 160]
-    if need(bool(far), "travel_to multi-leg", "no frontier point 40-160 m away to walk to: " + first_line(fr)):
-        q = far[0]
+    raw_fr = S.game.try_rpc("nav.frontier", {"radius": 160, "limit": 60}) or {}
+    q = far_walk_target(p, raw_fr.get("leads"), status().get("region") or region)
+    if need(q is not None, "travel_to multi-leg", "no frontier point or known spot 40-160 m away to walk to: "
+            + first_line(fr)):
         out, dt = took("travel_to", x=q[0], y=q[1], z=q[2])
         end = time.monotonic() + 180
         w = ""
@@ -682,6 +712,16 @@ def sec_combat() -> None:
         if not probed and len(now) >= 2:
             probed = end_turn_probe(cs, now, party)
             if probed:
+                # Live window 2026-10-16: the probe ends the whole group (avatar included); 0.2 s later the next loop
+                # still saw the group acting and played Claude's turn into the hand-over (a 9 m move out of turn, then
+                # "not this character's turn"). Wait for the game to hand the turn on before planning one.
+                t_hand = time.monotonic()
+                while time.monotonic() - t_hand < 15:
+                    cs2 = S.game.try_rpc("state.combat") or {}
+                    if not cs2.get("active") or not set(now) & set(T.acting(cs2)):
+                        break
+                    time.sleep(0.3)
+                log(f"end_turn probe: group handed on after {time.monotonic() - t_hand:.1f}s")
                 continue
         who_u = now[0]
         nb = S.game.try_rpc("state.nearby", {"radius": 40}) or {}
@@ -728,7 +768,9 @@ def sec_combat() -> None:
         jobs = sum(v for k, v in counts.items() if k.startswith("act."))
         polls = counts.get("job.poll", 0)
         rpcs = sum(counts.values())
-        moved = bool(re.search(r"(?m)^move \S+: done", out))
+        # "move eN: FAILED — beyond remaining movement … → partial 8.7m toward it: done" is a move too (live window
+        # 2026-10-16: Claude walked 9 m and the check said moved=False)
+        moved = bool(re.search(r"(?m)^move \S+: (?:done|FAILED[^\n]*→ partial [\d.]+m[^\n]*: done)", out))
         hit = bool(re.search(r"(MainHandAttack|Main Hand Attack|Ranged Attack) e\d+: done", out))
         dashed_on = bool(re.search(r"Shout_Dash: done", out)) and len(re.findall(r"(?m)^move ", out)) >= 2
         unknown = "has no action called 'Main Hand Attack'" in out  # Ranged Attack: only with a ranged weapon
@@ -838,6 +880,15 @@ def end_turn_probe(cs: dict, now: list[str], party: dict) -> bool:
         t = time.monotonic()
         r3 = S._end_turn_by_hud(host, JobResult("failed", None, r2.error))
         hud = f"; HUD End Turn {r3.status} {time.monotonic() - t:.1f}s"
+    if r2.status == "done":
+        # act 2026-10-16 (guard turn_over): right after the group's end the game may still show the avatar's turn
+        # open; a move then must be refused, not walked out of turn (live window 18:45: 9 m free move).
+        p = party[host].get("pos") or [0, 0, 0]
+        t = time.monotonic()
+        rm = S.game.run_job("act.move_to", {"char": host, "pos": [p[0] + 1.5, p[1], p[2]]}, wait_s=8)
+        refused = rm.status == "failed" and "turn" in str(rm.error or "")
+        item("no move right after the group's end (guard turn_over)", "PASS" if refused else "FAIL",
+             f"{an} act.move_to {time.monotonic() - t:.1f}s after its end: {rm.status} {rm.error or rm.result}")
     decision = ("IGNORED: flip END_HUD_FIRST on (BG3AI_END_HUD_FIRST=1), saves ~3 s per such end" if ignored
                 else "not ignored: keep END_HUD_FIRST off")
     item("end_turn after a companion's request (probe)", "PASS" if r2.status == "done" or ignored else "FAIL",
@@ -909,6 +960,21 @@ def moved_m(a: dict, b: dict) -> float:
     return max((sum((x - y) ** 2 for x, y in zip(a[u], b[u])) ** 0.5 for u in a if u in b), default=0.0)
 
 
+def ui3_refused(msg: str) -> bool:
+    """A mod UI-3 refusal (Client/UIActions.lua SAVELOAD_HINT): the whole message names save_game / load_game."""
+    return "refused" in msg and "save_game / load_game" in msg
+
+
+def hb_slot(spell: str, char: str | None) -> dict:
+    """ui.hotbar_slot as the cast route reads it (bridge hotbar._slot: the server's hotbar map when the client has no
+    spell ids, live window #1); {} on an error."""
+    from bg3ai import hotbar as HB
+    try:
+        return HB._slot(S.game, spell, char) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def close_targeting() -> str:
     """Leave a targeting mode (or an accidental game menu) with ESCAPE, by ui.key: the guarded press_key refuses it."""
     for _ in range(3):
@@ -949,9 +1015,31 @@ def hotbar_probe() -> None:
     except Exception as e:  # noqa: BLE001
         tree = f"eval error {e}"
     log(f"PROBE hotbar tree: {tree}")
+    # window #1 (10-16 18:32): PrototypeID nil on every slot VM, button DataContext nil, ActiveTask set with nothing
+    # in hand. Now: the ids come from the HotbarContainer component (Shared/HotbarMap.lua); log both contexts' maps,
+    # the first slot VMs' reflected props (UI.props: view models only, never elements) and the armed signals.
+    try:
+        ids = S.game.eval(
+            "local UI, HM = Mods.BG3AI.BG3AI.UI, Mods.BG3AI.BG3AI.HotbarMap local dc = UI.dc('HotBar') "
+            "local out = {} local bars = dc and UI.path(dc, 'CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.KeyboardHotBars') "
+            "local b1 = bars and bars:At(1) local sl = b1 and UI.get(b1, 'SlotList') "
+            "for i = 1, 2 do local s = sl and UI.count(sl) >= i and sl:At(i) local c = s and UI.get(s, 'Content') "
+            "local ks = {} for k, v in pairs(UI.props(c)) do ks[#ks + 1] = tostring(k) .. '=' .. tostring(v) end "
+            "table.sort(ks) out[#out + 1] = 'vm' .. i .. ' {' .. table.concat(ks, ','):sub(1, 400) .. '}' end "
+            "local m, info = Mods.BG3AI.BG3AI.Hotbar.clientMap(nil) "
+            "if m then local n = 0 for d, t in pairs(m) do for s, id in pairs(t) do n = n + 1 "
+            "if n <= 6 then out[#out + 1] = d .. '#' .. s .. '=' .. id end end end "
+            "out[#out + 1] = 'client map: ' .. n .. ' ids, container ' .. tostring(info.container) "
+            "else out[#out + 1] = 'client map: none (' .. tostring(info) .. ')' end "
+            "return table.concat(out, ' | ')", context="client")
+    except Exception as e:  # noqa: BLE001
+        ids = f"eval error {e}"
+    log(f"PROBE hotbar ids: {ids}")
+    srv = S.game.try_rpc("hotbar.map", {"char": sel}, context="server") if sel else None
+    log(f"PROBE hotbar server map: {json.dumps(srv)[:800]}")
     inp = S._inp()
     try:
-        want = S.game.rpc("ui.hotbar_slot", {"spell": "Target_MainHandAttack", "char": sel}, context="client") or {}
+        want = HB._slot(S.game, "Target_MainHandAttack", sel)   # = the route's read (server map when ids=none)
     except Exception as e:  # noqa: BLE001
         want = {"error": str(e)}
     cs = HB.cast_state(S.game, sel)
@@ -959,9 +1047,11 @@ def hotbar_probe() -> None:
     log(f"PROBE hotbar slot {json.dumps(want)} | cast_state {json.dumps(cs)} | located {pos} {json.dumps(last)[:600]}")
     ok = bool(want.get("found")) and want.get("rendered") is not False and pos is not None and cs.get("armed") is False
     item("hotbar widget tree (ACT-8, read-only)", "PASS" if ok else "FAIL",
-         f"{tree[:120]}; MainHandAttack: found={want.get('found')} deck={want.get('deck')} index={want.get('index')} "
+         f"{tree[:120]}; ids={want.get('ids')} from={want.get('ids_from')} map_why={want.get('map_why')}; "
+         f"MainHandAttack: found={want.get('found')} deck={want.get('deck')} index={want.get('index')} "
          f"cols={want.get('cols')} rows={want.get('rows')} rendered={want.get('rendered')} cell={want.get('cell')}; "
-         f"located at {pos} in {last.get('probes')} probes; armed={cs.get('armed')}")
+         f"located at {pos} in {last.get('probes')} probes; armed={cs.get('armed')} by={cs.get('armed_by')} "
+         f"preview={cs.get('preview')} spell_task={cs.get('spell_task')}")
     if not ok:  # the guesses the clicks rely on broke: don't click blind into the world with a spell in hand
         item("hotbar cast: Bless on 3 allies (ACT-8)", "SKIP", "the read-only hotbar item failed (see its PROBE line)")
         return
@@ -972,7 +1062,7 @@ def hotbar_probe() -> None:
         if S.game.run_job("act.select", {"char": u}, wait_s=5).status != "done":
             continue
         time.sleep(0.4)
-        r = S.game.try_rpc("ui.hotbar_slot", {"spell": "Target_Bless", "char": u}, context="client") or {}
+        r = hb_slot("Target_Bless", u)
         if r.get("found") and r.get("can_use") is not False:
             caster = u
             break
@@ -1015,7 +1105,7 @@ def hotbar_use_ability() -> bool:
     party = [r.get("uuid") for r in st.get("party") or []]
     caster = None
     for u in party:
-        r = S.game.try_rpc("ui.hotbar_slot", {"spell": "Target_Bless", "char": u}, context="client") or {}
+        r = hb_slot("Target_Bless", u)
         if r.get("found") and r.get("can_use") is not False:
             caster = u
             break
@@ -1061,7 +1151,7 @@ def twostep_dd_probe() -> bool:
     party = {r.get("uuid"): r for r in st.get("party") or [] if r.get("uuid")}
     caster = None
     for u in party:
-        r = S.game.try_rpc("ui.hotbar_slot", {"spell": DD_SPELL, "char": u}, context="client") or {}
+        r = hb_slot(DD_SPELL, u)
         if r.get("found") and r.get("can_use") is not False:
             caster = u
             break
@@ -1069,7 +1159,7 @@ def twostep_dd_probe() -> bool:
         item(TWOSTEP_ITEM, "SKIP", f"nobody in the party has {DD_SPELL} usable on the hotbar (level 7+ Gale, or "
              "a save with it): run SESSION-WATCH 'two-step by the hotbar' instead")
         return False
-    if S.game.try_rpc("ui.hotbar_slot", {"spell": DD_SPELL, "char": caster}, context="client").get("selected") is False:
+    if hb_slot(DD_SPELL, caster).get("selected") is False:
         S.game.run_job("act.select", {"char": caster}, wait_s=5)
     p0 = party[caster].get("pos")
     land = None
@@ -1211,25 +1301,31 @@ def sec_se() -> None:
     # load happened (the server marker survives). Nothing is saved or loaded either way except on a regression.
     set_marker()
     outs = [call("ui_action", command="QuickLoadCommand", widget="*"), call("press_key", key="F8")]
-    mod = []
+    mod, mod_ok = [], []
     # the raw mod ops would really quicksave/quickload on a mod without the UI-3 refusal (not hot-reloaded): send them
     # only when the live client Lua has it
     live = S.game.eval("local A = Mods.BG3AI.BG3AI.UIActions return tostring(A and A.saveLoadName ~= nil)",
                        context="client")
     for op, args in [] if live != "true" else (("ui.command", {"widget": "*", "command": "QuickLoadCommand"}), ("ui.key", {"key": "F8"}),
                      ("ui.command", {"widget": "*", "command": "QuickSaveCommand"})):
+        what = f"{op} {args.get('command') or args.get('key')}"
         try:
-            mod.append(f"{op} {args.get('command') or args.get('key')}: NOT refused {S.game.rpc(op, args, context='client')}")
+            mod.append(f"{what}: NOT refused {S.game.rpc(op, args, context='client')}")
+            mod_ok.append(False)
         except Exception as e:  # noqa: BLE001
-            mod.append(f"{op} {args.get('command') or args.get('key')}: {str(e)[:90]}")
+            # live window #1 (10-16): the verdict read the hint after a 90-char cut ("go through save_ga") and FAILed
+            # three right refusals: judge the whole message, shorten only the evidence
+            mod_ok.append(ui3_refused(str(e)))
+            mod.append(f"{what}: {'refused' if mod_ok[-1] else 'error'} {str(e)[:70]}")
     time.sleep(3.0)
     loaded = marker_gone()
     if live != "true":
         mod.append(f"mod ops not sent: the live client Lua has no UI-3 refusal (UIActions.saveLoadName={live}): hot reload")
-    ok = (live == "true" and all(o.startswith("REFUSED") for o in outs) and all("save_game / load_game" in m for m in mod)
+    ok = (live == "true" and all(o.startswith("REFUSED") for o in outs) and len(mod_ok) == 3 and all(mod_ok)
           and not loaded and alive())
     item("ui_action / press_key / ui.command don't save or load (UI-3)", "PASS" if ok else "FAIL",
-         " | ".join(first_line(o)[:90] for o in outs) + " | " + " | ".join(mod) + f"; a load happened={loaded}")
+         f"a load happened={loaded}; mod refusals {sum(mod_ok)}/3 | "
+         + " | ".join(first_line(o)[:90] for o in outs) + " | " + " | ".join(mod))
 
     # Save name box read-back (S056 ×4, S057: every save_game FAILED "the save name box keeps reading 'ls.LSTextBox'":
     # the check read ToString(), a TextBox's class name). ui.menu save probe: open, set the name, read the Text
@@ -1349,6 +1445,9 @@ def sec_se() -> None:
     log("PROBE ui.state after Z (is the Jump targeting on?): "
         + json.dumps(S.game.try_rpc("ui.state", context="client"))[:1500])
     log(f"PROBE player/selected values changed by Z: {json.dumps(changed)}")
+    # LIVE G4 check (Hotbar.lua armedOf): with Jump in hand armed should be true, after the ESCAPE below false
+    log("PROBE cast_state with Jump (Z) in hand: "
+        + json.dumps(S.game.try_rpc("ui.cast_state", {"char": status().get("active")}, context="client"))[:600])
     new_texts = []
     for x, y in ((0.55, 0.6), (0.9, 0.2)):
         call("click", x=x, y=y, button="none")
@@ -1375,6 +1474,8 @@ def sec_se() -> None:
     p0 = party_pos()
     after = close_targeting()
     time.sleep(1.0)
+    log("PROBE cast_state after the ESCAPE (nothing in hand): "
+        + json.dumps(S.game.try_rpc("ui.cast_state", {"char": status().get("active")}, context="client"))[:600])
     mv = moved_m(p0, party_pos())
     got = any(t.split(": ", 1)[1] != "{}" for t in new_texts)
     item("CursorText probe (Jump targeting)", "PASS" if got and mv < 0.5 else ("FAIL" if mv >= 0.5 else "INFO"),
@@ -1457,7 +1558,10 @@ def click_search_probe(h: str, name: str) -> None:
     u = S._world_uuid(h)
     saved, got = clicker.HOVER_V2, {}
     try:
-        for v2 in (True, False):
+        # window #1 (10-16) ran new first: its two occluded turns left old a view where the first point hit (1 try)
+        # while new had started from the hinge view. Now old first, its occluded turns / zoom undone, then new:
+        # both start from the same view.
+        for v2 in (False, True):
             clicker.HOVER_V2 = v2
             t = time.monotonic()
             centered = clicker.center_on_actor(S.game, inp, u)
@@ -1467,6 +1571,8 @@ def click_search_probe(h: str, name: str) -> None:
             got[v2] = (pos, tries, time.monotonic() - t, last.get("settle"), (["center"] if centered else []) + moves)
             w, hh = inp.window_size()
             inp.move(w // 2, hh - 8)   # off the door before the next search
+            if not v2:
+                undo_search_camera(inp, u, moves)
             time.sleep(0.3)
     except Exception as e:  # noqa: BLE001
         item(name_, "FAIL", f"{h} {name}: {type(e).__name__}: {e}")
@@ -1474,10 +1580,45 @@ def click_search_probe(h: str, name: str) -> None:
     finally:
         clicker.HOVER_V2 = saved
     (p2, t2, s2, st2, m2), (p1, t1, s1, _, m1) = got[True], got[False]
-    ok = p2 is not None and (s2 <= s1 + 0.3 or s2 <= 2.0)
+    ok, why = hover_compare(got[False], got[True])
     item(name_, "PASS" if ok else "FAIL",
          f"{h} {name}: new {'hit' if p2 else 'MISS'} {t2} tries {s2:.2f}s settle={st2} camera={m2}; "
-         f"old {'hit' if p1 else 'MISS'} {t1} tries {s1:.2f}s camera={m1}")
+         f"old {'hit' if p1 else 'MISS'} {t1} tries {s1:.2f}s camera={m1}" + (f"; {why}" if why else ""))
+
+
+OCCLUDED_TURNS = {"rotate_occluded_right": 1, "rotate_occluded_left": -2}   # clicker's turn multipliers
+
+
+def undo_search_camera(inp, uuid: str, moves: list[str]) -> None:
+    """Turn back a search's occluded turns and zoom-out (bring_into_view's own moves stay: the next search
+    re-runs it), so the next search starts from the same view."""
+    from bg3ai import clicker
+    net = sum(OCCLUDED_TURNS.get(m, 0) for m in moves)
+    if net:
+        clicker._turn(S.game, inp, uuid, -net)
+    if "zoom_out" in moves:
+        w, hh = inp.window_size()
+        inp.wheel(2, w // 2, hh // 2)
+        clicker.settle_camera(S.game, inp, uuid)
+
+
+def hover_compare(old: tuple, new: tuple) -> tuple[bool, str]:
+    """(pos, tries, s, settle, camera) of the old and the new search from the same view -> (ok, why not).
+    New must hit, in <= old + 0.3 s (or <= 2 s); and where old hit without an occluded turn on its first aim's
+    ring or an aim's centre (<= 9 + aims-1 tries), new must not turn the camera either nor take more tries."""
+    from bg3ai import clicker
+    (p1, t1, s1, _, m1), (p2, t2, s2, _, m2) = old, new
+    if p2 is None:
+        return False, "new missed"
+    if not (s2 <= s1 + 0.3 or s2 <= 2.0):
+        return False, f"new slower: {s2:.2f}s vs {s1:.2f}s"
+    turned = lambda m: any(x in OCCLUDED_TURNS for x in m)  # noqa: E731
+    if p1 is not None and not turned(m1) and t1 <= 9 + len(clicker.AIMS) - 1:
+        if turned(m2):
+            return False, "new turned the camera where old hit without a turn"
+        if t2 > t1:
+            return False, f"new took more tries ({t2} > {t1})"
+    return True, ""
 
 
 FUNCS = {"reads": sec_reads, "rest": sec_rest, "trade": sec_trade, "gear": sec_gear, "swap": sec_swap,
@@ -1528,11 +1669,9 @@ def sec_setup() -> None:
     # 1. ramwatch: the watchdog that holds runtime/ramwatch.lock writes anon+swap (else it runs old code)
     pids = ramwatch.game_pids()
     a_s, rss = sum(ramwatch.anon_swap_mb(p) for p in pids), sum(ramwatch.rss_mb(p) for p in pids)
-    try:
-        last = (REPO / "runtime" / "ram.log").read_text(errors="replace").strip().splitlines()[-1]
-    except (OSError, IndexError):
-        last = ""
-    fresh = "anon+swap=" in last and time.time() - os.path.getmtime(REPO / "runtime" / "ram.log") < 180
+    # the newest TICK line (a spike line, e.g. from the save load just before, can be the file's last line)
+    t_last, last = ramwatch.last_tick(REPO / "runtime" / "ram.log") or (0.0, "no anon+swap tick line in ram.log")
+    fresh = time.time() - t_last < 180
     item("ramwatch anon+swap kill signal", "PASS" if (a_s > 1000 and fresh) else "FAIL",
          f"game pids {pids}: anon+swap {a_s} MB, RSS {rss} MB (kill at {ramwatch.KILL_ANON_SWAP_MB}); ram.log: {last[-110:]}")
     if not load_verified(BASE):
@@ -1818,9 +1957,12 @@ def sec_vis() -> None:
          "PASS" if ok else "FAIL", f"open ground: {w}; stubbed: {v[:160]}")
     # 9. look_at on a door/container listed a moment ago and now out of sight (S055 e1174, S056 e603): examinable,
     #    out_of_sight (V.itemVisible stubbed false for one call, restored at once)
+    #    S027-start is at camp: no door/container in get_frontier (window 20261016-183253), so a <usable> lead or a
+    #    look listing counts too (V.STATIC_KINDS: the same staticSeen rule for every kind)
     fr = call("get_frontier")
-    ids = re.findall(r"\b(e\d+) [^<\n]*<(?:door|container)>", fr)
-    if need(bool(ids), "vis: look_at on a door seen a moment ago", "no door/container in get_frontier at the base save"):
+    ids = static_lead_ids(fr) or static_lead_ids(call("look", full=True))
+    if need(bool(ids), "vis: look_at on a door seen a moment ago",
+            "no door/container/usable in get_frontier or look at the base save"):
         u = S._uuid(ids[0])
         v = lua_server('local B=Mods.BG3AI.BG3AI local V=B.Visibility local f=V.itemVisible '
                        'V.itemVisible=function() return false end '
@@ -1909,6 +2051,17 @@ def sec_vis() -> None:
     a, b = sum(x for x, _ in sizes), sum(y for _, y in sizes)
     item("vis: result compaction keeps every fact (live)", "PASS" if not probs and b < a and sizes[2][1] <= sizes[1][1]
          else "FAIL", f"tokens ~{a}->~{b}, per call {sizes}; problems {probs[:3]}")
+    # 17b. render oddities of window 20261016-183253: one OBJECTIVE line per target (o1/o2), the CAMP line as text
+    #      (no key=value dump), get_nearby after look full=true -> "(same as the look a moment ago: N lines)"
+    st_txt = call("get_status", full=True)
+    objs = [re.sub(r"^OBJECTIVE \S+ ", "", ln) for ln in st_txt.split("\n") if ln.startswith("OBJECTIVE ")]
+    camp_ln = grab(r"^CAMP .*$", st_txt) or ""
+    near_out = comp.apply("get_nearby", call("get_nearby"))
+    ok = (len(objs) == len(set(objs)) and "ALSO camp=" not in st_txt and "=" not in camp_ln
+          and (not near_out.strip() or "same as" in near_out.split("\n")[0]))
+    item("vis: one OBJECTIVE line per target, CAMP line readable, repeated block referenced", "PASS" if ok else "FAIL",
+         f"objective lines {len(objs)} ({len(set(objs))} distinct); {camp_ln[:140] or 'no CAMP line'}; "
+         f"get_nearby after look: {first_line(near_out)[:80]}")
     tool = S.mcp._tool_manager.get_tool("look")
     item("vis: MCP results compacted plain text", "PASS" if getattr(tool.fn, "__compacted__", False)
          and tool.output_schema is None else "FAIL", f"wrapped={getattr(tool.fn, '__compacted__', False)} "

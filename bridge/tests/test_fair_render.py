@@ -203,3 +203,33 @@ class NearbyEffect(unittest.TestCase):
         out = render.render_nearby(n, H)
         self.assertRegex(out, r"ITEM e\d+ General <usable> 3.6m \[lit\]")
         self.assertNotIn("Button <usable> 1.8m (under General) [", out)
+
+
+class CampLine(unittest.TestCase):
+    """get_status's camp roster reads as text, name first (live 20261016-183253: `ALSO camp=[Warlock3(The Fiend)
+    level=3 e5 wants_talk level_up=4 name=Wyll; Druid5 name=Halsin level=5 e6]`)."""
+
+    CAMP = [{"uuid": "22222222-0000-0000-0000-000000000005", "name": "Wyll", "level": 3, "level_up": 4,
+             "wants_talk": True, "classes": [{"class": "Warlock", "level": 3, "subclass": "The Fiend"}]},
+            {"uuid": "22222222-0000-0000-0000-000000000006", "name": "Halsin", "level": 5, "level_up": 5,
+             "classes": [{"class": "Druid", "level": 5}]}]
+
+    def test_status_camp_line(self):
+        H = Handles()
+        out = render.render_status({"region": "Shadow-Cursed Lands", "gold": 43, "party": [], "camp": self.CAMP},
+                                   None, H)
+        w, h = H.get(self.CAMP[0]["uuid"]), H.get(self.CAMP[1]["uuid"])
+        self.assertIn(f"CAMP {w} Wyll Warlock3(The Fiend) level 3 (level up to 4 ready), wants to talk; "
+                      f"{h} Halsin Druid5 level 5 (at camp, not in the party)", out.split("\n"))
+        self.assertNotIn("ALSO", out)
+        self.assertNotIn("=", out.split("CAMP ")[1])
+
+    def test_other_extras_stay_on_also(self):
+        out = render.render_status({"party": [], "camp": self.CAMP[1:], "weather": "rain"}, None, Handles())
+        self.assertIn("ALSO weather=rain", out)
+        self.assertIn("CAMP ", out)
+
+    def test_odd_rows(self):
+        H = Handles()
+        self.assertEqual(render.camp_text([{"name": "Minthara"}], H), "Minthara (at camp, not in the party)")
+        self.assertIn("can_reach=6", render.camp_text([{"name": "Gale", "level": 5, "can_reach": 6}], H))

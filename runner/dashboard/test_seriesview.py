@@ -70,6 +70,33 @@ class RealNaut(unittest.TestCase):
         self.assertAlmostEqual(cost["mean"], sum(r["cost_usd"] for r in self.recs) / 3, places=2)
         self.assertIn("series: n=3, reached 3/3", s["summary_text"])
 
+    def test_result_tokens_vs_the_naut_baseline(self):
+        """The naut records predate result_tokens: the rows backfill it read-only from the raw streams (vis's
+        numbers, research/impl-vis.md), graded against the naut mean; runs.jsonl stays byte for byte."""
+        f = self.rt / "sessions" / "naut" / "runs.jsonl"
+        before = f.read_bytes()
+        V._RT_CACHE.clear()
+        p = V.series_payload(self.rt, "naut", {})
+        rts = [r["result_tokens"] for r in p["rows"]]
+        self.assertEqual([rt["total"] for rt in rts], [41944, 38027, 46255])
+        self.assertEqual([rt["n"] for rt in rts], [115, 111, 95])
+        self.assertEqual({rt["source"] for rt in rts}, {"stream"})
+        self.assertEqual([rt["grade_total"] for rt in rts], ["same", "same", "same"])   # all within ±10 % of the mean
+        self.assertEqual([rt["grade_per_result"] for rt in rts], ["same", "better", "worse"])   # 365, 343, 487 / 393
+        self.assertEqual(p["result_tok_baseline"]["total"], 42075.3)
+        m = {x["metric"]: x for x in p["spread"]["metrics"]}
+        self.assertEqual((m["result tok k"]["n"], m["result tok k"]["mean"]), (3, 42.1))
+        self.assertEqual(f.read_bytes(), before)
+        # a record that has the field is shown as recorded (no backfill), a graded better run is green
+        rec = dict(self.recs[0], result_tokens={"total": 30000, "n": 100, "per_result": 300.0, "images": 0})
+        self.assertEqual(V.row(rec, self.rt)["result_tokens"]["grade_total"], "better")
+        self.assertIsNone(V.row(dict(self.recs[0], result_tokens=None), self.rt)["result_tokens"])
+        # the live row: run 3's finished session
+        st = {"playthrough": "naut-r3", "series": "naut", "run_index": 4, "runner_pid": 1, "heartbeat": time.time(),
+              "run_started": self.recs[2]["started"]}
+        live = V.series_payload(self.rt, "naut", st, pid_alive=lambda p: True)["live"]
+        self.assertEqual(live["result_tokens"]["total"], 46255)
+
     def test_frozen_settings(self):
         fz = V.series_payload(self.rt, "naut", {})["frozen"]
         self.assertEqual((fz["until"], fz["runs"], fz["client"]), ("nautiloid_escaped", 3, "claude"))
@@ -146,6 +173,7 @@ class Synthetic(unittest.TestCase):
         self.assertEqual((r["persona"]["cell"], r["persona"]["score"]), ("fail", None))
         self.assertIsNone(r["model_time"])
         self.assertIsNone(r["latency"])
+        self.assertIsNone(r["result_tokens"])                       # no field and no session files
         self.assertEqual(r["changes"], ["sandbox: none → container"])
         self.assertEqual((p["frozen"]["sandbox"], p["frozen"]["sandbox_unfirewalled"]), ("container", True))
         self.assertEqual(p["spread"]["clean_streak"], 0)

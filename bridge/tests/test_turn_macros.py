@@ -613,6 +613,37 @@ class CombatTurn(Base):
         out = server.combat_turn(self.plan(action="Shout_Dodge"))
         self.assertIn("needs your answer", out)
 
+    def test_hud_end_is_not_interleaved_with_input_from_another_thread(self):
+        """Review M7: the background end's HUD fallback (select A, press End Turn) ran while the MCP thread clicked /
+        selected for B: the press could land on B. Both take server._INPUT_LOCK now: B's press_key waits."""
+        self.g.combat["current"] = P1
+        self.g.active = P2                       # someone else is selected: the fallback selects P1 first
+        self.g.dur["act.select"] = 0.3
+        real = self.g.rpc
+        order = []
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op in ("ui.command", "ui.key") or op == "act.select":
+                order.append(op if op != "act.select" else f"select {args['char'][-1]}")
+            if op == "ui.command":
+                self.g.combat["current"] = GOB
+                return {"done": True}
+            if op == "ui.key":  # a finished job
+                self.g.jobs[999] = {"status": "done", "end": 0, "op": op, "args": args, "result": {"key": "I"}}
+                return {"job": 999}
+            return real(op, args, context, timeout)
+        self.g.rpc = rpc
+        self.g.ui = {"screen": "inventory", "panels_open": ["Inventory"]}
+        t = threading.Thread(target=server._end_turn_by_hud,
+                             args=(P1, server.JobResult("failed", None, server.END_IGNORED)))
+        t.start()
+        deadline = time.monotonic() + 2
+        while not order and time.monotonic() < deadline:
+            time.sleep(0.01)
+        server._act("press_key", "ui.key", {"key": "I"}, context="client", wait_s=2)
+        t.join(5)
+        self.assertEqual(order[:3], [f"select {P1[-1]}", "ui.command", "ui.key"], order)
+
     def test_ignored_end_turn_presses_the_hud_end_turn(self):
         # S044/S045: Osiris EndTurn ignored for our Spiritual Weapon / during Ketheric's lines: 10 s TIMEOUT ×9
         self.g.refuse_if = lambda op, a: server.END_IGNORED if op == "act.end_turn" else None
@@ -675,6 +706,40 @@ class CombatTurn(Base):
         self.assertEqual(len(self.g.ops("act.cast")), 1)                # the extra attack waits for the player
         self.assertEqual(self.g.ops("act.end_turn"), [])
 
+    # review M6: the hold was checked at slot boundaries only; a slot's next alternative still spent after a drop
+    def test_hp_drop_during_an_alternative_stops_before_the_next_one(self):
+        def aoo(op, a):
+            if op == "act.cast":
+                self.g.watch["party"][0]["hp"] = 4   # 20 % < 35 %
+        self.g.on_start = aoo
+        self.g.dur["act.cast"] = 0.4
+        view = self.g._view
+
+        def failing(jid):  # the first cast runs (the AoO lands meanwhile), then fails late
+            j = self.g.jobs[jid]
+            if (j["status"] == "running" and j["args"].get("spell") == "Target_MainHandAttack"
+                    and time.monotonic() >= j["end"]):
+                j["status"], j["error"] = "failed", "the attack was cancelled"
+            return view(jid)
+        self.g._view = failing
+        out = server.combat_turn(self.plan(action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   {"ability": "Projectile_FireBolt", "target": self.gob}]))
+        self.assertEqual(self.casts(), ["Target_MainHandAttack"], out)
+        self.assertIn("action: Target_MainHandAttack e1: FAILED", out)
+        self.assertIn("STOPPED: e4 Claude HP 4/20 (HP dropped mid-turn", out)
+        self.assertEqual(self.g.ops("act.end_turn"), [])
+
+    def test_hp_drop_during_the_action_skips_then_move(self):
+        def aoo(op, a):
+            if op == "act.cast":
+                self.g.watch["party"][0]["hp"] = 4
+        self.g.on_start = aoo
+        self.g.dur["act.cast"] = 0.2
+        out = server.combat_turn(self.plan(move=self.gob, action=[{"ability": "Shout_Dash", "then_move": True}]))
+        self.assertIn("STOPPED: e4 Claude HP 4/20 (HP dropped mid-turn", out)
+        self.assertEqual(len(self.g.ops("act.move_to")), 1, out)   # the move before the Dash only
+        self.assertEqual(self.g.ops("act.end_turn"), [])
+
     def test_hp_below_condition_still_decides_inside_the_turn(self):
         self.g.watch["party"][0]["hp"] = 4
         self.g.actions = [{"spell": "Shout_SecondWind"}, {"spell": "Target_MainHandAttack"}]
@@ -699,6 +764,24 @@ class CombatTurn(Base):
         out = server.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [IMP])
         self.assertIn("already dead → aimed at", out)  # re-aimed at once (no skip, no fallback pass)
+
+    # review L4: the re-aim dropped every other pick (a 3-dart Magic Missile became one dart on the new target)
+    def test_dead_first_pick_is_replaced_in_targets_only(self):
+        self.g.dead.add(GOB)
+        self.g.actions = [{"spell": "Projectile_MagicMissile", "range": 18}]
+        server.combat_turn(self.plan(action={"ability": "Projectile_MagicMissile", "target": self.gob,
+                                             "targets": [self.gob, self.imp, self.gob]}))
+        # target + targets = 4 picks; the hotbar route is off, so the 2-target cast takes target + the 1st pick
+        # (before: targets popped, one dart)
+        self.assertEqual([(a.get("target"), a.get("targets")) for _, a in self.g.ops("act.cast")], [(IMP, [IMP])])
+
+    def test_dead_picks_are_dropped_from_targets(self):
+        self.g.dead.add(IMP)
+        self.g.actions = [{"spell": "Projectile_MagicMissile", "range": 18}]
+        out = server.combat_turn(self.plan(action={"ability": "Projectile_MagicMissile",
+                                                   "targets": [self.gob, self.imp]}))
+        self.assertEqual([a.get("targets") for _, a in self.g.ops("act.cast")], [[GOB]])
+        self.assertIn("dropped dead e2 Imp from the picks", out)
 
     def test_retarget_respects_reach_sight_and_the_off_switch(self):
         self.g.dead.add(GOB)

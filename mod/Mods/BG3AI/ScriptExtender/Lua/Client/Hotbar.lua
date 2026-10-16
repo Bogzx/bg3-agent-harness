@@ -42,6 +42,15 @@
 --   G4 CurrentPlayer.UIData.ActiveTask is nil while no spell is in hand;
 --   G5 the client cast entity (SpellCastIsCasting.Cast -> ClientSpellCastState/Targeting) exists while targeting;
 --   G6 the deck tab names map HotBarType -> HotbarDeckButton_* as in DECK_BUTTONS.
+-- LIVE 2026-10-16 18:32 (window #1, S027-start, se.log PROBE hotbar): G1, G2 and G4 broke.
+--   G2: ls.VMCharacterAction has no readable PrototypeID on bg3le (nil on all 65 slots). The spell id now comes
+--       from the engine's hotbar component (Shared/HotbarMap.lua: Element.Slot = the slot VM's SlotIndex), first the
+--       client entity's, else a map the bridge passes (args.map, from the server op hotbar.map). `ids` says which.
+--   G1: a slot button's DataContext reads nil. Buttons are now matched by position too: the n-th button of a deck's
+--       HotbarItemsList ListBox is the n-th slot of that deck (ListBox -> deck by ItemsSource, else by slot count in
+--       deck order).
+--   G4: ActiveTask is a gui::VMActiveTaskInfo with nothing in hand (PreviewType 4294967295, no TargetValues, no
+--       CurrentSpellTask, no cast entity). armed = one of those says a spell is in hand (H.armedOf).
 
 BG3AI = BG3AI or {}
 local UI = BG3AI.UI
@@ -74,6 +83,8 @@ local function num(v) return tonumber(v) end
 
 local function hotbarDC() return UI.dc("HotBar") end
 
+local function hotbarMap() return BG3AI.HotbarMap end
+
 local function spellOf(content)
     if content == nil then return nil end
     for _, k in ipairs(H.SPELL_KEYS) do
@@ -93,7 +104,9 @@ end
 
 -- The selected character's decks as data: { {type, vm, slots = { {vm, index, slot, spell, can_use, container} },
 -- cols, rows, order} }. Reads view models only (no elements).
-function H.decks(dc)
+-- `map` (optional, Shared/HotbarMap.lua shape { [HotBarType] = { [tostring(SlotIndex)] = spell } }) fills the ids the
+-- slot VMs don't expose. Each slot record's `src` = "vm" | "map" | nil (no id).
+function H.decks(dc, map)
     local sel = UI.path(dc, "CurrentPlayer.SelectedCharacter")
     local bars = UI.path(sel, "PlayerCharacterProperties.KeyboardHotBars")
     local out = {}
@@ -101,16 +114,35 @@ function H.decks(dc)
         if bar ~= nil then
             local d = { type = str(UI.get(bar, "HotBarType")) or ("deck" .. order), vm = bar, order = order,
                         cols = num(UI.get(bar, "CellColumns")), rows = num(UI.get(bar, "NumberOfBars")), slots = {} }
-            for i, slot in UI.items(UI.get(bar, "SlotList"), 400) do
+            local SL = UI.get(bar, "SlotList")
+            d.list = SL
+            local dm = type(map) == "table" and map[d.type] or nil
+            for i, slot in UI.items(SL, 400) do
                 local content = UI.get(slot, "Content")
-                d.slots[#d.slots + 1] = { vm = slot, index = i, slot = num(UI.get(slot, "SlotIndex")),
-                    spell = spellOf(content), can_use = UI.get(slot, "CanUse") ~= false,
+                local si = num(UI.get(slot, "SlotIndex"))
+                local sp, src = spellOf(content), nil
+                if sp then src = "vm"
+                elseif type(dm) == "table" and si ~= nil then
+                    sp = dm[tostring(si)] or dm[si]
+                    if sp then src = "map" end
+                end
+                d.slots[#d.slots + 1] = { vm = slot, index = i, slot = si, content = content,
+                    spell = sp, src = src, can_use = UI.get(slot, "CanUse") ~= false,
                     container = UI.get(content, "IsContainer") == true or nil }
             end
             out[#out + 1] = d
         end
     end
     return out
+end
+
+-- Which source named the spells: "vm" (any slot VM had an id), else "map", else "none".
+function H.idSource(decks)
+    local seen = {}
+    for _, d in ipairs(decks) do
+        for _, s in ipairs(d.slots) do if s.src then seen[s.src] = true end end
+    end
+    return seen.vm and "vm" or seen.map and "map" or "none"
 end
 
 -- Find `want` in the decks: exact id (case-insensitive) first, then an upcast variant's base id (upcast = level).
@@ -132,19 +164,44 @@ end
 -- Slot buttons in the HotBar widget, each matched to its slot record by its DataContext (GUESS G1):
 -- { {el, deck, rec} }.
 function H.buttons(widget, decks)
-    local byVM, bySig = {}, {}
+    local byVM, bySig, byContent = {}, {}, {}
     for _, d in ipairs(decks) do
         for _, s in ipairs(d.slots) do
             byVM[tostring(s.vm)] = { d, s }
+            if s.content ~= nil then byContent[tostring(s.content)] = { d, s } end
             bySig[tostring(s.spell) .. "#" .. tostring(s.slot) .. "#" .. d.type] = { d, s }
         end
     end
     local out = {}
     if widget == nil then return out end
-    for _, e in ipairs(UI.findAll(widget, function(e) return H.SLOT_BUTTONS[UI.name(e) or ""] == true end,
-                                  { prune = true, max = H.WALK_MAX })) do
+    local function isButton(e) return H.SLOT_BUTTONS[UI.name(e) or ""] == true end
+    -- by position (LIVE G1: DataContext reads nil): each deck's ListBox in tree order, its buttons in item order
+    local byPos = {}
+    local byList, used, nextDeck = {}, {}, 1
+    for di, d in ipairs(decks) do if d.list ~= nil then byList[tostring(d.list)] = di end end
+    for _, lb in ipairs(UI.findAll(widget, function(e) return UI.name(e) == "HotbarItemsList" end,
+                                   { prune = true, max = H.WALK_MAX })) do
+        local btns = UI.findAll(lb, isButton, { prune = true, hidden = true, max = 2000 })
+        local src = UI.get(lb, "ItemsSource")
+        local di = src ~= nil and byList[tostring(src)] or nil
+        if not di then
+            for j = nextDeck, #decks do
+                if not used[j] and #decks[j].slots == #btns and #btns > 0 then di = j break end
+            end
+        end
+        if di and not used[di] and #decks[di].slots == #btns then
+            used[di], nextDeck = true, di + 1
+            for k, e in ipairs(btns) do byPos[e] = { decks[di], decks[di].slots[k] } end
+        end
+    end
+    for _, e in ipairs(UI.findAll(widget, isButton, { prune = true, max = H.WALK_MAX })) do
         local dc = UI.get(e, "DataContext")
         local m = dc ~= nil and byVM[tostring(dc)] or nil
+        if not m then
+            local c = UI.get(e, "Content")
+            m = c ~= nil and byContent[tostring(c)] or nil
+        end
+        if not m then m = byPos[e] end
         if not m and dc ~= nil then
             -- a VM proxy whose tostring differs per read: match by spell + SlotIndex within one deck only
             local sp, si = spellOf(UI.get(dc, "Content")), num(UI.get(dc, "SlotIndex"))
@@ -169,6 +226,21 @@ local function selectedIs(char)
     return ok and cc ~= nil
 end
 
+-- The client entity's hotbar map: the caster's, else the selected character's (ClientControl).
+function H.clientMap(char)
+    local HM = hotbarMap()
+    if not HM then return nil, "HotbarMap not loaded" end
+    if char then return HM.forChar(char) end
+    for _, e in ipairs(try(Ext.Entity.GetAllEntitiesWithComponent, "ClientControl") or {}) do
+        local hc = try(function() return e.HotbarContainer end)
+        if hc ~= nil then
+            local map, info = HM.fromComponent(hc)
+            if info.bars > 0 then return map, info end
+        end
+    end
+    return nil, "no selected character with a HotbarContainer"
+end
+
 local function cellRef(b)
     return { deck = b.deck.type, index = b.rec.index, slot = b.rec.slot, spell = b.rec.spell, order = b.deck.order,
              cols = b.deck.cols, rows = b.deck.rows }
@@ -181,6 +253,17 @@ function H.slot(args)
     if not want or want == "" then error("spell is required") end
     local out = { selected = selectedIs(args.char) }
     local decks = H.decks(dc)
+    if H.idSource(decks) == "none" then
+        -- LIVE G2: the VMs carry no ids: the engine's hotbar component (client entity), else the bridge's map
+        local map, why
+        if type(args.map) == "table" then map, out.ids_from = args.map, "arg"
+        else
+            map, why = H.clientMap(args.char)
+            out.ids_from, out.map_why = map and "entity" or nil, (not map) and why or nil
+        end
+        if map then decks = H.decks(dc, map) end
+    end
+    out.ids = H.idSource(decks)
     out.shown_deck = str(UI.path(dc, "CurrentShownDeck.HotBarType"))
     local deck, rec, upcast = H.findSlot(decks, want)
     local w = UI.widget("HotBar")
@@ -195,7 +278,8 @@ function H.slot(args)
         local n = 0
         for _, d in ipairs(decks) do n = n + #d.slots end
         out.why = #decks == 0 and "no hotbar decks for the selected character" or
-            ("not on the hotbar (" .. n .. " slots in " .. #decks .. " decks)")
+            ("not on the hotbar (" .. n .. " slots in " .. #decks .. " decks"
+             .. (out.ids == "none" and ("; no spell ids: " .. tostring(out.map_why or "the map has none")) or "") .. ")")
         return out
     end
     out.found = true
@@ -244,13 +328,15 @@ function H.castState(args)
     local dc = hotbarDC()
     if dc == nil then error("the hotbar is not on screen") end
     local task = UI.path(dc, "CurrentPlayer.UIData.ActiveTask")
-    local out = { armed = task ~= nil }                     -- GUESS G4
+    local out = { task = task ~= nil }
     local tv = UI.get(task, "TargetValues") or UI.get(task, "HPTargetValues")
     out.counter = tv ~= nil
     out.remaining = num(UI.get(tv, "Remaining"))
     out.can_force = UI.get(task, "CanForceCast") == true
     out.preview = str(UI.get(task, "PreviewType"))
-    out.targeting = str(UI.path(dc, "CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.CurrentSpellTask.TargetingType"))
+    local st = UI.path(dc, "CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.CurrentSpellTask")
+    out.spell_task = st ~= nil
+    out.targeting = str(UI.get(st, "TargetingType"))
     out.upcast_open = UI.get(dc, "IsSelectingUpcastedSpell") == true or nil
     out.spell = spellOf(UI.path(dc, "CurrentActiveSlot.Content"))
     local c = castEntity(args.char)
@@ -270,14 +356,28 @@ function H.castState(args)
         if next(cs) then out.cast = cs end
         out.spell = out.spell or cs.spell
     end
+    out.armed, out.armed_by = H.armedOf(out)
     return out
+end
+
+-- LIVE G4: ActiveTask exists with nothing in hand (PreviewType 4294967295 = none). A spell is in hand when the
+-- cursor counter shows, the selected character has a CurrentSpellTask, a client cast entity exists, or the task
+-- previews something.
+H.NO_PREVIEW = { ["4294967295"] = true, ["-1"] = true, ["None"] = true, ["0"] = true }
+function H.armedOf(st)
+    if not st.task then return false, nil end
+    if st.counter then return true, "counter" end
+    if st.spell_task then return true, "spell_task" end
+    if st.cast then return true, "cast" end
+    if st.preview and not H.NO_PREVIEW[st.preview] then return true, "preview" end
+    return false, nil
 end
 
 function H.confirm()
     local dc = hotbarDC()
     if dc == nil then error("the hotbar is not on screen") end
     local task = UI.path(dc, "CurrentPlayer.UIData.ActiveTask")
-    if task == nil then error("no spell in hand") end
+    if task == nil or not H.castState({}).armed then error("no spell in hand") end
     if UI.get(task, "CanForceCast") ~= true then error("the tick button is disabled (no target picked yet?)") end
     local ok, err = UI.command(dc, "ForceCastCommand")
     if not ok then error("ForceCastCommand: " .. tostring(err)) end
@@ -287,11 +387,12 @@ end
 function H.cancel()
     local dc = hotbarDC()
     if dc == nil then error("the hotbar is not on screen") end
-    local armed = UI.path(dc, "CurrentPlayer.UIData.ActiveTask") ~= nil
-    if not armed then return { done = true, was_armed = false } end
+    if UI.path(dc, "CurrentPlayer.UIData.ActiveTask") == nil then return { done = true, was_armed = false } end
+    -- the task object stays with nothing in hand (LIVE G4): cancel anyway (harmless), report what armedOf saw
+    local armed = H.castState({}).armed
     local ok, err = UI.command(dc, "CancelTaskCommand")
     if not ok then error("CancelTaskCommand: " .. tostring(err)) end
-    return { done = true, was_armed = true }
+    return { done = true, was_armed = armed }
 end
 
 RPC.register("ui.hotbar_slot", function(args) return H.slot(args or {}) end)

@@ -57,6 +57,7 @@ Ext = { Entity = { Get = function(u) return entities[u] end,
                        return out
                    end } }
 
+dofile(LUA .. "/Shared/HotbarMap.lua")
 dofile(LUA .. "/Client/Hotbar.lua")
 local H = BG3AI.Hotbar
 
@@ -222,6 +223,112 @@ ok(not pcall(ops["ui.cast_confirm"], {}), "confirm with nothing in hand: error")
 -- 15. baseSpell
 ok(H.baseSpell("Projectile_MagicMissile_3") == "Projectile_MagicMissile", "baseSpell strips the level")
 ok(H.baseSpell("Target_Bless") == nil, "baseSpell: no suffix")
+
+-- 16. LIVE shape (window #1, 2026-10-16): the slot VMs carry no PrototypeID, the buttons no DataContext, one
+-- HotbarItemsList per deck; the ids come from the character's HotbarContainer (Element.Slot = SlotIndex).
+local HM = BG3AI.HotbarMap
+local function vslot(i) return { SlotIndex = i, Content = { IsContainer = false }, CanUse = true } end
+local lcommon = { HotBarType = "CommonHotBar", CellColumns = 2, NumberOfBars = 1, SlotList = { vslot(0), vslot(1) } }
+local lclass = { HotBarType = "ClassHotBar", CellColumns = 2, NumberOfBars = 2,
+                 SlotList = { vslot(0), vslot(1), vslot(2), vslot(3) } }
+local lpass = { HotBarType = "PassivesHotBar", CellColumns = 16, NumberOfBars = 2, SlotList = { vslot(0) } }
+local ldc = { CurrentPlayer = { SelectedCharacter = { PlayerCharacterProperties = { KeyboardHotBars = { lcommon, lclass, lpass } } },
+                                UIData = { ActiveTask = { PreviewType = "4294967295" } } },
+              CurrentShownDeck = { HotBarType = "CommonHotBar" }, CancelTaskCommand = true }
+local lcells = {}
+local function ldeck(bar)
+    local kids = {}
+    for _, s in ipairs(bar.SlotList) do
+        local b = { Name = "contentContainer", ActualWidth = 88, ActualHeight = 88 }   -- DataContext nil (live)
+        lcells[#lcells + 1] = b
+        kids[#kids + 1] = { Name = "ListBoxItem", kids = { b } }
+    end
+    return { Name = "ConcertinaItem", kids = { { Name = "HotbarItemsList", kids = { { Name = "Container", kids = kids } } } } }
+end
+local lconc = { Name = "Concertina", kids = { ldeck(lcommon), ldeck(lclass), ldeck(lpass) } }
+widgets.HotBar = { Name = "HotBar", DataContext = ldc, kids = { lconc } }
+local function el(slot, id) return { Slot = slot, SpellId = { Prototype = id, OriginatorPrototype = id } } end
+local hc = { ActiveContainer = "DefaultBarContainer", Containers = { DefaultBarContainer = {
+    { Index = 0, Controller = 0, Name = "", Elements = { el(0, "Target_MainHandAttack"), el(1, "Projectile_Jump") } },
+    { Index = 1, Controller = 0, Name = "", Elements = { el(0, "Target_Guidance"), el(3, "Target_Bless"), { Slot = 2, Item = "x" } } },
+    { Index = 2, Controller = 0, Name = "", Elements = {} } } } }
+entities["c3"] = { ClientControl = {}, HotbarContainer = hc }
+entities["c1"].ClientControl = nil
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", char = "c3" })
+ok(r.found and r.deck == "ClassHotBar" and r.index == 4 and r.slot == 3 and r.ids == "map" and r.ids_from == "entity",
+   "live shape: Bless found by the entity's hotbar component")
+ok(r.rendered == true and r.cell and r.cell.w == 88, "live shape: button matched by position (no DataContext)")
+lcells[3 + 3].IsMouseOver = true      -- common has 2 buttons: class index 4 = the 6th button
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", char = "c3" })
+ok(r.over == true and r.at and r.at.deck == "ClassHotBar" and r.at.index == 4 and r.at.spell == "Target_Bless", "live shape: over + at by position")
+lcells[6].IsMouseOver = nil
+lcells[1].IsMouseOver = true
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless" })      -- no char: the ClientControl entity's map
+ok(r.found and r.ids_from == "entity" and r.at and r.at.deck == "CommonHotBar" and r.at.spell == "Target_MainHandAttack",
+   "live shape: no char -> the selected (ClientControl) entity; at = Main Hand Attack")
+lcells[1].IsMouseOver = nil
+r = ops["ui.hotbar_slot"]({ spell = "Target_MainHandAttack", char = "c3" })
+ok(r.found and r.deck == "CommonHotBar" and r.index == 1 and r.rendered, "live shape: Main Hand Attack on the common deck")
+
+-- 17. no component on the client entity: the bridge's map (args.map, string slot keys from JSON) is used
+entities["c3"].HotbarContainer = nil
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", char = "c3" })
+ok(r.found == false and r.ids == "none" and r.why:find("no spell ids: no HotbarContainer", 1, true), "no ids: why says so")
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", char = "c3", map = { ClassHotBar = { ["3"] = "Target_Bless" } } })
+ok(r.found and r.index == 4 and r.ids == "map" and r.ids_from == "arg", "args.map from the bridge")
+entities["c3"].HotbarContainer = hc
+
+-- 18. a VM that does carry ids wins over the map (the old offline shape); no map read then
+lclass.SlotList[4].Content.PrototypeID = "Target_Bless"
+entities["c3"].HotbarContainer = nil
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", char = "c3" })
+ok(r.found and r.ids == "vm" and r.ids_from == nil, "VM ids: no map needed")
+lclass.SlotList[4].Content.PrototypeID = nil
+entities["c3"].HotbarContainer = hc
+
+-- 19. ListBox -> deck by ItemsSource when the counts tie (Common and Class both 17 live)
+local tA = { HotBarType = "CommonHotBar", CellColumns = 1, NumberOfBars = 1, SlotList = { vslot(0) } }
+local tB = { HotBarType = "ClassHotBar", CellColumns = 1, NumberOfBars = 1, SlotList = { vslot(0) } }
+local bA, bB = { Name = "contentContainer" }, { Name = "contentContainer" }
+ldc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.KeyboardHotBars = { tA, tB }
+widgets.HotBar = { Name = "HotBar", DataContext = ldc, kids = {   -- the Class ListBox comes first in the tree
+    { Name = "HotbarItemsList", ItemsSource = tB.SlotList, kids = { bB } },
+    { Name = "HotbarItemsList", ItemsSource = tA.SlotList, kids = { bA } } } }
+bB.IsMouseOver = true
+r = ops["ui.hotbar_slot"]({ spell = "Target_Guidance", char = "c3" })
+ok(r.at and r.at.deck == "ClassHotBar" and r.found and r.over == true, "ListBox matched by ItemsSource, not tree order")
+bB.IsMouseOver = nil
+
+-- 20. HotbarMap.fromComponent: active container, keyboard bar over a controller one, Name over Index
+local m, info = HM.fromComponent({ ActiveContainer = "Other", Containers = {
+    Other = { { Index = 1, Controller = 1, Elements = { el(5, "Target_Wrong") } },
+              { Index = 1, Controller = 0, Elements = { el(5, "Target_Right") } },
+              { Index = 9, Name = "CustomHotBar", Elements = { el(0, "Shout_Custom") } } },
+    DefaultBarContainer = { { Index = 0, Elements = { el(0, "Target_NotThis") } } } } })
+ok(info.container == "Other" and m.ClassHotBar["5"] == "Target_Right" and m.CustomHotBar["0"] == "Shout_Custom"
+   and m.CommonHotBar == nil, "fromComponent: active container, Controller 0 wins, Name wins")
+m, info = HM.fromComponent({ Containers = { DefaultBarContainer = { { Index = 0, Elements = { el(2, "A") } } } } })
+ok(info.container == "DefaultBarContainer" and m.CommonHotBar["2"] == "A" and info.slots == 1, "fromComponent: DefaultBarContainer without ActiveContainer")
+ok(next((HM.fromComponent({}))) == nil, "fromComponent: no containers -> empty")
+local fm, why = HM.forChar("nobody")
+ok(fm == nil and why == "no entity", "forChar: unknown uuid")
+
+-- 21. cast state, live shape: the task object with nothing in hand is not "armed"
+widgets.HotBar = { Name = "HotBar", DataContext = ldc, kids = { lconc } }
+r = ops["ui.cast_state"]({ char = "c3" })
+ok(r.task == true and r.armed == false and r.preview == "4294967295" and r.armed_by == nil, "live: ActiveTask with PreviewType none = not armed")
+ldc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.CurrentSpellTask = { TargetingType = "Target" }
+r = ops["ui.cast_state"]({ char = "c3" })
+ok(r.armed == true and r.armed_by == "spell_task", "a CurrentSpellTask = armed")
+ldc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.CurrentSpellTask = nil
+ldc.CurrentPlayer.UIData.ActiveTask.TargetValues = { Remaining = 2 }
+r = ops["ui.cast_state"]({ char = "c3" })
+ok(r.armed == true and r.armed_by == "counter" and r.remaining == 2, "the cursor counter = armed")
+ldc.CurrentPlayer.UIData.ActiveTask.TargetValues = nil
+ok(not pcall(ops["ui.cast_confirm"], {}), "confirm refused: the task object alone is not a spell in hand")
+commands = {}
+r = ops["ui.cast_cancel"]({})
+ok(r.done and r.was_armed == false and commands[1] == "CancelTaskCommand", "cancel with the idle task: command sent, was_armed false")
 
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
