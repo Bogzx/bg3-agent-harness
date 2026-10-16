@@ -46,12 +46,8 @@ if [ "$START_SERVER" = 1 ] && ! listening; then
     echo "server listening on http://$GW:$PORT/mcp (pid $SERVER_PID)"
 fi
 
-# The internal network still reaches every host port bound to all interfaces, at $GW (README.md: the firewall rule).
-OPEN=$(ss -ltnH 2>/dev/null | awk '{print $4}' | grep -E '^(0\.0\.0\.0|\*|\[::\]):' | sed 's/.*://' | sort -un \
-       | grep -vx "$PORT" | tr '\n' ' ' || true)
-if [ -n "$OPEN" ]; then
-    echo "WARNING: host ports open on all interfaces, reachable from the sandbox at $GW: $OPEN(see README.md)"
-fi
+# The internal network still reaches every host port bound to all interfaces, at $GW, unless firewall.sh is up.
+"$HERE/firewall.sh" check || echo "WARNING: the sandbox reaches more of the host than the bg3 server (README.md)"
 
 # 4. The client: that network only, no capabilities, read-only root, nothing of the host mounted.
 if [ $# -gt 0 ]; then
