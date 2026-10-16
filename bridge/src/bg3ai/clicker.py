@@ -21,6 +21,7 @@ with small pixel offsets and different aim heights.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -649,3 +650,38 @@ def read_answer_list(game: Game, inp: InputClient, read_options) -> tuple[dict, 
     inp.wheel(WHEEL_STEP * SCROLL_STEPS, at[0], at[1])  # back to the top, where the game opened it
     inp.wait_frames(2)
     return got, why
+
+
+def answer_key(text) -> str:
+    """An answer's text for comparisons: a leading [TAG], case, punctuation and spacing ignored."""
+    body = re.sub(r"^\s*\[[^\]]*\]\s*", "", str(text or ""))
+    return re.sub(r"[\W_]+", " ", body.lower()).strip()
+
+
+def scroll_to_answer(game: Game, inp: InputClient, read_options, text: str, up: bool = False) -> tuple[int | None, str | None]:
+    """Wheel a dialogue's answer list until the row reading `text` is rendered (audit UI-4: a row below the fold
+    is pressed by its own button, never by guessing its answer VM). Returns (its number now, None) or
+    (None, why). The list is left where the row shows: choosing it moves the dialogue on."""
+    want = answer_key(text)
+
+    def find() -> int | None:
+        for o in read_options():
+            if isinstance(o.get("i"), int) and answer_key(o.get("text")) == want:
+                return o["i"]
+        return None
+
+    i = find()
+    if i is not None:
+        return i, None
+    at = _over_list(game, inp)
+    if at is None:
+        return None, "could not point at the answer list"
+    step = WHEEL_STEP if up else -WHEEL_STEP
+    for _ in range(SCROLL_STEPS):
+        inp.wheel(step, at[0], at[1])
+        inp.wait_frames(6)
+        time.sleep(0.1)
+        i = find()
+        if i is not None:
+            return i, None
+    return None, f"no row reads '{text}' after {SCROLL_STEPS} wheel steps"

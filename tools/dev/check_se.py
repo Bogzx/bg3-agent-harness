@@ -111,6 +111,20 @@ def check_log_text(text: str) -> tuple[str, str]:
         return "WARN", "View::Update hooked, but no input hooks in the log (bg3le without patch 0003?)"
     if m.group(1) != m.group(2):
         return "WARN", f"only {m.group(1)} of {m.group(2)} View input entry points hooked: hit tests can race Lua"
+    # audit UI-5: patch 0008 finds its call sites by exact instruction bytes; a game patch disables it silently
+    mb = re.search(r"noesis: MultiBindingExpression guarded: GetSourceValue at (\d+) call sites, BeforeSet (\w+ ?\w*)",
+                   text)
+    if mb is not None and mb.group(1) == "0":
+        return "FAIL", ("patch 0008 found 0 GetSourceValue call sites (the game's code changed?): the dead-tree-element "
+                        "guard is off")
+    # 0010: frame-lock timeouts are logged at counts 1, 2, 4, ...; each is a call or frame that ran unguarded
+    to = re.findall(r"noesis: (Lua|UI-thread) frame-lock timeout #(\d+)", text)
+    if to:
+        last = {}
+        for side, n in to:
+            last[side] = max(int(n), last.get(side, 0))
+        return "WARN", ("frame-lock timeouts logged: " + ", ".join(f"{k} >= {v}" for k, v in sorted(last.items()))
+                        + " (Ext.UI calls / UI frames that ran unguarded, or refused in strict mode)")
     return "PASS", "View::Update and input hooked, no crash in the log"
 
 
@@ -191,9 +205,13 @@ def check_hook(g: Game) -> None:
         st = lua(g, 'local f = Ext._Internal and Ext._Internal.UiSerialize\n'
                     'if not f then return \'{"patched":false}\' end\n'
                     'local on, timeouts, ui, gen, leaked, parked, late, bad = f()\n'
+                    'local sf = Ext._Internal.UiStrict\n'
+                    'local son, refused = nil, nil\n'
+                    'if sf then son, refused = sf() end\n'
                     'return string.format(\'{"patched":true,"on":%s,"timeouts":%d,"ui_timeouts":%d,'
-                    '"generation":%d,"leaked":%d,"parked":%d,"late":%d,"bad":%d}\', tostring(on), timeouts, '
-                    'ui or -1, gen or -1, leaked or -1, parked or -1, late or -1, bad or -1)')
+                    '"generation":%d,"leaked":%d,"parked":%d,"late":%d,"bad":%d,"strict":%s,"refused":%d}\', '
+                    'tostring(on), timeouts, ui or -1, gen or -1, leaked or -1, parked or -1, late or -1, bad or -1, '
+                    'son == nil and "null" or tostring(son), refused or -1)')
     except (GameError, NotReady) as e:
         report("FAIL", "hook.patched", f"client eval failed: {e}")
         st = None
@@ -205,10 +223,15 @@ def check_hook(g: Game) -> None:
                 detail += f", parked={st['parked']}, released late={st['late']}"
             if st.get("bad", -1) >= 0:
                 detail += f", bad property values={st['bad']}"
+            if st.get("strict") is not None:
+                detail += f", strict={st['strict']} refused={st.get('refused')}"
             if st["generation"] < 0:
                 report("WARN", "hook.patched", detail + " (bg3le without patch 0003: releases are not generation-gated)")
             elif not st["on"]:
                 report("WARN", "hook.patched", detail + " (serializing is off: BG3LE_UI_SERIALIZE=0?)")
+            elif st["timeouts"] > 0 or st["ui_timeouts"] > 0:
+                report("WARN", "hook.patched", detail + " (frame-lock timeouts: those Ext.UI calls / UI frames ran "
+                       "unguarded; BG3LE_UI_STRICT=1 refuses the Lua side instead, patch 0010)")
             elif st.get("bad", -1) > 0:
                 report("WARN", "hook.patched", detail + " (patch 0006 read non-objects as nil: grep the "
                        "bg3le log for 'holds no live object')")

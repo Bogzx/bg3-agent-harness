@@ -98,6 +98,49 @@ local function waitJob(kind, timeout_ms, checkFn, init)
 end
 A.waitJob = waitJob
 
+-- Saving and loading belong to the dedicated jobs (MENU.save/load/quick*,
+-- reached through the bridge's save_game/load_game): they check the gates,
+-- the bridge adds the save-prefix check, the saver's settle and the DELTA
+-- reset. The agent-facing escape hatches (ui.command, ui.press, ui.key)
+-- refuse anything that would save, load or delete a save (audit UI-3:
+-- ui_action QuickLoadCommand widget="*" loaded with LOAD_ENABLED=false).
+-- Internal jobs call UI.command directly and are not affected. dry runs pass.
+A.SAVELOAD_PAGES = { SaveGame = true, SaveGamePopup = true, LoadGame = true }
+A.SAVELOAD_WORDS = { "quicksave", "quickload", "savegame", "loadgame", "continuegame", "overwrite",
+    "deletesave", "loadsave" }
+A.SAVELOAD_LABELS = { save = true, load = true, quicksave = true, quickload = true, overwrite = true,
+    savegame = true, loadgame = true }
+-- the game's default bindings (assumed; keybindings are not read)
+A.SAVELOAD_KEYS = { F5 = "quicksave", F8 = "quickload" }
+A.SAVELOAD_HINT = "; saving and loading go through save_game / load_game (gated, prefix-checked)"
+
+-- a command/button name or label that saves, loads or deletes a save -> the matched word, else nil. Pure.
+function A.saveLoadName(name)
+    local s = tostring(name or ""):lower():gsub("[%s_%-%.]", "")
+    for _, w in ipairs(A.SAVELOAD_WORDS) do if s:find(w, 1, true) then return w end end
+    return nil
+end
+
+-- a way out of a page (close / back / cancel) is always allowed. Pure.
+function A.leaveName(name)
+    local s = tostring(name or ""):lower()
+    return s:find("close", 1, true) or s:find("back", 1, true) or s:find("cancel", 1, true)
+        or s:find("hide", 1, true) or s:find("exit", 1, true)
+end
+
+-- the open Save/Load page's widget name, or nil
+function A.saveLoadPage()
+    for n in pairs(A.SAVELOAD_PAGES) do
+        local w = UI.widget(n)
+        if w and UI.isVisible(w) then return n end
+    end
+    return nil
+end
+
+local function refuseSaveLoad(what)
+    error(what .. A.SAVELOAD_HINT, 0)
+end
+
 ------------------------------------------------------------------------
 -- ui.key {key, mods?, hold_ms?}
 --   key: a key name as a player would say it ("ESCAPE", "Delete", "1",
@@ -155,6 +198,11 @@ end
 RPC.register("ui.key", function(args)
     local key, mods = A.keySpec(args.key or error("key required"), args.mods)
     args.mods = mods
+    if A.SAVELOAD_KEYS[key] and not mods then
+        refuseSaveLoad(key .. " is " .. A.SAVELOAD_KEYS[key] .. ": refused")
+    end
+    local page = key ~= "ESCAPE" and A.saveLoadPage()
+    if page then refuseSaveLoad(key .. " refused: the " .. page .. " page is open (ESCAPE closes it)") end
     if args.hold_ms then
         Ext.Input.InjectKeyDown(key, args.mods)
         local release = RPC.now_ms() + tonumber(args.hold_ms)
@@ -191,6 +239,14 @@ local function dcOf(widget)
 end
 
 local function commandOp(args)
+    if not args.dry then
+        local w = A.saveLoadName(args.command)
+        if w then refuseSaveLoad("ui.command " .. tostring(args.command) .. " refused (" .. w .. ")") end
+        local page = A.SAVELOAD_PAGES[tostring(args.widget)] and args.widget or A.saveLoadPage()
+        if page and not A.leaveName(args.command) then
+            refuseSaveLoad("ui.command " .. tostring(args.command) .. " refused: the " .. page .. " page is open")
+        end
+    end
     local dc = dcOf(args.widget) or error("widget not open: " .. tostring(args.widget))
     local obj = args.target and UI.path(dc, args.target) or dc
     if obj == nil then error("target not found: " .. tostring(args.target)) end
@@ -206,6 +262,7 @@ end
 RPC.register("ui.command", function(args)
     local ok, res = pcall(commandOp, args)
     if ok then return res end
+    if tostring(res):find(A.SAVELOAD_HINT, 1, true) then error(res, 0) end
     -- With a confirmation box open, "Yes"/"OK"/"No" (as command or param) means
     -- its button (live S005: ui_action Yes -> "no command 'Yes' on ls.Widget").
     if A.confirmBox and A.confirmBox() then
@@ -261,6 +318,17 @@ RPC.register("ui.press", function(args)
         total = (total or 0) + (n or 0)
     end
     if not found then error("no visible button '" .. tostring(button) .. "'" .. (args.widget and (" (widget " .. args.widget .. ")") or "")) end
+    if not args.dry then
+        local label = UI.allText(found, " ", 80)
+        local name = UI.name(found)
+        local flat = tostring(label or ""):lower():gsub("[%s_%-%.]", "")
+        local w = A.saveLoadName(name) or A.saveLoadName(label) or (A.SAVELOAD_LABELS[flat] and flat)
+            or (page == "MainMenu" and flat == "continue" and "continue")
+        if w then refuseSaveLoad("ui.press " .. tostring(label or name or button) .. " refused (" .. w .. ")") end
+        if A.SAVELOAD_PAGES[page] and not (A.leaveName(name) or A.leaveName(label)) then
+            refuseSaveLoad("ui.press " .. tostring(label or name or button) .. " refused: the " .. page .. " page is open")
+        end
+    end
     local ok, how = A.pressButton(found, args.dry)
     check(ok, how)
     return { done = not args.dry, page = page, via = how, matches = total }
@@ -578,7 +646,13 @@ local function settleDialogue(kind, before, opts)
 end
 A.settleDialogue = settleDialogue
 
--- ui.dialogue_choose {i, dry?, skip?}
+-- an answer's text for comparisons: tags, case, punctuation and spacing ignored. Pure.
+function A.answerKey(text)
+    local body = tostring(text or ""):gsub("^%s*%[[^%]]*%]%s*", "")
+    return (body:lower():gsub("[%s%p]+", " "):gsub("^ ", ""):gsub(" $", ""))
+end
+
+-- ui.dialogue_choose {i, text?, dry?, skip?}
 --   i = option number from ui.state (1..n); i = 0 or "continue" advances a
 --   line without options. Returns a job; its result is
 --   {screen, lines:[{speaker,text}], dialogue?:{speaker,text,options}, ended?}.
@@ -611,16 +685,36 @@ RPC.register("ui.dialogue_choose", function(args)
         for _, x in ipairs(answers) do
             if x.i == i then a = x break end
         end
-        if not a and counts and counts.below and i > #answers and i <= #answers + counts.below then
-            -- An answer below the visible rows of a long list (companion menus): the live VM at that
-            -- position in Answers, the order the list shows them in.
+        local first, last = math.huge, 0
+        for _, x in ipairs(answers) do
+            if x.i < first then first = x.i end
+            if x.i > last then last = x.i end
+        end
+        if #answers == 0 then first = 1 end
+        local below, above = counts and counts.below or 0, counts and counts.above or 0
+        local hidden = not a and ((i > last and i <= last + below) or (i < first and i >= first - above))
+        if hidden and counts.by_position then
+            -- An answer outside the visible rows of a long list (companion menus): the live VM at that
+            -- position in Answers. Only when the list's scroll extent counts exactly the VMs (by_position):
+            -- with a hidden text-less VM (S015: 7 VMs, 6 shown) or rows-only answers, the i-th VM is not
+            -- the i-th row (audit UI-4: SelectAnswerCommand on the wrong answer, reported as success).
             local vms = UI.prop(S.activeDialogue(dc), "Answers")
             local vm = vms and try(vms.At, vms, i)
             if vm then a = { i = i, vm = vm, off = UI.prop(vm, "Enabled") == false } end
+        elseif hidden then
+            -- the row is not rendered: the bridge wheels it into view and asks again
+            error(("option %d is not among the visible rows %d-%d of %d (needs_scroll)"):format(
+                i, first, last, last + below), 0)
         end
         a = a or error("no option " .. i .. " (" .. #answers .. " shown"
-            .. (counts and counts.below and (", " .. counts.below .. " more below") or "") .. ")")
+            .. (below > 0 and (", " .. below .. " more below") or "") .. ")")
         if a.off then error("option " .. i .. " is disabled") end
+        -- text: the option's text as the agent read it (the bridge passes it after wheeling the list); the row
+        -- pressed must still read it
+        if args.text and a.text and A.answerKey(a.text) ~= A.answerKey(args.text) then
+            error(("option %d reads '%s', not '%s' (the list changed); read the dialogue again"):format(
+                i, tostring(a.text), tostring(args.text)), 0)
+        end
         local ok, err = false, "no answer VM (rendered row only)"
         if a.vm then ok, err = UI.command(dc, "SelectAnswerCommand", a.vm, args.dry) end
         if not ok then
@@ -1128,18 +1222,50 @@ local function saveNameBox()
     return box, pop
 end
 
--- The box's Text property. Not UI.text: a TextBox's ToString() is its class name, so S056/S057 read
--- 'ls.LSTextBox' back and every save failed "the save name box keeps reading 'ls.LSTextBox'". nil = unreadable.
-local function boxText(box)
+-- A string property's value: a Lua string, or a boxed value whose ToString() is the string (a class name such as
+-- 'ls.LSTextBox' is not). nil = not a string.
+local function unboxString(v)
+    if type(v) == "string" then return v end
+    if v == nil or type(v) ~= "userdata" and type(v) ~= "table" then return nil end
+    local s = try(function() return v:ToString() end)
+    if type(s) ~= "string" or s:match("^ls%.") or s:match("^Noesis%.") or s:match("^gui%.") then return nil end
+    return s
+end
+A.unboxString = unboxString
+
+-- The name box's text and where it was read (result read_via). Not UI.text: a TextBox's ToString() is its class
+-- name, so S056/S057 read 'ls.LSTextBox' back and every save failed "the save name box keeps reading
+-- 'ls.LSTextBox'". Then the Text property read nil on every acceptance probe (read=None, renamed=None:
+-- BACKLOG "save-name probe reads None"), which also left the S052 default-name check blind. Sources, in order:
+-- the box's Text (property, then proxy field), with deep=true a TextBox inside the LSTextBox's template (probe
+-- only: a tree walk), then the dialog DC's SavegameNameInput (what the box is bound to). nil = unreadable.
+local function boxText(box, pop, deep)
     if box == nil then return nil end
-    local v = UI.prop(box, "Text")
-    if type(v) ~= "string" and UI.get then v = UI.get(box, "Text") end
-    if type(v) ~= "string" then return nil end
-    return v
+    local v = unboxString(UI.prop(box, "Text"))
+    if v then return v, "text" end
+    if UI.get then
+        v = unboxString(UI.get(box, "Text"))
+        if v then return v, "field" end
+    end
+    if deep and UI.findAll and UI.typeName then
+        local own = UI.typeName(box)
+        for _, e in ipairs(UI.findAll(box, function(e)
+            local t = UI.typeName(e) or ""
+            return t ~= own and t:find("TextBox", 1, true) ~= nil
+        end, { hidden = true })) do
+            v = unboxString(UI.prop(e, "Text"))
+            if v then return v, "inner" end
+        end
+    end
+    local dc = pop and try(function() return pop.DataContext end)
+    v = dc and unboxString(UI.prop(dc, "SavegameNameInput"))
+    if v then return v, "dc" end
+    return nil
 end
 
-local function saveNameNow()
-    return boxText((saveNameBox()))
+local function saveNameNow(deep)
+    local box, pop = saveNameBox()
+    return boxText(box, pop, deep)
 end
 
 local function setSaveName(name)
@@ -1148,7 +1274,7 @@ local function setSaveName(name)
     local ok = pcall(box.SetProperty, box, "Text", name)
     local dc = try(function() return pop.DataContext end)
     if dc then pcall(dc.SetProperty, dc, "SavegameNameInput", name) end
-    local now = boxText(box)
+    local now = boxText(box, pop)
     if not ok then return false, "could not set the name" end
     return true, now
 end
@@ -1233,8 +1359,8 @@ local function saveDriver(name, kind, opts)
         end
         if stage == "probe_close" then
             if popup or page or visible("GameMenu") then return esc() end
-            return "done", { probe = true, name = name, read = job.probeRead, matches = job.probeRead == name,
-                renamed = job.renamed, ms = ms }
+            return "done", { probe = true, name = name, read = job.probeRead, read_via = job.probeVia,
+                matches = job.probeRead == name, renamed = job.renamed, ms = ms }
         end
         local function key(k)
             -- one in-game RETURN per stage (retried once); then ask the bridge
@@ -1247,6 +1373,19 @@ local function saveDriver(name, kind, opts)
                 job.lastKey = now
                 pcall(Ext.Input.InjectKeyPress, k)
             end
+        end
+        -- Audit UI-6: the "new" RETURN relies on no save being selected (RETURN = UIAccept = NewSaveBtn). With a
+        -- row selected it acts on that save, and the box that comes up is its overwrite (or load/delete) question,
+        -- not ours: the next "new" RETURN would confirm it. A box before our name was accepted is answered No and
+        -- the save fails, closed; only accept/overwrite confirm a box.
+        if box and (stage == nil or stage == "open" or stage == "new") and not job.foreignBox then
+            job.foreignBox = true
+            local w = UI.widget("Dialog_box")
+            local btn = UI.findButton(w, "no") or UI.findButton(w, "cancel") or UI.findButton(w, "back")
+            if btn then A.pressButton(btn, false) end
+            return failClosed({ stage = stage or "open", name = name, foreign_box = true,
+                error = "a confirmation box came up before the save name (a save row was selected: RETURN acted "
+                    .. "on it, e.g. an overwrite); answered No, nothing saved" })
         end
         if box and (stage == "accept" or stage == "overwrite") then
             enter("overwrite")
@@ -1270,7 +1409,7 @@ local function saveDriver(name, kind, opts)
                 enter("accept")
                 return nil
             end
-            local cur = saveNameNow()
+            local cur, via = saveNameNow()
             if cur ~= nil and cur ~= name then
                 if job.nameSets >= A.SAVE_NAME_TRIES then
                     return failClosed({ stage = "name", name = name, typed = cur,
@@ -1284,9 +1423,16 @@ local function saveDriver(name, kind, opts)
             end
             if now - job.nameAt < A.SAVE_NAME_SETTLE_MS then return nil end
             if probe then
-                job.probeRead = cur
+                job.probeRead, job.probeVia = saveNameNow(true)
                 enter("probe_close")
                 return esc()
+            end
+            if via ~= "text" and via ~= "field" and now - (job.blindAt or 0) > 800 then
+                -- the box itself can't be read (the DC may still hold our name under a default the dialog wrote
+                -- into the box, S052): set it again right before each RETURN
+                job.blindAt = now
+                setSaveName(name)
+                job.blind = (job.blind or 0) + 1
             end
             return key("RETURN")
         end
@@ -1345,7 +1491,7 @@ local function saveDriver(name, kind, opts)
         A.pendingSave = nil
         ms.done = now - t0
         return "done", { saved = true, name = name, typed = job.typed, ms = ms,
-            no_save_state = job.noSaveState, renamed = job.renamed }
+            no_save_state = job.noSaveState, renamed = job.renamed, blind_sets = job.blind }
     end)
 end
 A.saveDriver = saveDriver

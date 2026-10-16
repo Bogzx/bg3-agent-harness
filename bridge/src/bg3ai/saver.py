@@ -186,6 +186,10 @@ class Saver:
                     return
             t_menu = time.monotonic()
             job["wall"] = time.time()
+            try:  # audit UI-6: a save written into one of these folders replaced that save
+                job["before"] = {d.name for d in self.save_dir().iterdir() if d.is_dir()}
+            except OSError:
+                job["before"] = set()
             try:
                 ok, detail = self.run_menu(job["label"])
             except Exception as e:  # noqa: BLE001 - any failure becomes a note, never a dead thread
@@ -217,6 +221,13 @@ class Saver:
             self.log(rec)
             if found:
                 self._note(f"SAVED '{name}' ({total:.1f}s, on disk)")
+            elif stray is not None and stray.name in job.get("before", ()):
+                shown = stray.name.split("__", 1)[-1]
+                rec["overwrote"] = stray.name
+                self.log({"save": name, "overwrote": stray.name})
+                self._note(f"⚠ OVERWROTE AN EXISTING SAVE: '{name}' was written over the older save '{shown}' (a "
+                           f"selected save took the save); '{shown}' now holds this moment, its old state is gone. "
+                           f"save_game('{name}') again for a save under the name")
             elif stray is not None:
                 shown = stray.name.split("__", 1)[-1]
                 self._note(f"⚠ SAVED UNDER ANOTHER NAME: '{name}' was written as '{shown}' (the game's default name: "

@@ -32,12 +32,15 @@
 #   BG3_DIR            game install (BG3AI_GAME_DIR is the older name). Default: found by tools/steam_paths.py
 #                      from Steam's libraryfolders.vdf, else ~/.local/share/Steam/steamapps/common/Baldurs Gate 3
 #   BG3AI_SNIPER_DIR   SteamLinuxRuntime_sniper (default: its library per libraryfolders.vdf, else next to the game)
+#   BG3AI_PROFILE_DIR  the game's Larian profile (default ~/.local/share/Larian Studios/Baldur's Gate 3; tools/steam_paths.py)
 #   BG3AI_PRIME        PRIME render offload to the NVIDIA GPU: auto (default; on when an NVIDIA GPU and its
 #                      Vulkan ICD are present), 1 (always), 0 (never)
 #   BG3AI_BG3LE_LIB    the preload (default <repo>/build/bg3le/dist/libbg3le.so, from tools/build_bg3le.sh)
 #   BG3AI_INPUT_LIB    the input shim (default <repo>/build/bg3sdl/libbg3sdl.so, from native/bg3sdl/build.sh)
 #   BG3LE_DEBUG_PORT   bg3le's Lua debug server port (default 9998)
-#   BG3AI_ALLOW_STEAM_ONLINE=1  launch even when Steam's last login was online (default: refuse; see below)
+#   BG3AI_REQUIRE_STEAM_OFFLINE=1|0  refuse unless Steam's last login was offline (default 0, or 1 when the machine
+#                      marker ~/.config/bg3ai/require-steam-offline exists: machine 2; tools/steam_paths.py
+#                      offline_required). BG3AI_ALLOW_STEAM_ONLINE=1 is the older "off".
 #   BG3AI_ALLOW_STALE_BG3LE=1   launch even when the bg3le build lacks a patches/bg3le patch (default: refuse,
 #                      exit 4, also with --dry-run; tools/bg3le_buildinfo.py compares BUILDINFO next to the library)
 #   BG3AI_GAME_SCOPE   1 (default): run the game in its own systemd user scope bg3ai-game-<stamp>.scope with
@@ -64,7 +67,7 @@ GAME="$(python3 "$REPO/tools/steam_paths.py" game)"
 SNIPER_DIR="$(python3 "$REPO/tools/steam_paths.py" sniper)"
 LIB="${BG3AI_BG3LE_LIB:-$REPO/build/bg3le/dist/libbg3le.so}"
 INPUT_LIB="${BG3AI_INPUT_LIB:-$REPO/build/bg3sdl/libbg3sdl.so}"
-PROFILE="$HOME/.local/share/Larian Studios/Baldur's Gate 3"
+PROFILE="$(python3 "$REPO/tools/steam_paths.py" profile)"   # $BG3AI_PROFILE_DIR, else ~/.local/share/Larian Studios/…
 PORT="${BG3LE_DEBUG_PORT:-9998}"
 
 die() { echo "launch_game: $*" >&2; exit 1; }
@@ -136,11 +139,11 @@ fi
 if ! pgrep -x steam >/dev/null 2>&1 && ! pgrep -f 'ubuntu12_32/steam' >/dev/null 2>&1; then
     echo "launch_game: warning: Steam does not appear to be running; libsteam_api needs it" >&2
 fi
-# Machine 2 shares the Steam account with the operator's machine: an online launch would kick them off. Refuse
-# unless Steam's last login was offline ($BG3AI_ALLOW_STEAM_ONLINE=1 on a machine where online is fine).
-if [ "$dry_run" != 1 ] && [ "${BG3AI_ALLOW_STEAM_ONLINE:-0}" != 1 ]; then
-    steam_state="$(python3 "$REPO/tools/steam_paths.py" offline)" \
-        || die "REFUSING TO LAUNCH: Steam is not offline ($steam_state). Steam > Go Offline, or BG3AI_ALLOW_STEAM_ONLINE=1"
+# A machine that shares its Steam account with another one that plays (machine 2: an online launch would kick the
+# operator off) requires an offline Steam (RUN-11: only there; a public user's online Steam is fine).
+if [ "$dry_run" != 1 ]; then
+    steam_state="$(python3 "$REPO/tools/steam_paths.py" launch-ok)" \
+        || die "REFUSING TO LAUNCH: Steam is not offline ($steam_state). Steam > Go Offline, or BG3AI_REQUIRE_STEAM_OFFLINE=0"
 fi
 if [ "$use_bg3le" = 1 ] && command -v ss >/dev/null 2>&1 && ss -Hltn "sport = :$PORT" | grep -q .; then
     [ "$dry_run" = 1 ] || die "port $PORT is already in use (another game instance?)"
@@ -156,6 +159,9 @@ GAME_LOG="$RUNTIME/logs/game-$stamp.log"
 env_args=(
     SteamAppId=1086940
     SteamGameId=1086940
+    # Marks the game (and the crash reporter it spawns) as this harness's: runner/play.py kills only marked or
+    # scoped bg3 processes, never a user's own Steam-launched BG3 (RUN-4)
+    "BG3AI_GAME_STAMP=$stamp"
     # Frame capture (bridge/src/bg3ai/screen.py talks to the control socket).
     VK_LOADER_LAYERS_ENABLE=VK_LAYER_MESA_screenshot
     "VK_LAYER_MESA_SCREENSHOT_CONFIG=comms;control=bg3ai-shot;output_dir=$RUNTIME/shots;log_type=error"

@@ -87,5 +87,19 @@ ok(UI.child(fresh, 1) ~= nil and visualCalls == 0, "child() alone uses the colle
 ok(UI.child(fresh, 5) == nil, "out-of-range index is nil")
 ok(UI.childReads.collection > 0 and UI.childReads.visual > 0, "read counters move")
 
+-- audit UI-5: with bg3le's strict mode (patch 0010) a changing stock panel is skipped, never read through
+-- Panel::GetVisualChild (S014's crash site); non-panels and unknown types keep VisualChild
+Ext._Internal = { UiStrict = function() return true, 0 end }
+visualCalls = 0
+ok(UI.childCount(host) == 1 and UI.child(host, 1) == nil and visualCalls == 0, "strict: count mismatch is skipped")
+ok(UI.childReads.skipped >= 1, "strict: skipped reads are counted")
+visualCalls = 0
+ok(UI.child(custom, 1) ~= nil and visualCalls == 1, "strict: an unknown type still uses VisualChild")
+ok(UI.child(fresh, 1) ~= nil, "strict: a settled panel reads its collection")
+Ext._Internal = { UiStrict = function() return false, 0 end }
+visualCalls = 0
+ok(UI.child(host, 1) == item and visualCalls == 1, "strict off: the mismatch falls back as before")
+Ext._Internal = nil
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

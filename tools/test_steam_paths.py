@@ -100,12 +100,34 @@ class SteamPathsTest(unittest.TestCase):
         (root / "steamapps/common/Baldurs Gate 3").mkdir(parents=True)
         self.assertEqual(sp.game_dir({}, self.home), root / "steamapps/common/Baldurs Gate 3")
 
+    def test_profile_saves_se(self):
+        prof = self.home / ".local/share/Larian Studios/Baldur's Gate 3"
+        self.assertEqual(sp.profile_dir({}, self.home), prof)
+        self.assertEqual(sp.saves_dir({}, self.home), prof / "PlayerProfiles/Public/Savegames/Story")
+        self.assertEqual(sp.se_dir({}, self.home), prof / "Script Extender")
+        env = {"BG3AI_PROFILE_DIR": "/p"}
+        self.assertEqual(sp.saves_dir(env, self.home), Path("/p/PlayerProfiles/Public/Savegames/Story"))
+        self.assertEqual(sp.se_dir(env, self.home), Path("/p/Script Extender"))
+        env |= {"BG3AI_SAVE_DIR": "/s", "BG3AI_SE_DIR": "/e"}
+        self.assertEqual((sp.saves_dir(env, self.home), sp.se_dir(env, self.home)), (Path("/s"), Path("/e")))
+
+    def test_mirrors_agree(self):
+        """server.py (the bridge doesn't import tools/) and launch_game.sh resolve the profile like profile_dir()."""
+        repo = Path(sp.__file__).resolve().parents[1]
+        server = (repo / "bridge/src/bg3ai/server.py").read_text()
+        for needle in ("BG3AI_SAVE_DIR", "BG3AI_PROFILE_DIR", str(sp.PROFILE_REL), str(sp.SAVES_REL)):
+            self.assertIn(needle, server)
+        self.assertIn("steam_paths.py\" profile", (repo / "runner/launch_game.sh").read_text())
+
     def test_cli(self):
         root, lib = self.debian_layout()
         env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin"}
         out = subprocess.run([sys.executable, str(Path(sp.__file__)), "data"], env=env,
                              capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(out, str(lib / "steamapps/common/Baldurs Gate 3/Data"))
+        out = subprocess.run([sys.executable, str(Path(sp.__file__)), "saves"], env=env | {"BG3AI_PROFILE_DIR": "/p"},
+                             capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(out, "/p/PlayerProfiles/Public/Savegames/Story")
 
 
 if __name__ == "__main__":

@@ -74,6 +74,7 @@ class Event:
     cost_usd: float | None = None      # result: the process's cost (None when the client can't know it)
     tokens: dict | None = None
     message_id: str | None = None      # usage: the message a running token count belongs to
+    resets_at: float | None = None     # rate_limit: when the limit resets (epoch s), if the client says
 
 
 class Client(Protocol):
@@ -100,6 +101,16 @@ def bare_tool(name: str) -> str:
 def bg3_server(path: Path = MCP_CONFIG) -> dict:
     """The bg3 stdio server of play/.mcp.json (the one claude gets), for clients that take their own config."""
     return json.loads(path.read_text())["mcpServers"]["bg3"]
+
+
+def http_server(url: str, timeout: int = 110_000) -> dict:
+    """The bg3 server over streamable HTTP (`bg3ai-mcp --transport http`), for a client in the container sandbox
+    (runner/sandbox.py): the server runs on the host with the session env, so the client passes none."""
+    return {"type": "http", "url": url, "timeout": timeout}
+
+
+def is_http(server: dict) -> bool:
+    return bool(server.get("url"))
 
 
 def session_env_names(env: dict) -> list[str]:
@@ -168,8 +179,9 @@ class ClaudeClient:
     no_tools = ("--tools ToolSearch (it loads the deferred MCP tools' schemas) + --strict-mcp-config with "
                 "play/.mcp.json: only mcp__bg3__*; play/.claude/settings.json denies the rest again")
 
-    def __init__(self, mcp_config: Path = MCP_CONFIG, binary: str = "claude", settings: dict | None = None):
-        # settings: an extra --settings JSON (the memory keeper's MCP pass: allow mcp__bg3__* outside play/)
+    def __init__(self, mcp_config: Path | str = MCP_CONFIG, binary: str = "claude", settings: dict | None = None):
+        # mcp_config: a file or an inline JSON string (the container sandbox's http server). settings: an extra
+        # --settings JSON (the memory keeper's MCP pass, the sandbox: allow mcp__bg3__* outside play/)
         self.mcp_config, self.binary, self.settings = mcp_config, binary, settings
 
     def write_config(self, req: Request) -> list[Path]:
@@ -205,8 +217,10 @@ class ClaudeClient:
             return [Event("compact", session_id=sid)]
         if t == "rate_limit_event":
             info = ev.get("rate_limit_info") or {}
+            reset = info.get("resetsAt")
             return [Event("rate_limit", text=str(info.get("status") or ""), session_id=sid,
-                          api_error=info.get("status") == "rejected")]
+                          api_error=info.get("status") == "rejected",
+                          resets_at=float(reset) if isinstance(reset, (int, float)) else None)]
         if t == "assistant":
             msg = ev.get("message") or {}
             out = []
@@ -333,18 +347,25 @@ class CodexClient:
             "web_search": "disabled",
             "project_doc_max_bytes": 0,
             "skills.include_instructions": False,
-            "mcp_servers.bg3.command": s["command"],
-            "mcp_servers.bg3.args": list(s.get("args") or []),
-            "mcp_servers.bg3.cwd": str(self.cwd),
-            "mcp_servers.bg3.env": env,
-            # codex starts MCP servers with a filtered env: the session's BG3AI_* go by name
-            "mcp_servers.bg3.env_vars": session_env_names(req.env),
+        }
+        if is_http(s):   # the container sandbox: the host runs the server with the session env
+            cfg["mcp_servers.bg3.url"] = s["url"]
+        else:
+            cfg.update({
+                "mcp_servers.bg3.command": s["command"],
+                "mcp_servers.bg3.args": list(s.get("args") or []),
+                "mcp_servers.bg3.cwd": str(self.cwd),
+                "mcp_servers.bg3.env": env,
+                # codex starts MCP servers with a filtered env: the session's BG3AI_* go by name
+                "mcp_servers.bg3.env_vars": session_env_names(req.env),
+            })
+        cfg.update({
             # approval_policy=never refuses every MCP call that needs approval ("MCP tool call requires approval,
             # but approval policy is never"): the bg3 tools are pre-approved, they are the agent's only tools
             "mcp_servers.bg3.default_tools_approval_mode": "approve",
             "mcp_servers.bg3.startup_timeout_sec": 60,
             "mcp_servers.bg3.tool_timeout_sec": (s.get("timeout") or 110_000) / 1000,
-        }
+        })
         if req.effort:
             cfg["model_reasoning_effort"] = CODEX_EFFORTS.get(req.effort, req.effort)
         cfg.update(self.extra_config)
@@ -450,12 +471,14 @@ class GeminiClient:
 
     def write_config(self, req: Request) -> list[Path]:
         s = self.server
-        env = {**(s.get("env") or {}), "BG3AI_SERVE_RULES": "1",
-               **{k: str(req.env[k]) for k in session_env_names(req.env)}}
-        settings = {"mcpServers": {"bg3": {"command": s["command"], "args": list(s.get("args") or []),
-                                           "cwd": str(self.cwd), "env": env, "timeout": s.get("timeout") or 110_000,
-                                           "trust": True}},
-                    "tools": {"exclude": list(GEMINI_BUILTIN_TOOLS)}}
+        if is_http(s):   # the container sandbox: the host runs the server with the session env
+            bg3 = {"httpUrl": s["url"], "timeout": s.get("timeout") or 110_000, "trust": True}
+        else:
+            env = {**(s.get("env") or {}), "BG3AI_SERVE_RULES": "1",
+                   **{k: str(req.env[k]) for k in session_env_names(req.env)}}
+            bg3 = {"command": s["command"], "args": list(s.get("args") or []), "cwd": str(self.cwd), "env": env,
+                   "timeout": s.get("timeout") or 110_000, "trust": True}
+        settings = {"mcpServers": {"bg3": bg3}, "tools": {"exclude": list(GEMINI_BUILTIN_TOOLS)}}
         path = self.settings_path(req)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(settings, indent=1) + "\n")
@@ -515,6 +538,29 @@ def make(name: str, **kw) -> Client:
         return CLIENTS[name](**kw)
     except KeyError:
         raise ValueError(f"unknown client {name!r} (one of {', '.join(CLIENTS)})") from None
+
+
+# The container's working dir and HOME (tools/container/Dockerfile.agent).
+SANDBOX_CWD = Path("/home/agent")
+
+
+def play_settings(path: Path = PLAY_DIR / ".claude" / "settings.json") -> dict:
+    """play/.claude/settings.json (allow mcp__bg3__*, deny every built-in tool) as a --settings JSON, for a claude
+    that runs where play/ isn't its project (the container sandbox)."""
+    raw = json.loads(path.read_text())
+    raw.pop("$schema", None)
+    return raw
+
+
+def make_http(name: str, url: str, server_timeout: int = 110_000, claude_settings: dict | None = None,
+              **kw) -> Client:
+    """A client whose only MCP server is the bg3 server at `url` (the container sandbox, runner/sandbox.py). The
+    rules of play come from the server (BG3AI_SERVE_RULES=1 on the host side): the container has no play/CLAUDE.md."""
+    server = http_server(url, server_timeout)
+    if name == "claude":
+        return ClaudeClient(mcp_config=json.dumps({"mcpServers": {"bg3": server}}),
+                            settings=play_settings() if claude_settings is None else claude_settings, **kw)
+    return make(name, server=server, cwd=SANDBOX_CWD, **kw)
 
 
 def process_env(client: Client, req: Request, base: dict | None = None) -> dict:

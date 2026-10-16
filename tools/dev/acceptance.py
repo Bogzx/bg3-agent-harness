@@ -497,6 +497,18 @@ def ladder_from_top() -> None:
     item("ladder from the top (active character climbs)", "PASS" if ok else "FAIL",
          f"{lad.get('name')} (foot y {foot:.1f}) {dt:.1f}s + {t_c:.1f}s; active={name}; at the foot={climbed}; heights "
          + ", ".join(f"{n} {y0.get(n, 0):.1f}->{ys[n]:.1f}" for n in ys) + f"; {first_line(out)}")
+    # act ladder 4th look (A.LADDER_WATCH_AT_USE): from the gate the job must END done (10-11 08:37/12:22 "still
+    # running" at 25 s) and the climber must stay at the foot (10:43: "done climbed=down", back at the top 12 s later)
+    held = []
+    for _ in range(5):
+        time.sleep(1.0)
+        held.append(heights()[1].get(name, 99))
+    stays = bool(held) and max(held) < foot + 1.5
+    item("ladder climb ends done and holds (act LADDER_WATCH_AT_USE)",
+         "PASS" if ok and "interact: done" in out and "climbed=" in out and stays else "FAIL",
+         f"{first_line(out)}; {name} over 5 s after: " + ", ".join(f"{y:.1f}" for y in held)
+         + f" (foot {foot:.1f}); FAIL with 'still running' or a climb back up: turn the flag off "
+         "(Mods.BG3AI.BG3AI.Actions.LADDER_WATCH_AT_USE = false) and rerun to compare")
     # back to the gate for the entrance check (up the ladder or round by the path)
     call("travel_to", x=-183.0, y=38.0, z=99.0)
     for _ in range(3):
@@ -810,6 +822,25 @@ def sec_se() -> None:
     hover_check("click button=none hovers only", "none", "nothing clicked")
     hover_check("click unknown button refused", "middle", "unknown button")
 
+    # audit UI-3 (se, 2026-10-16): the escape hatches don't save or load around save_game/load_game. Bridge refusals
+    # (ui_action QuickLoadCommand, press_key F8), the mod's own (ui.command / ui.key straight to the client), and no
+    # load happened (the server marker survives). Nothing is saved or loaded either way except on a regression.
+    set_marker()
+    outs = [call("ui_action", command="QuickLoadCommand", widget="*"), call("press_key", key="F8")]
+    mod = []
+    for op, args in (("ui.command", {"widget": "*", "command": "QuickLoadCommand"}), ("ui.key", {"key": "F8"}),
+                     ("ui.command", {"widget": "*", "command": "QuickSaveCommand"})):
+        try:
+            mod.append(f"{op} {args.get('command') or args.get('key')}: NOT refused {S.game.rpc(op, args, context='client')}")
+        except Exception as e:  # noqa: BLE001
+            mod.append(f"{op} {args.get('command') or args.get('key')}: {str(e)[:90]}")
+    time.sleep(3.0)
+    loaded = marker_gone()
+    ok = (all(o.startswith("REFUSED") for o in outs) and all("save_game / load_game" in m for m in mod)
+          and not loaded and alive())
+    item("ui_action / press_key / ui.command don't save or load (UI-3)", "PASS" if ok else "FAIL",
+         " | ".join(first_line(o)[:90] for o in outs) + " | " + " | ".join(mod) + f"; a load happened={loaded}")
+
     # Save name box read-back (S056 ×4, S057: every save_game FAILED "the save name box keeps reading 'ls.LSTextBox'":
     # the check read ToString(), a TextBox's class name). ui.menu save probe: open, set the name, read the Text
     # property back after the settle, ESCAPE out; nothing is written (checked on disk too).
@@ -820,9 +851,40 @@ def sec_se() -> None:
     scr = ui_screen()
     stray = [d.name for d in S.SAVE_DIR.iterdir() if d.stat().st_mtime >= t] if S.SAVE_DIR.is_dir() else []
     ok = r.status == "done" and res.get("matches") is True and scr == "game" and not stray
+    # BACKLOG "save-name probe reads None" (2026-10-16): the Text read is unboxed and falls back to an inner TextBox and
+    # the dialog DC's SavegameNameInput; read_via names the source that answered (text/field/inner/dc). PASS with
+    # via=dc means the box itself is still unreadable: real saves then re-set the name before each RETURN (blind_sets).
     item("save name box reads our name (probe, no save)", "PASS" if ok else "FAIL",
-         f"{r.status} {r.error or ''}; read={res.get('read')!r} matches={res.get('matches')} renamed={res.get('renamed')}; "
-         f"screen after={scr}; save folders written={stray or 'none'}")
+         f"{r.status} {r.error or ''}; read={res.get('read')!r} via={res.get('read_via')} matches={res.get('matches')} "
+         f"renamed={res.get('renamed')}; screen after={scr}; save folders written={stray or 'none'}")
+
+    # audit UI-5 (patch 0010): the running bg3le has the strict frame-lock mode; the counters read. Then one strict
+    # minute: strict on, a burst of UI reads (ui.state x40), strict back to what it was. PASS = no crash, the reads
+    # answer (a refusal reads as a missing field, not an error), refusals counted. Needs the rebuilt libbg3le.so.
+    try:
+        before = S.game.eval("local f = Ext._Internal.UiStrict if not f then return 'missing' end "
+                             "local on, n = f() local _, lt, ut = Ext._Internal.UiSerialize() "
+                             "return tostring(on) .. ' ' .. n .. ' ' .. lt .. ' ' .. ut", context="client")
+    except Exception as e:  # noqa: BLE001
+        before = f"eval error {e}"
+    if need(before.split()[0] in ("true", "false"), "bg3le strict frame lock (UI-5, patch 0010)",
+            f"UiStrict: {before} (the game runs a bg3le without 0010: relaunch after tools/build_bg3le.sh)"):
+        was = before.split()[0]
+        S.game.eval("Ext._Internal.UiStrict(true) return 1", context="client")
+        errs, t = 0, time.monotonic()
+        for _ in range(40):
+            u = S.game.try_rpc("ui.state", context="client")
+            errs += 0 if isinstance(u, dict) and u.get("screen") else 1
+        dt = time.monotonic() - t
+        after = S.game.eval(f"Ext._Internal.UiStrict({was}) local on, n = Ext._Internal.UiStrict() "
+                            "local _, lt, ut = Ext._Internal.UiSerialize() "
+                            "return tostring(on) .. ' ' .. n .. ' ' .. lt .. ' ' .. ut", context="client")
+        lg = bg3le_log()
+        crash = grep_crash(lg)
+        ok = alive() and not crash and errs <= 2 and after.split()[0] == was
+        item("bg3le strict frame lock (UI-5, patch 0010)", "PASS" if ok else "FAIL",
+             f"strict/refused/lua_timeouts/ui_timeouts before={before} after={after}; 40 ui.state in {dt:.1f}s, "
+             f"{errs} without a screen{'; ' + crash if crash else ''}")
 
     # set_reactions on a member that is not selected (S041 22:41:22 "char is not the selected character")
     st = status()
@@ -1146,17 +1208,25 @@ def sec_act() -> None:
         out = call("look_at", target=word)
         item("name by a whole word", "PASS" if "unknown target" not in out else "FAIL",
              f"look_at({word!r}) for {c['name']!r}: {first_line(out)[:160]}")
-    # Revivify is two-step (S057/S058 0 of 14): the live stats say so, and the queued UseSpell task takes the
-    # ground spot (TargetPos2). Probe on a living companion: the task is queued, given its spot, then purged.
-    v = lua_server(g + 'local h=Osi.GetHostCharacter() local o '
-                   'for _,r in pairs(Osi.DB_PartyMembers:Get(nil)) do if not G.same(r[1],h) then o=G.guid(r[1]) break end end '
-                   'if not A.two_step_spell then return "no A.two_step_spell" end '
-                   'if not A.two_step_spell("Teleportation_Revivify") then return "stats: not two-step" end '
-                   'if not o then return "no companion" end '
-                   'Osi.UseSpell(h,"Teleportation_Revivify",o,"NULL_00000000-0000-0000-0000-000000000000",1) '
-                   'local ok,why=A.set_task_pos2(h,"Teleportation_Revivify",A.place_spot(h,o)) '
-                   'Osi.PurgeOsirisQueue(h) return ok and "set" or ("not set: "..tostring(why))')
-    item("revivify two-step spot set", "PASS" if v == "set" else "FAIL", v[:200])
+    # ACT-9: the TargetPos2 engine write (unproven struct mapping, HANDOFF §7) is OFF by default, and a two-step
+    # spell is refused before any order. The probe below writes it, so it runs only when asked for
+    # (BG3AI_PROBE_TASK_POS2=1, an attended window: watch for a crash in the next minutes).
+    v = lua_server(g + 'if A.TASK_POS2==nil then return "no A.TASK_POS2" end return tostring(A.TASK_POS2)')
+    item("act-9 second-pick write off by default", "PASS" if v == "false" else "FAIL", v[:200])
+    if os.environ.get("BG3AI_PROBE_TASK_POS2", "0") in ("", "0"):
+        item("revivify two-step spot set", "SKIP", "the TargetPos2 write is off (ACT-9); BG3AI_PROBE_TASK_POS2=1 probes it")
+    else:
+        # Revivify is two-step (S057/S058 0 of 14): the live stats say so, and the queued UseSpell task takes the
+        # ground spot (TargetPos2). Probe on a living companion: the task is queued, given its spot, then purged.
+        v = lua_server(g + 'local h=Osi.GetHostCharacter() local o '
+                       'for _,r in pairs(Osi.DB_PartyMembers:Get(nil)) do if not G.same(r[1],h) then o=G.guid(r[1]) break end end '
+                       'if not A.two_step_spell then return "no A.two_step_spell" end '
+                       'if not A.two_step_spell("Teleportation_Revivify") then return "stats: not two-step" end '
+                       'if not o then return "no companion" end '
+                       'Osi.UseSpell(h,"Teleportation_Revivify",o,"NULL_00000000-0000-0000-0000-000000000000",1) '
+                       'A.TASK_POS2=true local ok,why=A.set_task_pos2(h,"Teleportation_Revivify",A.place_spot(h,o)) '
+                       'A.TASK_POS2=false Osi.PurgeOsirisQueue(h) return ok and "set" or ("not set: "..tostring(why))')
+        item("revivify two-step spot set", "PASS" if v == "set" else "FAIL", v[:200])
     # Dimension Door is a two-step teleport (S059 x3 refused): who goes (the caster / an ally within 2 m), then the
     # landing (AreaRadius). Live stats agree, and a landing in the air above the host is refused with a reason.
     v = lua_server(g + 'local h=Osi.GetHostCharacter() local sp="Teleportation_DimensionDoor" '
@@ -1168,6 +1238,24 @@ def sec_act() -> None:
                    'return "range="..tostring(r).." air="..(ok and "accepted" or (G.is_refusal(e) and e.reason or tostring(e)))')
     item("dimension door two-step landing", "PASS" if v.startswith("range=") and "air=accepted" not in v
          and "range=nil" not in v else "FAIL", v[:200])
+    # audit ACT-11/13/15 (offline-fixed 2026-10-16): the combat no-start timeout, G.q queries only (an action name
+    # through it is refused, never run), CharacterMoveTo blocked, approval seeded per companion after the load.
+    v = lua_server(g + 'local E=Mods.BG3AI.BG3AI.Events local h=Osi.GetHostCharacter() '
+                   'local seeded=0 for k,_ in pairs(E.approval or {}) do if tostring(k):find("|",1,true) then seeded=seeded+1 end end '
+                   'return tostring(A.CAST_NO_START_COMBAT_MS).."|"..tostring(G.query_ok and G.query_ok("IsLocked")).."|"'
+                   '..tostring(G.query_ok and G.query_ok("Unlock")).."|"..(G.query_ok and tostring(G.q("Unlock",h,h)) or "old mod: not called").."|"'
+                   '..tostring(G.ALLOW.CharacterMoveTo).."|"..tostring(G.BLOCK.CharacterMoveTo).."|"..tostring(seeded)')
+    parts = v.split("|")
+    ok = len(parts) == 7 and parts[:6] == ["3000", "true", "false", "nil", "nil", "true"]
+    item("act audit ACT-11/13/15 live state", "PASS" if ok and parts[6] != "0" else ("FAIL" if not ok else "SKIP"),
+         f"no_start_combat|query_ok(IsLocked)|query_ok(Unlock)|q(Unlock)|ALLOW.MoveTo|BLOCK.MoveTo|approval seeded: {v[:160]}"
+         + ("" if not ok or parts[6] != "0" else " (no companion rating seeded: solo party?)"))
+    # act combat target gone (BACKLOG ~937, offline 2026-10-16): a character the game doesn't know reads gone=off_stage
+    # (the reloaded mod carries the field); the ladder flag is on (A.LADDER_WATCH_AT_USE).
+    ts = S.game.try_rpc("act.target_state", {"uuid": "c0ffee00-0000-4000-8000-000000000bad"}) or {}
+    v = lua_server(g + 'return tostring(A.LADDER_WATCH_AT_USE).."|"..tostring(A.gone_why ~= nil)')
+    item("act target gone + ladder watch flag live", "PASS" if ts.get("gone") == "off_stage" and v == "true|true"
+         else "FAIL", f"target_state(unknown uuid)={ts}; LADDER_WATCH_AT_USE|gone_why: {v[:80]}")
     # swap_party where the camp button is greyed by the area: the reason at once (S039 21:48:34)
     b = S.game.try_rpc("ui.travel_block", context="client") or {}
     if b.get("error") != "Location":
@@ -1314,6 +1402,35 @@ def sec_vis() -> None:
     if need(bool(nm), "vis: name search finds party members", "no party in state.status"):
         out = call("get_nearby", radius=25, kinds=nm)
         item("vis: name search finds party members", "PASS" if f"PARTY " in out and nm in out else "FAIL", out[:200])
+    # 13. NAV-3 (audit 2026-10-13): the kill list is per playthrough (nav_guard_<host uuid>.json) and kills expire
+    lg = S.game.try_rpc("nav.level_guard", {}) or {}
+    f = str(lg.get("file") or "")
+    dated = all(isinstance(v, dict) and v.get("t") for v in (lg.get("slow") or {}).values())
+    item("vis: NAV-3 kill list per playthrough, kills dated", "PASS" if f.startswith("BG3AI/nav_guard_") and
+         lg.get("ttl_s") and dated else "FAIL", f"file={f} ttl_s={lg.get('ttl_s')} slow={lg.get('slow')}")
+    # 14. NAV-2: on a killed level nav.frontier searches <= 2 new directions and says so (the level is put back after
+    #     unless it was already off)
+    lvl, was = lg.get("level"), lg.get("here")
+    if need(bool(lvl), "vis: NAV-2 killed level frontier throttled", "no current level"):
+        if not was:
+            S.game.try_rpc("nav.level_guard", {"kill": lvl, "why": "acceptance NAV-2"})
+        lua_server(g + "N.waysCache, N.waysCacheN = {}, 0 return 1")
+        fr = S.game.try_rpc("nav.frontier", {"hazards": False}) or {}
+        if not was:
+            S.game.try_rpc("nav.level_guard", {"clear": lvl})
+        n = len(fr.get("ways") or [])
+        item("vis: NAV-2 killed level frontier throttled", "PASS" if n <= 2 and fr.get("ways_off") and
+             (fr.get("ms") or 0) < 60 else "FAIL", f"ways={n} ways_off={fr.get('ways_off')} ms={fr.get('ms')}")
+    # 15. NAV-6: the arrival read (ways_cached) never searches: a cold spot answers fast
+    lua_server(g + "N.waysCache, N.waysCacheN = {}, 0 return 1")
+    fr = S.game.try_rpc("nav.frontier", {"ways_cached": True, "hazards": False}) or {}
+    item("vis: NAV-6 arrival frontier without cold searches", "PASS" if (fr.get("ms") or 999) < 30 else "FAIL",
+         f"ms={fr.get('ms')} ways={len(fr.get('ways') or [])}")
+    # 16. NAV-7: a warm-up's answer leaves a jump's in-flight marker alone (markers per op)
+    v = lua_server(g + 'local p=G.pos(h) N.inflight("jump",p) N.inflight("ways warm",p) N.inflightDone("ways warm") '
+                   'local ok=N.inflightOf("jump")~=nil N.inflightDone("jump") '
+                   'return tostring(ok).."|"..tostring(N.inflightOf("jump"))')
+    item("vis: NAV-7 in-flight markers per op", "PASS" if v == "true|nil" else "FAIL", v)
     load_verified(BASE)
 
 

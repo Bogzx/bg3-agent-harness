@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import time
@@ -14,6 +15,10 @@ from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# RUN-9: play.RUNTIME is read at import; a test must never append to the real runtime/runner.log (the phantom
+# "0.01 s after SIGTERM" kill bursts the orchestrator chased). Tests that need a runtime set their own.
+os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
+os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")   # never chmod the real play/knowledge (Knowledge tests patch it)
 import play as P  # noqa: E402
 
 
@@ -396,6 +401,20 @@ class Misc(unittest.TestCase):
         for flag in P.CLAUDE_FLAGS:
             self.assertIn(flag, cmd)
 
+    def test_default_client_command_unchanged(self):
+        # The whole Runner path (Options default client → play_request → agent_cmd) gives the pre-client command
+        cases = [{}, {"effort": "high"}, {"fallback_model": "sonnet"}, {"autocompact": 350_000},
+                 {"effort": "max", "fallback_model": "sonnet", "autocompact": 200_000, "fix_model": "haiku"}]
+        for kw in cases:
+            r = P.Runner.__new__(P.Runner)
+            r.opt = P.Options("pt", None, 60, "opus", **kw)
+            self.assertEqual(r.opt.client, "claude")
+            for prompt, sid, resume, tag in (("go", "1234", False, ""), ("keep playing", "1234", True, ""),
+                                             ("fix", "5678", False, "-fix"), ("fix", "5678", True, "-fix")):
+                with self.subTest(opt=kw, resume=resume, tag=tag):
+                    self.assertEqual(_cmd(r, prompt, sid, resume, tag),
+                                     legacy_claude_cmd(r, prompt, sid, resume, tag))
+
     def test_builtin_tools_disabled(self):
         # The playing agent gets only the bg3 MCP tools (+ ToolSearch to load their schemas): files, memory and the
         # sandbox are the server's (memtools.py); no built-in file, shell, web or agent tool exists in the session.
@@ -470,21 +489,34 @@ class Misc(unittest.TestCase):
             P.main(["run", "--playthrough", "x", "--effort", "turbo"])
 
 
+os_getpgid = P.os.getpgid
+
+
 class KillGame(unittest.TestCase):
     """kill_game with every OS call mocked: nothing is signalled for real."""
 
     def setUp(self):
-        self.saved = (P.pids_of_game, P.port_open, P.os.kill, P.os.killpg, P.time.sleep, P.KILL_GRACE, P.KILL_CONFIRM)
+        self.saved = (P.all_bg3_pids, P.port_open, P.os.kill, P.os.killpg, P.time.sleep, P.KILL_GRACE, P.KILL_CONFIRM,
+                      P.RUNTIME, P.crash_reporter_pids, P.is_harness_pid, P.proc_start, P.proc_cmdline)
+        self.tmp = tempfile.TemporaryDirectory()
+        P.RUNTIME = Path(self.tmp.name)              # RUN-9: never the real runtime/runner.log
+        P.crash_reporter_pids = lambda: []           # nor the machine's real crash reporters
         self.sent = []
-        self.alive = {4242}
+        self.alive = {4242}       # our harness game
+        self.foreign = set()      # a user's own Steam-launched BG3
         self.ignores_term = True
+        # the launcher's group 777: launch_game.sh started at tick 555 (runner.json records it as pg_start)
+        self.leader = {"start": 555, "cmd": b"/bin/bash\0/repo/runner/launch_game.sh\0"}
 
         def kill(pid, sig):
             self.sent.append((pid, sig))
             if sig == P.signal.SIGKILL or not self.ignores_term:
                 self.alive.discard(pid)
 
-        P.pids_of_game = lambda: sorted(self.alive)
+        P.all_bg3_pids = lambda: sorted(self.alive | self.foreign)
+        P.is_harness_pid = lambda pid: pid not in self.foreign
+        P.proc_start = lambda pid: self.leader["start"] if pid == 777 else None
+        P.proc_cmdline = lambda pid: self.leader["cmd"] if pid == 777 else b""
         P.port_open = lambda *a, **k: bool(self.alive)
         P.os.kill = kill
         P.os.killpg = lambda pg, sig: self.sent.append(("pg", pg, sig))
@@ -493,11 +525,19 @@ class KillGame(unittest.TestCase):
         P.KILL_CONFIRM = 0.01
         self.r = P.Runner.__new__(P.Runner)
         self.r.game_proc = None
-        self.r.state = type("S", (), {"data": {"game": {"pgid": 777}}, "__getitem__": lambda s, k: s.data.get(k),
+        self.r.state = type("S", (), {"data": {"game": {"pgid": 777, "pg_start": 555}}, "__getitem__": lambda s, k: s.data.get(k),
                                       "__setitem__": lambda s, k, v: s.data.__setitem__(k, v)})()
 
     def tearDown(self):
-        (P.pids_of_game, P.port_open, P.os.kill, P.os.killpg, P.time.sleep, P.KILL_GRACE, P.KILL_CONFIRM) = self.saved
+        (P.all_bg3_pids, P.port_open, P.os.kill, P.os.killpg, P.time.sleep, P.KILL_GRACE, P.KILL_CONFIRM,
+         P.RUNTIME, P.crash_reporter_pids, P.is_harness_pid, P.proc_start, P.proc_cmdline) = self.saved
+        self.tmp.cleanup()
+
+    def test_logs_to_the_test_runtime(self):
+        # RUN-9: the kill bursts these tests log go to a temp runtime, never REPO/runtime/runner.log
+        self.r.kill_game()
+        self.assertIn("killing the game", (P.RUNTIME / "runner.log").read_text())
+        self.assertNotEqual(self.saved[7], P.REPO / "runtime")   # the module-level guard: BG3AI_RUNTIME is a tmp dir
 
     def test_escalates_to_sigkill_when_sigterm_ignored(self):
         self.r.kill_game()
@@ -517,6 +557,150 @@ class KillGame(unittest.TestCase):
         P.os.kill = lambda pid, sig: self.sent.append((pid, sig))   # nothing ever dies
         with self.assertRaises(RuntimeError):
             self.r.kill_game()
+
+    def test_users_own_bg3_never_signalled(self):
+        # RUN-4: a user's Steam-launched BG3 beside ours: ours dies, theirs gets no signal at all
+        self.foreign = {5151}
+        self.r.kill_game()
+        self.assertIn((4242, P.signal.SIGKILL), self.sent)
+        self.assertNotIn(5151, [x[0] for x in self.sent])
+        self.assertIn("leaving bg3 pid(s) 5151 alone", (P.RUNTIME / "runner.log").read_text())
+
+    def test_stale_group_not_signalled(self):
+        # RUN-4: runner.json's pgid after a reboot (or a reused pid): another start time or another program
+        for leader in ({"start": 999, "cmd": self.leader["cmd"]}, {"start": 555, "cmd": b"/usr/bin/firefox\0"}):
+            with self.subTest(leader=leader):
+                self.sent, self.alive = [], {4242}
+                self.r.state["game"] = {"pgid": 777, "pg_start": 555}
+                self.leader = leader
+                self.assertIsNone(self.r.owned_group())
+                self.r.kill_game()
+                self.assertNotIn("pg", [x[0] for x in self.sent])
+                self.assertIn((4242, P.signal.SIGKILL), self.sent)   # our game itself still goes
+
+    def test_owned_group(self):
+        self.assertEqual(self.r.owned_group(), 777)
+        self.r.state["game"] = {"pgid": 777}                  # a record from before pg_start: the command line decides
+        self.assertEqual(self.r.owned_group(), 777)
+        self.leader = {"start": None, "cmd": b""}             # leader gone: ours only while it holds our game
+        P.os.getpgid = lambda pid: 777 if pid == 4242 else 1
+        try:
+            self.assertEqual(self.r.owned_group(), 777)
+            self.alive = set()
+            self.assertIsNone(self.r.owned_group())
+        finally:
+            P.os.getpgid = os_getpgid
+
+    def test_launch_refused_beside_a_foreign_bg3(self):
+        self.foreign, self.alive = {5151}, set()
+        self.r.event = lambda kind, **f: self.sent.append(("event", kind))
+        saved = (P.steam_ready, P.bg3le_problems, P.subprocess.Popen)
+        P.steam_ready, P.bg3le_problems = (lambda: (True, "ok")), (lambda: [])
+        P.subprocess.Popen = None                              # launching would fail loudly
+        try:
+            with self.assertRaises(P.ForeignGameRunning):
+                self.r.launch_game(None)
+        finally:
+            P.steam_ready, P.bg3le_problems, P.subprocess.Popen = saved
+        self.assertIn(("event", "foreign_game"), self.sent)
+        self.assertTrue(issubclass(P.ForeignGameRunning, P.LaunchBlocked))   # the run loop retries, never gives up
+
+
+class ApiAndMcpFailures(unittest.TestCase):
+    """RUN-7 / RUN-8 pure parts."""
+
+    def test_classify(self):
+        self.assertIsNone(P.classify_api_failure([], False))
+        self.assertEqual(P.classify_api_failure(["Claude AI usage limit reached|1760000000"], False), "limit")
+        self.assertEqual(P.classify_api_failure(["API Error: 529 Overloaded"], False), "limit")
+        self.assertEqual(P.classify_api_failure(["API Error: 500 Internal server error"], False), "limit")
+        self.assertEqual(P.classify_api_failure([], True), "limit")              # rate_limit_event rejected
+        self.assertEqual(P.classify_api_failure(["Invalid API key · Please run /login"], False), "auth")
+        self.assertEqual(P.classify_api_failure(["API Error: 404 model: claude-x not found"], False), "auth")
+        self.assertEqual(P.classify_api_failure(["Credit balance is too low"], True), "auth")
+
+    def test_backoff(self):
+        now = 1000.0
+        self.assertEqual(P.api_backoff_s(now + 600, now, 1), 600 + P.API_RESET_SLACK_S)   # its reset time
+        self.assertEqual(P.api_backoff_s(now + 10 ** 6, now, 1), P.API_RESET_MAX_S)
+        self.assertEqual([P.api_backoff_s(None, now, k) for k in (1, 2, 3)], [60, 120, 240])
+        self.assertEqual(P.api_backoff_s(now - 5, now, 99), P.API_BACKOFF_MAX_S)        # a past reset: doubling
+
+    def test_mcp_problem(self):
+        self.assertIsNone(P.mcp_problem(["bg3:connected"], True))
+        self.assertEqual(P.mcp_problem(["bg3:failed"], True), "the bg3 MCP server is failed")
+        self.assertIn("missing", P.mcp_problem([], True))
+        self.assertIsNone(P.mcp_problem([], False))         # codex/gemini: an absent list proves nothing
+        self.assertIsNone(P.mcp_problem(None, True))
+        self.assertEqual(P.mcp_problem(["bg3:pending"], False), "the bg3 MCP server is pending")
+
+
+class AgentSaves(unittest.TestCase):
+    """RUN-6: the agent's quicksaves (actions.jsonl save_game.bg records) are this playthrough's saves."""
+
+    def test_agent_quicksaves(self):
+        acts = [{"tool": "save_game.bg", "ok": True, "folder": "Claude-52151269953__QuickSave_7"},
+                {"tool": "save_game.bg", "ok": True, "folder": "Claude-52151269953__S028-prep"},   # named: by label
+                {"tool": "save_game.bg", "ok": False, "folder": None},
+                {"tool": "save_game.bg", "ok": True, "folder": "Tav-1__QuickSave_3"},               # another owner
+                {"tool": "save_game", "result": "QuickSave_9"},
+                {"tool": "save_game.bg", "ok": True, "folder": "Claude-52151269953__QuickSave_7"}]  # once
+        self.assertEqual(P.agent_quicksaves(acts, "claude"), ["Claude-52151269953__QuickSave_7"])
+        self.assertEqual(P.agent_quicksaves(acts, None), [])
+
+    def test_record_and_pick(self):
+        r = P.Runner.__new__(P.Runner)
+        r.opt = P.Options("pt", None, 20, "opus", save_owner="Claude")
+        r.state = type("S", (), {"data": {"runner_saves": [], "save_owner": "Claude"},
+                                 "__getitem__": lambda s, k: s.data.get(k),
+                                 "__setitem__": lambda s, k, v: s.data.__setitem__(k, v)})()
+        acts = [{"t": 5, "tool": "save_game.bg", "ok": True, "folder": f"Claude-1__QuickSave_{i}"} for i in range(60)]
+        with mock.patch.object(P, "read_actions_since", lambda t, *a, **k: acts):
+            r.record_agent_saves(0)
+        self.assertEqual(len(r.state["agent_saves"]), P.AGENT_SAVES_KEPT)
+        self.assertEqual(r.state["agent_saves"][-1], "Claude-1__QuickSave_59")
+        saves = [P.parse_save_folder("Claude-1__S010-end", 10.0), P.parse_save_folder("Claude-1__QuickSave_59", 20.0),
+                 P.parse_save_folder("Claude-1__QuickSave_99", 30.0)]
+        self.assertEqual(P.pick_save(saves, None, "Claude", r.ours()).label, "QuickSave_59")
+
+    def test_position_keys_are_not_progress(self):
+        status = {"level": "L", "party": [{"name": "Claude", "pos": [1, 2, 3]}, {"name": "Gale", "pos": [4, 5, 6]}]}
+        a = P.progress_signature(status, [])
+        self.assertEqual((a["pos_name"], a["party_pos"]["Gale"]), ("Claude", [4.0, 5.0, 6.0]))
+        b = P.progress_signature(dict(status, party=status["party"][::-1]), [])
+        self.assertFalse(P.made_progress(a, b))
+        self.assertIsNone(P.state_drift(a, b))           # same members, same places, other order
+
+
+class HarnessPid(unittest.TestCase):
+    """RUN-4: is_harness_pid/proc_start on real processes (sleep children; no game)."""
+
+    def spawn(self, **env):
+        import subprocess
+        p = subprocess.Popen(["sleep", "30"], env={"PATH": "/usr/bin:/bin", **env})
+        self.addCleanup(lambda: (p.kill(), p.wait()))
+        time.sleep(0.1)
+        return p.pid
+
+    def test_markers(self):
+        self.assertFalse(P.is_harness_pid(self.spawn()))                                  # a user's own process
+        self.assertFalse(P.is_harness_pid(self.spawn(SteamAppId="1086940")))              # a Steam-launched BG3
+        self.assertTrue(P.is_harness_pid(self.spawn(BG3AI_GAME_STAMP="20261016-120000")))  # launch_game.sh's
+        self.assertTrue(P.is_harness_pid(self.spawn(                                       # a launch from before
+            VK_LAYER_MESA_SCREENSHOT_CONFIG="comms;control=bg3ai-shot;output_dir=/x")))
+        self.assertFalse(P.is_harness_pid(2 ** 22 + 7))                                   # no such process
+
+    def test_proc_start_identity(self):
+        a = self.spawn()
+        self.assertIsInstance(P.proc_start(a), int)
+        self.assertEqual(P.proc_start(a), P.proc_start(a))
+        self.assertIsNone(P.proc_start(2 ** 22 + 7))
+        self.assertIn(b"sleep", P.proc_cmdline(a))
+
+    def test_launcher_marks_the_game(self):
+        sh = (P.REPO / "runner" / "launch_game.sh").read_text()
+        self.assertIn('"BG3AI_GAME_STAMP=$stamp"', sh)
+        self.assertIn('SCOPE_UNIT="bg3ai-game-$stamp.scope"', sh)
 
 
 class Relaunch(unittest.TestCase):
@@ -1339,6 +1523,32 @@ class MemorySessionWithoutHooks(unittest.TestCase):
 class MemoryKeeperHook(unittest.TestCase):
     """Runner.start_keeper/join_keeper: threaded pass, logged to events + keeper_history, joined before play."""
 
+    def test_recover_at_start(self):  # MEM-1: a pass the runner died in is undone before any session
+        import memory_keeper as K
+        with tempfile.TemporaryDirectory() as d:
+            events = []
+            mem = Path(d) / "memory"
+            mem.mkdir()
+            (mem / "quests.md").write_text("# Quests\n")
+            K.save_pending(Path(d), mem, "S007", K.snapshot(mem))
+            (mem / "quests.md").write_text("# Quests\n- unvalidated [seen]\n")
+
+            class FakeState:
+                dir = Path(d)
+
+            class FakeRunner:
+                opt = P.Options("pt", None, 20, "opus")
+                state = FakeState()
+                def event(self, kind, **f): events.append((kind, f))
+                recover_keeper = P.Runner.recover_keeper
+            r = FakeRunner()
+            r.mem = mem
+            with mock.patch.object(P, "log", lambda *a, **k: None):
+                r.recover_keeper()
+            self.assertEqual((mem / "quests.md").read_text(), "# Quests\n")
+            self.assertEqual(events[0][0], "keeper_recovered")
+            self.assertIn("never finished", events[0][1]["detail"])
+
     def test_start_and_join(self):
         import memory_keeper as K
         with tempfile.TemporaryDirectory() as d:
@@ -1355,8 +1565,8 @@ class MemoryKeeperHook(unittest.TestCase):
                 start_keeper = P.Runner.start_keeper
                 join_keeper = P.Runner.join_keeper
 
-            def fake_run(mem, n, base, model, effort, minutes, refused=None):
-                calls.append((n, Path(base).name, model, effort, minutes))
+            def fake_run(mem, n, base, model, effort, minutes, refused=None, client=None):
+                calls.append((n, Path(base).name, model, effort, minutes, client))
                 got_refused.append(refused)
                 time.sleep(0.2)
                 return K.KeeperResult("S007", status="ok", seconds=0.2, files=["quests.md"], commit="abc")
@@ -1373,13 +1583,24 @@ class MemoryKeeperHook(unittest.TestCase):
                 self.assertTrue(r.keeper_thread.is_alive())
                 r.join_keeper()
             self.assertIsNone(r.keeper_thread)
-            self.assertEqual(calls, [(7, "S007-keeper", "opus", "low", 5.0)])   # default: the play model
+            # default: the play model and the play client (claude: run_keeper's default non-MCP file-tools pass)
+            self.assertEqual(calls, [(7, "S007-keeper", "opus", "low", 5.0, "claude")])
             self.assertEqual([(x["name"], x["level"]) for x in got_refused[0]], [("Wyll", 5), ("Gale", 8)])
             self.assertEqual(events[0][0], "memory_keeper")
             self.assertEqual(events[0][1]["status"], "ok")
             hist = json.loads((Path(d) / "keeper_history.jsonl").read_text())
             self.assertEqual(hist["files"], ["quests.md"])
             self.assertEqual((hist["model"], events[0][1]["model"]), ("opus", "opus"))
+            self.assertEqual((hist["client"], events[0][1]["client"]), ("claude", "claude"))
+            # a codex run keeps its memory with codex (run_keeper then goes through the keeper-mode MCP server)
+            r.opt = P.Options("pt", None, 20, "gpt-5", client="codex")
+            with mock.patch.object(K, "run_keeper", fake_run), \
+                    mock.patch.object(P, "read_actions_since", lambda t, *a, **k: []):
+                r.start_keeper("S007", res)
+                r.join_keeper()
+            self.assertEqual(calls[-1][-1], "codex")
+            self.assertEqual(calls[-1][2], "gpt-5")
+            r.opt = P.Options("pt", None, 20, "opus")
             # quick exits and --no-memory-keeper skip the pass
             r.start_keeper("S008", P.SessionResult("S008", "c", 0, "exited", 0.0, 30.0))
             self.assertIsNone(r.keeper_thread)
@@ -1678,6 +1899,31 @@ class SeriesRuns(unittest.TestCase):
         self.assertIn("nautiloid", (r.state.dir / "knowledge_edits" / "builds.md").read_text())   # kept
         self.assertEqual((r.state.dir / "knowledge_edits" / "new.md").read_text(), "cached answers\n")
 
+    def test_knowledge_change_makes_the_run_unclean(self):  # FAIR-2
+        P.KNOWLEDGE_DIR.mkdir(parents=True)
+        (P.KNOWLEDGE_DIR / "tools.md").write_text("tools\n")
+        r = self._series_runner()
+        t0 = time.time() - 5
+        r.begin_run(t0)
+        (P.KNOWLEDGE_DIR / "tools.md").write_text("tools v2\n")   # changed mid-run (by anyone)
+        with mock.patch.object(P, "run_record", lambda *a, **k: {"clean": True, "milestone": "m", "wall_min": 1,
+                                                                  "sessions": 1, "cost_usd": 0.0, "crashes": 0,
+                                                                  "recoveries": 0, "reloads": 0, "harness_failures": 0,
+                                                                  "agent_failures": 0, "unknown_failures": 0,
+                                                                  "t": time.time()}), \
+                mock.patch.object(P.model_time, "model_time", lambda *a, **k: None), \
+                mock.patch.object(P.runs, "model_time_field", lambda *a, **k: None):
+            r.opt.judge = False
+            rec = r.write_run_record(t0)
+        self.assertFalse(rec["clean"])
+        self.assertTrue(rec["knowledge_changed"])
+
+    def test_play_settings_keep_knowledge_unwritable(self):  # FAIR-2: the agent's only file access is the MCP's
+        settings = json.loads((Path(P.__file__).resolve().parents[1] / "play" / ".claude" / "settings.json").read_text())
+        deny = settings["permissions"]["deny"]
+        for tool in ("Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"):
+            self.assertIn(tool, deny)
+
     # ---------------------------------------------------------------- failure classes
 
     def kinds(self, fails) -> list[tuple[str, str]]:
@@ -1867,6 +2113,21 @@ class InflightStuck(unittest.TestCase):
             self.assertEqual(P.mark_inflight_stuck(f), "SCL_Main_A")
             self.assertTrue(json.loads(f.read_text())["inflight"]["stuck"])
             self.assertIsNone(P.mark_inflight_stuck(f))          # already stuck
+
+    def test_per_playthrough_file_and_per_op_markers(self):  # NAV-3 + NAV-7
+        with tempfile.TemporaryDirectory() as d:
+            old = Path(d) / "nav_guard.json"
+            old.write_text(json.dumps({"inflight": {"level": "WLD_Main_A", "op": "ways warm"}}))
+            os.utime(old, (1, 1))
+            f = Path(d) / "nav_guard_aaaa.json"
+            f.write_text(json.dumps({"inflights": {"jump": {"level": "SCL_Main_A", "op": "jump"},
+                                                   "ways warm": {"level": "SCL_Main_A", "op": "ways warm"}}}))
+            self.assertEqual(P.mark_inflight_stuck(Path(d)), "SCL_Main_A")    # the newest file
+            got = json.loads(f.read_text())["inflights"]
+            self.assertTrue(got["ways warm"]["stuck"])
+            self.assertNotIn("stuck", got["jump"])                             # a jump marker counts anyway
+            self.assertNotIn("stuck", json.loads(old.read_text())["inflight"])
+            self.assertIsNone(P.mark_inflight_stuck(Path(d) / "none"))
 
     def test_nothing_in_flight_or_no_file(self):
         with tempfile.TemporaryDirectory() as d:

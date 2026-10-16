@@ -29,10 +29,19 @@ Fairness: it only reorganizes what the memory already says (the player's own not
 
 Result guard: the runner lints after the pass. New lint errors get one short resumed fix attempt; if they
 remain, every keeper edit is rolled back from the pre-pass snapshot (the memory is left as the player left it).
+
+MEM-1 (audit 2026-10-13): lint can't tell a hallucinated fact from a real one. A bullet the keeper adds to a fact
+file that names something (a capitalised word past the bullet's first) that appears nowhere in the memory before the
+pass, the read-only knowledge dir or the keeper's own prompt is dropped (ungrounded_lines): it can't have come from
+the player's notes. The pre-pass snapshot is also kept on disk (keeper_pending.json next to the keeper's log) until
+the pass is committed or rolled back; a runner killed mid-pass leaves it, and recover() at the next start kills a
+leftover keeper process and puts the memory back as the player left it, so the next session never builds on
+unvalidated keeper edits.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -169,13 +178,157 @@ def restore(mem: Path, before: dict[str, bytes], rels: list[str]) -> None:
             p.unlink(missing_ok=True)
 
 
+# ---------------------------------------------------------------- grounding (MEM-1)
+
+FACT_FILES = [*M.TAGGED_FILES, "lessons.md", "objectives.md", "party-build.md", "strategy.md"]
+_NAME_RE = re.compile(r"[A-Z][A-Za-z'’-]{2,}")
+_SENT_START = re.compile(r"(?:^|[.!?:;]\s+|[(\[]|\*\*|`)$")
+# words the prompt itself asks the keeper to write
+_KEEPER_WORDS = {"when", "note", "retired", "archive", "last", "updated", "done", "died", "ally", "fall", "seen", "told",
+                 "wiki", "guess", "worked", "blocked", "lessons", "party", "main", "now"}
+
+
+def corpus(snap: dict[str, bytes], knowledge: Path = KNOWLEDGE, extra: str = "") -> str:
+    """Lower-cased text the keeper may draw on: the memory before the pass, the knowledge dir, its prompt."""
+    parts = [b.decode("utf-8", "replace") for b in snap.values()]
+    try:
+        for p in sorted(knowledge.rglob("*.md")):
+            parts.append(p.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        pass
+    parts.append(extra)
+    return "\n".join(parts).lower()
+
+
+def ungrounded_names(line: str, text: str) -> list[str]:
+    """Capitalised words of a bullet (not starting it or a sentence) that `text` (lower-case corpus) never has."""
+    body = re.sub(r"^\s*[-*+]\s+", "", line)
+    out = []
+    for m in _NAME_RE.finditer(body):
+        w = m.group(0).strip("'’-")
+        if m.start() == 0 or _SENT_START.search(body[:m.start()]) or w.lower() in _KEEPER_WORDS:
+            continue
+        if re.fullmatch(r"S\d+|L\d+|[IVX]+", w) or w.lower() in text:
+            continue
+        out.append(w)
+    return out
+
+
+def ungrounded_lines(mem: Path, before: dict[str, bytes], rels: list[str], text: str) -> dict[str, list[str]]:
+    """{file: [added bullet lines naming something the corpus never has]} over the keeper's FACT_FILES edits."""
+    out: dict[str, list[str]] = {}
+    for rel in rels:
+        if rel not in FACT_FILES or not (mem / rel).is_file():
+            continue
+        old = before.get(rel, b"").decode("utf-8", "replace").splitlines()
+        pool: dict[str, int] = {}
+        for ln in old:
+            pool[ln] = pool.get(ln, 0) + 1
+        bad = []
+        for ln in (mem / rel).read_text(encoding="utf-8", errors="replace").splitlines():
+            if pool.get(ln):
+                pool[ln] -= 1
+                continue
+            if re.match(r"\s*[-*+]\s", ln) and ungrounded_names(ln, text):
+                bad.append(ln)
+        if bad:
+            out[rel] = bad
+    return out
+
+
+def drop_lines(mem: Path, found: dict[str, list[str]]) -> None:
+    for rel, bad in found.items():
+        p = mem / rel
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines(True)
+        left = list(bad)
+        keep = []
+        for ln in lines:
+            if ln.rstrip("\n") in left:
+                left.remove(ln.rstrip("\n"))
+                continue
+            keep.append(ln)
+        p.write_text("".join(keep), encoding="utf-8")
+
+
+# ---------------------------------------------------------------- crash recovery (MEM-1)
+
+PENDING = "keeper_pending.json"
+
+
+def save_pending(state_dir: Path, mem: Path, sid: str, snap: dict[str, bytes]) -> Path:
+    p = Path(state_dir) / PENDING
+    p.write_text(json.dumps({"sid": sid, "mem": str(mem.resolve()), "t": round(time.time(), 1),
+                             "files": {k: base64.b64encode(v).decode() for k, v in snap.items()}}))
+    return p
+
+
+def note_pgid(pending: Path | None, pgid: int) -> None:
+    if pending is not None:
+        try:
+            Path(f"{pending}.pgid").write_text(str(pgid))
+        except OSError:
+            pass
+
+
+def clear_pending(pending: Path | None) -> None:
+    if pending is not None:
+        for p in (pending, Path(f"{pending}.pgid")):
+            Path(p).unlink(missing_ok=True)
+
+
+def recover(mem: Path, state_dir: Path) -> str | None:
+    """At the runner's start: a keeper pass that never finished (the runner was killed mid-pass) left its pre-pass
+    snapshot. Kills a leftover keeper process group, then puts the memory back as the player left it unless the
+    pass was committed. Returns what was done, or None when nothing was pending. Never raises."""
+    p = Path(state_dir) / PENDING
+    if not p.is_file():
+        return None
+    try:
+        try:
+            pgid = int(Path(f"{p}.pgid").read_text().strip())
+            os.killpg(pgid, signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
+        d = json.loads(p.read_text())
+        sid = d.get("sid") or "?"
+        if Path(d.get("mem") or "") != mem.resolve():
+            clear_pending(p)
+            return f"{sid} keeper snapshot is for another memory dir: dropped"
+        head = M.git(mem, "log", "-1", "--format=%s", check=False).stdout.strip() if M.is_git_repo(mem) else ""
+        if head.startswith(f"{sid} memory-keeper:"):
+            clear_pending(p)
+            return f"{sid} keeper pass was committed: nothing to undo"
+        snap = {k: base64.b64decode(v) for k, v in (d.get("files") or {}).items()}
+        rels = changes(mem, snap)
+        restore(mem, snap, rels)
+        clear_pending(p)
+        return f"{sid} keeper pass never finished: put back {', '.join(rels) or 'nothing (no edits)'}"
+    except Exception as e:  # noqa: BLE001 - recovery never stops the runner
+        return f"keeper recovery failed: {type(e).__name__}: {e}"[:300]
+
+
 # ---------------------------------------------------------------- prompt / command
 
+def last_keeper_session(mem: Path) -> int | None:
+    """The session whose keeper pass was last committed ("Sxxx memory-keeper: ..."), or None."""
+    if not M.is_git_repo(mem) or not M.has_head(mem):
+        return None
+    out = M.git(mem, "log", "-1", "--format=%s", "--grep=^S[0-9]* memory-keeper:", check=False).stdout.strip()
+    m = re.match(r"S(\d+) memory-keeper:", out)
+    return int(m.group(1)) if m else None
+
+
 def logs_to_read(mem: Path, sid_n: int) -> list[int]:
-    """Session logs since the stalest curated file was last committed (at most MAX_LOGS, oldest first)."""
+    """Session logs since the stalest curated file was last committed (at most MAX_LOGS, oldest first). MEM-1: never
+    from before the last committed keeper pass or the last chapter (those logs are already in the curated files or a
+    chapter; one never-touched file used to pull `since` back to S000), and always the session that just ended."""
     touched = [M.last_touched_session(mem, rel) for rel in M.STALE_AFTER]
     known = [t for t in touched if t is not None and t >= 0]
     since = min(known) if known else 0
+    kept = last_keeper_session(mem)
+    if kept is not None:
+        since = max(since, kept + 1)
+    since = min(max(since, M.last_compacted_session(mem) + 1), sid_n)
     nums = [n for n in M.session_numbers(mem) if since <= n <= sid_n]
     return nums[-MAX_LOGS:]
 
@@ -447,6 +600,7 @@ class KeeperResult:
     timed_out: bool = False
     exit_code: int | None = None
     lint_errors: list[str] = field(default_factory=list)
+    ungrounded: list[str] = field(default_factory=list)   # MEM-1: added lines dropped (names not in the memory)
     detail: str = ""
 
     def summary(self) -> str:
@@ -459,6 +613,8 @@ class KeeperResult:
             s += "; timed out"
         if self.lint_errors:
             s += f"; {len(self.lint_errors)} lint error(s): {self.lint_errors[0][:200]}"
+        if self.ungrounded:
+            s += f"; dropped {len(self.ungrounded)} ungrounded line(s): {self.ungrounded[0][:160]}"
         if self.detail:
             s += f"; {self.detail}"
         return s
@@ -469,7 +625,7 @@ def _errors(mem: Path, session: int) -> list[str]:
 
 
 def _run_claude(cmd: list[str], cwd: Path, log_path: Path, timeout: float,
-                extra_env: dict | None = None) -> tuple[int | None, bool]:
+                extra_env: dict | None = None, pending: Path | None = None) -> tuple[int | None, bool]:
     """Runs one claude (or other client) call with its stream into log_path; kills its process group at the
     timeout (the keeper-mode MCP server is in that group too)."""
     env = {**os.environ, "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", **(extra_env or {})}
@@ -478,6 +634,7 @@ def _run_claude(cmd: list[str], cwd: Path, log_path: Path, timeout: float,
     with open(log_path, "a") as out:
         proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT,
                                 stdin=subprocess.DEVNULL, start_new_session=True, text=True)
+        note_pgid(pending, proc.pid)   # its own process group: recover() kills it if the runner dies meanwhile
         try:
             return proc.wait(timeout=max(1.0, timeout)), False
         except subprocess.TimeoutExpired:
@@ -492,6 +649,35 @@ def _run_claude(cmd: list[str], cwd: Path, log_path: Path, timeout: float,
                 except subprocess.TimeoutExpired:
                     continue
             return proc.returncode, True
+
+
+def keeper_server_env(mem: Path, knowledge: Path, task: Path) -> tuple[dict, dict]:
+    """(server spec, env) of the keeper-mode bg3 server run over http on the host: the env a stdio server started
+    by the client would get (_run_claude's, which drops the play session's deadline and metrics) + its own."""
+    server = keeper_server(mem, knowledge, task)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP", "BG3AI_METRICS_PATH")}
+    return server, {**env, **server["env"]}
+
+
+def _run_sandboxed(box, cli, text: str, mem: Path, model: str, effort: str | None, sess: str | None, resume: bool,
+                   log_base: Path, knowledge: Path, log_path: Path, timeout: float,
+                   pending: Path | None) -> tuple[int | None, bool]:
+    """One keeper call in the container sandbox: the keeper-mode server over http on the host for this call, the
+    client in a `keeper` container; both gone afterwards, whatever happened."""
+    server, env = keeper_server_env(mem, knowledge, Path(f"{log_base}.task.md"))
+    req = C.Request(prompt=text, model=model, session_dir=Path(log_base).parent, session=sess, resume=resume,
+                    effort=effort, tag=Path(log_base).name)
+    files = cli.write_config(req)
+    name = box.container_name(Path(log_base).name)
+    cmd = box.run_argv(name, cli.command(req), cli.env(req), files, role="keeper")
+    t0 = time.time()
+    srv = box.start_server(server, env, mem, Path(f"{log_base}.mcp-http.log"))   # SandboxError: run_keeper's error
+    try:
+        return _run_claude(cmd, mem, log_path, timeout - (time.time() - t0), pending=pending)
+    finally:
+        box.remove(name)
+        srv.stop()
 
 
 def commit(mem: Path, rels: list[str], message: str) -> str | None:
@@ -514,38 +700,51 @@ def commit(mem: Path, rels: list[str], message: str) -> str | None:
 def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL, effort: str | None = KEEPER_EFFORT,
                minutes: float = KEEPER_MINUTES, claude: str = "claude", knowledge: Path = KNOWLEDGE,
                refused: list[dict] | None = None, client: str = "claude", mcp: bool | None = None,
-               binary: str | None = None) -> KeeperResult:
+               binary: str | None = None, sandbox=None) -> KeeperResult:
     """One keeper pass for the session that just ended (number sid_n). Never raises.
 
     client: the clients.py client that keeps the memory (the play client, so a benchmark compares one model end to
     end). mcp: through the bg3 server in keeper mode (keeper_server); None = True for every client but claude,
     whose default stays today's pass with Claude Code's file tools (keeper_cmd). binary: the client's executable
-    (default: `claude` for claude, else the client's own)."""
+    (default: `claude` for claude, else the client's own). sandbox: the runner's runner/sandbox.Sandbox (run
+    --sandbox container): the client runs in the container against the keeper-mode server over http (always MCP)."""
     sid = M.session_id(sid_n)
     via_mcp = client != "claude" if mcp is None else mcp
+    if sandbox is not None:
+        via_mcp = True   # no file tools in the container: the keeper-mode server is the only way to the memory
     who = client
     res = KeeperResult(sid)
+    snap = pending = None
     t0 = time.time()
     end = t0 + minutes * 60
     try:
         before_errors = set(_errors(mem, sid_n + 1))
         report = L.lint(mem, "any", sid_n + 1).render(mem)
         snap = snapshot(mem)
+        pending = save_pending(Path(log_base).parent, mem, sid, snap)
         log_path = Path(f"{log_base}.jsonl")
         sess = str(uuid.uuid4())
         prompt = build_prompt(mem, sid, sid_n, report, minutes, refused, tools="mcp" if via_mcp else "files")
+        grounds = corpus(snap, knowledge, prompt)
         cli = None
         if via_mcp:
             Path(f"{log_base}.task.md").write_text(prompt + "\n", encoding="utf-8")   # the server's instructions
-            cli = keeper_client(client, mem, log_base, knowledge, binary or (claude if client == "claude" else None))
+            if sandbox is not None:
+                cli = C.make_http(client, sandbox.url, **({"binary": binary} if binary else {}))
+            else:
+                cli = keeper_client(client, mem, log_base, knowledge,
+                                    binary or (claude if client == "claude" else None))
             sess = sess if cli.assigns_session else None
 
         def call(text: str, resume: bool, left: float) -> tuple[int | None, bool]:
             if cli is None:
                 return _run_claude(keeper_cmd(text, mem, model, effort, sess, resume, claude, knowledge),
-                                   mem, log_path, left)
+                                   mem, log_path, left, pending=pending)
+            if sandbox is not None:
+                return _run_sandboxed(sandbox, cli, text, mem, model, effort, sess, resume, log_base, knowledge,
+                                      log_path, left, pending)
             cmd, env = client_cmd(cli, text, mem, model, effort, sess, resume, log_base)
-            return _run_claude(cmd, mem, log_path, left, env)
+            return _run_claude(cmd, mem, log_path, left, env, pending=pending)
 
         rc, res.timed_out = call(prompt, False, end - time.time())
         if cli is not None and not cli.assigns_session:
@@ -559,6 +758,10 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
                 res.reverted = sorted(set(res.reverted) | {"HANDOFF.md (player part)"})
             if keep_character_core(mem, snap):
                 res.reverted = sorted(set(res.reverted) | {f"{L.CHARACTER_FILE} (core)"})
+            bad = ungrounded_lines(mem, snap, [r for r in changes(mem, snap) if writable(r)], grounds)
+            if bad:
+                drop_lines(mem, bad)
+                res.ungrounded += [f"{rel}: {ln.strip()}" for rel, lns in bad.items() for ln in lns]
             new = [e for e in _errors(mem, sid_n + 1) if e not in before_errors]
             left = end - time.time()
             if not new or attempt == 1 or left < FIX_MIN_SECONDS or res.timed_out:
@@ -582,7 +785,15 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
             res.files = files
             res.commit = commit(mem, files, f"{sid} memory-keeper: {', '.join(files)}")
             res.status = "ok"
+        clear_pending(pending)   # committed, rolled back or nothing to do: no undo left for recover()
     except Exception as e:  # noqa: BLE001 - a keeper failure never stops play
         res.status, res.detail = "error", f"{type(e).__name__}: {e}"[:300]
+        if snap is not None and not res.commit:   # unvalidated edits never reach the next session
+            try:
+                restore(mem, snap, changes(mem, snap))
+                clear_pending(pending)
+                res.detail += "; keeper edits rolled back"
+            except Exception as e2:  # noqa: BLE001 - recover() at the next start retries
+                res.detail += f"; rollback failed ({type(e2).__name__}), recover() at the next start"
     res.seconds = round(time.time() - t0, 1)
     return res

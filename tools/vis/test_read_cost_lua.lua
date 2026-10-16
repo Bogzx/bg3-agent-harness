@@ -15,6 +15,17 @@ local COST_TARGET_MS = 30
 
 local P1 = "aaaaaaaa-0000-0000-0000-000000000001"
 local world, items, fire, blocked, heights
+asyncQ = {}
+local function pumpPaths()
+    local q = asyncQ
+    asyncQ = {}
+    for _, r in ipairs(q) do
+        local t = r.path.target
+        r.path.GoalFound = not blocked(t[1], t[2], t[3])
+        if r.path.GoalFound then r.path.Nodes[1] = { Position = { t[1], t[2], t[3] } } end
+        r.cb(r.path)
+    end
+end
 local calls = {}
 local function charge(name) calls[name] = (calls[name] or 0) + 1 end
 local function simMs()
@@ -43,6 +54,13 @@ Ext = {
             return true
         end,
         ReleasePath = function() end,
+        -- async (N.waysWarm, NAV-6): queued, answered by pumpPaths() (the engine's update); charged like a FindPath
+        -- but off the server thread, so not counted in an op's cost
+        BeginPathfinding = function(_, target, cb)
+            local p = { from = world[P1], target = target, Nodes = {} }
+            asyncQ[#asyncQ + 1] = { path = p, cb = cb }
+            return p
+        end,
     },
     IO = { LoadFile = function() return nil end, SaveFile = function() end },
     Json = { Parse = function() return nil end, Stringify = function() return "{}" end },
@@ -83,6 +101,7 @@ local function reset()
     calls = {}
     N.frame = (N.frame or 0) + 1
     N.waysCache, N.waysCacheN, N.waysWarmState = {}, 0, { t = 0 }
+    N.asyncPaths, N.asyncPathsN, asyncQ = {}, 0, {}
 end
 local function test(name, fn)
     count = count + 1
@@ -247,11 +266,21 @@ end)
 test("nav.frontier after standing still (ways warmed by the Tick): under target", function()
     frontierWorld()
     local now = 0
-    for _ = 1, 12 do now = now + 1000; N.waysWarm(now) end
+    -- NAV-6: the Tick's warm-up is async (BeginPathfinding, one request at a time, answered by the engine)
+    for _ = 1, 40 do now = now + 100; N.waysWarm(now); pumpPaths() end
     calls = {}
     local r = RPC.ops["nav.frontier"]({})
     eq(#r.ways, 8, "ways from the cache")
+    eq(calls.FindPath or 0, 0, "no sync search")
     under("nav.frontier warm (25 items, 1 fire)")
+end)
+
+test("nav.frontier at a walk's arrival (ways_cached, NAV-6): no sync search, under target", function()
+    frontierWorld()
+    local r = RPC.ops["nav.frontier"]({ ways_cached = true })
+    eq(#r.leads > 0, true, "leads"); eq(r.ways, nil, "no ways warm yet")
+    eq(calls.FindPath or 0, 0, "no sync search")
+    under("nav.frontier arrival (ways_cached)")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

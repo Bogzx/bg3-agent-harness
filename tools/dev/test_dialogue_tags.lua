@@ -322,5 +322,75 @@ do
     check("S063 rows only: not with fewer VMs than rows", #out8 == 0 and changing8 == true)
 end
 
+-- 13. Audit UI-4: ui.dialogue_choose for an option outside the visible rows. The i-th answer VM is the i-th row
+--     only when the list's scroll extent counts exactly the VMs (by_position); for rows-only answers (a hidden
+--     text-less VM: S015 "7 VMs, 6 shown") Answers.At(i) is another answer, so choose asks the bridge to wheel
+--     the row into view (needs_scroll) instead of firing SelectAnswerCommand on the wrong one.
+do
+    local ops, cmds, pressed = {}, {}, {}
+    Ext = {
+        IO = { LoadFile = function() return nil end }, Json = { Parse = function() return {} end },
+        Utils = { MonotonicTime = function() return 0 end, GetGameState = function() return "Running" end },
+        Input = { InjectKeyPress = function() end },
+        Events = { GameStateChanged = { Subscribe = function() end } },
+    }
+    BG3AI.RPC.register = function(name, fn) ops[name] = fn end
+    BG3AI.RPC.start_job = function(kind, spec) return { id = 1 } end
+    local vms = {}
+    for k = 1, 10 do vms[k] = vm({ { Type = "Text" } }) vms[k]._id = k end
+    local adObj = ad(vms, true)
+    local rowsEls = {}
+    for k = 1, 6 do rowsEls[k] = { Type = "ls.LSListBoxItem", _children = { { Type = "Button", _btn = k } } } end
+    local dlg = { _children = { { _name = "answerList", _children = rowsEls } } }
+    BG3AI.UI.widgetMap = function() return { Dialogue = { el = dlg } } end
+    BG3AI.UI.command = function(dc, name, param, dry) cmds[#cmds + 1] = { name, param } return true end
+    BG3AI.UI.isButton = function(e) return e._btn ~= nil end
+    BG3AI.UI.press = function(el, dry) pressed[#pressed + 1] = el._btn return true end
+    dofile(LUA .. "/Client/UIActions.lua")
+    local S2 = BG3AI.UIState
+    S2.dialogue = function() return { text = "line" } end
+    S2.activeDialogue = function() return adObj end
+    local shown, counts
+    S2.dialogueAnswers = function() return shown, false, counts end
+    local function rows(first, n, rowsOnly)
+        local out = {}
+        for k = first, first + n - 1 do
+            out[#out + 1] = { i = k, text = "answer " .. k, row = k - first + 1, vm = (not rowsOnly) and vms[k] or nil }
+        end
+        return out
+    end
+    local function choose(i, text)
+        cmds, pressed = {}, {}
+        return pcall(ops["ui.dialogue_choose"], { i = i, text = text, dry = true })
+    end
+
+    shown, counts = rows(1, 6, true), { below = 4, rows_only = true }
+    local okc, err = choose(8)
+    check("UI-4 rows only: option 8 below the fold asks for a scroll", not okc and tostring(err):find("needs_scroll"), err)
+    check("UI-4 rows only: no SelectAnswerCommand on Answers.At(8)", #cmds == 0 and #pressed == 0)
+    okc = choose(3)
+    check("UI-4 rows only: a visible row is pressed by its own button", okc and #cmds == 0 and pressed[1] == 3)
+    shown, counts = rows(5, 6, true), { above = 4, rows_only = true }
+    okc, err = choose(2)
+    check("UI-4 rows only: option 2 above the window asks for a scroll", not okc and tostring(err):find("needs_scroll"), err)
+    okc, err = choose(11)
+    check("UI-4: beyond the list is no option", not okc and tostring(err):find("no option 11"), err)
+
+    shown, counts = rows(1, 6, false), { below = 4, above = 0, by_position = true }
+    okc, err = choose(8)
+    check("UI-4 by position (extent == VMs): option 8 is VM 8", okc and cmds[1] and cmds[1][1] == "SelectAnswerCommand"
+        and cmds[1][2] == vms[8], err)
+    shown, counts = rows(1, 6, false), { below = 4 }   -- no scroll info: not proven, no At(i)
+    okc, err = choose(8)
+    check("UI-4 no scroll info: no At(i) guess", not okc and tostring(err):find("needs_scroll") and #cmds == 0, err)
+
+    -- text: the bridge passes the option's text after wheeling; the pressed row must still read it
+    shown, counts = rows(5, 6, true), { above = 4, rows_only = true }
+    okc, err = choose(7, "Answer 7.")
+    check("UI-4 text check: same text (case/punctuation) passes", okc and pressed[1] == 3, err)
+    okc, err = choose(7, "answer 9")
+    check("UI-4 text check: another text is refused", not okc and tostring(err):find("the list changed") and #pressed == 0, err)
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end

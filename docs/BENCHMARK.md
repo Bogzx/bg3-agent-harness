@@ -36,7 +36,7 @@ A comparison only holds when all of these are equal across the models compared. 
 |---|---|---|
 | Game build | Steam buildid `25605617` (Patch 8 Hotfix 10; `tools/dev/first_launch.sh` `WANT_BUILD`) | preflight; series pins |
 | bg3le, mod, harness code | `series.json` `pins`: bg3le sha256 + source, mod tree sha1, repo commit + dirty diff ([runner/README.md](../runner/README.md), "Fixed per series") | the runner refuses a run whose pins differ (`--allow-version-drift` records it) |
-| Steam updates | Steam in offline mode for the whole series | preflight WARN; the runner refuses to launch with Steam online (`BG3AI_ALLOW_STEAM_ONLINE=1` overrides) |
+| Steam updates | Steam in offline mode for the whole series | preflight WARN; the runner refuses to launch with Steam online where the machine requires offline (`~/.config/bg3ai/require-steam-offline` or `BG3AI_REQUIRE_STEAM_OFFLINE=1`; the test machine does) |
 | Scenarios | `scenarios/<name>.json`: start, `until` milestone, caps, profile, resets ([scenarios/README.md](../scenarios/README.md)) | `series.json` `scenario.digest` + the start save's sha1 |
 | Caps | per scenario (`run_hours`, `max_cost`, `max_tokens`) | `series.json` `caps` (`--allow-cap-change` records a change) |
 | Persona judge model | `claude-sonnet-5-5` (`runner/judge.py`, `$BG3AI_JUDGE_MODEL`); never the model under test | `series.json`; `--allow-judge-change` records it |

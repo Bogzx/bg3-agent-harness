@@ -1,11 +1,12 @@
 # bg3-ai: an AI that plays Baldur's Gate 3
 
-A mod plus a harness that let an LLM agent (Claude Code) play **Baldur's Gate 3** end to end:
+A mod plus a harness that let an LLM agent (any MCP client; the runner drives Claude Code by default, `--client
+codex|gemini` are wired too) play **Baldur's Gate 3** end to end:
 
 * it **sees** what the player sees: fair, visibility-filtered game state as compact text, plus the real
   screen on demand;
 * it **acts** like a player: the game's own UI commands, engine actions, and input as a fallback;
-* it **remembers**: a git-tracked Markdown memory carried across ~1-hour sessions;
+* it **remembers**: a git-tracked Markdown memory carried across sessions of up to an hour (`--session-minutes`, default 60);
 * it **runs unattended**: a supervisor launches the game, runs sessions, recovers from crashes, and
   shows a live dashboard.
 
@@ -35,7 +36,29 @@ A client in a container reaches the server over HTTP: `tools/container/README.md
 ## Rules the system enforces
 
 * **Fairness.** The mod filters state server-side with the engine's own perception queries and projects
-  only fields the in-game UI shows. The playing agent has no shell and no web access, and can only read or
-  write its `memory/` and `knowledge/` folders.
+  only fields the in-game UI shows. The playing agent has no shell and no web access (bg3.wiki only through the
+  rate-limited wiki tool). It reads and writes its `memory/` and only reads `knowledge/`, through the MCP server's
+  memory tools, which enforce that sandbox.
 * **Efficiency.** State and actions go through the engine as text. Screenshots are opt-in. GUIDs become
   short handles (`e12`).
+
+## Machine configuration
+
+Nothing is tied to one machine; every path has an env override and a default found at run time:
+
+| What | Env | Default |
+|---|---|---|
+| game install | `BG3_DIR` | the Steam library listing app 1086940 (`tools/steam_paths.py game`) |
+| Steam's sniper runtime | `BG3AI_SNIPER_DIR` | its library per `libraryfolders.vdf`, else next to the game |
+| Steam root | `STEAM_ROOT` | `~/.steam/steam`, `~/.steam/debian-installation`, `~/.local/share/Steam`, Flatpak |
+| Larian profile | `BG3AI_PROFILE_DIR` | `~/.local/share/Larian Studios/Baldur's Gate 3` (`steam_paths.py profile`) |
+| saves / Script Extender files | `BG3AI_SAVE_DIR` / `BG3AI_SE_DIR` | `<profile>/PlayerProfiles/Public/Savegames/Story` / `<profile>/Script Extender` |
+| runtime logs, shots, metrics | `BG3AI_RUNTIME` | `<repo>/runtime` |
+| playthroughs (memory repos) | `BG3AI_PLAYTHROUGHS` | `<repo>/playthroughs` |
+| NVIDIA PRIME offload | `BG3AI_PRIME=1\|0` | auto: on when an NVIDIA GPU and its Vulkan ICD are present |
+| Steam must be offline | `BG3AI_REQUIRE_STEAM_OFFLINE=1\|0` | off, or on when `~/.config/bg3ai/require-steam-offline` exists |
+
+Host requirements the code assumes: Linux with systemd user sessions (`systemd-run --user --scope` for the game's
+cgroup, `journalctl --user` for OOM reasons; both degrade to a warning without them), Mesa's
+`VK_LAYER_MESA_screenshot`, Docker (bg3le build, Lua test suites). `runner/launch_game.sh` lists every knob.
+Operator scripts for the dev machines (`tools/orchestrator/`) are untracked and not needed to run anything.

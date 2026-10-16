@@ -154,5 +154,25 @@ test("client: Noesis counters on the minute line, a line when parking starts and
     assert(M.noesis() == nil, "server: nil")
 end)
 
+test("client: frame-lock timeouts and strict refusals on the minute line (audit UI-5)", function()
+    Ext.IsServer = function() return false end
+    Ext._Internal = { UiSerialize = function() return true, 7, 3, 68, 10, 0, 5000, 0 end,
+        UiStrict = function() return true, 4 end }
+    dofile(LUA .. "/Shared/Mem.lua")
+    M.heap_mb = function() return heap end
+    reset()
+    M.check(clock, 40)
+    M.check(clock + M.LOG_EVERY_MS, 40)
+    assert(printed[#printed]:find("noesis gen 68 parked 0 leaked 10 released_late 5000 lock_timeouts lua 7 ui 3 strict true refused 4",
+        1, true), printed[#printed])
+    local m = RPC.ops["sys.mem"]({})
+    assert(m.noesis.lua_timeouts == 7 and m.noesis.ui_timeouts == 3 and m.noesis.refused == 4, "sys.mem timeouts")
+    Ext._Internal = { UiSerialize = function() return true, 0, 0, 68, 10, 0, 5000, 0 end }  -- a build without 0010
+    assert(M.noesis().strict == nil, "no UiStrict: no strict field")
+    Ext._Internal = nil
+    Ext.IsServer = function() return true end
+    dofile(LUA .. "/Shared/Mem.lua")
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

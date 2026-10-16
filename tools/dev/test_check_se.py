@@ -36,6 +36,24 @@ class LogVerdictTest(unittest.TestCase):
         self.assertEqual(v, "WARN")
         self.assertIn("16 of 18", d)
 
+    def test_0008_zero_call_sites_fails(self):
+        # audit UI-5: 0008 depends on exact instruction bytes; 0 sites = the guard is off
+        line = "noesis: MultiBindingExpression guarded: GetSourceValue at {} call sites, BeforeSet hooked\n"
+        v, d = C.check_log_text(HOOKED + line.format(0))
+        self.assertEqual(v, "FAIL")
+        self.assertIn("0008", d)
+        self.assertEqual(C.check_log_text(HOOKED + line.format(3))[0], "PASS")
+
+    def test_frame_lock_timeouts_warn(self):
+        # 0010 logs timeouts at 1, 2, 4, ...
+        log = HOOKED + ("noesis: Lua frame-lock timeout #1 (50 ms); ran unserialized\n"
+                        "noesis: Lua frame-lock timeout #4 (50 ms); ran unserialized\n"
+                        "noesis: UI-thread frame-lock timeout #2 (16 ms): frame ran unguarded\n")
+        v, d = C.check_log_text(log)
+        self.assertEqual(v, "WARN")
+        self.assertIn("Lua >= 4", d)
+        self.assertIn("UI-thread >= 2", d)
+
     def test_no_frame_yet(self):
         self.assertEqual(C.check_log_text("bg3le: started\n")[0], "WARN")
 

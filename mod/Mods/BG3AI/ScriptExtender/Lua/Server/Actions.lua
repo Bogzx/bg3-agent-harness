@@ -559,17 +559,26 @@ local function on_route(job, track, prev, here)
     return false
 end
 
+-- NAV-8: jobs tick every TICK_MS (50 ms; 50-66 ms at 30-60 fps), so a 2-3.9 m jump between two ticks (a run
+-- does ~0.4 m) passed both old tests (> 4 m, or > 12 m/s over >= 100 ms). A step over TELEPORT_SMALL_M within a short tick is
+-- judged at TELEPORT_MIN_DT_MS (a frame hitch that long is a long dt, the speed test). Not undone: TeleportToPosition
+-- is on G.BLOCK (no harness teleports); the job fails and the teleport_blocked event reaches the runner's log.
+A.TELEPORT_SMALL_M = 1.5
+A.TELEPORT_MIN_DT_MS = 50
 local function teleport_check(job, track, armed)
     local here = G.pos(job.char)
     if not here then return nil end
     local t = RPC.now_ms()
     local prev, dt = track.last_pos, t - (track.last_t or t)
     local step = prev and U.dist(prev, here) or 0
-    if prev and (step > 4.0 or (dt >= 100 and step / (dt / 1000) > 12.0))
+    local fast = dt >= 100 and step / (dt / 1000) > 12.0
+        or (step > A.TELEPORT_SMALL_M and dt < 100 and step / (math.max(dt, A.TELEPORT_MIN_DT_MS) / 1000) > 12.0)
+    if prev and (step > 4.0 or fast)
         and (not armed or armed(prev)) and not on_route(job, track, prev, here) then
         if job.walk then job.walk.done = true end
         pcall(G.osi, "PurgeOsirisQueue", job.char)
-        RPC.push("teleport_blocked", { uuid = job.char, from = pos_view(prev), to = pos_view(here) })
+        RPC.push("teleport_blocked", { uuid = job.char, from = pos_view(prev), to = pos_view(here),
+            m = U.round(step, 1) })
         RPC.finish_job(job, "failed", { pos = pos_view(here), teleported = true },
             "engine teleported the character (not allowed)")
         return nil
@@ -837,6 +846,12 @@ A.LADDER_FOLLOWER_M = 20.0 -- chained followers this close to the actor must sta
 A.LADDER_SETTLE_MAX_MS = 3000
 A.LADDER_STEP_M = 1.5
 A.LADDER_STEP_MAX_MS = 3000
+-- 4th look (acceptance after the follower hold, 10-11 08:37/10:43/12:22, the gate start): Claude climbed but the job
+-- was "still running" at 25 s twice, and once ended "done climbed=down" with Claude back at the top 12 s later. The
+-- climb watch (purge once the climb begins, retry, deadline) started only at the UseFinished; for a settled Use
+-- (after a walk) `used_at` stayed nil until then, so a late UseFinished let the Use's re-climb loop (cause 1) run.
+-- true: the watch starts at our own Use (a UseFinished keeps the earlier time). false: the old wait for UseFinished.
+A.LADDER_WATCH_AT_USE = true
 
 -- In combat a carried potion is drunk as from the hotbar: on the drinker's turn, for the item's own UseCosts
 -- (a bonus action for Potion of Healing). S003/S017/S018/S023/S031: every in-combat potion was refused ("not
@@ -1029,6 +1044,7 @@ reg("interact", function(args)
                     j.ladder.held = A.ladder_hold(char)
                 end
                 G.osi("Use", char, target, j.use_ev)
+                if ladder and A.LADDER_WATCH_AT_USE then j.used_at = RPC.now_ms() end
             end)
         end,
         on_tick = function(job)
@@ -1064,7 +1080,8 @@ reg("interact", function(args)
                     if not lj.held then lj.held = A.ladder_hold(char) end
                     lj.used, lj.y0 = true, here and here[2] or lj.y0
                     G.osi("Use", char, target, job.use_ev)
-                    job.used_at = job.used_at and now or nil -- a re-Use restarts the climb deadline
+                    -- a re-Use restarts the climb deadline; the first one starts it (A.LADDER_WATCH_AT_USE)
+                    job.used_at = (job.used_at or A.LADDER_WATCH_AT_USE) and now or nil
                 end
                 return
             end
@@ -1117,6 +1134,15 @@ reg("interact", function(args)
                         local x, z = here[1] + dx / n * A.LADDER_STEP_M, here[3] + dz / n * A.LADDER_STEP_M
                         local y = G.floor_at(x, z, here[2])
                         if y and math.abs(y - here[2]) < 0.6 then back = { x, y, z } end
+                    end
+                    -- NAV-8: the step back walks only with a path proof (a short direct path; CharacterMoveToPosition
+                    -- with no path is the engine's teleport)
+                    if back then
+                        local okr, r, info = pcall(G.reachable, char, back)
+                        if not (okr and r == true and not (info and info.needs_jump)
+                            and (not (info and info.length_m) or info.length_m <= 2 * A.LADDER_STEP_M + 1.0)) then
+                            back = nil
+                        end
                     end
                     if back then
                         G.osi("CharacterMoveToPosition", char, back[1], back[2], back[3], "Walk", ev_name(job, "lstep"))
@@ -1348,9 +1374,19 @@ function A.place_spot(char, target)
     return { a[1] + dx * k, a[2], a[3] + dz * k }
 end
 
+-- Writing TargetPos2 into the engine's queued task goes through a struct mapping (bg3se OsirisTask.h) never proven
+-- on this build, and the read-back uses the same mapping, so a wrong offset would pass it: the lockpick write that
+-- corrupted the heap was this class (HANDOFF §7, audit ACT-9). OFF until a live check proves the layout
+-- (acceptance "revivify two-step spot set", opt-in); meanwhile a two-step spell cast is refused with the routes
+-- that work (a scroll is clicked through the UI). Turn on for a probe: Mods.BG3AI.BG3AI.Actions.TASK_POS2 = true
+A.TASK_POS2 = false
+A.TASK_POS2_OFF = "the engine-task write for a second pick is off (audit ACT-9)"
+
 -- Give the queued UseSpell task its second target (OsirisUseSpellTask.TargetPos2, bg3se OsirisTask.h). Returns
--- true, or nil + why. Read-checked before the write; any proxy error is caught.
+-- true, or nil + why. Read-checked before the write; any proxy error is caught. Nothing is written while
+-- A.TASK_POS2 is off.
 function A.set_task_pos2(char, spell, p)
+    if not A.TASK_POS2 then return nil, A.TASK_POS2_OFF end
     local ok, err = pcall(function()
         local tasks = Ext.Entity.Get(char).ServerCharacter.OsirisController.Tasks
         local t
@@ -1428,6 +1464,18 @@ reg("cast", function(args)
         landing, pos = pos, nil
         if #targets == 0 then targets[1] = char end -- nobody named: the caster goes alone
         if #targets > 1 then G.refuse("a teleport takes one who goes (the caster or an ally beside them), then the landing") end
+    end
+    -- ACT-9: with the second-pick write off, a two-step cast would be ordered with its first pick only: the game
+    -- then waits for the second click (or refuses), and the next action cancels it. Refused before any cost.
+    if A.two_step_spell(base) and not targets[2] and not A.TASK_POS2 then
+        if A.revive_spell(base) then
+            G.refuse(tostring(base) .. " is a two-step cast (the body, then the spot they stand up on) and this"
+                .. " action can't give its second pick yet. Read a Scroll of Revivify by name (use_ability"
+                .. " ability=\"Scroll of Revivify\" target=<the body>: it clicks the body, then the ground beside it),"
+                .. " or Withers at camp")
+        end
+        G.refuse(tostring(base) .. " is a two-step teleport (who goes, then the landing) and this action can't give"
+            .. " its landing yet: walk, jump or climb there (route),")
     end
     if #targets == 0 and not pos then
         local st = Ext.Stats.Get(base)
@@ -1707,7 +1755,7 @@ reg("cast", function(args)
             end
         end,
         on_finish = function(job)
-            if job.jump_marked then pcall(BG3AI.Nav.inflight, nil) end
+            if job.jump_marked then pcall(BG3AI.Nav.inflightDone, "jump") end -- NAV-7: only its own marker
             if not job.casted then return end
             -- Resource audit: charge whatever the engine did not.
             local after = G.resources(char)
@@ -2264,6 +2312,22 @@ local function needs_click(job, target, expect, menu)
     RPC.finish_job(job, "done", { needs_click = target, expect = expect, button = menu and "R" or "L", menu = menu })
 end
 
+-- A character out of sight that is no longer in the fight (S033 18:39-18:41: Umbral Tremors read
+-- "not visible" for 4 turns of retargets and skipped attacks): "dead", "off_stage" (dissipated,
+-- despawned: an entity the game no longer knows reads off stage too) or "left_fight" (the party is in a
+-- fight and it isn't). A player sees each: its portrait leaves the turn order. nil: only out of sight.
+local function gone_why(t)
+    if G.is_dead(t) then return "dead" end
+    if not G.b(G.q("IsOnStage", t)) then return "off_stage" end
+    if not G.in_combat(t) then
+        for _, p in ipairs(G.party()) do
+            if G.in_combat(p) then return "left_fight" end
+        end
+    end
+    return nil
+end
+A.gone_why = gone_why
+
 -- Read-only follow-up for the bridge after a click: what a player sees on the
 -- target (locked padlock icon, open/closed, trap marker of a discovered trap).
 RPC.register("act.target_state", function(args)
@@ -2271,6 +2335,9 @@ RPC.register("act.target_state", function(args)
     if t and G.b(G.q("IsItem", t)) then
         local h = holder(t)
         if h and G.is_party(h) then return { visible = true, held = true } end
+    end
+    if t and not G.is_party(t) and not G.b(G.q("IsItem", t)) and not G.visible(t) then
+        return { visible = false, gone = gone_why(t) }
     end
     if not t or not G.visible(t) then return { visible = false } end
     local out = { visible = true }

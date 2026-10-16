@@ -100,6 +100,7 @@ local function reset()
     N.asyncPaths, N.asyncPathsN = {}, 0
     N.warmAsync = { ok = 0, timeouts = 0, byLevel = {}, broken = false }
     N.guardReset()
+    N.slowHits = {}
     asyncQ = {}
 end
 local function test(name, fn)
@@ -1356,13 +1357,18 @@ test("waysWarm: nothing while a job (walk, jump, cast) runs", function()
     eq(N.warmAsync.ok > 0, true, "after the job")
 end)
 
-test("kill switch: a search over PATH_LEVEL_KILL_MS turns off jump planning, jumpGap and the warm-up there", function()
+test("kill switch: SLOW_SEARCH_STRIKES searches over PATH_LEVEL_KILL_MS turn off jump planning, jumpGap and the warm-up there", function()
     onLevel("SHADOWFELL", function()
         local real = Ext.Level.FindPath
         Ext.Level.FindPath = function(path) clock = clock + N.PATH_LEVEL_KILL_MS + 10; return false end
         N.path(P1, { -9, 0, 3 })
+        eq(N.levelSlow(), nil, "NAV-3: one slow search is a strike, not a kill")
+        eq(N.slowHits.SHADOWFELL, 1, "one strike")
+        N.frame = N.frame + 1
+        N.path(P1, { -19, 0, 7 })
         Ext.Level.FindPath = real
         assert(N.levelSlow(), "killed")
+        assert(N.levelSlow().why:find("2 path searches"), "why: " .. tostring(N.levelSlow().why))
         local c, restore = countingFind()
         local plan, why = N.jumpPlan(P1, { 0, 0, 0 }, { -12, 0, 0 }, 4.5, function() return nil end)
         eq(plan, nil, "no plan"); assert(tostring(why):find("off on this level"), "why: " .. tostring(why))
@@ -1388,7 +1394,7 @@ test("kill switch: a crash during a jump plan (marker left in the file) turns th
         N.guardReset()
         local s = N.levelSlow("SHADOWFELL")
         assert(s and s.why:find("died during jump plan"), "killed by the marker")
-        eq(N.guardState().inflight, nil, "marker cleared")
+        eq(N.guardState().inflights, nil, "marker cleared")
         eq(saved, true, "written back")
     end)
     Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile = realL, realP, realS
@@ -1430,11 +1436,11 @@ test("kill switch: a stop during a FRESH warm-up is no strike (09:08 relaunch + 
         N.guardReset()
         eq(N.levelSlow("BGO_Main_A"), nil, "not killed")
         eq(N.guardState().strikes.BGO_Main_A, 1, "no new strike")
-        eq(N.guardState().inflight, nil, "marker cleared")
+        eq(N.guardState().inflights, nil, "marker cleared")
         -- a stuck one marks the file; N.WARM_CLEAN_RESET answered warm-ups clear an old strike
         N.inflight("ways warm", { 1, 2, 3 })
         N.inflightStuck()
-        eq(N.guardState().inflight.stuck, true, "stuck marked")
+        eq(N.inflightOf("ways warm").stuck, true, "stuck marked")
         N.inflight(nil)
         N.warmClean = {}
         for _ = 1, N.WARM_CLEAN_RESET - 1 do N.warmAnswered("BGO_Main_A") end
@@ -1450,8 +1456,8 @@ end)
 test("jump plan: the in-flight marker is set during its searches and cleared after", function()
     local marks = {}
     local realS, realJ = Ext.IO.SaveFile, Ext.Json.Stringify
-    Ext.Json.Stringify = function(t) return t.inflight and ("in:" .. t.inflight.op) or "clear" end
-    Ext.IO.SaveFile = function(p, txt) if p == N.GUARD_FILE then marks[#marks + 1] = txt end end
+    Ext.Json.Stringify = function(t) local k = t.inflights and next(t.inflights); return k and ("in:" .. k) or "clear" end
+    Ext.IO.SaveFile = function(p, txt) if p:find("nav_guard", 1, true) then marks[#marks + 1] = txt end end
     local ok, err = pcall(function()
         onLevel("SCL_Main_A", function()
             N.jumpPlan(P1, { 0, 0, 0 }, { -6, 0, 0 }, 4.5, function() return nil end)
@@ -1608,6 +1614,160 @@ test("landing: a column with no ground at all is never a landing (S038/S039 void
     end)
     Ext.Level.GetHeightsAt = savedH
     if not ok then error(err, 0) end
+end)
+
+
+-- ---- NAV-2/NAV-3 (audit 2026-10-13) ------------------------------------------------------------------------------
+
+test("NAV-2: ways on a killed level searches at most WAYS_SLOW_DIRS directions per call, no jump probes", function()
+    onLevel("SHADOWFELL", function()
+        N.killLevel(nil, "by hand")
+        local c, restore = countingFind()
+        local ok, err = pcall(function()
+            blocked = function(x) return x < -5 end -- the W side is closed (a jump probe would search there)
+            local ways, _, off = N.ways(P1, 20, 8, 100)
+            eq(#ways, N.WAYS_SLOW_DIRS, "two directions")
+            eq(off, "by hand", "the kill reason comes back")
+            assert(c.n <= 2 * N.WAYS_SLOW_DIRS, "at most 2 probes per direction, got " .. c.n)
+            local ways2 = N.ways(P1, 20, 8, 100)
+            eq(#ways2, 2 * N.WAYS_SLOW_DIRS, "the next read adds two more (cached ones kept)")
+            local V = BG3AI.Visibility
+            V.itemsAround, V.charactersAround = function() return {} end, function() return {} end
+            local okf, r = pcall(RPC.ops["nav.frontier"], { hazards = false })
+            V.itemsAround, V.charactersAround = nil, nil
+            assert(okf, "nav.frontier: " .. tostring(r))
+            eq(r.ways_off, "by hand", "frontier says ways are throttled")
+        end)
+        restore()
+        if not ok then error(err, 0) end
+    end)
+    onLevel("WLD_Main_A", function()
+        local ways, _, off = N.ways(P1, 20, 8, 1000)
+        eq(#ways, 8, "a healthy level: all eight"); eq(off, nil, "no reason")
+    end)
+end)
+
+test("NAV-3: the guard file is per playthrough (host uuid); the machine-wide file only before a host exists", function()
+    eq(N.guardFile(), N.GUARD_FILE, "no host")
+    onLevel("WLD_Main_A", function()
+        eq(N.guardFile(), "BG3AI/nav_guard_" .. P1 .. ".json", "per host")
+        N.killLevel("WLD_Main_A", "x")
+        assert(N.levelSlow(), "killed in this playthrough")
+    end)
+    eq(N.levelSlow("WLD_Main_A"), nil, "another file (no host): not killed there")
+end)
+
+test("NAV-3: a kill expires after KILL_TTL_S; an undated kill from an older file is dated at load", function()
+    local realL, realP, realS, realNow = Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile, N.nowS
+    local now = 1000000
+    N.nowS = function() return now end
+    local file = { slow = { CTY_Main_A = { why = "old", ms = 900 } }, strikes = { CTY_Main_A = 1 } }
+    Ext.IO.LoadFile = function(p) if p == N.GUARD_FILE then return "x" end end
+    Ext.Json.Parse = function() return file end
+    Ext.IO.SaveFile = function() end
+    local ok, err = pcall(function()
+        N.guardReset()
+        local v = N.levelSlow("CTY_Main_A")
+        assert(v, "still killed"); eq(v.t, now, "dated now")
+        now = now + N.KILL_TTL_S - 1
+        assert(N.levelSlow("CTY_Main_A"), "not yet")
+        now = now + 2
+        eq(N.levelSlow("CTY_Main_A"), nil, "expired while running")
+        eq(N.guardState().strikes.CTY_Main_A, nil, "its strikes too")
+        file = { slow = { BGO_Main_A = { why = "old", t = now - N.KILL_TTL_S - 5 } } }
+        N.guardReset()
+        eq(N.levelSlow("BGO_Main_A"), nil, "expired at load")
+        N.killLevel("SCL_Main_A", "new")
+        eq(N.levelSlow("SCL_Main_A").t, now, "a new kill is dated")
+    end)
+    Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile, N.nowS = realL, realP, realS, realNow
+    N.guardReset()
+    if not ok then error(err, 0) end
+end)
+
+test("NAV-3: a jump marker older than JUMP_MARK_MAX_MS with the game alive is dropped (no kill at a later death)", function()
+    N.inflight("jump", { 1, 2, 3 })
+    N.inflightExpire(clock + 1000)
+    eq(N.inflightOf("jump") and N.inflightOf("jump").op, "jump", "fresh: kept")
+    N.inflightExpire(clock + N.JUMP_MARK_MAX_MS + 1)
+    eq(N.inflightOf("jump"), nil, "stale: dropped")
+    N.inflight("ways warm", { 1, 2, 3 })
+    N.inflightExpire(clock + N.JUMP_MARK_MAX_MS + 1)
+    eq(N.inflightOf("ways warm").op, "ways warm", "a warm-up marker has its own rule (stuck)")
+    N.inflight(nil)
+end)
+
+test("NAV-7: a warm-up answer no longer erases a jump cast's marker (one marker per op)", function()
+    N.inflight("jump", { 4, 0, 0 })
+    N.inflight("ways warm", { 1, 2, 3 })
+    N.inflightDone("ways warm")
+    assert(N.inflightOf("jump"), "the jump marker survives the warm-up's answer")
+    eq(N.inflightOf("ways warm"), nil, "the warm-up's own cleared")
+    N.inflightDone("jump")
+    eq(N.guardState().inflights, nil, "all clear")
+end)
+
+test("NAV-7: a crash with both a jump and a fresh warm-up in flight kills the level (jump) at the next load", function()
+    local realL, realP, realS = Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile
+    Ext.IO.LoadFile = function(p) if p == N.GUARD_FILE then return "x" end end
+    Ext.Json.Parse = function() return { slow = {}, inflights = {
+        ["ways warm"] = { level = "SCL_Main_A", op = "ways warm" }, jump = { level = "SCL_Main_A", op = "jump" } } } end
+    Ext.IO.SaveFile = function() end
+    local ok, err = pcall(function()
+        N.guardReset()
+        local s = N.levelSlow("SCL_Main_A")
+        assert(s and s.why:find("died during jump"), "killed by the jump marker: " .. tostring(s and s.why))
+        eq(N.guardState().inflights, nil, "markers consumed")
+    end)
+    Ext.IO.LoadFile, Ext.Json.Parse, Ext.IO.SaveFile = realL, realP, realS
+    N.guardReset()
+    if not ok then error(err, 0) end
+end)
+
+
+test("NAV-5: nav.route on an unreachable goal stays bounded when every search is slow (jumpAcross, walk toward)", function()
+    onLevel("WLD_Main_A", function()
+        local real = Ext.Level.FindPath
+        local n = 0
+        blocked = function(x) return x < -6 end
+        Ext.Level.FindPath = function(path)
+            n = n + 1
+            clock = clock + 30 -- each search 30 ms (live: failing searches 20 ms .. 2 s)
+            return real(path)
+        end
+        local V = BG3AI.Visibility
+        V.itemsAround, V.charactersAround = function() return {} end, function() return {} end
+        local t0 = clock
+        local ok, out = pcall(N.routeAhead, V.context(), P1, { -40, 0, 0 }, false)
+        V.itemsAround, V.charactersAround = nil, nil
+        Ext.Level.FindPath = real
+        assert(ok, tostring(out))
+        eq(out.reachable, false, "no path")
+        local ms = clock - t0
+        assert(ms <= N.ROUTE_BUDGET_MS + N.ROUTE_CLOSEST_BUDGET_MS + 3 * 30,
+            "route took " .. ms .. " ms over " .. n .. " searches")
+    end)
+end)
+
+test("NAV-5: reachToward stops at its deadline (unfinished, never a false 'no walkable ground')", function()
+    blocked = function(x) return x < -6 end
+    local real = Ext.Level.FindPath
+    Ext.Level.FindPath = function(path) clock = clock + 30; return real(path) end
+    local r = N.reachToward(P1, "W", nil, 20, 1, false, false, clock + 50)
+    Ext.Level.FindPath = real
+    assert(r.samples <= 3, "searches stop at the deadline: " .. r.samples)
+    assert(r.reachable ~= false, "cut short is not 'no way'")
+end)
+
+test("NAV-5: nearestVisited parses each breadcrumb cell once", function()
+    PersistentVars = { nav = { levels = { WLD_Main_A = { cells = { ["1:0:1"] = 1, ["-5:0:2"] = 1 }, n = 2, places = {} } } } }
+    N.cellCenter = {}
+    local a = N.nearestVisited("WLD_Main_A", { -30, 0, 10 })
+    assert(a and a.pos[1] < 0, "the western cell")
+    eq(type(N.cellCenter["-5:0:2"]), "table", "cached")
+    local b = N.nearestVisited("WLD_Main_A", { -30, 0, 10 })
+    eq(b.pos[1], a.pos[1], "same answer from the cache")
+    PersistentVars = nil
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

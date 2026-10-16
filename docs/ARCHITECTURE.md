@@ -2,7 +2,7 @@
 
 Goal: an AI agent (any MCP client; `claude -p` by default) plays Baldur's Gate 3 from start to finish through a mod that (1) exposes
 everything the player can see, (2) lets it take every action a player can, (3) gives it the real screen
-when needed, and (4) keeps a Markdown memory of the playthrough across ~1-hour sessions. Two hard rules
+when needed, and (4) keeps a Markdown memory of the playthrough across sessions of up to an hour (20-30 min in the continuous runs). Two hard rules
 apply throughout:
 
 * **Fair:** the agent only gets information a human player could see. Hidden enemies, undiscovered
@@ -49,7 +49,7 @@ The research behind every decision is in `research/` (01–06; this document is 
 
 | Question | Decision | Why (details in research/) |
 |---|---|---|
-| How does our code get into the game? | **bg3le** (github.com/lenonk/bg3le, pinned v0.3.6 as a submodule, built in Docker for the sniper runtime) injected with `LD_PRELOAD` into the **native Linux** build | The official Script Extender (bg3se) is Windows-only. bg3le ports its whole Lua API (`Ext.*`, `Osi.*`) to the native build and supports exactly our game version (v4.76.31.656). Writing our own injector would mean months of reverse engineering, since Larian's functions have no symbols. Fallback: Proton + Windows build + official bg3se, which runs the *same* mod and the *same* IPC. (01, 01b) |
+| How does our code get into the game? | **bg3le** (github.com/lenonk/bg3le, pinned v0.3.6 as a submodule, built in Docker for the sniper runtime) injected with `LD_PRELOAD` into the **native Linux** build | The official Script Extender (bg3se) is Windows-only. bg3le ports its whole Lua API (`Ext.*`, `Osi.*`) to the native build and supports exactly our game version (v4.76.31.656). Writing our own injector would mean months of reverse engineering, since Larian's functions have no symbols. Fallback (planned, not implemented: no Proton launcher exists; HANDOFF §6): Proton + Windows build + official bg3se, which would run the *same* mod and the *same* IPC. (01, 01b) |
 | How does the agent talk to the mod? | bg3le's built-in **LuaDebug TCP eval server** (127.0.0.1:9998). The bridge evaluates `return Mods.BG3AI.BG3AI.rpc('<json>')` in the server or client context | No file polling. ~1 frame latency. Wire-compatible with bg3se's debugger, so the Proton fallback works unchanged. Long actions become jobs that are polled. (01, PROTOCOL.md) |
 | What state does the agent see? | **Server-side visibility filter** using the engine's own perception queries (`CanSee`, `HasLineOfSight`, `IsInvisible`, `IsTrapDiscovered`, `GetCanInteract`, ...), then a **UI-mirroring allowlist projection** that exports only fields the hover tooltip / Examine panel / turn-order bar / journal show, honouring the game's Custom-Mode HUD toggles | Client-side replicated state is *not* filtered (sneaking enemies exist there with full HP). Rendering state mixes culling and fades. Osiris perception queries are what the game's own story uses. An allowlist makes leaks a code-review problem. (02) |
 | How does the agent act? | Layered: **UI ICommands** (dialogue answers, rolls, reactions, menus, trade, level-up) → **engine cast requests** (spells, attacks) → **guarded Osiris** (movement, interaction, party) → **SDL input injection** (fallback). Every action passes a guard (visibility of target, combat turn, cheat-call blocklist) and is **confirmed by events** | UI commands are fair by construction: they send the same request a button does. Osiris calls bypass costs for spells, so they're guarded. Pixel clicking is the last resort. (03) |
@@ -90,9 +90,10 @@ with interrupts: `move_to` stops when combat or dialogue starts. Engine pathfind
 replaces walking pixel by pixel, the biggest cost in the Pokémon agents. Map markers persist in memory.
 
 ### 4. Autonomy: runner, recovery and observability
-`runner/launch_game.sh` launches with all injections and no Steam config changes. `runner/play.py` runs
+`runner/launch_game.sh` launches with all injections and no Steam config changes; install, profile and runtime
+paths come from env or are found at run time (`tools/steam_paths.py`; table in README "Machine configuration"). `runner/play.py` runs
 sessions in a loop: it starts the game, loads the playthrough's save, opens the memory session, starts the
-client (`claude -p`, built-in tools off) in `play/` with a deadline, then saves, snapshots and commits. It also recovers from crashes, hangs and game overs, and
+client (`--client claude|codex|gemini`, `runner/clients.py`; `claude -p` with built-in tools off by default) in `play/` with a deadline, then saves, snapshots and commits. It also recovers from crashes, hangs and game overs, and
 detects stalls across sessions. `runner/dashboard/` is a live web view of the game screen, party, the
 agent's tool calls and its notes.
 
@@ -104,7 +105,7 @@ agent's tool calls and its notes.
   save with no clicks. `Ext.Input.InjectKeyPress("SPACE")` passed the splash screen.
 * Osiris (`GetHostCharacter`, `DB_PartyMembers`, `GetDisplayName` + `Ext.Loca`) on a loaded save.
 * Mesa layer capture of the real game (5120×1440 in 0.4 s including JPEG encode).
-* MCP server: 43 tools registered then (93 on 2026-10-13). Saves and wiki work end to end.
+* MCP server: 43 tools registered then (93 on 2026-10-16, 78 always loaded; list: `play/knowledge/tools.md`). Saves and wiki work end to end.
 
 ## Repo map
 | Path | What |

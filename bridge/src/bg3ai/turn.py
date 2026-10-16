@@ -207,7 +207,7 @@ def parse_plan(raw: Any, allowed: set) -> TurnPlan:
 
 
 # Failures that another target could fix (the planned one died, moved out of range or out of sight).
-TARGET_MISS = ("out of range", "line of sight", "already dead", "is dead", "not visible")
+TARGET_MISS = ("out of range", "line of sight", "already dead", "is dead", "not visible", "is gone (")
 MELEE_RANGE_M = 3.0  # an ability range this short is melee (weapon reach, Shove); longer ones are ranged
 MELEE_REACH_PAD = 1.0  # weapon range is edge to edge: add both bounding radii (0.5 m each, medium creatures)
 MAX_RETARGET = 3
@@ -414,9 +414,19 @@ class TurnWatcher(actq.Watcher):
         self.policy = policy
         self.answer = answer
         self.answered: list[str] = []
+        self.hp_hit: tuple[str, str] | None = None  # an HP drop held for the next slot boundary (check)
 
     def check(self, tool, next_tool, ui=None):
         hit = super().check(tool, next_tool, ui)
+        if hit and hit[0] == "hp" and not hit[1].endswith(" is downed"):
+            # S033 18:41: an attack of opportunity took Wyll below the HP threshold mid-turn and the watcher
+            # cancelled his queued cast (INTERRUPTED, the action lost, ~1 per 4 sessions). Inside your own
+            # turn an HP drop never cancels the step in progress (the cast/walk finishes); it is held in
+            # `hp_hit` and combat_turn stops before the next slot (nothing spent, turn not ended) so the
+            # player decides. Going down still stops at once.
+            if self.hp_hit is None:
+                self.hp_hit = hit
+            return None
         if hit and self.policy and hit[0] == "prompt" and hit[1].startswith("reaction"):
             try:
                 self.answered.append(self.answer(self.policy == "use"))

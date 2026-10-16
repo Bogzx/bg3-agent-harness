@@ -180,6 +180,31 @@ class SaverTest(unittest.TestCase):
         self.assertEqual(saver.stray_save(root, "S052-lab-fight2", t), d)
         self.assertIsNone(saver.stray_save(root, "", t))
 
+    def test_overwrite_of_an_existing_save_is_named(self):
+        # audit UI-6: with a save row selected the game wrote over that save; this was reported as a good save
+        # "under another name"
+        saver.DISK_WAIT_S = 0.4
+        rig = Rig(writes=False, menu_s=0.01)
+        old = rig.dir / "Claude-7__S010-pre-kagha"
+        old.mkdir()
+        (old / "S010-pre-kagha.lsv").write_bytes(b"x")
+        os.utime(old / "S010-pre-kagha.lsv", (time.time() - 500, time.time() - 500))
+
+        def overwrite(label):
+            rig.menus.append(label)
+            (old / "S010-pre-kagha.lsv").write_bytes(b"y" * 50)  # the game rewrites the selected save's folder
+            return True, "menus new=10 accept=300 done=600"
+        rig.run_menu = overwrite
+        logged = []
+        s = saver.Saver(rig.run_menu, rig.can_save, lambda: rig.dir, logged.append)
+        s.save("S100-new")
+        self.assertTrue(wait_until(lambda: s.pending is None, 5))
+        note = s.take_notes()
+        self.assertIn("OVERWROTE AN EXISTING SAVE", note)
+        self.assertIn("'S010-pre-kagha'", note)
+        self.assertNotIn("good save", note)
+        self.assertTrue(any(r.get("overwrote") == old.name for r in logged), logged)
+
     def test_one_save_at_a_time(self):
         rig = Rig(menu_s=0.3)
         s = rig.saver()

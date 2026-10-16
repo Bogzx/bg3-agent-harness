@@ -42,14 +42,28 @@ function M.noesis()
     if CONTEXT ~= "client" then return nil end
     local f = Ext._Internal and Ext._Internal.UiSerialize
     if type(f) ~= "function" then return nil end
-    local ok, _, _, _, gen, leaked, parked, late = pcall(f)
+    local ok, _, lua_to, ui_to, gen, leaked, parked, late, bad = pcall(f)
     if not ok or type(parked) ~= "number" then return nil end
-    return { gen = gen, leaked = leaked, parked = parked, late = late }
+    local n = { gen = gen, leaked = leaked, parked = parked, late = late, lua_timeouts = lua_to, ui_timeouts = ui_to,
+        bad = bad }
+    -- audit UI-5: frame-lock timeouts (each one an Ext.UI call or a UI frame that ran unguarded, or with
+    -- bg3le's strict mode (patch 0010) a refused call) were only in check_se's counters
+    local sf = Ext._Internal.UiStrict
+    if type(sf) == "function" then
+        local oks, on, refused = pcall(sf)
+        if oks then n.strict, n.refused = on == true, refused end
+    end
+    return n
 end
 
 local function noesisText(n)
-    return string.format("noesis gen %s parked %s leaked %s released_late %s", tostring(n.gen), tostring(n.parked),
+    local s = string.format("noesis gen %s parked %s leaked %s released_late %s", tostring(n.gen), tostring(n.parked),
         tostring(n.leaked), tostring(n.late))
+    if n.lua_timeouts then
+        s = s .. string.format(" lock_timeouts lua %s ui %s", tostring(n.lua_timeouts), tostring(n.ui_timeouts))
+    end
+    if n.strict ~= nil then s = s .. string.format(" strict %s refused %s", tostring(n.strict), tostring(n.refused)) end
+    return s
 end
 
 -- true while the heap is over the cap: callers skip work nobody asked for.

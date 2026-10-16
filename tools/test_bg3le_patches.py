@@ -88,7 +88,15 @@ class PatchTest(unittest.TestCase):
                        "_ZN6Noesis4View7KeyDownENS_3KeyE", "hook_input("):
             self.assertIn(needle, ui)
         for needle in ("std::atomic<bool> g_serialize{ true };", '"BG3LE_UI_SERIALIZE"', '"UiSerialize"',
-                       "try_lock_for(std::chrono::milliseconds(kUiWaitMs))"):
+                       "try_lock_for(std::chrono::milliseconds(strict ? kUiStrictWaitMs : kUiWaitMs))"):
+            self.assertIn(needle, inl)
+        # 0010 (audit UI-5): strict mode refuses a Lua call on a lock timeout (a Lua error, the caller
+        # retries) instead of running it unserialized; off unless BG3LE_UI_STRICT / UiStrict(true); both
+        # sides' timeouts are logged
+        for needle in ("std::atomic<bool> g_strict{ false };", '"BG3LE_UI_STRICT"', '"UiStrict"',
+                       'return luaL_error(L, "bg3le: UI busy (frame lock not taken in %d ms); retry", kFrameWaitMs);',
+                       '"noesis: Lua frame-lock timeout #%llu (%d ms)%s"',
+                       '"noesis: UI-thread frame-lock timeout #%llu (%d ms): frame ran unguarded"'):
             self.assertIn(needle, inl)
         # 0003 + 0005: the generation moves on a View replacement and on loads; a reference taken
         # under an older View leaks, one of an older load generation is parked and given back once

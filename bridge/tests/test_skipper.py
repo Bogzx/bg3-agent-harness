@@ -64,8 +64,8 @@ class SkipperTest(unittest.TestCase):
 
     def test_stuck_dialogue_line_gets_one_shim_space_per_request(self):
         # S023: cinematic lines the page's skip command and the engine SPACE did not skip.
-        want = {"seq": 5, "key": "SPACE", "reason": "line", "try": 3, "at": 1000}
-        self.game.status = {"on": True, "now": 1100, "line": {"tries": 3, "age": 1500}, "want": want}
+        want = {"seq": 5, "key": "SPACE", "reason": "line", "try": 3, "at": 1000, "line": 12}
+        self.game.status = {"on": True, "now": 1100, "line": {"tries": 3, "age": 1500, "id": 12}, "want": want}
         for _ in range(3):
             self.sk.step()
         self.assertEqual(self.inp.keys, ["SPACE"])
@@ -76,6 +76,17 @@ class SkipperTest(unittest.TestCase):
         self.game.status = {"on": True, "now": 1900, "line": {"tries": 3}, "want": want}  # stale request
         self.sk.step()
         self.game.status = {"on": True, "now": 1100, "want": dict(want, seq=7)}  # no line any more
+        self.sk.step()
+        self.assertEqual(self.inp.keys, [])
+
+    def test_no_line_space_for_another_line_or_an_old_mod(self):
+        # audit UI-7: the request names its line; a different line now (or no id: a mod without the live
+        # re-check) gets no SPACE (it could land in an answer list or end a combat turn)
+        want = {"seq": 8, "key": "SPACE", "reason": "line", "try": 3, "at": 1000, "line": 12}
+        self.game.status = {"on": True, "now": 1100, "line": {"tries": 3, "id": 13}, "want": want}
+        self.sk.step()
+        old = {k: v for k, v in want.items() if k != "line"}
+        self.game.status = {"on": True, "now": 1100, "line": {"tries": 3}, "want": dict(old, seq=9)}
         self.sk.step()
         self.assertEqual(self.inp.keys, [])
 

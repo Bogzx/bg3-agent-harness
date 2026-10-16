@@ -283,6 +283,16 @@ class Tracker:
                             f"{t.get('avg')}, {r.get('session') or 'earlier'}): use another damage type on it"]
         return []
 
+    def last_time_rec(self, cs: dict) -> dict | None:
+        """The latest past bad fight vs any of these enemies that has key facts (what first_turn_warnings cites)."""
+        names = {o.get("name") for o in (cs or {}).get("order") or [] if isinstance(o, dict)
+                 and o.get("relation") == "hostile" and o.get("name")}
+        for r in reversed(self.history):
+            if r.get("grade") in BAD and names & {e.get("name") for e in r.get("enemies") or []} \
+                    and (r.get("key_facts") or []):
+                return r
+        return None
+
     def first_turn_warnings(self, cs: dict) -> list[str]:
         """At a fight's first state read: past debriefs vs these enemies with a bad grade → the 2-3 key facts."""
         names = {o.get("name") for o in (cs or {}).get("order") or [] if isinstance(o, dict)
@@ -409,6 +419,8 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
         rec["grade_before"] = grade
     if f.joined:
         rec["joined_round"] = f.joined
+    if getattr(f, "chain_t", None):
+        rec["chain_t"] = f.chain_t   # a retry: the first attempt's start (the agent's lessons count from there)
     rec["key_facts"] = key_facts(rec)
     rec["summary"] = summary(rec)
     return rec

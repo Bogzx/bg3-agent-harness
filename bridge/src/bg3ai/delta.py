@@ -162,15 +162,38 @@ def _char_rec(c: dict) -> dict:
             "flags": tuple(f for f in ("dead", "downed", "in_combat") if c.get(f)), "dist": c.get("dist")}
 
 
-_ITEM_FLAGS = ("locked", "opened", "trap", "owned")
+# open/closed: a door's state now (State.lua; "opened" = a container ever opened); armed: a discovered trap's
+# {armed=true} (NAV-4: a door opening or a trap disarmed made no diff line, S054 06:11/06:13 extra interacts)
+_ITEM_FLAGS = ("locked", "opened", "trap", "owned", "open", "closed", "armed")
+
+
+def _item_flag(it: dict, f: str) -> bool:
+    if f == "armed":
+        return isinstance(it.get("trap"), dict) and bool(it["trap"].get("armed"))
+    return bool(it.get(f))
 
 
 def _item_rec(it: dict) -> dict:
     return {"name": it.get("name", "?"), "kind": it.get("kind"), "dist": it.get("dist"),
-            "flags": tuple(f for f in _ITEM_FLAGS if it.get(f)), "story": bool(it.get("story")),
+            "flags": tuple(f for f in _ITEM_FLAGS if _item_flag(it, f)), "story": bool(it.get("story")),
             "count": it.get("count"), "near": it.get("near"), "effect": it.get("effect"),
             "rarity": it.get("rarity") if it.get("rarity") not in (None, "Common", "common") else None,
             "ihp": (it.get("hp"), it["max_hp"]) if isinstance(it.get("max_hp"), (int, float)) else None}
+
+
+def _flag_changes(old: tuple, new: tuple) -> list[str]:
+    """An item's flag changes as words: "unlocked", "now open" (a door, not "open, not closed"), "trap disarmed"."""
+    added = [f for f in _ITEM_FLAGS if f in new and f not in old]
+    gone = [f for f in _ITEM_FLAGS if f in old and f not in new]
+    out = []
+    for f in added:
+        out.append({"open": "now open", "closed": "now closed", "armed": "trap armed"}.get(f, f))
+    for f in gone:
+        if (f == "closed" and "open" in added) or (f == "open" and "closed" in added) or (f == "armed" and "trap" in gone):
+            continue
+        out.append({"locked": "unlocked", "opened": "closed", "trap": "trap gone", "armed": "trap disarmed",
+                    "open": "no longer open", "closed": "no longer closed"}.get(f, f"not {f}"))
+    return out
 
 
 def snapshot(H: Handles, status: dict | None = None, ui: dict | None = None, nearby: dict | None = None,
@@ -366,11 +389,7 @@ def _ent_lines(old: dict, new: dict, H: Handles) -> list[str]:
                     and _dist(o["pos"], n["pos"]) >= NPC_MOVE_MIN_M):
                 bits.append(f"moved {render.num(round(_dist(o['pos'], n['pos']), 1))}m, now {render.num(n['dist'])}m")
         else:
-            for f in _ITEM_FLAGS:
-                if f in n["flags"] and f not in o["flags"]:
-                    bits.append(f)
-                elif f in o["flags"] and f not in n["flags"]:
-                    bits.append({"locked": "unlocked", "opened": "closed", "trap": "trap gone"}.get(f, f"not {f}"))
+            bits.extend(_flag_changes(o["flags"], n["flags"]))
             if n.get("count") != o.get("count") and n.get("count") is not None:
                 bits.append(f"x{o.get('count') or 1}->{n['count']}")
             if n.get("effect") != o.get("effect"):

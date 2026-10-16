@@ -226,6 +226,18 @@ class LookTool(Base):
         self.assertRegex(out, r"ITEM \+ e\d+ Potion of Healing x2 \(Claude\)")
         self.assertRegex(out, r"ITEM \+ e\d+ Rusty Key \(Claude\)")
 
+    def test_door_opens_and_trap_disarmed(self):  # NAV-4: no diff line before (S054 06:11/06:13 extra interacts)
+        self.fake.w["nearby"]["items"][1]["closed"] = True
+        self.fake.w["nearby"]["items"][0]["trap"] = {"armed": True}
+        server.look()
+        door, chest = self.fake.w["nearby"]["items"][1], self.fake.w["nearby"]["items"][0]
+        door.pop("closed")
+        door["open"] = True
+        chest["trap"] = {"armed": False}
+        out = server.look()
+        self.assertRegex(out, r"~ e\d+ Sphincter Door now open")
+        self.assertRegex(out, r"~ e\d+ Chest trap disarmed")
+
     def test_painting_lights_up(self):  # Grand Mausoleum: a button press lights its painting (puzzle state)
         server.look()
         ch = self.fake.w["nearby"]["items"][0]

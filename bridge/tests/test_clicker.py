@@ -537,6 +537,34 @@ class AnswerList(unittest.TestCase):
         self.assertEqual(g.off, 0.0)  # back at the top
         self.assertIsNotNone(clicker._list_hit["at"])  # remembered for the next list
 
+    def test_scroll_to_answer_below_the_fold(self):
+        # audit UI-4: option 9 is not rendered; the list is wheeled until the row reading its text shows
+        clicker._list_hit["at"] = None
+        inp = FakeInput()
+        g = self.G(inp)
+        i, why = clicker.scroll_to_answer(g, inp, g.options, "Answer 9.")
+        self.assertIsNone(why)
+        self.assertEqual(i, 9)
+        self.assertIn(9, [o["i"] for o in g.options()])  # left where the row shows
+
+    def test_scroll_to_answer_visible_needs_no_wheel(self):
+        clicker._list_hit["at"] = None
+        inp = FakeInput()
+        g = self.G(inp)
+        self.assertEqual(clicker.scroll_to_answer(g, inp, g.options, "answer 2"), (2, None))
+        self.assertFalse([e for e in inp.log if e[0] == "wheel"])
+
+    def test_scroll_to_answer_missing_text(self):
+        clicker._list_hit["at"] = None
+        inp = FakeInput()
+        g = self.G(inp)
+        i, why = clicker.scroll_to_answer(g, inp, g.options, "answer 42")
+        self.assertIsNone(i)
+        self.assertIn("no row reads", why)
+
+    def test_answer_key(self):
+        self.assertEqual(clicker.answer_key("[PERSUASION] Leave it, Karlach."), "leave it karlach")
+
     def test_list_not_found(self):
         clicker._list_hit["at"] = None
         inp = FakeInput()

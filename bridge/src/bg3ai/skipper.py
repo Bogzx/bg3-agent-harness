@@ -119,8 +119,13 @@ class MovieSkipper:
                     self.sent_seq = want.get("seq")
                     self._press(f"movie skipped (ESCAPE via shim, try {want.get('try')})")
                 elif (isinstance(want, dict) and want.get("reason") == "line" and want.get("key") == "SPACE"
-                      and st.get("line") and not st.get("movie") and want.get("seq") != self.sent_seq
+                      and isinstance(st.get("line"), dict) and want.get("line") is not None
+                      and want.get("line") == st["line"].get("id")
+                      and not st.get("movie") and want.get("seq") != self.sent_seq
                       and 0 <= (st.get("now") or 0) - (want.get("at") or 0) <= LINE_WANT_MS):
+                    # Audit UI-7: only for the same line (want.line == line.id); the mod shows a line request
+                    # only after re-reading that the line still plays and it is not our combat turn (a SPACE then
+                    # would land in an answer list or end the turn). An older mod without ids gets no shim SPACE.
                     # A voiced/cinematic line the page's skip command and the engine SPACE did not skip (S023).
                     self.sent_seq = want.get("seq")
                     self._press(f"line skipped (SPACE via shim, try {want.get('try')})", "SPACE")

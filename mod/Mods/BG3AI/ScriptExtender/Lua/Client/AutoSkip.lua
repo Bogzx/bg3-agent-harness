@@ -164,9 +164,9 @@ local function press(key)
     return ok
 end
 
-local function want(key, reason, tries, now)
+local function want(key, reason, tries, now, line)
     K.wantSeq = K.wantSeq + 1
-    K.want = { seq = K.wantSeq, key = key, reason = reason, try = tries, at = now }
+    K.want = { seq = K.wantSeq, key = key, reason = reason, try = tries, at = now, line = line }
     RPC.push("needs_skip_key", { key = key, reason = reason, try = tries, seq = K.wantSeq })
 end
 
@@ -259,7 +259,8 @@ function K.tick()
     local key = text and ((d.speaker or "") .. "|" .. text) or "#notext"
     local line = st.line
     if not line or line.key ~= key then
-        line = { key = key, since = now, tries = 0, last = 0, notext = not text }
+        K.lineSeq = (K.lineSeq or 0) + 1
+        line = { key = key, since = now, tries = 0, last = 0, notext = not text, id = K.lineSeq }
         st.line = line
         if text then
             K.stats.seen = K.stats.seen + 1
@@ -269,6 +270,11 @@ function K.tick()
 
     -- Choices are the agent's: answers or a continue prompt mean stop.
     if d.options or d.continue then return end
+    -- A text line too only while the game says it plays (ShowAnswers == false: d.listening). Audit UI-7: with
+    -- answer rows rendered but none texted yet, dialogueAnswers gives {} (no options), ShowAnswers is true and
+    -- there is no continue: that skipped (command, SPACE, shim SPACE) into the answer list. Not also "no answer
+    -- VMs": the next node's answers may exist while its lead-in line still plays.
+    if not d.listening then return end
     -- Act only on a node seen unchanged on two consecutive ticks.
     local grace = line.notext and K.NOTEXT_GRACE_MS or K.LINE_GRACE_MS
     if now - line.since < math.max(grace, K.PERIOD_MS) then return end
@@ -289,7 +295,7 @@ function K.tick()
     elseif line.tries == 2 or line.notext then
         ok = press("SPACE")
     else
-        want("SPACE", "line", line.tries, now)
+        want("SPACE", "line", line.tries, now, line.id)
         ok = true
     end
     if ok and line.tries == 1 then
@@ -322,7 +328,25 @@ function K.view()
              movies = K.stats.movies, cinematic = cin > 0 and cin or nil }
 end
 
--- autoskip.status: the bridge's skipper polls this (cheap: no UI reads).
+-- A line's shim-SPACE request (want reason "line") is only good while that line still plays: the skipper's SPACE
+-- lands up to a poll + LINE_WANT_MS later, when answers may be up or our combat turn may have begun (SPACE ends a
+-- turn). Audit UI-7. Live re-check for the status poll: the same line (K.state.line, the tick's), the Dialogue
+-- page's ShowAnswers still false, and not our turn. (ok, why).
+function K.lineStillUp(w)
+    local line = K.state.line
+    if not line or line.id ~= w.line then return false, "another line" end
+    if UI.quiet(3) then return false, "quiet" end
+    local dw = UI.widget and UI.widget("Dialogue")
+    if not dw or not UI.isVisible(dw) then return false, "no dialogue" end
+    local dc = try(function() return dw.DataContext end)
+    local ad = dc and S.activeDialogue(dc)
+    if not ad then return false, "no dialogue" end
+    if UI.pick(ad, { "ShowAnswers" }).ShowAnswers ~= false then return false, "answers" end
+    if isOurCombatTurn(dc) then return false, "our turn" end
+    return true
+end
+
+-- autoskip.status: the bridge's skipper polls this (cheap: no UI reads, except a few to confirm a line request).
 -- -> {on, now, movie?={age, tries, kind}, want?={seq,key,reason,try,at}, stats}
 -- {debug=true} adds {gs, widgets=[ContentRoot child names], probe} (for live checks).
 RPC.register("autoskip.status", function(args)
@@ -335,12 +359,17 @@ RPC.register("autoskip.status", function(args)
         K.polled = (K.polled or 0) + 1
     end
     local m = K.state.movie
+    local w, held = K.want, nil
+    if w and w.reason == "line" then
+        local ok, live, why = pcall(K.lineStillUp, w)
+        if not ok or not live then w, held = nil, ok and why or "error" end
+    end
     local res = {
         on = K.enabled(), now = now,
         movie = m and { age = now - m.since, tries = m.tries, kind = m.kind } or nil,
-        want = K.want,
+        want = w, held = held,
         line = K.state.line and { notext = K.state.line.notext or nil, tries = K.state.line.tries,
-                                  age = now - K.state.line.since } or nil,
+                                  age = now - K.state.line.since, id = K.state.line.id } or nil,
         stats = { lines = K.stats.lines, movies = K.stats.movies, seen = K.stats.seen, errors = K.errors or 0,
                   cinematic = K.stats.cinematic or 0, polled = K.polled },
         slow = K.slow,

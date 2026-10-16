@@ -149,9 +149,22 @@ UI.PANEL_TYPES = {
     UniformGrid = true, VirtualizingPanel = true, VirtualizingStackPanel = true, TabPanel = true,
     ToolBarPanel = true, ToolBarOverflowPanel = true,
 }
-UI.childReads = UI.childReads or { collection = 0, visual = 0 }
--- element proxy -> its Children collection, or false (read VisualChild)
+UI.childReads = UI.childReads or { collection = 0, visual = 0, skipped = 0 }
+UI.childReads.skipped = UI.childReads.skipped or 0
+-- element proxy -> its Children collection, false (read VisualChild) or "mismatch" (a stock panel whose
+-- collection count is not the visual one: changing right now)
 local childColl = setmetatable({}, { __mode = "k" })
+
+-- bg3le's strict frame-lock mode (patch 0010, BG3LE_UI_STRICT=1 / Ext._Internal.UiStrict(true)), read per call
+-- (an atomic load, not wrapped in the frame lock). Audit UI-5: in strict mode a changing stock panel is skipped
+-- (its children read nil this time; callers retry on a later tick) instead of falling back to
+-- Panel::GetVisualChild, the S014 crash site. Off: the fallback stays as before.
+function UI.strict()
+    local f = Ext._Internal and Ext._Internal.UiStrict
+    if type(f) ~= "function" then return false end
+    local ok, on = pcall(f)
+    return ok and on == true
+end
 
 function UI.childCount(el)
     local n = try(function() return el.VisualChildrenCount end) or 0
@@ -159,7 +172,7 @@ function UI.childCount(el)
     local coll = false
     if n > 0 and UI.PANEL_TYPES[UI.typeName(el) or ""] then
         local c = UI.prop(el, "Children")
-        if c ~= nil and tonumber(UI.prop(c, "Count")) == n then coll = c end
+        if c ~= nil and tonumber(UI.prop(c, "Count")) == n then coll = c else coll = "mismatch" end
     end
     childColl[el] = coll
     return n
@@ -172,7 +185,11 @@ function UI.child(el, i)
         UI.childCount(el)
         coll = childColl[el]
     end
-    if coll then
+    if coll == "mismatch" and UI.strict() then
+        UI.childReads.skipped = UI.childReads.skipped + 1
+        return nil
+    end
+    if coll and coll ~= "mismatch" then
         UI.childReads.collection = UI.childReads.collection + 1
         return try(coll.At, coll, i)
     end

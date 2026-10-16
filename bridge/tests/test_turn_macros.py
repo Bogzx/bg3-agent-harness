@@ -60,6 +60,7 @@ class FakeGame:
                                                                     "bonus": 1, "movement": 3}}
         self.visible: set[str] = {GOB, IMP, CHEST}
         self.dead: set[str] = set()
+        self.gone: dict[str, str] = {}  # act.target_state gone= for an unseen combatant (Actions.lua gone_why)
         self.combat: dict = {"active": False}
         self.reach: Any = None  # nav.reach_toward reply (or callable(args))
         self.approach: Any = None  # nav.approach reply (None: op unknown, like a mod not reloaded yet)
@@ -123,6 +124,8 @@ class FakeGame:
                 u = args["uuid"]
                 if u in (CHEST, LOCKED, OWNED, BOOK, LETTER, POTION):  # items: like Actions.lua, no dead
                     return {"visible": u in self.visible, "locked": u == LOCKED, "opened": False}
+                if u in self.gone and u not in self.visible:
+                    return {"visible": False, "gone": self.gone[u]}
                 return {"visible": u in self.visible or u in self.dead, "dead": u in self.dead or None}
             if op == "events.since":
                 evs = [e for e in self.events if e["seq"] > int(args.get("seq", 0))][: int(args.get("limit", 200))]
@@ -142,7 +145,8 @@ class FakeGame:
                 order = []
                 for o in cs.get("order") or []:
                     u = o.get("uuid")
-                    if o.get("relation") != "party" and u not in self.visible and u not in self.dead:
+                    if o.get("relation") != "party" and (u not in self.visible and u not in self.dead
+                                                         or u in self.gone):
                         continue
                     if u in self.dead:
                         o["dead"] = True
@@ -635,6 +639,29 @@ class CombatTurn(Base):
         self.assertNotIn("STOPPED", out)
         self.assertIn("end_turn: done", out)
 
+    # S033 18:41: Wyll's AoO mid-turn dropped him below the HP threshold and the watcher cancelled his cast.
+    def test_hp_drop_mid_turn_does_not_cancel_the_queued_cast(self):
+        def aoo(op, a):
+            if op == "act.cast":
+                self.g.watch["party"][0]["hp"] = 4   # 20 % < 35 %
+        self.g.on_start = aoo
+        self.g.dur["act.cast"] = 0.2
+        hit = {"ability": "Target_MainHandAttack", "target": self.gob}
+        out = server.combat_turn(self.plan(action=hit, extra=[[dict(hit)]]))
+        self.assertIn("action: Target_MainHandAttack e1: done", out)   # the running cast finished
+        self.assertNotIn("INTERRUPTED", out)
+        self.assertIn("STOPPED: e4 Claude HP 4/20 (HP dropped mid-turn", out)
+        self.assertIn("turn NOT ended", out)
+        self.assertEqual(len(self.g.ops("act.cast")), 1)                # the extra attack waits for the player
+        self.assertEqual(self.g.ops("act.end_turn"), [])
+
+    def test_hp_below_condition_still_decides_inside_the_turn(self):
+        self.g.watch["party"][0]["hp"] = 4
+        self.g.actions = [{"spell": "Shout_SecondWind"}, {"spell": "Target_MainHandAttack"}]
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+                                           bonus={"ability": "Shout_SecondWind", "if": "hp_below:50"}))
+        self.assertIn("Shout_SecondWind", self.casts())
+
     def test_ally_going_down_mid_turn_still_stops_it(self):
         def down(op, a):
             if op == "act.cast":
@@ -651,8 +678,7 @@ class CombatTurn(Base):
         self.g.actions = [{"spell": "Target_SacredFlame", "range": 18}]
         out = server.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [IMP])
-        self.assertIn("already dead", out)
-        self.assertIn("(auto fallback)", out)
+        self.assertIn("already dead → aimed at", out)  # re-aimed at once (no skip, no fallback pass)
 
     def test_retarget_respects_reach_sight_and_the_off_switch(self):
         self.g.dead.add(GOB)
@@ -673,6 +699,58 @@ class CombatTurn(Base):
         server.combat_turn(self.plan(**plan))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [IMP])
 
+    # S033 18:39-18:41: Umbral Tremors left the fight; act.target_state said only visible=false, 4 turns of
+    # skipped attacks. Now "is gone (…)" and the attack is re-aimed at once (the Dodge after it is not used).
+    def test_gone_target_says_gone_and_reaims_at_once(self):
+        self.g.visible.discard(GOB)
+        self.g.gone[GOB] = "off_stage"
+        next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.9, 1]
+        self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}, {"spell": "Shout_Dodge"}]
+        hit = {"ability": "Target_MainHandAttack", "target": self.gob}
+        out = server.combat_turn(self.plan(action=[hit, "Shout_Dodge"], extra=[[dict(hit)]]))
+        self.assertIn(f"{self.gob} Goblin is gone (it left the battlefield: dissipated or despawned) → aimed at "
+                      f"{self.imp} Imp", out)
+        self.assertNotIn("not visible", out)
+        self.assertEqual([(a.get("spell"), a.get("target")) for _, a in self.g.ops("act.cast")],
+                         [("Target_MainHandAttack", IMP), ("Target_MainHandAttack", IMP)])
+
+    def test_gone_target_nobody_in_reach_skips_and_says_gone(self):
+        self.g.visible.discard(GOB)
+        self.g.gone[GOB] = "left_fight"
+        self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}, {"spell": "Shout_Dodge"}]
+        out = server.combat_turn(self.plan(action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   "Shout_Dodge"]))
+        self.assertIn("is gone (it is no longer in the turn order)", out)  # imp 12 m: out of melee reach
+        self.assertEqual(self.casts(), ["Shout_Dodge"])
+
+    def test_hidden_target_is_not_reaimed_at_once(self):
+        # only out of sight (still in the fight): the old skip + auto fallback, not "gone"
+        self.g.visible.discard(GOB)
+        next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.9, 1]
+        self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertIn("not visible", out)
+        self.assertNotIn("is gone", out)
+        self.assertIn("(auto fallback)", out)
+
+    def test_gone_move_target_says_gone(self):
+        self.g.visible.discard(GOB)
+        self.g.gone[GOB] = "dead"
+        out = server.combat_turn(self.plan(move=self.gob,
+                                           action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertIn(f"target: {self.gob} Goblin is gone (it died) → the plan now aims at the nearest visible "
+                      f"hostile {self.imp} Imp", out)
+
+    def test_gone_target_retarget_false_keeps_the_skip(self):
+        self.g.visible.discard(GOB)
+        self.g.gone[GOB] = "off_stage"
+        next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.9, 1]
+        self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+                                           retarget=False))
+        self.assertIn("is gone", out)
+        self.assertEqual(self.g.ops("act.cast"), [])
+
     def test_extra_attack_retargets_after_the_first_kill(self):
         def kill(op, a):
             if op == "act.cast" and a.get("target") == GOB:
@@ -685,7 +763,7 @@ class CombatTurn(Base):
         hit = {"ability": "Target_MainHandAttack", "target": self.gob}
         out = server.combat_turn(self.plan(action=hit, extra=[[hit]]))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [GOB, IMP])
-        self.assertIn("extra 1 (auto fallback)", out)
+        self.assertIn("extra 1: e1 Goblin is already dead → aimed at e2 Imp", out)
 
     def test_unplanned_bonus_heals_a_downed_ally(self):
         lae = next(o for o in self.g.combat["order"] if o["uuid"] == P2)
@@ -1042,6 +1120,12 @@ class CombatTurn(Base):
         self.assertIn("left out: ", out)
         self.assertIn("action: Target_Bless", out)
         self.assertNotIn("FAILED", out)
+
+    def test_use_ability_takes_a_list_of_targets(self):
+        # ACT-8: a client sending targets as a JSON list reached targets.split(",")
+        out = server.use_ability("Target_Bless", targets=[self.gob, " ", self.imp])
+        self.assertNotIn("split", out)
+        self.assertEqual([a.get("targets") for _, a in self.g.ops("act.cast")], [[GOB, IMP]])
 
     def test_reactions_prep(self):
         server.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))

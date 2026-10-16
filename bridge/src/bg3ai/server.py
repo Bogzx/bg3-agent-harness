@@ -31,7 +31,10 @@ RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
 PLAY_DIR = Path(os.environ.get("BG3AI_PLAY_DIR", REPO / "play"))
 MEMORY = Path(os.environ.get("BG3AI_MEMORY_DIR", PLAY_DIR / "memory"))
 KNOWLEDGE = Path(os.environ.get("BG3_KNOWLEDGE_DIR") or PLAY_DIR / "knowledge")
-SAVE_DIR = Path.home() / ".local/share/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public/Savegames/Story"
+# Same lookup as tools/steam_paths.py saves_dir() (the runner exports nothing: both read the same env).
+SAVE_DIR = Path(os.environ.get("BG3AI_SAVE_DIR") or Path(
+    os.environ.get("BG3AI_PROFILE_DIR") or Path.home() / ".local/share/Larian Studios/Baldur's Gate 3")
+    / "PlayerProfiles/Public/Savegames/Story")
 DEADLINE = float(os.environ.get("BG3AI_SESSION_DEADLINE", "0") or 0)
 WRAPUP_S = 10 * 60
 
@@ -288,6 +291,50 @@ def _close_fight(reloaded: bool = False) -> str:
     return debrief.render(rec)
 
 
+OWN_LESSONS_MAX = 3
+_OWN_LESSON_RE = re.compile(r"^- (\d{1,2}):(\d{2})(?:-\d{1,2}:\d{2})? \[lesson\]\s*(.+)$", re.I)
+
+
+def _own_lessons(rec: dict | None) -> list[str]:
+    """The agent's own [lesson] lines written since `rec`'s fight began, from that fight's session log
+    (BACKLOG ~1107: S033's "kill Umbral Tremors early" lesson after attempt 1 never reached attempt 2;
+    lessons.md only gets it from the keeper at the session's end). Newest last, at most OWN_LESSONS_MAX."""
+    if not isinstance(rec, dict):
+        return []
+    sess = rec.get("session")
+    path = (MEMORY / "sessions" / f"{sess}.md") if sess else None
+    if path is None or not path.is_file():
+        path = _session_log()
+    try:
+        text = path.read_text(errors="replace") if path is not None else ""
+    except OSError:
+        return []
+    # a retry chain (attempt 1 → reload → attempt 2 …) counts from its first attempt
+    m = re.search(r"T(\d{2}):(\d{2})", str(rec.get("chain_t") or rec.get("t") or ""))
+    start = int(m.group(1)) * 60 + int(m.group(2)) if m else None
+    out: list[str] = []
+    for line in text.splitlines():
+        lm = _OWN_LESSON_RE.match(line.strip())
+        if not lm:
+            continue
+        at = int(lm.group(1)) * 60 + int(lm.group(2))
+        if start is not None and not (0 <= (at - start) % 1440 <= 12 * 60):   # before the fight (midnight-safe)
+            continue
+        if lm.group(3).strip() not in out:
+            out.append(lm.group(3).strip())
+    return out[-OWN_LESSONS_MAX:]
+
+
+def _own_lessons_text(rec: dict | None) -> str:
+    own = _own_lessons(rec)
+    return ("YOUR LESSON from that fight (session log): " + " | ".join(own)) if own else ""
+
+
+def _last_attempt_text(rec: dict) -> str:
+    """LAST ATTEMPT (debrief) + the agent's own lessons from that fight."""
+    return "\n".join(x for x in (debrief.last_attempt(rec), _own_lessons_text(rec)) if x)
+
+
 def _fight_hint(cs: dict, party: set | None) -> str:
     """At the first combat-state read of a fight: the retried fight's key facts (after a load_game), else what
     past debriefs vs these enemies said. Once per fight."""
@@ -307,10 +354,15 @@ def _fight_hint(cs: dict, party: set | None) -> str:
             names = {o.get("name") for o in cs.get("order") or [] if isinstance(o, dict) and o.get("relation") == "hostile"}
             if not names or names & {e.get("name") for e in rec.get("enemies") or []}:
                 _retry["fight"] = False
+                f.chain_t = rec.get("chain_t") or rec.get("t")
                 facts = (rec.get("key_facts") or [])[:3]
+                own = _own_lessons_text(rec)
                 return (f"RETRY of the fight that went {rec.get('grade_before') or rec.get('grade')}: "
-                        + ("; ".join(facts) if facts else rec.get("summary", "")))
-        return "\n".join(tr.first_turn_warnings(cs))
+                        + ("; ".join(facts) if facts else rec.get("summary", "")) + (f"\n{own}" if own else ""))
+        warns = tr.first_turn_warnings(cs)
+        past = tr.last_time_rec(cs) if warns else None
+        own = _own_lessons_text(past) if past else ""
+        return "\n".join(warns + ([own] if own else []))
     except Exception as e:  # noqa: BLE001
         _log("debrief", {}, f"hint failed: {e}", 0)
         return ""
@@ -1389,7 +1441,7 @@ def get_status(full: bool = False) -> str:
         body += "\n" + ph
     if _retry["status"] and _retry["rec"]:
         _retry["status"] = False   # the first look after a reload repeats it once
-        body += "\n" + debrief.last_attempt(_retry["rec"])
+        body += "\n" + _last_attempt_text(_retry["rec"])
     return _finish("get_status", {"full": full}, body, t0)
 
 
@@ -2711,9 +2763,44 @@ def click_on(target: str, button: str = "left") -> str:
     inp = _inp()
     if inp is None:
         raise GameError("input shim not available")
-    cr = click_entity(game, inp, _world_uuid(target), "R" if button.lower().startswith("r") else "L")
+    u, btn = _world_uuid(target), "R" if button.lower().startswith("r") else "L"
+    cr = click_entity(game, inp, u, btn)
+    head = ""
+    if not cr.ok and cr.reason == "off_screen":
+        near = _click_selects(u)
+        if near and game.run_job("act.select", {"char": near}, wait_s=4).status == "done":
+            head = f"selected {_label(near)} first (next to it; the camera follows the selected character)\n"
+            cr = click_entity(game, inp, u, btn)
     tail = f"\nthe {cr.screen} screen covers the world: press_key ESCAPE first" if cr.reason == "covered" else ""
-    return _finish("click_on", {"target": target}, ("clicked" if cr.ok else f"FAILED: {cr.reason}") + " — " + render.compact(cr.as_dict(), H) + tail, t0)
+    return _finish("click_on", {"target": target}, head + ("clicked" if cr.ok else f"FAILED: {cr.reason}") + " — " + render.compact(cr.as_dict(), H) + tail, t0)
+
+
+CLICK_SELECT_M = 12.0   # click_on off_screen: a party member at most this near the target is selected, then retried
+
+
+def _click_selects(uuid: str) -> str | None:
+    """click_on off_screen: the game's center key brings the camera back to the SELECTED character, who may stand far
+    from the target while another member stands next to it (naut-r2 S001 16:54: a shared combat turn with the camera
+    on Lae'zel, Corran 1.6 m from the nerve; click_on FAILED off_screen x2, then set_party select Corran + click_on
+    worked). -> the living member nearest the target when that is not the selected one, else None."""
+    tpos = _ent_pos(uuid)
+    if not tpos:
+        return None
+    active = (game.try_rpc("state.status") or {}).get("active")
+    rows = (_watch_conn().try_rpc("act.watch") or {}).get("party") or []
+    best, bd, ad = None, None, None
+    for r in rows:
+        p = r.get("pos") if isinstance(r, dict) else None
+        if not (isinstance(p, (list, tuple)) and len(p) >= 3) or r.get("dead") or r.get("downed"):
+            continue
+        d = sum((float(a) - float(b)) ** 2 for a, b in zip(p[:3], tpos[:3])) ** 0.5
+        if r.get("uuid") == active:
+            ad = d
+        if bd is None or d < bd:
+            best, bd = r.get("uuid"), d
+    if not best or best == active or bd > CLICK_SELECT_M or (ad is not None and ad - bd < 3.0):
+        return None
+    return best
 
 
 def _act_click_roll(tool: str, op: str, args: dict) -> str:
@@ -3320,12 +3407,44 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
 # act: dialogue and rolls
 # ---------------------------------------------------------------------------
 
+def _choose_answer(option: int) -> JobResult:
+    """ui.dialogue_choose; an option outside the rendered rows of a long list (the mod says needs_scroll: it no
+    longer guesses the answer VM by position, audit UI-4) is wheeled into view like a player does, found again by
+    its text, and chosen by that row with the text checked by the mod."""
+    try:
+        return game.run_job("ui.dialogue_choose", {"i": option}, context="client", wait_s=20)
+    except GameError as e:
+        if "needs_scroll" not in str(e):
+            raise
+        first = e
+
+    def read() -> list:
+        u = game.try_rpc("ui.state", context="client") or {}
+        dd = u.get("dialogue") if isinstance(u, dict) else None
+        return [o for o in (dd or {}).get("options") or [] if isinstance(o, dict)]
+
+    full = _complete_answers(game.try_rpc("ui.state", context="client") or {})
+    opts = ((full.get("dialogue") or {}) if isinstance(full, dict) else {}).get("options") or []
+    want = next((o.get("text") for o in opts if isinstance(o, dict) and o.get("i") == option and o.get("text")), None)
+    if not want:
+        raise GameError(f"{first}; its text could not be read by scrolling: call get_dialogue and choose again")
+    inp = _inp()
+    if inp is None:
+        raise GameError(f"{first}; scrolling the list needs the input shim")
+    from . import clicker
+    shown = [o["i"] for o in read() if isinstance(o.get("i"), int)]
+    i, why = clicker.scroll_to_answer(game, inp, read, want, up=bool(shown) and option < min(shown))
+    if i is None:
+        raise GameError(f"option {option} ('{want}') is below the visible rows and could not be scrolled into view: {why}")
+    return game.run_job("ui.dialogue_choose", {"i": i, "text": want}, context="client", wait_s=20)
+
+
 @mcp.tool()
 @_guard
 def choose_dialogue(option: int) -> str:
     """Pick dialogue answer number `option` (as numbered in the last DIALOGUE shown). Then clicks through any filler that follows (Continue, a single non-committing line) and returns the next real choice, roll, or the end. Never picks a real answer for you."""
     t0 = time.monotonic()
-    r = game.run_job("ui.dialogue_choose", {"i": option}, context="client", wait_s=20)
+    r = _choose_answer(option)
     if AUTO_DIALOGUE and r.status == "done" and not _batch["active"]:
         # Fast reflexes: click through the filler that follows the answer here and show the next real
         # choice, instead of a dialogue_advance / get_dialogue round trip per line (S002/S003).
@@ -3470,9 +3589,9 @@ def _reaction_index(r: dict | None, name: str) -> int | str:
 @mcp.tool()
 @_guard
 def use_ability(ability: str, target: str = "", x: float | None = None, y: float | None = None,
-                z: float | None = None, who: str | None = None, upcast: int = 0, targets: str = "",
+                z: float | None = None, who: str | None = None, upcast: int = 0, targets: str | list[str] = "",
                 wait: bool = True, force: bool = False) -> str:
-    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: comma list for multi-target spells. Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). A teleport (Dimension Door): x,y,z = the landing (a spot the caster can see), targets = an ally beside you to bring (omit to go alone). A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): out of combat it is read and its target clicked (default: who). A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
+    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: a list (or comma list) for multi-target spells; at most 2 per cast. Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells (Dimension Door, the Revivify spell) are refused for now: read a Scroll of Revivify instead. A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): out of combat it is read and its target clicked (default: who). A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
     char = _who(who)
     try:
         aid = _ability_id(char, ability)
@@ -3496,7 +3615,10 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
     if target:
         args["target"] = _uuid(target)
     if targets:
-        args["targets"] = [_uuid(t) for t in targets.split(",") if t.strip()]
+        # a list (["e1","e2"], as a plan or a client sends it) or a comma list: the list reached targets.split and
+        # failed the step "'list' object has no attribute 'split'" (audit ACT-8)
+        names = targets.split(",") if isinstance(targets, str) else [str(t) for t in targets]
+        args["targets"] = [_uuid(t.strip()) for t in names if t.strip()]
         keep = 2 - (1 if "target" in args else 0)
         if len(args["targets"]) > keep:
             # S018/S025/S029: Bless on 3 was refused ("more than two targets"), losing the whole action (the
@@ -4750,12 +4872,27 @@ def ability_preview(ability: str, target: str, who: str | None = None) -> str:
 @_guard
 def ui_action(command: str, widget: str = "", param: str = "") -> str:
     """Escape hatch for screens without a dedicated tool (level up, trade, character creation, popups): run a named UI command on the current screen, as get_dialogue/ui dump lists them."""
+    if _saveload_word(command):
+        return (f"REFUSED: ui_action {command} saves/loads/deletes a save; use save_game / load_game (gated, "
+                "prefix-checked, the saver's settle and the DELTA reset)")
     args: dict[str, Any] = {"command": command}
     if widget:
         args["widget"] = widget
     if param:
         args["param"] = param
     return _act("ui_action", "ui.command", args, context="client", wait_s=15)
+
+
+# Audit UI-3: the escape hatches (ui_action, press_key) must not save or load around save_game/load_game. The mod
+# refuses the same (UIActions.SAVELOAD_*); this catches it before a round trip and with an older mod build.
+_SAVELOAD_WORDS = ("quicksave", "quickload", "savegame", "loadgame", "continuegame", "overwrite", "deletesave",
+                   "loadsave")
+_SAVELOAD_KEYS = {"F5": "quicksave", "F8": "quickload"}  # the game's default bindings
+
+
+def _saveload_word(name: str) -> str | None:
+    flat = re.sub(r"[\s_.\-]", "", str(name or "").lower())
+    return next((w for w in _SAVELOAD_WORDS if w in flat), None)
 
 
 @mcp.tool()
@@ -4841,6 +4978,11 @@ def press_key(key: str) -> str:
     key = key.upper()
     if key in ("ESCAPE", "ESC"):
         return _press_escape()
+    if key in _SAVELOAD_KEYS:
+        if key == "F5":  # quicksave: the gated save path does the same
+            return "press_key F5 is quicksave -> save_game(): " + getattr(save_game, "fn", save_game)()
+        return ("REFUSED: F8 is quickload; reloading goes through load_game (prefix-checked; resets the "
+                "change tracking)")
     return _act("press_key", "ui.key", {"key": key}, context="client", wait_s=5)
 
 
@@ -5578,7 +5720,8 @@ ARRIVAL_LEADS = 5
 
 def _arrival_leads() -> str:
     """'\nLEADS (unvisited; get_frontier lists all): e529 Damaged Vase <usable> 8.3m E | …' + the WAYS line."""
-    res = game.try_rpc("nav.frontier", {})
+    # NAV-6: at arrival the warm-up hasn't run yet (300 ms of stillness); ways only from its answers, no cold searches
+    res = game.try_rpc("nav.frontier", {"ways_cached": True})
     if not isinstance(res, dict) or not isinstance(res.get("leads"), list):
         return ""
     _remember_names(res)
@@ -5914,6 +6057,17 @@ def _side(cs: dict, u: str | None, party: set | None) -> str | None:
     return turn.side(cs, u, party if party is not None else (_party_cached() or set()), _turn_sides)
 
 
+GONE_WHY = {"dead": "it died", "off_stage": "it left the battlefield: dissipated or despawned",
+            "left_fight": "it is no longer in the turn order"}
+
+
+def _gone(ts: dict) -> str:
+    """'is gone (…)' for an act.target_state reply whose combatant left the fight (Actions.lua gone_why);
+    '' for one only out of sight."""
+    g = ts.get("gone") if isinstance(ts, dict) else None
+    return f"is gone ({GONE_WHY.get(g, g)})" if g else ""
+
+
 def _turn_check(who: str, step: actq.Step | None) -> tuple[bool, str]:
     """Before each turn step, from what the player sees: (fatal, why). fatal = the turn is over for us;
     a non-fatal why (target dead / out of view) skips just this alternative."""
@@ -5938,6 +6092,8 @@ def _turn_check(who: str, step: actq.Step | None) -> tuple[bool, str]:
             # a revive's target is a body (S063: Revivify on dead Shadowheart was skipped, then re-aimed at a foe)
             if ts.get("dead") and not turn.REVIVE.search(str(step.args.get("ability") or "")):
                 return False, f"{_label(u)} is already dead"
+            if _gone(ts) and not turn.REVIVE.search(str(step.args.get("ability") or "")):
+                return False, f"{_label(u)} {_gone(ts)}"
             if not ts.get("visible"):
                 return False, f"{_label(u)} is not visible"
     return False, ""
@@ -6232,6 +6388,50 @@ def _slot_skip(alt: turn.Alt, who: str, info: dict | None) -> str:
             + (f" ({render.num(d)}m)" if d is not None else ""))
 
 
+def _hp_held(watcher: actq.Watcher, lines: list) -> bool:
+    """combat_turn, at a slot boundary: an HP drop the TurnWatcher held during the last step (it never
+    cancels the step in progress) stops the turn here, before anything else is spent."""
+    hit = getattr(watcher, "hp_hit", None)
+    if not hit:
+        return False
+    watcher.hp_hit = None
+    lines.append(f"STOPPED: {_label(hit[1])} (HP dropped mid-turn; the step in progress finished, "
+                 "nothing else spent: decide the rest)")
+    return True
+
+
+def _reaim_gone(alt: turn.Alt, who: str, why: str, info: dict) -> str | None:
+    """combat_turn: an alternative aimed at a hostile that is dead or gone (left the turn order) is re-aimed
+    at once at the nearest living hostile in sight within the ability's reach, instead of being skipped (S033
+    Umbral Tremors: 4 turns of skipped attacks); every later alternative aimed at it follows (info["gone"]).
+    Same side rules as the auto fallback: a hostile target only, never a revive; retarget:false turns it
+    off. Returns the new target's uuid, or None (no re-aim: the skip and the auto fallback stay)."""
+    if not info.get("retarget", True) or alt.step.tool != "use_ability":
+        return None
+    a = alt.step.args
+    sp, t = a.get("ability"), a.get("target")
+    if not t or turn.REVIVE.search(str(sp or "")):
+        return None
+    try:
+        lost = _uuid(str(t))
+    except ValueError:
+        return None
+    if " is gone (" not in why and " is already dead" not in why:
+        return None
+    cs = game.try_rpc("state.combat") or {}
+    if not cs.get("active") or _side(cs, lost, info.get("party")) not in ("hostile", None):
+        return None
+    gone = info.setdefault("gone", set())
+    gone.add(lost)
+    near = turn.hostiles_in_reach(cs, who, _ability_range(who, sp, info), gone)
+    if not near:
+        return None
+    a["target"] = H.get(near[0])
+    for k in ("targets", "x", "y", "z"):
+        a.pop(k, None)
+    return near[0]
+
+
 def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: list,
                after: dict, info: dict | None = None) -> tuple[str, bool]:
     """Try a slot's alternatives in order. ('ok'|'none'|'stop', then_move of the one that worked)."""
@@ -6241,6 +6441,14 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
         if fatal:
             lines.append(f"{name}: " + " → ".join(tried + [why]))
             return "stop", False
+        if why and info is not None:
+            new = _reaim_gone(alt, who, why, info)
+            if new:
+                tried.append(f"{why} → aimed at {_label(new)}")
+                fatal, why = _turn_check(who, alt.step)
+                if fatal:
+                    lines.append(f"{name}: " + " → ".join(tried + [why]))
+                    return "stop", False
         why = why or _slot_skip(alt, who, info)
         if why:
             tried.append(f"{alt.step.short()}: skipped ({why})")
@@ -6538,7 +6746,9 @@ def _retarget_lost(p: turn.TurnPlan, who: str, lines: list, info: dict) -> bool:
         ts = game.try_rpc("act.target_state", {"uuid": lost}) or {}
         if not isinstance(ts, dict) or (ts.get("visible") and not ts.get("dead")):
             return False
-        why = "is dead" if ts.get("dead") else "is out of sight"
+        why = "is dead" if ts.get("dead") else (_gone(ts) or "is out of sight")
+    if why != "is out of sight":
+        info.setdefault("gone", set()).add(lost)
     near = turn.hostiles_in_reach(cs, who, 1e6, {lost})
     if not near:
         said = info.get("move_lost") == f"{_label(lost)} {why}"
@@ -7017,11 +7227,14 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
     watcher = turn.TurnWatcher(_watch_conn(), p.on_reaction, _answer_reaction, ignore=_parse_ignore(ignore))
     watcher.baseline()
     after: dict = {}
-    info: dict = {"party": party}
+    info: dict = {"party": party, "retarget": p.retarget}
     stopped = False
     _turn_cs["cs"] = cs  # nothing ran since this read: the first step check reuses it
     moved = False
     for slot in p.order:
+        if _hp_held(watcher, lines):
+            stopped = True
+            break
         if p.move and p.move.target and p.retarget and (slot == "move" or (moved and slot in ("action", "bonus"))):
             # The move's target died or went out of sight (sent ahead / during the walk): aim the plan at the
             # nearest visible hostile, and walk again if the move already ran and movement is left.
@@ -7054,6 +7267,9 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
                 lines.append(f"extra 1: skipped (the Extra Attack already went to the {used[0]} attack)")
                 extras = extras[len(used):]
             for i, alts in extras:
+                if _hp_held(watcher, lines):
+                    res = "stop"
+                    break
                 res, _ = _turn_slot(f"extra {i}", alts, char, watcher, lines, after, info)
                 if (res == "none" and alts and lines and lines[-1].startswith(f"extra {i}:")
                         and turn.missed_target(lines[-1])):
@@ -7078,6 +7294,8 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
             stopped = True
             break
     _turn_cs.clear()
+    if not stopped and _hp_held(watcher, lines):
+        stopped = True
     if not stopped and p.auto_bonus and not p.slots["bonus"]:
         if _turn_auto_bonus(char, watcher, lines, after) == "stop":
             stopped = True
@@ -8321,7 +8539,7 @@ def load_game(save: str = "latest") -> str:
         body += "\n" + fight_block
     if retried_fight is not None and r.status == "done":
         _retry.update(rec=retried_fight, status=True, fight=True)
-        body += "\n" + debrief.last_attempt(retried_fight)
+        body += "\n" + _last_attempt_text(retried_fight)
     return _finish("load_game", {"save": save}, body, t0, events=False)
 
 

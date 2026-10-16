@@ -288,9 +288,11 @@ local function approvalKey(owner, rated) return owner .. "|" .. (rated or "") en
 function E.seedApproval(c)
     local host = V.uuid(osi(Osi.GetHostCharacter)) or c.party[1]
     if not host then return end
+    E.approvalAsked = E.approvalAsked or {}
     for _, u in ipairs(c.party) do
         local k = approvalKey(u, host)
-        if u ~= host and E.approval[k] == nil then
+        if u ~= host and E.approval[k] == nil and not E.approvalAsked[k] then
+            E.approvalAsked[k] = true -- once per pair and Lua state: a hireling has no rating to read every poll
             local v = osi(Osi.GetApprovalRating, u, host)
             if type(v) == "number" then E.approval[k] = v end
         end

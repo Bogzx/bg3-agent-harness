@@ -139,7 +139,7 @@ def next_run_index(records: list[dict]) -> int:
 # ======================================================================== per-run reset
 
 def archive_nav_state(se_bg3ai: Path, dest: Path) -> list[str]:
-    """NAV-3: move the mod's machine-global navigation files (the per-level kill list nav_guard.json and the
+    """NAV-3: move the mod's machine-global navigation files (the per-level kill lists nav_guard*.json and the
     breadcrumb mirrors nav_<host uuid>.json, Script Extender/BG3AI/) into dest, so a new playthrough starts with no
     level killed and no breadcrumbs from an earlier game. Moved, not deleted. Returns the moved names."""
     moved = []
@@ -169,6 +169,50 @@ def snapshot_tree(root: Path) -> dict[str, str]:
             except OSError:
                 continue
     return out
+
+
+def lock_tree(root: Path, record: Path) -> int:
+    """FAIR-2, second fence: chmod a-w every file under root for a benchmark series (the clients already have no
+    file tools; this makes an accidental write fail loudly, the agent's or an operator's mid-series edit alike).
+    Files only: git and a hand `cp` can still replace one, and git ignores the write bit. The original modes go to
+    record first; an existing record (an execv'd successor re-locking, or a runner killed while locked) is merged,
+    never overwritten, so unlock_tree always restores the modes from before the first lock. Returns files locked."""
+    try:
+        saved = json.loads(record.read_text())
+    except (OSError, ValueError):
+        saved = {}
+    files = [p for p in sorted(root.rglob("*")) if p.is_file() and not p.is_symlink()] if root.is_dir() else []
+    for p in files:
+        saved.setdefault(str(p.relative_to(root)), p.stat().st_mode & 0o7777)
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps(saved, indent=1, sort_keys=True))
+    n = 0
+    for p in files:
+        try:
+            p.chmod(p.stat().st_mode & 0o7777 & ~0o222)
+            n += 1
+        except OSError:
+            continue
+    return n
+
+
+def unlock_tree(root: Path, record: Path) -> int:
+    """Undo lock_tree: put back every recorded mode, then delete the record. No record = nothing locked: 0."""
+    try:
+        saved = json.loads(record.read_text())
+    except (OSError, ValueError):
+        return 0
+    n = 0
+    for rel, mode in saved.items():
+        p = root / rel
+        try:
+            if p.is_file() and not p.is_symlink():
+                p.chmod(int(mode))
+                n += 1
+        except (OSError, ValueError):
+            continue
+    record.unlink(missing_ok=True)
+    return n
 
 
 def tree_changes(root: Path, snap: dict[str, str]) -> dict[str, str]:

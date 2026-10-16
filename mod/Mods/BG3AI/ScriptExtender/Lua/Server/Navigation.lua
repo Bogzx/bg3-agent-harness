@@ -191,6 +191,7 @@ if not N.tickSubscribed then
         local ok, err = pcall(record)
         if not ok then Ext.Utils.PrintWarning("[BG3AI] nav record: " .. tostring(err)) end
         local t = Ext.Utils.MonotonicTime()
+        if N.inflightExpire then pcall(N.inflightExpire, t) end
         if N.waysWarm then
             local okw, errw = pcall(N.waysWarm, t)
             if not okw and not N.waysWarmWarned then
@@ -342,22 +343,53 @@ local function rawPath(e, from, target, endTol)
 end
 
 -- Per-level kill switch (se's S038 verdict: the engine's FindPath never ended on the Shadowfell grid). A level where
--- one search took over PATH_LEVEL_KILL_MS, where two async warm-up searches timed out, or where the game died while
--- background/jump-planning searches were in flight (the in-flight marker below is still in the file at the next
--- load) gets no warm-ups, no jump planning and no jumpGap/jumpAcross probes; replies say so (plan_skipped). Kept in
--- GUARD_FILE across crashes and playthroughs (it is the level's grid that is the problem). Cleared with
--- nav.level_guard {clear=true}.
+-- searches took over PATH_LEVEL_KILL_MS SLOW_SEARCH_STRIKES times since the load, where two async warm-up searches
+-- timed out, or where the game died while background/jump-planning searches were in flight (the in-flight marker
+-- below is still in the file at the next load) gets no warm-ups, no jump planning and no jumpGap/jumpAcross probes;
+-- replies say so (plan_skipped). Cleared with nav.level_guard {clear=true}.
+-- NAV-3 (audit 2026-10-13): the list was permanent and machine-global, so one slow search or one unrelated crash
+-- took jumps away for every later playthrough and benchmark run. Now: one file per playthrough (the host
+-- character's uuid, like the breadcrumb mirror; the machine-wide GUARD_FILE only before a host exists), a kill
+-- expires after KILL_TTL_S of wall time, one slow search is a strike (SLOW_SEARCH_STRIKES of them kill), and a jump
+-- marker counts only for a death within JUMP_MARK_MAX_MS of the cast (the Tick drops an older one: the game lived).
 N.GUARD_FILE = "BG3AI/nav_guard.json"
 N.PATH_LEVEL_KILL_MS = 800
+N.SLOW_SEARCH_STRIKES = 2
 N.WARM_DEATH_STRIKES = 2
-local guard
+N.KILL_TTL_S = 6 * 3600
+N.JUMP_MARK_MAX_MS = 15000
+N.nowS = function() return os and os.time and os.time() or nil end -- wall clock (s); tests replace it
+N.slowHits = N.slowHits or {}
+local guard, guardPath
+function N.guardFile()
+    local host = osi(Osi.GetHostCharacter)
+    local u = host and V.uuid(host)
+    return u and ("BG3AI/nav_guard_" .. u .. ".json") or N.GUARD_FILE
+end
 local function guardSave()
-    pcall(Ext.IO.SaveFile, N.GUARD_FILE, Ext.Json.Stringify(guard, { Beautify = false }))
+    pcall(Ext.IO.SaveFile, guardPath or N.GUARD_FILE, Ext.Json.Stringify(guard, { Beautify = false }))
+end
+-- a kill older than KILL_TTL_S is dropped (with its strikes); a kill with no time (an older file) is dated now
+local function expireKills(g)
+    local now, changed = N.nowS(), false
+    if not now then return false end
+    for lv, v in pairs(g.slow) do
+        if type(v) ~= "table" then v = { why = tostring(v) }; g.slow[lv] = v; changed = true end
+        if not tonumber(v.t) then v.t = now; changed = true
+        elseif now - v.t > N.KILL_TTL_S then
+            g.slow[lv] = nil
+            if g.strikes then g.strikes[lv] = nil end
+            changed = true
+            Ext.Utils.PrintWarning("[BG3AI] nav guard: " .. tostring(lv) .. " back on (its kill expired)")
+        end
+    end
+    return changed
 end
 local function guardState()
-    if guard then return guard end
-    guard = { slow = {} }
-    local ok, txt = pcall(Ext.IO.LoadFile, N.GUARD_FILE)
+    local path = N.guardFile()
+    if guard and guardPath == path then return guard end
+    guard, guardPath = { slow = {}, strikes = {} }, path
+    local ok, txt = pcall(Ext.IO.LoadFile, path)
     if ok and type(txt) == "string" and txt ~= "" then
         local okp, d = pcall(Ext.Json.Parse, txt)
         if okp and type(d) == "table" then
@@ -371,7 +403,14 @@ local function guardState()
                     Ext.Utils.PrintWarning("[BG3AI] nav guard: " .. tostring(lv) .. " back on (an old warm-up strike rule)")
                 end
             end
-            local f = d.inflight
+            local dirty = expireKills(guard)
+            -- NAV-7: one marker per op (inflights[op]); an older file has the single `inflight`
+            local marks = {}
+            if type(d.inflight) == "table" then marks[#marks + 1] = d.inflight end
+            if type(d.inflights) == "table" then
+                for _, f in pairs(d.inflights) do if type(f) == "table" then marks[#marks + 1] = f end end
+            end
+            for _, f in ipairs(marks) do
             if type(f) == "table" and f.level then
                 -- A background warm-up request is in flight most of the time the party stands still, so a planned
                 -- game kill (the runner's 2 h relaunch, 2026-10-11 04:39) left its marker and the next start put
@@ -390,46 +429,95 @@ local function guardState()
                         .. " (a kill or a crash elsewhere): no strike", tostring(f.op), tostring(f.level)))
                 elseif f.op ~= "ways warm" or n >= N.WARM_DEATH_STRIKES then
                     guard.slow[f.level] = guard.slow[f.level] or { why = "the game died during "
-                        .. (f.op == "ways warm" and "a stuck ways warm" or tostring(f.op)), ms = -1 }
+                        .. (f.op == "ways warm" and "a stuck ways warm" or tostring(f.op)), ms = -1, t = N.nowS() }
                     Ext.Utils.PrintError(string.format("[BG3AI] nav guard: the game died during %s on %s @%s: warm-ups"
                         .. " and jump planning are off on that level", tostring(f.op), tostring(f.level), tostring(f.at)))
                 else
                     Ext.Utils.PrintWarning(string.format("[BG3AI] nav guard: the game stopped during %s on %s (strike %d of"
                         .. " %d; a relaunch also does this)", tostring(f.op), tostring(f.level), n, N.WARM_DEATH_STRIKES))
                 end
-                guardSave()
+                dirty = true
             end
+            end
+            if dirty then guardSave() end
         end
     end
     return guard
 end
 N.guardState = function() return guardState() end
-N.guardReset = function() guard = nil end -- tests
+N.guardReset = function() guard, guardPath = nil, nil end -- tests
 function N.levelSlow(level)
     level = level or currentLevel()
-    return level and guardState().slow[level] or nil
+    if not level then return nil end
+    local g = guardState()
+    local v = g.slow[level]
+    -- a kill can expire while the game runs (a long session)
+    if v and tonumber(v.t) and N.nowS() and N.nowS() - v.t > N.KILL_TTL_S then
+        if expireKills(g) then guardSave() end
+        v = g.slow[level]
+    end
+    return v
 end
 function N.killLevel(level, why, ms)
     level = level or currentLevel()
     if not level then return end
     local g = guardState()
     if g.slow[level] then return end
-    g.slow[level] = { why = why, ms = ms and math.floor(ms) or nil }
+    g.slow[level] = { why = why, ms = ms and math.floor(ms) or nil, t = N.nowS() }
     Ext.Utils.PrintError(string.format("[BG3AI] nav guard: %s on %s: warm-ups and jump planning off on this level",
         tostring(why), tostring(level)))
     guardSave()
 end
--- In-flight marker around background and jump-planning searches: a crash inside one leaves it in the file.
+-- A sync search slower than PATH_LEVEL_KILL_MS (S025: 1.6-2.3 s no-path searches on ordinary big levels): a strike;
+-- SLOW_SEARCH_STRIKES of them on a level since this load kill it.
+function N.slowSearch(ms, level)
+    level = level or currentLevel()
+    if not level then return end
+    local n = (N.slowHits[level] or 0) + 1
+    N.slowHits[level] = n
+    if n >= N.SLOW_SEARCH_STRIKES then
+        N.killLevel(level, string.format("%d path searches took over %d ms (the last %d ms)", n, N.PATH_LEVEL_KILL_MS,
+            math.floor(ms)), ms)
+    else
+        Ext.Utils.PrintWarning(string.format("[BG3AI] nav guard: a path search took %d ms on %s (strike %d of %d)",
+            math.floor(ms), tostring(level), n, N.SLOW_SEARCH_STRIKES))
+    end
+end
+-- In-flight markers around background and jump-planning searches: a crash inside one leaves it in the file.
+-- NAV-7: one per op (inflights[op]): a warm-up answer used to clear the one shared slot and erase a jump cast's
+-- marker set ~1 s earlier, so the guard missed the very crash it exists for. N.inflight(op, at) sets op's marker,
+-- N.inflightDone(op) clears it (N.inflight(nil) clears all: older callers).
 function N.inflight(op, at)
     local g = guardState()
-    g.inflight = op and { level = currentLevel(), op = op, at = at and U.vec(at, 1) and table.concat(U.vec(at, 1), ",") } or nil
+    if op then
+        g.inflights = g.inflights or {}
+        g.inflights[op] = { level = currentLevel(), op = op, at = at and U.vec(at, 1) and table.concat(U.vec(at, 1), ","),
+            mt = Ext.Utils.MonotonicTime() }
+    else
+        g.inflights = nil
+    end
     guardSave()
+end
+function N.inflightDone(op)
+    local g = guardState()
+    if g.inflights and g.inflights[op] then
+        g.inflights[op] = nil
+        if next(g.inflights) == nil then g.inflights = nil end
+        guardSave()
+    end
+end
+function N.inflightOf(op) local g = guardState(); return g.inflights and g.inflights[op] or nil end
+-- Tick (NAV-3): a jump marker older than JUMP_MARK_MAX_MS with the game still running was not a jump that froze the
+-- engine (a job that never finished, an error path): dropped, so a later unrelated death doesn't kill the level.
+function N.inflightExpire(now)
+    local f = guard and guard.inflights and guard.inflights.jump
+    if f and f.mt and now - f.mt > N.JUMP_MARK_MAX_MS then N.inflightDone("jump") end
 end
 -- The in-flight warm-up is stuck (unanswered past N.WARM_STUCK_MS): a death from here on is a strike.
 N.WARM_STUCK_MS = 1000
 function N.inflightStuck()
-    local g = guardState()
-    if g.inflight and not g.inflight.stuck then g.inflight.stuck = true; guardSave() end
+    local f = N.inflightOf("ways warm")
+    if f and not f.stuck then f.stuck = true; guardSave() end
 end
 -- Answered warm-ups on a level since this load; N.WARM_CLEAN_RESET of them clear its old strikes (minutes of
 -- healthy searches: an old strike was a kill, not this level's searches).
@@ -543,9 +631,7 @@ local function gatedPath(e, from, target, endTol)
     local r = rawPath(e, from, target, endTol)
     pf.n = pf.n + 1
     pf.ms = pf.ms + (r.ms or 0)
-    if (r.ms or 0) > N.PATH_LEVEL_KILL_MS then
-        N.killLevel(nil, string.format("a path search took %d ms", math.floor(r.ms)), r.ms)
-    end
+    if (r.ms or 0) > N.PATH_LEVEL_KILL_MS then N.slowSearch(r.ms) end
     if (r.ms or 0) > N.PATH_SLOW_MEMO_MS and r.reachable ~= nil then
         if N.slowPathsN >= N.PATH_SLOW_MEMO_MAX then N.slowPaths, N.slowPathsN = {}, 0 end
         N.slowPaths[key] = { t = now, r = r }
@@ -866,8 +952,13 @@ RPC.register("nav.frontier", function(args)
     -- Open directions (args.ways=false skips): from the per-spot cache the
     -- Tick warms; a cold spot searches the missing ones (~12 ms each live).
     if args.ways ~= false then
-        local ways = N.ways(active, tonumber(args.ways_far) or 20, 8, tonumber(args.ways_budget_ms) or 100)
+        -- ways_cached (NAV-6, a walk's arrival): only what the warm-up already answered, never a sync search (the
+        -- S038 freeze moment: a cold frontier right where a walk ended)
+        local cached = args.ways_cached == true
+        local ways, _, off = N.ways(active, tonumber(args.ways_far) or 20, 8, tonumber(args.ways_budget_ms) or 100,
+            nil, cached or nil, cached or nil)
         if ways and #ways > 0 then out.ways = ways end
+        if off and (not ways or #ways < #N.WAYS_DIRS) then out.ways_off = off end
     end
     out.ms = Ext.Utils.MonotonicTime() - t0
     return out
@@ -1093,7 +1184,9 @@ end
 N.DETOUR = 1.5
 N.DETOUR_LOOSE = 3.0 -- loose: a winding walk still counts (walk_toward)
 N.LOOSE_TRIES = 5
-function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose)
+-- deadline (MonotonicTime ms, optional, NAV-5): no new search past it; what was found so far is the answer
+-- (unfinished=true when the sweep was cut short).
+function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil, "no position" end
@@ -1138,8 +1231,10 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose)
     -- of harmful surfaces at its end and along its route.
     local firstHazard, avoided, tried, memo = nil, 0, 0, {}
     local hidden -- a sample refused for crossing the invisible-floor layer (N.hiddenFloor)
+    local cut = false
     local function good(i)
         if memo[i] ~= nil then return memo[i] end
+        if deadline and Ext.Utils.MonotonicTime() > deadline then cut = true; return false end
         local c, dd = pts[i], pts[i].dd
         tried = tried + 1
         local ok = false
@@ -1184,6 +1279,7 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose)
         local n = 0
         for i = #pts, 1, -1 do
             if n >= N.LOOSE_TRIES then break end
+            if deadline and Ext.Utils.MonotonicTime() > deadline then cut = true; break end
             local c, dd = pts[i], pts[i].dd
             if dd >= 2.0 then
                 if memo[i] == nil then tried = tried + 1 end
@@ -1202,12 +1298,13 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose)
     if firstHazard then firstHazard.dd = nil end
     if hidden then hidden.dd = nil end
     if not best then
+        if cut then return { reachable = nil, unfinished = true, samples = tried, hazard = firstHazard, hidden_floor = hidden } end
         if avoided == 0 then return { reachable = false, samples = tried, hidden_floor = hidden } end
         return { reachable = false, samples = tried, hazard = firstHazard, hidden_floor = hidden }
     end
     local out = { pos = U.vec(best.pos, 1), path_m = best.path_m, straight_m = best.straight_m,
         needs_jump = best.needs_jump, reachable = true, samples = tried, dir = N.direction(from, best.pos),
-        searched = true, winding = winding or nil }
+        searched = true, winding = winding or nil, unfinished = cut or nil }
     if avoided > 0 then out.avoided = avoided; out.hazard_beyond = firstHazard end
     if hidden then out.hidden_beyond = hidden end
     return out
@@ -1813,7 +1910,7 @@ function N.jumpPlan(charUuid, from, pos, cap, bad)
     if slow then return nil, "jump planning is off on this level (" .. tostring(slow.why) .. ")" end
     N.inflight("jump plan", pos)
     local ok, r = pcall(jumpPlanImpl, charUuid, from, pos, cap, bad)
-    N.inflight(nil)
+    N.inflightDone("jump plan")
     if not ok then error(r, 0) end
     return r
 end
@@ -2137,8 +2234,10 @@ function N.closestReach(charUuid, goal, budgetMs)
         end
     end
     -- a caller with a tighter budget (nav.route) gets a coarser walk toward it (half the path searches)
+    -- NAV-5: the walk toward it is bounded too (half the budget past what the rings left; one search may overrun)
     local step = budget < N.CLOSEST_BUDGET_MS and 4 or 2
-    local r = N.reachToward(charUuid, nil, goal, math.min(U.dist(from, goal), N.CONNECT_M), step, false)
+    local by = math.max(t0 + budget, Ext.Utils.MonotonicTime() + budget / 2)
+    local r = N.reachToward(charUuid, nil, goal, math.min(U.dist(from, goal), N.CONNECT_M), step, false, nil, by)
     if r and r.reachable and r.pos and (r.straight_m or 0) >= 1 then
         return { pos = r.pos, path_m = r.path_m, to_goal_m = round(U.dist(r.pos, goal), 1),
             dy_to_goal = round(goal[2] - r.pos[2], 1), via = "toward" }
@@ -2365,19 +2464,28 @@ end
 
 -- The explored breadcrumb cell nearest `goal` (horizontally): the closest the
 -- party has been. {pos, to_goal_m} or nil. Pure over the party's own cells.
+-- NAV-5: a cell key is parsed once (N.cellCenter, kept for the Lua state): this ran a string match per explored
+-- cell on every far route.
+N.cellCenter = N.cellCenter or {}
 function N.nearestVisited(level, goal)
     local l = level and store().levels[level]
     if not l or not goal then return nil end
     local best, bd
+    local cc = N.cellCenter
     for k in pairs(l.cells) do
-        local cx, cy, cz = tostring(k):match("^(-?%d+):(-?%d+):(-?%d+)$")
-        if cx then
-            local p = { (tonumber(cx) + 0.5) * N.CELL_XZ, (tonumber(cy) + 0.5) * N.CELL_Y, (tonumber(cz) + 0.5) * N.CELL_XZ }
+        local p = cc[k]
+        if p == nil then
+            local cx, cy, cz = tostring(k):match("^(-?%d+):(-?%d+):(-?%d+)$")
+            p = cx and { (tonumber(cx) + 0.5) * N.CELL_XZ, (tonumber(cy) + 0.5) * N.CELL_Y, (tonumber(cz) + 0.5) * N.CELL_XZ } or false
+            cc[k] = p
+        end
+        if p then
             local d = math.sqrt((p[1] - goal[1]) ^ 2 + (p[3] - goal[3]) ^ 2)
             if not bd or d < bd then best, bd = p, d end
         end
     end
     if not best then return nil end
+    best = { best[1], best[2], best[3] }
     best[2] = floorAt(best[1], best[3], best[2]) or best[2]
     return { pos = U.vec(best, 1), to_goal_m = round(bd, 1) }
 end
@@ -2406,9 +2514,11 @@ end
 -- >= 1 cell, then a floor within reach that is nearer the goal. The few best pairs are checked with real paths: the
 -- edge walkable, the landing not (else it is a walk). -> {from (takeoff), to (landing), gap_m, dy, walk_m, to_goal_m}
 -- or nil. Cost: ~(2R/cell)^2 height+tile reads (~1.7k) + <= JUMPX_TRIES paths.
+-- deadline (MonotonicTime ms, optional, NAV-5): the scan and the searches stop there (nil: none found in time).
 N.JUMPX_R_M, N.JUMPX_CELL_M, N.JUMPX_TRIES = 30.0, 1.5, 6
-function N.jumpAcross(charUuid, from, goal)
+function N.jumpAcross(charUuid, from, goal, deadline)
     if N.levelSlow() then return nil end -- kill switch: no extra searches on this level
+    local function late() return deadline and Ext.Utils.MonotonicTime() > deadline end
     local cap = N.JUMP_LAND_CAP_M
     local G = BG3AI.Guard
     if G and G.jump_max then
@@ -2441,6 +2551,7 @@ function N.jumpAcross(charUuid, from, goal)
     local steps = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
     local cands = {}
     for i = -n, n do
+        if late() then return nil end
         for j = -n, n do
             for _, ha in ipairs(floors(i, j)) do
                 local ax, az = from[1] + i * c, from[3] + j * c
@@ -2477,14 +2588,14 @@ function N.jumpAcross(charUuid, from, goal)
     table.sort(cands, function(p, q) return p.score < q.score end)
     local tries, seen = 0, {}
     for _, cd in ipairs(cands) do
-        if tries >= N.JUMPX_TRIES then break end
+        if tries >= N.JUMPX_TRIES or late() then break end
         local key = math.floor(cd.b[1]) .. "," .. math.floor(cd.b[3])
         if not seen[key] then
             seen[key] = true
             tries = tries + 1
             local rb = N.path(charUuid, cd.b)
             if not (rb and rb.reachable and not rb.partial) then
-                local ra = N.path(charUuid, cd.a)
+                local ra = not late() and N.path(charUuid, cd.a)
                 if ra and ra.reachable and not ra.partial then
                     -- the grid's cells are 1.5 m: slide both ends to the real edges in 0.5 m steps (live 18:5x:
                     -- the grid said 4.5 m, the broken stair's gap is ~3 m)
@@ -2639,6 +2750,7 @@ end
 N.ROUTE_CLOSEST_BUDGET_MS = 80
 N.ROUTE_BUDGET_MS = 110          -- the whole route (check_route: < 150 ms in the mod)
 N.ROUTE_CONNECT_RESERVE_MS = 25  -- kept for the connectors' path probes after the lower-ground scan
+N.ROUTE_JUMPX_BUDGET_MS = 40     -- NAV-5: jumpAcross's grid scan + its (expected-failing) landing searches
 function N.routeAhead(ctx, charUuid, goal, withConnectors)
     local t0 = Ext.Utils.MonotonicTime()
     local e = V.entity(charUuid)
@@ -2661,7 +2773,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
         elseif r and r.reachable == false then
             out.reachable = false
             if (r.no_floor or r.chasm) and r.reason then out.no_path_reason = r.reason end
-            local t = N.reachToward(charUuid, nil, goal, N.CONNECT_M, 2, false)
+            local t = N.reachToward(charUuid, nil, goal, N.CONNECT_M, 2, false, nil, t0 + N.ROUTE_CLOSEST_BUDGET_MS)
             if t and t.reachable and t.pos and (t.straight_m or 0) >= 1 then
                 out.closest = { pos = t.pos, path_m = t.path_m, to_goal_m = round(U.dist(t.pos, goal), 1),
                     dy_to_goal = round(goal[2] - t.pos[2], 1), via = "toward" }
@@ -2685,7 +2797,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
         elseif r and r.reachable == false then
             out.reachable = false
             out.straight_hazard = N.routeExposure({ from, goal })
-            local okj, jx = pcall(N.jumpAcross, charUuid, from, goal)
+            local okj, jx = pcall(N.jumpAcross, charUuid, from, goal, t0 + N.ROUTE_JUMPX_BUDGET_MS)
             if okj and jx then out.jump = jx end
             local c = N.closestReach(charUuid, goal, N.ROUTE_CLOSEST_BUDGET_MS)
             if c then
@@ -2923,8 +3035,19 @@ end
 -- call without noJump (get_frontier, route) fills it in.
 -- noSearch (the warm-up): built only from N.waysWarm's async answers (N.path noSearch); a direction with a probe
 -- unanswered is left out (not cached), so the warm-up asks it again instead of searching on the server thread.
+-- NAV-2: on a level the kill switch is on for (N.levelSlow) there are no warm-ups, so every direction would be a
+-- cold sync search on the very grid that got the level killed: at most WAYS_SLOW_DIRS new directions per call within
+-- WAYS_SLOW_BUDGET_MS, no jump probes; the 3rd value is then the kill reason (the reply says ways are throttled).
+N.WAYS_SLOW_DIRS = 2
+N.WAYS_SLOW_BUDGET_MS = 30
 function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump, noSearch)
     far, near, budgetMs = far or 20, near or 8, budgetMs or 100
+    local slow = not noSearch and N.levelSlow()
+    if slow then
+        budgetMs = math.min(budgetMs, N.WAYS_SLOW_BUDGET_MS)
+        maxDirs = math.min(maxDirs or N.WAYS_SLOW_DIRS, N.WAYS_SLOW_DIRS)
+        noJump = true
+    end
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil end
@@ -2989,7 +3112,7 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump, noSearch)
         local w = c.by[d]
         if w then out[#out + 1] = { dir = w.dir, open_m = w.open_m, dy = w.dy, jump = w.jump } end
     end
-    return out, Ext.Utils.MonotonicTime() - t0
+    return out, Ext.Utils.MonotonicTime() - t0, slow and tostring(slow.why) or nil
 end
 
 -- A gap a jump crosses in a direction the walk can't go (setup's screenshot reason: ledges, jump chains, the burnt
@@ -3134,7 +3257,7 @@ function N.waysWarm(now)
         elseif wa.ok > 0 and wa.byLevel[lv] >= N.WARM_TIMEOUTS_KILL then
             N.killLevel(req.level, "async path searches timed out " .. wa.byLevel[lv] .. "x")
         end
-        if not st.req then N.inflight(nil) end
+        if not st.req then N.inflightDone("ways warm") end
         return
     end
     if wa.broken or not Ext.Level.BeginPathfinding then return end
@@ -3172,7 +3295,7 @@ function N.waysWarm(now)
         local cur = st.req
         if not cur or cur.key ~= nxt.key then return end
         st.req = nil
-        N.inflight(nil)
+        N.inflightDone("ways warm")
         wa.ok = wa.ok + 1
         N.warmAnswered(level)
         local okr, r = pcall(readResult, pv, pv.GoalFound, from, target, N.PATH_END_TOL_M)
@@ -3421,14 +3544,16 @@ end)
 RPC.register("nav.level_guard", function(args)
     local g = N.guardState()
     if type(args.kill) == "string" then N.killLevel(args.kill, args.why or "turned off by hand") end
-    if args.clear == true then g.slow, g.strikes = {}, {}
+    if args.clear == true then g.slow, g.strikes, N.slowHits = {}, {}, {}
     elseif type(args.clear) == "string" then
         g.slow[args.clear] = nil
         if g.strikes then g.strikes[args.clear] = nil end
+        N.slowHits[args.clear] = nil
     end
-    if args.clear ~= nil then pcall(Ext.IO.SaveFile, N.GUARD_FILE, Ext.Json.Stringify(g, { Beautify = false })) end
+    if args.clear ~= nil then pcall(Ext.IO.SaveFile, N.guardFile(), Ext.Json.Stringify(g, { Beautify = false })) end
     local wa = N.warmAsync
-    return { slow = g.slow, level = currentLevel(), here = N.levelSlow(),
+    return { slow = g.slow, level = currentLevel(), here = N.levelSlow(), file = N.guardFile(),
+        slow_hits = N.slowHits[currentLevel() or ""], ttl_s = N.KILL_TTL_S,
         warm = { ok = wa.ok, timeouts = wa.timeouts, broken = wa.broken } }
 end)
 

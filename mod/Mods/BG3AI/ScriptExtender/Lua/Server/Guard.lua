@@ -435,7 +435,7 @@ function G.reachable(char, pos)
         local ok, r = pcall(N.path, char, pos)
         if ok and type(r) == "table" then
             return r.reachable, { length_m = r.length_m, needs_jump = r.needs_jump, reason = r.error_cause or r.reason,
-                hidden_floor = r.hidden_floor, drop = r.drop }
+                hidden_floor = r.hidden_floor, drop = r.drop, budget = r.budget }
         end
     end
     if type(N.reachable) == "function" then
@@ -590,7 +590,7 @@ function G.approach_point(char, target, reach)
         end
     end
     table.sort(cands, function(p, q) return p[3] < q[3] end)
-    local tries, jump_only, known = 0, false, false
+    local tries, jump_only, known, busy = 0, false, false, false
     for _, c in ipairs(cands) do
         if tries >= G.APPROACH_MAX_TRIES then break end
         local y = G.floor_at(c[1], c[2], t[2])
@@ -599,6 +599,7 @@ function G.approach_point(char, target, reach)
             local p = { c[1], y, c[2] }
             local r, info = G.reachable(char, p)
             if r ~= nil then known = true end
+            if r == nil and info and info.budget then busy = true end
             if r == true and not info.needs_jump then
                 return { pos = p, length_m = info.length_m or U.dist(a, p), dist = d, tpos = tpos }
             end
@@ -626,6 +627,8 @@ function G.approach_point(char, target, reach)
     end
     if jump_only then G.refuse("needs a jump: use jump_to") end
     G.raised_ladder_refuse(target, a)
+    -- NAV-8: "no answer" because this frame's path budget was spent is not "no pathfinding": no walk without proof
+    if not known and busy then G.refuse("path searches are busy this moment: send it again") end
     if not known and d <= G.UNVERIFIED_APPROACH_M and b(G.q("HasLineOfSight", char, target)) then
         -- No pathfinding answer at all (Nav missing, or nothing floor-like
         -- around a small target): a short walk toward something in plain

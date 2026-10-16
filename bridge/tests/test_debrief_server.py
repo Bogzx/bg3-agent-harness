@@ -2,6 +2,7 @@
 during a fight (LAST ATTEMPT) and the retried fight's first turn (research/fight-debrief.md)."""
 import json
 import os
+import time
 import unittest
 from unittest import mock
 
@@ -103,6 +104,66 @@ class FightServer(Base):
         rec = json.loads((runs / "S099.fights.jsonl").read_text().splitlines()[-1])
         self.assertEqual(rec["session"], "S099")   # from the metrics path (the runner sets no BG3AI_SESSION; S035)
         self.assertFalse((self.tmp / "fights.jsonl").exists())
+
+    def _load(self, name: str) -> str:
+        save = self.tmp / "saves" / f"P__{name}"
+        save.mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(server, "SAVE_DIR", self.tmp / "saves"), mock.patch.object(server, "SAVE_PREFIX", "P"), \
+                mock.patch.object(server, "_enable_save_gates", lambda: None), \
+                mock.patch.object(server.SAVER, "settle", lambda: ""), \
+                mock.patch.object(server, "_game_process_alive", lambda: True), \
+                mock.patch.object(server, "_server_boot", lambda: "b"), \
+                mock.patch.object(server, "_load_once", lambda *a: (JobResult("done", {"loaded": name}), False)):
+            return server.load_game(name)
+
+    # BACKLOG ~1107 (S033 Balthazar's antechamber): attempt 1 lost → the agent wrote a [lesson] → reload → long rest →
+    # attempt 2 vs the same enemies (lost again, reload) → next session attempt 3. Every retry's kickoff and the
+    # reload's result carry the LAST ATTEMPT / RETRY facts AND the agent's own lesson.
+    def test_s033_retry_shape_carries_last_attempt_and_own_lesson(self):
+        log = self.tmp / "sessions" / "S099.md"
+        before = time.strftime("%H:%M", time.localtime(time.time() - 1800))
+        log.write_text(f"# S099\n- {before} [lesson] an old lesson about doors\n")   # before the fight: not shown
+        self.bad_fight(end=False)
+        server.note("x")                                         # attempt 1 is open
+        server.note("kill Goblin spawners first, ranged", tag="lesson")
+        out = self._load("S099-pre")                             # reload mid-fight
+        self.assertIn("LAST ATTEMPT: reloaded (was costly) vs Goblin", out)
+        self.assertIn("YOUR LESSON from that fight (session log): kill Goblin spawners first, ranged", out)
+        self.assertNotIn("old lesson about doors", out)
+        st = server._last_attempt_text(server._retry["rec"])     # what the first get_status repeats
+        self.assertIn("YOUR LESSON", st)
+        # attempt 2: the fight starts again; its kickoff (COMBAT STARTED block / first combat_turn) says RETRY + lesson
+        self.g.combat = combat()
+        self.g.push("combat_started", {})
+        server.note("y")
+        hint = server._fight_hint(self.g.combat, {P1, P2})
+        self.assertTrue(hint.startswith("RETRY of the fight that went costly"), hint)
+        self.assertIn("YOUR LESSON from that fight (session log): kill Goblin spawners first, ranged", hint)
+        # attempt 2 lost too: another reload; attempt 1's lesson still counts (the chain's first start)
+        self.g.push("damage", {"source": ref(GOB, "Goblin"), "target": ref(P2, "Lae'zel"), "amount": 30,
+                               "type": "Slashing"})
+        self.g.push("downed", ref(P2, "Lae'zel"))
+        server.note("then focus the Goblin with Fire Bolt", tag="lesson")
+        out = self._load("S099-pre")
+        self.assertIn("LAST ATTEMPT: reloaded", out)
+        self.assertIn("kill Goblin spawners first, ranged | then focus the Goblin with Fire Bolt", out)
+        rec = json.loads((self.tmp / "fights.jsonl").read_text().splitlines()[-1])
+        self.assertTrue(rec.get("chain_t"))
+        # next session (a fresh bridge, history from fights.jsonl): LAST TIME + that session's lessons
+        server._FIGHTS.update(tr=None, path=None)
+        server._retry.update(rec=None, status=False, fight=False)
+        self.g.push("combat_started", {})
+        server.note("z")
+        hint = server._fight_hint(combat(), {P1, P2})
+        self.assertIn("LAST TIME vs Goblin, Imp (reloaded, S099)", hint)
+        self.assertIn("YOUR LESSON from that fight (session log): kill Goblin spawners first, ranged | then focus", hint)
+
+    def test_no_own_lesson_no_extra_line(self):
+        self.bad_fight(end=False)
+        server.note("x")
+        out = self._load("S099-pre")
+        self.assertIn("LAST ATTEMPT", out)
+        self.assertNotIn("YOUR LESSON", out)
 
     def test_clean_fight_no_inventory_read(self):
         self.g.push("combat_started", {})

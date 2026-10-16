@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import shutil
+import os
 import sys
 import tempfile
 import time
@@ -20,6 +21,10 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# RUN-9: play.RUNTIME is read at import; a test must never append to the real runtime/runner.log (the phantom
+# "0.01 s after SIGTERM" kill bursts the orchestrator chased). Tests that need a runtime set their own.
+os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
+os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")   # never chmod the real play/knowledge (Knowledge tests patch it)
 import play as P  # noqa: E402
 import runs as R  # noqa: E402
 from test_play import _res, _stream, _use  # noqa: E402
@@ -96,6 +101,60 @@ class Pins(TmpDir):
 
 # ======================================================================== caps
 
+class KnowledgeLock(TmpDir):
+    """FAIR-2: play/knowledge's files are read-only for a --runs series, and their modes come back after."""
+
+    def tree(self) -> Path:
+        k = self.tmp / "knowledge"
+        (k / "playbooks").mkdir(parents=True)
+        (k / "a.md").write_text("a")
+        (k / "playbooks" / "b.md").write_text("b")
+        (k / "x.sh").write_text("#!/bin/sh")
+        (k / "x.sh").chmod(0o755)
+        (k / "a.md").chmod(0o640)
+        return k
+
+    def modes(self, k: Path) -> dict:
+        return {str(p.relative_to(k)): p.stat().st_mode & 0o777 for p in k.rglob("*") if p.is_file()}
+
+    def test_lock_unlock_restores_modes(self):
+        k, rec = self.tree(), self.tmp / "rt" / "lock.json"
+        before = self.modes(k)
+        self.assertEqual(R.lock_tree(k, rec), 3)
+        self.assertEqual(self.modes(k), {"a.md": 0o440, "playbooks/b.md": 0o444, "x.sh": 0o555})
+        with self.assertRaises(PermissionError) if os.geteuid() else contextlib.nullcontext():
+            (k / "a.md").write_text("agent edit")
+        # an execv'd successor (or a restart after a kill) locks again: the record keeps the first modes
+        self.assertEqual(R.lock_tree(k, rec), 3)
+        self.assertEqual(R.unlock_tree(k, rec), 3)
+        self.assertEqual(self.modes(k), before)
+        self.assertFalse(rec.exists())
+        self.assertEqual(R.unlock_tree(k, rec), 0)   # nothing locked: no-op
+        self.assertEqual(R.lock_tree(self.tmp / "none", rec), 0)
+
+    def test_a_series_locks_for_its_duration_only(self):
+        k, rec = self.tree(), self.tmp / "rt" / "lock.json"
+        before, seen = self.modes(k), []
+
+        def fake_series(*a, **kw):
+            seen.append(self.modes(k))
+            return 0
+        with mock.patch.object(P, "KNOWLEDGE_DIR", k), mock.patch.object(P, "KNOWLEDGE_LOCK", rec), \
+                mock.patch.object(P, "run_series", side_effect=fake_series), \
+                mock.patch.object(P, "current_pins", return_value={}), \
+                mock.patch.object(P, "series_meta", return_value={}), \
+                mock.patch.dict(os.environ, {"BG3AI_KNOWLEDGE_LOCK": "1"}), \
+                mock.patch("bg3ai.skipper.start_background", return_value=None), \
+                mock.patch.object(P.ramwatch, "start_background", return_value=None), \
+                mock.patch.object(P.signal, "signal"), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            rc = P.main(["run", "--playthrough", "naut", "--until", "nautiloid_escaped", "--runs", "2"])
+        self.assertEqual((rc, len(seen)), (0, 1))
+        self.assertTrue(all(m & 0o222 == 0 for m in seen[0].values()))
+        self.assertEqual(self.modes(k), before)
+        self.assertFalse(rec.exists())
+
+
 class Caps(TmpDir):
     def test_series_caps(self):
         cli = {"run_hours": 4, "max_cost": 30.0, "max_tokens": None}
@@ -114,7 +173,13 @@ class Caps(TmpDir):
         def msg(mid, out):
             return {"type": "assistant", "message": {"id": mid, "usage": {"input_tokens": 10, "output_tokens": out,
                                                                           "cache_read_input_tokens": 100}}}
-        m = R.UsageMeter()
+        claude = R.clients.ClaudeClient()   # the meter takes clients.Events, as play.py feeds it
+
+        class Meter(R.UsageMeter):
+            def on_event(self, ev):
+                for e in claude.parse(json.dumps(ev)):
+                    super().on_event(e)
+        m = Meter()
         m.on_event(msg("m1", 5))
         m.on_event(msg("m1", 20))            # the same message again (a later content block): counted once
         m.on_event(msg("m2", 0))
@@ -126,7 +191,7 @@ class Caps(TmpDir):
         m.on_event(msg("m3", 390))
         self.assertEqual(m.tokens, 1500)
         self.assertAlmostEqual(m.cost, 3.0)  # 500 live tokens at the run's $0.002 per token
-        base = R.UsageMeter(10.0, 5000)      # earlier processes of the run
+        base = Meter(10.0, 5000)             # earlier processes of the run
         base.on_event(msg("x", 890))
         self.assertEqual((base.tokens, base.cost), (6000, 12.0))
         self.assertIsNone(R.cap_exceeded({"max_cost": None, "max_tokens": None}, 99, 10 ** 9))

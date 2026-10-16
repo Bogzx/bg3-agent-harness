@@ -57,9 +57,10 @@ import ramwatch  # noqa: E402  (runner/ramwatch.py: RAM watchdog, RSS spikes wit
 import runs  # noqa: E402  (runner/runs.py: run --runs naming, per-run resets, failure tagging, the runs table)
 import judge  # noqa: E402  (runner/judge.py: the persona judge, a run record's `persona`)
 import clients  # noqa: E402  (runner/clients.py: the CLI that plays, --client claude|codex|gemini)
+import sandbox  # noqa: E402  (runner/sandbox.py: run --sandbox container)
 import model_time  # noqa: E402  (runner/model_time.py: model vs harness time, a run record's `model_time`)
 sys.path.insert(0, str(REPO / "tools"))
-import steam_paths  # noqa: E402  (stdlib: Steam's offline state before any game launch)
+import steam_paths  # noqa: E402  (stdlib: Steam's offline state, the game's install and Larian profile paths)
 import bg3le_buildinfo  # noqa: E402  (stdlib: is build/bg3le/dist built with every patches/bg3le patch?)
 
 PLAY_DIR = REPO / "play"
@@ -70,18 +71,16 @@ LAUNCH_SH = REPO / "runner" / "launch_game.sh"
 CHECK_ALL = REPO / "tools" / "dev" / "check_all.py"
 CHECK_PLANS = REPO / "tools" / "dev" / "check_plans.py"   # party-build.md plan lines vs the game's level-up offers
 CHECK_PLANS_TIMEOUT = 90
-SAVE_DIR = Path(os.environ.get(
-    "BG3AI_SAVE_DIR",
-    Path.home() / ".local/share/Larian Studios/Baldur's Gate 3/PlayerProfiles/Public/Savegames/Story"))
+SAVE_DIR = steam_paths.saves_dir()   # $BG3AI_SAVE_DIR, else under $BG3AI_PROFILE_DIR / the default profile
 DEBUG_HOST = "127.0.0.1"
 DEBUG_PORT = int(os.environ.get("BG3LE_DEBUG_PORT", "9998"))
 SAVE_PREFIX = os.environ.get("BG3AI_SAVE_PREFIX", "")
 MEMORY_TEMPLATE = REPO / "memory-template"
 SCENARIOS = Path(os.environ.get("BG3AI_SCENARIOS", REPO / "scenarios"))   # scenarios/<name>.json (run --scenario)
 KNOWLEDGE_DIR = PLAY_DIR / "knowledge"   # agent-writable outside playbooks/ (FAIR-2): snapshot + restore per --runs run
-# The mod's Ext.IO files (nav_guard.json: the per-level navigation kill list; nav_<host uuid>.json: breadcrumb mirrors)
-SE_BG3AI_DIR = Path(os.environ.get(
-    "BG3AI_SE_DIR", Path.home() / ".local/share/Larian Studios/Baldur's Gate 3/Script Extender")) / "BG3AI"
+KNOWLEDGE_LOCK = RUNTIME / "knowledge-lock.json"   # its files are read-only during a --runs series (FAIR-2)
+# The mod's Ext.IO files (nav_guard_<host uuid>.json, older nav_guard.json: the per-level navigation kill list; nav_<host uuid>.json: breadcrumb mirrors)
+SE_BG3AI_DIR = steam_paths.se_dir() / "BG3AI"   # $BG3AI_SE_DIR, else <profile>/Script Extender
 
 HARD_STOP_GRACE = 10 * 60      # deadline + this → SIGINT
 SIGINT_GRACE = 30              # then SIGTERM
@@ -116,12 +115,50 @@ JUDGE_TIMEOUT_S = 15 * 60      # the persona judge's whole budget after a run (t
 KILLED_EXITS = (-2, -9, -15, 130, 137, 143)   # claude ended by a signal (SIGINT/KILL/TERM, raw or as 128+n)
 
 
+def classify_api_failure(texts: list[str], rejected: bool) -> str | None:
+    """RUN-7: "limit" (a usage/rate limit, an overload or a server error: wait and retry, never give up), "auth"
+    (a key, credit or model problem: the quick-failure stop stays), or None (no API failure). texts: the stream's
+    api_error event texts; rejected: a rate_limit event said rejected."""
+    if any(API_AUTH_RE.search(t or "") for t in texts):
+        return "auth"
+    return "limit" if texts or rejected else None
+
+
+def api_backoff_s(resets_at: float | None, now: float, repeat: int) -> float:
+    """How long to wait after an API limit: until its reset time (+slack, at most API_RESET_MAX_S) when the client
+    said, else API_BACKOFF_MIN_S doubling per repeat (repeat 1 = the first), at most API_BACKOFF_MAX_S."""
+    if resets_at and resets_at > now:
+        return min(resets_at - now + API_RESET_SLACK_S, API_RESET_MAX_S)
+    return float(min(API_BACKOFF_MIN_S * 2 ** max(repeat - 1, 0), API_BACKOFF_MAX_S))
+
+
+def mcp_problem(mcp: list[str] | None, strict: bool) -> str | None:
+    """RUN-8: why the play process's bg3 MCP server isn't usable, from its init event's "name:status" list, or None.
+    strict (claude, whose init lists every server): a missing bg3 counts too; other clients only report a failure."""
+    if mcp is None:
+        return None
+    for m in mcp:
+        name, _, status = str(m).partition(":")
+        if name == "bg3":
+            return None if status == "connected" else f"the bg3 MCP server is {status or 'unknown'}"
+    return "the bg3 MCP server is missing from the init event" if strict else None
+
+
 def exit_reason(reason: str, returncode: int | None) -> str:
     """'killed' when claude died of a signal the runner didn't send (S027: an outside SIGTERM at 3 min was taken
     for a clean exit, so the end lint demanded a handoff and a fix-notes session ran); else `reason`."""
     return "killed" if reason == "exited" and returncode in KILLED_EXITS else reason
 STUCK_SESSIONS = 2
-MAX_QUICK_FAILURES = 3         # claude exiting within a minute this many times in a row → give up
+MAX_QUICK_FAILURES = 3         # claude exiting within a minute this many times in a row → give up (auth/config only:
+                               # a usage/rate limit or an overload backs off and never gives up, RUN-7)
+API_BACKOFF_MIN_S = 60         # RUN-7: the first wait after a limit/overload with no reset time; doubles per repeat
+API_BACKOFF_MAX_S = 3600       # ... up to this; a known reset time is waited for (+API_RESET_SLACK_S) up to 6 h
+API_RESET_SLACK_S = 60
+API_RESET_MAX_S = 6 * 3600
+MOD_GONE_S = 180               # RUN-8: Mods.BG3AI missing this long while the game answers → a hang (recover)
+# RUN-7: an API failure the runner waits out (usage/rate limit, overload, server errors) vs one a human must fix
+API_AUTH_RE = re.compile(r"invalid api key|authentication|credit balance|unknown model|not_found_error|"
+                         r"model.{0,40}(?:not found|does not exist|unavailable)|\b401\b|\b403\b", re.I)
 MAX_RESUMES = 3                # game crashes per session that resume the same claude conversation
 RESUME_MIN_MINUTES = 8         # less than this left after a crash: end the session, the next one picks up
 MAX_SETUP_FAILURES = 5         # game launch/load failing this many times in a row → give up
@@ -341,6 +378,22 @@ def is_autosave(label: str) -> bool:
     return re.match(r"(?i)^(auto|quick)save_\d+$", label) is not None
 
 
+AGENT_SAVES_KEPT = 50
+
+
+def agent_quicksaves(actions: list[dict], owner: str | None) -> list[str]:
+    """Quicksave folders the MCP server's saver wrote (actions.jsonl "save_game.bg" records with ok and the folder
+    found on disk, bridge saver.py), in order; only `owner`'s (None: none, an unknown owner proves nothing)."""
+    out = []
+    for a in actions:
+        if a.get("tool") != "save_game.bg" or not a.get("ok") or not a.get("folder"):
+            continue
+        s = parse_save_folder(str(a["folder"]))
+        if s and owner and s.owner.casefold() == owner.casefold() and is_autosave(s.label) and s.folder not in out:
+            out.append(s.folder)
+    return out
+
+
 def foreign_use_since(save: Save, saves: list[Save], actions: list[dict], game_started: float | None,
                       runner_saves: set[str], prefix: str = SAVE_PREFIX) -> str | None:
     """Why the running game may no longer be at `save` (this playthrough's newest save), or None.
@@ -366,13 +419,23 @@ def foreign_use_since(save: Save, saves: list[Save], actions: list[dict], game_s
 
 
 def mark_inflight_stuck(guard_file: Path) -> str | None:
-    """After the runner killed a hung game: marks the mod's in-flight background search (nav_guard.json "inflight")
-    stuck, so the next start counts it as a strike on that level. The mod marks it from its own Tick, which runs on
-    the server thread that froze (2026-10-13: a ways warm froze SCL_Main_A for 30 min; the marker stayed fresh, no
-    strike, and the next load froze again). Returns the level, or None when there was nothing in flight."""
+    """After the runner killed a hung game: marks the mod's in-flight background search stuck, so the next start
+    counts it as a strike on that level. The mod marks it from its own Tick, which runs on the server thread that
+    froze (2026-10-13: a ways warm froze SCL_Main_A for 30 min; the marker stayed fresh, no strike, and the next load
+    froze again). guard_file: the file, or the mod's dir (the newest nav_guard*.json: NAV-3 keeps one per
+    playthrough, nav_guard_<host uuid>.json). The marker is "inflights"["ways warm"] (NAV-7, one per op) or an
+    older file's "inflight". Returns the level, or None when there was nothing in flight."""
     try:
+        if guard_file.is_dir():
+            files = sorted(guard_file.glob("nav_guard*.json"), key=lambda p: p.stat().st_mtime)
+            if not files:
+                return None
+            guard_file = files[-1]
         d = json.loads(guard_file.read_text())
         f = d.get("inflight") if isinstance(d, dict) else None
+        many = d.get("inflights") if isinstance(d, dict) else None
+        if isinstance(many, dict) and isinstance(many.get("ways warm"), dict):
+            f = many["ways warm"]
         if not isinstance(f, dict) or not f.get("level") or f.get("stuck"):
             return None
         f["stuck"] = True
@@ -510,9 +573,13 @@ def progress_signature(status: dict | None, journal: list | dict | None) -> dict
         sig["subregion"] = status.get("subregion")
         party = status.get("party") or []
         sig["party_levels"] = sorted(str(p.get("level")) for p in party if isinstance(p, dict))
-        pos = next((p.get("pos") for p in party if isinstance(p, dict) and isinstance(p.get("pos"), list)), None)
-        if pos and len(pos) >= 3:
-            sig["pos"] = [round(float(x), 1) for x in pos[:3]]   # not compared as is: see session_progress
+        placed = [p for p in party if isinstance(p, dict) and isinstance(p.get("pos"), list) and len(p["pos"]) >= 3]
+        if placed:
+            sig["pos"] = [round(float(x), 1) for x in placed[0]["pos"][:3]]   # not compared as is: see session_progress
+            # RUN-6: the party's order can change (a swap, the selection); state_drift compares one member by name
+            sig["pos_name"] = placed[0].get("name")
+            sig["party_pos"] = {str(p["name"]): [round(float(x), 1) for x in p["pos"][:3]] for p in placed
+                                if p.get("name")}
         xp = [p.get("xp") for p in party if isinstance(p, dict) and p.get("xp") is not None]
         if xp:
             sig["xp"] = sum(xp)
@@ -529,12 +596,15 @@ def progress_signature(status: dict | None, journal: list | dict | None) -> dict
     return sig
 
 
+POS_KEYS = ("pos", "pos_name", "party_pos")   # where the party stands: never a save-state change by itself
+
+
 def made_progress(start_sig: dict | None, end_sig: dict | None) -> bool | None:
     """True/False, or None when it can't be told (a signature is missing). The position is left out: any step
     would count (session_progress counts a far move)."""
     if start_sig is None or end_sig is None:
         return None
-    strip = lambda d: {k: v for k, v in d.items() if k != "pos"}  # noqa: E731
+    strip = lambda d: {k: v for k, v in d.items() if k not in POS_KEYS}  # noqa: E731
     return strip(start_sig) != strip(end_sig)
 
 
@@ -550,7 +620,7 @@ def session_progress(start_sig: dict | None, end_sig: dict | None, points: int |
     >= PROGRESS_MOVE_M; False only when it can be told; None when nothing is known (a crash, no reads)."""
     sig = made_progress(start_sig, end_sig)
     if sig:
-        changed = [k for k in end_sig if k != "pos" and start_sig.get(k) != end_sig.get(k)]
+        changed = [k for k in end_sig if k not in POS_KEYS and start_sig.get(k) != end_sig.get(k)]
         return True, "changed " + ", ".join(changed)
     if isinstance(points, (int, float)) and points >= PROGRESS_MIN_POINTS:
         return True, f"{points:g} story points"
@@ -576,9 +646,12 @@ def state_drift(end_sig: dict | None, now_sig: dict | None) -> str | None:
     for k in DRIFT_KEYS:
         if k in end_sig and k in now_sig and end_sig[k] != now_sig[k]:
             return f"{k} {now_sig[k]} (the last session ended at {end_sig[k]})"
-    a, b = end_sig.get("pos"), now_sig.get("pos")
+    a, b, who = end_sig.get("pos"), now_sig.get("pos"), "the party"
+    name = end_sig.get("pos_name")
+    if name and name in (now_sig.get("party_pos") or {}):   # the same member, whatever the party's order now
+        b, who = now_sig["party_pos"][name], name
     if a and b and math.dist(a, b) > DRIFT_MOVE_M:
-        return f"the party stands {math.dist(a, b):.0f} m from where the last session ended"
+        return f"{who} stands {math.dist(a, b):.0f} m from where the last session ended"
     return None
 
 
@@ -1115,7 +1188,17 @@ class RpcError(RuntimeError):
 SETUP_ERRORS = (RuntimeError, OSError, TimeoutError, LuaDebugError)
 
 
-class SteamNotOffline(RuntimeError):
+class LaunchBlocked(RuntimeError):
+    """The game can't be launched now for a reason an operator fixes outside the runner: never a give-up, the run
+    loop retries every STEAM_RETRY_S."""
+
+
+class ForeignGameRunning(LaunchBlocked):
+    """A bg3 this harness didn't launch (a user's own BG3) is running: never signalled, and no second game beside it
+    (RUN-4)."""
+
+
+class SteamNotOffline(LaunchBlocked):
     """Steam isn't in offline mode: launching BG3 could kick the account's other machine off. Never launch."""
 
 
@@ -1134,12 +1217,15 @@ class LaunchGaveUp(Exception):
 
 
 def steam_ready() -> tuple[bool, str]:
-    """(ok to launch BG3?, why): Steam's last login was offline and a Steam client is running.
-    $BG3AI_ALLOW_STEAM_ONLINE=1 skips the offline requirement (a machine where online is fine)."""
-    if os.environ.get("BG3AI_ALLOW_STEAM_ONLINE") == "1":
-        ok, why = True, "BG3AI_ALLOW_STEAM_ONLINE=1"
+    """(ok to launch BG3?, why): a Steam client is running and, on a machine that requires it
+    (steam_paths.offline_required: $BG3AI_REQUIRE_STEAM_OFFLINE=1 or ~/.config/bg3ai/require-steam-offline; machine
+    2), Steam's last login was offline. Not required by default (RUN-11: a public user's runner launched never)."""
+    required, req_why = steam_paths.offline_required()
+    if not required:
+        ok, why = True, f"Steam offline {req_why}"
     else:
         ok, why = steam_paths.steam_offline()
+        why = f"{why} [offline required: {req_why}]"
     if not ok:
         return False, why
     r = subprocess.run(["pgrep", "-x", "steam"], capture_output=True, text=True)
@@ -1182,6 +1268,15 @@ def rpc(op: str, args: dict | None = None, context: str = "server", timeout: flo
     if not reply.get("ok"):
         raise RpcError(f"{op}: {reply.get('error')}")
     return reply.get("result")
+
+
+def mod_loaded(timeout: float = EVAL_TIMEOUT) -> bool | None:
+    """RUN-8: the BG3AI mod's RPC is loaded in the client context (MOD_READY_LUA); None when the eval itself fails
+    (that is game_state's business, not a missing mod)."""
+    try:
+        return lua_eval(MOD_READY_LUA, "client", timeout).strip() == "true"
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def game_state(timeout: float = EVAL_TIMEOUT) -> str | None:
@@ -1297,15 +1392,79 @@ def load_menu_args(save: Save, saves: list[Save]) -> dict:
     return args
 
 
-def pids_of_game() -> list[int]:
-    """The native game processes (./bin/bg3), not the pressure-vessel wrapper."""
+def all_bg3_pids() -> list[int]:
+    """Every native game process on the machine (./bin/bg3), ours or a user's own; not the pressure-vessel wrapper."""
     r = subprocess.run(["pgrep", "-x", "bg3"], capture_output=True, text=True)
     return [int(p) for p in r.stdout.split()]
 
 
+# A harness process (launch_game.sh's game, or the crash reporter it spawns) carries one of these (RUN-4): the marker
+# env (BG3AI_GAME_STAMP, from 2026-10-16) or the screenshot layer's bg3ai control socket (every launch before it),
+# its own cgroup scope (BG3AI_GAME_SCOPE, the default) or bg3le mapped in.
+HARNESS_ENV = (b"BG3AI_GAME_STAMP=", b"control=bg3ai-shot")
+
+
+def is_harness_pid(pid: int) -> bool:
+    """The process was started by runner/launch_game.sh (this harness), not by a user from Steam."""
+    proc = Path(f"/proc/{pid}")
+    try:
+        if "/bg3ai-game-" in (proc / "cgroup").read_text(errors="replace"):
+            return True
+    except OSError:
+        pass
+    try:
+        env = (proc / "environ").read_bytes()
+        if any(m in env for m in HARNESS_ENV):
+            return True
+    except OSError:
+        pass
+    try:
+        with open(proc / "maps", "rb") as f:
+            return any(b"libbg3le" in ln for ln in f)
+    except OSError:
+        return False
+
+
+def pids_of_game() -> list[int]:
+    """This harness's native game processes (all_bg3_pids that is_harness_pid): the ones the runner may wait on,
+    count as its game, or kill. A user's own BG3 is never one of them (RUN-4)."""
+    return [p for p in all_bg3_pids() if is_harness_pid(p)]
+
+
+def foreign_bg3_pids() -> list[int]:
+    """bg3 processes this harness didn't launch (a user's own BG3): the runner never signals them and never
+    launches a second game beside one."""
+    return [p for p in all_bg3_pids() if not is_harness_pid(p)]
+
+
+def proc_start(pid: int) -> int | None:
+    """The process's start time (clock ticks since boot, /proc/<pid>/stat field 22): with the pid, its identity
+    (a pid reused after a reboot or a wrap has another start time)."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        return int(stat[stat.rindex(")") + 2:].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def proc_cmdline(pid: int) -> bytes:
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return b""
+
+
+def _pgid(pid: int) -> int | None:
+    try:
+        return os.getpgid(pid)
+    except OSError:
+        return None
+
+
 def crash_reporter_pids() -> list[int]:
     """BG3's LinuxCrashReporter processes. One starts after the game crashes and keeps the launcher alive (S014:
-    the runner then waited 10 min for a dead game). Only reporters with the game's SteamAppId (or its install path)."""
+    the runner then waited 10 min for a dead game). Only reporters with the game's SteamAppId (or its install path)
+    that this harness's game spawned (is_harness_pid): a user's own BG3 crash report is left alone (RUN-4)."""
     r = subprocess.run(["pgrep", "-f", "LinuxCrashReporter"], capture_output=True, text=True)
     out = []
     for p in r.stdout.split():
@@ -1314,7 +1473,7 @@ def crash_reporter_pids() -> list[int]:
             cmd = Path(f"/proc/{p}/cmdline").read_bytes()
         except OSError:
             continue
-        if BG3_APP_ENV in env or b"Baldurs Gate 3" in cmd:
+        if (BG3_APP_ENV in env or b"Baldurs Gate 3" in cmd) and is_harness_pid(int(p)):   # RUN-4: ours only
             out.append(int(p))
     return out
 
@@ -1537,12 +1696,28 @@ class Options:
     judge_change: str | None = None    # --allow-judge-change: the judge model differs from series.json's
     client: str = "claude"             # run --client: the CLI that plays (runner/clients.py; frozen in series.json)
     client_change: str | None = None   # --allow-client-change: the client differs from series.json's
+    sandbox: str = "none"              # run --sandbox: none | container (runner/sandbox.py)
+    box: sandbox.Sandbox | None = None  # --sandbox container: prepared once by cmd_run (firewall checked, proxy up)
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
 # compaction is a ~1-2 min summary stall (a >10 s gap) and a generic summary, so shorter sessions with our own
 # handoff are the default lever; this is an opt-in safety net / A-B switch (e.g. 350000 with 30-min sessions).
 AUTOCOMPACT_MIN, AUTOCOMPACT_MAX = 100_000, 1_000_000
+
+
+def make_client(opt: Options) -> clients.Client:
+    """The play client: the bg3 stdio server of play/.mcp.json, or with --sandbox container the http one on the
+    sandbox network's gateway (the client runs in the container)."""
+    if opt.sandbox == "container":
+        return clients.make_http(opt.client, sandbox.URL)
+    return clients.make(opt.client)
+
+
+def sandbox_server_env(base_env: dict, req: clients.Request) -> dict:
+    """The env of the http bg3 server of one sandboxed play process: what the stdio server would get (the runner's
+    env, play/.mcp.json's, the session's) with the rules served by the server (the container has no play/)."""
+    return {**base_env, **(clients.bg3_server().get("env") or {}), **req.env, "BG3AI_SERVE_RULES": "1"}
 
 
 def session_overrides(path: Path) -> dict:
@@ -1573,6 +1748,7 @@ class SessionResult:
     claude_session: str
     exit_code: int | None
     reason: str          # exited | hard_stop | crash | hang | agent_hang | aborted | killed | milestone | dry_run
+    #                      | cap | api_limit (RUN-7: usage/rate limit, overload) | mcp_failed (RUN-8)
     started: float
     ended: float
     notes: list[str] = field(default_factory=list)
@@ -1580,17 +1756,22 @@ class SessionResult:
     effort: str | None = None
     detail: str = ""     # what the runner saw, for a fault
     fault_at: float | None = None
+    resets_at: float | None = None   # api_limit: when the client said the limit resets
 
 
 class Runner:
     watch: LaunchWatch | None = None   # crash signs of the game the runner launched (see launch_game)
+    api_limits = 0                     # RUN-7: API limits in a row (the back-off doubles per repeat)
     cap_hit: dict | None = None        # --max-cost/--max-tokens: {cap, cost, tokens, why} once the run reached one
     run_started: float | None = None   # --until: the run's start (claude_totals counts from there)
     _client: clients.Client | None = None
 
     def __init__(self, opt: Options):
         self.opt = opt
-        self._client = clients.make(opt.client)   # the CLI every play, resume and fix-notes process runs
+        self._client = make_client(opt)   # the CLI every play, resume and fix-notes process runs
+        # --sandbox container: this playthrough's HOME for the client in the container (its sessions to resume)
+        self.box = replace(opt.box, home=self.state.dir / "sandbox-home") if opt.box else None
+        self._sandbox_live: tuple | None = None   # (server, container) of the play process now running
         self.mem = PLAYTHROUGHS / opt.playthrough / "memory"
         self.state = RunnerState(opt.playthrough)
         self.profile_path = PLAYTHROUGHS / opt.playthrough / "profile.json"
@@ -1703,17 +1884,34 @@ class Runner:
 
     # ---------------------------------------------------------------- game lifecycle
 
-    def owns_game(self) -> bool:
-        """True if the running game is one this runner (or a previous run of it) launched."""
-        if self.game_proc is not None and self.game_proc.poll() is None:
-            return True
-        pg = (self.state["game"] or {}).get("pgid")
+    def owned_group(self) -> int | None:
+        """The launcher's process group from runner.json's game record, only while it is provably that launch
+        (RUN-4): its leader is runtime launch_game.sh with the start time recorded at launch (records from before
+        2026-10-16 have none: the command line alone). None after a reboot or a pid reuse: never signalled then."""
+        g = self.state["game"] or {}
+        pg = g.get("pgid")
         if not pg:
-            return False
+            return None
         try:   # after a self-restart (execv) the game is still our child: reap it if it exited, or it stays a zombie
             os.waitpid(pg, os.WNOHANG)
         except OSError:
             pass
+        start = proc_start(pg)
+        if start is None:   # the leader (launch_game.sh) is gone: the group is ours only if it holds a harness game
+            return pg if any(_pgid(p) == pg for p in pids_of_game()) else None
+        if b"launch_game.sh" not in proc_cmdline(pg):
+            return None
+        if g.get("pg_start") is not None and g["pg_start"] != start:
+            return None
+        return pg
+
+    def owns_game(self) -> bool:
+        """True if the running game is one this runner (or a previous run of it) launched."""
+        if self.game_proc is not None and self.game_proc.poll() is None:
+            return True
+        pg = self.owned_group()
+        if pg is None:
+            return False
         try:
             os.killpg(pg, 0)
             return True
@@ -1729,11 +1927,19 @@ class Runner:
         ok, why = steam_ready()
         write_status(steam_offline=ok, steam_why=why)
         if not ok:
-            log(f"!!!!! REFUSING TO LAUNCH BG3: Steam is not offline: {why}. Put Steam in offline mode "
-                "(Steam > Go Offline...) and leave it running; the runner keeps retrying. !!!!!")
+            log(f"!!!!! REFUSING TO LAUNCH BG3: Steam not ready: {why}. Start Steam (in offline mode where offline "
+                "is required: Steam > Go Offline...) and leave it running; the runner keeps retrying. !!!!!")
             self.event("steam_refused", why=why)
             raise SteamNotOffline(why)
         self.refuse_stale_bg3le(bg3le_problems())
+        foreign = foreign_bg3_pids()
+        if foreign:   # RUN-4: a user's own BG3 (Steam would hand a second launch to it, or two games fight)
+            why = f"a BG3 this harness didn't launch is running (pid {', '.join(map(str, foreign))})"
+            write_status(alert={"t": time.time(), "kind": "foreign_game", "msg": f"not launching: {why}"[:600]})
+            log(f"!!!!! REFUSING TO LAUNCH BG3: {why}; it is never killed by the runner. Close it to let the runner "
+                "launch its own game; the runner keeps retrying. !!!!!")
+            self.event("foreign_game", pids=foreign)
+            raise ForeignGameRunning(why)
         if port_open():
             raise RuntimeError(f"port {DEBUG_PORT} is still in use; can't launch another game")
         args = [str(LAUNCH_SH)] + (["--load", load_folder] if load_folder else [])
@@ -1748,7 +1954,8 @@ class Runner:
         logf.close()  # the game has its own copy of the descriptor
         now = time.time()
         self.watch = LaunchWatch(stamp, RUNTIME / "logs", now)
-        self.state["game"] = {"pgid": self.game_proc.pid, "launched": now, "load": load_folder, "stamp": stamp}
+        self.state["game"] = {"pgid": self.game_proc.pid, "pg_start": proc_start(self.game_proc.pid), "launched": now,
+                              "load": load_folder, "stamp": stamp}
         self.state["mod_hashes"] = mod_tree_hashes()  # a fresh game loads the mod as it is now
         write_status(game_pgid=self.game_proc.pid)
 
@@ -1767,14 +1974,22 @@ class Runner:
 
     def kill_game(self) -> None:
         """Stop the game: SIGTERM, then SIGKILL after KILL_GRACE s (bg3 ignores SIGTERM), on both the
-        launcher's process group and every bg3 process; then require port 9998 to be free."""
+        launcher's process group (only while owned_group proves it is that launch) and this harness's bg3 processes
+        (pids_of_game: never a user's own BG3, RUN-4); then require port 9998 to be free."""
         log("killing the game")
-        pg = (self.state["game"] or {}).get("pgid")
         groups = []
         if self.game_proc is not None and self.game_proc.poll() is None:
             groups.append(self.game_proc.pid)
-        elif pg:
-            groups.append(pg)
+        else:
+            pg = self.owned_group()
+            if pg:
+                groups.append(pg)
+            elif (self.state["game"] or {}).get("pgid"):
+                log(f"not signalling process group {self.state['game']['pgid']}: not provably our launch any more "
+                    "(a reboot or a reused pid)")
+        foreign = foreign_bg3_pids()
+        if foreign:
+            log(f"leaving bg3 pid(s) {', '.join(map(str, foreign))} alone: not launched by this harness")
 
         def send(sig: int) -> None:
             for pgid in groups:
@@ -1901,9 +2116,21 @@ class Runner:
         return [s for s in saves if s.mtime >= after or s.folder == self.opt.start_save] if after else saves
 
     def ours(self) -> set[str]:
-        """Save folders pick_save takes whatever their label: the runner's quicksaves and a scenario's start save
-        (older than every save of the run, so the agent's first save supersedes it)."""
-        return set(self.state["runner_saves"]) | ({self.opt.start_save} if self.opt.start_save else set())
+        """Save folders pick_save takes whatever their label: the runner's quicksaves, the agent's own quicksaves
+        (agent_saves, RUN-6: S059's newest good state was one) and a scenario's start save (older than every save of
+        the run, so the agent's first save supersedes it)."""
+        return (set(self.state["runner_saves"]) | set(self.state["agent_saves"] or [])
+                | ({self.opt.start_save} if self.opt.start_save else set()))
+
+    def record_agent_saves(self, since: float) -> list[str]:
+        """The quicksave folders the play session's MCP server wrote since `since` (its save_game.bg lines in
+        actions.jsonl: the folder found on disk) → runner.json agent_saves (the last AGENT_SAVES_KEPT). Named
+        Sxxx- saves need no record (pick_save takes them by label). Only this playthrough's owner's folders."""
+        found = agent_quicksaves(read_actions_since(since), self.state["save_owner"] or self.opt.save_owner)
+        if found:
+            kept = [f for f in self.state["agent_saves"] or [] if f not in found] + found
+            self.state["agent_saves"] = kept[-AGENT_SAVES_KEPT:]
+        return found
 
     def choose_save(self) -> Save | None:
         handoff = self.mem / "HANDOFF.md"
@@ -1987,15 +2214,18 @@ class Runner:
     def foreign_use(self, save: Save) -> str | None:
         """foreign_use_since() for the running game; a relaunch counts only for a game this runner didn't start."""
         started = None if self.owns_game() else game_started_at()
-        return foreign_use_since(save, list_saves(), read_actions_since(save.mtime), started,
-                                 set(self.state["runner_saves"]))
+        return foreign_use_since(save, list_saves(), read_actions_since(save.mtime), started, self.ours())
 
     def restart_drift(self) -> str | None:
-        """state_drift() between the last play session's end and the running game (a runner restart only)."""
+        """state_drift() between the last play session's end and the running game (a runner restart only). Fails
+        closed (RUN-6): a game whose progress can't be read is not proven to be where the session ended → reload."""
         last = next((h for h in reversed(self.state["history"] or []) if h.get("kind") == "play"), None)
         if not last or not last.get("end_sig"):
             return None
-        return state_drift(last["end_sig"], read_progress())
+        now = read_progress()
+        if now is None:
+            return "its progress can't be read (state.status/state.journal), so it isn't known to be where it was"
+        return state_drift(last["end_sig"], now)
 
     def load_save(self, save: Save | None, force: bool = False) -> str | None:
         """Bring the game to this playthrough's latest save (or the main menu for a new game). force: load it even
@@ -2291,7 +2521,7 @@ class Runner:
         crashed_at = time.time()
         self.kill_game()
         if why == "stopped responding":
-            mark_inflight_stuck(SE_BG3AI_DIR / "nav_guard.json")
+            mark_inflight_stuck(SE_BG3AI_DIR)
         save = self.choose_save()
         label = self.load_save(save)
         self.pending_notes.append(
@@ -2358,7 +2588,7 @@ class Runner:
     def client(self) -> clients.Client:
         """The play CLI (--client), built once in __init__ (a bare Runner in a test builds it on first use)."""
         if self._client is None:
-            self._client = clients.make(self.opt.client)
+            self._client = make_client(self.opt)
         return self._client
 
     def play_request(self, prompt: str, session: str | None, resume: bool, tag: str = "", env: dict | None = None,
@@ -2426,11 +2656,15 @@ class Runner:
             log(f"{sid}{tag}: no {client.name} session id to resume; starting a new conversation")
             resume = False
         req = self.play_request(prompt, claude_session, resume, tag, session_env, sid)
-        client.write_config(req)
+        written = client.write_config(req)
         # The playthrough has its own memory system; Claude Code's auto-memory would add a second one (and a
         # per-machine path in the prompt): CLAUDE_CODE_DISABLE_AUTO_MEMORY is ClaudeClient.env's.
         env = clients.process_env(client, req, base_env)
         cmd = self.agent_cmd(req)
+        box, cname = self.box, None
+        if box is not None:   # --sandbox container: the client in the container, the bg3 server over http here
+            cname = box.container_name(sid + tag)
+            cmd = box.run_argv(cname, cmd, client.env(req), written)
         model, effort = self.model_for(tag)
         write_status(playthrough=self.opt.playthrough, session=sid + tag, claude_session=claude_session,
                      model=model, effort=effort or "default",
@@ -2448,10 +2682,24 @@ class Runner:
         human.write(f"===== {sid}{tag} {datetime.now():%Y-%m-%d %H:%M:%S} {client.name} session "
                     f"{claude_session or '(new)'}\n")
         human.write("[prompt] " + _short(prompt, 4000) + "\n")
+        if box is not None:
+            try:
+                self._sandbox_live = (box.start_server(clients.bg3_server(), sandbox_server_env(base_env, req),
+                                                       PLAY_DIR, Path(f"{base}.mcp-http.log")), cname)
+            except sandbox.SandboxError as e:   # RUN-8's path: a setup failure, the agent would have no tools
+                detail = f"sandbox: {e}"
+                human.write(f"{datetime.now():%H:%M:%S} [runner] {detail}\n")
+                human.close()
+                jsonl.close()
+                log(f"{sid}{tag}: {detail} (a setup failure)")
+                self.event("mcp_failed", session=sid + tag, detail=detail[:300])
+                return SessionResult(sid, claude_session, None, "mcp_failed", start, time.time(), model=model,
+                                     effort=effort, detail=detail)
         try:
             proc = subprocess.Popen(cmd, cwd=PLAY_DIR, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     stdin=subprocess.DEVNULL, start_new_session=True, text=True, bufsize=1)
         except OSError:
+            self.sandbox_cleanup()
             human.close()
             jsonl.close()
             raise
@@ -2463,6 +2711,7 @@ class Runner:
             done = runs.claude_totals(self.state.dir, self.run_started)
             meter = runs.UsageMeter(done["cost_usd"], runs.token_total(done["tokens"]))
         seen_session = [claude_session]   # the conversation id: assigned up front, or the stream's init event's
+        api = {"texts": [], "rejected": False, "resets_at": None, "mcp": None}   # RUN-7/RUN-8, from the stream
 
         def pump():
             for line in proc.stdout:
@@ -2487,6 +2736,13 @@ class Runner:
                     if e.kind == "init" and e.session_id and not seen_session[0]:
                         seen_session[0] = e.session_id
                         write_status(claude_session=e.session_id)
+                    if e.kind == "init" and api["mcp"] is None:
+                        api["mcp"] = mcp_problem(e.mcp, client.name == "claude") or ""
+                    if e.api_error and e.kind in ("text", "error", "result") and e.text:
+                        api["texts"].append(e.text[:300])
+                    if e.kind == "rate_limit":
+                        api["resets_at"] = e.resets_at or api["resets_at"]
+                        api["rejected"] = api["rejected"] or e.api_error
                 try:
                     # bg3ai.metrics reads claude's stream-json; other clients' events are fed in that shape
                     for tev in ([ev] if client.name == "claude" else [timing_event(e) for e in events]):
@@ -2507,6 +2763,7 @@ class Runner:
 
         health = HealthTracker()
         next_health = time.time() + HEALTH_INTERVAL
+        mod_gone_since = None   # RUN-8: the game answers but Mods.BG3AI is gone (a Lua reset, a mod load error)
         reason = "exited"
         detail, fault_at = "", None
         signals_sent = []
@@ -2522,9 +2779,17 @@ class Runner:
                 health.record(ok)
                 next_health = time.time() + (HEALTH_INTERVAL if ok else HEALTH_RETRY_INTERVAL)
                 write_status(heartbeat=time.time())
+                if ok and mod_loaded(HEALTH_EVAL_TIMEOUT) is False:
+                    mod_gone_since = mod_gone_since or now
+                else:
+                    mod_gone_since = None
                 if not alive or health.hung:
                     reason = "crash" if not alive else "hang"
                     detail, fault_at = self.fault_detail(health), now
+                elif mod_gone_since is not None and now - mod_gone_since >= MOD_GONE_S:
+                    reason, fault_at = "hang", now   # GAME_FAULTS: recover (relaunch + load) and resume claude
+                    detail = (f"the game answers but the BG3AI mod is gone (Mods.BG3AI) for {now - mod_gone_since:.0f} s: "
+                              "a Lua reset or a mod load error; the agent's tools can't work")
             if needs_game and reason == "exited" and self.until_hit:
                 reason = "milestone"
                 human.write(f"{datetime.now():%H:%M:%S} [runner] milestone {self.until_hit['id']} reached; "
@@ -2533,6 +2798,13 @@ class Runner:
             if reason == "exited" and meter is not None and self.check_usage_caps(meter.cost, meter.tokens):
                 reason = "cap"
                 human.write(f"{datetime.now():%H:%M:%S} [runner] {self.cap_hit['why']}; stopping claude\n")
+                hard_stop = min(hard_stop, now)
+            if reason == "exited" and api["mcp"]:
+                # RUN-8: a toolless agent would be pushed to its hard stop by the stop check: end it at once
+                reason, detail = "mcp_failed", api["mcp"]
+                human.write(f"{datetime.now():%H:%M:%S} [runner] {detail}; stopping {client.name}\n")
+                log(f"{sid}{tag}: {detail}; stopping {client.name} (a setup failure)")
+                self.event("mcp_failed", session=sid + tag, detail=detail)
                 hard_stop = min(hard_stop, now)
             silent = now - last_output[0]
             if reason == "exited" and silent >= AGENT_SILENT_MINUTES * 60:
@@ -2558,7 +2830,17 @@ class Runner:
                 self._signal(proc, signal.SIGKILL)
                 signals_sent.append("kill")
         reader.join(timeout=10)
+        self.sandbox_cleanup()
         reason = exit_reason(reason, proc.returncode)
+        if reason in ("exited", "killed") and api["mcp"]:
+            reason, detail = "mcp_failed", api["mcp"]   # it exited before the 2 s loop saw the init event
+        kind = classify_api_failure(api["texts"], api["rejected"]) if reason == "exited" else None
+        if kind == "limit":   # RUN-7: wait it out in the run loop (never a quick failure)
+            reason, detail = "api_limit", (api["texts"] or ["rate limit rejected"])[-1]
+            log(f"{sid}{tag}: {client.name} hit an API limit: {detail[:200]}")
+        elif kind == "auth":
+            detail = api["texts"][-1]
+            log(f"{sid}{tag}: {client.name} API/config error (counts toward the quick-failure stop): {detail[:200]}")
         if reason == "killed":
             detail = f"claude ended by a signal from outside the runner (exit {proc.returncode})"
             log(f"{sid}{tag}: {detail}")
@@ -2575,7 +2857,17 @@ class Runner:
         self.write_progress(f"{sid}{tag}", base, start, end)
         self.write_triage(f"{sid}{tag}", base)
         return SessionResult(sid, seen_session[0], proc.returncode, reason, start, end, model=model, effort=effort,
-                             detail=detail, fault_at=fault_at)
+                             detail=detail, fault_at=fault_at, resets_at=api["resets_at"])
+
+    def sandbox_cleanup(self) -> None:
+        """--sandbox container: the play process's container (a SIGKILL to the docker CLI doesn't reach it) and
+        its http server. Also at the runner's end, for a session an exception left."""
+        live, self._sandbox_live = getattr(self, "_sandbox_live", None), None
+        if live:
+            server, cname = live
+            if cname:
+                sandbox.Sandbox.remove(cname)
+            server.stop()
 
     def fault_detail(self, health: HealthTracker) -> str:
         if self.game_proc is not None and self.game_proc.poll() is not None:
@@ -2746,6 +3038,8 @@ class Runner:
         if self.opt.judge_change:
             rec["judge_change"] = self.opt.judge_change
         rec["client"] = self.opt.client
+        if getattr(self, "box", None) is not None:
+            rec.update(self.box.record())   # sandbox=container (+ sandbox_unfirewalled)
         if self.opt.client_change:
             rec["client_change"] = self.opt.client_change
         if self.opt.series:
@@ -2756,6 +3050,11 @@ class Runner:
             k = self.restore_knowledge(run_started)
             if k is not None:
                 rec["knowledge"] = k
+                # FAIR-2: knowledge/ is shared by every run; one that changed during the run (put back or not)
+                # isn't comparable with the others in its series
+                if k.get("agent_edits") or k.get("other_changes"):
+                    rec["clean"] = False
+                    rec["knowledge_changed"] = True
         path = self.runs_path()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -2927,8 +3226,8 @@ class Runner:
         if r.returncode == 0:
             log(f"{res.sid}: memory committed by session.py end")
             return
-        if res.reason in ("exited", "hard_stop", "milestone") and res.claude_session and not (self.stop_requested
-                                                                                              or self.abort):
+        if (res.reason in ("exited", "hard_stop", "milestone") and res.claude_session
+                and res.ended - res.started >= 60 and not (self.stop_requested or self.abort)):   # RUN-7: <1 min: no
             log(f"{res.sid}: memory lint failed; running a {FIX_SESSION_MINUTES}-minute fix-notes session")
             self.run_claude(res.sid, fix_notes_prompt(r.stdout), FIX_SESSION_MINUTES, res.claude_session,
                             resume=True, tag="-fix", needs_game=False)
@@ -2995,9 +3294,10 @@ class Runner:
         base = self.state.dir / f"{sid}-keeper"
         model = keeper_model(self.opt.keeper_model, res.model or self.opt.model)
         effort, minutes = self.opt.keeper_effort, self.opt.keeper_minutes
+        client = self.opt.client
 
         def work():
-            log(f"{sid}: memory keeper starting ({model}, effort {effort or 'default'}, ≤{minutes:g} min)")
+            log(f"{sid}: memory keeper starting ({client} {model}, effort {effort or 'default'}, ≤{minutes:g} min)")
             try:   # stored level-up plan lines the game refused this session: the keeper rewrites them
                 refused = K.refused_plans(read_actions_since(res.started))
             except Exception as e:  # noqa: BLE001 - never stops the keeper
@@ -3007,20 +3307,34 @@ class Runner:
             refused += [b for b in plan_bad or [] if (b["name"].lower(), b["level"]) not in seen]
             if refused:
                 log(f"{sid}: refused plan lines for the keeper: {', '.join(x['name'] + ' L' + str(x['level']) for x in refused)}")
-            r = K.run_keeper(self.mem, n, base, model, effort, minutes, refused=refused)
+            # the play client keeps the memory too (a benchmark compares one CLI end to end); claude stays on its
+            # default pass with Claude Code's file tools, the others go through the bg3 server's keeper mode
+            r = K.run_keeper(self.mem, n, base, model, effort, minutes, refused=refused, client=client,
+                             sandbox=getattr(self, "box", None))
             log(r.summary())
             self.event("memory_keeper", session=sid, status=r.status, seconds=r.seconds, files=r.files,
                        commit=r.commit, timed_out=r.timed_out, reverted=r.reverted, lint_errors=r.lint_errors[:5],
-                       model=model)
+                       model=model, client=client)
             try:
                 with open(self.state.dir / "keeper_history.jsonl", "a") as f:
-                    f.write(json.dumps({"t": round(time.time(), 1), "model": model, "effort": effort,
+                    f.write(json.dumps({"t": round(time.time(), 1), "client": client, "model": model, "effort": effort,
                                         **r.__dict__}) + "\n")
             except OSError as e:
                 log(f"keeper history write failed: {e}")
 
         self.keeper_thread = threading.Thread(target=work, name="memory-keeper", daemon=True)
         self.keeper_thread.start()
+
+    def recover_keeper(self) -> None:
+        """MEM-1: a keeper pass the runner died in (killed, crashed, restarted mid-pass) left its pre-pass snapshot:
+        its process is killed and its unvalidated edits put back before any session builds on them."""
+        if self.opt.dry_run:
+            return
+        import memory_keeper as K
+        msg = K.recover(self.mem, self.state.dir)
+        if msg:
+            log(f"memory keeper: {msg}")
+            self.event("keeper_recovered", detail=msg)
 
     def join_keeper(self) -> None:
         t, self.keeper_thread = getattr(self, "keeper_thread", None), None
@@ -3188,6 +3502,11 @@ class Runner:
         self.close_memory_session(res)
         plan_bad = [] if crashed else self.check_plan_lines(f"{sid} end")   # the keeper rewrites invalid lines
         self.start_keeper(sid, res, plan_bad)
+        try:
+            if got := self.record_agent_saves(res.started):
+                log(f"{sid}: the agent's quicksave(s) {', '.join(got)} are this playthrough's saves too")
+        except Exception as e:  # noqa: BLE001 - bookkeeping, never ends the session handling
+            log(f"{sid}: agent saves not recorded: {e!r}")
         end_sig = read_progress()
         entry = {
             "kind": "play", "session": sid, "claude_session": res.claude_session, "reason": res.reason,
@@ -3220,6 +3539,23 @@ class Runner:
         return res
 
     # ---------------------------------------------------------------- main loop
+
+    def wait_api_limit(self, res: SessionResult) -> None:
+        """RUN-7: the play client hit a usage/rate limit or an overload: wait (api_backoff_s: until its reset time,
+        else doubling from API_BACKOFF_MIN_S) and let the run loop start the next session. Never a give-up; an
+        operator stop (signal, runtime/STOP) ends the wait at once."""
+        wait = api_backoff_s(res.resets_at, time.time(), self.api_limits)
+        until = time.time() + wait
+        msg = (f"API limit ({res.detail[:200]}); waiting {wait / 60:.0f} min until "
+               f"{datetime.fromtimestamp(until):%H:%M}" + (" (its reset time)" if res.resets_at else "")
+               + f", limit {self.api_limits} in a row; the run continues by itself")
+        log(msg)
+        self.event("api_limit", detail=res.detail[:300], wait_s=round(wait), resets_at=res.resets_at,
+                   repeat=self.api_limits)
+        write_status(alert={"t": time.time(), "kind": "api_limit", "msg": msg[:600]})
+        while time.time() < until and not (self.stop_requested or self.abort or (RUNTIME / "STOP").exists()):
+            time.sleep(min(15.0, max(until - time.time(), 0.0)))
+        write_status(alert=None)
 
     def session_minutes(self) -> float:
         """--session-minutes, or session-config.json "minutes" (re-read before every session: switch 20 ↔ 60 live)."""
@@ -3282,6 +3618,7 @@ class Runner:
 
     def run(self) -> int:
         self.check_memory()
+        self.recover_keeper()
         h = self.handover or {}
         now = time.time()
         run_started = h.get("run_started") or now
@@ -3326,9 +3663,11 @@ class Runner:
                     break
                 try:
                     res = self.play_session(minutes, first)
-                except SteamNotOffline as e:
-                    # Never a give-up: an operator puts Steam back offline and the run continues by itself.
-                    log(f"session setup refused: Steam not offline ({e}); retrying in {STEAM_RETRY_S} s")
+                except LaunchBlocked as e:
+                    # Never a give-up: an operator puts Steam back offline (or closes their own BG3) and the run
+                    # continues by itself.
+                    log(f"session setup refused: {'Steam not offline' if isinstance(e, SteamNotOffline) else 'launch blocked'} "
+                        f"({e}); retrying in {STEAM_RETRY_S} s")
                     if self.abort:
                         break
                     time.sleep(STEAM_RETRY_S)
@@ -3352,12 +3691,13 @@ class Runner:
                         raise
                     except Exception as e2:  # noqa: BLE001
                         log(f"recovery failed: {e2}; waiting 2 minutes")
-                        if not isinstance(e2, SteamNotOffline):
+                        if not isinstance(e2, LaunchBlocked):
                             self.event("recovery_failed", fault="setup", error=str(e2)[:300])
                         time.sleep(120)
                     continue
                 first = False
-                setup_failures = 0
+                if res.reason != "mcp_failed":
+                    setup_failures = 0
                 if res.reason == "dry_run":
                     break
                 if self.until_hit:
@@ -3367,6 +3707,21 @@ class Runner:
                 if self.cap_hit:
                     stop_why, outcome = self.cap_hit["why"], "over_budget"
                     break
+                if res.reason == "api_limit":   # RUN-7: wait for the limit's reset, never give up
+                    self.quick_failures = 0
+                    self.api_limits += 1
+                    self.wait_api_limit(res)
+                    continue
+                self.api_limits = 0
+                if res.reason == "mcp_failed":   # RUN-8: a setup failure (the agent had no game tools)
+                    setup_failures += 1
+                    if setup_failures >= MAX_SETUP_FAILURES:
+                        log(f"{setup_failures} setup failures in a row (the bg3 MCP server: {res.detail}); giving up")
+                        stop_why = "gave up: the bg3 MCP server fails to start"
+                        outcome = "gave_up"
+                        return 1
+                    time.sleep(min(30 * setup_failures, 300))
+                    continue
                 if res.ended - res.started < 60 and res.reason == "exited":
                     self.quick_failures += 1
                     if self.quick_failures >= MAX_QUICK_FAILURES:
@@ -3400,6 +3755,7 @@ class Runner:
             raise
         finally:
             self.join_keeper()
+            self.sandbox_cleanup()
             self.outcome = outcome or ("stopped" if self.opt.until and not restarting else None)
             if not restarting:
                 if self.opt.until and outcome in runs.OUTCOMES and not self.opt.dry_run:
@@ -3533,7 +3889,18 @@ def cmd_run(a) -> int:
     if a.session_minutes < MIN_SESSION_MINUTES:
         log(f"WARNING: {a.session_minutes:g}-min sessions (wrap-up at {wrap_minutes(a.session_minutes):.1f} min); "
             "expect little play")
+    if a.sandbox_unfirewalled and a.sandbox != "container":
+        print("refusing --sandbox-unfirewalled: it goes with --sandbox container", file=sys.stderr)
+        return 2
     lock = acquire_lock()  # held for the process lifetime (released only to exec the new runner code)
+    box = None
+    if a.sandbox == "container":   # once per runner: docker, network, images, firewall, egress proxy
+        try:
+            box = sandbox.prepare(client, None, a.sandbox_unfirewalled, log, RUNTIME / "sandbox-server.pid")
+        except sandbox.SandboxError as e:
+            print(f"refusing --sandbox container: {e}", file=sys.stderr)
+            log(f"runner stopped (sandbox not ready: {str(e).splitlines()[0][:200]})")
+            return 2
     (RUNTIME / "STOP").unlink(missing_ok=True)
     opt = Options(a.playthrough, a.hours, a.session_minutes, a.model, a.take_over, a.dry_run,
                   a.save_owner, a.effort, a.fix_model, a.fix_effort, a.fallback_model,
@@ -3544,7 +3911,7 @@ def cmd_run(a) -> int:
     opt = replace(opt, run_hours=caps["run_hours"], max_cost=caps["max_cost"], max_tokens=caps["max_tokens"],
                   cap_changes=cap_changes or None, pins=current_pins() if a.until and not a.runs else None,
                   judge=use_judge, judge_model=judge_model if use_judge else None, judge_change=judge_change,
-                  client=client, client_change=client_change)
+                  client=client, client_change=client_change, sandbox=a.sandbox, box=box)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
@@ -3572,18 +3939,26 @@ def cmd_run(a) -> int:
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
     try:
+        if a.runs and os.environ.get("BG3AI_KNOWLEDGE_LOCK", "1") != "0":
+            log(f"play/knowledge read-only for the series: {runs.lock_tree(KNOWLEDGE_DIR, KNOWLEDGE_LOCK)} files "
+                f"(modes in {KNOWLEDGE_LOCK}; BG3AI_KNOWLEDGE_LOCK=0 skips)")
         if a.runs:
             return run_series(opt, a.runs, current, a.allow_version_drift, scenario, save_sha1)
+        if runs.unlock_tree(KNOWLEDGE_DIR, KNOWLEDGE_LOCK):   # a series runner that died while locked
+            log("play/knowledge: a stale series lock was undone")
         current["runner"] = Runner(opt)
         return current["runner"].run()
     except RestartRunner:
         exec_new_runner(lock, skip_stop)
         raise  # not reached
-    finally:
+    finally:   # not reached on a self-restart (exec_new_runner): the successor keeps the series' lock
         if skip_stop is not None:
             skip_stop.set()
+        if box is not None:
+            sandbox.shutdown()   # the egress proxy and any container left (a self-restart's successor recreates them)
         if ram_stop is not None:
             ram_stop.set()
+        runs.unlock_tree(KNOWLEDGE_DIR, KNOWLEDGE_LOCK)
 
 
 def persona_line(p: dict) -> str:
@@ -3711,6 +4086,7 @@ def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, s
             prepare_series_run(base, pt, k, scenario)
         except (SetupError, OSError) as e:
             log(f"series {base}: can't set up run {k} ({pt}): {e}")
+            log(f"runner stopped (series setup failed: run {k})")   # RUN-10: every exit path logs it
             return 1
         r = current["runner"] = Runner(replace(opt, playthrough=pt, run_index=k))
         if current["stop"]:
@@ -3962,6 +4338,13 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--client", choices=sorted(clients.CLIENTS),
                    help="the CLI that plays (runner/clients.py; default claude). A series keeps its first one "
                         "(series.json); codex and gemini are offline-tested only")
+    r.add_argument("--sandbox", choices=sandbox.MODES, default="none",
+                   help="container: the client plays from a container that reaches only the bg3 MCP server (served "
+                        "over http on the host) and its model API (runner/sandbox.py, tools/container/README.md); "
+                        "refuses without the host firewall (sudo tools/container/firewall.sh up). Recorded")
+    r.add_argument("--sandbox-unfirewalled", action="store_true",
+                   help="--sandbox container without the host firewall (dev only: the container then reaches every "
+                        "host port bound to all interfaces); recorded as sandbox_unfirewalled")
     r.add_argument("--allow-client-change", action="store_true",
                    help="--runs: let --client differ from series.json (recorded)")
     r.add_argument("--allow-version-drift", action="store_true",

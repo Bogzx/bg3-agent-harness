@@ -409,6 +409,86 @@ ok(injected[1] == "S" and injected[2][1] == "LCtrl", "ui.key CTRL+S injects S + 
 local okk, ek = pcall(ops["ui.key"], { key = "FOO" })
 ok(not okk and tostring(ek):find("unknown key 'FOO'") and tostring(ek):find("DELETE"), "unknown key lists names: " .. tostring(ek))
 
+-- audit UI-3: the escape hatches don't save or load around save_game / load_game
+do
+    injected = nil
+    local okf, ef = pcall(ops["ui.key"], { key = "F8" })
+    ok(not okf and tostring(ef):find("quickload") and tostring(ef):find("load_game") and injected == nil,
+        "ui.key F8 (quickload) refused: " .. tostring(ef))
+    okf, ef = pcall(ops["ui.key"], { key = "f5" })
+    ok(not okf and tostring(ef):find("quicksave") and injected == nil, "ui.key F5 (quicksave) refused: " .. tostring(ef))
+    W("LoadGame", {}, {})
+    okf, ef = pcall(ops["ui.key"], { key = "RETURN" })
+    ok(not okf and tostring(ef):find("LoadGame page is open") and injected == nil, "RETURN on the Load page refused: " .. tostring(ef))
+    local _ikp = Ext.Input.InjectKeyPress
+    Ext.Input.InjectKeyPress = function(k) injected = { k } end
+    okf = pcall(ops["ui.key"], { key = "ESCAPE" })
+    ok(okf and injected and injected[1] == "ESCAPE", "ESCAPE still closes the Load page")
+    widgets = {}
+    okf = pcall(ops["ui.key"], { key = "RETURN" })
+    ok(okf and injected[1] == "RETURN", "RETURN with no save/load page passes")
+    Ext.Input.InjectKeyPress = _ikp
+
+    local executed = {}
+    local _cmd = BG3AI.UI.command
+    BG3AI.UI.command = function(dc, name, param, dry) if not dry then executed[#executed + 1] = name end return true end
+    for _, c in ipairs({ "QuickLoadCommand", "QuickSaveCommand", "OpenLoadGameDialog", "ContinueGameCommand",
+        "DeleteSavegameCommand" }) do
+        okf, ef = pcall(ops["ui.command"], { widget = "*", command = c })
+        ok(not okf and tostring(ef):find("save_game / load_game"), "ui.command " .. c .. " refused: " .. tostring(ef))
+    end
+    ok(#executed == 0, "nothing executed: " .. table.concat(executed, ","))
+    okf, ef = pcall(ops["ui.command"], { widget = "*", command = "QuickLoadCommand", dry = true })
+    ok(okf, "a dry QuickLoadCommand (CanExecute only) passes: " .. tostring(ef))
+    -- the refusal is not swallowed by the confirm-box fallback
+    W("Dialog_box", { "[ForceUpdate]" }, { { "Yes", nil, function() pressed = "saveload-yes" end } })
+    pressed = nil
+    okf, ef = pcall(ops["ui.command"], { widget = "*", command = "QuickLoadCommand", param = "Yes" })
+    ok(not okf and pressed == nil, "a refused QuickLoad doesn't press the box's Yes")
+    widgets = {}
+    W("SaveGame", {}, {})
+    okf, ef = pcall(ops["ui.command"], { widget = "SaveGame", command = "SelectSaveCommand" })
+    ok(not okf and tostring(ef):find("SaveGame page is open"), "any command on the Save page refused: " .. tostring(ef))
+    okf, ef = pcall(ops["ui.command"], { widget = "SaveGame", command = "CloseCommand" })
+    ok(okf, "Close on the Save page passes: " .. tostring(ef))
+    widgets = {}
+    okf, ef = pcall(ops["ui.command"], { widget = "*", command = "EndTurn" })
+    ok(okf and executed[#executed] == "EndTurn", "an ordinary command passes: " .. tostring(ef))
+    BG3AI.UI.command = _cmd
+
+    -- ui.press: Save/Load buttons and anything but a way out on the Save/Load pages
+    local _fb = BG3AI.UI.findButton
+    BG3AI.UI.findButton = function(w, which)
+        for _, b in ipairs(w.buttons) do
+            if (b.name or ""):lower() == which:lower() or (b.label or ""):lower():find(which:lower(), 1, true) then return b, 1 end
+        end
+    end
+    local hit
+    W("GameMenu", {}, { { "Load Game", "LoadBtn", function() hit = "load" end }, { "Resume", "ResumeBtn", function() hit = "resume" end } })
+    okf, ef = pcall(ops["ui.press"], { widget = "GameMenu", button = "Load Game" })
+    ok(not okf and hit == nil, "ui.press Load Game refused: " .. tostring(ef))
+    okf, ef = pcall(ops["ui.press"], { widget = "GameMenu", button = "Resume" })
+    ok(okf and hit == "resume", "ui.press Resume passes: " .. tostring(ef))
+    widgets = {}
+    W("MainMenu", {}, { { "Continue", "ContinueBtn", function() hit = "continue" end } })
+    hit = nil
+    okf, ef = pcall(ops["ui.press"], { widget = "MainMenu", button = "Continue" })
+    ok(not okf and hit == nil, "main menu Continue (loads the latest save) refused: " .. tostring(ef))
+    widgets = {}
+    W("Roll", {}, { { "Continue", "ContinueBtn", function() hit = "roll" end } })
+    okf, ef = pcall(ops["ui.press"], { widget = "Roll", button = "Continue" })
+    ok(okf and hit == "roll", "Continue elsewhere passes: " .. tostring(ef))
+    widgets = {}
+    W("SaveGame", {}, { { "My save", "SaveRow", function() hit = "row" end }, { "Back", "BackBtn", function() hit = "back" end } })
+    hit = nil
+    okf, ef = pcall(ops["ui.press"], { widget = "SaveGame", button = "My save" })
+    ok(not okf and hit == nil, "a save row on the Save page refused: " .. tostring(ef))
+    okf, ef = pcall(ops["ui.press"], { widget = "SaveGame", button = "Back" })
+    ok(okf and hit == "back", "Back on the Save page passes: " .. tostring(ef))
+    BG3AI.UI.findButton = _fb
+    widgets = {}
+end
+
 -- waypoint names (live S007: travel_to waypoint="Roadside Cliffs" / "WAYP_CHA_Top" failed)
 local WPS = { { name = "Overgrown Ruins", region = "Wilderness" }, { name = "Roadside Cliffs", region = "Wilderness" },
     { name = "Emerald Grove Environs", region = "Wilderness" }, { name = "The Risen Road", region = "Wilderness" } }

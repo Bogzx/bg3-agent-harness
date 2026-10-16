@@ -241,7 +241,8 @@ function S.dialogueAnswers(widget, ad)
             if win and win.total == n then
                 local byPos = S.pairRenderedByPosition(items, vms, win.first)
                 if byPos then
-                    return byPos, false, { below = n - (win.first - 1) - #items, above = win.first - 1 }
+                    return byPos, false, { below = n - (win.first - 1) - #items, above = win.first - 1,
+                        by_position = true }
                 end
             elseif not win and texted == 0 then -- no scroll info: the list's top rows (live 12:1x)
                 local byPos = S.pairRenderedByPosition(items, vms, 1)

@@ -101,6 +101,87 @@ class PressEscape(unittest.TestCase):
         self.assertEqual(fake.keys, ["SPACE"])
 
 
+class SaveLoadHatches(unittest.TestCase):
+    """Audit UI-3: ui_action / press_key don't save or load around save_game / load_game."""
+
+    def use(self):
+        fake = Fake(["game"])
+        orig = server.game
+        server.game = fake
+        self.addCleanup(setattr, server, "game", orig)
+        return fake
+
+    def test_ui_action_quickload_refused_before_the_game(self):
+        fake = self.use()
+        for cmd in ("QuickLoadCommand", "QuickSaveCommand", "OpenLoadGameDialog", "ContinueGameCommand",
+                    "DeleteSavegameCommand", "Overwrite"):
+            out = getattr(server.ui_action, "fn", server.ui_action)(cmd, "*")
+            self.assertTrue(out.startswith("REFUSED"), (cmd, out))
+        self.assertEqual(fake.keys, [])
+
+    def test_ui_action_other_commands_pass(self):
+        self.assertIsNone(server._saveload_word("UserTriggeredNextPhaseCommand"))
+        self.assertIsNone(server._saveload_word("SelectAnswerCommand"))
+        self.assertIsNone(server._saveload_word("TakeAllCommand"))
+
+    def test_f8_refused(self):
+        fake = self.use()
+        out = getattr(server.press_key, "fn", server.press_key)("f8")
+        self.assertTrue(out.startswith("REFUSED"), out)
+        self.assertEqual(fake.keys, [])
+
+    def test_f5_is_save_game(self):
+        fake = self.use()
+        calls = []
+        with unittest.mock.patch.object(server, "save_game", lambda label="": calls.append(label) or "save_game: queued"):
+            out = getattr(server.press_key, "fn", server.press_key)("F5")
+        self.assertEqual(calls, [""])
+        self.assertIn("save_game: queued", out)
+        self.assertEqual(fake.keys, [])
+
+
+
+class ChooseBelowTheFold(unittest.TestCase):
+    """Audit UI-4: the mod refuses a rows-only option outside the rendered rows (needs_scroll); the bridge wheels the
+    row into view, finds it by its text and chooses that row with the text for the mod to check."""
+
+    class G:
+        def __init__(self):
+            self.jobs = []
+
+        def rpc(self, op, args=None, context="server"):
+            if op == "ui.state":
+                return {"screen": "dialogue", "dialogue": {"text": "line", "options": [
+                    {"i": k, "text": f"answer {k}"} for k in range(1, 7)], "more_below": 4}}
+            return {}
+
+        try_rpc = rpc
+
+        def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+            self.jobs.append(dict(args))
+            if "text" not in args:
+                raise GameError("option 8 is not among the visible rows 1-6 of 10 (needs_scroll)")
+            return JobResult(status="done", result={"screen": "game"})
+
+    def test_scrolls_and_chooses_by_text(self):
+        g = self.G()
+        full = {"dialogue": {"options": [{"i": k, "text": f"answer {k}"} for k in range(1, 11)]}}
+        from bg3ai import clicker
+        with unittest.mock.patch.object(server, "game", g), \
+                unittest.mock.patch.object(server, "_complete_answers", lambda ui: full), \
+                unittest.mock.patch.object(server, "_inp", lambda: object()), \
+                unittest.mock.patch.object(clicker, "scroll_to_answer", lambda game, inp, read, text, up=False: (8, None)):
+            r = server._choose_answer(8)
+        self.assertEqual(r.status, "done")
+        self.assertEqual(g.jobs, [{"i": 8}, {"i": 8, "text": "answer 8"}])
+
+    def test_other_errors_pass_through(self):
+        g = self.G()
+        g.run_job = lambda *a, **k: (_ for _ in ()).throw(GameError("option 3 is disabled"))
+        with unittest.mock.patch.object(server, "game", g):
+            with self.assertRaises(GameError):
+                server._choose_answer(3)
+
 
 class FeedGale(unittest.TestCase):
     def test_item_by_handle_goes_to_ui_donate(self):

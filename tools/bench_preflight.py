@@ -200,7 +200,8 @@ def check_updates(ctx: Ctx) -> list[tuple[str, str, str]]:
     else:
         risk = "Steam online may update the game between (or during) the runs of a series"
     return [(WARN, "updates", f"Steam is not offline ({why}): {risk}; {setting}. Start Steam in offline mode for "
-                              "a series (the runner refuses to launch otherwise, unless BG3AI_ALLOW_STEAM_ONLINE=1)")]
+                              "a series (the runner refuses to launch otherwise where the machine requires it: "
+                              "~/.config/bg3ai/require-steam-offline or BG3AI_REQUIRE_STEAM_OFFLINE=1)")]
 
 
 def check_steam_running(ctx: Ctx) -> list[tuple[str, str, str]]:

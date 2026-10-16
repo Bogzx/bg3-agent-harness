@@ -123,6 +123,9 @@ local function reset()
     calls, osiv, stats = {}, {}, {}
     Ext.System = nil
     party_rows = { P1 }
+    if A then A.TASK_POS2 = false end
+    -- the stub world moves in synthetic multi-metre steps per 60 ms tick: NAV-8's small-step rule off (own tests)
+    if A then A.TELEPORT_SMALL_M = 1e9 end
     world = {
         [P1] = { pos = { 0, 0, 0 }, comps = {} },
         [NPC] = { pos = { 10, 0, 0 }, comps = {} },
@@ -262,6 +265,12 @@ test("approach: pathfinding unknown, close and in sight -> unverified", function
     eq(p.unverified, true, "unverified")
 end)
 
+test("NAV-8: approach with this frame's path budget spent -> refused (no walk without a path proof)", function()
+    nav.fn = function() return { reachable = nil, budget = true, unfinished = true } end
+    world[NPC].pos = { 6, 0, 0 }
+    refused(function() G.approach_point(P1, NPC, 2.5) end, "busy")
+end)
+
 test("approach: pathfinding unknown and far -> refused", function()
     nav.fn = function() return { reachable = nil } end
     world[NPC].pos = { 20, 0, 0 }
@@ -372,6 +381,28 @@ test("move_to: a big step off the route is still a teleport", function()
     tick()
     without_route()
     eq(j.status, "failed", "status"); assert(j.error:find("teleported"), j.error)
+end)
+
+test("NAV-8: a 3 m jump within one 60 ms job tick is a teleport (both old tests passed it)", function()
+    A.TELEPORT_SMALL_M = 1.5
+    local j = job(op("move_to", { char = P1, pos = { 30, 0, 0 } }))
+    tick()
+    world[P1].pos = { 0.3, 0, 0 }
+    tick()
+    eq(j.status, "running", "a walk's step")
+    world[P1].pos = { 3.3, 0, 0 } -- jobs tick every TICK_MS 50 ms: 60 ms here
+    tick()
+    eq(j.status, "failed", "status"); assert(j.error:find("teleported"), j.error)
+end)
+
+test("NAV-8: a walk's step after a frame hitch (2 m in 300 ms) is not a teleport", function()
+    A.TELEPORT_SMALL_M = 1.5
+    local j = job(op("move_to", { char = P1, pos = { 30, 0, 0 } }))
+    tick()
+    clock = clock + 240 -- a 300 ms tick
+    world[P1].pos = { 2, 0, 0 }
+    tick()
+    eq(j.status, "running", "status " .. tostring(j.error))
 end)
 
 -- ---- combat movement -------------------------------------------------------
@@ -980,6 +1011,7 @@ test("cast: a refused melee swing says how far it swung from and our reach (ACT-
 end)
 
 test("cast: Revivify is two-step: the body, then the ground beside it (S057/S058 0 of 14 casts)", function()
+    A.TASK_POS2 = true -- the ACT-9 flag: these probe the write itself
     spell("Teleportation_Revivify", { SpellType = "Teleportation", OriginTargetConditions = "Dead() and Tagged('PLAYABLE')",
         TargetConditions = "not Character()", TargetRadius = "9", UseCosts = "ActionPoint:1", Level = 0 })
     stats.Projectile_Bolt = stats.Projectile_Bolt or { SpellType = "Projectile" }
@@ -1010,9 +1042,36 @@ test("cast: Revivify is two-step: the body, then the ground beside it (S057/S058
 end)
 
 test("cast: two-step spell without a queued task names the reason", function()
+    A.TASK_POS2 = true -- the ACT-9 flag: these probe the write itself
     world[P1].comps.ServerCharacter = { OsirisController = { Tasks = {} } }
     local ok, why = A.set_task_pos2(P1, "Teleportation_Revivify", { 1, 0, 1 })
     eq(ok, nil, "not set"); assert(why:find("no queued spell task", 1, true), why)
+    world[P1].comps.ServerCharacter = nil
+end)
+
+test("cast (ACT-9): with the TargetPos2 write off (default), a two-step spell is refused before any order", function()
+    eq(A.TASK_POS2, false, "off by default")
+    spell("Teleportation_Revivify", { SpellType = "Teleportation", OriginTargetConditions = "Dead() and Tagged('PLAYABLE')",
+        TargetConditions = "not Character()", TargetRadius = "9", UseCosts = "ActionPoint:1", Level = 0 })
+    local tasks = {}
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = { { Spell = { OriginatorPrototype = "Teleportation_Revivify" } } } } }
+    osiv[key("IsDead", NPC)] = 1
+    world[NPC].pos = { 4, 0, 0 }
+    local function fails(args, pat)
+        local ok, r = pcall(op, "cast", args)
+        local msg = (not ok) and (G.is_refusal(r) and r.reason or tostring(r)) or tostring(job(r).error)
+        assert(msg:find(pat, 1, true), msg)
+    end
+    fails({ char = P1, spell = "Teleportation_Revivify", target = NPC }, "Scroll of Revivify")
+    eq(#called("UseSpell"), 0, "no UseSpell")
+    local ok, why = A.set_task_pos2(P1, "Teleportation_Revivify", { 1, 0, 1 })
+    eq(ok, nil, "no write"); assert(why:find("ACT-9", 1, true), why)
+    eq(world[P1].comps.ServerCharacter.OsirisController.Tasks[1].TargetPos2, nil, "the task is untouched")
+    spell("Teleportation_DimensionDoor", { SpellType = "Teleportation", TargetRadius = "2", AreaRadius = "50",
+        OriginTargetConditions = "Ally()", TargetConditions = "CanStand('')", TeleportSelf = "No",
+        UseCosts = "ActionPoint:1", Level = 0 })
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 3, 0, 3 } }, "two-step teleport")
+    eq(#called("UseSpell"), 0, "no UseSpell"); eq(#called("UseSpellAtPosition"), 0, "no UseSpellAtPosition")
     world[P1].comps.ServerCharacter = nil
 end)
 
@@ -1022,6 +1081,7 @@ local DD = { SpellType = "Teleportation", TargetRadius = "2", AreaRadius = "50",
     TeleportSelf = "No", UseCosts = "ActionPoint:1", Level = 0 }
 
 test("cast: Dimension Door alone: the caster goes, the point is the landing (S059 08:59:47 'range 2.0 m')", function()
+    A.TASK_POS2 = true -- the ACT-9 flag: these probe the write itself
     spell("Teleportation_DimensionDoor", DD)
     eq(A.revive_spell("Teleportation_DimensionDoor"), false, "not a revive")
     local tasks = {}
@@ -1051,6 +1111,7 @@ test("cast: Dimension Door alone: the caster goes, the point is the landing (S05
 end)
 
 test("cast: Dimension Door with an ally: the ally is the first pick, the landing the second (S059 08:57:42)", function()
+    A.TASK_POS2 = true -- the ACT-9 flag: these probe the write itself
     spell("Teleportation_DimensionDoor", DD)
     local tasks = {}
     world[P1].comps.ServerCharacter = { OsirisController = { Tasks = tasks } }
@@ -1070,6 +1131,7 @@ test("cast: Dimension Door with an ally: the ally is the first pick, the landing
 end)
 
 test("cast: Dimension Door landing checks: range from AreaRadius, a landing in the air names the floor", function()
+    A.TASK_POS2 = true -- the ACT-9 flag: these probe the write itself
     spell("Teleportation_DimensionDoor", DD)
     local function fails(args, pat)
         local ok, r = pcall(op, "cast", args)
@@ -1163,6 +1225,7 @@ test("jump: the cast runs under the nav in-flight marker, cleared at the end (a 
     world[P1].pos = { 0, 0, 0 }
     local marks = {}
     BG3AI.Nav.inflight = function(o) marks[#marks + 1] = o or "clear" end
+    BG3AI.Nav.inflightDone = function(o) marks[#marks + 1] = "clear " .. tostring(o) end -- NAV-7: only its own
     local ok, err = pcall(function()
         local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 4, 0, 0 } }))
         eq(marks[1], "jump", "marked at the order")
@@ -1171,9 +1234,9 @@ test("jump: the cast runs under the nav in-flight marker, cleared at the end (a 
         A.dispatch("CastedSpell", { P1, "Projectile_Jump" })
         tick(60)
         eq(j.status, "done", "landed " .. tostring(j.error))
-        eq(marks[#marks], "clear", "cleared at the end")
+        eq(marks[#marks], "clear jump", "cleared at the end")
     end)
-    BG3AI.Nav.inflight = nil
+    BG3AI.Nav.inflight, BG3AI.Nav.inflightDone = nil, nil
     world[P1].pos = { 0, 0, 0 }
     if not ok then error(err, 0) end
 end)
@@ -1271,6 +1334,31 @@ test("act.target_state: carried item -> held", function()
     osiv[key("GetInventoryOwner", GEM)] = P1
     local r = RPC.ops["act.target_state"]({ uuid = GEM })
     eq(r.held, true, "held")
+end)
+
+test("act.target_state: a combatant out of sight says if it is gone (S033 Umbral Tremors)", function()
+    osiv[key("CanSee", P1, NPC)] = nil
+    osiv[key("IsInCombat", P1)] = 1
+    osiv[key("IsInCombat", NPC)] = 1
+    local r = RPC.ops["act.target_state"]({ uuid = NPC })
+    eq(r.visible, false, "hidden")
+    eq(r.gone, nil, "only out of sight: still in the fight")
+    osiv[key("IsInCombat", NPC)] = 0
+    eq(RPC.ops["act.target_state"]({ uuid = NPC }).gone, "left_fight", "left the turn order")
+    osiv[key("IsOnStage", NPC)] = 0
+    eq(RPC.ops["act.target_state"]({ uuid = NPC }).gone, "off_stage", "dissipated / despawned")
+    osiv[key("IsDead", NPC)] = 1
+    eq(RPC.ops["act.target_state"]({ uuid = NPC }).gone, "dead", "died out of sight")
+    osiv[key("IsDead", NPC)] = 0
+    osiv[key("IsOnStage", NPC)] = 1
+    osiv[key("IsInCombat", P1)] = 0
+    eq(RPC.ops["act.target_state"]({ uuid = NPC }).gone, nil, "no fight: nothing to leave")
+    osiv[key("CanSee", P1, NPC)] = 1
+    r = RPC.ops["act.target_state"]({ uuid = NPC })
+    eq(r.visible, true, "in sight")
+    eq(r.gone, nil, "in sight: never gone")
+    osiv[key("CanSee", P1, DOOR)] = nil
+    eq(RPC.ops["act.target_state"]({ uuid = DOOR }).gone, nil, "items: no gone")
 end)
 
 -- ---- live bug S001 (claude-run-2): melee "range 0.0 m", shared turn groups -----
@@ -1518,6 +1606,30 @@ test("interact ladder: the re-Use starts the climb -> done", function()
     eq(#called("Use"), 2, "one re-Use")
 end)
 
+test("NAV-8: the ladder step back walks only with a path proof", function()
+    local function steps() local n = 0; for _, c in ipairs(called("CharacterMoveToPosition")) do
+        if tostring(c[7]):find("lstep") then n = n + 1 end end; return n end
+    world[P1].pos = { 9.5, 0, 0 }
+    job(op("interact", { char = P1, target = LADDER }))
+    A.dispatch("UseFinished", { P1, LADDER, 1 })
+    tick()
+    clock = clock + A.LADDER_RETRY_MS + 1 tick()
+    eq(steps(), 1, "a proven step back")
+end)
+
+test("NAV-8: no step back where the engine finds no path (it would be the engine's teleport)", function()
+    world[P1].pos = { 9.5, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    nav.fn = function() return { reachable = false } end
+    A.dispatch("UseFinished", { P1, LADDER, 1 })
+    tick()
+    clock = clock + A.LADDER_RETRY_MS + 1 tick()
+    local n = 0
+    for _, c in ipairs(called("CharacterMoveToPosition")) do if tostring(c[7]):find("lstep") then n = n + 1 end end
+    eq(n, 0, "no step back")
+    eq(j.status, "running", "the re-Use still comes " .. tostring(j.error))
+end)
+
 test("interact ladder: after a walk to the top, the Use waits until the actor stands still (acceptance 01:5x)", function()
     world[P1].pos = { 0, 0, 0 }
     local j = job(op("interact", { char = P1, target = LADDER }))
@@ -1532,6 +1644,49 @@ test("interact ladder: after a walk to the top, the Use waits until the actor st
     A.dispatch("UseFinished", { P1, LADDER, 1 })
     tick()
     eq(j.status, "running", "climb awaited")
+end)
+
+test("interact ladder: a settled Use with no UseFinished still watches the climb (acceptance 10-11 08:37/10:43)", function()
+    local restore = with_tasks(1)
+    world[P1].pos = { 0, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    world[P1].pos = { 9.3, 0, 0 }
+    A.dispatch("EntityEvent", { P1, j.walk.ev })
+    tick() tick() clock = clock + A.LADDER_SETTLE_MS + 1 tick()
+    eq(#called("Use"), 1, "Use once still")
+    assert(j.used_at, "the climb watch starts at our Use")
+    local lp = world[LADDER].pos
+    world[LADDER].pos = { 10, -6, 0 }
+    for _, y in ipairs({ -0.6, -2.1, -3.6 }) do world[P1].pos = { 9.9, y, 0 } tick() end
+    eq(#called("PurgeOsirisQueue"), 1, "the Use purged once the climb began, no UseFinished needed")
+    world[P1].pos = { 9.9, -5.6, 0.3 } tick()
+    world[LADDER].pos = lp
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.climbed, "down", "climbed")
+    restore()
+end)
+
+test("interact ladder: LADDER_WATCH_AT_USE=false keeps the old wait for UseFinished", function()
+    A.LADDER_WATCH_AT_USE = false
+    local ok, err = pcall(function()
+        world[P1].pos = { 0, 0, 0 }
+        local j = job(op("interact", { char = P1, target = LADDER }))
+        world[P1].pos = { 9.3, 0, 0 }
+        A.dispatch("EntityEvent", { P1, j.walk.ev })
+        tick() tick() clock = clock + A.LADDER_SETTLE_MS + 1 tick()
+        eq(#called("Use"), 1, "Use once still")
+        eq(j.used_at, nil, "no watch before UseFinished")
+    end)
+    A.LADDER_WATCH_AT_USE = true
+    if not ok then error(err, 0) end
+end)
+
+test("interact ladder: a standing Use with no UseFinished: no-climb retry still comes", function()
+    world[P1].pos = { 9.5, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    assert(j.used_at, "watch from the Use")
+    tick()
+    clock = clock + A.LADDER_RETRY_MS + 1 tick()
+    eq(#called("CharacterMoveToPosition"), 1, "stepped back for the re-Use")
 end)
 
 test("interact ladder: a UseFinished before our settled Use is not ours", function()

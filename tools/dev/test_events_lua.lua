@@ -101,5 +101,18 @@ do
     check("seed keeps the live value", E.approval[SH .. "|" .. HOST] == 7, E.approval[SH .. "|" .. HOST])
 end
 
+-- a member with no rating (a hireling) is asked once, not every poll
+do
+    local HIRE = "aaaaaaaa-0000-0000-0000-000000000003"
+    party[#party + 1] = HIRE; isParty[HIRE] = true
+    local asked = 0
+    local real = Osi.GetApprovalRating
+    Osi.GetApprovalRating = function(o, r) if o == HIRE then asked = asked + 1 end return real(o, r) end
+    for _ = 1, 3 do E.lastPoll = 0; tick() end
+    check("no rating: asked once", asked == 1, asked)
+    check("no rating: nothing seeded", E.approval[HIRE .. "|" .. HOST] == nil)
+    Osi.GetApprovalRating = real
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end

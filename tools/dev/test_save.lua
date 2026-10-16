@@ -23,13 +23,19 @@ local function setState(to)
     for _, h in ipairs(stateHandlers) do h({ FromState = from, ToState = to }) end
 end
 
-local nameBox = { t = "" }    -- the popup's SaveName box
+local nameBox = { t = "" }    -- the popup's SaveName box (mode: nil = Text is a string, "boxed" = a boxed value,
+                              -- "classname" = its ToString() is the class name, "none" = unreadable)
+local selectedRow = nil       -- audit UI-6: a save row selected on the Save page
+local pressedNo = false
 local defaultName = nil       -- S052: the dialog writes its default name this many frames after it opens
 local overwriteIn = nil
 local savedAs = nil           -- the name the game saved with (the box's text at the accepting RETURN)
 local function show(n)
     widgets[n] = { name = n, visible = true }
-    if n == "SaveGamePopup" then nameBox.t = "" overwriteIn = defaultName and 9 or nil end  -- ~145 ms: after our first set (80 ms polls), before the accept
+    if n == "SaveGamePopup" then
+        nameBox.t = "" overwriteIn = defaultName and 9 or nil  -- ~145 ms: after our first set (80 ms polls), before the accept
+        widgets[n].DataContext = { isDC = true, SetProperty = function(_, k, v) if k == "SavegameNameInput" then nameBox.dc = v end end }
+    end
 end
 local function hide(n) widgets[n] = nil end
 
@@ -57,9 +63,14 @@ local function frame()
                 savedAs = nameBox.t
                 hide("SaveGamePopup") hide("SaveGame")  -- saved: back to the game menu
                 if saveStarts then saveAt = clock + 500 end
+            elseif widgets.Dialog_box then
+                savedAs = "OVERWRITTEN:" .. tostring(selectedRow)
+                hide("Dialog_box")
+            elseif widgets.SaveGame and selectedRow then show("Dialog_box")
             elseif widgets.SaveGame then show("SaveGamePopup") end
         elseif k == "ESCAPE" then
-            if widgets.SaveGamePopup then hide("SaveGamePopup")
+            if widgets.Dialog_box then hide("Dialog_box")
+            elseif widgets.SaveGamePopup then hide("SaveGamePopup")
             elseif widgets.SaveGame then hide("SaveGame")
             elseif widgets.GameMenu then hide("GameMenu") end
         end
@@ -99,10 +110,26 @@ BG3AI = {
         -- live (S056): a TextBox's ToString() is its class name; only the Text property holds the name
         text = function() return "ls.LSTextBox" end,
         clean = function(v) return v end,
-        prop = function(obj, k) if obj and obj.isNameBox and k == "Text" then return nameBox.t end return nil end,
+        prop = function(obj, k)
+            if obj and obj.isNameBox and k == "Text" then
+                if nameBox.mode == "boxed" then return { ToString = function() return nameBox.t end } end
+                if nameBox.mode == "classname" then return { ToString = function() return "ls.LSTextBox" end } end
+                if nameBox.mode == "none" then return nil end
+                return nameBox.t
+            end
+            if obj and obj.isDC and k == "SavegameNameInput" then return nameBox.dc end
+            return nil
+        end,
         get = function() return nil end,
         props = function() return {} end,
-        findButton = function() return nil end,
+        findButton = function(w, which)
+            if w and w.name == "Dialog_box" and which == "no" then return { isNo = true } end
+            return nil
+        end,
+        press = function(el, dry)
+            if el.isNo and not dry then pressedNo = true hide("Dialog_box") end
+            return true
+        end,
         findAll = function() return {} end,
         anyDC = function() return { dc = "any" } end,
         dc = function() return nil end,
@@ -194,6 +221,45 @@ job = runSave("probe-name2", true)
 defaultName = nil
 ok(job.status == "done" and job.result.matches == true and (job.result.renamed or 0) >= 1,
     "probe re-sets over the dialog's default name: read=" .. tostring(job.result and job.result.read))
+
+-- BACKLOG "save-name probe reads None": live, the Text property never read back as a Lua string (read=None,
+-- renamed=None on every acceptance run). A boxed value unboxes through ToString; a class name doesn't count; an
+-- unreadable box falls back to the dialog DC's SavegameNameInput; result.read_via says which.
+nameBox.mode = "boxed"
+job = runSave("probe-boxed", true)
+ok(job.status == "done" and job.result.read == "probe-boxed" and job.result.read_via == "text",
+    "probe unboxes a boxed Text: read=" .. tostring(job.result and job.result.read) .. " via=" .. tostring(job.result and job.result.read_via))
+nameBox.mode = "classname"
+job = runSave("probe-class", true)
+ok(job.status == "done" and job.result.read == "probe-class" and job.result.read_via == "dc",
+    "a class-name ToString is not the text; the DC answers: read=" .. tostring(job.result and job.result.read)
+    .. " via=" .. tostring(job.result and job.result.read_via))
+nameBox.mode = "none"
+defaultName = "Steel Watch Foundry - Lab Level - 16h 14m"
+savedAs = nil
+job = runSave("S099-dc-read")
+defaultName = nil
+ok(job.status == "done" and savedAs == "S099-dc-read", "unreadable Text: the save still goes through under our name: "
+    .. tostring(savedAs))
+nameBox.mode = nil
+
+-- audit UI-6: a save row selected → the "new" RETURN acts on it and an overwrite box comes up before our name.
+-- It is answered No and the save fails closed; the 2nd RETURN that would confirm the overwrite never comes.
+selectedRow = "S010-pre-kagha"
+savedAs, pressedNo = nil, false
+local nkeys = #keys
+job = runSave("S100-selected-row")
+selectedRow = nil
+ok(job.status == "failed" and job.result and job.result.foreign_box == true and tostring(job.error):find("nothing saved", 1, true),
+    "a box before the name fails the save: " .. tostring(job.status) .. " " .. tostring(job.error))
+ok(savedAs == nil, "no overwrite confirmed: " .. tostring(savedAs))
+ok(pressedNo, "the box was answered No")
+local returns = 0
+for i = nkeys + 1, #keys do if keys[i] == "RETURN" then returns = returns + 1 end end
+ok(returns == 1, "exactly one RETURN (the 'new' one), none on the box: " .. returns)
+ok(widgets.SaveGamePopup == nil and widgets.SaveGame == nil and widgets.GameMenu == nil and widgets.Dialog_box == nil,
+    "menus closed after the refused overwrite")
+ok(A.pendingSave == nil, "pending save cleared")
 
 -- S056 07:17: the name never sticks → failed, and the save menus are closed first (the agent finished one by hand)
 nameBox.stuck = true

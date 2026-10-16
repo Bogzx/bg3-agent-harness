@@ -64,6 +64,8 @@ elif mode == "git_meta":
     app("quests.md", "\n- Rescue Halsin [told] (S003)\n")
     Path(".gitattributes").write_text("* filter=evil\n")
     Path("chapters/.gitattributes").write_text("* filter=evil\n")
+elif mode == "hallucinate":   # MEM-1: a name no note has, next to a real one
+    app("quests.md", "\n- Bring the idol to Qxzarnath the Undying [seen] (S003)\n- Find the tiefling kids [seen] (S003)\n")
 elif mode == "fail":
     sys.exit(3)
 print(json.dumps({"type": "result", "subtype": "success"}))
@@ -396,6 +398,67 @@ class KeeperTest(MemoryTestCase):
             self.write(f"sessions/S{n:03d}.md", "x\n")
         self.assertEqual(len(K.logs_to_read(self.mem, 14)), K.MAX_LOGS)
         self.assertEqual(K.logs_to_read(self.mem, 14)[-1], 14)
+
+    # ---- MEM-1 (audit 2026-10-13)
+
+    def test_ungrounded_names_are_dropped(self):
+        r = self.run_keeper("hallucinate")
+        self.assertEqual(r.status, "ok", r.summary())
+        q = self.read("quests.md")
+        self.assertNotIn("Qxzarnath", q)
+        self.assertIn("Find the tiefling kids [seen]", q)
+        self.assertEqual(len(r.ungrounded), 1)
+        self.assertIn("Qxzarnath", r.summary())
+
+    def test_grounding_rules(self):
+        text = "met zevlor at the gate. nightsong"
+        self.assertEqual(K.ungrounded_names("- Talk to Zevlor at the Gate [seen]", text), [])
+        self.assertEqual(K.ungrounded_names("- Talk to Ketheric [seen]", text), ["Ketheric"])
+        self.assertEqual(K.ungrounded_names("- WHEN Nightsong, fall: S012 L5 [seen]", text), [])
+        self.assertEqual(K.ungrounded_names("- Done. Ketheric fell [seen]", text), [])   # a sentence start
+
+    def test_no_pending_snapshot_after_a_pass(self):
+        self.run_keeper("ok")
+        self.assertFalse((self.base.parent / K.PENDING).exists())
+
+    def test_recover_after_a_runner_kill_mid_pass(self):
+        quests = self.read("quests.md")
+        snap = K.snapshot(self.mem)
+        K.save_pending(self.base.parent, self.mem, "S003", snap)   # what run_keeper wrote before the call
+        self.append("quests.md", "\n- Unvalidated [seen] (S003)\n")   # the keeper's edit, never checked
+        msg = K.recover(self.mem, self.base.parent)
+        self.assertIn("never finished", msg)
+        self.assertIn("quests.md", msg)
+        self.assertEqual(self.read("quests.md"), quests)
+        self.assertFalse((self.base.parent / K.PENDING).exists())
+        self.assertIsNone(K.recover(self.mem, self.base.parent))
+
+    def test_recover_keeps_a_committed_pass(self):
+        r = self.run_keeper("ok")
+        K.save_pending(self.base.parent, self.mem, "S003", {})   # died between the commit and the cleanup
+        self.assertIn("committed", K.recover(self.mem, self.base.parent))
+        self.assertIn("Find the tiefling kids", self.read("quests.md"))
+        self.assertTrue(r.commit)
+
+    def test_recover_kills_a_leftover_keeper(self):
+        import subprocess, time as _t
+        p = subprocess.Popen(["sleep", "30"], start_new_session=True)
+        pend = K.save_pending(self.base.parent, self.mem, "S003", K.snapshot(self.mem))
+        K.note_pgid(pend, p.pid)
+        K.recover(self.mem, self.base.parent)
+        p.wait(timeout=5)
+        self.assertIsNotNone(p.returncode)
+
+    def test_logs_to_read_starts_after_the_last_keeper_pass(self):
+        for n in range(4, 15):
+            self.write(f"sessions/S{n:03d}.md", "x\n")
+        self.commit("S014")
+        self.append("quests.md", "\n- Kept [seen] (S012)\n")
+        self.commit("S012 memory-keeper: quests.md")
+        self.assertEqual(K.logs_to_read(self.mem, 14), [13, 14])     # a never-touched file no longer pulls S001 in
+        self.write("chapters/C01_S001-S014_x.md", "# C01\n")
+        self.commit("S014 chapter")
+        self.assertEqual(K.logs_to_read(self.mem, 14), [14])           # always the session that just ended
 
 
 if __name__ == "__main__":

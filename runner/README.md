@@ -242,7 +242,10 @@ stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
   profile has them off); if the mod still refuses (or the eval fails) it relaunches the game with
   `--load <folder>` instead. Any mod refusal during setup is a setup failure (relaunch, retry), never fatal.
 - **Give-ups:** Claude exiting within a minute 3 times in a row (auth or config problems), or 5
-  consecutive game setup failures, stops the runner. A stale bg3le build (`tools/bg3le_buildinfo.py`: the
+  consecutive game setup failures (a bg3 MCP server that fails at init counts as one, and the session stops
+  at once), stops the runner. A usage/rate limit, an overload or a server error never gives up: the runner
+  waits for the limit's reset time (else 1, 2, 4… min up to 1 h) and goes on (event `api_limit`). A game
+  that answers while the BG3AI mod is gone for 3 min is a hang (recover, resume). A stale bg3le build (`tools/bg3le_buildinfo.py`: the
   dist lacks a `patches/bg3le` patch, or `launch_game.sh` exits 4) stops it before any launch: run
   `tools/build_bg3le.sh` (`BG3AI_ALLOW_STALE_BG3LE=1` launches anyway). Every exit logs
   `runner stopped (<why>)`; an unexpected error also logs its traceback. Check `runtime/runner.log`.
@@ -251,8 +254,15 @@ stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
 
 - The runner refuses to use a game that is already in a save it didn't load (e.g. your own playthrough).
   Quit to the menu or close the game first, or pass `--take-over`.
-- It only kills a game it launched, one at the main menu, or any game under `--take-over`.
-- Only one runner at a time (`runtime/runner.lock`).
+- It only ever signals this harness's bg3 processes: ones `runner/launch_game.sh` started (the
+  `BG3AI_GAME_STAMP` env, the `bg3ai-game-*.scope` cgroup, or bg3le mapped in), and the launcher's process
+  group only while its leader is provably that launch (command line + start time). A BG3 you launched from
+  Steam is never killed; while one runs the runner refuses to launch its own (event `foreign_game`) and retries.
+- Only one runner at a time (`runtime/runner.lock`, an flock; never delete the file:
+  `tools/orchestrator/runner_lib.sh` waits for the lock instead).
+- Steam offline is required only on a machine that sets it: `~/.config/bg3ai/require-steam-offline` (its
+  text is the reason; the test machine has it) or `BG3AI_REQUIRE_STEAM_OFFLINE=1` (`=0` overrides the file). Elsewhere an
+  online Steam is fine. `python3 tools/steam_paths.py launch-ok` shows the decision.
 - `BG3AI_SAVE_PREFIX` marks this playthrough's saves. The runner accepts it as a folder prefix (`Claude-`:
   the character name plus the game's dash, what the MCP server and docs/HANDOFF.md use; the agent's
   `Sxxx-` labels stay plain) or as a label prefix (`pt1-S010-end`). It is optional: without it the runner

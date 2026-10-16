@@ -12,6 +12,7 @@ import json
 import re
 import shutil
 import subprocess
+import os
 import sys
 import tempfile
 import tomllib
@@ -19,6 +20,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# RUN-9: play.RUNTIME is read at import; a test must never append to the real runtime/runner.log (the phantom
+# "0.01 s after SIGTERM" kill bursts the orchestrator chased). Tests that need a runtime set their own.
+os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 import clients as C  # noqa: E402
 import play as P  # noqa: E402
 import runs as R  # noqa: E402
@@ -98,6 +102,14 @@ class ClaudeDropIn(unittest.TestCase):
                 with self.subTest(opt=opt, resume=resume, tag=tag):
                     self.assertEqual(client.command(_req(r, prompt, sid, resume, tag)),
                                      TP.legacy_claude_cmd(r, prompt, sid, resume, tag))
+
+    def test_rate_limit_reset(self):
+        # RUN-7: the reset time of a rejected rate limit reaches the runner (it waits until then)
+        ev = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": 1791590400}}
+        (e,) = C.ClaudeClient().parse(json.dumps(ev))
+        self.assertEqual((e.kind, e.api_error, e.resets_at), ("rate_limit", True, 1791590400.0))
+        (e,) = C.ClaudeClient().parse(json.dumps({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}}))
+        self.assertEqual((e.api_error, e.resets_at), (False, None))
 
     def test_env_and_config(self):
         c, req = C.ClaudeClient(), C.Request("go", "opus", Path("/tmp"), session="1")

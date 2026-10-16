@@ -16,6 +16,7 @@ local widgets = {}      -- list of {name=, dc=, visible=}
 local quiet = false
 local commands = {}
 local dialogue = nil    -- what UIState.dialogue returns
+local live = {}         -- named reads (UI.pick): ShowAnswers of the active dialogue, IsCurrentTurn/CanEndTurn
 printed = {}
 
 Ext = {
@@ -53,7 +54,15 @@ BG3AI = {
         quiet = function() return quiet end,
         command = function(dc, name) commands[#commands + 1] = name return true end,
         props = function() return {} end,
-        pick = function() return {} end,
+        pick = function(obj, names)
+            local out = {}
+            for _, k in ipairs(names) do out[k] = live[k] end
+            return out
+        end,
+        widget = function(n)
+            for _, w in ipairs(widgets) do if w.name == n then return w end end
+            return nil
+        end,
         prop = function() return nil end,
     },
     UIState = {
@@ -89,6 +98,7 @@ local function reset()
     K.want = nil
     K.lastTick = clock
     widgets, dialogue, quiet, gameState = {}, nil, false, "Running"
+    live = { ShowAnswers = false }
     BG3AI.UIActions.config = {}
     run(50)
 end
@@ -168,7 +178,7 @@ check("state change resets probe", K.state.nextMovie == 0)
 -- 6. dialogue lines: skipped after the grace, never with answers
 reset()
 widgets = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true } } }
-dialogue = { speaker = "Lae'zel", text = "Tsk'va." }
+dialogue = { speaker = "Lae'zel", text = "Tsk'va.", listening = true }
 run(200)
 check("line not skipped before grace", #commands == 0)
 run(400)
@@ -184,7 +194,7 @@ check("answers: no skip", #commands == 0 and #keys == 0)
 --     SPACE, then shim SPACE requests (want reason=line) until it goes; a new line or answers clear it
 reset()
 widgets = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true } } }
-dialogue = { speaker = "Mizora", text = "Clause G, Section Nine." }
+dialogue = { speaker = "Mizora", text = "Clause G, Section Nine.", listening = true }
 run(600)
 check("stuck line: command first", count(commands, "SelectorSkipCommand") == 1 and #keys == 0, #keys)
 run(700)
@@ -200,8 +210,28 @@ check("stuck line: then a shim SPACE request", sawWant and sawWant.key == "SPACE
 local st = ops["autoskip.status"]()
 check("stuck line: status carries the line", st.line and st.line.tries == 3 and st.movie == nil)
 check("stuck line: movie probe keeps the line request", K.want ~= nil)
+-- audit UI-7: the request is re-checked live on every status poll (the skipper's SPACE lands later)
+if K.want then
+    live.ShowAnswers = true
+    local h = ops["autoskip.status"]()
+    check("UI-7: answers up since the tick: no shim SPACE request", h.want == nil and h.held == "answers", h.held)
+    live.ShowAnswers, live.IsCurrentTurn = false, true
+    h = ops["autoskip.status"]()
+    check("UI-7: our combat turn began: no shim SPACE (SPACE ends a turn)", h.want == nil and h.held == "our turn", h.held)
+    live.IsCurrentTurn = nil
+    local saved = K.state.line
+    K.state.line = { key = "x|other", id = -1, since = clock, tries = 0 }
+    h = ops["autoskip.status"]()
+    check("UI-7: another line: no shim SPACE", h.want == nil and h.held == "another line", h.held)
+    K.state.line = saved
+    h = ops["autoskip.status"]()
+    check("UI-7: the same line still playing: request shown", h.want ~= nil and h.want.line == saved.id and h.line.id == saved.id)
+else
+    check("UI-7: a line request to re-check", false)
+end
 run(300)
 check("stuck line: request lives one tick", K.want == nil or K.want.try == 4, K.want and K.want.try)
+
 dialogue = { speaker = "Mizora", text = "Choose.", options = { {}, {} } }
 run(300)
 check("answers: line request cleared", K.want == nil)
@@ -209,9 +239,19 @@ run(5000)
 check("answers: no more requests", K.want == nil and count(keys, "SPACE") == 1)
 reset()
 widgets = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true } } }
-dialogue = { speaker = "Halsin", text = "Oak father's blessings to you." }
+dialogue = { speaker = "Halsin", text = "Oak father's blessings to you.", listening = true }
 run(20000)
 check("stuck line: capped at LINE_MAX_TRIES", K.state.line.tries == K.LINE_MAX_TRIES, K.state.line.tries)
+
+-- 6c. audit UI-7: a text line while the game says answers are shown (ShowAnswers true: rows rendered, none texted
+--     yet, so no options and no continue) is never skipped: no command, no SPACE, no shim request
+reset()
+widgets = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true } } }
+dialogue = { speaker = "Karlach", text = "What's on your mind?" }
+live.ShowAnswers = true
+run(20000)
+check("UI-7: line with answers coming: no skip at all", #commands == 0 and #keys == 0 and K.want == nil, #commands)
+check("UI-7: the line is still reported", count(events, "dialogue_line") == 1)
 
 -- 7. a movie over the loading screen (New Game intro: game state StartLoading, the Movie state's
 --    overlay above the loading screen "root"): engine ESCAPE, then shim requests every LOAD_RETRY_MS
