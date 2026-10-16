@@ -7,7 +7,9 @@ twice), and the agent walked 460 m toward Zevlor while an unlocked waypoint stoo
 Pure helpers (server.py and route.py call them):
 * pick_waypoint: fast travel first when an unlocked waypoint on this level is much nearer the goal;
 * DeadEnds: where trips toward a goal were blocked this session (the bridge restarts per session), so the
-  second stop at the same spot says "tried 2x: blocked" and offers another way instead of a third try.
+  second stop at the same spot says "tried 2x: blocked" and offers another way instead of a third try. Each
+  is tagged with its level (coordinates of another map mean nothing here), expires DEAD_TTL_S after its last
+  hit (a door since opened, a cleared obstacle) and the store is cleared on a save load (audit NAV-10).
 
 Fair: waypoints are the party's unlocked ones (the map shows them, with their places); dead ends are the
 agent's own failed walks.
@@ -29,6 +31,7 @@ ROUTE_WP_SAVE_M = 30.0  # route's NEXT suggests a waypoint this much nearer the 
 DEAD_GOAL_M = 15.0    # trips toward goals this close together share their dead ends
 DEAD_SPOT_M = 8.0     # stops this close together are the same dead end
 DEAD_REPEAT = 2       # this many stops at one spot: "tried twice: blocked"
+DEAD_TTL_S = 1200.0   # a dead end not hit again for this long is forgotten (the way may have opened since)
 
 _GROUND = re.compile(r"no walkable ground|the way is blocked|no walkable path|no path to the destination|could not get closer|"
                      r"path blocked", re.I)
@@ -68,6 +71,8 @@ class DeadEnd:
     pos: list
     left_m: float
     times: list[str] = field(default_factory=list)
+    level: str | None = None  # the level it was hit on (None: unknown, applies anywhere until it expires)
+    last: float = 0.0         # monotonic time of the last hit (expiry)
 
     @property
     def count(self) -> int:
@@ -82,31 +87,52 @@ def _p(p: Any) -> str:
 
 
 class DeadEnds:
-    """Where trips toward a goal stopped on blocked ground, this session."""
+    """Where trips toward a goal stopped on blocked ground, this session. level: the current level id (None when
+    unknown; read once per record/for_goal), now: a monotonic clock (tests inject both)."""
 
-    def __init__(self, clock: Callable[[], str] | None = None) -> None:
+    def __init__(self, clock: Callable[[], str] | None = None, level: Callable[[], str | None] | None = None,
+                 now: Callable[[], float] | None = None, ttl_s: float = DEAD_TTL_S) -> None:
         self.items: list[DeadEnd] = []
         self.clock = clock or (lambda: time.strftime("%H:%M"))
+        self.level = level or (lambda: None)
+        self.now = now or time.monotonic
+        self.ttl_s = ttl_s
+
+    def _here(self) -> str | None:
+        try:
+            lv = self.level()
+        except Exception:  # noqa: BLE001 - a failed level read (loading) must not fail travel_to
+            return None
+        return lv if isinstance(lv, str) and lv else None
+
+    def _live(self, lv: str | None) -> list[DeadEnd]:
+        """Drop the expired entries; return those of this level (an unknown level on either side matches)."""
+        t = self.now()
+        self.items = [e for e in self.items if t - e.last <= self.ttl_s]
+        return [e for e in self.items if lv is None or e.level is None or e.level == lv]
 
     def record(self, goal: Any, pos: Any, left_m: float | None = None) -> DeadEnd | None:
         if not (isinstance(goal, (list, tuple)) and isinstance(pos, (list, tuple)) and len(goal) >= 3 and len(pos) >= 3):
             return None
+        lv = self._here()
         left = float(left_m) if left_m is not None else dist(pos, goal)
-        for e in self.items:
+        for e in self._live(lv):
             if dist(e.goal, goal) <= DEAD_GOAL_M and dist(e.pos, pos) <= DEAD_SPOT_M:
                 e.times.append(self.clock())
                 e.left_m = min(e.left_m, round(left, 1))
+                e.last = self.now()
+                e.level = e.level or lv
                 return e
         e = DeadEnd([round(float(x), 1) for x in goal[:3]], [round(float(x), 1) for x in pos[:3]], round(left, 1),
-                    [self.clock()])
+                    [self.clock()], lv, self.now())
         self.items.append(e)
         return e
 
     def for_goal(self, goal: Any) -> list[DeadEnd]:
-        """Dead ends toward this goal, most hit first."""
+        """Dead ends toward this goal on this level, most hit first."""
         if not isinstance(goal, (list, tuple)):
             return []
-        return sorted((e for e in self.items if dist(e.goal, goal) <= DEAD_GOAL_M), key=lambda e: -e.count)
+        return sorted((e for e in self._live(self._here()) if dist(e.goal, goal) <= DEAD_GOAL_M), key=lambda e: -e.count)
 
     def near(self, goal: Any, pos: Any, within: float = DEAD_SPOT_M) -> DeadEnd | None:
         return next((e for e in self.for_goal(goal) if dist(e.pos, pos) <= within), None)

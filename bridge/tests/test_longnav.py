@@ -6,7 +6,10 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from test_turn_macros import P1, Base
 
@@ -82,6 +85,46 @@ class Pure(unittest.TestCase):
         c = FAR_NO_PATH["connectors"][0]
         self.assertIsNotNone(longnav.connector_dead(c, d.for_goal(KARLACH)))
         self.assertIsNone(longnav.connector_dead({**c, "leads": "down"}, d.for_goal(KARLACH)))
+
+    def test_dead_ends_apply_only_on_their_level(self):
+        # NAV-10: coordinates of another map mean nothing here
+        lv = ["WLD_Main_A"]
+        d = longnav.DeadEnds(clock_seq("01:11", "01:15", "01:20"), level=lambda: lv[0], now=lambda: 0.0)
+        d.record(KARLACH, [101.8, 22.2, 481.3], 35.6)
+        self.assertEqual(d.items[0].level, "WLD_Main_A")
+        self.assertEqual(len(d.for_goal(KARLACH)), 1)  # same level: applies
+        lv[0] = "SCL_Main_A"
+        self.assertEqual(d.for_goal(KARLACH), [])  # another level: ignored
+        self.assertIsNone(d.near(KARLACH, [101.8, 22.2, 481.3]))
+        e = d.record(KARLACH, [101.8, 22.2, 481.3])  # the same coordinates there are a new spot
+        self.assertEqual((e.count, e.level, len(d.items)), (1, "SCL_Main_A", 2))
+        lv[0] = "WLD_Main_A"
+        self.assertEqual([x.level for x in d.for_goal(KARLACH)], ["WLD_Main_A"])  # back: the old one applies again
+
+    def test_unknown_level_falls_back_to_matching(self):
+        lv: list = [None]
+        d = longnav.DeadEnds(clock_seq("01:11"), level=lambda: lv[0], now=lambda: 0.0)
+        d.record(KARLACH, [101.8, 22.2, 481.3])
+        lv[0] = "WLD_Main_A"
+        self.assertEqual(len(d.for_goal(KARLACH)), 1)
+
+        def boom():
+            raise GameError("loading")
+        d.level = boom  # a failed level read (loading) neither fails nor hides anything
+        self.assertEqual(len(d.for_goal(KARLACH)), 1)
+
+    def test_dead_ends_expire_after_their_last_hit(self):
+        t = [0.0]
+        d = longnav.DeadEnds(clock_seq("01:11", "01:25", "02:00"), level=lambda: "WLD_Main_A", now=lambda: t[0])
+        d.record(KARLACH, [101.8, 22.2, 481.3])
+        t[0] = longnav.DEAD_TTL_S - 1
+        self.assertEqual(d.record(KARLACH, [101.8, 22.2, 481.3]).count, 2)  # a hit refreshes it
+        t[0] = 2 * longnav.DEAD_TTL_S - 2
+        self.assertEqual(len(d.for_goal(KARLACH)), 1)
+        t[0] = 2 * longnav.DEAD_TTL_S
+        self.assertEqual(d.for_goal(KARLACH), [])  # the way may have opened since
+        self.assertEqual(d.items, [])
+        self.assertEqual(d.record(KARLACH, [101.8, 22.2, 481.3]).count, 1)  # starts over
 
 
 class RouteText(unittest.TestCase):
@@ -213,6 +256,23 @@ class TravelTrips(Base):
         third = server.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertIn("KNOWN DEAD END toward it: blocked 2x", third)
         self.assertIn("tried 3x", third)
+
+    def test_dead_ends_carry_the_level_and_a_load_clears_them(self):
+        self.g.reach = {"reachable": False}
+        server.travel_to(x=60.0, y=0.0, z=0.0)
+        self.assertEqual([e.level for e in server.DEAD.items], ["TUT"])  # state.status level
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "P__S099-pre").mkdir()
+            with mock.patch.object(server, "SAVE_DIR", Path(tmp)), mock.patch.object(server, "SAVE_PREFIX", "P"), \
+                    mock.patch.object(server, "_enable_save_gates", lambda: None), \
+                    mock.patch.object(server.SAVER, "settle", lambda: ""), \
+                    mock.patch.object(server, "_game_process_alive", lambda: True), \
+                    mock.patch.object(server, "_server_boot", lambda: "b"), \
+                    mock.patch.object(server, "_load_once", lambda *a: (JobResult("done", {"loaded": "S099-pre"}), False)):
+                server.load_game("S099-pre")
+        self.assertEqual(server.DEAD.items, [])
+        second = server.travel_to(x=60.0, y=0.0, z=0.0)
+        self.assertNotIn("tried", second)  # the wall hit before the load is forgotten
 
     def test_a_cancelled_trip_is_no_dead_end(self):
         self.g.reach = {"reachable": False, "hazard": {"surface": "Fire", "at_m": 3}}

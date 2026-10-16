@@ -5140,7 +5140,16 @@ def _fast_travel_first(char: str, dest: list, dist_m: float | None) -> tuple[str
 
 
 _trips: dict[str, dict] = {}  # char -> {dest, d0, t0} of the travel_to its queue is running (live progress)
-DEAD = longnav.DeadEnds()  # where trips were blocked this session (S010: the same boulder wall 5 times)
+
+
+def _map_level() -> str | None:
+    """The level the party is on (state.status), for the dead ends: they apply only on the level they were hit on."""
+    st = game.try_rpc("state.status")
+    return st.get("level") if isinstance(st, dict) else None
+
+
+# where trips were blocked this session (S010: the same boulder wall 5 times); per level, cleared by load_game
+DEAD = longnav.DeadEnds(level=_map_level)
 
 
 def _trip_left(char: str) -> tuple[float, float | None] | None:
@@ -8250,6 +8259,7 @@ def load_game(save: str = "latest") -> str:
         r.result["pressed"] = f"{retried + 1} times (the first press didn't start a load)"
     game.event_seq = {"server": 0, "client": 0}
     DELTA.reset()  # a loaded save is a new world: the next look is a full one
+    DEAD.clear()  # and its ways: a wall hit before the load may be open in the loaded save (NAV-10)
     delta.INV.reset()  # and its inventory: the mod's rev restarts with its Lua state (stale gear/gold after a load)
     body = _job_text("load_game", r) + (f"\n{dropped}" if dropped else "")
     if fight_block:
