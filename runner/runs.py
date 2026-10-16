@@ -621,6 +621,31 @@ def series_client(frozen: str | None, wanted: str | None, default: str,
     return wanted, None, change
 
 
+def sandbox_mode(mode: str | None, unfirewalled: bool = False) -> dict:
+    """The sandbox setting a series freezes (series.json "sandbox", "sandbox_unfirewalled"): --sandbox and
+    --sandbox-unfirewalled (only meaningful with container)."""
+    mode = mode or "none"
+    return {"sandbox": mode, "sandbox_unfirewalled": bool(unfirewalled) and mode == "container"}
+
+
+def series_sandbox(meta: dict, wanted: dict, allow_change: bool) -> tuple[str | None, str | None]:
+    """(error, change) for the sandbox like series_client, except that a left-out --sandbox is "none" (never the
+    frozen container: that needs the firewall and Docker, so the operator says it). meta: series.json ({} = a new
+    series: nothing frozen yet); a series from before the sandbox key played without one ("none")."""
+    if not meta:
+        return None, None
+    frozen = sandbox_mode(meta.get("sandbox"), meta.get("sandbox_unfirewalled", False))
+    if frozen == wanted:
+        return None, None
+    fmt = lambda m: m["sandbox"] + (" (unfirewalled)" if m["sandbox_unfirewalled"] else "")   # noqa: E731
+    change = f"sandbox: {fmt(frozen)} → {fmt(wanted)}"
+    if not allow_change:
+        flags = "--sandbox " + frozen["sandbox"] + (" --sandbox-unfirewalled" if frozen["sandbox_unfirewalled"] else "")
+        return (f"the series' sandbox is fixed in series.json ({change}): run it with {flags}, or pass "
+                "--allow-sandbox-change to record the change"), change
+    return None, change
+
+
 MODEL_TIME_DOCS = ("measured", "estimated", "not_separable")   # model_time's constant field lists: not per record
 
 

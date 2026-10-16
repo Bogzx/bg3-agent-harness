@@ -87,6 +87,22 @@ class ServeTest(unittest.TestCase):
         code, _, body = self.get("/")
         self.assertIn(b'id="storyTabs"', body)
 
+    def test_series(self):
+        code, ctype, body = self.get("/series")
+        self.assertEqual(code, 200)
+        self.assertIn(b"BG3 AI Series", body)
+        _, _, body = self.get("/api/series")
+        r = json.loads(body)
+        self.assertEqual((r["series"], r["rows"], r["live"]), (None, [], None))
+        d = TMP / "sessions" / "sx"
+        d.mkdir(parents=True)
+        (d / "runs.jsonl").write_text(json.dumps({"series": "sx", "run": 1, "playthrough": "sx", "outcome": "reached",
+                                                  "clean": True, "cost_usd": 1.5}) + "\n")
+        r = json.loads(self.get("/api/series?playthrough=sx")[2])
+        self.assertEqual((r["series"], r["rows"][0]["cost_usd"], r["spread"]["clean_streak"]), ("sx", 1.5, 1))
+        self.assertIn("not a series name", json.loads(self.get("/api/series?playthrough=..%2Fx")[2])["error"])
+        self.assertIn(b'href="/series"', self.get("/")[2])
+
     def test_screen_empty_and_404(self):
         code, _, _ = self.get("/api/screen")
         self.assertEqual(code, 204)

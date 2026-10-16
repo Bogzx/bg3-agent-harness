@@ -16,6 +16,7 @@ share the Mesa layer's single control slot through the file lock in bridge/src/b
 only while someone has the page open.
 
 Endpoints: /  /api/state  /api/feed?after=N  /api/agentlog?after=N&path=ID  /api/screen  /api/latency  /api/progress  /api/goals  /api/story
+           /series  /api/series[?playthrough=BASE]   (benchmark series: runs.jsonl rows, spread, the run in progress)
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "bridge" / "src"))
 import feeds as F  # noqa: E402
+import seriesview as SERIES  # noqa: E402
 import story as STORY  # noqa: E402
 
 RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
@@ -181,6 +183,7 @@ class Hub:
 
 def make_handler(hub: Hub):
     index_html = (HERE / "index.html").read_bytes()
+    series_html = (HERE / "series.html").read_bytes()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "bg3ai-dashboard/1"
@@ -212,6 +215,13 @@ def make_handler(hub: Hub):
             try:
                 if url.path in ("/", "/index.html"):
                     return self._send(200, index_html, "text/html; charset=utf-8")
+                if url.path in ("/series", "/series.html"):
+                    return self._send(200, series_html, "text/html; charset=utf-8")
+                if url.path == "/api/series":   # benchmark series view (seriesview.py); no game polling
+                    runner = F.read_json(RUNTIME / "runner.status.json")
+                    base = (q.get("playthrough") or q.get("series") or [None])[0]
+                    return self._json(SERIES.series_payload(
+                        RUNTIME, base, runner, latency_live=lambda: F.latency_payload(RUNTIME, runner)["live"]))
                 if url.path == "/api/state":
                     hub.viewed()
                     return self._json(hub.state())

@@ -334,7 +334,11 @@ end
 -- Show a gameplay tab so its list items are realized (their labels are only readable when rendered).
 local function tabStage(ctx, tab)
     return function()
-        if ctx.widget and selectTab(ctx.widget, tab) then return "next", 450 end
+        if ctx.widget and selectTab(ctx.widget, tab) then
+            -- ctx.fast (cc_apply, P.CC_STATE_WAITS): the next selectStage waits for the tab's labels instead
+            if ctx.fast then ctx.tabAt = RPC.now_ms() return "next", 0 end
+            return "next", 450
+        end
         return "next", 0
     end
 end
@@ -998,8 +1002,22 @@ local function selectStage(getDC, ctx, key, prop, collection, want, required)
         if not dc then return "fail", "page closed" end
         if ctx.widget then P.refreshLabels(ctx.widget) end
         local coll = UI.prop(dc, collection)
-        if UI.count(coll) == 0 then return "next", 0 end
+        -- ctx.fast: until the old fixed delays would have run out (tab wait + the pick wait cut to CC_SETTLE_MS),
+        -- wait for what the pick needs (see P.CC_STATE_WAITS)
+        local since = RPC.now_ms() - (ctx.tabAt or -1e9)
+        local early = ctx.fast and since < P.CC_TAB_MS + P.CC_PICK_MS - P.CC_SETTLE_MS
+        if UI.count(coll) == 0 then
+            if early and since < P.CC_SETTLE_MS then return "wait", P.CC_POLL_MS end
+            return "next", 0
+        end
+        local after = ctx.fast and P.CC_SETTLE_MS or 300
         local cur = UI.prop(dc, prop)
+        if early then
+            -- a pick needs the whole list labelled; keeping the current choice only its label (for the report)
+            local picks = want ~= nil or (required and cur == nil)
+            if picks and not P.allLabelled(coll) then return "wait", P.CC_POLL_MS end
+            if not picks and cur ~= nil and label(cur) == nil then return "wait", P.CC_POLL_MS end
+        end
         if want == nil then
             if cur == nil and required then
                 -- Nothing chosen and the page needs a choice: take the first selectable, and say so.
@@ -1009,23 +1027,26 @@ local function selectStage(getDC, ctx, key, prop, collection, want, required)
                         if not ok then return "fail", err end
                         ctx.result.defaulted = ctx.result.defaulted or {}
                         ctx.result.defaulted[#ctx.result.defaulted + 1] = key
-                        ctx.pending = { key = key, prop = prop, item = it }
+                        ctx.pending = { key = key, prop = prop, item = it, at = RPC.now_ms() }
                         break
                     end
                 end
-                return "next", 300
+                return "next", after
             end
             ctx.result.set[key] = label(cur)
             return "next", 0
         end
         local item, _, err = pick(coll, want)
-        if not item then return "fail", err end
+        if not item then
+            if early then return "wait", P.CC_POLL_MS end  -- e.g. the previous pick's dependent list not rebuilt yet
+            return "fail", err
+        end
         if not same(cur, item) then
             local ok, serr = set(dc, prop, item)
             if not ok then return "fail", serr end
         end
-        ctx.pending = { key = key, prop = prop, item = item }
-        return "next", 300
+        ctx.pending = { key = key, prop = prop, item = item, at = RPC.now_ms() }
+        return "next", after
     end
 end
 
@@ -1037,6 +1058,10 @@ local function verifyStage(getDC, ctx)
         if not pend then return "next", 0 end
         if ctx.widget then P.refreshLabels(ctx.widget) end
         local cur = UI.prop(getDC(), pend.prop)
+        if ctx.fast and not same(cur, pend.item) and RPC.now_ms() - (pend.at or 0) < P.CC_PICK_MS then
+            ctx.pending = pend  -- ctx.fast: give a pick that hasn't read back yet the old 300 ms
+            return "wait", P.CC_POLL_MS
+        end
         ctx.result.set[pend.key] = label(cur)
         if not same(cur, pend.item) then
             ctx.result.problems[#ctx.result.problems + 1] =
@@ -1077,7 +1102,7 @@ local function skillsStage(getDC, ctx, wanted)
                 if not done then ctx.result.problems[#ctx.result.problems + 1] = "skill " .. name .. ": not offered" end
             end
         end
-        return "next", 300
+        return "next", ctx.fast and P.CC_SETTLE_MS or 300
     end
 end
 
@@ -1139,7 +1164,7 @@ local function passivesStage(getDC, ctx, wanted, defaults)
         for _, name in ipairs(want or {}) do
             if not found[name] then ctx.result.problems[#ctx.result.problems + 1] = "passive " .. name .. ": not offered" end
         end
-        return "next", 300
+        return "next", ctx.fast and P.CC_SETTLE_MS or 300
     end
 end
 
@@ -1370,7 +1395,7 @@ local function abilitiesStage(ctx, plan)
                 local ok, err = UI.command(dc, "UseRecommendedAbilities", nil)
                 if not ok then ctx.result.problems[#ctx.result.problems + 1] = "recommended abilities: " .. tostring(err) end
             end
-            return "next", 300
+            return "next", ctx.fast and P.CC_SETTLE_MS or 300
         end
         if type(want) ~= "table" then return "fail", "abilities must be \"recommended\" or a table" end
         if not state.reset then
@@ -1433,10 +1458,32 @@ local function abilityBonusStage(ctx, plan)
     end
 end
 
+-- cc_apply pacing. Naut series (2026-10-13): every call took 6.1 s, all of it fixed waits (450 ms after each of the 8
+-- tabs, 300 ms after each pick/command). With P.CC_STATE_WAITS a stage waits for the state the next step needs
+-- instead: after a tab, until every item of the list it picks from has a readable label (what the 450 ms was for:
+-- labels come from rendered list items, and a half-rendered list can match "Elf" to "Half-Elf") or the wanted
+-- item is found; after a pick, CC_SETTLE_MS, then its read-back. Each old delay stays as the cap. Off live:
+-- Mods.BG3AI.BG3AI.Progression.CC_STATE_WAITS = false, or per call args.paced (the bridge's BG3AI_CC_PACED=1).
+P.CC_STATE_WAITS = true
+P.CC_TAB_MS = 450
+P.CC_PICK_MS = 300
+P.CC_SETTLE_MS = 100
+P.CC_POLL_MS = 40
+
+-- Every item of a collection reads a label (property, rendered list item or static name), none is "#i"/an id only.
+function P.allLabelled(coll)
+    for _, it in ipairs(list(coll)) do
+        if label(it) == nil then return false end
+    end
+    return true
+end
+
 RPC.register("ui.cc_apply", function(args)
     local plan = args.plan or {}
     if not P.ccDC() then error("character creation is not open (pages: " .. table.concat(pages(), ",") .. ")") end
     local ctx = { result = { set = {}, problems = {} }, widget = "CharacterCreation" }
+    ctx.fast = P.CC_STATE_WAITS ~= false and not args.paced
+    ctx.result.pacing = ctx.fast and "state" or "fixed"
     local get = P.ccDC
     local custom = plan.origin == nil and (plan.race or plan.class)
     local stages = {
@@ -1453,8 +1500,8 @@ RPC.register("ui.cc_apply", function(args)
                 if UI.prop(o, "IsCustom") == true then
                     local ok, err = set(dc, "SelectedOrigin", o)
                     if not ok then return "fail", err end
-                    ctx.pending = { key = "origin", prop = "SelectedOrigin", item = o }
-                    return "next", 400
+                    ctx.pending = { key = "origin", prop = "SelectedOrigin", item = o, at = RPC.now_ms() }
+                    return "next", ctx.fast and P.CC_SETTLE_MS or 400
                 end
             end
             return "fail", "no custom origin offered"

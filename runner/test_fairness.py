@@ -61,6 +61,18 @@ class Rules(unittest.TestCase):
         self.assertEqual(got.get("hidden_state"), 1)
         self.assertNotIn("template", got)
 
+    def test_invisibility_status_by_name_is_not_hidden_state(self):
+        # the old event form and the bridge's compacted ones (compact.py EVENT_LINES / CHANGES)
+        got = self.rules(
+            call("wait_for", "  status_applied name=Invisibility target={e2 name=Tav} invisible"),
+            call("wait_for", "  status_applied e2: Invisibility (invisible)"),
+            call("combat_turn", "  status_applied e2 Tav: Invisibility, invisible"),
+            call("look", "  e2 Tav +Invisibility invisible"),
+        )
+        self.assertNotIn("hidden_state", got)
+        got = self.rules(call("get_nearby", "e44 Meazel <character> 12m invisible +Burning"))
+        self.assertEqual(got.get("hidden_state"), 1)
+
 
 class TriageSection(unittest.TestCase):
     def test_section_in_triage_report(self):

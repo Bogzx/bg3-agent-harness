@@ -25,7 +25,7 @@ and unit-tested but has not played a real run yet.
   It checks: installed through Steam, fully, no update pending; the native ELF binary and sniper; the buildid
   equals the pinned build (and, with `--series`, the series' frozen one); Steam offline and the game's
   `AutoUpdateBehavior` (WARN when Steam could change the build mid-series); a Steam client running; bg3le built with
-  every `patches/bg3le` patch; the mod in place; the `claude` CLI; docker (only for the container recipe); free
+  every `patches/bg3le` patch; the mod in place; the `claude` CLI; docker (only for `--sandbox container`); free
   RAM vs the cap; VRAM.
 
 ## 2. What is frozen
@@ -70,12 +70,24 @@ python3 runner/play.py runs --playthrough naut-opus [--failures]        # the ta
 `act2_last_light` need a start save made once by hand ([scenarios/README.md](../scenarios/README.md), "Making a
 start save"); loading a start save in a series is *not live-tested*.
 
-**Models other than Claude.** `play.py` plays through the `claude` CLI only, so `--model` takes Claude models
-today. The pieces for others exist but are not wired into the runner: `runner/clients.py` (a client interface:
-Claude verified offline, Codex run against stubs only, Gemini untested), the MCP server over HTTP, the rules served
-to any client (`bridge/src/bg3ai/rules.py`) and the container recipe that lets an untrusted client reach only the
-bg3 server ([tools/container/README.md](../tools/container/README.md); its host firewall not yet run on a real
-host). A non-Claude series is *not possible end to end yet*.
+**Models other than Claude.** `--client claude|codex|gemini` picks the CLI that plays (`runner/clients.py`:
+Claude: the same command as before, verified offline; Codex run against stubs only, Gemini untested); a series
+keeps its first client (series.json). A non-Claude series is *not live-tested yet*.
+
+**The container sandbox (step 3).** `--sandbox container` runs the client in a container that reaches only the bg3
+MCP server (served over http on the host with the session's env) and, through an egress proxy, its own model API:
+no repo, game files, saves, memory or other host ports inside
+([tools/container/README.md](../tools/container/README.md), "The runner"). Use it for any client you don't want to
+trust with the host. It needs, once per boot, `sudo tools/container/firewall.sh up` (the runner refuses to start
+without the nft table, with that hint; `--sandbox-unfirewalled` is for dev runs and is recorded), docker, and the
+client's credentials in the runner's env (`CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GEMINI_API_KEY`). Run records carry `"sandbox": "container"`. The keeper runs in the container too.
+
+```bash
+sudo tools/container/firewall.sh up && tools/container/firewall.sh check          # OK: only the bg3 server
+python3 runner/play.py run --scenario nautiloid --runs 5 --client codex --model gpt-5 --sandbox container \
+    --playthrough naut-gpt5
+```
 
 ## 4. A run record
 
@@ -152,4 +164,5 @@ model's full set (Underdark at its caps) or 4-5 models' Nautiloid series.
 - Any non-Claude client in a series (section 3).
 - `tools/bench_preflight.py` on a machine other than the test machine (unit-tested with fixture Steam trees; its
   `AutoUpdateBehavior` meanings come from community documentation, not Valve's: fairly sure of 0 and 1, less of 2).
-- The container firewall on a real host.
+- The container firewall on a real host, and a real `--sandbox container` session (offline tests and a Docker-only
+  smoke without game or credentials pass: `runner/test_sandbox.py`, `tools/container/sandbox_smoke.py`).

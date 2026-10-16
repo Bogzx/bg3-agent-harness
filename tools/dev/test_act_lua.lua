@@ -1453,12 +1453,12 @@ test("end_turn in a shared turn group: done on RequestedEndTurn, lists who is st
     restore()
 end)
 
-test("end_turn in a group whose EndTurn stays pending: done {requested} after 1.5 s, counts as ended", function()
+test("end_turn in a group whose EndTurn stays pending: done {requested} after END_REQUEST_AFTER_MS, counts as ended", function()
     local restore = group_setup()
     local j = job(op("end_turn", { char = P1 }))
-    tick(10) -- 0.6 s: still waiting for RequestedEndTurn
+    tick(math.floor(A.END_REQUEST_AFTER_MS / 60) - 1) -- just short of it: still waiting for RequestedEndTurn
     eq(j.status, "running", "status " .. tostring(j.error))
-    tick(20) -- past A.END_REQUEST_AFTER_MS; RequestedEndTurn never set (live S002)
+    tick(3) -- past A.END_REQUEST_AFTER_MS; RequestedEndTurn never set (live S002)
     eq(j.status, "done", "status " .. tostring(j.error))
     eq(j.result.requested, true, "requested")
     eq(j.result.still_to_act and j.result.still_to_act[1], P2, "Lae'zel still to act")
@@ -1468,6 +1468,16 @@ test("end_turn in a group whose EndTurn stays pending: done {requested} after 1.
     eq(j2.status, "failed", "second end_turn refused at once")
     A.dispatch("TurnEnded", { "S_Player_" .. P1 })
     eq(G.is_my_turn(P1), true, "TurnEnded clears the request (next round)")
+    restore()
+end)
+
+test("latency: a shared-group end is reported within 0.5 s (was 1.5 s; naut 12 x 1.6 s)", function()
+    assert(A.END_REQUEST_AFTER_MS <= 500, "END_REQUEST_AFTER_MS " .. A.END_REQUEST_AFTER_MS)
+    assert(A.END_REQUEST_AFTER_MS < A.END_IGNORED_MS, "a request is reported before the ignored-end fallback")
+    local restore = group_setup()
+    local j = job(op("end_turn", { char = P1 }))
+    tick(9) -- 0.54 s
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.requested, true, "requested")
     restore()
 end)
 

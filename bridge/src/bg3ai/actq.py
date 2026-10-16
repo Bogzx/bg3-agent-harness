@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import collections
 import json
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -35,6 +36,10 @@ DAMAGE_MIN_PCT = 4.0
 DAMAGE_SUM_PCT = 8.0
 WATCH_EVERY_S = 0.3  # act.watch + events poll while a step runs
 UI_EVERY_S = 1.0  # ui.state (client) poll: kept slow, Noesis reads are the risky part
+# A check's reads (events of both contexts, act.watch, ui.state, the caller's post_ops) in one round trip: the
+# server ops in one eval, the client ops in another, both in the same tick (Game.read). Off: one RPC each, in order
+# (combat_turn made 20-110 serial RPCs between its steps, ~25 ms each: impl-act "combat_turn serial RPCs").
+BATCH_CHECKS = os.environ.get("BG3AI_BATCH_CHECKS", "1") != "0"
 
 # Prompt screens and the steps that are meant to answer them.
 PROMPTS = {
@@ -158,6 +163,29 @@ class Watcher:
         self._downed: set[str] = set()
         self._traps: dict[str, list] = {}  # spotted during this run, not yet on anyone's way: uuid -> pos
         self._pos: dict[str, list] = {}  # party positions at the previous poll
+        # Extra server ops read with the check after each finished step (BATCH_CHECKS), handed to on_post as
+        # {op: result}: combat_turn's next turn check reads state.combat there instead of one RPC more.
+        self.post_ops: list[tuple[str, dict]] = []
+        self.on_post: Callable[[dict], None] | None = None
+
+    def _fetch(self, server: list, client: list) -> tuple[list, list]:
+        """Results of server and client ops (None for a failed one): one round trip with BATCH_CHECKS and a
+        game that can read both contexts at once, else one try_rpc each in order."""
+        if BATCH_CHECKS and hasattr(self.game, "read") and len(server) + len(client) > 1:
+            try:
+                return self.game.read(server, client, events=False, soft=("server", "client"))
+            except Exception:  # noqa: BLE001 - like try_rpc: a failed read is an empty one
+                return [None] * len(server), [None] * len(client)
+        return ([self.game.try_rpc(op, a) for op, a in server],
+                [self.game.try_rpc(op, a, context="client") for op, a in client])
+
+    @staticmethod
+    def _as_watch(w: Any) -> dict:
+        return w if isinstance(w, dict) else {}
+
+    @staticmethod
+    def _as_screen(ui: Any) -> str:
+        return (ui.get("screen") or "game") if isinstance(ui, dict) else "game"
 
     def _watch(self) -> dict:
         w = self.game.try_rpc("act.watch") or {}
@@ -169,11 +197,19 @@ class Watcher:
 
     def baseline(self) -> None:
         with self._lock:
-            for ctx in ("server", "client"):
-                res = self.game.try_rpc("events.since", {"seq": 10**12, "limit": 1}, context=ctx) or {}
-                self._seq[ctx] = res.get("latest", 0) if isinstance(res, dict) else 0
-            self.start = self.last = self._watch()
-            self._screen = self._screen_now()
+            ev = ("events.since", {"seq": 10**12, "limit": 1})
+            if BATCH_CHECKS:
+                (es, w), (ec, ui) = self._fetch([ev, ("act.watch", {})], [ev, ("ui.state", {})])
+                for ctx, res in (("server", es), ("client", ec)):
+                    self._seq[ctx] = res.get("latest", 0) if isinstance(res, dict) else 0
+                self.start = self.last = self._as_watch(w)
+                self._screen = self._as_screen(ui)
+            else:
+                for ctx in ("server", "client"):
+                    res = self.game.try_rpc(*ev, context=ctx) or {}
+                    self._seq[ctx] = res.get("latest", 0) if isinstance(res, dict) else 0
+                self.start = self.last = self._watch()
+                self._screen = self._screen_now()
             self._ui_at = time.monotonic()
             for row in self.start.get("party") or []:
                 p = _pct(row)
@@ -192,10 +228,12 @@ class Watcher:
             self._screen = self._screen_now()
             self._ui_at = time.monotonic()
 
-    def _new_events(self) -> list[dict]:
+    def _new_events(self, got: dict | None = None) -> list[dict]:
+        """Events since the last check; got = {ctx: events.since reply} already read (BATCH_CHECKS)."""
         out = []
         for ctx in ("server", "client"):
-            res = self.game.try_rpc("events.since", {"seq": self._seq[ctx], "limit": 200}, context=ctx)
+            res = got[ctx] if got is not None else \
+                self.game.try_rpc("events.since", {"seq": self._seq[ctx], "limit": 200}, context=ctx)
             if not isinstance(res, dict):
                 continue
             evs = res.get("events") or []
@@ -270,7 +308,24 @@ class Watcher:
         """(kind, reason) if the run must stop, else None. tool = the step running (or just run)."""
         with self._lock:
             handled = {tool, next_tool}
-            for ev in self._new_events():
+            got = scr = None
+            want_ui = bool(ui or (ui is None and time.monotonic() - self._ui_at >= UI_EVERY_S))
+            if BATCH_CHECKS:
+                post = list(self.post_ops) if ui is False else []
+                sres, cres = self._fetch(
+                    [("events.since", {"seq": self._seq["server"], "limit": 200}), ("act.watch", {})] + post,
+                    [("events.since", {"seq": self._seq["client"], "limit": 200})]
+                    + ([("ui.state", {})] if want_ui else []))
+                got = {"server": sres[0], "client": cres[0]}
+                w_read = self._as_watch(sres[1])
+                if want_ui:
+                    scr = self._as_screen(cres[1])
+                if post and self.on_post is not None:
+                    try:
+                        self.on_post({op: r for (op, _), r in zip(post, sres[2:])})
+                    except Exception:  # noqa: BLE001 - a hook must not break the interrupt check
+                        pass
+            for ev in self._new_events(got):
                 k = ev.get("kind")
                 if k == "teleport_blocked" and "teleport" not in self.ignore:
                     return "teleport", "the engine tried to teleport a character (blocked)"
@@ -285,7 +340,7 @@ class Watcher:
                     if d.get("kind") == "trap" and isinstance(pos, (list, tuple)) and len(pos) == 3 \
                             and isinstance(item, dict) and item.get("uuid"):
                         self._traps[item["uuid"]] = list(pos)
-            w = self._watch()
+            w = w_read if got is not None else self._watch()
             if w:
                 self.last = w
                 if w.get("combat") and not self.start.get("combat") and "combat" not in self.ignore:
@@ -299,9 +354,9 @@ class Watcher:
                             self._hostiles.add(s.get("uuid"))
                             return "hostile", f"hostile in view: {s.get('uuid')}"
             now = time.monotonic()
-            if ui or (ui is None and now - self._ui_at >= UI_EVERY_S):
+            if (want_ui if got is not None else ui or (ui is None and now - self._ui_at >= UI_EVERY_S)):
                 self._ui_at = now
-                scr = self._screen_now()
+                scr = scr if got is not None else self._screen_now()
                 if scr in PROMPTS and scr != self._screen and "prompt" not in self.ignore \
                         and not handled & PROMPTS[scr]:
                     self._screen = scr

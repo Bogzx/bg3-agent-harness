@@ -2,12 +2,13 @@
 
     uv run --project bridge python tools/dev/acceptance.py                  # every section, one game.lock hold each
     uv run --project bridge python tools/dev/acceptance.py --only rest,trade
-    uv run --project bridge python tools/dev/acceptance.py --list
+    uv run --project bridge python tools/dev/acceptance.py --list             # sections, order, estimated time
+    uv run --project bridge --with lz4 --with zstandard python tools/dev/acceptance.py --check   # offline, no game
 
 Each section runs in its own process under `flock -w 1800 runtime/game.lock` (other workers test between
 sections), loads its own save first and verifies the load (a server Lua marker set before the load must be gone
 after it, the party must be readable and the screen the game view), then reloads that save at the end, so story
-state never changes. Saves are only loaded (S027-start, S026-dammon-heat), never written; the bridge runs with a
+state never changes. Saves are only loaded (S027-start, S026-dammon-heat, S050-end), never written; the bridge runs with a
 scratch runtime and a scratch memory dir (note() writes there). Results: runtime/acceptance/<section>.json + .log,
 and the table printed at the end (also runtime/acceptance/table.md). Exit code = number of FAILs.
 """
@@ -31,7 +32,26 @@ LOCK = REPO / "runtime" / "game.lock"
 BASE = "S027-start"            # the real playthrough state (after S026); loaded, never overwritten
 TRADE_SAVE = "S026-dammon-heat"  # Last Light Inn, Quartermaster Talli in view
 DOOR_SAVE = "S050-end"         # Lower City, beside the locked Steel Watch Foundry door (S050 04:12 lockpick hover_miss x4)
-SECTIONS = ["reads", "rest", "trade", "gear", "swap", "nav", "loads", "combat", "setup", "se", "act", "vis"]
+# Run order (se 2026-10-16): read-only sections first, then the ones that change the world (each reloads its save at
+# the end), then the crash guard's reloads, then se, whose last items spend a spell slot (hotbar Bless) and switch
+# bg3le's strict frame lock on and back: a crash there costs no other section. Every section loads its own save first,
+# so a section that died half-way leaves nothing behind but process-wide state (the strict lock: restored in a
+# finally; a nav kill list entry: cleared in a finally).
+SECTIONS = ["reads", "setup", "act", "vis", "gear", "swap", "rest", "trade", "nav", "combat", "loads", "se"]
+# Estimated seconds per section (the 2026-10-11/13 full runs on the test machine: max seen, + today's new items), for the plan.
+EST_S = {"reads": 60, "setup": 30, "act": 60, "vis": 75, "gear": 60, "swap": 85, "rest": 85, "trade": 135,
+         "nav": 195, "combat": 210, "loads": 80, "se": 260}
+# What each save must be for its sections (checked offline by --check from the save's SaveInfo.json).
+SAVE_NEEDS = {
+    BASE: {"level": "SCL_Main_A", "party_has": ["Claude", "Gale", "Shadowheart"], "party_not": ["Wyll"],
+           "party_min": 3, "used_by": "every section (swap: Gale in, Wyll in camp; se hotbar: Shadowheart's Bless "
+                                     "+ 3 in the party; nav/combat: fast travel to Moonrise Towers)"},
+    TRADE_SAVE: {"level": "SCL_Main_A", "near": ((-26.8, 27.4, 164.8), 8),
+                 "used_by": "trade (Last Light Inn; Talli ~34 m S at (-31.3, 27.5, 130.2))"},
+    DOOR_SAVE: {"level": "CTY_Main_A", "near": ((-233.0, 4.5, -180.6), 8),
+                "used_by": "se (Lower City, the locked Steel Watch Foundry door ~1.6 m away; the older S050-end "
+                           "folder stands 31 m off: load_game takes the newest, the right one)"},
+}
 
 RESULTS: list[dict] = []
 S = None  # bg3ai.server, imported in the section process
@@ -633,6 +653,8 @@ def sec_combat() -> None:
          f"{len(gc)} chars, ids shown={ids[:4]}; {named[0][:160] if named else first_line(gc)}")
     from bg3ai import turn as T
     played = 0
+    bg_ends: list[tuple] = []  # (who, combat_turn s, background end s after it returned, queue text, turn passed)
+    rts: list[tuple] = []  # (metrics record, single state.combat RPCs, FAILED lines) per combat_turn (batched checks)
     end = time.monotonic() + 150
     while time.monotonic() < end and played < 3:
         cs = S.game.try_rpc("state.combat") or {}
@@ -664,8 +686,30 @@ def sec_combat() -> None:
         plan = json.dumps({"move": {"target": fh, "within": 1.5}, "on_reaction": "skip", "end": True,
                            "action": [{"ability": "Main Hand Attack", "target": fh},
                                       {"ability": "Ranged Attack", "target": fh}, "Dash"]})
-        out, dt, counts = counted("combat_turn", plan=plan, who=S.H.get(who_u))
+        recs: list[dict] = []
+        orig_td = S.METRICS.tool_done
+
+        def tool_done(tool, *a, **k):  # the combat_turn's own metrics record (rt_n / watch_n)
+            r = orig_td(tool, *a, **k)
+            if tool == "combat_turn" and r and not r.get("nested"):
+                recs.append(r)
+            return r
+        S.METRICS.tool_done = tool_done
+        try:
+            out, dt, counts = counted("combat_turn", plan=plan, who=S.H.get(who_u))
+        finally:
+            S.METRICS.tool_done = orig_td
+        if recs:
+            rts.append((recs[-1], counts.get("state.combat", 0), out.count("FAILED")))
         log(f"RPCs by op: {dict(sorted(counts.items(), key=lambda kv: -kv[1]))}")
+        if "end_turn: ending in the background" in out:  # latency round 2026-10-16 (S.END_ASYNC)
+            b0 = time.monotonic()
+            while S._queues().busy(who_u) and time.monotonic() - b0 < S.END_BG_HOLD_S:
+                time.sleep(0.1)
+            q = S._last_queue_text(who_u)
+            cs2 = S.game.try_rpc("state.combat") or {}
+            bg_ends.append((party[who_u].get("name"), dt, time.monotonic() - b0, q,
+                            who_u not in T.acting(cs2) or not cs2.get("active")))
         jobs = sum(v for k, v in counts.items() if k.startswith("act."))
         polls = counts.get("job.poll", 0)
         rpcs = sum(counts.values())
@@ -690,6 +734,26 @@ def sec_combat() -> None:
              + " | ".join(l for l in out.splitlines()[:4]))
     if not played:
         item("combat_turn on a safe fight", "SKIP", "the fight ended before a party turn")
+    # latency (2026-10-16): the party's last end before enemy turns runs in the background; it must still end the turn
+    # ("end_turn: done", incl. the HUD fallback) and the turn must pass. The numbers = what the agent no longer waits.
+    if not bg_ends:
+        item("combat_turn background end", "SKIP", f"no background end (END_ASYNC={S.END_ASYNC}; shared group or "
+             "the next turn ours each time)")
+    else:
+        ok = all("end_turn" in q and "STOPPED" not in q and ": done" in q and passed for _, _, _, q, passed in bg_ends)
+        item("combat_turn background end", "PASS" if ok else "FAIL",
+             "; ".join(f"{n}: returned {d:.1f}s, end done {b:.1f}s later, passed={p}, {q.splitlines()[-1][:90] if q else '-'}"
+                       for n, d, b, q, p in bg_ends))
+    # act 2026-10-16 "combat_turn serial RPCs": the step checks ride on the watcher's read after each step (one round
+    # trip with its events + act.watch); a read nobody can have changed is reused. Single state.combat RPCs left: the
+    # end_turn tool's own, the NEXT line's, one after each failed alternative (the start one is in a multi).
+    if rts:
+        from bg3ai import actq
+        ok = actq.BATCH_CHECKS and all("rt_n" in r and n <= 3 + f for r, n, f in rts)
+        item("combat_turn batched step checks", "PASS" if ok else "FAIL",
+             f"BATCH_CHECKS={actq.BATCH_CHECKS}; " + "; ".join(
+                 f"rt_n={r.get('rt_n')} rpc_n={r.get('rpc_n')} watch_n={r.get('watch_n', 0)} single state.combat={n} "
+                 f"failed={f} ms-job={r['ms'] - r.get('job_ms', 0):.0f}" for r, n, f in rts))
     melee_probe()
     load_verified(BASE)
 
@@ -768,6 +832,122 @@ def close_targeting() -> str:
     return ui_screen()
 
 
+def hotbar_probe() -> None:
+    """Audit ACT-8 rest (se, 2026-10-16): the hotbar cast route (bridge hotbar.py + Client/Hotbar.lua), built offline
+    from HotBar.xaml with guesses G1-G10 (Hotbar.lua / hotbar.py headers). 1) read-only: the widget tree as the mod
+    sees it (decks, a slot VM's spell id, a slot button's DataContext), ui.hotbar_slot for Main Hand Attack, and the
+    cursor search for its cell (moves only, no click). 2) one Bless on 3 party members out of combat through the
+    hotbar (spends a level-1 slot; sec_se reloads the base save after). PASS = the cast went off on 3 (BLESS on each)
+    and nothing is left in hand. Full reads in se.log (PROBE hotbar lines)."""
+    from bg3ai import hotbar as HB
+    st = status()
+    sel = st.get("active")
+    try:
+        tree = S.game.eval(
+            "local UI = Mods.BG3AI.BG3AI.UI local dc = UI.dc('HotBar') if not dc then return 'no HotBar dc' end "
+            "local bars = UI.path(dc, 'CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.KeyboardHotBars') "
+            "local out = {'decks=' .. tostring(UI.count(bars))} "
+            "for i, b in UI.items(bars, 8) do local sl = UI.get(b, 'SlotList') local s1 = sl and UI.count(sl) > 0 and sl:At(1) "
+            "local c = s1 and UI.get(s1, 'Content') "
+            "out[#out + 1] = tostring(UI.get(b, 'HotBarType')) .. ' n=' .. tostring(sl and UI.count(sl)) .. ' cols=' "
+            ".. tostring(UI.get(b, 'CellColumns')) .. ' rows=' .. tostring(UI.get(b, 'NumberOfBars')) .. ' s1=' "
+            ".. tostring(UI.typeName(s1)) .. '/' .. tostring(UI.get(s1, 'SlotIndex')) .. ' content=' .. tostring(UI.typeName(c)) "
+            ".. ' PrototypeID=' .. tostring(UI.get(c, 'PrototypeID')) end "
+            "local w = UI.widget('HotBar') local btn = w and UI.find(w, function(e) return UI.name(e) == 'contentContainer' end) "
+            "out[#out + 1] = 'button dc=' .. tostring(btn and UI.typeName(UI.get(btn, 'DataContext'))) "
+            ".. ' w=' .. tostring(btn and UI.get(btn, 'ActualWidth')) "
+            "out[#out + 1] = 'shown=' .. tostring(UI.path(dc, 'CurrentShownDeck.HotBarType')) "
+            ".. ' ActiveTask=' .. tostring(UI.path(dc, 'CurrentPlayer.UIData.ActiveTask')) "
+            "return table.concat(out, ' | ')", context="client")
+    except Exception as e:  # noqa: BLE001
+        tree = f"eval error {e}"
+    log(f"PROBE hotbar tree: {tree}")
+    inp = S._inp()
+    try:
+        want = S.game.rpc("ui.hotbar_slot", {"spell": "Target_MainHandAttack", "char": sel}, context="client") or {}
+    except Exception as e:  # noqa: BLE001
+        want = {"error": str(e)}
+    cs = HB.cast_state(S.game, sel)
+    pos, last = (None, {}) if not want.get("found") or inp is None else HB.locate_cell(S.game, inp, "Target_MainHandAttack", sel, want)
+    log(f"PROBE hotbar slot {json.dumps(want)} | cast_state {json.dumps(cs)} | located {pos} {json.dumps(last)[:600]}")
+    ok = bool(want.get("found")) and want.get("rendered") is not False and pos is not None and cs.get("armed") is False
+    item("hotbar widget tree (ACT-8, read-only)", "PASS" if ok else "FAIL",
+         f"{tree[:120]}; MainHandAttack: found={want.get('found')} deck={want.get('deck')} index={want.get('index')} "
+         f"cols={want.get('cols')} rows={want.get('rows')} rendered={want.get('rendered')} cell={want.get('cell')}; "
+         f"located at {pos} in {last.get('probes')} probes; armed={cs.get('armed')}")
+    if not ok:  # the guesses the clicks rely on broke: don't click blind into the world with a spell in hand
+        item("hotbar cast: Bless on 3 allies (ACT-8)", "SKIP", "the read-only hotbar item failed (see its PROBE line)")
+        return
+    # 2) Bless x3 out of combat
+    party = [r.get("uuid") for r in st.get("party") or []]
+    caster = None
+    for u in party:
+        if S.game.run_job("act.select", {"char": u}, wait_s=5).status != "done":
+            continue
+        time.sleep(0.4)
+        r = S.game.try_rpc("ui.hotbar_slot", {"spell": "Target_Bless", "char": u}, context="client") or {}
+        if r.get("found") and r.get("can_use") is not False:
+            caster = u
+            break
+    if need(caster is not None and len(party) >= 3 and not st.get("in_combat") and inp is not None,
+            "hotbar cast: Bless on 3 allies (ACT-8)",
+            f"caster with a usable Bless={caster}, party={len(party)}, in_combat={st.get('in_combat')}"):
+        targets = ([caster] + [u for u in party if u != caster])[:3]
+        r = HB.hotbar_cast(S.game, inp, caster, "Target_Bless", targets)
+        time.sleep(2.5)
+        blessed = []
+        for u in targets:
+            try:
+                blessed.append(lua_server(f'return tostring(Osi.HasActiveStatus("{u}", "BLESS"))') == "1")
+            except Exception:  # noqa: BLE001
+                blessed.append(False)
+        cs = HB.cast_state(S.game, caster)
+        ok = r.ok and all(blessed) and not cs.get("armed") and ui_screen() == "game"
+        item("hotbar cast: Bless on 3 allies (ACT-8)", "PASS" if ok else "FAIL",
+             f"{json.dumps(r.as_dict())[:200]}; BLESS on {blessed}; in hand after={cs.get('armed')}; screen={ui_screen()}")
+        if not ok:
+            close_targeting()
+    if sel:
+        S.game.run_job("act.select", {"char": sel}, wait_s=5)
+
+
+def strict_lock_probe() -> None:
+    """audit UI-5 (patch 0010): the running bg3le has the strict frame-lock mode; the counters read. Then one strict
+    minute: strict on, a burst of UI reads (ui.state x40), strict back to what it was (in a finally: the mode is
+    process-wide, a load doesn't reset it). PASS = no crash, the reads answer (a refusal reads as a missing field, not
+    an error), refusals counted. Needs the rebuilt libbg3le.so. Runs LAST in the last section: a crash costs nothing."""
+    try:
+        before = S.game.eval("local f = Ext._Internal.UiStrict if not f then return 'missing' end "
+                             "local on, n = f() local _, lt, ut = Ext._Internal.UiSerialize() "
+                             "return tostring(on) .. ' ' .. n .. ' ' .. lt .. ' ' .. ut", context="client")
+    except Exception as e:  # noqa: BLE001
+        before = f"eval error {e}"
+    if not need(before.split()[0] in ("true", "false"), "bg3le strict frame lock (UI-5, patch 0010)",
+                f"UiStrict: {before} (the game runs a bg3le without 0010: relaunch after tools/build_bg3le.sh)"):
+        return
+    was = before.split()[0]
+    errs, t, after = 0, time.monotonic(), "not restored"
+    try:
+        S.game.eval("Ext._Internal.UiStrict(true) return 1", context="client")
+        for _ in range(40):
+            u = S.game.try_rpc("ui.state", context="client")
+            errs += 0 if isinstance(u, dict) and u.get("screen") else 1
+    finally:
+        dt = time.monotonic() - t
+        try:
+            after = S.game.eval(f"Ext._Internal.UiStrict({was}) local on, n = Ext._Internal.UiStrict() "
+                                "local _, lt, ut = Ext._Internal.UiSerialize() "
+                                "return tostring(on) .. ' ' .. n .. ' ' .. lt .. ' ' .. ut", context="client")
+        except Exception as e:  # noqa: BLE001
+            after = f"restore failed: {e}"
+    lg = bg3le_log()
+    crash = grep_crash(lg)
+    ok = alive() and not crash and errs <= 2 and after.split()[0] == was
+    item("bg3le strict frame lock (UI-5, patch 0010)", "PASS" if ok else "FAIL",
+         f"strict/refused/lua_timeouts/ui_timeouts before={before} after={after}; 40 ui.state in {dt:.1f}s, "
+         f"{errs} without a screen{'; ' + crash if crash else ''}")
+
+
 def sec_se() -> None:
     """se overnight batch (2026-10-10 23:xx): click hover/unknown button, reactions on an unselected member, the
     game-process check of load_game, Noesis counters, and a read-only CursorText probe in the Jump targeting."""
@@ -828,7 +1008,11 @@ def sec_se() -> None:
     set_marker()
     outs = [call("ui_action", command="QuickLoadCommand", widget="*"), call("press_key", key="F8")]
     mod = []
-    for op, args in (("ui.command", {"widget": "*", "command": "QuickLoadCommand"}), ("ui.key", {"key": "F8"}),
+    # the raw mod ops would really quicksave/quickload on a mod without the UI-3 refusal (not hot-reloaded): send them
+    # only when the live client Lua has it
+    live = S.game.eval("local A = Mods.BG3AI.BG3AI.UIActions return tostring(A and A.saveLoadName ~= nil)",
+                       context="client")
+    for op, args in [] if live != "true" else (("ui.command", {"widget": "*", "command": "QuickLoadCommand"}), ("ui.key", {"key": "F8"}),
                      ("ui.command", {"widget": "*", "command": "QuickSaveCommand"})):
         try:
             mod.append(f"{op} {args.get('command') or args.get('key')}: NOT refused {S.game.rpc(op, args, context='client')}")
@@ -836,7 +1020,9 @@ def sec_se() -> None:
             mod.append(f"{op} {args.get('command') or args.get('key')}: {str(e)[:90]}")
     time.sleep(3.0)
     loaded = marker_gone()
-    ok = (all(o.startswith("REFUSED") for o in outs) and all("save_game / load_game" in m for m in mod)
+    if live != "true":
+        mod.append(f"mod ops not sent: the live client Lua has no UI-3 refusal (UIActions.saveLoadName={live}): hot reload")
+    ok = (live == "true" and all(o.startswith("REFUSED") for o in outs) and all("save_game / load_game" in m for m in mod)
           and not loaded and alive())
     item("ui_action / press_key / ui.command don't save or load (UI-3)", "PASS" if ok else "FAIL",
          " | ".join(first_line(o)[:90] for o in outs) + " | " + " | ".join(mod) + f"; a load happened={loaded}")
@@ -858,34 +1044,6 @@ def sec_se() -> None:
          f"{r.status} {r.error or ''}; read={res.get('read')!r} via={res.get('read_via')} matches={res.get('matches')} "
          f"renamed={res.get('renamed')}; screen after={scr}; save folders written={stray or 'none'}")
 
-    # audit UI-5 (patch 0010): the running bg3le has the strict frame-lock mode; the counters read. Then one strict
-    # minute: strict on, a burst of UI reads (ui.state x40), strict back to what it was. PASS = no crash, the reads
-    # answer (a refusal reads as a missing field, not an error), refusals counted. Needs the rebuilt libbg3le.so.
-    try:
-        before = S.game.eval("local f = Ext._Internal.UiStrict if not f then return 'missing' end "
-                             "local on, n = f() local _, lt, ut = Ext._Internal.UiSerialize() "
-                             "return tostring(on) .. ' ' .. n .. ' ' .. lt .. ' ' .. ut", context="client")
-    except Exception as e:  # noqa: BLE001
-        before = f"eval error {e}"
-    if need(before.split()[0] in ("true", "false"), "bg3le strict frame lock (UI-5, patch 0010)",
-            f"UiStrict: {before} (the game runs a bg3le without 0010: relaunch after tools/build_bg3le.sh)"):
-        was = before.split()[0]
-        S.game.eval("Ext._Internal.UiStrict(true) return 1", context="client")
-        errs, t = 0, time.monotonic()
-        for _ in range(40):
-            u = S.game.try_rpc("ui.state", context="client")
-            errs += 0 if isinstance(u, dict) and u.get("screen") else 1
-        dt = time.monotonic() - t
-        after = S.game.eval(f"Ext._Internal.UiStrict({was}) local on, n = Ext._Internal.UiStrict() "
-                            "local _, lt, ut = Ext._Internal.UiSerialize() "
-                            "return tostring(on) .. ' ' .. n .. ' ' .. lt .. ' ' .. ut", context="client")
-        lg = bg3le_log()
-        crash = grep_crash(lg)
-        ok = alive() and not crash and errs <= 2 and after.split()[0] == was
-        item("bg3le strict frame lock (UI-5, patch 0010)", "PASS" if ok else "FAIL",
-             f"strict/refused/lua_timeouts/ui_timeouts before={before} after={after}; 40 ui.state in {dt:.1f}s, "
-             f"{errs} without a screen{'; ' + crash if crash else ''}")
-
     # set_reactions on a member that is not selected (S041 22:41:22 "char is not the selected character")
     st = status()
     sel = st.get("active")
@@ -905,6 +1063,19 @@ def sec_se() -> None:
     alive_now = S._game_process_alive()
     item("load_game game-process check", "PASS" if alive_now and (rss or 0) >= S.GAME_ALIVE_MIN_MB else "FAIL",
          f"_game_process_alive={alive_now}; biggest bg3 pid={pid} rss={rss} MB (min {S.GAME_ALIVE_MIN_MB})")
+
+    # naut helm cinematic (se, 2026-10-16): AutoSkip now skips a line playing in our combat turn (skip command +
+    # engine SPACE, never shim SPACE) and autoskip.status says why a line is not being skipped; the bridge hands a
+    # stuck line back after DIALOGUE_STUCK_EXIT_S and a read tool waits AUTO_DIALOGUE_READ_LINE_S. BASE has no combat
+    # cinematic: this checks the live mod/bridge carry it; the skip itself is the SESSION-WATCH "helm cinematic" row.
+    sw = S.game.eval("local K = Mods.BG3AI.BG3AI.AutoSkip return tostring(K and K.TURN_LINE_SKIP) .. ' ' .. "
+                     "tostring(K and K.TURN_LINE_SPACE)", context="client")
+    ast = S.game.try_rpc("autoskip.status", context="client") or {}
+    ok = sw == "true true" and isinstance(ast, dict) and ast.get("on") is True \
+        and S.DIALOGUE_STUCK_EXIT_S > 0 and S.AUTO_DIALOGUE_READ_LINE_S < S.DIALOGUE_LINE_WAIT_S
+    item("AutoSkip skips lines in our combat turn (helm; switches live)", "PASS" if ok else "FAIL",
+         f"TURN_LINE_SKIP/SPACE={sw} (nil nil = client Lua not hot-reloaded); autoskip on={ast.get('on')} "
+         f"line={ast.get('line')}; bridge stuck_exit={S.DIALOGUE_STUCK_EXIT_S}s read_line={S.AUTO_DIALOGUE_READ_LINE_S}s")
 
     # Noesis parked/leaked: sys.mem (client) + the bg3le minute line
     m = S.game.try_rpc("sys.mem", context="client") or {}
@@ -1005,6 +1176,7 @@ def sec_se() -> None:
     item("CursorText probe (Jump targeting)", "PASS" if got and mv < 0.5 else ("FAIL" if mv >= 0.5 else "INFO"),
          f"new texts while targeting={got}; party moved {mv:.1f} m; screen after={after}; " + " | ".join(new_texts)[:220]
          + " (full: se.log PROBE lines)")
+    hotbar_probe()   # audit ACT-8 rest: hotbar cell + Bless x3 (spends a slot: after the probes, reloaded right below)
     load_verified(BASE)
     # Lockpick on the S050 door (S050 04:11-04:12 + S051: 8x "hover_miss hovered_instead=[(an object with no id)]";
     # S047 02:57: "nothing happened" while the game walked the actor to its lockpick spot). Opens the roll only:
@@ -1058,7 +1230,7 @@ def sec_se() -> None:
             if ui_screen() == "roll":
                 call("press_key", key="ESCAPE")
         load_verified(BASE)
-
+    strict_lock_probe()  # last: process-wide mode, restored in a finally; nothing runs after it in this section
 
 
 FUNCS = {"reads": sec_reads, "rest": sec_rest, "trade": sec_trade, "gear": sec_gear, "swap": sec_swap,
@@ -1256,6 +1428,14 @@ def sec_act() -> None:
     v = lua_server(g + 'return tostring(A.LADDER_WATCH_AT_USE).."|"..tostring(A.gone_why ~= nil)')
     item("act target gone + ladder watch flag live", "PASS" if ts.get("gone") == "off_stage" and v == "true|true"
          else "FAIL", f"target_state(unknown uuid)={ts}; LADDER_WATCH_AT_USE|gone_why: {v[:80]}")
+    # latency round (2026-10-16): a shared-group end is reported after 0.4 s (Lua A.END_REQUEST_AFTER_MS, was 1.5 s);
+    # dialogue_advance with no conversation anywhere returns in ~0.5 s (was 2.5 s: naut "0 filler line(s)" 2.7 s).
+    v = lua_server(g + 'return tostring(A.END_REQUEST_AFTER_MS)')
+    out, dt = took("dialogue_advance")
+    ok = v == "400" and "conversation ended" in out and dt < 1.5
+    item("act latency: end hold 0.4 s + dialogue_advance idle exit", "PASS" if ok else "FAIL",
+         f"END_REQUEST_AFTER_MS={v}; dialogue_advance {dt:.1f}s: {first_line(out)[:80]}; bridge END_ASYNC={S.END_ASYNC} "
+         f"TURN_POLL_S={S.TURN_POLL_S} DIALOGUE_IDLE_OPEN_S={S.DIALOGUE_IDLE_OPEN_S}")
     # swap_party where the camp button is greyed by the area: the reason at once (S039 21:48:34)
     b = S.game.try_rpc("ui.travel_block", context="client") or {}
     if b.get("error") != "Location":
@@ -1414,10 +1594,12 @@ def sec_vis() -> None:
     if need(bool(lvl), "vis: NAV-2 killed level frontier throttled", "no current level"):
         if not was:
             S.game.try_rpc("nav.level_guard", {"kill": lvl, "why": "acceptance NAV-2"})
-        lua_server(g + "N.waysCache, N.waysCacheN = {}, 0 return 1")
-        fr = S.game.try_rpc("nav.frontier", {"hazards": False}) or {}
-        if not was:
-            S.game.try_rpc("nav.level_guard", {"clear": lvl})
+        try:  # the kill list is a file (nav_guard_<host>.json) a load doesn't reset: always clear what we killed
+            lua_server(g + "N.waysCache, N.waysCacheN = {}, 0 return 1")
+            fr = S.game.try_rpc("nav.frontier", {"hazards": False}) or {}
+        finally:
+            if not was:
+                S.game.try_rpc("nav.level_guard", {"clear": lvl})
         n = len(fr.get("ways") or [])
         item("vis: NAV-2 killed level frontier throttled", "PASS" if n <= 2 and fr.get("ways_off") and
              (fr.get("ms") or 0) < 60 else "FAIL", f"ways={n} ways_off={fr.get('ways_off')} ms={fr.get('ms')}")
@@ -1431,6 +1613,24 @@ def sec_vis() -> None:
                    'local ok=N.inflightOf("jump")~=nil N.inflightDone("jump") '
                    'return tostring(ok).."|"..tostring(N.inflightOf("jump"))')
     item("vis: NAV-7 in-flight markers per op", "PASS" if v == "true|nil" else "FAIL", v)
+    # 17. result compaction (compact.py) on live results: every fact of the raw text survives (compact_check), the
+    # second look is shorter (static lines, clock), and the MCP layer serves compacted plain text.
+    from bg3ai import compact, compact_check as cc
+    comp, shown, probs, sizes = compact.Compactor(), [], [], []
+    for name, kw in (("get_status", {"full": True}), ("look", {"full": True}), ("look", {"full": True}),
+                     ("get_nearby", {}), ("get_map", {}), ("get_frontier", {})):
+        raw = call(name, **kw)
+        out = comp.apply(name, raw)
+        probs += [f"{name}: {p}" for p in cc.check(raw, out, comp.elided, "\n".join(shown))]
+        shown.append(out)
+        sizes.append((cc.est_tokens(raw), cc.est_tokens(out)))
+    a, b = sum(x for x, _ in sizes), sum(y for _, y in sizes)
+    item("vis: result compaction keeps every fact (live)", "PASS" if not probs and b < a and sizes[2][1] <= sizes[1][1]
+         else "FAIL", f"tokens ~{a}->~{b}, per call {sizes}; problems {probs[:3]}")
+    tool = S.mcp._tool_manager.get_tool("look")
+    item("vis: MCP results compacted plain text", "PASS" if getattr(tool.fn, "__compacted__", False)
+         and tool.output_schema is None else "FAIL", f"wrapped={getattr(tool.fn, '__compacted__', False)} "
+         f"output_schema={tool.output_schema}")
     load_verified(BASE)
 
 
@@ -1465,25 +1665,58 @@ def run_section(name: str) -> int:
     return sum(r["verdict"] == "FAIL" for r in RESULTS)
 
 
+def plan(names: list[str]) -> str:
+    t = 0
+    rows = []
+    for n in names:
+        t += EST_S.get(n, 60)
+        rows.append(f"  {n:<7} ~{EST_S.get(n, 60) // 60}m{EST_S.get(n, 60) % 60:02d}s  (done by ~{t // 60}m{t % 60:02d}s)")
+    return "\n".join(rows) + f"\n  total ~{t // 60} min (+ waits for {LOCK.name})"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default="")
     ap.add_argument("--section", default="")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--check", action="store_true", help="offline: validate tools, RPC ops, Lua snippets, saves")
     a = ap.parse_args()
     if a.list:
         print(" ".join(SECTIONS))
+        print(plan(SECTIONS))
         return 0
+    if a.check:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import acceptance_check
+        return acceptance_check.main_check(sys.modules[__name__])
     if a.section:
         return run_section(a.section)
     names = [s for s in (a.only.split(",") if a.only else SECTIONS) if s]
+    unknown = [n for n in names if n not in FUNCS]
+    if unknown:
+        print(f"unknown section(s) {unknown}; sections: {' '.join(SECTIONS)}")
+        return 2
     OUT.mkdir(parents=True, exist_ok=True)
+    print("plan:\n" + plan(names), flush=True)
     rows = []
+    died = ""
     for name in names:
-        print(f"--- section {name}: waiting for {LOCK.name} ({time.strftime('%H:%M:%S')})", flush=True)
+        if died:  # the game is gone: the rest can't run; say so instead of N "the game is not running" FAILs
+            rows.append({"item": f"section {name}", "verdict": "SKIP",
+                         "evidence": f"not run: the game died during section {died} (relaunch, then --only {name},…)"})
+            continue
+        print(f"--- section {name} (~{EST_S.get(name, 60)} s): waiting for {LOCK.name} ({time.strftime('%H:%M:%S')})",
+              flush=True)
+        t = time.monotonic()
         subprocess.run(["flock", "-w", "1800", str(LOCK), "timeout", "900", sys.executable, __file__, "--section", name])
+        print(f"--- section {name} took {time.monotonic() - t:.0f} s (est. {EST_S.get(name, 60)} s)", flush=True)
         f = OUT / f"{name}.json"
         rows += json.loads(f.read_text()) if f.exists() else [{"item": f"section {name}", "verdict": "FAIL", "evidence": "no result file"}]
+        if not alive():
+            died = name
+            rows.append({"item": f"game alive after section {name}", "verdict": "FAIL",
+                         "evidence": "bg3 is gone: collect runtime/logs/bg3le-*.log (crash: lines) + "
+                                     f"runtime/acceptance/{name}.log"})
     table = ["| item | verdict | evidence |", "|---|---|---|"] + [
         f"| {r['item']} | {r['verdict']} | {r['evidence'].replace('|', '/')} |" for r in rows]
     (OUT / "table.md").write_text("\n".join(table) + "\n")

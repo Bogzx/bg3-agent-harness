@@ -19,6 +19,12 @@ HP_RE = re.compile(r"(e\d+) ([A-Z][\w' -]*?) (?:moved [^,\n]*, )?HP (\d+)->(\d+)
 DOWN_RE = re.compile(r"(e\d+) ([A-Z][\w' -]*?) [^\n]*\+Downed")
 DIED_RE = re.compile(r"died name=([^\n}]+?) (e\d+)")
 DIED2_RE = re.compile(r"died (e\d+) name=([^\n}]+)")
+# compacted results (bridge compact.py): "died e34 Imp" / "died e67" (named earlier in the result), or no died event
+# at all when CHANGES already says "~ e32 Imp DEAD"; names come from any "eN Name" line of the session
+DIED3_RE = re.compile(r"^\s*died (e\d+)(?: ([A-Z][^\n;=]*))?$", re.M)
+_WORDS = r"([A-Z][a-z'][\w'-]*(?: [A-Z][a-z'][\w'-]*)*)"  # a display name: capitalized words, not DEAD/HP flags
+DEAD_RE = re.compile(r"^\s*~ (e\d+) " + _WORDS + r"[ ,][^\n]*\bDEAD\b(?! END)", re.M)
+NAMED_RE = re.compile(r"(?:^|[\s{(\[])(e\d+) (?:name=)?" + _WORDS + r"(?=[\s,;:}\])]|$)")
 OURS_RE = re.compile(r"(?:PARTY [+-] e\d+ ([A-Z][\w' -]*)|e\d+ ([A-Z][\w' -]*?) \(yours\))")
 TURN_RE = re.compile(r"TURN (?:round (\d+) turn=)?(e\d+) ([A-Z][\w' -]*?)(?: \(round (\d+)\)|\n|$)")
 ROUND_RE = re.compile(r"round[ =](\d+)")
@@ -26,8 +32,38 @@ PARTY_RE = re.compile(r"PARTY \*?(e\d+) ([A-Z][\w'-]*)")
 WHERE_RE = re.compile(r"WHERE ([^|\n·]+)")
 ABIL_RE = re.compile(r'"ability\\?"\s*:\s*\\?"([^"\\]+)')
 CAST_RE = re.compile(r"cast=([A-Za-z_]+)")
+# compacted action lines drop "cast=X" when X is the action id: "action: Target_MainHandAttack e31: done — target=.."
+ACTION_DONE_RE = re.compile(r"(?:action: |→ )([A-Z][A-Za-z]*_\w+)(?: e\d+)?: done\b(?![^\n]*cast=)")
 FLAGS = {"debrief": re.compile(r"(?i)debrief"), "last_attempt": re.compile(r"LAST ATTEMPT"),
          "lesson": re.compile(r"(?i)\blessons?\b"), "repeat_warning": re.compile(r"(?i)repeated mistake|same as last time")}
+
+
+def deaths(text, names=None):
+    """{(name, handle)} of everything that died in these results, old (`died name=X eN`, `died eN name=X`) and
+    compacted forms (`died eN X`, `died eN`, CHANGES `~ eN X ... DEAD`). names: handle -> name for bare handles."""
+    names = names or {}
+    out = {(n.strip(), e) for n, e in DIED_RE.findall(text)} | {(n.strip(), e) for e, n in DIED2_RE.findall(text)}
+    out |= {((n or names.get(e, e)).strip(), e) for e, n in DIED3_RE.findall(text)}
+    out |= {(n.strip(), e) for e, n in DEAD_RE.findall(text)}
+    by_handle = {}
+    for n, e in out:  # one entry per handle: a real name beats a bare handle
+        if e not in by_handle or by_handle[e] == e:
+            by_handle[e] = n
+    return {(n, e) for e, n in by_handle.items()}
+
+
+def handle_names(text):
+    """handle -> the last display name a result gave it (`e34 Imp`, `e2 name=Brannoch Vael`, `name=Imp e34`)."""
+    seen = defaultdict(Counter)
+    for e, n in NAMED_RE.findall(text):
+        seen[e][n] += 1
+    for n, e in DIED_RE.findall(text):
+        seen[e][n.strip()] += 1
+    return {e: c.most_common(1)[0][0] for e, c in seen.items()}
+
+
+def casts_of(text):
+    return Counter(CAST_RE.findall(text)) + Counter(ACTION_DONE_RE.findall(text))
 
 
 def base(name):
@@ -115,6 +151,7 @@ def mine(run, sid):
             party.add(n)
         for a, b in OURS_RE.findall(c["res"]):
             ours.add(base(a or b))
+    names = handle_names("\n".join(c["res"] for c in calls))
     fights = []
     where = "?"
     ci = 0
@@ -146,7 +183,7 @@ def mine(run, sid):
                 if (eid, c["t"]) not in seen and base(name) in party:
                     seen.add((eid, c["t"]))
                     downs[base(name)] += 1
-        died = {(n.strip(), e) for n, e in DIED_RE.findall(text)} | {(n.strip(), e) for e, n in DIED2_RE.findall(text)}
+        died = deaths(text, names)
         party_died = sorted({base(n) for n, _ in died if base(n) in party})
         enemies = Counter()
         for n, e in died:
@@ -162,7 +199,7 @@ def mine(run, sid):
             if c["tool"] in ("combat_turn", "use_ability", "do_actions"):
                 for a in ABIL_RE.findall(c["args"]):
                     abilities[a] += 1
-        casts = Counter(CAST_RE.findall(text))
+        casts = casts_of(text)
         after = [c for c in calls if end < c["t"] <= end + RELOAD_AFTER_S]
         reload_c = next((c for c in inside + after if c["tool"] == "load_game"), None)
         downed_all = len(party) and len(downs) >= min(4, len(party)) and not enemies
@@ -182,7 +219,7 @@ def mine(run, sid):
     for c in calls:
         if any(st - 10 <= c["t"] <= en + 5 for st, en in spans):
             continue
-        for n, e in list(DIED_RE.findall(c["res"])) + [(n, e) for e, n in DIED2_RE.findall(c["res"])]:
+        for n, e in sorted(deaths(c["res"], names)):
             if base(n) in party:
                 rl = next((d for d in calls if c["t"] < d["t"] <= c["t"] + 600 and d["tool"] == "load_game"), None)
                 fights.append({"session": sid, "start": time.strftime("%H:%M:%S", time.localtime(c["t"])), "t": c["t"],

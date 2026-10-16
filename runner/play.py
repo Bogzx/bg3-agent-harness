@@ -1696,6 +1696,7 @@ class Options:
     judge_change: str | None = None    # --allow-judge-change: the judge model differs from series.json's
     client: str = "claude"             # run --client: the CLI that plays (runner/clients.py; frozen in series.json)
     client_change: str | None = None   # --allow-client-change: the client differs from series.json's
+    sandbox_change: str | None = None  # --allow-sandbox-change: the sandbox mode differs from series.json's
     sandbox: str = "none"              # run --sandbox: none | container (runner/sandbox.py)
     box: sandbox.Sandbox | None = None  # --sandbox container: prepared once by cmd_run (firewall checked, proxy up)
 
@@ -1769,11 +1770,11 @@ class Runner:
     def __init__(self, opt: Options):
         self.opt = opt
         self._client = make_client(opt)   # the CLI every play, resume and fix-notes process runs
+        self.mem = PLAYTHROUGHS / opt.playthrough / "memory"
+        self.state = RunnerState(opt.playthrough)
         # --sandbox container: this playthrough's HOME for the client in the container (its sessions to resume)
         self.box = replace(opt.box, home=self.state.dir / "sandbox-home") if opt.box else None
         self._sandbox_live: tuple | None = None   # (server, container) of the play process now running
-        self.mem = PLAYTHROUGHS / opt.playthrough / "memory"
-        self.state = RunnerState(opt.playthrough)
         self.profile_path = PLAYTHROUGHS / opt.playthrough / "profile.json"
         self.profile = load_profile(self.profile_path)
         if opt.character_brief or opt.roleplay or opt.difficulty:
@@ -3042,6 +3043,8 @@ class Runner:
             rec.update(self.box.record())   # sandbox=container (+ sandbox_unfirewalled)
         if self.opt.client_change:
             rec["client_change"] = self.opt.client_change
+        if self.opt.sandbox_change:
+            rec["sandbox_change"] = self.opt.sandbox_change
         if self.opt.series:
             rec = {"series": self.opt.series, "run": self.opt.run_index, **rec}
             run = self.state["run"] or {}
@@ -3310,7 +3313,7 @@ class Runner:
             # the play client keeps the memory too (a benchmark compares one CLI end to end); claude stays on its
             # default pass with Claude Code's file tools, the others go through the bg3 server's keeper mode
             r = K.run_keeper(self.mem, n, base, model, effort, minutes, refused=refused, client=client,
-                             sandbox=getattr(self, "box", None))
+                             **({"sandbox": box} if (box := getattr(self, "box", None)) else {}))
             log(r.summary())
             self.event("memory_keeper", session=sid, status=r.status, seconds=r.seconds, files=r.files,
                        commit=r.commit, timed_out=r.timed_out, reverted=r.reverted, lint_errors=r.lint_errors[:5],
@@ -3631,7 +3634,7 @@ class Runner:
             self.event("runner_start", pid=os.getpid())
         write_status(playthrough=self.opt.playthrough, runner_pid=os.getpid(), run_end=run_end,
                      session=None, deadline=None, run_started=run_started, heartbeat=time.time(), alert=None,
-                     series=self.opt.series, run_index=self.opt.run_index)
+                     series=self.opt.series, run_index=self.opt.run_index, sandbox=self.opt.sandbox)
         first = not h
         setup_failures = 0
         stop_why = "stopped"
@@ -3889,9 +3892,20 @@ def cmd_run(a) -> int:
     if a.session_minutes < MIN_SESSION_MINUTES:
         log(f"WARNING: {a.session_minutes:g}-min sessions (wrap-up at {wrap_minutes(a.session_minutes):.1f} min); "
             "expect little play")
-    if a.sandbox_unfirewalled and a.sandbox != "container":
+    if a.sandbox_unfirewalled is True and a.sandbox != "container":
         print("refusing --sandbox-unfirewalled: it goes with --sandbox container", file=sys.stderr)
         return 2
+    sandbox_change = None
+    if a.runs:   # a series plays in one sandbox mode, fixed like its client; checked before docker is touched
+        err, sandbox_change = runs.series_sandbox(series_meta(a.playthrough),
+                                                  runs.sandbox_mode(a.sandbox, a.sandbox_unfirewalled),
+                                                  a.allow_sandbox_change)
+        if err:
+            msg = f"series {a.playthrough}: REFUSING the run: {err}"
+            print(msg, file=sys.stderr)
+            log(msg)
+            log("runner stopped (sandbox mode differs from the series: run refused)")
+            return 2
     lock = acquire_lock()  # held for the process lifetime (released only to exec the new runner code)
     box = None
     if a.sandbox == "container":   # once per runner: docker, network, images, firewall, egress proxy
@@ -3911,7 +3925,8 @@ def cmd_run(a) -> int:
     opt = replace(opt, run_hours=caps["run_hours"], max_cost=caps["max_cost"], max_tokens=caps["max_tokens"],
                   cap_changes=cap_changes or None, pins=current_pins() if a.until and not a.runs else None,
                   judge=use_judge, judge_model=judge_model if use_judge else None, judge_change=judge_change,
-                  client=client, client_change=client_change, sandbox=a.sandbox, box=box)
+                  client=client, client_change=client_change, sandbox=a.sandbox, box=box,
+                  sandbox_change=sandbox_change)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
@@ -3986,16 +4001,18 @@ def series_profile(base: str) -> dict | None:
 
 def freeze_series(base: str, n: int, until: str | None, profile: dict, pins: dict | None = None,
                   caps: dict | None = None, scenario: dict | None = None, judge_model: str | None = None,
-                  client: str | None = None) -> None:
+                  client: str | None = None, box: dict | None = None) -> None:
     """series.json, written once by the first run: the profile, N, the milestone, the version pins, the caps, the
-    persona judge's model and the client (--client) every later run is held to, and the scenario
-    (runs.scenario_freeze) of a run --scenario series. A series from before pins/caps/judge/client gets them from
-    the first run that has them."""
+    persona judge's model, the client (--client) and the sandbox (box: runs.sandbox_mode) every later run is held
+    to, and the scenario (runs.scenario_freeze) of a run --scenario series. A series from before
+    pins/caps/judge/client gets them from the first run that has them; one from before the sandbox key never gets
+    it (it played without a sandbox: runs.series_sandbox reads a missing key as "none")."""
     path = RUNTIME / "sessions" / base / "series.json"
     meta = series_meta(base)
     if path.exists() and ("pins" in meta or pins is None) and ("caps" in meta or caps is None) and \
             ("judge_model" in meta or judge_model is None) and ("client" in meta or client is None):
         return
+    new = not path.exists()
     if not path.exists():
         meta = {"series": base, "runs": n, "until": until, "profile": profile, "created": round(time.time(), 1)}
         if scenario is not None:
@@ -4008,6 +4025,8 @@ def freeze_series(base: str, n: int, until: str | None, profile: dict, pins: dic
         meta.setdefault("judge_model", judge_model)
     if client is not None:
         meta.setdefault("client", client)
+    if new and box is not None:
+        meta.update(box)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n")
 
@@ -4094,7 +4113,8 @@ def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, s
         pins = current_pins()
         freeze_series(base, n, opt.until, r.profile, pins, {k_: getattr(opt, k_) for k_ in runs.CAP_KEYS},
                       runs.scenario_freeze(scenario, save_sha1) if scenario else None,
-                      opt.judge_model if opt.judge else None, opt.client)
+                      opt.judge_model if opt.judge else None, opt.client,
+                      runs.sandbox_mode(opt.sandbox, bool(opt.box and opt.box.unfirewalled)))
         refusal = gate_series_run(base, r, pins, allow_drift)
         if refusal:
             log(refusal)
@@ -4341,10 +4361,13 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--sandbox", choices=sandbox.MODES, default="none",
                    help="container: the client plays from a container that reaches only the bg3 MCP server (served "
                         "over http on the host) and its model API (runner/sandbox.py, tools/container/README.md); "
-                        "refuses without the host firewall (sudo tools/container/firewall.sh up). Recorded")
+                        "refuses without the host firewall (sudo tools/container/firewall.sh up). Recorded; a series "
+                        "keeps its first mode (series.json) and refuses a run in another")
     r.add_argument("--sandbox-unfirewalled", action="store_true",
                    help="--sandbox container without the host firewall (dev only: the container then reaches every "
                         "host port bound to all interfaces); recorded as sandbox_unfirewalled")
+    r.add_argument("--allow-sandbox-change", action="store_true",
+                   help="--runs: let --sandbox / --sandbox-unfirewalled differ from series.json (recorded)")
     r.add_argument("--allow-client-change", action="store_true",
                    help="--runs: let --client differ from series.json (recorded)")
     r.add_argument("--allow-version-drift", action="store_true",

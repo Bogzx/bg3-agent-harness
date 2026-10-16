@@ -25,8 +25,9 @@
 --   * Never act while answers, a continue prompt, a roll, a reaction prompt,
 --     a popup or any other decision page is up.
 --   * SPACE is only injected while the Dialogue page is visible, an
---     ActiveDialogue exists, no answers are shown, and it is not our
---     combat turn (Space is End Turn).
+--     ActiveDialogue exists and no answers are shown. In our combat turn
+--     (Space is End Turn on the HUD) only the engine SPACE in the same tick
+--     as those checks (TURN_LINE_SPACE), never the shim SPACE.
 --   * Each line or movie gets at most MAX_TRIES presses, RETRY_MS apart.
 --   * A node without subtitle text (cinematic shots, a door opening, the
 --     mind flayer's reveal: S002 sat ~20 s on these in TUT_Helm_MindflayerCall
@@ -70,6 +71,11 @@ K.LINE_GRACE_MS = 250   -- let a new line render before skipping it
 K.NOTEXT_GRACE_MS = 600 -- a text-less node: longer, so a line whose text is still rendering is not lost
 K.NOTEXT_RETRY_MS = 1000
 K.NOTEXT_MAX_TRIES = 60 -- text-less nodes chain under one key: keep skipping for about a minute
+-- Our combat turn with a line playing (the Nautiloid helm cinematic): the skip command, and the engine SPACE on
+-- every 2nd try (TURN_LINE_SPACE). Never the shim SPACE. Live revert: Mods.BG3AI.BG3AI.AutoSkip.TURN_LINE_SKIP = false
+-- (back to: never skip in our turn), or only TURN_LINE_SPACE = false (command only).
+K.TURN_LINE_SKIP = true
+K.TURN_LINE_SPACE = true
 K.stats = K.stats or { lines = 0, movies = 0, seen = 0 }
 K.state = { next = 0, nextMovie = 0 }
 -- What the bridge should press through the shim: {seq, key, reason, try, at}
@@ -280,11 +286,33 @@ function K.tick()
     if now - line.since < math.max(grace, K.PERIOD_MS) then return end
     local maxTries = line.notext and K.NOTEXT_MAX_TRIES or K.LINE_MAX_TRIES
     local gap = line.notext and K.NOTEXT_RETRY_MS or K.RETRY_MS
-    if line.tries >= maxTries or now - line.last < gap then return end
-    if isOurCombatTurn(dc) then return end
+    if line.tries >= maxTries then line.blocked = "tries" return end
+    if now - line.last < gap then return end
+    -- naut series (helm): the transponder cinematic plays during the party's shared combat turn, and this rule
+    -- skipped nothing (~30-45 s a run). A player skips it with SPACE (the Dialogue page has the input; the HUD's
+    -- End Turn is hidden): our turn now gets the page's skip command and the engine SPACE, sent in this tick
+    -- right after the live checks above, never the shim SPACE (it lands a poll later, maybe on the HUD).
+    local ourTurn = isOurCombatTurn(dc)
+    if ourTurn and not K.TURN_LINE_SKIP then line.blocked = "our turn" return end
+    line.blocked = nil
 
     line.tries = line.tries + 1
     line.last = now
+    if ourTurn then
+        line.turn = true
+        local ok
+        if line.tries % 2 == 1 or not K.TURN_LINE_SPACE then
+            ok = UI.command(dc, "SelectorSkipCommand", nil, false)
+        else
+            ok = press("SPACE")
+        end
+        if ok and not line.counted then
+            line.counted = true
+            if line.notext then K.stats.cinematic = (K.stats.cinematic or 0) + 1
+            else K.stats.lines = K.stats.lines + 1 end
+        end
+        return
+    end
     -- Escalate while the same line stays up (S023: Mizora's and Halsin's cinematic lines played at voice
     -- pace: SelectorSkipCommand "succeeded" with no effect, so SPACE never came; ~4 min of waits): the
     -- page's skip command, then the engine's SPACE, then SPACE through the bridge's input shim (real input).
@@ -298,7 +326,8 @@ function K.tick()
         want("SPACE", "line", line.tries, now, line.id)
         ok = true
     end
-    if ok and line.tries == 1 then
+    if ok and not line.counted then
+        line.counted = true
         if line.notext then K.stats.cinematic = (K.stats.cinematic or 0) + 1
         else K.stats.lines = K.stats.lines + 1 end
     end
@@ -369,7 +398,8 @@ RPC.register("autoskip.status", function(args)
         movie = m and { age = now - m.since, tries = m.tries, kind = m.kind } or nil,
         want = w, held = held,
         line = K.state.line and { notext = K.state.line.notext or nil, tries = K.state.line.tries,
-                                  age = now - K.state.line.since, id = K.state.line.id } or nil,
+                                  age = now - K.state.line.since, id = K.state.line.id,
+                                  turn = K.state.line.turn, blocked = K.state.line.blocked } or nil,
         stats = { lines = K.stats.lines, movies = K.stats.movies, seen = K.stats.seen, errors = K.errors or 0,
                   cinematic = K.stats.cinematic or 0, polled = K.polled },
         slow = K.slow,

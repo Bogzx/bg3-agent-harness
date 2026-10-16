@@ -36,10 +36,66 @@ The client needs no files from the repo: the server serves the rules of play (pl
 `bg3://rules` resource. With `BG3AI_SESSION_DEADLINE` set, it also refuses game actions 5 minutes after the
 deadline (`BG3AI_STOP_GRACE_S`) and tells the agent to call `end_session` (docs/BENCHMARK-BIAS.md).
 
-Put the agent in the same image (or one like it) and point its MCP config at `http://172.30.99.1:8770/mcp`
-(streamable HTTP). The model API is outside the internal network: give the container a second network to an
-egress proxy that allows only the API host (not part of this recipe). Without it the client can talk to nothing but
-the server, which is the point.
+The runner does all of this for you: next section.
+
+## The runner: `play.py run --sandbox container`
+
+```sh
+sudo tools/container/firewall.sh up                       # once per boot (root); the runner refuses without it
+export CLAUDE_CODE_OAUTH_TOKEN=...                        # or ANTHROPIC_API_KEY (codex: OPENAI_API_KEY, gemini: GEMINI_API_KEY)
+python3 runner/play.py run --playthrough box1 --sandbox container [--client codex] ...
+```
+
+```
+host                                            internal network bg3ai-sandbox (172.30.99.0/24)
+  runner ── per play process ──┐
+  bg3ai-mcp --transport http   │   <── 8770 ──   bg3ai-play-<session>  (bg3ai/agent-client: claude/codex/gemini)
+    --host 172.30.99.1, the    │                   --cap-drop ALL, no-new-privileges, read-only root, host uid,
+    session's env, cwd play/   └── docker run ──>  HOME = runtime/sessions/<pt>/sandbox-home (rw), nothing else
+  game, repo, saves, memory                          │ HTTPS_PROXY=http://172.30.99.2:3128
+  internet <── default bridge ── bg3ai-egress (172.30.99.2): CONNECT <the client's API host>:443 only
+```
+
+What `runner/sandbox.py` does:
+- **Once per runner start** (`prepare`): `docker version` answers; the network exists (created like `run.sh`); both
+  images are built (`Dockerfile` = smoke client, firewall probe and proxy; `Dockerfile.agent` = node 22 + the three
+  CLIs, the play client's version pinned to the host's `<cli> --version`); the **firewall gate**; play/keeper
+  containers a dead runner left are removed; the egress proxy is (re)started for the client's API hosts
+  (`sandbox.EGRESS`; override with `BG3AI_SANDBOX_EGRESS=host1,host2`).
+- **Firewall gate**: `nft list table inet bg3ai_sandbox` (or `sudo -n nft list ...`; read-only) must show the table
+  with the accept rule for `172.30.99.1:8770`: missing or stale → refused with the `sudo ... firewall.sh up` hint.
+  Then `firewall.sh check` from a container must print OK (nothing but the server reachable). Where nft can't be
+  read without root and `sudo -n` isn't allowed, the probe alone decides. `--sandbox-unfirewalled` skips the gate
+  (dev only): the run record gets `sandbox_unfirewalled: true`.
+- **Per play process** (every session, resume and fix-notes pass): the bg3 server starts on the host over http with
+  exactly the env a stdio server would get (the runner's env, `play/.mcp.json`'s, the session's: deadline, save
+  identity, metrics path, `BG3AI_SESSION`...) plus `BG3AI_SERVE_RULES=1` (the container has no `play/CLAUDE.md`),
+  log `runtime/sessions/<pt>/<sid>.mcp-http.log`, pid in `runtime/sandbox-server.pid` (a dead runner's stale server
+  is stopped first). Then `docker run --rm` of the client's usual command (`clients.make_http`: the bg3 server is its
+  only MCP server, at the http URL; claude also gets play/.claude/settings.json as `--settings`). The client's stdout
+  is the stream the runner already parses: log, latency, stop check, caps, RUN-7/RUN-8 all work unchanged. Signals:
+  the docker CLI forwards SIGINT/SIGTERM to the container (tini); after the process ends the container is
+  `docker rm -f`'d (a SIGKILL to the CLI doesn't reach it) and the server stopped. A server that can't start (port
+  taken, crash) is RUN-8's `mcp_failed` setup failure.
+- **Memory keeper**: the same, in a `keeper` container against the keeper-mode server over http (always the MCP
+  pass: no file tools in the container, also for claude).
+- **Records**: runs.jsonl gets `sandbox: "container"` (+ `sandbox_unfirewalled`).
+- **Credentials**: passed by name (`docker run -e NAME`: never in argv or logs) when set in the runner's env:
+  claude `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`), codex `OPENAI_API_KEY` /
+  `CODEX_API_KEY`, gemini `GEMINI_API_KEY` / `GOOGLE_API_KEY`. A login kept in the sandbox home works too. The
+  host's own `~/.claude` / `~/.codex` are never mounted.
+- At the runner's end the proxy and any container left are removed.
+
+What it doesn't cover: DNS from the client container goes to Docker's embedded resolver (on an `--internal` network
+it doesn't forward outside: the clients need none, the proxy resolves); the proxy's allowlist is by host name, so the
+client can still send anything to its own model API (it can anyway). The model API is the only way out.
+
+**Tested.** Offline: `runner/test_sandbox.py` (fake docker, fake nft/sudo, throwaway server processes; the whole
+run_claude path through a fake `docker run`; the keeper path). Docker-only smoke without a game or model spend:
+`python3 tools/container/sandbox_smoke.py` (prepare with the real daemon, the real bg3 server over http, node in the
+agent image: MCP initialize, the proxy allows only the API host on 443, no direct route; the real `claude -p` in the
+container sees `bg3: connected` and, with no login, fails auth through the proxy). **Not yet run:** a real session
+(game + a logged-in client) and the gate with the firewall loaded (`--firewalled` on the smoke).
 
 ## What the network does not stop, and the firewall that does
 

@@ -581,6 +581,59 @@ class StatusFlap:
 FLAP = StatusFlap()
 
 
+class EventEcho:
+    """Across calls: the same event (kind + identical data) again within ECHO_WINDOW_S is an echo, not news.
+    The engine fires some twice for one act: a door/Sphincter interact gives two UseFinished (`used`), one of
+    them after the interact result returned, so the next result (a route, a look) showed it again; a pickup
+    gave `item_added ... count=2` twice (naut golden results 21-22, 128-129, 254-261). Real repeats differ in
+    their data (a stack count, another item) or come later than the window."""
+    ECHO_KINDS = {"used", "item_added", "item_removed", "opened", "closed", "door_opened"}
+    ECHO_WINDOW_S = 5.0
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.last: dict[tuple, float] = {}
+
+    def filter(self, evs: list[dict]) -> list[dict]:
+        out = []
+        for e in evs:
+            if e.get("kind") not in self.ECHO_KINDS:
+                out.append(e)
+                continue
+            key = (e.get("kind"), json.dumps(e.get("data"), sort_keys=True, default=str))
+            t = e.get("t")
+            now = float(t) / 1000.0 if isinstance(t, (int, float)) else self.clock()
+            prev = self.last.get(key)
+            self.last[key] = now
+            if prev is not None and 0 <= now - prev < self.ECHO_WINDOW_S:
+                continue
+            out.append(e)
+        if len(self.last) > 300:
+            newest = max(self.last.values())
+            self.last = {k: v for k, v in self.last.items() if newest - v < self.ECHO_WINDOW_S}
+        return out
+
+
+ECHO = EventEcho()
+
+
+def one_line(text: str, cap: int = 240) -> str:
+    """A multi-line step result as one line for an event field (queue_interrupted last=): the step's own line
+    plus its FAILED/INTERRUPTED/STOPPED lines, up to its CHANGES/EVENTS/RUNNING/NOW block. An event value
+    with raw newlines broke the EVENTS block (naut-r2 golden 129: `last=1. travel_to ..` then a stray
+    `STOPPED: leg 1 failed` and a fake CHANGES block holding `done=0 who=e2`)."""
+    lines = [ln.strip() for ln in str(text).split("\n")]
+    head: list[str] = []
+    for ln in lines:
+        if ln in ("CHANGES", "EVENTS") or ln.startswith(("RUNNING ", "NOW ", "\u23f1")):
+            break
+        if ln:
+            head.append(ln)
+    keep = head[:1] + [ln for ln in head[1:] if re.search(r"FAILED|INTERRUPTED|TIMEOUT|STOPPED|REFUSED", ln)]
+    out = " | ".join(keep or head[:1])
+    return out if len(out) <= cap else out[: cap - 1] + "…"
+
+
 def _target_text(t: Any, H: Handles) -> str:
     if isinstance(t, dict) and isinstance(t.get("uuid"), str):
         return f"{t.get('name')} {H.get(t['uuid'], t.get('name'))}".strip()
@@ -618,12 +671,14 @@ def _group_statuses(evs: list[dict], H: Handles) -> list[dict]:
 
 
 def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", job: str | None = None,
-                  flap: StatusFlap | None = None, party: set | None = None) -> str:
+                  flap: StatusFlap | None = None, party: set | None = None, echo: EventEcho | None = None) -> str:
     """EVENTS section. body: the tool result's own text, so events it already reports are left out
-    (job: the job id a wait_for just returned). flap: the cross-call status mute (server passes FLAP)."""
+    (job: the job id a wait_for just returned). flap: the cross-call status mute (server passes FLAP).
+    echo: the cross-call duplicate filter (server passes ECHO)."""
     m = re.match(r"TURN (e\d+)", body or "")
     own = m.group(1) if m else None
     evs = [e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS and not _already_shown(e, H, body, own, job)]
+    evs = echo.filter(evs) if echo is not None else evs
     evs = _drop_flicker(flap.filter(evs, party) if flap is not None else evs)
     evs = _group_statuses(evs, H)
     if not evs:
@@ -636,6 +691,7 @@ def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", 
     for e in shown:
         data = e.get("data")
         txt = compact(data, H) if isinstance(data, (dict, list)) else (H.scrub(str(data)) if data is not None else "")
+        txt = re.sub(r"\s*\n\s*", " | ", txt.strip())  # one event, one line: a raw newline would end the block
         kind = e.get("kind")
         if kind in _RUN_EVENTS and prev == kind:
             out[-1] += f"; {txt}"

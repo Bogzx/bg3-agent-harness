@@ -423,6 +423,7 @@ class Wiring(TmpDir):
         self.assertEqual(rec["latency"]["idle_median_s"], 0.4)
         self.assertEqual(rec["story"]["points"], 42)
         self.assertEqual(rec["milestones_reached"], 0)
+        self.assertNotIn("sandbox_change", rec)
         line = json.loads((P.RUNTIME / "sessions" / "naut" / "runs.jsonl").read_text().splitlines()[-1])
         self.assertEqual((line["series"], line["run"], line["cap"]), ("naut", 2, "tokens"))
         # the time cap: outcome timeout, cap "time"; reached: time to the milestone
@@ -431,6 +432,8 @@ class Wiring(TmpDir):
         self.assertIn("timeout", [f["kind"] for f in rec["failures"]])
         rec = P.run_record(d, t0, t0 + 600, {"id": "nautiloid_escaped", "t": t0 + 450.0}, "naut-r2", [])
         self.assertEqual((rec["outcome"], rec["cap"], rec["time_to_milestone_s"]), ("reached", None, 450.0))
+        r.opt.sandbox_change = "sandbox: container → none"                  # --allow-sandbox-change
+        self.assertEqual(r.write_run_record(t0, "timeout")["sandbox_change"], "sandbox: container → none")
 
     def test_runs_command_prints_the_summary(self):
         d = P.RUNTIME / "sessions" / "naut"

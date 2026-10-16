@@ -404,6 +404,13 @@ def next_up(combat: dict, party: set, label: Callable[[str], str], ended: str | 
     return "NEXT " + ", ".join(names) + (f", then {tail}" if mine else ""), mine
 
 
+def next_is_party(combat: dict, party: set, ended: str | None = None) -> bool:
+    """Is the first combatant (in the visible order) to act after `ended`'s turn one of ours, with no other turn in
+    between? Then the end is waited for (the next member plays at once); else enemies act first."""
+    text, mine = next_up(combat, party, str, ended)
+    return bool(mine) and text.endswith(": plan that turn now")
+
+
 class TurnWatcher(actq.Watcher):
     """The default interrupts, except that a reaction prompt can be answered by the plan's policy
     (on_reaction use/skip) instead of stopping the turn: like the game's own "always"/"never" setting,

@@ -253,6 +253,67 @@ run(20000)
 check("UI-7: line with answers coming: no skip at all", #commands == 0 and #keys == 0 and K.want == nil, #commands)
 check("UI-7: the line is still reported", count(events, "dialogue_line") == 1)
 
+-- 6d. naut series (helm): "*The helm's alien transponder - you've made it in time.*" plays during the party's shared
+--     combat turn (round 6, turn=Lae'zel) and nothing was skipped (autoskip skipped=16 flat, ~30-45 s a run).
+--     Our turn: the skip command, then the engine SPACE in the same tick, alternating; never a shim SPACE request.
+local statsBefore = { lines = K.stats.lines, cinematic = K.stats.cinematic }
+local HELM = { speaker = "Narrator", text = "*The helm's alien transponder - you've made it in time.*", listening = true }
+reset()
+widgets = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true } } }
+dialogue = HELM
+live.IsCurrentTurn = true
+run(600)
+check("helm: our turn: skip command", count(commands, "SelectorSkipCommand") == 1 and #keys == 0, #commands)
+check("helm: counted", K.view().lines == statsBefore.lines + 1, K.view().lines)
+run(700)
+check("helm: our turn: then engine SPACE", count(keys, "SPACE") == 1, #keys)
+local helmWant = false
+for _ = 1, 400 do
+    run(16)
+    if K.want or ops["autoskip.status"]().want then helmWant = true end
+end
+check("helm: our turn: never a shim SPACE request", not helmWant)
+check("helm: alternates command / SPACE up to LINE_MAX_TRIES",
+    count(commands, "SelectorSkipCommand") == K.LINE_MAX_TRIES / 2 and count(keys, "SPACE") == K.LINE_MAX_TRIES / 2,
+    count(commands, "SelectorSkipCommand") .. "/" .. count(keys, "SPACE"))
+local hs = ops["autoskip.status"]().line
+check("helm: status line shows turn + tries exhausted", hs and hs.turn == true and hs.blocked == "tries", hs and hs.blocked)
+check("helm: counted once", K.view().lines == statsBefore.lines + 1)
+-- then the text-less crash shots, still in our turn: skipped too
+dialogue = { listening = true }
+run(K.NOTEXT_GRACE_MS + K.NOTEXT_RETRY_MS * 3)
+check("helm notext: our turn: skipped", (K.view().cinematic or 0) == (statsBefore.cinematic or 0) + 1 and ops["autoskip.status"]().want == nil)
+-- answers in our turn: nothing
+reset()
+widgets = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true } } }
+dialogue = { speaker = "Zhalk", text = "Choose.", options = { {}, {} } }
+live.IsCurrentTurn = true
+run(3000)
+check("helm: our turn + answers: no skip", #commands == 0 and #keys == 0)
+-- switches: TURN_LINE_SPACE=false → command only; TURN_LINE_SKIP=false → the old rule (nothing in our turn)
+reset()
+K.TURN_LINE_SPACE = false
+widgets = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true } } }
+dialogue = HELM
+live.IsCurrentTurn = true
+run(5000)
+check("helm: TURN_LINE_SPACE off: commands only", #keys == 0 and count(commands, "SelectorSkipCommand") >= 3, #keys)
+K.TURN_LINE_SPACE = true
+reset()
+K.TURN_LINE_SKIP = false
+widgets = { { name = "Dialogue", dc = "gui.DCDialog", DataContext = { dc = true } } }
+dialogue = HELM
+live.CanEndTurn = true
+run(5000)
+check("helm: TURN_LINE_SKIP off: no skip in our turn", #commands == 0 and #keys == 0 and K.want == nil, #commands)
+check("helm: TURN_LINE_SKIP off: status says why", ops["autoskip.status"]().line.blocked == "our turn")
+K.TURN_LINE_SKIP = true
+-- the turn passes to the enemy mid-line: the usual escalation (shim SPACE) resumes
+live.CanEndTurn = nil
+run(2000)
+check("helm: not our turn any more: skipped", count(commands, "SelectorSkipCommand") >= 1)
+K.stats.lines, K.stats.cinematic = statsBefore.lines, statsBefore.cinematic
+
 -- 7. a movie over the loading screen (New Game intro: game state StartLoading, the Movie state's
 --    overlay above the loading screen "root"): engine ESCAPE, then shim requests every LOAD_RETRY_MS
 --    for as long as it lasts (past MAX_TRIES)

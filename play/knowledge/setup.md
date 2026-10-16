@@ -19,7 +19,8 @@ operator's instructions say otherwise, follow those instead.
 
 **With a character brief** (the kickoff says CHARACTER CREATION), the character is yours to design from it:
 follow `playbooks/character-creation.md`; the build below is only the fallback for what the brief leaves open.
-**Without a brief**, create this default build, named as the kickoff says:
+**Without a brief**, create this default build, named as the kickoff says (no name in the kickoff: choose a
+distinctive one; it becomes the playthrough's save owner):
 
 - **Tav, not the Dark Urge.** The Urge adds forced events and extra irreversible choices.
 - **Half-Orc Paladin, Oath of Devotion.** Heavy armour, Lay on Hands for emergency healing, Divine Smite for

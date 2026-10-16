@@ -37,7 +37,11 @@ A.active = {}   -- char guid -> running job
 local TICK_MS = 50   -- post-condition polling; cheap queries, keeps chaining fast
 A.MOVE_REACH = 2.2   -- move_to {target}: stop within this of the entity (centres; melee reach is
                      -- weapon 1.5 + both radii, >= 2.2 m even for a tiny target, see G.check_cast)
-A.END_REQUEST_AFTER_MS = 1500 -- end_turn in a shared group: report the request as done after this
+-- end_turn in a shared group (others still to act): report the request as done after this. 1500 until 2026-10-16:
+-- the outcome at 1.5 s was always the same "requested" (the game ends the group only when the others end too), so
+-- the hold only waited (naut series: 12 shared ends x 1.6 s). 400 ms leaves a few frames for the game to set
+-- RequestedEndTurn / hand over (then the plain finish runs). Revert live: Mods.BG3AI.BG3AI.Actions.END_REQUEST_AFTER_MS = 1500
+A.END_REQUEST_AFTER_MS = 400
 A.END_IGNORED_MS = 3000 -- end_turn: the game ignored EndTurn (no group pending) this long: failed (bridge: HUD button)
 A.END_IGNORED = "the game ignored the end-turn order"
 -- S035 19:28-19:30: three jump_to calls each ran 25 s "still running" while Shadowheart never moved: the engine

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BG3 AI Series</title>
+<style>
+:root {
+  --bg: #0d0f14; --panel: #151922; --panel-2: #1b2030; --line: #262c3d;
+  --text: #e4e7ef; --muted: #8b93a7; --faint: #5b6377;
+  --accent: #d4a24c; --accent-2: #8a6cff;
+  --ok: #4cc38a; --warn: #e6b450; --bad: #ef5f6b; --info: #5aa9ff;
+  --harness: #d4a24c; --model: #8a6cff; --overlap: #4cc38a;
+  --mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); }
+header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  padding: 10px 16px; background: rgba(13,15,20,.94); border-bottom: 1px solid var(--line); }
+header h1 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: .04em; }
+header h1 span { color: var(--accent); }
+header a { color: var(--muted); font-size: 12px; }
+select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.chip { display: inline-flex; gap: 5px; padding: 2px 9px; border-radius: 999px; background: var(--panel-2);
+  border: 1px solid var(--line); color: var(--muted); font-size: 12px; white-space: nowrap; }
+.chip b { color: var(--text); font-weight: 600; }
+.chip.warn { border-color: var(--warn); } .chip.warn b { color: var(--warn); }
+.upd { color: var(--faint); font: 12px var(--mono); }
+main { padding: 14px 16px 30px; display: flex; flex-direction: column; gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.card > h2 { margin: 0; padding: 8px 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .09em;
+  color: var(--muted); border-bottom: 1px solid var(--line); }
+.big { display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: baseline; padding: 12px 14px; }
+.big .n { font: 650 30px/1 var(--mono); }
+.big .l { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.big .kv { display: flex; flex-direction: column; gap: 4px; }
+.line { padding: 0 14px 12px; color: var(--muted); font: 13px var(--mono); }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font: 13px var(--mono); }
+th, td { padding: 6px 9px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { color: var(--muted); font: 600 11px var(--sans); text-transform: uppercase; letter-spacing: .06em; background: var(--panel-2);
+  position: sticky; top: 0; }
+th.l, td.l { text-align: left; }
+tr.live td { background: #1a1f12; }
+tr.live td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .muted { color: var(--faint); }
+.badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font: 700 11px var(--sans); text-transform: uppercase;
+  letter-spacing: .05em; }
+.badge.reached { background: #1d3326; color: var(--ok); }
+.badge.running { background: #2b2614; color: var(--accent); animation: pulse 1.6s infinite; }
+.badge.other { background: #3a1c22; color: var(--bad); }
+@keyframes pulse { 50% { opacity: .55; } }
+.split { display: flex; width: 130px; height: 10px; border-radius: 3px; overflow: hidden; background: var(--panel-2); }
+.split i { display: block; height: 100%; }
+.split .h { background: var(--harness); } .split .m { background: var(--model); } .split .o { background: var(--overlap); }
+.small { font-size: 11px; color: var(--muted); }
+.legend { display: flex; gap: 14px; padding: 8px 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.empty { padding: 16px; color: var(--faint); }
+.err { padding: 10px 14px; color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>BG3 AI <span>Series</span></h1>
+  <select id="pick" aria-label="series"></select>
+  <div class="chips" id="frozen"></div>
+  <span class="upd" id="upd">…</span>
+  <a href="/">live dashboard</a>
+</header>
+<main>
+  <section class="card">
+    <h2>Series</h2>
+    <div class="big" id="big"></div>
+    <div class="line" id="line"></div>
+  </section>
+  <section class="card">
+    <h2>Runs <span class="small" style="text-transform:none;letter-spacing:0">(last row: the run in progress)</span></h2>
+    <div class="legend">
+      <span><i style="background:var(--harness)"></i>harness only</span>
+      <span><i style="background:var(--model)"></i>model only</span>
+      <span><i style="background:var(--overlap)"></i>overlap</span>
+      <span id="tg"></span>
+    </div>
+    <div class="scroll"><table id="runs"></table></div>
+  </section>
+  <section class="card">
+    <h2>Spread (play.py runs)</h2>
+    <div class="scroll"><table id="spread"></table></div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const num = (v, d = 1) => (v === null || v === undefined) ? '<span class="muted">-</span>' : Number(v).toFixed(d);
+let TG = {idle_median_s: 2, gaps_over_10s: 0, read_rt_median_ms: 100};
+const cls = (v, goal, warnMul = 2) => v === null || v === undefined ? "" : v <= goal ? "ok" : v <= goal * warnMul || (goal === 0 && v <= 2) ? "warn" : "bad";
+let series = new URLSearchParams(location.search).get("playthrough") || "";
+
+function split(mt) {
+  if (!mt || !mt.wall_s) return '<span class="muted">-</span>';
+  const w = mt.wall_s, p = (x) => Math.max(0, 100 * (x || 0) / w).toFixed(1);
+  return `<div class="split" title="harness ${mt.harness_only_s}s · model ${mt.model_only_s}s · overlap ${mt.overlap_s}s of ${mt.wall_s}s">` +
+    `<i class="h" style="width:${p(mt.harness_only_s)}%"></i><i class="m" style="width:${p(mt.model_only_s)}%"></i>` +
+    `<i class="o" style="width:${p(mt.overlap_s)}%"></i></div>` +
+    `<span class="small">H ${mt.harness_pct ?? "-"}% · M ${mt.model_pct ?? "-"}% · O ${mt.overlap_pct ?? "-"}%</span>`;
+}
+const tools = (mt) => !mt || !mt.top_tools ? "" : mt.top_tools.map((t) => `${esc(t.tool)} ${Math.round(t.s)}s`).join(", ");
+function lat(l) {
+  if (!l) return ['<td class="muted">-</td>', '<td class="muted">-</td>', '<td class="muted">-</td>'];
+  return [`<td class="${cls(l.idle_median_s, TG.idle_median_s)}">${num(l.idle_median_s, 2)} / ${num(l.idle_p90_s, 1)}</td>`,
+          `<td class="${cls(l.gaps_over_10s, TG.gaps_over_10s)}">${l.gaps_over_10s ?? "-"}</td>`,
+          `<td class="${cls(l.read_rt_median_ms, TG.read_rt_median_ms)}">${num(l.read_rt_median_ms, 0)}</td>`];
+}
+const sandbox = (r) => esc(r.sandbox || "none") + (r.sandbox_unfirewalled ? ' <span class="warn">unfw</span>' : "");
+
+const HEAD = ["run", "outcome", "clean", "to M min", "wall min", "cost $", "tok M", "fail H/A/U", "persona",
+  "idle med/p90 s", "gaps>10s", "read rt ms", "harness / model / overlap", "top harness tools", "sandbox", "model", "notes"];
+const LEFT = new Set(["outcome", "harness / model / overlap", "top harness tools", "sandbox", "model", "notes"]);
+
+function runRow(r) {
+  const f = r.failures || {};
+  const fc = `${f.harness ?? 0}/${f.agent ?? 0}/${f.unknown ?? 0}`;
+  const out = r.outcome === "reached" ? "reached" : "other";
+  const top = (f.top || []).map((t) => esc(t.kind) + (t.n > 1 ? "×" + t.n : "")).join(", ");
+  const p = r.persona;
+  const pc = !p ? '<span class="muted">-</span>' : p.score !== null && p.score !== undefined
+    ? `<span class="${p.score >= 7 ? "ok" : p.score >= 5 ? "warn" : "bad"}" title="${esc(p.summary)}">${esc(p.cell)}</span>` : esc(p.cell);
+  const notes = [r.why, top, ...(r.changes || [])].filter(Boolean).map(esc).join(" · ");
+  return `<tr><td>${r.run}</td><td class="l"><span class="badge ${out}">${esc(r.outcome)}${r.cap ? " (" + esc(r.cap) + ")" : ""}</span></td>` +
+    `<td class="${r.clean ? "ok" : "bad"}">${r.clean ? "yes" : "no"}</td><td>${num(r.to_milestone_min)}</td><td>${num(r.wall_min)}</td>` +
+    `<td>${num(r.cost_usd, 2)}</td><td>${num(r.tokens_m, 2)}</td>` +
+    `<td class="${(f.harness || 0) + (f.unknown || 0) ? "warn" : ""}">${fc}</td><td>${pc}</td>${lat(r.latency).join("")}` +
+    `<td class="l">${split(r.model_time)}</td><td class="l small">${tools(r.model_time)}</td>` +
+    `<td class="l">${sandbox(r)}</td><td class="l small">${esc(r.client)}/${esc(r.model || "?")}</td>` +
+    `<td class="l small" style="white-space:normal;min-width:180px">${notes}</td></tr>`;
+}
+function liveRow(r) {
+  const ls = r.latency_session;
+  const cur = ls && ls.current_idle_s !== null && ls.current_idle_s !== undefined
+    ? ` · now idle <b class="${cls(ls.current_idle_s, 10, 1)}">${ls.current_idle_s}s</b>` : "";
+  const l = ls || r.latency;
+  const note = [`${r.in_session ? "playing " + esc(r.session) : "between sessions"}`,
+    `${r.story_points} pts`, r.latency && ls ? `run so far: idle ${num(r.latency.idle_median_s, 2)}s, gaps ${r.latency.gaps_over_10s}` : "",
+    r.alert ? `<span class="bad">ALERT ${esc(r.alert.kind)}: ${esc(r.alert.msg)}</span>` : ""].filter(Boolean).join(" · ");
+  return `<tr class="live"><td>${r.run}</td><td class="l"><span class="badge running">${esc(r.outcome)}</span></td>` +
+    `<td class="muted">…</td><td class="muted">-</td><td>${num(r.elapsed_min)}</td>` +
+    `<td>${r.usage_estimated ? "≈" : ""}${num(r.cost_usd, 2)}</td><td>${num(r.tokens_m, 2)}</td><td class="muted">-</td><td class="muted">-</td>` +
+    `${lat(l).join("")}<td class="l">${split(r.model_time)}</td><td class="l small">${tools(r.model_time)}</td>` +
+    `<td class="l">${esc(r.sandbox || "?")}</td><td class="l small">${r.sessions} session(s)</td>` +
+    `<td class="l small" style="white-space:normal;min-width:180px">${note}${cur}</td></tr>`;
+}
+
+function render(d) {
+  if (d.targets) TG = d.targets;
+  $("tg").textContent = `goals: idle median ≤ ${TG.idle_median_s} s · gaps>10s = ${TG.gaps_over_10s} · read rt ≤ ${TG.read_rt_median_ms} ms`;
+  const pick = $("pick");
+  const names = (d.available || []).map((a) => a.name);
+  if (d.series && !names.includes(d.series)) names.unshift(d.series);
+  pick.innerHTML = names.map((n) => `<option ${n === d.series ? "selected" : ""}>${esc(n)}</option>`).join("");
+  const fz = d.frozen;
+  $("frozen").innerHTML = !fz ? '<span class="chip">no series.json (single --until runs)</span>' : [
+    ["until", fz.until], ["runs", fz.runs], ["client", fz.client], ["judge", fz.judge_model],
+    ["sandbox", fz.sandbox + (fz.sandbox_unfirewalled ? " (unfirewalled)" : "")],
+    ["caps", fz.caps ? Object.entries(fz.caps).filter(([, v]) => v !== null).map(([k, v]) => `${k}=${v}`).join(" ") || "none" : "none"],
+    ["scenario", fz.scenario],
+  ].filter(([, v]) => v !== null && v !== undefined).map(([k, v]) =>
+    `<span class="chip ${k === "sandbox" && fz.sandbox_unfirewalled ? "warn" : ""}">${k} <b>${esc(v)}</b></span>`).join("");
+  const s = d.spread || {};
+  const of = fz && fz.runs ? fz.runs : s.n;
+  const big = [[`${s.reached ?? 0}/${of ?? 0}`, "reached", s.reached && s.reached === s.n ? "ok" : ""],
+    [`${s.clean ?? 0}/${s.n ?? 0}`, "clean", s.clean === s.n && s.n ? "ok" : "warn"],
+    [s.clean_streak ?? 0, "clean in a row", ""], [s.best_streak ?? 0, "best streak", ""]];
+  const m = Object.fromEntries((s.metrics || []).map((x) => [x.metric, x]));
+  const mean = (k, dg) => m[k] && m[k].n ? `${Number(m[k].mean).toFixed(dg)} <span class="small">±${Number(m[k].stddev).toFixed(dg)}</span>` : "-";
+  big.push([mean("to milestone min", 1), "to milestone min", ""], [mean("cost $", 2), "cost $", ""],
+           [mean("idle median s", 2), "idle median s", ""], [mean("persona score", 1), "persona", ""]);
+  $("big").innerHTML = big.map(([n, l, c]) => `<div class="kv"><span class="n ${c}">${n}</span><span class="l">${l}</span></div>`).join("");
+  $("line").textContent = (d.error ? d.error + " · " : "") + (s.line || "");
+  const rows = (d.rows || []).map(runRow);
+  if (d.live) rows.push(liveRow(d.live));
+  $("runs").innerHTML = `<thead><tr>${HEAD.map((h) => `<th class="${LEFT.has(h) ? "l" : ""}">${h}</th>`).join("")}</tr></thead>` +
+    `<tbody>${rows.join("") || `<tr><td class="l muted" colspan="${HEAD.length}">no runs recorded yet</td></tr>`}</tbody>`;
+  const sp = s.metrics || [];
+  $("spread").innerHTML = `<thead><tr><th class="l">metric</th><th>n</th><th>min</th><th>max</th><th>mean</th><th>stddev</th></tr></thead><tbody>` +
+    sp.map((x) => `<tr><td class="l">${esc(x.metric)}</td><td>${x.n}</td>` +
+      ["min", "max", "mean", "stddev"].map((k) => `<td>${x.n ? x[k] : "-"}</td>`).join("") + "</tr>").join("") + "</tbody>";
+  $("upd").textContent = new Date(d.now * 1000).toLocaleTimeString();
+}
+
+async function tick() {
+  try {
+    const r = await fetch("/api/series" + (series ? "?playthrough=" + encodeURIComponent(series) : ""), {cache: "no-store"});
+    render(await r.json());
+  } catch (e) {
+    $("upd").textContent = "offline: " + e;
+  }
+}
+$("pick").addEventListener("change", (e) => {
+  series = e.target.value;
+  history.replaceState(null, "", "?playthrough=" + encodeURIComponent(series));
+  tick();
+});
+tick();
+setInterval(tick, 10000);
+</script>
+</body>
+</html>

@@ -210,6 +210,17 @@ decision point, so batched actions can chain.
 | `ui.dump` | C | `{root?, depth?, text_only?, max?, hidden?}` | `{widgets:[{w, dc, items:[{t} \| {b,n,off?}]}], ms}`: visible text and buttons per page |
 | `ui.widgets` / `ui.props` | C | – / `{widget, path?, commands?}` | Open pages with DC types / a VM's values, sub-objects and commands (dev) |
 
+Hotbar cast route (`Client/Hotbar.lua`, worker **se**, audit ACT-8; bridge `bg3ai/hotbar.py hotbar_cast`, not wired into
+use_ability yet: `HOTBAR_CAST_ENABLED`). Built from HotBar.xaml offline; the guesses G1-G10 are listed in both files and
+checked by acceptance se "hotbar widget tree (ACT-8, read-only)" / "hotbar cast: Bless on 3 allies (ACT-8)".
+
+| op | ctx | args | result |
+|---|---|---|---|
+| `ui.hotbar_slot` | C | `{spell, char?, tabs?}` | `{found, deck, index, slot, cols, rows, order, can_use, container?, upcast?, shown_deck, rendered, cell:{w,h}, over, at?:{deck,index,slot,spell,order,cols,rows}, over_hud, deck_button, deck_button_over?, selected?, why?}`: the selected character's cell for a spell id (index 1-based, column-first grid), `over` = the cursor is on it, `at` = the cell under the cursor now |
+| `ui.cast_state` | C | `{char?}` | `{armed, spell?, remaining?, can_force, counter, targeting?, preview?, upcast_open?, cast?:{spell, phase, picked, index, previewing}}`: the spell in hand, the cursor's target counter, the tick button, the client cast entity |
+| `ui.cast_confirm` | C | `{}` | `{done}`: the multi-target tick button (`ForceCastCommand`), only while armed and enabled |
+| `ui.cast_cancel` | C | `{}` | `{done, was_armed}`: `CancelTaskCommand`, the bridge's last resort after ESCAPE and a right click |
+
 Widget names are the XAML root `x:Name`, e.g. `ContainerWidget`, `Dialog_box` (MessageBox), `ModalTutorial`,
 `NotificationWidget`, `JournalQuest`, `DMSettings`. Character creation, new game and level-up live in `Client/Progression.lua`
 (worker **se**). Trade, rests, fast travel and waypoints live in `Client/Services.lua` (worker **kb**).

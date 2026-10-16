@@ -1,0 +1,710 @@
+"""Tool-result compaction: say each thing once, short (the model side of live-feel latency).
+
+Every agent turn re-reads every earlier tool result (the context is one growing prompt), so result size drives
+time-to-first-token and cost. The naut series (research/impl-vis.md "Observation size") showed ~20 % of result
+text repeating verbatim what an earlier result said (hints, the party/alert lines, the clock, legends) and much of
+the rest spent on syntax: `{name=Lae'zel e29}`, `type= amount=0`, an engine spell id next to its display name.
+
+`Compactor.apply(tool, text)` rewrites a finished result (server._guard, once per top-level call) with rules that
+drop no fact a player sees:
+* shorter syntax for the same facts (REFS, EMPTIES, CAST_IDS, NUMBERS, GONE_GROUP, REPEATS, MERGE_BLOCKS);
+* text this session already showed in full, said again only as a short form: hints after HINT_FULL_TIMES
+  showings, the advisory ALERTS/PARTY lines while unchanged ("(unchanged)"), the layout legend, a clock line
+  identical to the last one, a dialogue line the same result (or the previous one) already quoted.
+Each rule has its own constant; BG3AI_COMPACT=0 turns all of it off. `self.elided` lists, per call, the text a
+rule left out because the agent saw it before: tools/vis/obs_size.py's fact checker verifies each was shown
+verbatim earlier and that every fact of the original result survives in the result or in those fragments.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import time
+
+COMPACT = os.environ.get("BG3AI_COMPACT", "1") != "0"
+
+REFS = True          # {name=Lae'zel e29} / {e29 name=Lae'zel} / name=Lae'zel e29 -> e29 Lae'zel
+EMPTIES = True       # "type= amount=0" -> "amount=0"; "combat_started []" -> "combat_started"
+CAST_IDS = True      # an engine spell id next to the display name (cast events; action: X ... cast=X)
+NUMBERS = True       # hp=21 max_hp=24 -> hp=21/24; damage=[target=e33 type=Slashing name=Imp amount=7] -> [e33 Imp 7 Slashing]
+GONE_GROUP = True    # GONE e16 Pod, e18 Pod, e19 Pod -> GONE e16/e18/e19 Pod
+SAME_GROUP = True    # "  + e80 Dead Thrall neutral dead 16.8m" x3 -> "  + Dead Thrall neutral dead: e80 16.8m, e82 19.2m, ..";
+                     # "ITEM + e44 Camp Supply Sack (Lae'zel)" x10 -> "ITEM + (Lae'zel): e44 Camp Supply Sack, .."
+REPEATS = True       # the same line twice in a row -> "line (x2)"
+MERGE_BLOCKS = True  # CHANGES ... CHANGES (back to back) -> one block; same for EVENTS
+HINTS = True         # instructions in results: full text HINT_FULL_TIMES times per session, then the short form
+HINT_FULL_TIMES = 1
+STATIC = True        # ALERTS / PARTY: advisory lines: "(unchanged)" while identical, in full again after STATIC_RESHOW_S
+STATIC_RESHOW_S = 600.0
+CLOCK = True         # a "⏱ 16:38 · 25m left" line identical to the last one shown is left out
+LAYOUT_LEGEND = True  # get_layout's symbol key in full once, then "key as before"
+DIALOGUE_DEDUP = True  # dialogue_line events quoting a line this result (or the last one) already shows
+EMPTY_LINES = True   # "ALSO " with nothing after it
+EVENT_LINES = True   # damage target=e2 X source=e34 Imp type=Fire amount=3 -> damage e34 Imp -> e2 X 3 Fire (fixed kinds)
+NAMES_ONCE = True    # in EVENTS, a handle named earlier in the same result is written without its name again
+QUEST_DEDUP = True   # a quest text this session already showed verbatim -> "(text as before)"
+PHRASES = True       # shorter wording of fixed phrases (PHRASE_RULES), every time
+COMBAT_ROWS = True   # "initiative=4 hp_pct=100 e28 can_act @(..) name=Lae'zel from={e2=[1.6,1]} relation=party"
+                     # -> "e28 Lae'zel party init 4 hp 100% can_act @(..) from e2 1.6m" (los 0 -> "no-LOS")
+COORD_DECIMALS = 0   # positions reported as "@(x,y,z)" (where someone got to) rounded to this many decimals;
+                     # None keeps them. Positions offered as targets ("closest walkable spot (x,y,z)") keep 0.1 m.
+DUP_FIELDS = True    # "move e32: done — target=e32", "total_damage=9" next to the one damage=[.. 9 ..]
+EVENTS_VS_CHANGES = True  # "died e32" / "status_applied e2: Burning" when CHANGES of the same result says DEAD / +Burning;
+                          # handles CHANGES already named lose their names in EVENTS (NAMES_ONCE)
+ACTIONS_AGAIN = True  # a YOUR ACTIONS list identical to one shown before for that member -> "(actions as listed before)"
+ACTIONS_MIN_LINES = 8  # only whole lists (a short spent-action variant is cheaper to repeat than to look up)
+# Harness bookkeeping a player never sees (the NOW line shows what is left): the guard's charge per action, and a
+# finished walk leg's end position + arrival error when a later leg follows (the last position stays).
+HARNESS_FIELDS = True
+PATH_LEGS = True     # route's "  1. 17.6m W" / "  2. 19.5m W" -> "  1-2. 17.6m, 19.5m W" (same heading, nothing else)
+# Results quoting files or pages (markdown the agent or the wiki wrote): only the clock rule applies.
+PROSE_TOOLS = {"memory_read", "memory_search", "memory_list", "memory_write", "memory_edit", "memory_append",
+               "wiki_page", "wiki_search", "recall", "session_start", "end_session"}
+
+_H = r"[eo]\d+"
+_NAME = r"[^{}=;,:\[\]\n]+?"
+
+# (key, pattern, short form). The pattern matches only the instruction text; named groups hold facts and the short
+# form keeps every one of them (tests/test_compact.py checks it). Matched spans are not facts (the checker skips them).
+HINT_RULES: list[tuple[str, str, str]] = [
+    ("early_wake", r"\(early wake, lead_s=(?P<lead>[\d.]+)\): plan the next step now\. What you issue(?: for [^\n]*?)?"
+                   r" runs after the walk arrives \(it does not cancel it\); wait_for again blocks to the end\.",
+     r"(early wake, lead_s=\g<lead>): plan the next step; it runs after the walk."),
+    ("next_walk", r"NEXT: queue_actions what to do on arrival, then look/plan/notes while it runs; wait_for only when "
+                  r"you are out of work", ""),
+    ("notes_window", r"NOTES WINDOW: ~(?P<s>[\d.]+)s of walking left: note\(\) what happened / plan now \(not after it "
+                     r"ends, when the character would stand idle\); queue_actions the arrival first",
+     r"NOTES WINDOW: ~\g<s>s of walking left: note/plan now"),
+    ("appends", r" \(queue_actions appends after it\)", ""),
+    ("pace", r"PACE: you waited right after issuing\. Next time first do independent work \(queue the arrival steps, "
+             r"look, plan, notes\): the character acts while you think\.",
+     "PACE: you waited right after issuing (do independent work first)."),
+    ("actions_before", r"\(other actions as listed before for (?P<h>e\d+); get_combat_state lists them all\)",
+     r"(other actions of \g<h> as before)"),
+    ("plan_while", r"\. Plan it while they act and send its combat_turn now \(it waits for the turn\)",
+     ": send its combat_turn now"),
+    ("combat_started", r"COMBAT STARTED \(no get_combat_state needed\):", "COMBAT STARTED:"),
+    ("no_change", r"No change since your last look \(full=true shows everything\)\.", "No change since your last look."),
+    ("saving", r" in the background \(~2 s with the game's save freeze; your next call waits for them\)\. Keep playing; "
+               r"SAVED shows on a later result\.", " in the background; SAVED shows later."),
+    ("shared_turn", r" can all act now, in any order \(combat_turn who=\.\.\., end each one's turn\)",
+     " can all act now, any order"),
+    ("more_nearby", r"; get_nearby / get_frontier\)", ")"),
+    ("more_items", r" item changes; get_inventory\)", " item changes)"),
+    ("plan_them", r" — plan them from this state \(combat_turn again\)\.", " — plan them (combat_turn again)."),
+    ("retarget", r" \(retarget:false keeps it\)", ""),
+    ("climb", r" \[interact to climb\]", ""),
+    ("sell_junk", r" \(sell junk: trade sell=junk\)", ""),
+    ("combat_over", r"combat is over: loot, heal, then end_combat_report", "combat is over"),
+    ("floors_rel", r" \(m, relative to you\)", ""),
+    ("walks_it", r"^NEXT: travel_to/move_to walks it$", ""),
+    ("flapping", r" note=on/off on 3\+ others nearby \(aura/light\): muted for non-party", " (muted)"),
+]
+_HINTS = [(k, re.compile(p, re.M), r) for k, p, r in HINT_RULES]
+
+# Fixed wording said shorter every time (no facts in the patterns; groups are kept).
+PHRASE_RULES: list[tuple[str, str]] = [
+    (r"destination is beyond remaining movement \(", "beyond movement ("),
+    (r" toward it: ", ": "),
+    (r"stopped short of ", "short of "),
+    (r"the route needs ", "route needs "),
+    (r" — melee is out of reach this turn", " — no melee this turn"),
+    (r"the plan now aims at the nearest visible hostile", "retargets the nearest visible hostile"),
+    (r"ended via=the HUD's End Turn \(the game ignored the order\)", "ended via the HUD (the game ignored the order)"),
+    (r"(DEAD), no longer in_combat", r"\1"),
+    (r"turn NOT ended: decide, then continue \(combat_turn again, or single tools\)", "turn NOT ended: decide, then continue"),
+]
+_PHRASES = [(re.compile(p), r) for p, r in PHRASE_RULES]
+
+_LAYOUT_RE = re.compile(r"^(LAYOUT [^;\n]*; )(# wall .*)$")
+_CLOCK_RE = re.compile(r"^⏱ \d\d:\d\d · \d+m left$")
+_STATIC_PREFIXES = ("ALERTS ", "PARTY: ")
+_HEADERS = ("CHANGES", "EVENTS")
+
+
+def enabled() -> bool:
+    return COMPACT
+
+
+# ---------------------------------------------------------------------------
+# line rewrites (same facts, fewer tokens)
+# ---------------------------------------------------------------------------
+
+_REF_BRACE_A = re.compile(r"\{name=(" + _NAME + r") (" + _H + r")\}")
+_REF_BRACE_B = re.compile(r"\{(" + _H + r") name=(" + _NAME + r")\}")
+_REF_BARE_A = re.compile(r"\bname=(" + _NAME + r") (" + _H + r")(?=[;\]}\n]|$)")
+_REF_BARE_B = re.compile(r"\b(" + _H + r") name=")
+_REF_ONLY = re.compile(r"=\{(" + _H + r")\}")
+
+
+def refs(line: str) -> str:
+    line = _REF_BRACE_A.sub(r"\2 \1", line)
+    line = _REF_BRACE_B.sub(r"\1 \2", line)
+    line = _REF_BARE_A.sub(r"\2 \1", line)
+    line = _REF_BARE_B.sub(r"\1 ", line)
+    return _REF_ONLY.sub(r"=\1", line)
+
+
+_EMPTY_KV = re.compile(r" [a-z_]+=(?= |$)")
+_EMPTY_LIST = re.compile(r"^(\s+[a-z_]+) \[\]$")
+
+
+def empties(line: str) -> str:
+    line = _EMPTY_KV.sub("", line)
+    return _EMPTY_LIST.sub(r"\1", line)
+
+
+_ACTION_CAST = re.compile(r"^(action: (\S+) .*?: done — )cast=\2 ")
+
+
+def cast_ids(line: str) -> str:
+    if line.startswith("  cast ") and " name=" in line:
+        line = re.sub(r" spell=\S+", "", line)
+    return _ACTION_CAST.sub(r"\1", line)
+
+
+_HP = re.compile(r"\bhp=(\d+) max_hp=(\d+)")
+_GUARD = re.compile(r"charged_by_guard=\[(?:amount=(\d+) resource=([\w ]+?)|resource=([\w ]+?) amount=(\d+))\]")
+_DMG = re.compile(r"damage=\[([^\[\]]*)\]")
+_DMG_KEYS = {"target", "type", "name", "amount"}
+
+
+def _damage_entry(entry: str) -> str | None:
+    kv = {}
+    for part in re.finditer(r"(\w+)=([^=]*?)(?= \w+=|$)", entry.strip()):
+        kv[part.group(1)] = part.group(2)
+    if not kv or set(kv) - _DMG_KEYS or "amount" not in kv:
+        return None
+    return " ".join(x for x in (kv.get("target"), kv.get("name"), kv.get("amount"), kv.get("type")) if x)
+
+
+def _damage(m: re.Match) -> str:
+    parts = [_damage_entry(e) for e in m.group(1).split("; ")]
+    if any(p is None for p in parts):
+        return m.group(0)
+    return "damage=[" + "; ".join(parts) + "]"
+
+
+def numbers(line: str) -> str:
+    line = _HP.sub(r"hp=\1/\2", line)
+    line = _GUARD.sub(lambda m: f"charged_by_guard=[{m.group(2) or m.group(3)} {m.group(1) or m.group(4)}]", line)
+    return _DMG.sub(_damage, line)
+
+
+_GONE = re.compile(r"^(\s*GONE )(.*)$")
+
+
+def gone_group(line: str) -> str:
+    m = _GONE.match(line)
+    if not m:
+        return line
+    items = m.group(2).split(", ")
+    order: list[str] = []
+    by_name: dict[str, list[str]] = {}
+    for it in items:
+        hm = re.fullmatch(r"(" + _H + r") (.+)", it)
+        if not hm:
+            return line
+        if hm.group(2) not in by_name:
+            order.append(hm.group(2))
+            by_name[hm.group(2)] = []
+        by_name[hm.group(2)].append(hm.group(1))
+    return m.group(1) + ", ".join("/".join(by_name[n]) + " " + n for n in order)
+
+
+_AT = re.compile(r"@\((-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\)")
+
+
+def _round(v: str, nd: int) -> str:
+    x = round(float(v), nd)
+    t = f"{x:.{nd}f}" if nd else str(int(x))
+    return "0" if t in ("-0", "-0.0") else t
+
+
+def coords(line: str, nd: int | None = None) -> str:
+    nd = COORD_DECIMALS if nd is None else nd
+    if nd is None:
+        return line
+    return _AT.sub(lambda m: "@(" + ",".join(_round(v, nd) for v in m.groups()) + ")", line)
+
+
+_MOVE_TARGET = re.compile(r"^(move (e\d+): .*?) target=\2\b")
+_DEAD_REF = re.compile(r"=\{(?:(e\d+) (dead|downed)|(dead|downed) (e\d+))\}")
+_TOTAL = re.compile(r" total_damage=(\d+)(?=.*damage=\[[^;\]]* \1(?: \w+)?\])|(?<=damage=\[)([^;\]]* (\d+)(?: \w+)?)\](.*?) total_damage=\3\b")
+
+
+def dup_fields(line: str) -> str:
+    line = _MOVE_TARGET.sub(r"\1", line)
+    line = _DEAD_REF.sub(lambda m: "=" + (f"{m.group(1)} {m.group(2)}" if m.group(1) else f"{m.group(4)} {m.group(3)}"),
+                         line)
+    m = re.search(r" total_damage=(\d+)", line)
+    d = re.findall(r"damage=\[([^\]]*)\]", line)
+    if m and len(d) == 1 and ";" not in d[0] and re.search(r"(?:^| )" + m.group(1) + r"(?: \w+)?$", d[0]):
+        line = line[:m.start()] + line[m.end():]
+    return line
+
+
+# --- combatant rows under COMBAT -------------------------------------------------------------------------------
+_ROW_KEYS = ("initiative", "hp_pct", "name", "race", "relation", "from")
+_ROW_TOK = re.compile(r"from=\{[^}]*\}|@\([^)]*\)|[a-z_]+=(?:\[[^\]]*\]|\{[^}]*\}|\S+)|\S+")
+_ROW_FLAGS = {"can_act", "is_current", "acted", "ended", "dead", "downed", "unseen", "summon", "hidden", "invisible"}
+
+
+def combat_row(line: str) -> str:
+    if not line.startswith("  ") or "initiative=" not in line or "relation=" not in line:
+        return line
+    kv: dict[str, str] = {}
+    flags, extra, handle, pos = [], [], None, None
+    last = None
+    for tok in _ROW_TOK.findall(line.strip()):
+        m = re.match(r"^([a-z_]+)=(.*)$", tok)
+        if m and not tok.startswith("@"):
+            kv[m.group(1)] = m.group(2)
+            last = m.group(1) if m.group(1) in ("name", "race") else None
+        elif tok.startswith("@("):
+            pos, last = tok, None
+        elif re.fullmatch(r"e\d+", tok) and handle is None:
+            handle = tok
+            last = "name" if "name" not in kv else None  # "e27 Lae'zel" (refs() already folded name=)
+            if last:
+                kv["name"] = ""
+        elif tok in _ROW_FLAGS:
+            flags.append("current" if tok == "is_current" else tok)
+            last = None
+        elif last:
+            kv[last] = (kv[last] + " " + tok).strip()
+        else:
+            extra.append(tok)
+    if handle is None or set(kv) - set(_ROW_KEYS) - {"hp", "max_hp"}:
+        return line
+    name = kv.get("name", "")
+    out = [handle] + ([name] if name else [])
+    if kv.get("race") and kv["race"] != name:
+        out.append(f"({kv['race']})")
+    if kv.get("relation"):
+        out.append(kv["relation"])
+    if "initiative" in kv:
+        out.append(f"init {kv['initiative']}")
+    if "hp_pct" in kv:
+        out.append(f"hp {kv['hp_pct']}%")
+    out += [f"{k}={kv[k]}" for k in ("hp", "max_hp") if k in kv]
+    out += flags + extra
+    if pos:
+        out.append(pos)
+    fr = kv.get("from", "")
+    pairs = re.findall(r"(e\d+)=\[(-?[\d.]+),([01])\]", fr)
+    if pairs:
+        out.append("from " + ", ".join(f"{h} {d}m" + ("" if los == "1" else " no-LOS") for h, d, los in pairs))
+    elif fr:
+        out.append(f"from={fr}")
+    return "  " + " ".join(out)
+
+
+_GUARD_FIELD = re.compile(r" (?:movement_)?charged_by_guard=(?:\[[^\]]*\]|\S+)")
+
+
+def harness_fields(lines: list[str]) -> list[str]:
+    out = [_GUARD_FIELD.sub("", ln) for ln in lines]
+    for i, ln in enumerate(out[:-1]):
+        if ln.startswith("leg ") and out[i + 1].startswith("leg ") and ": done" in ln:
+            out[i] = re.sub(r" dist=[\d.]+", "", re.sub(r" @\([^)]*\)", "", ln))
+    return out
+
+
+_LEG = re.compile(r"^  (\d+)(?:-(\d+))?\. ((?:[\d.]+m, )*[\d.]+m) ([NESW]{1,2})$")
+
+
+def path_legs(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    for ln in lines:
+        m = _LEG.match(ln)
+        p = _LEG.match(out[-1]) if out and m else None
+        if p and p.group(4) == m.group(4) and int(m.group(1)) == int(p.group(2) or p.group(1)) + 1:
+            out[-1] = f"  {p.group(1)}-{m.group(1)}. {p.group(3)}, {m.group(3)} {m.group(4)}"
+            continue
+        out.append(ln)
+    return out
+
+
+def _rewrite(line: str) -> str:
+    if REFS:
+        line = refs(line)
+    if EMPTIES:
+        line = empties(line)
+    if CAST_IDS:
+        line = cast_ids(line)
+    if NUMBERS:
+        line = numbers(line)
+    if GONE_GROUP:
+        line = gone_group(line)
+    if DUP_FIELDS:
+        line = dup_fields(line)
+    if COMBAT_ROWS:
+        line = combat_row(line)
+    line = coords(line)
+    if PHRASES:
+        for rx, r in _PHRASES:
+            line = rx.sub(r, line)
+    return line
+
+
+def _merge_blocks(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    block = None  # header of the block the last line belongs to
+    for ln in lines:
+        if ln in _HEADERS:
+            if block == ln:
+                continue
+            block = ln
+        elif not ln.startswith("  "):
+            block = None
+        out.append(ln)
+    return out
+
+
+def _repeats(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    n = 1
+    for i, ln in enumerate(lines):
+        if i + 1 < len(lines) and lines[i + 1] == ln and ln.strip() and ln not in _HEADERS:
+            n += 1
+            continue
+        out.append(f"{ln} (x{n})" if n > 1 else ln)
+        n = 1
+    return out
+
+
+# --- EVENTS lines: "  kind key=value key=value bare" (values may hold spaces; refs already "e2 Name") ---------
+_KV = re.compile(r"(?:^| )([a-z_]+)=(.*?)(?= [a-z_]+=|$)")
+_REF = re.compile(r"^(" + _H + r") (.+)$")
+
+
+_FLAGS = re.compile(r"(?:^| )(success|failed)(?= |$)")
+
+
+def _parse_event(rest: str) -> tuple[dict[str, str], str]:
+    flags = " ".join(_FLAGS.findall(rest))
+    rest = _FLAGS.sub("", rest).strip()
+    kv = {m.group(1): m.group(2) for m in _KV.finditer(rest)}
+    bare = (_KV.sub("", rest).strip() + " " + flags).strip()
+    return kv, bare
+
+
+class _Names:
+    """Handles already named in this result: later mentions are the handle alone (NAMES_ONCE)."""
+
+    def __init__(self):
+        self.named: set[str] = set()
+
+    def __call__(self, value: str) -> str:
+        parts = []
+        for v in value.split("; "):
+            m = _REF.match(v)
+            if m and NAMES_ONCE:
+                if m.group(1) in self.named:
+                    v = m.group(1)
+                else:
+                    self.named.add(m.group(1))
+            parts.append(v)
+        return "; ".join(parts)
+
+
+def event_line(line: str, names: _Names) -> str:
+    m = re.match(r"^(\s+)([a-z_]+)(?: (.*))?$", line)
+    if not m:
+        return line
+    ind, kind, rest = m.group(1), m.group(2), m.group(3) or ""
+    kv, bare = _parse_event(rest)
+    keys = set(kv)
+    out = None
+    if kind == "damage" and keys <= {"target", "source", "type", "amount"} and "amount" in kv and not bare:
+        src = names(kv["source"]) + " -> " if kv.get("source") else ""
+        out = f"damage {src}{names(kv.get('target', '?'))} {kv['amount']}" + (f" {kv['type']}" if kv.get("type") else "")
+    elif kind == "cast" and keys <= {"caster", "roll", "name", "spell"} and "name" in kv and not bare:
+        out = (f"cast {names(kv.get('caster', '?'))}: {kv['name']}" + (f" ({kv['roll']})" if kv.get("roll") else ""))
+    elif kind == "used" and keys <= {"item", "char"} and "item" in kv:
+        out = f"used {names(kv.get('char', '?'))}: {names(kv['item'])}" + (f" {bare}" if bare else "")
+    elif kind in ("status_applied", "status_removed") and keys == {"target", "name"} and not bare:
+        out = f"{kind} {names(kv['target'])}: {kv['name']}"
+    elif kind == "item_added" and keys <= {"item", "owner", "count"} and "item" in kv and not bare:
+        out = (f"item_added {names(kv.get('owner', '?'))}: {names(kv['item'])}"
+               + (f" count={kv['count']}" if kv.get("count") else ""))
+    elif kind == "round_started" and keys == {"round"} and not bare:
+        out = f"round_started {kv['round']}"
+    elif not kv and bare and _REF.match(bare.split("; ")[0]):  # turn_started e28 Lae'zel; e2 Name / died e8 Name
+        out = f"{kind} {names(bare)}"
+    return ind + out if out is not None else line
+
+
+_STATUS_CHANGE = re.compile(r"(?:^|[ ,])([+-])([A-Z][\w' ]*?)(?=,| [+-][A-Z]|$)")
+_CHANGE_HANDLE = re.compile(r"^\s+(?:~ |\+ |PARTY \+ )?(e\d+) ")
+_NAMED = re.compile(r"\b(e\d+) [A-Z]")
+
+
+def _changes_facts(lines: list[str]) -> tuple[set[str], set[tuple[str, str, str]], set[str]]:
+    """(handles CHANGES calls DEAD, {(handle, +/-, status)}, handles named outside EVENTS) of one result."""
+    dead, sts, named = set(), set(), set()
+    block = None
+    for ln in lines:
+        if ln in _HEADERS:
+            block = ln
+            continue
+        if not ln.startswith("  "):
+            block = None
+        if block != "EVENTS":
+            named.update(_NAMED.findall(ln))
+        if block == "CHANGES":
+            m = _CHANGE_HANDLE.match(ln)
+            if m:
+                if re.search(r"\bDEAD\b", ln):
+                    dead.add(m.group(1))
+                for sign, st in _STATUS_CHANGE.findall(ln[m.end():]):
+                    sts.add((m.group(1), sign, st.strip()))
+    return dead, sts, named
+
+
+_EV_DIED = re.compile(r"^\s+died (e\d+)(?: [^;]*)?$")
+_EV_STATUS = re.compile(r"^\s+status_(applied|removed) (e\d+)(?: [^:]*)?: (.+)$")
+
+
+def _events(lines: list[str]) -> list[str]:
+    names = _Names()
+    dead, sts, named = _changes_facts(lines) if EVENTS_VS_CHANGES else (set(), set(), set())
+    names.named |= named
+    out, block = [], None
+    for ln in lines:
+        if ln in _HEADERS:
+            block = ln
+        elif not ln.startswith("  "):
+            block = None
+        elif block == "EVENTS":
+            ln = event_line(ln, names)
+            m = _EV_DIED.match(ln)
+            if m and m.group(1) in dead:
+                continue  # CHANGES: "~ e32 Imp DEAD"
+            m = _EV_STATUS.match(ln)
+            if m and (m.group(2), "+" if m.group(1) == "applied" else "-", m.group(3)) in sts:
+                continue  # CHANGES: "e2 Name +Burning"
+        out.append(ln)
+    return [ln for j, ln in enumerate(out)
+            if not (ln == "EVENTS" and (j + 1 == len(out) or not out[j + 1].startswith("  ")))]
+
+
+_QUEST_TEXT = re.compile(r"^(\s+quest_update .*?text=)(.{40,}?)((?: title=.*)?)$|^(QUEST [^:\n]+: )(.{40,})$")
+
+
+_PLUS = re.compile(r"^(  \+ )(e\d+) (.+?) (\d+(?:\.\d+)?m)$")
+_ITEM_OWNER = re.compile(r"^(ITEM \+ )(e\d+ .+?) (\([^()]+\))$")
+
+
+def _same_group(lines: list[str]) -> list[str]:
+    """Lines that differ only in handle (+ distance) said once with the list (SAME_GROUP)."""
+    groups: dict[tuple, list[int]] = {}
+    for i, ln in enumerate(lines):
+        m = _PLUS.match(ln)
+        if m:
+            groups.setdefault(("+", m.group(3)), []).append(i)
+            continue
+        m = _ITEM_OWNER.match(ln)
+        if m:
+            groups.setdefault(("item", m.group(3)), []).append(i)
+    drop: set[int] = set()
+    repl: dict[int, str] = {}
+    for (kind, key), idx in groups.items():
+        if len(idx) < 3:
+            continue
+        if kind == "+":
+            parts = [f"{_PLUS.match(lines[i]).group(2)} {_PLUS.match(lines[i]).group(4)}" for i in idx]
+            repl[idx[0]] = f"  + {key}: " + ", ".join(parts)
+        else:
+            parts = [_ITEM_OWNER.match(lines[i]).group(2) for i in idx]
+            repl[idx[0]] = f"ITEM + {key}: " + ", ".join(parts)
+        drop.update(idx[1:])
+    return [repl.get(i, ln) for i, ln in enumerate(lines) if i not in drop]
+
+
+# an action list line: "Fire Bolt [A] 18m", "Jump [3m+B] 4.5m", "UNAVAILABLE: ...", "Main Hand Attack (id) [A] 1.5m"
+_ACTION_LINE = re.compile(r"^(?:UNAVAILABLE: .*|[^\s\[][^\[\n]*\[[^\]\n]*\].*)$")
+
+
+_DLG_EVENT = re.compile(r"^\s+dialogue_line speaker=(.*?) text=(.+)$")
+
+
+# ---------------------------------------------------------------------------
+# the stateful part (what this session already showed)
+# ---------------------------------------------------------------------------
+
+class Compactor:
+    def __init__(self, clock=time.time):
+        self.clock = clock
+        self.hint_seen: dict[str, int] = {}
+        self.static: dict[str, tuple[str, float]] = {}
+        self.last_clock = ""
+        self.legend_shown = ""
+        self.prev_text = ""
+        self.quests: dict[str, int] = {}  # quest text -> the call that showed it
+        self.calls = 0
+        self.actions: dict[str, list[list[str]]] = {}  # handle -> the full YOUR ACTIONS lists shown
+        self.elided: list[str] = []  # this call's left-out fragments (shown verbatim earlier)
+
+    def apply(self, tool: str, text: str) -> str:
+        self.elided = []
+        if not COMPACT or not isinstance(text, str) or not text:
+            return text
+        if tool in PROSE_TOOLS:
+            out = "\n".join(self._clock(text.split("\n"))) if CLOCK else text
+            self.prev_text = out
+            return out
+        lines = [_rewrite(ln) for ln in text.split("\n")]
+        if MERGE_BLOCKS:
+            lines = _merge_blocks(lines)
+        if HARNESS_FIELDS:
+            lines = harness_fields(lines)
+        if PATH_LEGS:
+            lines = path_legs(lines)
+        if EVENT_LINES:
+            lines = _events(lines)
+        if SAME_GROUP:
+            lines = _same_group(lines)
+        if REPEATS:
+            lines = _repeats(lines)
+        if QUEST_DEDUP:
+            self.calls += 1
+            lines = [self._quest(ln) for ln in lines]
+        if EMPTY_LINES:
+            lines = [ln for ln in lines if ln.strip() != "ALSO"]
+        if DIALOGUE_DEDUP:
+            lines = self._dialogue(lines)
+        if HINTS:
+            lines = self._hints(lines)
+        if STATIC:
+            lines = [self._static(ln) for ln in lines]
+        if LAYOUT_LEGEND:
+            lines = [self._legend(ln) for ln in lines]
+        if ACTIONS_AGAIN:
+            lines = self._actions(lines)
+        if CLOCK:
+            lines = self._clock(lines)
+        out = "\n".join(lines)
+        out = re.sub(r"\n{3,}", "\n\n", out).strip("\n")
+        self.prev_text = out
+        return out
+
+    def _hints(self, lines: list[str]) -> list[str]:
+        out = []
+        for ln in lines:
+            new = ln
+            for key, rx, short in _HINTS:
+                def sub(m: re.Match, key=key, short=short) -> str:
+                    n = self.hint_seen.get(key, 0)
+                    self.hint_seen[key] = n + 1
+                    return m.group(0) if n < HINT_FULL_TIMES else m.expand(short)
+                new = rx.sub(sub, new)
+            if new.strip() or not ln.strip():  # a hint that was the whole line goes with its line
+                out.append(new)
+        return out
+
+    def _actions(self, lines: list[str]) -> list[str]:
+        out: list[str] = []
+        i = 0
+        while i < len(lines):
+            ln = lines[i]
+            m = re.match(r"^YOUR ACTIONS \((e\d+)\)$", ln)
+            if not m:
+                out.append(ln)
+                i += 1
+                continue
+            j = i + 1
+            head = []
+            if j < len(lines) and lines[j].startswith("NOW "):
+                head.append(lines[j])
+                j += 1
+            k = j
+            while k < len(lines) and _ACTION_LINE.match(lines[k]):
+                k += 1
+            body = lines[j:k]
+            out += [ln] + head
+            shown = self.actions.setdefault(m.group(1), [])
+            if len(body) >= ACTIONS_MIN_LINES and body in shown:
+                self.elided.append("\n".join(body))
+                out.append("(actions as listed before)")
+            else:
+                if len(body) >= ACTIONS_MIN_LINES:
+                    shown.append(body)
+                out += body
+            i = k
+        return out
+
+    def _quest(self, line: str) -> str:
+        m = _QUEST_TEXT.match(line)
+        if not m:
+            return line
+        said = m.group(2) or m.group(5)
+        if said in self.quests:
+            if self.quests[said] != self.calls:  # shown by an earlier result (else: above in this one)
+                self.elided.append(said)
+            return (m.group(1) + "(text as before)" + m.group(3)) if m.group(1) else m.group(4) + "(text as before)"
+        self.quests[said] = self.calls
+        return line
+
+    def _static(self, line: str) -> str:
+        pre = next((p for p in _STATIC_PREFIXES if line.startswith(p)), None)
+        if pre is None:
+            return line
+        now = self.clock()
+        last = self.static.get(pre)
+        if last and last[0] == line and now - last[1] < STATIC_RESHOW_S:
+            self.elided.append(line)
+            return pre + "(unchanged)"
+        self.static[pre] = (line, now)
+        return line
+
+    def _legend(self, line: str) -> str:
+        m = _LAYOUT_RE.match(line)
+        if not m:
+            return line
+        if self.legend_shown == m.group(2):
+            self.elided.append(m.group(2))
+            return m.group(1) + "key as before"
+        self.legend_shown = m.group(2)
+        return line
+
+    def _clock(self, lines: list[str]) -> list[str]:
+        out = []
+        for ln in lines:
+            if _CLOCK_RE.match(ln):
+                if ln == self.last_clock:
+                    self.elided.append(ln)
+                    continue
+                self.last_clock = ln
+            out.append(ln)
+        return out
+
+    def _dialogue(self, lines: list[str]) -> list[str]:
+        out: list[str] = []
+        for ln in lines:
+            m = _DLG_EVENT.match(ln)
+            if m:
+                said = m.group(2)
+                if _quotes("\n".join(out), said):
+                    continue  # quoted above in this result
+                if _quotes(self.prev_text, said):
+                    self.elided.append(said)
+                    continue
+            out.append(ln)
+        # an EVENTS header left with nothing under it
+        return [ln for j, ln in enumerate(out)
+                if not (ln == "EVENTS" and (j + 1 == len(out) or not out[j + 1].startswith("  ")))]
+
+
+def _quotes(text: str, said: str) -> bool:
+    """`said` appears in text as a quoted line: after "Speaker: " (DIALOGUE) or "text=" (lines=[...], events)."""
+    return any(f"{pre}{said}" in text for pre in (": ", "text="))
+
+
+DEFAULT = Compactor()
+
+
+def apply(tool: str, text: str) -> str:
+    return DEFAULT.apply(tool, text)

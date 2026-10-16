@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,8 @@ class FakeGame:
         self.inv: dict = {"items": []}
         self.on_start = None  # hook(op, args)
         self.sheets: dict[str, dict] = {}  # state.character replies by uuid
+        self.activity: dict | None = None  # nav.activity reply (None: op unknown, like a mod not reloaded yet)
+        self.autoskip: dict | None = None  # autoskip.status reply (None: op unknown, an old mod)
 
     def push(self, kind: str, data: Any = None) -> None:
         with self.lock:
@@ -171,6 +174,10 @@ class FakeGame:
                 return json.loads(json.dumps(self.landing))
             if op == "nav.markers":
                 return {"markers": []}
+            if op == "nav.activity" and self.activity is not None:
+                return dict(self.activity)
+            if op == "autoskip.status" and self.autoskip is not None:
+                return json.loads(json.dumps(self.autoskip))
             if op == "state.nearby":
                 return json.loads(json.dumps(self.nearby))
             if op == "state.character" and args.get("uuid") in self.sheets:
@@ -239,6 +246,10 @@ class Base(unittest.TestCase):
         # Old tests check the instant-return shape; settle-window tests set it themselves.
         saved_settle, server.SETTLE_S = server.SETTLE_S, 0.0
         self.addCleanup(setattr, server, "SETTLE_S", saved_settle)
+        # Old tests check combat_turn's inline end ("end_turn: done"); CombatTurnBackgroundEnd turns it on.
+        saved_end, server.END_ASYNC = server.END_ASYNC, False
+        self.addCleanup(setattr, server, "END_ASYNC", saved_end)
+        server._bg_ends.clear()
         server._pace.update(issued_at=0.0, calls_since=0, next_shown=0, nudge=False)
         self.gob = server.H.get(GOB, "Goblin")
         self.imp = server.H.get(IMP, "Imp")
@@ -1571,6 +1582,81 @@ class LootArea(Base):
         self.assertEqual(self.corpses, [])
 
 
+class CombatTurnBackgroundEnd(Base):
+    """Latency (naut series): the party's last end before enemy turns runs in the background (END_ASYNC); the
+    agent plans while the game ends the turn (1.6-5.3 s a time, ~35 s a run blocked)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.g.combat = combat()
+        self.g.watch["combat"] = True
+
+        def advance(op, args):  # ending the turn hands it to the goblin
+            if op == "act.end_turn":
+                self.g.combat["current"] = GOB
+        self.g.on_start = advance
+        server.END_ASYNC = True
+        self.g.dur["act.end_turn"] = 0.6
+
+    def plan(self, **kw) -> str:
+        return json.dumps(kw)
+
+    def test_returns_before_the_end_finishes_and_reports_it_later(self):
+        t = time.monotonic()
+        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        self.assertLess(time.monotonic() - t, 0.5)
+        self.assertIn("end_turn: ending in the background", out)
+        self.assertIn(f"NEXT {self.gob} Goblin", out)
+        self.assertIn("RUNNING queue", out)
+        self.assertEqual(len(self.g.ops("act.end_turn")), 1)
+        time.sleep(0.8)
+        self.assertIn("queue_done", server.get_events())
+
+    def test_next_combat_turn_waits_for_the_background_end(self):
+        server.combat_turn(self.plan(action="Shout_Dodge"))
+        self.g.combat["current"] = P1  # the enemies acted; Claude again
+        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        self.assertRegex(out, r"waited [\d.]+s for e\d+ Claude's turn end to finish first")
+        ends = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.end_turn"]
+        casts = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.cast"]
+        self.assertLess(ends[0], casts[1])
+
+    def test_a_direct_action_for_that_character_waits_too(self):
+        server.combat_turn(self.plan(action="Shout_Dodge"))
+        out = server.use_ability("Shout_Dodge")
+        self.assertIn("turn end to finish first", out)
+
+    def test_a_shared_turn_group_member_left_ends_inline(self):
+        self.g.combat["turn_group"] = [P1, P2]
+        self.g.combat["current"] = P1
+
+        def advance(op, args):
+            if op == "act.end_turn":
+                self.g.combat["turn_group"] = [P2]
+        self.g.on_start = advance
+        out = server.combat_turn(json.dumps({}), who=server.H.get(P1))
+        self.assertIn("end_turn: done", out)
+        self.assertNotIn("background", out)
+
+    def test_next_turn_ours_ends_inline_and_shows_its_actions(self):
+        self.g.combat["order"] = [o for o in self.g.combat["order"] if o["uuid"] in (P1, P2)] + \
+            [o for o in self.g.combat["order"] if o["uuid"] not in (P1, P2)]
+        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
+        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        self.assertIn("end_turn: done", out)
+        self.assertIn("'s turn: plan it", out)
+
+    def test_wait_next_blocks_as_before(self):
+        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), wait_next=True)
+        self.assertNotIn("background", out)
+
+    def test_off_switch(self):
+        server.END_ASYNC = False
+        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        self.assertIn("end_turn: done", out)
+
+
 class DialogueAdvance(Base):
     def test_advances_filler_and_stops_at_a_choice(self):
         choice = {"screen": "dialogue", "dialogue": {"text": "Choose.", "options": [
@@ -1593,6 +1679,79 @@ class DialogueAdvance(Base):
 
     def test_conversation_over(self):
         self.assertIn("STOPPED: conversation ended", server.dialogue_advance())
+
+    def test_nobody_in_a_conversation_returns_at_once(self):
+        # naut series (latency): "0 filler line(s), STOPPED: conversation ended" took 2.7 s each (the whole 2.5 s
+        # open window), 2-3 calls a run. The game says no party member is in one: wait DIALOGUE_IDLE_OPEN_S only.
+        self.g.activity = {"in_dialogue": False}
+        t = time.monotonic()
+        out = server.dialogue_advance()
+        self.assertLess(time.monotonic() - t, server.DIALOGUE_IDLE_OPEN_S + 0.6)
+        self.assertIn("STOPPED: conversation ended", out)
+        self.assertEqual(len(self.g.ops("nav.activity")), 1)
+
+    def test_a_conversation_still_opening_gets_the_whole_window(self):
+        self.g.activity = {"in_dialogue": True}  # started on the server, not drawn yet
+        self.g.ui_seq = [{"screen": "game"}] * 4 + [{"screen": "dialogue", "dialogue": {"text": "Choose.", "options": [
+            {"i": 1, "text": "Yes"}, {"i": 2, "text": "No"}]}}]
+        out = server.dialogue_advance()
+        self.assertIn("STOPPED: a real choice (2 options)", out)
+
+    # naut series (helm): "*The helm's alien transponder - you've made it in time.*" in the party's combat turn.
+    HELM = {"screen": "dialogue", "dialogue": {"speaker": "Narrator", "listening": True,
+                                               "text": "*The helm's alien transponder - you've made it in time.*"}}
+
+    def test_a_line_autoskip_cannot_skip_hands_back_early(self):
+        self.g.ui = self.HELM
+        for blocked, says in (("our turn", "AutoSkip doesn't skip lines in your combat turn"),
+                              ("tries", "still up after 8 skips")):
+            self.g.autoskip = {"on": True, "line": {"id": 7, "tries": 8, "age": 4000, "blocked": blocked}}
+            t = time.monotonic()
+            out = server.dialogue_advance()
+            self.assertLess(time.monotonic() - t, 2.5)  # not DIALOGUE_LINE_WAIT_S (15 s)
+            self.assertIn("STOPPED: line still playing (a line playing 4s, " + says, out)
+            self.assertIn("wait_for dialogue_ended or level_changed", out)
+        self.g.autoskip = {"on": True, "line": {"id": 7, "notext": True, "tries": 60, "age": 61000, "blocked": "tries"}}
+        self.assertIn("a cinematic shot playing 61s", server.dialogue_advance())
+        self.g.autoskip = {"on": False}
+        self.assertIn("AutoSkip is off", server.dialogue_advance())
+
+    def test_a_line_autoskip_is_skipping_is_waited_for(self):
+        # Skipping (no blocked) or too new: the usual wait, and the next prompt is clicked through.
+        self.g.autoskip = {"on": True, "line": {"id": 7, "tries": 2, "age": 1500, "turn": True}}
+        self.g.ui_seq = [self.HELM] * 8 + [{"screen": "dialogue", "dialogue": {"text": "Choose.", "options": [
+            {"i": 1, "text": "Yes"}, {"i": 2, "text": "No"}]}}]
+        out = server.dialogue_advance()
+        self.assertIn("STOPPED: a real choice (2 options)", out)
+        self.assertGreaterEqual(len(self.g.ops("autoskip.status")), 1)
+
+    def test_stuck_exit_off_switch_and_old_mod_wait_the_full_window(self):
+        self.g.ui = self.HELM
+        for exit_s, status in ((0.0, {"on": True, "line": {"tries": 8, "age": 9000, "blocked": "our turn"}}),
+                               (2.0, None)):
+            self.g.calls.clear()
+            self.g.autoskip = status
+            with mock.patch.object(server, "DIALOGUE_STUCK_EXIT_S", exit_s), \
+                    mock.patch.object(server, "DIALOGUE_LINE_WAIT_S", 1.2):
+                t = time.monotonic()
+                out = server.dialogue_advance()
+            self.assertGreaterEqual(time.monotonic() - t, 1.2)
+            self.assertIn("STOPPED: line still playing", out)
+            self.assertNotIn("line still playing (", out)
+            if exit_s == 0:
+                self.assertEqual(self.g.ops("autoskip.status"), [])
+
+    def test_a_read_tool_waits_briefly_on_a_playing_line(self):
+        # naut-r2: get_combat_state (dialogue_started in its events) took 15.4 s on the helm line.
+        self.g.ui = self.HELM
+        self.g.autoskip = {"on": True, "line": {"id": 7, "tries": 1, "age": 300, "turn": True}}
+        with mock.patch.object(server, "AUTO_DIALOGUE_READ_LINE_S", 0.6):
+            t = time.monotonic()
+            out = server._auto_dialogue("get_combat_state", "COMBAT round=6", "dialogue_started []")
+            took = time.monotonic() - t
+        self.assertLess(took, 1.5)
+        self.assertIn("STOPPED: line still playing", out)
+        self.assertEqual(server.AUTO_DIALOGUE_READ_LINE_S, 3.0)  # the default; a talk_to/wait_for keeps 15 s
 
     def test_filler_rules(self):
         self.assertEqual(macros.dialogue_filler({"continue": True}), (True, 0, ""))

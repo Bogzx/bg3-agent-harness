@@ -94,6 +94,11 @@ next run):
 - `judge_model`, the persona judge's model (below): `--judge-model` / `$BG3AI_JUDGE_MODEL` left out takes it; a
   different one is refused (exit 2) unless `--allow-judge-change` (recorded in `judge_change`). Frozen by the first
   judged run, or by the first `play.py judge` of a series from before it.
+- `sandbox`, `sandbox_unfirewalled` (`--sandbox`, `--sandbox-unfirewalled`): written by the first run of a new series
+  only; a series from before these keys played without a sandbox (`none`). A run in another mode is refused before
+  any docker work (exit 2, `REFUSING the run: the series' sandbox is fixed …`, then `runner stopped (sandbox mode
+  differs …)`) unless `--allow-sandbox-change` (recorded in `sandbox_change`). Unlike the client, a left-out
+  `--sandbox` means `none`, never the frozen container: pass the flags the refusal names.
 
 **Persona judge** (`runner/judge.py`). After a run's record is written (any outcome), `--judge` scores the run's
 in-character decisions (dialogue choices with their stated reasons, `[decision]` notes, CHARACTER.md development)
@@ -128,7 +133,7 @@ What a run doesn't inherit (reset before its first session, listed in the record
 | saves (every run's character may have one name) | `runner.json` `saves_after` = the run's start: the runner and the MCP server (`BG3AI_SAVES_AFTER`, `list_saves`/`load_game`) ignore older saves (a scenario's start save excepted, in the runner) |
 | the navigation per-level kill list `Script Extender/BG3AI/nav_guard.json` (NAV-3) and the breadcrumb mirrors `nav_<host uuid>.json` | moved into `runtime/sessions/<run>/reset/` (`$BG3AI_SE_DIR` overrides the Script Extender dir) |
 | the mod's Lua state (kill list in memory, warm-up counters, guards) | the game process is stopped between runs |
-| `play/knowledge/` (agent-writable outside playbooks/, FAIR-2) | snapshotted at the run start; after the run every file the agent's Edit/Write calls changed is put back (its version kept in `runtime/sessions/<run>/knowledge_edits/`); other changes (an operator's) are reported, not reverted; the record's `knowledge` lists both |
+| `play/knowledge/` (read-only to the agent's tools; FAIR-2) | its files are `chmod a-w` for the whole series (original modes in `runtime/knowledge-lock.json`, restored when the runner exits; an execv'd successor keeps the lock; any later non-series `run` undoes a stale one; `BG3AI_KNOWLEDGE_LOCK=0` skips it): an operator edit mid-series fails loudly instead of skewing the series. Also snapshotted at the run start; after the run every file the agent's Edit/Write calls changed is put back (its version kept in `runtime/sessions/<run>/knowledge_edits/`); other changes (an operator's) are reported, not reverted; the record's `knowledge` lists both |
 | memory, `runner.json` history, progress seen-state, session logs | per playthrough already (a new playthrough per run); a scenario's save start adds its start note as HANDOFF.md |
 | travel_to dead ends | per MCP server process (per session) already |
 
@@ -258,6 +263,10 @@ stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
   `BG3AI_GAME_STAMP` env, the `bg3ai-game-*.scope` cgroup, or bg3le mapped in), and the launcher's process
   group only while its leader is provably that launch (command line + start time). A BG3 you launched from
   Steam is never killed; while one runs the runner refuses to launch its own (event `foreign_game`) and retries.
+- `--sandbox container` plays from a container that reaches only the bg3 MCP server (over http on the host, one
+  server per play process) and the client's model API through an egress proxy; the memory keeper runs there too.
+  It refuses to start without the host firewall (`sudo tools/container/firewall.sh up`; `--sandbox-unfirewalled`
+  for dev runs, recorded). runner/sandbox.py, tools/container/README.md ("The runner").
 - Only one runner at a time (`runtime/runner.lock`, an flock; never delete the file:
   `tools/orchestrator/runner_lib.sh` waits for the lock instead).
 - Steam offline is required only on a machine that sets it: `~/.config/bg3ai/require-steam-offline` (its
@@ -291,6 +300,12 @@ Tests (pure logic only, nothing is launched): `python3 runner/test_play.py`, `ru
 `runner/test_scenarios.py`. Crash recovery end to end with
 stubs (no game, no claude, temp dirs only): `python3 runner/test_crash.py`.
 
+Dashboard: **`/series`** (`/api/series[?playthrough=BASE]`, `runner/dashboard/seriesview.py`), the benchmark series
+view: per run outcome, minutes to the milestone, cost, tokens, H/A/U failures, persona, idle median/p90, gaps > 10 s,
+read round trip, the model_time harness/model/overlap bar with the top harness tools, sandbox; the series.json
+settings; the spread (the streak line and the stats of `play.py runs`); and a live row for the run in progress
+(runner.status.json `series`/`run_index`: elapsed, cost so far incl. the running stream, the current session's live
+latency). Every 10 s; default: the running series, else the newest runs.jsonl.
 Dashboard: `/api/goals` + the **Goal scorecard** card (every session's goal metrics side by side with
 pass/fail, a trend sparkline, best value and pass rate; goal bars in `runner/dashboard/feeds.py` `GOALS`) and a
 **milestones** line (`bridge/src/bg3ai/milestones.py`: Nautiloid escaped, beach, first camp, … Act 3), also in

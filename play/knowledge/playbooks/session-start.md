@@ -16,7 +16,8 @@ files up front. `memory_read` one only when the game sends you to it (e.g. objec
 - **Brand-new playthrough** (PLAYTHROUGH.md says "Character: (not created yet)" and `list_saves` has
   none): with a character brief in the kickoff (CHARACTER CREATION), run the `character-creation` playbook
   now. Without one: `new_game` with the difficulty from `knowledge/setup.md` (Explorer), then
-  `create_character` with that default build, **named exactly as the kickoff says**. Record the build in
+  `create_character` with that default build, **named exactly as the kickoff says** (no name in the kickoff:
+  choose a distinctive one; it becomes the playthrough's save owner). Record the build in
   PLAYTHROUGH.md and party-build.md, then play the prologue.
 - Dialogue or combat in progress: handle it first (the `dialogue` or `combat` playbook).
 - The injection has a **snapshots/gear.md** block, or get_status shows `ALERTS … better gear in bags`:

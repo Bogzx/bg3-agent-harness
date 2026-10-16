@@ -41,6 +41,11 @@ _FLAG_WORDS = re.compile(r"\b(?:story ?flag|dialog(?:ue)? ?resource|DialogResour
 # A listing line about an entity (handle e12) that names a hidden state.
 _HIDDEN_STATE = re.compile(r"\b(?:invisible|hidden|sneaking|stealthed|ambushing)\b", re.I)
 _HANDLE = re.compile(r"\be\d+\b")
+# the Invisibility status/potion by name is what the party sees on its own portraits: old event form
+# "status_applied name=Invisibility target=..", compacted (bridge compact.py) "status_applied e2 Name: Invisibility"
+# and CHANGES "e2 Name +Invisibility"
+_INVIS_STATUS = re.compile(r"Potion of Invisibility|name=Invisib|status_(?:applied|removed) e\d+[^:\n]*: Invisib|"
+                           r"(?:^|[ ,])[+-]Invisib")
 # The roll screen shows the DC: roll_check results and ROLL/roll={...} data are fair.
 _ROLL_SCREEN = re.compile(r"^\s*ROLL\b|\broll=\{|\bphase=(?:intro|result|reroll)\b|context=DialogCheck")
 # The agent's own memory printed back (LESSONS / LAST ATTEMPT / RETRY lines, "- WHEN …: …" lesson rows): a DC the agent
@@ -101,7 +106,7 @@ def audit_calls(calls: list[dict]) -> dict[str, list[tuple[dict, str]]]:
             for m in _JUDGED_ID.finditer(noact):
                 hit("judged_id", c, noact, m)
             if not re.search(r"spotted|status_removed|dialogue_line|text=|^\s*\d+\. ", clean):
-                if _HANDLE.search(clean) and not re.search(r"Potion of Invisibility|name=Invisib", clean):
+                if _HANDLE.search(clean) and not _INVIS_STATUS.search(clean):
                     for m in _HIDDEN_STATE.finditer(clean):
                         hit("hidden_state", c, clean, m)
     return hits

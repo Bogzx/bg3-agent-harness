@@ -12,6 +12,9 @@ Three record streams, all JSONL:
       doing something during the call. bg (top-level calls only) is how many background activities
       (async jobs, action queues) were already running when the call started; async marks a call that
       started one and returned while it runs (move_to, travel_to, queue_actions, wait=false...).
+      rt_n: the call's serial round trips to the game, on both of the bridge's connections (the main one and
+      the interrupt watcher's), evals that overlapped (one parallel read) counted once; watch_n: how many of
+      the call's evals went over the watcher connection (only when > 0; rpc_n/rpc_ms count the main one only).
     {"type":"sample", "t", "moving", "job", "dlg", "combat", "pturn"} / {"type":"sample", "t", "load": true}
       ~1/s from the activity sampler (nav.activity on its own connection). pturn (in combat only, newer mods):
       a party member has the active turn; false means enemies/NPCs are acting and the agent can only wait.
@@ -151,6 +154,7 @@ class Recorder:
         self.path = Path(path) if path else None
         self.lock = threading.Lock()
         self.rpcs: deque = deque(maxlen=5000)   # (t0, t1, op, owner): owner = the tool thread it ran for
+        self.wrpcs: deque = deque(maxlen=5000)  # the same for the interrupt watcher's connection (watch_view)
         self._tl = threading.local()            # .owner: the tool thread a helper thread works for
         self.jobs: deque = deque(maxlen=500)    # (t0, t1, op, status)
         self.last_active = 0.0                  # wall time of the latest busy sample
@@ -188,6 +192,10 @@ class Recorder:
     def job_done(self, op: str, t0: float, t1: float, status: str) -> None:
         with self.lock:
             self.jobs.append((t0, t1, op, status))
+
+    def watch_view(self) -> "_WatchView":
+        """The recorder for the watcher's own Game connection: its evals count in rt_n/watch_n, not rpc_n."""
+        return _WatchView(self)
 
     def bg_start(self, key: str, eta_s: float | None = None, t: float | None = None) -> None:
         """A background activity began: an async job (j12) or a character's action queue."""
@@ -232,13 +240,17 @@ class Recorder:
         with self.lock:
             # Only this call's own RPCs: queue workers, wait polls and other tools share the recorder.
             rpc = [(a, b, op) for a, b, op, o in self.rpcs if o == me and a >= t0 - 0.001 and b <= t1 + 0.001]
+            wrpc = [(a, b) for a, b, _, o in self.wrpcs if o == me and a >= t0 - 0.001 and b <= t1 + 0.001]
             job_ms = sum((min(b, t1) - max(a, t0)) * 1000 for a, b, _, _ in self.jobs if b > t0 and a < t1)
             busy = job_ms > 0 or self.last_active >= t0 or self.active_now
             bg = None if nested else self._bg_open_at(t0, exclude_from=t0)
             started = not nested and any(t0 <= v[0] <= t1 + 0.001 for v in self.bg.values())
         rec = {"type": "tool", "tool": tool, "t0": round(t0, 3), "t1": round(t1, 3), "ms": round(ms, 1),
                "rpc_ms": round(sum((b - a) * 1000 for a, b, _ in rpc), 1), "rpc_n": len(rpc),
-               "job_ms": round(max(job_ms, 0.0), 1), "busy": bool(busy)}
+               "job_ms": round(max(job_ms, 0.0), 1), "busy": bool(busy),
+               "rt_n": round_trips([(a, b) for a, b, _ in rpc] + wrpc)}
+        if wrpc:
+            rec["watch_n"] = len(wrpc)
         if nested:
             rec["nested"] = True
         if rpc and len(rpc) <= OPS_MAX and (not nested or not ok):
@@ -277,6 +289,39 @@ class Recorder:
             rec["pturn"] = bool(party_turn)
         self.write(rec)
         return rec
+
+
+class _WatchView:
+    """Recorder.watch_view(): the parent's owner/adopt/jobs, RPCs kept apart (wrpcs)."""
+
+    def __init__(self, parent: Recorder):
+        self.parent = parent
+
+    def owner_token(self) -> int:
+        return self.parent.owner_token()
+
+    def adopt(self, token: int | None) -> None:
+        self.parent.adopt(token)
+
+    def rpc_done(self, op: str, t0: float, t1: float) -> None:
+        owner = self.parent.owner_token()
+        with self.parent.lock:
+            self.parent.wrpcs.append((t0, t1, op, owner))
+
+    def job_done(self, op: str, t0: float, t1: float, status: str) -> None:
+        self.parent.job_done(op, t0, t1, status)
+
+
+def round_trips(spans: Iterable[tuple[float, float]]) -> int:
+    """Serial round trips in a set of eval intervals: overlapping ones (a parallel read) count once."""
+    n, end = 0, None
+    for a, b in sorted(spans):
+        if end is None or a >= end:
+            n += 1
+            end = b
+        else:
+            end = max(end, b)
+    return n
 
 
 def moved(prev: dict | None, cur: dict | None, eps: float = MOVE_EPS_M) -> bool:
@@ -941,6 +986,9 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
         "tool_rt_ms": {"all": stats(rt, 1), "read": stats((r["ms"] for r in reads), 1),
                        "read_by_tool": read_by_tool(reads), "wait_for": stats((r["ms"] for r in waits), 1),
                        "rpc": stats((r.get("rpc_ms", 0) / max(r.get("rpc_n", 1), 1) for r in top if r.get("rpc_n")), 1)},
+        # serial game round trips per combat_turn (rt_n: both connections, parallel evals once; impl-act
+        # "combat_turn serial RPCs"); n = calls that carry it (bridges before 2026-10-16 don't)
+        "combat_turn_rt": stats(r["rt_n"] for r in top if r["tool"] == "combat_turn" and "rt_n" in r),
         # wait_for calls that never blocked (the state already answered it, or nothing could cause it)
         "wait_for_noop": {"n": sum(1 for r in waits if r.get("noop")), "of": len(waits),
                           "ms": round(sum(r["ms"] for r in waits if r.get("noop")), 1),

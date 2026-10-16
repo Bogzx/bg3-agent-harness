@@ -20,7 +20,7 @@ from typing import Any, Callable
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import actq, delta, economy, leveling, macros, metrics, party, render, saver, saves, turn
+from . import actq, compact, delta, economy, leveling, macros, metrics, party, render, saver, saves, turn
 from . import companions, debrief, lessons, longnav, lore, memtools, naming, navhints, rules
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
@@ -211,7 +211,8 @@ def _events_text(body: str = "", job: str | None = None, max_wait: float | None 
         if evs:
             seen += evs
             _note_dialogue_speaker(evs)
-            parts.append(render.render_events(evs, H, body=body, job=job, flap=render.FLAP, party=_party_cached()))
+            parts.append(render.render_events(evs, H, body=body, job=job, flap=render.FLAP, party=_party_cached(),
+                                              echo=render.ECHO))
     fight = _fight_feed(seen)
     if fight:
         parts.append(fight)
@@ -641,7 +642,8 @@ def _auto_dialogue(tool: str, body: str, ev: str) -> str:
     else:
         return ""
     try:
-        n, lines, stop = _dialogue_autopilot(open_s=open_s)
+        n, lines, stop = _dialogue_autopilot(open_s=open_s,
+                                             line_s=AUTO_DIALOGUE_READ_LINE_S if tool in _READ_TOOLS else None)
     except GameError:
         return ""
     if n == 0 and stop == "conversation ended":
@@ -1156,6 +1158,9 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
         args = dict(args, tb_ok=True)
     if not _batch["active"]:
         held = _hold_for_early_walks(args.get("char"))
+        note = "\n".join(x for x in (held, note) if x)
+    if args.get("char"):
+        held = _hold_for_bg_end(args["char"])  # its turn is still being ended in the background
         note = "\n".join(x for x in (held, note) if x)
     if not wait and not _batch["active"] and context == "server":
         return _start_async(tool, op, args, t0, note)
@@ -2428,7 +2433,9 @@ def move_to(target: str = "", x: float | None = None, y: float | None = None, z:
         args["pos"] = [x, y, z]
     else:
         raise ValueError("give target=<id> or x,y,z")
-    far = None if _batch.get("in_travel") else _far_move(args["char"], args.get("target"), args.get("pos"))
+    # combat_turn's moves (in_turn, BATCH_CHECKS): in combat _far_move is always None, no act.watch for it
+    far = None if _batch.get("in_travel") or _batch.get("in_turn") else \
+        _far_move(args["char"], args.get("target"), args.get("pos"))
     if far:  # S005: 'destination is too far away' ×4 (one move is capped at MOVE_CAP_M): walk it in legs
         dest, d = far
         out = travel_to(x=dest[0], y=dest[1], z=dest[2], who=who)
@@ -3106,7 +3113,10 @@ class _ReadyCheckWatch:
         return False
 
     def _run(self) -> None:
-        wg = _watch_conn()
+        try:
+            wg = _watch_conn()
+        except Exception:  # noqa: BLE001 - no second connection (a test fake, the port gone): no watch, the job runs on
+            return
         while not self._stop.wait(self.POLL_S):
             try:
                 res = wg.rpc("events.since", {"seq": self._seq, "limit": 200}, context="server", timeout=3.0)
@@ -3702,6 +3712,8 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
 def end_turn(who: str | None = None, wait: bool = True) -> str:
     """End the current character's turn; blocks through enemy turns until a party member can act or combat ends (wait=false: return right after ending it; then wait_for('my_turn'))."""
     t0 = time.monotonic()
+    held = _hold_for_bg_end()  # combat_turn's background end of the last turn: this one comes after it
+    pre = held + "\n" if held else ""
     if who:
         char = _who_uuid(who)
     else:
@@ -3714,14 +3726,14 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
             char = mine[0]
     args = {"char": char}
     if _session_over():
-        return _finish("end_turn", args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
+        return _finish("end_turn", args, pre + "REFUSED: the session is over. Save and write your handoff notes.", t0)
     cs = game.try_rpc("state.combat") or {}
     if char in turn.downed(cs):
         # S018: end_turn on downed Claude/Shadowheart -> "FAILED: character is downed" (x2).
         body = f"end_turn {_label(char)}: skipped — {_downed_text(char)}"
         if wait and not _batch["active"]:
             body += "\n" + _wait_for_party_turn(80.0)
-        return _finish("end_turn", args, body, t0)
+        return _finish("end_turn", args, pre + body, t0)
     r = game.run_job("act.end_turn", args, wait_s=15)
     if r.status == "failed" and END_IGNORED in str(r.error or ""):
         r = _end_turn_by_hud(char, r)
@@ -3736,7 +3748,7 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
         body = f"end_turn {_label(char)}: nothing to end — {nothing}"
         if wait:
             body += ("\n" if not _batch["active"] else " — ") + _wait_for_party_turn(80.0)
-        return _finish("end_turn", args, body, t0)
+        return _finish("end_turn", args, pre + body, t0)
     body = _job_text("end_turn", r)
     if not _batch["active"]:
         # Name whose turn it was: in a shared turn group the game moves the selection, and the agent
@@ -3746,7 +3758,7 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
         body += "\n" + _wait_for_party_turn(80.0)
     elif r.status == "done" and wait:
         body += " — " + _wait_for_party_turn(80.0)
-    return _finish("end_turn", args, body, t0)
+    return _finish("end_turn", args, pre + body, t0)
 
 
 def _nothing_to_end(r) -> str:
@@ -3802,7 +3814,7 @@ def _wait_for_party_turn(max_s: float) -> str:
         if time.monotonic() > deadline:
             _batch["last"] = "interrupted"
             return "other combatants are still acting (use wait or get_combat_state)"
-        time.sleep(0.5)
+        time.sleep(TURN_POLL_S)
 
 
 @mcp.tool()
@@ -5749,6 +5761,7 @@ def _watch_conn() -> Game:
     global _watch_game
     if _watch_game is None:
         _watch_game = Game(port=game.port)
+        _watch_game.metrics = METRICS.watch_view()  # its evals count in the tools' rt_n / watch_n
     return _watch_game
 
 
@@ -5855,7 +5868,7 @@ def _on_queue_report(who: str, rep: actq.Report) -> None:
         if rep.left:
             data["left"] = rep.left
         if rep.lines:
-            data["last"] = H.scrub(rep.lines[-1])[:160]
+            data["last"] = render.one_line(H.scrub(rep.lines[-1]))
     kind = "queue_interrupted" if rep.stopped else "queue_done"
     try:
         _watch_conn().rpc("act.note", {"kind": kind, "data": data})
@@ -6042,6 +6055,35 @@ def _party_set() -> set:
 # combat_turn's own state.combat read, reused by the first step check (no step ran in between): one round
 # trip instead of two at the start of every turn.
 _turn_cs: dict = {}
+# actq.BATCH_CHECKS (env BG3AI_BATCH_CHECKS=0 reverts): the read is also taken from the watcher's check after each
+# finished step (the same round trip as its events + act.watch) and kept until the next step starts (_run_one
+# clears it) instead of one read per check: the turn can't change while no step of ours runs. A read older than
+# this is read again anyway.
+TURN_CS_MAX_S = 1.5
+
+
+def _turn_batch() -> bool:
+    """Inside a combat_turn (this thread) with BATCH_CHECKS on: keep/reuse its state.combat reads."""
+    return actq.BATCH_CHECKS and bool(_batch.get("in_turn"))
+
+
+def _cs_keep(cs: Any) -> dict:
+    """Remember a state.combat read for the next step check (BATCH_CHECKS); returns it ({} if none)."""
+    cs = cs if isinstance(cs, dict) else {}
+    if cs:
+        _turn_cs.update(cs=cs, t=time.monotonic())
+    return cs
+
+
+def _cs_cached() -> dict | None:
+    """The kept state.combat read, if still valid (no step ran since, not older than TURN_CS_MAX_S)."""
+    cs = _turn_cs.get("cs")
+    if cs is None:
+        return None
+    if actq.BATCH_CHECKS and time.monotonic() - _turn_cs.get("t", time.monotonic()) > TURN_CS_MAX_S:
+        _turn_cs.clear()
+        return None
+    return cs
 # uuid -> relation from combat_turn's turn order reads: the side of a planned target that is out of sight now.
 _turn_sides: dict = {}
 
@@ -6071,7 +6113,10 @@ def _gone(ts: dict) -> str:
 def _turn_check(who: str, step: actq.Step | None) -> tuple[bool, str]:
     """Before each turn step, from what the player sees: (fatal, why). fatal = the turn is over for us;
     a non-fatal why (target dead / out of view) skips just this alternative."""
-    cs = _turn_cs.pop("cs", None) or game.try_rpc("state.combat") or {}
+    if _turn_batch():
+        cs = _cs_cached() or _cs_keep(game.try_rpc("state.combat"))
+    else:
+        cs = _turn_cs.pop("cs", None) or game.try_rpc("state.combat") or {}
     if not cs.get("active"):
         return True, "combat is over"
     now = turn.acting(cs)
@@ -6731,8 +6776,11 @@ def _retarget_lost(p: turn.TurnPlan, who: str, lines: list, info: dict) -> bool:
         lost = _uuid(str(p.move.target))
     except ValueError:
         return False
-    cs = _turn_cs.get("cs") or game.try_rpc("state.combat") or {}
-    _turn_cs["cs"] = cs
+    if _turn_batch():
+        cs = _cs_cached() or _cs_keep(game.try_rpc("state.combat"))
+    else:
+        cs = _turn_cs.get("cs") or game.try_rpc("state.combat") or {}
+        _turn_cs["cs"] = cs
     if not cs.get("active"):
         return False
     if _side(cs, lost, info.get("party")) not in ("hostile", None):
@@ -6784,7 +6832,7 @@ def _turn_auto_bonus(who: str, watcher: actq.Watcher, lines: list, after: dict) 
     claude-run-2 turns). 'ok' | 'none' | 'stop'."""
     if after.get("bonus") == 0:
         return "none"
-    cs = game.try_rpc("state.combat") or {}
+    cs = (_cs_cached() if _turn_batch() else None) or game.try_rpc("state.combat") or {}
     if not any(o.get("relation") == "party" and o.get("hp_pct") == 0 and not o.get("dead")
                for o in cs.get("order") or []):
         return "none"
@@ -6842,7 +6890,7 @@ def _wait_turn(ready, max_s: float, blocked=None, on_prompt=None, extend_s: floa
             # was sent again (another 5 s of thinking + 34 s of waiting). Enemies still taking turns: wait on.
             if not (t - moved < TURN_PROGRESS_S and t < t0 + max_s + extend_s):
                 return cs, "timed out"
-        time.sleep(0.3)
+        time.sleep(TURN_POLL_S)
 
 
 def _prompt_why(ui: dict) -> str:
@@ -6859,6 +6907,7 @@ def _prompt_why(ui: dict) -> str:
 
 
 def _answer_reaction(use: bool) -> str:
+    _turn_cs.clear()  # a reaction (an opportunity attack) can kill: the kept turn read is stale
     r = _watch_conn().run_job("ui.react", {"use": use}, context="client", wait_s=10)
     return f"reaction prompt: {'used' if use else 'declined'} ({r.status})"
 
@@ -6908,7 +6957,7 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     who: required when NOW lists more than one of your characters; left out, the plan goes to the only one acting whose actions cover every ability it names (else REFUSED), and a plan sent ahead waits for the character selected when it was sent.
     A slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off); fallbacks keep to the planned target's side (an ally-aimed heal only re-aims at a downed party member, a revive never). A melee swing the game refused without a reason steps within 1 m once and swings again. A melee move that ends out of reach says "melee is out of reach this turn" and skips the melee attacks on that target (ranged / Dash next). The move's target (a hostile) dead or out of sight (Shadow Blend, killed first): the plan is re-aimed at the nearest visible hostile, and walks on if movement is left (retarget:false keeps it). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).
     An empty plan {} just ends that character's turn (e.g. it already acted through single tools).
-    end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn).
+    end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn). When enemies act next, the end itself runs in the background ("ending in the background", then queue_done): what you send next waits for it.
     Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), up to 30 s longer while enemies are still taking turns, then plays it."""
     chain = _turn_chain(plan)
     if chain is None:
@@ -6989,8 +7038,60 @@ def _plan_end(plan: str, end: bool) -> bool:
 
 
 CHAIN_BUDGET_S = 80.0  # a list of member plans: total time the later members may wait for their turns
+# combat_turn ends the turn in the background when nobody else of the party can act now (the party's last end before
+# enemies or the next turn group act): the agent plans the next turn while the game ends this one. naut series (3
+# runs): every end blocked 1.6-5.3 s (a game-ignored EndTurn → HUD End Turn: 3.5 s, 9x), ~35 s a run with the model
+# idle. The end runs as the character's queue step (RUNNING line, queue_done / queue_interrupted event); anything
+# sent for the party meanwhile first waits for it (END_BG_HOLD_S). BG3AI_END_ASYNC=0 reverts (blocking end).
+END_ASYNC = os.environ.get("BG3AI_END_ASYNC", "1") != "0"
+END_BG_HOLD_S = 12.0  # Lua fails an ignored end at 3 s, the HUD fallback takes ≤ ~8 s more (select + press + check)
+_bg_ends: dict[str, float] = {}  # char -> when its background end started
 TURN_EXTEND_S = 30.0  # the first (or only) plan: extra wait past wait_turn while enemy turns still progress
+# How often a wait for a party turn (combat_turn sent ahead, end_turn wait) reads state.combat (~10-20 ms): the turn's
+# start reaches the agent this much late at most (0.3 / 0.5 s until 2026-10-16: ~0.2 s mean per turn, 8-15 a run).
+TURN_POLL_S = float(os.environ.get("BG3AI_TURN_POLL_S", "0.15"))
 TURN_PROGRESS_S = 10.0  # ... "progress" = the acting combatant changed this recently
+
+
+def _in_queue_worker() -> bool:
+    return threading.current_thread().name.startswith("actq-")
+
+
+def _end_in_background(char: str) -> bool:
+    """Start char's end_turn as its action queue's only step and return at once. Interrupts never cancel it (an end
+    is no walk); the queue's usual settings are kept for later queues. False: its queue is busy (end it inline)."""
+    if _queues().busy(char):
+        return False
+    had, prev = char in _queue_ignore, _queue_ignore.get(char)
+    _enqueue(char, [actq.Step("end_turn", {"wait": False})], ignore=",".join(actq.INTERRUPT_KINDS))
+    if had:
+        _queue_ignore[char] = prev  # the running executor keeps its own (all-kinds) set
+    else:
+        _queue_ignore.pop(char, None)
+    _bg_ends[char] = time.monotonic()
+    return True
+
+
+def _hold_for_bg_end(char: str | None = None) -> str:
+    """Before an action: a background end (of char, or of anyone when None) still running? Wait for it (≤
+    END_BG_HOLD_S), so the next turn's steps never land in the turn being ended. A note or ''."""
+    if not _bg_ends or _in_queue_worker():
+        return ""
+    keys = [c for c in list(_bg_ends) if char is None or c == char]
+    if not keys:
+        return ""
+    t0 = time.monotonic()
+    held = False
+    while any(_queues().busy(c) for c in keys) and time.monotonic() - t0 < END_BG_HOLD_S:
+        held = True
+        time.sleep(0.05)
+    for c in keys:
+        if not _queues().busy(c):
+            _bg_ends.pop(c, None)
+    if not held:
+        return ""
+    return (f"(waited {render.num(round(time.monotonic() - t0, 1))}s for "
+            f"{', '.join(_label(c) for c in keys)}'s turn end to finish first)")
 
 
 def _summon_first(why: str, plan: str, ignore: str) -> str | None:
@@ -7102,13 +7203,33 @@ def _plan_actor(p: turn.TurnPlan, cands: list[str]) -> list[str]:
 
 def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ignore: str, wait_turn: float,
                      extend_s: float = 0.0) -> str:
+    was = _batch.get("in_turn")
+    _batch["in_turn"] = actq.BATCH_CHECKS  # its steps are moves in combat (see move_to)
+    try:
+        return _combat_turn_body(plan, who, end, wait_next, ignore, wait_turn, extend_s)
+    finally:
+        _batch["in_turn"] = was
+        _turn_cs.clear()
+
+
+def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ignore: str, wait_turn: float,
+                      extend_s: float = 0.0) -> str:
     t0 = time.monotonic()
     if _session_over():
         return _finish("combat_turn", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
     p = turn.parse_plan(plan, _BATCHABLE)
-    cs = game.rpc("state.combat")
+    bg_held = _hold_for_bg_end()  # the previous turn's background end first: the turn order moves with it
+    cs = st0 = None
+    if actq.BATCH_CHECKS:  # both reads in one round trip
+        try:
+            cs, st0 = delta.multi_rpc(game, [("state.combat", {}), ("state.status", {})])
+        except GameError:
+            cs = st0 = None
+    if not isinstance(cs, dict):
+        cs = game.rpc("state.combat")  # its error, as before
     _remember_names(cs)
-    st0 = game.try_rpc("state.status") or {}  # one read for the party and the selected character
+    if not isinstance(st0, dict):
+        st0 = game.try_rpc("state.status") or {}  # one read for the party and the selected character
     party = {c.get("uuid") for c in st0.get("party") or [] if isinstance(c, dict)}
     if not cs.get("active"):
         # S025: sent as the last enemy died; nothing to play is not a failure. Opening a fight is a plain attack.
@@ -7200,6 +7321,8 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
         raise GameError(f"{why} (now {', '.join(_label(u) for u in now) or '?'})" + (f"; {waited}" if waited else ""))
     lines = [f"TURN {_label(char)}" + (f" (round {cs['round']})" if cs.get("round") is not None else "")
              + (f" — {waited}" if waited else "") + _light_note(cs)]
+    if bg_held:
+        lines.append(bg_held)
     if inferred:
         lines.append(f"who: {_label(char)} ({inferred}; give who= to choose)")
     fight_hint = _fight_hint(cs, party)   # the first turn of a fight: a retry's key facts / past debriefs' warnings
@@ -7225,11 +7348,17 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
         except GameError as e:
             lines.append(f"reactions: FAILED — {e}")
     watcher = turn.TurnWatcher(_watch_conn(), p.on_reaction, _answer_reaction, ignore=_parse_ignore(ignore))
+    if actq.BATCH_CHECKS:  # the next step check's state.combat comes with the check after each step
+        watcher.post_ops = [("state.combat", {})]
+        watcher.on_post = lambda got: _cs_keep(got.get("state.combat"))
     watcher.baseline()
     after: dict = {}
     info: dict = {"party": party, "retarget": p.retarget}
     stopped = False
-    _turn_cs["cs"] = cs  # nothing ran since this read: the first step check reuses it
+    if actq.BATCH_CHECKS:
+        _cs_keep(cs)
+    else:
+        _turn_cs["cs"] = cs  # nothing ran since this read: the first step check reuses it
     moved = False
     for slot in p.order:
         if _hp_held(watcher, lines):
@@ -7289,11 +7418,13 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
                 if "Dodge" in lines[-1]:
                     lines.append("BG3 has no Dodge action (5e only): Shout_Disengage, Shout_Dash, Shout_Hide, or an attack")
                 res = "stop"
-        _turn_cs.clear()
+        if not actq.BATCH_CHECKS:  # BATCH_CHECKS: kept until a step runs (_run_one clears it)
+            _turn_cs.clear()
         if res == "stop":
             stopped = True
             break
-    _turn_cs.clear()
+    if not actq.BATCH_CHECKS:
+        _turn_cs.clear()
     if not stopped and _hp_held(watcher, lines):
         stopped = True
     if not stopped and p.auto_bonus and not p.slots["bonus"]:
@@ -7304,17 +7435,23 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
         fatal, why = _turn_check(char, None)
         if fatal:
             lines.append(f"end_turn: {why}")
+        elif _end_async_ok(char, party, wait_next, _cs_cached() if actq.BATCH_CHECKS else None) \
+                and _end_in_background(char):
+            lines.append("end_turn: ending in the background (the game takes 1-4 s; its result shows as queue_done): "
+                         "plan the next turn now, a combat_turn sent meanwhile waits for it")
         else:
             ex = _new_executor(watcher, _watch_conn(), char)
             text, _status, res = ex.call_tool(actq.Step("end_turn", {"wait": wait_next}), char)
             lines.append(re.sub(r" — after=\{[^}]*\}| after=\{[^}]*\}", "", text))
             if isinstance(res, dict) and isinstance(res.get("after"), dict):
                 after.update(res["after"])
-    elif stopped and char in turn.downed(game.try_rpc("state.combat") or {}):
+    elif stopped and char in turn.downed((_cs_cached() if actq.BATCH_CHECKS else None)
+                                         or game.try_rpc("state.combat") or {}):
         lines.append(f"{_label(char)} went down: its turn passes by itself (death saving throws); "
                      "get it up with Healing Word / Help from an ally")
     elif stopped:
         lines.append("turn NOT ended: decide, then continue (combat_turn again, or single tools)")
+    _turn_cs.clear()
     now = _now_line(after)
     if now:
         lines.append(now.replace("NOW ", f"NOW {H.get(char)} ", 1))
@@ -7328,6 +7465,21 @@ def _combat_turn_one(plan: str, who: str | None, end: bool, wait_next: bool, ign
     if stopped:
         _batch["last"] = "interrupted"
     return _finish("combat_turn", {"who": who}, "\n".join(lines), t0)
+
+
+def _end_async_ok(char: str, party: set, wait_next: bool, cs: dict | None = None) -> bool:
+    """End this turn in the background? Only when asked not to block (wait_next false), outside a batch/queue, and
+    nobody else of the party can act now: a shared turn group's other members play right after (their combat_turn
+    must see this end done), so ends inside a group stay inline (0.4 s: Actions.lua END_REQUEST_AFTER_MS); so does
+    an end whose next turn (visible order) is ours anyway (the result then shows that member's actions)."""
+    if not END_ASYNC or wait_next or _batch["active"] or _in_queue_worker():
+        return False
+    cs = cs or game.try_rpc("state.combat") or {}  # cs: the end check's own read (BATCH_CHECKS)
+    if not cs.get("active"):
+        return False
+    if [u for u in turn.party_acting(cs, party) if u != char]:
+        return False
+    return not turn.next_is_party(cs, party, ended=char)
 
 
 # ---- macros ----
@@ -7465,28 +7617,69 @@ def loot_area(radius: float = macros.LOOT_RADIUS, who: str | None = None, corpse
 # A voiced or cinematic line still playing: wait this long for the next prompt before handing back (every return
 # here costs a model turn; S003's Helm cinematic took 6 empty advance/wait turns at the old 8 s).
 DIALOGUE_LINE_WAIT_S = float(os.environ.get("BG3AI_DIALOGUE_LINE_WAIT_S", "15"))
+# dialogue_advance with no conversation on screen: when the game says no party member is in one (nav.activity), wait
+# only this long for one to open instead of open_s (2.5 s). naut series: 2-3 calls a run after a conversation had
+# already ended ("0 filler line(s), STOPPED: conversation ended" at 2.7 s each). 2.5 reverts it.
+DIALOGUE_IDLE_OPEN_S = float(os.environ.get("BG3AI_DIALOGUE_IDLE_OPEN_S", "0.5"))
+# naut series (helm): "*The helm's alien transponder…*" played in the party's combat turn, AutoSkip (then) skipped
+# nothing there, and 2 dialogue_advance + 1 get_combat_state sat the whole 15 s on it, ~30-45 s a run. A line AutoSkip
+# says it can't skip (autoskip.status line.blocked: "our turn" with its switch off, or its tries used up; or AutoSkip
+# off) hands back once it has played this long, saying so. 0 = off (wait the full DIALOGUE_LINE_WAIT_S).
+DIALOGUE_STUCK_EXIT_S = float(os.environ.get("BG3AI_DIALOGUE_STUCK_EXIT_S", "2"))
+# The bridge's own autopilot after a read tool (get_combat_state, look, …: a dialogue_started event in its result)
+# waits at most this long on a playing line: a read is not a wait (naut-r2: get_combat_state 15.4 s).
+AUTO_DIALOGUE_READ_LINE_S = float(os.environ.get("BG3AI_AUTO_DIALOGUE_READ_LINE_S", "3"))
 # Autopilot (fast reflexes): the bridge clicks through filler itself after choose_dialogue and when a
 # conversation opens, so the agent sees the next real choice at once. BG3AI_AUTO_DIALOGUE=0 turns it off.
 AUTO_DIALOGUE = os.environ.get("BG3AI_AUTO_DIALOGUE", "1") != "0"
 
 
+def _line_stuck(waited_s: float) -> str | None:
+    """A playing line AutoSkip can't skip (autoskip.status): why, for the stop reason; None while it is skipping
+    it, it is too new, or the status can't be read (an old mod: the plain wait)."""
+    st = game.try_rpc("autoskip.status", context="client")
+    if not isinstance(st, dict):
+        return None
+    if st.get("on") is False:
+        return (f"AutoSkip is off, {waited_s:.0f}s so far" if waited_s >= DIALOGUE_STUCK_EXIT_S else None)
+    ln = st.get("line") if isinstance(st.get("line"), dict) else {}
+    age = float(ln.get("age") or 0) / 1000
+    why = {"our turn": "AutoSkip doesn't skip lines in your combat turn",
+           "tries": f"still up after {ln.get('tries')} skips"}.get(ln.get("blocked"))
+    if not why or age < DIALOGUE_STUCK_EXIT_S:
+        return None
+    return f"{'a cinematic shot' if ln.get('notext') else 'a line'} playing {age:.0f}s, {why}"
+
+
 def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.5,
-                        line_s: float | None = None, strict: bool = True) -> tuple[int, list[str], str | None]:
+                        line_s: float | None = None, strict: bool = True,
+                        idle_open_s: float | None = None) -> tuple[int, list[str], str | None]:
     """Click through FILLER only (macros.dialogue_filler: a Continue prompt or one untagged, non-committing
     option) until a real choice, a roll/reaction/popup, or the end. Returns (lines advanced, report lines,
     stop reason). open_s: how long a dialogue that is still opening may take to appear. strict (the bridge's
     own autopilot): only a Continue prompt or a bare "..."/Continue/End option, never a spoken answer, even
-    the only one; dialogue_advance (the agent asked for it) also takes a single plain non-committing answer."""
+    the only one; dialogue_advance (the agent asked for it) also takes a single plain non-committing answer.
+    idle_open_s: no dialogue on screen and the game says no party member is in a conversation → wait only this long."""
     line_s = DIALOGUE_LINE_WAIT_S if line_s is None else line_s
     lines: list[str] = []
     stop = None
     n = 0
-    wait_until = time.monotonic() + line_s
-    open_until = time.monotonic() + open_s
+    t_start = time.monotonic()
+    wait_until = t_start + line_s
+    open_until = t_start + open_s
+    idle_checked = idle_open_s is None or idle_open_s >= open_s
+    stuck_check = t_start + min(DIALOGUE_STUCK_EXIT_S, 1.0)
     while n < max(1, min(int(max_lines), 30)):
         ui = game.try_rpc("ui.state", context="client") or {}
         scr = ui.get("screen")
         if scr in (None, "game") and n == 0 and time.monotonic() < open_until:
+            if not idle_checked:
+                idle_checked = True
+                act = game.try_rpc("nav.activity")
+                if isinstance(act, dict) and act.get("in_dialogue") is False:
+                    open_until = min(open_until, t_start + idle_open_s)
+                    if time.monotonic() >= open_until:
+                        continue
             time.sleep(0.25)
             continue
         if scr != "dialogue":
@@ -7496,7 +7689,16 @@ def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.
             break
         ok, i, why = macros.dialogue_filler(ui.get("dialogue"), strict=strict)
         if not ok:
-            if why in ("line still playing", "no options yet") and time.monotonic() < wait_until:
+            now = time.monotonic()
+            if why in ("line still playing", "no options yet") and now < wait_until:
+                if why == "line still playing" and DIALOGUE_STUCK_EXIT_S > 0 and now >= stuck_check:
+                    stuck_check = now + 1.0
+                    stuck = _line_stuck(now - t_start)
+                    if stuck:
+                        stop = (f"{why} ({stuck}; it wants no input: wait_for dialogue_ended or level_changed, "
+                                f"or act on what else you can)")
+                        lines.extend(_render_ui(ui, brief=True))
+                        break
                 time.sleep(0.3)
                 continue
             stop = why
@@ -7523,7 +7725,7 @@ def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.
 def dialogue_advance(max_lines: int = macros.DIALOGUE_MAX) -> str:
     """Click through FILLER dialogue lines only (a Continue prompt, or a single untagged option that commits to nothing). Stops and shows the dialogue at the first real choice (2+ options, a skill/class tag, a committing option), a roll, a reaction, a popup, or when the conversation ends. Never picks an answer for you. Rarely needed: choose_dialogue and talk_to already do this."""
     t0 = time.monotonic()
-    n, lines, stop = _dialogue_autopilot(max_lines, strict=False)
+    n, lines, stop = _dialogue_autopilot(max_lines, strict=False, idle_open_s=DIALOGUE_IDLE_OPEN_S)
     head = f"dialogue_advance: {n} filler line(s)"
     body = [head] + lines + ([f"STOPPED: {stop}"] if stop else [])
     return _finish("dialogue_advance", {"max_lines": max_lines}, "\n".join(body), t0)
@@ -8727,6 +8929,42 @@ def _mark_always_load(names=ALWAYS_LOAD) -> list[str]:
 
 if os.environ.get("BG3AI_ALWAYS_LOAD", "1") != "0":  # 0: everything deferred (A/B checks)
     _mark_always_load()
+
+
+# Every result the client gets passes compact.py (each thing said once, short: the model re-reads every result on
+# every later turn). Wrapped here, at the MCP layer, so do_actions and the wiki tools (no _guard) get it too and the
+# steps do_actions runs inside itself (direct calls) do not. The session briefing on the first result stays as is.
+BRIEFING_SEP = "\n\n=== the result of your call ===\n"
+# str tools return plain text, not structured {"result": "..."}: Claude Code showed the model the JSON form
+# (escaped newlines and quotes on every line). BG3AI_PLAIN_RESULTS=0 restores the SDK default.
+PLAIN_RESULTS = os.environ.get("BG3AI_PLAIN_RESULTS", "1") != "0"
+
+
+def _compacted(name: str, fn: Callable) -> Callable:
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*a, **kw):
+        out = fn(*a, **kw)
+        if isinstance(out, str) and compact.enabled():
+            head, sep, body = out.rpartition(BRIEFING_SEP)
+            out = head + sep + compact.apply(name, body)
+        return out
+    wrapper.__compacted__ = True
+    return wrapper
+
+
+def _mark_results(server: MCPServer = mcp) -> None:
+    for tool in server._tool_manager.list_tools():
+        if not getattr(tool.fn, "__compacted__", False):
+            tool.fn = _compacted(tool.name, tool.fn)
+        schema = tool.fn_metadata.output_schema or {}
+        if PLAIN_RESULTS and schema.get("properties", {}).get("result", {}).get("type") == "string":
+            tool.fn_metadata.output_schema = None
+            tool.__dict__.pop("output_schema", None)  # Tool.output_schema is a cached_property
+
+
+_mark_results()
 
 
 # ---------------------------------------------------------------------------
