@@ -7963,6 +7963,7 @@ try:
     SAVES_AFTER = float(os.environ.get("BG3AI_SAVES_AFTER") or 0)
 except ValueError:
     SAVES_AFTER = 0.0
+START_SAVE = os.environ.get("BG3AI_START_SAVE") or ""  # a scenario's start save: older than the run, still its own
 AI_LABEL = re.compile(r"S\d{3}-")
 
 
@@ -8007,11 +8008,12 @@ def _latest_ok(folder: str) -> bool:
 
 
 def _my_saves() -> list[Path]:
-    """This playthrough's save folders, newest first (none older than SAVES_AFTER)."""
+    """This playthrough's save folders, newest first (none older than SAVES_AFTER, except a scenario's START_SAVE:
+    an agent wiped before its first own save can load it)."""
     if not SAVE_DIR.is_dir():
         return []
-    return sorted((d for d in SAVE_DIR.iterdir() if d.is_dir() and _is_mine(d.name)
-                   and d.stat().st_mtime >= SAVES_AFTER),
+    return sorted((d for d in SAVE_DIR.iterdir() if d.is_dir() and (d.name == START_SAVE or (
+                   _is_mine(d.name) and d.stat().st_mtime >= SAVES_AFTER))),
                   key=lambda d: d.stat().st_mtime, reverse=True)
 
 

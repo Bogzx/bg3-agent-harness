@@ -239,6 +239,17 @@ class Saves(Base):
             server.load_game("latest")
         self.assertEqual(self.loaded, ["Claude-2__S001-start"])
 
+    def test_a_scenario_run_keeps_its_start_save(self):
+        # run --scenario: the start save predates the run (SAVES_AFTER) but stays loadable by name
+        self.save("Claude-1__SCN-grove", 10)
+        self.save("Claude-1__S004-end", 20)                   # an earlier run's: still hidden
+        with mock.patch.object(server, "SAVES_AFTER", self.t + 50), \
+                mock.patch.object(server, "START_SAVE", "Claude-1__SCN-grove"):
+            self.assertIn("SCN-grove", server.list_saves())
+            self.assertNotIn("S004-end", server.list_saves())
+            server.load_game("SCN-grove")
+        self.assertEqual(self.loaded, ["Claude-1__SCN-grove"])
+
     def test_prefix_from_the_owner(self):
         self.assertEqual(server._env_prefix({"BG3AI_SAVE_OWNER": "Ilse"}), "Ilse-")
         self.assertEqual(server._env_prefix({"BG3AI_SAVE_OWNER": "Ilse", "BG3AI_SAVE_PREFIX": "Ilse-4"}), "Ilse-4")
