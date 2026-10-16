@@ -599,38 +599,21 @@ def read_seen(state_dir: Path) -> dict | None:
         return None
 
 
-CLAUDE_STREAM_RE = re.compile(r"^S\d{3,}(?:-[\w-]+)?\.jsonl$")   # Sxxx.jsonl, Sxxx-r1/-fix/-keeper.jsonl
-
-
 def run_record(state_dir: Path, run_started: float, now: float, hit: dict, playthrough: str,
-               history: list[dict], outcome: str | None = None, why: str = "", take_over: bool = False) -> dict:
+               history: list[dict], outcome: str | None = None, why: str = "", take_over: bool = False,
+               cap: str | None = None) -> dict:
     """One runs.jsonl line for an --until run: wall time, sessions, claude cost and tokens (the stream's result
     events, the [end] lines), crashes/hangs and recoveries (runner_events.jsonl), agent reloads (actions.jsonl);
-    the outcome (reached | timeout | gave_up | runner_error), every failure tagged harness/agent/unknown
-    (runner/runs.py), the operator actions, and `clean` (reached, no harness failure, no operator action)."""
+    the outcome (reached | timeout | over_budget | gave_up | runner_error) and the cap that ended it (time | cost |
+    tokens), every failure tagged harness/agent/unknown (runner/runs.py), the operator actions, `clean` (reached, no
+    harness failure, no operator action), and the benchmark metrics (runs.run_metrics: time to the milestone,
+    deaths, fairness flags, latency, story points)."""
     outcome = outcome or ("reached" if hit.get("id") else "timeout")
+    if outcome == "timeout":
+        cap = "time"
     sessions = [h for h in history if h.get("kind") == "play" and (h.get("started") or 0) >= run_started]
-    cost, turns, tokens = 0.0, 0, {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
-    for f in state_dir.iterdir() if state_dir.is_dir() else []:
-        try:
-            if not CLAUDE_STREAM_RE.match(f.name) or f.stat().st_mtime < run_started:
-                continue
-            lines = f.read_text(errors="replace").splitlines()
-        except OSError:
-            continue
-        for ln in lines:
-            if '"type": "result"' not in ln and '"type":"result"' not in ln:
-                continue
-            try:
-                ev = json.loads(ln)
-            except ValueError:
-                continue
-            cost += float(ev.get("total_cost_usd") or 0)
-            turns += int(ev.get("num_turns") or 0)
-            u = ev.get("usage") or {}
-            for k, src in (("input", "input_tokens"), ("output", "output_tokens"),
-                           ("cache_read", "cache_read_input_tokens"), ("cache_write", "cache_creation_input_tokens")):
-                tokens[k] += int(u.get(src) or 0)
+    totals = runs.claude_totals(state_dir, run_started)
+    cost, turns, tokens = totals["cost_usd"], totals["turns"], totals["tokens"]
     events = []
     try:
         for ln in (state_dir / "runner_events.jsonl").read_text().splitlines():
@@ -644,7 +627,7 @@ def run_record(state_dir: Path, run_started: float, now: float, hit: dict, playt
         pass
     actions = [a for a in read_actions_since(run_started) if a.get("t", now) <= now + 1]
     reloads = [a for a in actions if a.get("tool") == "load_game"]
-    failures = runs.classify_run(state_dir, run_started, now, sessions, events, actions, outcome, why)
+    failures = runs.classify_run(state_dir, run_started, now, sessions, events, actions, outcome, why, cap)
     _, operator = runs.event_failures(events)
     if take_over:
         operator.append({"t": round(run_started, 1), "what": "--take-over (the run may have started from a game "
@@ -663,7 +646,9 @@ def run_record(state_dir: Path, run_started: float, now: float, hit: dict, playt
             "agent_hangs": sum(1 for e in events if e.get("kind") == "fault" and e.get("fault") == "agent_hang"),
             "recoveries": sum(1 for e in events if e.get("kind") == "recovered"),
             "setup_failures": sum(1 for e in events if e.get("kind") == "setup_failed"),
-            "reloads": len(reloads), "failures": failures, "operator": operator}
+            "reloads": len(reloads), "failures": failures, "operator": operator, "cap": cap,
+            **runs.run_metrics(state_dir, run_started, hit.get("t"), failures),
+            "milestones_reached": milestones.status(read_seen(state_dir))["reached"]}
 
 
 def keeper_model(option: str | None, play_model: str) -> str:
@@ -1509,6 +1494,11 @@ class Options:
     series: str | None = None          # run --runs: the series (the base playthrough); its runs.jsonl gets the records
     run_index: int | None = None       # run --runs: this run's number in the series (1 = the base playthrough)
     series_end: float | None = None    # run --runs --hours: the whole series' end (epoch s)
+    max_cost: float | None = None      # run --max-cost USD: cost cap of one --until run (then it ends over_budget)
+    max_tokens: int | None = None      # run --max-tokens N: token cap of one --until run (runs.token_total)
+    pins: dict | None = None           # version pins this run plays with (runs.version_pins), recorded in runs.jsonl
+    version_drift: list | None = None  # --allow-version-drift: the pins that differ from the series' first run
+    cap_changes: list | None = None    # --allow-cap-change: the caps that differ from series.json
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -1556,6 +1546,8 @@ class SessionResult:
 
 class Runner:
     watch: LaunchWatch | None = None   # crash signs of the game the runner launched (see launch_game)
+    cap_hit: dict | None = None        # --max-cost/--max-tokens: {cap, cost, tokens, why} once the run reached one
+    run_started: float | None = None   # --until: the run's start (claude_totals counts from there)
 
     def __init__(self, opt: Options):
         self.opt = opt
@@ -2395,6 +2387,10 @@ class Runner:
 
         timing = latency.StreamTiming(Path(f"{base}.turns.jsonl"))
         last_output = [time.time()]  # the agent-hang watchdog: any stream line counts as alive
+        meter = None   # --max-cost/--max-tokens: the run's cost and tokens as this stream goes (runs.UsageMeter)
+        if self.has_usage_caps() and self.run_started is not None:
+            done = runs.claude_totals(self.state.dir, self.run_started)
+            meter = runs.UsageMeter(done["cost_usd"], runs.token_total(done["tokens"]))
 
         def pump():
             for line in proc.stdout:
@@ -2412,6 +2408,8 @@ class Runner:
                     human.write(f"{stamp} {text}\n")
                 try:
                     timing.on_event(ev)
+                    if meter is not None:
+                        meter.on_event(ev)
                 except Exception:  # noqa: BLE001 - metrics never break a session
                     pass
 
@@ -2446,6 +2444,10 @@ class Runner:
                 reason = "milestone"
                 human.write(f"{datetime.now():%H:%M:%S} [runner] milestone {self.until_hit['id']} reached; "
                             "stopping claude (--until)\n")
+                hard_stop = min(hard_stop, now)
+            if reason == "exited" and meter is not None and self.check_usage_caps(meter.cost, meter.tokens):
+                reason = "cap"
+                human.write(f"{datetime.now():%H:%M:%S} [runner] {self.cap_hit['why']}; stopping claude\n")
                 hard_stop = min(hard_stop, now)
             silent = now - last_output[0]
             if reason == "exited" and silent >= AGENT_SILENT_MINUTES * 60:
@@ -2611,18 +2613,47 @@ class Runner:
             self.event("milestone", milestone=hit["id"], session=session)
         return self.until_hit if hit else None
 
+    def caps(self) -> dict:
+        """The run's caps as recorded (runs.CAP_KEYS)."""
+        return {"run_hours": self.opt.run_hours, "max_cost": self.opt.max_cost, "max_tokens": self.opt.max_tokens}
+
+    def has_usage_caps(self) -> bool:
+        return bool(self.opt.until and (self.opt.max_cost is not None or self.opt.max_tokens is not None))
+
+    def check_usage_caps(self, cost: float, tokens: int) -> bool:
+        """--max-cost / --max-tokens: True (and cap_hit set, an event logged) once the run reached one."""
+        if self.cap_hit:
+            return True
+        if not self.has_usage_caps():
+            return False
+        cap = runs.cap_exceeded(self.caps(), cost, tokens)
+        if not cap:
+            return False
+        limit = f"--max-cost ${self.opt.max_cost:g}" if cap == "cost" else f"--max-tokens {self.opt.max_tokens}"
+        why = f"{cap} cap used up: ${cost:.2f}, {tokens} tokens ({limit})"
+        self.cap_hit = {"cap": cap, "cost": round(cost, 4), "tokens": tokens, "why": why}
+        log(why + ": the run ends")
+        self.event("cap", cap=cap, cost=round(cost, 4), tokens=tokens)
+        return True
+
     def runs_path(self) -> Path:
         """runs.jsonl of this run: the series' (runtime/sessions/<base>/) for --runs, else the playthrough's."""
         return RUNTIME / "sessions" / self.opt.series / "runs.jsonl" if self.opt.series else self.state.dir / "runs.jsonl"
 
     def write_run_record(self, run_started: float, outcome: str = "reached", why: str = "") -> dict:
-        """runs.jsonl: one line per --until run (the benchmark's raw score), whatever the outcome. A --runs run also
-        gets its knowledge/ edits put back (FAIR-2) and noted in the record."""
+        """runs.jsonl: one line per --until run (the benchmark's raw score), whatever the outcome, with the version
+        pins the run started with and its caps. A --runs run also gets its knowledge/ edits put back (FAIR-2) and
+        noted in the record."""
+        cap = (self.cap_hit or {}).get("cap") if outcome == "over_budget" else None
         rec = run_record(self.state.dir, run_started, time.time(), self.until_hit or {}, self.opt.playthrough,
-                         self.state["history"] or [], outcome, why, self.opt.take_over)
+                         self.state["history"] or [], outcome, why, self.opt.take_over, cap)
         play = self.model_for()[0]
         rec.update(model=play, effort=self.model_for()[1],
                    keeper_model=keeper_model(self.opt.keeper_model, play) if self.opt.keeper else None)
+        cur = self.state["run"] or {}
+        rec.update(caps=self.caps(), pins=cur.get("pins") or self.opt.pins,
+                   version_drift=cur.get("version_drift", self.opt.version_drift) or None,
+                   cap_changes=self.opt.cap_changes or None)
         if self.opt.series:
             rec = {"series": self.opt.series, "run": self.opt.run_index, **rec}
             run = self.state["run"] or {}
@@ -2653,7 +2684,8 @@ class Runner:
         cur = self.state["run"]
         if cur and cur.get("started"):
             return cur["started"]
-        rec = {"started": now, "series": self.opt.series, "index": self.opt.run_index}
+        rec = {"started": now, "series": self.opt.series, "index": self.opt.run_index, "pins": self.opt.pins,
+               "version_drift": self.opt.version_drift}
         if self.opt.series and not self.state["history"] and not self.opt.dry_run:
             rec["reset"] = self.reset_for_run(now)
         if not self.opt.dry_run:
@@ -2848,7 +2880,7 @@ class Runner:
         """Starts the memory-keeper pass for the session that just ended (runner/memory_keeper.py). It runs in a
         thread while the runner prepares the next session (game check, mod reload, settings, check_all: none of
         them write memory) and is joined before the next player starts, so it never races the player's edits."""
-        if not self.opt.keeper or self.opt.dry_run or res.ended - res.started < 120:
+        if not self.opt.keeper or self.opt.dry_run or res.ended - res.started < 120 or getattr(self, "cap_hit", None):
             if plan_bad:   # no keeper pass to fix them: the next player gets the note
                 self.pending_notes.append(plan_note(plan_bad))
             return
@@ -3167,9 +3199,14 @@ class Runner:
                 outcome = "already_reached"   # no record: that run was recorded when it got there
                 return 0
             if self.opt.until:
-                run_started = self.begin_run(run_started)
+                run_started = self.run_started = self.begin_run(run_started)
             while not self.stop_requested and not (RUNTIME / "STOP").exists():
                 self.code_update_check()
+                if self.has_usage_caps():   # the finished processes so far, the memory keeper's included
+                    done = runs.claude_totals(self.state.dir, run_started)
+                    if self.check_usage_caps(done["cost_usd"], runs.token_total(done["tokens"])):
+                        stop_why, outcome = self.cap_hit["why"], "over_budget"
+                        break
                 session_minutes = self.session_minutes()
                 minutes = session_budget(time.time(), run_end, session_minutes,
                                          min(MIN_SESSION_MINUTES, session_minutes))
@@ -3218,6 +3255,9 @@ class Runner:
                 if self.until_hit:
                     stop_why = f"--until {self.opt.until}: reached in {self.until_hit.get('session')}"
                     outcome = "reached"
+                    break
+                if self.cap_hit:
+                    stop_why, outcome = self.cap_hit["why"], "over_budget"
                     break
                 if res.ended - res.started < 60 and res.reason == "exited":
                     self.quick_failures += 1
@@ -3296,6 +3336,17 @@ def cmd_run(a) -> int:
     if a.run_hours is not None and (a.run_hours <= 0 or not a.until):
         print("refusing --run-hours: it needs a positive value and --until MILESTONE", file=sys.stderr)
         return 2
+    for flag, v in (("--max-cost", a.max_cost), ("--max-tokens", a.max_tokens)):
+        if v is not None and (v <= 0 or not a.until):
+            print(f"refusing {flag}: it needs a positive value and --until MILESTONE", file=sys.stderr)
+            return 2
+    caps = {"run_hours": a.run_hours, "max_cost": a.max_cost, "max_tokens": a.max_tokens}
+    cap_changes: list[str] = []
+    if a.runs:   # a series' caps are fixed by its first run (series.json)
+        caps, err, cap_changes = runs.series_caps(series_meta(a.playthrough).get("caps"), caps, a.allow_cap_change)
+        if err:
+            print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
+            return 2
     if a.session_minutes < MIN_SESSION_MINUTES:
         log(f"WARNING: {a.session_minutes:g}-min sessions (wrap-up at {wrap_minutes(a.session_minutes):.1f} min); "
             "expect little play")
@@ -3306,7 +3357,8 @@ def cmd_run(a) -> int:
                   a.allow_short_sessions, not a.no_memory_keeper, a.keeper_model, a.keeper_effort,
                   a.keeper_minutes, a.autocompact, until=a.until, character_brief=a.character_brief,
                   roleplay=a.roleplay, difficulty=a.difficulty)
-    opt = replace(opt, run_hours=a.run_hours)
+    opt = replace(opt, run_hours=caps["run_hours"], max_cost=caps["max_cost"], max_tokens=caps["max_tokens"],
+                  cap_changes=cap_changes or None, pins=current_pins() if a.until and not a.runs else None)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
@@ -3335,7 +3387,7 @@ def cmd_run(a) -> int:
     signal.signal(signal.SIGTERM, on_signal)
     try:
         if a.runs:
-            return run_series(opt, a.runs, current)
+            return run_series(opt, a.runs, current, a.allow_version_drift)
         current["runner"] = Runner(opt)
         return current["runner"].run()
     except RestartRunner:
@@ -3348,23 +3400,64 @@ def cmd_run(a) -> int:
             ram_stop.set()
 
 
+def series_meta(base: str) -> dict:
+    """runtime/sessions/<base>/series.json ({} when there is none yet)."""
+    try:
+        d = json.loads((RUNTIME / "sessions" / base / "series.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
 def series_profile(base: str) -> dict | None:
     """The character brief every run of a series plays (runtime/sessions/<base>/series.json "profile"), frozen when
     the series started: run 1 later adds the name its agent chose to its own profile.json, and run 2 must not get
     that name forced on it."""
-    try:
-        return json.loads((RUNTIME / "sessions" / base / "series.json").read_text()).get("profile")
-    except (OSError, ValueError, AttributeError):
-        return None
+    return series_meta(base).get("profile")
 
 
-def freeze_series(base: str, n: int, until: str | None, profile: dict) -> None:
+def freeze_series(base: str, n: int, until: str | None, profile: dict, pins: dict | None = None,
+                  caps: dict | None = None) -> None:
+    """series.json, written once by the first run: the profile, N, the milestone, the version pins and the caps
+    every later run is held to. A series from before pins/caps gets them from the first run that has them."""
     path = RUNTIME / "sessions" / base / "series.json"
-    if path.exists():
+    meta = series_meta(base)
+    if path.exists() and ("pins" in meta or pins is None) and ("caps" in meta or caps is None):
         return
+    if not path.exists():
+        meta = {"series": base, "runs": n, "until": until, "profile": profile, "created": round(time.time(), 1)}
+    if pins is not None:
+        meta.setdefault("pins", pins)
+    if caps is not None:
+        meta.setdefault("caps", caps)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"series": base, "runs": n, "until": until, "profile": profile,
-                                "created": round(time.time(), 1)}, indent=1, ensure_ascii=False) + "\n")
+    path.write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n")
+
+
+def current_pins() -> dict:
+    """The versions a run starting now plays with (runs.version_pins): the BG3 Steam buildid, the bg3le build the
+    launcher loads, the mod tree and the repo."""
+    lib = Path(os.environ.get("BG3AI_BG3LE_LIB", bg3le_buildinfo.DIST / "libbg3le.so"))
+    return runs.version_pins(REPO, steam_paths.buildid(), lib.parent, MOD_DIR / "Mods" / "BG3AI" / "meta.lsx",
+                             mod_tree_hashes())
+
+
+def gate_series_run(base: str, r: Runner, pins: dict, allow_drift: bool) -> str | None:
+    """Before run r of the series: a refusal (str) when a run that hasn't started yet would play with other
+    versions than the series' first run (series.json "pins") and drift isn't allowed; else None, with the run's
+    pins (and the drift, when allowed) set on r.opt. A run already under way keeps the pins it started with."""
+    run = r.state["run"] or {}
+    if run.get("started") or r.state["history"]:
+        r.opt.pins = run.get("pins") or pins
+        return None
+    drift = runs.pin_drift(series_meta(base).get("pins"), pins)
+    if drift and not allow_drift:
+        return (f"series {base}: REFUSING run {r.opt.run_index}: versions differ from the series' first run "
+                f"({'; '.join(drift)}); restore them, or pass --allow-version-drift to record the drift")
+    r.opt.pins, r.opt.version_drift = pins, drift or None
+    if drift:
+        log(f"series {base}: run {r.opt.run_index} plays with version drift (allowed): {'; '.join(drift)}")
+    return None
 
 
 def prepare_series_run(base: str, pt: str, k: int) -> None:
@@ -3385,7 +3478,7 @@ def prepare_series_run(base: str, pt: str, k: int) -> None:
         log(f"{pt}: new memory {mem} from memory-template (commit {h[:8]})")
 
 
-def run_series(opt: Options, n: int, current: dict) -> int:
+def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False) -> int:
     """run --until M --runs N: runs 1..N of the series opt.series, each a new playthrough (runs.run_name) and a new
     game, one runs.jsonl record per run in runtime/sessions/<base>/. Resumes at the first run without a record (a
     restart, by hand or on changed code, continues the series). Between runs the game is stopped (end_run_game).
@@ -3409,7 +3502,14 @@ def run_series(opt: Options, n: int, current: dict) -> int:
         r = current["runner"] = Runner(replace(opt, playthrough=pt, run_index=k))
         if current["stop"]:
             r.stop_requested = True
-        freeze_series(base, n, opt.until, r.profile)
+        pins = current_pins()
+        freeze_series(base, n, opt.until, r.profile, pins, {k_: getattr(opt, k_) for k_ in runs.CAP_KEYS})
+        refusal = gate_series_run(base, r, pins, allow_drift)
+        if refusal:
+            log(refusal)
+            print(refusal, file=sys.stderr)
+            log("runner stopped (version drift: run refused)")   # tools/orchestrator/test_cycle.sh waits for it
+            return 2
         opt = replace(opt, series_end=r.opt.series_end)   # a self-restart's handover keeps the series budget
         log(f"series {base}: run {k}/{n} ({pt}, --until {opt.until})")
         rc = r.run()
@@ -3503,6 +3603,7 @@ def cmd_runs(a) -> int:
         print(f"no run records for {a.playthrough} ({RUNTIME / 'sessions' / a.playthrough / 'runs.jsonl'})")
         return 1
     print(runs.runs_table(recs))
+    print("\n" + runs.series_summary(recs))
     if a.failures:
         for r in recs:
             print(f"\nrun {r.get('run') or 1} ({r.get('playthrough')}): {r.get('outcome')}"
@@ -3556,6 +3657,16 @@ def main(argv: list[str] | None = None) -> int:
                         "runtime/sessions/<pt>/runs.jsonl, --hours caps the whole series. Re-running resumes it")
     r.add_argument("--run-hours", type=float, metavar="H",
                    help="with --until: cap one run at H hours; then it ends as a timeout (a failure) and the next starts")
+    r.add_argument("--max-cost", type=float, metavar="USD",
+                   help="with --until: cap one run's claude cost; past it the run ends over_budget (a failure). A "
+                        "series keeps its first run's caps (series.json)")
+    r.add_argument("--max-tokens", type=int, metavar="N",
+                   help="with --until: cap one run's claude tokens (input + output + cache reads + cache writes)")
+    r.add_argument("--allow-cap-change", action="store_true",
+                   help="--runs: let --run-hours/--max-cost/--max-tokens differ from series.json (recorded)")
+    r.add_argument("--allow-version-drift", action="store_true",
+                   help="--runs: play a run although the game build, bg3le, the mod or the repo differ from the "
+                        "series' first run (series.json pins); the drift is recorded")
     r.add_argument("--character-brief", metavar="TEXT",
                    help="who the character is, in your words: written to playthroughs/<pt>/profile.json; a new game "
                         "then starts with a character-creation phase that designs the build and persona from it")

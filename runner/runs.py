@@ -14,12 +14,19 @@ Failure classes (every failure in a run record is one of them):
               killed by a signal from outside the runner
 Operator actions (a manual restart, a stop, a runner self-restart on changed code, --take-over) are listed apart:
 a run with any of them is not clean.
+
+Benchmark comparability: every run record carries its version pins (game build, bg3le, mod, repo) and caps (time,
+cost, tokens); a series freezes both in series.json from its first run (play.py refuses a drifted later run unless
+--allow-version-drift / --allow-cap-change).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
+import statistics
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -29,7 +36,8 @@ import fairness  # noqa: E402
 import triage  # noqa: E402
 
 HARNESS, AGENT, UNKNOWN = "harness", "agent", "unknown"
-OUTCOMES = ("reached", "timeout", "gave_up", "runner_error")
+OUTCOMES = ("reached", "timeout", "over_budget", "gave_up", "runner_error")   # timeout: the time cap; over_budget:
+CAPS = ("time", "cost", "tokens")                                                # the cost or token cap (record "cap")
 
 # runner_events.jsonl kinds that are harness failures (the fault kinds are mapped in event_failures)
 HARNESS_EVENTS = {
@@ -45,7 +53,8 @@ HARNESS_EVENTS = {
 }
 FAULT_KINDS = {"crash": ("game_crash", HARNESS), "hang": ("game_hang", HARNESS), "agent_hang": ("agent_hang", UNKNOWN)}
 
-PLAY_STREAM_RE = re.compile(r"^S\d{3,}(?:-r\d+)?\.jsonl$")      # play sessions and their resumes (not -fix/-keeper)
+PLAY_STREAM_RE = re.compile(r"^S\d{3,}(?:-[rc]\d+)?\.jsonl$")   # play sessions and their resumes (crash -rN, stop
+                                                                # check -cN; not -fix/-keeper)
 CLAUDE_STREAM_RE = re.compile(r"^S\d{3,}(?:-[\w-]+)?\.jsonl$")   # every claude stream, incl. -fix and -keeper
 API_ERROR_RE = re.compile(r"API Error|usage limit|rate.?limit|overloaded|credit balance|invalid api key|"
                           r"authentication|\b(?:429|500|502|503|529)\b", re.I)
@@ -340,12 +349,14 @@ def reload_failures(actions: list[dict]) -> list[dict]:
     return out
 
 
-def outcome_failure(outcome: str, why: str, t: float, others: list[dict]) -> list[dict]:
-    """The run's own ending as a failure: a timeout is the agent's (unknown when harness failures hit the run),
-    a give-up and a runner error are ours."""
-    if outcome == "timeout":
+def outcome_failure(outcome: str, why: str, t: float, others: list[dict], cap: str | None = None) -> list[dict]:
+    """The run's own ending as a failure: a timeout or a cost/token cap is the agent's (unknown when harness failures
+    hit the run), a give-up and a runner error are ours."""
+    if outcome in ("timeout", "over_budget"):
         cls = UNKNOWN if any(f["class"] == HARNESS for f in others) else AGENT
-        return [failure(t, "timeout", cls, why or "the run's time ran out before the milestone")]
+        kind = "timeout" if outcome == "timeout" else f"{cap or 'cost'}_cap"
+        return [failure(t, kind, cls, why or ("the run's time ran out before the milestone" if outcome == "timeout"
+                                              else f"the run's {cap or 'cost'} cap was used up before the milestone"))]
     if outcome == "gave_up":
         return [failure(t, "gave_up", HARNESS, why)]
     if outcome == "runner_error":
@@ -354,7 +365,7 @@ def outcome_failure(outcome: str, why: str, t: float, others: list[dict]) -> lis
 
 
 def classify_run(state_dir: Path, run_started: float, now: float, sessions: list[dict], events: list[dict],
-                 actions: list[dict], outcome: str, why: str) -> list[dict]:
+                 actions: list[dict], outcome: str, why: str, cap: str | None = None) -> list[dict]:
     """Every failure of one run, in time order (failures without a time first)."""
     fails, _ = event_failures(events)
     fails += history_failures(sessions)
@@ -375,13 +386,350 @@ def classify_run(state_dir: Path, run_started: float, now: float, sessions: list
         if PLAY_STREAM_RE.match(f.name):
             fails += stream_failures(f)
     fails += reload_failures(actions)
-    fails += outcome_failure(outcome, why, now, fails)
+    fails += outcome_failure(outcome, why, now, fails, cap)
     return sorted(fails, key=lambda f: (f["t"] is not None, f["t"] or 0))
 
 
 def is_clean(outcome: str, failures: list[dict], operator: list[dict]) -> bool:
     """The milestone reached with no harness failure and no operator action: a run that scores the model alone."""
     return outcome == "reached" and not operator and not any(f.get("class") == HARNESS for f in failures)
+
+
+# ======================================================================== version pins
+
+# Repo paths whose working-tree state a run plays with (runtime/, playthroughs/ and docs are not code).
+CODE_PATHS = ("runner", "bridge", "mod", "play", "tools", "patches", "memory-template")
+# The pins compared between the runs of a series (dotted paths into version_pins()).
+DRIFT_KEYS = ("game_build", "bg3le.sha256", "bg3le.source", "mod.sha1", "repo.commit", "repo.dirty", "repo.diff")
+
+
+def _git(cwd: Path, *args: str) -> str | None:
+    try:
+        p = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+def buildinfo(text: str) -> dict:
+    """build/bg3le/dist/BUILDINFO (tools/build_bg3le.sh): the upstream commit, the binary's sha256, the patches."""
+    out: dict = {"patches": []}
+    for ln in text.splitlines():
+        k, _, v = ln.partition(":")
+        k, v = k.strip(), v.strip()
+        if k == "bg3le commit":
+            out["commit"] = v
+        elif k == "sha256":
+            out["sha256"] = v
+        elif k == "patch":
+            out["patches"].append(v)
+    return out
+
+
+def mod_version(meta_lsx: str) -> str | None:
+    """The mod's meta.lsx Version64 as major.minor.revision.build (Larian's bit layout), or None."""
+    m = re.search(r'id="Version64"[^>]*value="(\d+)"', meta_lsx)
+    if not m:
+        return None
+    v = int(m.group(1))
+    return f"{v >> 55}.{(v >> 47) & 0xFF}.{(v >> 31) & 0xFFFF}.{v & 0x7FFFFFFF}"
+
+
+def tree_digest(hashes: dict[str, str]) -> str:
+    """One sha1 over a {relative path: sha1} tree (play.py mod_tree_hashes)."""
+    return hashlib.sha1("".join(f"{k}\0{v}\n" for k, v in sorted(hashes.items())).encode()).hexdigest()
+
+
+def repo_pin(repo: Path, git=_git) -> dict:
+    """The repo commit and whether the code paths differ from it (tracked edits or untracked files); diff: a sha1 of
+    `git diff HEAD` plus the untracked names over CODE_PATHS, so two dirty trees with different edits differ."""
+    head = (git(repo, "rev-parse", "HEAD") or "").strip() or None
+    status = git(repo, "status", "--porcelain", "--", *CODE_PATHS)
+    diff = git(repo, "diff", "HEAD", "--", *CODE_PATHS)
+    dirty = bool(status and status.strip()) if status is not None else None
+    untracked = "".join(ln for ln in (status or "").splitlines(True) if ln.startswith("??"))
+    return {"commit": head, "dirty": dirty,
+            "diff": hashlib.sha1(((diff or "") + untracked).encode()).hexdigest()[:16] if dirty else None}
+
+
+def bg3le_pin(dist: Path, source: Path, git=_git) -> dict:
+    """bg3le as the game loads it: the built binary (BUILDINFO's upstream commit and sha256, the patches built in)
+    and the source tree's `git describe --dirty` (third_party/bg3le carries local changes past its pinned tag:
+    local_changes)."""
+    try:
+        info = buildinfo((dist / "BUILDINFO").read_text(errors="replace"))
+    except OSError:
+        info = {"patches": []}
+    sha = info.get("sha256")
+    if not sha:
+        try:
+            sha = hashlib.sha256((dist / "libbg3le.so").read_bytes()).hexdigest()
+        except OSError:
+            sha = None
+    desc = (git(source, "describe", "--tags", "--dirty", "--always") or "").strip() or None
+    return {"source": desc, "local_changes": desc.endswith("-dirty") if desc else None, "commit": info.get("commit"),
+            "sha256": sha, "patches": len(info["patches"])}
+
+
+def version_pins(repo: Path, game_build: str, dist: Path, mod_meta: Path, mod_hashes: dict[str, str],
+                 git=_git) -> dict:
+    """What one run plays with: the BG3 Steam buildid, bg3le, the mod (version + tree sha1) and the repo."""
+    try:
+        ver = mod_version(mod_meta.read_text(errors="replace"))
+    except OSError:
+        ver = None
+    return {"game_build": game_build or None, "bg3le": bg3le_pin(dist, repo / "third_party" / "bg3le", git),
+            "mod": {"version": ver, "sha1": tree_digest(mod_hashes) if mod_hashes else None},
+            "repo": repo_pin(repo, git)}
+
+
+def _dig(d: dict | None, dotted: str):
+    for k in dotted.split("."):
+        d = d.get(k) if isinstance(d, dict) else None
+    return d
+
+
+def pin_drift(first: dict | None, now: dict) -> list[str]:
+    """`key: first → now` for every DRIFT_KEYS pin that differs from the series' first run (none: no first pins)."""
+    if not first:
+        return []
+    return [f"{k}: {_dig(first, k)} → {_dig(now, k)}" for k in DRIFT_KEYS if _dig(first, k) != _dig(now, k)]
+
+
+# ======================================================================== caps (time, cost, tokens)
+
+CAP_KEYS = ("run_hours", "max_cost", "max_tokens")   # --run-hours, --max-cost USD, --max-tokens N
+
+
+def series_caps(frozen: dict | None, cli: dict, allow_change: bool) -> tuple[dict, str | None, list[str]]:
+    """(caps for this run, error, changes): series.json's caps rule a series; a CLI cap left out takes the frozen
+    one, a different CLI value is an error unless allow_change (then it is used and listed). No frozen caps (the
+    first run, or a series from before caps): the CLI's."""
+    if frozen is None:
+        return {k: cli.get(k) for k in CAP_KEYS}, None, []
+    caps, changes = {}, []
+    for k in CAP_KEYS:
+        want, have = cli.get(k), frozen.get(k)
+        if want is None or want == have:
+            caps[k] = have
+        else:
+            changes.append(f"{k}: {have} → {want}")
+            caps[k] = want
+    if changes and not allow_change:
+        return caps, ("the series' caps are fixed in series.json (" + "; ".join(changes) + "): drop the flag, or "
+                      "pass --allow-cap-change to record the change"), changes
+    return caps, None, changes
+
+
+TOKEN_FIELDS = (("input", "input_tokens"), ("output", "output_tokens"), ("cache_read", "cache_read_input_tokens"),
+                ("cache_write", "cache_creation_input_tokens"))
+
+
+def usage_tokens(usage: dict | None) -> dict:
+    u = usage if isinstance(usage, dict) else {}
+    return {k: int(u.get(src) or 0) for k, src in TOKEN_FIELDS}
+
+
+def token_total(tokens: dict | None) -> int:
+    """What --max-tokens counts: every token claude processed (input, output, cache reads and writes)."""
+    return sum(int(v or 0) for v in (tokens or {}).values())
+
+
+def claude_totals(state_dir: Path, since: float) -> dict:
+    """Cost, turns and tokens of every claude stream written since `since` (play, resumes, -fix, -keeper): their
+    result events, i.e. the finished claude processes."""
+    cost, turns, tokens = 0.0, 0, {k: 0 for k, _ in TOKEN_FIELDS}
+    try:
+        files = sorted(state_dir.iterdir()) if state_dir.is_dir() else []
+    except OSError:
+        files = []
+    for f in files:
+        try:
+            if not CLAUDE_STREAM_RE.match(f.name) or f.stat().st_mtime < since:
+                continue
+            lines = f.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        for ln in lines:
+            if '"type": "result"' not in ln and '"type":"result"' not in ln:
+                continue
+            try:
+                ev = json.loads(ln)
+            except ValueError:
+                continue
+            cost += float(ev.get("total_cost_usd") or 0)
+            turns += int(ev.get("num_turns") or 0)
+            for k, v in usage_tokens(ev.get("usage")).items():
+                tokens[k] += v
+    return {"cost_usd": cost, "turns": turns, "tokens": tokens}
+
+
+class UsageMeter:
+    """A run's cost and tokens while a claude process streams: `base` (the run's finished processes, claude_totals)
+    plus this stream's assistant messages (their usage, per message id) until its result event gives the exact
+    totals. Claude reports cost only in result events, so the live cost is the live tokens at the run's cost per
+    token so far (none before the run's first result: a cost cap then trips at the end of the first process)."""
+
+    def __init__(self, base_cost: float = 0.0, base_tokens: int = 0):
+        self.done_cost, self.done_tokens = float(base_cost), int(base_tokens)
+        self.msgs: dict = {}
+        self.live = 0
+
+    def on_event(self, ev: dict) -> None:
+        typ = ev.get("type")
+        if typ == "assistant":
+            msg = ev.get("message") or {}
+            if not isinstance(msg.get("usage"), dict):
+                return
+            mid = msg.get("id") or f"#{len(self.msgs)}"
+            n = token_total(usage_tokens(msg["usage"]))
+            self.live += n - self.msgs.get(mid, 0)
+            self.msgs[mid] = n
+        elif typ == "result":
+            self.done_cost += float(ev.get("total_cost_usd") or 0)
+            self.done_tokens += token_total(usage_tokens(ev.get("usage")))
+            self.msgs, self.live = {}, 0
+
+    @property
+    def tokens(self) -> int:
+        return self.done_tokens + self.live
+
+    @property
+    def cost(self) -> float:
+        rate = self.done_cost / self.done_tokens if self.done_tokens else 0.0
+        return self.done_cost + self.live * rate
+
+
+def cap_exceeded(caps: dict | None, cost: float, tokens: int) -> str | None:
+    """'cost' or 'tokens' when the run reached --max-cost / --max-tokens, else None (the time cap is play.py's)."""
+    caps = caps or {}
+    if caps.get("max_cost") is not None and cost >= caps["max_cost"]:
+        return "cost"
+    if caps.get("max_tokens") is not None and tokens >= caps["max_tokens"]:
+        return "tokens"
+    return None
+
+
+# ======================================================================== run metrics (pure functions over files)
+
+def _recent(state_dir: Path, since: float, pattern: re.Pattern) -> list[Path]:
+    out = []
+    try:
+        files = sorted(state_dir.iterdir()) if state_dir.is_dir() else []
+    except OSError:
+        return out
+    for f in files:
+        try:
+            if pattern.match(f.name) and f.stat().st_mtime >= since:
+                out.append(f)
+        except OSError:
+            continue
+    return out
+
+
+def time_to_milestone(started: float | None, reached_at: float | None) -> float | None:
+    """Wall seconds from the run's start to the milestone (None: not reached)."""
+    if started is None or reached_at is None:
+        return None
+    return round(reached_at - started, 1)
+
+
+FIGHTS_RE = re.compile(r"^S\d{3,}\.fights\.jsonl$")
+
+
+def death_counts(state_dir: Path, since: float, failures: list[dict]) -> dict:
+    """Party downs and deaths in the run's fights (Sxxx.fights.jsonl, the MCP server's fight debriefs: party[].downed
+    and .died per fight) and Game Overs (the run's party_wipe failures). Downs or deaths outside a fight the
+    debrief saw (a fall, a trap out of combat) are not observable in the logs and not counted."""
+    fights = downs = deaths = 0
+    for f in _recent(state_dir, since, FIGHTS_RE):
+        for r in _read_jsonl(f):
+            fights += 1
+            for m in r.get("party") or []:
+                if isinstance(m, dict):
+                    downs += int(m.get("downed") or 0)
+                    deaths += 1 if m.get("died") else 0
+    wipes = sum(int(x.get("n") or 1) for x in failures or [] if x.get("kind") == "party_wipe")
+    return {"fights": fights, "downs": downs, "deaths": deaths, "wipes": wipes}
+
+
+def fairness_flags(streams: list[Path]) -> dict:
+    """runner/fairness.py over the run's play streams: hits per rule (LEAK and CHECK), plus the sandbox/fairness
+    guard's blocks of the agent's own file calls."""
+    kinds: Counter = Counter()
+    leak = check = blocks = 0
+    for s in streams:
+        calls, _ = triage.load_calls(s, Path(str(s)[:-len(".jsonl")] + ".turns.jsonl"))
+        blocks += sum(1 for c in calls if c["name"] in fairness.NOT_GAME and GUARD_BLOCK in (c.get("text") or ""))
+        for rule, hits in fairness.audit_calls(calls).items():
+            kinds[rule] += len(hits)
+            if fairness.RULES[rule][0] == fairness.LEAK:
+                leak += len(hits)
+            else:
+                check += len(hits)
+    return {"count": leak + check, "leak": leak, "check": check, "blocks": blocks, "kinds": dict(kinds)}
+
+
+LATENCY_RE = re.compile(r"^S\d{3,}(?:-[rc]\d+)?\.latency\.json$")   # play sessions only (not -fix/-keeper)
+
+
+def _weighted_median(pairs: list[tuple[float, int]]) -> float | None:
+    pairs = sorted((v, n) for v, n in pairs if v is not None and n)
+    total = sum(n for _, n in pairs)
+    acc = 0
+    for v, n in pairs:
+        acc += n
+        if acc * 2 >= total:
+            return v
+    return None
+
+
+def latency_summary(state_dir: Path, since: float) -> dict | None:
+    """The run's live feel from its play sessions' Sxxx.latency.json (bg3ai.metrics): idle gap median and p90 (s),
+    gaps over 10 s, the read tools' round-trip median (ms). Over several sessions each value is the median of the
+    per-session values weighted by their sample counts (exact for a one-session run); None: no latency files."""
+    idle_med, idle_p90, rt, gaps, n = [], [], [], 0, 0
+    for f in _recent(state_dir, since, LATENCY_RE):
+        try:
+            d = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        n += 1
+        a = ((d.get("idle_s") or {}).get("all")) or {}
+        idle_med.append((a.get("median"), a.get("n") or 0))
+        idle_p90.append((a.get("p90"), a.get("n") or 0))
+        r = ((d.get("tool_rt_ms") or {}).get("read")) or {}
+        rt.append((r.get("median"), r.get("n") or 0))
+        gaps += int((d.get("long_gaps") or {}).get("total") or 0)
+    if not n:
+        return None
+    return {"sessions": n, "idle_median_s": _weighted_median(idle_med), "idle_p90_s": _weighted_median(idle_p90),
+            "gaps_over_10s": gaps, "read_rt_median_ms": _weighted_median(rt)}
+
+
+def story_gained(state_dir: Path, since: float) -> dict:
+    """Story progress points the run's sessions gained (progress_history.jsonl, bg3ai.progress: one line per
+    session) and their events by kind."""
+    points = events = sessions = 0
+    by_kind: Counter = Counter()
+    for r in _read_jsonl(state_dir / "progress_history.jsonl"):
+        if (r.get("t") or 0) < since:
+            continue
+        sessions += 1
+        points += int(r.get("points") or 0)
+        events += int(r.get("events") or 0)
+        by_kind.update({k: int(v or 0) for k, v in (r.get("by_kind") or {}).items()})
+    return {"points": points, "events": events, "sessions": sessions, "by_kind": dict(by_kind)}
+
+
+def run_metrics(state_dir: Path, run_started: float, reached_at: float | None, failures: list[dict]) -> dict:
+    """The benchmark fields of a run record beyond the failures (each a pure function above)."""
+    streams = _recent(state_dir, run_started, PLAY_STREAM_RE)
+    return {"time_to_milestone_s": time_to_milestone(run_started, reached_at),
+            "deaths": death_counts(state_dir, run_started, failures),
+            "fairness_flags": fairness_flags(streams),
+            "latency": latency_summary(state_dir, run_started),
+            "story": story_gained(state_dir, run_started)}
 
 
 # ======================================================================== the table
@@ -413,8 +761,8 @@ def best_streak(records: list[dict]) -> int:
 
 def runs_table(records: list[dict]) -> str:
     """Plain-text table of a series' runs (play.py runs --playthrough <base>)."""
-    head = ("run", "playthrough", "outcome", "clean", "wall min", "sessions", "harness", "agent", "unknown", "cost $",
-            "top failures")
+    head = ("run", "playthrough", "outcome", "clean", "wall min", "to M min", "sessions", "harness", "agent",
+            "unknown", "cost $", "tokens M", "idle med s", "top failures")
     rows = []
     for r in records:
         c = class_counts(r.get("failures"))
@@ -423,9 +771,13 @@ def runs_table(records: list[dict]) -> str:
             kinds[f"{f.get('kind')}({f.get('class', '?')[0]})"] += int(f.get("n") or 1)
         top = ", ".join(f"{k}×{n}" if n > 1 else k for k, n in kinds.most_common(4))
         outcome = r.get("outcome") or ("reached" if r.get("milestone") else "?")
+        ttm, idle = record_ttm(r), record_idle(r)
+        outcome += f" ({r['cap']})" if r.get("cap") and outcome != "timeout" else ""
         rows.append((str(r.get("run") or 1), str(r.get("playthrough") or ""), outcome,
-                     "yes" if r.get("clean") else "no", f"{r.get('wall_min', 0):g}", str(r.get("sessions", "")),
-                     str(c[HARNESS]), str(c[AGENT]), str(c[UNKNOWN]), f"{r.get('cost_usd', 0):.2f}", top))
+                     "yes" if r.get("clean") else "no", f"{r.get('wall_min', 0):g}",
+                     "-" if ttm is None else f"{ttm / 60:.1f}", str(r.get("sessions", "")),
+                     str(c[HARNESS]), str(c[AGENT]), str(c[UNKNOWN]), f"{r.get('cost_usd', 0):.2f}",
+                     f"{token_total(r.get('tokens')) / 1e6:.2f}", "-" if idle is None else f"{idle:g}", top))
     widths = [max(len(x) for x in col) for col in zip(head, *rows)] if rows else [len(h) for h in head]
     lines = ["  ".join(v.ljust(w) for v, w in zip(row, widths)).rstrip() for row in [head, *rows]]
     lines.insert(1, "  ".join("-" * w for w in widths))
@@ -433,4 +785,58 @@ def runs_table(records: list[dict]) -> str:
     clean = sum(1 for r in records if r.get("clean"))
     lines += ["", f"{len(records)} run(s), {clean} clean; {n} clean in a row (latest), best streak "
                   f"{best_streak(records)}"]
+    return "\n".join(lines)
+
+
+# ======================================================================== the series summary
+
+def record_ttm(r: dict) -> float | None:
+    """time_to_milestone_s of a record (derived from reached_at - started for records written before the field)."""
+    if "time_to_milestone_s" in r:
+        return r["time_to_milestone_s"]
+    return time_to_milestone(r.get("started"), r.get("reached_at"))
+
+
+def record_idle(r: dict) -> float | None:
+    return ((r.get("latency") or {}).get("idle_median_s"))
+
+
+def stats(values: list) -> dict | None:
+    """{n, min, max, mean, stddev (sample; 0 for one value)} of the non-None values, or None."""
+    v = [float(x) for x in values if x is not None]
+    if not v:
+        return None
+    return {"n": len(v), "min": min(v), "max": max(v), "mean": statistics.fmean(v),
+            "stddev": statistics.stdev(v) if len(v) > 1 else 0.0}
+
+
+SUMMARY_METRICS = (   # (label, value of a record, format)
+    ("wall min", lambda r: r.get("wall_min"), "{:.1f}"),
+    ("to milestone min", lambda r: None if record_ttm(r) is None else record_ttm(r) / 60, "{:.1f}"),
+    ("cost $", lambda r: r.get("cost_usd"), "{:.2f}"),
+    ("tokens M", lambda r: token_total(r.get("tokens")) / 1e6 if r.get("tokens") else None, "{:.2f}"),
+    ("idle median s", record_idle, "{:.2f}"),
+)
+
+
+def series_summary(records: list[dict]) -> str:
+    """The series in numbers (play.py runs): n, reached, and min/max/mean/stddev of wall time, time to the
+    milestone (reached runs only), cost, tokens and the idle-gap median; the pins and caps when they vary."""
+    reached = sum(1 for r in records if (r.get("outcome") or ("reached" if r.get("milestone") else "")) == "reached")
+    lines = [f"series: n={len(records)}, reached {reached}/{len(records)}"]
+    head = ("metric", "n", "min", "max", "mean", "stddev")
+    rows = []
+    for label, get, fmt in SUMMARY_METRICS:
+        st = stats([get(r) for r in records])
+        rows.append((label, "0", "-", "-", "-", "-") if st is None else
+                    (label, str(st["n"]), *(fmt.format(st[k]) for k in ("min", "max", "mean", "stddev"))))
+    widths = [max(len(x) for x in col) for col in zip(head, *rows)]
+    lines += ["  ".join(v.ljust(w) for v, w in zip(row, widths)).rstrip() for row in [head, *rows]]
+    lines.insert(2, "  ".join("-" * w for w in widths))
+    drift = [f"run {r.get('run') or 1}: " + "; ".join(r["version_drift"]) for r in records if r.get("version_drift")]
+    if drift:
+        lines += ["version drift (--allow-version-drift): " + " | ".join(drift)]
+    caps = {json.dumps(r.get("caps"), sort_keys=True) for r in records if r.get("caps")}
+    if len(caps) > 1:
+        lines += ["caps differ between runs: " + " | ".join(sorted(caps))]
     return "\n".join(lines)

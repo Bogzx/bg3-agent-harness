@@ -19,9 +19,10 @@ nothing.
 
 Options: `--session-minutes 60` (wrap-up starts 3 min before the end), `--hours N` (total
 budget; no new session starts with less than 20 min left), `--model`, `--save-owner NAME`,
-`--take-over` (see Safety), `--until MILESTONE [--runs N] [--run-hours H]`, `--character-brief TEXT [--roleplay
-strict|light] [--difficulty Explorer|Balanced|Tactician]` (all below). `play.py runs --playthrough PT [--failures]`
-prints a series' run table.
+`--take-over` (see Safety), `--until MILESTONE [--runs N] [--run-hours H] [--max-cost USD] [--max-tokens N]
+[--allow-version-drift] [--allow-cap-change]`, `--character-brief TEXT [--roleplay strict|light] [--difficulty
+Explorer|Balanced|Tactician]` (all below). `play.py runs --playthrough PT [--failures]` prints a series' run table
+and its summary.
 
 `--save-owner` (or `$BG3AI_SAVE_OWNER`) is the player character's name, which starts every save folder
 of the playthrough: `Claude` for `Claude-<id>__<label>`. Without it, the runner learns the owner from the
@@ -46,8 +47,15 @@ Without a brief, a new game is named after `--save-owner` as before.
 (SIGINT; the fix-notes pass closes the memory), the runner quicksaves if needed and appends a run record to
 `runtime/sessions/<pt>/runs.jsonl` (wall/play minutes, sessions, cost, turns and tokens from claude's result events,
 game crashes/hangs, agent hangs, recoveries, setup failures, agent reloads), then exits. A playthrough already past
-it doesn't play. Every way an `--until` run ends writes a record (not a `stop`, which leaves the run to resume),
-and `--run-hours H` caps one run: past it the run ends as a timeout.
+it doesn't play. Every way an `--until` run ends writes a record (not a `stop`, which leaves the run to resume).
+
+**Caps.** `--run-hours H` caps one run's wall time: past it the run ends as a `timeout`. `--max-cost USD` and
+`--max-tokens N` cap its claude cost and tokens (every claude process of the run: play, resumes, fix-notes, memory
+keeper; tokens = input + output + cache reads + cache writes). They are checked while claude streams (the run's
+finished processes from their result events plus the live stream's per-message usage; claude reports cost only in
+result events, so the live cost is the live tokens at the run's cost per token so far) and between sessions (the
+keeper's cost too). Past one, claude is stopped like at a hard stop (session reason `cap`, no keeper pass after it)
+and the run ends `over_budget`; the record's `cap` says which (`time` | `cost` | `tokens`).
 
 **Benchmark series (`--runs N`).** The launch bar is 3 unattended Nautiloid runs in a row:
 
@@ -62,9 +70,25 @@ Run 1 is the playthrough itself (`naut`), run k is `naut-r<k>`. Each run gets a 
 series' brief is frozen in `runtime/sessions/naut/series.json` when it starts, so the name run 1's agent chose isn't
 forced on run 2. Between runs the runner stops the game it launched; the next run launches it again to the main
 menu and plays a new game (phase 0 with a brief, else the `--save-owner` name). `--hours` caps the whole series,
-`--run-hours` each run. All records go to `runtime/sessions/naut/runs.jsonl` (`series`, `run`). Re-running the same
+`--run-hours`/`--max-cost`/`--max-tokens` each run. All records go to `runtime/sessions/naut/runs.jsonl` (`series`,
+`run`). Re-running the same
 command resumes the series at the first run without a record (also after the runner's self-restart). The series
-stops early on `stop`/Ctrl-C, a stale bg3le build or a runner error; it goes on after a timeout or a give-up.
+stops early on `stop`/Ctrl-C, a stale bg3le build or a runner error; it goes on after a timeout, a cap or a give-up.
+
+**Fixed per series** (`series.json`, written by the first run; a series from before these fields gets them from its
+next run):
+- `caps` (`run_hours`, `max_cost`, `max_tokens`): later runs take them from series.json; a cap flag left out uses the
+  frozen value, a different value is refused (exit 2) unless `--allow-cap-change` (recorded in `cap_changes`).
+- `pins`, the versions every run plays with (`runs.version_pins`): `game_build` (the Steam buildid from
+  `appmanifest_1086940.acf`, `tools/steam_paths.py buildid`; bg3le was verified on 25605617, see
+  `tools/dev/first_launch.sh`), `bg3le` (`source`: `git describe --tags --dirty` of third_party/bg3le, `local_changes`
+  = `-dirty`; `commit`, `sha256` and the patch count from `build/bg3le/dist/BUILDINFO`), `mod` (meta.lsx `version`,
+  `sha1` over the mod/ tree) and `repo` (`commit`, `dirty` and a `diff` hash over the code paths: runner, bridge, mod,
+  play, tools, patches, memory-template). Before a run that hasn't started, the runner compares `game_build`,
+  `bg3le.sha256`, `bg3le.source`, `mod.sha1` and `repo.commit/dirty/diff` with the first run's and refuses a
+  difference (exit 2, `REFUSING run k: versions differ ...`, then `runner stopped`) unless `--allow-version-drift`
+  (then recorded in `version_drift`). A run already under way (the runner's self-restart) keeps the pins it started
+  with. So: commit, or at least don't edit code, between the runs of a series.
 
 What a run doesn't inherit (reset before its first session, listed in the record's `reset`):
 
@@ -80,9 +104,26 @@ What a run doesn't inherit (reset before its first session, listed in the record
 Kept on purpose: `runtime/levelup_clicks.json` (UI click calibration), the wiki cache, `bg3ai/config.json`
 (the runner sets it every session), `runtime/actions.jsonl` (read by time window).
 
-**Run record** (`runs.jsonl`, one line per run): `outcome` (`reached` | `timeout` | `gave_up` | `runner_error`),
-`why`, `clean`, counts and cost as above, `failures` (each `{t, kind, class, detail, n?}`), `operator` (each
-`{t, what}`). Classes (`runner/runs.py`):
+**Run record** (`runs.jsonl`, one line per run): `outcome` (`reached` | `timeout` | `over_budget` | `gave_up` |
+`runner_error`), `cap` (`time` | `cost` | `tokens` when a cap ended it), `why`, `clean`, counts, cost and `tokens`
+as above, `failures` (each `{t, kind, class, detail, n?}`), `operator` (each `{t, what}`), `caps`, `pins`,
+`version_drift`, `cap_changes`, and the benchmark metrics (`runs.run_metrics`, pure functions over the run's files):
+
+| Field | What | From |
+|---|---|---|
+| `time_to_milestone_s` | wall seconds from the run's start to the milestone; null if not reached | the milestone's time |
+| `deaths` | `{fights, downs, deaths, wipes}`: party members downed / dead per fight, Game Overs | `Sxxx.fights.jsonl` (the fight debriefs' `party[].downed/died`), `party_wipe` failures. Downs/deaths outside a fight the debrief saw (falls, traps out of combat) aren't observable |
+| `fairness_flags` | `{count, leak, check, blocks, kinds: {rule: n}}` | runner/fairness.py over the play streams; `blocks`: the sandbox guard's blocks of the agent's file calls |
+| `latency` | `{sessions, idle_median_s, idle_p90_s, gaps_over_10s, read_rt_median_ms}` | the play sessions' `Sxxx.latency.json`; over several sessions each value is the sample-weighted median of the per-session values (exact for one session); null without latency files |
+| `story` | `{points, events, sessions, by_kind}` gained in the run | `progress_history.jsonl` |
+| `milestones_reached` | milestones reached in the playthrough at the end | `bg3ai.milestones.status` |
+
+`play.py runs` prints the per-run table (now with time to the milestone, tokens and the idle median) and a series
+summary: n, reached, and n/min/max/mean/stddev (sample) of wall time, time to the milestone (reached runs), cost,
+tokens and the idle median; plus any version drift and caps that differ between runs. Records from before a field
+show `-` (time to the milestone is derived from `reached_at - started`).
+
+Classes (`runner/runs.py`):
 
 - **harness** (ours): `game_crash`, `game_hang`, `game_oom`, `setup_failed`, `launch_failed`, `launch_gave_up`,
   `load_refused`, `recovery_failed`, `bg3le_stale`, `steam_refused`, `oom_save_refused` (runner_events.jsonl);
@@ -92,7 +133,8 @@ Kept on purpose: `runtime/levelup_clicks.json` (UI click calibration), the wiki 
   game-tool result: the agent saw what a player can't), `gave_up` (the runner gave up), `runner_error`.
 - **agent**: `stall` (the progress poller's stuck record: no story progress for 10+ min while acting), `party_wipe`
   (Game Over), `reload` (every load_game it called), `early_exit`, `fairness_block` (the sandbox guard blocked its
-  file call), `timeout` (the run's time ran out; `unknown` when harness failures hit the run).
+  file call), `timeout` (the run's time ran out), `cost_cap` / `tokens_cap` (the run's cost or token cap); the last
+  three are `unknown` when harness failures hit the run.
 - **unknown**: `agent_hang` (claude silent for minutes: a slow turn or a stalled API), `claude_killed` (claude
   ended by a signal from outside the runner).
 
@@ -194,7 +236,7 @@ stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
 | `runtime/runner.status.json` | live status for `play.py status` |
 | `runtime/sessions/<pt>/runner.json` | save owner, runner quicksaves, per-session history and progress signatures |
 | `runtime/sessions/<pt>/runs.jsonl` | one record per `--until` run (a `--runs` series: all its runs, in the base's dir) |
-| `runtime/sessions/<pt>/series.json` | a `--runs` series: its frozen profile, N, the milestone |
+| `runtime/sessions/<pt>/series.json` | a `--runs` series: its frozen profile, N, the milestone, version pins and caps |
 | `runtime/sessions/<run>/reset/`, `knowledge_snapshot.json`, `knowledge_edits/` | a `--runs` run's moved nav files, knowledge/ snapshot, the agent's knowledge/ edits that were put back |
 | `playthroughs/<pt>/profile.json` | the character brief, roleplay mode, difficulty (`--character-brief`) |
 | `runtime/sessions/<pt>/Sxxx.{jsonl,log}` | Claude's stream (raw and readable); `Sxxx-fix.*` for fix-notes passes |
