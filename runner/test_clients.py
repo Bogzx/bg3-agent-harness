@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Unit tests for runner/clients.py: ClaudeClient is a drop-in for play.py's claude_cmd and format_stream_event
-(compared on every line of the real runtime/sessions streams), CodexClient's command and its parsing of real codex
+"""Unit tests for runner/clients.py: ClaudeClient is a drop-in for play.py's claude_cmd and format_stream_event as
+they were before the client interface (frozen in test_play.py: legacy_claude_cmd, legacy_format_stream_event; compared on every line of the real runtime/sessions streams), CodexClient's command and its parsing of real codex
 0.157.1 event lines (recorded offline against a local stub model server and a stub MCP server, no model call), and
 GeminiClient's documented shapes (untested CLI). Never launches claude, codex, gemini or the game.
 
@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import clients as C  # noqa: E402
 import play as P  # noqa: E402
 import runs as R  # noqa: E402
+import test_play as TP  # noqa: E402  (the frozen pre-client claude_cmd / format_stream_event)
 
 SESSIONS = P.REPO / "runtime" / "sessions"
 NAUT = SESSIONS / "naut"
@@ -96,7 +97,7 @@ class ClaudeDropIn(unittest.TestCase):
                                              ("fix", "5678", False, "-fix"), ("fix", "5678", True, "-fix")):
                 with self.subTest(opt=opt, resume=resume, tag=tag):
                     self.assertEqual(client.command(_req(r, prompt, sid, resume, tag)),
-                                     r.claude_cmd(prompt, sid, resume, tag))
+                                     TP.legacy_claude_cmd(r, prompt, sid, resume, tag))
 
     def test_env_and_config(self):
         c, req = C.ClaudeClient(), C.Request("go", "opus", Path("/tmp"), session="1")
@@ -118,7 +119,7 @@ class ClaudeDropIn(unittest.TestCase):
                 except json.JSONDecodeError:
                     continue
                 got = [s for e in client.parse(ln) for s in C.format_event(e)]
-                self.assertEqual(got, P.format_stream_event(ev), f"{f.name}:{i + 1}")
+                self.assertEqual(got, TP.legacy_format_stream_event(ev), f"{f.name}:{i + 1}")
                 n += 1
         self.assertGreater(n, 100)
 

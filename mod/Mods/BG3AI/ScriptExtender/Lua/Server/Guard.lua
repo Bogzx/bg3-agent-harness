@@ -41,8 +41,25 @@ end
 local function b(x) return U.truthy(x) end
 G.b = b
 
--- Osiris query wrapper: never throws, returns nil on error.
+-- Osiris query wrapper: never throws, returns nil on error. Queries only: Osi[name] runs any call or DB insert
+-- (G.q("Unlock", ...) would have unlocked), so a name must read like a query and never be a blocked or allowlisted
+-- action (those go through G.osi). Audit ACT-13.
+G.QUERY_PREFIXES = { "^Is", "^Has", "^Get", "^Can", "^InSamePartyGroup$", "^DialogIs", "^SpeakerGet", "^CombatGet" }
+G.q_denied = G.q_denied or {}
+function G.query_ok(name)
+    name = tostring(name)
+    if name:sub(1, 3) == "DB_" or (G.BLOCK and G.BLOCK[name]) or (G.ALLOW and G.ALLOW[name]) then return false end
+    for _, p in ipairs(G.QUERY_PREFIXES) do if name:find(p) then return true end end
+    return false
+end
 function G.q(name, ...)
+    if not G.query_ok(name) then
+        if not G.q_denied[name] then
+            G.q_denied[name] = true
+            Ext.Utils.PrintWarning("[BG3AI] guard: G.q('" .. tostring(name) .. "') is not a query; refused")
+        end
+        return nil
+    end
     local fn = Osi[name]
     local ok, r1, r2, r3 = pcall(fn, ...)
     if ok then return r1, r2, r3 end
@@ -637,7 +654,7 @@ end
 ------------------------------------------------------------------------
 
 G.ALLOW = {
-    CharacterMoveTo = true, CharacterMoveToPosition = true, PurgeOsirisQueue = true,
+    CharacterMoveToPosition = true, PurgeOsirisQueue = true,
     Use = true, Pickup = true, ToInventory = true, SendToCampChest = true,
     Equip = true, Unequip = true, UseSpell = true, UseSpellAtPosition = true,
     EndTurn = true, MakePlayerActive = true, AttachToPartyGroup = true,
@@ -660,6 +677,7 @@ G.BLOCK = {
     SetFaction = true, SetRelation = true, SetRelationTemporaryHostile = true,
     RequestLongRest = true, RequestLongRestConfirmed = true, AutoSave = true,
     QRY_StartDialog_Fixed = true, QRY_StartDialog = true, CharacterMoveToAndTalk = true,
+    CharacterMoveTo = true, -- the target-entity form walks with no path check and teleports when no path (ACT-13)
     SetCanJoinCombat = true, RequestGatherAtCamp = true, EndCombat = true, LeaveCombat = true, Die = true,
 }
 

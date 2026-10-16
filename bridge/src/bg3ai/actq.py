@@ -118,6 +118,10 @@ def parse_steps(raw: Any, allowed: set) -> list[Step]:
             raise StepError(f"step {i}: '{name}' can't be batched or queued")
         c_if, c_unless = _parse_conds(st.pop("if", None)), _parse_conds(st.pop("unless", None))
         st.pop("wait", None)  # steps always run to completion
+        if isinstance(st.get("targets"), (list, tuple)):
+            # use_ability takes targets as a comma list; a plan's ["e1","e2"] reached targets.split(",") and failed
+            # the whole step "'list' object has no attribute 'split'" (audit ACT-8).
+            st["targets"] = ",".join(str(t) for t in st["targets"] if str(t).strip())
         out.append(Step(name, st, c_if, c_unless))
     return out
 

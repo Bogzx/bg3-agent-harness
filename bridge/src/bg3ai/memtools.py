@@ -20,6 +20,9 @@ it, so any MCP client gets the same harness and the server, not the client, enfo
   dev checks do, never opens one; BG3AI_AUTO_SESSION=0 turns it off); session_start shows it again. end_session makes the
   Stop hook's check (keep playing / write the handoff / lint errors / committed); the runner makes the same check
   when the client exits. Manual sessions (no deadline) get the elapsed-time wrap-up reminder in results.
+* Keeper mode (server.keeper_server, BG3AI_KEEPER_MODE=1): the runner's memory keeper pass between sessions, for
+  any client: the memory tools only, over KeeperSandbox (the keeper's writable files; sessions/ read-only; HANDOFF.md
+  only in its last section), and no lifecycle.
 """
 
 from __future__ import annotations
@@ -122,8 +125,55 @@ class Sandbox:
         if p.exists() and not p.is_file():
             raise Refused(f"REFUSED: {rel} is a directory")
 
+    def check_content(self, rel: str, old: str | None, new: str) -> str | None:
+        """None if writing `new` over `old` to memory/<rel> is allowed, else why not (KeeperSandbox: HANDOFF.md)."""
+        return None
+
     def display(self, root: str, rel: str) -> str:
         return f"{root}/{rel}" if rel else f"{root}/"
+
+
+class KeeperSandbox(Sandbox):
+    """The memory keeper's sandbox (server.keeper_server, BG3AI_KEEPER_MODE=1): the runner's keeper pass between
+    sessions (runner/memory_keeper.py) for any client. On top of the player's rules: writes only to `writable`
+    (memory-relative files, and dirs given as "chapters/"); sessions/ is read-only (the player's append-only logs);
+    HANDOFF.md only from `handoff_section` (its heading) on: the player's text above it stays byte for byte (the
+    runner reads its "Save to load" line). The runner still restores anything out of bounds after the pass."""
+
+    def __init__(self, memory: Callable[[], Path], knowledge: Callable[[], Path], writable: list[str] | tuple = (),
+                 handoff_section: str | None = None):
+        super().__init__(memory, knowledge)
+        self.writable = [w.strip() for w in writable if w.strip()]
+        self.handoff_section = handoff_section
+
+    @classmethod
+    def from_env(cls, memory: Callable[[], Path], knowledge: Callable[[], Path], env=None) -> "KeeperSandbox":
+        """BG3AI_KEEPER_WRITABLE (comma-separated; nothing writable without it) and BG3AI_KEEPER_HANDOFF_SECTION."""
+        env = os.environ if env is None else env
+        return cls(memory, knowledge, (env.get("BG3AI_KEEPER_WRITABLE") or "").split(","),
+                   env.get("BG3AI_KEEPER_HANDOFF_SECTION") or None)
+
+    def may_write(self, rel: str) -> bool:
+        return any(rel == w or (w.endswith("/") and rel.startswith(w)) for w in self.writable)
+
+    def _check_write(self, root: str, rel: str, p: Path) -> None:
+        super()._check_write(root, rel, p)
+        if rel.split("/", 1)[0] == "sessions":
+            raise Refused("REFUSED: memory/sessions/ is read-only for the memory keeper (the player's logs)")
+        if not self.may_write(rel):
+            raise Refused(f"REFUSED: the memory keeper may write only {', '.join(self.writable) or 'nothing'}")
+
+    def check_content(self, rel: str, old: str | None, new: str) -> str | None:
+        if rel != "HANDOFF.md" or not self.handoff_section or old is None:
+            return None
+
+        def head(text: str) -> str:
+            i = text.find("\n" + self.handoff_section)
+            return (text if i < 0 else text[:i]).rstrip("\n")
+        if head(new) != head(old):
+            return (f"REFUSED: HANDOFF.md above '{self.handoff_section}' is the player's: change only that last "
+                    f"section (memory_edit inside it, or memory_append it if it is missing)")
+        return None
 
 
 # ---------------------------------------------------------------- reading
@@ -264,6 +314,8 @@ def _save(sb: Sandbox, root: str, p: Path, rel: str, old: str | None, new: str, 
     if len(new) > WRITE_MAX_CHARS:
         raise Refused(f"REFUSED: {rel} would be {len(new)} chars (limit {WRITE_MAX_CHARS}); condense it")
     if rel == L.CHARACTER_FILE and (why := _character_ok(sb, old, new)):
+        raise Refused(why)
+    if why := sb.check_content(rel, old, new):
         raise Refused(why)
     _atomic_write(p, new)
     return f"{verb} {sb.display(root, rel)} ({len(new.splitlines())} lines).\n{lint_note(sb, rel)}"

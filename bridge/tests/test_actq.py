@@ -85,6 +85,11 @@ class FakeGame:
                 return {"job": jid, "eta_s": 2.4, "route_m": 8.0}
             if op == "job.poll":
                 return self._view(int(args["id"]))
+            if op == "job.notify":  # RPC.lua: announce a waited-on job's end from now on (ACT-10)
+                j = self.jobs[int(args["id"])]
+                if j["status"] == "running":
+                    j["notify"] = True
+                return self._view(int(args["id"]))
             if op == "job.cancel":
                 j = self.jobs[int(args["id"])]
                 if j["status"] == "running":
@@ -181,6 +186,30 @@ class AsyncActions(Base):
         self.assertLess(time.monotonic() - t0, 0.5)
         self.assertTrue(out.startswith("move_to: started j1, ETA 2.4s (8m)"), out)
         self.assertTrue(self.g.ops("act.move_to")[0][1]["notify"])
+
+    def test_a_waited_job_that_outlives_its_wait_is_followed(self):
+        # ACT-10: "still running (use wait to keep watching)" with no id and no job_finished: the outcome was lost
+        self.g.dur["act.interact"] = 0.4
+        out = server._act("interact", "act.interact", {"char": P1, "target": DOOR}, wait_s=0.05)
+        self.assertIn("still running", out)
+        self.assertIn("goes on as j1", out)
+        self.assertIn("j1", server._async)
+        self.assertIn("RUNNING j1 interact", server.get_events())
+        out = server.wait_for("j1", timeout_s=2)
+        self.assertIn("interact: done", out)
+
+    def test_a_waited_job_that_ends_before_it_is_followed_reports_its_end(self):
+        orig = self.g.rpc
+
+        def ended(op, args=None, context="server", timeout=12.0):
+            if op == "job.notify":
+                return {"id": args["id"], "status": "failed", "error": "could not use that", "elapsed_ms": 9}
+            return orig(op, args, context, timeout)
+        self.g.rpc = ended
+        self.g.dur["act.interact"] = 5
+        out = server._act("interact", "act.interact", {"char": P1, "target": DOOR}, wait_s=0.05)
+        self.assertIn("interact: FAILED — could not use that", out)
+        self.assertNotIn("j1", server._async)
 
     def test_async_refusal_is_reported_immediately(self):
         self.g.refuse["act.move_to"] = "no walkable path there"
@@ -331,6 +360,15 @@ class DoActions(Base):
                                 % (self.door, self.door))
         self.assertIn("STOPPED: ", out)
         self.assertIn("standing in Fire", out)
+
+    def test_list_targets_become_a_comma_list(self):
+        # ACT-8: {"targets": ["e1","e2"]} in a plan reached targets.split(",") (AttributeError)
+        st = actq.parse_steps([{"tool": "use_ability", "ability": "Target_Bless", "targets": ["e1", "e2", " "]}],
+                              {"use_ability"})[0]
+        self.assertEqual(st.args["targets"], "e1,e2")
+        st = actq.parse_steps([{"tool": "use_ability", "ability": "Target_Bless", "targets": "e1,e2"}],
+                              {"use_ability"})[0]
+        self.assertEqual(st.args["targets"], "e1,e2")
 
     def test_bad_steps(self):
         self.assertIn("FAILED: step 1: 'save_game' can't be batched", server.do_actions('[{"tool":"save_game"}]'))

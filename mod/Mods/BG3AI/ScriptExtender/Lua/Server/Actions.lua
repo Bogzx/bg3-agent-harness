@@ -43,6 +43,9 @@ A.END_IGNORED = "the game ignored the end-turn order"
 -- S035 19:28-19:30: three jump_to calls each ran 25 s "still running" while Shadowheart never moved: the engine
 -- dropped UseSpellAtPosition without CastSpellFailed. No CastSpell and no step this long after the order: fail.
 A.CAST_NO_START_MS = 8000
+-- In combat the cast never walks (WithoutMove): a cast the engine takes starts within a second, so 8 s of nothing
+-- was ~6 s of a turn lost per dropped order (S062 Target_MainHandAttack ×2, audit ACT-11). A jump keeps the 8 s.
+A.CAST_NO_START_COMBAT_MS = 3000
 A.CAST_WALK_MAX_REACH = 3.0 -- act.cast out of combat walks into range only for touch-range casts (Help, melee)
 A.MELEE_STOP_SLACK = 0.4 -- move_to {target, within}: stop this far inside the melee reach
 A.CAST_SETTLE_MS = 250       -- cast: report this long after CastedSpell / the last hit
@@ -879,6 +882,9 @@ function A.ladder_release(char, held)
     end
 end
 
+A.STORY_LOCKED = "clicked it: still locked (no lock to pick: the game opens it some other way, e.g. a lever, a"
+    .. " quest item carried or used on it, a spell)"
+
 reg("interact", function(args)
     local char = G.actor(args.char)
     G.not_in_dialogue(char)
@@ -901,21 +907,32 @@ reg("interact", function(args)
     end
     -- Locked: as in the game, a party member carrying its key opens it (the
     -- player would select them and click). Otherwise refuse with the options.
-    local key_item, key_note
+    -- A story lock (no lockpick difficulty: the Temple of Bhaal door the amulet opens, a lever-worked gate) has no
+    -- key to match: the click is still sent, as a player's, and the game's own script answers it (a prompt, the
+    -- door opening, or "Locked"). Refusing it needed a hand click (audit ACT-6, impl-logs.md:679).
+    local key_item, key_note, story_lock
     if G.b(G.q("IsLocked", target)) then
         local h, k = G.party_key(target, char)
-        if not h then
+        if not h and G.lock_pickable(target) == false then
+            story_lock = true
+        elseif not h then
             G.refuse("it is locked and nobody in the party carries its key (lockpick it, force it, or find the key)")
         end
-        if not G.same(h, char) then
+        if story_lock then -- the actor clicks it themselves
+        elseif not G.same(h, char) then
             char = h
             G.not_in_dialogue(char)
             G.combat_gate(char, "no_combat")
             G.within(char, target, G.MAX_INTERACT_DIST, "the key holder's target")
         end
-        key_item = k
-        local function nm(u) local ok, n = pcall(function() return BG3AI.Visibility.name(u) end); return ok and n or u end
-        key_note = { unlocked_with = nm(k), key_holder = nm(char) }
+        if not story_lock then
+            key_item = k
+            local function nm(u) local ok, n = pcall(function() return BG3AI.Visibility.name(u) end); return ok and n or u end
+            key_note = { unlocked_with = nm(k), key_holder = nm(char) }
+        end
+    end
+    local function story_locked()
+        return story_lock and G.b(G.q("IsLocked", target))
     end
     local was_open = G.b(G.q("IsOpened", target))
     local openable, ladder = false, false
@@ -968,9 +985,10 @@ reg("interact", function(args)
             UseFinished = function(job, a)
                 if G.same(a[1], char) and G.same(a[2], target) then
                     if ladder and not (job.ladder and job.ladder.used) then return end -- not our Use yet (see below)
-                    if not G.b(a[3]) then
+                    if not G.b(a[3]) or (story_locked() and not openable) then
                         RPC.finish_job(job, "failed", nil, key_note and G.b(G.q("IsLocked", target))
-                            and ("still locked: " .. key_note.unlocked_with .. " did not open it") or "could not use that")
+                            and ("still locked: " .. key_note.unlocked_with .. " did not open it")
+                            or (story_locked() and A.STORY_LOCKED) or "could not use that")
                         return
                     end
                     local res = state_result()
@@ -1120,7 +1138,8 @@ reg("interact", function(args)
             if res then
                 RPC.finish_job(job, "done", res)
             elseif job.used_at and RPC.now_ms() - job.used_at > (openable and 1500 or 300) then
-                RPC.finish_job(job, "done", with_key({ used = true }))
+                if story_locked() then RPC.finish_job(job, "failed", { used = true }, A.STORY_LOCKED)
+                else RPC.finish_job(job, "done", with_key({ used = true })) end
             end
         end,
     })
@@ -1510,6 +1529,8 @@ reg("cast", function(args)
         settle = A.PROJECTILE_SETTLE_MS
     end
 
+    local no_start_ms = (combat and without_move == 1 and base ~= "Projectile_Jump") and A.CAST_NO_START_COMBAT_MS
+        or A.CAST_NO_START_MS
     local walk_m = walk and walk.plan.length_m or 0
     return start("cast", char, {
         eta_s = 2.0 + (walk and walk_eta(walk_m) or 0),
@@ -1559,8 +1580,8 @@ reg("cast", function(args)
                 local p = G.pos(char)
                 if p and job.ordered_pos and U.dist(p, job.ordered_pos) > 0.5 then
                     job.began = true -- the engine walks into range / the jump took off
-                elseif RPC.now_ms() - job.ordered_ms > A.CAST_NO_START_MS then
-                    local why = "the game never started it (" .. tostring(math.floor(A.CAST_NO_START_MS / 1000))
+                elseif RPC.now_ms() - job.ordered_ms > no_start_ms then
+                    local why = "the game never started it (" .. tostring(math.floor(no_start_ms / 1000))
                         .. " s, no cast, no step)"
                     if base == "Projectile_Jump" then
                         why = why .. ": it ignores a landing the jump can't reach (too far or too high for this"

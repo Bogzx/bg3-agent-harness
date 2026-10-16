@@ -463,6 +463,22 @@ test("interact: an item in the actor's own bag is used in place", function()
     eq(#called("Use"), 1, "Use"); eq(#called("CharacterMoveToPosition"), 0, "moves")
 end)
 
+test("job.notify (ACT-10): a waited job that outlived the wait announces its end as job_finished", function()
+    local r = op("interact", { char = P1, target = DOOR })
+    local j = job(r)
+    local function finished()
+        for _, ev in ipairs(RPC.events) do
+            if ev.kind == "job_finished" and ev.data.job == "j" .. tostring(j.id) then return ev end
+        end
+    end
+    eq(finished(), nil, "no event before")
+    local v = RPC.ops["job.notify"]({ id = j.id })
+    eq(v.status, "running", "view")
+    RPC.finish_job(j, "done", { used = true })
+    assert(finished(), "job_finished pushed")
+    eq(RPC.ops["job.notify"]({ id = j.id }).status, "done", "an ended job's view")
+end)
+
 test("interact: an item in another character's bag is refused", function()
     osiv[key("GetInventoryOwner", GEM)] = NPC
     local j = job(op("interact", { char = P1, target = GEM }))
@@ -561,6 +577,23 @@ test("cast: an order the engine silently drops fails after CAST_NO_START_MS (S03
     world[P1].pos = { 1, 0, 0 }; tick(140)
     eq(j.status, "running", "moved")
     world[P1].pos = { 0, 0, 0 }
+end)
+
+test("cast in combat (ACT-11): a dropped order fails after CAST_NO_START_COMBAT_MS, not 8 s", function()
+    combat_setup(9)
+    spell("Target_Thing", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    local j = job(op("cast", { char = P1, spell = "Target_Thing", target = NPC }))
+    eq(j.status, "running", "started " .. tostring(j.error))
+    tick(40) -- 2.4 s
+    eq(j.status, "running", "early")
+    tick(12) -- 3.1 s, no CastSpell, no step
+    eq(j.status, "failed", "status"); assert(j.error:find("never started it %(3 s"), j.error)
+    -- a cast the engine took waits on
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    j = job(op("cast", { char = P1, spell = "Target_Thing", target = NPC }))
+    A.dispatch("CastSpell", { P1, "Target_Thing", "Target", "None", 0 })
+    tick(60)
+    eq(j.status, "running", "began")
 end)
 
 test("cast: a once-per-rest item spell is refused after one use until a rest (S030 Spell Slot Restoration x3)", function()
@@ -1643,6 +1676,44 @@ test("interact locked: nobody carries the key -> refused with the options", func
     eq(#called("Unlock"), 0, "Unlock")
 end)
 
+-- ACT-6: a story lock (zero lockpick-difficulty id: the Temple of Bhaal door the amulet opens) is clicked anyway.
+local function story_door()
+    osiv[key("IsLocked", DOOR)] = 1
+    world[DOOR].comps.Lock = { Key_M = "NO_KEY", LockDifficultyClassID = "00000000-0000-0000-0000-000000000000", LockDC = 0 }
+end
+
+test("interact story lock, no key: walks and clicks it; the game's script opens it -> done", function()
+    story_door()
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    arrive(j, { 8.5, 0, 0 })
+    eq(#called("Use"), 1, "Use"); eq(#called("Unlock"), 0, "never Unlock")
+    A.dispatch("UseFinished", { P1, DOOR, 1 })
+    osiv[key("IsLocked", DOOR)] = nil
+    osiv[key("IsOpened", DOOR)] = 1
+    tick()
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.opened, true, "opened")
+    eq(j.result.unlocked_with, nil, "no key reported")
+end)
+
+test("interact story lock: the click changes nothing -> failed, says it is a story lock", function()
+    story_door()
+    world[DOOR].pos = { 1, 0, 0 }
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    eq(#called("Use"), 1, "Use in place")
+    A.dispatch("UseFinished", { P1, DOOR, 1 })
+    tick(30)
+    eq(j.status, "failed", "status " .. tostring(j.status)); assert(j.error:find("no lock to pick"), j.error)
+end)
+
+test("interact story lock: the Use fails -> the story-lock reason", function()
+    story_door()
+    world[DOOR].pos = { 1, 0, 0 }
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    A.dispatch("UseFinished", { P1, DOOR, 0 })
+    eq(j.status, "failed", "status"); assert(j.error:find("no lock to pick"), j.error)
+end)
+
 test("interact locked: a key with another name does not fit", function()
     keyed_door(P1, "PriestessKey", "PrisonKey")
     local j = job(op("interact", { char = P1, target = DOOR }))
@@ -1700,6 +1771,17 @@ test("guard: Unlock stays blocked through G.osi; unlock_with_key needs the key a
     world[DOOR].pos = { 1, 0, 0 }
     eq(pcall(G.unlock_with_key, DOOR, P1, 2.5), true, "key + adjacent")
     eq(#called("Unlock"), 1, "one Unlock")
+end)
+
+test("guard (ACT-13): CharacterMoveTo is blocked; G.q runs queries only", function()
+    eq(pcall(G.osi, "CharacterMoveTo", P1, NPC, "Walk", "ev"), false, "G.osi CharacterMoveTo")
+    eq(#called("CharacterMoveTo"), 0, "no CharacterMoveTo")
+    osiv[key("IsLocked", DOOR)] = 1
+    eq(G.q("IsLocked", DOOR), 1, "a query runs")
+    eq(G.q("Unlock", DOOR, P1), nil, "a blocked action through G.q"); eq(#called("Unlock"), 0, "no Unlock")
+    eq(G.q("Use", P1, DOOR, "ev"), nil, "an allowlisted action through G.q"); eq(#called("Use"), 0, "no Use")
+    eq(G.q("DB_Foo", P1), nil, "a DB insert"); eq(G.q("SetHitpoints", P1, 1), nil, "a non-query name")
+    eq(G.query_ok("InSamePartyGroup"), true, "InSamePartyGroup"); eq(G.query_ok("SpeakerGetDialog"), true, "SpeakerGetDialog")
 end)
 
 test("lockpick: a party member carries the key -> refused, points to interact", function()

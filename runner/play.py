@@ -56,6 +56,7 @@ import triage  # noqa: E402  (runner/triage.py: post-session Sxxx.triage.md)
 import ramwatch  # noqa: E402  (runner/ramwatch.py: RAM watchdog, RSS spikes with the last tool calls)
 import runs  # noqa: E402  (runner/runs.py: run --runs naming, per-run resets, failure tagging, the runs table)
 import judge  # noqa: E402  (runner/judge.py: the persona judge, a run record's `persona`)
+import clients  # noqa: E402  (runner/clients.py: the CLI that plays, --client claude|codex|gemini)
 import model_time  # noqa: E402  (runner/model_time.py: model vs harness time, a run record's `model_time`)
 sys.path.insert(0, str(REPO / "tools"))
 import steam_paths  # noqa: E402  (stdlib: Steam's offline state before any game launch)
@@ -143,9 +144,8 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # No built-in tools but ToolSearch (it loads the deferred MCP tools' schemas): files, memory, the session's start and
 # end and the sandbox are the bg3 MCP server's (bridge/src/bg3ai/memtools.py), so the agent has only mcp__bg3__*
 # and no client hook is needed for correctness. play/.claude/settings.json denies the rest again (defence in depth).
-PLAY_TOOLS = "ToolSearch"
-CLAUDE_FLAGS = ["--exclude-dynamic-system-prompt-sections", "--setting-sources", "project,local",
-                "--disable-slash-commands", "--tools", PLAY_TOOLS]
+# The flags live in runner/clients.py (ClaudeClient builds the command).
+PLAY_TOOLS, CLAUDE_FLAGS = clients.PLAY_TOOLS, clients.CLAUDE_FLAGS
 MAX_STOP_RESUMES = 6           # claude ended its turn but the stop check says "keep playing"/"finish the wrap-up":
                                # resume it with the reason at most this often per session (was the Stop hook's block)
 
@@ -886,37 +886,22 @@ def _short(value, limit: int) -> str:
     return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
-def format_stream_event(ev: dict) -> list[str]:
-    """Human-readable lines for one stream-json event (assistant text, tool calls, results)."""
-    t = ev.get("type")
-    out = []
-    if t == "system" and ev.get("subtype") == "init":
-        servers = [f"{m.get('name')}:{m.get('status')}" for m in ev.get("mcp_servers") or [] if isinstance(m, dict)]
-        out.append(f"[init] session={ev.get('session_id')} model={ev.get('model')} "
-                   f"tools={len(ev.get('tools') or [])} mcp={servers}")
-    elif t == "system" and ev.get("subtype") in ("compact_boundary",):
-        out.append("[compact] context compacted")
-    elif t == "assistant":
-        for c in (ev.get("message") or {}).get("content") or []:
-            if c.get("type") == "text" and c.get("text", "").strip():
-                out.append(f"[say] {_short(c['text'].strip(), 2000)}")
-            elif c.get("type") == "tool_use":
-                name = c.get("name", "?").removeprefix("mcp__bg3__")
-                out.append(f"[tool] {name} {_short(c.get('input') or {}, 300)}")
-    elif t == "user":
-        content = (ev.get("message") or {}).get("content")
-        for c in content if isinstance(content, list) else []:
-            if c.get("type") == "tool_result":
-                body = c.get("content")
-                if isinstance(body, list):
-                    body = " ".join(b.get("text", f"<{b.get('type')}>") for b in body if isinstance(b, dict))
-                tag = "[error]" if c.get("is_error") else "[result]"
-                out.append(f"{tag} {_short(body or '', 400)}")
-    elif t == "result":
-        out.append(f"[end] {ev.get('subtype')} turns={ev.get('num_turns')} "
-                   f"duration={round((ev.get('duration_ms') or 0) / 60000, 1)}min "
-                   f"cost=${ev.get('total_cost_usd', 0) or 0:.2f}")
-    return out
+def timing_event(ev: clients.Event) -> dict | None:
+    """A non-claude client's Event in the stream-json shape bg3ai.metrics.StreamTiming reads (assistant text and
+    tool calls, tool results, the process's result), so its turns.jsonl and latency report work the same; claude's
+    raw events go to StreamTiming as they are. None: nothing StreamTiming times."""
+    if ev.kind == "text":
+        return {"type": "assistant", "message": {"content": [{"type": "text", "text": ev.text}]}}
+    if ev.kind == "tool_call":
+        return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": ev.call_id,
+                                                              "name": ev.tool, "input": ev.args or {}}]}}
+    if ev.kind == "tool_result":
+        return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": ev.call_id,
+                                                         "content": ev.text, "is_error": ev.is_error}]}}
+    if ev.kind == "result":
+        return {"type": "result", "num_turns": ev.turns, "duration_api_ms": None,
+                "usage": {"output_tokens": (ev.tokens or {}).get("output")}}
+    return None
 
 
 def gates_decision(char_name: str | None, owner: str | None, new_game: bool) -> bool | None:
@@ -1550,6 +1535,8 @@ class Options:
     judge: bool = False                # run --judge (default with --runs): score the run's persona after its record
     judge_model: str | None = None     # the judge's model (series.json "judge_model" for a series)
     judge_change: str | None = None    # --allow-judge-change: the judge model differs from series.json's
+    client: str = "claude"             # run --client: the CLI that plays (runner/clients.py; frozen in series.json)
+    client_change: str | None = None   # --allow-client-change: the client differs from series.json's
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -1599,9 +1586,11 @@ class Runner:
     watch: LaunchWatch | None = None   # crash signs of the game the runner launched (see launch_game)
     cap_hit: dict | None = None        # --max-cost/--max-tokens: {cap, cost, tokens, why} once the run reached one
     run_started: float | None = None   # --until: the run's start (claude_totals counts from there)
+    _client: clients.Client | None = None
 
     def __init__(self, opt: Options):
         self.opt = opt
+        self._client = clients.make(opt.client)   # the CLI every play, resume and fix-notes process runs
         self.mem = PLAYTHROUGHS / opt.playthrough / "memory"
         self.state = RunnerState(opt.playthrough)
         self.profile_path = PLAYTHROUGHS / opt.playthrough / "profile.json"
@@ -2365,22 +2354,32 @@ class Runner:
         o = session_overrides(state.dir / "session-config.json") if state else {}
         return o.get("model", self.opt.model), o.get("effort", self.opt.effort)
 
-    def claude_cmd(self, prompt: str, claude_session: str, resume: bool, tag: str = "") -> list[str]:
+    @property
+    def client(self) -> clients.Client:
+        """The play CLI (--client), built once in __init__ (a bare Runner in a test builds it on first use)."""
+        if self._client is None:
+            self._client = clients.make(self.opt.client)
+        return self._client
+
+    def play_request(self, prompt: str, session: str | None, resume: bool, tag: str = "", env: dict | None = None,
+                     sid: str = "") -> clients.Request:
+        """One play process for the client: model and effort (model_for), the fallback model, the autocompact
+        window (play sessions only, not the fix pass), the session env and the file stem (sid + tag) that names a
+        client's per-session config file."""
         model, effort = self.model_for(tag)
-        cmd = ["claude", "-p", prompt, "--model", model, "--output-format", "stream-json",
-               "--verbose", "--strict-mcp-config", "--mcp-config", str(PLAY_DIR / ".mcp.json"), *CLAUDE_FLAGS]
-        if effort:
-            cmd += ["--effort", effort]
-        if self.opt.fallback_model:
-            cmd += ["--fallback-model", self.opt.fallback_model]
+        state = getattr(self, "state", None)
+        ac = None
         if tag != "-fix":
-            state = getattr(self, "state", None)
             ac = (session_overrides(state.dir / "session-config.json") if state else {}).get(
                 "autocompact", self.opt.autocompact)
-            if ac:
-                cmd += ["--autocompact", str(ac)]
-        cmd += ["--resume", claude_session] if resume else ["--session-id", claude_session]
-        return cmd
+        sdir = state.dir if state else RUNTIME / "sessions" / self.opt.playthrough
+        return clients.Request(prompt, model, sdir, session=session, resume=resume, effort=effort,
+                               fallback_model=self.opt.fallback_model, autocompact=ac, env=dict(env or {}),
+                               tag=sid + tag)
+
+    def agent_cmd(self, req: clients.Request) -> list[str]:
+        """The play process's command line (the client's; tests swap the binary here)."""
+        return self.client.command(req)
 
     def save_env(self) -> dict:
         """The MCP server's save identity and gates: BG3AI_SAVE_OWNER/PREFIX (save_identity) and BG3AI_SAVE_GATES;
@@ -2398,41 +2397,56 @@ class Runner:
         was killed 30 s in by the OOM kill of the game); the next session's setup relaunches the game."""
         start = time.time()
         deadline, hard_stop = deadlines(start, minutes)
-        env = dict(os.environ,
-                   BG3AI_SESSION_DEADLINE=str(int(deadline)),
-                   BG3AI_PLAYTHROUGH=self.opt.playthrough,
-                   BG3_SESSION_MINUTES=str(minutes),
-                   BG3_WRAP_MINUTES=str(wrap_minutes(minutes)),
-                   # when the MCP clock line switches to WRAP UP (epoch seconds); play until then
-                   BG3AI_SESSION_WRAPUP=str(int(start + wrap_minutes(minutes) * 60)),
-                   # The playthrough has its own memory system; Claude Code's auto-memory would add a second one
-                   # (and a per-machine path in the prompt).
-                   CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
-        env.pop("BG3AI_SAVE_GATES", None)
-        env.update(self.save_env())
+        client = self.client
+        session_env = dict(BG3AI_SESSION_DEADLINE=str(int(deadline)),
+                           BG3AI_PLAYTHROUGH=self.opt.playthrough,
+                           BG3_SESSION_MINUTES=str(minutes),
+                           BG3_WRAP_MINUTES=str(wrap_minutes(minutes)),
+                           # when the MCP clock line switches to WRAP UP (epoch seconds); play until then
+                           BG3AI_SESSION_WRAPUP=str(int(start + wrap_minutes(minutes) * 60)))
+        base_env = dict(os.environ)
+        base_env.pop("BG3AI_SAVE_GATES", None)
+        session_env.update(self.save_env())
         base = self.state.dir / f"{sid}{tag}"
-        env["BG3AI_METRICS_PATH"] = f"{base}.metrics.jsonl"  # the bridge's per-tool latency records
-        env["BG3AI_SESSION"] = sid   # the runner opened this memory session: the MCP server attaches, never opens one
+        session_env["BG3AI_METRICS_PATH"] = f"{base}.metrics.jsonl"  # the bridge's per-tool latency records
+        # the runner opened this memory session: the MCP server attaches, never opens one
+        session_env["BG3AI_SESSION"] = sid
         # the memory keeper compacts old logs between sessions: session.py then doesn't ask the player to
-        env["BG3AI_KEEPER"] = "1" if self.opt.keeper and not self.opt.dry_run else "0"
+        session_env["BG3AI_KEEPER"] = "1" if self.opt.keeper and not self.opt.dry_run else "0"
         if not needs_game:
-            env["BG3AI_FIX_NOTES"] = "1"   # the stop check lints + commits instead of "keep playing"; no game I/O
-        cmd = self.claude_cmd(prompt, claude_session, resume, tag)
+            session_env["BG3AI_FIX_NOTES"] = "1"   # the stop check lints + commits instead of "keep playing"; no game I/O
+        # The runner's own BG3AI_*/BG3_* go to the MCP server too (claude passes its whole env on; codex and gemini
+        # forward Request.env by name).
+        session_env = {**{k: base_env[k] for k in clients.session_env_names(base_env)}, **session_env}
+        # A client that names the conversation itself (codex, gemini) starts without an id: it comes in the
+        # stream's init event. One that never got it can't resume: that process starts a new conversation.
+        if not client.assigns_session and not resume:
+            claude_session = None
+        if resume and not claude_session:
+            log(f"{sid}{tag}: no {client.name} session id to resume; starting a new conversation")
+            resume = False
+        req = self.play_request(prompt, claude_session, resume, tag, session_env, sid)
+        client.write_config(req)
+        # The playthrough has its own memory system; Claude Code's auto-memory would add a second one (and a
+        # per-machine path in the prompt): CLAUDE_CODE_DISABLE_AUTO_MEMORY is ClaudeClient.env's.
+        env = clients.process_env(client, req, base_env)
+        cmd = self.agent_cmd(req)
         model, effort = self.model_for(tag)
         write_status(playthrough=self.opt.playthrough, session=sid + tag, claude_session=claude_session,
                      model=model, effort=effort or "default",
                      started=start, deadline=deadline, hard_stop=hard_stop, log=str(base) + ".log",
                      metrics=f"{base}.metrics.jsonl", turns=f"{base}.turns.jsonl",
                      progress=f"{base}.progress.jsonl", session_ended=None)
-        log(f"{sid}{tag}: claude starting ({model}, effort {effort or 'default'}; deadline {datetime.fromtimestamp(deadline):%H:%M}, "
-            f"hard stop {datetime.fromtimestamp(hard_stop):%H:%M})")
+        log(f"{sid}{tag}: {client.name} starting ({model}, effort {effort or 'default'}; deadline "
+            f"{datetime.fromtimestamp(deadline):%H:%M}, hard stop {datetime.fromtimestamp(hard_stop):%H:%M})")
         if self.opt.dry_run:
             print(json.dumps({"cmd": cmd, "cwd": str(PLAY_DIR), "deadline": deadline}, indent=1))
             return SessionResult(sid, claude_session, 0, "dry_run", start, start, model=model, effort=effort)
 
         jsonl = open(f"{base}.jsonl", "a")
         human = open(f"{base}.log", "a", buffering=1)
-        human.write(f"===== {sid}{tag} {datetime.now():%Y-%m-%d %H:%M:%S} claude session {claude_session}\n")
+        human.write(f"===== {sid}{tag} {datetime.now():%Y-%m-%d %H:%M:%S} {client.name} session "
+                    f"{claude_session or '(new)'}\n")
         human.write("[prompt] " + _short(prompt, 4000) + "\n")
         try:
             proc = subprocess.Popen(cmd, cwd=PLAY_DIR, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -2448,6 +2462,7 @@ class Runner:
         if self.has_usage_caps() and self.run_started is not None:
             done = runs.claude_totals(self.state.dir, self.run_started)
             meter = runs.UsageMeter(done["cost_usd"], runs.token_total(done["tokens"]))
+        seen_session = [claude_session]   # the conversation id: assigned up front, or the stream's init event's
 
         def pump():
             for line in proc.stdout:
@@ -2461,12 +2476,25 @@ class Runner:
                     if line.strip():
                         human.write(f"{stamp} [raw] {line.rstrip()[:500]}\n")
                     continue
-                for text in format_stream_event(ev):
-                    human.write(f"{stamp} {text}\n")
                 try:
-                    timing.on_event(ev)
+                    events = client.parse(line)
+                except Exception as e:  # noqa: BLE001 - a line the parser chokes on is logged, never fatal
+                    human.write(f"{stamp} [raw] {type(e).__name__}: {line.rstrip()[:400]}\n")
+                    continue
+                for e in events:
+                    for text in clients.format_event(e):
+                        human.write(f"{stamp} {text}\n")
+                    if e.kind == "init" and e.session_id and not seen_session[0]:
+                        seen_session[0] = e.session_id
+                        write_status(claude_session=e.session_id)
+                try:
+                    # bg3ai.metrics reads claude's stream-json; other clients' events are fed in that shape
+                    for tev in ([ev] if client.name == "claude" else [timing_event(e) for e in events]):
+                        if tev is not None:
+                            timing.on_event(tev)
                     if meter is not None:
-                        meter.on_event(ev)
+                        for e in events:
+                            meter.on_event(e)
                 except Exception:  # noqa: BLE001 - metrics never break a session
                     pass
 
@@ -2546,7 +2574,7 @@ class Runner:
         self.write_latency(f"{sid}{tag}", base, start, end)
         self.write_progress(f"{sid}{tag}", base, start, end)
         self.write_triage(f"{sid}{tag}", base)
-        return SessionResult(sid, claude_session, proc.returncode, reason, start, end, model=model, effort=effort,
+        return SessionResult(sid, seen_session[0], proc.returncode, reason, start, end, model=model, effort=effort,
                              detail=detail, fault_at=fault_at)
 
     def fault_detail(self, health: HealthTracker) -> str:
@@ -2717,6 +2745,9 @@ class Runner:
                                                                          until=rec["t"]))
         if self.opt.judge_change:
             rec["judge_change"] = self.opt.judge_change
+        rec["client"] = self.opt.client
+        if self.opt.client_change:
+            rec["client_change"] = self.opt.client_change
         if self.opt.series:
             rec = {"series": self.opt.series, "run": self.opt.run_index, **rec}
             run = self.state["run"] or {}
@@ -3487,6 +3518,14 @@ def cmd_run(a) -> int:
         if err:
             print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
             return 2
+    client, client_change = a.client or "claude", None
+    if a.runs:   # a series plays with one CLI, fixed like its judge; a series from before --client played claude
+        meta = series_meta(a.playthrough)
+        client, err, client_change = runs.series_client(meta.get("client") or ("claude" if meta else None),
+                                                        a.client, "claude", a.allow_client_change)
+        if err:
+            print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
+            return 2
     if use_judge and judge.same_model(judge_model, a.model):
         print(f"refusing --judge: the judge model {judge_model} is the model under test ({a.model}); pick another "
               "with --judge-model (fixed for the whole benchmark) or pass --no-judge", file=sys.stderr)
@@ -3504,7 +3543,8 @@ def cmd_run(a) -> int:
                   start_save=scenario["start"].get("save") if scenario else None)
     opt = replace(opt, run_hours=caps["run_hours"], max_cost=caps["max_cost"], max_tokens=caps["max_tokens"],
                   cap_changes=cap_changes or None, pins=current_pins() if a.until and not a.runs else None,
-                  judge=use_judge, judge_model=judge_model if use_judge else None, judge_change=judge_change)
+                  judge=use_judge, judge_model=judge_model if use_judge else None, judge_change=judge_change,
+                  client=client, client_change=client_change)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
@@ -3570,14 +3610,16 @@ def series_profile(base: str) -> dict | None:
 
 
 def freeze_series(base: str, n: int, until: str | None, profile: dict, pins: dict | None = None,
-                  caps: dict | None = None, scenario: dict | None = None, judge_model: str | None = None) -> None:
-    """series.json, written once by the first run: the profile, N, the milestone, the version pins, the caps and
-    the persona judge's model every later run is held to, and the scenario (runs.scenario_freeze) of a run
-    --scenario series. A series from before pins/caps/judge gets them from the first run that has them."""
+                  caps: dict | None = None, scenario: dict | None = None, judge_model: str | None = None,
+                  client: str | None = None) -> None:
+    """series.json, written once by the first run: the profile, N, the milestone, the version pins, the caps, the
+    persona judge's model and the client (--client) every later run is held to, and the scenario
+    (runs.scenario_freeze) of a run --scenario series. A series from before pins/caps/judge/client gets them from
+    the first run that has them."""
     path = RUNTIME / "sessions" / base / "series.json"
     meta = series_meta(base)
     if path.exists() and ("pins" in meta or pins is None) and ("caps" in meta or caps is None) and \
-            ("judge_model" in meta or judge_model is None):
+            ("judge_model" in meta or judge_model is None) and ("client" in meta or client is None):
         return
     if not path.exists():
         meta = {"series": base, "runs": n, "until": until, "profile": profile, "created": round(time.time(), 1)}
@@ -3589,6 +3631,8 @@ def freeze_series(base: str, n: int, until: str | None, profile: dict, pins: dic
         meta.setdefault("caps", caps)
     if judge_model is not None:
         meta.setdefault("judge_model", judge_model)
+    if client is not None:
+        meta.setdefault("client", client)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n")
 
@@ -3674,7 +3718,7 @@ def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, s
         pins = current_pins()
         freeze_series(base, n, opt.until, r.profile, pins, {k_: getattr(opt, k_) for k_ in runs.CAP_KEYS},
                       runs.scenario_freeze(scenario, save_sha1) if scenario else None,
-                      opt.judge_model if opt.judge else None)
+                      opt.judge_model if opt.judge else None, opt.client)
         refusal = gate_series_run(base, r, pins, allow_drift)
         if refusal:
             log(refusal)
@@ -3768,11 +3812,21 @@ def cmd_status(a) -> int:
 
 
 def cmd_runs(a) -> int:
-    """The runs table of a series (or of one playthrough's --until runs) and its clean streak."""
-    recs = runs.series_records(RUNTIME / "sessions" / a.playthrough / "runs.jsonl", a.playthrough)
+    """The runs table of a series (or of one playthrough's --until runs) and its clean streak. --backfill first
+    adds the benchmark fields (runs.METRIC_FIELDS) records written before them lack, in place; present ones stay."""
+    path = RUNTIME / "sessions" / a.playthrough / "runs.jsonl"
+    recs = runs.series_records(path, a.playthrough)
     if not recs:
-        print(f"no run records for {a.playthrough} ({RUNTIME / 'sessions' / a.playthrough / 'runs.jsonl'})")
+        print(f"no run records for {a.playthrough} ({path})")
         return 1
+    if getattr(a, "backfill", False):
+        for r in recs:
+            fields = runs.backfill_metrics(RUNTIME / "sessions" / (r.get("playthrough") or a.playthrough), r)
+            if fields:
+                ok = runs.update_record(path, r, fields)
+                print(f"run {r.get('run') or 1} ({r.get('playthrough')}): "
+                      f"{'backfilled' if ok else 'NOT written'} {', '.join(fields)}")
+        recs = runs.series_records(path, a.playthrough)
     print(runs.runs_table(recs))
     print("\n" + runs.series_summary(recs))
     if a.failures:
@@ -3905,6 +3959,11 @@ def main(argv: list[str] | None = None) -> int:
                    f"{judge.DEFAULT_MODEL}); never the model under test. A series keeps its first one (series.json)")
     r.add_argument("--allow-judge-change", action="store_true",
                    help="--runs: let --judge-model / $BG3AI_JUDGE_MODEL differ from series.json (recorded)")
+    r.add_argument("--client", choices=sorted(clients.CLIENTS),
+                   help="the CLI that plays (runner/clients.py; default claude). A series keeps its first one "
+                        "(series.json); codex and gemini are offline-tested only")
+    r.add_argument("--allow-client-change", action="store_true",
+                   help="--runs: let --client differ from series.json (recorded)")
     r.add_argument("--allow-version-drift", action="store_true",
                    help="--runs: play a run although the game build, bg3le, the mod or the repo differ from the "
                         "series' first run (series.json pins); the drift is recorded")
@@ -3924,6 +3983,8 @@ def main(argv: list[str] | None = None) -> int:
     rs = sub.add_parser("runs", help="table of a series' --until runs: outcome, clean, failures by class")
     rs.add_argument("--playthrough", required=True, help="the series (run --runs) or playthrough (run --until)")
     rs.add_argument("--failures", action="store_true", help="also list every run's failures")
+    rs.add_argument("--backfill", action="store_true", help="first add the metrics (latency, deaths, fairness "
+                    "flags, story, time to milestone) old records lack, from their files; present fields stay")
     sub.add_parser("scenarios", help="list scenarios/*.json: ready, or needs a start save")
     j = sub.add_parser("judge", help="(re-)score runs' in-character decisions into their runs.jsonl records")
     j.add_argument("--playthrough", required=True, help="the series (run --runs) or playthrough (run --until)")

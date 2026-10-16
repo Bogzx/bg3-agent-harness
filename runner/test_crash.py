@@ -190,8 +190,8 @@ class FakeRunBase(unittest.TestCase):
         r.close_memory_session = lambda res: None
         r.between_sessions_check = lambda: None   # tools/dev/check_all.py would probe the real port 9998
         r.mem = self.tmp / "memory"
-        real_cmd = r.claude_cmd
-        r.claude_cmd = lambda *a, **k: [sys.executable, str(self.claude)] + real_cmd(*a, **k)[1:]
+        real_cmd = r.agent_cmd
+        r.agent_cmd = lambda req: [sys.executable, str(self.claude)] + real_cmd(req)[1:]
         g = FakeGame(r, saves)
         P.port_open, P.game_state, P.lua_eval, P.rpc = g.port_open, g.game_state, g.lua_eval, g.rpc
         P.server_ready = lambda: g.port_open() and not g.hung and g.loaded() is not None
@@ -544,8 +544,8 @@ class Series(NautiloidBase):
             orig(r, opt)
             r.next_sid = lambda: "S001"
             r.close_memory_session = lambda res: None
-            real_cmd = r.claude_cmd
-            r.claude_cmd = lambda *a, **k: [sys.executable, str(test.claude)] + real_cmd(*a, **k)[1:]
+            real_cmd = r.agent_cmd
+            r.agent_cmd = lambda req: [sys.executable, str(test.claude)] + real_cmd(req)[1:]
             r.code_update_check = lambda: None
             r.between_sessions_check = lambda: None
             r.check_plan_lines = lambda *a, **k: []

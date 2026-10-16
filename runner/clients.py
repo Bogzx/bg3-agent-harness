@@ -168,8 +168,9 @@ class ClaudeClient:
     no_tools = ("--tools ToolSearch (it loads the deferred MCP tools' schemas) + --strict-mcp-config with "
                 "play/.mcp.json: only mcp__bg3__*; play/.claude/settings.json denies the rest again")
 
-    def __init__(self, mcp_config: Path = MCP_CONFIG, binary: str = "claude"):
-        self.mcp_config, self.binary = mcp_config, binary
+    def __init__(self, mcp_config: Path = MCP_CONFIG, binary: str = "claude", settings: dict | None = None):
+        # settings: an extra --settings JSON (the memory keeper's MCP pass: allow mcp__bg3__* outside play/)
+        self.mcp_config, self.binary, self.settings = mcp_config, binary, settings
 
     def write_config(self, req: Request) -> list[Path]:
         return []   # play/.mcp.json is the config (it sets BG3AI_SERVE_RULES=0: claude reads play/CLAUDE.md itself)
@@ -181,6 +182,8 @@ class ClaudeClient:
     def command(self, req: Request) -> list[str]:
         cmd = [self.binary, "-p", req.prompt, "--model", req.model, "--output-format", "stream-json",
                "--verbose", "--strict-mcp-config", "--mcp-config", str(self.mcp_config), *CLAUDE_FLAGS]
+        if self.settings:
+            cmd += ["--settings", json.dumps(self.settings)]
         if req.effort:
             cmd += ["--effort", req.effort]
         if req.fallback_model:

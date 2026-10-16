@@ -280,6 +280,12 @@ class CombatTurn(Base):
         server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob, "force": True}))
         self.assertEqual([a.get("force") for _, a in self.g.ops("act.cast")], [True])
 
+    def test_list_targets_reach_the_cast(self):
+        # ACT-8: a plan's list-form targets failed the step "'list' object has no attribute 'split'"
+        out = server.combat_turn(self.plan(action={"ability": "Target_Bless", "targets": [self.gob, self.imp]}))
+        self.assertNotIn("split", out)
+        self.assertEqual([a.get("targets") for _, a in self.g.ops("act.cast")], [[GOB, IMP]])
+
     def test_empty_plan_just_ends_the_turn(self):
         # S031 17:07: {"plan":{}} for a member that had acted through do_actions stopped the chain
         out = server.combat_turn(self.plan())
@@ -1293,6 +1299,46 @@ class CombatTurn(Base):
                          ({"action": "Shout_Dodge", "on_reaction": "maybe"}, "on_reaction"),
                          ({"action": "Shout_Dodge", "order": "action,fly"}, "order")):
             self.assertIn(msg, server.combat_turn(json.dumps(bad)), bad)
+
+
+class NearestNamesake(Base):
+    """ACT-7: disarm/lockpick/loot_corpse by a name two things share take the one in sight nearest the actor."""
+
+    T1, T2 = "71717171-2222-3333-4444-555555555555", "72727272-2222-3333-4444-555555555555"
+
+    def setUp(self) -> None:
+        super().setUp()
+        server.H.get(self.T1, "Fire Trap")
+        server.H.get(self.T2, "Fire Trap")
+        self.g.nearby = {"characters": [], "items": [
+            {"uuid": self.T1, "name": "Fire Trap", "pos": [9, 0, 0], "dist": 9.0},
+            {"uuid": self.T2, "name": "Fire Trap", "pos": [3, 0, 0], "dist": 3.0}]}
+        rpc = self.g.rpc
+
+        def with_pos(op, args=None, context="server"):  # state.status party rows carry pos (State.lua member rows)
+            r = rpc(op, args, context)
+            if op == "state.status":
+                for row in r["party"]:
+                    row["pos"] = next(m["pos"] for m in self.g.watch["party"] if m["uuid"] == row["uuid"])
+            return r
+        self.g.rpc = with_pos
+
+    def test_the_nearest_in_sight_is_meant(self):
+        self.assertEqual(server._nearest_uuid("Fire Trap", P1), self.T2)
+        # from Lae'zel's side the other one is nearer: distances are the actor's, not the active member's
+        self.g.watch["party"][1]["pos"] = [10, 0, 0]
+        self.assertEqual(server._nearest_uuid("Fire Trap", P2), self.T1)
+
+    def test_a_tie_or_none_in_sight_stays_ambiguous(self):
+        self.g.nearby["items"][0]["pos"] = [-3.2, 0, 0]
+        with self.assertRaisesRegex(ValueError, "is ambiguous"):
+            server._nearest_uuid("Fire Trap", P1)
+        self.g.nearby = {"characters": [], "items": []}
+        with self.assertRaisesRegex(ValueError, "is ambiguous"):
+            server._nearest_uuid("Fire Trap", P1)
+
+    def test_an_id_is_taken_as_is(self):
+        self.assertEqual(server._nearest_uuid(server.H.get(self.T1), P1), self.T1)
 
 
 class OpenerCombat(Base):

@@ -3,7 +3,7 @@
 The playing agent logs every session (sessions/Sxxx.md) but rarely updates the curated files (claude-run-2:
 quests/npcs/locations unchanged for 8 sessions, objectives for 3, compaction due since S010). So after each
 session the runner gives that job to a model (the play model by default, low effort, ≤5 min) that sees ONLY the memory
-dir and the read-only knowledge dir: no game, no bg3 MCP tools, no shell, no web. It reads the session logs
+dir and the read-only knowledge dir: no game tools, no shell, no web. It reads the session logs
 and HANDOFF.md and updates objectives/quests/npcs/locations/party-build/strategy, compacts old sessions into
 a chapter when due, and the runner commits its edits as "<sid> memory-keeper: ..." so lint's staleness
 counters reset.
@@ -16,6 +16,14 @@ so a concurrent keeper would race both. HANDOFF.md (the runner reads its "Save t
 prep) is the player's except its last section (HANDOFF_SECTION, the keeper's: what the next session needs
 from the logs); the runner restores the player's part byte for byte if touched. sessions/ (append-only player
 logs) is read-only for the keeper: denied by its permissions and restored by the runner if touched anyway.
+
+Which client (run_keeper's client=, mcp=): Claude's default is Claude Code's own Read/Edit/Write/Glob/Grep in the
+memory dir, fenced by a --settings deny list and a PostToolUse memlint hook (keeper_cmd), as tuned live. Any other
+client (and Claude with mcp=True, for a benchmark that wants every model on the same path) keeps the memory through
+the bg3 MCP server in keeper mode (keeper_server): the memory_* tools only, the same write rules enforced by the
+server (bridge memtools.KeeperSandbox), lint in each write's result, the task as the server's instructions. The
+runner's guards below (restore out-of-bounds edits, HANDOFF head byte for byte, CHARACTER core, lint rollback) run
+after either path.
 
 Fairness: it only reorganizes what the memory already says (the player's own notes); no new information.
 
@@ -40,6 +48,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "tools" / "memory"))
 import lint as L  # noqa: E402
 import memlib as M  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import clients as C  # noqa: E402
 
 SESSION_PY = REPO / "tools" / "memory" / "session.py"
 KNOWLEDGE = REPO / "play" / "knowledge"
@@ -214,18 +224,24 @@ def refused_plans(actions: list[dict]) -> list[dict]:
 
 
 def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: float,
-                 refused: list[dict] | None = None) -> str:
+                 refused: list[dict] | None = None, tools: str = "files") -> str:
+    """The keeper's task. tools: "files" (Claude Code's Read/Edit/Write/Glob/Grep in the memory dir, today's Claude
+    pass) or "mcp" (the bg3 server's memory_* tools in keeper mode, any client): only the tool wording differs."""
+    mcp = tools == "mcp"
     logs = ", ".join(f"sessions/{M.session_id(n)}.md" for n in logs_to_read(mem, sid_n)) or "(none)"
     stale = L.stale_files(mem, sid_n + 1)
     stale_txt = ", ".join(f"{rel} ({age} sessions)" for rel, age in stale) or "none"
     nxt = M.session_id(sid_n + 1)
     lines = [
         f"You are the MEMORY KEEPER of an AI's Baldur's Gate 3 playthrough. Session {sid} just ended; {nxt} "
-        f"starts after you. You have {minutes:.0f} minutes, Read/Edit/Write/Glob/Grep only, and no game access. "
+        f"starts after you. You have {minutes:.0f} minutes, "
+        + ("the memory_list/memory_read/memory_search/memory_write/memory_edit/memory_append tools only"
+           if mcp else "Read/Edit/Write/Glob/Grep only") + ", and no game access. "
         "Work fast: few, targeted reads and edits. No questions: nobody answers.",
         "",
-        "JOB: bring the curated memory files up to date from the player's own notes. Your working directory "
-        "is the memory dir. Read HANDOFF.md, objectives.md, PLAYTHROUGH.md, then these session logs (newest "
+        "JOB: bring the curated memory files up to date from the player's own notes. "
+        + ("Paths are memory/<file> (the memory dir; a bare name means memory/) and knowledge/<file> (read-only). "
+           if mcp else "Your working directory is the memory dir. ") + "Read HANDOFF.md, objectives.md, PLAYTHROUGH.md, then these session logs (newest "
         f"matter most): {logs}. Then edit:",
         "- objectives.md: the current Main goal, its why and its next step, matching HANDOFF.md and the latest "
         "log. Mark finished goals done.",
@@ -283,8 +299,9 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         "reverted). Never delete facts "
         "from decisions.md or npcs.md: condense them under '## Archive' and add a line 'ARCHIVE: <why>'.",
         "- Keep files within budget (objectives ≤80 lines, quests ≤300, npcs/locations ≤400, party-build ≤150).",
-        "- A hook reports lint errors after each edit (silence = clean): fix them right away. The runner lints "
-        "after you and rolls back ALL your edits if you leave new errors.",
+        ("- Each write's result ends with its lint check ('lint: ok' or the errors): fix errors right away. "
+         if mcp else "- A hook reports lint errors after each edit (silence = clean): fix them right away. ")
+        + "The runner lints after you and rolls back ALL your edits if you leave new errors.",
     ]
     news = harness_news(knowledge_dir=KNOWLEDGE)
     if news:
@@ -317,10 +334,10 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         lines += [
             "",
             f"COMPACTION DUE (sessions after {M.session_id(last)} are in no chapter): AFTER the curated files, "
-            f"follow {KNOWLEDGE / 'playbooks' / 'compaction.md'} (step 1 and the pruning in step 2, skip its "
+            f"follow {'knowledge/playbooks/compaction.md' if mcp else KNOWLEDGE / 'playbooks' / 'compaction.md'} (step 1 and the pruning in step 2, skip its "
             f"logging step). Cover {M.session_id(last + 1)}-{M.session_id(min(last + 10, sid_n))} in "
             f"chapters/C<nn>_S{last + 1:03d}-S{min(last + 10, sid_n):03d}_<slug>.md; write the chapter in ONE "
-            "Write call once you have read those logs (a half-written chapter would be counted as done). "
+            f"{'memory_write' if mcp else 'Write'} call once you have read those logs (a half-written chapter would be counted as done). "
             "If a chapter file for these sessions already exists, update it instead of adding a second one.",
         ]
     lines += ["", "Current lint report:", lint_report[-3000:], "",
@@ -344,6 +361,63 @@ def keeper_settings(mem: Path, knowledge: Path = KNOWLEDGE) -> dict:
             "type": "command",
             "command": f"{sys.executable} {SESSION_PY} memlint --memory-dir {m}"}]}]},
     }
+
+
+# ---------------------------------------------------------------- any client: the bg3 server in keeper mode
+
+def keeper_server(mem: Path, knowledge: Path = KNOWLEDGE, task: Path | None = None) -> dict:
+    """The bg3 stdio server in keeper mode (bridge server.keeper_server): only the memory tools, the keeper's
+    write rules enforced server-side (memtools.KeeperSandbox from WRITABLE_FILES/WRITABLE_DIRS + HANDOFF.md +
+    CHARACTER.md, sessions/ and knowledge/ read-only, HANDOFF.md only below HANDOFF_SECTION) and `task` as its
+    instructions. play/.mcp.json's command, with its --project made absolute (the client runs in the memory dir)."""
+    s = C.bg3_server()
+    args = list(s.get("args") or [])
+    for i, a in enumerate(args[:-1]):
+        if a == "--project":
+            args[i + 1] = str((C.PLAY_DIR / args[i + 1]).resolve())
+    env = {**(s.get("env") or {}), "BG3AI_KEEPER_MODE": "1", "BG3AI_MEMORY_DIR": str(mem.resolve()),
+           "BG3_KNOWLEDGE_DIR": str(knowledge.resolve()),
+           "BG3AI_KEEPER_WRITABLE": ",".join([*WRITABLE_FILES, "HANDOFF.md", L.CHARACTER_FILE,
+                                              *(d + "/" for d in WRITABLE_DIRS)]),
+           "BG3AI_KEEPER_HANDOFF_SECTION": HANDOFF_SECTION, "BG3AI_AUTO_SESSION": "0", "BG3AI_MOVIE_SKIP": "0",
+           "BG3AI_METRICS_SAMPLE_S": "0"}
+    if task is not None:
+        env["BG3AI_KEEPER_TASK"] = str(Path(task).resolve())
+    return {"type": "stdio", "command": s["command"], "args": args, "env": env, "timeout": s.get("timeout") or 110_000}
+
+
+def keeper_client(name: str, mem: Path, log_base: Path, knowledge: Path = KNOWLEDGE, binary: str | None = None):
+    """A clients.py Client whose only tools are the keeper-mode bg3 server's (its config files next to log_base)."""
+    server = keeper_server(mem, knowledge, Path(f"{log_base}.task.md"))
+    kw = {"binary": binary} if binary else {}
+    if name == "claude":
+        cfg = Path(f"{log_base}.mcp.json")
+        cfg.write_text(json.dumps({"mcpServers": {"bg3": server}}, indent=1) + "\n")
+        return C.ClaudeClient(mcp_config=cfg, settings={"permissions": {"allow": ["mcp__bg3__*"]}}, **kw)
+    return C.make(name, server=server, cwd=mem, **kw)
+
+
+def _session_from_log(client, log_path: Path) -> str | None:
+    """The conversation id a client that doesn't take one up front (codex, gemini) printed in its init event."""
+    sid = None
+    try:
+        lines = log_path.read_text(errors="replace").splitlines()
+    except OSError:
+        return None
+    for ln in lines:
+        for ev in client.parse(ln):
+            if ev.kind == "init" and ev.session_id:
+                sid = ev.session_id
+    return sid
+
+
+def client_cmd(client, prompt: str, mem: Path, model: str, effort: str | None, session: str | None, resume: bool,
+               log_base: Path) -> tuple[list[str], dict]:
+    """(argv, extra env) of one keeper call through `client` (keeper_client)."""
+    req = C.Request(prompt=prompt, model=model, session_dir=Path(log_base).parent, session=session, resume=resume,
+                    effort=effort, tag=Path(log_base).name)
+    client.write_config(req)
+    return client.command(req), client.env(req)
 
 
 def keeper_cmd(prompt: str, mem: Path, model: str, effort: str | None, session_uuid: str, resume: bool,
@@ -394,9 +468,11 @@ def _errors(mem: Path, session: int) -> list[str]:
     return [f"{k}: {m}" for k, m in L.lint(mem, "any", session).errors]
 
 
-def _run_claude(cmd: list[str], cwd: Path, log_path: Path, timeout: float) -> tuple[int | None, bool]:
-    """Runs one claude call with its stream-json into log_path; kills its process group at the timeout."""
-    env = dict(os.environ, CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
+def _run_claude(cmd: list[str], cwd: Path, log_path: Path, timeout: float,
+                extra_env: dict | None = None) -> tuple[int | None, bool]:
+    """Runs one claude (or other client) call with its stream into log_path; kills its process group at the
+    timeout (the keeper-mode MCP server is in that group too)."""
+    env = {**os.environ, "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", **(extra_env or {})}
     for k in ("BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP", "BG3AI_METRICS_PATH"):
         env.pop(k, None)
     with open(log_path, "a") as out:
@@ -437,9 +513,17 @@ def commit(mem: Path, rels: list[str], message: str) -> str | None:
 
 def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL, effort: str | None = KEEPER_EFFORT,
                minutes: float = KEEPER_MINUTES, claude: str = "claude", knowledge: Path = KNOWLEDGE,
-               refused: list[dict] | None = None) -> KeeperResult:
-    """One keeper pass for the session that just ended (number sid_n). Never raises."""
+               refused: list[dict] | None = None, client: str = "claude", mcp: bool | None = None,
+               binary: str | None = None) -> KeeperResult:
+    """One keeper pass for the session that just ended (number sid_n). Never raises.
+
+    client: the clients.py client that keeps the memory (the play client, so a benchmark compares one model end to
+    end). mcp: through the bg3 server in keeper mode (keeper_server); None = True for every client but claude,
+    whose default stays today's pass with Claude Code's file tools (keeper_cmd). binary: the client's executable
+    (default: `claude` for claude, else the client's own)."""
     sid = M.session_id(sid_n)
+    via_mcp = client != "claude" if mcp is None else mcp
+    who = client
     res = KeeperResult(sid)
     t0 = time.time()
     end = t0 + minutes * 60
@@ -449,9 +533,23 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
         snap = snapshot(mem)
         log_path = Path(f"{log_base}.jsonl")
         sess = str(uuid.uuid4())
-        prompt = build_prompt(mem, sid, sid_n, report, minutes, refused)
-        rc, res.timed_out = _run_claude(keeper_cmd(prompt, mem, model, effort, sess, False, claude, knowledge),
-                                        mem, log_path, end - time.time())
+        prompt = build_prompt(mem, sid, sid_n, report, minutes, refused, tools="mcp" if via_mcp else "files")
+        cli = None
+        if via_mcp:
+            Path(f"{log_base}.task.md").write_text(prompt + "\n", encoding="utf-8")   # the server's instructions
+            cli = keeper_client(client, mem, log_base, knowledge, binary or (claude if client == "claude" else None))
+            sess = sess if cli.assigns_session else None
+
+        def call(text: str, resume: bool, left: float) -> tuple[int | None, bool]:
+            if cli is None:
+                return _run_claude(keeper_cmd(text, mem, model, effort, sess, resume, claude, knowledge),
+                                   mem, log_path, left)
+            cmd, env = client_cmd(cli, text, mem, model, effort, sess, resume, log_base)
+            return _run_claude(cmd, mem, log_path, left, env)
+
+        rc, res.timed_out = call(prompt, False, end - time.time())
+        if cli is not None and not cli.assigns_session:
+            sess = _session_from_log(cli, log_path)
         res.exit_code = rc
         for attempt in range(2):
             changed = changes(mem, snap)
@@ -467,8 +565,9 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
                 break
             fix = ("Memory lint now reports these NEW errors; fix them with minimal edits, then stop:\n"
                    + "\n".join(new)[-3000:])
-            rc, res.timed_out = _run_claude(keeper_cmd(fix, mem, model, effort, sess, True, claude, knowledge),
-                                            mem, log_path, left)
+            if cli is not None and not (cli.supports_resume and sess):
+                break   # no conversation to resume (the client printed no session id)
+            rc, res.timed_out = call(fix, True, left)
             res.exit_code = rc
         files = [r for r in changes(mem, snap) if writable(r)]
         if new:
@@ -478,7 +577,7 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
         elif not files:
             res.status = "no_changes" if rc == 0 or res.timed_out else "error"
             if res.status == "error":
-                res.detail = f"claude exit {rc}"
+                res.detail = f"{who} exit {rc}"
         else:
             res.files = files
             res.commit = commit(mem, files, f"{sid} memory-keeper: {', '.join(files)}")

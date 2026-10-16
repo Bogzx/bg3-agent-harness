@@ -183,7 +183,9 @@ listen("CastedSpell", 5, function(caster, spell, _, _, _)
         local r = tostring(st.SpellRoll and st.SpellRoll.Default or "")
         roll = r:find("SavingThrow%(") and "save" or (r:find("Attack%(") and "attack") or nil
     end)
-    RPC.push("cast", { caster = ref(u), spell = spell, name = name, roll = roll })
+    -- spell: the engine id, only for our own casters (the hotbar's spell, what a plan names). An enemy's cast shows
+    -- a player only its display name; its id can carry hints the name doesn't (audit ACT-14, as for status ids).
+    RPC.push("cast", { caster = ref(u), spell = ctx().is_party[u] and spell or nil, name = name, roll = roll })
 end)
 
 ------------------------------------------------------------------------
@@ -278,12 +280,29 @@ listen("LeveledUp", 1, function(char)
 end)
 
 -- ApprovalRatingChanged(ratingOwner, ratedEntity, newValue): the toast shows
--- who approves/disapproves, not numbers; report direction only.
-listen("ApprovalRatingChanged", 3, function(npc, _, value)
+-- who approves/disapproves, not numbers; report direction only. E.approval is keyed owner|rated and seeded from
+-- GetApprovalRating by the poll (E.seedApproval): unseeded, the first change per companion after every load had no
+-- previous value and was dropped (audit ACT-15).
+local function approvalKey(owner, rated) return owner .. "|" .. (rated or "") end
+
+function E.seedApproval(c)
+    local host = V.uuid(osi(Osi.GetHostCharacter)) or c.party[1]
+    if not host then return end
+    for _, u in ipairs(c.party) do
+        local k = approvalKey(u, host)
+        if u ~= host and E.approval[k] == nil then
+            local v = osi(Osi.GetApprovalRating, u, host)
+            if type(v) == "number" then E.approval[k] = v end
+        end
+    end
+end
+
+listen("ApprovalRatingChanged", 3, function(npc, rated, value)
     local u = V.uuid(npc)
     if not u then return end
-    local prev = E.approval[u]
-    E.approval[u] = value
+    local k = approvalKey(u, V.uuid(rated))
+    local prev = E.approval[k]
+    E.approval[k] = value
     if prev == nil or prev == value then return end
     RPC.push("approval", { npc = ref(u), direction = value > prev and "approves" or "disapproves" })
 end)
@@ -433,6 +452,7 @@ local function poll()
         RPC.push("gold_changed", { gold = gold, delta = gold - E.lastGold })
     end
     E.lastGold = gold
+    E.seedApproval(c)
     -- A trap became discovered near the party (the orange outline appears).
     local center = c.observers[1] and c.observers[1].pos
     if center and V.index.ready then

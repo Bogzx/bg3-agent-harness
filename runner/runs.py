@@ -32,6 +32,7 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import clients  # noqa: E402
 import fairness  # noqa: E402
 import triage  # noqa: E402
 
@@ -308,29 +309,26 @@ MOVE_TOOLS = ("move", "move_to", "walk_toward", "travel_to")   # "FAILED: beyond
 
 
 def stream_failures(stream: Path) -> list[dict]:
-    """One play stream (Sxxx.jsonl / Sxxx-rN.jsonl): MCP server not connected, claude API/usage errors, tool
-    exceptions and timeouts, fairness-guard blocks, fairness leaks, Game Over. Same-kind failures of one tool and
-    error are grouped (n)."""
+    """One play stream (Sxxx.jsonl / Sxxx-rN.jsonl, any client): MCP server not connected, model API/usage errors
+    (kind claude_api, whichever client), tool exceptions and timeouts, fairness-guard blocks, fairness leaks, Game
+    Over. Same-kind failures of one tool and error are grouped (n)."""
     sid = stream.name[:-len(".jsonl")]
     try:
         t_end = stream.stat().st_mtime
+        lines = stream.read_text(errors="replace").splitlines()
     except OSError:
         return []
     out = []
-    for ev in _read_jsonl(stream):
-        typ = ev.get("type")
-        if typ == "system" and ev.get("subtype") == "init":
-            for s in ev.get("mcp_servers") or []:
-                if isinstance(s, dict) and s.get("name") == "bg3" and s.get("status") != "connected":
-                    out.append(failure(None, "mcp_failed", HARNESS, f"{sid}: the bg3 MCP server is {s.get('status')}"))
-        elif typ == "result" and ev.get("is_error") and API_ERROR_RE.search(str(ev.get("result") or "")):
-            out.append(failure(t_end, "claude_api", HARNESS, f"{sid}: {ev.get('result')}"))
-        elif typ == "assistant":
-            content = (ev.get("message") or {}).get("content")
-            for b in content if isinstance(content, list) else []:
-                txt = b.get("text", "") if isinstance(b, dict) and b.get("type") == "text" else ""
-                if txt.lstrip().startswith(("API Error", "Claude AI usage limit")):
-                    out.append(failure(t_end, "claude_api", HARNESS, f"{sid}: {txt.strip()}"))
+    for ev in stream_events(lines):
+        if ev.kind == "init":
+            for m in ev.mcp or []:
+                name, _, status = m.partition(":")
+                if name == "bg3" and status != "connected":
+                    out.append(failure(None, "mcp_failed", HARNESS, f"{sid}: the bg3 MCP server is {status}"))
+        elif ev.kind == "result" and ev.is_error and ev.api_error:
+            out.append(failure(t_end, "claude_api", HARNESS, f"{sid}: {ev.text}"))
+        elif ev.kind in ("text", "error") and ev.api_error:
+            out.append(failure(t_end, "claude_api", HARNESS, f"{sid}: {ev.text}"))
     calls, _ = triage.load_calls(stream, Path(str(stream)[:-len(".jsonl")] + ".turns.jsonl"))
     groups: dict[tuple[str, str, str], list[dict]] = {}
     wipe = None
@@ -566,6 +564,19 @@ def series_judge_model(frozen: str | None, wanted: str | None, default: str,
     return wanted, None, change
 
 
+def series_client(frozen: str | None, wanted: str | None, default: str,
+                  allow_change: bool) -> tuple[str, str | None, str | None]:
+    """(client for this run, error, change): like series_judge_model for the CLI that plays (--client). wanted:
+    --client (None: not given, the frozen one or the default). Runs by another CLI don't compare."""
+    if frozen is None or wanted is None or wanted == frozen:
+        return frozen or wanted or default, None, None
+    change = f"client: {frozen} → {wanted}"
+    if not allow_change:
+        return wanted, (f"the series' client is fixed in series.json ({change}): drop --client, or pass "
+                        "--allow-client-change to record the change"), change
+    return wanted, None, change
+
+
 MODEL_TIME_DOCS = ("measured", "estimated", "not_separable")   # model_time's constant field lists: not per record
 
 
@@ -588,38 +599,78 @@ def token_total(tokens: dict | None) -> int:
     return sum(int(v or 0) for v in (tokens or {}).values())
 
 
+# The first event type of a stream → the client that wrote it (claude: system init; codex: thread.started; gemini:
+# init). A stream from before the client interface is claude's.
+STREAM_CLIENTS = {"system": "claude", "thread.started": "codex", "init": "gemini"}
+# The lines claude_totals needs, per client (a substring test before json: streams run to tens of MB).
+RESULT_MARKS = {"claude": ('"type": "result"', '"type":"result"'),
+                "codex": ("thread.started", "turn.completed", "turn.failed"),
+                "gemini": ('"type": "result"', '"type":"result"', '"type":"init"', '"type": "init"')}
+
+
+def stream_client(lines: list[str]) -> str:
+    """The client whose stream these lines are (STREAM_CLIENTS by the first JSON object's type; default claude)."""
+    for ln in lines:
+        try:
+            ev = json.loads(ln)
+        except ValueError:
+            continue
+        if isinstance(ev, dict):
+            return STREAM_CLIENTS.get(ev.get("type"), "claude")
+    return "claude"
+
+
+def stream_events(lines: list[str], parsers: dict | None = None, name: str | None = None) -> list:
+    """The lines of one stream as clients.Events, parsed by the client that wrote it (name, default
+    stream_client(lines)). parsers: client name → instance, shared across the streams of a run (codex's resumed
+    threads report running totals: its parser keeps the last total per thread, so feed streams in write order)."""
+    name = name or stream_client(lines)
+    parsers = {} if parsers is None else parsers
+    if name not in parsers:   # parsing only: no MCP server config needed (codex/gemini would read play/.mcp.json)
+        parsers[name] = clients.make(name, **({} if name == "claude" else {"server": {}}))
+    parser = parsers[name]
+    out = []
+    for ln in lines:
+        out.extend(parser.parse(ln))
+    return out
+
+
 def claude_totals(state_dir: Path, since: float) -> dict:
-    """Cost, turns and tokens of every claude stream written since `since` (play, resumes, -fix, -keeper): their
-    result events, i.e. the finished claude processes."""
+    """Cost, turns and tokens of every play-agent stream written since `since` (play, resumes, -fix, -keeper; any
+    client): their result events, i.e. the finished processes. A cost a client can't know (codex/gemini model
+    without a price) counts 0."""
     cost, turns, tokens = 0.0, 0, {k: 0 for k, _ in TOKEN_FIELDS}
     try:
-        files = sorted(state_dir.iterdir()) if state_dir.is_dir() else []
+        files = list(state_dir.iterdir()) if state_dir.is_dir() else []
     except OSError:
         files = []
+    found = []
     for f in files:
         try:
-            if not CLAUDE_STREAM_RE.match(f.name) or f.stat().st_mtime < since:
-                continue
+            if CLAUDE_STREAM_RE.match(f.name) and (mtime := f.stat().st_mtime) >= since:
+                found.append((mtime, f.name, f))
+        except OSError:
+            continue
+    parsers: dict = {}
+    for _, _, f in sorted(found):   # in the order written: a resume after the process it resumes
+        try:
             lines = f.read_text(errors="replace").splitlines()
         except OSError:
             continue
-        for ln in lines:
-            if '"type": "result"' not in ln and '"type":"result"' not in ln:
+        name = stream_client(lines)
+        for ev in stream_events([ln for ln in lines if any(m in ln for m in RESULT_MARKS[name])], parsers, name):
+            if ev.kind != "result":
                 continue
-            try:
-                ev = json.loads(ln)
-            except ValueError:
-                continue
-            cost += float(ev.get("total_cost_usd") or 0)
-            turns += int(ev.get("num_turns") or 0)
-            for k, v in usage_tokens(ev.get("usage")).items():
-                tokens[k] += v
+            cost += float(ev.cost_usd or 0)
+            turns += int(ev.turns or 0)
+            for k in clients.TOKEN_KEYS:
+                tokens[k] += int((ev.tokens or {}).get(k) or 0)
     return {"cost_usd": cost, "turns": turns, "tokens": tokens}
 
 
 class UsageMeter:
-    """A run's cost and tokens while a claude process streams: `base` (the run's finished processes, claude_totals)
-    plus this stream's assistant messages (their usage, per message id) until its result event gives the exact
+    """A run's cost and tokens while a play process streams: `base` (the run's finished processes, claude_totals)
+    plus this stream's running usage (clients.Event "usage", per message id) until its result event gives the exact
     totals. Claude reports cost only in result events, so the live cost is the live tokens at the run's cost per
     token so far (none before the run's first result: a cost cap then trips at the end of the first process)."""
 
@@ -628,19 +679,16 @@ class UsageMeter:
         self.msgs: dict = {}
         self.live = 0
 
-    def on_event(self, ev: dict) -> None:
-        typ = ev.get("type")
-        if typ == "assistant":
-            msg = ev.get("message") or {}
-            if not isinstance(msg.get("usage"), dict):
-                return
-            mid = msg.get("id") or f"#{len(self.msgs)}"
-            n = token_total(usage_tokens(msg["usage"]))
+    def on_event(self, ev) -> None:
+        """One clients.Event."""
+        if ev.kind == "usage":
+            mid = ev.message_id or f"#{len(self.msgs)}"
+            n = token_total(ev.tokens)
             self.live += n - self.msgs.get(mid, 0)
             self.msgs[mid] = n
-        elif typ == "result":
-            self.done_cost += float(ev.get("total_cost_usd") or 0)
-            self.done_tokens += token_total(usage_tokens(ev.get("usage")))
+        elif ev.kind == "result":
+            self.done_cost += float(ev.cost_usd or 0)
+            self.done_tokens += token_total(ev.tokens)
             self.msgs, self.live = {}, 0
 
     @property
@@ -665,7 +713,8 @@ def cap_exceeded(caps: dict | None, cost: float, tokens: int) -> str | None:
 
 # ======================================================================== run metrics (pure functions over files)
 
-def _recent(state_dir: Path, since: float, pattern: re.Pattern) -> list[Path]:
+def _recent(state_dir: Path, since: float, pattern: re.Pattern, until: float | None = None) -> list[Path]:
+    """The files matching `pattern` written since `since` (and not after `until`: a backfill of an old record)."""
     out = []
     try:
         files = sorted(state_dir.iterdir()) if state_dir.is_dir() else []
@@ -673,7 +722,8 @@ def _recent(state_dir: Path, since: float, pattern: re.Pattern) -> list[Path]:
         return out
     for f in files:
         try:
-            if pattern.match(f.name) and f.stat().st_mtime >= since:
+            mtime = f.stat().st_mtime if pattern.match(f.name) else None
+            if mtime is not None and mtime >= since and (until is None or mtime <= until):
                 out.append(f)
         except OSError:
             continue
@@ -690,12 +740,12 @@ def time_to_milestone(started: float | None, reached_at: float | None) -> float 
 FIGHTS_RE = re.compile(r"^S\d{3,}\.fights\.jsonl$")
 
 
-def death_counts(state_dir: Path, since: float, failures: list[dict]) -> dict:
+def death_counts(state_dir: Path, since: float, failures: list[dict], until: float | None = None) -> dict:
     """Party downs and deaths in the run's fights (Sxxx.fights.jsonl, the MCP server's fight debriefs: party[].downed
     and .died per fight) and Game Overs (the run's party_wipe failures). Downs or deaths outside a fight the
     debrief saw (a fall, a trap out of combat) are not observable in the logs and not counted."""
     fights = downs = deaths = 0
-    for f in _recent(state_dir, since, FIGHTS_RE):
+    for f in _recent(state_dir, since, FIGHTS_RE, until):
         for r in _read_jsonl(f):
             fights += 1
             for m in r.get("party") or []:
@@ -737,12 +787,12 @@ def _weighted_median(pairs: list[tuple[float, int]]) -> float | None:
     return None
 
 
-def latency_summary(state_dir: Path, since: float) -> dict | None:
+def latency_summary(state_dir: Path, since: float, until: float | None = None) -> dict | None:
     """The run's live feel from its play sessions' Sxxx.latency.json (bg3ai.metrics): idle gap median and p90 (s),
     gaps over 10 s, the read tools' round-trip median (ms). Over several sessions each value is the median of the
     per-session values weighted by their sample counts (exact for a one-session run); None: no latency files."""
     idle_med, idle_p90, rt, gaps, n = [], [], [], 0, 0
-    for f in _recent(state_dir, since, LATENCY_RE):
+    for f in _recent(state_dir, since, LATENCY_RE, until):
         try:
             d = json.loads(f.read_text())
         except (OSError, ValueError):
@@ -760,13 +810,13 @@ def latency_summary(state_dir: Path, since: float) -> dict | None:
             "gaps_over_10s": gaps, "read_rt_median_ms": _weighted_median(rt)}
 
 
-def story_gained(state_dir: Path, since: float) -> dict:
+def story_gained(state_dir: Path, since: float, until: float | None = None) -> dict:
     """Story progress points the run's sessions gained (progress_history.jsonl, bg3ai.progress: one line per
     session) and their events by kind."""
     points = events = sessions = 0
     by_kind: Counter = Counter()
     for r in _read_jsonl(state_dir / "progress_history.jsonl"):
-        if (r.get("t") or 0) < since:
+        if (r.get("t") or 0) < since or (until is not None and (r.get("t") or 0) > until):
             continue
         sessions += 1
         points += int(r.get("points") or 0)
@@ -775,14 +825,33 @@ def story_gained(state_dir: Path, since: float) -> dict:
     return {"points": points, "events": events, "sessions": sessions, "by_kind": dict(by_kind)}
 
 
-def run_metrics(state_dir: Path, run_started: float, reached_at: float | None, failures: list[dict]) -> dict:
-    """The benchmark fields of a run record beyond the failures (each a pure function above)."""
-    streams = _recent(state_dir, run_started, PLAY_STREAM_RE)
+def run_metrics(state_dir: Path, run_started: float, reached_at: float | None, failures: list[dict],
+                until: float | None = None) -> dict:
+    """The benchmark fields of a run record beyond the failures (each a pure function above). until: the run's end,
+    for a record computed after the fact (backfill_metrics); None = now (the record being written)."""
+    streams = _recent(state_dir, run_started, PLAY_STREAM_RE, until)
     return {"time_to_milestone_s": time_to_milestone(run_started, reached_at),
-            "deaths": death_counts(state_dir, run_started, failures),
+            "deaths": death_counts(state_dir, run_started, failures, until),
             "fairness_flags": fairness_flags(streams),
-            "latency": latency_summary(state_dir, run_started),
-            "story": story_gained(state_dir, run_started)}
+            "latency": latency_summary(state_dir, run_started, until),
+            "story": story_gained(state_dir, run_started, until)}
+
+
+METRIC_FIELDS = ("time_to_milestone_s", "deaths", "fairness_flags", "latency", "story")   # run_metrics' keys
+BACKFILL_SLACK_S = 5.0   # as model_time.WINDOW_SLACK_S: a run's last files are written a little before its record
+
+
+def backfill_metrics(state_dir: Path, rec: dict) -> dict:
+    """The run_metrics fields a record written before them lacks, computed from its files now (the run's window:
+    started .. t + slack); {} when it has them all or has no start. A present field is never in the result, so
+    merging it (update_record) never overwrites a value."""
+    missing = [k for k in METRIC_FIELDS if k not in rec]
+    started, end = rec.get("started"), rec.get("t")
+    if not missing or not isinstance(started, (int, float)):
+        return {}
+    until = end + BACKFILL_SLACK_S if isinstance(end, (int, float)) else None
+    m = run_metrics(state_dir, started, rec.get("reached_at"), rec.get("failures") or [], until)
+    return {k: m[k] for k in missing}
 
 
 # ======================================================================== the table

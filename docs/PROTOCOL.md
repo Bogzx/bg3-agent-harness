@@ -79,6 +79,7 @@ Context: **S** = server, **C** = client. `uuid` = entity GUID string. `pos` = `[
 | `sys.info` | S,C | – | `{context,version,game_version,game_state,ops[],event_seq}` |
 | `events.since` | S,C | `{seq,limit}` | `{latest, events:[{seq,t,kind,data}]}` |
 | `job.poll` / `job.cancel` | S,C | `{id}` | `{id,kind,status,result,error,elapsed_ms}` |
+| `job.notify` | S,C | `{id}` | same view; a still-running job announces its end as `job_finished` (a waited call that outlived its wait) |
 
 ### State (`Server/Visibility.lua`, `Server/State.lua`; owner: worker **vis**)
 | op | ctx | args | result (sketch) |

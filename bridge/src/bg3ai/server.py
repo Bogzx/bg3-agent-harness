@@ -917,6 +917,36 @@ def _interact_uuid(ref: str) -> str:
         return _world_uuid(ref)
 
 
+def _nearest_uuid(ref: str, char: str) -> str:
+    """disarm/lockpick/loot_corpse by name: two identical traps, chests or bodies made the name "is ambiguous", a
+    wasted round trip (audit ACT-7). The one in sight nearest the actor is meant, as a player clicks the one in
+    front of them; a tie (within NEAREST_TIE_M) keeps the refusal."""
+    try:
+        return _uuid(ref)
+    except ValueError as e:
+        if "is ambiguous" not in str(e):
+            raise
+        err = e
+    cands = {H.by_handle.get(h) for h in H.matches(ref)}
+    near = game.try_rpc("state.nearby", {"radius": 40, "kinds": ["characters", "items"]}) or {}
+    me = next((r.get("pos") for r in (game.try_rpc("state.status") or {}).get("party") or []
+               if isinstance(r, dict) and r.get("uuid") == char), None)
+    rows = []
+    for r in (near.get("characters") or []) + (near.get("items") or []):
+        if isinstance(r, dict) and r.get("uuid") in cands:
+            d = macros.dist(me, r.get("pos")) if me else float("inf")
+            d = d if d < float("inf") else r.get("dist")
+            if isinstance(d, (int, float)):
+                rows.append((d, r["uuid"]))
+    rows.sort()
+    if rows and (len(rows) == 1 or rows[1][0] - rows[0][0] > NEAREST_TIE_M):
+        return rows[0][1]
+    raise err
+
+
+NEAREST_TIE_M = 0.5
+
+
 def _remember_names(obj: Any) -> None:
     """Register every uuid/name pair in a payload so later references by name work."""
     if isinstance(obj, dict):
@@ -1103,6 +1133,9 @@ def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "s
             if not (r.status == "failed" and _convo_refused(r.error)):
                 break
     _log_stage_ms(op, r)
+    if context == "server" and r.status == "still_running":
+        r, followed = _follow_on(tool, r, args)
+        note = "\n".join(x for x in (followed, note) if x)
     _remember_names(r.result)
     _batch["last"] = r.status
     _batch["result"] = r.result
@@ -1130,6 +1163,26 @@ def _close_left_trade(wait_s: float = 2.0) -> bool:
 
 # Async jobs started with wait=false: handle (j12) -> what the agent needs to follow them up.
 _async: dict[str, dict] = {}
+
+
+def _follow_on(tool: str, r: JobResult, args: dict) -> tuple[JobResult, str]:
+    """A waited-on job still running at the end of its wait: it was neither followed nor announced (no id, no
+    job_finished), so the agent re-sent it and superseded a ladder climb about to finish (audit ACT-10). From now on
+    it is an async job: its end arrives as job_finished (job.notify) and wait_for('j12') follows it. A job that ended
+    meanwhile comes back as its final view."""
+    jid = r.result.get("job") if isinstance(r.result, dict) else None
+    if jid is None:
+        return r, ""
+    view = game.try_rpc("job.notify", {"id": jid})
+    if isinstance(view, dict) and view.get("status") not in (None, "running"):
+        return JobResult(view["status"], view.get("result"), view.get("error"),
+                         elapsed_ms=view.get("elapsed_ms", 0)), ""
+    h = f"j{jid}"
+    _async[h] = {"ctx": "server", "id": jid, "tool": tool, "t0": time.monotonic(), "eta": None,
+                 "char": args.get("char")}
+    METRICS.bg_start(h, None)
+    return r, (f"it goes on as {h}: its end shows as job_finished in a later result; wait_for('{h}') waits for it "
+               f"(sending {tool} again would supersede it)")
 
 
 def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> str:
@@ -2455,21 +2508,21 @@ def _click_act(tool: str, op: str, args: dict, wait_s: float = 40.0) -> str:
 @_guard
 def loot_corpse(corpse: str, who: str | None = None) -> str:
     """Walk to a visible dead body and open its loot window (then use loot)."""
-    return _click_act("loot_corpse", "act.loot_corpse", {"char": _who(who), "target": _uuid(corpse)})
+    return _click_act("loot_corpse", "act.loot_corpse", {"char": (me := _who(who)), "target": _nearest_uuid(corpse, me)})
 
 
 @mcp.tool()
 @_guard
 def lockpick(target: str, who: str | None = None) -> str:
     """Pick the lock of a visible locked door/chest (needs Thieves' Tools); opens the roll — then roll_check."""
-    return _act_click_roll("lockpick", "act.lockpick", {"char": _who(who), "target": _uuid(target)})
+    return _act_click_roll("lockpick", "act.lockpick", {"char": (me := _who(who)), "target": _nearest_uuid(target, me)})
 
 
 @mcp.tool()
 @_guard
 def disarm(trap: str, who: str | None = None) -> str:
     """Disarm a DISCOVERED trap (needs a Trap Disarm Toolkit); opens the roll — then roll_check."""
-    return _act_click_roll("disarm", "act.disarm", {"char": _who(who), "target": _uuid(trap)})
+    return _act_click_roll("disarm", "act.disarm", {"char": (me := _who(who)), "target": _nearest_uuid(trap, me)})
 
 
 @mcp.tool()
@@ -8458,6 +8511,77 @@ if os.environ.get("BG3AI_ALWAYS_LOAD", "1") != "0":  # 0: everything deferred (A
     _mark_always_load()
 
 
+# ---------------------------------------------------------------------------
+# keeper mode (BG3AI_KEEPER_MODE=1): the runner's memory keeper pass for any client
+# ---------------------------------------------------------------------------
+
+KEEPER_TOOLS = ("memory_list", "memory_read", "memory_search", "memory_write", "memory_edit", "memory_append")
+KEEPER_DEFAULT_TASK = ("Memory keeper mode: you maintain the memory files of an AI's Baldur's Gate 3 playthrough "
+                       "between sessions. Your task is in your prompt. No game tools.")
+
+
+def keeper_mode() -> bool:
+    return os.environ.get("BG3AI_KEEPER_MODE", "0") not in ("", "0")
+
+
+def keeper_task(env=None) -> str:
+    """The keeper's task text for the server instructions: the file $BG3AI_KEEPER_TASK (runner/memory_keeper.py
+    writes its prompt there), so a client that shows MCP instructions gets it too."""
+    path = (os.environ if env is None else env).get("BG3AI_KEEPER_TASK")
+    if not path:
+        return KEEPER_DEFAULT_TASK
+    try:
+        return Path(path).read_text(encoding="utf-8").strip() or KEEPER_DEFAULT_TASK
+    except OSError:
+        return KEEPER_DEFAULT_TASK
+
+
+def keeper_server(task: str, sandbox: memtools.KeeperSandbox) -> MCPServer:
+    """A separate server with only the memory tools over the keeper's sandbox: no game tools, no game connection or
+    background threads, no session_start/end_session (the memory session stays as the runner left it), no events
+    or clock in results, nothing in runtime/actions.jsonl or the metrics (the client's stream log is the record)."""
+    srv = MCPServer("bg3", instructions=task)
+
+    def guarded(fn):
+        import functools
+
+        @functools.wraps(fn)
+        def wrapper(*a, **kw):
+            try:
+                return fn(*a, **kw).rstrip()
+            except memtools.Refused as e:
+                return str(e)
+        return wrapper
+
+    def memory_list(path: str = "memory") -> str:
+        """List a folder: memory/ (the playthrough's notes), memory/sessions, memory/chapters, knowledge/ (read-only reference notes). Shows each file's line count."""
+        return memtools.list_files(sandbox, path)
+
+    def memory_read(path: str, start_line: int = 1, max_lines: int = 400) -> str:
+        """Read a file: "memory/<file>" (e.g. memory/npcs.md, memory/sessions/S012.md) or "knowledge/<file>". A bare name means memory/. Long files come in pages: start_line for the next one."""
+        return memtools.read_file(sandbox, path, start_line, max_lines)
+
+    def memory_search(query: str, path: str = "memory", regex: bool = False) -> str:
+        """Find a name or word (case-insensitive): every matching line as file:line: text. path narrows it (memory/npcs.md, memory/sessions, knowledge). regex=true for a regular expression."""
+        return memtools.search(sandbox, query, path, regex)
+
+    def memory_write(path: str, content: str) -> str:
+        """Create or rewrite a whole memory file (Markdown only; only the files your task names are writable). The result shows memory lint errors about the file: fix them."""
+        return memtools.write_file(sandbox, path, content or "")
+
+    def memory_edit(path: str, old_text: str, new_text: str, replace_all: bool = False) -> str:
+        """Replace exact text in a memory file (old_text must match once, whitespace included; replace_all=true for every match). The result shows memory lint errors about the file: fix them."""
+        return memtools.edit_file(sandbox, path, old_text or "", new_text or "", replace_all)
+
+    def memory_append(path: str, text: str) -> str:
+        """Append lines at the end of a memory file. The result shows memory lint errors about the file: fix them."""
+        return memtools.append_file(sandbox, path, text or "")
+
+    for fn in (memory_list, memory_read, memory_search, memory_write, memory_edit, memory_append):
+        srv.add_tool(guarded(fn), meta=dict(ALWAYS_LOAD_META))
+    return srv
+
+
 def main(argv: list[str] | None = None) -> None:
     import argparse
     import threading
@@ -8470,6 +8594,13 @@ def main(argv: list[str] | None = None) -> None:
                     "address for a container client)")
     ap.add_argument("--port", type=int, default=8770, help="http: port (the dashboard has 8765)")
     a = ap.parse_args(argv)
+    if keeper_mode():
+        srv = keeper_server(keeper_task(), memtools.KeeperSandbox.from_env(lambda: MEMORY, lambda: KNOWLEDGE))
+        if a.transport == "http":
+            srv.run("streamable-http", **http_options(a.host, a.port))
+        else:
+            srv.run("stdio")
+        return
     # Serving a client: without the runner the first tool call opens the memory session (never on a plain import).
     LIFE.auto = os.environ.get("BG3AI_AUTO_SESSION", "1") != "0"
     stop = threading.Event()

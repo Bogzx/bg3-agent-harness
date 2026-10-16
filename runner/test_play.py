@@ -277,6 +277,81 @@ class StuckDetection(unittest.TestCase):
         self.assertIn("Last Light Inn", d)
 
 
+# ---------------------------------------------------------------- the claude path before runner/clients.py
+
+def legacy_claude_cmd(r, prompt: str, claude_session: str, resume: bool, tag: str = "") -> list[str]:
+    """play.py's Runner.claude_cmd as it was before the client interface (commit 1ca87d6), frozen: the claude
+    command a session gets must stay byte-identical (ClaudeClient through Runner.play_request)."""
+    model, effort = r.model_for(tag)
+    cmd = ["claude", "-p", prompt, "--model", model, "--output-format", "stream-json",
+           "--verbose", "--strict-mcp-config", "--mcp-config", str(P.PLAY_DIR / ".mcp.json"),
+           "--exclude-dynamic-system-prompt-sections", "--setting-sources", "project,local",
+           "--disable-slash-commands", "--tools", "ToolSearch"]
+    if effort:
+        cmd += ["--effort", effort]
+    if r.opt.fallback_model:
+        cmd += ["--fallback-model", r.opt.fallback_model]
+    if tag != "-fix":
+        state = getattr(r, "state", None)
+        ac = (P.session_overrides(state.dir / "session-config.json") if state else {}).get(
+            "autocompact", r.opt.autocompact)
+        if ac:
+            cmd += ["--autocompact", str(ac)]
+    cmd += ["--resume", claude_session] if resume else ["--session-id", claude_session]
+    return cmd
+
+
+def _legacy_short(value, limit: int) -> str:
+    s = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    s = s.replace("\n", " ⏎ ")
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def legacy_format_stream_event(ev: dict) -> list[str]:
+    """play.py's format_stream_event before the client interface (commit 1ca87d6), frozen: the human log's lines
+    for a claude stream must stay the same (clients.format_event over ClaudeClient.parse)."""
+    t = ev.get("type")
+    out = []
+    if t == "system" and ev.get("subtype") == "init":
+        servers = [f"{m.get('name')}:{m.get('status')}" for m in ev.get("mcp_servers") or [] if isinstance(m, dict)]
+        out.append(f"[init] session={ev.get('session_id')} model={ev.get('model')} "
+                   f"tools={len(ev.get('tools') or [])} mcp={servers}")
+    elif t == "system" and ev.get("subtype") in ("compact_boundary",):
+        out.append("[compact] context compacted")
+    elif t == "assistant":
+        for c in (ev.get("message") or {}).get("content") or []:
+            if c.get("type") == "text" and c.get("text", "").strip():
+                out.append(f"[say] {_legacy_short(c['text'].strip(), 2000)}")
+            elif c.get("type") == "tool_use":
+                name = c.get("name", "?").removeprefix("mcp__bg3__")
+                out.append(f"[tool] {name} {_legacy_short(c.get('input') or {}, 300)}")
+    elif t == "user":
+        content = (ev.get("message") or {}).get("content")
+        for c in content if isinstance(content, list) else []:
+            if c.get("type") == "tool_result":
+                body = c.get("content")
+                if isinstance(body, list):
+                    body = " ".join(b.get("text", f"<{b.get('type')}>") for b in body if isinstance(b, dict))
+                tag = "[error]" if c.get("is_error") else "[result]"
+                out.append(f"{tag} {_legacy_short(body or '', 400)}")
+    elif t == "result":
+        out.append(f"[end] {ev.get('subtype')} turns={ev.get('num_turns')} "
+                   f"duration={round((ev.get('duration_ms') or 0) / 60000, 1)}min "
+                   f"cost=${ev.get('total_cost_usd', 0) or 0:.2f}")
+    return out
+
+
+def _cmd(r, prompt: str, session: str, resume: bool, tag: str = "") -> list[str]:
+    """The command a session gets (Runner.play_request → the client)."""
+    return r.agent_cmd(r.play_request(prompt, session, resume, tag))
+
+
+def _lines(ev: dict) -> list[str]:
+    """The human log lines the runner writes for one claude stream event (ClaudeClient.parse → format_event)."""
+    from clients import ClaudeClient, format_event
+    return [x for e in ClaudeClient().parse(json.dumps(ev)) for x in format_event(e)]
+
+
 class Misc(unittest.TestCase):
     def test_health_tracker(self):
         t = P.HealthTracker(3)
@@ -294,29 +369,29 @@ class Misc(unittest.TestCase):
         ev = {"type": "assistant", "message": {"content": [
             {"type": "text", "text": "Heading to the windmill."},
             {"type": "tool_use", "name": "mcp__bg3__move_to", "input": {"target": "e12"}}]}}
-        self.assertEqual(P.format_stream_event(ev), ["[say] Heading to the windmill.",
+        self.assertEqual(_lines(ev), ["[say] Heading to the windmill.",
                                                      '[tool] move_to {"target":"e12"}'])
         res = {"type": "user", "message": {"content": [
             {"type": "tool_result", "content": [{"type": "text", "text": "status: arrived"}]}]}}
-        self.assertEqual(P.format_stream_event(res), ["[result] status: arrived"])
+        self.assertEqual(_lines(res), ["[result] status: arrived"])
         end = {"type": "result", "subtype": "success", "num_turns": 12, "duration_ms": 120000,
                "total_cost_usd": 1.5}
-        self.assertEqual(P.format_stream_event(end), ["[end] success turns=12 duration=2.0min cost=$1.50"])
+        self.assertEqual(_lines(end), ["[end] success turns=12 duration=2.0min cost=$1.50"])
         init = {"type": "system", "subtype": "init", "session_id": "abc", "model": "opus", "tools": [1, 2],
                 "mcp_servers": [{"name": "bg3", "status": "connected"}]}
-        self.assertIn("bg3:connected", P.format_stream_event(init)[0])
-        self.assertEqual(P.format_stream_event({"type": "weird"}), [])
+        self.assertIn("bg3:connected", _lines(init)[0])
+        self.assertEqual(_lines({"type": "weird"}), [])
 
     def test_claude_command(self):
         r = P.Runner.__new__(P.Runner)
         r.opt = P.Options("pt", None, 60, "opus")
-        cmd = r.claude_cmd("go", "1234", resume=False)
+        cmd = _cmd(r, "go", "1234", resume=False)
         self.assertEqual(cmd[:3], ["claude", "-p", "go"])
         self.assertIn("--session-id", cmd)
         self.assertIn("stream-json", cmd)
         self.assertIn("--verbose", cmd)
         self.assertEqual(cmd[cmd.index("--model") + 1], "opus")
-        self.assertIn("--resume", r.claude_cmd("fix", "1234", resume=True))
+        self.assertIn("--resume", _cmd(r, "fix", "1234", resume=True))
         self.assertNotIn("--effort", cmd)  # Claude Code's default unless asked
         for flag in P.CLAUDE_FLAGS:
             self.assertIn(flag, cmd)
@@ -326,7 +401,7 @@ class Misc(unittest.TestCase):
         # sandbox are the server's (memtools.py); no built-in file, shell, web or agent tool exists in the session.
         r = P.Runner.__new__(P.Runner)
         r.opt = P.Options("pt", None, 60, "opus")
-        for cmd in (r.claude_cmd("go", "1", resume=False), r.claude_cmd("fix", "1", resume=True, tag="-fix")):
+        for cmd in (_cmd(r, "go", "1", resume=False), _cmd(r, "fix", "1", resume=True, tag="-fix")):
             tools = cmd[cmd.index("--tools") + 1]
             self.assertEqual(tools, "ToolSearch")
             self.assertIn("--strict-mcp-config", cmd)
@@ -355,10 +430,10 @@ class Misc(unittest.TestCase):
         r.opt = P.Options("pt", None, 60, "opus", effort="medium", fix_model="sonnet", fallback_model="sonnet")
         with tempfile.TemporaryDirectory() as d:
             r.state = SimpleNamespace(dir=Path(d))
-            cmd = r.claude_cmd("go", "1", resume=False)
+            cmd = _cmd(r, "go", "1", resume=False)
             self.assertEqual(cmd[cmd.index("--effort") + 1], "medium")
             self.assertEqual(cmd[cmd.index("--fallback-model") + 1], "sonnet")
-            fix = r.claude_cmd("fix", "1", resume=True, tag="-fix")
+            fix = _cmd(r, "fix", "1", resume=True, tag="-fix")
             self.assertEqual((fix[fix.index("--model") + 1], fix[fix.index("--effort") + 1]), ("sonnet", "low"))
             # session-config.json overrides the CLI for play sessions, re-read every time; bad values ignored
             (Path(d) / "session-config.json").write_text('{"model": "fable", "effort": "high"}')
@@ -376,18 +451,18 @@ class Misc(unittest.TestCase):
         r.opt = P.Options("pt", None, 30, "opus")
         with tempfile.TemporaryDirectory() as d:
             r.state = SimpleNamespace(dir=Path(d))
-            self.assertNotIn("--autocompact", r.claude_cmd("go", "1", resume=False))  # Claude Code's default
+            self.assertNotIn("--autocompact", _cmd(r, "go", "1", resume=False))  # Claude Code's default
             r.opt = P.Options("pt", None, 30, "opus", autocompact=350_000)
-            cmd = r.claude_cmd("go", "1", resume=False)
+            cmd = _cmd(r, "go", "1", resume=False)
             self.assertEqual(cmd[cmd.index("--autocompact") + 1], "350000")
-            self.assertNotIn("--autocompact", r.claude_cmd("fix", "1", resume=True, tag="-fix"))
+            self.assertNotIn("--autocompact", _cmd(r, "fix", "1", resume=True, tag="-fix"))
             # session-config.json switches it live (A/B); out-of-range / non-int values are ignored
             (Path(d) / "session-config.json").write_text('{"autocompact": 200000}')
-            cmd = r.claude_cmd("go", "1", resume=False)
+            cmd = _cmd(r, "go", "1", resume=False)
             self.assertEqual(cmd[cmd.index("--autocompact") + 1], "200000")
             for bad in ('{"autocompact": 5000}', '{"autocompact": "200k"}', '{"autocompact": true}'):
                 (Path(d) / "session-config.json").write_text(bad)
-                cmd = r.claude_cmd("go", "1", resume=False)
+                cmd = _cmd(r, "go", "1", resume=False)
                 self.assertEqual(cmd[cmd.index("--autocompact") + 1], "350000")
 
     def test_cli_effort(self):

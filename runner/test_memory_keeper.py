@@ -25,7 +25,9 @@ from pathlib import Path
 args = sys.argv[1:]
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps({"args": args, "cwd": os.getcwd()}) + "\n")
-mode, resume = os.environ.get("FAKE_MODE", "ok"), "--resume" in args
+mode, resume = os.environ.get("FAKE_MODE", "ok"), "--resume" in args or args[:2] == ["exec", "resume"]
+if args[:1] == ["exec"]:   # codex: the thread id comes first in its stream
+    print(json.dumps({"type": "thread.started", "thread_id": "thread-1"}), flush=True)
 def app(rel, text):
     with open(rel, "a") as f:
         f.write(text)
@@ -120,6 +122,89 @@ class KeeperTest(MemoryTestCase):
         self.assertIn("## From the logs (memory keeper)", prompt)
         self.assertIn("HARNESS FIXES", prompt)  # the real harness-news.md: retire fixed quirks
         self.assertIn("## Retired quirks", prompt)
+
+    def test_claude_via_mcp_keeper_server(self):
+        os.environ["FAKE_MODE"] = "ok"
+        r = K.run_keeper(self.mem, 3, self.base, minutes=1.0, claude=str(self.fake), mcp=True)
+        self.assertEqual(r.status, "ok", r.summary())
+        args = self.call_args()[0]
+        self.assertNotIn("--restricted", args)
+        self.assertEqual(args[args.index("--tools") + 1], "ToolSearch")   # + the bg3 server's tools only
+        self.assertIn("--strict-mcp-config", args)
+        self.assertEqual(json.loads(args[args.index("--settings") + 1]),
+                         {"permissions": {"allow": ["mcp__bg3__*"]}})
+        self.assertEqual(json.loads(self.calls.read_text().splitlines()[0])["cwd"], str(self.mem))
+        self.assertIn("--session-id", args)
+        cfg = json.loads(Path(args[args.index("--mcp-config") + 1]).read_text())
+        env = cfg["mcpServers"]["bg3"]["env"]
+        self.assertEqual(env["BG3AI_KEEPER_MODE"], "1")
+        self.assertEqual(env["BG3AI_MEMORY_DIR"], str(self.mem.resolve()))
+        self.assertEqual(env["BG3AI_KEEPER_HANDOFF_SECTION"], K.HANDOFF_SECTION)
+        writable = env["BG3AI_KEEPER_WRITABLE"].split(",")
+        self.assertIn("objectives.md", writable)
+        self.assertIn("chapters/", writable)
+        self.assertNotIn("sessions/", writable)
+        prompt = args[args.index("-p") + 1]
+        self.assertEqual(Path(env["BG3AI_KEEPER_TASK"]).read_text().strip(), prompt.strip())
+        self.assertIn("memory_edit", prompt)
+        self.assertIn("lint check", prompt)
+        self.assertNotIn("Read/Edit/Write/Glob/Grep", prompt)
+
+    def test_keeper_server_runs_the_bridge_from_anywhere(self):
+        s = K.keeper_server(self.mem)
+        proj = s["args"][s["args"].index("--project") + 1]
+        self.assertEqual(Path(proj), K.REPO / "bridge")
+        self.assertEqual(s["args"][-1], "bg3ai-mcp")
+        self.assertNotIn("BG3AI_KEEPER_TASK", s["env"])
+
+    def run_codex(self, mode: str) -> K.KeeperResult:
+        os.environ["FAKE_MODE"] = mode
+        return K.run_keeper(self.mem, 3, self.base, model="gpt-5", minutes=1.0, client="codex",
+                            binary=str(self.fake))
+
+    @staticmethod
+    def codex_config(args: list[str]) -> dict:
+        return dict(args[i + 1].split("=", 1) for i, a in enumerate(args) if a == "-c")
+
+    def test_codex_via_mcp_keeper_server(self):
+        r = self.run_codex("ok")
+        self.assertEqual(r.status, "ok", r.summary())
+        self.assertEqual(self.git_log()[0], "S003 memory-keeper: objectives.md, quests.md")
+        args = self.call_args()[0]
+        self.assertEqual(args[:2], ["exec", "--json"])
+        self.assertEqual(args[args.index("-m") + 1], "gpt-5")
+        self.assertIn("shell_tool", args)   # --disable shell_tool
+        cfg = self.codex_config(args)
+        self.assertEqual(cfg["model_reasoning_effort"], '"low"')
+        self.assertEqual(json.loads(cfg["mcp_servers.bg3.cwd"]), str(self.mem))
+        self.assertIn('"BG3AI_KEEPER_MODE" = "1"', cfg["mcp_servers.bg3.env"])
+        self.assertIn(K.HANDOFF_SECTION, cfg["mcp_servers.bg3.env"])
+        self.assertIn("memory_write", args[-1])   # the prompt is codex's last argument
+
+    def test_codex_fix_attempt_resumes_its_thread(self):
+        r = self.run_codex("fixable")
+        self.assertEqual(r.status, "ok", r.summary())
+        calls = self.call_args()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][:3], ["exec", "resume", "--json"])
+        self.assertEqual(calls[1][-2], "thread-1")
+        self.assertIn("NEW errors", calls[1][-1])
+
+    def test_codex_lint_failure_rolls_back(self):
+        r = self.run_codex("bad_lint")
+        self.assertEqual(r.status, "lint_failed")
+        self.assertNotIn("Zevlor untagged", (self.mem / "npcs.md").read_text())
+
+    def test_codex_out_of_bounds_reverted(self):
+        r = self.run_codex("out_of_bounds")
+        self.assertEqual(r.status, "ok", r.summary())
+        self.assertNotIn("keeper scribble", (self.mem / "sessions" / "S003.md").read_text())
+        self.assertFalse((self.mem / "new-notes.md").exists())
+
+    def test_codex_failure_is_reported(self):
+        r = self.run_codex("fail")
+        self.assertEqual(r.status, "error")
+        self.assertIn("codex exit 3", r.detail)
 
     def test_deaths_always_become_lessons(self):
         # S043 Jaheira / S045 Aylin: an ally's death in a fight must reach lessons.md (and the party notes)

@@ -167,6 +167,15 @@ RPC.register("job.poll", function(args)
     return job_view(job)
 end)
 
+-- A waited-on job that outlived the bridge's wait: announce its end as job_finished from now on, as if it had been
+-- started with notify (audit ACT-10: its outcome was invisible). The view says whether it already ended.
+RPC.register("job.notify", function(args)
+    local job = RPC.jobs[tonumber(args.id)]
+    if not job then error("no such job " .. tostring(args.id)) end
+    if job.status == "running" then job.notify = true end
+    return job_view(job)
+end)
+
 RPC.register("job.cancel", function(args)
     local job = RPC.jobs[tonumber(args.id)]
     if not job then error("no such job " .. tostring(args.id)) end
