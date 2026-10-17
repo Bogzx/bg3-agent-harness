@@ -2,16 +2,18 @@
 
 **When:** only when the `⏱` line says **WRAP UP NOW** (or a SESSION CLOCK reminder, or the operator asks).
 "⏱ 21:12 · 2m of play left" means play 2 more minutes; stuck is not a reason (run `stuck`); escaping danger is
-play. A boss fight, descent or long trip needn't fit in the minutes left: the game keeps running between
-sessions and the next one plays on from where the party stands (a fight waits on your turn), so start it.
+play. A boss fight, descent or long trip needn't fit in the minutes left: a fight on at WRAP UP holds the session
+until it ends (the ⏱ line says "in a fight", no time), and the next session plays on from where the party stands,
+so start it.
 Never kill time with get_status/wiki reads (S036 idled ~2.5 min).
 **Do it once.** If `end_session` or the runner says "Keep playing", play on until the time it names: no
 `end_session`, `Sxxx-end` save or HANDOFF edit before then. At that time: one `memory_edit` of HANDOFF's changed
 lines, a save only if the party moved, `end_session`. No reading through files, no tidying. "Finish the fight
-first" (a call mid-fight): play the fight out, no wrap-up during it.
+first" (a call mid-fight): play the fight out, no wrap-up during it; WRAP UP comes after it.
 
 ## 1. Safe state (≤ 1 min)
-- **Combat:** finish the current round. If the fight goes on, save anyway (if the game allows) and write the
+- **Combat:** WRAP UP NOW comes after a fight ends, so this is rare (a fight 15 min past WRAP UP, or an ambush in
+  the wrap-up): finish the current round. If the fight goes on, save anyway (if the game allows) and write the
   situation precisely in HANDOFF.
 - **Dialogue:** finish the conversation (`dialogue` playbook rules apply). Start nothing new.
 

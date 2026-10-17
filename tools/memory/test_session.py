@@ -557,7 +557,7 @@ class AutonomousStopTest(MemoryTestCase):
         w, at = self.s074_clock()
         r = S.stop_decision(self.mem, now=w - 4 * 60, in_combat=lambda: True)["reason"]
         self.assertTrue(r.startswith("Finish the fight first"), r)
-        self.assertIn("plays on from where you are", r)
+        self.assertIn("the session waits for the fight", r)
         self.assertIn("Don't save S001-end or edit HANDOFF.md during the fight", r)
         self.assertNotIn("min of play", r)
         self.assertNotIn(at, r)
@@ -568,6 +568,34 @@ class AutonomousStopTest(MemoryTestCase):
         def never():
             raise AssertionError("in_combat asked for an accepted end")
         self.assertIn("committed", S.stop_decision(self.mem, now=w, in_combat=never)["systemMessage"])
+
+    def test_fight_hold_moves_the_wrap_up_for_the_stop_check(self):
+        # S078: a fight on at WRAP UP holds the session (bridge server.py _times writes $BG3AI_FIGHT_HOLD_PATH). The
+        # runner's stop check (no in_combat) then says finish the fight, with no time; after the fight, WRAP UP is the
+        # fight's end, so an end_session right after it is accepted.
+        w, at = self.s074_clock()
+        self.write("HANDOFF.md", self.good_handoff(1))
+        hold = self.mem.parent / "S001.hold.json"
+        os.environ["BG3AI_FIGHT_HOLD_PATH"] = str(hold)
+        self.addCleanup(os.environ.pop, "BG3AI_FIGHT_HOLD_PATH", None)
+        cap = w + 15 * 60
+        hold.write_text(json.dumps({"wrap": int(cap), "deadline": int(cap + 180), "held": True, "cap": int(cap)}))
+        self.assertEqual((S.wrap_at(), S.session_deadline()), (int(cap), int(cap + 180)))
+        r = S.stop_decision(self.mem, now=w + 5 * 60)["reason"]   # past the planned WRAP UP, fight on
+        self.assertTrue(r.startswith("Finish the fight first"), r)
+        self.assertNotRegex(r, r"\d\d:\d\d|min of play")
+        end = w + 9 * 60   # the fight ended 9 min after the planned WRAP UP
+        hold.write_text(json.dumps({"wrap": int(end), "deadline": int(end + 180), "held": False, "cap": int(cap)}))
+        self.assertIn("committed", S.stop_decision(self.mem, now=end + 1)["systemMessage"])
+
+    def test_a_stale_or_broken_hold_file_never_shortens(self):
+        w, _ = self.s074_clock()
+        hold = self.mem.parent / "S001.hold.json"
+        os.environ["BG3AI_FIGHT_HOLD_PATH"] = str(hold)
+        self.addCleanup(os.environ.pop, "BG3AI_FIGHT_HOLD_PATH", None)
+        for text in ("", "garbage", "[1]", json.dumps({"wrap": w - 600, "deadline": w - 400})):
+            hold.write_text(text)
+            self.assertEqual((S.wrap_at(), S.session_deadline()), (w, w + 180))
 
     def test_wrapup_far_from_wrap_still_bounced(self):
         self.open_session(1, minutes_ago=14)

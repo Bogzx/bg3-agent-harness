@@ -77,6 +77,10 @@ if n_calls <= int(os.environ.get("FAKE_CLAUDE_LIMIT", "0")):
           flush=True)
     sys.exit(1)
 print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "resumed" if resume else "playing"}]}}), flush=True)
+# FAKE_CLAUDE_HOLD_S=N → the bg3 MCP server's fight hold (a fight on at WRAP UP): the session ends N s from now at most
+if os.environ.get("FAKE_CLAUDE_HOLD_S") and os.environ.get("BG3AI_FIGHT_HOLD_PATH") and not resume:
+    with open(os.environ["BG3AI_FIGHT_HOLD_PATH"], "w") as f:
+        json.dump({"deadline": time.time() + float(os.environ["FAKE_CLAUDE_HOLD_S"]), "held": True}, f)
 try:
     time.sleep(float(os.environ["FAKE_CLAUDE_RESUME_S" if resume else "FAKE_CLAUDE_FIRST_S"]))
 except KeyboardInterrupt:
@@ -185,7 +189,7 @@ class FakeRunBase(unittest.TestCase):
                  "LAUNCH_BACKOFF", "PLAYTHROUGHS", "press_menu_key", "MENU_POLL", "bg3le_problems", "MOD_GONE_S",
                  "user_journal", "SE_BG3AI_DIR")
         self.saved = {n: getattr(P, n) for n in names}
-        for k in ("FAKE_CLAUDE_HANG", "FAKE_CLAUDE_MCP", "FAKE_CLAUDE_LIMIT", "FAKE_CLAUDE_RESET"):
+        for k in ("FAKE_CLAUDE_HANG", "FAKE_CLAUDE_MCP", "FAKE_CLAUDE_LIMIT", "FAKE_CLAUDE_RESET", "FAKE_CLAUDE_HOLD_S"):
             os.environ.pop(k, None)
             self.addCleanup(os.environ.pop, k, None)
         P.RUNTIME = self.tmp / "runtime"
@@ -471,6 +475,34 @@ class StopCheck(FakeRunBase):
         self.assertEqual((h["stop_resumes"], h["keeper_model"]), (1, "opus"))
         self.assertTrue((self.r.state.dir / "S001-c1.log").exists())
         self.assertEqual([e["BG3AI_SESSION"] for e in self.claude_envs()], ["S001", "S001"])
+
+    def test_a_fight_at_the_deadline_holds_the_hard_stop(self):
+        # S078: a session never ends mid-fight. The bg3 MCP server writes the fight hold (Sxxx.hold.json); the runner
+        # moves its hard stop and the session's end with it. A 3 s session with a 1 s hard-stop grace would SIGINT
+        # the 10 s fake claude at ~4-6 s; held to +20 s, claude ends on its own and the stop check gets the held end.
+        os.environ.update(FAKE_CLAUDE_FIRST_S="10", FAKE_CLAUDE_HOLD_S="20")
+        calls = []
+        self.r.stop_check = lambda sid, deadline, minutes: calls.append(deadline) and None
+        with mock.patch.object(P, "deadlines", lambda start, m: (start + m * 60, start + m * 60 + 1)):
+            t0 = time.time()
+            res = self.r.play_session(0.05, first=True)
+        self.assertEqual(res.reason, "exited")   # not hard_stop
+        self.assertEqual(len(self.claude_runs()), 1)
+        held = json.loads((self.r.state.dir / "S001.hold.json").read_text())["deadline"]
+        self.assertEqual(calls, [held])
+        self.assertGreater(held, t0 + 15)
+        self.assertIn("[runner] fight hold (a fight at WRAP UP): session end", (self.r.state.dir / "S001.log").read_text())
+
+    def test_the_fight_hold_is_bounded(self):
+        hold = self.tmp / "S001.hold.json"
+        self.assertEqual(P.held_deadline(hold, 1000.0), 1000.0)   # no file
+        hold.write_text(json.dumps({"deadline": 1300, "held": True}))
+        self.assertEqual(P.held_deadline(hold, 1000.0), 1300.0)
+        hold.write_text(json.dumps({"deadline": 1000 + P.FIGHT_HOLD_S + 600}))
+        self.assertEqual(P.held_deadline(hold, 1000.0), 1000.0 + P.FIGHT_HOLD_S)   # never past the bound
+        for bad in ("", "[1]", "{\"deadline\": \"x\"}", json.dumps({"deadline": 900})):
+            hold.write_text(bad)
+            self.assertEqual(P.held_deadline(hold, 1000.0), 1000.0)   # never earlier
 
     def test_capped(self):
         P.MAX_STOP_RESUMES = 2

@@ -278,6 +278,25 @@ def deadlines(start: float, session_minutes: float, grace: float = HARD_STOP_GRA
     return deadline, deadline + grace
 
 
+# A session never ends mid-fight (S078): the bg3 MCP server holds the clock while a fight that was on at WRAP UP lasts,
+# at most its FIGHT_HOLD_S (15 min) past the planned WRAP UP, and writes the moved times to $BG3AI_FIGHT_HOLD_PATH
+# (Sxxx.hold.json). The runner moves its deadline and hard stop with it, never more than FIGHT_HOLD_S past its own.
+FIGHT_HOLD_S = 15 * 60
+
+
+def fight_hold_path(state_dir: Path, sid: str) -> Path:
+    return state_dir / f"{sid}.hold.json"
+
+
+def held_deadline(path: Path, deadline: float) -> float:
+    """The session deadline with the MCP server's fight hold applied (bounded), or `deadline`."""
+    try:
+        held = float(json.loads(path.read_text()).get("deadline") or 0)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return deadline
+    return max(deadline, min(held, deadline + FIGHT_HOLD_S))
+
+
 def session_budget(now: float, run_end: float | None, session_minutes: float,
                    min_minutes: float = MIN_SESSION_MINUTES) -> float | None:
     """Minutes for the next session given the --hours budget; None when there's no room for one."""
@@ -2943,6 +2962,7 @@ class Runner:
         session_env["BG3AI_METRICS_PATH"] = f"{base}.metrics.jsonl"  # the bridge's per-tool latency records
         # the runner opened this memory session: the MCP server attaches, never opens one
         session_env["BG3AI_SESSION"] = sid
+        session_env["BG3AI_FIGHT_HOLD_PATH"] = str(fight_hold_path(self.state.dir, sid))  # per session, not per -rN
         # the memory keeper compacts old logs between sessions: session.py then doesn't ask the player to
         session_env["BG3AI_KEEPER"] = "1" if self.opt.keeper and not self.opt.dry_run else "0"
         if not needs_game:
@@ -3070,9 +3090,18 @@ class Runner:
         reason = "exited"
         detail, fault_at = "", None
         signals_sent = []
+        hold, held_until, planned_stop = fight_hold_path(self.state.dir, sid), deadline, hard_stop
         while proc.poll() is None:
             time.sleep(2)
             now = time.time()
+            if reason == "exited" and not signals_sent and needs_game and held_deadline(hold, deadline) != held_until:
+                # the cap while the fight lasts, then the fight's end + the wrap-up; never before the planned stop
+                held_until = held_deadline(hold, deadline)
+                hard_stop = max(planned_stop, held_until + HARD_STOP_GRACE)
+                human.write(f"{datetime.now():%H:%M:%S} [runner] fight hold (a fight at WRAP UP): session end "
+                            f"{datetime.fromtimestamp(held_until):%H:%M:%S}, hard stop "
+                            f"{datetime.fromtimestamp(hard_stop):%H:%M}\n")
+                write_status(deadline=held_until, hard_stop=hard_stop)
             if self.abort and reason == "exited":
                 reason = "aborted"
                 hard_stop = min(hard_stop, now)
@@ -3642,12 +3671,15 @@ class Runner:
         return subprocess.run([sys.executable, str(SESSION_PY), *args, "--memory-dir", str(self.mem)],
                               capture_output=True, text=True, cwd=PLAY_DIR, stdin=subprocess.DEVNULL)
 
-    def session_env(self, deadline: float, minutes: float) -> dict:
+    def session_env(self, deadline: float, minutes: float, sid: str | None = None) -> dict:
         """The clock env session.py sees for a session (what run_claude gives claude and the MCP server)."""
-        return dict(os.environ, BG3AI_SESSION_DEADLINE=str(int(deadline)),
-                    BG3AI_SESSION_WRAPUP=str(int(deadline - wrapup_minutes(minutes) * 60)),
-                    BG3_SESSION_MINUTES=str(minutes), BG3_WRAP_MINUTES=str(wrap_minutes(minutes)),
-                    BG3AI_KEEPER="1" if self.opt.keeper and not self.opt.dry_run else "0")
+        env = dict(os.environ, BG3AI_SESSION_DEADLINE=str(int(deadline)),
+                   BG3AI_SESSION_WRAPUP=str(int(deadline - wrapup_minutes(minutes) * 60)),
+                   BG3_SESSION_MINUTES=str(minutes), BG3_WRAP_MINUTES=str(wrap_minutes(minutes)),
+                   BG3AI_KEEPER="1" if self.opt.keeper and not self.opt.dry_run else "0")
+        if sid and getattr(self, "state", None) is not None:   # the playthrough state comes with run()
+            env["BG3AI_FIGHT_HOLD_PATH"] = str(fight_hold_path(self.state.dir, sid))
+        return env
 
     def session_cmd(self, args: list[str], env: dict) -> subprocess.CompletedProcess:
         """session.py <args> with the session's clock env; never reads the runner's stdin."""
@@ -3672,7 +3704,7 @@ class Runner:
         """session.py stop after claude ended its turn (was the Stop hook): the reason the session can't end yet
         (keep playing, write the handoff, fix lint), or None (it ended; on success the memory is committed)."""
         try:
-            r = self.session_cmd(["stop"], self.session_env(deadline, minutes))
+            r = self.session_cmd(["stop"], self.session_env(deadline, minutes, sid))
             out = json.loads(r.stdout) if r.stdout.strip() else {}
         except (OSError, ValueError) as e:
             log(f"{sid}: stop check failed: {e}")
@@ -3945,7 +3977,10 @@ class Runner:
         # (keep playing until wrap-up, write the handoff, fix lint) by resuming the conversation with the reason.
         resumes = stop_resumes = 0
         gave_up: LaunchGaveUp | None = None
+        planned_end = session_end
         while True:
+            # a fight on at WRAP UP held the clock: the stop check, resumes and the hard-stop test use the moved end
+            session_end = held_deadline(fight_hold_path(self.state.dir, sid), planned_end)
             if res.reason not in FAULTS:
                 if (res.reason != "exited" or res.exit_code != 0 or stop_resumes >= MAX_STOP_RESUMES or self.abort
                         or time.time() > session_end + HARD_STOP_GRACE - 60):
@@ -3999,7 +4034,7 @@ class Runner:
         if not crashed:
             self.ensure_save(res.started)
         try:   # was the SessionEnd hook: commit a finished wrap-up, else log that the session ended before it
-            self.session_cmd(["session-end"], self.session_env(session_end, minutes))
+            self.session_cmd(["session-end"], self.session_env(session_end, minutes, sid))
         except OSError as e:
             log(f"{sid}: session-end failed: {e}")
         self.close_memory_session(res)

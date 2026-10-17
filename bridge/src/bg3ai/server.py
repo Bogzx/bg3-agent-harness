@@ -131,14 +131,18 @@ def _wrap_left() -> float:
 
 
 def _clock_line() -> str:
-    """The clock for tool results: always from ADVANCE_S before WRAP UP on, otherwise at most every 10 minutes,
-    and at once when a stuck episode starts (then with the clock, while it lasts)."""
+    """The clock for tool results: always from ADVANCE_S before WRAP UP on and in a fight, otherwise at most every
+    10 minutes, and at once when a stuck episode starts (then with the clock, while it lasts)."""
     now = time.time()
     st = _stuck()
     new_stuck = st is not None and st.get("t") != _clock_shown["stuck"]
     if not DEADLINE and not st:
         return ""
-    full = new_stuck or (DEADLINE and DEADLINE - now <= _wrap_left() + ADVANCE_S)
+    if DEADLINE and _fighting():
+        if st is not None:
+            _clock_shown["stuck"] = st.get("t")
+        return _clock()  # no time in it: not counted as a full line (the next one comes on time after the fight)
+    full = new_stuck or (DEADLINE and _times()[0] - now <= ADVANCE_S)
     if not full and now - _clock_shown["at"] < 600:
         # Between full lines, a terse one: S009 guessed "time is nearly up" 4 min after the last clock with
         # 15 min left, saved, wrote its handoff (a 42 s gap), then walked back; and session_clock costs a turn.
@@ -146,19 +150,104 @@ def _clock_line() -> str:
         # HANDOFF at 13m left).
         if not DEADLINE:
             return ""
-        return f"⏱ {time.strftime('%H:%M')} · {int((DEADLINE - now - _wrap_left()) // 60)}m of play left"
+        return f"⏱ {time.strftime('%H:%M')} · {int((_times()[0] - now) // 60)}m of play left"
     _clock_shown["at"] = now
     if st is not None:
         _clock_shown["stuck"] = st.get("t")
     return _clock()
 
 
-# The full line (with the "keep advancing the story" advice) on every result in the last minutes of play: S073 had only
-# terse "3m of play left" lines there and filled them with loot, equip_best, junk to camp and a 60 s wait next to the
-# unused elevator down to Cazador's dungeon, so the next story step was left for S074.
-ADVANCE_S = 5 * 60
+# The near line (what to do, no countdown) on every result in the last minutes of play: S073 had only terse "3m of
+# play left" lines there and filled them with loot, equip_best, junk to camp and a 60 s wait next to the unused
+# elevator down to Cazador's dungeon, so the next story step was left for S074. 10 min, not 5: S077 and S078 began
+# their wrap-up at ~6 min of play (S078 01:35, after a lost try: "about 8 minutes").
+ADVANCE_S = 10 * 60
 ADVANCE = ("keep advancing the story: start the next step even if it won't finish; the next session continues from "
            "where the party stands")
+NEAR = ("start the next story step now, even a fight or a descent: it needn't finish. A fight holds the session "
+        "until it ends, and the next session continues from where the party stands")
+
+# A session never ends mid-fight. S078 01:42:25, 2 min of play before WRAP UP: "Time is nearly up, so I'm reloading"
+# a Viconia fight at round 1 with Silence on Gydd holding; three rounds of clock text (S10/S12/S14/S15) hadn't taken
+# the time pressure away. So in a fight the ⏱ line shows no time, and a fight still on at WRAP UP holds the clock:
+# WRAP UP comes when the fight ends (the end its wrap-up length later), at most FIGHT_HOLD_S after the planned WRAP UP,
+# then the normal end. The hold goes to $BG3AI_FIGHT_HOLD_PATH (set by the runner), which the runner's hard stop and
+# session.py's end check read; a restarted server (crash resume) keeps the session's cap from it.
+FIGHT_HOLD_S = 15 * 60
+FIGHT_READ_S = 15.0  # a state.combat read is kept this long; combat_started/combat_ended events and load_game drop it
+FIGHT_LINE = "in a fight: finish it, taking each turn the time it needs; the session waits for the fight"
+HOLD_PATH = os.environ.get("BG3AI_FIGHT_HOLD_PATH", "")
+_hold: dict = {"of": None, "cap": 0.0, "wrap": None, "held": False, "fight": None, "read_at": 0.0,
+         "written": None}
+
+
+def _fight_now() -> bool:
+    """In combat (a state.combat read, kept FIGHT_READ_S; no game: no)."""
+    now = time.monotonic()
+    if _hold["fight"] is None or now - _hold["read_at"] > FIGHT_READ_S:
+        _hold.update(fight=bool((game.try_rpc("state.combat") or {}).get("active")), read_at=now)
+    return _hold["fight"]
+
+
+def _fight_seen(tool: str, ev: str) -> None:
+    """A fight started or ended (or a load): the next clock reads state.combat again."""
+    if tool == "load_game" or "combat_started" in (ev or "") or "combat_ended" in (ev or ""):
+        _hold["fight"] = None
+
+
+def _times() -> tuple[float, float, bool]:
+    """(WRAP UP, end, held) of this runner session (DEADLINE set), with the fight hold applied. While held, WRAP UP
+    is the cap (what the runner and session.py plan for); when the fight ends (or the cap comes), it is that moment."""
+    wrap_len = _wrap_left()
+    base = DEADLINE - wrap_len
+    if _hold["of"] != (DEADLINE, base):  # once per server process (tests change the session)
+        _hold.update(of=(DEADLINE, base), cap=base + FIGHT_HOLD_S, wrap=None, held=False, written=None)
+        saved = _read_hold()
+        if saved:
+            _hold["cap"] = min(_hold["cap"], float(saved.get("cap") or _hold["cap"]))
+            _hold["held"] = bool(saved.get("held"))
+            _hold["wrap"] = None if _hold["held"] else saved.get("wrap")
+    now, cap = time.time(), _hold["cap"]
+    wrap = max(base, float(_hold["wrap"] or 0))
+    held = wrap <= now < cap and _fight_now()
+    if _hold["held"] and not held:  # the fight ended (or the cap came): WRAP UP now
+        _hold["wrap"] = wrap = max(wrap, min(now, cap))
+    _hold["held"] = held
+    if held:
+        wrap = cap
+    _write_hold(wrap, wrap + wrap_len, held)
+    return wrap, wrap + wrap_len, held
+
+
+def _fighting() -> bool:
+    """The ⏱ line is the fight line: held, or a fight before WRAP UP (after the cap: the normal end)."""
+    wrap, _, held = _times()
+    return held or (time.time() < wrap and _fight_now())
+
+
+def _read_hold() -> dict:
+    if not HOLD_PATH:
+        return {}
+    try:
+        d = json.loads(Path(HOLD_PATH).read_text())
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _write_hold(wrap: float, end: float, held: bool) -> None:
+    row = {"wrap": int(wrap), "deadline": int(end), "held": held, "cap": int(_hold["cap"])}
+    if not HOLD_PATH or row == _hold["written"]:
+        return
+    if _hold["written"] is None and not held and int(wrap) == int(DEADLINE - _wrap_left()):
+        return  # nothing held yet: no file
+    try:
+        tmp = Path(HOLD_PATH + ".tmp")
+        tmp.write_text(json.dumps({**row, "t": int(time.time())}))
+        os.replace(tmp, HOLD_PATH)
+        _hold["written"] = row
+    except OSError:
+        pass
 
 
 def _clock() -> str:
@@ -166,24 +255,27 @@ def _clock() -> str:
     stuck = (" · " if DEADLINE else "⏱ ") + _stuck_text(st) if st else ""
     if not DEADLINE:
         return stuck
-    left = DEADLINE - time.time()
+    hhmm = time.strftime("%H:%M")  # wall clock: S001 invented log times without it
+    if _fighting():
+        return f"⏱ {hhmm} · {FIGHT_LINE}" + stuck
+    wrap, end, _ = _times()
+    now = time.time()
+    left = end - now
     if left <= 0:
         return f"⏱ SESSION OVER: only save_game and note-taking now; {WRAPUP_HINT}."
     # Wrap-up starts at BG3AI_SESSION_WRAPUP (the runner: 3 min before the end, a third of a short
     # session); before it, only the play time and when WRAP UP comes: S070 read "9m left · 6m of play: keep playing
     # until WRAP UP at 3m left" as "time is nearly up" and wrapped up at once (S069: "13m left").
-    wrap_left = _wrap_left()
-    m = int(left // 60)
-    hhmm = time.strftime("%H:%M")  # wall clock: S001 invented log times without it
-    if left <= wrap_left:
-        return f"⏱ {hhmm} · {m}m left: WRAP UP NOW. Reach a safe spot, save_game, then {WRAPUP_HINT}."
-    play = int((left - wrap_left) // 60)
-    wrap_hhmm = time.strftime("%H:%M", time.localtime(DEADLINE - wrap_left))
-    return f"⏱ {hhmm} · {play}m of play left until WRAP UP at {wrap_hhmm}: {ADVANCE}" + stuck
+    if now >= wrap:
+        return f"⏱ {hhmm} · {int(left // 60)}m left: WRAP UP NOW. Reach a safe spot, save_game, then {WRAPUP_HINT}."
+    wrap_hhmm = time.strftime("%H:%M", time.localtime(wrap))
+    if wrap - now <= ADVANCE_S:
+        return f"⏱ {hhmm} · WRAP UP at {wrap_hhmm}. Until then: {NEAR}" + stuck
+    return f"⏱ {hhmm} · {int((wrap - now) // 60)}m of play left until WRAP UP at {wrap_hhmm}: {ADVANCE}" + stuck
 
 
 def _session_over() -> bool:
-    return bool(DEADLINE) and time.time() > DEADLINE
+    return bool(DEADLINE) and time.time() > _times()[1]
 
 
 # Dialogue tools don't wait for a stalled tick to read events (see Game.drain_events_bounded).
@@ -607,6 +699,7 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
             ev = _events_text()
             if ev:
                 out.append(ev)
+        _fight_seen(tool, ev)
         fight = _auto_combat(tool, body, ev)
         if fight:
             out.append(fight)
@@ -781,7 +874,8 @@ def _guard(fn):
             LIFE.ensure()  # manual mode: the first call opens the memory session (was the SessionStart hook)
         except Exception as e:  # noqa: BLE001 - a memory problem never blocks a game tool
             _log("session_start", {}, f"session not opened: {type(e).__name__}: {e}", 0)
-        refused = rules.stop_refusal(fn.__name__, DEADLINE, _READ_TOOLS)  # deadline + grace: for any client
+        end = _times()[1] if DEADLINE and time.time() > DEADLINE else DEADLINE  # a fight hold moves it
+        refused = rules.stop_refusal(fn.__name__, end, _READ_TOOLS)  # deadline + grace: for any client
         if refused:
             return _finish(fn.__name__, kw, refused, t0, events=False)
         waited = _await_new_game() if _new_game["thread"] is not None and fn.__name__ not in _NEW_GAME_NO_WAIT \
@@ -4863,12 +4957,15 @@ def rules_resource() -> str:
 def end_session() -> str:
     """The last step of the wrap-up: checks the session can end (wrap-up time reached, HANDOFF.md written for this session, memory lint clean) and commits the memory. If it says NOT ENDED, do what it says (keep playing, or fix and call it again). End your turn only when it reports the commit."""
     t0 = time.monotonic()
+    if DEADLINE:
+        _times()  # the fight hold up to date for session.py's check ($BG3AI_FIGHT_HOLD_PATH)
     return _mem_finish("end_session", {}, LIFE.end(in_combat=_fight_on), t0)
 
 
 def _fight_on() -> bool:
-    """For an early end_session refusal: a fight is running (no game: no)."""
-    return bool((game.try_rpc("state.combat") or {}).get("active"))
+    """For an early end_session refusal: a fight is running (a fresh read; no game: no)."""
+    _hold["fight"] = None
+    return _fight_now()
 
 
 # ---------------------------------------------------------------------------
@@ -10303,9 +10400,9 @@ def session_clock() -> str:
     line = _clock()  # includes the stuck signal, if any
     if not line:
         return "No session deadline set."
-    if DEADLINE and DEADLINE - time.time() > _wrap_left():
+    if DEADLINE and FIGHT_LINE not in line and _times()[0] > time.time():
         # S073 polled session_clock 10 times in its last 2.5 min of play, waiting for WRAP UP instead of playing
-        wrap_hhmm = time.strftime("%H:%M", time.localtime(DEADLINE - _wrap_left()))
+        wrap_hhmm = time.strftime("%H:%M", time.localtime(_times()[0]))
         line += (f"\nNo need to call session_clock again: the ⏱ line on every result switches to WRAP UP NOW at "
                  f"{wrap_hhmm} by itself. Until then, play.")
     return line
