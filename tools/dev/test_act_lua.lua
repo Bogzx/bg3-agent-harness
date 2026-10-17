@@ -453,6 +453,70 @@ test("interact: approach first, Use only after arriving", function()
     eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.opened, true, "opened")
 end)
 
+-- Live L3 helm probe 2026-10-17 (e39 at the Nautiloid helm): the ring point facing the actor lies under the upper
+-- landing; GetHeightsAt there gives only the upper floor, and N.path to it is a partial path (ends 4.2 m short).
+local function helm_heights(x) if x < 9.2 then return { -12.0, 3.1 } end return { 0.0, 3.1 } end
+
+test("G.reachable: a partial path (ends short of the point) is not reachable; a point move names where it ends", function()
+    nav.fn = function() return { reachable = true, partial = true, end_off = 4.2, end_pos = { 6.8, 0, 1.4 }, length_m = 1.8 } end
+    local r, info = G.reachable(P1, { 8.2, 3.1, 0 })
+    eq(r, false, "reachable"); eq(info.partial, true, "partial"); eq(info.end_off, 4.2, "end_off")
+    refused(function() G.point_reachable(P1, { 8.2, 3.1, 0 }) end, "the walkable ground ends 4.2m short of it, at (6.8,0.0,1.4)")
+end)
+
+test("approach: a ladder's foot is approached on the foot's floor, not under its upper landing (live L3 helm probe)", function()
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = helm_heights
+    nav.fn = function(_, pos)
+        if pos[2] > 1.5 then return { reachable = true, partial = true, end_off = 4.2, length_m = 1.8 } end
+        return { reachable = true, length_m = 6.7 }
+    end
+    local ok, err = pcall(function()
+        local p = G.approach_point(P1, LADDER, A.USE_REACH)
+        near(p.pos[2], 0, "on the foot's floor"); near(p.length_m, 6.7, "the full path")
+        near(p.use_y, 0, "use_y = the foot")
+    end)
+    Ext.Level.GetHeightsAt = heights
+    if not ok then error(err, 0) end
+end)
+
+test("approach: a ladder ring point on the other floor is skipped even when it reads reachable", function()
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = helm_heights
+    nav.fn = function(_, pos) return { reachable = true, length_m = pos[2] > 1.5 and 1.8 or 6.7 } end
+    local ok, err = pcall(function()
+        near(G.approach_point(P1, LADDER, A.USE_REACH).pos[2], 0, "ladder: on the foot's floor")
+        near(G.approach_point(P1, GEM, A.USE_REACH).pos[2], 3.1, "not a ladder: the nearest floor point, as before")
+    end)
+    Ext.Level.GetHeightsAt = heights
+    if not ok then error(err, 0) end
+end)
+
+test("interact ladder: the approach walk already climbed it -> done climbed=up, no Use (live L3 helm probe)", function()
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    eq(j.phase, "approach", "walks first")
+    arrive(j, { 9.6, 2.4, 0 }) -- the engine's walk went up the ladder and stepped off at the top
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(j.result.climbed, "up", "climbed"); eq(j.result.climbed_on_walk, true, "on the walk")
+    eq(#called("Use"), 0, "no Use (it would climb back down)")
+end)
+
+test("interact ladder: a walk that ends on the foot's floor still settles and Uses", function()
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    arrive(j, { 9.0, 0, 0 })
+    eq(j.status, "running", "status " .. tostring(j.error))
+    tick() tick() clock = clock + A.LADDER_SETTLE_MS + 1 tick()
+    eq(#called("Use"), 1, "Use")
+end)
+
+test("interact in combat names the tool a player uses: click_on <target> (naut3 x3: '(use the UI)')", function()
+    osiv[key("IsInCombat", P1)] = 1
+    local j = job(op("interact", { char = P1, target = GEM }))
+    eq(j.status, "failed", "status")
+    assert(j.error:find("click_on " .. GEM, 1, true), tostring(j.error))
+    eq(#called("Use"), 0, "no Use")
+end)
+
 test("interact: a ladder-like jump next to the item is not a teleport", function()
     world[P1].pos = { 9, 0, 0 }
     local j = job(op("interact", { char = P1, target = DOOR }))

@@ -453,8 +453,17 @@ function G.reachable(char, pos)
     if type(N.path) == "function" then
         local ok, r = pcall(N.path, char, pos)
         if ok and type(r) == "table" then
-            return r.reachable, { length_m = r.length_m, needs_jump = r.needs_jump, reason = r.error_cause or r.reason,
+            local info = { length_m = r.length_m, needs_jump = r.needs_jump, reason = r.error_cause or r.reason,
                 hidden_floor = r.hidden_floor, drop = r.drop, budget = r.budget }
+            -- A found path that ends short of the point (N.path's partial: end_off > 2 m) does not reach it (live L3
+            -- helm probe 2026-10-17: a ring point on the floor above a ladder's foot read "reachable 1.8 m"; the
+            -- engine then walked there up the ladder, and the interact's own Use climbed back down). N.verifyPoint
+            -- already counts it so.
+            if r.reachable and r.partial then
+                info.partial, info.end_off, info.end_pos = true, r.end_off, r.end_pos
+                return false, info
+            end
+            return r.reachable, info
         end
     end
     if type(N.reachable) == "function" then
@@ -546,6 +555,12 @@ function G.point_reachable(char, pos)
             .. " on an invisible-floor trial walk straight lines along the mosaic's lines (get_layout LINES), corner to corner",
             h[1] or 0, h[2] or 0, h[3] or 0, info.hidden_floor.at_m or 0))
     end
+    if r ~= true and info.partial then
+        local e = info.end_pos or {}
+        G.refuse(string.format("no walkable path there: the walkable ground ends %.1fm short of it, at (%.1f,%.1f,%.1f)"
+            .. " (the spot is off the walkable ground, or on another floor: a ladder/jump_to)", info.end_off or 0,
+            e[1] or 0, e[2] or 0, e[3] or 0))
+    end
     if r ~= true then
         G.refuse("no walkable path there (may need a jump or another route)" .. G.closest_hint(char, pos))
     end
@@ -597,11 +612,17 @@ local function ladder_top(a, target)
     return ok and type(top) == "table" and top or nil
 end
 
+-- A ladder is used from the floor of the end it is approached at: a ring point on the other floor (the landing above
+-- its foot) is a walk the engine makes up the ladder itself (live L3 helm probe 2026-10-17).
+G.LADDER_FLOOR_DY = 1.5
+
 function G.approach_point(char, target, reach)
     local a, tpos = G.pos(char), G.pos(target)
     if not a or not tpos then G.refuse("cannot locate target") end
     local top = ladder_top(a, target)
     local t = top or tpos -- where it is used from
+    local is_ladder = false
+    pcall(function() is_ladder = G.entity(target).ServerItem.IsLadder or false end)
     local d = U.dist(a, t)
     if d <= reach then return { here = true, dist = d, length_m = 0, tpos = tpos } end
     local base = math.atan(a[3] - t[3], a[1] - t[1]) -- angle from target toward actor
@@ -620,6 +641,7 @@ function G.approach_point(char, target, reach)
     for _, c in ipairs(cands) do
         if tries >= G.APPROACH_MAX_TRIES then break end
         local y = G.floor_at(c[1], c[2], t[2])
+        if y and is_ladder and math.abs(y - t[2]) >= G.LADDER_FLOOR_DY then y = nil end
         if y then
             tries = tries + 1
             local p = { c[1], y, c[2] }
@@ -627,7 +649,8 @@ function G.approach_point(char, target, reach)
             if r ~= nil then known = true end
             if r == nil and info and info.budget then busy = true end
             if r == true and not info.needs_jump then
-                return { pos = p, length_m = info.length_m or U.dist(a, p), dist = d, tpos = tpos }
+                return { pos = p, length_m = info.length_m or U.dist(a, p), dist = d, tpos = tpos,
+                    use_y = is_ladder and t[2] or nil }
             end
             if r == true and info.needs_jump then jump_only = true end
         end

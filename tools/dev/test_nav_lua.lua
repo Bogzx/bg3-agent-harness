@@ -562,6 +562,28 @@ test("approach: out of movement walks the budget and says so", function()
     near(r.pos[1], -4, "x"); near(r.pos[3], 5, "z")
 end)
 
+test("approach: a spot cut by the movement left whose own walk is longer is pulled back to fit (naut3-r3 #56)", function()
+    -- the route to the target runs straight; a walk to a spot near the start bends (1.28x the straight line)
+    nodesFor = function(_, t)
+        if math.abs(t[1]) < 5 then return { { t[1] * 0.5, 0, t[1] * 0.4 }, t } end
+        return { t }
+    end
+    local r = N.approach(P1, { -10, 0, 0 }, { -10, 0, 0 }, 1.5, 1.8, true)
+    eq(r.limit, "movement", "limit")
+    assert(r.walk_m >= 0.5 and r.walk_m < 1.8, "pulled back: " .. r.walk_m)
+    local len = N.path(P1, r.pos).length_m
+    assert(len <= 1.85, "its own walk fits the movement left: " .. len)
+end)
+
+test("approach: no spot toward the target fits the movement left -> walk 0 (stays put, says out of movement)", function()
+    nodesFor = function(_, t)  -- a fixed 2.4 m detour round an obstacle right at the start
+        if math.abs(t[1]) < 5 then return { { t[1] * 0.5, 0, 1.2 }, t } end
+        return { t }
+    end
+    local r = N.approach(P1, { -10, 0, 0 }, { -10, 0, 0 }, 1.5, 1.8, true)
+    eq(r.limit, "movement", "limit"); eq(r.walk_m, 0, "walk")
+end)
+
 test("approach: stops before fire on the route, avoid=false walks through", function()
     fire = function(x) return x < -4 and x > -7 end
     local r = N.approach(P1, { -12, 0, 0 }, { -12, 0, 0 }, 1.5, nil, true)
