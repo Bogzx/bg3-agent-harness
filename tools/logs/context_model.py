@@ -97,6 +97,9 @@ def fit_prices(sessions):
         y = s["cost"] or 0
         a += R * R; b += R * W; c += W * W; d += R * y; e += W * y
     det = a * c - b * b
+    if abs(det) < 1e-9 * max(a * c, 1e-12):  # one session (or proportional ones): fit one scale, write = 12.5 x read
+        k = (d + 12.5 * e) / (a + 25 * b + 156.25 * c) if a + c else 0.0  # (cache write 1.25x input, read 0.1x)
+        return k, 12.5 * k
     return (d * c - b * e) / det, (a * e - b * d) / det
 
 

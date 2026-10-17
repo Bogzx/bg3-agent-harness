@@ -26,7 +26,7 @@ def main():
         res_n = collections.Counter()
         images = collections.Counter()
         name_of = {}
-        cost = None
+        cost = out_total = None
         compacts = 0
         hook_chars = 0
         for line in open(p, errors="replace"):
@@ -62,13 +62,15 @@ def main():
                             res_n[name] += 1
             elif t == "result":
                 cost = d.get("total_cost_usd")
+                out_total = (d.get("usage") or {}).get("output_tokens")
             elif t == "system" and d.get("subtype") == "compact_boundary":
                 compacts += 1
             elif t == "system" and d.get("subtype") == "hook_response":
                 hook_chars += len(d.get("output") or "")
         ctx = [u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
                for u in (msgs[i] for i in order)]
-        out = sum(u.get("output_tokens", 0) for u in msgs.values())
+        # per-message usage in stream-json is the message_start snapshot (output ~1-10 tokens): the result has the total
+        out = out_total if out_total is not None else sum(u.get("output_tokens", 0) for u in msgs.values())
         cread = sum(u.get("cache_read_input_tokens", 0) for u in msgs.values())
         ccreate = sum(u.get("cache_creation_input_tokens", 0) for u in msgs.values())
         if not ctx:

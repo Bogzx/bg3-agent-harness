@@ -11,6 +11,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+SESSIONS = ROOT / "runtime/sessions"
 OUT = ROOT / "runtime/mined/fights.jsonl"
 GAP_S = 25          # combat samples further apart than this split fights
 RELOAD_AFTER_S = 120  # a load_game this soon after a fight's end counts as its reload
@@ -29,6 +30,14 @@ OURS_RE = re.compile(r"(?:PARTY [+-] e\d+ ([A-Z][\w' -]*)|e\d+ ([A-Z][\w' -]*?) 
 TURN_RE = re.compile(r"TURN (?:round (\d+) turn=)?(e\d+) ([A-Z][\w' -]*?)(?: \(round (\d+)\)|\n|$)")
 ROUND_RE = re.compile(r"round[ =](\d+)")
 PARTY_RE = re.compile(r"PARTY \*?(e\d+) ([A-Z][\w'-]*)")
+# combat_turn's own turn headers are always ours ("TURN e1 Corran Vell (round 1)"); PARTY lines give one word only
+OUR_TURN_RE = re.compile(r"^TURN e\d+ ([A-Z][\w' -]*?) \(round \d+\)", re.M)
+# the harness's own fight summary: outcome, rounds, enemies ("vs Imp x3, Commander Zhalk +1 more"), our names
+DEBRIEF_RE = re.compile(r"FIGHT DEBRIEF \(([\w ]+), (\d+) rounds?, [^)]*\) vs ([^\n]+)")
+TOOK_RE = re.compile(r"· took ([^\n]+)")
+# summons are listed as party ("PARTY e267 Spiritual Weapon L1 HP 20/20 summon of e267", "PARTY + e472 Spiritual
+# Weapon HP 20/20"); their expiry is not a party death
+SUMMON_RE = re.compile(r"PARTY (?:\+ )?\*?e\d+ ([A-Z][\w' -]*?) (?:L\d+ )?HP [^\n]*?summon of|PARTY \+ e\d+ ([A-Z][\w' -]*?) HP")
 WHERE_RE = re.compile(r"WHERE ([^|\n·]+)")
 ABIL_RE = re.compile(r'"ability\\?"\s*:\s*\\?"([^"\\]+)')
 CAST_RE = re.compile(r"cast=([A-Za-z_]+)")
@@ -67,12 +76,37 @@ def casts_of(text):
     return Counter(CAST_RE.findall(text)) + Counter(ACTION_DONE_RE.findall(text))
 
 
+def debrief(text):
+    """(outcome, rounds, [enemy names]) of the first FIGHT DEBRIEF in text, or None."""
+    m = DEBRIEF_RE.search(text)
+    if not m:
+        return None
+    names = [re.sub(r" x\d+$", "", n.strip()) for n in re.sub(r" \+\d+ more$", "", m.group(3).strip()).split(", ")]
+    return m.group(1), int(m.group(2)), [n for n in names if n]
+
+
+def party_names(calls):
+    """Our characters by full name. PARTY lines give the first word only ("PARTY e1 Corran Vell ..." -> Corran), so
+    full names come from combat_turn turn headers and the debrief's "took A n, B m", kept when their first word is a
+    PARTY name (a summon's turn header, "Spiritual Weapon", is not a member); no PARTY line at all: kept as they are."""
+    first, full, summons = set(), set(), set()
+    for c in calls:
+        first.update(n for _, n in PARTY_RE.findall(c["res"]))
+        summons.update(base(a or b) for a, b in SUMMON_RE.findall(c["res"]))
+        if c["tool"] in ("combat_turn", "end_turn"):
+            full.update(base(n) for n in OUR_TURN_RE.findall(c["res"]))
+        for m in TOOK_RE.findall(c["res"]):
+            full.update(base(re.sub(r" \d+$", "", x.strip())) for x in m.split(","))
+    full = {n for n in full if n and (not first or n.split()[0] in first)}
+    return (first | full) - summons - {n.split()[0] for n in summons}
+
+
 def base(name):
     return re.sub(r"\s+\d+$", "", name.strip())
 
 
 def load_session(run, sid):
-    sd = ROOT / "runtime/sessions" / run
+    sd = SESSIONS / run
     t_use, t_res = {}, {}
     with open(sd / f"{sid}.turns.jsonl") as f:
         for line in f:
@@ -145,11 +179,9 @@ def outcome_of(reloaded, downed_all, killed, cut):
 
 def mine(run, sid):
     calls, spans, last_t = load_session(run, sid)
-    party = set()
+    party = party_names(calls)
     ours = set()
     for c in calls:
-        for _, n in PARTY_RE.findall(c["res"]):
-            party.add(n)
         for a, b in OURS_RE.findall(c["res"]):
             ours.add(base(a or b))
     names = handle_names("\n".join(c["res"] for c in calls))
@@ -194,6 +226,12 @@ def mine(run, sid):
             n = base(m.group(3))
             if n not in party and n not in ours:
                 enemies[n] += 0  # present, not killed
+        after = [c for c in calls if end < c["t"] <= end + RELOAD_AFTER_S]
+        db = debrief(text + "\n" + "\n".join(c["res"] for c in after))
+        if db:  # the harness's own list is complete (compacted results may name no death / no enemy turn)
+            rounds = db[1]
+            for n in db[2]:
+                enemies[base(n)] += 0
         enemy_names = sorted(enemies, key=lambda n: (-enemies[n], n))
         abilities = Counter()
         for c in inside:
@@ -201,15 +239,16 @@ def mine(run, sid):
                 for a in ABIL_RE.findall(c["args"]):
                     abilities[a] += 1
         casts = casts_of(text)
-        after = [c for c in calls if end < c["t"] <= end + RELOAD_AFTER_S]
         reload_c = next((c for c in inside + after if c["tool"] == "load_game"), None)
         downed_all = len(party) and len(downs) >= min(4, len(party)) and not enemies
         cut = last_t - end <= GAP_S  # combat still on at the last sample: the session ended mid-fight
-        outcome = outcome_of(bool(reload_c), downed_all, sum(enemies.values()) > 0, cut)
+        graded = db[0] if db else None   # debrief.py grades: clean / costly / near_wipe / wipe / reloaded
+        outcome = outcome_of(bool(reload_c) or graded == "reloaded", bool(downed_all) or graded == "wipe",
+                             sum(enemies.values()) > 0 or graded in ("clean", "costly", "near_wipe"), cut)
         flags = {k: bool(rx.search(text + "\n".join(c["res"] for c in after))) for k, rx in FLAGS.items()}
         key = ", ".join(sorted(enemy_names[:3])) or "?"  # enemy group; the place is shown per attempt
         fights.append({
-            "session": sid, "start": time.strftime("%H:%M:%S", time.localtime(start)), "t": start,
+            "run": run, "session": sid, "debrief": db[0] if db else None, "start": time.strftime("%H:%M:%S", time.localtime(start)), "t": start,
             "dur_s": round(end - start), "where": where, "key": key, "enemies": dict(enemies), "rounds": rounds,
             "hp_lost": sum(hp_lost.values()), "hp_lost_by": dict(hp_lost), "downs": sum(downs.values()),
             "downs_by": dict(downs), "party_died": party_died, "outcome": outcome,
@@ -223,7 +262,7 @@ def mine(run, sid):
         for n, e in sorted(deaths(c["res"], names)):
             if base(n) in party:
                 rl = next((d for d in calls if c["t"] < d["t"] <= c["t"] + 600 and d["tool"] == "load_game"), None)
-                fights.append({"session": sid, "start": time.strftime("%H:%M:%S", time.localtime(c["t"])), "t": c["t"],
+                fights.append({"run": run, "session": sid, "start": time.strftime("%H:%M:%S", time.localtime(c["t"])), "t": c["t"],
                                "dur_s": 0, "where": where, "key": "INCIDENT: " + base(n) + " died out of combat",
                                "enemies": {}, "rounds": 0, "hp_lost": 0, "hp_lost_by": {}, "downs": 0, "downs_by": {},
                                "party_died": [base(n)], "outcome": "reload" if rl else "death",
@@ -234,7 +273,10 @@ def mine(run, sid):
 
 
 def bad(f):
-    return f["outcome"] in ("reload", "wipe", "death") or f["downs"] > 0 or bool(f["party_died"])
+    """A fight to learn from: reloaded / wiped / a death or down, or the harness's debrief graded it bad
+    (bg3ai.debrief.BAD: costly, near_wipe, wipe, reloaded)."""
+    return (f["outcome"] in ("reload", "wipe", "death") or f["downs"] > 0 or bool(f["party_died"])
+            or f.get("debrief") in ("costly", "near_wipe", "wipe", "reloaded"))
 
 
 def main():
@@ -248,7 +290,7 @@ def main():
         store = [json.loads(l) for l in OUT.open()]
     for sid in a.sessions:
         new = mine(a.run, sid)
-        store = [f for f in store if f["session"] != sid] + new
+        store = [f for f in store if (f.get("run", "claude-run-2"), f["session"]) != (a.run, sid)] + new
         print(f"# {sid}: {len(new)} fights")
         for f in new:
             mark = "BAD " if bad(f) else "    "
@@ -259,7 +301,9 @@ def main():
         with OUT.open("w") as fo:
             for f in sorted(store, key=lambda f: f["t"]):
                 fo.write(json.dumps(f) + "\n")
-    # history per enemy group (same region + same top enemies), only groups fought more than once or with a bad fight
+    # history per enemy group (same region + same top enemies), only groups fought more than once or with a bad fight;
+    # this playthrough only (records before 2026-10-17 have no run: claude-run-2)
+    store = [f for f in store if f.get("run", "claude-run-2") == a.run]
     groups = defaultdict(list)
     for f in sorted(store, key=lambda f: f["t"]):
         groups[f["key"]].append(f)

@@ -41,7 +41,9 @@ def main():
                 continue
             win = [c for c in calls if a <= c["t0"] <= b]
             where = None
-            for c in win:
+            for c in calls:  # compacted results print WHERE only when it changes: the last one up to b
+                if c["t0"] > b:
+                    break
                 m = WHERE_RX.search(c["res"])
                 if m:
                     where = m.group(1).strip()

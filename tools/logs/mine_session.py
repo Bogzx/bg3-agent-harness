@@ -12,6 +12,8 @@ Writes runtime/mined/<run>/<sid>.calls.jsonl and <sid>.summary.json; prints a sh
 import json, os, re, sys, statistics, collections
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "runner"))
+import triage  # noqa: E402
 SESS = os.path.join(ROOT, "runtime", "sessions")
 OUT = os.path.join(ROOT, "runtime", "mined")
 
@@ -22,18 +24,6 @@ MEM_RX = re.compile(r"/memory/|/knowledge/|play/memory|playthroughs/")
 
 def short(name):
     return name[len("mcp__bg3__"):] if name.startswith("mcp__bg3__") else name
-
-
-def result_text(content):
-    if isinstance(content, str):
-        return content
-    out = []
-    for b in content or []:
-        if b.get("type") == "text":
-            out.append(b.get("text", ""))
-        elif b.get("type") == "image":
-            out.append("[image]")
-    return "\n".join(out)
 
 
 def pct(xs, q):
@@ -70,7 +60,8 @@ def mine(run, sid):
                     order.append(b["id"])
                     msg_of[b["id"]] = m.get("id")
                 elif d.get("type") == "user" and bt == "tool_result":
-                    results[b["tool_use_id"]] = (result_text(b.get("content")), bool(b.get("is_error")))
+                    # triage.result_text: the old bridge's {"result": "..."} string and the new text blocks alike
+                    results[b["tool_use_id"]] = (triage.result_text(b), bool(b.get("is_error")))
                 elif d.get("type") == "assistant" and bt == "text":
                     texts.append((m.get("id"), b.get("text", "")))
                     last_text[0] = b.get("text", "")[:300]

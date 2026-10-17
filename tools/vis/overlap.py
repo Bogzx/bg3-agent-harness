@@ -192,13 +192,7 @@ def report(name: str, calls: list[dict], verbose: bool = False) -> tuple[list[st
         out.append(f"  {t[:18]:18} {b[0]:5} {b[1]:8.1f} {b[2]:8} {b[3]:9.1f} {b[4]:6.1f} {b[5]:6.1f}")
     if len(small) > 1:
         out.append(f"  {f'({len(small)} others)':18} {rest[0]:5} {rest[1]:8.1f} {'':8} {'':9} {'':6} {'':6}")
-    cats = collections.defaultdict(lambda: [0, 0.0])
-    for u in un:
-        cats[u["cat"]][0] += len(u["calls"])
-        cats[u["cat"]][1] += u["think"]
-    n_un = sum(v[0] for v in cats.values())
-    out.append(f"  unneeded model turns: {n_un} calls, {sum(v[1] for v in cats.values()):.1f} s model "
-               f"({', '.join(f'{k} {v[0]}/{v[1]:.1f}s' for k, v in sorted(cats.items(), key=lambda x: -x[1][1]))})")
+    out.append("  " + unneeded_summary(un))
     for u in un:
         c0 = u["calls"][0]
         at = c0["t"] - calls[0]["t"]
@@ -220,6 +214,17 @@ def report(name: str, calls: list[dict], verbose: bool = False) -> tuple[list[st
             if c["refusal"]:
                 out.append(f"    {c['name']}: {c['refusal'][:200]}")
     return out, un
+
+
+def unneeded_summary(un: list[dict]) -> str:
+    """'unneeded model turns: N calls, S s model (cat calls/s, …)'."""
+    cats = collections.defaultdict(lambda: [0, 0.0])
+    for u in un:
+        cats[u["cat"]][0] += len(u["calls"])
+        cats[u["cat"]][1] += u["think"]
+    n_un = sum(v[0] for v in cats.values())
+    return (f"unneeded model turns: {n_un} calls, {sum(v[1] for v in cats.values()):.1f} s model "
+            f"({', '.join(f'{k} {v[0]}/{v[1]:.1f}s' for k, v in sorted(cats.items(), key=lambda x: -x[1][1]))})")
 
 
 def top_refusals(per_target: dict[str, list[dict]]) -> list[str]:
