@@ -104,6 +104,26 @@ class RetryVerdict(unittest.TestCase):
                "  enemies used: Orin: Slay\n  killed 2/9 · dealt Karlach 21\n")
         self.assertEqual(fights.KILLED_RE.search(txt).groups(), ("2", "9"))
 
+    def test_downs_from_the_debrief_block(self):
+        # vis V7: S065 Orin try 2's debrief (its results showed none of the 4 downs as +Downed)
+        txt = ("FIGHT DEBRIEF (reloaded, 7 rounds, 8m51s) vs Orin\n  killed 2/9 · dealt Karlach 21\n"
+               "  downed: Wyll r2 by Orin, Karlach r6 by Orin, Karlach r6 by Orin, Shadowheart r7 by Death's Head "
+               "of Bhaal Fustian\n  ours: Wyll Eldritch Blast x3\nnext: downed: Claude r1 by Orin\n")
+        self.assertEqual(fights.debrief_downs(txt), {"Wyll": 1, "Karlach": 2, "Shadowheart": 1})
+        # S061: a summon is listed too (mine() keeps party names only); the ability in parentheses (v2)
+        self.assertEqual(fights.debrief_downs("FIGHT DEBRIEF (wipe, 11 rounds, 9m) vs Gortash\n  downed: Spiritual "
+                                              "Weapon r9 by Iron Consul Lo, Karlach r10 by Gortash (Slay, Bite)\n"),
+                         {"Spiritual Weapon": 1, "Karlach": 1})
+        self.assertEqual(fights.debrief_downs("FIGHT DEBRIEF (clean, 2 rounds, 1m) vs Imp\n  killed 3/3\n"), {})
+        self.assertIsNone(fights.debrief_downs("downed: nothing to play, its turn passes by itself"))
+
+    def test_repeat_warning_flag_reads_the_debrief_warnings(self):
+        # the debrief's WARNING wording (S061-S065 showed 8 distinct ones; the old pattern matched none)
+        rx = fights.FLAGS["repeat_warning"]
+        self.assertTrue(rx.search("WARNING: Wyll went down first again (last time vs these enemies too: r6, S061)"))
+        self.assertTrue(rx.search("WARNING: Radiant did little to Orin last time too (9 hits, avg 1.0, S065)"))
+        self.assertFalse(rx.search("WARNING: Karlach is still in the party"))
+
 
 if __name__ == "__main__":
     unittest.main()
