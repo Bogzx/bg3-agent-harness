@@ -18,6 +18,9 @@ Usage: python3 tools/logs/context_model.py claude-run-2 S021 S023 S024 S025 S026
 import collections, json, math, os, statistics, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import repo_paths  # noqa: E402
+RUNTIME = str(repo_paths.runtime_dir())   # the main tree's from a worktree
 HANDOFF_TOK = 4000          # HANDOFF.md + Now line read at the start, on top of the start injection
 COMPACT_SUMMARY_TOK = 15000  # Claude Code's compaction summary (typ. 8-20k)
 COMPACT_OUT_TOK = 8000       # output tokens to write it
@@ -27,7 +30,7 @@ CHARS_PER_TOK = 3.3
 
 
 def load(run, sid):
-    base = os.path.join(ROOT, "runtime/sessions", run, sid)
+    base = os.path.join(RUNTIME, "sessions", run, sid)
     calls, order, cost = {}, [], None
     res_tok_after = collections.defaultdict(float)   # tool-result tokens added after call i
     last_mid = None

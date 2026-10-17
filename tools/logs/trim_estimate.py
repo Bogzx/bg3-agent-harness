@@ -12,6 +12,9 @@ Usage: python3 tools/logs/trim_estimate.py claude-run-2 S025 S026
 import collections, json, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import repo_paths  # noqa: E402
+RUNTIME = str(repo_paths.runtime_dir())   # the main tree's from a worktree
 ID_RX = re.compile(r" \((?:Target|Projectile|Shout|Zone|Throw|Rush|Wall|Teleportation|Cone|Interrupt)_[A-Za-z0-9_]+\)")
 MOVE_RX = re.compile(r"^  e\d+ [^\n]+? moved \d+(?:\.\d+)?m [NSEW]{1,2}$", re.M)
 STATUS_RX = re.compile(r"^  status_(applied|removed) name=([^ ]+) [^\n]*?target=\{name=([^}]+)\}[^\n]*$", re.M)
@@ -75,7 +78,7 @@ def saved(tool, t):
 def main():
     run, sids = sys.argv[1], sys.argv[2:]
     for sid in sids:
-        res, calls = results(os.path.join(ROOT, "runtime/sessions", run, sid + ".jsonl"))
+        res, calls = results(os.path.join(RUNTIME, "sessions", run, sid + ".jsonl"))
         total = sum(len(t) for _, t in res)
         tot, by_tool = collections.Counter(), collections.Counter()
         for tool, t in res:

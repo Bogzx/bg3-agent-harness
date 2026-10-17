@@ -7,6 +7,9 @@ A "hand" call = click(x,y), press_key, screenshot, zoom/camera. Buckets by known
 import json, os, sys, glob, collections, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import repo_paths  # noqa: E402
+RUNTIME = str(repo_paths.runtime_dir())   # the main tree's from a worktree
 
 SPOTS = [  # (bucket, x, y, radius)
     ("exit_turn_based", 0.87, 0.927, 0.02),
@@ -42,10 +45,10 @@ def bucket(c):
 
 def main():
     run = sys.argv[1]
-    sids = sys.argv[2:] or sorted(os.path.basename(p)[:-12] for p in glob.glob(os.path.join(ROOT, "runtime/mined", run, "S*.calls.jsonl")))
+    sids = sys.argv[2:] or sorted(os.path.basename(p)[:-12] for p in glob.glob(os.path.join(RUNTIME, "mined", run, "S*.calls.jsonl")))
     total = collections.Counter()
     for sid in sids:
-        p = os.path.join(ROOT, "runtime/mined", run, sid + ".calls.jsonl")
+        p = os.path.join(RUNTIME, "mined", run, sid + ".calls.jsonl")
         if not os.path.exists(p):
             continue
         cnt = collections.Counter()

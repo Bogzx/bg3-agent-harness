@@ -10,6 +10,9 @@ Usage: python3 tools/logs/context_cost.py claude-run-2 S025 S026 [...]
 import json, os, sys, collections
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import repo_paths  # noqa: E402
+RUNTIME = str(repo_paths.runtime_dir())   # the main tree's from a worktree
 
 
 def short(n):
@@ -19,7 +22,7 @@ def short(n):
 def main():
     run, sids = sys.argv[1], sys.argv[2:]
     for sid in sids:
-        p = os.path.join(ROOT, "runtime/sessions", run, sid + ".jsonl")
+        p = os.path.join(RUNTIME, "sessions", run, sid + ".jsonl")
         msgs = {}
         order = []
         res_chars = collections.Counter()

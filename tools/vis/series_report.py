@@ -48,7 +48,7 @@ FIRST_MOVES = {"travel_to", "walk_toward", "move_to", "queue_actions", "do_actio
 # ======================================================================== runs
 
 def sessions_root() -> Path:
-    return next((d for d in overlap.SESSIONS if d.is_dir()), overlap.SESSIONS[-1])
+    return overlap.SESSIONS
 
 
 def series_runs(base: str, root: Path) -> list[tuple[str, dict | None]]:
@@ -259,6 +259,8 @@ def sig_objective_move(cs, ctx):
         for ln in c["text"].splitlines():
             if re.match(r"\s*move o\d+ \(objective ", ln):
                 last = ln.rsplit("→", 1)[-1]
+                if "no movement left" in last or "INTERRUPTED" in last:
+                    continue   # nothing to walk, or a game event (a conversation) cut a walk toward it: no verdict
                 yield ("pass" if re.search(r":? done\b", last) and "FAILED" not in last else "fail"), k, ln.strip()
 
 
@@ -315,18 +317,35 @@ def sig_ladder_once(cs, ctx):
             yield "pass", k, f"{lid} 10 m up, ladders climbed {list(seen)}: {ln}"
 
 
+def hinted(cs: list[dict], k: int, lid: str | None) -> tuple[str, str] | None:
+    """(up|down, line) the last result before call k said climbing ladder `lid` goes (route's NEXT "interact eN
+    (ladder up)", its LADDERS list or a STOPPED hint "eN … (climbs 2.9m up"), else None."""
+    if not lid:
+        return None
+    rx = re.compile(rf"\b{re.escape(lid)}\b[^\n]*?(?:\(ladder (up|down)\)|climbs [\d.]+m (up|down))")
+    for c in reversed(cs[:k]):
+        m = list(rx.finditer(c["text"]))
+        if m:
+            return m[-1].group(1) or m[-1].group(2), m[-1].group(0)[:90]
+    return None
+
+
 def sig_climb_chain(cs, ctx):
+    """Judged: an interact/travel_to step (the bridge picks the way) right after a climb that went the way the hint
+    said. Not judged: after a wrong-way climb the next step is on another floor (helm-hint's failure, naut3 #27), and
+    a move_to to the agent's own coordinates may aim at the floor the climb left (naut3-r3 #45)."""
+    wrong_way = {(k, ln) for k, lid, d, _, ln in climbs(cs) if (hinted(cs, k, lid) or (d,))[0] != d}
     for k, c in enumerate(cs):
         steps = [ln.strip() for ln in c["text"].splitlines() if re.match(r"\s*\d+\. \w+", ln)]
         for s0, s1 in zip(steps, steps[1:]):
-            if "climbed=" not in s0:
+            if "climbed=" not in s0 or (k, s0) in wrong_way or not re.match(r"\d+\. (interact|travel_to)\b", s1):
                 continue
             if "no walkable path" in s1 or "FAILED" in s1:
                 yield "fail", k, f"{s0} | {s1}"
             elif "STOPPED" not in c["text"]:
                 yield "pass", k, f"{s0} | {s1}"
-        if c["name"] == "do_actions" and c["refusal"] and "no walkable path" in c["refusal"] and steps \
-                and "climbed=" in steps[0]:
+        if c["name"] == "do_actions" and c["refusal"] and "no walkable path" in c["refusal"] and len(steps) == 1 \
+                and "climbed=" in steps[0] and (k, steps[0]) not in wrong_way:
             yield "fail", k, c["refusal"]
 
 
@@ -334,13 +353,12 @@ def sig_ladder_hint(cs, ctx):
     a, b = _helm(cs)
     if a is None:
         return
-    hint = next((_line(c["text"], r"interact e\d+.{0,20}, then interact e\d+") for c in cs[a:b + 1]
-                 if _line(c["text"], r"interact e\d+.{0,20}, then interact e\d+")), None)
-    first = next(((k, d, ln) for k, lid, d, big, ln in climbs(cs) if a <= k <= b), None)
+    first = next(((k, lid, d, ln) for k, lid, d, big, ln in climbs(cs) if a <= k <= b), None)
     if first:
-        k, d, ln = first
-        yield ("pass" if d == "up" else "fail"), k, f"first helm climb {d}: {ln}" + (f"  [hint: {hint}]" if hint
-                                                                                      else "")
+        k, lid, d, ln = first
+        h = hinted(cs, k, lid)
+        yield ("pass" if d == "up" else "fail"), k, f"first helm climb {d} ({lid}): {ln}" + (
+            f"  [hint said {h[0]}: {h[1]}]" if h else "")
 
 
 def sig_wedged(cs, ctx):
@@ -409,8 +427,12 @@ def sig_first_look(cs, ctx):
     gap = f"first move {cs[j]['name']} #{j} {cs[j]['t'] - c['t_res']:.1f}s after create_character" if j else \
         "no move after create_character"
     reads = [x["name"] for x in cs[k + 1:j] if x["name"] in ("get_status", "look", "save_game", "get_party")]
+    where = _line(c["text"].split("FIRST LOOK", 1)[-1], r"^WHERE ")
     if "FIRST LOOK" not in c["text"]:
         yield "fail", k, f"no FIRST LOOK in create_character; {gap}; reads before it: {reads}"
+    elif where and ("Character creation" in where or "screen=loading" in where):
+        yield "fail", k, f"FIRST LOOK read before the world loaded ({where[:50]}): it shows the CC scene, so the " \
+                         f"reads after it were needed; {gap}"
     elif reads:
         yield "fail", k, f"FIRST LOOK present, but {reads} before the first move; {gap}"
     else:
@@ -425,8 +447,9 @@ def sig_naming(cs, ctx):
     for r in ctx.get("stage_ms") or []:
         if r.get("op") != "create_character" or not lo <= (r.get("t") or 0) <= hi or "naming_ms" not in r:
             continue
-        ok = r["naming_ms"] <= NAMING_MS and r.get("typed") == "over_selection"
-        yield ("pass" if ok else "fail"), k, (f"stage_ms naming_ms={r['naming_ms']} typed={r.get('typed', '-')} "
+        ok = r["naming_ms"] <= NAMING_MS and r.get("typed", "over_selection") == "over_selection"
+        typed = r.get("typed", "not logged")   # server._log_cc_timing drops naming's `typed` (setup): time only
+        yield ("pass" if ok else "fail"), k, (f"stage_ms naming_ms={r['naming_ms']} typed={typed} "
                                               f"popup={(r.get('naming_stages') or {}).get('popup')} "
                                               f"type={(r.get('naming_stages') or {}).get('type')}")
 
@@ -533,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("series", help="series base name (runtime/sessions/<name>)")
     ap.add_argument("--vs", help="the series to compare with (e.g. naut2)")
-    ap.add_argument("--sessions", type=Path, help="sessions root (default runtime/sessions)")
+    ap.add_argument("--sessions", type=Path, help="sessions root (default <$BG3AI_RUNTIME, else the main tree's runtime>/sessions)")
     ap.add_argument("-v", "--verbose", action="store_true", help="every run's signature evidence")
     a = ap.parse_args(argv)
     print(report(a.series, a.vs, a.sessions or sessions_root(), a.verbose))

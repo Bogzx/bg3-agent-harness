@@ -6,13 +6,15 @@ better (rounds, HP lost, downs)? same tactic failing twice?
 
 Usage: tools/logs/fights.py S033 [S034 ...] [--run claude-run-2] [--history]
 """
-import argparse, json, re, time
+import argparse, json, re, sys, time
 from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SESSIONS = ROOT / "runtime/sessions"
-OUT = ROOT / "runtime/mined/fights.jsonl"
+sys.path.insert(0, str(ROOT / "tools"))
+import repo_paths  # noqa: E402
+SESSIONS = repo_paths.runtime_dir() / "sessions"   # the main tree's from a worktree
+OUT = repo_paths.runtime_dir() / "mined/fights.jsonl"
 GAP_S = 25          # combat samples further apart than this split fights
 RELOAD_AFTER_S = 120  # a load_game this soon after a fight's end counts as its reload
 

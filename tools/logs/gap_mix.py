@@ -8,6 +8,9 @@ Usage: python3 tools/logs/gap_mix.py claude-run-2 [S025 S026 ...]
 import json, os, re, sys, glob, collections, datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import repo_paths  # noqa: E402
+RUNTIME = str(repo_paths.runtime_dir())   # the main tree's from a worktree
 GAP_RX = re.compile(r"^- (\d\d:\d\d:\d\d) \*\*([\d.]+) s\*\* idle \((\w+)")
 
 CATS = [
@@ -30,13 +33,13 @@ def cat(c):
 
 def main():
     run = sys.argv[1]
-    d = os.path.join(ROOT, "runtime/sessions", run)
+    d = os.path.join(RUNTIME, "sessions", run)
     sids = sys.argv[2:] or sorted(os.path.basename(p)[:-10] for p in glob.glob(os.path.join(d, "S*.triage.md")))
     tot = collections.Counter()
     totn = collections.Counter()
     for sid in sids:
         tp = os.path.join(d, sid + ".triage.md")
-        cp = os.path.join(ROOT, "runtime/mined", run, sid + ".calls.jsonl")
+        cp = os.path.join(RUNTIME, "mined", run, sid + ".calls.jsonl")
         if not (os.path.exists(tp) and os.path.exists(cp)):
             continue
         calls = [json.loads(l) for l in open(cp)]

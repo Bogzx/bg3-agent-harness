@@ -30,9 +30,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "runner"))
+sys.path.insert(0, str(REPO / "tools"))
 import triage  # noqa: E402
+import repo_paths  # noqa: E402
 
-SESSIONS = (Path.cwd() / "runtime" / "sessions", REPO / "runtime" / "sessions")  # where playthrough names resolve
+SESSIONS = repo_paths.runtime_dir() / "sessions"  # where playthrough names resolve (the main tree's from a worktree)
 BLOCK_S = 1.5   # a call shorter than this blocks nothing worth overlapping
 FOLD_S = 3.0   # the table folds tools that blocked nothing and cost less model time than this
 LEAD_S = 2.0    # what an early return / a queued next step can overlap at most: one model turn (median ~2 s)
@@ -161,7 +163,7 @@ def stems(target: str) -> list[Path]:
     """Session stems of a playthrough name, a session dir, or one session (stem or .jsonl)."""
     p = Path(target)
     if not p.exists():
-        p = next((d / target for d in SESSIONS if (d / target).is_dir()), p)
+        p = SESSIONS / target if (SESSIONS / target).is_dir() else p
     if p.is_dir():
         return sorted(p / f.name[:-6] for f in p.glob("S*.jsonl")
                       if _STEM.match(f.name[:-6]) and (p / (f.name[:-6] + ".turns.jsonl")).exists())

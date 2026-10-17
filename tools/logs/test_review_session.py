@@ -343,7 +343,7 @@ class SyntheticSession(unittest.TestCase):
         (sd / "S001.progress.jsonl").write_text(json.dumps({"type": "progress", "t": 1001.0, "kind": "talk",
                                                             "points": 2}) + "\n")
         MS.SESS, MS.OUT = str(root / "runtime" / "sessions"), str(root / "runtime" / "mined")
-        SS.ROOT = CC.ROOT = str(root)
+        SS.RUNTIME = CC.RUNTIME = str(root / "runtime")
         self.root = root
 
     def tearDown(self):
@@ -382,7 +382,7 @@ def overlap_refusal(c):
 
 def main():
     if "--rebuild" in sys.argv:
-        rt = RS.RUNTIME   # ./runtime when it exists (run from the main tree), else the repo's
+        rt = RS.RUNTIME   # $BG3AI_RUNTIME, else the main tree's (also from a worktree)
         fx = rebuild(rt)
         FIXTURE.parent.mkdir(exist_ok=True)
         FIXTURE.write_bytes(gzip.compress(json.dumps(fx, ensure_ascii=False).encode(), mtime=0))

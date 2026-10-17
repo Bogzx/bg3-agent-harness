@@ -77,6 +77,35 @@ NAUT3 = [
      "-388)", 2.0, 6.0),
     ("dialogue_advance", {}, "STOPPED: loading on screen\nWHERE Nautiloid -> Wilderness", 2.0, 3.0),
 ]
+# live naut3 (2026-10-17, main 55cc737), cut: the shapes the judge got wrong. A FIRST LOOK of the CC scene, a climb
+# down the ladder route called "up" then the next ladder refused from the lower floor (naut3 #26/#27), a move_to to
+# the lower floor's spot after climbing back up (r3 #44/#45), move o3 with no movement left (r2 #54) and one cut
+# by a conversation (r3 #59).
+NAUT3_LIVE = [
+    ("create_character", {}, "character created and finished: 'Tamsin Drey' (name checked in game)\n"
+     "FIRST LOOK (this is get_status + look: don't read again before moving):\nWHERE Character creation | exploring "
+     "| gold 0\nCHAR e2 Dream Visitor neutral HP 5/5 0m @(0,0,0)", 2.0, 3.8),
+    ("look", {}, "WHERE Nautiloid | DIALOGUE screen=loading | gold 0", 1.1, 0.1),
+    ("walk_toward", {"direction": "NW"}, "walk_toward: started j1, ETA 5.4s (20m)", 3.5, 0.5),
+    ("route", {"objective": "o2", "go": True}, "ROUTE to objective Helm: 17.3m NE, 13.3m above you\nLADDERS/DOORS "
+     "in view (best first):\n  e55 Arterial Mesh <ladder> 8.5m N climbs 10.1m up\n  e54 Arterial Mesh <ladder> "
+     "5.2m W climbs 2.9m up walk 5.7m\nNEXT: interact e54 (ladder up), then interact e55 (ladder up)", 5.6, 0.2),
+    ("do_actions", {"actions": '[{"tool":"interact","target":"e54"},{"tool":"interact","target":"e55"}]'},
+     "1. interact: done — used climbed=down dy=-2.7\n2. interact: FAILED — no walkable path there (may need a jump "
+     "or another route); closest walkable spot (-46.2,5.1,-361.8) is 8.4m from it (walk 3m, it is 2.7m above that "
+     "spot)\nSTOPPED: step 2 interact e55 failed", 1.9, 14.0),
+    ("queue_actions", {"actions": '[{"tool":"interact","target":"e54"},{"tool":"move_to","x":-46.2,"y":5.1,'
+                                  '"z":-361.8},{"tool":"interact","target":"e55"}]'}, "queued 3 step(s)", 2.2, 0.1),
+    ("wait_for", {"target": "queue"}, "queue e1: STOPPED: step 2 move_to -46.2,5.1,-361.8 failed\n1. interact: done "
+     "— dy=2.9 used climbed=up\n2. move_to: FAILED — no walkable path there (may need a jump or another route); "
+     "closest walkable spot (-44.7,6.1,-361.8) is 1.8m from it (walk 1m)", 1.2, 3.8),
+    ("interact", {"target": "e55"}, "interact: done — dy=10 used climbed=up @(-41,18,-356.5)", 1.0, 8.0),
+    ("combat_turn", {"plan": {"move": "o3"}}, "TURN e1 Tamsin Drey (round 2)\nmove o3 (objective Transponder): "
+     "FAILED — no movement left\naction: Shout_Dash: FAILED — not enough action", 2.2, 0.5),
+    ("combat_turn", {"plan": {"move": "o3"}}, "TURN e46 Lae'zel (round 3)\nmove o3 (objective Transponder): beyond "
+     "movement (path 31.4 m, 9.0 m left) → partial 8.7m: INTERRUPTED — a conversation started — travelled=5.5", 1.7,
+     20.9),
+]
 NAUT3_STAGE = {"t": None, "op": "create_character", "naming_ms": 1400, "typed": "over_selection",
                "naming_stages": {"popup": 120, "type": 300}}
 
@@ -94,6 +123,9 @@ class SeriesReport(unittest.TestCase):
         d = cls.root / "naut3"
         d.mkdir()
         write_session(d, NAUT3)
+        d = cls.root / "naut3-live"
+        d.mkdir()
+        write_session(d, NAUT3_LIVE)
         stage = [*STAGE, {**NAUT3_STAGE, "t": 1001.0}]
         (cls.root.parent / "stage_ms.jsonl").write_text("".join(json.dumps(r) + "\n" for r in stage))
         # naut2's runs.jsonl names its runs; naut has none (still running: the dirs that exist)
@@ -153,6 +185,30 @@ class SeriesReport(unittest.TestCase):
         ph = SR.phase_rows(cs, [])
         self.assertTrue(all(ph[p] is not None for p in SR.PHASES), ph)
         self.assertEqual(ph["helm ladder"]["refused"], 1)
+
+    def test_live_naut3_shapes_are_judged_on_their_cause(self):
+        """vis V5: live naut3's false FAILs (move-oN, helm-chain, cc-naming) and the real cause of cc-first-look."""
+        cs = self.calls("naut3-live")
+        stage = {"op": "create_character", "t": cs[0]["t"], "naming_ms": 1016, "via": "typed",
+                 "naming_stages": {"popup": 423, "type": 122}}   # what server.py logs today: no `typed`
+        v = lambda key, ctx={}: SR.verdict(cs, dict((k, f) for k, _, f in SR.SIGNATURES)[key], ctx)  # noqa: E731
+        self.assertEqual(v("move-oN")[0], "NOT-SEEN")      # no movement left / a conversation: no verdict
+        self.assertEqual(v("helm-chain")[0], "NOT-SEEN")   # a wrong-way climb, then the agent's own move_to
+        st, ev, *_ = v("helm-hint")
+        self.assertEqual(st, "FAILED")
+        self.assertIn("first helm climb down (e54)", ev[1])
+        self.assertIn("hint said up: e54 (ladder up)", ev[1])
+        st, ev, *_ = v("cc-first-look")
+        self.assertEqual(st, "FAILED")
+        self.assertIn("before the world loaded (WHERE Character creation", ev[1])
+        self.assertEqual(v("cc-naming", {"stage_ms": [stage]})[0], "PROVED")
+        self.assertIn("typed=not logged", v("cc-naming", {"stage_ms": [stage]})[1][1])
+        self.assertEqual(v("cc-naming", {"stage_ms": [{**stage, "typed": "cleared"}]})[0], "FAILED")
+        # a STOPPED hint's ladder list names the direction too (naut3-r2 #37)
+        hint = [{"text": "STOPPED: climb with interact on a ladder/stairs/hatch (e59 Arterial Mesh <ladder> 6.2m W "
+                         "(climbs 2.9m up), e58 Arterial Mesh <ladder> 9m NW (climbs 10.1m up))"}]
+        self.assertEqual(SR.hinted(hint, 1, "e59")[0], "up")
+        self.assertIsNone(SR.hinted(hint, 1, "e5"))
 
     def test_report_runs_end_to_end(self):
         out = SR.report("naut2", "naut", self.root)
