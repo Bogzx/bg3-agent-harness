@@ -560,6 +560,30 @@ Ext.Input.InjectKeyPress = function(k) if k == "M" and widgets.GameMenu then map
 wj = run(ops["ui.waypoints"]({}).job, 6000)
 ok(wj.status == "done" and mapKeys[1] == "ESCAPE" and mapKeys[2] == "M", "game menu closed, then M: " .. table.concat(mapKeys, ","))
 Ext.Input.InjectKeyPress = _inj
+-- check_all S11 (19:11:17 / 19:56:53): the ESCAPE that closes the map was swallowed and ui.waypoints said done with the
+-- map still up (S068 started on it). Done only once it is gone: one more ESCAPE after SV.MAP_CLOSE_MS.
+do
+    local escSwallow = 1
+    Ext.Input.InjectKeyPress = function(k)
+        if k == "ESCAPE" and escSwallow > 0 then mapKeys[#mapKeys + 1] = k escSwallow = escSwallow - 1 return end
+        _inj(k)
+    end
+    widgets, mapKeys = {}, {}
+    local t0 = clock
+    wj = run(ops["ui.waypoints"]({}).job, 9000)
+    ok(wj.status == "done" and widgets.JournalMap == nil and table.concat(mapKeys, ",") == "M,ESCAPE,ESCAPE"
+        and wj.result.map_escapes == 2 and not wj.result.map_open and clock - t0 >= BG3AI.Services.MAP_CLOSE_MS,
+        "swallowed ESCAPE: pressed again, done once the map closed: " .. tostring(wj.status) .. " keys="
+        .. table.concat(mapKeys, ","))
+    -- it never closes: two ESCAPEs (never a 3rd: that one would open the game menu), done with map_open
+    escSwallow, widgets, mapKeys = 99, {}, {}
+    wj = run(ops["ui.waypoints"]({}).job, 9000)
+    ok(wj.status == "done" and wj.result.map_open == true and #wj.result.waypoints >= 0
+        and table.concat(mapKeys, ",") == "M,ESCAPE,ESCAPE" and widgets.GameMenu == nil,
+        "map stays up: 2 ESCAPEs, done with map_open: " .. tostring(wj.status) .. " keys=" .. table.concat(mapKeys, ","))
+    Ext.Input.InjectKeyPress = _inj
+    widgets, mapKeys = {}, {}
+end
 -- the map never opens: 3 presses, then a failure that says what is on screen
 widgets, mapKeys = {}, {}
 swallow = 99

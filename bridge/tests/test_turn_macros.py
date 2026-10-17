@@ -1813,8 +1813,13 @@ class CombatTurnBackgroundEnd(Base):
         out = server.queue_actions(json.dumps([{"tool": "use_ability", "ability": "Shout_Dodge"}]),
                                    who=server.H.get(P1))
         self.assertIn("turn end to finish first", out)
-        ex = server._queues().queues[P1].executor
+        q = server._queues().queues[P1]
+        ex = q.executor
         self.assertEqual(ex.watcher.ignore, set())               # not the end's all-kinds set
+        # queue_actions returns before its worker sends the cast (flaky under full-suite load, 2026-10-17: the cast
+        # list still ended with combat_turn's own cast, before the end): wait for that worker, bounded
+        q.thread.join(5.0)
+        self.assertFalse(q.thread.is_alive())
         ends = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.end_turn"]
         casts = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.cast"]
         self.assertLess(ends[0], casts[-1])

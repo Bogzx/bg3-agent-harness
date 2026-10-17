@@ -10,7 +10,7 @@
 --   ui.long_rest {dry?, confirm?}                                     -> job
 --     confirm=false: stop at a game question ("End the day?") instead of
 --     answering Yes; result.confirmed lists the questions answered.
---   ui.waypoints {}                                                   -> job (opens/closes the map)
+--   ui.waypoints {}                                                   -> job (opens/closes the map; done once closed)
 --   ui.fast_travel {waypoint, dry?}                                   -> job (waits out "Unavailable"; refuses at camp)
 --   ui.travel_block {}                                                -> {error, in_camp, dialogue, screen}
 --
@@ -1195,15 +1195,33 @@ local function closeMap(opened)
     if opened and mapWidget() then Ext.Input.InjectKeyPress("ESCAPE") end
 end
 
+-- check_all S11 (19:11:17 before S066, 19:56:53 before S068: "screen map after closing the map (left open?)", S068
+-- started on the map): done went out on the tick of the ESCAPE, and that ESCAPE was swallowed. Done only once the map
+-- is gone: none after SV.MAP_CLOSE_MS -> one more ESCAPE; still up after another -> done with map_open = true (the
+-- list itself is good; the caller closes it).
+SV.MAP_CLOSE_MS = 1500
 RPC.register("ui.waypoints", function(args)
     local err = travelError()
-    return withMap("ui.waypoints", 6000, function(w, opened, state)
-        local out = {}
-        for _, wp in ipairs(mapWaypoints(w)) do
-            out[#out + 1] = { region = wp.region, name = wp.name, off = wp.off }
+    local out, closeT, escapes
+    return withMap("ui.waypoints", 9000, function(w, opened, state)
+        if not out then
+            out = {}
+            for _, wp in ipairs(mapWaypoints(w)) do
+                out[#out + 1] = { region = wp.region, name = wp.name, off = wp.off }
+            end
+            closeMap(opened)
+            closeT, escapes = RPC.now_ms(), opened and 1 or 0
         end
-        closeMap(opened)
-        return "done", { waypoints = out, travel_blocked = err, map_presses = state.mapPresses }
+        local res = { waypoints = out, travel_blocked = err, map_presses = state.mapPresses, map_escapes = escapes }
+        if not opened or not mapWidget() then return "done", res end
+        if RPC.now_ms() - closeT < SV.MAP_CLOSE_MS then return nil end
+        if escapes >= 2 then
+            res.map_open = true
+            return "done", res
+        end
+        Ext.Input.InjectKeyPress("ESCAPE")
+        closeT, escapes = RPC.now_ms(), escapes + 1
+        return nil
     end)
 end)
 

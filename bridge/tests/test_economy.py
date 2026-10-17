@@ -1090,6 +1090,64 @@ class TradeHandover(unittest.TestCase):
         self.assertNotIn("box:ui.confirm", [c[0] for c in calls])
 
 
+class TradeConfirmCloses(unittest.TestCase):
+    """S067 #125 / S068 #168: trade(request=…, confirm=true) left the window up and the agent pressed ESCAPE after
+    it each time. A confirmed deal closes the window and checks the game view is back."""
+
+    WARES = tuple(f"11111111-2222-3333-4444-5555555557{n:02d}" for n in range(4))  # Supply Pack, Pork, Chicken, Potion
+
+    def _trade(self, job_result: dict, closes_after: int | None = 2, **kw):
+        calls, ui, reads = [], {"screen": "trade"}, [0]
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                calls.append((op, dict(args or {})))
+                if op == "ui.key":
+                    ui.update(screen="dialogue", dialogue={"speaker": "Arron", "options": []})  # the goodbye line
+                if op == "ui.state":
+                    if ui.get("screen") == "dialogue" and closes_after is not None:
+                        reads[0] += 1
+                        if reads[0] > closes_after:
+                            ui.clear()  # the line ended: no screen = the game view
+                    return dict(ui)
+                return default
+
+        def fake_act(tool, op, args, **k):
+            calls.append((op, dict(args)))
+            server._batch["result"] = job_result
+            return "trade: done"
+
+        saved = (server.game, server._act, server._render_ui, server.H, server.TRADE_CLOSE_S)
+        server.H = Handles()
+        handles = ",".join(server.H.get(u, f"ware {i}") for i, u in enumerate(self.WARES))
+        server.game, server._act = G(), fake_act
+        server._render_ui = lambda u, brief=False: [f"SCREEN {u.get('screen')}"]
+        server.TRADE_CLOSE_S = 0.5
+        try:
+            return server.trade(request=handles, **kw), calls
+        finally:
+            (server.game, server._act, server._render_ui, server.H, server.TRADE_CLOSE_S) = saved
+
+    def test_s068_confirmed_deal_closes_the_window(self):
+        out, calls = self._trade({"confirmed": True, "moved": []}, confirm=True)
+        self.assertEqual([a for op, a in calls if op == "ui.key"], [{"key": "ESCAPE"}])
+        self.assertIn("closed the trade window: back in the game", out)
+
+    def test_no_confirm_keeps_it_open(self):
+        out, calls = self._trade({"moved": []})
+        self.assertNotIn("ui.key", [c[0] for c in calls])
+        self.assertNotIn("closed the trade window", out)
+
+    def test_deal_not_confirmed_keeps_it_open(self):
+        _, calls = self._trade({"moved": [], "problems": ["x"]}, confirm=True)
+        self.assertNotIn("ui.key", [c[0] for c in calls])
+
+    def test_window_still_up_is_said(self):
+        out, _ = self._trade({"confirmed": True, "moved": []}, closes_after=None, confirm=True)
+        self.assertIn("(closing the trade window: screen=dialogue after ESCAPE)", out)
+        self.assertIn("SCREEN dialogue", out)
+
+
 class TradeSellOpens(unittest.TestCase):
     def test_npc_with_sell_junk_opens_first(self):
         calls = []

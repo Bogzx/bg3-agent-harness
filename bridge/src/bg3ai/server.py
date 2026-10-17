@@ -5376,7 +5376,7 @@ def _level_up_steps(uuid: str, args: dict, note: str) -> str:
 @_guard
 def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = False, sell: str = "",
           keep: str = "", full: bool = False, donate: bool = False, count: int = 0) -> str:
-    """Barter with a trader. Open with npc=<id> (talks to them and picks the conversation's trade answer, e.g. 'Let me see your wares.'; if none is offered yet it stops at the conversation), then list items via get_inventory; offer/request: comma lists of item ids to move; confirm=true to finish the deal. price is for the whole stack (price=156 count=3: 52 each; a stack moves whole). Wares marked supply=N are food (camp supplies per item; a long rest needs 40). A stack's "how many?" box is answered for you: the whole stack, or count=N.
+    """Barter with a trader. Open with npc=<id> (talks to them and picks the conversation's trade answer, e.g. 'Let me see your wares.'; if none is offered yet it stops at the conversation), then list items via get_inventory; offer/request: comma lists of item ids to move; confirm=true to finish the deal (then the window closes). price is for the whole stack (price=156 count=3: 52 each; a stack moves whole). Wares marked supply=N are food (camp supplies per item; a long rest needs 40). A stack's "how many?" box is answered for you: the whole stack, or count=N.
     sell="junk": sell everything a player sells at every trader in one call (not equipped, story, consumables, food, keys/tools, magic gear, or keep=<comma ids>), up to the trader's gold; get_inventory(filter="junk") previews it.
     Opening or trade() with no args lists the wares grouped (food with supply, potions/scrolls, gear by rarity) and your best-priced items, capped per group; full=true lists everything. offer/request/confirm calls show the table and the balance only.
     donate=true gives the offered items for nothing (answers the game's "Donate these items?"); automatic on a quest hand-over screen (a dialogue answer like "take them" opens a trade screen whose other side has no wares and no gold): trade(offer=<id>, confirm=true) gives it and closes the screen."""
@@ -5427,11 +5427,27 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
     res = _batch.get("result")
     if isinstance(res, dict) and res.get("donate_box"):
         out = _answer_donate(res, handover)
+    elif confirm and isinstance(res, dict) and res.get("confirmed"):
+        out += "\n" + _close_trade_after_deal()
     elif offer and "couldn't be moved" in out:
         notes = economy.equipped_offers(game.try_rpc("state.inventory", {}), args["offer"], _name_of)
         if notes:
             out += "\n" + "\n".join(notes)
     return (head + "\n" + out) if head else out
+
+
+TRADE_CLOSE_S = 3.0  # the trader's goodbye line (a dialogue screen with no answers) plays this long at most
+
+
+def _close_trade_after_deal() -> str:
+    """S067 #125 / S068 #168: the window stayed up after trade(confirm=true) and the agent pressed ESCAPE by hand
+    each time (~4 s a session). The deal is done: close the window as a player does and check the game is back."""
+    if _ui_screen()[0] != "trade":
+        return ""
+    if _close_left_trade(TRADE_CLOSE_S) and _ui_screen()[0] == "game":
+        return "(closed the trade window: back in the game; trade(npc=<trader>) opens it again)"
+    u = game.try_rpc("ui.state", context="client") or {}
+    return "\n".join([f"(closing the trade window: screen={u.get('screen') or '?'} after ESCAPE)"] + _render_ui(u))
 
 
 def _answer_donate(res: dict, handover: bool) -> str:
