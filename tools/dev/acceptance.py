@@ -188,6 +188,45 @@ def alive() -> bool:
     return subprocess.run(["pgrep", "-x", "bg3"], capture_output=True).returncode == 0
 
 
+def game_memory(proc: Path = Path("/proc"), cgroot: Path = Path("/sys/fs/cgroup")) -> dict:
+    """The harness game's memory in MB, {} without a bg3: VmRSS/VmSwap summed over the bg3 processes, and their cgroup
+    (launch_game.sh's bg3ai-game-<stamp>.scope, MemoryMax 10G): current/peak/swap/swap_peak and anon/file from
+    memory.stat. The scope counts page cache: L8's window scope peaked at 10G (+990M swap) while the game's RSS stayed
+    at 4.9-6.4 GB, so `file` against `anon` tells a leak (anon grows section after section) from cache."""
+    out: dict = {}
+    cg = None
+    for d in proc.iterdir():
+        try:
+            if not d.name.isdigit() or (d / "comm").read_text().strip() != "bg3":
+                continue
+            status = (d / "status").read_text()
+            cg = cg or next((ln.split("::", 1)[1] for ln in (d / "cgroup").read_text().splitlines()
+                             if ln.startswith("0::")), None)
+        except OSError:
+            continue
+        for key, name in (("VmRSS", "rss"), ("VmSwap", "swap")):
+            m = re.search(rf"^{key}:\s+(\d+) kB", status, re.M)
+            if m:
+                out[name] = out.get(name, 0) + int(m.group(1)) // 1024
+    if not out:
+        return {}
+    base = cgroot / cg.lstrip("/") if cg else None
+    if base is not None and "bg3ai-game-" in cg:
+        out["scope"] = cg.rsplit("/", 1)[-1]
+        for f, name in (("memory.current", "cg_current"), ("memory.peak", "cg_peak"),
+                        ("memory.swap.current", "cg_swap"), ("memory.swap.peak", "cg_swap_peak")):
+            try:
+                out[name] = int((base / f).read_text().split()[0]) // 2**20
+            except (OSError, ValueError, IndexError):
+                pass
+        try:
+            stat = dict(ln.split() for ln in (base / "memory.stat").read_text().splitlines() if ln.count(" ") == 1)
+            out.update({k: int(stat[k]) // 2**20 for k in ("anon", "file") if k in stat})
+        except (OSError, ValueError):
+            pass
+    return out
+
+
 def set_marker() -> None:
     S.game.eval("Mods.BG3AI.BG3AI.__acceptance = true return 1", context="server")
 
@@ -2915,6 +2954,8 @@ def main() -> int:
     print("plan:\n" + plan(names), flush=True)
     rows = []
     died = ""
+    memory = [{"after": "start", "t": round(time.time()), **game_memory()}]   # memory.json: live_window's table
+    (OUT / "memory.json").write_text(json.dumps(memory, indent=1))
     for name in names:
         if died:  # the game is gone: the rest can't run; say so instead of N "the game is not running" FAILs
             rows.append({"section": name, "item": f"section {name}", "verdict": "SKIP",
@@ -2937,6 +2978,9 @@ def main() -> int:
             rows.append({"section": name, "item": f"game alive after section {name}", "verdict": "FAIL",
                          "evidence": "bg3 is gone: collect runtime/logs/bg3le-*.log (crash: lines) + "
                                      f"runtime/acceptance/{name}.log"})
+        memory.append({"after": name, "t": round(time.time()), **game_memory()})
+        (OUT / "memory.json").write_text(json.dumps(memory, indent=1))
+        print(f"--- memory after {name}: {memory[-1]}", flush=True)
     table = ["| item | verdict | evidence |", "|---|---|---|"] + [
         f"| {r['item']} | {r['verdict']} | {r['evidence'].replace('|', '/')} |" for r in rows]
     (OUT / "table.md").write_text("\n".join(table) + "\n")

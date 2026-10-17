@@ -110,7 +110,7 @@ STEAM_RETRY_S = 120            # Steam not offline: refuse to launch, retry this
 # Party ready checks (long_rest's "end the day?", region fast travel) stop working in a long-lived game process (se's
 # discriminator 2026-10-10 18:07-18:18, research/impl-se.md §6: the 12:48 process failed from S028 on, fresh processes
 # work with or without the mod). Between sessions the runner relaunches a game older than this (0 = never by age), or
-# one whose last session logged a ready-check failure, and loads the playthrough's newest save.
+# one whose last session logged a ready-check failure, and loads the playthrough's save (choose_save).
 GAME_MAX_AGE_H = float(os.environ.get("BG3AI_GAME_MAX_AGE_H", "2"))
 READY_FAIL_RE = re.compile(r"\b(?:ready_failed|end_day_failed)\b(?::\w+)?")
 GAME_FAULTS = ("crash", "hang")
@@ -399,10 +399,10 @@ def played_elsewhere(t: float, windows: list[tuple[float, float]], slack: float 
     return bool(windows) and t > windows[0][0] - slack and not in_windows(t, windows, slack)
 
 
-def pick_save(saves: list[Save], handoff_label: str | None, owner: str | None,
-              runner_saves: set[str], prefix: str = SAVE_PREFIX,
-              windows: list[tuple[float, float]] | None = None) -> Save | None:
-    """The newest save of this playthrough.
+def save_candidates(saves: list[Save], handoff_label: str | None, owner: str | None,
+                    runner_saves: set[str], prefix: str = SAVE_PREFIX,
+                    windows: list[tuple[float, float]] | None = None) -> list[Save]:
+    """The saves of this playthrough.
 
     Candidates: the folder HANDOFF names, any `Sxxx-` save of the playthrough's owner, and quicksaves the
     runner itself made for this playthrough (recorded by folder). Never anything else. With `windows`
@@ -423,7 +423,84 @@ def pick_save(saves: list[Save], handoff_label: str | None, owner: str | None,
             cands.append(s)
         elif owner is not None and is_ai_save(s, prefix):
             cands.append(s)
-    return max(cands, key=lambda s: s.mtime, default=None)
+    return cands
+
+
+def pick_save(saves: list[Save], handoff_label: str | None, owner: str | None,
+              runner_saves: set[str], prefix: str = SAVE_PREFIX,
+              windows: list[tuple[float, float]] | None = None) -> Save | None:
+    """The newest save of this playthrough (save_candidates)."""
+    return max(save_candidates(saves, handoff_label, owner, runner_saves, prefix, windows),
+               key=lambda s: s.mtime, default=None)
+
+
+HANDOFF_SAVE_SLACK_S = 5.0   # a save this soon after the HANDOFF's session ended was still that session's
+
+
+def parse_handoff_session(text: str) -> int | None:
+    """The session that wrote HANDOFF.md: N of its '# Handoff SN → SN+1' heading (memlib.HANDOFF_RE), or None."""
+    import memlib as M
+    m = M.HANDOFF_RE.search(re.sub(r"<!--.*?-->", "", text, flags=re.S))
+    return int(m.group(1)) if m else None
+
+
+def session_ends(history: list[dict] | None, state_dir: Path | None) -> dict[int, float]:
+    """When each play session ended: runner.json history "ended", or its Sxxx.turns.jsonl's last event (a session the
+    runner never recorded: it crashed mid-session), whichever is later."""
+    out: dict[int, float] = {}
+
+    def put(sid: str, t: float) -> None:
+        m = re.match(r"S(\d+)", sid or "")
+        if m:
+            n = int(m.group(1))
+            out[n] = max(out.get(n, t), t)
+    for h in history or []:
+        if h.get("kind") == "play" and isinstance(h.get("ended"), (int, float)):
+            put(str(h.get("session") or ""), float(h["ended"]))
+    if state_dir is not None:
+        try:
+            files = sorted(Path(state_dir).glob("S*.turns.jsonl"))
+        except OSError:
+            files = []
+        for f in files:
+            w = _first_last_t(f)
+            if w:
+                put(f.name, w[1])
+    return out
+
+
+def pick_save_why(saves: list[Save], handoff_label: str | None, owner: str | None,
+                  runner_saves: set[str], prefix: str = SAVE_PREFIX,
+                  windows: list[tuple[float, float]] | None = None, handoff_session: int | None = None,
+                  ends: dict[int, float] | None = None) -> tuple[Save | None, str]:
+    """The save a session starts from, and why. HANDOFF's "Save to load" is the agent's decision: it wins over newer
+    saves unless one was written after the session that wrote HANDOFF (`handoff_session`, its heading) ended (`ends`,
+    session_ends): later play HANDOFF doesn't know about (a session that crashed before its wrap-up, a runner
+    quicksave), or HANDOFF's session is unknown. S076 (L8): the newest was S075-fight, saved mid-fight on try 6,
+    HANDOFF (S075's) named S075-end; S076's HANDOFF named S075-end again, its S076-end being a losing fight."""
+    cands = save_candidates(saves, handoff_label, owner, runner_saves, prefix, windows)
+    newest = max(cands, key=lambda s: s.mtime, default=None)
+    if newest is None:
+        return None, "no save of this playthrough"
+    if not handoff_label:
+        return newest, "the newest save (HANDOFF names no save)"
+    named = max((s for s in cands if label_matches(s.label, handoff_label, prefix)), key=lambda s: s.mtime,
+                default=None)
+    if named is None:
+        return newest, f"the newest save (HANDOFF names \"{handoff_label}\": no such save of this playthrough)"
+    if named is newest:
+        return named, "HANDOFF's \"Save to load\", also the newest save"
+    sid = f"S{handoff_session:03d}" if handoff_session is not None else None
+    end = (ends or {}).get(handoff_session) if handoff_session is not None else None
+    if end is None:
+        return newest, (f"the newest save (HANDOFF names \"{handoff_label}\" but "
+                        + (f"{sid} never played here" if sid else "has no '# Handoff Sxxx' heading")
+                        + ": can't tell whether it knew the newer saves)")
+    if newest.mtime > end + HANDOFF_SAVE_SLACK_S:
+        return newest, (f"the newest save (HANDOFF names \"{handoff_label}\", but \"{newest.label}\" was saved "
+                        f"after {sid}, which wrote HANDOFF, ended)")
+    return named, (f"HANDOFF's \"Save to load\" ({sid}'s choice), not the newer \"{newest.label}\" from the same "
+                   "session")
 
 
 def foreign_saves(saves: list[Save], owner: str | None, runner_saves: set[str], windows: list[tuple[float, float]],
@@ -911,7 +988,7 @@ PACE_PREFLIGHT = """PACE PRE-FLIGHT (read before your first game action):
 
 
 def build_kickoff(sid: str, playthrough: str, deadline: float, loaded_save: str | None,
-                  notes: list[str], briefing: str = "") -> str:
+                  notes: list[str], briefing: str = "", save_why: str = "") -> str:
     """The first message of a session. `briefing` is session.py start's memory injection (the runner opened the
     session): it leads the message, where the SessionStart hook used to put it. Without it (the runner couldn't open
     the session) the agent calls session_start."""
@@ -930,7 +1007,8 @@ def build_kickoff(sid: str, playthrough: str, deadline: float, loaded_save: str 
     if briefing:
         lines.insert(0, briefing)
     if loaded_save:
-        lines.append(f"The runner has already loaded save \"{loaded_save}\". Don't reload it; verify state "
+        why = f" ({save_why})" if save_why else ""
+        lines.append(f"The runner has already loaded save \"{loaded_save}\"{why}. Don't reload it; verify state "
                      "with get_status.")
     for note in notes:
         lines.append(note)
@@ -1338,6 +1416,11 @@ class ForeignGameRunning(LaunchBlocked):
 
 class SteamNotOffline(LaunchBlocked):
     """Steam isn't in offline mode: launching BG3 could kick the account's other machine off. Never launch."""
+
+
+class NoDisplay(LaunchBlocked):
+    """No usable display env (display_env.problem): the game would fall back to the iGPU and crash (L8). Never
+    launch; the desktop session coming back fixes it."""
 
 
 class GameDied(RuntimeError):
@@ -2096,6 +2179,11 @@ class Runner:
         filled = display_env.fill(os.environ)   # Xwayland restarted since the runner started: its new -auth file
         if filled:
             log("display env refreshed from the desktop session: " + " ".join(f"{k}={v}" for k, v in filled.items()))
+        no_display = display_env.problem(os.environ)
+        if no_display:
+            log(f"!!!!! REFUSING TO LAUNCH BG3: no usable display: {no_display}; the runner keeps retrying. !!!!!")
+            self.event("display_refused", why=no_display)
+            raise NoDisplay(no_display)
         args = [str(LAUNCH_SH)] + (["--load", load_folder] if load_folder else [])
         stamp = base = f"{datetime.now():%Y%m%d-%H%M%S}"   # launch_game.sh names its logs with it (BG3AI_LAUNCH_STAMP)
         n = 1
@@ -2291,15 +2379,26 @@ class Runner:
 
     def choose_save(self) -> Save | None:
         handoff = self.mem / "HANDOFF.md"
-        label = parse_handoff_save(handoff.read_text()) if handoff.exists() else None
+        text = handoff.read_text() if handoff.exists() else ""
         saves = self.own_saves()
-        save = pick_save(saves, label, self.state["save_owner"], self.ours(), windows=self.play_windows())
+        save, why = pick_save_why(saves, parse_handoff_save(text), self.state["save_owner"], self.ours(),
+                                  windows=self.play_windows(), handoff_session=parse_handoff_session(text),
+                                  ends=session_ends(self.state["history"], getattr(self.state, "dir", None)))
         blocked = set(self.state["oom_blocked"] or [])
         if save and save.folder in blocked:
+            first = save
             save = self.refuse_oom_save(save, saves, blocked)
+            why = f"\"{first.label}\" is OOM-blocked ({why}): the newest other save"
+        self.save_choice = (save.label, why) if save else None
+        log(f"save choice: {save.folder if save else 'none'}: {why}")
         if save and not self.state["save_owner"] and not self.opt.dry_run:
             self.adopt_owner(save.owner)
         return save
+
+    def loaded_why(self, loaded: str | None) -> str:
+        """Why the runner loaded `loaded` (choose_save's reason), "" when it loaded another save (a crash fallback)."""
+        choice = getattr(self, "save_choice", None)
+        return choice[1] if loaded and choice and choice[0] == loaded else ""
 
     def refuse_oom_save(self, save: Save, saves: list[Save], blocked: set[str]) -> Save:
         """The newest save OOM-killed the game OOM_SAVE_LIMIT times in a row right after loading: load the newest
@@ -3725,7 +3824,8 @@ class Runner:
         sid = self.next_sid()
         print(f"session:        {sid} ({minutes:.0f} min)")
         print(f"memory:         {self.mem}")
-        print(f"save to load:   {save.folder if save else '(none: new game from the main menu)'}")
+        print(f"save to load:   {save.folder if save else '(none: new game from the main menu)'}"
+              + (f" ({self.save_choice[1]})" if save and self.save_choice else ""))
         print(f"game:           {'up, state ' + str(game_state()) if port_open() else 'not running'}")
         if save and self.opt.take_over and port_open():
             touched = self.foreign_use(save)
@@ -3736,7 +3836,8 @@ class Runner:
         print("plan check:     tools/dev/check_plans.py at each session end (→ keeper) and in the prep (→ RUNNER NOTE); now:")
         self.check_plan_lines("dry run", dry=True)
         prompt = build_kickoff(sid, self.opt.playthrough, time.time() + minutes * 60,
-                               save.label if save else None, list(self.pending_notes))
+                               save.label if save else None, list(self.pending_notes), save_why=self.loaded_why(
+                                   save.label if save else None))
         return self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))
 
     def play_session(self, minutes: float, first: bool) -> SessionResult:
@@ -3794,7 +3895,7 @@ class Runner:
         sid = opened or predicted
         if opened and opened != predicted:
             log(f"session.py start opened {opened} (predicted {predicted})")
-        prompt = build_kickoff(sid, self.opt.playthrough, deadline, loaded, notes, briefing)
+        prompt = build_kickoff(sid, self.opt.playthrough, deadline, loaded, notes, briefing, self.loaded_why(loaded))
         res = self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))
         if res.reason == "dry_run":
             return res
@@ -4392,19 +4493,21 @@ def resume_preview(pt: str, save_owner: str | None, session_minutes: float, allo
     sid = session_id(reuse) if reuse else session_id(
         predict_session_number(M.session_numbers(mem), M.load_state(mem).get("current")))
     handoff = mem / "HANDOFF.md"
-    label = parse_handoff_save(handoff.read_text()) if handoff.exists() else None
+    text = handoff.read_text() if handoff.exists() else ""
+    label = parse_handoff_save(text)
     ours = set(rs.get("runner_saves") or []) | set(rs.get("agent_saves") or [])
     windows = play_windows(rs.get("history") or [], d)
     saves, after = list_saves(), rs.get("saves_after")
     own = [s for s in saves if s.mtime >= after] if after else saves
-    save = pick_save(own, label, rs.get("save_owner"), ours, windows=windows)
+    save, why = pick_save_why(own, label, rs.get("save_owner"), ours, windows=windows,
+                              handoff_session=parse_handoff_session(text), ends=session_ends(rs.get("history"), d))
     owner, prefix = save_identity(save_owner or rs.get("save_owner"))
     foreign = foreign_saves(saves, owner, ours, windows, prefix) if not after else []
     over = session_overrides(d / "session-config.json")
     minutes = over.get("minutes", session_minutes)
     if minutes < MIN_SESSION_MINUTES and not allow_short:
         minutes = session_minutes
-    return {"sid": sid, "handoff_label": label, "save": save.folder if save else None,
+    return {"sid": sid, "handoff_label": label, "save": save.folder if save else None, "save_why": why,
             "oom_blocked": bool(save and save.folder in (rs.get("oom_blocked") or [])), "exclude": foreign,
             "minutes": minutes, "model": over.get("model"), "effort": over.get("effort"),
             "memory_linked": (PLAY_DIR / "memory").resolve() == mem.resolve()}
@@ -4456,8 +4559,10 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
     off, owhy = steam_paths.steam_offline()
     print(f"steam:          offline required: {req_off} ({why}); offline now: {off} ({owhy})"
           + ("  -> THE RUNNER WOULD REFUSE TO LAUNCH" if req_off and not off else ""))
+    no_display = display_env.problem(os.environ)
     print(f"display:        {display_env.describe(os.environ)} (unset ones found from the desktop session)"
-          + ("" if os.environ.get("XAUTHORITY") else "  -> NO XAUTHORITY: the game may not open a window"))
+          + ("" if os.environ.get("XAUTHORITY") else "  -> NO XAUTHORITY")
+          + (f"  -> THE RUNNER WOULD REFUSE TO LAUNCH: {no_display}" if no_display else ""))
     bad = bg3le_buildinfo.problems()
     print("bg3le:          " +("STALE: " + "; ".join(bad) + " -> the runner would stop" if bad else "dist has every patch"))
     game = pids_of_game()
@@ -4480,6 +4585,7 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
         print(f"resume:         {sid}; loads {res['save'] or 'NO SAVE (new game)'} (HANDOFF names "
               f"{res['handoff_label'] or '-'})" + ("  -> OOM-BLOCKED: the runner loads an older save" if
                                                     res["oom_blocked"] else ""))
+        print(f"save choice:    {res['save_why']}")
         print(f"saves hidden:   {', '.join(res['exclude']) or 'none'} (BG3AI_SAVES_EXCLUDE)")
         print(f"session-config: {minutes:g} min, model {model}, effort {effort or 'default'} (session-config.json "
               "wins over the flags)" + ("" if res["memory_linked"] else f"; play/memory is relinked to {pt}"))

@@ -48,6 +48,8 @@ for s in {r["section"] for r in rows}:
     (out / f"{s}.log").write_text(f"log of {s}\n")
 (out / "results.json").write_text(json.dumps(rows))
 (out / "table.md").write_text("| item | verdict | evidence |\n")
+if os.environ.get("FAKE_MEMORY"):
+    (out / "memory.json").write_text(os.environ["FAKE_MEMORY"])
 print("plan: ...")
 sys.exit(sum(r["verdict"] == "FAIL" for r in rows))
 '''
@@ -124,8 +126,10 @@ class Base(unittest.TestCase):
         self.write("tools/dev/first_launch.sh", FAKE_LAUNCH, exe=True)
         self.write("runner/ramwatch.py", "import time\ntime.sleep(3)\n")
         self.write("bin/uv", FAKE_UV, exe=True)
+        self.xauth = self.repo / "xauth_test"   # a real file: display_env.fill replaces a missing one (stale)
+        self.xauth.write_text("")
         self.env = dict(os.environ, PATH=f"{self.repo / 'bin'}:{os.environ['PATH']}", DISPLAY=":1",
-                        XAUTHORITY="/run/user/1000/xauth_test")
+                        XAUTHORITY=str(self.xauth))
         for k in ("FAKE_STEAM_RC", "FAKE_CHECK_RC", "FAKE_LAUNCH_RC", "FAKE_ROWS"):
             self.env.pop(k, None)
         self.out: list[str] = []
@@ -347,7 +351,7 @@ class TestWindow(Base):
         # the launch: the save, --skip-shim, the display env; never the lock fd
         self.assertEqual((self.rt / "launch-args.txt").read_text().split(),
                          ["--skip-shim", "--", "--load", LW.DEFAULT_SAVE])
-        self.assertIn("XAUTHORITY=/run/user/1000/xauth_test", (self.rt / "launch-env.txt").read_text())
+        self.assertIn(f"XAUTHORITY={self.xauth}", (self.rt / "launch-env.txt").read_text())
         self.assertNotIn("game.lock", (self.rt / "launch-fds.txt").read_text())
         # the acceptance ran while the window held game.lock, told not to flock it itself
         probe = json.loads((self.rt / "acceptance-probe.json").read_text())
@@ -361,12 +365,28 @@ class TestWindow(Base):
         self.assertIn("- [act] move_to: teleport_blocked", s)
         self.assertIn("- [se] hotbar Bless: no slot", s)
         self.assertNotIn("### se", s)
+        self.assertNotIn("Game memory", s)   # no memory.json from the acceptance: no table
         # tee: outputs and copies in the run dir; the lock is released at the end
         self.assertIn("plan: ...", (w.dir / "acceptance.log").read_text())
         self.assertIn("first_launch.sh", (w.dir / "window.log").read_text())
         self.assertTrue((w.dir / "acceptance" / "act.log").exists())
         self.assertTrue((w.dir / "acceptance" / "results.json").exists())
         self.assertFalse(LW.held_by_other(self.rt / "game.lock"))
+
+    def test_memory_per_section_in_the_summary(self):
+        # L8: the window game hit its 10G scope cap (+990M swap); the summary shows the memory after each section
+        mem = [{"after": "start", "rss": 2497, "swap": 0, "cg_current": 3100, "cg_peak": 3200, "cg_swap_peak": 0,
+                "anon": 1700, "file": 1400},
+               {"after": "act", "rss": 6250, "swap": 10, "cg_current": 9900, "cg_peak": 10240, "cg_swap_peak": 990,
+                "anon": 5400, "file": 4500},
+               {"after": "se"}]   # the game died
+        w, _ = self.launch_then(FakeProcs(game=[], saves=None), FAKE_MEMORY=json.dumps(mem))
+        s = (w.dir / "summary.md").read_text()
+        self.assertIn("| after | RSS | swap | scope | scope peak | scope swap peak | anon | file |", s)
+        self.assertIn("| start | 2497 | 0 | 3100 | 3200 | 0 | 1700 | 1400 |", s)
+        self.assertIn("| act | 6250 | 10 | 9900 | 10240 | 990 | 5400 | 4500 |", s)
+        self.assertIn("| se | no bg3 | | | | | | |", s)
+        self.assertTrue((w.dir / "acceptance" / "memory.json").exists())
 
     def test_only_and_keep_game(self):
         procs = FakeProcs(game=[], saves=None)

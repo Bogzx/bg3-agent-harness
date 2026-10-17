@@ -193,6 +193,77 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertFalse(P.played_elsewhere(-500.0, windows))
         self.assertTrue(P.played_elsewhere(750.0, windows))   # 600 + 120 s slack < 750 < 900 - 120
 
+    def test_handoff_save_is_the_agents_choice(self):
+        # L8: S076 started from S075-fight (newest, mid-fight try 6) while S075's HANDOFF named S075-end; S076's
+        # HANDOFF named S075-end again ("S076-end = try 7 mid-fight, losing: don't continue it")
+        f = P.parse_save_folder
+        ends = {75: 2000.0, 76: 3000.0}
+        s75 = [f("Claude-1__S074-end", 900.0), f("Claude-2__S075-end", 1500.0), f("Claude-3__S075-fight", 1900.0)]
+        save, why = P.pick_save_why(s75, "S075-end", "Claude", set(), "Claude-", None, 75, ends)
+        self.assertEqual(save.label, "S075-end")
+        self.assertIn("S075's choice", why)
+        self.assertIn('not the newer "S075-fight"', why)
+        s76 = s75 + [f("Claude-4__S076-end", 2900.0)]
+        self.assertEqual(P.pick_save_why(s76, "S075-end", "Claude", set(), "Claude-", None, 76, ends)[0].label,
+                         "S075-end")   # an older save on purpose
+        # HANDOFF from S075, but S076 played on and saved (crashed before its wrap-up): the newest
+        save, why = P.pick_save_why(s76, "S075-end", "Claude", set(), "Claude-", None, 75, ends)
+        self.assertEqual(save.label, "S076-end")
+        self.assertIn("after S075, which wrote HANDOFF, ended", why)
+        # S077 crashed without saving: S076's HANDOFF still holds
+        self.assertEqual(P.pick_save_why(s76, "S075-end", "Claude", set(), "Claude-", None, 76,
+                                         {**ends, 77: 4000.0})[0].label, "S075-end")
+        # a runner quicksave after the session ended is later play too
+        q = s76 + [f("Claude-5__QuickSave_3", 3010.0)]
+        self.assertEqual(P.pick_save_why(q, "S075-end", "Claude", {"Claude-5__QuickSave_3"}, "Claude-", None, 76,
+                                         ends)[0].label, "QuickSave_3")
+        # unknown HANDOFF session, no heading, no such save, no label: the newest, each with its reason
+        for args, needle in [((76, {}), "S076 never played here"), ((None, ends), "no '# Handoff Sxxx' heading")]:
+            save, why = P.pick_save_why(s76, "S075-end", "Claude", set(), "Claude-", None, *args)
+            self.assertEqual((save.label, needle in why), ("S076-end", True))
+        save, why = P.pick_save_why(s76, "S070-end", "Claude", set(), "Claude-", None, 76, ends)
+        self.assertEqual((save.label, "no such save" in why), ("S076-end", True))
+        save, why = P.pick_save_why(s76, None, "Claude", set(), "Claude-", None, 76, ends)
+        self.assertEqual((save.label, why), ("S076-end", "the newest save (HANDOFF names no save)"))
+        self.assertEqual(P.pick_save_why(s76, "S076-end", "Claude", set(), "Claude-", None, 76, ends),
+                         (s76[-1], "HANDOFF's \"Save to load\", also the newest save"))
+        self.assertEqual(P.pick_save_why([], "S075-end", "Claude", set(), "Claude-"), (None, "no save of this playthrough"))
+        # pick_save stays the newest (status, crash fallbacks)
+        self.assertEqual(P.pick_save(s76, "S075-end", "Claude", set(), "Claude-").label, "S076-end")
+
+    def test_handoff_session_and_session_ends(self):
+        self.assertEqual(P.parse_handoff_session("# Handoff S076 → S077  (2026-10-18 00:45)\nSave to load: x\n"), 76)
+        self.assertIsNone(P.parse_handoff_session("<!--\n# Handoff S001 → S002\n-->\nSave to load: x\n"))
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "S076.turns.jsonl").write_text('{"t": 100}\n{"t": 250}\n')   # crashed, never recorded
+            (Path(d) / "S075.turns.jsonl").write_text('{"t": 10}\n{"t": 40}\n')
+            hist = [{"kind": "play", "session": "S075", "started": 5.0, "ended": 60.0},
+                    {"kind": "keeper", "session": "S075", "ended": 90.0}]
+            self.assertEqual(P.session_ends(hist, Path(d)), {75: 60.0, 76: 250.0})
+        self.assertEqual(P.session_ends(None, None), {})
+
+    def test_choose_save_follows_handoff_and_tells_the_kickoff(self):
+        f = P.parse_save_folder
+        saves = [f("Claude-2__S075-end", 1500.0), f("Claude-3__S075-fight", 1900.0)]
+        with tempfile.TemporaryDirectory() as d:
+            mem = Path(d) / "memory"
+            mem.mkdir()
+            (mem / "HANDOFF.md").write_text('# Handoff S075 → S076\nSave to load: "S075-end" (pre-fight)\n')
+            r = P.Runner.__new__(P.Runner)
+            r.mem, r.opt = mem, P.Options("pt", None, 20, "opus", save_owner="Claude", dry_run=True)
+            data = {"save_owner": "Claude", "history": [{"kind": "play", "session": "S075", "started": 1000.0,
+                                                         "ended": 2000.0}]}
+            r.state = type("S", (), {"data": data, "dir": Path(d), "__getitem__": lambda s, k: s.data.get(k),
+                                     "__setitem__": lambda s, k, v: s.data.__setitem__(k, v)})()
+            with mock.patch.object(P, "list_saves", lambda: saves), mock.patch.object(P, "log"):
+                self.assertEqual(r.choose_save().label, "S075-end")
+        self.assertIn("S075's choice", r.loaded_why("S075-end"))
+        self.assertEqual(r.loaded_why("S075-fight"), "")   # a fallback loaded another save: no reason
+        self.assertEqual(r.loaded_why(None), "")
+        k = P.build_kickoff("S076", "pt", time.time() + 60, "S075-end", [], save_why=r.loaded_why("S075-end"))
+        self.assertIn('already loaded save "S075-end" (HANDOFF\'s "Save to load" (S075\'s choice), not the newer '
+                      '"S075-fight" from the same session). Don\'t reload it', k)
+
     def test_foreign_saves_for_the_mcp_server(self):
         f = P.parse_save_folder
         saves = [f("Claude-2__S065-end", 1500.0), f("Claude-3__S999-savetest", 5000.0),
@@ -684,10 +755,29 @@ class KillGame(unittest.TestCase):
                 mock.patch.object(P, "write_status", lambda **kw: None), \
                 mock.patch.object(P.display_env, "pgrep_xwayland",
                                   lambda: "9 /usr/bin/Xwayland :1 -auth /run/user/1000/xauth_new -rootless\n"), \
+                mock.patch.object(P.display_env, "problem", lambda env: None), \
                 mock.patch.dict(P.os.environ, {"DISPLAY": ":1", "XAUTHORITY": "/run/user/1000/xauth_old"}):
             self.r.launch_game(None)
         self.assertEqual(envs[0]["XAUTHORITY"], "/run/user/1000/xauth_new")
         self.assertIn("display env refreshed", (P.RUNTIME / "runner.log").read_text())
+
+    def test_launch_refused_without_a_display(self):
+        # L8: a launch with no usable display fell back to the AMD iGPU and dumped cores; refuse, the run loop retries
+        from unittest import mock
+        self.alive = set()
+        self.r.event = lambda kind, **f: self.sent.append(("event", kind, f))
+        with mock.patch.object(P, "steam_ready", lambda: (True, "ok")), \
+                mock.patch.object(P, "bg3le_problems", lambda: []), \
+                mock.patch.object(P.subprocess, "Popen", None), \
+                mock.patch.object(P, "write_status", lambda **kw: None), \
+                mock.patch.object(P.display_env, "pgrep_xwayland", lambda: ""), \
+                mock.patch.dict(P.os.environ, {"DISPLAY": ":97", "XAUTHORITY": "/nonexistent/xauth"}):
+            with self.assertRaises(P.NoDisplay) as cm:
+                self.r.launch_game(None)
+        self.assertIn("DISPLAY=:97 but no X server socket", str(cm.exception))
+        self.assertTrue(issubclass(P.NoDisplay, P.LaunchBlocked))
+        self.assertEqual(self.sent[-1][:2], ("event", "display_refused"))
+        self.assertIn("REFUSING TO LAUNCH BG3: no usable display", (P.RUNTIME / "runner.log").read_text())
 
 
 class ApiAndMcpFailures(unittest.TestCase):
@@ -2547,9 +2637,11 @@ class SeriesRuns(unittest.TestCase):
                          xwayland="9 /usr/bin/Xwayland :1 -rootless -auth /run/user/1000/xauth_Ab -listenfd 4\n")
         self.assertIn("display:        DISPLAY=:1 XAUTHORITY=/run/user/1000/xauth_Ab", out)
         self.assertNotIn("NO XAUTHORITY", out)
-        out = self._plan("--playthrough", "np", unset=("DISPLAY", "XAUTHORITY"), xwayland="")
+        with tempfile.TemporaryDirectory() as home:   # no ~/.Xauthority either
+            out = self._plan("--playthrough", "np", unset=("DISPLAY", "XAUTHORITY"), xwayland="", env={"HOME": home})
         self.assertIn("display:        DISPLAY=:1 XAUTHORITY=unset", out)
         self.assertIn("NO XAUTHORITY", out)
+        self.assertIn("THE RUNNER WOULD REFUSE TO LAUNCH: ", out)   # no X socket :1, or no auth file
         with tempfile.NamedTemporaryFile() as x:
             out = self._plan("--playthrough", "np", env={"DISPLAY": ":7", "XAUTHORITY": x.name},
                              xwayland="9 /usr/bin/Xwayland :1 -auth /run/user/1000/xauth_Ab\n")
