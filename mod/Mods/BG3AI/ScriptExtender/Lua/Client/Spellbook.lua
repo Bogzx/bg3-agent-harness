@@ -3,9 +3,10 @@
 -- class that prepares, spells in the book, the limit) and selects the character; this op opens the page, runs the
 -- spell cells' own command, waits for each cell to flip, and closes the page again.
 --
---   ui.prepare_spells {name?, add = [{id, name}], remove = [{id, name}], probe?, key?}
+--   ui.prepare_spells {name?, add = [{id, name}], remove = [{id, name}], probe?, icons?, key?}
 --     -> job; result { toggled = [{name, op, ok, why?}], before = {value, max}, after = {value, max}, book, shows,
---                      opened, closed } (probe=true: { probe = {...} }, read-only)
+--                      opened, closed } (probe=true: { probe = {...} }, read-only; icons = [stats icon names]: per
+--                      name its sheet place and how many cells show it, on/off)
 --
 -- From the game's own XAML (Game.pak, read offline 2026-10-17):
 --   Mods/MainUI/GUI/Pages/CharacterPanel.xaml: widget "CharacterPanel"; the spellbook is its page whose Metadata is
@@ -29,6 +30,13 @@
 --   ImageSource names the stats Icon), else by its look (level, school, concentration, cost) among the cells in the
 --   state the server says the spell is in. The server sends each spell's look and `twins` (other book spells that
 --   look the same in that state); with twins and no icon the page can't tell them apart: refused, nothing clicked.
+-- LIVE L6 (2026-10-17): GUESS S4 broke: every cell's ImageSource is the shared icon SHEET (UriSource = the atlas UUID,
+--   7373f338-… Icons_Skills), so all cells read one "icon". A8: a cell's icon is its brush's Viewbox [u, v, w, h] on
+--   that atlas. Shared.pak Public/Shared/GUI/Icons_Skills.lsx (read offline) gives Spell_Enchantment_Bless U1
+--   0.28149414 V1 0.15649414, U2-U1 0.03076172 (TextureAtlasPath UUID 7373f338-…), the same numbers L6's cells show,
+--   and every L6 Class-book cell maps to one of Claude's spells that way (Aid off, Command, Compelled Duel, ...). The
+--   spell side is Ext.StaticData.GetIconUVs(icon) (UV0 = U1,V1; UV1 = U2,V2) + GetIconAtlas(icon).TextureUuid (GUESS
+--   S5: bg3le reads them so; L6's probe got non-nil values but its dump broke on them). Unread: the look match.
 
 BG3AI = BG3AI or {}
 local UI = BG3AI.UI
@@ -77,20 +85,49 @@ function SB.onSpells(w)
     return m == "ToggleSpells"
 end
 
--- The icon name a cell's brush shows ("Spell_Enchantment_Bless"), nil when nothing names it (GUESS S4: the
--- ImageBrush's ImageSource, or the source's Uri/name, ends in the stats Icon).
+-- Two numbers from a vec2 / rect read: {x, y, ...} as an array or by name.
+local function xy(v, a, b)
+    if v == nil then return nil end
+    local x = tonumber(UI.get(v, 1) or UI.get(v, a))
+    local y = tonumber(UI.get(v, 2) or UI.get(v, b))
+    if x and y then return x, y end
+    return nil
+end
+
+-- A cell's icon: { atlas, u, v, w } = its brush's Viewbox on the icon sheet (live L6), nil when it doesn't read.
 function SB.iconOf(vm)
     local brush = UI.get(vm, "Icon")
     if brush == nil then return nil end
-    local src = UI.get(brush, "ImageSource")
-    local cands = { src, UI.get(src, "UriSource"), UI.get(src, "Source"), UI.get(src, "TextureName"),
-                    UI.get(src, "Name"), UI.get(brush, "Name") }
-    for _, v in ipairs(cands) do
-        local t = type(v) == "string" and v or nil
-        t = t and (t:match("([^/\\:]+)$") or t):gsub("%.%w+$", "")
-        if t and t ~= "" then return t end
-    end
-    return nil
+    local vb = UI.props(brush).Viewbox or UI.get(brush, "Viewbox")
+    local u, v = xy(vb, "X", "Y")
+    local w = tonumber(UI.get(vb, 3) or UI.get(vb, "Width"))
+    local atlas = str(UI.get(UI.get(brush, "ImageSource"), "UriSource"))
+    if not (u and v and w and atlas) then return nil end
+    return { atlas = atlas, u = u, v = v, w = w }
+end
+
+-- A stats icon name's place on its sheet ("Spell_Enchantment_Bless" -> { atlas, u, v, w }), nil when unread.
+SB.EPS = 0.002   -- 4 texels on the 2048 sheets; icons sit 64 texels apart
+local uv_cache = {}
+function SB.iconUV(name)
+    name = str(name)
+    if name == nil then return nil end
+    if uv_cache[name] then return uv_cache[name] end
+    local sd = Ext and Ext.StaticData
+    local uvs = sd and try(sd.GetIconUVs, name)
+    local u0, v0 = xy(UI.get(uvs, "UV0"), "x", "y")
+    local u1 = xy(UI.get(uvs, "UV1"), "x", "y")
+    local atlas = str(UI.get(sd and try(sd.GetIconAtlas, name), "TextureUuid"))
+    if not (u0 and v0 and u1 and atlas) then return nil end
+    uv_cache[name] = { atlas = atlas, u = u0, v = v0, w = u1 - u0 }
+    return uv_cache[name]
+end
+
+-- Does the cell show that icon?
+function SB.shows(cell_icon, uv)
+    if not (cell_icon and uv) then return false end
+    return low(cell_icon.atlas) == low(uv.atlas) and math.abs(cell_icon.u - uv.u) < SB.EPS
+        and math.abs(cell_icon.v - uv.v) < SB.EPS and math.abs(cell_icon.w - uv.w) < SB.EPS
 end
 
 -- The selected character's preparing books: { {vm, class, value, max, cells = { cell }, n} } where cell = {vm, name?,
@@ -145,14 +182,18 @@ function SB.match(books, spell, state, exact)
             end
         end
     end
-    local icon = spell.look and low(spell.look.icon)
-    if icon and icon ~= "" then
-        local any_icon = false
+    local uv = SB.iconUV(spell.look and spell.look.icon)
+    if uv then
+        local any_icon, hits = false, {}
         for _, b in ipairs(books) do
             for _, c in ipairs(b.cells) do
                 if c.icon then any_icon = true end
-                if c.icon and low(c.icon) == icon and ok_state(c) then return c, b end
+                if c.needs ~= false and ok_state(c) and SB.shows(c.icon, uv) then hits[#hits + 1] = { c, b } end
             end
+        end
+        if #hits == 1 then return hits[1][1], hits[1][2] end
+        if #hits > 1 then
+            return nil, nil, string.format("%d cells show %s's icon: nothing clicked", #hits, tostring(spell.name))
         end
         if any_icon then return nil, nil, "no cell shows " .. tostring(spell.name) .. "'s icon" end
     end
@@ -179,13 +220,13 @@ end
 local function cellLine(c)
     return string.format("L%s %s%s %s %s%s%s", tostring(c.level), tostring(c.school), c.conc == true and " conc" or "",
         tostring(c.cost), c.activated and "on" or "off", c.needs == false and " always" or "",
-        c.icon and (" icon=" .. c.icon) or "")
+        c.icon and string.format(" icon=%s@%.5f,%.5f", c.icon.atlas:sub(1, 8), c.icon.u, c.icon.v) or "")
 end
 
 local function statOf(b) return b and { value = b.value, max = b.max } or nil end
 
 -- probe: what the page holds, read-only (the one live check of S1-S3).
-local function probeOf(w, dc, books, sel)
+local function probeOf(w, dc, books, sel, icons)
     local p = { widget_visible = w and UI.isVisible(w) or false, metadata = str(UI.get(w, "Metadata")),
                 dc = UI.typeName(dc), selected = str(UI.get(sel, "Name")),
                 toggle_cmd = UI.get(dc, "ToggleCharacterAction") ~= nil, books = {} }
@@ -225,6 +266,29 @@ local function probeOf(w, dc, books, sel)
         summary[#summary + 1] = { class = b.class, value = b.value, max = b.max, cells = lines }
     end
     p.preparing = summary
+    -- A8: each asked icon name's sheet place (GUESS S5) and the cells that show it, by state
+    if icons then
+        p.icons = {}
+        local sd = Ext and Ext.StaticData
+        for _, name in ipairs(icons) do
+            local uvs = sd and try(sd.GetIconUVs, name)
+            local raw = {}
+            for _, k in ipairs({ "UV0", "UV1" }) do
+                local v = UI.get(uvs, k)
+                raw[k] = { str(v), UI.get(v, 1), UI.get(v, 2), UI.get(v, "x"), UI.get(v, "y") }
+            end
+            raw.atlas = str(UI.get(sd and try(sd.GetIconAtlas, name), "TextureUuid"))
+            local uv, on, off = SB.iconUV(name), 0, 0
+            for _, b in ipairs(books) do
+                for _, c in ipairs(b.cells) do
+                    if SB.shows(c.icon, uv) then
+                        if c.activated then on = on + 1 else off = off + 1 end
+                    end
+                end
+            end
+            p.icons[name] = { uv = uv, raw = raw, uvs = str(uvs), on = on, off = off }
+        end
+    end
     return p
 end
 
@@ -276,7 +340,7 @@ function SB.start(args)
         st.shows = str(UI.get(sel, "Name"))
         if st.phase == "read" then
             if args.probe then
-                st.probe = probeOf(w, dc, books, sel)
+                st.probe = probeOf(w, dc, books, sel, args.icons)
                 return close("done")
             end
             if args.name and st.shows and low(st.shows) ~= low(args.name) then

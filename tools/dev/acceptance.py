@@ -2031,6 +2031,7 @@ SPELLBOOK_PROBE_ITEM = "spellbook probe (A5, read-only)"
 PREPARE_ITEM = "prepare_spells Bless on Claude: on the hotbar, then unprepared (A5)"
 PREPARE_REFUSE_ITEM = "prepare_spells honest refusals (A5)"
 PREPARE_LIMIT_ITEM = "prepare_spells limit = the page's (A7, read-only)"
+SPELLBOOK_ICON_ITEM = "spellbook cells by icon sheet place (A8, read-only)"
 PREPARE_WHO = "Claude"     # the Paladin in HOTBAR_SAVE; Bless is on his class list, unprepared at S065-end (A4)
 
 
@@ -2040,19 +2041,43 @@ def _member(name: str) -> str | None:
 
 def spellbook_probe() -> None:
     """A5: the spellbook page as bg3le reads it, read-only (Client/Spellbook.lua GUESSES S1-S4): K opens the page,
-    the selected character's preparing book has cells (A7: one look line each, `icon=` when GUESS S4 reads),
+    the selected character's preparing book has cells (A7: one look line each; A8: `icon=atlas@u,v`),
     PreparedSpellsStat reads, and the widget's DataContext has ToggleCharacterAction (CanExecute per cell). The page
     is closed again; nothing is toggled. PASS = a preparing book with cells and a max, and the command present.
     A7 also: PREPARE_LIMIT_ITEM = the server's limit (act.prepared max: SpellBookPrepares.ClassPreparedSpellCount,
-    GUESS P1) equals the page's PreparedSpellsStat.Max (live L4: 12; Stats.MaxPreparedSpells read 9)."""
+    GUESS P1) equals the page's PreparedSpellsStat.Max (live L4: 12; Stats.MaxPreparedSpells read 9).
+    A8: SPELLBOOK_ICON_ITEM = every spell that needs preparing finds its cell(s) by its stats Icon's place on the icon
+    sheet (Ext.StaticData.GetIconUVs/GetIconAtlas, GUESS S5) in its own state: prepared -> on, unprepared -> off."""
     u = _member(PREPARE_WHO)
     if not need(u is not None, SPELLBOOK_PROBE_ITEM, f"no {PREPARE_WHO} in the party"):
         return
+    # A8: the stats Icon of each spell that needs preparing, by state (Server/Guard.lua prep_info, the plan's look)
+    raw_icons = lua_server(f"local G=Mods.BG3AI.BG3AI.Guard local i=G.prep_info(G.guid('{u}')) local o={{}} "
+                           "for _,k in ipairs({'prepared','unprepared'}) do for _,r in ipairs(i[k]) do "
+                           "o[#o+1]=k:sub(1,1)..'|'..r.name..'|'..tostring(r.look and r.look.icon) end end "
+                           "return table.concat(o,';')")
+    spells = [x.split("|") for x in raw_icons.split(";") if x.count("|") == 2]
     S.game.run_job("act.select", {"char": u}, wait_s=5)
     time.sleep(0.5)
-    r = S.game.run_job("ui.prepare_spells", {"name": PREPARE_WHO, "probe": True}, context="client", wait_s=15)
+    r = S.game.run_job("ui.prepare_spells", {"name": PREPARE_WHO, "probe": True,
+                                             "icons": sorted({ic for _, _, ic in spells if ic != "nil"})},
+                       context="client", wait_s=15)
     res = r.result if isinstance(r.result, dict) else {}
     p = res.get("probe") or {}
+    icons = p.get("icons") or {}
+    log("PROBE spellbook icons: " + json.dumps(icons)[:4000])
+    # each icon's cells, by state, = the spells with that icon in that state (shared icons count together)
+    want: dict = {}
+    for k, _, ic in spells:
+        on, off = want.get(ic, (0, 0))
+        want[ic] = (on + (k == "p"), off + (k == "u"))
+    bad = [f"{name}({'on' if k == 'p' else 'off'}): cells on/off {icons.get(ic, {}).get('on')}/"
+           f"{icons.get(ic, {}).get('off')} want {want[ic][0]}/{want[ic][1]}"
+           for k, name, ic in spells if (icons.get(ic, {}).get("on"), icons.get(ic, {}).get("off")) != want[ic]]
+    bless = icons.get("Spell_Enchantment_Bless") or {}
+    item(SPELLBOOK_ICON_ITEM, "PASS" if spells and not bad else "FAIL",
+         (f"{len(spells)} spells, {len(spells) - len(bad)} matched by icon; " + ("; ".join(bad[:6]) if bad else "all")
+          + f"; Bless uv={bless.get('uv')} raw={bless.get('raw')}")[:400])
     log("PROBE spellbook: " + json.dumps({"status": r.status, "error": r.error, "opened": res.get("opened"),
                                           "closed": res.get("closed"), "probe": p})[:6000])
     books = p.get("preparing") or []
@@ -2258,7 +2283,7 @@ def sec_act() -> None:
     # A5 prepare_spells on HOTBAR_SAVE (Claude the Paladin, L10): the read-only spellbook probe, then Bless prepared
     # and unprepared again (nothing is saved; the next section loads its own save)
     if not load_verified(HOTBAR_SAVE, record=True):
-        for name in (SPELLBOOK_PROBE_ITEM, PREPARE_LIMIT_ITEM, PREPARE_ITEM, PREPARE_REFUSE_ITEM):
+        for name in (SPELLBOOK_PROBE_ITEM, SPELLBOOK_ICON_ITEM, PREPARE_LIMIT_ITEM, PREPARE_ITEM, PREPARE_REFUSE_ITEM):
             item(name, "SKIP", f"{HOTBAR_SAVE} did not load")
     else:
         spellbook_probe()

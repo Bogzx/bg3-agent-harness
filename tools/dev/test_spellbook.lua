@@ -244,24 +244,79 @@ reset()
 j = run({ name = "Claude", add = { { id = "Target_PfE", name = "Protection", level = 1, twins = 0,
                                       look = { school = "Abjuration", conc = true, cost = "Action" } } } })
 ok(#toggles == 0 and j.result.toggled[1].why:find("no spell cell like Protection"), "always-prepared cell skipped")
--- icons readable (GUESS S4): the icon decides, even with twins
+-- live L6 / A8: every cell's ImageSource is the shared icon sheet (UriSource = the atlas UUID); its Viewbox is the
+-- icon's place on it. Ext.StaticData gives a stats icon's place (UVs real, from Icons_Skills.lsx); the icon decides.
+local SKILLS, ITEMS = "7373f338-0992-4f16-e15e-887c9774d972", "d4e9580f-2780-8a0b-c494-b7213d6ec2c8"
+local W = 0.03076172
+local SHEET = { Spell_Enchantment_Bless = { SKILLS, 0.28149414, 0.15649414 },
+                Spell_Enchantment_Heroism = { SKILLS, 0.65649414, 0.21899414 },
+                Spell_Enchantment_Bane = { SKILLS, 0.03149414, 0.43774414 },
+                Spell_Necromancy_Revivify = { SKILLS, 0.40649414, 0.50024414 } }
+Ext.StaticData = {
+    GetIconUVs = function(n) local e = SHEET[n] return e and { UV0 = { e[2], e[3] }, UV1 = { e[2] + W, e[3] + W } } end,
+    GetIconAtlas = function(n) local e = SHEET[n] return e and { TextureUuid = e[1] } end }
+local function on_sheet(c, n, atlas)
+    local e = SHEET[n]
+    c.Icon = { Viewbox = { e[2], e[3], W, W }, ImageSource = { UriSource = atlas or e[1] } }
+end
+on_sheet(nbless, "Spell_Enchantment_Bless")
+on_sheet(hero, "Spell_Enchantment_Heroism")
+on_sheet(extra, "Spell_Enchantment_Bane")
+local ic = SB.iconOf(nbless)
+ok(ic and ic.atlas == SKILLS and math.abs(ic.u - 0.28149414) < 1e-6 and math.abs(ic.w - W) < 1e-6,
+   "iconOf: the brush's atlas and Viewbox")
+ok(SB.shows(ic, SB.iconUV("Spell_Enchantment_Bless")) and not SB.shows(ic, SB.iconUV("Spell_Enchantment_Heroism")),
+   "Bless's cell shows Bless's sheet place, not Heroism's")
 reset()
-nbless.Icon = { ImageSource = { UriSource = "Assets/Icons/Spell_Enchantment_Bless.png" } }
-hero.Icon = { ImageSource = { UriSource = "Assets/Icons/Spell_Enchantment_Heroism.png" } }
-extra.Icon = { ImageSource = { UriSource = "Assets/Icons/Spell_Enchantment_Bane.png" } }
 lbook.ActionGroups[2].Actions[6] = extra
-j = run({ name = "Claude", add = { { id = "Target_Bane", name = "Bane", level = 1, twins = 1,
-                                      look = { icon = "Spell_Enchantment_Bane", school = "Enchantment", conc = true,
-                                               cost = "Action" } } } })
+local BANE = { id = "Target_Bane", name = "Bane", level = 1, twins = 1,
+               look = { icon = "Spell_Enchantment_Bane", school = "Enchantment", conc = true, cost = "Action" } }
+j = run({ name = "Claude", add = { BANE } })
 ok(#toggles == 1 and toggles[1] == "Bane" and extra.Activated, "icon read: Bane's cell by its icon despite twins")
-ok(SB.iconOf(nbless) == "Spell_Enchantment_Bless", "iconOf strips the path and extension")
+extra.Activated, lbook.PreparedSpellsStat.Value = false, 4
+-- Bless's look-alike Heroism prepared too (twins 1): the icon still tells them apart, add and remove
+reset()
+j = run({ name = "Claude", add = { { id = "Target_Bless", name = "Bless", level = 1, twins = 1, look = BLESS.look } } })
+ok(#toggles == 1 and toggles[1] == "Bless" and nbless.Activated and hero.Activated, "add Bless by icon, twins 1")
+reset()
+j = run({ name = "Claude", remove = { { id = "Target_Bless", name = "Bless", level = 1, twins = 1, look = BLESS.look } } })
+ok(#toggles == 1 and toggles[1] == "Bless" and not nbless.Activated and hero.Activated,
+   "remove Bless by icon while Heroism stays prepared")
+-- already prepared, by icon: no click
+reset()
+j = run({ name = "Claude", add = { HERO } })
+ok(#toggles == 0 and j.result.toggled[1].ok and j.result.toggled[1].why == "already prepared",
+   "Heroism already prepared (its icon, on): no click")
+-- the same place on another sheet is another icon
+reset()
+on_sheet(extra, "Spell_Enchantment_Bane", ITEMS)
+j = run({ name = "Claude", add = { BANE } })
+ok(#toggles == 0 and j.result.toggled[1].why:find("no cell shows Bane's icon"),
+   "same UV on the items sheet: not Bane, refused (" .. tostring(j.result.toggled[1].why) .. ")")
+-- two cells show the icon: refused
+reset()
+on_sheet(extra, "Spell_Enchantment_Bless")
+j = run({ name = "Claude", add = { BLESS } })
+ok(#toggles == 0 and j.result.toggled[1].why:find("2 cells show Bless's icon"), "two cells with Bless's icon: refused")
+on_sheet(extra, "Spell_Enchantment_Bane")
+-- an icon the sheets don't know: the look match as before (Revivify-like unknown name -> look, twins 1 -> refused)
+reset()
+j = run({ name = "Claude", add = { { id = "Target_X", name = "X", level = 1, twins = 1,
+                                      look = { icon = "Spell_Unknown", school = "Enchantment", conc = true,
+                                               cost = "Action" } } } })
+ok(#toggles == 0 and j.result.toggled[1].why:find("can't tell its cell apart"), "unknown icon: look match rules")
 -- probe: one compact line per cell
 reset()
-j = run({ name = "Claude", probe = true })
+j = run({ name = "Claude", probe = true, icons = { "Spell_Enchantment_Bless", "Spell_Enchantment_Heroism", "Nope" } })
 local lines = j.result.probe.preparing[1].cells
 ok(#lines == 7 and lines[1] == "L1 Abjuration conc Action on always" and
    lines[3] == "L1 Enchantment conc BonusAction on", "probe: a look line per cell (" .. tostring(lines[3]) .. ")")
-ok(j.result.probe.books[3].groups[2].cells[4].icon.name == "Spell_Enchantment_Bless", "probe: the icon read per cell")
+ok(lines[4] == "L1 Enchantment conc Action off icon=7373f338@0.28149,0.15649", "probe: the icon place per cell ("
+   .. tostring(lines[4]) .. ")")
+local pi = j.result.probe.icons
+ok(pi.Spell_Enchantment_Bless.off == 1 and pi.Spell_Enchantment_Bless.on == 0 and pi.Spell_Enchantment_Heroism.on == 1
+   and pi.Spell_Enchantment_Bless.raw.atlas == SKILLS and pi.Nope.uv == nil and pi.Nope.on == 0,
+   "probe icons: per name its cells by state, raw UVs")
 
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

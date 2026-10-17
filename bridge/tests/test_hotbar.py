@@ -464,7 +464,7 @@ class HotbarCast(unittest.TestCase):
 
     def test_paging_clicks_the_deck_tab(self):
         self.w.rendered, self.w.shown = False, "CommonHotBar"
-        self.w.tab_at = (int(0.5 * W), int(0.83 * H))
+        self.w.tab_at = (int(0.46 * W), int(0.978 * H))   # HotBar.xaml DECKTAB BAR: below the decks (live layout)
         r, _ = _cast(self.w)
         self.assertTrue(r.ok, r.as_dict())
         self.assertEqual(r.detail["paging"]["tab"], "HotbarDeckButton_Class")

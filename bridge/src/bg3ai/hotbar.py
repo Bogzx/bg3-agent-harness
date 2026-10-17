@@ -26,7 +26,7 @@ how far to move. Found spots are cached per window size, so the first cast after
 GUESSES (unverified live; G1-G6 are in Client/Hotbar.lua; acceptance se "hotbar widget tree (ACT-8, read-only)" and
 "hotbar cast: Bless on 3 allies (ACT-8)" check them): G7 the HUD scales with window height / 2160 (only the first
 step's pitch; then measured); G8 decks sit left to right in KeyboardHotBars order; G9 row 0 is the top row (flipped
-on the first miss); G10 the deck tabs sit in the band just above the decks (TAB_FY); the cast "started" once no
+on the first miss); G10 (wrong live L6, fixed A8) the deck tabs sit below the decks (TAB_FY); the cast "started" once no
 spell is in hand or the cast entity's phase left None; ESCAPE / a right click put a spell in hand back.
 """
 
@@ -59,7 +59,11 @@ CANCEL_WAIT_FRAMES = 6
 # the 0.06 in-betweens) can't step over the Common or Class deck.
 SCAN_FY = (0.95, 0.91, 0.87, 0.83, 0.98, 0.79)
 SCAN_FX_PASSES = ((0.0, 0.12, 0.24), (0.06, 0.18, 0.30))   # offsets from the centre, each side
-TAB_FY = (0.80, 0.83, 0.86, 0.77, 0.89, 0.74)   # GUESS G10: the deck tabs (BottomLinks) sit just above the decks
+# The deck tabs (BottomLinks): HotBar.xaml HotbarCentre row 2 "DECKTAB BAR", BELOW the decks (row 1), the screen's
+# bottom strip: an 84-high bar ending 9 above HotbarCentre's bottom, which hangs 16 below the window (2160 design: centre
+# 2125 = 0.984). Live screenshot 20261017-184005 se-jump-probe-0.55-0.6.jpg: the tab labels at y 0.978, the Class tab
+# ("Paladin") at x 0.46. Live L6's 52 probes in 0.74..0.89 (above the decks: GUESS G10) never hovered a tab.
+TAB_FY = (0.978, 0.968, 0.988)
 TAB_FX_STEP = 0.03
 TAB_FX_SPAN = 0.40
 WALK_STEPS = 12
