@@ -3,9 +3,9 @@
   uv run --project bridge python tools/dev/check_setup.py status            # get_status full + ALERTS, inventory filters
   flock -w 1800 runtime/game.lock uv run --project bridge python tools/dev/check_setup.py call <tool> '<json args>'
   flock -w 1800 runtime/game.lock uv run --project bridge python tools/dev/check_setup.py credits
-      # a launch without --load (it waits out the loading): splash screen, Enter, the main menu settled, then its
-      # Credits button (a real shim click, once more if the menu stays up) -> ui.state screen credits, ending false;
-      # ESC back to the menu. PASS/FAIL lines.
+      # a launch without --load (it waits out the loading): splash screen, Enter (again while the splash stays, up
+      # to 4 presses), the main menu settled, then its Credits button (a real shim click, once more if the menu
+      # stays up) -> ui.state screen credits, ending false; ESC back to the menu. PASS/FAIL lines.
 """
 
 from __future__ import annotations
@@ -51,6 +51,10 @@ CREDITS_BUTTON = (382 / 1920, 820 / 1080)
 MENU_WAIT_S = 180
 MENU_SETTLE_S = 2.0
 CREDITS_WAIT_S = 6.0
+# Live L7: on a fresh launch the first Enter on the splash didn't take (still SplashScreen 20 s later); the runner
+# presses again every few seconds while the splash shows (play.py wait_menu). So: Enter, wait, Enter again, bounded.
+SPLASH_PRESSES = 4
+SPLASH_PRESS_WAIT_S = 8.0
 POLL_S = 0.5
 
 
@@ -94,9 +98,13 @@ def credits_steps(ui, key, click, clock=time.monotonic, sleep=time.sleep, out=pr
     st = wait(lambda x: x.get("screen") in ("splash", "main_menu"), MENU_WAIT_S)
     if st.get("screen") != "main_menu":
         verdict(st.get("screen") == "splash" and st.get("page") == "SplashScreen", "splash screen", st)
-        if st.get("screen") == "splash":
+        for press in range(1, SPLASH_PRESSES + 1):
+            if st.get("screen") != "splash":
+                break
+            if press > 1:
+                out(f"RETRY Enter on the splash (still up {SPLASH_PRESS_WAIT_S:.0f} s after press {press - 1})")
             key("ENTER")  # only on the splash: on the main menu Enter would press Continue
-        st = wait(lambda x: x.get("screen") == "main_menu", 20)
+            st = wait(lambda x: x.get("screen") == "main_menu", SPLASH_PRESS_WAIT_S)
     if st.get("screen") == "main_menu":
         st = settled(MENU_SETTLE_S)
     if st.get("screen") != "main_menu":
