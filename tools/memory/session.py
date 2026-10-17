@@ -80,13 +80,29 @@ MAX_KEEP_PLAYING_BLOCKS = 200    # autonomous mode: cap on "keep playing" stop b
 STOP_GRACE_S = 120
 
 
+def fight_hold() -> dict:
+    """The MCP server's fight hold for this session (bridge server.py _times: a fight still on at WRAP UP moves WRAP
+    UP to its end, bounded), from $BG3AI_FIGHT_HOLD_PATH: {"wrap", "deadline", "held", "cap"}; {} without one."""
+    path = os.environ.get("BG3AI_FIGHT_HOLD_PATH")
+    if not path:
+        return {}
+    try:
+        d = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
 def session_deadline() -> float | None:
-    """Epoch deadline from $BG3AI_SESSION_DEADLINE (set by runner/play.py = autonomous mode), else None."""
+    """Epoch deadline from $BG3AI_SESSION_DEADLINE (set by runner/play.py = autonomous mode), else None; a fight hold
+    moves it later."""
     try:
         v = float(os.environ.get("BG3AI_SESSION_DEADLINE", "") or 0)
     except ValueError:
         return None
-    return v if v > 0 else None
+    if v <= 0:
+        return None
+    return max(v, float(fight_hold().get("deadline") or 0))
 
 
 def wrap_at() -> float | None:
@@ -101,7 +117,8 @@ def wrap_at() -> float | None:
         w = float(os.environ.get("BG3AI_SESSION_WRAPUP", "") or 0)
     except ValueError:
         w = 0.0
-    return w if 0 < w < deadline else deadline - WRAP_WINDOW_S
+    w = w if 0 < w < deadline else deadline - WRAP_WINDOW_S
+    return max(w, float(fight_hold().get("wrap") or 0))
 
 
 def wrap_due(state: dict, now: float) -> bool:
@@ -510,8 +527,8 @@ def _close_and_commit(mem: Path, st: dict, note: str = "", message: str | None =
 def stop_decision(mem: Path, now: float | None = None, in_combat: Callable[[], bool] | None = None) -> dict | None:
     """Decide what the Stop hook does. Returns hook JSON output, or None to allow the stop silently.
 
-    in_combat (the end_session tool; the Stop hook can't tell): asked only for an early refusal, which then says to
-    finish the fight, with no time in it."""
+    in_combat (the end_session tool): asked only for an early refusal, which then says to finish the fight, with no
+    time in it. Without it (the runner's stop check) a held fight hold counts as a fight."""
     now = now or time.time()
     st = M.load_state(mem)
     if not st.get("open"):
@@ -546,14 +563,14 @@ def stop_decision(mem: Path, now: float | None = None, in_combat: Callable[[], b
                                f"keep-playing blocks")
             return {"systemMessage": f"{sid}: early stop allowed after {keep} keep-playing blocks."}
         st["keep_playing_blocks"] = keep + 1
-        if in_combat is not None and in_combat():
+        if in_combat() if in_combat is not None else fight_hold().get("held"):
             # S074: 3 of 4 refusals came mid-fight, each after a HANDOFF edit, and "8/4/2 min of play before WRAP
-            # UP" read as a clock to beat. A fight needs no time: the next session plays on from it.
+            # UP" read as a clock to beat. S078: the session waits for a fight (the fight hold), so no time at all.
             M.save_state(mem, st)
             return {"decision": "block",
-                    "reason": (f"Finish the fight first: you are in combat. Play it out turn by turn (combat_turn); "
-                               f"take the time each turn needs, the fight needn't end this session: the game keeps "
-                               f"running between sessions and the next one plays on from where you are. Don't save "
+                    "reason": (f"Finish the fight first: you are in combat. Play it out turn by turn (combat_turn), "
+                               f"taking the time each turn needs: the session waits for the fight (WRAP UP comes "
+                               f"after it ends), so reloading or leaving it is never about time. Don't save "
                                f"{sid}-end or edit HANDOFF.md during the fight. Your next message is a game tool "
                                f"call, not a summary (nobody reads it; a text-only message ends your turn). Call "
                                f"end_session again only when the ⏱ line says WRAP UP NOW.")}
@@ -568,8 +585,8 @@ def stop_decision(mem: Path, now: float | None = None, in_combat: Callable[[], b
         # gaps): "Keep playing: 8 minutes left" said neither when to call again nor that the minutes include the
         # wrap-up. So: the play minutes, the time to call again, and no HANDOFF/end_session until then.
         again = (" You already wrapped up early. A boss fight, descent or trip needn't fit in the time left: start "
-                 "it; the game keeps running between sessions and the next one plays on from where you are. Never "
-                 "idle reads." if handoff_ready or keep
+                 "it; a fight holds the session until it ends, and the next session plays on from where you are. "
+                 "Never idle reads." if handoff_ready or keep
                  else "")
         return {"decision": "block",
                 "reason": (f"Keep playing: {play} min of play before WRAP UP at {at}. Call end_session again at "

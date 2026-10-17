@@ -182,7 +182,7 @@ def phrases() -> list:
 _PHRASES = _PHRASES_BASE
 
 _LAYOUT_RE = re.compile(r"^(LAYOUT [^;\n]*; )(# wall .*)$")
-_CLOCK_RE = re.compile(r"^⏱ \d\d:\d\d · \d+m (?:of play )?left$")
+_CLOCK_RE = re.compile(r"^⏱ \d\d:\d\d · (?:\d+m (?:of play )?left|in a fight: [^\n]*)$")  # terse / fight line
 _STATIC_PREFIXES = ("ALERTS ", "PARTY: ")
 _HEADERS = ("CHANGES", "EVENTS")
 

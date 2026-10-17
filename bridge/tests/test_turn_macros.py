@@ -2350,6 +2350,9 @@ class ClockStuck(unittest.TestCase):
         server.PROGRESS_PATH = str(self.path)
         server.DEADLINE = time.time() + 40 * 60
         server._clock_shown.update(at=time.time(), stuck=None)
+        p = mock.patch.object(server, "_fight_now", lambda: False)  # this module's fake game may be mid-fight
+        p.start()
+        self.addCleanup(p.stop)
 
     def _restore(self, saved) -> None:
         server.DEADLINE, server.PROGRESS_PATH = saved[0], saved[1]

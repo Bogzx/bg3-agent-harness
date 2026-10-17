@@ -163,12 +163,15 @@ as a `dialogue_line` event (speaker: text). Never wait for, watch or screenshot 
 events. Opening and in-between filler is clicked for you: `talk_to` and `choose_dialogue` results show the
 next real choice directly. Answers are never picked for you.
 
-Every result ends with a `⏱` clock line in runner sessions: a short `⏱ 00:21 · 12m of play left`, and every 10
-minutes (on every result in the last 5) the full `⏱ 00:21 · 12m of play left until WRAP UP at 00:33: keep
-advancing the story: start the next step even if it won't finish; the next session continues from where the party
-stands`. So don't call `session_clock` or guess the time: the line says WRAP UP NOW by itself. The wrap-up has its
-own minutes after those: **play until the line itself says WRAP UP NOW**, however few minutes of play it shows,
-and spend them on the story (the next door, descent, talk or fight), not on loot, inventory or waiting. When the line
+Every result ends with a `⏱` clock line in runner sessions: a short `⏱ 00:21 · 12m of play left`, every 10
+minutes the full `⏱ 00:21 · 12m of play left until WRAP UP at 00:33: keep advancing the story: …`, and on every
+result in the last 10 minutes of play `⏱ 00:25 · WRAP UP at 00:33. Until then: start the next story step now, even
+a fight or a descent: it needn't finish. …`. So don't call `session_clock` or guess the time: the line says WRAP UP
+NOW by itself. The wrap-up has its own minutes after those: **play until the line itself says WRAP UP NOW**, and
+spend the minutes before it on the story (the next door, descent, talk or fight), not on loot, inventory or waiting.
+**A session never ends mid-fight:** in combat the line is `⏱ 00:31 · in a fight: finish it, taking each turn the
+time it needs; the session waits for the fight`, with no time in it. A fight still on at WRAP UP holds the clock:
+WRAP UP comes when the fight ends. So reloading, fleeing or rushing a fight is never about time. When the line
 says **"no story progress for N min: change approach"**, the runner has measured no new journal,
 area, waypoint or level for that long while you were busy: run the `stuck` playbook now.
 
@@ -301,8 +304,8 @@ continue with another party member → another objective. Then keep playing.
   appears. **Don't start wrap-up before that**, and don't save `Sxxx-end` or rewrite HANDOFF.md early: the
   minutes left include the wrap-up time, and autonomous sessions block early stops. Nothing needs to fit
   in the time left: the game keeps running between sessions and the next one starts about a minute later
-  from where the party stands (a fight in progress waits on your turn), so start the boss fight, descent or
-  trip; at WRAP UP finish the round, save and say where the fight stands. Never idle with get_status/wiki
+  from where the party stands, so start the boss fight, descent or trip. A fight on at WRAP UP holds the session
+  until it ends (WRAP UP NOW comes after it). Never idle with get_status/wiki
   reads. Retreating from real danger is play, not wrap-up. Because notes were written during
   play, wrap-up is short: finish the current fight round or conversation → `save_game("Sxxx-end")` →
   rewrite HANDOFF.md (one `memory_write`) → update PLAYTHROUGH.md's `Now:` line → `end_session`. Details
