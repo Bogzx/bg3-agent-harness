@@ -290,12 +290,11 @@ def fights_section(sessions: Path, run: str, sid: str, store: Path) -> tuple[lis
                       key=lambda p: p["t"])   # earlier in time only: the store also holds later sessions
         if prev:
             p = prev[-1]
-            better = (f["outcome"] == "won" and p["outcome"] != "won") or f["downs"] < p["downs"] or \
-                (f["downs"] == p["downs"] and f["hp_lost"] < p["hp_lost"])
-            same = set(list(p["abilities"])[:4]) & set(list(f["abilities"])[:4])
+            verdict = F.retry_verdict(p, f)
+            same = F.same_tactic(p, f)
             out.append(f"  - retry of {p['session']} {p['start']} ({p['outcome']}, hp-{p['hp_lost']}, downs "
-                       f"{p['downs']}): {'better' if better else '**NOT better**'}"
-                       + (f"; SAME TACTIC {sorted(same)}" if len(same) >= 3 and F.bad(f) else "")
+                       f"{p['downs']}): {'**NOT better**' if verdict == 'NOT better' else verdict}"
+                       + (f"; SAME TACTIC {same}" if same else "")
                        + ("" if f["harness"].get("lesson") else "; no lesson shown"))
     if not fs:
         out.append("none")

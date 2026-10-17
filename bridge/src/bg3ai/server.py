@@ -313,7 +313,7 @@ def _own_lessons(rec: dict | None) -> list[str]:
     except OSError:
         return []
     # a retry chain (attempt 1 → reload → attempt 2 …) counts from its first attempt
-    m = re.search(r"T(\d{2}):(\d{2})", str(rec.get("chain_t") or rec.get("t") or ""))
+    m = re.search(r"T(\d{2}):(\d{2})", str(_fights().chain_start(rec) or ""))
     start = int(m.group(1)) * 60 + int(m.group(2)) if m else None
     out: list[str] = []
     for line in text.splitlines():
@@ -358,10 +358,18 @@ def _fight_hint(cs: dict, party: set | None) -> str:
             if not names or names & {e.get("name") for e in rec.get("enemies") or []}:
                 _retry["fight"] = False
                 f.chain_t = rec.get("chain_t") or rec.get("t")
-                facts = (rec.get("key_facts") or [])[:3]
+                facts = (rec.get("key_facts") or [])[:debrief.FACTS_SHOWN]
                 own = _own_lessons_text(rec)
-                return (f"RETRY of the fight that went {rec.get('grade_before') or rec.get('grade')}: "
-                        + ("; ".join(facts) if facts else rec.get("summary", "")) + (f"\n{own}" if own else ""))
+                head = f"RETRY of the fight that went {rec.get('grade_before') or rec.get('grade')}: "
+                lost = tr.informative(names, before=rec) if debrief._graded(rec) == "clean" else None
+                if lost is not None and debrief._graded(lost) != "clean":
+                    # reloaded while it went fine (S061 09:53/09:56 lure practice): the facts that matter are the
+                    # last lost attempt's
+                    head += ("; ".join(facts) + " · " if facts else "") + (
+                        f"the last lost attempt vs them ({debrief._outcome(lost)}, {lost.get('session') or 'earlier'}"
+                        f"{debrief._hhmm(lost)}): ")
+                    facts = (lost.get("key_facts") or [])[:debrief.FACTS_SHOWN]
+                return (head + ("; ".join(facts) if facts else rec.get("summary", "")) + (f"\n{own}" if own else ""))
         warns = tr.first_turn_warnings(cs)
         past = tr.last_time_rec(cs) if warns else None
         own = _own_lessons_text(past) if past else ""

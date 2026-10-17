@@ -173,3 +173,14 @@ repeats 2-3 key facts. setup's LESSONS line is separate and comes from the store
 **act implementation (2026-10-10 19:50):** debrief.py + server.py hooks, as specified above, with act's extra fields
 and the exact grade thresholds in research/fight-debrief.md (`t` is an ISO string; `ours[].saves` is null: events
 don't show saves). LAST ATTEMPT / RETRY / LAST TIME / WARNING lines as in 4.
+
+**v2 records (vis V6, 2026-10-17, from the Act 3 boss retries S059-S065).** One hit = one damage event per type,
+read together: only a hit's main part counts for a damage type (a 1-3 Radiant rider beside 12 Slashing is no
+resistance), and an enemy whose hits did 1 per part often enough (≥ 4 hits, ≥ 1/3) gets `dmg_cap` (Orin's
+Unstoppable) instead of resisted types. New fields: `unseen` {dmg, types} (damage from no visible source: traps,
+surfaces, hidden attackers; a key fact when ≥ 25 % of all taken and more than any enemy did), `deaths` and
+`downed[].ability` (the enemy's cast that round), `kills` (kill order), `left` (surviving hurt enemies: lowest and
+last hp_pct). Summons' downs are left out. v1 records lose their `low` flags and "did little" facts when loaded.
+LAST TIME / RETRY show 4 key facts and cite the latest attempt that went badly (not a reload of a fight going
+clean); YOUR LESSON counts from the chain's first attempt (`chain_t`, else the same session's reloaded attempts
+just before). Fights with no enemy, damage or down are not recorded.

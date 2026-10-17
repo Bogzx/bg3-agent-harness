@@ -79,7 +79,8 @@ class FightServer(Base):
         server.note("y")
         self.g.combat = combat()
         hint = server._fight_hint(self.g.combat, {P1, P2})
-        self.assertIn("LAST TIME vs Goblin (costly, S099): Lae'zel went down first", hint)
+        self.assertIn("LAST TIME vs Goblin (costly, S099 ", hint)
+        self.assertIn("): Lae'zel went down first (r1, by Goblin)", hint)
         self.g.push("damage", {"source": ref(GOB, "Goblin"), "target": ref(P2, "Lae'zel"), "amount": 30,
                                "type": "Slashing"})
         self.g.push("downed", ref(P2, "Lae'zel"))
@@ -155,7 +156,7 @@ class FightServer(Base):
         self.g.push("combat_started", {})
         server.note("z")
         hint = server._fight_hint(combat(), {P1, P2})
-        self.assertIn("LAST TIME vs Goblin, Imp (reloaded, S099)", hint)
+        self.assertIn("LAST TIME vs Goblin, Imp (reloaded, was costly, S099 ", hint)
         self.assertIn("YOUR LESSON from that fight (session log): kill Goblin spawners first, ranged | then focus", hint)
 
     def test_no_own_lesson_no_extra_line(self):
@@ -164,6 +165,29 @@ class FightServer(Base):
         out = self._load("S099-pre")
         self.assertIn("LAST ATTEMPT", out)
         self.assertNotIn("YOUR LESSON", out)
+
+    # vis V6 (S061 09:53/09:56 → S062): attempt 1 lost → reload; attempt 2 reloaded after 2 rounds while it went
+    # fine (lure practice) → its RETRY carried only "unused: …". Now it also cites the last lost attempt's facts.
+    def test_retry_after_a_clean_reload_cites_the_last_lost_attempt(self):
+        self.bad_fight(end=False)
+        server.note("x")
+        self._load("S099-pre")                                   # attempt 1: costly, reloaded
+        self.g.events.clear()                                    # the loaded save's mod starts a new event log
+        self.g.combat = combat()
+        self.g.push("combat_started", {})
+        self.g.push("damage", {"source": ref(P1, "Claude"), "target": ref(GOB, "Goblin"), "amount": 5,
+                               "type": "Slashing"})
+        server.note("y")
+        server._fight_hint(self.g.combat, {P1, P2})              # attempt 2's kickoff (RETRY of attempt 1)
+        out = self._load("S099-pre")                             # reloaded while clean
+        self.g.events.clear()
+        self.assertIn("LAST ATTEMPT: reloaded (was clean)", out)
+        self.g.push("combat_started", {})
+        server.note("z")
+        hint = server._fight_hint(self.g.combat, {P1, P2})
+        self.assertTrue(hint.startswith("RETRY of the fight that went clean: "), hint)
+        self.assertIn("the last lost attempt vs them (reloaded, was costly, S099 ", hint)
+        self.assertIn("): Lae'zel went down first (r1, by Goblin)", hint)
 
     def test_clean_fight_no_inventory_read(self):
         self.g.push("combat_started", {})

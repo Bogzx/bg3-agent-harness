@@ -37,6 +37,7 @@ OUR_TURN_RE = re.compile(r"^TURN e\d+ ([A-Z][\w' -]*?) \(round \d+\)", re.M)
 # the harness's own fight summary: outcome, rounds, enemies ("vs Imp x3, Commander Zhalk +1 more"), our names
 DEBRIEF_RE = re.compile(r"FIGHT DEBRIEF \(([\w ]+), (\d+) rounds?, [^)]*\) vs ([^\n]+)")
 TOOK_RE = re.compile(r"· took ([^\n]+)")
+KILLED_RE = re.compile(r"FIGHT DEBRIEF \([^\n]*\n(?:  [^\n]*\n)*?  killed (\d+)/(\d+)")
 # summons are listed as party ("PARTY e267 Spiritual Weapon L1 HP 20/20 summon of e267", "PARTY + e472 Spiritual
 # Weapon HP 20/20"); their expiry is not a party death
 SUMMON_RE = re.compile(r"PARTY (?:\+ )?\*?e\d+ ([A-Z][\w' -]*?) (?:L\d+ )?HP [^\n]*?summon of|PARTY \+ e\d+ ([A-Z][\w' -]*?) HP")
@@ -230,6 +231,7 @@ def mine(run, sid):
                 enemies[n] += 0  # present, not killed
         after = [c for c in calls if end < c["t"] <= end + RELOAD_AFTER_S]
         db = debrief(text + "\n" + "\n".join(c["res"] for c in after))
+        km = KILLED_RE.search(text + "\n" + "\n".join(c["res"] for c in after))
         if db:  # the harness's own list is complete (compacted results may name no death / no enemy turn)
             rounds = db[1]
             for n in db[2]:
@@ -256,6 +258,7 @@ def mine(run, sid):
             "downs_by": dict(downs), "party_died": party_died, "outcome": outcome,
             "reload_to": (re.search(r"loaded=([^\n ]+)", reload_c["res"]) or [None, None])[1] if reload_c else None,
             "abilities": dict(abilities.most_common(8)), "casts": dict(casts.most_common(8)), "harness": flags,
+            "killed": int(km.group(1)) if km else None,
         })
     # party deaths outside any fight span (falls, traps, walks): logged as incidents with the next reload
     for c in calls:
@@ -279,6 +282,28 @@ def bad(f):
     (bg3ai.debrief.BAD: costly, near_wipe, wipe, reloaded)."""
     return (f["outcome"] in ("reload", "wipe", "death") or f["downs"] > 0 or bool(f["party_died"])
             or f.get("debrief") in ("costly", "near_wipe", "wipe", "reloaded"))
+
+
+def retry_verdict(p, f):
+    """An attempt vs the earlier one at the same group: "better" (won, fewer downs, or as many and less HP lost),
+    "further (killed 2 vs 0)" when it got more enemies killed but cost as much or more (S065 Orin try 2: 2 Reapers
+    and Orin to 21 % with a death; S061 09:37: Gortash killed, then the wipe), else "NOT better"."""
+    if (f["outcome"] == "won" and p["outcome"] != "won") or f["downs"] < p["downs"] or \
+            (f["downs"] == p["downs"] and f["hp_lost"] < p["hp_lost"]):
+        return "better"
+    if f.get("killed") is not None and p.get("killed") is not None and f["killed"] > p["killed"]:
+        return f"further (killed {f['killed']} vs {p['killed']})"
+    return "NOT better"
+
+
+def same_tactic(p, f):
+    """The top abilities both failed attempts share (>= 3 of the top 4), only when the later one made no progress:
+    a class's damage kit repeats in a win too (S062's win shared Divine Smite / Frenzied Strike / Main Hand with
+    S061 09:37's wipe; the plan changed in target order, position and counterspells)."""
+    if retry_verdict(p, f) != "NOT better" or not (bad(p) and bad(f)):
+        return []
+    same = set(list(p["abilities"])[:4]) & set(list(f["abilities"])[:4])
+    return sorted(same) if len(same) >= 3 else []
 
 
 def main():
@@ -318,11 +343,10 @@ def main():
         if not nxt:
             print(f"  {f['session']} {f['start']} reload → no retry seen yet")
             continue
-        better = (nxt["outcome"] == "won") or nxt["downs"] < f["downs"] or (nxt["downs"] == f["downs"] and nxt["hp_lost"] < f["hp_lost"])
-        same = set(list(f["abilities"])[:4]) & set(list(nxt["abilities"])[:4])
+        same = same_tactic(f, nxt)
         print(f"  {f['session']} {f['start']} r{f['rounds']} hp-{f['hp_lost']} downs {f['downs']} {f['outcome']}  →  "
               f"{nxt['session']} {nxt['start']} r{nxt['rounds']} hp-{nxt['hp_lost']} downs {nxt['downs']} {nxt['outcome']}: "
-              f"{'better' if better else 'NOT better'}{'; SAME TACTIC ' + str(sorted(same)) if len(same) >= 3 and bad(nxt) else ''}")
+              f"{retry_verdict(f, nxt)}{'; SAME TACTIC ' + str(same) if same else ''}")
     print("\n# history per enemy group (attempts in order)")
     for key, fs in groups.items():
         if len(fs) < 2 and not any(bad(f) for f in fs):
@@ -332,13 +356,10 @@ def main():
         for f in fs:
             note = ""
             if prev:
-                better = (f["outcome"] == "won" and prev["outcome"] != "won") or \
-                         (f["downs"] < prev["downs"]) or (f["downs"] == prev["downs"] and f["hp_lost"] < prev["hp_lost"])
-                note = "better" if better else "NOT better"
-                if bad(prev) and bad(f):
-                    same = set(list(prev["abilities"])[:4]) & set(list(f["abilities"])[:4])
-                    if len(same) >= 3:
-                        note += f"; REPEATED TACTIC {sorted(same)}"
+                note = retry_verdict(prev, f)
+                same = same_tactic(prev, f)
+                if same:
+                    note += f"; REPEATED TACTIC {same}"
             print(f"  {f['session']} {f['start']} [{f['where'][:28]}] r{f['rounds']} hp-{f['hp_lost']} downs {f['downs']} {f['outcome']}"
                   f"{' → ' + f['reload_to'] if f['reload_to'] else ''}  top={list(f['abilities'])[:4]}  {note}")
             prev = f
