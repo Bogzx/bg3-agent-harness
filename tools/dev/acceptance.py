@@ -44,7 +44,7 @@ HOTBAR_SAVE = "S065-end"
 # finally; a nav kill list entry: cleared in a finally).
 SECTIONS = ["reads", "setup", "act", "vis", "gear", "swap", "rest", "trade", "nav", "combat", "loads", "se"]
 # Estimated seconds per section (the 2026-10-11/13 full runs on the test machine: max seen, + today's new items), for the plan.
-EST_S = {"reads": 60, "setup": 30, "act": 110, "vis": 75, "gear": 60, "swap": 85, "rest": 85, "trade": 135,
+EST_S = {"reads": 60, "setup": 30, "act": 140, "vis": 75, "gear": 60, "swap": 85, "rest": 85, "trade": 135,
          "nav": 195, "combat": 220, "loads": 80, "se": 350}
 # Who fixes a section's FAILs (docs/ORCHESTRATOR.md ownership): tools/dev/live_window.py prints the failures per owner.
 # An item dict may carry its own "owner" to override this.
@@ -2451,7 +2451,49 @@ def sec_vis() -> None:
         item("vis: queue_interrupted event on one line (live mod event path)",
              "PASS" if len(ev) == 1 and "FAILED — acceptance probe" in ev[0] and "done=0" in ev[0] and not stray
              else "FAIL", f"{ev[:1]} stray={stray[:1]}")
+    helm_ladder_probe()
     load_verified(BASE)
+
+
+# A6 #5 (live L3 helm probe 2026-10-17, research/impl-se.md): naut3-r3's character stopped at the helm fire, where every
+# naut3 run's [interact e39, interact e40] climbed e39 on the approach walk and then back down with the Use. The save
+# is another character's ("Marek Dunhallow-"), so the prefix is switched for its load only.
+HELM_SAVE, HELM_PREFIX = "ACC-naut-helm", "Marek Dunhallow-"
+HELM_E39 = "a8e40469-0efa-4077-b125-47058511202e"  # Arterial Mesh ladder, foot y 4.53, climbs 2.9 m up
+HELM_E40 = "73876474-0791-42e6-87ea-bf16db317afe"  # Arterial Mesh ladder from e39's top to the helm deck (y 18)
+HELM_ITEM = "helm ladders: approach on the foot's floor, both climb up (A6, naut3 helm-hint/helm-once)"
+
+
+def helm_ladder_probe() -> None:
+    before = S.SAVE_PREFIX
+    S.SAVE_PREFIX = HELM_PREFIX
+    try:
+        if not any(d.name.endswith("__" + HELM_SAVE) for d in S._my_saves()):
+            item(HELM_ITEM, "SKIP", f"no {HELM_PREFIX}*__{HELM_SAVE} save folder")
+            return
+        if not load_verified(HELM_SAVE):
+            return
+        g = "local G=Mods.BG3AI.BG3AI.Guard local A=Mods.BG3AI.BG3AI.Actions local h=Osi.GetHostCharacter() "
+        ap = lua_server(g + f'local ok,p=pcall(G.approach_point,h,"{HELM_E39}",A.USE_REACH) '
+                        'if not ok then return "refused: "..tostring(G.is_refusal(p) and p.reason or p) end '
+                        'if p.here then return "here" end return string.format("%.2f", p.pos[2])')
+        try:
+            ap_ok = abs(float(ap) - 4.53) < 1.5
+        except ValueError:
+            ap_ok = False
+        steps = [{"tool": "interact", "target": HELM_E39}, {"tool": "interact", "target": HELM_E40}]
+        out, dt = took("do_actions", actions=json.dumps(steps))
+        y = lua_server('local _,y,_=Osi.GetPosition(Osi.GetHostCharacter()) return string.format("%.2f", y)')
+        climbs = re.findall(r"climbed=(\w+)", out)
+        try:
+            top = float(y) >= 17.0
+        except ValueError:
+            top = False
+        item(HELM_ITEM, "PASS" if ap_ok and climbs[:2] == ["up", "up"] and top else "FAIL",
+             f"approach y={ap} (foot 4.53); climbs={climbs} final y={y} in {dt:.1f}s; "
+             + " | ".join(ln for ln in out.splitlines() if re.match(r"\d+\. ", ln))[:300])
+    finally:
+        S.SAVE_PREFIX = before
 
 
 FUNCS["vis"] = sec_vis

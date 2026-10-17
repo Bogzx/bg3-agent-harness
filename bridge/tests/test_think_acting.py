@@ -107,9 +107,39 @@ class PartialShrink(Fight):
         self.g.refuse_if = refuse
         self.g.reach = lambda a: {"reachable": True, "pos": [3.0, 0.0, 4.0] if a["max_m"] > 5 else [2.0, 0.0, 3.0]}
         out = server.combat_turn(json.dumps({"move": self.gob}), end=False)
-        self.assertEqual([round(a["max_m"], 1) for _, a in self.g.ops("nav.reach_toward")], [5.2, 4.3])
+        # 5.2 m that needed 6.1 m: shorter in proportion, 5.2 × 5.2 / 6.1 = 4.4 (A6: was 5.2 − 0.6 − 0.3)
+        self.assertEqual([round(a["max_m"], 1) for _, a in self.g.ops("nav.reach_toward")], [5.2, 4.4])
         self.assertEqual(self.moves()[-1]["pos"], [2.0, 0.0, 3.0])
-        self.assertIn("→ partial 4.3m toward it: done", out)
+        self.assertIn("→ partial 4.4m toward it: done", out)
+
+    def r3(self, second_ok: bool) -> str:
+        # naut3-r3 #56: "move e85: beyond movement (path 5.6 m, 2.1 m left) → partial 1.8m: FAILED — beyond movement
+        # (path 3.1 m, 2.1 m left)": the old retry budget 1.8 − 1.0 − 0.3 = 0.5 was too small to try
+        def refuse(op, a):
+            if op != "act.move_to":
+                return None
+            if a.get("target"):
+                return "destination is beyond remaining movement (path 5.6 m, 2.1 m left)"
+            if a.get("pos") == [1.5, 0.0, 0.5] or not second_ok:
+                return "destination is beyond remaining movement (path 3.1 m, 2.1 m left)"
+            return None
+        self.g.refuse_if = refuse
+        self.g.approach = lambda a: {"reachable": True, "limit": "movement", "walk_m": a.get("budget_m"),
+                                     "pos": [1.5, 0.0, 0.5] if a.get("budget_m", 9) > 1.5 else [0.9, 0.0, 0.3]}
+        return server.combat_turn(json.dumps({"move": self.gob}), end=False)
+
+    def test_r3_a_short_walk_that_bends_retries_in_proportion(self):
+        out = self.r3(second_ok=True)
+        budgets = [round(a["budget_m"], 2) for _, a in self.g.ops("nav.approach") if "budget_m" in a]
+        self.assertEqual(budgets, [1.8, 1.05])  # 1.8 × 1.8 / 3.1
+        self.assertEqual(self.moves()[-1]["pos"], [0.9, 0.0, 0.3])
+        self.assertIn("→ partial 1m toward it: done", out)
+        self.assertNotIn("FAILED", out.split("→", 1)[1])
+
+    def test_r3_no_spot_fits_says_it_stays_put(self):
+        out = self.r3(second_ok=False)
+        self.assertIn("→ no spot toward it fits the 2.1m left (the nearest needs 3.1m of walking): stays put", out)
+        self.assertNotIn("FAILED", out.split("→", 1)[1])
 
     def test_switch_off_keeps_the_one_try(self):
         old, server.PARTIAL_SHRINK_RETRY = server.PARTIAL_SHRINK_RETRY, False
@@ -120,6 +150,21 @@ class PartialShrink(Fight):
         out = server.combat_turn(json.dumps({"move": self.gob}), end=False)
         self.assertEqual(len(self.g.ops("nav.reach_toward")), 1)
         self.assertIn("→ partial 5.2m toward it: FAILED", out)
+
+
+class SpentTurn(Fight):
+    def test_a_plan_on_a_turn_already_spent_says_so(self):
+        # naut3-r2 #54: Tamsin's turn group stayed open after her attack, walk and end request; the same plan again
+        self.g.refuse_if = lambda op, a: ("no movement left" if op == "act.move_to" else
+                                          "not enough action" if op == "act.cast" else None)
+        out = server.combat_turn(json.dumps({"move": self.gob, "action": [{"ability": "Shout_Dash"}]}), end=False)
+        self.assertIn("no movement left", out)
+        self.assertIn("both were spent earlier in this same turn (not a new turn)", out)
+
+    def test_no_note_when_the_action_was_spent_by_this_plan(self):
+        self.g.refuse_if = lambda op, a: "no movement left" if op == "act.move_to" else None
+        out = server.combat_turn(json.dumps({"move": self.gob, "action": [{"ability": "Shout_Dash"}]}), end=False)
+        self.assertNotIn("spent earlier", out)
 
 
 class WhoInAFight(Fight):
@@ -182,6 +227,21 @@ class WalkTowardClip(Fight):
         self.assertEqual([round(a["max_m"], 1) for _, a in self.g.ops("nav.reach_toward")], [9.0, 8.1])
         self.assertEqual([m["pos"] for m in self.moves()], [[9.0, 0.0, 0.0], [8.1, 0.0, 0.0]])
         self.assertIn("cut to the movement left (9m): 8.1m", out)
+        self.assertNotIn("FAILED", out)
+
+    def test_walk_cut_along_the_route_with_nav_approach(self):
+        # vis (A6): the straight-line re-pick can still need more walking than is left; nav.approach cuts the real
+        # route where the spot's own walk fits (the mod checks it)
+        self.g.reach = {"reachable": True, "pos": [9.0, 0.0, 0.0], "straight_m": 9.0, "path_m": 9.6}
+        self.g.approach = {"reachable": True, "pos": [7.9, 0.0, 1.0], "walk_m": 8.7, "limit": "movement"}
+        self.g.refuse_if = lambda op, a: ("destination is beyond remaining movement (path 9.6 m, 9.0 m left)"
+                                          if op == "act.move_to" and a.get("pos") == [9.0, 0.0, 0.0] else None)
+        out = server.walk_toward(direction="E", max_m=9, wait=True)
+        ap = [a for _, a in self.g.ops("nav.approach")]
+        self.assertEqual((ap[-1]["pos"], ap[-1]["budget_m"]), ([9.0, 0.0, 0.0], 8.7))
+        self.assertEqual(len(self.g.ops("nav.reach_toward")), 1)  # only the first pick
+        self.assertEqual(self.moves()[-1]["pos"], [7.9, 0.0, 1.0])
+        self.assertIn("cut to the movement left (9m): 8.7m", out)
         self.assertNotIn("FAILED", out)
 
     def test_switch_off_fails_as_before(self):

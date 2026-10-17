@@ -319,7 +319,11 @@ local function start(kind, char, spec)
     if char then
         local prev = A.active[char]
         if prev and prev.status == "running" then
-            interrupt(prev, "superseded by a new action")
+            -- naut3-r2 15:51:34: Lae'zel's cast, cast and end_turn were each superseded within 0.3 s by a job that
+            -- logged nothing but "done": name the new one, in the result and the log
+            pcall(Ext.Utils.Print, string.format("[BG3AI] job %s (%s) superseded by a new %s for %s",
+                tostring(prev.id), tostring(prev.kind), kind, tostring(char)))
+            interrupt(prev, "superseded by a new action (" .. kind .. ")")
         end
     end
     spec.act = true
@@ -951,6 +955,12 @@ reg("interact", function(args)
     G.not_in_dialogue(char)
     local target = G.guid(args.target)
     local potion = A.combat_potion(char, target)
+    if not potion and target and G.in_combat(char) then
+        -- naut3 ×3: the transponder inside combat_turn was refused "(use the UI)", and each run spent a model turn
+        -- finding click_on. Name the tool: in a fight a player uses an object by clicking it.
+        G.refuse("not available during combat through this action: in a fight an object is used by clicking it,"
+            .. " click_on " .. target .. " (the selected character walks there on its own movement)")
+    end
     if not potion then G.combat_gate(char, "no_combat") end
     if not target then G.refuse("no target given") end
     -- An item in the actor's own bags (potion, scroll, book): use it in place.
@@ -1068,7 +1078,19 @@ reg("interact", function(args)
             end,
         }),
         start = function(job)
+            local y_start = (G.pos(char) or {})[2]
             begin_approach(job, target, plan, A.USE_REACH, function(j)
+                -- The engine's own walk took the ladder already (live L3 helm probe: the walk to e39's foot climbed
+                -- it, and the Use then climbed back down): the walk ended on the far end's floor, so it is climbed.
+                local here, use_y = G.pos(char), j.approach and j.approach.plan.use_y
+                if ladder and j.walk and here and use_y and y_start
+                    and math.abs(here[2] - use_y) >= A.LADDER_DY and math.abs(here[2] - y_start) >= A.LADDER_DY
+                    and (here[2] - use_y) * (here[2] - y_start) > 0 then
+                    local dy = here[2] - y_start
+                    RPC.finish_job(j, "done", with_key({ used = true, climbed = dy < 0 and "down" or "up",
+                        dy = U.round(dy, 1), climbed_on_walk = true }))
+                    return
+                end
                 if key_item then
                     local ok, err = pcall(G.unlock_with_key, target, char, A.USE_REACH + 0.7)
                     if not ok then

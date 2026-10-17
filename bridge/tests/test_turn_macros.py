@@ -1011,10 +1011,24 @@ class CombatTurn(Base):
                                            action={"ability": "Target_MainHandAttack", "target": self.gob}))
         moves = self.g.ops("act.move_to")
         self.assertEqual(moves[-1][1]["pos"], [-4.0, 0.0, 5.0])
-        self.assertIn("→ along the route: done", out)
+        # naut3 15:40:52: the range asked for was reached, so the move line says done, not "FAILED — could not …"
+        self.assertIn(f"move {server.H.get(GOB)}: done", out)
         self.assertIn("now 1.2m from", out)
+        self.assertIn("(along the route; the walk to the spot beside it stopped 5.7m away)", out)
+        self.assertNotIn("could not get closer", out)
         self.assertNotIn("melee is out of reach", out)
         self.assertEqual(self.casts(), ["Target_MainHandAttack"])
+
+    def test_route_walk_that_stays_out_of_range_keeps_the_first_failure(self):
+        self.g.combat = combat(gob_dist=5.7)
+        self.g.approach = {"reachable": True, "pos": [-4.0, 0.0, 5.0], "walk_m": 4.5, "need_m": 4.5,
+                           "limit": "in_range", "movement_left": 9.0}
+        self.g.refuse_if = lambda op, a: ("could not get closer to the destination — dist=5.7"
+                                          if op == "act.move_to" and a.get("target") else None)
+        self._walk_to(3.5)
+        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5}))
+        self.assertIn("FAILED — could not get closer to the destination", out)
+        self.assertIn("→ along the route: done", out)
 
     def test_melee_short_but_within_reach_pad_still_attacks(self):
         # 1.5 m wanted, 2.2 m centre to centre: inside the edge-to-edge reach, the game decides

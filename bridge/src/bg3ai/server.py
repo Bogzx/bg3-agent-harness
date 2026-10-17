@@ -2374,8 +2374,17 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
     if left is not None and left >= 1.0 and over is not None and res.get("straight_m") is not None:
         # ACT-P3 (naut2 run 1 19:59:37): walk_toward(max_m=9) in a fight → "FAILED — beyond movement (path 9.6 m,
         # 9.0 m left)", the same call again with max_m 8.5. Cut the walk to the movement left, as combat_turn does.
+        # Along the real route to the spot, cut where its own walk fits the movement left (nav.approach checks the
+        # cut spot's path); the straight-line samples below are the fallback for a mod without nav.approach (vis,
+        # A6: a straight pick can still need more walking than is left).
         budget = float(res["straight_m"]) - over - 0.3
-        r2 = game.try_rpc("nav.reach_toward", {**args, "max_m": budget, "loose": True}) if budget >= 1.0 else None
+        r2 = game.try_rpc("nav.approach", {"char": args["char"], "pos": res["pos"], "within": 0.5,
+                                            "budget_m": float(left) - 0.3})
+        if isinstance(r2, dict) and ("pos" in r2 or "reachable" in r2):
+            ok = r2.get("reachable") and r2.get("pos") and float(r2.get("walk_m") or 0) >= 1.0
+            r2 = dict(r2, straight_m=r2.get("walk_m")) if ok else None
+        else:
+            r2 = game.try_rpc("nav.reach_toward", {**args, "max_m": budget, "loose": True}) if budget >= 1.0 else None
         if isinstance(r2, dict) and r2.get("reachable") and r2.get("pos"):
             body = _act("walk_toward", "act.move_to", {"char": args["char"], "pos": r2["pos"], "run": run},
                         wait=wait, note=note)
@@ -6757,7 +6766,8 @@ def _turn_move_objective(p: turn.TurnPlan) -> None:
 
 # A partial walk whose sampled spot still needs more than the movement left (naut2 run 1: "beyond movement (path
 # 9.7 m, 9.0 m left) → partial 8.7m: FAILED — beyond movement (path 9.7 m …)": the 8.7 m budget is straight, the
-# route bends) tries once more, shorter by the overshoot. False reverts.
+# route bends) tries once more, shorter in proportion to how much the walk bends (budget × budget / path: naut3-r3
+# #56, 1.8 m that needed 3.1 m, the old "budget − overshoot" left 0.5 m and no retry). False reverts.
 PARTIAL_SHRINK_RETRY = True
 
 
@@ -6765,6 +6775,12 @@ def _path_over(text: str) -> float | None:
     """'beyond movement (path 9.7 m, 9.0 m left)' → 0.7 (how much the route needs over the movement left)."""
     m = re.search(r"path ([\d.]+) m, ([\d.]+) m left", text or "")
     return float(m.group(1)) - float(m.group(2)) if m else None
+
+
+def _path_need(text: str) -> float | None:
+    """'beyond movement (path 9.7 m, 9.0 m left)' → 9.7 (the walk the refused spot needs)."""
+    m = re.search(r"path ([\d.]+) m, [\d.]+ m left", text or "")
+    return float(m.group(1)) if m else None
 
 
 def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, after: dict,
@@ -6912,9 +6928,9 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
                 x, y, z = r["pos"]
                 rep2, text2 = _run_one(watcher, who, actq.Step("move_to", {"x": x, "y": y, "z": z}))
                 _after(rep2, after)
-                over = _path_over(text2) if not rep2.done and turn.move_too_long(text2) else None
-                if PARTIAL_SHRINK_RETRY and over is not None and budget - over - 0.3 >= 1.0:
-                    budget = budget - over - 0.3
+                need = _path_need(text2) if not rep2.done and turn.move_too_long(text2) else None
+                if PARTIAL_SHRINK_RETRY and need and budget * budget / need >= 1.0:
+                    budget = budget * budget / need
                     r3 = (_approach(who, tu, mv, mv.within if mv.within is not None else turn.MELEE_M, budget)
                           if ap is not None else
                           game.try_rpc("nav.reach_toward", {"char": who, **({"target": tu} if tu else {"pos": mv.pos}),
@@ -6924,6 +6940,13 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
                         rep2, text2 = _run_one(watcher, who, actq.Step("move_to", {"x": x, "y": y, "z": z}))
                         _after(rep2, after)
                 res2 = text2.split(': ', 1)[-1]
+                if PARTIAL_SHRINK_RETRY and not rep2.done and turn.move_too_long(text2):
+                    # no spot toward it fits the movement left (the walk bends round something right here): the
+                    # member stays put, which is no failure of the plan (naut3-r3 #56 ended "FAILED — beyond movement")
+                    info["short"] = "movement"
+                    lines.append(f"move {what}: {text} → no spot toward it fits the {render.num(left)}m left (the"
+                                 f" nearest needs {render.num(_path_need(text2) or 0)}m of walking): stays put")
+                    return "none"
                 if rep2.done and tu:
                     d2 = dist_now()
                     res2 = re.sub(r"\s*dist=[\d.]+", "", res2).rstrip(" —")
@@ -6957,6 +6980,14 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
                 if d2 is not None:
                     res2 += f", now {render.num(d2)}m from {what}" + short_note(d2, ap2)
                 res2 += out_of_melee(d2)
+                want = mv.within if mv.within is not None else turn.MELEE_M
+                if d2 is not None and d2 <= want + 0.3:
+                    # naut3 15:40:52: "move e71: FAILED — could not get closer … → along the route: done …, now 1.5m
+                    # from e71": the range asked for was reached, so the move is done; the first try is a detail
+                    m = re.search(r"dist=([\d.]+)", text)
+                    lines.append(f"move {what}: {res2} (along the route; the walk to the spot beside it stopped"
+                                 + (f" {m.group(1)}m away)" if m else " short)"))
+                    return "ok"
                 lines.append(f"move {what}: {text} → along the route: {res2}")
                 return "ok"
             if rep2.stop_kind not in (None, "failed"):
@@ -7014,6 +7045,19 @@ def _slot_skip(alt: turn.Alt, who: str, info: dict | None) -> str:
     d = mo.get("dist")
     return (f"{_label(mo['target'])} is out of range for melee after the move"
             + (f" ({render.num(d)}m)" if d is not None else ""))
+
+
+def _spent_note(char: str, lines: list) -> str:
+    """naut3-r2 #54: Tamsin's turn group stayed open after her attack, walk and end request; the same {move o3,
+    Dash} plan was sent again and read 'move: FAILED — no movement left / action: Shout_Dash: FAILED — not enough
+    action' as if a new turn had failed. When the move found no movement and the action's first try found no action,
+    both were spent before this plan: say so."""
+    moved = any(re.match(r"move .*?: (FAILED — )?no movement left", ln) for ln in lines)
+    acted = any(re.match(r"action: [^:]+: FAILED — not enough action", ln) for ln in lines)
+    if not (moved and acted):
+        return ""
+    return (f"{_label(char)} had no movement and no action left when this plan started: both were spent earlier in "
+            "this same turn (not a new turn). What is left: a bonus action, or end_turn.")
 
 
 def _hp_held(watcher: actq.Watcher, lines: list) -> bool:
@@ -8091,6 +8135,9 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
         if _turn_auto_bonus(char, watcher, lines, after) == "stop" or _hp_held(watcher, lines):
             stopped = True  # M6: a drop during the automatic bonus: "decide the rest", not an end_turn
     lines.extend(watcher.answered)
+    spent = _spent_note(char, lines)
+    if spent:
+        lines.append(spent)
     if end and not stopped:
         fatal, why = _turn_check(char, None)
         if fatal:

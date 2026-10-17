@@ -1384,6 +1384,7 @@ end
 -- Returns {reachable, pos, walk_m, need_m?, route_m, end_m, limit} where limit
 -- says why pos is where it is: "in_range" | "movement" | "hazard" | "route_end";
 -- or {reachable=false, reason}.
+N.APPROACH_FIT_TRIES = 2
 function N.approach(charUuid, target, tpos, within, budget, avoid)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
@@ -1407,6 +1408,20 @@ function N.approach(charUuid, target, tpos, within, budget, avoid)
         end
     end
     local p = N.pointAlong(pts, walk)
+    -- naut3-r3 #56: the spot 1.8 m along the route to an imp needed a 3.1 m walk of its own (2.1 m left), so the
+    -- move was refused "beyond movement" and the turn's shrink retry had too little left to try. A spot cut by the
+    -- movement left is checked with its own path and pulled back along the route until that path fits.
+    if limit == "movement" and walk > 0 then
+        for i = 1, N.APPROACH_FIT_TRIES + 1 do
+            local rp = N.path(charUuid, U.vec(p, 2))
+            local len = rp and rp.reachable == true and not rp.partial and rp.length_m
+            if not len or len <= budget + 0.05 then break end
+            walk = i <= N.APPROACH_FIT_TRIES and walk * budget / len - 0.1 or 0 -- no fit: no spot toward it
+            if walk < 0.5 then walk = 0 end
+            p = N.pointAlong(pts, walk)
+            if walk == 0 then break end
+        end
+    end
     out.pos, out.walk_m, out.limit = U.vec(p, 2), round(walk, 1), limit
     out.end_m = round(U.dist(p, tpos), 1)
     return out
