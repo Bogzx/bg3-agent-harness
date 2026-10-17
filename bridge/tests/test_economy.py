@@ -11,12 +11,14 @@ import tempfile
 import time
 import unittest
 from typing import Any
+from unittest import mock
 
 _RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit
 os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
 from bg3ai import economy, render, server  # noqa: E402
 from bg3ai.game import JobResult  # noqa: E402
+from bg3ai.hotbar import HotbarCastResult
 from bg3ai.render import Handles  # noqa: E402
 
 CLAUDE = "11111111-0000-0000-0000-000000000001"
@@ -1238,9 +1240,10 @@ class ScrollUse(unittest.TestCase):
                         "11111111-0000-0000-0000-0000000000a3")
 
     def _run(self, who, ability, target="", owner=None, click_ok=True, name="Scroll of Invisibility",
-             res="use_ability: done — used", screen=None, rpc=None, targets=""):
-        from bg3ai import clicker
+             res="use_ability: done — used", screen=None, rpc=None, targets="", pos=None, ground=None):
+        from bg3ai import clicker, twostep
         calls, clicks = [], []
+        self.grounds = []
         scroll, sh = self.SCROLL, self.SH
         own = owner or sh
         self.rpcs = []
@@ -1272,8 +1275,13 @@ class ScrollUse(unittest.TestCase):
             clicks.append(uuid)
             return clicker.ClickResult(ok=click_ok, reason=None if click_ok else "hover_miss")
 
+        def fake_ground(game, inp, caster, spell, p, should_stop=None):
+            self.grounds.append((caster, spell, list(p)))
+            return ground or HotbarCastResult(True, picked=1)
+
         saved = (server.game, server._act, server._ability_id, server.H, server._inp, clicker.click_entity,
-                 server._who)
+                 server._who, twostep.ground_click)
+        twostep.ground_click = fake_ground
         server.H = Handles()
         for u, n in ((sh, "Shadowheart"), (self.GALE, "Gale"), (scroll, "Scroll of Invisibility")):
             server.H.get(u, n)
@@ -1282,13 +1290,14 @@ class ScrollUse(unittest.TestCase):
         clicker.click_entity = fake_click
         server._who = lambda w: {"Shadowheart": sh, "Gale": self.GALE}.get(w, w)
         try:
+            x, y, z = pos or (None, None, None)
             out = server.use_ability(ability, target=server.H.get(target) if target else "", who=who,
-                                     targets=targets)
+                                     targets=targets, x=x, y=y, z=z)
         except server.GameError as e:
             out = "ERR " + str(e)
         finally:
             (server.game, server._act, server._ability_id, server.H, server._inp, clicker.click_entity,
-             server._who) = saved
+             server._who, twostep.ground_click) = saved
         return out, calls, clicks
 
     def test_scroll_read_and_target_clicked(self):
@@ -1365,6 +1374,65 @@ class ScrollUse(unittest.TestCase):
                                    name="Scroll of Scorching Ray", rpc={"ui.cast_state": cast_state})
         self.assertEqual(clicks, [self.GALE] * 3)
         self.assertIn("(3 picks)", out.split("\n")[0])
+
+    def test_cone_scroll_in_combat_is_aimed_at_the_point(self):
+        # S066 #66 r3 Wyll: "Scroll of Cone of Cold" x,y,z 56,-53,996.5 → "cast on e2 Wyll by a click" (400 g and
+        # the action, no damage): the spell in hand is clicked on the ground at the point, never on the reader
+        out, _, clicks = self._run(
+            "Shadowheart", "Scroll of Cone of Cold", name="Scroll of Cone of Cold", pos=(56.0, -53.0, 996.5),
+            res="use_ability: done — combat_scroll",
+            rpc={"act.scroll_settle": lambda a: {"read": True, "charged": []}})
+        head = out.split("\n")[0]
+        self.assertEqual(clicks, [])
+        self.assertEqual(self.grounds, [(self.SH, "Scroll of Cone of Cold", [56.0, -53.0, 996.5])])
+        self.assertIn("read in combat (Scroll of Cone of Cold read, aimed at the ground at (56,-53,996.5) by a "
+                      "click); its action is spent", head)
+        self.assertNotIn("cast on", head)
+
+    def test_misty_step_scroll_lands_and_says_where(self):
+        # S066 #143: use_ability(Karlach, "Scroll of Misty Step", x=24,y=-43,z=1005) → "cast on e1 Karlach by a
+        # click", Karlach still @(17.8,-42.8): now the landing is clicked and the result says she moved
+        where = iter([[17.8, -42.8, 1004.8], [17.8, -42.8, 1004.8], [23.9, -43.0, 1005.0]])
+        last = [None]
+
+        def status(a):
+            last[0] = next(where, last[0])
+            return {"party": [{"uuid": self.SH, "pos": last[0]}]}
+        with mock.patch.object(server.time, "sleep"):
+            out, _, clicks = self._run("Shadowheart", "Scroll of Misty Step", name="Scroll of Misty Step",
+                                       pos=(24.0, -43.0, 1005.0), rpc={"state.status": status})
+        head = out.split("\n")[0]
+        self.assertEqual(clicks, [])
+        self.assertIn("aimed at the ground at (24,-43,1005) by a click); Shadowheart moved 6 m, now (23.9,-43,1005)",
+                      head)
+        self.assertNotIn("act.scroll_settle", [op for op, _ in self.rpcs])
+
+    def test_misty_step_scroll_that_did_not_move_says_so(self):
+        saved, server.TELEPORT_WAIT_S = server.TELEPORT_WAIT_S, 0.0
+        self.addCleanup(setattr, server, "TELEPORT_WAIT_S", saved)
+        out, _, _ = self._run("Shadowheart", "Scroll of Misty Step", name="Scroll of Misty Step",
+                              pos=(24.0, -43.0, 1005.0),
+                              rpc={"state.status": lambda a: {"party": [{"uuid": self.SH, "pos": [17.8, -42.8, 1004.8]}]}})
+        self.assertIn("Shadowheart did NOT move (still (17.8,-42.8,1004.8))", out.split("\n")[0])
+
+    def test_ground_not_taken_spends_nothing(self):
+        saved, server.SCROLL_SETTLE_S = server.SCROLL_SETTLE_S, 0.0
+        self.addCleanup(setattr, server, "SCROLL_SETTLE_S", saved)
+        miss = HotbarCastResult(False, reason="ground_refused", stage="ground",
+                                detail={"why": "the game shows a CastWarning cursor there", "cancelled": "escape"})
+        out, _, clicks = self._run("Shadowheart", "Scroll of Cone of Cold", name="Scroll of Cone of Cold",
+                                   pos=(56.0, -53.0, 996.5), ground=miss, res="use_ability: done — combat_scroll",
+                                   rpc={"act.scroll_settle": lambda a: {"read": False}})
+        head = out.split("\n")[0]
+        self.assertEqual(clicks, [])
+        self.assertIn("the ground at (56,-53,996.5) was not taken (the game shows a CastWarning cursor there); the "
+                      "spell was put back, nothing cast", head)
+        self.assertIn("the scroll was not used up (no target taken?): no action spent", head)
+
+    def test_a_target_wins_over_a_point(self):
+        _, _, clicks = self._run("Shadowheart", "Scroll of Fear", target=self.GALE, name="Scroll of Fear",
+                                 pos=(1.0, 2.0, 3.0))
+        self.assertEqual((clicks, self.grounds), ([self.GALE], []))
 
     def test_plan_fits_counts_a_carried_scroll(self):
         # combat_turn's who-inference (ACT-2): a plan naming "Scroll of Fear" fits the member who carries it

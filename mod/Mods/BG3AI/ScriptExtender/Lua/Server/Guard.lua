@@ -1530,6 +1530,22 @@ function G.oath_risk(char, st, flags, target)
         temp and "Temporarily Hostile" or "neutral", hp))
 end
 
+-- The first status on char that stops its orders: {name, type}, or nil. S067 #43/#54: Wyll's Eldritch Blast, ordered
+-- while Stunned, went to the game and never started (3 s each): an INCAPACITATED status (Stunned, Paralysed, Asleep)
+-- leaves no action to take. S066 #100/#130, S067 #32: Karlach's Rage, the first order of her turn while Fearful (Orin's
+-- Piercing Growl: FEARED, StatusType FEAR), never started either (3 of 3), though her move and attacks after it did.
+G.BLOCKING_STATUS_TYPES = { INCAPACITATED = true, FEAR = true }
+function G.blocking_status(char)
+    local V = BG3AI.Visibility
+    local e = V and V.statuses and G.entity(char)
+    if not e then return nil end
+    for _, s in ipairs(V.statuses(e) or {}) do
+        local ok, typ = pcall(function() return tostring(Ext.Stats.Get(s.id).StatusType) end)
+        if ok and G.BLOCKING_STATUS_TYPES[typ] then return { name = s.name, type = typ } end
+    end
+    return nil
+end
+
 function G.check_cast(char, spell, target, pos, upcast, force)
     if type(spell) ~= "string" or spell == "" then G.refuse("no action given") end
     local st = Ext.Stats.Get(spell)
@@ -1552,6 +1568,10 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     pcall(function() for _, f in ipairs(st.SpellFlags) do flags[f] = true end end)
     if flags.HasVerbalComponent and b(G.q("HasActiveStatus", char, "SILENCED")) then
         G.refuse("cannot cast spells with a verbal component while silenced")
+    end
+    local blk = G.in_combat(char) and G.blocking_status(char)
+    if blk and blk.type == "INCAPACITATED" then
+        G.refuse("cannot act while " .. tostring(blk.name) .. " (it takes the whole turn): end its turn")
     end
 
     -- Resources.

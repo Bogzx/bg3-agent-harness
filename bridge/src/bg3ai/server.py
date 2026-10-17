@@ -2893,10 +2893,12 @@ def _scroll_settle(char: str) -> str:
     return "; its action is spent" + (f" (charged by the guard: {paid})" if paid else "")
 
 
-def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = None) -> str:
+def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = None,
+                pos: list[float] | None = None) -> str:
     """Read a scroll as a player does: use it from the bags (the game then waits for a target), then click the
-    target (default: the reader), once per pick for a multi-pick spell (`targets` in click order). In combat (A7)
-    it is read on the reader's turn for an action, like casting; the mod refuses it off-turn or with no action left.
+    target (default: the reader), once per pick for a multi-pick spell (`targets` in click order), or with `pos` and
+    no target the ground there (a point/cone scroll). In combat (A7) it is read on the reader's turn for an action,
+    like casting; the mod refuses it off-turn or with no action left.
     A scroll on another member's bags is named, not taken."""
     name = str(it.get("name"))
     if it.get("owner") and it.get("owner") != char:
@@ -2925,11 +2927,16 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
         head += (f" ({name} opened for reading: it has no target; press_key ESCAPE closes the page. To put it on a "
                  f"pedestal or in a slot: insert_item(item, into))")
         return head + ("\n" + rest if rest else "")
-    tgts = [tgt] + [_uuid(t) for t in targets or []]
-    cr = click_entity(game, inp, tgt, "L")
     head, _, rest = out.partition("\n")
     in_combat = "combat_scroll" in head
     head = head.replace(" — combat_scroll", " — read in combat").replace("combat_scroll", "read in combat")
+    if pos is not None and not target:
+        head += _scroll_ground(inp, name, char, pos)
+        if in_combat:
+            head += _scroll_settle(char)
+        return head + ("\n" + rest if rest else "")
+    tgts = [tgt] + [_uuid(t) for t in targets or []]
+    cr = click_entity(game, inp, tgt, "L")
     if cr.ok and _two_step_scroll(name) and tgt != char:
         head += _revive_spot(inp, name, char, tgt)
     elif cr.ok:
@@ -2940,6 +2947,44 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
     if in_combat and cr.ok:
         head += _scroll_settle(char)
     return head + ("\n" + rest if rest else "")
+
+
+_TELEPORT_SCROLL = re.compile(r"misty step|thunder step|far step", re.IGNORECASE)
+TELEPORT_WAIT_S = 2.0   # a teleport scroll: the reader lands this long after the ground click at most
+
+
+def _scroll_ground(inp, name: str, char: str, pos: list[float]) -> str:
+    """S066 #66/#130/#143: Scroll of Cone of Cold and Scroll of Misty Step came back "cast on <the reader> by a
+    click" (the x,y,z dropped; Karlach never moved, a 400 g scroll and the action for nothing). The spell in hand
+    is aimed at the ground at `pos` as a player clicks it (twostep.ground_click); a teleport says where the reader
+    is after it."""
+    def at() -> list[float] | None:
+        st = game.try_rpc("state.status") or {}
+        p = next((r.get("pos") for r in st.get("party") or [] if isinstance(r, dict) and r.get("uuid") == char), None)
+        return list(p[:3]) if isinstance(p, (list, tuple)) and len(p) >= 3 else None
+
+    tele = bool(_TELEPORT_SCROLL.search(name))
+    p0 = at() if tele else None
+    res = twostep.ground_click(game, inp, char, name, pos, should_stop=_click_stop())
+    where = render.pos(pos)
+    if not res.ok:
+        why = res.detail.get("why") or res.reason
+        back = ("the spell left the hand without a cast" if res.reason == "dropped"
+                else "the spell was put back" if res.detail.get("cancelled") or res.stage == "arm"
+                else "the spell may still be in hand (press_key ESCAPE)")
+        return f"; {name}: the ground at {where} was not taken ({why}); {back}, nothing cast"
+    out = f" ({name} read, aimed at the ground at {where} by a click)"
+    if not tele or p0 is None:
+        return out
+    end, p1 = time.monotonic() + TELEPORT_WAIT_S, p0
+    while time.monotonic() < end:
+        p1 = at() or p0
+        if sum((a - b) ** 2 for a, b in zip(p0, p1)) ** 0.5 > 1.0:
+            break
+        time.sleep(0.2)
+    d = sum((a - b) ** 2 for a, b in zip(p0, p1)) ** 0.5
+    return out + (f"; {_name_of(char)} moved {d:.0f} m, now {render.pos([round(v, 1) for v in p1])}" if d > 1.0
+                  else f"; {_name_of(char)} did NOT move (still {render.pos([round(v, 1) for v in p0])})")
 
 
 REVIVE_WAIT_S = 4.0   # Revivify: the body stands up this long after the second click at most
@@ -3990,7 +4035,7 @@ def _reaction_index(r: dict | None, name: str) -> int | str:
 def use_ability(ability: str, target: str = "", x: float | None = None, y: float | None = None,
                 z: float | None = None, who: str | None = None, upcast: int = 0, targets: str | list[str] = "",
                 wait: bool = True, force: bool = False) -> str:
-    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: a list (or comma list) for multi-target spells, in click order (the same id twice = 2 darts/beams); a cast may use only the first 2 (the result then says \"cast on the first 2 only\"). Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells: Dimension Door takes x,y,z = the landing (target = an ally beside you to bring, else you go alone); the Revivify spell takes target = the body; while their route is off they are refused: read a Scroll of Revivify instead. A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): it is read and its target clicked (default: who; targets = one click per beam/pick, e.g. Scorching Ray); in combat too, on the reader's turn for an action, like casting. A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
+    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: a list (or comma list) for multi-target spells, in click order (the same id twice = 2 darts/beams; all on one target = cast at it, which takes every beam); a cast may use only the first 2 (the result then says \"cast on the first 2 only\"). Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells: Dimension Door takes x,y,z = the landing (target = an ally beside you to bring, else you go alone); the Revivify spell takes target = the body; while their route is off they are refused: read a Scroll of Revivify instead. A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): it is read and its target clicked (default: who; targets = one click per beam/pick, e.g. Scorching Ray; x,y,z = the ground for a point/cone scroll: Cone of Cold, Misty Step, Fireball); in combat too, on the reader's turn for an action, like casting. A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
     char = _who(who)
     try:
         aid = _ability_id(char, ability)
@@ -4008,7 +4053,8 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
         if scroll is None:
             raise
         more = (targets.split(",") if isinstance(targets, str) else [str(t) for t in targets]) if targets else []
-        return _use_scroll(char, scroll, target, [t.strip() for t in more if t.strip()])
+        return _use_scroll(char, scroll, target, [t.strip() for t in more if t.strip()],
+                           pos=[x, y, z] if None not in (x, y, z) else None)
     spell, note = _own_attack(char, aid)
     tail = ""
     args: dict[str, Any] = {"char": char, "spell": spell}
@@ -4036,7 +4082,10 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
         # ACT-8: Bless on 3, Magic Missile darts, Scorching Ray / Eldritch Blast beams: the player's route (hotbar
         # cell, one click per target, the tick); the mod checks the cast first and watches it like an Osiris cast
         return _hotbar_use(char, spell, picks, args, note)
-    if len(picks) > 2:
+    if _one_pick(picks):
+        args.pop("targets", None)
+        args["target"], tail = picks[0], _one_pick(picks)
+    elif len(picks) > 2:
         # S018/S025/S029: Bless on 3 was refused ("more than two targets"), losing the whole action (the game's
         # cast call takes 2 targets). Cast it on the first two and say who was left out.
         keep = 2 - (1 if "target" in args else 0)
@@ -4048,6 +4097,17 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
     post = (lambda r: _opener_combat(args["target"], r.result) if r.status == "done" else "") if opener else None
     out = _act("use_ability", "act.cast", args, wait_s=30, wait=wait, post=post)
     return _with_tail(out, tail, note)
+
+
+def _one_pick(picks: list[str]) -> str:
+    """S066 #59: Eldritch Blast targets=[Orin]x3 went to the 2-target cast as UseSpell(Orin, Orin): "the game never
+    started it" (Wyll's boss-round action lost), while one target takes every beam (S065 11:52: 3 Force hits on
+    Orin). When the first pick repeats, the cast goes at it alone: what to say then ('' = picks as given)."""
+    if len(picks) < 2 or picks[0] != picks[1]:
+        return ""
+    rest = [u for u in dict.fromkeys(picks) if u != picks[0]]
+    return (f"targets: {picks.count(picks[0])} picks on {_label(picks[0])}: cast at it alone (one target takes "
+            f"every beam/dart)" + (f"; left out: {', '.join(_label(u) for u in rest)}" if rest else ""))
 
 
 def _two_only(picks: list[str], why: str) -> str:
@@ -4097,9 +4157,9 @@ def _hotbar_use(char: str, spell: str, picks: list[str], args: dict, note: str) 
                           "not cast again by Osiris (the cast may have started: check the NOW line / CHANGES)")
             return None
         two = {k: v for k, v in args.items() if k not in ("target", "targets")}
-        two.update(target=picks[0], targets=picks[1:2])
+        two.update(target=picks[0], **({} if _one_pick(picks) else {"targets": picks[1:2]}))
         why = res.detail.get("why") or res.reason
-        hb["tail"] = _two_only(picks, f"the hotbar route failed at {res.stage}: {why}")
+        hb["tail"] = _one_pick(picks) or _two_only(picks, f"the hotbar route failed at {res.stage}: {why}")
         return two, ""
 
     out = _act("use_ability", "act.cast", hb_args, wait_s=30, wait=True, on_start=clicks, redo=redo)
@@ -4242,7 +4302,14 @@ def _opener_combat(tu: str, res: Any) -> str:
 
 
 END_IGNORED = "the game ignored the end-turn order"  # Actions.lua A.END_IGNORED
-END_HUD_WAIT_S = 3.0
+END_LUA_IGNORED_S = 3.0   # Actions.lua A.END_IGNORED_MS: the Lua job hands back after this
+# S066 19:21 #68, S067 19:42 #46 and 19:46 #65: the last member of a shared turn group (the others' ends requested)
+# ended 7-10.4 s after its EndTurn (the whole group's end-of-turn work: a Contagion save and the like), past the Lua
+# 3 s and this wait's old 3 s, so "the HUD's End Turn didn't end it either" (false failures: the next combat_turn was
+# refused, then end_turn found nothing to end). A press the game takes ends the turn in ~0.4 s; a slower end is the
+# game's own work, so it is watched, not failed.
+END_HUD_WAIT_S = 9.0
+END_HUD_QUICK_S = 1.0   # ended this soon after the press: the press did it
 # Proposal "ignored EndTurn -> HUD at once" (naut runs 1/3, ~12 s/run): in a shared turn group, after a companion's
 # end was requested, every Osiris EndTurn on the avatar was ignored (3 s Lua timeout, then the HUD ended it in ~0.4 s).
 # On: when another party member of the current group has already ended, press the HUD's End Turn at once (the Osiris
@@ -4277,12 +4344,16 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
             game.rpc("ui.command", {"widget": "*", "command": "EndTurn"}, context="client")
     except GameError as e:
         return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn failed too: {e}", r.events, r.elapsed_ms)
-    deadline = time.monotonic() + END_HUD_WAIT_S
+    pressed = time.monotonic()
+    deadline = pressed + END_HUD_WAIT_S
     while time.monotonic() < deadline:
         cs = game.try_rpc("state.combat") or {}
         if not cs.get("active") or char not in turn.acting(cs):
-            return JobResult("done", {"ended": True, "via": "the HUD's End Turn (the game ignored the order)"},
-                             None, r.events, r.elapsed_ms)
+            late = time.monotonic() - pressed
+            via = ("the HUD's End Turn (the game ignored the order)" if late <= END_HUD_QUICK_S else
+                   f"the game, slowly ({late + END_LUA_IGNORED_S:.0f} s after the order: end-of-turn effects; the HUD's "
+                   "End Turn was pressed too)")
+            return JobResult("done", {"ended": True, "via": via}, None, r.events, r.elapsed_ms)
         time.sleep(0.2)
     return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn didn't end it either (a cutscene or line "
                      "may be holding the turn: wait_for, then end_turn again)", r.events, r.elapsed_ms)
@@ -7984,7 +8055,7 @@ CHAIN_BUDGET_S = 80.0  # a list of member plans: total time the later members ma
 # idle. The end runs as the character's queue step (RUNNING line, queue_done / queue_interrupted event); anything
 # sent for the party meanwhile first waits for it (END_BG_HOLD_S). BG3AI_END_ASYNC=0 reverts (blocking end).
 END_ASYNC = os.environ.get("BG3AI_END_ASYNC", "1") != "0"
-END_BG_HOLD_S = 12.0  # Lua fails an ignored end at 3 s, the HUD fallback takes ≤ ~8 s more (select + press + check)
+END_BG_HOLD_S = 16.0  # Lua fails an ignored end at 3 s, the HUD fallback takes ≤ ~10 s more (select + press + 9 s watch)
 _bg_ends: dict[str, float] = {}  # char -> when its background end started
 TURN_EXTEND_S = 30.0  # the first (or only) plan: extra wait past wait_turn while enemy turns still progress
 # How often a wait for a party turn (combat_turn sent ahead, end_turn wait) reads state.combat (~10-20 ms): the turn's

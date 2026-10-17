@@ -271,6 +271,68 @@ class TwoStepCast(unittest.TestCase):
         self.assertFalse(twostep.ground_ok({"error": "no op"})[0])
 
 
+class ScrollWorld(TwoStepWorld):
+    """A scroll's Use already put a one-pick point/cone spell in hand (no hotbar cell): the game takes one ground
+    click that is not on a character and not `bad`, then casts."""
+
+    def on_click(self, x, y, button):
+        if button == "R" or not self.armed:
+            return FakeWorld.on_click(self, x, y, button)
+        if self.char_at(x, y) is not None:
+            return
+        w = to_world(x, y)
+        if self.bad_at(w):
+            return
+        self.ground_at = w
+        self.picked.append("ground")
+        self.fire()
+
+
+class GroundClick(unittest.TestCase):
+    """S066 #66 Scroll of Cone of Cold x,y,z 56,-53,996.5 and #143 Scroll of Misty Step x,y,z 24,-43,1005 came back
+    "cast on <the reader> by a click": the spell in hand is aimed at the ground at the point instead."""
+
+    def setUp(self):
+        self.w = ScrollWorld()
+        self.w.armed = "Zone_ConeOfCold"
+
+    def _go(self, pos):
+        inp = FakeInput(self.w)
+        with mock.patch.object(hotbar.time, "sleep"), mock.patch.object(twostep.time, "sleep"):
+            return twostep.ground_click(self.w, inp, "caster", "Scroll of Cone of Cold", pos), inp
+
+    def test_the_point_is_clicked_on_the_ground(self):
+        r, inp = self._go([0.0, 0.0, 10.0])
+        self.assertTrue(r.ok, r.as_dict())
+        self.assertEqual(self.w.cast_done, [("Zone_ConeOfCold", ["ground"])])
+        self.assertEqual(self.w.ground_at, [0.0, 0.0, 10.0])
+        self.assertEqual(clicks(inp), [to_screen([0.0, 0.0, 10.0])])   # no hotbar cell: the scroll armed it
+
+    def test_a_character_on_the_point_is_not_clicked_a_nudge_is(self):
+        self.w.targets["ally"] = to_screen([0.0, 0.0, 10.0])
+        r, inp = self._go([0.0, 0.0, 10.0])
+        self.assertTrue(r.ok, r.as_dict())
+        self.assertAlmostEqual(self.w.ground_at[0], 0.4)
+        self.assertEqual(len(clicks(inp)), 1)
+
+    def test_nothing_in_hand_no_click(self):
+        # a ground click with no spell in hand is a move order (movement spent in combat)
+        self.w.armed = None
+        r, inp = self._go([0.0, 0.0, 10.0])
+        self.assertFalse(r.ok)
+        self.assertEqual((r.stage, r.reason), ("arm", "not_armed"))
+        self.assertEqual(clicks(inp), [])
+
+    def test_every_spot_refused_puts_the_spell_back(self):
+        self.w.bad = [lambda p: True]
+        r, inp = self._go([0.0, 0.0, 10.0])
+        self.assertFalse(r.ok)
+        self.assertEqual((r.stage, r.reason), ("ground", "ground_refused"))
+        self.assertEqual(r.detail["cancelled"], "escape")
+        self.assertIsNone(self.w.armed)
+        self.assertEqual((self.w.cast_done, clicks(inp)), ([], []))
+
+
 class FakeTwoStep:
     def __init__(self, g, ok=True, reason=None, stage=None, raises=False):
         self.g, self.ok, self.reason, self.stage, self.raises = g, ok, reason, stage, raises

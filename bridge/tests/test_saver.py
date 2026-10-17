@@ -136,6 +136,41 @@ class SaverTest(unittest.TestCase):
         self.assertFalse(s.ui_busy)
         self.assertIn("SAVE FAILED 'x': save page did not open; call save_game again", s.take_notes())
 
+    def test_a_conversation_during_the_menus_queues_it_once_more(self):
+        # S067 #77: Orin died, the Emperor's conversation took the screen at the menus' accept step: SAVE FAILED
+        rig = Rig(menu_s=0.05)
+        real = rig.run_menu
+        tries = []
+
+        def run_menu(label):
+            tries.append(label)
+            if len(tries) == 1:
+                rig.can = False                  # the conversation opens mid-menu
+                return False, "in-game RETURN did not advance 'accept'"
+            return real(label)
+        s = saver.Saver(run_menu, rig.can_save, lambda: rig.dir)
+        s.save("S067-orin-dead")
+        self.assertTrue(wait_until(lambda: s.pending is not None and s.pending["phase"] == "queued"))
+        self.assertIn("the save menus were interrupted (dialogue on screen); queued", s.take_notes())
+        self.assertEqual(tries, ["S067-orin-dead"])
+        rig.can = True                           # the conversation ended
+        self.assertTrue(wait_until(lambda: s.pending is None))
+        self.assertEqual(tries, ["S067-orin-dead"] * 2)
+        self.assertIn("SAVED 'S067-orin-dead'", s.take_notes())
+
+    def test_a_second_menu_failure_is_reported(self):
+        rig = Rig(menu_ok=False)
+
+        def run_menu(label):
+            rig.can = False
+            return False, "save page did not open"
+        s = saver.Saver(run_menu, rig.can_save, lambda: rig.dir)
+        s.save("x")
+        self.assertTrue(wait_until(lambda: s.pending is not None and s.pending["phase"] == "queued"))
+        rig.can = True
+        self.assertTrue(wait_until(lambda: s.pending is None))
+        self.assertIn("SAVE FAILED 'x': save page did not open; call save_game again", s.take_notes())
+
     def test_no_folder_on_disk_is_a_failure(self):
         saver.DISK_WAIT_S = 0.3
         rig = Rig(writes=False, menu_s=0.01)

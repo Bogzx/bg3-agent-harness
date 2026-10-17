@@ -692,6 +692,36 @@ test("cast in combat (ACT-11): a dropped order fails after CAST_NO_START_COMBAT_
     eq(j.status, "running", "began")
 end)
 
+test("cast in combat while Stunned is refused; a dropped order while Fearful names the fear (S066/S067)", function()
+    combat_setup(9)
+    spell("Projectile_EB", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0 })
+    spell("STUNNED", { StatusType = "INCAPACITATED" })
+    spell("FEARED", { StatusType = "FEAR" })
+    spell("BLEEDING", { StatusType = "BOOST" })
+    local savedV = BG3AI.Visibility
+    local on = {}
+    BG3AI.Visibility = setmetatable({ statuses = function() return on end }, { __index = savedV })
+    -- S067 #43/#54: Wyll Stunned, Eldritch Blast "never started it" x2: refused before any order now
+    on = { { id = "BLEEDING", name = "Bleeding" }, { id = "STUNNED", name = "Stunned" } }
+    local j = job(op("cast", { char = P1, spell = "Projectile_EB", target = NPC }))
+    eq(j.status, "failed", "stunned"); assert(j.error:find("cannot act while Stunned"), j.error)
+    eq(#called("UseSpell"), 0, "no order")
+    -- S066 #100: Karlach's Rage at a Fearful turn start: ordered (not refused), and the drop says why
+    on = { { id = "BLEEDING", name = "Bleeding" }, { id = "FEARED", name = "Fearful" } }
+    j = job(op("cast", { char = P1, spell = "Projectile_EB", target = NPC }))
+    eq(j.status, "running", "ordered " .. tostring(j.error))
+    tick(52) -- 3.1 s, no CastSpell, no step
+    eq(j.status, "failed", "status")
+    assert(j.error:find("never started it %(3 s, no cast, no step%): the caster is Fearful %(a fear status"), j.error)
+    -- no such status: the plain message
+    on = { { id = "BLEEDING", name = "Bleeding" } }
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    j = job(op("cast", { char = P1, spell = "Projectile_EB", target = NPC }))
+    tick(52)
+    eq(j.status, "failed", "plain"); assert(not j.error:find("the caster is"), j.error)
+    BG3AI.Visibility = savedV
+end)
+
 test("cast ui=true (ACT-8 hotbar route): 3 targets checked, no Osiris order, CastedSpell finishes, nothing charged", function()
     combat_setup(9)
     spell("Target_Bless", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 1 })
