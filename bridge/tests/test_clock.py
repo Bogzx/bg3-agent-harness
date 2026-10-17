@@ -25,6 +25,9 @@ class Clock(unittest.TestCase):
     def tearDown(self):
         server.DEADLINE = self.saved
 
+    def at(self, in_s: float) -> str:
+        return time.strftime("%H:%M", time.localtime(self.now + in_s))
+
     def clock(self, left_s: float, wrap_left_s: float | None) -> str:
         server.DEADLINE = self.now + left_s
         env = {} if wrap_left_s is None else {"BG3AI_SESSION_WRAPUP": str(server.DEADLINE - wrap_left_s)}
@@ -36,18 +39,29 @@ class Clock(unittest.TestCase):
     def test_short_session_14m_left_is_play_time(self):
         # 15-min session: wrap-up is its last third (5 min). 14m left must not read as "wrap up".
         line = self.clock(14 * 60 + 30, 5 * 60)
-        self.assertEqual(line, "⏱ " + time.strftime("%H:%M") + " · 14m left · 9m of play: keep playing until WRAP UP at 5m left")
+        self.assertEqual(line, "⏱ " + time.strftime("%H:%M") + " · 9m of play left: keep playing until WRAP UP at "
+                         + self.at(14 * 60 + 30 - 5 * 60))
         self.assertNotIn("WRAP UP NOW", line)
         self.assertIn("WRAP UP NOW", self.clock(4 * 60 + 50, 5 * 60))
 
     def test_hour_session(self):
         self.assertEqual(self.clock(14 * 60 + 30, 10 * 60),
-                         "⏱ " + time.strftime("%H:%M") + " · 14m left · 4m of play: keep playing until WRAP UP at 10m left")
+                         "⏱ " + time.strftime("%H:%M") + " · 4m of play left: keep playing until WRAP UP at "
+                         + self.at(4 * 60 + 30))
         self.assertIn("WRAP UP NOW", self.clock(9 * 60 + 59, 10 * 60))
 
     def test_without_the_runner_env_defaults_to_10_min(self):
-        self.assertIn("until WRAP UP at 10m left", self.clock(40 * 60, None))
+        self.assertIn("30m of play left", self.clock(40 * 60, None))
         self.assertIn("WRAP UP NOW", self.clock(9 * 60, None))
+
+    def test_no_time_to_the_end_before_wrap_up(self):
+        # S070 21:09: "9m left · 6m of play: keep playing until WRAP UP at 3m left" -> "Time is nearly up", wrap-up
+        # at once (end_session x5, HANDOFF x6). Before WRAP UP the line names only the play time and WRAP UP's time.
+        line = self.clock(9 * 60 + 30, 3 * 60)
+        self.assertNotIn("9m", line)
+        self.assertIn("6m of play left", line)
+        self.assertIn("keep playing until WRAP UP at " + self.at(6 * 60 + 30), line)
+        self.assertNotIn("WRAP UP NOW", line)
 
     def test_over(self):
         self.assertIn("SESSION OVER", self.clock(-5, 5 * 60))
@@ -58,7 +72,25 @@ class Clock(unittest.TestCase):
         with mock.patch.object(server.time, "time", lambda: self.now), \
                 mock.patch.dict(server._clock_shown, {"at": 0.0, "stuck": None}):
             self.assertIn("keep playing", server._clock_line())  # first: the full line
-            self.assertEqual(server._clock_line(), "⏱ " + time.strftime("%H:%M") + " · 30m left")
+            self.assertEqual(server._clock_line(), "⏱ " + time.strftime("%H:%M") + " · 20m of play left")
+
+    def line_at(self, left_s: float, wrap_left_s: float) -> str:
+        """_clock_line with left_s to go, a full line shown 1 min ago and WRAP UP at wrap_left_s before the end."""
+        server.DEADLINE = self.now + left_s
+        env = {"BG3AI_SESSION_WRAPUP": str(server.DEADLINE - wrap_left_s)}
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(server.time, "time", lambda: self.now), \
+                mock.patch.dict(server._clock_shown, {"at": self.now - 60, "stuck": None}):
+            return server._clock_line()
+
+    def test_terse_line_keeps_the_play_time(self):
+        # S069: "⏱ 20:38 · 13m left" (the last full line 7 min before) read as wrap-up: S069-end + HANDOFF at 13m left
+        self.assertEqual(self.line_at(13 * 60 + 30, 3 * 60), "⏱ " + time.strftime("%H:%M") + " · 10m of play left")
+
+    def test_full_lines_every_call_from_wrap_up_on(self):
+        # the every-call full line started at the old 10-min wrap-up (WRAPUP_S); it starts at WRAP UP now
+        self.assertNotIn("keep playing", self.line_at(9 * 60 + 30, 3 * 60))
+        self.assertIn("6m of play left", self.line_at(9 * 60 + 30, 3 * 60))
+        self.assertIn("WRAP UP NOW", self.line_at(2 * 60 + 50, 3 * 60))
 
 
 if __name__ == "__main__":

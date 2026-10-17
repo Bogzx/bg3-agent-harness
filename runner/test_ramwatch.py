@@ -150,9 +150,9 @@ class RamWatchTest(unittest.TestCase):
     def test_rss_slow_growth_and_new_game_are_not_spikes(self):
         t = 2_000_000.0
         for i in range(30):                                         # +3 GB over 5 min: a slow climb
-            self.assertIsNone(self.w.sample(t + i * 10, 5000 + i * 100, 6000))
-        self.assertIsNone(self.w.sample(t + 400, 0, 6000))          # the game died: baseline reset
-        self.assertIsNone(self.w.sample(t + 405, 6000, 6000))       # a new game's first sample (0 → 6 GB)
+            self.assertIsNone(self.w.sample(t + i * 10, 5000 + i * 100, 6000, [100]))
+        self.assertIsNone(self.w.sample(t + 400, 0, 6000, [100]))          # the game died: baseline reset
+        self.assertIsNone(self.w.sample(t + 405, 6000, 6000, [100]))       # a new game's first sample (0 → 6 GB)
 
     def test_last_tick_skips_spike_lines(self):
         # live window 20261016-183253: setup ran 10 s after a save-load spike, the log's last line was the SPIKE

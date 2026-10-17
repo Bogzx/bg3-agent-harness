@@ -1,12 +1,13 @@
 # Session wrap-up (target: ≤ 3 minutes)
 
 **When:** only when the `⏱` line says **WRAP UP NOW** (or a SESSION CLOCK reminder, or the operator asks).
-"⏱ 5m left · 2m of play" means play 2 more minutes; stuck is not a reason (run `stuck`); escaping danger is
+"⏱ 21:12 · 2m of play left" means play 2 more minutes; stuck is not a reason (run `stuck`); escaping danger is
 play. A boss fight, descent or long trip needn't fit in the minutes left: the game keeps running between
 sessions and the next one plays on from where the party stands (a fight waits on your turn), so start it.
 Never kill time with get_status/wiki reads (S036 idled ~2.5 min).
-**Do it once.** If `end_session` or the runner says "Keep playing", play on: no second `Sxxx-end` save unless the
-party moved, no HANDOFF rewrite (one `memory_edit` of a changed line is fine). No reading through files, no tidying.
+**Do it once.** If `end_session` or the runner says "Keep playing", play on until the time it names: no
+`end_session`, `Sxxx-end` save or HANDOFF edit before then. At that time: one `memory_edit` of HANDOFF's changed
+lines, a save only if the party moved, `end_session`. No reading through files, no tidying.
 
 ## 1. Safe state (≤ 1 min)
 - **Combat:** finish the current round. If the fight goes on, save anyway (if the game allows) and write the

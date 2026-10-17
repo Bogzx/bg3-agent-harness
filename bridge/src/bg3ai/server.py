@@ -38,7 +38,7 @@ SAVE_DIR = Path(os.environ.get("BG3AI_SAVE_DIR") or Path(
     os.environ.get("BG3AI_PROFILE_DIR") or Path.home() / ".local/share/Larian Studios/Baldur's Gate 3")
     / "PlayerProfiles/Public/Savegames/Story")
 DEADLINE = float(os.environ.get("BG3AI_SESSION_DEADLINE", "0") or 0)
-WRAPUP_S = 10 * 60
+WRAPUP_S = 10 * 60  # wrap-up length without the runner's BG3AI_SESSION_WRAPUP (the runner: 3 min, a third of a short one)
 
 INSTRUCTIONS = """Tools to play Baldur's Gate 3 as the player. All information is what the player can see.
 Start with get_status. Refer to things by their short id (e12) or a party member's name.
@@ -120,18 +120,31 @@ def _stuck_text(st: dict) -> str:
     return f"no story progress for {mins} min: change approach (knowledge/playbooks/stuck.md)"
 
 
+def _wrap_left() -> float:
+    """Seconds before DEADLINE when WRAP UP starts: BG3AI_SESSION_WRAPUP (the runner's wrap-up time), else WRAPUP_S."""
+    try:
+        wrap_at = float(os.environ.get("BG3AI_SESSION_WRAPUP") or 0)
+    except ValueError:
+        wrap_at = 0.0
+    return DEADLINE - wrap_at if 0 < wrap_at < DEADLINE else WRAPUP_S
+
+
 def _clock_line() -> str:
-    """The clock for tool results: always in the last 10 minutes, otherwise at most every 10 minutes,
+    """The clock for tool results: always from WRAP UP on, otherwise at most every 10 minutes,
     and at once when a stuck episode starts (then with the clock, while it lasts)."""
     now = time.time()
     st = _stuck()
     new_stuck = st is not None and st.get("t") != _clock_shown["stuck"]
     if not DEADLINE and not st:
         return ""
-    if not new_stuck and (not DEADLINE or DEADLINE - now > WRAPUP_S) and now - _clock_shown["at"] < 600:
+    if not new_stuck and (not DEADLINE or DEADLINE - now > _wrap_left()) and now - _clock_shown["at"] < 600:
         # Between full lines, a terse one: S009 guessed "time is nearly up" 4 min after the last clock with
         # 15 min left, saved, wrote its handoff (a 42 s gap), then walked back; and session_clock costs a turn.
-        return f"⏱ {time.strftime('%H:%M')} · {int((DEADLINE - now) // 60)}m left" if DEADLINE else ""
+        # It says the play time, not the time to the end: S069 read a bare "13m left" as wrap-up (S069-end +
+        # HANDOFF at 13m left).
+        if not DEADLINE:
+            return ""
+        return f"⏱ {time.strftime('%H:%M')} · {int((DEADLINE - now - _wrap_left()) // 60)}m of play left"
     _clock_shown["at"] = now
     if st is not None:
         _clock_shown["stuck"] = st.get("t")
@@ -146,20 +159,17 @@ def _clock() -> str:
     left = DEADLINE - time.time()
     if left <= 0:
         return f"⏱ SESSION OVER: only save_game and note-taking now; {WRAPUP_HINT}."
-    # Wrap-up starts at BG3AI_SESSION_WRAPUP (the runner: 10 min before the end, a third of a short
-    # session); before it, say how much is play time so "14m left" doesn't read as "wrap up now".
-    try:
-        wrap_at = float(os.environ.get("BG3AI_SESSION_WRAPUP") or 0)
-    except ValueError:
-        wrap_at = 0.0
-    wrap_left = DEADLINE - wrap_at if 0 < wrap_at < DEADLINE else WRAPUP_S
+    # Wrap-up starts at BG3AI_SESSION_WRAPUP (the runner: 3 min before the end, a third of a short
+    # session); before it, only the play time and when WRAP UP comes: S070 read "9m left · 6m of play: keep playing
+    # until WRAP UP at 3m left" as "time is nearly up" and wrapped up at once (S069: "13m left").
+    wrap_left = _wrap_left()
     m = int(left // 60)
     hhmm = time.strftime("%H:%M")  # wall clock: S001 invented log times without it
     if left <= wrap_left:
         return f"⏱ {hhmm} · {m}m left: WRAP UP NOW. Reach a safe spot, save_game, then {WRAPUP_HINT}."
     play = int((left - wrap_left) // 60)
-    return (f"⏱ {hhmm} · {m}m left · {play}m of play: keep playing until WRAP UP at {round(wrap_left / 60)}m left"
-            + stuck)
+    wrap_hhmm = time.strftime("%H:%M", time.localtime(DEADLINE - wrap_left))
+    return f"⏱ {hhmm} · {play}m of play left: keep playing until WRAP UP at {wrap_hhmm}" + stuck
 
 
 def _session_over() -> bool:

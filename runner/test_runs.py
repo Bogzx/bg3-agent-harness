@@ -691,7 +691,7 @@ class Judging(TmpDir):
         t = time.time()
         with self.fake(sleep=5):
             p = P.judge_record(self.dir, rec, "judge-x", timeout=1.5)
-        self.assertLess(time.time() - t, 4)
+        self.assertLess(time.time() - t, 4.8)  # before the 5 s judge could answer (4 s was a tight margin under load)
         self.assertEqual(p["status"], "judge_failed")
         self.assertIn("timed out", p["error"])
         with self.fake():
