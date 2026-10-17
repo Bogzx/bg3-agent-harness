@@ -211,20 +211,39 @@ end)
 -- Entities currently under the cursor according to the picking helper; also
 -- the raw GameObjects (an object with no Uuid component still counts when it
 -- is the target entity itself).
+-- L7 22:09 (Dimension Door's first pick, the caster himself, spell in hand): 1.5 s of aims and the helper's GameObject
+-- never named him; no hover with a spell in hand was ever seen live. The entry's own Character / DeadCharacter / Item
+-- picks and the Selection (the in-range pick the cursor targets) are read too, after the GameObjects, and `via` says
+-- which field named each uuid (GUESS: SE field names never read live before).
+P.PICK_FIELDS = { "Character", "DeadCharacter", "Item" }
 function P.hovered()
     local ok, ph = pcall(Ext.UI.GetPickingHelper, 1)
-    if not ok or not ph then return {}, nil, {} end
-    local out, objs = {}, {}
+    if not ok or not ph then return {}, nil, {}, {} end
+    local out, objs, via = {}, {}, {}
+    local function add(e, field)
+        local u = e and entity_uuid(e)
+        if u and not via[u] then
+            out[#out + 1], via[u] = u, field
+        end
+    end
+    local inner
     pcall(function()
-        local inner = ph.Inner.Inner
+        inner = ph.Inner.Inner
         for i = 1, #inner do
             local go = inner[i].GameObject
             if go then objs[#objs + 1] = go end
-            local u = go and entity_uuid(go)
-            if u then out[#out + 1] = u end
+            add(go, "GameObject")
         end
     end)
-    return out, ph, objs
+    pcall(function()
+        for i = 1, #inner do
+            for _, f in ipairs(P.PICK_FIELDS) do
+                pcall(function() add(inner[i][f], f) end)
+            end
+        end
+    end)
+    pcall(function() add(ph.Selection.field_0_Entity, "Selection") end)
+    return out, ph, objs, via
 end
 
 -- A picked object without a Uuid component is the target when it is the same entity (by handle: bg3le's entity
@@ -265,12 +284,15 @@ end
 
 RPC.register("ui.hover_check", function(args)
     local want = guid(args.uuid)
-    local list, ph, objs = P.hovered()
+    local list, ph, objs, via = P.hovered()
     local res = { hovered = false }
     for _, u in ipairs(list) do
         if u == want then res.hovered = true end
     end
-    if not res.hovered and #objs > #list then
+    if res.hovered and via[want] ~= "GameObject" then res.via_field = via[want] end
+    local anon = false
+    for _, go in ipairs(objs) do if not entity_uuid(go) then anon = true end end
+    if not res.hovered and anon then
         -- S032 17:42: 90 aims at a Vault Door and the helper never named anything: an object without a Uuid
         -- component (its client entity) is compared to the target's entity itself.
         res.hover_nouuid = true
@@ -358,16 +380,67 @@ function P.ground_verdict(want, tol, world, hovered, avoid, cur, is_char)
     return res
 end
 
+-- The cursor's point on the ground (pure; tested offline). L7 22:10 (Misty Step scroll, Bhaal temple): every spot read
+-- "the cursor's ground point is 11.56 m off": WorldPosition is the cursor ray's near-plane point (the projection's
+-- calibration, impl-act "Projection"), about the camera's spot, not a hit. The hit fields are SE names not read live
+-- before, so one counts only when it lies on the cursor ray (camera C through the near point W) past W; else the
+-- ray meets the landing's height (no occluder check: the post-click state and the move say if it went elsewhere).
+-- hits: { {name, point}, ... } in preference order. -> point, source
+P.RAY_TOL = 0.02  -- off-ray distance per metre along it (~1.1 deg)
+function P.ground_point(C, W, hits, want_y)
+    if not (C and W) then return nil end
+    local d = { W[1] - C[1], W[2] - C[2], W[3] - C[3] }
+    local len = math.sqrt(d[1] ^ 2 + d[2] ^ 2 + d[3] ^ 2)
+    if len < 1e-6 then return nil end
+    d = { d[1] / len, d[2] / len, d[3] / len }
+    if len > 0.5 then
+        -- W is no near-plane point (> 0.5 m from the camera): it is the hit itself
+        hits = { { "WorldPosition", W }, table.unpack(hits or {}) }
+    end
+    for _, h in ipairs(hits or {}) do
+        local p = h[2]
+        if p and not (p[1] == 0 and p[2] == 0 and p[3] == 0) then
+            local v = { p[1] - C[1], p[2] - C[2], p[3] - C[3] }
+            local t = v[1] * d[1] + v[2] * d[2] + v[3] * d[3]
+            if t > 0.3 then
+                local off = math.sqrt((v[1] - t * d[1]) ^ 2 + (v[2] - t * d[2]) ^ 2 + (v[3] - t * d[3]) ^ 2)
+                if off <= math.max(0.05, t * P.RAY_TOL) then return p, h[1] end
+            end
+        end
+    end
+    if want_y and math.abs(d[2]) > 1e-3 then
+        local t = (want_y - C[2]) / d[2]
+        if t > 0 then return { C[1] + t * d[1], want_y, C[3] + t * d[3] }, "ray_plane" end
+    end
+    return nil
+end
+
+P.GROUND_HIT_FIELDS = { "Position", "SceneryPosition", "PlaceablePosition" }
+
 RPC.register("ui.ground_check", function(args)
     local want = args.pos ~= nil and vec3(args.pos) or nil
     if args.pos ~= nil and not want then error("bad pos") end
     local list, ph = P.hovered()
-    local world
+    local world, src
     if ph then
+        local W, hits = nil, {}
         pcall(function()
             local wp = ph.Inner.WorldPosition
-            world = vec3({ wp[1], wp[2], wp[3] })
+            W = vec3({ wp[1], wp[2], wp[3] })
         end)
+        for _, f in ipairs(P.GROUND_HIT_FIELDS) do
+            pcall(function()
+                local hp = ph.Inner[f]
+                hits[#hits + 1] = { f, vec3({ hp[1], hp[2], hp[3] }) }
+            end)
+        end
+        local C
+        local _, cam = P.camera()
+        if cam then pcall(function()
+            local t = cam.Transform.Transform.Translate
+            C = vec3({ t[1], t[2], t[3] })
+        end) end
+        world, src = P.ground_point(C, W, hits, want and want[2])
     end
     local avoid = {}
     for _, a in ipairs(args.avoid or {}) do avoid[#avoid + 1] = guid(a) end
@@ -378,6 +451,7 @@ RPC.register("ui.ground_check", function(args)
         return ok and e ~= nil and U.comp(e, "ClientCharacter") ~= nil
     end or nil
     local res = P.ground_verdict(want, args.tol, world, list, avoid, P.cursor_info(cc), is_char)
+    res.world_src = src
     if ph then pcall(function() res.at = { ph.WindowCursorPos[1], ph.WindowCursorPos[2] } end) end
     return res
 end)

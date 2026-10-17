@@ -52,6 +52,7 @@ START_WAIT_S = 1.0           # last click / tick -> the cast started
 TARGET_HOVER_S = 1.5         # hover search per target (the camera is already on the fight)
 LOCATE_BUDGET_S = 6.0        # finding the cell when no spot is cached (window #2: 4 s = 39 probes, one row only)
 CANCEL_WAIT_FRAMES = 6
+CANCEL_ESCAPES = 3            # one ESCAPE per step back (the spell in hand, then its level picker)
 
 # Where the hotbar sits (fractions of the window): bottom centre. A coarse grid, whole band first: live window #2
 # (19:49) spent the 4 s budget on 39 probes along y=0.95 alone (x 0.5..0.88, 0.02 apart) and saw no cell. A deck is
@@ -128,6 +129,12 @@ def server_map(game: Game, char: str | None) -> dict | None:
         _maps[char] = (time.monotonic(), m)
         return m
     return None
+
+
+def forget_map(char: str | None) -> None:
+    """The caster's spells changed (prepare_spells): the next read is fresh. L7 22:08: the acceptance read Bless "not
+    on the hotbar" 3 s after preparing it from a map cached 4 s before the prepare (MAP_TTL_S 20)."""
+    _maps.pop(char, None)
 
 
 def _slot(game: Game, spell: str, char: str | None, tabs: bool = False, cache: bool = False) -> dict:
@@ -421,30 +428,46 @@ def _armed(game: Game, char: str | None) -> dict:
 
 def cancel(game: Game, inp: InputClient, char: str | None) -> str | None:
     """Put the spell back as a player does: ESCAPE, then a right click, then the HUD's cancel. None when nothing
-    was in hand; else how it was cancelled ("escape" | "right_click" | "command" | "failed"). An open upcast level
-    picker counts as in hand (ESCAPE closes it)."""
+    was in hand; else how it was cancelled ("escape" | "escape xN" | "right_click" | "command" | "failed (...)").
+    An open upcast level picker counts as in hand (ESCAPE closes it)."""
     def held(st: dict) -> bool:
         return bool(st.get("armed") or st.get("upcast_open"))
 
     if not held(_armed(game, char)):
         return None
-    inp.key("ESCAPE")
-    inp.wait_frames(CANCEL_WAIT_FRAMES)
-    if not held(_armed(game, char)):
-        how = "escape"
-    else:
+    # L7 22:09 (Dimension Door from the upcast picker): ESCAPE, right click and the HUD's cancel all left it "in hand".
+    # GUESS: an ESCAPE steps back one level (the spell in hand -> its level picker -> closed), so up to CANCEL_ESCAPES
+    # while it is still held; one that opened the game menu means the hand was already empty.
+    how, menu = None, False
+    for i in range(CANCEL_ESCAPES):
+        if i and clicker._screen(game).get("screen") == "game_menu":
+            inp.key("ESCAPE")
+            inp.wait_frames(CANCEL_WAIT_FRAMES)
+            menu = True
+            break
+        inp.key("ESCAPE")
+        inp.wait_frames(CANCEL_WAIT_FRAMES)
+        st = _armed(game, char)
+        if not held(st):
+            how = "escape" if i == 0 else f"escape x{i + 1}"
+            break
+    if how is None and not menu:
         w, h = inp.window_size()
         inp.click(w // 2, int(h * 0.4), button="R")
         inp.wait_frames(CANCEL_WAIT_FRAMES)
-        if not held(_armed(game, char)):
+        st = _armed(game, char)
+        if not held(st):
             how = "right_click"
-        else:
-            try:
-                _rpc(game, "ui.cast_cancel", {})
-            except GameError:
-                pass
-            inp.wait_frames(CANCEL_WAIT_FRAMES)
-            how = "command" if not held(_armed(game, char)) else "failed"
+    if how is None:
+        try:
+            _rpc(game, "ui.cast_cancel", {})
+        except GameError:
+            pass
+        inp.wait_frames(CANCEL_WAIT_FRAMES)
+        st = _armed(game, char)
+        how = "command" if not held(st) else (
+            f"failed (still reads in hand: {st.get('armed_by') or ('upcast picker' if st.get('upcast_open') else '?')}"
+            f"{'; an ESCAPE opened the game menu' if menu else ''})")
     # an ESCAPE that landed after the spell was already gone opens the game menu: close it again
     if clicker._screen(game).get("screen") == "game_menu":
         inp.key("ESCAPE")

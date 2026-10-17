@@ -46,7 +46,8 @@ Lines a result may end with:
 - `interact(target, who, wait=true)` → door, lever, chest, corpse (opens loot), book, ladder, waypoint; walks there first.
 - `pick_up(item, who, wait=true)` → take an item lying on the ground (walks there first).
 - `loot_corpse(corpse, who)` → walk to a visible dead body and open its loot window; then `loot` takes from it.
-- `loot(take="all", who)` → take from the open container or corpse: "all" or comma-separated ids.
+- `loot(take="all", who)` → take from the open container or corpse: "all" or comma-separated ids, then closes the
+  window; `take="none"` closes it without taking. interact closes an empty container's window itself.
 - `jump_to(x, y, z, who, force=false)` → jump (costs movement plus a bonus action in combat; max distance ≈ Strength/2 m, but jumps over ~4.5 m have landed short live). A landing in fire/acid/… or on a wall (or a long jump that may fall short into one) is moved to the nearest clear spot in reach, and the result says so; with none near, it is refused. A refusal (blocked landing, too far, no floor at that height) carries the way that works when there is one: "It is walkable: move_to …" or "move_to <stand> (walk Nm), then jump_to <landing>": do exactly that. `force=true` jumps exactly there.
 - `set_party(action, who, leader)` → select | chain | unchain | sneak_on | sneak_off | turn_based_on | turn_based_off.
 - `fast_travel(waypoint)` → to an unlocked waypoint (name or id); not in combat. From camp it leaves camp first; if a long rest's night is still running (night at camp blocks all travel) it goes to sleep first and says so.

@@ -381,6 +381,12 @@ def sec_rest() -> None:
     load_verified(BASE)
 
 
+def wares_block(listing: str) -> str:
+    """The WARES lines of a trade listing (not YOUR ITEMS: those are ours to offer, not to request)."""
+    m = re.search(r"(?ms)^WARES .*?(?=^YOUR ITEMS|^\(|\Z)", listing)
+    return m.group(0) if m else ""
+
+
 def sec_trade() -> None:
     if not load_verified(TRADE_SAVE):
         return
@@ -425,7 +431,10 @@ def sec_trade() -> None:
     item("trade sell=junk (one call)", "PASS" if ok else "FAIL", f"{dt:.1f}s; gold {g0}→{g1}; {first_line(out)} {tail}")
     # [act] S067 #125 / S068 #168: the window stayed up after trade(request, confirm=true) and the agent pressed
     # ESCAPE by hand: a confirmed deal closes it now and says so. Buys the cheapest food ware (reloaded after).
-    food = sorted(((int(p), e) for e, p in re.findall(r"(e\d+) [^|\n]*? (\d+)g supply=\d+", wares)), key=lambda x: x[0])
+    # A15 (L7 22:08): the picks come from the WARES block only (the first listing had no ware ids, and the old regex
+    # took e100/e171 from YOUR ITEMS: "isn't on this side"); sell=junk's result is the newer listing
+    shop = wares_block(out if "WARES" in out else wares)
+    food = sorted(((int(p), e) for e, p in re.findall(r"(e\d+) [^|\n]*? (\d+)g supply=\d+", shop)), key=lambda x: x[0])
     if food:
         out, dt = took("trade", request=food[0][1], confirm=True)
         scr = ui_screen()
@@ -437,7 +446,7 @@ def sec_trade() -> None:
         item("trade confirm closes the window", "SKIP", "no food ware in the listing: " + first_line(wares))
     # [act] A13 S069 20:37:23: request 2 wares (one a stack) + confirm went to the barter before the Balance's gold
     # was on our side: refused, ESCAPE + reopen. confirm now waits for an even table; the TABLE counts gold once.
-    priced = [(int(p), e, " x" in t) for e, t, p in re.findall(r"(e\d+) ([^|\n]*?) (\d+)g", wares)]
+    priced = [(int(p), e, " x" in t) for e, t, p in re.findall(r"(e\d+) ([^|\n]*?) (\d+)g", shop)]
     stack = min((x for x in priced if x[2]), default=None)
     single = min((x for x in priced if not x[2] and (not stack or x[1] != stack[1])), default=None)
     if stack and single and m:
@@ -2131,7 +2140,7 @@ def prepared_guard_probe() -> None:
 
 
 SPELLBOOK_PROBE_ITEM = "spellbook probe (A5, read-only)"
-PREPARE_ITEM = "prepare_spells Bless on Claude: on the hotbar, then unprepared (A5)"
+PREPARE_ITEM = "prepare_spells Bless on Claude: prepared, then unprepared; hotbar slot reported (A5, A15)"
 PREPARE_REFUSE_ITEM = "prepare_spells honest refusals (A5)"
 PREPARE_LIMIT_ITEM = "prepare_spells limit = the page's (A7, read-only)"
 SPELLBOOK_ICON_ITEM = "spellbook cells by icon sheet place (A8, read-only)"
@@ -2222,15 +2231,29 @@ def prepare_spells_refusals() -> None:
 
 
 def _bless_state(u: str) -> tuple[bool, bool, dict]:
-    """(Bless prepared on the server, Bless on the server hotbar map, the act.prepared row)."""
+    """(Bless prepared on the server, Bless on the server hotbar map, the act.prepared row). The map is read fresh
+    (A15: L7 read one cached before the prepare)."""
     from bg3ai import hotbar as HB
     rows = (S.game.try_rpc("act.prepared", {"uuids": [u]}) or {}).get("casters") or []
     row = rows[0] if rows else {}
     prepared = any(r.get("id") == "Target_Bless" for r in row.get("prepared") or [])
+    HB.forget_map(u)
     return prepared, HB.map_has(HB.server_map(S.game, u), "Target_Bless"), row
 
 
+def _bless_slot(u: str) -> str:
+    """Where the player sees Bless: the HUD deck cell (ui.hotbar_slot), or that no deck has it."""
+    from bg3ai import hotbar as HB
+    from bg3ai.game import GameError
+    try:
+        r = HB._slot(S.game, "Target_Bless", u)
+    except GameError as e:
+        return f"slot read failed: {e}"
+    return f"{r.get('deck')} #{r.get('index')}" if r.get("found") else "on no deck"
+
+
 def _wait_bless(u: str, want: bool, s: float = 3.0) -> tuple[bool, bool, dict]:
+    """Until Bless is prepared == want and its hotbar presence matches too (an unslotted spell waits the whole s)."""
     end = time.monotonic() + s
     while True:
         st = _bless_state(u)
@@ -2240,9 +2263,11 @@ def _wait_bless(u: str, want: bool, s: float = 3.0) -> tuple[bool, bool, dict]:
 
 
 def prepare_bless_round_trip() -> None:
-    """A5: prepare_spells(Claude, add Bless) through the spellbook page -> Bless prepared on the server AND on his
-    hotbar map (the game places a newly prepared spell on the bar); then remove it again -> neither. A full book swaps
-    out his last prepared spell for the test and puts it back. HOTBAR_SAVE is never saved over."""
+    """A5: prepare_spells(Claude, add Bless) through the spellbook page -> Bless prepared on the server; then remove
+    it again -> not prepared. A full book swaps out his last prepared spell for the test and puts it back.
+    HOTBAR_SAVE is never saved over. A15: PASS does not assume the game slots a newly prepared spell (L7: no hotbar
+    cell after the prepare, from a stale map read); where it went is reported: the server map (fresh) and the HUD
+    deck after the prepare, and whether the spell swapped out left the map."""
     u = _member(PREPARE_WHO)
     if not need(u is not None, PREPARE_ITEM, f"no {PREPARE_WHO} in the party"):
         return
@@ -2257,15 +2282,19 @@ def prepare_bless_round_trip() -> None:
     first = {"remove": ["Bless"], "add": []} if was else {"add": ["Bless"], "remove": swap}
     out1, dt1 = took("prepare_spells", who=PREPARE_WHO, **first)
     st1 = _wait_bless(u, not was)
+    slot1 = _bless_slot(u)
+    from bg3ai import hotbar as HB
+    swap_id = next((r.get("id") for r in row.get("prepared") or [] if swap and r.get("name") == swap[0]), None)
+    swap_left = (not HB.map_has(HB.server_map(S.game, u), swap_id)) if swap_id else None
     second = {"add": ["Bless"], "remove": []} if was else {"remove": ["Bless"], "add": swap}
     out2, dt2 = took("prepare_spells", who=PREPARE_WHO, **second)
     st2 = _wait_bless(u, was)
-    ok = (first_line(out1).startswith("prepare_spells: done") and st1[:2] == (not was, not was)
-          and first_line(out2).startswith("prepare_spells: done") and st2[:2] == (was, was))
+    ok = (first_line(out1).startswith("prepare_spells: done") and st1[0] == (not was)
+          and first_line(out2).startswith("prepare_spells: done") and st2[0] == was)
     item(PREPARE_ITEM, "PASS" if ok else "FAIL",
-         f"1) {first_line(out1)[:110]} ({dt1:.1f}s) -> prepared={st1[0]} on_map={st1[1]}; "
+         f"1) {first_line(out1)[:110]} ({dt1:.1f}s) -> prepared={st1[0]} on_map={st1[1]} hud={slot1}; "
          f"2) {first_line(out2)[:110]} ({dt2:.1f}s) -> prepared={st2[0]} on_map={st2[1]}"
-         + (f"; swapped out {swap[0]} and back" if swap else ""))
+         + (f"; swapped out {swap[0]} and back ({swap_id} left the map: {swap_left})" if swap else ""))
 
 
 BLOCKING_STATUS_ITEM = "cast guard reads Stunned/Fearful status types (A9, read-only)"

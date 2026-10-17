@@ -793,6 +793,15 @@ test("cast in combat while Stunned is refused; a dropped order while Fearful nam
     j = job(op("cast", { char = P1, spell = "Projectile_EB", target = NPC }))
     tick(52)
     eq(j.status, "failed", "plain"); assert(not j.error:find("the caster is"), j.error)
+    -- S072 21:53:33: Lethargic (HASTE_LETHARGY, INCAPACITATED in the stats) let Karlach move and attack: ordered
+    spell("HASTE_LETHARGY", { StatusType = "INCAPACITATED" })
+    on = { { id = "HASTE_LETHARGY", name = "Lethargic" } }
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    local n0 = #called("UseSpell")
+    j = job(op("cast", { char = P1, spell = "Projectile_EB", target = NPC }))
+    eq(j.status, "running", "lethargic ordered " .. tostring(j.error))
+    eq(#called("UseSpell"), n0 + 1, "lethargic: ordered once")
+    tick(52)
     BG3AI.Visibility = savedV
 end)
 

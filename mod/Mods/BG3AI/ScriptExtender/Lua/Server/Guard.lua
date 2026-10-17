@@ -1548,13 +1548,17 @@ end
 -- leaves no action to take. S066 #100/#130, S067 #32: Karlach's Rage, the first order of her turn while Fearful (Orin's
 -- Piercing Growl: FEARED, StatusType FEAR), never started either (3 of 3), though her move and attacks after it did.
 G.BLOCKING_STATUS_TYPES = { INCAPACITATED = true, FEAR = true }
+-- INCAPACITATED in the stats but not in play. S072 21:53:33: Karlach's turn started "+Lethargic -Hastened"
+-- (HASTE_LETHARGY, `using "STUNNED"`); the guard refused her Rage "(it takes the whole turn)", yet the same turn's
+-- move and both attacks worked.
+G.ACTING_STATUSES = { HASTE_LETHARGY = true }
 function G.blocking_status(char)
     local V = BG3AI.Visibility
     local e = V and V.statuses and G.entity(char)
     if not e then return nil end
     for _, s in ipairs(V.statuses(e) or {}) do
         local ok, typ = pcall(function() return tostring(Ext.Stats.Get(s.id).StatusType) end)
-        if ok and G.BLOCKING_STATUS_TYPES[typ] then return { name = s.name, type = typ } end
+        if ok and G.BLOCKING_STATUS_TYPES[typ] and not G.ACTING_STATUSES[s.id] then return { name = s.name, type = typ } end
     end
     return nil
 end

@@ -70,6 +70,57 @@ test("cursor_info: unreadable fields give nothing, not an error", function()
     assert(c.cursor == nil and c.warning == nil)
     assert(next(P.cursor_info(nil)) == nil)
 end)
+-- L7 22:09 Dimension Door: the caster under a spell cursor was never named by GameObject: the entry's own picks count
+test("hovered: Character / Item / Selection picks name uuids after the GameObjects, via says which", function()
+    local U1, U2, U3 = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222",
+        "33333333-3333-3333-3333-333333333333"
+    local function e(u) return { Uuid = { EntityUuid = u } } end
+    local saved = Ext.UI.GetPickingHelper
+    Ext.UI.GetPickingHelper = function()
+        return { Inner = { Inner = { { GameObject = e(U1), Character = e(U1) }, { Character = e(U2) } } },
+                 Selection = { field_0_Entity = e(U3) } }
+    end
+    local list, _, objs, via = P.hovered()
+    Ext.UI.GetPickingHelper = saved
+    assert(#list == 3 and list[1] == U1 and list[2] == U2 and list[3] == U3, table.concat(list, ","))
+    assert(via[U1] == "GameObject" and via[U2] == "Character" and via[U3] == "Selection")
+    assert(#objs == 1)
+end)
+test("hovered: an unreadable field is skipped, the rest still read", function()
+    local U1 = "11111111-1111-1111-1111-111111111111"
+    local saved = Ext.UI.GetPickingHelper
+    local entry = setmetatable({ Item = { Uuid = { EntityUuid = U1 } } }, { __index = function(_, k)
+        error("no property " .. k) end })
+    Ext.UI.GetPickingHelper = function() return { Inner = { Inner = { entry } } } end
+    local list, _, _, via = P.hovered()
+    Ext.UI.GetPickingHelper = saved
+    assert(#list == 1 and via[U1] == "Item", tostring(list[1]))
+end)
+-- L7 22:10 Misty Step: WorldPosition (the near-plane point by the camera) was read as the ground point: 11.56 m off
+test("ground_point: the near-plane WorldPosition is not the ground; an on-ray hit field is", function()
+    local C = { 0, 10, 0 }
+    local W = { 0.06, 9.94, 0 }                       -- 0.085 m along the ray toward (10, 0, 0)
+    local hits = { { "Position", { 10, 0, 0 } }, { "SceneryPosition", { 3, 1, 4 } } }
+    local p, src = P.ground_point(C, W, hits, 0)
+    assert(src == "Position" and p[1] == 10, tostring(src))
+    -- the first field off the ray (a stale or misaligned read) is passed over for the next one on it
+    p, src = P.ground_point(C, W, { { "Position", { 0, 0, 0 } }, { "SceneryPosition", { 3, 1, 4 } },
+                                    { "PlaceablePosition", { 9.9, 0.1, 0 } } }, 0)
+    assert(src == "PlaceablePosition", tostring(src))
+    -- nothing on the ray: where the ray meets the landing's height
+    p, src = P.ground_point(C, W, { { "Position", { 5, 5, 5 } } }, 0)
+    assert(src == "ray_plane" and math.abs(p[1] - 10) < 1e-6 and p[2] == 0 and math.abs(p[3]) < 1e-6, tostring(src))
+    -- a WorldPosition far from the camera is a hit itself
+    p, src = P.ground_point(C, { 10, 0, 0 }, {}, 3)
+    assert(src == "WorldPosition" and p[1] == 10, tostring(src))
+    -- no camera: no point (the verdict then has no d_m and the click is not checked by distance)
+    assert(P.ground_point(nil, W, hits, 0) == nil)
+    -- the old read: W as the ground point was ~11.5 m off a landing 11.6 m out; the on-ray hit is on it
+    local v = P.ground_verdict({ 10, 0, 0 }, 0.8, W, {}, {}, {})
+    assert(v.near == false and v.d_m > 9, tostring(v.d_m))
+    v = P.ground_verdict({ 10, 0, 0 }, 0.8, P.ground_point(C, W, hits, 0), {}, {}, {})
+    assert(v.near == true, tostring(v.d_m))
+end)
 test("ground_verdict: flat distance to the landing, near within tol, the avoided body under the cursor", function()
     local r = P.ground_verdict({ 10, 0, 5 }, 1.0, { 10.6, 3, 5 }, { "body" }, { "body" }, { cursor = "Cast", warning = false })
     assert(r.near == true and math.abs(r.d_m - 0.6) < 1e-6, tostring(r.d_m))

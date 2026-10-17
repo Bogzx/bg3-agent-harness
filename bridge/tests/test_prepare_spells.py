@@ -8,6 +8,7 @@ Run: cd bridge && uv run python -m unittest discover -s tests -p 'test_prepare_s
 
 from __future__ import annotations
 
+import time
 import unittest
 
 from test_turn_macros import P1, P2, Base, FakeGame  # noqa: F401 (sets BG3AI_RUNTIME first)
@@ -108,6 +109,14 @@ class PrepareSpells(Base):
         job = [a for op, a in self.g.calls if op == "ui.prepare_spells"]
         self.assertEqual(job, [{"name": "Claude", "add": [{"id": "Target_Bless", "name": "Bless", "level": 1}],
                                 "remove": []}])
+
+    def test_the_cached_hotbar_map_is_dropped(self):
+        # L7 22:08: a hotbar map cached before the prepare (MAP_TTL_S 20) still lacked Bless 3 s after it
+        from bg3ai import hotbar
+        uuid = server._who("Claude")
+        hotbar._maps[uuid] = (time.monotonic(), {"ClassHotBar": {"1": "Target_CureWounds"}})
+        self.call(who="Claude", add=["Bless"])
+        self.assertNotIn(uuid, hotbar._maps)
 
     def test_a_loading_screen_is_waited_out_before_the_page(self):
         # S070 21:00:08: pressed K 6 s after a region change with the loading screen up: "the spellbook didn't open"

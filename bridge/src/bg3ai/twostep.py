@@ -136,10 +136,18 @@ class _Run:
     def pick_first(self) -> tuple[bool, dict]:
         clicker.bring_into_view(self.game, self.inp, self.first, steps=3)
         deadline = min(self.hard, time.monotonic() + hotbar.TARGET_HOVER_S)
-        tpos, tries, hc = clicker.hover_point(self.game, self.inp, self.first, deadline=deadline)
+        seen: dict[str, int] = {}
+        tpos, tries, hc = clicker.hover_point(self.game, self.inp, self.first, deadline=deadline, seen=seen)
         if tpos is None:
             reason = "off_screen" if tries == 0 and hc.get("off_screen") else "hover_miss"
-            return False, {"reason": reason, "why": f"could not point at {self.first}"}
+            # L7 22:09: the first pick's miss said only "could not point at"; what the helper named instead
+            info = {"reason": reason, "why": f"could not point at {self.first}", "hover_tries": tries,
+                    "hovered_instead": seen,
+                    "hover_last": {k: hc.get(k) for k in ("hover", "cursor", "world", "timed_out")
+                                   if hc.get(k) is not None}}
+            return False, {k: v for k, v in info.items() if v or k == "hover_tries"}
+        if hc.get("via_field"):
+            self.res.detail["first_via"] = hc["via_field"]
         if self.stop():
             return False, {"reason": "cancelled", "why": "the step was cancelled or interrupted"}
         before = self.st
@@ -203,7 +211,8 @@ class _Run:
             self.inp.wait_frames(2)
             gc = ground_check(self.game, want, avoid)
             ok, why = ground_ok(gc)
-            looks.append({k: gc.get(k) for k in ("d_m", "cursor", "warning", "on_avoid") if gc.get(k) is not None})
+            looks.append({k: gc.get(k) for k in ("d_m", "world_src", "cursor", "warning", "on_avoid")
+                          if gc.get(k) is not None})
             if not ok:
                 last = {"reason": "ground_refused", "why": why, "ground": gc}
                 continue
