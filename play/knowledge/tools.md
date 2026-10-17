@@ -38,7 +38,7 @@ Lines a result may end with:
 - `wiki_search(query, limit=5)` / `wiki_page(title, section="", max_chars=2500)` → bg3.wiki; tag it `[wiki]`. A whole page is cut at max_chars and lists its sections: ask for the one you need with `section=`. For a puzzle, `recall(query)` (what you read) and `get_nearby(kinds="props")` come first.
 - `screenshot(scale=0.5)` / `zoom(x, y, w, h)` → pixels: only when text can't answer (zoom crops the last screenshot; fractions 0-1).
 - `ui_dump(text_only=true)` → text and buttons of the current UI screen; cheaper than a screenshot.
-- `session_clock()` → time left in the session.
+- `session_clock()` → time left in the session. Not needed to time the wrap-up: every result's `⏱` line says WRAP UP NOW by itself.
 
 ## Act (exploration)
 - `move_to(target | x,y,z, who, run=true, wait=false)` → walk there (next to an entity; refused if there's no walkable path). **Returns at once** with a job id + ETA (a fast failure comes back at once too). Don't pass `wait=true`: plan or take notes during the walk, then `wait_for` if you must. Stops early on combat or dialogue.
