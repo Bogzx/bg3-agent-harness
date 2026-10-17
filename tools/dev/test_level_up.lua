@@ -687,5 +687,33 @@ local featSel = false
 for _, n in ipairs(TAB_LOG) do if n == "featTab" then featSel = true end end
 check(not featSel, "non-feat level: the run never selects the feat tab")
 
+-- 35. S068 #67, Gale L10: a cantrip slot and 2 spell slots, plan.cantrips = []. Was: needs_clicks for the 2 spells
+--     (the bridge's 308-probe click search failed "no spell button found") and "spell picks pending". Now refused
+--     at once naming the cantrip, nothing left to click; the full plan then leaves all 3 for the clicks.
+local GALE10 = { class = "Wizard", cantrips = { list = "cleric0", open = 1 }, spells = { list = "wizard1", open = 2 } }
+openPage(GALE10)
+j = run({ uuid = "gale", plan = { spells = { "Magic Missile", "Shield" }, cantrips = {} } })
+local err35 = tostring(j.error)
+check(j.status == "failed" and j.result.needs_clicks == nil and not page.finished, "#67: no clicks queued, not finished")
+check(err35:find("not finishing: spell choice 'cantrips' needs 1 more cantrip in plan.cantrips; can pick: Toll the Dead", 1, true)
+      and not err35:find("spell picks pending", 1, true) and not err35:find("more spell", 1, true),
+      "#67: the refusal names the missing cantrip (not the spells): " .. err35)
+check(err35:find("nothing clicked: pass the whole plan in one call, with Magic Missile, Shield", 1, true)
+      and has(j.result.not_clicked, "Shield"), "#67: says the planned spells were not clicked")
+j = run({ uuid = "gale", plan = { spells = { "Magic Missile", "Shield" }, cantrips = { "Light" } } })
+nc = j.result.needs_clicks or {}
+check(j.status == "failed" and #nc == 3 and nc[1].name == "Light" and nc[1].cantrips == true
+      and tostring(j.error):find("spell picks pending", 1, true), "#67: with the cantrip all 3 go to the clicks")
+
+-- 36. the same on a missing spell (cantrip planned) and on an unfilled passive choice: the refusal names that pick
+openPage(GALE10)
+j = run({ uuid = "gale", plan = { spells = { "Shield" }, cantrips = { "Light" } } })
+check(j.result.needs_clicks == nil and tostring(j.error):find("needs 1 more spell in plan.spells", 1, true)
+      and not tostring(j.error):find("more cantrip", 1, true), "missing spell named, cantrip not clicked alone")
+openPage(WYLL)
+j = run({ uuid = "wyll", plan = { spells = { "Hex" } } })
+check(j.result.needs_clicks == nil and tostring(j.error):find("passive choice 'Warlock invocations' needs 2 more", 1, true),
+      "missing invocations named before the Hex click")
+
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

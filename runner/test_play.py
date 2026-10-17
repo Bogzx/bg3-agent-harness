@@ -1392,6 +1392,7 @@ class CheckAllBetweenSessions(unittest.TestCase):
     def _runner(self, d: Path, last=None):
         r = P.Runner.__new__(P.Runner)
         r.stop_requested = False
+        r.pending_notes = []
         r.state = P.RunnerState.__new__(P.RunnerState)
         r.state.dir, r.state.path, r.state.data = d, d / "runner.json", {"check_all_at": last}
         triage_md = d / "S004.triage.md"
@@ -1399,7 +1400,7 @@ class CheckAllBetweenSessions(unittest.TestCase):
         r.last_triage = ("S004", triage_md)
         return r, triage_md
 
-    def _run(self, d: Path, r, report, rc=1):
+    def _run(self, d: Path, r, report, rc=1, screen="game"):
         logs, calls = [], []
 
         def fake_run(cmd, **kw):
@@ -1409,7 +1410,7 @@ class CheckAllBetweenSessions(unittest.TestCase):
             return mock.Mock(returncode=rc, stdout="", stderr="")
 
         with mock.patch.object(P, "RUNTIME", d), mock.patch.object(P, "log", logs.append), \
-                mock.patch.object(P.subprocess, "run", fake_run):
+                mock.patch.object(P.subprocess, "run", fake_run), mock.patch.object(P, "ui_screen", return_value=screen):
             res = r.between_sessions_check()
         return res, logs, calls
 
@@ -1442,6 +1443,42 @@ class CheckAllBetweenSessions(unittest.TestCase):
             self.assertIn("not reachable", logs[0])
             self.assertLess(r.state["check_all_at"], time.time() - 3000)  # not recorded: retried next session
             self.assertIn("no verdict", triage_md.read_text())
+
+    def test_screen_fail_is_loud(self):
+        # S068 started on screen=map: a map check_all could not close fails the prep loudly and tells the session
+        report = dict(self.REPORT, rows=self.REPORT["rows"] + [
+            {"name": "screen", "verdict": "FAIL", "secs": 6.0, "lines": [],
+             "detail": "screen map after the checks (was game): the next session would start there"}])
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            r, _ = self._runner(d)
+            _, logs, _ = self._run(d, r, report)
+            self.assertTrue(any(line.startswith("PREP FAIL: the game is not on the game view after check_all: "
+                                                "screen map after the checks") for line in logs), logs)
+            self.assertEqual(len(r.pending_notes), 1)
+            self.assertIn("left the game off the game view (screen map after the checks", r.pending_notes[0])
+            self.assertIn("ESCAPE", r.pending_notes[0])
+
+    def test_screen_ok_is_quiet(self):
+        report = dict(self.REPORT, rows=self.REPORT["rows"] + [
+            {"name": "screen", "verdict": "WARN", "secs": 1.0, "lines": [],
+             "detail": "game view; closed a map left open (ESCAPE x1)"}])
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            for rep, screen in ((report, "map"), (self.REPORT, "game")):  # no row: the runner asks ui.state
+                r, _ = self._runner(d)
+                _, logs, _ = self._run(d, r, rep, screen=screen)
+                self.assertEqual(r.pending_notes, [])
+                self.assertFalse(any("PREP FAIL" in line for line in logs))
+
+    def test_no_verdict_map_up_is_loud(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            r, _ = self._runner(d)
+            _, logs, _ = self._run(d, r, None, rc=None, screen="map")  # timed out mid-waypoints
+            self.assertTrue(any(line.startswith("PREP FAIL") and "screen map after check_all (timed out" in line
+                                for line in logs), logs)
+            self.assertEqual(len(r.pending_notes), 1)
 
     def test_stop_requested_skips(self):
         with tempfile.TemporaryDirectory() as td:

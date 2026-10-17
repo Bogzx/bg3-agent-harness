@@ -6,7 +6,8 @@ Refuses to run while a session is playing: runtime/runner.lock held by a runner,
 in play/ (exit 3). The runner itself runs it between sessions with BG3AI_CHECK_ALL_RUNNER_PID=<its pid>: a lock
 held by that pid (the pid the lock file names) is then not a blocker; a claude in play/ still is. --json PATH
 also writes the rows and counts (the runner appends the table to the session's triage report). Nothing here moves a character, saves, loads or hot-reloads. The only UI it touches: the
-`waypoints` check opens the map (M) twice and closes it, and only on the plain game view out of combat.
+`waypoints` check opens the map (M) twice and closes it, and only on the plain game view out of combat; the last
+row (`screen`) closes a map still up.
 
 Checks, in order (latency first, so nothing else is in flight while it measures):
   latency     look / get_status / get_nearby through the MCP tool functions, --calls each: p50/p90 (goal: bridge
@@ -14,7 +15,8 @@ Checks, in order (latency first, so nothing else is in flight while it measures)
   waypoints   fast_travel's list: state.map's unlocked waypoints vs the map UI's list (ui.waypoints), and each
               one (by name and by WAYP id) resolves to itself through the mod's SV.pickWaypoint. Empty UI list
               = the S007 bug (FAIL). Then opens the map again at once: it must open (S021 "the map didn't
-              open" right after a travel), in one M press (more = a swallowed press, WARN), and close.
+              open" right after a travel), in one M press (more = a swallowed press, WARN), and close: the screen
+              must be back to the game view (a map still up is closed with ESCAPE and WARNs; FAIL if it stays).
   keys        press_key dry run: UIActions.keySpec maps DELETE/1/ENTER/ctrl+s/... to bg3se SDLScanCode labels,
               and each label exists in Ext.Enums.SDLScanCode / SDLKeyModifier. Nothing is pressed.
   confirm     confirm-dialog detection: UIActions.confirmBox() runs, and when a box is open, which button
@@ -30,6 +32,11 @@ Checks, in order (latency first, so nothing else is in flight while it measures)
               debug slot without a client socket = the leak) decides; its strict read target (<30 ms) only WARNs
   session     tools/dev/check_session.py: the newest finished session's own files (latency.json, transcript,
               metrics, saves, runner.log, bg3le log) against the live-todo items they answer. No game access.
+
+Last, always (not a check to skip, past the budget too): `screen`. The next session must start where the
+last one left off, not on a map our checks opened (S068 started on screen=map: the agent had to press ESCAPE).
+A map still up is closed (ESCAPE, as a player would); FAIL when the screen is not the game view and differs from
+the one before the checks (the runner then tells the next session).
 
 Prints one PASS / WARN / FAIL table (one row per check, the worst line of a sub-script decides its row) and
 exits 1 on any FAIL, 2 when the game isn't reachable, 3 when a session is playing. -v prints the sub-scripts'
@@ -373,6 +380,35 @@ end
 """
 
 QUIET_SCREENS = ("game",)
+# An ESCAPE's close lands frames later (ui.state right after ui.waypoints can still say map); then ui.map_close.
+SCREEN_SETTLE_S, MAP_CLOSES = 3.0, 2
+
+
+def screen_now(g) -> str | None:
+    ui = g.try_rpc("ui.state", {}, context="client", default={}) or {}
+    return ui.get("screen") if isinstance(ui, dict) else None
+
+
+def settle_screen(g, want: str = "game", timeout: float | None = None) -> str | None:
+    """ui.state's screen, polled until it is want or the timeout passed; the last screen seen."""
+    end = time.monotonic() + (SCREEN_SETTLE_S if timeout is None else timeout)
+    while True:
+        screen = screen_now(g)
+        if screen == want or time.monotonic() >= end:
+            return screen
+        time.sleep(0.2)
+
+
+def close_map(g) -> tuple[str | None, int]:
+    """Wait for the game view; a map still up then gets ESCAPE (ui.map_close) up to MAP_CLOSES times.
+    Live 2026-10-17 19:11 and 19:56: "screen map after closing the map (left open?)" and S068 started on the map.
+    Returns (the screen at the end, ESCAPEs sent)."""
+    screen, closes = settle_screen(g), 0
+    while screen == "map" and closes < MAP_CLOSES:
+        g.try_rpc("ui.map_close", {}, context="client")
+        closes += 1
+        screen = settle_screen(g)
+    return screen, closes
 
 
 def check_waypoints(g) -> Row:
@@ -409,15 +445,36 @@ def check_waypoints(g) -> Row:
     detail += f"; map reopened ({r2.status}), M presses {presses[0]}+{presses[1]}"
     if r2.status != "done":
         return Row("waypoints", "FAIL", detail + f": 2nd open {r2.status}: {r2.error or r2.result}")
-    ui2 = g.try_rpc("ui.state", {}, context="client", default={}) or {}
-    if isinstance(ui2, dict) and ui2.get("screen", "game") != "game":
-        return Row("waypoints", "FAIL", detail + f": screen {ui2.get('screen')} after closing the map (left open?)")
+    screen, closes = close_map(g)
+    if screen is not None and screen != "game":
+        return Row("waypoints", "FAIL", detail + f": screen {screen} after closing the map"
+                   + (f" ({closes} ESCAPE by check_all did not close it either)" if closes else ""))
+    if closes:
+        return Row("waypoints", "WARN", detail + f": the map was still up after ui.waypoints closed it; "
+                   f"check_all closed it (ESCAPE x{closes})")
     if any(isinstance(n, int) and n > 1 for n in presses):
         return Row("waypoints", "WARN", detail + ": a press was swallowed (re-pressed, opened)")
     if misses:
         return Row("waypoints", "FAIL" if len(misses) * 2 > len(wants) else "WARN", detail + ": " + "; ".join(misses[:3]),
                    lines=[f"WARN {m}" for m in misses])
     return Row("waypoints", "PASS", detail)
+
+
+def check_screen(g, before: str | None) -> Row:
+    """The last row: the screen the next session starts on (see the module doc)."""
+    screen = screen_now(g)
+    if screen is None:
+        return Row("screen", "WARN", "ui.state did not answer: the screen is unknown")
+    closes = 0
+    if screen != "game" and (screen != before or screen == "map"):
+        screen, closes = close_map(g)
+    closed = f"; closed a map left open (ESCAPE x{closes})" if closes else ""
+    if screen == "game":
+        return Row("screen", "WARN" if closes else "PASS", "game view" + closed)
+    if screen == before:
+        return Row("screen", "WARN", f"screen {screen}, as before the checks (left by the session, not ours)" + closed)
+    return Row("screen", "FAIL", f"screen {screen} after the checks (was {before}): the next session would start "
+               "there" + closed)
 
 
 MOD_LUA = r"""
@@ -510,6 +567,7 @@ def run_all(names: list[str], g, tools_fn, calls: int, budget: float, verbose: b
             runner=None) -> list[Row]:
     deadline = time.monotonic() + budget
     rows = []
+    before = screen_now(g)
     for name in names:
         left = deadline - time.monotonic()
         if left < 5:
@@ -537,6 +595,13 @@ def run_all(names: list[str], g, tools_fn, calls: int, budget: float, verbose: b
             row = Row(name, "FAIL", f"{type(e).__name__}: {str(e)[:140]}")
         row.secs = time.monotonic() - t0
         rows.append(row)
+    t0 = time.monotonic()
+    try:
+        row = check_screen(g, before)
+    except Exception as e:  # noqa: BLE001
+        row = Row("screen", "FAIL", f"{type(e).__name__}: {str(e)[:140]}")
+    row.secs = time.monotonic() - t0
+    rows.append(row)
     return rows
 
 
