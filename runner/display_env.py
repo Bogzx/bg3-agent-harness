@@ -45,15 +45,20 @@ def wayland_socket(runtime_dir: str) -> str | None:
 
 def fill(env: dict, default_display: str = DEFAULT_DISPLAY, uid: int | None = None, ps_text: str | None = None) -> dict:
     """Set the unset KEYS in env (in place) from the desktop session; returns {key: value} of what was set.
-    XAUTHORITY stays unset when no Xwayland runs (the caller decides whether that's fatal)."""
+    XAUTHORITY stays unset when no Xwayland runs (the caller decides whether that's fatal). An XAUTHORITY whose
+    file is gone counts as unset (and is dropped): Xwayland makes a new one when it restarts (naut3 2026-10-17:
+    after the 16:01 freeze xauth_CCLmsa -> xauth_tDSowK, so an exported or earlier-found value went stale)."""
     got: dict[str, str] = {}
-    if not (env.get("DISPLAY") and env.get("XAUTHORITY")):
+    stale = bool(env.get("XAUTHORITY")) and not os.path.exists(env["XAUTHORITY"])
+    if not (env.get("DISPLAY") and env.get("XAUTHORITY")) or stale:
         ps = pgrep_xwayland() if ps_text is None else ps_text
         if not env.get("DISPLAY"):
             got["DISPLAY"] = xwayland_display(ps) or default_display
-        auth = None if env.get("XAUTHORITY") else xwayland_auth(ps)
-        if auth:
+        auth = None if env.get("XAUTHORITY") and not stale else xwayland_auth(ps)
+        if auth and auth != env.get("XAUTHORITY"):
             got["XAUTHORITY"] = auth
+        elif stale and not auth:
+            env.pop("XAUTHORITY")
     if not env.get("XDG_RUNTIME_DIR"):
         d = f"/run/user/{os.getuid() if uid is None else uid}"
         if os.path.isdir(d):

@@ -5585,7 +5585,7 @@ def create_character(plan: str) -> str:
     t_named = time.monotonic()
     nm = nf.get("name") or {}
     timing.update(naming_ms=round((t_named - t_apply) * 1000), via=nm.get("via"), how=nm.get("how"),
-                  popups=nm.get("popups"), naming_stages=nm.get("ms"), notes=notes[-4:])
+                  typed=nm.get("typed"), popups=nm.get("popups"), naming_stages=nm.get("ms"), notes=notes[-4:])
     before = (SAVE_OWNER, SAVE_PREFIX)
     if want:
         _set_save_owner(want)  # now, before the wait: a client timeout during the load mustn't lose it (I3)
@@ -5637,7 +5637,9 @@ def _cc_first_look() -> str:
             out.append("first save (no save_game needed): " + SAVER.save(f"{sess}-start"))
         except Exception as e:  # noqa: BLE001 - the agent can still save by hand
             out.append(f"first save not started ({type(e).__name__}: {e}): save_game(label=\"{sess}-start\")")
-    out.append("NEXT: issue the first move now; write PLAYTHROUGH.md's Character line and the [decision] note "
+    first = "the first move" if "DIALOGUE" not in fl.split("\n", 1)[0].upper() else \
+        "dialogue_advance (the opening conversation is up), then the first move"
+    out.append(f"NEXT: issue {first} now; write PLAYTHROUGH.md's Character line and the [decision] note "
                "while it runs (fix CHARACTER.md's header only if the status above spells name/race/class "
                "differently)")
     return "\n" + "\n".join(out)
@@ -5658,17 +5660,24 @@ def _log_cc_timing(rec: dict) -> None:
         pass
 
 
+CC_LEVEL = "SYS_CC_I"  # the character creation scene's level (render.REGION_NAMES "Character creation")
+
+
 def _avatar_name(timeout: float, want: str | None = None) -> str | None:
     """The created character's name once the world has loaded (state.status's party: on the Nautiloid only the
     avatar), or None if nothing readable came within `timeout`. With `want`, a party member of that name wins.
-    Only on the game view: on the CC page (right after "Venture forth") the party is the page's dummy."""
+    Only on the game view (or the opening dialogue), never on the CC scene: right after "Venture forth" it reads
+    as screen=game with the page's dummy in the party (naut3, all 3 runs: name "checked" 0.3 s after the press,
+    then the FIRST LOOK showed "WHERE Character creation" and the agent re-read 10 s later on the Nautiloid)."""
     end = time.monotonic() + timeout
     while True:
         st = None
         try:
-            if game.game_state() == "Running" and _ui_screen()[0] == "game":
+            if game.game_state() == "Running" and _ui_screen()[0] in ("game", "dialogue"):
                 st = game.try_rpc("state.status", context="server")
         except (GameError, NotReady, OSError):
+            st = None
+        if isinstance(st, dict) and st.get("level") == CC_LEVEL:
             st = None
         names = [str(b.get("name")) for b in (st or {}).get("party") or []
                  if isinstance(b, dict) and b.get("name") not in (None, "", "Unknown")]

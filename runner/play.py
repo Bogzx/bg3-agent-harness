@@ -2090,6 +2090,9 @@ class Runner:
             raise ForeignGameRunning(why)
         if port_open():
             raise RuntimeError(f"port {DEBUG_PORT} is still in use; can't launch another game")
+        filled = display_env.fill(os.environ)   # Xwayland restarted since the runner started: its new -auth file
+        if filled:
+            log("display env refreshed from the desktop session: " + " ".join(f"{k}={v}" for k, v in filled.items()))
         args = [str(LAUNCH_SH)] + (["--load", load_folder] if load_folder else [])
         stamp = base = f"{datetime.now():%Y%m%d-%H%M%S}"   # launch_game.sh names its logs with it (BG3AI_LAUNCH_STAMP)
         n = 1

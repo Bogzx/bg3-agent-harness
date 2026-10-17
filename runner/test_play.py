@@ -662,6 +662,32 @@ class KillGame(unittest.TestCase):
         self.assertIn(("event", "foreign_game"), self.sent)
         self.assertTrue(issubclass(P.ForeignGameRunning, P.LaunchBlocked))   # the run loop retries, never gives up
 
+    def test_launch_refreshes_a_stale_xauthority(self):
+        # naut3: Xwayland restarted (16:01 freeze) with a new -auth file; a game launched with the old one can't
+        # open a window. Each launch re-checks it.
+        from unittest import mock
+        self.alive = set()
+        envs: list[dict] = []
+
+        class Proc:
+            pid = 4343
+
+        def popen(args, **kw):
+            envs.append(kw["env"])
+            return Proc()
+        self.r.state = {}
+        with mock.patch.object(P, "steam_ready", lambda: (True, "ok")), \
+                mock.patch.object(P, "bg3le_problems", lambda: []), \
+                mock.patch.object(P.subprocess, "Popen", popen), \
+                mock.patch.object(P, "mod_tree_hashes", lambda: {}), \
+                mock.patch.object(P, "write_status", lambda **kw: None), \
+                mock.patch.object(P.display_env, "pgrep_xwayland",
+                                  lambda: "9 /usr/bin/Xwayland :1 -auth /run/user/1000/xauth_new -rootless\n"), \
+                mock.patch.dict(P.os.environ, {"DISPLAY": ":1", "XAUTHORITY": "/run/user/1000/xauth_old"}):
+            self.r.launch_game(None)
+        self.assertEqual(envs[0]["XAUTHORITY"], "/run/user/1000/xauth_new")
+        self.assertIn("display env refreshed", (P.RUNTIME / "runner.log").read_text())
+
 
 class ApiAndMcpFailures(unittest.TestCase):
     """RUN-7 / RUN-8 pure parts."""
@@ -2312,9 +2338,18 @@ class SeriesRuns(unittest.TestCase):
         out = self._plan("--playthrough", "np", unset=("DISPLAY", "XAUTHORITY"), xwayland="")
         self.assertIn("display:        DISPLAY=:1 XAUTHORITY=unset", out)
         self.assertIn("NO XAUTHORITY", out)
-        out = self._plan("--playthrough", "np", env={"DISPLAY": ":7", "XAUTHORITY": "/x"},
+        with tempfile.NamedTemporaryFile() as x:
+            out = self._plan("--playthrough", "np", env={"DISPLAY": ":7", "XAUTHORITY": x.name},
+                             xwayland="9 /usr/bin/Xwayland :1 -auth /run/user/1000/xauth_Ab\n")
+        self.assertIn(f"display:        DISPLAY=:7 XAUTHORITY={x.name}", out)   # inherited values win
+        # naut3: an exported value from before Xwayland restarted (the file is gone) is replaced
+        out = self._plan("--playthrough", "np", env={"DISPLAY": ":7", "XAUTHORITY": "/run/user/1000/xauth_old"},
                          xwayland="9 /usr/bin/Xwayland :1 -auth /run/user/1000/xauth_Ab\n")
-        self.assertIn("display:        DISPLAY=:7 XAUTHORITY=/x", out)   # inherited values win
+        self.assertIn("display:        DISPLAY=:7 XAUTHORITY=/run/user/1000/xauth_Ab", out)
+        out = self._plan("--playthrough", "np", env={"DISPLAY": ":7", "XAUTHORITY": "/run/user/1000/xauth_old"},
+                         xwayland="")
+        self.assertIn("XAUTHORITY=unset", out)
+        self.assertIn("NO XAUTHORITY", out)
 
     def test_plan_prints_the_freeze_and_the_command_and_writes_nothing(self):
         out = self._plan("--playthrough", "np", "--until", "nautiloid_escaped", "--runs", "3", "--model", "opus",
