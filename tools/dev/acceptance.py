@@ -37,6 +37,8 @@ DOOR_SAVE = "S050-end"         # Lower City, beside the locked Steel Watch Found
 # probe, 2026-10-17: Shadowheart has Healing Word / Blessing of the Trickster, Claude only smites). In S065 Claude the
 # Paladin (L10) cast Target_Bless and hit "a cast takes at most 2 here": the case ACT-8 fixes.
 HOTBAR_SAVE = "S065-end"
+# A9: Karlach carries a Scroll of Misty Step here (S066 #143 read it on herself, then reloaded to get it back)
+SCROLL_SAVE = "S066-end"
 # Run order (se 2026-10-16): read-only sections first, then the ones that change the world (each reloads its save at
 # the end), then the crash guard's reloads, then se, whose last items spend a spell slot (hotbar Bless) and switch
 # bg3le's strict frame lock on and back: a crash there costs no other section. Every section loads its own save first,
@@ -61,6 +63,8 @@ SAVE_NEEDS = {
     HOTBAR_SAVE: {"level": "CTY_Main_A", "party_has": ["Claude"], "party_min": 3,
                   "used_by": "se/act hotbar casts (Claude the Paladin's Bless on 3; Dimension Door if Gale is in); "
                              "act prepare_spells (Bless prepared and unprepared on Claude, A5)"},
+    SCROLL_SAVE: {"party_has": ["Karlach"], "party_min": 3,
+                  "used_by": "act point scroll aimed at the ground (A9: Karlach's Scroll of Misty Step)"},
     TRADE_SAVE: {"level": "SCL_Main_A", "near": ((-26.8, 27.4, 164.8), 8),
                  "used_by": "trade (Last Light Inn; Talli ~34 m S at (-31.3, 27.5, 130.2))"},
     DOOR_SAVE: {"level": "CTY_Main_A", "near": ((-233.0, 4.5, -180.6), 8),
@@ -1324,6 +1328,25 @@ def container_probe(u: str, cell: dict) -> str:
     return f"server {json.dumps(srv)[:1500]} | hud {vm[:3000]}"
 
 
+def floor_point(p0: list, dist: float) -> list | None:
+    """A floor point at p0's height (within 1 m), `dist` m away, well on screen; None when no direction has one."""
+    for k in range(8):
+        a = k * math.pi / 4
+        q = [p0[0] + dist * math.cos(a), p0[1], p0[2] + dist * math.sin(a)]
+        hs = lua_server(f"local ok,h=pcall(Ext.Level.GetHeightsAt,{q[0]},{q[2]}) "
+                        "if not ok or type(h)~='table' then return '' end local o={} "
+                        "for _,v in ipairs(h) do o[#o+1]=string.format('%.2f',v) end return table.concat(o,',')")
+        ys = [float(v) for v in hs.split(",") if v.strip()] if hs and "error" not in hs else []
+        y = min(ys, key=lambda v: abs(v - p0[1]), default=None)
+        if y is None or abs(y - p0[1]) > 1.0:
+            continue
+        sp = S.game.try_rpc("ui.screen_pos", {"pos": [q[0], y, q[2]]}, context="client") or {}
+        nd = sp.get("ndc") or [9, 9]
+        if sp.get("on_screen") and abs(nd[0]) < 0.8 and abs(nd[1]) < 0.8:
+            return [round(q[0], 2), round(y, 2), round(q[2], 2)]
+    return None
+
+
 def twostep_dd_probe() -> bool:
     """act 2026-10-16, audit ACT-9: a two-step spell by the player's clicks (bridge twostep.py: hotbar cell, who goes =
     the caster, then the landing on the ground, the cursor checked by ui.ground_check before the click). Out of
@@ -1367,22 +1390,7 @@ def twostep_dd_probe() -> bool:
         # the cell opens the upcast level picker (live L4); the route picks the lowest real level
         log(f"PROBE twostep container {S.H.get(caster)}: {container_probe(caster, cell)}")
     p0 = party[caster].get("pos")
-    land = None
-    for k in range(8):   # a floor point at the caster's height, 10 m away, on screen
-        a = k * math.pi / 4
-        q = [p0[0] + 10 * math.cos(a), p0[1], p0[2] + 10 * math.sin(a)]
-        hs = lua_server(f"local ok,h=pcall(Ext.Level.GetHeightsAt,{q[0]},{q[2]}) "
-                        "if not ok or type(h)~='table' then return '' end local o={} "
-                        "for _,v in ipairs(h) do o[#o+1]=string.format('%.2f',v) end return table.concat(o,',')")
-        ys = [float(v) for v in hs.split(",") if v.strip()] if hs and "error" not in hs else []
-        y = min(ys, key=lambda v: abs(v - p0[1]), default=None)
-        if y is None or abs(y - p0[1]) > 1.0:
-            continue
-        sp = S.game.try_rpc("ui.screen_pos", {"pos": [q[0], y, q[2]]}, context="client") or {}
-        nd = sp.get("ndc") or [9, 9]
-        if sp.get("on_screen") and abs(nd[0]) < 0.8 and abs(nd[1]) < 0.8:
-            land = [round(q[0], 2), round(y, 2), round(q[2], 2)]
-            break
+    land = floor_point(p0, 10)
     if not need(land is not None, TWOSTEP_ITEM, "no floor point 10 m away on screen around the caster"):
         return False
     sp = S.game.try_rpc("ui.screen_pos", {"pos": land}, context="client") or {}
@@ -2165,6 +2173,40 @@ def prepare_bless_round_trip() -> None:
          + (f"; swapped out {swap[0]} and back" if swap else ""))
 
 
+BLOCKING_STATUS_ITEM = "cast guard reads Stunned/Fearful status types (A9, read-only)"
+POINT_SCROLL_ITEM = "point scroll aimed at the ground: Misty Step 6 m (A9)"
+
+
+def point_scroll_probe() -> None:
+    """A9 (S066 #66 Cone of Cold, #143 Misty Step: "cast on <the reader> by a click", the x,y,z dropped): out of combat
+    in SCROLL_SAVE, Karlach reads her Scroll of Misty Step at a floor point 6 m away on screen (bridge
+    twostep.ground_click: the cursor checked by ui.ground_check, then the click). PASS = the result says "aimed at
+    the ground" and "moved", and she stands within 1.5 m of the point. Spends the scroll in memory only (not saved)."""
+    if not load_verified(SCROLL_SAVE, record=True):
+        item(POINT_SCROLL_ITEM, "SKIP", f"{SCROLL_SAVE} did not load")
+        return
+    inv = S.game.try_rpc("state.inventory", {}) or {}
+    it = next((x for x in inv.get("items") or [] if isinstance(x, dict)
+               and str(x.get("name") or "").lower() == "scroll of misty step"), None)
+    if not need(it is not None, POINT_SCROLL_ITEM, f"no Scroll of Misty Step carried in {SCROLL_SAVE}"):
+        return
+    if not need(not (S.game.try_rpc("state.combat") or {}).get("active"), POINT_SCROLL_ITEM, "in combat"):
+        return
+    u = it["owner"]
+    p0 = party_pos().get(u)
+    land = floor_point(p0, 6) if p0 else None
+    if not need(land is not None, POINT_SCROLL_ITEM, "no floor point 6 m away on screen around the reader"):
+        return
+    out, dt = took("use_ability", ability="Scroll of Misty Step", x=land[0], y=land[1], z=land[2], who=S.H.get(u))
+    time.sleep(1.0)
+    p1 = party_pos().get(u) or p0
+    off = math.dist([p1[0], p1[2]], [land[0], land[2]])
+    head = first_line(out)
+    ok = "aimed at the ground" in head and " moved " in head and off <= 1.5
+    item(POINT_SCROLL_ITEM, "PASS" if ok else "FAIL",
+         f"{head[:260]} ({dt:.1f}s); {off:.1f} m from the point {land}, moved {math.dist(p0, p1):.1f} m")
+
+
 def sec_act() -> None:
     """act overnight batch (2026-10-10/11): the hot-reloaded Lua is live (jump FELL report, CastSpellFailed reason,
     missing ranged weapon named, one-decimal range refusal), react by name, swap_party's camp block answer,
@@ -2262,6 +2304,14 @@ def sec_act() -> None:
     v = lua_server(g + 'return tostring(A.LADDER_WATCH_AT_USE).."|"..tostring(A.gone_why ~= nil)')
     item("act target gone + ladder watch flag live", "PASS" if ts.get("gone") == "off_stage" and v == "true|true"
          else "FAIL", f"target_state(unknown uuid)={ts}; LADDER_WATCH_AT_USE|gone_why: {v[:80]}")
+    # A9 (S066 #100/#130, S067 #32/#43/#54): the cast guard reads the caster's status types (Stunned refused, a dropped
+    # order while Fearful names it). Read-only: the stats types the check keys on, and the check on the host now.
+    v = lua_server(g + 'if not G.blocking_status then return "no G.blocking_status" end '
+                   'local b=G.blocking_status(Osi.GetHostCharacter()) '
+                   'return tostring(Ext.Stats.Get("FEARED").StatusType).."|"..tostring(Ext.Stats.Get("STUNNED").StatusType)'
+                   '.."|"..tostring(b and b.name)')
+    item(BLOCKING_STATUS_ITEM, "PASS" if v.startswith("FEAR|INCAPACITATED|") else "FAIL",
+         f"FEARED|STUNNED StatusType|host's blocking status: {v[:160]}")
     # latency round (2026-10-16): a shared-group end is reported after 0.4 s (Lua A.END_REQUEST_AFTER_MS, was 1.5 s);
     # dialogue_advance with no conversation anywhere returns in ~0.5 s (was 2.5 s: naut "0 filler line(s)" 2.7 s).
     v = lua_server(g + 'return tostring(A.END_REQUEST_AFTER_MS)')
@@ -2291,6 +2341,8 @@ def sec_act() -> None:
         prepare_bless_round_trip()
     # A6 helm ladders (live L5: it sat at the end of sec_vis, so --only act never ran it); loads its own save
     helm_ladder_probe()
+    # A9 (S066 #66/#143): a point scroll is aimed at the ground at its x,y,z; loads its own save
+    point_scroll_probe()
 
 
 FUNCS["act"] = sec_act

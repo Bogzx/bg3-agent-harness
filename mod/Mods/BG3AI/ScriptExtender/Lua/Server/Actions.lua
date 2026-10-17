@@ -1826,6 +1826,12 @@ reg("cast", function(args)
                         why = why .. ": it ignores a landing the jump can't reach (too far or too high for this"
                             .. " character, or no clear arc): pick a nearer, lower landing (route / get_layout)"
                     end
+                    local blk = combat and G.blocking_status(char)
+                    if blk then
+                        why = why .. ": the caster is " .. tostring(blk.name) .. (blk.type == "FEAR"
+                            and " (a fear status: the game dropped orders at such a turn's start before; nothing"
+                                .. " was spent)" or " (it can't act while that lasts)")
+                    end
                     pcall(G.osi, "PurgeOsirisQueue", char)
                     RPC.finish_job(job, "failed", nil, why)
                     return

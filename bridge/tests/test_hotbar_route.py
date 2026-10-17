@@ -109,6 +109,44 @@ class HotbarRoute(Base):
         self.assertNotIn("ui", a)
         self.assertIn("an upcast or a position goes by the 2-target cast", out)
 
+    def test_off_three_beams_on_one_target_cast_at_it_alone(self):
+        # S066 #59 r1 Wyll: Eldritch Blast targets=[e356]x3 → UseSpell(Orin, Orin): "the game never started it"
+        hotbar.HOTBAR_CAST_ENABLED = False
+        out = server.use_ability("Projectile_EldritchBlast", targets=[self.gob] * 3, who=self.p1)
+        (a,) = self.cast_args()
+        self.assertEqual(a["target"], GOB)
+        self.assertNotIn("targets", a)
+        self.assertIn(f"targets: 3 picks on {self.gob}", out)
+        self.assertIn("cast at it alone (one target takes every beam/dart)", out)
+        self.assertNotIn("NOT targeted", out)
+        self.assertNotIn("left out", out)
+
+    def test_two_beams_on_one_target_too_and_a_later_one_is_named(self):
+        hotbar.HOTBAR_CAST_ENABLED = False
+        server.use_ability("Projectile_EldritchBlast", target=self.gob, targets=[self.gob], who=self.p1)
+        out = server.use_ability("Projectile_EldritchBlast", targets=[self.gob, self.gob, self.imp], who=self.p1)
+        a1, a2 = self.cast_args()
+        self.assertEqual((a1["target"], a1.get("targets")), (GOB, None))
+        self.assertEqual((a2["target"], a2.get("targets")), (GOB, None))
+        self.assertIn(f"left out: {self.imp}", out)
+
+    def test_distinct_picks_keep_the_two_target_cast(self):
+        hotbar.HOTBAR_CAST_ENABLED = False
+        server.use_ability("Projectile_EldritchBlast", targets=[self.gob, self.imp, self.gob], who=self.p1)
+        (a,) = self.cast_args()
+        self.assertEqual(a["targets"], [GOB, IMP])
+
+    def test_route_failure_with_one_target_repeated_falls_back_to_it_alone(self):
+        hotbar.HOTBAR_CAST_ENABLED = True
+        self.g.dur["act.cast"] = 5.0
+        self.fake.ok, self.fake.reason, self.fake.stage = False, "cell_not_found", "locate"
+        self.g.on_start = lambda op, a: self.g.dur.update({"act.cast": 0.05}) if a.get("ui") is None else None
+        out = server.use_ability("Projectile_EldritchBlast", targets=[self.gob] * 3, who=self.p1)
+        a1, a2 = self.cast_args()
+        self.assertEqual(a1["targets"], [GOB] * 3)        # the route clicks the repeats (valid by hand)
+        self.assertEqual((a2["target"], a2.get("targets")), (GOB, None))
+        self.assertIn("cast at it alone", out)
+
     def test_route_failure_cancels_and_casts_on_two_by_osiris(self):
         hotbar.HOTBAR_CAST_ENABLED = True
         self.g.dur["act.cast"] = 5.0   # the ui job would watch for a long time: the cancel ends it

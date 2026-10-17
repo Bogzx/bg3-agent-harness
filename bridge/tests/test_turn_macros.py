@@ -680,6 +680,28 @@ class CombatTurn(Base):
         out = server.end_turn(who=server.H.get(P1), wait=False)
         self.assertIn("didn't end it either", out, (out, self.g.combat))
 
+    def test_a_slow_end_after_the_hud_press_is_done_not_failed(self):
+        # S066 19:21 #68 / S067 19:46 #65: a shared group's last end came 7-10.4 s after the order, past the Lua 3 s
+        # + the old 3 s HUD watch: "didn't end it either", the next combat_turn refused, end_turn found nothing
+        clock = [0.0]
+        reads = []
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "state.combat":
+                reads.append(clock[0])
+                return combat(current=GOB) if len(reads) > 1 and clock[0] >= 7.0 else combat()
+            return {"done": True}
+
+        def sleep(s):
+            clock[0] += s
+        g = type("G", (), {"rpc": staticmethod(rpc), "try_rpc": staticmethod(rpc)})()
+        with mock.patch.object(server, "game", g), mock.patch.object(server, "_active", lambda: P1), \
+                mock.patch.object(server.time, "monotonic", lambda: clock[0]), \
+                mock.patch.object(server.time, "sleep", sleep):
+            r = server._end_turn_by_hud(P1, server.JobResult("failed", None, server.END_IGNORED))
+        self.assertEqual(r.status, "done", r.error)
+        self.assertIn("the game, slowly (10 s after the order", r.result["via"])
+
     def test_downed_member_is_not_who_acts(self):
         p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
         p1["hp_pct"] = 0
@@ -776,8 +798,9 @@ class CombatTurn(Base):
         server.combat_turn(self.plan(action={"ability": "Projectile_MagicMissile", "target": self.gob,
                                              "targets": [self.gob, self.imp, self.gob]}))
         # target + targets = 4 picks; the hotbar route is off, so the 2-target cast takes target + the 1st pick
-        # (before: targets popped, one dart)
-        self.assertEqual([(a.get("target"), a.get("targets")) for _, a in self.g.ops("act.cast")], [(IMP, [IMP])])
+        # (before: targets popped, one dart). A9: that pair is the imp twice, UseSpell(imp, imp), which the game never
+        # started (S066 #59): the cast goes at the imp alone, which takes every dart
+        self.assertEqual([(a.get("target"), a.get("targets")) for _, a in self.g.ops("act.cast")], [(IMP, None)])
 
     def test_dead_picks_are_dropped_from_targets(self):
         self.g.dead.add(IMP)

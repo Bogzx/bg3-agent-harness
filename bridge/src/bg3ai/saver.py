@@ -198,6 +198,19 @@ class Saver:
             with self.cv:
                 self.ui_busy = False
                 self.cv.notify_all()
+            if not ok and not job.get("requeued"):
+                # S067 #77: Orin died, the save's menus ran, and the Emperor's conversation took the screen at the
+                # accept step ("in-game RETURN did not advance 'accept'"): the save was dropped. A menu failure while
+                # the game can't save now (a conversation, a cutscene) is that interruption: queue it once again.
+                can, why = self.can_save()
+                if not can:
+                    job["requeued"] = True
+                    job["phase"] = "queued"
+                    self.log({"save": name, "ok": False, "menu_s": round(menu_s, 2), "detail": detail,
+                              "requeued": why})
+                    self._note(f"save '{name}': the save menus were interrupted ({why}); queued, it saves at the "
+                               "next moment it can")
+                    return self._run(job)
             if not ok:
                 self._note(f"⚠ SAVE FAILED '{name}': {detail}; call save_game again")
                 self.log({"save": name, "ok": False, "menu_s": round(menu_s, 2), "detail": detail})

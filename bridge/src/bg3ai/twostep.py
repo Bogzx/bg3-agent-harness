@@ -259,6 +259,26 @@ def twostep_cast(game: Game, inp: InputClient | None, caster: str, spell: str, f
     return run.done(True, phase=(run.st.get("cast") or {}).get("phase"))
 
 
+ARM_WAIT_S = 1.0               # a scroll's Use -> its spell in hand
+
+
+def ground_click(game: Game, inp: InputClient, caster: str, spell: str, pos: list[float],
+                 should_stop=None) -> HotbarCastResult:
+    """Aim the spell already in hand (a scroll read: its Use put the spell there) at the ground at `pos`, as a player
+    clicks it: Cone of Cold's direction, Misty Step's landing, a sphere's centre (S066 #66/#143: those scrolls were
+    clicked on the reader, the x,y,z dropped). The same cursor-checked click as Dimension Door's landing. ok = the
+    cast started; every failure puts the spell back, so nothing is cast and no click lands as a move order."""
+    run = _Run(game, inp, caster, spell, caster, [float(v) for v in pos[:3]], should_stop)
+    run.res.detail.update(targets=1, two_step=None, ground=True)
+    armed, run.st = hotbar._wait(game, caster, lambda s: bool(s.get("armed")), ARM_WAIT_S)
+    if not armed:
+        return run.done(False, "arm", "not_armed", "no spell in hand after the scroll's use")
+    ok, info = run.click_ground(lambda before, s: hotbar._started(s))
+    if not ok:
+        return _fail(run, "ground", info)
+    return run.done(True, phase=(run.st.get("cast") or {}).get("phase"))
+
+
 def _fail(run: _Run, stage: str, info: dict) -> HotbarCastResult:
     reason, why = info.pop("reason", "failed"), info.pop("why", None)
     # "dropped": the spell already left the hand; an ESCAPE now would open the game menu
