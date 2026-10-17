@@ -15,6 +15,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -23,7 +24,7 @@ from test_turn_macros import (
 )
 
 from bg3ai import areablock, party, server
-from bg3ai.game import JobResult
+from bg3ai.game import GameError, JobResult
 
 CLAUDE = "aaaaaaaa-0000-4000-8000-000000000004"
 KARLACH = "aaaaaaaa-0000-4000-8000-000000000001"
@@ -67,6 +68,7 @@ class Fake:
 
     def __init__(self, status):
         self.status, self.block, self.wps, self.can = status, {"hud": True}, [], {}
+        self.ft_error = None   # ui.fast_travel's Lua refusal (raised by game.rpc, as live)
         self.jobs, self.calls = [], []
         self.event_seq = {"server": 0, "client": 0}
 
@@ -92,6 +94,8 @@ class Fake:
 
     def run_job(self, op, args, context="server", wait_s=25.0, on_start=None, **kw):
         self.jobs.append((op, args))
+        if op == "ui.fast_travel" and self.ft_error:
+            raise GameError(self.ft_error)
         if op == "act.chain":
             return JobResult("failed", None, "timeout")  # S064 11:35: act.chain x3 timed out (136 m away)
         if op == "ui.fast_travel":
@@ -269,6 +273,33 @@ class StoryAreaBlock(Case):
         self.assertIn("Same story-area block as camp", out)
         self.assertNotIn("act.go_to_camp", fake.ops())
         self.assertNotIn("ui.fast_travel", fake.ops())
+
+    def test_s074_travel_to_far_coordinates_walks_with_the_area_text(self):
+        # S074 23:00:54: travel_to(x=-67,y=40,z=-45) from inside Szarr Palace, 1.9 km: the fast-travel shortcut's Lua
+        # refusal ended the whole call as a bare `FAILED: can't fast travel now (Location)` (14 s to the next try)
+        fake = self.s065()
+        fake.ft_error = "can't fast travel now (Location)"
+        wp = dict(RUINS_WP, to_goal_m=60.0)
+        ft = lambda: server._fast_travel_first(CLAUDE, [-67.0, 40.0, -45.0], 1900.0)
+        with mock.patch.object(server, "_pos_now", return_value=[21.0, -49.0, 1001.0]), \
+                mock.patch.object(server.longnav, "pick_waypoint", return_value=wp), \
+                mock.patch.object(server, "_leave_camp_first", return_value=""):
+            line, left = ft()
+            self.assertIsNone(left)                                               # the walk goes on from here
+            self.assertTrue(line.startswith("fast travel to Undercity Ruins: can't fast travel now (Location): this "
+                                            "area does not allow travel"), line)
+            self.assertIn("Way out: walk out the way you came, e.g. toward the Temple of Bhaal waypoint", line)
+            self.assertTrue(line.endswith("Walking instead."), line)
+            self.assertIsNotNone(server.AREA.current(LVL))                      # the ALERTS line has it now
+            n = fake.ops().count("ui.fast_travel")
+            line, _ = ft()                                                        # the next long trip: no try
+            self.assertTrue(line.startswith("fast travel to Undercity Ruins skipped: the game blocks travel here"), line)
+            self.assertIn("Same story-area block as travel_to at ", line)
+            self.assertEqual(fake.ops().count("ui.fast_travel"), n)
+            fake.ft_error = "can't fast travel in combat"                         # any other refusal: walk, as before
+            server.AREA.block = None
+            line, _ = ft()
+            self.assertEqual(line, "fast travel to Undercity Ruins failed (can't fast travel in combat): walking instead")
 
     def test_way_out_is_where_travel_last_worked(self):
         fake = self.s065()

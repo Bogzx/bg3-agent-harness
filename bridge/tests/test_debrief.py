@@ -30,22 +30,24 @@ def cast(u, n, name):
 
 
 def fight_events():
+    """In the mod's order: a hit's damage events, then its cast (Events.lua AttackedBy before CastedSpell)."""
     return [
         ev("combat_started"), ev("round_started", round=1),
-        cast(SH, "Shadowheart", "Sacred Flame"), dmg(SH, "Shadowheart", AV, "Justiciar Avenger", 20, "Radiant"),
-        cast(W, "Wyll", "Eldritch Blast"), dmg(W, "Wyll", AV, "Justiciar Avenger", 0, ""),
-        dmg(W, "Wyll", AV, "Justiciar Avenger", 12, "Force"),
-        cast(SH, "Shadowheart", "Spirit Guardians"), dmg(SH, "Shadowheart", TR, "Umbral Tremor", 2, "Necrotic"),
-        dmg(SH, "Shadowheart", AV, "Justiciar Avenger", 9, "Necrotic"),
+        dmg(SH, "Shadowheart", AV, "Justiciar Avenger", 20, "Radiant"), cast(SH, "Shadowheart", "Sacred Flame"),
+        dmg(W, "Wyll", AV, "Justiciar Avenger", 0, ""), dmg(W, "Wyll", AV, "Justiciar Avenger", 12, "Force"),
+        cast(W, "Wyll", "Eldritch Blast"),
+        dmg(SH, "Shadowheart", TR, "Umbral Tremor", 2, "Necrotic"),
+        dmg(SH, "Shadowheart", AV, "Justiciar Avenger", 9, "Necrotic"), cast(SH, "Shadowheart", "Spirit Guardians"),
         cast(SO, "Justiciar Soulhunter", "Living Shadow"),
         ev("status_applied", target=ref(W, "Wyll"), source=ref(SO, "Justiciar Soulhunter"), name="Blinded"),
         dmg(SO, "Justiciar Soulhunter", W, "Wyll", 30, "Piercing"),
         ev("round_started", round=2),
+        dmg(SH, "Shadowheart", TR, "Umbral Tremor", 2, "Necrotic"),   # Spirit Guardians at its turn start (no cast)
         dmg(SO, "Justiciar Soulhunter", W, "Wyll", 46, "Piercing"), ev("downed", **ref(W, "Wyll")),
         dmg(AV, "Justiciar Avenger", C, "Claude", 20, "Slashing"),
         ev("used", char=ref(C, "Claude"), item=ref("u-pot", "Potion of Healing"), success=True),
-        cast(C, "Claude", "Main Hand Attack"), dmg(C, "Claude", TR, "Umbral Tremor", 10, "Bludgeoning"),
-        dmg(C, "Claude", TR, "Umbral Tremor", 11, "Bludgeoning"),
+        dmg(C, "Claude", TR, "Umbral Tremor", 10, "Bludgeoning"), dmg(C, "Claude", TR, "Umbral Tremor", 11, "Bludgeoning"),
+        cast(C, "Claude", "Main Hand Attack"),
         ev("died", **ref(AV, "Justiciar Avenger")),
         ev("combat_ended"),
     ]
@@ -90,7 +92,7 @@ class Build(unittest.TestCase):
         eb = next(a for a in rec["abilities"] if a["name"] == "Eldritch Blast")
         self.assertEqual((eb["hits"], eb["misses"], eb["dmg"]), (1, 1, 12))
         sg = next(a for a in rec["abilities"] if a["name"] == "Spirit Guardians")
-        self.assertEqual(sg["targets_max"], 2)
+        self.assertEqual((sg["targets_max"], sg["hits"], sg["dmg"]), (2, 3, 13))
         low = [t for t in rec["dmg_types"] if t["low"]]
         self.assertEqual([(t["enemy"], t["type"]) for t in low], [("Umbral Tremor", "Necrotic")])
         self.assertEqual(rec["pos"]["surrounded"], {"name": "Claude", "n": 3, "round": 1})
@@ -102,7 +104,9 @@ class Build(unittest.TestCase):
         self.assertEqual(rec["unused"], ["Scroll of Fireball"])
         self.assertEqual(rec["consumables"], {"used": ["Potion of Healing"], "unused": ["Scroll of Fireball"]})
         party = {p["name"]: p for p in rec["party"]}
-        self.assertEqual(party["Shadowheart"]["dealt"], 31)
+        self.assertEqual(party["Shadowheart"]["dealt"], 33)
+        sf = next(a for a in rec["abilities"] if a["name"] == "Sacred Flame")
+        self.assertEqual((sf["hits"], sf["dmg"]), (1, 20))
         self.assertEqual(party["Wyll"]["taken"], 76)
         self.assertEqual(rec["key_facts"][0], "Wyll went down first (r2, by Justiciar Soulhunter)")
         json.dumps(rec)  # serialisable
@@ -126,7 +130,7 @@ class Build(unittest.TestCase):
         self.assertIn("use the unused scroll/potion;", debrief.last_attempt(rec) + ";")
         note = debrief.fight_note(rec)
         self.assertTrue(note.startswith("costly @SCL vs Justiciar Soulhunter, Justiciar Avenger (Human), Umbral Tremor | "), note)
-        self.assertIn("| rounds 2 | downed: Wyll by Justiciar Soulhunter | dealt 64 / taken 96 |", note)
+        self.assertIn("| rounds 2 | downed: Wyll by Justiciar Soulhunter | dealt 66 / taken 96 |", note)
         self.assertIn("| resisted: Umbral Tremor:Necrotic | unused: Scroll of Fireball | Wyll went down first", note)
 
     def test_saves_summons_and_mirror_names(self):
@@ -134,16 +138,19 @@ class Build(unittest.TestCase):
         # Spiritual Weapon's hits arrive with Shadowheart as the source; the copies vanish (no died events).
         tr = debrief.Tracker()
         SW, MW, MS = "u-sw", "u-mirror-wyll", "u-mirror-sh"
-        evs = [ev("combat_started"), ev("round_started", round=1),
-               ev("cast", caster=ref(SH, "Shadowheart"), spell="Target_TollTheDead", name="Toll the Dead", roll="save"),
-               dmg(SH, "Shadowheart", MS, "Shadowheart", 0, "Necrotic"),
+        evs = [dmg(SH, "Shadowheart", MS, "Shadowheart", 0, "Necrotic"),
                ev("cast", caster=ref(SH, "Shadowheart"), spell="Target_TollTheDead", name="Toll the Dead", roll="save"),
                dmg(SH, "Shadowheart", MW, "Wyll", 0, "Necrotic"),
-               ev("cast", caster=ref(SW, "Spiritual Weapon"), spell="x", name="Greataxe Slash", roll="attack"),
+               ev("cast", caster=ref(SH, "Shadowheart"), spell="Target_TollTheDead", name="Toll the Dead", roll="save"),
                dmg(SH, "Shadowheart", MW, "Wyll", 11, "Slashing"),
+               ev("cast", caster=ref(SW, "Spiritual Weapon"), spell="x", name="Greataxe Slash", roll="attack"),
                dmg(MW, "Wyll", C, "Claude", 9, "Force"),
-               cast(W, "Wyll", "Eldritch Blast"), dmg(W, "Wyll", MW, "Wyll", 10, "Force"),
+               dmg(W, "Wyll", MW, "Wyll", 10, "Force"), cast(W, "Wyll", "Eldritch Blast"),
                ev("combat_ended")]
+        tr.feed([ev("combat_started"), ev("round_started", round=1)], PARTY | {SW}, now=0.0)
+        tr.observe({"order": [{"uuid": SW, "name": "Spiritual Weapon", "relation": "party", "summon": True},
+                              {"uuid": MW, "name": "Wyll", "relation": "hostile"},
+                              {"uuid": MS, "name": "Shadowheart", "relation": "hostile"}]}, PARTY | {SW})
         tr.feed(evs, PARTY | {SW}, now=0.0)
         rec = tr.close(ROWS, [], {}, now=60.0)
         self.assertFalse([t for t in rec["dmg_types"] if t["low"]])            # saves are not a resisted type
@@ -289,14 +296,16 @@ class Act3Retries(unittest.TestCase):
         # S060-r1 09:15: every weapon hit carried 1-3 Radiant (Slashing 12 + Radiant 2); Divine Smite Piercing 8 +
         # Radiant 18, Guiding Bolt Radiant 18. The trap grid hit for 434 of 666 with no visible source.
         tr = debrief.Tracker()
-        evs = [ev("combat_started"), ev("round_started", round=1), cast(K, "Karlach", "Main Hand Attack")]
+        evs = [ev("combat_started"), ev("round_started", round=1)]
         evs += hit(K, "Karlach", GT, "Gortash", ("Slashing", 12), ("Radiant", 2))
         evs += hit(K, "Karlach", GT, "Gortash", ("Slashing", 11), ("Radiant", 2))   # extra attack: next hit
-        evs += [cast(C, "Claude", "Divine Smite")] + hit(C, "Claude", GT, "Gortash", ("Piercing", 8), ("Radiant", 18))
-        evs += [cast(SH, "Shadowheart", "Guiding Bolt")] + hit(SH, "Shadowheart", GT, "Gortash", ("Radiant", 18))
-        evs += [cast(K, "Karlach", "Frenzied Strike")] + hit(K, "Karlach", GT, "Gortash", ("Slashing", 13), ("Radiant", 2))
-        evs += [ev("round_started", round=2), cast(NU, "Black Gauntlet Numia", "Blight"),
-                dmg(NU, "Black Gauntlet Numia", SH, "Shadowheart", 40, "Necrotic"), ev("downed", **ref(SH, "Shadowheart"))]
+        evs += [cast(K, "Karlach", "Main Hand Attack")]
+        evs += hit(C, "Claude", GT, "Gortash", ("Piercing", 8), ("Radiant", 18)) + [cast(C, "Claude", "Divine Smite")]
+        evs += hit(SH, "Shadowheart", GT, "Gortash", ("Radiant", 18)) + [cast(SH, "Shadowheart", "Guiding Bolt")]
+        evs += hit(K, "Karlach", GT, "Gortash", ("Slashing", 13), ("Radiant", 2)) + [cast(K, "Karlach", "Frenzied Strike")]
+        # the down comes before the cast that did it (the mod's order): the cast names it
+        evs += [ev("round_started", round=2), dmg(NU, "Black Gauntlet Numia", SH, "Shadowheart", 40, "Necrotic"),
+                ev("downed", **ref(SH, "Shadowheart")), cast(NU, "Black Gauntlet Numia", "Blight")]
         evs += [unseen(u, n, 38, "Thunder") for u, n in ((C, "Claude"), (K, "Karlach"), (W, "Wyll"))]
         evs += [unseen(u, n, 36, "Fire") for u, n in ((C, "Claude"), (K, "Karlach"))]
         tr.feed(evs, PARTY4 | {"u-sw"}, now=0.0)
@@ -327,13 +336,13 @@ class Act3Retries(unittest.TestCase):
                ev("status_applied", target=ref(OR, "Orin"), name="Unstoppable: 7"),
                ev("died", **ref(RE, "Reaper of Bhaal Eglantine")), ev("died", **ref("u-r2", "Reaper of Bhaal Hiila"))]
         for _ in range(3):
-            evs += [cast(C, "Claude", "Main Hand Attack")] + hit(C, "Claude", OR, "Orin", ("Piercing", 1), ("Radiant", 1))
-            evs += [cast(SH, "Shadowheart", "Sacred Flame")] + hit(SH, "Shadowheart", OR, "Orin", ("Radiant", 1))
-            evs += [cast(SH, "Shadowheart", "Toll the Dead")] + hit(SH, "Shadowheart", OR, "Orin", ("Necrotic", 1))
-        evs += [cast(W, "Wyll", "Eldritch Blast")] + hit(W, "Wyll", OR, "Orin", ("Force", 4))
-        evs += [ev("round_started", round=6), cast(OR, "Orin", "Slay"), dmg(OR, "Orin", K, "Karlach", 60, "Slashing"),
+            evs += hit(C, "Claude", OR, "Orin", ("Piercing", 1), ("Radiant", 1)) + [cast(C, "Claude", "Main Hand Attack")]
+            evs += hit(SH, "Shadowheart", OR, "Orin", ("Radiant", 1)) + [cast(SH, "Shadowheart", "Sacred Flame")]
+            evs += hit(SH, "Shadowheart", OR, "Orin", ("Necrotic", 1)) + [cast(SH, "Shadowheart", "Toll the Dead")]
+        evs += hit(W, "Wyll", OR, "Orin", ("Force", 4)) + [cast(W, "Wyll", "Eldritch Blast")]
+        evs += [ev("round_started", round=6), dmg(OR, "Orin", K, "Karlach", 60, "Slashing"),
                 ev("downed", **ref(K, "Karlach")), cast(OR, "Orin", "Slay"), dmg(OR, "Orin", K, "Karlach", 30, "Slashing"),
-                ev("died", **ref(K, "Karlach"))]
+                ev("died", **ref(K, "Karlach")), cast(OR, "Orin", "Slay")]
         tr.feed(evs[:6], PARTY4, now=0.0)
         for pct in (100, 21, 33):
             tr.observe({"order": [{"uuid": OR, "name": "Orin", "relation": "hostile", "hp_pct": pct},
@@ -368,7 +377,7 @@ class Act3Retries(unittest.TestCase):
         evs = [ev("combat_started"), ev("round_started", round=1)]
         for amt, typ in ((1, "Radiant"), (1, "Force"), (1, "Force"), (1, "Piercing"), (1, "Radiant"), (4, "Force"),
                          (5, "Slashing"), (6, "Force"), (8, "Slashing"), (8, "Piercing"), (17, "Slashing")):
-            evs += [cast(C, "Claude", "Main Hand Attack")] + hit(C, "Claude", OR, "Orin", (typ, amt))
+            evs += hit(C, "Claude", OR, "Orin", (typ, amt)) + [cast(C, "Claude", "Main Hand Attack")]
         tr.feed(evs, PARTY4)
         rec = tr.close(ROWS4)
         self.assertEqual((rec["dmg_cap"][0]["ones"], rec["dmg_cap"][0]["hits"]), (5, 11))
@@ -515,3 +524,132 @@ class FledFights(unittest.TestCase):
         rec = tr.close(ROWS, [], {"session": "S999"}, now=160.0)
         self.assertFalse(debrief.fled(rec))
         self.assertIn("focus Justiciar Soulhunter first", debrief.last_attempt(rec))
+
+
+S074_REC = Path(__file__).parent / "golden" / "fights_s074.jsonl"   # the real v2 record of Cazador try 1 (S074 23:04)
+G, CZ, GH, GH2 = "u-gale", "u-cazador", "u-gur-1", "u-gur-2"
+SPAWN = {"u-leon": "Leon", "u-petras": "Pale Petras", "u-aurelia": "Aurelia", "u-dalyria": "Dalyria",
+         "u-violet": "Violet", "u-yousen": "Yousen"}
+PARTY_G = PARTY | {K, G}
+ROWS_G = ROWS4 + [{"uuid": G, "name": "Gale", "hp": 11, "max_hp": 158}]
+
+
+class S074Cazador(unittest.TestCase):
+    """vis V16: Cazador try 1 (S074 23:04-23:10). The debrief booked Gale's Scorching Ray (49) and Magic Missile under
+    Shadowheart's heals, counted the six ritual victims as enemies and two of them as kills (`killed 3/27`), and read
+    one 3-damage Psychic hit as "switch damage types" (plus a WARNING in try 2). Shapes from the transcript."""
+
+    def cazador_rows(self):
+        rows = [{"uuid": CZ, "name": "Cazador Szarr", "relation": "hostile", "race": "Vampire", "hp_pct": 100},
+                {"uuid": GH, "name": "Fallen Gur Hunter", "relation": "hostile"},
+                {"uuid": GH2, "name": "Fallen Gur Hunter", "relation": "hostile"}]
+        rows += [{"uuid": u, "name": n, "relation": "hostile", "race": "Vampire Spawn", "hp_pct": 100}
+                 for u, n in SPAWN.items()]   # [Sacrificial Lamb, Temporarily Hostile]
+        return {"order": rows}
+
+    def spawn_turns(self):
+        return [ev("turn_started", **ref(u, n)) for u, n in SPAWN.items()]
+
+    def fight(self):
+        tr = debrief.Tracker()
+        tr.feed([ev("combat_started"), ev("round_started", round=1)], PARTY_G, now=0.0)
+        tr.observe(self.cazador_rows(), PARTY_G)
+        evs = [ev("turn_started", **ref(CZ, "Cazador Szarr")),
+               dmg(CZ, "Cazador Szarr", G, "Gale", 31, "Lightning"), dmg(CZ, "Cazador Szarr", G, "Gale", 47, "Necrotic"),
+               cast(CZ, "Cazador Szarr", "Call Lightning"),
+               ev("turn_started", **ref(SH, "Shadowheart")), cast(SH, "Shadowheart", "Healing Word"),
+               ev("turn_started", **ref(G, "Gale"))]
+        evs += hit(G, "Gale", GH, "Fallen Gur Hunter", ("Force", 10)) + [ev("died", **ref(GH, "Fallen Gur Hunter"))]
+        evs += [dmg(G, "Gale", CZ, "Cazador Szarr", a, "Force") for a in (9, 9, 9)] + [cast(G, "Gale", "Magic Missile")]
+        evs += [ev("turn_started", **ref(C, "Claude")), cast(C, "Claude", "Dash"),
+                dmg(C, "Claude", GH2, "Fallen Gur Hunter", 8, "Slashing"), cast(C, "Claude", "Main Hand Attack")]
+        evs += self.spawn_turns()
+        evs += [ev("round_started", round=2), ev("turn_started", **ref(SH, "Shadowheart")),
+                cast(SH, "Shadowheart", "Mass Cure Wounds"), ev("turn_started", **ref(G, "Gale"))]
+        evs += [dmg(G, "Gale", CZ, "Cazador Szarr", a, "Fire") for a in (12, 11, 12, 14)]
+        evs += [cast(G, "Gale", "Scorching Ray")] + self.spawn_turns()
+        # r3: Cazador's Call Lightning on Gale; Gale's 3 Psychic back at him (no cast of ours: a retaliation)
+        evs += [ev("round_started", round=3), ev("turn_started", **ref(CZ, "Cazador Szarr")),
+                dmg(CZ, "Cazador Szarr", G, "Gale", 7, "Lightning"), dmg(G, "Gale", CZ, "Cazador Szarr", 3, "Psychic"),
+                cast(CZ, "Cazador Szarr", "Activate Call Lightning")] + self.spawn_turns()
+        evs += [ev("round_started", round=4), ev("turn_started", **ref(CZ, "Cazador Szarr")),
+                cast(CZ, "Cazador Szarr", "Ascension"), ev("died", **ref("u-leon", "Leon")),
+                ev("died", **ref("u-petras", "Pale Petras"))]
+        tr.feed(evs, PARTY_G, now=60.0)
+        tr.observe(self.cazador_rows(), PARTY_G)
+        return tr, tr.close(ROWS_G, ["Scroll of Sunbeam"], {"session": "S074"}, reloaded=True, now=369.0)
+
+    def test_heals_get_no_damage_and_each_hit_goes_to_its_own_cast(self):
+        _, rec = self.fight()
+        ab = {(a["caster"], a["name"]): a for a in rec["abilities"]}
+        for heal in ("Healing Word", "Mass Cure Wounds"):                  # old code: 37 and 49 dmg
+            self.assertEqual((ab[("Shadowheart", heal)]["hits"], ab[("Shadowheart", heal)]["dmg"]), (0, 0))
+        # 4 rays, plus the r3 Psychic: no cast claimed it, so the round's end gives it to Gale's latest cast
+        self.assertEqual((ab[("Gale", "Scorching Ray")]["hits"], ab[("Gale", "Scorching Ray")]["dmg"]), (5, 49 + 3))
+        self.assertEqual((ab[("Gale", "Magic Missile")]["hits"], ab[("Gale", "Magic Missile")]["dmg"]), (4, 37))
+        self.assertEqual((ab[("Claude", "Dash")]["hits"], ab[("Claude", "Main Hand Attack")]["dmg"]), (0, 8))
+        txt = debrief.render(rec)
+        self.assertNotIn("Mass Cure Wounds", txt)
+        self.assertIn("Gale Scorching Ray x1: 5 hit/0 miss, 52 dmg", txt)
+
+    def test_ritual_victims_are_no_enemies_and_their_deaths_no_kills(self):
+        _, rec = self.fight()
+        self.assertEqual({e["name"] for e in rec["enemies"]}, {"Cazador Szarr", "Fallen Gur Hunter"})
+        self.assertEqual(rec["kills"], [{"name": "Fallen Gur Hunter", "round": 1}])
+        self.assertEqual(rec["idle"][:2], [{"name": "Leon", "died": 4}, {"name": "Pale Petras", "died": 4}])
+        txt = debrief.render(rec)
+        self.assertIn("killed 1/3 (Fallen Gur Hunter r1)", txt)                # old code: killed 3/9
+        self.assertIn("hostile but idle, not counted: Leon (died r4), Pale Petras (died r4), Aurelia, Dalyria +2", txt)
+        self.assertNotIn("Leon r4", txt)
+
+    def test_an_enemy_without_a_turn_yet_is_still_a_foe(self):
+        tr = debrief.Tracker()
+        tr.feed([ev("combat_started"), ev("round_started", round=1)], PARTY_G, now=0.0)
+        tr.observe(self.cazador_rows(), PARTY_G)
+        tr.feed([dmg(CZ, "Cazador Szarr", G, "Gale", 31, "Lightning")], PARTY_G, now=5.0)
+        rec = tr.close(ROWS_G, [], {}, reloaded=True, now=10.0)   # reloaded before anyone else's turn
+        self.assertIn("Leon", {e["name"] for e in rec["enemies"]})
+        self.assertNotIn("idle", rec)
+
+    def test_one_small_hit_of_a_type_is_no_resistance(self):
+        _, rec = self.fight()
+        self.assertFalse([t for t in rec["dmg_types"] if t["low"]], rec["dmg_types"])   # old code: Psychic (1 hit)
+        self.assertNotIn("did little", " ".join(rec["key_facts"]))
+        self.assertNotIn("switch damage types", debrief.last_attempt(rec))
+        self.assertNotIn("low damage", debrief.render(rec))
+
+    def test_the_stored_s074_record_warns_no_more(self):
+        hist = [json.loads(x) for x in S074_REC.read_text().splitlines()]
+        self.assertIn("Psychic did little to Cazador Szarr (1 hit, avg 3.0)", hist[0]["key_facts"])   # as stored
+        tr = debrief.Tracker(hist)
+        cs = {"order": [{"name": "Cazador Szarr", "relation": "hostile"}, {"name": "Bat", "relation": "hostile"}]}
+        tr.feed([ev("combat_started"), ev("round_started", round=1)], PARTY_G)
+        line = tr.first_turn_warnings(cs)[0]
+        self.assertTrue(line.startswith("LAST TIME vs Bat, Cazador Szarr (reloaded, was costly, S074 23:04): Gale went "
+                                        "down first (r3, by Predator Werewolf); most damage to us: Cazador Szarr"), line)
+        self.assertNotIn("did little", line)
+        self.assertNotIn("Psychic", tr.history[0]["summary"])
+        self.assertEqual(tr.history[0]["enemies"][3]["resisted"], [])
+        w, _ = tr.feed([dmg(G, "Gale", CZ, "Cazador Szarr", 4, "Psychic")], PARTY_G)   # try 2, 23:22:06
+        self.assertEqual(w, [])
+        self.assertNotIn("switch damage types", debrief.last_attempt(tr.history[0]))
+
+    def test_a_two_hit_low_type_still_counts(self):
+        tr = debrief.Tracker()
+        evs = [ev("combat_started"), ev("round_started", round=1)]
+        for typ, amt, nm in (("Fire", 12, "Fire Bolt"), ("Fire", 13, "Fire Bolt"), ("Fire", 11, "Fire Bolt"),
+                             ("Psychic", 2, "Mind Sliver"), ("Psychic", 3, "Mind Sliver")):
+            evs += hit(G, "Gale", CZ, "Cazador Szarr", (typ, amt)) + [cast(G, "Gale", nm)]
+        tr.feed(evs, PARTY_G)
+        rec = tr.close(ROWS_G, [], {}, now=60.0)
+        self.assertEqual([(t["type"], t["hits"]) for t in rec["dmg_types"] if t["low"]], [("Psychic", 2)])
+
+    def test_a_down_is_named_by_the_cast_that_follows_it(self):
+        # the mod's order: damage, downed, then the enemy's cast (S074 r3: Gale downed by a werewolf's Multiattack)
+        tr = debrief.Tracker()
+        tr.feed([ev("combat_started"), ev("round_started", round=3), ev("turn_started", **ref("u-ww", "Predator Werewolf")),
+                 dmg("u-ww", "Predator Werewolf", G, "Gale", 17, "Slashing"), ev("downed", **ref(G, "Gale")),
+                 cast("u-ww", "Predator Werewolf", "Multiattack"), ev("turn_started", **ref(C, "Claude")),
+                 cast("u-ww", "Predator Werewolf", "Claws")], PARTY_G)
+        rec = tr.close(ROWS_G, [], {}, now=60.0)
+        self.assertEqual(rec["downed"], [{"name": "Gale", "round": 3, "by": "Predator Werewolf", "ability": "Multiattack"}])

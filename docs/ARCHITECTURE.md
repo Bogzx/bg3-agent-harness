@@ -184,3 +184,12 @@ last hp_pct). Summons' downs are left out. v1 records lose their `low` flags and
 LAST TIME / RETRY show 4 key facts and cite the latest attempt that went badly (not a reload of a fight going
 clean); YOUR LESSON counts from the chain's first attempt (`chain_t`, else the same session's reloaded attempts
 just before). Fights with no enemy, damage or down are not recorded.
+
+**Since vis V16 (2026-10-18, S074 Cazador try 1).** The mod sends a hit's damage events before its cast event:
+a member's damage is held until that member's next cast (a summon's cast takes its owner's held damage), and a
+turn/round boundary gives what no cast claimed to the source's latest cast. Heals no longer collect another
+member's damage (S074: Gale's Scorching Ray 49 under Shadowheart's Mass Cure Wounds). A down's `ability` is the
+enemy's cast that follows the hit. A hostile that had turns but never acted, was never hit by anything and never
+statused by us is `idle` ({name, died}): not an enemy, not a kill (S074's six Sacrificial Lamb spawn,
+`killed 3/27`); the render lists them apart. A damage type is `low` only from ≥ 2 hits (`LOW_MIN_HITS`); stored
+records' 1-hit lows are dropped on load like v1's.

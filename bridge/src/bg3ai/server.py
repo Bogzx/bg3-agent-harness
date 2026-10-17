@@ -6398,10 +6398,27 @@ def _fast_travel_first(char: str, dest: list, dist_m: float | None) -> tuple[str
     wp = longnav.pick_waypoint(here, dest, wps) if here else None
     if not wp:
         return None
+    # S074 23:00:54: travel_to(x,y,z) 1.9 km from inside Szarr Palace ended at once as a bare `FAILED: can't fast
+    # travel now (Location)` (the Lua refusal raised through here), with no way out and no walk. A Location block
+    # gets fast_travel's text and the walk goes on; a block remembered for this level skips the try.
+    if AREA.block is not None:
+        st = game.try_rpc("state.status") or {}
+        if AREA.current(st.get("level")) is not None:
+            return (f"fast travel to {wp['name']} skipped: the game blocks travel here (story area, Location)."
+                    + _area_refusal("travel_to", st) + " Walking instead.", None)
     left = _leave_camp_first()
     if left.startswith("FAILED"):
         return (f"fast travel to {wp['name']}: {left}: walking instead", None)
-    r = game.run_job("ui.fast_travel", {"waypoint": wp["name"]}, context="client", wait_s=70)
+    try:
+        r = game.run_job("ui.fast_travel", {"waypoint": wp["name"]}, context="client", wait_s=70)
+    except NotReady:
+        raise
+    except GameError as e:
+        r = JobResult("failed", None, str(e))
+    if r.status != "done" and "(Location)" in str(r.error):
+        return (f"fast travel to {wp['name']}: can't fast travel now (Location): this area does not allow travel (a "
+                "dungeon or story area; camp() is blocked too)." + _area_refusal("travel_to") + " Walking instead.",
+                None)
     if r.status != "done":
         return (f"fast travel to {wp['name']} failed ({r.error or r.status}): walking instead", None)
     _trip_arrived()
