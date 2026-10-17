@@ -51,6 +51,32 @@ class Rules(unittest.TestCase):
         self.assertEqual(got.get("roll_subject"), 1)
         self.assertEqual(got.get("template"), 1)
 
+    def test_pickpocket_window_dc_is_fair(self):
+        """Pickpocket.xaml shows the selected item's DC under "Target" (S070: 4 false hits on '60% DC9')."""
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge/src"))
+        from bg3ai import economy
+
+        def h(it: dict) -> str:
+            return it.get("h", "")
+
+        pockets = economy.pockets_text({"items": [
+            {"h": "e659", "name": "Wyrm's Rock Prison Key", "chance": 60, "dc": 9, "story": True},
+            {"name": "Gold", "count": 12, "chance": 60, "dc": 9}]}, h)
+        self.assertIn("60% DC9", pockets)
+        got = self.rules(
+            call("pickpocket", pockets),
+            call("do_actions", "1. pickpocket: " + pockets),
+            call("pickpocket", economy.steal_text(
+                {"item": {"name": "Ring"}, "success": True, "rolled": 14, "dc": 9, "chance": 60}, h)),
+            call("pickpocket", economy.steal_text(
+                {"item": {"name": "Ring"}, "success": False, "rolled": 3, "dc": 18, "chance": 20}, h)),
+            call("pickpocket", "pickpocket: failed — Ring: 20% chance (DC 18) is below min_chance 70; nothing taken"),
+        )
+        self.assertEqual(got, {})
+        # a DC on any other line of the same result is still a leak
+        got = self.rules(call("pickpocket", pockets + "\n  + e12 Chest <container> 3m (lock DC 15)"))
+        self.assertEqual(got.get("dc_outside_roll"), 1)
+
     def test_checks(self):
         got = self.rules(
             call("get_map", "level=SCL_Main_A waypoints=[id=WAYP_CHA_Chapel name=Overgrown Ruins]"),

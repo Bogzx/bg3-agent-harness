@@ -48,6 +48,12 @@ _INVIS_STATUS = re.compile(r"Potion of Invisibility|name=Invisib|status_(?:appli
                            r"(?:^|[ ,])[+-]Invisib")
 # The roll screen shows the DC: roll_check results and ROLL/roll={...} data are fair.
 _ROLL_SCREEN = re.compile(r"^\s*ROLL\b|\broll=\{|\bphase=(?:intro|result|reroll)\b|context=DialogCheck")
+# The pickpocket window shows the DC too: Pickpocket.xaml / Pickpocket_c.xaml (Game.pak, and the Patch8 controller
+# override) print Roll.DifficultyCheck under "Target" for the selected item, with no Custom-Mode toggle, next to
+# the chance pie. The bridge's lines from that window (economy.py pockets_text/steal_text, Services.lua
+# ui.pickpocket's min_chance refusal) are fair; a DC anywhere else still is not (S051/S070: 4 false hits).
+_PICKPOCKET_WINDOW = re.compile(r"\bPOCKETS \(|\bCAUGHT\? the steal of\b|\bstole\??\s.*\brolled \d+ vs DC \d+"
+                                r"|% chance \(DC \d+\) is below min_chance\b")
 # The agent's own memory printed back (LESSONS / LAST ATTEMPT / RETRY lines, "- WHEN …: …" lesson rows): a DC the agent
 # read off a roll screen and wrote down is not a leak (S051-S055: 13+ false "dc_outside_roll" hits, all
 # "- WHEN Aelis …: failed Deception DC18 on Aelis started a fight").
@@ -59,7 +65,7 @@ _ROLL_SUBJECT = re.compile(r"roll_result[^|\n]*\b(?:subject|event|vs)=")
 LEAK, CHECK = "LEAK", "CHECK"
 RULES = {  # rule -> (severity, what it means)
     "guid": (LEAK, "raw GUID in a result (scrub missed it)"),
-    "dc_outside_roll": (LEAK, "a DC outside the roll screen"),
+    "dc_outside_roll": (LEAK, "a DC outside the roll screen and the pickpocket window"),
     "roll_subject": (LEAK, "a passive roll's subject/event"),
     "flag": (LEAK, "story flag / dialogue resource named"),
     "template": (LEAK, "internal template/resource name"),
@@ -90,7 +96,8 @@ def audit_calls(calls: list[dict]) -> dict[str, list[tuple[dict, str]]]:
             clean = _FILE_PATH.sub("", line)
             for m in _GUID.finditer(clean):
                 hit("guid", c, clean, m)
-            if name != "roll_check" and not _ROLL_SCREEN.search(clean) and not _MEMORY_LINE.search(clean):
+            if (name != "roll_check" and not _ROLL_SCREEN.search(clean) and not _PICKPOCKET_WINDOW.search(clean)
+                    and not _MEMORY_LINE.search(clean)):
                 for m in _DC.finditer(clean):
                     hit("dc_outside_roll", c, clean, m)
             for m in _ROLL_SUBJECT.finditer(clean):
