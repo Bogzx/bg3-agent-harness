@@ -423,7 +423,7 @@ class Lifecycle:
             return self.take_pending()
         return S.build_context(mem, "repeat" if st.get("open") else "startup")
 
-    def end(self) -> str:
+    def end(self, in_combat: Callable[[], bool] | None = None) -> str:
         """The end_session tool: the Stop hook's check (session.py stop_decision), as text."""
         mem = self.memory
         if not mem.is_dir():
@@ -432,7 +432,7 @@ class Lifecycle:
         if not st.get("open"):
             return "No open session (it was already committed). You can end your turn."
         sid = M.session_id(st["current"])
-        out = S.stop_decision(mem)
+        out = S.stop_decision(mem, in_combat=in_combat)
         if out is None:
             return (f"{sid} stays open: wrap-up isn't due and HANDOFF.md isn't written for {sid}. Keep playing, or "
                     f"run the session-wrapup playbook first if the operator asked you to stop.")

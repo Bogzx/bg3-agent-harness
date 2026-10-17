@@ -4825,7 +4825,12 @@ def rules_resource() -> str:
 def end_session() -> str:
     """The last step of the wrap-up: checks the session can end (wrap-up time reached, HANDOFF.md written for this session, memory lint clean) and commits the memory. If it says NOT ENDED, do what it says (keep playing, or fix and call it again). End your turn only when it reports the commit."""
     t0 = time.monotonic()
-    return _mem_finish("end_session", {}, LIFE.end(), t0)
+    return _mem_finish("end_session", {}, LIFE.end(in_combat=_fight_on), t0)
+
+
+def _fight_on() -> bool:
+    """For an early end_session refusal: a fight is running (no game: no)."""
+    return bool((game.try_rpc("state.combat") or {}).get("active"))
 
 
 # ---------------------------------------------------------------------------

@@ -256,6 +256,20 @@ class ServerMemoryTools(Base):
         self.assertEqual(M.git(self.mem, "log", "-1", "--format=%s").stdout.strip(), "S001")
         self.assertIn("No open session", server.end_session())
 
+    def test_end_session_mid_fight(self):
+        # S074: refused mid-fight with "2 min of play before WRAP UP at 23:27": in a fight it says finish it.
+        os.environ["BG3AI_SESSION"] = "S001"
+        TU.MemoryTestCase.open_session(self, 1)
+        deadline = time.time() + 30 * 60
+        os.environ["BG3AI_SESSION_DEADLINE"] = str(deadline)
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(deadline - 180)
+        self.g.combat = {"active": True}
+        out = server.end_session()
+        self.assertTrue(out.startswith("NOT ENDED. Finish the fight first"), out)
+        self.assertNotIn("min of play", out)
+        self.g.combat = {"active": False}
+        self.assertTrue(server.end_session().startswith("NOT ENDED. Keep playing"))
+
     # helpers borrowed by the test above (TU.MemoryTestCase's, bound to this case)
     def write(self, rel: str, text: str) -> None:
         p = self.mem / rel

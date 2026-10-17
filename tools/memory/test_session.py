@@ -473,9 +473,20 @@ class AutonomousStopTest(MemoryTestCase):
         self.open_session(1, minutes_ago=50)
         self.set_deadline(4.5)
         os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 1.5 * 60)  # the clock line: "1m of play"
-        self.assertTrue(S.stop_decision(self.mem)["reason"].startswith("Keep playing"))  # no HANDOFF yet
         self.write("HANDOFF.md", self.good_handoff(1))
         self.assertIn("committed", S.stop_decision(self.mem)["systemMessage"])
+
+    def test_refused_inside_the_grace_then_at_the_named_minute(self):
+        # A refusal inside STOP_GRACE_S (no HANDOFF yet) named "at HH:MM": the HANDOFF written after it doesn't
+        # undercut that time (S074); at HH:MM:00 it ends.
+        self.open_session(1, minutes_ago=50)
+        self.set_deadline(4.5)
+        w = time.time() + 1.5 * 60
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(w)  # the clock line: "1m of play"
+        self.assertTrue(S.stop_decision(self.mem)["reason"].startswith("Keep playing"))  # no HANDOFF yet
+        self.write("HANDOFF.md", self.good_handoff(1))
+        self.assertEqual(S.stop_decision(self.mem)["decision"], "block")
+        self.assertIn("committed", S.stop_decision(self.mem, now=w - w % 60)["systemMessage"])
 
     def test_wrapup_for_a_boss_minutes_before_wrap_bounced(self):
         # S066 (S040-S066 alike): HANDOFF written at 17 min left ("the boss fight won't fit"), end_session refused at
@@ -491,7 +502,9 @@ class AutonomousStopTest(MemoryTestCase):
         self.assertIn("plays on from where you are", r)
         self.assertNotIn("point of no return", r)
         self.assertEqual(S.stop_decision(self.mem, now=dl - 5.1 * 60)["decision"], "block")
-        self.assertIn("committed", S.stop_decision(self.mem, now=dl - 4.9 * 60)["systemMessage"])
+        self.assertEqual(S.stop_decision(self.mem, now=dl - 4.9 * 60)["decision"], "block")  # the time named (S074)
+        w = dl - 3 * 60
+        self.assertIn("committed", S.stop_decision(self.mem, now=w - w % 60)["systemMessage"])
 
     def test_refusal_says_when_to_call_again(self):
         # S070: end_session at 8, 6, 5, 5 min left ("Keep playing: 8 minutes left in this session"), a HANDOFF edit
@@ -510,6 +523,51 @@ class AutonomousStopTest(MemoryTestCase):
         self.assertNotIn("current plan", r)       # the current plan was the wrap-up: it edited HANDOFF and retried
         self.assertNotIn("written early is fine", r)
         self.assertIn("committed", S.stop_decision(self.mem, now=dl - 3 * 60 + 1)["systemMessage"])
+
+    def s074_clock(self):
+        """S074's shape: WRAP UP 45 s into its minute (23:27:45, named "at 23:27"), the deadline 3 min later."""
+        w = (time.time() // 60) * 60 + 20 * 60 + 45
+        os.environ["BG3AI_SESSION_DEADLINE"] = str(w + 180)
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(w)
+        self.open_session(1, minutes_ago=18)
+        self.write("HANDOFF.md", self.good_handoff(1))
+        return w, time.strftime("%H:%M", time.localtime(w))
+
+    def test_named_time_holds_against_the_grace(self):
+        # S074: end_session refused at 8, 4, 2, 2 min of play ("Call end_session again at 23:27"), then accepted at
+        # 23:25:50, inside STOP_GRACE_S, contradicting its own refusal. Once a time is named, it holds.
+        w, at = self.s074_clock()
+        r = S.stop_decision(self.mem, now=w - 8.2 * 60)["reason"]
+        self.assertTrue(r.startswith(f"Keep playing: 8 min of play before WRAP UP at {at}. Call end_session "
+                                     f"again at {at}"), r)
+        for left in (130, 115, 50):   # 115 s: the S074 accept (the grace alone would end here)
+            out = S.stop_decision(self.mem, now=w - left)
+            self.assertEqual(out.get("decision"), "block", left)
+            self.assertIn(f"again at {at}", out["reason"])
+        self.assertIn("committed", S.stop_decision(self.mem, now=w - 45)["systemMessage"])   # {at}:00
+
+    def test_grace_without_a_named_time(self):
+        # The S018-S025 grace stays for a first call: no refusal has named a time yet.
+        w, _ = self.s074_clock()
+        self.assertIn("committed", S.stop_decision(self.mem, now=w - 115)["systemMessage"])
+
+    def test_mid_fight_refusal_finish_the_fight(self):
+        # S074: 3 of the 4 refusals came mid-fight, each after a HANDOFF edit; "2 min of play before WRAP UP" read
+        # as a clock to beat. In a fight: finish it, no minutes, no time to call again.
+        w, at = self.s074_clock()
+        r = S.stop_decision(self.mem, now=w - 4 * 60, in_combat=lambda: True)["reason"]
+        self.assertTrue(r.startswith("Finish the fight first"), r)
+        self.assertIn("plays on from where you are", r)
+        self.assertIn("Don't save S001-end or edit HANDOFF.md during the fight", r)
+        self.assertNotIn("min of play", r)
+        self.assertNotIn(at, r)
+        self.assertNotIn("time_named", self.state())
+        out = S.stop_decision(self.mem, now=w - 4 * 60, in_combat=lambda: False)   # fight over
+        self.assertTrue(out["reason"].startswith("Keep playing: 4 min"), out["reason"])
+
+        def never():
+            raise AssertionError("in_combat asked for an accepted end")
+        self.assertIn("committed", S.stop_decision(self.mem, now=w, in_combat=never)["systemMessage"])
 
     def test_wrapup_far_from_wrap_still_bounced(self):
         self.open_session(1, minutes_ago=14)

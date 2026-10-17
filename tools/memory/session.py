@@ -45,6 +45,7 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -506,8 +507,11 @@ def _close_and_commit(mem: Path, st: dict, note: str = "", message: str | None =
     return M.git_commit_all(mem, message or M.session_id(n)) if M.is_git_repo(mem) else None
 
 
-def stop_decision(mem: Path, now: float | None = None) -> dict | None:
-    """Decide what the Stop hook does. Returns hook JSON output, or None to allow the stop silently."""
+def stop_decision(mem: Path, now: float | None = None, in_combat: Callable[[], bool] | None = None) -> dict | None:
+    """Decide what the Stop hook does. Returns hook JSON output, or None to allow the stop silently.
+
+    in_combat (the end_session tool; the Stop hook can't tell): asked only for an early refusal, which then says to
+    finish the fight, with no time in it."""
     now = now or time.time()
     st = M.load_state(mem)
     if not st.get("open"):
@@ -525,6 +529,10 @@ def stop_decision(mem: Path, now: float | None = None) -> dict | None:
         # The runner's fix-notes pass (play is over; memory edits only): never "keep playing" (S027-fix was bounced
         # 4 times with "9 minutes left"); lint + commit, or the lint report.
         early = False
+    elif deadline and w is not None and st.get("time_named"):
+        # S074: refused with "Call end_session again at 23:27", accepted at 23:25:50 by the grace below (the 4th
+        # call, after 3 refusals each with a HANDOFF edit). Once a refusal named the time, that time holds.
+        early = now < w - w % 60   # the start of the "at HH:MM" minute
     elif deadline and handoff_ready and w is not None and now >= w - STOP_GRACE_S:
         early = False
     else:
@@ -538,6 +546,18 @@ def stop_decision(mem: Path, now: float | None = None) -> dict | None:
                                f"keep-playing blocks")
             return {"systemMessage": f"{sid}: early stop allowed after {keep} keep-playing blocks."}
         st["keep_playing_blocks"] = keep + 1
+        if in_combat is not None and in_combat():
+            # S074: 3 of 4 refusals came mid-fight, each after a HANDOFF edit, and "8/4/2 min of play before WRAP
+            # UP" read as a clock to beat. A fight needs no time: the next session plays on from it.
+            M.save_state(mem, st)
+            return {"decision": "block",
+                    "reason": (f"Finish the fight first: you are in combat. Play it out turn by turn (combat_turn); "
+                               f"take the time each turn needs, the fight needn't end this session: the game keeps "
+                               f"running between sessions and the next one plays on from where you are. Don't save "
+                               f"{sid}-end or edit HANDOFF.md during the fight. Your next message is a game tool "
+                               f"call, not a summary (nobody reads it; a text-only message ends your turn). Call "
+                               f"end_session again only when the ⏱ line says WRAP UP NOW.")}
+        st["time_named"] = True  # "at HH:MM" below
         M.save_state(mem, st)
         play = max(1, int((w - now) // 60))  # w: wrap_at() is set whenever the deadline is
         at = time.strftime("%H:%M", time.localtime(w))
