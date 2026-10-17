@@ -171,6 +171,16 @@ def moved_left_behind(status: dict, mover: str, far_m: float = APART_M) -> list[
             if not r["stay"] and (r["other_level"] or r.get("dy") or (r["dist"] or 0) > far_m)]
 
 
+def trip_moved_text(tool: str, res: dict, who: str, label: Callable[[str], str]) -> str:
+    """A walk the game finished with one jump onto its own end right after a fast travel (Actions.lua tele_finish,
+    by_trip; S073 22:33:39): arrived, and the jump said as it is."""
+    def at(p: Any) -> str:
+        return f"@({','.join(f'{float(v):g}' for v in p[:3])})" if isinstance(p, list) and len(p) >= 3 else ""
+    return (f"{tool}: done — {at(res.get('pos'))} dist={res.get('dist') or 0}: the game moved {label(who)} the "
+            f"last {float(res.get('m') or 0):g}m to the walk's end in one jump from {at(res.get('from'))}, "
+            f"{float(res.get('after_trip_s') or 0):g}s after the fast travel (not walked; nothing to undo)")
+
+
 def game_moved_text(tool: str, res: dict, who: str, label: Callable[[str], str], area: str | None,
                     behind: list[dict], sealed_from: str | None, in_combat: bool = False) -> str:
     """The result of a walk the game's story cut short by moving the walker itself (Actions.lua tele_finish,

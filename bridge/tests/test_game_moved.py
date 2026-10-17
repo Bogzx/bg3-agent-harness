@@ -14,6 +14,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -133,6 +134,54 @@ class JobText(unittest.TestCase):
         self.assertTrue(out.startswith("move_to: FAILED — engine teleported the character (not allowed)"), out)
 
 
+# V15 S073 22:33:39: 9 s after the fast travel to Lower City Central Wall, the walk from the waypoint jumped its last
+# 29.8 m onto its own end (Actions.lua tele_finish by_trip; the Lua side is in tools/dev/test_act_lua.lua).
+S073_END, S073_FROM = [-47.7, 20.1, -102.2], [-48.5, 27.9, -73.5]
+BY_TRIP = {"pos": S073_END, "teleported": True, "by_trip": True, "from": S073_FROM, "m": 29.8, "dest_m": 0,
+           "dist": 0, "after_trip_s": 9}
+
+
+class TripMoved(unittest.TestCase):
+    def setUp(self):
+        saved = server.game
+        self.addCleanup(lambda: setattr(server, "game", saved))
+        server.game = Fake(s066_status())
+        server.H.get(CLAUDE, "Claude")
+
+    def test_s073_the_walk_put_on_its_end_after_a_fast_travel_is_done(self):
+        out = server._job_text("move_to", JobResult("done", dict(BY_TRIP)), CLAUDE)
+        self.assertEqual(out, f"move_to: done — @(-47.7,20.1,-102.2) dist=0: the game moved {server._label(CLAUDE)} "
+                              "the last 29.8m to the walk's end in one jump from @(-48.5,27.9,-73.5), 9s after the "
+                              "fast travel (not walked; nothing to undo)")
+        self.assertNotIn("not allowed", out)
+
+    def test_fast_travel_first_marks_the_arrival(self):
+        calls = []
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                calls.append(op)
+                return {"waypoints": []} if op == "nav.waypoints" else default
+
+            def run_job(self, op, args=None, context="server", wait_s=0):
+                calls.append(op)
+                return JobResult("done", {})
+
+        class W:
+            def try_rpc(self, op, args=None):
+                return {"party": [{"uuid": CLAUDE, "pos": [-50.2, 27.2, -54.8]}]}
+
+        server.game = G()
+        wp = {"name": "Lower City Central Wall", "pos": [-50.2, 27.2, -54.8], "to_goal_m": 60.4}
+        with mock.patch.object(server, "_pos_now", return_value=[150.0, 30.0, -100.0]), \
+                mock.patch.object(server.longnav, "pick_waypoint", return_value=wp), \
+                mock.patch.object(server, "_leave_camp_first", return_value=""), \
+                mock.patch.object(server, "_watch_conn", return_value=W()):
+            line, left = server._fast_travel_first(CLAUDE, [-76, 19, -112], 224.0)
+        self.assertTrue(line.endswith(": done"), line)
+        self.assertEqual(calls[calls.index("ui.fast_travel"):], ["ui.fast_travel", "act.trip_arrived"])
+
+
 class QueueScope(unittest.TestCase):
     """A queue stops for its own member's conversation or game move, not for another member's."""
 
@@ -157,6 +206,12 @@ class QueueScope(unittest.TestCase):
             self.assertEqual(hit is not None and hit[0] == "teleport", stops, who)
             if stops:
                 self.assertEqual(hit[1], f"the game moved {CLAUDE} (a quest updated)")
+
+    def test_s073_a_walk_put_on_its_end_after_a_trip_stops_no_queue(self):
+        for who in (CLAUDE, KARLACH, None):
+            g, w = self.watcher(who)
+            g.push("moved_after_trip", {"uuid": CLAUDE, "m": 29.8, "after_trip_s": 9})
+            self.assertIsNone(w.check("travel_to", None, ui=False), who)
 
     def test_a_blocked_teleport_still_stops_every_queue(self):
         g, w = self.watcher(KARLACH)
