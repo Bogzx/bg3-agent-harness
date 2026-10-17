@@ -240,6 +240,28 @@ class OlderToolFixes(unittest.TestCase):
         self.assertNotIn("who-acting (act, ACT-P2, BG3AI_COMBAT_WHO_ACTING)", {r[0] for r in hit})
         self.assertEqual(SW.cells("| a `x|y` b | c \\| d |"), ["a `x|y` b", "c | d"])
 
+    def test_session_watch_calls_only_row_skips_batches(self):
+        """V13, S071 #100: a do_actions use_ability out of combat answered `FAILED — choose a variant`, and the
+        combat_turn row "variant pick wording" read it as its FAIL. A row whose when says "calls only" matches its
+        tools' own calls, not batches."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        doc = Path(tmp.name) / "SESSION-WATCH.md"
+        row = ("| variant pick wording (act, S043+) | {when} \"Lay on Hands\"/\"Spiritual Weapon\" by base name | "
+               "`Target_LayOnHands: took the biggest heal variant …` and no `choose a variant` in that result | "
+               "`FAILED — choose a variant` in a combat_turn result |\n")
+        head = "## Combat (act)\n| item | happens when | PASS | FAIL |\n|---|---|---|---|\n"
+        batch = call("do_actions", "FAILED — choose a variant: Target_LayOnHands_SmallHeal, Target_LayOnHands_BigHeal, "
+                     "Target_LayOnHands_Cure\nSTOPPED: step 1 use_ability failed",
+                     {"actions": '[{"tool":"use_ability","ability":"Lay on Hands","target":"e1"}]'}, k=100)
+        turn = call("combat_turn", "TURN e4 Claude (round 2)\nbonus: Target_LayOnHands: took the biggest heal variant "
+                    "(Target_LayOnHands_BigHeal) on e1 Gale\nend_turn: done", {"plan": "{}"}, k=120)
+        # the PASS cell's "in that result" is a condition the check can't judge (dropped): a combat_turn is "seen"
+        for when, want in (("combat_turn calls only:", (1, 0, 0, "seen")), ("combat_turn", (2, 0, 1, "FAIL?"))):
+            doc.write_text(head + row.format(when=when))
+            v = {r[0]: r[1:5] for r in SW.check([batch, turn], SW.parse_watch(doc))}
+            self.assertEqual(v["variant pick wording (act, S043+)"], want, when)
+
     def test_session_watch_main_tree_from_worktree(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

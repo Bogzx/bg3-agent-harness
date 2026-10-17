@@ -91,6 +91,11 @@ NOT_READ = {"wait_for", "wait", "save_game", "load_game", "screenshot", "zoom", 
 # game then has no read RT (n/a) instead of a FAIL on memory_write/end_session (naut2 S001-fix: 269 ms).
 NOT_GAME_READ = {"memory_list", "memory_read", "memory_search", "memory_write", "memory_edit", "memory_append",
                  "note", "end_session", "new_game", "create_character"}
+# Tools that change the game but aren't in ACTION_TOOLS (APM and gaps don't count them): not observations either.
+# V12: in S066-S070 they were 8-15 % of the "reads" (swap_party 5-14 s, prepare_spells 0.1-8 s, stay and confirm
+# ~1.5 s each: equip/swap/UI waits), most of them above the median.
+NOT_OBS = {"equip_best", "prepare_spells", "swap_party", "stay", "confirm", "dismiss_popups", "feed_gale",
+           "insert_item", "set_reactions", "ui_action"}
 OPS_MAX = 12  # tool records list their evals ("ops") when they made at most this many
 # Top-level calls that issue actions (pipelining is measured over these); waits don't count.
 ISSUE_TOOLS = (ACTION_TOOLS | BATCH_TOOLS | {QUEUE_TOOL}) - NOT_APM
@@ -1002,7 +1007,7 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
 
     top = [r for r in tool_recs if not r.get("nested")]
     reads = [r for r in top if r["tool"] not in ACTION_TOOLS and r["tool"] not in BATCH_TOOLS
-             and r["tool"] not in NOT_READ and r["tool"] not in NOT_GAME_READ]
+             and r["tool"] not in NOT_READ and r["tool"] not in NOT_GAME_READ and r["tool"] not in NOT_OBS]
     waits = [r for r in top if r["tool"] in ("wait_for",)]
     rt = [r["ms"] - r.get("job_ms", 0) for r in top]
     n_actions = sum(a.get("steps", 1) for a in acts if a["tool"] not in NOT_APM)
