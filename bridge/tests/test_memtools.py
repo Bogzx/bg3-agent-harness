@@ -196,7 +196,7 @@ class ServerMemoryTools(Base):
         with mock.patch.object(server, "_stuck", lambda: None):
             out = server.memory_list()
         self.assertIn("⏱", out)
-        self.assertIn("keep playing", out)
+        self.assertIn("advancing the story", out)
 
     def test_manual_mode_first_call_opens_the_session(self):
         out = server.memory_list("knowledge")

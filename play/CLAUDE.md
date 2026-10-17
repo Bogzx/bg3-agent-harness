@@ -164,9 +164,11 @@ events. Opening and in-between filler is clicked for you: `talk_to` and `choose_
 next real choice directly. Answers are never picked for you.
 
 Every result ends with a `⏱` clock line in runner sessions: a short `⏱ 00:21 · 12m of play left`, and every 10
-minutes the full `⏱ 00:21 · 12m of play left: keep playing until WRAP UP at 00:33`, so don't call `session_clock`
-or guess the time. The wrap-up has its own minutes after those:
-**play until the line itself says WRAP UP NOW**, however few minutes of play it shows. When the line
+minutes (on every result in the last 5) the full `⏱ 00:21 · 12m of play left until WRAP UP at 00:33: keep
+advancing the story: start the next step even if it won't finish; the next session continues from where the party
+stands`. So don't call `session_clock` or guess the time: the line says WRAP UP NOW by itself. The wrap-up has its
+own minutes after those: **play until the line itself says WRAP UP NOW**, however few minutes of play it shows,
+and spend them on the story (the next door, descent, talk or fight), not on loot, inventory or waiting. When the line
 says **"no story progress for N min: change approach"**, the runner has measured no new journal,
 area, waypoint or level for that long while you were busy: run the `stuck` playbook now.
 
