@@ -347,7 +347,21 @@ ok(not listed(st.panels_open, "SplashScreen"), "splash: not listed as a panel")
 hide("SplashScreen")
 show("MainMenu")
 ok(S.state({}).screen == "main_menu", "after the splash: main menu")
+
+-- live L6: the main menu's content read as popup {title "Log In", text "Create account? (c) 2023 Larian ...",
+-- buttons = the menu's}: the Larian account corner panel. Not a popup: only the menu's buttons are reported.
+local popup = S.popup
+S.popup = function() return { title = "Log In", text = "Create account? \194\169 2023 Larian Studios",
+    buttons = { "Continue", "New Game", "Load Game", "Credits", "Quit Game", "Larian Account" } } end
+st = S.state({})
+ok(st.screen == "main_menu" and st.popup == nil, "main menu: the Log In corner panel is no popup")
+ok(st.menu and st.menu.buttons and st.menu.buttons[1] == "Continue" and #st.menu.buttons == 6,
+    "main menu: its buttons under menu")
 hide("MainMenu")
+show("GameMenu")
+ok(S.state({}).popup ~= nil, "the in-game menu still reports its content")
+hide("GameMenu")
+S.popup = popup
 
 local tally = string.format("%d passed, %d failed", passes, fails)
 print(tally)
