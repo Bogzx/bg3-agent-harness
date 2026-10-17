@@ -100,7 +100,7 @@ BG3AI = {
         widget = function(n) return widgets[n] end,
         widgetMap = function()
             local m = { Hotbar = { el = { visible = true } } }
-            for n, w in pairs(widgets) do m[n] = { el = w } end
+            for n, w in pairs(widgets) do m[w.listedAs or n] = { el = w, dc = w.dc } end
             return m
         end,
         isVisible = function(el) return el.visible ~= false end,
@@ -323,6 +323,31 @@ ok(S.state({}).credits.ending == nil, "neither reads: ending unknown")
 show("MainMenu")
 ok(S.state({}).screen == "credits", "credits over the main menu")
 hide("MainMenu") hide("Credits")
+
+-- live 2026-10-17 (main menu -> Credits button): the page's name didn't read (listed as "?", dc gui::DCCredits,
+-- Metadata "", IsEndGameCredits false); the screen read "game" with panels_open {"?"}. Found by its DC type now.
+show("MainMenu") show("Credits")
+widgets.Credits.listedAs, widgets.Credits.dc = "?", "gui::DCCredits"
+widgets.Credits.DataContext = { creditsDC = true, ending = false }
+widgets.Credits.metadata = ""
+st = S.state({})
+ok(st.screen == "credits" and st.page == "Credits" and st.blocking, "nameless credits page found by its DC type")
+ok(st.credits and st.credits.ending == false and st.credits.metadata == "", "menu credits by DC: ending false")
+local function listed(t, n) for _, x in ipairs(t or {}) do if x == n then return true end end return false end
+ok(not listed(st.panels_open, "?") and not listed(st.panels_open, "Credits"), "the credits page isn't listed as a panel")
+widgets.Credits.dc = "gui::DCSomethingElse"
+ok(S.state({}).screen == "main_menu", "another nameless page is not the credits")
+hide("MainMenu") hide("Credits")
+
+-- live 2026-10-17: the "Press any key" splash after a fresh launch read screen "game", panels_open {"SplashScreen"}
+show("SplashScreen")
+st = S.state({})
+ok(st.screen == "splash" and st.page == "SplashScreen" and st.blocking, "splash: its own screen, blocking")
+ok(not listed(st.panels_open, "SplashScreen"), "splash: not listed as a panel")
+hide("SplashScreen")
+show("MainMenu")
+ok(S.state({}).screen == "main_menu", "after the splash: main menu")
+hide("MainMenu")
 
 local tally = string.format("%d passed, %d failed", passes, fails)
 print(tally)

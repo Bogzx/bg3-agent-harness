@@ -352,6 +352,59 @@ class KeeperTest(MemoryTestCase):
         self.assertIn("S001-S010", p)
         self.assertNotIn("COMPACTION DUE", K.build_prompt(self.mem, "S003", 3, "", 5))
 
+    # claude-run-2 S060.md 09:20 (a v1 record: "Radiant did little to Gortash" was a rider, vis V6 2026-10-17)
+    FIGHT = ("- 09:20 [fight] reloaded @Rivington & Wyrm's Crossing vs Gortash (Human) | rounds 4 | downed: Shadowheart "
+             "by Black Gauntlet Numia | dealt 91 / taken 666 | resisted: Gortash:Radiant | unused: none | Radiant did "
+             "little to Gortash (2 hits, avg 2.0)\n")
+
+    def fights(self, sid: str, *versions: int | None, name: str | None = None) -> None:
+        recs = [{"session": sid, "grade": "reloaded", **({"v": v} if v else {})} for v in versions]
+        (self.tmp / f"{name or sid}.fights.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
+
+    def test_old_debrief_logs_by_record_version(self):
+        self.append("sessions/S002.md", self.FIGHT)
+        self.append("sessions/S003.md", self.FIGHT)
+        self.fights("S002", None)              # v1 (no "v"): before the fix
+        self.fights("S003", 2, 2)
+        self.assertEqual(K.old_debrief_logs(self.mem, self.tmp, [1, 2, 3]), [2])   # S001 has no [fight] line
+        self.fights("S003", 2, name="S003-r1")  # a restarted session's second records file
+        self.fights("S003", 2)
+        self.assertEqual(K.old_debrief_logs(self.mem, self.tmp, [3]), [])
+        self.fights("S003", 1, name="S003-r1")
+        self.assertEqual(K.old_debrief_logs(self.mem, self.tmp, [3]), [3])
+        # fight lines without any record (a hand run, no sessions dir) can't be shown to be new
+        self.assertEqual(K.old_debrief_logs(self.mem, None, [2, 3]), [2, 3])
+
+    def test_prompt_flags_old_debrief_resistances(self):
+        # S8 (vis found ~80 false "resisted / did little" facts in S035-S065): the keeper must not distill them
+        self.append("sessions/S003.md", self.FIGHT)
+        self.commit("S003 fight")
+        self.fights("S003", None)
+        p = K.build_prompt(self.mem, "S003", 3, "", 5, sessions_dir=self.tmp)
+        self.assertIn("OLD FIGHT DEBRIEFS", p)
+        self.assertIn("in sessions/S003.md the `[fight]` lines' `resisted: …` field", p)
+        self.fights("S003", 2)
+        self.assertNotIn("OLD FIGHT DEBRIEFS", K.build_prompt(self.mem, "S003", 3, "", 5, sessions_dir=self.tmp))
+
+    def test_old_debriefs_in_the_compaction_range(self):
+        # compaction reads S001-S010 into a chapter: an old fight line there is flagged too, though it isn't a log
+        # the keeper reads for the curated files
+        self.append("sessions/S002.md", self.FIGHT)
+        for n in range(4, 13):
+            self.write(f"sessions/S{n:03d}.md", f"# S{n:03d}\n")
+        self.commit("S012")
+        self.assertNotIn(2, K.logs_to_read(self.mem, 12))
+        p = K.build_prompt(self.mem, "S012", 12, "", 5, sessions_dir=self.tmp)
+        self.assertIn("COMPACTION DUE", p)
+        self.assertIn("OLD FIGHT DEBRIEFS (a harness bug, fixed 2026-10-17): in sessions/S002.md the", p)
+
+    def test_run_keeper_reads_the_records_beside_its_log(self):
+        self.append("sessions/S003.md", self.FIGHT)
+        self.commit("S003 fight")
+        self.fights("S003", None)                # self.base's directory: runtime/sessions/<playthrough>
+        self.run_keeper("ok")
+        self.assertIn("OLD FIGHT DEBRIEFS", " ".join(self.call_args()[0]))
+
     # Live 12:2x (runtime/actions.jsonl): Wyll's stored L5 line refused, then the camp path's two-level result.
     WYLL_FAIL = ("level_up: FAILED \u2014 finish: level up is not complete, not finishing: passive Thirsting Blade: not "
                  "offered; passive choice 'Warlock invocations L5' needs 1 more in plan.passives; can pick: Mire the Mind, "
