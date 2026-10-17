@@ -118,9 +118,10 @@ BG3AI = {
                 return nameBox.t
             end
             if obj and obj.isDC and k == "SavegameNameInput" then return nameBox.dc end
+            if obj and obj.creditsDC and k == "IsEndGameCredits" then return obj.ending end
             return nil
         end,
-        get = function() return nil end,
+        get = function(obj, k) if obj and k == "Metadata" then return obj.metadata end return nil end,
         props = function() return {} end,
         findButton = function(w, which)
             if w and w.name == "Dialog_box" and which == "no" then return { isNo = true } end
@@ -305,6 +306,23 @@ show("SaveGamePopup")
 ok(S.state({}).screen == "popup", "stale pending save doesn't hide a popup")
 hide("SaveGamePopup")
 A.pendingSave = nil
+
+-- the credits page (Credits.xaml): the end credits vs the main menu's Credits button
+show("Credits")
+widgets.Credits.DataContext = { creditsDC = true, ending = true }
+local st = S.state({})
+ok(st.screen == "credits" and st.blocking and st.credits and st.credits.ending == true, "end credits: screen credits, ending")
+widgets.Credits.DataContext.ending = false
+ok(S.state({}).credits.ending == false, "menu credits: ending false")
+widgets.Credits.DataContext.ending = nil
+widgets.Credits.metadata = "Ending"
+st = S.state({})
+ok(st.credits.ending == true and st.credits.metadata == "Ending", "the widget's Metadata Ending alone")
+widgets.Credits.metadata = nil
+ok(S.state({}).credits.ending == nil, "neither reads: ending unknown")
+show("MainMenu")
+ok(S.state({}).screen == "credits", "credits over the main menu")
+hide("MainMenu") hide("Credits")
 
 local tally = string.format("%d passed, %d failed", passes, fails)
 print(tally)

@@ -28,6 +28,9 @@ class ServeTest(unittest.TestCase):
         (TMP / "actions.jsonl").write_text(
             json.dumps({"t": 1, "tool": "get_status", "args": {}, "ms": 5, "result": "WHERE x"}) + "\n")
         (TMP / "runner.status.json").write_text(json.dumps({"playthrough": "run1", "deadline": 4e9}))
+        (TMP / "thermal.log").write_text(
+            "2026-10-17 16:25:39 cpu=51 acpi=51 amdgpu=49 nvme=36 nv=[47,8.09,210,0,0x0000000000000001] "
+            "profile=balanced load=0.21 bg3=down\n")
         logs = TMP / "sessions" / "run1"
         logs.mkdir(parents=True)
         (logs / "S001.log").write_text("[say] I will head north.\n[tool] get_status {}\n")
@@ -63,6 +66,9 @@ class ServeTest(unittest.TestCase):
         self.assertIn("Handoff S001", s["memory"]["handoff"])
         self.assertFalse(s["screen"]["enabled"])
         self.assertTrue(self.hub.watching())
+        th = s["thermal"]   # runtime/thermal.log's last line (runner/ramwatch.py or thermal_log.sh)
+        self.assertEqual((th["cpu"], th["gpu"], th["pause_cpu_c"], th["pause_gpu_c"]), (51, 47, 92, 85))
+        self.assertIn("profile=balanced", th["line"])
 
     def test_feed_incremental(self):
         _, _, body = self.get("/api/feed?after=-1")

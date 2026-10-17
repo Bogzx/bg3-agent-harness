@@ -30,6 +30,9 @@ local prop, props, clean = UI.prop, UI.props, UI.clean
 
 -- Page name -> screen, in priority order (modal things first).
 S.SCREENS = {
+    -- The end credits after the final cinematic (Mods/MainUI/GUI/Pages/Credits.xaml, ContextName "Credits",
+    -- DCCredits; the main menu's Credits button opens the same page). First: it can sit over the main menu.
+    { "Credits", "credits" },
     { "MainMenu", "main_menu" },
     { "CharacterCreation", "character_creation" },
     { "CharacterRespec", "character_creation" },
@@ -75,7 +78,7 @@ S.BLOCKING = {
     main_menu = true, loading = true, character_creation = true, reaction = true, roll = true,
     popup = true, tutorial = true, dialogue = true, level_up = true, trade = true, rest = true,
     book = true, reward = true, donate = true, learn_spells = true, tadpole_tree = true, save_load = true,
-    game_menu = true, options = true, game_over = true,
+    game_menu = true, options = true, game_over = true, credits = true,
 }
 
 -- Always-there HUD pages; anything else that is visible counts as a panel.
@@ -678,6 +681,21 @@ end
 -- ui.state
 ------------------------------------------------------------------------
 
+-- The credits page: ending = true for the end credits after the final cinematic (Credits.xaml: the widget's
+-- Metadata is "Ending" and DCCredits.IsEndGameCredits turns its background black), false for the main menu's Credits
+-- button, nil when neither reads. What the player sees either way; the runner ends the run on the end credits.
+function S.credits(wmap)
+    local w = wmap.Credits
+    local el = w and w.el
+    local dc = el and try(function() return el.DataContext end)
+    local flag = dc and prop(dc, "IsEndGameCredits")
+    local meta = el and (UI.get(el, "Metadata") or prop(el, "Metadata"))
+    local ending = nil
+    if flag ~= nil then ending = flag == true end
+    if meta ~= nil then ending = ending or tostring(meta) == "Ending" end
+    return { ending = ending, metadata = meta ~= nil and tostring(meta) or nil }
+end
+
 function S.state(args)
     local t0 = RPC.now_ms()
     local res = {}
@@ -763,6 +781,8 @@ function S.state(args)
         if res.tutorial then res.tutorial.dismissable = true end
     elseif scr == "container" then
         res.container = S.container(wmap)
+    elseif scr == "credits" then
+        res.credits = S.credits(wmap)
     elseif scr == "game_menu" or scr == "main_menu" or scr == "save_load" or scr == "book"
         or scr == "reward" or scr == "options" then
         res.popup = S.popup(wmap[res.page].el)

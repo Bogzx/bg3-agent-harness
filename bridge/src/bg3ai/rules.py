@@ -27,7 +27,7 @@ URI = "bg3://rules"
 # pattern that stops matching (CLAUDE.md was edited) is skipped; test_rules.py fails so it gets updated.
 ADAPT: list[tuple[str, str]] = [
     # Claude Code's mcp__bg3__ prefix, its ToolSearch and the alwaysLoad hint.
-    (r"Game tools come from the `bg3` MCP server\. \*\*Their real names.*?only when you need one\.",
+    (r"Game tools come from the `bg3` MCP server\. \*\*Their real names.*?(?=\n\n)",   # the whole paragraph
      "Game tools come from the `bg3` MCP server. This text names them by their bare name (`get_status`, "
      "`travel_to`); your client may show them with a prefix. Every tool is available: call them directly."),
 ]

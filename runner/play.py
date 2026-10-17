@@ -58,6 +58,7 @@ import ramwatch  # noqa: E402  (runner/ramwatch.py: RAM watchdog, RSS spikes wit
 import runs  # noqa: E402  (runner/runs.py: run --runs naming, per-run resets, failure tagging, the runs table)
 import judge  # noqa: E402  (runner/judge.py: the persona judge, a run record's `persona`)
 import clients  # noqa: E402  (runner/clients.py: the CLI that plays, --client claude|codex|gemini)
+import display_env  # noqa: E402  (runner/display_env.py: DISPLAY/XAUTHORITY/... when a shell lacks them)
 import sandbox  # noqa: E402  (runner/sandbox.py: run --sandbox container)
 import model_time  # noqa: E402  (runner/model_time.py: model vs harness time, a run record's `model_time`)
 sys.path.insert(0, str(REPO / "tools"))
@@ -163,6 +164,12 @@ API_AUTH_RE = re.compile(r"invalid api key|authentication|credit balance|unknown
 MAX_RESUMES = 3                # game crashes per session that resume the same claude conversation
 RESUME_MIN_MINUTES = 8         # less than this left after a crash: end the session, the next one picks up
 MAX_SETUP_FAILURES = 5         # game launch/load failing this many times in a row → give up
+CRASH_LOOP_FAULTS = 6          # game crashes/hangs + setup failures within CRASH_LOOP_WINDOW_S of one run → stop: an
+CRASH_LOOP_WINDOW_S = 3600     # unattended run never burns hours (and money) relaunching a game that keeps dying
+COST_DAY_S = 24 * 3600         # run --max-cost-per-day: the trailing window
+COST_PAUSE_CHECK_S = 600       # ... while it is over the cap, the runner waits and looks again this often
+STATUS_LINE = "runner.status.txt"   # runtime/: one line for the orchestrator (`cat`, or `play.py status`)
+HEAT_PAUSE_CHECK_S = 15        # heat pause (ramwatch.heat_limits, runtime/thermal.log): look again this often
 LAUNCH_ATTEMPTS = 3            # a launch that dies before the save plays is retried; the 3rd try loads the previous
 LAUNCH_BACKOFF = (15, 45)      # good save; then the runner stops (alert). Seconds to wait before the 2nd and 3rd try
 MENU_STATES = ("Menu", "LoadMenu")   # client game states at the main menu or its splash ("Press any key")
@@ -726,6 +733,52 @@ def state_drift(end_sig: dict | None, now_sig: dict | None) -> str | None:
     if a and b and math.dist(a, b) > DRIFT_MOVE_M:
         return f"{who} stands {math.dist(a, b):.0f} m from where the last session ended"
     return None
+
+
+def run_events(state_dir: Path, since: float) -> list[dict]:
+    """runner_events.jsonl records at or after `since`."""
+    out = []
+    try:
+        lines = (state_dir / "runner_events.jsonl").read_text().splitlines()
+    except OSError:
+        return out
+    for ln in lines:
+        try:
+            e = json.loads(ln)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and e.get("t", 0) >= since:
+            out.append(e)
+    return out
+
+
+def crash_loop(events: list[dict], now: float, run_started: float, n: int = CRASH_LOOP_FAULTS,
+               window: float = CRASH_LOOP_WINDOW_S) -> str | None:
+    """Why the run should stop as a crash loop (n game crashes/hangs or setup failures within `window` of this run;
+    a runner (re)start by the operator counts from its start), or None."""
+    since = max(now - window, run_started - 1)
+    bad = [e for e in events if e.get("t", 0) >= since and (
+        (e.get("kind") == "fault" and e.get("fault") in GAME_FAULTS) or e.get("kind") == "setup_failed")]
+    if len(bad) < n:
+        return None
+    return f"crash loop: {len(bad)} game crashes/hangs/setup failures in {(now - min(e['t'] for e in bad)) / 60:.0f} min"
+
+
+def day_cost(state_dir: Path, now: float) -> float:
+    """The play agent's spend in the trailing COST_DAY_S (finished processes; run --max-cost-per-day)."""
+    return runs.claude_totals(state_dir, now - COST_DAY_S)["cost_usd"]
+
+
+def status_line(now: float, playthrough: str, state: str, run_started: float, sessions: int, seen: dict | None,
+                spent_day: float, cost_cap: float | None, faults: int) -> str:
+    """runtime/runner.status.txt: what the runner does, for the orchestrator, in one line."""
+    ms = milestones.status(seen)
+    story = (f"milestones {ms['reached']}/{ms['total']} (Act {ms['act']})"
+             + (": THE GAME IS FINISHED" if ms["ended"] else f", next {ms['next'] or '-'}"))
+    return (f"{datetime.fromtimestamp(now):%Y-%m-%d %H:%M:%S} {playthrough}: {state} | up {(now - run_started) / 3600:.1f} h, "
+            f"{sessions} session(s) | {story} | ${spent_day:.2f} in 24 h"
+            + (f" (cap ${cost_cap:g})" if cost_cap else "")
+            + f" | {faults} game fault(s) in {CRASH_LOOP_WINDOW_S / 60:.0f} min (stop at {CRASH_LOOP_FAULTS})")
 
 
 def story_points(summary_path: Path) -> int | None:
@@ -1791,6 +1844,7 @@ class Options:
     box: sandbox.Sandbox | None = None  # --sandbox container: prepared once by cmd_run (firewall checked, proxy up)
     restart_run: bool = False          # run --runs --restart-run: start the next run over even after finished sessions
     keep_game: bool = False            # run --until/--runs --keep-game: leave the harness game up when the run/series ends
+    max_cost_per_day: float | None = None  # run --max-cost-per-day USD: pause while the trailing 24 h spent this much
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -1887,6 +1941,7 @@ class Runner:
         self.new_game = False
         self.gates: bool | None = None       # gates_decision for the game this session plays (BG3AI_SAVE_GATES)
         self.until_hit: dict | None = None   # the --until milestone, once the progress poller saw it reached
+        self.cost_pause_since: float | None = None   # --max-cost-per-day: paused since (epoch s)
         self.last_triage: tuple[str, Path] | None = None  # (session, Sxxx.triage.md) of the last claude run
         self.code_watch = CodeWatch()         # this process's repo code, for the self-restart between sessions
         self.bridge_hashes: dict | None = None  # bridge/src as the last session's MCP server ran it
@@ -2611,12 +2666,18 @@ class Runner:
 
     def recover(self, why: str) -> None:
         log(f"recovering: {why}")
+        heat = None
         if not self.game_alive():
             oom = self.check_game_oom()
             if oom:
                 why = f"{why} (out of memory: {oom})"
+            heat = self.heat_killed()
+            if heat:
+                why = f"{why} (the heat guard stopped it: {heat})"
         crashed_at = time.time()
         self.kill_game()
+        if heat:
+            self.heat_paused(after_kill=True)   # no relaunch into the same heat
         if why == "stopped responding":
             mark_inflight_stuck(SE_BG3AI_DIR)
         save = self.choose_save()
@@ -2772,6 +2833,7 @@ class Runner:
                      started=start, deadline=deadline, hard_stop=hard_stop, log=str(base) + ".log",
                      metrics=f"{base}.metrics.jsonl", turns=f"{base}.turns.jsonl",
                      progress=f"{base}.progress.jsonl", session_ended=None)
+        self.write_status_line(f"playing {sid}{tag} (until {datetime.fromtimestamp(deadline):%H:%M})")
         log(f"{sid}{tag}: {client.name} starting ({model}, effort {effort or 'default'}; deadline "
             f"{datetime.fromtimestamp(deadline):%H:%M}, hard stop {datetime.fromtimestamp(hard_stop):%H:%M})")
         if self.opt.dry_run:
@@ -2894,7 +2956,7 @@ class Runner:
             if needs_game and reason == "exited" and self.until_hit:
                 reason = "milestone"
                 human.write(f"{datetime.now():%H:%M:%S} [runner] milestone {self.until_hit['id']} reached; "
-                            "stopping claude (--until)\n")
+                            f"stopping claude ({'the game is finished' if self.game_ended() else '--until'})\n")
                 hard_stop = min(hard_stop, now)
             if reason == "exited" and meter is not None and self.check_usage_caps(meter.cost, meter.tokens):
                 reason = "cap"
@@ -3076,20 +3138,110 @@ class Runner:
                     log(f"{session}: stuck signal: no story progress for {story.STUCK_MIN:.0f}+ min while active")
                 hit = self.check_until(tl.seen, session)
                 if hit and human is not None:
-                    human.write(f"{stamp} [runner] milestone {hit['id']} ({hit['label']}) reached: --until stop\n")
+                    human.write(f"{stamp} [runner] milestone {hit['id']} ({hit['label']}) reached: "
+                                f"{'the game is finished' if self.game_ended() else '--until stop'}\n")
             except Exception as e:  # noqa: BLE001 - progress never breaks a session
                 log(f"{session}: progress poll failed: {e}")
 
     def check_until(self, seen: dict | None, session: str | None) -> dict | None:
-        """run --until: the milestone, the first time milestones.status() says it's reached (else None)."""
-        if not self.opt.until or self.until_hit:
+        """run --until: the milestone, the first time milestones.status() says it's reached (else None). Every run
+        also ends at milestones.GAME_END (the end credits / the epilogue): there is nothing left to play."""
+        if self.until_hit:
             return None
-        hit = until_reached(seen, self.opt.until)
-        if hit:
-            self.until_hit = dict(hit, session=session, t=round(time.time(), 1))
-            log(f"{session or 'runner'}: milestone {hit['id']} ({hit['label']}) reached: stopping (--until)")
-            self.event("milestone", milestone=hit["id"], session=session)
-        return self.until_hit if hit else None
+        for mid in dict.fromkeys(m for m in (self.opt.until, milestones.GAME_END) if m):
+            hit = until_reached(seen, mid)
+            if hit:
+                self.until_hit = dict(hit, session=session, t=round(time.time(), 1))
+                end = mid == milestones.GAME_END
+                log(f"{session or 'runner'}: milestone {hit['id']} ({hit['label']}) reached: stopping "
+                    + ("(the game is finished)" if end else "(--until)"))
+                self.event("milestone", milestone=hit["id"], session=session, **({"terminal": True} if end else {}))
+                return self.until_hit
+        return None
+
+    def game_ended(self) -> bool:
+        return bool(self.until_hit and self.until_hit.get("id") == milestones.GAME_END)
+
+    # ---------------------------------------------------------------- long runs (playthrough mode)
+
+    def write_status_line(self, state: str) -> str:
+        """runtime/runner.status.txt (+ runner.status.json "status_line"). Never breaks the runner."""
+        try:
+            now = time.time()
+            t0 = getattr(self, "run_t0", None) or now
+            n = sum(1 for h in self.state["history"] or [] if h.get("kind") == "play" and (h.get("started") or 0) >= t0)
+            faults = sum(1 for e in run_events(self.state.dir, max(now - CRASH_LOOP_WINDOW_S, t0 - 1))
+                         if (e.get("kind") == "fault" and e.get("fault") in GAME_FAULTS) or e.get("kind") == "setup_failed")
+            line = status_line(now, self.opt.playthrough, state, t0, n, read_seen(self.state.dir),
+                               day_cost(self.state.dir, now), self.opt.max_cost_per_day, faults)
+            (RUNTIME / STATUS_LINE).write_text(line + "\n")
+            write_status(status_line=line)
+            return line
+        except Exception as e:  # noqa: BLE001
+            log(f"status line failed: {type(e).__name__}: {e}")
+            return ""
+
+    def cost_paused(self) -> bool:
+        """--max-cost-per-day: True (after waiting up to COST_PAUSE_CHECK_S) while the trailing 24 h spent the cap.
+        A pause, not an end: the run goes on once old sessions leave the window. Checked between sessions, so a day
+        can go over by about one session."""
+        cap = self.opt.max_cost_per_day
+        if not cap:
+            return False
+        spent = day_cost(self.state.dir, time.time())
+        if spent < cap:
+            if self.cost_pause_since is not None:
+                log(f"cost: ${spent:.2f} in the last 24 h, under --max-cost-per-day ${cap:g}: playing again "
+                    f"(paused {(time.time() - self.cost_pause_since) / 60:.0f} min)")
+                self.event("cost_resume", spent=round(spent, 2), cap=cap)
+                self.cost_pause_since = None
+            return False
+        if self.cost_pause_since is None:
+            self.cost_pause_since = time.time()
+            log(f"cost: ${spent:.2f} in the last 24 h >= --max-cost-per-day ${cap:g}: pausing (no session starts; "
+                f"checked every {COST_PAUSE_CHECK_S / 60:g} min)")
+            self.event("cost_pause", spent=round(spent, 2), cap=cap)
+        self.write_status_line(f"PAUSED: ${spent:.2f} in 24 h >= --max-cost-per-day ${cap:g}")
+        until = time.time() + COST_PAUSE_CHECK_S
+        while time.time() < until and not (self.stop_requested or self.abort or (RUNTIME / "STOP").exists()):
+            time.sleep(min(5.0, max(0.0, until - time.time())))
+        return True
+
+    def heat_killed(self) -> str | None:
+        """Why ramwatch's heat guard killed the game of this launch (runtime/heat_kills.jsonl), or None."""
+        launched = (self.state["game"] or {}).get("launched")
+        kills = read_spikes(launched, RUNTIME / "heat_kills.jsonl") if launched else []
+        return kills[-1].get("why", "too hot") if kills else None
+
+    def heat_paused(self, after_kill: bool = False) -> bool:
+        """Heat guard: while runtime/thermal.log (ramwatch, or tools/orchestrator/thermal_log.sh) says the CPU or the
+        GPU stayed at the heat-pause limit for pause_s (ramwatch.heat_limits: 92 C / 85 C for 60 s), no session
+        starts: waits until both stayed under it for pause_s, then True. after_kill (the heat guard killed the game):
+        waits unless it is cool already. the test machine cut its power twice under the naut series load (2026-10-16 ~20:07,
+        2026-10-17 ~16:01). A stale or missing log pauses nothing."""
+        path = RUNTIME / "thermal.log"
+        h = ramwatch.read_heat(path)
+        if not (h["pause"] or (after_kill and not h["cool"])):
+            return False
+        lim = ramwatch.heat_limits()
+        t0 = time.time()
+        what = (f"CPU {h['cpu']} C / GPU {h['gpu']} C" + (f" for {h['hot_s']:.0f} s" if h["pause"] else ""))
+        log(f"heat: {what}{' after the heat kill' if after_kill else ''} (pause at CPU >= {lim['pause_cpu_c']:g} C "
+            f"or GPU >= {lim['pause_gpu_c']:g} C for {lim['pause_s']:g} s): pausing until both stay under it for "
+            f"{lim['pause_s']:g} s")
+        self.event("heat_pause", cpu_c=h["cpu"], gpu_c=h["gpu"], seconds=round(h["hot_s"]), after_kill=after_kill)
+        while not (self.stop_requested or self.abort or (RUNTIME / "STOP").exists()):
+            self.write_status_line(f"PAUSED: too hot (CPU {h['cpu']} C, GPU {h['gpu']} C; "
+                                   f"limit {lim['pause_cpu_c']:g}/{lim['pause_gpu_c']:g} C)")
+            time.sleep(HEAT_PAUSE_CHECK_S)
+            h = ramwatch.read_heat(path)
+            if h["cool"]:
+                break
+        if not h["cool"]:
+            return True   # stopped while paused: the run loop sees the stop
+        log(f"heat: CPU {h['cpu']} C / GPU {h['gpu']} C after {(time.time() - t0) / 60:.0f} min: playing again")
+        self.event("heat_resume", cpu_c=h["cpu"], gpu_c=h["gpu"], seconds=round(time.time() - t0))
+        return True
 
     def caps(self) -> dict:
         """The run's caps as recorded (runs.CAP_KEYS)."""
@@ -3331,7 +3483,7 @@ class Runner:
         if r.returncode == 0:
             log(f"{res.sid}: memory committed by session.py end")
             return
-        if until_stop_handoff_only(res.reason, bool(self.opt.until), r.stdout):
+        if until_stop_handoff_only(res.reason, bool(self.opt.until or self.until_hit), r.stdout):
             # The --until stop ends the session at the milestone, before any wrap-up, so HANDOFF.md is still the
             # previous session's: that alone is no notes problem (naut/naut2: a 14 s fix pass + the wait every run).
             # The keeper rewrites HANDOFF; a later session start reconciles the open session.
@@ -3734,7 +3886,7 @@ class Runner:
         self.recover_keeper()
         h = self.handover or {}
         now = time.time()
-        run_started = h.get("run_started") or now
+        run_started = self.run_t0 = h.get("run_started") or now
         if h:   # same run, new code: keep its --hours budget; the game is the one this run was playing
             run_end = h.get("run_end")
             log(f"runner restarted in place with the new code (pid {os.getpid()})")
@@ -3751,15 +3903,26 @@ class Runner:
         outcome = None   # --until: how the run ended, when that ending writes a record (not a stop or a restart)
         restarting = False
         try:
-            if self.opt.until and self.check_until(read_seen(self.state.dir), None):
-                log(f"--until {self.opt.until}: already reached in this playthrough; nothing to play")
-                stop_why = f"--until {self.opt.until}: already reached"
+            if self.check_until(read_seen(self.state.dir), None):
+                what = "the game is finished" if self.game_ended() else f"--until {self.opt.until}"
+                log(f"{what}: already reached in this playthrough; nothing to play")
+                stop_why = f"{what}: already reached"
                 outcome = "already_reached"   # no record: that run was recorded when it got there
                 return 0
             if self.opt.until:
                 run_started = self.run_started = self.begin_run(run_started)
             while not self.stop_requested and not (RUNTIME / "STOP").exists():
                 self.code_update_check()
+                loop = crash_loop(run_events(self.state.dir, run_started - 1), time.time(), run_started)
+                if loop:
+                    log(f"{loop}: stopping the run (the game keeps dying; see runner_events.jsonl and the launch logs)")
+                    self.event("crash_loop", why=loop)
+                    write_status(alert={"t": time.time(), "kind": "crash_loop", "msg": loop})
+                    stop_why, outcome = f"gave up: {loop}", "gave_up"
+                    return 1
+                if self.heat_paused() or self.cost_paused():
+                    continue
+                self.write_status_line("starting the next session")
                 if self.has_usage_caps():   # the finished processes so far, the memory keeper's included
                     done = runs.claude_totals(self.state.dir, run_started)
                     if self.check_usage_caps(done["cost_usd"], runs.token_total(done["tokens"])):
@@ -3814,7 +3977,9 @@ class Runner:
                 if res.reason == "dry_run":
                     break
                 if self.until_hit:
-                    stop_why = f"--until {self.opt.until}: reached in {self.until_hit.get('session')}"
+                    stop_why = (f"the game is finished: {self.until_hit['label']} in {self.until_hit.get('session')}"
+                                if self.game_ended() else
+                                f"--until {self.opt.until}: reached in {self.until_hit.get('session')}")
                     outcome = "reached"
                     break
                 if self.cap_hit:
@@ -3871,13 +4036,15 @@ class Runner:
             self.sandbox_cleanup()
             self.outcome = outcome or ("stopped" if self.opt.until and not restarting else None)
             if not restarting:
-                if self.opt.until and outcome in runs.OUTCOMES and not self.opt.dry_run:
+                # (a playthrough run without --until gets one record too: the game's end, its terminal milestone)
+                if (self.opt.until or self.game_ended()) and outcome in runs.OUTCOMES and not self.opt.dry_run:
                     try:
                         self.write_run_record(run_started, outcome, "" if outcome == "reached" else stop_why)
                     except Exception as e:  # noqa: BLE001 - a failed record never hides why the runner stopped
                         log(f"run record failed: {type(e).__name__}: {e}")
                 (RUNTIME / "STOP").unlink(missing_ok=True)
                 write_status(session=None, deadline=None, runner_pid=None)
+                self.write_status_line(f"STOPPED ({stop_why})")
                 self.event("runner_stop", why=stop_why)
                 log(f"runner stopped ({stop_why})")   # every exit path: tools/orchestrator/test_cycle.sh waits for it
         return 0
@@ -3970,6 +4137,9 @@ def cmd_run(a) -> int:
         if v is not None and (v <= 0 or not a.until):
             print(f"refusing {flag}: it needs a positive value and --until MILESTONE", file=sys.stderr)
             return 2
+    if a.max_cost_per_day is not None and a.max_cost_per_day <= 0:
+        print("refusing --max-cost-per-day: it needs a positive value", file=sys.stderr)
+        return 2
     caps = {"run_hours": a.run_hours, "max_cost": a.max_cost, "max_tokens": a.max_tokens}
     cap_changes: list[str] = []
     if a.runs:   # a series' caps are fixed by its first run (series.json), a scenario's by the scenario
@@ -4019,9 +4189,15 @@ def cmd_run(a) -> int:
             log(msg)
             log("runner stopped (sandbox mode differs from the series: run refused)")
             return 2
+    # a the multiplexer/ssh shell has no display env: the game (launch_game.sh inherits os.environ) gets the desktop's
+    filled = display_env.fill(os.environ)
     if a.plan:   # after every refusal above, before the lock: nothing written, nothing launched
         return plan_run(a, scenario, save_sha1, caps, use_judge, judge_model, client)
     lock = acquire_lock()  # held for the process lifetime (released only to exec the new runner code)
+    if filled:
+        log("display env filled from the desktop session: " + " ".join(f"{k}={v}" for k, v in filled.items()))
+    if not os.environ.get("XAUTHORITY"):
+        log("WARNING: no XAUTHORITY and no Xwayland -auth: the game may fail to open a window")
     box = None
     if a.sandbox == "container":   # once per runner: docker, network, images, firewall, egress proxy
         try:
@@ -4042,7 +4218,7 @@ def cmd_run(a) -> int:
                   judge=use_judge, judge_model=judge_model if use_judge else None, judge_change=judge_change,
                   client=client, client_change=client_change, sandbox=a.sandbox, box=box,
                   sandbox_change=sandbox_change, restart_run=a.restart_run,
-                  keep_game=a.keep_game)
+                  keep_game=a.keep_game, max_cost_per_day=a.max_cost_per_day)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
@@ -4097,6 +4273,41 @@ def cmd_run(a) -> int:
 PLAN_PROMPT = "<KICKOFF: built at the session start from the run's memory briefing>"
 
 
+def resume_preview(pt: str, save_owner: str | None, session_minutes: float, allow_short: bool) -> dict | None:
+    """run --plan for a playthrough with memory, read-only: what Runner.next_sid, choose_save, save_env and
+    session_minutes would give its next session (without it --plan printed S001 and no save for a resume). None: a
+    new playthrough."""
+    import memlib as M
+    mem = PLAYTHROUGHS / pt / "memory"
+    if not mem.is_dir():
+        return None
+    d = RUNTIME / "sessions" / pt
+    try:
+        rs = json.loads((d / "runner.json").read_text())
+    except (OSError, ValueError):
+        rs = {}
+    reuse = M.reusable_session(mem)
+    sid = session_id(reuse) if reuse else session_id(
+        predict_session_number(M.session_numbers(mem), M.load_state(mem).get("current")))
+    handoff = mem / "HANDOFF.md"
+    label = parse_handoff_save(handoff.read_text()) if handoff.exists() else None
+    ours = set(rs.get("runner_saves") or []) | set(rs.get("agent_saves") or [])
+    windows = play_windows(rs.get("history") or [], d)
+    saves, after = list_saves(), rs.get("saves_after")
+    own = [s for s in saves if s.mtime >= after] if after else saves
+    save = pick_save(own, label, rs.get("save_owner"), ours, windows=windows)
+    owner, prefix = save_identity(save_owner or rs.get("save_owner"))
+    foreign = foreign_saves(saves, owner, ours, windows, prefix) if not after else []
+    over = session_overrides(d / "session-config.json")
+    minutes = over.get("minutes", session_minutes)
+    if minutes < MIN_SESSION_MINUTES and not allow_short:
+        minutes = session_minutes
+    return {"sid": sid, "handoff_label": label, "save": save.folder if save else None,
+            "oom_blocked": bool(save and save.folder in (rs.get("oom_blocked") or [])), "exclude": foreign,
+            "minutes": minutes, "model": over.get("model"), "effort": over.get("effort"),
+            "memory_linked": (PLAY_DIR / "memory").resolve() == mem.resolve()}
+
+
 def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_judge: bool, judge_model: str,
              client_name: str) -> int:
     """run --plan: what `run` would do next, read-only (no runner lock, no game, no playthrough/memory/series files;
@@ -4143,8 +4354,10 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
     off, owhy = steam_paths.steam_offline()
     print(f"steam:          offline required: {req_off} ({why}); offline now: {off} ({owhy})"
           + ("  -> THE RUNNER WOULD REFUSE TO LAUNCH" if req_off and not off else ""))
+    print(f"display:        {display_env.describe(os.environ)} (unset ones found from the desktop session)"
+          + ("" if os.environ.get("XAUTHORITY") else "  -> NO XAUTHORITY: the game may not open a window"))
     bad = bg3le_buildinfo.problems()
-    print("bg3le:          " + ("STALE: " + "; ".join(bad) + " -> the runner would stop" if bad else "dist has every patch"))
+    print("bg3le:          " +("STALE: " + "; ".join(bad) + " -> the runner would stop" if bad else "dist has every patch"))
     game = pids_of_game()
     print(f"game:           {'harness bg3 up: ' + str(game) if game else 'not running: the runner launches it'}"
           + (f"; a user's own bg3 runs {foreign_bg3_pids()}: the runner won't launch beside it"
@@ -4154,22 +4367,34 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
     keeper = keeper_model(a.keeper_model, a.model) if not a.no_memory_keeper else "OFF"
     print(f"play:           client {client_name}, model {a.model}, effort {a.effort or 'default'}, "
           f"{a.session_minutes:g}-min sessions, keeper {keeper}, judge {judge_model if use_judge else 'off'}, "
-          f"sandbox {a.sandbox}, caps {caps}, --hours {a.hours}")
-    sid = "S001"
-    deadline = time.time() + a.session_minutes * 60
+          f"sandbox {a.sandbox}, caps {caps}, --hours {a.hours or 'none (until stopped or the game ends)'}"
+          + (f", --max-cost-per-day ${a.max_cost_per_day:g}" if a.max_cost_per_day else ""))
+    sid, minutes, model, effort = "S001", a.session_minutes, a.model, a.effort
+    res = resume_preview(pt, a.save_owner or os.environ.get("BG3AI_SAVE_OWNER"), a.session_minutes,
+                         a.allow_short_sessions)
+    if res:
+        sid, minutes = res["sid"], res["minutes"]
+        model, effort = res["model"] or model, res["effort"] or effort
+        print(f"resume:         {sid}; loads {res['save'] or 'NO SAVE (new game)'} (HANDOFF names "
+              f"{res['handoff_label'] or '-'})" + ("  -> OOM-BLOCKED: the runner loads an older save" if
+                                                    res["oom_blocked"] else ""))
+        print(f"saves hidden:   {', '.join(res['exclude']) or 'none'} (BG3AI_SAVES_EXCLUDE)")
+        print(f"session-config: {minutes:g} min, model {model}, effort {effort or 'default'} (session-config.json "
+              "wins over the flags)" + ("" if res["memory_linked"] else f"; play/memory is relinked to {pt}"))
     owner, prefix = save_identity(a.save_owner or os.environ.get("BG3AI_SAVE_OWNER"))
-    env = {"BG3AI_PLAYTHROUGH": pt, "BG3AI_SESSION": sid, "BG3_SESSION_MINUTES": str(a.session_minutes),
-           "BG3_WRAP_MINUTES": str(wrap_minutes(a.session_minutes)), "BG3AI_SAVE_OWNER": owner,
+    env = {"BG3AI_PLAYTHROUGH": pt, "BG3AI_SESSION": sid, "BG3_SESSION_MINUTES": str(minutes),
+           "BG3_WRAP_MINUTES": str(wrap_minutes(minutes)), "BG3AI_SAVE_OWNER": owner,
            "BG3AI_SAVE_PREFIX": prefix, "BG3AI_KEEPER": "0" if a.no_memory_keeper else "1",
+           **({"BG3AI_SAVES_EXCLUDE": "\n".join(res["exclude"])} if res and res["exclude"] else {}),
            **({"BG3AI_START_SAVE": scenario["start"]["save"]} if scenario and scenario["start"].get("save") else {})}
     opt = types.SimpleNamespace(sandbox=a.sandbox, client=client_name)
     cl = make_client(opt)
-    req = clients.Request(PLAN_PROMPT, a.model, RUNTIME / "sessions" / pt, session=str(uuid.uuid4()), resume=False,
-                          effort=a.effort, fallback_model=a.fallback_model, autocompact=a.autocompact, env=env,
+    req = clients.Request(PLAN_PROMPT, model, RUNTIME / "sessions" / pt, session=str(uuid.uuid4()), resume=False,
+                          effort=effort, fallback_model=a.fallback_model, autocompact=a.autocompact, env=env,
                           tag=sid)
     cmd = cl.command(req)
-    print(f"first session:  {sid} of {pt} in {PLAY_DIR} (deadline in {a.session_minutes:g} min; the session env "
-          "adds the deadlines, metrics path and BG3AI_* of the runner's env)")
+    print(f"{'next session: ' if res else 'first session:'}  {sid} of {pt} in {PLAY_DIR} (deadline in {minutes:g} min; the "
+          "session env adds the deadlines, metrics path and BG3AI_* of the runner's env)")
     print(json.dumps({"cmd": cmd, "cwd": str(PLAY_DIR), "env": env}, indent=1, ensure_ascii=False))
     if a.sandbox == "container":
         print("sandbox:        the command runs inside the container (box.run_argv), the bg3 server over http")
@@ -4566,6 +4791,10 @@ def cmd_status(a) -> int:
               f"hard stop {_ago(st.get('hard_stop'))}")
     if st.get("run_end"):
         print(f"run ends: {_ago(st['run_end'])}")
+    if st.get("status_line"):
+        print(f"status:   {st['status_line']}")
+    th = ramwatch.last_thermal(RUNTIME / "thermal.log")
+    print(f"thermal:  {th[1] + ' (' + _ago(th[0]) + ')' if th else '- (no runtime/thermal.log)'}")
     if pt:
         rs = RunnerState(pt)
         hist = rs["history"] or []
@@ -4693,7 +4922,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--scenario", metavar="NAME",
                    help="play scenarios/<NAME>.json as a --runs series: its start (new game or start save), --until "
                         "milestone, caps and profile, frozen in series.json; a flag that contradicts it is refused")
-    r.add_argument("--hours", type=float, help="total wall-clock budget (default: until stopped)")
+    r.add_argument("--hours", type=float, help="total wall-clock budget (default, or 0: until stopped or the game "
+                   "ends; every run stops at the end credits / epilogue, milestone game_end)")
     r.add_argument("--session-minutes", type=float, default=60,
                    help='per-session override, live: session-config.json {"minutes": 60}, re-read before each session')
     r.add_argument("--allow-short-sessions", action="store_true",
@@ -4728,6 +4958,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--max-cost", type=float, metavar="USD",
                    help="with --until: cap one run's claude cost; past it the run ends over_budget (a failure). A "
                         "series keeps its first run's caps (series.json)")
+    r.add_argument("--max-cost-per-day", type=float, metavar="USD",
+                   help="long runs: pause (no new session) while the play agent's spend in the trailing 24 h is at "
+                        "least USD; it plays again once old sessions leave the window (checked between sessions)")
     r.add_argument("--max-tokens", type=int, metavar="N",
                    help="with --until: cap one run's claude tokens (input + output + cache reads + cache writes)")
     r.add_argument("--allow-cap-change", action="store_true",

@@ -12,7 +12,7 @@ Steps (each one a row of the final PASS/FAIL/SKIP table; the first FAIL before t
              close-on-exec, and first_launch.sh closes fds > 2 before the launcher, so the game never inherits it
              (the 10:51 deadlock, docs/ORCHESTRATOR.md "flock -o"). The acceptance runs with BG3AI_GAME_LOCK_HELD=1,
              so its sections don't flock the file a second time.
-  display    DISPLAY=:1 and XAUTHORITY from Xwayland's -auth when unset (a the multiplexer/ssh shell; docs/HANDOFF.md)
+  display    DISPLAY/XAUTHORITY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR from Xwayland when unset (runner/display_env.py)
   steam      tools/steam_paths.py launch-ok: Steam up and OFFLINE (exit 3 = not offline: stop)
   bg3le      tools/bg3le_buildinfo.py: the dist has every patch
   check      acceptance.py --check (offline: tools, RPC ops, Lua snippets, saves): must be 0 FAIL
@@ -47,6 +47,10 @@ import sys
 import time
 from pathlib import Path
 from typing import Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "runner"))
+import display_env  # noqa: E402  (runner/display_env.py: shared with play.py run)
+from display_env import xwayland_auth  # noqa: E402,F401
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_SAVE = "Claude-4810126690__S027-start"   # acceptance.BASE's folder (acceptance --check proves it is the newest)
@@ -169,12 +173,6 @@ def find_uv(env: dict) -> str:
         return found
     local = Path(env.get("HOME") or Path.home()) / ".local" / "bin" / "uv"
     return str(local) if local.exists() else "uv"
-
-
-def xwayland_auth(ps_text: str) -> str | None:
-    """XAUTHORITY from `pgrep -a Xwayland` output: the value of its -auth argument."""
-    m = re.search(r"-auth\s+(\S+)", ps_text)
-    return m.group(1) if m else None
 
 
 class Window:
@@ -353,9 +351,9 @@ class Window:
         def display():
             if self.env.get("DISPLAY") and self.env.get("XAUTHORITY"):
                 return f"inherited DISPLAY={self.env['DISPLAY']} XAUTHORITY={self.env['XAUTHORITY']}"
-            r = subprocess.run(["pgrep", "-a", "Xwayland"], capture_output=True, text=True)
-            auth = self.env.get("XAUTHORITY") or xwayland_auth(r.stdout)
-            return (f"would use DISPLAY={self.env.get('DISPLAY') or self.a.display} XAUTHORITY={auth}" if auth
+            env = dict(self.env)
+            display_env.fill(env, self.a.display)
+            return (f"would use {display_env.describe(env)}" if env.get("XAUTHORITY")
                     else "WOULD REFUSE: no XAUTHORITY and no Xwayland -auth")
 
         def steam():
@@ -418,15 +416,11 @@ class Window:
         return self.row("lock", "PASS", f"holding {path}") == "PASS"
 
     def display(self) -> bool:
-        if self.env.get("DISPLAY") and self.env.get("XAUTHORITY"):
+        inherited = bool(self.env.get("DISPLAY") and self.env.get("XAUTHORITY"))
+        display_env.fill(self.env, self.a.display)
+        if inherited:
             return self.row("display", "PASS", f"DISPLAY={self.env['DISPLAY']} XAUTHORITY={self.env['XAUTHORITY']} "
                             "(inherited)") == "PASS"
-        r = subprocess.run(["pgrep", "-a", "Xwayland"], capture_output=True, text=True)
-        auth = xwayland_auth(r.stdout)
-        if not self.env.get("DISPLAY"):
-            self.env["DISPLAY"] = self.a.display
-        if auth and not self.env.get("XAUTHORITY"):
-            self.env["XAUTHORITY"] = auth
         if not self.env.get("XAUTHORITY"):
             return self.row("display", "FAIL", "no XAUTHORITY and no Xwayland -auth found (is the desktop session "
                             "up? export DISPLAY/XAUTHORITY yourself)") == "PASS"

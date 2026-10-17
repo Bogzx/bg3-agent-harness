@@ -1124,6 +1124,21 @@ class ScreenshotMap(Base):
         self.fn()
         self.assertEqual(self.order, ["capture"])
 
+    def test_captures_where_the_game_writes(self):
+        # live 20261017-145354: acceptance.py's bridge ran on runtime/acceptance/rt and waited for the PNG in
+        # rt/shots while the game wrote into runtime/shots: "game did not present a frame in time"
+        made = []
+        server._screen = None
+        with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": "/game/runtime/shots"}), \
+                unittest.mock.patch("bg3ai.screen.ScreenCapture", side_effect=lambda d: made.append(d)):
+            try:
+                self.fn()
+            except Exception:  # noqa: BLE001  (the fake capture object is None)
+                pass
+        self.assertEqual(made, [Path("/game/runtime/shots")])
+        with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": ""}):
+            self.assertEqual(server._shots_dir(), server.RUNTIME / "shots")
+
 
 class DoorOpenState(unittest.TestCase):
     """S054 05:54:51: 'Control Centre <door> 4.5m' gave no open/closed state; interact closed the open door."""

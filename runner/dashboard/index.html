@@ -174,7 +174,7 @@ table.goals svg { vertical-align: middle; }
 </head>
 <body>
 <header>
-  <div class="brand"><h1>BG3 <span>·</span> AI playthrough</h1><span class="chip" id="pt">—</span><span class="chip" id="sess">no session</span></div>
+  <div class="brand"><h1>BG3 <span>·</span> AI playthrough</h1><span class="chip" id="pt">—</span><span class="chip" id="sess">no session</span><span class="chip" id="thermal" hidden></span></div>
   <div class="where"><span class="mode exploring" id="mode">—</span><span class="region" id="region">waiting for game…</span><span class="chip" id="gold" hidden></span></div>
   <div class="clock idle" id="clock"><div><div class="time" id="clockTime">--:--</div></div><div class="bar"><i id="clockBar" style="width:0"></i></div></div>
   <div class="dots"><span class="dot" id="dGame">game</span><span class="dot" id="dScreen">screen</span><span class="dot" id="dAgent">agent</span></div>
@@ -346,6 +346,7 @@ function renderState(s) {
   $("dAgent").className = "dot " + (agentLive ? "on" : "");
   renderClock();
   $("checkAll").innerHTML = checkAllHtml(s.runner && s.runner.check_all, s.now);
+  renderThermal(s.thermal, s.now);
   $("banner").style.display = "none";
 }
 
@@ -528,6 +529,18 @@ function milestonesHtml(m) {
   return `<b>milestones ${m.reached}/${m.total}</b> <small class="k">(Act ${m.act})</small> &nbsp;`
     + ok.map((i) => `<span class="m ok" title="${i.t ? hhmmss(i.t) : "before tracking"}">✓ ${esc(i.label)}${i.session ? ` <small>${esc(i.session)}</small>` : ""}</span>`).join("")
     + (m.next ? `<span class="m next">→ next: ${esc(m.next)}</span>` : "");
+}
+function renderThermal(th, now) {
+  // runtime/thermal.log's last line (runner/ramwatch.py): red at the runner's heat-pause limits, faint when stale
+  const el = $("thermal");
+  el.hidden = !th;
+  if (!th) return;
+  const c = (v) => v == null ? "?" : v + "°C";
+  const hot = (th.cpu != null && th.cpu >= th.pause_cpu_c) || (th.gpu != null && th.gpu >= th.pause_gpu_c);
+  const age = Math.round(now - th.t);
+  el.innerHTML = `CPU <b>${c(th.cpu)}</b> · GPU <b>${c(th.gpu)}</b>${age > 30 ? ` <small>(${age > 120 ? Math.round(age / 60) + " min" : age + " s"} old)</small>` : ""}`;
+  el.style.color = hot ? "var(--bad)" : age > 30 ? "var(--faint)" : "";
+  el.title = th.line;
 }
 function checkAllHtml(c, now) {
   // runner.status.json check_all: tools/dev/check_all.py between sessions (FAILs never stop play)

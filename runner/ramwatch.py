@@ -15,11 +15,17 @@
     the multiplexer's unit makes systemd stop every agent);
   - below WARN_MB available: marks test runs (unittest/pytest/Lua test suites of this user) as the OOM killer's
     first victims (oom_score_adj 1000, no privilege needed) and logs a warning;
-  - below KILL_MB available: SIGTERMs those test runs before the kernel picks the game.
+  - below KILL_MB available: SIGTERMs those test runs before the kernel picks the game;
+  - every THERMAL_S writes one temperature line to runtime/thermal.log (synced, so the last seconds before a hard
+    power-off survive; the format of tools/orchestrator/thermal_log.sh, which it replaces while it holds
+    runtime/thermal_log.lock), and SIGKILLs bg3 when the CPU or the GPU stays above the heat-kill limits
+    (heat_limits(); runtime/heat_kills.jsonl, with the last tool calls). the test machine cut its power twice under the naut
+    series load (2026-10-16 ~20:07, 2026-10-17 ~16:01; no kernel log, no MCE, no OOM). The runner pauses between
+    sessions at the lower heat-pause limits (runner/play.py heat_paused, from the same log).
 
 runner/play.py runs it as a thread for the whole run; standalone (e.g. live tests with the runner stopped):
     python3 runner/ramwatch.py            # until Ctrl-C
-    python3 runner/ramwatch.py --once     # one check, printed
+    python3 runner/ramwatch.py --once     # one check (RAM + one thermal line), printed
 """
 from __future__ import annotations
 
@@ -29,6 +35,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import threading
@@ -67,6 +74,19 @@ GAME_COMM = "bg3"
 # Test runs that may be sacrificed for the game: python unittest/pytest, the Lua test scripts and their Docker
 # client. Never claude, the runner, the bridge or the game.
 TEST_RX = re.compile(r"(-m\s+(unittest|pytest)\b|\bpytest\b|/test_[\w-]+\.(sh|py|lua)\b|nickblah/lua)")
+THERMAL_LOG = RUNTIME / "thermal.log"
+THERMAL_LOCK = RUNTIME / "thermal_log.lock"   # tools/orchestrator/thermal_log.sh takes the same one (flock -n)
+THERMAL_S = 5                  # one thermal line per this many seconds (thermal_log.sh's cadence)
+HEAT_KILLS = RUNTIME / "heat_kills.jsonl"
+HWMON = Path("/sys/class/hwmon")
+PLATFORM_PROFILE = Path("/sys/firmware/acpi/platform_profile")
+NV_QUERY = "temperature.gpu,power.draw,clocks.gr,utilization.gpu,clocks_throttle_reasons.active"
+SAMPLE_GAP_S = 15              # a longer gap between two thermal samples breaks a "sustained" run
+# (env var, default): CPU = k10temp Tctl, GPU = nvidia-smi's temperature (the amdgpu hwmon without nvidia-smi)
+HEAT_ENV = {"pause_cpu_c": ("BG3AI_HEAT_PAUSE_CPU_C", 92), "pause_gpu_c": ("BG3AI_HEAT_PAUSE_GPU_C", 85),
+            "pause_s": ("BG3AI_HEAT_PAUSE_S", 60),
+            "kill_cpu_c": ("BG3AI_HEAT_KILL_CPU_C", 97), "kill_gpu_c": ("BG3AI_HEAT_KILL_GPU_C", 92),
+            "kill_s": ("BG3AI_HEAT_KILL_S", 20)}
 
 
 def meminfo(path: Path = Path("/proc/meminfo")) -> dict[str, int]:
@@ -211,6 +231,161 @@ def last_tick(path: Path = LOG, tail_bytes: int = 16384) -> tuple[float, str] | 
     return None
 
 
+def heat_limits(env=None) -> dict[str, float]:
+    """The heat guard's limits (HEAT_ENV): the env var's number, else the default (a bad value = the default)."""
+    env = os.environ if env is None else env
+    out = {}
+    for k, (var, default) in HEAT_ENV.items():
+        try:
+            out[k] = float(env.get(var) or default)
+        except ValueError:
+            out[k] = float(default)
+    return out
+
+
+def hwmon_temp(name: str, root: Path = HWMON) -> int | None:
+    """temp1_input of the first hwmon called `name`, in whole C (thermal_log.sh's hw()), or None."""
+    try:
+        dirs = sorted(root.glob("hwmon*"))   # bash's glob order
+    except OSError:
+        return None
+    for d in dirs:
+        try:
+            if (d / "name").read_text().strip() != name:
+                continue
+            return int((d / "temp1_input").read_text().strip()) // 1000
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+def nvidia_query(run=subprocess.run) -> str:
+    """nvidia-smi's NV_QUERY as 'temp,power,clock,util,throttle' (spaces removed), '' without nvidia-smi."""
+    if run is subprocess.run and not shutil.which("nvidia-smi"):
+        return ""
+    try:
+        r = run(["nvidia-smi", f"--query-gpu={NV_QUERY}", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if r.returncode != 0:
+        return ""
+    return (r.stdout.splitlines() or [""])[0].replace(" ", "")
+
+
+def _num(v: str) -> int | None:
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def thermal_sample(root: Path = HWMON, profile: Path = PLATFORM_PROFILE, nv: str | None = None,
+                   loadavg: Path = Path("/proc/loadavg"), game_up: bool | None = None) -> dict:
+    """One reading: hwmon temps by name (None when missing), the nvidia-smi fields, platform_profile, load."""
+    nv = nvidia_query() if nv is None else nv
+    try:
+        prof = profile.read_text().strip()
+    except OSError:
+        prof = ""
+    try:
+        load = loadavg.read_text().split()[0]
+    except (OSError, IndexError):
+        load = ""
+    s = {name: hwmon_temp(name, root) for name in ("k10temp", "acpitz", "amdgpu", "nvme")}
+    s.update(nv=nv, nv_temp=_num(nv.split(",")[0]) if nv else None, profile=prof, load=load,
+             bg3=bool(game_pids()) if game_up is None else game_up)
+    return s
+
+
+def sample_gpu(s: dict) -> int | None:
+    """The GPU temperature the heat guard watches: NVIDIA's when nvidia-smi answers, else the amdgpu hwmon."""
+    return s.get("nv_temp") if s.get("nv_temp") is not None else s.get("amdgpu")
+
+
+def thermal_line(s: dict, now: datetime | None = None) -> str:
+    """thermal_log.sh's line: '2026-10-17 16:25:39 cpu=51 acpi=51 amdgpu=49 nvme=36 nv=[47,8.09,210,0,0x…1]
+    profile=balanced load=0.21 bg3=down' ('-' for a missing sensor, nv=[] without nvidia-smi)."""
+    def v(x):
+        return "-" if x is None else x
+    return (f"{(now or datetime.now()):%Y-%m-%d %H:%M:%S} cpu={v(s.get('k10temp'))} acpi={v(s.get('acpitz'))} "
+            f"amdgpu={v(s.get('amdgpu'))} nvme={v(s.get('nvme'))} nv=[{s.get('nv') or ''}] "
+            f"profile={s.get('profile') or ''} load={s.get('load') or ''} bg3={'up' if s.get('bg3') else 'down'}")
+
+
+THERMAL_RX = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) cpu=(\S+) acpi=\S+ amdgpu=(\S+) nvme=\S+ nv=\[([^\]]*)\]")
+
+
+def parse_thermal(line: str) -> tuple[float, int | None, int | None] | None:
+    """(epoch s, CPU C, GPU C) of a thermal.log line (either writer), or None for any other line."""
+    m = THERMAL_RX.match(line)
+    if not m:
+        return None
+    try:
+        t = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").timestamp()
+    except ValueError:
+        return None
+    nv = m.group(4)
+    gpu = _num(nv.split(",")[0]) if nv else None
+    return t, _num(m.group(2)), gpu if gpu is not None else _num(m.group(3))
+
+
+def thermal_tail(path: Path = THERMAL_LOG, tail_bytes: int = 16384) -> list[str]:
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - tail_bytes))
+            return fh.read().decode(errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def last_thermal(path: Path = THERMAL_LOG) -> tuple[float, str] | None:
+    """The newest temperature line of thermal.log and its time (epoch s), or None."""
+    for ln in reversed(thermal_tail(path)):
+        p = parse_thermal(ln)
+        if p:
+            return p[0], ln.strip()
+    return None
+
+
+def held_for(samples, hot) -> float:
+    """How long `hot(cpu, gpu)` has held without a break up to the newest sample (s; 0 when it doesn't hold now).
+    samples: (t, cpu, gpu) oldest first; a gap > SAMPLE_GAP_S ends the run."""
+    start = end = None
+    for t, cpu, gpu in reversed(list(samples)):
+        if not hot(cpu, gpu) or (start is not None and start - t > SAMPLE_GAP_S):
+            break
+        end = t if end is None else end
+        start = t
+    return 0.0 if end is None else end - start
+
+
+def over(cpu_c: float, gpu_c: float):
+    return lambda cpu, gpu: (cpu is not None and cpu >= cpu_c) or (gpu is not None and gpu >= gpu_c)
+
+
+def heat_state(samples, now: float, limits: dict | None = None, stale_s: float = 30) -> dict:
+    """The runner's heat pause from thermal samples (t, cpu, gpu): {"pause": hot for pause_s, "cool": under the
+    pause limits for pause_s, "hot_s", "cool_s", "cpu", "gpu", "fresh"}. Stale data (newest sample older than
+    stale_s, or none) pauses nothing."""
+    lim = limits or heat_limits()
+    samples = list(samples)
+    fresh = bool(samples) and now - samples[-1][0] <= stale_s
+    hot = over(lim["pause_cpu_c"], lim["pause_gpu_c"])
+    hot_s = held_for(samples, hot) if fresh else 0.0
+    cool_s = held_for(samples, lambda c, g: not hot(c, g)) if fresh else 0.0
+    cpu, gpu = (samples[-1][1], samples[-1][2]) if samples else (None, None)
+    return {"pause": fresh and hot_s >= lim["pause_s"], "cool": not fresh or cool_s >= lim["pause_s"],
+            "hot_s": hot_s, "cool_s": cool_s, "cpu": cpu, "gpu": gpu, "fresh": fresh}
+
+
+def read_heat(path: Path = THERMAL_LOG, now: float | None = None, limits: dict | None = None) -> dict:
+    """heat_state() of thermal.log's tail."""
+    samples = [p for p in map(parse_thermal, thermal_tail(path)) if p]
+    return heat_state(samples, time.time() if now is None else now, limits)
+
+
 class RamWatch:
     def __init__(self, log=None, logfile: Path = LOG, warn_mb: int = WARN_MB, kill_mb: int = KILL_MB,
                  exclude: set[int] | None = None):
@@ -225,6 +400,11 @@ class RamWatch:
         self.last_anon_swap = 0
         self.fast = False            # the RSS grew fast at the last sample: sample every FAST_SAMPLE_S
         self.tests_killed_at = 0.0
+        self.thermal_log, self.thermal_lock_path, self.heat_kills = THERMAL_LOG, THERMAL_LOCK, HEAT_KILLS
+        self.thermal_lock = None     # held runtime/thermal_log.lock: this watchdog writes thermal.log
+        self.heat: collections.deque[tuple[float, int | None, int | None]] = collections.deque(maxlen=64)
+        self.limits = heat_limits()
+        self.next_thermal = 0.0
 
     def _write(self, line: str) -> None:
         try:
@@ -355,6 +535,52 @@ class RamWatch:
         self.fast = False
         return rec
 
+    def _thermal_writer(self) -> bool:
+        """Holds runtime/thermal_log.lock (tried again each time while thermal_log.sh has it): one writer only."""
+        if self.thermal_lock is None:
+            self.thermal_lock = take_lock(self.thermal_lock_path)
+        return self.thermal_lock is not None
+
+    def thermal(self, now: float | None = None, s: dict | None = None, pids: list[int] | None = None) -> dict | None:
+        """One thermal sample: the thermal.log line (when this watchdog is the writer, synced), then the heat kill:
+        bg3 is SIGKILLed when the CPU >= kill_cpu_c or the GPU >= kill_gpu_c for kill_s. Returns the kill record."""
+        now = time.time() if now is None else now
+        pids = game_pids() if pids is None else pids
+        s = thermal_sample(game_up=bool(pids)) if s is None else s
+        if self._thermal_writer():
+            try:
+                self.thermal_log.parent.mkdir(parents=True, exist_ok=True)
+                with self.thermal_log.open("a") as f:
+                    f.write(thermal_line(s, datetime.fromtimestamp(now)) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+            except OSError:
+                pass
+        cpu, gpu = s.get("k10temp"), sample_gpu(s)
+        self.heat.append((now, cpu, gpu))
+        lim = self.limits
+        hot_s = held_for(self.heat, over(lim["kill_cpu_c"], lim["kill_gpu_c"]))
+        if not pids or hot_s < lim["kill_s"]:
+            return None
+        why = (f"CPU {cpu} C / GPU {gpu} C for {hot_s:.0f} s (heat kill at CPU >= {lim['kill_cpu_c']:g} C or "
+               f"GPU >= {lim['kill_gpu_c']:g} C for {lim['kill_s']:g} s)")
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        rec = {"kind": "heat_kill", "t": now, "why": why, "cpu_c": cpu, "gpu_c": gpu, "seconds": round(hot_s),
+               "line": thermal_line(s, datetime.fromtimestamp(now)), "pids": pids,
+               "tools": last_tools(now, self.actions), "bg3le": bg3le_crumbs(self.logs)}
+        msg = (f"KILLED bg3 {pids} (SIGKILL): too hot: {why}. Last tool calls: "
+               + (" | ".join(rec["tools"]) or "none in the last 2 min")
+               + ". Last bg3le lines: " + (" ⏎ ".join(rec["bg3le"][-6:]) or "none"))
+        self._write(msg)
+        self.log(f"ramwatch: !!!!! {msg}")
+        self._append(self.heat_kills, rec)
+        self.heat.clear()
+        return rec
+
     def loop(self, stop: threading.Event) -> None:
         next_tick = 0.0
         while not stop.is_set():
@@ -362,6 +588,9 @@ class RamWatch:
                 if time.time() >= next_tick:
                     self.tick()
                     next_tick = time.time() + (LOW_INTERVAL_S if self.low else INTERVAL_S)
+                if time.time() >= self.next_thermal:
+                    self.next_thermal = time.time() + THERMAL_S
+                    self.thermal()
                 self.sample()
             except Exception as e:  # noqa: BLE001 - the watchdog never breaks the runner
                 self._write(f"error: {e}")
@@ -370,11 +599,14 @@ class RamWatch:
 
 def take_lock(path: Path = RUNTIME / "ramwatch.lock"):
     """One watchdog per machine (the runner's thread or a standalone one). Returns the held file, or None."""
+    f = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         f = open(path, "w")
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
+        if f is not None:   # the thermal lock is tried every THERMAL_S while thermal_log.sh holds it
+            f.close()
         return None
     f.write(str(os.getpid()))
     f.flush()
@@ -404,6 +636,7 @@ def main() -> int:
     w = RamWatch(lambda m: print(m, flush=True))
     if a.once:
         print(w.tick())
+        print(thermal_line(thermal_sample()))
         return 0
     lock = take_lock()
     if lock is None:

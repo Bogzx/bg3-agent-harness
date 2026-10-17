@@ -10,7 +10,9 @@ Game tools come from the `bg3` MCP server. **Their real names are `mcp__bg3__<na
 to the bare name fails with "No such tool available" (the first call of S009–S013 did). The core ones (`queue_actions`, `do_actions`, `wait_for`, `travel_to`, `move_to`,
 `interact`, `look`, `combat_turn`, …) are loaded from the start, and so are `screenshot`, `click`,
 `press_key`, `dismiss_popups`, `lockpick`, `regroup`, `get_map`, the rests, `camp` and `level_up`: call
-them directly (S005 lost 10 turns to ToolSearch). Load others with ToolSearch only when you need one.
+them directly (S005 lost 10 turns to ToolSearch). Load others with ToolSearch only when you need one:
+`ToolSearch` is Claude Code's own tool, the one name here WITHOUT the prefix (`mcp__bg3__ToolSearch` does not
+exist; naut2-r3 S001 called it), e.g. ToolSearch with query `select:mcp__bg3__get_layout`.
 
 ## Play like a human clicking ahead (pipelining)
 A skilled player clicks the next destination, then thinks while the character walks. Do the same:

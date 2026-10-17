@@ -47,6 +47,9 @@
 #                      OOMPolicy=continue and a memory cap, so an OOM kills only the game, never the caller's unit
 #                      (20:48: the game hit 13.3 GB inside the multiplexer's unit, OOMPolicy=stop, and systemd killed every
 #                      agent). 0: no scope (and no cap).
+#   host tuning        opt-in per machine: the marker ~/.config/bg3ai/host-tuning (platform_profile=balanced,
+#                      nvidia_max_clock=1500, ...) is applied with `sudo -n` before each launch, skipped with a
+#                      warning when sudo needs a password (runner/host_tuning.py; the test machine froze twice uncapped)
 #   BG3AI_GAME_MEMORY_MAX / BG3AI_GAME_SWAP_MAX   the scope's MemoryMax / MemorySwapMax (default 10G / 2G; the
 #                      game normally peaks at ~6.3 GB RSS)
 set -euo pipefail
@@ -145,13 +148,17 @@ if [ "$dry_run" != 1 ]; then
     steam_state="$(python3 "$REPO/tools/steam_paths.py" launch-ok)" \
         || die "REFUSING TO LAUNCH: Steam is not offline ($steam_state). Steam > Go Offline, or BG3AI_REQUIRE_STEAM_OFFLINE=0"
 fi
+# Host tuning (the test machine: platform_profile and the NVIDIA clock cap reset on every reboot). Never fatal, never a prompt.
+if [ "$dry_run" = 1 ]; then _tune=plan; else _tune=apply; fi
+python3 "$REPO/runner/host_tuning.py" "$_tune" 2>&1 | sed 's/^/launch_game: /' >&2 || true
 if [ "$use_bg3le" = 1 ] && command -v ss >/dev/null 2>&1 && ss -Hltn "sport = :$PORT" | grep -q .; then
     [ "$dry_run" = 1 ] || die "port $PORT is already in use (another game instance?)"
     echo "launch_game: warning: port $PORT is already in use (another game instance?)" >&2
 fi
 
 stamp="${BG3AI_LAUNCH_STAMP:-$(date +%Y%m%d-%H%M%S)}"   # the runner passes its own, to find this launch's logs
-mkdir -p "$RUNTIME/logs" "$RUNTIME/shots"
+SHOTS="${BG3AI_SHOTS_DIR:-$RUNTIME/shots}"   # the bridge reads the same variable (server._shots_dir)
+mkdir -p "$RUNTIME/logs" "$SHOTS"
 GAME_LOG="$RUNTIME/logs/game-$stamp.log"
 
 # Environment for the game process only. `env` runs inside the container, so none of this touches the runtime's
@@ -164,7 +171,7 @@ env_args=(
     "BG3AI_GAME_STAMP=$stamp"
     # Frame capture (bridge/src/bg3ai/screen.py talks to the control socket).
     VK_LOADER_LAYERS_ENABLE=VK_LAYER_MESA_screenshot
-    "VK_LAYER_MESA_SCREENSHOT_CONFIG=comms;control=bg3ai-shot;output_dir=$RUNTIME/shots;log_type=error"
+    "VK_LAYER_MESA_SCREENSHOT_CONFIG=comms;control=bg3ai-shot;output_dir=$SHOTS;log_type=error"
 )
 # PRIME render offload: on a hybrid laptop the game must render on the NVIDIA GPU. The screenshot layer sits
 # above any driver, so capture is unaffected (tools/dev/check_screenshot_layer.sh checks it with vkcube).
