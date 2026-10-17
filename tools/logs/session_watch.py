@@ -153,6 +153,59 @@ def is_game(c):
     return c["name"] not in NOT_GAME and not c["name"].startswith(("memory_", "wiki_"))
 
 
+# The effect, not the call (vis V9, S066): a PASS signature on the line under a step that did nothing is void (#58
+# `targets: cast on the first 2 only` under `Projectile_EldritchBlast: FAILED — the game never started it` read as
+# "Bless on 3" / "hotbar N-target cast" PASS?), and a point/cone scroll read and "cast on" its own reader is the
+# wasted self-cast, a FAIL (#65 Cone of Cold `cast on e2 Wyll by a click` with x,y,z; #142 Misty Step on Karlach).
+NO_EFFECT_RX = re.compile(r": (?:FAILED|INTERRUPTED|TIMEOUT|REFUSED) — |never started it|cast nothing")
+STEP_STATUS_RX = re.compile(r": (?:done|FAILED|INTERRUPTED|TIMEOUT|REFUSED|STOPPED)\b")
+SCROLL_CAST_RX = re.compile(r"\(Scroll of ([^()]+?) read, cast on e\d+ ([^()]+?) by a click\)")
+
+
+def _line(text, i):
+    """(start, end) of the line holding index i."""
+    a = text.rfind("\n", 0, i) + 1
+    b = text.find("\n", i)
+    return a, len(text) if b < 0 else b
+
+
+def _point_scroll(inp, scroll):
+    """Did the call aim this scroll at a point (x / x,y,z in the same JSON object as its name)?"""
+    blob = json.dumps(inp or {}, ensure_ascii=False).replace('\\"', '"')
+    return any(f'"Scroll of {scroll}"' in o and re.search(r'"x(?:,y,z)?"\s*:', o)
+               for o in re.findall(r"\{[^{}]*\}", blob))
+
+
+def self_cast(c, text, at):
+    """The wasted point-scroll self-cast on the line at index `at`, or None: the reader is the last `TURN eN Name`
+    line above it (combat_turn) or the call's who."""
+    a, b = _line(text, at)
+    m = SCROLL_CAST_RX.search(text, a, b)
+    if not m:
+        return None
+    turns = re.findall(r"^TURN e\d+ (.+?) \(round", text[:a], re.M)
+    reader = turns[-1] if turns else (c.get("input") or {}).get("who")
+    if reader and m.group(2).strip() == str(reader).strip() and _point_scroll(c.get("input"), m.group(1)):
+        return m
+    return None
+
+
+def effect(c, text, ms):
+    """'fail' (a point scroll cast on its reader), 'void' (the step above the matched line did nothing) or None,
+    for one PASS clause's matches on one call."""
+    for m in ms:
+        if self_cast(c, text, m.start()):
+            return "fail"
+    for m in ms:
+        a, b = _line(text, m.start())
+        if STEP_STATUS_RX.search(text, a, b) or a == 0:
+            continue   # the matched line is a step with its own status (a refusal PASS is that step's own text)
+        pa, pb = _line(text, a - 1)
+        if NO_EFFECT_RX.search(text, pa, pb):
+            return "void"
+    return None
+
+
 def check(calls, rows=None):
     """[(item, trig, pass, fail, verdict, example)] per SESSION-WATCH.md row (series_report's section left out):
     counts are calls with a match. trig = a call of a tool the row names, or any PASS/FAIL match; a clause matches a
@@ -177,7 +230,10 @@ def check(calls, rows=None):
                 for rxs in row[kind]:
                     ms = [re.search(rx, t) for rx in rxs]
                     if all(ms):
-                        hits[kind].append((k, c, t, ms[0]))
+                        eff = effect(c, t, ms) if kind == "pass" else None
+                        if eff == "void" or (eff == "fail" and any(h[0] == k for h in hits["fail"])):
+                            continue
+                        hits["fail" if eff == "fail" else kind].append((k, c, t, ms[0]))
                         break
             if c["name"] in tools or any(h[0] == k for h in hits["pass"] + hits["fail"]):
                 hits["trig"].append((k, c, t, None))

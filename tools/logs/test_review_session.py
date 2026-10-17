@@ -383,6 +383,61 @@ def overlap_refusal(c):
     return RS.overlap.refusal(c)
 
 
+class EffectNotCall(unittest.TestCase):
+    """vis V9: S066 PASS? verdicts on calls that did nothing (the real call texts, the rows as SESSION-WATCH.md has
+    them): a point scroll cast on its reader, and a 2-target note under a cast the game never started."""
+
+    ROWS = ("| scroll by name (setup, DONE-OFFLINE) | use_ability with a carried scroll | `(Scroll of … read, cast on …` "
+            "| `no action called 'Scroll of …'`, or click_on right after a scroll use |\n"
+            "| Bless on 3 (act, S031+) | use_ability/combat_turn with 3+ targets | `targets: cast on the first 2 only` and "
+            "`done` | `more than two targets is not supported yet` |\n"
+            "| hotbar N-target cast (se + act wiring) | use_ability / a combat_turn step with 3+ targets | with the switch "
+            "off: `cast on the first 2 only, 1 of 3 NOT targeted (the hotbar route for more is off)` | `fired_early` |\n")
+    EB = ("TURN e2 Wyll (round 1) — waited 7.1s for the turn\n"
+          "action: Projectile_EldritchBlast: FAILED — the game never started it (3 s, no cast, no step)\n"
+          "targets: cast on the first 2 only, 1 of 3 NOT targeted (the hotbar route for more is off); left out: e356 Orin\n"
+          "end_turn: done (still to act: e3)")
+    CONE = ('[{"who":"Wyll","plan":{"action":[{"ability":"Scroll of Cone of Cold","x,y,z":"56,-53,996.5"},'
+            '{"ability":"Eldritch Blast","target":"e354"}],"on_reaction":"skip"}}]')
+
+    def rows(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        doc = Path(tmp.name) / "SESSION-WATCH.md"
+        doc.write_text("## Combat (act)\n| item | happens when | PASS | FAIL |\n|---|---|---|---|\n" + self.ROWS)
+        return SW.parse_watch(doc)
+
+    def verdicts(self, calls):
+        return {r[0].split(" (")[0]: r[1:5] for r in SW.check(calls, self.rows())}
+
+    def test_s066_59_a_cast_the_game_never_started_is_no_pass(self):
+        v = self.verdicts([call("combat_turn", self.EB, {"who": "Wyll", "plan": "{}"}, k=58)])
+        self.assertEqual(v["Bless on 3"], (1, 0, 0, "seen"))
+        self.assertEqual(v["hotbar N-target cast"], (1, 0, 0, "seen"))
+        done = self.EB.replace("FAILED — the game never started it (3 s, no cast, no step)",
+                               "done — damage=[e356 Orin 1 Force; e356 Orin 1 Force]")
+        v = self.verdicts([call("combat_turn", done, {"who": "Wyll", "plan": "{}"}, k=58)])
+        self.assertEqual(v["Bless on 3"], (1, 1, 0, "PASS?"))
+        self.assertEqual(v["hotbar N-target cast"], (1, 1, 0, "PASS?"))
+
+    def test_s066_a_point_scroll_cast_on_its_reader_is_a_fail(self):
+        misty = call("use_ability", "use_ability: done — used after={@(17.8,-42.8,1004.8)} (Scroll of Misty Step read, "
+                     "cast on e1 Karlach by a click)\nEVENTS\n  used e1: e17 Scroll of Misty Step success",
+                     {"who": "Karlach", "ability": "Scroll of Misty Step", "x": 24, "y": -43, "z": 1005}, k=142)
+        cone = call("combat_turn", "TURN e1 Karlach (round 3)\nend_turn: done\nTURN e2 Wyll (round 3) — waited 13.9s for "
+                    "the turn\naction: Scroll of Cone of Cold: done — read in combat used (Scroll of Cone of Cold read, "
+                    "cast on e2 Wyll by a click); its action is spent", {"plan": self.CONE}, k=65)
+        for c in (misty, cone):
+            self.assertEqual(self.verdicts([c])["scroll by name"], (1, 0, 1, "FAIL?"), c["k"])
+        fear = call("combat_turn", "TURN e2 Wyll (round 2)\naction: Scroll of Fear e353: done — read in combat used "
+                    "(Scroll of Fear read, cast on e353 Reaper of Bhaal Hiila by a click); its action is spent",
+                    {"plan": '[{"who":"Wyll","plan":{"action":[{"ability":"Scroll of Fear","target":"e353"}]}}]'}, k=61)
+        self.assertEqual(self.verdicts([fear])["scroll by name"], (1, 1, 0, "PASS?"))
+        armour = call("use_ability", "use_ability: done — (Scroll of Mage Armour read, cast on e1 Karlach by a click)",
+                      {"who": "Karlach", "ability": "Scroll of Mage Armour"}, k=3)   # a self-buff scroll: no point
+        self.assertEqual(self.verdicts([armour])["scroll by name"], (1, 1, 0, "PASS?"))
+
+
 def main():
     if "--rebuild" in sys.argv:
         rt = RS.RUNTIME   # $BG3AI_RUNTIME, else the main tree's (also from a worktree)

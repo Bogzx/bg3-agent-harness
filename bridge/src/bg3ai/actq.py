@@ -159,11 +159,20 @@ def _pct(row: dict) -> float | None:
     return None
 
 
+def _mine(who: str | None, rows: Any) -> bool:
+    """Does an event about these party rows ({uuid}) concern a queue of `who`? Always without a who or rows.
+    S066 19:11:55: Orin's conversation (party=[Claude]) stopped Karlach, Wyll and Shadowheart walking to him."""
+    if not who or not isinstance(rows, list) or not rows:
+        return True
+    return any(isinstance(r, dict) and str(r.get("uuid") or "")[-36:] == who[-36:] for r in rows)
+
+
 class Watcher:
     """Detects the default interrupts for one run of steps. check() is thread-safe."""
 
-    def __init__(self, game, hp_below: float = HP_BELOW_PCT, ignore: set | None = None):
+    def __init__(self, game, hp_below: float = HP_BELOW_PCT, ignore: set | None = None, who: str | None = None):
         self.game = game
+        self.who = who  # a queue's member: only its own conversation / a game teleport of it stops the run
         self.hp_below = hp_below
         self.ignore = set(ignore or ())
         self._lock = threading.Lock()
@@ -346,12 +355,15 @@ class Watcher:
                         pass
             for ev in self._new_events(got):
                 k = ev.get("kind")
+                d = ev.get("data") or ev
                 if k == "teleport_blocked" and "teleport" not in self.ignore:
                     return "teleport", "the engine tried to teleport a character (blocked)"
+                if k == "teleported_by_game" and "teleport" not in self.ignore and _mine(self.who, [d]):
+                    return "teleport", f"the game moved {d.get('uuid')} ({d.get('why') or 'a story move'})"
                 if k == "combat_started" and "combat" not in self.ignore and not self.start.get("combat"):
                     return "combat", "combat started"
                 if k == "dialogue_started" and "dialogue" not in self.ignore and not handled & PROMPTS["dialogue"] \
-                        and not (ev.get("data") or ev).get("automated"):
+                        and not d.get("automated") and _mine(self.who, d.get("party")):
                     return "dialogue", "a conversation started"
                 if k == "spotted":
                     d = ev.get("data") or {}

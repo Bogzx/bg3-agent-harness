@@ -161,3 +161,35 @@ def camp_behind(status: dict, stay: set | None = None, far_m: float = CAMP_BEHIN
 def behind_text(rows: list[dict], label: Callable[[str], str]) -> str:
     """'e1 Karlach 136m, 64m above, unchained; e2 Wyll other level'."""
     return "; ".join(f"{label(r['uuid'])} {_where(r)}" for r in rows)
+
+
+def moved_left_behind(status: dict, mover: str, far_m: float = APART_M) -> list[dict]:
+    """apart() rows, measured from a member the game just moved, who are far from it or on another floor/level
+    (an unchained member standing next to it is not left behind). S066 19:11:50: Orin's arena pulled Claude 22 m
+    over the chasm; Karlach, Wyll and Shadowheart stayed 23-25 m back and Claude fought 3 rounds alone."""
+    return [r for r in apart(status, leader=mover, far_m=far_m)
+            if not r["stay"] and (r["other_level"] or r.get("dy") or (r["dist"] or 0) > far_m)]
+
+
+def game_moved_text(tool: str, res: dict, who: str, label: Callable[[str], str], area: str | None,
+                    behind: list[dict], sealed_from: str | None, in_combat: bool = False) -> str:
+    """The result of a walk the game's story cut short by moving the walker itself (Actions.lua tele_finish,
+    by_game): where it is now and how the rest of the party follows. sealed_from: the member nav found no
+    walkable way from (None: the way was found or not checked)."""
+    pos = res.get("pos") or []
+    at = f" to @({','.join(f'{float(v):g}' for v in pos[:3])})" if len(pos) >= 3 else ""
+    out = [f"{tool}: INTERRUPTED — the game moved {label(who)} {round(float(res.get('m') or 0))}m{at}"
+           + (f" into {area}" if area else "") + f" ({res.get('why') or 'a story move'}): not our walk, nothing "
+           "to undo; the scene there is theirs now"]
+    if behind:
+        line = "PARTY LEFT BEHIND: " + behind_text(behind, label)
+        if sealed_from:
+            line += (f"; no walkable way from {label(sealed_from)} to {label(who)} (a sealed story area?): plan the "
+                     "scene without them, or reload before the approach and walk in together")
+        elif in_combat:
+            line += f" → in combat: move them toward {label(who)} on their turns (combat_turn move)"
+        else:
+            line += (f" → regroup(leader={label(who).split(' ')[0]}) walks them to {label(who)} (their walks keep "
+                     "going through a conversation they are not in)")
+        out.append(line)
+    return "\n".join(out)

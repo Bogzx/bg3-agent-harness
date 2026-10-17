@@ -411,3 +411,47 @@ class Act3Retries(unittest.TestCase):
         tr.feed([ev("round_started", round=15), ev("combat_ended")], PARTY)
         self.assertIsNone(tr.close(ROWS))
         self.assertIs(tr.last, past)
+
+
+S066 = Path(__file__).parent / "golden" / "fights_s066.jsonl"   # real v2 records: Orin tries 3-7 (S066 19:12-19:30)
+
+
+class ThinAttempts(unittest.TestCase):
+    """vis V9: S066's LAST ATTEMPT said `focus Orin first` x9. It came from the solo 19:12 try (Claude pulled into
+    the arena, the others dealt/took 0, no hit on Orin) and the 1-round tests at 19:25/19:27/19:30, although 19:17
+    had measured Orin's per-hit cap (11 of 14 hits did 1)."""
+
+    def setUp(self):
+        self.old = [debrief._trust(json.loads(x)) for x in GOLDEN.read_text().splitlines()]
+        self.s066 = [debrief._trust(json.loads(x)) for x in S066.read_text().splitlines()]
+
+    def test_which_attempts_are_thin(self):
+        self.assertEqual([debrief.thin(r) for r in self.s066],
+                         ["Claude fought alone", None, "it lasted 1 round", "it lasted 1 round", "it lasted 1 round"])
+
+    def test_a_1_round_test_keeps_the_cap_the_chain_measured(self):
+        for i in (2, 3, 4):
+            la = debrief.last_attempt(self.s066[i], self.old + self.s066[:i + 1])
+            self.assertNotIn("focus Orin first", la, i)
+            self.assertIn("Orin often took 1 per hit", la, i)
+            self.assertIn("it lasted 1 round, so it measured little; the fuller attempt vs them (reloaded, was costly, "
+                          "S066 19:17): Wyll went down first", la, i)
+            self.assertIn("protect Wyll", la, i)   # the fuller attempt's first down, not this test's
+        self.assertIn("focus Orin first", debrief.last_attempt(self.s066[2]))   # (HEAD: no history to read)
+
+    def test_the_solo_try_plans_from_the_last_full_fight(self):
+        # 19:14: only S065's v1 records existed (no cap measurable in them), so the tip stays `focus Orin first`,
+        # but from S065 11:50's fight of four, said as such
+        la = debrief.last_attempt(self.s066[0], self.old + self.s066[:1])
+        self.assertIn("Claude fought alone, so it measured little; the fuller attempt vs them (reloaded, was near_wipe, "
+                      "S065 11:50): DIED: Karlach", la)
+        self.assertIn("protect Wyll", la)
+        # once any attempt measured the cap it holds for the solo try too
+        la = debrief.last_attempt(self.s066[0], self.old + self.s066)
+        self.assertNotIn("focus Orin first", la)
+        self.assertIn("Orin often took 1 per hit", la)
+
+    def test_a_full_attempt_reads_as_before(self):
+        la = debrief.last_attempt(self.s066[1], self.old + self.s066[:2])
+        self.assertNotIn("measured little", la)
+        self.assertIn("Orin often took 1 per hit", la)
