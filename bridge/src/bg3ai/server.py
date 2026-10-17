@@ -2394,6 +2394,9 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
                            f"{macros.hazard_way_out(res.get('hazard'))}.", t0)
         body = (f"FAILED: no walkable ground toward {what} within {render.num(max_m)}m"
                 + (f" ({n} spots checked)" if n is not None else ""))
+        note = render.opened_note(res, H)
+        if note:
+            body += f"\n{note}"
         hint = _route_hint(args)  # toward an objective/target only (a direction has no goal)
         others = navhints.other_dirs_text(res.get("others") if isinstance(res, dict) else None)
         if not hint and not others:
@@ -6252,9 +6255,12 @@ _trips: dict[str, dict] = {}  # char -> {dest, d0, t0} of the travel_to its queu
 
 
 def _map_level() -> str | None:
-    """The level the party is on (state.status), for the dead ends: they apply only on the level they were hit on."""
+    """The level the party is on (state.status), for the dead ends: they apply only on the level they were hit on,
+    and only until a wall/door near the party changes (geo_gen, V13: a dead end before a wall opened is no longer one)."""
     st = game.try_rpc("state.status")
-    return st.get("level") if isinstance(st, dict) else None
+    if not isinstance(st, dict) or not st.get("level"):
+        return None
+    return f"{st['level']}#{st['geo_gen']}" if st.get("geo_gen") is not None else st["level"]
 
 
 # where trips were blocked this session (S010: the same boulder wall 5 times); per level, cleared by load_game

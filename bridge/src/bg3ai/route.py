@@ -265,6 +265,9 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
             sh = res["straight_hazard"]
             line += f" (the straight line crosses {macros.exposure_text(sh)} at {_m(sh.get('at_m'))})"
         out.append(line)
+        note = render.opened_note(res, H)
+        if note:
+            out.append(note)
         c = res.get("closest")
         if isinstance(c, dict) and c.get("pos"):
             line = f"CLOSEST walkable spot {pos(c['pos'])}: {_m(c.get('to_goal_m'))} from the goal"

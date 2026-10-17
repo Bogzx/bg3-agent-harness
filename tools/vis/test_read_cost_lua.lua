@@ -27,6 +27,8 @@ local function pumpPaths()
     end
 end
 local calls = {}
+local nowMs = 0      -- Ext.Utils.MonotonicTime (V13 tests move it; 0 for the rest)
+local listeners = {} -- Osiris listeners by event name (V13)
 local function charge(name) calls[name] = (calls[name] or 0) + 1 end
 local function simMs()
     local ms = 0
@@ -36,8 +38,9 @@ end
 
 Ext = {
     IsServer = function() return true end,
-    Utils = { MonotonicTime = function() return 0 end, PrintWarning = function() end, Print = function() end,
+    Utils = { MonotonicTime = function() return nowMs end, PrintWarning = function() end, Print = function() end,
         IsValidHandle = function() return false end },
+    Osiris = { RegisterListener = function(name, _, _, fn) listeners[name] = fn end },
     Events = { Tick = { Subscribe = function() end } },
     Level = {
         GetHeightsAt = function(x, z) charge("GetHeightsAt"); return heights(x, z) end,
@@ -68,7 +71,8 @@ Ext = {
     Require = function() return nil end,
     StaticData = { Get = function() return nil end },
 }
-Osi = setmetatable({}, { __index = function() return function() return 0 end end })
+Osi = setmetatable({ IsItem = function(u) return items and items[u] and 1 or 0 end },
+    { __index = function() return function() return 0 end end })
 
 BG3AI = {}
 dofile(LUA .. "/Shared/Util.lua")
@@ -80,7 +84,9 @@ BG3AI.Visibility = {
     party = function() return { P1 } end,
     uuid = function(u) return u end,
     name = function(u) return "N:" .. u end,
-    context = function() return { party = { P1 }, is_party = { [P1] = true } } end,
+    context = function() return { party = { P1 }, is_party = { [P1] = true },
+                                  observers = { { uuid = P1, pos = world[P1] } } } end,
+    itemKind = function(u) local it = items[u]; return it and it.kind or "item" end,
     itemsAround = function() local out = {}; for u in pairs(items) do out[#out + 1] = u end; table.sort(out); return out end,
     itemVisible = function(_, u) local it = items[u]; return it ~= nil, it and it.kind end,
     characterVisible = function() return false end,
@@ -102,6 +108,9 @@ local function reset()
     N.frame = (N.frame or 0) + 1
     N.waysCache, N.waysCacheN, N.waysWarmState = {}, 0, { t = 0 }
     N.asyncPaths, N.asyncPathsN, asyncQ = {}, 0, {}
+    N.waysWarmState = { t = 0 }
+    N.slowPaths, N.slowPathsN, N.connectFail, N.geoLast = {}, 0, {}, nil
+    nowMs = 0
 end
 local function test(name, fn)
     count = count + 1
@@ -281,6 +290,96 @@ test("nav.frontier at a walk's arrival (ways_cached, NAV-6): no sync search, und
     eq(#r.leads > 0, true, "leads"); eq(r.ways, nil, "no ways warm yet")
     eq(calls.FindPath or 0, 0, "no sync search")
     under("nav.frontier arrival (ways_cached)")
+end)
+
+
+-- ---- walls the game opens (V13, S071 Wyrmway) ------------------------------------------
+
+-- The S071 shape: a Stone Wall 4.5 m W of the party (a door-kind item the party can see), opened by a use.
+local WALL = "wall-0001"
+local function wallWorld(dist, kind, seen)
+    world[WALL] = { -(dist or 4.5), 0, 0 }
+    items[WALL] = { kind = kind or "door" }
+    if seen == false then items[WALL].hidden = true end
+    blocked = function(x) return x < -(dist or 4.5) + 0.5 and x > -(dist or 4.5) - 0.5 or x < -(dist or 4.5) end
+end
+local function wayW(ways)
+    for _, w in ipairs(ways or {}) do if w.dir == "W" then return w.open_m end end
+end
+-- the Tick stands the party still and warms every direction (answers pumped as the engine would)
+local function warm(ms)
+    for _ = 1, 40 do nowMs = nowMs + (ms or 100); N.waysWarm(nowMs); pumpPaths() end
+end
+
+test("V13: ways cached before a wall opened are dropped when it opens (S071 e371 Stone Wall)", function()
+    wallWorld()
+    warm()
+    eq(wayW(N.ways(P1, 20, 8, 1000)), 0, "W blocked by the wall")
+    blocked = function() return false end   -- the wall slid open
+    listeners.Opened(WALL)
+    nowMs = nowMs + N.GEO_SETTLE_MS + 1
+    eq(wayW(N.ways(P1, 20, 8, 1000)), 20, "W open right after (was the cached 'blocked' for 120 s)")
+end)
+
+test("V13: a warm-up answer asked before the wall opened is not kept", function()
+    wallWorld()
+    nowMs = 1000
+    for _ = 1, 10 do nowMs = nowMs + 100; N.waysWarm(nowMs) end   -- a request in flight on the old geometry
+    eq(#asyncQ, 1, "one request in flight")
+    listeners.Opened(WALL)        -- opens; the engine answers from the grid it searched (still closed)
+    pumpPaths()
+    for _, a in pairs(N.asyncPaths) do eq(a.r.reachable ~= false, true, "no old 'unreachable' kept") end
+end)
+
+test("V13: while the wall may still be moving a no-path is not kept, and the reply says try again", function()
+    wallWorld()
+    listeners.Opened(WALL)        -- the event comes first; the walk grid lags the slide
+    nowMs = nowMs + 1000
+    eq(wayW(N.ways(P1, 20, 8, 1000)), 0, "W still blocked during the slide")
+    local r = RPC.ops["nav.path"]({ pos = { -8, 0, 0 } })
+    eq(r.reachable, false, "no path yet")
+    eq(r.opened and r.opened.uuid, WALL, "names the wall"); eq(r.opened.how, "opened", "how")
+    eq(r.opened.settling, true, "may still be moving")
+    blocked = function() return false end   -- the slide ended
+    nowMs = nowMs + N.GEO_SETTLE_MS
+    N.frame = N.frame + 1                   -- a later tick (the one-frame path cache)
+    eq(wayW(N.ways(P1, 20, 8, 1000)), 20, "searched again once settled (not the slide's 'blocked')")
+    eq(RPC.ops["nav.path"]({ pos = { -8, 0, 0 } }).reachable, true, "path through it")
+end)
+
+test("V13: after it settled a no-path says it was searched after the opening; later, nothing", function()
+    wallWorld()
+    listeners.Opened(WALL)
+    nowMs = nowMs + N.GEO_SETTLE_MS + 2000   -- the opening led elsewhere: still no way W
+    local r = RPC.ops["nav.path"]({ pos = { -8, 0, 0 } })
+    eq(r.opened and r.opened.settling, nil, "not moving any more"); eq(r.opened.ago_s, 8, "ago")
+    nowMs = nowMs + N.GEO_NOTE_MS
+    eq(RPC.ops["nav.path"]({ pos = { -8, 0, 0 } }).opened, nil, "old news")
+end)
+
+test("V13: a hidden blocker going off stage empties the caches but is never named (fair)", function()
+    wallWorld(4.5, "item")
+    warm()
+    eq(wayW(N.ways(P1, 20, 8, 1000)), 0, "blocked")
+    N.slowPaths["x"], N.slowPathsN = { t = nowMs, r = { reachable = false } }, 1
+    blocked = function() return false end
+    listeners.WentOnStage(WALL, 0)
+    eq(next(N.slowPaths), nil, "slow-search memo dropped")
+    nowMs = nowMs + N.GEO_SETTLE_MS + 1
+    eq(wayW(N.ways(P1, 20, 8, 1000)), 20, "W open")
+    blocked = function(x) return x < -4 end
+    eq(RPC.ops["nav.path"]({ pos = { -8, 0, 0 } }).opened, nil, "no note for something the party can't see")
+end)
+
+test("V13: a door opening far from the party (Lower City crowds) keeps the caches", function()
+    wallWorld(4.5)
+    warm()
+    local gen = N.geoGen
+    world["door-far"], items["door-far"] = { 300, 0, 0 }, { kind = "door" }
+    listeners.Opened("door-far")
+    eq(N.geoGen, gen, "no change"); eq(wayW(N.ways(P1, 20, 8, 1000)), 0, "the cached ways stand")
+    listeners.Opened("not-an-item")
+    eq(N.geoGen, gen, "only items")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

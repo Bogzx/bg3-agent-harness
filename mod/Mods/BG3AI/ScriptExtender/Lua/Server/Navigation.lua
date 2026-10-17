@@ -250,6 +250,61 @@ local function cachePut(key, v)
     N.pathCache[key] = v
 end
 
+-- Walls, doors and blockers the game opens, closes or takes away (V13, S071 Wyrmway: a Stone Wall opened by a use,
+-- an illusory wall opened by lightning on two torches; the story also does it with Open(), SetOnStage and
+-- PlatformMoveTo). Every path answer kept across frames (the async warm-up answers, the slow-search memo, the ways
+-- per spot, the connector failures) may then describe the old geometry, so a change within GEO_NEAR_M of the party
+-- drops them all (geoGen). A sliding wall's walk grid can lag its Opened event: for GEO_SETTLE_MS after it a "no
+-- path" is not kept (searched again next time), and no-path replies carry `opened` (a door/wall the party can see,
+-- nothing else: a hidden blocker going off stage only empties the caches) so the agent knows to try again.
+N.GEO_NEAR_M = 40
+N.GEO_SETTLE_MS = 6000
+N.GEO_NOTE_MS = 20000
+N.geoGen = N.geoGen or 0
+function N.geoSettling(now)
+    local g = N.geoLast
+    return g ~= nil and (now or Ext.Utils.MonotonicTime()) - g.t < N.GEO_SETTLE_MS
+end
+function N.geometryChanged(uuid, how)
+    local e = uuid and V.entity(uuid)
+    local p = e and V.pos(e)
+    if not p then return false end
+    local near = false
+    for _, o in ipairs(V.context().observers or {}) do
+        if o.pos and U.dist(o.pos, p) <= N.GEO_NEAR_M then near = true end
+    end
+    if not near then return false end
+    N.geoGen = N.geoGen + 1
+    local shown = (how == "opened" or how == "closed") and V.itemKind(uuid, e) == "door"
+        and V.itemVisible(V.context(), uuid, e, p)
+    N.geoLast = { uuid = uuid, how = how, t = Ext.Utils.MonotonicTime(), pos = p, shown = shown or nil }
+    N.pathCache, N.asyncPaths, N.asyncPathsN = {}, {}, 0
+    N.slowPaths, N.slowPathsN = {}, 0
+    N.waysCache, N.waysCacheN = {}, 0
+    N.connectFail = {}
+    return true
+end
+-- {uuid, name, how, ago_s, settling?} for a no-path reply from `from` within GEO_NOTE_MS of a shown change, else nil
+function N.geoNote(from)
+    local g = N.geoLast
+    local now = Ext.Utils.MonotonicTime()
+    if not g or not g.shown or now - g.t > N.GEO_NOTE_MS or (from and U.dist(from, g.pos) > N.GEO_NEAR_M) then
+        return nil
+    end
+    return { uuid = g.uuid, name = V.name(g.uuid), how = g.how, ago_s = round((now - g.t) / 1000, 0),
+             settling = N.geoSettling(now) or nil }
+end
+if Ext.Osiris and not N.geoListening then
+    N.geoListening = true
+    for _, ev in ipairs({ { "Opened", 1, "opened" }, { "Closed", 1, "closed" }, { "WentOnStage", 2, "stage" },
+        { "DestroyedBy", 4, "destroyed" } }) do
+        pcall(Ext.Osiris.RegisterListener, ev[1], ev[2], "after", function(obj)
+            local u = V.uuid(obj)
+            if u and truthy(osi(Osi.IsItem, u)) then pcall(N.geometryChanged, u, ev[3]) end
+        end)
+    end
+end
+
 -- The engine's path search has a per-frame budget: in one frame only the
 -- first 3-4 immediate searches run, the rest come back GoalFound=false with
 -- SearchComplete=false (live, WLD_Main_A: 8 identical searches -> 4 ok, 4
@@ -634,7 +689,7 @@ local function gatedPath(e, from, target, endTol)
     pf.n = pf.n + 1
     pf.ms = pf.ms + (r.ms or 0)
     if (r.ms or 0) > N.PATH_LEVEL_KILL_MS then N.slowSearch(r.ms) end
-    if (r.ms or 0) > N.PATH_SLOW_MEMO_MS and r.reachable ~= nil then
+    if (r.ms or 0) > N.PATH_SLOW_MEMO_MS and r.reachable ~= nil and not (r.reachable == false and N.geoSettling()) then
         if N.slowPathsN >= N.PATH_SLOW_MEMO_MAX then N.slowPaths, N.slowPathsN = {}, 0 end
         N.slowPaths[key] = { t = now, r = r }
         N.slowPathsN = N.slowPathsN + 1
@@ -797,6 +852,7 @@ RPC.register("nav.path", function(args)
     if r0.points then r.hazard = N.routeHazard(r0.points) end
     local mv = movementLeft(char)
     if mv and r.reachable then r.within_movement = r.length_m <= mv + 0.05; r.movement_left = round(mv, 1) end
+    if not r.reachable then r.opened = N.geoNote(cp) end
     return r
 end)
 
@@ -2449,7 +2505,7 @@ function N.connectors(ctx, charUuid, goal, radius, limit, budgetMs)
                 o.path_m = r.length_m
             elseif r and r.reachable == false then
                 o.unreachable = true
-                N.connectFail[fkey] = { t = now, from = from }
+                if not N.geoSettling() then N.connectFail[fkey] = { t = now, from = from } end
             elseif r and r.unfinished then
                 o.unprobed = true
             end
@@ -3086,12 +3142,13 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump, noSearch)
     local t0 = Ext.Utils.MonotonicTime()
     local key = waysKey(charUuid, from, far, near)
     local c = N.waysCache[key]
-    if not c or t0 - c.t > N.WAYS_TTL_MS then
+    if not c or t0 - c.t > N.WAYS_TTL_MS or (c.settling and not N.geoSettling(t0)) then
         if not c then
             N.waysCacheN = N.waysCacheN + 1
             if N.waysCacheN > N.WAYS_CACHE_MAX then N.waysCache, N.waysCacheN = {}, 1 end
         end
-        c = { t = t0, by = {} }
+        -- searched while a wall/door may still be moving (V13): kept only until it has settled
+        c = { t = t0, by = {}, settling = N.geoSettling(t0) or nil }
         N.waysCache[key] = c
     end
     -- true (open), false, or nil (noSearch: no answer yet)
@@ -3313,7 +3370,7 @@ function N.waysWarm(now)
     if N.levelSlow() or jobRunning() then return end
     local key = waysKey(active, p, 20, 8)
     local c = N.waysCache[key]
-    if c and now - c.t > N.WAYS_TTL_MS then c = nil end
+    if c and (now - c.t > N.WAYS_TTL_MS or (c.settling and not N.geoSettling(now))) then c = nil end
     local nxt = warmNext(active, p, c or { by = {} }, now)
     if not nxt then return end
     if nxt.dir then
@@ -3322,7 +3379,7 @@ function N.waysWarm(now)
     end
     -- breadcrumb: S038 20:48 the server froze in a FindPath ~0.3 s after a walk ended (this, or nav.landing)
     if Mem then Mem.crumb(string.format("ways warm @(%.1f,%.1f,%.1f)", p[1], p[2], p[3])) end
-    local from, target, level = { p[1], p[2], p[3] }, nxt.pos, currentLevel()
+    local from, target, level, gen = { p[1], p[2], p[3] }, nxt.pos, currentLevel(), N.geoGen
     local okb, path = pcall(Ext.Level.BeginPathfinding, e, target, function(pv)
         local cur = st.req
         if not cur or cur.key ~= nxt.key then return end
@@ -3332,6 +3389,8 @@ function N.waysWarm(now)
         N.warmAnswered(level)
         local okr, r = pcall(readResult, pv, pv.GoalFound, from, target, N.PATH_END_TOL_M)
         if not okr or type(r) ~= "table" then return end
+        -- asked before a wall/door changed (V13): the old geometry's answer; the warm-up asks again
+        if gen ~= N.geoGen or (not r.reachable and N.geoSettling()) then return end
         r.ms = Ext.Utils.MonotonicTime() - cur.t
         if N.asyncPathsN >= N.ASYNC_MAX then N.asyncPaths, N.asyncPathsN = {}, 0 end
         N.asyncPaths[nxt.key] = { t = Ext.Utils.MonotonicTime(), r = r }
@@ -3446,6 +3505,10 @@ RPC.register("nav.reach_toward", function(args)
     if under then r.standing_in = under end
     r.searched = nil
     r.direct_why = args.direct_why
+    if r.reachable == false then
+        local ce = V.entity(char)
+        r.opened = N.geoNote(ce and V.pos(ce))
+    end
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r
 end)
@@ -3867,6 +3930,10 @@ RPC.register("nav.route", function(args)
     if r.reachable == false and args.ways ~= false then
         local ok, ways = pcall(N.ways, char, 20, 8, 80)
         if ok and ways and #ways > 0 then r.ways = ways end
+    end
+    if r.reachable == false then
+        local ce = V.entity(char)
+        r.opened = N.geoNote(ce and V.pos(ce))
     end
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r

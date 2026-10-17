@@ -94,6 +94,44 @@ class RouteTool(Base):
         self.assertIn("NO WALKABLE PATH", out)
         self.assertIn("WAYS walkable: SW 20m+, N 8m (3.1m up) | blocked: E", out)
 
+    # V13, S071 21:28: e371 Stone Wall "now open", then path_preview/walk_toward/route said no path through it
+    WALL = "11111111-2222-3333-4444-000000000371"
+
+    def opened(self, settling: bool) -> dict:
+        return {"uuid": self.WALL, "name": "Stone Wall", "how": "opened", "ago_s": 3 if settling else 12,
+                **({"settling": True} if settling else {})}
+
+    def test_no_path_right_after_a_wall_opened_says_try_again(self):
+        self.reply = dict(FIRE_MAZE, opened=self.opened(True))
+        out = server.route(x=-40.0, y=16.0, z=-431.0)
+        self.assertIn("NO WALKABLE PATH", out)
+        self.assertRegex(out, r"e\d+ Stone Wall opened 3s ago and may still be moving: this passage just opened, "
+                              r"try again in a few seconds")
+        self.g.reach = {"reachable": False, "samples": 9, "opened": self.opened(True)}
+        self.assertIn("this passage just opened, try again", server.walk_toward(direction="W"))
+        self.reply = dict(FIRE_MAZE, opened=self.opened(False))
+        self.assertRegex(server.route(x=-40.0, y=16.0, z=-431.0), r"\(searched after e\d+ Stone Wall opened 12s ago: up to date\)")
+        self.reply = FIRE_MAZE
+        self.assertNotIn("opened", server.route(x=-40.0, y=16.0, z=-431.0))
+
+    def test_dead_ends_from_before_a_wall_changed_no_longer_apply(self):
+        gen = {"n": 0}
+        orig = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "state.status":
+                return {"level": "BGO_Main_A", "geo_gen": gen["n"]}
+            return orig(op, args, context, timeout)
+        self.g.rpc = rpc
+        dead = server.longnav.DeadEnds(level=server._map_level)
+        goal, at = [5.0, 11.7, -729.5], [11.8, 11.6, -729.3]
+        dead.record(goal, at)
+        dead.record(goal, at)
+        self.assertEqual(dead.near(goal, at).count, 2)
+        gen["n"] = 1   # the Stone Wall opened next to the party
+        self.assertIsNone(dead.near(goal, at))
+        self.assertEqual(server._map_level(), "BGO_Main_A#1")
+
     def test_pulled_up_ladder_is_no_way_up(self):
         # S059 08:56 Wyrm's Rock: e683's foot hung 5.7 m above the floor; route/frontier said "climbs 6.5m up"
         import copy
@@ -260,6 +298,16 @@ class HelmRoute(Base):
 class Rendering(unittest.TestCase):
     def test_hint_is_empty_when_reachable(self):
         self.assertEqual(route.hint_text(WITH_CLIMB, render.Handles()), "")
+
+    def test_path_preview_no_path_right_after_a_wall_opened(self):
+        H = render.Handles()
+        res = {"reachable": False, "straight_m": 6.8,
+               "opened": {"uuid": "11111111-2222-3333-4444-000000000371", "name": "Stone Wall", "how": "opened",
+                          "ago_s": 2, "settling": True}}
+        out = render.render_path(res, H)
+        self.assertTrue(out.startswith("UNREACHABLE: no walkable path (6.8m straight line)"))
+        self.assertIn("e1 Stone Wall opened 2s ago and may still be moving: this passage just opened, try again", out)
+        self.assertEqual(render.render_path({"reachable": False, "straight_m": 6.8}, H).count("\n"), 0)
 
     def test_unprobed_connector_says_so(self):
         # nav.route's connector probes have a budget: past it a ladder/door is listed without a path probe

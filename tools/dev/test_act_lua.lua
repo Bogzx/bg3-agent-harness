@@ -2629,6 +2629,7 @@ end)
 -- Claude the Paladin: Bless, Cure Wounds, Command, Shield of Faith need preparing (Cure Wounds and Shield of Faith
 -- prepared), Sanctuary is the oath's, limit 3.
 local function paladin(max)
+    G.spellFacts = {}  -- each helper redefines the stats; the game's never change (V12 memo)
     local loca = Ext.Loca.GetTranslatedString
     Ext.Loca.GetTranslatedString = function(h) return h end
     local function book(id, kind) return { Id = { Prototype = id, OriginatorPrototype = id }, PrepareType = kind } end
@@ -2715,6 +2716,7 @@ end)
 -- Claude's book as bg3se gives it: upcast entries (_2/_3) with the base as OriginatorPrototype, Command's variants as
 -- their own RequiresPreparation entries (stats SpellContainerID), SpellBookPrepares listing only the container.
 local function paladin_l4(class_max)
+    G.spellFacts = {}  -- each helper redefines the stats; the game's never change (V12 memo)
     local loca = Ext.Loca.GetTranslatedString
     Ext.Loca.GetTranslatedString = function(h) return h end
     local function book(id, orig, kind) return { Id = { Prototype = id, OriginatorPrototype = orig },
@@ -2793,6 +2795,23 @@ test("prep_plan (A7): no over-limit refusal under the page's limit; each change 
     local list = op("prepared", { uuids = { P1 } })
     undo()
     eq(list.casters[1].prepared[1].look, nil, "act.prepared rows carry no look"); eq(list.casters[1].max, 12, "max")
+end)
+
+test("act.prepared (V12): a second read gets no stats entry again; same rows", function()
+    local undo = paladin_l4(12)
+    local get, n = Ext.Stats.Get, 0
+    Ext.Stats.Get = function(id) n = n + 1; return get(id) end
+    local first = op("prepared", { uuids = { P1 } })
+    local cold = n
+    n = 0
+    local again = op("prepared", { uuids = { P1 } })
+    Ext.Stats.Get = get
+    undo()
+    local function names(l) local o = {} for _, r in ipairs(l.casters[1].prepared) do o[#o + 1] = r.name .. r.level end
+        return table.concat(o, ",") end
+    eq(cold > 0, true, "the first read gets the entries")
+    eq(n, 0, "the second read gets none")
+    eq(names(again), names(first), "same rows"); eq(names(first), "Command1,Cure Wounds1,Heroism1,Wrathful Smite1", "rows")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))
