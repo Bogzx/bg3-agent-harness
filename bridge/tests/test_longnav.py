@@ -359,6 +359,7 @@ class TravelTrips(Base):
         # S035 19:27/19:39: "can't fast travel now (Location)" twice in the Gauntlet of Shar, no way out given
         seen = []
         orig_try, orig_job = self.g.try_rpc, self.g.run_job
+        self.addCleanup(setattr, server.AREA, "block", None)   # the block it remembers would skip later trips' fast travel
 
         def try_rpc(op, args=None, context="server", **kw):
             if op == "ui.travel_block":

@@ -23,6 +23,8 @@ CAP_HITS = 4               # this many party hits that did 1 per damage part, at
 CAP_SHARE = 1 / 3          # enemy: a per-hit shield (S065 Orin's Unstoppable: 5 of 11 / 18 of 31 hits), no resisted type
 UNSEEN_SHARE = 0.25        # damage from no visible source (traps, hidden attackers) this share of all taken is a fact
 HEALED_PCT = 10            # an enemy seen this many HP points (%) below where it ended healed back
+LOW_MIN_HITS = 2           # hits of a type before it can read as "did little": one is noise (S074: Gale's lone 3
+                           # Psychic on Cazador, a retaliation, read as "switch damage types" and a WARNING in try 2)
 V = 2                      # record version: v1's damage-type "low" flags counted riders (see _trust)
 BAD = ("costly", "near_wipe", "wipe", "reloaded")
 _CONSUMABLE = re.compile(r"(?i)\b(potion|elixir|scroll|grenade|flask|bomb|oil of|arrow of)\b")
@@ -46,6 +48,10 @@ class Fight:
         self.names: dict[str, str] = {}
         self.enemies: set[str] = set()                # confirmed hostile: hurt us / statused us / hostile row
         self.touched: set[str] = set()                # characters the party damaged (enemies if no hostile rows)
+        self.acted: set[str] = set()                  # non-party characters that cast, or hit or statused the party
+        self.affected: set[str] = set()               # non-party characters the party put a status on
+        self.hurt: set[str] = set()                   # non-party characters any damage event hit (a surface too)
+        self.turned: set[str] = set()                 # non-party characters that had a turn
         self.rows_seen = False
         self.race: dict[str, str] = {}
         self.killed: set[str] = set()
@@ -63,7 +69,9 @@ class Fight:
         self.ally_died: list[dict] = []               # allied NPCs (Jaheira S043, Aylin S045) that died: {uuid, name, round}
         self.casting: dict[str, str] = {}             # party caster uuid -> current ability name
         self.rolls: dict[tuple, str] = {}             # (caster name, ability) -> "save" / "attack" (the cast event)
-        self.last_cast: tuple[str, str] | None = None  # the party's latest cast (caster uuid, ability)
+        self.pending: dict[str, list] = defaultdict(list)   # party source uuid -> [(target, amount)] before its cast
+        self.hit_open: dict[str, list] = defaultdict(list)  # enemy uuid -> our downs/deaths its next cast explains
+        self.last_hit_src: dict[str, str] = {}        # party uuid -> the enemy uuid that hit it last
         self.abil: dict[tuple, dict] = {}
         self.abil_targets: dict[tuple, set] = defaultdict(set)
         self.types: dict[tuple, list] = defaultdict(list)   # (enemy name, type) -> each party hit's main part
@@ -96,6 +104,7 @@ class Tracker:
         self.last_t = 0.0
         self.allies: set[str] = set()        # allied non-party characters seen on any turn order (kept across fights)
         self.dead_allies: list[dict] = []    # {uuid, name, t}: ally deaths until revived (server's ALERTS line)
+        self.summons: set[str] = set()       # our summons seen on the turn order (their hits come as the owner's)
 
     # ---- input ----
 
@@ -111,6 +120,8 @@ class Tracker:
             k, d = e.get("kind"), e.get("data") or {}
             if k != "damage" and self.cur is not None:
                 warns += self._flush_hit(self.cur)
+            if k in ("turn_started", "round_started", "combat_ended") and self.cur is not None:
+                self._settle(self.cur)
             if k in ("combat_started", "round_started", "turn_started") and self.cur is None:
                 if k == "turn_started" and not party:
                     continue
@@ -121,6 +132,8 @@ class Tracker:
             f = self.cur
             if f is None:
                 continue
+            if k == "turn_started" and _ref(d)[0] not in party:
+                f.turned.add(_ref(d)[0])
             if k == "round_started" and d.get("round"):
                 f.round = int(d["round"])
             elif k == "combat_ended":
@@ -134,16 +147,21 @@ class Tracker:
                 if n:
                     f.names[u] = n
                 if u in party:
+                    src = f.last_hit_src.get(u)
                     if k == "died":
                         f.died.add(u)
                         f.deaths.append({"uuid": u, "name": f.name(u), "round": f.round,
                                          "by": f.last_hit_by.get(u), "ability": f.last_hit_ab.get(u)})
+                        if src:
+                            f.hit_open[src].append(f.deaths[-1])
                     if u not in f.downed_now:
                         f.downed_now.add(u)
                         f.max_down = max(f.max_down, len(f.downed_now))
                         first = not f.downs
                         f.downs.append({"uuid": u, "name": f.name(u), "round": f.round,
                                         "by": f.last_hit_by.get(u), "ability": f.last_hit_ab.get(u)})
+                        if src:
+                            f.hit_open[src].append(f.downs[-1])
                         if first:
                             warns += self._first_down_warning(f, f.name(u))
                 elif k == "died" and u in self.allies:
@@ -173,11 +191,22 @@ class Tracker:
                     a["casts"] += 1
                     if d.get("roll"):
                         f.rolls[(f.name(u), nm)] = str(d["roll"])
-                    f.last_cast = (u, nm)
                     f.abil_targets[(f.name(u), nm, a["casts"])] = set()
+                    # The mod sends a hit's damage before its cast (S074: Gale's Scorching Ray, 4 Fire hits = 49,
+                    # then the cast): the damage held since this caster's last cast is this cast's. A summon's hits
+                    # come with its owner as the source (the mod sends attackerOwner first): the one other source
+                    # holding damage. Not any member's: S074 booked Gale's 49 under Shadowheart's Mass Cure Wounds.
+                    own = f.pending.pop(u, [])
+                    held = [s for s, v in f.pending.items() if v]
+                    if not own and u in self.summons and len(held) == 1:
+                        own = f.pending.pop(held[0])
+                    self._credit(f, u, nm, own)
                 else:
+                    f.acted.add(u)
                     f.enemy_casts[f.name(u)][nm] += 1   # kept by name; only confirmed enemies are reported
                     f.enemy_last[u] = (None if nm in _BASIC else nm, f.round)
+                    for x in f.hit_open.pop(u, []):     # the hit that downed us came before this cast
+                        x["ability"] = f.enemy_last[u][0]
             elif k == "status_applied":
                 tu, tn = _ref(d.get("target"))
                 su, sn = _ref(d.get("source"))
@@ -187,7 +216,10 @@ class Tracker:
                     f.names[su] = sn
                 if tu in party and su and su not in party and d.get("name"):
                     f.enemies.add(su)
+                    f.acted.add(su)
                     f.enemy_status[f.name(su)][str(d["name"])] += 1
+                elif tu and tu not in party and su in party:
+                    f.affected.add(tu)
                 elif tu and tu not in party and su not in party and d.get("name"):
                     # its own buffs (S065 Orin: Slayer Form, Unstoppable: 7): named with the per-hit cap
                     f.enemy_self[f.name(tu)][re.sub(r":\s*\d+$", "", str(d["name"]))] += 1
@@ -215,9 +247,11 @@ class Tracker:
             f.taken[tu] += amt
             if su and su not in party:
                 f.enemies.add(su)
+                f.acted.add(su)
                 if amt > 0:
                     f.enemy_dmg[f.name(su)] += amt
                     f.last_hit_by[tu] = f.name(su)
+                    f.last_hit_src[tu] = su
                     ab, rnd = f.enemy_last.get(su) or (None, 0)
                     f.last_hit_ab[tu] = ab if rnd == f.round else None   # its cast this round, not an old one
             elif not su and amt > 0:
@@ -225,28 +259,13 @@ class Tracker:
                 # 298 of 298, 434 of 666, 563 of 660 taken, while "most damage to us" named a minor enemy.
                 f.unseen[dtype or "?"].append(amt)
             return []
+        if tu:
+            f.hurt.add(tu)
         if not (su in party and tu):
             return []
         f.touched.add(tu)
-        f.dealt[su] += amt
-        # A summon's hit comes with its owner as the source (the mod sends attackerOwner first): when the party's
-        # latest cast is by another party character that never dealt damage under its own name (the summon), the
-        # hit belongs to that cast's ability; the damage total stays with the owner.
-        who = su
-        if f.last_cast and f.last_cast[0] != su and not f.dealt.get(f.last_cast[0]):
-            who = f.last_cast[0]
-        nm = f.casting.get(who)
-        if nm:
-            a = f.abil.get((f.name(who), nm))
-            if a is not None:
-                if amt > 0:
-                    a["hits"] += 1
-                    a["dmg"] += amt
-                elif f.rolls.get((f.name(who), nm)) == "save":
-                    a["saves"] = a.get("saves", 0) + 1
-                else:
-                    a["misses"] += 1
-                f.abil_targets[(f.name(who), nm, a["casts"])].add(tu)
+        f.dealt[su] += amt   # a summon's hit too: the total stays with the owner
+        f.pending[su].append((tu, amt))   # its ability: the cast event that follows (feed)
         # One hit = one damage event per type, back to back (Events.lua AttackedBy): a type seen again starts the
         # next hit (extra attack).
         h = f.hit
@@ -257,6 +276,30 @@ class Tracker:
         h["types"].add(dtype)
         h["parts"].append((dtype, amt))
         return warns
+
+    def _credit(self, f: Fight, who: str, nm: str, items: list) -> None:
+        """Hits (target, amount) of `who`'s cast `nm`: a hit, a made save or a miss."""
+        a = f.abil.get((f.name(who), nm))
+        if a is None:
+            return
+        for tu, amt in items:
+            if amt > 0:
+                a["hits"] += 1
+                a["dmg"] += amt
+            elif f.rolls.get((f.name(who), nm)) == "save":
+                a["saves"] = a.get("saves", 0) + 1
+            else:
+                a["misses"] += 1
+            f.abil_targets[(f.name(who), nm, a["casts"])].add(tu)
+
+    def _settle(self, f: Fight) -> None:
+        """A turn or round boundary (or the end): damage no cast claimed (a reaction, a damage-over-time tick, a
+        cast sent before its hits) goes to its source's latest cast; the open downs keep the cast they had."""
+        for su, items in f.pending.items():
+            if items and f.casting.get(su):
+                self._credit(f, su, f.casting[su], items)
+        f.pending.clear()
+        f.hit_open.clear()
 
     def _flush_hit(self, f: Fight) -> list[str]:
         """The hit read so far: its parts for the per-hit shield, its main part for the damage-type stats. A rider
@@ -280,10 +323,13 @@ class Tracker:
     def observe(self, cs: dict, party: set | None) -> None:
         """A state.combat read: surrounded members, high/low ground."""
         f = self.cur
-        if f is None or not isinstance(cs, dict):
+        if not isinstance(cs, dict):
             return
         party = party or set()
         rows = [o for o in cs.get("order") or [] if isinstance(o, dict)]
+        self.summons |= {o["uuid"] for o in rows if o.get("summon") and o.get("uuid") in party}
+        if f is None:
+            return
         f.rows_seen = f.rows_seen or bool(rows)
         for o in rows:
             if o.get("uuid") and o.get("name"):
@@ -395,6 +441,7 @@ class Tracker:
         if f is None:
             return None
         self._flush_hit(f)
+        self._settle(f)
         now = time.time() if now is None else now
         rec = build(f, party_rows or [], unused or [], meta or {}, reloaded, now)
         if not rec["enemies"] and not rec["downed"] and not any(p["dealt"] or p["taken"] for p in rec["party"]):
@@ -434,12 +481,21 @@ def _hhmm(r: dict) -> str:
 def _trust(r: dict) -> dict:
     """A v1 record (before 2026-10-17) counted a hit's rider as its own damage type: of ~80 "did little" types in
     claude-run-2 S035-S065 nearly all were a 1-3 Radiant rider beside a weapon's 10-15 (avg 2.0), or Orin's
-    Unstoppable (every type 1). Its low flags and the facts built from them are dropped, not trusted."""
-    if not isinstance(r, dict) or int(r.get("v") or 1) >= V or not any(t.get("low") for t in r.get("dmg_types") or []):
+    Unstoppable (every type 1). Its low flags and the facts built from them are dropped, not trusted; so are a
+    v2 record's flags from fewer than LOW_MIN_HITS hits (S074's 1-hit Psychic vs Cazador)."""
+    if not isinstance(r, dict):
         return r
-    r = dict(r, dmg_types=[dict(t, low=False) for t in r.get("dmg_types") or []],
-             enemies=[dict(e, resisted=[]) for e in r.get("enemies") or []])
-    r["key_facts"] = [x for x in r.get("key_facts") or [] if " did little to " not in x]
+    old = int(r.get("v") or 1) < V
+    bad = {(t.get("enemy"), t.get("type")) for t in r.get("dmg_types") or []
+           if t.get("low") and (old or int(t.get("hits") or 0) < LOW_MIN_HITS)}
+    if not bad:
+        return r
+    r = dict(r, dmg_types=[dict(t, low=False) if (t.get("enemy"), t.get("type")) in bad else t
+                           for t in r.get("dmg_types") or []],
+             enemies=[dict(e, resisted=[x for x in e.get("resisted") or [] if (e.get("name"), x) not in bad])
+                      for e in r.get("enemies") or []])
+    r["key_facts"] = [x for x in r.get("key_facts") or []
+                      if not any(x.startswith(f"{t} did little to {e} (") for e, t in bad)]
     r["summary"] = summary(r)
     return r
 
@@ -456,7 +512,11 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
         # An enemy named like a party member (the Self-Same Trial's mirror copies, S035) reads "Wyll (foe)".
         return f"{n} (foe)" if n in pnames else n
     enemies: dict[str, dict] = {}
-    foes = f.enemies | (set() if f.rows_seen else f.touched)
+    # A hostile that had turns but never acted, and that nothing hit and the party never statused, is no foe of
+    # this fight (S074 Cazador: six Sacrificial Lamb spawn, "Temporarily Hostile", passing every turn, whose ritual
+    # deaths read as our kills, "killed 3/27"): listed apart, not counted. One that had no turn yet stays a foe.
+    idle = {u for u in f.enemies & f.turned if u not in f.acted | f.touched | f.affected | f.hurt}
+    foes = (f.enemies | (set() if f.rows_seen else f.touched)) - idle
     for u in foes:
         n = f.name(u)
         e = enemies.setdefault(n, {"name": foe(n), "race": f.race.get(n), "count": 0, "killed": 0,
@@ -492,7 +552,7 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
             avg = round(sum(amts) / len(amts), 1) if amts else 0.0
             others = [a for t2, am2 in lst if t2 != t for a in am2 if a > 0]
             other_avg = sum(others) / len(others) if others else None
-            low = en not in capped and ((len(amts) >= 1 and not hits) or (
+            low = en not in capped and len(amts) >= LOW_MIN_HITS and (not hits or (
                 other_avg is not None and len(amts) + len(others) >= 3 and avg < 0.5 * other_avg))
             dmg_types.append({"enemy": foe(en), "type": t, "hits": len(amts), "avg": avg, "low": bool(low)})
     max_hp = sum(int(r.get("max_hp") or 0) for r in rows)
@@ -531,8 +591,13 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
                                    for t, a in sorted(f.unseen.items(), key=lambda kv: -sum(kv[1]))][:3]}
     if capped:
         rec["dmg_cap"] = list(capped.values())
+    if idle:
+        died = {k["uuid"]: k["round"] for k in f.kills}
+        rec["idle"] = sorted(({"name": foe(f.name(u)), "died": died.get(u)} for u in idle),
+                             key=lambda x: (x["died"] is None, x["died"] or 0, x["name"]))[:8]
+    idle_names = {f.name(u) for u in idle} - {f.name(u) for u in foes}
     left = [{"name": foe(n), "low_pct": lo, "pct": last} for n, (lo, last) in f.hp.items()
-            if lo < 100 and n not in {f.name(u) for u in f.killed}]
+            if lo < 100 and n not in {f.name(u) for u in f.killed} and n not in idle_names]
     if left:
         rec["left"] = sorted(left, key=lambda x: -enemies.get(x["name"], {}).get("dmg_to_us", 0))[:4]
     # setup's interface fields (docs/ARCHITECTURE.md): group = the retry key; per-enemy n/used/resisted; per-member
@@ -750,6 +815,11 @@ def render(rec: dict) -> str:
         bits.append(f"{s['name']} surrounded by {s['n']} r{s['round']}")
     if pos.get("elev_m"):
         bits.append(("enemies above us" if pos["elev_m"] > 0 else "we held high ground") + f" ({pos['elev_m']:+}m)")
+    idle = rec.get("idle") or []
+    if idle:
+        bits.append("hostile but idle, not counted: " + ", ".join(
+            x["name"] + (f" (died r{x['died']})" if x.get("died") else "") for x in idle[:4])
+            + (f" +{len(idle) - 4}" if len(idle) > 4 else ""))
     if cons.get("used"):
         bits.append("used " + ", ".join(cons["used"]))
     if cons.get("unused"):
