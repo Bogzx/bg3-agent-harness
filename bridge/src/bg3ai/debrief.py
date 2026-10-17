@@ -28,6 +28,7 @@ BAD = ("costly", "near_wipe", "wipe", "reloaded")
 _CONSUMABLE = re.compile(r"(?i)\b(potion|elixir|scroll|grenade|flask|bomb|oil of|arrow of)\b")
 _BASIC = {"Main Hand Attack", "Ranged Attack", "Off Hand Attack", "Dash", "Disengage", "Jump", "Shove", "Help",
           "Dodge", "Hide", "Throw", "Improvised Melee Weapon"}
+_ESCAPE = re.compile(r"(?i)\b(dash|disengage)\b")   # Dash, Disengage, Cunning Action: Dash, Step of the Wind: …
 
 
 def _ref(d: Any) -> tuple[str | None, str | None]:
@@ -606,6 +607,39 @@ def _left(rec: dict, name: str) -> str:
     return f", left at {x['pct']}%" + (f" (was down to {x['low_pct']}%)" if healed else "")
 
 
+def fled(rec: dict) -> bool:
+    """The party ran instead of fighting: every ability it used was a Dash/Disengage, it dealt no damage and killed
+    nothing (S069 20:25 Sorcerous Sundries: the shop's guards turned hostile, all four Dashed for 3 rounds toward the
+    door, reloaded mid-escape; its LAST ATTEMPT said `focus Water Elemental first`). Read from the record, so a
+    stored one qualifies too."""
+    ours = [a for a in rec.get("abilities") or [] if isinstance(a, dict)]
+    return (bool(ours) and all(_ESCAPE.search(str(a.get("name") or "")) for a in ours)
+            and not any(p.get("dealt") for p in rec.get("party") or [])
+            and not any(e.get("killed") for e in rec.get("enemies") or []))
+
+
+def _fled_facts(rec: dict) -> list[str]:
+    """What a retreat measured: how it went, what hit it hardest, who took most (no kill order: nothing was fought)."""
+    ways = sorted({a["name"] for a in rec.get("abilities") or [] if isinstance(a, dict) and a.get("name")})
+    total = sum(e.get("count", 0) for e in rec.get("enemies") or [])
+    facts = [f"the party fled ({' + '.join(ways)} only, {_rounds(rec)}, dealt 0, killed 0/{total})"]
+    hard = max(rec.get("enemies") or [], key=lambda e: e.get("dmg_to_us", 0), default=None)
+    unseen = _unseen_top(rec)
+    if unseen:
+        facts.append(f"hit hardest while fleeing: no visible source {unseen['dmg']} (traps, surfaces or unseen attackers)")
+    elif hard and hard.get("dmg_to_us"):
+        ab = f" ({', '.join(hard['abilities'][:2])})" if hard.get("abilities") else ""
+        facts.append(f"hit hardest while fleeing: {hard['name']}{ab} {hard['dmg_to_us']}")
+    pos = rec.get("pos") or {}
+    if pos.get("surrounded"):
+        s = pos["surrounded"]
+        facts.append(f"{s['name']} surrounded by {s['n']} (r{s['round']})")
+    slow = max(rec.get("party") or [], key=lambda p: p.get("taken", 0), default=None)
+    if slow and slow.get("taken"):
+        facts.append(f"took most: {slow['name']} {slow['taken']}")
+    return facts
+
+
 def key_facts(rec: dict) -> list[str]:
     facts = []
     deaths = rec.get("deaths")
@@ -620,6 +654,8 @@ def key_facts(rec: dict) -> list[str]:
     if downs and (downs[0]["name"], downs[0]["round"]) not in {(d["name"], d["round"]) for d in deaths or []}:
         d = downs[0]   # (a first down that died that round is the DIED fact already)
         facts.append(f"{d['name']} went down first (r{d['round']}{_by(d)})")
+    if fled(rec):
+        return (facts + _fled_facts(rec))[:4]
     hard = max(rec.get("enemies") or [], key=lambda e: e.get("dmg_to_us", 0), default=None)
     unseen = _unseen_top(rec)
     taken = sum(p.get("taken", 0) for p in rec.get("party") or [])
@@ -653,14 +689,15 @@ def key_facts(rec: dict) -> list[str]:
 
 def summary(rec: dict) -> str:
     g = rec.get("grade")
-    head = f"{g}" + (f" (was {rec['grade_before']})" if rec.get("grade_before") else "")
+    head = f"{g}" + (f" (was {rec['grade_before']})" if rec.get("grade_before") else "") + (
+        " after fleeing" if fled(rec) else "")
     return (f"{head} vs {_enemy_list(rec)} ({_rounds(rec)})"
             + (": " + "; ".join(rec.get("key_facts") or []) if rec.get("key_facts") else ""))
 
 
 def render(rec: dict) -> str:
     """The FIGHT DEBRIEF block for the tool result (≤ 8 lines)."""
-    lines = [f"FIGHT DEBRIEF ({rec['grade']}, {_rounds(rec)}, {rec['duration_s'] // 60}m{rec['duration_s'] % 60:02d}s)"
+    lines = [f"FIGHT DEBRIEF ({rec['grade']}{', fled' if fled(rec) else ''}, {_rounds(rec)}, {rec['duration_s'] // 60}m{rec['duration_s'] % 60:02d}s)"
              f" vs {_enemy_list(rec, 6)}"]
     es = [e for e in rec.get("enemies") or [] if e.get("abilities") or e.get("statuses_on_us")]
     if es:
@@ -740,11 +777,27 @@ def _foes(r: dict) -> set:
 
 def fuller(rec: dict, history: list[dict]) -> dict | None:
     """The latest attempt in history vs the same enemies (>= 2 of them, or all of a smaller fight) that is not
-    thin() and has key facts: what a thin attempt's LAST ATTEMPT plans from."""
+    thin() and has key facts: what a thin attempt's LAST ATTEMPT plans from. Not a flight (fled): it fought nothing."""
     names = _foes(rec)
     need = min(2, len(names))
     return next((r for r in reversed(history) if r is not rec and need and len(names & _foes(r)) >= need
-                 and not thin(r) and r.get("key_facts")), None)
+                 and not thin(r) and not fled(r) and r.get("key_facts")), None)
+
+
+def _fled_tips(rec: dict) -> list[str]:
+    """A flight's plan: don't set the fight off again; if it starts, get out cleaner (no kill order)."""
+    tips = ["avoid it: don't repeat what started it (or be gone before it starts)"]
+    hard = max(rec.get("enemies") or [], key=lambda e: e.get("dmg_to_us", 0), default=None)
+    if hard and hard.get("dmg_to_us") and not _unseen_top(rec):
+        tips.append(f"if it starts again, leave by a way out of {hard['name']}'s reach")
+    if (rec.get("pos") or {}).get("surrounded"):
+        tips.append("Disengage first when in melee")
+    unused = (rec.get("consumables") or {}).get("unused") or []
+    if unused:
+        scroll = any(re.search(r"(?i)\bscroll\b", x) for x in unused)
+        tips.append("an unused scroll/potion may cover the escape"
+                    + (" (in combat a scroll costs its spell's action)" if scroll else ""))
+    return tips
 
 
 def capped_enemies(rec: dict, history: list[dict] | None = None) -> set:
@@ -755,6 +808,9 @@ def capped_enemies(rec: dict, history: list[dict] | None = None) -> set:
 
 
 def last_attempt(rec: dict, history: list[dict] | None = None) -> str:
+    if fled(rec):
+        return (f"LAST ATTEMPT: {rec.get('summary')} — an escape, not a fight: plan the way out or avoid it: "
+                + "; ".join(_fled_tips(rec)[:4]))
     why = thin(rec)
     src = fuller(rec, history or []) if why else None
     base = src or rec

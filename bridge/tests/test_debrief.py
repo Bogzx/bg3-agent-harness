@@ -455,3 +455,63 @@ class ThinAttempts(unittest.TestCase):
         la = debrief.last_attempt(self.s066[1], self.old + self.s066[:2])
         self.assertNotIn("measured little", la)
         self.assertIn("Orin often took 1 per hit", la)
+
+
+S069 = Path(__file__).parent / "golden" / "fights_s069.jsonl"   # real v2 record: S069 20:25 Sorcerous Sundries escape
+
+
+class FledFights(unittest.TestCase):
+    """vis V10: S069 20:25 the shop's guards turned hostile, all four Dashed for 3 rounds toward the door and the
+    agent reloaded mid-escape; the LAST ATTEMPT said `focus Water Elemental first` for a fight nobody fought."""
+
+    def setUp(self):
+        self.rec = json.loads(S069.read_text().splitlines()[0])
+        # as server.py does after reading the unused consumables
+        self.rec["key_facts"] = debrief.key_facts(self.rec)
+        self.rec["summary"] = debrief.summary(self.rec)
+
+    def test_the_s069_escape_reads_as_a_flight(self):
+        self.assertTrue(debrief.fled(self.rec))
+        self.assertEqual(self.rec["key_facts"], [
+            "the party fled (Dash only, 3 rounds, dealt 0, killed 0/11)",
+            "hit hardest while fleeing: Water Elemental (Slam, Multiattack) 115",
+            "Claude surrounded by 3 (r1)", "took most: Karlach 139"])
+        self.assertTrue(self.rec["summary"].startswith("reloaded (was costly) after fleeing vs Animated Armour x4"))
+        self.assertTrue(debrief.render(self.rec).startswith("FIGHT DEBRIEF (reloaded, fled, 3 rounds, 3m46s) vs "))
+
+    def test_its_last_attempt_has_no_kill_order(self):
+        la = debrief.last_attempt(self.rec, [self.rec])
+        self.assertNotIn("focus", la)
+        self.assertIn("an escape, not a fight: plan the way out or avoid it: avoid it: don't repeat what started it", la)
+        self.assertIn("leave by a way out of Water Elemental's reach", la)
+        self.assertIn("Disengage first when in melee", la)
+        self.assertIn("an unused scroll/potion may cover the escape (in combat a scroll costs its spell's action)", la)
+
+    def test_a_thin_attempt_does_not_plan_from_a_flight(self):
+        test = dict(self.rec, rounds=1, abilities=[{"caster": "Claude", "name": "Main Hand Attack", "casts": 1,
+                                                    "hits": 1, "misses": 0, "saves": 0, "roll": "attack",
+                                                    "targets_max": 1, "dmg": 9}],
+                    party=[dict(p, dealt=9 if p["name"] == "Claude" else 0) for p in self.rec["party"]])
+        self.assertFalse(debrief.fled(test))
+        self.assertEqual(debrief.thin(test), "it lasted 1 round")
+        self.assertIsNone(debrief.fuller(test, [self.rec, test]))
+
+    def test_a_tracked_flight(self):
+        tr = debrief.Tracker()
+        tr.feed([ev("combat_started"), ev("round_started", round=1), cast(C, "Claude", "Dash"),
+                 dmg(SO, "Justiciar Soulhunter", C, "Claude", 40, "Piercing"), ev("round_started", round=2),
+                 cast(W, "Wyll", "Cunning Action: Disengage"), cast(C, "Claude", "Dash"),
+                 dmg(SO, "Justiciar Soulhunter", W, "Wyll", 12, "Piercing")], PARTY, now=100.0)
+        rec = tr.close(ROWS, [], {"session": "S999"}, reloaded=True, now=160.0)
+        self.assertTrue(debrief.fled(rec))
+        self.assertEqual(rec["key_facts"][0], "the party fled (Cunning Action: Disengage + Dash only, 2 rounds, "
+                                              "dealt 0, killed 0/1)")
+        self.assertNotIn("focus", debrief.last_attempt(rec))
+
+    def test_a_fight_with_a_dash_in_it_is_not_a_flight(self):
+        tr = debrief.Tracker()
+        evs = fight_events()
+        tr.feed(evs[:2] + [cast(C, "Claude", "Dash")] + evs[2:], PARTY, now=100.0)
+        rec = tr.close(ROWS, [], {"session": "S999"}, now=160.0)
+        self.assertFalse(debrief.fled(rec))
+        self.assertIn("focus Justiciar Soulhunter first", debrief.last_attempt(rec))
