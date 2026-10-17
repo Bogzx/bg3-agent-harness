@@ -297,9 +297,11 @@ continue with another party member → another objective. Then keep playing.
   COMPACTION DUE, run `compaction` next.
 - **Wrap-up (3 min):** only when the `⏱` line says **WRAP UP NOW** or a SESSION CLOCK reminder
   appears. **Don't start wrap-up before that**, and don't save `Sxxx-end` or rewrite HANDOFF.md early: the
-  minutes left include the wrap-up time, and autonomous sessions block early stops. One exception: with
-  ≤ 5m of play left and a point of no return next (a descent, a boss, a new region), wrap up now instead
-  of killing time (`end_session` accepts it); never idle with get_status/wiki reads. Retreating from real danger is play, not wrap-up. Because notes were written during
+  minutes left include the wrap-up time, and autonomous sessions block early stops. Nothing needs to fit
+  in the time left: the game keeps running between sessions and the next one starts about a minute later
+  from where the party stands (a fight in progress waits on your turn), so start the boss fight, descent or
+  trip; at WRAP UP finish the round, save and say where the fight stands. Never idle with get_status/wiki
+  reads. Retreating from real danger is play, not wrap-up. Because notes were written during
   play, wrap-up is short: finish the current fight round or conversation → `save_game("Sxxx-end")` →
   rewrite HANDOFF.md (one `memory_write`) → update PLAYTHROUGH.md's `Now:` line → `end_session`. Details
   (the HANDOFF template, lint fixes) are in the `session-wrapup` playbook. `end_session` lints the memory and

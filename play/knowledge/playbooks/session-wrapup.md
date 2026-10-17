@@ -2,9 +2,9 @@
 
 **When:** only when the `⏱` line says **WRAP UP NOW** (or a SESSION CLOCK reminder, or the operator asks).
 "⏱ 5m left · 2m of play" means play 2 more minutes; stuck is not a reason (run `stuck`); escaping danger is
-play. One exception: with "5m of play" or less and a point of no return next (a descent, a boss, a long trip, a
-new region), wrap up now (`end_session` accepts it). Never kill time with get_status/wiki reads (S036 idled
-~2.5 min): wrap up, or do reversible useful work (sell/stash junk, equip_best, level plans, loot nearby, notes).
+play. A boss fight, descent or long trip needn't fit in the minutes left: the game keeps running between
+sessions and the next one plays on from where the party stands (a fight waits on your turn), so start it.
+Never kill time with get_status/wiki reads (S036 idled ~2.5 min).
 **Do it once.** If `end_session` or the runner says "Keep playing", play on: no second `Sxxx-end` save unless the
 party moved, no HANDOFF rewrite (one `memory_edit` of a changed line is fine). No reading through files, no tidying.
 

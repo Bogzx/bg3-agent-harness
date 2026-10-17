@@ -461,7 +461,7 @@ class AutonomousStopTest(MemoryTestCase):
         # 10-min window, so the agent stopped at 7.4 min left while the clock line still said "1m of play".
         self.open_session(1, minutes_ago=12)
         self.write("HANDOFF.md", self.good_handoff(1))
-        self.set_deadline(9.4)  # (S036: past STOP_GRACE_S = 5 min before the wrap-up, so 6.4 min out still bounces)
+        self.set_deadline(9.4)  # (6.4 min before the wrap-up: past STOP_GRACE_S, so it bounces)
         os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 6.4 * 60)  # wrap-up 3 min before the deadline
         self.assertTrue(S.stop_decision(self.mem)["reason"].startswith("Keep playing"))
         os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() - 1)
@@ -471,20 +471,27 @@ class AutonomousStopTest(MemoryTestCase):
         # S018-S025: "0m of play" on the clock line, the agent wrapped up, and the hook bounced it 1-4 times
         # ("Keep playing: 3 minutes left"), each bounce re-saving Sxxx-end. Within STOP_GRACE_S it may stop.
         self.open_session(1, minutes_ago=50)
-        self.set_deadline(5)
-        os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 2 * 60)
+        self.set_deadline(4.5)
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 1.5 * 60)  # the clock line: "1m of play"
         self.assertTrue(S.stop_decision(self.mem)["reason"].startswith("Keep playing"))  # no HANDOFF yet
         self.write("HANDOFF.md", self.good_handoff(1))
         self.assertIn("committed", S.stop_decision(self.mem)["systemMessage"])
 
-    def test_wrapup_at_a_natural_stop_4_min_before_wrap_accepted(self):
-        # S036: HANDOFF written 3.3 min before WRAP UP at a point of no return; the 150 s grace bounced it and it
-        # killed ~2.5 min with idle reads. A finished wrap-up counts from STOP_GRACE_S (5 min) before WRAP UP.
-        self.open_session(1, minutes_ago=24)
-        self.set_deadline(7.5)
-        os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() + 4.5 * 60)
+    def test_wrapup_for_a_boss_minutes_before_wrap_bounced(self):
+        # S066 (S040-S066 alike): HANDOFF written at 17 min left ("the boss fight won't fit"), end_session refused at
+        # 14 and 8 min left, then accepted at 7.8 min left (4.8 min before WRAP UP at 3 min left) under the 5 min
+        # grace. The game keeps running between sessions, so a fight needn't fit: only the last 2 min may stop.
+        self.open_session(1, minutes_ago=22)
+        dl = time.time() + 7.8 * 60
+        os.environ["BG3AI_SESSION_DEADLINE"] = str(dl)
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(dl - 3 * 60)
         self.write("HANDOFF.md", self.good_handoff(1))
-        self.assertIn("committed", S.stop_decision(self.mem)["systemMessage"])
+        r = S.stop_decision(self.mem, now=dl - 7.8 * 60)["reason"]
+        self.assertTrue(r.startswith("Keep playing: 7 minutes left"), r)
+        self.assertIn("plays on from where you are", r)
+        self.assertNotIn("point of no return", r)
+        self.assertEqual(S.stop_decision(self.mem, now=dl - 5.1 * 60)["decision"], "block")
+        self.assertIn("committed", S.stop_decision(self.mem, now=dl - 4.9 * 60)["systemMessage"])
 
     def test_wrapup_far_from_wrap_still_bounced(self):
         self.open_session(1, minutes_ago=14)
@@ -493,7 +500,7 @@ class AutonomousStopTest(MemoryTestCase):
         self.write("HANDOFF.md", self.good_handoff(1))
         r = S.stop_decision(self.mem)["reason"]
         self.assertTrue(r.startswith("Keep playing"))
-        self.assertIn("reversible work", r)
+        self.assertIn("needn't fit in the time left", r)
 
     def test_wrapup_epoch_out_of_range_falls_back(self):
         self.set_deadline(10)
