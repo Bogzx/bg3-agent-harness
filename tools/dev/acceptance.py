@@ -37,6 +37,9 @@ DOOR_SAVE = "S050-end"         # Lower City, beside the locked Steel Watch Found
 # probe, 2026-10-17: Shadowheart has Healing Word / Blessing of the Trickster, Claude only smites). In S065 Claude the
 # Paladin (L10) cast Target_Bless and hit "a cast takes at most 2 here": the case ACT-8 fixes.
 HOTBAR_SAVE = "S065-end"
+# V10 (S069 20:34-20:36): Mystra's statue (Stormshore Tabernacle) never in get_nearby, interact "not visible"; saved
+# right after Gale's meeting, the party within 2 m of it
+MYSTRA_SAVE = "S069-mystra"
 # A9: Karlach carries a Scroll of Misty Step here (S066 #143 read it on herself, then reloaded to get it back)
 SCROLL_SAVE = "S066-end"
 # Run order (se 2026-10-16): read-only sections first, then the ones that change the world (each reloads its save at
@@ -46,7 +49,7 @@ SCROLL_SAVE = "S066-end"
 # finally; a nav kill list entry: cleared in a finally).
 SECTIONS = ["reads", "setup", "act", "vis", "gear", "swap", "rest", "trade", "nav", "combat", "loads", "se"]
 # Estimated seconds per section (the 2026-10-11/13 full runs on the test machine: max seen, + today's new items), for the plan.
-EST_S = {"reads": 60, "setup": 30, "act": 140, "vis": 75, "gear": 60, "swap": 85, "rest": 85, "trade": 135,
+EST_S = {"reads": 60, "setup": 30, "act": 140, "vis": 115, "gear": 60, "swap": 85, "rest": 85, "trade": 135,
          "nav": 195, "combat": 220, "loads": 80, "se": 350}
 # Who fixes a section's FAILs (docs/ORCHESTRATOR.md ownership): tools/dev/live_window.py prints the failures per owner.
 # An item dict may carry its own "owner" to override this.
@@ -67,6 +70,8 @@ SAVE_NEEDS = {
                   "used_by": "act point scroll aimed at the ground (A9: Karlach's Scroll of Misty Step)"},
     TRADE_SAVE: {"level": "SCL_Main_A", "near": ((-26.8, 27.4, 164.8), 8),
                  "used_by": "trade (Last Light Inn; Talli ~34 m S at (-31.3, 27.5, 130.2))"},
+    MYSTRA_SAVE: {"level": "CTY_Main_A", "near": ((103.4, 44.5, -17.8), 8),
+                  "used_by": "vis Mystra statue probe (Stormshore Tabernacle, the statue ~2 m from the party)"},
     DOOR_SAVE: {"level": "CTY_Main_A", "near": ((-233.0, 4.5, -180.6), 8),
                 "used_by": "se (Lower City, the locked Steel Watch Foundry door ~1.6 m away; the older S050-end "
                            "folder stands 31 m off: load_game takes the newest, the right one)"},
@@ -2626,7 +2631,101 @@ def sec_vis() -> None:
         item("vis: queue_interrupted event on one line (live mod event path)",
              "PASS" if len(ev) == 1 and "FAILED — acceptance probe" in ev[0] and "done=0" in ev[0] and not stray
              else "FAIL", f"{ev[:1]} stray={stray[:1]}")
+    # 20. V10: Mystra's statue in get_nearby (loads its own save)
+    mystra_statue_probe()
     load_verified(BASE)
+
+
+# V10 (S069): the Tabernacle's god statues share one story pattern (Act3b_LOW_StormshoreTabernacle.txt
+# DB_LOW_StormshoreTabernacle_SingleGods): Helm/Tyr/Selune were listed, Mystra's never was (get_nearby radius 6 from
+# 1.4 m, a name search, interact as Gale: "target is not visible"). The probe reads, for Mystra's and Helm's statue,
+# every step of V.itemVisible (flags, kind, CanInteract, bounds, the index, CanSee/LOS per member, the rays) and the
+# server components one has and the other lacks. Read-only.
+MYSTRA_STATUE = "ab6b7142-2333-4b38-9506-fb3e72157145"  # S_LOW_MystraStatue
+HELM_STATUE = "858e4c3a-1575-44fa-9955-6ef6a96bff39"    # S_LOW_HelmStatue (listed in S069)
+MYSTRA_ITEM = "vis: Mystra's statue listed in get_nearby next to it (V10, S069)"
+STATUE_PROBE_LUA = (
+    "local B=Mods.BG3AI.BG3AI local V,U=B.Visibility,B.Util local ctx=V.context() local out={} "
+    "local function o(fn,...) local ok,r=pcall(fn,...) return ok and tostring(r) or 'err' end "
+    "for _,u in ipairs(UUIDS) do local r={} out[u]=r local e=Ext.Entity.Get(u) "
+    "if not e then r.entity='none' else "
+    "local p=V.pos(e) local kind=V.itemKind(u,e) r.name=tostring(V.name(u)) r.kind=kind r.pos=p "
+    "r.tpl=o(Osi.GetTemplate,u) r.onstage=o(Osi.IsOnStage,u) r.byscript=o(Osi.IsInvisibleByScript,u) "
+    "r.invisible=o(Osi.IsInvisible,u) r.caninteract=o(Osi.GetCanInteract,u) r.trap=o(Osi.IsTrap,u) r.si={} "
+    "for _,k in ipairs({'Invisible','Invisible2','Destroyed','OffStage','CanUse','CanBePickedUp','IsDoor',"
+    "'IsLadder','IsContainer','StoryItem','IsSecretDoor'}) do "
+    "local ok,v=pcall(function() return e.ServerItem[k] end) r.si[k]=ok and tostring(v) or 'err' end "
+    "r.inventory=e.InventoryMember~=nil r.helper=V.helperItem(u) r.bound=e.Bound~=nil r.bounds=V.bounds(e) "
+    "r.indexed=false if p then for _,x in ipairs(V.itemsAround(p,1)) do if x==u then r.indexed=true end end end "
+    "r.obs={} for _,ob in ipairs(ctx.observers) do local s={name=V.name(ob.uuid),sight=ob.sight,"
+    "see=o(Osi.CanSee,ob.uuid,u),los=o(Osi.HasLineOfSight,ob.uuid,u),rays={}} r.obs[#r.obs+1]=s "
+    "if p and ob.pos then s.d=U.dist(ob.pos,p) local eye={ob.pos[1],ob.pos[2]+V.EYE_H,ob.pos[3]} "
+    "for _,h in ipairs({0.5,1.0,1.6}) do local pt={p[1],p[2]+h,p[3]} "
+    "local ok,hit=pcall(Ext.Level.RaycastClosest,eye,pt,V.RAY_TYPE,V.RAY_INCLUDE,V.RAY_EXCLUDE,0) "
+    "local ray={h=h,want=U.dist(eye,pt)} s.rays[#s.rays+1]=ray "
+    "if not ok then ray.err=tostring(hit) elseif hit then "
+    "pcall(function() ray.at=U.dist(eye,{hit.Position[1],hit.Position[2],hit.Position[3]}) end) "
+    "pcall(function() local he=hit.Shape.PhysicsObject.Entity ray.hit=he.Uuid.EntityUuid "
+    "ray.hit_name=V.name(ray.hit) end) end end end end "
+    "r.perceived=V.perceived(ctx,u,p) r.large=V.largePerceived(ctx,u,e,p,kind) "
+    "r.fixture=V.fixturePerceived(ctx,u,e,p,kind) r.visible=V.itemVisible(ctx,u,e,p) "
+    "r.known=V.itemKnown(ctx,u,e,p) r.guard=o(B.Guard.visible,u) "
+    "local ok,names=pcall(function() return e:GetAllComponentNames(false) end) r.comps={} "
+    "if ok and type(names)=='table' then for k,v in pairs(names) do "
+    "r.comps[#r.comps+1]=type(v)=='string' and v or tostring(k) end end end end "
+    "return Ext.Json.Stringify(out,{Beautify=false})")
+
+
+def ray_brief(x: dict, u: str) -> str:
+    """`h:clear`, `h:self` (the ray hit the item) or `h:<hit at>/<item at> <what it hit>` (m from the eye)."""
+    if x.get("err"):
+        return f"{x['h']}:err"
+    if "at" not in x and "hit" not in x:
+        return f"{x['h']}:clear"
+    if x.get("hit") == u:
+        return f"{x['h']}:self"
+    return f"{x['h']}:{x.get('at') or 0:.1f}/{x.get('want') or 0:.1f} {x.get('hit_name') or x.get('hit')}"
+
+
+def statue_brief(r: dict) -> str:
+    """One statue's probe row, the lines that decide V.itemVisible first."""
+    if not r or r.get("entity") == "none":
+        return "no entity"
+    obs = "; ".join(
+        f"{s.get('name')} {s.get('d') or 0:.1f}m see={s.get('see')} los={s.get('los')} rays="
+        + ",".join(ray_brief(x, r.get("u")) for x in s.get("rays") or [])
+        for s in r.get("obs") or [])
+    si = " ".join(f"{k}={v}" for k, v in (r.get("si") or {}).items() if v not in ("false", "nil"))
+    return (f"{r.get('name')} kind={r.get('kind')} pos={[round(x, 1) for x in r.get('pos') or []]} "
+            f"visible={r.get('visible')} known={r.get('known')} guard={r.get('guard')} | onstage={r.get('onstage')} "
+            f"byscript={r.get('byscript')} invisible={r.get('invisible')} caninteract={r.get('caninteract')} "
+            f"trap={r.get('trap')} si{{{si}}} inventory={r.get('inventory')} helper={r.get('helper')} "
+            f"indexed={r.get('indexed')} bound={r.get('bound')} bounds={r.get('bounds')} | perceived={r.get('perceived')} "
+            f"large={r.get('large')} fixture={r.get('fixture')} | {obs} | tpl={r.get('tpl')}")
+
+
+def mystra_statue_probe() -> None:
+    if not load_verified(MYSTRA_SAVE):
+        item(MYSTRA_ITEM, "SKIP", f"{MYSTRA_SAVE} did not load")
+        return
+    near = call("get_nearby", radius=8)
+    named = call("get_nearby", radius=20, kinds="Mystra")
+    raw = lua_server(f"local UUIDS={{'{MYSTRA_STATUE}','{HELM_STATUE}'}} " + STATUE_PROBE_LUA)
+    try:
+        rows = json.loads(raw)
+    except ValueError:
+        item(MYSTRA_ITEM, "FAIL", f"probe error: {raw[:600]}")
+        return
+    for u in rows:
+        rows[u]["u"] = u
+    m, h = rows.get(MYSTRA_STATUE) or {}, rows.get(HELM_STATUE) or {}
+    cm, ch = set(m.get("comps") or []), set(h.get("comps") or [])
+    log(f"statue probe raw: {raw}")
+    listed = "Statue of Mystra" in near and "Statue of Mystra" in named
+    item(MYSTRA_ITEM, "PASS" if listed else "FAIL",
+         f"radius 8: {'listed' if 'Statue of Mystra' in near else 'missing'}; kinds=Mystra: {first_line(named)[:100]} "
+         f"|| MYSTRA {statue_brief(m)} || HELM {statue_brief(h)} || components only Mystra: {sorted(cm - ch)}; "
+         f"only Helm: {sorted(ch - cm)}")
 
 
 # A6 #5 (live L3 helm probe 2026-10-17, research/impl-se.md): naut3-r3's character stopped at the helm fire, where every

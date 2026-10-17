@@ -21,9 +21,15 @@ Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendere
 
 ## Auditing
 * **Per-session audit** (`runner/fairness.py`, a section of every `Sxxx.triage.md`): scans every game-tool result
-  the agent got for raw GUIDs, DCs outside the roll screen, passive-roll subjects, story-flag/template names and
+  the agent got for raw GUIDs, DCs outside the roll screen and the pickpocket window, passive-roll subjects, story-flag/template names and
   engine status ids and waypoint/level ids (LEAK), and hidden-state words on entity lines (CHECK). Memory, wiki and
   screenshot results are skipped. `python3 runner/fairness.py runtime/sessions/<run>/Sxxx` prints it alone.
+* **Where the game itself shows a DC** (checked in the game's XAML, Game.pak + Patch8 overrides, 2026-10-17):
+  the roll screen (`Library/DiceAnimation.xaml`: `Roll.DifficultyCheck`, hidden when `Roll.ShowDC` is false, which
+  is how `DIALOGUE_DC_HIDE` reaches it; lockpick, disarm and dialogue checks all use it) and the pickpocket window
+  (`Pages/Pickpocket.xaml`/`_c`: the selected item's `Roll.DifficultyCheck` under "Target", always shown, with the
+  chance as a coloured pie). Nowhere else: not on dialogue options before the roll, not on locks or traps. So
+  `pickpocket` prints "60% DC9" and `lockpick`/`disarm`/`roll_check` print the roll screen's DC, and nothing else does.
 * `dev.fairness_probe` (server op) returns, for the current area, how many candidates each rule filtered.
   It returns counts only, never names.
 * Visibility probes and their live results are in `research/impl-vis.md`.
