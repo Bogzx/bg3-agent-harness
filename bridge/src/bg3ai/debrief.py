@@ -86,7 +86,7 @@ class Fight:
         self.enemy_self: dict[str, Counter] = defaultdict(Counter)   # statuses on an enemy not from the party
         self.enemy_last: dict[str, tuple] = {}        # enemy uuid -> (its latest non-basic cast or None, round)
         self.last_hit_ab: dict[str, str | None] = {}  # party uuid -> that cast, for the down / death line
-        self.unseen: dict[str, list] = defaultdict(list)   # type -> amounts of hits on us from no visible source
+        self.unseen: dict[str, list] = defaultdict(list)   # type -> (target, amount): hits on us from no visible source
         self.deaths: list[dict] = []
         self.kills: list[dict] = []                   # {name, round} in kill order
         self.hp: dict[str, list] = {}                 # hostile name -> [lowest hp_pct seen, last hp_pct seen]
@@ -270,7 +270,7 @@ class Tracker:
             elif not su and amt > 0:
                 # no visible source (the mod's "Someone", or none): traps, surfaces, hidden attackers. S059-S064:
                 # 298 of 298, 434 of 666, 563 of 660 taken, while "most damage to us" named a minor enemy.
-                f.unseen[dtype or "?"].append(amt)
+                f.unseen[dtype or "?"].append((tu, amt))
             return []
         if tu:
             f.hurt.add(tu)
@@ -593,7 +593,7 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
                            expected=round(sum(want) / len(want), 1))
             dmg_types.append(row)
     max_hp = sum(int(r.get("max_hp") or 0) for r in rows)
-    taken = sum(f.taken.values())
+    taken = sum(f.taken.get(u, 0) for u in party_u)   # the max HP's members: not a summon's (S078-r1 Cambion)
     n_party = max(1, len(party_u))
     # Thresholds (act owns them; docs/ARCHITECTURE.md "Learning from fights"): near_wipe = a member died, half the
     # party down at once, one member left standing, or an allied NPC died (a story ally can be gone for good);
@@ -622,10 +622,14 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
     rec["deaths"] = [{"name": d["name"], "round": d["round"], "by": foe(d["by"])}
                      | ({"ability": d["ability"]} if d.get("ability") else {}) for d in f.deaths if d["uuid"] in party_u]
     rec["kills"] = [{"name": foe(k["name"]), "round": k["round"]} for k in f.kills if k["uuid"] in foes][:12]
-    if f.unseen:
-        rec["unseen"] = {"dmg": sum(sum(a) for a in f.unseen.values()),
+    # Only the hits on the members the party list shows: a summon's (S078-r1 Viconia: the Cambion's) are in neither
+    # their "taken" nor this, else "no visible source 623 of 564".
+    unseen = {t: [a for u, a in hits if u in party_u] for t, hits in f.unseen.items()}
+    unseen = {t: a for t, a in unseen.items() if a}
+    if unseen:
+        rec["unseen"] = {"dmg": sum(sum(a) for a in unseen.values()),
                          "types": [{"type": t, "hits": len(a), "avg": round(sum(a) / len(a), 1)}
-                                   for t, a in sorted(f.unseen.items(), key=lambda kv: -sum(kv[1]))][:3]}
+                                   for t, a in sorted(unseen.items(), key=lambda kv: -sum(kv[1]))][:3]}
     if capped:
         rec["dmg_cap"] = list(capped.values())
     if idle:

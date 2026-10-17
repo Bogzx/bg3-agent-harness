@@ -401,6 +401,85 @@ class SyntheticSession(unittest.TestCase):
         self.assertIn("output 1k", self.run_main(self.CC, ["r", "S001"]))   # 777 from the result, not 2+3+1
 
 
+class MultiStream(unittest.TestCase):
+    """vis V19: S078 crashed at 1.2 min and its resume S078-r1 made 88 pts in 23.5 min, but S078.review.md read
+    "1.2 min ... 0 pts (0/h)", 0 fights and stream 1's cost and latency only. The headline, the gaps, the fights and
+    the cost now count every stream (Sxxx, Sxxx-r1, ...); the latency targets pool the streams' gaps and reads."""
+
+    def stream(self, sd, stem, t, acts, reads, cost, prog, lat):
+        uses, turns, recs = [], [], []
+        for i, (name, t0, t1) in enumerate(sorted([(n, a, b) for n, a, b in acts] + [("look", a, a + ms / 1000)
+                                                                                    for a, ms in reads],
+                                                  key=lambda x: x[1])):
+            uses.append({"type": "assistant", "message": {"id": f"{stem}m{i}", "content": [
+                {"type": "tool_use", "id": f"{stem}{i}", "name": f"mcp__bg3__{name}", "input": {}}]}})
+            uses.append({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"{stem}{i}",
+                                                                  "content": [{"type": "text", "text": "done"}]}]}})
+            turns += [{"type": "use", "t": t + t0, "id": f"{stem}{i}"}, {"type": "result", "t": t + t1, "id": f"{stem}{i}"}]
+            recs.append({"type": "tool", "tool": name, "t0": t + t0, "t1": t + t1, "ms": round((t1 - t0) * 1000, 1)})
+        uses.append({"type": "result", "total_cost_usd": cost})
+        (sd / f"{stem}.jsonl").write_text("".join(json.dumps(e) + "\n" for e in uses))
+        (sd / f"{stem}.turns.jsonl").write_text("".join(json.dumps(e) + "\n" for e in turns))
+        (sd / f"{stem}.metrics.jsonl").write_text("".join(json.dumps(e) + "\n" for e in recs))
+        (sd / f"{stem}.progress.json").write_text(json.dumps(prog))
+        (sd / f"{stem}.latency.json").write_text(json.dumps(dict(lat, start=t, end=t + 60 * lat["minutes"])))
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.rt = Path(self.tmp.name)
+        sd = self.rt / "sessions" / RUN
+        sd.mkdir(parents=True)
+        t0 = 1792275500.0
+        # S100: one explore gap of 19 s, a 50 ms read; S100-r1: gaps 0.5, 1 and 26 s, reads of 150 and 170 ms
+        self.stream(sd, "S100", t0, [("move_to", 0, 1), ("move_to", 20, 21)], [(21.2, 50)], 0.30,
+                    {"minutes": 1.2, "points": 0, "per_hour": 0.0, "events": 0, "by_kind": {},
+                     "longest_no_progress_min": 1.2, "stuck_episodes": 0, "stuck_min": 0.0},
+                    {"minutes": 1.2, "apm": 1.7, "targets": {}})
+        self.stream(sd, "S100-r1", t0 + 300, [("move_to", 0, 1), ("move_to", 1.5, 2), ("move_to", 3, 4),
+                                              ("move_to", 30, 31)], [(31.5, 150), (32.0, 170)], 5.56,
+                    {"minutes": 23.5, "points": 88, "per_hour": 224.7, "events": 48,
+                     "by_kind": {"talk": 17, "explore": 12}, "longest_no_progress_min": 6.9, "stuck_episodes": 1,
+                     "stuck_min": 2.0},
+                    {"minutes": 23.5, "apm": 5.96, "targets": {}})
+        keeper = {"type": "result", "total_cost_usd": 0.31}
+        (sd / "S100-keeper.jsonl").write_text(json.dumps(keeper) + "\n")
+        self.r = RS.review(RUN, "S100", self.rt / "sessions", self.rt)
+
+    def section(self, title):
+        m = re.search(rf"^## {re.escape(title)}.*?(?=^## |\Z)", self.r, re.M | re.S)
+        self.assertIsNotNone(m, title)
+        return m.group(0)
+
+    def test_headline_counts_every_stream(self):
+        h = self.section("Headline")
+        self.assertIn("24.7 min (1.2 + 23.5: S100, S100-r1), 9 calls (2 stream(s))", h)   # old: 1.2 min
+        self.assertIn("story: **88 pts (214/h)**, 48 progress events (pts: talk 17, explore 12); longest without "
+                      "progress 6.9 min; stuck episodes 1 (2.0 min)", h)                       # old: 0 pts (0/h)
+        self.assertIn("cost: play $5.86 + keeper $0.31", h)                                    # old: $0.30
+        # pooled: explore gaps 19, 0.5, 1, 26 → 10.0 (S100 alone 19, S100-r1 alone 1); reads 50, 150, 170 → 150
+        self.assertIn("latency: idle median (explore) 10.0s **FAIL** (target <2.0s); gaps >10 s (non-dialogue) 2 "
+                      "**FAIL** (target 0); bridge RT median 150.0ms **FAIL** (target <100.0ms) (all streams)", h)
+        self.assertIn("- live feel S100: APM 1.7", h)
+        self.assertIn("- live feel S100-r1: APM 5.96", h)
+
+    def test_gaps_of_every_stream(self):
+        g = self.section("Gaps > 10 s")
+        self.assertIn("(2; target 0)", g)
+        self.assertIn("**19.0 s** explore", g)
+        self.assertIn("**26.0 s** explore", g)   # S100-r1's: old code read S100's metrics only
+
+    def test_fights_of_every_stream(self):
+        seen = []
+        mine = RS.F.mine
+        RS.F.mine = lambda run, sid: seen.append(sid) or []
+        try:
+            RS.fights_section(self.rt / "sessions", RUN, "S100", self.rt / "none.jsonl")
+        finally:
+            RS.F.mine = mine
+        self.assertEqual(seen, ["S100", "S100-r1"])
+
+
 def overlap_refusal(c):
     return RS.overlap.refusal(c)
 

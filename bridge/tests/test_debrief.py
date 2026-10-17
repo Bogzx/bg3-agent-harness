@@ -739,3 +739,46 @@ class S077DidLittle(unittest.TestCase):
         w, _ = tr2.feed(hit(SH, "Shadowheart", WW2, "Predator Werewolf", ("Radiant", 4)), PARTY_G)
         self.assertEqual(w, [("WARNING: Radiant did little to Predator Werewolf last time too (3 hits, avg 3.3 vs 13.5 "
                               "from the same attacks on other enemies, S999): use another damage type on it")])
+
+
+CB = "u-cambion"
+
+
+class S078Summon(unittest.TestCase):
+    """vis V19: S078-r1 Viconia try 1 read `no visible source 623 of 564`: in the Sharran Darkness every hit came from
+    "Someone", also those on Claude's Planar Ally Cambion (e520, a summon: in the party set the events are read with,
+    not in the party list whose "taken" is the denominator)."""
+
+    def fight(self, cambion_hits):
+        tr = debrief.Tracker()
+        evs = [ev("combat_started"), ev("round_started", round=1)]
+        evs += [unseen(u, n, a, t) for u, n, a, t in ((K, "Karlach", 17, "Necrotic"), (K, "Karlach", 6, "Slashing"),
+                                                    (G, "Gale", 16, "Necrotic"), (SH, "Shadowheart", 2, "Necrotic"))]
+        evs += [unseen(CB, "Cambion", a, t) for a, t in cambion_hits]
+        evs += [dmg(NU, "Viconia DeVir", C, "Claude", 8, "Piercing"), ev("combat_ended")]
+        tr.observe({"order": [{"uuid": CB, "name": "Cambion", "relation": "party", "summon": True}]}, PARTY_G | {CB})
+        tr.feed(evs, PARTY_G | {CB}, now=0.0)
+        return tr.close(ROWS_G, [], {"session": "S078"}, now=60.0)
+
+    def test_a_summons_unseen_hits_are_not_ours(self):
+        rec = self.fight([(19, "Necrotic"), (24, "Necrotic"), (10, "Necrotic"), (3, "Bludgeoning")])
+        taken = sum(p["taken"] for p in rec["party"])
+        self.assertEqual(taken, 49)
+        self.assertEqual(rec["unseen"], {"dmg": 41, "types": [{"type": "Necrotic", "hits": 3, "avg": 11.7},
+                                                              {"type": "Slashing", "hits": 1, "avg": 6.0}]})
+        self.assertIn("most damage to us: no visible source 41 of 49 (Necrotic 3 hits avg 11.7, Slashing 1 hit avg 6.0)"
+                      ": traps, surfaces or unseen attackers", rec["key_facts"])   # old code: 97 of 49
+        self.assertEqual(rec["grade"], "clean")
+
+    def test_only_a_summon_hit_unseen_leaves_no_unseen(self):
+        tr = debrief.Tracker()
+        tr.feed([ev("combat_started"), ev("round_started", round=1), unseen(CB, "Cambion", 24, "Necrotic"),
+                 dmg(NU, "Viconia DeVir", C, "Claude", 8, "Piercing"), ev("combat_ended")], PARTY_G | {CB}, now=0.0)
+        rec = tr.close(ROWS_G, [], {"session": "S078"}, now=60.0)
+        self.assertNotIn("unseen", rec)
+        self.assertNotIn("no visible source", debrief.render(rec))
+
+    def test_a_summons_damage_does_not_make_the_fight_costly(self):
+        # 30 % of the members' max HP (190+104+90+76+158 = 618) is 185.4: the Cambion's 200 used to count
+        rec = self.fight([(50, "Necrotic")] * 4)
+        self.assertEqual(rec["grade"], "clean")

@@ -112,15 +112,75 @@ def stream_result(path: Path) -> dict | None:
 
 # ======================================================================== sections
 
+def play_gaps(stem: Path, lat: dict) -> tuple[list[dict], list[float]]:
+    """A stream's idle gaps outside wrap-up and its read round trips (ms), as metrics.summarize finds them for
+    Sxxx.latency.json: several streams' targets come from these pooled (a median of medians is none)."""
+    recs = M.read_jsonl(Path(f"{stem}.metrics.jsonl"))
+    tools = [r for r in recs if r.get("type") == "tool" and "t0" in r]
+    samples = [r for r in recs if r.get("type") == "sample"]
+    turns = M.read_jsonl(Path(f"{stem}.turns.jsonl"))
+    turns += M.wrapup_from_stream(Path(f"{stem}.jsonl"), turns)
+    wrap_t = M.wrapup_start(turns)
+    if wrap_t is not None and lat.get("start") is not None and not lat["start"] <= wrap_t < lat.get("end", wrap_t + 1):
+        wrap_t = None
+    gl = [g for g in M.gaps(M.action_intervals(tools) or M.stream_actions(turns), samples, tools, wrap_t)
+          if g["kind"] != "wrapup"]
+    skip = M.ACTION_TOOLS | M.BATCH_TOOLS | M.NOT_READ | M.NOT_GAME_READ | M.NOT_OBS
+    return gl, [r["ms"] for r in tools if not r.get("nested") and r["tool"] not in skip]
+
+
+def pooled_targets(legs: list[Path], lats: list[dict]) -> dict:
+    """latency.json's three targets over all of a session's streams."""
+    gl, reads = [], []
+    for stem, lat in zip(legs, lats):
+        g, r = play_gaps(stem, lat)
+        gl += g
+        reads += r
+    ex = M.percentile([g["s"] for g in gl if g["kind"] == "explore"], 50)
+    rt = M.percentile(reads, 50)
+    long_n = sum(1 for g in gl if g["kind"] in ("explore", "combat") and g["s"] > LONG_GAP_S)
+    tg = M.TARGETS
+    return {"median_idle_explore_s": {"value": None if ex is None else round(ex, 2),
+                                      "target": tg["median_idle_explore_s"],
+                                      "pass": None if ex is None else ex < tg["median_idle_explore_s"]},
+            "long_gaps_non_dialogue": {"value": long_n, "target": tg["long_gaps_non_dialogue"],
+                                       "pass": long_n == 0 if gl else None},
+            "bridge_rt_median_ms": {"value": None if rt is None else round(rt, 1), "target": tg["bridge_rt_median_ms"],
+                                    "pass": None if rt is None else rt < tg["bridge_rt_median_ms"]}}
+
+
+def progress(progs: list[dict]) -> dict:
+    """Sxxx.progress.json, summed over the session's streams (S078: 0 pts in 1.2 min before the crash, 88 in r1)."""
+    ps = [p for p in progs if p]
+    if len(ps) < 2:
+        return ps[0] if ps else {}
+    mins = sum(p.get("minutes") or 0 for p in ps)
+    pts = sum(p.get("points") or 0 for p in ps)
+    kinds: collections.Counter = collections.Counter()
+    for p in ps:
+        kinds.update(p.get("by_kind") or {})
+    longest = [p["longest_no_progress_min"] for p in ps if isinstance(p.get("longest_no_progress_min"), (int, float))]
+    return {"minutes": round(mins, 1), "points": pts, "per_hour": pts / mins * 60 if mins else 0.0,
+            "events": sum(p.get("events") or 0 for p in ps), "by_kind": dict(kinds),
+            "longest_no_progress_min": max(longest) if longest else "?",
+            "stuck_episodes": sum(p.get("stuck_episodes") or 0 for p in ps),
+            "stuck_min": round(sum(p.get("stuck_min") or 0 for p in ps), 1)}
+
+
 def headline(sd: Path, sid: str, calls: list[dict], fights: list[dict], cost: dict) -> list[str]:
-    lat = _json(sd / f"{sid}.latency.json") or {}
-    prog = _json(sd / f"{sid}.progress.json") or {}
-    mins = lat.get("minutes") or prog.get("minutes") or (
+    legs = stems(sd, sid) or [sd / sid]   # the session and its resumes: all of them count
+    lats = [_json(Path(f"{s}.latency.json")) or {} for s in legs]
+    progs = [_json(Path(f"{s}.progress.json")) or {} for s in legs]
+    prog = progress(progs)
+    per = [lat.get("minutes") or p.get("minutes") or 0 for lat, p in zip(lats, progs)]
+    mins = sum(per) or (
         (calls[-1]["t_res"] - calls[0]["t"]) / 60 if calls else 0)
     out = ["## Headline", ""]
-    t0 = lat.get("start") or (calls[0]["t"] if calls else None)
+    t0 = lats[0].get("start") or (calls[0]["t"] if calls else None)
     out.append(f"- **{sid}** {time.strftime('%Y-%m-%d %H:%M', time.localtime(t0)) if t0 else '?'}, "
-               f"{mins:.1f} min, {len(calls)} calls ({len(stems(sd, sid))} stream(s))")
+               f"{mins:.1f} min" + (f" ({' + '.join(f'{m:.1f}' for m in per)}: {', '.join(s.name for s in legs)})"
+                                    if len(legs) > 1 else "")
+               + f", {len(calls)} calls ({len(legs)} stream(s))")
     if prog:
         out.append(f"- story: **{prog.get('points', 0)} pts ({prog.get('per_hour', 0):.0f}/h)**, "
                    f"{prog.get('events', 0)} progress events (pts: "
@@ -135,7 +195,7 @@ def headline(sd: Path, sid: str, calls: list[dict], fights: list[dict], cost: di
                f"{sorted({n for f in fights for n in f['party_died']}) or 0}")
     out.append(f"- cost: play ${cost['play']:.2f}" + (f" + keeper ${cost['keeper']:.2f}" if cost.get("keeper") else "")
                + (f"; ${cost['play'] / mins * 60:.2f}/h of play" if mins else ""))
-    tg = lat.get("targets") or {}
+    tg = (lats[0].get("targets") or {}) if len(legs) == 1 else pooled_targets(legs, lats) if any(lats) else {}
     if tg:
         cells = []
         for k, label, unit in (("median_idle_explore_s", "idle median (explore)", "s"),
@@ -145,9 +205,11 @@ def headline(sd: Path, sid: str, calls: list[dict], fights: list[dict], cost: di
                 v = tg[k]
                 cells.append(f"{label} {v['value']}{unit} {'PASS' if v['pass'] else '**FAIL**'} (target "
                              f"{'<' if k != 'long_gaps_non_dialogue' else ''}{v['target']}{unit})")
-        out.append("- latency: " + "; ".join(cells))
-    if lat:
-        out.append(f"- live feel: APM {lat.get('apm', '?')}, calls/min {(lat.get('rates') or {}).get('calls_pm', '?')}, "
+        out.append("- latency: " + "; ".join(cells) + (" (all streams)" if len(legs) > 1 else ""))
+    for stem, lat in zip(legs, lats):
+        if not lat:
+            continue
+        out.append(f"- live feel{' ' + stem.name if len(legs) > 1 else ''}: APM {lat.get('apm', '?')}, calls/min {(lat.get('rates') or {}).get('calls_pm', '?')}, "
                    f"think median {(lat.get('think_s') or {}).get('median', '?')} s (p90 "
                    f"{(lat.get('think_s') or {}).get('p90', '?')}), pipelined {lat.get('pipelining_pct', '?')} %, "
                    f"think overlap {lat.get('think_overlap_pct', '?')} %, busy {lat.get('busy_pct', '?')} %, "
@@ -185,15 +247,10 @@ def gap_cause(calls: list[dict], a: float, b: float) -> tuple[str, str, dict | N
 
 
 def gaps(sd: Path, sid: str, calls: list[dict]) -> tuple[list[str], list[dict]]:
-    """Long (> 10 s) gaps outside dialogue and wrap-up, with the cause of each; [issue] for the top list."""
-    base = sd / sid
-    recs = M.read_jsonl(Path(f"{base}.metrics.jsonl"))
-    tools = [r for r in recs if r.get("type") == "tool"]
-    samples = [r for r in recs if r.get("type") == "sample"]
-    turns = M.read_jsonl(Path(f"{base}.turns.jsonl"))
-    wrap_t = M.wrapup_start(turns + M.wrapup_from_stream(Path(f"{base}.jsonl"), turns))
-    gl = [g for g in M.gaps(M.action_intervals(tools), samples, tools, wrap_t)
-          if g["kind"] not in ("wrapup", "dialogue") and g["s"] > LONG_GAP_S]
+    """Long (> 10 s) gaps outside dialogue and wrap-up in all the session's streams, with the cause of each; [issue]
+    for the top list."""
+    gl = [g for stem in stems(sd, sid) for g in play_gaps(stem, _json(Path(f"{stem}.latency.json")) or {})[0]
+          if g["kind"] != "dialogue" and g["s"] > LONG_GAP_S]
     out = [f"## Gaps > {LONG_GAP_S:.0f} s outside dialogue ({len(gl)}; target 0)", ""]
     issues = []
     for g in sorted(gl, key=lambda g: g["t"]):
@@ -273,13 +330,14 @@ def hand(calls: list[dict]) -> tuple[list[str], list[dict]]:
 
 
 def fights_section(sessions: Path, run: str, sid: str, store: Path) -> tuple[list[str], list[dict]]:
-    """fights.py's fights of the session; each compared with the last earlier attempt at the same group (this
+    """fights.py's fights of the session (all its streams); each compared with the last earlier attempt at the same group (this
     session's or runtime/mined/fights.jsonl's). Reloads are competence, not harness: not in the top list."""
     F.SESSIONS = sessions
-    fs = F.mine(run, sid)
+    legs = [s.name for s in stems(sessions / run, sid)] or [sid]
+    fs = [f for leg in legs for f in F.mine(run, leg)]
     out = [f"## Fights ({len(fs)}; fights.py)", ""]
     prior = [json.loads(l) for l in store.open()] if store.exists() else []
-    prior = [f for f in prior if f.get("run", "claude-run-2") == run and f["session"] != sid]
+    prior = [f for f in prior if f.get("run", "claude-run-2") == run and f["session"] not in legs]
     for f in fs:
         out.append(f"- {'**BAD** ' if F.bad(f) else ''}{f['start']} {f['dur_s']} s r{f['rounds']} hp-{f['hp_lost']} "
                    f"downs {f['downs']} {f['outcome']}{' (' + f['debrief'] + ')' if f.get('debrief') else ''}"
@@ -417,9 +475,11 @@ def review(run: str, sid: str, sessions: Path, rt: Path) -> str:
     calls = load(sd, sid)
     if not calls:
         raise SystemExit(f"{sd / sid}: no timed calls (missing .jsonl / .turns.jsonl?)")
-    res = stream_result(sd / f"{sid}.jsonl") or {}
-    kres = stream_result(sd / f"{sid}-keeper.jsonl") or {}
-    cost = {"play": res.get("total_cost_usd") or 0.0, "keeper": kres.get("total_cost_usd")}
+    legs = stems(sd, sid)
+    res = [stream_result(Path(f"{s}.jsonl")) or {} for s in legs]
+    kres = [k for k in (stream_result(Path(f"{s}-keeper.jsonl")) for s in legs) if k]
+    cost = {"play": sum(r.get("total_cost_usd") or 0.0 for r in res),
+            "keeper": sum(k.get("total_cost_usd") or 0.0 for k in kres) if kres else None}
     events = M.read_jsonl(sd / "runner_events.jsonl")
     stage = rt / "stage_ms.jsonl"
     ctx = {"stage_ms": M.read_jsonl(stage) if stage.exists() else []}
