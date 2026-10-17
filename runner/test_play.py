@@ -1649,6 +1649,7 @@ class MemoryKeeperHook(unittest.TestCase):
                 def memory_state(self): return {"open": False}
                 start_keeper = P.Runner.start_keeper
                 join_keeper = P.Runner.join_keeper
+                def write_review(self, sid): pass   # SessionReview tests it
 
             def fake_run(mem, n, base, model, effort, minutes, refused=None, client=None):
                 calls.append((n, Path(base).name, model, effort, minutes, client))
@@ -1694,6 +1695,86 @@ class MemoryKeeperHook(unittest.TestCase):
             r.start_keeper("S009", res, [{"name": "Gale", "level": 8, "problems": "no plan line"}])
             self.assertIsNone(r.keeper_thread)
             self.assertIn("Gale L8: no plan line", r.pending_notes[0])  # no keeper: the player gets the note
+
+
+class SessionReview(unittest.TestCase):
+    """Runner.write_review: tools/logs/review_session.py's Sxxx.review.md once the keeper pass is done."""
+
+    def _runner(self, d: Path, reviews: list | None = None):
+        class FakeState:
+            dir = d / "sessions" / "pt"
+
+        class FakeRunner:
+            opt = P.Options("pt", None, 20, "opus")
+            state, mem, keeper_thread, pending_notes = FakeState(), d / "memory", None, []
+            def event(self, kind, **f):
+                with open(self.state.dir / "runner_events.jsonl", "a") as fh:
+                    fh.write(json.dumps({"t": time.time(), "kind": kind, **f}) + "\n")
+            def memory_state(self): return {"open": False}
+            start_keeper = P.Runner.start_keeper
+            join_keeper = P.Runner.join_keeper
+            write_review = P.Runner.write_review
+        FakeState.dir.mkdir(parents=True)
+        r = FakeRunner()
+        if reviews is not None:
+            r.write_review = lambda sid: reviews.append(
+                (sid, (r.state.dir / "runner_events.jsonl").read_text() if (r.state.dir / "runner_events.jsonl").exists() else ""))
+        return r
+
+    def test_real_review_after_the_keeper(self):
+        import memory_keeper as K
+        with tempfile.TemporaryDirectory() as d:
+            r = self._runner(Path(d))
+            Triage._session(None, r.state.dir)   # S009 stream + turns + metrics
+            logs = []
+            res = P.SessionResult("S009", "c", 0, "exited", 0.0, 1200.0)
+            with mock.patch.object(K, "run_keeper", lambda *a, **k: K.KeeperResult("S009", status="ok", seconds=1.0,
+                                                                                   files=["quests.md"], commit="abc")), \
+                    mock.patch.object(P, "read_actions_since", lambda t, *a, **k: []), \
+                    mock.patch.object(P, "RUNTIME", Path(d)), mock.patch.object(P, "log", logs.append):
+                r.start_keeper("S009", res)
+                r.join_keeper()
+            md = (r.state.dir / "S009.review.md").read_text()
+        self.assertIn("# Review pt/S009", md)
+        self.assertIn("keeper: ok in 1.0 s", md)   # written after the keeper's memory_keeper event
+        self.assertIn(f"S009: review {r.state.dir / 'S009.review.md'}", logs)
+
+    def test_review_without_a_keeper_pass_and_not_in_dry_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            reviews = []
+            r = self._runner(Path(d), reviews)
+            r.start_keeper("S008", P.SessionResult("S008", "c", 0, "exited", 0.0, 30.0))   # too short for a keeper
+            self.assertEqual([x[0] for x in reviews], ["S008"])
+            r.opt = P.Options("pt", None, 20, "opus", dry_run=True)
+            r.start_keeper("S009", P.SessionResult("S009", "c", 0, "exited", 0.0, 1200.0))
+            self.assertEqual([x[0] for x in reviews], ["S008"])
+
+    def test_review_even_when_the_keeper_raises(self):
+        import memory_keeper as K
+        with tempfile.TemporaryDirectory() as d:
+            reviews = []
+            r = self._runner(Path(d), reviews)
+
+            def boom(*a, **k):
+                raise RuntimeError("keeper crashed")
+            with mock.patch.object(K, "run_keeper", boom), mock.patch.object(P, "log", lambda *a, **k: None), \
+                    mock.patch.object(P, "read_actions_since", lambda t, *a, **k: []), \
+                    mock.patch("threading.excepthook", lambda *a: None):
+                r.start_keeper("S007", P.SessionResult("S007", "c", 0, "exited", 0.0, 1200.0))
+                r.join_keeper()
+            self.assertEqual([x[0] for x in reviews], ["S007"])
+
+    def test_failure_and_timeout_never_raise(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = self._runner(Path(d))
+            logs = []
+            with mock.patch.object(P, "RUNTIME", Path(d)), mock.patch.object(P, "log", logs.append):
+                self.assertIsNone(r.write_review("S001"))     # no transcript: review_session exits 1
+                with mock.patch.object(P.subprocess, "run", side_effect=P.subprocess.TimeoutExpired("x", 120)):
+                    self.assertIsNone(r.write_review("S001"))
+            self.assertIn("S001: review failed (exit 1)", logs[0])
+            self.assertIn("no timed calls", logs[0])
+            self.assertEqual(logs[1], f"S001: review killed after {P.REVIEW_TIMEOUT} s")
 
 
 class PlanCheck(unittest.TestCase):
@@ -1861,6 +1942,27 @@ def _res(i: str, text: str, is_error: bool = False) -> dict:
                                                      "content": [{"type": "text", "text": text}]}]}}
 
 
+class FakeUI:
+    """ui.state + the ui.key / ui.press RPCs over a game screen. screen None: the game doesn't answer."""
+
+    def __init__(self, screen=None, panels=(), resume_works=True):
+        self.screen, self.panels, self.resume_works, self.calls = screen, list(panels), resume_works, []
+
+    def ui_state(self):
+        return None if self.screen is None else {"screen": self.screen, "panels_open": self.panels}
+
+    def ui_screen(self):
+        return self.screen
+
+    def rpc(self, op, args=None, context="server", timeout=None):
+        self.calls.append((op, (args or {}).get("key") or (args or {}).get("button")))
+        if op == "ui.key" and args.get("key") == "ESCAPE":
+            self.screen = {"game": "game_menu", "game_menu": "game"}.get(self.screen, self.screen)
+        elif op == "ui.press" and args.get("button") == "Resume" and self.resume_works and self.screen == "game_menu":
+            self.screen = "game"
+        return {}
+
+
 class LongRun(unittest.TestCase):
     """Playthrough mode for many hours: the crash-loop stop, the rolling 24 h cost cap, the status line."""
 
@@ -1871,6 +1973,11 @@ class LongRun(unittest.TestCase):
         self.addCleanup(lambda: [setattr(P, n, v) for n, v in self.saved.items()])
         P.RUNTIME, P.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
         P.RUNTIME.mkdir(parents=True)
+        self.ui = FakeUI()   # never the real game's UI (the heat pause presses ESCAPE in it)
+        for name in ("ui_state", "ui_screen", "rpc"):
+            p = mock.patch.object(P, name, getattr(self.ui, name))
+            p.start()
+            self.addCleanup(p.stop)
 
     def test_crash_loop(self):
         ev = [{"t": 1000.0 + 60 * k, "kind": "fault", "fault": "crash"} for k in range(5)]
@@ -1937,6 +2044,70 @@ class LongRun(unittest.TestCase):
         self.assertFalse(r.heat_paused())
         (P.RUNTIME / "thermal.log").unlink()
         self.assertFalse(r.heat_paused())                                # no log (no ramwatch): no pause
+
+    def _hot_pause(self, r, logs, stop_at=None):
+        """A heat pause that cools at the 2nd check (stop_at: STOP written at that check instead)."""
+        self.thermal([(93, 70)] * 14)
+        n = []
+
+        def sleep(s):
+            if s != P.HEAT_PAUSE_CHECK_S:
+                return
+            n.append(s)
+            self.assertEqual(self.ui.screen, "game_menu" if self.ui.calls else self.ui.screen)  # open while hot
+            if stop_at and len(n) == stop_at:
+                (P.RUNTIME / "STOP").write_text("x")
+            self.thermal([(80, 60)] * 14 if len(n) >= 2 else [(93, 70)] * 14)
+        with mock.patch.object(P.time, "sleep", side_effect=sleep), mock.patch.object(P, "log", logs.append):
+            return r.heat_paused()
+
+    def test_heat_pause_opens_the_game_menu_and_closes_it_when_cool(self):
+        r = P.Runner(P.Options("long", None, 30, "opus"))
+        self.ui.screen, logs = "game", []
+        self.assertTrue(self._hot_pause(r, logs))
+        self.assertEqual(self.ui.calls, [("ui.key", "ESCAPE"), ("ui.press", "Resume")])   # the player's ESC; Resume
+        self.assertEqual(self.ui.screen, "game")
+        self.assertIn("heat: game menu open (ESCAPE) while it cools", logs)
+        self.assertIn("heat: game menu closed", logs)
+        self.assertLess(logs.index("heat: game menu closed"), [i for i, x in enumerate(logs) if "playing again" in x][0])
+
+    def test_heat_pause_resume_button_fails_then_escape(self):
+        r = P.Runner(P.Options("long", None, 30, "opus"))
+        self.ui.screen, self.ui.resume_works, logs = "game", False, []
+        with mock.patch.object(P, "HEAT_MENU_WAIT_S", 0.0):
+            r.wait_screen = lambda want, timeout=0.0: P.Runner.wait_screen(want, 0.0)
+            self.assertTrue(self._hot_pause(r, logs))
+        self.assertEqual(self.ui.calls, [("ui.key", "ESCAPE"), ("ui.press", "Resume"), ("ui.key", "ESCAPE")])
+        self.assertEqual(self.ui.screen, "game")
+
+    def test_heat_pause_skips_the_menu_where_escape_does_something_else(self):
+        for screen, panels, why in (("dialogue", [], "the dialogue screen is up"),
+                                    ("loading", [], "the loading screen is up"),
+                                    ("movie", [], "the movie screen is up"),
+                                    ("game", ["Trade"], "the game screen with Trade is up"),
+                                    (None, [], "the game's UI doesn't answer")):
+            with self.subTest(screen=screen):
+                r = P.Runner(P.Options("long", None, 30, "opus"))
+                self.ui.screen, self.ui.panels, self.ui.calls, logs = screen, panels, [], []
+                self.assertTrue(self._hot_pause(r, logs))           # still paused: only the menu is skipped
+                self.assertEqual(self.ui.calls, [])                 # no key pressed
+                self.assertTrue(any(why in x for x in logs), logs)
+                self.assertTrue(any("playing again" in x for x in logs))
+
+    def test_heat_pause_stopped_while_paused_still_closes_the_menu(self):
+        r = P.Runner(P.Options("long", None, 30, "opus"))
+        self.ui.screen, logs = "game", []
+        self.assertTrue(self._hot_pause(r, logs, stop_at=1))
+        self.assertEqual(self.ui.screen, "game")
+        self.assertIn("heat: game menu closed", logs)
+
+    def test_heat_menu_never_after_a_heat_kill(self):
+        r = P.Runner(P.Options("long", None, 30, "opus"))
+        self.ui.screen = "game"   # (a game the kill left would be dead; nothing is pressed either way)
+        self.thermal([(98, 70)] * 4 + [(85, 60)] * 3)
+        with mock.patch.object(P.time, "sleep", side_effect=lambda s: self.thermal([(70, 50)] * 14)):
+            self.assertTrue(r.heat_paused(after_kill=True))
+        self.assertEqual(self.ui.calls, [])
 
     def test_heat_kill_waits_before_the_relaunch(self):
         r = P.Runner(P.Options("long", None, 30, "opus"))

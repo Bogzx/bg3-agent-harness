@@ -5591,9 +5591,10 @@ def create_character(plan: str) -> str:
         _set_save_owner(want)  # now, before the wait: a client timeout during the load mustn't lose it (I3)
     left = max(0.0, CC_BUDGET_S - (time.monotonic() - t0))
     got = _avatar_name(left, want)
-    _log_cc_timing(dict(timing, ok=got is not None, world_ms=round((time.monotonic() - t_named) * 1000),
-                        total_ms=round((time.monotonic() - t0) * 1000)))
+    timing.update(ok=got is not None, world_ms=round((time.monotonic() - t_named) * 1000),
+                  total_ms=round((time.monotonic() - t0) * 1000))
     if got is not None and want is not None and got.casefold() != want.casefold():
+        _log_cc_timing(timing)
         _restore_save_owner(before)
         raise GameError(f"character creation finished, but the character in the world is called '{got}', not "
                         f"'{want}': its saves won't match this playthrough. Say so in your notes and stop")
@@ -5604,7 +5605,10 @@ def create_character(plan: str) -> str:
             f"character created and finished: '{who}' (the name was set on the naming page, but the world hadn't "
             "loaded yet to check it: check get_status once it has; don't call create_character again)")
     if got is not None:
+        t_look = time.monotonic()
         body += _cc_first_look()
+        timing["first_look_ms"] = round((time.monotonic() - t_look) * 1000)   # ours: look(full) + the save's start
+    _log_cc_timing(timing)
     return _finish("create_character", {"plan": p}, body, t0)
 
 
@@ -5651,8 +5655,10 @@ CC_WORLD_POLL_S = 0.25  # the loaded-world check after "Venture forth" (was 2 s:
 
 
 def _log_cc_timing(rec: dict) -> None:
-    """create_character's own phases (cc_apply, naming, finish + world load) to runtime/stage_ms.jsonl as op
-    "create_character": SESSION-WATCH / acceptance read time and attempts from there (never shown)."""
+    """create_character's phases to runtime/stage_ms.jsonl as op "create_character": apply_ms, naming_ms (+ the
+    finish press) and first_look_ms are ours; world_ms (finish -> the world checked) is the game's load, ~8-12 s
+    since the check waits out the CC scene; total_ms = apply + naming + world. SESSION-WATCH / acceptance read time
+    and attempts from there (never shown)."""
     try:
         with open(RUNTIME / "stage_ms.jsonl", "a") as f:
             f.write(json.dumps({"t": round(time.time(), 1), "op": "create_character", **rec}) + "\n")

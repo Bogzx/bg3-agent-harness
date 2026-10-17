@@ -322,8 +322,9 @@ class CreateCharacter(Base):
         self.assertEqual((ok["pacing"], ok["via"], ok["popups"]), ("state", "typed", 1))
         # naut3: vis's cc-naming check wants how the name went in; the record had only via/how (typed=-)
         self.assertEqual(ok["typed"], "over_selection")
-        for k in ("apply_ms", "naming_ms", "world_ms", "total_ms"):
+        for k in ("apply_ms", "naming_ms", "world_ms", "total_ms", "first_look_ms"):
             self.assertIsInstance(ok[k], int, k)
+        self.assertNotIn("first_look_ms", recs[0])   # no world, no first look
         self.assertEqual(set(ok["naming_stages"]), {"page", "popup", "locate", "focus", "type"})
         self.assertTrue(any("Reset Tutorials" in m for m in ok["notes"]), ok["notes"])
         self.assertNotIn("paced", g.applied[0])  # cc_apply's state waits (the mod's default)

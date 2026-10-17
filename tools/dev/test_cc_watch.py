@@ -39,6 +39,25 @@ class CCVerdict(unittest.TestCase):
         v, _ = acceptance.cc_verdict([rec(100, apply_ms=6100, naming_ms=5200, total_ms=22100)])
         self.assertEqual(v, "FAIL")
 
+    def test_the_world_load_is_not_our_time(self):
+        # since S6 create_character waits out the CC scene: a 12 s load (total 16.1 s) with our phases at 3.8 s
+        r = rec(100, apply_ms=1950, naming_ms=1300, first_look_ms=550, world_ms=12300, total_ms=15550 + 550)
+        v, ev = acceptance.cc_verdict([r])
+        self.assertEqual(v, "PASS", ev)
+        self.assertIn("ours 3800 ms (target <= 5000)", ev)
+        self.assertIn("world load 12300 ms (game time, not judged)", ev)
+
+    def test_our_own_phases_over_the_target_fail(self):
+        v, ev = acceptance.cc_verdict([rec(100, apply_ms=2900, naming_ms=2400, first_look_ms=900)])  # 6.2 s ours
+        self.assertEqual(v, "FAIL", ev)
+        self.assertIn("ours 6200 ms", ev)
+
+    def test_a_record_before_first_look_ms(self):
+        # the naut3 records (part 56, before part 57): apply + naming only
+        v, ev = acceptance.cc_verdict([rec(100, apply_ms=1965, naming_ms=998, world_ms=319, total_ms=3282)])
+        self.assertEqual(v, "PASS", ev)
+        self.assertIn("first look not logged = ours 2963 ms", ev)
+
     def test_only_the_last_creation_counts(self):
         recs = [rec(100, ok=False, error="x"), rec(5000)]
         self.assertEqual(acceptance.cc_verdict(recs)[0], "PASS")
