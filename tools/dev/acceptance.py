@@ -1838,8 +1838,18 @@ FUNCS = {"reads": sec_reads, "rest": sec_rest, "trade": sec_trade, "gear": sec_g
 
 
 # create_character targets after the CC pacing round (impl-setup part 45; naut 2026-10-13 run 3: cc_apply 6.1 s,
-# naming 5.2 s, 22.1 s in all; runs 1-2 needed 3 calls). The world load (~7.6 s) is game time.
-CC_MAX_APPLY_MS, CC_MAX_NAMING_MS, CC_MAX_TOTAL_MS = 3000, 2500, 15000
+# naming 5.2 s, 22.1 s in all; runs 1-2 needed 3 calls). Since S6 (impl-setup part 56) the tool returns once the
+# world has loaded, so total_ms holds the game's ~8-12 s load (world_ms): game time, shown, not judged. Judged: our
+# own phases, cc_apply + naming (with the finish press) + the first look (impl-setup part 57; naut3: 1.9 s + 1.0-1.7 s
+# + ~0.3-0.6 s; records before part 57 have no first_look_ms: apply + naming).
+CC_MAX_APPLY_MS, CC_MAX_NAMING_MS, CC_MAX_OWN_MS = 3000, 2500, 5000
+
+
+def cc_own_ms(r: dict) -> int | None:
+    """Our part of a create_character record: cc_apply + naming + first look (the world load is the game's)."""
+    if r.get("apply_ms") is None or r.get("naming_ms") is None:
+        return None
+    return r["apply_ms"] + r["naming_ms"] + (r.get("first_look_ms") or 0)
 
 
 def cc_verdict(recs: list[dict]) -> tuple[str, str]:
@@ -1854,10 +1864,12 @@ def cc_verdict(recs: list[dict]) -> tuple[str, str]:
     ev = (f"{len(last)} call(s) ({sum(1 for r in last if not r.get('ok'))} failed"
           + "".join(f"; {str(r.get('error'))[:60]}" for r in last if not r.get("ok"))
           + f"), pacing {fin.get('pacing')}: cc_apply {fin.get('apply_ms')} ms, naming {fin.get('naming_ms')} ms "
-          f"({fin.get('how')}, {fin.get('popups')} popup(s), {fin.get('naming_stages')}), finish+world "
-          f"{fin.get('world_ms')} ms, total {fin.get('total_ms')} ms")
+          f"({fin.get('how')}, {fin.get('popups')} popup(s), {fin.get('naming_stages')}), first look "
+          + (f"{fin['first_look_ms']} ms" if "first_look_ms" in fin else "not logged")
+          + f" = ours {cc_own_ms(fin)} ms (target <= {CC_MAX_OWN_MS}); "
+          f"world load {fin.get('world_ms')} ms (game time, not judged), total {fin.get('total_ms')} ms")
     good = (len(last) == 1 and bool(ok) and (fin.get("apply_ms") or 1e9) <= CC_MAX_APPLY_MS
-            and (fin.get("naming_ms") or 1e9) <= CC_MAX_NAMING_MS and (fin.get("total_ms") or 1e9) <= CC_MAX_TOTAL_MS)
+            and (fin.get("naming_ms") or 1e9) <= CC_MAX_NAMING_MS and (cc_own_ms(fin) or 1e9) <= CC_MAX_OWN_MS)
     return ("PASS" if good else "FAIL"), ev
 
 

@@ -106,8 +106,9 @@ NAUT3_LIVE = [
      "movement (path 31.4 m, 9.0 m left) → partial 8.7m: INTERRUPTED — a conversation started — travelled=5.5", 1.7,
      20.9),
 ]
-NAUT3_STAGE = {"t": None, "op": "create_character", "naming_ms": 1400, "typed": "over_selection",
-               "naming_stages": {"popup": 120, "type": 300}}
+NAUT3_STAGE = {"t": None, "op": "create_character", "ok": True, "naming_ms": 1400, "typed": "over_selection",
+               "naming_stages": {"popup": 120, "type": 300}, "apply_ms": 1950, "first_look_ms": 500,
+               "world_ms": 11800, "total_ms": 15150}   # setup part 57: the tool waits out the world load
 
 
 class SeriesReport(unittest.TestCase):
@@ -209,6 +210,26 @@ class SeriesReport(unittest.TestCase):
                          "(climbs 2.9m up), e58 Arterial Mesh <ladder> 9m NW (climbs 10.1m up))"}]
         self.assertEqual(SR.hinted(hint, 1, "e59")[0], "up")
         self.assertIsNone(SR.hinted(hint, 1, "e5"))
+
+    def test_cc_time_judges_our_phases_not_the_world_load(self):
+        cs = self.calls("naut3")
+        v = lambda ctx: SR.verdict(cs, dict((k, f) for k, _, f in SR.SIGNATURES)["cc-time"], ctx)  # noqa: E731
+        rec = {**NAUT3_STAGE, "t": cs[0]["t"]}
+        st, ev, *_ = v({"stage_ms": [rec]})
+        self.assertEqual(st, "PROVED")    # 15.2 s in all, 3.85 s of it ours
+        self.assertIn("ours 3850 ms (apply 1950 + naming 1400 + first look 500), world load 11800 ms (game)", ev[1])
+        self.assertEqual(v({"stage_ms": [{**rec, "apply_ms": 2900, "naming_ms": 2400, "first_look_ms": 900}]})[0],
+                         "FAILED")        # 6.2 s ours
+        old = {**rec, "world_ms": 319, "total_ms": 3282, "apply_ms": 1965, "naming_ms": 998}
+        del old["first_look_ms"]          # naut3's records (before part 57): apply + naming
+        self.assertEqual(v({"stage_ms": [old]})[0], "PROVED")
+        self.assertEqual(v({"stage_ms": [{**rec, "ok": False}]})[0], "NOT-SEEN")   # a failed call: cc-naming's
+        # the CC phase wall leaves the load out: same run, with and without the load inside create_character
+        k = max(i for i, c in enumerate(cs) if c["name"] == "create_character")
+        plain = SR.phase_rows(cs, [])["CC"]["wall"]
+        self.assertAlmostEqual(SR.phase_rows(cs, [], [rec])["CC"]["wall"], plain - 11.8, places=3)
+        late = {**rec, "t": cs[k]["t_res"] + 60}   # another CC's record, outside the phase
+        self.assertAlmostEqual(SR.phase_rows(cs, [], [late])["CC"]["wall"], plain, places=3)
 
     def test_report_runs_end_to_end(self):
         out = SR.report("naut2", "naut", self.root)

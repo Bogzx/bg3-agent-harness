@@ -10,7 +10,8 @@ dirs that exist (<base>, <base>-r2, …). Calls: overlap.load (runner/triage.py)
 (model_time.session_files: Sxxx + resumes, not -fix / -keeper); model messages: model_time.model_turns.
 
 (a) phases of a Nautiloid run (first match after the previous phase's end; "-" when not reached):
-  CC                calls up to the last create_character
+  CC                calls up to the last create_character, minus its world load (stage_ms world_ms: game time;
+                    create_character waits it out since setup part 56)
   first fight       first COMBAT start after CC .. its combat_ended
   helm ladder       first "Nm above you" / climb / Helm refusal after the fight .. the 10 m climb up (dy >= 8)
   transponder dash  first Transponder / o3 mention after the ladder .. Wilderness
@@ -40,6 +41,7 @@ from bg3ai import metrics as M  # noqa: E402
 TURN_S = 0.3          # a call with less model time before it was issued in the same message: not a turn
 PHASES = ("CC", "first fight", "helm ladder", "transponder dash")
 NAMING_MS = 2500      # setup part 52: naming target
+CC_OWN_MS = 5000      # acceptance.CC_MAX_OWN_MS (setup part 57): cc_apply + naming + first look; the load is the game's
 OBJECTIVE_MOVED_M = 5.0   # server.OBJECTIVE_MOVED_M: a re-trip farther than this after an arrival = the marker moved
 ARRIVAL_READS = {"get_map", "get_status"}
 FIRST_MOVES = {"travel_to", "walk_toward", "move_to", "queue_actions", "do_actions", "interact", "route"}
@@ -120,8 +122,15 @@ def phases(cs: list[dict]) -> dict[str, tuple[int | None, int | None]]:
     return ph
 
 
-def phase_rows(cs: list[dict], msgs: list[dict]) -> dict[str, dict | None]:
-    """{phase: {wall, turns, model, refused, first_block (median)} or None}, plus "rest" (no wall)."""
+def cc_world_s(stage_ms: list[dict], lo: float, hi: float) -> float:
+    """Seconds of world load inside create_character calls logged between lo and hi (stage_ms world_ms)."""
+    return sum((r.get("world_ms") or 0) / 1000 for r in stage_ms
+               if r.get("op") == "create_character" and lo <= (r.get("t") or 0) <= hi)
+
+
+def phase_rows(cs: list[dict], msgs: list[dict], stage_ms: list[dict] = ()) -> dict[str, dict | None]:
+    """{phase: {wall, turns, model, refused, first_block (median)} or None}, plus "rest" (no wall). The CC wall
+    leaves out the world load create_character waited for (stage_ms)."""
     out, used = {}, set()
     for name, (a, b) in phases(cs).items():
         if a is None or b is None:
@@ -131,7 +140,7 @@ def phase_rows(cs: list[dict], msgs: list[dict]) -> dict[str, dict | None]:
         used.update(range(a, b + 1))
         lo, hi = seg[0]["t"] - seg[0]["think"] - 0.01, seg[-1]["t_res"]
         fb = [m["t_first"] - m["trigger"] for m in msgs if lo <= m["trigger"] <= hi]
-        out[name] = dict(wall=hi - lo, turns=sum(1 for c in seg if c["think"] >= TURN_S),
+        out[name] = dict(wall=hi - lo - (cc_world_s(stage_ms, lo, hi) if name == "CC" else 0), turns=sum(1 for c in seg if c["think"] >= TURN_S),
                          model=sum(c["think"] for c in seg), refused=sum(1 for c in seg if c["refusal"]),
                          first_block=st.median(fb) if fb else None)
     rest = [c for k, c in enumerate(cs) if k not in used]
@@ -454,6 +463,23 @@ def sig_naming(cs, ctx):
                                               f"type={(r.get('naming_stages') or {}).get('type')}")
 
 
+def sig_cc_time(cs, ctx):
+    """create_character's own phases (stage_ms: apply + naming + first look) within CC_OWN_MS; the world load is
+    the game's, quoted, not judged."""
+    if not cs:
+        return
+    lo, hi = cs[0]["t"] - 120, cs[-1]["t_res"]
+    k = next((i for i, c in enumerate(cs) if c["name"] == "create_character"), 0)
+    for r in ctx.get("stage_ms") or []:
+        if (r.get("op") != "create_character" or not r.get("ok") or not lo <= (r.get("t") or 0) <= hi
+                or r.get("apply_ms") is None or r.get("naming_ms") is None):
+            continue
+        own = r["apply_ms"] + r["naming_ms"] + (r.get("first_look_ms") or 0)
+        yield ("pass" if own <= CC_OWN_MS else "fail"), k, (
+            f"stage_ms ours {own} ms (apply {r['apply_ms']} + naming {r['naming_ms']} + first look "
+            f"{r.get('first_look_ms', '-')}), world load {r.get('world_ms')} ms (game), total {r.get('total_ms')} ms")
+
+
 SIGNATURES = (   # (key, what: the fix and its owner, check)
     ("who-acting", "ACT-P2 (act): a fight tool without who acts for the member whose turn it is", sig_who),
     ("move-oN", "ACT-P1 (act): combat_turn move \"oN\" walks toward the objective marker", sig_objective_move),
@@ -472,6 +498,8 @@ SIGNATURES = (   # (key, what: the fix and its owner, check)
     ("cc-first-look", "setup: create_character carries the FIRST LOOK; no read before the first move",
      sig_first_look),
     ("cc-naming", "setup: naming <= 2.5 s, typed over the selection (runtime/stage_ms.jsonl)", sig_naming),
+    ("cc-time", "setup: create_character's own phases (apply + naming + first look) <= 5 s; the world load is "
+     "the game's (runtime/stage_ms.jsonl)", sig_cc_time),
 )
 
 
@@ -531,7 +559,7 @@ def report(base: str, vs: str | None, root: Path, verbose: bool = False) -> str:
         for run, _ in rr:
             cs, msgs = load_run(root / run)
             calls[s][run] = cs
-            prows[s][run] = phase_rows(cs, msgs)
+            prows[s][run] = phase_rows(cs, msgs, ctx["stage_ms"])
             un[run] = overlap.unneeded(cs)
     out = [f"SERIES {base}" + (f" vs {vs}" if vs else "")]
     for s in names:

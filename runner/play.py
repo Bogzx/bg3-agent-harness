@@ -71,6 +71,7 @@ RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
 SESSION_PY = REPO / "tools" / "memory" / "session.py"
 LAUNCH_SH = REPO / "runner" / "launch_game.sh"
 CHECK_ALL = REPO / "tools" / "dev" / "check_all.py"
+REVIEW_PY = REPO / "tools" / "logs" / "review_session.py"
 CHECK_PLANS = REPO / "tools" / "dev" / "check_plans.py"   # party-build.md plan lines vs the game's level-up offers
 CHECK_PLANS_TIMEOUT = 90
 SAVE_DIR = steam_paths.saves_dir()   # $BG3AI_SAVE_DIR, else under $BG3AI_PROFILE_DIR / the default profile
@@ -104,6 +105,7 @@ AGENT_SILENT_MINUTES = float(os.environ.get("BG3AI_AGENT_SILENT_MIN", "4"))  # n
                                # (bridge tools cap their waits at ~60 s; a model turn is seconds to ~1 min)
 CHECK_ALL_INTERVAL = 30 * 60   # tools/dev/check_all.py between sessions, at most this often (it takes ~25 s)
 CHECK_ALL_TIMEOUT = 240        # its own budget is 120 s plus the bridge import; past this it's killed
+REVIEW_TIMEOUT = 120           # review_session.py takes ~2 s on a 23-min session (claude-run-2 S065); killed past this
 STEAM_RETRY_S = 120            # Steam not offline: refuse to launch, retry this often (never give up)
 # Party ready checks (long_rest's "end the day?", region fast travel) stop working in a long-lived game process (se's
 # discriminator 2026-10-10 18:07-18:18, research/impl-se.md §6: the 12:48 process failed from S028 on, fresh processes
@@ -170,6 +172,7 @@ COST_DAY_S = 24 * 3600         # run --max-cost-per-day: the trailing window
 COST_PAUSE_CHECK_S = 600       # ... while it is over the cap, the runner waits and looks again this often
 STATUS_LINE = "runner.status.txt"   # runtime/: one line for the orchestrator (`cat`, or `play.py status`)
 HEAT_PAUSE_CHECK_S = 15        # heat pause (ramwatch.heat_limits, runtime/thermal.log): look again this often
+HEAT_MENU_WAIT_S = 2.0         # the ESC game menu opens/closes in ~0.3 s (bridge server._press_escape)
 LAUNCH_ATTEMPTS = 3            # a launch that dies before the save plays is retried; the 3rd try loads the previous
 LAUNCH_BACKOFF = (15, 45)      # good save; then the runner stops (alert). Seconds to wait before the 2nd and 3rd try
 MENU_STATES = ("Menu", "LoadMenu")   # client game states at the main menu or its splash ("Press any key")
@@ -2090,6 +2093,9 @@ class Runner:
             raise ForeignGameRunning(why)
         if port_open():
             raise RuntimeError(f"port {DEBUG_PORT} is still in use; can't launch another game")
+        filled = display_env.fill(os.environ)   # Xwayland restarted since the runner started: its new -auth file
+        if filled:
+            log("display env refreshed from the desktop session: " + " ".join(f"{k}={v}" for k, v in filled.items()))
         args = [str(LAUNCH_SH)] + (["--load", load_folder] if load_folder else [])
         stamp = base = f"{datetime.now():%Y%m%d-%H%M%S}"   # launch_game.sh names its logs with it (BG3AI_LAUNCH_STAMP)
         n = 1
@@ -3230,18 +3236,76 @@ class Runner:
             f"or GPU >= {lim['pause_gpu_c']:g} C for {lim['pause_s']:g} s): pausing until both stay under it for "
             f"{lim['pause_s']:g} s")
         self.event("heat_pause", cpu_c=h["cpu"], gpu_c=h["gpu"], seconds=round(h["hot_s"]), after_kill=after_kill)
-        while not (self.stop_requested or self.abort or (RUNTIME / "STOP").exists()):
-            self.write_status_line(f"PAUSED: too hot (CPU {h['cpu']} C, GPU {h['gpu']} C; "
-                                   f"limit {lim['pause_cpu_c']:g}/{lim['pause_gpu_c']:g} C)")
-            time.sleep(HEAT_PAUSE_CHECK_S)
-            h = ramwatch.read_heat(path)
-            if h["cool"]:
-                break
+        menu = not after_kill and self.heat_menu_open()   # after a heat kill there is no game to pause
+        try:
+            while not (self.stop_requested or self.abort or (RUNTIME / "STOP").exists()):
+                self.write_status_line(f"PAUSED: too hot (CPU {h['cpu']} C, GPU {h['gpu']} C; "
+                                       f"limit {lim['pause_cpu_c']:g}/{lim['pause_gpu_c']:g} C)")
+                time.sleep(HEAT_PAUSE_CHECK_S)
+                h = ramwatch.read_heat(path)
+                if h["cool"]:
+                    break
+        finally:
+            if menu:
+                self.heat_menu_close()
         if not h["cool"]:
             return True   # stopped while paused: the run loop sees the stop
         log(f"heat: CPU {h['cpu']} C / GPU {h['gpu']} C after {(time.time() - t0) / 60:.0f} min: playing again")
         self.event("heat_resume", cpu_c=h["cpu"], gpu_c=h["gpu"], seconds=round(time.time() - t0))
         return True
+
+    @staticmethod
+    def wait_screen(want: str, timeout: float = HEAT_MENU_WAIT_S) -> str | None:
+        """ui.state's screen, polled until it is want or timeout passed; the last screen seen."""
+        end = time.monotonic() + timeout
+        while True:
+            screen = ui_screen()
+            if screen == want or time.monotonic() >= end:
+                return screen
+            time.sleep(0.15)
+
+    def heat_menu_open(self) -> bool:
+        """Heat pause: the ESC game menu over the running game, as a player pauses (the world stops and our
+        tools idle under it), so it cools. Only from the plain game view: in a dialogue, a trade, a movie (ESCAPE
+        skips it), on a loading screen or with a panel open an ESCAPE does something else, so those are skipped
+        with a log line. True when it opened the menu (heat_menu_close closes it again). Never raises."""
+        try:
+            st = ui_state()
+            if st is None:
+                log("heat: game menu not opened (the game's UI doesn't answer)")
+                return False
+            screen, panels = st.get("screen") or "game", st.get("panels_open") or []
+            if screen != "game" or panels:
+                log(f"heat: game menu not opened: the {screen} screen{' with ' + ', '.join(panels) if panels else ''}"
+                    " is up (an ESCAPE there does something else); the game keeps rendering")
+                return False
+            rpc("ui.key", {"key": "ESCAPE"}, context="client")
+            got = self.wait_screen("game_menu")
+            if got != "game_menu":
+                log(f"heat: ESCAPE did not open the game menu (screen {got}); the game keeps rendering")
+                return False
+            log("heat: game menu open (ESCAPE) while it cools")
+            return True
+        except Exception as e:  # noqa: BLE001 - the pause still holds the next session
+            log(f"heat: game menu not opened: {e!r}")
+            return False
+
+    def heat_menu_close(self) -> None:
+        """Closes the game menu heat_menu_open opened: its Resume button (a second ESCAPE left it open 3/3 live,
+        bridge server._press_escape), ESCAPE if it is still up. Never raises."""
+        try:
+            screen = ui_screen()
+            if screen != "game_menu":
+                log(f"heat: the game menu is already closed (screen {screen})")
+                return
+            rpc("ui.press", {"button": "Resume", "widget": "GameMenu"}, context="client")
+            if (got := self.wait_screen("game")) == "game_menu":
+                rpc("ui.key", {"key": "ESCAPE"}, context="client")
+                got = self.wait_screen("game")
+            log("heat: game menu closed" if got != "game_menu" else "heat: the game menu is STILL OPEN after Resume "
+                "and ESCAPE (the next session's agent sees it)")
+        except Exception as e:  # noqa: BLE001
+            log(f"heat: game menu not closed: {e!r}")
 
     def caps(self) -> dict:
         """The run's caps as recorded (runs.CAP_KEYS)."""
@@ -3553,6 +3617,8 @@ class Runner:
         if not self.opt.keeper or self.opt.dry_run or res.ended - res.started < 120 or getattr(self, "cap_hit", None):
             if plan_bad:   # no keeper pass to fix them: the next player gets the note
                 self.pending_notes.append(plan_note(plan_bad))
+            if not self.opt.dry_run:
+                self.write_review(sid)
             return
         import memory_keeper as K
         n = int(sid[1:])
@@ -3561,7 +3627,7 @@ class Runner:
         effort, minutes = self.opt.keeper_effort, self.opt.keeper_minutes
         client = self.opt.client
 
-        def work():
+        def keep():
             log(f"{sid}: memory keeper starting ({client} {model}, effort {effort or 'default'}, ≤{minutes:g} min)")
             try:   # stored level-up plan lines the game refused this session: the keeper rewrites them
                 refused = K.refused_plans(read_actions_since(res.started))
@@ -3587,8 +3653,35 @@ class Runner:
             except OSError as e:
                 log(f"keeper history write failed: {e}")
 
+        def work():
+            try:
+                keep()
+            finally:   # after the keeper: the review reads its memory_keeper event
+                self.write_review(sid)
+
         self.keeper_thread = threading.Thread(target=work, name="memory-keeper", daemon=True)
         self.keeper_thread.start()
+
+    def write_review(self, sid: str) -> Path | None:
+        """Sxxx.review.md (tools/logs/review_session.py) for the logs worker, once the keeper pass is done (its
+        memory/keeper section and the session's runner events are in by then; tools/logs/wait_new_session.sh wakes
+        on it). Covers the session and its resumes. Niced, with a timeout; nothing here raises."""
+        cmd = ["nice", "-n", "15", sys.executable, str(REVIEW_PY), self.state.dir.name, sid,
+               "--runtime", str(RUNTIME), "--sessions", str(self.state.dir.parent)]
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO, timeout=REVIEW_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            log(f"{sid}: review killed after {REVIEW_TIMEOUT} s")
+            return None
+        except OSError as e:
+            log(f"{sid}: review failed: {e}")
+            return None
+        if p.returncode != 0:
+            log(f"{sid}: review failed (exit {p.returncode}): {(p.stderr or p.stdout).strip()[-300:]}")
+            return None
+        path = self.state.dir / f"{sid}.review.md"
+        log(f"{sid}: review {path}")
+        return path
 
     def recover_keeper(self) -> None:
         """MEM-1: a keeper pass the runner died in (killed, crashed, restarted mid-pass) left its pre-pass snapshot:

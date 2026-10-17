@@ -30,6 +30,9 @@ class CCGame(FakeGame):
         self.waits: list[float] = []
         self.owner_seen: list[str] = []
         self.cc_open = True
+        self.cc_scene_reads = 0   # state.status reads after "Venture forth" that still see the CC scene (SYS_CC_I)
+        self.world_screen = "game"
+        self.in_dialogue = False
 
     def run_job(self, op, args, context="server", wait_s=25.0, poll_s=0.01, on_start=None):
         if op == "ui.cc_apply":
@@ -51,11 +54,16 @@ class CCGame(FakeGame):
             self.config.append(dict(args or {}))
             return {"gates": {}}
         if op == "ui.state":
-            return {"screen": "game" if self.page.finished or not self.cc_open else "character_creation"}
+            return {"screen": self.world_screen if self.page.finished or not self.cc_open else "character_creation"}
         if op == "state.status":
             if not self.page.finished or self.world_name is None:
                 raise GameError("server not ready")
-            return {"party": [{"uuid": "p1", "name": self.world_name}]}
+            if self.cc_scene_reads > 0:   # live: screen=game, the page's dummy already carries the typed name
+                self.cc_scene_reads -= 1
+                return {"level": "SYS_CC_I", "region": "Character creation",
+                        "party": [{"uuid": "p0", "name": self.world_name}]}
+            return {"level": "TUT_Avernus_C", "region": "Nautiloid", "in_dialogue": self.in_dialogue,
+                    "party": [{"uuid": "p1", "name": self.world_name}]}
         return super().rpc(op, args, context, timeout)
 
 
@@ -172,6 +180,34 @@ class CreateCharacter(Base):
         # nested: the look's own metric record is marked nested (not a separate agent read)
         self.assertFalse(server._batch["active"])
 
+    def test_first_look_waits_out_the_cc_scene(self):
+        # naut3 (3/3 runs): right after "Venture forth" the CC scene reads as screen=game with the dummy named; the
+        # name was "checked" there and the FIRST LOOK said "WHERE Character creation", so the agent read again
+        # 10-15 s later. Now the check waits for the real level.
+        g, _ = self.use(FakePage())
+        g.cc_scene_reads = 3
+        with mock.patch.object(server, "CC_WORLD_POLL_S", 0.01):
+            out = server.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
+        self.assertEqual(g.cc_scene_reads, 0)
+        self.assertIn("(name checked in game)", out)
+        self.assertIn("WHERE Nautiloid", out)
+        self.assertNotIn("Character creation", out)
+        self.assertIn("NEXT: issue the first move now", out)
+
+    def test_first_look_in_the_opening_dialogue_says_advance_first(self):
+        g, _ = self.use(FakePage())
+        g.world_screen, g.in_dialogue = "dialogue", True
+        out = server.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
+        self.assertIn("(name checked in game)", out)
+        self.assertIn("NEXT: issue dialogue_advance (the opening conversation is up), then the first move now", out)
+
+    def test_loading_screen_is_not_the_world(self):
+        g, _ = self.use(FakePage())
+        g.world_screen = "loading"
+        out = server.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
+        self.assertIn("hadn't loaded yet", out)
+        self.assertNotIn("FIRST LOOK", out)
+
     def test_first_look_switch_off(self):
         self.use(FakePage())
         saved: list[str] = []
@@ -284,8 +320,11 @@ class CreateCharacter(Base):
         self.assertIn("didn't focus", recs[0]["error"])
         ok = recs[1]
         self.assertEqual((ok["pacing"], ok["via"], ok["popups"]), ("state", "typed", 1))
-        for k in ("apply_ms", "naming_ms", "world_ms", "total_ms"):
+        # naut3: vis's cc-naming check wants how the name went in; the record had only via/how (typed=-)
+        self.assertEqual(ok["typed"], "over_selection")
+        for k in ("apply_ms", "naming_ms", "world_ms", "total_ms", "first_look_ms"):
             self.assertIsInstance(ok[k], int, k)
+        self.assertNotIn("first_look_ms", recs[0])   # no world, no first look
         self.assertEqual(set(ok["naming_stages"]), {"page", "popup", "locate", "focus", "type"})
         self.assertTrue(any("Reset Tutorials" in m for m in ok["notes"]), ok["notes"])
         self.assertNotIn("paced", g.applied[0])  # cc_apply's state waits (the mod's default)

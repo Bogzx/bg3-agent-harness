@@ -5594,15 +5594,16 @@ def create_character(plan: str) -> str:
     t_named = time.monotonic()
     nm = nf.get("name") or {}
     timing.update(naming_ms=round((t_named - t_apply) * 1000), via=nm.get("via"), how=nm.get("how"),
-                  popups=nm.get("popups"), naming_stages=nm.get("ms"), notes=notes[-4:])
+                  typed=nm.get("typed"), popups=nm.get("popups"), naming_stages=nm.get("ms"), notes=notes[-4:])
     before = (SAVE_OWNER, SAVE_PREFIX)
     if want:
         _set_save_owner(want)  # now, before the wait: a client timeout during the load mustn't lose it (I3)
     left = max(0.0, CC_BUDGET_S - (time.monotonic() - t0))
     got = _avatar_name(left, want)
-    _log_cc_timing(dict(timing, ok=got is not None, world_ms=round((time.monotonic() - t_named) * 1000),
-                        total_ms=round((time.monotonic() - t0) * 1000)))
+    timing.update(ok=got is not None, world_ms=round((time.monotonic() - t_named) * 1000),
+                  total_ms=round((time.monotonic() - t0) * 1000))
     if got is not None and want is not None and got.casefold() != want.casefold():
+        _log_cc_timing(timing)
         _restore_save_owner(before)
         raise GameError(f"character creation finished, but the character in the world is called '{got}', not "
                         f"'{want}': its saves won't match this playthrough. Say so in your notes and stop")
@@ -5613,7 +5614,10 @@ def create_character(plan: str) -> str:
             f"character created and finished: '{who}' (the name was set on the naming page, but the world hadn't "
             "loaded yet to check it: check get_status once it has; don't call create_character again)")
     if got is not None:
+        t_look = time.monotonic()
         body += _cc_first_look()
+        timing["first_look_ms"] = round((time.monotonic() - t_look) * 1000)   # ours: look(full) + the save's start
+    _log_cc_timing(timing)
     return _finish("create_character", {"plan": p}, body, t0)
 
 
@@ -5646,7 +5650,9 @@ def _cc_first_look() -> str:
             out.append("first save (no save_game needed): " + SAVER.save(f"{sess}-start"))
         except Exception as e:  # noqa: BLE001 - the agent can still save by hand
             out.append(f"first save not started ({type(e).__name__}: {e}): save_game(label=\"{sess}-start\")")
-    out.append("NEXT: issue the first move now; write PLAYTHROUGH.md's Character line and the [decision] note "
+    first = "the first move" if "DIALOGUE" not in fl.split("\n", 1)[0].upper() else \
+        "dialogue_advance (the opening conversation is up), then the first move"
+    out.append(f"NEXT: issue {first} now; write PLAYTHROUGH.md's Character line and the [decision] note "
                "while it runs (fix CHARACTER.md's header only if the status above spells name/race/class "
                "differently)")
     return "\n" + "\n".join(out)
@@ -5658,8 +5664,10 @@ CC_WORLD_POLL_S = 0.25  # the loaded-world check after "Venture forth" (was 2 s:
 
 
 def _log_cc_timing(rec: dict) -> None:
-    """create_character's own phases (cc_apply, naming, finish + world load) to runtime/stage_ms.jsonl as op
-    "create_character": SESSION-WATCH / acceptance read time and attempts from there (never shown)."""
+    """create_character's phases to runtime/stage_ms.jsonl as op "create_character": apply_ms, naming_ms (+ the
+    finish press) and first_look_ms are ours; world_ms (finish -> the world checked) is the game's load, ~8-12 s
+    since the check waits out the CC scene; total_ms = apply + naming + world. SESSION-WATCH / acceptance read time
+    and attempts from there (never shown)."""
     try:
         with open(RUNTIME / "stage_ms.jsonl", "a") as f:
             f.write(json.dumps({"t": round(time.time(), 1), "op": "create_character", **rec}) + "\n")
@@ -5667,17 +5675,24 @@ def _log_cc_timing(rec: dict) -> None:
         pass
 
 
+CC_LEVEL = "SYS_CC_I"  # the character creation scene's level (render.REGION_NAMES "Character creation")
+
+
 def _avatar_name(timeout: float, want: str | None = None) -> str | None:
     """The created character's name once the world has loaded (state.status's party: on the Nautiloid only the
     avatar), or None if nothing readable came within `timeout`. With `want`, a party member of that name wins.
-    Only on the game view: on the CC page (right after "Venture forth") the party is the page's dummy."""
+    Only on the game view (or the opening dialogue), never on the CC scene: right after "Venture forth" it reads
+    as screen=game with the page's dummy in the party (naut3, all 3 runs: name "checked" 0.3 s after the press,
+    then the FIRST LOOK showed "WHERE Character creation" and the agent re-read 10 s later on the Nautiloid)."""
     end = time.monotonic() + timeout
     while True:
         st = None
         try:
-            if game.game_state() == "Running" and _ui_screen()[0] == "game":
+            if game.game_state() == "Running" and _ui_screen()[0] in ("game", "dialogue"):
                 st = game.try_rpc("state.status", context="server")
         except (GameError, NotReady, OSError):
+            st = None
+        if isinstance(st, dict) and st.get("level") == CC_LEVEL:
             st = None
         names = [str(b.get("name")) for b in (st or {}).get("party") or []
                  if isinstance(b, dict) and b.get("name") not in (None, "", "Unknown")]

@@ -28,9 +28,21 @@ class DisplayEnv(unittest.TestCase):
             self.assertEqual(got, {"DISPLAY": ":1", "XAUTHORITY": "/run/user/1000/xauth_ABcd",
                                    "WAYLAND_DISPLAY": "wayland-0"})
             self.assertEqual(env["DISPLAY"], ":1")
-            env = {"DISPLAY": ":5", "XAUTHORITY": "/mine", "WAYLAND_DISPLAY": "w", "XDG_RUNTIME_DIR": rd}
+            mine = str(Path(rd, "xauth_mine"))
+            Path(mine).write_text("")
+            env = {"DISPLAY": ":5", "XAUTHORITY": mine, "WAYLAND_DISPLAY": "w", "XDG_RUNTIME_DIR": rd}
             self.assertEqual(D.fill(env, ps_text=PS), {})
-            self.assertEqual(env["XAUTHORITY"], "/mine")
+            self.assertEqual(env["XAUTHORITY"], mine)
+
+    def test_a_vanished_xauthority_is_replaced(self):
+        # naut3: after the 16:01 freeze Xwayland restarted with a new -auth file; the old value pointed nowhere
+        env = {"DISPLAY": ":1", "XAUTHORITY": "/run/user/1000/xauth_gone", "WAYLAND_DISPLAY": "w",
+               "XDG_RUNTIME_DIR": "/nonexistent"}
+        self.assertEqual(D.fill(env, ps_text=PS), {"XAUTHORITY": "/run/user/1000/xauth_ABcd"})
+        self.assertEqual(env["DISPLAY"], ":1")
+        env["XAUTHORITY"] = "/run/user/1000/xauth_gone"
+        self.assertEqual(D.fill(env, ps_text=""), {})              # no Xwayland: dropped (the runner warns)
+        self.assertNotIn("XAUTHORITY", env)
 
     def test_no_xwayland_keeps_xauthority_unset(self):
         env = {"XDG_RUNTIME_DIR": "/nonexistent"}
