@@ -1754,6 +1754,23 @@ test("NAV-3: a kill expires after KILL_TTL_S; an undated kill from an older file
     if not ok then error(err, 0) end
 end)
 
+test("NAV-3: kills are dated by the SE wall clock (the game's sandbox has no os: L8 2026-10-18 undated CTY kill)", function()
+    local realOs, realS = os, Ext.IO.SaveFile
+    local saved
+    Ext.Timer = { ClockEpoch = function() return 1760000000 end }
+    Ext.IO.SaveFile = function(_, txt) saved = txt end
+    os = nil
+    local ok, err = pcall(function()
+        N.guardReset()
+        N.killLevel("CTY_Main_A", "async path searches timed out 2x")
+        eq(N.levelSlow("CTY_Main_A").t, 1760000000, "dated")
+        assert(saved, "saved")
+    end)
+    os, Ext.IO.SaveFile, Ext.Timer = realOs, realS, nil
+    N.guardReset()
+    if not ok then error(err, 0) end
+end)
+
 test("NAV-3: a jump marker older than JUMP_MARK_MAX_MS with the game alive is dropped (no kill at a later death)", function()
     N.inflight("jump", { 1, 2, 3 })
     N.inflightExpire(clock + 1000)

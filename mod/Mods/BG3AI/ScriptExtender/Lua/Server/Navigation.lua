@@ -413,7 +413,9 @@ N.SLOW_SEARCH_STRIKES = 2
 N.WARM_DEATH_STRIKES = 2
 N.KILL_TTL_S = 6 * 3600
 N.JUMP_MARK_MAX_MS = 15000
-N.nowS = function() return os and os.time and os.time() or nil end -- wall clock (s); tests replace it
+-- wall clock (s); tests replace it. Not os.time: the SE sandbox has no `os` (bg3le sets it to nil), so every kill
+-- was saved undated and never expired (L8 2026-10-18: CTY_Main_A "async path searches timed out 2x", no t).
+N.nowS = function() return Ext.Timer and Ext.Timer.ClockEpoch and Ext.Timer.ClockEpoch() or nil end
 N.slowHits = N.slowHits or {}
 local guard, guardPath
 function N.guardFile()

@@ -2615,24 +2615,35 @@ def sec_vis() -> None:
     if need(bool(nm), "vis: name search finds party members", "no party in state.status"):
         out = call("get_nearby", radius=25, kinds=nm)
         item("vis: name search finds party members", "PASS" if f"PARTY " in out and nm in out else "FAIL", out[:200])
-    # 13. NAV-3 (audit 2026-10-13): the kill list is per playthrough (nav_guard_<host uuid>.json) and kills expire
+    # 13. NAV-3 (audit 2026-10-13): the kill list is per playthrough (nav_guard_<host uuid>.json) and kills expire.
+    #     Read-only: the save is the real playthrough's, so its file holds that playthrough's kills. Kills need the
+    #     mod's wall clock (L8 2026-10-18: N.nowS read os.time, which the SE sandbox lacks: every kill undated); a
+    #     load dates an undated kill, so any kill listed here must carry `t`.
     lg = S.game.try_rpc("nav.level_guard", {}) or {}
     f = str(lg.get("file") or "")
     dated = all(isinstance(v, dict) and v.get("t") for v in (lg.get("slow") or {}).values())
+    now = lua_server(g + "return tostring(N.nowS())")
+    skew = abs(float(now) - time.time()) if re.fullmatch(r"\d+(\.\d+)?", now) else None
     item("vis: NAV-3 kill list per playthrough, kills dated", "PASS" if f.startswith("BG3AI/nav_guard_") and
-         lg.get("ttl_s") and dated else "FAIL", f"file={f} ttl_s={lg.get('ttl_s')} slow={lg.get('slow')}")
+         lg.get("ttl_s") and dated and skew is not None and skew < 120 else "FAIL",
+         f"file={f} ttl_s={lg.get('ttl_s')} clock={now} (skew {skew}) slow={lg.get('slow')}")
     # 14. NAV-2: on a killed level nav.frontier searches <= 2 new directions and says so (the level is put back after
     #     unless it was already off)
     lvl, was = lg.get("level"), lg.get("here")
     if need(bool(lvl), "vis: NAV-2 killed level frontier throttled", "no current level"):
+        # The kill is in memory only: the file (nav_guard_<host>.json) is the real playthrough's, and
+        # nav.level_guard kill/clear would save it and wipe that level's strikes. The finally rewrites the file
+        # from memory in case a strike saved it with our kill meanwhile.
+        key = json.dumps(lvl)
         if not was:
-            S.game.try_rpc("nav.level_guard", {"kill": lvl, "why": "acceptance NAV-2"})
-        try:  # the kill list is a file (nav_guard_<host>.json) a load doesn't reset: always clear what we killed
+            lua_server(g + f'N.guardState().slow[{key}] = {{why="acceptance NAV-2", t=N.nowS()}} return 1')
+        try:
             lua_server(g + "N.waysCache, N.waysCacheN = {}, 0 return 1")
             fr = S.game.try_rpc("nav.frontier", {"hazards": False}) or {}
         finally:
             if not was:
-                S.game.try_rpc("nav.level_guard", {"clear": lvl})
+                lua_server(g + f"local gs = N.guardState() gs.slow[{key}] = nil "
+                           "Ext.IO.SaveFile(N.guardFile(), Ext.Json.Stringify(gs, {Beautify = false})) return 1")
         n = len(fr.get("ways") or [])
         item("vis: NAV-2 killed level frontier throttled", "PASS" if n <= 2 and fr.get("ways_off") and
              (fr.get("ms") or 0) < 60 else "FAIL", f"ways={n} ways_off={fr.get('ways_off')} ms={fr.get('ms')}")
