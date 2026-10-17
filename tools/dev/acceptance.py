@@ -398,6 +398,21 @@ def sec_trade() -> None:
              + " ".join(re.findall(r"(?m)^\((?:closed|closing) the trade window[^\n]*", out)))
     else:
         item("trade confirm closes the window", "SKIP", "no food ware in the listing: " + first_line(wares))
+    # [act] A13 S069 20:37:23: request 2 wares (one a stack) + confirm went to the barter before the Balance's gold
+    # was on our side: refused, ESCAPE + reopen. confirm now waits for an even table; the TABLE counts gold once.
+    priced = [(int(p), e, " x" in t) for e, t, p in re.findall(r"(e\d+) ([^|\n]*?) (\d+)g", wares)]
+    stack = min((x for x in priced if x[2]), default=None)
+    single = min((x for x in priced if not x[2] and (not stack or x[1] != stack[1])), default=None)
+    if stack and single and m:
+        if ui_screen() != "trade":
+            call("trade", npc=m.group(1))
+        out, dt = took("trade", request=f"{stack[1]},{single[1]}", confirm=True)
+        ok = out.startswith("trade: done") and "refused" not in out and "(no id)" not in out
+        item("trade confirm: 2 wares incl. a stack, even table first (A13)", "PASS" if ok else "FAIL",
+             f"{dt:.1f}s; {stack[1]} {stack[0]}g + {single[1]} {single[0]}g; {first_line(out)} | "
+             + grab(r"^TABLE[^\n]*", out))
+    else:
+        item("trade confirm: 2 wares incl. a stack, even table first (A13)", "SKIP", "no stack + single ware listed")
     esc = call("press_key", key="ESCAPE") if ui_screen() == "trade" else "(closed already)"
     # [se] S057 07:40:25: camp() right after closing a trade failed "cannot do that during a conversation" ×2 (the
     # trader's goodbye line); camp now waits ≤ 6 s for a line with no dialogue window, then goes. Reloaded after.
@@ -1583,6 +1598,15 @@ def sec_se() -> None:
         ok = "not the selected character" not in out and "FAILED" not in out and "EXCEPTION" not in out
         item("reactions on an unselected member", "PASS" if ok else "FAIL",
              f"{other.get('name')} (selected was {sel}): {first_line(out)[:160]} ({dt:.1f}s)")
+        if sel:
+            S.game.run_job("act.select", {"char": sel}, wait_s=5)
+        # [act] A13 S069 20:45:31: act.select was done 1 ms after the order while another member held ClientControl;
+        # done now means the member holds it (one resync via another member). Read-only on the selection.
+        r = S.game.run_job("act.select", {"char": other["uuid"]}, wait_s=5)
+        now = status().get("active")
+        item("act.select done = the member holds ClientControl (A13)",
+             "PASS" if r.status == "done" and now == other["uuid"] else "FAIL",
+             f"{r.status} {r.error or ''} result={r.result}; active after={now} (wanted {other['uuid']})")
         if sel:
             S.game.run_job("act.select", {"char": sel}, wait_s=5)
 

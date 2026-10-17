@@ -125,6 +125,7 @@ local function reset()
     party_rows = { P1 }
     if A then A.TASK_POS2 = false end
     if G then G.turn_over = {} end -- TurnEnded's marker (turn over until TurnStarted) is per test
+    if A then A.hit_ms = {} end -- AttackedBy on a party member (cast re-order window) is per test
     -- the stub world moves in synthetic multi-metre steps per 60 ms tick: NAV-8's small-step rule off (own tests)
     if A then A.TELEPORT_SMALL_M = 1e9 end
     world = {
@@ -793,6 +794,114 @@ test("cast in combat while Stunned is refused; a dropped order while Fearful nam
     tick(52)
     eq(j.status, "failed", "plain"); assert(not j.error:find("the caster is"), j.error)
     BG3AI.Visibility = savedV
+end)
+
+test("cast in combat: a dropped order right after a hit on the caster is ordered once more (S066-S069 x6)", function()
+    combat_setup(9)
+    spell("Target_Swing", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    world[NPC].pos = { 1.5, 0, 0 }
+    -- S069 r3 Karlach: an opportunity attack at her during the walk, then the swing never started; the bonus
+    -- ordered 3 s later worked. A hit 1 s before the order: the first order is dropped, the second one starts.
+    A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 0, "Attack", 0 })
+    clock = clock + 1000
+    local j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
+    eq(#called("UseSpell"), 1, "first order")
+    tick(52) -- 3.1 s, no CastSpell, no step
+    eq(j.status, "running", "ordered again " .. tostring(j.error))
+    eq(#called("UseSpell"), 2, "second order"); eq(#called("PurgeOsirisQueue"), 1, "the dropped one purged first")
+    A.dispatch("CastSpell", { P1, "Target_Swing", "Target", "None", 0 })
+    A.dispatch("CastedSpell", { P1, "Target_Swing", "Target", "None", 0 })
+    tick(10)
+    eq(j.status, "done", "the second order cast")
+    -- dropped twice: fails, naming the hit and the second order
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 2, "", 0 }) -- a Bleeding tick at the turn start
+    clock = clock + 500
+    j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
+    tick(52)
+    eq(j.status, "running", "second order")
+    tick(52)
+    eq(j.status, "failed", "dropped twice")
+    assert(j.error:find("never started it %(3 s, no cast, no step%) twice: ordered again after a hit on the caster"
+        .. " 0%.5 s before the first order"), j.error)
+    eq(#called("UseSpell"), 4, "two orders, no third")
+    -- no hit near the order (one 3 s before it): fails at 3 s as before, one order
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 2, "", 0 })
+    clock = clock + 3000
+    j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
+    tick(52)
+    eq(j.status, "failed", "no hit: plain failure"); assert(not j.error:find("twice"), j.error)
+    eq(#called("UseSpell"), 5, "one order")
+    -- a hit after the order (during the 3 s) counts too
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
+    tick(10)
+    A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 0, "Attack", 0 })
+    tick(42)
+    eq(j.status, "running", "hit after the order: ordered again")
+    eq(#called("UseSpell"), 7, "second order")
+    -- S070 Guiding Bolt: no hit, Prone ended at the turn start (shown statuses only, by name)
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ statusInfo = function(id)
+        return ({ PRONE = { name = "Prone" } })[id] end }, { __index = savedV })
+    clock = clock + 3000
+    A.dispatch("StatusRemoved", { P1, "SOME_TECHNICAL_STATUS", "", 0 })
+    j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
+    tick(52)
+    eq(j.status, "failed", "a technical status ending is no reason")
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    A.dispatch("StatusRemoved", { P1, "PRONE", "", 0 })
+    j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
+    tick(52)
+    eq(j.status, "running", "Prone ended: ordered again")
+    tick(52)
+    assert(j.error:find("twice: ordered again after the caster's Prone ending"), j.error)
+    BG3AI.Visibility = savedV
+end)
+
+test("select: done once the character holds ClientControl; a no-op order resyncs via another member (S069)", function()
+    party_rows = { P1, P2 }
+    world[P2] = { pos = { 3, 0, 0 }, comps = { ClientControl = {} } }
+    osiv[key("IsCharacter", P2)] = 1
+    osiv[key("GetReservedUserID", P1)] = 1
+    osiv[key("GetCurrentCharacter", 1)] = P1 -- the server's current character is already P1, the client controls P2
+    local orders, follow = {}, nil
+    Osi.MakePlayerActive = function(u)
+        orders[#orders + 1] = u
+        if follow then follow(u) end
+    end
+    -- S069 20:45:31: the old post-condition (GetCurrentCharacter) finished at once; now it waits for ClientControl
+    local j = job(op("select", { char = P1 }))
+    tick(5) -- 300 ms
+    eq(j.status, "running", "P2 still holds ClientControl")
+    eq(#orders, 1, "one order so far")
+    follow = function(u) -- the game follows a real change of selection
+        for _, w in ipairs({ P1, P2 }) do world[w].comps.ClientControl = (w == u) and {} or nil end
+    end
+    tick(6) -- 660 ms: resync, P2 first, then P1 on the next tick
+    tick(2)
+    eq(orders[2], P2, "via another member"); eq(orders[3], P1, "then the character")
+    eq(j.status, "done", "selected " .. tostring(j.error)); eq(j.result.resynced, true, "resynced")
+    -- already holding it: done on the first tick, one order
+    orders = {}
+    j = job(op("select", { char = P1 }))
+    tick()
+    eq(j.status, "done", "already selected"); eq(#orders, 1, "one order")
+    -- the client never follows: failed at 2.5 s, naming who holds it (not a 3 s timeout)
+    follow = nil
+    world[P1].comps.ClientControl, world[P2].comps.ClientControl = nil, {}
+    j = job(op("select", { char = P1 }))
+    tick(43) -- 2.58 s
+    eq(j.status, "failed", "kept"); assert(j.error:find("the game kept .* selected"), j.error)
+    eq(j.result.holder, P2, "holder")
+    -- nobody holds ClientControl (the host fallback): GetCurrentCharacter decides, as before
+    world[P2].comps.ClientControl = nil
+    j = job(op("select", { char = P1 }))
+    tick()
+    eq(j.status, "done", "host fallback")
+    Osi.MakePlayerActive = nil
 end)
 
 test("cast ui=true (ACT-8 hotbar route): 3 targets checked, no Osiris order, CastedSpell finishes, nothing charged", function()

@@ -43,9 +43,12 @@ EXPECT_SCREENS: dict[str, set[str]] = {
 OFFSETS = [(0, 0), (0, -14), (0, 14), (-12, 0), (12, 0), (0, -30), (0, 28), (-24, -10), (24, -10)]
 # S032 17:42 (Vault Door e679, 90 tries, nothing ever under the cursor) and ~10 doors/chests S017-S026: a door's
 # origin is its hinge, so a wide (double/vault) door's leaf is 1-2 m along its X axis: aims at ±1.4 m too.
+# S070 21:08:39 (Dragon Head Torch, 89 aims on the wall behind it): a wall-mounted item hangs above the item aims'
+# 1.1 m: 1.6 / 2.1 m over the origin too (Pick.aim_point; a character's are its chest).
+# Last in the list: the first view's probe takes every aim's centre anyway.
 AIMS: list[tuple[str, float]] = [("auto", 0.0), ("chest", 0.0), ("low", 0.0), ("feet", 0.0),
                                  ("mid", 0.5), ("mid", -0.5), ("mid", 0.9), ("mid", -0.9),
-                                 ("mid", 1.4), ("mid", -1.4)]
+                                 ("mid", 1.4), ("mid", -1.4), ("high", 0.0), ("top", 0.0)]
 
 # Camera moves a player would make to look at the target (closed loop on ui.screen_pos): zoom out while the
 # target sits near/over an edge, rotate (middle-drag) toward it when it is far off to a side or behind.

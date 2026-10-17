@@ -634,6 +634,18 @@ class TradeText(unittest.TestCase):
         self.assertNotIn("WARES", out)
         self.assertLess(len(out), 400)
 
+    def test_gold_on_the_table_is_its_stack_shown_once(self):
+        # S055 03:45:46: "you give: (no id) ? x60 60g, 60 gold (=120g)": the Balance's gold (a Gold stack) printed
+        # as an unnamed item plus the side's shown total as gold. Now the Lua counts the stack once (A13).
+        res = dict(TRADE_S023, offer={"you": {"gold": 60, "items": [{"gold": True, "count": 60, "price": 60}]},
+                                       "trader": {"gold": 0, "items": [{"uuid": _u(106), "name": "Potion of Healing",
+                                                                        "count": 4, "price": 208}]}},
+                   balance={"you_give": 60, "you_get": 208})
+        out = economy.trade_text(res, self.h, listing=False)
+        self.assertIn("TABLE you give: 60 gold (=60g) | you get: e106 Potion of Healing x4 208g (=208g) | short by 148g",
+                      out)
+        self.assertNotIn("(no id)", out)
+
     def test_tool_renders_through_trade_text(self):
         class G(FakeGame):
             def run_job(self, op, args, context="server", wait_s=25.0, **kw):

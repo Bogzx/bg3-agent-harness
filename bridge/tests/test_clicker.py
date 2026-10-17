@@ -48,6 +48,7 @@ class FakeGame:
         self.hover_other = None               # what the picking helper reports instead of the target
         self.rc = None                        # where the right-click opened the context menu
         self.cursor = (0, 0)
+        self.aim_px: dict = {}  # projected spot -> the aim that put it there (first one wins, as the search dedupes)
 
     want_row = "Lockpick"
 
@@ -93,12 +94,20 @@ class FakeGame:
             if self.behind:
                 return {"on_screen": False, "behind": True, "side": self.side}
             nx, ny = self.ndc
-            if args.get("aim") == "chest":
-                ny -= 0.2
-            self.last_aim = (args.get("aim"), args.get("ox", 0.0))
+            # each aim its own spot: up the item (chest/high/top), along its X axis (ox)
+            ny -= {"chest": 0.2, "high": 0.3, "top": 0.4}.get(args.get("aim"), 0.0)
+            nx += 0.06 * float(args.get("ox") or 0.0)
+            aim = (args.get("aim"), args.get("ox", 0.0))
+            px = ((nx * 0.5 + 0.5) * 1920, (ny * 0.5 + 0.5) * 1080)
+            if not any(abs(px[0] - a) < 1 and abs(px[1] - b) < 1 for a, b in self.aim_px):
+                self.aim_px[px] = aim
+            self.last_aim = aim
             return {"ndc": [nx, ny], "on_screen": -1 <= nx <= 1 and -1 <= ny <= 1, "side": self.side}
         if op == "ui.hover_check":
-            ok = self.hover_aims is None or self.last_aim in self.hover_aims
+            # the aim whose spot is nearest the cursor (the search tries each spot and its pixel nudges)
+            near = min(self.aim_px.items(), key=lambda kv: (kv[0][0] - self.cursor[0]) ** 2
+                       + (kv[0][1] - self.cursor[1]) ** 2, default=(None, self.last_aim))[1]
+            ok = self.hover_aims is None or near in self.hover_aims
             return {"hovered": ok} if ok or not self.hover_other else {"hovered": False, "hover": self.hover_other}
         if op == "ui.state":
             return {"screen": self.screen_after if self.clicked else "game"}
@@ -462,7 +471,7 @@ class ClickEntity(unittest.TestCase):
 
         def rpc(op, args=None, context="server"):
             if op == "ui.hover_check":
-                clock[0] += 0.3
+                clock[0] += 0.2   # per try (live S070: 89 tries in 8 s = 0.09 s); the probe now has 12 aim centres
                 turned = sum(1 for e in inp.log if e[0] == "drag" and e[1] == "M")
                 if turned >= 2:   # visible from the other side only
                     return {"hovered": True}

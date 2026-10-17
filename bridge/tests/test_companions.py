@@ -284,6 +284,71 @@ class SwapParty(unittest.TestCase):
         self.assertIn("walked to Halsin", out)
         self.assertIn("swap_party: done", out)
 
+    def settle_fake(self, back_after: int | None):
+        """S070 20:59:06: Wyll still at the dream scene's spot 7 s after the long rest: talk 'not visible', walk 'no
+        path'. back_after: state.camp reads until Halsin stands on his camp spot (None = never)."""
+        menu = {"options": [{"i": 1, "text": "I'd like you to join me."}]}
+        full = {"options": [{"i": 2, "text": "Gale could do with a rest."}]}
+        fake = FakeGame([menu, full], at_camp=True)
+        fake.talking = False
+        reads = []
+        real_rpc, real_job = fake.rpc, fake.run_job
+
+        def back() -> bool:
+            return back_after is not None and len(reads) > back_after
+
+        def rpc(op, args=None, context="server"):
+            out = real_rpc(op, args, context)
+            if op == "state.camp":
+                reads.append(1)
+                for c in out["camp"]:
+                    if c["uuid"] == HALSIN:
+                        c["pos"] = [10.0, 0.0, 5.0] if back() else [-1414.0, 8.0, -2596.0]
+            return out
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            if op == "act.talk" and not back():
+                fake.jobs.append((op, args))
+                return JobResult(status="failed", error="target is not visible")
+            if op == "act.move_to" and not back():
+                fake.jobs.append((op, args))
+                return JobResult(status="failed", error="no path to the destination")
+            return real_job(op, args, context, wait_s, **kw)
+        fake.rpc, fake.run_job = rpc, run_job
+        fake.try_rpc = lambda op, args=None, context="server", default=None: rpc(op, args, context)
+        self.use(fake)
+        for name, val in (("_far_move", lambda *a: None), ("LONG_REST_AT", [server.time.monotonic()])):
+            self.addCleanup(setattr, server, name, getattr(server, name))
+            setattr(server, name, val)
+        clock = [0.0]
+        real_mono = server.time.monotonic
+        server.time.monotonic = lambda: real_mono() + clock[0]
+        self.addCleanup(setattr, server.time, "monotonic", real_mono)
+        server.time.sleep = lambda s: clock.__setitem__(0, clock[0] + s)
+        return fake
+
+    def test_after_a_long_rest_waits_for_the_companion_to_return(self):
+        fake = self.settle_fake(back_after=3)
+        out = server.swap_party(into="Halsin", out="Gale", leave_camp=False)
+        talks = [j for j in fake.jobs if j[0] == "act.talk"]
+        self.assertEqual(len(talks), 3)
+        self.assertIn("to return to its camp spot after the long rest", out)
+        self.assertIn("swap_party: done", out)
+
+    def test_after_a_long_rest_never_a_final_failure_while_it_hasnt_returned(self):
+        self.settle_fake(back_after=None)
+        out = server.swap_party(into="Halsin", out="Gale", leave_camp=False)
+        self.assertIn("swap_party: NOT YET — Halsin hasn't come back to its camp spot since the long rest", out)
+        self.assertIn("30 s waited", out)
+        self.assertNotIn("FAILED to talk", out)
+
+    def test_no_settle_wait_long_after_a_rest(self):
+        fake = self.settle_fake(back_after=None)
+        server.LONG_REST_AT[0] = server.time.monotonic() - 2 * server.REST_SETTLE_WINDOW_S
+        out = server.swap_party(into="Halsin", out="Gale", leave_camp=False)
+        self.assertIn("swap_party: FAILED to talk to Halsin", out)
+        self.assertEqual(len([j for j in fake.jobs if j[0] == "act.talk"]), 2)
+
     def test_far_walk_up_stops_short_of_the_companion(self):
         # acceptance 12:2x: the 59 m walk to Wyll ended on his spot, then a 3.4 m second leg; stop short instead
         seen = {}

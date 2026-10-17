@@ -1294,6 +1294,28 @@ class CombatTurn(Base):
         self.assertIn("reactions set: Divine Smite=always", out)
         self.assertNotIn("reactions: FAILED", out)
 
+    # S069 20:45:31: act.select now waits for ClientControl; when the game keeps another member selected its reason
+    # is the prep's failure (no 5 futile retries of the client)
+    def test_reactions_prep_names_who_the_game_kept_selected(self):
+        from bg3ai.game import GameError
+        orig = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "ui.reactions":
+                self.g.calls.append((op, args))
+                raise GameError('[string "BG3AI/Client/UISettings.lua"]:192: char is not the selected character; '
+                                'select it first (act.select)')
+            if op == "act.select":
+                self.g.calls.append((op, args))
+                return {"status": "failed", "error": "the game kept Karlach selected (MakePlayerActive twice, once"
+                        " via another member)"}
+            return orig(op, args, context, timeout)
+        self.g.rpc = rpc
+        out = server.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
+        self.assertEqual(len(self.g.ops("ui.reactions")), 1)
+        self.assertIn("could not be selected: the game kept Karlach selected", out)
+        self.assertIn("action: Shout_Dodge: done", out)
+
     def test_next_party_member_already_up_gets_actions(self):
         self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
         out = server.combat_turn(self.plan(action="Shout_Dodge"))

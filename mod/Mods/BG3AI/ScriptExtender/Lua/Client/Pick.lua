@@ -130,6 +130,11 @@ end
 
 -- Where to aim on an entity: characters at chest height, corpses low, items
 -- slightly above their origin.
+-- S070 21:08:39: click_on a Dragon Head Torch (Wyrmway) missed 89 aims, every one on the wall behind it (a no-id
+-- object 9.6 m from the torch's origin), after both camera turns: the sconces hang ~1.5-2 m up the wall (the
+-- screenshot) and an item's aims stopped at 1.1 m over its origin. "high"/"top" reach a wall mount (GUESS: the
+-- torch's origin is at the wall's foot); a character's are its chest (deduplicated by the search).
+P.AIM_UP = { feet = 0.05, low = 0.3, mid = 0.9, chest = 1.1, high = 1.6, top = 2.1 }
 function P.aim_point(uuid, aim, dy, ox)
     local e = Ext.Entity.Get(uuid)
     if not e then return nil, "unknown entity" end
@@ -141,7 +146,8 @@ function P.aim_point(uuid, aim, dy, ox)
         local dead = U.comp(e, "Death") ~= nil
         if is_char then aim = dead and "low" or "chest" else aim = "low" end
     end
-    local off = ({ feet = 0.05, low = 0.3, mid = 0.9, chest = 1.1 })[aim] or 0.3
+    if is_char and (aim == "high" or aim == "top") then aim = "chest" end
+    local off = P.AIM_UP[aim] or 0.3
     p[2] = p[2] + off + (tonumber(dy) or 0)
     ox = tonumber(ox)
     if ox and ox ~= 0 then

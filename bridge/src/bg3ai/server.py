@@ -11,6 +11,7 @@ Design rules (docs/ARCHITECTURE.md):
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
@@ -3710,6 +3711,11 @@ def _camp_block_text(b: dict) -> str:
 
 
 SWAP_DIALOGUE_S = 25.0  # swap_party: the longest it drives the companion's dialogue
+# S070 20:59:06: swap_party 7 s after the long rest's wake-up: Wyll (a speaker of the dream scene) still stood where
+# the scene put him: talk "not visible", walk "no path … travelled=0", FAILED, and the agent played Wyll's own quest
+# without him. Within REST_SETTLE_WINDOW_S of a long rest such a failure waits (≤ SWAP_REST_SETTLE_S) for the
+# companion to move back to its camp spot, then walks and talks again; never a final failure while it hasn't.
+REST_SETTLE_WINDOW_S, SWAP_REST_SETTLE_S, SWAP_SETTLE_MOVE_M = 180.0, 30.0, 1.0
 
 
 WALK_UP_SHORT_M = 2.0  # _walk_up_to stops this far short of the character (act.talk's approach covers the rest)
@@ -3735,6 +3741,22 @@ def _walk_up_to(char: str, uuid: str, name: str, pos: list | None = None) -> str
     dest = {"pos": list(pos[:3])} if pos else {"target": uuid}
     r = game.run_job("act.move_to", {"char": char, "run": True, **dest}, wait_s=45)
     return f"walked to {name}" + ("" if r.status == "done" else f" ({_job_text('move_to', r)[:120]})")
+
+
+def _swap_settle(inc: dict) -> tuple[dict | None, float]:
+    """After a long rest: wait until the camp companion's row (state.camp) stands ≥ SWAP_SETTLE_MOVE_M from where it
+    was (back on its camp spot). -> (the new row, s waited) or (None, s waited)."""
+    t0 = time.monotonic()
+    p0 = inc.get("pos")
+    while time.monotonic() - t0 < SWAP_REST_SETTLE_S:
+        time.sleep(1.0)
+        info = game.try_rpc("state.camp") or {}
+        row = next((c for c in info.get("camp") or [] if isinstance(c, dict) and c.get("uuid") == inc.get("uuid")),
+                   None)
+        p = (row or {}).get("pos")
+        if row and p and (not p0 or math.dist(p[:3], p0[:3]) >= SWAP_SETTLE_MOVE_M):
+            return row, time.monotonic() - t0
+    return None, time.monotonic() - t0
 
 
 @mcp.tool()
@@ -3808,6 +3830,19 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
     if r.status != "done" and any(w in _job_text("talk_to", r) for w in ("too far away", "not visible")):
         # Live 2026-10-10: Halsin stood 66 m from the camp arrival point, out of view (talk is capped at 40 m and
         # needs sight): walk up to where state.camp says it stands first.
+        steps.append(_walk_up_to(talker, inc["uuid"], str(inc.get("name")), inc.get("pos")))
+        r = game.run_job("act.talk", {"char": talker, "npc": inc["uuid"]}, wait_s=40)
+    unreachable = ("too far away", "not visible")
+    if r.status != "done" and any(w in _job_text("talk_to", r) for w in unreachable) \
+            and time.monotonic() - LONG_REST_AT[0] < REST_SETTLE_WINDOW_S:
+        moved, waited = _swap_settle(inc)
+        if not moved:
+            return done("\n".join(steps + [
+                f"swap_party: NOT YET — {inc.get('name')} hasn't come back to its camp spot since the long rest "
+                f"(still where the rest's scene left it, {waited:.0f} s waited: {_job_text('talk_to', r)}). Not a "
+                f"refusal: swap_party(into=\"{inc.get('name')}\", out=\"{out}\") again in a minute"]))
+        steps.append(f"waited {waited:.0f} s for {inc.get('name')} to return to its camp spot after the long rest")
+        inc = moved
         steps.append(_walk_up_to(talker, inc["uuid"], str(inc.get("name")), inc.get("pos")))
         r = game.run_job("act.talk", {"char": talker, "npc": inc["uuid"]}, wait_s=40)
     if r.status != "done":
@@ -5059,13 +5094,13 @@ def long_rest(confirm: bool = True, partial: bool = False) -> str:
         return int((time.monotonic() - t0) * 1000) + 1500
 
     out = _box_act("long_rest", "ui.long_rest", args, wait_s=90)
-    ALERTS.rested(_batch.get("result"))
+    _rested()
     if "rest screen didn't open" in out:
         flow = _rest_flow_answer(since=since_ms)
         if isinstance(flow, dict) and not flow.get("steps"):
             # the press never reached the story (S018: a press swallowed by a closing screen): press once more
             out = _box_act("long_rest", "ui.long_rest", args, wait_s=90)
-            ALERTS.rested(_batch.get("result"))
+            _rested()
             if "rest screen didn't open" not in out:
                 return out
             flow = _rest_flow_answer(since=since_ms)
@@ -5073,12 +5108,22 @@ def long_rest(confirm: bool = True, partial: bool = False) -> str:
             # the game said yes after the job's 4 s window: the rest screen is coming, carry on in this call
             # without pressing again (a press at night is the story's "leave night mode")
             out = _box_act("long_rest", "ui.long_rest", {**args, "no_press": True}, wait_s=90)
-            ALERTS.rested(_batch.get("result"))
+            _rested()
             if "rest screen didn't open" not in out:
                 return out
             flow = game.try_rpc("camp.rest_flow", {"since_ms": since_ms()})
         out += "\n" + _rest_flow_hint(flow)
     return out
+
+
+LONG_REST_AT = [0.0]  # monotonic time of the last long rest (swap_party's post-rest settle)
+
+
+def _rested() -> None:
+    res = _batch.get("result")
+    ALERTS.rested(res)
+    if isinstance(res, dict) and res.get("rest") in ("full", "partial"):
+        LONG_REST_AT[0] = time.monotonic()
 
 
 def _rest_flow_answer(wait_s: float = 8.0, since: Callable[[], int] = lambda: 20000) -> dict | None:
@@ -5269,9 +5314,28 @@ def prepare_spells(who: str | None = None, add: list[str] | str | None = None,
     """Change a caster's PREPARED spells (clerics, paladins, druids, wizards), out of combat: only prepared spells cast. add/remove: spell names (or ids), a list or a comma string; removals happen first, so a swap fits the limit. It works the spellbook page like a player (opens it, clicks the spells, closes it) and ends with the prepared list. Refused in combat, over the limit (it names what is prepared), for a spell not in the character's book, and for classes that don't prepare (sorcerer/warlock/bard/ranger: level_up changes their spells). get_party and get_status show each caster's PREPARED list and limit."""
     t0 = time.monotonic()
     char = _who(who)
+    waited = _wait_loading_out()
     text = spellprep.prepare(game, char, spellprep.names(add), spellprep.names(remove),
                              select=lambda u: _select_for_clicks(u, "the spellbook"))
+    if waited:
+        text += f"\n(waited {waited:.0f} s for the loading screen to end first)"
     return _finish("prepare_spells", {"who": who, "add": add, "remove": remove}, _label(text), t0)
+
+
+LOADING_WAIT_S = 60.0  # _wait_loading_out: the longest a region load is waited out
+
+
+def _wait_loading_out(max_s: float = LOADING_WAIT_S) -> float:
+    """S070 21:00:08: prepare_spells pressed K 6 s after a region change (Return to Wyrm's Crossing) with the loading
+    screen up: "the spellbook didn't open". A key or click during a load goes nowhere: wait until the loading screen
+    is gone and the HUD is up. -> seconds waited (0 when nothing was loading)."""
+    t0 = time.monotonic()
+    if _ui_screen()[0] != "loading":
+        return 0.0
+    while time.monotonic() - t0 < max_s and _ui_screen()[0] in ("loading", "?"):
+        time.sleep(0.5)
+    _settle_hud(10)
+    return time.monotonic() - t0
 
 
 @mcp.tool()
@@ -5435,7 +5499,7 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
     """Barter with a trader. Open with npc=<id> (talks to them and picks the conversation's trade answer, e.g. 'Let me see your wares.'; if none is offered yet it stops at the conversation), then list items via get_inventory; offer/request: comma lists of item ids to move; confirm=true to finish the deal (then the window closes). price is for the whole stack (price=156 count=3: 52 each; a stack moves whole). Wares marked supply=N are food (camp supplies per item; a long rest needs 40). A stack's "how many?" box is answered for you: the whole stack, or count=N.
     sell="junk": sell everything a player sells at every trader in one call (not equipped, story, consumables, food, keys/tools, magic gear, or keep=<comma ids>), up to the trader's gold; get_inventory(filter="junk") previews it.
     Opening or trade() with no args lists the wares grouped (food with supply, potions/scrolls, gear by rarity) and your best-priced items, capped per group; full=true lists everything. offer/request/confirm calls show the table and the balance only.
-    donate=true gives the offered items for nothing (answers the game's "Donate these items?"); automatic on a quest hand-over screen (a dialogue answer like "take them" opens a trade screen whose other side has no wares and no gold): trade(offer=<id>, confirm=true) gives it and closes the screen."""
+    confirm refuses an uneven table before the barter (a trader with no gold swaps items only); donate=true gives the offered items (or an overpay's difference) for nothing (answers the game's "Donate these items?"); automatic on a quest hand-over screen (a dialogue answer like "take them" opens a trade screen whose other side has no wares and no gold): trade(offer=<id>, confirm=true) gives it and closes the screen."""
     if sell:
         if sell.strip().lower() != "junk":
             raise ValueError('sell must be "junk" (or use offer=<ids> for specific items)')
@@ -5710,9 +5774,10 @@ def _reactions_rpc(char: str, args: dict) -> Any:
     back to the host when no party member holds ClientControl, so "already selected" can be wrong (S025; S041
     22:41:22 combat_turn "reactions: FAILED — char is not the selected character"): select first when the server
     disagrees, and on the client's refusal select and retry once."""
+    sel = None
     try:
         if _active() != char:
-            game.run_job("act.select", {"char": char}, wait_s=5)
+            sel = game.run_job("act.select", {"char": char}, wait_s=5)
     except GameError:
         pass
     try:
@@ -5720,7 +5785,13 @@ def _reactions_rpc(char: str, args: dict) -> Any:
     except GameError as e:
         if "not the selected character" not in str(e):
             raise
-    game.run_job("act.select", {"char": char}, wait_s=5)
+        last = e
+    # act.select waits until the character holds ClientControl (one resync via another member): its failure names
+    # who the game kept selected (S069 20:45:31: done at once while another member was selected, 6 refusals)
+    if sel is None or sel.status == "done":
+        sel = game.run_job("act.select", {"char": char}, wait_s=5)
+    if sel.status != "done":
+        raise GameError(f"{last} ({_label(char)} could not be selected: {sel.error or sel.status})")
     for _ in range(5):  # the client's ClientControl follows the selection a frame or two later
         time.sleep(0.1)
         try:
@@ -5764,7 +5835,7 @@ def press_key(key: str) -> str:
         return _press_escape()
     if key in _SAVELOAD_KEYS:
         if key == "F5":  # quicksave: the gated save path does the same
-            return "press_key F5 is quicksave -> save_game(): " + getattr(save_game, "fn", save_game)()
+            return "press_key F5 is quicksave -> save_game(\"quicksave\"): " + getattr(save_game, "fn", save_game)("quicksave")
         return ("REFUSED: F8 is quickload; reloading goes through load_game (prefix-checked; resets the "
                 "change tracking)")
     return _act("press_key", "ui.key", {"key": key}, context="client", wait_s=5)
@@ -9680,7 +9751,7 @@ def _save_menus(label: str) -> tuple[bool, str]:
         # An in-game key/text didn't land: send it through the input shim, then let the mod continue.
         inp = _inp()
         if inp is None:
-            return False, "the save menus need the input shim (" + (r.error or "needs_text") + "); try save_game() (quicksave)"
+            return False, "the save menus need the input shim (" + (r.error or "needs_text") + "); try save_game(label=\"quicksave\")"
         if res.get("needs_text"):
             inp.text(label)
         inp.key(res.get("needs_key") or "RETURN")
@@ -9723,10 +9794,20 @@ SAVER = saver.Saver(_save_menus, _can_save, lambda: SAVE_DIR, _save_log)
 @mcp.tool()
 @_guard
 def save_game(label: str = "") -> str:
-    """Save the game (returns at once: the save runs in the background; SAVED shows on a later result). label: short name for a named save (e.g. "Sxxx-pre-kagha"); empty = quicksave. If the game can't save right now (conversation, roll) it is queued for the next moment it can."""
+    """Save the game (returns at once: the save runs in the background; SAVED shows on a later result). label: short name for a named save (e.g. "Sxxx-pre-kagha"); empty = named after the session and the time (Sxxx-HHMM); "quicksave" = the game's quicksave. If the game can't save right now (conversation, roll) it is queued for the next moment it can."""
     t0 = time.monotonic()
     _enable_save_gates()
     label = re.sub(r"[^A-Za-z0-9 _-]", "", label)[:40] if label else ""  # the mod's name filter (no dots)
+    if label.lower() == "quicksave":
+        label = ""
+    elif not label.strip():
+        # S070 21:14:32: save_game(label="") made a quicksave where a named save was meant (load_game "latest"
+        # and the keeper look for Sxxx- names): name it after the session; refused without one
+        sess = os.environ.get("BG3AI_SESSION") or ""
+        if not sess:
+            return _finish("save_game", {"label": label}, "save_game: REFUSED — no label: give one (e.g. "
+                           "label=\"S070-before-boss\"), or label=\"quicksave\" for the game's quicksave", t0)
+        label = f"{sess}-{time.strftime('%H%M')}"
     body = SAVER.save(label, sync=_session_over())  # session over: nothing comes after, so wait for the disk
     return _finish("save_game", {"label": label}, body, t0)
 

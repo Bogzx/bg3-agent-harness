@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
@@ -309,6 +310,18 @@ class ServerSave(Base):
         self.assertTrue(wait_until(lambda: server.SAVER.pending is None))
         later = server.wait_for("idle", timeout_s=0.1)
         self.assertIn("SAVED 'S010-prekagha'", later)
+
+    def test_an_empty_label_is_named_after_the_session(self):
+        # S070 21:14:32: save_game(label="") made a quicksave where a named save was meant
+        with unittest.mock.patch.dict(os.environ, {"BG3AI_SESSION": "S070"}):
+            out = server.save_game("")
+        self.assertRegex(out, r"saving 'S070-\d{4}' in the background")
+        server.SAVER.settle(3)
+        with unittest.mock.patch.dict(os.environ, {"BG3AI_SESSION": ""}):
+            out = server.save_game("  ")
+        self.assertIn("save_game: REFUSED — no label", out)
+        out = server.save_game("QuickSave")
+        self.assertIn("saving 'quicksave' in the background", out)
 
     def test_a_gated_tool_waits_for_the_menus(self):
         server.save_game("x")

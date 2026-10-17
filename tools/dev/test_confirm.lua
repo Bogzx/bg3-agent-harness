@@ -1098,5 +1098,116 @@ do
     A.LOAD_ENABLED, BG3AI.UI.command, BG3AI.UI.get = _le, _cmd, _get
 end
 
+do -- A13 S069 20:37:23 (Vicar Humbletoes, trader gold 0): request Mantle 819g + Potions x6 198g, confirm: FinishBarter
+    -- went out before the Balance's gold was on our side -> refused, ESCAPE + reopen. The table's *OfferGold props are
+    -- each side's shown total (S069 "1017 gold" = 819 + 198): the gold on the table is a Gold stack among the items.
+    local UIt = BG3AI.UI
+    local saved = {}
+    for _, k in ipairs({ "get", "prop", "props", "items", "pick", "command", "widget", "isVisible", "cachedByName",
+                         "typeName" }) do saved[k] = UIt[k] end
+    local _entity = Ext.Entity
+    Ext.Entity = { GetAllEntitiesWithComponent = function() return {} end, Get = function() return nil end }
+    local function inv(...) local l = {} for i, it in ipairs({ ... }) do l[i] = { Index = i - 1, Object = it } end
+        return { Slots = l } end
+    local trade, tw, cmds, landAt, landWith
+    local function setup(yours, theirs, traderGold)
+        trade = { Mode = "Barter", CharacterOffer = inv(table.unpack(yours)), TraderOffer = inv(table.unpack(theirs)),
+            TraderInventoryGold = traderGold, TradePartyGold = 1374, TradeButtonsEnabled = true }
+        local function total(side) local t = 0 for _, sl in ipairs(side.Slots) do t = t + sl.Object.TradePrice end
+            return t end
+        trade.CharacterOfferGold, trade.TraderOfferGold = total(trade.CharacterOffer), total(trade.TraderOffer)
+        tw, cmds, landAt, landWith = { DataContext = trade }, {}, nil, nil
+    end
+    local function land()  -- the Balance's gold reaches our side of the table landAt
+        if landAt and clock >= landAt then
+            trade.CharacterOffer = inv(landWith)
+            trade.CharacterOfferGold = landWith.TradePrice
+            landAt = nil
+        end
+    end
+    UIt.get = function(o, k)
+        if o == trade then land() end
+        if type(o) == "table" then return o[k] end
+        return nil
+    end
+    UIt.prop = UIt.get
+    UIt.props = function(o) if o == trade then land() end return type(o) == "table" and o or {} end
+    UIt.items = function(c, max)
+        local i = 0
+        return function()
+            i = i + 1
+            if type(c) ~= "table" or i > #c or (max and i > max) then return nil end
+            return i, c[i]
+        end
+    end
+    UIt.pick = function(o, names) local out = {} for _, n in ipairs(names) do out[n] = o[n] end return out end
+    UIt.widget = function(n) if n == "Trade" then return tw end return saved.widget(n) end
+    UIt.isVisible = function(el) if el == tw then return true end return saved.isVisible(el) end
+    UIt.cachedByName = function() return nil end
+    UIt.typeName = function() return nil end
+    UIt.command = function(o, name, param, dry)
+        if o ~= trade then return saved.command(o, name, param, dry) end
+        if dry then return true end
+        cmds[#cmds + 1] = name
+        if name == "BalanceTrade" and landWith and not landAt then landAt = clock + 400 end
+        if name == "FinishBarter" then
+            land()
+            if trade.CharacterOfferGold >= trade.TraderOfferGold then
+                trade.CharacterOffer, trade.TraderOffer = inv(), inv()
+            else
+                trade.TradeDeclined = true
+            end
+        end
+        return true
+    end
+    local function count(name) local n = 0 for _, c in ipairs(cmds) do if c == name then n = n + 1 end end return n end
+    local mantle, pots = { Count = 1, TradePrice = 819 }, { Count = 6, TradePrice = 198 }
+    local gold = { Count = 1017, TradePrice = 1017, ItemType = "Gold" }
+
+    -- the gold lands 400 ms after the Balance: barter only then
+    setup({}, { mantle, pots }, 0)
+    landWith = gold
+    local j = run(ops["ui.trade"]({ confirm = true }).job, 6000)
+    ok(j.status == "done" and j.result and j.result.confirmed == true,
+        "S069: confirm waits for the Balance's gold, then barters: " .. tostring(j.status) .. " " .. tostring(j.error))
+    ok(count("FinishBarter") == 1 and not trade.TradeDeclined, "S069: one FinishBarter, not refused")
+
+    -- the table's shown totals are not gold: 2 wares (1017g) and nothing of ours = short by 1017, not 2034
+    setup({}, { mantle, pots }, 0)
+    local st = ops["ui.trade"]({})
+    ok(st.balance.you_give == 0 and st.balance.you_get == 1017 and st.offer.trader.gold == 0,
+        "table: TraderOfferGold (the side's total) is not gold on the table: " .. tostring(st.balance.you_get))
+    trade.CharacterOffer = inv(gold)
+    st = ops["ui.trade"]({})
+    ok(st.balance.you_give == 1017 and st.offer.you.gold == 1017 and st.offer.you.items[1].gold == true,
+        "table: our gold is the Gold stack: " .. tostring(st.balance.you_give))
+
+    -- the gold never lands: Balance pressed again on a table that stopped changing, never FinishBarter
+    setup({}, { mantle, pots }, 0)
+    j = run(ops["ui.trade"]({ confirm = true }).job, 6000)
+    ok(j.status == "failed" and tostring(j.error):find("you would get 1017g more than you give", 1, true)
+        and count("FinishBarter") == 0 and count("BalanceTrade") >= 2,
+        "gold never on the table: not confirmed, no refusal to clear: " .. tostring(j.error) .. " B="
+        .. count("BalanceTrade"))
+
+    -- a 0-gold trader can't pay a difference: items only, say so (no gift unless donate)
+    setup({ { Count = 1, TradePrice = 100 } }, { { Count = 1, TradePrice = 60 } }, 0)
+    j = run(ops["ui.trade"]({ confirm = true }).job, 6000)
+    ok(j.status == "failed" and tostring(j.error):find("you would give 40g more", 1, true)
+        and tostring(j.error):find("items only", 1, true) and count("FinishBarter") == 0,
+        "overpay to a 0-gold trader: refused before the barter: " .. tostring(j.error))
+    setup({ { Count = 1, TradePrice = 100 } }, { { Count = 1, TradePrice = 60 } }, 0)
+    j = run(ops["ui.trade"]({ confirm = true, donate = true }).job, 6000)
+    ok(count("FinishBarter") == 1, "overpay on purpose (donate): bartered")
+    -- selling to a 0-gold trader: the old message
+    setup({ { Count = 1, TradePrice = 23 } }, {}, 0)
+    j = run(ops["ui.trade"]({ confirm = true }).job, 6000)
+    ok(j.status == "failed" and tostring(j.error):find("the trader has no gold left", 1, true)
+        and count("FinishBarter") == 0, "sell to a 0-gold trader: " .. tostring(j.error))
+
+    for k, f in pairs(saved) do UIt[k] = f end
+    Ext.Entity = _entity
+end
+
 print(("%d passed, %d failed"):format(passes, fails))
 os.exit(fails == 0 and 0 or 1)

@@ -109,6 +109,28 @@ class PrepareSpells(Base):
         self.assertEqual(job, [{"name": "Claude", "add": [{"id": "Target_Bless", "name": "Bless", "level": 1}],
                                 "remove": []}])
 
+    def test_a_loading_screen_is_waited_out_before_the_page(self):
+        # S070 21:00:08: pressed K 6 s after a region change with the loading screen up: "the spellbook didn't open"
+        seen, real = [], self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "ui.state":
+                seen.append(op)
+                return {"screen": "loading" if len(seen) <= 3 else "game"}
+            if op == "ui.travel_block":
+                return {"hud": True}
+            return real(op, args, context, timeout)
+        self.g.rpc = rpc
+        self.g.try_rpc = lambda op, args=None, context="server", default=None: rpc(op, args, context)
+        real_sleep = server.time.sleep
+        server.time.sleep = lambda s: None
+        self.addCleanup(setattr, server.time, "sleep", real_sleep)
+        out = self.call(who="Claude", add=["Bless"])
+        self.assertGreaterEqual(len(seen), 4)  # read until the load ended, then the page
+        self.assertIn("prepare_spells: done — prepared Bless", out)
+        self.assertIn("for the loading screen to end first", out)
+        self.assertEqual(len([1 for op, _ in self.g.calls if op == "ui.prepare_spells"]), 1)
+
     def test_the_page_gets_each_spells_look_and_twins(self):
         # A7, live L4: the page's cells carry no names; the plan's look + twins ride to the page job
         look = {"icon": "Spell_Enchantment_Bless", "school": "Enchantment", "conc": True, "cost": "Action"}

@@ -605,10 +605,10 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
     bal = res.get("balance") or {}
 
     def side(s: dict) -> str:
-        items = [f"{h(it)} {it.get('name') or '?'}{' x' + str(_count(it)) if _count(it) > 1 else ''} "
-                 f"{_price(it)}g" for it in s.get("items") or [] if isinstance(it, dict)]
-        if s.get("gold"):
-            items.append(f"{s['gold']} gold")
+        # the gold on the table is a Gold stack among the items (S055/S069: "(no id) ? x60 60g, 60 gold")
+        items = [f"{_count(it)} gold" if it.get("gold") else
+                 f"{h(it)} {it.get('name') or '?'}{' x' + str(_count(it)) if _count(it) > 1 else ''} {_price(it)}g"
+                 for it in s.get("items") or [] if isinstance(it, dict)]
         return ", ".join(items) or "nothing"
     if you.get("items") or them.get("items") or you.get("gold") or them.get("gold") or not listing:
         give, get = bal.get("you_give") or 0, bal.get("you_get") or 0

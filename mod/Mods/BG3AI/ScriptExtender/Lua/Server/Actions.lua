@@ -50,6 +50,13 @@ A.CAST_NO_START_MS = 8000
 -- In combat the cast never walks (WithoutMove): a cast the engine takes starts within a second, so 8 s of nothing
 -- was ~6 s of a turn lost per dropped order (S062 Target_MainHandAttack ×2, audit ACT-11). A jump keeps the 8 s.
 A.CAST_NO_START_COMBAT_MS = 3000
+-- S066-S069: the 6 dropped combat orders no status or target explains (Rage x3, a melee swing x3) all came right
+-- after a hit on the caster in its own turn (AttackedBy: a Bleeding tick at its turn start, an opportunity attack
+-- during its walk, a psychic tick); the next order ~3 s later worked 6 of 6. S070 20:50 Guiding Bolt: no hit, but the
+-- caster stood up from Prone at that turn start (S069's Claude also lost Hold Person then). A no-start whose caster
+-- was hit or lost a status this long before the order (or after it) is ordered once more instead of failing.
+A.CAST_HIT_WINDOW_MS = 2500
+A.hit_ms = A.hit_ms or {} -- char guid -> {t, why}: when it was last hit (AttackedBy defender) or lost a status
 -- act.cast {ui=true} (audit ACT-8, the hotbar N-target route): the bridge clicks the hotbar cell and each target as a
 -- player does, after this job started; the job only checks the cast and watches CastSpell/CastedSpell. The clicks
 -- take ~1 s + 0.5 s per target (hotbar.py budget, hard cap 3x + 4 s): no start this long = failed (the bridge cancels
@@ -235,6 +242,16 @@ function A.loop_watch(char, item)
     end
 end
 
+function A.stirred(u, why)
+    local g = G.guid(u)
+    if not g then return end
+    if not A.hit_ms[g] then
+        A.hit_n = (A.hit_n or 0) + 1
+        if A.hit_n > 500 then A.hit_ms, A.hit_n = {}, 1 end
+    end
+    A.hit_ms[g] = { t = G.now_ms(), why = why }
+end
+
 function A.dispatch(event, args)
     if event == "TurnEnded" and args[1] then
         local g = G.guid(args[1]) or args[1]
@@ -242,6 +259,13 @@ function A.dispatch(event, args)
     elseif event == "TurnStarted" and args[1] then
         local g = G.guid(args[1]) or args[1]
         if g then G.turn_over[g] = nil; G.end_requested[g] = nil end
+    elseif event == "AttackedBy" and args[1] then
+        A.stirred(args[1], "a hit on the caster")
+    elseif event == "StatusRemoved" and args[1] then
+        -- shown statuses only, by their shown name (Prone: standing up; Hold Person); technical ones flap all the time
+        local V = BG3AI.Visibility
+        local info = V and V.statusInfo and V.statusInfo(tostring(args[2]))
+        if info then A.stirred(args[1], "the caster's " .. tostring(info.name) .. " ending") end
     end
     each_running(function(job)
         if job.tele then -- a jump settling (teleport_check): only the story signals count now
@@ -1765,6 +1789,20 @@ reg("cast", function(args)
         or A.CAST_NO_START_MS
     if ui then no_start_ms = A.CAST_UI_NO_START_MS end
     local walk_m = walk and walk.plan.length_m or 0
+    local function order(job)
+        job.osi_task = "spell"
+        job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
+        if pos then
+            -- Engine form has 6 inputs (6th = WithoutMove), verified live
+            -- on bg3le; the 5-input form is kept as a fallback for builds
+            -- without it.
+            G.osi_forms("UseSpellAtPosition", { char, spell, pos[1], pos[2], pos[3], without_move },
+                { char, spell, pos[1], pos[2], pos[3] })
+        else
+            G.osi("UseSpell", char, spell, targets[1], targets[2] or NULL_GUID, without_move)
+            A.give_second_pick(job, char, spell, targets, landing)
+        end
+    end
     return start("cast", char, {
         eta_s = 2.0 + (walk and walk_eta(walk_m) or 0),
         timeout_ms = 30000 + (walk and walk_timeout(walk_m) or 0),
@@ -1820,8 +1858,20 @@ reg("cast", function(args)
                 if p and job.ordered_pos and U.dist(p, job.ordered_pos) > 0.5 then
                     job.began = true -- the engine walks into range / the jump took off
                 elseif RPC.now_ms() - job.ordered_ms > no_start_ms then
+                    local hit = combat and not job.ui and A.hit_ms[G.guid(char)]
+                    if hit and not job.reordered and hit.t >= job.ordered_ms - A.CAST_HIT_WINDOW_MS then
+                        job.reordered, job.reorder_why = (hit.t - job.ordered_ms) / 1000, hit.why
+                        pcall(G.osi, "PurgeOsirisQueue", char)
+                        order(job)
+                        return
+                    end
                     local why = "the game never started it (" .. tostring(math.floor(no_start_ms / 1000))
                         .. " s, no cast, no step)"
+                    if job.reordered then
+                        why = why .. " twice: ordered again after " .. job.reorder_why .. " "
+                            .. string.format("%.1f s %s the first order", math.abs(job.reordered),
+                                job.reordered < 0 and "before" or "after")
+                    end
                     if base == "Projectile_Jump" then
                         why = why .. ": it ignores a landing the jump can't reach (too far or too high for this"
                             .. " character, or no clear arc): pick a nearer, lower landing (route / get_layout)"
@@ -1943,23 +1993,12 @@ reg("cast", function(args)
                 A.give_second_pick(job, char, spell, targets, landing, true)
                 return
             end
-            job.osi_task = "spell"
-            job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
             -- S039 21:53: the engine froze inside a jump cast and the crash left no trace: mark it in flight, so a
             -- crash during the jump turns this level's jump planning off at the next start (Navigation.lua guard)
             if pos and base == "Projectile_Jump" and BG3AI.Nav and BG3AI.Nav.inflight then
                 job.jump_marked = pcall(BG3AI.Nav.inflight, "jump", pos)
             end
-            if pos then
-                -- Engine form has 6 inputs (6th = WithoutMove), verified live
-                -- on bg3le; the 5-input form is kept as a fallback for builds
-                -- without it.
-                G.osi_forms("UseSpellAtPosition", { char, spell, pos[1], pos[2], pos[3], without_move },
-                    { char, spell, pos[1], pos[2], pos[3] })
-            else
-                G.osi("UseSpell", char, spell, targets[1], targets[2] or NULL_GUID, without_move)
-                A.give_second_pick(job, char, spell, targets, landing)
-            end
+            order(job)
         end,
         on_finish = function(job)
             if job.jump_marked then pcall(BG3AI.Nav.inflightDone, "jump") end -- NAV-7: only its own marker
@@ -2236,21 +2275,60 @@ end)
 -- act.select {char}
 ------------------------------------------------------------------------
 
+-- S069 20:45:31 (bg3le log 17031.7): act.select for Claude was done 1 ms after MakePlayerActive (the post-condition
+-- GetCurrentCharacter was already Claude) while another member held ClientControl: ui.reactions refused 6 times in
+-- 0.6 s. Done = the character holds ClientControl (what the HUD and every ui.* op act on); GetCurrentCharacter counts
+-- only while no member holds it (the host fallback, State.selectedCharacter). Still not after SELECT_RESYNC_MS: the
+-- order was a no-op (the game's current character already) or lost in a hand-over: select another member, then
+-- this one, once. Not by SELECT_FAIL_MS: failed, naming who holds it.
+A.SELECT_RESYNC_MS, A.SELECT_FAIL_MS = 600, 2500
+local function controls(u)
+    local e = G.entity(u)
+    local ok, cc = pcall(function() return e and e.ClientControl end)
+    return ok and cc ~= nil
+end
+local function controller()
+    for _, u in ipairs(G.party()) do if controls(u) then return u end end
+    return nil
+end
+
 reg("select", function(args)
     local char = G.actor(args.char)
+    local function selected()
+        if controls(char) then return true end
+        if controller() then return false end
+        local user = G.q("GetReservedUserID", char)
+        return user ~= nil and G.same(G.q("GetCurrentCharacter", user), char)
+    end
     return start("select", char, {
         timeout_ms = 3000,
-        osi = {
-            CharacterSelectedForUser = function(job, a)
-                if G.same(a[1], char) then RPC.finish_job(job, "done", { selected = true }) end
-            end,
-        },
-        start = function() G.osi("MakePlayerActive", char) end,
-        -- Post-condition: the owning user's current character is `char`.
+        start = function(job)
+            job.t0 = RPC.now_ms()
+            G.osi("MakePlayerActive", char)
+        end,
         on_tick = function(job)
-            local user = G.q("GetReservedUserID", char)
-            if user and G.same(G.q("GetCurrentCharacter", user), char) then
-                RPC.finish_job(job, "done", { selected = true })
+            if selected() then
+                RPC.finish_job(job, "done", { selected = true, resynced = job.resynced })
+                return
+            end
+            local dt = RPC.now_ms() - job.t0
+            if job.reselect then
+                job.reselect = nil
+                G.osi("MakePlayerActive", char)
+            elseif not job.resynced and dt >= A.SELECT_RESYNC_MS then
+                job.resynced = true
+                for _, u in ipairs(G.party()) do
+                    if not G.same(u, char) and not G.is_dead(u) then
+                        G.osi("MakePlayerActive", u)
+                        job.reselect = true
+                        return
+                    end
+                end
+                G.osi("MakePlayerActive", char)
+            elseif dt >= A.SELECT_FAIL_MS then
+                local who = controller()
+                RPC.finish_job(job, "failed", { holder = who }, "the game kept " .. (who and name_of(who) or "nobody")
+                    .. " selected (MakePlayerActive twice, once via another member)")
             end
         end,
     })

@@ -384,6 +384,7 @@ local function offerView(vmOffer)
             uuid = known.uuid, name = known.name,
             count = (tonumber(p.Count) or 1) > 1 and tonumber(p.Count) or nil,
             price = (tonumber(p.TradePrice) or -1) >= 0 and tonumber(p.TradePrice) or nil,
+            gold = p.ItemType == "Gold" or nil, -- the gold a Balance puts on the table is a Gold stack (price = count)
         }
     end
     return out
@@ -394,6 +395,27 @@ local function sumPrices(items)
     -- TradePrice is the whole stack's price (live 10:50 Talli: Supply Pack x3 = 156, Potion of Healing x5 = 40)
     for _, it in ipairs(items) do t = t + (it.price or 0) end
     return t
+end
+
+local function goldOn(items)
+    local g = 0
+    for _, it in ipairs(items) do if it.gold then g = g + (it.count or 1) end end
+    return g
+end
+
+-- CharacterOfferGold / TraderOfferGold are each side's total as the screen shows it, not gold put down: every table
+-- read had it equal to that side's item prices (S069 20:37:24 "you get: Mantle 819g, Potions 198g, 1017 gold"; S055
+-- 03:45:46 "you give: ? x60 60g, 60 gold | you get: Potions x4 208g, 208 gold"; a Crude Mace 23g, 23 gold), so the
+-- balance counted everything twice. The gold on the table is the Gold stacks among the items.
+-- What the table still lacks before FinishBarter (prices as shown, a gold stack = its count): nil when even within
+-- TRADE_TOLERANCE_G (or 1 %), else "short", n (we would get n more than we give: the trader refuses) or "over", n
+-- (we would give n more: the trader takes it for nothing).
+SV.TRADE_TOLERANCE_G = 2
+function SV.tradeImbalance(give, get)
+    local tol = math.max(SV.TRADE_TOLERANCE_G, math.floor(0.01 * math.max(give, get)))
+    if get - give > tol then return "short", get - give end
+    if give - get > tol then return "over", give - get end
+    return nil
 end
 
 -- Everything the trade screen shows, as data.
@@ -430,14 +452,11 @@ function tradeStateRaw(dc, layout, max)
         trader_gold = tonumber(p.TraderInventoryGold),
         price_modifier_pct = tonumber(p.PriceModifierPercentage),
         offer = {
-            you = { items = yours, gold = tonumber(p.CharacterOfferGold) or 0 },
-            trader = { items = theirs, gold = tonumber(p.TraderOfferGold) or 0 },
+            you = { items = yours, gold = goldOn(yours) },
+            trader = { items = theirs, gold = goldOn(theirs) },
         },
-        -- What each side puts on the table at the shown prices (items + gold).
-        balance = {
-            you_give = sumPrices(yours) + (tonumber(p.CharacterOfferGold) or 0),
-            you_get = sumPrices(theirs) + (tonumber(p.TraderOfferGold) or 0),
-        },
+        -- What each side puts on the table at the shown prices (its gold stacks included, at their count).
+        balance = { you_give = sumPrices(yours), you_get = sumPrices(theirs) },
         feedback = fb and UI.isVisible(fb) and UI.text(fb) or nil,
         declined = p.TradeDeclined == true or nil,
         can_confirm = p.TradeButtonsEnabled ~= false,
@@ -541,7 +560,7 @@ RPC.register("ui.trade", function(args)
     if not wantsChange then return SV.tradeState(dc, nil, tonumber(args.max)) end
 
     -- Barter mode shows both offers and keeps the deal explicit until confirm.
-    local phase, waitUntil, balanceTries = "mode", 0, 0
+    local phase, waitUntil, balanceTries, lastTable = "mode", 0, 0, nil
     SV.splitTries, SV.splitApplied, SV.splitCount = 0, nil, nil
     local moved, problems, confirmed, queue = {}, {}, false, {}
     if UI.prop(dc, "Mode") ~= "Barter" then
@@ -616,31 +635,47 @@ RPC.register("ui.trade", function(args)
             end
             -- Balance with gold the way the Balance button does, then barter.
             UI.command(live, "BalanceTrade", nil, false)
-            phase, waitUntil, balanceTries = "balanced", RPC.now_ms() + 250, 1
+            phase, waitUntil, balanceTries = "balanced", RPC.now_ms() + 250, 0
             return nil
         end
         if phase == "balanced" then
             -- S026 09:39: confirm right after an offer, with our items on the table and nothing coming
             -- back (BalanceTrade not applied yet): the game asked to DONATE them, the job timed out, and the
-            -- agent balanced + bartered by hand. Never finish a one-sided deal: re-balance, else say why.
-            local ours = #vmSlots(UI.prop(live, "CharacterOffer"), 60)
-            local theirs = #vmSlots(UI.prop(live, "TraderOffer"), 60)
-            local tgold = tonumber(UI.prop(live, "TraderOfferGold")) or 0
-            if ours > 0 and theirs == 0 and tgold == 0 and not args.donate then
-                local has = tonumber(UI.prop(live, "TraderInventoryGold")) or 0
-                if has > 0 and balanceTries < 4 then
-                    UI.command(live, "BalanceTrade", nil, false)
-                    balanceTries = balanceTries + 1
+            -- agent balanced + bartered by hand. S069 20:37:23 (a trader with 0 gold): request 2 wares (1017g),
+            -- confirm: FinishBarter went out before the Balance's gold was on our side, refused, ESCAPE + reopen
+            -- (~25 s). Never finish an uneven deal: wait for the Balance (pressed again on a table that stopped
+            -- changing), else say why. An overpay goes through only on purpose (donate).
+            local yours, theirs = offerView(UI.prop(live, "CharacterOffer")), offerView(UI.prop(live, "TraderOffer"))
+            local give, get = sumPrices(yours), sumPrices(theirs)
+            local side, n = SV.tradeImbalance(give, get)
+            if side and not (side == "over" and args.donate) then
+                local sig = give .. "/" .. get
+                if balanceTries < 5 then
+                    if sig == lastTable then UI.command(live, "BalanceTrade", nil, false) end
+                    lastTable, balanceTries = sig, balanceTries + 1
                     waitUntil = RPC.now_ms() + 300
                     return nil
                 end
+                local has = tonumber(UI.prop(live, "TraderInventoryGold")) or 0
+                local ours = tonumber(UI.prop(live, "TradePartyGold")) or 0
                 local st = SV.tradeState(live)
                 st.moved = moved
-                return "failed", st, has > 0 and "not confirmed: the Balance didn't add the trader's gold, so the "
-                    .. "game would take your items for nothing (donate): call trade(confirm=true) again"
-                    or "not confirmed: the trader has no gold left, so the game would take your items for nothing "
-                    .. "(donate): request wares of equal value instead (request=<ids>), or give them on purpose "
-                    .. "with trade(offer=<ids>, confirm=true, donate=true)"
+                if side == "short" then
+                    return "failed", st, string.format("not confirmed: you would get %dg more than you give (the Balance"
+                        .. " didn't put your gold on the table; your gold %d), so the trader would refuse: call"
+                        .. " trade(confirm=true) again, or offer items too", n, ours)
+                end
+                if #theirs == 0 then
+                    return "failed", st, has > 0 and "not confirmed: the Balance didn't add the trader's gold, so the "
+                        .. "game would take your items for nothing (donate): call trade(confirm=true) again"
+                        or "not confirmed: the trader has no gold left, so the game would take your items for nothing "
+                        .. "(donate): request wares of equal value instead (request=<ids>), or give them on purpose "
+                        .. "with trade(offer=<ids>, confirm=true, donate=true)"
+                end
+                return "failed", st, string.format("not confirmed: you would give %dg more than you get (%s), so the"
+                    .. " game would take it for nothing: request wares worth %dg more, or confirm it on purpose with"
+                    .. " donate=true", n, has > 0 and "the Balance didn't add the trader's gold"
+                        or "the trader has no gold to pay the difference: items only", n)
             end
             local param = UI.prop(live, "ActionCommandParameter")
             if not isNoesis(param) then param = nil end
@@ -653,7 +688,7 @@ RPC.register("ui.trade", function(args)
             phase, waitUntil = "finishing", RPC.now_ms() + 300
             -- S028 15:48 (Wulbren's tools: a quest hand-over through the trade screen): a one-sided deal makes the
             -- game ask "Donate these items?"; the bridge answers that box (trade donate=true), so stop here.
-            if args.donate and ours > 0 and theirs == 0 and tgold == 0 then
+            if args.donate and #yours > 0 and #theirs == 0 then
                 local st = SV.tradeState(live)
                 st.moved, st.donate_box = moved, true
                 return "done", st

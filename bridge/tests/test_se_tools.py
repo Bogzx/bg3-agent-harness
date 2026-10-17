@@ -135,7 +135,7 @@ class SaveLoadHatches(unittest.TestCase):
         calls = []
         with unittest.mock.patch.object(server, "save_game", lambda label="": calls.append(label) or "save_game: queued"):
             out = getattr(server.press_key, "fn", server.press_key)("F5")
-        self.assertEqual(calls, [""])
+        self.assertEqual(calls, ["quicksave"])
         self.assertIn("save_game: queued", out)
         self.assertEqual(fake.keys, [])
 

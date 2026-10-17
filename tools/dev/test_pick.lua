@@ -19,7 +19,8 @@ Ext = {
     },
     Entity = {}, UI = {},
 }
-BG3AI = { Util = { round = function(x) return x end }, RPC = { register = function() end } }
+BG3AI = { Util = { round = function(x) return x end, comp = function(e, c) return type(e) == "table" and e[c] or nil end },
+    RPC = { register = function() end } }
 dofile(LUA .. "/Client/Pick.lua")
 local P = BG3AI.Pick
 
@@ -81,6 +82,20 @@ test("ground_verdict: flat distance to the landing, near within tol, the avoided
     assert(r.on_avoid == true and r.hover == "barrel")
     r = P.ground_verdict({ 0, 0, 0 }, 1, { 0, 0, 0 }, { "barrel" }, {}, {}, function(u) return u == "ally" end)
     assert(r.on_avoid == false)
+end)
+
+-- A14 S070 21:08:39: a Dragon Head Torch ~1.8 m up the wall: item aims stopped at 1.1 m over the origin
+test("aim_point: high/top reach a wall mount on an item; a character's are its chest", function()
+    local torch = { Transform = { Transform = { Translate = { 1, 10, 2 } } } }
+    local guy = { Transform = { Transform = { Translate = { 1, 10, 2 } } }, ClientCharacter = {} }
+    Ext.Entity.Get = function(u) return ({ torch = torch, guy = guy })[u] end
+    local p, aim = P.aim_point("torch", "top")
+    assert(aim == "top" and math.abs(p[2] - 12.1) < 1e-9, tostring(aim) .. " " .. tostring(p and p[2]))
+    p, aim = P.aim_point("torch", "high")
+    assert(aim == "high" and math.abs(p[2] - 11.6) < 1e-9)
+    p, aim = P.aim_point("guy", "top")
+    assert(aim == "chest" and math.abs(p[2] - 11.1) < 1e-9, tostring(aim))
+    Ext.Entity.Get = nil
 end)
 
 print(string.format("%d/%d passed", n - bad, n))

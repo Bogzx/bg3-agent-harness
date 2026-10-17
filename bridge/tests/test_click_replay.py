@@ -71,7 +71,7 @@ class SimInput:
 
 
 # Where each aim lands relative to the entity origin's "low" point, in px (an item: "auto" resolves to "low").
-AIM_PX = {"low": (0, 0), "chest": (0, -55), "feet": (0, 20), "mid": (0, -40)}
+AIM_PX = {"low": (0, 0), "chest": (0, -55), "feet": (0, 20), "mid": (0, -40), "high": (0, -65), "top": (0, -90)}
 PX_PER_M = 50
 
 
@@ -199,7 +199,8 @@ class Replay(unittest.TestCase):
         r_old, s_old = run(E126, v2=False)
         r, s = run(E126, v2=True)
         self.assertTrue(r.ok, r)
-        self.assertEqual(r.pos, r_old.pos)
+        box = E126["views"][-1][1]   # the leaf's hit box (A14: the "high" aim's centre lands in it before the ring)
+        self.assertTrue(box[0] <= r.pos[0] <= box[2] and box[1] <= r.pos[1] <= box[3], (r.pos, r_old.pos))
         self.assertEqual(r.detail["camera"], ["rotate_occluded_right", "rotate_occluded_left"])
         self.assertEqual(r.detail.get("settle"), "cursor")
         print(f"\n  e126 replay: old {r_old.tries} tries {s_old:.1f} s -> new {r.tries} tries {s:.1f} s")
@@ -207,10 +208,11 @@ class Replay(unittest.TestCase):
         # The replay runs on the simulated clock only (clicker.time = Clock, frames = clock steps): the counts are
         # exact, not load-dependent. vis's 52 / 36 runs were the tree mid-edit (52 = centres in every probe, 36 =
         # before the door fix). A change here means the search order changed: update these numbers on purpose.
-        self.assertEqual((r_old.tries, r.tries), (82, 44))
-        self.assertLessEqual(r.tries, int(r_old.tries * 0.55))
+        # 44 -> 46 (A14): the first view's probe takes the 2 wall-mount aims' centres too (46/82 = 0.56).
+        self.assertEqual((r_old.tries, r.tries), (82, 46))
+        self.assertLessEqual(r.tries, int(r_old.tries * 0.57))
         self.assertLessEqual(s, s_old / 2.5)
-        self.assertLessEqual(s, 5.5)
+        self.assertLessEqual(s, 5.7)   # 5.5 before A14's 2 wall-mount centres (+0.1 s simulated)
 
     def test_e126_new_path_with_same_frame_picking(self):
         r, s = run(E126, v2=True, pick_same_frame=True)
@@ -249,11 +251,28 @@ class Replay(unittest.TestCase):
         self.assertLess(r.tries, r_old.tries)
         self.assertLess(s, s_old)
 
+    def test_wall_torch_above_the_item_aims(self):
+        # S070 21:08:39: a Dragon Head Torch ~1.8 m up the wall: every aim (≤ 1.1 m over the origin) hovered the
+        # wall behind it, 89 tries and both camera turns, hover_miss. The "top" aim's centre takes it, no turn.
+        torch = {"views": [(True, box_at(0, 0, "top")), (True, box_at(0, 0, "top")), (True, box_at(0, 0, "top"))]}
+        r, _ = run(torch, v2=True)
+        self.assertTrue(r.ok, r)
+        self.assertNotIn("camera", r.detail)
+        old = clicker.AIMS
+        clicker.AIMS = [a for a in old if a[0] not in ("high", "top")]
+        try:
+            r_old, _ = run(torch, v2=True)
+        finally:
+            clicker.AIMS = old
+        self.assertFalse(r_old.ok)
+        self.assertEqual(r_old.reason, "hover_miss")
+
     def test_never_worse_than_old_on_the_first_ring_or_a_centre(self):
         # the same view, everything else a no-id occluder: a hit the old path makes on the first aim's ring or any
         # aim's centre, the new path makes in no more tries and with no camera turn
         spots = [box_at(dx, dy) for dx, dy in clicker.OFFSETS]
-        spots += [box_at(0, 0, aim, ox) for aim, ox in clicker.AIMS[1:] if aim != "low"]
+        # the wall-mount aims (A14, last in AIMS) have their own test; in this fake "high" sits on the chest ring
+        spots += [box_at(0, 0, aim, ox) for aim, ox in clicker.AIMS[1:] if aim not in ("low", "high", "top")]
         for box in spots:
             scene = {"views": [(True, box)]}
             r_old, _ = run(scene, v2=False)
