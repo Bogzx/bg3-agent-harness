@@ -34,7 +34,7 @@ import fights as F  # noqa: E402
 import hand_clicks as HC  # noqa: E402
 import session_watch as SW  # noqa: E402
 
-RUNTIME = next((d for d in (Path.cwd() / "runtime", REPO / "runtime") if d.is_dir()), REPO / "runtime")
+RUNTIME = overlap.repo_paths.runtime_dir()   # $BG3AI_RUNTIME, else the main tree's runtime/ (also from a worktree)
 LONG_GAP_S = triage.LONG_GAP_S
 TOP_N = 10
 HAND = ("click", "press_key", "screenshot", "zoom", "camera")
@@ -447,7 +447,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("run", help="playthrough (runtime/sessions/<run>)")
     ap.add_argument("sid", help="session, e.g. S065")
     ap.add_argument("--runtime", type=Path, default=RUNTIME,
-                    help="runtime dir: run*.log, stage_ms.jsonl, mined/fights.jsonl (default ./runtime, else the repo's)")
+                    help="runtime dir: run*.log, stage_ms.jsonl, mined/fights.jsonl (default $BG3AI_RUNTIME, else the main tree's)")
     ap.add_argument("--sessions", type=Path, help="sessions root (default <runtime>/sessions)")
     ap.add_argument("--stdout", action="store_true", help="print, don't write Sxxx.review.md")
     a = ap.parse_args(argv)

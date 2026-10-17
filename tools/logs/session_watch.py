@@ -14,17 +14,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "runner"))
+sys.path.insert(0, str(ROOT / "tools"))
 import triage  # noqa: E402
+from repo_paths import main_tree, runtime_dir  # noqa: E402
 
 NOT_GAME = {"Read", "Edit", "Write", "Glob", "Grep", "ToolSearch", "Bash", "note", "session_clock", "session_start",
             "end_session"}
-
-def main_tree(root=ROOT):
-    """The main checkout: root itself, or for a worktree (.git is a file "gitdir: <main>/.git/worktrees/<name>") the
-    main tree, which holds the untracked docs/SESSION-WATCH.md and runtime/."""
-    git = root / ".git"
-    return Path(git.read_text().split(":", 1)[1].strip()).parents[2] if git.is_file() else root
-
 
 WATCH_FILE = None   # tests point this at a fixed copy
 
@@ -230,7 +225,7 @@ def covering_logs(t0, t1, logs_dir=None):
 def main():
     sid = sys.argv[1]
     run = sys.argv[2] if len(sys.argv) > 2 else "claude-run-2"
-    RT = (ROOT if (ROOT / "runtime").exists() else main_tree()) / "runtime"
+    RT = runtime_dir()
     SD = RT / "sessions" / run
     calls, _ = triage.load_calls(SD / f"{sid}.jsonl", SD / f"{sid}.turns.jsonl")
     tools = [c["name"] for c in calls if is_game(c)]

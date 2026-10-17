@@ -8,6 +8,9 @@ Usage: python3 tools/logs/think_by_situation.py claude-run-2 S025 S026 [...]   (
 import json, os, sys, bisect, collections
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import repo_paths  # noqa: E402
+RUNTIME = str(repo_paths.runtime_dir())   # the main tree's from a worktree
 
 
 def q(v, p):
@@ -21,7 +24,7 @@ def main():
     prev = collections.defaultdict(list)
     for sid in sids:
         ts, st = [], []
-        for line in open(os.path.join(ROOT, "runtime/sessions", run, sid + ".metrics.jsonl")):
+        for line in open(os.path.join(RUNTIME, "sessions", run, sid + ".metrics.jsonl")):
             if '"sample"' not in line[:20]:
                 continue
             e = json.loads(line)
@@ -38,7 +41,7 @@ def main():
                 s = "explore_idle"
             st.append(s)
         last_tool = None
-        for line in open(os.path.join(ROOT, "runtime/mined", run, sid + ".calls.jsonl")):
+        for line in open(os.path.join(RUNTIME, "mined", run, sid + ".calls.jsonl")):
             c = json.loads(line)
             if c["think"] is not None and c["t0"] and ts:
                 i = min(len(ts) - 1, bisect.bisect_left(ts, c["t0"] - c["think"] / 2))

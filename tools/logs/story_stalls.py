@@ -6,18 +6,21 @@ Usage: python3 tools/logs/story_stalls.py claude-run-2 [min_minutes=4] [sids...]
 import json, os, sys, re, glob, time, collections
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import repo_paths  # noqa: E402
+RUNTIME = str(repo_paths.runtime_dir())   # the main tree's from a worktree
 WHERE_RX = re.compile(r"WHERE ([^|\\\n]+?)(?: \||\\n|\n| ->)")
 
 
 def main():
     run = sys.argv[1]
     mn = float(sys.argv[2]) if len(sys.argv) > 2 else 4
-    d = os.path.join(ROOT, "runtime/sessions", run)
+    d = os.path.join(RUNTIME, "sessions", run)
     sids = sys.argv[3:] or sorted(os.path.basename(p)[:-15] for p in glob.glob(os.path.join(d, "S*.progress.jsonl")))
     stall_where = collections.Counter()
     for sid in sids:
         pj = os.path.join(d, sid + ".progress.jsonl")
-        cp = os.path.join(ROOT, "runtime/mined", run, sid + ".calls.jsonl")
+        cp = os.path.join(RUNTIME, "mined", run, sid + ".calls.jsonl")
         if not os.path.exists(pj) or not os.path.exists(cp):
             continue
         ev = [json.loads(l) for l in open(pj)]

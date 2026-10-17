@@ -9,6 +9,8 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+import repo_paths  # noqa: E402
 FAIL = re.compile(r"(?i)\b(error|failed|fails|refused|refusing|can't|cannot|couldn't|could not|not found|timed? ?out|"
                   r"no such|invalid|unknown|blocked|stuck|didn't|did not|nothing happened|unreachable|aborted|exception)\b")
 
@@ -22,7 +24,7 @@ def main():
     ap.add_argument("--date", default=time.strftime("%Y-%m-%d"))
     ap.add_argument("--since", default="00:00")
     ap.add_argument("--until", default="23:59")
-    ap.add_argument("--file", default=str(ROOT / "runtime/actions.jsonl"))
+    ap.add_argument("--file", default=str(repo_paths.runtime_dir() / "actions.jsonl"))
     ap.add_argument("--timeline", action="store_true", help="print every call (one line each)")
     ap.add_argument("--fails", type=int, default=60, help="max failure lines to print")
     ap.add_argument("--slow", type=float, default=10.0, help="list calls slower than this (s)")

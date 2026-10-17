@@ -13,9 +13,11 @@ import json, os, re, sys, statistics, collections
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "runner"))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
 import triage  # noqa: E402
-SESS = os.path.join(ROOT, "runtime", "sessions")
-OUT = os.path.join(ROOT, "runtime", "mined")
+import repo_paths  # noqa: E402
+SESS = os.path.join(repo_paths.runtime_dir(), "sessions")   # the main tree's from a worktree
+OUT = os.path.join(repo_paths.runtime_dir(), "mined")
 
 FAIL_RX = re.compile(r"\bFAILED\b|^(ERROR|Error|STILL IN|STOPPED)|TIMEOUT|timed out after|Connection closed|Tool .* not found|No such tool")
 HAND_TOOLS = {"click", "screenshot", "press_key", "zoom", "camera"}
