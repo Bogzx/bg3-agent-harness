@@ -1,5 +1,6 @@
 """wait_new_session.sh on a scratch tree: wakes on the runner's Sxxx.review.md (written after the memory keeper),
-maps a resume's triage to its session, and falls back to the keeper event when no review comes.
+maps a resume's triage to its session, falls back to the keeper event when no review comes, and ignores a
+triage rewritten after its session's review.
 
     python3 tools/logs/test_wait_new_session.py
 """
@@ -59,6 +60,32 @@ class WaitNewSession(unittest.TestCase):
         (self.sd / "S005.review.md").write_text("# Review pt/S005\n")
         out, _ = p.communicate(timeout=20)
         self.assertEqual(out.splitlines()[-1], "NEW SESSION: S005")
+
+    def test_a_triage_appended_after_its_review_is_not_new(self):
+        # S079: check_all appended to S079.triage.md after S079.review.md; the next wait woke on it again
+        (self.sd / "S079.triage.md").write_text("# Triage S079\n")
+        time.sleep(0.02)
+        (self.sd / "S079.review.md").write_text("# Review pt/S079\n")
+        p = self.start()
+        with open(self.sd / "S079.triage.md", "a") as f:
+            f.write("## check_all after the session\n")
+        time.sleep(0.5)   # ~10 polls
+        self.assertIsNone(p.poll(), "woke on the rewritten S079 triage")
+        (self.sd / "S080.triage.md").write_text("# Triage S080\n")
+        time.sleep(0.02)
+        (self.sd / "S080.review.md").write_text("# Review pt/S080\n")
+        out, _ = p.communicate(timeout=20)
+        self.assertEqual(out, "review: runtime/sessions/pt/S080.review.md\nNEW SESSION: S080\n")
+
+    def test_a_resume_after_the_sessions_review_is_new(self):
+        (self.sd / "S007.triage.md").write_text("# Triage S007\n")
+        (self.sd / "S007.review.md").write_text("# Review pt/S007\n")   # of the crashed first stream
+        p = self.start()
+        (self.sd / "S007-r1.triage.md").write_text("# Triage S007-r1\n")
+        time.sleep(0.02)
+        (self.sd / "S007.review.md").write_text("# Review pt/S007 (both streams)\n")
+        out, _ = p.communicate(timeout=20)
+        self.assertEqual(out, "review: runtime/sessions/pt/S007.review.md\nNEW SESSION: S007\n")
 
     def test_no_review_falls_back_to_the_keeper_event(self):
         p = self.start(keeper_max="20", grace="1")
