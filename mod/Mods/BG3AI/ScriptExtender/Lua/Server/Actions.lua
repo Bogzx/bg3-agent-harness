@@ -2534,6 +2534,8 @@ RPC.register("act.watch", function(args)
         local h = e and U.comp(e, "Health")
         if h then pcall(function() row.hp = h.Hp; row.max_hp = h.MaxHp end) end
         if G.is_downed(u) then row.downed = true end
+        -- on a ladder: the bridge's queue starts the step after a climb only once the climber is off it (actq)
+        if G.b(G.q("HasActiveStatus", u, "CLIMBING")) then row.climbing = true end
         -- a harmful surface underfoot the player sees (fire, acid, ...): the queue's "surface" interrupt
         local N = BG3AI.Nav
         if row.pos and type(N) == "table" and type(N.surfaceAt) == "function" then

@@ -483,11 +483,18 @@ end
 -- goal (BG3AI.Nav.closestReach: rings around the goal, else the farthest
 -- walk toward it). "" when there is none or Nav is missing.
 -- No walkable spot toward the goal at all: maybe the walker is wedged in a nook (Navigation.lua N.wedged, S058 08:00).
-function G.wedged_hint(char)
+-- goal (optional): no jump next to a member on a floor farther from the goal (naut2 run 3: back down the ladder just
+-- climbed); that case says so instead.
+function G.wedged_hint(char, goal)
     local N = BG3AI.Nav
     if type(N) ~= "table" or type(N.wedged) ~= "function" then return "" end
-    local ok, w = pcall(N.wedged, char)
+    local ok, w = pcall(N.wedged, char, nil, goal)
     if not ok or type(w) ~= "table" then return "" end
+    if not w.to and w.away then
+        return string.format("; no walkable ground reads around you, and the only landing (next to %s) is %.1fm %s,"
+            .. " away from the goal: don't jump there; try again in a moment (right after a climb the ground can read"
+            .. " blocked), or route", tostring(w.away), math.abs(w.away_dy or 0), (w.away_dy or 0) < 0 and "below" or "above")
+    end
     if not w.to then return "" end -- nobody to land next to: maybe a small balcony whose way out is its ladder
     return string.format("; you are wedged: no walkable ground leads out from where you stand: jump_to (%.1f,%.1f,%.1f)"
         .. " next to %s (%.1fm)%s, then try again", w.to[1], w.to[2], w.to[3], tostring(w.near), w.dist_m or 0,
@@ -514,7 +521,7 @@ function G.closest_hint(char, goal)
     local N = BG3AI.Nav
     if type(N) ~= "table" or type(N.closestReach) ~= "function" or not goal then return "" end
     local ok, c = pcall(N.closestReach, char, goal)
-    if not ok or type(c) ~= "table" or not c.pos then return G.wedged_hint(char) end
+    if not ok or type(c) ~= "table" or not c.pos then return G.wedged_hint(char, goal) end
     local up = ""
     if type(c.dy_to_goal) == "number" and math.abs(c.dy_to_goal) >= 1.5 then
         up = string.format(", it is %.1fm %s that spot", math.abs(c.dy_to_goal), c.dy_to_goal > 0 and "above" or "below")

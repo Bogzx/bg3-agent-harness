@@ -133,6 +133,9 @@ class Rules(unittest.TestCase):
     def test_empties(self):
         self.assertEqual(compact.empties("  damage target=x type= amount=0"), "  damage target=x amount=0")
         self.assertEqual(compact.empties("  combat_started []"), "  combat_started")
+        hint = "(+1 more items, 0 scenery objects not listed; narrow with radius= or kinds=)"
+        self.assertEqual(compact.empties(hint), hint)                                  # a hint, not a record
+        self.assertEqual(compact.empties("  damage source=e1 amount="), "  damage source=e1")
 
     def test_event_templates(self):
         n = compact._Names()
@@ -446,6 +449,27 @@ class CombatRules(unittest.TestCase):
         self.assertIn("NEXT (order as before), then e28 Lae'zel (yours)", again)
         other = self.checked(c, "combat_turn", text.replace("+2 more", "+3 more"), first + again)
         self.assertIn("+3 more", other)
+
+    def test_checker_possessive_is_the_name(self):
+        from bg3ai import compact_check as cc
+        self.assertEqual(cc.atoms("NOW e2 Wyll's turn"), {"NOW", "e2", "Wyll", "turn"})
+        self.assertEqual(cc.check("TURN turn=e2 Wyll\nNOW e2 Wyll's turn: plan it", "TURN turn=e2 Wyll\nNOW e2's turn: plan it",
+                                  [], ""), [])
+        self.assertTrue(cc.check("NOW e2 Wyll's turn", "NOW e2's turn", [], ""))   # the name nowhere else: lost
+
+    def test_next_party_member_keeps_yours(self):
+        # claude-run-2 S050 replay: a party member next with nobody in between
+        text = ("CHANGES\n  TURN round 2 turn=e5 Shadowheart\n  e6 Claude HP 50->40/90\n"
+                "NEXT e6 Claude (yours): plan that turn now")
+        c = fresh()
+        first = self.checked(c, "combat_turn", text)
+        self.assertIn("NEXT e6 (yours): plan that turn now", first)
+        self.assertIn("NEXT e6 (yours): plan that turn now", self.checked(c, "combat_turn", text, first))  # not "as before"
+        shared = ("CHANGES\n  e1 Karlach HP 9->8/9\nNEXT e1 Karlach + e2 Wyll (yours, shared turn): plan that turn now")
+        self.assertIn("NEXT e1 Karlach + e2 Wyll (yours, shared turn): plan that turn now",   # not matched: in full
+                      self.checked(fresh(), "combat_turn", shared))
+        self.assertEqual(compact._next_item("e1 Karlach + e2 Wyll (yours, shared turn)", {"e1"}),
+                         "e1 + e2 Wyll (yours, shared turn)")
 
     def test_kind_group(self):
         lines = ["CHANGES", "  + e113 Mucoid Shell <item> 22.9m", "  + e68 Hellsboar hostile HP 5/5 1.5m",

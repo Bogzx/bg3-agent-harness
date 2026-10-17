@@ -88,6 +88,58 @@ def route_waypoint(res: dict) -> dict | None:
                                  save_m=longnav.ROUTE_WP_SAVE_M, ratio=1.0)
 
 
+FLOOR_SAME_M = 1.5  # a ladder end this close to your height (or to another ladder's landing) is on that floor
+FLOOR_LANDS_M = 2.5  # a climb landing this close to the goal's height needs no second ladder
+
+
+def ladder_ends(l: dict) -> tuple[float, float] | None:
+    """(y of the end it is climbed from, y it lands at) for a ladder lead whose climb the frontier measured
+    (Navigation.lua: pos = its foot, leads = up/down from the reader, to = the other end, height_m)."""
+    pos, h = l.get("pos"), l.get("height_m")
+    if l.get("kind") != "ladder" or l.get("leads") not in ("up", "down") or not pos \
+            or not isinstance(h, (int, float)):
+        return None
+    foot, top = pos[1], pos[1] + h
+    return (foot, top) if l["leads"] == "up" else (top, foot)
+
+
+def rank_ways(ways: list[dict], here: list | None, dest: list | None) -> tuple[list[dict], list[dict]]:
+    """(the ways best first, the ladders to climb in order) toward a goal on another floor. naut2 runs 1-3 (vis): at
+    the Nautiloid helm the refusal named the nearest ladder, the 2.9 m one that led DOWN from where the party stood,
+    and every run climbed it down and back up before the 10 m one. First: a ladder going the goal's way from this
+    floor (landing nearest the goal's height), then stairs/exits/unmeasured ladders, then one going the goal's way
+    from another floor, then one going the other way. When the first climb lands short of the goal on the floor of
+    such a ladder from another floor, both are named in order (from the helm's lower deck: e56 up, then e57 up)."""
+    def dist(l: dict) -> float:
+        return l.get("dist") or 1e9
+    if not (here and dest) or abs(dest[1] - here[1]) < FLOOR_SAME_M:
+        return sorted(ways, key=dist), []
+    side = "up" if dest[1] > here[1] else "down"
+
+    def rank(l: dict) -> tuple:
+        ends = ladder_ends(l)
+        if ends is None:
+            return (1, 0, dist(l))
+        start, land = ends
+        if l["leads"] != side:
+            return (3, 0, dist(l))
+        return (0 if abs(start - here[1]) <= FLOOR_SAME_M else 2, round(abs(dest[1] - land) / 2), dist(l))
+
+    ranked = sorted(ways, key=rank)
+    mine = [l for l in ranked if rank(l)[0] == 0]
+    if not mine:
+        return ranked, []
+    a = mine[0]
+    a_land = ladder_ends(a)[1]
+    chain = [a]
+    if abs(dest[1] - a_land) >= FLOOR_LANDS_M:
+        nxt = next((l for l in ranked if rank(l)[0] == 2 and abs(ladder_ends(l)[0] - a_land) <= FLOOR_SAME_M
+                    and abs(dest[1] - ladder_ends(l)[1]) < abs(dest[1] - a_land)), None)
+        if nxt:
+            chain.append(nxt)
+    return chain + [l for l in ranked if l not in chain], chain
+
+
 def _next(res: dict, H: Handles, ends: list | None = None) -> str:
     """One concrete suggestion."""
     wd = res.get("wedged")
@@ -129,7 +181,15 @@ def _next(res: dict, H: Handles, ends: list | None = None) -> str:
     up = res.get("dy") or 0
     if abs(up) >= 2.5:
         want = "up" if up > 0 else "down"
-        lad = next((c for c in cons if c.get("kind") == "ladder" and c.get("leads") in (want, None)), None)
+        lads = [c for c in cons if c.get("kind") == "ladder" and c.get("leads") in (want, None)]
+        # naut2 runs 1-3 from the helm's lower deck: NEXT said "interact e57" (its foot on the deck 2.6 m above, the
+        # engine's score favours its top near the goal); the way is e56 up first, then e57
+        ranked, chain = rank_ways(lads, res.get("from"), res.get("goal"))
+        if len(chain) == 2:
+            a, b = (H.get(c["uuid"], c.get("name")) for c in chain)
+            return (f"NEXT: interact {a} (ladder {want}), then interact {b} (ladder {want}) "
+                    f"(one call: queue_actions [interact {a}, interact {b}]), then route again")
+        lad = chain[0] if chain else (ranked[0] if ranked else None)
         if lad:
             return f"NEXT: interact {H.get(lad['uuid'], lad.get('name'))} (ladder {want}), then route again"
     helper = next((c for c in cons if c.get("helps")), None)
@@ -152,6 +212,12 @@ def _next(res: dict, H: Handles, ends: list | None = None) -> str:
 
 def wedged_text(w: Any) -> str:
     """nav.wedged / route's res['wedged'] -> '; you are wedged: ...' (S058 08:00), '' when not wedged."""
+    if isinstance(w, dict) and w.get("wedged") and not w.get("to") and w.get("away"):
+        # naut2 run 3: the only landing was next to Lae'zel at the foot of the ladder just climbed, away from the goal
+        dy = w.get("away_dy") or 0
+        return (f"; no walkable ground reads around you, and the only landing (next to {w['away']}) is "
+                f"{_m(abs(dy))} {'below' if dy < 0 else 'above'}, away from the goal: don't jump there; try again in a "
+                "moment (right after a climb the ground can read blocked), or route")
     if not isinstance(w, dict) or not w.get("wedged") or not w.get("to"):
         return ""  # no member to land next to: maybe a small balcony whose way out is the ladder (S059 08:52)
     return (f"; you are wedged: no walkable ground leads out from where you stand: jump_to x,y,z = {pos(w['to'])} "
@@ -235,8 +301,10 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
         if res.get("ways"):  # the open directions from here, as get_frontier says them
             out.append(render.render_ways(res["ways"]))
         wt = wedged_text(res.get("wedged"))
-        if wt:
+        if wt.startswith("; you are wedged"):
             out.append("WEDGED" + wt[len("; you are wedged"):])
+        elif wt:
+            out.append("WEDGED? " + wt.lstrip("; "))
     else:
         why = res.get("unknown_reason")  # S039 21:44: after a jump onto a rock off the walkable grid ("midair")
         out.append(f"path unknown: {why}" + ("; step onto plain ground (move_to a floor near you) and route again"

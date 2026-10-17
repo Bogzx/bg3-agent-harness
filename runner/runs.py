@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import clients  # noqa: E402
 import fairness  # noqa: E402
+import model_time  # noqa: E402
 import triage  # noqa: E402
 
 HARNESS, AGENT, UNKNOWN = "harness", "agent", "unknown"
@@ -985,6 +986,22 @@ def backfill_metrics(state_dir: Path, rec: dict) -> dict:
     return {k: m[k] for k in missing}
 
 
+def backfill_model_time(state_dir: Path, rec: dict) -> dict:
+    """{"model_time": …} for a record without one, or whose model_time lacks keys a newer model_time.py reports
+    (api_floor, the headline): computed over the run's window and merged under the present keys, so a value already
+    in the record is never changed. {} when nothing is missing, no start, or no timing in the window."""
+    started, end = rec.get("started"), rec.get("t")
+    old = rec.get("model_time")
+    if not isinstance(started, (int, float)) or (isinstance(old, dict) and "api_floor" in old
+                                                  and model_time.HEADLINE in old):
+        return {}
+    until = end + BACKFILL_SLACK_S if isinstance(end, (int, float)) else None
+    fresh = model_time_field(model_time.model_time(state_dir, since=started, until=until))
+    if not fresh.get("sessions"):
+        return {}
+    return {"model_time": {**fresh, **(old if isinstance(old, dict) else {})}}
+
+
 # ======================================================================== the table
 
 def class_counts(failures: list[dict]) -> Counter:
@@ -1015,8 +1032,8 @@ def best_streak(records: list[dict]) -> int:
 def runs_table(records: list[dict]) -> str:
     """Plain-text table of a series' runs (play.py runs --playthrough <base>)."""
     head = ("run", "playthrough", "outcome", "clean", "wall min", "to M min", "sessions", "harness", "agent",
-            "unknown", "cost $", "tokens M", "idle med s", "persona", "adj model min", "result tok k (/res)",
-            "top failures")
+            "unknown", "cost $", "tokens M", "idle med s", "persona", "adj model min", "API floor s",
+            "result tok k (/res)", "top failures")
     rows = []
     for r in records:
         c = class_counts(r.get("failures"))
@@ -1025,14 +1042,15 @@ def runs_table(records: list[dict]) -> str:
             kinds[f"{f.get('kind')}({f.get('class', '?')[0]})"] += int(f.get("n") or 1)
         top = ", ".join(f"{k}×{n}" if n > 1 else k for k, n in kinds.most_common(4))
         outcome = r.get("outcome") or ("reached" if r.get("milestone") else "?")
-        ttm, idle, adj = record_ttm(r), record_idle(r), record_adjusted_model_s(r)
+        ttm, idle, adj, floor = record_ttm(r), record_idle(r), record_adjusted_model_s(r), record_api_floor(r)
         outcome += f" ({r['cap']})" if r.get("cap") and outcome != "timeout" else ""
         rows.append((str(r.get("run") or 1), str(r.get("playthrough") or ""), outcome,
                      "yes" if r.get("clean") else "no", f"{r.get('wall_min', 0):g}",
                      "-" if ttm is None else f"{ttm / 60:.1f}", str(r.get("sessions", "")),
                      str(c[HARNESS]), str(c[AGENT]), str(c[UNKNOWN]), f"{r.get('cost_usd', 0):.2f}",
                      f"{token_total(r.get('tokens')) / 1e6:.2f}", "-" if idle is None else f"{idle:g}",
-                     persona_cell(r), "-" if adj is None else f"{adj / 60:.1f}", result_tok_cell(r), top))
+                     persona_cell(r), "-" if adj is None else f"{adj / 60:.1f}",
+                     "-" if floor is None else f"{floor:.2f}", result_tok_cell(r), top))
     widths = [max(len(x) for x in col) for col in zip(head, *rows)] if rows else [len(h) for h in head]
     lines = ["  ".join(v.ljust(w) for v, w in zip(row, widths)).rstrip() for row in [head, *rows]]
     lines.insert(1, "  ".join("-" * w for w in widths))
@@ -1074,8 +1092,28 @@ def persona_cell(r: dict) -> str:
 
 
 def record_adjusted_model_s(r: dict) -> float | None:
-    """The run's model time normalised to the reference API speed (model_time.adjusted_model_s)."""
-    return (r.get("model_time") or {}).get("adjusted_model_s")
+    """The run's "adj model min" in seconds: model time with output speed and TTFT both at the reference API
+    (model_time.HEADLINE = adjusted_model_s_ref_ttft). adjusted_model_s kept the measured TTFT, so a slower API hour
+    read as a regression (naut -> naut2: +18 % there, -13 % here)."""
+    return model_time.headline_s(r.get("model_time"))
+
+
+def record_api_floor(r: dict) -> float | None:
+    """The run's API floor: p10 first-block latency of its messages without thinking (model_time.api_floor)."""
+    return model_time.floor_of(r.get("model_time"))
+
+
+def floor_note(floors: list[tuple[str, float]]) -> str | None:
+    """"API floor differs …" when the API floors of runs (or series) are further apart than model_time.FLOOR_DIFF_S:
+    their raw model-time difference is then (partly) the API's; the TTFT-normalised adj model min compares."""
+    if len(floors) < 2:
+        return None
+    lo, hi = min(floors, key=lambda x: x[1]), max(floors, key=lambda x: x[1])
+    if not model_time.floor_differs(lo[1], hi[1]):
+        return None
+    return (f"API floor differs ({lo[0]} {lo[1]:.2f} s … {hi[0]} {hi[1]:.2f} s per request, > "
+            f"{model_time.FLOOR_DIFF_S:g} s): raw model time differences are the API's, not a regression; "
+            f"compare adj model min (TTFT-normalised)")
 
 
 def stats(values: list) -> dict | None:
@@ -1100,6 +1138,7 @@ SUMMARY_METRICS = (   # (label, value of a record, format)
     ("result tok k", lambda r: (record_result_tokens(r) or {}).get("total", 0) / 1000 if record_result_tokens(r)
      else None, "{:.1f}"),
     ("tok/result", lambda r: (record_result_tokens(r) or {}).get("per_result"), "{:.0f}"),
+    ("API floor s", record_api_floor, "{:.2f}"),
 )
 
 
@@ -1131,9 +1170,51 @@ def series_summary(records: list[dict]) -> str:
                       f"run {k} {result_tok_grade(rt.get('total'), RESULT_TOK_BASELINE_TOTAL)}/"
                       f"{result_tok_grade(rt.get('per_result'), RESULT_TOK_BASELINE_PER_RESULT)}"
                       for k, rt in graded) + " (total/per result; ±10 % = same)"]
+    note = floor_note([(f"run {r.get('run') or 1}", record_api_floor(r)) for r in records
+                       if record_api_floor(r) is not None])
+    if note:
+        lines += [note]
     judges = {(r.get("persona") or {}).get("judge_model") for r in records} - {None}
     if len(judges) > 1:
         lines += ["judge models differ between runs (scores don't compare): " + " | ".join(sorted(judges))]
+    return "\n".join(lines)
+
+
+COMPARE_METRICS = (   # (label, value of a record, format): play.py runs --vs
+    ("wall min", lambda r: r.get("wall_min"), "{:.1f}"),
+    ("model min (raw)", lambda r: ((r.get("model_time") or {}).get("model_s") or 0) / 60 or None, "{:.2f}"),
+    ("adj model min", lambda r: None if record_adjusted_model_s(r) is None else record_adjusted_model_s(r) / 60,
+     "{:.2f}"),
+    ("API floor s", record_api_floor, "{:.2f}"),
+    ("model turns", lambda r: (r.get("model_time") or {}).get("model_turns"), "{:.0f}"),
+    ("idle median s", record_idle, "{:.2f}"),
+    ("cost $", lambda r: r.get("cost_usd"), "{:.2f}"),
+)
+
+
+def series_compare(name_a: str, recs_a: list[dict], name_b: str, recs_b: list[dict]) -> str:
+    """Two series side by side (means, b - a), and "API floor differs" when their mean floors are further apart
+    than model_time.FLOOR_DIFF_S: the raw model-time delta is then the API's, the adj model min one is ours."""
+    head = ("metric", name_a, name_b, "delta")
+    rows = []
+    for label, get, fmt in COMPARE_METRICS:
+        sa, sb = stats([get(r) for r in recs_a]), stats([get(r) for r in recs_b])
+        cell = lambda st: "-" if st is None else fmt.format(st["mean"])   # noqa: E731
+        d = "-" if sa is None or sb is None else (fmt.format(sb["mean"] - sa["mean"]) if sb["mean"] < sa["mean"]
+                                                  else "+" + fmt.format(sb["mean"] - sa["mean"]))
+        if sa and sb and sa["mean"]:
+            d += f" ({100 * (sb['mean'] - sa['mean']) / sa['mean']:+.0f} %)"
+        rows.append((label, cell(sa), cell(sb), d))
+    widths = [max(len(x) for x in col) for col in zip(head, *rows)]
+    lines = [f"{name_a} (n={len(recs_a)}) vs {name_b} (n={len(recs_b)}), means"]
+    lines += ["  ".join(v.ljust(w) for v, w in zip(row, widths)).rstrip() for row in [head, *rows]]
+    lines.insert(2, "  ".join("-" * w for w in widths))
+    fa, fb = (stats([record_api_floor(r) for r in rs]) for rs in (recs_a, recs_b))
+    note = floor_note([(name_a, fa["mean"]), (name_b, fb["mean"])]) if fa and fb else None
+    if note:
+        lines += [note]
+    elif not (fa and fb):
+        lines += ["API floor unknown for a series (records before the field: play.py runs --backfill)"]
     return "\n".join(lines)
 
 

@@ -375,6 +375,36 @@ class HotbarCast(unittest.TestCase):
         self.assertTrue(r.ok, r.as_dict())
         self.assertEqual(self.w.jobs, ["act.select"])
 
+    def test_hud_lag_after_select_is_polled(self):
+        # live window #3 (10-17 14:07): right after act.select the HUD's decks still show the previous member, so
+        # the read finds no Bless though the caster's server map has it: read again until the cell shows
+        self.w.selected = False
+        real, stale = self.w.slot, [0]
+
+        def slot(args):
+            out = real(args)
+            if self.w.selected and stale[0] < 3:
+                stale[0] += 1
+                return {"selected": True, "found": False, "ids": "map", "why": "not on the hotbar"}
+            return out
+        self.w.slot = slot
+        with mock.patch.object(hotbar.time, "sleep"):
+            r, _ = _cast(self.w)
+        self.assertTrue(r.ok, r.as_dict())
+        self.assertEqual(stale[0], 3)
+        self.assertEqual(self.w.jobs, ["act.select"])
+
+    def test_no_poll_when_the_map_lacks_the_spell(self):
+        self.w.selected = False
+        self.w.server_map = {"ClassHotBar": {"12": "Target_Guidance"}}
+        calls = []
+        real = self.w.slot
+        self.w.slot = lambda args: (calls.append(1), {"selected": True, "found": False, "why": "not on the hotbar"})[1] \
+            if self.w.selected else real(args)
+        r, _ = _cast(self.w)
+        self.assertEqual((r.stage, r.reason), ("slot", "not_on_hotbar"))
+        self.assertEqual(len(calls), 1)                 # one read after the select, no settle loop
+
     def test_paging_clicks_the_deck_tab(self):
         self.w.rendered, self.w.shown = False, "CommonHotBar"
         self.w.tab_at = (int(0.5 * W), int(0.83 * H))

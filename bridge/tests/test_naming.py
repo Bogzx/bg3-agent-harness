@@ -251,6 +251,34 @@ class StateWaits(unittest.TestCase):
             ensure_name(page2.rpc, FakeInput(page2, size=(1920, 1080)), "Orsen Vale")
         self.assertGreater(_reads(page2), 3 * _reads(page))  # the centring walk: ~2x12 more hovers
 
+    def test_name_typed_over_the_selection(self):
+        # naut2 (2026-10-17): `type` ~1.55 s = END + BACKSPACE x22 + RETURN at ~3 frames a key. The click selects
+        # the box's text, so the name goes over it and RETURN follows: 2 shim commands instead of 25.
+        page = FakePage(box=(860, 920), xs=(700, 1220))
+        inp = FakeInput(page, size=(1920, 1080))
+        res = ensure_name(page.rpc, inp, "Corran Vell")
+        self.assertEqual(inp.typed, ["Corran Vell", "<RETURN>"])
+        self.assertEqual((res["typed"], page.text), ("over_selection", "Corran Vell"))
+
+    def test_no_selection_clears_only_what_the_box_holds(self):
+        page = FakePage(box=(860, 920), xs=(700, 1220))
+        inp = FakeInput(page, size=(1920, 1080))
+        inp.click = lambda x, y, button="L", count=1, sync=True: (       # focuses, selects nothing
+            setattr(page, "cursor", (x, y)), inp.clicks.append((x, y)),
+            setattr(page, "focused", page.over(x, y)))
+        res = ensure_name(page.rpc, inp, "Claude")
+        # "Tav" + "Claude" appended -> clear 9 + 2, type again
+        self.assertEqual(inp.typed, ["Claude", "<END>", "<BACKSPACE11>", "Claude", "<RETURN>"])
+        self.assertEqual((res["typed"], page.text), ("cleared", "Claude"))
+
+    def test_typed_name_that_never_shows_still_fails(self):
+        page = FakePage(box=(860, 920), xs=(700, 1220))
+        inp = FakeInput(page, size=(1920, 1080))
+        inp.text = lambda s, sync=True: inp.typed.append(s)               # text never reaches the box
+        with self.assertRaises(NamingError):
+            ensure_name(page.rpc, inp, "Claude")
+        self.assertFalse(page.finished)
+
     def test_cached_point_first(self):
         # the box sits off the layout's prediction: the first call scans, the next one goes straight there
         page = FakePage(box=(700, 760), xs=(700, 1220))

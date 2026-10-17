@@ -814,6 +814,53 @@ test("waysWarm: all eight warm within ~1 s of stopping (arrival), with no search
     assert(ok, err)
 end)
 
+-- naut2 runs 2/3 (Nautiloid helm): a ladder's foot and top share x/z, and the path key had only the start's x/z, so the
+-- warm-up's answers from the deck below answered N.path for 30 s after the climb.
+test("N.path: a warm-up answer from the floor below is not the answer after climbing a ladder (same x/z)", function()
+    local t0 = clock
+    N.waysWarm(clock)
+    while clock - t0 < 1000 do clock = clock + 16; N.frame = N.frame + 1; pumpPaths(); N.waysWarm(clock) end
+    local T = { { 20, 0, 0 }, { -20, 0, 0 }, { 0, 0, 20 }, { 0, 0, -20 } }
+    local warm = 0
+    for _, t in ipairs(T) do if (N.path(P1, t) or {}).async then warm = warm + 1 end end
+    eq(warm > 0, true, "the warm-up answered some of them below")
+    world[P1] = { 0, 2.9, 0 } -- up the ladder: same x/z
+    N.frame = N.frame + 1
+    for _, t in ipairs(T) do eq((N.path(P1, t) or {}).async, nil, "async answer reused after the climb") end
+end)
+
+-- naut2 run 3 (Nautiloid helm): right after climbing e44 the wedged hint said "jump_to (-42.3,4.5,…) next to Lae'zel",
+-- who stood at the ladder's foot 2.9 m below; the jump undid the climb (+60 s). With a goal no landing on a floor
+-- farther from it; a member on the actor's own floor comes first.
+test("wedged: no landing on the floor below, away from the goal (naut2 run 3); own floor first", function()
+    local realH, realParty, realName = Ext.Level.GetHeightsAt, BG3AI.Visibility.party, BG3AI.Visibility.name
+    local P2, P3 = "P2-laezel", "P3-gale"
+    Ext.Level.GetHeightsAt = function() return { 4.5, 7.4 } end
+    local party = { P1, P2 }
+    BG3AI.Visibility.party = function() return party end
+    BG3AI.Visibility.name = function(u) return u == P2 and "Lae'zel" or u == P3 and "Gale" or "Corran" end
+    local ok, err = pcall(function()
+        world[P1] = { -42.0, 7.4, -362.0 }
+        world[P2] = { -42.3, 4.5, -365.0 }
+        blocked = function() return true end
+        local w = N.wedged(P1, 1000) -- no goal: a jump next to her, as before
+        eq(w.wedged, true, "wedged"); eq(w.near, "Lae'zel", "no goal: next to her")
+        w = N.wedged(P1, 1000, { -41.0, 7.7, -357.0 }) -- interact e45: the ladder's foot, on the actor's floor
+        eq(w.to, nil, "no jump down"); eq(w.away, "Lae'zel", "says why"); near(w.away_dy, -2.9, "how far down")
+        w = N.wedged(P1, 1000, { -31.8, 18.2, -354.8 }) -- the helm, 11 m up
+        eq(w.to, nil, "no jump down toward a goal above"); eq(w.away, "Lae'zel", "away")
+        w = N.wedged(P1, 1000, { -42.0, 0.0, -380.0 }) -- a goal below: her floor is on the way
+        eq(w.near, "Lae'zel", "goal below"); eq(w.away, nil, "not away")
+        world[P3] = { -42.0, 7.4, -367.0 } -- on the actor's floor, farther than Lae'zel
+        party = { P1, P2, P3 }
+        w = N.wedged(P1, 1000)
+        eq(w.near, "Gale", "own floor first")
+    end)
+    Ext.Level.GetHeightsAt, BG3AI.Visibility.party, BG3AI.Visibility.name = realH, realParty, realName
+    world[P2], world[P3] = nil, nil
+    assert(ok, err)
+end)
+
 -- NAV-1: the ways cache entry (WAYS_TTL_MS) outlives N.path's async answers (ASYNC_TTL_MS); a warm-up after a long
 -- stand-still used to read the stale answers as "answered" and let N.ways search them synchronously.
 test("waysWarm: after standing still past WAYS_TTL_MS the re-warm asks async again, no sync FindPath", function()

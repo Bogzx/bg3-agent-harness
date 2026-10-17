@@ -72,7 +72,8 @@ def model_time_view(mt: dict | None) -> dict | None:
     view = {"wall_s": _r(wall), "harness_only_s": _r(sp.get("harness_only_s")),
             "model_only_s": _r(sp.get("model_only_s")), "overlap_s": _r(sp.get("overlap_s")),
             "other_s": _r(sp.get("other_s")), "harness_s": _r(mt.get("harness_s")), "model_s": _r(mt.get("model_s")),
-            "adjusted_model_s": _r(mt.get("adjusted_model_s")),
+            "adjusted_model_s": _r(mt.get("adjusted_model_s")), "adj_model_s": _r(MT.headline_s(mt)),
+            "api_floor_s": MT.floor_of(mt),
             "top_tools": [{"tool": k, "n": v.get("n"), "s": _r(v.get("s"))} for k, v in tools[:TOP_TOOLS]]}
     if wall:
         view["harness_pct"] = round(100 * (sp.get("harness_only_s") or 0) / wall)
@@ -168,7 +169,9 @@ def spread(records: list[dict]) -> dict:
     return {"n": len(records), "reached": reached, "clean": clean, "clean_streak": R.clean_streak(records),
             "best_streak": R.best_streak(records),
             "line": table.splitlines()[-1] if table else "no runs recorded yet",
-            "metrics": metrics, "summary_text": R.series_summary(records) if records else ""}
+            "metrics": metrics, "summary_text": R.series_summary(records) if records else "",
+            "floor_note": R.floor_note([(f"run {r.get('run') or 1}", R.record_api_floor(r)) for r in records
+                                        if R.record_api_floor(r) is not None])}
 
 
 def _run_started(status: dict, state_dir: Path) -> float | None:

@@ -28,6 +28,12 @@ Per session, then summed over the run:
                    result event: out_tok / (model_s - turns x ttft median) over the timeline                derived
   adjusted_model_s model_s - out_tok / out_tok_s + out_tok / REF_OUT_TOK_S   (TTFT kept as measured)        estimate
   adjusted_model_s_ref_ttft   the same with TTFT also normalised: - turns x ttft median + turns x REF_TTFT_S estimate
+                   = the headline "adj model min" of run records and `play.py runs` (HEADLINE): the model's own
+                   work at a fixed API, so a slower API hour does not read as a regression
+  api_floor        the API's fixed cost per request: the first-block latency (trigger -> first block) of the
+                   messages without thinking; p10_s = the fastest 10 %, the floor every turn pays (naut 1.00 s,
+                   naut2 1.49-1.60 s: +0.6 s x ~85 turns was the whole naut -> naut2 model-time rise). A series
+                   comparison whose floors differ by more than FLOOR_DIFF_S says "API floor differs"     measured
 
 What the logs cannot separate (NOT_SEPARABLE): thinking vs visible tokens per message are estimates (only the session
 total is exact); TTFT on messages without thinking is the median, not a measurement; CLI overhead between a
@@ -52,8 +58,11 @@ from bg3ai import metrics as M  # noqa: E402
 
 REF_OUT_TOK_S = 100.0   # the reference output speed (tokens/s) adjusted model time is normalised to: a fixed yardstick,
 REF_TTFT_S = 0.75       # never changed between runs that are compared (both are recorded in "ref")
+HEADLINE = "adjusted_model_s_ref_ttft"   # the "adj model min" of run records, tables and the dashboard
+FLOOR_DIFF_S = 0.3      # API floors (api_floor.p10_s) further apart than this: model-time differences are the API's
 WINDOW_SLACK_S = 5.0    # as judge.py: the run record is written a little after the last call
-TOP_TOOLS = 8
+# harness_by_tool keeps every tool (was the top 8: naut2's dialogue_advance, ~1-3 s after the helm skip, dropped
+# out of all 3 run records). The dashboard picks its own top few.
 
 PLAY_STREAM_RE = re.compile(r"^S\d{3,}(?:-[rc]\d+)?\.jsonl$")   # as runs.PLAY_STREAM_RE (play sessions + resumes)
 RESUME_RE = re.compile(r"^(S\d{3,})-([rc])(\d+)\.jsonl$")
@@ -64,7 +73,7 @@ NOT_SEPARABLE = [
     "CLI overhead between a tool_result and the next request (inside ttft)",
     "provider queueing vs prompt prefill (both inside ttft)",
 ]
-MEASURED = ["harness_s", "model_s", "split", "idle", "ttft_s", "think_s", "wall_s"]
+MEASURED = ["harness_s", "model_s", "split", "idle", "ttft_s", "think_s", "wall_s", "api_floor"]
 ESTIMATED = ["out_tok (per message; total exact when tokens_source=exact_scaled)", "out_tok_s", "gen_s",
              "residual_s", "adjusted_model_s", "adjusted_model_s_ref_ttft"]
 
@@ -311,6 +320,7 @@ def analyze_session(name: str, stream: Path, since: float | None = None, until: 
         m["tok"] = m["est"] * cf + m["think_est"] * tf
 
     ttfts = [m["ttft_s"] for m in counted if "ttft_s" in m]
+    first_blocks = [m["t_first"] - m["trigger"] for m in counted if "think_s" not in m]
     ttft_med = M.percentile(ttfts, 50) if ttfts else None
     model_s = sum(m["t_last"] - m["trigger"] for m in counted)
     tok = sum(m["tok"] for m in counted)
@@ -336,6 +346,7 @@ def analyze_session(name: str, stream: Path, since: float | None = None, until: 
     for c in calls:
         by_tool.setdefault(c["name"], []).append(c["t1"] - c["t0"])
     return {"session": name, "lo": lo, "hi": hi, "msgs": msgs, "counted": counted, "ttfts": ttfts,
+            "first_blocks": first_blocks,
             "ttft_med": ttft_med, "model_s": model_s, "harness_s": _length(harness_sp),
             "harness_call_s": sum(c["t1"] - c["t0"] for c in calls), "by_tool": by_tool,
             "bridge_tool_s": sum(r.get("ms", 0) for r in tools if not r.get("nested")) / 1000.0,
@@ -381,6 +392,30 @@ def adjusted(model_s: float, turns: int, tok: float, gen_s: float | None, ttft_m
             "adjusted_model_s": adj, "adjusted_model_s_ref_ttft": adj - ttft_total + turns * ref_ttft}
 
 
+def api_floor(first_blocks: list[float], ttfts: list[float]) -> dict | None:
+    """The API's fixed cost per request: p10 / median of the first-block latencies of messages without thinking
+    (TTFT + the first block's own few tokens), and the measured TTFT median of the thinking messages beside it."""
+    if not first_blocks:
+        return None
+    return {"n": len(first_blocks), "p10_s": _r(M.percentile(first_blocks, 10)),
+            "median_s": _r(M.percentile(first_blocks, 50)),
+            "ttft_median_s": _r(M.percentile(ttfts, 50)) if ttfts else None}
+
+
+def floor_of(mt: dict | None) -> float | None:
+    """api_floor.p10_s of a model_time dict (a run record's); None for records written before the field."""
+    return ((mt or {}).get("api_floor") or {}).get("p10_s")
+
+
+def headline_s(mt: dict | None) -> float | None:
+    """The headline adjusted model time (HEADLINE: output speed and TTFT both at the reference API)."""
+    return (mt or {}).get(HEADLINE)
+
+
+def floor_differs(a: float | None, b: float | None, limit: float = FLOOR_DIFF_S) -> bool:
+    return a is not None and b is not None and abs(a - b) > limit + 1e-9   # 1.3 - 1.0 = 0.30000000000000004
+
+
 def report(sessions: list[dict], ref_tps: float = REF_OUT_TOK_S, ref_ttft: float = REF_TTFT_S,
            per_session: bool = True) -> dict:
     """Sum raw session splits into the reported dict (one session or a whole run)."""
@@ -413,7 +448,7 @@ def report(sessions: list[dict], ref_tps: float = REF_OUT_TOK_S, ref_ttft: float
     for s in sessions:
         for k, v in s["by_tool"].items():
             by_tool.setdefault(k, []).extend(v)
-    top = sorted(by_tool.items(), key=lambda kv: -sum(kv[1]))[:TOP_TOOLS]
+    top = sorted(by_tool.items(), key=lambda kv: -sum(kv[1]))   # every tool, most time first
     sources = sorted({s["tokens_source"] for s in sessions})
     n = len(counted)
     out = {
@@ -430,6 +465,7 @@ def report(sessions: list[dict], ref_tps: float = REF_OUT_TOK_S, ref_ttft: float
         "model_s_per_turn": _stats([m["t_last"] - m["trigger"] for m in counted]),
         "think_s": _stats([m["think_s"] for m in counted if "think_s" in m]),
         "ttft_s": dict(_stats(ttfts), source="measured (thinking messages)") if ttfts else None,
+        "api_floor": api_floor([x for s in sessions for x in s.get("first_blocks", [])], ttfts),
         "out_tok": round(tok),
         "out_tok_per_turn": _stats([m["tok"] for m in counted]),
         "thinking_tok": round(sum(s["thinking_tok"] or 0 for s in sessions)),
@@ -450,7 +486,10 @@ def report(sessions: list[dict], ref_tps: float = REF_OUT_TOK_S, ref_ttft: float
         out["per_session"] = [
             {"session": s["session"], "model_s": _r(s["model_s"]), "harness_s": _r(s["harness_s"]),
              "turns": len(s["counted"]), "out_tok_s": _r(s["tps"], 1), "ttft_median_s": _r(s["ttft_med"]),
-             "adjusted_model_s": _r(a["adjusted_model_s"])} for s, a in zip(sessions, adj)]
+             "adjusted_model_s": _r(a["adjusted_model_s"]),
+             "adjusted_model_s_ref_ttft": _r(a["adjusted_model_s_ref_ttft"]),
+             "api_floor_p10_s": (api_floor(s.get("first_blocks", []), s["ttfts"]) or {}).get("p10_s")}
+            for s, a in zip(sessions, adj)]
     return out
 
 

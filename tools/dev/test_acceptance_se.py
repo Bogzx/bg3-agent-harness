@@ -90,5 +90,65 @@ class UndoCamera(unittest.TestCase):
         inp.wheel.assert_not_called()
 
 
+class HotbarCasterPick(unittest.TestCase):
+    """Live window #3 (10-17 14:07, S027-start): 'caster with a usable Bless=None'. The pick now reads each member's
+    server hotbar map (no HUD switch), the selected member first, then polls the HUD read after selecting."""
+
+    MAPS = {"gale": {"ClassHotBar": {"3": "Projectile_MagicMissile", "4": "Projectile_ScorchingRay"}},
+            "karl": {"CommonHotBar": {"9": "Target_MainHandAttack"}},
+            "sh": {"ClassHotBar": {"2": "Target_GuidingBolt"}},
+            "claude": {"ClassHotBar": {"6": "Target_Bless", "4": "Target_CureWounds"}}}
+
+    def _run(self, maps, sel, found_after=0):
+        from unittest import mock
+        from bg3ai import hotbar as HB
+        reads, selects = [], []
+        fake_s = mock.Mock()
+        fake_s.H.get = lambda u: u
+        fake_s.game.run_job = lambda op, args, wait_s=0: selects.append(args["char"])
+
+        def slot(game, spell, char, tabs=False, cache=False):
+            reads.append(char)
+            hit = len(reads) > found_after
+            return {"found": hit, "can_use": True, "selected": True, "deck": "ClassHotBar", "index": 7}
+        with mock.patch.object(A, "S", fake_s), mock.patch.object(A, "log"), \
+                mock.patch.object(HB, "server_map", lambda game, u: maps.get(u)), \
+                mock.patch.object(HB, "_slot", slot), mock.patch.object(HB.time, "sleep"):
+            pick, why = A.pick_hotbar_caster(["gale", "karl", "sh", "claude"], sel)
+        return pick, why, reads, selects
+
+    def test_window3_party_picks_claude_from_the_server_map(self):
+        pick, why, reads, selects = self._run(self.MAPS, sel="gale")
+        self.assertEqual(pick, ("claude", "Target_Bless", "BLESS", 3))
+        self.assertEqual(selects, ["claude"])          # nobody else selected (no HUD read per member)
+        self.assertEqual(reads, ["claude"])
+
+    def test_selected_member_first_and_not_reselected(self):
+        maps = dict(self.MAPS, sh={"ClassHotBar": {"1": "Target_Bless"}})
+        pick, _, _, selects = self._run(maps, sel="claude")
+        self.assertEqual(pick[0], "claude")
+        self.assertEqual(selects, [])
+
+    def test_hud_lag_after_select_is_polled(self):
+        pick, _, reads, _ = self._run(self.MAPS, sel="gale", found_after=3)
+        self.assertEqual(pick[0], "claude")
+        self.assertEqual(len(reads), 4)                 # 3 stale reads, then the cell
+
+    def test_nobody_has_it_says_what_each_has(self):
+        maps = {k: v for k, v in self.MAPS.items() if k != "claude"}
+        pick, why, _, selects = self._run(maps, sel="gale")
+        self.assertIsNone(pick)
+        self.assertEqual(selects, [])
+        self.assertIn("gale: 2 ids, multi-target ['Projectile_MagicMissile', 'Projectile_ScorchingRay']", why)
+        self.assertIn("claude: no map", why)
+
+    def test_map_has_upcast_base(self):
+        from bg3ai import hotbar as HB
+        self.assertTrue(HB.map_has({"ClassHotBar": {"6": "Target_Bless"}}, "target_bless"))
+        self.assertTrue(HB.map_has({"ClassHotBar": {"6": "Projectile_MagicMissile"}}, "Projectile_MagicMissile_3"))
+        self.assertFalse(HB.map_has({"ClassHotBar": {"6": "Target_Bane"}}, "Target_Bless"))
+        self.assertFalse(HB.map_has(None, "Target_Bless"))
+
+
 if __name__ == "__main__":
     unittest.main()

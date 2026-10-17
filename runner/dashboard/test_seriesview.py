@@ -178,6 +178,24 @@ class Synthetic(unittest.TestCase):
         self.assertEqual((p["frozen"]["sandbox"], p["frozen"]["sandbox_unfirewalled"]), ("container", True))
         self.assertEqual(p["spread"]["clean_streak"], 0)
 
+    def test_adj_model_time_and_api_floor(self):
+        d = self.rt / "sessions" / "fl"
+        d.mkdir(parents=True)
+        mt = lambda adj, floor: {"sessions": 1, "wall_s": 400.0, "split": {"harness_only_s": 200.0},   # noqa: E731
+                                 "adjusted_model_s": adj + 50, "adjusted_model_s_ref_ttft": adj,
+                                 "api_floor": {"n": 60, "p10_s": floor, "median_s": floor + 0.3}}
+        recs = [{"series": "fl", "run": 1, "playthrough": "fl", "outcome": "reached", "clean": True,
+                 "model_time": mt(193.0, 1.0)},
+                {"series": "fl", "run": 2, "playthrough": "fl-r2", "outcome": "reached", "clean": True,
+                 "model_time": mt(167.0, 1.55)}]
+        (d / "runs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
+        p = V.series_payload(self.rt, "fl", {})
+        self.assertEqual([(r["model_time"]["adj_model_s"], r["model_time"]["api_floor_s"]) for r in p["rows"]],
+                         [(193.0, 1.0), (167.0, 1.55)])
+        self.assertIn("API floor differs (run 1 1.00 s … run 2 1.55 s", p["spread"]["floor_note"])
+        metrics = {m["metric"]: m for m in p["spread"]["metrics"]}
+        self.assertEqual((metrics["adj model min"]["mean"], metrics["API floor s"]["n"]), (3.0, 2))
+
     def test_live_usage_of_a_running_stream(self):
         """A play stream without its result yet: live tokens, priced at the run's cost per token so far."""
         d = self.rt / "sessions" / "sb-r2"

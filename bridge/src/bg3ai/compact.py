@@ -210,7 +210,8 @@ def refs(line: str) -> str:
     return _REF_ONLY.sub(r"=\1", line)
 
 
-_EMPTY_KV = re.compile(r" [a-z_]+=(?= |$)")
+_EMPTY_KV = re.compile(r" [a-z_]+=(?= [a-z_]+=|$)")   # an empty value before the next key or the end: not a hint's
+# "narrow with radius= or kinds=)" (claude-run-2 S030/S058 replay: it came out as "narrow with or kinds=")
 _EMPTY_LIST = re.compile(r"^(\s+[a-z_]+) \[\]$")
 
 
@@ -849,6 +850,17 @@ def turn_names(lines: list[str]) -> list[str]:
 
 
 _NEXT = re.compile(r"^NEXT ((?:e\d+ [^,]+?|\+\d+ more)(?:, (?:e\d+ [^,]+?|\+\d+ more))*)(, then .*|\..*|:.*)?$")
+_YOURS = re.compile(r"^(.*?)( \((?:yours|yours, shared turn)\))?$")
+
+
+def _next_item(item: str, named: set[str]) -> str:
+    """One NEXT entry with the names this result already showed cut to their handle. Keeps "(yours)" and every member
+    of a shared turn: "NEXT e6 Claude (yours): plan that turn now" (a party member next, nobody in between) came out
+    as "NEXT e6: plan that turn now" (claude-run-2 S050/S058 replay); a shared turn "e1 A + e2 B (yours, shared turn)"
+    keeps every member (its comma keeps _NEXT from matching today, so it is shown in full)."""
+    body, suffix = _YOURS.match(item).groups()
+    parts = [re.sub(r"^(e\d+) .+$", r"\1", p) if p.split(" ")[0] in named else p for p in body.split(" + ")]
+    return " + ".join(parts) + (suffix or "")
 
 
 # ---------------------------------------------------------------------------
@@ -987,13 +999,12 @@ class Compactor:
                 out.append(ln)
                 continue
             order, rest = m.group(1), m.group(2) or ""
-            if ln == self.last_next[0]:
+            if ln == self.last_next[0] and (", " in order or rest.startswith(", then")):   # not "NEXT e4 (yours): …"
                 self.elided.append(self.last_next[1])
                 out.append(f"NEXT (order as before){rest}")
                 continue
             named = set(_NAMED.findall("\n".join(out)))
-            shown = ", ".join(re.sub(r"^(e\d+) .+$", r"\1", it) if it.split(" ")[0] in named else it
-                              for it in order.split(", "))
+            shown = ", ".join(_next_item(it, named) for it in order.split(", "))
             self.last_next = (ln, f"NEXT {shown}{rest}")
             out.append(self.last_next[1])
         return out

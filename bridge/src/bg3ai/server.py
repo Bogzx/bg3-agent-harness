@@ -22,13 +22,14 @@ from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, compact, delta, economy, leveling, macros, metrics, party, render, saver, saves, turn
 from . import companions, debrief, lessons, longnav, lore, memtools, naming, navhints, rules
-from . import hotbar, twostep
+from . import boxclick, hotbar, twostep
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
 
 REPO = Path(__file__).resolve().parents[3]
 RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
+boxclick.HITS_PATH = RUNTIME / "boxclick_hits.json"   # a box's button position, kept across sessions
 PLAY_DIR = Path(os.environ.get("BG3AI_PLAY_DIR", REPO / "play"))
 MEMORY = Path(os.environ.get("BG3AI_MEMORY_DIR", PLAY_DIR / "memory"))
 KNOWLEDGE = Path(os.environ.get("BG3_KNOWLEDGE_DIR") or PLAY_DIR / "knowledge")
@@ -755,6 +756,8 @@ def _guard(fn):
         refused = rules.stop_refusal(fn.__name__, DEADLINE, _READ_TOOLS)  # deadline + grace: for any client
         if refused:
             return _finish(fn.__name__, kw, refused, t0, events=False)
+        waited = _await_new_game() if _new_game["thread"] is not None and fn.__name__ not in _NEW_GAME_NO_WAIT \
+            else ""
         getattr(game, "begin_tool", lambda: None)()
         gated = fn.__name__ not in _SAVE_UNGATED
         if gated:
@@ -765,6 +768,8 @@ def _guard(fn):
             out = fn(*a, **kw)
             if _who_tl.note and isinstance(out, str):  # _who picked the member acting now (ACT-P2); last, so
                 out = out + "\n" + _who_tl.note           # a result's own first word (FAILED, done) stays first
+            if waited and isinstance(out, str):
+                out = waited + "\n" + out
             if LIFE.pending and isinstance(out, str):  # the briefing rides on the first text result
                 out = RULES.wrap(LIFE.take_pending(), _session_key()) + "\n\n=== the result of your call ===\n" + out
             return out
@@ -2258,11 +2263,15 @@ def _route_hint(args: dict) -> str:
     return route_text.hint_text(res, H)
 
 
-def _wedged_hint(char: str | None) -> str:
+def _wedged_hint(char: str | None, goal: list | None = None) -> str:
     """'; you are wedged: ... jump_to (x,y,z) next to Wyll (2.8m)' when no floor around the walker is walkable
-    (nav.wedged, S058 08:00: stuck in a nook after a pick_up, 6 calls to guess the jump out), else ''."""
+    (nav.wedged, S058 08:00: stuck in a nook after a pick_up, 6 calls to guess the jump out), else ''. goal: no
+    landing on a floor farther from it (naut2 run 3: the jump went back down the ladder just climbed)."""
+    args: dict[str, Any] = {"char": char} if char else {}
+    if goal and len(goal) == 3:
+        args["goal"] = list(goal)
     try:  # a hint only: never let it break the failure it decorates
-        w = game.try_rpc("nav.wedged", {"char": char} if char else {})
+        w = game.try_rpc("nav.wedged", args)
     except Exception:  # noqa: BLE001 (an old mod without the op, a test fake)
         return ""
     return route_text.wedged_text(w)
@@ -2322,7 +2331,7 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         hint = _route_hint(args)  # toward an objective/target only (a direction has no goal)
         others = navhints.other_dirs_text(res.get("others") if isinstance(res, dict) else None)
         if not hint and not others:
-            hint = _wedged_hint(args.get("char")).lstrip("; ")
+            hint = _wedged_hint(args.get("char"), args.get("pos")).lstrip("; ")
         return _finish("walk_toward", args, body + ("\n" + hint if hint else others + "." if others else
                                                     ". Try another direction, get_frontier, or a door."), t0)
     head = f"heading {res.get('dir') or ''} toward {what}: {render.num(res.get('straight_m', 0))}m"
@@ -5417,7 +5426,56 @@ def new_game(difficulty: str = "Explorer") -> str:
     """From the main menu: start a new game at the given difficulty (Explorer | Balanced | Tactician) and open character creation."""
     if not PLAYTHROUGH:
         raise GameError("new_game is only available in an AI playthrough session")
-    return _act("new_game", "ui.new_game", {"difficulty": difficulty}, context="client", wait_s=90)
+    if not NEW_GAME_ASYNC:
+        return _act("new_game", "ui.new_game", {"difficulty": difficulty}, context="client", wait_s=NEW_GAME_WAIT_S)
+    t0 = time.monotonic()
+    if _session_over():
+        return _finish("new_game", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
+    args = {"difficulty": difficulty}
+    th = threading.Thread(target=_new_game_bg, args=(args,), name="new_game", daemon=True)
+    _new_game.update(thread=th, result=None, t0=t0)
+    th.start()
+    return _finish("new_game", args, (
+        f"new_game ({difficulty}): loading character creation in the background (~10 s). Write CHARACTER.md and "
+        "party-build.md now (memory tools don't wait); the next game tool (character_creation_options) waits for "
+        "the screen and says how it went."), t0, events=False)
+
+
+# vis's proposal (2026-10-17): new_game returns at once, so the agent writes CHARACTER.md / party-build.md during the
+# ~10 s load instead of after it; the next game tool waits for the load (_guard -> _await_new_game). Off by default
+# until a live window shows it: BG3AI_NEW_GAME_ASYNC=1 turns it on.
+NEW_GAME_ASYNC = os.environ.get("BG3AI_NEW_GAME_ASYNC", "").strip() not in ("", "0")
+NEW_GAME_WAIT_S = 90.0
+_new_game: dict = {"thread": None, "result": None, "t0": 0.0}
+_NEW_GAME_NO_WAIT = _SAVE_UNGATED | {"note", "recall"}   # no game screen: they run during the load
+
+
+def _new_game_bg(args: dict) -> None:
+    try:
+        with _InputHeld():
+            r = game.run_job("ui.new_game", args, context="client", wait_s=NEW_GAME_WAIT_S)
+    except Exception as e:  # noqa: BLE001 - reported by the tool that waits for it
+        r = JobResult("failed", None, f"{type(e).__name__}: {e}")
+    _new_game["result"] = r
+
+
+def _await_new_game() -> str:
+    """A game tool after an async new_game: wait for its load. -> '' (done at once), a line saying how long it
+    waited, or why character creation didn't open (the tool then runs anyway and reports its own state)."""
+    th = _new_game["thread"]
+    if th is None:
+        return ""
+    t = time.monotonic()
+    th.join(NEW_GAME_WAIT_S + 5)
+    if th.is_alive():
+        return "new_game: still loading (the next game tool waits again)"
+    _new_game["thread"] = None
+    r = _new_game["result"]
+    if r is None or r.status != "done":
+        return (_job_text("new_game", r) if r is not None else "new_game: no result") \
+            + "\nnew_game did NOT open character creation"
+    waited = time.monotonic() - t
+    return f"(new_game's load finished; waited {waited:.1f} s for it)" if waited >= 0.5 else ""
 
 
 @mcp.tool()
@@ -5506,7 +5564,44 @@ def create_character(plan: str) -> str:
     body = (f"character created and finished: '{who}' (name checked in game)" if got else
             f"character created and finished: '{who}' (the name was set on the naming page, but the world hadn't "
             "loaded yet to check it: check get_status once it has; don't call create_character again)")
+    if got is not None:
+        body += _cc_first_look()
     return _finish("create_character", {"plan": p}, body, t0)
+
+
+CC_FIRST_LOOK = os.environ.get("BG3AI_CC_FIRST_LOOK", "1").strip() not in ("0", "")
+
+
+def _cc_first_look() -> str:
+    """After a checked create_character: the playthrough's first save, queued (the playbook's Sxxx-start), and the
+    full first look (look(full=True): the status read-back of name/race/class, objectives, what's nearby), so the
+    first move needs no more calls. naut2 (2026-10-17): 12-14 s idle in every run right after creation, 8-9 calls
+    (get_status, save_game, memory_edit, note, memory_read, look, get_frontier, get_map) before the first move.
+    BG3AI_CC_FIRST_LOOK=0: the bare result of before."""
+    if not CC_FIRST_LOOK:
+        return ""
+    out = []
+    prev = (_batch["active"], _batch["last"])
+    _batch["active"] = True   # a nested read: no event drain of its own, logged as a nested call
+    try:
+        fl = look(full=True)
+    except Exception as e:  # noqa: BLE001
+        fl = f"(first look failed: {type(e).__name__}: {e}; call look)"
+    finally:
+        _batch["active"], _batch["last"] = prev
+    out.append("FIRST LOOK (this is get_status + look: don't read again before moving):\n" + fl)
+    # after the look: a save that starts at once holds the menus ~2 s, and the nested look would wait for them
+    sess = os.environ.get("BG3AI_SESSION") or ""
+    if re.fullmatch(r"S\d{3,}", sess):
+        try:
+            _enable_save_gates()
+            out.append("first save (no save_game needed): " + SAVER.save(f"{sess}-start"))
+        except Exception as e:  # noqa: BLE001 - the agent can still save by hand
+            out.append(f"first save not started ({type(e).__name__}: {e}): save_game(label=\"{sess}-start\")")
+    out.append("NEXT: issue the first move now; write PLAYTHROUGH.md's Character line and the [decision] note "
+               "while it runs (fix CHARACTER.md's header only if the status above spells name/race/class "
+               "differently)")
+    return "\n" + "\n".join(out)
 
 
 CC_BUDGET_S = 95.0  # the whole tool, under play/.mcp.json's 110 s MCP timeout (a client timeout invites a retry)
@@ -6205,7 +6300,8 @@ def _make_executor(who: str | None, ignore: str | set = "") -> actq.Executor:
 def _new_executor(watcher: actq.Watcher, wg: Game, who: str | None) -> actq.Executor:
     holder: dict = {}
     ex = actq.Executor(lambda step, w: _call_step(holder["ex"], step, w), watcher,
-                       lambda ctx, jid: wg.rpc("job.cancel", {"id": jid}, ctx), who=who, predicate=_predicate)
+                       lambda ctx, jid: wg.rpc("job.cancel", {"id": jid}, ctx), who=who, predicate=_predicate,
+                       actor=lambda: who or _active())
     holder["ex"] = ex
     return ex
 
@@ -8405,7 +8501,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                 stop = (f"no walkable ground leads further toward it ({render.num(round(d, 1))}m left"
                         + (", no other leg either" if failed_end is not None else "")
                         + "): try get_frontier, a door, or a jump")
-                stop += _wedged_hint(char)
+                stop += _wedged_hint(char, dest)
                 if isinstance(r, dict):
                     stop += macros.direct_why_text(r.get("direct_why"), d)
                 if isinstance(r, dict) and r.get("hazard_beyond"):
@@ -8689,9 +8785,15 @@ def _wait_for_stragglers(char: str, here: Any, crew: set, outer: actq.Executor |
             "or stay(who) to leave them on purpose")
 
 
-def _floor_ways(within: float = 1e9) -> tuple[dict | None, list[dict]]:
-    """(frontier, the 2 nearest ladders/stairs/exits in view within `within` m): the ways to another floor or an
-    interior. Leads only: the open-direction searches cost ~100 ms."""
+_ladder_ends, _rank_ways = route_text.ladder_ends, route_text.rank_ways
+FLOOR_SAME_M = route_text.FLOOR_SAME_M
+
+
+def _floor_ways(within: float = 1e9, here: list | None = None, dest: list | None = None,
+                kinds: tuple = ("ladder", "stairs", "exit")) -> tuple[dict | None, list[dict], list[dict]]:
+    """(frontier, the 2 best ladders/stairs/exits in view within `within` m, the ladders to climb in order): the ways
+    to another floor or an interior, ranked toward dest (_rank_ways; nearest first without one). Leads only: the
+    open-direction searches cost ~100 ms."""
     # the frontier's own radius is 30 m: ask for `within` (acceptance 01:07: the Mausoleum Entrance 34 m from the
     # ladder top was cut, so travel_to (-286,-31,-847.5) started a 934 m walk instead of naming the entrance)
     args: dict[str, Any] = {"ways": False}
@@ -8703,30 +8805,42 @@ def _floor_ways(within: float = 1e9) -> tuple[dict | None, list[dict]]:
     res = game.try_rpc("nav.frontier", args)
     leads = res.get("leads") if isinstance(res, dict) else None
     # a ladder pulled up out of reach is no way up (S059 08:57 e683, Navigation.lua N.ladderRaised)
-    ups = sorted((l for l in leads or [] if l.get("uuid") and l.get("kind") in ("ladder", "stairs", "exit")
-                  and not (l.get("raised_m") and l.get("leads") == "up")
-                  and (l.get("dist") or 0) <= within), key=lambda l: l.get("dist") or 1e9)[:2]
-    return res, ups
+    ways = [l for l in leads or [] if l.get("uuid") and l.get("kind") in kinds
+            and not (l.get("raised_m") and l.get("leads") == "up") and (l.get("dist") or 0) <= within]
+    ranked, chain = _rank_ways(ways, here, dest)
+    return res, ranked[:2], chain
 
 
-def _ways_text(res: dict | None, ups: list[dict]) -> str:
+def _climb_text(l: dict, here: list | None) -> str:
+    """' (climbs 10.1m up, from a floor 2.6m above you)' for a ladder whose climb the frontier measured."""
+    ends = _ladder_ends(l)
+    if ends is None:
+        return ""
+    off = ""
+    if here and abs(ends[0] - here[1]) > FLOOR_SAME_M:
+        off = f", from a floor {render.num(round(abs(ends[0] - here[1]), 1))}m {'above' if ends[0] > here[1] else 'below'} you"
+    return f" (climbs {render.num(l['height_m'])}m {l['leads']}{off})"
+
+
+def _ways_text(res: dict | None, ups: list[dict], here: list | None = None) -> str:
     _remember_names(res)
     return ", ".join(f"{H.get(l['uuid'], l.get('name'))} {l.get('name', '?')} <{l.get('kind')}> "
                      f"{render.num(l.get('dist', '?'))}m{(' ' + l['dir']) if l.get('dir') else ''}"
+                     + _climb_text(l, here)
                      + (" (seen earlier, out of sight now)" if l.get("remembered") else "") for l in ups)
 
 
 def _climb_hint(here: list | None, dest: list | None) -> str:
-    """travel_to stopped short of a destination on another deck: name the nearest ladders/stairs/exits (the walker
-    never climbs on its own; interact with the ladder does)."""
+    """travel_to stopped short of a destination on another deck: name the ladders/stairs/exits that lead there (the
+    walker never climbs on its own; interact with the ladder does)."""
     if not (here and dest) or abs(dest[1] - here[1]) < 2.5:
         return ""
-    res, ups = _floor_ways()
+    res, ups, _chain = _floor_ways(here=here, dest=dest)
     side = "above" if dest[1] > here[1] else "below"
     hint = f"; it is {render.num(round(abs(dest[1] - here[1]), 1))}m {side} you"
     if not ups:
         return hint + ": find a ladder or stairs (get_frontier) or jump_to"
-    return hint + f": climb with interact on a ladder/stairs/hatch ({_ways_text(res, ups)}), then travel_to again"
+    return hint + f": climb with interact on a ladder/stairs/hatch ({_ways_text(res, ups, here)}), then travel_to again"
 
 
 FLOOR_DY_M = 6.0      # travel_to: a goal this far above/below gets one route probe before the trip starts
@@ -8755,17 +8869,23 @@ def _other_floor(char: str, here: list | None, dest: list | None) -> str | None:
         # and an entrance is right here. Else walk as before.
         if r.get("reachable") is True or not (r.get("estimate") or r.get("too_far")) or dy < FLOOR_FAR_DY_M:
             return None
-    res, ups = _floor_ways(FLOOR_WAY_M)
-    if r.get("reachable") is not False:
-        ups = [u for u in ups if u.get("kind") == "exit"]  # an interior: only a named entrance/exit leads in
+    # an interior: only a named entrance/exit leads in
+    res, ups, chain = _floor_ways(FLOOR_WAY_M, here, dest, ("ladder", "stairs", "exit")
+                                  if r.get("reachable") is False else ("exit",))
     if not ups:
         return None
     side = "above" if dest[1] > here[1] else "below"
     first = H.get(ups[0]["uuid"], ups[0].get("name"))
+    if len(chain) == 2:
+        # naut2 run 2: the queued [interact e56, interact e57] is the helm's way up from the lower deck
+        a, b = (H.get(l["uuid"], l.get("name")) for l in chain)
+        how = f"interact {a}, then interact {b} (or queue_actions [interact {a}, interact {b}, travel_to ...])"
+    else:
+        how = f"interact {first} (or queue_actions [interact {first}, travel_to ...])"
     why = ("no walk on this floor reaches it (inside/under/over something)" if r.get("reachable") is False
            else f"{render.num(round(macros.dist(here, dest)))}m off and too far to preview: likely inside an interior")
-    return (f"REFUSED: the goal is {render.num(round(dy))}m {side} you and {why}. The way there is likely: {_ways_text(res, ups)}. "
-            f"interact {first} (or queue_actions [interact {first}, travel_to ...]), then travel_to again")
+    return (f"REFUSED: the goal is {render.num(round(dy))}m {side} you and {why}. The way there is likely: {_ways_text(res, ups, here)}. "
+            f"{how}, then travel_to again")
 
 
 def _floor_detour_note(r: dict, here: list, dest: list, dy: float) -> str | None:
@@ -8779,13 +8899,12 @@ def _floor_detour_note(r: dict, here: list, dest: list, dy: float) -> str | None
         return None
     if not isinstance(length, (int, float)) or length < max(FLOOR_DETOUR_X * straight, straight + FLOOR_DETOUR_ADD_M):
         return None
-    res, ups = _floor_ways(FLOOR_WAY_M)
-    ups = [u for u in ups if u.get("kind") in ("ladder", "stairs")]
+    res, ups, _chain = _floor_ways(FLOOR_WAY_M, here, dest, ("ladder", "stairs"))
     if not ups:
         return None
     side = "above" if dest[1] > here[1] else "below"
     return (f"note: the goal is {render.num(round(dy))}m {side} you and the walk there winds {render.num(round(length))}m "
-            f"for {render.num(round(straight))}m straight; shorter: {_ways_text(res, ups)} "
+            f"for {render.num(round(straight))}m straight; shorter: {_ways_text(res, ups, here)} "
             f"(cancel, interact {H.get(ups[0]['uuid'], ups[0].get('name'))}, then travel_to again)")
 
 
@@ -9004,6 +9123,9 @@ try:
 except ValueError:
     SAVES_AFTER = 0.0
 START_SAVE = os.environ.get("BG3AI_START_SAVE") or ""  # a scenario's start save: older than the run, still its own
+# Save folders of this character that another playthrough (same name) or a worker wrote (the runner's foreign_saves,
+# newline-separated): never in list_saves / load_game (claude-run-2's resume: "latest" was replay-hoh's Act 2 save).
+SAVES_EXCLUDE = frozenset(x for x in (os.environ.get("BG3AI_SAVES_EXCLUDE") or "").split("\n") if x)
 AI_LABEL = re.compile(r"S\d{3}-")
 
 
@@ -9052,8 +9174,8 @@ def _my_saves() -> list[Path]:
     an agent wiped before its first own save can load it)."""
     if not SAVE_DIR.is_dir():
         return []
-    return sorted((d for d in SAVE_DIR.iterdir() if d.is_dir() and (d.name == START_SAVE or (
-                   _is_mine(d.name) and d.stat().st_mtime >= SAVES_AFTER))),
+    return sorted((d for d in SAVE_DIR.iterdir() if d.is_dir() and d.name not in SAVES_EXCLUDE and (
+                   d.name == START_SAVE or (_is_mine(d.name) and d.stat().st_mtime >= SAVES_AFTER))),
                   key=lambda d: d.stat().st_mtime, reverse=True)
 
 

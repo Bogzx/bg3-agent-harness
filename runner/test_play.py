@@ -168,6 +168,63 @@ class HandoffAndSaves(unittest.TestCase):
                  P.parse_save_folder("Claude-12__LIVETEST-vis-open", 300), P.parse_save_folder("Claude-13__AutoSave_42", 250)]
         self.assertEqual(P.pick_save(saves, "S027-start", "Claude", set(), "Claude-").folder, "Claude-48__S027-start")
 
+    def test_pick_only_saves_written_while_this_playthrough_played(self):
+        # 2026-10-17: claude-run-2's newest save is S065-end (10-11 12:03), but replay-hoh saved S027-end and
+        # S028-lastlight-prep as "Claude" on 10-15 and a worker saved S999-savetest on 10-13: without the play
+        # windows the resume would have loaded Act 2's S028-lastlight-prep
+        f = P.parse_save_folder
+        saves = [f("Claude-1__S065-pre-orin", 1000.0), f("Claude-2__S065-end", 1500.0),
+                 f("Claude-3__S999-savetest", 5000.0), f("Claude-4__S027-end", 9000.0),
+                 f("Claude-5__S028-lastlight-prep", 9500.0), f("Claude-6__QuickSave_9", 9600.0)]
+        windows = [(100.0, 600.0), (900.0, 1450.0)]
+        self.assertEqual(P.pick_save(saves, None, "Claude", set(), "Claude-").label, "S028-lastlight-prep")
+        self.assertEqual(P.pick_save(saves, None, "Claude", set(), "Claude-", windows).label, "S065-end")  # +50 s slack
+        self.assertEqual(P.pick_save(saves, "S027-end", "Claude", set(), "Claude-", windows).label, "S065-end")
+        # the runner's / agent's own quicksaves count by folder, whenever written; no windows = a new playthrough
+        self.assertEqual(P.pick_save(saves, None, "Claude", {"Claude-6__QuickSave_9"}, "Claude-", windows).label,
+                         "QuickSave_9")
+        self.assertEqual(P.pick_save(saves, None, "Claude", set(), "Claude-", []).label, "S028-lastlight-prep")
+        self.assertFalse(P.in_windows(1571.0, windows))
+        self.assertTrue(P.in_windows(1570.0, windows))
+        # a save older than the playthrough's first window is judged as before (a crash in the first session)
+        older = [f("Claude-0__S001-start", -500.0)] + saves[3:4]
+        self.assertEqual(P.pick_save(older, None, "Claude", set(), "Claude-", windows).label, "S001-start")
+        self.assertFalse(P.played_elsewhere(-500.0, windows))
+        self.assertTrue(P.played_elsewhere(750.0, windows))   # 600 + 120 s slack < 750 < 900 - 120
+
+    def test_foreign_saves_for_the_mcp_server(self):
+        f = P.parse_save_folder
+        saves = [f("Claude-2__S065-end", 1500.0), f("Claude-3__S999-savetest", 5000.0),
+                 f("Claude-5__S028-lastlight-prep", 9500.0), f("Claude-6__QuickSave_9", 9600.0),
+                 f("Claude-7__LIVETEST-x", 9700.0), f("Tav-8__S001-end", 9800.0)]
+        windows = [(900.0, 1450.0)]
+        self.assertEqual(P.foreign_saves(saves, "Claude", set(), windows, "Claude-"),
+                         ["Claude-3__S999-savetest", "Claude-5__S028-lastlight-prep"])   # not quicksaves/LIVETEST/Tav
+        self.assertEqual(P.foreign_saves(saves, "Claude", {"Claude-3__S999-savetest"}, windows, "Claude-"),
+                         ["Claude-5__S028-lastlight-prep"])
+        self.assertEqual(P.foreign_saves(saves, "Claude", set(), [], "Claude-"), [])     # a new playthrough
+        with tempfile.TemporaryDirectory() as d:
+            r = P.Runner(P.Options("solo", None, 20, "opus", save_owner="Claude"))
+            r.state.dir = Path(d)
+            r.state["history"] = [{"kind": "play", "session": "S065", "started": 900.0, "ended": 1450.0}]
+            with mock.patch.object(P, "list_saves", lambda: saves):
+                self.assertEqual(r.save_env()["BG3AI_SAVES_EXCLUDE"],
+                                 "Claude-3__S999-savetest\nClaude-5__S028-lastlight-prep")
+                r.state["history"] = []
+                self.assertNotIn("BG3AI_SAVES_EXCLUDE", r.save_env())
+
+    def test_play_windows_include_sessions_the_runner_never_recorded(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "S001.turns.jsonl").write_text('{"type":"assistant","t":100.0}\n{"type":"use","t":150.5}\n'
+                                                 '{"type":"result","t":290.0}\n')
+            (d / "S002.turns.jsonl").write_text('not json\n{"type":"use","t":400.0}\n')   # crashed: one event
+            (d / "S003.turns.jsonl").write_text("")
+            hist = [{"kind": "play", "session": "S001", "started": 90.0, "ended": 300.0},
+                    {"kind": "play", "session": "S000"}]                                       # no times: skipped
+            self.assertEqual(P.play_windows(hist, d), [(90.0, 300.0), (100.0, 290.0), (400.0, 400.0)])
+            self.assertEqual(P.play_windows(None, None), [])
+
     def test_foreign_use_since(self):
         best = P.parse_save_folder("Claude-48__S027-start", 100)
         mine = [best, P.parse_save_folder("Claude-13__AutoSave_42", 150), P.parse_save_folder("Claude-9__S026-end", 90)]
@@ -912,7 +969,9 @@ class Profile(unittest.TestCase):
         self.assertIn("Roleplay: strict", n)
         self.assertIn('Difficulty: new_game("Explorer") (the default', n)
         self.assertIn("CHARACTER CREATION", n)                 # play/CLAUDE.md's playbook trigger
-        self.assertIn('save_game(label="S001-start")', n)
+        self.assertIn('save_game(label="S001-start")', n)   # the fallback when create_character's save didn't start
+        self.assertIn("make the first move at once, with no more reads", n)   # naut2: 12-14 s of reads after CC
+        self.assertNotIn("read name/race/class back with get_status", n)
         self.assertIn("Name: yours to choose", n)
         self.assertIn('Name: exactly "Ilse"', P.character_creation_note(prof, "Ilse"))
 
@@ -2293,6 +2352,75 @@ class SeriesRuns(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(P.main(["run", "--playthrough", "x", "--until", "nautiloid_escaped", "--restart-run"]), 2)
         self.assertIn("--restart-run", err.getvalue())
+
+    # ---------------------------------------------------------------- the game at the end (naut2 left it running)
+
+    def _series_with_fake_runners(self, keep_game=False, n=2):
+        from unittest import mock
+        calls = []
+
+        class FakeRunner:
+            def __init__(fr, opt):
+                fr.opt, fr.outcome, fr.fatal, fr.stop_requested, fr.profile = opt, None, False, False, {}
+
+            def run(fr):
+                path = P.RUNTIME / "sessions" / "np" / "runs.jsonl"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with open(path, "a") as f:
+                    f.write(json.dumps({"series": "np", "run": fr.opt.run_index, "playthrough": fr.opt.playthrough,
+                                        "outcome": "reached"}) + "\n")
+                fr.outcome = "reached"
+                return 0
+
+            def end_run_game(fr, when="between runs", after=""):
+                calls.append((fr.opt.run_index, when))
+
+            def event(fr, *a, **k):
+                pass
+
+        opt = P.Options("np", None, 20, "opus", until="nautiloid_escaped", series="np", keep_game=keep_game)
+        with mock.patch.object(P, "Runner", FakeRunner), \
+                mock.patch.object(P, "prepare_series_run", lambda *a, **k: None), \
+                mock.patch.object(P, "freeze_series", lambda *a, **k: None), \
+                mock.patch.object(P, "gate_series_run", lambda *a, **k: None), \
+                mock.patch.object(P, "current_pins", lambda: {}), \
+                mock.patch.object(P, "restart_half_run", lambda *a, **k: None), \
+                mock.patch.object(P, "log"):
+            P.run_series(opt, n, {"runner": None, "stop": False})
+        return calls
+
+    def test_a_series_stops_its_last_game_unless_keep_game(self):
+        self.assertEqual(self._series_with_fake_runners(), [(1, "between runs"), (2, "series end")])
+        __import__("shutil").rmtree(P.RUNTIME / "sessions" / "np")
+        self.assertEqual(self._series_with_fake_runners(keep_game=True), [(1, "between runs")])
+
+    def test_stop_game_at_end_only_for_until_runs(self):
+        from unittest import mock
+        r = mock.Mock()
+        until = P.Options("x", None, 20, "opus", until="nautiloid_escaped")
+        self.assertTrue(P.stop_game_at_end(r, until, "run end"))
+        r.end_run_game.assert_called_once_with("run end", "--keep-game leaves it up")
+        r.reset_mock()
+        for opt in (P.Options("x", None, 20, "opus"),                                   # continuous play
+                    P.replace(until, keep_game=True), P.replace(until, dry_run=True)):
+            self.assertFalse(P.stop_game_at_end(r, opt, "run end"))
+        r.end_run_game.assert_not_called()
+        self.assertFalse(P.stop_game_at_end(None, until, "run end"))
+
+    def test_end_run_game_names_when(self):
+        from unittest import mock
+        r = self._series_runner()
+        logged = []
+        with mock.patch.object(P, "port_open", lambda: True), mock.patch.object(r, "owns_game", lambda: True), \
+                mock.patch.object(r, "kill_game") as kill, mock.patch.object(P, "log", logged.append):
+            r.end_run_game("series end", "--keep-game leaves it up")
+        kill.assert_called_once()
+        self.assertEqual(logged, ["series end: game stopped; --keep-game leaves it up"])
+        with mock.patch.object(P, "port_open", lambda: True), mock.patch.object(r, "owns_game", lambda: False), \
+                mock.patch.object(r, "kill_game") as kill, mock.patch.object(P, "log", logged.append):
+            r.end_run_game("run end")
+        kill.assert_not_called()                                   # not this runner's game: never killed
+        self.assertEqual(logged[-1], "run end: the game up is not one this runner launched; left running")
 
     # ---------------------------------------------------------------- fix-notes after the --until stop
 

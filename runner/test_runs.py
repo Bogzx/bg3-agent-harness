@@ -575,14 +575,17 @@ class Judging(TmpDir):
 
     def test_table_and_summary_show_persona_and_model_time(self):
         recs = [dict(Summary.RECS[0], persona={"status": "ok", "score": 8.0, "judge_model": "j", "cost_usd": 0.1},
-                     model_time={"adjusted_model_s": 300.0, "model_s": 400.0}),
+                     model_time={"adjusted_model_s_ref_ttft": 300.0, "adjusted_model_s": 330.0, "model_s": 400.0,
+                                 "api_floor": {"p10_s": 1.0}}),
                 dict(Summary.RECS[1], persona={"status": "judge_failed", "judge_model": "j", "cost_usd": 0.05},
-                     model_time={"adjusted_model_s": 420.0}),
+                     model_time={"adjusted_model_s_ref_ttft": 420.0, "adjusted_model_s": 500.0,
+                                 "api_floor": {"p10_s": 1.1}}),
                 dict(Summary.RECS[2], persona={"status": "ok", "score": 6.0, "judge_model": "k", "cost_usd": 0.1})]
         lines = R.runs_table(recs).splitlines()
-        self.assertIn("persona  adj model min", lines[0])
+        self.assertIn("persona  adj model min  API floor s", lines[0])
         cells = [ln.split() for ln in lines[2:5]]
-        self.assertEqual((cells[0][13:15], cells[1][13:15]), (["8", "5.0"], ["fail", "7.0"]))
+        # adj model min = the TTFT-normalised adjusted_model_s_ref_ttft, not adjusted_model_s
+        self.assertEqual((cells[0][13:16], cells[1][13:16]), (["8", "5.0", "1.00"], ["fail", "7.0", "1.10"]))
         self.assertIn("6  ", lines[4][lines[0].index("persona"):])
         self.assertIn("-", lines[4][lines[0].index("adj model min"):].split()[0])
         self.assertEqual(R.persona_cell({}), "-")
@@ -592,6 +595,47 @@ class Judging(TmpDir):
         self.assertEqual(row["adj model min"][-5:], ["2", "5.0", "7.0", "6.0", "1.4"])
         self.assertEqual(row["judge $"][-5:-3], ["3", "0.05"])
         self.assertIn("judge models differ between runs (scores don't compare): j | k", out)
+        self.assertNotIn("API floor differs", out)                                  # 1.0 vs 1.1 s: same API
+        self.assertIn("API floor s", out)
+
+    def test_api_floor_difference_is_flagged_not_a_regression(self):
+        mt = lambda adj, floor: {"model_s": adj + 40, "adjusted_model_s_ref_ttft": adj,   # noqa: E731
+                                 "api_floor": {"p10_s": floor}, "model_turns": 80}
+        naut = [dict(Summary.RECS[0], model_time=mt(193.0, 1.0)), dict(Summary.RECS[1], model_time=mt(190.0, 1.02))]
+        naut2 = [dict(Summary.RECS[0], model_time=mt(167.0, 1.5)), dict(Summary.RECS[1], model_time=mt(166.0, 1.6))]
+        out = R.series_summary(naut + [dict(Summary.RECS[2], run=3, model_time=mt(170.0, 1.55))])
+        self.assertIn("API floor differs (run 1 1.00 s … run 3 1.55 s per request, > 0.3 s)", out)
+        cmp = R.series_compare("naut", naut, "naut2", naut2)
+        self.assertIn("naut (n=2) vs naut2 (n=2), means", cmp)
+        row = {ln.split("  ")[0]: ln for ln in cmp.splitlines()}
+        self.assertIn("-0.42 (-13 %)", row["adj model min"])
+        self.assertIn("+0.54 (+53 %)", row["API floor s"])
+        self.assertIn("API floor differs (naut 1.01 s … naut2 1.55 s per request", cmp)
+        self.assertNotIn("API floor differs", R.series_compare("a", naut, "b", naut))
+        old = [dict(Summary.RECS[0], model_time={"adjusted_model_s": 1.0})]
+        self.assertIn("API floor unknown", R.series_compare("a", old, "b", naut))
+        self.assertIsNone(R.record_adjusted_model_s(old[0]))   # the headline only: no fallback to adjusted_model_s
+
+    def test_backfill_model_time_adds_missing_keys_only(self):
+        fresh = {"sessions": 1, "model_s": 999.0, "adjusted_model_s_ref_ttft": 160.0, "api_floor": {"p10_s": 1.5},
+                 "measured": ["x"]}
+        calls = []
+        orig = R.model_time.model_time
+        R.model_time.model_time = lambda d, since=None, until=None: calls.append((since, until)) or dict(fresh)
+        try:
+            rec = {"started": 100.0, "t": 200.0, "model_time": {"sessions": 1, "model_s": 210.0}}
+            out = R.backfill_model_time(Path("/nowhere"), rec)["model_time"]
+            self.assertEqual(out["model_s"], 210.0)                         # a present value never changes
+            self.assertEqual((out["api_floor"], out["adjusted_model_s_ref_ttft"]), ({"p10_s": 1.5}, 160.0))
+            self.assertNotIn("measured", out)
+            self.assertEqual(calls, [(100.0, 200.0 + R.BACKFILL_SLACK_S)])
+            self.assertEqual(R.backfill_model_time(Path("/nowhere"), dict(rec, model_time=out)), {})   # complete
+            self.assertEqual(R.backfill_model_time(Path("/nowhere"), {"t": 1.0}), {})                   # no start
+            self.assertIn("model_time", R.backfill_model_time(Path("/nowhere"), {"started": 1.0}))     # none yet
+            R.model_time.model_time = lambda d, since=None, until=None: {"sessions": 0}
+            self.assertEqual(R.backfill_model_time(Path("/nowhere"), rec), {})                          # no timing
+        finally:
+            R.model_time.model_time = orig
 
     def test_model_time_field_drops_the_constant_lists(self):
         mt = R.model_time_field({"sessions": 1, "model_s": 3.0, "measured": ["a"], "estimated": ["b"],

@@ -57,6 +57,23 @@ INTERRUPT_KINDS = ("combat", "dialogue", "prompt", "hostile", "hp", "damage", "s
 TRAP_AHEAD_M, TRAP_SIDE_M, TRAP_CLOSE_M, TRAP_FLOOR_M = 10.0, 2.5, 2.0, 5.0  # floor: live mines sat 4.5 m over the walker's y
 TRAP_MOVING_M = 0.25  # moved at least this much since the last poll: walking
 TRAP_SAFE_TOOLS = {"disarm"}  # steps that go to the trap on purpose
+# naut2 runs 2/3 (vis): a queued [interact e56, interact e57] at the Nautiloid helm climbed e56, then e57 failed "no
+# walkable path; closest walkable spot (-46.2,5.1,-361.8)": the spot the lower deck gets, before the climb. The
+# ladder job ends at the climber's first still tick on the new floor, and the next step's path search ran from the
+# old one; one model turn later (run 1) the same interact worked. So after a climb the next step starts once the
+# climber stood still CLIMB_SETTLE_S off the ladder (act.watch: same position, no CLIMBING), at most
+# CLIMB_SETTLE_MAX_S; and a "no walkable path" right after a climb settles once more and runs again, once.
+CLIMB_SETTLE_S = 0.4
+CLIMB_SETTLE_MAX_S = 3.0
+CLIMB_STILL_M = 0.05
+CLIMB_POLL_S = 0.1
+CLIMB_RETRY_SETTLE_S = 1.0
+CLIMB_RETRY_TEXT = "no walkable path"
+
+
+def climbed(result: Any) -> bool:
+    """A step result that climbed a ladder (act.interact's climbed=up/down)."""
+    return isinstance(result, dict) and result.get("climbed") in ("up", "down")
 
 
 class StepError(ValueError):
@@ -407,12 +424,13 @@ class Executor:
     """
 
     def __init__(self, call_tool: Callable, watcher: Watcher, cancel_job: Callable, who: str | None = None,
-                 predicate: Callable | None = None):
+                 predicate: Callable | None = None, actor: Callable[[], str | None] | None = None):
         self.call_tool = call_tool
         self.watcher = watcher
         self.cancel_job = cancel_job
         self.who = who
         self.predicate = predicate
+        self.actor = actor or (lambda: who)  # the uuid the steps move (who, else the active character)
         self.current: tuple[str, int] | None = None
         self.current_step: Step | None = None
         self.stop = threading.Event()  # cancel_queue
@@ -467,8 +485,49 @@ class Executor:
                 return False, f"unless {name}{':' + arg if arg else ''}"
         return True, ""
 
+    def settle_climb(self, still_s: float | None = None, max_s: float | None = None) -> float:
+        """Wait until the climber stood still still_s (CLIMB_SETTLE_S) off the ladder, at most max_s
+        (CLIMB_SETTLE_MAX_S): seconds waited."""
+        still_s = CLIMB_SETTLE_S if still_s is None else still_s
+        max_s = CLIMB_SETTLE_MAX_S if max_s is None else max_s
+        t0 = time.monotonic()
+        try:
+            who = self.actor()
+        except Exception:  # noqa: BLE001 - no actor known: nothing to wait for
+            who = None
+        if not who:
+            return 0.0
+        last, since = None, None
+        while not self.interrupt and not self.stop.is_set():
+            now = time.monotonic()
+            row = next((r for r in self.watcher._watch().get("party") or [] if r.get("uuid") == who), None)
+            pos = row.get("pos") if row else None
+            if not pos:
+                break
+            moved = max(abs(a - b) for a, b in zip(pos, last)) if last else None
+            if moved is not None and moved <= CLIMB_STILL_M and not row.get("climbing"):
+                since = since or now
+                if now - since >= still_s:
+                    break
+            else:
+                since = None
+            last = pos
+            if now - t0 >= max_s:
+                break
+            time.sleep(CLIMB_POLL_S)
+        return time.monotonic() - t0
+
+    def _call(self, step: Step) -> tuple[str, str, Any]:
+        try:
+            return self.call_tool(step, self.who)
+        except TypeError as e:
+            return f"{step.tool}: bad arguments ({e})", "failed", None
+        except Exception as e:  # GameError etc. become a failed step
+            return f"{step.tool}: FAILED: {e}", "failed", None
+
     def run(self, next_step: Callable[[], Step | None], peek_next: Callable[[], Step | None]) -> Report:
         rep = Report()
+        after_climb = False
         done = threading.Event()
         mon = threading.Thread(target=self._monitor, args=(done, peek_next), name="actq-monitor", daemon=True)
         mon.start()
@@ -494,12 +553,14 @@ class Executor:
                     text, status = self._wait_step(step), "done"
                     result = None
                 else:
-                    try:
-                        text, status, result = self.call_tool(step, self.who)
-                    except TypeError as e:
-                        text, status, result = f"{step.tool}: bad arguments ({e})", "failed", None
-                    except Exception as e:  # GameError etc. become a failed step
-                        text, status, result = f"{step.tool}: FAILED: {e}", "failed", None
+                    text, status, result = self._call(step)
+                    if (after_climb and status == "failed" and CLIMB_RETRY_TEXT in str(text)
+                            and not self.interrupt and not self.stop.is_set()):
+                        # planned from the floor below/above after all: settle longer, plan again from here
+                        self.settle_climb(CLIMB_RETRY_SETTLE_S)
+                        if not self.interrupt and not self.stop.is_set():
+                            text, status, result = self._call(step)
+                after_climb = status == "done" and climbed(result)
                 self.current_step = None
                 rep.lines.append(f"{i}. {text}")
                 if status == "done":
@@ -512,6 +573,8 @@ class Executor:
                         hit = self.watcher.check(step.tool, nxt.tool if nxt else None, ui=False)
                         if hit:
                             self.interrupt = hit
+                        elif after_climb and nxt is not None:
+                            self.settle_climb()
                     continue
                 if not self.interrupt:
                     why = stopped_reason(text) if status == "interrupted" else ""

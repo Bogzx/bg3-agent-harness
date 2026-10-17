@@ -199,6 +199,64 @@ class RouteTool(Base):
         self.assertNotIn("Try another direction", out)
 
 
+E56 = "11111111-2222-3333-4444-000000000056"
+E57 = "11111111-2222-3333-4444-000000000057"
+
+
+def _helm_from(here: list, e56_leads: str) -> dict:
+    """naut2 runs 1-3 at the Nautiloid helm: e56 (2.9 m, lower deck <-> mid deck), e57 (10.1 m, mid deck -> helm deck);
+    nav.route ranks e57 first (its top lies 9.3 m from the helm)."""
+    return {"from": here, "goal": HELM, "straight_m": 20.4, "dir": "NE", "dy": round(HELM[1] - here[1], 1),
+            "levels_here": [0.0], "levels_goal": [0.0], "reachable": False,
+            "connectors": [
+                {"uuid": E57, "name": "Arterial Mesh", "kind": "ladder", "pos": [-41.0, 7.7, -357.0], "dist": 8.6,
+                 "dir": "N", "dy": round(7.7 - here[1], 1), "height_m": 10.1, "leads": "up", "unprobed": True,
+                 "to_goal_m": 9.3, "helps": True},
+                {"uuid": E56, "name": "Arterial Mesh", "kind": "ladder", "pos": [-43.0, 5.0, -363.2], "dist": 1.1,
+                 "dir": "N", "dy": round(5.0 - here[1], 1), "height_m": 2.9, "leads": e56_leads, "path_m": 1.4,
+                 "to_goal_m": 17.8, "helps": True}]}
+
+
+class HelmRoute(Base):
+    def test_lower_deck_names_both_climbs_in_order(self):
+        """naut2 r1/r2: from the lower deck NEXT said "interact e57 (ladder up)"; e57's foot is on the deck 2.7 m up."""
+        out = route.render_route(_helm_from([-43.0, 5.0, -362.2], "up"), server.H, "objective Helm")
+        a, b = server.H.get(E56, "Arterial Mesh"), server.H.get(E57, "Arterial Mesh")
+        self.assertIn(f"NEXT: interact {a} (ladder up), then interact {b} (ladder up) "
+                      f"(one call: queue_actions [interact {a}, interact {b}]), then route again", out)
+
+    def test_from_the_short_ladders_top_names_the_long_one(self):
+        out = route.render_route(_helm_from([-43.0, 7.6, -363.1], "down"), server.H, "objective Helm")
+        b = server.H.get(E57, "Arterial Mesh")
+        self.assertIn(f"NEXT: interact {b} (ladder up), then route again", out)
+
+    def test_wedged_with_only_a_landing_away_from_the_goal_says_dont_jump(self):
+        """naut2 run 3: right after e44's climb "jump_to (-42.3,4.5,…) next to Lae'zel": back down the ladder (+60 s)."""
+        w = {"wedged": True, "away": "Lae'zel", "away_dy": -2.9}
+        txt = route.wedged_text(w)
+        self.assertIn("the only landing (next to Lae'zel) is 2.9m below, away from the goal: don't jump there", txt)
+        self.assertNotIn("jump_to", txt)
+        res = dict(FIRE_MAZE, closest=None, wedged=w)
+        out = route.render_route(res, server.H, "it")
+        self.assertIn("WEDGED? no walkable ground reads around you", out)
+        self.assertNotIn("NEXT: jump_to", out)
+
+    def test_wedged_hint_sends_the_goal(self):
+        seen = []
+        real = self.g.try_rpc
+
+        def fake(op, args=None, context="server", default=None):
+            if op == "nav.wedged":
+                seen.append(args)
+                return {"wedged": True, "away": "Lae'zel", "away_dy": -2.9}
+            return real(op, args, context, default)
+        self.g.try_rpc = fake
+        self.assertIn("away from the goal", server._wedged_hint(P1, HELM))
+        self.assertEqual(seen, [{"char": P1, "goal": HELM}])
+        server._wedged_hint(P1)
+        self.assertEqual(seen[-1], {"char": P1})
+
+
 class Rendering(unittest.TestCase):
     def test_hint_is_empty_when_reachable(self):
         self.assertEqual(route.hint_text(WITH_CLIMB, render.Handles()), "")

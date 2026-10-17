@@ -572,10 +572,12 @@ N.ASYNC_TTL_MS = 30000
 N.ASYNC_MAX = 256
 N.asyncPaths = N.asyncPaths or {}
 N.asyncPathsN = N.asyncPathsN or 0
+-- The start's height is in the key (naut2 runs 2/3, Nautiloid helm): a ladder's foot and top share x/z to 0.1 m, so a
+-- warm-up answer from the deck below was the answer for 30 s after climbing it.
 local function pathKey(charUuid, tposOrUuid, from)
     return charUuid .. "|" .. (type(tposOrUuid) == "string" and tposOrUuid
         or string.format("%.1f:%.1f:%.1f", tposOrUuid[1], tposOrUuid[2], tposOrUuid[3]))
-        .. "|" .. string.format("%.1f:%.1f", from[1], from[3])
+        .. "|" .. string.format("%.1f:%.1f:%.1f", from[1], from[2], from[3])
 end
 
 -- Bounds over every caller at once (S038 20:48: the server froze in a FindPath on the Shadowfell and the RSS went
@@ -2254,7 +2256,13 @@ N.WEDGE_RING_M = 3.0
 N.WEDGE_PARTY_M = 12.0
 N.WEDGE_SHORT_M = 1.2 -- land this far short of the member (not on top of them)
 N.WEDGE_BUDGET_MS = 80
-function N.wedged(charUuid, budgetMs)
+-- naut2 run 3 (Nautiloid helm): right after the climb up e44 the hint said "jump_to (-42.3,4.5,…) next to Lae'zel":
+-- she still stood at the ladder's foot, 2.9 m below, and the goal (the helm) was 11 m up; the jump undid the climb
+-- and cost ~60 s. The landing is next to a member on the actor's own floor first; with a goal (optional) never next
+-- to one on another floor (more than WEDGE_FLOOR_M off) farther from the goal's height than the actor: then
+-- {wedged, away = that member's name, away_dy} and no jump.
+N.WEDGE_FLOOR_M = 1.5
+function N.wedged(charUuid, budgetMs, goal)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil end
@@ -2273,20 +2281,29 @@ function N.wedged(charUuid, budgetMs)
         end
     end
     if floors == 0 then return nil end -- a ledge/pillar top with no floor around: route's LOWER GROUND/jump lines
-    local best
+    local best, away
+    -- (interact's goal is the item itself: run 3's e45 foot stood on the actor's own floor, Lae'zel 2.9 m below)
+    local toGoal = goal and math.abs(goal[2] - from[2]) or nil
     for _, u in ipairs(V.party()) do
         local pe = u ~= charUuid and V.entity(u)
         local p = pe and V.pos(pe)
         local dead = pe and V.osi(Osi.IsDead, u)
         if p and dead ~= 1 and dead ~= true then
             local d = hdist(from, p)
-            if d >= N.WEDGE_SHORT_M + 0.5 and d <= N.WEDGE_PARTY_M and math.abs(p[2] - from[2]) <= 4
-                and (not best or d < best.d) then
-                best = { u = u, p = p, d = d }
+            if d >= N.WEDGE_SHORT_M + 0.5 and d <= N.WEDGE_PARTY_M and math.abs(p[2] - from[2]) <= 4 then
+                local other = math.abs(p[2] - from[2]) > N.WEDGE_FLOOR_M -- another floor: after one on ours
+                if toGoal and other and math.abs(goal[2] - p[2]) > toGoal + 0.5 then
+                    if not away or d < away.d then away = { u = u, p = p, d = d } end
+                elseif not best or (best.other and not other) or (best.other == other and d < best.d) then
+                    best = { u = u, p = p, d = d, other = other }
+                end
             end
         end
     end
     local out = { wedged = true }
+    if not best and away then
+        out.away, out.away_dy = V.name(away.u), round(away.p[2] - from[2], 1)
+    end
     if best then
         local k = (best.d - N.WEDGE_SHORT_M) / best.d
         local to = { from[1] + (best.p[1] - from[1]) * k, best.p[2], from[3] + (best.p[3] - from[3]) * k }
@@ -2808,7 +2825,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
                 end
                 out.closest = c
             else
-                local okw, w = pcall(N.wedged, charUuid)
+                local okw, w = pcall(N.wedged, charUuid, nil, goal)
                 if okw and w then out.wedged = w end
             end
         end
@@ -3801,12 +3818,13 @@ end)
 -- A target must be visible; a pos is the agent's own goal (objective marker,
 -- map marker, coordinates it read). Ladders/doors are listed when there is no
 -- path, or always with connectors=true.
--- nav.wedged {char?}: N.wedged for walk_toward/travel_to failures (route carries it as r.wedged).
+-- nav.wedged {char?, goal?}: N.wedged for walk_toward/travel_to failures (route carries it as r.wedged).
 RPC.register("nav.wedged", function(args)
     local ctx = V.context()
     local char = args.char or activeChar(ctx)
     if not ctx.is_party[char] then error("not a party member", 0) end
-    return N.wedged(char) or { wedged = false }
+    local goal = type(args.goal) == "table" and #args.goal == 3 and args.goal or nil
+    return N.wedged(char, nil, goal) or { wedged = false }
 end)
 
 RPC.register("nav.route", function(args)

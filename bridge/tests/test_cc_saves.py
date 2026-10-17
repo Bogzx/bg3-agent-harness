@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import unittest
 from unittest import mock
@@ -58,6 +59,74 @@ class CCGame(FakeGame):
         return super().rpc(op, args, context, timeout)
 
 
+class NewGameGame(FakeGame):
+    """ui.new_game as a job that takes `load_s` and ends `status`; ui.cc_options answers once it is done."""
+
+    def __init__(self, load_s: float = 0.3, status: str = "done") -> None:
+        super().__init__()
+        self.load_s, self.status = load_s, status
+        self.loaded = threading.Event()
+        self.ops: list[str] = []
+
+    def run_job(self, op, args, context="server", wait_s=25.0, poll_s=0.01, on_start=None):
+        self.ops.append(op)
+        if op == "ui.new_game":
+            time.sleep(self.load_s)
+            if self.status == "done":
+                self.loaded.set()
+                return JobResult("done", {"screen": "character_creation"})
+            return JobResult("failed", None, "not at the main menu")
+        return super().run_job(op, args, context, wait_s, poll_s, on_start)
+
+    def rpc(self, op, args=None, context="server", timeout=12.0):
+        self.ops.append(op)
+        if op == "ui.cc_options":
+            return {"open": self.loaded.is_set(), "races": ["Elf"]}
+        return super().rpc(op, args, context, timeout)
+
+
+class NewGameAsync(Base):
+    """vis's proposal: new_game returns at once (BG3AI_NEW_GAME_ASYNC=1), memory tools run during the load, the next
+    game tool waits for it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        p = mock.patch.object(server, "PLAYTHROUGH", "pt-new")
+        p.start()
+        self.addCleanup(p.stop)
+        self.addCleanup(server._new_game.update, thread=None, result=None)
+
+    def test_returns_at_once_and_the_next_game_tool_waits(self):
+        server.game = g = NewGameGame(load_s=0.6)
+        with mock.patch.object(server, "NEW_GAME_ASYNC", True):
+            t = time.monotonic()
+            out = server.new_game("Explorer")
+            self.assertLess(time.monotonic() - t, 0.4)
+            self.assertIn("loading character creation in the background", out)
+            server.session_clock()                              # no game screen: runs during the load
+            self.assertFalse(g.loaded.is_set())
+            opts = server.character_creation_options()          # waits for the load
+        self.assertTrue(g.loaded.is_set())
+        self.assertIn("(new_game's load finished; waited", opts)
+        self.assertLess(opts.index("waited"), opts.index("Elf"))
+        self.assertIsNone(server._new_game["thread"])
+
+    def test_a_failed_load_is_reported_by_the_next_game_tool(self):
+        server.game = NewGameGame(load_s=0.05, status="failed")
+        with mock.patch.object(server, "NEW_GAME_ASYNC", True):
+            server.new_game("Explorer")
+            opts = server.character_creation_options()
+        self.assertIn("new_game did NOT open character creation", opts)
+        self.assertIn("not at the main menu", opts)
+
+    def test_switch_off_blocks_as_before(self):
+        server.game = g = NewGameGame(load_s=0.05)
+        with mock.patch.object(server, "NEW_GAME_ASYNC", False):
+            server.new_game("Explorer")
+        self.assertTrue(g.loaded.is_set())                      # returned only after the load
+        self.assertIsNone(server._new_game["thread"])
+
+
 @mock.patch.object(naming.time, "sleep", lambda s: None)
 class CreateCharacter(Base):
     def setUp(self) -> None:
@@ -86,6 +155,37 @@ class CreateCharacter(Base):
         self.assertTrue(g.page.finished)
         self.assertEqual([op for op, _ in g.page.calls][-1], "ui.cc_finish")
         self.assertEqual((server.SAVE_OWNER, server.SAVE_PREFIX), ("Ilse", "Ilse-"))  # I3
+
+    def test_first_look_and_first_save_ride_on_the_result(self):
+        # naut2: 12-14 s idle after creation in every run (get_status, save_game, memory_edit, note, look,
+        # get_frontier...). The result now has the first look and queues Sxxx-start itself.
+        self.use(FakePage())
+        saved: list[str] = []
+        fake_save = mock.patch.object(server.SAVER, "save",
+                                      lambda label, sync=False: saved.append(label) or f"save_game: queued '{label}'")
+        with mock.patch.dict(os.environ, {"BG3AI_SESSION": "S001"}), fake_save:
+            out = server.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
+        self.assertEqual(saved, ["S001-start"])
+        self.assertLess(out.index("FIRST LOOK"), out.index("first save (no save_game needed)"))
+        self.assertIn("PARTY e", out)                          # look(full=True)'s status block
+        self.assertIn("NEXT: issue the first move now", out)
+        # nested: the look's own metric record is marked nested (not a separate agent read)
+        self.assertFalse(server._batch["active"])
+
+    def test_first_look_switch_off(self):
+        self.use(FakePage())
+        saved: list[str] = []
+        with mock.patch.object(server, "CC_FIRST_LOOK", False), mock.patch.dict(os.environ, {"BG3AI_SESSION": "S001"}), \
+                mock.patch.object(server.SAVER, "save", lambda label, sync=False: saved.append(label) or ""):
+            out = server.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
+        self.assertNotIn("FIRST LOOK", out)
+        self.assertEqual(saved, [])
+
+    def test_no_first_look_when_the_world_was_not_checked(self):
+        self.use(FakePage(), world_name=None)
+        out = server.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
+        self.assertIn("hadn't loaded yet", out)
+        self.assertNotIn("FIRST LOOK", out)
 
     def test_owner_is_the_default_name(self):
         server.SAVE_OWNER, server.SAVE_PREFIX = "Claude", "Claude-"
@@ -282,6 +382,16 @@ class Saves(Base):
             self.save("Claude-2__S001-start", 60)             # run 2's own
             server.load_game("latest")
         self.assertEqual(self.loaded, ["Claude-2__S001-start"])
+
+    def test_another_playthroughs_saves_of_the_same_name_are_hidden(self):
+        # claude-run-2's resume: replay-hoh saved S028-lastlight-prep as "Claude" after claude-run-2's S065-end
+        self.save("Claude-1__S065-end", 10)
+        self.save("Claude-2__S028-lastlight-prep", 20)
+        with mock.patch.object(server, "SAVES_EXCLUDE", frozenset({"Claude-2__S028-lastlight-prep"})):
+            self.assertNotIn("S028-lastlight-prep", server.list_saves())
+            self.assertIn("not one of this playthrough's saves", server.load_game("S028-lastlight-prep"))
+            server.load_game("latest")
+        self.assertEqual(self.loaded, ["Claude-1__S065-end"])
 
     def test_a_scenario_run_keeps_its_start_save(self):
         # run --scenario: the start save predates the run (SAVES_AFTER) but stays loadable by name

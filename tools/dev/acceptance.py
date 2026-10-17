@@ -1103,31 +1103,28 @@ def hotbar_probe() -> None:
         return
     # 2) Bless x3 out of combat
     party = [r.get("uuid") for r in st.get("party") or []]
-    caster = None
-    for u in party:
-        if S.game.run_job("act.select", {"char": u}, wait_s=5).status != "done":
-            continue
-        time.sleep(0.4)
-        r = hb_slot("Target_Bless", u)
-        if r.get("found") and r.get("can_use") is not False:
-            caster = u
-            break
-    if need(caster is not None and len(party) >= 3 and not st.get("in_combat") and inp is not None,
+    pick, why = pick_hotbar_caster(party, sel)
+    caster, spell, status_id, n = pick or (None, None, None, 0)
+    if need(caster is not None and not st.get("in_combat") and inp is not None,
             "hotbar cast: Bless on 3 allies (ACT-8)",
-            f"caster with a usable Bless={caster}, party={len(party)}, in_combat={st.get('in_combat')}"):
-        targets = ([caster] + [u for u in party if u != caster])[:3]
-        r = HB.hotbar_cast(S.game, inp, caster, "Target_Bless", targets)
+            f"caster with a usable ally multi-target spell={caster}, party={len(party)}, "
+            f"in_combat={st.get('in_combat')}; {why}"):
+        targets = ([caster] + [u for u in party if u != caster])[:n]
+        r = HB.hotbar_cast(S.game, inp, caster, spell, targets)
         time.sleep(2.5)
-        blessed = []
+        on = []
         for u in targets:
             try:
-                blessed.append(lua_server(f'return tostring(Osi.HasActiveStatus("{u}", "BLESS"))') == "1")
+                on.append(lua_server(f'return tostring(Osi.HasActiveStatus("{u}", "{status_id}"))') == "1")
             except Exception:  # noqa: BLE001
-                blessed.append(False)
+                on.append(False)
         cs = HB.cast_state(S.game, caster)
-        ok = r.ok and all(blessed) and not cs.get("armed") and ui_screen() == "game"
+        ok = r.ok and r.picked == len(targets) and all(on) and not cs.get("armed") and ui_screen() == "game"
+        if ok:
+            HOTBAR_PICK.update(caster=caster, spell=spell, status=status_id, n=n)
         item("hotbar cast: Bless on 3 allies (ACT-8)", "PASS" if ok else "FAIL",
-             f"{json.dumps(r.as_dict())[:200]}; BLESS on {blessed}; in hand after={cs.get('armed')}; screen={ui_screen()}")
+             f"{spell} by {S.H.get(caster)} on {len(targets)}: {json.dumps(r.as_dict())[:200]}; {status_id} on {on}; "
+             f"in hand after={cs.get('armed')}; screen={ui_screen()}")
         if not ok:
             close_targeting()
     if sel:
@@ -1135,6 +1132,49 @@ def hotbar_probe() -> None:
 
 
 HOTBAR_ITEM = "use_ability Bless on 3 via the hotbar route (ACT-8 wiring)"
+
+# Spells for the N-target hotbar items: they target allies (castable out of combat on the party without a fight),
+# take more than 2 targets at their base level (the Osiris route's limit), and leave a status to check. Bless is the
+# one the S027-start party has (Claude the Paladin casts it in claude-run-2 S025/S029; Shadowheart in S018-S025).
+# Aid / Mass Healing Word are Shouts (an area, no target clicks) and prove nothing about the click route.
+HOTBAR_ALLY_SPELLS = (("Target_Bless", "BLESS", 3),)
+# Seen on the maps only to say what else the party could cast (all hostile: not for an out-of-combat item).
+HOTBAR_MULTI_OTHER = ("Target_Bane", "Projectile_MagicMissile", "Projectile_ScorchingRay", "Projectile_EldritchBlast",
+                      "Target_HoldPerson")
+HOTBAR_PICK: dict = {}   # se's passed pick (caster, spell, status, n): act's wiring item casts the same
+
+
+def pick_hotbar_caster(party: list, sel: str | None) -> tuple[tuple | None, str]:
+    """(caster, spell, status, targets) for the N-target hotbar items, from each member's SERVER hotbar map (no HUD
+    switching: live window #3 found no Bless 0.4 s after each act.select, the HUD still showing the previous member).
+    The selected member first. Then the caster is selected and the HUD read polled until it shows the cell
+    (hotbar._slot_after_select). Returns (None, why) with what every member has when nobody fits."""
+    from bg3ai import hotbar as HB
+    order = ([sel] if sel in party else []) + [u for u in party if u != sel]
+    seen = []
+    for spell, status_id, n in HOTBAR_ALLY_SPELLS:
+        if len(party) < n:
+            continue
+        for u in order:
+            m = HB.server_map(S.game, u)
+            if not HB.map_has(m, spell):
+                continue
+            if u != sel:
+                S.game.run_job("act.select", {"char": u}, wait_s=5)
+            r = HB._slot_after_select(S.game, spell, u)
+            log(f"PROBE hotbar caster {S.H.get(u)}: {spell} on the map; HUD read found={r.get('found')} "
+                f"can_use={r.get('can_use')} selected={r.get('selected')} deck={r.get('deck')} index={r.get('index')}")
+            if r.get("found") and r.get("can_use") is not False:
+                return (u, spell, status_id, n), ""
+            seen.append(f"{S.H.get(u)} has {spell} but the HUD read found={r.get('found')} can_use={r.get('can_use')}")
+    for u in order:
+        m = HB.server_map(S.game, u)
+        have = [sp for sp in tuple(s for s, _, _ in HOTBAR_ALLY_SPELLS) + HOTBAR_MULTI_OTHER if HB.map_has(m, sp)]
+        n_ids = sum(len(v or {}) for v in (m or {}).values())
+        seen.append(f"{S.H.get(u)}: {n_ids} ids, multi-target {have or 'none'}" if m else f"{S.H.get(u)}: no map")
+    why = "; ".join(seen)
+    log(f"PROBE hotbar caster: none fits ({why})")
+    return None, why
 
 
 def hotbar_use_ability() -> bool:
@@ -1149,27 +1189,24 @@ def hotbar_use_ability() -> bool:
         return False
     st = status()
     party = [r.get("uuid") for r in st.get("party") or []]
-    caster = None
-    for u in party:
-        r = hb_slot("Target_Bless", u)
-        if r.get("found") and r.get("can_use") is not False:
-            caster = u
-            break
-    if not need(caster is not None and len(party) >= 3, HOTBAR_ITEM, f"caster={caster}, party={len(party)}"):
+    # the spell and caster se's direct item proved (the same reload: the same party and hotbars)
+    caster, spell, status_id, n = (HOTBAR_PICK.get(k) for k in ("caster", "spell", "status", "n"))
+    if not need(caster in party and len(party) >= (n or 3), HOTBAR_ITEM,
+                f"caster={caster} (se's pick), party={len(party)}"):
         return False
-    targets = ([caster] + [u for u in party if u != caster])[:3]
+    targets = ([caster] + [u for u in party if u != caster])[:n]
     saved, HB.HOTBAR_CAST_ENABLED = HB.HOTBAR_CAST_ENABLED, True
     try:
-        out, dt = took("use_ability", ability="Target_Bless", targets=[S.H.get(u) for u in targets], who=S.H.get(caster))
+        out, dt = took("use_ability", ability=spell, targets=[S.H.get(u) for u in targets], who=S.H.get(caster))
     finally:
         HB.HOTBAR_CAST_ENABLED = saved
     time.sleep(1.0)
-    blessed = [lua_server(f'return tostring(Osi.HasActiveStatus("{u}", "BLESS"))') == "1" for u in targets]
+    blessed = [lua_server(f'return tostring(Osi.HasActiveStatus("{u}", "{status_id}"))') == "1" for u in targets]
     cs = HB.cast_state(S.game, caster)
-    ok = ("use_ability: done" in out and "via=hotbar" in out and "hotbar: 3 of 3" in out and all(blessed)
+    ok = ("use_ability: done" in out and "via=hotbar" in out and f"hotbar: {n} of {n}" in out and all(blessed)
           and "charged_by_guard" not in out and not cs.get("armed") and ui_screen() == "game")
     item(HOTBAR_ITEM, "PASS" if ok else "FAIL",
-         f"{dt:.1f}s; BLESS on {blessed}; in hand={cs.get('armed')}; "
+         f"{spell} by {S.H.get(caster)}: {dt:.1f}s; {status_id} on {blessed}; in hand={cs.get('armed')}; "
          + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar", "targets")))[:200])
     if not ok:
         close_targeting()

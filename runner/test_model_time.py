@@ -162,6 +162,13 @@ class Session(TmpDir):
         self.assertEqual(r["ttft_s"]["median"], 0.5)
         self.assertEqual(r["harness_by_tool"]["look"]["n"], 2)
         self.assertNotIn("per_session", r)
+        # API floor: first-block latency of the counted messages without thinking; TTFT median beside it
+        plain = [m["t_first"] - m["trigger"] for m in s["counted"] if "think_s" not in m]
+        self.assertEqual(s["first_blocks"], plain)
+        self.assertEqual(r["api_floor"], {"n": len(plain), "p10_s": round(M.percentile(plain, 10), 2),
+                                          "median_s": round(M.percentile(plain, 50), 2), "ttft_median_s": 0.5})
+        self.assertEqual(MT.floor_of(r), r["api_floor"]["p10_s"])
+        self.assertEqual(MT.headline_s(r), r["adjusted_model_s_ref_ttft"])
 
     def test_no_result_event_estimates_from_the_timeline(self):
         write_session(self.dir, "S001", scenario())
@@ -194,6 +201,15 @@ class Session(TmpDir):
         gen = s["tok"] / 100.0
         self.assertAlmostEqual(r["adjusted_model_s_ref_ttft"],
                                round(4.9 - gen + s["tok"] / MT.REF_OUT_TOK_S + 3 * MT.REF_TTFT_S, 2), places=2)
+
+    def test_floor_helpers(self):
+        self.assertIsNone(MT.api_floor([], [0.5]))
+        self.assertIsNone(MT.floor_of({"model_s": 3.0}))           # a record written before the field
+        self.assertIsNone(MT.floor_of(None))
+        self.assertIsNone(MT.headline_s({"adjusted_model_s": 200.0}))
+        self.assertTrue(MT.floor_differs(1.0, 1.31))
+        self.assertFalse(MT.floor_differs(1.0, 1.3))
+        self.assertFalse(MT.floor_differs(None, 2.0))
 
     def test_resume_api_time_minus_its_parent(self):
         write_session(self.dir, "S001", scenario(_result(10_000, 900, 0, wall_ms=50_000)))
@@ -280,6 +296,16 @@ class RunLevel(TmpDir):
         self.assertAlmostEqual(r["gen_s"], 2.0)                    # B at A's 200 tok/s
         self.assertEqual(r["speed_source"], "api+timeline")
         self.assertIsNone(r["api_s"])
+
+    def test_harness_by_tool_keeps_every_tool(self):
+        # naut2: the top 8 dropped dialogue_advance (~1-3 s) from every run record
+        write_session(self.dir, "S001", scenario(_result(api_ms=4000, out=400, think=200)))
+        s = MT.analyze_session("S001", self.dir / "S001.jsonl")
+        s["by_tool"] = {f"tool{i:02d}": [float(i)] * 2 for i in range(1, 13)}
+        hb = MT.report([s])["harness_by_tool"]
+        self.assertEqual(len(hb), 12)
+        self.assertEqual(list(hb)[:2], ["tool12", "tool11"])      # most time first
+        self.assertEqual(hb["tool01"], {"n": 2, "s": 2.0})
 
     def test_never_raises(self):
         self.assertEqual(MT.model_time(self.dir / "missing"), {"sessions": 0})

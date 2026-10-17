@@ -6,7 +6,10 @@ Run: cd bridge && uv run python -m unittest tests.test_boxclick
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
@@ -77,6 +80,10 @@ class FakeScreen:
 class ClickBox(unittest.TestCase):
     def setUp(self):
         boxclick._hits.clear()
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.addCleanup(setattr, boxclick, "HITS_PATH", boxclick.HITS_PATH)
+        boxclick.HITS_PATH = Path(d.name) / "boxclick_hits.json"
 
     def test_seed_hits_first_try(self):
         s = FakeScreen()
@@ -85,6 +92,29 @@ class ClickBox(unittest.TestCase):
         self.assertEqual(s.pressed, "Yes")
         self.assertEqual(r["tries"], 1)
         self.assertEqual(len(s.clicks), 1)
+
+    def test_a_hit_is_kept_for_its_box_across_processes(self):
+        # naut2: "Reset Tutorials" is seen once per run, by a new MCP server each time: searched from the seed
+        # every run. Now its hit is stored per answer|title and the next process clicks it on the first try.
+        far = (500, 640, 600, 670)
+        s = FakeScreen(yes=far)
+        first = boxclick.click_box(s.rpc, s, "yes")
+        self.assertGreater(first["tries"], 1)
+        stored = json.loads(boxclick.HITS_PATH.read_text())
+        self.assertEqual(list(stored), ["yes|[ForceUpdate]"])
+        boxclick._hits.clear()                               # a new process
+        s2 = FakeScreen(yes=far)
+        self.assertEqual(boxclick.click_box(s2.rpc, s2, "yes")["tries"], 1)
+        boxclick._hits.clear()
+        self.assertEqual(boxclick.candidates("yes", "Another box")[0], boxclick.SEEDS["yes"])   # per title
+        boxclick.HITS_PATH.write_text("not json")
+        self.assertEqual(boxclick.candidates("yes", "[ForceUpdate]")[0], boxclick.SEEDS["yes"])  # ignored
+
+    def test_describe_counts_tries(self):
+        self.assertEqual(boxclick.describe({"clicked": "No", "closed": True, "tries": 3}),
+                         "clicked No on the question box (closed, 3 tries)")
+        self.assertEqual(boxclick.describe({"clicked": "No", "closed": True, "tries": 1}),
+                         "clicked No on the question box (closed, 1 try)")
 
     def test_searches_and_never_clicks_off_button(self):
         s = FakeScreen(yes=(500, 640, 600, 670))  # far from the seed

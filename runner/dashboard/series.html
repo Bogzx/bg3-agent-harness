@@ -103,7 +103,9 @@ let series = new URLSearchParams(location.search).get("playthrough") || "";
 function split(mt) {
   if (!mt || !mt.wall_s) return '<span class="muted">-</span>';
   const w = mt.wall_s, p = (x) => Math.max(0, 100 * (x || 0) / w).toFixed(1);
-  return `<div class="split" title="harness ${mt.harness_only_s}s · model ${mt.model_only_s}s · overlap ${mt.overlap_s}s of ${mt.wall_s}s">` +
+  const adj = mt.adj_model_s != null ? ` · adj model ${(mt.adj_model_s / 60).toFixed(1)} min` : "";
+  const fl = mt.api_floor_s != null ? ` · API floor ${mt.api_floor_s.toFixed(2)}s` : "";
+  return `<div class="split" title="harness ${mt.harness_only_s}s · model ${mt.model_only_s}s · overlap ${mt.overlap_s}s of ${mt.wall_s}s${adj}${fl}">` +
     `<i class="h" style="width:${p(mt.harness_only_s)}%"></i><i class="m" style="width:${p(mt.model_only_s)}%"></i>` +
     `<i class="o" style="width:${p(mt.overlap_s)}%"></i></div>` +
     `<span class="small">H ${mt.harness_pct ?? "-"}% · M ${mt.model_pct ?? "-"}% · O ${mt.overlap_pct ?? "-"}%</span>`;
@@ -191,7 +193,7 @@ function render(d) {
            [mean("idle median s", 2), "idle median s", ""], [mean("persona score", 1), "persona", ""],
            [mean("result tok k", 1), "result tok k / run", ""]);
   $("big").innerHTML = big.map(([n, l, c]) => `<div class="kv"><span class="n ${c}">${n}</span><span class="l">${l}</span></div>`).join("");
-  $("line").textContent = (d.error ? d.error + " · " : "") + (s.line || "");
+  $("line").textContent = (d.error ? d.error + " · " : "") + (s.line || "") + (s.floor_note ? " · " + s.floor_note : "");
   const rows = (d.rows || []).map(runRow);
   if (d.live) rows.push(liveRow(d.live));
   $("runs").innerHTML = `<thead><tr>${HEAD.map((h) => `<th class="${LEFT.has(h) ? "l" : ""}">${h}</th>`).join("")}</tr></thead>` +

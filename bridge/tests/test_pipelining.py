@@ -360,6 +360,63 @@ class OtherFloor(Base):
         self.assertIsNone(server._other_floor(P1, [0.0, 38.0, 0.0], [-100.0, -31.0, -950.0]))
 
 
+class HelmLadders(Base):
+    """naut2 runs 1-3 (vis): at the Nautiloid helm travel_to's refusal named e56 (the nearest ladder, 2.9 m, leading
+    DOWN from where the party stood); every run climbed it down and back up before the 10 m e57. The refusal names
+    the ladder that goes the goal's way from this floor, and from the lower deck the two climbs in order."""
+    E56 = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeee56"
+    E57 = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeee57"
+    HELM = [-31.0, 18.5, -354.0]
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.leads: list = []
+        real = self.g.try_rpc
+
+        def fake(op, args=None, context="server", default=None):
+            if op == "nav.route":
+                return {"reachable": False}
+            if op == "nav.frontier":
+                return {"leads": [dict(l) for l in self.leads]}
+            return real(op, args, context, default)
+        self.g.try_rpc = fake
+        self.e56 = server.H.get(self.E56, "Arterial Mesh")
+        self.e57 = server.H.get(self.E57, "Arterial Mesh")
+
+    def test_from_the_short_ladders_top_names_the_one_going_up(self):
+        self.leads = [{"uuid": self.E56, "name": "Arterial Mesh", "kind": "ladder", "dist": 3.1, "dir": "S",
+                       "pos": [-43.0, 5.0, -363.2], "dy": -2.6, "height_m": 2.9, "leads": "down", "to": [-43.0, 5.0, -363.2]},
+                      {"uuid": self.E57, "name": "Arterial Mesh", "kind": "ladder", "dist": 6.0, "dir": "N",
+                       "pos": [-41.0, 7.7, -357.0], "height_m": 10.1, "leads": "up", "to": [-41.0, 17.8, -357.0]}]
+        out = server._other_floor(P1, [-43.0, 7.6, -363.1], self.HELM)
+        self.assertIn("REFUSED: the goal is 11m above you", out)
+        self.assertIn(f"likely: {self.e57} Arterial Mesh <ladder> 6m N (climbs 10.1m up), {self.e56} ", out)
+        self.assertIn(f"{self.e56} Arterial Mesh <ladder> 3.1m S (climbs 2.9m down)", out)
+        self.assertIn(f"interact {self.e57} (or queue_actions [interact {self.e57}, travel_to ...])", out)
+
+    def test_from_the_lower_deck_names_both_climbs_in_order(self):
+        self.leads = [{"uuid": self.E57, "name": "Arterial Mesh", "kind": "ladder", "dist": 8.6, "dir": "N",
+                       "pos": [-41.0, 7.7, -357.0], "dy": 2.7, "height_m": 10.1, "leads": "up", "to": [-41.0, 17.8, -357.0]},
+                      {"uuid": self.E56, "name": "Arterial Mesh", "kind": "ladder", "dist": 1.1, "dir": "N",
+                       "pos": [-43.0, 5.0, -363.2], "height_m": 2.9, "leads": "up", "to": [-43.0, 7.9, -363.2]}]
+        out = server._other_floor(P1, [-43.0, 5.0, -362.0], self.HELM)
+        self.assertIn(f"likely: {self.e56} Arterial Mesh <ladder> 1.1m N (climbs 2.9m up), "
+                      f"{self.e57} Arterial Mesh <ladder> 8.6m N (climbs 10.1m up, from a floor 2.7m above you)", out)
+        self.assertIn(f"interact {self.e56}, then interact {self.e57} (or queue_actions [interact {self.e56}, "
+                      f"interact {self.e57}, travel_to ...]), then travel_to again", out)
+
+    def test_ranking_without_a_goal_or_climb_data_stays_nearest_first(self):
+        far = {"uuid": "x1", "kind": "stairs", "dist": 9.0}
+        near = {"uuid": "x2", "kind": "ladder", "dist": 2.0}
+        self.assertEqual(server._rank_ways([far, near], None, None), ([near, far], []))
+        self.assertEqual(server._rank_ways([far, near], [0.0, 0.0, 0.0], [0.0, 10.0, 0.0]), ([near, far], []))
+        # a ladder going the other way goes after the stairs
+        down = {"uuid": "x3", "kind": "ladder", "dist": 1.0, "pos": [0.0, -3.0, 0.0], "height_m": 3.0,
+                "leads": "down"}
+        ranked, chain = server._rank_ways([down, far], [0.0, 0.0, 0.0], [0.0, 10.0, 0.0])
+        self.assertEqual((ranked, chain), ([far, down], []))
+
+
 class FloorDetour(Base):
     """se 12:3x, Roadside Cliffs: locks 9-16 m below a ledge, the ladder 13 m N named by some travel_to stops and not
     by others. A walkable route that winds far around names the ladder at the start (the walk still runs)."""

@@ -30,6 +30,12 @@ there within the old 0.8 s page-transition sleep, no centring walk; the scan + c
 message box is re-checked when a probe or a click comes up empty (it may open after the page). The click waits for
 `focused`, the typing for the box to show the name, the popup click for the box to close. BG3AI_CC_PACED=1 brings
 back the fixed sleeps and the full scan + centring (`paced()`).
+
+Typing (naut2 series, 2026-10-17: naming 3.2-3.3 s against the 2.5 s target, `type` ~1.55 s of it): the shim spends
+~3 frames per key, so END + BACKSPACE x 22 + RETURN were ~72 frames. The click focuses the box and selects its text,
+so the name is typed over the selection and only RETURN follows (`type_over_selection`). When the box then doesn't
+show the name (no selection: the text was appended), only what the box holds is cleared (its length + 2
+backspaces) and the name typed again. Paced mode keeps the full clear.
 """
 from __future__ import annotations
 
@@ -180,6 +186,8 @@ def dismiss_popup(rpc: Rpc, inp, log: Callable[[str], None] = lambda m: None) ->
         return None
     res = click_box(rpc, inp, "no")
     log(f"naming page: {probe.get('title') or 'a message box'} was open ({describe(res)})")
+    if res.get("closed") and not paced():   # click_box already saw it close
+        return res
     if paced():
         time.sleep(POPUP_SETTLE_S)
         return res
@@ -195,13 +203,26 @@ def dismiss_popup(rpc: Rpc, inp, log: Callable[[str], None] = lambda m: None) ->
     return res
 
 
-def _clear_and_type(inp, name: str) -> None:
+def _clear_and_type(inp, name: str, n: int = MAX_LEN + 2) -> None:
     inp.key("END")
-    for _ in range(MAX_LEN + 2):
+    for _ in range(min(n, MAX_LEN + 2)):
         inp.key("BACKSPACE", sync=False)
     inp.sync()
     inp.text(name)
     inp.key("RETURN")
+
+
+def type_over_selection(rpc: Rpc, inp, name: str, settle: float) -> tuple[dict, str]:
+    """After the focusing click (it selects the box's text): type the name over it, RETURN once the box shows it.
+    Otherwise clear what the box shows now and type again. -> (last view, "over_selection"|"cleared")."""
+    inp.text(name)
+    v = _wait_view(rpc, name, lambda vv: bool(vv.get("ok")), settle)
+    if v.get("ok"):
+        inp.key("RETURN")   # no re-read: ui.cc_finish re-checks the box before it finishes
+        return v, "over_selection"
+    text = v.get("text")
+    _clear_and_type(inp, name, len(text) + 2 if isinstance(text, str) else MAX_LEN + 2)
+    return _wait_view(rpc, name, lambda vv: bool(vv.get("ok")), settle), "cleared"
 
 
 def ensure_name(rpc: Rpc, inp, name: str, log: Callable[[str], None] = lambda m: None,
@@ -275,8 +296,11 @@ def ensure_name(rpc: Rpc, inp, name: str, log: Callable[[str], None] = lambda m:
     else:
         raise NamingError(f"clicking the name box at {x},{y} didn't focus it")
     lap("focus")
-    _clear_and_type(inp, name)
-    v = _wait_view(rpc, name, lambda vv: bool(vv.get("ok")), settle)
+    if slow:
+        _clear_and_type(inp, name)
+        v, typed = _wait_view(rpc, name, lambda vv: bool(vv.get("ok")), settle), "full_clear"
+    else:
+        v, typed = type_over_selection(rpc, inp, name, settle)
     lap("type")
     if not v.get("ok"):
         raise NamingError(f"typed '{name}', but the box shows {v.get('text')!r} and the character is "
@@ -284,7 +308,7 @@ def ensure_name(rpc: Rpc, inp, name: str, log: Callable[[str], None] = lambda m:
     _last_at[inp.window_size()] = (x, y)
     log(f"name '{name}' typed (box {v.get('text')!r}, character {v.get('name') or 'unreadable'})")
     return {"via": "typed", "view": v, "at": [x, y], "how": how, "popups": popups, "ms": ms,
-            "pacing": "fixed" if slow else "state"}
+            "pacing": "fixed" if slow else "state", "typed": typed}
 
 
 def finish(rpc: Rpc, name: str | None) -> dict:

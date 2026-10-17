@@ -334,12 +334,70 @@ def label_matches(label: str, wanted: str, prefix: str = SAVE_PREFIX) -> bool:
     return label == wanted or label == prefix + wanted
 
 
+SAVE_WINDOW_SLACK_S = 120.0   # a save this close to one of the playthrough's play windows still counts as written in it
+
+
+def _first_last_t(path: Path) -> tuple[float, float] | None:
+    """The first and last "t" of a jsonl file (a Sxxx.turns.jsonl: the session's first and last stream event), reading
+    only its head and tail; None when unreadable or without times."""
+    try:
+        with open(path, "rb") as f:
+            head = f.readline()
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 65536))
+            tail = f.read().splitlines()
+    except OSError:
+        return None
+    ts = []
+    for ln in [head] + list(reversed(tail)):
+        try:
+            t = json.loads(ln).get("t")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(t, (int, float)):
+            ts.append(float(t))
+            if len(ts) == 2:
+                break
+    return (min(ts), max(ts)) if ts else None
+
+
+def play_windows(history: list[dict] | None, state_dir: Path | None) -> list[tuple[float, float]]:
+    """When this playthrough was being played: its play sessions' [started, ended] (runner.json history) and each
+    Sxxx*.turns.jsonl's first..last event (a session the runner never recorded: it crashed mid-session). pick_save
+    takes an `Sxxx-` save of the owner only when it was written in one of these: the owner (the character's name) is
+    shared by other playthroughs (replay-hoh saved S027-end / S028-lastlight-prep as "Claude" on 10-15, after
+    claude-run-2's S065-end), and a worker's savetest (S999-savetest) is no playthrough's."""
+    out = [(float(h["started"]), float(h["ended"])) for h in history or []
+           if h.get("kind") == "play" and isinstance(h.get("started"), (int, float))
+           and isinstance(h.get("ended"), (int, float))]
+    if state_dir is not None:
+        try:
+            files = sorted(Path(state_dir).glob("S*.turns.jsonl"))
+        except OSError:
+            files = []
+        out += [w for w in (_first_last_t(f) for f in files) if w]
+    return sorted(out)
+
+
+def in_windows(t: float, windows: list[tuple[float, float]], slack: float = SAVE_WINDOW_SLACK_S) -> bool:
+    return any(a - slack <= t <= b + slack for a, b in windows)
+
+
+def played_elsewhere(t: float, windows: list[tuple[float, float]], slack: float = SAVE_WINDOW_SLACK_S) -> bool:
+    """A save time after this playthrough began (its first play window) that falls in none of its windows: written
+    while another playthrough (or a worker) had the game. Older saves are judged as before (the newest wins anyway)."""
+    return bool(windows) and t > windows[0][0] - slack and not in_windows(t, windows, slack)
+
+
 def pick_save(saves: list[Save], handoff_label: str | None, owner: str | None,
-              runner_saves: set[str], prefix: str = SAVE_PREFIX) -> Save | None:
+              runner_saves: set[str], prefix: str = SAVE_PREFIX,
+              windows: list[tuple[float, float]] | None = None) -> Save | None:
     """The newest save of this playthrough.
 
     Candidates: the folder HANDOFF names, any `Sxxx-` save of the playthrough's owner, and quicksaves the
-    runner itself made for this playthrough (recorded by folder). Never anything else.
+    runner itself made for this playthrough (recorded by folder). Never anything else. With `windows`
+    (play_windows: when this playthrough was played; empty for a new one), a labelled save counts only when it was
+    written in one of them or before the first: another playthrough with the same name, or a worker, wrote the rest.
     """
     cands = []
     for s in saves:
@@ -349,11 +407,25 @@ def pick_save(saves: list[Save], handoff_label: str | None, owner: str | None,
             continue  # AutoSave_N/QuickSave_N: the game's or a worker's test state (se 18:14 AutoSave_59), never ours
         elif owner is not None and s.owner != owner:
             continue
+        elif played_elsewhere(s.mtime, windows or []):
+            continue  # same owner, written while another playthrough (or a worker) played
         elif handoff_label and label_matches(s.label, handoff_label, prefix):
             cands.append(s)
         elif owner is not None and is_ai_save(s, prefix):
             cands.append(s)
     return max(cands, key=lambda s: s.mtime, default=None)
+
+
+def foreign_saves(saves: list[Save], owner: str | None, runner_saves: set[str], windows: list[tuple[float, float]],
+                  prefix: str = SAVE_PREFIX) -> list[str]:
+    """The owner's `Sxxx-` saves written outside this playthrough's play windows: another playthrough with the same
+    character name (replay-hoh's S027-end / S028-lastlight-prep as "Claude"), a worker's S999-savetest. The MCP
+    server's list_saves / load_game("latest") must not offer them (BG3AI_SAVES_EXCLUDE): before claude-run-2's first
+    save after a resume, "latest" was replay-hoh's Act 2 save. [] for a new playthrough (no windows)."""
+    if not windows or not owner:
+        return []
+    return sorted(s.folder for s in saves if s.owner == owner and s.folder not in runner_saves
+                  and is_ai_save(s, prefix) and played_elsewhere(s.mtime, windows))
 
 
 def saves_since(saves: list[Save], t: float, owner: str | None, prefix: str = SAVE_PREFIX) -> list[Save]:
@@ -894,8 +966,11 @@ def character_creation_note(profile: dict, name: str | None) -> str:
         "RUNNER NOTE: PHASE 0, CHARACTER CREATION. This is a new game and the playthrough has a character brief. "
         "Before any play, memory_read knowledge/playbooks/character-creation.md and follow it in order: new_game at the "
         "difficulty below, design the build and the persona from the brief, write memory/CHARACTER.md and the build "
-        "plan in party-build.md, create_character with the name, read name/race/class back with get_status, then "
-        "the first save, save_game(label=\"S001-start\"): the runner learns the character's name from it. Then keep playing as that character following CLAUDE.md.",
+        "plan in party-build.md (during new_game's load), then create_character with the name. Its result is the "
+        "first look (name/race/class as the game spells them, objectives, what's nearby) and queues the first save "
+        "itself: the runner learns the character's name from it (if the result says it wasn't started: "
+        "save_game(label=\"S001-start\")). Then make the first move at once, with no more reads, and write "
+        "PLAYTHROUGH.md and the log while it runs. Then keep playing as that character following CLAUDE.md.",
         "Character brief (the operator's words):\n> " + c.get("brief", "").strip().replace("\n", "\n> "),
     ]
     if c.get("constraints"):
@@ -1715,6 +1790,7 @@ class Options:
     sandbox: str = "none"              # run --sandbox: none | container (runner/sandbox.py)
     box: sandbox.Sandbox | None = None  # --sandbox container: prepared once by cmd_run (firewall checked, proxy up)
     restart_run: bool = False          # run --runs --restart-run: start the next run over even after finished sessions
+    keep_game: bool = False            # run --until/--runs --keep-game: leave the harness game up when the run/series ends
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -2132,11 +2208,14 @@ class Runner:
         saves = list_saves()
         return [s for s in saves if s.mtime >= after or s.folder == self.opt.start_save] if after else saves
 
+    def play_windows(self) -> list[tuple[float, float]]:
+        return play_windows(self.state["history"], getattr(self.state, "dir", None))
+
     def ours(self) -> set[str]:
         """Save folders pick_save takes whatever their label: the runner's quicksaves, the agent's own quicksaves
         (agent_saves, RUN-6: S059's newest good state was one) and a scenario's start save (older than every save of
         the run, so the agent's first save supersedes it)."""
-        return (set(self.state["runner_saves"]) | set(self.state["agent_saves"] or [])
+        return (set(self.state["runner_saves"] or []) | set(self.state["agent_saves"] or [])
                 | ({self.opt.start_save} if self.opt.start_save else set()))
 
     def record_agent_saves(self, since: float) -> list[str]:
@@ -2153,7 +2232,7 @@ class Runner:
         handoff = self.mem / "HANDOFF.md"
         label = parse_handoff_save(handoff.read_text()) if handoff.exists() else None
         saves = self.own_saves()
-        save = pick_save(saves, label, self.state["save_owner"], self.ours())
+        save = pick_save(saves, label, self.state["save_owner"], self.ours(), windows=self.play_windows())
         blocked = set(self.state["oom_blocked"] or [])
         if save and save.folder in blocked:
             save = self.refuse_oom_save(save, saves, blocked)
@@ -2164,7 +2243,8 @@ class Runner:
     def refuse_oom_save(self, save: Save, saves: list[Save], blocked: set[str]) -> Save:
         """The newest save OOM-killed the game OOM_SAVE_LIMIT times in a row right after loading: load the newest
         other save of the playthrough (loudly), or stop the runner when there is none (a crash loop needs a human)."""
-        alt = pick_save([s for s in saves if s.folder not in blocked], None, self.state["save_owner"], self.ours())
+        alt = pick_save([s for s in saves if s.folder not in blocked], None, self.state["save_owner"], self.ours(),
+                        windows=self.play_windows())
         streak = self.state["oom_streak"] or {}
         why = streak.get("why", "OOM")
         if alt is None:
@@ -2336,7 +2416,7 @@ class Runner:
         saves = [s for s in self.own_saves() if s.folder not in failed]
         good = self.state["loaded_save"]
         hit = next((s for s in saves if s.folder == good), None)
-        return hit or pick_save(saves, None, self.state["save_owner"], self.ours())
+        return hit or pick_save(saves, None, self.state["save_owner"], self.ours(), windows=self.play_windows())
 
     def sleep(self, seconds: float) -> None:
         end = time.time() + seconds
@@ -2630,12 +2710,16 @@ class Runner:
 
     def save_env(self) -> dict:
         """The MCP server's save identity and gates: BG3AI_SAVE_OWNER/PREFIX (save_identity) and BG3AI_SAVE_GATES;
-        a --runs run's BG3AI_SAVES_AFTER, and a scenario's BG3AI_START_SAVE (older than the run, still its save)."""
+        a --runs run's BG3AI_SAVES_AFTER, a scenario's BG3AI_START_SAVE (older than the run, still its save), and
+        BG3AI_SAVES_EXCLUDE: the owner's saves another playthrough or a worker wrote (foreign_saves, newline-separated)."""
         state = getattr(self, "state", None)
         owner, prefix = save_identity(self.opt.save_owner or (state["save_owner"] if state else None))
         after = state["saves_after"] if state else None   # a --runs run: the server's saves start at the run
+        foreign = (foreign_saves(list_saves(), owner, self.ours(), self.play_windows(), prefix)
+                   if state and owner and not after else [])
         return {"BG3AI_SAVE_OWNER": owner, "BG3AI_SAVE_PREFIX": prefix, **gates_env(getattr(self, "gates", None)),
                 **({"BG3AI_SAVES_AFTER": str(int(after))} if after else {}),
+                **({"BG3AI_SAVES_EXCLUDE": "\n".join(foreign)} if foreign else {}),
                 **({"BG3AI_START_SAVE": start} if (start := getattr(self.opt, "start_save", None)) else {})}
 
     def run_claude(self, sid: str, prompt: str, minutes: float, claude_session: str,
@@ -3157,20 +3241,22 @@ class Runner:
                 f"other changes (not reverted): {', '.join(res['other_changes']) or 'none'}")
         return res
 
-    def end_run_game(self) -> None:
+    def end_run_game(self, when: str = "between runs", after: str = "the next run launches a new one") -> None:
         """--runs, between runs: stop the game the run played, so the next run starts a new game in a fresh process
-        (the mod's Lua state, the kill list in memory included). A game the runner doesn't own is left alone."""
+        (the mod's Lua state, the kill list in memory included). Also at the end of a series or an --until run
+        (when="series end" / "run end"; --keep-game skips that): naut2 left its last run's game running
+        (bg3ai-game-20261017-133954.scope). A game the runner doesn't own is left alone."""
         if not port_open() and not self.owns_game():
             return
         if not (self.owns_game() or self.opt.take_over):
-            log("between runs: the game up is not one this runner launched; left running (the next run needs the "
-                "main menu)")
+            log(f"{when}: the game up is not one this runner launched; left running"
+                + (" (the next run needs the main menu)" if when == "between runs" else ""))
             return
         try:
             self.kill_game()
-            log("between runs: game stopped; the next run launches a new one")
+            log(f"{when}: game stopped; {after}")
         except Exception as e:  # noqa: BLE001 - the next run's setup retries (and records it)
-            log(f"between runs: stopping the game failed: {e}")
+            log(f"{when}: stopping the game failed: {e}")
 
     def write_progress(self, session: str, base: Path, start: float, end: float) -> dict | None:
         """Sxxx.progress.json + a line in progress_history.jsonl."""
@@ -3955,7 +4041,8 @@ def cmd_run(a) -> int:
                   cap_changes=cap_changes or None, pins=current_pins() if a.until and not a.runs else None,
                   judge=use_judge, judge_model=judge_model if use_judge else None, judge_change=judge_change,
                   client=client, client_change=client_change, sandbox=a.sandbox, box=box,
-                  sandbox_change=sandbox_change, restart_run=a.restart_run)
+                  sandbox_change=sandbox_change, restart_run=a.restart_run,
+                  keep_game=a.keep_game)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
@@ -3991,7 +4078,9 @@ def cmd_run(a) -> int:
         if runs.unlock_tree(KNOWLEDGE_DIR, KNOWLEDGE_LOCK):   # a series runner that died while locked
             log("play/knowledge: a stale series lock was undone")
         current["runner"] = Runner(opt)
-        return current["runner"].run()
+        rc = current["runner"].run()
+        stop_game_at_end(current["runner"], opt, "run end")
+        return rc
     except RestartRunner:
         exec_new_runner(lock, skip_stop)
         raise  # not reached
@@ -4357,6 +4446,15 @@ def restart_half_run(opt: Options, base: str, pt: str, k: int, forced: bool) -> 
     return h
 
 
+def stop_game_at_end(r: "Runner | None", opt: Options, when: str) -> bool:
+    """An --until run or a series that is over stops its harness game, as between runs (--keep-game: left up; a dry
+    run and continuous play never). Not reached on a self-restart (RestartRunner leaves run() by exception)."""
+    if r is None or not opt.until or opt.keep_game or opt.dry_run:
+        return False
+    r.end_run_game(when, "--keep-game leaves it up")
+    return True
+
+
 def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, scenario: dict | None = None,
                save_sha1: str | None = None) -> int:
     """run --until M --runs N: runs 1..N of the series opt.series, each a new playthrough (runs.run_name) and a new
@@ -4407,6 +4505,7 @@ def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, s
                 + ("; needs a human" if r.fatal else "") + ")")
             break
         prev = r
+    stop_game_at_end(current["runner"], opt, "series end")
     recs = runs.series_records(path, base)
     if recs:
         log(f"series {base}: {len(recs)}/{n} run(s) recorded, {sum(1 for x in recs if x.get('clean'))} clean, "
@@ -4475,7 +4574,8 @@ def cmd_status(a) -> int:
             print(f"last:     {h['session']} {h['reason']} after {h.get('minutes')} min, progress={h.get('progress')}")
         if is_stuck(hist):
             print("stuck:    YES, the next kickoff carries a change-approach directive")
-        save = pick_save(list_saves(), None, rs["save_owner"], set(rs["runner_saves"]))
+        save = pick_save(list_saves(), None, rs["save_owner"], set(rs["runner_saves"]) | set(rs["agent_saves"] or []),
+                         windows=play_windows(hist, rs.dir))
         print(f"last save: {save.folder + ' (' + _ago(save.mtime) + ')' if save else '-'}")
         logs = sorted(rs.dir.glob("S*.log"), key=lambda p: p.stat().st_mtime)
         logfile = Path(st["log"]) if st.get("log") and Path(st["log"]).exists() else (logs[-1] if logs else None)
@@ -4487,7 +4587,9 @@ def cmd_status(a) -> int:
 
 def cmd_runs(a) -> int:
     """The runs table of a series (or of one playthrough's --until runs) and its clean streak. --backfill first
-    adds the benchmark fields (runs.METRIC_FIELDS) records written before them lack, in place; present ones stay."""
+    adds the benchmark fields (runs.METRIC_FIELDS) records written before them lack, and the model_time keys
+    (api_floor, the headline) an older model_time lacks, in place; present values stay. --vs OTHER: the two series'
+    means side by side, "API floor differs" when their API floors are > 0.3 s apart."""
     path = RUNTIME / "sessions" / a.playthrough / "runs.jsonl"
     recs = runs.series_records(path, a.playthrough)
     if not recs:
@@ -4495,7 +4597,8 @@ def cmd_runs(a) -> int:
         return 1
     if getattr(a, "backfill", False):
         for r in recs:
-            fields = runs.backfill_metrics(RUNTIME / "sessions" / (r.get("playthrough") or a.playthrough), r)
+            state_dir = RUNTIME / "sessions" / (r.get("playthrough") or a.playthrough)
+            fields = {**runs.backfill_metrics(state_dir, r), **runs.backfill_model_time(state_dir, r)}
             if fields:
                 ok = runs.update_record(path, r, fields)
                 print(f"run {r.get('run') or 1} ({r.get('playthrough')}): "
@@ -4503,6 +4606,10 @@ def cmd_runs(a) -> int:
         recs = runs.series_records(path, a.playthrough)
     print(runs.runs_table(recs))
     print("\n" + runs.series_summary(recs))
+    if getattr(a, "vs", None):
+        other = runs.series_records(RUNTIME / "sessions" / a.vs / "runs.jsonl", a.vs)
+        print("\n" + (runs.series_compare(a.vs, other, a.playthrough, recs) if other else
+                      f"no run records for {a.vs}"))
     if a.failures:
         for r in recs:
             print(f"\nrun {r.get('run') or 1} ({r.get('playthrough')}): {r.get('outcome')}"
@@ -4659,6 +4766,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--difficulty", choices=DIFFICULTIES, help="difficulty of a new game (profile.json)")
     r.add_argument("--take-over", action="store_true",
                    help="allow using a game that is already in a save the runner didn't load")
+    r.add_argument("--keep-game", action="store_true",
+                   help="--until / --runs: leave the harness game running when the run (or the series) ends; by "
+                   "default it is stopped like between runs")
     r.add_argument("--restart-run", action="store_true",
                    help="--runs: start the next run over even when it has finished play sessions (its sessions, "
                    "memory and saves record move aside to *.restarted-<time>). Without it a run with no finished "
@@ -4674,7 +4784,10 @@ def main(argv: list[str] | None = None) -> int:
     rs.add_argument("--playthrough", required=True, help="the series (run --runs) or playthrough (run --until)")
     rs.add_argument("--failures", action="store_true", help="also list every run's failures")
     rs.add_argument("--backfill", action="store_true", help="first add the metrics (latency, deaths, fairness "
-                    "flags, story, time to milestone) old records lack, from their files; present fields stay")
+                    "flags, story, time to milestone, model_time's API floor) old records lack, from their files; "
+                    "present values stay")
+    rs.add_argument("--vs", metavar="SERIES", help="compare with another series (means; flags an API floor "
+                    "difference instead of reading it as a model-time regression)")
     sub.add_parser("scenarios", help="list scenarios/*.json: ready, or needs a start save")
     j = sub.add_parser("judge", help="(re-)score runs' in-character decisions into their runs.jsonl records")
     j.add_argument("--playthrough", required=True, help="the series (run --runs) or playthrough (run --until)")

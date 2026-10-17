@@ -80,7 +80,9 @@ def strip_hints(text: str) -> str:
 
 
 def atoms(text: str) -> set[str]:
-    return {a for a in _ATOM.findall(text) if a not in IGNORED}
+    """The facts of a text. A possessive counts as its name ("Wyll's turn" -> Wyll): "NOW e2 Wyll's turn" compacted
+    to "NOW e2's turn" under "turn=e2 Wyll" kept the fact (claude-run-2 Act 2/3 replay: 56 such false alarms)."""
+    return {a[:-2] if a.endswith("'s") and len(a) > 2 else a for a in _ATOM.findall(text)} - IGNORED
 
 
 def _line_keys(line: str) -> frozenset[str]:

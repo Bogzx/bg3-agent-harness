@@ -147,6 +147,38 @@ def _slot(game: Game, spell: str, char: str | None, tabs: bool = False, cache: b
     return r
 
 
+SELECT_SETTLE_S = 2.0   # after act.select: the HUD's decks follow the new character a few frames later
+
+
+def map_has(m: dict | None, spell: str) -> bool:
+    """The spell (or its base id, for an upcast variant id) is on a hotbar map (server_map shape)."""
+    want = spell.lower()
+    base = want.rsplit("_", 1)[0] if want[-2:-1] == "_" and want[-1:].isdigit() else None
+    for slots in (m or {}).values():
+        for sp in (slots or {}).values() if isinstance(slots, dict) else ():
+            s = str(sp).lower()
+            if s == want or (base and s == base):
+                return True
+    return False
+
+
+def _slot_after_select(game: Game, spell: str, char: str | None) -> dict:
+    """ui.hotbar_slot right after selecting `char`. Live window #3 (10-17 14:07, S027-start): the acceptance read 0.4 s
+    after act.select said no party member had Bless, though Claude casts it in S025/S029: the HUD's decks still
+    showed the previous character while the id map was the new one's. While the caster's own server map has the
+    spell and the read doesn't find it yet, read again (up to SELECT_SETTLE_S)."""
+    r = _slot(game, spell, char)
+    if r.get("found") or not map_has(server_map(game, char), spell):
+        return r
+    end = time.monotonic() + SELECT_SETTLE_S
+    while time.monotonic() < end:
+        time.sleep(0.15)
+        r = _slot(game, spell, char)
+        if r.get("found"):
+            break
+    return r
+
+
 def cast_state(game: Game, char: str | None) -> dict:
     try:
         return _rpc(game, "ui.cast_state", {"char": char} if char else {})
@@ -463,7 +495,7 @@ def arm(game: Game, inp: InputClient, caster: str, spell: str, res: HotbarCastRe
         # the hotbar shows the selected character: select the caster first, as a player clicks its portrait
         game.run_job("act.select", {"char": caster}, wait_s=5)
         try:
-            want = _slot(game, spell, caster)
+            want = _slot_after_select(game, spell, caster)
         except GameError as e:
             return fail("slot", "no_hotbar", str(e))
     if want.get("selected") is False:

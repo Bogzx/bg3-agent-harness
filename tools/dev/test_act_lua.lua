@@ -1441,6 +1441,32 @@ test("act.watch: Chasm underfoot is no surface interrupt (S040: the queue cancel
     if not ok then error(err, 0) end
 end)
 
+test("wedged hint: a landing only away from the goal says don't jump (naut2 run 3: back down the ladder just climbed)", function()
+    local savedNav = BG3AI.Nav
+    local got
+    BG3AI.Nav = setmetatable({ wedged = function(_, _, goal)
+        got = goal
+        if goal then return { wedged = true, away = "Lae'zel", away_dy = -2.9 } end
+        return { wedged = true, to = { -42.3, 4.5, -363.3 }, near = "Lae'zel", dist_m = 0.6 }
+    end }, { __index = savedNav })
+    local ok, err = pcall(function()
+        local h = G.wedged_hint(P1, { -41, 7.7, -357 })
+        eq(got[2], 7.7, "the goal reaches N.wedged")
+        assert(h:find("next to Lae'zel%) is 2.9m below, away from the goal: don't jump there"), h)
+        assert(not h:find("jump_to"), h)
+        assert(G.wedged_hint(P1):find("jump_to %(%-42.3,4.5,%-363.3%) next to Lae'zel"), "no goal: as before")
+    end)
+    BG3AI.Nav = savedNav
+    if not ok then error(err, 0) end
+end)
+
+test("act.watch: a climber on a ladder reads climbing (the queue's next step waits for it, naut2 helm)", function()
+    eq(RPC.ops["act.watch"]({}).party[1].climbing, nil, "standing")
+    osiv[key("HasActiveStatus", P1, "CLIMBING")] = 1
+    eq(RPC.ops["act.watch"]({}).party[1].climbing, true, "climbing")
+    osiv[key("HasActiveStatus", P1, "CLIMBING")] = nil
+end)
+
 test("act.note: only queue_* kinds reach the event stream", function()
     RPC.ops["act.note"]({ kind = "queue_done", data = { n = 2 } })
     eq(RPC.events[#RPC.events].kind, "queue_done", "kind")

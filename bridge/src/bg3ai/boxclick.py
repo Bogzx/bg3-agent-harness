@@ -13,18 +13,26 @@ Noesis IsMouseOver, the same check leveling.py uses), and click only when it is.
 
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 Rpc = Callable[[str, dict], Any]
 
 # Where the answers sat in S013/S014 (window fractions of a 1920x1080 window; both agent clicks worked).
 SEEDS = {"yes": (0.44, 0.54), "no": (0.56, 0.54)}
-_hits: dict[str, tuple[float, float]] = {}  # answer -> last point that was over its button (this process)
+_hits: dict[str, tuple[float, float]] = {}  # answer (and answer|title) -> last point over its button (this process)
+# Hits that worked, kept across processes ("answer|title" -> window fractions). Each play session has a new MCP
+# server, so a box seen once per run (character creation's "Reset Tutorials") was searched for from the seed every
+# run (naut2: the popup step took ~1.2 s of naming). The server sets it (runtime/boxclick_hits.json); None = off.
+HITS_PATH: Path | None = None
 
 GRID_X = [round(0.30 + 0.035 * i, 3) for i in range(12)]   # 0.30 .. 0.685
 GRID_Y = [round(0.40 + 0.02 * i, 3) for i in range(15)]    # 0.40 .. 0.68
 BUDGET_S = 8.0
+AFTER_CLICK_FRAMES = 4   # was 8: the close is polled anyway, every CLOSE_POLL_S (was 0.1 s)
+CLOSE_POLL_S = 0.03
 
 
 def _key(answer: str) -> str:
@@ -32,10 +40,51 @@ def _key(answer: str) -> str:
     return "no" if a in ("no", "cancel", "back", "close") else ("yes" if a in ("yes", "ok", "confirm", "accept") else a)
 
 
-def candidates(answer: str) -> list[tuple[float, float]]:
+def _stored() -> dict:
+    if HITS_PATH is None:
+        return {}
+    try:
+        d = json.loads(HITS_PATH.read_text())
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _remember(k: str, title: str | None, p: tuple[float, float]) -> None:
+    _hits[k] = p
+    if not title:
+        return
+    _hits[f"{k}|{title}"] = p
+    if HITS_PATH is None:
+        return
+    d = _stored()
+    if d.get(f"{k}|{title}") == list(p):
+        return
+    d[f"{k}|{title}"] = list(p)
+    try:
+        HITS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = HITS_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d, indent=1))
+        tmp.replace(HITS_PATH)
+    except OSError:
+        pass
+
+
+def _remembered(k: str, title: str | None) -> tuple[float, float] | None:
+    """This box's own last hit (this process, then the stored one), else this answer's last hit."""
+    if title:
+        if f"{k}|{title}" in _hits:
+            return _hits[f"{k}|{title}"]
+        p = _stored().get(f"{k}|{title}")
+        if isinstance(p, list) and len(p) == 2 and all(isinstance(v, (int, float)) for v in p):
+            return float(p[0]), float(p[1])
+    return _hits.get(k)
+
+
+def candidates(answer: str, title: str | None = None) -> list[tuple[float, float]]:
     """Points to try, nearest the last hit (or the seed) first."""
     k = _key(answer)
-    seed = _hits.get(k) or SEEDS.get(k) or SEEDS["yes"]
+    seed = _remembered(k, title) or SEEDS.get(k) or SEEDS["yes"]
     pts = [seed] + [(x, y) for y in GRID_Y for x in GRID_X]
     out, seen = [], set()
     for p in sorted(pts, key=lambda p: (p != seed, abs(p[0] - seed[0]) + 2 * abs(p[1] - seed[1]))):
@@ -60,7 +109,8 @@ def click_box(rpc: Rpc, inp: Any, answer: str = "yes", budget_s: float = BUDGET_
     sig0 = _sig(first)
     w, h = inp.window_size()
     end = time.monotonic() + budget_s
-    pts = candidates(answer)
+    title = first.get("title") if isinstance(first.get("title"), str) else None
+    pts = candidates(answer, title)
     tries = 0
     row = None
     while pts and time.monotonic() < end:
@@ -78,7 +128,7 @@ def click_box(rpc: Rpc, inp: Any, answer: str = "yes", budget_s: float = BUDGET_
         if not v.get("over"):
             continue
         inp.click(int(fx * w), int(fy * h))
-        inp.wait_frames(8)
+        inp.wait_frames(AFTER_CLICK_FRAMES)
         res = {"clicked": v.get("label"), "at": (fx, fy), "tries": tries, "closed": False}
         t1 = time.monotonic() + 1.5
         while time.monotonic() < t1:
@@ -89,9 +139,9 @@ def click_box(rpc: Rpc, inp: Any, answer: str = "yes", budget_s: float = BUDGET_
             if _sig(after) != sig0:
                 res["next"] = {kk: after.get(kk) for kk in ("title", "text", "buttons") if after.get(kk)}
                 break
-            time.sleep(0.1)
+            time.sleep(CLOSE_POLL_S)
         if res["closed"] or res.get("next"):
-            _hits[k] = (fx, fy)
+            _remember(k, title, (fx, fy))
         inp.move(w // 2, int(h * 0.2))  # off the box (no hover left on its buttons)
         return res
     if k == "yes" and (first.get("buttons") or [None])[0] == first.get("label"):
@@ -130,7 +180,7 @@ def describe(res: dict) -> str:
         return f"couldn't click the box: {res['error']} ({res.get('tries', 0)} tries)"
     s = f"clicked {res.get('clicked')} on the question box"
     if res.get("closed"):
-        s += " (closed)"
+        s += f" (closed, {res.get('tries', 0)} tr{'y' if res.get('tries') == 1 else 'ies'})"
     elif res.get("next"):
         n = res["next"]
         s += f"; next question: {n.get('text') or n.get('title')} [{'/'.join(map(str, n.get('buttons') or []))}]"

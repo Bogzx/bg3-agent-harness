@@ -234,6 +234,15 @@ def combat(current: str = P1, gob_dist: float = 6.0) -> dict:
         {"uuid": P2, "name": "Lae'zel", "relation": "party"}]}
 
 
+def clear_server_state() -> None:
+    """Forget the server's in-flight jobs, queues' leftovers and per-session caches. Base runs it before and after
+    each test, so a test that leaves an _async job behind (a walk the queue never polled to its end) can't make a
+    later module's tools poll it ('unittest test_turn_based test_objectives': 12 FAILs "unexpected op job.poll")."""
+    for d in (server._async, server._early, server._early_seen, server._looted, server._bg_ends, server._turn_sides,
+              server._ability_ids, server._trips, server._queue_ignore, server._turn_cs, server._step_note):
+        d.clear()
+
+
 class Base(unittest.TestCase):
     def setUp(self) -> None:
         self.g = FakeGame()
@@ -244,10 +253,7 @@ class Base(unittest.TestCase):
         server.game = self.g
         server._watch_game = self.g
         server._queue_mgr = None
-        server._async.clear()
-        server._early.clear()
-        server._early_seen.clear()
-        server._looted.clear()
+        clear_server_state()
         server.MEMORY = self.tmp
         server.delta.changes_text = lambda game, H: ""
         actq.WATCH_EVERY_S, actq.UI_EVERY_S = 0.01, 0.01
@@ -258,13 +264,10 @@ class Base(unittest.TestCase):
         # Old tests check combat_turn's inline end ("end_turn: done"); CombatTurnBackgroundEnd turns it on.
         saved_end, server.END_ASYNC = server.END_ASYNC, False
         self.addCleanup(setattr, server, "END_ASYNC", saved_end)
-        server._bg_ends.clear()
         server._pace.update(issued_at=0.0, calls_since=0, next_shown=0, nudge=False)
         self.gob = server.H.get(GOB, "Goblin")
         self.imp = server.H.get(IMP, "Imp")
         self.chest = server.H.get(CHEST, "Chest")
-        server._turn_sides.clear()
-        server._ability_ids.clear()
         server.H.get(P1, "Claude")
         server.H.get(P2, "Lae'zel")
 
@@ -274,6 +277,7 @@ class Base(unittest.TestCase):
             for q in server._queue_mgr.queues.values():
                 if q.thread:
                     q.thread.join(2)
+        clear_server_state()
         (server.game, server._watch_game, server._queue_mgr, actq.WATCH_EVERY_S, actq.UI_EVERY_S,
          server.MEMORY, server.delta.changes_text) = saved
 
