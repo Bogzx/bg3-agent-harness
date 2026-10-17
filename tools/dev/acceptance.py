@@ -386,7 +386,19 @@ def sec_trade() -> None:
                                             or "nothing" in out.lower())
     tail = " ".join(re.findall(r"(?m)^\((?:sold|\d+ barters)[^\n]*", out))   # "(3 barters of up to 25 items)" "(sold N …)"
     item("trade sell=junk (one call)", "PASS" if ok else "FAIL", f"{dt:.1f}s; gold {g0}→{g1}; {first_line(out)} {tail}")
-    esc = call("press_key", key="ESCAPE")
+    # [act] S067 #125 / S068 #168: the window stayed up after trade(request, confirm=true) and the agent pressed
+    # ESCAPE by hand: a confirmed deal closes it now and says so. Buys the cheapest food ware (reloaded after).
+    food = sorted(((int(p), e) for e, p in re.findall(r"(e\d+) [^|\n]*? (\d+)g supply=\d+", wares)), key=lambda x: x[0])
+    if food:
+        out, dt = took("trade", request=food[0][1], confirm=True)
+        scr = ui_screen()
+        ok = "closed the trade window: back in the game" in out and scr == "game"
+        item("trade confirm closes the window", "PASS" if ok else "FAIL",
+             f"{dt:.1f}s; screen={scr}; {first_line(out)} | "
+             + " ".join(re.findall(r"(?m)^\((?:closed|closing) the trade window[^\n]*", out)))
+    else:
+        item("trade confirm closes the window", "SKIP", "no food ware in the listing: " + first_line(wares))
+    esc = call("press_key", key="ESCAPE") if ui_screen() == "trade" else "(closed already)"
     # [se] S057 07:40:25: camp() right after closing a trade failed "cannot do that during a conversation" ×2 (the
     # trader's goodbye line); camp now waits ≤ 6 s for a line with no dialogue window, then goes. Reloaded after.
     out, dt = took("camp")
@@ -1725,6 +1737,17 @@ def sec_se() -> None:
         item("map opens once in the Lower City (slow map)", "PASS" if ok else "FAIL",
              f"{r.status} {r.error or ''} in {dt:.1f}s; waypoints={n} map_presses={res.get('map_presses')}; "
              f"screen 1.5 s after closing={scr}")
+        # [act] check_all S11 (19:11:17 / 19:56:53, S068 started on the map): two ui.waypoints back to back (check_all's
+        # pattern), the 2nd said done right after its ESCAPE with the map still up. done = closed now: no sleep here.
+        rows = []
+        for _ in range(2):
+            t = time.monotonic()
+            r = S.game.run_job("ui.waypoints", {}, context="client", wait_s=20)
+            res = r.result if isinstance(r.result, dict) else {}
+            rows.append((r.status, ui_screen(), res.get("map_escapes"), res.get("map_open"), time.monotonic() - t))
+        ok = all(st == "done" and sc == "game" and not mo for st, sc, _, mo, _ in rows)
+        item("ui.waypoints done = map closed (twice in a row)", "PASS" if ok else "FAIL",
+             "; ".join(f"{st} screen={sc} escapes={es} map_open={mo} {d:.1f}s" for st, sc, es, mo, d in rows))
         # screenshot(map=true) (S055 x2, S056 x3: M + screenshot + ESCAPE by hand): one call opens, shoots, closes.
         # Judged on the map (opened, closed after); a frame that doesn't present (08:0x: the acceptance window's
         # screenshots failed) is reported, not failed.
