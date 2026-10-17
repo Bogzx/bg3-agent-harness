@@ -353,6 +353,30 @@ def downed(combat: dict) -> set[str]:
             if o.get("uuid") and o.get("relation") == "party" and o.get("hp_pct") == 0 and not o.get("dead")}
 
 
+def disabled_lines(combat: dict, label: Callable[[str], str], only: str | None = None) -> list[str]:
+    """'DISABLED e3 Gale: Sleeping (6 turns): cannot act; an adjacent ally's Help (an action) ends it; any damage
+    ends it', one line per living party member with a disabling status (state.combat `disabled`, Guard.disabling),
+    for every combat read. S076 00:39:38: Gale's +Sleeping showed once, in a CHANGES line; her spells were planned
+    for rounds 4-6 ("Gale is awake now") and nobody woke her. only: that member's line alone."""
+    out = []
+    for o in (combat or {}).get("order") or []:
+        u, dis = o.get("uuid"), o.get("disabled")
+        if not u or not isinstance(dis, list) or not dis or o.get("dead") or (only and u != only):
+            continue
+        bits = []
+        for d in dis:
+            if not isinstance(d, dict):
+                continue
+            t = str(d.get("name") or "?")
+            if isinstance(d.get("turns"), int):
+                t += f" ({d['turns']} turn{'s' if d['turns'] != 1 else ''})"
+            how = [str(d[k]) for k in ("effect", "fix") if d.get(k)]
+            bits.append(t + (": " + "; ".join(how) if how else ""))
+        if bits:
+            out.append(f"DISABLED {label(u)}: " + " | ".join(bits))
+    return out
+
+
 def party_acting(combat: dict, party: set) -> list[str]:
     """Party members (summons too) who may act now; a downed one can't (its turn passes by itself)."""
     down = downed(combat)

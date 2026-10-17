@@ -43,6 +43,7 @@ def fight_events():
         dmg(SO, "Justiciar Soulhunter", W, "Wyll", 30, "Piercing"),
         ev("round_started", round=2),
         dmg(SH, "Shadowheart", TR, "Umbral Tremor", 2, "Necrotic"),   # Spirit Guardians at its turn start (no cast)
+        dmg(SH, "Shadowheart", TR, "Umbral Tremor", 2, "Necrotic"),   # and again (3 Tremor hits vs 9 on the Avenger)
         dmg(SO, "Justiciar Soulhunter", W, "Wyll", 46, "Piercing"), ev("downed", **ref(W, "Wyll")),
         dmg(AV, "Justiciar Avenger", C, "Claude", 20, "Slashing"),
         ev("used", char=ref(C, "Claude"), item=ref("u-pot", "Potion of Healing"), success=True),
@@ -92,9 +93,12 @@ class Build(unittest.TestCase):
         eb = next(a for a in rec["abilities"] if a["name"] == "Eldritch Blast")
         self.assertEqual((eb["hits"], eb["misses"], eb["dmg"]), (1, 1, 12))
         sg = next(a for a in rec["abilities"] if a["name"] == "Spirit Guardians")
-        self.assertEqual((sg["targets_max"], sg["hits"], sg["dmg"]), (2, 3, 13))
+        self.assertEqual((sg["targets_max"], sg["hits"], sg["dmg"]), (2, 4, 15))
         low = [t for t in rec["dmg_types"] if t["low"]]
         self.assertEqual([(t["enemy"], t["type"]) for t in low], [("Umbral Tremor", "Necrotic")])
+        # V18b: the same attack (Spirit Guardians) did 9 to the Avenger: 3 compared hits, avg 2.0 vs 9.0
+        self.assertEqual({k: low[0][k] for k in ("compared", "got", "expected")},
+                         {"compared": 3, "got": 2.0, "expected": 9.0})
         self.assertEqual(rec["pos"]["surrounded"], {"name": "Claude", "n": 3, "round": 1})
         self.assertEqual(rec["pos"]["elev_m"], 3.0)
         self.assertEqual(rec["position"], ["surrounded", "enemy_high_ground"])
@@ -104,7 +108,7 @@ class Build(unittest.TestCase):
         self.assertEqual(rec["unused"], ["Scroll of Fireball"])
         self.assertEqual(rec["consumables"], {"used": ["Potion of Healing"], "unused": ["Scroll of Fireball"]})
         party = {p["name"]: p for p in rec["party"]}
-        self.assertEqual(party["Shadowheart"]["dealt"], 33)
+        self.assertEqual(party["Shadowheart"]["dealt"], 35)
         sf = next(a for a in rec["abilities"] if a["name"] == "Sacred Flame")
         self.assertEqual((sf["hits"], sf["dmg"]), (1, 20))
         self.assertEqual(party["Wyll"]["taken"], 76)
@@ -130,7 +134,7 @@ class Build(unittest.TestCase):
         self.assertIn("use the unused scroll/potion;", debrief.last_attempt(rec) + ";")
         note = debrief.fight_note(rec)
         self.assertTrue(note.startswith("costly @SCL vs Justiciar Soulhunter, Justiciar Avenger (Human), Umbral Tremor | "), note)
-        self.assertIn("| rounds 2 | downed: Wyll by Justiciar Soulhunter | dealt 66 / taken 96 |", note)
+        self.assertIn("| rounds 2 | downed: Wyll by Justiciar Soulhunter | dealt 68 / taken 96 |", note)
         self.assertIn("| resisted: Umbral Tremor:Necrotic | unused: Scroll of Fireball | Wyll went down first", note)
 
     def test_saves_summons_and_mirror_names(self):
@@ -634,15 +638,17 @@ class S074Cazador(unittest.TestCase):
         self.assertEqual(w, [])
         self.assertNotIn("switch damage types", debrief.last_attempt(tr.history[0]))
 
-    def test_a_two_hit_low_type_still_counts(self):
+    def test_a_three_hit_low_type_still_counts(self):
+        # the same attack doing under half to one enemy what it did to another (V18b: 3 compared hits, was 2)
         tr = debrief.Tracker()
         evs = [ev("combat_started"), ev("round_started", round=1)]
-        for typ, amt, nm in (("Fire", 12, "Fire Bolt"), ("Fire", 13, "Fire Bolt"), ("Fire", 11, "Fire Bolt"),
-                             ("Psychic", 2, "Mind Sliver"), ("Psychic", 3, "Mind Sliver")):
-            evs += hit(G, "Gale", CZ, "Cazador Szarr", (typ, amt)) + [cast(G, "Gale", nm)]
+        for tgt, nm_t, amt in ((GH, "Fallen Gur Hunter", 9), (GH2, "Fallen Gur Hunter", 10), (CZ, "Cazador Szarr", 2),
+                               (CZ, "Cazador Szarr", 3), (CZ, "Cazador Szarr", 2)):
+            evs += hit(G, "Gale", tgt, nm_t, ("Psychic", amt)) + [cast(G, "Gale", "Mind Sliver")]
         tr.feed(evs, PARTY_G)
         rec = tr.close(ROWS_G, [], {}, now=60.0)
-        self.assertEqual([(t["type"], t["hits"]) for t in rec["dmg_types"] if t["low"]], [("Psychic", 2)])
+        self.assertEqual([(t["enemy"], t["type"], t["hits"]) for t in rec["dmg_types"] if t["low"]],
+                         [("Cazador Szarr", "Psychic", 3)])
 
     def test_a_down_is_named_by_the_cast_that_follows_it(self):
         # the mod's order: damage, downed, then the enemy's cast (S074 r3: Gale downed by a werewolf's Multiattack)
@@ -653,3 +659,83 @@ class S074Cazador(unittest.TestCase):
                  cast("u-ww", "Predator Werewolf", "Claws")], PARTY_G)
         rec = tr.close(ROWS_G, [], {}, now=60.0)
         self.assertEqual(rec["downed"], [{"name": "Gale", "round": 3, "by": "Predator Werewolf", "ability": "Multiattack"}])
+
+
+S076_REC = Path(__file__).parent / "golden" / "fights_s076.jsonl"   # real v2 records: Cazador tries 6-7 (S076)
+S077_REC = Path(__file__).parent / "golden" / "fights_s077.jsonl"   # real v2 record: Cazador try 9, won (S077)
+BATS = [f"u-bat-{i}" for i in range(6)]
+WW, WW2, CT = "u-ww-1", "u-ww-2", "u-chatterteeth"
+
+
+class S077DidLittle(unittest.TestCase):
+    """vis V18b: S077's mid-fight WARNINGs came from S076's v2 records (each x2): `Piercing did little to Bat (2 hits,
+    avg 5.0)` = killing blows on 1-HP bats, `Piercing did little to Cazador Szarr (2 hits, avg 7.5)` = two hits,
+    `Radiant did little to Predator Werewolf (7 hits, avg 11.7)` = Sacred Flame / Guiding Bolt next to Fireball's 33
+    (the same Radiant did 14.5 on the bats). S077's own record flagged Magic Missile's Force on the bats and on the
+    Chatterteeth (3 darts each) against Fireball. A low type now needs >= 3 hits that are no killing blow, each
+    compared with the same attack on other enemies."""
+
+    def history(self):
+        return [json.loads(ln) for p in (S076_REC, S077_REC) for ln in p.read_text().splitlines()]
+
+    def test_the_real_records_raise_no_warning(self):
+        hist = self.history()
+        self.assertEqual({(t["enemy"], t["type"]) for r in hist for t in r["dmg_types"] if t["low"]},
+                         {("Predator Werewolf", "Piercing"), ("Bat", "Piercing"), ("Cazador Szarr", "Psychic"),
+                          ("Cazador Szarr", "Piercing"), ("Predator Werewolf", "Radiant"),
+                          ("Fallen Gur Hunter", "Piercing"), ("Bat", "Force"), ("Chatterteeth", "Force")})  # as recorded
+        tr = debrief.Tracker(hist)
+        tr.feed([ev("combat_started"), ev("round_started", round=1)], PARTY_G)
+        w, _ = tr.feed(hit(K, "Karlach", BATS[0], "Bat", ("Piercing", 5)) + [ev("died", **ref(BATS[0], "Bat"))]
+                       + hit(C, "Claude", CZ, "Cazador Szarr", ("Piercing", 8)) + [cast(C, "Claude", "Main Hand Attack")]
+                       + hit(SH, "Shadowheart", WW, "Predator Werewolf", ("Radiant", 12))
+                       + [cast(SH, "Shadowheart", "Sacred Flame")], PARTY_G)
+        self.assertEqual(w, [])   # old code: the three S077 WARNINGs
+        self.assertNotIn("did little", debrief.last_attempt(tr.history[-1]))
+
+    def fight(self):
+        tr = debrief.Tracker()
+        evs = [ev("combat_started"), ev("round_started", round=1)]
+        # Fireball: 1-HP bats die (each hit a killing blow), Cazador and a werewolf take 30-33
+        evs += [x for b in BATS[:3] for x in hit(G, "Gale", b, "Bat", ("Fire", 28)) + [ev("died", **ref(b, "Bat"))]]
+        evs += hit(G, "Gale", CZ, "Cazador Szarr", ("Fire", 30)) + hit(G, "Gale", WW, "Predator Werewolf", ("Fire", 33))
+        evs += [cast(G, "Gale", "Fireball")]
+        # Magic Missile: 3 darts on the Chatterteeth, 3 killing darts on bats: nothing to compare with
+        evs += hit(G, "Gale", CT, "Chatterteeth", ("Force", 9)) * 3
+        evs += [x for b in BATS[3:] for x in hit(G, "Gale", b, "Bat", ("Force", 8)) + [ev("died", **ref(b, "Bat"))]]
+        evs += [cast(G, "Gale", "Magic Missile")]
+        # Sacred Flame: 11-12 on the werewolves, 13-14 on Cazador (no resistance: comparable)
+        for tgt, tn, amt in ((WW, "Predator Werewolf", 11), (WW2, "Predator Werewolf", 12), (WW, "Predator Werewolf", 12),
+                             (CZ, "Cazador Szarr", 14), (CZ, "Cazador Szarr", 13)):
+            evs += hit(SH, "Shadowheart", tgt, tn, ("Radiant", amt)) + [cast(SH, "Shadowheart", "Sacred Flame")]
+        # Karlach's Piercing on Cazador: 2 hits only
+        evs += hit(K, "Karlach", CZ, "Cazador Szarr", ("Piercing", 7)) + hit(K, "Karlach", CZ, "Cazador Szarr", ("Piercing", 8))
+        evs += [cast(K, "Karlach", "Main Hand Attack"), ev("combat_ended")]
+        tr.feed(evs, PARTY_G)
+        return tr.close(ROWS_G, [], {"session": "S077"}, now=600.0)
+
+    def test_no_low_type_from_kills_few_hits_or_other_attacks(self):
+        rec = self.fight()
+        self.assertEqual([(t["enemy"], t["type"]) for t in rec["dmg_types"] if t["low"]], [])
+        rad = next(t for t in rec["dmg_types"] if (t["enemy"], t["type"]) == ("Predator Werewolf", "Radiant"))
+        self.assertEqual((rad["compared"], rad["got"], rad["expected"]), (3, 11.7, 13.5))
+        bat = [t for t in rec["dmg_types"] if t["enemy"] == "Bat"]
+        self.assertTrue(bat and all("compared" not in t for t in bat), bat)   # killing blows: never compared
+        self.assertNotIn("did little", debrief.render(rec))
+
+    def test_a_real_resistance_still_shows_and_warns_next_time(self):
+        # the same Sacred Flame at a quarter on one werewolf, 3 hits: low, and the next fight's first hit warns
+        tr = debrief.Tracker()
+        evs = [ev("combat_started"), ev("round_started", round=1)]
+        for tgt, tn, amt in ((CZ, "Cazador Szarr", 14), (CZ, "Cazador Szarr", 13), (WW, "Predator Werewolf", 3),
+                             (WW, "Predator Werewolf", 4), (WW, "Predator Werewolf", 3)):
+            evs += hit(SH, "Shadowheart", tgt, tn, ("Radiant", amt)) + [cast(SH, "Shadowheart", "Sacred Flame")]
+        tr.feed(evs + [ev("combat_ended")], PARTY_G)
+        rec = tr.close(ROWS_G, [], {"session": "S999"}, now=60.0)
+        self.assertIn("Radiant did little to Predator Werewolf (3 hits, avg 3.3 vs 13.5 from the same attacks on "
+                      "other enemies)", rec["key_facts"])
+        tr2 = debrief.Tracker([rec])
+        tr2.feed([ev("combat_started"), ev("round_started", round=1)], PARTY_G)
+        w, _ = tr2.feed(hit(SH, "Shadowheart", WW2, "Predator Werewolf", ("Radiant", 4)), PARTY_G)
+        self.assertEqual(w, [("WARNING: Radiant did little to Predator Werewolf last time too (3 hits, avg 3.3 vs 13.5 "
+                              "from the same attacks on other enemies, S999): use another damage type on it")])

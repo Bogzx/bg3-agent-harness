@@ -365,11 +365,14 @@ class KeeperTest(MemoryTestCase):
         self.append("sessions/S002.md", self.FIGHT)
         self.append("sessions/S003.md", self.FIGHT)
         self.fights("S002", None)              # v1 (no "v"): before the fix
-        self.fights("S003", 2, 2)
+        self.fights("S003", 3, 3)
         self.assertEqual(K.old_debrief_logs(self.mem, self.tmp, [1, 2, 3]), [2])   # S001 has no [fight] line
-        self.fights("S003", 2, name="S003-r1")  # a restarted session's second records file
-        self.fights("S003", 2)
+        self.fights("S003", 3, name="S003-r1")  # a restarted session's second records file
+        self.fights("S003", 3)
         self.assertEqual(K.old_debrief_logs(self.mem, self.tmp, [3]), [])
+        # vis V18b: v2 (S066-S077) judged "did little" from 2 hits / killing blows on 1-HP bats / other attacks
+        self.fights("S003", 2, name="S003-r1")
+        self.assertEqual(K.old_debrief_logs(self.mem, self.tmp, [3]), [3])
         self.fights("S003", 1, name="S003-r1")
         self.assertEqual(K.old_debrief_logs(self.mem, self.tmp, [3]), [3])
         # fight lines without any record (a hand run, no sessions dir) can't be shown to be new
@@ -383,7 +386,10 @@ class KeeperTest(MemoryTestCase):
         p = K.build_prompt(self.mem, "S003", 3, "", 5, sessions_dir=self.tmp)
         self.assertIn("OLD FIGHT DEBRIEFS", p)
         self.assertIn("in sessions/S003.md the `[fight]` lines' `resisted: …` field", p)
-        self.fights("S003", 2)
+        self.fights("S003", 2)   # a v2 record (S066-S077): its 'did little' facts are wrong too
+        p = K.build_prompt(self.mem, "S003", 3, "", 5, sessions_dir=self.tmp)
+        self.assertIn("killing blows capped by a 1-HP enemy's HP", p)
+        self.fights("S003", 3)
         self.assertNotIn("OLD FIGHT DEBRIEFS", K.build_prompt(self.mem, "S003", 3, "", 5, sessions_dir=self.tmp))
 
     def test_old_debriefs_in_the_compaction_range(self):
@@ -396,7 +402,7 @@ class KeeperTest(MemoryTestCase):
         self.assertNotIn(2, K.logs_to_read(self.mem, 12))
         p = K.build_prompt(self.mem, "S012", 12, "", 5, sessions_dir=self.tmp)
         self.assertIn("COMPACTION DUE", p)
-        self.assertIn("OLD FIGHT DEBRIEFS (a harness bug, fixed 2026-10-17): in sessions/S002.md the", p)
+        self.assertIn("OLD FIGHT DEBRIEFS (a harness bug, fixed 2026-10-17 and 2026-10-18): in sessions/S002.md the", p)
 
     def test_run_keeper_reads_the_records_beside_its_log(self):
         self.append("sessions/S003.md", self.FIGHT)

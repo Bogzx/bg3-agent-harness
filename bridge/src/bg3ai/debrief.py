@@ -23,9 +23,10 @@ CAP_HITS = 4               # this many party hits that did 1 per damage part, at
 CAP_SHARE = 1 / 3          # enemy: a per-hit shield (S065 Orin's Unstoppable: 5 of 11 / 18 of 31 hits), no resisted type
 UNSEEN_SHARE = 0.25        # damage from no visible source (traps, hidden attackers) this share of all taken is a fact
 HEALED_PCT = 10            # an enemy seen this many HP points (%) below where it ended healed back
-LOW_MIN_HITS = 2           # hits of a type before it can read as "did little": one is noise (S074: Gale's lone 3
-                           # Psychic on Cazador, a retaliation, read as "switch damage types" and a WARNING in try 2)
-V = 2                      # record version: v1's damage-type "low" flags counted riders (see _trust)
+LOW_MIN_HITS = 3           # compared hits of a type before it can read as "did little": one is noise (S074: Gale's
+                           # lone 3 Psychic on Cazador), two were S077's mid-fight WARNINGs (Piercing vs Cazador)
+LOW_SHARE = 0.5            # "did little": the hits did under this share of what the same attacks did to other enemies
+V = 3                      # record version: v1's "low" flags counted riders, v2's compared other attacks (see _trust)
 BAD = ("costly", "near_wipe", "wipe", "reloaded")
 _CONSUMABLE = re.compile(r"(?i)\b(potion|elixir|scroll|grenade|flask|bomb|oil of|arrow of)\b")
 _BASIC = {"Main Hand Attack", "Ranged Attack", "Off Hand Attack", "Dash", "Disengage", "Jump", "Shove", "Help",
@@ -74,7 +75,11 @@ class Fight:
         self.last_hit_src: dict[str, str] = {}        # party uuid -> the enemy uuid that hit it last
         self.abil: dict[tuple, dict] = {}
         self.abil_targets: dict[tuple, set] = defaultdict(set)
-        self.types: dict[tuple, list] = defaultdict(list)   # (enemy name, type) -> each party hit's main part
+        self.types: dict[tuple, list] = defaultdict(list)   # (enemy name, type) -> each party hit's main part:
+        # {amt, ab: (caster name, ability) once its cast is known, kill: it killed the target}
+        self.pending_hits: dict[str, list] = defaultdict(list)   # party source uuid -> its hits before its cast
+        self.burst: dict[str, dict] = {}              # enemy uuid -> our hit on it in the damage run just read: a
+        # death right after it marks it kill (the run ends at any event but damage/downed/died)
         self.hit: dict | None = None                  # the party hit being read: one damage event per type
         self.hit_totals: dict[str, list] = defaultdict(list)   # enemy name -> each party hit's total
         self.hit_ones: Counter = Counter()             # enemy name -> party hits that did 1 per damage part
@@ -120,6 +125,8 @@ class Tracker:
             k, d = e.get("kind"), e.get("data") or {}
             if k != "damage" and self.cur is not None:
                 warns += self._flush_hit(self.cur)
+                if k not in ("downed", "died"):
+                    self.cur.burst.clear()
             if k in ("turn_started", "round_started", "combat_ended") and self.cur is not None:
                 self._settle(self.cur)
             if k in ("combat_started", "round_started", "turn_started") and self.cur is None:
@@ -170,6 +177,8 @@ class Tracker:
                     self.dead_allies = [a for a in self.dead_allies if a["uuid"] != u] + [
                         {"uuid": u, "name": f.name(u), "t": now}]
                 elif k == "died":
+                    if u in f.burst:   # a killing blow is capped by the HP left (S077: 1-HP bats)
+                        f.burst[u]["kill"] = True
                     if u not in f.killed:
                         f.kills.append({"uuid": u, "name": f.name(u), "round": f.round})
                     f.killed.add(u)
@@ -197,10 +206,14 @@ class Tracker:
                     # come with its owner as the source (the mod sends attackerOwner first): the one other source
                     # holding damage. Not any member's: S074 booked Gale's 49 under Shadowheart's Mass Cure Wounds.
                     own = f.pending.pop(u, [])
+                    hits = f.pending_hits.pop(u, [])
                     held = [s for s, v in f.pending.items() if v]
                     if not own and u in self.summons and len(held) == 1:
                         own = f.pending.pop(held[0])
+                        hits = f.pending_hits.pop(held[0], [])
                     self._credit(f, u, nm, own)
+                    for h in hits:
+                        h["ab"] = (f.name(u), nm)
                 else:
                     f.acted.add(u)
                     f.enemy_casts[f.name(u)][nm] += 1   # kept by name; only confirmed enemies are reported
@@ -298,7 +311,11 @@ class Tracker:
         for su, items in f.pending.items():
             if items and f.casting.get(su):
                 self._credit(f, su, f.casting[su], items)
+        for su, hits in f.pending_hits.items():
+            for h in hits if f.casting.get(su) else []:
+                h["ab"] = (f.name(su), f.casting[su])
         f.pending.clear()
+        f.pending_hits.clear()
         f.hit_open.clear()
 
     def _flush_hit(self, f: Fight) -> list[str]:
@@ -316,7 +333,10 @@ class Tracker:
             f.hit_ones[tn] += all(a <= 1 for _, a in h["parts"])
         dtype, amt = max(h["parts"], key=lambda p: p[1])
         if dtype and amt > 0:
-            f.types[(tn, dtype)].append(amt)
+            rec = {"amt": amt, "ab": None, "kill": False}
+            f.types[(tn, dtype)].append(rec)
+            f.pending_hits[h["key"][0]].append(rec)
+            f.burst[h["key"][1]] = rec
             return self._type_warning(f, tn, dtype)
         return []
 
@@ -385,8 +405,8 @@ class Tracker:
             for t in r.get("dmg_types") or []:
                 if t.get("enemy") == enemy and t.get("type") == dtype and t.get("low"):
                     f.warned.add(("type", enemy, dtype))
-                    return [f"WARNING: {dtype} did little to {enemy} last time too ({_hits(t.get('hits') or 0)}, avg "
-                            f"{t.get('avg')}, {r.get('session') or 'earlier'}): use another damage type on it"]
+                    return [f"WARNING: {dtype} did little to {enemy} last time too ({_low_why(t)}, "
+                            f"{r.get('session') or 'earlier'}): use another damage type on it"]
         return []
 
     def last_time_rec(self, cs: dict) -> dict | None:
@@ -481,8 +501,9 @@ def _hhmm(r: dict) -> str:
 def _trust(r: dict) -> dict:
     """A v1 record (before 2026-10-17) counted a hit's rider as its own damage type: of ~80 "did little" types in
     claude-run-2 S035-S065 nearly all were a 1-3 Radiant rider beside a weapon's 10-15 (avg 2.0), or Orin's
-    Unstoppable (every type 1). Its low flags and the facts built from them are dropped, not trusted; so are a
-    v2 record's flags from fewer than LOW_MIN_HITS hits (S074's 1-hit Psychic vs Cazador)."""
+    Unstoppable (every type 1). A v2 record (to 2026-10-18) compared a type with the other attacks' damage and
+    counted killing blows (S077's WARNINGs from S076: Radiant 11.7/hit vs werewolves, Piercing on 1-HP bats). Their
+    low flags and the facts built from them are dropped, not trusted; so are flags from fewer than LOW_MIN_HITS hits."""
     if not isinstance(r, dict):
         return r
     old = int(r.get("v") or 1) < V
@@ -546,15 +567,31 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
     by_enemy: dict[str, list] = defaultdict(list)
     for (en, t), amts in f.types.items():
         by_enemy[en].append((t, amts))
+    # "Did little" = the same attacks did far more to other enemies. S077 (from S076's records): `Radiant did little to
+    # Predator Werewolf (7 hits, avg 11.7)` was Sacred Flame/Guiding Bolt next to Fireball's 33 (14.5 on the bats),
+    # and `Piercing did little to Bat (2 hits, avg 5.0)` was killing blows on 1-HP bats. Killing blows and hits whose
+    # attack has no other enemy to compare with are left out.
+    seen: dict[tuple, dict] = defaultdict(lambda: defaultdict(list))   # (attack, type) -> enemy -> amounts
+    for (en, t), hits in f.types.items():
+        for h in hits:
+            if h["ab"] and not h["kill"]:
+                seen[(h["ab"], t)][en].append(h["amt"])
     for en, lst in by_enemy.items():
-        for t, amts in lst:
-            hits = [a for a in amts if a > 0]
+        for t, hits in lst:
+            amts = [h["amt"] for h in hits]
             avg = round(sum(amts) / len(amts), 1) if amts else 0.0
-            others = [a for t2, am2 in lst if t2 != t for a in am2 if a > 0]
-            other_avg = sum(others) / len(others) if others else None
-            low = en not in capped and len(amts) >= LOW_MIN_HITS and (not hits or (
-                other_avg is not None and len(amts) + len(others) >= 3 and avg < 0.5 * other_avg))
-            dmg_types.append({"enemy": foe(en), "type": t, "hits": len(amts), "avg": avg, "low": bool(low)})
+            got, want = [], []
+            for h in hits:
+                elsewhere = [a for e2, am in seen.get((h["ab"], t), {}).items() if e2 != en for a in am]
+                if h["ab"] and not h["kill"] and elsewhere:
+                    got.append(h["amt"])
+                    want.append(sum(elsewhere) / len(elsewhere))
+            low = en not in capped and len(got) >= LOW_MIN_HITS and sum(got) < LOW_SHARE * sum(want)
+            row = {"enemy": foe(en), "type": t, "hits": len(amts), "avg": avg, "low": bool(low)}
+            if got:
+                row.update(compared=len(got), got=round(sum(got) / len(got), 1),
+                           expected=round(sum(want) / len(want), 1))
+            dmg_types.append(row)
     max_hp = sum(int(r.get("max_hp") or 0) for r in rows)
     taken = sum(f.taken.values())
     n_party = max(1, len(party_u))
@@ -641,6 +678,14 @@ def _enemy_list(rec: dict, n: int = 4) -> str:
 
 def _hits(n: int) -> str:
     return f"{n} hit" + ("" if n == 1 else "s")
+
+
+def _low_why(t: dict) -> str:
+    """'3 hits, avg 4.0 vs 9.0 from the same attacks on other enemies' (v3), else the v2 shape."""
+    if t.get("expected") is not None:
+        return (f"{_hits(t.get('compared') or 0)}, avg {t.get('got')} vs {t['expected']} from the same attacks "
+                "on other enemies")
+    return f"{_hits(t.get('hits') or 0)}, avg {t.get('avg')}"
 
 
 def _rounds(rec: dict) -> str:
@@ -738,7 +783,7 @@ def key_facts(rec: dict) -> list[str]:
     else:
         for t in rec.get("dmg_types") or []:
             if t.get("low"):
-                facts.append(f"{t['type']} did little to {t['enemy']} ({_hits(t['hits'])}, avg {t['avg']})")
+                facts.append(f"{t['type']} did little to {t['enemy']} ({_low_why(t)})")
                 break
     pos = rec.get("pos") or {}
     if pos.get("surrounded"):
@@ -804,7 +849,7 @@ def render(rec: dict) -> str:
     low = [f"{c['ones']} of {c['hits']} hits did 1 per type vs {c['enemy']} (any type"
            + (f"; on it: {', '.join(c['statuses'])}" if c.get("statuses") else "") + ")"
            for c in rec.get("dmg_cap") or []][:2]
-    low += [f"{t['type']} vs {t['enemy']} ({_hits(t['hits'])}, avg {t['avg']})"
+    low += [f"{t['type']} vs {t['enemy']} ({_low_why(t)})"
             for t in rec.get("dmg_types") or [] if t.get("low")][:3 - len(low)]
     if low:
         lines.append("  low damage: " + "; ".join(low))

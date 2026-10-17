@@ -1564,6 +1564,92 @@ function G.blocking_status(char, with_acting)
     return nil
 end
 
+-- Statuses that take a party member out of the fight, listed on every combat read (state.combat `disabled`) with
+-- what the game offers against them. S076 00:39:38: Gale's +Sleeping (Chatterteeth's Eyebite) showed once, in a
+-- CHANGES line; the agent planned her spells for rounds 4-6 ("Gale is awake now") and nobody woke her.
+G.DISABLING_TYPES = { INCAPACITATED = true, FEAR = true, KNOCKED_DOWN = true }
+G.DISABLING_GROUPS = { SG_Incapacitated = true, SG_Unconscious = true, SG_Sleeping = true, SG_Paralyzed = true,
+    SG_Stunned = true, SG_Petrified = true, SG_Frightened = true, SG_Prone = true, SG_Restrained = true,
+    SG_Dominated = true, SG_Possessed = true, SG_Confused = true, SG_Fleeing = true }
+-- What Target_Help removes (its SpellProperties in Shared Spell_Target.txt: RemoveStatus of these groups and ids).
+G.HELP_GROUPS = { SG_Sleeping = true, SG_Helpable_Condition = true, SG_Prone = true, SG_Restrained = true }
+G.HELP_STATUSES = { BURNING = true, PRONE = true, SLEEPING = true, SLEEP = true, ENSNARING_STRIKE = true, WEB = true,
+    HYPNOTIC_PATTERN = true }
+
+-- A stats flag list (a table of names, a name->true map or a ';' string) as a set.
+local function flagset(v)
+    local out = {}
+    if type(v) == "table" then
+        for k, x in pairs(v) do
+            if type(k) == "string" and x then out[k] = true elseif type(x) == "string" then out[x] = true end
+        end
+    elseif v ~= nil then
+        for x in tostring(v):gmatch("[^;%s]+") do out[x] = true end
+    end
+    return out
+end
+
+G._disabling = G._disabling or {}  -- status id -> {effect, fix} or false (stats don't change in a session)
+
+function G.disabling_info(id)
+    local c = G._disabling[id]
+    if c ~= nil then return c end
+    c = false
+    local st = Ext.Stats.Get(id)
+    if st then
+        local function field(k) local ok, v = pcall(function() return st[k] end); if ok then return v end end
+        local typ = tostring(field("StatusType") or "")
+        local groups = flagset(field("StatusGroups"))
+        local hit = G.DISABLING_TYPES[typ]
+        for g in pairs(groups) do hit = hit or G.DISABLING_GROUPS[g] end
+        if hit and typ ~= "DOWNED" then  -- downed members have their own line (turn.downed; SG_Incapacitated too)
+            local effect
+            if typ == "KNOCKED_DOWN" or groups.SG_Prone then
+                effect = "stands up at its turn start for half its movement"
+            elseif typ == "INCAPACITATED" and not G.ACTING_STATUSES[id] then
+                effect = "cannot act"
+            elseif tostring(field("Boosts") or ""):find("ActionResourceBlock(Movement)", 1, true) then
+                effect = "cannot move"
+            end
+            local fix = {}
+            local help = G.HELP_STATUSES[id]
+            for g in pairs(groups) do help = help or G.HELP_GROUPS[g] end
+            if help then fix[#fix + 1] = "an adjacent ally's Help (an action) ends it" end
+            if flagset(field("RemoveEvents")).OnDamage then fix[#fix + 1] = "any damage ends it" end
+            if tostring(field("RemoveConditions") or ""):find("SavingThrow", 1, true) then
+                fix[#fix + 1] = "it saves again each turn"
+            end
+            c = { effect = effect, fix = #fix > 0 and table.concat(fix, "; ") or nil }
+        end
+    end
+    G._disabling[id] = c
+    return c
+end
+
+-- char's disabling statuses: {{name, turns?, effect?, fix?}, ...} (nil when none).
+function G.disabling(char)
+    local V = BG3AI.Visibility
+    local e = V and V.statuses and G.entity(char)
+    if not e then return nil end
+    local out
+    for _, s in ipairs(V.statuses(e) or {}) do
+        local ok, info = pcall(G.disabling_info, s.id)
+        if ok and info then
+            out = out or {}
+            out[#out + 1] = { name = s.name, turns = s.turns, effect = info.effect, fix = info.fix }
+        end
+    end
+    return out
+end
+
+-- The fix the game offers for char's status `name` ("" when none), for refusals.
+function G.disabling_fix(char, name)
+    for _, d in ipairs(G.disabling(char) or {}) do
+        if d.name == name and d.fix then return "; " .. d.fix end
+    end
+    return ""
+end
+
 function G.check_cast(char, spell, target, pos, upcast, force)
     if type(spell) ~= "string" or spell == "" then G.refuse("no action given") end
     local st = Ext.Stats.Get(spell)
@@ -1589,7 +1675,8 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     end
     local blk = G.in_combat(char) and G.blocking_status(char)
     if blk and blk.type == "INCAPACITATED" then
-        G.refuse("cannot act while " .. tostring(blk.name) .. " (it takes the whole turn): end its turn")
+        G.refuse("cannot act while " .. tostring(blk.name) .. " (it takes the whole turn): end its turn"
+            .. G.disabling_fix(char, blk.name))
     end
 
     -- Resources.

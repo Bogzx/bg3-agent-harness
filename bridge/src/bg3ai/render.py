@@ -771,7 +771,7 @@ def render_combat(res: dict, H: Handles) -> str:
             n = str(o.get("name") or "?")
             objs[n] = objs.get(n, 0) + 1
         else:
-            lines.append("  " + compact(o, H))
+            lines.append("  " + compact({k: v for k, v in o.items() if k != "disabled"}, H))  # DISABLED lines
     if objs:
         lines.append("OBJECTS on the turn order (props): "
                      + ", ".join(n + (f" x{c}" if c > 1 else "") for n, c in sorted(objs.items(), key=lambda x: -x[1])))

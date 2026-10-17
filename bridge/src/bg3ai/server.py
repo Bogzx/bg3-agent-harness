@@ -2494,6 +2494,8 @@ def _combat_state_text() -> str:
     hint = _fight_hint(res, party)
     if hint:
         body += "\n" + hint
+    if isinstance(res, dict):
+        body += "".join("\n" + x for x in turn.disabled_lines(res, _label))
     mine = turn.party_acting(res, party) if isinstance(res, dict) else []
     cur = st.get("active") if st.get("active") in mine else (mine[0] if mine else None)
     if len(mine) > 1:
@@ -3357,7 +3359,8 @@ def set_party(action: str, who: str | None = None, leader: str | None = None) ->
     """Party control. action: select (control 'who'), chain (link 'who' to 'leader'), unchain (detach 'who'), sneak_on, sneak_off, turn_based_on, turn_based_off."""
     a = action.lower()
     if a == "select":
-        return _act("set_party", "act.select", {"char": _who(who)})
+        char = _who(who)
+        return _act("set_party", "act.select", {"char": char}, post=lambda _r: "\n".join(_disabled_lines(char)))
     if a == "chain":
         out = _act("set_party", "act.chain", {"char": _who(who), "leader": _who(leader) if leader else _active()})
         return _already_ok(out, "already chained together", f"{who} is already chained to the leader")
@@ -4639,7 +4642,7 @@ def _wait_for_party_turn(max_s: float) -> str:
             return "combat is over"
         mine = turn.party_acting(cs, party)
         if mine:
-            return _now_turn_text(mine)
+            return "\n".join([_now_turn_text(mine)] + turn.disabled_lines(cs, _label))
         ui = game.try_rpc("ui.state", context="client") or {}
         if ui.get("screen") in _PROMPT_SCREENS:
             _batch["last"] = "interrupted"
@@ -6581,7 +6584,7 @@ def _wait_state(low: str, tgt: str, kinds: set, ui: dict, view: dict) -> str | N
         if not _wait_combat(view).get("active"):
             return "not in combat"
         if _wait_acting(view):
-            return _now_turn_text(_wait_acting(view))
+            return "\n".join([_now_turn_text(_wait_acting(view))] + turn.disabled_lines(_wait_combat(view), _label))
     if not kinds:
         return None
     for k in kinds & set(_PROMPT_SCREENS_WAIT):
@@ -8188,6 +8191,12 @@ def _answer_reaction(use: bool) -> str:
     return f"reaction prompt: {'used' if use else 'declined'} ({r.status})"
 
 
+def _disabled_lines(only: str | None = None) -> list[str]:
+    """The DISABLED lines (turn.disabled_lines) of a fresh combat read; [] out of combat."""
+    cs = game.try_rpc("state.combat") or {}
+    return turn.disabled_lines(cs, _label, only) if cs.get("active") else []
+
+
 def _turn_next(who: str, party: set) -> str:
     """After the turn: who acts next, and the next party member's actions if it is already their turn."""
     cs = game.try_rpc("state.combat") or {}
@@ -8201,6 +8210,7 @@ def _turn_next(who: str, party: set) -> str:
         out = f"NOW {_label(cur)}'s turn: plan it"
         if len(others) > 1:
             out += f"; also {', '.join(_label(u) for u in others[1:])}"
+        out += "".join("\n" + x for x in turn.disabled_lines(cs, _label))
         acts = game.try_rpc("state.actions", {"uuid": cur})
         _learn_actions(cur, acts)
         if acts:
@@ -8209,7 +8219,7 @@ def _turn_next(who: str, party: set) -> str:
     text, mine = turn.next_up(cs, party, _label, ended=who)
     if mine:
         text += ". Plan it while they act and send its combat_turn now (it waits for the turn)"
-    return text
+    return "\n".join([text] + turn.disabled_lines(cs, _label)).strip("\n")
 
 
 @mcp.tool()
@@ -8752,6 +8762,8 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
         nxt = _turn_next(char, party)
         if nxt:
             lines.append(nxt)
+    else:
+        lines += _disabled_lines()
     if stopped:
         _batch["last"] = "interrupted"
     return _finish("combat_turn", {"who": who}, "\n".join(lines), t0)

@@ -912,6 +912,47 @@ test("cast in combat while Stunned is refused; a dropped order while Fearful nam
     BG3AI.Visibility = savedV
 end)
 
+test("disabling statuses carry the game's fix; the Sleeping refusal names it (S076 Gale, vis V18)", function()
+    combat_setup(9)
+    G._disabling = {}
+    spell("Projectile_SR", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0 })
+    -- the stats as the game resolves them (Shared Status_*.txt, `using` inherited)
+    spell("SLEEPING_EYEBITE", { StatusType = "INCAPACITATED", RemoveEvents = { "OnDamage", "OnStatusApplied" },
+        StatusGroups = { "SG_Unconscious", "SG_Condition", "SG_Sleeping", "SG_Sleeping_Magical" } })
+    spell("HOLD_PERSON", { StatusType = "INCAPACITATED", RemoveEvents = { "OnTurn" },
+        RemoveConditions = "SavingThrow(Ability.Wisdom, SourceSpellDC())" })
+    spell("PRONE", { StatusType = "KNOCKED_DOWN", RemoveEvents = { "OnTurn" } })
+    spell("FRIGHTENED", { StatusType = "BOOST", StatusGroups = { "SG_Frightened", "SG_Condition" },
+        Boosts = "Disadvantage(AllAbilities);Disadvantage(AttackRoll);ActionResourceBlock(Movement)" })
+    spell("HASTE_LETHARGY", { StatusType = "INCAPACITATED" })
+    spell("BLEEDING", { StatusType = "BOOST", StatusGroups = { "SG_Condition" } })
+    spell("DOWNED", { StatusType = "DOWNED", StatusGroups = "SG_Unconscious;SG_Incapacitated" })
+    local savedV = BG3AI.Visibility
+    local on = {}
+    BG3AI.Visibility = setmetatable({ statuses = function() return on end }, { __index = savedV })
+    on = { { id = "BLEEDING", name = "Bleeding" }, { id = "DOWNED", name = "Downed" } }
+    eq(G.disabling(P1), nil, "bleeding + downed (its own line)")
+    on = { { id = "BLEEDING", name = "Bleeding" }, { id = "SLEEPING_EYEBITE", name = "Sleeping", turns = 7 },
+        { id = "HOLD_PERSON", name = "Held" }, { id = "PRONE", name = "Prone" },
+        { id = "FRIGHTENED", name = "Frightened", turns = 2 }, { id = "HASTE_LETHARGY", name = "Lethargic" } }
+    local d = G.disabling(P1)
+    eq(#d, 5, "five")
+    eq(d[1].name, "Sleeping"); eq(d[1].turns, 7); eq(d[1].effect, "cannot act")
+    eq(d[1].fix, "an adjacent ally's Help (an action) ends it; any damage ends it", "sleep fix")
+    eq(d[2].effect, "cannot act"); eq(d[2].fix, "it saves again each turn", "hold fix")
+    eq(d[3].effect, "stands up at its turn start for half its movement")
+    eq(d[3].fix, "an adjacent ally's Help (an action) ends it", "prone fix")
+    eq(d[4].effect, "cannot move"); eq(d[4].fix, nil, "fear: no fix")
+    eq(d[5].name, "Lethargic"); eq(d[5].effect, nil, "lethargic acts (S072)")
+    -- S076 00:40:39: Gale's Scorching Ray while asleep: the refusal says how to wake her
+    on = { { id = "SLEEPING_EYEBITE", name = "Sleeping" } }
+    local j = job(op("cast", { char = P1, spell = "Projectile_SR", target = NPC }))
+    eq(j.status, "failed", "asleep")
+    eq(j.error, "cannot act while Sleeping (it takes the whole turn): end its turn; an adjacent ally's Help "
+        .. "(an action) ends it; any damage ends it")
+    BG3AI.Visibility = savedV
+end)
+
 test("cast in combat: a dropped order right after a hit on the caster is ordered once more (S066-S069 x6)", function()
     combat_setup(9)
     spell("Target_Swing", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })

@@ -1006,7 +1006,14 @@ function S.combat(ctx)
                             end)
                         end
                         if truthy(osi(Osi.IsDead, u)) then o.dead = true end
-                        if ctx.is_party[u] then o.light_in_hand = heldLight(u) end
+                        if ctx.is_party[u] then
+                            o.light_in_hand = heldLight(u)
+                            local Gd = BG3AI.Guard
+                            if Gd and Gd.disabling then
+                                local okd, d = pcall(Gd.disabling, u)
+                                if okd then o.disabled = d end
+                            end
+                        end
                         o.concentration = concentration(me)
                         out.order[#out.order + 1] = o
                     else

@@ -193,3 +193,19 @@ enemy's cast that follows the hit. A hostile that had turns but never acted, was
 statused by us is `idle` ({name, died}): not an enemy, not a kill (S074's six Sacrificial Lamb spawn,
 `killed 3/27`); the render lists them apart. A damage type is `low` only from ≥ 2 hits (`LOW_MIN_HITS`); stored
 records' 1-hit lows are dropped on load like v1's.
+
+**v3 records (vis V18b, 2026-10-18, S077's WARNINGs from S076's records).** A damage type is `low` ("did little")
+only when ≥ 3 of its hits on that enemy (`LOW_MIN_HITS`) that were no killing blow (a `died` right after the hit's
+damage run) did under half (`LOW_SHARE`) of what the same attack (caster + ability, known from the cast that
+follows the hits or the turn's settle) of that type did to other enemies in the fight; hits whose attack hit no
+other enemy are not compared. The row carries `compared`, `got`, `expected`; the facts and WARNINGs read `(3 hits,
+avg 3.3 vs 13.5 from the same attacks on other enemies)`. v2 records' `low` flags (they compared a type with the
+other attacks' damage and counted killing blows) are dropped on load like v1's.
+
+**Since vis V18 (2026-10-18, S076 Gale asleep 3 rounds).** state.combat's party entries carry `disabled`
+(Guard.disabling: statuses of StatusType INCAPACITATED/FEAR/KNOCKED_DOWN or a disabling StatusGroup, DOWNED
+excluded), each `{name, turns, effect, fix}` read from the game's stats: `cannot act` / `cannot move` / Prone's
+stand-up, and the fix (Target_Help's RemoveStatus list, `OnDamage`, a save each turn). The bridge prints one
+`DISABLED eN Name: …` line per such member (turn.disabled_lines) on every combat read: the TURN block's NOW/NEXT
+(`_turn_next`, or after an interrupted turn), get_combat_state, end_turn/wait_for my_turn, set_party select. The
+Guard's `cannot act while X` refusal names the fix too.

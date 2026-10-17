@@ -336,13 +336,15 @@ def logs_to_read(mem: Path, sid_n: int) -> list[int]:
 # vis V6 (2026-10-17): a fight record before v2 counted a hit's rider (1-3 Radiant beside 12 Slashing) or a per-hit
 # shield (Orin's Unstoppable) as a resisted damage type, so its [fight] line's "resisted:" field and "<Type> did
 # little to <enemy>" facts are false (~80 in claude-run-2 S035-S065, e.g. lessons.md "EB/Radiant do ~0 vs Avatar").
-DEBRIEF_V = 2
+# vis V18b (2026-10-18): a v2 record (S066-S077) judged "did little" from 2 hits, from killing blows on 1-HP enemies
+# and against other attacks' damage (S076: "Radiant did little to Predator Werewolf", 11.7/hit beside Fireball's 33).
+DEBRIEF_V = 3
 
 
 def old_debrief_logs(mem: Path, sessions_dir: Path | None, nums: list[int]) -> list[int]:
-    """The sessions among nums whose log has [fight] lines written before the v2 debrief: one of the session's
-    fight records (sessions_dir/Sxxx[-rN].fights.jsonl, written with each line) lacks v >= 2, or it has none (the
-    log alone can't show its lines are new)."""
+    """The sessions among nums whose log has [fight] lines written before the v3 debrief: one of the session's
+    fight records (sessions_dir/Sxxx[-rN].fights.jsonl, written with each line) lacks v >= DEBRIEF_V, or it has none
+    (the log alone can't show its lines are new)."""
     out = []
     for n in nums:
         sid = M.session_id(n)
@@ -530,10 +532,12 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
     if old:
         lines += [
             "",
-            "OLD FIGHT DEBRIEFS (a harness bug, fixed 2026-10-17): in "
+            "OLD FIGHT DEBRIEFS (a harness bug, fixed 2026-10-17 and 2026-10-18): in "
             + ", ".join(f"sessions/{M.session_id(n)}.md" for n in old)
             + " the `[fight]` lines' `resisted: …` field and every `<Type> did little to <enemy>` fact are WRONG "
-            "(a damage rider or an enemy's per-hit shield was read as a resisted damage type). Take no resistance, "
+            "(before S066: a damage rider or an enemy's per-hit shield was read as a resisted damage type; S066-S077: "
+            "'did little' was judged per hit from 2 hits, from killing blows capped by a 1-HP enemy's HP, and "
+            "against other attacks' damage, e.g. Sacred Flame beside Fireball). Take no resistance, "
             "immunity or 'did little / does ~0' fact from them, nor from a `[lesson]` that rests only on one, into "
             "any file or chapter; the rest of those lines (grade, downs, deaths, damage totals, unused items) stands.",
         ]

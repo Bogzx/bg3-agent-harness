@@ -2713,6 +2713,16 @@ def sec_vis() -> None:
         item("vis: queue_interrupted event on one line (live mod event path)",
              "PASS" if len(ev) == 1 and "FAILED — acceptance probe" in ev[0] and "done=0" in ev[0] and not stray
              else "FAIL", f"{ev[:1]} stray={stray[:1]}")
+    # 19b. V18 (S076 Gale asleep 3 rounds): the game's own stats give each disabling status its effect and fix
+    #      (read-only: StatusGroups / RemoveEvents as SE exposes them, `using` inherited)
+    v = lua_server(g + 'G._disabling = {} local out = {} for _, id in ipairs({"SLEEPING_EYEBITE", "HOLD_PERSON", '
+                   '"PRONE", "FRIGHTENED", "BLEEDING"}) do local i = G.disabling_info(id) '
+                   'out[#out + 1] = i and (tostring(i.effect) .. "/" .. tostring(i.fix)) or "-" end '
+                   'return table.concat(out, "|")')
+    want = ("cannot act/an adjacent ally's Help (an action) ends it; any damage ends it|cannot act/it saves again "
+            "each turn|stands up at its turn start for half its movement/an adjacent ally's Help (an action) ends "
+            "it|cannot move/nil|-")
+    item("vis: V18 disabling statuses read from the stats", "PASS" if v == want else "FAIL", v[:400])
     # 20. V10: Mystra's statue in get_nearby (loads its own save)
     mystra_statue_probe()
     load_verified(BASE)
