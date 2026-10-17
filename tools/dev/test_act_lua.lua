@@ -1020,6 +1020,22 @@ test("select: done once the character holds ClientControl; a no-op order resyncs
     Osi.MakePlayerActive = nil
 end)
 
+test("select is not an action: a walk running for the member goes on (L8 helm ladder 'superseded by select')", function()
+    osiv[key("GetReservedUserID", P1)] = 1
+    osiv[key("GetCurrentCharacter", 1)] = P1
+    Osi.MakePlayerActive = function() end
+    local w = job(op("move_to", { char = P1, target = NPC }))
+    eq(w.status, "running", "walk started")
+    local s = job(op("select", { char = P1 }))
+    tick()
+    eq(s.status, "done", "selected " .. tostring(s.error))
+    eq(w.status, "running", "the walk was not superseded: " .. tostring(w.error))
+    eq(A.active[P1], w, "the walk stays the member's job")
+    arrive(w, { 8.5, 0, 0 })
+    eq(w.status, "done", "walk " .. tostring(w.error))
+    Osi.MakePlayerActive = nil
+end)
+
 test("cast ui=true (ACT-8 hotbar route): 3 targets checked, no Osiris order, CastedSpell finishes, nothing charged", function()
     combat_setup(9)
     spell("Target_Bless", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 1 })
@@ -1038,6 +1054,37 @@ test("cast ui=true (ACT-8 hotbar route): 3 targets checked, no Osiris order, Cas
     eq(j.result.via, "hotbar", "via"); eq(j.result.targets_n, 3, "targets_n")
     eq(j.result.charged_by_guard, nil, "the game charged it (the action point stays as the game left it)")
     eq(world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount, 1, "no extra charge")
+end)
+
+test("cast ui=true: a CastSpellFailed before the clicks are done is held (L8 DD upcast picker), after them it fails", function()
+    combat_setup(9)
+    spell("Target_Bless", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 1 })
+    -- the picker's CastSpellFailed mid-clicks, then the real cast: done
+    local j = job(op("cast", { char = P1, spell = "Target_Bless", targets = { P1, NPC, GOB }, ui = true }))
+    A.dispatch("CastSpellFailed", { P1, "Target_Bless", "Target", "None", 0 })
+    tick(5)
+    eq(j.status, "running", "held while clicking: " .. tostring(j.error))
+    A.dispatch("CastSpell", { P1, "Target_Bless", "Target", "None", 0 })
+    RPC.ops["act.ui_clicked"]({ id = j.id })
+    A.dispatch("CastedSpell", { P1, "Target_Bless" })
+    tick(10)
+    eq(j.status, "done", "the cast went off " .. tostring(j.error))
+    -- held, clicks done, nothing starts: failed CAST_UI_REFUSED_MS later with the game's reason
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    j = job(op("cast", { char = P1, spell = "Target_Bless", targets = { P1, NPC, GOB }, ui = true }))
+    A.dispatch("CastSpellFailed", { P1, "Target_Bless", "Target", "None", 0 })
+    local r = RPC.ops["act.ui_clicked"]({ id = j.id })
+    assert(r.held and r.held:find("the game refused the cast"), tostring(r.held))
+    tick(10) -- 0.6 s
+    eq(j.status, "running", "not yet")
+    tick(20) -- 1.8 s
+    eq(j.status, "failed", "refused"); assert(j.error:find("the game refused the cast"), j.error)
+    -- after the clicks: at once
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    j = job(op("cast", { char = P1, spell = "Target_Bless", targets = { P1, NPC, GOB }, ui = true }))
+    RPC.ops["act.ui_clicked"]({ id = j.id })
+    A.dispatch("CastSpellFailed", { P1, "Target_Bless", "Target", "None", 0 })
+    eq(j.status, "failed", "refused after the clicks")
 end)
 
 test("cast ui=true cancelled: after CastSpell it says began (no Osiris redo), before it a plain cancel; no purge", function()
@@ -2847,6 +2894,14 @@ test("state.actions: lists only prepared class spells (A4: S065 showed Shadowhea
     local ids = {}
     for _, a in ipairs(list) do ids[#ids + 1] = a.spell end
     eq(table.concat(ids, ","), "Target_CureWounds,Target_Sanctuary", "no unprepared Bless")
+end)
+
+test("state.combat hp_pct: a member at 1/218 HP reads 1 %, not 0 (S076 Karlach called downed)", function()
+    if not BG3AI.State or not BG3AI.State.hp_pct then dofile(LUA .. "/Server/State.lua") end
+    eq(BG3AI.State.hp_pct(1, 218), 1, "1/218")
+    eq(BG3AI.State.hp_pct(0, 218), 0, "0/218")
+    eq(BG3AI.State.hp_pct(109, 218), 50, "half")
+    eq(BG3AI.State.hp_pct(218, 218), 100, "full")
 end)
 
 -- ---- A5: prepare_spells plan (Guard.prep_info / prep_plan, act.prepare_plan, act.prepared) -------------------

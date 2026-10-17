@@ -66,6 +66,7 @@ class FakeWorld:
         self.armed = None                   # spell in hand
         self.picked: list[str] = []
         self.phase = None
+        self.hand_phase = "PrepareUpdate"   # the cast entity's phase while the spell is only in hand (live L4-L8)
         self.cast_done: list = []
         self.arm_ignores = False
         self.refuse = set()                 # target uuids the game does not take
@@ -164,7 +165,7 @@ class FakeWorld:
             if self.armed:
                 st["spell"] = self.armed
                 st["remaining"] = self.max - len(self.picked)
-                st["cast"] = {"picked": len(self.picked), "phase": "None", "spell": self.armed}
+                st["cast"] = {"picked": len(self.picked), "phase": self.hand_phase, "spell": self.armed}
             elif self.phase:
                 st["cast"] = {"phase": self.phase}
             return st

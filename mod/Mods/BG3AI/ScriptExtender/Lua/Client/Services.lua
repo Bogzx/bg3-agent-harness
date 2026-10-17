@@ -94,9 +94,17 @@ end
 -- still wants to talk, rest anyway?", live S005): the agent asked for this
 -- rest/travel, so answer it the way that player would, at most `max` per job,
 -- and keep each question for the result. args.confirm == false: leave it and
--- fail with the question so the agent answers with ui.confirm.
+-- fail with the question so the agent answers with ui.confirm. rest = the rest flow's own boxes: one whose text
+-- is only the unresolved "[ForceUpdate]" handle (the engine's "Do you want to end the day?" ready check, BACKLOG
+-- S031 note) is answered even then: S077 r1 01:13 long_rest(confirm=false) stopped on "[ForceUpdate] [Yes/No]",
+-- a question nobody can read, and the agent screenshot-clicked it. A readable question still stops.
 -- Returns nil (no box), true (handled: keep waiting) or "failed", nil, err.
-local function handleConfirm(job, args, max, veto)
+local function unreadable(s)
+    return s == nil or s == "" or s == "?" or tostring(s):gsub("%[ForceUpdate%]", ""):match("^%s*$") ~= nil
+end
+SV.unreadable = unreadable
+
+local function handleConfirm(job, args, max, veto, rest)
     local A = BG3AI.UIActions
     if not (A and A.confirmBox) then return nil end
     local box = A.confirmBox()
@@ -104,7 +112,7 @@ local function handleConfirm(job, args, max, veto)
     local labels = {}
     for _, b in ipairs(box.buttons) do labels[#labels + 1] = b.label end
     local q = box.text or box.title or "?"
-    if args.confirm == false then
+    if args.confirm == false and not (rest and unreadable(box.text) and unreadable(box.title)) then
         return "failed", nil, "the game asks: " .. q .. " [" .. table.concat(labels, "/") .. "]; answer with confirm"
     end
     -- veto(q): a reason this op must not answer the question (vis live: fast_travel answered a rest prompt).
@@ -750,7 +758,7 @@ RPC.register("ui.short_rest", function(args)
         if before and now and now < before then
             return "done", { short_rests_left = now, of = max, confirmed = job.confirms }
         end
-        local c, cres, err = handleConfirm(job, args)
+        local c, cres, err = handleConfirm(job, args, nil, nil, true)
         if c == "failed" then return "failed", cres, err end
     end)
 end)
@@ -911,7 +919,7 @@ RPC.register("ui.long_rest", function(args)
     -- The night ends (IsAtNightCamp false) after the sleep press; a camp scene or the rest screen may come first.
     local function sleepTick(job, result)
         local now = RPC.now_ms()
-        local c, cres, err = handleConfirm(job, args)
+        local c, cres, err = handleConfirm(job, args, nil, nil, true)
         if c == "failed" then
             R.boxAt = now
             return "failed", cres, err
@@ -956,7 +964,7 @@ RPC.register("ui.long_rest", function(args)
         -- "End the day?" comes before the rest screen opens; others may follow it, and
         -- a partial rest (too few supplies) may ask once more after Rest is pressed.
         if phase ~= "resting" or (w and not sawActive) then
-            local c, cres, err = handleConfirm(job, args)
+            local c, cres, err = handleConfirm(job, args, nil, nil, true)
             if c == "failed" then
                 R.boxAt = RPC.now_ms() -- the bridge clicks it (needs_click) or the agent answers, then calls again
                 cres = cres or {}

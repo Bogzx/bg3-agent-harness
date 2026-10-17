@@ -943,6 +943,14 @@ local function heldLight(u)
     return name
 end
 
+-- A turn-order row's HP percent (pure; tested offline). S076 00:29: Karlach at 1/218 rounded to 0 % and the bridge
+-- called her downed: a living member reads at least 1 %; the row's `downed` (the game's state) says downed.
+function S.hp_pct(hp, max_hp)
+    local p = math.floor(100 * hp / max_hp + 0.5)
+    if p == 0 and hp > 0 then p = 1 end
+    return p
+end
+
 function S.combat(ctx)
     local ce
     for _, u in ipairs(ctx.party) do
@@ -977,7 +985,7 @@ function S.combat(ctx)
                         pcall(function() if m.Initiative then o.initiative = m.Initiative end end)
                         local h = health(me)
                         if h and h.max_hp and h.max_hp > 0 and (ctx.is_party[u] or not ctx.rules.HIDE_NPC_HP) then
-                            o.hp_pct = math.floor(100 * h.hp / h.max_hp + 0.5)
+                            o.hp_pct = S.hp_pct(h.hp, h.max_hp)
                         end
                         if tb then
                             pcall(function()
@@ -1006,6 +1014,11 @@ function S.combat(ctx)
                             end)
                         end
                         if truthy(osi(Osi.IsDead, u)) then o.dead = true end
+                        -- the game's own downed state (bridge turn.is_downed), never a rounded hp_pct
+                        if ctx.is_party[u] and not o.dead and (truthy(osi(Osi.HasActiveStatus, u, "DOWNED"))
+                            or (h and h.hp == 0)) then
+                            o.downed = true
+                        end
                         if ctx.is_party[u] then o.light_in_hand = heldLight(u) end
                         o.concentration = concentration(me)
                         out.order[#out.order + 1] = o

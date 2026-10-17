@@ -287,12 +287,11 @@ def reach_line(combat: dict, who: str, movement: Any, label: Callable[[str], str
 
 
 def downed_allies(combat: dict, who: str, rng: float, skip: set | None = None) -> list[str]:
-    """Party members at 0 HP (downed, not dead) that `who` sees within `rng` m, nearest first."""
+    """Party members downed (not dead) that `who` sees within `rng` m, nearest first."""
     out = []
     for o in (combat or {}).get("order") or []:
         u = o.get("uuid")
-        if not u or u == who or u in (skip or ()) or o.get("dead") or o.get("relation") != "party" \
-                or o.get("hp_pct") != 0:
+        if not u or u == who or u in (skip or ()) or o.get("relation") != "party" or not is_downed(o):
             continue
         d = (o.get("from") or {}).get(who)
         if isinstance(d, (list, tuple)) and len(d) >= 2 and isinstance(d[0], (int, float)) and d[1] and d[0] <= rng:
@@ -346,11 +345,18 @@ def acting(combat: dict) -> list[str]:
     return [c["current"]] if c.get("current") else []
 
 
+def is_downed(o: dict) -> bool:
+    """A turn-order row the game has downed: the mod's `downed` (the DOWNED status, or 0 HP), not dead. Never the
+    rounded hp_pct: S076 00:29-00:32 Karlach at 1/218 HP read hp_pct 0 and was called downed, so end_turn and
+    combat_turn refused her (~3.5 min of a Cazador round, played by hand)."""
+    return bool(o.get("downed")) and not o.get("dead")
+
+
 def downed(combat: dict) -> set[str]:
-    """Party members at 0 HP and not dead: their turn is only the game's death saving throw (it passes by
+    """Party members downed and not dead: their turn is only the game's death saving throw (it passes by
     itself; end_turn is refused 'character is downed', S018)."""
     return {o["uuid"] for o in (combat or {}).get("order") or []
-            if o.get("uuid") and o.get("relation") == "party" and o.get("hp_pct") == 0 and not o.get("dead")}
+            if o.get("uuid") and o.get("relation") == "party" and is_downed(o)}
 
 
 def party_acting(combat: dict, party: set) -> list[str]:
