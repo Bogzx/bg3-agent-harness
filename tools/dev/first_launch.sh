@@ -12,7 +12,8 @@
 #   2 builds      build/bg3le/dist/libbg3le.so exists (this script never builds bg3le: ~10 GB RAM, and never
 #                 while the game runs); rebuild the input shim + sdltest against the game's libSDL2 and run
 #                 native/bg3sdl/test/test_shim.py --chain, then --sniper
-#   3 launch      runner/launch_game.sh in the background (PRIME offload to NVIDIA when present)
+#   3 launch      a usable display (unset DISPLAY/XAUTHORITY from the desktop's Xwayland, else FAIL), then
+#                 runner/launch_game.sh in the background (PRIME offload to NVIDIA when present)
 #   4 bg3le       wait for the Lua debug server on 127.0.0.1:$BG3LE_DEBUG_PORT, then sys.info from the mod
 #   5 health      no "WARNING: resolve:" in bg3le's log; the game is on the NVIDIA GPU (nvidia-smi); the game runs
 #                 in its own systemd scope bg3ai-game-<stamp>.scope (launch_game.sh: OOMPolicy=continue, MemoryMax
@@ -113,6 +114,14 @@ if [ "$attach" = 1 ]; then
     ok "attaching to the running game"
 else
     port_up && die "port $PORT is already in use (a game is running?): pass --attach, or stop it first"
+    # The desktop's display env when this shell lacks it (a the multiplexer pane, ssh); none usable = no launch (L8: the game
+    # fell back to the AMD iGPU and dumped cores). launch_game.sh checks again (exit 5).
+    display_problem=""
+    display_sh="$(python3 "$REPO/runner/display_env.py" shell)" || [ -n "$display_sh" ] || display_problem="display_env.py failed"
+    eval "$display_sh"
+    [ -z "$display_problem" ] ||
+        die "no usable display: $display_problem. Export DISPLAY/XAUTHORITY of the desktop session (runner/display_env.py)"
+    ok "display: DISPLAY=$DISPLAY XAUTHORITY=${XAUTHORITY:-~/.Xauthority}"
     LAUNCH_LOG="$RUNTIME/logs/first_launch-$(date +%Y%m%d-%H%M%S).log"
     # Close inherited fds > 2 first: run under `flock runtime/live.lock`, the launcher (which lives as long as the
     # game) kept the lock fd and held the live lock for the whole game (2026-10-10 10:52, every worker blocked).

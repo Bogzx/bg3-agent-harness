@@ -21,7 +21,9 @@ Steps (each one a row of the final PASS/FAIL/SKIP table; the first FAIL before t
              it waits for bg3le, the mod's sys.info, health and one frame. Refused beside a user's own BG3; a harness
              game already running needs --attach
   reload     only with --attach and mod/ newer than the game (or --reload): Ext.Debug.Reset() + two module checks
-  acceptance acceptance.py [--only ...], output tee'd; per section its PASS/FAIL/SKIP counts
+  acceptance acceptance.py [--only ...], output tee'd; per section its PASS/FAIL/SKIP counts, and the game's memory
+             at the start and after each section (acceptance's memory.json: RSS, swap, its scope's current/peak/
+             swap peak, anon vs file cache)
   collect    on a game death: the last bg3le/game log lines, crash lines, ram.log / ram_kills / ram_spikes tails,
              journalctl OOM lines, the launcher log
   stop       SIGTERM then SIGKILL this harness's bg3 + crash reporters only (runner/play.py is_harness_pid, RUN-4);
@@ -190,6 +192,7 @@ class Window:
         self.dir = self.runtime / "live" / self.stamp
         self.rows: list[dict] = []          # harness steps: {step, verdict, evidence}
         self.items: list[dict] = []         # acceptance rows: {section, item, verdict, evidence[, owner]}
+        self.memory: list[dict] = []        # acceptance's memory.json: the game's memory at the start, after each section
         self.lock_f = None
         self.logf = None
         self._out = out or (lambda s: print(s, flush=True))
@@ -535,9 +538,14 @@ class Window:
                 f = out_dir / f"{n}.{ext}"
                 if f.exists() and f.stat().st_mtime >= start - 1:
                     shutil.copy2(f, dst / f.name)
-        for f in [results, out_dir / "table.md"] + sorted(out_dir.glob("se-jump-probe-*.jpg")):
+        for f in [results, out_dir / "table.md", out_dir / "memory.json"] + sorted(out_dir.glob("se-jump-probe-*.jpg")):
             if f.exists() and f.stat().st_mtime >= start - 1:
                 shutil.copy2(f, dst / f.name)
+        try:
+            mem = out_dir / "memory.json"
+            self.memory = json.loads(mem.read_text()) if mem.stat().st_mtime >= start - 1 else []
+        except (OSError, ValueError):
+            self.memory = []
 
     def collect(self) -> None:
         """A game death: the evidence se's runbook lists, into death/ (best effort, every source optional)."""
@@ -620,6 +628,15 @@ class Window:
                 rs = [r for r in self.items if r.get("section") == n]
                 c = {v: sum(r.get("verdict") == v for r in rs) for v in ("PASS", "FAIL", "SKIP")}
                 out.append(f"| {n} | {self.acc.SECTION_OWNERS.get(n, '?')} | {c['PASS']} | {c['FAIL']} | {c['SKIP']} |")
+        if self.memory:
+            out += ["", ("Game memory (MB; scope = its bg3ai-game cgroup, MemoryMax 10G, page cache included: anon "
+                         "growing section after section is a leak, file is cache)"), "",
+                    "| after | RSS | swap | scope | scope peak | scope swap peak | anon | file |",
+                    "|---|---|---|---|---|---|---|---|"]
+            keys = ("rss", "swap", "cg_current", "cg_peak", "cg_swap_peak", "anon", "file")
+            for m in self.memory:
+                out.append(f"| {m.get('after', '?')} | " + " | ".join(str(m.get(k, "-")) for k in keys) + " |"
+                           if "rss" in m else f"| {m.get('after', '?')} | no bg3 |" + " |" * (len(keys) - 1))
         fails = [r for r in self.items if r.get("verdict") == "FAIL"]
         harness_fails = [r for r in self.rows if r["verdict"] == "FAIL"]
         out += ["", "## Failures by owner", ""]

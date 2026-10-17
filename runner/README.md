@@ -191,7 +191,10 @@ stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
 2. **Which save.** It takes the newest of: the save named on HANDOFF.md's `Save to load:` line,
    `Sxxx-...` saves by this playthrough's save owner (the character prefix of the save folder, recorded
    the first time), and quicksaves the runner itself made. Nothing else is ever loaded. With no save yet
-   (a new playthrough) the game is left at the main menu.
+   (a new playthrough) the game is left at the main menu. The `Save to load:` save wins over newer ones (the
+   agent's decision, e.g. a reload before a lost fight) unless a save was written after the session that wrote
+   HANDOFF (its `# Handoff Sxxx` heading) ended: a crashed session's or a runner quicksave's later play. The choice
+   and its reason are in the runner log (`save choice:`), `run --plan` and the kickoff (S16, 2026-10-18).
 3. **Claude.** It first opens the memory session itself (`session.py start`: `sessions/Sxxx.md`; its output, the
    memory briefing, leads the kickoff). Then it runs `claude -p <kickoff> --model M --output-format stream-json
    --verbose --strict-mcp-config --mcp-config play/.mcp.json --tools ToolSearch --session-id <uuid>` in `play/`.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,6 +56,67 @@ class DisplayEnv(unittest.TestCase):
         env: dict = {"DISPLAY": ":1", "XAUTHORITY": "/a"}
         D.fill(env, uid=999999)   # no /run/user/999999
         self.assertNotIn("XDG_RUNTIME_DIR", env)
+
+    def test_problem(self):
+        with tempfile.TemporaryDirectory() as d:
+            x11, home = Path(d, "x11"), Path(d, "home")
+            x11.mkdir()
+            home.mkdir()
+            Path(x11, "X1").write_text("")
+            auth = Path(d, "xauth_ok")
+            auth.write_text("")
+            def p(env: dict) -> str | None:
+                return D.problem(env, home=str(home), x11_dir=str(x11))
+            self.assertIsNone(p({"DISPLAY": ":1", "XAUTHORITY": str(auth)}))
+            self.assertIsNone(p({"DISPLAY": "unix:1.0", "XAUTHORITY": str(auth)}))
+            self.assertIn("DISPLAY is unset", p({"XAUTHORITY": str(auth)}))
+            self.assertIn("no X server socket", p({"DISPLAY": ":7", "XAUTHORITY": str(auth)}))
+            self.assertIn("doesn't exist", p({"DISPLAY": ":1", "XAUTHORITY": str(auth) + "-gone"}))
+            self.assertIn("XAUTHORITY is unset", p({"DISPLAY": ":1"}))
+            Path(home, ".Xauthority").write_text("")
+            self.assertIsNone(p({"DISPLAY": ":1"}))                  # Xlib's default file
+            self.assertIsNone(p({"DISPLAY": "otherhost:0", "XAUTHORITY": str(auth)}))   # remote: no socket check
+
+
+class LaunchRefusesWithoutDisplay(unittest.TestCase):
+    """L8 2026-10-18: launches from a shell without DISPLAY/XAUTHORITY fell back to the AMD iGPU and dumped cores.
+    launch_game.sh against a fake game and sniper (its `run` would write a marker): nothing real can start."""
+
+    def setUp(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.tmp = Path(d.name)
+        game, sniper = self.tmp / "game", self.tmp / "sniper"
+        (game / "bin").mkdir(parents=True)
+        sniper.mkdir()
+        self.marker = self.tmp / "launched"
+        for exe in (game / "bin" / "bg3", sniper / "run"):
+            exe.write_text(f"#!/bin/sh\ntouch {self.marker}\nexit 0\n")
+            exe.chmod(0o755)
+        self.env = {**os.environ, "BG3_DIR": str(game), "BG3AI_SNIPER_DIR": str(sniper),
+                    "BG3AI_RUNTIME": str(self.tmp / "runtime"), "BG3AI_PROFILE_DIR": str(self.tmp / "profile"),
+                    "BG3AI_CONFIG_DIR": str(self.tmp / "config"), "BG3AI_REQUIRE_STEAM_OFFLINE": "0",
+                    "BG3AI_GAME_SCOPE": "0", "BG3LE_DEBUG_PORT": "59997",
+                    "DISPLAY": ":97", "XAUTHORITY": str(self.tmp / "no-such-xauth")}   # no /tmp/.X11-unix/X97
+
+    def launch(self, *args: str) -> subprocess.CompletedProcess:
+        sh = Path(D.__file__).parent / "launch_game.sh"
+        return subprocess.run(["bash", str(sh), "--no-bg3le", "--no-input-shim", *args], capture_output=True,
+                              text=True, env=self.env, timeout=60)
+
+    def test_refused_exit_5(self):
+        self.assertFalse(os.path.exists("/tmp/.X11-unix/X97"))
+        r = self.launch()
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn("REFUSING TO LAUNCH: no usable display: DISPLAY=:97 but no X server socket", r.stderr)
+        self.assertFalse(self.marker.exists())
+
+    def test_dry_run_only_warns(self):
+        r = self.launch("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("warning: no usable display", r.stderr)
+        self.assertIn("./bin/bg3", r.stdout)
+        self.assertFalse(self.marker.exists())
 
 
 if __name__ == "__main__":

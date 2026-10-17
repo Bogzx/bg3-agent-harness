@@ -2,14 +2,18 @@
 
 A the multiplexer pane or an ssh shell has no DISPLAY/XAUTHORITY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR, so the game can't open a
 window. The desktop's Xwayland carries them: `Xwayland :1 -auth /run/user/1000/xauth_XXXX ...` (docs/HANDOFF.md).
-Used by runner/play.py (run) and tools/dev/live_window.py (its display step).
+Used by runner/play.py (run), tools/dev/live_window.py (its display step) and runner/launch_game.sh (`display_env.py
+shell`: fill, or refuse to launch). Without a display the game doesn't fail cleanly: L8 2026-10-18 00:1x, two launches
+from a the multiplexer shell fell back to the AMD iGPU (no NVIDIA PRIME without X) and dumped SIGTRAP cores within 10 s.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
+import sys
 
 DEFAULT_DISPLAY = ":1"   # the test machine's Xwayland
 KEYS = ("DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR")
@@ -74,3 +78,49 @@ def fill(env: dict, default_display: str = DEFAULT_DISPLAY, uid: int | None = No
 
 def describe(env: dict) -> str:
     return " ".join(f"{k}={env.get(k) or 'unset'}" for k in KEYS)
+
+
+def problem(env: dict, home: str | None = None, x11_dir: str = "/tmp/.X11-unix") -> str | None:
+    """Why the game can't open a window with env (after fill), or None. DISPLAY must be set and, when local (":N"),
+    its X socket must exist; XAUTHORITY must name an existing file, or be unset with a ~/.Xauthority (Xlib's
+    default)."""
+    disp = env.get("DISPLAY")
+    if not disp:
+        return "DISPLAY is unset and no Xwayland runs (is the desktop session up?)"
+    m = re.fullmatch(r"(?:unix)?:(\d+)(?:\.\d+)?", disp)
+    if m and not os.path.exists(os.path.join(x11_dir, f"X{m.group(1)}")):
+        return f"DISPLAY={disp} but no X server socket {x11_dir}/X{m.group(1)}"
+    auth = env.get("XAUTHORITY")
+    if auth:
+        return None if os.path.isfile(auth) else f"XAUTHORITY={auth} doesn't exist (Xwayland restarted?)"
+    home = home if home is not None else env.get("HOME") or os.path.expanduser("~")
+    if os.path.isfile(os.path.join(home, ".Xauthority")):
+        return None
+    return f"XAUTHORITY is unset, no ~/.Xauthority and no Xwayland -auth found (DISPLAY={disp})"
+
+
+def main(argv: list[str]) -> int:
+    """`display_env.py shell`: `export K=V` lines for what fill() found (eval them); when the result can't open a
+    window, also `display_problem=<why>` and exit 1. `display_env.py check`: describe, the problem on stderr."""
+    if len(argv) != 2 or argv[1] not in ("shell", "check"):
+        print("usage: display_env.py shell|check", file=sys.stderr)
+        return 2
+    env = dict(os.environ)
+    got = fill(env)
+    why = problem(env)
+    if argv[1] == "shell":
+        for k, v in got.items():
+            print(f"export {k}={shlex.quote(v)}")
+        if "XAUTHORITY" in os.environ and "XAUTHORITY" not in env:
+            print("unset XAUTHORITY")   # stale and no Xwayland: fill dropped it
+        if why:
+            print(f"display_problem={shlex.quote(why)}")
+    else:
+        print(describe(env))
+        if why:
+            print(why, file=sys.stderr)
+    return 1 if why else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

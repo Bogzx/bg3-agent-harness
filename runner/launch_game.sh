@@ -41,6 +41,8 @@
 #   BG3AI_REQUIRE_STEAM_OFFLINE=1|0  refuse unless Steam's last login was offline (default 0, or 1 when the machine
 #                      marker ~/.config/bg3ai/require-steam-offline exists: machine 2; tools/steam_paths.py
 #                      offline_required). BG3AI_ALLOW_STEAM_ONLINE=1 is the older "off".
+#   DISPLAY / XAUTHORITY  unset ones are taken from the desktop's Xwayland (runner/display_env.py); with no usable
+#                      display (no X socket, no auth file) the launch is refused, exit 5 (never a silent iGPU start)
 #   BG3AI_ALLOW_STALE_BG3LE=1   launch even when the bg3le build lacks a patches/bg3le patch (default: refuse,
 #                      exit 4, also with --dry-run; tools/bg3le_buildinfo.py compares BUILDINFO next to the library)
 #   BG3AI_GAME_SCOPE   1 (default): run the game in its own systemd user scope bg3ai-game-<stamp>.scope with
@@ -73,7 +75,7 @@ INPUT_LIB="${BG3AI_INPUT_LIB:-$REPO/build/bg3sdl/libbg3sdl.so}"
 PROFILE="$(python3 "$REPO/tools/steam_paths.py" profile)"   # $BG3AI_PROFILE_DIR, else ~/.local/share/Larian Studios/…
 PORT="${BG3LE_DEBUG_PORT:-9998}"
 
-die() { echo "launch_game: $*" >&2; exit 1; }
+die() { echo "launch_game: $1" >&2; exit "${2:-1}"; }
 
 game_args=()
 extra_env=()
@@ -147,6 +149,18 @@ fi
 if [ "$dry_run" != 1 ]; then
     steam_state="$(python3 "$REPO/tools/steam_paths.py" launch-ok)" \
         || die "REFUSING TO LAUNCH: Steam is not offline ($steam_state). Steam > Go Offline, or BG3AI_REQUIRE_STEAM_OFFLINE=0"
+fi
+# A display the game can open a window on: unset DISPLAY/XAUTHORITY/... come from the desktop's Xwayland
+# (runner/display_env.py; a the multiplexer or ssh shell has none). Without one the game doesn't fail cleanly: L8 2026-10-18,
+# two launches from a bare shell fell back to the AMD iGPU and dumped SIGTRAP cores within 10 s. Exit 5.
+display_problem=""
+display_sh="$(python3 "$REPO/runner/display_env.py" shell)" || [ -n "$display_sh" ] || display_problem="display_env.py failed"
+eval "$display_sh"
+if [ -n "$display_problem" ]; then
+    [ "$dry_run" = 1 ] || die "REFUSING TO LAUNCH: no usable display: $display_problem. Export DISPLAY/XAUTHORITY of the desktop session (runner/display_env.py)" 5
+    echo "launch_game: warning: no usable display: $display_problem" >&2
+elif [ -n "$display_sh" ]; then
+    echo "launch_game: display env from the desktop session: $(echo $display_sh | sed 's/export //g')" >&2
 fi
 # Host tuning (the test machine: platform_profile and the NVIDIA clock cap reset on every reboot). Never fatal, never a prompt.
 if [ "$dry_run" = 1 ]; then _tune=plan; else _tune=apply; fi
