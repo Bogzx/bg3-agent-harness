@@ -70,23 +70,29 @@ def apart(status: dict, leader: str | None = None, far_m: float = APART_M, stay:
     return out
 
 
+def _where(r: dict, far_m: float = APART_M) -> str:
+    """'136m, 64m above, unchained' for an apart() row."""
+    if r["other_level"]:
+        what = "other level"
+    elif r["dist"] is not None and r["dist"] > far_m:
+        what = f"{round(r['dist'])}m"
+    else:
+        what = "near" if not r.get("dy") else f"{round(r['dist'])}m"
+    if r.get("dy"):
+        what += f", {round(abs(r['dy']))}m {'above' if r['dy'] > 0 else 'below'}"
+    if r["unchained"]:
+        what += ", unchained"
+    if r["downed"]:
+        what += ", downed"
+    return what
+
+
 def apart_line(rows: list[dict], label: Callable[[str], str], far_m: float = APART_M) -> str:
     """'PARTY APART: e1 Lae'zel 34m, e3 Gale other level → regroup()' ('' when everyone is together).
     Members told to stay are listed as such; an unchained member near the leader as 'unchained'."""
     bits, fix = [], False
     for r in rows:
-        if r["other_level"]:
-            what = "other level"
-        elif r["dist"] is not None and r["dist"] > far_m:
-            what = f"{round(r['dist'])}m"
-        else:
-            what = "near" if not r.get("dy") else f"{round(r['dist'])}m"
-        if r.get("dy"):
-            what += f", {round(abs(r['dy']))}m {'above' if r['dy'] > 0 else 'below'}"
-        if r["unchained"]:
-            what += ", unchained"
-        if r["downed"]:
-            what += ", downed"
+        what = _where(r, far_m)
         if r["stay"]:
             what += " (staying)"
         else:
@@ -117,3 +123,41 @@ def stragglers(rows: list[dict], leader_pos: Any, far_m: float = STRAGGLER_M, st
         if d is not None and d > far_m:
             out.append((u, d))
     return out
+
+
+WAYPOINT_HERE_M = 8.0   # fast_travel: the selected member already stands at the waypoint (S064: 4.5 m from its circle)
+CAMP_BEHIND_M = 150.0   # at camp: a member this far from the actor stayed behind (the camp is ~40 m across; S065 3863 m)
+
+
+def travel_behind(rows: list[dict]) -> list[dict]:
+    """apart() rows a fast travel leaves where they are: unchained (out of the selected member's group) or on
+    another level, and not told to stay. S064 11:36: with Karlach selected and Wyll + Shadowheart unchained 138 m
+    away, the game moved Karlach alone ('arrived'); the others took one fast travel each."""
+    return [r for r in rows if not r["stay"] and (r["unchained"] or r["other_level"])]
+
+
+def camp_behind(status: dict, stay: set | None = None, far_m: float = CAMP_BEHIND_M) -> list[dict]:
+    """Members the camp travel left behind: living, not summons, on another level or farther than far_m from the
+    biggest group (the camp; the active member may be the one left out). S065 12:01:47: camp() 'done — at_camp'
+    moved Claude, Karlach and Shadowheart; Wyll stayed 3863 m away and long_rest failed 4 s later (the rest
+    check: 'Wyll: not at a place where you can rest')."""
+    members = [r for r in (status or {}).get("party") or []
+               if r.get("uuid") and not (r.get("dead") or r.get("off_stage") or r.get("summon"))]
+
+    def near(a: dict, b: dict) -> bool:
+        if a.get("region") and b.get("region") and a["region"] != b["region"]:
+            return False
+        d = _d(a.get("pos"), b.get("pos"))
+        return d is not None and d <= far_m
+    if len(members) < 2:
+        return []
+    active = (status or {}).get("active")
+    ref = max(members, key=lambda m: (sum(near(m, o) for o in members), m.get("uuid") == active))
+    rows = apart(status, leader=ref["uuid"], far_m=far_m, stay=stay, floor_m=float("inf"))
+    # the chain doesn't matter for camp travel (and `chained` is relative to the active member, not the camp)
+    return [{**r, "unchained": False} for r in rows if r["other_level"] or (r["dist"] is not None and r["dist"] > far_m)]
+
+
+def behind_text(rows: list[dict], label: Callable[[str], str]) -> str:
+    """'e1 Karlach 136m, 64m above, unchained; e2 Wyll other level'."""
+    return "; ".join(f"{label(r['uuid'])} {_where(r)}" for r in rows)
