@@ -2713,8 +2713,41 @@ def _far_move(char: str, target: str | None, pos: list | None) -> tuple[list, fl
 def interact(target: str, who: str | None = None, wait: bool = True) -> str:
     """Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first (past 40 m: a travel_to, then the use on arrival). A locked door/chest opens when anyone in the party carries its key (that member walks up and opens it). wait=false returns at once with a job id."""
     char = _who(who)
+    _EMPTY_CLOSED[0] = -1e9
     out = _act("interact", "act.interact", {"char": char, "target": _interact_uuid(target)}, wait=wait)
-    return _walk_first("interact", out, char, who, target, actq.Step("interact", {"target": target})) or out
+    out = _walk_first("interact", out, char, who, target, actq.Step("interact", {"target": target})) or out
+    return _container_left_open(out) if wait else out
+
+
+# S073 22:47-22:58: 3 hand ESCAPEs after interact opened a cabinet/wardrobe ("CONTAINER text=Take All", "STOPPED:
+# container on screen"): two showed no slots, one only things the agent left. An empty one is closed here; a full
+# one stays open (the take is the agent's) and the result says how to close it. The grid may fill a frame late, so
+# an empty read is read again before closing.
+CONTAINER_EMPTY_READS, CONTAINER_EMPTY_S = 3, 0.3
+CONTAINER_OPEN_NOTE = ('(the container window stays open: loot() takes everything and closes it, loot(take="ids") '
+                       'takes some, loot(take="none") closes it without taking)')
+
+
+def _container_left_open(out: str) -> str:
+    if "\nCONTAINER " not in "\n" + out:
+        return out
+    for i in range(CONTAINER_EMPTY_READS):
+        c = (game.try_rpc("ui.state", context="client") or {}).get("container")
+        if not isinstance(c, dict):
+            return out  # closed meanwhile
+        if c.get("slots"):
+            return out + "\n" + CONTAINER_OPEN_NOTE
+        if i + 1 < CONTAINER_EMPTY_READS:
+            time.sleep(CONTAINER_EMPTY_S)
+    r = game.run_job("ui.loot", {"close": True}, context="client", wait_s=5)
+    if r.status != "done":
+        return out + f"\n(the container is empty; closing its window failed: {r.error or r.status})"
+    _EMPTY_CLOSED[0] = time.monotonic()
+    keep = [ln for ln in out.split("\n") if not ln.startswith("CONTAINER ") and ln != "STOPPED: container on screen"]
+    return "\n".join(keep + ["(the container is empty: closed its window)"])
+
+
+_EMPTY_CLOSED = [-1e9]   # monotonic time interact closed an empty container (loot_area's loot step follows it)
 
 
 @mcp.tool()
@@ -2785,6 +2818,7 @@ def _click_act(tool: str, op: str, args: dict, wait_s: float = 40.0) -> str:
 @_guard
 def loot_corpse(corpse: str, who: str | None = None) -> str:
     """Walk to a visible dead body and open its loot window (then use loot)."""
+    _EMPTY_CLOSED[0] = -1e9
     return _click_act("loot_corpse", "act.loot_corpse", {"char": (me := _who(who)), "target": _nearest_uuid(corpse, me)})
 
 
@@ -3158,8 +3192,14 @@ def _act_click_roll(tool: str, op: str, args: dict) -> str:
 @mcp.tool()
 @_guard
 def loot(take: str = "all", who: str | None = None) -> str:
-    """Take items from the open container/corpse window. take: "all", or comma-separated item ids (from get_inventory, which lists the open container's contents)."""
+    """Take items from the open container/corpse window, then close it. take: "all", comma-separated item ids (from get_inventory, which lists the open container's contents), or "none" (close it without taking)."""
+    if take.strip().lower() in ("none", "leave"):
+        return _act("loot", "ui.loot", {"close": True}, context="client")
     if take.strip().lower() == "all":
+        if time.monotonic() - _EMPTY_CLOSED[0] < 10 and not (game.try_rpc("ui.state", context="client") or {}).get(
+                "container"):
+            _EMPTY_CLOSED[0] = -1e9
+            return "loot: done — nothing to take (the container was empty; interact closed its window)"
         # Right after interact/loot_corpse the container panel may still be opening (live S002: "no container
         # open" then the Backpack counted as already looted): give it up to ~2 s.
         for _ in range(8):
@@ -3173,6 +3213,11 @@ def loot(take: str = "all", who: str | None = None) -> str:
     char = _who(who)
     results = [_act("loot", "act.transfer", {"item": _uuid(t.strip()), "to": char})
                for t in take.split(",") if t.strip()]
+    if (game.try_rpc("ui.state", context="client") or {}).get("container"):
+        # S073: the take is done; the window would stay up for a hand ESCAPE
+        r = game.run_job("ui.loot", {"close": True}, context="client", wait_s=5)
+        results.append("(closed the container window)" if r.status == "done"
+                       else f"(closing the container window failed: {r.error or r.status})")
     return "\n".join(results)
 
 
@@ -5327,6 +5372,7 @@ def prepare_spells(who: str | None = None, add: list[str] | str | None = None,
     waited = _wait_loading_out()
     text = spellprep.prepare(game, char, spellprep.names(add), spellprep.names(remove),
                              select=lambda u: _select_for_clicks(u, "the spellbook"))
+    hotbar.forget_map(char)   # the hotbar's spells follow the book: no stale slot -> spell map for the next cast
     if waited:
         text += f"\n(waited {waited:.0f} s for the loading screen to end first)"
     return _finish("prepare_spells", {"who": who, "add": add, "remove": remove}, _label(text), t0)
@@ -5555,6 +5601,13 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
         args["max"] = 500
     out = _act("trade", "ui.trade", args, context="client", wait_s=20)
     res = _batch.get("result")
+    if _trade_view["listing"]:
+        for _ in range(TRADE_FILL_TRIES):
+            if not _wares_unnamed(res):
+                break
+            time.sleep(TRADE_FILL_S)
+            out = _act("trade", "ui.trade", args, context="client", wait_s=20)
+            res = _batch.get("result")
     if isinstance(res, dict) and res.get("donate_box"):
         out = _answer_donate(res, handover)
     elif confirm and isinstance(res, dict) and res.get("confirmed"):
@@ -5564,6 +5617,18 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
         if notes:
             out += "\n" + "\n".join(notes)
     return (head + "\n" + out) if head else out
+
+
+# L7 22:08 (Talli, trade() 0.2 s after choose_dialogue opened the screen): 24 wares "(no id) ?", "(1 item group(s)
+# could not be named)", no food; 16 s later the same trader listed 60 named wares. The trader's side of the screen
+# fills a few frames after it opens, and a half-filled side matches no inventory: the listing is read again.
+TRADE_FILL_TRIES, TRADE_FILL_S = 4, 0.4
+
+
+def _wares_unnamed(res: Any) -> bool:
+    """The trader's side could not be matched yet: an unmatched group and wares without ids."""
+    return isinstance(res, dict) and bool(res.get("unmatched")) and any(
+        isinstance(w, dict) and not w.get("uuid") for w in res.get("wares") or [])
 
 
 TRADE_CLOSE_S = 3.0  # the trader's goodbye line (a dialogue screen with no answers) plays this long at most

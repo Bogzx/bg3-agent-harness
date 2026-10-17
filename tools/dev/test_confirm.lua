@@ -1209,5 +1209,24 @@ do -- A13 S069 20:37:23 (Vicar Humbletoes, trader gold 0): request Mantle 819g +
     Ext.Entity = _entity
 end
 
+-- A15 (L7 22:08 helm item): an expanded group above hides the owner's: collapse the other expanded groups
+do
+    local function grp(hdr, expanded)
+        local el = { expanded = expanded }
+        el.SetProperty = function(self, k, v) if k == "IsExpanded" then self.expanded = v end end
+        return { el = el, hdr = hdr }
+    end
+    local _prop = BG3AI.UI.prop
+    BG3AI.UI.prop = function(e, k) if k == "IsExpanded" then return e.expanded end return _prop(e, k) end
+    local groups = { grp("Claude", true), grp("Marek Dunhallow  Level 1", true), grp("Tamsin Drey", false) }
+    local done = A.collapseOthers(groups, "marek dunhallow")
+    ok(#done == 1 and done[1] == "Claude", "collapseOthers collapses only the other expanded group: "
+        .. table.concat(done, ","))
+    ok(groups[1].el.expanded == false and groups[2].el.expanded == true and groups[3].el.expanded == false,
+        "collapseOthers: the owner's group stays expanded")
+    ok(#A.collapseOthers(groups, "marek dunhallow") == 0, "collapseOthers: nothing left to collapse")
+    BG3AI.UI.prop = _prop
+end
+
 print(("%d passed, %d failed"):format(passes, fails))
 os.exit(fails == 0 and 0 or 1)

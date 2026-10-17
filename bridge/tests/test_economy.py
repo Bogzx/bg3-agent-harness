@@ -1160,6 +1160,56 @@ class TradeConfirmCloses(unittest.TestCase):
         self.assertIn("SCREEN dialogue", out)
 
 
+_HALF = {"unmatched": 1, "wares": [{"price": 1040}, {"price": 832}]}
+_NAMED = {"wares": [{"uuid": "11111111-2222-3333-4444-555555555701", "name": "Supply Pack", "price": 156,
+                     "supply": 40}]}
+
+
+class TradeWaresFill(unittest.TestCase):
+    """L7 22:08: trade() 0.2 s after the screen opened listed 24 wares "(no id) ?" (the trader's side half filled);
+    the listing is read again until the wares are named."""
+
+    def _listing(self, results: list[dict], **kw):
+        calls = []
+
+        def fake_act(tool, op, args, **k):
+            calls.append((op, dict(args)))
+            server._batch["result"] = results[min(len(calls), len(results)) - 1]
+            return "trade: done" + (" (no id)" if server._wares_unnamed(server._batch["result"]) else " named")
+
+        saved = (server._act, server.TRADE_FILL_S)
+        server._act, server.TRADE_FILL_S = fake_act, 0.0
+        try:
+            return server.trade(**kw), calls
+        finally:
+            server._act, server.TRADE_FILL_S = saved
+
+
+    def test_half_filled_wares_are_read_again(self):
+        out, calls = self._listing([_HALF, _HALF, _NAMED])
+        self.assertEqual(len(calls), 3)
+        self.assertIn("named", out)
+
+    def test_named_listing_is_read_once(self):
+        _, calls = self._listing([_NAMED])
+        self.assertEqual(len(calls), 1)
+
+    def test_never_named_stops_after_the_tries(self):
+        out, calls = self._listing([_HALF])
+        self.assertEqual(len(calls), 1 + server.TRADE_FILL_TRIES)
+        self.assertIn("(no id)", out)
+
+    def test_a_request_is_not_repeated(self):
+        saved = server.H
+        server.H = Handles()
+        try:
+            h = server.H.get("11111111-2222-3333-4444-555555555701", "Supply Pack")
+            _, calls = self._listing([_HALF], request=h)
+        finally:
+            server.H = saved
+        self.assertEqual(len(calls), 1)
+
+
 class TradeSellOpens(unittest.TestCase):
     def test_npc_with_sell_junk_opens_first(self):
         calls = []

@@ -1040,14 +1040,40 @@ end
 --   5. done once the page closes or the game state leaves Running. The load
 --      itself resets this Lua state; the caller waits for Running again.
 -- args: name (folder), owner?, index?, date? = {y, m, d, H, M} (local time).
+-- The playthrough groups on the load page: { {el, hdr}, ... } in display order.
+function A.loadGroups(w)
+    local out = {}
+    for _, ex in ipairs(UI.findAll(w, function(e) return UI.typeName(e) == "Expander" end, { prune = true })) do
+        local hdr = UI.allText(ex, " ", 80)
+        out[#out + 1] = { el = ex, hdr = hdr and hdr:match("^%s*(.-)%s*$") or "" }
+    end
+    return out
+end
+
+-- L7 22:08 (acceptance helm item): "no playthrough named 'Marek Dunhallow' on the load page" right after loads from
+-- Claude's group (51 saves, expanded by those loads; Marek's group is the next one down) though the same load worked
+-- at 18:40. GUESS: the page's list only builds the groups in view, and an expanded group above pushes the others
+-- out. A player collapses that group to see the ones under it: groups expanded and not `want` are collapsed.
+-- -> the collapsed headers.
+function A.collapseOthers(groups, want)
+    local done = {}
+    for _, g in ipairs(groups) do
+        local h = g.hdr:lower()
+        if not (want and (h == want or h:find(want, 1, true) == 1)) and UI.prop(g.el, "IsExpanded") == true then
+            pcall(g.el.SetProperty, g.el, "IsExpanded", false)
+            done[#done + 1] = g.hdr
+        end
+    end
+    return done
+end
+
 local function loadItems(owner)
     local w = UI.widget("LoadGame")
     if not w then return nil, {} end
     local want = owner and owner:lower()
     local out, matched = {}, {}
-    for _, ex in ipairs(UI.findAll(w, function(e) return UI.typeName(e) == "Expander" end, { prune = true })) do
-        local hdr = UI.allText(ex, " ", 80)
-        hdr = hdr and hdr:match("^%s*(.-)%s*$") or ""
+    for _, g in ipairs(A.loadGroups(w)) do
+        local ex, hdr = g.el, g.hdr
         if not want or hdr:lower() == want or hdr:lower():find(want, 1, true) == 1 then
             matched[#matched + 1] = ex
             if UI.prop(ex, "IsExpanded") ~= true then pcall(ex.SetProperty, ex, "IsExpanded", true) end
@@ -1129,6 +1155,7 @@ function MENU.load(args)
     local index = tonumber(args.index) or 1
     local want = type(args.date) == "table" and args.date or nil
     local stage, since, tries, cand = "open", RPC.now_ms(), 0, nil
+    local collapsed
     local function enter(st) stage, since, tries = st, RPC.now_ms(), 0 end
     return waitJob("ui.menu.load", 30000, function(job)
         local now = RPC.now_ms()
@@ -1163,7 +1190,18 @@ function MENU.load(args)
             if #matched == 0 then
                 -- S025 08:35: failed 1 s after the page opened, the same save loaded on the next call: the
                 -- playthrough list fills a few frames after the page shows. Wait like the save list below.
-                if now - since > 3000 then return "failed", { stage = stage, error = "no playthrough named '" .. tostring(owner) .. "' on the load page (after 3s)" } end
+                if now - since > 1500 and not collapsed and owner then
+                    collapsed = A.collapseOthers(A.loadGroups(w), owner:lower())
+                    if #collapsed > 0 then since = now return nil end
+                end
+                if now - since > 3000 then
+                    local seen = {}
+                    for _, g in ipairs(A.loadGroups(w)) do if #seen < 8 then seen[#seen + 1] = g.hdr end end
+                    return "failed", { stage = stage, groups = seen, collapsed = collapsed,
+                        error = "no playthrough named '" .. tostring(owner) .. "' on the load page (after 3s"
+                            .. (collapsed and #collapsed > 0 and ("; collapsed " .. table.concat(collapsed, ", ")) or "")
+                            .. "; groups shown: " .. (#seen > 0 and table.concat(seen, " | ") or "none") .. ")" }
+                end
                 return nil
             end
             if #items == 0 then

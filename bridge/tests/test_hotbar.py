@@ -70,6 +70,7 @@ class FakeWorld:
         self.arm_ignores = False
         self.refuse = set()                 # target uuids the game does not take
         self.escape_cancels = True
+        self.escape_steps_back = False      # L7 GUESS: ESCAPE on a picker spell in hand reopens its level picker
         self.right_cancels = True
         self.screen = "game"
         self.targets = {}                   # uuid -> (x, y) on screen; None = off screen
@@ -131,6 +132,8 @@ class FakeWorld:
         if k == "ESCAPE":
             if self.upcast_open and not self.armed:
                 self.upcast_open = None
+            elif self.armed and self.escape_steps_back and self.armed.rsplit("_", 1)[0] in self.pickers:
+                self.upcast_open, self.armed, self.picked = self.armed.rsplit("_", 1)[0], None, []
             elif self.armed and self.escape_cancels:
                 self.armed, self.picked = None, []
             elif not self.armed:
@@ -488,6 +491,32 @@ class HotbarCast(unittest.TestCase):
         self.w.armed, self.w.right_cancels = "Target_Bless", False
         self.assertEqual(hotbar.cancel(self.w, inp, "caster"), "command")
         self.assertIsNone(hotbar.cancel(self.w, inp, "caster"))   # nothing in hand: no input at all
+
+    def test_cancel_steps_back_through_the_level_picker(self):
+        # L7 22:09: Dimension Door from the picker stayed "in hand" after ESCAPE, right click and the HUD cancel
+        self.w.pickers["Teleportation_DimensionDoor"] = [(True, False), (False, True)]
+        self.w.armed, self.w.escape_steps_back = "Teleportation_DimensionDoor_5", True
+        inp = FakeInput(self.w)
+        self.assertEqual(hotbar.cancel(self.w, inp, "caster"), "escape x2")
+        self.assertIsNone(self.w.upcast_open)
+        self.assertEqual(self.w.screen, "game")
+
+    def test_cancel_stops_escaping_when_the_menu_opens(self):
+        # a stale "in hand" read: the first ESCAPE emptied the hand, a second one would open the game menu
+        self.w.armed, self.w.escape_cancels = "Target_Bless", False
+        inp = FakeInput(self.w)
+        real = self.w.on_key
+
+        def on_key(k):
+            real(k)
+            if k == "ESCAPE" and self.w.screen == "game" and self.w.armed:
+                self.w.screen = "game_menu"     # the hand is empty in the game; only the read is stuck
+            elif k == "ESCAPE" and self.w.screen == "game_menu":
+                self.w.screen = "game"
+        self.w.on_key = on_key
+        how = hotbar.cancel(self.w, inp, "caster")
+        self.assertEqual(how, "command")    # ui.cast_cancel cleared the fake's read
+        self.assertEqual(self.w.screen, "game")
 
     def test_covered_and_no_input(self):
         self.w.screen = "dialogue"
