@@ -364,7 +364,7 @@ function V.itemVisible(ctx, uuid, e, pos)
         return false -- scenery: the game doesn't highlight it either
     end
     if V.perceived(ctx, uuid, pos) or V.largePerceived(ctx, uuid, e, pos, kind)
-        or V.fixturePerceived(ctx, uuid, e, pos, kind) then
+        or V.fixturePerceived(ctx, uuid, e, pos, kind) or V.unboundedPerceived(ctx, uuid, e, pos, kind) then
         if (V.FIXTURE_KINDS[kind] and V.isNamedFixture(uuid)) or kind == "ladder" then
             V.fixtureSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow() }
         end
@@ -408,6 +408,22 @@ function V.itemKnown(ctx, uuid, e, pos)
         if o.pos and U.dist(o.pos, pos) <= V.SEEN_STATIC_M then return true, V.itemKind(uuid, e) end
     end
     return false
+end
+
+-- An item a party member used is known to the whole party (V.itemKnown): they all saw it used. S069 20:36: a hand
+-- click used e623 (Statue of Mystra), then `interact e623 who=Gale` from the same spot was "target is not visible".
+function V.noteUsed(char, item, success)
+    local u = V.uuid(item)
+    if not (u and truthy(success) and V.context().is_party[V.uuid(char) or ""]) then return end
+    local e = V.entity(u)
+    local pos = e and V.pos(e)
+    if pos then V.staticSeen[u] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow(), pos = pos } end
+end
+if Ext.Osiris and not V.useListening then
+    V.useListening = true
+    pcall(Ext.Osiris.RegisterListener, "UseFinished", 3, "after", function(char, item, success)
+        pcall(V.noteUsed, char, item, success)
+    end)
 end
 
 -- Puzzle fixtures by their shown name (State.FIXTURE_NAMES: Button, Lever, Switch, ...).
@@ -687,6 +703,47 @@ function V.fixturePerceived(ctx, uuid, e, pos, kind)
                 V.rayStats.errors = V.rayStats.errors + 1
                 V.rayBroken = true
                 Ext.Utils.PrintWarning("[BG3AI] fixture raycast disabled: " .. tostring(res))
+                return false
+            end
+            if res then v = true; break end
+        end
+    end
+    rayCachePut(ctx, key, now, v)
+    return v
+end
+
+-- Interactables with no AI bounds (V.bounds nil): neither ray rule above applies, and CanSee/LOS fail on an object
+-- that occludes itself (live probe L7, S069 Stormshore Tabernacle: the Statue of Mystra 2.8-4.7 m from all four
+-- members, see=0 los=0, bounds missing while the Statue of Helm had r 1.05 h 3.5; every ray from the eyes to 0.5/1.0/
+-- 1.6 m above its feet hit the statue first, and get_nearby/interact never saw it while a player clicks it). Perceived
+-- when a party member within sight has a ray at one of those heights whose first hit is the item itself: nothing
+-- stands between the eye and it. Self hits only: a clear ray past a point we can't size proves nothing. Not "item":
+-- pickables keep CanSee/LOS (no rays for every loose cup in a scan).
+V.UNBOUNDED_KINDS = { usable = true, object = true, container = true }
+V.UNBOUNDED_H = { 0.5, 1.0, 1.6 }
+function V.unboundedPerceived(ctx, uuid, e, pos, kind)
+    if not pos or V.rayBroken or not V.UNBOUNDED_KINDS[kind] or V.bounds(e) then return false end
+    local now = Ext.Utils.MonotonicTime()
+    local key = "ub:" .. uuid
+    local c = rayCacheGet(ctx, key, now)
+    if c then return c.v end
+    local o1 = ctx.observers[1]
+    if not (o1 and o1.pos and V.rayCalibrated(o1)) then return false end
+    local v, tried = false, {}
+    for _, o in ipairs(ctx.observers) do
+        local eye = o.pos and { o.pos[1], o.pos[2] + V.EYE_H, o.pos[3] }
+        if eye and U.dist(o.pos, pos) <= o.sight and not eyeTried(tried, eye) then
+            local ok, res = pcall(function()
+                for _, h in ipairs(V.UNBOUNDED_H) do
+                    local hit = raycast(eye, { pos[1], pos[2] + h, pos[3] })
+                    if hit and hitEntityUuid(hit) == uuid then return true end
+                end
+                return false
+            end)
+            if not ok then
+                V.rayStats.errors = V.rayStats.errors + 1
+                V.rayBroken = true
+                Ext.Utils.PrintWarning("[BG3AI] unbounded-item raycast disabled: " .. tostring(res))
                 return false
             end
             if res then v = true; break end

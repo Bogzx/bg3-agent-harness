@@ -450,6 +450,70 @@ test("undiscovered trap fixture (vent) stays hidden with a clear ray", function(
     eq(visible("T"), false)
 end)
 
+-- The live probe L7 (S069-mystra): Statue of Mystra, kind usable, onstage, CanInteract 1, a Bound component without
+-- AI bounds (V.bounds nil), CanSee 0 / HasLineOfSight 0 from all four members 2.8-4.7 m away, and every ray to 0.5/1.0/
+-- 1.6 m above its feet hit the statue ~0.3 m short of its axis.
+local function statue(u, pos, comps)
+    world[u] = { pos = pos, comps = comps or { ServerItem = { CanUse = true }, Bound = { Bound = { AIBounds = {} } } } }
+    osiv[key("IsOnStage", u)] = 1
+    osiv[key("GetCanInteract", u)] = 1
+end
+local function hitsFirst(u) -- every non-floor ray: its first hit is u, 0.3 m short of the target point
+    return floorThen(function(a, b)
+        local d = BG3AI.Util.dist(a, b)
+        local f = (d - 0.3) / d
+        return { Position = { a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f },
+            Shape = { PhysicsObject = { Entity = entity(u) } } }
+    end)
+end
+
+test("unbounded usable (Mystra's statue, probe L7): CanSee/LOS 0, no AI bounds, rays hit it first -> perceived", function()
+    setup(); statue("M", { 2.4, 0, 1.2 })
+    eq(V.bounds(V.entity("M")), nil, "no AI bounds")
+    ray.fn = hitsFirst("M")
+    eq(visible("M"), true)
+end)
+
+test("unbounded usable behind a pillar (rays hit something else first) is not perceived", function()
+    setup(); statue("M", { 2.4, 0, 1.2 }); world.W = { pos = { 1, 0, 0.5 } }
+    ray.fn = hitsFirst("W")
+    eq(visible("M"), false)
+end)
+
+test("unbounded usable: clear rays (nothing hit) prove nothing, only self hits count", function()
+    setup(); statue("M", { 2.4, 0, 1.2 })
+    ray.fn = floorThen(function() return nil end)
+    eq(visible("M"), false)
+end)
+
+test("unbounded usable beyond sight range is not perceived", function()
+    setup(); statue("M", { 19, 0, 0 })
+    ray.fn = hitsFirst("M")
+    eq(visible("M"), false)
+end)
+
+test("unbounded pickable item keeps CanSee/LOS (no self-hit rays)", function()
+    setup(); statue("I", { 2, 0, 0 }, { ServerItem = { CanBePickedUp = true } })
+    ray.fn = hitsFirst("I")
+    eq(visible("I"), false)
+end)
+
+test("used by a party member: the item is known to the whole party (S069: Gale's interact after a hand click)", function()
+    setup(); statue("M", { 2.4, 0, 1.2 }); world.W = { pos = { 1, 0, 0.5 } }
+    V.staticSeen = {}
+    ray.fn = hitsFirst("W") -- out of sight
+    local function known() V.ctxCache = nil; return (V.itemKnown(V.context(), "M")) == true end
+    eq(known(), false, "not seen, not used")
+    V.noteUsed("NPC", "M", 1)
+    eq(known(), false, "an NPC's use is not the party's")
+    V.noteUsed("P1", "M", 0)
+    eq(known(), false, "a failed use")
+    V.noteUsed("P1", "M", 1)
+    eq(known(), true, "used by a party member")
+    eq(visible("M"), false, "still not listed (get_nearby keeps the strict rule)")
+    V.staticSeen = {}
+end)
+
 -- ---- objective markers ----------------------------------------------------
 
 local function markerSetup(targetPos, viaOsi)
