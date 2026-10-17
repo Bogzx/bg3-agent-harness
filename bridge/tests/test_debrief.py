@@ -119,7 +119,11 @@ class Build(unittest.TestCase):
         self.assertTrue(la.startswith("LAST ATTEMPT: costly vs "))
         self.assertIn("protect Wyll", la)
         self.assertIn("focus Justiciar Soulhunter first", la)
-        self.assertIn("scrolls: the tools read them out of combat only (read buff scrolls before the fight)", la)
+        # vis V7: a scroll works in combat in BG3 (an action, like the spell); V6's "out of combat only" was wrong
+        self.assertIn("use the unused scroll/potion (in combat a scroll costs its spell's action)", la)
+        self.assertNotIn("out of combat", la)
+        rec["consumables"]["unused"] = ["Potion of Healing"]
+        self.assertIn("use the unused scroll/potion;", debrief.last_attempt(rec) + ";")
         note = debrief.fight_note(rec)
         self.assertTrue(note.startswith("costly @SCL vs Justiciar Soulhunter, Justiciar Avenger (Human), Umbral Tremor | "), note)
         self.assertIn("| rounds 2 | downed: Wyll by Justiciar Soulhunter | dealt 64 / taken 96 |", note)

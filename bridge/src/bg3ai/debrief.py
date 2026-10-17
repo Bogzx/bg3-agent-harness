@@ -25,7 +25,6 @@ UNSEEN_SHARE = 0.25        # damage from no visible source (traps, hidden attack
 HEALED_PCT = 10            # an enemy seen this many HP points (%) below where it ended healed back
 V = 2                      # record version: v1's damage-type "low" flags counted riders (see _trust)
 BAD = ("costly", "near_wipe", "wipe", "reloaded")
-_DRINK = re.compile(r"(?i)\b(potion|elixir)\b")   # drunk in combat (act.interact's combat_potion); scrolls are not
 _CONSUMABLE = re.compile(r"(?i)\b(potion|elixir|scroll|grenade|flask|bomb|oil of|arrow of)\b")
 _BASIC = {"Main Hand Attack", "Ranged Attack", "Off Hand Attack", "Dash", "Disengage", "Jump", "Shove", "Help",
           "Dodge", "Hide", "Throw", "Improvised Melee Weapon"}
@@ -741,12 +740,11 @@ def last_attempt(rec: dict) -> str:
     if any(t.get("low") for t in rec.get("dmg_types") or []):
         tips.append("switch damage types")
     unused = (rec.get("consumables") or {}).get("unused") or []
-    if any(_DRINK.search(x) for x in unused):
-        tips.append("drink the unused potion")
-    if any(not _DRINK.search(x) for x in unused):
-        # act.interact's no_combat gate (Actions.lua): S061 "Scroll of Fear: FAILED — not available during combat
-        # through this action"; S066's Orin plan counts on 3 scrolls in the fight
-        tips.append("scrolls: the tools read them out of combat only (read buff scrolls before the fight)")
+    if unused:
+        # BG3 reads a scroll in combat for the spell's action cost (our tools' S061 "not available during combat"
+        # refusal was a harness gap, act A7), so no "out of combat only" here
+        scroll = any(re.search(r"(?i)\bscroll\b", x) for x in unused)
+        tips.append("use the unused scroll/potion" + (" (in combat a scroll costs its spell's action)" if scroll else ""))
     pos = rec.get("pos") or {}
     if pos.get("surrounded") or (pos.get("elev_m") or 0) >= ELEV_M:
         tips.append("open from range / high ground, fight at a chokepoint")

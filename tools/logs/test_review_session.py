@@ -144,7 +144,10 @@ class ReviewFixture(unittest.TestCase):
     def test_s065_fights_retry_and_debrief(self):
         f = self.section("S065", "Fights")
         self.assertIn("reload (reloaded) → S065-pre-orin: Death's Head of Bhaal Fustian, Invoker of Bhaal Hivune, Orin", f)
-        self.assertIn("retry of S065 11:43:15 (reload, hp-421, downs 0): further (killed 2 vs 0)", f)   # vis V6
+        # vis V7: downs from the debrief's `downed:` line (the results had no +Downed: 0 and 0 before)
+        self.assertIn("11:43:15 340 s r4 hp-421 downs 1 reload", f)
+        self.assertIn("11:50:17 533 s r7 hp-790 downs 4 reload", f)
+        self.assertIn("retry of S065 11:43:15 (reload, hp-421, downs 1): further (killed 2 vs 0)", f)   # vis V6
         self.assertNotIn("Spiritual Weapon", f.split("top")[0])
 
     def test_s065_watch_and_top(self):

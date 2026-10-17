@@ -38,6 +38,10 @@ OUR_TURN_RE = re.compile(r"^TURN e\d+ ([A-Z][\w' -]*?) \(round \d+\)", re.M)
 DEBRIEF_RE = re.compile(r"FIGHT DEBRIEF \(([\w ]+), (\d+) rounds?, [^)]*\) vs ([^\n]+)")
 TOOK_RE = re.compile(r"· took ([^\n]+)")
 KILLED_RE = re.compile(r"FIGHT DEBRIEF \([^\n]*\n(?:  [^\n]*\n)*?  killed (\d+)/(\d+)")
+# the debrief block's "  downed: Wyll r2 by Orin, Karlach r6 by Orin (Slay), Shadowheart r7 by Death's Head of Bhaal
+# Fustian": one entry per down, the harness's complete list (S065's results showed no +Downed for its 1 and 4 downs)
+DEBRIEF_BLOCK_RE = re.compile(r"FIGHT DEBRIEF \([^\n]*(?:\n  [^\n]*)*")
+DOWNED_ENTRY_RE = re.compile(r"(?:^|, )([A-Z][\w' -]*?) r\d+\b")
 # summons are listed as party ("PARTY e267 Spiritual Weapon L1 HP 20/20 summon of e267", "PARTY + e472 Spiritual
 # Weapon HP 20/20"); their expiry is not a party death
 SUMMON_RE = re.compile(r"PARTY (?:\+ )?\*?e\d+ ([A-Z][\w' -]*?) (?:L\d+ )?HP [^\n]*?summon of|PARTY \+ e\d+ ([A-Z][\w' -]*?) HP")
@@ -48,7 +52,7 @@ CAST_RE = re.compile(r"cast=([A-Za-z_]+)")
 # "bonus: Target_PommelStrike e67: done — statuses=[..]"
 ACTION_DONE_RE = re.compile(r"(?:(?:action|bonus): |→ )([A-Z][A-Za-z]*_\w+)(?: e\d+)?: done\b(?![^\n]*cast=)")
 FLAGS = {"debrief": re.compile(r"(?i)debrief"), "last_attempt": re.compile(r"LAST ATTEMPT"),
-         "lesson": re.compile(r"(?i)\blessons?\b"), "repeat_warning": re.compile(r"(?i)repeated mistake|same as last time")}
+         "lesson": re.compile(r"(?i)\blessons?\b"), "repeat_warning": re.compile(r"WARNING: [^\n]*last time (?:vs these enemies )?too")}
 
 
 def deaths(text, names=None):
@@ -86,6 +90,16 @@ def debrief(text):
         return None
     names = [re.sub(r" x\d+$", "", n.strip()) for n in re.sub(r" \+\d+ more$", "", m.group(3).strip()).split(", ")]
     return m.group(1), int(m.group(2)), [n for n in names if n]
+
+
+def debrief_downs(text):
+    """Counter of the names in the first FIGHT DEBRIEF's `downed:` line (party and summons alike; empty when nobody
+    went down), or None without a debrief."""
+    m = DEBRIEF_BLOCK_RE.search(text)
+    if not m:
+        return None
+    line = next((ln[len("  downed: "):] for ln in m.group(0).split("\n") if ln.startswith("  downed: ")), "")
+    return Counter(base(n) for n in DOWNED_ENTRY_RE.findall(line))
 
 
 def party_names(calls):
@@ -232,6 +246,9 @@ def mine(run, sid):
         after = [c for c in calls if end < c["t"] <= end + RELOAD_AFTER_S]
         db = debrief(text + "\n" + "\n".join(c["res"] for c in after))
         km = KILLED_RE.search(text + "\n" + "\n".join(c["res"] for c in after))
+        dd = debrief_downs(text + "\n" + "\n".join(c["res"] for c in after))
+        if dd is not None:  # the harness's own list is complete, like its rounds (S065: 0 downs mined, it had 1 and 4)
+            downs = Counter({n: k for n, k in dd.items() if n in party})
         if db:  # the harness's own list is complete (compacted results may name no death / no enemy turn)
             rounds = db[1]
             for n in db[2]:
