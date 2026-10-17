@@ -21,8 +21,9 @@ class FakeGame:
     """A fresh launch: loading for `loading_s`, the splash until Enter, then the main menu, which ignores clicks
     for `fade_s` after it shows (live L6: it reads main_menu while still fading in)."""
 
-    def __init__(self, loading_s=0.0, splash=True, fade_s=0.0, buttons=MENU, credits_work=True):
+    def __init__(self, loading_s=0.0, splash=True, fade_s=0.0, buttons=MENU, credits_work=True, enters_lost=0):
         self.t, self.loading_s, self.fade_s, self.buttons = 0.0, loading_s, fade_s, buttons
+        self.enters_lost = enters_lost  # live L7: the splash ignored the first Enter
         self.splash, self.credits_work = splash, credits_work
         self.menu_at = None if splash else 0.0
         self.credits, self.keys, self.clicks, self.lines = False, [], [], []
@@ -42,7 +43,10 @@ class FakeGame:
     def key(self, name):
         self.keys.append((round(self.t, 1), name, self.ui()["screen"]))
         if name == "ENTER" and self.ui()["screen"] == "splash":
-            self.menu_at = self.t + 1.0
+            if self.enters_lost:
+                self.enters_lost -= 1
+            else:
+                self.menu_at = self.t + 1.0
         if name == "ESCAPE":
             self.credits = False
 
@@ -93,6 +97,21 @@ class CreditsProbe(unittest.TestCase):
         self.assertEqual(g.run(), 1)
         self.assertEqual(len(g.clicks), 2)
         self.assertTrue(any("menu Credits -> screen credits" in x for x in g.fails()))
+
+    def test_lost_enter_on_the_splash_is_pressed_again(self):
+        # live L7: after a fresh launch the first Enter didn't take (FAIL main menu, page SplashScreen)
+        g = FakeGame(enters_lost=2)
+        self.assertEqual(g.run(), 0, g.lines)
+        self.assertEqual([k[1:] for k in g.keys], [("ENTER", "splash")] * 3 + [("ESCAPE", "credits")])
+        self.assertEqual(sum(x.startswith("RETRY Enter") for x in g.lines), 2)
+        self.assertEqual(g.fails(), [])
+
+    def test_splash_that_never_takes_fails_after_bounded_presses(self):
+        g = FakeGame(enters_lost=10 * C.SPLASH_PRESSES)
+        self.assertEqual(g.run(), 1)
+        self.assertEqual([k[1] for k in g.keys], ["ENTER"] * C.SPLASH_PRESSES)
+        self.assertEqual(g.clicks, [])
+        self.assertTrue(any("main menu (needed for the credits)" in x for x in g.fails()))
 
     def test_at_the_main_menu_no_enter(self):
         # Enter on the main menu would press Continue (loads a save)
