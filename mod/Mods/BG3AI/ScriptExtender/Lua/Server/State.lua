@@ -23,7 +23,7 @@ S.REGION_NAMES = {
     TUT_Avernus_C = "Nautiloid", WLD_Main_A = "Wilderness", CRE_Main_A = "Rosymorn Monastery",
     SCL_Main_A = "Shadow-Cursed Lands", INT_Main_A = "Last Light / Moonrise interlude",
     BGO_Main_A = "Rivington & Wyrm's Crossing", CTY_Main_A = "Lower City", IRN_Main_A = "Iron Throne",
-    END_Main = "Upper City", SYS_CC_I = "Character creation",
+    END_Main = "Upper City", EPI_Main_A = "Epilogue", SYS_CC_I = "Character creation",
 }
 
 ------------------------------------------------------------------------

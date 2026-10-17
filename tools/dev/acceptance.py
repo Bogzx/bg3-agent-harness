@@ -1613,6 +1613,9 @@ def sec_se() -> None:
         else:
             item("screenshot(map=true) opens + closes the map", "PASS" if scr == "game" else "FAIL",
                  f"{shot[:160]} in {dt:.1f}s; screen 1 s after={scr} (game = closed again)")
+        # 20261017-145354: the capture waited in rt/shots, the game wrote runtime/shots (BG3AI_SHOTS_DIR now)
+        item("screenshot works in the acceptance window (shots dir = the game's)",
+             "PASS" if shot == "map image" else "FAIL", f"{shot[:160]} dir={S._shots_dir()}")
         near = call("get_nearby", kinds="door", radius=20)
         # S054 05:54:51: no open/closed on doors → interact closed an open door (a scene started). State.lua: doors
         # carry open/closed (Osi.IsOpened); the locked Foundry door must read "closed".
@@ -2201,6 +2204,8 @@ def run_section(name: str) -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("BG3AI_PLAYTHROUGH", "claude-run-2")
     os.environ.setdefault("BG3AI_SAVE_PREFIX", "Claude-")
+    # the game's capture layer writes into the launcher's runtime/shots, not into our scratch runtime
+    os.environ.setdefault("BG3AI_SHOTS_DIR", str(Path(os.environ.get("BG3AI_RUNTIME") or REPO / "runtime") / "shots"))
     os.environ["BG3AI_RUNTIME"] = str(OUT / "rt")
     os.environ["BG3AI_MEMORY_DIR"] = str(OUT / "memory")
     os.environ["BG3AI_SESSION"] = "S999"

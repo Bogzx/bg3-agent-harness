@@ -57,9 +57,30 @@ class Milestones(unittest.TestCase):
         self.assertEqual(st["act"], 2)
         self.assertIn("moonrise", {i["id"] for i in st["items"] if i["reached"]})
 
+    def test_act3_from_claude_run_2(self):
+        # claude-run-2 at S065 (progress_state.json, trimmed): Wyrm's Rock and Gortash done, Bhaal Temple before Orin
+        seen = dict(SEEN, regions=SEEN["regions"] + ["Lower City", "Rivington & Wyrm's Crossing"],
+                    areas=SEEN["areas"] + ["Rivington & Wyrm's Crossing|Wyrm's Rock Fortress", "Lower City|Bhaal Temple"],
+                    quests=dict(SEEN["quests"], **{"Get Gortash's Netherstone": {"done": True},
+                                                   "Get Orin's Netherstone": {"done": False},
+                                                   "Confront the Elder Brain": {"done": False}}))
+        st = MS.status(seen)
+        got = {i["id"] for i in st["items"] if i["reached"] and i["act"] == 3}
+        self.assertEqual(got, {"act3", "lower_city", "wyrms_rock", "gortash", "bhaal_temple"})
+        self.assertEqual((st["act"], st["next"], st["ended"]), (3, "Orin's Netherstone", False))   # Iron Throne: optional
+
+    def test_game_end(self):
+        st = MS.status(dict(SEEN, game_end={"t": 1, "how": "the epilogue (EPI_Main_A)"}))
+        self.assertTrue(st["ended"])
+        self.assertIsNone(st["next"])
+        self.assertEqual(MS.MILESTONES[-1][0], MS.GAME_END)
+        by = {i["id"]: i for i in MS.status(SEEN, [("S099", [ev("game_end", "the end credits", 5)])])["items"]}
+        self.assertEqual((by["game_end"]["reached"], by["game_end"]["session"]), (True, "S099"))
+        self.assertFalse(MS.status(SEEN)["ended"])
+
     def test_line(self):
         line = MS.line(MS.status(SEEN, [("S005", [ev("area", "Campsite", 1)])]))
-        self.assertTrue(line.startswith("milestones 7/20 (Act 1): ✓ Aboard the Nautiloid"))
+        self.assertTrue(line.startswith(f"milestones 7/{len(MS.MILESTONES)} (Act 1): ✓ Aboard the Nautiloid"))
         self.assertIn("✓ First camp (S005)", line)
         self.assertTrue(line.endswith("next: Emerald Grove"))
 

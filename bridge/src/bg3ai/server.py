@@ -2492,6 +2492,12 @@ def get_events() -> str:
     return _finish("get_events", {}, body, t0) or "No new events."
 
 
+def _shots_dir() -> Path:
+    """Where the game's capture layer writes (its output_dir, set at launch from the launcher's runtime). A bridge
+    with its own BG3AI_RUNTIME (acceptance.py) waited in the wrong folder: "did not present a frame in time"."""
+    return Path(os.environ.get("BG3AI_SHOTS_DIR") or RUNTIME / "shots")
+
+
 @mcp.tool()
 @_guard
 def screenshot(scale: float = 0.5, map: bool = False) -> Image | str:
@@ -2500,7 +2506,7 @@ def screenshot(scale: float = 0.5, map: bool = False) -> Image | str:
     from .screen import ScreenCapture
 
     if _screen is None:
-        _screen = ScreenCapture(RUNTIME / "shots")
+        _screen = ScreenCapture(_shots_dir())
     width = int(2560 * max(0.25, min(scale, 1.0)))
     opened = False
     if map:

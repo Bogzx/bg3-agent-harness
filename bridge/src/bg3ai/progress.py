@@ -39,6 +39,12 @@ Weights (points per event; deliberately simple, story-weighted):
     fight_won   6  a fight ended (combat_ended) with >= FIGHT_WON_KILLS first-time kills in it
     boss_fight 15  … instead of fight_won: someone the party had talked to died in it (S041: the Balthazar fight,
                    won on try 4, scored 28/h; a refight after a reload kills nobody new, so it never scores twice)
+    game_end   30  the story is over (once): the epilogue level loaded (EPI_Main_A, region "Epilogue"), or the end
+                   credits: ui.state screen "credits" with credits.ending true (Credits.xaml: widget Metadata
+                   "Ending", DCCredits.IsEndGameCredits). The main menu's Credits button opens the same page
+                   (ending false: no). When the flag doesn't read (ending absent), credits count only after the
+                   party reached the finale (END_Main, "Upper City"). The runner stops the run on it (milestone
+                   game_end).
 
 Not progress: summons joining (Spiritual Weapon is in DB_PartyMembers, S017 scored it as a companion), the
 levels a recruit is caught up to on joining (S021: Karlach -> 2, 3, 4 = 24 points within 90 s), and an
@@ -62,13 +68,14 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 WEIGHTS = {"region": 15, "quest_done": 10, "level_up": 8, "waypoint": 5, "companion": 5, "quest_new": 3,
            "area": 3, "quest_step": 2, "objective": 2, "obj_moved": 1, "explore": 1, "talk": 2, "kill": 1,
-           "key_item": 5, "puzzle": 2, "story_kill": 5, "fight_won": 6, "boss_fight": 15}
+           "key_item": 5, "puzzle": 2, "story_kill": 5, "fight_won": 6, "boss_fight": 15, "game_end": 30}
 EVENT_KINDS = ("died", "dialogue_started", "item_added", "door_opened", "combat_started", "combat_ended")
 FIGHT_WON_KILLS = 3
 EXPLORE_CELLS = 8
@@ -81,6 +88,10 @@ STEP_KEY_LEN = 100  # journal steps are remembered by their first 100 characters
 POLL_S = float(os.environ.get("BG3AI_PROGRESS_POLL_S", "15") or 15)
 STUCK_MIN = float(os.environ.get("BG3AI_STUCK_MINUTES", "15") or 15)
 STUCK_MIN_ACTIONS = 10
+
+# Level names as State.lua REGION_NAMES shows them (or the raw level when the mod predates the name).
+FINALE_RX = re.compile(r"^(upper city|END_Main)$", re.I)
+EPILOGUE_RX = re.compile(r"^(epilogue|EPI_\w+)$", re.I)
 
 SERVER_OPS = (("status", "state.status"), ("journal", "state.journal"), ("map", "state.map"),
               ("markers", "nav.markers"), ("explored", "nav.explored"))
@@ -114,13 +125,22 @@ def read_game(lua_eval: Callable[..., str]) -> dict | None:
     since = _events["seq"]
     ops: list = [op for _, op in SERVER_OPS]
     ops.append(("events.since", {"seq": since if since is not None else 2 ** 31, "limit": EVENTS_LIMIT}))
-    raw = lua_eval(combined_code(ops), "server")
+    try:
+        raw = lua_eval(combined_code(ops), "server")
+    except Exception:
+        # at the main menu the server context may not answer; the end credits can still roll there
+        ui = _ui(lua_eval)
+        if (ui or {}).get("screen") == "credits":
+            return {"status": None, "ui": ui}
+        raise
     replies = json.loads(raw) if raw and raw not in ("nil", "") else []
     got: dict[str, Any] = {}
     for (key, _), r in zip(SERVER_OPS, replies):
         got[key] = r.get("result") if isinstance(r, dict) and r.get("ok") else None
     if got.get("status") is None:
-        return None
+        # no game session; the end credits may still roll (after the finale the game can leave the level)
+        ui = _ui(lua_eval)
+        return {"status": None, "ui": ui} if (ui or {}).get("screen") == "credits" else None
     er = replies[len(SERVER_OPS)] if len(replies) > len(SERVER_OPS) else None
     er = er.get("result") if isinstance(er, dict) and er.get("ok") else None
     if isinstance(er, dict) and isinstance(er.get("latest"), int):
@@ -132,12 +152,16 @@ def read_game(lua_eval: Callable[..., str]) -> dict | None:
         else:
             got["events"] = [e for e in evs if e.get("kind") in EVENT_KINDS]
             _events["seq"] = max([e.get("seq", since) for e in evs] + [since])
+    got["ui"] = _ui(lua_eval)
+    return got
+
+
+def _ui(lua_eval: Callable[..., str]) -> dict | None:
     try:
         r = json.loads(lua_eval(combined_code(["ui.state"]), "client"))[0]
-        got["ui"] = r.get("result") if r.get("ok") else None
-    except Exception:  # noqa: BLE001 - the subregion is optional
-        got["ui"] = None
-    return got
+        return r.get("result") if r.get("ok") else None
+    except Exception:  # noqa: BLE001 - the subregion (and the credits screen) are optional
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +173,7 @@ def empty_seen() -> dict:
             "objectives_done": [], "levels": {}, "explored": {}, "objective_pos": {}, "objective_moved_t": {},
             "joined": {}, "talked": [], "killed": [], "key_items": [], "puzzles": [], "baseline": False,
             "quests_unaccepted": True, "unread": ["journal", "map"],
-            "fight": {"kills": 0, "story": ""}}
+            "fight": {"kills": 0, "story": ""}, "game_end": None}
 
 
 def _step_key(text: str) -> str:
@@ -382,8 +406,28 @@ def diff(seen: dict, got: dict, now: float | None = None) -> tuple[dict, list[di
     _explored(seen, got.get("explored"), add, "explored" in fresh)
     party.update(seen["levels"])
     _game_events(seen, got.get("events"), add, party)
+    end = _game_end(seen, region, ui)
+    if end:
+        seen["game_end"] = {"t": now, "how": end}
+        add("game_end", end)
     seen["baseline"] = True
     return seen, ev
+
+
+def _game_end(seen: dict, region: Any, ui: dict) -> str | None:
+    """How the story just ended (see game_end above), or None (not over, or it ended before)."""
+    if seen.get("game_end"):
+        return None
+    if region and EPILOGUE_RX.match(str(region)):
+        return "the epilogue (EPI_Main_A)"
+    if ui.get("screen") != "credits":
+        return None
+    ending = (ui.get("credits") or {}).get("ending") if isinstance(ui.get("credits"), dict) else None
+    if ending is True:
+        return "the end credits"
+    if ending is None and any(FINALE_RX.match(str(r)) for r in seen["regions"]):
+        return "the end credits after the finale"
+    return None   # ending False: the main menu's Credits button
 
 
 # ---------------------------------------------------------------------------

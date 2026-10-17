@@ -535,6 +535,70 @@ class NewRuns(NautiloidBase):
         self.assertEqual(len(self.claude_runs()), 1)
         self.assertIn("already reached in this playthrough", (P.RUNTIME / "runner.log").read_text())
 
+    def test_game_end_stops_a_playthrough_run_with_a_record(self):
+        # playthrough mode (no --until): the end credits after the finale end the run; no relaunch, no next session
+        r = self.r
+        self.quiet(r)
+        credits = {"on": False}
+
+        def feed(_lua):   # the finale (END_Main = "Upper City"), then the end credits roll with no game session
+            if not self.g.loaded():
+                return None
+            if credits["on"]:
+                return {"status": None, "ui": {"screen": "credits", "page": "Credits"}}
+            return {"status": {"region": "Upper City", "party": [{"name": "Claude", "level": 12}]},
+                    "ui": {"screen": "game", "region": "High Hall"}}
+        P.story.read_game = feed
+
+        def roll():
+            time.sleep(4)
+            credits["on"] = True
+        threading.Thread(target=roll, daemon=True).start()
+        t0 = time.time()
+        self.assertEqual(r.run(), 0)
+        self.assertLess(time.time() - t0, 40)                      # not the fake claude's 60 s
+        self.assertEqual(len(self.claude_runs()), 1)
+        self.assertEqual(r.state["history"][-1]["reason"], "milestone")
+        rec = json.loads((r.state.dir / "runs.jsonl").read_text().splitlines()[-1])
+        self.assertEqual((rec["outcome"], rec["milestone"], rec["reached_in"]), ("reached", "game_end", "S001"))
+        log = (P.RUNTIME / "runner.log").read_text()
+        self.assertIn("milestone game_end (The end (credits / epilogue)) reached: stopping (the game is finished)", log)
+        self.assertIn("runner stopped (the game is finished: The end (credits / epilogue) in S001)", log)
+        evs = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
+        self.assertIn({"milestone": "game_end", "terminal": True},
+                      [{k: e[k] for k in ("milestone", "terminal") if k in e} for e in evs if e["kind"] == "milestone"])
+        seen = json.loads((r.state.dir / "progress_state.json").read_text())
+        self.assertEqual(seen["game_end"]["how"], "the end credits after the finale")
+        # the next runner start has nothing to play
+        r2 = P.Runner(P.Options("crash-test", None, 20, "opus", save_owner="Claude"))
+        r2.check_memory = lambda: None
+        self.assertEqual(r2.run(), 0)
+        self.assertEqual(len(self.claude_runs()), 1)
+        self.assertIn("the game is finished: already reached in this playthrough", (P.RUNTIME / "runner.log").read_text())
+
+    def test_crash_loop_stops_a_long_run(self):
+        # playthrough mode, many hours unattended: a game that dies every session ends the run instead of relaunching
+        r = self.r
+        self.quiet(r)
+        played = []
+
+        def session(minutes, first):
+            now = time.time()
+            played.append(now)
+            for _ in range(2):   # two crashes recovered inside each session
+                r.event("fault", fault="crash", session="S%03d" % len(played), detail="test")
+            return P.SessionResult("S%03d" % len(played), "c", 0, "exited", now - 300, now)
+        r.play_session = session
+        self.assertEqual(r.run(), 1)
+        self.assertEqual(len(played), 3)   # 6 faults after the 3rd session: no 4th
+        log = (P.RUNTIME / "runner.log").read_text()
+        self.assertIn("crash loop: 6 game crashes/hangs/setup failures in", log)
+        self.assertIn("runner stopped (gave up: crash loop", log)
+        line = (P.RUNTIME / P.STATUS_LINE).read_text()
+        self.assertIn("crash-test: STOPPED (gave up: crash loop", line)
+        self.assertIn("6 game fault(s) in 60 min (stop at 6)", line)
+        self.assertEqual(json.loads((P.RUNTIME / "runner.status.json").read_text())["alert"]["kind"], "crash_loop")
+
     def test_new_playthrough_with_a_brief_runs_phase_0_and_adopts_the_created_name(self):
         brief = "a pious, short-tempered dwarf cleric who distrusts mind flayers"
         os.environ["FAKE_CLAUDE_FIRST_S"] = "4"

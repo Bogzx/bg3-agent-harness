@@ -538,6 +538,72 @@ class ReadGame(unittest.TestCase):
     def test_no_session(self):
         self.assertIsNone(P.read_game(lambda code, ctx: json.dumps([{"ok": False, "error": "no session"}] * 5)))
 
+    def test_credits_without_a_session(self):
+        # after the finale the credits can roll with no game session (status fails, or the server eval errors)
+        credits = json.dumps([{"ok": True, "result": {"screen": "credits", "page": "Credits"}}])
+
+        def no_status(code: str, ctx: str) -> str:
+            return credits if ctx == "client" else json.dumps([{"ok": False, "error": "no session"}] * 6)
+
+        def server_down(code: str, ctx: str) -> str:
+            if ctx == "server":
+                raise RuntimeError("no server context")
+            return credits
+        for ev in (no_status, server_down):
+            self.assertEqual(P.read_game(ev), {"status": None, "ui": {"screen": "credits", "page": "Credits"}})
+
+        def menu_down(code: str, ctx: str) -> str:
+            if ctx == "server":
+                raise RuntimeError("no server context")
+            return json.dumps([{"ok": True, "result": {"screen": "main_menu"}}])
+        with self.assertRaises(RuntimeError):   # not the credits: a failed poll as before
+            P.read_game(menu_down)
+
+
+class GameEnd(unittest.TestCase):
+    def base(self, region: str) -> dict:
+        seen, _ = P.diff(None, {"status": {"region": region, "party": [{"name": "Tav", "level": 12}]}}, now=0)
+        return seen
+
+    def test_credits_after_the_finale(self):
+        seen = self.base("Upper City")
+        seen, evs = P.diff(seen, {"status": None, "ui": {"screen": "credits"}}, now=10)
+        self.assertEqual([(e["kind"], e["what"], e["points"]) for e in evs],
+                         [("game_end", "the end credits after the finale", 30)])
+        self.assertEqual(seen["game_end"], {"t": 10, "how": "the end credits after the finale"})
+        _, evs = P.diff(seen, {"status": None, "ui": {"screen": "credits"}}, now=20)
+        self.assertEqual(evs, [])   # once
+
+    def test_credits_before_the_finale_are_the_menu_button(self):
+        seen = self.base("Lower City")
+        seen, evs = P.diff(seen, {"status": None, "ui": {"screen": "credits"}}, now=10)
+        self.assertEqual(evs, [])
+        self.assertIsNone(seen["game_end"])
+
+    def test_the_ending_flag_decides(self):
+        # Credits.xaml: Metadata "Ending" / DCCredits.IsEndGameCredits = the end credits; false = the menu button
+        seen, evs = P.diff(self.base("Lower City"), {"status": None, "ui": {"screen": "credits",
+                                                                            "credits": {"ending": True}}}, now=10)
+        self.assertEqual([(e["kind"], e["what"]) for e in evs], [("game_end", "the end credits")])
+        seen, evs = P.diff(self.base("Upper City"), {"status": None, "ui": {"screen": "credits",
+                                                                            "credits": {"ending": False}}}, now=10)
+        self.assertEqual(evs, [])
+        self.assertIsNone(seen["game_end"])
+
+    def test_epilogue_level(self):
+        for region in ("Epilogue", "EPI_Main_A"):   # the mod's name, or the raw level from an older mod
+            seen = self.base("Upper City")
+            seen, evs = P.diff(seen, {"status": {"region": region, "party": [{"name": "Tav", "level": 12}]}}, now=5)
+            self.assertEqual(kinds(evs), ["region", "game_end"], region)
+            self.assertEqual(seen["game_end"]["how"], "the epilogue (EPI_Main_A)")
+
+    def test_old_seen_state_gets_the_key(self):
+        seen = self.base("Lower City")
+        del seen["game_end"]
+        seen, evs = P.diff(seen, {"status": {"region": "Lower City", "party": [{"name": "Tav", "level": 12}]}})
+        self.assertIsNone(seen["game_end"])
+        self.assertEqual(evs, [])
+
     def test_weights_documented(self):
         doc = P.__doc__
         for k, v in P.WEIGHTS.items():

@@ -1835,6 +1835,135 @@ def _res(i: str, text: str, is_error: bool = False) -> dict:
                                                      "content": [{"type": "text", "text": text}]}]}}
 
 
+class LongRun(unittest.TestCase):
+    """Playthrough mode for many hours: the crash-loop stop, the rolling 24 h cost cap, the status line."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-long-"))
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
+        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "PLAYTHROUGHS", "COST_PAUSE_CHECK_S", "day_cost")}
+        self.addCleanup(lambda: [setattr(P, n, v) for n, v in self.saved.items()])
+        P.RUNTIME, P.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
+        P.RUNTIME.mkdir(parents=True)
+
+    def test_crash_loop(self):
+        ev = [{"t": 1000.0 + 60 * k, "kind": "fault", "fault": "crash"} for k in range(5)]
+        self.assertIsNone(P.crash_loop(ev, 1300.0, 0.0))
+        ev.append({"t": 1310.0, "kind": "setup_failed"})
+        self.assertEqual(P.crash_loop(ev, 1320.0, 0.0), "crash loop: 6 game crashes/hangs/setup failures in 5 min")
+        self.assertIsNone(P.crash_loop(ev, 1320.0, 1100.0))                 # an operator restart counts from its start
+        self.assertIsNone(P.crash_loop(ev, 1000.0 + 3600 + 61, 0.0))        # the first one left the hour
+        agent = [{"t": 1000.0 + k, "kind": "fault", "fault": "agent_hang"} for k in range(9)]
+        self.assertIsNone(P.crash_loop(agent, 1100.0, 0.0))                 # the agent's hangs aren't the game's
+
+    def test_status_line(self):
+        seen = {"regions": ["Lower City"], "areas": ["Lower City|Bhaal Temple"]}
+        line = P.status_line(1_000_000.0, "claude-run-2", "playing S070 (until 16:30)", 1_000_000.0 - 5400, 3, seen,
+                             12.345, 40.0, 1)
+        self.assertRegex(line, r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d claude-run-2: playing S070 \(until 16:30\) \| up 1.5 h, "
+                               r"3 session\(s\) \| milestones \d+/\d+ \(Act 3\), next .+ \| \$12.35 in 24 h \(cap \$40\) \| "
+                               r"1 game fault\(s\) in 60 min \(stop at 6\)$")
+        line = P.status_line(1.0, "pt", "STOPPED (x)", 0.0, 0, dict(seen, game_end={"t": 1}), 0.0, None, 0)
+        self.assertIn("THE GAME IS FINISHED", line)
+        self.assertNotIn("cap", line)
+
+    def test_cost_pause_waits_and_resumes(self):
+        r = P.Runner(P.Options("long", None, 30, "opus", max_cost_per_day=20.0))
+        P.COST_PAUSE_CHECK_S = 0.05
+        spent = {"usd": 25.0}
+        P.day_cost = lambda d, now: spent["usd"]
+        self.assertTrue(r.cost_paused())
+        self.assertIn("PAUSED: $25.00 in 24 h >= --max-cost-per-day $20", (P.RUNTIME / P.STATUS_LINE).read_text())
+        self.assertTrue(r.cost_paused())   # still over: one pause event, not one per check
+        spent["usd"] = 19.5
+        self.assertFalse(r.cost_paused())
+        evs = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
+        self.assertEqual([(e["kind"], e["spent"]) for e in evs], [("cost_pause", 25.0), ("cost_resume", 19.5)])
+        r2 = P.Runner(P.Options("long", None, 30, "opus"))
+        self.assertFalse(r2.cost_paused())   # no cap: never
+
+    def thermal(self, temps: list[tuple[int, int]], end: float | None = None) -> None:
+        """runtime/thermal.log in thermal_log.sh's format: one line per 5 s ending at `end` (default now)."""
+        end = time.time() if end is None else end
+        t0 = end - 5 * (len(temps) - 1)
+        (P.RUNTIME / "thermal.log").write_text("".join(
+            f"{P.datetime.fromtimestamp(t0 + 5 * i):%Y-%m-%d %H:%M:%S} cpu={c} acpi={c} amdgpu=50 nvme=40 "
+            f"nv=[{g},35.0,1500,99,0x0] profile=balanced load=5.0 bg3=up\n" for i, (c, g) in enumerate(temps)))
+
+    def test_heat_pause_waits_until_cool(self):
+        # the test machine cut its power twice under the naut series load: no session starts while it is too hot
+        r = P.Runner(P.Options("long", None, 30, "opus"))
+        self.thermal([(93, 70)] * 14)                                    # 65 s at 93 C (pause at 92 C for 60 s)
+        sleeps = []
+
+        def sleep(s):   # the next check: cool for a minute
+            sleeps.append(s)
+            self.thermal([(93, 70)] * 3 + [(80, 70)] * 12 if len(sleeps) == 1 else [(80, 60)] * 14)
+        with mock.patch.object(P.time, "sleep", side_effect=sleep):
+            self.assertTrue(r.heat_paused())
+        self.assertEqual(sleeps, [P.HEAT_PAUSE_CHECK_S] * 2)              # 1st check: cool for only 55 s
+        self.assertIn("PAUSED: too hot (CPU 80 C, GPU 70 C; limit 92/85 C)", (P.RUNTIME / P.STATUS_LINE).read_text())
+        evs = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
+        self.assertEqual([(e["kind"], e["cpu_c"]) for e in evs], [("heat_pause", 93), ("heat_resume", 80)])
+        self.thermal([(80, 86)] * 10)                                    # GPU 86 C for 45 s: not yet
+        self.assertFalse(r.heat_paused())
+        self.thermal([(99, 99)] * 14, end=time.time() - 120)               # stale log: no pause
+        self.assertFalse(r.heat_paused())
+        (P.RUNTIME / "thermal.log").unlink()
+        self.assertFalse(r.heat_paused())                                # no log (no ramwatch): no pause
+
+    def test_heat_kill_waits_before_the_relaunch(self):
+        r = P.Runner(P.Options("long", None, 30, "opus"))
+        r.state["game"] = {"stamp": "s", "launched": time.time() - 600}
+        self.assertIsNone(r.heat_killed())
+        (P.RUNTIME / "heat_kills.jsonl").write_text(
+            json.dumps({"kind": "heat_kill", "t": time.time() - 900, "why": "old launch"}) + "\n"
+            + json.dumps({"kind": "heat_kill", "t": time.time() - 10, "why": "CPU 98 C / GPU 70 C for 20 s"}) + "\n")
+        self.assertEqual(r.heat_killed(), "CPU 98 C / GPU 70 C for 20 s")
+        self.thermal([(98, 70)] * 4 + [(85, 60)] * 3)                    # cooling, but not for 60 s yet
+        self.assertFalse(r.heat_paused())                                # between sessions: not a pause
+        with mock.patch.object(P.time, "sleep", side_effect=lambda s: self.thermal([(70, 50)] * 14)):
+            self.assertTrue(r.heat_paused(after_kill=True))              # after the kill: wait for 60 s cool
+        self.thermal([(70, 50)] * 14)
+        self.assertFalse(r.heat_paused(after_kill=True))                 # already cool: relaunch at once
+
+    def test_recover_after_a_heat_kill_names_it_and_waits(self):
+        r = P.Runner(P.Options("long", None, 30, "opus"))
+        r.state["game"] = {"stamp": "s", "launched": time.time() - 600}
+        (P.RUNTIME / "heat_kills.jsonl").write_text(json.dumps({"kind": "heat_kill", "t": time.time() - 10,
+                                                                "why": "CPU 98 C / GPU 70 C for 20 s"}) + "\n")
+        order = []
+        with mock.patch.multiple(r, game_alive=lambda: False, check_game_oom=lambda: None,
+                                 kill_game=lambda: order.append("kill"), choose_save=lambda: None,
+                                 load_save=lambda s: order.append("relaunch") or "S070-end",
+                                 heat_paused=lambda after_kill=False: order.append(("cool", after_kill)) or True), \
+                mock.patch.object(P, "read_actions_since", return_value=[]):
+            r.recover("crashed")
+        self.assertEqual(order, ["kill", ("cool", True), "relaunch"])
+        self.assertIn("crashed (the heat guard stopped it: CPU 98 C / GPU 70 C for 20 s)", r.pending_notes[0])
+
+    def test_status_prints_the_last_thermal_line(self):
+        import contextlib
+        import io
+        self.thermal([(80, 68)])
+        with mock.patch.object(P, "port_open", return_value=False), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            P.cmd_status(P.argparse.Namespace(playthrough=None))
+        self.assertRegex(out.getvalue(), r"thermal:  \d{4}-\d\d-\d\d \d\d:\d\d:\d\d cpu=80 .* nv=\[68,")
+        (P.RUNTIME / "thermal.log").unlink()
+        with mock.patch.object(P, "port_open", return_value=False), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            P.cmd_status(P.argparse.Namespace(playthrough=None))
+        self.assertIn("thermal:  - (no runtime/thermal.log)", out.getvalue())
+
+    def test_cli_refuses_a_bad_day_cap(self):
+        import contextlib
+        import io
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(P.main(["run", "--playthrough", "x", "--max-cost-per-day", "0"]), 2)
+        self.assertIn("--max-cost-per-day", err.getvalue())
+
+
 class SeriesRuns(unittest.TestCase):
     """run --until M --runs N: naming, fresh memory and the same profile per run, the per-run reset (saves, the nav
     kill list, knowledge/), failure classes, the clean flag and the runs table."""
@@ -2152,7 +2281,7 @@ class SeriesRuns(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(P.main(["runs", "--playthrough", "nothing"]), 1)
 
-    def _plan(self, *argv: str) -> str:
+    def _plan(self, *argv: str, env: dict | None = None, unset: tuple = (), xwayland: str = "") -> str:
         import contextlib
         import io
         from unittest import mock
@@ -2166,9 +2295,26 @@ class SeriesRuns(unittest.TestCase):
                 mock.patch.object(P.bg3le_buildinfo, "problems", lambda: []), \
                 mock.patch.object(P, "pids_of_game", lambda: []), \
                 mock.patch.object(P, "foreign_bg3_pids", lambda: []), \
+                mock.patch.dict(P.os.environ, env or {}), \
+                mock.patch.object(P.display_env, "pgrep_xwayland", lambda: xwayland), \
                 contextlib.redirect_stdout(buf):
+            for k in unset:
+                P.os.environ.pop(k, None)
             self.assertEqual(P.main(["run", *argv, "--plan"]), 0)
         return buf.getvalue()
+
+    def test_plan_fills_the_display_env_from_xwayland(self):
+        # a the multiplexer pane has no DISPLAY/XAUTHORITY: the runner finds them itself (no exports in the start command)
+        out = self._plan("--playthrough", "np", unset=("DISPLAY", "XAUTHORITY"),
+                         xwayland="9 /usr/bin/Xwayland :1 -rootless -auth /run/user/1000/xauth_Ab -listenfd 4\n")
+        self.assertIn("display:        DISPLAY=:1 XAUTHORITY=/run/user/1000/xauth_Ab", out)
+        self.assertNotIn("NO XAUTHORITY", out)
+        out = self._plan("--playthrough", "np", unset=("DISPLAY", "XAUTHORITY"), xwayland="")
+        self.assertIn("display:        DISPLAY=:1 XAUTHORITY=unset", out)
+        self.assertIn("NO XAUTHORITY", out)
+        out = self._plan("--playthrough", "np", env={"DISPLAY": ":7", "XAUTHORITY": "/x"},
+                         xwayland="9 /usr/bin/Xwayland :1 -auth /run/user/1000/xauth_Ab\n")
+        self.assertIn("display:        DISPLAY=:7 XAUTHORITY=/x", out)   # inherited values win
 
     def test_plan_prints_the_freeze_and_the_command_and_writes_nothing(self):
         out = self._plan("--playthrough", "np", "--until", "nautiloid_escaped", "--runs", "3", "--model", "opus",
@@ -2190,6 +2336,34 @@ class SeriesRuns(unittest.TestCase):
         self.assertEqual(cmd["env"]["BG3_SESSION_MINUTES"], "30.0")
         written = [x for d in (P.RUNTIME, P.PLAYTHROUGHS) if d.exists() for x in d.rglob("*")]
         self.assertEqual(written, [])
+
+    def test_plan_of_a_resume_shows_the_next_session_save_and_hidden_saves(self):
+        # claude-run-2 resume check (2026-10-17): --plan printed "S001" and no save for a playthrough at S065
+        from unittest import mock
+        mem = P.PLAYTHROUGHS / "cr" / "memory"
+        (mem / "sessions").mkdir(parents=True)
+        for n in (64, 65):
+            (mem / "sessions" / f"S{n:03d}.md").write_text(f"# S{n:03d}\n")
+        (mem / "HANDOFF.md").write_text('Save to load: "S065-end"\n')
+        d = P.RUNTIME / "sessions" / "cr"
+        d.mkdir(parents=True)
+        t = 1_000_000.0
+        (d / "runner.json").write_text(json.dumps({"save_owner": "Claude", "history": [
+            {"kind": "play", "session": "S065", "started": t, "ended": t + 1800}]}))
+        (d / "session-config.json").write_text(json.dumps({"minutes": 30, "effort": "high"}))
+        saves = [P.Save("Claude-1__S065-end", "Claude", "S065-end", t + 1700),
+                 P.Save("Claude-2__S027-end", "Claude", "S027-end", t + 90000),       # another playthrough's
+                 P.Save("Claude-3__S999-savetest", "Claude", "S999-savetest", t + 95000)]
+        with mock.patch.object(P, "list_saves", lambda: saves):
+            out = self._plan("--playthrough", "cr", "--save-owner", "Claude", "--session-minutes", "20")
+        self.assertIn("resume:         S066; loads Claude-1__S065-end (HANDOFF names S065-end)", out)
+        self.assertIn("saves hidden:   Claude-2__S027-end, Claude-3__S999-savetest", out)
+        self.assertIn("session-config: 30 min, model opus, effort high", out)
+        cmd = json.loads(out[out.index('{\n "cmd"'):])
+        self.assertEqual(cmd["env"]["BG3AI_SESSION"], "S066")
+        self.assertEqual(cmd["env"]["BG3_SESSION_MINUTES"], "30.0")
+        self.assertEqual(cmd["env"]["BG3AI_SAVES_EXCLUDE"], "Claude-2__S027-end\nClaude-3__S999-savetest")
+        self.assertEqual(cmd["cmd"][cmd["cmd"].index("--effort") + 1], "high")
 
     def test_plan_of_a_frozen_series_shows_the_next_run_and_drift(self):
         d = P.RUNTIME / "sessions" / "np"

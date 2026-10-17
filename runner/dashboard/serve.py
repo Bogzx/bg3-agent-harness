@@ -35,7 +35,9 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "bridge" / "src"))
+sys.path.insert(0, str(REPO / "runner"))
 import feeds as F  # noqa: E402
+import ramwatch as RW  # noqa: E402  (runtime/thermal.log: the last temperature line)
 import seriesview as SERIES  # noqa: E402
 import story as STORY  # noqa: E402
 
@@ -178,7 +180,20 @@ class Hub:
             "screen": screen,
             "memory": F.memory_view(mem),
             "agent_log": {"path_id": agent_log.name if agent_log else None},
+            "thermal": thermal_view(RUNTIME / "thermal.log"),
         }
+
+
+def thermal_view(path: Path) -> dict | None:
+    """The last thermal.log line (runner/ramwatch.py or tools/orchestrator/thermal_log.sh) with its CPU/GPU C and
+    the heat-pause limits, or None."""
+    last = RW.last_thermal(path)
+    if not last:
+        return None
+    _, cpu, gpu = RW.parse_thermal(last[1])
+    lim = RW.heat_limits()
+    return {"t": last[0], "line": last[1], "cpu": cpu, "gpu": gpu,
+            "pause_cpu_c": lim["pause_cpu_c"], "pause_gpu_c": lim["pause_gpu_c"]}
 
 
 def make_handler(hub: Hub):

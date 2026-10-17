@@ -17,7 +17,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# (id, act, label, fact kind, pattern). Kinds: region, area, quest_done, quest, companions (count), level (max).
+# (id, act, label, fact kind, pattern). Kinds: region, area, quest_done, quest, companions (count), level (max),
+# end (the game is finished).
 MILESTONES: list[tuple[str, int, str, str, Any]] = [
     ("nautiloid", 1, "Aboard the Nautiloid", "region", r"nautiloid"),
     ("first_companion", 1, "First companion", "companions", 2),
@@ -40,12 +41,31 @@ MILESTONES: list[tuple[str, int, str, str, Any]] = [
     ("moonrise", 2, "Moonrise Towers", "area", r"moonrise"),
     ("act3", 3, "Act 3: Rivington", "region", r"rivington|wyrm"),
     ("lower_city", 3, "Lower City (Baldur's Gate)", "region", r"lower city"),
+    # Act 3 by claude-run-2's own journal and minimap (progress_state.json at S065): "Wyrm's Rock Fortress",
+    # "Bhaal Temple" areas, the quests "Get Gortash's Netherstone" / "Get Orin's Netherstone" / "Confront the Elder
+    # Brain". Level names from the game's paks (Gustav.pak Levels/): IRN_Main_A (Iron Throne), BGO_MorphicPool_A,
+    # END_Main (Upper City, the finale), END_HighHall_C, END_NetherBrainArenas_E, EPI_Main_A (the epilogue).
+    ("wyrms_rock", 3, "Wyrm's Rock Fortress", "area", r"wyrm'?s rock"),
+    ("gortash", 3, "Gortash's Netherstone", "quest_done", r"gortash'?s netherstone"),
+    ("iron_throne", 3, "The Iron Throne", "region", r"iron throne"),
+    ("bhaal_temple", 3, "Temple of Bhaal", "area", r"bhaal temple|temple of bhaal"),
+    ("orin", 3, "Orin's Netherstone", "quest_done", r"orin'?s netherstone"),
+    ("morphic_pool", 3, "Morphic Pool", "area", r"morphic pool"),
     ("upper_city", 3, "Upper City (endgame)", "region", r"upper city"),
+    ("high_hall", 3, "High Hall", "area", r"high hall"),
+    ("netherbrain", 3, "The Netherbrain", "area", r"nether.?brain"),
+    ("elder_brain", 3, "Elder Brain confronted", "quest_done", r"confront the elder brain"),
+    # The story is over: the end credits after the finale, or the epilogue level (bg3ai.progress game_end).
+    ("game_end", 3, "The end (credits / epilogue)", "end", True),
 ]
+GAME_END = "game_end"
+# Side content: never the "next" milestone (claude-run-2 may skip the Iron Throne).
+OPTIONAL = {"iron_throne"}
 
 
 def empty_facts() -> dict:
-    return {"region": set(), "area": set(), "quest_done": set(), "quest": set(), "companions": set(), "joined": set(), "level": 0}
+    return {"region": set(), "area": set(), "quest_done": set(), "quest": set(), "companions": set(), "joined": set(),
+            "level": 0, "end": False}
 
 
 def facts_from_seen(seen: dict) -> dict:
@@ -60,6 +80,7 @@ def facts_from_seen(seen: dict) -> dict:
     levels = seen.get("levels") or {}
     f["companions"].update(str(n) for n in levels)
     f["level"] = max([int(v) for v in levels.values() if isinstance(v, (int, float))], default=0)
+    f["end"] = bool(seen.get("game_end"))
     return f
 
 
@@ -75,6 +96,8 @@ def add_event(f: dict, ev: dict) -> None:
         f["quest"].add(what)
     elif kind == "companion":
         f["joined"].add(what)  # someone joined the party (the avatar never gets this event)
+    elif kind == "game_end":
+        f["end"] = True
     elif kind == "level_up":
         m = LEVEL_RE.match(what)
         if m:
@@ -86,6 +109,8 @@ def reached(f: dict, kind: str, pat: Any) -> bool:
         return len(f["companions"]) >= pat or len(f["joined"]) >= pat - 1
     if kind == "level":
         return f["level"] >= pat
+    if kind == "end":
+        return f["end"]
     rx = re.compile(pat, re.I)
     return any(rx.search(x) for x in f[kind])
 
@@ -94,7 +119,8 @@ def status(seen: dict | None, sessions: list[tuple[str, list[dict]]] | None = No
     """Milestones reached now (from the seen-state) and when each was first reached (from session events).
 
     sessions: [(session id, progress records)] in play order. Returns
-    {"reached": n, "total": N, "act": current act, "next": label, "items": [{id, act, label, reached, session, t}]}.
+    {"reached": n, "total": N, "act": current act, "next": label (None once the game ended), "ended": bool,
+     "items": [{id, act, label, reached, session, t}]}.
     """
     now = facts_from_seen(seen or {})
     first: dict[str, tuple[str, float | None]] = {}
@@ -114,9 +140,14 @@ def status(seen: dict | None, sessions: list[tuple[str, list[dict]]] | None = No
         items.append({"id": mid, "act": act, "label": label, "reached": ok, "session": sid if ok else None,
                       "t": t if ok else None})
     done = [i for i in items if i["reached"]]
-    nxt = next((i["label"] for i in items if not i["reached"]), None)
+    ended = any(i["id"] == GAME_END and i["reached"] for i in items)
+    # after the furthest one reached: a route that skipped one (claude-run-2 took the Mountain Pass, never the
+    # Underdark) isn't sent back to it
+    last = max((k for k, i in enumerate(items) if i["reached"]), default=-1)
+    nxt = None if ended else next((i["label"] for i in items[last + 1:] if not i["reached"]
+                                   and i["id"] not in OPTIONAL), None)
     return {"reached": len(done), "total": len(items), "act": max((i["act"] for i in done), default=1),
-            "next": nxt, "items": items}
+            "next": nxt, "items": items, "ended": ended}
 
 
 def line(st: dict) -> str:
