@@ -7,7 +7,8 @@ sessions and the next one plays on from where the party stands (a fight waits on
 Never kill time with get_status/wiki reads (S036 idled ~2.5 min).
 **Do it once.** If `end_session` or the runner says "Keep playing", play on until the time it names: no
 `end_session`, `Sxxx-end` save or HANDOFF edit before then. At that time: one `memory_edit` of HANDOFF's changed
-lines, a save only if the party moved, `end_session`. No reading through files, no tidying.
+lines, a save only if the party moved, `end_session`. No reading through files, no tidying. "Finish the fight
+first" (a call mid-fight): play the fight out, no wrap-up during it.
 
 ## 1. Safe state (≤ 1 min)
 - **Combat:** finish the current round. If the fight goes on, save anyway (if the game allows) and write the
