@@ -283,6 +283,16 @@ function UI.contentRoot()
     return try(root.Find, root, "ContentRoot")
 end
 
+-- A page without an x:Name goes by its ls:UIWidget.ContextName: live (2026-10-17) the Credits page (Credits.xaml)
+-- has Name "" and ContextName "Credits"; on the named pages the two are the same.
+local function pageName(w)
+    local n = UI.name(w)
+    if n then return n end
+    local ctx = UI.prop(w, "ContextName")
+    ctx = ctx ~= nil and tostring(ctx) or ""
+    return ctx ~= "" and ctx or nil
+end
+
 -- { {name, dc, el}, ... } for every page under ContentRoot (cheap: ~25).
 function UI.widgets()
     local cr = UI.contentRoot()
@@ -292,7 +302,7 @@ function UI.widgets()
         local w = UI.child(cr, i)
         if w then
             local dc = try(function() return w.DataContext end)
-            out[#out + 1] = { name = UI.name(w) or "?", dc = UI.typeName(dc), el = w, index = i }
+            out[#out + 1] = { name = pageName(w) or "?", dc = UI.typeName(dc), el = w, index = i }
         end
     end
     return out

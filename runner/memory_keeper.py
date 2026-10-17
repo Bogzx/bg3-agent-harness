@@ -333,6 +333,44 @@ def logs_to_read(mem: Path, sid_n: int) -> list[int]:
     return nums[-MAX_LOGS:]
 
 
+# vis V6 (2026-10-17): a fight record before v2 counted a hit's rider (1-3 Radiant beside 12 Slashing) or a per-hit
+# shield (Orin's Unstoppable) as a resisted damage type, so its [fight] line's "resisted:" field and "<Type> did
+# little to <enemy>" facts are false (~80 in claude-run-2 S035-S065, e.g. lessons.md "EB/Radiant do ~0 vs Avatar").
+DEBRIEF_V = 2
+
+
+def old_debrief_logs(mem: Path, sessions_dir: Path | None, nums: list[int]) -> list[int]:
+    """The sessions among nums whose log has [fight] lines written before the v2 debrief: one of the session's
+    fight records (sessions_dir/Sxxx[-rN].fights.jsonl, written with each line) lacks v >= 2, or it has none (the
+    log alone can't show its lines are new)."""
+    out = []
+    for n in nums:
+        sid = M.session_id(n)
+        try:
+            if "[fight]" not in (mem / "sessions" / f"{sid}.md").read_text(encoding="utf-8", errors="replace"):
+                continue
+        except OSError:
+            continue
+        vs = []
+        paths = [sessions_dir / f"{sid}.fights.jsonl", *sorted(sessions_dir.glob(f"{sid}-*.fights.jsonl"))] \
+            if sessions_dir is not None else []
+        for path in paths:
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for ln in lines:
+                try:
+                    r = json.loads(ln)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(r, dict):
+                    vs.append(int(r.get("v") or 1))
+        if not vs or min(vs) < DEBRIEF_V:
+            out.append(n)
+    return out
+
+
 def harness_news(knowledge_dir: Path = KNOWLEDGE, last: int = 12) -> list[str]:
     """The newest harness-news.md entries ('- YYYY-MM-DD HH:MM …'), at most `last`."""
     try:
@@ -377,11 +415,13 @@ def refused_plans(actions: list[dict]) -> list[dict]:
 
 
 def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: float,
-                 refused: list[dict] | None = None, tools: str = "files") -> str:
+                 refused: list[dict] | None = None, tools: str = "files", sessions_dir: Path | None = None) -> str:
     """The keeper's task. tools: "files" (Claude Code's Read/Edit/Write/Glob/Grep in the memory dir, today's Claude
-    pass) or "mcp" (the bg3 server's memory_* tools in keeper mode, any client): only the tool wording differs."""
+    pass) or "mcp" (the bg3 server's memory_* tools in keeper mode, any client): only the tool wording differs.
+    sessions_dir: the runner's runtime/sessions/<playthrough> (the fight records, see old_debrief_logs)."""
     mcp = tools == "mcp"
-    logs = ", ".join(f"sessions/{M.session_id(n)}.md" for n in logs_to_read(mem, sid_n)) or "(none)"
+    nums = logs_to_read(mem, sid_n)
+    logs = ", ".join(f"sessions/{M.session_id(n)}.md" for n in nums) or "(none)"
     stale = L.stale_files(mem, sid_n + 1)
     stale_txt = ", ".join(f"{rel} ({age} sessions)" for rel, age in stale) or "none"
     nxt = M.session_id(sid_n + 1)
@@ -482,8 +522,22 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         ]
         for r in refused:
             lines.append(f"- {r['name']} L{r['level']}: {r['problems']}")
-    if M.compaction_due(mem, sid_n + 1):
+    due = M.compaction_due(mem, sid_n + 1)
+    if due:
         last = M.last_compacted_session(mem)
+        nums = sorted(set(nums) | set(range(last + 1, min(last + 10, sid_n) + 1)))
+    old = old_debrief_logs(mem, sessions_dir, nums)
+    if old:
+        lines += [
+            "",
+            "OLD FIGHT DEBRIEFS (a harness bug, fixed 2026-10-17): in "
+            + ", ".join(f"sessions/{M.session_id(n)}.md" for n in old)
+            + " the `[fight]` lines' `resisted: …` field and every `<Type> did little to <enemy>` fact are WRONG "
+            "(a damage rider or an enemy's per-hit shield was read as a resisted damage type). Take no resistance, "
+            "immunity or 'did little / does ~0' fact from them, nor from a `[lesson]` that rests only on one, into "
+            "any file or chapter; the rest of those lines (grade, downs, deaths, damage totals, unused items) stands.",
+        ]
+    if due:
         lines += [
             "",
             f"COMPACTION DUE (sessions after {M.session_id(last)} are in no chapter): AFTER the curated files, "
@@ -724,7 +778,8 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
         pending = save_pending(Path(log_base).parent, mem, sid, snap)
         log_path = Path(f"{log_base}.jsonl")
         sess = str(uuid.uuid4())
-        prompt = build_prompt(mem, sid, sid_n, report, minutes, refused, tools="mcp" if via_mcp else "files")
+        prompt = build_prompt(mem, sid, sid_n, report, minutes, refused, tools="mcp" if via_mcp else "files",
+                              sessions_dir=Path(log_base).parent)
         grounds = corpus(snap, knowledge, prompt)
         cli = None
         if via_mcp:

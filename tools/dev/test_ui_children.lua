@@ -61,6 +61,20 @@ ok(table.concat(names, ",") == "Hud,ContainerWidget", "widgets lists ContentRoot
 ok(visualCalls == 0, "ContentRoot (a Grid) is walked without VisualChild")
 ok(UI.widget("ContainerWidget") == loot, "widget by name")
 
+-- Live 2026-10-17: the Credits page has Name "" and ContextName "Credits" (it was listed as "?", so the
+-- "Credits" screen never matched); a page with neither stays "?".
+local credits = el("Grid", "", {}, { props = { ContextName = "Credits" } })
+local bare = el("Grid", "")
+local cr2 = el("Grid", "ContentRoot", { hud, credits, bare })
+local root1 = root
+root = el("Border", "root", { cr2 })
+root.Find = function(self, n) return n == "ContentRoot" and cr2 or nil end
+names = {}
+for _, w in ipairs(UI.widgets()) do names[#names + 1] = w.name end
+ok(table.concat(names, ",") == "Hud,Credits,?", "a nameless page goes by its ContextName")
+ok(UI.widgetMap().Credits and UI.widgetMap().Credits.el == credits, "widgetMap finds the Credits page")
+root = root1
+
 visualCalls = 0
 local found = UI.byName(loot, "TakeAll")
 ok(found == btn, "find below a Grid and a Border")

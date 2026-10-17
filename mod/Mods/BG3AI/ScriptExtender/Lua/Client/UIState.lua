@@ -32,8 +32,11 @@ local prop, props, clean = UI.prop, UI.props, UI.clean
 S.SCREENS = {
     -- The end credits after the final cinematic (Mods/MainUI/GUI/Pages/Credits.xaml, ContextName "Credits",
     -- DCCredits; the main menu's Credits button opens the same page). First: it can sit over the main menu.
+    -- The page has no x:Name: UI.widgets names it by its ContextName, S.state also by its DC type (S.PAGE_DC).
     { "Credits", "credits" },
     { "MainMenu", "main_menu" },
+    -- "Press any key to continue" after a fresh launch, before the main menu.
+    { "SplashScreen", "splash" },
     { "CharacterCreation", "character_creation" },
     { "CharacterRespec", "character_creation" },
     { "CharacterFullRespec", "character_creation" },
@@ -78,8 +81,12 @@ S.BLOCKING = {
     main_menu = true, loading = true, character_creation = true, reaction = true, roll = true,
     popup = true, tutorial = true, dialogue = true, level_up = true, trade = true, rest = true,
     book = true, reward = true, donate = true, learn_spells = true, tadpole_tree = true, save_load = true,
-    game_menu = true, options = true, game_over = true, credits = true,
+    game_menu = true, options = true, game_over = true, credits = true, splash = true,
 }
+
+-- Pages also found by their DataContext type, in case the name doesn't read (live 2026-10-17: the Credits page
+-- has an empty Name and was listed as "?").
+S.PAGE_DC = { Credits = "gui::DCCredits" }
 
 -- Always-there HUD pages; anything else that is visible counts as a panel.
 S.HUD = {
@@ -701,6 +708,15 @@ function S.state(args)
     local res = {}
     local gs = tostring(try(Ext.Utils.GetGameState) or "?")
     local wmap = UI.widgetMap()
+    for page, dcType in pairs(S.PAGE_DC) do
+        if not wmap[page] then
+            local found
+            for name, w in pairs(wmap) do
+                if w.dc == dcType then found = name break end
+            end
+            if found then wmap[page], wmap[found] = wmap[found], nil end
+        end
+    end
     -- Our own background save (UIActions saveDriver), < 15 s old: its menus
     -- and the game's ~1 s Save state show as the game underneath (below).
     local SA = BG3AI.UIActions
