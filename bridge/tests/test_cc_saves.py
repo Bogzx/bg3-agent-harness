@@ -48,7 +48,7 @@ class CCGame(FakeGame):
         return "Running"
 
     def rpc(self, op, args=None, context="server", timeout=12.0):
-        if op in ("ui.cc_name", "ui.cc_finish", "ui.confirm_probe"):
+        if op in ("ui.cc_name", "ui.cc_finish", "ui.confirm_probe", "ui.box_open"):
             return self.page.rpc(op, args or {})
         if op == "ui.config":
             self.config.append(dict(args or {}))

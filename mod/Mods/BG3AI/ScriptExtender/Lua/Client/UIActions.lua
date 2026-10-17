@@ -404,12 +404,15 @@ A.CONFIRM_WORDS.cancel = A.CONFIRM_WORDS.no
 
 local function trim(s) return (tostring(s or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")) end
 
+local function isBoxName(name)
+    local n = name:lower()
+    return n == "dialog_box" or n:find("messagebox", 1, true) ~= nil or n:find("confirm", 1, true) ~= nil
+end
+
 -- The open confirmation box: { name, el, title, text, buttons = { {el, label, name} } } or nil.
 function A.confirmBox()
     for _, rec in ipairs(UI.widgets()) do
-        local n = rec.name:lower()
-        if (n == "dialog_box" or n:find("messagebox", 1, true) or n:find("confirm", 1, true))
-            and UI.isVisible(rec.el) then
+        if isBoxName(rec.name) and UI.isVisible(rec.el) then
             local box = { name = rec.name, el = rec.el, buttons = {} }
             local p = S.popup(rec.el)
             box.title, box.text = p.title, p.text
@@ -571,6 +574,22 @@ RPC.register("ui.confirm_probe", function(args)
         if o ~= b and UI.prop(o.el, "IsMouseOver") == true then view.over_other = i end
     end
     return view
+end)
+
+-- ui.box_open -> {state, box}: is a question (or stack-split) box still showing? For the bridge's watch after
+-- its click (boxclick.py), which must not touch the box: all three game crashes (S072/S077/S078, impl-setup S17)
+-- came while confirm_probe walked the buttons + IsMouseOver of a box the rest / travel transition was tearing
+-- down. Reads the game state, and only while Running/Paused the top-level widgets' visibility (what ui.state's
+-- screen reads): never a box's children, never IsMouseOver.
+RPC.register("ui.box_open", function()
+    local gs = tostring(try(Ext.Utils.GetGameState) or "?")
+    if gs ~= "Running" and gs ~= "Paused" then return { state = gs, box = false } end
+    for _, rec in ipairs(UI.widgets()) do
+        if (isBoxName(rec.name) or rec.name == "SplitItem") and UI.isVisible(rec.el) then
+            return { state = gs, box = true }
+        end
+    end
+    return { state = gs, box = false }
 end)
 
 ------------------------------------------------------------------------

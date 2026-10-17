@@ -73,6 +73,8 @@ class FakePage:
             if moved:
                 v["moved"] = True
             return v
+        if op == "ui.box_open":
+            return {"state": "Running", "box": bool(self.popup)}
         if op == "ui.confirm_probe":
             if not self.popup:
                 return {"box": False}

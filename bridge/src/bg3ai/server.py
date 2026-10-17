@@ -2805,7 +2805,7 @@ def _box_act(tool: str, op: str, args: dict, wait_s: float, rounds: int = 3, on_
         c = boxclick.click_box(lambda o, a: game.rpc(o, a, context="client"), inp, str(ans))
         q = res.get("question")
         notes.append(boxclick.describe(c) + (f" (the question: {q})" if q and "[ForceUpdate]" not in str(q) else ""))
-        if tool in ("confirm", "fast_travel") or not (c.get("closed") or c.get("next") or c.get("gone")):
+        if tool in ("confirm", "fast_travel") or not (c.get("closed") or c.get("shown") or c.get("gone")):
             if tool != "long_rest" and tool != "short_rest" and not c.get("error"):
                 out = f"{tool}: done — {notes.pop()}" + ("; travelling" if tool == "fast_travel" else "")
             break

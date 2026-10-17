@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from itertools import pairwise
 from pathlib import Path
 
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
@@ -19,12 +20,29 @@ from bg3ai.game import JobResult  # noqa: E402
 W, H = 1920, 1080
 YES = (780, 560, 900, 610)  # Yes button rect (px)
 NO = (1020, 560, 1140, 610)
+# This far button is the 88th point tried: with probes >= PROBE_GAP_S apart (A18) the default 8 s budget covers ~80.
+FAR_BUDGET_S = 20.0
+
+
+class FakeClock:
+    """boxclick's `time`: sleep advances the clock, so the poll spacing is exact and the tests don't wait."""
+
+    def __init__(self):
+        self.t = 1000.0
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += max(0.0, s)
 
 
 class FakeScreen:
     """The box, a cursor and the input shim; clicks land only inside a button."""
 
-    def __init__(self, yes=YES, no=NO):
+    def __init__(self, yes=YES, no=NO, clock=None):
+        self.clock = clock
+        self.log: list[tuple[str, float]] = []   # (op, time) of every rpc, "click" for each click
         self.cur = (0, 0)
         self.box = True
         self.rects = {"Yes": yes, "No": no}
@@ -50,6 +68,7 @@ class FakeScreen:
 
     def click(self, x, y, button="L", count=1, sync=True):
         self.clicks.append((x, y))
+        self.log.append(("click", self.now()))
         for label, (x0, y0, x1, y1) in self.rects.items():
             if x0 <= x <= x1 and y0 <= y <= y1:
                 self.pressed = label
@@ -62,7 +81,13 @@ class FakeScreen:
         x0, y0, x1, y1 = self.rects[label]
         return x0 <= self.cur[0] <= x1 and y0 <= self.cur[1] <= y1
 
+    def now(self):
+        return self.clock.t if self.clock else 0.0
+
     def rpc(self, op, args):
+        self.log.append((op, self.now()))
+        if op == "ui.box_open":
+            return {"state": "Running", "box": bool(self.box)}
         if op != "ui.confirm_probe":
             return {}  # incidental reads (_finish's level-up nudge reads state.status once a minute)
         if not self.box:
@@ -80,6 +105,9 @@ class FakeScreen:
 class ClickBox(unittest.TestCase):
     def setUp(self):
         boxclick._hits.clear()
+        self.clock = FakeClock()
+        self.addCleanup(setattr, boxclick, "time", boxclick.time)
+        boxclick.time = self.clock
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         self.addCleanup(setattr, boxclick, "HITS_PATH", boxclick.HITS_PATH)
@@ -98,7 +126,7 @@ class ClickBox(unittest.TestCase):
         # every run. Now its hit is stored per answer|title and the next process clicks it on the first try.
         far = (500, 640, 600, 670)
         s = FakeScreen(yes=far)
-        first = boxclick.click_box(s.rpc, s, "yes")
+        first = boxclick.click_box(s.rpc, s, "yes", budget_s=FAR_BUDGET_S)
         self.assertGreater(first["tries"], 1)
         stored = json.loads(boxclick.HITS_PATH.read_text())
         self.assertEqual(list(stored), ["yes|[ForceUpdate]"])
@@ -118,7 +146,7 @@ class ClickBox(unittest.TestCase):
 
     def test_searches_and_never_clicks_off_button(self):
         s = FakeScreen(yes=(500, 640, 600, 670))  # far from the seed
-        r = boxclick.click_box(s.rpc, s, "yes")
+        r = boxclick.click_box(s.rpc, s, "yes", budget_s=FAR_BUDGET_S)
         self.assertTrue(r.get("closed"), r)
         self.assertEqual(len(s.clicks), 1)  # only the hover-checked click
         self.assertGreater(r["tries"], 1)
@@ -133,11 +161,58 @@ class ClickBox(unittest.TestCase):
         self.assertTrue(r["closed"])
 
     def test_next_question_reported(self):
-        s = FakeScreen()
+        s = FakeScreen(clock=self.clock)
         s.next_box = True
         r = boxclick.click_box(s.rpc, s, "yes")
-        self.assertIn("next", r)
-        self.assertIn("Someone wants to talk", boxclick.describe(r))
+        self.assertTrue(r["shown"], r)
+        self.assertFalse(r["closed"])
+        self.assertIn("a question box still shows", boxclick.describe(r))
+
+    def test_box_never_read_after_the_click(self):
+        # S072/S077/S078: the game crashed 6.7-7.5 s after the probe-click began on the rest/travel box, while
+        # confirm_probe walked the buttons + IsMouseOver of a box the transition was tearing down (every 30 ms).
+        # After the click only ui.box_open is read; the transition (UnloadLevel) ends the watch as closed.
+        s = FakeScreen(clock=self.clock)
+        clicked = []
+        polls = []
+        orig = s.click
+
+        def click(x, y, **kw):
+            orig(x, y, **kw)
+            s.box = True              # the box stays drawn while the game tears it down
+            clicked.append(True)
+        s.click = click
+
+        def rpc(op, args):
+            if clicked and op != "ui.box_open":
+                raise AssertionError(f"{op} after the click: the box is being torn down")
+            if op == "ui.box_open":
+                polls.append(self.clock.t)
+                if len(polls) >= 3:
+                    return {"state": "UnloadLevel", "box": False}
+                return {"state": "Running", "box": True}
+            return s.rpc(op, args)
+        r = boxclick.click_box(rpc, s, "yes")
+        self.assertTrue(r["closed"], r)
+        self.assertEqual(len(polls), 3)   # nothing read once the transition showed
+        self.assertTrue(all(b - a >= boxclick.CLOSE_POLL_S >= 0.1 for a, b in pairwise(polls)), polls)
+
+    def test_probes_before_the_click_are_spaced(self):
+        s = FakeScreen(yes=(500, 640, 600, 670), clock=self.clock)   # far from the seed: a search
+        r = boxclick.click_box(s.rpc, s, "yes", budget_s=FAR_BUDGET_S)
+        self.assertTrue(r["closed"], r)
+        probes = [t for op, t in s.log if op == "ui.confirm_probe"]
+        self.assertGreater(len(probes), 3)
+        self.assertTrue(all(b - a >= boxclick.PROBE_GAP_S >= 0.1 for a, b in pairwise(probes)), probes)
+        after = s.log[[op for op, _ in s.log].index("click") + 1:]
+        self.assertEqual({op for op, _ in after}, {"ui.box_open"})
+
+    def test_return_fallback_watches_without_probing(self):
+        s = FakeScreen(yes=(0, 0, 1, 1), clock=self.clock)
+        s.enter_default = True
+        boxclick.click_box(s.rpc, s, "yes", budget_s=0.5)
+        ops = [op for op, _ in s.log]
+        self.assertNotIn("ui.confirm_probe", ops[ops.index("ui.box_open"):])
 
     def test_not_found_no_click(self):
         s = FakeScreen(yes=(0, 0, 1, 1))

@@ -392,6 +392,27 @@ ok(pr.over == true, "probe: over Yes")
 widgets = {}
 ok(ops["ui.confirm_probe"]({}).box == false, "probe: no box")
 
+-- ui.box_open (A18, the bridge's watch after its click): visibility of the top-level widget only, never the
+-- buttons' IsMouseOver; nothing UI is read once the game is in a transition.
+W("Dialog_box", { "[ForceUpdate]" }, { { "Yes", nil, function() end }, { "No", nil, function() end } })
+local UI, overReads = BG3AI.UI, 0
+local prop0 = UI.prop
+UI.prop = function(e, k) if k == "IsMouseOver" then overReads = overReads + 1 end return prop0(e, k) end
+local bo = ops["ui.box_open"]()
+ok(bo.box == true and bo.state == "Running" and overReads == 0, "box_open: box shown, no IsMouseOver read")
+widgets.Dialog_box.visible = false
+ok(ops["ui.box_open"]().box == false, "box_open: hidden box = closed")
+widgets = {}
+W("SplitItem", {}, { { "Cancel", nil, function() end } })
+ok(ops["ui.box_open"]().box == true, "box_open: split box")
+local gs0, widgetReads, widgets0 = Ext.Utils.GetGameState, 0, UI.widgets
+Ext.Utils.GetGameState = function() return "UnloadLevel" end
+UI.widgets = function() widgetReads = widgetReads + 1 return widgets0() end
+bo = ops["ui.box_open"]()
+ok(bo.box == false and bo.state == "UnloadLevel" and widgetReads == 0, "box_open: transition, no UI read")
+Ext.Utils.GetGameState, UI.widgets, UI.prop = gs0, widgets0, prop0
+widgets = {}
+
 -- ui.key names (live S007: press_key DELETE -> "not a SDLScanCode: DELETE")
 local function ks(k, m) local a, b = A.keySpec(k, m) return a .. "|" .. table.concat(b or {}, ",") end
 ok(ks("DELETE") == "DEL|", "DELETE -> DEL: " .. ks("DELETE"))
