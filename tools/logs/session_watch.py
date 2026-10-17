@@ -211,7 +211,8 @@ def check(calls, rows=None):
     counts are calls with a match. trig = a call of a tool the row names, or any PASS/FAIL match; a clause matches a
     call when all its signatures do. verdict FAIL? / PASS? / seen / NOT-SEEN, or 'by hand' (no signature a
     transcript can show: R/B/L/M or prose). A row whose item/when names tools is matched on their calls and on
-    batches (do_actions, queue_actions, wait_for) only. The example is the first FAIL, else PASS, else trigger call, as
+    batches (do_actions, queue_actions, wait_for) only; a row whose when says "calls only" on their own calls only
+    (V13, S071 #100: a do_actions use_ability asking "choose a variant" out of combat is no combat_turn FAIL). The example is the first FAIL, else PASS, else trigger call, as
     '#k +Ns tool: text' (k = index in calls)."""
     t0 = next((c["t"] for c in calls if c.get("t")), None)
     texts = [(k, c, call_text(c)) for k, c in enumerate(calls) if is_game(c)]
@@ -222,9 +223,10 @@ def check(calls, rows=None):
         if row["series"]:
             continue
         tools = row_tools(row, names)
+        scope = tools if re.search(r"\bcalls only\b", row["when"]) else tools | BATCH
         hits = {"pass": [], "fail": [], "trig": []}
         for k, c, t in texts:
-            if tools and c["name"] not in tools | BATCH:   # a row about named tools: their calls (or a batch's)
+            if tools and c["name"] not in scope:   # a row about named tools: their calls (or a batch's)
                 continue
             for kind in ("fail", "pass"):
                 for rxs in row[kind]:

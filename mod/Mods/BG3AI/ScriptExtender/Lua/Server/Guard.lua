@@ -1050,10 +1050,8 @@ end
 -- The container a spell is a variant of (Target_Command_Halt -> Target_Command_Container), else nil. Live L4: each
 -- variant sits in the book as its own RequiresPreparation entry, while SpellBookPrepares lists only the container.
 function G.container_of(id)
-    local ok, st = pcall(Ext.Stats.Get, id)
-    local okc, c = pcall(function() return st and st.SpellContainerID end)
-    c = ok and okc and c and tostring(c) or ""
-    return c ~= "" and c or nil
+    local f = G.spell_facts(id)
+    return f and f.box or nil
 end
 
 -- A SpellBook entry that needs preparing and isn't prepared (prepared = G.prepared_ids). A container's variant
@@ -1077,13 +1075,6 @@ end
 -- book; the server keeps per-class counts in SpellBookPrepares.ClassPreparedSpellCount (bg3se field_30,
 -- HashMap<class Guid, int>), so that sum is the limit, MaxPreparedSpells only when it doesn't read (GUESS P1:
 -- the map holds the page's Max; acceptance act "prepare_spells limit = the page's (A7, read-only)" checks it).
-local function spell_meta(id)
-    local ok, st = pcall(Ext.Stats.Get, id)
-    if not ok or not st then return id, nil end
-    local okn, h = pcall(function() return st.DisplayName end)
-    local okl, l = pcall(function() return st.Level end)
-    return (okn and U.loca(h)) or id, okl and tonumber(l) or nil, st
-end
 
 -- What the spellbook page's cell shows for a spell (Client/Spellbook.lua matches cells by it: live L4, a cell has no
 -- Name and its ActionId reads "Sentinel"): the stats Icon, level, school, concentration and the main cost as the VM
@@ -1109,6 +1100,27 @@ local function cell_look(st)
     local bonus = costs:find("BonusActionPoint:", 1, true)
     look.cost = (act and bonus) and "BothActions" or act and "Action" or bonus and "BonusAction" or nil
     return look
+end
+
+-- What prep_info and the cast checks read from a spell's stats entry, per spell id: its container (SpellContainerID),
+-- shown name, level and page look (cell_look). nil when the entry doesn't read (not kept). A stats entry doesn't
+-- change in a running game, and bg3le's Ext.Stats.Get is Lua (a fresh proxy per call, each attribute a lookup plus a
+-- decode): act.prepared rides in every get_status and walked every caster's whole book through ~2 gets and ~8
+-- attribute reads per spell each time (V12: act.prepared alone 338 ms median in S068-S070).
+G.spellFacts = {}
+function G.spell_facts(id)
+    local f = G.spellFacts[id]
+    if f then return f end
+    local ok, st = pcall(Ext.Stats.Get, id)
+    if not ok or not st then return nil end
+    local okc, c = pcall(function() return st.SpellContainerID end)
+    c = okc and c and tostring(c) or ""
+    local okn, h = pcall(function() return st.DisplayName end)
+    local okl, l = pcall(function() return st.Level end)
+    f = { box = c ~= "" and c or nil, name = (okn and U.loca(h)) or id, level = okl and tonumber(l) or nil,
+          look = cell_look(st) }
+    G.spellFacts[id] = f
+    return f
 end
 
 local function class_limit(e)
@@ -1149,8 +1161,9 @@ function G.prep_info(char)
         if okk and id and not seen[id] and (kind == "RequiresPreparation" or kind == "AlwaysPrepared")
                 and not G.container_of(id) then
             seen[id] = true
-            local name, level, st = spell_meta(id)
-            local row = { id = id, name = name, level = level, look = st and cell_look(st) or nil }
+            local f = G.spell_facts(id)
+            local level = f and f.level
+            local row = { id = id, name = f and f.name or id, level = level, look = f and f.look }
             if kind == "AlwaysPrepared" then
                 if (level or 0) > 0 then info.always[#info.always + 1] = row end
             elseif G.unprepared(s, set) then

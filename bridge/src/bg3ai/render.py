@@ -1101,14 +1101,30 @@ def render_ways(ways: Any, far: float = 20.0) -> str:
     return line
 
 
+def opened_note(res: Any, H: Handles) -> str:
+    """A no-path reply soon after a door/wall the party can see opened or closed (nav `opened`, V13: S071's Wyrmway
+    Stone Wall): while it may still be moving the answer can change, so try again; later the answer was searched
+    after it, so it is current. '' when there is none."""
+    o = res.get("opened") if isinstance(res, dict) else None
+    if not isinstance(o, dict) or not o.get("uuid"):
+        return ""
+    what = f"{H.get(o['uuid'], o.get('name'))} {o.get('name') or ''}".rstrip()
+    how = "closed" if o.get("how") == "closed" else "opened"
+    ago = f"{num(o.get('ago_s', 0))}s ago"
+    if o.get("settling") and how == "opened":
+        return f"{what} opened {ago} and may still be moving: this passage just opened, try again in a few seconds"
+    return f"(searched after {what} {how} {ago}: up to date)"
+
+
 def render_path(res: Any, H: Handles) -> str:
     """nav.path -> one line. Drops the route points (dozens of coordinates) and says plainly when there is
     no path; error_cause is the engine's opaque code, so it is left out."""
     if not isinstance(res, dict):
         return compact(res, H)
     if res.get("reachable") is False:
+        note = opened_note(res, H)
         return (f"UNREACHABLE: no walkable path ({num(res.get('straight_m', '?'))}m straight line): "
-                "it may need a ladder, a jump (jump_to), a door, or another route")
+                "it may need a ladder, a jump (jump_to), a door, or another route" + (f"\n{note}" if note else ""))
     if res.get("reachable") is None:
         return compact({k: v for k, v in res.items() if k != "points"}, H)
     bits = [f"reachable: walk {num(res.get('length_m', '?'))}m"]

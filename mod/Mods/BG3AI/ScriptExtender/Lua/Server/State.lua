@@ -592,10 +592,7 @@ local function statField(st, k)
     return v
 end
 
-local function itemStats(ie, o)
-    local st
-    pcall(function() st = Ext.Stats.Get(ie.Data.StatsId) end)
-    if not st then return end
+local function statsFacts(st, o)
     local sv = tonumber(statField(st, "SupplyValue"))
     if sv and sv > 0 then o.supply = sv end
     local cat = statField(st, "ObjectCategory")
@@ -626,6 +623,28 @@ local function itemStats(ie, o)
         local ench = tonumber(boosts:match("WeaponEnchantment%((%d+)%)"))
         if ench then o.ench = ench end
     end
+end
+
+-- statsFacts per StatsId. A stats entry doesn't change in a running game, and bg3le's Ext.Stats.Get is Lua: a fresh
+-- proxy per call, each attribute read a lookup plus a decode. Uncached, every full state.inventory re-read ~14
+-- attributes of each carried item twice (supplyTotal and itemView) and of the camp chest's items (V12: the reads
+-- look/get_status/get_inventory took 140-350 ms in S066-S070). The facts are scalars; a missing entry isn't kept.
+S.statsFactsMemo = {}
+
+local function itemStats(ie, o)
+    local sid
+    pcall(function() sid = ie.Data.StatsId end)
+    if sid == nil then return end
+    local f = S.statsFactsMemo[tostring(sid)]
+    if not f then
+        local st
+        pcall(function() st = Ext.Stats.Get(sid) end)
+        if not st then return end
+        f = {}
+        statsFacts(st, f)
+        S.statsFactsMemo[tostring(sid)] = f
+    end
+    for k, v in pairs(f) do o[k] = v end
 end
 
 -- Class-bound weapons (equip_best keeps them in hand): the bind statuses the bind spells apply to the item
@@ -1388,6 +1407,9 @@ timed("state.status", function()
     local lvl = host and osi(Osi.GetRegion, host)
     out.level = lvl
     out.region = lvl and (S.REGION_NAMES[lvl] or lvl)
+    -- bumped when a wall/door/blocker near the party changed (Navigation.lua geometryChanged, V13): the bridge's
+    -- dead ends from before it no longer apply
+    out.geo_gen = BG3AI.Nav and BG3AI.Nav.geoGen or nil
     local anyCombat, ftb = false, false
     for _, u in ipairs(ctx.party) do
         local b = partyBrief(ctx, u, active)

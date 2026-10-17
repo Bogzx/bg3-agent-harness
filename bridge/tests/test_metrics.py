@@ -165,6 +165,14 @@ class Summary(unittest.TestCase):
                            [], [], start=T0, end=T0 + 20)
         self.assertEqual(play["targets"]["bridge_rt_median_ms"]["value"], 42.0)  # get_map + look only
 
+    def test_state_changing_tools_are_not_reads(self):
+        # V12: S069's read median 134.6 ms held stay x6 (~1.5 s), swap_party (14 s) and equip_best x2 (~0.3 s).
+        s = M.summarize([tool("get_nearby", 0.0, 0.09), tool("look", 1.0, 1.25), tool("stay", 2.0, 3.5),
+                         tool("swap_party", 4.0, 18.0), tool("equip_best", 19.0, 19.3), tool("get_map", 20.0, 20.02)],
+                        [], [], start=T0, end=T0 + 21)
+        self.assertEqual(s["tool_rt_ms"]["read"]["n"], 3)
+        self.assertEqual(s["targets"]["bridge_rt_median_ms"]["value"], 90.0)  # get_map, get_nearby, look
+
     def test_async_walk_is_not_idle(self):
         # An async move_to returns at once; the party walks 1-9 s, the next action comes at 12 s.
         tools = [tool("move_to", 0.0, 0.5), tool("talk_to", 12.0, 13.0)]
