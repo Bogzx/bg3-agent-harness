@@ -1107,6 +1107,8 @@ def _job_text(name: str, r: JobResult, char: str | None = None) -> str:
     r = JobResult(r.status, _trim_after(res, name, char), r.error, r.events, r.elapsed_ms)
     if isinstance(r.result, dict) and r.result.get("by_game"):
         return _game_moved_text(name, r.result, char)
+    if isinstance(r.result, dict) and r.result.get("by_trip") and r.status == "done":
+        return party.trip_moved_text(name, r.result, char or _active(), _label)
     if name == "trade" and isinstance(r.result, dict) and ("wares" in r.result or "offer" in r.result):
         head = f"trade: done" if r.status == "done" else f"trade: {r.status.upper()}" + (f" — {r.error}" if r.error else "")
         return head + "\n" + economy.trade_text(r.result, _item_handle, **_trade_view)
@@ -3446,8 +3448,16 @@ def fast_travel(waypoint: str) -> str:
             arrived = _wait_running(120) and _settle_hud(20)
             out += "; arrived" if arrived else "; still not back in the game 2 min later (wait_for idle)"
     if "fast_travel: done" in out or out.rstrip().endswith("arrived"):
+        _trip_arrived()
         out += _left_behind_after_trip(waypoint)
     return (left + "\n" + out) if left else out
+
+
+def _trip_arrived() -> None:
+    """Tell the walks a fast travel just arrived (Actions.lua act.trip_arrived): a jump in the next seconds is the
+    game's (S073 22:33:39: the last 29.8 m of a walk from the waypoint, 9 s after the arrival, read `FAILED — engine
+    teleported the character (not allowed)` and stopped the queue)."""
+    game.try_rpc("act.trip_arrived")
 
 
 AREA = areablock.AreaBlock()  # story-area travel blocks (Location), remembered per level (S065)
@@ -6239,6 +6249,7 @@ def _fast_travel_first(char: str, dest: list, dist_m: float | None) -> tuple[str
     r = game.run_job("ui.fast_travel", {"waypoint": wp["name"]}, context="client", wait_s=70)
     if r.status != "done":
         return (f"fast travel to {wp['name']} failed ({r.error or r.status}): walking instead", None)
+    _trip_arrived()
     now = None
     for _ in range(20):  # the party reappears at the waypoint after the load
         p = (_watch_conn().try_rpc("act.watch") or {}).get("party") or []

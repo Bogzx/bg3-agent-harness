@@ -644,9 +644,28 @@ A.TELEPORT_MIN_DT_MS = 50
 A.TELEPORT_DEST_M = 3.0
 A.TELEPORT_GAME_M = 8.0
 A.TELEPORT_SETTLE_MS = 1500
+-- A fast travel's arrival (the bridge calls act.trip_arrived when ui.fast_travel is done). S073 22:33:39: 9 s after
+-- the arrival at Lower City Central Wall, 19 m into a walk from the waypoint, Claude jumped the last 29.8 m (7.8 m
+-- down) onto the walk's own end (dest_m 0) with no story signal, while the save menus were up. A jump in the first
+-- TRIP_SETTLE_MS after an arrival is the game's: onto the walk's end the walk is done (event moved_after_trip),
+-- elsewhere it is interrupted like a story move.
+A.TRIP_SETTLE_MS = 15000
+A.trip_t = nil
+
+RPC.register("act.trip_arrived", function()
+    A.trip_t = RPC.now_ms()
+    return { t = A.trip_t }
+end)
+
+-- ms from the last arrival to t, or nil when there was none in the TRIP_SETTLE_MS before t.
+local function trip_age(t)
+    local age = A.trip_t and t - A.trip_t
+    if age and age >= 0 and age <= A.TRIP_SETTLE_MS then return age end
+end
 
 -- why = the story signal (the game moved the character: interrupted, event teleported_by_game), nil = the
--- engine's own teleport of our walk (failed, event teleport_blocked, as before).
+-- engine's own teleport of our walk (failed, event teleport_blocked, as before), unless it came right after a
+-- fast travel (trip_age).
 function A.tele_finish(job, why)
     local tp = job.tele
     job.tele = nil
@@ -655,6 +674,18 @@ function A.tele_finish(job, why)
     local ev = { uuid = job.char, from = pos_view(tp.from), to = pos_view(here), m = U.round(tp.m, 1) }
     local res = { pos = pos_view(here), teleported = true, from = pos_view(tp.from), m = U.round(tp.m, 1),
         dest_m = tp.dest_m and U.round(tp.dest_m, 1) or nil }
+    local trip = not why and trip_age(tp.t)
+    if trip then
+        local s = U.round(trip / 1000, 1)
+        -- a plain walk put on its own end: arrived (an approach's action after it is not done: interrupted below)
+        if tp.dest_m and tp.dest_m <= A.TELEPORT_DEST_M and job.walk and not job.walk.on_arrive then
+            ev.after_trip_s, res.after_trip_s, res.by_trip, res.dist = s, s, true, U.round(tp.dest_m, 1)
+            RPC.push("moved_after_trip", ev)
+            RPC.finish_job(job, "done", res)
+            return
+        end
+        why = string.format("%.0f s after the fast travel", trip / 1000)
+    end
     if why then
         ev.why, res.by_game, res.why = why, true, why
         RPC.push("teleported_by_game", ev)

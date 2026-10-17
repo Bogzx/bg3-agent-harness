@@ -127,6 +127,7 @@ local function reset()
     if G then G.turn_over = {} end -- TurnEnded's marker (turn over until TurnStarted) is per test
     -- the stub world moves in synthetic multi-metre steps per 60 ms tick: NAV-8's small-step rule off (own tests)
     if A then A.TELEPORT_SMALL_M = 1e9 end
+    if A then A.trip_t = nil end -- a fast travel's arrival (act.trip_arrived) is per test
     world = {
         [P1] = { pos = { 0, 0, 0 }, comps = {} },
         [NPC] = { pos = { 10, 0, 0 }, comps = {} },
@@ -411,6 +412,65 @@ test("V9 S063: a jump that lands far from where the walk was going is the game's
     tick()
     eq(j.status, "interrupted", "status"); eq(j.result.by_game, true, "by_game")
     assert(j.error:find("landed 22 m from where it was walking", 1, true), j.error)
+end)
+
+-- V15 S073 22:33:39: Lower City Central Wall reached at 23509.9 (bg3le log clock), the walk from the waypoint began 0.5 s later;
+-- at 23518.86, 19 m along it, Claude jumped 29.8 m (7.8 m down) onto the walk's own end, no story signal with it.
+local S073_FROM, S073_END = { -48.5, 27.9, -73.5 }, { -47.7, 20.1, -102.2 }
+local function s073_jump(after_ms, land)
+    op("trip_arrived", {})
+    world[P1].pos = { S073_FROM[1], S073_FROM[2], S073_FROM[3] }
+    local j = job(op("move_to", { char = P1, pos = S073_END }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    local sway = 0.05
+    while clock - A.trip_t < after_ms do -- 5 cm to and fro a tick: not standing still (the 5 s stuck check)
+        sway = -sway
+        world[P1].pos = { S073_FROM[1] + sway, S073_FROM[2], S073_FROM[3] }
+        tick()
+    end
+    world[P1].pos = land or S073_END
+    tick()
+    return j
+end
+
+test("V15 S073: a jump onto the walk's end 9 s after a fast travel is the game's: the walk is done", function()
+    local seq = RPC.eventSeq
+    local j = s073_jump(9000)
+    eq(j.status, "running", "settling (a story signal may still come)")
+    settle()
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.by_trip, true, "by_trip")
+    near(j.result.m, 29.8, "m"); near(j.result.dist, 0, "at the walk's end")
+    assert(j.result.after_trip_s >= 9 and j.result.after_trip_s < 9.2, "after_trip_s " .. j.result.after_trip_s)
+    eq(last_event("teleport_blocked", seq), nil, "not a blocked teleport")
+    eq(last_event("teleported_by_game", seq), nil, "no story move (it stops the member's queue)")
+    near(last_event("moved_after_trip", seq).data.m, 29.8, "event")
+end)
+
+test("V15: the same jump 16 s after the arrival is still the engine's teleport", function()
+    local j = s073_jump(16000)
+    settle()
+    eq(j.status, "failed", "status"); assert(j.error:find("engine teleported"), j.error)
+    eq(j.result.by_trip, nil, "by_trip")
+end)
+
+test("V15: a jump off the walk's end right after a fast travel is the game's move, not ours", function()
+    local seq = RPC.eventSeq
+    local j = s073_jump(3000, { -48.0, 27.9, -78.5 }) -- 5 m along, 24 m short of the end
+    settle()
+    eq(j.status, "interrupted", "status"); eq(j.result.by_game, true, "by_game")
+    assert(j.error:find("3 s after the fast travel", 1, true), j.error)
+    eq(last_event("teleport_blocked", seq), nil, "not a blocked teleport")
+end)
+
+test("V15: an approach put on its spot right after a fast travel does not count its action as done", function()
+    op("trip_arrived", {})
+    local j = job(op("interact", { char = P1, target = GEM }))
+    eq(j.phase, "approach", "phase")
+    tick()
+    world[P1].pos = { j.walk.pos[1], j.walk.pos[2], j.walk.pos[3] }
+    tick()
+    settle()
+    eq(j.status, "interrupted", "status " .. tostring(j.error)); eq(#called("Use"), 0, "no Use")
 end)
 
 test("V9 S066: the members walking to him keep walking when his conversation starts", function()
