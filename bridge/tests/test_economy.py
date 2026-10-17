@@ -697,6 +697,8 @@ class Pickpocket(unittest.TestCase):
                 return JobResult("done", test.POCKETS)
 
             def try_rpc(self, op, *a, **k):
+                if op == "ui.selected":  # the HUD has Claude too (A16: the pickpocket select reads the client)
+                    return {"uuid": _u(1)}
                 return self.rpc(op) if op == "state.status" else None
 
             def drain_events(self, ctx):

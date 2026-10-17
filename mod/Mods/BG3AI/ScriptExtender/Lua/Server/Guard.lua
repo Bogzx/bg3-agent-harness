@@ -1552,13 +1552,14 @@ G.BLOCKING_STATUS_TYPES = { INCAPACITATED = true, FEAR = true }
 -- (HASTE_LETHARGY, `using "STUNNED"`); the guard refused her Rage "(it takes the whole turn)", yet the same turn's
 -- move and both attacks worked.
 G.ACTING_STATUSES = { HASTE_LETHARGY = true }
-function G.blocking_status(char)
+-- with_acting: those too (a walk that never started names them, S074).
+function G.blocking_status(char, with_acting)
     local V = BG3AI.Visibility
     local e = V and V.statuses and G.entity(char)
     if not e then return nil end
     for _, s in ipairs(V.statuses(e) or {}) do
         local ok, typ = pcall(function() return tostring(Ext.Stats.Get(s.id).StatusType) end)
-        if ok and G.BLOCKING_STATUS_TYPES[typ] and not G.ACTING_STATUSES[s.id] then return { name = s.name, type = typ } end
+        if ok and G.BLOCKING_STATUS_TYPES[typ] and (with_acting or not G.ACTING_STATUSES[s.id]) then return { name = s.name, type = typ } end
     end
     return nil
 end

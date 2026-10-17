@@ -152,6 +152,10 @@ local function controlledUuid()
     return e and try(function() return e.Uuid.EntityUuid end) or nil
 end
 
+-- The HUD's selected character. A16 (S074 23:06:52): the server's act.select was done while the client still had
+-- another member; the bridge confirms act.select against this (Game._select).
+RPC.register("ui.selected", function() return { uuid = controlledUuid() } end)
+
 -- Interrupt ids in InterruptContainer order, with their display names.
 local function interruptIds(uuid)
     local e = try(Ext.Entity.Get, uuid)

@@ -2867,7 +2867,7 @@ def pickpocket(npc: str, who: str | None = None, take: str = "", min_chance: int
     listing = _pockets(args)
     if listing.status != "done" and "no pickpocket window" in str(listing.error or ""):
         char = _who(who)
-        if who and char != (game.try_rpc("state.status") or {}).get("active"):
+        if who and not _hud_has(char):
             # Live 12:3x: who=Shadowheart while Claude was controlled: the engine opened the window, but the client
             # shows it only for the controlled character ("no pickpocket window" after 3 s). Take control, as a player
             # does before stealing with someone else.
@@ -4400,8 +4400,7 @@ def _select_for_clicks(char: str, shows: str = "the hotbar") -> str:
     """Review H1: the click routes need the caster selected (the hotbar shows the selected character). Select it BEFORE
     act.cast {ui=true} starts: an act.select inside its on_start is a new action for that character, and the mod's
     start() interrupts the running ui job ("superseded by a new action") while the clicks cast for real. A note."""
-    st = game.try_rpc("state.status") or {}
-    if not isinstance(st, dict) or st.get("active") == char:
+    if _hud_has(char):
         return ""
     r = game.run_job("act.select", {"char": char}, wait_s=5)
     return f"selected {_label(char)} first ({shows} shows the selected character)" if r.status == "done" \
@@ -4507,7 +4506,7 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
         return JobResult("done", {"ended": True}, None, r.events, r.elapsed_ms)
     try:
         with _InputHeld():  # M7: no click/select from the MCP thread between this select and the press
-            if _active() != char:
+            if not _hud_has(char):  # the press ends whoever the HUD has selected (A16)
                 game.run_job("act.select", {"char": char}, wait_s=5)
             game.rpc("ui.command", {"widget": "*", "command": "EndTurn"}, context="client")
     except GameError as e:
@@ -4933,7 +4932,7 @@ def insert_item(item: str | None = None, into: str | None = None, who: str | Non
     if r.status == "failed" and "no Insert Item panel" in str(r.error):
         if not into:
             return _finish("insert_item", args, "insert_item: FAILED — no Insert Item panel is open: pass into=<the pedestal/socket> (interact opens it)", t0)
-        if char != (game.try_rpc("state.status") or {}).get("active"):
+        if not _hud_has(char):
             # S037 20:15-20:17: who=Shadowheart while Claude was controlled: 3 interacts "used … success", no panel;
             # selecting her and clicking opened it. The client shows the panel only to the controlled character
             # (as pickpocket's window), so take control first, as a player does.
@@ -5536,7 +5535,7 @@ def _select_for_level_up(uuid: str) -> str | None:
     """Make `uuid` the controlled character (no-op when it already is). -> the previously active member, or None."""
     try:  # best effort: an unselected member still levels when its portrait fingerprint is unique
         prev = _active()
-        if prev != uuid:
+        if not _hud_has(uuid):
             game.run_job("act.select", {"char": uuid}, wait_s=5)
             time.sleep(0.2)  # the client's ClientControl follows the selection a frame or two later
         return prev
@@ -5866,38 +5865,32 @@ def confirm(answer: str = "yes", amount: int = 0) -> str:
     return _box_act("confirm", "ui.confirm", args, wait_s=8)
 
 
+def _hud_has(char: str) -> bool:
+    """Does the HUD (the client's ClientControl, what every ui.* op and the HUD's buttons act on) have `char`
+    selected? A16: state.status `active` is the server's view; in S074 it said Claude while the HUD had another member."""
+    hud = (game.try_rpc("ui.selected", context="client") or {}).get("uuid")
+    return bool(hud) and hud[-36:] == char[-36:]
+
+
 def _reactions_rpc(char: str, args: dict) -> Any:
-    """ui.reactions works on the HUD's selected character (the client's ClientControl). The server's `active` falls
-    back to the host when no party member holds ClientControl, so "already selected" can be wrong (S025; S041
-    22:41:22 combat_turn "reactions: FAILED — char is not the selected character"): select first when the server
-    disagrees, and on the client's refusal select and retry once."""
-    sel = None
-    try:
-        if _active() != char:
-            sel = game.run_job("act.select", {"char": char}, wait_s=5)
-    except GameError:
-        pass
+    """ui.reactions works on the HUD's selected character (the client's ClientControl): select first when the HUD
+    shows another member. act.select is done only once the client shows the character (Game._select, A16: in S041,
+    S069 and S074 the server's own view said selected while the HUD kept another member, and ui.reactions refused)."""
+    if not _hud_has(char):
+        sel = game.run_job("act.select", {"char": char}, wait_s=5)
+        if sel.status != "done":
+            raise GameError(f"{_label(char)} could not be selected: {sel.error or sel.status}")
     try:
         return game.rpc("ui.reactions", args, context="client")
     except GameError as e:
         if "not the selected character" not in str(e):
             raise
         last = e
-    # act.select waits until the character holds ClientControl (one resync via another member): its failure names
-    # who the game kept selected (S069 20:45:31: done at once while another member was selected, 6 refusals)
-    if sel is None or sel.status == "done":
-        sel = game.run_job("act.select", {"char": char}, wait_s=5)
+    # selected away between the check and the call (the game picks a member at a turn start): select once more
+    sel = game.run_job("act.select", {"char": char}, wait_s=5)
     if sel.status != "done":
         raise GameError(f"{last} ({_label(char)} could not be selected: {sel.error or sel.status})")
-    for _ in range(5):  # the client's ClientControl follows the selection a frame or two later
-        time.sleep(0.1)
-        try:
-            return game.rpc("ui.reactions", args, context="client")
-        except GameError as e:
-            if "not the selected character" not in str(e):
-                raise
-            last = e
-    raise GameError(f"{last} (selected {_label(char)} and retried)")
+    return game.rpc("ui.reactions", args, context="client")
 
 
 @mcp.tool()
@@ -7563,6 +7556,11 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
         m = re.search(r"dist=([\d.]+)", text)
         info["short"] = "route_end"
         text += out_of_melee(float(m.group(1)) if m else dist_now())
+    elif "never started moving" in text:
+        # S074 r2: Claude's walk stood still (the mod gives up after 2.5 s, no longer 5 s of "no path"): the plan
+        # goes on from where he stands, melee on a target out of reach skipped like a route that ends here
+        info["short"] = "no_path"
+        text += out_of_melee(dist_now())
     lines.append(f"move {what}: {text}")
     return "none"
 

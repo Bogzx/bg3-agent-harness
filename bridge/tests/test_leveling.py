@@ -836,8 +836,9 @@ class ServerRetryAndRefresh(unittest.TestCase):
             def try_rpc(self, *a, **k):
                 return None
 
-        saved = (S._act, S._who, S._active, S.game, S._inp)
+        saved = (S._act, S._who, S._active, S.game, S._inp, S._hud_has)
         S._act, S._who, S._active, S.game, S._inp = fake_act, (lambda ref: "u-sh"), (lambda: "u-claude"), G(), (lambda: None)
+        S._hud_has = lambda u: u == "u-claude"  # the HUD has Claude (A16: the select reads the client)
         try:
             out = S.level_up("Shadowheart", plan='{"cantrips": ["Light"]}')
             self.assertTrue(out.startswith("level_up: FAILED"))
@@ -851,7 +852,7 @@ class ServerRetryAndRefresh(unittest.TestCase):
             S.level_up("Claude", plan="{}")
             self.assertEqual(selects, [])   # already the active member
         finally:
-            S._act, S._who, S._active, S.game, S._inp = saved
+            S._act, S._who, S._active, S.game, S._inp, S._hud_has = saved
 
     def test_finish_refreshes_status_for_a_new_level_up(self):
         from bg3ai import server as S

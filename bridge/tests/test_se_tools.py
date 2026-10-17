@@ -677,6 +677,8 @@ class InsertFake:
             return {"items": [{"uuid": self.BOOK, "name": "Teachings of Loss: The Nightsinger", "owner": self.ME}]}
         if op == "state.status":
             return {"active": self.ME}
+        if op == "ui.selected":  # the HUD has the same member (A16: HUD-dependent selects read the client)
+            return {"uuid": self.ME}
         return {}
 
     try_rpc = rpc

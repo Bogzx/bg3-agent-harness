@@ -564,6 +564,53 @@ test("combat move_to entity: within movement, guard charges what the engine did 
     near(j.result.after.movement, 3.5, "movement left")
 end)
 
+test("combat move_to: a walk that never starts fails after 2.5 s naming a Lethargic walker (S074 r2)", function()
+    combat_setup(12)
+    stats["HASTE_LETHARGY"] = { StatusType = "INCAPACITATED" }
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ statuses = function() return { { id = "HASTE_LETHARGY", name = "Lethargic" } } end },
+        { __index = savedV })
+    local j = job(op("move_to", { char = P1, target = NPC }))
+    eq(j.status, "running", "ordered " .. tostring(j.error))
+    tick(40) -- 2.4 s standing still: the old walk waited 5 s for "no path to the destination"
+    eq(j.status, "running", "before the window")
+    tick(3)
+    BG3AI.Visibility = savedV
+    eq(j.status, "failed", "status")
+    assert(j.error:find("never started moving (2.5 s, the route was there); the character is Lethargic", 1, true), j.error)
+    assert(not j.error:find("not this character's turn", 1, true), "the turn goes on: " .. j.error)
+    assert(#called("PurgeOsirisQueue") >= 1, "the order is purged")
+end)
+
+test("combat move_to: the turn passing mid-walk stops it at once with the fatal turn text (S074 r2)", function()
+    combat_setup(12)
+    local j = job(op("move_to", { char = P1, target = NPC }))
+    world[P1].pos = { 1, 0, 0 }
+    tick()
+    world[P1].comps.TurnBased.IsActiveCombatTurn = false -- the game ended the turn (now Cazador's)
+    tick(2)
+    eq(j.status, "running", "a flag seen for 2 ticks is not a stop yet")
+    tick()
+    eq(j.status, "failed", "status")
+    assert(j.error:find("not this character's turn any more: the game passed the turn on during the walk (travelled 1.0 m)",
+        1, true), j.error)
+end)
+
+test("combat move_to: the flag dropping because the fight ended is not a stop; no start window out of combat", function()
+    combat_setup(12)
+    local j = job(op("move_to", { char = P1, target = NPC }))
+    world[P1].comps.TurnBased.IsActiveCombatTurn = false
+    osiv[key("IsInCombat", P1)] = nil -- the last enemy died: out of combat, the walk goes on
+    tick(60) -- 3.6 s, past the combat no-start window too: the walk began in combat, but the fight is over
+    eq(j.status, "running", "walks on " .. tostring(j.error))
+    reset()
+    j = job(op("move_to", { char = P1, target = NPC }))
+    tick(60)
+    eq(j.status, "running", "out of combat: the old 5 s rule only")
+    tick(30)
+    eq(j.status, "failed", "5 s"); assert(j.error:find("no path to the destination", 1, true), j.error)
+end)
+
 test("combat loot approach: budget enforced (click ops walk in combat too)", function()
     combat_setup(4)
     osiv[key("IsDead", NPC)] = 1

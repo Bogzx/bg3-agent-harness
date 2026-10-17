@@ -1653,6 +1653,16 @@ def sec_se() -> None:
         item("act.select done = the member holds ClientControl (A13)",
              "PASS" if r.status == "done" and now == other["uuid"] else "FAIL",
              f"{r.status} {r.error or ''} result={r.result}; active after={now} (wanted {other['uuid']})")
+        # [act] A16 S074 23:06:52: act.select was done on the server while the HUD kept another member (ui.reactions
+        # refused). Done now means the client's ClientControl (ui.selected) shows the member; a second select of the
+        # same member is the server's no-op order that S074 hit.
+        hud = (S.game.try_rpc("ui.selected", context="client") or {}).get("uuid")
+        r2 = S.game.run_job("act.select", {"char": other["uuid"]}, wait_s=5)
+        hud2 = (S.game.try_rpc("ui.selected", context="client") or {}).get("uuid")
+        item("act.select done = the HUD shows the member (A16)",
+             "PASS" if r.status == "done" and r2.status == "done" and hud == hud2 == other["uuid"] else "FAIL",
+             f"first {r.status}, HUD after={hud}; again {r2.status} {r2.error or ''} result={r2.result}, HUD after="
+             f"{hud2} (wanted {other['uuid']}; None = client Lua not hot-reloaded)")
         if sel:
             S.game.run_job("act.select", {"char": sel}, wait_s=5)
 

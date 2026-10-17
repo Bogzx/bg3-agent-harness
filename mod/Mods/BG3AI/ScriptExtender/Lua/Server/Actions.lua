@@ -505,7 +505,7 @@ local function begin_walk(job, opts)
         target = opts.target, pos = opts.pos, ev = ev_name(job, "mv"),
         last_pos = G.pos(job.char), y0 = (G.pos(job.char) or {})[2], still_ms = 0, travelled = 0,
         tolerance = opts.tolerance or 1.5, reach = opts.reach, melee = opts.melee, on_arrive = opts.on_arrive,
-        move_id = opts.move_id or job.id,
+        move_id = opts.move_id or job.id, combat = G.in_combat(job.char),
     }
     local p = opts.pos
     -- The engine's own route to p: big steps along it (jump links, a frame
@@ -749,6 +749,43 @@ local function teleport_check(job, track, armed)
     return here, step, dt
 end
 
+-- S074 23:21:13 (bg3le 26405.1-26410.2): Claude's round-2 move (12 m route, in budget) stood still 5.1 s and came
+-- back "no path to the destination" while his turn had passed to Cazador (he began it Lethargic: his Haste had just
+-- ended); the plan's next step only then found the turn gone. A walk begun in combat stops at once when its turn has
+-- passed (WALK_TURN_GONE_TICKS in a row, so a flag flipping as the fight ends is not a stop), and one that never
+-- moves fails after WALK_NO_START_COMBAT_MS (the cast's no-start window is 3 s) naming what stops the walker.
+A.WALK_TURN_GONE_TICKS = 3
+A.WALK_NO_START_COMBAT_MS = 2500
+local function combat_walk_stop(job)
+    local w = job.walk
+    local function stop(why)
+        w.done = true
+        pcall(G.osi, "PurgeOsirisQueue", job.char)
+        local blk = G.blocking_status(job.char, true)
+        RPC.finish_job(job, "failed", job.partial, why .. (blk and ("; the character is " .. tostring(blk.name))
+            or ""))
+        return true
+    end
+    if not G.in_combat(job.char) then return false end -- the fight ended mid-walk: an ordinary walk now
+    local active = G.tb_flags(job.char)
+    if active == false or G.turn_is_over(job.char) then
+        w.gone_ticks = (w.gone_ticks or 0) + 1
+        if w.gone_ticks >= A.WALK_TURN_GONE_TICKS then
+            return stop(string.format("not this character's turn any more: the game passed the turn on during the "
+                .. "walk (travelled %.1f m)", w.travelled))
+        end
+    else
+        w.gone_ticks = 0
+    end
+    if w.travelled < 0.05 and w.still_ms >= A.WALK_NO_START_COMBAT_MS then
+        local d, _, de = walk_dist_left(job)
+        if not (walk_close_enough(job, d, de) or (d and d <= w.tolerance)) then
+            return stop(string.format("never started moving (%.1f s, the route was there)", w.still_ms / 1000))
+        end
+    end
+    return false
+end
+
 -- Per-tick walk bookkeeping: teleports, distance travelled (combat budget)
 -- and stuck detection.
 local function walk_tick(job)
@@ -772,6 +809,7 @@ local function walk_tick(job)
         end
         return
     end
+    if w.combat and combat_walk_stop(job) then return end
     if w.still_ms >= 5000 then
         local d, _, de = walk_dist_left(job)
         if walk_close_enough(job, d, de) or (d and d <= w.tolerance) then

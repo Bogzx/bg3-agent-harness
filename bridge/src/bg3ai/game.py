@@ -443,7 +443,10 @@ class Game:
         """Start an action op that returns {job}, then poll until it settles or wait_s passes.
         on_start(context, job_id) runs once the job exists (the action queue uses it to cancel)."""
         t0 = time.time()
-        r = self._run_job(op, args, context, wait_s, poll_s, on_start)
+        if op == "act.select" and context == "server":
+            r = self._select(args, wait_s, poll_s, on_start)
+        else:
+            r = self._run_job(op, args, context, wait_s, poll_s, on_start)
         if self.metrics is not None and (r.elapsed_ms or r.status == "still_running"):  # a real job, not an instant op
             self.metrics.job_done(op, t0, time.time(), r.status)
         return r
@@ -498,6 +501,57 @@ class Game:
             if r is not None:
                 return r
             wait = True
+
+    # A16 (S074 23:06:52, bg3le 25512.4): act.select was done on the server in 1 ms (its own view already showed
+    # Claude) while the HUD kept another member selected; ui.reactions refused, and the second act.select was the same
+    # no-op. The client's ClientControl is what the HUD and every ui.* op act on: act.select is done once the client
+    # shows the character.
+    SELECT_FOLLOW_S = 1.0  # a real selection change reaches the client a frame or two later
+
+    def hud_selected(self) -> str | None:
+        """The character the HUD has selected (the client's ClientControl), or None when it can't be read."""
+        try:
+            got = self.rpc("ui.selected", context="client")
+        except GameError:
+            return None
+        return got.get("uuid") if isinstance(got, dict) else None
+
+    def _hud_follows(self, char: str) -> bool:
+        """Does the HUD show `char` within SELECT_FOLLOW_S? An unreadable client counts as yes (the server's word)."""
+        deadline = time.monotonic() + self.SELECT_FOLLOW_S
+        while True:
+            u = self.hud_selected()
+            if u is None or u[-36:] == char[-36:]:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+
+    def _select(self, args: dict, wait_s: float, poll_s: float, on_start=None) -> JobResult:
+        char = str(args.get("char") or "")
+        r = self._run_job("act.select", args, "server", wait_s, poll_s, on_start)
+        if r.status != "done" or not char or self._hud_follows(char):
+            return r
+        # The server's order was a no-op (its current character already): select another member and wait for the
+        # HUD to show them, then this one again, as a player clicks another portrait and back.
+        st = self.try_rpc("state.status") or {}
+        rows = st.get("party") if isinstance(st, dict) else None
+        via = next((p["uuid"] for p in rows or [] if isinstance(p, dict) and p.get("uuid")
+                    and p["uuid"][-36:] != char[-36:] and not p.get("dead") and not p.get("downed")), None)
+        via_ok = bool(via) and self._run_job("act.select", {"char": via}, "server", wait_s, poll_s,
+                                             on_start).status == "done"
+        if via_ok:
+            self._hud_follows(via)
+            r = self._run_job("act.select", args, "server", wait_s, poll_s, on_start)
+            if r.status == "done" and self._hud_follows(char):
+                return JobResult("done", {**(r.result if isinstance(r.result, dict) else {}), "via": via}, None,
+                                 r.events, r.elapsed_ms)
+        if r.status != "done":
+            return r
+        holder = self.hud_selected()
+        return JobResult("failed", {"holder": holder, "via": via}, "the HUD kept another member selected (act.select "
+                         "was done on the server" + ("; selecting another member and back didn't move it either)"
+                                                     if via_ok else ")"), r.events, r.elapsed_ms)
 
     def poll_job(self, job_id: int, context: str = "server", wait_s: float = 25.0) -> JobResult:
         """Wait on a job someone else started (wait_for): the first poll is at once (it may be done)."""

@@ -78,6 +78,7 @@ class FakeGame:
         self.activity: dict | None = None  # nav.activity reply (None: op unknown, like a mod not reloaded yet)
         self.autoskip: dict | None = None  # autoskip.status reply (None: op unknown, an old mod)
         self.active = P1  # state.status active (the selected character); act.select moves it
+        self.hud: str | None = None  # ui.selected (the client's ClientControl) when it differs from self.active
         # Actions.lua start(): a new action job for a character interrupts its running one (opt-in: review H1)
         self.supersede = False
 
@@ -116,7 +117,7 @@ class FakeGame:
                         if j["status"] == "running" and j["args"].get("char") == args["char"]:
                             j["status"], j["error"] = "interrupted", "superseded by a new action"
                 if op == "act.select":
-                    self.active = args["char"]
+                    self.active, self.hud = args["char"], None
                 self.jobs[jid] = {"status": "running", "end": time.monotonic() + self.dur.get(op, 0.02),
                                   "op": op, "args": args}
                 return {"job": jid, "eta_s": 1.0, "route_m": 4.0}
@@ -146,6 +147,8 @@ class FakeGame:
                 if self.ui_seq:
                     return self.ui_seq.pop(0) if len(self.ui_seq) > 1 else self.ui_seq[0]
                 return dict(self.ui)
+            if op == "ui.selected":
+                return {"uuid": self.hud or self.active}
             if op in ("ui.dismiss", "ui.reactions"):
                 return {"ok": True}
             if op == "state.status":
@@ -695,7 +698,7 @@ class CombatTurn(Base):
         def sleep(s):
             clock[0] += s
         g = type("G", (), {"rpc": staticmethod(rpc), "try_rpc": staticmethod(rpc)})()
-        with mock.patch.object(server, "game", g), mock.patch.object(server, "_active", lambda: P1), \
+        with mock.patch.object(server, "game", g), mock.patch.object(server, "_hud_has", lambda u: u == P1), \
                 mock.patch.object(server.time, "monotonic", lambda: clock[0]), \
                 mock.patch.object(server.time, "sleep", sleep):
             r = server._end_turn_by_hud(P1, server.JobResult("failed", None, server.END_IGNORED))
@@ -1022,6 +1025,28 @@ class CombatTurn(Base):
         self.assertIn("Shout_Dash: skipped (more movement gets no closer", out)
         self.assertEqual(self.casts(), ["Shout_Dodge"])
 
+    def test_walk_that_never_starts_runs_the_rest_from_here(self):
+        # S074 23:21:13: Claude's move stood still (Lethargic) 5.1 s, "no path"; the mod now gives up after 2.5 s
+        self.g.combat = combat(gob_dist=8.0)
+        self.g.refuse_if = lambda op, a: ("never started moving (2.5 s, the route was there); the character is "
+                                          "Lethargic" if op == "act.move_to" else None)
+        out = server.combat_turn(self.plan(move=self.gob,
+                                           action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   {"ability": "Projectile_MainHandAttack", "target": self.gob}]))
+        self.assertIn("never started moving", out)
+        self.assertIn("melee is out of reach this turn", out)
+        self.assertEqual(self.casts(), ["Projectile_MainHandAttack"])
+
+    def test_turn_passing_during_the_walk_stops_the_plan(self):
+        # S074 23:21:50: "action: it is no longer e5 Claude's turn" came only from the next step; the walk says it now
+        self.g.combat = combat(gob_dist=8.0)
+        self.g.refuse_if = lambda op, a: ("not this character's turn any more: the game passed the turn on during "
+                                          "the walk (travelled 0.0 m)" if op == "act.move_to" else None)
+        out = server.combat_turn(self.plan(move=self.gob,
+                                           action=[{"ability": "Projectile_MainHandAttack", "target": self.gob}]))
+        self.assertIn("the game passed the turn on during the walk", out)
+        self.assertEqual(self.casts(), [])
+
     def test_blocked_spot_beside_target_walks_the_route_instead(self):
         # S032 17:44: post-Dash walk to the spot beside e743 ended where it started (5.7 m, 9 m unspent)
         self.g.combat = combat(gob_dist=5.7)
@@ -1315,6 +1340,16 @@ class CombatTurn(Base):
         self.assertEqual(len(self.g.ops("ui.reactions")), 1)
         self.assertIn("could not be selected: the game kept Karlach selected", out)
         self.assertIn("action: Shout_Dodge: done", out)
+
+    # A16 (S074 23:06:52): the server said Claude was selected, the HUD had another member: select before the prep
+    def test_reactions_prep_selects_first_when_the_hud_shows_another_member(self):
+        self.g.hud = P2
+        out = server.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
+        sel = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.select"]
+        reac = [i for i, (o, _) in enumerate(self.g.calls) if o == "ui.reactions"]
+        self.assertEqual(len(reac), 1)
+        self.assertTrue(sel and sel[0] < reac[0], self.g.calls)
+        self.assertIn("reactions set: Divine Smite=always", out)
 
     def test_next_party_member_already_up_gets_actions(self):
         self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
