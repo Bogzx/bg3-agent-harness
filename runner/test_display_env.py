@@ -118,6 +118,20 @@ class LaunchRefusesWithoutDisplay(unittest.TestCase):
         self.assertIn("./bin/bg3", r.stdout)
         self.assertFalse(self.marker.exists())
 
+    def test_ui_strict_env(self):
+        """S17: BG3AI_UI_STRICT=1 starts the game with bg3le's strict frame lock; unset/0 leaves it off."""
+        sh = Path(D.__file__).parent / "launch_game.sh"
+
+        def cmd(**env):
+            r = subprocess.run(["bash", str(sh), "--no-input-shim", "--dry-run"], capture_output=True, text=True,
+                               env={**self.env, "BG3AI_BG3LE_LIB": str(self.tmp / "libbg3le.so"), **env}, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return r.stdout
+        self.assertIn("BG3LE_UI_STRICT=1", cmd(BG3AI_UI_STRICT="1"))
+        self.assertNotIn("BG3LE_UI_STRICT", cmd(BG3AI_UI_STRICT="0"))
+        self.assertNotIn("BG3LE_UI_STRICT", cmd())
+        self.assertFalse(self.marker.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

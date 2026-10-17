@@ -50,6 +50,9 @@ MILESTONES: list[tuple[str, int, str, str, Any]] = [
     ("iron_throne", 3, "The Iron Throne", "region", r"iron throne"),
     ("bhaal_temple", 3, "Temple of Bhaal", "area", r"bhaal temple|temple of bhaal"),
     ("orin", 3, "Orin's Netherstone", "quest_done", r"orin'?s netherstone"),
+    # Astarion's arc (claude-run-2 S077 01:05: "Investigate Cazador's Palace" done after the kill, "Call of the Blood"
+    # is his own quest). Not "The Pale Elf": it closed in S074 when Astarion died in a lost try that was reloaded.
+    ("cazador", 3, "Cazador defeated", "quest_done", r"investigate cazador'?s palace|call of the blood"),
     ("morphic_pool", 3, "Morphic Pool", "area", r"morphic pool"),
     ("upper_city", 3, "Upper City (endgame)", "region", r"upper city"),
     ("high_hall", 3, "High Hall", "area", r"high hall"),
@@ -59,8 +62,8 @@ MILESTONES: list[tuple[str, int, str, str, Any]] = [
     ("game_end", 3, "The end (credits / epilogue)", "end", True),
 ]
 GAME_END = "game_end"
-# Side content: never the "next" milestone (claude-run-2 may skip the Iron Throne).
-OPTIONAL = {"iron_throne"}
+# Side content: never the "next" milestone and never moves it (claude-run-2 may skip the Iron Throne).
+OPTIONAL = {"iron_throne", "cazador"}
 
 
 def empty_facts() -> dict:
@@ -143,7 +146,7 @@ def status(seen: dict | None, sessions: list[tuple[str, list[dict]]] | None = No
     ended = any(i["id"] == GAME_END and i["reached"] for i in items)
     # after the furthest one reached: a route that skipped one (claude-run-2 took the Mountain Pass, never the
     # Underdark) isn't sent back to it
-    last = max((k for k, i in enumerate(items) if i["reached"]), default=-1)
+    last = max((k for k, i in enumerate(items) if i["reached"] and i["id"] not in OPTIONAL), default=-1)
     nxt = None if ended else next((i["label"] for i in items[last + 1:] if not i["reached"]
                                    and i["id"] not in OPTIONAL), None)
     return {"reached": len(done), "total": len(items), "act": max((i["act"] for i in done), default=1),

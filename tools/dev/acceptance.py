@@ -46,15 +46,17 @@ SCROLL_SAVE = "S066-end"
 # the end), then the crash guard's reloads, then se, whose last items spend a spell slot (hotbar Bless) and switch
 # bg3le's strict frame lock on and back: a crash there costs no other section. Every section loads its own save first,
 # so a section that died half-way leaves nothing behind but process-wide state (the strict lock: restored in a
-# finally; a nav kill list entry: cleared in a finally).
-SECTIONS = ["reads", "setup", "act", "vis", "gear", "swap", "rest", "trade", "nav", "combat", "loads", "se"]
+# finally; a nav kill list entry: cleared in a finally). strict (S17) runs last: strict on across 2 loads + a long
+# rest, restored in a finally.
+SECTIONS = ["reads", "setup", "act", "vis", "gear", "swap", "rest", "trade", "nav", "combat", "loads", "se", "strict"]
 # Estimated seconds per section (the 2026-10-11/13 full runs on the test machine: max seen, + today's new items), for the plan.
 EST_S = {"reads": 65, "setup": 30, "act": 140, "vis": 115, "gear": 60, "swap": 85, "rest": 85, "trade": 135,
-         "nav": 195, "combat": 220, "loads": 80, "se": 350}
+         "nav": 195, "combat": 220, "loads": 80, "se": 350, "strict": 150}
 # Who fixes a section's FAILs (docs/ORCHESTRATOR.md ownership): tools/dev/live_window.py prints the failures per owner.
 # An item dict may carry its own "owner" to override this.
 SECTION_OWNERS = {"reads": "vis", "setup": "setup", "act": "act", "vis": "vis", "gear": "act", "swap": "act",
-                  "rest": "act", "trade": "act", "nav": "vis", "combat": "act", "loads": "se", "se": "se"}
+                  "rest": "act", "trade": "act", "nav": "vis", "combat": "act", "loads": "se", "se": "se",
+                  "strict": "setup"}
 # tools/dev/live_window.py holds runtime/game.lock for its whole window and sets this: the sections then run without
 # their own flock (a second flock on the same file would wait for the window's hold forever).
 LOCK_HELD_ENV = "BG3AI_GAME_LOCK_HELD"
@@ -65,7 +67,8 @@ SAVE_NEEDS = {
                                      "Moonrise Towers)"},
     HOTBAR_SAVE: {"level": "CTY_Main_A", "party_has": ["Claude"], "party_min": 3,
                   "used_by": "se/act hotbar casts (Claude the Paladin's Bless on 3; Dimension Door if Gale is in); "
-                             "act prepare_spells (Bless prepared and unprepared on Claude, A5)"},
+                             "act prepare_spells (Bless prepared and unprepared on Claude, A5); strict (load 2, then camp "
+                             "+ long_rest from Act 3)"},
     SCROLL_SAVE: {"party_has": ["Karlach"], "party_min": 3,
                   "used_by": "act point scroll aimed at the ground (A9: Karlach's Scroll of Misty Step)"},
     TRADE_SAVE: {"level": "SCL_Main_A", "near": ((-26.8, 27.4, 164.8), 8),
@@ -1572,6 +1575,69 @@ def strict_lock_probe() -> None:
          f"{errs} without a screen{'; ' + crash if crash else ''}")
 
 
+STRICT_ITEM = "strict frame lock across loads + rest (S17)"
+
+
+def strict_counters(set_to: bool | None = None) -> dict:
+    """bg3le's strict frame lock (patch 0010), optionally switched first: {strict, refused, lua_timeouts,
+    ui_timeouts} or {error}."""
+    arg = "" if set_to is None else ("true" if set_to else "false")
+    try:
+        parts = S.game.eval("local f = Ext._Internal and Ext._Internal.UiStrict if type(f) ~= 'function' then "
+                            f"return 'missing' end local on, n = f({arg}) local _, lt, ut = Ext._Internal.UiSerialize() "
+                            "return tostring(on) .. ' ' .. n .. ' ' .. lt .. ' ' .. ut", context="client").split()
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"eval error {e}"}
+    if len(parts) != 4:
+        return {"error": " ".join(parts) or "no reply"}
+    return {"strict": parts[0] == "true", "refused": int(parts[1]), "lua_timeouts": int(parts[2]),
+            "ui_timeouts": int(parts[3])}
+
+
+def strict_delta(a: dict, b: dict) -> str:
+    return " ".join(f"{k} +{b.get(k, 0) - a.get(k, 0)}" for k in ("refused", "lua_timeouts", "ui_timeouts"))
+
+
+def sec_strict() -> None:
+    """S17 (crashes S072/S077/S078, all ~7 s after the hover-click on the rest/travel [ForceUpdate] box, 99/189/33
+    unserialized Lua UI calls in those launches; L8: 0 refusals in steady reads, the timeouts come from launches and
+    loads): strict ON across 2 load_game + camp + long_rest (the box-click path), counters per step, strict back to
+    what it was in a finally. PASS = the game lives, both loads verify, the rest is done, strict restored; refusals
+    are evidence for the turn-on decision, not a FAIL. Last section: a crash here costs nothing else."""
+    c0 = strict_counters()
+    if not need("error" not in c0, STRICT_ITEM, f"UiStrict: {c0.get('error')} (bg3le without patch 0010?)"):
+        return
+    steps, ok = [], False
+    try:
+        cur = strict_counters(True)
+        for label in (BASE, HOTBAR_SAVE):
+            loaded = load_verified(label)
+            nxt = strict_counters()
+            steps.append(f"load {label}: {'ok' if loaded else 'FAILED'} ({strict_delta(cur, nxt)})")
+            cur = nxt
+            if not loaded:
+                break
+        else:
+            out, _ = took("camp", action="go")
+            time.sleep(2)
+            rest, rdt = took("long_rest")
+            if "partial" in rest.lower() and "FAILED" in rest:
+                rest, rdt = took("long_rest", partial=True)
+            nxt = strict_counters()
+            rested = ("done" in rest or "rested" in rest) and "FAILED" not in rest
+            steps.append(f"camp {first_line(out)[:40]}; long_rest {rdt:.1f}s {first_line(rest)[:80]} "
+                         f"({strict_delta(cur, nxt)})")
+            ok = rested
+    finally:
+        end = strict_counters(c0["strict"])
+    crash = grep_crash(bg3le_log())
+    ok = ok and alive() and not crash and end.get("strict") == c0["strict"]
+    log(f"strict counters before {c0}, after {end}")
+    item(STRICT_ITEM, "PASS" if ok else "FAIL",
+         f"{' | '.join(steps)}; total {strict_delta(c0, end)}; restored strict={end.get('strict')}"
+         + (f"; {crash}" if crash else ""))
+
+
 def sec_se() -> None:
     """se overnight batch (2026-10-10 23:xx): click hover/unknown button, reactions on an unselected member, the
     game-process check of load_game, Noesis counters, and a read-only CursorText probe in the Jump targeting."""
@@ -2141,6 +2207,7 @@ def sec_setup() -> None:
 
 
 FUNCS["setup"] = sec_setup
+FUNCS["strict"] = sec_strict
 
 
 def lua_server(code: str) -> str:

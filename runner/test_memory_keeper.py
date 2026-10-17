@@ -386,6 +386,47 @@ class KeeperTest(MemoryTestCase):
         self.fights("S003", 2)
         self.assertNotIn("OLD FIGHT DEBRIEFS", K.build_prompt(self.mem, "S003", 3, "", 5, sessions_dir=self.tmp))
 
+    def test_done_items_listed_for_the_next_steps_check(self):
+        # S078 01:18: HANDOFF's side list (S077) and objectives.md's Next still named Gale's Sorcerous Sundries vault,
+        # done in S069 ("DONE S069: Annals of Karsus taken" in the same objectives block); the map kept its Tolna's
+        # Office marker and the party travelled there (~20 s) before the player saw it was stale
+        self.write("objectives.md", "# Objectives\n\n## Main\n4. NOW: prepare for the elder brain.\n"
+                   "   - DONE S069: Annals of Karsus taken; Gale met Mystra [seen S069].\n"
+                   "   - Next: side list (Blue Jay, Sorcerous Sundries vault), then the Morphic Pool.\n")
+        self.write("quests.md", "# Quests\n\n## Investigate Cazador's Palace / The Pale Elf (DONE S077)\n- killed\n"
+                   "## The Wizard of Waterdeep (active)\n- vault\n## Done\n- Roveer's Storehouse: rewarded (S073) "
+                   "[seen]\n- Last updated: S076\n")
+        self.commit("S003 memory")
+        self.assertEqual(K.done_records(self.mem), [
+            "objectives.md: DONE S069: Annals of Karsus taken; Gale met Mystra [seen S069].",
+            "quests.md: Investigate Cazador's Palace / The Pale Elf (DONE S077)",
+            "quests.md Done: Roveer's Storehouse: rewarded (S073) [seen]"])
+        p = K.build_prompt(self.mem, "S003", 3, "", 5)
+        block = p.split("DONE IN MEMORY (finished per the memory files", 1)[1]
+        self.assertIn("- objectives.md: DONE S069: Annals of Karsus taken", block)
+        self.assertNotIn("Wizard of Waterdeep", block)                      # active quests aren't done
+        self.assertNotIn("Last updated", block)
+        self.assertIn("Check EVERY next step and side-list item (also ones you copy from HANDOFF.md)", p)
+        self.assertIn("even when the game's journal or map still shows its marker", p)
+        self.assertIn("`- <item> is done (Sxxx: <what the record says>): skip it.`", p)
+
+    def test_no_done_block_without_records(self):
+        self.write("objectives.md", "# Objectives\n\n## Main\n1. NOW: find the grove.\n")
+        self.commit("S003 memory")
+        self.assertEqual(K.done_records(self.mem), [])
+        self.assertNotIn("DONE IN MEMORY (finished", K.build_prompt(self.mem, "S003", 3, "", 5))
+
+    def test_done_records_cap_keeps_objectives_first(self):
+        # claude-run-2 at S078: quests.md's Done list alone is > 40 lines; the objectives' DONE line must stay
+        self.write("objectives.md", "# Objectives\n\n## Main\n   - DONE S069: Annals of Karsus taken [seen S069].\n")
+        self.write("quests.md", "# Quests\n\n## Done\n" + "".join(f"- old quest {n} (S0{n:02d}) [seen]\n"
+                                                                   for n in range(60, 0, -1)))
+        self.commit("S003 memory")
+        got = K.done_records(self.mem)
+        self.assertEqual(len(got), K.DONE_MAX_LINES)
+        self.assertEqual(got[0], "objectives.md: DONE S069: Annals of Karsus taken [seen S069].")
+        self.assertEqual(got[1], "quests.md Done: old quest 60 (S060) [seen]")   # newest first, as the file has it
+
     def test_old_debriefs_in_the_compaction_range(self):
         # compaction reads S001-S010 into a chapter: an old fight line there is flagged too, though it isn't a log
         # the keeper reads for the curated files

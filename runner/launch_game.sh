@@ -38,6 +38,9 @@
 #   BG3AI_BG3LE_LIB    the preload (default <repo>/build/bg3le/dist/libbg3le.so, from tools/build_bg3le.sh)
 #   BG3AI_INPUT_LIB    the input shim (default <repo>/build/bg3sdl/libbg3sdl.so, from native/bg3sdl/build.sh)
 #   BG3LE_DEBUG_PORT   bg3le's Lua debug server port (default 9998)
+#   BG3AI_UI_STRICT=1  bg3le's strict UI frame lock from the first frame (BG3LE_UI_STRICT=1, patch 0010: a Lua UI
+#                      call that can't take the lock in 50 ms is refused instead of running unserialized). Default
+#                      off. The runner also sets it in a kept game at each session start (play.py apply_ui_strict)
 #   BG3AI_REQUIRE_STEAM_OFFLINE=1|0  refuse unless Steam's last login was offline (default 0, or 1 when the machine
 #                      marker ~/.config/bg3ai/require-steam-offline exists: machine 2; tools/steam_paths.py
 #                      offline_required). BG3AI_ALLOW_STEAM_ONLINE=1 is the older "off".
@@ -223,6 +226,7 @@ if [ "$use_bg3le" = 1 ]; then
         # bg3le writes <path>.<pid> for each process in the chain that loads it.
         "BG3LE_LOG=$RUNTIME/logs/bg3le-$stamp.log"
     )
+    [ "${BG3AI_UI_STRICT:-0}" = 1 ] && env_args+=(BG3LE_UI_STRICT=1)
     [ -n "$mod_path" ] && env_args+=("BG3LE_MOD_PATH=$mod_path")
 fi
 env_args+=("${extra_env[@]}")

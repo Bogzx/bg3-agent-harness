@@ -1223,6 +1223,28 @@ PLAY_SETTINGS = [
     ("ui.dismiss", {}),
 ]
 
+
+def ui_strict_wanted(env) -> bool | None:
+    """BG3AI_UI_STRICT: "1" on, "0" off, unset/anything else None (leave the game's mode alone; default off)."""
+    return {"1": True, "0": False}.get(str(env.get("BG3AI_UI_STRICT", "")).strip())
+
+
+def ui_strict_lua(on: bool) -> str:
+    """Client Lua: set the strict mode, -> "<on> <refused> <lua timeouts> <ui timeouts>" or "missing"."""
+    return ("local f = Ext._Internal and Ext._Internal.UiStrict if type(f) ~= 'function' then return 'missing' end "
+            f"f({'true' if on else 'false'}) local s, n = f() local _, lt, ut = Ext._Internal.UiSerialize() "
+            "return tostring(s) .. ' ' .. tostring(n) .. ' ' .. tostring(lt) .. ' ' .. tostring(ut)")
+
+
+def ui_strict_text(reply: str) -> str:
+    """ui_strict_lua's reply as one log line."""
+    parts = str(reply).split()
+    if len(parts) != 4 or parts[0] not in ("true", "false"):
+        return f"not set ({reply!r}: the running bg3le lacks patch 0010?)"
+    return (f"{'ON' if parts[0] == 'true' else 'off'} (refused {parts[1]}, lock timeouts lua {parts[2]} "
+            f"ui {parts[3]})")
+
+
 # The player's own created character (the avatar), not the selected one: Osi.GetHostCharacter() and the
 # client's ClientControl follow the selection, so picking Lae'zel used to close the save/load gates.
 # Server context. DB_Avatars first, then the Avatar component; the host character only as a last resort.
@@ -2722,6 +2744,7 @@ class Runner:
                 rpc(op, args, context="client")
             except Exception as e:  # noqa: BLE001
                 log(f"play settings: {op} {args} failed: {e}")
+        self.apply_ui_strict()
         name = None
         if not self.new_game:
             name = host_character_name()
@@ -2738,6 +2761,18 @@ class Runner:
                 f"({'new game' if self.new_game else f'character {name!r}, save owner {owner!r}'})")
         except Exception as e:  # noqa: BLE001
             log(f"play settings: ui.config gates failed: {e}")
+
+    def apply_ui_strict(self) -> None:
+        """BG3AI_UI_STRICT=1/0: bg3le's strict frame lock (patch 0010) on/off in the running game, so a game kept
+        across sessions follows the switch without a relaunch (launch_game.sh passes BG3LE_UI_STRICT=1 for the
+        launch itself). Unset: left as it is. Logs the lock counters it reads back."""
+        on = ui_strict_wanted(os.environ)
+        if on is None:
+            return
+        try:
+            log("ui strict: " + ui_strict_text(lua_eval(ui_strict_lua(on), "client")))
+        except Exception as e:  # noqa: BLE001
+            log(f"ui strict: setting {'on' if on else 'off'} failed: {e}")
 
     def hot_reload_mod(self) -> int:
         """Between sessions: if any file under mod/ changed since the game last loaded it, Ext.Debug.Reset() and
