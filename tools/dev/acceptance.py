@@ -2649,6 +2649,8 @@ def sec_vis() -> None:
 # 1.4 m, a name search, interact as Gale: "target is not visible"). The probe reads, for Mystra's and Helm's statue,
 # every step of V.itemVisible (flags, kind, CanInteract, bounds, the index, CanSee/LOS per member, the rays) and the
 # server components one has and the other lacks. Read-only.
+# L7 FAIL: Mystra's has a Bound but no AI bounds (V.bounds nil), so no ray rule ran; CanSee/LOS 0, every ray hit the
+# statue first. V14 (V.unboundedPerceived, self-hit rays): expected PASS, with unbounded=true and aib (the raw AIBounds).
 MYSTRA_STATUE = "ab6b7142-2333-4b38-9506-fb3e72157145"  # S_LOW_MystraStatue
 HELM_STATUE = "858e4c3a-1575-44fa-9955-6ef6a96bff39"    # S_LOW_HelmStatue (listed in S069)
 MYSTRA_ITEM = "vis: Mystra's statue listed in get_nearby next to it (V10, S069)"
@@ -2676,7 +2678,10 @@ STATUE_PROBE_LUA = (
     "pcall(function() local he=hit.Shape.PhysicsObject.Entity ray.hit=he.Uuid.EntityUuid "
     "ray.hit_name=V.name(ray.hit) end) end end end end "
     "r.perceived=V.perceived(ctx,u,p) r.large=V.largePerceived(ctx,u,e,p,kind) "
-    "r.fixture=V.fixturePerceived(ctx,u,e,p,kind) r.visible=V.itemVisible(ctx,u,e,p) "
+    "r.fixture=V.fixturePerceived(ctx,u,e,p,kind) r.unbounded=V.unboundedPerceived and V.unboundedPerceived(ctx,u,e,p,kind) "
+    "r.aib=o(function() local n,t=0,{} for k,d in pairs(e.Bound.Bound.AIBounds) do n=n+1 "
+    "t[#t+1]=tostring(k)..'='..tostring(d.Height)..'/'..tostring(d.ActualHeight)..'/'..tostring(d.Radius) end "
+    "return n..' '..table.concat(t,',') end) r.visible=V.itemVisible(ctx,u,e,p) "
     "r.known=V.itemKnown(ctx,u,e,p) r.guard=o(B.Guard.visible,u) "
     "local ok,names=pcall(function() return e:GetAllComponentNames(false) end) r.comps={} "
     "if ok and type(names)=='table' then for k,v in pairs(names) do "
@@ -2709,7 +2714,8 @@ def statue_brief(r: dict) -> str:
             f"byscript={r.get('byscript')} invisible={r.get('invisible')} caninteract={r.get('caninteract')} "
             f"trap={r.get('trap')} si{{{si}}} inventory={r.get('inventory')} helper={r.get('helper')} "
             f"indexed={r.get('indexed')} bound={r.get('bound')} bounds={r.get('bounds')} | perceived={r.get('perceived')} "
-            f"large={r.get('large')} fixture={r.get('fixture')} | {obs} | tpl={r.get('tpl')}")
+            f"large={r.get('large')} fixture={r.get('fixture')} unbounded={r.get('unbounded')} aib={r.get('aib')} | {obs} | "
+            f"tpl={r.get('tpl')}")
 
 
 def mystra_statue_probe() -> None:
