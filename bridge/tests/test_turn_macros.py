@@ -2334,7 +2334,7 @@ class ClockStuck(unittest.TestCase):
         now = time.time()
         self.write({"type": "stuck", "t": now, "since": now - 17 * 60, "idle_min": 17, "actions": 40})
         line = server._clock_line()
-        self.assertIn("m left · no story progress for 17 min: change approach", line)
+        self.assertIn(" · no story progress for 17 min: change approach", line)
         self.assertNotIn("no story progress", server._clock_line())  # announced once, then with the clock
         self.write({"type": "progress", "t": now + 1, "kind": "area", "what": "x", "points": 3})
         self.assertNotIn("no story progress", server._clock())

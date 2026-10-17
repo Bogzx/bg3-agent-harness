@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -945,7 +946,7 @@ class SaveIdentity(unittest.TestCase):
         def popen(cmd, **kw):
             envs.append(kw["env"])
             raise OSError("stop here")
-        with mock.patch.multiple(P, RUNTIME=tmp, SAVE_PREFIX="", log=lambda m: None), \
+        with mock.patch.multiple(P, RUNTIME=tmp, SAVE_PREFIX="", log=lambda m: None, list_saves=list), \
                 mock.patch.object(P.subprocess, "Popen", popen), \
                 mock.patch.dict(P.os.environ, {"BG3AI_SAVE_GATES": "1", "BG3AI_SAVE_OWNER": "Stale"}):
             r = P.Runner(P.Options("env-test", None, 60, "opus", save_owner="Claude"))
@@ -1623,7 +1624,7 @@ class MemorySessionWithoutHooks(unittest.TestCase):
             self.assertEqual(sid, "S001")
             self.assertTrue(brief.startswith("=== BG3 PLAYTHROUGH MEMORY — session S001 ==="))
             self.assertIn("Autonomous session: deadline", brief)
-            self.assertIn("Keep playing: 29 minutes left", r.stop_check(sid, deadline, 30))
+            self.assertIn("min of play before WRAP UP at", r.stop_check(sid, deadline, 30))
             near = time.time() + 120   # inside the last 3 minutes: wrap-up is due
             self.assertIn("HANDOFF.md hasn't been rewritten", r.stop_check(sid, near, 30))
             (r.mem / "HANDOFF.md").write_text("# Handoff S001 → S002\nSave to load: \"S001-end\" — camp\n\n"
@@ -1691,8 +1692,10 @@ class MemoryKeeperHook(unittest.TestCase):
             def fake_run(mem, n, base, model, effort, minutes, refused=None, client=None):
                 calls.append((n, Path(base).name, model, effort, minutes, client))
                 got_refused.append(refused)
-                time.sleep(0.2)
+                release.wait(10)  # alive until the test looked (a 0.2 s sleep could end first on a loaded machine)
                 return K.KeeperResult("S007", status="ok", seconds=0.2, files=["quests.md"], commit="abc")
+
+            release = threading.Event()
 
             r = FakeRunner()
             res = P.SessionResult("S007", "c", 0, "exited", 0.0, 1200.0)
@@ -1704,6 +1707,7 @@ class MemoryKeeperHook(unittest.TestCase):
                 r.start_keeper("S007", res, [{"name": "Gale", "level": 8, "problems": "check_plans …: no plan line"},
                                              {"name": "wyll", "level": 5, "problems": "dup of the refused line"}])
                 self.assertTrue(r.keeper_thread.is_alive())
+                release.set()
                 r.join_keeper()
             self.assertIsNone(r.keeper_thread)
             # default: the play model and the play client (claude: run_keeper's default non-MCP file-tools pass)

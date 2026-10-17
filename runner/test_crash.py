@@ -22,6 +22,7 @@ port_open()/lua_eval()/rpc() never touch port 9998, and RUNTIME/SAVE data live i
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -31,6 +32,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -180,7 +182,8 @@ class FakeRunBase(unittest.TestCase):
                  "port_open", "game_state", "lua_eval", "rpc",
                  "server_ready", "available_ops", "host_character_name", "ui_screen", "read_progress",
                  "pids_of_game", "all_bg3_pids", "list_saves", "RESUME_MIN_MINUTES", "steam_ready", "crash_reporter_pids",
-                 "LAUNCH_BACKOFF", "PLAYTHROUGHS", "press_menu_key", "MENU_POLL", "bg3le_problems", "MOD_GONE_S")
+                 "LAUNCH_BACKOFF", "PLAYTHROUGHS", "press_menu_key", "MENU_POLL", "bg3le_problems", "MOD_GONE_S",
+                 "user_journal", "SE_BG3AI_DIR")
         self.saved = {n: getattr(P, n) for n in names}
         for k in ("FAKE_CLAUDE_HANG", "FAKE_CLAUDE_MCP", "FAKE_CLAUDE_LIMIT", "FAKE_CLAUDE_RESET"):
             os.environ.pop(k, None)
@@ -199,6 +202,8 @@ class FakeRunBase(unittest.TestCase):
         P.press_menu_key = lambda: "fake key"          # never the real input shim
         P.bg3le_problems = lambda: []                  # the real dist may be stale on a dev machine (UI-1)
         P.MENU_POLL = 0.05
+        P.user_journal = lambda since: ""              # recover's OOM check: never the real journalctl (up to 20 s)
+        P.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"     # a hang's recover marks nav_guard*.json: never the live game's
 
         self.claude = claude
         now = time.time()
@@ -212,6 +217,9 @@ class FakeRunBase(unittest.TestCase):
         r.next_sid = lambda: "S001"
         r.close_memory_session = lambda res: None
         r.between_sessions_check = lambda: None   # tools/dev/check_all.py would probe the real port 9998
+        r.check_plan_lines = lambda *a, **k: []   # so would tools/dev/check_plans.py (a uv run, up to 90 s, at
+        #                                           session prep and end: the fake game passes its port/state checks)
+        r.code_update_check = lambda: None        # other workers edit the tree meanwhile: no self-restart here
         r.mem = self.tmp / "memory"
         real_cmd = r.agent_cmd
         r.agent_cmd = lambda req: [sys.executable, str(self.claude)] + real_cmd(req)[1:]
@@ -229,7 +237,8 @@ class FakeRunBase(unittest.TestCase):
 
     def tearDown(self):
         if self.g.alive():
-            os.killpg(self.r.game_proc.pid, signal.SIGKILL)
+            with contextlib.suppress(ProcessLookupError):   # it can exit between poll() and the kill
+                os.killpg(self.r.game_proc.pid, signal.SIGKILL)
             self.r.game_proc.wait()
         for n, v in self.saved.items():
             setattr(P, n, v)
@@ -891,10 +900,15 @@ class RunLoop(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-loop-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "STEAM_RETRY_S", "MAX_SETUP_FAILURES")}
+        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "STEAM_RETRY_S", "MAX_SETUP_FAILURES", "HANDOVER")}
         P.RUNTIME = self.tmp / "runtime"
+        P.HANDOVER = P.RUNTIME / "runner-handover.json"   # bound at import: a restart's handover stays in this test
         P.STEAM_RETRY_S = 0
         P.MAX_SETUP_FAILURES = 2
+        # other workers edit the tree meanwhile: a changed module would raise RestartRunner out of run()
+        patcher = mock.patch.object(P.Runner, "code_update_check", lambda self: None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         for n, v in self.saved.items():

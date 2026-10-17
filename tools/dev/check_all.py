@@ -382,6 +382,9 @@ end
 QUIET_SCREENS = ("game",)
 # An ESCAPE's close lands frames later (ui.state right after ui.waypoints can still say map); then ui.map_close.
 SCREEN_SETTLE_S, MAP_CLOSES = 3.0, 2
+# ui.waypoints' own job timeout is 9 s (Services.lua withMap 9000: a slow open, then done only once the map closed,
+# one retry ESCAPE after SV.MAP_CLOSE_MS): wait past it so a slow job settles instead of 'still_running'.
+WAYPOINTS_WAIT_S = 12.0
 
 
 def screen_now(g) -> str | None:
@@ -422,7 +425,7 @@ def check_waypoints(g) -> Row:
     if screen not in QUIET_SCREENS or combat:
         return Row("waypoints", "WARN", f"skipped the map UI ({'in combat' if combat else 'screen ' + screen}); "
                    f"{len(unlocked)} unlocked in state.map")
-    r = g.run_job("ui.waypoints", {}, context="client", wait_s=8.0)
+    r = g.run_job("ui.waypoints", {}, context="client", wait_s=WAYPOINTS_WAIT_S)
     if r.status != "done":
         return Row("waypoints", "FAIL", f"ui.waypoints {r.status}: {r.error or r.result}")
     listed = (r.result or {}).get("waypoints") or []
@@ -438,17 +441,26 @@ def check_waypoints(g) -> Row:
     detail = f"map UI lists {len(listed)}, state.map {len(unlocked)}; {len(wants) - len(misses)}/{len(wants)} names+ids resolve"
     if blocked:
         detail += f"; travel blocked now ({blocked})"
+    # ui.waypoints gave up closing the map (map_open = true after its retry ESCAPE): close it before the 2nd open,
+    # which would otherwise read the list off the map already up and test no reopen.
+    closes = 0
+    if (r.result or {}).get("map_open"):
+        screen, closes = close_map(g)
+        if screen is not None and screen != "game":
+            return Row("waypoints", "FAIL", detail + f": screen {screen} after ui.waypoints left the map open"
+                       + (f" ({closes} ESCAPE by check_all did not close it either)" if closes else ""))
     # Live S021: the map open right after another one swallowed the M press ("the map didn't open").
     # Open it again at once; withMap re-presses, so >1 press means the toggle was out of step.
-    r2 = g.run_job("ui.waypoints", {}, context="client", wait_s=8.0)
+    r2 = g.run_job("ui.waypoints", {}, context="client", wait_s=WAYPOINTS_WAIT_S)
     presses = [(x.result or {}).get("map_presses") for x in (r, r2)]
     detail += f"; map reopened ({r2.status}), M presses {presses[0]}+{presses[1]}"
     if r2.status != "done":
         return Row("waypoints", "FAIL", detail + f": 2nd open {r2.status}: {r2.error or r2.result}")
-    screen, closes = close_map(g)
+    screen, closes2 = close_map(g)
     if screen is not None and screen != "game":
         return Row("waypoints", "FAIL", detail + f": screen {screen} after closing the map"
-                   + (f" ({closes} ESCAPE by check_all did not close it either)" if closes else ""))
+                   + (f" ({closes2} ESCAPE by check_all did not close it either)" if closes2 else ""))
+    closes += closes2
     if closes:
         return Row("waypoints", "WARN", detail + f": the map was still up after ui.waypoints closed it; "
                    f"check_all closed it (ESCAPE x{closes})")

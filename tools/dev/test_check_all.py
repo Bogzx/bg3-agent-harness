@@ -44,6 +44,7 @@ class FakeGame:
                     "ops": {"nav.waypoints": True, "act.watch": True, "nav.activity": True}}
         self.activity = {"in_combat": False, "pos": {}}
         self.calls: list[tuple] = []
+        self.waits: list = []  # run_job's wait_s in call order
         self.__dict__.update(kw)
 
     def server_ready(self):
@@ -95,6 +96,7 @@ class FakeGame:
 
     def run_job(self, op, args, context="server", wait_s=25.0, poll_s=0.1, on_start=None):
         self.calls.append((op, args))
+        self.waits.append(wait_s)
         if self.jobs:
             return self.jobs.pop(0)
         return self.job or JobResult("done", {"waypoints": self.ui_list, "map_presses": 1})
@@ -326,6 +328,38 @@ class WaypointsTest(unittest.TestCase):
         self.assertEqual(r.verdict, "PASS", r.detail)
         self.assertEqual([c[0] for c in g.calls].count("ui.waypoints"), 2)
         self.assertIn("map reopened (done), M presses 1+1", r.detail)
+
+    def test_waits_past_the_job_timeout(self):
+        # act A12: ui.waypoints is done only once the map closed, its job timeout 6 -> 9 s (slow open + a retry ESCAPE
+        # after SV.MAP_CLOSE_MS); an 8 s wait gave up on a job still closing the map
+        g = FakeGame()
+        C.check_waypoints(g)
+        self.assertEqual(g.waits, [C.WAYPOINTS_WAIT_S] * 2)
+        self.assertGreater(C.WAYPOINTS_WAIT_S, 9.0)
+
+    def test_map_open_after_the_first_list_is_closed_before_reopening(self):
+        # ui.waypoints' retry ESCAPE was swallowed too (map_open = true): check_all closes it, then tests the reopen
+        lst = [{"name": "Roadside Cliffs"}, {"name": "Emerald Grove"}]
+        g = FakeGame(jobs=[JobResult("done", {"waypoints": lst, "map_presses": 1, "map_open": True}),
+                           JobResult("done", {"waypoints": lst, "map_presses": 1})], screens=["game"])
+        g.screen = "map"
+        with mock.patch.object(C, "SCREEN_SETTLE_S", 0.0):
+            r = C.check_waypoints(g)
+        ops = [c[0] for c in g.calls if c[0] in ("ui.waypoints", "ui.map_close")]
+        self.assertEqual(ops, ["ui.waypoints", "ui.map_close", "ui.waypoints"])
+        self.assertEqual(r.verdict, "WARN", r.detail)
+        self.assertIn("check_all closed it (ESCAPE x1)", r.detail)
+
+    def test_map_open_that_stays_open_fails_before_reopening(self):
+        lst = [{"name": "Roadside Cliffs"}, {"name": "Emerald Grove"}]
+        g = FakeGame(jobs=[JobResult("done", {"waypoints": lst, "map_presses": 1, "map_open": True})],
+                     screens=["game"], map_close_fixes=False)
+        g.screen = "map"
+        with mock.patch.object(C, "SCREEN_SETTLE_S", 0.0):
+            r = C.check_waypoints(g)
+        self.assertEqual(r.verdict, "FAIL", r.detail)
+        self.assertIn("after ui.waypoints left the map open (2 ESCAPE", r.detail)
+        self.assertEqual([c[0] for c in g.calls].count("ui.waypoints"), 1)
 
     def test_second_open_fails(self):
         ok = JobResult("done", {"waypoints": [{"name": "Roadside Cliffs"}, {"name": "Emerald Grove"}], "map_presses": 1})

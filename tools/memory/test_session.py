@@ -394,15 +394,15 @@ class AutonomousStopTest(MemoryTestCase):
         self.set_deadline(40)
         out = S.stop_decision(self.mem)
         self.assertEqual(out["decision"], "block")
-        self.assertTrue(out["reason"].startswith("Keep playing: 39 minutes left") or
-                        out["reason"].startswith("Keep playing: 40 minutes left"), out["reason"])
+        self.assertTrue(out["reason"].startswith("Keep playing: 36 min of play before WRAP UP at") or
+                        out["reason"].startswith("Keep playing: 37 min of play before WRAP UP at"), out["reason"])
         self.assertIn("SESSION CLOCK", out["reason"])
         self.assertIn("not a summary", out["reason"])
         self.assertNotIn("already wrapped up", out["reason"])  # first block, no HANDOFF yet
         st = self.state()
         self.assertEqual(st["keep_playing_blocks"], 1)
         # S030: the 2nd early stop re-saved Sxxx-end and rewrote HANDOFF.md; from the 2nd block on, it says not to.
-        self.assertIn("don't save Sxxx-end or rewrite HANDOFF.md again", S.stop_decision(self.mem)["reason"])
+        self.assertIn("You already wrapped up early", S.stop_decision(self.mem)["reason"])
         self.assertNotIn("stop_blocks", st)  # counted separately from wrap-up blocks
 
     def test_keep_playing_cap(self):
@@ -487,11 +487,29 @@ class AutonomousStopTest(MemoryTestCase):
         os.environ["BG3AI_SESSION_WRAPUP"] = str(dl - 3 * 60)
         self.write("HANDOFF.md", self.good_handoff(1))
         r = S.stop_decision(self.mem, now=dl - 7.8 * 60)["reason"]
-        self.assertTrue(r.startswith("Keep playing: 7 minutes left"), r)
+        self.assertTrue(r.startswith("Keep playing: 4 min of play before WRAP UP at"), r)
         self.assertIn("plays on from where you are", r)
         self.assertNotIn("point of no return", r)
         self.assertEqual(S.stop_decision(self.mem, now=dl - 5.1 * 60)["decision"], "block")
         self.assertIn("committed", S.stop_decision(self.mem, now=dl - 4.9 * 60)["systemMessage"])
+
+    def test_refusal_says_when_to_call_again(self):
+        # S070: end_session at 8, 6, 5, 5 min left ("Keep playing: 8 minutes left in this session"), a HANDOFF edit
+        # before each: the refusal names the WRAP UP time to call again at and says no end_session/HANDOFF until then
+        self.open_session(1, minutes_ago=20)
+        dl = time.time() + 8.5 * 60
+        os.environ["BG3AI_SESSION_DEADLINE"] = str(dl)
+        os.environ["BG3AI_SESSION_WRAPUP"] = str(dl - 3 * 60)
+        self.write("HANDOFF.md", self.good_handoff(1))
+        r = S.stop_decision(self.mem, now=dl - 8.5 * 60)["reason"]
+        at = time.strftime("%H:%M", time.localtime(dl - 3 * 60))
+        self.assertTrue(r.startswith(f"Keep playing: 5 min of play before WRAP UP at {at}. Call end_session again "
+                                     f"at {at}, when the ⏱ line says WRAP UP NOW"), r)
+        self.assertIn("until then don't call end_session, save S001-end or edit HANDOFF.md", r)
+        self.assertNotIn("minutes left", r)       # the time to the end (wrap-up included) read as "nearly up"
+        self.assertNotIn("current plan", r)       # the current plan was the wrap-up: it edited HANDOFF and retried
+        self.assertNotIn("written early is fine", r)
+        self.assertIn("committed", S.stop_decision(self.mem, now=dl - 3 * 60 + 1)["systemMessage"])
 
     def test_wrapup_far_from_wrap_still_bounced(self):
         self.open_session(1, minutes_ago=14)

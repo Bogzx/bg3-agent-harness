@@ -539,24 +539,28 @@ def stop_decision(mem: Path, now: float | None = None) -> dict | None:
             return {"systemMessage": f"{sid}: early stop allowed after {keep} keep-playing blocks."}
         st["keep_playing_blocks"] = keep + 1
         M.save_state(mem, st)
-        left = max(1, int((deadline - now) // 60))
+        play = max(1, int((w - now) // 60))  # w: wrap_at() is set whenever the deadline is
+        at = time.strftime("%H:%M", time.localtime(w))
         # S030: 7 early stops from 10 min left, each with a 1.3-2.1k-char session summary (6-9 s) and, after the
         # first, another save_game Sxxx-end + HANDOFF.md rewrite. A text-only message is what ends the turn, so
         # the reason asks for a game call next and says the early wrap-up need not be redone.
-        again = (" You already wrapped up early: don't save Sxxx-end or rewrite HANDOFF.md again until the "
-                 "⏱ line says WRAP UP. A boss fight, descent or trip needn't fit in the time left: start it; the "
-                 "game keeps running between sessions and the next one plays on from where you are. Never idle "
-                 "reads." if handoff_ready or keep
+        # S070: wrapped up at 9 min left, then end_session x5 (4 refused) with a HANDOFF edit before each (~130 s of
+        # gaps): "Keep playing: 8 minutes left" said neither when to call again nor that the minutes include the
+        # wrap-up. So: the play minutes, the time to call again, and no HANDOFF/end_session until then.
+        again = (" You already wrapped up early. A boss fight, descent or trip needn't fit in the time left: start "
+                 "it; the game keeps running between sessions and the next one plays on from where you are. Never "
+                 "idle reads." if handoff_ready or keep
                  else "")
         return {"decision": "block",
-                "reason": (f"Keep playing: {left} minutes left in this session. Your next message is a game "
-                           f"tool call, not a summary (nobody reads it; a text-only message ends your turn). "
-                           f"Continue your current plan "
-                           f"(get_status if you lost track). Stuck is not a reason to stop: follow "
-                           f"knowledge/playbooks/stuck.md (cancel_queue, reload the last save, move another party "
-                           f"member, another objective). A HANDOFF.md written early is fine; rewrite it at "
-                           f"wrap-up. Only stop after the session-wrapup playbook when the SESSION CLOCK "
-                           f"reminder appears (the ⏱ line in tool results says WRAP UP).{again}")}
+                "reason": (f"Keep playing: {play} min of play before WRAP UP at {at}. Call end_session again at "
+                           f"{at}, when the ⏱ line says WRAP UP NOW; until then don't call end_session, save "
+                           f"{sid}-end or edit HANDOFF.md (at WRAP UP: one memory_edit of the lines that changed, a "
+                           f"save only if the party moved). Your next message is a game tool call, not a summary "
+                           f"(nobody reads it; a text-only message ends your turn): get_status if you lost track. "
+                           f"Stuck is not a reason to stop: follow knowledge/playbooks/stuck.md (cancel_queue, reload "
+                           f"the last save, move another party member, another objective). Only stop after the "
+                           f"session-wrapup playbook when the SESSION CLOCK reminder appears (the ⏱ line in tool "
+                           f"results says WRAP UP).{again}")}
     blocks = int(st.get("stop_blocks") or 0)
     if not handoff_ready and os.environ.get("BG3AI_FIX_NOTES"):
         # No game in the fix-notes pass (S027 was killed before wrap-up): only the memory part of the wrap-up.

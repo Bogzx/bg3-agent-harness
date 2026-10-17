@@ -197,6 +197,8 @@ class Rules(unittest.TestCase):
         self.assertIn("⏱ 16:38 · 25m left", c.apply("look", "a\n⏱ 16:38 · 25m left"))
         self.assertEqual(c.apply("look", "b\n⏱ 16:38 · 25m left"), "b")
         self.assertIn("⏱ 16:39 · 24m left", c.apply("look", "c\n⏱ 16:39 · 24m left"))
+        self.assertIn("⏱ 16:40 · 20m of play left", c.apply("look", "d\n⏱ 16:40 · 20m of play left"))
+        self.assertEqual(c.apply("look", "e\n⏱ 16:40 · 20m of play left"), "e")
         wrap = "⏱ 16:39 · 3m left: WRAP UP NOW. Reach a safe spot, save_game, then follow x."
         self.assertIn(wrap, c.apply("look", "d\n" + wrap))
         self.assertIn(wrap, c.apply("look", "e\n" + wrap))  # never dropped
