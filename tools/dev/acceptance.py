@@ -1330,7 +1330,9 @@ def twostep_dd_probe() -> bool:
     combat in BASE, to a floor point ~10 m from the caster that is on screen. HOTBAR_CAST_ENABLED is on for this one
     call, only after se's read-only hotbar item passed. PASS = 'use_ability: done', the caster now <= 1.5 m from the
     landing, nothing in hand, screen game. The PROBE line logs ui.ground_check at the landing (GUESS T1: cursor
-    "Cast"/"CastWarning"). SKIP when nobody has Dimension Door on the hotbar. True = it cast (the caller reloads)."""
+    "Cast"/"CastWarning"). A7: a container cell (live L4: the upcast level picker) is cast through the picker's lowest
+    real level. SKIP when nobody has Dimension Door on the hotbar, it is greyed out, or the picker has no usable level.
+    True = it cast (the caller reloads)."""
     from bg3ai import hotbar as HB
     ro_ok = any(r["item"] == "hotbar widget tree (ACT-8, read-only)" and r["verdict"] == "PASS" for r in RESULTS)
     if not need(ro_ok, TWOSTEP_ITEM, "se's 'hotbar widget tree (ACT-8, read-only)' did not PASS"):
@@ -1339,29 +1341,31 @@ def twostep_dd_probe() -> bool:
     if not need(not (S.game.try_rpc("state.combat") or {}).get("active"), TWOSTEP_ITEM, "in combat"):
         return False
     party = {r.get("uuid"): r for r in st.get("party") or [] if r.get("uuid")}
-    caster, boxed = None, []
+    caster, cell, greyed = None, {}, []
     for u in party:
+        if not HB.map_has(HB.server_map(S.game, u), DD_SPELL):
+            continue
+        # A7 (live L4): read the member's OWN hud. Unselected, ui.hotbar_slot reads the selected character's decks with
+        # this member's id map: e5 Shadowheart's DD index 26 was Claude's Blinding Smite there (no container flag).
         r = hb_slot(DD_SPELL, u)
-        if r.get("found") and r.get("can_use") is not False:
-            if r.get("container") or r.get("upcast"):   # the route has no container sub-bar / level picker yet
-                boxed.append((u, r))
-                continue
-            caster = u
-            break
+        if r.get("selected") is False:
+            S.game.run_job("act.select", {"char": u}, wait_s=5)
+            r = HB._slot_after_select(S.game, DD_SPELL, u)
+        if not r.get("found"):
+            continue
+        if r.get("can_use") is False:
+            greyed.append(u)
+            continue
+        caster, cell = u, r
+        break
     if caster is None:
-        if boxed:
-            for u, r in boxed:
-                log(f"PROBE twostep container {S.H.get(u)}: {container_probe(u, r)}")
-            item(TWOSTEP_ITEM, "SKIP", "; ".join(
-                f"{S.H.get(u)} has {DD_SPELL} only in a {'container' if r.get('container') else 'upcast'} slot "
-                f"({r.get('deck')} index {r.get('index')}): the route can't open its sub-bar yet" for u, r in boxed)
-                + " (PROBE twostep container: what the cell holds)")
-            return False
-        item(TWOSTEP_ITEM, "SKIP", f"nobody in the party has {DD_SPELL} usable on the hotbar (level 7+ Gale, or "
-             "a save with it): run SESSION-WATCH 'two-step by the hotbar' instead")
+        why = (f"{', '.join(str(S.H.get(u)) for u in greyed)} has {DD_SPELL} greyed out (no level-4+ slot left)"
+               if greyed else f"nobody in the party has {DD_SPELL} on the hotbar (level 7+ Gale, or a save with it)")
+        item(TWOSTEP_ITEM, "SKIP", why + ": run SESSION-WATCH 'two-step by the hotbar' instead")
         return False
-    if hb_slot(DD_SPELL, caster).get("selected") is False:
-        S.game.run_job("act.select", {"char": caster}, wait_s=5)
+    if cell.get("container") or cell.get("upcast"):
+        # the cell opens the upcast level picker (live L4); the route picks the lowest real level
+        log(f"PROBE twostep container {S.H.get(caster)}: {container_probe(caster, cell)}")
     p0 = party[caster].get("pos")
     land = None
     for k in range(8):   # a floor point at the caster's height, 10 m away, on screen
@@ -1398,6 +1402,11 @@ def twostep_dd_probe() -> bool:
     except OSError:
         pass
     ok = "use_ability: done" in out and off <= 1.5 and not cs.get("armed") and ui_screen() == "game"
+    if not ok and "no spell slot left" in out and not cs.get("armed"):
+        # the picker greyed every level (a save without the slot): not a route failure
+        item(TWOSTEP_ITEM, "SKIP", f"{S.H.get(caster)}: the level picker had no usable level (no slot left); "
+             + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar")))[:200])
+        return False
     item(TWOSTEP_ITEM, "PASS" if ok else "FAIL",
          f"{dt:.1f}s; now {off:.1f} m from the landing (moved {math.dist(p0, p1):.1f} m); in hand={cs.get('armed')}; "
          + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar")))[:220])
@@ -2021,6 +2030,7 @@ def prepared_guard_probe() -> None:
 SPELLBOOK_PROBE_ITEM = "spellbook probe (A5, read-only)"
 PREPARE_ITEM = "prepare_spells Bless on Claude: on the hotbar, then unprepared (A5)"
 PREPARE_REFUSE_ITEM = "prepare_spells honest refusals (A5)"
+PREPARE_LIMIT_ITEM = "prepare_spells limit = the page's (A7, read-only)"
 PREPARE_WHO = "Claude"     # the Paladin in HOTBAR_SAVE; Bless is on his class list, unprepared at S065-end (A4)
 
 
@@ -2029,10 +2039,12 @@ def _member(name: str) -> str | None:
 
 
 def spellbook_probe() -> None:
-    """A5: the spellbook page as bg3le reads it, read-only (Client/Spellbook.lua GUESSES S1-S3): K opens the page,
-    the selected character's preparing book has named cells with Activated, PreparedSpellsStat reads, and the widget's
-    DataContext has ToggleCharacterAction (CanExecute per cell). The page is closed again; nothing is toggled.
-    PASS = a preparing book with cells and a max, and the command present."""
+    """A5: the spellbook page as bg3le reads it, read-only (Client/Spellbook.lua GUESSES S1-S4): K opens the page,
+    the selected character's preparing book has cells (A7: one look line each, `icon=` when GUESS S4 reads),
+    PreparedSpellsStat reads, and the widget's DataContext has ToggleCharacterAction (CanExecute per cell). The page
+    is closed again; nothing is toggled. PASS = a preparing book with cells and a max, and the command present.
+    A7 also: PREPARE_LIMIT_ITEM = the server's limit (act.prepared max: SpellBookPrepares.ClassPreparedSpellCount,
+    GUESS P1) equals the page's PreparedSpellsStat.Max (live L4: 12; Stats.MaxPreparedSpells read 9)."""
     u = _member(PREPARE_WHO)
     if not need(u is not None, SPELLBOOK_PROBE_ITEM, f"no {PREPARE_WHO} in the party"):
         return
@@ -2050,6 +2062,20 @@ def spellbook_probe() -> None:
          f"toggle_cmd={p.get('toggle_cmd')}; preparing="
          + "; ".join(f"{b.get('class')} {b.get('value')}/{b.get('max')} {len(b.get('cells') or [])} cells"
                      for b in books) + " (full: acceptance.log PROBE spellbook)")
+    for b in books:
+        log(f"PROBE spellbook cells {b.get('class')}: " + " | ".join(b.get("cells") or []))
+    rows = (S.game.try_rpc("act.prepared", {"uuids": [u]}) or {}).get("casters") or []
+    row = rows[0] if rows else {}
+    raw = lua_server(f"local p=Ext.Entity.Get('{u}').SpellBookPrepares local o={{}} "
+                     "for k,v in pairs(p.ClassPreparedSpellCount) do o[#o+1]=tostring(k):sub(1,8)..'='..tostring(v) end "
+                     "local f={} for k,v in pairs(p.ClassFallbackPreparedSpellCount) do "
+                     "f[#f+1]=tostring(k):sub(1,8)..'='..tostring(v) end "
+                     "return 'count{'..table.concat(o,',')..'} fallback{'..table.concat(f,',')..'}'")
+    page = next((b.get("max") for b in books if b.get("max")), None)
+    ok_l = page is not None and row.get("max") is not None and float(row["max"]) == float(page)
+    item(PREPARE_LIMIT_ITEM, "PASS" if ok_l else "FAIL",
+         f"page {page}; server max={row.get('max')} (class_max={row.get('class_max')}, "
+         f"stats_max={row.get('stats_max')}, count={row.get('count')}); SpellBookPrepares {raw[:160]}")
 
 
 def prepare_spells_refusals() -> None:
@@ -2232,12 +2258,14 @@ def sec_act() -> None:
     # A5 prepare_spells on HOTBAR_SAVE (Claude the Paladin, L10): the read-only spellbook probe, then Bless prepared
     # and unprepared again (nothing is saved; the next section loads its own save)
     if not load_verified(HOTBAR_SAVE, record=True):
-        for name in (SPELLBOOK_PROBE_ITEM, PREPARE_ITEM, PREPARE_REFUSE_ITEM):
+        for name in (SPELLBOOK_PROBE_ITEM, PREPARE_LIMIT_ITEM, PREPARE_ITEM, PREPARE_REFUSE_ITEM):
             item(name, "SKIP", f"{HOTBAR_SAVE} did not load")
-        return
-    spellbook_probe()
-    prepare_spells_refusals()
-    prepare_bless_round_trip()
+    else:
+        spellbook_probe()
+        prepare_spells_refusals()
+        prepare_bless_round_trip()
+    # A6 helm ladders (live L5: it sat at the end of sec_vis, so --only act never ran it); loads its own save
+    helm_ladder_probe()
 
 
 FUNCS["act"] = sec_act
@@ -2463,7 +2491,6 @@ def sec_vis() -> None:
         item("vis: queue_interrupted event on one line (live mod event path)",
              "PASS" if len(ev) == 1 and "FAILED — acceptance probe" in ev[0] and "done=0" in ev[0] and not stray
              else "FAIL", f"{ev[:1]} stray={stray[:1]}")
-    helm_ladder_probe()
     load_verified(BASE)
 
 
@@ -2493,7 +2520,8 @@ def helm_ladder_probe() -> None:
             ap_ok = abs(float(ap) - 4.53) < 1.5
         except ValueError:
             ap_ok = False
-        steps = [{"tool": "interact", "target": HELM_E39}, {"tool": "interact", "target": HELM_E40}]
+        # handles, not uuids (live L5: do_actions said "unknown target e252" for the raw uuid; render.py takes handles)
+        steps = [{"tool": "interact", "target": S.H.get(HELM_E39)}, {"tool": "interact", "target": S.H.get(HELM_E40)}]
         out, dt = took("do_actions", actions=json.dumps(steps))
         y = lua_server('local _,y,_=Osi.GetPosition(Osi.GetHostCharacter()) return string.format("%.2f", y)')
         climbs = re.findall(r"climbed=(\w+)", out)

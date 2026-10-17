@@ -76,6 +76,34 @@ def _ids(c: dict | None) -> set[str]:
     return {str(r.get("id")) for r in (c or {}).get("prepared") or [] if isinstance(r, dict)}
 
 
+def _cell_spec(r: dict) -> dict:
+    """What the page job needs to find a spell's cell (live L4: the cells carry no names): id, name, and when the plan
+    has them the level, the look (icon, school, concentration, cost) and `twins` (look-alikes in the same state)."""
+    out = {"id": r.get("id"), "name": r.get("name")}
+    for k in ("level", "look", "twins"):
+        if r.get(k) is not None:
+            out[k] = r[k]
+    return out
+
+
+def _unasked(plan: dict, after: dict | None, want_in: set[str], want_out: set[str]) -> str:
+    """A prepared-set change nobody asked for (the page clicked a look-alike's cell): named, so it can be undone."""
+    if after is None:
+        return ""
+    before = _ids(plan)
+    have = _ids(after)
+    names = {str(r.get("id")): str(r.get("name") or r.get("id"))
+             for c in (plan, after) for k in ("prepared", "unprepared", "add", "remove")
+             for r in c.get(k) or [] if isinstance(r, dict)}
+    gained = sorted(names.get(i, i) for i in have - before - want_in)
+    lost = sorted(names.get(i, i) for i in before - have - want_out)
+    bits = ([f"prepared {', '.join(gained)}"] if gained else []) + ([f"unprepared {', '.join(lost)}"] if lost else [])
+    if not bits:
+        return ""
+    return ("ALSO CHANGED (not asked: the spellbook cells carry no names and a look-alike's cell was clicked): "
+            + "; ".join(bits) + " — prepare_spells again to put it back")
+
+
 def prepare(game, char: str, add: list[str], remove: list[str], select: Callable[[str], str] | None = None) -> str:
     """The whole tool: plan, select, the spellbook page, the server's answer. Returns the result text."""
     plan = game.rpc("act.prepare_plan", {"char": char, "add": add, "remove": remove})
@@ -84,8 +112,8 @@ def prepare(game, char: str, add: list[str], remove: list[str], select: Callable
     if plan.get("refused"):
         return f"prepare_spells: FAILED — {plan['refused']}"
     notes = [str(n) for n in plan.get("notes") or []]
-    adds = [{"id": r.get("id"), "name": r.get("name")} for r in plan.get("add") or []]
-    rems = [{"id": r.get("id"), "name": r.get("name")} for r in plan.get("remove") or []]
+    adds = [_cell_spec(r) for r in plan.get("add") or []]
+    rems = [_cell_spec(r) for r in plan.get("remove") or []]
     if not adds and not rems:
         return "\n".join(["prepare_spells: nothing to change" + (f" ({'; '.join(notes)})" if notes else ""),
                           "PREPARED " + caster_text(plan)])
@@ -119,6 +147,9 @@ def prepare(game, char: str, add: list[str], remove: list[str], select: Callable
     if notes:
         bits.append("; ".join(notes))
     lines = [head + " — " + "; ".join(bits)]
+    extra = _unasked(plan, after, want_in, want_out)
+    if extra:
+        lines.append(extra)
     if after is not None:
         lines.append("PREPARED " + caster_text(after))
     else:

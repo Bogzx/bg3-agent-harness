@@ -203,32 +203,59 @@ class PrepReason(unittest.TestCase):
 
 
 class TwostepContainer(unittest.TestCase):
-    """Live 20261017-152016: e3's Dimension Door sits in a container slot (ClassHotBar index 26); the item FAILed
-    at stage slot ('its variants' sub-bar is not built yet'). Now it SKIPs before any cast, with a probe line."""
+    """Live L4 (2026-10-17): the DD item read e5 Shadowheart's cell while Claude was selected, got Claude's Blinding
+    Smite at ClassHotBar #26 (no container flag) and FAILed at the route's "container" stop. A7: each candidate is
+    read from its own HUD (selected first), and a container cell (the upcast level picker) goes on to the cast."""
 
-    def test_container_only_caster_skips_with_the_cell(self):
+    def _run(self, slots, after_select, maps, lands=False):
         from unittest import mock
+
+        from bg3ai import hotbar as HB
         fake_s = mock.Mock()
-        fake_s.H.get = lambda u: {"u3": "e3", "u4": "e4"}[u]
+        fake_s.H.get = lambda u: {"u3": "e3", "u4": "e4", "u5": "e5"}[u]
         fake_s.game.try_rpc = lambda *a, **k: {}
-        slots = {"u3": {"found": True, "can_use": True, "container": True, "deck": "ClassHotBar", "index": 26},
-                 "u4": {"found": False}}
+        selects = []
+        fake_s.game.run_job = lambda op, args, **k: selects.append(args["char"])
         got, probes, logs = [], [], []
+        party = [{"uuid": u, "pos": [0, 0, 0]} for u in slots]
         with mock.patch.object(A, "S", fake_s), \
                 mock.patch.object(A, "RESULTS", [{"item": "hotbar widget tree (ACT-8, read-only)", "verdict": "PASS"}]), \
-                mock.patch.object(A, "status", lambda: {"party": [{"uuid": "u3"}, {"uuid": "u4"}]}), \
+                mock.patch.object(A, "status", lambda: {"party": party}), \
                 mock.patch.object(A, "hb_slot", lambda spell, u: slots[u]), \
+                mock.patch.object(HB, "server_map", lambda g, u: maps.get(u)), \
+                mock.patch.object(HB, "_slot_after_select", lambda g, sp, u: after_select[u]), \
                 mock.patch.object(A, "container_probe", lambda u, r: probes.append(u) or "server {} | hud slot{}"), \
+                mock.patch.object(A, "lua_server", lambda code: ""), \
                 mock.patch.object(A, "took", side_effect=AssertionError("cast attempted")), \
                 mock.patch.object(A, "log", logs.append), \
                 mock.patch.object(A, "item", lambda *a: got.append(a)):
             self.assertFalse(A.twostep_dd_probe())
-        self.assertEqual(probes, ["u3"])
-        self.assertEqual(len(got), 1)
-        name, verdict, why = got[0]
-        self.assertEqual((name, verdict), (A.TWOSTEP_ITEM, "SKIP"))
-        self.assertIn("e3 has Teleportation_DimensionDoor only in a container slot (ClassHotBar index 26)", why)
-        self.assertTrue(any(line.startswith("PROBE twostep container e3:") for line in logs))
+        return got, probes, logs, selects
+
+    def test_reads_the_members_own_hud_and_takes_the_container_cell(self):
+        dd = {"ClassHotBar": {"25": "Teleportation_DimensionDoor"}}
+        slots = {"u4": {"found": False, "selected": True}, "u5": {"found": True, "can_use": True, "selected": False,
+                                                                  "deck": "ClassHotBar", "index": 26}}
+        after = {"u5": {"found": True, "can_use": True, "container": True, "selected": True, "deck": "ClassHotBar",
+                        "index": 26}}
+        got, probes, logs, selects = self._run(slots, after, {"u5": dd})
+        self.assertEqual(selects, ["u5"], "selected before reading its cell")
+        self.assertEqual(probes, ["u5"], "the container cell is probed (read-only) and taken")
+        self.assertTrue(any(line.startswith("PROBE twostep container e5:") for line in logs))
+        # no floor point (lua_server stubbed): the item stops there, not at the old container SKIP
+        self.assertFalse(any("container slot" in str(g) for g in got), got)
+
+    def test_nobody_has_it_skips(self):
+        got, probes, _, selects = self._run({"u3": {"found": False}}, {}, {})
+        self.assertEqual((got[0][0], got[0][1]), (A.TWOSTEP_ITEM, "SKIP"))
+        self.assertIn("nobody in the party has", got[0][2])
+        self.assertEqual((probes, selects), ([], []))
+
+    def test_greyed_out_skips(self):
+        dd = {"ClassHotBar": {"25": "Teleportation_DimensionDoor"}}
+        got, _, _, _ = self._run({"u3": {"found": True, "can_use": False, "selected": True}}, {}, {"u3": dd})
+        self.assertEqual(got[0][1], "SKIP")
+        self.assertIn("e3 has Teleportation_DimensionDoor greyed out", got[0][2])
 
 
 if __name__ == "__main__":

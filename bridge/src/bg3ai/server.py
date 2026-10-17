@@ -2831,9 +2831,57 @@ def _carried_scroll(char: str, ability: str) -> dict | None:
     return next((it for it in items if it.get("owner") == char), items[0])
 
 
-def _use_scroll(char: str, it: dict, target: str) -> str:
+SCROLL_MAX_PICKS = 6     # Scorching Ray's beams and the like: one click per pick
+SCROLL_SETTLE_S = 2.5    # a combat scroll: the scroll is used up this long after the last click at most
+
+
+def _scroll_more_picks(inp, char: str, tgts: list[str]) -> str:
+    """A scroll whose spell takes several picks (Scorching Ray's 3 beams): click on while the cursor counter wants
+    more, cycling `tgts` (one target: all on it), then the tick when the game waits for it. '' when one pick did."""
+    from .clicker import click_entity
+    def state() -> dict:
+        return game.try_rpc("ui.cast_state", {"char": char}, context="client") or {}
+
+    n = 1
+    st = state()
+    while st.get("armed") and (st.get("remaining") or 0) > 0 and n < SCROLL_MAX_PICKS:
+        cr = click_entity(game, inp, tgts[n % len(tgts)], "L")
+        if not cr.ok:
+            return (f"; pick {n + 1} missed ({cr.reason}): the game still waits for it (click_on <id>, or press_key "
+                    f"ESCAPE to put it away)")
+        n += 1
+        st = state()
+    if st.get("armed") and st.get("can_force"):
+        try:
+            game.rpc("ui.cast_confirm", {}, context="client")
+        except GameError as e:
+            return f"; {n} picks, but the tick failed ({e})"
+    return f" ({n} picks)" if n > 1 else ""
+
+
+def _scroll_settle(char: str) -> str:
+    """A scroll read in combat (act.interact's combat_scroll): once it is used up, the mod charges what reading it
+    cost (an action) and the engine did not. What to tell the agent about it."""
+    end = time.monotonic() + SCROLL_SETTLE_S
+    while True:
+        last = time.monotonic() >= end
+        r = game.try_rpc("act.scroll_settle", {"char": char, "final": last}) or {}
+        if r.get("read") or r.get("none"):
+            break
+        if last:
+            return "; the scroll was not used up (no target taken?): no action spent"
+        time.sleep(0.2)
+    if not r.get("read"):
+        return ""
+    paid = ", ".join(str(c.get("resource")) for c in r.get("charged") or [] if isinstance(c, dict))
+    return "; its action is spent" + (f" (charged by the guard: {paid})" if paid else "")
+
+
+def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = None) -> str:
     """Read a scroll as a player does: use it from the bags (the game then waits for a target), then click the
-    target (default: the reader). A scroll on another member's bags is named, not taken."""
+    target (default: the reader), once per pick for a multi-pick spell (`targets` in click order). In combat (A7)
+    it is read on the reader's turn for an action, like casting; the mod refuses it off-turn or with no action left.
+    A scroll on another member's bags is named, not taken."""
     name = str(it.get("name"))
     if it.get("owner") and it.get("owner") != char:
         raise GameError(f"{_label(char)} has no action called that; {_label(it['owner'])} carries {name} "
@@ -2861,15 +2909,20 @@ def _use_scroll(char: str, it: dict, target: str) -> str:
         head += (f" ({name} opened for reading: it has no target; press_key ESCAPE closes the page. To put it on a "
                  f"pedestal or in a slot: insert_item(item, into))")
         return head + ("\n" + rest if rest else "")
+    tgts = [tgt] + [_uuid(t) for t in targets or []]
     cr = click_entity(game, inp, tgt, "L")
     head, _, rest = out.partition("\n")
+    in_combat = "combat_scroll" in head
+    head = head.replace(" — combat_scroll", " — read in combat").replace("combat_scroll", "read in combat")
     if cr.ok and _two_step_scroll(name) and tgt != char:
         head += _revive_spot(inp, name, char, tgt)
     elif cr.ok:
-        head += f" ({name} read, cast on {_label(tgt)} by a click)"
+        head += f" ({name} read, cast on {_label(tgt)} by a click)" + _scroll_more_picks(inp, char, tgts)
     else:
         head += (f"; the game waits for {name}'s target but the click on {_label(tgt)} failed ({cr.reason}): "
                  f"click_on <id>, or press_key ESCAPE to put it away")
+    if in_combat and cr.ok:
+        head += _scroll_settle(char)
     return head + ("\n" + rest if rest else "")
 
 
@@ -3791,7 +3844,7 @@ def _reaction_index(r: dict | None, name: str) -> int | str:
 def use_ability(ability: str, target: str = "", x: float | None = None, y: float | None = None,
                 z: float | None = None, who: str | None = None, upcast: int = 0, targets: str | list[str] = "",
                 wait: bool = True, force: bool = False) -> str:
-    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: a list (or comma list) for multi-target spells, in click order (the same id twice = 2 darts/beams); a cast may use only the first 2 (the result then says \"cast on the first 2 only\"). Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells: Dimension Door takes x,y,z = the landing (target = an ally beside you to bring, else you go alone); the Revivify spell takes target = the body; while their route is off they are refused: read a Scroll of Revivify instead. A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): out of combat it is read and its target clicked (default: who). A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
+    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: a list (or comma list) for multi-target spells, in click order (the same id twice = 2 darts/beams); a cast may use only the first 2 (the result then says \"cast on the first 2 only\"). Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells: Dimension Door takes x,y,z = the landing (target = an ally beside you to bring, else you go alone); the Revivify spell takes target = the body; while their route is off they are refused: read a Scroll of Revivify instead. A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): it is read and its target clicked (default: who; targets = one click per beam/pick, e.g. Scorching Ray); in combat too, on the reader's turn for an action, like casting. A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
     char = _who(who)
     try:
         aid = _ability_id(char, ability)
@@ -3808,7 +3861,8 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
         scroll = _carried_scroll(char, ability)
         if scroll is None:
             raise
-        return _use_scroll(char, scroll, target)
+        more = (targets.split(",") if isinstance(targets, str) else [str(t) for t in targets]) if targets else []
+        return _use_scroll(char, scroll, target, [t.strip() for t in more if t.strip()])
     spell, note = _own_attack(char, aid)
     tail = ""
     args: dict[str, Any] = {"char": char, "spell": spell}
@@ -7913,7 +7967,9 @@ def _plan_fits(u: str, abilities: list[str]) -> bool:
             if _ability_id(u, a) not in have:
                 return False
         except (GameError, ValueError):
-            return False
+            it = _carried_scroll(u, a)   # A7: a scroll `u` carries is read in combat too
+            if not (it and it.get("owner") == u):
+                return False
     return True
 
 

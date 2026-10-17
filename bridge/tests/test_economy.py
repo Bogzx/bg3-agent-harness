@@ -1238,18 +1238,23 @@ class ScrollUse(unittest.TestCase):
                         "11111111-0000-0000-0000-0000000000a3")
 
     def _run(self, who, ability, target="", owner=None, click_ok=True, name="Scroll of Invisibility",
-             res="use_ability: done — used", screen=None):
+             res="use_ability: done — used", screen=None, rpc=None, targets=""):
         from bg3ai import clicker
         calls, clicks = [], []
         scroll, sh = self.SCROLL, self.SH
         own = owner or sh
+        self.rpcs = []
+        rpcs = self.rpcs
 
         class G:
             def try_rpc(self, op, args=None, context="server", default=None):
+                rpcs.append((op, dict(args or {})))
                 if op == "state.inventory":
                     return {"items": [{"uuid": scroll, "name": name, "owner": own}]}
                 if op == "ui.state" and screen:
                     return {"screen": screen}
+                if rpc is not None and op in rpc:
+                    return rpc[op](args or {})
                 return default
 
             def drain_events(self, ctx=None):
@@ -1277,7 +1282,8 @@ class ScrollUse(unittest.TestCase):
         clicker.click_entity = fake_click
         server._who = lambda w: {"Shadowheart": sh, "Gale": self.GALE}.get(w, w)
         try:
-            out = server.use_ability(ability, target=server.H.get(target) if target else "", who=who)
+            out = server.use_ability(ability, target=server.H.get(target) if target else "", who=who,
+                                     targets=targets)
         except server.GameError as e:
             out = "ERR " + str(e)
         finally:
@@ -1323,6 +1329,58 @@ class ScrollUse(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(clicks, [])
         self.assertIn("drunk", out.split("\n")[0])
+
+    def test_scroll_in_combat_is_read_and_its_action_settled(self):
+        # A7: claude-run-2's Orin plan reads scrolls mid-fight; the mod reads it on the reader's turn (combat_scroll)
+        out, calls, clicks = self._run(
+            "Shadowheart", "Scroll of Fear", target=self.GALE, name="Scroll of Fear",
+            res="use_ability: done — combat_scroll",
+            rpc={"act.scroll_settle": lambda a: {"read": True, "charged": [{"resource": "action", "amount": 1}]}})
+        head = out.split("\n")[0]
+        self.assertEqual(clicks, [self.GALE])
+        self.assertIn("use_ability: done — read in combat (Scroll of Fear read, cast on", head)
+        self.assertIn("its action is spent (charged by the guard: action)", head)
+        self.assertNotIn("combat_scroll", out)
+
+    def test_scroll_in_combat_not_used_up_spends_nothing(self):
+        saved, server.SCROLL_SETTLE_S = server.SCROLL_SETTLE_S, 0.0
+        self.addCleanup(setattr, server, "SCROLL_SETTLE_S", saved)
+        out, _, _ = self._run("Shadowheart", "Scroll of Fear", target=self.GALE, name="Scroll of Fear",
+                              res="use_ability: done — combat_scroll",
+                              rpc={"act.scroll_settle": lambda a: {"read": False}})
+        self.assertIn("the scroll was not used up (no target taken?): no action spent", out.split("\n")[0])
+        self.assertTrue(any(op == "act.scroll_settle" and a.get("final") for op, a in self.rpcs), "final settle")
+
+    def test_out_of_combat_scroll_has_no_settle(self):
+        self._run("Shadowheart", "Scroll of Invisibility", target=self.SH)
+        self.assertNotIn("act.scroll_settle", [op for op, _ in self.rpcs])
+
+    def test_scorching_ray_scroll_clicks_once_per_beam(self):
+        left = iter([2, 1])
+
+        def cast_state(a):
+            r = next(left, None)
+            return {"armed": True, "remaining": r} if r is not None else {"armed": False}
+        out, _, clicks = self._run("Shadowheart", "Scroll of Scorching Ray", target=self.GALE,
+                                   name="Scroll of Scorching Ray", rpc={"ui.cast_state": cast_state})
+        self.assertEqual(clicks, [self.GALE] * 3)
+        self.assertIn("(3 picks)", out.split("\n")[0])
+
+    def test_plan_fits_counts_a_carried_scroll(self):
+        # combat_turn's who-inference (ACT-2): a plan naming "Scroll of Fear" fits the member who carries it
+        from unittest import mock
+        inv = {"items": [{"uuid": self.SCROLL, "name": "Scroll of Fear", "owner": self.SH}]}
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                return inv if op == "state.inventory" else {"actions": []}
+
+        def no_action(char, ability):
+            raise server.GameError(f"{char} has no action called '{ability}'")
+        with mock.patch.object(server, "game", G()), mock.patch.object(server, "_ability_id", no_action), \
+                mock.patch.object(server, "_learn_actions", lambda *a: None):
+            self.assertTrue(server._plan_fits(self.SH, ["Scroll of Fear"]))
+            self.assertFalse(server._plan_fits(self.GALE, ["Scroll of Fear"]))
 
     def test_disarm_by_name_is_the_disarm_tool(self):
         from unittest import mock

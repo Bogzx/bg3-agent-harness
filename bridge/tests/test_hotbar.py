@@ -79,6 +79,11 @@ class FakeWorld:
         self.no_ids = False
         self.server_map = {"ClassHotBar": {"12": "Target_Bless"}}
         self.map_calls = 0
+        # act A7: spells whose cell opens the upcast level picker -> [(IsFake, CanUse)] per level (live L4: DD)
+        self.pickers: dict[str, list[tuple[bool, bool]]] = {}
+        self.containers: set[str] = set()
+        self.upcast_open: str | None = None
+        self.upcast_args: list[dict] = []
 
     # --- layout
     def cell_at(self, x, y):
@@ -100,7 +105,11 @@ class FakeWorld:
             return
         hit = self.cell_at(x, y)
         if hit and not self.armed:
-            if not self.arm_ignores:
+            if self.arm_ignores:
+                return
+            if hit[2] in self.pickers:
+                self.upcast_open = hit[2]
+            else:
                 self.armed, self.picked = hit[2], []
             return
         if self.tab_at and abs(x - self.tab_at[0]) < 30 and abs(y - self.tab_at[1]) < 12:
@@ -120,7 +129,9 @@ class FakeWorld:
 
     def on_key(self, k):
         if k == "ESCAPE":
-            if self.armed and self.escape_cancels:
+            if self.upcast_open and not self.armed:
+                self.upcast_open = None
+            elif self.armed and self.escape_cancels:
                 self.armed, self.picked = None, []
             elif not self.armed:
                 self.screen = "game_menu" if self.screen == "game" else "game"
@@ -145,6 +156,8 @@ class FakeWorld:
         if op == "ui.cast_state":
             st = {"armed": self.armed is not None, "can_force": bool(self.armed and self.picked),
                   "counter": self.armed is not None}
+            if self.upcast_open:
+                st["upcast_open"] = True
             if self.armed:
                 st["spell"] = self.armed
                 st["remaining"] = self.max - len(self.picked)
@@ -152,6 +165,18 @@ class FakeWorld:
             elif self.phase:
                 st["cast"] = {"phase": self.phase}
             return st
+        if op == "ui.hotbar_upcast":
+            self.upcast_args.append(dict(args))
+            sp = self.upcast_open
+            if not sp:
+                raise GameError("no upcast levels on the spell in hand (the picker is not open)")
+            levels = self.pickers[sp]
+            lv = args.get("level") or next((i + 1 for i, (fake, can) in enumerate(levels) if not fake and can), None)
+            if lv is None:
+                raise GameError("every level is greyed out: no spell slot left to cast it with")
+            self.armed, self.picked, self.upcast_open = (sp if lv == 4 or not args.get("level") else f"{sp}_{lv}"), \
+                [], None
+            return {"done": True, "level": lv, "index": lv, "levels": len(levels), "open": True}
         if op == "ui.cast_confirm":
             if not (self.armed and self.picked):
                 raise GameError("the tick button is disabled")
@@ -188,7 +213,12 @@ class FakeWorld:
             out["deck_button_over"] = "HotbarDeckButton_Class"
         for d in self.decks:
             for i, sp in enumerate(d["spells"]):
-                if sp.lower() == want:
+                base = want[:-2] if want[-2:-1] == "_" and want[-1:].isdigit() else None
+                if sp.lower() == want or (base and sp.lower() == base):
+                    if sp.lower() != want:
+                        out["upcast"] = int(want[-1])
+                    if sp in self.containers:
+                        out["container"] = True
                     out.update(found=True, deck=d["type"], index=i + 1, cols=d["cols"], rows=d["rows"],
                                order=d["order"], can_use=True, spell=sp, cell={"w": 88, "h": 88},
                                deck_button="HotbarDeckButton_Class" if d["type"] == "ClassHotBar" else None,
@@ -338,6 +368,33 @@ class HotbarCast(unittest.TestCase):
         self.assertFalse(r.ok)
         self.assertEqual((r.stage, r.reason), ("slot", "not_on_hotbar"))
         self.assertEqual(inp.log, [])
+
+    def test_container_cell_picks_the_lowest_real_level(self):
+        # live L4: Dimension Door's cell is a container whose sub-bar is the upcast picker (levels 1-3 fake, 4 real)
+        self.w.pickers["Target_Bless"] = [(True, False)] * 3 + [(False, True), (False, True)]
+        self.w.containers.add("Target_Bless")
+        r, inp = _cast(self.w)
+        self.assertTrue(r.ok, r.detail)
+        self.assertEqual(self.w.upcast_args, [{}])
+        self.assertEqual(r.detail["upcast"], {"level": 4, "index": 4, "levels": 5})
+        self.assertEqual(self.w.cast_done, [("Target_Bless", ["a", "b", "c"])])
+
+    def test_upcast_variant_asks_its_level_and_its_entry_counts_as_in_hand(self):
+        self.w.pickers["Target_Bless"] = [(False, True)] * 3
+        r, _ = _cast(self.w, "Target_Bless_2")
+        self.assertTrue(r.ok, r.detail)
+        self.assertEqual(self.w.upcast_args, [{"level": 2}])
+        self.assertEqual(self.w.cast_done, [("Target_Bless_2", ["a", "b", "c"])])
+
+    def test_picker_all_greyed_out_closes_it(self):
+        self.w.pickers["Target_Bless"] = [(True, False)] * 3 + [(False, False)]
+        self.w.containers.add("Target_Bless")
+        r, inp = _cast(self.w)
+        self.assertEqual((r.stage, r.reason), ("arm", "upcast"))
+        self.assertIn("no spell slot left", r.detail["why"])
+        self.assertEqual(r.detail.get("cancelled"), "escape")
+        self.assertIsNone(self.w.upcast_open)
+        self.assertEqual(self.w.screen, "game")
 
     def test_cell_click_does_not_arm(self):
         self.w.arm_ignores = True

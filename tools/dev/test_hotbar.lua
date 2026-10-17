@@ -52,9 +52,11 @@ function UI.cachedByName(w, n)
     local hits = UI.findAll(widgets[w], function(e) return e.Name == n end)
     return hits[1]
 end
-function UI.command(o, name)
+local params = {}
+function UI.command(o, name, param)
     if type(o) ~= "table" or o[name] == nil then return false, "no command '" .. name .. "'" end
     commands[#commands + 1] = name
+    params[#params + 1] = param
     if o[name] == "fail" then return false, "command cannot execute now" end
     return true
 end
@@ -392,6 +394,30 @@ r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", map = smap })
 ok(calls > c2 and r.cached == nil, "no cache flag: always a fresh walk")
 H.decks, clockMs, dupes = realDecks, nil, {}
 sdc.CurrentPlayer.UIData.Cursor.IsOverUI = false
+
+-- 20. A7: the upcast level picker (live L4 shape: Dimension Door, levels 1-3 fake, 4 real, 5 the _5 upcast)
+local ups = { { IsFake = true, CanUse = false }, { IsFake = true, CanUse = false }, { IsFake = true, CanUse = false },
+              { IsFake = false, CanUse = true }, { IsFake = false, CanUse = true } }
+local udc = { CurrentActiveSlot = { Content = { IsContainer = true, SpellUpcast = ups } }, IsSelectingUpcastedSpell = true,
+              UseSlotCommand = true }
+local savedHB = widgets.HotBar
+widgets.HotBar = { Name = "HotBar", DataContext = udc, kids = {} }
+commands, params = {}, {}
+r = ops["ui.hotbar_upcast"]({})
+ok(r.done and r.level == 4 and r.index == 4 and r.levels == 5 and r.open, "upcast: the lowest real level (4)")
+ok(commands[1] == "UseSlotCommand" and params[1] == ups[4], "upcast: UseSlotCommand with that level's VM")
+commands, params = {}, {}
+r = ops["ui.hotbar_upcast"]({ level = 5 })
+ok(r.level == 5 and params[1] == ups[5], "upcast: an asked level")
+local okl, errl = pcall(ops["ui.hotbar_upcast"], { level = 2 })
+ok(not okl and tostring(errl):find("level 2 is greyed out", 1, true), "upcast: a fake level is refused")
+ups[4].CanUse, ups[5].CanUse = false, false
+okl, errl = pcall(ops["ui.hotbar_upcast"], {})
+ok(not okl and tostring(errl):find("no spell slot left", 1, true), "upcast: all greyed out")
+udc.CurrentActiveSlot = nil
+okl, errl = pcall(ops["ui.hotbar_upcast"], {})
+ok(not okl and tostring(errl):find("picker is not open", 1, true), "upcast: no picker")
+widgets.HotBar = savedHB
 
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

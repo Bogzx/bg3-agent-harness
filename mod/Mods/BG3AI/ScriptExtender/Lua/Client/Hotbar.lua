@@ -26,6 +26,9 @@
 --   ui.cast_confirm {}
 --       -> {done=true} | error. The multi-target tick button (ForceCastButton, ForceCastCommand): finish with
 --       fewer targets than the spell's max. Only while a spell is armed and the button is enabled.
+--   ui.hotbar_upcast {level?}
+--       -> {done=true, level, index, levels, open} | error. The upcast level picker (act A7): pick `level`, else the
+--       lowest level the caster can cast at now, by the picker button's own command (see H.upcast).
 --   ui.cast_cancel {}
 --       -> {done, was_armed}. Last resort after ESCAPE / right click: the HUD's CancelTaskCommand.
 --
@@ -530,7 +533,41 @@ function H.cancel()
     return { done = true, was_armed = armed }
 end
 
+-- The upcast level picker (act A7, 2026-10-17). HotBar.xaml "UpcastSection" (shown while IsSelectingUpcastedSpell):
+-- ItemsControl ContainerItems, ItemsSource CurrentActiveSlot.Content.SpellUpcast; each level is an LSButton with
+-- HotBarSlotStyle (Library/DataTemplates.xaml: Command = the widget's UseSlotCommand, CommandParameter = the
+-- ls:VMUpcast item, IsEnabled = CanUse). A click on a level is exactly UseSlotCommand:Execute(item).
+-- LIVE L4 (S065-end, Shadowheart's Dimension Door, ClassHotBar #26, IsContainer=true): SpellUpcast[5], #1-#3
+-- IsFake=true CanUse=false, #4 IsFake=false CanUse=true. GUESS U1: entry i is slot level i when the entry has no
+-- SpellSlotLevel of its own.
+function H.upcast(args)
+    local dc = hotbarDC()
+    if dc == nil then error("the hotbar is not on screen") end
+    local levels = {}
+    for i, vm in UI.items(UI.path(dc, "CurrentActiveSlot.Content.SpellUpcast"), 12) do
+        if vm ~= nil then
+            levels[#levels + 1] = { vm = vm, index = i, level = num(UI.get(vm, "SpellSlotLevel")) or i,
+                                    fake = UI.get(vm, "IsFake") == true, can = UI.get(vm, "CanUse") ~= false }
+        end
+    end
+    if #levels == 0 then error("no upcast levels on the spell in hand (the picker is not open)") end
+    local want = num(args.level)
+    local pick
+    for _, l in ipairs(levels) do
+        if want and l.level == want then pick = l break end
+        if not want and not l.fake and l.can then pick = l break end
+    end
+    if want and not pick then error("the picker has no level " .. want .. " (levels 1-" .. #levels .. ")") end
+    if not pick then error("every level is greyed out: no spell slot left to cast it with") end
+    if pick.fake or not pick.can then error("level " .. pick.level .. " is greyed out (no slot of that level left)") end
+    local ok, err = UI.command(dc, "UseSlotCommand", pick.vm)
+    if not ok then error("UseSlotCommand: " .. tostring(err)) end
+    return { done = true, level = pick.level, index = pick.index, levels = #levels,
+             open = UI.get(dc, "IsSelectingUpcastedSpell") == true }
+end
+
 RPC.register("ui.hotbar_slot", function(args) return H.slot(args or {}) end)
+RPC.register("ui.hotbar_upcast", function(args) return H.upcast(args or {}) end)
 RPC.register("ui.cast_state", function(args) return H.castState(args or {}) end)
 RPC.register("ui.cast_confirm", function() return H.confirm() end)
 RPC.register("ui.cast_cancel", function() return H.cancel() end)

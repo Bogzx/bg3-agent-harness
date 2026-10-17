@@ -417,18 +417,22 @@ def _armed(game: Game, char: str | None) -> dict:
 
 def cancel(game: Game, inp: InputClient, char: str | None) -> str | None:
     """Put the spell back as a player does: ESCAPE, then a right click, then the HUD's cancel. None when nothing
-    was in hand; else how it was cancelled ("escape" | "right_click" | "command" | "failed")."""
-    if not _armed(game, char).get("armed"):
+    was in hand; else how it was cancelled ("escape" | "right_click" | "command" | "failed"). An open upcast level
+    picker counts as in hand (ESCAPE closes it)."""
+    def held(st: dict) -> bool:
+        return bool(st.get("armed") or st.get("upcast_open"))
+
+    if not held(_armed(game, char)):
         return None
     inp.key("ESCAPE")
     inp.wait_frames(CANCEL_WAIT_FRAMES)
-    if not _armed(game, char).get("armed"):
+    if not held(_armed(game, char)):
         how = "escape"
     else:
         w, h = inp.window_size()
         inp.click(w // 2, int(h * 0.4), button="R")
         inp.wait_frames(CANCEL_WAIT_FRAMES)
-        if not _armed(game, char).get("armed"):
+        if not held(_armed(game, char)):
             how = "right_click"
         else:
             try:
@@ -436,7 +440,7 @@ def cancel(game: Game, inp: InputClient, char: str | None) -> str | None:
             except GameError:
                 pass
             inp.wait_frames(CANCEL_WAIT_FRAMES)
-            how = "command" if not _armed(game, char).get("armed") else "failed"
+            how = "command" if not held(_armed(game, char)) else "failed"
     # an ESCAPE that landed after the spell was already gone opens the game menu: close it again
     if clicker._screen(game).get("screen") == "game_menu":
         inp.key("ESCAPE")
@@ -505,10 +509,10 @@ def arm(game: Game, inp: InputClient, caster: str, spell: str, res: HotbarCastRe
     for k in ("deck", "index", "rows", "cols"):
         if want.get(k) is not None:
             res.detail.setdefault("cell", {})[k] = want[k]
-    if want.get("upcast"):
-        return fail("slot", "upcast", "an upcast through the hotbar's level picker is not built yet")
-    if want.get("container"):
-        return fail("slot", "container", "the spell sits in a container slot (its variants' sub-bar is not built yet)")
+    # act A7 (live L4): Shadowheart's Dimension Door cell is a "container" whose sub-bar is the upcast level picker
+    # (SpellUpcast: levels 1-3 fake, 4 real); an upcast variant id (X_3) sits on its base cell. Both: click the cell,
+    # then pick the level in the picker (ui.hotbar_upcast: the lowest real one, or the asked level).
+    picker = bool(want.get("container") or want.get("upcast"))
     if want.get("can_use") is False:
         return fail("slot", "cannot_use", "the hotbar shows the spell greyed out (no slot/resource, or not now)")
 
@@ -536,11 +540,27 @@ def arm(game: Game, inp: InputClient, caster: str, spell: str, res: HotbarCastRe
     t_click = time.monotonic()
     inp.click(pos[0], pos[1], button="L")
     sp_lower = spell.lower()
+    base_lower = (str(want.get("spell") or "") or spell).lower()
 
     def in_hand(st: dict) -> bool:
-        s = (st.get("spell") or (st.get("cast") or {}).get("spell") or "")
-        return bool(st.get("armed")) and (not s or s.lower() == sp_lower)
+        s = (st.get("spell") or (st.get("cast") or {}).get("spell") or "").lower()
+        if not st.get("armed"):
+            return False
+        if not s or s in (sp_lower, base_lower):
+            return True
+        # a level picked in the picker may put its upcast entry in hand (Teleportation_DimensionDoor_5)
+        return picker and s[-2:-1] == "_" and s[-1:].isdigit() and s[:-2] in (sp_lower, base_lower)
 
+    if picker:
+        opened, st = _wait(game, caster, lambda s: bool(s.get("upcast_open")) or in_hand(s), ARM_WAIT_S)
+        if st.get("upcast_open"):
+            try:
+                up = _rpc(game, "ui.hotbar_upcast", {"level": want.get("upcast")} if want.get("upcast") else {})
+            except GameError as e:
+                return fail("arm", "upcast", f"the level picker: {e}", cancel_it=True, state=st)
+            res.detail["upcast"] = {k: up.get(k) for k in ("level", "index", "levels")}
+        elif not opened:
+            return fail("arm", "not_armed", "the cell click opened no level picker and put nothing in hand", state=st)
     armed_ok, st = _wait(game, caster, in_hand, ARM_WAIT_S)
     res.detail["cell_pos"] = pos
     if not armed_ok:

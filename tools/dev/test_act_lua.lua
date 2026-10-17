@@ -2344,12 +2344,57 @@ test("interact: in combat a carried potion is drunk on the drinker's turn for it
     world[P1].comps.TurnBased.IsActiveCombatTurn = false
     j = job(op("interact", { char = P1, target = POT }))
     eq(j.status, "failed", "not my turn"); assert(j.error:find("not this character's turn", 1, true), j.error)
-    -- a scroll (not a potion) stays out-of-combat only
+    -- any other carried item (not a potion or a scroll) stays out of combat
     world[P1].comps.TurnBased.IsActiveCombatTurn = true
-    stats.OBJ_Potion_Healing.ItemUseType = "Scroll"
+    stats.OBJ_Potion_Healing.ItemUseType = "Food"
     j = job(op("interact", { char = P1, target = POT }))
-    eq(j.status, "failed", "scroll"); assert(j.error:find("during combat", 1, true), j.error)
+    eq(j.status, "failed", "food"); assert(j.error:find("during combat", 1, true), j.error)
     eq(#called("Use"), 1, "still one Use")
+end)
+
+test("interact (A7): in combat a carried scroll is read on the reader's turn for an action; settle charges once", function()
+    combat_setup(9)
+    local SCR = "a0a0a0a0-0000-0000-0000-00000000000a"
+    world[SCR] = { pos = { 0, 0, 0 }, comps = { Data = { StatsId = "OBJ_Scroll_Fear" } } }
+    osiv[key("IsItem", SCR)] = 1
+    osiv[key("GetInventoryOwner", SCR)] = P1
+    osiv[key("GetStackAmount", SCR)] = 2
+    stats.OBJ_Scroll_Fear = { ItemUseType = "Scroll", UseCosts = "ActionPoint:1" }
+    local j = job(op("interact", { char = P1, target = SCR }))
+    eq(j.status, "running", "reads: " .. tostring(j.error))
+    eq(#called("Use"), 1, "one Use")
+    A.dispatch("UseFinished", { P1, SCR, 1 })
+    tick(10)
+    eq(j.status, "done", "done"); eq(j.result.combat_scroll, true, "flagged for the target clicks")
+    eq(world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount, 1, "no charge at the Use")
+    -- the target not clicked yet: the scroll is still there -> nothing charged, still pending
+    local r = op("scroll_settle", { char = P1 })
+    eq(r.read, false, "not used up yet"); eq(world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount, 1, "kept")
+    -- the spell went off (stack 2 -> 1) and the engine charged nothing: the guard charges the action
+    osiv[key("GetStackAmount", SCR)] = 1
+    r = op("scroll_settle", { char = P1 })
+    eq(r.read, true, "read"); eq(r.charged[1].resource, "action", "action charged")
+    eq(world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount, 0, "action spent")
+    eq(op("scroll_settle", { char = P1 }).none, true, "settled once")
+    -- no action left: refused, no Use
+    j = job(op("interact", { char = P1, target = SCR }))
+    eq(j.status, "failed", "no action"); assert(j.error:find("not enough action to read it", 1, true), j.error)
+    eq(#called("Use"), 1, "still one Use")
+    -- not the reader's turn
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    world[P1].comps.TurnBased.IsActiveCombatTurn = false
+    j = job(op("interact", { char = P1, target = SCR }))
+    eq(j.status, "failed", "not my turn"); assert(j.error:find("not this character's turn", 1, true), j.error)
+    -- the engine charged the action itself (Use took it): settle charges nothing more
+    world[P1].comps.TurnBased.IsActiveCombatTurn = true
+    j = job(op("interact", { char = P1, target = SCR }))
+    A.dispatch("UseFinished", { P1, SCR, 1 })
+    tick(10)
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
+    osiv[key("IsItem", SCR)] = 0   -- the last scroll is gone
+    r = op("scroll_settle", { char = P1 })
+    eq(r.read, true, "read (gone)"); eq(#r.charged, 0, "nothing more charged")
+    eq(world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount, 0, "not below 0")
 end)
 
 test("cast: Oath of Devotion refuses a killing blow on a Temporarily Hostile target unless force (S026/S028)", function()
@@ -2560,6 +2605,91 @@ test("act.prepare_plan returns {refused}; act.prepared lists only preparing cast
     eq(ok_plan.add[1].id, "Target_Bless", "plan")
     eq(#list.casters, 1, "only P1 prepares"); eq(list.casters[1].uuid, P1, "uuid")
     eq(list.casters[1].max, 3, "max"); eq(#list.casters[1].prepared, 2, "prepared rows")
+end)
+
+-- ---- A7: live L4 shapes (Claude S065-end: "31 prepared, limit 9"; page 12/12) -----------------------------------
+
+-- Claude's book as bg3se gives it: upcast entries (_2/_3) with the base as OriginatorPrototype, Command's variants as
+-- their own RequiresPreparation entries (stats SpellContainerID), SpellBookPrepares listing only the container.
+local function paladin_l4(class_max)
+    local loca = Ext.Loca.GetTranslatedString
+    Ext.Loca.GetTranslatedString = function(h) return h end
+    local function book(id, orig, kind) return { Id = { Prototype = id, OriginatorPrototype = orig },
+                                                 PrepareType = kind or "RequiresPreparation" } end
+    local function sp(id, name, school, flags, costs, extra)
+        stats[id] = { DisplayName = name, Level = 1, SpellSchool = school, SpellFlags = flags, UseCosts = costs,
+                      Icon = "Spell_" .. name:gsub("%W", "") }
+        for k, v in pairs(extra or {}) do stats[id][k] = v end
+    end
+    sp("Target_Bless", "Bless", "Enchantment", { "IsConcentration", "IsSpell" }, "ActionPoint:1;SpellSlotsGroup:1:1:1")
+    sp("Target_Heroism", "Heroism", "Enchantment", { "IsConcentration" }, "ActionPoint:1;SpellSlotsGroup:1:1:1")
+    sp("Target_Bane", "Bane", "Enchantment", { "IsConcentration" }, "ActionPoint:1;SpellSlotsGroup:1:1:1")
+    sp("Target_CureWounds", "Cure Wounds", "Evocation", { "IsSpell" }, "ActionPoint:1;SpellSlotsGroup:1:1:1")
+    sp("Target_Smite_Wrathful", "Wrathful Smite", "Evocation", { "IsConcentration" },
+        "ActionPoint:1;BonusActionPoint:1;SpellSlotsGroup:1:1:1")
+    sp("Target_Command_Container", "Command", "Enchantment", {}, "ActionPoint:1;SpellSlotsGroup:1:1:1")
+    sp("Target_Command_Halt", "Command: Halt", "Enchantment", {}, "ActionPoint:1",
+        { SpellContainerID = "Target_Command_Container" })
+    world[P1].comps.SpellBook = { Spells = {
+        book("Target_Bless", "Target_Bless"), book("Target_Bless_2", "Target_Bless"),
+        book("Target_Heroism", "Target_Heroism"), book("Target_Heroism_2", "Target_Heroism"),
+        book("Target_CureWounds", "Target_CureWounds"), book("Target_CureWounds_2", "Target_CureWounds"),
+        book("Target_CureWounds_3", "Target_CureWounds"), book("Target_Smite_Wrathful", "Target_Smite_Wrathful"),
+        book("Target_Command_Container", "Target_Command_Container"),
+        book("Target_Command_Halt", "Target_Command_Halt"), book("Target_Command_Halt_2", "Target_Command_Halt") } }
+    world[P1].comps.SpellBookPrepares = { PreparedSpells = { meta_id("Target_CureWounds"), meta_id("Target_Heroism"),
+        meta_id("Target_Smite_Wrathful"), meta_id("Target_Command_Container") },
+        ClassPreparedSpellCount = class_max and { ["c0de0000-0000-0000-0000-00000000000a"] = class_max } or nil }
+    world[P1].comps.Stats = { MaxPreparedSpells = 3 }
+    osiv[key("GetDisplayName", P1)] = "Claude"
+    return function() Ext.Loca.GetTranslatedString = loca end
+end
+
+test("prep_info (A7, live L4): one row per spell (upcasts merged, container variants no rows); the class limit", function()
+    local undo = paladin_l4(12)
+    local info = G.prep_info(P1)
+    undo()
+    local function ids(rows) local o = {} for _, r in ipairs(rows) do o[#o + 1] = r.name end return table.concat(o, ",") end
+    eq(ids(info.prepared), "Command,Cure Wounds,Heroism,Wrathful Smite", "prepared: 4, once each")
+    eq(ids(info.unprepared), "Bless", "unprepared: Bless once, no Command: Halt")
+    eq(info.count, 4, "count 4 (not 9 entries)")
+    eq(info.max, 12, "limit = SpellBookPrepares.ClassPreparedSpellCount"); eq(info.stats_max, 3, "stats max kept")
+    eq(info.prepared[4].look.cost, "BothActions", "Wrathful Smite: BothActions")
+    eq(info.unprepared[1].look.icon, "Spell_Bless", "icon"); eq(info.unprepared[1].look.conc, true, "conc")
+    -- no class counts: Stats.MaxPreparedSpells
+    undo = paladin_l4(nil)
+    info = G.prep_info(P1)
+    undo()
+    eq(info.max, 3, "no class map: Stats.MaxPreparedSpells")
+end)
+
+test("unprepared (A7): a container's variant casts with its container prepared", function()
+    local undo = paladin_l4(12)
+    local set = G.prepared_ids(G.entity(P1))
+    local spells = world[P1].comps.SpellBook.Spells
+    eq(G.unprepared(spells[10], set), false, "Command: Halt castable (Command prepared)")
+    eq(G.unprepared(spells[11], set), false, "Halt's upcast too")
+    eq(G.unprepared(spells[2], set), true, "Bless_2 not prepared")
+    world[P1].comps.SpellBookPrepares.PreparedSpells = { meta_id("Target_CureWounds") }
+    eq(G.unprepared(spells[10], G.prepared_ids(G.entity(P1))), true, "Halt refused once Command isn't prepared")
+    undo()
+end)
+
+test("prep_plan (A7): no over-limit refusal under the page's limit; each change carries its page look + twins", function()
+    local undo = paladin_l4(12)
+    local p = G.prep_plan(P1, { "Bless" }, { "Heroism" })
+    eq(p.add[1].twins, 0, "Bless: no unprepared look-alike")
+    eq(p.remove[1].twins, 0, "Heroism: no prepared look-alike")
+    eq(p.add[1].look.school, "Enchantment", "look rides along"); eq(p.add[1].level, 1, "level")
+    eq(p.class_max, 12, "class_max"); eq(p.stats_max, 3, "stats_max")
+    -- Bane in the book unprepared and alike: Bless now has a twin
+    table.insert(world[P1].comps.SpellBook.Spells, { Id = { Prototype = "Target_Bane", OriginatorPrototype = "Target_Bane" },
+                                                     PrepareType = "RequiresPreparation" })
+    p = G.prep_plan(P1, { "Bless" }, {})
+    eq(p.add[1].twins, 1, "Bless and Bane look the same on the page")
+    local list = op("prepared", { uuids = { P1 } })
+    undo()
+    eq(list.casters[1].prepared[1].look, nil, "act.prepared rows carry no look"); eq(list.casters[1].max, 12, "max")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

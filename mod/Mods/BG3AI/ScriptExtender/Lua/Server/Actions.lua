@@ -921,6 +921,31 @@ function A.combat_potion(char, target)
     return { snapshot = snap, payers = payers }
 end
 
+-- Scrolls in combat (A7, 2026-10-17). In BG3 anyone reads a carried scroll mid-fight, on their own turn, for the
+-- scroll's cost (_MagicScroll: ItemUseType "Scroll", UseCosts "ActionPoint:1": an action, like casting the spell).
+-- The tools refused it ("not available during combat": S061 Scroll of Fear; claude-run-2's Orin plan reads Fear, Cone
+-- of Cold, Scorching Ray and Revivify scrolls). The Use puts the scroll's spell in hand; the bridge clicks its target.
+-- Osiris Use may skip the cost (it does for potions), so A.scroll_pending keeps what reading it owes and
+-- act.scroll_settle charges, once the scroll is used up, whatever the engine did not.
+A.scroll_pending = {}
+function A.combat_scroll(char, target)
+    if not target or not G.in_combat(char) or not G.b(G.q("IsItem", target)) then return nil end
+    if not G.same(holder(target), char) then return nil end
+    local ok, st = pcall(function() return Ext.Stats.Get(G.entity(target).Data.StatsId) end)
+    if not ok or not st or st.ItemUseType ~= "Scroll" then return nil end
+    G.combat_gate(char, "turn")
+    local snap, payers = G.resources(char), {}
+    for _, c in ipairs(G.parse_costs(st.UseCosts)) do
+        local n, l = G.payer(snap, c)
+        if not n then
+            G.refuse("not enough " .. G.friendly(c.name) .. " to read it (reading a scroll costs "
+                .. (c.name == "ActionPoint" and "an action, like casting" or G.friendly(c.name)) .. ")")
+        end
+        payers[#payers + 1] = { name = n, level = l, amount = c.amount, before = (snap[n] or {})[l] or 0 }
+    end
+    return { payers = payers, stack = tonumber((G.q("GetStackAmount", target))) or 1 }
+end
+
 -- Ladder, 3rd look (acceptance 04:31 still FAIL from the Mausoleum gate after the settle): every passing climb had
 -- the followers already standing; every failing one had them still arriving, and all four "used" the ladder (the
 -- engine sends the chained followers through the leader's Use). Only the actor climbs: the chained followers are
@@ -955,13 +980,14 @@ reg("interact", function(args)
     G.not_in_dialogue(char)
     local target = G.guid(args.target)
     local potion = A.combat_potion(char, target)
-    if not potion and target and G.in_combat(char) then
+    local scroll = not potion and A.combat_scroll(char, target)
+    if not potion and not scroll and target and G.in_combat(char) then
         -- naut3 ×3: the transponder inside combat_turn was refused "(use the UI)", and each run spent a model turn
         -- finding click_on. Name the tool: in a fight a player uses an object by clicking it.
         G.refuse("not available during combat through this action: in a fight an object is used by clicking it,"
             .. " click_on " .. target .. " (the selected character walks there on its own movement)")
     end
-    if not potion then G.combat_gate(char, "no_combat") end
+    if not potion and not scroll then G.combat_gate(char, "no_combat") end
     if not target then G.refuse("no target given") end
     -- An item in the actor's own bags (potion, scroll, book): use it in place.
     local carried = G.b(G.q("IsItem", target)) and holder(target)
@@ -1034,9 +1060,14 @@ reg("interact", function(args)
     return start("interact", char, {
         eta_s = walk_eta(plan.length_m) + 1.0, route_m = plan.length_m,
         timeout_ms = 30000 + walk_timeout(plan.length_m),
-        interrupt = { combat = not potion, dialogue = true, attacked = not potion },
-        on_finish = (potion or ladder) and function(job)
+        interrupt = { combat = not (potion or scroll), dialogue = true, attacked = not (potion or scroll) },
+        on_finish = (potion or scroll or ladder) and function(job)
             if job.ladder and job.ladder.held then A.ladder_release(char, job.ladder.held) end
+            if scroll and job.status == "done" then
+                A.scroll_pending[G.guid(char)] = { item = target, stack = scroll.stack, payers = scroll.payers }
+                if type(job.result) == "table" then job.result.combat_scroll = true end
+                return
+            end
             if not potion or job.status ~= "done" then return end
             -- Osiris Use skips the hotbar's cost: charge whatever the engine did not.
             local after, charged = G.resources(char), {}
@@ -2636,6 +2667,13 @@ RPC.register("act.prepare_plan", function(args)
     error(res, 0)
 end)
 
+-- rows without the page look (it rides only in a plan, for the page's cells; this answer goes out every tick)
+local function plain_rows(rows)
+    local out = {}
+    for i, r in ipairs(rows) do out[i] = { id = r.id, name = r.name, level = r.level } end
+    return out
+end
+
 RPC.register("act.prepared", function(args)
     local out = {}
     for _, u in ipairs(args.uuids or G.party()) do
@@ -2643,10 +2681,37 @@ RPC.register("act.prepared", function(args)
         local info = g and G.prep_info(g)
         if info and info.prepares then
             out[#out + 1] = { uuid = g, name = name_of(g), max = info.max, count = info.count, read = info.read,
-                              prepared = info.prepared, always = info.always, classes = info.classes }
+                              prepared = plain_rows(info.prepared), always = plain_rows(info.always),
+                              classes = info.classes, stats_max = info.stats_max, class_max = info.class_max }
         end
     end
     return { casters = out }
+end)
+
+-- act.scroll_settle {char, final?} (A7): after a combat scroll's target clicks. Once the scroll is used up (gone from
+-- the reader's bags, or its stack smaller) it charges what reading it owed and the engine did not -> {read = true,
+-- charged = [{resource, amount}]}. Not used up yet: {read = false} (the pending entry stays until final=true).
+RPC.register("act.scroll_settle", function(args)
+    local char = G.guid(args.char)
+    local p = char and A.scroll_pending[char]
+    if not p then return { read = false, none = true } end
+    local left = 0
+    if G.b(G.q("IsItem", p.item)) and G.same(holder(p.item), char) then
+        left = tonumber((G.q("GetStackAmount", p.item))) or 1
+    end
+    if left >= p.stack then
+        if args.final then A.scroll_pending[char] = nil end
+        return { read = false }
+    end
+    A.scroll_pending[char] = nil
+    local after, charged = G.resources(char), {}
+    for _, q in ipairs(p.payers) do
+        local owed = q.amount - (q.before - ((after[q.name] or {})[q.level] or 0))
+        if owed > 0.01 and G.deduct(char, q.name, q.level, owed) then
+            charged[#charged + 1] = { resource = G.friendly(q.name), amount = owed }
+        end
+    end
+    return { read = true, charged = charged }
 end)
 
 RPC.register("act.note", function(args)

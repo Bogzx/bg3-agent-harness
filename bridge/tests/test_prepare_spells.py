@@ -106,7 +106,35 @@ class PrepareSpells(Base):
         self.assertIn("prepare_spells: done — prepared Bless", out)
         self.assertIn("PREPARED Claude 3/3: Cure Wounds, Shield of Faith, Bless; always: Sanctuary", out)
         job = [a for op, a in self.g.calls if op == "ui.prepare_spells"]
-        self.assertEqual(job, [{"name": "Claude", "add": [{"id": "Target_Bless", "name": "Bless"}], "remove": []}])
+        self.assertEqual(job, [{"name": "Claude", "add": [{"id": "Target_Bless", "name": "Bless", "level": 1}],
+                                "remove": []}])
+
+    def test_the_page_gets_each_spells_look_and_twins(self):
+        # A7, live L4: the page's cells carry no names; the plan's look + twins ride to the page job
+        look = {"icon": "Spell_Enchantment_Bless", "school": "Enchantment", "conc": True, "cost": "Action"}
+        self.g.book[P1]["unprepared"] = [dict(BLESS, look=look, twins=0)]
+        self.call(who="Claude", add=["Bless"])
+        job = [a for op, a in self.g.calls if op == "ui.prepare_spells"][0]
+        self.assertEqual(job["add"], [{"id": "Target_Bless", "name": "Bless", "level": 1, "look": look, "twins": 0}])
+
+    def test_an_unasked_change_is_named(self):
+        # the page clicked Heroism's cell (a look-alike) instead of nothing: the server's list shows it, and so do we
+        self.g.stuck = True
+        orig = self.g.run_job
+
+        def wrong_cell(op, args, *a, **kw):
+            res = orig(op, args, *a, **kw)
+            if op == "ui.prepare_spells":
+                b = self.g.book[P1]
+                b["prepared"] = [x for x in b["prepared"] if x["id"] != SHIELD["id"]]
+            return res
+        self.g.run_job = wrong_cell
+        saved, spellprep.SETTLE_S = spellprep.SETTLE_S, 0.0
+        self.addCleanup(setattr, spellprep, "SETTLE_S", saved)
+        out = self.call(who="Claude", add=["Bless"])
+        self.assertIn("prepare_spells: FAILED — Bless not prepared", out)
+        self.assertIn("ALSO CHANGED (not asked: the spellbook cells carry no names and a look-alike's cell was "
+                      "clicked): unprepared Shield of Faith — prepare_spells again to put it back", out)
 
     def test_refusal_is_said_and_nothing_is_clicked(self):
         self.g.refused = ("over the limit: Claude can prepare 3 spells and has 3 prepared (Bless, Cure Wounds, "

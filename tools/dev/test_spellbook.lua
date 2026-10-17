@@ -54,8 +54,8 @@ local toggles = {}
 local stuck = {}   -- names whose toggle does nothing
 function UI.command(o, name, param)
     if type(o) ~= "table" or o[name] == nil then return false, "no command '" .. name .. "'" end
-    toggles[#toggles + 1] = param.Name
-    if not stuck[param.Name] then
+    toggles[#toggles + 1] = param.Name or param._tag
+    if not stuck[param.Name or param._tag] then
         param.Activated = not param.Activated
         local stat = o.book.PreparedSpellsStat
         stat.Value = stat.Value + (param.Activated and 1 or -1)
@@ -188,6 +188,80 @@ ok(p.toggle_cmd == true and p.selected == "Claude" and #p.books == 2 and p.books
 ok(p.books[2].groups[1].cells[1].props.Name == "Bless" and p.books[2].groups[1].cells[1].can_toggle == true,
    "probe: cell props + CanExecute")
 ok(#p.preparing == 1 and p.preparing[1].class == "Paladin", "probe: one preparing book summarised")
+
+-- 8. live L4 shape (A7): the cells carry no Name (ActionId "Sentinel"); matched by their look in the state the server
+-- says the spell is in. Bless (off) and Heroism (on) look the same: level 1 Enchantment, concentration, Action.
+local function nameless(tag, lvl, school, conc, cost, on, needs)
+    return { _tag = tag, ActionId = "Sentinel", SpellSlotLevel = lvl, SpellSchool = school, IsConcentrationSpell = conc,
+             MainCost = cost, Activated = on, NeedsActivation = needs ~= false }
+end
+local pfe = nameless("PfEaG", 1, "Abjuration", true, "Action", true, false)
+local nbless = nameless("Bless", 1, "Enchantment", true, "Action", false)
+local hero = nameless("Heroism", 1, "Enchantment", true, "Action", true)
+local duel = nameless("CompelledDuel", 1, "Enchantment", true, "BonusAction", true)
+local ncmd = nameless("Command", 1, "Enchantment", false, "Action", true)
+local blind = nameless("BlindingSmite", 3, "Evocation", false, "BothActions", true)
+local lbook = { Class = { MustPrepareSpells = true }, PreparedSpellsStat = { Value = 4, Max = 12 },
+                ActionGroups = { {}, { Actions = { pfe, ncmd, duel, nbless, hero } }, {}, { Actions = { blind } } },
+                ManuallyPreparedActions = { ncmd, duel, hero, blind } }
+local base = { Class = {}, PreparedSpellsStat = { Value = -1, Max = -1 },
+               ActionGroups = { { Actions = { nameless("ItemSpell", 1, "Enchantment", true, "Action", false, false) } } } }
+dc.book = lbook
+dc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.SpellBooks = { base, {}, lbook }
+local BLESS = { id = "Target_Bless", name = "Bless", level = 1, twins = 0,
+                look = { icon = "Spell_Enchantment_Bless", school = "Enchantment", conc = true, cost = "Action" } }
+local HERO = { id = "Target_Heroism", name = "Heroism", level = 1, twins = 0,
+               look = { icon = "Spell_Enchantment_Heroism", school = "Enchantment", conc = true, cost = "Action" } }
+reset()
+j = run({ name = "Claude", add = { BLESS } })
+ok(j.status == "done" and #toggles == 1 and toggles[1] == "Bless" and nbless.Activated == true and hero.Activated,
+   "nameless cells: Bless's cell by its look among the unprepared ones, not Heroism (" .. tostring(toggles[1]) .. ")")
+ok(j.result.before.value == 4 and j.result.after.value == 5 and j.result.after.max == 12, "page stat 4/12 -> 5/12")
+-- removing Bless while Heroism (its look-alike) is prepared too: the server sends twins = 1 -> refused
+reset()
+j = run({ name = "Claude", remove = { { id = "Target_Bless", name = "Bless", level = 1, twins = 1, look = BLESS.look } } })
+ok(#toggles == 0 and j.result.toggled[1].why:find("1 other spell%(s%) look the same as Bless"),
+   "remove with a prepared look-alike: refused (" .. tostring(j.result.toggled[1].why) .. ")")
+reset()
+nbless.Activated = false
+j = run({ name = "Claude", remove = { HERO } })
+ok(#toggles == 1 and toggles[1] == "Heroism" and hero.Activated == false, "remove Heroism: the prepared look-alike")
+hero.Activated, lbook.PreparedSpellsStat.Value = true, 4
+-- twins: the server says another unprepared spell looks the same -> refused, nothing clicked
+reset()
+j = run({ name = "Claude", add = { { id = "Target_Bane", name = "Bane", level = 1, twins = 1, look = BLESS.look } } })
+ok(#toggles == 0 and j.result.toggled[1].ok == false and j.result.toggled[1].why:find("can't tell its cell apart"),
+   "twins: refused, nothing clicked (" .. tostring(j.result.toggled[1].why) .. ")")
+-- the page shows two look-alikes the server didn't expect: refused
+reset()
+local extra = nameless("Bane", 1, "Enchantment", true, "Action", false)
+lbook.ActionGroups[2].Actions[6] = extra
+j = run({ name = "Claude", add = { BLESS } })
+ok(#toggles == 0 and j.result.toggled[1].why:find("2 cells look like Bless"), "2 look-alike cells: refused")
+lbook.ActionGroups[2].Actions[6] = nil
+-- an always-prepared cell is never a candidate; a wrong level isn't either
+reset()
+j = run({ name = "Claude", add = { { id = "Target_PfE", name = "Protection", level = 1, twins = 0,
+                                      look = { school = "Abjuration", conc = true, cost = "Action" } } } })
+ok(#toggles == 0 and j.result.toggled[1].why:find("no spell cell like Protection"), "always-prepared cell skipped")
+-- icons readable (GUESS S4): the icon decides, even with twins
+reset()
+nbless.Icon = { ImageSource = { UriSource = "Assets/Icons/Spell_Enchantment_Bless.png" } }
+hero.Icon = { ImageSource = { UriSource = "Assets/Icons/Spell_Enchantment_Heroism.png" } }
+extra.Icon = { ImageSource = { UriSource = "Assets/Icons/Spell_Enchantment_Bane.png" } }
+lbook.ActionGroups[2].Actions[6] = extra
+j = run({ name = "Claude", add = { { id = "Target_Bane", name = "Bane", level = 1, twins = 1,
+                                      look = { icon = "Spell_Enchantment_Bane", school = "Enchantment", conc = true,
+                                               cost = "Action" } } } })
+ok(#toggles == 1 and toggles[1] == "Bane" and extra.Activated, "icon read: Bane's cell by its icon despite twins")
+ok(SB.iconOf(nbless) == "Spell_Enchantment_Bless", "iconOf strips the path and extension")
+-- probe: one compact line per cell
+reset()
+j = run({ name = "Claude", probe = true })
+local lines = j.result.probe.preparing[1].cells
+ok(#lines == 7 and lines[1] == "L1 Abjuration conc Action on always" and
+   lines[3] == "L1 Enchantment conc BonusAction on", "probe: a look line per cell (" .. tostring(lines[3]) .. ")")
+ok(j.result.probe.books[3].groups[2].cells[4].icon.name == "Spell_Enchantment_Bless", "probe: the icon read per cell")
 
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

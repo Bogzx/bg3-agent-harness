@@ -1038,27 +1038,88 @@ function G.prepared_ids(e)
     return ok and set
 end
 
--- A SpellBook entry that needs preparing and isn't prepared (prepared = G.prepared_ids). An unreadable prepared
--- list counts as nothing prepared: refuse rather than cast a spell the player could not.
+-- The spell a SpellBook entry stands for: its OriginatorPrototype (an upcast entry "Target_Bless_2" has Prototype
+-- Target_Bless_2 and OriginatorPrototype Target_Bless; live L4: Claude's book holds level-1 spells x3, level-2 x2),
+-- else its Prototype. nil when neither reads.
+function G.entry_id(entry)
+    local ok, id = pcall(function() return entry.Id.OriginatorPrototype end)
+    if not ok or id == nil or tostring(id) == "" then ok, id = pcall(function() return entry.Id.Prototype end) end
+    return ok and id ~= nil and tostring(id) or nil
+end
+
+-- The container a spell is a variant of (Target_Command_Halt -> Target_Command_Container), else nil. Live L4: each
+-- variant sits in the book as its own RequiresPreparation entry, while SpellBookPrepares lists only the container.
+function G.container_of(id)
+    local ok, st = pcall(Ext.Stats.Get, id)
+    local okc, c = pcall(function() return st and st.SpellContainerID end)
+    c = ok and okc and c and tostring(c) or ""
+    return c ~= "" and c or nil
+end
+
+-- A SpellBook entry that needs preparing and isn't prepared (prepared = G.prepared_ids). A container's variant
+-- counts as prepared with its container. An unreadable prepared list counts as nothing prepared: refuse rather than
+-- cast a spell the player could not.
 function G.unprepared(entry, prepared)
     local ok, kind = pcall(function() return tostring(entry.PrepareType) end)
     if not ok or kind ~= "RequiresPreparation" then return false end
     if not prepared then return true end
-    local okp, id = pcall(function() return entry.Id.OriginatorPrototype end)
-    if not okp or id == nil then okp, id = pcall(function() return entry.Id.Prototype end) end
-    return not (okp and prepared[tostring(id)])
+    local id = G.entry_id(entry)
+    if id == nil then return true end
+    if prepared[id] then return false end
+    local box = G.container_of(id)
+    return not (box and prepared[box])
 end
 
 -- Spell preparation (A5, 2026-10-17). What the spellbook's prepare page shows: the class spells that need preparing
--- (prepared or not), the always-prepared ones (domain/oath) and the limit. The limit is the game's own number,
--- Stats.MaxPreparedSpells (bg3se StatsComponent; the UI shows it as PreparedSpellsStat.Max; one number, so a
--- character with two preparing classes is not split per class).
+-- (prepared or not), the always-prepared ones (domain/oath) and the limit. One row per spell (G.entry_id: upcast
+-- entries merge; a container's variants are not rows). The limit (A7, live L4): Stats.MaxPreparedSpells read 9 for
+-- Claude while his spellbook page said PreparedSpellsStat 12/12 with 12 prepared. The page's number is per class
+-- book; the server keeps per-class counts in SpellBookPrepares.ClassPreparedSpellCount (bg3se field_30,
+-- HashMap<class Guid, int>), so that sum is the limit, MaxPreparedSpells only when it doesn't read (GUESS P1:
+-- the map holds the page's Max; acceptance act "prepare_spells limit = the page's (A7, read-only)" checks it).
 local function spell_meta(id)
     local ok, st = pcall(Ext.Stats.Get, id)
     if not ok or not st then return id, nil end
     local okn, h = pcall(function() return st.DisplayName end)
     local okl, l = pcall(function() return st.Level end)
-    return (okn and U.loca(h)) or id, okl and tonumber(l) or nil
+    return (okn and U.loca(h)) or id, okl and tonumber(l) or nil, st
+end
+
+-- What the spellbook page's cell shows for a spell (Client/Spellbook.lua matches cells by it: live L4, a cell has no
+-- Name and its ActionId reads "Sentinel"): the stats Icon, level, school, concentration and the main cost as the VM
+-- spells it (MainCost Action / BonusAction / BothActions).
+local function cell_look(st)
+    local look = {}
+    local function get(k)
+        local ok, v = pcall(function() return st[k] end)
+        return ok and v ~= nil and v or nil
+    end
+    look.icon = get("Icon") and tostring(get("Icon")) or nil
+    look.school = get("SpellSchool") and tostring(get("SpellSchool")) or nil
+    local flags = get("SpellFlags")
+    local conc = false
+    if type(flags) == "table" then
+        for _, f in ipairs(flags) do if f == "IsConcentration" then conc = true end end
+    elseif flags then
+        conc = tostring(flags):find("IsConcentration", 1, true) ~= nil
+    end
+    look.conc = conc
+    local costs = tostring(get("UseCosts") or "")
+    local act = costs:find("^ActionPoint:") or costs:find("[;%s]ActionPoint:")
+    local bonus = costs:find("BonusActionPoint:", 1, true)
+    look.cost = (act and bonus) and "BothActions" or act and "Action" or bonus and "BonusAction" or nil
+    return look
+end
+
+local function class_limit(e)
+    local prep = e and U.comp(e, "SpellBookPrepares")
+    local sum, n = 0, 0
+    pcall(function()
+        for _, v in pairs(prep.ClassPreparedSpellCount) do
+            if tonumber(v) then sum, n = sum + tonumber(v), n + 1 end
+        end
+    end)
+    return n > 0 and sum or nil
 end
 
 local function class_names(e)
@@ -1084,12 +1145,12 @@ function G.prep_info(char)
     local seen = {}
     for _, s in ipairs(entries) do
         local okk, kind = pcall(function() return tostring(s.PrepareType) end)
-        local oki, id = pcall(function() return s.Id.Prototype end)
-        id = oki and id and tostring(id) or nil
-        if okk and id and not seen[id] and (kind == "RequiresPreparation" or kind == "AlwaysPrepared") then
+        local id = G.entry_id(s)
+        if okk and id and not seen[id] and (kind == "RequiresPreparation" or kind == "AlwaysPrepared")
+                and not G.container_of(id) then
             seen[id] = true
-            local name, level = spell_meta(id)
-            local row = { id = id, name = name, level = level }
+            local name, level, st = spell_meta(id)
+            local row = { id = id, name = name, level = level, look = st and cell_look(st) or nil }
             if kind == "AlwaysPrepared" then
                 if (level or 0) > 0 then info.always[#info.always + 1] = row end
             elseif G.unprepared(s, set) then
@@ -1107,7 +1168,9 @@ function G.prep_info(char)
     table.sort(info.unprepared, order)
     table.sort(info.always, order)
     local okm, max = pcall(function() return e.Stats.MaxPreparedSpells end)
-    info.max = okm and tonumber(max) or nil
+    info.stats_max = okm and tonumber(max) or nil
+    info.class_max = class_limit(e)
+    info.max = info.class_max or info.stats_max
     info.count = #info.prepared
     info.prepares = #info.prepared + #info.unprepared > 0
     return info
@@ -1176,12 +1239,28 @@ function G.prep_plan(char, add, remove)
             adds[#adds + 1] = r
         end
     end
+    -- How many other book spells the page shows alike (same level, school, concentration, cost and prepared state):
+    -- with no readable icon the page can tell a spell's cell apart only when that is 0 (Client/Spellbook.lua).
+    local function look_key(r)
+        local l = r.look or {}
+        return table.concat({ tostring(r.level), tostring(l.school), tostring(l.conc), tostring(l.cost) }, "|")
+    end
+    local function twins(r, kind)
+        local n = 0
+        for _, o in ipairs(info[kind]) do
+            if o.id ~= r.id and look_key(o) == look_key(r) then n = n + 1 end
+        end
+        return n
+    end
+    for _, r in ipairs(adds) do r.twins = twins(r, "unprepared") end
+    for _, r in ipairs(removes) do r.twins = twins(r, "prepared") end
     local after = info.count - #removes + #adds
     if info.max and after > info.max and #adds > 0 then
         G.refuse(string.format("over the limit: %s can prepare %d spells and has %d prepared (%s); remove %d of them"
             .. " in the same call (remove=[...])", who, info.max, info.count, names(info.prepared), after - info.max))
     end
     return { char = char, name = who, classes = info.classes, max = info.max, count = info.count, after = after,
+             stats_max = info.stats_max, class_max = info.class_max,
              prepared = info.prepared, always = info.always, add = adds, remove = removes, notes = notes }
 end
 

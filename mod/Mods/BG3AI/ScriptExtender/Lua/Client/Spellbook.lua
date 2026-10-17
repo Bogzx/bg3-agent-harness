@@ -21,6 +21,14 @@
 --   S2 those VM props read on bg3le (the hotbar's VMCharacterAction had no readable PrototypeID: cells are matched
 --      by Name, the spell's shown name, which the server sends);
 --   S3 the panel's DataContext is the one with ToggleCharacterAction; the page shows the selected character.
+-- LIVE L4 (2026-10-17, S065-end, Claude): S1 and S3 held; S2 broke: a cell VM has no Name and its ActionId reads
+--   "Sentinel", so every cell was dropped ("0 cells"). Readable per cell: Activated, NeedsActivation (false = always
+--   prepared), SpellSlotLevel, SpellSchool, IsConcentrationSpell, MainCost (Action / BonusAction / BothActions), Icon
+--   (an ImageBrush), ShortDescription (a VMContextTransString). Books: 0 Base (item spells), 1 Tadpole, 2 Class.
+--   A7: a cell is now matched (SB.match) by its Name if one ever reads, else by its icon name (GUESS S4: the brush's
+--   ImageSource names the stats Icon), else by its look (level, school, concentration, cost) among the cells in the
+--   state the server says the spell is in. The server sends each spell's look and `twins` (other book spells that
+--   look the same in that state); with twins and no icon the page can't tell them apart: refused, nothing clicked.
 
 BG3AI = BG3AI or {}
 local UI = BG3AI.UI
@@ -69,8 +77,24 @@ function SB.onSpells(w)
     return m == "ToggleSpells"
 end
 
--- The selected character's preparing books: { {vm, class, value, max, cells = { [lower name] = cell }, n} } where
--- cell = {vm, name, activated, needs}.
+-- The icon name a cell's brush shows ("Spell_Enchantment_Bless"), nil when nothing names it (GUESS S4: the
+-- ImageBrush's ImageSource, or the source's Uri/name, ends in the stats Icon).
+function SB.iconOf(vm)
+    local brush = UI.get(vm, "Icon")
+    if brush == nil then return nil end
+    local src = UI.get(brush, "ImageSource")
+    local cands = { src, UI.get(src, "UriSource"), UI.get(src, "Source"), UI.get(src, "TextureName"),
+                    UI.get(src, "Name"), UI.get(brush, "Name") }
+    for _, v in ipairs(cands) do
+        local t = type(v) == "string" and v or nil
+        t = t and (t:match("([^/\\:]+)$") or t):gsub("%.%w+$", "")
+        if t and t ~= "" then return t end
+    end
+    return nil
+end
+
+-- The selected character's preparing books: { {vm, class, value, max, cells = { cell }, n} } where cell = {vm, name?,
+-- icon?, activated, needs, level, school, conc, cost}.
 function SB.books(dc)
     local sel = UI.path(dc, "CurrentPlayer.SelectedCharacter")
     local out = {}
@@ -82,30 +106,80 @@ function SB.books(dc)
             local b = { vm = book, class = str(UI.path(book, "Class.ClassDisplayName")), value = tonumber(UI.get(stat, "Value")),
                         max = max, cells = {}, n = 0 }
             local function add(vm)
-                local name = str(UI.get(vm, "Name"))
-                if name and not b.cells[name:lower()] then
-                    b.cells[name:lower()] = { vm = vm, name = name, activated = UI.get(vm, "Activated") == true,
-                                              needs = UI.get(vm, "NeedsActivation") }
-                    b.n = b.n + 1
-                end
+                if vm == nil then return end
+                b.cells[#b.cells + 1] = { vm = vm, name = str(UI.get(vm, "Name")), icon = SB.iconOf(vm),
+                    activated = UI.get(vm, "Activated") == true, needs = UI.get(vm, "NeedsActivation"),
+                    level = tonumber(UI.get(vm, "SpellSlotLevel")), school = str(UI.get(vm, "SpellSchool")),
+                    conc = UI.get(vm, "IsConcentrationSpell"), cost = str(UI.get(vm, "MainCost")) }
+                b.n = b.n + 1
             end
+            -- the level groups only: ManuallyPreparedActions repeats the prepared cells (they would count twice)
             for _, group in UI.items(UI.get(book, "ActionGroups"), 32) do
                 for _, vm in UI.items(UI.get(group, "Actions"), 200) do add(vm) end
             end
-            for _, vm in UI.items(UI.get(book, "ManuallyPreparedActions"), 64) do add(vm) end
             out[#out + 1] = b
         end
     end
     return out, sel
 end
 
--- The cell for a spell {id, name} in any preparing book: cell, book.
-function SB.cell(books, spell)
+local function looks_like(c, spell)
+    local l = spell.look or {}
+    if c.needs == false then return false end   -- always prepared: not a toggle
+    if spell.level ~= nil and c.level ~= tonumber(spell.level) then return false end
+    if l.school ~= nil and low(c.school) ~= low(l.school) then return false end
+    if l.conc ~= nil and (c.conc == true) ~= (l.conc == true) then return false end
+    if l.cost ~= nil and low(c.cost) ~= low(l.cost) then return false end
+    return true
+end
+
+-- The cell for a spell {id, name, level?, look = {icon, school, conc, cost}?, twins?} whose Activated is `state`
+-- (nil: any): cell, book, why. By name, then icon, then look (only when the look is the spell's own: twins 0).
+-- exact = name or icon only (a look match can't prove "already prepared": its look-alike may be the one that is).
+function SB.match(books, spell, state, exact)
+    local function ok_state(c) return state == nil or c.activated == state end
     for _, b in ipairs(books) do
-        local c = b.cells[low(spell.name)] or b.cells[low(spell.id)]
-        if c then return c, b end
+        for _, c in ipairs(b.cells) do
+            if c.name and ok_state(c) and (low(c.name) == low(spell.name) or low(c.name) == low(spell.id)) then
+                return c, b
+            end
+        end
     end
-    return nil
+    local icon = spell.look and low(spell.look.icon)
+    if icon and icon ~= "" then
+        local any_icon = false
+        for _, b in ipairs(books) do
+            for _, c in ipairs(b.cells) do
+                if c.icon then any_icon = true end
+                if c.icon and low(c.icon) == icon and ok_state(c) then return c, b end
+            end
+        end
+        if any_icon then return nil, nil, "no cell shows " .. tostring(spell.name) .. "'s icon" end
+    end
+    if exact then return nil, nil, "no cell named " .. tostring(spell.name) end
+    if spell.look == nil then return nil, nil, "no spell cell named " .. tostring(spell.name) .. " in the spellbook" end
+    if (tonumber(spell.twins) or 0) > 0 then
+        return nil, nil, string.format("the spellbook cells carry no names, and %d other spell(s) look the same as %s"
+            .. " there (level, school, concentration, cost): can't tell its cell apart, nothing clicked",
+            tonumber(spell.twins), tostring(spell.name))
+    end
+    local hits = {}
+    for _, b in ipairs(books) do
+        for _, c in ipairs(b.cells) do
+            if ok_state(c) and looks_like(c, spell) then hits[#hits + 1] = { c, b } end
+        end
+    end
+    if #hits == 1 then return hits[1][1], hits[1][2] end
+    if #hits == 0 then return nil, nil, "no spell cell like " .. tostring(spell.name) .. " in the spellbook" end
+    return nil, nil, string.format("%d cells look like %s (the cells carry no names): nothing clicked", #hits,
+        tostring(spell.name))
+end
+
+-- Compact per-cell looks for the probe ("L1 Enchantment conc Action on needs icon=…").
+local function cellLine(c)
+    return string.format("L%s %s%s %s %s%s%s", tostring(c.level), tostring(c.school), c.conc == true and " conc" or "",
+        tostring(c.cost), c.activated and "on" or "off", c.needs == false and " always" or "",
+        c.icon and (" icon=" .. c.icon) or "")
 end
 
 local function statOf(b) return b and { value = b.value, max = b.max } or nil end
@@ -125,7 +199,17 @@ local function probeOf(w, dc, books, sel)
                     local cmd = UI.get(dc, "ToggleCharacterAction")
                     return cmd and cmd:CanExecute(vm)
                 end)
-                g.cells[#g.cells + 1] = { props = UI.props(vm), can_toggle = ok and can or ("error: " .. tostring(can)) }
+                local brush = UI.get(vm, "Icon")
+                local src = UI.get(brush, "ImageSource")
+                local desc = {}
+                for _, x in UI.items(UI.get(UI.get(vm, "ShortDescription"), "Params"), 6) do
+                    desc[#desc + 1] = str(UI.get(x, "Text"))
+                end
+                g.cells[#g.cells + 1] = { props = UI.props(vm), can_toggle = ok and can or ("error: " .. tostring(can)),
+                    icon = { brush = UI.props(brush), brush_type = UI.typeName(brush), source = UI.props(src),
+                             source_type = UI.typeName(src), source_str = src ~= nil and tostring(src) or nil,
+                             name = SB.iconOf(vm) },
+                    desc = desc, desc_props = UI.props(UI.get(vm, "ShortDescription")) }
             end
             bp.groups[gi] = g
         end
@@ -136,10 +220,9 @@ local function probeOf(w, dc, books, sel)
     end
     local summary = {}
     for _, b in ipairs(books) do
-        local names = {}
-        for _, c in pairs(b.cells) do names[#names + 1] = c.name .. (c.activated and "*" or "") end
-        table.sort(names)
-        summary[#summary + 1] = { class = b.class, value = b.value, max = b.max, cells = names }
+        local lines = {}
+        for _, c in ipairs(b.cells) do lines[#lines + 1] = cellLine(c) end
+        summary[#summary + 1] = { class = b.class, value = b.value, max = b.max, cells = lines }
     end
     p.preparing = summary
     return p
@@ -219,19 +302,19 @@ function SB.start(args)
                 st.after = statOf(books[1])
                 return close("done")
             end
-            local c, b = SB.cell(books, q.spell)
+            local c, b, why = SB.match(books, q.spell, not q.want)
             local rec = { name = q.spell.name or q.spell.id, op = q.op }
             st.toggled[#st.toggled + 1] = rec
-            if not c then
-                rec.ok, rec.why = false, "no spell cell named " .. tostring(rec.name) .. " in the spellbook"
-            elseif c.activated == q.want then
+            if not c and SB.match(books, q.spell, q.want, true) then
                 rec.ok, rec.why = true, q.want and "already prepared" or "already unprepared"
+            elseif not c then
+                rec.ok, rec.why = false, why
             elseif q.want and b.max and b.value and b.value >= b.max then
                 rec.ok, rec.why = false, string.format("the spellbook is full (%d/%d prepared)", b.value, b.max)
             else
                 local ok, err = UI.command(dc, "ToggleCharacterAction", c.vm)
                 if ok then
-                    st.cur = { q = q, rec = rec }
+                    st.cur = { q = q, rec = rec, vm = c.vm }
                     phase("flip")
                 else
                     rec.ok, rec.why = false, "the cell's command: " .. tostring(err)
@@ -240,8 +323,8 @@ function SB.start(args)
             return
         end
         if st.phase == "flip" then
-            local c = SB.cell(books, st.cur.q.spell)
-            if c and c.activated == st.cur.q.want then
+            -- the clicked cell's own VM (a look match can't find it again by state once it flipped)
+            if UI.get(st.cur.vm, "Activated") == st.cur.q.want then
                 st.cur.rec.ok = true
                 phase("next")
             elseif now - st.t > SB.FLIP_MS then
