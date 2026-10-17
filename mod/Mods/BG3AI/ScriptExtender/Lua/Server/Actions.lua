@@ -154,8 +154,9 @@ local INTERRUPTS = {
         end
     end,
     DialogActorJoined = function(job, a)
-        -- Ambient barks (automated dialogs) don't stop a player's walk.
-        if job.interrupt.dialogue and G.is_party(a[3])
+        -- Ambient barks (automated dialogs) don't stop a player's walk. Only the walker's own conversation stops
+        -- it (S066 19:11:55: Orin's dialogue pulled Claude in and stopped the 3 members walking to him 16-20 m in).
+        if job.interrupt.dialogue and G.is_party(a[3]) and (not job.char or G.same(a[3], job.char))
             and not G.b(G.q("DialogIsAutomated", a[1])) then
             interrupt(job, "a conversation started")
         end
@@ -170,6 +171,18 @@ local INTERRUPTS = {
             interrupt(job, "attacked")
         end
     end,
+}
+
+-- What the game's story does around a jump it makes: the moved character pulled into a conversation, the party
+-- entering combat, a quest step unlocking (S066 19:11:50: Orin's arena, `Get Orin's Netherstone` ×4 with the jump).
+local TELE_SIGNALS = {
+    DialogActorJoined = function(job, a)
+        if G.same(a[3], job.char) and not G.b(G.q("DialogIsAutomated", a[1])) then return "a conversation started" end
+    end,
+    EnteredCombat = function(_, a)
+        if G.is_party(a[1]) then return "combat started" end
+    end,
+    QuestUpdateUnlocked = function() return "a quest updated" end,
 }
 
 function A.is_character(u)
@@ -231,6 +244,12 @@ function A.dispatch(event, args)
         if g then G.turn_over[g] = nil; G.end_requested[g] = nil end
     end
     each_running(function(job)
+        if job.tele then -- a jump settling (teleport_check): only the story signals count now
+            local sig = TELE_SIGNALS[event]
+            local why = sig and sig(job, args)
+            if why then A.tele_finish(job, why) end
+            return
+        end
         local rule = INTERRUPTS[event]
         if rule and job.interrupt then rule(job, args) end
         if job.status == "running" and job.osi and job.osi[event] then
@@ -268,7 +287,7 @@ for event, arity in pairs({
     PickupFailed = 2, AddedTo = 3,
     Equipped = 2, EquipFailed = 2, Unequipped = 2, UnequipFailed = 2,
     CharacterSelectedForUser = 2, AttachedToPartyGroup = 1, DetachedFromPartyGroup = 1,
-    TeleportedToCamp = 1, TeleportedFromCamp = 1,
+    TeleportedToCamp = 1, TeleportedFromCamp = 1, QuestUpdateUnlocked = 3,
     EnteredForceTurnBased = 1, LeftForceTurnBased = 1,
     StatusApplied = 4, StatusRemoved = 4,
 }) do
@@ -335,6 +354,7 @@ local function start(kind, char, spec)
         local t = RPC.now_ms()
         if t - last < TICK_MS then return end
         last = t
+        if job.tele then return A.tele_settle(job) end -- a jump settling: nothing else runs (teleport_check)
         user_tick(job)
     end or nil
     local user_finish = spec.on_finish
@@ -615,6 +635,40 @@ end
 -- is on G.BLOCK (no harness teleports); the job fails and the teleport_blocked event reaches the runner's log.
 A.TELEPORT_SMALL_M = 1.5
 A.TELEPORT_MIN_DT_MS = 50
+-- Who made the jump. The engine's no-path fallback puts the walker AT our destination; a story script (an arena
+-- pull, a trial's put-back, a ritual drop) puts it somewhere else (S063 Shadowheart 22 m below her move's point,
+-- S036 21 m off) or starts its scene right then (S066 Orin: at the spot, a quest update with it, her conversation
+-- 5 s later). A jump over TELEPORT_GAME_M that lands farther than TELEPORT_DEST_M from where we walked is the
+-- game's at once; any other waits TELEPORT_SETTLE_MS for such a signal (TELE_SIGNALS) before it is called the
+-- engine's (a short NAV-8 jump mid-walk stays ours). Nothing is undone either way.
+A.TELEPORT_DEST_M = 3.0
+A.TELEPORT_GAME_M = 8.0
+A.TELEPORT_SETTLE_MS = 1500
+
+-- why = the story signal (the game moved the character: interrupted, event teleported_by_game), nil = the
+-- engine's own teleport of our walk (failed, event teleport_blocked, as before).
+function A.tele_finish(job, why)
+    local tp = job.tele
+    job.tele = nil
+    if not tp or job.status ~= "running" then return end
+    local here = G.pos(job.char) or tp.to
+    local ev = { uuid = job.char, from = pos_view(tp.from), to = pos_view(here), m = U.round(tp.m, 1) }
+    local res = { pos = pos_view(here), teleported = true, from = pos_view(tp.from), m = U.round(tp.m, 1),
+        dest_m = tp.dest_m and U.round(tp.dest_m, 1) or nil }
+    if why then
+        ev.why, res.by_game, res.why = why, true, why
+        RPC.push("teleported_by_game", ev)
+        RPC.finish_job(job, "interrupted", res, "the game moved the character (" .. why .. "), not our walk")
+    else
+        RPC.push("teleport_blocked", ev)
+        RPC.finish_job(job, "failed", res, "engine teleported the character (not allowed)")
+    end
+end
+
+function A.tele_settle(job)
+    if job.tele and RPC.now_ms() - job.tele.t >= A.TELEPORT_SETTLE_MS then A.tele_finish(job, nil) end
+end
+
 local function teleport_check(job, track, armed)
     local here = G.pos(job.char)
     if not here then return nil end
@@ -625,12 +679,15 @@ local function teleport_check(job, track, armed)
         or (step > A.TELEPORT_SMALL_M and dt < 100 and step / (math.max(dt, A.TELEPORT_MIN_DT_MS) / 1000) > 12.0)
     if prev and (step > 4.0 or fast)
         and (not armed or armed(prev)) and not on_route(job, track, prev, here) then
+        -- where this walk was going (none once it has ended: Use/Pickup's own walk from the approach point)
+        local dest = job.walk and not job.walk.done and job.walk.pos
         if job.walk then job.walk.done = true end
         pcall(G.osi, "PurgeOsirisQueue", job.char)
-        RPC.push("teleport_blocked", { uuid = job.char, from = pos_view(prev), to = pos_view(here),
-            m = U.round(step, 1) })
-        RPC.finish_job(job, "failed", { pos = pos_view(here), teleported = true },
-            "engine teleported the character (not allowed)")
+        local dest_m = dest and U.dist(here, dest) or nil
+        job.tele = { from = prev, to = here, m = step, t = t, dest_m = dest_m }
+        if dest_m and dest_m > A.TELEPORT_DEST_M and step > A.TELEPORT_GAME_M then
+            A.tele_finish(job, string.format("it landed %.0f m from where it was walking", dest_m))
+        end
         return nil
     end
     track.last_pos, track.last_t = here, t

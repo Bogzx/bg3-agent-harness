@@ -335,7 +335,7 @@ def _own_lessons_text(rec: dict | None) -> str:
 
 def _last_attempt_text(rec: dict) -> str:
     """LAST ATTEMPT (debrief) + the agent's own lessons from that fight."""
-    return "\n".join(x for x in (debrief.last_attempt(rec), _own_lessons_text(rec)) if x)
+    return "\n".join(x for x in (debrief.last_attempt(rec, _fights().history), _own_lessons_text(rec)) if x)
 
 
 def _fight_hint(cs: dict, party: set | None) -> str:
@@ -1105,6 +1105,8 @@ def _job_text(name: str, r: JobResult, char: str | None = None) -> str:
     if isinstance(res, dict) and "phases" in res:  # ui.roll's state timeline: metrics only (_roll_step)
         res = {k: v for k, v in res.items() if k != "phases"}
     r = JobResult(r.status, _trim_after(res, name, char), r.error, r.events, r.elapsed_ms)
+    if isinstance(r.result, dict) and r.result.get("by_game"):
+        return _game_moved_text(name, r.result, char)
     if name == "trade" and isinstance(r.result, dict) and ("wares" in r.result or "offer" in r.result):
         head = f"trade: done" if r.status == "done" else f"trade: {r.status.upper()}" + (f" — {r.error}" if r.error else "")
         return head + "\n" + economy.trade_text(r.result, _item_handle, **_trade_view)
@@ -1121,6 +1123,25 @@ def _job_text(name: str, r: JobResult, char: str | None = None) -> str:
         if r.result not in (None, {}, []):
             s += " — " + render.compact(r.result, H)
     return s
+
+
+def _game_moved_text(name: str, res: dict, char: str | None) -> str:
+    """A walk the game's story cut short by moving the walker (Actions.lua tele_finish by_game): where it is, who
+    stayed behind and whether they can walk there (one nav.path from the nearest; S066 Orin's arena, S063 the
+    ritual drop)."""
+    who = char or _active()
+    st = game.try_rpc("state.status") or {}
+    behind = party.moved_left_behind(st, who) if isinstance(st, dict) else []
+    sealed = None
+    pos = res.get("pos")
+    if behind and isinstance(pos, list) and len(pos) >= 3:
+        near = min(behind, key=lambda r: r["dist"] if r["dist"] is not None else float("inf"))
+        if not near["other_level"]:
+            p = game.try_rpc("nav.path", {"char": near["uuid"], "pos": pos[:3]})
+            sealed = near["uuid"] if isinstance(p, dict) and p.get("reachable") is False else None
+    area = st.get("subregion") if isinstance(st, dict) else None
+    return party.game_moved_text(name, res, who, _label, area, behind, sealed,
+                                 in_combat=bool(isinstance(st, dict) and st.get("in_combat")))
 
 
 # Turn-based mode outside combat (S021 burning inn, S024-S026 Shadow-Cursed Lands: the game forces it; every walk
@@ -3112,6 +3133,33 @@ def talk_to(npc: str, who: str | None = None, wait: bool = True) -> str:
 _TOO_FAR_RX = re.compile(r"is too far away \((\d+(?:\.\d+)?)m from this character, max \d+m\)")
 
 
+# S067 #129: talk_to Gale (the CAMP roster: at camp, wants to talk) went to where the party last saw him 201 s
+# before, the temple 3870 m away, and fast-travelled the whole party out of camp. A sighting that far is never
+# a reason to travel by itself: the tool says the distance and the trip, and the agent decides.
+STALE_TRIP_M = longnav.FT_MIN_M
+
+
+def _at_camp_line(uuid: str) -> str:
+    """A camp member out of sight: where the game says they are (the camp), not a last sighting."""
+    here = _at_camp(game.try_rpc("ui.state", context="client"))
+    return (f"{_label(uuid)} is at camp now (the camp roster), not where the party last saw them: "
+            + ("walk around the camp to find them (look / get_nearby), then talk_to again" if here else
+               "camp() takes the party there; then find them in the camp (look / get_nearby)"))
+
+
+def _stale_trip_line(target: str, seen: tuple[list, int | None], here: list, d: float) -> str:
+    """Refusal for a walk-first trip to a sighting past STALE_TRIP_M: the distance and the trip it would take."""
+    ago = f" {render.num(seen[1])}s ago" if seen[1] is not None else ""
+    wps = (game.try_rpc("nav.waypoints", {"pos": seen[0]}) or {}).get("waypoints")
+    wp = longnav.pick_waypoint(here, seen[0], wps)
+    trip = (f"a fast travel to {wp['name']} + a {render.num(round(wp['to_goal_m']))}m walk" if wp
+            else f"a {render.num(round(d))}m walk")
+    x, y, z = (render.num(round(v, 1)) for v in seen[0])
+    return (f"NOT TRAVELLED: {target} is out of sight; the party last saw them{ago} {render.pos(seen[0])}, "
+            f"{render.num(round(d))}m away ({trip}). They may have moved since. To go anyway: "
+            f"travel_to x={x}, y={y}, z={z}, then talk_to {target}")
+
+
 def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, step) -> str | None:
     """A refusal that a walk fixes, as a player clicks it and the character walks there: the target is past the
     act range (S023 interact 75 m, S028 talk_to 47/50 m and interact 40 m at camp) or out of sight but seen on this
@@ -3128,9 +3176,17 @@ def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, st
         dest: dict[str, Any] = {"target": target}
         line = f"{target} is {far.group(1)}m away: walking there first"
     else:
-        seen = _last_seen(_uuid(target))
+        u = _uuid(target)
+        st = game.try_rpc("state.status") or {}
+        if isinstance(st, dict) and any(isinstance(c, dict) and c.get("uuid") == u for c in st.get("camp") or []):
+            return out + "\n" + _at_camp_line(u)
+        seen = _last_seen(u)
         if not seen:
             return None
+        here = _pos_now(char)
+        d = macros.dist(here, seen[0]) if here else None
+        if d is not None and d > STALE_TRIP_M:
+            return out + "\n" + _stale_trip_line(target, seen, here, d)
         dest = {"x": seen[0][0], "y": seen[0][1], "z": seen[0][2]}
         line = _seen_line(target, seen)
     trip = travel_to(who=who, **dest)
@@ -6665,7 +6721,8 @@ def _queues() -> actq.QueueManager:
     global _queue_mgr
     if _queue_mgr is None:
         _queue_mgr = actq.QueueManager(lambda who: _new_executor(
-            actq.Watcher(_watch_conn(), ignore=_queue_ignore.get(who, set())), _watch_conn(), who), _on_queue_report)
+            actq.Watcher(_watch_conn(), ignore=_queue_ignore.get(who, set()), who=who), _watch_conn(), who),
+            _on_queue_report)
     return _queue_mgr
 
 

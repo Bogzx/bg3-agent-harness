@@ -345,13 +345,84 @@ test("move_to entity within: already in reach -> done, in_reach", function()
     eq(j.result.in_reach, true, "in_reach")
 end)
 
+-- A jump that lands where the walk was going waits A.TELEPORT_SETTLE_MS for a story signal (teleport_check).
+local function settle() tick(math.ceil(A.TELEPORT_SETTLE_MS / 60) + 1) end
+local function last_event(kind, since)
+    for i = #RPC.events, 1, -1 do
+        local ev = RPC.events[i]
+        if ev.seq <= (since or 0) then return nil end
+        if ev.kind == kind then return ev end
+    end
+end
+
 test("move_to: teleport is detected and purged", function()
     local j = job(op("move_to", { char = P1, pos = { 30, 0, 0 } }))
     tick()
     world[P1].pos = { 30, 0, 0 }
     tick()
-    eq(j.status, "failed", "status"); assert(j.error:find("teleported"), j.error)
-    assert(#called("PurgeOsirisQueue") >= 1, "purged")
+    eq(j.status, "running", "settling"); assert(#called("PurgeOsirisQueue") >= 1, "purged at once")
+    settle()
+    eq(j.status, "failed", "status"); assert(j.error:find("engine teleported"), j.error)
+    eq(j.result.teleported, true, "teleported"); eq(j.result.by_game, nil, "ours")
+    local ev = last_event("teleport_blocked")
+    assert(ev and ev.data.m == 30, "teleport_blocked m")
+end)
+
+test("V9 S066: a jump onto the walk's spot + the walker pulled into a conversation = the game moved it", function()
+    local seq = RPC.eventSeq
+    local j = job(op("move_to", { char = P1, pos = { 21.7, -1, 0 } }))
+    tick()
+    world[P1].pos = { 21.7, -1.3, 0.4 } -- Orin's arena: 21.7 m in one tick, 0.5 m from where the walk was going
+    tick()
+    eq(j.status, "running", "settling")
+    A.dispatch("DialogActorJoined", { "ORIN_DLG", 7, P1, 0 })
+    eq(j.status, "interrupted", "status"); eq(j.result.by_game, true, "by_game")
+    assert(j.error:find("the game moved", 1, true) and j.error:find("a conversation started", 1, true), j.error)
+    near(j.result.m, 21.7, "m"); eq(last_event("teleport_blocked", seq), nil, "not a blocked teleport")
+    eq(last_event("teleported_by_game", seq).data.why, "a conversation started", "event")
+end)
+
+test("V9 S066: a quest step unlocking right after the jump is the story's too", function()
+    local j = job(op("move_to", { char = P1, pos = { 21.7, -1, 0 } }))
+    tick()
+    world[P1].pos = { 21.7, -1.3, 0.4 }
+    tick(5)
+    A.dispatch("QuestUpdateUnlocked", { P1, "CTY_OrinNetherstone", "Step" })
+    eq(j.status, "interrupted", "status"); eq(j.result.why, "a quest updated", "why")
+end)
+
+test("V9: a conversation another member joins while the jump settles is no signal", function()
+    party_rows = { P1, P2 }
+    world[P2] = { pos = { 50, 0, 0 }, comps = {} }
+    local j = job(op("move_to", { char = P1, pos = { 30, 0, 0 } }))
+    tick()
+    world[P1].pos = { 30, 0, 0 }
+    tick()
+    A.dispatch("DialogActorJoined", { "OTHER_DLG", 8, P2, 0 })
+    eq(j.status, "running", "still settling")
+    settle()
+    eq(j.status, "failed", "the engine's")
+end)
+
+test("V9 S063: a jump that lands far from where the walk was going is the game's at once", function()
+    local j = job(op("move_to", { char = P1, pos = { 3, 0, 0 } }))
+    tick()
+    world[P1].pos = { 0.5, -22, 0 } -- the ritual drop: 22 m straight down, the walk was going 3 m E
+    tick()
+    eq(j.status, "interrupted", "status"); eq(j.result.by_game, true, "by_game")
+    assert(j.error:find("landed 22 m from where it was walking", 1, true), j.error)
+end)
+
+test("V9 S066: the members walking to him keep walking when his conversation starts", function()
+    party_rows = { P1, P2 }
+    world[P2] = { pos = { 0, 0, 5 }, comps = {} }
+    osiv[key("IsCharacter", P2)] = 1; osiv[key("IsOnStage", P2)] = 1
+    local j = job(op("move_to", { char = P2, pos = { 20, 0, 5 } }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    A.dispatch("DialogActorJoined", { "ORIN_DLG", 7, P1, 0 })
+    eq(j.status, "running", "another member's conversation")
+    A.dispatch("DialogActorJoined", { "ORIN_DLG", 7, P2, 0 })
+    eq(j.status, "interrupted", "its own"); eq(j.error, "a conversation started", "why")
 end)
 
 -- S001 leg 5: a 7 m single-tick step along the engine's own route (a jump link
@@ -381,7 +452,7 @@ test("move_to: a big step off the route is still a teleport", function()
     world[P1].pos = { 7, 0, 9 }
     tick()
     without_route()
-    eq(j.status, "failed", "status"); assert(j.error:find("teleported"), j.error)
+    eq(j.status, "interrupted", "status"); eq(j.result.teleported, true, "teleported") -- 23 m off the walk's end
 end)
 
 test("NAV-8: a 3 m jump within one 60 ms job tick is a teleport (both old tests passed it)", function()
@@ -393,6 +464,7 @@ test("NAV-8: a 3 m jump within one 60 ms job tick is a teleport (both old tests 
     eq(j.status, "running", "a walk's step")
     world[P1].pos = { 3.3, 0, 0 } -- jobs tick every TICK_MS 50 ms: 60 ms here
     tick()
+    settle() -- a 3 m jump is never the story's at once
     eq(j.status, "failed", "status"); assert(j.error:find("teleported"), j.error)
 end)
 
@@ -547,6 +619,7 @@ test("interact: Use's own walk teleporting from afar is caught", function()
     eq(#called("Use"), 1, "Use")
     tick()
     world[P1].pos = { 3.3, 0, 9 }; tick()
+    settle()
     eq(j.status, "failed", "status"); assert(j.error:find("teleported"), tostring(j.error))
 end)
 

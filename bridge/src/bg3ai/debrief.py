@@ -722,22 +722,57 @@ def render(rec: dict) -> str:
     return "\n".join(lines[:8])
 
 
-def last_attempt(rec: dict) -> str:
+def thin(rec: dict) -> str | None:
+    """Why an attempt measured too little to plan from: one member fought alone (S066 19:12: Claude pulled into
+    Orin's arena, the other three dealt and took 0), or it lasted 1 round (S066 19:25/19:27/19:30 tests)."""
+    ps = [p for p in rec.get("party") or [] if isinstance(p, dict)]
+    on = [p.get("name") for p in ps if p.get("dealt") or p.get("taken")]
+    if len(ps) >= 2 and len(on) <= 1:
+        return f"{on[0]} fought alone" if on else "nobody in the party fought"
+    if (rec.get("rounds") or 1) <= 1:
+        return "it lasted 1 round"
+    return None
+
+
+def _foes(r: dict) -> set:
+    return {e.get("name") for e in r.get("enemies") or [] if e.get("name")}
+
+
+def fuller(rec: dict, history: list[dict]) -> dict | None:
+    """The latest attempt in history vs the same enemies (>= 2 of them, or all of a smaller fight) that is not
+    thin() and has key facts: what a thin attempt's LAST ATTEMPT plans from."""
+    names = _foes(rec)
+    need = min(2, len(names))
+    return next((r for r in reversed(history) if r is not rec and need and len(names & _foes(r)) >= need
+                 and not thin(r) and r.get("key_facts")), None)
+
+
+def capped_enemies(rec: dict, history: list[dict] | None = None) -> set:
+    """Enemies a per-hit cap (dmg_cap) was measured on in this record or any record in history: the cap is the
+    enemy's own (Orin's Unstoppable), so one measure holds for every attempt (S066: 19:17 measured it, the solo
+    19:12 try and the 1-round tests could not)."""
+    return {c["enemy"] for r in [rec, *(history or [])] for c in r.get("dmg_cap") or [] if c.get("enemy")}
+
+
+def last_attempt(rec: dict, history: list[dict] | None = None) -> str:
+    why = thin(rec)
+    src = fuller(rec, history or []) if why else None
+    base = src or rec
     tips = []
     if rec.get("allies_died"):
         tips.append(f"keep {rec['allies_died'][0]['name']} alive (heal/shield first, pull the enemies off them)")
-    downs = rec.get("downed") or []
+    downs = base.get("downed") or []
     if downs:
         tips.append(f"protect {downs[0]['name']} (pre-buff, keep back, heal first)")
-    hard = max(rec.get("enemies") or [], key=lambda e: e.get("dmg_to_us", 0), default=None)
-    capped = {c["enemy"] for c in rec.get("dmg_cap") or []}
-    if _unseen_top(rec):
+    hard = max(base.get("enemies") or [], key=lambda e: e.get("dmg_to_us", 0), default=None)
+    capped = capped_enemies(rec, history)
+    if _unseen_top(base):
         tips.append("find what hits you unseen (traps, hidden attackers) or fight out of its reach")
     elif hard and hard.get("dmg_to_us") and hard["name"] in capped:
         tips.append(f"{hard['name']} often took 1 per hit: many small hits, or end what shields it first")
     elif hard and hard.get("dmg_to_us"):
         tips.append(f"focus {hard['name']} first")
-    if any(t.get("low") for t in rec.get("dmg_types") or []):
+    if any(t.get("low") for t in base.get("dmg_types") or []):
         tips.append("switch damage types")
     unused = (rec.get("consumables") or {}).get("unused") or []
     if unused:
@@ -745,11 +780,16 @@ def last_attempt(rec: dict) -> str:
         # refusal was a harness gap, act A7), so no "out of combat only" here
         scroll = any(re.search(r"(?i)\bscroll\b", x) for x in unused)
         tips.append("use the unused scroll/potion" + (" (in combat a scroll costs its spell's action)" if scroll else ""))
-    pos = rec.get("pos") or {}
+    pos = base.get("pos") or {}
     if pos.get("surrounded") or (pos.get("elev_m") or 0) >= ELEV_M:
         tips.append("open from range / high ground, fight at a chokepoint")
     tips = tips or ["pre-buff, open from range or high ground, focus one target"]
-    return f"LAST ATTEMPT: {rec.get('summary')} — plan a different approach: " + "; ".join(tips[:4])
+    thin_note = ""
+    if why:
+        thin_note = f" — {why}, so it measured little" + (
+            f"; the fuller attempt vs them ({_outcome(src)}, {src.get('session') or 'earlier'}{_hhmm(src)}): "
+            + "; ".join((src.get("key_facts") or [])[:3]) if src else "")
+    return f"LAST ATTEMPT: {rec.get('summary')}{thin_note} — plan a different approach: " + "; ".join(tips[:4])
 
 
 def fight_note(rec: dict) -> str:
