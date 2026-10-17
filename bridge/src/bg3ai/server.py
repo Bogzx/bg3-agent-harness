@@ -3049,13 +3049,29 @@ def _scroll_ground(inp, name: str, char: str, pos: list[float]) -> str:
     p0 = at() if tele else None
     res = twostep.ground_click(game, inp, char, name, pos, should_stop=_click_stop())
     where = render.pos(pos)
+    looks = twostep.looks_brief(res.detail.get("looks") or [])
     if not res.ok:
         why = res.detail.get("why") or res.reason
         back = ("the spell left the hand without a cast" if res.reason == "dropped"
                 else "the spell was put back" if res.detail.get("cancelled") or res.stage == "arm"
                 else "the spell may still be in hand (press_key ESCAPE)")
-        return f"; {name}: the ground at {where} was not taken ({why}); {back}, nothing cast"
-    out = f" ({name} read, aimed at the ground at {where} by a click)"
+        out = f"; {name}: the ground at {where} was not taken ({_label(why)}); {back}, nothing cast"
+        if looks:
+            out += f" [{_label(looks)}]"
+        # L8 23:58: this said "nothing cast" while Karlach stood 5.1 m on, 2 m from the landing a second later
+        p1 = at() if tele and p0 is not None else None
+        if p1 is not None and sum((a - b) ** 2 for a, b in zip(p0, p1)) ** 0.5 > 1.0:
+            d = sum((a - b) ** 2 for a, b in zip(p0, p1)) ** 0.5
+            out += (f"; yet {_name_of(char)} moved {d:.0f} m (now {render.pos([round(v, 1) for v in p1])}): check "
+                    "whether the scroll is still in the bags")
+        return out
+    src = res.detail.get("ground_src")
+    out = f" ({name} read, aimed at the ground at {where} by a click" + (f"; ground point from {src}" if src else "")
+    if res.detail.get("clear_of"):
+        at_ = render.pos([round(v, 1) for v in res.detail.get("ground_at") or pos])
+        out += (f"; landed the click at {at_}, {res.detail.get('shifted_m')} m from the asked point: "
+                f"{', '.join(_label(u) for u in res.detail['clear_of'])} stood under the cursor there")
+    out += ")"
     if not tele or p0 is None:
         return out
     end, p1 = time.monotonic() + TELEPORT_WAIT_S, p0
@@ -4316,6 +4332,8 @@ def _hotbar_use(char: str, spell: str, picks: list[str], args: dict, note: str) 
         hb["res"] = res
         if not res.ok and res.reason != "fired_early":
             game.try_rpc("job.cancel", {"id": jid}, context=ctx)
+        else:
+            game.try_rpc("act.ui_clicked", {"id": jid}, context=ctx)
 
     def redo(r: JobResult):
         res = hb.get("res")
@@ -4342,6 +4360,7 @@ def _hotbar_use(char: str, spell: str, picks: list[str], args: dict, note: str) 
                 + (f" (OVER the {d['budget_s']:g}s budget)" if d.get("over_budget") else ""))
         if res.reason == "fired_early":
             tail += f"; the game cast after {res.picked} (the spell's max), the rest left out"
+    tail = "\n".join(x for x in (tail, _hand_back(char)) if x)
     if res is not None:
         _log_hotbar(spell, res)
     return _with_tail(out, tail, note)
@@ -4376,9 +4395,12 @@ def _twostep_use(char: str, spell: str, args: dict, note: str) -> str:
         hb["res"] = res
         if not res.ok:
             game.try_rpc("job.cancel", {"id": jid}, context=ctx)
+        else:
+            game.try_rpc("act.ui_clicked", {"id": jid}, context=ctx)
 
     out = _act("use_ability", "act.cast", ui_args, wait_s=30, wait=True, on_start=clicks)
     res = hb.get("res")
+    hand = _hand_back(char)
     tail = sel
     if res is not None:
         d = res.as_dict()
@@ -4392,7 +4414,21 @@ def _twostep_use(char: str, spell: str, args: dict, note: str) -> str:
                     " cast" + ("" if landing is not None else
                                ": a Scroll of Revivify by name, or Withers at camp, also bring a body back"))
         _log_hotbar(spell, res)
-    return _with_tail(out, tail, note)
+    return _with_tail(out, "\n".join(x for x in (tail, hand) if x), note)
+
+
+def _hand_back(char: str) -> str:
+    """A17 (L8 23:59 se, Dimension Door: "the game refused the cast", the spell still in hand): however a hotbar
+    route ended (the mod's refusal after the clicks, a cast that never started), no spell stays in hand after it.
+    A note when one was put back; "" when the hand was empty (one ui.cast_state read)."""
+    inp = _inp()
+    if inp is None:
+        return ""
+    try:
+        how = hotbar.cancel(game, inp, char)
+    except GameError as e:
+        return f"the spell in hand could not be put back ({e}): press_key ESCAPE"
+    return f"the spell was still in hand after the cast: put back ({how})" if how else ""
 
 
 # review M3: a failed hotbar route is cast again by Osiris only from these stages (nothing clicked past the cell)
@@ -5161,7 +5197,7 @@ def short_rest() -> str:
 @mcp.tool()
 @_guard
 def long_rest(confirm: bool = True, partial: bool = False) -> str:
-    """Long rest at camp (go there with camp first): consumes 40 camp supplies, restores everything, may trigger camp scenes (handle them as dialogues). The game's questions on the way ("End the day?", "someone still wants to talk, rest anyway?") are answered Yes and listed in the result; confirm=false stops at the first one instead (then confirm(...)). With fewer than 40 supplies it stops before resting (a partial rest restores only half HP and slots): get food first, or partial=true to rest anyway."""
+    """Long rest at camp (go there with camp first): consumes 40 camp supplies, restores everything, may trigger camp scenes (handle them as dialogues). The game's questions on the way ("End the day?", "someone still wants to talk, rest anyway?") are answered Yes and listed in the result; confirm=false stops at the first readable one instead (then confirm(...)); the unreadable "[ForceUpdate]" box (the game's own End-the-Day check) is answered either way. With fewer than 40 supplies it stops before resting (a partial rest restores only half HP and slots): get food first, or partial=true to rest anyway."""
     args: dict[str, Any] = {} if confirm else {"confirm": False}
     if partial:
         args["partial"] = True
@@ -8112,8 +8148,7 @@ def _turn_auto_bonus(who: str, watcher: actq.Watcher, lines: list, after: dict) 
     if after.get("bonus") == 0:
         return "none"
     cs = (_cs_cached() if _turn_batch() else None) or game.try_rpc("state.combat") or {}
-    if not any(o.get("relation") == "party" and o.get("hp_pct") == 0 and not o.get("dead")
-               for o in cs.get("order") or []):
+    if not any(o.get("relation") == "party" and turn.is_downed(o) for o in cs.get("order") or []):
         return "none"
     acts = game.try_rpc("state.actions", {"uuid": who})
     acts = acts.get("actions") if isinstance(acts, dict) else acts
@@ -9895,8 +9930,30 @@ def _save_menus(label: str) -> tuple[bool, str]:
     return r.status == "done", detail
 
 
+def _save_blocker() -> str:
+    """A party walk/action still running (a queue, an async job): the save waits for it. S078 00:4x: save_game during
+    a queued travel_to failed at the menus ("in-game RETURN did not advance 'new'"); the retry standing still
+    worked. "" when nothing runs."""
+    if _queues().busy():
+        q = next((q for q in _queues().status() if q.get("running") or q.get("waiting")), None)
+        what = (q.get("running") or (q.get("waiting") or ["?"])[0]) if q else "?"
+        return f"a walk/action is running (queue {_label(q['who']) if q else '?'}: {str(what)[:60]})"
+    jobs = _running_jobs()
+    if jobs:
+        info = _async.get(jobs[0]) or {}
+        return f"a walk/action is running ({jobs[0]} {info.get('tool') or ''})".replace(" )", ")")
+    return ""
+
+
+SAVE_WALK_WAIT_S = 20.0   # a session-end (sync) save waits this long for a running walk/action to finish
+
+
 def _can_save() -> tuple[bool, str]:
-    """Whether the game takes a save now: nothing modal on screen and the Save command enabled."""
+    """Whether the game takes a save now: no party walk/action running, nothing modal on screen and the Save
+    command enabled."""
+    busy = _save_blocker()
+    if busy:
+        return False, busy
     ui = game.try_rpc("ui.state", context="client") or {}
     scr = (ui.get("screen") or "game") if isinstance(ui, dict) else "game"
     if scr not in ("game", "game_menu", "save_load"):
@@ -9927,7 +9984,7 @@ SAVER = saver.Saver(_save_menus, _can_save, lambda: SAVE_DIR, _save_log)
 @mcp.tool()
 @_guard
 def save_game(label: str = "") -> str:
-    """Save the game (returns at once: the save runs in the background; SAVED shows on a later result). label: short name for a named save (e.g. "Sxxx-pre-kagha"); empty = named after the session and the time (Sxxx-HHMM); "quicksave" = the game's quicksave. If the game can't save right now (conversation, roll) it is queued for the next moment it can."""
+    """Save the game (returns at once: the save runs in the background; SAVED shows on a later result). label: short name for a named save (e.g. "Sxxx-pre-kagha"); empty = named after the session and the time (Sxxx-HHMM); "quicksave" = the game's quicksave. If the game can't save right now (conversation, roll, a walk/action still running) it is queued for the next moment it can."""
     t0 = time.monotonic()
     _enable_save_gates()
     label = re.sub(r"[^A-Za-z0-9 _-]", "", label)[:40] if label else ""  # the mod's name filter (no dots)
@@ -9941,7 +9998,11 @@ def save_game(label: str = "") -> str:
             return _finish("save_game", {"label": label}, "save_game: REFUSED — no label: give one (e.g. "
                            "label=\"S070-before-boss\"), or label=\"quicksave\" for the game's quicksave", t0)
         label = f"{sess}-{time.strftime('%H%M')}"
-    body = SAVER.save(label, sync=_session_over())  # session over: nothing comes after, so wait for the disk
+    sync = _session_over()  # session over: nothing comes after, so wait for the disk
+    end = time.monotonic() + SAVE_WALK_WAIT_S
+    while sync and _save_blocker() and time.monotonic() < end:
+        time.sleep(0.3)   # the walk ends first (the queued form waits for it between calls instead)
+    body = SAVER.save(label, sync=sync)
     return _finish("save_game", {"label": label}, body, t0)
 
 

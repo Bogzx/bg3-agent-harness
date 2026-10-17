@@ -1551,6 +1551,35 @@ class ScrollUse(unittest.TestCase):
                       "spell was put back, nothing cast", head)
         self.assertIn("the scroll was not used up (no target taken?): no action spent", head)
 
+    def test_a17_misty_step_not_taken_says_the_looks_and_a_move_anyway(self):
+        # L8 23:58: "a character is under the cursor (3ed74f06…)" x5, "nothing cast", and Karlach stood 5.1 m on
+        miss = HotbarCastResult(False, reason="ground_refused", stage="ground", detail={
+            "why": f"a character is under the cursor ({self.GALE})", "cancelled": "escape",
+            "looks": [{"world_src": "ray_plane", "on_avoid": True, "hover": self.GALE}] * 5})
+        where = iter([[17.8, -42.8, 1004.8], [22.6, -42.8, 1006.5]])
+        last = [None]
+
+        def status(a):
+            last[0] = next(where, last[0])
+            return {"party": [{"uuid": self.SH, "pos": last[0]}]}
+        out, _, _ = self._run("Shadowheart", "Scroll of Misty Step", name="Scroll of Misty Step",
+                              pos=(23.8, -42.35, 1004.8), ground=miss, rpc={"state.status": status})
+        head = out.split("\n")[0]
+        self.assertRegex(head, r"was not taken \(a character is under the cursor \(e\d+ Gale\)\)")
+        self.assertRegex(head, r"\[5 cursor looks; ground point from ray_plane x5; under the cursor: e\d+ Gale x5\]")
+        self.assertIn("; yet Shadowheart moved 5 m (now (22.6,-42.8,1006.5)): check whether the scroll is still in "
+                      "the bags", head)
+
+    def test_a17_misty_step_landed_clear_of_a_body_says_so(self):
+        hit = HotbarCastResult(True, detail={"ground_src": "Position", "clear_of": [self.GALE], "shifted_m": 1.2,
+                                             "ground_at": [23.8, -42.35, 1006.0]})
+        saved, server.TELEPORT_WAIT_S = server.TELEPORT_WAIT_S, 0.0
+        self.addCleanup(setattr, server, "TELEPORT_WAIT_S", saved)
+        out, _, _ = self._run("Shadowheart", "Scroll of Misty Step", name="Scroll of Misty Step",
+                              pos=(23.8, -42.35, 1004.8), ground=hit)
+        self.assertRegex(out.split("\n")[0], r"by a click; ground point from Position; landed the click at "
+                         r"\(23\.8,-42\.4,1006\), 1\.2 m from the asked point: e\d+ Gale stood under the cursor there\)")
+
     def test_a_target_wins_over_a_point(self):
         _, _, clicks = self._run("Shadowheart", "Scroll of Fear", target=self.GALE, name="Scroll of Fear",
                                  pos=(1.0, 2.0, 3.0))

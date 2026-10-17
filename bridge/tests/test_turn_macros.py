@@ -246,6 +246,15 @@ def clear_server_state() -> None:
         d.clear()
 
 
+def reset_handles() -> None:
+    """Empty server.H in place (modules hold the object): the next uuid registered is e1 again."""
+    h = server.H
+    h.by_uuid.clear()
+    h.by_handle.clear()
+    h.names.clear()
+    h._n = 0
+
+
 class Base(unittest.TestCase):
     def setUp(self) -> None:
         self.g = FakeGame()
@@ -268,6 +277,9 @@ class Base(unittest.TestCase):
         saved_end, server.END_ASYNC = server.END_ASYNC, False
         self.addCleanup(setattr, server, "END_ASYNC", saved_end)
         server._pace.update(issued_at=0.0, calls_since=0, next_shown=0, nudge=False)
+        # A17: an empty handle registry, so these are e1 Goblin, e2 Imp, e3 Chest, e4 Claude, e5 Lae'zel whatever ran
+        # before ('unittest tests.test_leveling tests.test_turn_macros': 5 FAILs, "e6 Goblin" for "e1 Goblin")
+        reset_handles()
         self.gob = server.H.get(GOB, "Goblin")
         self.imp = server.H.get(IMP, "Imp")
         self.chest = server.H.get(CHEST, "Chest")
@@ -569,13 +581,24 @@ class CombatTurn(Base):
     # S018: end_turn on downed Claude / Shadowheart -> "FAILED: character is downed" (x2); combat_turn too.
     def test_downed_character_turn_is_skipped(self):
         p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
-        p1["hp_pct"] = 0
+        p1.update(hp_pct=0, downed=True)
         out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1))
         self.assertIn("is downed: nothing to play", out)
         out = server.end_turn(who=server.H.get(P1), wait=False)
         self.assertIn("skipped", out)
         self.assertNotIn("FAILED", out)
         self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], [])
+
+    # S076 00:29-00:32 (Cazador try 6 r6): Karlach at 1/218 HP read hp_pct 0 (State.lua rounded it) and end_turn /
+    # combat_turn refused her as downed while set_party showed hp=1/218 action=1. Not downed: she plays.
+    def test_one_hp_member_rounded_to_zero_pct_is_not_downed(self):
+        p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
+        p1["hp_pct"] = 0                       # round(100 * 1 / 218) from an older mod; no downed flag
+        self.assertEqual(turn.downed(self.g.combat), set())
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1))
+        self.assertNotIn("is downed", out)
+        self.assertIn("Shout_Dodge", self.casts())
+        self.assertIn("end_turn: done", out)
 
     def test_stale_conversation_flag_retried_for_a_single_tool(self):
         # S055 06:44: pickpocket ×3 "character is in a conversation" right after the conversation ended
@@ -707,7 +730,7 @@ class CombatTurn(Base):
 
     def test_downed_member_is_not_who_acts(self):
         p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
-        p1["hp_pct"] = 0
+        p1.update(hp_pct=0, downed=True)
         self.g.combat["turn_group"] = [P1, P2]
         self.assertEqual(turn.party_acting(self.g.combat, {P1, P2}), [P2])
 
@@ -900,7 +923,7 @@ class CombatTurn(Base):
 
     def test_unplanned_bonus_heals_a_downed_ally(self):
         lae = next(o for o in self.g.combat["order"] if o["uuid"] == P2)
-        lae.update(hp_pct=0, **{"from": {P1: [7.0, 1]}})
+        lae.update(hp_pct=0, downed=True, **{"from": {P1: [7.0, 1]}})
         self.g.visible.add(P2)  # G.visible: party members always
         self.g.actions = [{"spell": "Target_HealingWord", "range": 18}, {"spell": "Shout_Dodge"}]
         out = server.combat_turn(self.plan(action="Shout_Dodge"))
@@ -914,7 +937,7 @@ class CombatTurn(Base):
         self.g.visible.add(P2)
         server.combat_turn(self.plan(action="Shout_Dodge"))
         lae = next(o for o in self.g.combat["order"] if o["uuid"] == P2)
-        lae.update(hp_pct=0, **{"from": {P1: [7.0, 1]}})
+        lae.update(hp_pct=0, downed=True, **{"from": {P1: [7.0, 1]}})
         for kw in ({"auto_bonus": False}, {"bonus": "Shout_SecondWind"}):
             self.g.combat["current"] = P1
             server.combat_turn(self.plan(action="Shout_Dodge", **kw))
@@ -1431,7 +1454,7 @@ class CombatTurn(Base):
         p3 = "33333333-2222-3333-4444-555555555555"
         server.H.get(p3, "Gale")
         self.g.combat["order"].append({"uuid": p3, "name": "Gale", "relation": "party", "hp_pct": 0,
-                                       "from": {P1: [5.0, 1]}})
+                                       "downed": True, "from": {P1: [5.0, 1]}})
         self.g.combat["current"] = P1
         n = len(self.g.ops("act.cast"))
         out = server.combat_turn(self.plan(action={"ability": "Target_HealingWord", "target": server.H.get(P2)},

@@ -200,13 +200,19 @@ ok(widgets.MakeCamp ~= nil, "rest screen opened after two Yes answers (status " 
 ok(j.confirms and #j.confirms == 2, "two questions recorded: " .. tostring(j.confirms and #j.confirms))
 ok(j.confirms and j.confirms[2]:find("Someone wants to talk"), "question text kept")
 
--- long rest with confirm=false: stops at the question
+-- long rest with confirm=false: the unreadable "[ForceUpdate]" box (End the day?) is answered (S077 r1: it
+-- stopped there and the agent clicked it by hand); the readable question after it stops
 widgets = {}
 r = ops["ui.long_rest"]({ confirm = false })
 j = jobs[r.job]
-for _ = 1, 20 do clock = clock + 50 j.on_tick(j) if j.status ~= "running" then break end end
+for _ = 1, 40 do clock = clock + 50 j.on_tick(j) if j.status ~= "running" then break end end
 ok(j.status == "failed" and tostring(j.error):find("answer with confirm"), "confirm=false fails with the question: " .. tostring(j.error))
+ok(tostring(j.error):find("Someone wants to talk", 1, true), "stopped at the readable one: " .. tostring(j.error))
+ok(j.confirms and #j.confirms == 1 and j.confirms[1]:find("[ForceUpdate]", 1, true), "the [ForceUpdate] box answered: "
+    .. tostring(j.confirms and j.confirms[1]))
 ok(widgets.Dialog_box ~= nil, "box left open")
+ok(BG3AI.Services.unreadable("[ForceUpdate]") and BG3AI.Services.unreadable(nil)
+    and BG3AI.Services.unreadable(" [ForceUpdate] ") and not BG3AI.Services.unreadable("End the day?"), "unreadable()")
 
 
 -- long rest: a box whose Yes ignores its Command (live S013/S014 "[ForceUpdate] Yes/No") -> needs_click

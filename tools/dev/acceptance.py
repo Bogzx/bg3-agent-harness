@@ -1516,10 +1516,15 @@ def twostep_dd_probe() -> bool:
     p1 = party_pos().get(caster) or p0
     off = math.dist([p1[0], p1[2]], [land[0], land[2]])
     cs = HB.cast_state(S.game, caster)
+    land_look = ""
     try:
         rows = (S.RUNTIME / "hotbar_cast.jsonl").read_text().splitlines()
         log(f"PROBE twostep result {rows[-1] if rows else '-'}")
-    except OSError:
+        # A17: what the cursor showed at the landing (L8: no landing click was made at all, `one_step`)
+        last = json.loads(rows[-1]) if rows else {}
+        land_look = (f"; landing looks={last.get('looks')} clicks={last.get('ground_clicks')} "
+                     f"one_step={last.get('one_step')} first_s={last.get('first_s')}")
+    except (OSError, ValueError):
         pass
     ok = "use_ability: done" in out and off <= 1.5 and not cs.get("armed") and ui_screen() == "game"
     if not ok and "no spell slot left" in out and not cs.get("armed"):
@@ -1529,7 +1534,8 @@ def twostep_dd_probe() -> bool:
         return False
     item(TWOSTEP_ITEM, "PASS" if ok else "FAIL",
          f"{dt:.1f}s; now {off:.1f} m from the landing (moved {math.dist(p0, p1):.1f} m); in hand={cs.get('armed')}; "
-         + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar")))[:220])
+         + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar", "the spell")))[:220]
+         + land_look[:200])
     if not ok:
         close_targeting()
     return True
@@ -2375,9 +2381,13 @@ def point_scroll_probe() -> None:
     p1 = party_pos().get(u) or p0
     off = math.dist([p1[0], p1[2]], [land[0], land[2]])
     head = first_line(out)
-    ok = "aimed at the ground" in head and " moved " in head and off <= 1.5
+    # A17: L8 said "nothing cast" while Karlach moved 5.1 m: is the scroll still carried?
+    inv2 = S.game.try_rpc("state.inventory", {}) or {}
+    left = any(isinstance(x, dict) and x.get("uuid") == it.get("uuid") for x in inv2.get("items") or [])
+    ok = "aimed at the ground" in head and " moved " in head and off <= 1.5 and not left
     item(POINT_SCROLL_ITEM, "PASS" if ok else "FAIL",
-         f"{head[:260]} ({dt:.1f}s); {off:.1f} m from the point {land}, moved {math.dist(p0, p1):.1f} m")
+         f"{head[:420]} ({dt:.1f}s); {off:.1f} m from the point {land}, moved {math.dist(p0, p1):.1f} m; "
+         f"scroll still carried={left}")
 
 
 def sec_act() -> None:

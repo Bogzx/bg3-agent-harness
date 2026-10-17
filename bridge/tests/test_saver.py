@@ -17,7 +17,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
+from test_turn_macros import P1, Base  # (sets BG3AI_RUNTIME before importing server)
 
 from bg3ai import saver, server  # noqa: E402
 
@@ -322,6 +322,37 @@ class ServerSave(Base):
         self.assertIn("save_game: REFUSED — no label", out)
         out = server.save_game("QuickSave")
         self.assertIn("saving 'quicksave' in the background", out)
+
+    def test_a17_a_save_during_a_walk_waits_for_it(self):
+        """S078: save_game during a queued travel_to failed at the menus ("in-game RETURN did not advance 'new'");
+        the retry standing still worked. The save is queued while a queue or async job runs, says so, and runs once
+        the walk is over."""
+        class Q:
+            walking = True
+
+            def busy(self, who=None):
+                return self.walking
+
+            def status(self):
+                return [{"who": P1, "running": "travel_to o1", "waiting": []}] if self.walking else []
+        q = Q()
+        saved = (server._queues, server._running_jobs, saver.DEFER_POLL_S)
+        server._queues, server._running_jobs, saver.DEFER_POLL_S = (lambda: q), list, 0.05
+        self.addCleanup(lambda: (setattr(server, "_queues", saved[0]), setattr(server, "_running_jobs", saved[1]),
+                                 setattr(saver, "DEFER_POLL_S", saved[2])))
+        ok, why = server._can_save()
+        self.assertFalse(ok)
+        self.assertIn("a walk/action is running (queue e4 Claude: travel_to o1)", why)
+        rig = self.rig
+        server.SAVER = saver.Saver(rig.run_menu, server._can_save, lambda: rig.dir)
+        out = server.save_game("S078-start")
+        self.assertIn("queued 'S078-start': the game can't save right now (a walk/action is running", out)
+        time.sleep(0.3)
+        self.assertEqual(rig.menus, [])            # no menus while it walks
+        q.walking = False
+        real = self.g.try_rpc
+        self.g.try_rpc = lambda op, *a, **kw: {"can": True} if op == "ui.menu" else real(op, *a, **kw)
+        self.assertTrue(wait_until(lambda: rig.menus == ["S078-start"]), self.g.calls[-5:])
 
     def test_a_gated_tool_waits_for_the_menus(self):
         server.save_game("x")

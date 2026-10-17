@@ -62,6 +62,9 @@ A.hit_ms = A.hit_ms or {} -- char guid -> {t, why}: when it was last hit (Attack
 -- take ~1 s + 0.5 s per target (hotbar.py budget, hard cap 3x + 4 s): no start this long = failed (the bridge cancels
 -- earlier on its own failure).
 A.CAST_UI_NO_START_MS = 15000
+-- act.cast {ui=true}: a CastSpellFailed that came before the bridge's clicks were done (the upcast picker sends one)
+-- fails the job only when no cast starts this long after the bridge says the clicks are done (act.ui_clicked).
+A.CAST_UI_REFUSED_MS = 1500
 A.CAST_UI_MAX_TARGETS = 10 -- darts/beams/allies one hotbar cast can name (Magic Missile at level 9 = 11 is not ours)
 A.CAST_WALK_MAX_REACH = 3.0 -- act.cast out of combat walks into range only for touch-range casts (Help, melee)
 A.MELEE_STOP_SLACK = 0.4 -- move_to {target, within}: stop this far inside the melee reach
@@ -358,8 +361,12 @@ end
 -- Start an action job for `char` (nil for party-wide actions). spec fields:
 --   timeout_ms, interrupt = {combat, dialogue, attacked}, osi = {Event = fn},
 --   on_tick(job), on_finish(job), start(job) -> performs the game call.
+-- spec.passive (act.select): not an action of the character. It neither supersedes the character's running job
+-- nor becomes A.active (L8 23:58 helm ladders / trade travel: an act.select of the walker at its arrival
+-- interrupted interact e39 and a 43 m move_to, "superseded by a new action (select)"; picking a portrait doesn't stop a
+-- player's walk or climb).
 local function start(kind, char, spec)
-    if char then
+    if char and not spec.passive then
         local prev = A.active[char]
         if prev and prev.status == "running" then
             -- naut3-r2 15:51:34: Lae'zel's cast, cast and end_turn were each superseded within 0.3 s by a job that
@@ -418,7 +425,7 @@ local function start(kind, char, spec)
         if job.char then pcall(G.osi, "PurgeOsirisQueue", job.char) end
     end
     local job = RPC.start_job("act." .. kind, spec)
-    if char then A.active[char] = job end
+    if char and not spec.passive then A.active[char] = job end
     local ok, err = pcall(spec.start, job)
     if not ok then
         local reason = G.is_refusal(err) and err.reason or tostring(err)
@@ -1694,6 +1701,15 @@ local function resolve_spell(spell, upcast)
     return spell
 end
 
+-- act.ui_clicked {id}: the bridge's hotbar clicks for that act.cast {ui=true} job are done (A17). A CastSpellFailed
+-- held from before then fails the job CAST_UI_REFUSED_MS later unless the cast starts; one after it fails it at once.
+RPC.register("act.ui_clicked", function(args)
+    local job = RPC.jobs[tonumber(args.id)]
+    if not job then error("no such job " .. tostring(args.id)) end
+    if job.ui and job.status == "running" then job.clicked_ms = RPC.now_ms() end
+    return { status = job.status, held = job.ui_failed }
+end)
+
 reg("cast", function(args)
     local char = G.actor(args.char)
     G.not_in_dialogue(char)
@@ -1895,7 +1911,16 @@ reg("cast", function(args)
                 end
             end,
             CastSpellFailed = function(job, a)
-                if matches(a) then RPC.finish_job(job, "failed", nil, A.cast_failed_why(char, targets[1], spell)) end
+                if not matches(a) then return end
+                local why = A.cast_failed_why(char, targets[1], spell)
+                if job.ui and not job.clicked_ms and not job.began then
+                    -- L8 23:59 (se, Dimension Door): picking the level in the upcast picker sent this 0.12 s
+                    -- before the first target click, and the job failed while the bridge went on clicking. In the
+                    -- hotbar route it is held until the bridge's clicks are done (act.ui_clicked).
+                    job.ui_failed = job.ui_failed or why
+                    return
+                end
+                RPC.finish_job(job, "failed", nil, why)
             end,
             -- AttackedBy(defender, attackerOwner, attacker, damageType, amount, cause, storyActionId)
             AttackedBy = function(job, a)
@@ -1922,6 +1947,11 @@ reg("cast", function(args)
         }),
         on_tick = function(job)
             if job.phase == "approach" then return approach_tick(job) end
+            if job.ui_failed and job.clicked_ms and not job.casted and not job.began
+                and RPC.now_ms() - job.clicked_ms >= A.CAST_UI_REFUSED_MS then
+                RPC.finish_job(job, "failed", nil, job.ui_failed)
+                return
+            end
             if not job.casted and not job.began and job.ordered_ms then
                 local p = G.pos(char)
                 if p and job.ordered_pos and U.dist(p, job.ordered_pos) > 0.5 then
@@ -1934,8 +1964,8 @@ reg("cast", function(args)
                         order(job)
                         return
                     end
-                    local why = "the game never started it (" .. tostring(math.floor(no_start_ms / 1000))
-                        .. " s, no cast, no step)"
+                    local why = job.ui_failed or ("the game never started it ("
+                        .. tostring(math.floor(no_start_ms / 1000)) .. " s, no cast, no step)")
                     if job.reordered then
                         why = why .. " twice: ordered again after " .. job.reorder_why .. " "
                             .. string.format("%.1f s %s the first order", math.abs(job.reordered),
@@ -2370,6 +2400,7 @@ reg("select", function(args)
         return user ~= nil and G.same(G.q("GetCurrentCharacter", user), char)
     end
     return start("select", char, {
+        passive = true,
         timeout_ms = 3000,
         start = function(job)
             job.t0 = RPC.now_ms()

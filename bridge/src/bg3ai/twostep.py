@@ -30,6 +30,7 @@ in hand (we then try the next spot).
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from typing import Any
@@ -47,6 +48,16 @@ GROUND_TOL_M = 0.8             # the cursor's world point this close (flat) to t
 SPOT_DISTS = (1.2, 1.8, 2.4)   # Revivify: the ground this far from the body toward the caster
 LAND_NUDGES_M = ((0.0, 0.0), (0.4, 0.0), (-0.4, 0.0), (0.0, 0.4), (0.0, -0.4))   # around a landing the game refused
 MAX_GROUND_CLICKS = 3
+# L8 23:58 (act, Misty Step scroll 6 m): all 5 spots (the landing, then +-0.4 m) read "a character is under the
+# cursor" (Shadowheart): a nudge smaller than a body never leaves it. A landing whose cursor ray hits a character
+# is tried again this far (flat) from that character's feet: straight away from it through the landing (along the
+# cast direction when the landing is on it), then turned by CLEAR_TURNS_DEG (sideways clears a body standing
+# between the camera and the spot). At most CLEAR_BODIES characters; spots past CLEAR_MAX_SHIFT_M from the asked
+# landing are not tried.
+BODY_CLEAR_M = 1.2
+CLEAR_TURNS_DEG = (0, 60, -60, 120, -120)
+CLEAR_BODIES = 2
+CLEAR_MAX_SHIFT_M = 2.5
 VIEW_STEPS = 4                 # camera moves to bring a ground point into view
 DD_ORDER = ("who", "landing")  # GUESS T2
 
@@ -93,6 +104,45 @@ def ground_ok(gc: dict) -> tuple[bool, str | None]:
     if gc.get("warning"):
         return False, f"the game shows a {gc.get('cursor') or gc.get('overlay')} cursor there"
     return True, None
+
+
+def clear_spots(want: list[float], body: list[float], origin: list[float] | None = None) -> list[list[float]]:
+    """Ground points BODY_CLEAR_M (flat) from `body` (the feet of the character the cursor ray hit when aimed at
+    `want`), at want's height: away from the body through `want` first, then turned by CLEAR_TURNS_DEG; `want` on
+    the body itself: along the cast direction (from `origin`, the caster), else +x. Spots farther than
+    CLEAR_MAX_SHIFT_M from `want` are left out."""
+    dx, dz = want[0] - body[0], want[2] - body[2]
+    d = math.hypot(dx, dz)
+    if d < 0.2 and origin is not None:
+        dx, dz = want[0] - origin[0], want[2] - origin[2]
+        d = math.hypot(dx, dz)
+    if d < 1e-6:
+        dx, dz, d = 1.0, 0.0, 1.0
+    ux, uz = dx / d, dz / d
+    out = []
+    for deg in CLEAR_TURNS_DEG:
+        c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+        p = [round(body[0] + BODY_CLEAR_M * (ux * c - uz * s), 2), want[1],
+             round(body[2] + BODY_CLEAR_M * (ux * s + uz * c), 2)]
+        if math.hypot(p[0] - want[0], p[2] - want[2]) <= CLEAR_MAX_SHIFT_M:
+            out.append(p)
+    return out
+
+
+def looks_brief(looks: list[dict]) -> str:
+    """The cursor looks of a ground click in one line: where the ground point came from and what was under the
+    cursor, counted ("ground point from ray_plane x5; under the cursor: <uuid> x5")."""
+    if not looks:
+        return ""
+    def counted(key: str) -> str:
+        n: dict[str, int] = {}
+        for lk in looks:
+            if lk.get(key):
+                n[str(lk[key])] = n.get(str(lk[key]), 0) + 1
+        return ", ".join(f"{k} x{v}" for k, v in n.items())
+    src, hov = counted("world_src"), counted("hover")
+    return "; ".join(x for x in (f"{len(looks)} cursor looks", f"ground point from {src or 'nothing read'}",
+                                 f"under the cursor: {hov}" if hov else "") if x)
 
 
 def _took(before: dict, now: dict) -> bool:
@@ -180,6 +230,17 @@ class _Run:
         return _rpc(self.game, "ui.screen_pos", {"uuid": self.first, "aim": "feet", "toward": self.caster,
                                                  "dist": v})
 
+    def _clear_of(self, body: str) -> list[list[float]]:
+        """Landing spots clear of the character `body` the cursor ray hit (its feet from ui.screen_pos)."""
+        try:
+            feet = _rpc(self.game, "ui.screen_pos", {"uuid": body, "aim": "feet"}).get("world")
+            org = _rpc(self.game, "ui.screen_pos", {"uuid": self.caster, "aim": "feet"}).get("world")
+        except GameError:
+            return []
+        if not (isinstance(feet, list) and len(feet) >= 3 and self.landing is not None):
+            return []
+        return clear_spots(self.landing, feet, org if isinstance(org, list) and len(org) >= 3 else None)
+
     def click_ground(self, done_when) -> tuple[bool, dict]:
         """Click candidate spots until `done_when(state)` holds. Never clicks on a warning cursor or a character."""
         if self.landing is not None:
@@ -192,7 +253,10 @@ class _Run:
         w, h = self.inp.window_size()
         clicks, looks = 0, []
         last: dict = {}
-        for spot in self.spots():
+        todo = self.spots()
+        cleared: list[str] = []
+        while todo:
+            spot = todo.pop(0)
             if time.monotonic() >= self.hard or clicks >= MAX_GROUND_CLICKS:
                 break
             try:
@@ -211,10 +275,14 @@ class _Run:
             self.inp.wait_frames(2)
             gc = ground_check(self.game, want, avoid)
             ok, why = ground_ok(gc)
-            looks.append({k: gc.get(k) for k in ("d_m", "world_src", "cursor", "warning", "on_avoid")
+            looks.append({k: gc.get(k) for k in ("d_m", "world_src", "cursor", "warning", "on_avoid", "hover")
                           if gc.get(k) is not None})
             if not ok:
                 last = {"reason": "ground_refused", "why": why, "ground": gc}
+                body = gc.get("hover") if gc.get("on_avoid") and spot[0] == "pos" else None
+                if body and body not in cleared and len(cleared) < CLEAR_BODIES:
+                    cleared.append(body)
+                    todo[:0] = [("pos", p) for p in self._clear_of(body)]
                 continue
             if self.stop():
                 return False, {"reason": "cancelled", "why": "the step was cancelled or interrupted"}
@@ -225,7 +293,11 @@ class _Run:
             self.st = st
             if took:
                 self.res.picked += 1
-                self.res.detail.update(ground_clicks=clicks, ground_at=want, looks=looks)
+                self.res.detail.update(ground_clicks=clicks, ground_at=want, looks=looks,
+                                       ground_src=gc.get("world_src"))
+                if cleared and self.landing is not None:
+                    self.res.detail.update(clear_of=cleared, shifted_m=round(math.hypot(
+                        want[0] - self.landing[0], want[2] - self.landing[2]), 1))
                 return True, {}
             if not st.get("armed"):
                 # the spell left the hand without a cast (the game dropped it): nothing more to click

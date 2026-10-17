@@ -46,8 +46,14 @@ class TwoStepWorld(FakeWorld):
         self.landing_first = False
         self.ground_at = None
         self.offscreen_pos = False
+        self.body_r: dict[str, float] = {}
 
     def char_at(self, x, y):
+        w = to_world(x, y)
+        for u, r in self.body_r.items():   # a body this wide (m) under the cursor ray: L8 Shadowheart
+            p = self.wpos[u]
+            if ((w[0] - p[0]) ** 2 + (w[2] - p[2]) ** 2) ** 0.5 <= r:
+                return u
         for u, p in self.targets.items():
             if p and abs(x - p[0]) <= 4 and abs(y - p[1]) <= 4:
                 return u
@@ -85,6 +91,12 @@ class TwoStepWorld(FakeWorld):
                 return {"on_screen": False, "ndc": [1.6, 0.0], "side": "right", "world": args["pos"]}
             x, y = to_screen(args["pos"])
             return {"on_screen": True, "ndc": [x / 960 - 1, y / 540 - 1], "x": x, "y": y, "world": args["pos"]}
+        if op == "ui.screen_pos" and args.get("aim") == "feet" and not args.get("toward") \
+                and self.targets.get(args.get("uuid")):
+            self.rpcs.append(op)
+            p = self.wpos[args["uuid"]]
+            x, y = to_screen(p)
+            return {"on_screen": True, "ndc": [0, 0], "x": x, "y": y, "world": list(p), "aim": "feet"}
         if op == "ui.screen_pos" and args.get("toward"):
             self.rpcs.append(op)
             a, b = self.wpos[args["uuid"]], self.wpos[args["toward"]]
@@ -315,6 +327,31 @@ class GroundClick(unittest.TestCase):
         self.assertAlmostEqual(self.w.ground_at[0], 0.4)
         self.assertEqual(len(clicks(inp)), 1)
 
+    def test_a17_a_body_on_the_landing_wider_than_the_nudges_is_stepped_clear_of(self):
+        """L8 23:58: Misty Step 6 m, every spot (the landing and +-0.4 m) read "a character is under the cursor
+        (Shadowheart)": the landing is tried BODY_CLEAR_M from her feet, along the cast direction, and the result
+        says where the ground point came from and how far the landing moved."""
+        self.w.wpos["ally"] = [0.0, 0.0, 10.0]
+        self.w.targets["ally"] = to_screen([0.0, 0.0, 10.0])
+        self.w.body_r["ally"] = 0.7
+        r, inp = self._go([0.0, 0.0, 10.0])
+        self.assertTrue(r.ok, r.as_dict())
+        self.assertEqual(self.w.ground_at, [0.0, 0.0, 10.0 + twostep.BODY_CLEAR_M])
+        self.assertEqual(r.detail["clear_of"], ["ally"])
+        self.assertEqual(r.detail["shifted_m"], 1.2)
+        self.assertEqual(len(clicks(inp)), 1)
+        self.assertEqual(r.detail["looks"][0]["hover"], "ally")
+        self.assertIn("under the cursor: ally x1", twostep.looks_brief(r.detail["looks"]))
+
+    def test_a17_clear_spots(self):
+        # the landing on the body: along the cast direction; else away from the body through the landing
+        self.assertEqual(twostep.clear_spots([0, 0, 10], [0, 0, 10], [0, 0, 0])[0], [0.0, 0, 11.2])
+        self.assertEqual(twostep.clear_spots([1, 0, 10], [0, 0, 10])[0], [1.2, 0, 10.0])
+        # all within CLEAR_MAX_SHIFT_M of the landing; the turned ones too
+        for p in twostep.clear_spots([0, 0, 10], [0, 0, 10], [0, 0, 0]):
+            self.assertLessEqual(((p[0]) ** 2 + (p[2] - 10) ** 2) ** 0.5, twostep.CLEAR_MAX_SHIFT_M)
+        self.assertEqual(len(twostep.clear_spots([0, 0, 10], [0, 0, 10], [0, 0, 0])), 5)
+
     def test_nothing_in_hand_no_click(self):
         # a ground click with no spell in hand is a move order (movement spent in combat)
         self.w.armed = None
@@ -401,6 +438,33 @@ class TwoStepRoute(Base):
         self.assertTrue(a["ui"])
         self.assertEqual(self.fake.calls[0][2:4], (a["target"], None))
         self.assertIn("the body + the ground beside it clicked", out)
+
+    def test_a17_clicks_done_told_to_the_job_and_a_spell_left_in_hand_put_back(self):
+        """L8 23:59 (se): Dimension Door "the game refused the cast", moved 0 m, the spell LEFT IN HAND. The mod job
+        hears when the clicks are done (act.ui_clicked: a CastSpellFailed from before then is the upcast picker's),
+        and whatever the outcome, a spell still in hand afterwards is put back."""
+        hotbar.HOTBAR_CAST_ENABLED = True
+        held = {"n": 0}
+
+        def cancel(game, inp, char):
+            held["n"] += 1
+            return "escape"
+        with mock.patch.object(hotbar, "cancel", cancel):
+            out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        (clicked,) = [a for _, a in self.g.ops("act.ui_clicked")]
+        self.assertIsNotNone(clicked.get("id"))
+        self.assertEqual(held["n"], 1)
+        self.assertIn("the spell was still in hand after the cast: put back (escape)", out)
+        with mock.patch.object(hotbar, "cancel", lambda g, i, c: None):
+            out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        self.assertNotIn("still in hand", out)
+        # a failed route cancels the job instead: no act.ui_clicked
+        self.fake.ok, self.fake.reason, self.fake.stage = False, "ground_refused", "ground"
+        self.g.dur["act.cast"] = 5.0
+        with mock.patch.object(hotbar, "cancel", lambda g, i, c: None):
+            server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        self.assertEqual(len(self.g.ops("act.ui_clicked")), 2)
+        self.assertEqual(len(self.g.ops("job.cancel")), 1)
 
     def test_route_failure_cancels_the_job_no_retry(self):
         hotbar.HOTBAR_CAST_ENABLED = True

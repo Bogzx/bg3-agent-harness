@@ -484,14 +484,21 @@ def _progress(before: dict, now: dict) -> bool:
     return isinstance(pb, int) and isinstance(pn, int) and pn > pb
 
 
+# SpellCastPhase (bg3se Enumerations/ECS.inl) values of a spell that is only in hand: live probes L4-L8 read
+# "PrepareUpdate" with Jump in hand and nothing picked (the caster's aiming pose). L8 23:59 (se, Dimension Door):
+# that phase counted as "started", so the first pick read as taken at once and the run ended `one_step` with no
+# landing click and the spell still in hand.
+AIMING_PHASES = (None, "", "None", "0", "PrepareStart", "PrepareUpdate", "12", "13")
+
+
 def _started(now: dict) -> bool:
-    """The cast left the targeting phase: no spell in hand any more, or the cast entity moved past None."""
+    """The cast left the targeting phase: no spell in hand any more, or the cast entity moved past aiming."""
     if not now:
         return False
     if not now.get("armed"):
         return True
     phase = (now.get("cast") or {}).get("phase")
-    return phase not in (None, "", "None", "0")
+    return phase not in AIMING_PHASES
 
 
 def _wait(game: Game, char: str | None, pred, timeout: float) -> tuple[bool, dict]:

@@ -225,9 +225,10 @@ end
 -- on TurnEnded (Actions dispatch), out of combat, or after END_REQUEST_TTL_MS.
 G.end_requested = G.end_requested or {}
 G.END_REQUEST_TTL_MS = 120000
+-- vis V17: the os.clock() fallback this had would itself raise in the game (bg3le has no os); the same clock as
+-- RPC.now_ms, and an error from it surfaces as the caller's (fail closed)
 local function now_ms()
-    local ok, t = pcall(function() return Ext.Utils.MonotonicTime() end)
-    return ok and t or os.clock() * 1000
+    return Ext.Utils.MonotonicTime()
 end
 G.now_ms = now_ms
 
