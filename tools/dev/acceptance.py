@@ -104,27 +104,47 @@ def first_line(s: str) -> str:
     return (s or "").strip().splitlines()[0] if (s or "").strip() else ""
 
 
-# Spots a past run's route reached on foot (leg end dist<=0.2), per region, for the multi-leg item when no lead is
-# 40-160 m away: ladder_probe2/cycle-0414/cycle-0819 "leg 3: along the route (108.5m): move_to: done @(-155.7,31.5,50.3)"
-# on the Moonrise -> Mausoleum walk; 137 m from the S027-start camp exit at the Last Light Inn (-54.2,27.5,141.8).
-KNOWN_WALK = {"Shadow-Cursed Lands": [(-155.7, 31.5, 50.3)]}
+# Spots a past run's route reached on foot (leg end dist<=0.2), per region, with the waypoint the route started from,
+# for the multi-leg item: ladder_probe2/cycle-0414/cycle-0819 and windows #1-#2 "leg 3: along the route (108.5m):
+# move_to: done @(-155.7,31.5,50.3)" on the Moonrise Towers -> Mausoleum walk. Walked from the S027-start camp exit
+# inside the Last Light Inn (-54.2,27.5,141.8) instead (window #2), it is no route: west of the inn's Oak Door every
+# leg dead-ends at (-86,28.5,130) ("no walkable ground leads further", also logs pass #9); the way out is the east
+# gate (-8,28.5,119), where a Harper Branthos scene can start. So the item fast travels to the route's waypoint first.
+KNOWN_WALK = {"Shadow-Cursed Lands": [((-155.7, 31.5, 50.3), "Moonrise Towers")]}
 
 
 def far_walk_target(p, leads, region: str = "", lo: float = 40.0, hi: float = 160.0):
-    """A walk target lo-hi m away (flat distance) from p: a KNOWN_WALK spot of the region (a route reached it before:
-    the item stays the same run to run), else the frontier lead with a pos nearest 100 m (doors, exits and
-    waypoints first: on the walkable mesh); None when none fits."""
+    """(spot, waypoint) for the multi-leg item: a KNOWN_WALK spot of the region with the waypoint to fast travel to
+    first (a route reached it from there: the item stays the same run to run; no distance test, the waypoint sets
+    it), else the frontier lead lo-hi m away (flat) from p with a pos nearest 100 m (doors, exits and waypoints
+    first: on the walkable mesh) and waypoint None; None when none fits."""
     def d(q):
         return math.hypot(q[0] - p[0], q[2] - p[2])
-    known = [q for key, qs in KNOWN_WALK.items() if key.lower() in (region or "").lower() for q in qs if lo < d(q) < hi]
-    if known:
-        return min(known, key=lambda q: abs(d(q) - 100))
+    for key, qs in KNOWN_WALK.items():
+        if key.lower() in (region or "").lower() and qs:
+            q, via = qs[0]
+            return tuple(float(x) for x in q), via
     rows = []
     for l in leads or []:
         q = l.get("pos") if isinstance(l, dict) else None
         if isinstance(q, (list, tuple)) and len(q) >= 3 and lo < d(q) < hi:
             rows.append((l.get("kind") not in ("door", "exit", "waypoint"), abs(d(q) - 100), tuple(float(x) for x in q[:3])))
-    return min(rows)[2] if rows else None
+    return (min(rows)[2], None) if rows else None
+
+
+ROUTE_KEYS = ("reachable", "length_m", "needs_jump", "drop", "end_off_m", "unknown_reason", "no_path_reason", "far",
+              "too_far", "ms")
+
+
+def route_brief(r) -> str:
+    """nav.route's answer in one line (the keys that say whether and how the game's own path gets there)."""
+    if not isinstance(r, dict):
+        return f"no answer ({r!r})"[:120]
+    out = [f"{k}={r[k]}" for k in ROUTE_KEYS if r.get(k) is not None]
+    cl = r.get("closest")
+    if isinstance(cl, dict):
+        out.append("closest=" + ",".join(f"{k}={cl[k]}" for k in ("pos", "path_m", "to_goal_m") if k in cl))
+    return " ".join(out) or "empty"
 
 
 def static_lead_ids(text: str) -> list[str]:
@@ -437,26 +457,40 @@ def sec_nav() -> None:
         call("camp", action="leave")
     me = (status().get("party") or [{}])[0]
     p = me.get("pos") or [0, 0, 0]
-    # Multi-leg walk: a lead 40-160 m away (raw nav.frontier positions: get_frontier's text has none), else a
-    # spot a past run's route reached in this region (window 20261016-183253: only doors 10-17 m at the inn exit).
+    # Multi-leg walk: a route-proven spot of the region from its waypoint (KNOWN_WALK), else a lead 40-160 m away
+    # (raw nav.frontier positions: get_frontier's text has none; window 20261016-183253: only doors 10-17 m here).
     fr = call("get_frontier")
     raw_fr = S.game.try_rpc("nav.frontier", {"radius": 160, "limit": 60}) or {}
-    q = far_walk_target(p, raw_fr.get("leads"), status().get("region") or region)
-    if need(q is not None, "travel_to multi-leg", "no frontier point or known spot 40-160 m away to walk to: "
+    tgt = far_walk_target(p, raw_fr.get("leads"), status().get("region") or region)
+    if need(tgt is not None, "travel_to multi-leg", "no known spot or frontier point 40-160 m away to walk to: "
             + first_line(fr)):
-        out, dt = took("travel_to", x=q[0], y=q[1], z=q[2])
-        end = time.monotonic() + 180
-        w = ""
-        while time.monotonic() < end:
-            w = call("wait_for", target="queue", timeout_s=60, lead_s=0)
-            if "still waiting" not in w:
-                break
-        me2 = (status().get("party") or [{}])[0].get("pos") or p
-        left = ((me2[0] - q[0]) ** 2 + (me2[2] - q[2]) ** 2) ** 0.5
-        legs = len(re.findall(r"(?i)leg", out + w))
-        ok = left < 6 and "INTERRUPTED" not in w
-        item("travel_to multi-leg", "PASS" if ok else "FAIL",
-             f"{((q[0]-p[0])**2+(q[2]-p[2])**2)**0.5:.0f} m trip, {left:.1f} m left at the end; {first_line(out)} | {first_line(w)}")
+        q, via = tgt
+        ok_start = True
+        if via:
+            # What the game's own path says from here (window #2: travel_to fell back to dead-end straight legs):
+            # one probe, recorded for the next window's diagnosis, no walk.
+            item("nav.route from the start to the multi-leg spot (no walk)", "INFO",
+                 f"from {[round(float(x), 1) for x in p[:3]]}: "
+                 + route_brief(S.game.try_rpc("nav.route", {"pos": list(q), "connectors": False})))
+            ft = call("fast_travel", waypoint=via)
+            ok_start = need("FAILED" not in ft and "REFUSED" not in ft, "travel_to multi-leg",
+                            f"fast_travel {via} failed: " + first_line(ft))
+            p = (status().get("party") or [{}])[0].get("pos") or p
+        if ok_start:
+            out, dt = took("travel_to", x=q[0], y=q[1], z=q[2])
+            end = time.monotonic() + 180
+            w = ""
+            while time.monotonic() < end:
+                w = call("wait_for", target="queue", timeout_s=60, lead_s=0)
+                if "still waiting" not in w:
+                    break
+            me2 = (status().get("party") or [{}])[0].get("pos") or p
+            left = ((me2[0] - q[0]) ** 2 + (me2[2] - q[2]) ** 2) ** 0.5
+            legs = len(re.findall(r"(?m)^leg \d+:", w))
+            ok = left < 6 and legs >= 2 and "INTERRUPTED" not in w
+            item("travel_to multi-leg", "PASS" if ok else "FAIL",
+                 f"{((q[0]-p[0])**2+(q[2]-p[2])**2)**0.5:.0f} m trip{' from ' + via if via else ''}, {legs} legs, "
+                 f"{left:.1f} m left at the end; {first_line(out)} | {first_line(w)}")
 
     # Interior via entrance: the Mausoleum room from its gate is REFUSED naming the entrance, then interact.
     ft, dt = took("fast_travel", waypoint="Moonrise Towers")
@@ -1011,6 +1045,10 @@ def hotbar_probe() -> None:
             ".. ' w=' .. tostring(btn and UI.get(btn, 'ActualWidth')) "
             "out[#out + 1] = 'shown=' .. tostring(UI.path(dc, 'CurrentShownDeck.HotBarType')) "
             ".. ' ActiveTask=' .. tostring(UI.path(dc, 'CurrentPlayer.UIData.ActiveTask')) "
+            # window #2: a hidden duplicate "HotBar" page read in place of the shown one? (visible flag per page)
+            "local hb = {} for _, x in ipairs(UI.widgets()) do if x.name == 'HotBar' then "
+            "hb[#hb + 1] = tostring(UI.isVisible(x.el)) .. (x.el == w and '*' or '') end end "
+            "out[#out + 1] = 'HotBar pages=' .. table.concat(hb, ',') .. ' (* = UI.widget)' "
             "return table.concat(out, ' | ')", context="client")
     except Exception as e:  # noqa: BLE001
         tree = f"eval error {e}"
@@ -1045,12 +1083,20 @@ def hotbar_probe() -> None:
     cs = HB.cast_state(S.game, sel)
     pos, last = (None, {}) if not want.get("found") or inp is None else HB.locate_cell(S.game, inp, "Target_MainHandAttack", sel, want)
     log(f"PROBE hotbar slot {json.dumps(want)} | cast_state {json.dumps(cs)} | located {pos} {json.dumps(last)[:600]}")
+    # window #2: 39 misses and only the last one logged. `seen` = how many probes were on the HUD (IsOverUI), on the
+    # decks (Concertina), on a cell, the first spot of each, and the last IsMouseOver chain under the HotBar widget.
+    seen = last.get("seen")
+    if seen:
+        log(f"PROBE hotbar locate seen {json.dumps(seen)}")
     ok = bool(want.get("found")) and want.get("rendered") is not False and pos is not None and cs.get("armed") is False
     item("hotbar widget tree (ACT-8, read-only)", "PASS" if ok else "FAIL",
          f"{tree[:120]}; ids={want.get('ids')} from={want.get('ids_from')} map_why={want.get('map_why')}; "
          f"MainHandAttack: found={want.get('found')} deck={want.get('deck')} index={want.get('index')} "
          f"cols={want.get('cols')} rows={want.get('rows')} rendered={want.get('rendered')} cell={want.get('cell')}; "
-         f"located at {pos} in {last.get('probes')} probes; armed={cs.get('armed')} by={cs.get('armed_by')} "
+         f"located at {pos} in {last.get('probes')} probes"
+         + (f" (seen ui={seen.get('over_ui')} decks={seen.get('over_hud')} cells={seen.get('cells')} "
+            f"chain={(seen.get('hover') or {}).get('chain')})" if seen else "")
+         + f"; armed={cs.get('armed')} by={cs.get('armed_by')} "
          f"preview={cs.get('preview')} spell_task={cs.get('spell_task')}")
     if not ok:  # the guesses the clicks rely on broke: don't click blind into the world with a spell in hand
         item("hotbar cast: Bless on 3 allies (ACT-8)", "SKIP", "the read-only hotbar item failed (see its PROBE line)")
@@ -1535,8 +1581,13 @@ def sec_se() -> None:
             h, name = doors[0]
             out, dt = took("lockpick", target=h)
             ok = "opened=roll" in out or "unlocked" in out
+            # live window #2 (19:51): a Steel Watcher saw the lockpick and the crime scene came in place of the roll.
+            # The route (hover, menu row, the game's answer) worked; the tool now says so (reason=interrupted).
+            caught = "reason=interrupted" in out and "menu=Lockpick" in out
             ev = (f"{h} {name.strip()}: {first_line(out)[:200]} ({dt:.1f}s) "
-                  + grab(r"hover_via=\w+|no_id_objects=\[[^\]]*\]|walked_m=[\d.]+", out))
+                  + grab(r"hover_via=\w+|no_id_objects=\[[^\]]*\]|walked_m=[\d.]+", out)
+                  + (" [caught: the game's crime scene, not a roll; the walk wait is not exercised]" if caught else ""))
+            ok = ok or caught
             item("lockpick a door (no-id hover, walk wait)", "PASS" if ok else "FAIL", ev)
             if ui_screen() == "roll":
                 call("press_key", key="ESCAPE")

@@ -141,6 +141,29 @@ class ServerTools(unittest.TestCase):
         self.assertIn("OBJECTIVES", out)
         self.assertIn("OBJECTIVE o3 Rescue Shadowheart (another area)", out)
 
+    def test_map_unchanged_names_the_objectives_here(self):
+        # naut2 run 1: "No map change (Nautiloid; 1 objectives, 0 markers)" hid that o1 now stood 66.8m W
+        server.get_map()
+        out = server.get_map()
+        self.assertTrue(out.startswith("No map change (Nautiloid; 3 objectives"))
+        self.assertIn("Here: o1 Escape the ship 16m W", out)
+        self.assertIn("o2 Find the helm 40.2m N", out)
+        self.assertNotIn("Shadowheart", out)
+        server.MAP_SAME_OBJECTIVES = False
+        self.addCleanup(setattr, server, "MAP_SAME_OBJECTIVES", True)
+        self.assertNotIn("Here:", server.get_map())
+
+    def test_objective_moved_on_after_arrival(self):
+        server.get_map()  # o1/o2 ids as shown
+        arrived_at = [-16.0, 0.0, 0.0]
+        self.assertEqual(server._objective_moved_note("o1", arrived_at), "")  # still there: nothing to say
+        moved = dict(MARKERS[0], pos=[-60.0, 0.0, 30.0], dist=66.8, dir="W")
+        self.fake.markers = [moved, MARKERS[1], MARKERS[2]]
+        self.assertEqual(server._objective_moved_note("o1", arrived_at),
+                         'o1 Escape the ship moved on: now 66.8m W: travel_to(objective="o1") again')
+        self.fake.markers = [MARKERS[1], MARKERS[2]]
+        self.assertIn("is gone now", server._objective_moved_note("o1", arrived_at))
+
     def test_objective_handle_as_a_target(self):
         """S041 22:24 talk_to(npc="o1") for the Balthazar marker: 'unknown target'. o1 resolves by its label."""
         balth = "99999999-2222-3333-4444-555555555555"

@@ -426,6 +426,28 @@ class ClickEntity(unittest.TestCase):
         self.assertEqual(r.screen, "roll")
         self.assertGreaterEqual(r.detail.get("walked_m", 0), 1.0)
 
+    def test_crime_scene_in_place_of_the_roll(self):
+        # live window #2 (10-16 19:51): Lockpick pressed in a Steel Watcher's sight -> the crime dialogue, not a roll;
+        # it read "nothing happened" after 6.4 s. Now: interrupted, at once, with what came instead.
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.0, 0.2))
+        g.menu = ["Examine", "Lockpick"]
+        real, polls = g.rpc, [0]
+
+        def rpc(op, args=None, context="server"):
+            if op == "ui.state" and getattr(g, "menu_done", False):
+                polls[0] += 1
+                return {"screen": "dialogue"}
+            return real(op, args, context)
+        g.rpc = rpc
+        r = clicker.click_entity(g, inp, "door", expect="roll", verify_timeout=2.0, menu="Lockpick")
+        self.assertFalse(r.ok)
+        self.assertEqual(r.reason, "interrupted")
+        self.assertEqual(r.screen, "dialogue")
+        self.assertEqual(r.detail.get("instead"), "dialogue")
+        self.assertEqual(r.detail.get("menu"), "Lockpick")
+        self.assertEqual(polls[0], 1)   # no wait for the roll
+
     def test_roll_wait_ends_when_nobody_moves(self):
         r, polls = self._walking(steps_moving=0, roll_after=99)
         self.assertEqual(r.reason, "no_effect")

@@ -38,6 +38,16 @@ local function walk(e, pred, out, prune)
     for _, k in ipairs(e.kids or {}) do walk(k, pred, out, prune) end
 end
 function UI.findAll(e, pred, opts) local out = {} walk(e, pred, out, opts and opts.prune) return out end
+function UI.childCount(e) return type(e) == "table" and #(e.kids or {}) or 0 end
+function UI.child(e, i) return (e.kids or {})[i] end
+function UI.typeName(e) return type(e) == "table" and e.Type or nil end
+local dupes = {}   -- extra "HotBar" pages listed before widgets.HotBar (a hidden duplicate)
+function UI.widgets()
+    local out = {}
+    for _, w in ipairs(dupes) do out[#out + 1] = { name = w.Name, el = w } end
+    for n, w in pairs(widgets) do out[#out + 1] = { name = n, el = w } end
+    return out
+end
 function UI.cachedByName(w, n)
     local hits = UI.findAll(widgets[w], function(e) return e.Name == n end)
     return hits[1]
@@ -50,7 +60,9 @@ function UI.command(o, name)
 end
 
 local entities = {}
-Ext = { Entity = { Get = function(u) return entities[u] end,
+local clockMs = nil
+Ext = { Utils = { MonotonicTime = function() if clockMs == nil then error("no clock") end return clockMs end },
+        Entity = { Get = function(u) return entities[u] end,
                    GetAllEntitiesWithComponent = function(c)
                        local out = {}
                        for _, e in pairs(entities) do if e[c] then out[#out + 1] = e end end
@@ -329,6 +341,57 @@ ok(not pcall(ops["ui.cast_confirm"], {}), "confirm refused: the task object alon
 commands = {}
 r = ops["ui.cast_cancel"]({})
 ok(r.done and r.was_armed == false and commands[1] == "CancelTaskCommand", "cancel with the idle task: command sent, was_armed false")
+
+-- 22. live window #2 (19:49): 39 probes never saw a cell. The shown widget over a hidden duplicate; the IsOverUI
+-- flag; a hovered ListBoxItem names its cell when the button's own IsMouseOver stays false; the probe cache.
+local sb = { HotBarType = "ClassHotBar", CellColumns = 2, NumberOfBars = 1, SlotList = { vslot(0), vslot(1) } }
+local sdc = { CurrentPlayer = { SelectedCharacter = { PlayerCharacterProperties = { KeyboardHotBars = { sb } } },
+                                UIData = { Cursor = { IsOverUI = false } } } }
+local sbtn = { { Name = "contentContainer", ActualWidth = 88, ActualHeight = 88 },
+               { Name = "contentContainer", ActualWidth = 88, ActualHeight = 88 } }
+local sitems = { { Type = "ListBoxItem", kids = { { Name = "Border", kids = { sbtn[1] } } } },
+                 { Type = "ListBoxItem", kids = { { Name = "Border", kids = { sbtn[2] } } } } }
+local slist = { Name = "HotbarItemsList", ItemsSource = sb.SlotList, kids = { { Name = "Panel", kids = sitems } } }
+local sconc = { Name = "Concertina", kids = { slist } }
+local shown = { Name = "HotBar", DataContext = sdc, kids = { sconc } }
+local hidden = { Name = "HotBar", IsVisible = false, DataContext = ldc, kids = { lconc } }
+dupes = { hidden }
+widgets.HotBar = shown
+local smap = { ClassHotBar = { ["0"] = "Target_Guidance", ["1"] = "Target_Bless" } }
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", map = smap })
+ok(r.found and r.deck == "ClassHotBar" and r.index == 2 and r.ids_from == "arg", "the shown HotBar, not the hidden first one")
+ok(r.over == false and r.at == nil and r.over_ui == false and r.hover == nil, "cursor off the HUD: over_ui false, no chain")
+-- the cursor on Bless's ListBoxItem: the item and its ancestors hover, the button's own flag stays false
+sdc.CurrentPlayer.UIData.Cursor.IsOverUI = true
+sconc.IsMouseOver, slist.IsMouseOver, slist.kids[1].IsMouseOver, sitems[2].IsMouseOver = true, true, true, true
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", map = smap })
+ok(r.over_ui == true and r.over_hud == true, "over_ui + over_hud")
+ok(r.at and r.at.deck == "ClassHotBar" and r.at.index == 2 and r.at.via == "item" and r.over == true,
+   "a hovered ListBoxItem names its cell (via=item) -> over the wanted cell")
+ok(r.hover and r.hover[#r.hover] == "ListBoxItem" and r.hover[1] == "Concertina", "hover chain names, deepest last")
+r = ops["ui.hotbar_slot"]({ spell = "Target_Guidance", map = smap })
+ok(r.at and r.at.index == 2 and r.over == false, "item hover: not over another wanted cell")
+-- on the list's panel between items: the chain stops above any single button -> no cell, chain reported
+sitems[2].IsMouseOver = nil
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", map = smap })
+ok(r.at == nil and r.over == false and r.hover and r.hover[#r.hover] == "Panel", "between cells: no at, chain ends on the panel")
+-- the cache: a 2nd read within CACHE_MS reuses the walk (a changed slot list is not seen), only with cache=true
+clockMs = 1000
+local calls, realDecks = 0, H.decks
+H.decks = function(...) calls = calls + 1 return realDecks(...) end
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", map = smap, cache = true })
+local c1 = calls
+clockMs = 2000
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", map = smap, cache = true })
+ok(c1 >= 1 and calls == c1 and r.cached == true and r.found and r.ids_from == "arg", "cache=true: 2nd read reuses the walk")
+clockMs = 1000 + H.CACHE_MS + 1
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", map = smap, cache = true })
+ok(calls > c1 and r.cached == nil, "cache expires after CACHE_MS")
+local c2 = calls
+r = ops["ui.hotbar_slot"]({ spell = "Target_Bless", map = smap })
+ok(calls > c2 and r.cached == nil, "no cache flag: always a fresh walk")
+H.decks, clockMs, dupes = realDecks, nil, {}
+sdc.CurrentPlayer.UIData.Cursor.IsOverUI = false
 
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

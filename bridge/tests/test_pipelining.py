@@ -165,10 +165,11 @@ class EarlyWake(Base):
     def test_wakes_early_and_the_next_action_waits_for_the_walk(self):
         h = self.walk(1.2)
         t0 = time.monotonic()
-        out = server.wait_for(h, timeout_s=5)
+        out = server.wait_for(h, timeout_s=5, lead_s=2)
         self.assertLess(time.monotonic() - t0, 0.5)
         self.assertIn(f"{h} move_to: arriving, ETA ~", out)
         self.assertIn("runs after the walk arrives", out)
+        self.assertNotIn("blocks to the end", out)  # ACT-P4: it invited an immediate re-wait
         walk = self.g.jobs[int(h[1:])]
         self.assertEqual(walk["status"], "running")
         res = server.interact(target=server.H.get(CHEST))
@@ -178,7 +179,15 @@ class EarlyWake(Base):
 
     def test_once_per_walk_then_blocks_to_the_end(self):
         h = self.walk(0.8)
-        self.assertIn("arriving", server.wait_for(h, timeout_s=5))
+        self.assertIn("arriving", server.wait_for(h, timeout_s=5, lead_s=2))
+        out = server.wait_for(h, timeout_s=5, lead_s=2)
+        self.assertIn("move_to: done", out)
+        self.assertNotIn("arriving", out)
+
+    def test_default_waits_for_the_arrival(self):
+        # ACT-P4 (naut2 runs 1-2: 4 of 5 early wakes were followed at once by wait_for(lead_s=0)): opt-in only
+        self.assertEqual(server.LEAD_S, 0.0)
+        h = self.walk(0.8)
         out = server.wait_for(h, timeout_s=5)
         self.assertIn("move_to: done", out)
         self.assertNotIn("arriving", out)
@@ -216,7 +225,7 @@ class EarlyWake(Base):
         self.assertNotIn("Crate", out)  # visited
         self.assertIn("WAYS walkable: N 20m+ | blocked: S", out)
         h = self.walk(0.8)
-        self.assertNotIn("LEADS", server.wait_for(h, timeout_s=5))  # early wake: still walking
+        self.assertNotIn("LEADS", server.wait_for(h, timeout_s=5, lead_s=2))  # early wake: still walking
 
     def test_not_in_combat(self):
         h = self.walk(0.5)
@@ -241,7 +250,7 @@ class EarlyWake(Base):
         self.assertTrue(wait_until(lambda: self.g.ops("act.move_to")))
         server._trips[P1] = {"dest": [50.0, 0.0, 0.0], "d0": 50.0, "t0": time.monotonic() - 4.0}
         self.g.watch["party"][0]["pos"] = [45.0, 0.0, 0.0]  # 45 m in 4 s: ~0.4 s left
-        out = server.wait_for("queue", timeout_s=5)
+        out = server.wait_for("queue", timeout_s=5, lead_s=2)
         self.assertIn(f"queue {who()} travel_to: arriving, ETA ~", out)
         self.assertTrue(server._queues().busy(P1))
         res = server.interact(target=server.H.get(CHEST))

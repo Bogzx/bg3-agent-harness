@@ -13,6 +13,10 @@
 --       very cell (its IsMouseOver), `at` = the cell under the cursor now (any deck), `over_hud` = the cursor
 --       is on the hotbar decks, `deck_button_over` (with tabs=true) the deck tab under the cursor. The bridge
 --       finds the cell's screen spot with these (bg3le has no PointToScreen).
+--       Also `over_ui` (CurrentPlayer.UIData.Cursor.IsOverUI: the cursor is on any HUD element, verified live) and
+--       `hover` = the IsMouseOver chain under the HotBar widget (last names, deepest last) while it has one, so a
+--       miss says where the cursor was. `cache=true` (the bridge's cursor search) reuses the deck/button walk for
+--       CACHE_MS (the slots don't change while the cursor sweeps; window #2 spent 4 s on 39 full walks).
 --   ui.cast_state {char?}
 --       -> {armed, spell?, remaining?, can_force, counter, targeting?, preview?, upcast_open?,
 --           cast?={spell, phase, picked, index, previewing}}
@@ -42,6 +46,11 @@
 --   G4 CurrentPlayer.UIData.ActiveTask is nil while no spell is in hand;
 --   G5 the client cast entity (SpellCastIsCasting.Cast -> ClientSpellCastState/Targeting) exists while targeting;
 --   G6 the deck tab names map HotBarType -> HotbarDeckButton_* as in DECK_BUTTONS.
+-- LIVE 2026-10-16 19:49 (window #2): ids from the entity map and the cell (CommonHotBar #10, 88x88) read fine, but
+--   39 cursor probes along y=0.95 (x 0.5..0.88) never saw `at`/`over`/over_hud. Unknown which: wrong band, a hidden
+--   duplicate "HotBar" widget read in place of the shown one (UI.widget takes the first), or IsMouseOver not set on
+--   the cell buttons. Now: the shown HotBar widget is preferred, a hovered ListBoxItem of a HotbarItemsList also
+--   names its cell, and `over_ui`/`hover` report what the cursor was on.
 -- LIVE 2026-10-16 18:32 (window #1, S027-start, se.log PROBE hotbar): G1, G2 and G4 broke.
 --   G2: ls.VMCharacterAction has no readable PrototypeID on bg3le (nil on all 65 slots). The spell id now comes
 --       from the engine's hotbar component (Shared/HotbarMap.lua: Element.Slot = the slot VM's SlotIndex), first the
@@ -81,7 +90,41 @@ end
 
 local function num(v) return tonumber(v) end
 
-local function hotbarDC() return UI.dc("HotBar") end
+-- The shown "HotBar" page: a visible one beats a hidden duplicate (UI.widget takes the first in ContentRoot).
+local function hotbarWidget()
+    if UI.widgets then
+        local first
+        for _, w in ipairs(UI.widgets()) do
+            if w.name == "HotBar" then
+                if UI.isVisible(w.el) then return w.el end
+                first = first or w.el
+            end
+        end
+        if first then return first end
+    end
+    return UI.widget("HotBar")
+end
+H.widget = hotbarWidget
+
+-- A named element under the shown HotBar widget (UI.cachedByName looks under the first "HotBar", maybe a hidden one).
+local named = {}
+local function byNameIn(w, name)
+    if w == nil then return nil end
+    local key = tostring(w) .. "/" .. name
+    local e = named[key]
+    if e ~= nil and UI.name(e) == name then return e end
+    e = UI.findAll(w, function(x) return UI.name(x) == name end, { hidden = true, prune = true, max = H.WALK_MAX })[1]
+    named[key] = e
+    return e
+end
+
+-- Element identity across reads: the same proxy, else the same native address in its tostring.
+local function same(a, b) return a == b or (a ~= nil and b ~= nil and tostring(a) == tostring(b)) end
+
+local function hotbarDC()
+    local w = hotbarWidget()
+    return w and UI.get(w, "DataContext") or nil
+end
 
 local function hotbarMap() return BG3AI.HotbarMap end
 
@@ -172,8 +215,8 @@ function H.buttons(widget, decks)
             bySig[tostring(s.spell) .. "#" .. tostring(s.slot) .. "#" .. d.type] = { d, s }
         end
     end
-    local out = {}
-    if widget == nil then return out end
+    local out, lists = {}, {}
+    if widget == nil then return out, lists end
     local function isButton(e) return H.SLOT_BUTTONS[UI.name(e) or ""] == true end
     -- by position (LIVE G1: DataContext reads nil): each deck's ListBox in tree order, its buttons in item order
     local byPos = {}
@@ -192,6 +235,7 @@ function H.buttons(widget, decks)
         if di and not used[di] and #decks[di].slots == #btns then
             used[di], nextDeck = true, di + 1
             for k, e in ipairs(btns) do byPos[e] = { decks[di], decks[di].slots[k] } end
+            lists[#lists + 1] = { lb = lb, deck = decks[di], btns = btns }
         end
     end
     for _, e in ipairs(UI.findAll(widget, isButton, { prune = true, max = H.WALK_MAX })) do
@@ -214,7 +258,70 @@ function H.buttons(widget, decks)
         end
         if m then out[#out + 1] = { el = e, deck = m[1], rec = m[2] } end
     end
+    return out, lists
+end
+
+-- The IsMouseOver chain under `el`: from el down through the hovered child at each level (a few reads per level).
+-- Returns the elements, top first.
+H.HOVER_DEPTH = 60
+function H.hoverChain(el)
+    local chain = {}
+    if el == nil or UI.childCount == nil then return chain end
+    local e = el
+    for _ = 1, H.HOVER_DEPTH do
+        local nxt
+        for i = 1, UI.childCount(e) do
+            local c = UI.child(e, i)
+            if c ~= nil and UI.get(c, "IsMouseOver") == true then nxt = c break end
+        end
+        if not nxt then break end
+        chain[#chain + 1] = nxt
+        e = nxt
+    end
+    return chain
+end
+
+-- The cell a hover chain is on, when the chain passes a deck's HotbarItemsList but no slot button reads
+-- IsMouseOver: the deepest hovered element below the list that holds exactly one slot button names that button's
+-- cell (type-agnostic: ListBoxItem, a border, the button's own template). nil when the chain names none.
+function H.cellFromChain(chain, lists)
+    local function isButton(e) return H.SLOT_BUTTONS[UI.name(e) or ""] == true end
+    for i, e in ipairs(chain) do
+        if UI.name(e) == "HotbarItemsList" then
+            local L
+            for _, l in ipairs(lists) do if same(l.lb, e) then L = l break end end
+            if not L then return nil end
+            for j = #chain, i + 1, -1 do
+                local under = isButton(chain[j]) and { chain[j] }
+                    or UI.findAll(chain[j], isButton, { prune = true, hidden = true, max = 400 })
+                if #under == 1 then
+                    for k, b in ipairs(L.btns) do
+                        if same(b, under[1]) then return L.deck, L.deck.slots[k] end
+                    end
+                    return nil
+                end
+                if #under > 1 then return nil end
+            end
+            return nil
+        end
+    end
+    return nil
+end
+
+local function chainNames(chain, n)
+    local out = {}
+    for i = math.max(1, #chain - (n or 6) + 1), #chain do
+        local e = chain[i]
+        out[#out + 1] = UI.name(e) or (UI.typeName and UI.typeName(e)) or "?"
+    end
     return out
+end
+
+H.CACHE_MS = 3000
+H._cache = nil
+local function nowMs()
+    local ok, t = pcall(function() return Ext.Utils.MonotonicTime() end)
+    return ok and tonumber(t) or nil
 end
 
 local function selectedIs(char)
@@ -247,32 +354,59 @@ local function cellRef(b)
 end
 
 function H.slot(args)
-    local dc = hotbarDC()
+    local w = hotbarWidget()
+    local dc = w and UI.get(w, "DataContext") or nil
     if dc == nil then error("the hotbar is not on screen") end
     local want = args.spell
     if not want or want == "" then error("spell is required") end
     local out = { selected = selectedIs(args.char) }
-    local decks = H.decks(dc)
-    if H.idSource(decks) == "none" then
-        -- LIVE G2: the VMs carry no ids: the engine's hotbar component (client entity), else the bridge's map
-        local map, why
-        if type(args.map) == "table" then map, out.ids_from = args.map, "arg"
-        else
-            map, why = H.clientMap(args.char)
-            out.ids_from, out.map_why = map and "entity" or nil, (not map) and why or nil
+    local t, c = nowMs(), H._cache
+    local hit = args.cache and t and c and c.w == tostring(w) and c.char == tostring(args.char)
+                and t - c.t < H.CACHE_MS
+    local decks, buttons, lists
+    if hit then
+        decks, buttons, lists = c.decks, c.buttons, c.lists
+        out.ids, out.ids_from, out.map_why, out.cached = c.ids, c.ids_from, c.map_why, true
+    else
+        decks = H.decks(dc)
+        if H.idSource(decks) == "none" then
+            -- LIVE G2: the VMs carry no ids: the engine's hotbar component (client entity), else the bridge's map
+            local map, why
+            if type(args.map) == "table" then map, out.ids_from = args.map, "arg"
+            else
+                map, why = H.clientMap(args.char)
+                out.ids_from, out.map_why = map and "entity" or nil, (not map) and why or nil
+            end
+            if map then decks = H.decks(dc, map) end
         end
-        if map then decks = H.decks(dc, map) end
+        out.ids = H.idSource(decks)
+        buttons, lists = H.buttons(w, decks)
+        if args.cache and t then
+            H._cache = { w = tostring(w), char = tostring(args.char), t = t, decks = decks, buttons = buttons,
+                         lists = lists, ids = out.ids, ids_from = out.ids_from, map_why = out.map_why }
+        end
     end
-    out.ids = H.idSource(decks)
     out.shown_deck = str(UI.path(dc, "CurrentShownDeck.HotBarType"))
     local deck, rec, upcast = H.findSlot(decks, want)
-    local w = UI.widget("HotBar")
-    local buttons = H.buttons(w, decks)
     for _, b in ipairs(buttons) do
         if UI.get(b.el, "IsMouseOver") == true then out.at = cellRef(b) break end
     end
-    local conc = w and UI.cachedByName("HotBar", "Concertina")
+    out.over_ui = UI.path(dc, "CurrentPlayer.UIData.Cursor.IsOverUI") == true
+    local conc = byNameIn(w, "Concertina")
     out.over_hud = conc ~= nil and UI.get(conc, "IsMouseOver") == true
+    if out.over_ui or out.over_hud then
+        local chain = H.hoverChain(w)
+        if #chain > 0 then
+            out.hover = chainNames(chain)
+            if not out.at then
+                local d, r = H.cellFromChain(chain, lists)
+                if d then
+                    out.at = cellRef({ deck = d, rec = r })
+                    out.at.via = "item"
+                end
+            end
+        end
+    end
     if not deck then
         out.found = false
         local n = 0
@@ -295,6 +429,7 @@ function H.slot(args)
         if b.rec == rec then
             out.rendered = UI.isVisible(b.el) ~= false
             out.over = UI.get(b.el, "IsMouseOver") == true
+                or (out.at ~= nil and out.at.deck == deck.type and out.at.index == rec.index)
             out.cell = { w = num(UI.get(b.el, "ActualWidth")), h = num(UI.get(b.el, "ActualHeight")) }
             out.enabled = UI.get(b.el, "IsEnabled") ~= false
             break
@@ -302,7 +437,7 @@ function H.slot(args)
     end
     if w and args.tabs then   -- only while looking for a deck tab: a missing name walks the whole widget
         for _, name in pairs(H.DECK_BUTTONS) do
-            local tab = UI.cachedByName("HotBar", name)
+            local tab = byNameIn(w, name)
             if tab and UI.get(tab, "IsMouseOver") == true then out.deck_button_over = name end
         end
     end

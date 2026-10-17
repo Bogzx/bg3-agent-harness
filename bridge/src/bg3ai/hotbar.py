@@ -50,15 +50,18 @@ ARM_WAIT_S = 0.6             # cell click -> the spell is in hand
 PICK_WAIT_S = 0.6            # target click -> the counter moves
 START_WAIT_S = 1.0           # last click / tick -> the cast started
 TARGET_HOVER_S = 1.5         # hover search per target (the camera is already on the fight)
-LOCATE_BUDGET_S = 4.0        # finding the cell when no spot is cached
+LOCATE_BUDGET_S = 6.0        # finding the cell when no spot is cached (window #2: 4 s = 39 probes, one row only)
 CANCEL_WAIT_FRAMES = 6
 
-# Where the hotbar sits (fractions of the window): bottom centre. Scan rows first, then outward from the centre.
-SCAN_FY = (0.95, 0.92, 0.89, 0.97, 0.86, 0.83, 0.80)
-SCAN_FX_STEP = 0.02
-SCAN_FX_SPAN = 0.40
+# Where the hotbar sits (fractions of the window): bottom centre. A coarse grid, whole band first: live window #2
+# (19:49) spent the 4 s budget on 39 probes along y=0.95 alone (x 0.5..0.88, 0.02 apart) and saw no cell. A deck is
+# 2 rows of 88/2160 of the height (~0.08) and >= 4 cells wide, so rows 0.04 apart and columns 0.12 apart (pass 1, then
+# the 0.06 in-betweens) can't step over the Common or Class deck.
+SCAN_FY = (0.95, 0.91, 0.87, 0.83, 0.98, 0.79)
+SCAN_FX_PASSES = ((0.0, 0.12, 0.24), (0.06, 0.18, 0.30))   # offsets from the centre, each side
 TAB_FY = (0.80, 0.83, 0.86, 0.77, 0.89, 0.74)   # GUESS G10: the deck tabs (BottomLinks) sit just above the decks
 TAB_FX_STEP = 0.03
+TAB_FX_SPAN = 0.40
 WALK_STEPS = 12
 # A cell's pitch before any is measured: HotbarSlotSize 88 (HotBar.xaml) in a 2160-high design. GUESS G7: the HUD is
 # scaled by window height / 2160; the walk measures the real pitch from the first two cells it sees.
@@ -123,12 +126,14 @@ def server_map(game: Game, char: str | None) -> dict | None:
     return None
 
 
-def _slot(game: Game, spell: str, char: str | None, tabs: bool = False) -> dict:
+def _slot(game: Game, spell: str, char: str | None, tabs: bool = False, cache: bool = False) -> dict:
     args: dict[str, Any] = {"spell": spell}
     if char:
         args["char"] = char
     if tabs:
         args["tabs"] = True
+    if cache:
+        args["cache"] = True   # the cursor search: the mod reuses its deck/button walk (Hotbar.CACHE_MS)
     hit = _maps.get(char)
     if hit and time.monotonic() - hit[0] < MAP_TTL_S:
         args["map"] = hit[1]
@@ -174,6 +179,8 @@ class _Locator:
         self.probes = 0
         self.last: dict = {}
         self.py_sign = 1
+        # what the probes saw (live window #2 reported only the last miss): HUD hits, deck hits, the first of each
+        self.seen: dict[str, Any] = {"over_ui": 0, "over_hud": 0, "cells": 0}
 
     def probe(self, x: float, y: float) -> dict:
         w, h = self.size
@@ -182,10 +189,19 @@ class _Locator:
         self.inp.wait_frames(2)
         self.probes += 1
         try:
-            r = _slot(self.game, self.spell, self.char)
+            r = _slot(self.game, self.spell, self.char, cache=True)
         except GameError as e:
             r = {"error": str(e)}
         r["_pos"] = (x, y)
+        for k in ("over_ui", "over_hud"):
+            if r.get(k):
+                self.seen[k] += 1
+                self.seen.setdefault(f"first_{k}", [x, y])
+        if r.get("at"):
+            self.seen["cells"] += 1
+            self.seen.setdefault("first_cell", [x, y])
+        if r.get("hover"):
+            self.seen["hover"] = {"at": [x, y], "chain": r["hover"]}
         at = r.get("at")
         if isinstance(at, dict) and at.get("deck") is not None and at.get("index") is not None:
             self.cells[(at["deck"], at["index"])] = (x, y, at.get("rows"), at.get("cols"), at.get("order"))
@@ -224,17 +240,27 @@ class _Locator:
         return v0[0] + (ct - c0) * px, v0[1] + (rt - r0) * py
 
     def scan(self, deadline: float) -> dict | None:
-        """Sweep the bottom band until the cursor is on any hotbar cell."""
+        """Sweep the bottom band (a coarse grid, then its in-betweens) until the cursor is on any hotbar cell. A probe
+        on the decks but between cells (over_hud, no cell) looks half a cell around itself first."""
         w, h = self.size
-        n = int(SCAN_FX_SPAN / SCAN_FX_STEP)
-        fxs = [0.5] + [0.5 + s * k * SCAN_FX_STEP for k in range(1, n + 1) for s in (-1, 1)]
-        for fy in SCAN_FY:
-            for fx in fxs:
-                if time.monotonic() >= deadline:
-                    return None
-                r = self.probe(fx * w, fy * h)
-                if r.get("over") or r.get("at"):
-                    return r
+        half = default_pitch(h, self.want.get("cell")) / 2
+        for offs in SCAN_FX_PASSES:
+            fxs = [0.5 + sg * o for o in offs for sg in ((1,) if o == 0 else (-1, 1))]
+            for fy in SCAN_FY:
+                for fx in fxs:
+                    if time.monotonic() >= deadline:
+                        return None
+                    x, y = fx * w, fy * h
+                    r = self.probe(x, y)
+                    if r.get("over") or r.get("at"):
+                        return r
+                    if r.get("over_hud"):
+                        for dx, dy in ((half, 0), (-half, 0), (0, half), (0, -half)):
+                            if time.monotonic() >= deadline:
+                                return None
+                            r = self.probe(x + dx, y + dy)
+                            if r.get("over") or r.get("at"):
+                                return r
         return None
 
     def walk(self, r: dict, deadline: float) -> dict | None:
@@ -242,7 +268,7 @@ class _Locator:
         A move that falls off the bar goes back to the last cell seen; after a row move it also flips the row sign
         (GUESS G9 wrong)."""
         deck, idx, rows = self.want["deck"], self.want["index"], self.want.get("rows")
-        misses, prev, last_dr = 0, r, 0
+        misses, prev, last_dr, cross = 0, r, 0, 0.0
         for _ in range(WALK_STEPS):
             if r.get("over"):
                 return r
@@ -253,10 +279,16 @@ class _Locator:
                 misses += 1
                 if misses > 3 or not prev.get("at"):
                     return None
+                if cross:
+                    # a jump to the next deck landed in the gap between decks: keep going that way, half a cell
+                    x, y = r["_pos"]
+                    r = self.probe(x + cross, y)
+                    continue
                 if last_dr:
                     self.py_sign, last_dr = -self.py_sign, 0
                 r = prev          # re-plan from the last cell seen
                 continue
+            cross = 0.0
             prev = r
             x, y = r["_pos"]
             if at.get("deck") == deck:
@@ -272,7 +304,7 @@ class _Locator:
                 cols = at.get("cols") or (ca + 1)
                 right = (self.want.get("order") or 0) > (at.get("order") or 0)
                 dx = (cols - ca) * px if right else -(ca + 1) * px
-                last_dr = 0
+                last_dr, cross = 0, (px / 2 if right else -px / 2)
                 r = self.probe(x + dx, y)
         return r if r.get("over") else None
 
@@ -310,7 +342,7 @@ def show_deck(game: Game, inp: InputClient, spell: str, char: str | None, want: 
     pts: list[tuple[int, int]] = []
     if tab in _tabs["at"]:
         pts.append(_tabs["at"][tab])
-    n = int(SCAN_FX_SPAN / TAB_FX_STEP)
+    n = int(TAB_FX_SPAN / TAB_FX_STEP)
     fxs = [0.5] + [0.5 + sgn * k * TAB_FX_STEP for k in range(1, n + 1) for sgn in (-1, 1)]
     pts += [(int(fx * w), int(fy * h)) for fy in TAB_FY for fx in fxs]
     probes = 0
@@ -340,6 +372,8 @@ def locate_cell(game: Game, inp: InputClient, spell: str, char: str | None, want
     loc = _Locator(game, inp, spell, char, want)
     pos, last = loc.locate()
     last = dict(last, probes=loc.probes)
+    if pos is None:
+        last["seen"] = loc.seen   # where the probes were on the HUD at all (the next live probe's evidence)
     if pos is None:
         _geom["cells"].pop((want.get("deck"), want.get("index")), None)
     return pos, last

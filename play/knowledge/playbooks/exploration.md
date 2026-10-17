@@ -39,6 +39,10 @@ the region done in locations.md.
   append the arrival steps with `queue_actions` and plan meanwhile (it stops on an interrupt or when
   nothing leads further); `fast_travel(waypoint="<name>")` between unlocked
   waypoints (never in combat). `regroup()` brings stragglers back.
+- A climb or a door on the way: one call, `queue_actions('[{"tool":"interact","target":"e57"},{"tool":"travel_to","objective":"o2"}]')`
+  (a REFUSED travel_to names the ladder), not interact, wait, then travel_to (naut2: ~4 s of standing per climb).
+- An arrival result already holds CHANGES, LEADS and, for an objective trip, where that objective is now
+  ("o1 … moved on: now 67m W"): act on it; a `get_map`/`get_status` right after only answers "No change".
 - Sneaking: `set_party(action="sneak_on")` near enemies you want to avoid or ambush, `sneak_off` after.
 - Keep the party chained (`set_party(action="chain", who=…, leader=…)`) except when positioning on
   purpose.

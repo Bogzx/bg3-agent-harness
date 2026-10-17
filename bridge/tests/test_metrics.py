@@ -154,6 +154,17 @@ class Summary(unittest.TestCase):
         self.assertAlmostEqual(s["busy_pct"], round(100 * 5 / 60, 1))
         self.assertAlmostEqual(s["dialogue_pct"], round(100 * 21 / 60, 1))
 
+    def test_memory_and_setup_tools_are_not_reads(self):
+        # naut2 S001-fix: a notes-only session (memory_write 135 ms, end_session 403 ms) logged
+        # bridge_rt_median_ms=FAIL; in play, new_game (9.6 s) and create_character (5.6 s) sat in the read median.
+        fix = M.summarize([tool("memory_write", 0.0, 0.135), tool("end_session", 1.0, 1.403)], [], [],
+                          start=T0, end=T0 + 14)
+        self.assertIsNone(fix["targets"]["bridge_rt_median_ms"]["pass"])
+        play = M.summarize([tool("new_game", 0.0, 9.6), tool("create_character", 10.0, 15.6),
+                            tool("get_map", 16.0, 16.024), tool("look", 17.0, 17.06), tool("note", 18.0, 18.04)],
+                           [], [], start=T0, end=T0 + 20)
+        self.assertEqual(play["targets"]["bridge_rt_median_ms"]["value"], 42.0)  # get_map + look only
+
     def test_async_walk_is_not_idle(self):
         # An async move_to returns at once; the party walks 1-9 s, the next action comes at 12 s.
         tools = [tool("move_to", 0.0, 0.5), tool("talk_to", 12.0, 13.0)]

@@ -21,20 +21,28 @@ CAMP_LOOK = ("CHAR e7 Withers neutral HP 1/1 1.2m\nITEM e11 Wooden Crate <item> 
 
 
 class TestFarWalk(unittest.TestCase):
-    def test_known_spot_at_the_inn(self):
+    def test_known_spot_from_its_waypoint(self):
+        # window #2: walked from the inn exit, west dead-ends at (-86,28.5,130): the spot comes with its waypoint
         q = A.far_walk_target(INN_EXIT, [{"kind": "door", "pos": [-60, 27, 135]}], "Shadow-Cursed Lands")
-        self.assertEqual(q, (-155.7, 31.5, 50.3))
-        self.assertTrue(40 < ((q[0] - INN_EXIT[0]) ** 2 + (q[2] - INN_EXIT[2]) ** 2) ** 0.5 < 160)
+        self.assertEqual(q, ((-155.7, 31.5, 50.3), "Moonrise Towers"))
+        self.assertEqual(A.far_walk_target([-150, 31, 50], None, "Shadow-Cursed Lands")[1], "Moonrise Towers")
 
     def test_leads_elsewhere_doors_first(self):
         leads = [{"kind": "usable", "pos": [100, 0, 0]}, {"kind": "door", "pos": [0, 0, 60]},
                  {"kind": "door", "pos": [0, 0, 300]}, {"kind": "exit", "pos": [0, 0, 10]}, {"kind": "door"}]
-        self.assertEqual(A.far_walk_target([0, 0, 0], leads, "Rivington"), (0.0, 0.0, 60.0))
-        self.assertEqual(A.far_walk_target([0, 0, 0], leads[:1], "Rivington"), (100.0, 0.0, 0.0))
+        self.assertEqual(A.far_walk_target([0, 0, 0], leads, "Rivington"), ((0.0, 0.0, 60.0), None))
+        self.assertEqual(A.far_walk_target([0, 0, 0], leads[:1], "Rivington"), ((100.0, 0.0, 0.0), None))
 
     def test_none(self):
         self.assertIsNone(A.far_walk_target(INN_EXIT, [{"kind": "door", "pos": [-60, 27, 135]}], "Rivington"))
-        self.assertIsNone(A.far_walk_target([-150, 31, 50], None, "Shadow-Cursed Lands"))  # standing on the spot
+        self.assertIsNone(A.far_walk_target([0, 0, 0], None, "Rivington"))
+
+    def test_route_brief(self):
+        r = {"from": [1, 2, 3], "reachable": False, "far": True, "ms": 95,
+             "closest": {"pos": [-86.2, 28.5, 129.8], "path_m": 40.1, "to_goal_m": 105.6, "via": "toward"}}
+        self.assertEqual(A.route_brief(r), "reachable=False far=True ms=95 "
+                         "closest=pos=[-86.2, 28.5, 129.8],path_m=40.1,to_goal_m=105.6")
+        self.assertTrue(A.route_brief(None).startswith("no answer"))
 
 
 class TestStaticLeads(unittest.TestCase):

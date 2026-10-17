@@ -376,6 +376,17 @@ class Watcher:
 # executor: runs steps; a monitor thread cancels the running job on an interrupt
 # ---------------------------------------------------------------------------
 
+def stopped_reason(text: str, cap: int = 100) -> str:
+    """A macro step's own stop line ("STOPPED: no walkable ground leads further toward it (105.6m left): try …")
+    cut to its first clause, for the queue's headline: live window #2 read "STOPPED: step 1 travel_to … interrupted"
+    (a ground stop, no interrupt at all) and the reason only 4 lines further down. "" when there is none."""
+    for ln in reversed((text or "").splitlines()):
+        if ln.startswith("STOPPED: "):
+            why = ln[len("STOPPED: "):].split(": ", 1)[0].split("; ", 1)[0].strip()
+            return why if len(why) <= cap else why[:cap - 1].rstrip() + "…"
+    return ""
+
+
 @dataclass
 class Report:
     lines: list = field(default_factory=list)
@@ -503,7 +514,8 @@ class Executor:
                             self.interrupt = hit
                     continue
                 if not self.interrupt:
-                    self.interrupt = ("failed", f"step {i} {step.short()} {status}")
+                    why = stopped_reason(text) if status == "interrupted" else ""
+                    self.interrupt = ("failed", f"step {i} {step.short()}" + (f": {why}" if why else f" {status}"))
                 break
         finally:
             done.set()

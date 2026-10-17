@@ -49,6 +49,8 @@ class FakeWorld:
     def __init__(self, row_dy=PITCH, max_targets=3):
         self.cursor = (0, 0)
         self.row_dy = row_dy
+        self.y0 = 1000
+        self.slot_args: list[dict] = []
         self.decks = [
             {"type": "CommonHotBar", "order": 1, "cols": 2, "rows": 1, "x0": 700,
              "spells": ["Target_MainHandAttack", "Projectile_Jump"]},
@@ -83,7 +85,7 @@ class FakeWorld:
         for d in self.decks:
             for i, sp in enumerate(d["spells"]):
                 col, row = i // d["rows"], i % d["rows"]
-                cx, cy = d["x0"] + col * PITCH, 1000 + row * self.row_dy
+                cx, cy = d["x0"] + col * PITCH, self.y0 + row * self.row_dy
                 if abs(x - cx) < PITCH / 2 - 1 and abs(y - cy) < PITCH / 2 - 1:
                     if d["type"] == "ClassHotBar" and not self.rendered:
                         return None
@@ -173,6 +175,7 @@ class FakeWorld:
         raise GameError(f"unknown op {op}")
 
     def slot(self, args):
+        self.slot_args.append(dict(args))
         want = args["spell"].lower()
         out = {"selected": self.selected, "shown_deck": self.shown}
         hit = self.cell_at(*self.cursor)
@@ -438,6 +441,99 @@ class HotbarCast(unittest.TestCase):
 
     def test_flag_off_by_default(self):
         self.assertFalse(hotbar.HOTBAR_CAST_ENABLED)
+
+
+class Locate(unittest.TestCase):
+    """Live window #2 (10-16 19:49): 39 probes along y=0.95 only (x 0.5..0.88), the 4 s budget gone, no cell seen."""
+
+    def setUp(self):
+        hotbar._geom.update(size=None, cells={})
+        hotbar._maps.clear()
+        self.w = FakeWorld()
+
+    def _want(self, spell="Target_Bless"):
+        self.w.cursor = (0, 0)
+        return self.w.slot({"spell": spell})
+
+    def test_hotbar_higher_and_left_found_by_the_grid(self):
+        # decks at y 0.82 and x ~0.31: the old scan's first row never got there within its budget
+        self.w.y0 = int(0.82 * H)
+        for d, x0 in zip(self.w.decks, (520, 520 + 2 * PITCH + 20)):
+            d["x0"] = x0
+        inp = FakeInput(self.w)
+        pos, last = hotbar.locate_cell(self.w, inp, "Target_Bless", None, self._want())
+        self.assertIsNotNone(pos, last)
+        self.assertTrue(last.get("over"))
+        self.assertLess(last["probes"], 45)
+        self.assertTrue(all(a.get("cache") for a in self.w.slot_args[1:]))   # every probe reuses the mod's walk
+
+    def test_jump_to_the_next_deck_steps_over_the_gap(self):
+        # the scan lands on Common first; Class sits 20 px past its edge: one jump lands in the gap, a half cell on
+        # finds it (it used to re-plan the same jump until misses ran out)
+        self.w.decks[1]["x0"] = 700 + 2 * PITCH + 20
+        inp = FakeInput(self.w)
+        loc = hotbar._Locator(self.w, inp, "Target_Bless", None, self._want())
+        r0 = loc.probe(744, 1000)
+        self.assertEqual(r0["at"]["deck"], "CommonHotBar")
+        r = loc.walk(r0, deadline=hotbar.time.monotonic() + 5)
+        self.assertIsNotNone(r)
+        self.assertTrue(r["over"])
+
+    def test_miss_reports_what_the_probes_saw(self):
+        self.w.decks = []
+        real = self.w.slot
+
+        def slot(args):
+            out = real(args)
+            x, y = self.w.cursor
+            if y > 0.9 * H:   # the bottom band is HUD, but nothing there reads as a cell
+                out.update(over_ui=True, hover=["Concertina", "Border"])
+            return out
+        self.w.slot = slot
+        want = {"found": True, "deck": "ClassHotBar", "index": 3, "rows": 2, "cols": 3, "order": 2,
+                "cell": {"w": 88, "h": 88}}
+        inp = FakeInput(self.w)
+        with mock.patch.object(hotbar, "LOCATE_BUDGET_S", 0.3):
+            pos, last = hotbar.locate_cell(self.w, inp, "Target_Bless", None, want)
+        self.assertIsNone(pos)
+        seen = last["seen"]
+        self.assertGreater(seen["over_ui"], 0)
+        self.assertEqual(seen["cells"], 0)
+        self.assertEqual(seen["hover"]["chain"], ["Concertina", "Border"])
+        self.assertIn("first_over_ui", seen)
+
+    def test_on_the_decks_between_cells_looks_half_a_cell_around(self):
+        # cells read within 16 px of their centres (12 px margins); the decks' area reads over_hud. The 0.5 column
+        # falls in the margin between Common's two cells; no other grid point is on a cell.
+        real_cell_at = self.w.cell_at
+
+        def cell_at(x, y):
+            hit = real_cell_at(x, y)
+            if not hit:
+                return None
+            d, i, _ = hit
+            col, row = (i - 1) // d["rows"], (i - 1) % d["rows"]
+            cx, cy = d["x0"] + col * PITCH, self.w.y0 + row * self.w.row_dy
+            return hit if abs(x - cx) <= 16 and abs(y - cy) <= 16 else None
+        self.w.cell_at = cell_at
+        real = self.w.slot
+
+        def slot(args):
+            out = real(args)
+            x, y = self.w.cursor
+            out["over_hud"] = 915 <= x <= 1005 and 960 <= y <= 1005
+            return out
+        self.w.slot = slot
+        self.w.y0 = int(0.91 * H)            # Common's one row on the grid's 2nd row
+        self.w.decks[0]["x0"] = 938          # centres 938 and 982: x 960 is between them
+        self.w.decks[1]["x0"] = 2400         # Class off screen
+        loc = hotbar._Locator(self.w, FakeInput(self.w), "Target_MainHandAttack", None,
+                              self._want("Target_MainHandAttack"))
+        with mock.patch.object(hotbar, "SCAN_FX_PASSES", ((0.0, 0.12, 0.24), (0.06, 0.18, 0.30))):
+            r = loc.scan(hotbar.time.monotonic() + 5)
+        self.assertIsNotNone(r)
+        self.assertEqual(r["at"]["deck"], "CommonHotBar")
+        self.assertEqual(r["_pos"], (982, round(0.91 * H)))   # the half-cell step right of (960, 983)
 
 
 class Geometry(unittest.TestCase):

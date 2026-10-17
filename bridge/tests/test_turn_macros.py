@@ -2019,11 +2019,42 @@ class TravelTo(Base):
         self.assertIn("travel_to marker m1 Old well: 50m", out)
         self.assertIn("arrived", out)
 
+    def test_objective_that_moved_on_is_named_on_arrival(self):
+        # naut2 run 1: o1 "arrived (0.7m from it)", then the marker stood 66.8m W; 3 calls to find out
+        seen = [[{"label": "Escape Route", "pos": [50.0, 0.0, 0.0], "dist": 50.0, "dir": "E", "here": True}],
+                [{"label": "Escape Route", "pos": [50.0, 0.0, 66.0], "dist": 66.8, "dir": "N", "here": True}]]
+        calls = []
+        server._objectives["last"] = []
+        server._objective_ids.clear()  # o1 = this marker, whatever ids earlier tests handed out
+
+        def markers(max_age=0.0):
+            calls.append(max_age)
+            arrived = any(a["pos"][0] >= 50.0 for _, a in self.g.ops("act.move_to"))
+            ms = [dict(m) for m in seen[1 if arrived else 0]]
+            server._set_objectives(ms)
+            return ms
+        orig = server._objective_markers
+        server._objective_markers = markers
+        self.addCleanup(setattr, server, "_objective_markers", orig)
+        out = server.travel_to(objective="o1", wait=True)
+        self.assertIn("arrived", out)
+        self.assertIn('o1 Escape Route moved on: now 66.8m N: travel_to(objective="o1") again', out)
+        self.assertEqual(calls[-1], 0.0)  # a fresh read on arrival, not the cached markers
+
     def test_no_way_further(self):
         self.g.reach = {"reachable": True, "pos": [0.2, 0, 0]}
         out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
         self.assertIn("STOPPED: no walkable ground leads further", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
+
+    def test_no_way_further_says_why_the_games_route_was_not_taken(self):
+        # live window #2: inside the Last Light Inn the straight legs dead-ended 106 m short, the reason unsaid
+        self.g.reach = {"reachable": True, "pos": [0.2, 0, 0], "direct_why": "partial"}
+        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        self.assertIn("; the game's path ends short of it", out)
+        out = server.travel_to(x=20.0, y=0.0, z=0.0, wait=True)  # one sampled leg: no route asked about
+        self.assertIn("STOPPED: no walkable ground leads further", out)
+        self.assertNotIn("the game's path", out)
 
     def test_interrupt_stops_the_trip(self):
         self.g.on_start = lambda op, a: op == "act.move_to" and self.g.push("dialogue_started", {})

@@ -41,7 +41,7 @@ FATAL = ("not this character's turn", "session is over", "no active character", 
          "not in combat", "already ended its turn")
 # Failures of a move that a shorter walk can fix.
 MELEE_M = 1.5  # a plain move to a target means "next to it"
-MOVE_SHORT = ("beyond remaining movement", "no movement left", "not enough movement")
+MOVE_SHORT = ("beyond remaining movement", "beyond movement (", "no movement left", "not enough movement")
 
 
 _DASH = re.compile(r"(?i)\s*(shout_dash\w*|dash|dash \(shout_dash\w*\))\s*$")
@@ -64,6 +64,7 @@ class Move:
     within: float | None = None  # stop once this close (straight line), e.g. weapon/spell range
     partial: bool = True  # if the full walk doesn't fit the movement left, walk as far as it does
     avoid: bool = True  # keep out of harmful surfaces on the way (false: walk through fire to get there)
+    label: str | None = None  # a move toward an objective marker (ACT-P1): "o3 (objective Transponder)", pos = the marker's
 
 
 @dataclass

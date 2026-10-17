@@ -115,7 +115,7 @@ _NAME = r"[^{}=;,:\[\]\n]+?"
 # form keeps every one of them (tests/test_compact.py checks it). Matched spans are not facts (the checker skips them).
 HINT_RULES: list[tuple[str, str, str]] = [
     ("early_wake", r"\(early wake, lead_s=(?P<lead>[\d.]+)\): plan the next step now\. What you issue(?: for [^\n]*?)?"
-                   r" runs after the walk arrives \(it does not cancel it\); wait_for again blocks to the end\.",
+                   r" runs after the walk arrives \(it does not cancel it\)(?:; wait_for again blocks to the end)?\.",
      r"(early wake, lead_s=\g<lead>): plan the next step; it runs after the walk."),
     ("next_walk", r"NEXT: queue_actions what to do on arrival, then look/plan/notes while it runs; wait_for only when "
                   r"you are out of work", ""),

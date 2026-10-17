@@ -2158,6 +2158,178 @@ class SeriesRuns(unittest.TestCase):
         self.assertIn("--until", err.getvalue())
 
 
+    # ---------------------------------------------------------------- a half-played run (naut2 run 2, 2026-10-16)
+
+    def _half_run(self, pt="np-r2", k=2, finished=False):
+        """naut2 run 2 as the machine crash left it: runner.json run start, a S001 stream, the memory session
+        open with edits, saves/<pt>.txt and a save since the start; no runs.jsonl record."""
+        from unittest import mock
+        d = P.RUNTIME / "sessions" / "np"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "series.json").write_text(json.dumps({"series": "np", "runs": 3, "until": "nautiloid_escaped",
+                                                   "profile": {"character": {"brief": "a sergeant"}}}))
+        (d / "runs.jsonl").write_text("" if k == 1 else json.dumps(
+            {"series": "np", "run": 1, "playthrough": "np", "outcome": "reached"}) + "\n")
+        (d / "runner_events.jsonl").write_text('{"kind": "runner_start"}\n')
+        P.prepare_series_run("np", pt, k)
+        sd = P.RUNTIME / "sessions" / pt
+        sd.mkdir(parents=True, exist_ok=True)
+        hist = [{"kind": "play", "session": "S001", "started": 1001.0}] if finished else []
+        (sd / "runner.json").write_text(json.dumps({"history": hist, "runner_saves": [], "saves_after": 1000.0,
+                                                    "run": {"started": 1000.0, "series": "np", "index": k}}))
+        (sd / "S001.jsonl").write_text("{}\n")
+        mem = P.PLAYTHROUGHS / pt / "memory"
+        (mem / ".session.json").write_text(json.dumps({"current": 1, "open": True}))
+        (mem / "CHARACTER.md").write_text("# Character: Brannoc Vale\n")
+        (P.RUNTIME / "saves").mkdir(parents=True, exist_ok=True)
+        P._save_record_path(pt).write_text("Brannoc Vale-51612617911__S001-start\n")
+        saves = [P.Save("Brannoc Vale-51612617911__S001-start", "Brannoc Vale", "S001-start", 1100.0),
+                 P.Save("Corran Vell-1__S001-start", "Corran Vell", "S001-start", 900.0)]   # run 1's: older
+        P.list_saves = lambda: saves
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(P, "HANDOVER", self.tmp / "runtime" / "runner-handover.json").start()
+        return sd, mem
+
+    def test_half_run_state_reads_what_a_crash_left(self):
+        P.list_saves = lambda: []
+        P.prepare_series_run("np", "np-r2", 2)
+        self.assertIsNone(P.half_run_state("np-r2"))     # a fresh run: template memory only
+        sd, mem = self._half_run()
+        h = P.half_run_state("np-r2")
+        self.assertEqual((h["started"], h["finished_sessions"], h["streams"], h["open_session"]),
+                         (1000.0, [], ["S001.jsonl"], "S001"))
+        self.assertTrue(any("CHARACTER.md" in x for x in h["uncommitted"]))
+        self.assertEqual(h["recorded_saves"], ["Brannoc Vale-51612617911__S001-start"])
+        self.assertEqual(h["saves_since_start"], ["Brannoc Vale-51612617911__S001-start"])
+        self.assertTrue(h["restartable"])
+        lines = "\n".join(P.half_run_lines(h))
+        self.assertIn("HALF-PLAYED:    np-r2 started", lines)
+        self.assertIn("session S001 open", lines)
+        self.assertIn("RESTARTS it (no finished play session)", lines)
+        self.assertIn("CONTINUES",
+                      "\n".join(P.half_run_lines({**h, "restartable": False, "finished_sessions": ["S001"]})))
+        self.assertIn("RESTARTS it (--restart-run)",
+                      "\n".join(P.half_run_lines({**h, "restartable": False}, forced=True)))
+        self.assertNotIn(", \n", lines)
+        busy = "\n".join(P.half_run_lines(h, active=True))
+        self.assertIn("a runner holds the lock", busy)
+        self.assertNotIn("RESTARTS", busy)
+
+    def test_plan_warns_about_a_half_played_run_and_writes_nothing(self):
+        self._half_run()
+        before = sorted(x for d in (P.RUNTIME, P.PLAYTHROUGHS) for x in d.rglob("*"))
+        out = self._plan("--playthrough", "np", "--until", "nautiloid_escaped", "--runs", "3", "--allow-judge-change")
+        self.assertIn("run 2/3 next (np-r2), 1 recorded", out)
+        self.assertIn("HALF-PLAYED:    np-r2", out)
+        self.assertIn("-> run RESTARTS it", out)
+        self.assertEqual(sorted(x for d in (P.RUNTIME, P.PLAYTHROUGHS) for x in d.rglob("*")), before)
+        self.assertTrue(P.HANDOVER.parent.is_dir())
+
+    def _restart(self, pt="np-r2", k=2, forced=False):
+        logged = []
+        from unittest import mock
+        with mock.patch.object(P, "log", logged.append):
+            h = P.restart_half_run(P.Options(pt, None, 20, "opus", until="nautiloid_escaped", series="np",
+                                             run_index=k), "np", pt, k, forced)
+        return h, logged
+
+    def test_a_crashed_run_without_a_finished_session_restarts_from_scratch(self):
+        sd, mem = self._half_run()
+        h, logged = self._restart()
+        self.assertIsNotNone(h)
+        self.assertFalse(sd.exists())
+        self.assertFalse((P.PLAYTHROUGHS / "np-r2").exists())
+        self.assertFalse(P._save_record_path("np-r2").exists())
+        arch = [x.name for x in (P.RUNTIME / "sessions").iterdir() if x.name.startswith("np-r2.restarted-")]
+        self.assertEqual(len(arch), 1)
+        self.assertTrue((P.RUNTIME / "sessions" / arch[0] / "S001.jsonl").is_file())        # moved, not deleted
+        self.assertTrue((P.PLAYTHROUGHS / arch[0] / "memory" / "CHARACTER.md").is_file())
+        self.assertTrue((P.RUNTIME / "saves" / f"{arch[0]}.txt").is_file())
+        self.assertIn("RESTARTED from scratch (its runner died without a handover", logged[-1])
+        # then run_series' prepare_series_run gives it a template memory and the series' profile again
+        P.prepare_series_run("np", "np-r2", 2)
+        self.assertIsNone(P.half_run_state("np-r2"))
+        self.assertFalse((P.PLAYTHROUGHS / "np-r2" / "memory" / "CHARACTER.md").exists())
+        # and the fresh Runner resets the run (begin_run: saves_after = now, so the crashed saves are old)
+        r = self._series_runner("np-r2", 2)
+        self.assertIsNone(r.state["run"])
+        self.assertGreater(r.begin_run(5000.0), 1100.0)
+        self.assertEqual(r.state["saves_after"], 5000.0)
+
+    def test_a_run_with_a_finished_session_continues_unless_forced(self):
+        sd, mem = self._half_run(finished=True)
+        h, _ = self._restart()
+        self.assertIsNone(h)
+        self.assertTrue((sd / "runner.json").is_file())
+        h, logged = self._restart(forced=True)
+        self.assertEqual(h["finished_sessions"], ["S001"])
+        self.assertFalse(sd.exists())
+        self.assertIn("(--restart-run;", logged[-1])
+
+    def test_never_restarts_its_own_execv_successor(self):
+        sd, mem = self._half_run()
+        P.write_handover({"run_started": 1000.0}, P.HANDOVER)   # same pid: this process is the successor
+        h, _ = self._restart(forced=True)
+        self.assertIsNone(h)
+        self.assertTrue((sd / "runner.json").is_file())
+        self.assertTrue(P.HANDOVER.exists())                      # peeked, not consumed: the Runner reads it
+
+    def test_restarting_run_1_keeps_the_series_files_and_profile(self):
+        sd, mem = self._half_run(pt="np", k=1)
+        (P.PLAYTHROUGHS / "np" / "profile.json").write_text(json.dumps(
+            {"character": {"brief": "a sergeant", "name": "Brannoc Vale"}}))   # the half run adopted its name
+        h, _ = self._restart(pt="np", k=1)
+        self.assertIsNotNone(h)
+        self.assertEqual(sorted(x.name for x in sd.iterdir()), ["runner_events.jsonl", "runs.jsonl", "series.json"])
+        arch = next(x for x in (P.RUNTIME / "sessions").iterdir() if x.name.startswith("np.restarted-"))
+        self.assertTrue((arch / "runner.json").is_file())
+        P.prepare_series_run("np", "np", 1)
+        self.assertEqual(json.loads((P.PLAYTHROUGHS / "np" / "profile.json").read_text()),
+                         {"character": {"brief": "a sergeant"}})          # the frozen brief, no half-run name
+
+    def test_restart_run_needs_runs(self):
+        import contextlib
+        import io
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(P.main(["run", "--playthrough", "x", "--until", "nautiloid_escaped", "--restart-run"]), 2)
+        self.assertIn("--restart-run", err.getvalue())
+
+    # ---------------------------------------------------------------- fix-notes after the --until stop
+
+    HANDOFF_ONLY = ("ERROR  handoff     HANDOFF.md was written by S000, not by the current session S001. Rewrite it\n"
+                    "ERROR  handoff     HANDOFF.md is missing the required '## Next steps' line/section\n")
+    REAL = HANDOFF_ONLY + "ERROR  objectives  objectives.md: o3 has no status\n"
+
+    def test_until_stop_handoff_only(self):
+        self.assertTrue(P.until_stop_handoff_only("milestone", True, self.HANDOFF_ONLY))
+        self.assertFalse(P.until_stop_handoff_only("milestone", True, self.REAL))          # a real notes problem
+        self.assertFalse(P.until_stop_handoff_only("milestone", True, "Traceback: boom"))  # session.py failed
+        self.assertFalse(P.until_stop_handoff_only("exited", True, self.HANDOFF_ONLY))     # it had its wrap-up time
+        self.assertFalse(P.until_stop_handoff_only("milestone", False, self.HANDOFF_ONLY))
+
+    def _close(self, report: str, reason="milestone"):
+        from unittest import mock
+        r = self._series_runner()
+        fixes, events = [], []
+        res = mock.Mock(sid="S001", reason=reason, claude_session="u", started=0.0, ended=500.0)
+        with mock.patch.object(r, "memory_state", return_value={"open": True}), \
+                mock.patch.object(r, "session_py", return_value=mock.Mock(returncode=1, stdout=report)), \
+                mock.patch.object(r, "run_claude", side_effect=lambda *a, **k: fixes.append(a)), \
+                mock.patch.object(r, "event", side_effect=lambda kind, **f: events.append(kind)), \
+                mock.patch.object(P, "log"):
+            r.close_memory_session(res)
+        return fixes, events
+
+    def test_no_fix_notes_session_after_the_milestone_when_only_the_handoff_fails(self):
+        fixes, events = self._close(self.HANDOFF_ONLY)
+        self.assertEqual(fixes, [])
+        self.assertIn("fix_notes_skipped", events)
+        fixes, events = self._close(self.REAL)
+        self.assertEqual(len(fixes), 1)                 # a real lint failure still gets its fix pass
+        self.assertEqual(fixes[0][0], "S001")
+        fixes, _ = self._close(self.HANDOFF_ONLY, reason="exited")
+        self.assertEqual(len(fixes), 1)                 # not the --until stop: the agent skipped its wrap-up
+
 class InflightStuck(unittest.TestCase):
     """A hung game's in-flight background search is marked stuck by the runner (the mod's Tick froze with it)."""
 

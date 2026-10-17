@@ -759,8 +759,12 @@ def _guard(fn):
         gated = fn.__name__ not in _SAVE_UNGATED
         if gated:
             SAVER.enter()  # a background save has the menus up for ~1 s: don't interleave with it
+        who_prev = getattr(_who_tl, "note", "")
+        _who_tl.note = ""
         try:
             out = fn(*a, **kw)
+            if _who_tl.note and isinstance(out, str):  # _who picked the member acting now (ACT-P2); last, so
+                out = out + "\n" + _who_tl.note           # a result's own first word (FAILED, done) stays first
             if LIFE.pending and isinstance(out, str):  # the briefing rides on the first text result
                 out = RULES.wrap(LIFE.take_pending(), _session_key()) + "\n\n=== the result of your call ===\n" + out
             return out
@@ -769,8 +773,10 @@ def _guard(fn):
         except NotReady as e:
             return _finish(fn.__name__, kw, f"NOT READY: {e}", t0, events=False)
         except (GameError, ValueError) as e:
-            return _finish(fn.__name__, kw, "FAILED: " + re.sub(r'\[string "[^"]*"\]:\d+: ', "", str(e)), t0)
+            post = "\n" + _who_tl.note if _who_tl.note else ""
+            return _finish(fn.__name__, kw, "FAILED: " + re.sub(r'\[string "[^"]*"\]:\d+: ', "", str(e)) + post, t0)
         finally:
+            _who_tl.note = who_prev
             if gated:
                 SAVER.leave()
     return wrapper
@@ -876,6 +882,11 @@ def _uuid(ref: str) -> str:
 
 
 def _active() -> str:
+    return _active_st()[0]
+
+
+def _active_st() -> tuple[str, dict]:
+    """The selected character (a living one, see below) and the state.status read it came from."""
     st = game.rpc("state.status")
     _remember_names(st)
     a = st.get("active")
@@ -889,8 +900,8 @@ def _active() -> str:
         alive = [r["uuid"] for r in rows if not r.get("dead") and not r.get("off_stage") and not r.get("summon")
                  and not r.get("downed")]
         if alive:
-            return alive[0]
-    return a
+            return alive[0], st
+    return a, st
 
 
 def _who_uuid(ref: str) -> str:
@@ -918,8 +929,26 @@ def _who_uuid(ref: str) -> str:
         raise
 
 
+# ACT-P2 (naut2 run 1 19:59:10/16): use_ability Shout_Dash and walk_toward with no `who` acted as the selected Lae'zel,
+# whose turn had ended: "FAILED — it is not this character's turn" twice, then the same calls again with who (the
+# fight's party_can_act was [e1] alone). In a fight, a left-out who = the one party member acting now when the selected
+# one can't act; the result says so. BG3AI_COMBAT_WHO_ACTING=0 reverts (the selected character, as before).
+COMBAT_WHO_ACTING = os.environ.get("BG3AI_COMBAT_WHO_ACTING", "1") != "0"
+_who_tl = threading.local()  # .note: said in front of the running tool's result (_guard)
+
+
 def _who(ref: str | None) -> str:
-    return _who_uuid(ref) if ref else _active()
+    if ref:
+        return _who_uuid(ref)
+    char, st = _active_st()
+    if COMBAT_WHO_ACTING and st.get("in_combat"):
+        cs = game.try_rpc("state.combat") or {}
+        party = {r.get("uuid") for r in st.get("party") or [] if isinstance(r, dict)}
+        mine = turn.party_acting(cs, party) if cs.get("active") else []
+        if char not in mine and len(mine) == 1:
+            _who_tl.note = f"(who: {_label(mine[0])}, whose turn it is; the selected {_label(char)} can't act now)"
+            return mine[0]
+    return char
 
 
 def _world_uuid(ref: str) -> str:
@@ -2074,8 +2103,23 @@ def get_map(full: bool = False) -> str:
         if markers:
             body += "\nMARKERS\n" + "\n".join(f"  {m['id']} {m['label']} @{render.pos(m.get('pos'))} ({m.get('region', '')})" for m in markers)
     else:
-        body = "\n".join(lines) if lines else f"No map change ({region or '?'}; {len(ms or [])} objectives, {len(markers)} markers). full=true lists them."
+        body = "\n".join(lines) if lines else _map_same_text(region, ms, markers)
     return _finish("get_map", {"full": full}, body, t0)
+
+
+# naut2 run 1: on arrival at o1 the agent asked get_map ("No map change (Nautiloid; 1 objectives, 0 markers)"),
+# get_status ("No change"), then get_map full=true to learn o1 now stood 66.8m W: two model turns (~3.5 s) while the
+# character stood still. The no-change answer names this area's objectives with their distance now.
+MAP_SAME_OBJECTIVES = True
+MAP_SAME_OBJECTIVES_MAX = 3
+
+
+def _map_same_text(region: str, ms: list | None, markers: list) -> str:
+    head = f"No map change ({region or '?'}; {len(ms or [])} objectives, {len(markers)} markers)."
+    obj = render.render_objectives(ms or [], here_only=True, limit=MAP_SAME_OBJECTIVES_MAX) if MAP_SAME_OBJECTIVES else []
+    obj = [ln.strip() for ln in obj if ln.strip() and not ln.strip().startswith("(+")]
+    return head + (" Here: " + "; ".join(o.removeprefix("OBJECTIVE ") for o in obj) + "." if obj else "") \
+        + " full=true lists everything."
 
 
 @mcp.tool()
@@ -2224,11 +2268,16 @@ def _wedged_hint(char: str | None) -> str:
     return route_text.wedged_text(w)
 
 
+# ACT-P3: in a fight, a walk_toward longer than the movement left walks as far as it goes (says so) instead of failing.
+# BG3AI_WALK_CLIP_MOVEMENT=0 reverts.
+WALK_CLIP_MOVEMENT = os.environ.get("BG3AI_WALK_CLIP_MOVEMENT", "1") != "0"
+
+
 @mcp.tool()
 @_guard
 def walk_toward(direction: str = "", objective: str = "", target: str = "", max_m: float = 30.0,
                 who: str | None = None, run: bool = True, wait: bool = False) -> str:
-    """Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (returns within ~1 s with a job id + ETA, or the result if it already ended; wait=true blocks only in combat). Good for "head west" or "go toward the objective marker" when no door or item is in view."""
+    """Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (returns within ~1 s with a job id + ETA, or the result if it already ended; wait=true blocks only in combat). Good for "head west" or "go toward the objective marker" when no door or item is in view. In a fight a walk longer than the movement left is cut to it (the result says so)."""
     t0 = time.monotonic()
     args: dict[str, Any] = {"char": _who(who), "max_m": max_m}
     if objective:
@@ -2290,6 +2339,18 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
     wait, note = _walk_wait(wait)
     body = _act("walk_toward", "act.move_to", {"char": args["char"], "pos": res["pos"], "run": run}, wait=wait,
                 note=note)
+    left = turn.movement_left(body) if WALK_CLIP_MOVEMENT and turn.move_too_long(body) else None
+    over = _path_over(body)
+    if left is not None and left >= 1.0 and over is not None and res.get("straight_m") is not None:
+        # ACT-P3 (naut2 run 1 19:59:37): walk_toward(max_m=9) in a fight → "FAILED — beyond movement (path 9.6 m,
+        # 9.0 m left)", the same call again with max_m 8.5. Cut the walk to the movement left, as combat_turn does.
+        budget = float(res["straight_m"]) - over - 0.3
+        r2 = game.try_rpc("nav.reach_toward", {**args, "max_m": budget, "loose": True}) if budget >= 1.0 else None
+        if isinstance(r2, dict) and r2.get("reachable") and r2.get("pos"):
+            body = _act("walk_toward", "act.move_to", {"char": args["char"], "pos": r2["pos"], "run": run},
+                        wait=wait, note=note)
+            head += (f"; cut to the movement left ({render.num(left)}m): "
+                     f"{render.num(r2.get('straight_m', budget))}m")
     return head + "\n" + body
 
 
@@ -5501,7 +5562,7 @@ def do_actions(actions: str, wait: bool = True, ignore: str = "", note: str = ""
     """Run several actions in order in ONE call: a whole combat turn, a looting sweep, a dialogue chain. Plan from one observation, then execute.
     actions: JSON list of steps, e.g.
     [{"tool":"move_to","target":"e12"},{"tool":"use_ability","ability":"Target_MainHandAttack","target":"e12","unless":"hp_below:30"},{"tool":"use_ability","ability":"Shout_SecondWind","if":"hp_below:50"},{"tool":"end_turn"}]
-    Allowed: move_to, walk_toward, interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
+    Allowed: move_to, walk_toward, travel_to (a whole trip as one step, e.g. after a climb), interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
     Optional per step: "if"/"unless" with in_combat, in_dialogue, my_turn, hp_below:<pct>, item_present:<id>, target_visible:<id> (a failed condition skips the step).
     Stops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a trap spotted on the way, a blocked teleport, or a failed step. ignore="hostile,hp" disables some (combat, dialogue, prompt, hostile, hp, damage, surface, teleport, trap).
     Returns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions).
@@ -5833,7 +5894,10 @@ def _quiet(scr: str | None, view: dict) -> bool:
 # the character stands. wait_for on a walk returns when about one think time (lead_s) of it is left, so the
 # agent plans the next step during the last seconds; what it then issues for that character runs after the
 # walk arrives (_hold_for_early_walks), never cancelling it. Not in combat (the turn needs the real arrival).
-LEAD_S = 2.0          # default lead: the agent's typical think time
+# ACT-P4 (naut2 runs 1-2): of 5 early wakes, 1 was used as meant (loot steps queued for the arrival) and 4 were
+# followed at once by wait_for(lead_s=0): one more model turn each (~10 s lost). Off by default now; lead_s=2 opts
+# in per call. BG3AI_LEAD_S=2 brings the old default back.
+LEAD_S = max(0.0, float(os.environ.get("BG3AI_LEAD_S", "0")))  # default lead (0 = wait for the arrival)
 EARLY_CHECK_S = 0.25  # how often wait_for looks at the remaining ETA (one act.watch per trip)
 EARLY_HOLD_S = 8.0    # an action issued after an early wake waits at most this long for the walk to end
 _early: dict[str, dict] = {}  # key -> {"char", "job"|"queue"} of walks whose early wake fired (hold their followers)
@@ -5888,8 +5952,7 @@ def _early_wake(low: str, lead_s: float, view: dict) -> str | None:
     who = sorted({_label(w[1]) for w in walks if w[1]})
     return (f"{', '.join(w[3] for w in walks)}: arriving, ETA ~{render.num(round(left, 1))}s (early wake, "
             f"lead_s={render.num(lead_s)}): plan the next step now. What you issue"
-            + (f" for {', '.join(who)}" if who else "") + " runs after the walk arrives (it does not cancel it);"
-            " wait_for again blocks to the end.")
+            + (f" for {', '.join(who)}" if who else "") + " runs after the walk arrives (it does not cancel it).")
 
 
 def _hold_for_early_walks(char: str | None) -> str:
@@ -5926,7 +5989,7 @@ def _hold_for_early_walks(char: str | None) -> str:
 @mcp.tool()
 @_guard
 def wait_for(target: str = "idle", timeout_s: float = 15.0, lead_s: float = LEAD_S) -> str:
-    """Block only until something happens, then report it plus events and CHANGES. target: a job id (j12) from an async action; 'queue' (all queues done) or 'queue:<who>'; 'idle' (no async job or queue running); 'my_turn' (a party member can act, or combat ended); or event kinds, comma-separated (e.g. 'combat_started,dialogue_started,job_finished'). Also returns early when a reaction/roll/dialogue/popup or a rest/level-up/trade screen appears. Returns at once when the state already answers it or nothing running could cause it. Outside combat, waiting on a walk/travel_to (job id, 'queue', 'idle') returns once when ~lead_s seconds of it are left (ETA line), so you plan while it finishes: what you issue then runs after the arrival, never cancelling it; lead_s=0 waits for the end."""
+    """Block only until something happens, then report it plus events and CHANGES. target: a job id (j12) from an async action; 'queue' (all queues done) or 'queue:<who>'; 'idle' (no async job or queue running); 'my_turn' (a party member can act, or combat ended); or event kinds, comma-separated (e.g. 'combat_started,dialogue_started,job_finished'). Also returns early when a reaction/roll/dialogue/popup or a rest/level-up/trade screen appears. Returns at once when the state already answers it or nothing running could cause it. A walk/travel_to (job id, 'queue', 'idle') is waited to its arrival; lead_s=2 (outside combat) returns once ~2 s of it are left instead, only for when you will queue the arrival step without needing its result: what you issue then runs after the arrival, never cancelling it."""
     t0 = time.monotonic()
     lead_s = max(0.0, min(float(lead_s), 10.0))
     early_at = 0.0
@@ -6528,6 +6591,47 @@ def _turn_run(watcher: actq.Watcher, who: str, step: actq.Step) -> tuple[actq.Re
     return rep, text + f" (still in a conversation after {TURN_CONVO_WAIT_S:g}s of lines)"
 
 
+# ACT-P1 (naut2 run 1 19:59:07): combat_turn {"move":"o3"} (the Transponder, 35 m off) was REFUSED "o3 is the objective
+# marker …", then 27 calls / 56 s of route + Dash + walk_toward + wait_for + end_turn per member per round followed. A
+# move to an objective whose name is nothing in view walks toward its marker like a position move, with the turn's
+# partial rule (as far as the movement left goes; a Dash with then_move walks on). BG3AI_TURN_MOVE_OBJECTIVE=0 reverts.
+TURN_MOVE_OBJECTIVE = os.environ.get("BG3AI_TURN_MOVE_OBJECTIVE", "1") != "0"
+TURN_OBJECTIVE_MAX_M = 40.0  # the walkable spot toward the marker is picked this far out at most (then partial)
+
+
+def _turn_move_objective(p: turn.TurnPlan) -> None:
+    """combat_turn: the move's oN → what it names in view (unchanged rule), else the marker's position (mv.label
+    says which). An objective in another area or unknown: ValueError, as before."""
+    mv = p.move
+    ref = str(mv.target or "").strip().lower() if mv else ""
+    if not (TURN_MOVE_OBJECTIVE and re.fullmatch(r"o\d+", ref)):
+        return
+    try:
+        mv.target = H.get(_objective_ref(ref)) or mv.target  # its name is something in view: walk to that
+        return
+    except ValueError as e:
+        if "is the objective marker" not in str(e):
+            raise
+    m = render.find_objective(_objective_markers(max_age=600), ref)
+    if not (m.get("here") and isinstance(m.get("pos"), list) and len(m["pos"]) == 3):
+        raise ValueError(f"objective {ref} '{render.objective_label(m)}' is not in this area: travel_to(objective='{ref}')")
+    mv.target, mv.within = None, None
+    mv.pos = [float(x) for x in m["pos"]]
+    mv.label = f"{ref} (objective {render.objective_label(m)})"
+
+
+# A partial walk whose sampled spot still needs more than the movement left (naut2 run 1: "beyond movement (path
+# 9.7 m, 9.0 m left) → partial 8.7m: FAILED — beyond movement (path 9.7 m …)": the 8.7 m budget is straight, the
+# route bends) tries once more, shorter by the overshoot. False reverts.
+PARTIAL_SHRINK_RETRY = True
+
+
+def _path_over(text: str) -> float | None:
+    """'beyond movement (path 9.7 m, 9.0 m left)' → 0.7 (how much the route needs over the movement left)."""
+    m = re.search(r"path ([\d.]+) m, ([\d.]+) m left", text or "")
+    return float(m.group(1)) - float(m.group(2)) if m else None
+
+
 def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, after: dict,
                info: dict | None = None) -> str:
     """The move slot: 'ok', 'none' (couldn't move; the turn goes on, fallbacks may still work) or 'stop'.
@@ -6540,7 +6644,7 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
     if fatal:
         lines.append(f"move: {why}")
         return "stop"
-    what = mv.target or render.pos(mv.pos)
+    what = mv.label or mv.target or render.pos(mv.pos)
     tu = _uuid(mv.target) if mv.target else None
     step = None
     ap = None
@@ -6612,6 +6716,16 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
     if step is None and melee:
         step = actq.Step("move_to", {"target": mv.target,
                                      "within": mv.within if mv.within is not None else turn.MELEE_M})
+    if step is None and mv.label and mv.pos:
+        # toward an objective marker (ACT-P1): it may stand on a console or a ledge; walk to the farthest walkable
+        # spot toward it (walk_toward's pick), and the partial rule below cuts that to the movement left
+        r = game.try_rpc("nav.reach_toward", {"char": who, "pos": mv.pos, "max_m": TURN_OBJECTIVE_MAX_M, "loose": True})
+        if not (isinstance(r, dict) and r.get("reachable") and r.get("pos")):
+            info["short"] = "no_path"
+            lines.append(f"move {what}: no walkable ground toward it")
+            return "none"
+        x, y, z = r["pos"]
+        step = actq.Step("move_to", {"x": x, "y": y, "z": z})
     if step is None:
         step = actq.Step("move_to", {"target": mv.target} if mv.target else dict(zip("xyz", mv.pos)))
     rep, text = _turn_run(watcher, who, step)
@@ -6663,6 +6777,17 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
                 x, y, z = r["pos"]
                 rep2, text2 = _run_one(watcher, who, actq.Step("move_to", {"x": x, "y": y, "z": z}))
                 _after(rep2, after)
+                over = _path_over(text2) if not rep2.done and turn.move_too_long(text2) else None
+                if PARTIAL_SHRINK_RETRY and over is not None and budget - over - 0.3 >= 1.0:
+                    budget = budget - over - 0.3
+                    r3 = (_approach(who, tu, mv, mv.within if mv.within is not None else turn.MELEE_M, budget)
+                          if ap is not None else
+                          game.try_rpc("nav.reach_toward", {"char": who, **({"target": tu} if tu else {"pos": mv.pos}),
+                                                            "max_m": budget}))
+                    if isinstance(r3, dict) and r3.get("reachable") and r3.get("pos"):
+                        x, y, z = r3["pos"]
+                        rep2, text2 = _run_one(watcher, who, actq.Step("move_to", {"x": x, "y": y, "z": z}))
+                        _after(rep2, after)
                 res2 = text2.split(': ', 1)[-1]
                 if rep2.done and tu:
                     d2 = dist_now()
@@ -7339,7 +7464,7 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     says `NOW <a>'s turn: plan it; also <b>, <c>` (S023-S026: 175 back-to-back combat_turn calls, one per member).
     Single turn:  move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Disengage). If every action alternative is out of range, it tries the ranged weapon attack itself, else Dash + walk on when the move ran out of movement. A move that ends out of reach says how far it got and why (out of movement / fire on the route / no route closer).
     plan: JSON, e.g. {"move":{"target":"e12","within":1.5},"action":[{"ability":"Target_MainHandAttack","target":"e12"},{"ability":"Projectile_MainHandAttack","target":"e12"},{"ability":"Shout_Dash","then_move":true},"Shout_Disengage"],"bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"},"extra":[[{"ability":"Target_MainHandAttack","target":"e12"}]]}
-    move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z]. Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).
+    move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z], "o3" (an objective: toward its marker, e.g. a Dash to the exit). Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).
     Abilities: the shown name or the id; a weapon attack the character doesn't have (a summon's) becomes its own weapon attack. Extra Attack: after the first weapon attack, an "extra" slot attack costs no action (the game's rule).
     Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","force","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it, walk the move again (a Dash does this by default; then_move:false turns it off).
     order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn and while a sent-ahead plan waits (default: stop).
@@ -7724,6 +7849,7 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
         lines.append(bg_held)
     if inferred:
         lines.append(f"who: {_label(char)} ({inferred}; give who= to choose)")
+    _turn_move_objective(p)
     fight_hint = _fight_hint(cs, party)   # the first turn of a fight: a retry's key facts / past debriefs' warnings
     if fight_hint:
         lines.append(fight_hint)
@@ -8280,6 +8406,8 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                         + (", no other leg either" if failed_end is not None else "")
                         + "): try get_frontier, a door, or a jump")
                 stop += _wedged_hint(char)
+                if isinstance(r, dict):
+                    stop += macros.direct_why_text(r.get("direct_why"), d)
                 if isinstance(r, dict) and r.get("hazard_beyond"):
                     stop += f"; ahead: {macros.hazard_text(r['hazard_beyond'])}"
                 hid = r.get("hidden_floor") or r.get("hidden_beyond") if isinstance(r, dict) else None
@@ -8375,12 +8503,40 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
         _batch["in_travel"] = in_travel
         if outer_w is not None:
             outer_w.ignore -= added
+    if objective and not stop and TRAVEL_OBJECTIVE_RECHECK and lines and lines[-1].startswith("arrived"):
+        moved = _objective_moved_note(objective, dest)
+        if moved:
+            lines.append(moved)
     if longnav.ground_stop(stop, lines):
         # Every ground stop (no ground ahead, stalled legs, a blocked leg) names the way up/down: the stall stops
         # never did, so the ladder was named only by some stops (se 12:3x).
         stop += _climb_hint(_pos_now(char) or here, dest)
         stop += _dead_end_note(char, here, dest, what)
     return _macro_finish("travel_to", {"to": what}, lines, stop, [], t0)
+
+
+# naut2 run 1: travel_to o1 "arrived (0.7m from it)", then o1 Escape Route stood 66.8m W (the objective's marker
+# moves on as you reach it); the agent found out 3 calls later. Re-read the markers (one nav.markers) on arrival.
+TRAVEL_OBJECTIVE_RECHECK = True
+OBJECTIVE_MOVED_M = 5.0
+
+
+def _objective_moved_note(objective: str, dest: list) -> str:
+    """'o1 Escape Route moved on: now 66.8m W: travel_to(objective="o1") again' when the objective walked to now
+    stands elsewhere, a 'done or gone' line when it vanished, else ''."""
+    try:
+        m = render.find_objective(_objective_markers(), objective)
+    except ValueError:
+        return f"objective {objective} is gone now (done, or the quest moved on): get_map"
+    except Exception:  # noqa: BLE001 - a hint only
+        return ""
+    if not (m.get("here") and m.get("pos") and m.get("dist") is not None):
+        return ""
+    if macros.dist(m["pos"], dest) < OBJECTIVE_MOVED_M or float(m["dist"]) < OBJECTIVE_MOVED_M:
+        return ""
+    ref = f"o{m['oid']}" if m.get("oid") else objective
+    return (f"{ref} {render.objective_label(m)} moved on: now {render.num(m['dist'])}m {m.get('dir') or ''}".rstrip()
+            + f': travel_to(objective="{ref}") again')
 
 
 def _dead_end_note(char: str, here: Any, dest: list, what: str) -> str:

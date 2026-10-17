@@ -1126,11 +1126,17 @@ def read_handover(path: Path | None = None, now: float | None = None) -> dict | 
     """The handover the previous incarnation of this process wrote (same pid, fresh); always consumed."""
     path = path or HANDOVER
     try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
+        return peek_handover(path, now)
     finally:
         path.unlink(missing_ok=True)
+
+
+def peek_handover(path: Path | None = None, now: float | None = None) -> dict | None:
+    """read_handover without consuming it: is this process the execv'd successor of a runner mid-run?"""
+    try:
+        data = json.loads((path or HANDOVER).read_text())
+    except (OSError, ValueError):
+        return None
     if not isinstance(data, dict) or data.get("pid") != os.getpid():
         return None
     if (now or time.time()) - data.get("t", 0) > HANDOVER_MAX_AGE:
@@ -1544,6 +1550,14 @@ def memory_lint_errors(report: str, skip: tuple[str, ...] = ()) -> list[str]:
     return out
 
 
+def until_stop_handoff_only(reason: str | None, until: bool, report: str) -> bool:
+    """The session ended on the --until milestone and its end lint failed only on the handoff check (no wrap-up
+    ran, by design): no fix-notes session. Any other ERROR (a real notes problem), or a report without ERROR lines
+    (session.py itself failed), still gets one."""
+    return (reason == "milestone" and until and bool(memory_lint_errors(report))
+            and not memory_lint_errors(report, skip=("handoff",)))
+
+
 def check_all_cmd(json_path: Path) -> list[str]:
     """check_all imports the MCP server (bridge deps): through uv's bridge env when uv is there."""
     uv = shutil.which("uv")
@@ -1700,6 +1714,7 @@ class Options:
     sandbox_change: str | None = None  # --allow-sandbox-change: the sandbox mode differs from series.json's
     sandbox: str = "none"              # run --sandbox: none | container (runner/sandbox.py)
     box: sandbox.Sandbox | None = None  # --sandbox container: prepared once by cmd_run (firewall checked, proxy up)
+    restart_run: bool = False          # run --runs --restart-run: start the next run over even after finished sessions
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -3230,6 +3245,14 @@ class Runner:
         if r.returncode == 0:
             log(f"{res.sid}: memory committed by session.py end")
             return
+        if until_stop_handoff_only(res.reason, bool(self.opt.until), r.stdout):
+            # The --until stop ends the session at the milestone, before any wrap-up, so HANDOFF.md is still the
+            # previous session's: that alone is no notes problem (naut/naut2: a 14 s fix pass + the wait every run).
+            # The keeper rewrites HANDOFF; a later session start reconciles the open session.
+            log(f"{res.sid}: memory lint: only the handoff check failed (the --until stop came before the wrap-up): "
+                "no fix-notes session; memory left open (the keeper writes the handoff)")
+            self.event("fix_notes_skipped", session=res.sid, why="until_milestone_handoff_only")
+            return
         if (res.reason in ("exited", "hard_stop", "milestone") and res.claude_session
                 and res.ended - res.started >= 60 and not (self.stop_requested or self.abort)):   # RUN-7: <1 min: no
             log(f"{res.sid}: memory lint failed; running a {FIX_SESSION_MINUTES}-minute fix-notes session")
@@ -3851,6 +3874,9 @@ def cmd_run(a) -> int:
     if a.runs is not None and (a.runs < 1 or not a.until):
         print("refusing --runs: it needs N >= 1 and --until MILESTONE (each run ends there)", file=sys.stderr)
         return 2
+    if a.restart_run and not a.runs:
+        print("refusing --restart-run: it restarts a series run (--runs N)", file=sys.stderr)
+        return 2
     if a.run_hours is not None and (a.run_hours <= 0 or not a.until):
         print("refusing --run-hours: it needs a positive value and --until MILESTONE", file=sys.stderr)
         return 2
@@ -3929,7 +3955,7 @@ def cmd_run(a) -> int:
                   cap_changes=cap_changes or None, pins=current_pins() if a.until and not a.runs else None,
                   judge=use_judge, judge_model=judge_model if use_judge else None, judge_change=judge_change,
                   client=client, client_change=client_change, sandbox=a.sandbox, box=box,
-                  sandbox_change=sandbox_change)
+                  sandbox_change=sandbox_change, restart_run=a.restart_run)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
@@ -3995,6 +4021,10 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
         pt = runs.run_name(base, k)
         print(f"series:         {base}: run {k}/{a.runs} next ({pt}), {len(recs)} recorded"
               + ("; ALL DONE: run would exit at once" if k > a.runs else ""))
+        half = half_run_state(pt) if k <= a.runs else None
+        active = (RUNTIME / "runner.lock").exists() and not _lock_free(RUNTIME / "runner.lock")
+        for line in half_run_lines(half, forced=a.restart_run, active=active) if half else []:
+            print(line)
         prof = series_profile(base) or (scenario["profile"] if scenario else None)
         if prof is None:
             prof = load_profile(PLAYTHROUGHS / (base if k <= 1 else pt) / "profile.json")
@@ -4174,7 +4204,8 @@ def prepare_series_run(base: str, pt: str, k: int, scenario: dict | None = None)
         prof = scenario["profile"]
     if prof is None and k > 1:
         prof = load_profile(PLAYTHROUGHS / base / "profile.json") or None
-    if (k > 1 or scenario is not None) and prof and not prof_path.exists():
+    # run 1 restarted (restart_half_run moved its profile.json aside): the series' frozen profile
+    if (k > 1 or scenario is not None or series_profile(base) is not None) and prof and not prof_path.exists():
         prof_path.parent.mkdir(parents=True, exist_ok=True)
         prof_path.write_text(json.dumps(prof, indent=1, ensure_ascii=False) + "\n")
         log(f"{pt}: profile.json " + (f"from scenario {scenario['name']}" if scenario else f"copied from series {base}"))
@@ -4188,6 +4219,144 @@ def prepare_series_run(base: str, pt: str, k: int, scenario: dict | None = None)
             log(f"{pt}: HANDOFF.md = the start note of scenario {scenario['name']} (commit {h[:8]})")
 
 
+SERIES_DIR_KEEP = ("series.json", "runs.jsonl", "runner_events.jsonl")   # run 1 shares the series' session dir
+
+
+def _save_record_path(pt: str) -> Path:
+    """runtime/saves/<pt>.txt: the folders the play session's save_game wrote (bridge server._save_record)."""
+    return RUNTIME / "saves" / (re.sub(r"[^A-Za-z0-9_.-]", "_", pt) + ".txt")
+
+
+def _git_lines(mem: Path, *args: str) -> list[str]:
+    try:
+        r = subprocess.run(["git", "--no-optional-locks", "-C", str(mem), *args], capture_output=True, text=True,
+                           timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return [ln for ln in r.stdout.splitlines() if ln.strip()] if r.returncode == 0 else []
+
+
+def half_run_state(pt: str) -> dict | None:
+    """What a series run with no record left behind (a runner or machine crash mid-run; naut2 run 2, 2026-10-16
+    20:10): runner.json's run start and its finished play sessions, its claude streams, memory edits past the
+    template (an open session, uncommitted changes, session commits), the saves/<pt>.txt entries and the saves
+    written since its start. None: nothing, a fresh run. Read-only (run --plan prints it)."""
+    sdir = RUNTIME / "sessions" / pt
+    try:
+        st = json.loads((sdir / "runner.json").read_text())
+    except (OSError, ValueError):
+        st = {}
+    st = st if isinstance(st, dict) else {}
+    started = (st.get("run") or {}).get("started")
+    finished = [h.get("session") for h in st.get("history") or []
+                if h.get("kind") == "play" and (h.get("started") or 0) >= (started or 0)]
+    streams = sorted(f.name for f in sdir.glob("S*.jsonl") if runs.CLAUDE_STREAM_RE.match(f.name)) \
+        if sdir.is_dir() else []
+    mem = PLAYTHROUGHS / pt / "memory"
+    try:
+        ms = json.loads((mem / ".session.json").read_text())
+    except (OSError, ValueError):
+        ms = {}
+    open_sid = session_id(ms["current"]) if isinstance(ms, dict) and ms.get("open") and ms.get("current") else None
+    dirty = _git_lines(mem, "status", "--porcelain") if (mem / ".git").exists() else []
+    commits = [c for c in _git_lines(mem, "log", "--format=%h %s") if not c.split(" ", 1)[-1].startswith("S000")] \
+        if (mem / ".git").exists() else []
+    try:
+        recorded = [x for x in _save_record_path(pt).read_text().splitlines() if x.strip()]
+    except OSError:
+        recorded = []
+    after = st.get("saves_after")
+    try:
+        saves = [s.folder for s in sorted(list_saves(), key=lambda s: s.mtime) if after and s.mtime >= after]
+    except Exception:  # noqa: BLE001 - a report, never fatal
+        saves = []
+    if not (started or finished or streams or open_sid or dirty or commits or recorded):
+        return None
+    return {"playthrough": pt, "started": started, "finished_sessions": finished, "streams": streams,
+            "open_session": open_sid, "uncommitted": dirty, "commits": commits, "recorded_saves": recorded,
+            "saves_since_start": saves, "restartable": not finished}
+
+
+def half_run_lines(h: dict, forced: bool = False, active: bool = False) -> list[str]:
+    """run --plan's warning about a half-played next run, and what `run` would do with it (active: a runner holds
+    the lock, so this is most likely the run it is playing right now)."""
+    when = datetime.fromtimestamp(h["started"]).strftime("%Y-%m-%d %H:%M:%S") if h.get("started") else "?"
+    mem = ", ".join(x for x in (
+        f"session {h['open_session']} open" if h.get("open_session") else "",
+        f"{len(h['uncommitted'])} uncommitted change(s)" if h.get("uncommitted") else "",
+        f"{len(h['commits'])} commit(s) past S000" if h.get("commits") else "") if x) or "template only"
+    out = [f"HALF-PLAYED:    {h['playthrough']} started {when} and has no record: "
+           f"{len(h['finished_sessions'])} finished play session(s) {h['finished_sessions'] or ''}".rstrip(),
+           f"                streams {', '.join(h['streams']) or 'none'}; memory: {mem}",
+           f"                saves/{h['playthrough']}.txt: {len(h['recorded_saves'])} entr(y/ies)"
+           + (f" ({', '.join(h['recorded_saves'][-3:])})" if h["recorded_saves"] else "")
+           + f"; {len(h['saves_since_start'])} save(s) since its start"
+           + (f" ({', '.join(h['saves_since_start'][-4:])})" if h["saves_since_start"] else "")]
+    if active:
+        out.append("                (a runner holds the lock: this is likely the run it is playing now; nothing to do)")
+    elif forced or h["restartable"]:
+        out.append(f"                -> run RESTARTS it ({'--restart-run' if forced else 'no finished play session'}): "
+                   f"moves runtime/sessions/{h['playthrough']}, playthroughs/{h['playthrough']} and "
+                   f"saves/{h['playthrough']}.txt aside to *.restarted-<time>, then a fresh start")
+    else:
+        out.append("                -> run CONTINUES it from its last save (its wall time counts from the start "
+                   "above); --restart-run starts it over")
+    return out
+
+
+def archive_half_run(base: str, pt: str, stamp: str | None = None) -> list[str]:
+    """Moves a half-played run aside so `run` starts it from scratch: runtime/sessions/<pt>, playthroughs/<pt> and
+    runtime/saves/<pt>.txt → <name>.restarted-<stamp> (nothing deleted). Run 1 shares the series' session dir: its
+    series.json, runs.jsonl and runner_events.jsonl stay. Returns what moved (as 'src -> dst')."""
+    stamp = stamp or time.strftime("%Y%m%d-%H%M%S")
+    moved = []
+    for root in (RUNTIME / "sessions", PLAYTHROUGHS):
+        src = root / pt
+        if not src.exists():
+            continue
+        dst = root / f"{pt}.restarted-{stamp}"
+        if root == RUNTIME / "sessions" and pt == base:
+            dst.mkdir(parents=True, exist_ok=True)
+            for f in sorted(src.iterdir()):
+                if f.name not in SERIES_DIR_KEEP:
+                    f.rename(dst / f.name)
+        else:
+            src.rename(dst)
+        moved.append(f"{src} -> {dst}")
+    rec = _save_record_path(pt)
+    if rec.exists():
+        dst = rec.with_name(f"{rec.stem}.restarted-{stamp}.txt")
+        rec.rename(dst)
+        moved.append(f"{rec} -> {dst}")
+    return moved
+
+
+def restart_half_run(opt: Options, base: str, pt: str, k: int, forced: bool) -> dict | None:
+    """Before run k's Runner exists: a half-played run whose runner died without a handover (a machine or runner
+    crash) and that has no finished play session is started over (forced: --restart-run, whatever it has). Its
+    game, when this harness still owns it, is stopped first. Never for this process's own execv successor (a
+    pending handover: same run, new code) or a dry run. Returns the half-run state it archived, or None."""
+    h = half_run_state(pt)
+    if h is None or opt.dry_run or peek_handover() is not None or not (forced or h["restartable"]):
+        return None
+    try:
+        old = Runner(replace(opt, playthrough=pt, run_index=k))
+        if old.owns_game():
+            old.kill_game()
+    except Exception as e:  # noqa: BLE001 - the new run's setup handles a game still up
+        log(f"series {base}: stopping run {k}'s old game failed: {e!r}")
+    moved = archive_half_run(base, pt)
+    when = datetime.fromtimestamp(h["started"]).strftime("%Y-%m-%d %H:%M:%S") if h.get("started") else "?"
+    log(f"series {base}: run {k} ({pt}) RESTARTED from scratch "
+        f"({'--restart-run' if forced else 'its runner died without a handover and no play session finished'}; "
+        f"started {when}, {len(h['finished_sessions'])} finished session(s), "
+        f"streams {', '.join(h['streams']) or 'none'}, "
+        f"memory session {h['open_session'] or 'closed'}, {len(h['recorded_saves'])} recorded save(s)); moved aside: "
+        + "; ".join(moved))
+    h["moved"] = moved
+    return h
+
+
 def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, scenario: dict | None = None,
                save_sha1: str | None = None) -> int:
     """run --until M --runs N: runs 1..N of the series opt.series, each a new playthrough (runs.run_name) and a new
@@ -4197,7 +4366,7 @@ def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, s
     from new_playthrough import SetupError
     base = opt.series
     path = RUNTIME / "sessions" / base / "runs.jsonl"
-    rc, prev = 0, None
+    rc, prev, first = 0, None, True
     while not current["stop"]:
         k = runs.next_run_index(runs.series_records(path, base))
         if k > n:
@@ -4205,6 +4374,8 @@ def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, s
         if prev is not None:
             prev.end_run_game()
         pt = runs.run_name(base, k)
+        restarted = restart_half_run(opt, base, pt, k, forced=opt.restart_run and first)
+        first = False
         try:
             prepare_series_run(base, pt, k, scenario)
         except (SetupError, OSError) as e:
@@ -4212,6 +4383,9 @@ def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, s
             log(f"runner stopped (series setup failed: run {k})")   # RUN-10: every exit path logs it
             return 1
         r = current["runner"] = Runner(replace(opt, playthrough=pt, run_index=k))
+        if restarted:
+            r.event("run_restarted", started=restarted.get("started"), finished_sessions=restarted["finished_sessions"],
+                    streams=restarted["streams"], moved=restarted["moved"])
         if current["stop"]:
             r.stop_requested = True
         pins = current_pins()
@@ -4485,6 +4659,10 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--difficulty", choices=DIFFICULTIES, help="difficulty of a new game (profile.json)")
     r.add_argument("--take-over", action="store_true",
                    help="allow using a game that is already in a save the runner didn't load")
+    r.add_argument("--restart-run", action="store_true",
+                   help="--runs: start the next run over even when it has finished play sessions (its sessions, "
+                   "memory and saves record move aside to *.restarted-<time>). Without it a run with no finished "
+                   "session whose runner died is restarted anyway; one with finished sessions continues")
     r.add_argument("--plan", action="store_true", help="print the series.json a series would freeze, its next "
                    "run and the first session's command, then exit: no lock, no game, no files written")
     r.add_argument("--dry-run", action="store_true", help="prepare the first session and print the claude "

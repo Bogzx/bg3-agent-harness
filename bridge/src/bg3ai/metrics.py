@@ -86,6 +86,11 @@ QUEUE_TOOL = "queue_actions"
 # Not observations, so not in the read round-trip target: waits on the game (wait_for blocks until a job ends,
 # S009: 26 calls, median 8.6 s), save/load (seconds by nature), screen captures, queue control.
 NOT_READ = {"wait_for", "wait", "save_game", "load_game", "screenshot", "zoom", QUEUE_TOOL, "cancel_queue"}
+# Not game observations either: the notes/memory tools (local files, no game RPC) and the one-off setup tools
+# (new_game ~10 s, create_character ~6 s). Left out of the read round trip only; a fix-notes session without the
+# game then has no read RT (n/a) instead of a FAIL on memory_write/end_session (naut2 S001-fix: 269 ms).
+NOT_GAME_READ = {"memory_list", "memory_read", "memory_search", "memory_write", "memory_edit", "memory_append",
+                 "note", "end_session", "new_game", "create_character"}
 OPS_MAX = 12  # tool records list their evals ("ops") when they made at most this many
 # Top-level calls that issue actions (pipelining is measured over these); waits don't count.
 ISSUE_TOOLS = (ACTION_TOOLS | BATCH_TOOLS | {QUEUE_TOOL}) - NOT_APM
@@ -997,7 +1002,7 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
 
     top = [r for r in tool_recs if not r.get("nested")]
     reads = [r for r in top if r["tool"] not in ACTION_TOOLS and r["tool"] not in BATCH_TOOLS
-             and r["tool"] not in NOT_READ]
+             and r["tool"] not in NOT_READ and r["tool"] not in NOT_GAME_READ]
     waits = [r for r in top if r["tool"] in ("wait_for",)]
     rt = [r["ms"] - r.get("job_ms", 0) for r in top]
     n_actions = sum(a.get("steps", 1) for a in acts if a["tool"] not in NOT_APM)

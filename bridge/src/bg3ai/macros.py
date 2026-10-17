@@ -206,6 +206,23 @@ def hazard_text(h: dict | None) -> str:
     return out
 
 
+# nav.reach_toward's direct_why (Navigation.lua N.directLeg): why travel_to's long leg along the game's own route
+# was refused and the trip fell back to straight-line legs. Live window #2: from inside the Last Light Inn the
+# straight legs dead-ended west of an Oak Door, 106 m short, with no word on what the game's path did.
+DIRECT_WHY = {"no path": "the game finds no path there", "partial": "the game's path ends short of it",
+              "jump": "the game's path needs a jump (jump_to/route)", "long": "the game's path is over 600 m",
+              "no node in reach": "the game's path doubles back first", "hidden floor": "the game's path crosses an unseen floor",
+              "leg end unverified": "the game's path's next stop did not check out"}
+
+
+def direct_why_text(why: Any, left_m: float) -> str:
+    """'; the game's path ends short of it' for a ground stop on a trip longer than one sampled leg; '' otherwise
+    (a hazard has its own text; a short trip never asked for the route)."""
+    if left_m <= TRAVEL_LEG_M or not isinstance(why, str) or why not in DIRECT_WHY:
+        return ""
+    return "; " + DIRECT_WHY[why]
+
+
 def leg_stopped_short(result: Any) -> bool:
     return isinstance(result, dict) and bool(result.get("stopped_short") or result.get("reached") is False)
 

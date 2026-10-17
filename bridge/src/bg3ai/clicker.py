@@ -707,6 +707,14 @@ def _finish_click(game: Game, inp: InputClient, uuid: str, button: str, expect: 
             if walk and walk.walked_m > 0.3:
                 extra["walked_m"] = round(walk.walked_m, 1)
             return ClickResult(True, None, scr, pos, tries, extra)
+        if wanted and scr == "dialogue" and before != "dialogue":
+            # Live window #2 (10-16 19:51, S050 Foundry door): the Lockpick row was pressed and a Steel Watcher
+            # answered with the crime scene (then combat) in place of the roll; this read "nothing happened" after
+            # 6.4 s. The click took: say what the game did instead, at once.
+            if walk and walk.walked_m > 0.3:
+                extra["walked_m"] = round(walk.walked_m, 1)
+            extra["instead"] = "dialogue"
+            return ClickResult(False, "interrupted", scr, pos, tries, extra)
         now = time.monotonic()
         if now >= deadline:
             # S047 02:57:54: the Lockpick row made the game walk the actor ~1 m to its own lockpick spot first; the
@@ -870,6 +878,8 @@ def run_click_action(game: Game, inp: InputClient | None, op: str, args: dict, w
                     "off_screen": "the target is not on screen",
                     "hover_miss": "could not point at the target",
                     "no_effect": "nothing happened",
+                    "interrupted": ("a conversation started instead (someone saw it: lockpicking, disarming "
+                                    "or picking a pocket in sight of its owner or a guard is a crime): answer it"),
                     "no_menu_entry": "the right-click menu had no such entry"}.get(reason, reason)
         if merged.get("click", {}).get("trap") == "still armed":
             jr.error = ("the trap is still armed after Disarm (no roll and no change within 4 s; opening or using it now sets it "
