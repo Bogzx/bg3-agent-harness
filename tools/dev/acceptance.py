@@ -1985,6 +1985,17 @@ def sec_setup() -> None:
         time.sleep(0.3)
         item("level_up selects the member first", "PASS" if got == prev and now == who and S._active() == prev
              else "FAIL", f"active {prev} → helper returned {got}, active then {now} (want {who}), back {S._active()}")
+    # 7. S11: check_all's waypoints check left the world map open (19:11 + 19:56 2026-10-17; S068 started on
+    # screen=map). Its waypoints + screen rows as the runner runs them: the game view after, 2 s later too.
+    sys.path.insert(0, str(REPO / "tools" / "dev"))
+    import check_all as CA
+    if need(ui_screen() == "game", "check_all leaves the game view", f"screen {ui_screen()} before the check"):
+        wp, scr_row = CA.check_waypoints(S.game), CA.check_screen(S.game, "game")
+        time.sleep(2.0)
+        scr = ui_screen()
+        item("check_all leaves the game view", "PASS" if scr == "game" and scr_row.verdict != "FAIL" else "FAIL",
+             f"waypoints {wp.verdict}: {wp.detail[-120:]} | screen row {scr_row.verdict}: {scr_row.detail} | "
+             f"screen 2 s after={scr}")
 
 
 FUNCS["setup"] = sec_setup

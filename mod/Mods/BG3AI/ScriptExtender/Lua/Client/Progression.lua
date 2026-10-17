@@ -1135,6 +1135,14 @@ local function passiveOn(it)
     return p.IsSelected == true or p.Selected == true or (tonumber(p.Value) or 0) > 0
 end
 
+-- A choice the page still has open that the plan doesn't fill: a problem, and one of ctx.missing, which the level
+-- up's finish names before any spell click (S068 #67).
+local function missingPick(ctx, msg)
+    ctx.result.problems[#ctx.result.problems + 1] = msg
+    ctx.missing = ctx.missing or {}
+    ctx.missing[#ctx.missing + 1] = msg
+end
+
 local function passivesStage(getDC, ctx, wanted, defaults)
     return function()
         local dc = getDC()
@@ -1185,8 +1193,8 @@ local function passivesReport(getDC, ctx)
                 -- picked can hold already-known entries (live: Wyll L5 invocations "needs -1 more"): an incomplete
                 -- choice always needs at least one
                 local more = math.max(1, (tonumber(v.max) or 1) - #v.picked)
-                ctx.result.problems[#ctx.result.problems + 1] = "passive choice '" .. title .. "' needs " .. more
-                    .. " more in plan.passives; can pick: " .. table.concat(v.options, ", ")
+                missingPick(ctx, "passive choice '" .. title .. "' needs " .. more
+                    .. " more in plan.passives; can pick: " .. table.concat(v.options, ", "))
                 ctx.result.options = ctx.result.options or {}
                 ctx.result.options[title] = v.options
             end
@@ -1254,10 +1262,10 @@ local function spellsReport(getDC, ctx)
                     if nd.cantrips == nil or nd.cantrips == s.cantrips then waiting = waiting + 1 end
                 end
                 if waiting < s.open then
-                    ctx.result.problems[#ctx.result.problems + 1] = "spell choice '" .. s.title .. "' needs "
+                    missingPick(ctx, "spell choice '" .. s.title .. "' needs "
                         .. (s.open - waiting) .. " more " .. (s.cantrips and "cantrip" or "spell")
                         .. (s.open - waiting == 1 and "" or "s") .. " in plan." .. (s.cantrips and "cantrips" or "spells")
-                        .. "; can pick: " .. table.concat(s.can_pick, ", ")
+                        .. "; can pick: " .. table.concat(s.can_pick, ", "))
                     ctx.result.options = ctx.result.options or {}
                     ctx.result.options[s.title] = s.can_pick
                 end
@@ -2140,8 +2148,8 @@ RPC.register("ui.level_up", function(args)
             if #items > 0 then
                 local max, spent = asiPoints(dc, items)
                 if spent < max then
-                    ctx.result.problems[#ctx.result.problems + 1] = (max - spent) .. " of " .. max
-                        .. " ability points unspent: plan.abilities; can raise: " .. canRaise(items)
+                    missingPick(ctx, (max - spent) .. " of " .. max
+                        .. " ability points unspent: plan.abilities; can raise: " .. canRaise(items))
                 end
             end
             return "next", 0
@@ -2168,6 +2176,20 @@ RPC.register("ui.level_up", function(args)
             if ctx.result.needs_clicks then
                 local names = {}
                 for _, nd in ipairs(ctx.result.needs_clicks) do names[#names + 1] = nd.name end
+                -- S068 #67, Gale L10: plan.cantrips = [] with 2 spells planned. The clicks ran first and the level
+                -- up failed as "no spell button found ... out of time (308 probes)"; a cantrip was what was missing.
+                -- A pick the plan doesn't fill keeps the page from finishing after the clicks too: name it now and
+                -- leave the spells unclicked (no needs_clicks: the bridge doesn't start its search).
+                local missing = {}
+                if UI.prop(dc, "CanSelectFeat") == true and UI.prop(dc, "SelectedFeat") == nil then
+                    missing[1] = "no feat chosen (plan.feat)"
+                end
+                for _, m in ipairs(ctx.missing or {}) do missing[#missing + 1] = m end
+                if #missing > 0 then
+                    ctx.result.needs_clicks, ctx.result.not_clicked = nil, names
+                    return "fail", "level up is not complete, not finishing: " .. table.concat(missing, "; ")
+                        .. " (nothing clicked: pass the whole plan in one call, with " .. table.concat(names, ", ") .. ")"
+                end
                 return "fail", "spell picks pending (" .. table.concat(names, ", ")
                     .. "): the level_up tool clicks these itself; nothing to click by hand"
             end

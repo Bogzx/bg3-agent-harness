@@ -3112,6 +3112,15 @@ class Runner:
         bad = [f"{r.get('name')}: {r.get('detail')}"[:200] for r in res["rows"] if r.get("verdict") == "FAIL"]
         for b in bad:
             log(f"check_all FAIL {b}")
+        # S068 started on screen=map (the waypoints check's map was still up, the agent pressed ESCAPE): check_all's
+        # last row closes it and says what the next session would start on; no row (timed out): ask ourselves.
+        scr = next((r for r in res["rows"] if r.get("name") == "screen"), None)
+        if scr is None and (screen := ui_screen()) == "map":
+            scr = {"verdict": "FAIL", "detail": f"screen {screen} after check_all ({res['why'] or 'no screen row'})"}
+        if scr and scr.get("verdict") == "FAIL":
+            log(f"PREP FAIL: the game is not on the game view after check_all: {scr.get('detail')}")
+            self.pending_notes.append(f"RUNNER NOTE: the between-sessions check left the game off the game view "
+                                      f"({scr.get('detail')}). Close that screen first (ESCAPE).")
         write_status(check_all={"t": now, "session": session, "ok": res["ok"], "counts": res["counts"],
                                 "line": res["line"], "fails": bad[:5], "why": res["why"]})
         if triage_path is not None:

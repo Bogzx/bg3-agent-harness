@@ -32,6 +32,8 @@ class FakeGame:
         self.keys = {"enums": True, "keyspec": True, "cases": [dict(c) for c in GOOD_KEYS]}
         self.confirm = {"api": True}
         self.screen = "game"
+        self.screens: list = []  # ui.state screens in call order (then self.screen)
+        self.map_close_fixes = True  # ui.map_close (ESCAPE) brings the game view back
         self.in_combat = False
         self.unlocked = [{"id": "WAYP_CHA_Top", "name": "Roadside Cliffs"}, {"id": "WAYP_Grove", "name": "Emerald Grove"}]
         self.ui_list = [{"region": "Wilderness", "name": "Roadside Cliffs"}, {"region": "Wilderness", "name": "Emerald Grove"}]
@@ -77,7 +79,12 @@ class FakeGame:
 
     def try_rpc(self, op, args=None, context="server", default=None):
         if op == "ui.state":
-            return {"screen": self.screen}
+            return {"screen": self.screens.pop(0) if self.screens else self.screen}
+        if op == "ui.map_close":
+            self.calls.append((op, args))
+            if self.map_close_fixes:
+                self.screens, self.screen = [], "game"
+            return {"closed": True}
         if op == "nav.waypoints":
             return {"level": "WLD_Main_A", "waypoints": self.unlocked}
         if op == "act.watch":
@@ -335,6 +342,33 @@ class WaypointsTest(unittest.TestCase):
         self.assertEqual(r.verdict, "WARN")
         self.assertIn("swallowed", r.detail)
 
+    def test_map_still_closing_is_waited_for(self):
+        # the ESCAPE lands frames later: ui.state says map once, then game; no extra ESCAPE
+        g = FakeGame(screens=["game", "map", "map"])  # the pre-check read, then 2 polls after the 2nd open
+        with mock.patch.object(C.time, "sleep"):
+            r = C.check_waypoints(g)
+        self.assertEqual(r.verdict, "PASS", r.detail)
+        self.assertNotIn("ui.map_close", [c[0] for c in g.calls])
+
+    def test_map_left_open_is_closed(self):
+        # live 19:11/19:56 2026-10-17: "screen map after closing the map (left open?)", S068 started on the map
+        g = FakeGame(screens=["game"])
+        g.screen = "map"
+        with mock.patch.object(C, "SCREEN_SETTLE_S", 0.0):
+            r = C.check_waypoints(g)
+        self.assertEqual(r.verdict, "WARN", r.detail)
+        self.assertIn("check_all closed it (ESCAPE x1)", r.detail)
+        self.assertEqual(g.screen, "game")
+
+    def test_map_that_stays_open_fails(self):
+        g = FakeGame(screens=["game"], map_close_fixes=False)
+        g.screen = "map"
+        with mock.patch.object(C, "SCREEN_SETTLE_S", 0.0):
+            r = C.check_waypoints(g)
+        self.assertEqual(r.verdict, "FAIL", r.detail)
+        self.assertIn("screen map after closing the map (2 ESCAPE by check_all did not close it either)", r.detail)
+        self.assertEqual([c[0] for c in g.calls].count("ui.map_close"), C.MAP_CLOSES)
+
     def test_job_failed(self):
         g = FakeGame(job=JobResult("failed", None, "the map didn't open"))
         r = C.check_waypoints(g)
@@ -346,6 +380,41 @@ READS_OK = ("connections    pools within cap: True  bg3le slots without a client
             "ALL            median 22.0 ms  p90 60.0 ms  -> PASS (<30 / <100)\n")
 READS = ("connections    pools within cap: True  bg3le slots without a client socket: 0  -> PASS\n"
          "ALL            median 52.0 ms  p90 120.0 ms  -> FAIL (<30 / <100)\n")
+
+
+class ScreenTest(unittest.TestCase):
+    def test_game_view(self):
+        g = FakeGame()
+        self.assertEqual(C.check_screen(g, "game").verdict, "PASS")
+        self.assertNotIn("ui.map_close", [c[0] for c in g.calls])
+
+    def test_closes_a_map(self):
+        for before in ("game", "map"):  # ours, or left by the session: the next one starts on the game view
+            g = FakeGame(screen="map")
+            with mock.patch.object(C, "SCREEN_SETTLE_S", 0.0):
+                r = C.check_screen(g, before)
+            self.assertEqual((r.verdict, g.screen), ("WARN", "game"), r.detail)
+            self.assertIn("closed a map left open (ESCAPE x1)", r.detail)
+
+    def test_map_that_stays_fails(self):
+        g = FakeGame(screen="map", map_close_fixes=False)
+        with mock.patch.object(C, "SCREEN_SETTLE_S", 0.0):
+            r = C.check_screen(g, "game")
+        self.assertEqual(r.verdict, "FAIL", r.detail)
+        self.assertIn("screen map after the checks (was game): the next session would start there", r.detail)
+
+    def test_session_screen_kept(self):
+        g = FakeGame(screen="dialogue")
+        r = C.check_screen(g, "dialogue")
+        self.assertEqual(r.verdict, "WARN")
+        self.assertNotIn("ui.map_close", [c[0] for c in g.calls])
+        with mock.patch.object(C, "SCREEN_SETTLE_S", 0.0):
+            self.assertEqual(C.check_screen(g, "game").verdict, "FAIL")
+
+    def test_no_ui_state(self):
+        g = FakeGame()
+        g.try_rpc = lambda op, args=None, context="server", default=None: default
+        self.assertEqual(C.check_screen(g, None).verdict, "WARN")
 
 
 class ModTest(unittest.TestCase):
@@ -409,7 +478,8 @@ class RunAllTest(unittest.TestCase):
         got = {r.name: r.verdict for r in rows}
         self.assertEqual(got, {"latency": "PASS", "waypoints": "PASS", "keys": "PASS", "confirm": "PASS",
                                "smoke": "PASS", "act": "WARN", "vis": "WARN", "se": "FAIL", "route": "FAIL",
-                               "mod": "PASS", "reads": "WARN", "session": "PASS"})
+                               "mod": "PASS", "reads": "WARN", "session": "PASS", "screen": "PASS"})
+        self.assertEqual(rows[-1].name, "screen")
         args = {n: a for n, a, _, _ in self.seen}
         self.assertEqual(args["check_se.py"], ["--only", "hook,children,autoskip"])  # never the stress/leak checks
         self.assertEqual(args["check_act.py"], ["latency", "approach", "forms"])  # read-only checks only
@@ -420,14 +490,14 @@ class RunAllTest(unittest.TestCase):
         out = io.StringIO()
         C.print_table(rows, out=out)
         text = out.getvalue()
-        self.assertIn("7 PASS, 3 WARN, 2 FAIL", text)
+        self.assertIn("8 PASS, 3 WARN, 2 FAIL", text)
         self.assertEqual(args["check_reads.py"], ["--rounds", "3", "--queue"])
         self.assertRegex(text, r"se\s+FAIL")
 
     def test_budget_skips(self):
         with mock.patch("sys.stdout", io.StringIO()):
             rows = C.run_all(["keys", "smoke"], FakeGame(), dict, 1, 4, False, self.tmp, self.fake_runner({}))
-        self.assertEqual([r.verdict for r in rows], ["SKIP", "SKIP"])
+        self.assertEqual([r.verdict for r in rows], ["SKIP", "SKIP", "PASS"])  # the screen row runs anyway
         self.assertEqual(self.seen, [])
 
     def test_exception_is_a_row(self):
@@ -435,7 +505,7 @@ class RunAllTest(unittest.TestCase):
         g.rpc = mock.Mock(side_effect=GameError("unknown op state.map"))
         with mock.patch("sys.stdout", io.StringIO()):
             rows = C.run_all(["waypoints", "keys"], g, dict, 1, 120, False, self.tmp, self.fake_runner({}))
-        self.assertEqual([r.verdict for r in rows], ["FAIL", "PASS"])
+        self.assertEqual([r.verdict for r in rows], ["FAIL", "PASS", "PASS"])
         self.assertIn("unknown op", rows[0].detail)
 
     def test_main_end_to_end(self):
@@ -453,7 +523,7 @@ class RunAllTest(unittest.TestCase):
             outputs["check_vis.py"] = (1, "[FAIL] markers: unknown op\n")
             self.assertEqual(C.main(["--calls", "2", "--skip", "latency"]), 1)
             self.assertEqual(C.main(["--only", "keys,confirm"]), 0)
-        self.assertIn("12 PASS, 0 WARN, 0 FAIL", out.getvalue())
+        self.assertIn("13 PASS, 0 WARN, 0 FAIL", out.getvalue())  # + the screen row
 
     def test_json_report(self):
         outputs = {"smoke.py": (0, "✓ get_status 4 ms\n"), "check_act.py": (0, "WARN  slow\n"),
@@ -470,8 +540,8 @@ class RunAllTest(unittest.TestCase):
             self.assertEqual(C.main(["--calls", "2", "--json", str(path)]), 1)
             rep = json.loads(path.read_text())
         self.assertEqual(rep["exit"], 1)
-        self.assertEqual(rep["counts"], {"PASS": 10, "WARN": 1, "FAIL": 1, "SKIP": 0})
-        self.assertEqual([r["name"] for r in rep["rows"]], C.ORDER)
+        self.assertEqual(rep["counts"], {"PASS": 11, "WARN": 1, "FAIL": 1, "SKIP": 0})
+        self.assertEqual([r["name"] for r in rep["rows"]], C.ORDER + ["screen"])
         self.assertEqual(next(r for r in rep["rows"] if r["name"] == "vis")["verdict"], "FAIL")
 
     def test_unreachable(self):
