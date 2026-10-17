@@ -33,6 +33,10 @@ LOCK = REPO / "runtime" / "game.lock"
 BASE = "S027-start"            # the real playthrough state (after S026); loaded, never overwritten
 TRADE_SAVE = "S026-dammon-heat"  # Last Light Inn, Quartermaster Talli in view
 DOOR_SAVE = "S050-end"         # Lower City, beside the locked Steel Watch Foundry door (S050 04:12 lockpick hover_miss x4)
+# The hotbar cast items (ACT-8 Bless x3, ACT-9 Dimension Door): BASE has no Bless on anyone's hotbar (live window #4
+# probe, 2026-10-17: Shadowheart has Healing Word / Blessing of the Trickster, Claude only smites). In S065 Claude the
+# Paladin (L10) cast Target_Bless and hit "a cast takes at most 2 here": the case ACT-8 fixes.
+HOTBAR_SAVE = "S065-end"
 # Run order (se 2026-10-16): read-only sections first, then the ones that change the world (each reloads its save at
 # the end), then the crash guard's reloads, then se, whose last items spend a spell slot (hotbar Bless) and switch
 # bg3le's strict frame lock on and back: a crash there costs no other section. Every section loads its own save first,
@@ -52,8 +56,10 @@ LOCK_HELD_ENV = "BG3AI_GAME_LOCK_HELD"
 # What each save must be for its sections (checked offline by --check from the save's SaveInfo.json).
 SAVE_NEEDS = {
     BASE: {"level": "SCL_Main_A", "party_has": ["Claude", "Gale", "Shadowheart"], "party_not": ["Wyll"],
-           "party_min": 3, "used_by": "every section (swap: Gale in, Wyll in camp; se hotbar: Shadowheart's Bless "
-                                     "+ 3 in the party; nav/combat: fast travel to Moonrise Towers)"},
+           "party_min": 3, "used_by": "every section (swap: Gale in, Wyll in camp; nav/combat: fast travel to "
+                                     "Moonrise Towers)"},
+    HOTBAR_SAVE: {"level": "CTY_Main_A", "party_has": ["Claude"], "party_min": 3,
+                  "used_by": "se/act hotbar casts (Claude the Paladin's Bless on 3; Dimension Door if Gale is in)"},
     TRADE_SAVE: {"level": "SCL_Main_A", "near": ((-26.8, 27.4, 164.8), 8),
                  "used_by": "trade (Last Light Inn; Talli ~34 m S at (-31.3, 27.5, 130.2))"},
     DOOR_SAVE: {"level": "CTY_Main_A", "near": ((-233.0, 4.5, -180.6), 8),
@@ -1134,8 +1140,8 @@ def hotbar_probe() -> None:
 HOTBAR_ITEM = "use_ability Bless on 3 via the hotbar route (ACT-8 wiring)"
 
 # Spells for the N-target hotbar items: they target allies (castable out of combat on the party without a fight),
-# take more than 2 targets at their base level (the Osiris route's limit), and leave a status to check. Bless is the
-# one the S027-start party has (Claude the Paladin casts it in claude-run-2 S025/S029; Shadowheart in S018-S025).
+# take more than 2 targets at their base level (the Osiris route's limit), and leave a status to check. Bless: on
+# HOTBAR_SAVE's hotbars (Claude the Paladin casts it in claude-run-2 S029-S065; S027-start has it on nobody's).
 # Aid / Mass Healing Word are Shouts (an area, no target clicks) and prove nothing about the click route.
 HOTBAR_ALLY_SPELLS = (("Target_Bless", "BLESS", 3),)
 # Seen on the maps only to say what else the party could cast (all hostile: not for an out-of-combat item).
@@ -1564,12 +1570,15 @@ def sec_se() -> None:
     item("CursorText probe (Jump targeting)", "PASS" if got and mv < 0.5 else ("FAIL" if mv >= 0.5 else "INFO"),
          f"new texts while targeting={got}; party moved {mv:.1f} m; screen after={after}; " + " | ".join(new_texts)[:220]
          + " (full: se.log PROBE lines)")
-    hotbar_probe()   # audit ACT-8 rest: hotbar cell + Bless x3 (spends a slot: after the probes, reloaded right below)
-    load_verified(BASE)
+    # audit ACT-8 rest: hotbar cell + Bless x3 on HOTBAR_SAVE (spends a slot: after the probes, reloaded right below);
+    # the read-only hotbar item still runs on BASE when that save won't load
+    hb_save = HOTBAR_SAVE if load_verified(HOTBAR_SAVE, record=True) else BASE
+    hotbar_probe()
+    load_verified(hb_save)
     if hotbar_use_ability():   # the same Bless x3 through use_ability (act's wiring): reloaded again
-        load_verified(BASE)
+        load_verified(hb_save)
     if twostep_dd_probe():   # ACT-9: Dimension Door by the clicks (spends a slot, moves the caster): reloaded
-        load_verified(BASE)
+        load_verified(hb_save)
     # Lockpick on the S050 door (S050 04:11-04:12 + S051: 8x "hover_miss hovered_instead=[(an object with no id)]";
     # S047 02:57: "nothing happened" while the game walked the actor to its lockpick spot). Opens the roll only:
     # ESCAPE, then the base save is reloaded; nothing is rolled or saved.

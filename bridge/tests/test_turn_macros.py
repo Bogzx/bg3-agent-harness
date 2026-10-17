@@ -1697,14 +1697,45 @@ class CombatTurnBackgroundEnd(Base):
     def plan(self, **kw) -> str:
         return json.dumps(kw)
 
+    def gate_end(self) -> None:
+        """The background end runs until a hold waits on it (released at the hold's first busy check) or the test
+        releases it: nothing here may depend on a 0.6 s end outlasting the tool calls in between (flaky under
+        full-suite load, 2026-10-17: no 'waited' in the next combat_turn, 1 of 5 full runs)."""
+        self.g.dur["act.end_turn"] = 3600.0
+        mgr = server._queues()
+        busy, hold = mgr.busy, server._hold_for_bg_end
+        holding = threading.local()
+
+        def held_busy(who=None):
+            b = busy(who)
+            if b and getattr(holding, "on", False):
+                self.release_end()  # the hold saw the end running: it waits, then sees it done
+            return b
+
+        def gated_hold(char=None):
+            holding.on = True
+            try:
+                return hold(char)
+            finally:
+                holding.on = False
+        for p in (mock.patch.object(mgr, "busy", held_busy), mock.patch.object(server, "_hold_for_bg_end", gated_hold)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def release_end(self) -> None:
+        """The end finishes at its next poll (one not started yet finishes at once)."""
+        with self.g.lock:
+            self.g.dur["act.end_turn"] = 0.0
+            for j in self.g.jobs.values():
+                if j["op"] == "act.end_turn" and j["status"] == "running":
+                    j["end"] = 0.0
+
     def test_returns_before_the_end_finishes_and_reports_it_later(self):
         # The end is the character's queue step: its worker thread sends act.end_turn after combat_turn returned (or
         # just before). Flaky under full-suite load when this asserted the op at once (se, 2026-10-16: 0 != 1 in 1 of
-        # 4 full runs, 10/10 alone): wait for it, bounded; the end's job lasts 1.5 s so "returned first" is not a race.
-        self.g.dur["act.end_turn"] = 1.5
-        t = time.monotonic()
+        # 4 full runs, 10/10 alone): wait for it, bounded. The end runs until released, so "returned first" is no race.
+        self.gate_end()
         out = server.combat_turn(self.plan(action="Shout_Dodge"))
-        self.assertLess(time.monotonic() - t, 1.2)
         self.assertIn("end_turn: ending in the background", out)
         self.assertIn(f"NEXT {self.gob} Goblin", out)
         self.assertIn("RUNNING queue", out)
@@ -1712,6 +1743,8 @@ class CombatTurnBackgroundEnd(Base):
         while not self.g.ops("act.end_turn") and time.monotonic() < until:
             time.sleep(0.01)
         self.assertEqual(len(self.g.ops("act.end_turn")), 1)
+        self.assertNotIn("queue_done", server.get_events())  # still running
+        self.release_end()
         evs = ""
         until = time.monotonic() + 5.0
         while "queue_done" not in evs and time.monotonic() < until:
@@ -1721,6 +1754,7 @@ class CombatTurnBackgroundEnd(Base):
         self.assertEqual(len(self.g.ops("act.end_turn")), 1)
 
     def test_next_combat_turn_waits_for_the_background_end(self):
+        self.gate_end()
         server.combat_turn(self.plan(action="Shout_Dodge"))
         self.g.combat["current"] = P1  # the enemies acted; Claude again
         out = server.combat_turn(self.plan(action="Shout_Dodge"))
@@ -1730,11 +1764,13 @@ class CombatTurnBackgroundEnd(Base):
         self.assertLess(ends[0], casts[1])
 
     def test_a_direct_action_for_that_character_waits_too(self):
+        self.gate_end()
         server.combat_turn(self.plan(action="Shout_Dodge"))
         out = server.use_ability("Shout_Dodge")
         self.assertIn("turn end to finish first", out)
 
     def test_review_m4_queued_steps_wait_and_get_their_own_interrupts(self):
+        self.gate_end()
         # the end's executor ignores every interrupt: steps queued for that character during it must not run in it
         server.combat_turn(self.plan(action="Shout_Dodge"))
         out = server.queue_actions(json.dumps([{"tool": "use_ability", "ability": "Shout_Dodge"}]),
@@ -1747,7 +1783,7 @@ class CombatTurnBackgroundEnd(Base):
         self.assertLess(ends[0], casts[-1])
 
     def test_review_m5_cancel_queue_never_cancels_the_end_half_way(self):
-        self.g.dur["act.end_turn"] = 2.0
+        self.gate_end()
         server.combat_turn(self.plan(action="Shout_Dodge"))
         until = time.monotonic() + 3.0
         while not self.g.ops("act.end_turn") and time.monotonic() < until:
@@ -1760,6 +1796,7 @@ class CombatTurnBackgroundEnd(Base):
         self.assertEqual(end["status"], "done")
 
     def test_review_m5_replace_waits_for_the_end_too(self):
+        self.gate_end()
         server.combat_turn(self.plan(action="Shout_Dodge"))
         out = server.queue_actions(json.dumps([{"tool": "use_ability", "ability": "Shout_Dodge"}]),
                                    who=server.H.get(P1), replace=True)
