@@ -69,6 +69,29 @@ class Milestones(unittest.TestCase):
         self.assertEqual(got, {"act3", "lower_city", "wyrms_rock", "gortash", "bhaal_temple"})
         self.assertEqual((st["act"], st["next"], st["ended"]), (3, "Orin's Netherstone", False))   # Iron Throne: optional
 
+    def test_cazador_from_claude_run_2(self):
+        # S077 (01:05-01:09): Cazador killed, "Investigate Cazador's Palace" done; the runner still read 21/30 and
+        # "next Morphic Pool". "The Pale Elf" closed in S074 on Astarion's death in a reloaded try: not a kill.
+        base = dict(SEEN, regions=SEEN["regions"] + ["Lower City"], areas=SEEN["areas"] + ["Lower City|Bhaal Temple"],
+                    quests=dict(SEEN["quests"], **{"Get Orin's Netherstone": {"done": True},
+                                                   "The Pale Elf": {"done": True},
+                                                   "Call of the Blood": {"done": False}}))
+
+        def caz(**quests):
+            st = MS.status(dict(base, quests=dict(base["quests"], **quests)))
+            return {i["id"]: i["reached"] for i in st["items"]}["cazador"], st
+        self.assertFalse(caz()[0])
+        self.assertTrue(caz(**{"Call of the Blood": {"done": True}})[0])
+        got, st = caz(**{"Investigate Cazador's Palace": {"done": True}})
+        self.assertTrue(got)
+        self.assertEqual(st["next"], "Morphic Pool")      # optional: counts, never the next one
+
+    def test_optional_never_moves_next(self):
+        # the Iron Throne (optional) reached before Gortash's Netherstone: Gortash stays next
+        seen = dict(SEEN, regions=SEEN["regions"] + ["Lower City", "Iron Throne"],
+                    areas=SEEN["areas"] + ["Rivington & Wyrm's Crossing|Wyrm's Rock Fortress"])
+        self.assertEqual(MS.status(seen)["next"], "Gortash's Netherstone")
+
     def test_game_end(self):
         st = MS.status(dict(SEEN, game_end={"t": 1, "how": "the epilogue (EPI_Main_A)"}))
         self.assertTrue(st["ended"])

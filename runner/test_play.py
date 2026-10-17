@@ -1016,6 +1016,42 @@ class Gates(unittest.TestCase):
             self.assertEqual(r.save_env().get("BG3AI_SAVE_GATES"), {True: "1", False: "0", None: None}[expected])
             P.rpc, P.lua_eval, P.log = self.saved
 
+    def test_ui_strict_switch(self):
+        """S17: BG3AI_UI_STRICT=1/0 sets bg3le's strict frame lock in the running game at session start; unset
+        (the default) sends nothing."""
+        self.assertIsNone(P.ui_strict_wanted({}))
+        self.assertIsNone(P.ui_strict_wanted({"BG3AI_UI_STRICT": "yes"}))
+        self.assertTrue(P.ui_strict_wanted({"BG3AI_UI_STRICT": "1"}))
+        self.assertFalse(P.ui_strict_wanted({"BG3AI_UI_STRICT": " 0 "}))
+        self.assertIn("f(true)", P.ui_strict_lua(True))
+        self.assertIn("f(false)", P.ui_strict_lua(False))
+        self.assertEqual(P.ui_strict_text("true 3 189 0"), "ON (refused 3, lock timeouts lua 189 ui 0)")
+        self.assertEqual(P.ui_strict_text("false 0 33 0"), "off (refused 0, lock timeouts lua 33 ui 0)")
+        self.assertIn("lacks patch 0010", P.ui_strict_text("missing"))
+        for env, sent in ((None, False), ("1", True), ("0", True)):
+            r = self._runner()
+            evals, logs = [], []
+            P.lua_eval = lambda code, ctx="client", evals=evals, **k: evals.append((code, ctx)) or (
+                "true 0 5 0" if "UiStrict" in code else "Claude")
+            P.log = logs.append
+            P.rpc = lambda op, args=None, context="server", timeout=0: None
+            old = os.environ.pop("BG3AI_UI_STRICT", None)
+            try:
+                if env is not None:
+                    os.environ["BG3AI_UI_STRICT"] = env
+                r.apply_play_settings()
+            finally:
+                os.environ.pop("BG3AI_UI_STRICT", None)
+                if old is not None:
+                    os.environ["BG3AI_UI_STRICT"] = old
+            strict = [(c, x) for c, x in evals if "UiStrict" in c]
+            self.assertEqual(bool(strict), sent, env)
+            if sent:
+                self.assertEqual(strict[0][1], "client")
+                self.assertIn(f"f({'true' if env == '1' else 'false'})", strict[0][0])
+                self.assertIn("ui strict: ON (refused 0, lock timeouts lua 5 ui 0)", logs)
+            P.rpc, P.lua_eval, P.log = self.saved
+
 
 class SaveIdentity(unittest.TestCase):
     """RUN-5 / I1: the MCP server gets BG3AI_SAVE_OWNER and a BG3AI_SAVE_PREFIX derived from --save-owner alone (the

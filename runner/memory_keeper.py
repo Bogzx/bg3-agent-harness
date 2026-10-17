@@ -416,6 +416,40 @@ def refused_plans(actions: list[dict]) -> list[dict]:
     return list(last.values())
 
 
+DONE_MAX_LINES = 40
+DONE_MAX_CHARS = 160
+_DONE_IN_OBJECTIVES = re.compile(r"\bDONE S\d{3}\b")
+_DONE_HEADING = re.compile(r"^## .*\(DONE S\d{3}\)")
+
+
+def done_records(mem: Path) -> list[str]:
+    """What the memory files already record as finished: objectives.md's `DONE Sxxx` lines, quests.md's
+    `## <quest> (DONE Sxxx)` headings, then its `## Done` bullets in file order (newest first there), DONE_MAX_LINES in
+    all. The keeper checks each
+    next step and side-list item against them (S078: the side list still sent the party to the Sorcerous Sundries
+    vault, "DONE S069: Annals of Karsus taken" three lines above it in objectives.md)."""
+    out: list[str] = []
+    bullets: list[str] = []
+
+    def read(rel: str) -> list[str]:
+        try:
+            return (mem / rel).read_text(errors="replace").splitlines()
+        except OSError:
+            return []
+    for ln in read("objectives.md"):
+        if _DONE_IN_OBJECTIVES.search(ln):
+            out.append("objectives.md: " + ln.strip().lstrip("-0123456789. ").strip())
+    in_done = False
+    for ln in read("quests.md"):
+        if ln.startswith("## "):
+            in_done = ln.strip() == "## Done"
+            if _DONE_HEADING.match(ln):
+                out.append("quests.md: " + ln[3:].strip())
+        elif in_done and ln.startswith("- ") and not ln.startswith("- Last updated"):
+            bullets.append("quests.md Done: " + ln[2:].strip())
+    return [r[:DONE_MAX_CHARS] for r in (out + bullets)[:DONE_MAX_LINES]]
+
+
 def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: float,
                  refused: list[dict] | None = None, tools: str = "files", sessions_dir: Path | None = None) -> str:
     """The keeper's task. tools: "files" (Claude Code's Read/Edit/Write/Glob/Grep in the memory dir, today's Claude
@@ -439,7 +473,10 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
            if mcp else "Your working directory is the memory dir. ") + "Read HANDOFF.md, objectives.md, PLAYTHROUGH.md, then these session logs (newest "
         f"matter most): {logs}. Then edit:",
         "- objectives.md: the current Main goal, its why and its next step, matching HANDOFF.md and the latest "
-        "log. Mark finished goals done.",
+        "log. Mark finished goals done. Check EVERY next step and side-list item (also ones you copy from HANDOFF.md) "
+        "against DONE IN MEMORY below and the logs' `[quest]` lines: one they show finished is dropped, even when the "
+        "game's journal or map still shows its marker (S078: the side list kept 'Sorcerous Sundries vault' after "
+        "'DONE S069: Annals of Karsus taken'; the map's Tolna's Office marker stayed, and the party walked to it).",
         "- quests.md, npcs.md, locations.md: add/update what the logs record (new quests and their state, NPCs met "
         "and what they said or did, places visited and what's there). Keep the existing format.",
         "- party-build.md, strategy.md, decisions.md, hypotheses.md: only where the logs give something new "
@@ -480,7 +517,9 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         "≤ 12 lines: what the logs record that HANDOFF's text above doesn't say and the next session needs. "
         "If the last log has a later state than HANDOFF (e.g. 'session ended WITHOUT wrap-up'): where the party "
         "was, what it was doing, the next concrete step. Also open leads with their exact names (doors, keys, "
-        "NPCs, passwords) and lessons the player looked up in old logs. Write 'nothing new' if nothing. "
+        "NPCs, passwords) and lessons the player looked up in old logs. A next step or side-list item in HANDOFF's "
+        "text above that DONE IN MEMORY or a log shows finished gets one line here: `- <item> is done (Sxxx: <what "
+        "the record says>): skip it.` Write 'nothing new' if nothing. "
         "Don't change one character above that heading (the runner reads its Save to load line).",
         f"Files no session changed for a while (update them first): {stale_txt}. If such a file truly has "
         f"nothing new, add or refresh one line `- Last updated: {sid} (no change)`.",
@@ -551,6 +590,10 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
             f"{'memory_write' if mcp else 'Write'} call once you have read those logs (a half-written chapter would be counted as done). "
             "If a chapter file for these sessions already exists, update it instead of adding a second one.",
         ]
+    done = done_records(mem)
+    if done:
+        lines += ["", "DONE IN MEMORY (finished per the memory files; no next step or side-list item may name one):",
+                  *(f"- {r}" for r in done)]
     lines += ["", "Current lint report:", lint_report[-3000:], "",
               "End with one line: what you updated (files) and anything you could not do."]
     return "\n".join(lines)
