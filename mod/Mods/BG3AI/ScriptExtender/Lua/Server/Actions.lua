@@ -208,6 +208,10 @@ function A.loop_watch(char, item)
     -- One ladder climb fires several UseFinished (live 14:1x: interrupted mid-climb). A ladder interact awaiting
     -- its climb has its own deadline (A.LADDER_CLIMB_MS, then failed + purge), so it is not a loop yet.
     if job and job.status == "running" and job.ladder and G.same(job.ladder.item, item) then return end
+    -- A walk routed through this ladder stops at its first reversal on it (WALK_OSI.UseFinished); this stays the
+    -- backstop at twice the uses (naut S001: 6).
+    if job and job.status == "running" and job.walk and not job.walk.done and job.climbs and job.climbs[item]
+        and s.n < 2 * A.LOOP_USES then return end
     A.use_streak[char] = nil
     RPC.push("loop_stopped", { uuid = char, item = item, uses = s.n, job = job and job.id or nil })
     if job and job.status == "running" then
@@ -226,10 +230,6 @@ function A.dispatch(event, args)
         local g = G.guid(args[1]) or args[1]
         if g then G.turn_over[g] = nil; G.end_requested[g] = nil end
     end
-    if event == "UseFinished" then
-        local ok, err = pcall(A.loop_watch, args[1], args[2])
-        if not ok then Ext.Utils.PrintWarning("[BG3AI] loop_watch: " .. tostring(err)) end
-    end
     each_running(function(job)
         local rule = INTERRUPTS[event]
         if rule and job.interrupt then rule(job, args) end
@@ -237,6 +237,11 @@ function A.dispatch(event, args)
             job.osi[event](job, args)
         end
     end)
+    -- after the jobs: a walk's own ladder-reversal stop (WALK_OSI.UseFinished) names the ladder before this fires
+    if event == "UseFinished" then
+        local ok, err = pcall(A.loop_watch, args[1], args[2])
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] loop_watch: " .. tostring(err)) end
+    end
 end
 
 local function listen(event, arity)
@@ -450,7 +455,7 @@ end
 local function begin_walk(job, opts)
     job.walk = {
         target = opts.target, pos = opts.pos, ev = ev_name(job, "mv"),
-        last_pos = G.pos(job.char), still_ms = 0, travelled = 0,
+        last_pos = G.pos(job.char), y0 = (G.pos(job.char) or {})[2], still_ms = 0, travelled = 0,
         tolerance = opts.tolerance or 1.5, reach = opts.reach, melee = opts.melee, on_arrive = opts.on_arrive,
         move_id = opts.move_id or job.id,
     }
@@ -537,6 +542,34 @@ local WALK_OSI = {
             pcall(G.osi, "PurgeOsirisQueue", job.char)
             RPC.finish_job(job, "failed", job.partial, "the path requires a jump")
         end
+    end,
+    -- naut S001 16:37 (Nautiloid helm): the walk to the second ladder went back down the first one and up again, 6
+    -- times, before the loop watchdog stopped it. No route climbs a ladder and comes back down it: the first
+    -- reversal on the same ladder during one job's walks stops it and names the climb to do first. Heights are
+    -- compared, not UseFinished counts (one climb fires several, live 14:1x).
+    UseFinished = function(job, a)
+        local w = job.walk
+        if not w or w.done or not G.same(a[1], job.char) then return end
+        local item = G.guid(a[2])
+        if not item or G.same(item, w.target) or (job.ladder and G.same(item, job.ladder.item)) then return end
+        local isl = false
+        pcall(function() isl = G.entity(item).ServerItem.IsLadder or false end)
+        local here = isl and G.pos(job.char)
+        if not here then return end
+        job.climbs = job.climbs or {}
+        local c = job.climbs[item]
+        if not c then c = { y = w.y0 or here[2] }; job.climbs[item] = c end
+        local dy = here[2] - c.y
+        if math.abs(dy) < A.LADDER_DY then return end
+        local dir = dy > 0 and "up" or "down"
+        if c.dir and c.dir ~= dir then
+            RPC.push("loop_stopped", { uuid = job.char, item = item, reversal = true, job = job.id })
+            interrupt(job, "stuck: the walk took ladder " .. item .. " " .. c.dir .. " and then back " .. dir
+                .. " (the game's route loops through it); climb it yourself first (interact " .. item
+                .. "), then send this again from that floor, or route")
+            return
+        end
+        c.dir, c.y = dir, here[2]
     end,
 }
 
@@ -931,7 +964,7 @@ reg("interact", function(args)
         if G.is_dead(target) then
             G.refuse("looting corpses is not supported by this action yet (use the UI)")
         end
-        G.refuse("use act.talk to talk to characters")
+        G.refuse("use talk_to to talk to characters")
     end
     -- Locked: as in the game, a party member carrying its key opens it (the
     -- player would select them and click). Otherwise refuse with the options.
@@ -2565,6 +2598,33 @@ RPC.register("act.watch", function(args)
         end
     end
     return out
+end)
+
+------------------------------------------------------------------------
+-- act.prepare_plan {char, add = [spell], remove = [spell]} (A5): the spellbook change prepare_spells will make,
+--   checked first (Guard.prep_plan); {refused = reason} instead of an error. Read-only: the change itself is the
+--   spellbook UI's (Client/Spellbook.lua ui.prepare_spells).
+-- act.prepared {uuids?}: each preparing caster's prepared spells and limit (party by default). Read-only.
+------------------------------------------------------------------------
+
+RPC.register("act.prepare_plan", function(args)
+    local ok, res = pcall(G.prep_plan, args.char, args.add, args.remove)
+    if ok then return res end
+    if G.is_refusal(res) then return { refused = res.reason } end
+    error(res, 0)
+end)
+
+RPC.register("act.prepared", function(args)
+    local out = {}
+    for _, u in ipairs(args.uuids or G.party()) do
+        local g = G.guid(u)
+        local info = g and G.prep_info(g)
+        if info and info.prepares then
+            out[#out + 1] = { uuid = g, name = name_of(g), max = info.max, count = info.count, read = info.read,
+                              prepared = info.prepared, always = info.always, classes = info.classes }
+        end
+    end
+    return { casters = out }
 end)
 
 RPC.register("act.note", function(args)

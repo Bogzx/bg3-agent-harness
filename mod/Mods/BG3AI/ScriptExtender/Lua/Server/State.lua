@@ -508,10 +508,13 @@ function S.actions(uuid)
     local book = comp(e, "SpellBook")
     if not book then return {} end
     local byId, order, upcasts, variants = {}, {}, {}, {}
+    -- a prepared caster's book holds its whole class list: list only what is prepared (Guard.unprepared, A4)
+    local Gd = BG3AI.Guard
+    local prepared = Gd and Gd.prepared_ids and Gd.prepared_ids(e)
     pcall(function()
         for _, s in ipairs(book.Spells) do
             local id = s.Id.Prototype
-            local info = spellInfo(id)
+            local info = not (Gd and Gd.unprepared and Gd.unprepared(s, prepared)) and spellInfo(id)
             if info then
                 if info.root and info.root ~= id then
                     upcasts[info.root] = upcasts[info.root] or {}

@@ -44,7 +44,7 @@ HOTBAR_SAVE = "S065-end"
 # finally; a nav kill list entry: cleared in a finally).
 SECTIONS = ["reads", "setup", "act", "vis", "gear", "swap", "rest", "trade", "nav", "combat", "loads", "se"]
 # Estimated seconds per section (the 2026-10-11/13 full runs on the test machine: max seen, + today's new items), for the plan.
-EST_S = {"reads": 60, "setup": 30, "act": 60, "vis": 75, "gear": 60, "swap": 85, "rest": 85, "trade": 135,
+EST_S = {"reads": 60, "setup": 30, "act": 110, "vis": 75, "gear": 60, "swap": 85, "rest": 85, "trade": 135,
          "nav": 195, "combat": 220, "loads": 80, "se": 350}
 # Who fixes a section's FAILs (docs/ORCHESTRATOR.md ownership): tools/dev/live_window.py prints the failures per owner.
 # An item dict may carry its own "owner" to override this.
@@ -59,7 +59,8 @@ SAVE_NEEDS = {
            "party_min": 3, "used_by": "every section (swap: Gale in, Wyll in camp; nav/combat: fast travel to "
                                      "Moonrise Towers)"},
     HOTBAR_SAVE: {"level": "CTY_Main_A", "party_has": ["Claude"], "party_min": 3,
-                  "used_by": "se/act hotbar casts (Claude the Paladin's Bless on 3; Dimension Door if Gale is in)"},
+                  "used_by": "se/act hotbar casts (Claude the Paladin's Bless on 3; Dimension Door if Gale is in); "
+                             "act prepare_spells (Bless prepared and unprepared on Claude, A5)"},
     TRADE_SAVE: {"level": "SCL_Main_A", "near": ((-26.8, 27.4, 164.8), 8),
                  "used_by": "trade (Last Light Inn; Talli ~34 m S at (-31.3, 27.5, 130.2))"},
     DOOR_SAVE: {"level": "CTY_Main_A", "near": ((-233.0, 4.5, -180.6), 8),
@@ -1000,6 +1001,19 @@ def moved_m(a: dict, b: dict) -> float:
     return max((sum((x - y) ** 2 for x, y in zip(a[u], b[u])) ** 0.5 for u in a if u in b), default=0.0)
 
 
+def server_map_line(srv) -> str:
+    """hotbar.map's answer for a PROBE line, every deck in slot order. Live window #3: json.dumps(...)[:800] ended
+    right where ClassHotBar 5-8 would be, so whether Bless was on the bar was not provable from the log."""
+    if not isinstance(srv, dict) or not isinstance(srv.get("map"), dict):
+        return json.dumps(srv)[:400]
+    def key(k):
+        return (0, int(k)) if str(k).isdigit() else (1, str(k))
+    decks = [f"{d}[{' '.join(f'{k}={v}' for k, v in sorted((m or {}).items(), key=lambda kv: key(kv[0])))}]"
+             for d, m in sorted(srv["map"].items())]
+    head = " ".join(f"{k}={srv[k]}" for k in ("container", "bars", "slots") if k in srv)
+    return (head + " " if head else "") + " ".join(decks)
+
+
 def ui3_refused(msg: str) -> bool:
     """A mod UI-3 refusal (Client/UIActions.lua SAVELOAD_HINT): the whole message names save_game / load_game."""
     return "refused" in msg and "save_game / load_game" in msg
@@ -1080,7 +1094,7 @@ def hotbar_probe() -> None:
         ids = f"eval error {e}"
     log(f"PROBE hotbar ids: {ids}")
     srv = S.game.try_rpc("hotbar.map", {"char": sel}, context="server") if sel else None
-    log(f"PROBE hotbar server map: {json.dumps(srv)[:800]}")
+    log(f"PROBE hotbar server map: {server_map_line(srv)}")
     inp = S._inp()
     try:
         want = HB._slot(S.game, "Target_MainHandAttack", sel)   # = the route's read (server map when ids=none)
@@ -1150,6 +1164,55 @@ HOTBAR_MULTI_OTHER = ("Target_Bane", "Projectile_MagicMissile", "Projectile_Scor
 HOTBAR_PICK: dict = {}   # se's passed pick (caster, spell, status, n): act's wiring item casts the same
 
 
+# A member's SpellBook / SpellContainer entries whose id contains NEEDLE, with the prepared state the guard reads
+# (Guard.prepared_ids / Guard.unprepared, A4 2026-10-17): {book: [{id, orig, src, prep, prepared, unprepared}],
+# container: [{id, src, prep, in, linked}], prepared_read} | {why}. Read-only.
+SPELL_STATE_LUA = (
+    "local G = Mods.BG3AI.BG3AI.Guard local e = Ext.Entity.Get(U) local needle = NEEDLE "
+    "if not e then return Ext.Json.Stringify({why = 'no entity'}) end "
+    "if not (G and G.prepared_ids and G.unprepared) then return Ext.Json.Stringify({why = 'the mod has no "
+    "Guard.prepared_ids (pre-A4)'}) end "
+    "local s = tostring local prep = G.prepared_ids(e) local out = {book = {}, container = {}, "
+    "prepared_read = prep ~= false} "
+    "pcall(function() for _, x in ipairs(e.SpellBook.Spells) do local id = s(x.Id.Prototype) "
+    "if id:find(needle, 1, true) then local o = s(x.Id.OriginatorPrototype) out.book[#out.book + 1] = {id = id, "
+    "orig = o, src = s(x.Id.SourceType), prep = s(x.PrepareType), prepared = (prep and prep[o]) == true, "
+    "unprepared = G.unprepared(x, prep)} end end end) "
+    "pcall(function() for _, m in ipairs(e.SpellContainer.Spells) do local id = s(m.SpellId.OriginatorPrototype) "
+    "if id:find(needle, 1, true) then out.container[#out.container + 1] = {id = id, src = s(m.SpellId.SourceType), "
+    "prep = s(m.PrepareType), ['in'] = s(m.ContainerSpell), linked = m.LinkedSpellContainer == true} end end end) "
+    "return Ext.Json.Stringify(out)")
+
+
+def spell_state(u: str, needle: str) -> dict:
+    """SPELL_STATE_LUA for one member; {why} on an error."""
+    try:
+        v = json.loads(lua_server(f"local U, NEEDLE = '{u}', '{needle}' " + SPELL_STATE_LUA))
+        return v if isinstance(v, dict) else {"why": f"not a table: {v!r}"[:80]}
+    except Exception as e:  # noqa: BLE001
+        return {"why": f"read error {e}"[:120]}
+
+
+def prep_reason(state: dict, spell: str, on_map: bool) -> str:
+    """Why `spell` is or isn't castable from a member's hotbar, from spell_state (A4: S065-end had no Bless on any
+    hotbar map, yet Claude cast it in S065 through the Osiris route, whose prepared check never ran)."""
+    if state.get("why"):
+        return f"spell state unread ({state['why']})"
+    rows = [b for b in state.get("book") or [] if str(b.get("id", "")).lower() == spell.lower()]
+    if not rows:
+        return "not in the spellbook" + (" but on the hotbar map" if on_map else "")
+    if not state.get("prepared_read"):
+        return "in the spellbook; the prepared list did not read"
+    b = rows[0]
+    if b.get("unprepared"):
+        return (f"in the spellbook ({b.get('prep')}), not prepared: not castable, and the game keeps it off the "
+                "hotbar" + ("; yet the map has it" if on_map else ""))
+    if on_map:
+        return f"prepared ({b.get('prep')}) and on the hotbar map"
+    return (f"castable ({b.get('prep')}, prepared={b.get('prepared')}) but not on the server hotbar map: the bar lost "
+            "it or Shared/HotbarMap.lua misses a bar (see PROBE hotbar server map)")
+
+
 def pick_hotbar_caster(party: list, sel: str | None) -> tuple[tuple | None, str]:
     """(caster, spell, status, targets) for the N-target hotbar items, from each member's SERVER hotbar map (no HUD
     switching: live window #3 found no Bless 0.4 s after each act.select, the HUD still showing the previous member).
@@ -1177,7 +1240,10 @@ def pick_hotbar_caster(party: list, sel: str | None) -> tuple[tuple | None, str]
         m = HB.server_map(S.game, u)
         have = [sp for sp in tuple(s for s, _, _ in HOTBAR_ALLY_SPELLS) + HOTBAR_MULTI_OTHER if HB.map_has(m, sp)]
         n_ids = sum(len(v or {}) for v in (m or {}).values())
-        seen.append(f"{S.H.get(u)}: {n_ids} ids, multi-target {have or 'none'}" if m else f"{S.H.get(u)}: no map")
+        line = f"{S.H.get(u)}: {n_ids} ids, multi-target {have or 'none'}" if m else f"{S.H.get(u)}: no map"
+        for spell, _, _ in HOTBAR_ALLY_SPELLS:   # why each ally spell is missing: unprepared, or the map
+            line += f"; {spell} {prep_reason(spell_state(u, spell), spell, HB.map_has(m, spell))}"
+        seen.append(line)
     why = "; ".join(seen)
     log(f"PROBE hotbar caster: none fits ({why})")
     return None, why
@@ -1223,6 +1289,41 @@ TWOSTEP_ITEM = "Dimension Door 10 m via the hotbar (ACT-9 two-step route)"
 DD_SPELL = "Teleportation_DimensionDoor"
 
 
+# Read-only: the container cell's slot VM and Content VM props, each collection prop's first items (the sub-bar's
+# variant cells, if the VM carries them), on the selected member's HUD (live window 20261017-152016: e3
+# Shadowheart's Teleportation_DimensionDoor read IsContainer at ClassHotBar index 26; its stats have no
+# ContainerSpells, so which variants the game boxed there is unknown).
+CONTAINER_VM_LUA = (
+    "local UI = Mods.BG3AI.BG3AI.UI local dc = UI.dc('HotBar') local out = {} "
+    "local function dump(o) local ks = {} for k, v in pairs(UI.props(o)) do "
+    "ks[#ks + 1] = tostring(k) .. '=' .. tostring(v):sub(1, 60) end table.sort(ks) return table.concat(ks, ',') end "
+    "local bars = dc and UI.path(dc, 'CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.KeyboardHotBars') "
+    "for _, bar in UI.items(bars, 16) do if tostring(UI.get(bar, 'HotBarType')) == DECK then "
+    "for i, slot in UI.items(UI.get(bar, 'SlotList'), 400) do if i == INDEX then local c = UI.get(slot, 'Content') "
+    "out[#out + 1] = 'slot{' .. dump(slot):sub(1, 600) .. '}' out[#out + 1] = 'content{' .. dump(c):sub(1, 1200) .. '}' "
+    "for k, v in pairs(UI.props(c)) do if tostring(v):find('Collection', 1, true) then "
+    "out[#out + 1] = tostring(k) .. '[' .. tostring(UI.count(v)) .. ']' "
+    "for j, x in UI.items(v, 4) do out[#out + 1] = '  ' .. tostring(k) .. '#' .. j .. '{' .. dump(x):sub(1, 400) .. '}' "
+    "end end end end end end end "
+    "return #out > 0 and table.concat(out, ' | ') or ('no cell ' .. DECK .. ' #' .. INDEX .. ' on the selected HUD')")
+
+
+def container_probe(u: str, cell: dict) -> str:
+    """What a container cell holds: the server's spell entries for the spell (SpellBook / SpellContainer:
+    ContainerSpell, LinkedSpellContainer) and the cell's VMs (CONTAINER_VM_LUA, after selecting `u`). Read-only."""
+    from bg3ai import hotbar as HB
+    srv = spell_state(u, "DimensionDoor")
+    try:
+        if cell.get("selected") is False:
+            S.game.run_job("act.select", {"char": u}, wait_s=5)
+            HB._slot_after_select(S.game, DD_SPELL, u)
+        vm = str(S.game.eval(f"local DECK, INDEX = '{cell.get('deck')}', {int(cell.get('index') or 0)} "
+                             + CONTAINER_VM_LUA, context="client"))
+    except Exception as e:  # noqa: BLE001
+        vm = f"eval error {e}"
+    return f"server {json.dumps(srv)[:1500]} | hud {vm[:3000]}"
+
+
 def twostep_dd_probe() -> bool:
     """act 2026-10-16, audit ACT-9: a two-step spell by the player's clicks (bridge twostep.py: hotbar cell, who goes =
     the caster, then the landing on the ground, the cursor checked by ui.ground_check before the click). Out of
@@ -1238,13 +1339,24 @@ def twostep_dd_probe() -> bool:
     if not need(not (S.game.try_rpc("state.combat") or {}).get("active"), TWOSTEP_ITEM, "in combat"):
         return False
     party = {r.get("uuid"): r for r in st.get("party") or [] if r.get("uuid")}
-    caster = None
+    caster, boxed = None, []
     for u in party:
         r = hb_slot(DD_SPELL, u)
         if r.get("found") and r.get("can_use") is not False:
+            if r.get("container") or r.get("upcast"):   # the route has no container sub-bar / level picker yet
+                boxed.append((u, r))
+                continue
             caster = u
             break
     if caster is None:
+        if boxed:
+            for u, r in boxed:
+                log(f"PROBE twostep container {S.H.get(u)}: {container_probe(u, r)}")
+            item(TWOSTEP_ITEM, "SKIP", "; ".join(
+                f"{S.H.get(u)} has {DD_SPELL} only in a {'container' if r.get('container') else 'upcast'} slot "
+                f"({r.get('deck')} index {r.get('index')}): the route can't open its sub-bar yet" for u, r in boxed)
+                + " (PROBE twostep container: what the cell holds)")
+            return False
         item(TWOSTEP_ITEM, "SKIP", f"nobody in the party has {DD_SPELL} usable on the hotbar (level 7+ Gale, or "
              "a save with it): run SESSION-WATCH 'two-step by the hotbar' instead")
         return False
@@ -1850,6 +1962,143 @@ def lua_server(code: str) -> str:
     return str(S.game.eval(code, context="server"))
 
 
+PREPARED_ITEM = "unprepared spell refused + hidden (A4 fairness)"
+
+
+def prepared_pick(states: dict) -> tuple | None:
+    """(member, an unprepared spell, a prepared one or None) from {member: spell_state(member, '')}: the first
+    member whose book has a spell that needs preparing and isn't prepared (a cleric / paladin / wizard)."""
+    for u, stt in states.items():
+        book = stt.get("book") or []
+        off = [b["id"] for b in book if b.get("unprepared")]
+        if off:
+            on = [b["id"] for b in book if b.get("prep") == "RequiresPreparation" and b.get("prepared")]
+            return u, off[0], (on[0] if on else None)
+    return None
+
+
+def prepared_guard_probe() -> None:
+    """A4 (2026-10-17): Guard.known_spell's prepared check never ran (p.Prototype on a SpellMetaId raises in
+    bg3se), so the Osiris route cast any class spell and state.actions listed the whole class list. Read-only:
+    PASS = an unprepared spell is refused 'not prepared' and missing from state.actions, a prepared one passes."""
+    g = "local G=Mods.BG3AI.BG3AI.Guard "
+    states = {r.get("uuid"): spell_state(r.get("uuid"), "") for r in status().get("party") or [] if r.get("uuid")}
+    bad = {S.H.get(u): s["why"] for u, s in states.items() if s.get("why")}
+    pick = prepared_pick(states)
+    books = ", ".join(f"{S.H.get(u)} {len(s.get('book') or [])}" for u, s in states.items())
+    if not need(pick is not None, PREPARED_ITEM,
+                f"no member has an unprepared spell (unread: {bad or 'none'}; book entries: {books})"):
+        return
+    u, off, on = pick
+    res = {}
+    for spell in [s for s in (off, on) if s]:
+        res[spell] = lua_server(g + f'local ok,e=pcall(G.known_spell,"{u}","{spell}") '
+                                'return ok and "ok" or (G.is_refusal(e) and e.reason or tostring(e))')
+    v_off = res[off]
+    v_on = res[on] if on else "ok (no prepared one to try)"
+    listed = lua_server(f'local n=0 for _, a in ipairs(Mods.BG3AI.BG3AI.State.actions("{u}")) do '
+                        f'if a.spell == "{off}" then n = n + 1 end end return tostring(n)')
+    ok = "not prepared" in v_off and v_on.startswith("ok") and listed == "0"
+    item(PREPARED_ITEM, "PASS" if ok else "FAIL",
+         f"{S.H.get(u)}: {off} -> {v_off[:80]}; listed in state.actions x{listed}; prepared {on} -> {v_on[:60]}")
+
+
+SPELLBOOK_PROBE_ITEM = "spellbook probe (A5, read-only)"
+PREPARE_ITEM = "prepare_spells Bless on Claude: on the hotbar, then unprepared (A5)"
+PREPARE_REFUSE_ITEM = "prepare_spells honest refusals (A5)"
+PREPARE_WHO = "Claude"     # the Paladin in HOTBAR_SAVE; Bless is on his class list, unprepared at S065-end (A4)
+
+
+def _member(name: str) -> str | None:
+    return next((r.get("uuid") for r in status().get("party") or [] if r.get("name") == name), None)
+
+
+def spellbook_probe() -> None:
+    """A5: the spellbook page as bg3le reads it, read-only (Client/Spellbook.lua GUESSES S1-S3): K opens the page,
+    the selected character's preparing book has named cells with Activated, PreparedSpellsStat reads, and the widget's
+    DataContext has ToggleCharacterAction (CanExecute per cell). The page is closed again; nothing is toggled.
+    PASS = a preparing book with cells and a max, and the command present."""
+    u = _member(PREPARE_WHO)
+    if not need(u is not None, SPELLBOOK_PROBE_ITEM, f"no {PREPARE_WHO} in the party"):
+        return
+    S.game.run_job("act.select", {"char": u}, wait_s=5)
+    time.sleep(0.5)
+    r = S.game.run_job("ui.prepare_spells", {"name": PREPARE_WHO, "probe": True}, context="client", wait_s=15)
+    res = r.result if isinstance(r.result, dict) else {}
+    p = res.get("probe") or {}
+    log("PROBE spellbook: " + json.dumps({"status": r.status, "error": r.error, "opened": res.get("opened"),
+                                          "closed": res.get("closed"), "probe": p})[:6000])
+    books = p.get("preparing") or []
+    ok = r.status == "done" and bool(p.get("toggle_cmd")) and any(b.get("cells") and b.get("max") for b in books)
+    item(SPELLBOOK_PROBE_ITEM, "PASS" if ok else "FAIL",
+         f"{r.status} {r.error or ''}; shows={p.get('selected')} metadata={p.get('metadata')} dc={p.get('dc')} "
+         f"toggle_cmd={p.get('toggle_cmd')}; preparing="
+         + "; ".join(f"{b.get('class')} {b.get('value')}/{b.get('max')} {len(b.get('cells') or [])} cells"
+                     for b in books) + " (full: acceptance.log PROBE spellbook)")
+
+
+def prepare_spells_refusals() -> None:
+    """A5: a spell not in the book is refused by name, and a member that doesn't prepare (no act.prepared row: a
+    barbarian, warlock, ...) is refused with the level-up hint; neither opens the spellbook."""
+    if not need(_member(PREPARE_WHO) is not None, PREPARE_REFUSE_ITEM, f"no {PREPARE_WHO} in the party"):
+        return
+    out1 = call("prepare_spells", who=PREPARE_WHO, add=["Fireball"])
+    preparing = {c.get("uuid") for c in (S.game.try_rpc("act.prepared", {}) or {}).get("casters") or []}
+    other = next((r.get("name") for r in status().get("party") or [] if r.get("uuid") not in preparing), None)
+    out2 = call("prepare_spells", who=other, add=["Bless"]) if other else ""
+    ok1 = f"{PREPARE_WHO} doesn't know Fireball" in out1
+    ok2 = (not other) or "doesn't prepare spells" in out2
+    item(PREPARE_REFUSE_ITEM, "PASS" if ok1 and ok2 else "FAIL",
+         f"Fireball: {first_line(out1)[:120]} | {other or '(every member prepares)'}: {first_line(out2)[:120]}")
+
+
+def _bless_state(u: str) -> tuple[bool, bool, dict]:
+    """(Bless prepared on the server, Bless on the server hotbar map, the act.prepared row)."""
+    from bg3ai import hotbar as HB
+    rows = (S.game.try_rpc("act.prepared", {"uuids": [u]}) or {}).get("casters") or []
+    row = rows[0] if rows else {}
+    prepared = any(r.get("id") == "Target_Bless" for r in row.get("prepared") or [])
+    return prepared, HB.map_has(HB.server_map(S.game, u), "Target_Bless"), row
+
+
+def _wait_bless(u: str, want: bool, s: float = 3.0) -> tuple[bool, bool, dict]:
+    end = time.monotonic() + s
+    while True:
+        st = _bless_state(u)
+        if (st[0] == want and st[1] == want) or time.monotonic() > end:
+            return st
+        time.sleep(0.3)
+
+
+def prepare_bless_round_trip() -> None:
+    """A5: prepare_spells(Claude, add Bless) through the spellbook page -> Bless prepared on the server AND on his
+    hotbar map (the game places a newly prepared spell on the bar); then remove it again -> neither. A full book swaps
+    out his last prepared spell for the test and puts it back. HOTBAR_SAVE is never saved over."""
+    u = _member(PREPARE_WHO)
+    if not need(u is not None, PREPARE_ITEM, f"no {PREPARE_WHO} in the party"):
+        return
+    was, on_map, row = _bless_state(u)
+    if not need(bool(row), PREPARE_ITEM, f"{PREPARE_WHO} has no act.prepared row (no preparing class read)"):
+        return
+    log(f"PROBE prepare before: Bless prepared={was} on_map={on_map}; {row.get('count')}/{row.get('max')} "
+        + ", ".join(r.get("name", "?") for r in row.get("prepared") or []))
+    swap = []
+    if not was and row.get("max") is not None and row.get("count", 0) >= row["max"] and row.get("prepared"):
+        swap = [row["prepared"][-1]["name"]]
+    first = {"remove": ["Bless"], "add": []} if was else {"add": ["Bless"], "remove": swap}
+    out1, dt1 = took("prepare_spells", who=PREPARE_WHO, **first)
+    st1 = _wait_bless(u, not was)
+    second = {"add": ["Bless"], "remove": []} if was else {"remove": ["Bless"], "add": swap}
+    out2, dt2 = took("prepare_spells", who=PREPARE_WHO, **second)
+    st2 = _wait_bless(u, was)
+    ok = (first_line(out1).startswith("prepare_spells: done") and st1[:2] == (not was, not was)
+          and first_line(out2).startswith("prepare_spells: done") and st2[:2] == (was, was))
+    item(PREPARE_ITEM, "PASS" if ok else "FAIL",
+         f"1) {first_line(out1)[:110]} ({dt1:.1f}s) -> prepared={st1[0]} on_map={st1[1]}; "
+         f"2) {first_line(out2)[:110]} ({dt2:.1f}s) -> prepared={st2[0]} on_map={st2[1]}"
+         + (f"; swapped out {swap[0]} and back" if swap else ""))
+
+
 def sec_act() -> None:
     """act overnight batch (2026-10-10/11): the hot-reloaded Lua is live (jump FELL report, CastSpellFailed reason,
     missing ranged weapon named, one-decimal range refusal), react by name, swap_party's camp block answer,
@@ -1883,6 +2132,7 @@ def sec_act() -> None:
     else:
         item("missing ranged weapon named", "PASS" if all("no ranged weapon equipped" in v for _, v in missing)
              else "FAIL", "; ".join(f"{n}: {v[:90]}" for n, v in missing))
+    prepared_guard_probe()
     # react by name with no prompt: answers at once, no Lua error (S034 19:03:14 react(which="Shield"))
     out, dt = took("react", use=True, which="Shield")
     item("react by name", "PASS" if "no reaction prompt on screen" in out and dt < 3 else "FAIL",
@@ -1964,7 +2214,15 @@ def sec_act() -> None:
         out, dt = took("swap_party", into=camp[0] if camp else "Gale", out=party[-1] if party else "")
         item("swap_party camp block answers at once",
              "PASS" if "(Location)" in out and dt < 3 else "FAIL", f"{first_line(out)[:200]} ({dt:.1f}s)")
-    load_verified(BASE)
+    # A5 prepare_spells on HOTBAR_SAVE (Claude the Paladin, L10): the read-only spellbook probe, then Bless prepared
+    # and unprepared again (nothing is saved; the next section loads its own save)
+    if not load_verified(HOTBAR_SAVE, record=True):
+        for name in (SPELLBOOK_PROBE_ITEM, PREPARE_ITEM, PREPARE_REFUSE_ITEM):
+            item(name, "SKIP", f"{HOTBAR_SAVE} did not load")
+        return
+    spellbook_probe()
+    prepare_spells_refusals()
+    prepare_bless_round_trip()
 
 
 FUNCS["act"] = sec_act

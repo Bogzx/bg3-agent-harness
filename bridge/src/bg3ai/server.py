@@ -22,7 +22,7 @@ from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, compact, delta, economy, leveling, macros, metrics, party, render, saver, saves, turn
 from . import companions, debrief, lessons, longnav, lore, memtools, naming, navhints, rules
-from . import boxclick, hotbar, twostep
+from . import boxclick, hotbar, spellprep, twostep
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady
 from .render import Handles
@@ -1482,8 +1482,11 @@ def get_status(full: bool = False) -> str:
         # state.inventory rides in the same tick for the ALERTS line (supplies, gold, encumbrance, gear);
         # test fakes without game.read don't serve it.
         real = hasattr(game, "read")
-        ops = [("state.status", {}), ("nav.markers", {})] + ([("state.inventory", delta.INV.args())] if real else [])
+        # act.prepared (A5): each caster's prepared spells, for the PREPARED line
+        ops = [("state.status", {}), ("nav.markers", {})] + (
+            [("state.inventory", delta.INV.args()), ("act.prepared", {})] if real else [])
         (st, mk, *inv), (ui, *ri) = _read(ops, [("ui.state", {})] + ([("ui.rest_info", {})] if real else []))
+        prep = inv[1] if len(inv) > 1 else None
         inv = delta.INV.merge(inv[0]) if inv else None
         if ri and isinstance(ri[0], dict) and isinstance(ri[0].get("short_rests_left"), int):
             ALERTS.short_rests = ri[0]["short_rests_left"]
@@ -1531,6 +1534,9 @@ def get_status(full: bool = False) -> str:
     al = _alerts_line(st, inv, force=full or first or _too_big(lines))
     if al:
         body += "\n" + al
+    pl = _prepared_line(prep, force=full or first or _too_big(lines))
+    if pl:
+        body += "\n" + pl
     ph = _party_hint_line(st, markers, force=full or first or _too_big(lines))
     if ph:
         body += "\n" + ph
@@ -1541,6 +1547,18 @@ def get_status(full: bool = False) -> str:
 
 
 ALERTS = economy.AlertTracker()
+_prepared_seen = {"line": None}
+
+
+def _prepared_line(prep: Any, force: bool = False) -> str:
+    """get_status's PREPARED line (A5): on a full look, and whenever the prepared sets or limits change."""
+    if not isinstance(prep, dict):
+        return ""
+    line = spellprep.status_line(prep.get("casters"))
+    if not line or (line == _prepared_seen["line"] and not force):
+        return ""
+    _prepared_seen["line"] = line
+    return line
 
 
 def _name_of(u: str) -> str:
@@ -1775,8 +1793,9 @@ def get_party(camp: bool = False) -> str:
 
     # Status and every sheet (of the party seen last time) + events in one tick; a changed party re-reads.
     guess = list(_party_seen)
-    got, _ = _read([("state.status", {})] + sheet_ops(guess))
-    st, sheets = got[0], got[1:]
+    got, _ = _read([("state.status", {}), ("act.prepared", {})] + sheet_ops(guess))
+    st, prep, sheets = got[0], got[1], got[2:]
+    casters = {c.get("uuid"): c for c in (prep or {}).get("casters") or [] if isinstance(c, dict)}
     if st is None:
         st = game.rpc("state.status")  # surfaces the real error
     _remember_names(st)
@@ -1791,6 +1810,8 @@ def get_party(camp: bool = False) -> str:
         if sheet:
             skip = {"uuid", "name", "classes", "hp", "max_hp", "temp_hp", "level", "statuses", "pos"}
             lines.append("   " + render.compact({k: v for k, v in sheet.items() if k not in skip}, H))
+        if c["uuid"] in casters:
+            lines.append("   prepared " + spellprep.caster_text(casters[c["uuid"]], named=False))
     return _finish("get_party", {}, "\n".join(lines) or "No party?", t0)
 
 
@@ -3924,7 +3945,7 @@ def _twostep_use(char: str, spell: str, args: dict, note: str) -> str:
 HOTBAR_REDO_STAGES = ("slot", "locate", "arm")
 
 
-def _select_for_clicks(char: str) -> str:
+def _select_for_clicks(char: str, shows: str = "the hotbar") -> str:
     """Review H1: the click routes need the caster selected (the hotbar shows the selected character). Select it BEFORE
     act.cast {ui=true} starts: an act.select inside its on_start is a new action for that character, and the mod's
     start() interrupts the running ui job ("superseded by a new action") while the clicks cast for real. A note."""
@@ -3932,7 +3953,7 @@ def _select_for_clicks(char: str) -> str:
     if not isinstance(st, dict) or st.get("active") == char:
         return ""
     r = game.run_job("act.select", {"char": char}, wait_s=5)
-    return f"selected {_label(char)} first (the hotbar shows the selected character)" if r.status == "done" \
+    return f"selected {_label(char)} first ({shows} shows the selected character)" if r.status == "done" \
         else f"could not select {_label(char)} first ({r.error or r.status})"
 
 
@@ -4867,6 +4888,18 @@ def _rest_dead_note(can: Any) -> str:
     return (f"\nDEAD: {', '.join(hit)} — the game won't gather a dead party member at camp, so the rest fails on "
             "them: revive them first (Revivify or a Scroll of Revivify aimed at the character, or Withers at camp), "
             "or swap them out of the party (swap_party)")
+
+
+@mcp.tool()
+@_guard
+def prepare_spells(who: str | None = None, add: list[str] | str | None = None,
+                   remove: list[str] | str | None = None) -> str:
+    """Change a caster's PREPARED spells (clerics, paladins, druids, wizards), out of combat: only prepared spells cast. add/remove: spell names (or ids), a list or a comma string; removals happen first, so a swap fits the limit. It works the spellbook page like a player (opens it, clicks the spells, closes it) and ends with the prepared list. Refused in combat, over the limit (it names what is prepared), for a spell not in the character's book, and for classes that don't prepare (sorcerer/warlock/bard/ranger: level_up changes their spells). get_party and get_status show each caster's PREPARED list and limit."""
+    t0 = time.monotonic()
+    char = _who(who)
+    text = spellprep.prepare(game, char, spellprep.names(add), spellprep.names(remove),
+                             select=lambda u: _select_for_clicks(u, "the spellbook"))
+    return _finish("prepare_spells", {"who": who, "add": add, "remove": remove}, _label(text), t0)
 
 
 @mcp.tool()
