@@ -371,7 +371,7 @@ class TravelTrips(Base):
         finally:
             self.g.try_rpc, self.g.run_job = orig_try, orig_job
         self.assertIn("FAILED — can't fast travel now (Location)", out)
-        self.assertIn("Walk out the way you came", out)
+        self.assertIn("Way out: walk out the way you came", out)
         self.assertNotIn("ui.fast_travel", seen)
 
     def test_route_tool_shows_this_sessions_dead_ends(self):
