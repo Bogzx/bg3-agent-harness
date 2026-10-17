@@ -1040,6 +1040,34 @@ test("known_spell: a missing Ranged Attack names the missing ranged weapon (S031
     refused(function() G.known_spell(P1, "Target_Fireball_X") end, "does not have that action")
 end)
 
+-- bg3se's SpellMetaId: OriginatorPrototype, SourceType, Source, ProgressionSource; any other name raises
+-- "Property does not exist" (LuaCppObjectProxy.inl LightObjectProxyMetatable::Index).
+local function meta_id(orig)
+    local fields = { OriginatorPrototype = orig, SourceType = "Progression" }
+    return setmetatable({}, { __index = function(_, k)
+        if fields[k] ~= nil then return fields[k] end
+        error("Property does not exist: SpellMetaId::" .. tostring(k) .. " - property does not exist")
+    end })
+end
+
+test("known_spell: an unprepared class spell is refused (A4: S065 Claude's Bless off the hotbar)", function()
+    local function book(id, kind) return { Id = { Prototype = id, OriginatorPrototype = id }, PrepareType = kind } end
+    world[P1].comps.SpellBook = { Spells = { book("Target_Bless", "RequiresPreparation"),
+        book("Target_CureWounds", "RequiresPreparation"), book("Target_Sanctuary", "AlwaysPrepared"),
+        book("Target_MainHandAttack", "Unknown") } }
+    world[P1].comps.SpellBookPrepares = { PreparedSpells = { meta_id("Target_CureWounds"), meta_id("Projectile_Jump") } }
+    refused(function() G.known_spell(P1, "Target_Bless") end, "that spell is not prepared")
+    eq(G.known_spell(P1, "Target_CureWounds").Id.Prototype, "Target_CureWounds", "prepared")
+    eq(G.known_spell(P1, "Target_Sanctuary").Id.Prototype, "Target_Sanctuary", "always prepared, not listed")
+    eq(G.known_spell(P1, "Target_MainHandAttack").Id.Prototype, "Target_MainHandAttack", "an action")
+    -- an unreadable prepared list: nothing counts as prepared
+    world[P1].comps.SpellBookPrepares = setmetatable({}, { __index = function() error("bad component") end })
+    refused(function() G.known_spell(P1, "Target_CureWounds") end, "that spell is not prepared")
+    eq(G.known_spell(P1, "Target_Sanctuary").Id.Prototype, "Target_Sanctuary", "always prepared still casts")
+    world[P1].comps.SpellBookPrepares = nil
+    world[P1].comps.SpellBook = nil
+end)
+
 test("cast: the engine's CastSpellFailed says why (S024-S041 'the action failed' x12)", function()
     osiv[key("HasLineOfSight", P1, GOB)] = 1
     eq(A.cast_failed_why(P1, nil), "the game refused the cast (no reason given)", "no target")
@@ -1964,6 +1992,43 @@ test("loop watchdog: a running job routed through a ladder loop is interrupted",
     restore()
 end)
 
+-- naut S001 16:37 (Nautiloid helm): interact e53 (the 2nd ladder) walked back down e54 (the 1st) and up again 6x
+local LADDER2 = "acacacac-0000-0000-0000-000000000018"
+test("walk: the approach going up a ladder and back down it stops at the reversal, naming it (naut S001 helm)", function()
+    local restore = with_tasks(1)
+    A.use_streak = {}
+    world[LADDER2] = { pos = { 3, 0, 0 }, comps = { ServerItem = { IsLadder = true } } }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    eq(j.phase, "approach", "walks first")
+    world[P1].pos = { 3, 0, 0 } A.dispatch("UseFinished", { P1, LADDER2, 1 })   -- the climb starts at the foot
+    world[P1].pos = { 3, 1.2, 0 } A.dispatch("UseFinished", { P1, LADDER2, 1 }) -- several per climb (live 14:1x)
+    world[P1].pos = { 3, 3, 0 } A.dispatch("UseFinished", { P1, LADDER2, 1 })   -- at the top
+    eq(j.status, "running", "one climb is a route " .. tostring(j.error))
+    world[P1].pos = { 3, 3, 0.2 } A.dispatch("UseFinished", { P1, LADDER2, 1 }) -- the same ladder again, from its top
+    eq(j.status, "running", "not yet back down")
+    world[P1].pos = { 3, 0, 0.2 } A.dispatch("UseFinished", { P1, LADDER2, 1 })
+    eq(j.status, "interrupted", "stopped at the reversal")
+    assert(j.error:find("the walk took ladder " .. LADDER2 .. " up and then back down", 1, true), j.error)
+    assert(j.error:find("(interact " .. LADDER2 .. ")", 1, true), j.error)
+    eq(#called("PurgeOsirisQueue"), 1, "purged once (the watchdog does not fire after it)")
+    restore()
+end)
+
+test("walk: ladder uses that never reverse, the target ladder's own use, and a door are no reversal", function()
+    world[LADDER2] = { pos = { 3, 0, 0 }, comps = { ServerItem = { IsLadder = true } } }
+    local j = job(op("move_to", { char = P1, pos = { 5, 6, 0 } }))
+    world[P1].pos = { 3, 3, 0 } A.dispatch("UseFinished", { P1, LADDER2, 1 })
+    world[P1].pos = { 3, 6, 0 } A.dispatch("UseFinished", { P1, LADDER2, 1 }) -- a long ladder, still going up
+    world[P1].pos = { 3, 0, 0 } A.dispatch("UseFinished", { P1, DOOR, 1 })    -- not a ladder
+    eq(j.status, "running", "move_to " .. tostring(j.error))
+    world[P1].pos = { 0, 0, 0 }
+    local k = job(op("interact", { char = P1, target = LADDER }))
+    world[P1].pos = { 9, 0, 0 } A.dispatch("UseFinished", { P1, LADDER, 1 })  -- the walk to the target's top
+    world[P1].pos = { 9, 3, 0 } A.dispatch("UseFinished", { P1, LADDER, 1 })
+    world[P1].pos = { 9, 0, 0 } A.dispatch("UseFinished", { P1, LADDER, 1 })
+    eq(k.status, "running", "the target itself is the interact's own business " .. tostring(k.error))
+end)
+
 test("act.stop: interrupts the running job and purges the queue", function()
     local restore = with_tasks(3)
     local j = job(op("move_to", { char = P1, pos = { 5, 0, 0 } }))
@@ -2321,6 +2386,116 @@ test("interact on a pulled-up ladder from below: says it hangs out of reach (S05
     eq(tostring(err):find("pulled up: its foot hangs 5.7m", 1, true) ~= nil, true, "names the raised foot: " .. tostring(err))
     eq(ok2, false, "door refused too"); eq(tostring(err2):find("pulled up", 1, true), nil, "the door: no ladder text")
     eq(ok3, true, "from above: no refusal")
+end)
+
+test("state.actions: lists only prepared class spells (A4: S065 showed Shadowheart every level-1 cleric spell)", function()
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ entity = entity, osi = function(f, ...)
+        local okf, v = pcall(f, ...)
+        if okf then return v end
+    end }, { __index = savedV })
+    if not BG3AI.State or not BG3AI.State.actions then dofile(LUA .. "/Server/State.lua") end
+    for _, id in ipairs({ "Target_Bless", "Target_CureWounds", "Target_Sanctuary" }) do
+        stats[id] = { Level = 1, SpellType = "Target", UseCosts = "ActionPoint:1;SpellSlotsGroup:1:1:1" }
+    end
+    local function book(id, kind) return { Id = { Prototype = id, OriginatorPrototype = id }, PrepareType = kind } end
+    world[P1].comps.SpellBook = { Spells = { book("Target_Bless", "RequiresPreparation"),
+        book("Target_CureWounds", "RequiresPreparation"), book("Target_Sanctuary", "AlwaysPrepared") } }
+    world[P1].comps.SpellBookPrepares = { PreparedSpells = { meta_id("Target_CureWounds") } }
+    BG3AI.State.spellCache = {}
+    local ok, list = pcall(BG3AI.State.actions, P1)
+    BG3AI.Visibility = savedV
+    world[P1].comps.SpellBook, world[P1].comps.SpellBookPrepares = nil, nil
+    eq(ok, true, "actions read: " .. tostring(list))
+    local ids = {}
+    for _, a in ipairs(list) do ids[#ids + 1] = a.spell end
+    eq(table.concat(ids, ","), "Target_CureWounds,Target_Sanctuary", "no unprepared Bless")
+end)
+
+-- ---- A5: prepare_spells plan (Guard.prep_info / prep_plan, act.prepare_plan, act.prepared) -------------------
+
+-- Claude the Paladin: Bless, Cure Wounds, Command, Shield of Faith need preparing (Cure Wounds and Shield of Faith
+-- prepared), Sanctuary is the oath's, limit 3.
+local function paladin(max)
+    local loca = Ext.Loca.GetTranslatedString
+    Ext.Loca.GetTranslatedString = function(h) return h end
+    local function book(id, kind) return { Id = { Prototype = id, OriginatorPrototype = id }, PrepareType = kind } end
+    local shown = { Target_Bless = "Bless", Target_CureWounds = "Cure Wounds", Target_Command_Container = "Command",
+                    Target_ShieldOfFaith = "Shield of Faith", Target_Sanctuary = "Sanctuary",
+                    Target_MainHandAttack = "Attack" }
+    for id, name in pairs(shown) do stats[id] = { DisplayName = name, Level = id == "Target_MainHandAttack" and 0 or 1 } end
+    world[P1].comps.SpellBook = { Spells = { book("Target_Bless", "RequiresPreparation"),
+        book("Target_CureWounds", "RequiresPreparation"), book("Target_Command_Container", "RequiresPreparation"),
+        book("Target_ShieldOfFaith", "RequiresPreparation"), book("Target_Sanctuary", "AlwaysPrepared"),
+        book("Target_MainHandAttack", "Unknown") } }
+    world[P1].comps.SpellBookPrepares = { PreparedSpells = { meta_id("Target_CureWounds"),
+        meta_id("Target_ShieldOfFaith"), meta_id("Target_Sanctuary") } }
+    world[P1].comps.Stats = { MaxPreparedSpells = max or 3 }
+    osiv[key("GetDisplayName", P1)] = "Claude"
+    return function() Ext.Loca.GetTranslatedString = loca end
+end
+
+test("prep_info: prepared / unprepared / always-prepared rows and the game's limit", function()
+    local undo = paladin()
+    local info = G.prep_info(P1)
+    undo()
+    local function ids(rows) local o = {} for _, r in ipairs(rows) do o[#o + 1] = r.name end return table.concat(o, ",") end
+    eq(ids(info.prepared), "Cure Wounds,Shield of Faith", "prepared")
+    eq(ids(info.unprepared), "Bless,Command", "unprepared")
+    eq(ids(info.always), "Sanctuary", "always (no weapon actions)")
+    eq(info.max, 3, "limit = Stats.MaxPreparedSpells"); eq(info.count, 2, "count"); eq(info.prepares, true, "prepares")
+end)
+
+test("prep_plan: add within the limit, names or ids in any case; notes for no-ops", function()
+    local undo = paladin()
+    local p = G.prep_plan(P1, { "bless", "Target_ShieldOfFaith", "Sanctuary" }, { "Command" })
+    undo()
+    eq(#p.add, 1, "one add"); eq(p.add[1].id, "Target_Bless", "Bless by name")
+    eq(#p.remove, 0, "Command was not prepared: nothing to remove")
+    eq(p.after, 3, "2 + 1"); eq(p.name, "Claude", "who")
+    local notes = table.concat(p.notes, "|")
+    eq(notes:find("Command was not prepared", 1, true) ~= nil, true, notes)
+    eq(notes:find("Shield of Faith is prepared already", 1, true) ~= nil, true, notes)
+    eq(notes:find("Sanctuary is always prepared already", 1, true) ~= nil, true, notes)
+end)
+
+test("prep_plan: over the limit names what is prepared; a swap in the same call fits", function()
+    local undo = paladin(2)
+    refused(function() G.prep_plan(P1, { "Bless" }, {}) end,
+        "over the limit: Claude can prepare 2 spells and has 2 prepared (Cure Wounds, Shield of Faith); remove 1")
+    local p = G.prep_plan(P1, { "Bless" }, { "Cure Wounds" })
+    undo()
+    eq(p.add[1].name, "Bless", "add"); eq(p.remove[1].name, "Cure Wounds", "remove"); eq(p.after, 2, "after")
+end)
+
+test("prep_plan refusals: in combat, not in the book, a class that doesn't prepare, an unreadable list", function()
+    local undo = paladin()
+    refused(function() G.prep_plan(P1, { "Fireball" }, {}) end, "Claude doesn't know Fireball: not in their spellbook")
+    refused(function() G.prep_plan(P1, {}, { "Fireball" }) end, "Fireball is not in Claude's spellbook")
+    osiv[key("IsInCombat", P1)] = 1
+    refused(function() G.prep_plan(P1, { "Bless" }, {}) end, "spells are prepared out of combat")
+    osiv[key("IsInCombat", P1)] = 0
+    world[P1].comps.SpellBookPrepares = setmetatable({}, { __index = function() error("bad component") end })
+    refused(function() G.prep_plan(P1, { "Bless" }, {}) end, "the prepared spell list didn't read")
+    -- a warlock: every spell is Unknown (learned at level up), nothing to prepare
+    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_EldritchBlast" }, PrepareType = "Unknown" },
+        { Id = { Prototype = "Target_HexSpell" }, PrepareType = "Unknown" } } }
+    refused(function() G.prep_plan(P1, { "Hex" }, {}) end, "Claude doesn't prepare spells: sorcerers, warlocks")
+    undo()
+end)
+
+test("act.prepare_plan returns {refused}; act.prepared lists only preparing casters", function()
+    party_rows = { P1, P2 }
+    world[P2] = { pos = { 1, 0, 0 }, comps = {} }
+    local undo = paladin()
+    local r = op("prepare_plan", { char = P1, add = { "Fireball" } })
+    local ok_plan = op("prepare_plan", { char = P1, add = { "Bless" } })
+    local list = op("prepared", {})
+    undo()
+    eq(r.refused ~= nil and r.refused:find("doesn't know Fireball", 1, true) ~= nil, true, tostring(r.refused))
+    eq(ok_plan.add[1].id, "Target_Bless", "plan")
+    eq(#list.casters, 1, "only P1 prepares"); eq(list.casters[1].uuid, P1, "uuid")
+    eq(list.casters[1].max, 3, "max"); eq(#list.casters[1].prepared, 2, "prepared rows")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

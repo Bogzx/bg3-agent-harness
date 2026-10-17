@@ -90,10 +90,28 @@ class UndoCamera(unittest.TestCase):
         inp.wheel.assert_not_called()
 
 
+class ServerMapLine(unittest.TestCase):
+    def test_every_deck_in_slot_order_no_cut(self):
+        m = {"ClassHotBar": {str(i): f"Target_Spell{i}_LongEnoughNameToFillTheLine" for i in range(1, 17)},
+             "CommonHotBar": {"10": "Target_MainHandAttack", "9": "Shout_Dash"}}
+        line = A.server_map_line({"map": m, "container": "DefaultBarContainer", "bars": 3, "slots": 18})
+        self.assertGreater(len(line), 800)   # window #3: the old [:800] cut ClassHotBar 5-8 off
+        self.assertIn("16=Target_Spell16_", line)
+        self.assertTrue(line.startswith("container=DefaultBarContainer bars=3 slots=18 ClassHotBar[1="), line[:80])
+        self.assertIn("CommonHotBar[9=Shout_Dash 10=Target_MainHandAttack]", line)
+
+    def test_no_map(self):
+        self.assertEqual(A.server_map_line({"why": "no component"}), '{"why": "no component"}')
+        self.assertEqual(A.server_map_line(None), "null")
+
+
 class HotbarCasterPick(unittest.TestCase):
     """Live window #3 (10-17 14:07, S027-start): 'caster with a usable Bless=None'. The pick now reads each member's
     server hotbar map (no HUD switch), the selected member first, then polls the HUD read after selecting."""
 
+    BLESS_OFF = {"book": [{"id": "Target_Bless", "prep": "RequiresPreparation", "prepared": False, "unprepared": True}],
+                 "prepared_read": True}
+    STATES = {"claude": BLESS_OFF}
     MAPS = {"gale": {"ClassHotBar": {"3": "Projectile_MagicMissile", "4": "Projectile_ScorchingRay"}},
             "karl": {"CommonHotBar": {"9": "Target_MainHandAttack"}},
             "sh": {"ClassHotBar": {"2": "Target_GuidingBolt"}},
@@ -112,6 +130,7 @@ class HotbarCasterPick(unittest.TestCase):
             hit = len(reads) > found_after
             return {"found": hit, "can_use": True, "selected": True, "deck": "ClassHotBar", "index": 7}
         with mock.patch.object(A, "S", fake_s), mock.patch.object(A, "log"), \
+                mock.patch.object(A, "spell_state", lambda u, needle: self.STATES.get(u, {"book": []})), \
                 mock.patch.object(HB, "server_map", lambda game, u: maps.get(u)), \
                 mock.patch.object(HB, "_slot", slot), mock.patch.object(HB.time, "sleep"):
             pick, why = A.pick_hotbar_caster(["gale", "karl", "sh", "claude"], sel)
@@ -142,12 +161,74 @@ class HotbarCasterPick(unittest.TestCase):
         self.assertIn("gale: 2 ids, multi-target ['Projectile_MagicMissile', 'Projectile_ScorchingRay']", why)
         self.assertIn("claude: no map", why)
 
+    def test_s065_end_names_the_unprepared_bless(self):
+        # live 20261017-152016 (S065-end): no Bless on any map; Claude knows it but never prepared it (A4: the
+        # Osiris route's prepared check never ran, so S065's Bless was cast unprepared)
+        maps = dict(self.MAPS, claude={"ClassHotBar": {"4": "Target_CureWounds"}})
+        pick, why, _, _ = self._run(maps, sel="gale")
+        self.assertIsNone(pick)
+        self.assertIn("claude: 1 ids, multi-target none; Target_Bless in the spellbook (RequiresPreparation), "
+                      "not prepared", why)
+        self.assertIn("karl: 1 ids, multi-target none; Target_Bless not in the spellbook", why)
+
     def test_map_has_upcast_base(self):
         from bg3ai import hotbar as HB
         self.assertTrue(HB.map_has({"ClassHotBar": {"6": "Target_Bless"}}, "target_bless"))
         self.assertTrue(HB.map_has({"ClassHotBar": {"6": "Projectile_MagicMissile"}}, "Projectile_MagicMissile_3"))
         self.assertFalse(HB.map_has({"ClassHotBar": {"6": "Target_Bane"}}, "Target_Bless"))
         self.assertFalse(HB.map_has(None, "Target_Bless"))
+
+
+class PrepReason(unittest.TestCase):
+    def _b(self, **kw):
+        return {"book": [dict({"id": "Target_Bless", "prep": "RequiresPreparation"}, **kw)], "prepared_read": True}
+
+    def test_each_case_names_its_cause(self):
+        R = A.prep_reason
+        self.assertIn("not prepared: not castable", R(self._b(prepared=False, unprepared=True), "Target_Bless", False))
+        self.assertIn("Shared/HotbarMap.lua misses a bar",
+                      R(self._b(prepared=True, unprepared=False), "Target_Bless", False))
+        self.assertEqual(R(self._b(prepared=True, unprepared=False), "Target_Bless", True),
+                         "prepared (RequiresPreparation) and on the hotbar map")
+        self.assertEqual(R({"book": []}, "Target_Bless", False), "not in the spellbook")
+        self.assertIn("did not read", R(dict(self._b(), prepared_read=False), "Target_Bless", False))
+        self.assertIn("pre-A4", R({"why": "the mod has no Guard.prepared_ids (pre-A4)"}, "Target_Bless", False))
+
+    def test_prepared_pick(self):
+        states = {"karl": {"book": [{"id": "Target_Rage", "prep": "AlwaysPrepared"}]},
+                  "sh": {"book": [{"id": "Target_Bane", "prep": "RequiresPreparation", "unprepared": True},
+                                  {"id": "Target_CureWounds", "prep": "RequiresPreparation", "prepared": True}]}}
+        self.assertEqual(A.prepared_pick(states), ("sh", "Target_Bane", "Target_CureWounds"))
+        self.assertIsNone(A.prepared_pick({"karl": states["karl"], "x": {"why": "no entity"}}))
+
+
+class TwostepContainer(unittest.TestCase):
+    """Live 20261017-152016: e3's Dimension Door sits in a container slot (ClassHotBar index 26); the item FAILed
+    at stage slot ('its variants' sub-bar is not built yet'). Now it SKIPs before any cast, with a probe line."""
+
+    def test_container_only_caster_skips_with_the_cell(self):
+        from unittest import mock
+        fake_s = mock.Mock()
+        fake_s.H.get = lambda u: {"u3": "e3", "u4": "e4"}[u]
+        fake_s.game.try_rpc = lambda *a, **k: {}
+        slots = {"u3": {"found": True, "can_use": True, "container": True, "deck": "ClassHotBar", "index": 26},
+                 "u4": {"found": False}}
+        got, probes, logs = [], [], []
+        with mock.patch.object(A, "S", fake_s), \
+                mock.patch.object(A, "RESULTS", [{"item": "hotbar widget tree (ACT-8, read-only)", "verdict": "PASS"}]), \
+                mock.patch.object(A, "status", lambda: {"party": [{"uuid": "u3"}, {"uuid": "u4"}]}), \
+                mock.patch.object(A, "hb_slot", lambda spell, u: slots[u]), \
+                mock.patch.object(A, "container_probe", lambda u, r: probes.append(u) or "server {} | hud slot{}"), \
+                mock.patch.object(A, "took", side_effect=AssertionError("cast attempted")), \
+                mock.patch.object(A, "log", logs.append), \
+                mock.patch.object(A, "item", lambda *a: got.append(a)):
+            self.assertFalse(A.twostep_dd_probe())
+        self.assertEqual(probes, ["u3"])
+        self.assertEqual(len(got), 1)
+        name, verdict, why = got[0]
+        self.assertEqual((name, verdict), (A.TWOSTEP_ITEM, "SKIP"))
+        self.assertIn("e3 has Teleportation_DimensionDoor only in a container slot (ClassHotBar index 26)", why)
+        self.assertTrue(any(line.startswith("PROBE twostep container e3:") for line in logs))
 
 
 if __name__ == "__main__":

@@ -998,6 +998,170 @@ local function spell_entries(char)
     return out, e
 end
 
+-- Prepared spells (A4, 2026-10-17). A prepared caster's SpellBook holds its whole class list: S065's action list
+-- showed Shadowheart every level-1 cleric spell. SpellBookPrepares.PreparedSpells (bg3se SpellMetaId:
+-- OriginatorPrototype, SourceType, no Prototype) names the prepared ones, and each SpellBook entry says whether it
+-- needs preparing (PrepareType AlwaysPrepared / RequiresPreparation / Unknown). The old check read p.Prototype
+-- first: bg3se raises "Property does not exist" there, the pcall swallowed it, and every class spell was castable
+-- (Claude's Bless in S065, with no Bless on his hotbar).
+-- The set of prepared OriginatorPrototypes, or false when the component can't be read.
+function G.prepared_ids(e)
+    local prep = e and U.comp(e, "SpellBookPrepares")
+    if not prep then return false end
+    local set = {}
+    local ok = pcall(function()
+        for _, p in ipairs(prep.PreparedSpells) do set[tostring(p.OriginatorPrototype)] = true end
+    end)
+    return ok and set
+end
+
+-- A SpellBook entry that needs preparing and isn't prepared (prepared = G.prepared_ids). An unreadable prepared
+-- list counts as nothing prepared: refuse rather than cast a spell the player could not.
+function G.unprepared(entry, prepared)
+    local ok, kind = pcall(function() return tostring(entry.PrepareType) end)
+    if not ok or kind ~= "RequiresPreparation" then return false end
+    if not prepared then return true end
+    local okp, id = pcall(function() return entry.Id.OriginatorPrototype end)
+    if not okp or id == nil then okp, id = pcall(function() return entry.Id.Prototype end) end
+    return not (okp and prepared[tostring(id)])
+end
+
+-- Spell preparation (A5, 2026-10-17). What the spellbook's prepare page shows: the class spells that need preparing
+-- (prepared or not), the always-prepared ones (domain/oath) and the limit. The limit is the game's own number,
+-- Stats.MaxPreparedSpells (bg3se StatsComponent; the UI shows it as PreparedSpellsStat.Max; one number, so a
+-- character with two preparing classes is not split per class).
+local function spell_meta(id)
+    local ok, st = pcall(Ext.Stats.Get, id)
+    if not ok or not st then return id, nil end
+    local okn, h = pcall(function() return st.DisplayName end)
+    local okl, l = pcall(function() return st.Level end)
+    return (okn and U.loca(h)) or id, okl and tonumber(l) or nil
+end
+
+local function class_names(e)
+    local out = {}
+    local c = e and U.comp(e, "Classes")
+    pcall(function()
+        for _, cl in ipairs(c.Classes) do
+            local ok, r = pcall(Ext.StaticData.Get, cl.ClassUUID, "ClassDescription")
+            local okd, h = pcall(function() return r.DisplayName.Handle.Handle end)
+            local n = (okd and U.loca(h)) or (ok and r and r.Name)
+            if n then out[#out + 1] = tostring(n) end
+        end
+    end)
+    return out
+end
+G.class_names = class_names
+
+-- { prepares, read, max, count, prepared, unprepared, always = { {id, name, level} }, classes }
+function G.prep_info(char)
+    local entries, e = spell_entries(char)
+    local set = G.prepared_ids(e)
+    local info = { prepared = {}, unprepared = {}, always = {}, classes = class_names(e), read = set ~= false }
+    local seen = {}
+    for _, s in ipairs(entries) do
+        local okk, kind = pcall(function() return tostring(s.PrepareType) end)
+        local oki, id = pcall(function() return s.Id.Prototype end)
+        id = oki and id and tostring(id) or nil
+        if okk and id and not seen[id] and (kind == "RequiresPreparation" or kind == "AlwaysPrepared") then
+            seen[id] = true
+            local name, level = spell_meta(id)
+            local row = { id = id, name = name, level = level }
+            if kind == "AlwaysPrepared" then
+                if (level or 0) > 0 then info.always[#info.always + 1] = row end
+            elseif G.unprepared(s, set) then
+                info.unprepared[#info.unprepared + 1] = row
+            else
+                info.prepared[#info.prepared + 1] = row
+            end
+        end
+    end
+    local function order(a, b)
+        if (a.level or 0) ~= (b.level or 0) then return (a.level or 0) < (b.level or 0) end
+        return a.name < b.name
+    end
+    table.sort(info.prepared, order)
+    table.sort(info.unprepared, order)
+    table.sort(info.always, order)
+    local okm, max = pcall(function() return e.Stats.MaxPreparedSpells end)
+    info.max = okm and tonumber(max) or nil
+    info.count = #info.prepared
+    info.prepares = #info.prepared + #info.unprepared > 0
+    return info
+end
+
+-- A spell named by id or shown name (any case) in prep_info: row, "prepared" | "unprepared" | "always".
+function G.prep_find(info, want)
+    local w = tostring(want or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    for _, kind in ipairs({ "prepared", "unprepared", "always" }) do
+        for _, r in ipairs(info[kind]) do
+            if r.id:lower() == w or r.name:lower() == w then return r, kind end
+        end
+    end
+    return nil
+end
+
+local function names(rows)
+    local out = {}
+    for _, r in ipairs(rows) do out[#out + 1] = r.name end
+    return table.concat(out, ", ")
+end
+
+-- The change the spellbook will make, checked as the UI checks it, or a refusal: in combat, a class that doesn't
+-- prepare, a spell not in the book, over the limit (naming what is prepared now).
+function G.prep_plan(char, add, remove)
+    char = G.actor(char)
+    local who = U.loca(G.q("GetDisplayName", char)) or "this character"
+    if G.in_combat(char) then
+        G.refuse("spells are prepared out of combat (the spellbook locks preparing during a fight); after the fight,"
+            .. " or after a long rest")
+    end
+    G.not_in_dialogue(char)
+    local info = G.prep_info(char)
+    local cls = table.concat(info.classes, "/")
+    if not info.prepares then
+        G.refuse(who .. (cls ~= "" and (" (" .. cls .. ")") or "") .. " doesn't prepare spells: sorcerers, warlocks,"
+            .. " bards and rangers know a fixed list that changes only at level up (level_up); clerics, druids,"
+            .. " paladins and wizards prepare")
+    end
+    if not info.read then G.refuse("the prepared spell list didn't read; nothing was changed") end
+    local adds, removes, notes, taken = {}, {}, {}, {}
+    for _, want in ipairs(remove or {}) do
+        local r, kind = G.prep_find(info, want)
+        if not r then
+            G.refuse(tostring(want) .. " is not in " .. who .. "'s spellbook (nothing to unprepare)")
+        elseif kind == "always" then
+            notes[#notes + 1] = r.name .. " is always prepared (it can't be unprepared)"
+        elseif kind == "unprepared" then
+            notes[#notes + 1] = r.name .. " was not prepared"
+        elseif not taken[r.id] then
+            taken[r.id] = true
+            removes[#removes + 1] = r
+        end
+    end
+    for _, want in ipairs(add or {}) do
+        local r, kind = G.prep_find(info, want)
+        if not r then
+            G.refuse(who .. " doesn't know " .. tostring(want) .. ": not in their spellbook (only "
+                .. (cls ~= "" and cls or "their class's") .. " spells of a level they can cast)")
+        elseif kind == "always" then
+            notes[#notes + 1] = r.name .. " is always prepared already"
+        elseif kind == "prepared" and not taken[r.id] then
+            notes[#notes + 1] = r.name .. " is prepared already"
+        elseif not taken["+" .. r.id] then
+            taken["+" .. r.id] = true
+            adds[#adds + 1] = r
+        end
+    end
+    local after = info.count - #removes + #adds
+    if info.max and after > info.max and #adds > 0 then
+        G.refuse(string.format("over the limit: %s can prepare %d spells and has %d prepared (%s); remove %d of them"
+            .. " in the same call (remove=[...])", who, info.max, info.count, names(info.prepared), after - info.max))
+    end
+    return { char = char, name = who, classes = info.classes, max = info.max, count = info.count, after = after,
+             prepared = info.prepared, always = info.always, add = adds, remove = removes, notes = notes }
+end
+
 -- Is the spell on the character's hotbar/spellbook and usable (prepared if it
 -- needs preparing)? Returns the matching SpellBook entry or refuses.
 function G.known_spell(char, spell)
@@ -1029,25 +1193,7 @@ function G.known_spell(char, spell)
         G.refuse("the character does not have that action")
     end
 
-    -- Prepared check: the SpellBookPrepares component lists what is prepared.
-    -- Entries that are always prepared (cantrips, class actions, item spells)
-    -- appear there too, so a missing entry means "not prepared".
-    local prep = e and U.comp(e, "SpellBookPrepares")
-    if prep then
-        local ok, inPrep = pcall(function()
-            for _, p in ipairs(prep.PreparedSpells) do
-                if p.Prototype == spell or (p.OriginatorPrototype == spell) then return true end
-            end
-            return false
-        end)
-        if ok and inPrep == false then
-            -- Some granted actions (e.g. Jump, Shove) are not "prepared" spells;
-            -- trust the spellbook entry if the spell is not a levelled spell.
-            local st = Ext.Stats.Get(spell)
-            local level = st and tonumber(st.Level) or 0
-            if level > 0 then G.refuse("that spell is not prepared") end
-        end
-    end
+    if G.unprepared(found, G.prepared_ids(e)) then G.refuse("that spell is not prepared") end
 
     -- Cooldown (once per turn / short rest / long rest)
     local cds = e and U.comp(e, "SpellBookCooldowns")
