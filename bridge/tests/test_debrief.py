@@ -119,7 +119,7 @@ class Build(unittest.TestCase):
         self.assertTrue(la.startswith("LAST ATTEMPT: costly vs "))
         self.assertIn("protect Wyll", la)
         self.assertIn("focus Justiciar Soulhunter first", la)
-        self.assertIn("use the unused scroll/potion", la)
+        self.assertIn("scrolls: the tools read them out of combat only (read buff scrolls before the fight)", la)
         note = debrief.fight_note(rec)
         self.assertTrue(note.startswith("costly @SCL vs Justiciar Soulhunter, Justiciar Avenger (Human), Umbral Tremor | "), note)
         self.assertIn("| rounds 2 | downed: Wyll by Justiciar Soulhunter | dealt 64 / taken 96 |", note)
@@ -199,8 +199,8 @@ class Build(unittest.TestCase):
         tr.feed([ev("combat_started"), ev("downed", **ref(SH, "Shadowheart")), ev("died", **ref(SH, "Shadowheart")),
                  ev("combat_ended")], PARTY)
         rec = tr.close(ROWS)
-        self.assertEqual(rec["key_facts"][0], "DIED: Shadowheart")
-        self.assertIn("DIED: Shadowheart — revive now", debrief.render(rec).splitlines()[1])
+        self.assertEqual(rec["key_facts"][0], "DIED: Shadowheart (r1)")
+        self.assertIn("DIED: Shadowheart (r1) — revive now", debrief.render(rec).splitlines()[1])
 
     def test_retry_window(self):
         tr, rec, _ = self.run_fight()
@@ -260,3 +260,150 @@ class Store(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+GOLDEN = Path(__file__).parent / "golden" / "fights_claude_run_2.jsonl"   # real v1 records: S061 09:37/09:53/09:56,
+K, GT, NU, OR, RE = "u-karlach", "u-gortash", "u-numia", "u-orin", "u-reaper"   # S065 11:43/11:50 (vis V6)
+PARTY4 = PARTY | {K}
+ROWS4 = ROWS + [{"uuid": K, "name": "Karlach", "hp": 0, "max_hp": 190}]
+
+
+def hit(src, sn, tgt, tn, *parts):
+    """One hit as the mod sends it: one damage event per type, back to back (Events.lua AttackedBy)."""
+    return [dmg(src, sn, tgt, tn, a, t) for t, a in parts]
+
+
+def unseen(tgt, tn, amt, typ):
+    return ev("damage", source={"name": "Someone"}, target=ref(tgt, tn), amount=amt, type=typ)
+
+
+class Act3Retries(unittest.TestCase):
+    """vis V6: the Act 3 boss retries (claude-run-2 S059-S065) got wrong or empty facts. Shapes from the
+    transcripts' combat_turn damage lists and the stored records."""
+
+    def test_s060_gortash_rider_is_no_resistance_and_traps_are_the_top_damage(self):
+        # S060-r1 09:15: every weapon hit carried 1-3 Radiant (Slashing 12 + Radiant 2); Divine Smite Piercing 8 +
+        # Radiant 18, Guiding Bolt Radiant 18. The trap grid hit for 434 of 666 with no visible source.
+        tr = debrief.Tracker()
+        evs = [ev("combat_started"), ev("round_started", round=1), cast(K, "Karlach", "Main Hand Attack")]
+        evs += hit(K, "Karlach", GT, "Gortash", ("Slashing", 12), ("Radiant", 2))
+        evs += hit(K, "Karlach", GT, "Gortash", ("Slashing", 11), ("Radiant", 2))   # extra attack: next hit
+        evs += [cast(C, "Claude", "Divine Smite")] + hit(C, "Claude", GT, "Gortash", ("Piercing", 8), ("Radiant", 18))
+        evs += [cast(SH, "Shadowheart", "Guiding Bolt")] + hit(SH, "Shadowheart", GT, "Gortash", ("Radiant", 18))
+        evs += [cast(K, "Karlach", "Frenzied Strike")] + hit(K, "Karlach", GT, "Gortash", ("Slashing", 13), ("Radiant", 2))
+        evs += [ev("round_started", round=2), cast(NU, "Black Gauntlet Numia", "Blight"),
+                dmg(NU, "Black Gauntlet Numia", SH, "Shadowheart", 40, "Necrotic"), ev("downed", **ref(SH, "Shadowheart"))]
+        evs += [unseen(u, n, 38, "Thunder") for u, n in ((C, "Claude"), (K, "Karlach"), (W, "Wyll"))]
+        evs += [unseen(u, n, 36, "Fire") for u, n in ((C, "Claude"), (K, "Karlach"))]
+        tr.feed(evs, PARTY4 | {"u-sw"}, now=0.0)
+        tr.feed([ev("downed", **ref("u-sw", "Spiritual Weapon"))], PARTY4 | {"u-sw"}, now=10.0)
+        rec = tr.close(ROWS4, ["Scroll of Revivify"], {"session": "S060"}, reloaded=True, now=60.0)
+        self.assertEqual(rec["v"], debrief.V)
+        self.assertFalse([t for t in rec["dmg_types"] if t["low"]], rec["dmg_types"])   # old code: Radiant (avg 2)
+        self.assertNotIn("did little", " ".join(rec["key_facts"]))
+        self.assertEqual(rec["unseen"]["dmg"], 186)
+        self.assertEqual(rec["key_facts"][0], "Shadowheart went down first (r2, by Black Gauntlet Numia: Blight)")
+        self.assertTrue(rec["key_facts"][1].startswith("most damage to us: no visible source 186 of 226 (Thunder 3 hits"
+                                                       " avg 38.0, Fire 2 hits avg 36.0)"), rec["key_facts"])
+        self.assertEqual([d["name"] for d in rec["downed"]], ["Shadowheart"])           # not our Spiritual Weapon
+        self.assertNotIn("dmg_cap", rec)
+        la = debrief.last_attempt(rec)
+        self.assertIn("find what hits you unseen", la)
+        self.assertNotIn("drink", la)                                                    # a scroll only
+        self.assertNotIn("switch damage types", la)
+        self.assertIn("(from no visible source: 186)", debrief.render(rec))
+
+    def test_s065_orin_unstoppable_is_a_per_hit_cap_with_the_kill_and_the_heal(self):
+        # S065 11:50: Unstoppable: 7 on Orin: each damage part of a hit did 1 (Radiant 9x1, Necrotic 3x1, Piercing 1 +
+        # Radiant 1; 18 of our 31 hits), the rest after the stacks were gone. Orin's Slay killed Karlach in r6; Orin
+        # got to 21 % and healed back to 33 %; Insect Plague killed 2 Reapers in r1.
+        tr = debrief.Tracker()
+        evs = [ev("combat_started"), ev("round_started", round=1),
+               ev("status_applied", target=ref(OR, "Orin"), name="Slayer Form"),
+               ev("status_applied", target=ref(OR, "Orin"), name="Unstoppable: 7"),
+               ev("died", **ref(RE, "Reaper of Bhaal Eglantine")), ev("died", **ref("u-r2", "Reaper of Bhaal Hiila"))]
+        for _ in range(3):
+            evs += [cast(C, "Claude", "Main Hand Attack")] + hit(C, "Claude", OR, "Orin", ("Piercing", 1), ("Radiant", 1))
+            evs += [cast(SH, "Shadowheart", "Sacred Flame")] + hit(SH, "Shadowheart", OR, "Orin", ("Radiant", 1))
+            evs += [cast(SH, "Shadowheart", "Toll the Dead")] + hit(SH, "Shadowheart", OR, "Orin", ("Necrotic", 1))
+        evs += [cast(W, "Wyll", "Eldritch Blast")] + hit(W, "Wyll", OR, "Orin", ("Force", 4))
+        evs += [ev("round_started", round=6), cast(OR, "Orin", "Slay"), dmg(OR, "Orin", K, "Karlach", 60, "Slashing"),
+                ev("downed", **ref(K, "Karlach")), cast(OR, "Orin", "Slay"), dmg(OR, "Orin", K, "Karlach", 30, "Slashing"),
+                ev("died", **ref(K, "Karlach"))]
+        tr.feed(evs[:6], PARTY4, now=0.0)
+        for pct in (100, 21, 33):
+            tr.observe({"order": [{"uuid": OR, "name": "Orin", "relation": "hostile", "hp_pct": pct},
+                                  {"uuid": RE, "name": "Reaper of Bhaal Eglantine", "relation": "hostile", "dead": True},
+                                  {"uuid": "u-r2", "name": "Reaper of Bhaal Hiila", "relation": "hostile", "dead": True}]},
+                       PARTY4)
+        tr.feed(evs[6:], PARTY4, now=30.0)
+        rec = tr.close(ROWS4, [], {"session": "S065"}, reloaded=True, now=530.0)
+        self.assertFalse([t for t in rec["dmg_types"] if t["low"]], rec["dmg_types"])   # old code: Radiant + Necrotic
+        self.assertEqual(rec["dmg_cap"][0]["enemy"], "Orin")
+        self.assertEqual(rec["dmg_cap"][0]["statuses"], ["Slayer Form", "Unstoppable"])
+        self.assertEqual(rec["deaths"], [{"name": "Karlach", "round": 6, "by": "Orin", "ability": "Slay"}])
+        self.assertEqual(rec["kills"], [{"name": "Reaper of Bhaal Eglantine", "round": 1},
+                                        {"name": "Reaper of Bhaal Hiila", "round": 1}])
+        self.assertEqual(rec["key_facts"], [
+            "DIED: Karlach (r6, by Orin: Slay)",                    # its first down that round: no 2nd fact
+            "most damage to us: Orin (Slay) 90, left at 33% (was down to 21%)",
+            "9 of 10 hits on Orin did 1 per damage type (any type; on it: Slayer Form, Unstoppable)"])
+        la = debrief.last_attempt(rec)
+        self.assertIn("Orin often took 1 per hit: many small hits, or end what shields it first", la)
+        self.assertNotIn("switch damage types", la)
+        self.assertNotIn("focus Orin first", la)
+        txt = debrief.render(rec)
+        self.assertIn("killed 2/", txt)
+        self.assertIn("(Reaper of Bhaal Eglantine r1, Reaper of Bhaal Hiila r1)", txt)
+        self.assertIn("left: Orin 33% (lowest 21%)", txt)
+        self.assertLessEqual(len(txt.splitlines()), 8)
+
+    def test_s065_orin_try_1_hits_are_a_shield_too(self):
+        # S065 11:43, our own hits on Orin (combat_turn damage lists): 5 of 11 did 1, the median was 4
+        tr = debrief.Tracker()
+        evs = [ev("combat_started"), ev("round_started", round=1)]
+        for amt, typ in ((1, "Radiant"), (1, "Force"), (1, "Force"), (1, "Piercing"), (1, "Radiant"), (4, "Force"),
+                         (5, "Slashing"), (6, "Force"), (8, "Slashing"), (8, "Piercing"), (17, "Slashing")):
+            evs += [cast(C, "Claude", "Main Hand Attack")] + hit(C, "Claude", OR, "Orin", (typ, amt))
+        tr.feed(evs, PARTY4)
+        rec = tr.close(ROWS4)
+        self.assertEqual((rec["dmg_cap"][0]["ones"], rec["dmg_cap"][0]["hits"]), (5, 11))
+        self.assertFalse([t for t in rec["dmg_types"] if t["low"]])                     # old code: Radiant
+
+    def test_stored_v1_records_lose_their_rider_lows(self):
+        # S066 = Orin try 3 starts from S065's records: their "Radiant did little to Orin" must not come back as a
+        # LAST TIME fact or a mid-fight "use another damage type" WARNING.
+        hist = [json.loads(x) for x in GOLDEN.read_text().splitlines()]
+        self.assertTrue(any("did little" in f for r in hist for f in r["key_facts"]))      # the v1 facts
+        tr = debrief.Tracker(hist)
+        cs = {"order": [{"name": "Orin", "relation": "hostile"}, {"name": "Reaper of Bhaal Dhoria", "relation": "hostile"}]}
+        tr.feed([ev("combat_started"), ev("round_started", round=1)], PARTY4)
+        line = tr.first_turn_warnings(cs)[0]
+        self.assertTrue(line.startswith("LAST TIME vs Orin, Reaper of Bhaal Dhoria (reloaded, was near_wipe, S065 11:50): "
+                                        "DIED: Karlach; Wyll went down first (r2, by Orin); most damage to us: Orin "
+                                        "(Slay, Multiattack) 587"), line)
+        self.assertNotIn("did little", line)
+        w, _ = tr.feed(hit(SH, "Shadowheart", OR, "Orin", ("Radiant", 1)) * 3, PARTY4)
+        self.assertEqual(w, [])
+        # its YOUR LESSON lines count from try 1 (11:43), not from 11:50 (a v1 record has no chain_t)
+        self.assertEqual(tr.chain_start(tr.last_time_rec(cs)), "2026-10-11T11:43:16")
+        self.assertEqual(tr.chain_start(tr.history[0]), "2026-10-11T09:37:57")   # S061: nothing before it here
+
+    def test_s062_last_time_cites_the_lost_attempt_not_the_lure_practice(self):
+        # S062 10:00 (the win) was told the 09:56 lure practice (2 rounds, reloaded while clean: "enemies held high
+        # ground; unused: …"), not 09:37's wipe (DIED: Wyll, Claude).
+        hist = [json.loads(x) for x in GOLDEN.read_text().splitlines()][:3]
+        tr = debrief.Tracker(hist)
+        cs = {"order": [{"name": "Lord Enver Gortash", "relation": "hostile"},
+                        {"name": "Black Gauntlet Ulova", "relation": "hostile"}]}
+        line = tr.first_turn_warnings(cs)[0]
+        self.assertIn("(reloaded, was wipe, S061 09:37): DIED: Wyll, Claude; Wyll went down first (r6, by Gortash)", line)
+        self.assertIs(tr.informative({"Lord Enver Gortash"}), tr.history[0])
+        self.assertIs(tr.informative({"Black Gauntlet Ulova"}, before=tr.history[0]), None)   # nothing older
+
+    def test_empty_fight_is_not_recorded(self):
+        # S059: round events with no enemy, damage or down closed as "[fight] clean … vs unseen enemies" x7
+        tr, past, _ = Build().run_fight()
+        tr.feed([ev("round_started", round=15), ev("combat_ended")], PARTY)
+        self.assertIsNone(tr.close(ROWS))
+        self.assertIs(tr.last, past)

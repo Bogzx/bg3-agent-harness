@@ -72,5 +72,38 @@ class CompactedResults(unittest.TestCase):
             self.assertEqual(fights.casts_of(a), fights.casts_of(b), sess)
 
 
+
+
+class RetryVerdict(unittest.TestCase):
+    """vis V6: claude-run-2's Act 3 retries as fights.py mined them (rounds, hp, downs, killed from the debrief)."""
+
+    def f(self, outcome, downs, hp, killed, abil, debrief="reloaded"):
+        return {"outcome": outcome, "downs": downs, "hp_lost": hp, "killed": killed, "debrief": debrief,
+                "party_died": [], "abilities": dict.fromkeys(abil, 1)}
+
+    def test_orin_try_2_got_further(self):
+        # S065 11:43 (killed 0/9, 1 down) → 11:50 (killed 2/9, 4 downs, Karlach died): "NOT better" before
+        t1 = self.f("reload", 1, 434, 0, ["Guiding Bolt", "Silence", "Insect Plague"])
+        t2 = self.f("reload", 4, 848, 2, ["Guiding Bolt", "Insect Plague", "Eldritch Blast"])
+        self.assertEqual(fights.retry_verdict(t1, t2), "further (killed 2 vs 0)")
+        self.assertEqual(fights.same_tactic(t1, t2), [])
+
+    def test_the_gortash_win_is_no_same_tactic(self):
+        # S061 09:37 wipe → S062 10:00 won (costly): same top abilities, a different plan
+        kit = ["Divine Smite", "Frenzied Strike", "Target_MainHandAttack", "Eldritch Blast"]
+        lost = self.f("reload", 12, 705, 3, kit)
+        won = self.f("won", 2, 377, 5, kit, debrief="costly")
+        self.assertEqual(fights.retry_verdict(lost, won), "better")
+        self.assertEqual(fights.same_tactic(lost, won), [])
+        again = self.f("reload", 12, 900, 3, kit)
+        self.assertEqual(fights.retry_verdict(lost, again), "NOT better")
+        self.assertEqual(fights.same_tactic(lost, again), sorted(kit[:4]))
+
+    def test_killed_from_the_debrief_block(self):
+        txt = ("load_game: done\nFIGHT DEBRIEF (reloaded, 7 rounds, 8m51s) vs Orin\n  DIED: Karlach — revive now\n"
+               "  enemies used: Orin: Slay\n  killed 2/9 · dealt Karlach 21\n")
+        self.assertEqual(fights.KILLED_RE.search(txt).groups(), ("2", "9"))
+
+
 if __name__ == "__main__":
     unittest.main()
