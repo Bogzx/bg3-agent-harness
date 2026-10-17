@@ -799,7 +799,11 @@ function S.state(args)
         res.container = S.container(wmap)
     elseif scr == "credits" then
         res.credits = S.credits(wmap)
-    elseif scr == "game_menu" or scr == "main_menu" or scr == "save_load" or scr == "book"
+    elseif scr == "main_menu" then
+        -- The menu's buttons only: its texts are the Larian account corner panel ("Log In", "Create account?") and
+        -- the copyright/version lines, which read as a popup titled "Log In" though nothing asks anything (live L6).
+        res.menu = { buttons = S.popup(wmap[res.page].el).buttons }
+    elseif scr == "game_menu" or scr == "save_load" or scr == "book"
         or scr == "reward" or scr == "options" then
         res.popup = S.popup(wmap[res.page].el)
         local b = scr == "book" and S.book(wmap)
