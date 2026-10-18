@@ -914,10 +914,11 @@ class Relaunch(unittest.TestCase):
         self.assertEqual(P.pick_save(saves, None, "Claude", {"Claude-3__QuickSave_4"}).label, "QuickSave_4")  # runner's own
 
     def _runner(self, d: Path, *, launched, log_text, save_mtime, last_started=50.0, steam=(True, "offline"),
-                owns=True, first=False, ram=5000, mod_path=None):
+                owns=True, first=False, ram=5000, mod_path=None, acts=()):
         self.saved = (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb,
-                      P.game_mod_path)
+                      P.game_mod_path, P.read_actions_since)
         P.port_open = lambda *a, **k: True
+        P.read_actions_since = lambda t, *a, **k: [x for x in acts if x.get("t", 0) > t]   # never the real log
         P.game_ram_mb = lambda: ram
         P.game_mod_path = lambda: mod_path   # never the machine's real game
         P.steam_ready = lambda: steam
@@ -943,7 +944,7 @@ class Relaunch(unittest.TestCase):
     def tearDown(self):
         if hasattr(self, "saved"):
             (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb,
-             P.game_mod_path) = self.saved
+             P.game_mod_path, P.read_actions_since) = self.saved
 
     def test_relaunches_after_a_ready_check_failure(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1020,6 +1021,63 @@ class Relaunch(unittest.TestCase):
             r = self._runner(Path(td), launched=time.time() - 600, log_text="ready_failed", save_mtime=10.0,
                              last_started=50.0)
             self.assertIsNone(r.maybe_relaunch(False))
+            self.assertEqual(self.killed, [])
+            self.assertTrue(any("lose play" in m for m in self.logs))
+
+    # S092 (09:03:17 load_game S090-end, then a refused do_actions, the wrap-up notes and end_session): actions.jsonl
+    S092_END = (
+        {"t": 60.0, "tool": "use_ability", "args": {}, "result": "ok: Fireball"},
+        {"t": 61.0, "tool": "load_game", "args": {"save": "Claude-1__S032-end"},
+         "result": "load_game: done — loaded=S032-end\nFIGHT DEBRIEF (reloaded, 2 rounds)"},
+        {"t": 62.0, "tool": "manage_inventory", "args": {"op": "use"}, "result": "FAILED: unknown target 'Elixir'"},
+        {"t": 62.1, "tool": "do_actions", "args": {"n": 20}, "result": "1. FAILED: unknown target\nSTOPPED: step 1"},
+        {"t": 63.0, "tool": "memory_read", "args": {}, "result": "knowledge/playbooks/session-wrapup.md"},
+        {"t": 64.0, "tool": "memory_write", "args": {}, "result": "Rewrote memory/HANDOFF.md"},
+        {"t": 64.5, "tool": "note", "args": {}, "result": "Noted 1 line"},
+        {"t": 65.0, "tool": "end_session", "args": {}, "result": "Memory for S092 committed"},
+    )
+
+    def test_ended_on_save(self):
+        save = P.Save("Claude-1__S032-end", "Claude", "S032-end", 10.0)
+        self.assertTrue(P.ended_on_save(self.S092_END, save))
+        self.assertTrue(P.ended_on_save(self.S092_END[1:2], save))    # the load was the last call
+        self.assertFalse(P.ended_on_save([], save))
+        self.assertFalse(P.ended_on_save(self.S092_END[:1], save))    # no load_game
+        later = {"t": 66.0, "result": "ok"}
+        for extra in ({**later, "tool": "equip_best"},                # S091: gear changed after the load
+                      {**later, "tool": "move_to"},
+                      {**later, "tool": "some_new_tool"}):            # unknown = a change
+            self.assertFalse(P.ended_on_save(self.S092_END + (extra,), save), extra)
+        for extra in ({**later, "tool": "move_to", "result": "NOT READY: loading"},
+                      {**later, "tool": "get_status"}, {**later, "tool": "wait_for"}):
+            self.assertTrue(P.ended_on_save(self.S092_END + (extra,), save), extra)
+        other = {"t": 61.5, "tool": "load_game", "args": {"save": "Claude-1__S031-end"},
+                 "result": "load_game: done — loaded=S031-end"}
+        self.assertFalse(P.ended_on_save(self.S092_END[:2] + (other,), save))   # the last load was another save
+        failed = {"t": 61.5, "tool": "load_game", "args": {"save": "Claude-1__S032-end"},
+                  "result": "FAILED: the game did not load"}
+        self.assertFalse(P.ended_on_save(self.S092_END[:2] + (failed,), save))  # the last load failed
+        twin = {"t": 61.5, "tool": "load_game", "args": {"save": "Claude-9__S032-end"},
+                "result": "load_game: done — loaded=S032-end"}
+        self.assertFalse(P.ended_on_save(self.S092_END[:2] + (twin,), save))    # same label, other folder
+        by_label = {"t": 61.5, "tool": "load_game", "args": {"save": "S032-end"},
+                    "result": "load_game: done — loaded=S032-end"}
+        self.assertTrue(P.ended_on_save(self.S092_END[:2] + (by_label,), save))
+
+    def test_relaunches_when_the_last_session_ended_on_the_older_save(self):
+        # S092 09:05: the mod-snapshot relaunch was skipped ("S090-end is older than S092's start") although S092
+        # ended on load_game S090-end with nothing changed after it
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=10.0, last_started=50.0,
+                             mod_path=str(P.MOD_DIR), acts=self.S092_END)
+            self.assertIn("loads the mod from", r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [1])
+            self.assertTrue(any("ended on load_game S032-end with nothing changed after it" in m for m in self.logs))
+        with tempfile.TemporaryDirectory() as td:   # one action after the load: skipped as before
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=10.0, last_started=50.0,
+                             mod_path=str(P.MOD_DIR),
+                             acts=self.S092_END + ({"t": 66.0, "tool": "equip_best", "result": "ok"},))
+            self.assertIsNone(r.maybe_relaunch(False, 30))
             self.assertEqual(self.killed, [])
             self.assertTrue(any("lose play" in m for m in self.logs))
 

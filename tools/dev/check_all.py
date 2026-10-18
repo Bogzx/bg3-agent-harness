@@ -282,12 +282,41 @@ def lua_str(s: str) -> str:
     return f"[{'=' * n}[{s}]{'=' * n}]"
 
 
+# The mod's busy gate (UI.lua UI.BUSY_ERR, act A23): for 200 ms after a slow or refused UI call every client UI read
+# raises at once. Right after the runner's hot reload (S092 boundary, 09:06:07) the one-shot confirm read met it: a
+# false FAIL. Client reads retry it this long; jobs and presses (ui.waypoints, ui.map_close) don't: twice = 2 presses.
+BUSY_ERR = "bg3le: UI busy"
+BUSY_RETRY_S, BUSY_RETRY_SLEEP_S = 2.0, 0.25
+
+
+def busy_retry(fn, *args, **kwargs):
+    """fn(*args, **kwargs), called again while it raises the busy gate's error, for up to BUSY_RETRY_S."""
+    end = time.monotonic() + BUSY_RETRY_S
+    while True:
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001 - only the busy error is retried
+            if BUSY_ERR not in str(e) or time.monotonic() >= end:
+                raise
+        time.sleep(BUSY_RETRY_SLEEP_S)
+
+
 def client_json(g, body: str, timeout: float = 8.0):
     """Run a client chunk (sets `out`) with A = UIActions, SV = Services; return decoded JSON."""
     code = ("local B = Mods.BG3AI.BG3AI\nlocal A, SV = B.UIActions, B.Services\nlocal out\n" + body +
             "\nreturn Ext.Json.Stringify(out, { Beautify = false })")
-    raw = g.eval(code, context="client", timeout=timeout)
+    raw = busy_retry(g.eval, code, context="client", timeout=timeout)
     return json.loads(raw) if raw not in ("", "nil") else None
+
+
+def ui_state(g) -> dict:
+    """ui.state through the busy gate; {} when the game doesn't answer (as try_rpc)."""
+    from bg3ai.game import GameError
+    try:
+        ui = busy_retry(g.rpc, "ui.state", {}, context="client")
+    except GameError:
+        return {}
+    return ui if isinstance(ui, dict) else {}
 
 
 KEYS_LUA = r"""
@@ -361,7 +390,7 @@ def check_confirm(g) -> Row:
     if not box.get("yes"):
         return Row("confirm", "FAIL", f"{box.get('name')} [{btns}]: no button answers 'yes'")
     try:
-        dry = g.rpc("ui.confirm", {"answer": "yes", "dry": True}, context="client")
+        dry = busy_retry(g.rpc, "ui.confirm", {"answer": "yes", "dry": True}, context="client")
         via = dry.get("via") if isinstance(dry, dict) else dry
     except Exception as e:  # noqa: BLE001 - reported, not raised
         return Row("confirm", "FAIL", f"{box.get('name')} [{btns}]: ui.confirm dry failed: {e}")
@@ -388,8 +417,7 @@ WAYPOINTS_WAIT_S = 12.0
 
 
 def screen_now(g) -> str | None:
-    ui = g.try_rpc("ui.state", {}, context="client", default={}) or {}
-    return ui.get("screen") if isinstance(ui, dict) else None
+    return ui_state(g).get("screen")
 
 
 def settle_screen(g, want: str = "game", timeout: float | None = None) -> str | None:
@@ -419,8 +447,7 @@ def check_waypoints(g) -> Row:
     unlocked = (g.rpc("state.map") or {}).get("waypoints") or []
     if not unlocked:
         return Row("waypoints", "PASS", "no waypoint unlocked yet (nothing to list)")
-    ui = g.try_rpc("ui.state", {}, context="client", default={}) or {}
-    screen = ui.get("screen", "?") if isinstance(ui, dict) else "?"
+    screen = ui_state(g).get("screen", "?")
     combat = any((p or {}).get("in_combat") for p in st.get("party") or []) or st.get("in_combat")
     if screen not in QUIET_SCREENS or combat:
         return Row("waypoints", "WARN", f"skipped the map UI ({'in combat' if combat else 'screen ' + screen}); "

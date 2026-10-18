@@ -595,6 +595,38 @@ def agent_quicksaves(actions: list[dict], owner: str | None) -> list[str]:
     return out
 
 
+# MCP tools that never change the game: observations, notes/memory, saves, and waits on jobs that other (logged)
+# calls started. Batch wrappers (latency.BATCH_TOOLS) don't either: each of their steps is a record of its own.
+STATE_KEEPING_TOOLS = {
+    "get_status", "look", "get_party", "get_character", "get_actions", "get_nearby", "look_at", "get_inventory",
+    "get_journal", "get_map", "get_frontier", "get_layout", "route", "get_explored", "path_preview",
+    "get_combat_state", "get_dialogue", "get_events", "screenshot", "zoom", "end_combat_report", "note",
+    "memory_list", "memory_read", "memory_search", "memory_write", "memory_edit", "memory_append", "session_start",
+    "end_session", "get_level_up_options", "ability_preview", "ui_dump", "character_creation_options",
+    "list_saves", "save_game", "save_game.bg", "wait_for", "cancel_queue", "recall", "wiki_search", "wiki_page",
+    "session_clock",
+}
+REFUSED_PREFIXES = ("FAILED", "NOT READY", "REFUSED")   # the bridge's not-ok results (server._log)
+
+
+def ended_on_save(actions: list[dict], save: Save) -> bool:
+    """True when the session's tool log (actions.jsonl records since its start, oldest first) ends with a load_game
+    of `save` after which nothing changed the game: every later call keeps the state (STATE_KEEPING_TOOLS, a batch
+    wrapper) or was refused. The game then stands exactly at `save`, so a relaunch onto it loses nothing although
+    the save predates the session. S091 + S092 both ended on load_game S090-end, and the S24 mod-snapshot relaunch
+    was skipped at 09:05 ("older than S092's start"). An unknown tool counts as a change."""
+    loads = [i for i, a in enumerate(actions) if a.get("tool") == "load_game"]
+    if not loads:
+        return False
+    last = actions[loads[-1]]
+    m = re.match(r"load_game: done — loaded=(\S+)", str(last.get("result") or ""))
+    arg = str((last.get("args") or {}).get("save") or "")
+    if not m or m.group(1) != save.label or ("__" in arg and arg != save.folder):
+        return False
+    return all(a.get("tool") in STATE_KEEPING_TOOLS or a.get("tool") in latency.BATCH_TOOLS
+               or str(a.get("result") or "").startswith(REFUSED_PREFIXES) for a in actions[loads[-1] + 1:])
+
+
 def foreign_use_since(save: Save, saves: list[Save], actions: list[dict], game_started: float | None,
                       runner_saves: set[str], prefix: str = SAVE_PREFIX) -> str | None:
     """Why the running game may no longer be at `save` (this playthrough's newest save), or None.
@@ -2774,7 +2806,8 @@ class Runner:
     def maybe_relaunch(self, first: bool, minutes: float = 0.0) -> str | None:
         """Between sessions: kill a game process that relaunch_reason() condemns for the next session (`minutes`
         long, plus the fight hold), so ensure_game() launches a fresh one with the newest save. Never kills when the relaunch can't happen (Steam not offline: the launch guard
-        would refuse) or would lose play (the newest save is older than the last session's start). -> the reason."""
+        would refuse) or would lose play (the newest save is older than the last session's start, unless that session
+        ended on a load_game of it: ended_on_save). -> the reason."""
         if self.opt.dry_run or not port_open():
             return None
         if first and not (self.owns_game() or self.opt.take_over):
@@ -2803,9 +2836,12 @@ class Runner:
             log(f"game relaunch wanted ({why}) but this playthrough has no save to load: skipped")
             return None
         if last and save.mtime < last.get("started", 0):
-            log(f"game relaunch wanted ({why}) but the newest save {save.label} is older than {last['session']}'s "
-                "start: skipped (it would lose play)")
-            return None
+            if not ended_on_save(read_actions_since(last.get("started", 0)), save):
+                log(f"game relaunch wanted ({why}) but the newest save {save.label} is older than {last['session']}'s "
+                    "start: skipped (it would lose play)")
+                return None
+            log(f"the newest save {save.label} is older than {last['session']}'s start, but {last['session']} ended on "
+                f"load_game {save.label} with nothing changed after it: the game stands at that save")
         ok, steam_why = steam_ready()
         if not ok:
             log(f"game relaunch wanted ({why}) but Steam is not offline ({steam_why}): keeping the running game")
