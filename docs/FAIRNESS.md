@@ -21,9 +21,11 @@ Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendere
 
 ## Auditing
 * **Per-session audit** (`runner/fairness.py`, a section of every `Sxxx.triage.md`): scans every game-tool result
-  the agent got for raw GUIDs, DCs outside the roll screen and the pickpocket window, passive-roll subjects, story-flag/template names and
-  engine status ids and waypoint/level ids (LEAK), and hidden-state words on entity lines (CHECK). Memory, wiki and
-  screenshot results are skipped. `python3 runner/fairness.py runtime/sessions/<run>/Sxxx` prints it alone.
+  the agent got, and the runner's prompts (the `.log`'s `[prompt]` lines), for raw GUIDs, DCs outside the roll screen and the pickpocket window, passive-roll subjects, story-flag/template names,
+  engine status ids, waypoint/level ids, side-channel flags (`unseen_combatants`, `geo_gen`), puzzle/lock verdicts
+  from story data, an unseen target's fate and unlocalised engine text (LEAK), and hidden-state words on entity lines
+  (CHECK). Memory, wiki and screenshot results are skipped. It is lexical: paths, maps and refusals built from hidden
+  data pass it (audit C1, 2026-10-18). `python3 runner/fairness.py runtime/sessions/<run>/Sxxx` prints it alone.
 * **Where the game itself shows a DC** (checked in the game's XAML, Game.pak + Patch8 overrides, 2026-10-17):
   the roll screen (`Library/DiceAnimation.xaml`: `Roll.DifficultyCheck`, hidden when `Roll.ShowDC` is false, which
   is how `DIALOGUE_DC_HIDE` reaches it; lockpick, disarm and dialogue checks all use it) and the pickpocket window
@@ -44,6 +46,10 @@ Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendere
   non-hidden NPCs far away. The screenshot tool covers that gap fairly.
 * Examine-panel data (HP, AC, ability scores, resistances) is exported for visible creatures because the
   game shows it to every player via Examine.
+* Operator text the agent reads (`knowledge/harness-news.md`, `tools.md`, tool docstrings) describes tool behaviour
+  only: never a place, route, puzzle, item or encounter from a playthrough, and examples are made up (user,
+  2026-10-18; bridge/tests/test_tool_docs.py guards the names that leaked). Game facts learned in a run go to
+  research/ or docs/.
 * The Faith-Leap Trial's floor mosaic is transcribed as a text picture (get_layout: its shape, 1 m per char,
   N up, no coordinates). No route along it and no warnings or refusals from the hidden platforms: a misstep
   has its in-game consequence (user, 2026-10-18).
