@@ -1009,6 +1009,11 @@ function S.combat(ctx)
                                 -- is current together; a member that already ended
                                 -- keeps IsActiveCombatTurn with RequestedEndTurn set.
                                 local pending = BG3AI.Guard and BG3AI.Guard.end_pending and BG3AI.Guard.end_pending(u)
+                                -- S087: a stunned (INCAPACITATED) member's open turn passes by itself (Guard.turn_passes)
+                                local passes = tb.IsActiveCombatTurn and ctx.is_party[u] and not tb.RequestedEndTurn
+                                    and not pending and BG3AI.Guard and BG3AI.Guard.turn_passes
+                                    and BG3AI.Guard.turn_passes(u)
+                                if passes then o.passes = passes; pending = true end
                                 if tb.IsActiveCombatTurn then
                                     o.is_current = true
                                     if tb.RequestedEndTurn or pending then

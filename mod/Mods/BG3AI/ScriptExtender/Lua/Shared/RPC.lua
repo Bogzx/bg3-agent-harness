@@ -69,7 +69,19 @@ function BG3AI.rpc(json)
         Mem.crumb(req.op .. (p and string.format(" (%s,%s,%s)", tostring(p[1]), tostring(p[2]), tostring(p[3])) or "")
             .. (a.target and (" " .. tostring(a.target)) or ""))
     end
+    local UI = BG3AI.UI
+    local hits, job0 = UI and UI.busyHits, RPC.nextJob
     local ok2, res = pcall(fn, req.args or {})
+    if hits and UI.busyHits ~= hits then
+        -- a UI read met the busy UI (Client/UI.lua UI.busy): no answer built from refused reads; a job the op
+        -- started on them is dropped
+        for id = job0, RPC.nextJob - 1 do
+            local j = RPC.jobs[id]
+            if j then RPC.finish_job(j, "interrupted", nil, UI.BUSY_ERR) end
+        end
+        return encode({ ok = false, error = UI.BUSY_ERR .. ": the game's UI is busy (a rest/travel/load transition); "
+            .. "retry in a moment" })
+    end
     if not ok2 then
         return encode({ ok = false, error = tostring(res) })
     end
@@ -143,6 +155,9 @@ end
 
 function RPC.finish_job(job, status, result, err)
     if job.status ~= "running" then return end
+    -- its on_tick met the busy UI this tick: whatever it concluded came from refused reads; it ticks again
+    local tk = RPC.ticking
+    if tk and tk.job == job and BG3AI.UI and BG3AI.UI.busyHits ~= tk.hits then return end
     job.status = status
     job.result = result
     job.error = err
@@ -190,9 +205,19 @@ local function tick_jobs()
     local t = now_ms()
     for _, job in pairs(RPC.jobs) do
         if job.status == "running" then
-            if job.on_tick then
+            -- S086 hang (Client/UI.lua UI.busy): while the UI is busy no job touches it; one that met it this tick
+            -- stays running (no verdict, no failure from the busy error) and ticks again once the UI is free
+            local UI = BG3AI.UI
+            if job.on_tick and not (UI and UI.busy and UI.busy()) then
+                local tk = { job = job, hits = UI and UI.busyHits }
+                RPC.ticking = tk
                 local ok, err = pcall(job.on_tick, job)
-                if not ok then RPC.finish_job(job, "failed", nil, tostring(err)) end
+                RPC.ticking = nil
+                if UI and UI.busyHits ~= tk.hits then
+                    job.busy_ticks = (job.busy_ticks or 0) + 1
+                elseif not ok then
+                    RPC.finish_job(job, "failed", nil, tostring(err))
+                end
             end
             if job.status == "running" and t > job.deadline then
                 if job.on_timeout then pcall(job.on_timeout, job) end

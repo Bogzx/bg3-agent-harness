@@ -15,6 +15,7 @@ from pathlib import Path
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
 from bg3ai import boxclick, server  # noqa: E402
+from bg3ai import game as game_mod
 from bg3ai.game import JobResult  # noqa: E402
 
 W, H = 1920, 1080
@@ -88,6 +89,10 @@ class FakeScreen:
         self.log.append((op, self.now()))
         if op == "ui.box_open":
             return {"state": "Running", "box": bool(self.box)}
+        if op == "sys.info":   # server reads of the transition wait after a rest/travel click (A23)
+            return {"game_state": "Running"}
+        if op == "camp.rest_flow":
+            return {"steps": ["end_day_ok"]}
         if op != "ui.confirm_probe":
             return {}  # incidental reads (_finish's level-up nudge reads state.status once a minute)
         if not self.box:
@@ -256,6 +261,8 @@ class BoxAct(Base):
         server._inp = lambda: self.scr
         self.addCleanup(setattr, server, "_inp", self.saved_inp)
         self.g.rpc = lambda op, args=None, context="server", **kw: self.scr.rpc(op, args or {})
+        self.addCleanup(setattr, server, "TRANSITION_SETTLE_S", server.TRANSITION_SETTLE_S)
+        server.TRANSITION_SETTLE_S = 0.0
 
     def test_long_rest_clicks_and_reruns(self):
         calls = []
@@ -296,6 +303,108 @@ class BoxAct(Base):
         out = server.confirm("yes")
         self.assertEqual(self.scr.clicks, [])
         self.assertIn("pressed=Yes", out)
+
+
+class RestTransition(Base):
+    """A23 (S086 05:17:45 hang): after the click on the rest/travel box, no client call at all until the server says
+    the transition is over (rest-flow answer, a conversation, a load back to Running, the party moved)."""
+
+    def setUp(self):
+        super().setUp()
+        boxclick._hits.clear()
+        self.scr = FakeScreen()
+        self.saved_inp = server._inp
+        server._inp = lambda: self.scr
+        self.addCleanup(setattr, server, "_inp", self.saved_inp)
+        for k, v in (("TRANSITION_POLL_S", 0.0), ("TRANSITION_SETTLE_S", 0.0)):
+            self.addCleanup(setattr, server, k, getattr(server, k))
+            setattr(server, k, v)
+        self.addCleanup(game_mod.release_client)
+        self.clicked = False
+        orig = self.scr.click
+
+        def click(x, y, **kw):
+            orig(x, y, **kw)
+            self.clicked = True
+        self.scr.click = click
+        self.log: list[tuple[str, str, bool]] = []   # (op, context, client held at the time)
+        self.flow = [{"steps": []}, {"steps": ["end_day_ok"]}]
+        self.state = ["Running"]
+
+        def rpc(op, args=None, context="server", **kw):
+            held = bool(game_mod.client_held())
+            self.log.append((op, context, held))
+            if context == "client":
+                if self.clicked and held:
+                    raise AssertionError(f"client call {op} during the transition")
+                if self.clicked and op in ("ui.box_open", "ui.confirm_probe"):
+                    raise AssertionError(f"{op} after the click: the box is being torn down")
+                return self.scr.rpc(op, args or {})
+            if op == "sys.info":
+                st = self.state.pop(0) if len(self.state) > 1 else self.state[0]
+                if st is None:
+                    raise server.NotReady("loading")
+                return {"game_state": st}
+            if op == "camp.rest_flow":
+                return self.flow.pop(0) if len(self.flow) > 1 else self.flow[0]
+            if op == "state.status":
+                return {"party": []}
+            return {}
+        self.g.rpc = rpc
+        self.jobs: list[tuple[str, bool]] = []
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            self.jobs.append((op, bool(game_mod.client_held())))
+            if len(self.jobs) == 1:
+                return JobResult("failed", {"needs_click": "yes", "question": "[ForceUpdate]"},
+                                 "the Yes press didn't close the game's question")
+            return JobResult("done", {"rest": "full", "supplies_used": 40})
+        self.g.run_job = run_job
+
+    def after_click(self):
+        i = next(i for i, (op, _c, _h) in enumerate(self.log) if op == "sys.info")
+        return self.log[i:]
+
+    def test_s086_long_rest_waits_on_the_server_only_after_the_click(self):
+        out = server.long_rest()
+        self.assertEqual(self.scr.pressed, "Yes")
+        self.assertTrue(out.startswith("long_rest: done"), out)
+        self.assertEqual([op for op, _ in self.jobs], ["ui.long_rest", "ui.long_rest"])
+        self.assertFalse(self.jobs[1][1], "the follow-up job starts after the hold is released")
+        after = self.after_click()
+        self.assertEqual({c for _op, c, _h in after if _h}, {"server"}, after)
+        self.assertNotIn("ui.box_open", [op for op, _c, _h in self.log])
+        self.assertIn("camp.rest_flow", [op for op, _c, _h in after])
+        self.assertEqual(server._TRANSITION_LAST.get("transition"), "the game answered (end_day_ok)")
+        self.assertEqual(game_mod.client_held(), "")
+
+    def test_s086_a_camp_scene_after_the_yes_stops_without_reading_the_ui(self):
+        self.flow = [{"steps": [], "can_rest": {"blocked": [{"name": "Claude", "flags": ["Dialog"]}]}}]
+        out = server.long_rest()
+        self.assertEqual([op for op, _ in self.jobs], ["ui.long_rest"])
+        self.assertIn("a conversation started (a camp scene)", out)
+        self.assertTrue(out.startswith("long_rest: STOPPED"), out)
+
+    def test_a_load_back_to_running_ends_the_wait(self):
+        self.state = ["Running", "UnloadLevel", None, "LoadLevel", "Running"]
+        r = server._transition_wait("fast_travel")
+        self.assertEqual(r["transition"], "the game loaded")
+
+    def test_no_word_from_the_game_goes_on_after_the_budget(self):
+        self.flow = [{"steps": ["requested", "gathered"]}]
+        self.addCleanup(setattr, server, "TRANSITION_MAX_S", server.TRANSITION_MAX_S)
+        server.TRANSITION_MAX_S = 0.05
+        r = server._transition_wait("long_rest")
+        self.assertEqual(r["transition"], "no word from the game")
+
+    def test_the_hold_refuses_client_evals_at_once(self):
+        g = game_mod.Game(port=1)   # nothing listens: a client eval would try to connect
+        game_mod.hold_client(5.0, "long_rest: test")
+        with self.assertRaises(game_mod.NotReady) as cm:
+            g.eval("return 1", "client")
+        self.assertIn("held", str(cm.exception))
+        game_mod.release_client()
+        self.assertEqual(game_mod.client_held(), "")
 
 
 class ClickButton(Base):
@@ -344,6 +453,20 @@ class ClickButton(Base):
         self.assertEqual(len(states), 0)
         server.click(0.6, 0.4, "right")   # a right click or a hover reads nothing
         server.click(0.6, 0.4, "none")
+
+    def test_a_world_click_while_walking_is_no_spell_in_hand(self):
+        # S086-r1 05:35-05:38 / S087 (14x): move clicks on the world read `IN HAND: a spell` (armed by a weak signal,
+        # no spell named) while the party simply walked
+        from bg3ai import hotbar
+        states = [{"armed": True, "armed_by": "preview", "spell": None},
+                  {"armed": True, "armed_by": "spell_task"},
+                  {"armed": False, "upcast_open": True, "spell": "Target_CureWounds"}]
+        saved = hotbar.cast_state
+        hotbar.cast_state = lambda game, char: states.pop(0)
+        self.addCleanup(setattr, hotbar, "cast_state", saved)
+        self.assertNotIn("IN HAND", server.click(0.62, 0.2))
+        self.assertNotIn("IN HAND", server.click(0.47, 0.22))
+        self.assertIn("IN HAND: Target_CureWounds", server.click(0.5, 0.9))   # the upcast picker is open: a spell
 
     def test_unknown_button_refused(self):
         out = server.click(0.1, 0.2, "middle")

@@ -227,7 +227,12 @@ G.end_requested = G.end_requested or {}
 G.END_REQUEST_TTL_MS = 120000
 -- A pending end that looks dropped (end_pending): g -> {req = its end_requested time, since = first seen so}
 G.end_alone = G.end_alone or {}
-G.END_DROP_MS = 15000
+-- S087 05:57:40-05:57:58: 18 s from the group's last end (Claude's) to the game's TurnEnded for all three (e4, e1, e2);
+-- S084 04:36:53 >= 16 s. 15 s forgot the earlier members' ends before the game was done.
+G.END_DROP_MS = 30000
+-- An end the game itself showed (our end_turn finished because its turn flags changed, not on our say-so): g -> the
+-- end_requested stamp it confirmed. Never dropped as "alone" (the S052 rule is for requests the game never took).
+G.end_confirmed = G.end_confirmed or {}
 -- vis V17: the os.clock() fallback this had would itself raise in the game (bg3le has no os); the same clock as
 -- RPC.now_ms, and an error from it surfaces as the caller's (fail closed)
 local function now_ms()
@@ -290,6 +295,7 @@ function G.end_pending(uuid)
         -- one by one (~2 s apart, the group's end-of-turn work up to ~10 s after the last member's EndTurn): forgetting
         -- then showed an ended member as acting and the next combat_turn was refused. Forget only when it lasts.
         if not others then
+            if G.end_confirmed[g] == t then return true end
             local a = G.end_alone[g]
             if not a or a.req ~= t then
                 G.end_alone[g] = { req = t, since = now_ms() }
@@ -1618,6 +1624,110 @@ function G.los_ok(char, target, d)
     return G.item_ray_los(char, target) == true
 end
 
+-- S085 05:03:37: Gale's Fireball at a point ~10 m below (-27,17,736) from the Guildhall's upper floor hit the ledge
+-- and burst on e606 Lady Croup, a neutral Guild ally on the caster's floor (listed in get_combat_state): killed. A
+-- player sees the aim preview before the click: the path, where it bursts, who stands in the ring. A harmful area
+-- spell (radius = ExplodeRadius / AreaRadius) is refused, saying where it bursts and who is in the blast there, when
+-- the blast would catch a party member, ally or neutral the party sees, or when a projectile aimed at a point bursts
+-- farther than its radius from it (the straight eye ray to the point hits something first). force=true casts anyway.
+-- The path is the straight line from the caster's eye; the game's projectile may arc. No usable ray API: no path
+-- check (never refused for that), the ring at the point is still checked.
+G.BLAST_TYPES = { Projectile = true, Target = true }
+G.BLAST_LIFT_M = 0.5  -- the path ray ends this far above the point (a floor point grazes its own floor)
+G.BLAST_SLACK_M = 1.0 -- a hit this close to the ray's end is the point itself
+
+function G.blast_radius(st)
+    local r = 0
+    for _, f in ipairs({ "ExplodeRadius", "AreaRadius" }) do
+        local ok, v = pcall(function() return tonumber(st[f]) end)
+        if ok and v and v > r then r = v end
+    end
+    return r
+end
+
+-- Where a projectile aimed at `aim` bursts: aim (clear way or no ray API), else the eye ray's first hit.
+-- Returns the point, blocked, the hit entity's uuid.
+function G.blast_path(char, aim)
+    local V = BG3AI.Visibility
+    local cast = Ext.Level and Ext.Level.RaycastClosest
+    local p = G.pos(char)
+    if type(V) ~= "table" or V.rayBroken or type(V.rayCalibrated) ~= "function" or not cast or not p then
+        return aim, false
+    end
+    local okc, cal = pcall(V.rayCalibrated, { pos = p })
+    if not (okc and cal) then return aim, false end
+    local eye = { p[1], p[2] + (V.EYE_H or 1.6), p[3] }
+    local tgt = { aim[1], aim[2] + G.BLAST_LIFT_M, aim[3] }
+    local ok, hit = pcall(cast, eye, tgt, V.RAY_TYPE, V.RAY_INCLUDE, V.RAY_EXCLUDE, 0)
+    if not ok or hit == nil then return aim, false end
+    local len, d = U.dist(eye, tgt), ray_hit_dist(hit, eye)
+    if not d or d >= len - G.BLAST_SLACK_M then return aim, false end
+    local okp, hp = pcall(function() local q = hit.Position; return { q[1], q[2], q[3] } end)
+    if not (okp and type(hp[1]) == "number") then
+        local f = d / len
+        hp = { eye[1] + (tgt[1] - eye[1]) * f, eye[2] + (tgt[2] - eye[2]) * f, eye[3] + (tgt[3] - eye[3]) * f }
+    end
+    return hp, true, ray_hit_uuid(hit)
+end
+
+-- Living characters the party sees within r of pt (skip: the cast's own target), nearest first:
+-- {uuid, name, side = party/ally/neutral/hostile, d}. nil without Visibility.
+function G.in_blast(char, pt, r, skip)
+    local V = BG3AI.Visibility
+    if type(V) ~= "table" or type(V.charactersNear) ~= "function" then return nil end
+    local ctx = V.context()
+    local out = {}
+    for _, row in ipairs(V.charactersNear(pt, r)) do
+        local u = G.guid(V.entityUuid(row[1]) or "")
+        if u and u ~= skip and not G.is_dead(u)
+            and (G.is_party(u) or V.characterVisible(ctx, u, row[1], row[2])) then
+            local side = (G.is_party(u) and "party") or (b(G.q("IsEnemy", char, u)) and "hostile")
+                or (V.isAlly(ctx, u) and "ally") or "neutral"
+            out[#out + 1] = { uuid = u, name = V.name(u), side = side, d = row[3] }
+        end
+    end
+    table.sort(out, function(x, y) return x.d < y.d end)
+    return out
+end
+
+local function fmt_pos(p) return string.format("(%.1f,%.1f,%.1f)", p[1], p[2], p[3]) end
+
+function G.blast_risk(char, st, flags, spell, target, pos)
+    local kind = tostring(st.SpellType or "")
+    if not flags.IsHarmful or not G.BLAST_TYPES[kind] then return end
+    local r = G.blast_radius(st)
+    local aim = pos or (target and not G.same(char, target) and G.pos(target))
+    if r <= 0 or not aim then return end
+    local at, blocked, what = aim, false, nil
+    if pos and kind == "Projectile" then at, blocked, what = G.blast_path(char, pos) end
+    local short = blocked and U.dist(at, aim) > r
+    local hit = G.in_blast(char, at, r, target and G.guid(target)) or {}
+    local friends, hostile = {}, 0
+    for _, h in ipairs(hit) do
+        if h.side == "hostile" then hostile = hostile + 1
+        else friends[#friends + 1] = string.format("%s %s (%s, %.1f m)", h.uuid, h.name, h.side, h.d) end
+    end
+    if #friends == 0 and not short then return end
+    local name = U.loca(st.DisplayName) or spell
+    local head
+    if blocked then
+        local on = what and b(G.q("IsItem", what)) and BG3AI.Visibility.name(what)
+        local p = G.pos(char)
+        head = string.format("%s: the way to that point is blocked: it would burst at %s%s, %.1f m from the caster"
+            .. " and %.1f m from the point", name, fmt_pos(at), on and on ~= "Unknown" and (" on " .. on) or "",
+            p and U.dist(p, at) or 0, U.dist(at, aim))
+    else
+        head = string.format("%s at %s", name, target and "that target" or "that point")
+    end
+    local ring = string.format("in its blast (%g m) there: ", r)
+    if #friends > 0 then
+        ring = ring .. table.concat(friends, ", ") .. (hostile > 0 and (" and " .. hostile .. " hostile") or "")
+    else
+        ring = ring .. (hostile > 0 and (hostile .. " hostile only") or "nobody")
+    end
+    G.refuse(head .. "; " .. ring .. ": aim elsewhere or move first, or force=true to cast anyway")
+end
+
 -- Extra Attack (live stats, 2026-10-10): after a weapon attack the ExtraAttack passive applies EXTRA_ATTACK,
 -- whose boost is UnlockSpellVariant(ExtraAttackCheck(), ModifyUseCosts(Replace,ActionPoint,0,0,ActionPoint))
 -- and which goes on the next cast (RemoveEvents OnSpellCast): the next weapon attack costs no action. We
@@ -1690,6 +1800,15 @@ function G.blocking_status(char, with_acting)
         if ok and G.BLOCKING_STATUS_TYPES[typ] and (with_acting or not G.ACTING_STATUSES[s.id]) then return { name = s.name, type = typ } end
     end
     return nil
+end
+
+-- S087 06:02:51-06:05:57: Mind Blast stunned Wyll, Gale and Shadowheart; their open turns read as acting, so Claude's
+-- sent-ahead combat_turn was refused "e3 Shadowheart (yours) must act first" (and the agent was told to plan stunned
+-- Wyll), while the game passes such a turn by itself. A party member whose INCAPACITATED status (Stunned, Paralysed,
+-- Asleep …) takes the whole turn: its turn passes (state.combat `passes`: not acting, never blocking). Its name, or nil.
+function G.turn_passes(char)
+    local blk = G.blocking_status(char)
+    return blk and blk.type == "INCAPACITATED" and blk.name or nil
 end
 
 -- Statuses that take a party member out of the fight, listed on every combat read (state.combat `disabled`) with
@@ -1850,6 +1969,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         if st_type ~= "Shout" and not G.same(char, target) and not G.los_ok(char, target, d) then
             G.refuse("no line of sight to target")
         end
+        if not force then G.blast_risk(char, st, flags, spell, target, nil) end
     elseif pos then
         G.point_ok(char, pos)
         local p = G.pos(char)
@@ -1877,6 +1997,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
             G.refuse(string.format("target point is out of range (%.1f m, range %.1f m): move closer first",
                 U.dist(p, pos), range))
         end
+        if not force and spell ~= G.JUMP_SPELL then G.blast_risk(char, st, flags, spell, nil, pos) end
     end
     return { stats = st, costs = costs, payers = payers, snapshot = snap, level = level, range = range,
         extra_attack = extra_attack or nil }

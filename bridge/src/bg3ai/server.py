@@ -25,7 +25,7 @@ from . import actq, areablock, compact, delta, economy, leveling, macros, metric
 from . import companions, debrief, lessons, longnav, lore, memtools, naming, navhints, rules
 from . import boxclick, hotbar, spellprep, twostep
 from . import route as route_text
-from .game import Game, GameError, JobResult, NotReady
+from .game import Game, GameError, JobResult, NotReady, hold_client, release_client
 from .render import Handles
 
 REPO = Path(__file__).resolve().parents[3]
@@ -2928,6 +2928,84 @@ def _inp():
     return _inp_client["c"]
 
 
+# A23 (S086 05:17:45 hang; impl-setup S17/S21): our click on the rest/travel Yes/No box starts the game's transition
+# (End the Day, a camp scene, a region load). S086: after the click, ui.box_open polls and then the follow-up
+# ui.long_rest job read the client UI while the game tore the box down: 954 frame-lock timeouts in two client Ticks,
+# the story thread stopped answering, FAULT hang. From the click on, no client call at all (game.hold_client) until
+# the server says the transition is over: a rest-flow answer (end_day_ok, rest_started, a refusal), a conversation
+# starting (the rest check's Dialog flag), the server's game state back to Running after a load, or the leader moved
+# (a trip within the level); then TRANSITION_SETTLE_S with the server up. No word in TRANSITION_MAX_S: go on anyway.
+TRANSITION_TOOLS = ("long_rest", "short_rest", "fast_travel")
+TRANSITION_MAX_S = 20.0
+TRANSITION_SETTLE_S = 1.0
+TRANSITION_POLL_S = 0.25
+_TRANSITION_DONE = ("end_day_ok", "end_day_failed", "rest_started", "rest_start_failed", "rest_cancelled",
+                    "gather_failed", "ready_failed", "rest_denied")
+_TRANSITION_LAST: dict = {}
+
+
+def _transition_wait(tool: str) -> dict:
+    """Server reads only (sys.info, camp.rest_flow, state.status) until the transition after the box click is over.
+    -> {transition: what ended it, transition_s}."""
+    t0 = time.monotonic()
+
+    def srv(op: str, a: dict | None = None) -> Any:
+        try:
+            return game.rpc(op, a or {}, context="server", timeout=3.0)
+        except GameError:
+            return None  # a load resets the server Lua: no answer = still loading
+
+    pos0 = _lead_pos(srv("state.status")) if tool == "fast_travel" else None
+    left, why = False, "no word from the game"
+    while time.monotonic() - t0 < TRANSITION_MAX_S:
+        info = srv("sys.info")
+        gs = info.get("game_state") if isinstance(info, dict) else None
+        if gs not in ("Running", "Paused"):
+            left = True
+        elif left:
+            why = "the game loaded"
+            break
+        elif tool == "short_rest" and time.monotonic() - t0 >= TRANSITION_SETTLE_S:
+            why = "settled"
+            break
+        elif tool == "long_rest":
+            flow = srv("camp.rest_flow", {"since_ms": int((time.monotonic() - t0) * 1000) + 300})
+            steps = [str(x) for x in (flow.get("steps") or [])] if isinstance(flow, dict) else []
+            done = [x for x in steps if _rest_step(x) in _TRANSITION_DONE]
+            can = flow.get("can_rest") if isinstance(flow, dict) else None
+            if done:
+                why = f"the game answered ({_rest_step(done[-1])})"
+                break
+            if any("Dialog" in (r.get("flags") or []) for r in (can or {}).get("blocked") or [] if isinstance(r, dict)):
+                why = "a conversation started"
+                break
+        elif tool == "fast_travel" and pos0:
+            p = _lead_pos(srv("state.status"))
+            if p and math.dist(p[:3], pos0[:3]) > 3.0:
+                why = "the party moved"
+                break
+        time.sleep(TRANSITION_POLL_S)
+    if why not in ("settled", "no word from the game"):
+        time.sleep(TRANSITION_SETTLE_S)
+    out = {"transition": why, "transition_s": round(time.monotonic() - t0, 1)}
+    _TRANSITION_LAST.clear()
+    _TRANSITION_LAST.update(out, tool=tool)
+    return out
+
+
+def _transition_after(tool: str):
+    """boxclick's after-click step for a transition box: hold every client call, wait on the server, release."""
+    def after(res: dict) -> dict:
+        hold_client(TRANSITION_MAX_S + TRANSITION_SETTLE_S + 5.0, f"{tool}: the game is changing screens after the Yes")
+        try:
+            res.update(_transition_wait(tool))
+        finally:
+            release_client()
+        res["closed"] = True
+        return res
+    return after
+
+
 def _box_act(tool: str, op: str, args: dict, wait_s: float, rounds: int = 3, on_start=None) -> str:
     """_act for the client jobs that answer the game's Yes/No box (rests, fast travel, confirm). When the mod
     says its button press didn't land (needs_click; live S013/S014 "[ForceUpdate] Yes/No" stayed open), click
@@ -2942,9 +3020,15 @@ def _box_act(tool: str, op: str, args: dict, wait_s: float, rounds: int = 3, on_
         inp = _inp() if ans else None
         if inp is None:
             break
-        c = boxclick.click_box(lambda o, a: game.rpc(o, a, context="client"), inp, str(ans))
+        c = boxclick.click_box(lambda o, a: game.rpc(o, a, context="client"), inp, str(ans),
+                               after=_transition_after(tool) if tool in TRANSITION_TOOLS else None)
         q = res.get("question")
         notes.append(boxclick.describe(c) + (f" (the question: {q})" if q and "[ForceUpdate]" not in str(q) else ""))
+        if c.get("transition") == "a conversation started":
+            # S086: the Yes started a camp scene; the agent answers it (no client read of the rest screen meanwhile)
+            out = (f"{tool}: STOPPED — {notes.pop()}; a conversation started (a camp scene): finish it (get_dialogue, "
+                   f"dialogue_advance / choose_dialogue), then {tool} again")
+            break
         if tool in ("confirm", "fast_travel") or not (c.get("closed") or c.get("shown") or c.get("gone")):
             if tool != "long_rest" and tool != "short_rest" and not c.get("error"):
                 out = f"{tool}: done — {notes.pop()}" + ("; travelling" if tool == "fast_travel" else "")
@@ -3669,6 +3753,7 @@ def fast_travel(waypoint: str) -> str:
             _batch["last"] = "failed"
         return _finish("fast_travel", {"waypoint": waypoint}, (left + "\n" if left else "") + split, time.monotonic())
     watch = _ReadyCheckWatch()
+    _TRANSITION_LAST.clear()
     with watch:
         out = _box_act("fast_travel", "ui.fast_travel", {"waypoint": waypoint}, wait_s=70, on_start=watch.on_start)
     if watch.failed is not None:
@@ -3683,7 +3768,10 @@ def fast_travel(waypoint: str) -> str:
     if out.rstrip().endswith("travelling"):
         # The box needed a mouse click (region change): the mod's job had stopped there, so nothing watched the
         # trip. Live 11:4x: "travelling" came back mid-load and the next reads saw the loading screen.
-        if _load_started(10.0):
+        if _TRANSITION_LAST.get("tool") == "fast_travel" and _TRANSITION_LAST.get("transition") in (
+                "the game loaded", "the party moved"):
+            out += "; arrived" if _settle_hud(20) else "; the HUD isn't back yet (wait_for idle)"
+        elif _load_started(10.0):
             arrived = _wait_running(120) and _settle_hud(20)
             out += "; arrived" if arrived else "; still not back in the game 2 min later (wait_for idle)"
     if "fast_travel: done" in out or out.rstrip().endswith("arrived"):
@@ -4461,7 +4549,7 @@ def _reaction_index(r: dict | None, name: str) -> int | str:
 def use_ability(ability: str, target: str = "", x: float | None = None, y: float | None = None,
                 z: float | None = None, who: str | None = None, upcast: int = 0, targets: str | list[str] = "",
                 wait: bool = True, force: bool = False) -> str:
-    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: a list (or comma list) for multi-target spells, in click order (the same id twice = 2 darts/beams; all on one target = cast at it, which takes every beam); a cast may use only the first 2 (the result then says \"cast on the first 2 only\"). Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells: Dimension Door takes x,y,z = the landing (target = an ally beside you to bring, else you go alone); the Revivify spell takes target = the body; while their route is off they are refused: read a Scroll of Revivify instead. A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): it is read and its target clicked (default: who; targets = one click per beam/pick, e.g. Scorching Ray; x,y,z = the ground for a point/cone scroll: Cone of Cold, Misty Step, Fireball); in combat too, on the reader's turn for an action, like casting. A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway."""
+    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: a list (or comma list) for multi-target spells, in click order (the same id twice = 2 darts/beams; all on one target = cast at it, which takes every beam); a cast may use only the first 2 (the result then says \"cast on the first 2 only\"). Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells: Dimension Door takes x,y,z = the landing (target = an ally beside you to bring, else you go alone); the Revivify spell takes target = the body; while their route is off they are refused: read a Scroll of Revivify instead. A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): it is read and its target clicked (default: who; targets = one click per beam/pick, e.g. Scorching Ray; x,y,z = the ground for a point/cone scroll: Cone of Cold, Misty Step, Fireball); in combat too, on the reader's turn for an action, like casting. A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway. A harmful area spell (Fireball) whose blast would catch a party member, ally or neutral in sight, or that would burst short of its point (the way there blocked, e.g. a ledge), is refused with where it bursts and who is in the blast; force=true casts anyway."""
     char = _who(who)
     try:
         aid = _ability_id(char, ability)
@@ -4911,13 +4999,20 @@ def _wait_for_party_turn(max_s: float) -> str:
     st = game.try_rpc("state.status") or {}
     party = {c.get("uuid") for c in st.get("party") or [] if isinstance(c, dict)}
     deadline = time.monotonic() + max_s
+    passed: set = set()
+    notes: list[str] = []
+    seen, since = None, time.monotonic()
     while True:
         cs = game.try_rpc("state.combat") or {}
         if not cs.get("active"):
             return "combat is over"
         mine = turn.party_acting(cs, party)
         if mine:
-            return "\n".join([_now_turn_text(mine)] + turn.disabled_lines(cs, _label))
+            return "\n".join([_now_turn_text(mine)] + notes + turn.disabled_lines(cs, _label))
+        key = (cs.get("round"), cs.get("current"), tuple(turn.passing(cs)))
+        if key != seen:
+            seen, since = key, time.monotonic()
+        _end_passing(cs, since, passed, notes)
         ui = game.try_rpc("ui.state", context="client") or {}
         if ui.get("screen") in _PROMPT_SCREENS:
             _batch["last"] = "interrupted"
@@ -6166,7 +6261,7 @@ def _reactions_rpc(char: str, args: dict) -> Any:
         _reaction_prompt_block(char)
         sel = game.run_job("act.select", {"char": char}, wait_s=5)
         if sel.status != "done":
-            raise GameError(f"{_label(char)} could not be selected: {sel.error or sel.status}")
+            raise GameError(f"{_label(char)} could not be selected: {sel.error or sel.status}" + _enemy_turn_why(char))
     try:
         return _job_reply(game.rpc("ui.reactions", args, context="client"))
     except GameError as e:
@@ -6177,8 +6272,19 @@ def _reactions_rpc(char: str, args: dict) -> Any:
     _reaction_prompt_block(char)
     sel = game.run_job("act.select", {"char": char}, wait_s=5)
     if sel.status != "done":
-        raise GameError(f"{last} ({_label(char)} could not be selected: {sel.error or sel.status})")
+        raise GameError(f"{last} ({_label(char)} could not be selected: {sel.error or sel.status})" + _enemy_turn_why(char))
     return _job_reply(game.rpc("ui.reactions", args, context="client"))
+
+
+def _enemy_turn_why(char: str) -> str:
+    """S087 06:10:18 (and S069 02:43): set_reactions(Wyll) during the enemies' turns: the HUD keeps the member it has
+    while no party member is acting. Say so and when it works ('' when a party member is acting: another cause)."""
+    cs = game.try_rpc("state.combat") or {}
+    if not cs.get("active") or turn.party_acting(cs, _party_set()):
+        return ""
+    return (f". It is the enemies' turn: the HUD doesn't switch members until a party member's turn comes. Set "
+            f"{_label(char)}'s reactions on a party turn (its own, or after selecting it then), or the selected "
+            "member's now")
 
 
 def _reaction_prompt_block(char: str) -> None:
@@ -6321,7 +6427,10 @@ def _in_hand_note() -> str:
     another layout) and the reply said only `clicked left at 881,1004`: the next left click on the world would have
     cast it. A player sees the spell in hand (the cursor changes, its cell lights up): say which one."""
     st = hotbar.cast_state(game, None)
-    if not (st.get("armed") or st.get("upcast_open")):
+    # S086-r1/S087 (14x): plain clicks on the world while the party walked said `IN HAND: a spell`: one of the weaker
+    # armed signals (a task preview, the cursor task) fires for a walk too, and no spell was ever named. A spell in
+    # hand is one the game names (the hotbar's active slot or the client cast state), or the upcast picker open.
+    if not (st.get("upcast_open") or (st.get("armed") and st.get("spell"))):
         return ""
     what = st.get("spell") or "a spell"
     return (f"\nIN HAND: {what} (the next left click on the world casts it at the cursor; press_key ESCAPE puts it"
@@ -8126,7 +8235,7 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
         tried.append(text)
         if rep.skipped:
             continue
-        if rep.stop_kind not in (None, "failed") or turn.is_fatal(text):
+        if rep.stop_kind not in (None, "failed") or turn.is_fatal(text) or turn.needs_decision(text):
             lines.append(f"{name}: " + " → ".join(tried))
             if rep.stop_kind not in (None, "failed"):
                 lines.append(f"STOPPED: {_label(rep.stopped or '')}")
@@ -8458,7 +8567,29 @@ def _downed_text(u: str) -> str:
             "saving throw). Get it up from an ally's turn: Healing Word, Help (adjacent) or a potion.")
 
 
-def _wait_turn(ready, max_s: float, blocked=None, on_prompt=None, extend_s: float = 0.0) -> tuple[dict, str]:
+# S087: a stunned member's open turn the game itself passes; if it is still open this long with nothing else moving,
+# the wait ends it as a player would (End Turn for a character that can't act) and says so.
+PASS_END_S = 5.0
+
+
+def _end_passing(cs: dict, since: float, done: set, notes: list | None) -> None:
+    """End the open turns of passing (stunned) party members when nothing moved for PASS_END_S (once each)."""
+    if time.monotonic() - since < PASS_END_S or turn.acting(cs):
+        return
+    rows = {o.get("uuid"): o for o in cs.get("order") or [] if isinstance(o, dict)}
+    for u in turn.passing(cs):
+        if u in done:
+            continue
+        done.add(u)
+        r = game.run_job("act.end_turn", {"char": u}, wait_s=5)
+        if notes is not None:
+            why = rows.get(u, {}).get("passes") or "can't act"
+            notes.append(f"ended {_label(u)}'s turn ({why}: it can't act)" if r.status == "done"
+                         else f"{_label(u)}'s turn ({why}) did not end: {r.error or r.status}")
+
+
+def _wait_turn(ready, max_s: float, blocked=None, on_prompt=None, extend_s: float = 0.0,
+               notes: list | None = None) -> tuple[dict, str]:
     """combat_turn sent ahead (planned while enemies act): poll until ready(combat) or combat ends, a prompt
     needs an answer, blocked(combat) names why the turn can't come (another party member must act first),
     or max_s passes. on_prompt(ui) answers a prompt itself (returns True: keep waiting). Past max_s it waits up
@@ -8469,6 +8600,7 @@ def _wait_turn(ready, max_s: float, blocked=None, on_prompt=None, extend_s: floa
     deadline = t0 + max_s
     n = 0
     seen, moved, turns = None, float("-inf"), 0  # moved: when the acting combatant last changed during the wait
+    passed: set = set()
     while True:
         cs = game.try_rpc("state.combat") or {}
         if not cs.get("active") or ready(cs):
@@ -8486,6 +8618,7 @@ def _wait_turn(ready, max_s: float, blocked=None, on_prompt=None, extend_s: floa
         why = blocked(cs) if blocked else ""
         if why:
             return cs, why
+        _end_passing(cs, max(moved, t0), passed, notes)
         n += 1
         if n % 3 == 0:
             ui = game.try_rpc("ui.state", context="client") or {}
@@ -8899,6 +9032,12 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
                     want = None
     if want and want in turn.downed(cs):
         return _finish("combat_turn", {"who": who}, _downed_text(want), t0)
+    if want and want in turn.passing(cs):
+        # S087 06:02:48: "NOW e1's turn: plan it; also e2 Gale" for two Stunned members: nothing to play
+        why = next((o.get("passes") for o in cs.get("order") or [] if o.get("uuid") == want), None) or "can't act"
+        r = game.run_job("act.end_turn", {"char": want}, wait_s=5)
+        return _finish("combat_turn", {"who": who}, f"{_label(want)} is {why}: nothing to play, its turn passes ("
+                       + ("ended it" if r.status == "done" else f"the game passes it: {r.error or r.status}") + ")", t0)
     ready = (lambda c: want in turn.acting(c)) if want else (lambda c: bool(turn.party_acting(c, party)))
 
     def blocked(c: dict) -> str:
@@ -8934,7 +9073,7 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
 
     if not ready(cs) and wait_turn > 0:
         w0 = time.monotonic()
-        cs, why = _wait_turn(ready, wait_turn, blocked, on_prompt, extend_s)
+        cs, why = _wait_turn(ready, wait_turn, blocked, on_prompt, extend_s, answered)
         _remember_names(cs)
         _seen_sides(cs)
         if not cs.get("active"):

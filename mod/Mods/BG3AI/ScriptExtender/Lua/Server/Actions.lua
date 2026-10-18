@@ -1375,6 +1375,11 @@ end
 
 A.STORY_LOCKED = "clicked it: still locked (no lock to pick: the game opens it some other way, e.g. a lever, a"
     .. " quest item carried or used on it, a spell)"
+-- S085 04:52:05 Sluice Gate, 04:53:03 Vault Door: one Use of a door fired UseFinished twice, success then failure
+-- (EVENTS `used … success` then `used …`). The success left the job waiting for the door to open (IsOpened flips a
+-- few frames later); the failure then ended it "could not use that" (the door opened; ~28 s and 2 extra turns).
+-- The game's success counts: a failure after it is ignored, and a failure waits this long for a success after it.
+A.USE_FAIL_GRACE_MS = 300
 
 -- S083 03:55:56-58 (V24): Knock on e720 "No Entry - No Exit"; look read it unlocked, 2 s later interact read IsLocked
 -- true again (a live read, no cache: the game's own flag flipped back while it opened the door) and refused "nobody
@@ -1515,10 +1520,13 @@ reg("interact", function(args)
             UseFinished = function(job, a)
                 if G.same(a[1], char) and G.same(a[2], target) then
                     if ladder and not (job.ladder and job.ladder.used) then return end -- not our Use yet (see below)
-                    if not G.b(a[3]) or (story_locked() and not openable) then
-                        RPC.finish_job(job, "failed", nil, key_note and G.b(G.q("IsLocked", target))
-                            and ("still locked: " .. key_note.unlocked_with .. " did not open it")
-                            or (story_locked() and (relocked and A.RELOCKED or A.STORY_LOCKED)) or "could not use that")
+                    if not G.b(a[3]) then
+                        if not job.use_ok then job.use_fail = job.use_fail or RPC.now_ms() end -- on_tick decides
+                        return
+                    end
+                    job.use_ok, job.use_fail = true, nil
+                    if story_locked() and not openable then
+                        RPC.finish_job(job, "failed", nil, relocked and A.RELOCKED or A.STORY_LOCKED)
                         return
                     end
                     local res = state_result()
@@ -1577,6 +1585,12 @@ reg("interact", function(args)
         on_tick = function(job)
             if job.phase == "approach" then return approach_tick(job) end
             if job.phase ~= "act" then return end
+            if job.use_fail and RPC.now_ms() - job.use_fail >= A.USE_FAIL_GRACE_MS then
+                RPC.finish_job(job, "failed", nil, key_note and G.b(G.q("IsLocked", target))
+                    and ("still locked: " .. key_note.unlocked_with .. " did not open it")
+                    or (story_locked() and (relocked and A.RELOCKED or A.STORY_LOCKED)) or "could not use that")
+                return
+            end
             -- Use walks on its own if still out of range; a jump while far from
             -- the item is a teleport, a jump next to it is the use (ladders, portals).
             if not teleport_check(job, job.use_track, function(prev)
@@ -2452,8 +2466,15 @@ reg("end_turn", function(args)
         G.refuse("this character already ended its turn (the rest of its turn group is still acting)")
     end
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
-    local function finish(job, requested)
+    local function finish(job, requested, by_flags)
         local res = { ended = true }
+        if by_flags then
+            -- S087 05:57:40: the game showed this end (RequestedEndTurn / the turn closed), then, while it applied
+            -- the group's ends (18 s to TurnEnded), showed the turn open again: Claude read as acting and the next
+            -- combat_turn was refused "e4 Claude (yours) must act first". Pending (and confirmed) until TurnEnded.
+            local g, t = G.guid(char) or char, G.now_ms()
+            G.end_requested[g], G.end_confirmed[g] = t, t
+        end
         if requested then
             -- The game applies it when the rest of the group ends; until then the guard counts it as ended.
             res.requested = true
@@ -2499,7 +2520,7 @@ reg("end_turn", function(args)
         },
         start = function() G.osi("EndTurn", char) end,
         on_tick = function(job)
-            if not G.is_my_turn(char) then finish(job) return end
+            if not G.is_my_turn(char) then finish(job, false, true) return end
             -- Shared turn group, others still up: EndTurn stays pending until they end (live S002:
             -- every such end_turn timed out at 10 s). Record it and return.
             if RPC.now_ms() - job.started >= A.END_REQUEST_AFTER_MS and #group_waiting(char) > 0 then
