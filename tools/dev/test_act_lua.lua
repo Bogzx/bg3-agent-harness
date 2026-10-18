@@ -1735,6 +1735,32 @@ test("jump: capped at half the Strength score (UNVERIFIED formula), not TargetRa
     eq(j.status, "running", "enhance leap " .. tostring(j.error))
 end)
 
+test("jump: Astral Gravity triples it, by name or by its JumpMaxDistanceMultiplier boost (S087 11.4 m refused at 9.5)", function()
+    stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
+    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
+    osiv[key("GetAbility", P1, "Strength")] = 19
+    local savedV = BG3AI.Visibility
+    local on = {}
+    BG3AI.Visibility = setmetatable({ statuses = function() return on end }, { __index = savedV })
+    local ok, err = pcall(function()
+        local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 11.4, 0, 0 } }))
+        eq(j.status, "failed", "11.4 m at 9.5"); assert(j.error:find("can jump 9.5 m"), j.error)
+        on = { { id = "UNKNOWN_ASTRAL_ID", name = "Astral Gravity" } }
+        j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 11.4, 0, 0 } }))
+        eq(j.status, "running", "astral by name " .. tostring(j.error))
+        j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 29.5, 0, 0 } }))
+        eq(j.status, "failed", "past 28.5 m"); assert(j.error:find("can jump 28.5 m"), j.error)
+        stats.SOME_GRAVITY = { Boosts = "JumpMaxDistanceMultiplier(3);IgnoreFallDamage()" }
+        on = { { id = "SOME_GRAVITY", name = "Something" } }
+        j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 20, 0, 0 } }))
+        eq(j.status, "running", "by boost " .. tostring(j.error))
+        local m, nf = BG3AI.Guard.jump_status(P1)
+        eq(m, 3, "mult"); eq(nf, true, "no fall damage")
+    end)
+    BG3AI.Visibility = savedV
+    if not ok then error(err, 0) end
+end)
+
 test("jump: a drop extends the reach (high ground, S040 the game's own jumps 18-28 m out over 18-23 m drops)", function()
     stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
     world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
