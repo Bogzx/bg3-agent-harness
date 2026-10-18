@@ -153,8 +153,22 @@ class WaitTurn(unittest.TestCase):
         self.assertLess(t, 32.0)
 
     def test_extension_is_capped(self):
+        # S080 02:31:45: still progressing at the cap = "enemies still acting", not a bare "timed out"
         states = [self.enemy(i // 5) for i in range(200)]
         _, why, t = self.run_wait(states, 30.0, 30.0)
-        self.assertEqual(why, "timed out")
+        self.assertTrue(why.startswith(server.TURN_STILL_ACTING), why)
+        self.assertIn("turn changes in the wait", why)
         self.assertLess(t, 62.0)
+
+    def test_hidden_enemy_hits_count_as_progress(self):
+        # S080: an enemy acting in Darkness is off the visible order (no current): only the party's HP moves.
+        # 80 s of that, then our turn: the default bound (30 + TURN_EXTEND_S) waits it out.
+        def hidden(i):
+            return {"active": True, "round": 3,
+                    "order": [{"uuid": "me", "hp": 100 - i // 6, "relation": "party"}]}
+        states = [hidden(i) for i in range(80)] + [{"active": True, "round": 3, "current": "me"}]
+        cs, why, t = self.run_wait(states, 30.0, server.TURN_EXTEND_S)
+        self.assertEqual(why, "")
+        self.assertEqual(cs.get("current"), "me")
+        self.assertGreater(t, 60.0)
 

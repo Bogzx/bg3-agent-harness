@@ -2409,6 +2409,48 @@ test("pickup: an order gone from the queue is re-sent, not a 40 s timeout (S043 
     restore()
 end)
 
+test("pickup: the item stacked into a party stack is done at once, not a 45 s timeout (S080 #9 apples)", function()
+    local STACK = "17171717-0000-0000-0000-00000000000d"
+    party_rows = { P1, P2 }
+    osiv[key("GetTemplate", GEM)] = "Apple_tpl"
+    osiv[key("GetTemplate", STACK)] = "Apple_tpl"
+    osiv[key("GetInventoryOwner", STACK)] = P2
+    osiv[key("IsCharacter", P2)] = 1
+    world[P1].pos = { 9, 0, 0 }
+    local j = job(op("pickup", { char = P1, item = GEM }))
+    A.dispatch("AddedTo", { "16161616-0000-0000-0000-00000000000c", P2, "" }) -- another kind: not ours
+    tick()
+    eq(j.status, "running", "other template ignored")
+    A.dispatch("AddedTo", { STACK, P2, "" })   -- the add names the stack; the gem still exists this frame
+    eq(j.status, "running", "ours still in the world")
+    world[GEM] = nil                           -- merged: it left the world
+    tick()
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(j.result.by, P2, "by"); eq(j.result.stacked_into, STACK, "stacked_into")
+end)
+
+test("pickup: our item's own AddedTo counts even when it merged at once (no holder left)", function()
+    world[P1].pos = { 9, 0, 0 }
+    local j = job(op("pickup", { char = P1, item = GEM }))
+    A.dispatch("AddedTo", { GEM, P1, "" })
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.by, P1, "by")
+end)
+
+test("pickup: an item that left the world mid-walk stops the walk at once (no timeout)", function()
+    local restore = with_tasks(1)
+    local j = job(op("pickup", { char = P1, item = GEM }))
+    eq(j.phase, "approach", "walking")
+    tick()
+    world[GEM] = nil
+    tick()
+    eq(j.status, "failed", "status")
+    assert(j.error:find("no longer in the world", 1, true), j.error)
+    eq(#called("PurgeOsirisQueue"), 1, "walk purged")
+    restore()
+    local r = job(op("pickup", { char = P1, item = GEM }))   -- already gone when ordered: refused, no walk
+    eq(r.status, "failed", "refused"); assert(r.error:find("no longer in the world", 1, true), r.error)
+end)
+
 test("move_to: a timed-out walk purges its CharacterMoveToPosition task", function()
     local restore = with_tasks(1)
     local j = job(op("move_to", { char = P1, pos = { 5, 0, 0 } }))

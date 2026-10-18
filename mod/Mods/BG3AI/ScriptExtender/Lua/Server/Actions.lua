@@ -1442,6 +1442,10 @@ reg("pickup", function(args)
     G.not_in_dialogue(char)
     G.combat_gate(char, "no_combat")
     local item = G.guid(args.item)
+    if item and G.pos(item) == nil and G.entity(item) == nil then
+        G.refuse("that item is no longer in the world (picked up and stacked into another, used or destroyed); "
+            .. "get_inventory shows whether the party has it")
+    end
     if not item or not G.b(G.q("IsItem", item)) then G.refuse("that is not an item") end
     if G.q("GetInventoryOwner", item) ~= nil then
         G.refuse("that item is inside a container (open it and loot instead)")
@@ -1449,12 +1453,26 @@ reg("pickup", function(args)
     G.target_visible(item)
     G.within(char, item, G.MAX_INTERACT_DIST, "item")
 
+    -- S080 #9: the 2nd of two Half-Eaten Apples stacked into the 1st in Gale's bag (AddedTo named the stack e388,
+    -- never e389, which left the world): the job waited for e389's holder until its ~45 s timeout. An add of the
+    -- same template to the party while our item is gone from the world is our pick (stacked); an item gone with
+    -- no such add ends the job at once.
+    local tpl = tostring((G.q("GetTemplate", item)) or "")
+    local function gone() return G.pos(item) == nil and G.entity(item) == nil end
     local function picked(job)
         local h = holder(item)
         if h and G.is_party(h) then
             RPC.finish_job(job, "done", { picked_up = true, by = h })
             return true
         end
+        if not gone() then return false end
+        if job.stacked then
+            RPC.finish_job(job, "done", { picked_up = true, by = job.stacked.by, stacked_into = job.stacked.into })
+        else
+            RPC.finish_job(job, "failed", { gone = true }, "the item is no longer in the world (someone else took "
+                .. "it, or it was used or destroyed); get_inventory shows whether the party has it")
+        end
+        return true
     end
     local plan = G.approach_point(char, item, A.USE_REACH)
     return start("pickup", char, {
@@ -1462,7 +1480,23 @@ reg("pickup", function(args)
         timeout_ms = 30000 + walk_timeout(plan.length_m),
         interrupt = { combat = true, dialogue = true, attacked = true },
         osi = with_walk({
-            AddedTo = function(job, a) if G.same(a[1], item) then picked(job) end end,
+            AddedTo = function(job, a)
+                if G.same(a[1], item) then
+                    local h = G.guid(a[2])
+                    h = h and (G.b(G.q("IsCharacter", h)) and h or holder(h))
+                    if h and G.is_party(h) then   -- holder(item) is nil when it merged into a stack at once
+                        RPC.finish_job(job, "done", { picked_up = true, by = h })
+                    else
+                        picked(job)
+                    end
+                elseif tpl ~= "" and tostring((G.q("GetTemplate", a[1])) or "") == tpl then
+                    local h = holder(a[1])
+                    if h and G.is_party(h) then
+                        job.stacked = { by = h, into = G.guid(a[1]) }
+                        picked(job)
+                    end
+                end
+            end,
             PickupFailed = function(job, a)
                 if G.same(a[1], char) and G.same(a[2], item) then
                     RPC.finish_job(job, "failed", nil, "could not pick that up")
@@ -1479,6 +1513,7 @@ reg("pickup", function(args)
             end)
         end,
         on_tick = function(job)
+            if gone() and picked(job) then return end   -- walking toward an item that left the world: stop now
             if job.phase == "approach" then return approach_tick(job) end
             if job.phase ~= "act" then return end
             if picked(job) then return end

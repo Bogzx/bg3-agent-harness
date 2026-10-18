@@ -258,6 +258,7 @@ def reset_handles() -> None:
 class Base(unittest.TestCase):
     def setUp(self) -> None:
         self.g = FakeGame()
+        server._listed.clear()  # the last answer listing shown (choose_dialogue numbers): per test
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-mem-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
         saved = (server.game, server._watch_game, server._queue_mgr, actq.WATCH_EVERY_S, actq.UI_EVERY_S,
@@ -434,6 +435,23 @@ class CombatTurn(Base):
         out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=0.5)
         self.assertIn("(timed out)", out)
         self.assertLess(time.monotonic() - t, 2.0)
+        self.assertEqual(self.g.ops("act.cast"), [])
+
+    # S080 02:31:45: 60 s into a 12-cultist enemy phase the sent-ahead plan came back "FAILED: it is not e4
+    # Claude's turn (now ?); waited 60.1s for the turn (timed out)". Still progressing at the bound: said so,
+    # nothing played; a list plan stops there too instead of counting it as played.
+    def test_wait_bound_hit_while_enemies_still_act_is_not_a_failure(self):
+        self.g.combat["current"] = GOB
+        still = (self.g.combat, server.TURN_STILL_ACTING + " (40 turn changes in the wait, the last 1s ago)")
+        with mock.patch.object(server, "_wait_turn", return_value=still):
+            out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1))
+            self.assertTrue(out.startswith(server.TURN_NOT_YET), out)
+            self.assertIn("still taking their turns", out)
+            self.assertIn(server.H.get(GOB), out)
+            self.assertNotIn("FAILED", out)
+            out = server.combat_turn(json.dumps([{"who": server.H.get(P1), "plan": {"action": "Shout_Dodge"}},
+                                                 {"who": server.H.get(P2), "plan": {"action": "Shout_Dodge"}}]))
+            self.assertIn("not played — the enemies are still taking their turns", out)
         self.assertEqual(self.g.ops("act.cast"), [])
 
     # S029: 5 sent-ahead turns stopped on an enemy attack's Shield Blow prompt; each cost get_dialogue + react
@@ -1373,6 +1391,37 @@ class CombatTurn(Base):
         self.assertEqual(len(reac), 1)
         self.assertTrue(sel and sel[0] < reac[0], self.g.calls)
         self.assertIn("reactions set: Divine Smite=always", out)
+
+    # S081 #8 02:43:22: set_reactions(Wyll) under an open Counterspell prompt → "Wyll could not be selected: the HUD
+    # kept another member selected". The prompt is named and nothing is selected.
+    def test_set_reactions_under_a_reaction_prompt_names_it(self):
+        self.g.hud = P2
+        self.g.ui = {"screen": "reaction", "reaction": {
+            "prompt": "Sharran Fidelian Lamona cast Bone Chill on Claude. | Choose how to react. | 108/160 | Counterspell"}}
+        out = server.set_reactions(who=server.H.get(P1), settings='{"Counterspell": "never"}')
+        self.assertIn("a reaction prompt is on screen (Sharran Fidelian Lamona cast Bone Chill on Claude.)", out)
+        self.assertIn("react(use=true|false)", out)
+        self.assertEqual(self.g.ops("act.select"), [])
+        self.assertEqual(self.g.ops("ui.reactions"), [])
+
+    # S081 #258: a mode change answers with a job (the commands apply a frame later): the result printed `job=1`
+    def test_set_reactions_waits_for_the_change(self):
+        orig, polls = self.g.rpc, []
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "ui.reactions":
+                self.g.calls.append((op, args))
+                return {"job": 1, "status": "running"}
+            if op == "job.poll" and context == "client":
+                polls.append(1)
+                return {"status": "done", "result": {"char": P1, "reactions": [{"name": "Counterspell", "mode": "never"}]}}
+            return orig(op, args, context, timeout)
+        self.g.rpc = rpc
+        out = server.set_reactions(who=server.H.get(P1), settings='{"Counterspell": "never"}')
+        self.assertTrue(polls)
+        self.assertIn("Counterspell", out)
+        self.assertIn("never", out)
+        self.assertNotIn("job=1", out)
 
     def test_next_party_member_already_up_gets_actions(self):
         self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)

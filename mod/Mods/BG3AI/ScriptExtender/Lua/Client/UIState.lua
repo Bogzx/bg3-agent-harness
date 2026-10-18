@@ -392,6 +392,18 @@ function S.listWindow(list, items)
         scrollable = tonumber(p.ScrollableHeight) }
 end
 
+-- Whether the answer list scrolls (its ScrollViewer has ScrollableHeight). S081 Karlach's camp menu: a two-line
+-- first row made listWindow's row-height arithmetic count 7 of ~9 answers, no "more below", so the join answer below
+-- the fold was never listed. The bridge wheels and reads a scrolling list whatever the counts say.
+S.SCROLL_CHECK_MIN = 3 -- fewer answers than this never fill the list's window
+function S.answersScroll(widget)
+    local list = UI.byName(widget, "answerList")
+    local sv = list and UI.find(list, function(e) return (UI.typeName(e) or ""):find("ScrollViewer", 1, true) ~= nil end,
+        { hidden = true, max = 400 })
+    local h = sv and tonumber(UI.get(sv, "ScrollableHeight"))
+    return h ~= nil and h > 0.5
+end
+
 -- Rendered rows paired with VMs first..first+#items-1 by position (the list's
 -- visible window; first = 1 at the top). nil unless every row has text.
 function S.pairRenderedByPosition(items, vms, first)
@@ -455,6 +467,7 @@ function S.dialogue(wmap)
             d.more_below = counts.below
             if (counts.above or 0) > 0 then d.more_above = counts.above end
         end
+        if not changing and #answers >= S.SCROLL_CHECK_MIN and S.answersScroll(w.el) then d.scrollable = true end
         if #answers > 0 then
             d.options = {}
             for _, a in ipairs(answers) do
