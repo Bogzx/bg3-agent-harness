@@ -282,6 +282,27 @@ class OlderToolFixes(unittest.TestCase):
             v = {r[0]: r[1:5] for r in SW.check([batch, turn], SW.parse_watch(doc))}
             self.assertEqual(v["variant pick wording (act, S043+)"], want, when)
 
+    def test_session_watch_unnamed_in_hand_is_a_fail(self):
+        """vis V29, S091: 11/11 `IN HAND: a spell` (unnamed) were called PASS?: the FAIL sentence ends in "again" (a
+        condition word then) and the PASS `IN HAND: <spell id>` matched "a spell"."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        doc = Path(tmp.name) / "SESSION-WATCH.md"
+        doc.write_text("## Combat (act)\n| item | happens when | PASS | FAIL |\n|---|---|---|---|\n"
+                       "| IN HAND only for a named spell (act A24) | world clicks while walking; a hotbar click that arms "
+                       "a spell | J: plain world clicks show no `IN HAND`; a hotbar arm shows `IN HAND: <spell id>` | "
+                       "J: `IN HAND: a spell` (unnamed) again; a real armed spell with no IN HAND line (the name source "
+                       "missing live: act) |\n")
+        rows = SW.parse_watch(doc)
+        unnamed = call("click", "clicked left at 1420,561\nIN HAND: a spell (the next left click on the world casts it "
+                       "at the cursor; press_key ESCAPE puts it back)", {"x": 0.74, "y": 0.52}, k=40)
+        named = call("click", "clicked left at 1420,561\nIN HAND: Projectile_GuidingBolt (the next left click on the "
+                     "world casts it at the cursor; press_key ESCAPE puts it back)", {"x": 0.74, "y": 0.52}, k=41)
+        v = {r[0]: r[1:5] for r in SW.check([unnamed], rows)}
+        self.assertEqual(v["IN HAND only for a named spell (act A24)"], (1, 0, 1, "FAIL?"))
+        v = {r[0]: r[1:5] for r in SW.check([named], rows)}
+        self.assertEqual(v["IN HAND only for a named spell (act A24)"], (1, 1, 0, "PASS?"))
+
     def test_session_watch_heal_row_names_heals_only(self):
         """V21, S080 #39: the V16 row's `N hit … dmg` (its `ours:` is too short to match) read Gale's Magic Missile
         as a heal with damage, FAIL? x2. The row now names the heal spells."""
