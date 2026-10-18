@@ -18,21 +18,21 @@ native/**/build/
 **/.claude/settings.local.json
 CLAUDE.local.md
 
-# Not part of the public repo. These files stay on disk for the orchestrator and workers, they just aren't versioned.
+# Not part of the public repo: local working files, kept on disk but not versioned.
 # Data from past playthroughs, and one-off live scripts with hard-coded spots and paths
 /research/memory-review-*
 /research/triage-live.md
 /tools/dev/live_*.py
 /tools/vis/probe_*
 /runner/test_orchestrator_scripts.py
-# Worker diaries, the backlog, and the orchestrator's process files
+# Local working notes
 /research/impl-*.md
 /research/live-todo.md
 /research/fight-debrief.md
 /docs/BACKLOG.md
 /docs/SESSION-WATCH.md
 /tools/orchestrator/
-# The orchestrator's instructions, handoffs and dated progress notes, and the research workers' brief
+# Local process notes
 /CLAUDE.md
 /docs/ORCHESTRATOR.md
 /docs/HANDOFF.md

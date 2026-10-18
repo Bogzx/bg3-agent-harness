@@ -31,13 +31,13 @@ some patience, and things break when the game updates.
 | Play time | 38.9 hours | 9 to 13 minutes of wall time per run |
 | Model cost | $711, memory keeper included | mean per run: $4.34 in the first series, $3.30 in the second, $1.46 in the third |
 | Tool calls | 20,809 | |
-| Fights | 191, of which 92 ended in a reload | |
+| Fights | 149 recorded by the harness, 91 of them with a reload | |
 | Model | Claude Opus 5.5, medium effort | Claude Opus 5.5 |
 | Difficulty | Explorer | Explorer |
 
 The harness was fixed and improved while claude-run-2 went on, so the run shows that the whole game can be
 finished through it. It is not a controlled measurement. In the Nautiloid series the cost per run fell as the
-harness improved between series. Fights are counted by `tools/logs/fights.py` from each session's combat samples.
+harness improved between series. Fights are the harness's own records: one per fight, graded when it ends.
 
 ### Known limits
 
