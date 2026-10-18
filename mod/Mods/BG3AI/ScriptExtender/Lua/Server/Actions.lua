@@ -262,6 +262,7 @@ function A.dispatch(event, args)
     elseif event == "TurnStarted" and args[1] then
         local g = G.guid(args[1]) or args[1]
         if g then G.turn_over[g] = nil; G.end_requested[g] = nil end
+        G.note_turn_started(args[1])
     elseif event == "AttackedBy" and args[1] then
         A.stirred(args[1], "a hit on the caster")
     elseif (event == "Unlocked" or event == "Opened") and args[1] then

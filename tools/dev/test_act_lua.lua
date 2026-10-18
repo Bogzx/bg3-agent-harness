@@ -125,6 +125,7 @@ local function reset()
     party_rows = { P1 }
     if A then A.TASK_POS2 = false end
     if G then G.turn_over = {} end -- TurnEnded's marker (turn over until TurnStarted) is per test
+    if G then G.turn_start, G.foe_start = {}, {} end -- TurnStarted records (Guard.turn_moved_on) too
     if A then A.hit_ms = {} end -- AttackedBy on a party member (cast re-order window) is per test
     -- the stub world moves in synthetic multi-metre steps per 60 ms tick: NAV-8's small-step rule off (own tests)
     if A then A.TELEPORT_SMALL_M = 1e9 end
@@ -2464,6 +2465,7 @@ local P2 = "ffffffff-0000-0000-0000-000000000006"
 local function group_setup()
     -- no pending ends from an earlier test (a leftover request now stays pending END_DROP_MS)
     G.end_requested, G.end_alone, G.turn_over = {}, {}, {}
+    G.turn_start, G.foe_start = {}, {}
     world[P2] = { pos = { -1, 0, 0 }, comps = {} }
     osiv[key("IsCharacter", P2)] = 1
     osiv[key("IsOnStage", P2)] = 1
@@ -2672,6 +2674,66 @@ test("turn over (live window 2026-10-16): after TurnEnded the stale open-turn fl
     clock = clock + G.TURN_OVER_TTL_MS + 1
     eq(G.is_my_turn(P2), true, "TTL")
     restore()
+end)
+
+test("S088 whose turn: another side's TurnStarted after the group's ends the members' turns (Guard.turn_moved_on)", function()
+    local restore = group_setup()
+    local ok, err = pcall(function()
+    local C = "COMBAT_HIGHHALL"
+    for _, u in ipairs({ P1, P2, NPC }) do osiv[key("CombatGetGuidFor", u)] = C end
+    -- round 4: the group's turn starts (one burst for both members)
+    A.dispatch("TurnStarted", { "S_Player_" .. P1 })
+    clock = clock + 50
+    A.dispatch("TurnStarted", { P2 })
+    eq(G.turn_moved_on(P1), false, "own turn")
+    eq(G.is_my_turn(P1), true, "P1 acts")
+    -- 06:19:16 Claude (P1) ends first: requested; 06:19:30 Shadowheart (P2), the last, ends through the HUD (the Lua
+    -- job gave up at 3 s: nothing recorded for her)
+    local j = job(op("end_turn", { char = P1 }))
+    clock = clock + A.END_REQUEST_AFTER_MS + 1 tick()
+    eq(j.status, "done", "P1 requested " .. tostring(j.error))
+    world[P2].comps.TurnBased.RequestedEndTurn = true
+    -- the game applies the group's ends: P1 flagged open again, and its pending end long forgotten (the S052 rule)
+    clock = clock + 14000
+    G.end_requested[G.guid(P1)] = nil
+    world[P1].comps.TurnBased = { IsActiveCombatTurn = true, RequestedEndTurn = false }
+    eq(G.is_my_turn(P1), true, "on the flags alone P1 reads open (the S088 'e6 Claude (yours) must act first')")
+    -- the Inquisitor's turn starts (e402): the game's turn has moved on, whatever P1's flags show
+    A.dispatch("TurnStarted", { NPC })
+    eq(G.turn_moved_on(P1), true, "moved on")
+    eq(G.is_my_turn(P1), false, "P1 may not act")
+    eq(G.is_my_turn(P2), false, "P2 may not act")
+    eq(G.turn_requested_end(P1), false, "not 'already ended (the rest of its group still acting)': not its turn")
+    local j2 = job(op("end_turn", { char = P1 }))
+    eq(j2.status, "failed", "end_turn refused"); assert(j2.error:find("not this character's turn"), j2.error)
+    eq(#called("EndTurn"), 1, "no EndTurn order sent for P1 again")
+    -- round 5: P1's own TurnStarted opens its next turn
+    clock = clock + 20000
+    A.dispatch("TurnStarted", { P1 })
+    eq(G.turn_moved_on(P1), false, "own TurnStarted")
+    eq(G.is_my_turn(P1), true, "P1's next turn")
+    -- a start outside the party in the same burst as ours (an NPC ally sharing the group) is not "after"
+    clock = clock + 300
+    A.dispatch("TurnStarted", { NPC })
+    eq(G.turn_moved_on(P1), false, "same burst")
+    -- another combat's turns say nothing about this one
+    clock = clock + 5000
+    osiv[key("CombatGetGuidFor", NPC)] = "COMBAT_ELSEWHERE"
+    A.dispatch("TurnStarted", { NPC })
+    eq(G.turn_moved_on(P1), false, "another combat")
+    -- fail-safe: a missed TurnStarted of ours never holds a turn shut for good
+    osiv[key("CombatGetGuidFor", NPC)] = C
+    A.dispatch("TurnStarted", { NPC })
+    eq(G.is_my_turn(P1), false, "moved on")
+    clock = clock + G.TURN_MOVED_TTL_MS
+    eq(G.is_my_turn(P1), true, "the flags decide again after TURN_MOVED_TTL_MS")
+    -- no record (a save loaded mid-turn: no TurnStarted seen): the flags decide
+    G.turn_start = {}
+    A.dispatch("TurnStarted", { NPC })
+    eq(G.turn_moved_on(P1), false, "no record")
+    end)
+    restore()
+    if not ok then error(err, 0) end
 end)
 
 test("combat gate: an ended group member cannot cast", function()

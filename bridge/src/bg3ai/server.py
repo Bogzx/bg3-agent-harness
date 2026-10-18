@@ -4500,7 +4500,7 @@ def roll_check(boosts: str = "", reroll_on_fail: bool = False) -> str:
 @mcp.tool()
 @_guard
 def react(use: bool, which: str = "") -> str:
-    """Answer a reaction prompt (Shield, Counterspell, Opportunity Attack...). use=true to react."""
+    """Answer a reaction prompt (Shield, Counterspell, Opportunity Attack...). use=true to react. which: the option's number in REACTION options, or its name ("Shield": the first row, the lowest level; "Shield 3" or "Shield III": that slot level)."""
     args: dict[str, Any] = {"use": use}
     if which:
         args["which"] = which
@@ -4514,6 +4514,7 @@ def react(use: bool, which: str = "") -> str:
 
 
 _ROMAN = re.compile(r"^(?:I|II|III|IV|V|VI|VII|VIII|IX)$")
+_ROMAN_N = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9}
 
 
 def _reaction_index(r: dict | None, name: str) -> int | str:
@@ -4525,13 +4526,24 @@ def _reaction_index(r: dict | None, name: str) -> int | str:
         return "no reaction prompt on screen"
     opts = [o for o in r.get("options") or [] if isinstance(o, dict)]
     want = name.strip().lower()
+    # A25: the rows carry their spell level (UIState.reactionRows; S088 Gale's Shield at levels I-VI): "Shield 3",
+    # "Shield III", "Shield L3", "Shield level 3" pick that row; a plain name the first (lowest) one
+    lv = re.fullmatch(r"(.*?)\s*\(?\s*(?:l|lvl|level)?\s*(\d|i{1,3}|iv|vi{0,3}|ix)\s*\)?", want)
+    level = None
+    if lv and lv.group(1) and any(want.startswith(str(o.get("name") or "?").lower()) for o in opts):
+        want, level = lv.group(1).strip(), _ROMAN_N.get(lv.group(2).upper()) or int(lv.group(2))
     for o in opts:
-        if want and want in str(o.get("name") or "").lower():
+        if want and want in str(o.get("name") or "").lower() and level in (None, o.get("level") or 1):
             return int(o.get("i") or 1)
+    if level is not None and any(want in str(o.get("name") or "").lower() for o in opts):
+        shown = ", ".join(f"{o.get('i')}={o.get('name')} (level {o.get('level') or 1})" for o in opts)
+        return (f"no reaction option {name!r} on this prompt ({shown}); answer with its number, or the name alone for "
+                "the first")
     toks = [t.strip() for t in str(r.get("prompt") or "").split("|")]
     if any("choose how to react" in t.lower() for t in toks):
         toks = toks[next(k for k, t in enumerate(toks) if "choose how to react" in t.lower()) + 1:]
-    names = [t for t in toks if t and not _ROMAN.match(t) and not re.fullmatch(r"[\d/ ]+", t)
+    # S088 06:16:18: Gale's "+1/1" (temporary HP on the portrait) read as a 7th name for 6 rows
+    names = [t for t in toks if t and not _ROMAN.match(t) and not re.fullmatch(r"[+\-]?[\d/ ]+", t)
              and t.lower() != "do not react"]
     hits = [k for k, t in enumerate(names) if want and want in t.lower()]
     if hits and (len(names) == len(opts) or len(set(n.lower() for n in names)) == 1):
@@ -4977,6 +4989,10 @@ def _nothing_to_end(r) -> str:
     if not cs.get("active"):
         return why + "; combat is over"
     now = turn.acting(cs)
+    if "already ended" in err and not now:
+        # S088 06:34:50 (×3): "… the rest of its turn group is still acting); now e6 Claude (yours)": the whole group
+        # had ended and the game was handing the turn on
+        why = "its turn already ended (its whole turn group has ended: the game hands the turn on by itself)"
     party = _party_set()
     if now:
         why += "; now " + ", ".join(_label(u) + (" (yours)" if u in party else "") for u in now)
@@ -8736,6 +8752,9 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
         w, pl = chain[i]
         # each member waits for its turn like a sent-ahead plan does, all within CHAIN_BUDGET_S (MCP timeout 110 s)
         wt = wait_turn if i == 0 else max(0.0, min(wait_turn, CHAIN_BUDGET_S - (time.monotonic() - c0)))
+        # A25: only this member's turn may stop the chain. S080 23:23:12: downed Wyll's "nothing to play" (no step,
+        # the flag untouched) stopped [Wyll, Gale] as "interrupted" on an earlier call's flag; Gale not played
+        _batch["last"] = "done"
         try:
             txt = _combat_turn_one(pl, w, True, wait_next and i == len(chain) - 1, ignore, wt,
                                    extend_s=TURN_EXTEND_S if i == 0 else 0.0)

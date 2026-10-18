@@ -601,6 +601,31 @@ class ServerWiring(unittest.TestCase):
         self.assertIn("1=Counterspell, 2=Shield", why)
         self.assertIn("no reaction prompt", S._reaction_index(None, "Shield"))
 
+    def test_s088_react_by_name_with_a_portrait_hp_token_and_upcast_rows(self):
+        """S088 06:16:18: react(which="Shield") → "no reaction option 'Shield' on this prompt (6 options: 1=+1/1,
+        2=Shield, … 7=Shield)": Gale's temporary HP (+1/1) read as a name, the rows (Shield at levels I-VI) nameless."""
+        from bg3ai import server as S
+        prompt = ("Inquisitor of the Absolute used Arrow of Arcane Interference on Gale. Inquisitor of the Absolute "
+                  "needs 15 to hit. They rolled 16. | Choose how to react. | 177/177 | +1/1 | Shield | II | Shield | "
+                  "II | III | Shield | III | IV | Shield | IV | V | Shield | V | VI | Shield | VI | Do Not React")
+        old = {"prompt": prompt, "options": [{"i": k, "decision": "Undecided"} for k in range(1, 7)]}
+        self.assertEqual(S._reaction_index(old, "Shield"), 1)   # an old mod's nameless rows: the prompt's names
+        # the rows as shown (UIState.reactionRows): name and level, display order
+        rows = {"prompt": prompt, "options": [{"i": 1, "who": "Gale", "name": "Shield"}] +
+                [{"i": k, "who": "Gale", "name": "Shield", "level": k} for k in range(2, 7)]}
+        self.assertEqual(S._reaction_index(rows, "Shield"), 1)
+        self.assertEqual(S._reaction_index(rows, "Shield 3"), 3)
+        self.assertEqual(S._reaction_index(rows, "shield III"), 3)
+        self.assertEqual(S._reaction_index(rows, "Shield (level 6)"), 6)
+        self.assertEqual(S._reaction_index(rows, "Shield L1"), 1)
+        why = S._reaction_index(rows, "Shield 7")
+        self.assertIn("6=Shield (level 6)", why)
+        cs = {"prompt": "Adept of the Absolute cast Guiding Bolt on Claude. | Choose how to react. | 179/179 | "
+                        "+17/17 | V | Counterspell | V | Do Not React",
+              "options": [{"i": 1, "who": "Gale", "name": "Counterspell", "level": 5}]}
+        self.assertEqual(S._reaction_index(cs, "Counterspell"), 1)
+        self.assertEqual(S._reaction_index({**cs, "options": [{"i": 1, "decision": "Undecided"}]}, "Counterspell"), 1)
+
     def test_name_by_a_whole_word_and_an_ally_in_the_fight(self):
         """S045 00:15 look_at("Aylin") for "Dame Aylin"; S043 23:15 talk_to("Jaheira"), an ally only in the turn
         order: both "unknown target"."""

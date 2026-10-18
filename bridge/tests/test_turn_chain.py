@@ -84,6 +84,17 @@ class Chain(unittest.TestCase):
         self.assertIn("Karlach's turn was interrupted", out)
         self.assertIn("NOT PLAYED: Gale, Claude", out)
 
+    def test_s080_an_earlier_calls_interrupt_does_not_stop_the_chain(self):
+        # S080 23:23:12: [Wyll, Gale], Wyll downed ("nothing to play", no step ran): "CHAIN STOPPED after 1 of 2: Wyll's
+        # turn was interrupted (above)" on the flag an earlier call had left; Gale not played
+        def fake(plan, who, end, wait_next, ignore, wait_turn, **kw):
+            return f"{who} is downed: nothing to play" if who == "Karlach" else f"TURN {who}"
+        server._batch["last"] = "interrupted"
+        with mock.patch.object(server, "_combat_turn_one", fake):
+            out = TC(json.dumps(self.PLANS))
+        self.assertNotIn("CHAIN STOPPED", out)
+        self.assertIn("TURN Gale", out)
+
     def test_single_plan_unchanged(self):
         with mock.patch.object(server, "_combat_turn_one", return_value="TURN x") as m:
             self.assertEqual(TC('{"action":[]}', who="Gale"), "TURN x")

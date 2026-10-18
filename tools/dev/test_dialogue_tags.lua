@@ -405,5 +405,56 @@ do
     check("UI-4 text check: another text is refused", not okc and tostring(err):find("the list changed") and #pressed == 0, err)
 end
 
+-- A25 (S088 06:16:18): the reaction prompt's rows as shown. Gale's Shield at levels I-VI; the decision VMs carried no
+-- names (options=[i=1 decision=Undecided]) and the prompt text had a 7th "name" (+1/1, her temporary HP).
+do
+    local function tb(s) return { Type = "TextBlock", _tostring = s, _props = {} } end
+    local function btn(texts, checked)
+        local kids = {}
+        for k, s in ipairs(texts) do kids[k] = tb(s) end
+        return { _name = "ReactButton", _props = { IsChecked = checked == true }, _children = kids }
+    end
+    local function root(who, buttons, hp)
+        local kids = {}
+        for _, s in ipairs(hp or {}) do kids[#kids + 1] = tb(s) end
+        kids[#kids + 1] = { _name = "Stack", _children = buttons }
+        return { _name = "InterruptorRoot", DataContext = { _props = { Character = { _props = { Name = who } } } },
+                 _children = kids }
+    end
+    local shield = { btn({ "Shield" }) }
+    for k, n in ipairs({ "II", "III", "IV", "V", "VI" }) do shield[k + 1] = btn({ n, "Shield", n }, k == 2) end
+    local popup = { _children = { { _name = "EventRoot", _children = {
+        root("Gale", shield, { "177/177", "+1/1" }),
+        root("Wyll", { btn({ "Hellish Rebuke" }) }),
+        { _name = "DoNotReactButton", _children = { tb("Do Not React") } } } } } }
+    BG3AI.UI.name = function(e) return e and e._name end
+    local rows = S.reactionRows(popup)
+    check("A25 reaction rows: one per ReactButton, display order", #rows == 7, #rows)
+    check("A25 reaction rows: names read from the rows", rows[1] and rows[1].name == "Shield"
+        and rows[6].name == "Shield" and rows[7].name == "Hellish Rebuke", rows[7] and rows[7].name)
+    check("A25 reaction rows: level from the numerals (none shown at level 1)", rows[1].level == nil
+        and rows[2].level == 2 and rows[6].level == 6, rows[2].level)
+    check("A25 reaction rows: who from the interruptor", rows[1].who == "Gale" and rows[7].who == "Wyll", rows[7].who)
+    check("A25 reaction rows: the portrait's HP is no row", rows[1].i == 1 and rows[7].i == 7)
+    check("A25 reaction rows: the toggled row", rows[3].chosen == true and not rows[2].chosen)
+    -- S.reaction returns them as its options (the decision VMs only when no row is on screen)
+    BG3AI.UI.path = function(o, path)
+        for part in path:gmatch("[^%.]+") do o = o and o._props and o._props[part] end
+        return o
+    end
+    local ev = { _props = { Interruptors = coll({}) } }
+    popup.DataContext = { _props = { Data = { _props = { InterruptEvents = coll({ ev }) } } } }
+    local r = S.reaction({ ReactionDecisionPopup = { el = popup } })
+    check("A25 S.reaction: the shown rows are the options", r and r.options and #r.options == 7
+        and r.options[4].name == "Shield" and r.options[4].level == 4, r and r.options and #r.options)
+    local bare = { _children = {}, DataContext = popup.DataContext }
+    local dec = { _props = { Decision = "Undecided", Interrupt = { _props = {} } } }
+    ev._props.Interruptors = coll({ { _props = { Character = { _props = { Name = "Gale" } },
+                                                 InterruptDecisions = coll({ dec }) } } })
+    r = S.reaction({ ReactionDecisionPopup = { el = bare } })
+    check("A25 S.reaction: no rows on screen: the decision VMs as before", r and r.options and #r.options == 1
+        and r.options[1].decision == "Undecided", r and r.options and #r.options)
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end

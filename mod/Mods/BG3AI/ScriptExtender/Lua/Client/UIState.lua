@@ -568,6 +568,35 @@ function S.roll(wmap)
     return r
 end
 
+-- The prompt's reactions as the rows show them, in display order: the ReactButtons ui.react's `which` numbers.
+-- A25 (S088 06:16:18): react(which="Shield") was refused: the decision VMs gave no names (`options=[i=1
+-- decision=Undecided]`, also S034) and they are not the display order (the popup sorts them by DecisionComparer).
+-- A row reads `[level] Name [slot level]` (DataTemplates.xaml InterruptToggleBtnTemplate: Roman numerals, none at
+-- level 1): Gale's Shield at levels I-VI showed `Shield | II | Shield | II | III | Shield | III …`.
+local ROMAN = { I = 1, II = 2, III = 3, IV = 4, V = 5, VI = 6, VII = 7, VIII = 8, IX = 9 }
+function S.reactionRows(el)
+    local rows = {}
+    local roots = UI.findAll(el, function(e) return UI.name(e) == "InterruptorRoot" end, { prune = true })
+    if #roots == 0 then roots = { el } end
+    for _, root in ipairs(roots) do
+        local who = clean(prop(prop(try(function() return root.DataContext end), "Character"), "Name"))
+        for _, b in ipairs(UI.findAll(root, function(e) return UI.name(e) == "ReactButton" end, { prune = true })) do
+            local r = { i = #rows + 1, who = who }
+            for _, t in ipairs(UI.findAll(b, function(e) return UI.typeName(e) == "TextBlock" end)) do
+                local s = UI.text(t)
+                if s and ROMAN[s] then
+                    r.level = r.level or ROMAN[s]
+                elseif s and not r.name and not s:match("^[%d/%s%+%-]+$") then
+                    r.name = s
+                end
+            end
+            if prop(b, "IsChecked") == true then r.chosen = true end
+            rows[#rows + 1] = r
+        end
+    end
+    return rows
+end
+
 -- Reaction prompt: Data.InterruptEvents[1] with its interruptors and the
 -- reactions each can use.
 function S.reaction(wmap)
@@ -577,7 +606,11 @@ function S.reaction(wmap)
     local events = UI.path(dc, "Data.InterruptEvents")
     if UI.count(events) == 0 then return nil end
     local ev = try(events.At, events, 1)
-    local out = { prompt = UI.allText(w.el, " | ", 3000), options = {} }
+    local out = { prompt = UI.allText(w.el, " | ", 3000), options = S.reactionRows(w.el) }
+    if #out.options > 0 then
+        if UI.count(events) > 1 then out.pending = UI.count(events) end
+        return out
+    end
     local i = 0
     for _, interruptor in UI.items(prop(ev, "Interruptors"), 8) do
         local ch = props(prop(interruptor, "Character"))

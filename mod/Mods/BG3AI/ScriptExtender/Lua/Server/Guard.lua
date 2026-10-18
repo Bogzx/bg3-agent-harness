@@ -240,6 +240,34 @@ local function now_ms()
 end
 G.now_ms = now_ms
 
+-- A25 (S088 High Hall Courtyard: 22 empty combat_turn/end_turn calls, ~205 s): whose turn it is, from the game's own
+-- turn events. Every turn (a shared group's too) begins with Osiris TurnStarted. Once a combatant outside the party
+-- (enemy or NPC ally: not in DB_PartyMembers, which holds our summons too) starts a turn in the same combat after a
+-- member's own TurnStarted, that member's turn is over, whatever its TurnBased flags show while the game applies a
+-- group's ends (S084/S087/S088: an ended member flagged open again). Until its next TurnStarted. No record (a save
+-- loaded mid-turn, an unknown combat): the flags decide, as before.
+G.turn_start = G.turn_start or {} -- party g -> { t = its own TurnStarted (ms), combat = combat guid }
+G.foe_start = G.foe_start or {}   -- combat guid -> the latest TurnStarted (ms) of a combatant outside the party
+G.TURN_BURST_MS = 1000            -- starts this close together are one turn (never "after")
+-- Fail-safe: a member's own TurnStarted missed (never seen live; turn_over relies on it too) must not hold its next
+-- turn shut for good: this long after the other side's start, the flags decide again.
+G.TURN_MOVED_TTL_MS = 60000
+
+function G.note_turn_started(char)
+    local g = G.guid(char)
+    if not g then return end
+    local c = G.q("CombatGetGuidFor", g)
+    if not c then return end
+    if G.is_party(g) then G.turn_start[g] = { t = now_ms(), combat = c } else G.foe_start[c] = now_ms() end
+end
+
+function G.turn_moved_on(uuid)
+    local g = G.guid(uuid) or uuid
+    local s = g and G.turn_start[g]
+    local f = s and G.foe_start[s.combat]
+    return f ~= nil and f - s.t > G.TURN_BURST_MS and now_ms() - f < G.TURN_MOVED_TTL_MS
+end
+
 -- The game's own turn flags, without our pending bookkeeping.
 local function tb_flags(uuid)
     local e = G.entity(uuid)
@@ -316,11 +344,12 @@ function G.is_my_turn(uuid)
     local tb = e and U.comp(e, "TurnBased")
     if not tb then return false end
     local ok, v = pcall(function() return tb.IsActiveCombatTurn == true and tb.RequestedEndTurn ~= true end)
-    return ok and v == true and not G.end_pending(uuid)
+    return ok and v == true and not G.end_pending(uuid) and not G.turn_moved_on(uuid)
 end
 
 -- Has this character ended its turn while its turn group is still active?
 function G.turn_requested_end(uuid)
+    if G.turn_moved_on(uuid) then return false end -- the turn passed on: not its turn at all
     local e = G.entity(uuid)
     local tb = e and U.comp(e, "TurnBased")
     local ok, v = pcall(function() return tb and tb.IsActiveCombatTurn == true end)

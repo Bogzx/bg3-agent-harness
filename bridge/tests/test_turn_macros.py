@@ -407,6 +407,71 @@ class CombatTurn(Base):
         self.assertEqual([a.get("char") for _, a in self.g.ops("act.end_turn")], [P1])
         self.assertEqual(self.g.ops("act.cast"), [])
 
+    def s088_group_ended(self) -> tuple[str, str]:
+        """S088 06:19:31 High Hall Courtyard: Claude's group (Claude + Lae'zel here) has ended, every member shown
+        is_current + ended while the game applies the ends, and State.lua names the first of them `current`; the next
+        party turn is Cambion + the Emperor's (a shared group after the goblin's). Returns their uuids."""
+        p3, p4 = "33333333-2222-3333-4444-555555555555", "44444444-2222-3333-4444-555555555555"
+        self.g.more_party = [{"uuid": p3, "name": "Cambion"}, {"uuid": p4, "name": "The Emperor"}]
+        server.H.get(p3, "Cambion")
+        server.H.get(p4, "The Emperor")
+        self.g.combat["order"] += [{"uuid": p3, "name": "Cambion", "relation": "party"},
+                                   {"uuid": p4, "name": "The Emperor", "relation": "party"}]
+        for o in self.g.combat["order"]:
+            if o["uuid"] in (P1, P2):
+                o.update(is_current=True, ended=True)
+        self.g.combat["current"] = P1
+        return p3, p4
+
+    def test_s088_a_chain_sent_while_the_last_group_ends_waits_for_its_turn(self):
+        # S088 (9 CHAIN STOPPED 'waited 0.0s', ~205 s with the end_turns they caused): "Cambion: not played — it is
+        # not e1 Cambion's turn (now e6 Claude); waited 0.0s for the turn (e6 Claude (yours) must act first …)"
+        # right after Claude ended: the ended `current` was read as acting
+        p3, p4 = self.s088_group_ended()
+        reads = [0]
+        real = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "state.combat":
+                reads[0] += 1
+                if reads[0] == 3:  # the game hands the turn on: the goblin acted, now Cambion + the Emperor
+                    for o in self.g.combat["order"]:
+                        o.pop("is_current", None), o.pop("ended", None)
+                        if o["uuid"] in (p3, p4):
+                            o["is_current"] = True
+                    self.g.combat.update(current=p3, turn_group=[p3, p4])
+            return real(op, args, context, timeout)
+
+        def advance(op, args):
+            if op == "act.end_turn":
+                g = self.g.combat["turn_group"]
+                g.remove(args["char"])
+                self.g.combat["current"] = g[0] if g else GOB
+        self.g.on_start = advance
+        self.assertEqual(turn.acting(self.g.combat), [])
+        with mock.patch.object(self.g, "rpc", rpc):
+            out = server.combat_turn(json.dumps([{"who": "Cambion", "plan": {"action": "Shout_Dodge"}},
+                                                 {"who": "The Emperor", "plan": {"action": "Shout_Dodge"}}]),
+                                     wait_turn=5)
+        self.assertNotIn("must act first", out)
+        self.assertNotIn("CHAIN STOPPED", out)
+        self.assertIn("TURN " + server.H.get(p3) + " Cambion", out)
+        self.assertIn("TURN " + server.H.get(p4) + " The Emperor", out)
+        self.assertEqual([a.get("char") for _, a in self.g.ops("act.end_turn")], [p3, p4])
+
+    def test_s088_end_turn_on_a_member_of_an_ended_group_names_no_ended_member_as_acting(self):
+        # S088 06:34:50: "end_turn e6 Claude: nothing to end — its turn already ended (combat_turn ends it; the rest of
+        # its turn group is still acting); now e6 Claude (yours)" (×3): its whole group had ended
+        self.s088_group_ended()
+        self.g.on_start = lambda op, a: None
+        self.g.refuse_if = lambda op, a: ("this character already ended its turn (the rest of its turn group is "
+                                          "still acting)" if op == "act.end_turn" else None)
+        out = server.end_turn(who="Claude", wait=False)
+        self.assertIn("nothing to end — its turn already ended", out)
+        self.assertNotIn("(yours)", out)
+        self.assertNotIn("the rest of its turn group is still acting", out)
+        self.assertIn("its whole turn group has ended", out)
+
     def test_blast_warning_keeps_the_turn_open_for_the_agent(self):
         # S085 05:03:37: Gale's Fireball burst on a ledge on a neutral Guild ally (killed). Guard.blast_risk refuses
         # with where it bursts and who is in the blast; the agent decides: no other alternative, no fallback on
