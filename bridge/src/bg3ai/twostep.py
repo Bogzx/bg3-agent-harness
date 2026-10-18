@@ -16,7 +16,8 @@ taken, the cast started).
     res = twostep_cast(Game(), InputClient(), caster, "Teleportation_DimensionDoor", caster, landing=[x, y, z])
     res = twostep_cast(Game(), InputClient(), caster, "Teleportation_Revivify", body)
 
-Wired into use_ability (server._twostep_use) behind hotbar.HOTBAR_CAST_ENABLED (off): the mod's act.cast {ui=true}
+Wired into use_ability (server._twostep_use) behind TWOSTEP_ENABLED (off; its own switch since A30, the N-target
+route keeps hotbar.HOTBAR_CAST_ENABLED): the mod's act.cast {ui=true}
 job makes the fairness checks first (our turn, known/prepared, the body / ally seen and in range, the landing in
 range and on a floor) and watches the cast; when off, the mod's ACT-9 refusal stands.
 
@@ -74,6 +75,9 @@ CLEAR_BODIES = 2
 CLEAR_MAX_SHIFT_M = 2.5
 VIEW_STEPS = 4                 # camera moves to bring a ground point into view
 DD_ORDER = ("who", "landing")  # GUESS T2
+# act's switch for routing Revivify / Dimension Door here (A30: apart from the N-target route's HOTBAR_CAST_ENABLED,
+# so it goes on once its own acceptance item "Dimension Door 10 m via the hotbar (ACT-9 two-step route)" passes).
+TWOSTEP_ENABLED = False
 
 _TWO_STEP = re.compile(r"revivify|resurrection|dimensiondoor|dimension_door", re.I)
 

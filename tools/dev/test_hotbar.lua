@@ -461,5 +461,32 @@ okl, errl = pcall(ops["ui.hotbar_upcast"], {})
 ok(not okl and tostring(errl):find("picker is not open", 1, true), "upcast: no picker")
 widgets.HotBar = savedHB
 
+-- 21. A30: ui.hotbar_use = the cell's own click command (UseSlotCommand, CommandParameter = the slot VM)
+local savedHB21 = widgets.HotBar
+widgets.HotBar = { Name = "HotBar", DataContext = dc, kids = { conc, tabs } }
+dc.UseSlotCommand = true
+commands, params = {}, {}
+r = ops["ui.hotbar_use"]({ spell = "Target_Bless" })
+ok(r.done and r.deck == "ClassHotBar" and r.index == 4 and r.spell == "Target_Bless", "use: Bless's cell")
+ok(commands[1] == "UseSlotCommand" and params[1] == class.SlotList[4], "use: UseSlotCommand with the slot VM")
+r = ops["ui.hotbar_use"]({ spell = "Target_EnhanceAbility" })
+ok(r.container == true and params[2] == class.SlotList[5], "use: a container cell (its picker opens)")
+okl, errl = pcall(ops["ui.hotbar_use"], { spell = "Shout_Shield" })
+ok(not okl and tostring(errl):find("greyed out", 1, true) and #commands == 2, "use: a greyed cell is not sent")
+okl, errl = pcall(ops["ui.hotbar_use"], { spell = "Target_Haste" })
+ok(not okl and tostring(errl):find("not on the hotbar", 1, true), "use: not on the hotbar")
+-- the VMs carry no ids (LIVE G2): the bridge's map names the cells
+local saved_ids = {}
+for _, s in ipairs(class.SlotList) do saved_ids[s] = s.Content.PrototypeID; s.Content.PrototypeID = nil end
+for _, s in ipairs(common.SlotList) do saved_ids[s] = s.Content.PrototypeID; s.Content.PrototypeID = nil end
+r = ops["ui.hotbar_use"]({ spell = "Target_Bless", map = { ClassHotBar = { ["13"] = "Target_Bless" } } })
+ok(r.done and r.index == 4 and params[3] == class.SlotList[4], "use: the map names the cell")
+for s, id in pairs(saved_ids) do s.Content.PrototypeID = id end
+dc.UseSlotCommand = "fail"
+okl, errl = pcall(ops["ui.hotbar_use"], { spell = "Target_Bless" })
+ok(not okl and tostring(errl):find("UseSlotCommand: command cannot execute now", 1, true), "use: a refused command")
+dc.UseSlotCommand = nil
+widgets.HotBar = savedHB21
+
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

@@ -86,6 +86,10 @@ class FakeWorld:
         self.containers: set[str] = set()
         self.upcast_open: str | None = None
         self.upcast_args: list[dict] = []
+        # A30 ui.hotbar_use (the cell's own UseSlotCommand): None = an older mod without the op, "arms" = like the
+        # cell's click, "noop" = the game takes the command and nothing comes into hand (GUESS C1 wrong)
+        self.use_cmd: str | None = None
+        self.use_args: list[dict] = []
 
     # --- layout
     def cell_at(self, x, y):
@@ -169,6 +173,19 @@ class FakeWorld:
             elif self.phase:
                 st["cast"] = {"phase": self.phase}
             return st
+        if op == "ui.hotbar_use" and self.use_cmd:
+            self.use_args.append(dict(args))
+            want = args["spell"]
+            base = want[:-2] if want[-2:-1] == "_" and want[-1:].isdigit() else want
+            sp = next((x for d in self.decks for x in d["spells"] if x.lower() in (want.lower(), base.lower())), None)
+            if sp is None:
+                raise GameError("not on the hotbar")
+            if self.use_cmd == "arms":
+                if sp in self.pickers:
+                    self.upcast_open = sp
+                else:
+                    self.armed, self.picked = sp, []
+            return {"done": True, "spell": sp}
         if op == "ui.hotbar_upcast":
             self.upcast_args.append(dict(args))
             sp = self.upcast_open
@@ -372,6 +389,42 @@ class HotbarCast(unittest.TestCase):
         self.assertFalse(r.ok)
         self.assertEqual((r.stage, r.reason), ("slot", "not_on_hotbar"))
         self.assertEqual(inp.log, [])
+
+    # A30: the cell's own click command arms the spell; no cursor search for the cell, no cell click
+    def test_command_arm_needs_no_cell_click(self):
+        self.w.use_cmd = "arms"
+        r, inp = _cast(self.w)
+        self.assertTrue(r.ok, r.detail)
+        self.assertEqual(self.w.use_args, [{"spell": "Target_Bless", "char": "caster"}])
+        self.assertEqual((r.detail["command_arm"], r.detail["cell_pos"]), ("armed", "command"))
+        self.assertEqual([c[1:3] for c in inp.log if c[0] == "click"], [(500, 500), (700, 480), (900, 520)])
+        self.assertNotIn("ui.hotbar_slot", [op for op in self.w.rpcs[self.w.rpcs.index("ui.hotbar_use"):]])
+        self.assertEqual(self.w.cast_done, [("Target_Bless", ["a", "b", "c"])])
+
+    def test_command_that_arms_nothing_takes_the_cursor_route(self):
+        self.w.use_cmd = "noop"
+        r, inp = _cast(self.w)
+        self.assertTrue(r.ok, r.detail)
+        self.assertEqual(r.detail["command_arm"], "sent, nothing in hand: the cursor route")
+        self.assertIsInstance(r.detail["cell_pos"], tuple)
+        self.assertEqual(len([c for c in inp.log if c[0] == "click"]), 4)   # the cell, then 3 targets
+        self.assertEqual(self.w.cast_done, [("Target_Bless", ["a", "b", "c"])])
+
+    def test_command_arm_on_a_container_cell_goes_through_its_picker(self):
+        self.w.use_cmd = "arms"
+        self.w.pickers["Target_Bless"] = [(True, False)] * 3 + [(False, True), (False, True)]
+        self.w.containers.add("Target_Bless")
+        r, inp = _cast(self.w)
+        self.assertTrue(r.ok, r.detail)
+        self.assertEqual(r.detail["command_arm"], "armed")
+        self.assertEqual(r.detail["upcast"], {"level": 4, "index": 4, "levels": 5})
+        self.assertEqual(len([c for c in inp.log if c[0] == "click"]), 3)
+
+    def test_an_older_mod_without_the_op_takes_the_cursor_route(self):
+        r, _ = _cast(self.w)
+        self.assertTrue(r.ok, r.detail)
+        self.assertIn("unknown op ui.hotbar_use", r.detail["command_arm"])
+        self.assertIsInstance(r.detail["cell_pos"], tuple)
 
     def test_container_cell_picks_the_lowest_real_level(self):
         # live L4: Dimension Door's cell is a container whose sub-bar is the upcast picker (levels 1-3 fake, 4 real)

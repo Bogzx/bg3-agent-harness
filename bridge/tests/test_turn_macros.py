@@ -1484,6 +1484,49 @@ class CombatTurn(Base):
         self.assertIn("STOPPED: reaction on screen", out)
         self.assertEqual(self.g.ops("ui.react"), [])
 
+    # S094 10:05:14: a reaction prompt already open when a turn starts was the watcher's baseline screen, so the turn
+    # played into it (Wyll's move 'never started moving', Dash 'never started', the turn lost).
+    def test_a_reaction_prompt_open_at_the_start_plays_nothing(self):
+        self.g.ui.update(screen="reaction", reaction={
+            "prompt": "Mind Flayer used Tentacle Whip on Claude. | Choose how to react. | 77/205 | Shield Blow"})
+        out = server.combat_turn(self.plan(move=self.gob, action={"ability": "Shout_Dash"}))
+        self.assertTrue(out.startswith(server.TURN_NOT_YET), out)
+        self.assertIn("e4 Claude's turn not started: reaction on screen: Mind Flayer used Tentacle Whip on Claude.",
+                      out)
+        self.assertIn("Nothing was played or spent", out)
+        self.assertEqual([op for op, _ in self.g.calls if op.startswith("act.") and op != "act.watch"], [])
+        self.assertEqual(self.g.ops("ui.react"), [])
+
+    def test_a_reaction_prompt_open_at_the_start_is_answered_by_the_plan(self):
+        self.g.ui["screen"] = "reaction"
+        self.g.on_start = lambda op, a: op == "ui.react" and self.g.ui.update(screen="game")
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+                                           on_reaction="skip"), end=False)
+        self.assertEqual(self.g.ops("ui.react")[0][1], {"use": False})
+        self.assertIn("reaction prompt: declined", out)
+        self.assertIn(f"action: Target_MainHandAttack {self.gob}: done", out)
+        self.assertNotIn("STOPPED", out)
+
+    def test_a_chain_stops_on_the_prompt_the_last_turn_left_open(self):
+        # S094 [.., Claude, Wyll, the Emperor]: Claude's walk opened Shield Blow as his turn ended; Wyll and the
+        # Emperor were played into it. Now the chain stops at Wyll, nothing of his sent.
+        self.g.combat["turn_group"] = [P1, P2]
+
+        def end(op, args):
+            if op == "act.end_turn" and args.get("char") == P1:
+                self.g.combat["turn_group"] = [P2]
+                self.g.ui.update(screen="reaction", reaction={"prompt": "Goblin attacked Claude. | Shield Blow"})
+        self.g.on_start = end
+        out = server.combat_turn(json.dumps([
+            {"who": server.H.get(P1), "plan": {"action": [{"ability": "Target_MainHandAttack", "target": self.gob}]}},
+            {"who": server.H.get(P2), "plan": {"move": self.gob, "action": ["Shout_Dash"]}}]))
+        self.assertIn(f"action: Target_MainHandAttack {self.gob}: done", out)
+        self.assertIn("CHAIN STOPPED after 1 of 2: e5: not played — e5 Lae'zel's turn not started: reaction on screen:"
+                      " Goblin attacked Claude.", out)
+        self.assertIn("NOT PLAYED: e5 —", out)
+        self.assertEqual([a.get("char") for _, a in self.g.ops("act.cast")], [P1])
+        self.assertEqual(self.g.ops("act.move_to"), [])
+
     # S018/S025/S029: Bless on 3 targets was refused ("more than two targets"): the action went to the fallback.
     def test_three_targets_cast_on_the_first_two(self):
         out = server.combat_turn(self.plan(action={"ability": "Target_Bless", "targets": f"{self.gob},{self.imp},{server.H.get(P1)}"}))

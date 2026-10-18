@@ -607,7 +607,32 @@ function H.upcast(args)
              open = UI.get(dc, "IsSelectingUpcastedSpell") == true }
 end
 
+-- A30: a cell's click is UseSlotCommand:Execute(the cell's slot VM) (HotBarSlotStyle, Library/DataTemplates.xaml:
+-- Command = the widget's UseSlotCommand, CommandParameter = {Binding}, the button's DataContext = the slot; read
+-- 2026-10-18), the command the picker's level buttons send too (H.upcast). The bridge sends it in place of the
+-- cursor search for the cell (live L5-L8: `could not point at the hotbar cell`, a container deck not built) and then
+-- proves the spell is in hand (ui.cast_state), as after a click. GUESS C1: Execute with a SlotList VM arms the spell
+-- as the button's click does.
+function H.use(args)
+    local dc = hotbarDC()
+    if dc == nil then error("the hotbar is not on screen") end
+    local want = args.spell
+    if not want or want == "" then error("spell is required") end
+    local decks = H.decks(dc)
+    if H.idSource(decks) == "none" then
+        local map = type(args.map) == "table" and args.map or H.clientMap(args.char)
+        if type(map) == "table" then decks = H.decks(dc, map) end
+    end
+    local deck, rec = H.findSlot(decks, want)
+    if not deck then error("not on the hotbar") end
+    if not rec.can_use then error("the hotbar shows it greyed out") end
+    local ok, err = UI.command(dc, "UseSlotCommand", rec.vm)
+    if not ok then error("UseSlotCommand: " .. tostring(err)) end
+    return { done = true, deck = deck.type, index = rec.index, spell = rec.spell, container = rec.container }
+end
+
 RPC.register("ui.hotbar_slot", function(args) return H.slot(args or {}) end)
+RPC.register("ui.hotbar_use", function(args) return H.use(args or {}) end)
 RPC.register("ui.hotbar_upcast", function(args) return H.upcast(args or {}) end)
 RPC.register("ui.cast_state", function(args) return H.castState(args or {}) end)
 RPC.register("ui.cast_confirm", function() return H.confirm() end)

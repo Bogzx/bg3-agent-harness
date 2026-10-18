@@ -1465,8 +1465,9 @@ def floor_point(p0: list, dist: float) -> list | None:
 def twostep_dd_probe() -> bool:
     """act 2026-10-16, audit ACT-9: a two-step spell by the player's clicks (bridge twostep.py: hotbar cell, who goes =
     the caster, then the landing on the ground, the cursor checked by ui.ground_check before the click). Out of
-    combat in BASE, to a floor point ~10 m from the caster that is on screen. HOTBAR_CAST_ENABLED is on for this one
-    call, only after se's read-only hotbar item passed. PASS = 'use_ability: done', the caster now <= 1.5 m from the
+    combat in BASE, to a floor point ~10 m from the caster that is on screen. twostep.TWOSTEP_ENABLED (A30: its own
+    switch) is on for this one call, only after se's read-only hotbar item passed. A30: the cell is armed by its own
+    click command (ui.hotbar_use) first; `arm=` in the line says which route armed it (command / the cursor's cell). PASS = 'use_ability: done', the caster now <= 1.5 m from the
     landing, nothing in hand, screen game. The PROBE line logs ui.ground_check at the landing (GUESS T1: cursor
     "Cast"/"CastWarning"). A7: a container cell (live L4: the upcast level picker) is cast through the picker's lowest
     real level. SKIP when nobody has Dimension Door on the hotbar, it is greyed out, or the picker has no usable level.
@@ -1510,11 +1511,12 @@ def twostep_dd_probe() -> bool:
         return False
     sp = S.game.try_rpc("ui.screen_pos", {"pos": land}, context="client") or {}
     log(f"PROBE twostep landing {land} screen {json.dumps(sp)}")
-    saved, HB.HOTBAR_CAST_ENABLED = HB.HOTBAR_CAST_ENABLED, True
+    from bg3ai import twostep as TS
+    saved, TS.TWOSTEP_ENABLED = TS.TWOSTEP_ENABLED, True
     try:
         out, dt = took("use_ability", ability=DD_SPELL, x=land[0], y=land[1], z=land[2], who=S.H.get(caster))
     finally:
-        HB.HOTBAR_CAST_ENABLED = saved
+        TS.TWOSTEP_ENABLED = saved
     time.sleep(1.0)
     p1 = party_pos().get(caster) or p0
     off = math.dist([p1[0], p1[2]], [land[0], land[2]])
@@ -1525,7 +1527,8 @@ def twostep_dd_probe() -> bool:
         log(f"PROBE twostep result {rows[-1] if rows else '-'}")
         # A17: what the cursor showed at the landing (L8: no landing click was made at all, `one_step`)
         last = json.loads(rows[-1]) if rows else {}
-        land_look = (f"; landing looks={last.get('looks')} clicks={last.get('ground_clicks')} "
+        land_look = (f"; arm={last.get('command_arm') or 'cursor'} cell={last.get('cell_pos')} "
+                     f"landing looks={last.get('looks')} clicks={last.get('ground_clicks')} "
                      f"one_step={last.get('one_step')} first_s={last.get('first_s')}")
     except (OSError, ValueError):
         pass
