@@ -6282,7 +6282,20 @@ def click(x: float, y: float, button: str = "left") -> str:
         return _finish("click", {"x": x, "y": y, "button": "none"}, f"hovered at {px},{py} (nothing clicked)", t0)
     inp.click(px, py, kind)
     time.sleep(0.3)
-    return _finish("click", {"x": x, "y": y}, f"clicked {'right' if kind == 'R' else 'left'} at {px},{py}", t0)
+    out = f"clicked {'right' if kind == 'R' else 'left'} at {px},{py}" + (_in_hand_note() if kind == "L" else "")
+    return _finish("click", {"x": x, "y": y}, out, t0)
+
+
+def _in_hand_note() -> str:
+    """S083 03:55:16: a blind left click on the hotbar picked up Netherese Orb Blast instead of Knock (the deck had
+    another layout) and the reply said only `clicked left at 881,1004`: the next left click on the world would have
+    cast it. A player sees the spell in hand (the cursor changes, its cell lights up): say which one."""
+    st = hotbar.cast_state(game, None)
+    if not (st.get("armed") or st.get("upcast_open")):
+        return ""
+    what = st.get("spell") or "a spell"
+    return (f"\nIN HAND: {what} (the next left click on the world casts it at the cursor; press_key ESCAPE puts it"
+            " back)")
 
 
 

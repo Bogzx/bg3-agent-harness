@@ -1341,6 +1341,70 @@ test("cast: an item next to the caster needs no engine line of sight (S024 Knock
     eq(j.status, "failed", "char status"); assert(j.error:find("line of sight"), j.error)
 end)
 
+test("cast: a door/wall past arm's length is in sight when an eye ray reaches its body (S083 e284/e703/e720)", function()
+    spell("Target_Knock", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    local WALL = "cdcdcdcd-0000-0000-0000-00000000000b"
+    local function hit(u, p) return { Position = p, Shape = { PhysicsObject = { Entity = { Uuid = { EntityUuid = u } } } } } end
+    local rays, rayfn = {}, nil
+    Ext.Level.RaycastClosest = function(a, b) rays[#rays + 1] = b; return rayfn(a, b) end
+    BG3AI.Visibility = { rayCalibrated = function() return true end, EYE_H = 1.6, RAY_TYPE = 5, RAY_INCLUDE = 0xFFFFFFFF,
+        RAY_EXCLUDE = 0x820200, bounds = function() return { height = 3.0, radius = 1.0 } end }
+    local function knock(t)
+        return job(op("cast", { char = P1, spell = "Target_Knock", target = t }))
+    end
+    local ok, err = pcall(function()
+        -- e284 Threshold of Loss: 6.3 m, its position 5.9 m up at the door's top inside the frame. The ray to the
+        -- position hits the frame (another object); one lower down the door hits the door itself.
+        world[DOOR].pos = { 2.2, 5.9, 0 }
+        osiv[key("HasLineOfSight", P1, DOOR)] = 0
+        rayfn = function(_, b)
+            if b[2] < 5.9 then return hit(DOOR, { 2.0, b[2], 0 }) end
+            return hit(WALL, { 1.9, 5.5, 0 })
+        end
+        local j = knock(DOOR)
+        eq(j.status, "running", "e284 status " .. tostring(j.error))
+        -- the same door behind a wall: every ray stops at the wall (fail: no line of sight)
+        rays, rayfn = {}, function() return hit(WALL, { 1.0, 3.0, 0 }) end
+        j = knock(DOOR)
+        eq(j.status, "failed", "walled status"); assert(j.error:find("line of sight"), j.error)
+        assert(#rays >= 8, "every sample tried: " .. #rays)
+        -- e703 sewer Wall (hidden destructible wall) 7 m away: the ray to its position ends on the wall itself
+        world[DOOR].pos = { 7.0, 0, 0 }
+        rayfn = function(_, b) return hit(DOOR, { 6.6, b[2], 0 }) end
+        j = knock(DOOR)
+        eq(j.status, "running", "e703 status " .. tostring(j.error))
+        -- e720 No Entry - No Exit, caster ~4.5 m back: nothing hit on the way to its middle (no hit = clear)
+        world[DOOR].pos = { 4.5, 0, 0 }
+        rayfn = function(_, b) if b[2] > 1.0 then return nil end return hit(WALL, { 4.4, 0, 0 }) end
+        j = knock(DOOR)
+        eq(j.status, "running", "e720 status " .. tostring(j.error))
+        -- a clear ray only below the position (outside the bounds) proves nothing: refused
+        world[DOOR].pos = { 2.2, 5.9, 0 }
+        rayfn = function(_, b) if b[2] < 5.9 then return nil end return hit(WALL, { 1.9, 5.5, 0 }) end
+        j = knock(DOOR)
+        eq(j.status, "failed", "air below status"); assert(j.error:find("line of sight"), j.error)
+        -- a character keeps the engine's check, whatever the rays say
+        world[GOB].pos = { 6.0, 0, 0 }
+        osiv[key("HasLineOfSight", P1, GOB)] = 0
+        rayfn = function(_, b) return hit(GOB, b) end
+        j = knock(GOB)
+        eq(j.status, "failed", "char status"); assert(j.error:find("line of sight"), j.error)
+        -- rays uncalibrated (the filter flags or the API wrong): fail closed
+        world[DOOR].pos = { 7.0, 0, 0 }
+        rayfn = function(_, b) return hit(DOOR, b) end
+        BG3AI.Visibility.rayCalibrated = function() return false end
+        j = knock(DOOR)
+        eq(j.status, "failed", "uncalibrated status"); assert(j.error:find("line of sight"), j.error)
+        -- the ray API throwing: fail closed
+        BG3AI.Visibility.rayCalibrated = function() return true end
+        rayfn = function() error("bad ray") end
+        j = knock(DOOR)
+        eq(j.status, "failed", "ray error status"); assert(j.error:find("line of sight"), j.error)
+    end)
+    BG3AI.Visibility, Ext.Level.RaycastClosest = nil, nil
+    if not ok then error(err, 0) end
+end)
+
 test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Stand radii)", function()
     combat_setup(9) -- the range refusal (out of combat the cast walks into range first)
     eq(G.radius(P1), 0.5, "fallback radius")
