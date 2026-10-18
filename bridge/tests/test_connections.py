@@ -151,6 +151,7 @@ class LongRun(unittest.TestCase):
         fake = FakeBg3le(server_tick_s=0.2, client_tick_s=0.2).start()
         fake.op("state.status", lambda a, c: {})
         g = Game(port=fake.port, pool_max=2)
+        g._ev_synced = True   # no event-cursor sync RPCs: the in-flight eval at close() is state.status
         try:
             t = threading.Thread(target=lambda: g.rpc("state.status"))
             t.start()

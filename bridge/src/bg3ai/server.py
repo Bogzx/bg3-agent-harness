@@ -3803,6 +3803,7 @@ class _ReadyCheckWatch:
         self.job = (context, job_id)
 
     def __enter__(self) -> "_ReadyCheckWatch":
+        getattr(game, "sync_events", lambda: None)()   # not the ring's older events
         self._seq = int((getattr(game, "event_seq", None) or {}).get("server", 0) or 0)
         self._t = threading.Thread(target=self._run, daemon=True, name="ready-check-watch")
         self._t.start()
@@ -7407,6 +7408,8 @@ def _peek_events(kinds: set) -> dict | None:
     (the result's EVENTS section still lists everything)."""
     def since(ctx):
         return game.try_rpc("events.since", {"seq": game.event_seq[ctx], "limit": 300}, context=ctx)
+
+    getattr(game, "sync_events", lambda: None)()   # before the seqs above are read
 
     got = _par(lambda: since("server"), lambda: since("client"))  # both contexts in one tick
     for ctx, res in zip(("server", "client"), got):
