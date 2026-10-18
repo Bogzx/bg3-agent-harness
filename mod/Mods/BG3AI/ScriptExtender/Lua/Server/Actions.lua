@@ -998,7 +998,8 @@ local function seg_dist_xz(p, a, b)
     return math.sqrt((p[1] - x) ^ 2 + (p[3] - z) ^ 2), a[2] + (b[2] - a[2]) * t
 end
 
--- The plates (not in skip) a route of points steps on, in route order.
+-- The plates (not in skip) a route of points steps on, in route order. Also takes off-limits areas (pl.dy: their
+-- height band; a plate's is 1.5 m).
 function A.plates_on(points, plates, skip)
     local hit, seen = {}, {}
     if type(points) ~= "table" or #points == 0 then return hit end
@@ -1007,7 +1008,7 @@ function A.plates_on(points, plates, skip)
         for _, pl in ipairs(plates) do
             if not skip[pl.uuid] and not seen[pl.uuid] then
                 local d, y = seg_dist_xz(pl.pos, a, b)
-                if d <= pl.r + A.PLATE_CLEAR_M and math.abs(y - pl.pos[2]) <= 1.5 then
+                if d <= pl.r + A.PLATE_CLEAR_M and math.abs(y - pl.pos[2]) <= (pl.dy or 1.5) then
                     seen[pl.uuid] = true
                     hit[#hit + 1] = pl
                 end
@@ -1026,22 +1027,33 @@ function A.plate_detour(char, from, dest, plates, skip)
     local crossed = A.plates_on(N.route(char, dest), plates, skip)
     if #crossed == 0 then return false end
     -- Points round every known plate, not only the crossed one: a grid of plates is walked round at its edge.
+    -- An off-limits area (vis V26, 6 m) also gets wider rings: from one side to the other of a disc that big, a
+    -- point at its edge leaves a leg through it. Points whose straight legs clear everything are tried first.
     local cands = {}
     for _, pl in ipairs(plates) do
         if not skip[pl.uuid] then
             local rr = pl.r + A.PLATE_CLEAR_M + 0.6
-            for k = 0, 7 do
-                local a = k * math.pi / 4
-                local c = { pl.pos[1] + rr * math.cos(a), pl.pos[2], pl.pos[3] + rr * math.sin(a) }
-                local free = true
-                for _, q in ipairs(plates) do
-                    if not skip[q.uuid] and dist_xz(c, q.pos) <= q.r + A.PLATE_CLEAR_M then free = false break end
+            for _, ring in ipairs(pl.area and { rr, rr * 1.5, rr * 2 } or { rr }) do
+                for k = 0, 7 do
+                    local a = k * math.pi / 4
+                    local c = { pl.pos[1] + ring * math.cos(a), pl.pos[2], pl.pos[3] + ring * math.sin(a) }
+                    local free = true
+                    for _, q in ipairs(plates) do
+                        if not skip[q.uuid] and dist_xz(c, q.pos) <= q.r + A.PLATE_CLEAR_M then free = false break end
+                    end
+                    if free then
+                        local clear = #A.plates_on({ from, c }, plates, skip) == 0
+                            and #A.plates_on({ c, dest }, plates, skip) == 0
+                        cands[#cands + 1] = { pos = c, cost = U.dist(from, c) + U.dist(c, dest), clear = clear }
+                    end
                 end
-                if free then cands[#cands + 1] = { pos = c, cost = U.dist(from, c) + U.dist(c, dest) } end
             end
         end
     end
-    table.sort(cands, function(x, y) return x.cost < y.cost end)
+    table.sort(cands, function(x, y)
+        if x.clear ~= y.clear then return x.clear end
+        return x.cost < y.cost
+    end)
     for i = 1, math.min(#cands, A.PLATE_VIA_TRIES) do
         local c = cands[i].pos
         local r1 = N.route(char, c)
@@ -1051,6 +1063,45 @@ function A.plate_detour(char, from, dest, plates, skip)
         end
     end
     return nil, crossed
+end
+
+-- Off-limits areas (vis V26, S084 04:08-04:12, the Counting House): a guard let the party off "with a warning.
+-- This time.", then a travel_to walked into the guards' off-limits area and the second offence started a fight.
+-- The bridge remembers where each trespass talk began once the game's own Narrator line said the area was
+-- off-limits (offlimits.py: fair, only after the warning was shown) and passes them as args.avoid
+-- ({id, pos, r, level, name}). Out of combat a walk never goes in: the way round it (as round the plates), else a
+-- refusal naming it; a destination inside is refused. trespass=true walks in anyway; an area the walker stands
+-- in doesn't count (walking out of it is right).
+A.AREA_DY_M = 4.0  -- an area covers its own floor: the floors above and below are other rooms
+
+local function in_area(p, a)
+    return p ~= nil and dist_xz(p, a.pos) <= a.r and math.abs(p[2] - a.pos[2]) <= A.AREA_DY_M
+end
+
+-- args.avoid on this level near a walk from `from` to `to`, minus the ones `from` is in: obstacle rows.
+function A.warned_areas(avoid, from, to)
+    local V, out = BG3AI.Visibility, {}
+    if type(avoid) ~= "table" or not from then return out end
+    local level = V and V.levelNow and V.levelNow()
+    for i, a in ipairs(avoid) do
+        local p, r = type(a) == "table" and a.pos, type(a) == "table" and tonumber(a.r)
+        if type(p) == "table" and #p >= 3 and r and r > 0 and (a.level == nil or a.level == level) then
+            local row = { uuid = "area:" .. tostring(a.id or i), pos = p, r = r, dy = A.AREA_DY_M,
+                area = a.name or "an off-limits area" }
+            if not in_area(from, row) and (U.dist(p, from) <= A.PLATE_NEAR_M + r or U.dist(p, to) <= A.PLATE_NEAR_M + r) then
+                out[#out + 1] = row
+            end
+        end
+    end
+    return out
+end
+
+local function area_names(rows)
+    local out, seen = {}, {}
+    for _, a in ipairs(rows) do
+        if a.area and not seen[a.area] then seen[a.area] = true; out[#out + 1] = a.area end
+    end
+    return table.concat(out, "; ")
 end
 
 reg("move_to", function(args)
@@ -1110,18 +1161,35 @@ reg("move_to", function(args)
     local combat = budget ~= nil
     local speed = (args.run == false and not combat) and "Walk" or "Run"
 
-    local via, crossed
+    local via, crossed, areas
     if not combat then
         local from = G.pos(char)
         local plates = from and A.known_plates(from, pos) or {}
+        areas = (not args.trespass) and A.warned_areas(args.avoid, from, pos) or {}
+        for _, a in ipairs(areas) do
+            if in_area(pos, a) then
+                G.refuse("the destination is inside " .. a.area .. " you were warned about (a second offence"
+                    .. " there can start a fight): talk to its guard first (a pass, a check), or trespass=true to"
+                    .. " walk in anyway")
+            end
+            plates[#plates + 1] = a
+        end
         if #plates > 0 then
             local skip = {}
             if plate then skip[plate] = true end
             for _, pl in ipairs(plates) do -- stepping off the plate the character stands on can't be helped
-                if dist_xz(from, pl.pos) <= pl.r + A.PLATE_CLEAR_M then skip[pl.uuid] = true end
+                if not pl.area and dist_xz(from, pl.pos) <= pl.r + A.PLATE_CLEAR_M then skip[pl.uuid] = true end
             end
             via, crossed = A.plate_detour(char, from, pos, plates, skip)
             if via then route = route + math.max(0, U.dist(from, via) + U.dist(via, pos) - U.dist(from, pos)) end
+            local through = {}
+            for _, pl in ipairs(crossed or {}) do if pl.area then through[#through + 1] = pl end end
+            areas = through
+            if via == nil and #through > 0 then
+                G.refuse("the way there crosses " .. area_names(through) .. " you were warned about and no way"
+                    .. " round it was found: go another way, talk to its guard first, or trespass=true to walk"
+                    .. " through anyway")
+            end
         end
     end
     local plate_r = plate and plate_radius(plate)
@@ -1163,6 +1231,7 @@ reg("move_to", function(args)
             charge_movement(job, char, mv_before)
             if type(job.result) ~= "table" then return end
             if via then job.result.round_plates = pos_view(via) end
+            if via and areas and #areas > 0 then job.result.avoiding = area_names(areas) .. " you were warned about" end
             if crossed and not via then
                 local over = {}
                 for _, pl in ipairs(crossed) do over[#over + 1] = pl.uuid end

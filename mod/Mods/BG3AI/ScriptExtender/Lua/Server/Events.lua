@@ -220,19 +220,27 @@ listen("DialogStarted", 2, function(_, instance)
         if u then speakers[#speakers + 1] = ref(u) end
     end
     local np = osi(Osi.DialogGetNumberOfInvolvedPlayers, instance) or 0
-    local party = {}
+    local party, at = {}, nil
     for i = 1, np do
         local p = osi(Osi.DialogGetInvolvedPlayer, instance, i)
         local u = p and V.uuid(p)
-        if u then party[#party + 1] = ref(u) end
+        if u then
+            party[#party + 1] = ref(u)
+            if not at then
+                local e = V.entity(u)
+                at = e and V.pos(e)
+            end
+        end
     end
     if #party == 0 then return end -- not our dialogue (ambient NPC chatter)
     E.dialogs = E.dialogs or {}
     E.dialogs[instance] = true
     -- Party banter / barks (automated dialogs) play while you walk: flagged so queues don't stop on them.
     local auto = osi(Osi.DialogIsAutomated, instance)
+    -- at/level: where the party member stood when the talk began (the bridge's off-limits areas, vis V26).
     RPC.push("dialogue_started", { speakers = speakers, party = party,
-        automated = (auto == 1 or auto == true) or nil })
+        automated = (auto == 1 or auto == true) or nil, at = at and U.vec(at, 1) or nil,
+        level = V.levelNow and V.levelNow() or nil })
 end)
 
 listen("DialogEnded", 2, function(_, instance)

@@ -10,9 +10,13 @@ Checks (PASS / WARN / FAIL / INFO lines; exit 1 on any FAIL):
              reachable or closest+connectors, ms (< 50 ms PASS, < 150 WARN). Printed through route.render_route,
              i.e. what the agent's `route` tool shows.
   2 ladder   For each ladder in view (nav.route connectors=true): the floors at the ladder's own column relative
-             to its pivot. A floor near 0 and near +height = pivot at the FOOT (what N.connectors assumes: PASS);
-             near 0 and -height = pivot at the TOP (FAIL: flip `leads`/`far_dy`); near +-height/2 = MIDDLE (FAIL:
-             halve). Also leads=up must mean far_dy > 0.
+             to its pivot, and on rings round it (Guard.LADDER_TOP_RADII: the top landing is often off the column,
+             behind the ladder). A floor near 0 and near +height (column or ring) = pivot at the FOOT (what
+             N.connectors assumes: PASS); a floor near -height under the pivot, none at 0 there and none at
+             +height round it = pivot at the TOP (FAIL: flip `leads`/`far_dy`); floors at 0 and -height in the
+             column and no landing found above = AMBIGUOUS (WARN: a foot on a floor over a lower one, S085 Guildhall
+             19353fd1, reads the same as a top); near +-height/2 = MIDDLE (FAIL: halve). Also leads=up must mean
+             far_dy > 0.
   3 links    A raw path (BeginPathfindingImmediate + FindPath) to the goal, else the closest spot, else the
              nearest ladder: node count, the fields a node has, how many carry a valid Portal handle, and the
              steep steps (|dy| >= 1 m, steeper than 1:1). Zero portals on a path that climbs = links come only
@@ -128,20 +132,37 @@ for _, u in ipairs(%s) do
         rel[#rel + 1] = math.floor((h - p[2]) * 10 + 0.5) / 10 end end
     end
     table.sort(rel)
-    out[#out + 1] = { uuid = u, pos = p, height = b and b.height, floors = rel }
+    local ring, seen = {}, {}
+    for _, r in ipairs(B.Guard and B.Guard.LADDER_TOP_RADII or { 1.0, 1.5, 2.2, 3.0 }) do
+      for k = 0, 7 do
+        local a = k * math.pi / 4
+        local ok2, hs2 = pcall(Ext.Level.GetHeightsAt, p[1] + r * math.cos(a), p[3] + r * math.sin(a))
+        if ok2 and type(hs2) == "table" then
+          for _, h in ipairs(hs2) do if type(h) == "number" and math.abs(h - p[2]) <= 20 then
+            local v = math.floor((h - p[2]) * 10 + 0.5) / 10
+            if not seen[v] then seen[v] = true; ring[#ring + 1] = v end end end
+        end
+      end
+    end
+    table.sort(ring)
+    out[#out + 1] = { uuid = u, pos = p, height = b and b.height, floors = rel, ring = ring }
   end
 end
 """
 
 
-def classify(height: float, floors: list[float]) -> str:
-    def has(v: float) -> bool:
-        return any(abs(f - v) <= 0.8 for f in floors)
-    if has(0) and has(height):
+def classify(height: float, floors: list[float], ring: list[float] | None = None) -> str:
+    """floors: heights at the pivot's column, ring: round it, both relative to the pivot."""
+    def has(v: float, xs: list[float]) -> bool:
+        return any(abs(f - v) <= 0.8 for f in xs)
+    above = has(height, floors) or has(height, ring or [])
+    if has(0, floors) and above:
         return "foot"
-    if has(0) and has(-height):
+    if has(-height, floors) and not has(0, floors) and not above:
         return "top"
-    if has(height / 2) and has(-height / 2):
+    if has(0, floors) and has(-height, floors):
+        return "ambiguous"  # S085 19353fd1 [-5.3, 0.1]: a foot over a lower floor, or a top over its landing
+    if has(height / 2, floors) and has(-height / 2, floors):
         return "middle"
     return "unknown"
 
@@ -165,10 +186,13 @@ def check_ladders(g: Game, route: dict | None) -> None:
         if not h:
             report("ladder", "WARN", f"{name}: no AI bounds height; floors at pivot column {row['floors']}")
             continue
-        kind = classify(h, row["floors"])
-        status = {"foot": "PASS", "unknown": "WARN"}.get(kind, "FAIL")
-        fix = {"top": " -> flip leads/far_dy in N.connectors + frontier", "middle": " -> pivot is mid: halve"}.get(kind, "")
-        report("ladder", status, f"{name}: pivot at {kind} (height {h:.1f}m, floors rel. pivot {row['floors']}){fix}")
+        kind = classify(h, row["floors"], row.get("ring"))
+        status = {"foot": "PASS", "unknown": "WARN", "ambiguous": "WARN"}.get(kind, "FAIL")
+        fix = {"top": " -> flip leads/far_dy in N.connectors + frontier", "middle": " -> pivot is mid: halve",
+               "ambiguous": " -> no landing seen above: climb it live to tell"}.get(kind, "")
+        at = "(" + ",".join(f"{v:.1f}" for v in row["pos"][:3]) + ")" if row.get("pos") else "?"
+        report("ladder", status, f"{name}: pivot at {kind} {at} (height {h:.1f}m, floors rel. pivot {row['floors']},"
+                                 f" round it {row.get('ring')}){fix}")
         if c.get("leads") == "up" and (c.get("far_dy") or 0) <= 0:
             report("ladder", "FAIL", f"{name}: leads=up but far_dy={c.get('far_dy')}")
         if c.get("leads") == "down" and (c.get("far_dy") or 0) >= 0:

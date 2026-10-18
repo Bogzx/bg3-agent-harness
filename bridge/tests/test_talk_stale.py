@@ -86,7 +86,7 @@ class StaleSighting(unittest.TestCase):
         spot = [-1466.0, 9.1, -2640.5]
         trips = self.use(Fake(camp_pos=spot))
         out = self.walk_first()
-        self.assertEqual(trips, [{"who": None, "x": -1466.0, "y": 9.1, "z": -2640.5}])
+        self.assertEqual(trips, [{"who": None, "x": -1466.0, "y": 9.1, "z": -2640.5, "trespass": True}])
         self.assertIn("is at camp (the camp roster) (-1466,9.1,-2640.5): walking there first; then talk_to", out)
         self.assertNotIn("walk around the camp", out)
 
@@ -107,7 +107,7 @@ class StaleSighting(unittest.TestCase):
     def test_a_near_sighting_still_walks_there(self):
         trips = self.use(Fake(camp=False, here=[0.0, -49.2, 989.9]))   # 40.7 m off
         out = self.walk_first()
-        self.assertEqual(trips, [{"who": None, "x": 40.7, "y": -49.2, "z": 989.9}])
+        self.assertEqual(trips, [{"who": None, "x": 40.7, "y": -49.2, "z": 989.9, "trespass": True}])
         self.assertIn("going to where you last saw them 201s ago", out)
 
 

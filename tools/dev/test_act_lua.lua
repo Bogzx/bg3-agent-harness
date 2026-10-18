@@ -587,6 +587,79 @@ test("move_to V25: already on the plate -> done, no walk", function()
     end)
 end)
 
+-- vis V26, S084 04:09-04:12 (the Counting House): let off "with a warning. This time.", then travel_to e578 walked
+-- into the vault guards' off-limits area (Dadger's talk at (-111,4,-177)) and the second offence started a fight.
+-- The bridge passes the areas the game warned about as avoid; walks go round them, never into them.
+local DADGER = { id = 2, pos = { -111, 4, -177 }, r = 6, level = "CTY_Main_A",
+    name = "the off-limits area by Cashguard Artillerist Dadger (-111,4,-177)" }
+local function move_refused(args, pat)
+    local r = op("move_to", args)
+    eq(r.status, "failed", "status")
+    assert(r.error:find(pat, 1, true), r.error)
+end
+
+test("move_to V26: a destination inside a warned off-limits area is refused, naming it (S084 travel_to e578)", function()
+    with_plates({}, {}, function()
+        world[P1].pos = { -92.2, 5.7, -188.2 } -- the east office, after the loot
+        world[DOOR].pos = { -112, 4, -176 }    -- e578 Grated Iron Doors, by the guards
+        move_refused({ char = P1, target = DOOR, avoid = { DADGER } },
+            "the destination is inside the off-limits area by Cashguard Artillerist Dadger (-111,4,-177) you were warned about")
+        eq(#called("CharacterMoveToPosition"), 0, "no walk")
+        move_refused({ char = P1, pos = { -110, 4, -178 }, avoid = { DADGER } }, "trespass=true")
+        local j = job(op("move_to", { char = P1, pos = { -110, 4, -178 }, avoid = { DADGER }, trespass = true }))
+        eq(j.status, "running", "trespass=true walks in: " .. tostring(j.error))
+    end)
+end)
+
+test("move_to V26: a way through a warned area goes round it and says so", function()
+    with_plates({}, {}, function()
+        world[P1].pos = { -100, 4, -177 }
+        local j = job(op("move_to", { char = P1, pos = { -122, 4, -177 }, avoid = { DADGER } }))
+        eq(j.status, "running", "status " .. tostring(j.error))
+        local mv = called("CharacterMoveToPosition")
+        eq(#mv, 1, "via first")
+        local via = { mv[1][3], mv[1][4], mv[1][5] }
+        assert(math.abs(via[3] + 177) > 6, "via clear of the area: z=" .. via[3])
+        arrive(j, via)
+        arrive(j, { -122, 4, -177 })
+        eq(j.status, "done", "status " .. tostring(j.error))
+        assert(j.result.avoiding and j.result.avoiding:find("Dadger", 1, true), tostring(j.result.avoiding))
+        assert(j.result.avoiding:find("you were warned about", 1, true), j.result.avoiding)
+    end)
+end)
+
+test("move_to V26: no way round a warned area -> refused, never walked through", function()
+    with_plates({}, {}, function()
+        world[P1].pos = { -100, 4, -177 }
+        BG3AI.Nav.routeFrom = function() return nil end
+        move_refused({ char = P1, pos = { -122, 4, -177 }, avoid = { DADGER } },
+            "crosses the off-limits area by Cashguard Artillerist Dadger (-111,4,-177) you were warned about and no way round")
+        eq(#called("CharacterMoveToPosition"), 0, "no walk")
+    end)
+end)
+
+test("move_to V26: no warning, another level, another floor, or standing in it -> walks as before", function()
+    with_plates({}, {}, function()
+        world[P1].pos = { -100, 4, -177 }
+        local function straight(avoid)
+            calls = {}
+            local j = job(op("move_to", { char = P1, pos = { -122, 4, -177 }, avoid = avoid }))
+            local mv = called("CharacterMoveToPosition")
+            eq(#mv, 1, "one walk"); near(mv[1][3], -122, "straight to the destination")
+            j.status = "done"
+            A.active = {}
+        end
+        straight(nil)
+        straight({ { id = 1, pos = DADGER.pos, r = 6, level = "SCL_Main_A", name = "x" } })
+        straight({ { id = 1, pos = { -111, 12.5, -177 }, r = 6, level = "CTY_Main_A", name = "upstairs" } })
+        world[P1].pos = { -108, 4, -177 } -- inside it already: walking out is right
+        calls = {}
+        local j = job(op("move_to", { char = P1, pos = { -122, 4, -177 }, avoid = { DADGER } }))
+        eq(j.status, "running", "status " .. tostring(j.error))
+        near(called("CharacterMoveToPosition")[1][3], -122, "straight out")
+    end)
+end)
+
 -- S001 leg 5: a 7 m single-tick step along the engine's own route (a jump link
 -- or a frame hitch) is the walk, not a teleport. Nav.route/onRoute are stubbed
 -- here; their geometry is tested in tools/dev/test_nav_lua.lua.
