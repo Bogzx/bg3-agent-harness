@@ -2244,6 +2244,18 @@ def sec_setup() -> None:
         item("check_all leaves the game view", "PASS" if scr == "game" and scr_row.verdict != "FAIL" else "FAIL",
              f"waypoints {wp.verdict}: {wp.detail[-120:]} | screen row {scr_row.verdict}: {scr_row.detail} | "
              f"screen 2 s after={scr}")
+    # 8. S20 (S085): the plan check passed Claude L12 Tough, taken at L4. plan_offers.lua now reads each member's
+    #    taken feats from its LevelUp history (read-only): a member past L4 has one unless all were Ability
+    #    Improvements (repeatable, left out); Ability Improvement is in the repeatable list.
+    import check_plans as CPL
+    uuids = [r["uuid"] for r in status().get("party") or [] if isinstance(r, dict) and r.get("uuid")]
+    ms = CPL.offers(S.game, uuids, 1)
+    lvl = {m["name"]: sum(c.get("level") or 0 for c in m["classes"]) for m in ms}
+    feats = {m["name"]: m.get("known_feats") for m in ms}
+    rep = (ms[0].get("repeatable_feats") or []) if ms else []
+    item("plan check reads taken feats", "PASS" if "Ability Improvement" in rep and any(
+        feats[n] for n in feats if lvl[n] >= 4) else "FAIL",
+         f"levels {lvl}; taken feats {feats}; repeatable {rep[:6]}")
 
 
 FUNCS["setup"] = sec_setup

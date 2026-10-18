@@ -75,5 +75,34 @@ class KnownPassives(unittest.TestCase):
         self.assertIn("Sculptor of Flesh", t)
 
 
+class TakenFeats(unittest.TestCase):
+    """S085: the plan check passed `Claude L12: {"feat":"Tough"}` (Tough taken at L4), and level_up failed on it."""
+    FEAT12 = {"level": 12, "feat": True, "skills": 0, "spells": [], "passives": []}
+
+    def test_taken_feat_refused(self):
+        p = CP.check_level(self.FEAT12, {"feat": "Tough"}, set(), {"Tough", "Alert"})
+        self.assertEqual(p, ["feat Tough: already taken (taken: Alert, Tough)"])
+        self.assertEqual(CP.check_level(self.FEAT12, {"feat": "tough"}, set(), {"Tough"})[0][:24], "feat tough: already take")
+        self.assertEqual(CP.check_level(self.FEAT12, {"feat": "Great Weapon Master"}, set(), {"Tough"}), [])
+
+    def test_member_rows(self):
+        # what plan_offers.lua returns: Ability Improvement is repeatable, so the lua leaves it out of known_feats
+        m = {"name": "Claude", "known": [], "known_passives": [], "known_feats": ["Tough"],
+             "repeatable_feats": ["Ability Improvement"],
+             "levels": [dict(self.FEAT12, level=11), self.FEAT12]}
+        plans = {("claude", 11): {"feat": "Alert"}, ("claude", 12): {"feat": "Tough"}}
+        rows = CP.check_member(m, plans)
+        self.assertEqual(rows[0]["problems"], [])
+        self.assertEqual(rows[1]["problems"], ["feat Tough: already taken (taken: Alert, Tough)"])
+        self.assertIn("feat (already taken: Tough)", rows[0]["offers"])
+        # the L11 line's feat counts as taken for L12 (the ahead level can't see it in the game yet)
+        rows = CP.check_member(m, {("claude", 11): {"feat": "Alert"}, ("claude", 12): {"feat": "Alert"}})
+        self.assertIn("feat Alert: already taken", rows[1]["problems"][0])
+        # a repeatable feat on both lines stays valid
+        rows = CP.check_member(m, {("claude", 11): {"feat": "Ability Improvement"},
+                                   ("claude", 12): {"feat": "Ability Improvement"}})
+        self.assertEqual([r["problems"] for r in rows], [[], []])
+
+
 if __name__ == "__main__":
     unittest.main()
