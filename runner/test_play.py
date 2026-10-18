@@ -914,25 +914,30 @@ class Relaunch(unittest.TestCase):
         self.assertEqual(P.pick_save(saves, None, "Claude", {"Claude-3__QuickSave_4"}).label, "QuickSave_4")  # runner's own
 
     def _runner(self, d: Path, *, launched, log_text, save_mtime, last_started=50.0, steam=(True, "offline"),
-                owns=True, first=False, ram=5000, mod_path=None, acts=()):
+                owns=True, first=False, ram=5000, mod_path=None, acts=(), extra_saves=(), runner_saves=(),
+                save_combat=None, combat_now=False, last_ended=None):
         self.saved = (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb,
-                      P.game_mod_path, P.read_actions_since)
+                      P.game_mod_path, P.read_actions_since, P.party_in_combat)
         P.port_open = lambda *a, **k: True
+        P.party_in_combat = lambda: combat_now
         P.read_actions_since = lambda t, *a, **k: [x for x in acts if x.get("t", 0) > t]   # never the real log
         P.game_ram_mb = lambda: ram
         P.game_mod_path = lambda: mod_path   # never the machine's real game
         P.steam_ready = lambda: steam
-        P.list_saves = lambda: [P.Save("Claude-1__S032-end", "Claude", "S032-end", save_mtime)]
+        P.list_saves = lambda: [P.Save("Claude-1__S032-end", "Claude", "S032-end", save_mtime), *extra_saves]
         P.game_started_at = lambda: launched
         P.log = lambda m: self.logs.append(m)
         self.logs, self.killed, self.events = [], [], []
         r = P.Runner.__new__(P.Runner)
         r.opt = P.Options("pt", None, 30, "opus", save_owner="Claude", take_over=True)
         r.mem = d
-        r.state = type("S", (), {"dir": d, "data": {"game": None, "save_owner": "Claude", "runner_saves": [],
-                                                       "loaded_save": "x",
+        r.pending_notes, r.relaunch_save = [], None
+        r.state = type("S", (), {"dir": d, "data": {"game": None, "save_owner": "Claude",
+                                                       "runner_saves": list(runner_saves),
+                                                       "runner_save_combat": save_combat, "loaded_save": "x",
                                                        "history": [{"kind": "play", "session": "S032",
-                                                                    "started": last_started}]},
+                                                                    "started": last_started,
+                                                                    **({"ended": last_ended} if last_ended else {})}]},
                                   "__getitem__": lambda s, k: s.data.get(k),
                                   "__setitem__": lambda s, k, v: s.data.__setitem__(k, v)})()
         (d / "S032.log").write_text(log_text)
@@ -944,7 +949,7 @@ class Relaunch(unittest.TestCase):
     def tearDown(self):
         if hasattr(self, "saved"):
             (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb,
-             P.game_mod_path, P.read_actions_since) = self.saved
+             P.game_mod_path, P.read_actions_since, P.party_in_combat) = self.saved
 
     def test_relaunches_after_a_ready_check_failure(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1080,6 +1085,176 @@ class Relaunch(unittest.TestCase):
             self.assertIsNone(r.maybe_relaunch(False, 30))
             self.assertEqual(self.killed, [])
             self.assertTrue(any("lose play" in m for m in self.logs))
+
+    # S093 (09:49:34): the agent didn't save after S090-end; the runner quicksaved at the session's end (QuickSave_24)
+    QS = P.Save("Claude-4__QuickSave_24", "Claude", "QuickSave_24", 70.0)
+    S093_END = (
+        {"t": 60.0, "tool": "end_turn", "args": {}, "result": "end_turn: done"},
+        {"t": 64.0, "tool": "memory_write", "args": {}, "result": "Rewrote memory/HANDOFF.md"},
+        {"t": 65.0, "tool": "end_session", "args": {}, "result": "Memory for S093 committed"},
+        {"t": 80.0, "tool": "get_status", "args": {}, "result": "WHERE Upper City"},   # the runner's check_all
+    )
+
+    def test_boundary_save(self):
+        last = {"session": "S093", "started": 50.0}
+        calm = {self.QS.folder: False}
+        saves = [P.Save("Claude-1__S032-end", "Claude", "S032-end", 10.0), self.QS,
+                 P.Save("Claude-3__QuickSave_23", "Claude", "QuickSave_23", 40.0)]   # the previous boundary's
+        runner = {self.QS.folder, "Claude-3__QuickSave_23"}
+        self.assertEqual(P.boundary_save(saves, runner, calm, last, list(self.S093_END)), (self.QS, ""))
+        got, why = P.boundary_save(saves, runner, {self.QS.folder: True}, last, list(self.S093_END))
+        self.assertIsNone(got)
+        self.assertIn("mid-fight", why)
+        got, why = P.boundary_save(saves, runner, {}, last, list(self.S093_END))   # made before the flag existed
+        self.assertIsNone(got)
+        self.assertIn("unknown whether the party was in a fight", why)
+        moved = {"t": 71.0, "tool": "move_to", "args": {}, "result": "move_to: done"}
+        got, why = P.boundary_save(saves, runner, calm, last, [*self.S093_END, moved])
+        self.assertIsNone(got)
+        self.assertIn("move_to changed the game after it", why)
+        refused = {**moved, "result": "NOT READY: loading"}
+        self.assertEqual(P.boundary_save(saves, runner, calm, last, [*self.S093_END, refused])[0], self.QS)
+        got, why = P.boundary_save(saves, {"Claude-3__QuickSave_23"}, calm, last, [])   # only one older than S093
+        self.assertIsNone(got)
+        self.assertIn("no runner quicksave since S093's start", why)
+        agents = P.Save("Claude-5__QuickSave_25", "Claude", "QuickSave_25", 75.0)    # not the runner's: ignored
+        self.assertEqual(P.boundary_save([*saves, agents], runner, calm, last, [])[0], self.QS)
+
+    def _s093(self, td, **kw):
+        # S093 wrote HANDOFF ("Save to load: S090-end") and ended 4 s before the quicksave: choose_save keeps S090-end
+        (Path(td) / "HANDOFF.md").write_text('# Handoff S032 → S033\n\nSave to load: "S032-end"\n')
+        r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=10.0, last_started=50.0,
+                         last_ended=66.0, mod_path=str(P.MOD_DIR), acts=self.S093_END, extra_saves=(self.QS,),
+                         runner_saves=(self.QS.folder,), **kw)
+        self.assertEqual(r.choose_save().label, "S032-end")
+        return r
+
+    def test_relaunches_onto_the_runners_boundary_quicksave(self):
+        # S093/S094 09:50:53: "the newest save S090-end is older than S093's start: skipped" although the runner's
+        # QuickSave_24 held where S093 ended; HANDOFF's older save stays choose_save's pick, the relaunch loads QS
+        with tempfile.TemporaryDirectory() as td:
+            r = self._s093(td, save_combat={self.QS.folder: False})
+            self.assertIn("loads the mod from", r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [1])
+            self.assertEqual(r.relaunch_save, self.QS)
+            self.assertEqual(r.save_choice[0], "QuickSave_24")
+            self.assertTrue(any("then loading Claude-4__QuickSave_24" in m for m in self.logs))
+            self.assertTrue(any("QuickSave_24" in n and "where that session left off" in n for n in r.pending_notes))
+
+    def test_boundary_quicksave_not_used_mid_fight(self):
+        for kw, why in (({"save_combat": {self.QS.folder: True}}, "made mid-fight"),
+                        ({"save_combat": {self.QS.folder: False}, "combat_now": True}, "in a fight now"),
+                        ({"save_combat": {self.QS.folder: False}, "combat_now": None}, "doesn't say"),
+                        ({"save_combat": None}, "unknown whether")):
+            self.logs = []
+            with tempfile.TemporaryDirectory() as td:
+                r = self._s093(td, **kw)
+                self.assertIsNone(r.maybe_relaunch(False, 30), kw)
+                self.assertEqual(self.killed, [], kw)
+                self.assertIsNone(r.relaunch_save, kw)
+                self.assertEqual(r.pending_notes, [], kw)
+                self.assertTrue(any(why in m and "lose play" in m for m in self.logs), (kw, self.logs))
+                self.tearDown()
+
+    def test_boundary_quicksave_not_kept_when_steam_blocks_the_relaunch(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._s093(td, save_combat={self.QS.folder: False}, steam=(False, "Steam is not running"))
+            self.assertIsNone(r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [])
+            self.assertIsNone(r.relaunch_save)   # a later ensure_game (a crash) must not load it
+            self.assertEqual(r.pending_notes, [])
+
+    def test_lose_play_mark(self):
+        last = {"session": "S093", "started": 50.0}
+        self.assertEqual(P.lose_play_mark(last, []), (50.0, "S093's start"))
+        reads = [{"t": 60.0, "tool": "get_status", "result": "WHERE"}, {"t": 61.0, "tool": "note", "result": "ok"}]
+        self.assertEqual(P.lose_play_mark(last, reads)[0], 50.0)   # nothing changed the game: its start
+        t, what = P.lose_play_mark(last, [*reads, {"t": 80.0, "tool": "move_to", "result": "move_to: done"},
+                                          {"t": 81.0, "tool": "move_to", "result": "FAILED — no path"}])
+        self.assertEqual(t, 80.0)   # the refused one changed nothing
+        self.assertIn("S093's last game change (move_to at ", what)
+
+    # A session saved partway (S032-end at 70, after its start at 50), then played on without saving (move_to at 80)
+    PLAYED_ON = ({"t": 60.0, "tool": "save_game", "args": {}, "result": "save_game: done"},
+                 {"t": 80.0, "tool": "move_to", "args": {}, "result": "move_to: done"},
+                 {"t": 85.0, "tool": "end_session", "args": {}, "result": "Memory committed"})
+
+    def test_kept_when_the_session_played_on_after_its_save(self):
+        # before: only the session's start counted, so the relaunch loaded S032-end and lost the walk at 80
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=70.0, last_started=50.0,
+                             mod_path=str(P.MOD_DIR), acts=self.PLAYED_ON)
+            self.assertIsNone(r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [])
+            self.assertTrue(any("older than S032's last game change (move_to at" in m and "lose play" in m
+                                for m in self.logs), self.logs)
+        with tempfile.TemporaryDirectory() as td:   # saved after its last game change: relaunched as before
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=82.0, last_started=50.0,
+                             mod_path=str(P.MOD_DIR), acts=self.PLAYED_ON)
+            self.assertIn("loads the mod from", r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [1])
+
+    def test_played_on_after_its_save_relaunches_onto_a_newer_boundary_quicksave(self):
+        qs = P.Save("Claude-4__QuickSave_24", "Claude", "QuickSave_24", 90.0)
+        for combat, relaunched in ((False, True), (True, False)):
+            self.logs, self.killed = [], []
+            with tempfile.TemporaryDirectory() as td:
+                (Path(td) / "HANDOFF.md").write_text('# Handoff S032 → S033\n\nSave to load: "S032-end"\n')
+                r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=70.0,
+                                 last_started=50.0, last_ended=88.0, mod_path=str(P.MOD_DIR), acts=self.PLAYED_ON,
+                                 extra_saves=(qs,), runner_saves=(qs.folder,), save_combat={qs.folder: combat})
+                self.assertEqual(r.choose_save().label, "S032-end")   # HANDOFF's, within the slack of S032's end
+                why = r.maybe_relaunch(False, 30)
+                self.assertEqual(why is not None, relaunched, self.logs)
+                self.assertEqual(r.relaunch_save, qs if relaunched else None)
+                if not relaunched:
+                    self.assertTrue(any("made mid-fight" in m and "lose play" in m for m in self.logs), self.logs)
+                self.tearDown()
+
+    def test_ensure_game_loads_the_relaunch_save_once(self):
+        saved = (P.port_open, P.log)
+        try:
+            P.port_open = lambda *a, **k: False
+            P.log = lambda m: None
+            r = P.Runner.__new__(P.Runner)
+            r.state = {"history": [], "loaded_save": None}
+            r.owns_game = lambda: True
+            r.opt = P.Options("pt", None, 30, "opus")
+            r.note_game_gone = r.check_game_oom = lambda *a: None
+            r.choose_save = lambda: "chosen"
+            r.load_save = lambda s: s
+            r.relaunch_save = self.QS
+            self.assertEqual(r.ensure_game(False), self.QS)
+            self.assertIsNone(r.relaunch_save)
+            self.assertEqual(r.ensure_game(False), "chosen")
+        finally:
+            P.port_open, P.log = saved
+
+
+class EnsureSave(unittest.TestCase):
+    def test_records_whether_the_runner_quicksave_was_mid_fight(self):
+        saved = (P.saves_since, P.list_saves, P.server_ready, P.available_ops, P.rpc, P.party_in_combat, P.log)
+        try:
+            for combat, tail in ((False, ""), (True, " (mid-fight)"), (None, " (fight state unknown)")):
+                logs, disk = [], []
+                P.saves_since = lambda *a: []
+                P.list_saves = lambda d=disk: list(d)
+                P.server_ready = lambda: True
+                P.available_ops = lambda c: {"ui.menu"}
+                P.party_in_combat = lambda c=combat: c
+                P.rpc = lambda *a, d=disk, **k: d.append(
+                    P.Save("Claude-4__QuickSave_24", "Claude", "QuickSave_24", time.time()))
+                P.log = logs.append
+                r = P.Runner.__new__(P.Runner)
+                r.state = {"save_owner": "Claude", "runner_saves": [], "runner_save_combat": None}
+                r.game_alive = lambda: True
+                r.ensure_save(0.0)
+                self.assertEqual(r.state["runner_saves"], ["Claude-4__QuickSave_24"])
+                self.assertEqual(r.state["runner_save_combat"], {"Claude-4__QuickSave_24": combat})
+                self.assertIn(f"quicksave written: Claude-4__QuickSave_24{tail}", logs)
+        finally:
+            (P.saves_since, P.list_saves, P.server_ready, P.available_ops, P.rpc, P.party_in_combat,
+             P.log) = saved
 
 
 class Gates(unittest.TestCase):

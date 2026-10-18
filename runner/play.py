@@ -623,8 +623,54 @@ def ended_on_save(actions: list[dict], save: Save) -> bool:
     arg = str((last.get("args") or {}).get("save") or "")
     if not m or m.group(1) != save.label or ("__" in arg and arg != save.folder):
         return False
-    return all(a.get("tool") in STATE_KEEPING_TOOLS or a.get("tool") in latency.BATCH_TOOLS
-               or str(a.get("result") or "").startswith(REFUSED_PREFIXES) for a in actions[loads[-1] + 1:])
+    return all(keeps_state(a) for a in actions[loads[-1] + 1:])
+
+
+def keeps_state(a: dict) -> bool:
+    """An actions.jsonl record that didn't change the game: a STATE_KEEPING_TOOLS call, a batch wrapper or a refused
+    call. An unknown tool counts as a change."""
+    return (a.get("tool") in STATE_KEEPING_TOOLS or a.get("tool") in latency.BATCH_TOOLS
+            or str(a.get("result") or "").startswith(REFUSED_PREFIXES))
+
+
+def lose_play_mark(last: dict, actions: list[dict]) -> tuple[float, str]:
+    """From when a relaunch onto an older save loses play: the last game-changing call of the last session
+    (`actions`: actions.jsonl since its start, keeps_state), else its start. A session that saved partway and played
+    on without saving would otherwise relaunch onto that save and lose the rest (user, 2026-10-18: losing play is worse
+    than a skipped relaunch). -> (time, what it is, for the log)."""
+    sid = last.get("session") or "the last session"
+    changed = [a for a in actions if not keeps_state(a)]
+    if not changed:
+        return float(last.get("started", 0)), f"{sid}'s start"
+    a = max(changed, key=lambda x: x.get("t", 0))
+    return float(a.get("t", 0)), (f"{sid}'s last game change ({a.get('tool')} at "
+                                  f"{datetime.fromtimestamp(a.get('t', 0)):%H:%M:%S})")
+
+
+def boundary_save(saves: list[Save], runner_saves: set[str], combat: dict[str, bool | None], last: dict,
+                  actions: list[dict]) -> tuple[Save | None, str]:
+    """The runner's own quicksave at the end of the last play session (ensure_save, when the agent didn't save), if
+    a relaunch can load it instead of an older save without losing play: written after the session started, out of
+    combat (`combat`: runner.json runner_save_combat, the party's state when the runner asked for the save), and no
+    call changed the game after it (`actions`: actions.jsonl since the session's start). S093 09:50: HANDOFF named
+    S090-end, S093 played on without a named save, and the snapshot relaunch was skipped although the runner's
+    QuickSave_24 held where S093 ended. A mid-fight one doesn't: the enemies' turns go on in the running game, and a
+    reload would roll them again. -> (save, "") or (None, why not)."""
+    sid = last.get("session") or "the last session"
+    mine = [s for s in saves if s.folder in runner_saves and s.mtime >= last.get("started", 0)]
+    if not mine:
+        return None, f"no runner quicksave since {sid}'s start"
+    s = max(mine, key=lambda x: x.mtime)
+    was = combat.get(s.folder)
+    if was is None:
+        return None, f"the runner's quicksave {s.label}: unknown whether the party was in a fight"
+    if was:
+        return None, (f"the runner's quicksave {s.label} was made mid-fight (the enemies' turns go on in the running "
+                      "game; a reload would roll them again)")
+    changed = [a for a in actions if a.get("t", 0) > s.mtime and not keeps_state(a)]
+    if changed:
+        return None, f"the runner's quicksave {s.label}: {changed[-1].get('tool')} changed the game after it"
+    return s, ""
 
 
 def foreign_use_since(save: Save, saves: list[Save], actions: list[dict], game_started: float | None,
@@ -1347,6 +1393,13 @@ AVATAR_NAME_LUA = (
     'end '
     'return nm(Osi.GetHostCharacter()) or ""')
 
+# "1" when a party member is in a fight, "0" when none is, "?" when the party can't be read.
+PARTY_COMBAT_LUA = (
+    'local ok, rows = pcall(function() return Osi.DB_PartyMembers:Get(nil) end) '
+    'if not ok or not rows or not rows[1] then return "?" end '
+    'for _, r in ipairs(rows) do local c = Osi.IsInCombat(r[1]) if c == 1 or c == true then return "1" end end '
+    'return "0"')
+
 MOD_DIR = REPO / "mod"
 # The runner's game loads the mod from this copy of mod/ (launch_game.sh --mod-path), refreshed only at a session
 # boundary: S090 loaded the Lua of a merge into main that landed 19 s after the session's bridge started.
@@ -1688,6 +1741,15 @@ def host_character_name() -> str | None:
         return lua_eval(AVATAR_NAME_LUA, context="server").strip() or None
     except Exception:  # noqa: BLE001
         return None
+
+
+def party_in_combat() -> bool | None:
+    """Whether a party member is in a fight (server context), None if the game doesn't answer."""
+    try:
+        r = lua_eval(PARTY_COMBAT_LUA, context="server").strip()
+    except Exception:  # noqa: BLE001
+        return None
+    return {"1": True, "0": False}.get(r)
 
 
 def server_ready() -> bool:
@@ -2189,6 +2251,7 @@ class Runner:
         self.stop_requested = False
         self.abort = False
         self.pending_notes: list[str] = []
+        self.relaunch_save: Save | None = None   # maybe_relaunch -> ensure_game: the save the relaunch loads
         self.quick_failures = 0
         self.new_game = False
         self.gates: bool | None = None       # gates_decision for the game this session plays (BG3AI_SAVE_GATES)
@@ -2806,8 +2869,10 @@ class Runner:
     def maybe_relaunch(self, first: bool, minutes: float = 0.0) -> str | None:
         """Between sessions: kill a game process that relaunch_reason() condemns for the next session (`minutes`
         long, plus the fight hold), so ensure_game() launches a fresh one with the newest save. Never kills when the relaunch can't happen (Steam not offline: the launch guard
-        would refuse) or would lose play (the newest save is older than the last session's start, unless that session
-        ended on a load_game of it: ended_on_save). -> the reason."""
+        would refuse) or would lose play (the newest save is older than the last session's last game change, or its
+        start without one: lose_play_mark; unless that session
+        ended on a load_game of it, ended_on_save, or the runner's quicksave at its end holds its last state,
+        boundary_save: then the relaunch loads that one). -> the reason."""
         if self.opt.dry_run or not port_open():
             return None
         if first and not (self.owns_game() or self.opt.take_over):
@@ -2831,22 +2896,40 @@ class Runner:
                     f"RAM+swap, no ready-check failure last session: kept (relaunch at {GAME_MAX_AGE_H:g} h by the "
                     f"session's end or {RELAUNCH_RAM_MB} MB)")
             return None
-        save = self.choose_save()
+        save, boundary = self.choose_save(), None
         if save is None:
             log(f"game relaunch wanted ({why}) but this playthrough has no save to load: skipped")
             return None
-        if last and save.mtime < last.get("started", 0):
-            if not ended_on_save(read_actions_since(last.get("started", 0)), save):
-                log(f"game relaunch wanted ({why}) but the newest save {save.label} is older than {last['session']}'s "
-                    "start: skipped (it would lose play)")
-                return None
-            log(f"the newest save {save.label} is older than {last['session']}'s start, but {last['session']} ended on "
-                f"load_game {save.label} with nothing changed after it: the game stands at that save")
+        acts = read_actions_since(last.get("started", 0)) if last else []
+        mark, what = lose_play_mark(last, acts) if last else (0.0, "")
+        if last and save.mtime < mark:
+            if ended_on_save(acts, save):
+                log(f"the newest save {save.label} is older than {what}, but {last['session']} "
+                    f"ended on load_game {save.label} with nothing changed after it: the game stands at that save")
+            else:
+                qs, no = boundary_save(self.own_saves(), set(self.state["runner_saves"] or []),
+                                       self.state["runner_save_combat"] or {}, last, acts)
+                if qs is not None and (now := party_in_combat()) is not False:
+                    qs, no = None, (f"the party is in a fight now, after {qs.label}" if now else
+                                    f"the game doesn't say whether the party is in a fight now (after {qs.label})")
+                if qs is None:
+                    log(f"game relaunch wanted ({why}) but the newest save {save.label} is older than "
+                        f"{what} and {no}: skipped (it would lose play)")
+                    return None
+                log(f"the newest save {save.label} is older than {what}; the runner's quicksave "
+                    f"{qs.label} at its end holds where it ended (out of combat, nothing changed after it)")
+                boundary = save = qs
         ok, steam_why = steam_ready()
         if not ok:
             log(f"game relaunch wanted ({why}) but Steam is not offline ({steam_why}): keeping the running game")
             self.event("game_relaunch_skipped", why=why, steam=steam_why)
             return None
+        if boundary is not None:   # ensure_game loads it (choose_save would pick HANDOFF's older save)
+            self.relaunch_save = boundary
+            self.save_choice = (boundary.label, f"the runner's quicksave at {last['session']}'s end (game relaunch)")
+            self.pending_notes.append(
+                f"RUNNER NOTE: \"{boundary.label}\" is the runner's quicksave at {last['session']}'s end: the game "
+                "stands where that session left off.")
         log(f"relaunching the game: {why}; then loading {save.folder}")
         self.event("game_relaunch", why=why, save=save.folder)
         self.kill_game()
@@ -2888,7 +2971,8 @@ class Runner:
             raise RuntimeError("debug port open but the game doesn't answer")
         if state is None:
             self.note_game_gone(self.check_game_oom())   # gone (e.g. 20:48: an OOM took the runner down with it)
-        return self.load_save(self.choose_save())
+        save, self.relaunch_save = getattr(self, "relaunch_save", None), None   # maybe_relaunch's boundary_save
+        return self.load_save(save or self.choose_save())
 
     def apply_play_settings(self) -> None:
         """Best effort, never fatal: autoskip, no tutorials, dismiss popups, then the save/load gates."""
@@ -3034,6 +3118,7 @@ class Runner:
         else:
             log("the agent didn't save this session; quicksaving")
         before = {s.folder for s in list_saves()}
+        combat = party_in_combat()   # recorded with the save: boundary_save never relaunches onto a mid-fight one
         t0 = time.time()
         try:
             if "ui.menu" in available_ops("client"):
@@ -3052,7 +3137,9 @@ class Runner:
                     log(f"quicksave {s.folder} has an unexpected owner; not recording it")
                     return
                 self.state["runner_saves"] = self.state["runner_saves"] + [s.folder]
-                log(f"quicksave written: {s.folder}")
+                self.state["runner_save_combat"] = {**(self.state["runner_save_combat"] or {}), s.folder: combat}
+                log(f"quicksave written: {s.folder}" + {True: " (mid-fight)", None: " (fight state unknown)"}.get(
+                    combat, ""))
                 return
             time.sleep(2)
         log("quicksave didn't appear within 60 s")
