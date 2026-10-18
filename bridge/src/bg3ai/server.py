@@ -4669,7 +4669,7 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
         args["force"] = True
     if which:
         args["which"] = which
-    if hotbar.HOTBAR_CAST_ENABLED and twostep.is_two_step(spell) and not upcast and len(picks) <= 1:
+    if twostep.TWOSTEP_ENABLED and twostep.is_two_step(spell) and not upcast and len(picks) <= 1:
         # ACT-9: Revivify (the body, then the ground beside it) and Dimension Door (who goes, then the landing) by
         # the player's clicks; with the route off the mod refuses them (its TargetPos2 write is off)
         return _twostep_use(char, spell, args, note)
@@ -8831,7 +8831,7 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z], "o3" (an objective: toward its marker, e.g. a Dash to the exit). Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).
     Abilities: the shown name or the id; a weapon attack the character doesn't have (a summon's) becomes its own weapon attack. Extra Attack: after the first weapon attack, an "extra" slot attack costs no action (the game's rule).
     Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","force","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it, walk the move again (a Dash does this by default; then_move:false turns it off).
-    order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts mid-turn and while a sent-ahead plan waits (default: stop).
+    order: "move,action,bonus,extra" (default; e.g. "bonus,move,action" for Misty Step first). reactions: {"Divine Smite":"ask"} sets prompts first; on_reaction: "use"|"skip" answers reaction prompts open at the turn's start, mid-turn and while a sent-ahead plan waits (default: stop, nothing played into an open prompt).
     No line of sight to a ranged target: it first steps (within the movement left and the ability's range) to the nearest spot that sees it, then casts again. A downed character has no turn to play (it passes by itself); another of your characters acting first makes a sent-ahead plan return at once; your summon (Spiritual Weapon …) acting first and not in the plan: its turn is played for it (its weapon attack on the plan's first target, else the nearest hostile) and then the plan.
     Before each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore="" adds new hostiles in view).
     who: required when NOW lists more than one of your characters; left out, the plan goes to the only one acting whose actions cover every ability it names (else REFUSED), and a plan sent ahead waits for the character selected when it was sent.
@@ -9278,6 +9278,16 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
         watcher.post_ops = [("state.combat", {})]
         watcher.on_post = lambda got: _cs_keep(got.get("state.combat"))
     watcher.baseline()
+    if watcher.open_prompt is not None:
+        # S094 10:05:14: the chain played Wyll's turn (then the Emperor's) into the Shield Blow prompt Claude's walk
+        # had opened: move and Dash 'never started', both turns lost. The prompt is answered first, by the plan's
+        # on_reaction, else by the agent: nothing is played into it.
+        if not p.on_reaction:
+            return _finish("combat_turn", {"who": who}, (
+                f"{TURN_NOT_YET}{_label(char)}'s turn not started: {_prompt_why(watcher.open_prompt)}. Nothing was "
+                "played or spent"), t0)
+        watcher.answered.append(_answer_reaction(p.on_reaction == "use"))
+        watcher.settle()
     after: dict = {}
     info: dict = {"party": party, "retarget": p.retarget}
     stopped = False

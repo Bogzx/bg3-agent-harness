@@ -518,11 +518,40 @@ def _wait(game: Game, char: str | None, pred, timeout: float) -> tuple[bool, dic
         time.sleep(0.03)
 
 
+# A30: arm by the cell's own click command (client op ui.hotbar_use: UseSlotCommand with the slot VM, what the button
+# sends on a click) before the cursor search for the cell (live L5-L8 failed there: `could not point at the hotbar
+# cell`, a container deck not built). An older mod without the op, or a refused command, takes the cursor route.
+COMMAND_ARM = True
+COMMAND_POS = (-1, -1)   # arm()'s "cell position" when the command armed it (no click made)
+
+
+def _command_arm(game: Game, spell: str, caster: str, res: HotbarCastResult) -> tuple[int, int] | None:
+    """ui.hotbar_use on the caster's cell: COMMAND_POS when the game took the command, None for the cursor route."""
+    if not COMMAND_ARM:
+        return None
+    args: dict[str, Any] = {"spell": spell, "char": caster}
+    hit = _maps.get(caster)   # the server map _slot fetched when the HUD named no spells (LIVE G2)
+    if hit and time.monotonic() - hit[0] < MAP_TTL_S:
+        args["map"] = hit[1]
+    try:
+        r = _rpc(game, "ui.hotbar_use", args)
+    except GameError as e:
+        res.detail["command_arm"] = str(e)[:120]
+        return None
+    if not r.get("done"):
+        return None
+    # GUESS C1 wrong (nothing in hand, no level picker): the cursor route then clicks the cell
+    took, _ = _wait(game, caster, lambda st: bool(st.get("armed") or st.get("upcast_open")), ARM_WAIT_S)
+    res.detail["command_arm"] = "armed" if took else "sent, nothing in hand: the cursor route"
+    return COMMAND_POS if took else None
+
+
 def arm(game: Game, inp: InputClient, caster: str, spell: str, res: HotbarCastResult,
         select: bool = True, should_stop=None) -> tuple[dict | None, dict]:
     """The hotbar half every UI cast shares: find the caster's cell (select the caster, page the deck), click it and
     prove the spell is in hand. Returns (None, cast_state) once armed, else (failure, {}) where failure holds
-    done()'s stage/reason/why/cancel_it (+ extra). Fills res.detail: cell, probes, paging, cell_pos, arm_s."""
+    done()'s stage/reason/why/cancel_it (+ extra). Fills res.detail: cell, probes, paging, cell_pos ("command" when
+    ui.hotbar_use armed it), command_arm, arm_s."""
 
     def fail(stage: str, reason: str, why: str | None, cancel_it: bool = False, **extra) -> tuple[dict, dict]:
         return dict(stage=stage, reason=reason, why=why, cancel_it=cancel_it, **extra), {}
@@ -559,8 +588,13 @@ def arm(game: Game, inp: InputClient, caster: str, spell: str, res: HotbarCastRe
     if pre.get("armed"):
         res.detail["cleared_before"] = cancel(game, inp, caster)
 
-    pos, last = (None, {}) if want.get("rendered") is False else locate_cell(game, inp, spell, caster, want)
-    res.detail["probes"] = last.get("probes")
+    if should_stop is not None and should_stop():
+        return fail("arm", "cancelled", "the step was cancelled or interrupted before the cell click")
+    pos = _command_arm(game, spell, caster, res)
+    last: dict = {}
+    if pos is None:
+        pos, last = (None, {}) if want.get("rendered") is False else locate_cell(game, inp, spell, caster, want)
+        res.detail["probes"] = last.get("probes")
     if pos is None and want.get("shown_deck") != want.get("deck"):
         # paging: the deck is collapsed (no button for the cell) or squeezed in the concertina (no hover)
         paged, pinfo = show_deck(game, inp, spell, caster, want)
@@ -577,7 +611,8 @@ def arm(game: Game, inp: InputClient, caster: str, spell: str, res: HotbarCastRe
     if should_stop is not None and should_stop():
         return fail("arm", "cancelled", "the step was cancelled or interrupted before the cell click")
     t_click = time.monotonic()
-    inp.click(pos[0], pos[1], button="L")
+    if pos != COMMAND_POS:
+        inp.click(pos[0], pos[1], button="L")
     sp_lower = spell.lower()
     base_lower = (str(want.get("spell") or "") or spell).lower()
 
@@ -601,7 +636,7 @@ def arm(game: Game, inp: InputClient, caster: str, spell: str, res: HotbarCastRe
         elif not opened:
             return fail("arm", "not_armed", "the cell click opened no level picker and put nothing in hand", state=st)
     armed_ok, st = _wait(game, caster, in_hand, ARM_WAIT_S)
-    res.detail["cell_pos"] = pos
+    res.detail["cell_pos"] = pos if pos != COMMAND_POS else "command"
     if not armed_ok:
         if st.get("armed"):
             # another spell in hand: the click landed on the wrong cell (a stale cached spot); forget the spot

@@ -1,7 +1,7 @@
 """Offline tests for twostep.py (audit ACT-9, act): Revivify / Dimension Door by the player's clicks, the hotbar cell
 (hotbar.arm), the first pick hover-verified, the ground click proven by the cursor (ui.ground_check: its world point,
 no character under it, no warning cursor) and by the spell state after the click; and the use_ability wiring behind
-HOTBAR_CAST_ENABLED.
+TWOSTEP_ENABLED.
 
 Run: cd bridge && uv run python -m unittest discover -s tests -p 'test_twostep.py'
 """
@@ -504,8 +504,8 @@ class TwoStepRoute(Base):
     def setUp(self) -> None:
         super().setUp()
         self.g.dur["act.cast"] = 0.05
-        saved = (hotbar.HOTBAR_CAST_ENABLED, twostep.twostep_cast, server._inp)
-        self.addCleanup(lambda: (setattr(hotbar, "HOTBAR_CAST_ENABLED", saved[0]),
+        saved = (twostep.TWOSTEP_ENABLED, twostep.twostep_cast, server._inp)
+        self.addCleanup(lambda: (setattr(twostep, "TWOSTEP_ENABLED", saved[0]),
                                  setattr(twostep, "twostep_cast", saved[1]), setattr(server, "_inp", saved[2])))
         server._inp = lambda: object()
         self.fake = FakeTwoStep(self.g)
@@ -515,15 +515,27 @@ class TwoStepRoute(Base):
     def cast_args(self) -> list[dict]:
         return [a for _, a in self.g.ops("act.cast")]
 
+    def test_its_own_switch_apart_from_the_n_target_route(self):
+        # A30: the two-step route goes on after its own live item, whatever the N-target route's switch says
+        self.assertFalse(twostep.TWOSTEP_ENABLED)
+        saved = hotbar.HOTBAR_CAST_ENABLED
+        self.addCleanup(setattr, hotbar, "HOTBAR_CAST_ENABLED", saved)
+        hotbar.HOTBAR_CAST_ENABLED = True
+        server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        self.assertEqual(self.fake.calls, [])
+        hotbar.HOTBAR_CAST_ENABLED, twostep.TWOSTEP_ENABLED = False, True
+        server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        self.assertEqual(len(self.fake.calls), 1)
+
     def test_off_sends_the_osiris_form_the_mod_refuses(self):
-        hotbar.HOTBAR_CAST_ENABLED = False
+        twostep.TWOSTEP_ENABLED = False
         server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         (a,) = self.cast_args()
         self.assertNotIn("ui", a)
         self.assertEqual(self.fake.calls, [])
 
     def test_on_dimension_door_alone(self):
-        hotbar.HOTBAR_CAST_ENABLED = True
+        twostep.TWOSTEP_ENABLED = True
         out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         (a,) = self.cast_args()
         self.assertTrue(a["ui"])
@@ -534,7 +546,7 @@ class TwoStepRoute(Base):
         self.assertEqual(self.g.ops("job.cancel"), [])
 
     def test_on_dimension_door_with_an_ally_from_targets(self):
-        hotbar.HOTBAR_CAST_ENABLED = True
+        twostep.TWOSTEP_ENABLED = True
         server.use_ability(DD, targets=[self.gob], x=1.0, y=0.0, z=10.0, who=self.p1)
         (a,) = self.cast_args()
         self.assertEqual(a["target"], self.g_uuid(self.gob))
@@ -542,7 +554,7 @@ class TwoStepRoute(Base):
         self.assertEqual(self.fake.calls[0][2], a["target"])
 
     def test_on_revivify_body(self):
-        hotbar.HOTBAR_CAST_ENABLED = True
+        twostep.TWOSTEP_ENABLED = True
         out = server.use_ability(REV, target=self.gob, who=self.p1)
         (a,) = self.cast_args()
         self.assertTrue(a["ui"])
@@ -553,7 +565,7 @@ class TwoStepRoute(Base):
         """L8 23:59 (se): Dimension Door "the game refused the cast", moved 0 m, the spell LEFT IN HAND. The mod job
         hears when the clicks are done (act.ui_clicked: a CastSpellFailed from before then is the upcast picker's),
         and whatever the outcome, a spell still in hand afterwards is put back."""
-        hotbar.HOTBAR_CAST_ENABLED = True
+        twostep.TWOSTEP_ENABLED = True
         held = {"n": 0}
 
         def cancel(game, inp, char):
@@ -577,7 +589,7 @@ class TwoStepRoute(Base):
         self.assertEqual(len(self.g.ops("job.cancel")), 1)
 
     def test_route_failure_cancels_the_job_no_retry(self):
-        hotbar.HOTBAR_CAST_ENABLED = True
+        twostep.TWOSTEP_ENABLED = True
         self.g.dur["act.cast"] = 5.0
         self.fake.ok, self.fake.reason, self.fake.stage = False, "ground_refused", "ground"
         out = server.use_ability(REV, target=self.gob, who=self.p1)
@@ -587,7 +599,7 @@ class TwoStepRoute(Base):
         self.assertIn("Scroll of Revivify", out)
 
     def test_error_in_the_route_cancels_too(self):
-        hotbar.HOTBAR_CAST_ENABLED = True
+        twostep.TWOSTEP_ENABLED = True
         self.g.dur["act.cast"] = 5.0
         self.fake.raises = True
         out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
@@ -595,20 +607,20 @@ class TwoStepRoute(Base):
         self.assertIn("failed at slot", out)
 
     def test_mod_refusal_no_clicks(self):
-        hotbar.HOTBAR_CAST_ENABLED = True
+        twostep.TWOSTEP_ENABLED = True
         self.g.refuse_if = lambda op, a: "the landing is out of range (55.0 m, range 50.0 m)" if op == "act.cast" else None
         out = server.use_ability(DD, x=55.0, y=0.0, z=0.0, who=self.p1)
         self.assertEqual(self.fake.calls, [])
         self.assertIn("the landing is out of range", out)
 
     def test_upcast_stays_osiris(self):
-        hotbar.HOTBAR_CAST_ENABLED = True
+        twostep.TWOSTEP_ENABLED = True
         server.use_ability(REV, target=self.gob, who=self.p1, upcast=5)
         self.assertNotIn("ui", self.cast_args()[0])
         self.assertEqual(self.fake.calls, [])
 
     def test_h1_unselected_caster_selected_before_the_ui_job(self):
-        hotbar.HOTBAR_CAST_ENABLED = True
+        twostep.TWOSTEP_ENABLED = True
         self.g.supersede = True
         self.g.active = "p2-not-the-caster"
         out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
@@ -619,7 +631,7 @@ class TwoStepRoute(Base):
         self.assertIn("who goes + the landing clicked", out)
 
     def test_m2_input_error_cancels(self):
-        hotbar.HOTBAR_CAST_ENABLED = True
+        twostep.TWOSTEP_ENABLED = True
         self.g.dur["act.cast"] = 5.0
         self.fake.raises = RuntimeError("the shim has not seen the game window yet")
         out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)

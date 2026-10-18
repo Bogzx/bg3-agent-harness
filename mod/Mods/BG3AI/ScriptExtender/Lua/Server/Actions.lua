@@ -57,6 +57,15 @@ A.CAST_NO_START_COMBAT_MS = 3000
 -- was hit or lost a status this long before the order (or after it) is ordered once more instead of failing.
 A.CAST_HIT_WINDOW_MS = 2500
 A.hit_ms = A.hit_ms or {} -- char guid -> {t, why}: when it was last hit (AttackedBy defender) or lost a status
+-- A30 (S090-S095, the Netherbrain fight): most combat casts that "never started" came with an enemy's cast in the
+-- same seconds (Spellplague: Counterspell, Pactsplitter: Psionic Backlash), Keene's Fixers x2 (S094) and Gur
+-- Huntwardens (S095) among them; the same cast sent again worked each time with nothing spent. In our own turn an
+-- enemy casts only as a reaction. The no-start waits while that reaction plays (until its CastedSpell +
+-- CAST_REACT_SETTLE_MS, at most CAST_REACT_HOLD_MS after the order: the 3 s purge could kill a cast the game holds
+-- for it), then orders once more when nothing of ours started and nothing was spent.
+A.CAST_REACT_HOLD_MS = 8000
+A.CAST_REACT_SETTLE_MS = 500
+A.react_seen = nil -- {t, done?, caster, spell}: the last cast by a character outside the party
 -- act.cast {ui=true} (audit ACT-8, the hotbar N-target route): the bridge clicks the hotbar cell and each target as a
 -- player does, after this job started; the job only checks the cast and watches CastSpell/CastedSpell. The clicks
 -- take ~1 s + 0.5 s per target (hotbar.py budget, hard cap 3x + 4 s): no start this long = failed (the bridge cancels
@@ -259,6 +268,19 @@ function A.stirred(u, why)
     A.hit_ms[g] = { t = G.now_ms(), why = why }
 end
 
+-- CastSpell / CastedSpell by a character outside the party (A30): its start, and its end on the same caster's
+-- CastedSpell (a CastedSpell alone counts as both).
+function A.foe_cast(event, caster, spell)
+    local g = G.guid(caster)
+    if not g or G.is_party(g) then return end
+    local now, r = G.now_ms(), A.react_seen
+    if event == "CastedSpell" and r and r.caster == g and not r.done then
+        r.done = now
+    else
+        A.react_seen = { t = now, done = event == "CastedSpell" and now or nil, caster = g, spell = tostring(spell) }
+    end
+end
+
 function A.dispatch(event, args)
     if event == "TurnEnded" and args[1] then
         local g = G.guid(args[1]) or args[1]
@@ -269,6 +291,8 @@ function A.dispatch(event, args)
         G.note_turn_started(args[1])
     elseif event == "AttackedBy" and args[1] then
         A.stirred(args[1], "a hit on the caster")
+    elseif (event == "CastSpell" or event == "CastedSpell") and args[1] then
+        A.foe_cast(event, args[1], args[2])
     elseif (event == "Unlocked" or event == "Opened") and args[1] then
         A.unlock_seen(args[1])
     elseif event == "StatusRemoved" and args[1] then
@@ -2073,6 +2097,26 @@ local function name_of(uuid)
     return U.loca(G.q("GetDisplayName", uuid))
 end
 
+-- A30: the enemy cast seen during our cast, as a player sees it (an unseen caster is not named).
+function A.react_name(rx)
+    local ok, st = pcall(Ext.Stats.Get, rx.spell)
+    local spell = ok and st and U.loca(st.DisplayName) or nil
+    local who = G.visible(rx.caster) and name_of(rx.caster) or nil
+    if who and spell then return who .. "'s " .. spell .. " (an enemy reaction)" end
+    return "an enemy's reaction cast"
+end
+
+-- A30: what of a cast's cost (check.payers) the game took since the check's snapshot, e.g. "action"; nil = nothing.
+function A.cost_spent(char, check)
+    if not (check and check.payers and check.snapshot) then return nil end
+    local now = G.resources(char)
+    for _, p in ipairs(check.payers) do
+        local before = (check.snapshot[p.name] or {})[p.level] or 0
+        if before - ((now[p.name] or {})[p.level] or 0) > 0.01 then return G.friendly(p.name) end
+    end
+    return nil
+end
+
 local NULL_GUID = "NULL_00000000-0000-0000-0000-000000000000"
 
 -- A27: a variant of a call-allies container (Gather Your Allies' groups) summons allies at its point.
@@ -2384,8 +2428,18 @@ reg("cast", function(args)
                 if p and job.ordered_pos and U.dist(p, job.ordered_pos) > 0.5 then
                     job.began = true -- the engine walks into range / the jump took off
                 elseif RPC.now_ms() - job.ordered_ms > no_start_ms then
+                    local now = RPC.now_ms()
+                    local rx = combat and not job.ui and A.react_seen
+                    if rx and rx.t < job.ordered_ms - A.CAST_HIT_WINDOW_MS then rx = nil end
+                    if rx and now - job.ordered_ms < A.CAST_REACT_HOLD_MS
+                        and (not rx.done or now - rx.done < A.CAST_REACT_SETTLE_MS) then
+                        return -- an enemy's reaction to it still plays: the game may start ours after it
+                    end
                     local hit = combat and not job.ui and A.hit_ms[G.guid(char)]
-                    if hit and not job.reordered and hit.t >= job.ordered_ms - A.CAST_HIT_WINDOW_MS then
+                    if hit and hit.t < job.ordered_ms - A.CAST_HIT_WINDOW_MS then hit = nil end
+                    local spent = rx and A.cost_spent(char, check)
+                    if not hit and rx and not spent then hit = { t = rx.t, why = A.react_name(rx) } end
+                    if hit and not job.reordered then
                         job.reordered, job.reorder_why = (hit.t - job.ordered_ms) / 1000, hit.why
                         pcall(G.osi, "PurgeOsirisQueue", char)
                         order(job)
@@ -2397,6 +2451,10 @@ reg("cast", function(args)
                         why = why .. " twice: ordered again after " .. job.reorder_why .. " "
                             .. string.format("%.1f s %s the first order", math.abs(job.reordered),
                                 job.reordered < 0 and "before" or "after")
+                    end
+                    if spent then
+                        why = why .. ": " .. A.react_name(rx) .. " came just then and the game took the "
+                            .. spent .. ": most likely countered"
                     end
                     if base == "Projectile_Jump" then
                         why = why .. ": it ignores a landing the jump can't reach (too far or too high for this"

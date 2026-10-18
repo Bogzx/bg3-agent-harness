@@ -1267,6 +1267,93 @@ test("cast in combat: a dropped order right after a hit on the caster is ordered
     BG3AI.Visibility = savedV
 end)
 
+test("cast in combat: an enemy's reaction cast holds the no-start, then the order goes once more (A30, S094)", function()
+    combat_setup(9)
+    A.react_seen = nil
+    spell("Target_Keene", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    spell("Target_Counterspell", { DisplayName = "Counterspell" })
+    local loca = Ext.Loca.GetTranslatedString
+    Ext.Loca.GetTranslatedString = function(h) return h end
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ is_visible = function() return false end }, { __index = savedV })
+    local AP = world[P1].comps.ActionResources.Resources.ActionPoint[1]
+    -- S094 09:55:40 Shadowheart's Keene's Fixers: Pactsplitter's Psionic Backlash came with it, nothing was cast,
+    -- nothing spent; the same call later worked. The reaction plays past 3 s: no purge while it does.
+    local j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
+    eq(#called("UseSpellAtPosition"), 1, "first order")
+    tick(8)
+    A.dispatch("CastSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
+    tick(44) -- 3.1 s after the order, the enemy's cast not over
+    eq(j.status, "running", "held while the reaction plays " .. tostring(j.error))
+    eq(#called("PurgeOsirisQueue"), 0, "not purged while held")
+    tick(16)
+    A.dispatch("CastedSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
+    tick(5)
+    eq(j.status, "running", "settle after the reaction")
+    tick(5)
+    eq(#called("UseSpellAtPosition"), 2, "ordered once more after the reaction")
+    eq(#called("PurgeOsirisQueue"), 1, "the dropped order purged first")
+    A.dispatch("CastSpell", { P1, "Target_Keene", "Target", "None", 0 })
+    A.dispatch("CastedSpell", { P1, "Target_Keene", "Target", "None", 0 })
+    tick(10)
+    eq(j.status, "done", "the second order cast " .. tostring(j.error))
+    -- dropped twice: names the reaction as a player sees it (an unseen caster unnamed)
+    AP.Amount = 1
+    j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
+    A.dispatch("CastedSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
+    tick(60)
+    eq(j.status, "running", "second order")
+    tick(60)
+    eq(j.status, "failed", "dropped twice")
+    assert(j.error:find("never started it %(3 s, no cast, no step%) twice: ordered again after an enemy's reaction"
+        .. " cast"), j.error)
+    -- a seen caster is named; the game took the action: countered, not ordered again
+    BG3AI.Visibility = setmetatable({ is_visible = function() return true end,
+        name = function() return "Spellplague" end }, { __index = savedV })
+    AP.Amount = 1
+    local n = #called("UseSpellAtPosition")
+    j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
+    A.dispatch("CastSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
+    AP.Amount = 0
+    A.dispatch("CastedSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
+    tick(60)
+    eq(j.status, "failed", "spent: no second order")
+    eq(#called("UseSpellAtPosition"), n + 1, "one order")
+    assert(j.error:find("Spellplague's Counterspell %(an enemy reaction%) came just then and the game took the"
+        .. " action: most likely countered"), j.error)
+    -- a reaction that never ends: held at most CAST_REACT_HOLD_MS, then ordered again
+    AP.Amount = 1
+    n = #called("UseSpellAtPosition")
+    j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
+    A.dispatch("CastSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
+    tick(130) -- 7.8 s
+    eq(#called("UseSpellAtPosition"), n + 1, "held to the cap")
+    tick(5)
+    eq(#called("UseSpellAtPosition"), n + 2, "ordered again at the cap")
+    -- an enemy cast well before the order (not a reaction to it): the plain 3 s failure, one order
+    AP.Amount = 1
+    A.react_seen = nil
+    A.dispatch("CastedSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
+    clock = clock + 3000
+    n = #called("UseSpellAtPosition")
+    j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
+    tick(52)
+    eq(j.status, "failed", "old enemy cast: plain failure"); assert(not j.error:find("twice"), j.error)
+    eq(#called("UseSpellAtPosition"), n + 1, "one order")
+    -- the party's own casts are no reaction
+    A.react_seen = nil
+    A.dispatch("CastSpell", { P2, "Target_Counterspell", "Target", "None", 0 })
+    party_rows = { P1, P2 }
+    A.dispatch("CastSpell", { P2, "Target_Counterspell", "Target", "None", 0 })
+    eq(A.react_seen and A.react_seen.caster, P2, "outside the party then")
+    A.react_seen = nil
+    A.dispatch("CastSpell", { P2, "Target_Counterspell", "Target", "None", 0 })
+    eq(A.react_seen, nil, "a party member's cast")
+    BG3AI.Visibility = savedV
+    Ext.Loca.GetTranslatedString = loca
+    A.react_seen = nil
+end)
+
 test("select: done once the character holds ClientControl; a no-op order resyncs via another member (S069)", function()
     party_rows = { P1, P2 }
     world[P2] = { pos = { 3, 0, 0 }, comps = { ClientControl = {} } }

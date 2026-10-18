@@ -181,6 +181,7 @@ class Watcher:
         self.last: dict = {}
         self._seq = {"server": 0, "client": 0}
         self._screen = "game"
+        self.open_prompt: dict | None = None  # the ui.state of a reaction prompt already open at baseline()
         self._ui_at = 0.0
         self._hp: dict[str, float] = {}
         self._chip: dict[str, float] = {}  # trivial damage outside combat this run, percent of max HP
@@ -229,13 +230,19 @@ class Watcher:
                 for ctx, res in (("server", es), ("client", ec)):
                     self._seq[ctx] = res.get("latest", 0) if isinstance(res, dict) else 0
                 self.start = self.last = self._as_watch(w)
-                self._screen = self._as_screen(ui)
             else:
                 for ctx in ("server", "client"):
                     res = self.game.try_rpc(*ev, context=ctx) or {}
                     self._seq[ctx] = res.get("latest", 0) if isinstance(res, dict) else 0
                 self.start = self.last = self._watch()
-                self._screen = self._screen_now()
+                ui = self.game.try_rpc("ui.state", context="client")
+            self._screen = self._as_screen(ui)
+            # S094 10:05:14: a Shield Blow prompt Claude's walk opened was this run's starting screen, so it never
+            # stopped Wyll's turn (move and Dash 'never started', the turn lost). The game waits for that answer
+            # first: an open reaction prompt is not the run's normal screen (the first UI check stops on it).
+            self.open_prompt = ui if self._screen == "reaction" else None
+            if self.open_prompt is not None:
+                self._screen = "game"
             self._ui_at = time.monotonic()
             for row in self.start.get("party") or []:
                 p = _pct(row)

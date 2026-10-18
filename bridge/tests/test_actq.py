@@ -622,6 +622,24 @@ class WatcherParty(unittest.TestCase):
     def party(self, **row) -> None:
         self.g.watch["party"] = [{"uuid": P1, "hp": 20, "max_hp": 20, **row}]
 
+    def test_a_reaction_prompt_open_at_the_start_stops_the_run(self):
+        # S094 10:05:14: the prompt was the run's starting screen, so it never stopped a turn played into it
+        self.g.screen = "reaction"
+        self.g.ui = {"reaction": {"prompt": "Mind Flayer used Tentacle Whip on Claude."}}
+        self.w.baseline()
+        self.assertEqual(self.w.open_prompt["reaction"]["prompt"], "Mind Flayer used Tentacle Whip on Claude.")
+        self.assertEqual(self.w.check("move_to", None, ui=True), ("prompt", "reaction on screen"))
+        self.assertIsNone(self.w.check("move_to", None, ui=True), "said once")
+        w = actq.Watcher(self.g)
+        w.baseline()
+        self.assertIsNone(w.check("react", None, ui=True), "the answer itself runs")
+        # a conversation open at the start stays the run's own screen (choose_dialogue runs in it)
+        self.g.screen, self.g.ui = "dialogue", {}
+        w = actq.Watcher(self.g)
+        w.baseline()
+        self.assertIsNone(w.open_prompt)
+        self.assertIsNone(w.check("move_to", None, ui=True))
+
     def test_damage_outside_combat(self):
         self.w.baseline()
         self.party(hp=19)
