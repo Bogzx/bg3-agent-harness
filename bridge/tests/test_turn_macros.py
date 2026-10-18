@@ -139,8 +139,8 @@ class FakeGame:
                 u = args["uuid"]
                 if u in (CHEST, LOCKED, OWNED, BOOK, LETTER, POTION):  # items: like Actions.lua, no dead
                     return {"visible": u in self.visible, "locked": u == LOCKED, "opened": False}
-                if u in self.gone and u not in self.visible:
-                    return {"visible": False, "gone": self.gone[u]}
+                if u in self.gone and u not in self.visible:  # like Actions.lua: only for one seen on the bar
+                    return {"visible": False, "gone": self.gone[u]} if args.get("on_bar") else {"visible": False}
                 return {"visible": u in self.visible or u in self.dead, "dead": u in self.dead or None}
             if op == "events.since":
                 evs = [e for e in self.events if e["seq"] > int(args.get("seq", 0))][: int(args.get("limit", 200))]
@@ -1013,19 +1013,21 @@ class CombatTurn(Base):
     # S033 18:39-18:41: Umbral Tremors left the fight; act.target_state said only visible=false, 4 turns of
     # skipped attacks. Now "is gone (…)" and the attack is re-aimed at once (the Dodge after it is not used).
     def test_gone_target_says_gone_and_reaims_at_once(self):
+        server._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
         self.g.visible.discard(GOB)
-        self.g.gone[GOB] = "off_stage"
+        self.g.gone[GOB] = "left_fight"
         next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.9, 1]
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}, {"spell": "Shout_Dodge"}]
         hit = {"ability": "Target_MainHandAttack", "target": self.gob}
         out = server.combat_turn(self.plan(action=[hit, "Shout_Dodge"], extra=[[dict(hit)]]))
-        self.assertIn(f"{self.gob} Goblin is gone (it left the battlefield: dissipated or despawned) → aimed at "
+        self.assertIn(f"{self.gob} Goblin is gone (it is no longer in the turn order) → aimed at "
                       f"{self.imp} Imp", out)
         self.assertNotIn("not visible", out)
         self.assertEqual([(a.get("spell"), a.get("target")) for _, a in self.g.ops("act.cast")],
                          [("Target_MainHandAttack", IMP), ("Target_MainHandAttack", IMP)])
 
     def test_gone_target_nobody_in_reach_skips_and_says_gone(self):
+        server._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
         self.g.visible.discard(GOB)
         self.g.gone[GOB] = "left_fight"
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}, {"spell": "Shout_Dodge"}]
@@ -1045,16 +1047,30 @@ class CombatTurn(Base):
         self.assertIn("(auto fallback)", out)
 
     def test_gone_move_target_says_gone(self):
+        server._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
         self.g.visible.discard(GOB)
-        self.g.gone[GOB] = "dead"
+        self.g.gone[GOB] = "left_fight"
         out = server.combat_turn(self.plan(move=self.gob,
                                            action={"ability": "Target_MainHandAttack", "target": self.gob}))
-        self.assertIn(f"target: {self.gob} Goblin is gone (it died) → the plan now aims at the nearest visible "
-                      f"hostile {self.imp} Imp", out)
+        self.assertIn(f"target: {self.gob} Goblin is gone (it is no longer in the turn order) → the plan now aims at "
+                      f"the nearest visible hostile {self.imp} Imp", out)
+
+    def test_target_never_seen_on_the_turn_order_is_only_out_of_sight(self):
+        # audit C9: a character the party never saw on the turn bar: no "is gone" from the engine, only out of sight
+        server._turn_sides.pop(GOB, None)
+        self.g.combat["order"] = [o for o in self.g.combat["order"] if o["uuid"] != GOB]
+        self.g.visible.discard(GOB)
+        self.g.gone[GOB] = "left_fight"
+        self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
+        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        self.assertNotIn("is gone", out)
+        self.assertIn("not visible", out)
+        self.assertEqual([a.get("on_bar") for op, a in self.g.ops("act.target_state")][:1], [False])
 
     def test_gone_target_retarget_false_keeps_the_skip(self):
+        server._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
         self.g.visible.discard(GOB)
-        self.g.gone[GOB] = "off_stage"
+        self.g.gone[GOB] = "left_fight"
         next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.9, 1]
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
         out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},

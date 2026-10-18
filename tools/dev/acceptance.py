@@ -2630,12 +2630,12 @@ def sec_act() -> None:
     item("act audit ACT-11/13/15 live state", "PASS" if ok and parts[6] != "0" else ("FAIL" if not ok else "SKIP"),
          f"no_start_combat|query_ok(IsLocked)|query_ok(Unlock)|q(Unlock)|ALLOW.MoveTo|BLOCK.MoveTo|approval seeded: {v[:160]}"
          + ("" if not ok or parts[6] != "0" else " (no companion rating seeded: solo party?)"))
-    # act combat target gone (BACKLOG ~937, offline 2026-10-16): a character the game doesn't know reads gone=off_stage
-    # (the reloaded mod carries the field); the ladder flag is on (A.LADDER_WATCH_AT_USE).
+    # act combat target gone (BACKLOG ~937, offline 2026-10-16; audit C9 2026-10-18): a character out of sight reads
+    # only visible=false (no dead/off_stage why); the reloaded mod has A.left_fight; the ladder flag is on.
     ts = S.game.try_rpc("act.target_state", {"uuid": "c0ffee00-0000-4000-8000-000000000bad"}) or {}
-    v = lua_server(g + 'return tostring(A.LADDER_WATCH_AT_USE).."|"..tostring(A.gone_why ~= nil)')
-    item("act target gone + ladder watch flag live", "PASS" if ts.get("gone") == "off_stage" and v == "true|true"
-         else "FAIL", f"target_state(unknown uuid)={ts}; LADDER_WATCH_AT_USE|gone_why: {v[:80]}")
+    v = lua_server(g + 'return tostring(A.LADDER_WATCH_AT_USE).."|"..tostring(A.left_fight ~= nil)')
+    item("act target gone + ladder watch flag live", "PASS" if ts == {"visible": False} and v == "true|true"
+         else "FAIL", f"target_state(unknown uuid)={ts}; LADDER_WATCH_AT_USE|left_fight: {v[:80]}")
     # A9 (S066 #100/#130, S067 #32/#43/#54): the cast guard reads the caster's status types (Stunned refused, a dropped
     # order while Fearful names it). Read-only: the stats types the check keys on, and the check on the host now.
     v = lua_server(g + 'if not G.blocking_status then return "no G.blocking_status" end '

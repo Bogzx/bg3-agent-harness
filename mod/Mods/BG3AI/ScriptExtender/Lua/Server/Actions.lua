@@ -3226,21 +3226,18 @@ local function needs_click(job, target, expect, menu)
     RPC.finish_job(job, "done", { needs_click = target, expect = expect, button = menu and "R" or "L", menu = menu })
 end
 
--- A character out of sight that is no longer in the fight (S033 18:39-18:41: Umbral Tremors read
--- "not visible" for 4 turns of retargets and skipped attacks): "dead", "off_stage" (dissipated,
--- despawned: an entity the game no longer knows reads off stage too) or "left_fight" (the party is in a
--- fight and it isn't). A player sees each: its portrait leaves the turn order. nil: only out of sight.
-local function gone_why(t)
-    if G.is_dead(t) then return "dead" end
-    if not G.b(G.q("IsOnStage", t)) then return "off_stage" end
-    if not G.in_combat(t) then
-        for _, p in ipairs(G.party()) do
-            if G.in_combat(p) then return "left_fight" end
-        end
+-- A combatant out of sight whose portrait has left the turn order (S033 18:39-18:41: Umbral Tremors read
+-- "not visible" for 4 turns of retargets and skipped attacks): the party is in a fight and it isn't (dead,
+-- off stage or gone). A player sees only that, never why (audit C9: "dead"/"off_stage" for an unseen
+-- character got past Events.lua's drop of unseen deaths), and only for one that was on the bar.
+local function left_fight(t)
+    if G.in_combat(t) and not G.is_dead(t) and G.b(G.q("IsOnStage", t)) then return false end
+    for _, p in ipairs(G.party()) do
+        if G.in_combat(p) then return true end
     end
-    return nil
+    return false
 end
-A.gone_why = gone_why
+A.left_fight = left_fight
 
 -- Read-only follow-up for the bridge after a click: what a player sees on the
 -- target (locked padlock icon, open/closed, trap marker of a discovered trap).
@@ -3260,8 +3257,9 @@ RPC.register("act.target_state", function(args)
         local h = holder(t)
         if h and G.is_party(h) then return { visible = true, held = true } end
     end
+    -- on_bar: the bridge saw it on the turn order (a combatant the party saw)
     if t and not G.is_party(t) and not G.b(G.q("IsItem", t)) and not G.visible(t) then
-        return { visible = false, gone = gone_why(t) }
+        return { visible = false, gone = args.on_bar and left_fight(t) and "left_fight" or nil }
     end
     if not t or not G.visible(t) then return { visible = false } end
     local out = { visible = true }

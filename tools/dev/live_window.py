@@ -64,7 +64,7 @@ RELOAD_PY = ("from bg3ai import luadebug as L\nc=L.LuaDebugClient(); c.connect()
              "try: c.evaluate('Ext.Debug.Reset() return 1', context='server')\nexcept Exception: pass\n")
 # After a hot reload: (context flag, Lua) that must print "true" (the runbook's step 4).
 RELOAD_CHECKS = [([], "return tostring(Mods.BG3AI.BG3AI.Hotbar ~= nil)"),
-                 (["--server"], "return tostring(Mods.BG3AI.BG3AI.Actions.gone_why ~= nil)")]
+                 (["--server"], "return tostring(Mods.BG3AI.BG3AI.Actions.left_fight ~= nil)")]
 
 
 def load_acceptance():

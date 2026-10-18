@@ -2603,29 +2603,36 @@ test("act.target_state: carried item -> held", function()
     eq(r.held, true, "held")
 end)
 
-test("act.target_state: a combatant out of sight says if it is gone (S033 Umbral Tremors)", function()
+test("act.target_state: a combatant out of sight says only that it left the turn order (S033, audit C9)", function()
     osiv[key("CanSee", P1, NPC)] = nil
     osiv[key("IsInCombat", P1)] = 1
     osiv[key("IsInCombat", NPC)] = 1
-    local r = RPC.ops["act.target_state"]({ uuid = NPC })
+    local bar = { uuid = NPC, on_bar = true }
+    local r = RPC.ops["act.target_state"](bar)
     eq(r.visible, false, "hidden")
     eq(r.gone, nil, "only out of sight: still in the fight")
     osiv[key("IsInCombat", NPC)] = 0
-    eq(RPC.ops["act.target_state"]({ uuid = NPC }).gone, "left_fight", "left the turn order")
+    eq(RPC.ops["act.target_state"](bar).gone, "left_fight", "left the turn order")
+    eq(RPC.ops["act.target_state"]({ uuid = NPC }).gone, nil, "never on the bar the party saw: nothing")
     osiv[key("IsOnStage", NPC)] = 0
-    eq(RPC.ops["act.target_state"]({ uuid = NPC }).gone, "off_stage", "dissipated / despawned")
+    eq(RPC.ops["act.target_state"](bar).gone, "left_fight", "despawned: the same, no why")
     osiv[key("IsDead", NPC)] = 1
-    eq(RPC.ops["act.target_state"]({ uuid = NPC }).gone, "dead", "died out of sight")
+    osiv[key("IsInCombat", NPC)] = 1
+    r = RPC.ops["act.target_state"](bar)
+    eq(r.gone, "left_fight", "died out of sight: the same, no why")
+    eq(r.dead, nil, "no dead for an unseen character")
+    eq(RPC.ops["act.target_state"]({ uuid = NPC }).gone, nil, "died unseen, never on the bar: nothing")
+    osiv[key("IsInCombat", NPC)] = 0
     osiv[key("IsDead", NPC)] = 0
     osiv[key("IsOnStage", NPC)] = 1
     osiv[key("IsInCombat", P1)] = 0
-    eq(RPC.ops["act.target_state"]({ uuid = NPC }).gone, nil, "no fight: nothing to leave")
+    eq(RPC.ops["act.target_state"](bar).gone, nil, "no fight: nothing to leave")
     osiv[key("CanSee", P1, NPC)] = 1
-    r = RPC.ops["act.target_state"]({ uuid = NPC })
+    r = RPC.ops["act.target_state"](bar)
     eq(r.visible, true, "in sight")
     eq(r.gone, nil, "in sight: never gone")
     osiv[key("CanSee", P1, DOOR)] = nil
-    eq(RPC.ops["act.target_state"]({ uuid = DOOR }).gone, nil, "items: no gone")
+    eq(RPC.ops["act.target_state"]({ uuid = DOOR, on_bar = true }).gone, nil, "items: no gone")
 end)
 
 -- ---- live bug S001 (claude-run-2): melee "range 0.0 m", shared turn groups -----

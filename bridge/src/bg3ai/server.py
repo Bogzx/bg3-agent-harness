@@ -7721,15 +7721,20 @@ def _side(cs: dict, u: str | None, party: set | None) -> str | None:
     return turn.side(cs, u, party if party is not None else (_party_cached() or set()), _turn_sides)
 
 
-GONE_WHY = {"dead": "it died", "off_stage": "it left the battlefield: dissipated or despawned",
-            "left_fight": "it is no longer in the turn order"}
+GONE_WHY = {"left_fight": "it is no longer in the turn order"}
 
 
 def _gone(ts: dict) -> str:
-    """'is gone (…)' for an act.target_state reply whose combatant left the fight (Actions.lua gone_why);
-    '' for one only out of sight."""
+    """'is gone (…)' for an act.target_state reply whose combatant left the turn order (Actions.lua left_fight);
+    '' for one only out of sight. Never why (dead, despawned): a player sees only the portrait leave (audit C9)."""
     g = ts.get("gone") if isinstance(ts, dict) else None
     return f"is gone ({GONE_WHY.get(g, g)})" if g else ""
+
+
+def _target_state(u: str) -> Any:
+    """act.target_state; on_bar = the target was on a turn order read this session (a combatant the party saw), the
+    only case where it may say the target left the turn order."""
+    return game.try_rpc("act.target_state", {"uuid": u, "on_bar": u in _turn_sides})
 
 
 def _turn_check(who: str, step: actq.Step | None) -> tuple[bool, str]:
@@ -7754,7 +7759,7 @@ def _turn_check(who: str, step: actq.Step | None) -> tuple[bool, str]:
         # A combatant on the read turn order is visible (state.combat lists only seen ones) and says if it
         # died: no act.target_state round trip (S018-S026: ~22 ms each, 2-4 per turn).
         ts = ({"visible": True, "dead": row.get("dead")} if row is not None
-              else game.try_rpc("act.target_state", {"uuid": u}))
+              else _target_state(u))
         if isinstance(ts, dict):
             # a revive's target is a body (S063: Revivify on dead Shadowheart was skipped, then re-aimed at a foe)
             if ts.get("dead") and not turn.REVIVE.search(str(step.args.get("ability") or "")):
@@ -8614,7 +8619,7 @@ def _retarget_lost(p: turn.TurnPlan, who: str, lines: list, info: dict) -> bool:
             return False
         why = "is dead"
     else:
-        ts = game.try_rpc("act.target_state", {"uuid": lost}) or {}
+        ts = _target_state(lost) or {}
         if not isinstance(ts, dict) or (ts.get("visible") and not ts.get("dead")):
             return False
         why = "is dead" if ts.get("dead") else (_gone(ts) or "is out of sight")
