@@ -1916,9 +1916,42 @@ function A.landing_range(spell)
     return ok and r and r > 0 and r or nil
 end
 
--- The landing of a two-step teleport (Dimension Door): within its range and on a floor (stats TargetConditions
--- CanStand; the game's cursor shows no landing in the air). Refuses with what to do.
+-- A one-step teleport to a point (Misty Step: SpellType Target, SpellProperties "GROUND:TeleportSource()" in Shared
+-- Spell_Target.txt; Target_MistyStep_4/_Free and the racial ones use it). bg3se gives SpellProperties as functor
+-- tables (shape UNVERIFIED: any "TeleportSource" string in them counts); the id names the usual ones if that fails.
+A.TELEPORT_ID = { "MistyStep", "ThunderStep", "FarStep", "ShadowStep", "Teleport" }
+local function teleport_functor(v, depth)
+    if type(v) == "string" then return v:find("TeleportSource", 1, true) ~= nil end
+    if depth > 4 or (type(v) ~= "table" and type(v) ~= "userdata") then return false end
+    local found = false
+    pcall(function()
+        for _, x in pairs(v) do if teleport_functor(x, depth + 1) then found = true; break end end
+    end)
+    return found
+end
+function A.point_teleport(spell)
+    if type(spell) ~= "string" or A.two_step_spell(spell) or A.revive_spell(spell) then return false end
+    local ok, st = pcall(Ext.Stats.Get, spell)
+    if not ok or not st then return false end
+    if tostring(st.SpellType or "") == "Teleportation" then return true end
+    local okp, props = pcall(function() return st.SpellProperties end)
+    if okp and teleport_functor(props, 0) then return true end
+    for _, k in ipairs(A.TELEPORT_ID) do if spell:find(k, 1, true) then return true end end
+    return false
+end
+
+-- The landing of a teleport (Dimension Door's second pick, Misty Step's point): within its range and on a floor
+-- (stats TargetConditions CanStand; the game's cursor shows no landing in the air), and that floor not a Chasm.
+-- S093 09:47 (the Netherbrain's psyche): Misty Step at (230.5,-55.7,4260.5), 1.5 m off the platform's edge, had no
+-- check; Gale fell to y -73.1 (the void's bottom, a Chasm floor like the Astral Prism's, vis V27) and died.
 A.LANDING_FLOOR_SLACK_M = 2.0
+A.LANDING_CHASM_MARGIN_M = 0.5 -- a Chasm this close to the landing (an edge): the lander can slip in
+local function chasm_at(p)
+    local N = BG3AI.Nav
+    if not (N and N.surfaceNear) then return false end
+    local ok, s = pcall(N.surfaceNear, p, A.LANDING_CHASM_MARGIN_M)
+    return ok and s == "Chasm"
+end
 function A.landing_ok(char, spell, dest)
     G.point_ok(char, dest)
     local p, rng = G.pos(char), A.landing_range(spell)
@@ -1928,20 +1961,43 @@ function A.landing_ok(char, spell, dest)
     end
     local ok, hs = pcall(Ext.Level.GetHeightsAt, dest[1], dest[3])
     if not ok or type(hs) ~= "table" then return end -- can't tell
+    local near, chasm = false, false
     for _, h in ipairs(hs) do
-        if type(h) == "number" and math.abs(h - dest[2]) <= A.LANDING_FLOOR_SLACK_M then return end
+        if type(h) == "number" and math.abs(h - dest[2]) <= A.LANDING_FLOOR_SLACK_M then
+            if chasm_at({ dest[1], h, dest[3] }) then chasm = true else near = true end
+        end
     end
+    if near then return end
     if #hs == 0 then
-        G.refuse(string.format("no ground at all under the landing (%.1f,%.1f,%.1f): pick a floor you can see",
-            dest[1], dest[2], dest[3]))
+        G.refuse(string.format("no ground at all under the landing (%.1f,%.1f,%.1f) (the void): pick a floor you can"
+            .. " see", dest[1], dest[2], dest[3]))
     end
-    local best
+    if chasm then
+        G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in a Chasm or within %.1f m of one (the void): a fall"
+            .. " there is fatal; pick a spot on the floor you stand on or can see, away from its edge",
+            dest[1], dest[2], dest[3], A.LANDING_CHASM_MARGIN_M))
+    end
+    local best, void
     for _, h in ipairs(hs) do
-        if type(h) == "number" and (not best or math.abs(h - dest[2]) < math.abs(best - dest[2])) then best = h end
+        if type(h) == "number" and (not best or math.abs(h - dest[2]) < math.abs(best - dest[2])) then
+            if chasm_at({ dest[1], h, dest[3] }) then void = void or h else best = h end
+        end
     end
-    G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in the air: no floor within %.0f m of that height"
-        .. "%s; give the floor's own y", dest[1], dest[2], dest[3], A.LANDING_FLOOR_SLACK_M,
-        best and string.format(" (the nearest floor there is at y=%.1f)", best) or ""))
+    G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in the air: no floor within %.0f m of that height",
+        dest[1], dest[2], dest[3], A.LANDING_FLOOR_SLACK_M)
+        .. (best and string.format(" (the nearest floor there is at y=%.1f); give the floor's own y", best)
+            or void and string.format(" (the only floor there is the void's bottom at y=%.1f, a Chasm: a fall there"
+                .. " is fatal); pick a spot on the floor you stand on or can see", void)
+            or "; give the floor's own y"))
+end
+
+-- A teleport's caster has gone from where the cast was ordered (or died / went down there): it was cast, whatever
+-- event the engine sent.
+A.TELEPORT_MOVED_M = 1.0
+function A.teleport_moved(job, char)
+    local p = G.pos(char)
+    if p and job.ordered_pos and U.dist(p, job.ordered_pos) > A.TELEPORT_MOVED_M then return true end
+    return G.is_dead(char) or G.is_downed(char) or false
 end
 
 -- The ground spot for a two-step cast: beside the body, A.PLACE_M toward the caster (the body itself is a
@@ -2161,7 +2217,8 @@ reg("cast", function(args)
             end
             error(c, 0)
         end
-        if landing then A.landing_ok(char, base, landing) end
+        if landing then A.landing_ok(char, base, landing)
+        elseif pos and A.point_teleport(base) then A.landing_ok(char, base, pos) end
         for i = 2, #targets do
             -- every later pick passes the first one's checks (seen, near, in range); a repeat = another dart/beam
             local t = targets[i]
@@ -2239,6 +2296,9 @@ reg("cast", function(args)
         job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
         if pos then
             if A.ally_call(spell) then job.ally_before = A.callers_near(pos) end
+            if A.point_teleport(base) then -- the result says where the caster landed (A.landing_report)
+                job.place, job.teleport = { U.round(pos[1], 1), U.round(pos[2], 1), U.round(pos[3], 1) }, true
+            end
             -- Engine form has 6 inputs (6th = WithoutMove), verified live
             -- on bg3le; the 5-input form is kept as a fallback for builds
             -- without it.
@@ -2273,6 +2333,12 @@ reg("cast", function(args)
             end,
             CastSpellFailed = function(job, a)
                 if not matches(a) then return end
+                if job.teleport and job.place and not job.casted and A.teleport_moved(job, char) then
+                    -- S093 09:47: Misty Step "FAILED — the game refused the cast" while Gale had gone (and fell to
+                    -- her death): the caster moved, so it was cast; on_tick reports where they landed
+                    job.casted, job.failed_event = RPC.now_ms(), true
+                    return
+                end
                 local why = A.cast_failed_why(char, targets[1], spell)
                 if job.ui and not job.clicked_ms and not job.began then
                     -- L8 23:59 (se, Dimension Door): picking the level in the upcast picker sent this 0.12 s
@@ -2353,7 +2419,9 @@ reg("cast", function(args)
             if now and now - job.casted >= A.CAST_SETTLE_MS
                 and ((job.last_hit and now - job.last_hit >= A.CAST_SETTLE_MS) or now - job.casted >= settle) then
                 local landing
-                if base == "Projectile_Jump" and pos and job.ordered_pos then
+                local jump = base == "Projectile_Jump" and pos
+                local dest = jump or (job.teleport and job.place)
+                if dest and job.ordered_pos then
                     local p = G.pos(char)
                     local last = job.jump_last
                     job.jump_last = p
@@ -2361,7 +2429,26 @@ reg("cast", function(args)
                     if p and (not last or U.dist(p, last) > 0.05) and now - job.casted < settle + A.JUMP_AIRBORNE_MAX_MS then
                         return
                     end
-                    if p then
+                    if p and not jump then
+                        -- a teleport: a landing far below its point is a fall (the void), reported with its outcome
+                        local drop = dest[2] - p[2]
+                        if drop > A.JUMP_FALL_M then
+                            job.fell_ms = job.fell_ms or now
+                            if now - job.fell_ms < A.JUMP_FALL_CHECK_MS then return end -- the fall damage lands
+                            local dead, downed = G.is_dead(char), G.is_downed(char)
+                            if dead or downed then
+                                RPC.finish_job(job, "failed", { cast = spell, fell_m = U.round(drop, 1),
+                                    now_at = U.vec(p, 1), landing = dest },
+                                    string.format("teleported, then FELL %.1fm below the landing (to y=%.1f) and %s:"
+                                        .. " the point had no floor under it (the void or an edge). %s Teleport only"
+                                        .. " onto a floor you stand on or can see, away from its edge",
+                                        drop, p[2], dead and "DIED" or "is DOWNED",
+                                        dead and "Revive them or load a save." or "Help them up."))
+                                return
+                            end
+                            job.fell_m = U.round(drop, 1)
+                        end
+                    elseif p then
                         local function flat(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[3] - b[3]) ^ 2) end
                         local off, moved = flat(p, pos), flat(p, job.ordered_pos)
                         if off > A.JUMP_OFF_M and moved < A.JUMP_NOWHERE_M then
@@ -3099,6 +3186,16 @@ A.gone_why = gone_why
 
 -- Read-only follow-up for the bridge after a click: what a player sees on the
 -- target (locked padlock icon, open/closed, trap marker of a discovered trap).
+-- act.landing_check {char, pos}: A.landing_ok for a teleport the bridge clicks itself (a Scroll of Misty Step read
+-- and aimed at the ground: no act.cast checks it). {ok = true} or {ok = false, why}.
+RPC.register("act.landing_check", function(args)
+    local char = G.actor(args.char)
+    local ok, err = pcall(A.landing_ok, char, nil, args.pos)
+    if ok then return { ok = true } end
+    if G.is_refusal(err) then return { ok = false, why = err.reason } end
+    error(err, 0)
+end)
+
 RPC.register("act.target_state", function(args)
     local t = G.guid(args.uuid)
     if t and G.b(G.q("IsItem", t)) then

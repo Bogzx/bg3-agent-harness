@@ -3221,6 +3221,12 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
         far = _body_far(char, tgt0)
         if far:
             raise GameError(far)
+    if pos is not None and not target and _TELEPORT_SCROLL.search(name):
+        # S093 09:47: a teleport to a point with no floor under it (Misty Step into the psyche's void: Gale died);
+        # the mod's landing check (a floor at that height, no Chasm) before the scroll is read
+        lc = game.try_rpc("act.landing_check", {"char": char, "pos": [float(v) for v in pos[:3]]}) or {}
+        if lc.get("ok") is False:
+            raise GameError(f"{name} not read: {lc.get('why')}")
     out = _act("use_ability", "act.interact", {"char": char, "target": it["uuid"]})
     if _batch.get("last") != "done" or "drunk" in out.partition("\n")[0]:
         return out  # a potion (in combat: for its bonus action) waits for no target
@@ -8336,13 +8342,26 @@ def _turn_slot(name: str, alts: list, who: str, watcher: actq.Watcher, lines: li
 
 
 _VARIANTS = re.compile(r"choose a variant: ([\w, ]+)")
+_WHICH_VARIANTS = re.compile(r"casts nothing by itself: use_ability which=<one of ([^>]+)>")
 
 
 def _pick_variant(step: actq.Step, text: str) -> str:
     """combat_turn: a container spell refused 'choose a variant: A, B, ...' (S023-S025 x5: Spiritual Weapon,
     Spirit Guardians, Lay on Hands) is cast as its first variant, like a quick click on the first entry; the
     line names it. Changes step.args in place; '' when it isn't that failure."""
-    m = _VARIANTS.search(text) if step.tool == "use_ability" else None
+    if step.tool != "use_ability":
+        return ""
+    m = _VARIANTS.search(text)
+    w = None if m or step.args.get("which") else _WHICH_VARIANTS.search(text)
+    if w:
+        # A27: a linked container (Gather Your Allies) lists its variants by shown name only (S093 fairness leak:
+        # the ids): the first usable one goes as which=, the container stays the ability
+        names = [v.strip() for v in w.group(1).split(", ") if v.strip()]
+        first = next((v for v in names if not v.endswith("[already called]")), "")
+        if not first:
+            return ""
+        step.args["which"] = first
+        return f"took the first variant {first}"
     if not m:
         return ""
     names = [v.strip() for v in m.group(1).split(",") if v.strip()]

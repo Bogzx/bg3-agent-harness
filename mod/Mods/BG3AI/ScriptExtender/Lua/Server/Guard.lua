@@ -1461,12 +1461,13 @@ function G.variant_used(char, spell)
     return nil
 end
 
--- "The Watch (Target_END_…), Gur Huntwardens (…) [already called]" for a refusal; the usable ids first.
+-- "The Watch, Gur Huntwardens [already called]" for a refusal; the usable ones first. Names only, as the game shows
+-- them (S093 fairness leak: the spell and status ids); the id only for a variant the game gives no name.
 function G.variant_list(char, ids)
     local free, used = {}, {}
     for _, id in ipairs(ids) do
         local f = G.spell_facts(id)
-        local shown = (f and f.name ~= id) and (f.name .. " (" .. id .. ")") or id
+        local shown = f and f.name or id
         if G.variant_used(char, id) then used[#used + 1] = shown .. " [already called]" else free[#free + 1] = shown end
     end
     for _, x in ipairs(used) do free[#free + 1] = x end
@@ -1494,7 +1495,7 @@ function G.pick_variant(char, box, which)
     end
     local used = G.variant_used(char, hit[1])
     if used then
-        G.refuse(G.spell_facts(hit[1]).name .. " was already called (" .. used .. "): pick another of "
+        G.refuse(G.spell_facts(hit[1]).name .. " was already called: pick another of "
             .. G.variant_list(char, ids))
     end
     return hit[1]
@@ -2078,10 +2079,9 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         local shown = G.spell_facts(spell)
         shown = shown and shown.name or spell
         if #free > 0 then
-            -- the usable ids first (combat_turn's quick pick takes the first), then every variant by its shown name
-            G.refuse("choose a variant: " .. table.concat(free, ", ") .. " (" .. shown .. " casts nothing by itself:"
-                .. " use_ability which=<one of " .. G.variant_list(char, ids) .. ">"
-                .. (spell_flags(st).CallAlliesSpell and ", x,y,z = the ground where they appear" or "") .. ")"
+            -- by shown name, the usable ones first (combat_turn's quick pick takes the first)
+            G.refuse(shown .. " casts nothing by itself: use_ability which=<one of " .. G.variant_list(char, ids) .. ">"
+                .. (spell_flags(st).CallAlliesSpell and ", x,y,z = the ground where they appear" or "")
                 .. (from and " (from the " .. from .. ")" or ""))
         elseif #ids > 0 then
             G.refuse(shown .. ": every variant was already used: " .. G.variant_list(char, ids))
