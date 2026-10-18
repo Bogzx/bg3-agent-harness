@@ -630,7 +630,7 @@ test("combat: an undiscovered trap in the turn order is not listed; a discovered
         local names = {}
         for _, o in ipairs(out.order) do names[#names + 1] = o.uuid end
         eq(table.concat(names, ","), P1, "undiscovered trap hidden")
-        eq(out.unseen_combatants, true, "counted as unseen")
+        eq(out.unseen_combatants, nil, "no flag that something unseen is in the fight (audit C8)")
         discovered = true
         out = S.combat(ctx)
         eq(#out.order, 2, "discovered trap listed")

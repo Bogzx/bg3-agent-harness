@@ -1004,7 +1004,6 @@ function S.combat(ctx)
     local to = comp(ce, "TurnOrder")
     if not to then return out end
     pcall(function() out.round = to.Round end)
-    local hidden = 0
     local ended_current -- a group whose members all ended (the game is about to move on)
     pcall(function()
         for _, g in ipairs(to.CurrentGroups) do
@@ -1081,16 +1080,13 @@ function S.combat(ctx)
                         end
                         o.concentration = concentration(me)
                         out.order[#out.order + 1] = o
-                    else
-                        hidden = hidden + 1
                     end
                 end
             end
         end
     end)
-    -- How the turn bar renders unseen combatants is unverified; only report
-    -- that the order contains combatants we can't see if any exist.
-    if hidden > 0 then out.unseen_combatants = true end
+    -- No count or flag for members that fail the gate (audit C8): it said "something hidden is in this fight"
+    -- (an undiscovered trap, a sneaking enemy) and later "it is gone".
     out.current = out.current or ended_current
     return out
 end
