@@ -1381,6 +1381,125 @@ function G.known_spell(char, spell)
     return found
 end
 
+-- A27 (S090, the Netherbrain): Gather Your Allies (Shout_END_AllyAbilities_MultipleSummon) is a linked spell
+-- container with no ContainerSpells: its ally groups (Target_END_AllyAbilities_WatchSummon …) name it as their
+-- SpellContainerID, and only a group's own cast at a ground point summons anyone. UseSpell on the container "cast" it
+-- twice and nobody came; the agent picked the group and the ground by hand (31 clicks over 3 tries).
+local function spell_flags(st)
+    local f = {}
+    pcall(function() for _, x in ipairs(st.SpellFlags) do f[x] = true end end)
+    return f
+end
+
+-- A container with variants but no ContainerSpells list: flagged IsLinkedSpellContainer, in no container itself.
+function G.linked_box(st)
+    if not st or tostring(st.ContainerSpells or "") ~= "" or tostring(st.SpellContainerID or "") ~= "" then
+        return false
+    end
+    return spell_flags(st).IsLinkedSpellContainer == true
+end
+
+-- The variants of `box` char can pick, in book order: ContainerSpells when the stats list them, else char's SpellBook
+-- entries whose stats name `box` as their container and its SpellContainer entries filed under it (the field the DD
+-- probe read live). A call-allies box with none read falls back to every group in the game data (from = "game data").
+function G.box_variants(char, box)
+    local st = Ext.Stats.Get(box)
+    local out, seen = {}, {}
+    local function add(id)
+        id = id and tostring(id) or ""
+        if id ~= "" and id ~= box and not seen[id] then seen[id] = true; out[#out + 1] = id end
+    end
+    for id in tostring(st and st.ContainerSpells or ""):gmatch("[^;]+") do add(id) end
+    if #out > 0 then return out end
+    local e = G.entity(char)
+    pcall(function()
+        for _, s in ipairs(e.SpellBook.Spells) do
+            local id = s.Id.Prototype
+            local f = G.spell_facts(id)
+            if f and f.box == box then add(id) end
+        end
+    end)
+    pcall(function()
+        for _, m in ipairs(e.SpellContainer.Spells) do
+            if tostring(m.ContainerSpell) == box then add(m.SpellId.OriginatorPrototype) end
+        end
+    end)
+    if #out == 0 and st and spell_flags(st).CallAlliesSpell then
+        local all = G.boxData[box]
+        if not all then
+            all = {}
+            pcall(function()
+                for _, id in ipairs(Ext.Stats.GetStats("SpellData")) do
+                    local s = Ext.Stats.Get(id)
+                    if s and tostring(s.SpellContainerID or "") == box then all[#all + 1] = id end
+                end
+            end)
+            G.boxData[box] = all -- the game data doesn't change in a running game: one walk of every spell
+        end
+        for _, id in ipairs(all) do add(id) end
+        return out, "game data"
+    end
+    return out
+end
+G.boxData = {}
+
+-- The statuses a spell's RequirementConditions forbid, when that is all they say ("not HasStatus('X') and not
+-- HasStatus('Y')": an ally group's called/consumed marks); nil otherwise.
+function G.forbidden_statuses(st)
+    local rc = tostring(st and st.RequirementConditions or "")
+    local out = {}
+    local rest = rc:gsub("not%s+HasStatus%(%s*'([%w_]+)'%s*%)", function(s) out[#out + 1] = s; return "" end)
+    if #out == 0 or rest:gsub("and", ""):match("%S") then return nil end
+    return out
+end
+
+-- The forbidding status char has for `spell` (the group was already called), else nil.
+function G.variant_used(char, spell)
+    for _, s in ipairs(G.forbidden_statuses(Ext.Stats.Get(spell)) or {}) do
+        if b(G.q("HasActiveStatus", char, s)) then return s end
+    end
+    return nil
+end
+
+-- "The Watch (Target_END_…), Gur Huntwardens (…) [already called]" for a refusal; the usable ids first.
+function G.variant_list(char, ids)
+    local free, used = {}, {}
+    for _, id in ipairs(ids) do
+        local f = G.spell_facts(id)
+        local shown = (f and f.name ~= id) and (f.name .. " (" .. id .. ")") or id
+        if G.variant_used(char, id) then used[#used + 1] = shown .. " [already called]" else free[#free + 1] = shown end
+    end
+    for _, x in ipairs(used) do free[#free + 1] = x end
+    return table.concat(free, ", ")
+end
+
+-- act.cast {which}: the variant of `box` named `which` (its id, its shown name, or a part of the name, any case).
+function G.pick_variant(char, box, which)
+    local ids, from = G.box_variants(char, box)
+    local want = tostring(which):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    local exact, part = {}, {}
+    for _, id in ipairs(ids) do
+        local f = G.spell_facts(id)
+        local name = (f and f.name or id):lower()
+        if id:lower() == want or name == want then exact[#exact + 1] = id
+        elseif #want >= 3 and name:find(want, 1, true) then part[#part + 1] = id end
+    end
+    local hit = #exact == 1 and exact or (#exact == 0 and part or exact)
+    local shown = G.spell_facts(box)
+    shown = shown and shown.name or box
+    if #ids == 0 then G.refuse(shown .. " has no variants to pick for this character") end
+    if #hit ~= 1 then
+        G.refuse((#hit == 0 and "no variant '" or "more than one variant matches '") .. tostring(which) .. "' in "
+            .. shown .. ": " .. G.variant_list(char, ids) .. (from and " (from the " .. from .. ")" or ""))
+    end
+    local used = G.variant_used(char, hit[1])
+    if used then
+        G.refuse(G.spell_facts(hit[1]).name .. " was already called (" .. used .. "): pick another of "
+            .. G.variant_list(char, ids))
+    end
+    return hit[1]
+end
+
 -- Item spells with a once-per-rest-per-item cooldown (Spellcrux Amulet's Spell Slot Restoration): Osi.UseSpell
 -- casts them without their item, so the engine records no cooldown. S030: Gale restored spell slots 3 times in a
 -- row for free (the agent flagged it as a game bug and stopped). The guard keeps the ledger itself, in
@@ -1933,6 +2052,24 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     local variants = tostring(st.ContainerSpells or "")
     if variants ~= "" then
         G.refuse("choose a variant: " .. variants:gsub(";", ", "))
+    end
+    if G.linked_box(st) then
+        local ids, from = G.box_variants(char, spell)
+        local free = {}
+        for _, id in ipairs(ids) do if not G.variant_used(char, id) then free[#free + 1] = id end end
+        local shown = G.spell_facts(spell)
+        shown = shown and shown.name or spell
+        if #free > 0 then
+            -- the usable ids first (combat_turn's quick pick takes the first), then every variant by its shown name
+            G.refuse("choose a variant: " .. table.concat(free, ", ") .. " (" .. shown .. " casts nothing by itself:"
+                .. " use_ability which=<one of " .. G.variant_list(char, ids) .. ">"
+                .. (spell_flags(st).CallAlliesSpell and ", x,y,z = the ground where they appear" or "") .. ")"
+                .. (from and " (from the " .. from .. ")" or ""))
+        elseif #ids > 0 then
+            G.refuse(shown .. ": every variant was already used: " .. G.variant_list(char, ids))
+        elseif spell_flags(st).CallAlliesSpell then
+            G.refuse(shown .. " casts nothing by itself and no ally group could be read for this character")
+        end
     end
     G.known_spell(char, spell)
 

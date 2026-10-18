@@ -239,12 +239,12 @@ class TwoStepCast(unittest.TestCase):
         self.assertEqual(len(clicks(inp)), 2)                   # cell + who goes; no ground click
 
     def test_revivify_spot_on_a_character_skips_to_the_next(self):
-        self.w.wpos["ally"] = [4.0 - 1.2, 0.0, 0.0]            # the ally stands on the first spot
+        self.w.wpos["ally"] = [4.0 - twostep.SPOT_DISTS[0], 0.0, 0.0]   # the ally stands on the first spot
         self.w.targets["ally"] = to_screen(self.w.wpos["ally"])
         r, _ = _cast(self.w, REV, "body")
         self.assertTrue(r.ok, r.as_dict())
         g = self.w.ground_at                                    # the next spot round the body, 60 deg off
-        self.assertAlmostEqual(((g[0] - 4.0) ** 2 + g[2] ** 2) ** 0.5, 1.2, places=1)
+        self.assertAlmostEqual(((g[0] - 4.0) ** 2 + g[2] ** 2) ** 0.5, twostep.SPOT_DISTS[0], places=1)
         self.assertGreater(abs(g[2]), 0.5)
         self.assertEqual(r.detail["ground_clicks"], 1)
 
@@ -410,19 +410,38 @@ class ReviveScroll(unittest.TestCase):
         self.assertTrue(r.ok, r.as_dict())
         self.assertEqual(self.w.cast_done, [("Teleportation_Revivify_Scroll", ["body", "ground"])])
         g = self.w.ground_at
-        self.assertAlmostEqual(((g[0] - 4.0) ** 2 + g[2] ** 2) ** 0.5, 1.2, places=1)
+        self.assertAlmostEqual(((g[0] - 4.0) ** 2 + g[2] ** 2) ** 0.5, 1.0, places=1)
         self.assertEqual(len(clicks(inp)), 1)                   # never clicked on the reader / the ally
         self.assertEqual(r.detail["looks"][0]["hover"], "ally")
 
-    def test_s089_body_in_fire_a_spot_outside_it_first(self):
-        """S089: Wyll lay in fire; stood up in it at 1 HP he goes down again. A spot outside the patch is tried first."""
-        self.w.wpos.update(caster=[0.0, 0.0, 0.0], ally=[1.0, 0.0, 0.0])
-        self.w.targets.update(caster=to_screen([0.0, 0.0, 0.0]), ally=to_screen([1.0, 0.0, 0.0]))
-        self.w.hazards = [{"surface": "Fire", "center": [2.8, 0.0, 0.0], "w_m": 2.0, "d_m": 2.0}]
+    def test_s090_body_in_fire_the_burning_spot_beside_it_is_taken(self):
+        """S090 07:12-07:13: Wyll's body in fire on the stairs; "Target is blocked!" on the clear steps below it toward
+        the reader, the burning floor right beside it taken (the agent's hand click). The cursor gave no warning
+        (worst case, T1 unread): each refused click left the spell in hand and the next spot of the ring was clicked."""
+        self.w.wpos.update(caster=[0.0, 0.0, 0.0], ally=[-5.0, 0.0, 0.0])
+        self.w.targets.update(caster=to_screen([0.0, 0.0, 0.0]), ally=to_screen([-5.0, 0.0, 0.0]))
+        self.w.body_r.clear()
+        self.w.hazards = [{"surface": "Fire", "center": [4.5, 0.0, 0.0], "w_m": 2.0, "d_m": 2.0}]
+        self.w.bad = [lambda p: p[0] < 3.9]                     # the steps below the body, toward the reader
+        self.w.cursor_reads = False
+        r, _ = self._go()
+        self.assertTrue(r.ok, r.as_dict())
+        g = self.w.ground_at
+        self.assertAlmostEqual(((g[0] - 4.0) ** 2 + g[2] ** 2) ** 0.5, 1.0, places=1)   # beside the body, not 1.5 m
+        self.assertGreater(g[0], 4.0)                           # the 120 deg spot, in the fire
+        self.assertEqual(r.detail["spot_in"], "Fire")
+        self.assertEqual(r.detail["ground_clicks"], 4)          # 0, 60, -60 refused (nothing spent), 120 taken
+
+    def test_fire_beside_the_body_is_not_put_last(self):
+        """A27: burning spots keep their ring order (A26 put them last; S090's game took only the burning one)."""
+        self.w.wpos.update(caster=[0.0, 0.0, 0.0], ally=[-5.0, 0.0, 0.0])
+        self.w.targets.update(caster=to_screen([0.0, 0.0, 0.0]), ally=to_screen([-5.0, 0.0, 0.0]))
+        self.w.body_r.clear()
+        self.w.hazards = [{"surface": "Fire", "center": [3.0, 0.0, 0.0], "w_m": 0.4, "d_m": 0.4}]
         r, inp = self._go()
         self.assertTrue(r.ok, r.as_dict())
-        self.assertGreater(self.w.ground_at[0], 4.0)            # the 120 deg spot: the far side, out of the fire
-        self.assertNotIn("spot_in", r.detail)
+        self.assertEqual(self.w.ground_at[0], 3.0)              # the first spot, toward the reader, in the fire
+        self.assertEqual(r.detail["spot_in"], "Fire")
         self.assertEqual(len(clicks(inp)), 1)
 
     def test_fire_all_round_still_revives_and_says_so(self):
@@ -441,8 +460,8 @@ class ReviveScroll(unittest.TestCase):
     def test_revive_spots_ring_the_body_toward_the_caster_first(self):
         sp = twostep.revive_spots([4.0, 1.0, 0.0], [0.0, 1.0, 0.0])
         self.assertEqual(len(sp), len(twostep.SPOT_DISTS) * len(twostep.SPOT_TURNS_DEG))
-        self.assertEqual(sp[0], [2.8, 1.0, 0.0])
-        self.assertEqual(sp[len(twostep.SPOT_TURNS_DEG) - 1], [5.2, 1.0, 0.0])   # the far side, 180 deg
+        self.assertEqual(sp[0], [3.0, 1.0, 0.0])                # right beside the body (S090: ~1 m)
+        self.assertEqual(sp[len(twostep.SPOT_TURNS_DEG) - 1], [5.0, 1.0, 0.0])   # the far side, 180 deg
         self.assertTrue(all(p[1] == 1.0 for p in sp))
 
     def test_no_spot_taken_puts_the_spell_back(self):

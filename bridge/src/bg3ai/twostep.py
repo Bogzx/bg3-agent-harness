@@ -48,10 +48,16 @@ GROUND_TOL_M = 0.8             # the cursor's world point this close (flat) to t
 # Revivify's second pick ("not Character()"): the ground this far from the body's feet, toward the caster first,
 # then turned by SPOT_TURNS_DEG (S089 07:08 x3: the spots 1.2-2.4 m toward the reader all lay under a character, the
 # reader and the Emperor it had just helped up; the game said "Target can't be a creature. Choose destination").
-SPOT_DISTS = (1.2, 1.8)
+# A27 (S090 07:12-07:13, Wyll's body in fire on the High Hall stairs): the game answered "Target is blocked!" on the
+# clear stairs 1.5-3 m below the body toward the reader and took the burning floor right beside it (the agent's hand
+# click, ~1 m off): the ring closest to the body first, burning spots in their ring order (not last).
+SPOT_DISTS = (1.0, 1.5)
 SPOT_TURNS_DEG = (0, 60, -60, 120, -120, 180)
-# S089: Wyll's body lay in fire (Burning); stood up there at 1 HP he would go down again. Spots inside a harmful
-# patch the party sees (nav.hazards: centre + w/d box) are tried last; this much beyond the box counts as in it.
+# A ground click the game refuses ("Target is blocked!") keeps the spell in hand and costs nothing: a revive tries
+# up to a whole ring of them.
+REVIVE_MAX_CLICKS = len(SPOT_TURNS_DEG)
+# S089/S090: the spot taken inside a harmful patch the party sees (nav.hazards: centre + w/d box) is named in the
+# result (they stand up downed and burning); this much beyond the box counts as in it.
 HAZARD_MARGIN_M = 0.5
 HAZARD_SCAN_M = 12
 LAND_NUDGES_M = ((0.0, 0.0), (0.4, 0.0), (-0.4, 0.0), (0.0, 0.4), (0.0, -0.4))   # around a landing the game refused
@@ -266,7 +272,7 @@ class _Run:
         except GameError:
             hz = None
         self.hazards = hz if isinstance(hz, list) else []
-        return sorted(out, key=lambda p: in_hazard(p, self.hazards) is not None)   # stable: ring order kept
+        return out
 
     def _clear_of(self, body: str) -> list[list[float]]:
         """Landing spots clear of the character `body` the cursor ray hit (its feet from ui.screen_pos)."""
@@ -290,12 +296,13 @@ class _Run:
         avoid = [self.first] if self.landing is None else [self.first, self.caster]
         w, h = self.inp.window_size()
         clicks, looks = 0, []
+        max_clicks = MAX_GROUND_CLICKS if self.landing is not None else REVIVE_MAX_CLICKS
         last: dict = {}
         todo = self.spots()
         cleared: list[str] = []
         while todo:
             spot = todo.pop(0)
-            if time.monotonic() >= self.hard or clicks >= MAX_GROUND_CLICKS:
+            if time.monotonic() >= self.hard or clicks >= max_clicks:
                 break
             try:
                 sp = _rpc(self.game, "ui.screen_pos", {"pos": spot})

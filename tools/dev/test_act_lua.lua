@@ -3778,5 +3778,133 @@ test("act.prepared (V12): a second read gets no stats entry again; same rows", f
     eq(names(again), names(first), "same rows"); eq(names(first), "Command1,Cure Wounds1,Heroism1,Wrathful Smite1", "rows")
 end)
 
+-- ---- A27: Gather Your Allies (S090 Netherbrain: 31 hand clicks over 3 tries) ----------------------------------
+
+local GYA = "Shout_END_AllyAbilities_MultipleSummon"
+local WATCH, KEENE, GUR = "Target_END_AllyAbilities_WatchSummon", "Target_END_AllyAbilities_KeeneSummon",
+    "Target_END_AllyAbilities_GurSummon"
+-- S090's game data (GustavDev Spell_Shout/Spell_Target.txt), the fields the route reads; names by loca handle
+local function allies_setup(where)
+    G.spellFacts, G.boxData = {}, {}
+    local loca = { hGYA = "Gather Your Allies", hW = "The Watch", hK = "Guildmaster Keene's Fixers", hG = "Gur Huntwardens" }
+    Ext.Loca.GetTranslatedString = function(h) return loca[h] end
+    stats[GYA] = { SpellType = "Shout", DisplayName = "hGYA;4", UseCosts = "",
+        SpellFlags = { "IsLinkedSpellContainer", "Temporary", "Wildshape", "CallAlliesSpell" } }
+    local function group(id, h, mark)
+        stats[id] = { SpellType = "Target", DisplayName = h .. ";2", TargetRadius = "18", Level = 0,
+            UseCosts = "ActionPoint:1", SpellContainerID = GYA, Requirements = "Combat",
+            RequirementConditions = "not HasStatus('" .. mark .. "INTERDICTED') and not HasStatus('" .. mark .. "CONSUMED')",
+            SpellFlags = { "HasVerbalComponent", "CannotTargetItems", "CannotTargetCharacter", "IsLinkedSpellContainer" } }
+    end
+    group(WATCH, "hW", "END_ALLYABILITIES_WATCHALLIES"); group(KEENE, "hK", "END_ALLYABILTIES_KEENEALLIES")
+    group(GUR, "hG", "END_ALLYABILITIES_GURALLIES")
+    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = GYA } } } }
+    local kids = {}
+    for _, id in ipairs({ WATCH, KEENE, GUR }) do
+        if where == "book" then table.insert(world[P1].comps.SpellBook.Spells, { Id = { Prototype = id } })
+        else kids[#kids + 1] = { ContainerSpell = GYA, SpellId = { OriginatorPrototype = id } } end
+    end
+    world[P1].comps.SpellContainer = { Spells = kids }
+    combat_setup(9)
+    return function() Ext.Loca.GetTranslatedString = function() return nil end; G.spellFacts, G.boxData = {}, {} end
+end
+
+test("A27 Gather Your Allies alone is refused before any cost, listing the groups by name (S090 x2 empty casts)", function()
+    for _, where in ipairs({ "book", "container" }) do
+        local undo = allies_setup(where)
+        osiv[key("HasActiveStatus", P1, "END_ALLYABILITIES_WATCHALLIESINTERDICTED")] = 1 -- Shadowheart called The Watch
+        local j = job(op("cast", { char = P1, spell = GYA }))
+        undo()
+        eq(j.status, "failed", where .. " status")
+        -- the usable ids first: combat_turn's quick pick (_VARIANTS) takes Keene's, not the used Watch
+        assert(j.error:find("choose a variant: " .. KEENE .. ", " .. GUR .. " (Gather Your Allies casts nothing by itself", 1, true), j.error)
+        assert(j.error:find("Guildmaster Keene's Fixers (" .. KEENE .. "), Gur Huntwardens (" .. GUR .. "), The Watch ("
+            .. WATCH .. ") [already called]", 1, true), j.error)
+        assert(j.error:find("x,y,z = the ground where they appear", 1, true), j.error)
+        eq(#called("UseSpell"), 0, where .. " no cast")
+    end
+end)
+
+test("A27 which='The Watch' casts that group at the ground point (UseSpellAtPosition, the variant's id)", function()
+    local undo = allies_setup("container")
+    local j = job(op("cast", { char = P1, spell = GYA, which = "the watch", pos = { 5, 0, 0 } }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    local c = called("UseSpellAtPosition")
+    eq(#c, 1, "one cast"); eq(c[1][3], WATCH, "the group's own spell")
+    -- part of a name, any case
+    j = job(op("cast", { char = P1, spell = GYA, which = "keene's", pos = { 5, 0, 0 } }))
+    eq(called("UseSpellAtPosition")[2][3], KEENE, "Keene by part of the name")
+    undo()
+end)
+
+test("A27 which: an unknown or used group is refused with the list; no point = 'needs x,y,z'; not in a fight", function()
+    local undo = allies_setup("book")
+    local function fails(args, pat)
+        local j = job(op("cast", args))
+        eq(j.status, "failed", pat)
+        assert(j.error:find(pat, 1, true), j.error)
+    end
+    fails({ char = P1, spell = GYA, which = "Harpers", pos = { 5, 0, 0 } },
+        "no variant 'Harpers' in Gather Your Allies: The Watch (" .. WATCH .. "), Guildmaster")
+    osiv[key("HasActiveStatus", P1, "END_ALLYABILITIES_GURALLIESCONSUMED")] = 1
+    fails({ char = P1, spell = GYA, which = "Gur", pos = { 5, 0, 0 } },
+        "Gur Huntwardens was already called (END_ALLYABILITIES_GURALLIESCONSUMED): pick another of The Watch")
+    fails({ char = P1, spell = GYA, which = "The Watch" }, "needs x,y,z: a ground point")
+    osiv[key("IsInCombat", P1)] = nil
+    fails({ char = P1, spell = GYA, which = "The Watch", pos = { 5, 0, 0 } }, "called only in a fight")
+    undo()
+    eq(#called("UseSpellAtPosition"), 0, "nothing cast")
+end)
+
+test("A27 the result names who arrived at the point (after the camera wait), or says nobody did", function()
+    local undo = allies_setup("container")
+    local LADY = "12121212-0000-0000-0000-000000000009"
+    local rows = { { "e-npc", { 6, 0, 0 } } }
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({
+        charactersNear = function(p, r)
+            local out = {}
+            for _, row in ipairs(rows) do if U.dist(row[2], p) <= r then out[#out + 1] = { row[1], row[2], 0 } end end
+            return out
+        end,
+        entityUuid = function(e) return e == "e-npc" and NPC or e == "e-lady" and LADY or nil end,
+        name = function(u) return u == LADY and "Lady Lockjaw" or "x" end,
+    }, { __index = savedV })
+    local j = job(op("cast", { char = P1, spell = GYA, which = "The Watch", pos = { 5, 0, 0 } }))
+    A.dispatch("CastSpell", { P1, WATCH, "Target", "None", 0 })
+    A.dispatch("CastedSpell", { P1, WATCH })
+    tick(20) -- 1.2 s: the camera wait, nobody yet
+    eq(j.status, "running", "waits for them")
+    rows[#rows + 1] = { "e-lady", { 7, 0, 1 } }
+    tick(2)
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(#j.result.allies, 1, "one newcomer (the NPC was already there)"); eq(j.result.allies[1].name, "Lady Lockjaw", "name")
+    eq(j.result.no_allies, nil, "no warning")
+    -- nobody comes: done after ALLY_CALL_WAIT_MS with the warning
+    rows = { { "e-npc", { 6, 0, 0 } } }
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    j = job(op("cast", { char = P1, spell = GYA, which = "Keene", pos = { 5, 0, 0 } }))
+    A.dispatch("CastSpell", { P1, KEENE, "Target", "None", 0 })
+    A.dispatch("CastedSpell", { P1, KEENE })
+    tick(math.ceil(A.ALLY_CALL_WAIT_MS / 60) + 2)
+    BG3AI.Visibility = savedV
+    undo()
+    eq(j.status, "done", "status"); eq(j.result.allies, nil, "nobody")
+    assert(tostring(j.result.no_allies):find("nobody arrived within 9 m of the point 6 s after the cast", 1, true),
+        tostring(j.result.no_allies))
+end)
+
+test("A27 a linked container with no variants (Shout_Shield_Wizard shape) still casts; forbidden_statuses parse", function()
+    G.spellFacts = {}
+    spell("Shout_Shield_Wizard", { SpellType = "Shout", UseCosts = "ReactionActionPoint:1", Level = 1,
+        SpellFlags = { "IsLinkedSpellContainer" } })
+    local j = job(op("cast", { char = P1, spell = "Shout_Shield_Wizard" }))
+    eq(j.status, "running", "cast " .. tostring(j.error))
+    local f = G.forbidden_statuses({ RequirementConditions = "not HasStatus('A_X') and not HasStatus( 'B_Y' )" })
+    eq(#f, 2, "two"); eq(f[2], "B_Y", "second")
+    eq(G.forbidden_statuses({ RequirementConditions = "not HasStatus('A') and Combat()" }), nil, "other terms: nil")
+    eq(G.forbidden_statuses({}), nil, "none")
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

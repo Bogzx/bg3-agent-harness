@@ -126,7 +126,8 @@ class Revive(unittest.TestCase):
         self.ground(hotbar.HotbarCastResult(True, picked=1, detail={"spot_in": "Fire"}))
         out = server._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
         self.assertIn("REVIVED", out)
-        self.assertIn("in Fire (no open spot clear of it): get them out of it at once", out)
+        self.assertIn("they stand up in Fire (the spot beside the body the game took): it can put them down again", out)
+        self.assertIn("heal them now (Lay on Hands, a potion: Help gives 1 HP)", out)
 
     def test_nothing_in_hand_after_the_body_click(self):
         self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))

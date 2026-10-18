@@ -2014,6 +2014,11 @@ def _learn_actions(who: str | None, acts: Any) -> None:
             ids = names.setdefault(str(a["name"]).strip().lower(), [])
             if a["spell"] not in ids:
                 ids.append(a["spell"])
+    for a in rows:
+        # A27: a container's variants by their own names ("The Watch" = Gather Your Allies' group), when no row has it
+        for v in (a.get("variants") or []) if isinstance(a, dict) else []:
+            if isinstance(v, dict) and v.get("name") and v.get("spell"):
+                names.setdefault(str(v["name"]).strip().lower(), [v["spell"]])
     _ability_ids[who] = names
 
 
@@ -3359,8 +3364,9 @@ def _revive_spot(inp, name: str, char: str, tgt: str) -> str:
                 else "the spell may still be in hand (press_key ESCAPE)")
         return (f"; {name}: the body {_label(tgt)} was clicked, but no ground beside it was taken to stand them up "
                 f"on ({_label(why)})" + (f" [{_label(looks)}]" if looks else "")
-                + f"; {back}, nothing cast (the scroll is still in the bags). The spot must be open floor with nobody "
-                "on it: move the party off the ground around the body, or read it from another side")
+                + f"; {back}, nothing cast (the scroll is still in the bags). The spot must be floor right beside the "
+                "body with nobody on it (a burning patch there is fine: S090): move the party off the ground around "
+                "the body, or read it from another side")
     end = time.monotonic() + REVIVE_WAIT_S
     dead = _is_dead(tgt)
     while dead and time.monotonic() < end:
@@ -3369,7 +3375,8 @@ def _revive_spot(inp, name: str, char: str, tgt: str) -> str:
     how = (f"clicked the body {_label(tgt)} and the ground beside it" if res.ok
            else f"clicked the body {_label(tgt)}; no spell in hand after it")
     if res.detail.get("spot_in"):
-        how += f", in {res.detail['spot_in']} (no open spot clear of it): get them out of it at once"
+        how += (f"; they stand up in {res.detail['spot_in']} (the spot beside the body the game took): it can put them "
+                "down again at once (S090), so heal them now (Lay on Hands, a potion: Help gives 1 HP) and get them out")
     if dead is None:
         return f" ({name} read: {how}; not a party member, so not checked)"
     if dead:
@@ -4572,8 +4579,8 @@ def _reaction_index(r: dict | None, name: str) -> int | str:
 @_guard
 def use_ability(ability: str, target: str = "", x: float | None = None, y: float | None = None,
                 z: float | None = None, who: str | None = None, upcast: int = 0, targets: str | list[str] = "",
-                wait: bool = True, force: bool = False) -> str:
-    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. targets: a list (or comma list) for multi-target spells, in click order (the same id twice = 2 darts/beams; all on one target = cast at it, which takes every beam); a cast may use only the first 2 (the result then says \"cast on the first 2 only\"). Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells: Dimension Door takes x,y,z = the landing (target = an ally beside you to bring, else you go alone); the Revivify spell takes target = the body; while their route is off they are refused: read a Scroll of Revivify instead. A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): it is read and its target clicked (default: who; targets = one click per beam/pick, e.g. Scorching Ray; x,y,z = the ground for a point/cone scroll: Cone of Cold, Misty Step, Fireball); in combat too, on the reader's turn for an action, like casting. A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway. A harmful area spell (Fireball) whose blast would catch a party member, ally or neutral in sight, or that would burst short of its point (the way there blocked, e.g. a ledge), is refused with where it bursts and who is in the blast; force=true casts anyway."""
+                wait: bool = True, force: bool = False, which: str = "") -> str:
+    """Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. which: the variant of an action that has several, by its name (Gather Your Allies: the ally group, e.g. which="The Watch" with x,y,z = the ground where they appear; the result lists who arrived); without it the refusal lists them. targets: a list (or comma list) for multi-target spells, in click order (the same id twice = 2 darts/beams; all on one target = cast at it, which takes every beam); a cast may use only the first 2 (the result then says \"cast on the first 2 only\"). Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells: Dimension Door takes x,y,z = the landing (target = an ally beside you to bring, else you go alone); the Revivify spell takes target = the body; while their route is off they are refused: read a Scroll of Revivify instead. A carried scroll works by name ("Scroll of Invisibility", or the spell's name when it isn't an action): it is read and its target clicked (default: who; targets = one click per beam/pick, e.g. Scorching Ray; x,y,z = the ground for a point/cone scroll: Cone of Cold, Misty Step, Fireball); in combat too, on the reader's turn for an action, like casting. A Devotion paladin's blow that could kill a Temporarily Hostile or neutral character is refused (it would break the oath); force=true strikes anyway. A harmful area spell (Fireball) whose blast would catch a party member, ally or neutral in sight, or that would burst short of its point (the way there blocked, e.g. a ledge), is refused with where it bursts and who is in the blast; force=true casts anyway."""
     char = _who(who)
     try:
         aid = _ability_id(char, ability)
@@ -4611,6 +4618,8 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
         args["upcast"] = upcast
     if force:
         args["force"] = True
+    if which:
+        args["which"] = which
     if hotbar.HOTBAR_CAST_ENABLED and twostep.is_two_step(spell) and not upcast and len(picks) <= 1:
         # ACT-9: Revivify (the body, then the ground beside it) and Dimension Door (who goes, then the landing) by
         # the player's clicks; with the route off the mod refuses them (its TargetPos2 write is off)

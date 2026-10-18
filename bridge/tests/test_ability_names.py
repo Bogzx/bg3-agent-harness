@@ -61,6 +61,26 @@ class Names(Base):
         server.use_ability("Fire Bolt", target=self.gob)
         self.assertEqual([a["spell"] for _, a in self.g.ops("act.cast")], ["Projectile_FireBolt"])
 
+    # A27 (S090 Netherbrain): Gather Your Allies' ally groups are variants; the agent writes the group's name.
+    def test_variants_by_their_own_name(self):
+        self.g.actions["actions"].append({"spell": "Shout_END_AllyAbilities_MultipleSummon", "name": "Gather Your Allies",
+                                          "variants": [{"spell": "Target_END_AllyAbilities_WatchSummon", "name": "The Watch"},
+                                                       {"spell": "Target_Smite_C", "name": "Smite"}]})
+        self.assertEqual(server._ability_id(P1, "the watch"), "Target_END_AllyAbilities_WatchSummon")
+        self.assertEqual(server._ability_id(P1, "Gather Your Allies"), "Shout_END_AllyAbilities_MultipleSummon")
+        with self.assertRaisesRegex(GameError, "2 actions called 'Smite'"):
+            server._ability_id(P1, "Smite")  # a row's own name is never replaced by a variant's
+
+    def test_which_and_the_point_reach_the_cast(self):
+        self.g.combat = combat()
+        self.g.actions["actions"].append({"spell": "Shout_END_AllyAbilities_MultipleSummon", "name": "Gather Your Allies"})
+        server.use_ability("Gather Your Allies", which="The Watch", x=5529.0, y=9.0, z=478.0)
+        (_, a), = self.g.ops("act.cast")
+        self.assertEqual((a["spell"], a["which"], a["pos"]),
+                         ("Shout_END_AllyAbilities_MultipleSummon", "The Watch", [5529.0, 9.0, 478.0]))
+        server.use_ability("Fire Bolt", target=self.gob)
+        self.assertNotIn("which", self.g.ops("act.cast")[-1][1])
+
     def test_combat_turn_plan_by_name(self):
         self.g.combat = combat()
         self.g.watch["combat"] = True

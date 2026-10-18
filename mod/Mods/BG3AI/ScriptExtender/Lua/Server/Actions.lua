@@ -70,6 +70,10 @@ A.CAST_WALK_MAX_REACH = 3.0 -- act.cast out of combat walks into range only for 
 A.MELEE_STOP_SLACK = 0.4 -- move_to {target, within}: stop this far inside the melee reach
 A.CAST_SETTLE_MS = 250       -- cast: report this long after CastedSpell / the last hit
 A.PROJECTILE_SETTLE_MS = 1500 -- cast: a projectile's hits can land this long after CastedSpell (no hit yet)
+-- A27: an ally group's call (Gather Your Allies -> The Watch) is done when newcomers stand within ALLY_CALL_R of its
+-- point; they come after its 3.5 s camera wait (GROUND:CameraWait(3.5)), so the result waits up to ALLY_CALL_WAIT_MS.
+A.ALLY_CALL_R = 9.0
+A.ALLY_CALL_WAIT_MS = 6000
 -- S038-S039: jump_to "done" 4x while the character landed back where it stood (moved 0.6 m, the landing 9 m away):
 -- the engine shortens a landing it can't reach. A jump ending this far (horizontally) from its landing reports it.
 A.JUMP_OFF_M = 3.0
@@ -2013,6 +2017,28 @@ end
 
 local NULL_GUID = "NULL_00000000-0000-0000-0000-000000000000"
 
+-- A27: a variant of a call-allies container (Gather Your Allies' groups) summons allies at its point.
+function A.ally_call(spell)
+    local st = Ext.Stats.Get(spell)
+    local box = st and tostring(st.SpellContainerID or "") or ""
+    local bst = box ~= "" and Ext.Stats.Get(box)
+    local call = false
+    pcall(function() for _, f in ipairs(bst.SpellFlags) do if f == "CallAlliesSpell" then call = true end end end)
+    return call
+end
+
+-- Living characters within ALLY_CALL_R of p: {uuid = true} (a group's call needs combat: nobody else walks in
+-- while it is cast, so whoever is new there came with it, party or not).
+function A.callers_near(p)
+    local V, out = BG3AI.Visibility, {}
+    if not (p and V and V.charactersNear and V.entityUuid) then return out end
+    for _, row in ipairs(V.charactersNear(p, A.ALLY_CALL_R)) do
+        local u = V.entityUuid(row[1])
+        if u and not G.is_dead(u) then out[u] = true end
+    end
+    return out
+end
+
 local function resolve_spell(spell, upcast)
     if upcast then
         local variant = spell .. "_" .. tostring(upcast)
@@ -2039,6 +2065,13 @@ reg("cast", function(args)
     G.cast_options_ok(args.options) -- callers may not request Ignore*/Forced options
     local base = args.spell
     if type(base) ~= "string" then G.refuse("no action given") end
+    if args.which ~= nil and tostring(args.which) ~= "" then
+        if not Ext.Stats.Get(base) then G.refuse("unknown action " .. base) end
+        base = G.pick_variant(char, base, args.which) -- A27: Gather Your Allies, which = "The Watch"
+        if A.ally_call(base) and not G.in_combat(char) then
+            G.refuse("an ally group is called only in a fight (the game's own rule)")
+        end
+    end
 
     local targets = {}
     if args.target then targets[1] = G.guid(args.target) end
@@ -2092,6 +2125,9 @@ reg("cast", function(args)
     end
     if #targets == 0 and not pos then
         local st = Ext.Stats.Get(base)
+        local ground = false
+        pcall(function() for _, f in ipairs(st.SpellFlags) do if f == "CannotTargetCharacter" then ground = true end end end)
+        if ground then G.refuse("this action needs x,y,z: a ground point (it can't target a character)") end
         if tostring(st.SpellType) ~= "Shout" then G.refuse("this action needs a target") end
         targets[1] = char -- self-centred actions (Dash, Hide, Disengage...)
     end
@@ -2200,6 +2236,7 @@ reg("cast", function(args)
         job.osi_task = "spell"
         job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
         if pos then
+            if A.ally_call(spell) then job.ally_before = A.callers_near(pos) end
             -- Engine form has 6 inputs (6th = WithoutMove), verified live
             -- on bg3le; the 5-input form is kept as a fallback for builds
             -- without it.
@@ -2353,6 +2390,15 @@ reg("cast", function(args)
                         end
                     end
                 end
+                local allies
+                if job.ally_before then
+                    allies = {}
+                    for u in pairs(A.callers_near(pos)) do
+                        if not job.ally_before[u] then allies[#allies + 1] = { uuid = u, name = name_of(u) } end
+                    end
+                    if #allies == 0 and now - job.casted < A.ALLY_CALL_WAIT_MS then return end
+                    table.sort(allies, function(x, y) return x.uuid < y.uuid end)
+                end
                 local res = { cast = spell, extra_attack = check.extra_attack, walked_into_range = job.walked,
                     upcast_ignored = upcast_ignored, landed_m_from_target = landing, fell_m = job.fell_m,
                     via = ui and "hotbar" or nil, targets_n = ui and #targets or nil }
@@ -2365,6 +2411,11 @@ reg("cast", function(args)
                     res.no_damage = true -- missed, saved, or no damage component
                 end
                 if #job.statuses > 0 then res.statuses = job.statuses end
+                if allies then
+                    res.allies = #allies > 0 and allies or nil
+                    res.no_allies = #allies == 0 and string.format("nobody arrived within %.0f m of the point %.0f s"
+                        .. " after the cast", A.ALLY_CALL_R, A.ALLY_CALL_WAIT_MS / 1000) or nil
+                end
                 if job.teleport and job.place then
                     -- Dimension Door: where the caster stands now vs the landing asked for.
                     local p = G.pos(char)
