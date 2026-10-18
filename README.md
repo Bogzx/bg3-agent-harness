@@ -134,8 +134,8 @@ favouring Claude. The protocol is in [docs/BENCHMARK.md](docs/BENCHMARK.md), and
   addresses re-resolved.
 - Linux with systemd user sessions, Mesa's `VK_LAYER_MESA_screenshot` Vulkan layer, Docker (to build bg3le and run
   the Lua tests), Python 3.12+ and [uv](https://docs.astral.sh/uv/).
-- 16 GB RAM and a GPU with 4 GB or more. Tested on an NVIDIA RTX 3050 laptop GPU under PRIME offload and on an AMD
-  RX 6900 XT.
+- 16 GB RAM and a GPU with 4 GB or more. Tested on an NVIDIA RTX 3050 (4 GB) under PRIME offload and on an AMD RX
+  6900 XT.
 - An MCP client for the agent (Claude Code by default) and the API budget to run it.
 
 ## Quick start

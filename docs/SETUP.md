@@ -2,8 +2,7 @@
 
 How to get from a fresh Linux box to a running game the agent can play. The README's quick start is the short
 version; this file adds the checks and the gotchas. Tested on Debian 13 (KDE Plasma on Wayland with Xwayland),
-first on an AMD RX 6900 XT (Mesa RADV) desktop and then on a 15 GB laptop with an NVIDIA RTX 3050 4 GB under
-PRIME offload.
+first with an AMD RX 6900 XT (Mesa RADV) and then with an NVIDIA RTX 3050 4 GB under PRIME offload.
 
 ## 1. Steam and the game
 

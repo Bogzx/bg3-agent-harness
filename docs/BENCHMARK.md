@@ -12,7 +12,7 @@ and unit-tested but has not played a real run yet.
 - **The native Linux build** (`bin/bg3`, Vulkan), not the Windows build under Proton, plus Steam Linux Runtime 3.0
   (sniper). bg3le, the mod loader we build from `third_party/bg3le`, hooks the native binary only.
 - **Hardware**: the game runs in its own cgroup capped at 10 GB RAM (`BG3AI_GAME_MEMORY_MAX`; it normally peaks at
-  ~6.3 GB RSS), so 16 GB RAM in total; a 4 GB+ GPU (tested: NVIDIA RTX 3050 Laptop GPU, 4 GB, PRIME offload). Building
+  ~6.3 GB RSS), so 16 GB RAM in total; a 4 GB+ GPU (tested: NVIDIA RTX 3050, 4 GB, PRIME offload). Building
   bg3le needs ~10 GB RAM once. ~160 GB disk for the game.
 - **Setup**: [docs/SETUP.md](SETUP.md) (machine setup), then `tools/build_bg3le.sh`, then
   `tools/dev/first_launch.sh` (one supervised launch that checks every layer).
