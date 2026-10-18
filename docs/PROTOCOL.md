@@ -37,11 +37,11 @@ PYTHONPATH=src python3 -m bg3ai.luadebug 'Ext.Debug.Reset() return 1'  # HOT REL
 
 Prototype a snippet in the eval first, then move it into the module and hot reload.
 
-Rules while the user's own save is loaded (currently a real playthrough in Act 2):
+Rules while developing against a real playthrough's save (yours or an agent's):
 - **No saving** (quick, auto or named), **no long or short rests**, **no area transitions or fast
   travel**, **no story dialogue choices**, and **no attacks or spells on NPCs**. Reads are always fine.
   Short walks with party members are fine. Opening a door or container is OK if nothing is taken.
-- Don't restart or kill the game. Ask the orchestrator.
+- Don't restart or kill a game someone else (or a running agent session) is using.
 - Wrap risky Noesis access in `pcall`. bg3le has no `Ext.UI.Defer`, so keep Noesis access read-mostly
   and short.
 
