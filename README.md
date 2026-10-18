@@ -1,7 +1,7 @@
-# bg3-ai
+# bg3-agent-harness
 
-An LLM agent that plays Baldur's Gate 3 on the native Linux build, through a Lua mod inside the game and an MCP
-server outside it.
+A harness that lets an LLM agent play Baldur's Gate 3 on the native Linux build: a Lua mod inside the game, an MCP
+server for any MCP client, an autonomous runner, a Markdown memory, and the tooling to run it as a benchmark.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-%E2%89%A53.12-3776AB.svg?logo=python&logoColor=white)](bridge/pyproject.toml)

@@ -34,7 +34,7 @@ On hybrid NVIDIA laptops `runner/launch_game.sh` turns on PRIME offload by itsel
 ## 3. Clone and build
 
 ```bash
-git clone <this repo> && cd bg3-ai
+git clone <this repo> && cd bg3-agent-harness
 git submodule update --init --recursive
 tools/build_bg3le.sh                 # ~10-20 min the first time (Docker, ~10 GB RAM) -> build/bg3le/dist/libbg3le.so
 native/bg3sdl/build.sh               # -> build/bg3sdl/libbg3sdl.so (the input shim)
