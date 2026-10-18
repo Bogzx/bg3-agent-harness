@@ -137,6 +137,6 @@ the rules everything connects, and with them only tcp 172.30.99.1:8770 does: tcp
 address and port 8770 on other addresses are refused; connections the host opens to the client still work, as does
 the host's own traffic to its gateway address; after renaming the bridge the subnet rule still holds; `up` twice
 leaves one identical table; `down` (twice) removes it and everything connects again. It prints PASS.
-`firewall.sh check` was run against a scratch internal network on the test machine without the rules: it reports tcp 22, 1716,
+`firewall.sh check` was run against a scratch internal network on the test box without the rules: it reports tcp 22, 1716,
 27036 and several udp ports reachable, as expected. **Not yet run:** `firewall.sh up` on a real host (no root here),
 then `check` reporting OK. Alternatively, bind those host services to specific addresses.
