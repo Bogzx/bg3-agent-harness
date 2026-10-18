@@ -57,7 +57,7 @@ at all if already in range); keep casters out of melee.
 `"skip"` answers prompts that appear during this turn. Otherwise a prompt stops the turn: `get_dialogue`
 shows it, `react(use=true, which="…")` or `react(use=false)` answers it, then finish the turn.
 **Movement:** a move that doesn't fit the movement left walks as far as it can (then the fallbacks decide).
-Running for an exit mid-fight (the Nautiloid's transponder): `{"move":"o3","action":[{"ability":"Shout_Dash","then_move":true}]}`
+Running for an exit mid-fight: `{"move":"o3","action":[{"ability":"Shout_Dash","then_move":true}]}`
 walks toward the objective marker, one call per member per round. A single tool with no `who` acts as
 the one member whose turn it is.
 Check a tight or vertical route with `path_preview` first; a jump is `{"tool":"jump_to",…}` as an alternative.

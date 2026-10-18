@@ -54,9 +54,7 @@ potions, leave, rest and come back. Exception: fights that the story or a turn c
 ## Prologue: the nautiloid
 
 - Mostly linear. Recruit the githyanki warrior and the cleric in the pod when offered.
-- When a **turn counter** appears ("reach the helm"), stop looting and move straight to the helm
-  console. You have 15 turns. Don't leave the room while that fight is going, and don't go back to the
-  healing pod once it's over.
+- A **turn counter** appears ("reach the helm"): 15 turns.
 
 ## Act 1: Wilderness, Underdark, Grymforge, Rosymorn
 
@@ -83,14 +81,9 @@ Underdark → Shadow-Cursed Lands.
 - A duergar prisoner behind rubble in Grymforge, and the gnome slaves: 2 rests or 2 departures.
 - Lae'zel's githyanki patrol encounter: speak to their captain before you fast travel or rest.
 
-**Hazards:**
-- Grymforge: a gnome threatens to blow a powder barrel. Keep **at least one** party member outside the
-  room (more than 18 m away) when you talk her down.
-- The Blood of Lathander vault (Rosymorn) has a 4-round escape trap. Have someone stand outside, or find the
-  crest that disarms it first.
-- The temple under the Goblin Camp has a moon-tile puzzle. Moves are unlimited; rotate until the dark moons
-  sit on the lit disc. A hidden lever (Perception, then lockpick) bypasses it. Optional.
-- A creepy book in the village cellar: optional, and its saves inflict curses. **Skip it.**
+**Hazards (game-over traps):**
+- Grymforge: a gnome threatens to blow a powder barrel. The blast can kill everyone in the room at once.
+- The Blood of Lathander vault (Rosymorn) springs a timed trap that can kill everyone left inside.
 
 ## Act 2: Shadow-Cursed Lands
 
@@ -109,17 +102,9 @@ the Ketheric fights → the colony below.
 - [ ] Rescue and escort quests near Moonrise and Last Light done, or deliberately abandoned.
 - [ ] Hard save.
 
-**Gauntlet of Shar, one-line hints:**
-- Entrance gem door: put out **every** light in the room, including spells and lanterns, then walk the
-  gaps in the glyph rows. A teleport past the door also works.
-- Stealth trial: shadows with darkvision patrol it. Kill one in a single hit or sneak; getting spotted
-  resets you. One character finishing is enough.
-- Mirror trial: unequip gear before entering so the copies spawn weak. Only fight your own copy.
-- Leap trial: the safe path is drawn on the floor mosaic before the bowl. Send one character; the third
-  misstep kills.
-- Gem lifts: ride down in small groups.
-- Library: **don't destroy** the book about the Nightsinger. Disarm the bookcase traps before looting.
-- A big mercenary in the gauntlet has a contract with a hidden clause. Read it with Insight.
+**Gauntlet of Shar:** its trials are puzzles to work out from what you see and read. If you look one up,
+the page is `wiki_page("Gauntlet of Shar")`.
+- Library: destroying a book there can't be undone.
 
 **Timers:**
 - Defending Halsin's portal while he lifts the curse: 4 turns.
@@ -136,15 +121,13 @@ the Ketheric fights → the colony below.
 3. **Iron Throne before the Steel Watch Foundry.** Destroying the Foundry first makes the Iron Throne
    unreachable.
 4. Destroy the Steel Watch Foundry.
-5. Then fight Gortash. With the Watch disabled, it's far easier. The throne room has traps; watch your
-   footing.
+5. Then Gortash.
 6. Orin in the Temple of Bhaal. Expect a companion to be taken. Follow that lead.
 7. Gather Your Allies: recruit every faction you can. They help in the final battle.
 
-**Iron Throne (timed):** 8 turns from when the countdown starts. Before stepping out of the submarine, buff
-up in turn-based mode (Haste, Longstrider). Open the farthest cells first. Ranged attacks and Magic Missile
-can open doors and levers from a distance. Everyone must be back in the sluice chamber when the counter
-ends, or they die. If nobody makes it back, the game is over. Never use the submarine controls to leave early.
+**Iron Throne (timed):** 8 turns from when the countdown starts. Anyone not back in the sluice chamber
+when the counter ends dies; if nobody makes it back, the game is over. Using the submarine controls to leave
+early can't be undone.
 
 **Deadlines:**
 - Execution notice for the counsellor: 5 rests.
@@ -164,9 +147,7 @@ ends, or they die. If nobody makes it back, the game is over. Never use the subm
 - Expect repeated Constitution saves, an ambush, and a mind contest using the Netherstones. Losing that
   contest is a Game Over, so the normal reload rule applies.
 - The party is forced to choose a side. See the never-pick list.
-- Upper city and High Hall: allies can be summoned with a special action. Use it.
-- The final brain has **turn counters**. When one appears, stop everything else and put all damage on the
-  target the objective names.
+- The final brain has **turn counters**.
 
 ## If something goes wrong
 

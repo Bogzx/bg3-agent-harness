@@ -46,7 +46,7 @@ distinctive one; it becomes the playthrough's save owner):
 
 - **Gale** is strong but brings extra risk: his orb has to be fed magic items, and his death starts a
   3-long-rest countdown to a Game Over. Keep him safe in camp and handle his requests, or use him only
-  when you need teleports (Dimension Door) for the Gauntlet or the Iron Throne.
+  when you need teleports (Dimension Door).
 - **Karlach** is the backup for Lae'zel: a simple, durable melee fighter.
 - Keep at least three characters in the active party at all times (some camp scenes are deadly with only two).
 - Approval: a pragmatic, kind play style keeps this group together. Don't side against a companion in
