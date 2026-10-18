@@ -274,6 +274,7 @@ class LiveTicks(unittest.TestCase):
     def test_background_client_events_arrive_once_on_the_next_tool(self):
         fake = self._live_fake()
         g = Game(port=fake.port)
+        g.sync_events()   # events before the process's first call are skipped (test_event_backlog)
         try:
             fake.emit("client", "dialogue_started")
             fake.emit("server", "quest_updated")
@@ -296,6 +297,7 @@ class Events(unittest.TestCase):
     def test_every_event_exactly_once_under_concurrency(self):
         fake = _fake()
         g = Game(port=fake.port)
+        g.sync_events()   # events before the process's first call are skipped (test_event_backlog)
         stop = threading.Event()
         got = {"server": [], "client": []}
         lock = threading.Lock()
@@ -340,6 +342,7 @@ class Events(unittest.TestCase):
     def test_stashed_events_reach_the_next_drain(self):
         fake = _fake()
         g = Game(port=fake.port)
+        g.sync_events()   # events before the process's first call are skipped (test_event_backlog)
         try:
             fake.emit("server", "quest_updated")
             g.begin_tool()

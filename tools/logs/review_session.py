@@ -343,8 +343,10 @@ def fights_section(sessions: Path, run: str, sid: str, store: Path) -> tuple[lis
                    f"downs {f['downs']} {f['outcome']}{' (' + f['debrief'] + ')' if f.get('debrief') else ''}"
                    f"{' → ' + f['reload_to'] if f.get('reload_to') else ''}: {f['key']}; died {f['party_died'] or '-'}; "
                    f"harness {[k for k, v in f['harness'].items() if v] or '-'}; top {list(f['abilities'])[:4]}")
-        # an earlier attempt at the same group (>= 2 shared enemies): better? same tactic?
-        prev = sorted((p for p in prior + fs if p["t"] < f["t"] and len(set(p["enemies"]) & set(f["enemies"])) >= 2),
+        # an earlier attempt at the same encounter (fights.same_encounter): better? same tactic?
+        pool = prior + fs
+        prev = sorted((p for p in pool if p["t"] < f["t"] and F.same_encounter(
+            p, f, [q for q in pool if p["t"] < q["t"] < f["t"]])),
                       key=lambda p: p["t"])   # earlier in time only: the store also holds later sessions
         if prev:
             p = prev[-1]

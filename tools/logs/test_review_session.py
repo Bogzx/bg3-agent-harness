@@ -22,6 +22,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import review_session as RS  # noqa: E402
 import fights as F  # noqa: E402
+import test_fights  # noqa: E402
 import session_watch as SW  # noqa: E402
 import context_model as CM  # noqa: E402
 import triage  # noqa: E402
@@ -322,7 +323,7 @@ class OlderToolFixes(unittest.TestCase):
         def fight(sid, t, outcome="reload"):
             return {"session": sid, "start": f"t{t}", "t": t, "dur_s": 9, "rounds": 2, "hp_lost": 10, "downs": 0,
                     "outcome": outcome, "key": "A, B", "enemies": {"A": 1, "B": 1}, "party_died": [], "harness": {},
-                    "abilities": {}, "reload_to": None}
+                    "abilities": {}, "reload_to": None, "where": "Bhaal Temple"}
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         store = Path(tmp.name) / "fights.jsonl"
@@ -335,6 +336,21 @@ class OlderToolFixes(unittest.TestCase):
             RS.F.mine = mine
         retries = [l for l in out if "retry of" in l]
         self.assertEqual([l.split("retry of ")[1][:9] for l in retries], ["S062 t50 ", "S063 t100"])
+
+    def test_retry_needs_the_same_encounter(self):
+        """vis V28: S087's High Hall Courtyard fight was called a `NOT better` retry of S045's Ketheric fight (two
+        shared kinds, Intellect Devourer and Mind Flayer, 42 sessions apart in another area)."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = Path(tmp.name) / "fights.jsonl"
+        store.write_text(json.dumps(test_fights.S045_KETHERIC_2) + "\n")
+        mine = RS.F.mine
+        RS.F.mine = lambda run, sid: [dict(test_fights.S087_COURTYARD)]
+        try:
+            out, _ = RS.fights_section(Path(tmp.name), RUN, "S087", store)
+        finally:
+            RS.F.mine = mine
+        self.assertEqual([l for l in out if "retry of" in l], [])   # old code: "retry of S045 00:28:24 ... NOT better"
 
     def test_helm_signatures_only_on_the_nautiloid(self):
         climbs = [call("interact", "interact: done — used climbed=up dy=6.1", {"target": "e573"}, k=0),

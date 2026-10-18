@@ -125,6 +125,73 @@ class RetryVerdict(unittest.TestCase):
         self.assertFalse(rx.search("WARNING: Karlach is still in the party"))
 
 
+def record(sid, start, t, where, enemies, outcome, hp, downs, abil):
+    return {"run": "claude-run-2", "session": sid, "start": start, "t": t, "dur_s": 600, "where": where,
+            "key": ", ".join(sorted(enemies)[:3]), "enemies": enemies, "rounds": 5, "hp_lost": hp, "downs": downs,
+            "party_died": [], "outcome": outcome, "reload_to": None, "debrief": None, "killed": None,
+            "abilities": dict.fromkeys(abil, 1), "harness": {"lesson": False}}
+
+
+# runtime/mined/fights.jsonl's records (the fields fights.py compares)
+S045_KETHERIC_1 = record("S045", "00:13:02", 1791666782.04, "Mind Flayer Colony",
+                         {"Dame Aylin": 1, "Necromite": 9, "Intellect Devourer": 4, "Mind Flayer": 1,
+                          "Ketheric Thorm": 0, "Apostle of Myrkul": 0}, "reload", 265, 0,
+                         ["Target_MainHandAttack", "Eldritch Blast", "Sacred Flame"])
+S045_KETHERIC_2 = record("S045", "00:28:24", 1791667704.34, "Mind Flayer Colony",
+                         {"Intellect Devourer": 4, "Mind Flayer": 1}, "unfinished", 100, 0,
+                         ["Shout_Dash", "Eldritch Blast", "Help"])
+S087_COURTYARD = record("S087", "05:56:34", 1792292194.7, "The High Hall Courtyard",
+                        {"Intellect Devourer": 2, "Watcher Guardian": 3, "Goblin Tracker": 5, "Goblin Brawler": 1,
+                         "Illithid Arcanist": 1, "Mind Flayer": 0, "Zealot of the Absolute": 0, "Winged Horror": 0},
+                        "reload", 520, 2, ["Target_MainHandAttack", "Guiding Bolt", "Magic Missile"])
+S076_CAZADOR_1 = record("S076", "00:23:27", 1792272207.25, "Lower City",
+                        {"Bat": 11, "Predator Werewolf": 3, "Fallen Gur Hunter": 1, "Cazador Szarr": 0,
+                         "Chatterteeth": 0}, "reload", 704, 5, ["Target_MainHandAttack", "Fire Bolt"])
+S076_CAZADOR_2 = record("S076", "00:34:25", 1792272865.54, "Cazador's Dungeon",
+                        {"Bat": 8, "Predator Werewolf": 3, "Fallen Gur Hunter": 3, "Cazador Szarr": 0,
+                         "Chatterteeth": 0}, "reload", 866, 8, ["Target_MainHandAttack", "Scorching Ray"])
+
+
+class SameEncounter(unittest.TestCase):
+    """vis V28: a retry is the same encounter, not just shared enemy kinds."""
+
+    def test_shared_kinds_elsewhere_are_no_retry(self):
+        # S087's High Hall Courtyard fight was a "NOT better" retry of S045's Ketheric fight (Intellect Devourer,
+        # Mind Flayer); the S046-S086 fights between them are missing from the store
+        self.assertFalse(fights.same_encounter(S045_KETHERIC_2, S087_COURTYARD))
+        self.assertFalse(fights.same_encounter(S045_KETHERIC_1, S087_COURTYARD))
+
+    def test_same_area_or_the_reload_chain(self):
+        self.assertTrue(fights.same_encounter(S045_KETHERIC_1, S045_KETHERIC_2))   # same area
+        # the reload chain across a WHERE that lagged the move into the dungeon
+        self.assertTrue(fights.same_encounter(S076_CAZADOR_1, S076_CAZADOR_2))
+        self.assertFalse(fights.same_encounter(S076_CAZADOR_1, S076_CAZADOR_2, [S045_KETHERIC_2]))
+        won = dict(S076_CAZADOR_1, outcome="won")
+        self.assertFalse(fights.same_encounter(won, S076_CAZADOR_2))
+        self.assertFalse(fights.same_encounter(dict(S076_CAZADOR_1, session="S073"), S076_CAZADOR_2))
+        unknown = dict(S087_COURTYARD, where="?")
+        self.assertFalse(fights.same_encounter(dict(S045_KETHERIC_2, where="?", outcome="won"), unknown))
+
+    def test_history_prints_no_verdict_across_encounters(self):
+        import contextlib, io, json, tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out = Path(tmp.name) / "fights.jsonl"
+        a = dict(S045_KETHERIC_2, key="Intellect Devourer, Mind Flayer")
+        b = dict(S087_COURTYARD, key="Intellect Devourer, Mind Flayer")
+        out.write_text(json.dumps(a) + "\n" + json.dumps(b) + "\n")
+        old, oldargv = fights.OUT, sys.argv
+        fights.OUT, sys.argv = out, ["fights.py", "--history"]
+        self.addCleanup(setattr, fights, "OUT", old)
+        self.addCleanup(setattr, sys, "argv", oldargv)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            fights.main()
+        text = buf.getvalue()
+        self.assertIn("S087 05:56:34 reload → no retry seen yet", text)
+        self.assertNotIn("better", text)   # old code: S045 00:28:24 → S087 ...: NOT better (twice)
+
+
 S080_DEBRIEF = ("load_game: done — loaded=S080-prefight\nFIGHT DEBRIEF (reloaded, 5 rounds, 8m41s) vs Viconia DeVir, "
                 "Justiciar Crusader Owltalon +16 more\n  DIED: Gale (r4, by Sharran Novice Greymask), Wyll (r4, by "
                 "Justiciar Crusader Owltalon), Shadowheart (r5, by Sharran Sentry Hendly) — revive now: Scroll of "

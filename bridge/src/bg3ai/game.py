@@ -98,6 +98,9 @@ class Game:
         self._cond = threading.Condition()
         # Last event seq consumed per context, so every tool can report "what happened since".
         self.event_seq = {"server": 0, "client": 0}
+        # Taken from the ring's latest seq before this process's first game call (sync_events).
+        self._ev_synced = self._ev_syncing = False
+        self._ev_sync_lock = threading.RLock()
         # Events already consumed by read() (events.since folded into a read's own eval), handed out by
         # the next drain_events() of that context before it asks the game for more.
         self._ev_locks = {"server": threading.RLock(), "client": threading.RLock()}  # per context
@@ -178,6 +181,7 @@ class Game:
         held = context == "client" and client_held()
         if held:
             raise NotReady(f"the game's UI is held: {held}; the result shows when it is over")
+        self.sync_events()
         for attempt in range(2):
             client = self._acquire()
             ok = False
@@ -271,6 +275,29 @@ class Game:
     # ---- events ----
 
     EVENT_LIMIT = 300
+    _ev_synced = True   # a Game built without __init__ (tests) never syncs
+
+    def sync_events(self) -> None:
+        """Once per process, before its first game call: start both contexts' cursors at the ring's latest seq.
+        The ring outlives bridge processes: from seq 0 a new one replayed the last session's events as new
+        (S084's Bhaal fight was debriefed again by check_all's 5 check processes and by S085's first tool
+        result). A context that can't answer yet (no save loaded) keeps 0: its ring starts fresh."""
+        if self._ev_synced:
+            return
+        with self._ev_sync_lock:   # other threads wait here until it's done (read()'s parallel drains)
+            if self._ev_synced or self._ev_syncing:   # syncing: the sync's own RPCs come back through eval()
+                return
+            self._ev_syncing = True
+            try:
+                for ctx in ("server", "client"):
+                    try:
+                        res = self.rpc("events.since", {"seq": 10**12, "limit": 1}, ctx)
+                    except (NotReady, GameError):
+                        continue
+                    if isinstance(res, dict):
+                        self.event_seq[ctx] = max(self.event_seq[ctx], int(res.get("latest") or 0))
+            finally:
+                self._ev_synced = True
     # Contexts whose events a read() without ops there drains in the background (see read()).
     LAZY_EVENTS = ("client",)
 
@@ -289,6 +316,7 @@ class Game:
         return evs, False
 
     def drain_events(self, context: str = "server", limit: int = EVENT_LIMIT) -> list[dict]:
+        self.sync_events()   # before the seq below is read
         fresh = self._fresh()
         if context in fresh:
             # This tool's read() drained the context in the same eval as its data (or is still draining it
@@ -374,6 +402,7 @@ class Game:
         """multi() without touching the calling thread's state: (results, per-op error or None,
         events fully drained)."""
         calls = list(calls)
+        self.sync_events()   # before the seq below is read
         if events:
             # Under the context's lock the seq can't move between building the call and consuming its reply.
             self._ev_locks[context].acquire()

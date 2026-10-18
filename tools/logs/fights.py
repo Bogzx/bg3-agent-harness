@@ -338,6 +338,20 @@ def retry_verdict(p, f):
     return "NOT better"
 
 
+def same_encounter(p, f, between=()):
+    """f is a retry of the earlier fight p: >= 2 shared enemy names in the same area (WHERE), or the reload chain
+    (p reloaded or was cut by the session end, f is the next fight, at most 2 sessions on; WHERE can lag a move:
+    S076 Cazador reload in "Lower City", retry in "Cazador's Dungeon"). Shared kinds alone are not one encounter:
+    S087's High Hall Courtyard fight shared Intellect Devourer and Mind Flayer with S045's Ketheric fight in the
+    Mind Flayer Colony. between: the fights of the run between p and f."""
+    if len(set(p["enemies"]) & set(f["enemies"])) < 2:
+        return False
+    if p["where"] == f["where"] != "?":
+        return True
+    num = [int(re.search(r"\d+", x["session"]).group()) for x in (p, f)]
+    return p["outcome"] in ("reload", "unfinished") and not between and num[1] - num[0] <= 2
+
+
 def same_tactic(p, f):
     """The top abilities both failed attempts share (>= 3 of the top 4), only when the later one made no progress:
     a class's damage kit repeats in a win too (S062's win shared Divine Smite / Frenzied Strike / Main Hand with
@@ -376,12 +390,12 @@ def main():
     groups = defaultdict(list)
     for f in sorted(store, key=lambda f: f["t"]):
         groups[f["key"]].append(f)
-    print("\n# retries (the next fight after a reload, >= 2 shared enemy names)")
+    print("\n# retries (the next fight after a reload at the same encounter: same_encounter)")
     seq = sorted(store, key=lambda f: f["t"])
     for i, f in enumerate(seq):
         if f["outcome"] != "reload":
             continue
-        nxt = next((g for g in seq[i + 1:] if len(set(g["enemies"]) & set(f["enemies"])) >= 2), None)
+        nxt = next((g for j, g in enumerate(seq[i + 1:], i + 1) if same_encounter(f, g, seq[i + 1:j])), None)
         if not nxt:
             print(f"  {f['session']} {f['start']} reload → no retry seen yet")
             continue
@@ -397,7 +411,7 @@ def main():
         prev = None
         for f in fs:
             note = ""
-            if prev:
+            if prev and same_encounter(prev, f, [g for g in seq if prev["t"] < g["t"] < f["t"]]):
                 note = retry_verdict(prev, f)
                 same = same_tactic(prev, f)
                 if same:
