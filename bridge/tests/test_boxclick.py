@@ -468,6 +468,30 @@ class ClickButton(Base):
         self.assertNotIn("IN HAND", server.click(0.47, 0.22))
         self.assertIn("IN HAND: Target_CureWounds", server.click(0.5, 0.9))   # the upcast picker is open: a spell
 
+    def test_the_spell_in_hand_is_named_from_the_server_map(self):
+        # S091 11/11 `IN HAND: a spell` (Guiding Bolt, Magic Missile from the hotbar in the psyche): no id on the
+        # slot VM, no client map; the HUD character's server map names the active cell, by its shown name
+        from bg3ai import hotbar
+        calls = []
+
+        def cast_state(game, char, m=None):
+            calls.append((char, m))
+            if m is None:
+                return {"armed": True, "armed_by": "spell_task", "upcast_open": True, "spell": None, "char": "c-gale"}
+            return {"armed": True, "upcast_open": True, "spell": "Projectile_MagicMissile",
+                    "spell_name": "Magic Missile", "char": "c-gale"}
+        maps = {"c-gale": {"ClassHotBar": {"4": "Projectile_MagicMissile"}}}
+        for name, fn in (("cast_state", cast_state), ("server_map", lambda game, char: maps.get(char))):
+            self.addCleanup(setattr, hotbar, name, getattr(hotbar, name))
+            setattr(hotbar, name, fn)
+        out = server.click(0.603, 0.93)
+        self.assertIn("IN HAND: Magic Missile (the next left click", out)
+        self.assertEqual(calls, [(None, None), ("c-gale", maps["c-gale"])])
+        maps.clear()   # no server map either: still in hand, unnamed
+        calls.clear()
+        self.assertIn("IN HAND: a spell", server.click(0.75, 0.55))
+        self.assertEqual(calls, [(None, None)])
+
     def test_unknown_button_refused(self):
         out = server.click(0.1, 0.2, "middle")
         self.assertEqual(self.ops, [])

@@ -1255,5 +1255,91 @@ do
     BG3AI.UI.prop = _prop
 end
 
+-- ui.react (act A28): S091 08:11:01 / 08:12:16 two answers timed out after 10 s with the prompt gone from the screen:
+-- the wait read the first page named ReactionDecisionPopup, left hidden with its events, not the shown one
+do
+    local UIt = BG3AI.UI
+    local saved = { widgets = UIt.widgets, widget = UIt.widget, path = UIt.path, command = UIt.command, count = UIt.count,
+                    widgetMap = UIt.widgetMap }
+    local pages = {}
+    local sent = {}
+    local function popup(visible, events)
+        return { name = "ReactionDecisionPopup", visible = visible, buttons = {},
+                 DataContext = { dc = "reaction", Data = { InterruptEvents = events } } }
+    end
+    UIt.widgets = function()
+        local out = {}
+        for _, w in ipairs(pages) do out[#out + 1] = { name = w.name, el = w } end
+        return out
+    end
+    UIt.widget = function(n) for _, w in ipairs(pages) do if w.name == n then return w end end end
+    UIt.widgetMap = function()   -- Client/UI.lua: the shown page wins over a hidden one of the same name
+        local m = {}
+        for _, w in ipairs(pages) do
+            local prev = m[w.name]
+            if not prev or (prev.el.visible == false and w.visible ~= false) then m[w.name] = { name = w.name, el = w } end
+        end
+        return m
+    end
+    UIt.path = function(o, p)
+        for part in p:gmatch("[^%.]+") do
+            if type(o) ~= "table" then return nil end
+            o = o[tonumber(part) or part]
+        end
+        return o
+    end
+    UIt.count = function(c) return type(c) == "table" and #c or 0 end
+    UIt.command = function(dc, name, param) sent[#sent + 1] = { dc = dc, name = name, ev = param } return true end
+    local stale = popup(false, { { id = "old" } })      -- an earlier prompt's page, hidden, its event still listed
+    local shown = popup(true, { { id = "mm" } })
+    pages = { stale, shown }
+    local jr = run(ops["ui.react"]({ use = false }).job, 600)
+    ok(sent[1] and sent[1].dc == shown.DataContext and sent[1].ev.id == "mm", "ui.react answers the shown prompt")
+    ok(jr.status == "running", "ui.react waits while the shown prompt is up: " .. tostring(jr.status))
+    shown.visible = false                               -- the game hides it; its event list stays as it was
+    jr = run(jr.id, 2000)
+    ok(jr.status == "done", "ui.react: the prompt left the screen -> done (was a 10 s TIMEOUT): " .. tostring(jr.status))
+    pages = { stale }
+    local okr, errr = pcall(ops["ui.react"], { use = true })
+    ok(not okr and tostring(errr):find("no reaction prompt on screen", 1, true), "ui.react: only a hidden page -> none")
+
+    -- S091/S092 Gale's Shield prompt, one row per level (I-VI), one interruptor: the commands never answered it, a
+    -- click on the row did -> the row goes to the bridge (needs_click), no command is sent
+    local function rows(n, roots)
+        local b = {}
+        for k = 1, roots or 1 do b[#b + 1] = { name = "InterruptorRoot" } end
+        for k = 1, n do b[#b + 1] = { name = "ReactButton", k = k } end
+        return b
+    end
+    local shield = popup(true, { { id = "shield" } })
+    shield.buttons = rows(6)
+    pages, sent = { shield }, {}
+    r = ops["ui.react"]({ use = true, which = 3 })
+    ok(r.needs_click == 3 and r.rows == 6 and r.job == nil and #sent == 0, "ui.react: multi-level prompt -> needs_click 3")
+    r = ops["ui.react"]({ use = true })
+    ok(r.needs_click == 1, "ui.react: multi-level prompt, no which -> row 1")
+    okr, errr = pcall(ops["ui.react"], { use = true, which = 7 })
+    ok(not okr and tostring(errr):find("no reaction option 7 (6 shown)", 1, true), "ui.react: no row 7")
+    r = ops["ui.react"]({ use = false })
+    ok(r.job and sent[1] and sent[1].name == "InterruptDontReactPlayerCommand", "ui.react use=false: the command as before")
+    -- two interruptors with a row each (their Accept button shows): the command path as before
+    shield.buttons, sent = rows(2, 2), {}
+    r = ops["ui.react"]({ use = true, which = 2 })
+    ok(r.job and r.needs_click == nil, "ui.react: two interruptors -> commands, no click")
+    -- ui.react_probe: over the wanted row, over another, watch reads no rows
+    shield.buttons = rows(6)
+    shield.buttons[1 + 4].over = true                                       -- row 4 under the cursor
+    r = ops["ui.react_probe"]({ which = 4 })
+    ok(r.open and r.events == 1 and r.rows == 6 and r.over == true and r.over_row == nil, "react_probe: over row 4")
+    r = ops["ui.react_probe"]({ which = 2 })
+    ok(r.over == nil and r.over_row == 4, "react_probe: on row 4, row 2 wanted")
+    r = ops["ui.react_probe"]({ watch = true })
+    ok(r.open and r.rows == nil and r.over == nil, "react_probe watch: no row walk")
+    shield.visible = false
+    r = ops["ui.react_probe"]({ which = 4 })
+    ok(r.open == false and r.events == 0, "react_probe: gone")
+    for k, f in pairs(saved) do UIt[k] = f end
+end
+
 print(("%d passed, %d failed"):format(passes, fails))
 os.exit(fails == 0 and 0 or 1)

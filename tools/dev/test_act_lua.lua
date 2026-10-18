@@ -739,22 +739,33 @@ test("combat move_to entity: within movement, guard charges what the engine did 
     near(j.result.after.movement, 3.5, "movement left")
 end)
 
-test("combat move_to: a walk that never starts fails after 2.5 s naming a Lethargic walker (S074 r2)", function()
+test("combat move_to: a walk that never starts fails after 2.5 s (S074 r2)", function()
     combat_setup(12)
-    stats["HASTE_LETHARGY"] = { StatusType = "INCAPACITATED" }
-    local savedV = BG3AI.Visibility
-    BG3AI.Visibility = setmetatable({ statuses = function() return { { id = "HASTE_LETHARGY", name = "Lethargic" } } end },
-        { __index = savedV })
     local j = job(op("move_to", { char = P1, target = NPC }))
     eq(j.status, "running", "ordered " .. tostring(j.error))
     tick(40) -- 2.4 s standing still: the old walk waited 5 s for "no path to the destination"
     eq(j.status, "running", "before the window")
     tick(3)
-    BG3AI.Visibility = savedV
     eq(j.status, "failed", "status")
-    assert(j.error:find("never started moving (2.5 s, the route was there); the character is Lethargic", 1, true), j.error)
+    assert(j.error:find("never started moving (2.5 s, the route was there)", 1, true), j.error)
     assert(not j.error:find("not this character's turn", 1, true), "the turn goes on: " .. j.error)
     assert(#called("PurgeOsirisQueue") >= 1, "the order is purged")
+end)
+
+test("combat move_to: a Lethargic walker is refused at once (S091 08:30; S074 r2 / S089 stood still 2.5-5 s)", function()
+    combat_setup(12)
+    stats["HASTE_LETHARGY"] = { StatusType = "INCAPACITATED" }
+    G._disabling = {}
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ statuses = function() return { { id = "HASTE_LETHARGY", name = "Lethargic" } } end },
+        { __index = savedV })
+    local n0 = #called("CharacterMoveToPosition")
+    local j = job(op("move_to", { char = P1, target = NPC }))
+    BG3AI.Visibility = savedV
+    eq(j.status, "failed", "refused " .. tostring(j.error))
+    eq(j.error, "cannot move while Lethargic (the status keeps it in place this turn)")
+    eq(#called("CharacterMoveToPosition"), n0, "no walk ordered")
+    G._disabling = {}
 end)
 
 test("combat move_to: the turn passing mid-walk stops it at once with the fatal turn text (S074 r2)", function()
@@ -1171,7 +1182,17 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     eq(d[3].effect, "stands up at its turn start for half its movement")
     eq(d[3].fix, "an adjacent ally's Help (an action) ends it", "prone fix")
     eq(d[4].effect, "cannot move"); eq(d[4].fix, nil, "fear: no fix")
-    eq(d[5].name, "Lethargic"); eq(d[5].effect, nil, "lethargic acts (S072)")
+    eq(d[5].name, "Lethargic")
+    eq(d[5].effect, "cannot move; its turn passes once the rest of its turn group has ended (act with it first)",
+        "lethargic: acts (S072) but never walks, its turn goes with the group's (S074/S089/S091)")
+    -- the movement figure / walk guard: whatever "cannot act" or "cannot move"
+    eq(G.move_blocked(P1), "Sleeping", "move_blocked: the first that stops a walk")
+    on = { { id = "PRONE", name = "Prone" }, { id = "BLEEDING", name = "Bleeding" } }
+    eq(G.move_blocked(P1), nil, "prone stands up and walks")
+    on = { { id = "HASTE_LETHARGY", name = "Lethargic" } }
+    eq(G.move_blocked(P1), "Lethargic", "lethargic")
+    on = { { id = "FRIGHTENED", name = "Frightened" } }
+    eq(G.move_blocked(P1), "Frightened", "movement blocked by a boost")
     -- S076 00:40:39: Gale's Scorching Ray while asleep: the refusal says how to wake her
     on = { { id = "SLEEPING_EYEBITE", name = "Sleeping" } }
     local j = job(op("cast", { char = P1, spell = "Projectile_SR", target = NPC }))

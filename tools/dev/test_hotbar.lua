@@ -63,7 +63,11 @@ end
 
 local entities = {}
 local clockMs = nil
+local stats = { Target_Bless = { DisplayName = "hBless;1" }, Projectile_MagicMissile = { DisplayName = "hMM;2" } }
+local loca = { hBless = "Bless", hMM = "Magic Missile" }
+BG3AI.Util = { loca = function(h) return h and loca[tostring(h):gsub(";%d+$", "")] or nil end }
 Ext = { Utils = { MonotonicTime = function() if clockMs == nil then error("no clock") end return clockMs end },
+        Stats = { Get = function(id) return stats[id] end },
         Entity = { Get = function(u) return entities[u] end,
                    GetAllEntitiesWithComponent = function(c)
                        local out = {}
@@ -343,6 +347,44 @@ ok(not pcall(ops["ui.cast_confirm"], {}), "confirm refused: the task object alon
 commands = {}
 r = ops["ui.cast_cancel"]({})
 ok(r.done and r.was_armed == false and commands[1] == "CancelTaskCommand", "cancel with the idle task: command sent, was_armed false")
+
+-- 21b. S091 (11/11 `IN HAND: a spell`): the live shape names no spell (no PrototypeID on the active slot's VM, no char
+-- from the bridge): the active cell's SlotIndex in the HUD character's hotbar map names it, by its shown name
+local savedBars = ldc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.KeyboardHotBars   -- 19's two decks
+ldc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.KeyboardHotBars = { lcommon, lclass, lpass }
+ldc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.CurrentSpellTask = { TargetingType = "Target" }
+ldc.CurrentActiveSlot = lclass.SlotList[4]                     -- SlotIndex 3 = Bless on the class deck
+r = ops["ui.cast_state"]({})
+ok(r.armed and r.spell == "Target_Bless" and r.spell_name == "Bless" and r.char == nil,
+   "S091: the active cell named from the ClientControl entity's map (no char, no UISettings)")
+BG3AI.UISettings = { selected = function() return "c3" end }   -- the HUD's selected character (UISettings.selected)
+r = ops["ui.cast_state"]({})
+ok(r.spell == "Target_Bless" and r.char == "c3", "S091: no char -> the HUD's selected character")
+entities["c3"].HotbarContainer = nil                           -- no client map: the bridge passes the server's
+r = ops["ui.cast_state"]({})
+ok(r.armed and r.spell == nil and r.spell_name == nil and r.char == "c3", "S091: no map anywhere -> unnamed, char given")
+r = ops["ui.cast_state"]({ char = "c3", map = { ClassHotBar = { ["3"] = "Projectile_MagicMissile" },
+                                                CommonHotBar = { ["3"] = "Target_Wrong" } } })
+ok(r.spell == "Projectile_MagicMissile" and r.spell_name == "Magic Missile", "S091: args.map names it (its deck, not another's)")
+-- a proxy of the active slot that isn't the list's own (tostring differs): the deck it shows, else IsActive
+ldc.CurrentActiveSlot = { SlotIndex = 3 }
+ldc.CurrentShownDeck = { HotBarType = "ClassHotBar" }
+r = ops["ui.cast_state"]({ char = "c3", map = { ClassHotBar = { ["3"] = "Projectile_MagicMissile" } } })
+ok(r.spell == "Projectile_MagicMissile", "S091: an unmatched proxy -> the shown deck's cell")
+lcommon.SlotList[2].IsActive = true
+ldc.CurrentActiveSlot = { SlotIndex = 1 }
+r = ops["ui.cast_state"]({ char = "c3", map = { CommonHotBar = { ["1"] = "Projectile_Jump" }, ClassHotBar = { ["1"] = "X" } } })
+ok(r.spell == "Projectile_Jump", "S091: the slot marked IsActive picks the deck over the shown one")
+lcommon.SlotList[2].IsActive = nil
+ldc.CurrentShownDeck = { HotBarType = "CommonHotBar" }
+-- nothing in hand: no name read, even with an active cell
+ldc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.CurrentSpellTask = nil
+r = ops["ui.cast_state"]({ char = "c3", map = { CommonHotBar = { ["1"] = "Projectile_Jump" } } })
+ok(r.armed == false and r.spell == nil, "S091: not armed -> no spell named from the active cell")
+ldc.CurrentActiveSlot = nil
+entities["c3"].HotbarContainer = hc
+BG3AI.UISettings = nil
+ldc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.KeyboardHotBars = savedBars
 
 -- 22. live window #2 (19:49): 39 probes never saw a cell. The shown widget over a hidden duplicate; the IsOverUI
 -- flag; a hovered ListBoxItem names its cell when the button's own IsMouseOver stays false; the probe cache.

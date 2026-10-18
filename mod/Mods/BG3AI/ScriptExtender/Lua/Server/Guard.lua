@@ -1938,6 +1938,12 @@ G.BLOCKING_STATUS_TYPES = { INCAPACITATED = true, FEAR = true }
 -- (HASTE_LETHARGY, `using "STUNNED"`); the guard refused her Rage "(it takes the whole turn)", yet the same turn's
 -- move and both attacks worked.
 G.ACTING_STATUSES = { HASTE_LETHARGY = true }
+-- ...but no Lethargic walk ever started (S074 23:21:13, S089 06:56:41 "never started moving", travelled 0), and its
+-- turn was over once the rest of the party's turn group had ended (S091 08:30:24 Wyll ended last, Claude's turn gone
+-- by 08:30:34 with no end order; S088 06:19:53): orders sent before that worked (S072 two attacks, S089 Dash). S091
+-- showed `DISABLED e5 Claude: Lethargic (1 turn)` beside `Move 9/9m` and the agent planned to walk off the Orb of
+-- Negation's platform.
+G.LETHARGY_EFFECT = "cannot move; its turn passes once the rest of its turn group has ended (act with it first)"
 -- with_acting: those too (a walk that never started names them, S074).
 function G.blocking_status(char, with_acting)
     local V = BG3AI.Visibility
@@ -2003,6 +2009,8 @@ function G.disabling_info(id)
                 effect = "stands up at its turn start for half its movement"
             elseif typ == "INCAPACITATED" and not G.ACTING_STATUSES[id] then
                 effect = "cannot act"
+            elseif G.ACTING_STATUSES[id] then
+                effect = G.LETHARGY_EFFECT
             elseif tostring(field("Boosts") or ""):find("ActionResourceBlock(Movement)", 1, true) then
                 effect = "cannot move"
             end
@@ -2035,6 +2043,16 @@ function G.disabling(char)
         end
     end
     return out
+end
+
+-- What keeps char from walking: the name of a disabling status that says "cannot act" or "cannot move …", or nil.
+-- The movement figure (State.lua moveView) and the combat walk guard (Actions.lua combat_budget) use it.
+function G.move_blocked(char)
+    for _, d in ipairs(G.disabling(char) or {}) do
+        local eff = d.effect or ""
+        if eff == "cannot act" or eff:find("^cannot move") then return d.name end
+    end
+    return nil
 end
 
 -- The fix the game offers for char's status `name` ("" when none), for refusals.

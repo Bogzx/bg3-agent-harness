@@ -388,6 +388,20 @@ local function resourcesView(res)
     return out
 end
 
+-- resourcesView for a character: a member that can't walk (Guard.move_blocked: Lethargic, Stunned …) shows Movement 0
+-- and MoveBlocked = the status. S091 08:30:24: `DISABLED e5 Claude: Lethargic` beside `Move 9/9m`, and the agent
+-- planned a walk that could not happen.
+local function moveView(u, res)
+    local out = resourcesView(res)
+    local Gd = BG3AI.Guard
+    local ok, blk = pcall(function() return Gd and Gd.move_blocked and Gd.move_blocked(u) end)
+    if ok and blk and out.Movement then
+        out.Movement[1] = 0
+        out.MoveBlocked = blk
+    end
+    return out
+end
+
 -- "ActionPoint:1;SpellSlotsGroup:1:1:2;Movement:3" -> {action=1, slot=2, movement=3, other={...}}
 local function parseCosts(s)
     local cost = {}
@@ -1620,7 +1634,7 @@ timed("state.character", function(args)
         local res = resistances(e)
         if #res > 0 then out.resistances = res end
     end
-    if sec("resources") then out.resources = resourcesView(resources(e)) end
+    if sec("resources") then out.resources = moveView(u, resources(e)) end
     if sec("conditions") then out.statuses = V.statuses(e) end
     if sec("passives") then out.features = passives(e) end
     if sec("equipment") then out.equipment = equipmentOf(e) end
@@ -1644,7 +1658,7 @@ timed("state.actions", function(args)
     local u = args.uuid or args.char or selectedCharacter(ctx.party)
     if not ctx.is_party[u] then error("not a party member", 0) end
     local e = V.entity(u)
-    return { uuid = u, resources = resourcesView(resources(e)), actions = S.actions(u) }
+    return { uuid = u, resources = moveView(u, resources(e)), actions = S.actions(u) }
 end)
 
 timed("state.nearby", function(args)

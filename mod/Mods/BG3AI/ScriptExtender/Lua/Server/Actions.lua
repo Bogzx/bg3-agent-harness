@@ -840,6 +840,8 @@ end
 -- movement before (both nil out of combat) or refuses.
 local function combat_budget(char, route)
     if not G.in_combat(char) then return nil, nil end
+    local blk = G.move_blocked(char)
+    if blk then G.refuse("cannot move while " .. tostring(blk) .. " (the status keeps it in place this turn)") end
     local mv = movement_left(char)
     if mv < 0.5 then G.refuse("no movement left") end
     if route > mv + 0.5 then

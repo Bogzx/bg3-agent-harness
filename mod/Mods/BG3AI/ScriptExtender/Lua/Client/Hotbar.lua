@@ -17,12 +17,14 @@
 --       `hover` = the IsMouseOver chain under the HotBar widget (last names, deepest last) while it has one, so a
 --       miss says where the cursor was. `cache=true` (the bridge's cursor search) reuses the deck/button walk for
 --       CACHE_MS (the slots don't change while the cursor sweeps; window #2 spent 4 s on 39 full walks).
---   ui.cast_state {char?}
---       -> {armed, spell?, remaining?, can_force, counter, targeting?, preview?, upcast_open?,
+--   ui.cast_state {char?, map?}
+--       -> {armed, spell?, spell_name?, char?, remaining?, can_force, counter, targeting?, preview?, upcast_open?,
 --           cast?={spell, phase, picked, index, previewing}}
 --       What the HUD shows about the spell in hand: armed (a spell task is active), the cursor's target counter
 --       (TargetValues.Remaining, the "N" next to the cursor), whether the tick button can finish early, and
---       the client cast entity's own state (targets picked so far, cast phase) when it has one.
+--       the client cast entity's own state (targets picked so far, cast phase) when it has one. No char: the HUD's
+--       selected character. spell: the active cell's VM id, else the cast entity's, else the cell's SlotIndex in the
+--       hotbar map (H.activeSpell; map = the server's hotbar.map shape); spell_name its shown name; char whose.
 --   ui.cast_confirm {}
 --       -> {done=true} | error. The multi-target tick button (ForceCastButton, ForceCastCommand): finish with
 --       fewer targets than the spell's max. Only while a spell is armed and the button is enabled.
@@ -336,10 +338,17 @@ local function selectedIs(char)
     return ok and cc ~= nil
 end
 
+-- The HUD's selected character (UISettings.selected: the ClientControl holder the HUD shows), nil when unknown.
+local function hudSelected()
+    local S = BG3AI.UISettings
+    return S and S.selected and (S.selected()) or nil
+end
+
 -- The client entity's hotbar map: the caster's, else the selected character's (ClientControl).
 function H.clientMap(char)
     local HM = hotbarMap()
     if not HM then return nil, "HotbarMap not loaded" end
+    char = char or hudSelected()
     if char then return HM.forChar(char) end
     for _, e in ipairs(try(Ext.Entity.GetAllEntitiesWithComponent, "ClientControl") or {}) do
         local hc = try(function() return e.HotbarContainer end)
@@ -462,9 +471,38 @@ local function castEntity(char)
     return nil
 end
 
+-- The spell id in the active hotbar cell when its VM carries none (LIVE G2): S091 11/11 `IN HAND: a spell`, the
+-- slot VM's PrototypeID reads nil and the bridge passes no char (no cast entity). The cell's SlotIndex in the
+-- character's hotbar map (args.map from the bridge's server read, else the client entity's), on the deck whose slot list holds the active slot (same VM, or a
+-- slot with that SlotIndex marked IsActive: GUESS H1), else the shown deck (a clicked cell is on the deck on screen).
+function H.activeSpell(dc, char, map)
+    local active = UI.get(dc, "CurrentActiveSlot")
+    local si = num(UI.get(active, "SlotIndex"))
+    if si == nil then return nil end
+    if type(map) ~= "table" then map = H.clientMap(char) end
+    if type(map) ~= "table" then return nil end
+    local deck
+    for _, d in ipairs(H.decks(dc)) do
+        for _, s in ipairs(d.slots) do
+            if same(s.vm, active) or (s.slot == si and UI.get(s.vm, "IsActive") == true) then deck = d.type break end
+        end
+        if deck then break end
+    end
+    local dm = map[deck or str(UI.path(dc, "CurrentShownDeck.HotBarType")) or ""]
+    return type(dm) == "table" and (dm[tostring(si)] or dm[si]) or nil
+end
+
+-- A spell id's shown name ("Projectile_MagicMissile" -> "Magic Missile"), nil when unknown.
+local function spellName(id)
+    local st = id and try(Ext.Stats.Get, id)
+    local U = BG3AI.Util
+    return st and U and U.loca and U.loca(try(function() return st.DisplayName end)) or nil
+end
+
 function H.castState(args)
     local dc = hotbarDC()
     if dc == nil then error("the hotbar is not on screen") end
+    local char = args.char or hudSelected()
     local task = UI.path(dc, "CurrentPlayer.UIData.ActiveTask")
     local out = { task = task ~= nil }
     local tv = UI.get(task, "TargetValues") or UI.get(task, "HPTargetValues")
@@ -477,7 +515,7 @@ function H.castState(args)
     out.targeting = str(UI.get(st, "TargetingType"))
     out.upcast_open = UI.get(dc, "IsSelectingUpcastedSpell") == true or nil
     out.spell = spellOf(UI.path(dc, "CurrentActiveSlot.Content"))
-    local c = castEntity(args.char)
+    local c = castEntity(char)
     if c then
         local cs = {}
         pcall(function()
@@ -495,6 +533,9 @@ function H.castState(args)
         out.spell = out.spell or cs.spell
     end
     out.armed, out.armed_by = H.armedOf(out)
+    if not out.spell and (out.armed or out.upcast_open) then out.spell = H.activeSpell(dc, char, args.map) end
+    out.spell_name = spellName(out.spell)
+    out.char = char
     return out
 end
 
