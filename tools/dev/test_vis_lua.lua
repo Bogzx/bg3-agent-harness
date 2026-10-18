@@ -8,6 +8,7 @@
 -- vis V25, S084 04:16: who of the party stands on a floor plate (S.plateOn).
 -- vis V24, S083 03:55:56: a lock read flipping locked -> unlocked counts as the game unlocking it (S.lockRead).
 -- vis V29, S091 08:19-08:29: the Netherbrain (a huge body) hidden 20-22.5 m from its anchor point (V.bigPerceived).
+-- vis V31, S093: in the psyche the floor calibration ray misses (ray rule off): a big foe in the party's fight.
 -- Ext, Osi and RPC are stubbed; Shared/Util.lua, Server/Visibility.lua and Server/State.lua are real.
 -- Run: tools/dev/test_fairness_lua.sh  (Lua 5.3 + 5.4 in Docker)
 
@@ -32,6 +33,7 @@ local inCamp = {}      -- DB_PlayerInCamp rows
 local sees = {}        -- uuid -> CanSee from Claude
 local onStage = {}     -- uuid -> false when off stage
 local los = true       -- HasLineOfSight from any member
+local fight = {}      -- uuid -> CombatGetGuidFor
 
 Ext = {
     Utils = { MonotonicTime = function() return 1000 end, PrintWarning = function() end, Print = function() end },
@@ -55,6 +57,7 @@ Osi = {
     IsAlly = function(_, u) return u == KARLACH and 1 or 0 end,
     CanSee = function(_, u) return sees[u] and 1 or 0 end,
     HasLineOfSight = function() return los and 1 or 0 end,
+    CombatGetGuidFor = function(u) return fight[u] end,
     DB_PlayerInCamp = { Get = function() if inCamp == "error" then error("no such DB") end return inCamp end },
     DB_Origins = { Get = function() return { { "S_Player_Karlach_" .. KARLACH }, { "S_Player_Claude_" .. CLAUDE } } end },
     GetRegion = function() return "CTY_Main_A" end, -- the camp and the city: one level
@@ -78,7 +81,8 @@ local function visible(u) return V.characterVisible(ctx(), u, V.entity(u)) end
 local failures, count = 0, 0
 local function test(name, fn)
     count = count + 1
-    inCamp, sees, onStage, los = {}, {}, {}, true
+    inCamp, sees, onStage, los, fight = {}, {}, {}, true, {}
+    Ext.Level, V.rayBroken, V.rayCache, V.calib = nil, nil, {}, { t = -1e9, ok = false } -- no ray API: uncalibrated
     ents[BRAIN].size, ents[BRAIN].bounds = nil, nil
     V.boundsCache = {}
     local ok, err = pcall(fn)
@@ -219,6 +223,45 @@ test("V29: V.bodyDist to a cylinder", function()
     near(V.bodyDist({ 10, 4, 0 }, { 0, 0, 0 }, 3, 6), 7, "level with its middle")
     near(V.bodyDist({ 7, 10, 0 }, { 0, 0, 0 }, 3, 6), 5.66, "above it")
     near(V.bodyDist({ 1, -2, 0 }, { 0, 0, 0 }, 3, 6), 2, "under it")
+end)
+
+-- S093: inside the psyche, the brain in the party's fight; no line of sight from the platform.
+local FIGHT = "11111111-0000-0000-0000-000000000093"
+local function psycheFight()
+    ents[BRAIN].size = 5
+    los = false
+    fight[CLAUDE], fight[BRAIN] = FIGHT, FIGHT
+end
+
+test("V31 S093: rays uncalibrated (the psyche floor): a big creature in the party's fight is seen by its body", function()
+    psycheFight()
+    eq(seenFrom(CLAUDE_PSYCHE), true, "Gargantuan foe, body within sight, no LOS, ray rule off")
+    eq(V.calib.ok, false, "uncalibrated")
+end)
+
+test("V31: the uncalibrated fallback needs the party's own fight, a big body and the body within sight", function()
+    psycheFight()
+    fight[BRAIN] = nil
+    eq(seenFrom(CLAUDE_PSYCHE), false, "not in a fight")
+    fight[BRAIN] = "22222222-0000-0000-0000-000000000000"
+    eq(seenFrom(CLAUDE_PSYCHE), false, "another fight")
+    fight[BRAIN] = FIGHT
+    eq(seenFrom({ 245.0, -53.0, 4280.0 }), false, "35 m off: the body is past sight range")
+    ents[BRAIN].size = 2
+    eq(seenFrom(CLAUDE_PSYCHE), false, "Medium: the anchor rule")
+end)
+
+test("V31: calibrated rays still decide (a wall in the way hides the fighting brain); a broken ray API stays strict", function()
+    psycheFight()
+    Ext.Level = { RaycastClosest = function(a, b)
+        if a[1] == b[1] and a[3] == b[3] and b[2] < a[2] then return { Distance = 1.6 } end -- the floor
+        return { Distance = 1.0 } -- a wall 1 m ahead of every eye ray
+    end }
+    eq(seenFrom(CLAUDE_PSYCHE), false, "floor hit, wall: hidden")
+    eq(V.calib.ok, true, "calibrated")
+    Ext.Level, V.rayCache, V.calib = nil, {}, { t = -1e9, ok = false }
+    V.rayBroken = true
+    eq(seenFrom(CLAUDE_PSYCHE), false, "rule switched off (check_vis) or broken: strict")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

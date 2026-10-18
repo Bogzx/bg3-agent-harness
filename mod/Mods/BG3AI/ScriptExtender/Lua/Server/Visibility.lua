@@ -336,16 +336,33 @@ function V.bigBody(e)
     return { r = r, h = math.max(bd and bd.height or 0, 2 * r) }
 end
 
+-- uuid fights in the fight a party member is in (the game's combat guid).
+function V.inPartyFight(ctx, uuid)
+    local g = V.osi(Osi.CombatGetGuidFor, uuid)
+    if not g then return false end
+    for _, u in ipairs(ctx.party) do
+        if V.osi(Osi.CombatGetGuidFor, u) == g then return true end
+    end
+    return false
+end
+
+-- V31, S093 (the psyche): the platforms don't answer the downward calibration ray (check_all "calibration ray missed
+-- the floor: rule is off"), so the ray branch is off exactly there. While the rays can't answer at this spot
+-- (uncalibrated; a broken or switched-off ray API stays strict), a big creature in the party's own fight with its
+-- body within a member's sight range is seen: it is in the fight's turn order and a body that size is on screen.
 function V.bigPerceived(ctx, uuid, e, pos)
     local body = pos and V.bigBody(e)
     if not body then return false end
+    local near = false
     for _, o in ipairs(ctx.observers) do
-        if o.pos and V.bodyDist(o.pos, pos, body.r, body.h) <= o.sight
-            and truthy(V.osi(Osi.HasLineOfSight, o.uuid, uuid)) then
-            return true
+        if o.pos and V.bodyDist(o.pos, pos, body.r, body.h) <= o.sight then
+            if truthy(V.osi(Osi.HasLineOfSight, o.uuid, uuid)) then return true end
+            near = true
         end
     end
-    return V.largePerceived(ctx, uuid, e, pos, nil, body)
+    if not near then return false end
+    if V.largePerceived(ctx, uuid, e, pos, nil, body) then return true end
+    return not V.rayBroken and not V.calib.ok and V.inPartyFight(ctx, uuid)
 end
 
 -- Item classification from server flags (no hidden flags are ever exported).
