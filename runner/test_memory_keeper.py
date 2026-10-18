@@ -416,6 +416,41 @@ class KeeperTest(MemoryTestCase):
         self.assertIn("even when the game's journal or map still shows its marker", p)
         self.assertIn("`- <item> is done (Sxxx: <what the record says>): skip it.`", p)
 
+    def test_bosses_done_from_milestones_and_fight_records(self):
+        # S086 review: the S085 player wrote "Cazador still pending (7 tries lost)" into HANDOFF, copied from
+        # PLAYTHROUGH.md's "next Cazador" (stale since S076); Cazador died in S077 (milestone), though his own fight
+        # record left him at 34% (the sarcophagus) and the journal kept a Call of the Blood objective
+        def jl(name: str, *recs: dict) -> None:
+            (self.tmp / name).write_text("".join(json.dumps(r) + "\n" for r in recs))
+
+        def ev(kind: str, what: str) -> dict:
+            return {"type": "progress", "t": 1.0, "kind": kind, "what": what}
+        jl("S066.progress.jsonl", ev("story_kill", "Orin"))          # her first death: a try that was reloaded
+        jl("S066.fights.jsonl", {"session": "S066", "reloaded": True, "kills": [{"name": "Orin", "round": 3}]})
+        jl("S067.fights.jsonl", {"session": "S067", "reloaded": False,
+                                 "kills": [{"name": "Bat", "round": 1}, {"name": "Orin", "round": 5}]})
+        jl("S077.fights.jsonl", {"session": "S077", "reloaded": False, "kills": [{"name": "Bat", "round": 1}],
+                                 "left": [{"name": "Cazador Szarr", "pct": 34}]})
+        jl("S077.progress.jsonl", ev("quest_step", "Call of the Blood: Cazador's been defeated"))
+        jl("S077-r1.progress.jsonl", ev("quest_done", "Investigate Cazador's Palace"))
+        jl("S078-keeper.progress.jsonl", ev("story_kill", "Bat"))   # not a session file
+        (self.tmp / "progress_state.json").write_text(json.dumps({"quests": {
+            "Investigate Cazador's Palace": {"done": True}, "Call of the Blood": {"done": False}}}))
+        self.assertEqual(K.game_done_records(self.tmp), [
+            "milestone: Cazador defeated (S077)",
+            "fight record: Orin killed in a fight not reloaded (S067)"])
+        self.assertEqual(K.game_done_records(None), [])
+        self.write("PLAYTHROUGH.md", "# Playthrough\nMain thread: Cazador fight (S074-S076, 7 tries lost); next "
+                   "Cazador, then the Morphic Pool.\n")
+        self.commit("S003 memory")
+        p = K.build_prompt(self.mem, "S003", 3, "", 5, sessions_dir=self.tmp)
+        block = p.split("DONE IN MEMORY (finished per the memory files and the runner's milestones", 1)[1]
+        self.assertIn("\n- milestone: Cazador defeated (S077)\n", block)
+        self.assertIn("\n- fight record: Orin killed in a fight not reloaded (S067)\n", block)
+        self.assertIn("The Main thread's `next …` never names a boss or goal that DONE IN MEMORY", p)
+        self.assertIn("'still pending / not yet / try again' claim (a boss, a quest) in HANDOFF's text above", p)
+        self.assertIn("not the game's journal: it can keep an objective open after the boss is dead", p)
+
     def test_no_done_block_without_records(self):
         self.write("objectives.md", "# Objectives\n\n## Main\n1. NOW: find the grove.\n")
         self.commit("S003 memory")

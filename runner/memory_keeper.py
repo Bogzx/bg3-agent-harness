@@ -57,6 +57,9 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "tools" / "memory"))
 import lint as L  # noqa: E402
 import memlib as M  # noqa: E402
+sys.path.insert(0, str(REPO / "bridge" / "src"))
+from bg3ai import milestones as MS  # noqa: E402  (stdlib only)
+from bg3ai import progress as P  # noqa: E402  (stdlib only)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import clients as C  # noqa: E402
 
@@ -450,6 +453,51 @@ def done_records(mem: Path) -> list[str]:
     return [r[:DONE_MAX_CHARS] for r in (out + bullets)[:DONE_MAX_LINES]]
 
 
+GAME_DONE_MAX_LINES = 30
+_LEG = re.compile(r"(S\d{3})(?:-r(\d+))?\.(?:progress|fights)\.jsonl")
+
+
+def game_done_records(sessions_dir: Path | None) -> list[str]:
+    """What the runner's own records (sessions_dir = runtime/sessions/<playthrough>) show is over, beside the memory:
+    the story milestones of kind quest_done reached (bg3ai.milestones: progress_state.json + Sxxx.progress.jsonl),
+    and the bosses killed in a fight that wasn't reloaded (a fight record's kill whose name has a story_kill
+    progress event: someone the party had talked to; the GAME_DONE_MAX_LINES newest). S085: PLAYTHROUGH.md's
+    Main thread said "next Cazador" from S076 to S084, the player copied it into HANDOFF as "Cazador still pending
+    (7 tries lost)"; the milestone "Cazador defeated (S077)" says otherwise. Cazador's own fight record can't (he
+    left at 34% into his sarcophagus), and the journal kept a Call of the Blood objective open."""
+    if sessions_dir is None or not sessions_dir.is_dir():
+        return []
+
+    def legs(kind: str) -> list[tuple[str, Path]]:   # (Sxxx, path) per session and crash-resume leg, in play order
+        found = [(m, p) for p in sessions_dir.glob(f"S*.{kind}.jsonl") if (m := _LEG.fullmatch(p.name))]
+        return [(m.group(1), p) for m, p in sorted(found, key=lambda x: (x[0].group(1), int(x[0].group(2) or 0)))]
+    progress = [(sid, P.load(p)) for sid, p in legs("progress")]
+    try:
+        seen = json.loads((sessions_dir / "progress_state.json").read_text())
+    except (OSError, ValueError):
+        seen = None
+    out = []
+    if seen or any(recs for _s, recs in progress):
+        kinds = {mid: kind for mid, _a, _l, kind, _p in MS.MILESTONES}
+        for i in MS.status(seen, progress)["items"]:
+            if i["reached"] and kinds.get(i["id"]) == "quest_done":
+                out.append(f"milestone: {i['label']}" + (f" ({i['session']})" if i["session"] else ""))
+    talked_dead = {str(r.get("what")) for _s, recs in progress for r in recs
+                   if r.get("type") == "progress" and r.get("kind") == "story_kill"}
+    killed: dict[str, str] = {}
+    for sid, path in legs("fights"):
+        for r in P.load(path):
+            kills = r.get("kills") or []
+            if r.get("reloaded") or not isinstance(kills, list):
+                continue
+            for k in kills:
+                name = str(k.get("name") or "") if isinstance(k, dict) else ""
+                if name in talked_dead and name not in killed:
+                    killed[name] = sid
+    kills = [f"fight record: {name} killed in a fight not reloaded ({sid})" for name, sid in killed.items()]
+    return [r[:DONE_MAX_CHARS] for r in out + kills[-GAME_DONE_MAX_LINES:]]
+
+
 def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: float,
                  refused: list[dict] | None = None, tools: str = "files", sessions_dir: Path | None = None) -> str:
     """The keeper's task. tools: "files" (Claude Code's Read/Edit/Write/Glob/Grep in the memory dir, today's Claude
@@ -505,8 +553,10 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         f"`{L.CHARACTER_DEV_HEADING}` (reverted). When the logs show the character changed (a vow kept or broken, a "
         "bond formed, a belief shaken), APPEND one line at the end: `- Sxxx: <what changed and why> [seen]`.",
         "- PLAYTHROUGH.md (it is shown to the player at every session start): keep the `Main thread:` line and "
-        "`## Party` current (who is in the active party, in camp, gone). Leave the `Now:` line as the player "
-        "wrote it.",
+        "`## Party` current (who is in the active party, in camp, gone). The Main thread's `next …` never names "
+        "a boss or goal that DONE IN MEMORY or a log shows finished (S077-S084 it still said 'next Cazador' though "
+        "quests.md had Cazador DONE S077; the S085 player copied it into HANDOFF as 'Cazador still pending'). "
+        "Leave the `Now:` line as the player wrote it.",
         "- PRUNE what no longer helps the next session: a goal, lead or 'Blocked' item for a region or act the "
         "party has left, or one the logs show is done or superseded, is removed from objectives.md (the "
         "session logs keep the history) and becomes one line under '## Done' in quests.md with the session "
@@ -517,9 +567,12 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         "≤ 12 lines: what the logs record that HANDOFF's text above doesn't say and the next session needs. "
         "If the last log has a later state than HANDOFF (e.g. 'session ended WITHOUT wrap-up'): where the party "
         "was, what it was doing, the next concrete step. Also open leads with their exact names (doors, keys, "
-        "NPCs, passwords) and lessons the player looked up in old logs. A next step or side-list item in HANDOFF's "
-        "text above that DONE IN MEMORY or a log shows finished gets one line here: `- <item> is done (Sxxx: <what "
-        "the record says>): skip it.` Write 'nothing new' if nothing. "
+        "NPCs, passwords) and lessons the player looked up in old logs. A next step, side-list item or "
+        "'still pending / not yet / try again' claim (a boss, a quest) in HANDOFF's text above that DONE IN MEMORY "
+        "or a log (`[combat]`, `[decision]`, `[quest]`, `[save]` lines) shows finished gets one line here: `- <item> "
+        "is done (Sxxx: <what the record says>): skip it.` Check such claims against those records, not the "
+        "game's journal: it can keep an objective open after the boss is dead (Call of the Blood still read "
+        "'trying to recover in his sarcophagus' after Cazador was killed in S077). Write 'nothing new' if nothing. "
         "Don't change one character above that heading (the runner reads its Save to load line).",
         f"Files no session changed for a while (update them first): {stale_txt}. If such a file truly has "
         f"nothing new, add or refresh one line `- Last updated: {sid} (no change)`.",
@@ -590,9 +643,10 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
             f"{'memory_write' if mcp else 'Write'} call once you have read those logs (a half-written chapter would be counted as done). "
             "If a chapter file for these sessions already exists, update it instead of adding a second one.",
         ]
-    done = done_records(mem)
+    done = done_records(mem) + game_done_records(sessions_dir)
     if done:
-        lines += ["", "DONE IN MEMORY (finished per the memory files; no next step or side-list item may name one):",
+        lines += ["", ("DONE IN MEMORY (finished per the memory files and the runner's milestones and fight records; "
+                       "no next step, side-list item or 'still pending' claim may name one):"),
                   *(f"- {r}" for r in done)]
     lines += ["", "Current lint report:", lint_report[-3000:], "",
               "End with one line: what you updated (files) and anything you could not do."]
