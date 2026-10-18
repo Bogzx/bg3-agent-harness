@@ -42,10 +42,15 @@ KILLED_RE = re.compile(r"FIGHT DEBRIEF \([^\n]*\n(?:  [^\n]*\n)*?  killed (\d+)/
 # Fustian": one entry per down, the harness's complete list (S065's results showed no +Downed for its 1 and 4 downs)
 DEBRIEF_BLOCK_RE = re.compile(r"FIGHT DEBRIEF \([^\n]*(?:\n  [^\n]*)*")
 DOWNED_ENTRY_RE = re.compile(r"(?:^|, )([A-Z][\w' -]*?) r\d+\b")
+# its "  DIED: Gale (r4, by Sharran Novice Greymask), Wyll (r4, by …) — revive now: …" (old: "  DIED: Gale, Wyll — …");
+# an allied NPC reads "Aylin (ally, r3)"
+DIED_ENTRY_RE = re.compile(r"(?:^|, )([A-Z][\w' -]*?)(?: \(([^()]*)\))?(?=, [A-Z]|$)")
 # summons are listed as party ("PARTY e267 Spiritual Weapon L1 HP 20/20 summon of e267", "PARTY + e472 Spiritual
 # Weapon HP 20/20"); their expiry is not a party death
 SUMMON_RE = re.compile(r"PARTY (?:\+ )?\*?e\d+ ([A-Z][\w' -]*?) (?:L\d+ )?HP [^\n]*?summon of|PARTY \+ e\d+ ([A-Z][\w' -]*?) HP")
-WHERE_RE = re.compile(r"WHERE ([^|\n·]+)")
+# "WHERE Cloister of Sombre Embrace · Lower City", or a move: "WHERE Campsite · Lower City -> Cloister of Sombre
+# Embrace · Lower City" (S080 02:16: stopping at the first · read "Campsite" for the fight there)
+WHERE_RE = re.compile(r"WHERE ([^|\n]+)")
 ABIL_RE = re.compile(r'"ability\\?"\s*:\s*\\?"([^"\\]+)')
 CAST_RE = re.compile(r"cast=([A-Za-z_]+)")
 # compacted action lines drop "cast=X" when X is the action id: "action: Target_MainHandAttack e31: done — target=..",
@@ -100,6 +105,24 @@ def debrief_downs(text):
         return None
     line = next((ln[len("  downed: "):] for ln in m.group(0).split("\n") if ln.startswith("  downed: ")), "")
     return Counter(base(n) for n in DOWNED_ENTRY_RE.findall(line))
+
+
+def place(where):
+    """The area a WHERE line names: a move's destination ("Campsite · Lower City -> Cloister of Sombre Embrace · Lower
+    City"), but a step out of an area into its bare region ("Bhaal Temple · Lower City -> Lower City") keeps the area."""
+    *_, src, dst = [""] + where.split("->")
+    return (dst if "·" in dst or not src else src).split("·")[0].strip()
+
+
+def debrief_deaths(text):
+    """The members in the first FIGHT DEBRIEF's `DIED:` line (empty when nobody died), or None without a debrief.
+    S080 try 7 went game over: its results had no died event for the 3 deaths the debrief listed."""
+    m = DEBRIEF_BLOCK_RE.search(text)
+    if not m:
+        return None
+    line = next((ln[len("  DIED: "):] for ln in m.group(0).split("\n") if ln.startswith("  DIED: ")), "")
+    line = line.split(" — ")[0]
+    return {base(n) for n, why in DIED_ENTRY_RE.findall(line) if not why.startswith("ally")}
 
 
 def party_names(calls):
@@ -213,7 +236,7 @@ def mine(run, sid):
         for c in inside + list(reversed(before)):
             m = WHERE_RE.search(c["res"])
             if m:
-                where = m.group(1).split("->")[-1].strip()
+                where = place(m.group(1))
                 break
         text = "\n".join(c["res"] for c in inside)
         rounds = max([int(x) for x in ROUND_RE.findall(text)] or [0])
@@ -249,6 +272,8 @@ def mine(run, sid):
         dd = debrief_downs(text + "\n" + "\n".join(c["res"] for c in after))
         if dd is not None:  # the harness's own list is complete, like its rounds (S065: 0 downs mined, it had 1 and 4)
             downs = Counter({n: k for n, k in dd.items() if n in party})
+        party_died = sorted(set(party_died) | {n for n in debrief_deaths(text + "\n" + "\n".join(
+            c["res"] for c in after)) or () if n in party})
         if db:  # the harness's own list is complete (compacted results may name no death / no enemy turn)
             rounds = db[1]
             for n in db[2]:

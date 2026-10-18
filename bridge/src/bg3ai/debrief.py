@@ -90,6 +90,8 @@ class Fight:
         self.deaths: list[dict] = []
         self.kills: list[dict] = []                   # {name, round} in kill order
         self.hp: dict[str, list] = {}                 # hostile name -> [lowest hp_pct seen, last hp_pct seen]
+        self.out: dict[str, int] = {}                 # enemy uuid -> round it was seen at 0 HP and not dead: knocked
+        # out by a non-lethal blow (S080 Viconia: `now neutral (was hostile), HP 65->0/86, +Knocked Out`, no died event)
         self.used: Counter = Counter()
         self.surrounded: dict | None = None
         self.elev: tuple[float, int] | None = None        # worst (enemies above us) mean height difference
@@ -363,6 +365,13 @@ class Tracker:
                 if isinstance(o.get("hp_pct"), (int, float)) and o.get("name") and not o.get("dead"):
                     lo = f.hp.setdefault(o["name"], [o["hp_pct"], o["hp_pct"]])
                     lo[0], lo[1] = min(lo[0], o["hp_pct"]), o["hp_pct"]
+            # a knocked-out enemy turns neutral: any row of a known enemy (a living one reads >= 1 %, State.hp_pct)
+            u = o.get("uuid")
+            if u in f.enemies and isinstance(o.get("hp_pct"), (int, float)) and not o.get("dead"):
+                if o["hp_pct"] <= 0:
+                    f.out.setdefault(u, f.round)
+                else:
+                    f.out.pop(u, None)
         hostile = [o for o in rows if o.get("relation") == "hostile" and not o.get("dead")]
         for o in rows:
             u = o.get("uuid")
@@ -621,7 +630,10 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
            "consumables": {"used": sorted(f.used), "unused": list(unused)[:6]}}
     rec["deaths"] = [{"name": d["name"], "round": d["round"], "by": foe(d["by"])}
                      | ({"ability": d["ability"]} if d.get("ability") else {}) for d in f.deaths if d["uuid"] in party_u]
-    rec["kills"] = [{"name": foe(k["name"]), "round": k["round"]} for k in f.kills if k["uuid"] in foes][:12]
+    rec["kills"] = [{"name": foe(k["name"]), "round": k["round"]} for k in f.kills if k["uuid"] in foes]
+    out = [{"name": foe(f.name(u)), "round": r} for u, r in f.out.items() if u in foes and u not in f.killed]
+    if out:
+        rec["out"] = out
     # Only the hits on the members the party list shows: a summon's (S078-r1 Viconia: the Cambion's) are in neither
     # their "taken" nor this, else "no visible source 623 of 564".
     unseen = {t: [a for u, a in hits if u in party_u] for t, hits in f.unseen.items()}
@@ -638,7 +650,7 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
                              key=lambda x: (x["died"] is None, x["died"] or 0, x["name"]))[:8]
     idle_names = {f.name(u) for u in idle} - {f.name(u) for u in foes}
     left = [{"name": foe(n), "low_pct": lo, "pct": last} for n, (lo, last) in f.hp.items()
-            if lo < 100 and n not in {f.name(u) for u in f.killed} and n not in idle_names]
+            if lo < 100 and n not in {f.name(u) for u in f.killed | set(f.out)} and n not in idle_names]
     if left:
         rec["left"] = sorted(left, key=lambda x: -enemies.get(x["name"], {}).get("dmg_to_us", 0))[:4]
     # setup's interface fields (docs/ARCHITECTURE.md): group = the retry key; per-enemy n/used/resisted; per-member
@@ -721,6 +733,16 @@ def _left(rec: dict, name: str) -> str:
     return f", left at {x['pct']}%" + (f" (was down to {x['low_pct']}%)" if healed else "")
 
 
+def _gone(rec: dict) -> dict[str, str]:
+    """Enemy name -> "killed r4" / "knocked out r2" when the record shows every one of that name down (S080: LAST
+    ATTEMPT said `focus Viconia DeVir first` after she died r4; the kill order cut her off at 4 kills)."""
+    when = {k["name"]: f"killed r{k['round']}" for k in rec.get("kills") or []}
+    when |= {o["name"]: f"knocked out r{o['round']}" for o in rec.get("out") or []}
+    n_out = Counter(o["name"] for o in rec.get("out") or [])
+    return {e["name"]: when.get(e["name"], "killed") for e in rec.get("enemies") or []
+            if e.get("count") and e.get("killed", 0) + n_out[e["name"]] >= e["count"]}
+
+
 def fled(rec: dict) -> bool:
     """The party ran instead of fighting: every ability it used was a Dash/Disengage, it dealt no damage and killed
     nothing (S069 20:25 Sorcerous Sundries: the shop's guards turned hostile, all four Dashed for 3 rounds toward the
@@ -779,7 +801,9 @@ def key_facts(rec: dict) -> list[str]:
                      + "): traps, surfaces or unseen attackers")
     elif hard and hard.get("dmg_to_us"):
         ab = f" ({', '.join(hard['abilities'][:2])})" if hard.get("abilities") else ""
-        facts.append(f"most damage to us: {hard['name']}{ab} {hard['dmg_to_us']}{_left(rec, hard['name'])}")
+        gone = _gone(rec).get(hard["name"])
+        facts.append(f"most damage to us: {hard['name']}{ab} {hard['dmg_to_us']}"
+                     + (f", {gone}" if gone else _left(rec, hard["name"])))
     for c in rec.get("dmg_cap") or []:
         on = f"; on it: {', '.join(c['statuses'])}" if c.get("statuses") else ""
         facts.append(f"{c['ones']} of {c['hits']} hits on {c['enemy']} did 1 per damage type (any type{on})")
@@ -821,13 +845,16 @@ def render(rec: dict) -> str:
     killed = sum(e["killed"] for e in rec.get("enemies") or [])
     total = sum(e["count"] for e in rec.get("enemies") or [])
     ps = rec.get("party") or []
-    gone = total - killed if rec.get("grade") in ("clean", "costly", "near_wipe") else 0
-    kills = rec.get("kills") or []
-    order = (" (" + ", ".join(f"{k['name']} r{k['round']}" for k in kills[:4]) + (", …" if len(kills) > 4 else "")
-             + ")") if kills else ""
+    gone = total - killed - len(rec.get("out") or []) if rec.get("grade") in ("clean", "costly", "near_wipe") else 0
+    kills = Counter((k["name"], k["round"]) for k in rec.get("kills") or [])   # in kill order; "Bat x3 r2"
+    order = (" (" + ", ".join(n + (f" x{c}" if c > 1 else "") + f" r{r}" for (n, r), c in kills.items())
+             + (", …" if sum(kills.values()) < killed else "") + ")") if kills else ""   # (older records kept 12)
+    outs = rec.get("out") or []
     left = rec.get("left") or []
     unseen = (rec.get("unseen") or {}).get("dmg")
-    lines.append(f"  killed {killed}/{total}" + order + (f" ({gone} gone at the end)" if gone else "")
+    lines.append(f"  killed {killed}/{total}" + order
+                 + (" + knocked out " + ", ".join(f"{o['name']} r{o['round']}" for o in outs) if outs else "")
+                 + (f" ({gone} gone at the end)" if gone else "")
                  + (" · left: " + ", ".join(f"{x['name']} {x['pct']}% (lowest {x['low_pct']}%)" for x in left[:3])
                     if left else "")
                  + " · dealt " + ", ".join(f"{p['name']} {p['dealt']}" for p in ps)
@@ -946,7 +973,14 @@ def last_attempt(rec: dict, history: list[dict] | None = None) -> str:
     elif hard and hard.get("dmg_to_us") and hard["name"] in capped:
         tips.append(f"{hard['name']} often took 1 per hit: many small hits, or end what shields it first")
     elif hard and hard.get("dmg_to_us"):
-        tips.append(f"focus {hard['name']} first")
+        down = _gone(base)
+        if hard["name"] not in down:
+            tips.append(f"focus {hard['name']} first")
+        else:   # never a focus on an enemy the record shows down: the hardest hitter still standing
+            up = max((e for e in base.get("enemies") or [] if e["name"] not in down), default=None,
+                     key=lambda e: e.get("dmg_to_us", 0))
+            if up and up.get("dmg_to_us"):
+                tips.append(f"after {hard['name']} ({down[hard['name']]}), focus {up['name']} first")
     if any(t.get("low") for t in base.get("dmg_types") or []):
         tips.append("switch damage types")
     unused = (rec.get("consumables") or {}).get("unused") or []

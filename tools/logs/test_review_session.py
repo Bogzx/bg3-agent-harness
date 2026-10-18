@@ -262,6 +262,26 @@ class OlderToolFixes(unittest.TestCase):
             v = {r[0]: r[1:5] for r in SW.check([batch, turn], SW.parse_watch(doc))}
             self.assertEqual(v["variant pick wording (act, S043+)"], want, when)
 
+    def test_session_watch_heal_row_names_heals_only(self):
+        """V21, S080 #39: the V16 row's `N hit … dmg` (its `ours:` is too short to match) read Gale's Magic Missile
+        as a heal with damage, FAIL? x2. The row now names the heal spells."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        doc = Path(tmp.name) / "SESSION-WATCH.md"
+        head = "## Fights (vis)\n| item | happens when | PASS | FAIL |\n|---|---|---|---|\n"
+        new = ("a heal with dmg in ours (heal names only, vis V21: S080 matched Magic Missile): `Cure Wounds x… hit/` or "
+               "`Healing Word x… hit/` or `Prayer of Healing x… hit/` or `Heal x… hit/` or `Lay on Hands x… hit/`")
+        mm = call("load_game", "FIGHT DEBRIEF (reloaded, 5 rounds, 8m41s) vs Viconia DeVir\n  ours: Gale Magic Missile "
+                  "x2: 11 hit/0 miss, up to 2 targets, 113 dmg; Claude Divine Smite x5: 14 hit/0 miss, 104 dmg", k=39)
+        heal = call("load_game", "FIGHT DEBRIEF (reloaded, 4 rounds, 6m) vs Cazador Szarr\n  ours: Gale Scorching Ray "
+                    "x1: 5 hit/0 miss, 52 dmg; Shadowheart Mass Cure Wounds x1: 4 hit/0 miss, 49 dmg", k=65)
+        for fail, want in (("a heal with `N hit … dmg` in `ours:`", (1, 0, 1, "FAIL?")), (new, (0, 0, 0, "NOT-SEEN"))):
+            doc.write_text(head + f"| fight facts V16 (vis V16) | any fight | x | {fail} |\n")
+            v = {r[0]: r[1:5] for r in SW.check([mm], SW.parse_watch(doc))}
+            self.assertEqual(v["fight facts V16 (vis V16)"], want, fail)
+        self.assertEqual({r[0]: r[1:5] for r in SW.check([heal], SW.parse_watch(doc))}["fight facts V16 (vis V16)"],
+                         (1, 0, 1, "FAIL?"))   # S074's real one still fails
+
     def test_session_watch_main_tree_from_worktree(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

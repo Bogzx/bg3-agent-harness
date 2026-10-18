@@ -782,3 +782,94 @@ class S078Summon(unittest.TestCase):
         # 30 % of the members' max HP (190+104+90+76+158 = 618) is 185.4: the Cambion's 200 used to count
         rec = self.fight([(50, "Necrotic")] * 4)
         self.assertEqual(rec["grade"], "clean")
+
+
+VI, OW = "u-viconia", "u-owltalon"
+MINOR = [("u-hyrald", "Sharran Fidelian Hyrald", 1), ("u-nightmist", "Justiciar Crusader Nightmist", 1),
+         ("u-fredrichk", "Sentry Fredrichk", 2), ("u-gydd", "Sharran Fidelian Gydd", 3)]
+
+
+class S080Viconia(unittest.TestCase):
+    """vis V21: S080 Viconia try 7 killed Viconia r4 (the 5th kill), then the cult wiped the party in r5. The debrief's
+    kill order showed the first 4 kills (`…`), so she was cut off, and LAST ATTEMPT said `focus Viconia DeVir first`
+    after her death. Try 9 knocked her out (`now neutral (was hostile), HP 65->0/86, +Knocked Out`: no died event)."""
+
+    def rows(self, vi_pct=60, vi_rel="hostile"):
+        return {"order": [{"uuid": VI, "name": "Viconia DeVir", "relation": vi_rel, "hp_pct": vi_pct},
+                          {"uuid": OW, "name": "Justiciar Crusader Owltalon", "relation": "hostile", "hp_pct": 80}]
+                + [{"uuid": u, "name": n, "relation": "hostile", "hp_pct": 100} for u, n, _ in MINOR]}
+
+    def fight(self, viconia_dies=True, knocked_out_rows=()):
+        tr = debrief.Tracker()
+        tr.feed([ev("combat_started"), ev("round_started", round=1)], PARTY_G, now=0.0)
+        tr.observe(self.rows(100), PARTY_G)
+        evs = [dmg(VI, "Viconia DeVir", W, "Wyll", 60, "Radiant"), cast(VI, "Viconia DeVir", "Spirit Guardians"),
+               dmg(OW, "Justiciar Crusader Owltalon", G, "Gale", 30, "Slashing")]
+        for r in (1, 2, 3, 4):
+            if r > 1:
+                evs.append(ev("round_started", round=r))
+            for u, n, kr in MINOR:
+                if kr == r:
+                    evs += [dmg(u, n, C, "Claude", 5, "Piercing"), dmg(C, "Claude", u, n, 20, "Slashing"),
+                            cast(C, "Claude", "Main Hand Attack"), ev("died", **ref(u, n))]
+        evs += [dmg(G, "Gale", VI, "Viconia DeVir", 40, "Force"), cast(G, "Gale", "Magic Missile")]
+        if viconia_dies:
+            evs.append(ev("died", **ref(VI, "Viconia DeVir")))
+        tr.feed(evs, PARTY_G, now=60.0)
+        for rows in knocked_out_rows:
+            tr.observe(rows, PARTY_G)
+        tr.feed([ev("round_started", round=5), ev("died", **ref(W, "Wyll"))], PARTY_G, now=90.0)
+        return tr.close(ROWS_G, [], {"session": "S080"}, reloaded=True, now=120.0)
+
+    def test_every_kill_is_listed(self):
+        rec = self.fight()
+        self.assertEqual([k["name"] for k in rec["kills"]][-1], "Viconia DeVir")
+        self.assertIn("killed 5/6 (Sharran Fidelian Hyrald r1, Justiciar Crusader Nightmist r1, Sentry Fredrichk r2, "
+                      "Sharran Fidelian Gydd r3, Viconia DeVir r4)", debrief.render(rec))   # old code: …, … (4)
+
+    def test_kills_of_one_name_in_a_round_read_compactly(self):
+        rec = {"grade": "clean", "duration_s": 60, "rounds": 2, "enemies": [{"name": "Bat", "count": 3, "killed": 3}],
+               "kills": [{"name": "Bat", "round": 2}] * 3, "party": []}
+        self.assertIn("killed 3/3 (Bat x3 r2)", debrief.render(rec))
+        old = {**rec, "enemies": [{"name": "Bat", "count": 14, "killed": 14}], "kills": [{"name": "Bat", "round": 2}] * 12}
+        self.assertIn("killed 14/14 (Bat x12 r2, …)", debrief.render(old))   # a record from before V21 kept 12
+
+    def test_no_focus_on_an_enemy_the_record_shows_dead(self):
+        rec = self.fight()
+        la = debrief.last_attempt(rec)
+        self.assertNotIn("focus Viconia DeVir first", la)
+        self.assertIn("after Viconia DeVir (killed r4), focus Justiciar Crusader Owltalon first", la)
+        self.assertIn("most damage to us: Viconia DeVir (Spirit Guardians) 60, killed r4", rec["key_facts"])
+
+    def test_the_stored_s080_try_7_record(self):
+        """The record as S080.fights.jsonl stored it (kills all 5, enemies' killed counts): read again, no focus on
+        Viconia; try 8's (she survived at 21 %) keeps it."""
+        try7 = {"grade": "reloaded", "summary": "reloaded (was wipe) vs Viconia DeVir", "rounds": 5,
+                "enemies": [{"name": "Viconia DeVir", "count": 1, "killed": 1, "dmg_to_us": 308},
+                            {"name": "Justiciar Crusader Owltalon", "count": 1, "killed": 0, "dmg_to_us": 122},
+                            {"name": "Sharran Sentry Hendly", "count": 1, "killed": 0, "dmg_to_us": 68}],
+                "kills": [{"name": "Sharran Fidelian Hyrald", "round": 1}, {"name": "Viconia DeVir", "round": 4}],
+                "party": [{"name": "Gale", "dealt": 172, "taken": 217}, {"name": "Wyll", "dealt": 67, "taken": 262}]}
+        la = debrief.last_attempt(try7)
+        self.assertNotIn("focus Viconia DeVir first", la)
+        self.assertIn("focus Justiciar Crusader Owltalon first", la)
+        try8 = {**try7, "enemies": [{**try7["enemies"][0], "killed": 0}] + try7["enemies"][1:],
+                "kills": try7["kills"][:1], "left": [{"name": "Viconia DeVir", "pct": 21, "low_pct": 21}]}
+        self.assertIn("focus Viconia DeVir first", debrief.last_attempt(try8))
+        self.assertIn("most damage to us: Viconia DeVir 308, left at 21%", debrief.key_facts(try8))
+
+    def test_a_knocked_out_enemy_is_down(self):
+        rec = self.fight(viconia_dies=False, knocked_out_rows=[self.rows(0, "neutral")])
+        self.assertEqual(rec["out"], [{"name": "Viconia DeVir", "round": 4}])
+        self.assertNotIn("Viconia DeVir", {x["name"] for x in rec.get("left") or []})   # old: left at 60 %
+        txt = debrief.render(rec)
+        self.assertIn("killed 4/6 (", txt)
+        self.assertIn(" + knocked out Viconia DeVir r4", txt)
+        la = debrief.last_attempt(rec)
+        self.assertNotIn("focus Viconia DeVir first", la)
+        self.assertIn("after Viconia DeVir (knocked out r4), focus Justiciar Crusader Owltalon first", la)
+
+    def test_a_knocked_out_enemy_back_up_counts_again(self):
+        rec = self.fight(viconia_dies=False, knocked_out_rows=[self.rows(0, "neutral"), self.rows(30)])
+        self.assertNotIn("out", rec)
+        self.assertIn("focus Viconia DeVir first", debrief.last_attempt(rec))
