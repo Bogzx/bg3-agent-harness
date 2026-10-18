@@ -724,6 +724,8 @@ def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", 
     prev = None
     for e in shown:
         data = e.get("data")
+        if e.get("kind") == "dialogue_started" and isinstance(data, dict):  # where/level: the bridge's (vis V26)
+            data = {k: v for k, v in data.items() if k not in ("at", "level")}
         txt = compact(data, H) if isinstance(data, (dict, list)) else (H.scrub(str(data)) if data is not None else "")
         txt = re.sub(r"\s*\n\s*", " | ", txt.strip())  # one event, one line: a raw newline would end the block
         kind = e.get("kind")

@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import actq, areablock, compact, delta, economy, leveling, macros, metrics, party, render, saver, saves, turn
+from . import actq, areablock, compact, delta, economy, leveling, macros, metrics, offlimits, party, render, saver, saves, turn
 from . import companions, debrief, lessons, longnav, lore, memtools, naming, navhints, rules
 from . import boxclick, hotbar, spellprep, twostep
 from . import route as route_text
@@ -314,6 +314,7 @@ def _events_text(body: str = "", job: str | None = None, max_wait: float | None 
         if evs:
             seen += evs
             _note_dialogue_speaker(evs)
+            OFFLIMITS.feed(evs)
             parts.append(render.render_events(evs, H, body=body, job=job, flap=render.FLAP, party=_party_cached(),
                                               echo=render.ECHO))
     fight = _fight_feed(seen)
@@ -484,6 +485,7 @@ def _fight_hint(cs: dict, party: set | None) -> str:
 # Fair: the player sees the tag on the answer and the bonuses on the character sheet; the DC is only shown on
 # the roll screen after picking, so it is never added here.
 _dlg = {"speaker": None}  # party member in the current conversation (from the last dialogue_started event)
+OFFLIMITS = offlimits.OffLimits()  # areas the game warned the party off (trespass talks), walks keep out (vis V26)
 _sheet_cache: dict[str, tuple[float, dict]] = {}
 SHEET_TTL_S = 120.0
 _ABILITY_TAGS = {"strength": "str", "dexterity": "dex", "constitution": "con", "intelligence": "int",
@@ -1385,6 +1387,8 @@ def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str 
         return _finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
     if op in _WALK_OPS and context == "server" and _tb_wanted["on"]:
         args = dict(args, tb_ok=True)
+    if op == "act.move_to" and context == "server" and OFFLIMITS.areas and not args.get("trespass"):
+        args = dict(args, avoid=OFFLIMITS.avoid())  # the mod keeps the walk out of them (Actions.lua, vis V26)
     if not _batch["active"]:
         held = _hold_for_early_walks(args.get("char"))
         note = "\n".join(x for x in (held, note) if x)
@@ -2391,8 +2395,9 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
     _remember_names(res)
     ends = DEAD.for_goal(args.get("pos") or (res.get("goal") if isinstance(res, dict) else None))
     tele = _teleport_hint(res)
+    warned = _offlimits_route_line(res)
     text = _finish("route", {"objective": objective, "target": target},
-                   seen_txt + route_text.render_route(res, H, what, ends) + tele, t0)
+                   seen_txt + route_text.render_route(res, H, what, ends) + tele + warned, t0)
     if go and isinstance(res, dict):
         # S023-S026: route then travel_to the same goal (17x) or to its closest walkable spot (12x): 2 model turns.
         c = res.get("closest") if isinstance(res.get("closest"), dict) else {}
@@ -2408,6 +2413,17 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
             return text + "\ngo: not started (no path and no closest walkable spot)"
         return text + "\nGO " + travel_to(who=who, **dest)
     return text
+
+
+def _offlimits_route_line(res: Any) -> str:
+    """route: a line 'avoiding the off-limits area by ... you were warned about' (or the goal inside one), '' when no
+    warned area of this level is on the way (vis V26)."""
+    if not (OFFLIMITS.areas and isinstance(res, dict)):
+        return ""
+    st = game.try_rpc("state.status") or {}
+    line = OFFLIMITS.route_line(st.get("level") if isinstance(st, dict) else None, res.get("from"), res.get("goal"),
+                                res.get("legs") if res.get("reachable") else None)
+    return "\n" + line if line else ""
 
 
 @mcp.tool()
@@ -2755,9 +2771,12 @@ def zoom(x: float, y: float, w: float, h: float) -> Image | str:
 @mcp.tool()
 @_guard
 def move_to(target: str = "", x: float | None = None, y: float | None = None, z: float | None = None,
-            who: str | None = None, run: bool = True, wait: bool = False, within: float | None = None) -> str:
-    """Walk to a visible entity (target=id) or a position (x,y,z). Returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. wait=true blocks only in combat. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow). Out of combat a destination past ~58 m goes via travel_to (legs) by itself. within=1.5 (with target): stop inside that melee reach. A floor plate as target is stood on (its centre; the companions stay put); walks go round the floor plates the party has seen."""
+            who: str | None = None, run: bool = True, wait: bool = False, within: float | None = None,
+            trespass: bool = False) -> str:
+    """Walk to a visible entity (target=id) or a position (x,y,z). Returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. wait=true blocks only in combat. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow). Out of combat a destination past ~58 m goes via travel_to (legs) by itself. within=1.5 (with target): stop inside that melee reach. A floor plate as target is stood on (its centre; the companions stay put); walks go round the floor plates the party has seen. Walks keep out of an off-limits area the game warned you about (round it, else refused); trespass=true walks in anyway."""
     args: dict[str, Any] = {"char": _who(who), "run": run}
+    if trespass:
+        args["trespass"] = True
     if target:
         args["target"] = _uuid(target)
         if within is not None:
@@ -2771,7 +2790,7 @@ def move_to(target: str = "", x: float | None = None, y: float | None = None, z:
         _far_move(args["char"], args.get("target"), args.get("pos"))
     if far:  # S005: 'destination is too far away' ×4 (one move is capped at MOVE_CAP_M): walk it in legs
         dest, d = far
-        out = travel_to(x=dest[0], y=dest[1], z=dest[2], who=who)
+        out = travel_to(x=dest[0], y=dest[1], z=dest[2], who=who, trespass=trespass)
         return f"move_to: {render.num(round(d))}m is past one walk ({render.num(MOVE_CAP_M)}m): went via travel_to\n" + out
     held = _plate_hold(args["char"]) if target and H.names.get(H.get(args["target"])) in PLATE_NAMES else []
     wait, note = _walk_wait(wait)
@@ -3458,7 +3477,7 @@ def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, st
                 return out + "\n" + _stale_trip_line(target, seen, here, d)
             dest = {"x": seen[0][0], "y": seen[0][1], "z": seen[0][2]}
             line = _seen_line(target, seen)
-    trip = travel_to(who=who, **dest)
+    trip = travel_to(who=who, trespass=True, **dest)  # to the one they mean, as a click on them (their guard too)
     if "FAILED" in trip or "REFUSED" in trip:
         return out + "\n" + trip
     queued = _enqueue(char, [step], ignore=None)
@@ -6644,13 +6663,15 @@ def _enqueue(char: str, steps: list, replace: bool = False, ignore: str | None =
 
 
 def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, x, y, z, t0: float,
-                  avoid: str = "auto", waited: bool = False, fast: bool = True) -> str:
+                  avoid: str = "auto", waited: bool = False, fast: bool = True, trespass: bool = False) -> str:
     """travel_to without waiting: check the destination now (bad ones fail at once), then run the trip
     as a queue entry for that character (the queue worker calls travel_to again, batch-active)."""
     args: dict[str, Any] = {k: v for k, v in (("marker", marker), ("objective", objective), ("target", target),
                                               ("x", x), ("y", y), ("z", z)) if v not in ("", None)}
     if avoid != "auto":
         args["avoid_hazards"] = avoid
+    if trespass:
+        args["trespass"] = True
     dest = None
     if target:
         what, dist_m = target, None
@@ -9423,13 +9444,15 @@ def _escape_surface(char: str, toward: list | None = None) -> str | None:
 @_guard
 def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target: str = "",
               x: float | None = None, y: float | None = None, z: float | None = None, who: str | None = None,
-              wait: bool = False, avoid_hazards: str = "auto", fast: str = "auto", note: str = "") -> str:
+              wait: bool = False, avoid_hazards: str = "auto", fast: str = "auto", note: str = "",
+              trespass: bool = False) -> str:
     """Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Walks the game's own route in one go when the whole way is plain walking (long trips in ≤55 m legs), else chains walks of up to 30 m along walkable ground toward it, around harmful surfaces you can see (fire, acid, ...); a leg that fails on the ground (no path, blocked) is retried another way (along the route, or shorter; twice per trip); stops on arrival (within 3 m), when no walkable ground leads further, after 2 legs without progress, or at the first interrupt (combat, conversation, prompt, new hostile, any damage). Stepping into a surface: it steps out (forward if it can) and goes on.
     avoid_hazards: auto (default) = when no clear way leads on, it takes the shortest crossing (says e.g. 'crossing 1.5m of Fire (~1-4 dmg + Burning)') unless HP is too low for the worst case; strict = never crosses; cross = crosses even at low HP (never lava/chasms, never >6 m).
     Returns within ~1 s with live progress (m left, ETA), or the outcome if the trip already ended: the trip runs as the first entry of the character's action queue, so queue_actions appends what to do on arrival while you observe and plan. Every later result shows it RUNNING, then queue_done or queue_interrupted (why). wait is ignored (the trip never blocks).
     fast: auto (default) = a trip of 120 m+ fast travels first to an unlocked waypoint of this level that is much nearer the goal (says so); never = always walk.
     A trip that stops twice at the same blocked spot says "tried 2x: blocked" and names another way (a waypoint, another side); route() shows the dead ends, unlocked waypoints and the closest spot you have been.
-    note: memory log line(s) appended to your session log at once, as note() does: write notes with the walk, no extra turn."""
+    note: memory log line(s) appended to your session log at once, as note() does: write notes with the walk, no extra turn.
+    An off-limits area the game warned you about (a guard's trespass talk) is walked round; a goal inside it, or a way with no way round, is refused (trespass=true walks in anyway)."""
     t0 = time.monotonic()
     _note_quiet(note)
     if waypoint:
@@ -9451,12 +9474,13 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             x, y, z, target = tp[0], tp[1], tp[2], ""
     if not _batch["active"]:  # wait=true too: the agent plans while the character walks
         return seen_txt + _travel_async(char, w, marker, objective, target, x, y, z, t0, policy, waited=wait,
-                                        fast=(fast or "auto").strip().lower() != "never")
+                                        fast=(fast or "auto").strip().lower() != "never", trespass=trespass)
     outer = _batch["exec"] if _batch["active"] else None  # the queue running this trip: its cancel stops it
+    walk = {"trespass": True} if trespass else {}  # its walks' move_to args
     if target:
         done: list = []
-        lines, stop, left = _macro_groups(char, [(f"walk to {target}", [actq.Step("move_to", {"target": target})])],
-                                          done=done)
+        step = actq.Step("move_to", {"target": target, **walk})
+        lines, stop, left = _macro_groups(char, [(f"walk to {target}", [step])], done=done)
         if not (stop or done):  # S083: a failed walk (90 m, past the move cap) ended as queue_done done=1
             _batch["last"] = "failed"
         return _macro_finish("travel_to", {"target": target}, lines, stop, left, t0)
@@ -9563,7 +9587,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                 note = f"another way ({'along the route' if r['alt'] == 'route' else 'a shorter leg'}): " + note
             failed_end = None
             px, py, pz = r["pos"]
-            rep, text = _run_one(leg_w, char, actq.Step("move_to", {"x": px, "y": py, "z": pz}), outer)
+            rep, text = _run_one(leg_w, char, actq.Step("move_to", {"x": px, "y": py, "z": pz, **walk}), outer)
             if r.get("hazard_beyond") and not ex:
                 text += f" (kept clear of {macros.hazard_text(r['hazard_beyond'])})"
             lines.append(f"leg {leg}: {note}{text}")
@@ -10507,6 +10531,7 @@ def _fight_before_load() -> tuple[dict | None, str]:
                 evs += game.drain_events(ctx)
             except GameError:
                 pass
+        OFFLIMITS.feed(evs)  # a warning in the talk the load cuts off is still known (the player saw it)
         _warns, ended = tr.feed(evs, _party_cached())
         if tr.cur is not None:
             block = _close_fight(reloaded=not ended)   # it ended in these events: its own grade, else reloaded

@@ -114,5 +114,22 @@ do
     Osi.GetApprovalRating = real
 end
 
+-- vis V26: dialogue_started says where the party member stood when the talk began (and the level): the bridge's
+-- off-limits areas (S084 Counting House trespass talks). Their own character's place: fair.
+do
+    local V = BG3AI.Visibility
+    V.pos = function(e) return e._u == SH and { -111.04, 4.0, -177.02 } or nil end
+    V.levelNow = function() return "CTY_Main_A" end
+    Osi.DialogGetNumberOfInvolvedNPCs = function() return 1 end
+    Osi.DialogGetInvolvedNPC = function() return "Dadger_" .. GOB end
+    Osi.DialogGetNumberOfInvolvedPlayers = function() return 1 end
+    Osi.DialogGetInvolvedPlayer = function() return "S_Player_" .. SH end
+    Osi.DialogIsAutomated = function() return 0 end
+    listeners.DialogStarted(nil, 7)
+    local d = last("dialogue_started")
+    check("dialogue_started: at", d and d.at and d.at[1] == -111 and d.at[3] == -177, d and d.at and d.at[1])
+    check("dialogue_started: level", d and d.level == "CTY_Main_A", d and d.level)
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end
