@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "bg3-ai: an LLM agent that plays Baldur's Gate 3"
+abstract: >-
+  A Lua mod, an MCP server and a session runner that let an LLM agent play Baldur's Gate 3 on the native Linux
+  build, seeing only what a human player could see.
+type: software
+authors:
+  - given-names: Bogdan
+    family-names: Truța
+license: MIT
+repository-code: "https://github.com/Bogzx/bg3-ai"
+version: 0.1.0
+date-released: "2026-10-18"
+keywords:
+  - llm-agents
+  - mcp
+  - baldurs-gate-3
+  - game-ai
+  - agent-evaluation
