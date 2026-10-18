@@ -128,8 +128,6 @@ end)
 -- StatusApplied(object, status, causee, storyActionID): displayable statuses only, by their shown name.
 -- Never the engine's status id: a player never sees it, and ids carry hints the name doesn't
 -- (MAG_MYRKULITES_UNDEAD_PRESENCE_BUFF = from a Myrkulite item; fairness audit S023-S027).
--- An item near the party (≤ ITEM_EFFECT_M from a member) whose look changes: a painting lighting up.
-E.ITEM_EFFECT_M = 30
 local function nearParty(u, m)
     local e = V.entity(u)
     local p = e and V.pos(e)
@@ -140,13 +138,15 @@ local function nearParty(u, m)
     return nil
 end
 
+-- An item the party sees or remembers (V.itemKnown) whose look changes: a painting lighting up. Not one merely
+-- near the party: a painting behind a wall lights up unseen (audit C11).
 local function itemEffectEvent(obj, status, on)
     local t = V.itemEffect(status)
     if not t then return false end
-    if not on and t:find("^flashing") then return true end -- the flash ending says nothing new
+    if not on and t == "flashing" then return true end -- the flash ending says nothing new
     local u = V.uuid(obj)
-    if u and nearParty(u, E.ITEM_EFFECT_M) then
-        RPC.push("item_effect", { item = ref(u), state = on and t or ("no longer " .. t:gsub(" %(.*", "")) })
+    if u and V.itemKnown(ctx(), u) then
+        RPC.push("item_effect", { item = ref(u), state = on and t or ("no longer " .. t) })
     end
     return true
 end
@@ -254,11 +254,16 @@ end)
 -- Journal, progression, approval
 ------------------------------------------------------------------------
 
+-- The title of a quest the journal shows (QuestVisiblity, a localised title, as State.journal), else nil: hidden and
+-- technical quests ("%%% EMPTY", no prototype) never reach the agent (audit C10).
 local function questTitle(questId)
     local S = BG3AI.State
-    if S and S.quests then
-        for _, q in ipairs(S.quests) do
-            if q.id == questId then return U.loca(q.title), q end
+    local quests = S and (S.loadQuests and S.loadQuests() or S.quests)
+    for _, q in ipairs(quests or {}) do
+        if q.id == questId then
+            local title = q.visible and U.loca(q.title)
+            if title then return title, q end
+            return nil
         end
     end
     return nil
@@ -267,19 +272,18 @@ end
 listen("QuestAccepted", 2, function(char, quest)
     if not ctx().is_party[V.uuid(char) or ""] then return end
     local title = questTitle(quest)
-    RPC.push("quest_added", { title = title or "New quest" })
+    if title then RPC.push("quest_added", { title = title }) end
 end)
 
+-- Only a step whose text the journal shows (State.journal skips the others).
 listen("QuestUpdateUnlocked", 3, function(char, quest, step)
     if not ctx().is_party[V.uuid(char) or ""] then return end
     local title, q = questTitle(quest)
-    local data = { title = title or "Quest" }
-    if q then
-        for _, st in ipairs(q.steps) do
-            if st.id == step then data.text = U.loca(st.desc) end
-        end
+    if not title then return end
+    for _, st in ipairs(q.steps) do
+        local text = st.id == step and U.loca(st.desc)
+        if text then return RPC.push("quest_update", { title = title, text = text }) end
     end
-    RPC.push("quest_update", data)
 end)
 
 listen("LeveledUp", 1, function(char)

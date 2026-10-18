@@ -131,5 +131,58 @@ do
     check("dialogue_started: level", d and d.level == "CTY_Main_A", d and d.level)
 end
 
+-- audit C10: quest events only for quests the journal shows, with a localised title and step text
+do
+    BG3AI.State = { loadQuests = function() return {
+        { id = "Q_SHOWN", title = "hQ", visible = true, steps = { { id = "S1", desc = "hS1" }, { id = "S2", desc = "hEmpty" } } },
+        { id = "Q_HIDDEN", title = "hQ", visible = false, steps = { { id = "S1", desc = "hS1" } } },
+        { id = "Q_NOTITLE", title = "hEmpty", visible = true, steps = { { id = "S1", desc = "hS1" } } },
+    } end }
+    local realLoca = Ext.Loca.GetTranslatedString
+    Ext.Loca.GetTranslatedString = function(h) return ({ hQ = "Find the Relic", hS1 = "A step.", hEmpty = "%%% EMPTY" })[h] end
+    local function count(kind) local n = 0 for _, p in ipairs(pushed) do if p.kind == kind then n = n + 1 end end return n end
+    local qa, qu = count("quest_added"), count("quest_update")
+    listeners.QuestAccepted("S_Player_" .. SH, "Q_HIDDEN")
+    listeners.QuestAccepted("S_Player_" .. SH, "Q_NOTITLE")
+    listeners.QuestAccepted("S_Player_" .. SH, "Q_UNKNOWN")
+    check("hidden/untitled/unknown quest: no quest_added", count("quest_added") == qa, count("quest_added") - qa)
+    listeners.QuestAccepted("S_Player_" .. SH, "Q_SHOWN")
+    check("shown quest: quest_added with its title", count("quest_added") == qa + 1 and last("quest_added").title == "Find the Relic")
+    listeners.QuestUpdateUnlocked("S_Player_" .. SH, "Q_HIDDEN", "S1")
+    listeners.QuestUpdateUnlocked("S_Player_" .. SH, "Q_UNKNOWN", "S1")
+    listeners.QuestUpdateUnlocked("S_Player_" .. SH, "Q_SHOWN", "S2")
+    check("hidden quest / unknown quest / unlocalised step: no quest_update", count("quest_update") == qu, count("quest_update") - qu)
+    listeners.QuestUpdateUnlocked("S_Player_" .. SH, "Q_SHOWN", "S1")
+    local d = last("quest_update")
+    check("shown step: quest_update with title and text", count("quest_update") == qu + 1 and d.title == "Find the Relic"
+        and d.text == "A step.")
+    Ext.Loca.GetTranslatedString = realLoca
+end
+
+-- audit C11: item_effect only for an item the party sees or remembers, never one near it behind a wall
+do
+    local V = BG3AI.Visibility
+    local PAINT = "dddddddd-0000-0000-0000-000000000001"
+    local known = false
+    V.itemEffect = function(id) return ({ LIT = "lit", FLASH = "flashing" })[id] end
+    V.itemKnown = function(_, u) return u == PAINT and known end
+    V.statusInfo = function() return nil end
+    local realCtx, realPos, realTime = V.context, V.pos, Ext.Utils.MonotonicTime
+    V.context = function() local c = realCtx(); c.observers = { { pos = { 1, 0, 0 } } }; return c end
+    V.pos = function() return { 3, 0, 0 } end -- 2 m from a member, behind a wall
+    Ext.Utils.MonotonicTime = function() return 900000 end -- Events' ctx() cache expires: the context above
+    local n = #pushed
+    listeners.StatusApplied("Paint_" .. PAINT, "LIT", "", "")
+    check("unseen item lighting up 2 m away: no item_effect", #pushed == n)
+    V.context, V.pos = realCtx, realPos
+    known = true
+    listeners.StatusApplied("Paint_" .. PAINT, "LIT", "", "")
+    local d = last("item_effect")
+    check("seen item: item_effect lit", #pushed == n + 1 and d and d.state == "lit", d and d.state)
+    listeners.StatusRemoved("Paint_" .. PAINT, "LIT", "", "")
+    d = last("item_effect")
+    check("seen item: no longer lit", d and d.state == "no longer lit", d and d.state)    Ext.Utils.MonotonicTime = realTime
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end

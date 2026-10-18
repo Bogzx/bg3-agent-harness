@@ -1127,6 +1127,7 @@ local function loadQuests()
     S.quests = quests
     return quests
 end
+S.loadQuests = loadQuests
 
 -- Journal cache. A full walk calls QuestIsAccepted on every quest prototype
 -- (~100 ms of Osiris calls; live get_journal took 143 ms) and get_journal,

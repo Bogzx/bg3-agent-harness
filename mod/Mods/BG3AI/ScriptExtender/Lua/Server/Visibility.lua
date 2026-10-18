@@ -963,15 +963,13 @@ function V.statusInfo(id)
 end
 
 -- Item effect states a player sees on the object itself (a painting lights up) but that have no
--- name in the UI: unnamed EFFECT statuses with a visual effect. Grand Mausoleum mural puzzle
--- (Story Act2_SHA_Mausoleum): a pressed button lights its painting (INPROGRESS) until the 3rd
--- press resolves the order: all glow (RIGHTORDER, walls open) or flash 3 s with the fail sound
--- (WRONGORDER: the vents fire and every painting goes dark = reset). Live 11:40: no way to tell a
--- painting lit by an earlier session's press, so the "right" order hit the trap.
+-- name in the UI: unnamed EFFECT statuses with a visual effect. Only the look, never what it means
+-- (audit C11: "solved" / "wrong order: resets" were the story script's verdicts). Mural paintings:
+-- a pressed button lights its painting; later all glow, or they flash for 3 s.
 V.ITEM_EFFECTS = {
     SHA_MAUSOLEUM_MURAL_INPROGRESS = "lit",
-    SHA_MAUSOLEUM_MURAL_RIGHTORDER = "glowing (solved)",
-    SHA_MAUSOLEUM_MURAL_WRONGORDER = "flashing (wrong order: resets)",
+    SHA_MAUSOLEUM_MURAL_RIGHTORDER = "glowing",
+    SHA_MAUSOLEUM_MURAL_WRONGORDER = "flashing",
 }
 V.itemEffectCache = V.itemEffectCache or {}
 
@@ -996,7 +994,7 @@ function V.itemEffect(id, generic)
     return c or nil
 end
 
--- Effect states on item entity e: "lit" / "glowing (solved)" / nil.
+-- Effect states on item entity e: "lit" / "glowing" / nil.
 function V.itemEffects(e, generic)
     local sc = U.comp(e, "StatusContainer")
     if not sc then return nil end
