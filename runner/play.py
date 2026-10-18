@@ -545,14 +545,19 @@ def saves_since(saves: list[Save], t: float, owner: str | None, prefix: str = SA
 
 def relaunch_reason(started: float | None, now: float, last_log: str | None,
                     max_age_h: float = GAME_MAX_AGE_H, session_s: float = 0.0, ram_mb: int | None = None,
-                    ram_limit_mb: int = RELAUNCH_RAM_MB) -> str | None:
+                    ram_limit_mb: int = RELAUNCH_RAM_MB, mod_path: str | None = None,
+                    mod_live: str | None = None) -> str | None:
     """Why the game process should be relaunched before the next session, or None: the last session's log shows a
-    party ready check failing (ready_failed / end_day_failed), the game already holds ram_limit_mb or more RAM+swap,
-    or the process would be max_age_h or more old by the end of a session that may run session_s (its length plus
-    the fight hold: S082 started at 1.9 h and ran to 2.3 h)."""
+    party ready check failing (ready_failed / end_day_failed), the game loads the mod from mod_path instead of the
+    runner's snapshot mod_live, the game already holds ram_limit_mb or more RAM+swap, or the process would be
+    max_age_h or more old by the end of a session that may run session_s (its length plus the fight hold: S082
+    started at 1.9 h and ran to 2.3 h)."""
     m = READY_FAIL_RE.search(last_log or "")
     if m:
         return f"the last session logged {m.group(0)} (ready checks break in a long-lived game process)"
+    if mod_path is not None and mod_live and mod_path != mod_live:
+        return (f"the game loads the mod from {mod_path}, not the runner's snapshot {mod_live} (a merge into main "
+                "mid-session would reach its next load_game: S090)")
     if ram_mb is not None and ram_limit_mb > 0 and ram_mb >= ram_limit_mb:
         return (f"the game holds {ram_mb} MB RAM+swap (relaunched at {ram_limit_mb} MB: it grows ~0.9 GB/h and "
                 f"ramwatch kills it at {ramwatch.KILL_ANON_SWAP_MB} MB)")
@@ -1311,14 +1316,18 @@ AVATAR_NAME_LUA = (
     'return nm(Osi.GetHostCharacter()) or ""')
 
 MOD_DIR = REPO / "mod"
+# The runner's game loads the mod from this copy of mod/ (launch_game.sh --mod-path), refreshed only at a session
+# boundary: S090 loaded the Lua of a merge into main that landed 19 s after the session's bridge started.
+MOD_LIVE = RUNTIME / "mod-live"
 MOD_READY_LUA = "return tostring(Mods.BG3AI ~= nil and Mods.BG3AI.BG3AI ~= nil and Mods.BG3AI.BG3AI.RPC ~= nil)"
 RELOAD_TIMEOUT = 60
 WAIT_REPORT_AFTER = 90         # a runner wait longer than this logs what it waits for ...
 WAIT_REPORT_EVERY = 30         # ... every this many seconds
 
 
-def mod_tree_hashes(root: Path = MOD_DIR) -> dict[str, str]:
-    """{relative path: sha1} for every file under mod/ (the Lua tree the game loads)."""
+def mod_tree_hashes(root: Path | None = None) -> dict[str, str]:
+    """{relative path: sha1} for every file under root (default MOD_LIVE: the Lua tree the runner's game loads)."""
+    root = MOD_LIVE if root is None else root
     out = {}
     for p in sorted(root.rglob("*")) if root.is_dir() else []:
         if p.is_file() and "__pycache__" not in p.parts:
@@ -1331,6 +1340,56 @@ def changed_files(old: dict | None, new: dict) -> list[str]:
     if old is None:
         return sorted(new)
     return sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))
+
+
+def sync_tree(src: Path, dst: Path) -> list[str]:
+    """Make dst hold exactly src's files (no __pycache__), in place: changed files are rewritten through a temp file
+    and a rename, extra ones removed. Never a swapped directory: launch_game.sh shares the mod path into the game's
+    container by itself, so a new dst directory would leave the running game on the old one. -> the paths changed."""
+    want = mod_tree_hashes(src)
+    changed = changed_files(mod_tree_hashes(dst), want)
+    for rel in changed:
+        p = dst / rel
+        if rel not in want:
+            p.unlink(missing_ok=True)
+            continue
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f".{p.name}.sync")
+        shutil.copyfile(src / rel, tmp)
+        tmp.replace(p)
+    for d in sorted((p for p in dst.rglob("*") if p.is_dir()), reverse=True):
+        if not any(d.iterdir()):
+            d.rmdir()
+    return changed
+
+
+def repo_commit(repo: Path = REPO, paths: tuple[str, ...] = ("mod", "bridge/src")) -> str:
+    """HEAD's short sha, "+dirty" when paths have uncommitted changes (the working tree is what the bridge runs and
+    the mod snapshot copies), "unknown" without git."""
+    try:
+        head = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short=9", "HEAD"], capture_output=True,
+                              text=True, timeout=10)
+        dirty = subprocess.run(["git", "-C", str(repo), "status", "--porcelain", "--", *paths], capture_output=True,
+                               text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    if head.returncode != 0 or not head.stdout.strip():
+        return "unknown"
+    return head.stdout.strip() + ("+dirty" if dirty.stdout.strip() else "")
+
+
+def game_mod_path(proc: Path = Path("/proc")) -> str | None:
+    """BG3LE_MOD_PATH of the running harness game (its environ): where it loads the mod from. None: no game, or
+    none it reads (no bg3le, or an unreadable environ)."""
+    for pid in pids_of_game():
+        try:
+            env = (proc / str(pid) / "environ").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        for kv in env:
+            if kv.startswith(b"BG3LE_MOD_PATH="):
+                return kv.split(b"=", 1)[1].decode(errors="replace")
+    return None
 
 
 # ---------------------------------------------------------------- self-update (between sessions)
@@ -2071,6 +2130,8 @@ class Runner:
     cap_hit: dict | None = None        # --max-cost/--max-tokens: {cap, cost, tokens, why} once the run reached one
     run_started: float | None = None   # --until: the run's start (claude_totals counts from there)
     _client: clients.Client | None = None
+    mod_rev: str | None = None         # the commit of this session's mod snapshot (MOD_LIVE)
+    moved_to: str | None = None        # the main commit code_moved last logged
 
     def __init__(self, opt: Options):
         self.opt = opt
@@ -2257,7 +2318,10 @@ class Runner:
             log(f"!!!!! REFUSING TO LAUNCH BG3: no usable display: {no_display}; the runner keeps retrying. !!!!!")
             self.event("display_refused", why=no_display)
             raise NoDisplay(no_display)
-        args = [str(LAUNCH_SH)] + (["--load", load_folder] if load_folder else [])
+        if not (MOD_LIVE / "Mods").is_dir():
+            self.refresh_mod_snapshot()
+        # the session's mod snapshot, also for a relaunch mid-session (never main's newer mod/)
+        args = [str(LAUNCH_SH), "--mod-path", str(MOD_LIVE)] + (["--load", load_folder] if load_folder else [])
         stamp = base = f"{datetime.now():%Y%m%d-%H%M%S}"   # launch_game.sh names its logs with it (BG3AI_LAUNCH_STAMP)
         n = 1
         while list((RUNTIME / "logs").glob(f"*-{stamp}.log*")):   # never another launch's logs (LaunchWatch)
@@ -2727,7 +2791,7 @@ class Runner:
         started = g.get("launched") if self.owns_game() and g.get("launched") else game_started_at()
         ram = game_ram_mb()
         why = relaunch_reason(started, time.time(), text, session_s=minutes * 60 + FIGHT_HOLD_S if minutes else 0.0,
-                              ram_mb=ram)
+                              ram_mb=ram, mod_path=game_mod_path(), mod_live=str(MOD_LIVE))
         if why is None:
             if started:
                 log(f"game process {(time.time() - started) / 3600:.1f} h old, {ram if ram is not None else '?'} MB "
@@ -2828,8 +2892,39 @@ class Runner:
         except Exception as e:  # noqa: BLE001
             log(f"ui strict: setting {'on' if on else 'off'} failed: {e}")
 
+    def refresh_mod_snapshot(self) -> list[str]:
+        """At a session boundary (before the relaunch check and the hot reload): MOD_LIVE := the main tree's mod/,
+        and mod_rev := the commit it came from, which the session's MCP server (started from the same tree) runs
+        too. A merge landing during the copy is copied again. -> the files changed."""
+        changed: list[str] = []
+        for _ in range(3):
+            before = repo_commit()
+            changed += sync_tree(MOD_DIR, MOD_LIVE)
+            self.mod_rev = repo_commit()
+            if self.mod_rev == before:
+                break
+        self.moved_to = None
+        shown = ", ".join(changed[:5]) + (" …" if len(changed) > 5 else "")
+        log(f"mod snapshot {MOD_LIVE} = {self.mod_rev}"
+            + (f" ({len(changed)} files updated: {shown})" if changed else " (unchanged)"))
+        return changed
+
+    def code_moved(self, label: str) -> None:
+        """Logs (once per new commit) when main moved since this session's mod snapshot: an MCP server started now
+        runs the newer bridge next to the game's older mod, until the next session's snapshot."""
+        if self.mod_rev is None:
+            return
+        now = repo_commit()
+        if now in (self.mod_rev, self.moved_to):
+            return
+        self.moved_to = now
+        log(f"{label}: main moved since the session's mod snapshot ({self.mod_rev} -> {now}): the game keeps "
+            f"{self.mod_rev}'s mod ({MOD_LIVE}) until the next session start; an MCP server started from now on "
+            f"runs {now}'s bridge")
+        self.event("main_moved", session=label, snapshot=self.mod_rev, head=now)
+
     def hot_reload_mod(self) -> int:
-        """Between sessions: if any file under mod/ changed since the game last loaded it, Ext.Debug.Reset() and
+        """Between sessions: if any file under MOD_LIVE changed since the game last loaded it, Ext.Debug.Reset() and
         wait for the mod's RPC table to come back. Returns the number of changed files (0 = nothing done)."""
         cur = mod_tree_hashes()
         changed = changed_files(self.state["mod_hashes"], cur)
@@ -3030,7 +3125,9 @@ class Runner:
                      progress=f"{base}.progress.jsonl", session_ended=None)
         self.write_status_line(f"playing {sid}{tag} (until {datetime.fromtimestamp(deadline):%H:%M})")
         log(f"{sid}{tag}: {client.name} starting ({model}, effort {effort or 'default'}; deadline "
-            f"{datetime.fromtimestamp(deadline):%H:%M}, hard stop {datetime.fromtimestamp(hard_stop):%H:%M})")
+            f"{datetime.fromtimestamp(deadline):%H:%M}, hard stop {datetime.fromtimestamp(hard_stop):%H:%M}; "
+            f"code {self.mod_rev or 'unknown'})")
+        self.code_moved(sid + tag)
         if self.opt.dry_run:
             print(json.dumps({"cmd": cmd, "cwd": str(PLAY_DIR), "deadline": deadline}, indent=1))
             return SessionResult(sid, claude_session, 0, "dry_run", start, start, model=model, effort=effort)
@@ -3220,6 +3317,7 @@ class Runner:
         human.close()
         jsonl.close()
         log(f"{sid}{tag}: claude finished ({reason}, exit {proc.returncode}, {(end - start) / 60:.1f} min)")
+        self.code_moved(sid + tag)
         self.write_latency(f"{sid}{tag}", base, start, end)
         self.write_progress(f"{sid}{tag}", base, start, end)
         self.write_triage(f"{sid}{tag}", base)
@@ -3944,6 +4042,10 @@ class Runner:
     def play_session(self, minutes: float, first: bool) -> SessionResult:
         if self.opt.dry_run:
             return self.plan_dry_run(minutes)
+        try:
+            self.refresh_mod_snapshot()   # before a relaunch (it loads the snapshot) and the hot reload
+        except OSError as e:
+            log(f"mod snapshot refresh failed: {e}; the game keeps {self.mod_rev}'s mod")
         relaunched = self.maybe_relaunch(first, minutes)
         loaded = self.ensure_game(first)
         if self.opt.start_save and not any(h.get("kind") == "play" for h in self.state["history"] or []):

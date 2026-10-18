@@ -740,14 +740,17 @@ class KillGame(unittest.TestCase):
         from unittest import mock
         self.alive = set()
         envs: list[dict] = []
+        args: list[list] = []
 
         class Proc:
             pid = 4343
 
-        def popen(args, **kw):
+        def popen(a, **kw):
+            args.append(a)
             envs.append(kw["env"])
             return Proc()
         self.r.state = {}
+        self.r.refresh_mod_snapshot = lambda: []
         with mock.patch.object(P, "steam_ready", lambda: (True, "ok")), \
                 mock.patch.object(P, "bg3le_problems", lambda: []), \
                 mock.patch.object(P.subprocess, "Popen", popen), \
@@ -759,6 +762,7 @@ class KillGame(unittest.TestCase):
                 mock.patch.dict(P.os.environ, {"DISPLAY": ":1", "XAUTHORITY": "/run/user/1000/xauth_old"}):
             self.r.launch_game(None)
         self.assertEqual(envs[0]["XAUTHORITY"], "/run/user/1000/xauth_new")
+        self.assertEqual(args[0][1:3], ["--mod-path", str(P.MOD_LIVE)])   # S24: the snapshot, never <repo>/mod
         self.assertIn("display env refreshed", (P.RUNTIME / "runner.log").read_text())
 
     def test_launch_refused_without_a_display(self):
@@ -910,10 +914,12 @@ class Relaunch(unittest.TestCase):
         self.assertEqual(P.pick_save(saves, None, "Claude", {"Claude-3__QuickSave_4"}).label, "QuickSave_4")  # runner's own
 
     def _runner(self, d: Path, *, launched, log_text, save_mtime, last_started=50.0, steam=(True, "offline"),
-                owns=True, first=False, ram=5000):
-        self.saved = (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb)
+                owns=True, first=False, ram=5000, mod_path=None):
+        self.saved = (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb,
+                      P.game_mod_path)
         P.port_open = lambda *a, **k: True
         P.game_ram_mb = lambda: ram
+        P.game_mod_path = lambda: mod_path   # never the machine's real game
         P.steam_ready = lambda: steam
         P.list_saves = lambda: [P.Save("Claude-1__S032-end", "Claude", "S032-end", save_mtime)]
         P.game_started_at = lambda: launched
@@ -936,7 +942,8 @@ class Relaunch(unittest.TestCase):
 
     def tearDown(self):
         if hasattr(self, "saved"):
-            (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb) = self.saved
+            (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb,
+             P.game_mod_path) = self.saved
 
     def test_relaunches_after_a_ready_check_failure(self):
         with tempfile.TemporaryDirectory() as td:
@@ -977,6 +984,28 @@ class Relaunch(unittest.TestCase):
             r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=100.0, ram=5432)
             self.assertIsNone(r.maybe_relaunch(False, 30))
             self.assertTrue(any("5432 MB RAM+swap" in m and "kept" in m for m in self.logs))
+
+    def test_relaunches_a_game_loading_the_main_trees_mod(self):
+        # S24 switch-over: a game launched before the snapshot (BG3LE_MOD_PATH=<repo>/mod) is relaunched once at a
+        # boundary; one loading the snapshot is kept
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=100.0,
+                             mod_path=str(P.MOD_DIR))
+            why = r.maybe_relaunch(False, 30)
+            self.assertIn(f"loads the mod from {P.MOD_DIR}, not the runner's snapshot {P.MOD_LIVE}", why)
+            self.assertEqual(self.killed, [1])
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=100.0,
+                             mod_path=str(P.MOD_LIVE))
+            self.assertIsNone(r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [])
+
+    def test_reason_mod_path(self):
+        now = 100_000.0
+        self.assertIn("not the runner's snapshot /rt/mod-live",
+                      P.relaunch_reason(now - 60, now, "", 2, mod_path="/repo/mod", mod_live="/rt/mod-live"))
+        self.assertIsNone(P.relaunch_reason(now - 60, now, "", 2, mod_path="/rt/mod-live", mod_live="/rt/mod-live"))
+        self.assertIsNone(P.relaunch_reason(now - 60, now, "", 2, mod_path=None, mod_live="/rt/mod-live"))  # unknown
 
     def test_kept_when_steam_not_offline(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1409,6 +1438,123 @@ class HotReload(unittest.TestCase):
         P.game_state = lambda: "Menu"
         self.r.hot_reload_mod()
         self.assertEqual({c for _, c in self.evals}, {"client"})
+
+
+class ModSnapshot(unittest.TestCase):
+    """S24: the runner's game loads the mod from MOD_LIVE, a copy of mod/ refreshed only at a session boundary (S090
+    loaded a merge's Lua that landed 19 s after its bridge started). Fake trees only."""
+
+    def test_sync_tree_in_place(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "mod", Path(td) / "live"
+            (src / "Mods" / "A").mkdir(parents=True)
+            (src / "Mods" / "A" / "x.lua").write_text("one")
+            (src / "Mods" / "A" / "y.lua").write_text("two")
+            (src / "__pycache__").mkdir()
+            (src / "__pycache__" / "c.pyc").write_text("no")
+            self.assertEqual(P.sync_tree(src, dst), ["Mods/A/x.lua", "Mods/A/y.lua"])
+            ino = dst.stat().st_ino
+            self.assertEqual(P.mod_tree_hashes(dst), P.mod_tree_hashes(src))
+            self.assertFalse((dst / "__pycache__").exists())
+            self.assertEqual(P.sync_tree(src, dst), [])                       # nothing to do
+            # a merge into main: x edited, y removed, a new dir; a stray temp file from an interrupted sync
+            (src / "Mods" / "A" / "x.lua").write_text("ONE")
+            (src / "Mods" / "A" / "y.lua").unlink()
+            (src / "Mods" / "B").mkdir()
+            (src / "Mods" / "B" / "z.lua").write_text("new")
+            (dst / "Mods" / "A" / ".x.lua.sync").write_text("half")
+            (dst / "Mods" / "Old").mkdir()
+            (dst / "Mods" / "Old" / "gone.lua").write_text("old")
+            self.assertEqual(P.sync_tree(src, dst),
+                             ["Mods/A/.x.lua.sync", "Mods/A/x.lua", "Mods/A/y.lua", "Mods/B/z.lua",
+                              "Mods/Old/gone.lua"])
+            self.assertEqual(P.mod_tree_hashes(dst), P.mod_tree_hashes(src))
+            self.assertEqual((dst / "Mods" / "A" / "x.lua").read_text(), "ONE")
+            self.assertFalse((dst / "Mods" / "Old").exists())                # emptied dirs go too
+            self.assertEqual(dst.stat().st_ino, ino)                          # the same directory (a bind mount's)
+
+    def test_repo_commit(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            self.assertEqual(P.repo_commit(repo), "unknown")                  # not a git tree
+            git = ["git", "-C", td, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+            P.subprocess.run(git + ["init", "-q"], check=True)
+            (repo / "mod").mkdir()
+            (repo / "mod" / "a.lua").write_text("1")
+            (repo / "docs.md").write_text("d")
+            P.subprocess.run(git + ["add", "."], check=True)
+            P.subprocess.run(git + ["commit", "-qm", "c"], check=True)
+            head = P.subprocess.run(git + ["rev-parse", "--short=9", "HEAD"], capture_output=True,
+                                    text=True).stdout.strip()
+            self.assertEqual(P.repo_commit(repo), head)
+            (repo / "docs.md").write_text("edited")                           # outside mod/ and bridge/src
+            self.assertEqual(P.repo_commit(repo), head)
+            (repo / "mod" / "a.lua").write_text("2")
+            self.assertEqual(P.repo_commit(repo), head + "+dirty")
+
+    def _runner(self, td: Path, commits: list[str]):
+        self.logs, self.events = [], []
+        saved = (P.MOD_DIR, P.MOD_LIVE, P.repo_commit, P.log)
+        self.addCleanup(lambda: setattr(P, "MOD_DIR", saved[0]) or setattr(P, "MOD_LIVE", saved[1])
+                        or setattr(P, "repo_commit", saved[2]) or setattr(P, "log", saved[3]))
+        P.MOD_DIR, P.MOD_LIVE = td / "mod", td / "runtime" / "mod-live"
+        (P.MOD_DIR / "Mods").mkdir(parents=True)
+        (P.MOD_DIR / "Mods" / "a.lua").write_text("1")
+        seq = iter(commits)
+        P.repo_commit = lambda *a, **k: next(seq)
+        P.log = self.logs.append
+        r = P.Runner.__new__(P.Runner)
+        r.event = lambda kind, **f: self.events.append((kind, f))
+        return r
+
+    def test_refresh_records_the_commit(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), ["abc", "abc"])
+            self.assertEqual(r.refresh_mod_snapshot(), ["Mods/a.lua"])
+            self.assertEqual(r.mod_rev, "abc")
+            self.assertEqual((P.MOD_LIVE / "Mods" / "a.lua").read_text(), "1")
+            self.assertIn(f"mod snapshot {P.MOD_LIVE} = abc (1 files updated: Mods/a.lua)", self.logs)
+
+    def test_refresh_copies_again_when_a_merge_lands_during_the_copy(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), ["abc", "def", "def", "def"])
+            r.refresh_mod_snapshot()
+            self.assertEqual(r.mod_rev, "def")
+
+    def test_main_moved_logged_once_per_commit(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), ["abc", "abc", "abc", "def", "def", "fed"])
+            r.code_moved("S089")                      # mod_rev unknown yet: nothing (and no git call)
+            r.refresh_mod_snapshot()
+            r.code_moved("S090")                      # abc: nothing moved
+            r.code_moved("S090")                      # def: logged
+            r.code_moved("S090-r1")                   # def again: once
+            r.code_moved("S090-r1")                   # fed: logged
+            moved = [m for m in self.logs if "main moved" in m]
+            self.assertEqual(len(moved), 2)
+            self.assertIn("S090: main moved since the session's mod snapshot (abc -> def): the game keeps abc's mod",
+                          moved[0])
+            self.assertEqual([f["head"] for k, f in self.events if k == "main_moved"], ["def", "fed"])
+
+    def test_game_mod_path_from_the_game_environ(self):
+        with tempfile.TemporaryDirectory() as td:
+            proc = Path(td)
+            for pid, env in ((11, b"HOME=/h\0BG3AI_GAME_STAMP=1\0"),                    # no bg3le: no mod path
+                             (12, b"HOME=/h\0BG3LE_MOD_PATH=/rt/mod-live\0BG3LE_DEBUG=1\0")):
+                (proc / str(pid)).mkdir()
+                (proc / str(pid) / "environ").write_bytes(env)
+            with mock.patch.object(P, "pids_of_game", lambda: [10, 11, 12]):   # 10: gone (no /proc entry)
+                self.assertEqual(P.game_mod_path(proc), "/rt/mod-live")
+            with mock.patch.object(P, "pids_of_game", lambda: [11]):
+                self.assertIsNone(P.game_mod_path(proc))
+
+    def test_wired_at_the_boundary(self):
+        src = Path(P.__file__).read_text()
+        body = src[src.index("    def play_session("):]
+        self.assertLess(body.index("self.refresh_mod_snapshot()"), body.index("self.maybe_relaunch("))
+        self.assertLess(body.index("self.refresh_mod_snapshot()"), body.index("self.hot_reload_mod()"))
+        claude = src[src.index("    def run_claude("):]
+        self.assertIn("code {self.mod_rev or 'unknown'}", claude[:claude.index("if self.opt.dry_run")])
 
 
 class WaitWatchdog(unittest.TestCase):
