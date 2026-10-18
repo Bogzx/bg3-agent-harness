@@ -1,5 +1,5 @@
-"""Offline tests: the session clock line says how much of the time left is play time, and only says
-WRAP UP at the runner's wrap-up time (BG3AI_SESSION_WRAPUP), scaled for short sessions.
+"""Offline tests: the session clock line shows no time left before WRAP UP, and says WRAP UP NOW at the runner's
+wrap-up time (BG3AI_SESSION_WRAPUP), scaled for short sessions.
 
 Run: cd bridge && uv run python -m unittest discover -s tests
 """
@@ -21,10 +21,12 @@ from bg3ai import rules, server
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools" / "memory"))
 import session  # noqa: E402
 
-ADVANCE = (": keep advancing the story: start the next step even if it won't finish; the next session continues from "
-           "where the party stands")
-NEAR = (". Until then: start the next story step now, even a fight or a descent: it needn't finish. A fight holds the "
-        "session until it ends, and the next session continues from where the party stands")
+def keep() -> str:
+    """The line before WRAP UP NOW at the current wall-clock minute (the server's strftime isn't patched)."""
+    return "⏱ " + time.strftime("%H:%M") + " · keep playing: you'll be told when to wrap up"
+
+
+NO_TIME = r"\d+ ?m\b|\d+ min|WRAP UP at|\d\d:\d\d\D*\d\d:\d\d"   # a countdown, a WRAP UP time, a 2nd HH:MM
 
 
 class Clock(unittest.TestCase):
@@ -53,32 +55,26 @@ class Clock(unittest.TestCase):
     def test_short_session_14m_left_is_play_time(self):
         # 15-min session: wrap-up is its last third (5 min). 14m left must not read as "wrap up".
         line = self.clock(14 * 60 + 30, 5 * 60)
-        self.assertEqual(line, "⏱ " + time.strftime("%H:%M") + " · WRAP UP at " + self.at(14 * 60 + 30 - 5 * 60) + NEAR)
-        self.assertNotIn("WRAP UP NOW", line)
+        self.assertEqual(line, keep())
         self.assertIn("WRAP UP NOW", self.clock(4 * 60 + 50, 5 * 60))
-        self.assertEqual(self.clock(16 * 60, 5 * 60), "⏱ " + time.strftime("%H:%M") + " · 11m of play left until "
-                         "WRAP UP at " + self.at(11 * 60) + ADVANCE)
+        self.assertEqual(self.clock(16 * 60, 5 * 60), keep())
 
     def test_hour_session(self):
-        self.assertEqual(self.clock(24 * 60 + 30, 10 * 60),
-                         "⏱ " + time.strftime("%H:%M") + " · 14m of play left until WRAP UP at "
-                         + self.at(14 * 60 + 30) + ADVANCE)
+        self.assertEqual(self.clock(24 * 60 + 30, 10 * 60), keep())
         self.assertIn("WRAP UP NOW", self.clock(9 * 60 + 59, 10 * 60))
 
     def test_without_the_runner_env_defaults_to_10_min(self):
-        self.assertIn("30m of play left", self.clock(40 * 60, None))
+        self.assertEqual(self.clock(40 * 60, None), keep())
         self.assertIn("WRAP UP NOW", self.clock(9 * 60, None))
 
-    def test_no_time_to_the_end_before_wrap_up(self):
-        # S070 21:09: "9m left · 6m of play: keep playing until WRAP UP at 3m left" -> "Time is nearly up", wrap-up
-        # at once (end_session x5, HANDOFF x6). Before WRAP UP the line names only the play time and WRAP UP's time.
-        # S078: the near line has no countdown at all, only what to do and WRAP UP's time.
-        line = self.clock(9 * 60 + 30, 3 * 60)
-        self.assertNotRegex(line, r"\d+m ")
-        self.assertIn("WRAP UP at " + self.at(6 * 60 + 30), line)
-        self.assertNotIn("WRAP UP NOW", line)
-        self.assertNotIn("nearly", line)
-        self.assertIn("start the next story step now", line)
+    def test_no_time_left_before_wrap_up(self):
+        # S069 "13m left", S070 "6m of play", S077/S078 ~6-8 min of play, S082 at 7 min of play ("I'm out of time to
+        # work out the door", two S082-end saves): every countdown or WRAP UP time was read as a clock to beat.
+        # Before WRAP UP NOW the line shows no time left at all, early or late in the session.
+        for left in (40 * 60, 13 * 60, 9 * 60 + 30, 3 * 60 + 5):
+            line = self.clock(left, 3 * 60)
+            self.assertEqual(line, keep(), left)
+            self.assertNotRegex(line, NO_TIME)
 
     def test_over(self):
         self.assertIn("SESSION OVER", self.clock(-5, 5 * 60))
@@ -88,8 +84,8 @@ class Clock(unittest.TestCase):
         server.DEADLINE = self.now + 30 * 60
         with mock.patch.object(server.time, "time", lambda: self.now), \
                 mock.patch.dict(server._clock_shown, {"at": 0.0, "stuck": None}):
-            self.assertIn("advancing the story", server._clock_line())  # first: the full line
-            self.assertEqual(server._clock_line(), "⏱ " + time.strftime("%H:%M") + " · 20m of play left")
+            self.assertEqual(server._clock_line(), keep())  # first: the full line
+            self.assertEqual(server._clock_line(), keep())
 
     def line_at(self, left_s: float, wrap_left_s: float) -> str:
         """_clock_line with left_s to go, a full line shown 1 min ago and WRAP UP at wrap_left_s before the end."""
@@ -99,24 +95,14 @@ class Clock(unittest.TestCase):
                 mock.patch.dict(server._clock_shown, {"at": self.now - 60, "stuck": None}):
             return server._clock_line()
 
-    def test_terse_line_keeps_the_play_time(self):
+    def test_terse_line_has_no_time_left(self):
         # S069: "⏱ 20:38 · 13m left" (the last full line 7 min before) read as wrap-up: S069-end + HANDOFF at 13m left
-        self.assertEqual(self.line_at(13 * 60 + 30, 3 * 60), "⏱ " + time.strftime("%H:%M") + " · 10m of play left")
+        for left in (13 * 60 + 30, 5 * 60 + 30, 3 * 60 + 10):
+            self.assertEqual(self.line_at(left, 3 * 60), keep(), left)
 
     def test_full_lines_every_call_from_wrap_up_on(self):
-        self.assertNotIn("advancing the story", self.line_at(14 * 60 + 30, 3 * 60))
-        self.assertIn("11m of play left", self.line_at(14 * 60 + 30, 3 * 60))
         self.assertIn("WRAP UP NOW", self.line_at(2 * 60 + 50, 3 * 60))
-
-    def test_last_minutes_of_play_full_line_every_result(self):
-        # S073 22:55-22:58: terse "3m of play left" lines only; the agent looted, ran equip_best, sent junk to camp and
-        # waited 60 s next to the unused elevator to Cazador's dungeon instead of starting the next story step.
-        # S077/S078 began the wrap-up at ~6 min of play: the near line covers the last 10.
-        self.assertTrue(self.line_at(5 * 60 + 30, 3 * 60).endswith(NEAR))  # 2m30 of play left
-        self.assertIn("WRAP UP at " + self.at(2 * 60 + 30) + ".", self.line_at(5 * 60 + 30, 3 * 60))
-        self.assertTrue(self.line_at(3 * 60 + 10 * 60 - 5, 3 * 60).endswith(NEAR))  # just inside the 10 min
-        self.assertEqual(self.line_at(3 * 60 + 10 * 60 + 30, 3 * 60),
-                         "⏱ " + time.strftime("%H:%M") + " · 10m of play left")  # 10m30 of play: terse
+        self.assertIn("WRAP UP NOW", self.line_at(10, 3 * 60))
 
     def session_clock(self, left_s: float, wrap_left_s: float) -> str:
         server.DEADLINE = self.now + left_s
@@ -125,11 +111,12 @@ class Clock(unittest.TestCase):
             return server.session_clock()
 
     def test_session_clock_says_no_need_to_call_again(self):
-        # S073 called session_clock 10 times in 2.5 min (22:56-22:58), waiting for WRAP UP
+        # S073 called session_clock 10 times in 2.5 min (22:56-22:58), waiting for WRAP UP. S082: no time in it either.
         out = self.session_clock(5 * 60 + 30, 3 * 60)
-        self.assertIn("start the next story step now", out)
-        self.assertIn("No need to call session_clock again: the ⏱ line on every result switches to WRAP UP NOW at "
-                      + self.at(2 * 60 + 30), out)
+        self.assertTrue(out.startswith(keep()), out)
+        self.assertIn("No need to call session_clock again: the ⏱ line on every result switches to WRAP UP NOW by "
+                      "itself. Until then, play.", out)
+        self.assertNotRegex(out, NO_TIME)
         self.assertNotIn("session_clock again", self.session_clock(2 * 60, 3 * 60))  # WRAP UP NOW: just the line
         self.assertIn("WRAP UP NOW", self.session_clock(2 * 60, 3 * 60))
 
@@ -173,7 +160,7 @@ class FightHold(unittest.TestCase):
         self.now = self.t0 + 60   # early in the session too: no "28m of play left" in a fight
         self.assertEqual(server._clock_line(), f"⏱ {self.hhmm()} · " + server.FIGHT_LINE)
         self.fight = False
-        self.assertIn("m of play left until WRAP UP", server._clock_line())
+        self.assertEqual(server._clock_line(), keep())
         self.assertFalse(self.hold.exists())  # the fight ended before WRAP UP: nothing held
 
     def test_fight_spanning_the_deadline_extends_the_session_until_it_ends(self):

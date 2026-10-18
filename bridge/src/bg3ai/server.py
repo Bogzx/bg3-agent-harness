@@ -131,8 +131,8 @@ def _wrap_left() -> float:
 
 
 def _clock_line() -> str:
-    """The clock for tool results: always from ADVANCE_S before WRAP UP on and in a fight, otherwise at most every
-    10 minutes, and at once when a stuck episode starts (then with the clock, while it lasts)."""
+    """The clock for tool results: always from WRAP UP on and in a fight, otherwise in full at most every 10 minutes
+    and at once when a stuck episode starts (then with the clock, while it lasts)."""
     now = time.time()
     st = _stuck()
     new_stuck = st is not None and st.get("t") != _clock_shown["stuck"]
@@ -142,30 +142,23 @@ def _clock_line() -> str:
         if st is not None:
             _clock_shown["stuck"] = st.get("t")
         return _clock()  # no time in it: not counted as a full line (the next one comes on time after the fight)
-    full = new_stuck or (DEADLINE and _times()[0] - now <= ADVANCE_S)
+    full = new_stuck or (DEADLINE and now >= _times()[0])
     if not full and now - _clock_shown["at"] < 600:
         # Between full lines, a terse one: S009 guessed "time is nearly up" 4 min after the last clock with
         # 15 min left, saved, wrote its handoff (a 42 s gap), then walked back; and session_clock costs a turn.
-        # It says the play time, not the time to the end: S069 read a bare "13m left" as wrap-up (S069-end +
-        # HANDOFF at 13m left).
         if not DEADLINE:
             return ""
-        return f"⏱ {time.strftime('%H:%M')} · {int((_times()[0] - now) // 60)}m of play left"
+        return f"⏱ {time.strftime('%H:%M')} · {KEEP_PLAYING}"
     _clock_shown["at"] = now
     if st is not None:
         _clock_shown["stuck"] = st.get("t")
     return _clock()
 
 
-# The near line (what to do, no countdown) on every result in the last minutes of play: S073 had only terse "3m of
-# play left" lines there and filled them with loot, equip_best, junk to camp and a 60 s wait next to the unused
-# elevator down to Cazador's dungeon, so the next story step was left for S074. 10 min, not 5: S077 and S078 began
-# their wrap-up at ~6 min of play (S078 01:35, after a lost try: "about 8 minutes").
-ADVANCE_S = 10 * 60
-ADVANCE = ("keep advancing the story: start the next step even if it won't finish; the next session continues from "
-           "where the party stands")
-NEAR = ("start the next story step now, even a fight or a descent: it needn't finish. A fight holds the session "
-        "until it ends, and the next session continues from where the party stands")
+# Before WRAP UP NOW the ⏱ line shows no time left at all. Every countdown was read as a clock to beat: S069 wrapped up
+# at a bare "13m left", S070 at "6m of play", S077/S078 at ~6-8 min of play, and S066-S082 (six sessions in a row, after
+# the S10/S14/S18 texts) at 7-13 min ("I'm out of time to work out the door", S082 at 7 min of play: two S082-end saves).
+KEEP_PLAYING = "keep playing: you'll be told when to wrap up"
 
 # A session never ends mid-fight. S078 01:42:25, 2 min of play before WRAP UP: "Time is nearly up, so I'm reloading"
 # a Viconia fight at round 1 with Silence on Gydd holding; three rounds of clock text (S10/S12/S14/S15) hadn't taken
@@ -263,15 +256,11 @@ def _clock() -> str:
     left = end - now
     if left <= 0:
         return f"⏱ SESSION OVER: only save_game and note-taking now; {WRAPUP_HINT}."
-    # Wrap-up starts at BG3AI_SESSION_WRAPUP (the runner: 3 min before the end, a third of a short
-    # session); before it, only the play time and when WRAP UP comes: S070 read "9m left · 6m of play: keep playing
-    # until WRAP UP at 3m left" as "time is nearly up" and wrapped up at once (S069: "13m left").
+    # Wrap-up starts at BG3AI_SESSION_WRAPUP (the runner: 3 min before the end, a third of a short session); before
+    # it, no minutes and no WRAP UP time (KEEP_PLAYING).
     if now >= wrap:
         return f"⏱ {hhmm} · {int(left // 60)}m left: WRAP UP NOW. Reach a safe spot, save_game, then {WRAPUP_HINT}."
-    wrap_hhmm = time.strftime("%H:%M", time.localtime(wrap))
-    if wrap - now <= ADVANCE_S:
-        return f"⏱ {hhmm} · WRAP UP at {wrap_hhmm}. Until then: {NEAR}" + stuck
-    return f"⏱ {hhmm} · {int((wrap - now) // 60)}m of play left until WRAP UP at {wrap_hhmm}: {ADVANCE}" + stuck
+    return f"⏱ {hhmm} · {KEEP_PLAYING}" + stuck
 
 
 def _session_over() -> bool:
@@ -10569,16 +10558,15 @@ def wiki_page(title: str, section: str = "", max_chars: int = 2500) -> str:
 
 @mcp.tool()
 def session_clock() -> str:
-    """Time left in this play session. Not needed to time the wrap-up: every tool result ends with the ⏱ line,
-    which says WRAP UP NOW by itself when it is time."""
+    """The session clock: the same ⏱ line every tool result ends with. It says WRAP UP NOW by itself when it is time;
+    until then there is no time to watch."""
     line = _clock()  # includes the stuck signal, if any
     if not line:
         return "No session deadline set."
     if DEADLINE and FIGHT_LINE not in line and _times()[0] > time.time():
         # S073 polled session_clock 10 times in its last 2.5 min of play, waiting for WRAP UP instead of playing
-        wrap_hhmm = time.strftime("%H:%M", time.localtime(_times()[0]))
-        line += (f"\nNo need to call session_clock again: the ⏱ line on every result switches to WRAP UP NOW at "
-                 f"{wrap_hhmm} by itself. Until then, play.")
+        line += ("\nNo need to call session_clock again: the ⏱ line on every result switches to WRAP UP NOW by "
+                 "itself. Until then, play.")
     return line
 
 
