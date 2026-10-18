@@ -234,11 +234,25 @@ end)
 test("characters stay strict (no ray rule)", function()
     setup()
     world.G = { pos = { 10, 0, 0 }, comps = { ServerCharacter = {},
-        Bound = { Bound = { AIBounds = { Hit = { Height = 3.0, Radius = 2.0 } } } } } }
+        Bound = { Bound = { AIBounds = { Hit = { Height = 1.8, Radius = 0.5 } } } } } }
     osiv[key("IsOnStage", "G")] = 1
     ray.fn = floorThen(function() return nil end)
     local ctx = V.context()
     eq(V.characterVisible(ctx, "G", V.entity("G"), { 10, 0, 0 }), false)
+end)
+
+-- vis V29 (S091 the Netherbrain): a big creature (bounds radius >= V.BIG_R) is seen by a clear ray to its body,
+-- like a large item; a wall in the way still hides it.
+test("a big creature: a clear ray to its body", function()
+    setup()
+    world.G = { pos = { 10, 0, 0 }, comps = { ServerCharacter = {},
+        Bound = { Bound = { AIBounds = { Hit = { Height = 3.0, Radius = 2.0 } } } } } }
+    osiv[key("IsOnStage", "G")] = 1
+    ray.fn = floorThen(function() return nil end)
+    eq(V.characterVisible(V.context(), "G", V.entity("G"), { 10, 0, 0 }), true)
+    V.rayCache = {}
+    ray.fn = floorThen(function(a) return { Position = { a[1] + 1, a[2], a[3] } } end) -- a wall 1 m ahead
+    eq(V.characterVisible(V.context(), "G", V.entity("G"), { 10, 0, 0 }), false)
 end)
 
 test("dev.perception_probe counts ray-only doors", function()

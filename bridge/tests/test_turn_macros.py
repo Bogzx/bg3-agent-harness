@@ -56,6 +56,7 @@ class FakeGame:
         self.more_party: list[dict] = []  # state.status rows after Claude and Lae'zel
         self.ui: dict = {"screen": "game"}
         self.ui_seq: list[dict] = []  # successive ui.state replies (last one repeats), when set
+        self.story_timer: dict | None = None  # ui.story_timer reply (None: op unknown, like a mod not reloaded yet)
         self.dur: dict[str, float] = {}
         self.refuse_if = lambda op, args: None
         self.result_for = lambda op, args: {"dist": 1.0, "after": {"hp": 20, "max_hp": 20, "action": 0,
@@ -150,6 +151,8 @@ class FakeGame:
                 return dict(self.ui)
             if op == "ui.selected":
                 return {"uuid": self.hud or self.active}
+            if op == "ui.story_timer" and self.story_timer is not None:
+                return dict(self.story_timer)
             if op in ("ui.dismiss", "ui.reactions"):
                 return {"ok": True}
             if op == "state.status":

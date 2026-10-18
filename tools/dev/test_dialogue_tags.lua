@@ -456,5 +456,30 @@ do
         and r.options[1].decision == "Undecided", r and r.options and #r.options)
 end
 
+-- vis V29, S091 08:19: the psyche's turn counter under the minimap (StoryTimer), shaped like StoryTimerStyle.
+do
+    local U = BG3AI.UI
+    local function tb(text, name) return { Type = "TextBlock", _tostring = text, _name = name, _props = {} } end
+    local timer = { Type = "ContentPresenter", _name = "StoryTimer", _visible = true, _children = {
+        { Type = "Grid", _children = {
+            tb("The brain is resisting the Chains of Karsus! Defeat it before it breaks free!"),
+            tb(nil, "CountDescription"),
+            tb("4 Turns Remaining.", "TurnLabelBlock"),
+            tb("4", "TurnAmountLabel"),
+        } },
+    } }
+    U.cachedByName = function(w, n) return w == "Minimap" and n == "StoryTimer" and timer or nil end
+    U.isVisible = function(e) return e._visible ~= false end
+    U.name = function(e) return e._name end
+    local t = S.storyTimer()
+    check("story timer turns_left", t and t.turns_left == 4, t and t.turns_left)
+    check("story timer text", t and t.text == "The brain is resisting the Chains of Karsus! Defeat it before it "
+        .. "breaks free! 4 Turns Remaining.", t and t.text)
+    timer._visible = false  -- Collapsed: no StoryTimer bound
+    check("no story timer when collapsed", S.storyTimer() == nil)
+    U.cachedByName = function() return nil end
+    check("no story timer without the minimap", S.storyTimer() == nil)
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end
