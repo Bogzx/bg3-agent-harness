@@ -181,6 +181,28 @@ class ServerTools(unittest.TestCase):
             server._uuid("o9")
         self.assertIn("no objective o9 now", str(cm.exception))
 
+    def test_objective_target_by_id_and_label(self):
+        """S094 09:54 interact("Netherbrain Stem") (o1's label) for the Brain Stem: 'unknown target' (the item's name
+        differs and it wasn't listed). nav.markers names the item the marker sits on: o1 and the label resolve to it."""
+        stem = "dddddddd-0000-0000-0000-000000000466"
+        self.fake.markers = [{"label": "Netherbrain Stem", "quest": "Confront the Elder Brain", "pos": [-5.0, 0, 0],
+                              "dist": 5.7, "dir": "SW", "here": True, "target": stem}] + MARKERS
+        out = server.get_status()
+        self.assertIn("OBJECTIVE o1 Netherbrain Stem 5.7m SW", out)
+        self.assertNotIn(stem, out)
+        self.assertEqual(server._uuid("o1"), stem)
+        orig = self.fake.try_rpc
+        self.fake.try_rpc = lambda op, args=None, context="server": (
+            {} if op in ("state.nearby", "state.combat") else orig(op, args, context))
+        self.assertEqual(server._uuid("Netherbrain Stem"), stem)
+        self.assertEqual(server._uuid("netherbrain stem"), stem)
+        with self.assertRaises(ValueError) as cm:
+            server._uuid("Netherbrain")  # part of a label is no target
+        self.assertIn("unknown target 'Netherbrain'", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            server._uuid("Escape the ship")  # an objective without a marked thing (a trigger/area)
+        self.assertIn("unknown target 'Escape the ship'", str(cm.exception))
+
     def test_walk_toward_direction(self):
         out = server.walk_toward(direction="w", wait=True)
         reach = [a for op, a in self.fake.calls if op == "nav.reach_toward"][0]

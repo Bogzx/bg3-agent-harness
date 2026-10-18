@@ -414,6 +414,23 @@ function V.helperItem(uuid)
     return c
 end
 
+-- The item an active objective's marker sits on, with a party member within sight of it: the game draws the quest
+-- marker over it on screen and highlights it. S094 09:53-10:08, the High Hall: o1 "Netherbrain Stem" (marker
+-- END_BrainStem, an item) routed to 5.7 m, yet none of the rules here listed the Brain Stem (a wall of flesh) from
+-- the spot travel_to(o1) stopped at, so get_nearby missed it and interact had no id: 7 hand clicks and 9
+-- screenshots over two tries. Walls don't hide it from this rule (its spot is on the map already); called
+-- after itemVisible's trap/secret/scenery filters.
+function V.objectivePerceived(ctx, uuid, pos)
+    local N = BG3AI.Nav
+    if not (pos and N and N.objectiveTargets) then return false end
+    local ok, set = pcall(N.objectiveTargets, ctx)
+    if not (ok and type(set) == "table" and set[uuid]) then return false end
+    for _, o in ipairs(ctx.observers or {}) do
+        if o.pos and U.dist(o.pos, pos) <= (o.sight or V.DEFAULT_SIGHT) then return true end
+    end
+    return false
+end
+
 -- Is item `uuid` perceivable, and is it something worth listing?
 -- Returns visible:boolean, kind:string.
 -- pos defaults to the item's own position (S021: Guard called this without
@@ -446,7 +463,8 @@ function V.itemVisible(ctx, uuid, e, pos)
         return false -- scenery: the game doesn't highlight it either
     end
     if V.perceived(ctx, uuid, pos) or V.largePerceived(ctx, uuid, e, pos, kind)
-        or V.fixturePerceived(ctx, uuid, e, pos, kind) or V.unboundedPerceived(ctx, uuid, e, pos, kind) then
+        or V.fixturePerceived(ctx, uuid, e, pos, kind) or V.unboundedPerceived(ctx, uuid, e, pos, kind)
+        or V.objectivePerceived(ctx, uuid, pos) then
         if (V.FIXTURE_KINDS[kind] and V.isNamedFixture(uuid)) or kind == "ladder" then
             V.fixtureSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow() }
         end

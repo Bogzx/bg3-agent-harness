@@ -402,6 +402,23 @@ class OlderToolFixes(unittest.TestCase):
         self.assertEqual((own, c["k"]), ("act", 0))
         calls[0]["refusal"] = None
         self.assertEqual(RS.gap_cause(calls, 100.5, 112.0)[:2], ("wiki lookups", "setup"))
+        # S094 10:14:23: 68.5 s of a fight, 59 s of it blocked in wait_for(my_turn): the enemy phase, not model think
+        calls = [call("end_turn", "done", k=0), call("wait_for", "still waiting for my_turn after 60s", k=3),
+                 call("end_turn", "done", k=69)]
+        for c in calls:
+            c["refusal"], c["t0"], c["session"] = None, 100.0, "S1"
+            c["t_res"] = c["t"] + 0.5
+        calls[1]["t_res"] = calls[1]["t"] + 59.0
+        g = {"kind": "combat", "s": 68.5, "gap_s": 68.5}
+        cause, own, c = RS.gap_cause(calls, 100.5, 169.0, g)
+        self.assertEqual((cause, own, c["k"]), ("waiting out the enemy phase (wait_for 59 s, model 10 s)", "game", 3))
+        self.assertEqual(RS.enemy_wait(calls, 100.5, 169.0, g), (59.0, calls[1]))
+        # metrics already took the enemy turns out (turn_s): the 10 s left is the agent's own think
+        g2 = {"kind": "combat", "s": 10.0, "gap_s": 68.5}
+        self.assertEqual(RS.gap_cause(calls, 100.5, 169.0, g2)[0], "model think before the next action")
+        self.assertEqual(RS.enemy_wait(calls, 100.5, 169.0, g2), (0.0, None))
+        self.assertEqual(RS.gap_cause(calls, 100.5, 169.0, dict(g, kind="explore"))[0],
+                         "model think before the next action")
         self.assertEqual(RS.owner("travel_to"), "vis")
         self.assertEqual(RS.owner("memory_write"), "setup")
         self.assertEqual(RS.owner("combat_turn"), "act")

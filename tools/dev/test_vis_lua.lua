@@ -9,6 +9,7 @@
 -- vis V24, S083 03:55:56: a lock read flipping locked -> unlocked counts as the game unlocking it (S.lockRead).
 -- vis V29, S091 08:19-08:29: the Netherbrain (a huge body) hidden 20-22.5 m from its anchor point (V.bigPerceived).
 -- vis V31, S093: in the psyche the floor calibration ray misses (ray rule off): a big foe in the party's fight.
+-- vis V32, S094 High Hall: the item an active objective's marker sits on (the Brain Stem) is seen within sight range.
 -- Ext, Osi and RPC are stubbed; Shared/Util.lua, Server/Visibility.lua and Server/State.lua are real.
 -- Run: tools/dev/test_fairness_lua.sh  (Lua 5.3 + 5.4 in Docker)
 
@@ -19,6 +20,8 @@ local KARLACH = "aaaaaaaa-0000-0000-0000-000000000005" -- recruited, waiting at 
 local WITHERS = "cccccccc-0000-0000-0000-000000000352"
 local GOB = "cccccccc-0000-0000-0000-000000000009"
 local BRAIN = "cccccccc-0000-0000-0000-000000000521"
+local STEM = "dddddddd-0000-0000-0000-000000000466"
+local VASE = "dddddddd-0000-0000-0000-000000000437"
 
 -- S081: the party arrived at (-1421.2, 8.4, -2601.2); Karlach stands at her camp spot ~35 m off.
 local ents = {
@@ -28,12 +31,17 @@ local ents = {
     [GOB] = { pos = { -1450.0, 8.0, -2620.0 } },
     -- S091 e521 The Unbreakable Will of the Netherbrain, look_at 08:30:00
     [BRAIN] = { pos = { 215.0, -61.0, 4259.0 } },
+    -- S094 e466 Brain Stem (usable), 5.7 m SW of Claude by route(o1); e437 a vase beside it
+    [STEM] = { pos = { -1425.2, 8.4, -2605.2 }, item = { CanUse = true } },
+    [VASE] = { pos = { -1425.2, 8.4, -2605.2 }, item = { CanUse = true } },
 }
 local inCamp = {}      -- DB_PlayerInCamp rows
 local sees = {}        -- uuid -> CanSee from Claude
 local onStage = {}     -- uuid -> false when off stage
 local los = true       -- HasLineOfSight from any member
 local fight = {}      -- uuid -> CombatGetGuidFor
+local canInteract = {} -- uuid -> false: scenery
+local objectives = {}  -- Nav.objectiveTargets: item uuid -> true
 
 Ext = {
     Utils = { MonotonicTime = function() return 1000 end, PrintWarning = function() end, Print = function() end },
@@ -43,6 +51,7 @@ Ext = {
         if not d then return nil end
         local e = { Uuid = { EntityUuid = u }, Transform = { Transform = { Translate = d.pos } } }
         e.CampPresence, e.HasExclamationDialog = d.CampPresence, d.HasExclamationDialog
+        if d.item then e.ServerItem = d.item return e end
         e.ServerCharacter = {}
         if d.size then e.ObjectSize = { Size = d.size } end
         if d.bounds then e.Bound = { Bound = { AIBounds = { Hit = d.bounds } } } end
@@ -58,6 +67,8 @@ Osi = {
     CanSee = function(_, u) return sees[u] and 1 or 0 end,
     HasLineOfSight = function() return los and 1 or 0 end,
     CombatGetGuidFor = function(u) return fight[u] end,
+    GetCanInteract = function(u) return canInteract[u] == false and 0 or 1 end,
+    IsTrap = function() return 0 end,
     DB_PlayerInCamp = { Get = function() if inCamp == "error" then error("no such DB") end return inCamp end },
     DB_Origins = { Get = function() return { { "S_Player_Karlach_" .. KARLACH }, { "S_Player_Claude_" .. CLAUDE } } end },
     GetRegion = function() return "CTY_Main_A" end, -- the camp and the city: one level
@@ -66,7 +77,8 @@ Osi = {
 }
 
 local handlers = {}    -- RPC name -> handler
-BG3AI = { RPC = { register = function(name, fn) handlers[name] = fn end, push = function() end } }
+BG3AI = { RPC = { register = function(name, fn) handlers[name] = fn end, push = function() end },
+    Nav = { objectiveTargets = function() return objectives end } }
 dofile(LUA .. "/Shared/Util.lua")
 dofile(LUA .. "/Server/Visibility.lua")
 dofile(LUA .. "/Server/State.lua")
@@ -81,7 +93,7 @@ local function visible(u) return V.characterVisible(ctx(), u, V.entity(u)) end
 local failures, count = 0, 0
 local function test(name, fn)
     count = count + 1
-    inCamp, sees, onStage, los, fight = {}, {}, {}, true, {}
+    inCamp, sees, onStage, los, fight, canInteract, objectives = {}, {}, {}, true, {}, {}, {}
     Ext.Level, V.rayBroken, V.rayCache, V.calib = nil, nil, {}, { t = -1e9, ok = false } -- no ray API: uncalibrated
     ents[BRAIN].size, ents[BRAIN].bounds = nil, nil
     V.boundsCache = {}
@@ -262,6 +274,35 @@ test("V31: calibrated rays still decide (a wall in the way hides the fighting br
     Ext.Level, V.rayCache, V.calib = nil, {}, { t = -1e9, ok = false }
     V.rayBroken = true
     eq(seenFrom(CLAUDE_PSYCHE), false, "rule switched off (check_vis) or broken: strict")
+end)
+
+-- S094 09:54: Claude 2.2 m from the objective's spot; CanSee and LOS to the stem's anchor fail, no ray answers.
+local function itemSeen(u, at)
+    local c = { party = { CLAUDE }, is_party = { [CLAUDE] = true },
+        observers = { { uuid = CLAUDE, pos = at or ents[CLAUDE].pos, sight = 18.5 } } }
+    return V.itemVisible(c, u, V.entity(u))
+end
+
+test("V32 S094: the item an active objective's marker sits on is seen within sight range (the Brain Stem)", function()
+    los = false
+    objectives[STEM] = true
+    local vis, kind = itemSeen(STEM)
+    eq(vis, true, "stem seen")
+    eq(kind, "usable", "kind")
+    eq(itemSeen(VASE), false, "a vase beside it, no objective: strict rule")
+    eq((V.itemKnown(ctx(), STEM, V.entity(STEM))), true, "interact's check")
+end)
+
+test("V32: no objective on it, past sight range, or scenery: hidden", function()
+    los = false
+    eq(itemSeen(STEM), false, "not an objective target")
+    objectives[STEM] = true
+    eq(itemSeen(STEM, { -1425.2, 8.4, -2630.0 }), false, "24.8 m off")
+    canInteract[STEM] = false
+    eq(itemSeen(STEM), false, "the game doesn't highlight scenery")
+    canInteract[STEM] = nil
+    onStage[STEM] = false
+    eq(itemSeen(STEM), false, "off stage")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))
