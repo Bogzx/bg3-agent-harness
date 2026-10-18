@@ -324,7 +324,7 @@ class CombatTurn(Base):
         return json.dumps(kw)
 
     def test_force_reaches_the_cast(self):
-        # Oath of Devotion guard (S026/S028): force=true on an alternative goes to act.cast
+        # force=true on an alternative goes to act.cast (the area-blast guard's override)
         server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob, "force": True}))
         self.assertEqual([a.get("force") for _, a in self.g.ops("act.cast")], [True])
 

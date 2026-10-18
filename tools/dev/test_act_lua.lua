@@ -3700,7 +3700,7 @@ test("interact (A7): in combat a carried scroll is read on the reader's turn for
     eq(world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount, 0, "not below 0")
 end)
 
-test("cast: Oath of Devotion refuses a killing blow on a Temporarily Hostile target unless force (S026/S028)", function()
+test("cast: a Devotion paladin's killing blow on a Temporarily Hostile or neutral target is the player's call (user, 2026-10-18)", function()
     combat_setup(9)
     world[GOB].pos = { 1.2, 0, 0 }
     spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
@@ -3710,59 +3710,21 @@ test("cast: Oath of Devotion refuses a killing blow on a Temporarily Hostile tar
     world[GOB].comps.Health = { Hp = 2, MaxHp = 67 }
     osiv[key("HasActiveStatus", GOB, "TEMPORARILY_HOSTILE")] = 1
     osiv[key("IsEnemy", P1, GOB)] = 1
-    local savedV, hideHp = BG3AI.Visibility, false
-    BG3AI.Visibility = setmetatable({ rules = function() return { HIDE_NPC_HP = hideHp } end,
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ rules = function() return { HIDE_NPC_HP = false } end,
         statusInfo = function(id) return ({ TEMPORARILY_HOSTILE = { name = "Temporarily Hostile" } })[id] end },
         { __index = savedV })
     local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
-    eq(j.status, "failed", "refused"); assert(j.error:find("Oath of Devotion", 1, true), j.error)
-    assert(j.error:find("Temporarily Hostile character (2 HP left)", 1, true), j.error)
-    -- audit C12: Custom Mode hides NPC HP: no HP number, and any harmful blow is refused (the HP can't be judged)
-    hideHp = true
-    world[GOB].comps.Health = { Hp = 50, MaxHp = 67 }
-    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
-    eq(j.status, "failed", "hidden HP: refused"); assert(not j.error:find("HP left", 1, true), j.error)
-    assert(not j.error:find("50", 1, true), j.error)
-    hideHp = false
-    world[GOB].comps.Health = { Hp = 2, MaxHp = 67 }
-    eq(#called("UseSpell"), 0, "no cast")
-    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB, force = true }))
-    eq(j.status, "running", "force: " .. tostring(j.error))
+    eq(j.status, "running", "temporarily hostile at 2 HP: " .. tostring(j.error))
     RPC.jobs[j.id] = nil; A.active[P1] = nil
-    -- healthy target: no risk yet
-    world[GOB].comps.Health = { Hp = 50, MaxHp = 67 }
-    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
-    eq(j.status, "running", "healthy target: " .. tostring(j.error))
-    RPC.jobs[j.id] = nil; A.active[P1] = nil
-    -- a real enemy at 2 HP: fine
-    world[GOB].comps.Health = { Hp = 2, MaxHp = 67 }
+    -- a neutral at 2 HP: struck too
+    osiv[key("IsEnemy", P1, GOB)] = nil
     osiv[key("HasActiveStatus", GOB, "TEMPORARILY_HOSTILE")] = nil
     j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
-    eq(j.status, "running", "enemy: " .. tostring(j.error))
+    eq(j.status, "running", "neutral at 2 HP: " .. tostring(j.error))
     RPC.jobs[j.id] = nil; A.active[P1] = nil
-    -- a neutral at 2 HP: refused; Non-Lethal Attacks on: allowed
-    osiv[key("IsEnemy", P1, GOB)] = nil
-    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
-    eq(j.status, "failed", "neutral"); assert(j.error:find("neutral", 1, true), j.error)
-    world[P1].comps.PassiveContainer.Passives[2].Passive.Disabled = false
-    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
-    eq(j.status, "running", "non-lethal on: " .. tostring(j.error))
-    RPC.jobs[j.id] = nil; A.active[P1] = nil
-    -- not a Devotion paladin: never refused
-    world[P1].comps.PassiveContainer.Passives[2].Passive.Disabled = true
-    world[P1].comps.PassiveContainer.Passives[1].Passive.PassiveId = "Something_Else"
-    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
-    eq(j.status, "running", "not devotion: " .. tostring(j.error))
-    RPC.jobs[j.id] = nil; A.active[P1] = nil
-    -- audit C12: a hostile whose Temporarily Hostile condition the UI doesn't draw is an enemy, as the player sees it
-    world[P1].comps.PassiveContainer.Passives[1].Passive.PassiveId = "Oath_Devotion_Tenents"
-    osiv[key("IsEnemy", P1, GOB)] = 1
-    osiv[key("HasActiveStatus", GOB, "TEMPORARILY_HOSTILE")] = 1
-    BG3AI.Visibility = setmetatable({ rules = function() return {} end, statusInfo = function() return nil end },
-        { __index = savedV })
-    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
-    eq(j.status, "running", "condition not shown: an enemy " .. tostring(j.error))
     BG3AI.Visibility = savedV
+    eq(G.oath_risk, nil, "no oath guard")
 end)
 
 test("go_to_camp: a dead selected character doesn't block the party's camp button (S035 19:38)", function()
