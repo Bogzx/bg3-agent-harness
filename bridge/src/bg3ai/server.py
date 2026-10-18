@@ -2756,7 +2756,7 @@ def zoom(x: float, y: float, w: float, h: float) -> Image | str:
 @_guard
 def move_to(target: str = "", x: float | None = None, y: float | None = None, z: float | None = None,
             who: str | None = None, run: bool = True, wait: bool = False, within: float | None = None) -> str:
-    """Walk to a visible entity (target=id) or a position (x,y,z). Returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. wait=true blocks only in combat. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow). Out of combat a destination past ~58 m goes via travel_to (legs) by itself. within=1.5 (with target): stop inside that melee reach."""
+    """Walk to a visible entity (target=id) or a position (x,y,z). Returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. wait=true blocks only in combat. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow). Out of combat a destination past ~58 m goes via travel_to (legs) by itself. within=1.5 (with target): stop inside that melee reach. A floor plate as target is stood on (its centre; the companions stay put); walks go round the floor plates the party has seen."""
     args: dict[str, Any] = {"char": _who(who), "run": run}
     if target:
         args["target"] = _uuid(target)
@@ -2773,8 +2773,30 @@ def move_to(target: str = "", x: float | None = None, y: float | None = None, z:
         dest, d = far
         out = travel_to(x=dest[0], y=dest[1], z=dest[2], who=who)
         return f"move_to: {render.num(round(d))}m is past one walk ({render.num(MOVE_CAP_M)}m): went via travel_to\n" + out
+    held = _plate_hold(args["char"]) if target and H.names.get(H.get(args["target"])) in PLATE_NAMES else []
     wait, note = _walk_wait(wait)
-    return _act("move_to", "act.move_to", args, wait=wait, note=note)
+    out = _act("move_to", "act.move_to", args, wait=wait, note=note)
+    if held:
+        out += "\nstaying off the plates: " + ", ".join(_label(u) for u in held) + " (regroup brings them back)"
+    return out
+
+
+PLATE_NAMES = ("Pressure Plate", "Marble Plate")  # the mod's V.PLATE_NAMES (Visibility.lua)
+
+
+def _plate_hold(char: str) -> list[str]:
+    """move_to onto a floor plate: the companions chained to the walker stay where they are (as the stay tool does),
+    so following it they don't step on other plates. S084 04:16-04:21 (Counting House vault code plates): the code
+    reset while companions shuffled onto plates. The ones held, in party order."""
+    st = game.try_rpc("state.status") or {}
+    held = []
+    for r in st.get("party") or []:
+        u = r.get("uuid")
+        if u and u != char and r.get("chained") is True and u not in _stay:
+            _stay.add(u)
+            game.try_rpc("act.unchain", {"char": u})
+            held.append(u)
+    return held
 
 
 MOVE_CAP_M = 58.0  # just under Guard.lua's G.MAX_MOVE_DIST (60 m, from the character): beyond it act.move_to refuses

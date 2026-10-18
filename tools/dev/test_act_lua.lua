@@ -129,6 +129,7 @@ local function reset()
     -- the stub world moves in synthetic multi-metre steps per 60 ms tick: NAV-8's small-step rule off (own tests)
     if A then A.TELEPORT_SMALL_M = 1e9 end
     if A then A.trip_t = nil end -- a fast travel's arrival (act.trip_arrived) is per test
+    if A then A.unlocked_ms = {} end -- Unlocked/Opened seen on an item (V24) is per test
     world = {
         [P1] = { pos = { 0, 0, 0 }, comps = {} },
         [NPC] = { pos = { 10, 0, 0 }, comps = {} },
@@ -486,6 +487,106 @@ test("V9 S066: the members walking to him keep walking when his conversation sta
     eq(j.status, "interrupted", "its own"); eq(j.error, "a conversation started", "why")
 end)
 
+-- vis V25, S084 04:16-04:22 (Counting House vault, 9 Marble Plates, code 1-3-5-6): every walk crossed other plates
+-- and reset the code. Plates the party has seen (V.fixtureSeen) are walked round; move_to(target=plate) stands on it.
+-- Nav.route/routeFrom are straight lines here (the plates' geometry is the test).
+local PLATE_A = "a1a1a1a1-0000-0000-0000-00000000000a"
+local PLATE_T = "a2a2a2a2-0000-0000-0000-00000000000b"
+local function with_plates(plates, seen, fn)
+    local savedV, savedR, savedF = BG3AI.Visibility, BG3AI.Nav.route, BG3AI.Nav.routeFrom
+    local names, fixtureSeen = {}, {}
+    for u, p in pairs(plates) do
+        world[u] = { pos = p, comps = {} }
+        names[u] = "Marble Plate"
+        osiv[key("IsItem", u)] = 1
+        osiv[key("IsOnStage", u)] = 1
+        osiv[key("CanSee", P1, u)] = 1
+        osiv[key("HasLineOfSight", P1, u)] = 1
+    end
+    for _, u in ipairs(seen) do fixtureSeen[u] = { t = clock, level = "CTY_Main_A" } end
+    BG3AI.Visibility = setmetatable({
+        PLATE_NAMES = { ["Marble Plate"] = true }, fixtureSeen = fixtureSeen, FIXTURE_REMEMBER_MS = 300000,
+        levelNow = function() return "CTY_Main_A" end, name = function(u) return names[u] end,
+        bounds = function() return { radius = 0.6, height = 0.1 } end,
+    }, { __index = savedV })
+    BG3AI.Nav.route = function(_, to) return { { world[P1].pos[1], world[P1].pos[2], world[P1].pos[3] }, to } end
+    BG3AI.Nav.routeFrom = function(_, from, to) return { from, to } end
+    local ok, err = pcall(fn)
+    BG3AI.Visibility, BG3AI.Nav.route, BG3AI.Nav.routeFrom = savedV, savedR, savedF
+    if not ok then error(err, 0) end
+end
+
+test("move_to V25: a seen plate on the straight way is walked round via a point beside it", function()
+    with_plates({ [PLATE_A] = { 5, 0, 0 } }, { PLATE_A }, function()
+        local j = job(op("move_to", { char = P1, pos = { 10, 0, 0 } }))
+        eq(j.status, "running", "status " .. tostring(j.error))
+        local mv = called("CharacterMoveToPosition")
+        eq(#mv, 1, "one walk at a time")
+        near(mv[1][3], 5, "via x"); near(math.abs(mv[1][5]), 1.6, "via z: beside the plate")
+        arrive(j, { mv[1][3], 0, mv[1][5] })
+        mv = called("CharacterMoveToPosition")
+        eq(#mv, 2, "then the destination"); near(mv[2][3], 10, "dest x"); near(mv[2][5], 0, "dest z")
+        arrive(j, { 10, 0, 0 })
+        eq(j.status, "done", "status " .. tostring(j.error))
+        near(j.result.round_plates[1], 5, "round_plates")
+        eq(j.result.over_plates, nil, "over_plates")
+    end)
+end)
+
+test("move_to V25: no clear way round -> walks as before and names the plate it crosses", function()
+    with_plates({ [PLATE_A] = { 5, 0, 0 } }, { PLATE_A }, function()
+        BG3AI.Nav.routeFrom = function() return nil end
+        local j = job(op("move_to", { char = P1, pos = { 10, 0, 0 } }))
+        local mv = called("CharacterMoveToPosition")
+        eq(#mv, 1, "moves"); near(mv[1][3], 10, "straight to the destination")
+        arrive(j, { 10, 0, 0 })
+        eq(j.status, "done", "status " .. tostring(j.error))
+        eq(j.result.over_plates and j.result.over_plates[1], PLATE_A, "over_plates")
+    end)
+end)
+
+test("move_to V25: a plate the party has not seen is not avoided (fair), nor the one it stands on", function()
+    with_plates({ [PLATE_A] = { 5, 0, 0 }, [PLATE_T] = { 0.3, 0, 0 } }, { PLATE_T }, function()
+        local j = job(op("move_to", { char = P1, pos = { 10, 0, 0 } }))
+        local mv = called("CharacterMoveToPosition")
+        eq(#mv, 1, "moves"); near(mv[1][3], 10, "straight"); near(mv[1][5], 0, "straight z")
+        arrive(j, { 10, 0, 0 })
+        eq(j.result.round_plates, nil, "round_plates"); eq(j.result.over_plates, nil, "over_plates")
+    end)
+end)
+
+test("move_to V25: target=<plate> walks onto its centre (not the ring beside it), round the other plates", function()
+    with_plates({ [PLATE_A] = { 3, 0, 0 }, [PLATE_T] = { 6, 0, 0 } }, { PLATE_A, PLATE_T }, function()
+        local j = job(op("move_to", { char = P1, target = PLATE_T }))
+        eq(j.status, "running", "status " .. tostring(j.error))
+        local mv = called("CharacterMoveToPosition")
+        near(math.abs(mv[1][5]), 1.6, "via beside plate A")
+        arrive(j, { mv[1][3], 0, mv[1][5] })
+        mv = called("CharacterMoveToPosition")
+        near(mv[2][3], 6, "onto the plate x"); near(mv[2][5], 0, "onto the plate z")
+        arrive(j, { 6, 0, 0.2 })
+        eq(j.status, "done", "status " .. tostring(j.error))
+        eq(j.result.on_plate, PLATE_T, "on_plate")
+    end)
+end)
+
+test("move_to V25: a plate walk that stops beside the plate fails, saying so", function()
+    with_plates({ [PLATE_T] = { 6, 0, 0 } }, { PLATE_T }, function()
+        local j = job(op("move_to", { char = P1, target = PLATE_T }))
+        arrive(j, { 4.8, 0, 0 })
+        eq(j.status, "failed", "status")
+        assert(j.error:find("not on it (1.2 m from its centre)", 1, true), j.error)
+    end)
+end)
+
+test("move_to V25: already on the plate -> done, no walk", function()
+    with_plates({ [PLATE_T] = { 0.2, 0, 0 } }, { PLATE_T }, function()
+        local j = job(op("move_to", { char = P1, target = PLATE_T }))
+        eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.on_plate, PLATE_T, "on_plate")
+        eq(#called("CharacterMoveToPosition"), 0, "moves")
+    end)
+end)
+
 -- S001 leg 5: a 7 m single-tick step along the engine's own route (a jump link
 -- or a frame hitch) is the walk, not a teleport. Nav.route/onRoute are stubbed
 -- here; their geometry is tested in tools/dev/test_nav_lua.lua.
@@ -631,6 +732,59 @@ test("interact: approach first, Use only after arriving", function()
     osiv[key("IsOpened", DOOR)] = 1
     tick()
     eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.opened, true, "opened")
+end)
+
+-- V24, S083 03:55:56-58: Knock unlocked e720 (look: "unlocked"), 2 s later IsLocked read true again and interact
+-- refused "nobody in the party carries its key" while EVENTS had door_opened e720.
+local function knocked_door()
+    world[DOOR].comps.Lock = { Key_M = "", LockDifficultyClassID = "11111111-2222-3333-4444-555555555555" }
+    osiv[key("IsLocked", DOOR)] = 1
+end
+local function interact_refused(pat)
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    eq(j.status, "failed", "status")
+    assert(j.error:find(pat, 1, true), j.error)
+end
+
+test("interact V24: a door the game unlocked 2 s ago that reads locked again is clicked, not refused", function()
+    knocked_door()
+    interact_refused("nobody in the party carries its key")
+    A.dispatch("Unlocked", { DOOR, P2, "NULL_00000000-0000-0000-0000-000000000000" })
+    clock = clock + 2000
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    arrive(j, { 8.5, 0, 0 })
+    eq(#called("Use"), 1, "the click is sent")
+    osiv[key("IsLocked", DOOR)] = nil -- the game finishes unlocking it; the Use opens it
+    osiv[key("IsOpened", DOOR)] = 1
+    tick()
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.opened, true, "opened")
+end)
+
+test("interact V24: still locked after that click says the game locked it again, not 'no lock to pick'", function()
+    knocked_door()
+    A.dispatch("Opened", { DOOR })
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    arrive(j, { 8.5, 0, 0 })
+    A.dispatch("UseFinished", { P1, DOOR, 1 })
+    clock = clock + 1600 tick()
+    eq(j.status, "failed", "status"); eq(j.error, A.RELOCKED, "error")
+end)
+
+test("interact V24: a door opened moments ago that still reads locked: 'it is open now', no Use", function()
+    knocked_door()
+    A.dispatch("Opened", { DOOR })
+    osiv[key("IsOpened", DOOR)] = 1
+    clock = clock + 2000
+    interact_refused("it is open now (the game unlocked or opened it 2 s ago)")
+    eq(#called("Use"), 0, "Use")
+end)
+
+test("interact V24: an unlock older than LOCK_FRESH_MS no longer counts: refused as locked", function()
+    knocked_door()
+    A.dispatch("Unlocked", { DOOR, P2, "" })
+    clock = clock + A.LOCK_FRESH_MS + 1
+    interact_refused("nobody in the party carries its key")
 end)
 
 -- Live L3 helm probe 2026-10-17 (e39 at the Nautiloid helm): the ring point facing the actor lies under the upper

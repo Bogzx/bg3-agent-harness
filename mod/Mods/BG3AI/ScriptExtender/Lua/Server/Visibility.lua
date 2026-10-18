@@ -459,6 +459,9 @@ end
 -- level while a party member is within FIXTURE_REMEMBER_M. Ladders too (se 12:3x, Roadside Cliffs: the ladder 13 m N
 -- of a ledge was named in one travel_to stop and missing from the next, depending on where the walk ended).
 V.FIXTURE_REMEMBER_MS = 300000
+-- Floor plates (a subset of the named fixtures): stepping on one presses it. Walks go round the ones the party has
+-- seen (Actions.lua A.known_plates, vis V25).
+V.PLATE_NAMES = { ["Pressure Plate"] = true, ["Marble Plate"] = true }
 V.FIXTURE_REMEMBER_M = 30.0
 V.fixtureSeen = V.fixtureSeen or {}
 function V.fixtureRemembered(ctx, uuid, pos)
