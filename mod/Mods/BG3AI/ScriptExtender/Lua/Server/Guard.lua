@@ -1450,6 +1450,41 @@ G.JUMP_SPELL = "Projectile_Jump"
 G.JUMP_MIN_M = 4.0
 G.JUMP_SLACK_M = 0.5
 G.JUMP_MULTIPLIERS = { ENHANCE_LEAP = 3, STEP_OF_THE_WIND = 2, STEP_OF_THE_WIND_DASH = 2 }
+-- Statuses that change a jump through their stats Boosts: JumpMaxDistanceMultiplier(k), IgnoreFallDamage(). S086/S087
+-- (the Astral Prism, END_Main): every party member has Astral Gravity ("Immune to Falling damage and its Jump distance
+-- is tripled", bg3.wiki); jump_to refused the island hops at "this character can jump 9.5 m" and route/ways never
+-- offered them (a 4.5 m gap, 4 m down), while the jumps the agent then made by hand landed (15.2 m out, 6.7 m down).
+-- Its status id and Boosts string are UNVERIFIED, so its display name (live: "Astral Gravity") counts too.
+G.JUMP_STATUS_NAMES = { ["Astral Gravity"] = { mult = 3, no_fall = true } }
+G._jumpBoosts = G._jumpBoosts or {} -- status id -> {mult, no_fall} or false (stats don't change in a session)
+local function jumpBoosts(id)
+    local c = G._jumpBoosts[id]
+    if c ~= nil then return c end
+    c = false
+    local ok, s = pcall(function() return tostring(Ext.Stats.Get(id).Boosts or "") end)
+    if ok then
+        local k = tonumber(s:match("JumpMaxDistanceMultiplier%(%s*([%d%.]+)%s*%)"))
+        local nf = s:find("IgnoreFallDamage", 1, true) ~= nil
+        if (k and k > 1) or nf then c = { mult = k and k > 1 and k or 1, no_fall = nf or nil } end
+    end
+    G._jumpBoosts[id] = c
+    return c
+end
+-- -> jump multiplier (1 = none), no fall damage (true/false) from char's active statuses
+function G.jump_status(char)
+    local V = BG3AI.Visibility
+    local e = V and V.statuses and G.entity(char)
+    if not e then return 1, false end
+    local mult, noFall = 1, false
+    for _, s in ipairs(V.statuses(e) or {}) do
+        local j = G.JUMP_STATUS_NAMES[s.name] or jumpBoosts(s.id)
+        if j then
+            if (j.mult or 1) > mult then mult = j.mult end
+            noFall = noFall or j.no_fall == true
+        end
+    end
+    return mult, noFall
+end
 function G.jump_max(char)
     local str = tonumber((G.q("GetAbility", char, "Strength"))) or 10
     local m = math.max(G.JUMP_MIN_M, str / 2)
@@ -1457,6 +1492,8 @@ function G.jump_max(char)
     for status, k in pairs(G.JUMP_MULTIPLIERS) do
         if b(G.q("HasActiveStatus", char, status)) and k > mult then mult = k end
     end
+    local ok, k = pcall(G.jump_status, char)
+    if ok and type(k) == "number" and k > mult then mult = k end
     return m * mult
 end
 

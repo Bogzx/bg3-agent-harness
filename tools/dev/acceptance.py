@@ -2667,6 +2667,16 @@ def sec_vis() -> None:
     # 3. Feather Fall read (FEATHER_FALL; true only in the Shadowfell or under the spell)
     v = lua_server(g + 'return tostring(N.featherFall(h)).."|"..tostring(N.safeDrop(h))')
     item("vis: Feather Fall status read", "PASS" if re.fullmatch(r"(true\|60(\.0)?|false\|4(\.0)?)", v) else "FAIL", v)
+    # 3b. jump statuses (V27, S086 the Astral Prism: Astral Gravity = jump x3, no fall damage; 1|false off the Prism,
+    #     3|true in it): mult|noFall|jump_max|every status that names Astral Gravity or a Jump/Fall boost (pins its id)
+    v = lua_server(g + 'local m,nf=G.jump_status(h) local t={} '
+                   'for _,s in ipairs(Mods.BG3AI.BG3AI.Visibility.statuses(G.entity(h)) or {}) do '
+                   'local ok,b=pcall(function() return tostring(Ext.Stats.Get(s.id).Boosts or "") end) '
+                   'if s.name=="Astral Gravity" or (ok and (b:find("Jump") or b:find("Fall"))) then '
+                   't[#t+1]=s.id.."="..(ok and b or "?") end end '
+                   'return string.format("%s|%s|%.1f|%s",tostring(m),tostring(nf),G.jump_max(h),table.concat(t,";"))')
+    item("vis: jump statuses (Astral Gravity x3, no fall damage)",
+         "PASS" if re.match(r"(1(\.0)?\|false|3(\.0)?\|true)\|", v) else "FAIL", v[:300])
     # 4. route to a point with no floor near it: NO WALKABLE PATH says why (S039 21:44 "pathfinding unavailable")
     p = (status().get("party") or [{}])[0].get("pos") or [0, 0, 0]
     out, dt = took("route", x=p[0] + 4, y=p[1] + 60, z=p[2])

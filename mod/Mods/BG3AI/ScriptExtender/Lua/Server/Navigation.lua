@@ -1836,9 +1836,26 @@ N.JUMP_SAFE_DROP_M = 4.0  -- no_floor: a floor this far below the jumper is stil
 -- deep floor is a landing too (the drop is reach, not damage: S040 jumps 18-25 m down).
 N.FEATHER_FALL_STATUS = "FEATHER_FALL"
 N.FEATHER_SAFE_DROP_M = 60.0
+-- Guard.jump_status: a status's jump multiplier and fall immunity (S086 the Astral Prism's Astral Gravity: x3, no fall
+-- damage) -> mult, noFall
+local function jumpStatus(charUuid)
+    local G = BG3AI.Guard
+    if not (G and G.jump_status) then return 1, false end
+    local ok, m, nf = pcall(G.jump_status, charUuid)
+    if not ok or type(m) ~= "number" then return 1, false end
+    return m, nf == true
+end
 function N.featherFall(charUuid)
     local ok, v = pcall(Osi.HasActiveStatus, charUuid, N.FEATHER_FALL_STATUS)
-    return ok and (v == 1 or v == true)
+    if ok and (v == 1 or v == true) then return true end
+    local _, nf = jumpStatus(charUuid)
+    return nf
+end
+-- The reliable landing distance (JUMP_LAND_CAP_M) grows with the jump multiplier: under Astral Gravity (x3) the
+-- Prism's island hops are 10-15 m (S087: 15.2 m out landed on the spot).
+function N.jumpLandCap(charUuid)
+    local m = jumpStatus(charUuid)
+    return N.JUMP_LAND_CAP_M * math.max(1, m)
 end
 function N.safeDrop(charUuid)
     return N.featherFall(charUuid) and N.FEATHER_SAFE_DROP_M or N.JUMP_SAFE_DROP_M
@@ -1860,7 +1877,8 @@ function N.landing(charUuid, pos)
     -- cap: where a long jump may fall short (S001: a 7.8 m jump landed 4.8 m out); reach: where a landing may be
     -- (S040: jump_to 6.7 m landed on the spot, the game's own jumps 9-28 m; "no clear spot within 3m of it is in
     -- reach (4.5m)" refused 3 jumps the agent then made by hand).
-    local cap = math.min(N.JUMP_LAND_CAP_M, maxM or N.JUMP_LAND_CAP_M)
+    local landCap = N.jumpLandCap(charUuid)
+    local cap = math.min(landCap, maxM or landCap)
     local reach = math.max(cap, maxM or cap)
     local safeDrop = N.safeDrop(charUuid)
     local d = hdist(from, pos)
@@ -2618,15 +2636,19 @@ N.JUMPX_R_M, N.JUMPX_CELL_M, N.JUMPX_TRIES = 30.0, 1.5, 6
 function N.jumpAcross(charUuid, from, goal, deadline)
     if N.levelSlow() then return nil end -- kill switch: no extra searches on this level
     local function late() return deadline and Ext.Utils.MonotonicTime() > deadline end
-    local cap = N.JUMP_LAND_CAP_M
+    local cap = N.jumpLandCap(charUuid)
     local G = BG3AI.Guard
     if G and G.jump_max then
         local ok, m = pcall(G.jump_max, charUuid)
         if ok and type(m) == "number" then cap = math.min(cap, m) end
     end
+    -- no fall damage (Feather Fall, Astral Gravity): a floor deeper than JUMP_SAFE_DROP_M across the gap is a landing
+    -- too (S086 the Astral Prism: the next island 7-11 m down)
+    local drop = N.safeDrop(charUuid)
     local c, R = N.JUMPX_CELL_M, N.JUMPX_R_M
     local n = math.floor(R / c)
-    local lo, hi = from[2] - 3 * N.JUMP_SAFE_DROP_M, from[2] + 3 * N.JUMP_UP_MAX_M
+    local takeLo = from[2] - 3 * N.JUMP_SAFE_DROP_M
+    local lo, hi = from[2] - math.max(3 * N.JUMP_SAFE_DROP_M, drop), from[2] + 3 * N.JUMP_UP_MAX_M
     local grid = {}
     local function floors(i, j)
         local key = i * 4096 + j
@@ -2636,7 +2658,10 @@ function N.jumpAcross(charUuid, from, goal, deadline)
         local x, z = from[1] + i * c, from[3] + j * c
         local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
         for _, h in ipairs(ok and type(hs) == "table" and hs or {}) do
-            if type(h) == "number" and h >= lo and h <= hi then
+            if type(h) == "number" and h < takeLo and h >= lo then
+                f.deep = f.deep or { x = x, z = z } -- read only when a deep landing is looked for (deepNear)
+                f.deep[#f.deep + 1] = h
+            elseif type(h) == "number" and h >= lo and h <= hi then
                 local t = N.tileAt({ x, h, z })
                 if t and t.blocked and t.surface ~= "Chasm" then f.wall = f.wall or h -- a wall's foot, not open air
                 elseif not (t and (t.blocked or t.surface)) then f[#f + 1] = h end
@@ -2646,6 +2671,19 @@ function N.jumpAcross(charUuid, from, goal, deadline)
         return f
     end
     local function near(f, a, b) for _, h in ipairs(f) do if h >= a and h <= b then return h end end end
+    local function deepNear(f, a, b)
+        local d = f.deep
+        if not d then return nil end
+        for k, h in ipairs(d) do
+            if h >= a and h <= b then
+                if d[-k] == nil then
+                    local t = N.tileAt({ d.x, h, d.z })
+                    d[-k] = not (t and (t.blocked or t.surface))
+                end
+                if d[-k] then return h end
+            end
+        end
+    end
     local goalD = function(x, z) return math.sqrt((x - goal[1]) ^ 2 + (z - goal[3]) ^ 2) end
     local steps = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
     local cands = {}
@@ -2653,31 +2691,37 @@ function N.jumpAcross(charUuid, from, goal, deadline)
         if late() then return nil end
         for j = -n, n do
             for _, ha in ipairs(floors(i, j)) do
-                local ax, az = from[1] + i * c, from[3] + j * c
-                for _, st in ipairs(steps) do
-                    local unit = c * math.sqrt(st[1] ^ 2 + st[2] ^ 2)
-                    local k, open = 1, 0
-                    while k * unit <= cap + 0.01 do
-                        local bi, bj = i + st[1] * k, j + st[2] * k
-                        if math.abs(bi) > n or math.abs(bj) > n then break end
-                        local f = floors(bi, bj)
-                        local land = near(f, ha - N.JUMP_SAFE_DROP_M, ha + N.JUMP_UP_MAX_M)
-                        if not land and (f.wall or near(f, ha + N.JUMP_UP_MAX_M, ha + N.JUMP_GAP_HEAD_M)) then
-                            break -- a wall or a building in the way, not a chasm
-                        end
-                        if land then
-                            if open >= 1 then
-                                local bx, bz = from[1] + bi * c, from[3] + bj * c
-                                local gain = goalD(ax, az) - goalD(bx, bz)
-                                if gain >= 1.0 then
-                                    cands[#cands + 1] = { a = { ax, ha, az }, b = { bx, land, bz }, gap = k * unit,
-                                        score = goalD(bx, bz) + 0.25 * hdist(from, { ax, ha, az }) }
-                                end
+                if ha >= takeLo then -- a takeoff near our height (the deep band is for landings)
+                    local ax, az = from[1] + i * c, from[3] + j * c
+                    for _, st in ipairs(steps) do
+                        local unit = c * math.sqrt(st[1] ^ 2 + st[2] ^ 2)
+                        local k, open = 1, 0
+                        while k * unit <= cap + 0.01 do
+                            local bi, bj = i + st[1] * k, j + st[2] * k
+                            if math.abs(bi) > n or math.abs(bj) > n then break end
+                            local f = floors(bi, bj)
+                            local land = near(f, ha - N.JUMP_SAFE_DROP_M, ha + N.JUMP_UP_MAX_M)
+                            if not land and open >= 1 and drop > N.JUMP_SAFE_DROP_M then
+                                local a, b = ha - drop, ha - N.JUMP_SAFE_DROP_M
+                                land = near(f, a, b) or deepNear(f, a, b)
                             end
-                            break
+                            if not land and (f.wall or near(f, ha + N.JUMP_UP_MAX_M, ha + N.JUMP_GAP_HEAD_M)) then
+                                break -- a wall or a building in the way, not a chasm
+                            end
+                            if land then
+                                if open >= 1 then
+                                    local bx, bz = from[1] + bi * c, from[3] + bj * c
+                                    local gain = goalD(ax, az) - goalD(bx, bz)
+                                    if gain >= 1.0 then
+                                        cands[#cands + 1] = { a = { ax, ha, az }, b = { bx, land, bz }, gap = k * unit,
+                                            score = goalD(bx, bz) + 0.25 * hdist(from, { ax, ha, az }) }
+                                    end
+                                end
+                                break
+                            end
+                            open = open + 1
+                            k = k + 1
                         end
-                        open = open + 1
-                        k = k + 1
                     end
                 end
             end
@@ -3234,28 +3278,39 @@ local function tileBlocked(p)
 end
 function N.jumpGap(charUuid, from, v)
     if N.levelSlow() then return nil end -- kill switch: no extra searches on this level
-    local cap = N.JUMP_LAND_CAP_M
+    local cap = N.jumpLandCap(charUuid)
     local G = BG3AI.Guard
     if G and G.jump_max then
         local ok, m = pcall(G.jump_max, charUuid)
         if ok and type(m) == "number" then cap = math.min(cap, m) end
     end
+    -- no fall damage (Feather Fall, Astral Gravity): a clear floor deeper than JUMP_GAP_DOWN_M across the gap lands
+    -- too (S086 the Astral Prism: "WAYS walkable: none" on every island, the next one 10-15 m out and 7-11 m down);
+    -- the void's bottom is a Chasm tile, never a landing. A longer jump needs a longer scan.
+    local drop = math.max(N.JUMP_GAP_DOWN_M, N.safeDrop(charUuid))
+    local scan = N.JUMP_GAP_SCAN_M + math.max(0, cap - N.JUMP_LAND_CAP_M)
     local y, edge, gapAt = from[2], nil, nil
     local function heightsAt(x, z)
         local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
         return ok and type(hs) == "table" and hs or {}
     end
     local s = N.JUMP_GAP_STEP_M
-    while s <= N.JUMP_GAP_SCAN_M do
+    while s <= scan do
         local x, z = from[1] + v[1] * s, from[3] + v[2] * s
-        local level, land, head
+        local level, land, head, deep
         for _, h in ipairs(heightsAt(x, z)) do
             if type(h) == "number" then
                 if math.abs(h - y) <= N.JUMP_GAP_LEVEL_M then level = h end
                 if h >= y - N.JUMP_GAP_DOWN_M and h <= y + N.JUMP_UP_MAX_M and (not land or math.abs(h - y) < math.abs(land - y)) then land = h end
                 if h > y + N.JUMP_UP_MAX_M and h <= y + N.JUMP_GAP_HEAD_M then head = true end
+                if gapAt and h < y - N.JUMP_GAP_DOWN_M and h >= y - drop and (not deep or h > deep) then
+                    local t = N.tileAt({ x, h, z })
+                    if not (t and (t.blocked or t.surface)) then deep = h end
+                end
             end
         end
+        -- a deep floor ends the gap like a level one, once the gap is a real one (a drop at the edge's foot is not)
+        if gapAt and not land and deep and s - edge[4] >= N.JUMP_GAP_MIN_M then land = deep end
         if not gapAt then
             if level then edge, y = { x, level, z, s }, level
             elseif land then return nil -- a step up/down, not a gap

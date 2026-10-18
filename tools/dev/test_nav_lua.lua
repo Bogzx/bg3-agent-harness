@@ -451,6 +451,61 @@ test("landing: a Chasm guess past the 4.5 m 'reliable' cap finds the floor beyon
     if not ok then error(err, 0) end
 end)
 
+test("Astral Gravity (S086/S087 the Astral Prism): jump x3 + no fall damage -> ways, route and jump_to offer the island hop", function()
+    -- S086-r1 05:35-05:39 / S087: "WAYS walkable: none", route "NO WALKABLE PATH ... jump_to over 10.5m of Chasm",
+    -- jump_to "in Chasm ... in reach (17.7m)"; the hop the agent then made by hand landed (11 m out, 11 m down).
+    -- Ledge at y 0 to x -2.9, the void (its bottom a Chasm at -35) to x -11.9, the next island 8 m down beyond.
+    local savedH, savedT, savedG = Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo, BG3AI.Guard
+    local islandY = -8.0
+    Ext.Level.GetHeightsAt = function(x)
+        if x > -2.9 then return { 0.0 } elseif x > -11.9 then return { -35.0 } end
+        return { islandY, -35.0 }
+    end
+    Ext.Level.GetTileDebugInfo = function(p)
+        local chasm = p[2] < -20
+        return { GroundSurface = chasm and "Chasm" or "None", CloudSurface = "None", Flags = chasm and { "WalkBlock" } or {} }
+    end
+    blocked = function(x) return x < -5 end
+    local astral = false
+    BG3AI.Guard = {
+        jump_max = function() return astral and 28.5 or 9.5 end,
+        jump_reach = function(c, a, b) local m = astral and 28.5 or 9.5; local dr = a[2] - b[2]
+            if dr > 2.3 then return m + dr, m end return m, m end,
+        jump_status = function() if astral then return 3, true end return 1, false end,
+    }
+    local ok, err = pcall(function()
+        eq(N.jumpGap(P1, { 0, 0, 0 }, { -1, 0 }), nil, "no hop without it (4.5 m gaps, 4 m down)")
+        eq(N.jumpAcross(P1, { 0, 0, 0 }, { -20, -8, 0 }), nil, "no jump across without it")
+        eq(N.featherFall(P1), false, "fall damage without it")
+        local r = N.landing(P1, { -13, -3, 0 })
+        eq(r.suggest, nil, "a floor 8 m down is no landing without it")
+        astral = true
+        N.frame = N.frame + 1
+        eq(N.featherFall(P1), true, "no fall damage")
+        local j = N.jumpGap(P1, { 0, 0, 0 }, { -1, 0 })
+        assert(j, "ways: the hop W")
+        near(j.to[2], -8, "lands on the island"); eq(j.dy, -8, "8 m down")
+        assert(j.to[1] <= -11.9 and j.gap_m >= 9 and j.gap_m <= 10, "over the 9 m void: " .. j.gap_m)
+        local x = N.jumpAcross(P1, { 0, 0, 0 }, { -20, -8, 0 })
+        assert(x, "route: the jump across")
+        assert(x.from[1] > -2.9 and x.to[1] <= -11.9, "edge to island: " .. x.from[1] .. " -> " .. x.to[1])
+        near(x.to[2], -8, "landing floor"); eq(x.dy, -8, "dy")
+        r = N.landing(P1, { -13, -3, 0 })
+        assert(r.suggest, "jump_to: the island's floor under the guessed y")
+        near(r.suggest[2], -8, "floor y"); eq(r.reliable_m, 13.5, "reliable cap x3")
+        r = N.landing(P1, { -6, -3, 0 })
+        eq(r.safe, false, "the void is still no landing"); eq(r.suggest, nil, "nothing over the void")
+        islandY = -16.0 -- deeper than the takeoff band: read lazily
+        N.frame = N.frame + 1
+        x = N.jumpAcross(P1, { 0, 0, 0 }, { -20, -16, 0 })
+        assert(x, "route: the jump 16 m down"); near(x.to[2], -16, "deep landing floor")
+        j = N.jumpGap(P1, { 0, 0, 0 }, { -1, 0 })
+        assert(j, "ways: the hop 16 m down"); eq(j.dy, -16, "16 m down")
+    end)
+    Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo, BG3AI.Guard = savedH, savedT, savedG
+    if not ok then error(err, 0) end
+end)
+
 local function withJump(m, fn)
     local saved = BG3AI.Guard
     BG3AI.Guard = { jump_max = function() return m end }
