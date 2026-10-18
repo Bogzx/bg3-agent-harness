@@ -3346,24 +3346,35 @@ def _body_far(char: str, tgt: str) -> str | None:
 
 def _revive_spot(inp, name: str, char: str, tgt: str) -> str:
     """S057/S058: 7 Scrolls of Revivify 'cast on Shadowheart by a click' and nobody stood up: the game then waits for
-    the spot the body stands up on. Click the ground beside the body, then say whether they came back."""
-    from .clicker import click_spot
+    the spot the body stands up on. Click the ground beside the body (twostep.revive_ground: S089 07:08 x3 the click
+    went on a creature, the spell stayed in hand and this said only STILL DEAD), then say whether they came back."""
     time.sleep(0.3)   # the second step's cursor comes up a few frames after the first click
-    sc = click_spot(game, inp, tgt, char, "L")
-    if not sc.ok:
-        return (f"; {name}: the body {_label(tgt)} was clicked, but the spot to stand them up on was not "
-                f"({sc.reason}): the game still waits for it (click the ground beside the body, or press_key ESCAPE)")
+    res = twostep.revive_ground(game, inp, char, name, tgt, should_stop=_click_stop())
+    _log_hotbar(name, res)
+    if not res.ok and res.reason != "not_armed":
+        why = res.detail.get("why") or res.reason
+        looks = twostep.looks_brief(res.detail.get("looks") or [])
+        back = ("the spell left the hand without a cast" if res.reason == "dropped"
+                else "the spell was put back" if res.detail.get("cancelled")
+                else "the spell may still be in hand (press_key ESCAPE)")
+        return (f"; {name}: the body {_label(tgt)} was clicked, but no ground beside it was taken to stand them up "
+                f"on ({_label(why)})" + (f" [{_label(looks)}]" if looks else "")
+                + f"; {back}, nothing cast (the scroll is still in the bags). The spot must be open floor with nobody "
+                "on it: move the party off the ground around the body, or read it from another side")
     end = time.monotonic() + REVIVE_WAIT_S
     dead = _is_dead(tgt)
     while dead and time.monotonic() < end:
         time.sleep(0.4)
         dead = _is_dead(tgt)
+    how = (f"clicked the body {_label(tgt)} and the ground beside it" if res.ok
+           else f"clicked the body {_label(tgt)}; no spell in hand after it")
+    if res.detail.get("spot_in"):
+        how += f", in {res.detail['spot_in']} (no open spot clear of it): get them out of it at once"
     if dead is None:
-        return f" ({name} read: clicked the body {_label(tgt)} and the ground beside it; not a party member, so not checked)"
+        return f" ({name} read: {how}; not a party member, so not checked)"
     if dead:
-        return (f" ({name} read: clicked the body {_label(tgt)} and the ground beside it, but {_name_of(tgt)} is "
-                f"STILL DEAD after {REVIVE_WAIT_S:.0f} s)")
-    return f" ({name} read: {_name_of(tgt)} REVIVED (clicked the body, then the ground beside it))"
+        return f" ({name} read: {how}, but {_name_of(tgt)} is STILL DEAD after {REVIVE_WAIT_S:.0f} s)"
+    return f" ({name} read: {_name_of(tgt)} REVIVED ({how}))"
 
 
 @mcp.tool()

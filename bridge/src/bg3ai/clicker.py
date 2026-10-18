@@ -747,38 +747,6 @@ def _finish_click(game: Game, inp: InputClient, uuid: str, button: str, expect: 
     return ClickResult(False, "no_effect", st.get("screen"), pos, tries, extra)
 
 
-# Revivify's second click: the ground this far from the body toward the reader (the body is a character, and the
-# spot's TargetConditions are "not Character()"); a cursor still on the body tries farther out.
-SPOT_DISTS = (1.2, 1.8, 2.4)
-
-
-def click_spot(game: Game, inp: InputClient, uuid: str, toward: str, button: str = "L") -> ClickResult:
-    """Click the ground beside `uuid`, toward `toward` (a two-step cast's second target). Never clicks while the
-    engine's picking helper has `uuid` itself under the cursor."""
-    tries = 0
-    for d in SPOT_DISTS:
-        tries += 1
-        try:
-            sp = game.rpc("ui.screen_pos", {"uuid": uuid, "aim": "feet", "toward": toward, "dist": d},
-                          context="client") or {}
-        except GameError as e:
-            return ClickResult(False, reason=str(e), tries=tries)
-        if not sp.get("on_screen") or sp.get("x") is None:
-            return ClickResult(False, reason="off_screen", tries=tries)
-        x, y = int(sp["x"]), int(sp["y"])
-        inp.move(x, y)
-        inp.wait_frames(2)
-        try:
-            hc = game.rpc("ui.hover_check", {"uuid": uuid}, context="client") or {}
-        except GameError:
-            hc = {}
-        if hc.get("hovered"):
-            continue
-        inp.click(x, y, button=button)
-        return ClickResult(True, pos=(x, y), tries=tries, detail={"dist_m": d})
-    return ClickResult(False, reason="hover_miss", tries=tries)
-
-
 def finish_needs_click(game: Game, inp: InputClient, result: dict | None) -> dict | None:
     """If a server job result asks for a click, perform it and merge the outcome into the result."""
     if not isinstance(result, dict) or not result.get("needs_click"):

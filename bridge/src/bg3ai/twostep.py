@@ -45,7 +45,15 @@ HARD_CAP_S = 12.0              # past this the cast is cancelled
 PICK_WAIT_S = 0.8              # first pick click -> the state moves
 LAND_WAIT_S = 1.2              # ground click -> the cast started
 GROUND_TOL_M = 0.8             # the cursor's world point this close (flat) to the spot we aim at
-SPOT_DISTS = (1.2, 1.8, 2.4)   # Revivify: the ground this far from the body toward the caster
+# Revivify's second pick ("not Character()"): the ground this far from the body's feet, toward the caster first,
+# then turned by SPOT_TURNS_DEG (S089 07:08 x3: the spots 1.2-2.4 m toward the reader all lay under a character, the
+# reader and the Emperor it had just helped up; the game said "Target can't be a creature. Choose destination").
+SPOT_DISTS = (1.2, 1.8)
+SPOT_TURNS_DEG = (0, 60, -60, 120, -120, 180)
+# S089: Wyll's body lay in fire (Burning); stood up there at 1 HP he would go down again. Spots inside a harmful
+# patch the party sees (nav.hazards: centre + w/d box) are tried last; this much beyond the box counts as in it.
+HAZARD_MARGIN_M = 0.5
+HAZARD_SCAN_M = 12
 LAND_NUDGES_M = ((0.0, 0.0), (0.4, 0.0), (-0.4, 0.0), (0.0, 0.4), (0.0, -0.4))   # around a landing the game refused
 MAX_GROUND_CLICKS = 3
 # L8 23:58 (act, Misty Step scroll 6 m): all 5 spots (the landing, then +-0.4 m) read "a character is under the
@@ -129,6 +137,35 @@ def clear_spots(want: list[float], body: list[float], origin: list[float] | None
     return out
 
 
+def revive_spots(body: list[float], caster: list[float] | None) -> list[list[float]]:
+    """Ground points around `body` (feet) at its height: each of SPOT_DISTS, toward `caster` first (+x without one),
+    then turned by SPOT_TURNS_DEG."""
+    dx, dz = (caster[0] - body[0], caster[2] - body[2]) if caster else (1.0, 0.0)
+    d = math.hypot(dx, dz)
+    if d < 1e-6:
+        dx, dz, d = 1.0, 0.0, 1.0
+    ux, uz = dx / d, dz / d
+    out = []
+    for r in SPOT_DISTS:
+        for deg in SPOT_TURNS_DEG:
+            c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+            out.append([round(body[0] + r * (ux * c - uz * s), 2), body[1], round(body[2] + r * (ux * s + uz * c), 2)])
+    return out
+
+
+def in_hazard(p: list[float], patches: list[dict] | None) -> str | None:
+    """The surface of the nav.hazards patch whose box (+HAZARD_MARGIN_M) holds `p` at about its height, else None."""
+    for h in patches or []:
+        c = h.get("center") if isinstance(h, dict) else None
+        if not (isinstance(c, list) and len(c) >= 3):
+            continue
+        hw = float(h.get("w_m") or 0) / 2 + HAZARD_MARGIN_M
+        hd = float(h.get("d_m") or 0) / 2 + HAZARD_MARGIN_M
+        if abs(p[0] - c[0]) <= hw and abs(p[2] - c[2]) <= hd and abs(p[1] - c[1]) <= 2.0:
+            return str(h.get("surface") or "a harmful surface")
+    return None
+
+
 def looks_brief(looks: list[dict]) -> str:
     """The cursor looks of a ground click in one line: where the ground point came from and what was under the
     cursor, counted ("ground point from ray_plane x5; under the cursor: <uuid> x5")."""
@@ -168,6 +205,7 @@ class _Run:
                                     detail={"spell": spell, "targets": 2, "two_step": "revive" if landing is None
                                             else "teleport"})
         self.st: dict = {}
+        self.hazards: list[dict] = []
 
     def done(self, ok: bool, stage: str | None = None, reason: str | None = None, why: str | None = None,
              cancel_it: bool = False, **extra) -> HotbarCastResult:
@@ -212,23 +250,23 @@ class _Run:
         return True, {}
 
     # --- the ground click: candidate world points, each cursor-checked, then the state after the click
-    def spots(self) -> list[tuple[list[float], tuple[int, int]] | dict]:
-        out: list = []
+    def spots(self) -> list[list[float]]:
         if self.landing is not None:
-            for dx, dz in LAND_NUDGES_M:
-                p = [self.landing[0] + dx, self.landing[1], self.landing[2] + dz]
-                out.append(("pos", p))
-        else:
-            for d in SPOT_DISTS:
-                out.append(("beside", d))
-        return out
-
-    def project(self, spot) -> dict:
-        kind, v = spot
-        if kind == "pos":
-            return _rpc(self.game, "ui.screen_pos", {"pos": v})
-        return _rpc(self.game, "ui.screen_pos", {"uuid": self.first, "aim": "feet", "toward": self.caster,
-                                                 "dist": v})
+            return [[self.landing[0] + dx, self.landing[1], self.landing[2] + dz] for dx, dz in LAND_NUDGES_M]
+        try:
+            feet = _rpc(self.game, "ui.screen_pos", {"uuid": self.first, "aim": "feet"}).get("world")
+            org = _rpc(self.game, "ui.screen_pos", {"uuid": self.caster, "aim": "feet"}).get("world")
+        except GameError:
+            return []
+        if not (isinstance(feet, list) and len(feet) >= 3):
+            return []
+        out = revive_spots(feet, org if isinstance(org, list) and len(org) >= 3 else None)
+        try:
+            hz = (self.game.rpc("nav.hazards", {"char": self.caster, "radius": HAZARD_SCAN_M}) or {}).get("hazards")
+        except GameError:
+            hz = None
+        self.hazards = hz if isinstance(hz, list) else []
+        return sorted(out, key=lambda p: in_hazard(p, self.hazards) is not None)   # stable: ring order kept
 
     def _clear_of(self, body: str) -> list[list[float]]:
         """Landing spots clear of the character `body` the cursor ray hit (its feet from ui.screen_pos)."""
@@ -260,7 +298,7 @@ class _Run:
             if time.monotonic() >= self.hard or clicks >= MAX_GROUND_CLICKS:
                 break
             try:
-                sp = self.project(spot)
+                sp = _rpc(self.game, "ui.screen_pos", {"pos": spot})
             except GameError as e:
                 last = {"reason": "error", "why": str(e)}
                 continue
@@ -270,7 +308,7 @@ class _Run:
             x, y = int(sp["x"]), int(sp["y"])
             if not (0 <= x < w and 0 <= y < h):
                 continue
-            want = sp.get("world") or (spot[1] if spot[0] == "pos" else None)
+            want = sp.get("world") or spot
             self.inp.move(x, y)
             self.inp.wait_frames(2)
             gc = ground_check(self.game, want, avoid)
@@ -279,10 +317,10 @@ class _Run:
                           if gc.get(k) is not None})
             if not ok:
                 last = {"reason": "ground_refused", "why": why, "ground": gc}
-                body = gc.get("hover") if gc.get("on_avoid") and spot[0] == "pos" else None
+                body = gc.get("hover") if gc.get("on_avoid") else None
                 if body and body not in cleared and len(cleared) < CLEAR_BODIES:
                     cleared.append(body)
-                    todo[:0] = [("pos", p) for p in self._clear_of(body)]
+                    todo[:0] = self._clear_of(body)
                 continue
             if self.stop():
                 return False, {"reason": "cancelled", "why": "the step was cancelled or interrupted"}
@@ -295,6 +333,9 @@ class _Run:
                 self.res.picked += 1
                 self.res.detail.update(ground_clicks=clicks, ground_at=want, looks=looks,
                                        ground_src=gc.get("world_src"))
+                hz = in_hazard(want, self.hazards) if self.landing is None and want else None
+                if hz:
+                    self.res.detail["spot_in"] = hz
                 if cleared and self.landing is not None:
                     self.res.detail.update(clear_of=cleared, shifted_m=round(math.hypot(
                         want[0] - self.landing[0], want[2] - self.landing[2]), 1))
@@ -354,6 +395,23 @@ def ground_click(game: Game, inp: InputClient, caster: str, spell: str, pos: lis
     armed, run.st = hotbar._wait(game, caster, lambda s: bool(s.get("armed")), ARM_WAIT_S)
     if not armed:
         return run.done(False, "arm", "not_armed", "no spell in hand after the scroll's use")
+    ok, info = run.click_ground(lambda before, s: hotbar._started(s))
+    if not ok:
+        return _fail(run, "ground", info)
+    return run.done(True, phase=(run.st.get("cast") or {}).get("phase"))
+
+
+def revive_ground(game: Game, inp: InputClient, reader: str, spell: str, body: str,
+                  should_stop=None) -> HotbarCastResult:
+    """The second pick of a revive scroll whose body was already clicked: the ground around the body, with the same
+    cursor checks as the spell's hotbar route (no character under the cursor, no warning cursor), proven by the
+    spell leaving the hand. S089 07:08 x3: a click on a creature left the spell waiting for its destination and the
+    scroll unread. ok = the cast started; every failure puts the spell back (nothing cast, the scroll kept)."""
+    run = _Run(game, inp, reader, spell, body, None, should_stop)
+    run.res.detail.update(targets=1)
+    armed, run.st = hotbar._wait(game, reader, lambda s: bool(s.get("armed")), ARM_WAIT_S)
+    if not armed:
+        return run.done(False, "arm", "not_armed", "no spell in hand after the body's click")
     ok, info = run.click_ground(lambda before, s: hotbar._started(s))
     if not ok:
         return _fail(run, "ground", info)

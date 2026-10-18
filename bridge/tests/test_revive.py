@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from bg3ai import clicker, server  # noqa: E402
+from bg3ai import hotbar, server, twostep  # noqa: E402
 
 ME = "aaaaaaaa-0000-0000-0000-000000000001"
 SH = "aaaaaaaa-0000-0000-0000-000000000002"
@@ -27,10 +27,6 @@ class Fake:
                     for r in self.party:
                         r.pop("dead", None)
             return {"active": self.active, "party": [dict(r) for r in self.party]}
-        if op == "ui.screen_pos":
-            return {"on_screen": True, "x": 100 + int(10 * args["dist"]), "y": 200}
-        if op == "ui.hover_check":
-            return {"hovered": False}
         return {}
 
     try_rpc = rpc
@@ -84,36 +80,60 @@ class Revive(unittest.TestCase):
         self.use(Fake([{"uuid": SH}, {"uuid": ME}], active=SH))
         self.assertEqual(server._active(), SH)
 
+    def ground(self, res):
+        """twostep.revive_ground (tested in test_twostep.ReviveScroll) answers `res`; the calls it got."""
+        calls = []
+
+        def fake(game, inp, reader, spell, body, should_stop=None):
+            calls.append((reader, spell, body))
+            return res
+        orig = twostep.revive_ground
+        twostep.revive_ground = fake
+        self.addCleanup(setattr, twostep, "revive_ground", orig)
+        for k, v in (("REVIVE_WAIT_S", 1.0), ("_log_hotbar", lambda spell, r: None)):
+            self.addCleanup(setattr, server, k, getattr(server, k))
+            setattr(server, k, v)
+        return calls
+
     def test_second_click_then_revived(self):
         fake = self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
         fake.revive_after = 2
-        inp = Inp()
-        orig = server.REVIVE_WAIT_S
-        server.REVIVE_WAIT_S = 2.0
-        self.addCleanup(setattr, server, "REVIVE_WAIT_S", orig)
-        out = server._revive_spot(inp, "Scroll of Revivify", ME, SH)
-        self.assertEqual(len(inp.clicks), 1)
+        calls = self.ground(hotbar.HotbarCastResult(True, picked=1))
+        out = server._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
+        self.assertEqual(calls, [(ME, "Scroll of Revivify", SH)])
         self.assertIn("REVIVED", out)
-        sp = [a for op, a in fake.calls if op == "ui.screen_pos"][0]
-        self.assertEqual((sp["toward"], sp["dist"]), (ME, clicker.SPOT_DISTS[0]))
 
     def test_still_dead_said(self):
         self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
-        orig = server.REVIVE_WAIT_S
-        server.REVIVE_WAIT_S = 0.5
-        self.addCleanup(setattr, server, "REVIVE_WAIT_S", orig)
+        self.ground(hotbar.HotbarCastResult(True, picked=1))
         self.assertIn("STILL DEAD", server._revive_spot(Inp(), "Scroll of Revivify", ME, SH))
 
-    def test_spot_skips_the_body_under_the_cursor(self):
-        fake = Fake([])
-        hov = iter([{"hovered": True}, {"hovered": False}])
-        base = fake.rpc
-        fake.rpc = lambda op, args=None, context="server": next(hov) if op == "ui.hover_check" else base(op, args, context)
-        inp = Inp()
-        cr = clicker.click_spot(fake, inp, SH, ME)
-        self.assertTrue(cr.ok)
-        self.assertEqual(cr.detail["dist_m"], clicker.SPOT_DISTS[1])
-        self.assertEqual(len(inp.clicks), 1)
+    def test_s089_no_spot_taken_says_nothing_was_cast(self):
+        """S089 07:08 x3: the spot was on a creature, the spell stayed in hand, and the result said only STILL DEAD."""
+        fake = self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
+        self.ground(hotbar.HotbarCastResult(False, stage="ground", reason="ground_refused", detail={
+            "why": f"a character is under the cursor ({ME})", "cancelled": "escape",
+            "looks": [{"hover": ME, "on_avoid": True}]}))
+        out = server._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
+        self.assertNotIn("STILL DEAD", out)
+        self.assertIn("the spell was put back, nothing cast (the scroll is still in the bags)", out)
+        self.assertIn("a character is under the cursor (e1 Claude)", out)
+        self.assertNotIn("state.status", [op for op, _ in fake.calls])   # no 4 s wait for a cast never made
+
+    def test_spot_in_fire_said(self):
+        fake = self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
+        fake.revive_after = 1
+        self.ground(hotbar.HotbarCastResult(True, picked=1, detail={"spot_in": "Fire"}))
+        out = server._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
+        self.assertIn("REVIVED", out)
+        self.assertIn("in Fire (no open spot clear of it): get them out of it at once", out)
+
+    def test_nothing_in_hand_after_the_body_click(self):
+        self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
+        self.ground(hotbar.HotbarCastResult(False, stage="arm", reason="not_armed"))
+        out = server._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
+        self.assertIn("no spell in hand after it", out)
+        self.assertIn("STILL DEAD", out)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 -- (client context; owner: worker "act").
 --
 -- ops:
---   ui.screen_pos  {uuid, aim?="auto"|"feet"|"low"|"mid"|"chest", dy?, ox?, toward?, dist?} | {pos=[x,y,z]}
+--   ui.screen_pos  {uuid, aim?="auto"|"feet"|"low"|"mid"|"chest", dy?, ox?} | {pos=[x,y,z]}
 --       -> {x, y, on_screen, ndc=[x,y], depth, size=[w,h], aim, side, world=[x,y,z]}
 --       pos: a world point (a ground spot: a two-step cast's landing); world: the point projected.
 --       ox: metres along the entity's own X axis (a door's origin is its
@@ -177,21 +177,6 @@ RPC.register("ui.screen_pos", function(args)
         if not uuid then error("bad uuid") end
         p, aim = P.aim_point(uuid, args.aim, args.dy, args.ox)
         if not p then error(aim) end
-    end
-    -- toward + dist: a ground spot beside the entity, dist metres toward another (Revivify's second click:
-    -- the spot the body stands up on, which must not be a character)
-    local tw = guid(args.toward)
-    if tw and tonumber(args.dist) then
-        local te = Ext.Entity.Get(tw)
-        local okt, t = pcall(function() return te.Transform.Transform.Translate end)
-        if okt and t then
-            local dx, dz = t[1] - p[1], t[3] - p[3]
-            local d = math.sqrt(dx * dx + dz * dz)
-            if d > 0.01 then
-                local k = math.min(tonumber(args.dist), d) / d
-                p[1], p[3] = p[1] + dx * k, p[3] + dz * k
-            end
-        end
     end
     local r, err = P.project(p)
     if not r then error(err) end

@@ -203,7 +203,7 @@ class TwoStepCast(unittest.TestCase):
         r, inp = _cast(self.w, REV, "body")
         self.assertTrue(r.ok, r.as_dict())
         self.assertEqual(self.w.cast_done, [(REV, ["body", "ground"])])
-        self.assertAlmostEqual(self.w.ground_at[0], 4.0 - twostep.SPOT_DISTS[0])
+        self.assertEqual([round(v, 2) for v in self.w.ground_at], [4.0 - twostep.SPOT_DISTS[0], 0.0, 0.0])
         self.assertEqual(r.detail["two_step"], "revive")
         body = self.w.targets["body"]
         self.assertNotIn(body, clicks(inp)[2:])                  # the ground click is not on the body
@@ -243,7 +243,9 @@ class TwoStepCast(unittest.TestCase):
         self.w.targets["ally"] = to_screen(self.w.wpos["ally"])
         r, _ = _cast(self.w, REV, "body")
         self.assertTrue(r.ok, r.as_dict())
-        self.assertAlmostEqual(self.w.ground_at[0], 4.0 - 1.8)
+        g = self.w.ground_at                                    # the next spot round the body, 60 deg off
+        self.assertAlmostEqual(((g[0] - 4.0) ** 2 + g[2] ** 2) ** 0.5, 1.2, places=1)
+        self.assertGreater(abs(g[2]), 0.5)
         self.assertEqual(r.detail["ground_clicks"], 1)
 
     def test_revivify_body_not_taken_cancels_without_a_ground_click(self):
@@ -368,6 +370,95 @@ class GroundClick(unittest.TestCase):
         self.assertEqual(r.detail["cancelled"], "escape")
         self.assertIsNone(self.w.armed)
         self.assertEqual((self.w.cast_done, clicks(inp)), ([], []))
+
+
+class ReviveScrollWorld(TwoStepWorld):
+    """A Scroll of Revivify read, its body already clicked (the scroll's Use + click_entity): Revivify in hand with
+    one pick taken; the game waits for the ground spot (S089 07:08: "Target can't be a creature. Choose
+    destination")."""
+
+    def __init__(self):
+        super().__init__()
+        self.armed, self.picked = "Teleportation_Revivify_Scroll", ["body"]
+        self.hazards: list[dict] = []
+
+    def rpc(self, op, args=None, context="server"):
+        if op == "nav.hazards":
+            return {"hazards": self.hazards}
+        return super().rpc(op, args, context)
+
+
+class ReviveScroll(unittest.TestCase):
+    """S089 07:08 x3: Scroll of Revivify on dead Wyll: the body click was taken, the 2nd click went 1.2-2.4 m toward
+    the reader, where the reader and the Emperor (just helped up) stood: the game kept the spell in hand and the
+    scroll unread, and the result said only 'STILL DEAD after 4 s'."""
+
+    def setUp(self):
+        self.w = ReviveScrollWorld()
+        # S089: everything 1.2-2.4 m toward the reader is under a character
+        self.w.wpos.update(caster=[1.6, 0.0, 0.0], ally=[2.6, 0.0, 0.0])
+        self.w.targets.update(caster=to_screen([1.6, 0.0, 0.0]), ally=to_screen([2.6, 0.0, 0.0]))
+        self.w.body_r.update(caster=0.5, ally=0.7)
+
+    def _go(self):
+        inp = FakeInput(self.w)
+        with mock.patch.object(hotbar.time, "sleep"), mock.patch.object(twostep.time, "sleep"):
+            return twostep.revive_ground(self.w, inp, "caster", "Scroll of Revivify", "body"), inp
+
+    def test_s089_spot_toward_the_reader_on_a_character_another_side_is_clicked(self):
+        r, inp = self._go()
+        self.assertTrue(r.ok, r.as_dict())
+        self.assertEqual(self.w.cast_done, [("Teleportation_Revivify_Scroll", ["body", "ground"])])
+        g = self.w.ground_at
+        self.assertAlmostEqual(((g[0] - 4.0) ** 2 + g[2] ** 2) ** 0.5, 1.2, places=1)
+        self.assertEqual(len(clicks(inp)), 1)                   # never clicked on the reader / the ally
+        self.assertEqual(r.detail["looks"][0]["hover"], "ally")
+
+    def test_s089_body_in_fire_a_spot_outside_it_first(self):
+        """S089: Wyll lay in fire; stood up in it at 1 HP he goes down again. A spot outside the patch is tried first."""
+        self.w.wpos.update(caster=[0.0, 0.0, 0.0], ally=[1.0, 0.0, 0.0])
+        self.w.targets.update(caster=to_screen([0.0, 0.0, 0.0]), ally=to_screen([1.0, 0.0, 0.0]))
+        self.w.hazards = [{"surface": "Fire", "center": [2.8, 0.0, 0.0], "w_m": 2.0, "d_m": 2.0}]
+        r, inp = self._go()
+        self.assertTrue(r.ok, r.as_dict())
+        self.assertGreater(self.w.ground_at[0], 4.0)            # the 120 deg spot: the far side, out of the fire
+        self.assertNotIn("spot_in", r.detail)
+        self.assertEqual(len(clicks(inp)), 1)
+
+    def test_fire_all_round_still_revives_and_says_so(self):
+        self.w.hazards = [{"surface": "Fire", "center": [4.0, 0.0, 0.0], "w_m": 7.0, "d_m": 6.0}]
+        r, _ = self._go()
+        self.assertTrue(r.ok, r.as_dict())
+        self.assertEqual(r.detail["spot_in"], "Fire")
+
+    def test_in_hazard(self):
+        hz = [{"surface": "Fire", "center": [0.0, 0.0, 0.0], "w_m": 2.0, "d_m": 4.0}]
+        self.assertEqual(twostep.in_hazard([1.4, 0.0, 2.4], hz), "Fire")       # box + HAZARD_MARGIN_M
+        self.assertIsNone(twostep.in_hazard([1.6, 0.0, 0.0], hz))
+        self.assertIsNone(twostep.in_hazard([0.0, 3.0, 0.0], hz))               # a floor above it
+        self.assertIsNone(twostep.in_hazard([0.0, 0.0, 0.0], None))
+
+    def test_revive_spots_ring_the_body_toward_the_caster_first(self):
+        sp = twostep.revive_spots([4.0, 1.0, 0.0], [0.0, 1.0, 0.0])
+        self.assertEqual(len(sp), len(twostep.SPOT_DISTS) * len(twostep.SPOT_TURNS_DEG))
+        self.assertEqual(sp[0], [2.8, 1.0, 0.0])
+        self.assertEqual(sp[len(twostep.SPOT_TURNS_DEG) - 1], [5.2, 1.0, 0.0])   # the far side, 180 deg
+        self.assertTrue(all(p[1] == 1.0 for p in sp))
+
+    def test_no_spot_taken_puts_the_spell_back(self):
+        self.w.bad = [lambda p: True]
+        r, inp = self._go()
+        self.assertFalse(r.ok)
+        self.assertEqual((r.stage, r.reason), ("ground", "ground_refused"))
+        self.assertEqual(r.detail["cancelled"], "escape")
+        self.assertIsNone(self.w.armed)
+        self.assertEqual((self.w.cast_done, clicks(inp)), ([], []))
+
+    def test_nothing_in_hand_no_click(self):
+        self.w.armed = None
+        r, inp = self._go()
+        self.assertEqual((r.ok, r.stage, r.reason), (False, "arm", "not_armed"))
+        self.assertEqual(clicks(inp), [])
 
 
 class FakeTwoStep:
