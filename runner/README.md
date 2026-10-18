@@ -229,6 +229,17 @@ stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
 
 ## Recovery
 
+- **Mod snapshot (S24):** the runner's game loads the mod from `runtime/mod-live/` (`launch_game.sh --mod-path`),
+  a copy of `mod/` synced in place at each session start, before the relaunch check and the hot reload, also for a
+  relaunch mid-session. A merge into main mid-session therefore never reaches the session's game (S090 loaded new Lua
+  next to its old bridge). The start line names the commit (`S090: claude starting (…; code 1328586c7)`); when main
+  moves during a session, the runner logs `main moved since the session's mod snapshot (a -> b)` (event
+  `main_moved`): an MCP server started after that (a resume) runs b's bridge next to a's mod. A game that loads the
+  mod from elsewhere (launched before this, or by a live window) is relaunched at the next session start.
+- **Relaunch skip:** a relaunch between sessions loads the newest save, so it is skipped when that save is older than
+  the last session's start (it would lose that session's play), unless the session ended on `load_game` of exactly
+  that save with nothing after it but reads, notes/memory, saves and refused calls (actions.jsonl; S25: S091 and
+  S092 ended on `load_game S090-end`, and the S24 relaunch was skipped at the boundary).
 - **Stopping the game:** the native `bg3` ignores SIGTERM. The runner sends SIGTERM to the launcher's
   process group and to every `pgrep -x bg3` process, then SIGKILL after 3 s. It relaunches only once no
   `bg3` process remains and port 9998 is free.

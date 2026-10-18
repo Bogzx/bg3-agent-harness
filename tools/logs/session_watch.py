@@ -58,7 +58,9 @@ HOLES = [(r"…", r".{0,200}?"), (r"<[^>]{1,30}>", r".{1,80}?"),
          (r"\be[NABMXY]\b", r"e\\d+"), (r"\bN+(?=\b|[ms]\b)", r"\\d+(?:\\.\\d+)?"), (r"\b[XY]\b", r".{1,60}?")]
 SOURCE_RX = re.compile(r"(?:\b[RBLMT]|ram\.log|jsonl|stage_ms|nav\.log|metrics)\s*$")  # `x` read from another file
 NEGATED_RX = re.compile(r"(?:\bno|\bnot|\bwithout|0×)\s*(?:\w+\s){0,2}$")
-COND_RX = re.compile(r"\b(?:whose|while|after|before|within|in a row|twice|again|repeated|more than|then|with no|"
+# not "again": a row's "`X` again" is its bug seen once more, one call is enough (vis V29: S091's 11 unnamed
+# `IN HAND: a spell` were no FAIL, the act A24 row's FAIL sentence was dropped and its `IN HAND: <spell id>` PASSed)
+COND_RX = re.compile(r"\b(?:whose|while|after|before|within|in a row|twice|repeated|more than|then|with no|"
                      r"when|where|unless|still|each|every|both|same|once|next|alone|bare|followed|inside|that|"
                      r"for an?|did not|didn't|omitted|ordinary|at the start)\b|[≥>≤<×]|\d\s*-\s*\d|"
                      r"\b\d+\s*(?:s|ms|m|x)?\s*``", re.I)
@@ -232,6 +234,8 @@ def check(calls, rows=None):
                 for rxs in row[kind]:
                     ms = [re.search(rx, t) for rx in rxs]
                     if all(ms):
+                        if kind == "pass" and any(h[0] == k for h in hits["fail"]):
+                            break   # the call shows this row's FAIL: not also its PASS
                         eff = effect(c, t, ms) if kind == "pass" else None
                         if eff == "void" or (eff == "fail" and any(h[0] == k for h in hits["fail"])):
                             continue

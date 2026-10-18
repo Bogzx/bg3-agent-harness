@@ -76,11 +76,11 @@ class FakeGame:
             return {"region": "Wilderness", "waypoints": self.unlocked}
         if op == "ui.confirm":
             return {"pressed": "Yes", "via": "command", "buttons": ["Yes", "No"]}
+        if op == "ui.state":
+            return {"screen": self.screens.pop(0) if self.screens else self.screen}
         raise GameError("unknown op " + op)
 
     def try_rpc(self, op, args=None, context="server", default=None):
-        if op == "ui.state":
-            return {"screen": self.screens.pop(0) if self.screens else self.screen}
         if op == "ui.map_close":
             self.calls.append((op, args))
             if self.map_close_fixes:
@@ -447,8 +447,67 @@ class ScreenTest(unittest.TestCase):
 
     def test_no_ui_state(self):
         g = FakeGame()
-        g.try_rpc = lambda op, args=None, context="server", default=None: default
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            raise GameError("game did not answer")
+        g.rpc = rpc
         self.assertEqual(C.check_screen(g, None).verdict, "WARN")
+
+
+class BusyRetryTest(unittest.TestCase):
+    """S092 boundary 09:06:07: the confirm read met the mod's busy gate ~5 s after the hot reload (false FAIL)."""
+
+    BUSY = GameError("bg3le: UI busy (a transition holds the game's UI; retried on a later tick)")
+
+    def busy_game(self, n: int) -> FakeGame:
+        """A FakeGame whose first n client evals and ui.state reads raise the busy gate's error."""
+        g = FakeGame()
+        left = {"eval": n, "ui.state": n}
+        eval0, rpc0 = g.eval, g.rpc
+
+        def ev(code, context="client", timeout=12.0):
+            if left["eval"]:
+                left["eval"] -= 1
+                raise self.BUSY
+            return eval0(code, context, timeout)
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "ui.state" and left["ui.state"]:
+                left["ui.state"] -= 1
+                raise self.BUSY
+            return rpc0(op, args, context, timeout)
+        g.eval, g.rpc = ev, rpc
+        return g
+
+    def test_confirm_passes_after_busy(self):
+        g = self.busy_game(2)
+        with mock.patch.object(C, "BUSY_RETRY_SLEEP_S", 0.0):
+            r = C.check_confirm(g)
+        self.assertEqual(r.verdict, "PASS", r.detail)
+        self.assertEqual(sum(1 for c in g.calls if c[0] == "eval"), 1)   # the 2 busy tries never reached the fake
+
+    def test_keys_and_screen_pass_after_busy(self):
+        g = self.busy_game(1)
+        with mock.patch.object(C, "BUSY_RETRY_SLEEP_S", 0.0):
+            self.assertEqual(C.check_keys(g).verdict, "PASS")
+            self.assertEqual(C.check_screen(g, "game").verdict, "PASS")
+
+    def test_busy_past_the_window_still_fails(self):
+        g = self.busy_game(10 ** 6)
+        with mock.patch.object(C, "BUSY_RETRY_S", 0.05), mock.patch.object(C, "BUSY_RETRY_SLEEP_S", 0.01):
+            row = C.run_all(["confirm"], g, dict, 1, 60, False, Path("."))[0]
+        self.assertEqual(row.verdict, "FAIL")
+        self.assertIn("bg3le: UI busy", row.detail)
+
+    def test_other_errors_not_retried(self):
+        calls = []
+
+        def boom():
+            calls.append(1)
+            raise GameError("attempt to index a nil value")
+        with self.assertRaises(GameError):
+            C.busy_retry(boom)
+        self.assertEqual(calls, [1])
 
 
 class ModTest(unittest.TestCase):
@@ -536,7 +595,13 @@ class RunAllTest(unittest.TestCase):
 
     def test_exception_is_a_row(self):
         g = FakeGame()
-        g.rpc = mock.Mock(side_effect=GameError("unknown op state.map"))
+        rpc0 = g.rpc
+
+        def rpc(op, *a, **k):   # ui.state still answers: the screen row stays PASS
+            if op == "ui.state":
+                return rpc0(op, *a, **k)
+            raise GameError("unknown op state.map")
+        g.rpc = rpc
         with mock.patch("sys.stdout", io.StringIO()):
             rows = C.run_all(["waypoints", "keys"], g, dict, 1, 120, False, self.tmp, self.fake_runner({}))
         self.assertEqual([r.verdict for r in rows], ["FAIL", "PASS", "PASS"])

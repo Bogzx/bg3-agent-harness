@@ -545,14 +545,19 @@ def saves_since(saves: list[Save], t: float, owner: str | None, prefix: str = SA
 
 def relaunch_reason(started: float | None, now: float, last_log: str | None,
                     max_age_h: float = GAME_MAX_AGE_H, session_s: float = 0.0, ram_mb: int | None = None,
-                    ram_limit_mb: int = RELAUNCH_RAM_MB) -> str | None:
+                    ram_limit_mb: int = RELAUNCH_RAM_MB, mod_path: str | None = None,
+                    mod_live: str | None = None) -> str | None:
     """Why the game process should be relaunched before the next session, or None: the last session's log shows a
-    party ready check failing (ready_failed / end_day_failed), the game already holds ram_limit_mb or more RAM+swap,
-    or the process would be max_age_h or more old by the end of a session that may run session_s (its length plus
-    the fight hold: S082 started at 1.9 h and ran to 2.3 h)."""
+    party ready check failing (ready_failed / end_day_failed), the game loads the mod from mod_path instead of the
+    runner's snapshot mod_live, the game already holds ram_limit_mb or more RAM+swap, or the process would be
+    max_age_h or more old by the end of a session that may run session_s (its length plus the fight hold: S082
+    started at 1.9 h and ran to 2.3 h)."""
     m = READY_FAIL_RE.search(last_log or "")
     if m:
         return f"the last session logged {m.group(0)} (ready checks break in a long-lived game process)"
+    if mod_path is not None and mod_live and mod_path != mod_live:
+        return (f"the game loads the mod from {mod_path}, not the runner's snapshot {mod_live} (a merge into main "
+                "mid-session would reach its next load_game: S090)")
     if ram_mb is not None and ram_limit_mb > 0 and ram_mb >= ram_limit_mb:
         return (f"the game holds {ram_mb} MB RAM+swap (relaunched at {ram_limit_mb} MB: it grows ~0.9 GB/h and "
                 f"ramwatch kills it at {ramwatch.KILL_ANON_SWAP_MB} MB)")
@@ -588,6 +593,84 @@ def agent_quicksaves(actions: list[dict], owner: str | None) -> list[str]:
         if s and owner and s.owner.casefold() == owner.casefold() and is_autosave(s.label) and s.folder not in out:
             out.append(s.folder)
     return out
+
+
+# MCP tools that never change the game: observations, notes/memory, saves, and waits on jobs that other (logged)
+# calls started. Batch wrappers (latency.BATCH_TOOLS) don't either: each of their steps is a record of its own.
+STATE_KEEPING_TOOLS = {
+    "get_status", "look", "get_party", "get_character", "get_actions", "get_nearby", "look_at", "get_inventory",
+    "get_journal", "get_map", "get_frontier", "get_layout", "route", "get_explored", "path_preview",
+    "get_combat_state", "get_dialogue", "get_events", "screenshot", "zoom", "end_combat_report", "note",
+    "memory_list", "memory_read", "memory_search", "memory_write", "memory_edit", "memory_append", "session_start",
+    "end_session", "get_level_up_options", "ability_preview", "ui_dump", "character_creation_options",
+    "list_saves", "save_game", "save_game.bg", "wait_for", "cancel_queue", "recall", "wiki_search", "wiki_page",
+    "session_clock",
+}
+REFUSED_PREFIXES = ("FAILED", "NOT READY", "REFUSED")   # the bridge's not-ok results (server._log)
+
+
+def ended_on_save(actions: list[dict], save: Save) -> bool:
+    """True when the session's tool log (actions.jsonl records since its start, oldest first) ends with a load_game
+    of `save` after which nothing changed the game: every later call keeps the state (STATE_KEEPING_TOOLS, a batch
+    wrapper) or was refused. The game then stands exactly at `save`, so a relaunch onto it loses nothing although
+    the save predates the session. S091 + S092 both ended on load_game S090-end, and the S24 mod-snapshot relaunch
+    was skipped at 09:05 ("older than S092's start"). An unknown tool counts as a change."""
+    loads = [i for i, a in enumerate(actions) if a.get("tool") == "load_game"]
+    if not loads:
+        return False
+    last = actions[loads[-1]]
+    m = re.match(r"load_game: done — loaded=(\S+)", str(last.get("result") or ""))
+    arg = str((last.get("args") or {}).get("save") or "")
+    if not m or m.group(1) != save.label or ("__" in arg and arg != save.folder):
+        return False
+    return all(keeps_state(a) for a in actions[loads[-1] + 1:])
+
+
+def keeps_state(a: dict) -> bool:
+    """An actions.jsonl record that didn't change the game: a STATE_KEEPING_TOOLS call, a batch wrapper or a refused
+    call. An unknown tool counts as a change."""
+    return (a.get("tool") in STATE_KEEPING_TOOLS or a.get("tool") in latency.BATCH_TOOLS
+            or str(a.get("result") or "").startswith(REFUSED_PREFIXES))
+
+
+def lose_play_mark(last: dict, actions: list[dict]) -> tuple[float, str]:
+    """From when a relaunch onto an older save loses play: the last game-changing call of the last session
+    (`actions`: actions.jsonl since its start, keeps_state), else its start. A session that saved partway and played
+    on without saving would otherwise relaunch onto that save and lose the rest (user, 2026-10-18: losing play is worse
+    than a skipped relaunch). -> (time, what it is, for the log)."""
+    sid = last.get("session") or "the last session"
+    changed = [a for a in actions if not keeps_state(a)]
+    if not changed:
+        return float(last.get("started", 0)), f"{sid}'s start"
+    a = max(changed, key=lambda x: x.get("t", 0))
+    return float(a.get("t", 0)), (f"{sid}'s last game change ({a.get('tool')} at "
+                                  f"{datetime.fromtimestamp(a.get('t', 0)):%H:%M:%S})")
+
+
+def boundary_save(saves: list[Save], runner_saves: set[str], combat: dict[str, bool | None], last: dict,
+                  actions: list[dict]) -> tuple[Save | None, str]:
+    """The runner's own quicksave at the end of the last play session (ensure_save, when the agent didn't save), if
+    a relaunch can load it instead of an older save without losing play: written after the session started, out of
+    combat (`combat`: runner.json runner_save_combat, the party's state when the runner asked for the save), and no
+    call changed the game after it (`actions`: actions.jsonl since the session's start). S093 09:50: HANDOFF named
+    S090-end, S093 played on without a named save, and the snapshot relaunch was skipped although the runner's
+    QuickSave_24 held where S093 ended. A mid-fight one doesn't: the enemies' turns go on in the running game, and a
+    reload would roll them again. -> (save, "") or (None, why not)."""
+    sid = last.get("session") or "the last session"
+    mine = [s for s in saves if s.folder in runner_saves and s.mtime >= last.get("started", 0)]
+    if not mine:
+        return None, f"no runner quicksave since {sid}'s start"
+    s = max(mine, key=lambda x: x.mtime)
+    was = combat.get(s.folder)
+    if was is None:
+        return None, f"the runner's quicksave {s.label}: unknown whether the party was in a fight"
+    if was:
+        return None, (f"the runner's quicksave {s.label} was made mid-fight (the enemies' turns go on in the running "
+                      "game; a reload would roll them again)")
+    changed = [a for a in actions if a.get("t", 0) > s.mtime and not keeps_state(a)]
+    if changed:
+        return None, f"the runner's quicksave {s.label}: {changed[-1].get('tool')} changed the game after it"
+    return s, ""
 
 
 def foreign_use_since(save: Save, saves: list[Save], actions: list[dict], game_started: float | None,
@@ -1310,15 +1393,26 @@ AVATAR_NAME_LUA = (
     'end '
     'return nm(Osi.GetHostCharacter()) or ""')
 
+# "1" when a party member is in a fight, "0" when none is, "?" when the party can't be read.
+PARTY_COMBAT_LUA = (
+    'local ok, rows = pcall(function() return Osi.DB_PartyMembers:Get(nil) end) '
+    'if not ok or not rows or not rows[1] then return "?" end '
+    'for _, r in ipairs(rows) do local c = Osi.IsInCombat(r[1]) if c == 1 or c == true then return "1" end end '
+    'return "0"')
+
 MOD_DIR = REPO / "mod"
+# The runner's game loads the mod from this copy of mod/ (launch_game.sh --mod-path), refreshed only at a session
+# boundary: S090 loaded the Lua of a merge into main that landed 19 s after the session's bridge started.
+MOD_LIVE = RUNTIME / "mod-live"
 MOD_READY_LUA = "return tostring(Mods.BG3AI ~= nil and Mods.BG3AI.BG3AI ~= nil and Mods.BG3AI.BG3AI.RPC ~= nil)"
 RELOAD_TIMEOUT = 60
 WAIT_REPORT_AFTER = 90         # a runner wait longer than this logs what it waits for ...
 WAIT_REPORT_EVERY = 30         # ... every this many seconds
 
 
-def mod_tree_hashes(root: Path = MOD_DIR) -> dict[str, str]:
-    """{relative path: sha1} for every file under mod/ (the Lua tree the game loads)."""
+def mod_tree_hashes(root: Path | None = None) -> dict[str, str]:
+    """{relative path: sha1} for every file under root (default MOD_LIVE: the Lua tree the runner's game loads)."""
+    root = MOD_LIVE if root is None else root
     out = {}
     for p in sorted(root.rglob("*")) if root.is_dir() else []:
         if p.is_file() and "__pycache__" not in p.parts:
@@ -1331,6 +1425,56 @@ def changed_files(old: dict | None, new: dict) -> list[str]:
     if old is None:
         return sorted(new)
     return sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))
+
+
+def sync_tree(src: Path, dst: Path) -> list[str]:
+    """Make dst hold exactly src's files (no __pycache__), in place: changed files are rewritten through a temp file
+    and a rename, extra ones removed. Never a swapped directory: launch_game.sh shares the mod path into the game's
+    container by itself, so a new dst directory would leave the running game on the old one. -> the paths changed."""
+    want = mod_tree_hashes(src)
+    changed = changed_files(mod_tree_hashes(dst), want)
+    for rel in changed:
+        p = dst / rel
+        if rel not in want:
+            p.unlink(missing_ok=True)
+            continue
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f".{p.name}.sync")
+        shutil.copyfile(src / rel, tmp)
+        tmp.replace(p)
+    for d in sorted((p for p in dst.rglob("*") if p.is_dir()), reverse=True):
+        if not any(d.iterdir()):
+            d.rmdir()
+    return changed
+
+
+def repo_commit(repo: Path = REPO, paths: tuple[str, ...] = ("mod", "bridge/src")) -> str:
+    """HEAD's short sha, "+dirty" when paths have uncommitted changes (the working tree is what the bridge runs and
+    the mod snapshot copies), "unknown" without git."""
+    try:
+        head = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short=9", "HEAD"], capture_output=True,
+                              text=True, timeout=10)
+        dirty = subprocess.run(["git", "-C", str(repo), "status", "--porcelain", "--", *paths], capture_output=True,
+                               text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    if head.returncode != 0 or not head.stdout.strip():
+        return "unknown"
+    return head.stdout.strip() + ("+dirty" if dirty.stdout.strip() else "")
+
+
+def game_mod_path(proc: Path = Path("/proc")) -> str | None:
+    """BG3LE_MOD_PATH of the running harness game (its environ): where it loads the mod from. None: no game, or
+    none it reads (no bg3le, or an unreadable environ)."""
+    for pid in pids_of_game():
+        try:
+            env = (proc / str(pid) / "environ").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        for kv in env:
+            if kv.startswith(b"BG3LE_MOD_PATH="):
+                return kv.split(b"=", 1)[1].decode(errors="replace")
+    return None
 
 
 # ---------------------------------------------------------------- self-update (between sessions)
@@ -1597,6 +1741,15 @@ def host_character_name() -> str | None:
         return lua_eval(AVATAR_NAME_LUA, context="server").strip() or None
     except Exception:  # noqa: BLE001
         return None
+
+
+def party_in_combat() -> bool | None:
+    """Whether a party member is in a fight (server context), None if the game doesn't answer."""
+    try:
+        r = lua_eval(PARTY_COMBAT_LUA, context="server").strip()
+    except Exception:  # noqa: BLE001
+        return None
+    return {"1": True, "0": False}.get(r)
 
 
 def server_ready() -> bool:
@@ -2071,6 +2224,8 @@ class Runner:
     cap_hit: dict | None = None        # --max-cost/--max-tokens: {cap, cost, tokens, why} once the run reached one
     run_started: float | None = None   # --until: the run's start (claude_totals counts from there)
     _client: clients.Client | None = None
+    mod_rev: str | None = None         # the commit of this session's mod snapshot (MOD_LIVE)
+    moved_to: str | None = None        # the main commit code_moved last logged
 
     def __init__(self, opt: Options):
         self.opt = opt
@@ -2096,6 +2251,7 @@ class Runner:
         self.stop_requested = False
         self.abort = False
         self.pending_notes: list[str] = []
+        self.relaunch_save: Save | None = None   # maybe_relaunch -> ensure_game: the save the relaunch loads
         self.quick_failures = 0
         self.new_game = False
         self.gates: bool | None = None       # gates_decision for the game this session plays (BG3AI_SAVE_GATES)
@@ -2257,7 +2413,10 @@ class Runner:
             log(f"!!!!! REFUSING TO LAUNCH BG3: no usable display: {no_display}; the runner keeps retrying. !!!!!")
             self.event("display_refused", why=no_display)
             raise NoDisplay(no_display)
-        args = [str(LAUNCH_SH)] + (["--load", load_folder] if load_folder else [])
+        if not (MOD_LIVE / "Mods").is_dir():
+            self.refresh_mod_snapshot()
+        # the session's mod snapshot, also for a relaunch mid-session (never main's newer mod/)
+        args = [str(LAUNCH_SH), "--mod-path", str(MOD_LIVE)] + (["--load", load_folder] if load_folder else [])
         stamp = base = f"{datetime.now():%Y%m%d-%H%M%S}"   # launch_game.sh names its logs with it (BG3AI_LAUNCH_STAMP)
         n = 1
         while list((RUNTIME / "logs").glob(f"*-{stamp}.log*")):   # never another launch's logs (LaunchWatch)
@@ -2710,7 +2869,10 @@ class Runner:
     def maybe_relaunch(self, first: bool, minutes: float = 0.0) -> str | None:
         """Between sessions: kill a game process that relaunch_reason() condemns for the next session (`minutes`
         long, plus the fight hold), so ensure_game() launches a fresh one with the newest save. Never kills when the relaunch can't happen (Steam not offline: the launch guard
-        would refuse) or would lose play (the newest save is older than the last session's start). -> the reason."""
+        would refuse) or would lose play (the newest save is older than the last session's last game change, or its
+        start without one: lose_play_mark; unless that session
+        ended on a load_game of it, ended_on_save, or the runner's quicksave at its end holds its last state,
+        boundary_save: then the relaunch loads that one). -> the reason."""
         if self.opt.dry_run or not port_open():
             return None
         if first and not (self.owns_game() or self.opt.take_over):
@@ -2727,26 +2889,47 @@ class Runner:
         started = g.get("launched") if self.owns_game() and g.get("launched") else game_started_at()
         ram = game_ram_mb()
         why = relaunch_reason(started, time.time(), text, session_s=minutes * 60 + FIGHT_HOLD_S if minutes else 0.0,
-                              ram_mb=ram)
+                              ram_mb=ram, mod_path=game_mod_path(), mod_live=str(MOD_LIVE))
         if why is None:
             if started:
                 log(f"game process {(time.time() - started) / 3600:.1f} h old, {ram if ram is not None else '?'} MB "
                     f"RAM+swap, no ready-check failure last session: kept (relaunch at {GAME_MAX_AGE_H:g} h by the "
                     f"session's end or {RELAUNCH_RAM_MB} MB)")
             return None
-        save = self.choose_save()
+        save, boundary = self.choose_save(), None
         if save is None:
             log(f"game relaunch wanted ({why}) but this playthrough has no save to load: skipped")
             return None
-        if last and save.mtime < last.get("started", 0):
-            log(f"game relaunch wanted ({why}) but the newest save {save.label} is older than {last['session']}'s "
-                "start: skipped (it would lose play)")
-            return None
+        acts = read_actions_since(last.get("started", 0)) if last else []
+        mark, what = lose_play_mark(last, acts) if last else (0.0, "")
+        if last and save.mtime < mark:
+            if ended_on_save(acts, save):
+                log(f"the newest save {save.label} is older than {what}, but {last['session']} "
+                    f"ended on load_game {save.label} with nothing changed after it: the game stands at that save")
+            else:
+                qs, no = boundary_save(self.own_saves(), set(self.state["runner_saves"] or []),
+                                       self.state["runner_save_combat"] or {}, last, acts)
+                if qs is not None and (now := party_in_combat()) is not False:
+                    qs, no = None, (f"the party is in a fight now, after {qs.label}" if now else
+                                    f"the game doesn't say whether the party is in a fight now (after {qs.label})")
+                if qs is None:
+                    log(f"game relaunch wanted ({why}) but the newest save {save.label} is older than "
+                        f"{what} and {no}: skipped (it would lose play)")
+                    return None
+                log(f"the newest save {save.label} is older than {what}; the runner's quicksave "
+                    f"{qs.label} at its end holds where it ended (out of combat, nothing changed after it)")
+                boundary = save = qs
         ok, steam_why = steam_ready()
         if not ok:
             log(f"game relaunch wanted ({why}) but Steam is not offline ({steam_why}): keeping the running game")
             self.event("game_relaunch_skipped", why=why, steam=steam_why)
             return None
+        if boundary is not None:   # ensure_game loads it (choose_save would pick HANDOFF's older save)
+            self.relaunch_save = boundary
+            self.save_choice = (boundary.label, f"the runner's quicksave at {last['session']}'s end (game relaunch)")
+            self.pending_notes.append(
+                f"RUNNER NOTE: \"{boundary.label}\" is the runner's quicksave at {last['session']}'s end: the game "
+                "stands where that session left off.")
         log(f"relaunching the game: {why}; then loading {save.folder}")
         self.event("game_relaunch", why=why, save=save.folder)
         self.kill_game()
@@ -2788,7 +2971,8 @@ class Runner:
             raise RuntimeError("debug port open but the game doesn't answer")
         if state is None:
             self.note_game_gone(self.check_game_oom())   # gone (e.g. 20:48: an OOM took the runner down with it)
-        return self.load_save(self.choose_save())
+        save, self.relaunch_save = getattr(self, "relaunch_save", None), None   # maybe_relaunch's boundary_save
+        return self.load_save(save or self.choose_save())
 
     def apply_play_settings(self) -> None:
         """Best effort, never fatal: autoskip, no tutorials, dismiss popups, then the save/load gates."""
@@ -2828,8 +3012,39 @@ class Runner:
         except Exception as e:  # noqa: BLE001
             log(f"ui strict: setting {'on' if on else 'off'} failed: {e}")
 
+    def refresh_mod_snapshot(self) -> list[str]:
+        """At a session boundary (before the relaunch check and the hot reload): MOD_LIVE := the main tree's mod/,
+        and mod_rev := the commit it came from, which the session's MCP server (started from the same tree) runs
+        too. A merge landing during the copy is copied again. -> the files changed."""
+        changed: list[str] = []
+        for _ in range(3):
+            before = repo_commit()
+            changed += sync_tree(MOD_DIR, MOD_LIVE)
+            self.mod_rev = repo_commit()
+            if self.mod_rev == before:
+                break
+        self.moved_to = None
+        shown = ", ".join(changed[:5]) + (" …" if len(changed) > 5 else "")
+        log(f"mod snapshot {MOD_LIVE} = {self.mod_rev}"
+            + (f" ({len(changed)} files updated: {shown})" if changed else " (unchanged)"))
+        return changed
+
+    def code_moved(self, label: str) -> None:
+        """Logs (once per new commit) when main moved since this session's mod snapshot: an MCP server started now
+        runs the newer bridge next to the game's older mod, until the next session's snapshot."""
+        if self.mod_rev is None:
+            return
+        now = repo_commit()
+        if now in (self.mod_rev, self.moved_to):
+            return
+        self.moved_to = now
+        log(f"{label}: main moved since the session's mod snapshot ({self.mod_rev} -> {now}): the game keeps "
+            f"{self.mod_rev}'s mod ({MOD_LIVE}) until the next session start; an MCP server started from now on "
+            f"runs {now}'s bridge")
+        self.event("main_moved", session=label, snapshot=self.mod_rev, head=now)
+
     def hot_reload_mod(self) -> int:
-        """Between sessions: if any file under mod/ changed since the game last loaded it, Ext.Debug.Reset() and
+        """Between sessions: if any file under MOD_LIVE changed since the game last loaded it, Ext.Debug.Reset() and
         wait for the mod's RPC table to come back. Returns the number of changed files (0 = nothing done)."""
         cur = mod_tree_hashes()
         changed = changed_files(self.state["mod_hashes"], cur)
@@ -2903,6 +3118,7 @@ class Runner:
         else:
             log("the agent didn't save this session; quicksaving")
         before = {s.folder for s in list_saves()}
+        combat = party_in_combat()   # recorded with the save: boundary_save never relaunches onto a mid-fight one
         t0 = time.time()
         try:
             if "ui.menu" in available_ops("client"):
@@ -2921,7 +3137,9 @@ class Runner:
                     log(f"quicksave {s.folder} has an unexpected owner; not recording it")
                     return
                 self.state["runner_saves"] = self.state["runner_saves"] + [s.folder]
-                log(f"quicksave written: {s.folder}")
+                self.state["runner_save_combat"] = {**(self.state["runner_save_combat"] or {}), s.folder: combat}
+                log(f"quicksave written: {s.folder}" + {True: " (mid-fight)", None: " (fight state unknown)"}.get(
+                    combat, ""))
                 return
             time.sleep(2)
         log("quicksave didn't appear within 60 s")
@@ -3030,7 +3248,9 @@ class Runner:
                      progress=f"{base}.progress.jsonl", session_ended=None)
         self.write_status_line(f"playing {sid}{tag} (until {datetime.fromtimestamp(deadline):%H:%M})")
         log(f"{sid}{tag}: {client.name} starting ({model}, effort {effort or 'default'}; deadline "
-            f"{datetime.fromtimestamp(deadline):%H:%M}, hard stop {datetime.fromtimestamp(hard_stop):%H:%M})")
+            f"{datetime.fromtimestamp(deadline):%H:%M}, hard stop {datetime.fromtimestamp(hard_stop):%H:%M}; "
+            f"code {self.mod_rev or 'unknown'})")
+        self.code_moved(sid + tag)
         if self.opt.dry_run:
             print(json.dumps({"cmd": cmd, "cwd": str(PLAY_DIR), "deadline": deadline}, indent=1))
             return SessionResult(sid, claude_session, 0, "dry_run", start, start, model=model, effort=effort)
@@ -3220,6 +3440,7 @@ class Runner:
         human.close()
         jsonl.close()
         log(f"{sid}{tag}: claude finished ({reason}, exit {proc.returncode}, {(end - start) / 60:.1f} min)")
+        self.code_moved(sid + tag)
         self.write_latency(f"{sid}{tag}", base, start, end)
         self.write_progress(f"{sid}{tag}", base, start, end)
         self.write_triage(f"{sid}{tag}", base)
@@ -3944,6 +4165,10 @@ class Runner:
     def play_session(self, minutes: float, first: bool) -> SessionResult:
         if self.opt.dry_run:
             return self.plan_dry_run(minutes)
+        try:
+            self.refresh_mod_snapshot()   # before a relaunch (it loads the snapshot) and the hot reload
+        except OSError as e:
+            log(f"mod snapshot refresh failed: {e}; the game keeps {self.mod_rev}'s mod")
         relaunched = self.maybe_relaunch(first, minutes)
         loaded = self.ensure_game(first)
         if self.opt.start_save and not any(h.get("kind") == "play" for h in self.state["history"] or []):

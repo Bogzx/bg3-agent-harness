@@ -21,7 +21,8 @@
 #   --continue         passes -continueGame (loads the most recent save)
 #   --env KEY=VALUE    extra environment for the game process (repeatable)
 #   --mod-path DIR     loose bg3le mod root(s), ':'-separated, each containing Mods/<Name>/ScriptExtender/
-#                      (default: $BG3AI_MOD_PATH, else <repo>/mod if it exists)
+#                      (default: $BG3AI_MOD_PATH, else <repo>/mod if it exists; runner/play.py passes its
+#                      session snapshot runtime/mod-live, refreshed from mod/ only between sessions)
 #   --no-bg3le         run the game without bg3le (control run)
 #   --no-input-shim    run the game without the SDL input shim (native/bg3sdl; control socket @bg3ai-input)
 #   --dry-run          print the environment and command, launch nothing

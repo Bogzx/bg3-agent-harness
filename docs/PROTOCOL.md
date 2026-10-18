@@ -24,7 +24,9 @@ Anything that takes game time (walking, a spell resolving, a dialogue line) **st
 ## Live development
 
 The game is usually running with bg3le and our mod loaded from `mod/` (via `BG3LE_MOD_PATH`, a loose
-folder: no `.pak` and no modsettings change).
+folder: no `.pak` and no modsettings change). A game the runner (`runner/play.py`) launched loads it from
+`runtime/mod-live/` instead: a copy of `mod/` the runner refreshes only at a session boundary, so a merge into main
+mid-session never reaches the session's game (S090). Edit `mod/`; the runner copies it at the next session start.
 
 ```bash
 cd bridge

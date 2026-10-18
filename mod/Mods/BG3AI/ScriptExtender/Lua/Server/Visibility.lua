@@ -301,7 +301,68 @@ function V.characterVisible(ctx, uuid, e, pos)
         end
         return false
     end
-    return V.perceived(ctx, uuid, pos)
+    return V.perceived(ctx, uuid, pos) or V.bigPerceived(ctx, uuid, e, pos)
+end
+
+------------------------------------------------------------------------
+-- Big creatures. S091 (the Netherbrain's psyche, 08:19-08:29): the brain, a huge body filling the screen, had no
+-- id until it took damage (get_nearby "Nothing visible in range", combat state `unseen_combatants`): its anchor
+-- point is 8 m below the party's platform and 20-22.5 m from every member, past the 18.5 m sight range; it listed
+-- at 12 m. A player sees a body that size from wherever any part of it is in sight. So a Huge/Gargantuan creature
+-- (or one with AI bounds this wide) is within a member's sight range when the nearest point of its body is
+-- (V.bodyDist on a cylinder from its bounds or its size), and seen there by LOS or a clear ray to its body.
+------------------------------------------------------------------------
+
+V.BIG_R = 1.5                        -- AI bounds radius (m) from which a creature counts as big
+V.SIZE_REACH = { [4] = 2.25, [5] = 3.0 } -- ObjectSize Huge, Gargantuan: half the 5e space (15 ft, 20 ft), m
+
+-- Distance from `from` to a cylinder of radius r and height h standing on `pos` (pure; tested offline).
+function V.bodyDist(from, pos, r, h)
+    local dx, dz = from[1] - pos[1], from[3] - pos[3]
+    local horiz = math.max(0, math.sqrt(dx * dx + dz * dz) - r)
+    local y, dy = from[2], 0
+    if y < pos[2] then dy = pos[2] - y elseif y > pos[2] + h then dy = y - pos[2] - h end
+    return math.sqrt(horiz * horiz + dy * dy)
+end
+
+-- {r, h} of a big creature's body, or nil. Medium and smaller sizes skip the bounds read (~0.25 ms live).
+function V.bigBody(e)
+    local okS, size = pcall(function() return e.ObjectSize.Size end)
+    size = okS and tonumber(size) or nil
+    if size and size <= 2 then return nil end
+    local bd = V.bounds(e)
+    local r = math.max(bd and bd.radius or 0, V.SIZE_REACH[size] or 0)
+    if r < V.BIG_R then return nil end
+    return { r = r, h = math.max(bd and bd.height or 0, 2 * r) }
+end
+
+-- uuid fights in the fight a party member is in (the game's combat guid).
+function V.inPartyFight(ctx, uuid)
+    local g = V.osi(Osi.CombatGetGuidFor, uuid)
+    if not g then return false end
+    for _, u in ipairs(ctx.party) do
+        if V.osi(Osi.CombatGetGuidFor, u) == g then return true end
+    end
+    return false
+end
+
+-- V31, S093 (the psyche): the platforms don't answer the downward calibration ray (check_all "calibration ray missed
+-- the floor: rule is off"), so the ray branch is off exactly there. While the rays can't answer at this spot
+-- (uncalibrated; a broken or switched-off ray API stays strict), a big creature in the party's own fight with its
+-- body within a member's sight range is seen: it is in the fight's turn order and a body that size is on screen.
+function V.bigPerceived(ctx, uuid, e, pos)
+    local body = pos and V.bigBody(e)
+    if not body then return false end
+    local near = false
+    for _, o in ipairs(ctx.observers) do
+        if o.pos and V.bodyDist(o.pos, pos, body.r, body.h) <= o.sight then
+            if truthy(V.osi(Osi.HasLineOfSight, o.uuid, uuid)) then return true end
+            near = true
+        end
+    end
+    if not near then return false end
+    if V.largePerceived(ctx, uuid, e, pos, nil, body) then return true end
+    return not V.rayBroken and not V.calib.ok and V.inPartyFight(ctx, uuid)
 end
 
 -- Item classification from server flags (no hidden flags are ever exported).
@@ -483,7 +544,7 @@ end
 -- For these objects only, a party member also perceives the object if a
 -- physics ray from its eye reaches one of a few sample points on the object's
 -- bounds unobstructed (or the first thing it hits is the object itself).
--- Characters never use this path: they stay on CanSee/LOS above.
+-- Characters use it only when big (V.bigPerceived); the others stay on CanSee/LOS above.
 -- Called only after the trap/secret-door/scenery filters, so it can never
 -- reveal an undiscovered standalone trap or a hidden secret door.
 ------------------------------------------------------------------------
@@ -647,13 +708,16 @@ local function eyeTried(tried, eye)
 end
 
 -- Is a large object perceived by an unobstructed ray from a party member?
-function V.largePerceived(ctx, uuid, e, pos, kind)
+-- body = V.bigBody of a big creature: its size and reach from its body (V.bodyDist), not its anchor point.
+function V.largePerceived(ctx, uuid, e, pos, kind, body)
     if not pos or V.rayBroken then return false end
-    local bd = V.bounds(e)
-    local large = V.LARGE_KINDS[kind] or (bd and (bd.height >= V.LARGE_H or bd.radius >= V.LARGE_R))
+    local bd = body and { height = body.h, radius = body.r } or V.bounds(e)
+    local large = body or V.LARGE_KINDS[kind] or (bd and (bd.height >= V.LARGE_H or bd.radius >= V.LARGE_R))
     if not large then return false end
     local now = Ext.Utils.MonotonicTime()
-    local c = rayCacheGet(ctx, uuid, now)
+    -- a creature can move: its verdict is kept for where it stands
+    local key = body and (uuid .. "@" .. math.floor(pos[1] + 0.5) .. "," .. math.floor(pos[3] + 0.5)) or uuid
+    local c = rayCacheGet(ctx, key, now)
     if c then return c.v end
     local o1 = ctx.observers[1]
     if not (o1 and o1.pos and V.rayCalibrated(o1)) then return false end
@@ -662,7 +726,8 @@ function V.largePerceived(ctx, uuid, e, pos, kind)
     local v, inRange, tried = false, false, {}
     for _, o in ipairs(ctx.observers) do
         local eye = o.pos and { o.pos[1], o.pos[2] + V.EYE_H, o.pos[3] }
-        if eye and U.dist(o.pos, pos) <= o.sight and not eyeTried(tried, eye) then
+        local d = o.pos and (body and V.bodyDist(o.pos, pos, r, h) or U.dist(o.pos, pos))
+        if eye and d <= o.sight and not eyeTried(tried, eye) then
             inRange = true
             local ok, res = pcall(function()
                 for _, pt in ipairs(samplePoints(eye, pos, h, r)) do
@@ -682,7 +747,7 @@ function V.largePerceived(ctx, uuid, e, pos, kind)
     end
     local st = V.rayStats
     if v then st.ray = st.ray + 1 elseif inRange then st.blocked = st.blocked + 1 else st.out_of_range = st.out_of_range + 1 end
-    rayCachePut(ctx, uuid, now, v)
+    rayCachePut(ctx, key, now, v)
     return v
 end
 

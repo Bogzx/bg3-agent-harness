@@ -740,14 +740,17 @@ class KillGame(unittest.TestCase):
         from unittest import mock
         self.alive = set()
         envs: list[dict] = []
+        args: list[list] = []
 
         class Proc:
             pid = 4343
 
-        def popen(args, **kw):
+        def popen(a, **kw):
+            args.append(a)
             envs.append(kw["env"])
             return Proc()
         self.r.state = {}
+        self.r.refresh_mod_snapshot = lambda: []
         with mock.patch.object(P, "steam_ready", lambda: (True, "ok")), \
                 mock.patch.object(P, "bg3le_problems", lambda: []), \
                 mock.patch.object(P.subprocess, "Popen", popen), \
@@ -759,6 +762,7 @@ class KillGame(unittest.TestCase):
                 mock.patch.dict(P.os.environ, {"DISPLAY": ":1", "XAUTHORITY": "/run/user/1000/xauth_old"}):
             self.r.launch_game(None)
         self.assertEqual(envs[0]["XAUTHORITY"], "/run/user/1000/xauth_new")
+        self.assertEqual(args[0][1:3], ["--mod-path", str(P.MOD_LIVE)])   # S24: the snapshot, never <repo>/mod
         self.assertIn("display env refreshed", (P.RUNTIME / "runner.log").read_text())
 
     def test_launch_refused_without_a_display(self):
@@ -910,22 +914,30 @@ class Relaunch(unittest.TestCase):
         self.assertEqual(P.pick_save(saves, None, "Claude", {"Claude-3__QuickSave_4"}).label, "QuickSave_4")  # runner's own
 
     def _runner(self, d: Path, *, launched, log_text, save_mtime, last_started=50.0, steam=(True, "offline"),
-                owns=True, first=False, ram=5000):
-        self.saved = (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb)
+                owns=True, first=False, ram=5000, mod_path=None, acts=(), extra_saves=(), runner_saves=(),
+                save_combat=None, combat_now=False, last_ended=None):
+        self.saved = (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb,
+                      P.game_mod_path, P.read_actions_since, P.party_in_combat)
         P.port_open = lambda *a, **k: True
+        P.party_in_combat = lambda: combat_now
+        P.read_actions_since = lambda t, *a, **k: [x for x in acts if x.get("t", 0) > t]   # never the real log
         P.game_ram_mb = lambda: ram
+        P.game_mod_path = lambda: mod_path   # never the machine's real game
         P.steam_ready = lambda: steam
-        P.list_saves = lambda: [P.Save("Claude-1__S032-end", "Claude", "S032-end", save_mtime)]
+        P.list_saves = lambda: [P.Save("Claude-1__S032-end", "Claude", "S032-end", save_mtime), *extra_saves]
         P.game_started_at = lambda: launched
         P.log = lambda m: self.logs.append(m)
         self.logs, self.killed, self.events = [], [], []
         r = P.Runner.__new__(P.Runner)
         r.opt = P.Options("pt", None, 30, "opus", save_owner="Claude", take_over=True)
         r.mem = d
-        r.state = type("S", (), {"dir": d, "data": {"game": None, "save_owner": "Claude", "runner_saves": [],
-                                                       "loaded_save": "x",
+        r.pending_notes, r.relaunch_save = [], None
+        r.state = type("S", (), {"dir": d, "data": {"game": None, "save_owner": "Claude",
+                                                       "runner_saves": list(runner_saves),
+                                                       "runner_save_combat": save_combat, "loaded_save": "x",
                                                        "history": [{"kind": "play", "session": "S032",
-                                                                    "started": last_started}]},
+                                                                    "started": last_started,
+                                                                    **({"ended": last_ended} if last_ended else {})}]},
                                   "__getitem__": lambda s, k: s.data.get(k),
                                   "__setitem__": lambda s, k, v: s.data.__setitem__(k, v)})()
         (d / "S032.log").write_text(log_text)
@@ -936,7 +948,8 @@ class Relaunch(unittest.TestCase):
 
     def tearDown(self):
         if hasattr(self, "saved"):
-            (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb) = self.saved
+            (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb,
+             P.game_mod_path, P.read_actions_since, P.party_in_combat) = self.saved
 
     def test_relaunches_after_a_ready_check_failure(self):
         with tempfile.TemporaryDirectory() as td:
@@ -978,6 +991,28 @@ class Relaunch(unittest.TestCase):
             self.assertIsNone(r.maybe_relaunch(False, 30))
             self.assertTrue(any("5432 MB RAM+swap" in m and "kept" in m for m in self.logs))
 
+    def test_relaunches_a_game_loading_the_main_trees_mod(self):
+        # S24 switch-over: a game launched before the snapshot (BG3LE_MOD_PATH=<repo>/mod) is relaunched once at a
+        # boundary; one loading the snapshot is kept
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=100.0,
+                             mod_path=str(P.MOD_DIR))
+            why = r.maybe_relaunch(False, 30)
+            self.assertIn(f"loads the mod from {P.MOD_DIR}, not the runner's snapshot {P.MOD_LIVE}", why)
+            self.assertEqual(self.killed, [1])
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=100.0,
+                             mod_path=str(P.MOD_LIVE))
+            self.assertIsNone(r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [])
+
+    def test_reason_mod_path(self):
+        now = 100_000.0
+        self.assertIn("not the runner's snapshot /rt/mod-live",
+                      P.relaunch_reason(now - 60, now, "", 2, mod_path="/repo/mod", mod_live="/rt/mod-live"))
+        self.assertIsNone(P.relaunch_reason(now - 60, now, "", 2, mod_path="/rt/mod-live", mod_live="/rt/mod-live"))
+        self.assertIsNone(P.relaunch_reason(now - 60, now, "", 2, mod_path=None, mod_live="/rt/mod-live"))  # unknown
+
     def test_kept_when_steam_not_offline(self):
         with tempfile.TemporaryDirectory() as td:
             r = self._runner(Path(td), launched=time.time() - 600, log_text="end_day_failed", save_mtime=100.0,
@@ -993,6 +1028,233 @@ class Relaunch(unittest.TestCase):
             self.assertIsNone(r.maybe_relaunch(False))
             self.assertEqual(self.killed, [])
             self.assertTrue(any("lose play" in m for m in self.logs))
+
+    # S092 (09:03:17 load_game S090-end, then a refused do_actions, the wrap-up notes and end_session): actions.jsonl
+    S092_END = (
+        {"t": 60.0, "tool": "use_ability", "args": {}, "result": "ok: Fireball"},
+        {"t": 61.0, "tool": "load_game", "args": {"save": "Claude-1__S032-end"},
+         "result": "load_game: done — loaded=S032-end\nFIGHT DEBRIEF (reloaded, 2 rounds)"},
+        {"t": 62.0, "tool": "manage_inventory", "args": {"op": "use"}, "result": "FAILED: unknown target 'Elixir'"},
+        {"t": 62.1, "tool": "do_actions", "args": {"n": 20}, "result": "1. FAILED: unknown target\nSTOPPED: step 1"},
+        {"t": 63.0, "tool": "memory_read", "args": {}, "result": "knowledge/playbooks/session-wrapup.md"},
+        {"t": 64.0, "tool": "memory_write", "args": {}, "result": "Rewrote memory/HANDOFF.md"},
+        {"t": 64.5, "tool": "note", "args": {}, "result": "Noted 1 line"},
+        {"t": 65.0, "tool": "end_session", "args": {}, "result": "Memory for S092 committed"},
+    )
+
+    def test_ended_on_save(self):
+        save = P.Save("Claude-1__S032-end", "Claude", "S032-end", 10.0)
+        self.assertTrue(P.ended_on_save(self.S092_END, save))
+        self.assertTrue(P.ended_on_save(self.S092_END[1:2], save))    # the load was the last call
+        self.assertFalse(P.ended_on_save([], save))
+        self.assertFalse(P.ended_on_save(self.S092_END[:1], save))    # no load_game
+        later = {"t": 66.0, "result": "ok"}
+        for extra in ({**later, "tool": "equip_best"},                # S091: gear changed after the load
+                      {**later, "tool": "move_to"},
+                      {**later, "tool": "some_new_tool"}):            # unknown = a change
+            self.assertFalse(P.ended_on_save(self.S092_END + (extra,), save), extra)
+        for extra in ({**later, "tool": "move_to", "result": "NOT READY: loading"},
+                      {**later, "tool": "get_status"}, {**later, "tool": "wait_for"}):
+            self.assertTrue(P.ended_on_save(self.S092_END + (extra,), save), extra)
+        other = {"t": 61.5, "tool": "load_game", "args": {"save": "Claude-1__S031-end"},
+                 "result": "load_game: done — loaded=S031-end"}
+        self.assertFalse(P.ended_on_save(self.S092_END[:2] + (other,), save))   # the last load was another save
+        failed = {"t": 61.5, "tool": "load_game", "args": {"save": "Claude-1__S032-end"},
+                  "result": "FAILED: the game did not load"}
+        self.assertFalse(P.ended_on_save(self.S092_END[:2] + (failed,), save))  # the last load failed
+        twin = {"t": 61.5, "tool": "load_game", "args": {"save": "Claude-9__S032-end"},
+                "result": "load_game: done — loaded=S032-end"}
+        self.assertFalse(P.ended_on_save(self.S092_END[:2] + (twin,), save))    # same label, other folder
+        by_label = {"t": 61.5, "tool": "load_game", "args": {"save": "S032-end"},
+                    "result": "load_game: done — loaded=S032-end"}
+        self.assertTrue(P.ended_on_save(self.S092_END[:2] + (by_label,), save))
+
+    def test_relaunches_when_the_last_session_ended_on_the_older_save(self):
+        # S092 09:05: the mod-snapshot relaunch was skipped ("S090-end is older than S092's start") although S092
+        # ended on load_game S090-end with nothing changed after it
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=10.0, last_started=50.0,
+                             mod_path=str(P.MOD_DIR), acts=self.S092_END)
+            self.assertIn("loads the mod from", r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [1])
+            self.assertTrue(any("ended on load_game S032-end with nothing changed after it" in m for m in self.logs))
+        with tempfile.TemporaryDirectory() as td:   # one action after the load: skipped as before
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=10.0, last_started=50.0,
+                             mod_path=str(P.MOD_DIR),
+                             acts=self.S092_END + ({"t": 66.0, "tool": "equip_best", "result": "ok"},))
+            self.assertIsNone(r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [])
+            self.assertTrue(any("lose play" in m for m in self.logs))
+
+    # S093 (09:49:34): the agent didn't save after S090-end; the runner quicksaved at the session's end (QuickSave_24)
+    QS = P.Save("Claude-4__QuickSave_24", "Claude", "QuickSave_24", 70.0)
+    S093_END = (
+        {"t": 60.0, "tool": "end_turn", "args": {}, "result": "end_turn: done"},
+        {"t": 64.0, "tool": "memory_write", "args": {}, "result": "Rewrote memory/HANDOFF.md"},
+        {"t": 65.0, "tool": "end_session", "args": {}, "result": "Memory for S093 committed"},
+        {"t": 80.0, "tool": "get_status", "args": {}, "result": "WHERE Upper City"},   # the runner's check_all
+    )
+
+    def test_boundary_save(self):
+        last = {"session": "S093", "started": 50.0}
+        calm = {self.QS.folder: False}
+        saves = [P.Save("Claude-1__S032-end", "Claude", "S032-end", 10.0), self.QS,
+                 P.Save("Claude-3__QuickSave_23", "Claude", "QuickSave_23", 40.0)]   # the previous boundary's
+        runner = {self.QS.folder, "Claude-3__QuickSave_23"}
+        self.assertEqual(P.boundary_save(saves, runner, calm, last, list(self.S093_END)), (self.QS, ""))
+        got, why = P.boundary_save(saves, runner, {self.QS.folder: True}, last, list(self.S093_END))
+        self.assertIsNone(got)
+        self.assertIn("mid-fight", why)
+        got, why = P.boundary_save(saves, runner, {}, last, list(self.S093_END))   # made before the flag existed
+        self.assertIsNone(got)
+        self.assertIn("unknown whether the party was in a fight", why)
+        moved = {"t": 71.0, "tool": "move_to", "args": {}, "result": "move_to: done"}
+        got, why = P.boundary_save(saves, runner, calm, last, [*self.S093_END, moved])
+        self.assertIsNone(got)
+        self.assertIn("move_to changed the game after it", why)
+        refused = {**moved, "result": "NOT READY: loading"}
+        self.assertEqual(P.boundary_save(saves, runner, calm, last, [*self.S093_END, refused])[0], self.QS)
+        got, why = P.boundary_save(saves, {"Claude-3__QuickSave_23"}, calm, last, [])   # only one older than S093
+        self.assertIsNone(got)
+        self.assertIn("no runner quicksave since S093's start", why)
+        agents = P.Save("Claude-5__QuickSave_25", "Claude", "QuickSave_25", 75.0)    # not the runner's: ignored
+        self.assertEqual(P.boundary_save([*saves, agents], runner, calm, last, [])[0], self.QS)
+
+    def _s093(self, td, **kw):
+        # S093 wrote HANDOFF ("Save to load: S090-end") and ended 4 s before the quicksave: choose_save keeps S090-end
+        (Path(td) / "HANDOFF.md").write_text('# Handoff S032 → S033\n\nSave to load: "S032-end"\n')
+        r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=10.0, last_started=50.0,
+                         last_ended=66.0, mod_path=str(P.MOD_DIR), acts=self.S093_END, extra_saves=(self.QS,),
+                         runner_saves=(self.QS.folder,), **kw)
+        self.assertEqual(r.choose_save().label, "S032-end")
+        return r
+
+    def test_relaunches_onto_the_runners_boundary_quicksave(self):
+        # S093/S094 09:50:53: "the newest save S090-end is older than S093's start: skipped" although the runner's
+        # QuickSave_24 held where S093 ended; HANDOFF's older save stays choose_save's pick, the relaunch loads QS
+        with tempfile.TemporaryDirectory() as td:
+            r = self._s093(td, save_combat={self.QS.folder: False})
+            self.assertIn("loads the mod from", r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [1])
+            self.assertEqual(r.relaunch_save, self.QS)
+            self.assertEqual(r.save_choice[0], "QuickSave_24")
+            self.assertTrue(any("then loading Claude-4__QuickSave_24" in m for m in self.logs))
+            self.assertTrue(any("QuickSave_24" in n and "where that session left off" in n for n in r.pending_notes))
+
+    def test_boundary_quicksave_not_used_mid_fight(self):
+        for kw, why in (({"save_combat": {self.QS.folder: True}}, "made mid-fight"),
+                        ({"save_combat": {self.QS.folder: False}, "combat_now": True}, "in a fight now"),
+                        ({"save_combat": {self.QS.folder: False}, "combat_now": None}, "doesn't say"),
+                        ({"save_combat": None}, "unknown whether")):
+            self.logs = []
+            with tempfile.TemporaryDirectory() as td:
+                r = self._s093(td, **kw)
+                self.assertIsNone(r.maybe_relaunch(False, 30), kw)
+                self.assertEqual(self.killed, [], kw)
+                self.assertIsNone(r.relaunch_save, kw)
+                self.assertEqual(r.pending_notes, [], kw)
+                self.assertTrue(any(why in m and "lose play" in m for m in self.logs), (kw, self.logs))
+                self.tearDown()
+
+    def test_boundary_quicksave_not_kept_when_steam_blocks_the_relaunch(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._s093(td, save_combat={self.QS.folder: False}, steam=(False, "Steam is not running"))
+            self.assertIsNone(r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [])
+            self.assertIsNone(r.relaunch_save)   # a later ensure_game (a crash) must not load it
+            self.assertEqual(r.pending_notes, [])
+
+    def test_lose_play_mark(self):
+        last = {"session": "S093", "started": 50.0}
+        self.assertEqual(P.lose_play_mark(last, []), (50.0, "S093's start"))
+        reads = [{"t": 60.0, "tool": "get_status", "result": "WHERE"}, {"t": 61.0, "tool": "note", "result": "ok"}]
+        self.assertEqual(P.lose_play_mark(last, reads)[0], 50.0)   # nothing changed the game: its start
+        t, what = P.lose_play_mark(last, [*reads, {"t": 80.0, "tool": "move_to", "result": "move_to: done"},
+                                          {"t": 81.0, "tool": "move_to", "result": "FAILED — no path"}])
+        self.assertEqual(t, 80.0)   # the refused one changed nothing
+        self.assertIn("S093's last game change (move_to at ", what)
+
+    # A session saved partway (S032-end at 70, after its start at 50), then played on without saving (move_to at 80)
+    PLAYED_ON = ({"t": 60.0, "tool": "save_game", "args": {}, "result": "save_game: done"},
+                 {"t": 80.0, "tool": "move_to", "args": {}, "result": "move_to: done"},
+                 {"t": 85.0, "tool": "end_session", "args": {}, "result": "Memory committed"})
+
+    def test_kept_when_the_session_played_on_after_its_save(self):
+        # before: only the session's start counted, so the relaunch loaded S032-end and lost the walk at 80
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=70.0, last_started=50.0,
+                             mod_path=str(P.MOD_DIR), acts=self.PLAYED_ON)
+            self.assertIsNone(r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [])
+            self.assertTrue(any("older than S032's last game change (move_to at" in m and "lose play" in m
+                                for m in self.logs), self.logs)
+        with tempfile.TemporaryDirectory() as td:   # saved after its last game change: relaunched as before
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=82.0, last_started=50.0,
+                             mod_path=str(P.MOD_DIR), acts=self.PLAYED_ON)
+            self.assertIn("loads the mod from", r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [1])
+
+    def test_played_on_after_its_save_relaunches_onto_a_newer_boundary_quicksave(self):
+        qs = P.Save("Claude-4__QuickSave_24", "Claude", "QuickSave_24", 90.0)
+        for combat, relaunched in ((False, True), (True, False)):
+            self.logs, self.killed = [], []
+            with tempfile.TemporaryDirectory() as td:
+                (Path(td) / "HANDOFF.md").write_text('# Handoff S032 → S033\n\nSave to load: "S032-end"\n')
+                r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=70.0,
+                                 last_started=50.0, last_ended=88.0, mod_path=str(P.MOD_DIR), acts=self.PLAYED_ON,
+                                 extra_saves=(qs,), runner_saves=(qs.folder,), save_combat={qs.folder: combat})
+                self.assertEqual(r.choose_save().label, "S032-end")   # HANDOFF's, within the slack of S032's end
+                why = r.maybe_relaunch(False, 30)
+                self.assertEqual(why is not None, relaunched, self.logs)
+                self.assertEqual(r.relaunch_save, qs if relaunched else None)
+                if not relaunched:
+                    self.assertTrue(any("made mid-fight" in m and "lose play" in m for m in self.logs), self.logs)
+                self.tearDown()
+
+    def test_ensure_game_loads_the_relaunch_save_once(self):
+        saved = (P.port_open, P.log)
+        try:
+            P.port_open = lambda *a, **k: False
+            P.log = lambda m: None
+            r = P.Runner.__new__(P.Runner)
+            r.state = {"history": [], "loaded_save": None}
+            r.owns_game = lambda: True
+            r.opt = P.Options("pt", None, 30, "opus")
+            r.note_game_gone = r.check_game_oom = lambda *a: None
+            r.choose_save = lambda: "chosen"
+            r.load_save = lambda s: s
+            r.relaunch_save = self.QS
+            self.assertEqual(r.ensure_game(False), self.QS)
+            self.assertIsNone(r.relaunch_save)
+            self.assertEqual(r.ensure_game(False), "chosen")
+        finally:
+            P.port_open, P.log = saved
+
+
+class EnsureSave(unittest.TestCase):
+    def test_records_whether_the_runner_quicksave_was_mid_fight(self):
+        saved = (P.saves_since, P.list_saves, P.server_ready, P.available_ops, P.rpc, P.party_in_combat, P.log)
+        try:
+            for combat, tail in ((False, ""), (True, " (mid-fight)"), (None, " (fight state unknown)")):
+                logs, disk = [], []
+                P.saves_since = lambda *a: []
+                P.list_saves = lambda d=disk: list(d)
+                P.server_ready = lambda: True
+                P.available_ops = lambda c: {"ui.menu"}
+                P.party_in_combat = lambda c=combat: c
+                P.rpc = lambda *a, d=disk, **k: d.append(
+                    P.Save("Claude-4__QuickSave_24", "Claude", "QuickSave_24", time.time()))
+                P.log = logs.append
+                r = P.Runner.__new__(P.Runner)
+                r.state = {"save_owner": "Claude", "runner_saves": [], "runner_save_combat": None}
+                r.game_alive = lambda: True
+                r.ensure_save(0.0)
+                self.assertEqual(r.state["runner_saves"], ["Claude-4__QuickSave_24"])
+                self.assertEqual(r.state["runner_save_combat"], {"Claude-4__QuickSave_24": combat})
+                self.assertIn(f"quicksave written: Claude-4__QuickSave_24{tail}", logs)
+        finally:
+            (P.saves_since, P.list_saves, P.server_ready, P.available_ops, P.rpc, P.party_in_combat,
+             P.log) = saved
 
 
 class Gates(unittest.TestCase):
@@ -1409,6 +1671,123 @@ class HotReload(unittest.TestCase):
         P.game_state = lambda: "Menu"
         self.r.hot_reload_mod()
         self.assertEqual({c for _, c in self.evals}, {"client"})
+
+
+class ModSnapshot(unittest.TestCase):
+    """S24: the runner's game loads the mod from MOD_LIVE, a copy of mod/ refreshed only at a session boundary (S090
+    loaded a merge's Lua that landed 19 s after its bridge started). Fake trees only."""
+
+    def test_sync_tree_in_place(self):
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = Path(td) / "mod", Path(td) / "live"
+            (src / "Mods" / "A").mkdir(parents=True)
+            (src / "Mods" / "A" / "x.lua").write_text("one")
+            (src / "Mods" / "A" / "y.lua").write_text("two")
+            (src / "__pycache__").mkdir()
+            (src / "__pycache__" / "c.pyc").write_text("no")
+            self.assertEqual(P.sync_tree(src, dst), ["Mods/A/x.lua", "Mods/A/y.lua"])
+            ino = dst.stat().st_ino
+            self.assertEqual(P.mod_tree_hashes(dst), P.mod_tree_hashes(src))
+            self.assertFalse((dst / "__pycache__").exists())
+            self.assertEqual(P.sync_tree(src, dst), [])                       # nothing to do
+            # a merge into main: x edited, y removed, a new dir; a stray temp file from an interrupted sync
+            (src / "Mods" / "A" / "x.lua").write_text("ONE")
+            (src / "Mods" / "A" / "y.lua").unlink()
+            (src / "Mods" / "B").mkdir()
+            (src / "Mods" / "B" / "z.lua").write_text("new")
+            (dst / "Mods" / "A" / ".x.lua.sync").write_text("half")
+            (dst / "Mods" / "Old").mkdir()
+            (dst / "Mods" / "Old" / "gone.lua").write_text("old")
+            self.assertEqual(P.sync_tree(src, dst),
+                             ["Mods/A/.x.lua.sync", "Mods/A/x.lua", "Mods/A/y.lua", "Mods/B/z.lua",
+                              "Mods/Old/gone.lua"])
+            self.assertEqual(P.mod_tree_hashes(dst), P.mod_tree_hashes(src))
+            self.assertEqual((dst / "Mods" / "A" / "x.lua").read_text(), "ONE")
+            self.assertFalse((dst / "Mods" / "Old").exists())                # emptied dirs go too
+            self.assertEqual(dst.stat().st_ino, ino)                          # the same directory (a bind mount's)
+
+    def test_repo_commit(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            self.assertEqual(P.repo_commit(repo), "unknown")                  # not a git tree
+            git = ["git", "-C", td, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+            P.subprocess.run(git + ["init", "-q"], check=True)
+            (repo / "mod").mkdir()
+            (repo / "mod" / "a.lua").write_text("1")
+            (repo / "docs.md").write_text("d")
+            P.subprocess.run(git + ["add", "."], check=True)
+            P.subprocess.run(git + ["commit", "-qm", "c"], check=True)
+            head = P.subprocess.run(git + ["rev-parse", "--short=9", "HEAD"], capture_output=True,
+                                    text=True).stdout.strip()
+            self.assertEqual(P.repo_commit(repo), head)
+            (repo / "docs.md").write_text("edited")                           # outside mod/ and bridge/src
+            self.assertEqual(P.repo_commit(repo), head)
+            (repo / "mod" / "a.lua").write_text("2")
+            self.assertEqual(P.repo_commit(repo), head + "+dirty")
+
+    def _runner(self, td: Path, commits: list[str]):
+        self.logs, self.events = [], []
+        saved = (P.MOD_DIR, P.MOD_LIVE, P.repo_commit, P.log)
+        self.addCleanup(lambda: setattr(P, "MOD_DIR", saved[0]) or setattr(P, "MOD_LIVE", saved[1])
+                        or setattr(P, "repo_commit", saved[2]) or setattr(P, "log", saved[3]))
+        P.MOD_DIR, P.MOD_LIVE = td / "mod", td / "runtime" / "mod-live"
+        (P.MOD_DIR / "Mods").mkdir(parents=True)
+        (P.MOD_DIR / "Mods" / "a.lua").write_text("1")
+        seq = iter(commits)
+        P.repo_commit = lambda *a, **k: next(seq)
+        P.log = self.logs.append
+        r = P.Runner.__new__(P.Runner)
+        r.event = lambda kind, **f: self.events.append((kind, f))
+        return r
+
+    def test_refresh_records_the_commit(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), ["abc", "abc"])
+            self.assertEqual(r.refresh_mod_snapshot(), ["Mods/a.lua"])
+            self.assertEqual(r.mod_rev, "abc")
+            self.assertEqual((P.MOD_LIVE / "Mods" / "a.lua").read_text(), "1")
+            self.assertIn(f"mod snapshot {P.MOD_LIVE} = abc (1 files updated: Mods/a.lua)", self.logs)
+
+    def test_refresh_copies_again_when_a_merge_lands_during_the_copy(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), ["abc", "def", "def", "def"])
+            r.refresh_mod_snapshot()
+            self.assertEqual(r.mod_rev, "def")
+
+    def test_main_moved_logged_once_per_commit(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), ["abc", "abc", "abc", "def", "def", "fed"])
+            r.code_moved("S089")                      # mod_rev unknown yet: nothing (and no git call)
+            r.refresh_mod_snapshot()
+            r.code_moved("S090")                      # abc: nothing moved
+            r.code_moved("S090")                      # def: logged
+            r.code_moved("S090-r1")                   # def again: once
+            r.code_moved("S090-r1")                   # fed: logged
+            moved = [m for m in self.logs if "main moved" in m]
+            self.assertEqual(len(moved), 2)
+            self.assertIn("S090: main moved since the session's mod snapshot (abc -> def): the game keeps abc's mod",
+                          moved[0])
+            self.assertEqual([f["head"] for k, f in self.events if k == "main_moved"], ["def", "fed"])
+
+    def test_game_mod_path_from_the_game_environ(self):
+        with tempfile.TemporaryDirectory() as td:
+            proc = Path(td)
+            for pid, env in ((11, b"HOME=/h\0BG3AI_GAME_STAMP=1\0"),                    # no bg3le: no mod path
+                             (12, b"HOME=/h\0BG3LE_MOD_PATH=/rt/mod-live\0BG3LE_DEBUG=1\0")):
+                (proc / str(pid)).mkdir()
+                (proc / str(pid) / "environ").write_bytes(env)
+            with mock.patch.object(P, "pids_of_game", lambda: [10, 11, 12]):   # 10: gone (no /proc entry)
+                self.assertEqual(P.game_mod_path(proc), "/rt/mod-live")
+            with mock.patch.object(P, "pids_of_game", lambda: [11]):
+                self.assertIsNone(P.game_mod_path(proc))
+
+    def test_wired_at_the_boundary(self):
+        src = Path(P.__file__).read_text()
+        body = src[src.index("    def play_session("):]
+        self.assertLess(body.index("self.refresh_mod_snapshot()"), body.index("self.maybe_relaunch("))
+        self.assertLess(body.index("self.refresh_mod_snapshot()"), body.index("self.hot_reload_mod()"))
+        claude = src[src.index("    def run_claude("):]
+        self.assertIn("code {self.mod_rev or 'unknown'}", claude[:claude.index("if self.opt.dry_run")])
 
 
 class WaitWatchdog(unittest.TestCase):

@@ -99,6 +99,31 @@ class RetryVerdict(unittest.TestCase):
         self.assertEqual(fights.retry_verdict(lost, again), "NOT better")
         self.assertEqual(fights.same_tactic(lost, again), sorted(kit[:4]))
 
+    def test_netherbrain_try_4_got_further(self):
+        # vis V29: S090 07:34 try 3 (killed 22, 3 downs, brain never hurt) -> S091 07:59 try 4 (killed 19, 6 downs,
+        # the brain at its last 28/210 when the psyche's turns ran out): "NOT better" before
+        t3 = dict(self.f("reload", 3, 1053, 22, ["Haste"]), foes={"Dominated Red Dragon": [313, 0]})
+        t4 = dict(self.f("reload", 6, 1233, 19, ["Haste"]),
+                  foes={"Dominated Red Dragon": [313, 0], "The Unbreakable Will of the Netherbrain": [210, 13]})
+        self.assertEqual(fights.retry_verdict(t3, t4),
+                         "further (The Unbreakable Will of the Netherbrain down to 13 % vs 100 %)")
+        self.assertEqual(fights.retry_verdict(t4, dict(t4, foes={"The Unbreakable Will of the Netherbrain": [210, 40]})),
+                         "NOT better")   # a try 5 that left it at 40 % is not further
+        self.assertEqual(fights.retry_verdict(t3, dict(t3)), "NOT better")   # old records: no foes
+
+    def test_tough_foes_from_s091_results(self):
+        txt = ("CHANGES\n  + e525 The Netherbrain hostile HP 29/210 11.4m\n"
+               "  + e521 The Unbreakable Will of the Netherbrain hostile HP 28/210 [Chains of Karsus] 11.9m\n"
+               "e521 @(215,-61,4259) hp=51 name=The Unbreakable Will of the Netherbrain max_hp=210 ac=15 "
+               "relation=hostile race=Aberration\n"
+               "  e367 Illithid Arcanist (Mind Flayer) hostile init -10 hp 63% @(5551,7,473)\n"
+               "  e367 Illithid Arcanist HP 50->20/90\n"   # under BOSS_MIN_HP
+               "  e2 Wyll HP 163->126/174\n"              # ours: never hostile
+               "  e400 Dominated Red Dragon (Dragon) hostile init 3\n  e400 Dominated Red Dragon HP 300->200/313\n")
+        self.assertEqual(fights.tough_foes(txt, {"Wyll"}, dead={"Dominated Red Dragon"}),
+                         {"The Netherbrain": [210, 14], "The Unbreakable Will of the Netherbrain": [210, 13],
+                          "Dominated Red Dragon": [313, 0]})
+
     def test_killed_from_the_debrief_block(self):
         txt = ("load_game: done\nFIGHT DEBRIEF (reloaded, 7 rounds, 8m51s) vs Orin\n  DIED: Karlach — revive now\n"
                "  enemies used: Orin: Slay\n  killed 2/9 · dealt Karlach 21\n")

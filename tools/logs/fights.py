@@ -51,6 +51,13 @@ SUMMON_RE = re.compile(r"PARTY (?:\+ )?\*?e\d+ ([A-Z][\w' -]*?) (?:L\d+ )?HP [^\
 # "WHERE Cloister of Sombre Embrace · Lower City", or a move: "WHERE Campsite · Lower City -> Cloister of Sombre
 # Embrace · Lower City" (S080 02:16: stopping at the first · read "Campsite" for the fight there)
 WHERE_RE = re.compile(r"WHERE ([^|\n]+)")
+# a hostile's HP as shown: a combatant appearing ("+ e521 The Unbreakable Will of the Netherbrain hostile HP 28/210"),
+# look_at ("e521 @(215,-61,4259) hp=51 name=The Unbreakable Will of the Netherbrain max_hp=210 ... relation=hostile"),
+# and CHANGES (HP_RE) of a name seen as hostile
+FOE_HP_RE = re.compile(r"(e\d+) ([A-Z][\w' -]*?) hostile HP (\d+)/(\d+)")
+LOOK_HP_RE = re.compile(r"hp=(\d+) name=([^\n=]+?) max_hp=(\d+)[^\n]*relation=hostile")
+HOSTILE_RE = re.compile(r"(e\d+) ([A-Z][\w' -]*?)(?: \([^)\n]*\))? hostile\b")
+BOSS_MIN_HP = 150     # a foe this tough counts for "further" (S091: the Netherbrain's brain, 210)
 ABIL_RE = re.compile(r'"ability\\?"\s*:\s*\\?"([^"\\]+)')
 CAST_RE = re.compile(r"cast=([A-Za-z_]+)")
 # compacted action lines drop "cast=X" when X is the action id: "action: Target_MainHandAttack e31: done — target=..",
@@ -205,6 +212,28 @@ def load_session(run, sid):
     return calls, spans, last_t
 
 
+def tough_foes(text, party=(), dead=()):
+    """{name: [max_hp, lowest hp %]} of the hostiles with max HP >= BOSS_MIN_HP whose HP these results showed (0 % for
+    one that died). S091 Netherbrain try 4 got the brain to 28/210 (13 %), which try 3 never hurt: the furthest try
+    yet."""
+    hostile = {base(n) for _, n in HOSTILE_RE.findall(text)}
+    reads = [(n, int(h), int(mx)) for _, n, h, mx in FOE_HP_RE.findall(text)]
+    reads += [(n, int(h), int(mx)) for h, n, mx in LOOK_HP_RE.findall(text)]
+    reads += [(n, int(b), int(mx)) for _, n, _, b, mx in HP_RE.findall(text) if base(n) in hostile]
+    out = {}
+    for n, hp, mx in reads:
+        n = base(n)
+        if mx < BOSS_MIN_HP or n in party:
+            continue
+        pct = round(100 * max(hp, 0) / mx)
+        cur = out.setdefault(n, [mx, pct])
+        cur[0], cur[1] = max(cur[0], mx), min(cur[1], pct)
+    for n, v in out.items():
+        if n in dead:
+            v[1] = 0
+    return out
+
+
 def outcome_of(reloaded, downed_all, killed, cut):
     """reload / wipe / unfinished (still in combat when the session's samples stop: S045 Ketheric try 2 was called
     "won") / won (enemies died) / ended."""
@@ -300,7 +329,7 @@ def mine(run, sid):
             "downs_by": dict(downs), "party_died": party_died, "outcome": outcome,
             "reload_to": (re.search(r"loaded=([^\n ]+)", reload_c["res"]) or [None, None])[1] if reload_c else None,
             "abilities": dict(abilities.most_common(8)), "casts": dict(casts.most_common(8)), "harness": flags,
-            "killed": int(km.group(1)) if km else None,
+            "killed": int(km.group(1)) if km else None, "foes": tough_foes(text, party, {base(n) for n, _ in died}),
         })
     # party deaths outside any fight span (falls, traps, walks): logged as incidents with the next reload
     for c in calls:
@@ -328,11 +357,17 @@ def bad(f):
 
 def retry_verdict(p, f):
     """An attempt vs the earlier one at the same group: "better" (won, fewer downs, or as many and less HP lost),
+    "further (The Unbreakable Will of the Netherbrain down to 13 % vs 100 %)" when it got a tough foe lower (S091),
     "further (killed 2 vs 0)" when it got more enemies killed but cost as much or more (S065 Orin try 2: 2 Reapers
     and Orin to 21 % with a death; S061 09:37: Gortash killed, then the wipe), else "NOT better"."""
     if (f["outcome"] == "won" and p["outcome"] != "won") or f["downs"] < p["downs"] or \
             (f["downs"] == p["downs"] and f["hp_lost"] < p["hp_lost"]):
         return "better"
+    # a tough foe brought lower than before (not hurt before: 100 %), S091 vs S090 (killed 19 vs 22)
+    drops = [((p.get("foes") or {}).get(n, [0, 100])[1] - lo, n, lo) for n, (_, lo) in (f.get("foes") or {}).items()]
+    drop, n, lo = max(drops, default=(0, None, None))
+    if drop > 0:
+        return f"further ({n} down to {lo} % vs {lo + drop} %)"
     if f.get("killed") is not None and p.get("killed") is not None and f["killed"] > p["killed"]:
         return f"further (killed {f['killed']} vs {p['killed']})"
     return "NOT better"
