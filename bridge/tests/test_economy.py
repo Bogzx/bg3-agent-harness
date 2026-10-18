@@ -1529,6 +1529,20 @@ class ScrollUse(unittest.TestCase):
                       head)
         self.assertNotIn("act.scroll_settle", [op for op, _ in self.rpcs])
 
+    def test_misty_step_scroll_into_the_void_is_not_read(self):
+        # S093 09:47: Misty Step at (230.5,-55.7,4260.5), off the psyche's platform: Gale fell into the void and died
+        why = ("the landing (230.5,-55.7,4260.5) is in the air: no floor within 2 m of that height (the only floor "
+               "there is the void's bottom at y=-73.1, a Chasm: a fall there is fatal); pick a spot on the floor you "
+               "stand on or can see")
+        out, calls, _ = self._run("Shadowheart", "Scroll of Misty Step", name="Scroll of Misty Step",
+                                  pos=(230.5, -55.7, 4260.5),
+                                  rpc={"act.landing_check": lambda a: {"ok": False, "why": why}})
+        self.assertTrue(out.startswith("ERR") or "FAILED" in out, out)
+        self.assertIn("Scroll of Misty Step not read: the landing (230.5,-55.7,4260.5) is in the air", out)
+        self.assertEqual(calls, [])  # the scroll is never used
+        self.assertEqual(self.grounds, [])
+        self.assertEqual([a.get("pos") for op, a in self.rpcs if op == "act.landing_check"], [[230.5, -55.7, 4260.5]])
+
     def test_misty_step_scroll_that_did_not_move_says_so(self):
         saved, server.TELEPORT_WAIT_S = server.TELEPORT_WAIT_S, 0.0
         self.addCleanup(setattr, server, "TELEPORT_WAIT_S", saved)

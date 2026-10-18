@@ -2151,6 +2151,88 @@ test("cast: Dimension Door landing checks: range from AreaRadius, a landing in t
     fails({ char = P1, spell = "Teleportation_DimensionDoor", targets = { GOB, NPC }, pos = { 0, 0, 5 } }, "one who goes")
 end)
 
+-- S093 09:47 (the Netherbrain's psyche): Gale on her platform (230,-52,4245) cast Misty Step at (230.5,-55.7,4260.5),
+-- 1.5 m off its edge; no landing check, she fell to y -73.1 (the void's bottom, a Chasm floor) and died, and the
+-- result read "FAILED — the game refused the cast (no reason given)".
+local MISTY = { SpellType = "Target", TargetRadius = "18", UseCosts = "BonusActionPoint:1", Level = 2,
+    TargetConditions = "CanStand('') and not Character() and not Self()",
+    SpellProperties = { { TextKey = "Ground", Functors = { { TypeId = "TeleportSource" } } } } }
+local GALE_AT, VOID, EDGE, PLATFORM = { 230, -52, 4245 }, { 230.5, -55.7, 4260.5 }, { 231.3, -56, 4261.5 },
+    { 232, -56, 4262 }
+-- the psyche's columns: the platform's floor at -56 (its edge at x = 231), the void's bottom (Chasm) at -73.1
+local function psyche(fn)
+    local heights, savedNav = Ext.Level.GetHeightsAt, BG3AI.Nav
+    Ext.Level.GetHeightsAt = function(x) return x >= 231 and { -56.0, -73.1 } or { -73.1 } end
+    BG3AI.Nav = setmetatable({ surfaceNear = function(p, m)
+        return (p[2] < -70 or p[1] - (m or 0) < 231) and "Chasm" or nil
+    end }, { __index = savedNav })
+    local ok, err = pcall(fn)
+    Ext.Level.GetHeightsAt, BG3AI.Nav = heights, savedNav
+    if not ok then error(err, 0) end
+end
+
+test("teleport: point_teleport reads Misty Step's TeleportSource (not DD, Revivify or a plain point spell)", function()
+    spell("Target_MistyStep", MISTY)
+    spell("Target_MistyStep_Free", { SpellType = "Target", TargetRadius = "18" }) -- no readable functors: the id
+    spell("Teleportation_DimensionDoor", DD)
+    spell("Target_Thing", { TargetRadius = "18", SpellType = "Target" })
+    eq(A.point_teleport("Target_MistyStep"), true, "functor"); eq(A.point_teleport("Target_MistyStep_Free"), true, "id")
+    eq(A.point_teleport("Teleportation_DimensionDoor"), false, "two-step"); eq(A.point_teleport("Target_Thing"), false, "plain")
+end)
+
+test("teleport: Misty Step into the psyche's void / at its edge is refused before any cost (S093 09:47 Gale)", function()
+    spell("Target_MistyStep", MISTY)
+    world[P1].pos = GALE_AT
+    psyche(function()
+        local function fails(pos, pat)
+            local ok, r = pcall(op, "cast", { char = P1, spell = "Target_MistyStep", pos = pos })
+            local msg = (not ok) and (G.is_refusal(r) and r.reason or tostring(r)) or tostring(job(r).error)
+            assert(msg:find(pat, 1, true), msg)
+        end
+        fails(VOID, "the only floor there is the void's bottom at y=-73.1, a Chasm")
+        fails(EDGE, "is in a Chasm or within 0.5 m of one")
+        eq(#called("UseSpellAtPosition"), 0, "nothing cast")
+        local j = job(op("cast", { char = P1, spell = "Target_MistyStep", pos = PLATFORM }))
+        eq(j.status, "running", "on the platform " .. tostring(j.error))
+    end)
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return {} end
+    local j = job(op("cast", { char = P1, spell = "Target_MistyStep", pos = VOID }))
+    Ext.Level.GetHeightsAt = heights
+    eq(j.status, "failed", "no floor at all")
+    assert(j.error:find("no ground at all under the landing", 1, true), j.error)
+    world[P1].pos = { 0, 0, 0 }
+end)
+
+test("teleport: the result says where the caster landed; a fall to death reads FELL ... DIED, not 'refused'", function()
+    spell("Target_MistyStep", MISTY)
+    world[P1].pos = GALE_AT
+    local j
+    psyche(function() j = job(op("cast", { char = P1, spell = "Target_MistyStep", pos = PLATFORM })) end)
+    A.dispatch("CastSpell", { P1, "Target_MistyStep", "Target", "None", 0 })
+    world[P1].pos = { 232, -56, 4262.2 }
+    A.dispatch("CastedSpell", { P1, "Target_MistyStep" })
+    tick(10)
+    eq(j.status, "done", "landed " .. tostring(j.error)); eq(j.result.teleported, true, "teleported")
+    eq(j.result.now_at[2], -56, "now at"); near(j.result.landed_m_from_target, 0.2, "on the spot")
+    -- S093's outcome (the check bypassed: a column the heights read as floor): CastSpellFailed after the fall
+    world[P1].pos = GALE_AT
+    local heights = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { -55.7 } end
+    j = job(op("cast", { char = P1, spell = "Target_MistyStep", pos = VOID }))
+    Ext.Level.GetHeightsAt = heights
+    eq(j.status, "running", "cast " .. tostring(j.error))
+    world[P1].pos = { 230.5, -73.1, 4260.5 }
+    osiv[key("IsDead", P1)] = 1
+    A.dispatch("CastSpellFailed", { P1, "Target_MistyStep" })
+    tick(20)
+    osiv[key("IsDead", P1)] = nil
+    world[P1].pos = { 0, 0, 0 }
+    eq(j.status, "failed", "status")
+    assert(j.error:find("teleported, then FELL 17.4m below the landing (to y=-73.1) and DIED", 1, true), j.error)
+    assert(not j.error:find("refused", 1, true), j.error)
+end)
+
 test("cast ui=true (ACT-9 player route): Dimension Door alone/with an ally, no order and no task write", function()
     eq(A.TASK_POS2, false, "the write stays off")
     spell("Teleportation_DimensionDoor", DD)
@@ -3830,6 +3912,13 @@ local function allies_setup(where)
     return function() Ext.Loca.GetTranslatedString = function() return nil end; G.spellFacts, G.boxData = {}, {} end
 end
 
+-- S093 fairness leak: no spell or status id in what the agent reads (the game shows the group names)
+local function no_ids(text)
+    for _, pat in ipairs({ "Target_", "Shout_", "END_ALLY", "END_ALLYABILTIES" }) do
+        assert(not text:find(pat, 1, true), "internal id in: " .. text)
+    end
+end
+
 test("A27 Gather Your Allies alone is refused before any cost, listing the groups by name (S090 x2 empty casts)", function()
     for _, where in ipairs({ "book", "container" }) do
         local undo = allies_setup(where)
@@ -3837,11 +3926,11 @@ test("A27 Gather Your Allies alone is refused before any cost, listing the group
         local j = job(op("cast", { char = P1, spell = GYA }))
         undo()
         eq(j.status, "failed", where .. " status")
-        -- the usable ids first: combat_turn's quick pick (_VARIANTS) takes Keene's, not the used Watch
-        assert(j.error:find("choose a variant: " .. KEENE .. ", " .. GUR .. " (Gather Your Allies casts nothing by itself", 1, true), j.error)
-        assert(j.error:find("Guildmaster Keene's Fixers (" .. KEENE .. "), Gur Huntwardens (" .. GUR .. "), The Watch ("
-            .. WATCH .. ") [already called]", 1, true), j.error)
+        -- the usable ones first: combat_turn's quick pick (_WHICH_VARIANTS) takes Keene's, not the used Watch
+        assert(j.error:find("Gather Your Allies casts nothing by itself: use_ability which=<one of Guildmaster Keene's"
+            .. " Fixers, Gur Huntwardens, The Watch [already called]>", 1, true), j.error)
         assert(j.error:find("x,y,z = the ground where they appear", 1, true), j.error)
+        no_ids(j.error)
         eq(#called("UseSpell"), 0, where .. " no cast")
     end
 end)
@@ -3864,12 +3953,20 @@ test("A27 which: an unknown or used group is refused with the list; no point = '
         local j = job(op("cast", args))
         eq(j.status, "failed", pat)
         assert(j.error:find(pat, 1, true), j.error)
+        no_ids(j.error)
     end
     fails({ char = P1, spell = GYA, which = "Harpers", pos = { 5, 0, 0 } },
-        "no variant 'Harpers' in Gather Your Allies: The Watch (" .. WATCH .. "), Guildmaster")
+        "no variant 'Harpers' in Gather Your Allies: The Watch, Guildmaster Keene's Fixers, Gur Huntwardens")
     osiv[key("HasActiveStatus", P1, "END_ALLYABILITIES_GURALLIESCONSUMED")] = 1
     fails({ char = P1, spell = GYA, which = "Gur", pos = { 5, 0, 0 } },
-        "Gur Huntwardens was already called (END_ALLYABILITIES_GURALLIESCONSUMED): pick another of The Watch")
+        "Gur Huntwardens was already called: pick another of The Watch, Guildmaster Keene's Fixers, Gur Huntwardens"
+        .. " [already called]")
+    -- S093 09:38 (fairness leak): the Watch called and consumed; every refusal and the all-used one, names only
+    osiv[key("HasActiveStatus", P1, "END_ALLYABILITIES_WATCHALLIESCONSUMED")] = 1
+    fails({ char = P1, spell = GYA, which = "The Watch", pos = { 5, 0, 0 } }, "The Watch was already called")
+    osiv[key("HasActiveStatus", P1, "END_ALLYABILTIES_KEENEALLIESCONSUMED")] = 1
+    fails({ char = P1, spell = GYA }, "Gather Your Allies: every variant was already used: The Watch [already called]")
+    osiv[key("HasActiveStatus", P1, "END_ALLYABILITIES_WATCHALLIESCONSUMED")] = nil
     fails({ char = P1, spell = GYA, which = "The Watch" }, "needs x,y,z: a ground point")
     osiv[key("IsInCombat", P1)] = nil
     fails({ char = P1, spell = GYA, which = "The Watch", pos = { 5, 0, 0 } }, "called only in a fight")
