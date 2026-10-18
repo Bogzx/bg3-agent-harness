@@ -111,7 +111,7 @@ function A.cast_failed_why(char, target, spell)
     local ok, txt = pcall(function()
         if G.is_dead(target) then return "the target was already dead when it fired" end
         if not G.visible(target) then return "the target is out of sight now (hidden, invisible or behind cover)" end
-        if not G.b(G.q("HasLineOfSight", char, target)) then
+        if not G.los_ok(char, target) then
             return "no line of sight to the target now (it or something moved into the way)"
         end
         return nil

@@ -1374,7 +1374,13 @@ function S.preview(ctx, args)
             or (comp(te, "ServerItem") and V.itemVisible(ctx, target, te, tpos))
         if not visible then return { visible = false } end
         out.distance = round(U.dist(V.pos(ce), tpos), 1)
-        out.line_of_sight = truthy(osi(Osi.HasLineOfSight, char, target))
+        -- the guard's rule (G.los_ok: an item in sight by a ray to its body, S083 doors/walls)
+        local G = BG3AI.Guard
+        if G and G.los_ok then
+            out.line_of_sight = G.los_ok(char, target, out.distance)
+        else
+            out.line_of_sight = truthy(osi(Osi.HasLineOfSight, char, target))
+        end
         if type(info.range) == "number" then
             -- The guard's rule (G.check_cast): melee is edge to edge (both AIBounds.Stand radii).
             local slack = melee and (standRadius(ce) + standRadius(te)) or 0.5

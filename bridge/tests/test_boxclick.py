@@ -329,6 +329,22 @@ class ClickButton(Base):
         server.click(0.1, 0.2, "Right")
         self.assertEqual(self.ops, [("click", "L", 100, 100), ("click", "R", 100, 100)])
 
+    def test_left_click_says_the_spell_now_in_hand(self):
+        # S083 03:55:16: a blind hotbar click picked up Netherese Orb Blast and the reply said only "clicked left"
+        from bg3ai import hotbar
+        states = [{"armed": True, "armed_by": "counter", "spell": "Projectile_NethereseOrbBlast"}, {"armed": False}]
+        saved = hotbar.cast_state
+        hotbar.cast_state = lambda game, char: states.pop(0)
+        self.addCleanup(setattr, hotbar, "cast_state", saved)
+        out = server.click(0.459, 0.93)
+        self.assertIn("IN HAND: Projectile_NethereseOrbBlast", out)
+        self.assertIn("press_key ESCAPE", out)
+        out = server.click(0.6, 0.4)
+        self.assertNotIn("IN HAND", out)
+        self.assertEqual(len(states), 0)
+        server.click(0.6, 0.4, "right")   # a right click or a hover reads nothing
+        server.click(0.6, 0.4, "none")
+
     def test_unknown_button_refused(self):
         out = server.click(0.1, 0.2, "middle")
         self.assertEqual(self.ops, [])

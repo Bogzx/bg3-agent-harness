@@ -1491,6 +1491,82 @@ end
 -- refused). An item that passed G.visible this close is in plain sight.
 G.ITEM_LOS_NEAR_M = 4.0
 
+-- Farther away the same holds (S083: Knock on e284 Threshold of Loss from 6.3 m, its position 5.9 m up at the
+-- door's top; Eldritch Blast on the e703 sewer Wall; Knock on e720 from ~4 m: all refused "no line of sight" while
+-- the game's cursor showed 100 %, ~48 hand inputs). HasLineOfSight aims at the item's position, which its own
+-- collision or frame hides. An item is in sight from the caster when a physics ray from the caster's eye to a
+-- point on a column through its position hits the item itself first (nothing stands between them), or reaches a
+-- point inside its AI bounds unblocked (Visibility's large-object rule). Characters keep the engine's check.
+-- nil = no usable ray API (uncalibrated / broken): the refusal stands.
+G.ITEM_RAY_FRACS = { 0.0, 0.5, 0.85, -0.5, -1.0 } -- x the bounds height from the position; < 0 counts self hits only
+G.ITEM_RAY_SLACK = 0.3
+
+local function ray_hit_uuid(hit)
+    local ok, u = pcall(function() return hit.Shape.PhysicsObject.Entity.Uuid.EntityUuid end)
+    return ok and type(u) == "string" and u:lower() or nil
+end
+
+local function ray_hit_dist(hit, from)
+    local ok, d = pcall(function() local p = hit.Position; return U.dist(from, { p[1], p[2], p[3] }) end)
+    if ok and type(d) == "number" then return d end
+    local okd, dd = pcall(function() return hit.Distance end)
+    return okd and type(dd) == "number" and dd or nil
+end
+
+function G.item_ray_los(char, target)
+    local V = BG3AI.Visibility
+    local cast = Ext.Level and Ext.Level.RaycastClosest
+    if type(V) ~= "table" or V.rayBroken or type(V.rayCalibrated) ~= "function" or not cast then return nil end
+    local p, t, uuid = G.pos(char), G.pos(target), G.guid(target)
+    if not (p and t and uuid) then return nil end
+    local okc, cal = pcall(V.rayCalibrated, { pos = p })
+    if not (okc and cal) then return nil end
+    local okb, bd = pcall(function() return type(V.bounds) == "function" and V.bounds(G.entity(target)) or nil end)
+    bd = okb and bd or nil
+    local h = math.max(bd and bd.height or 2.0, 0.5)
+    local r = math.max(bd and bd.radius or 0.5, 0.3)
+    local eye = { p[1], p[2] + (V.EYE_H or 1.6), p[3] }
+    local pts = {}
+    for _, f in ipairs(G.ITEM_RAY_FRACS) do pts[#pts + 1] = { { t[1], t[2] + h * f, t[3] }, f >= 0 } end
+    local dx, dz = t[1] - eye[1], t[3] - eye[3]
+    local len = math.sqrt(dx * dx + dz * dz)
+    if len > 0.01 then
+        local ux, uz, side, pull, mid = dx / len, dz / len, math.min(r * 0.8, 1.5), math.min(r, 0.75), t[2] + h * 0.5
+        pts[#pts + 1] = { { t[1] - uz * side, mid, t[3] + ux * side }, true }
+        pts[#pts + 1] = { { t[1] + uz * side, mid, t[3] - ux * side }, true }
+        pts[#pts + 1] = { { t[1] - ux * pull, mid, t[3] - uz * pull }, true }
+    end
+    local ok, res = pcall(function()
+        for _, s in ipairs(pts) do
+            local pt, inside = s[1], s[2]
+            local hit = cast(eye, pt, V.RAY_TYPE, V.RAY_INCLUDE, V.RAY_EXCLUDE, 0)
+            if hit == nil then
+                if inside then return true end
+            elseif ray_hit_uuid(hit) == uuid then
+                return true
+            elseif inside then
+                local d = ray_hit_dist(hit, eye)
+                if d and d >= U.dist(eye, pt) - G.ITEM_RAY_SLACK then return true end
+            end
+        end
+        return false
+    end)
+    if not ok then return nil end
+    return res
+end
+
+-- Line of sight from char to target for a cast: the engine's, else (items only) arm's length or the rays above.
+function G.los_ok(char, target, d)
+    if b(G.q("HasLineOfSight", char, target)) then return true end
+    if b(G.q("IsCharacter", target)) then return false end
+    if not d then
+        local p, t = G.pos(char), G.pos(target)
+        d = p and t and U.dist(p, t)
+    end
+    if d and d <= G.ITEM_LOS_NEAR_M then return true end
+    return G.item_ray_los(char, target) == true
+end
+
 -- Extra Attack (live stats, 2026-10-10): after a weapon attack the ExtraAttack passive applies EXTRA_ATTACK,
 -- whose boost is UnlockSpellVariant(ExtraAttackCheck(), ModifyUseCosts(Replace,ActionPoint,0,0,ActionPoint))
 -- and which goes on the next cast (RemoveEvents OnSpellCast): the next weapon attack costs no action. We
@@ -1720,9 +1796,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
             G.refuse(string.format("target is out of range (%.1f m, range %.1f m): move closer first", d, range))
         end
         if not force then G.oath_risk(char, st, flags, target) end
-        if st_type ~= "Shout" and not G.same(char, target)
-            and not b(G.q("HasLineOfSight", char, target))
-            and not (d <= G.ITEM_LOS_NEAR_M and not b(G.q("IsCharacter", target))) then
+        if st_type ~= "Shout" and not G.same(char, target) and not G.los_ok(char, target, d) then
             G.refuse("no line of sight to target")
         end
     elseif pos then

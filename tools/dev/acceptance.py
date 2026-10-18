@@ -1983,8 +1983,42 @@ def sec_se() -> None:
             item("lockpick a door (no-id hover, walk wait)", "PASS" if ok else "FAIL", ev)
             if ui_screen() == "roll":
                 call("press_key", key="ESCAPE")
+        door_los_probe([h for h, _ in re.findall(r"^(?:ITEM\s+|\+\s*)?(e\d+) ([^<\n]+?) <door>", near, re.M)])
         load_verified(BASE)
     strict_lock_probe()  # last: process-wide mode, restored in a finally; nothing runs after it in this section
+
+
+# A20 (S083 03:37/03:52/03:55): use_ability at a door or wall past G.ITEM_LOS_NEAR_M (4 m) was refused "no line of
+# sight" (the engine's HasLineOfSight) while the game's cursor showed 100 %; the guard now also takes an eye ray that
+# reaches the item's body (G.item_ray_los). Read-only, per party member x door within 20 m: the distance, the engine's
+# LOS, the rays' verdict. FAIL when the rays are unusable live (nil: uncalibrated / API error, every far door stays
+# refused) or say no where the engine says yes (the ray rule must not lose what the engine sees). The cast itself is
+# SESSION-WATCH "door/wall cast past 4 m (A20)".
+DOOR_LOS_ITEM = "act: door line of sight by eye rays (A20, S083)"
+DOOR_LOS_LUA = (
+    "local B=Mods.BG3AI.BG3AI local G,U=B.Guard,B.Util local out={} "
+    "for _,u in ipairs(DOORS) do for _,r in pairs(Osi.DB_PartyMembers:Get(nil)) do local c=r[1] "
+    "local p,t=G.pos(c),G.pos(u) local ok,ray=pcall(G.item_ray_los,c,u) "
+    "out[#out+1]={door=u,char=tostring(c),d=(p and t) and U.dist(p,t) or -1,los=G.b(Osi.HasLineOfSight(c,u)),"
+    "ray=ok and tostring(ray) or ('err '..tostring(ray)),guard=G.los_ok(c,u)} end end "
+    "return Ext.Json.Stringify(out,{Beautify=false})")
+
+
+def door_los_probe(handles: list[str]) -> None:
+    uuids = [u for u in (S._world_uuid(h) for h in handles[:4]) if u]
+    if not need(bool(uuids), DOOR_LOS_ITEM, f"no door within 20 m of {DOOR_SAVE}"):
+        return
+    doors = ",".join(f"'{u}'" for u in uuids)
+    raw = lua_server(f"local DOORS={{{doors}}} " + DOOR_LOS_LUA)
+    try:
+        rows = json.loads(raw)
+    except ValueError:
+        item(DOOR_LOS_ITEM, "FAIL", f"probe: {raw[:200]}")
+        return
+    bad = [r for r in rows if r.get("ray") not in ("true", "false") or (r.get("los") and r.get("ray") != "true")]
+    ev = "; ".join(f"{r['door'][:8]}<-{r['char'][-12:]} {r['d']:.1f}m los={int(bool(r['los']))} ray={r['ray']}"
+                   f" guard={int(bool(r['guard']))}" for r in rows)
+    item(DOOR_LOS_ITEM, "FAIL" if bad or not rows else "PASS", ev)
 
 
 def click_search_probe(h: str, name: str) -> None:
