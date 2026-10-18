@@ -8867,6 +8867,11 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
         if _bg_end_running(first[0]):  # review L1: not "end it" while its end still runs (a 2nd order races it)
             return (f"{_label(first[0])}'s turn end is still running in the background: wait_for(target=\"queue\"), "
                     "then send this again")
+        # S084: while the last member's end runs, the game can show a member that ended earlier as open: name the end
+        running = [c for c in list(_bg_ends) if _bg_end_running(c)]
+        if running:
+            return (f"{_label(running[0])}'s turn end is still running in the background (the game shows "
+                    f"{_label(first[0])}'s turn open meanwhile): wait_for(target=\"queue\"), then send this again")
         return (", ".join(_label(u) for u in first) + " (yours) must act first: play that turn "
                 f"(combat_turn who={H.get(first[0])}) or end it (end_turn who={H.get(first[0])})")
 
@@ -8920,7 +8925,8 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
     if char not in now:
         ended = any(o.get("uuid") == char and o.get("ended") for o in cs.get("order") or [])
         why = f"{_label(char)} already ended its turn" if ended else f"it is not {_label(char)}'s turn"
-        raise GameError(f"{why} (now {', '.join(_label(u) for u in now) or '?'})" + (f"; {waited}" if waited else ""))
+        raise GameError(f"{why} (now {', '.join(_label(u) for u in now) or '?'})" + (f"; {waited}" if waited else "")
+                        + (f" {bg_held}" if bg_held else ""))  # S084: "waited 0.0s" hid the hold's wait
     lines = [f"TURN {_label(char)}" + (f" (round {cs['round']})" if cs.get("round") is not None else "")
              + (f" — {waited}" if waited else "") + _light_note(cs)]
     if bg_held:

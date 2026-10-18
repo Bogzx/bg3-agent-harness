@@ -225,6 +225,9 @@ end
 -- on TurnEnded (Actions dispatch), out of combat, or after END_REQUEST_TTL_MS.
 G.end_requested = G.end_requested or {}
 G.END_REQUEST_TTL_MS = 120000
+-- A pending end that looks dropped (end_pending): g -> {req = its end_requested time, since = first seen so}
+G.end_alone = G.end_alone or {}
+G.END_DROP_MS = 15000
 -- vis V17: the os.clock() fallback this had would itself raise in the game (bg3le has no os); the same clock as
 -- RPC.now_ms, and an error from it surfaces as the caller's (fail closed)
 local function now_ms()
@@ -283,11 +286,22 @@ function G.end_pending(uuid)
                 if a2 and not r2 then others = true break end
             end
         end
+        -- S084 (7x in one fight): this is also how a group's end looks while the game applies the members' requests
+        -- one by one (~2 s apart, the group's end-of-turn work up to ~10 s after the last member's EndTurn): forgetting
+        -- then showed an ended member as acting and the next combat_turn was refused. Forget only when it lasts.
         if not others then
+            local a = G.end_alone[g]
+            if not a or a.req ~= t then
+                G.end_alone[g] = { req = t, since = now_ms() }
+                return true
+            end
+            if now_ms() - a.since < G.END_DROP_MS then return true end
             G.end_requested[g] = nil
+            G.end_alone[g] = nil
             return false
         end
     end
+    G.end_alone[g] = nil
     return true
 end
 

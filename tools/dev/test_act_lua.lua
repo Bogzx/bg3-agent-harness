@@ -2108,6 +2108,8 @@ end)
 
 local P2 = "ffffffff-0000-0000-0000-000000000006"
 local function group_setup()
+    -- no pending ends from an earlier test (a leftover request now stays pending END_DROP_MS)
+    G.end_requested, G.end_alone, G.turn_over = {}, {}, {}
     world[P2] = { pos = { -1, 0, 0 }, comps = {} }
     osiv[key("IsCharacter", P2)] = 1
     osiv[key("IsOnStage", P2)] = 1
@@ -2145,9 +2147,44 @@ test("stuck shared turn (S052-S055): a dropped group end is forgotten once nobod
     eq(j2.status, "done", "last member " .. tostring(j2.error))
     local ends = called("EndTurn")
     eq(ends[#ends][2], P1, "P1's EndTurn sent again by the last member")
-    -- nobody else acting: the guard no longer blocks P1 (it can act or end its turn)
+    -- nobody else acting: still ended while the game may be applying the group's requests (S084), then forgotten
+    eq(G.is_my_turn(P1), false, "not forgotten at once")
+    clock = clock + G.END_DROP_MS - 100
+    eq(G.is_my_turn(P1), false, "still pending just short of END_DROP_MS")
+    clock = clock + 200
+    -- it lasted: the guard no longer blocks P1 (it can act or end its turn)
     eq(G.is_my_turn(P1), true, "the game's open turn is P1's again")
     eq(G.turn_requested_end(P1), false, "not 'already ended'")
+    restore()
+end)
+
+test("S084 shared turn end: a member ended earlier stays ended while the game applies the group's requests", function()
+    local restore = group_setup()
+    -- P1 ended first (requested, the game hasn't set RequestedEndTurn: live S002)
+    local j = job(op("end_turn", { char = P1 }))
+    clock = clock + A.END_REQUEST_AFTER_MS + 1 tick()
+    eq(j.status, "done", "requested " .. tostring(j.error)); eq(j.result.requested, true, "requested")
+    -- P2, the last member: its EndTurn starts the group's end (ignored by Lua at 3 s; the bridge presses the HUD)
+    local j2 = job(op("end_turn", { char = P2 }))
+    clock = clock + A.END_IGNORED_MS tick()
+    eq(j2.status, "failed", "ignored " .. tostring(j2.error))
+    -- the game applies P2's request first; P1's comes ~2 s later (one by one)
+    world[P2].comps.TurnBased.RequestedEndTurn = true
+    for _, dt in ipairs({ 0, 1000, 2500, 6000 }) do
+        clock = clock + dt
+        eq(G.end_pending(P1), true, "P1 still counts as ended +" .. dt .. " ms (was: forgotten, shown acting)")
+        eq(G.is_my_turn(P1), false, "P1 may not act +" .. dt .. " ms")
+    end
+    world[P1].comps.TurnBased.RequestedEndTurn = true
+    A.dispatch("TurnEnded", { P2 })
+    A.dispatch("TurnEnded", { "S_Player_" .. P1 })
+    eq(G.is_my_turn(P1), false, "group over")
+    -- the next round: a fresh request in the same alone shape is timed from its own start, not the old one
+    A.dispatch("TurnStarted", { "S_Player_" .. P1 })
+    world[P1].comps.TurnBased.RequestedEndTurn = false
+    clock = clock + G.END_DROP_MS * 2
+    G.end_requested[G.guid(P1)] = G.now_ms()
+    eq(G.end_pending(P1), true, "a new request is not forgotten at once")
     restore()
 end)
 
