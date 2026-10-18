@@ -1234,6 +1234,15 @@ function N.route(charUuid, pos)
     return r and r.reachable and r.points or nil
 end
 
+-- The engine's route for this character from `from` (not where it stands) to pos, or nil: the second leg of a
+-- walk round floor plates (Actions.lua A.plate_detour, vis V25).
+function N.routeFrom(charUuid, from, pos)
+    local e = V.entity(charUuid)
+    if not e or not from or not pos then return nil end
+    local r = gatedPath(e, from, pos, N.PATH_END_TOL_M)
+    return r and r.reachable and r.points or nil
+end
+
 -- Farthest reachable floor point along a compass direction (or toward pos):
 -- the "walk west as far as you can" primitive. Samples every `step` m up to
 -- max_m; a sample counts only if pathable and the path is direct

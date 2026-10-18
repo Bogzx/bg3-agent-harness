@@ -292,7 +292,7 @@ def render_status(s: dict, ui: dict | None, H: Handles) -> str:
 
 
 MAX_REMEMBERED = 5  # remembered (out of sight) characters listed by get_nearby; the rest by name
-_KIND_RANK = {"door": 0, "container": 0, "ladder": 0, "waypoint": 0, "lever": 0, "trap": 0, "book": 1,
+_KIND_RANK = {"door": 0, "container": 0, "ladder": 0, "waypoint": 0, "lever": 0, "trap": 0, "plate": 1, "book": 1,
               "item": 2, "usable": 3, "object": 9}
 
 
@@ -301,8 +301,9 @@ _FLAGS = ("locked", "opened", "owned", "trap", "closed", "open", "story", "rarit
 
 
 def _same_key(it: dict) -> tuple | None:
-    """Grouping key of a plain item (name, kind); None when a flag sets it apart."""
-    if any(it.get(f) not in (None, False, "Common", "common", 1) for f in _FLAGS):
+    """Grouping key of a plain item (name, kind); None when a flag sets it apart. Floor plates are never folded:
+    each is a puzzle piece with its own id (S084 vault: 9 Marble Plates, a code to step on)."""
+    if it.get("kind") == "plate" or any(it.get(f) not in (None, False, "Common", "common", 1) for f in _FLAGS):
         return None
     return (it.get("name"), it.get("kind"))
 
@@ -355,6 +356,8 @@ def render_nearby(n: dict, H: Handles, max_items: int = 30, fold: bool = True) -
             bits.append(f"HP {num(it.get('hp'))}/{num(it['max_hp'])}")
         if it.get("near"):
             bits.append(f"({it['near']})")
+        if it.get("on"):  # a floor plate: who of the party stands on it (presses it)
+            bits.append("[on it: " + ", ".join(f"{H.get(u)} {H.names.get(H.get(u), '?')}" for u in it["on"]) + "]")
         if it.get("effect"):  # a painting lit by its button press (puzzle state)
             bits.append(f"[{it['effect']}]")
         g = groups.get(_same_key(it)) if _same_key(it) is not None else None

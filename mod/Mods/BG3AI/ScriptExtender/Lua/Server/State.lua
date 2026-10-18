@@ -26,6 +26,22 @@ S.REGION_NAMES = {
     END_Main = "Upper City", EPI_Main_A = "Epilogue", SYS_CC_I = "Character creation",
 }
 
+-- An item's lock as the game shows it now. A read of "unlocked" after one of "locked" is the game unlocking it
+-- (S083 03:55:56: Knock on e720, look showed `unlocked`; 2 s later IsLocked read true again for a moment and interact
+-- refused it as locked): Actions.lua's interact counts it as a fresh unlock (A.unlock_seen, vis V24).
+S.lockedSeen = S.lockedSeen or {}
+function S.lockRead(u)
+    local locked = truthy(osi(Osi.IsLocked, u))
+    if locked then
+        S.lockedSeen[u] = true
+    elseif S.lockedSeen[u] then
+        S.lockedSeen[u] = nil
+        local A = BG3AI.Actions
+        if A and A.unlock_seen then pcall(A.unlock_seen, u) end
+    end
+    return locked
+end
+
 ------------------------------------------------------------------------
 -- Generic helpers
 ------------------------------------------------------------------------
@@ -1232,6 +1248,23 @@ function S.fixtureRelation(it, all)
     return rel .. " " .. best.name
 end
 
+-- Party members standing on a floor plate at p (they press it), or nil. vis V25, S084 04:16-04:21: the vault's code
+-- reset ("Reset (red)") while companions shuffled onto plates; the agent read that from screenshots. Radius as
+-- Actions.lua's plate walks: the AI bounds clamped to 0.4-1.6 m, else 0.8 m.
+function S.plateOn(ctx, p, e)
+    local b = V.bounds(e)
+    local r = math.min(math.max(b and b.radius or 0.8, 0.4), 1.6)
+    local on
+    for _, ob in ipairs(ctx.observers) do
+        local q = ob.pos
+        if q and math.sqrt((q[1] - p[1]) ^ 2 + (q[3] - p[3]) ^ 2) <= r and math.abs(q[2] - p[2]) <= 1.0 then
+            on = on or {}
+            on[#on + 1] = ob.uuid
+        end
+    end
+    return on
+end
+
 function S.nearby(ctx, args)
     local radius = tonumber(args.radius) or 25
     local kinds
@@ -1311,7 +1344,7 @@ function S.nearby(ctx, args)
             o.near = near[it]
             o.effect = V.itemEffects(e, landmark[o.name] or S.FIXTURE_NAMES[o.name])
             if args.item_los then tactical(ctx, u, it.p, o) end
-            if truthy(osi(Osi.IsLocked, u)) then o.locked = true end
+            if S.lockRead(u) then o.locked = true end
             if it.kind == "door" then
                 -- S054 05:54:51: get_nearby said "Control Centre <door> 4.5m"; the door stood open, interact closed
                 -- it (a scene started) and the agent had to reopen it. A player sees whether a door is open.
@@ -1325,6 +1358,12 @@ function S.nearby(ctx, args)
             if truthy(osi(Osi.IsTrap, u)) and truthy(osi(Osi.IsTrapDiscovered, u)) then
                 o.trap = { armed = truthy(osi(Osi.IsTrapArmed, u)) }
                 o.kind = it.kind == "object" and "trap" or it.kind
+            end
+            if it.kind == "object" and V.PLATE_NAMES[o.name] then
+                -- a floor plate is a puzzle piece, listed as one (S084: 7 of the vault's 9 code plates were "scenery
+                -- objects not listed"), with who of the party stands on it
+                o.kind = "plate"
+                o.on = S.plateOn(ctx, it.p, e)
             end
             pcall(function() if e.ServerItem.StoryItem then o.story = true end end)
             -- the hover shows a breakable thing's HP (S044 23:51: "Membrane (6 HP)" blocking the colony tunnel was
@@ -1652,7 +1691,7 @@ timed("state.entity", function(args)
             return st and U.loca(st.Description) or nil
         end)
         if okd and desc then o.description = desc end
-        if truthy(osi(Osi.IsLocked, u)) then o.locked = true end
+        if S.lockRead(u) then o.locked = true end
         o.effect = V.itemEffects(e, true)
         return o
     end

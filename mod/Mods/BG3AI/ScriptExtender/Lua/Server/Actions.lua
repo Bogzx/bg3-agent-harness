@@ -264,6 +264,8 @@ function A.dispatch(event, args)
         if g then G.turn_over[g] = nil; G.end_requested[g] = nil end
     elseif event == "AttackedBy" and args[1] then
         A.stirred(args[1], "a hit on the caster")
+    elseif (event == "Unlocked" or event == "Opened") and args[1] then
+        A.unlock_seen(args[1])
     elseif event == "StatusRemoved" and args[1] then
         -- shown statuses only, by their shown name (Prone: standing up; Hold Person); technical ones flap all the time
         local V = BG3AI.Visibility
@@ -307,7 +309,7 @@ end
 -- Arities checked against the shipped story goals (e.g. UseFinished(_, _Item, 1)).
 for event, arity in pairs({
     EntityEvent = 2, CharacterMoveToCancelled = 2, CharacterMoveFailedUseJump = 1,
-    UseFinished = 3, Opened = 1, Closed = 1,
+    UseFinished = 3, Opened = 1, Closed = 1, Unlocked = 3,
     DialogStarted = 2, DialogActorJoined = 4, DialogRequestFailed = 2,
     CastSpell = 5, CastedSpell = 5, CastSpellFailed = 5,
     AttackedBy = 7, EnteredCombat = 2, TurnEnded = 1, TurnStarted = 1,
@@ -943,6 +945,114 @@ local function approach_tick(job)
     return walk_tick(job)
 end
 
+-- Floor plates (vis V25, S084 04:16-04:22, the Counting House High Security vault: nine Marble Plates, code 1-3-5-6).
+-- Every click and move_to crossed other plates and reset the code ("Reset (red)"): 50 hand calls, never entered.
+-- A player walks round the plates they can see and steps onto the one they mean. Known plates are the floor plates
+-- the party has seen on this level (V.fixtureSeen: a listing showed them), never an unseen one.
+-- move_to(target=<plate>) stands on the plate's centre; an out-of-combat move_to whose engine route crosses a known
+-- plate walks via a point whose two legs cross none, else walks as before and names the plates it crosses.
+A.PLATE_RADIUS_M = 0.8  -- a plate whose AI bounds can't be read
+A.PLATE_CLEAR_M = 0.4   -- a route this far past a plate's edge doesn't step on it (the walker's own footprint)
+A.PLATE_NEAR_M = 40     -- plates farther than this from both ends of the walk are not checked
+A.PLATE_VIA_TRIES = 12  -- detour points tried, the shortest first (up to 2 path searches each)
+
+local function dist_xz(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[3] - b[3]) ^ 2) end
+
+function A.is_plate(u)
+    local V = BG3AI.Visibility
+    return u ~= nil and V ~= nil and V.PLATE_NAMES ~= nil and V.PLATE_NAMES[V.name(u) or ""] == true
+end
+
+local function plate_radius(u)
+    local r
+    pcall(function()
+        local b = BG3AI.Visibility.bounds(G.entity(u))
+        r = b and b.radius
+    end)
+    if type(r) ~= "number" or r <= 0 then return A.PLATE_RADIUS_M end
+    return math.min(math.max(r, 0.4), 1.6)
+end
+
+-- Seen floor plates on this level near a walk from `from` to `to`: { {uuid, pos, r}, ... }.
+function A.known_plates(from, to)
+    local V, out = BG3AI.Visibility, {}
+    if not (V and V.fixtureSeen and V.levelNow) then return out end
+    local level, now = V.levelNow(), Ext.Utils.MonotonicTime()
+    for u, m in pairs(V.fixtureSeen) do
+        if m.level == level and now - m.t <= V.FIXTURE_REMEMBER_MS and A.is_plate(u) then
+            local p = G.pos(u)
+            if p and (U.dist(p, from) <= A.PLATE_NEAR_M or U.dist(p, to) <= A.PLATE_NEAR_M) then
+                out[#out + 1] = { uuid = G.guid(u) or u, pos = p, r = plate_radius(u) }
+            end
+        end
+    end
+    return out
+end
+
+-- Distance (x/z) from p to the segment a-b, and the segment's height there.
+local function seg_dist_xz(p, a, b)
+    local vx, vz = b[1] - a[1], b[3] - a[3]
+    local l2 = vx * vx + vz * vz
+    local t = l2 > 0 and math.max(0, math.min(1, ((p[1] - a[1]) * vx + (p[3] - a[3]) * vz) / l2)) or 0
+    local x, z = a[1] + vx * t, a[3] + vz * t
+    return math.sqrt((p[1] - x) ^ 2 + (p[3] - z) ^ 2), a[2] + (b[2] - a[2]) * t
+end
+
+-- The plates (not in skip) a route of points steps on, in route order.
+function A.plates_on(points, plates, skip)
+    local hit, seen = {}, {}
+    if type(points) ~= "table" or #points == 0 then return hit end
+    for i = 1, math.max(1, #points - 1) do
+        local a, b = points[i], points[i + 1] or points[i]
+        for _, pl in ipairs(plates) do
+            if not skip[pl.uuid] and not seen[pl.uuid] then
+                local d, y = seg_dist_xz(pl.pos, a, b)
+                if d <= pl.r + A.PLATE_CLEAR_M and math.abs(y - pl.pos[2]) <= 1.5 then
+                    seen[pl.uuid] = true
+                    hit[#hit + 1] = pl
+                end
+            end
+        end
+    end
+    return hit
+end
+
+-- A point to walk via so that neither leg steps on a known plate (skip: plates that may be stepped on: the target,
+-- the one the character stands on). Returns false (the direct route is clear), or via, or nil + the plates the
+-- direct route crosses (no clear detour found within PLATE_VIA_TRIES).
+function A.plate_detour(char, from, dest, plates, skip)
+    local N = BG3AI.Nav
+    if not (N and N.route and N.routeFrom) then return false end
+    local crossed = A.plates_on(N.route(char, dest), plates, skip)
+    if #crossed == 0 then return false end
+    -- Points round every known plate, not only the crossed one: a grid of plates is walked round at its edge.
+    local cands = {}
+    for _, pl in ipairs(plates) do
+        if not skip[pl.uuid] then
+            local rr = pl.r + A.PLATE_CLEAR_M + 0.6
+            for k = 0, 7 do
+                local a = k * math.pi / 4
+                local c = { pl.pos[1] + rr * math.cos(a), pl.pos[2], pl.pos[3] + rr * math.sin(a) }
+                local free = true
+                for _, q in ipairs(plates) do
+                    if not skip[q.uuid] and dist_xz(c, q.pos) <= q.r + A.PLATE_CLEAR_M then free = false break end
+                end
+                if free then cands[#cands + 1] = { pos = c, cost = U.dist(from, c) + U.dist(c, dest) } end
+            end
+        end
+    end
+    table.sort(cands, function(x, y) return x.cost < y.cost end)
+    for i = 1, math.min(#cands, A.PLATE_VIA_TRIES) do
+        local c = cands[i].pos
+        local r1 = N.route(char, c)
+        if r1 and #A.plates_on(r1, plates, skip) == 0 then
+            local r2 = N.routeFrom(char, c, dest)
+            if r2 and #A.plates_on(r2, plates, skip) == 0 then return c, crossed end
+        end
+    end
+    return nil, crossed
+end
+
 reg("move_to", function(args)
     local char = G.actor(args.char)
     G.not_in_dialogue(char)
@@ -950,7 +1060,25 @@ reg("move_to", function(args)
     local target = args.target and G.guid(args.target)
     local pos = args.pos
     local route, melee, reach
-    if target then
+    local plate = target and A.is_plate(target) and target or nil
+    if plate then
+        -- A floor plate: stand on its centre, as a player's click on it does (the ring point next to it is off it).
+        G.target_visible(target)
+        G.within(char, target, G.MAX_MOVE_DIST, "destination")
+        pos = G.pos(target)
+        local here = G.pos(char)
+        local r = plate_radius(target)
+        if here and pos and dist_xz(here, pos) <= r * 0.6 then
+            return start("move_to", char, {
+                timeout_ms = 1000,
+                start = function(job)
+                    RPC.finish_job(job, "done", { pos = pos_view(here), on_plate = target, already_there = true,
+                        dist = U.round(dist_xz(here, pos), 1) })
+                end,
+            })
+        end
+        route = G.point_reachable(char, pos).length_m or U.dist(here, pos)
+    elseif target then
         -- Entity targets: walk to a verified reachable point next to them.
         G.target_visible(target)
         G.within(char, target, G.MAX_MOVE_DIST, "destination")
@@ -982,18 +1110,65 @@ reg("move_to", function(args)
     local combat = budget ~= nil
     local speed = (args.run == false and not combat) and "Walk" or "Run"
 
+    local via, crossed
+    if not combat then
+        local from = G.pos(char)
+        local plates = from and A.known_plates(from, pos) or {}
+        if #plates > 0 then
+            local skip = {}
+            if plate then skip[plate] = true end
+            for _, pl in ipairs(plates) do -- stepping off the plate the character stands on can't be helped
+                if dist_xz(from, pl.pos) <= pl.r + A.PLATE_CLEAR_M then skip[pl.uuid] = true end
+            end
+            via, crossed = A.plate_detour(char, from, pos, plates, skip)
+            if via then route = route + math.max(0, U.dist(from, via) + U.dist(via, pos) - U.dist(from, pos)) end
+        end
+    end
+    local plate_r = plate and plate_radius(plate)
+    local function on_plate(job)
+        local here = G.pos(job.char)
+        local d = here and pos and dist_xz(here, pos) or nil
+        local res = { pos = pos_view(here), dist = d and U.round(d, 1) or nil }
+        if d and d <= plate_r then
+            res.on_plate = plate
+            RPC.push("moved_done", { uuid = job.char, move_id = job.id })
+            RPC.finish_job(job, "done", res)
+        else
+            res.reached = false
+            RPC.finish_job(job, "failed", res, "stopped next to the plate, not on it (" .. (d and U.round(d, 1) or "?")
+                .. " m from its centre)")
+        end
+    end
+    local final = { pos = pos, target = not plate and target or nil, speed = speed, tolerance = plate and 0.5 or 1.5,
+        reach = reach, melee = melee, on_arrive = plate and on_plate or nil }
+
     return start("move_to", char, {
         eta_s = walk_eta(route, speed), route_m = route,
         timeout_ms = walk_timeout(route),
         interrupt = { combat = not combat, dialogue = true, attacked = not combat },
         osi = WALK_OSI,
         start = function(job)
-            begin_walk(job, { pos = pos, target = target, speed = speed,
-                tolerance = 1.5, reach = reach, melee = melee })
+            if via then
+                begin_walk(job, { pos = via, speed = speed, tolerance = 1.0, on_arrive = function(j)
+                    begin_walk(j, final)
+                    j.walk.budget = budget
+                end })
+            else
+                begin_walk(job, final)
+            end
             job.walk.budget = budget
         end,
         on_tick = walk_tick,
-        on_finish = function(job) charge_movement(job, char, mv_before) end,
+        on_finish = function(job)
+            charge_movement(job, char, mv_before)
+            if type(job.result) ~= "table" then return end
+            if via then job.result.round_plates = pos_view(via) end
+            if crossed and not via then
+                local over = {}
+                for _, pl in ipairs(crossed) do over[#over + 1] = pl.uuid end
+                job.result.over_plates = over
+            end
+        end,
     })
 end)
 
@@ -1132,6 +1307,27 @@ end
 A.STORY_LOCKED = "clicked it: still locked (no lock to pick: the game opens it some other way, e.g. a lever, a"
     .. " quest item carried or used on it, a spell)"
 
+-- S083 03:55:56-58 (V24): Knock on e720 "No Entry - No Exit"; look read it unlocked, 2 s later interact read IsLocked
+-- true again (a live read, no cache: the game's own flag flipped back while it opened the door) and refused "nobody
+-- carries its key" with door_opened in the same reply. An item the game unlocked or opened in the last LOCK_FRESH_MS
+-- is not refused on that read: standing open, the reply says so; shut, the click is sent and the game answers it.
+A.LOCK_FRESH_MS = 10000
+A.unlocked_ms = A.unlocked_ms or {} -- item guid -> when Osiris last raised Unlocked/Opened on it
+A.RELOCKED = "clicked it: still locked (the game unlocked it moments ago and it is locked again)"
+function A.unlock_seen(item)
+    local g = G.guid(item)
+    if not g then return end
+    local now = G.now_ms()
+    for k, t in pairs(A.unlocked_ms) do
+        if now - t > A.LOCK_FRESH_MS then A.unlocked_ms[k] = nil end
+    end
+    A.unlocked_ms[g] = now
+end
+function A.unlocked_lately(item)
+    local t = A.unlocked_ms[G.guid(item) or ""]
+    if t and G.now_ms() - t <= A.LOCK_FRESH_MS then return t end
+end
+
 reg("interact", function(args)
     local char = G.actor(args.char)
     G.not_in_dialogue(char)
@@ -1164,10 +1360,16 @@ reg("interact", function(args)
     -- A story lock (no lockpick difficulty: the Temple of Bhaal door the amulet opens, a lever-worked gate) has no
     -- key to match: the click is still sent, as a player's, and the game's own script answers it (a prompt, the
     -- door opening, or "Locked"). Refusing it needed a hand click (audit ACT-6, impl-logs.md:679).
-    local key_item, key_note, story_lock
+    local key_item, key_note, story_lock, relocked
     if G.b(G.q("IsLocked", target)) then
         local h, k = G.party_key(target, char)
-        if not h and G.lock_pickable(target) == false then
+        local fresh = not h and A.unlocked_lately(target)
+        if fresh and G.b(G.q("IsOpened", target)) then
+            G.refuse("it is open now (the game unlocked or opened it " .. math.floor((G.now_ms() - fresh) / 1000)
+                .. " s ago): walk through it (interact on an open door closes it)")
+        elseif fresh then
+            story_lock, relocked = true, true
+        elseif not h and G.lock_pickable(target) == false then
             story_lock = true
         elseif not h then
             G.refuse("it is locked and nobody in the party carries its key (lockpick it, force it, or find the key)")
@@ -1247,7 +1449,7 @@ reg("interact", function(args)
                     if not G.b(a[3]) or (story_locked() and not openable) then
                         RPC.finish_job(job, "failed", nil, key_note and G.b(G.q("IsLocked", target))
                             and ("still locked: " .. key_note.unlocked_with .. " did not open it")
-                            or (story_locked() and A.STORY_LOCKED) or "could not use that")
+                            or (story_locked() and (relocked and A.RELOCKED or A.STORY_LOCKED)) or "could not use that")
                         return
                     end
                     local res = state_result()
@@ -1420,7 +1622,8 @@ reg("interact", function(args)
             if res then
                 RPC.finish_job(job, "done", res)
             elseif job.used_at and RPC.now_ms() - job.used_at > (openable and 1500 or 300) then
-                if story_locked() then RPC.finish_job(job, "failed", { used = true }, A.STORY_LOCKED)
+                if story_locked() then
+                    RPC.finish_job(job, "failed", { used = true }, relocked and A.RELOCKED or A.STORY_LOCKED)
                 else RPC.finish_job(job, "done", with_key({ used = true })) end
             end
         end,

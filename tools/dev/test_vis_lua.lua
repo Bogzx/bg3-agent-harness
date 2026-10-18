@@ -5,6 +5,8 @@
 -- Act 3 camp and the Lower City, S081) a camp companion's "!" and camp spot showed from anywhere in the city.
 -- vis V23, S083 03:44: state.entity sent no position for a visible NPC, so travel_to/talk_to's walk to Nocturne
 -- 90 m off was one move_to (capped at 60 m) instead of legs.
+-- vis V25, S084 04:16: who of the party stands on a floor plate (S.plateOn).
+-- vis V24, S083 03:55:56: a lock read flipping locked -> unlocked counts as the game unlocking it (S.lockRead).
 -- Ext, Osi and RPC are stubbed; Shared/Util.lua, Server/Visibility.lua and Server/State.lua are real.
 -- Run: tools/dev/test_fairness_lua.sh  (Lua 5.3 + 5.4 in Docker)
 
@@ -139,6 +141,33 @@ test("state.entity of an unseen NPC still refuses", function()
     local ok, err = pcall(handlers["state.entity"], { uuid = GOB })
     eq(ok, false, "refused")
     eq(err, "not visible", "error")
+end)
+
+test("V24 S083: a listing's locked read then unlocked read tells interact the game just unlocked it", function()
+    local seen = {}
+    BG3AI.Actions = { unlock_seen = function(u) seen[#seen + 1] = u end }
+    local DOOR = "dddddddd-0000-0000-0000-000000000720"
+    local lockedNow = 1
+    Osi.IsLocked = function(u) return u == DOOR and lockedNow or 0 end
+    eq(S.lockRead(DOOR), true, "locked before Knock")
+    eq(#seen, 0, "no unlock yet")
+    lockedNow = 0
+    eq(S.lockRead(DOOR), false, "unlocked after Knock")
+    eq(seen[1], DOOR, "unlock_seen")
+    eq(S.lockRead(DOOR), false, "read again")
+    eq(#seen, 1, "one unlock per locked -> unlocked change")
+    eq(S.lockRead(GOB), false, "never locked")
+    eq(#seen, 1, "an item never seen locked is no unlock")
+    Osi.IsLocked, BG3AI.Actions = nil, nil
+end)
+
+test("V25 S084: S.plateOn names the party members standing on a floor plate", function()
+    local c = ctx()
+    local plate = { -1421.6, 8.4, -2601.0 } -- 0.45 m from Claude
+    local on = S.plateOn(c, plate, nil)
+    eq(on and on[1], CLAUDE, "Claude on it")
+    eq(S.plateOn(c, { -1419.0, 8.4, -2601.2 }, nil), nil, "2.2 m off: not on it")
+    eq(S.plateOn(c, { -1421.2, 11.0, -2601.2 }, nil), nil, "a floor above")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))
