@@ -42,5 +42,22 @@ class ToolDocs(unittest.TestCase):
         hits = {k: sorted(set(names.findall(v))) for k, v in texts.items() if names.search(v)}
         self.assertEqual(hits, {})
 
+    def test_agent_text_gives_no_puzzle_answers_or_oath_guard(self):
+        """User, 2026-10-18: play/knowledge keeps deadlines, points of no return and game-over traps, never a
+        puzzle's or an encounter's answer; and the Oath of Devotion guard is gone, so no text describes it."""
+        answers = re.compile(r"dark moons|lit disc|glyph rows|put out \*\*every\*\* light|copies spawn weak|"
+                             r"floor mosaic before the bowl|hidden clause|farthest cells first|"
+                             r"outside the\s+room \(more than 18 m|crest that disarms|sluice chamber when the counter\s+"
+                             r"ends, or|put all damage on the|Watch disabled", re.I)
+        oath = re.compile(r"Oath of Devotion guard|Oath of Devotion: |paladin's blow that could kill|"
+                          r"force=true strikes anyway|Non-Lethal Attacks on skips", re.I)
+        play = TOOLS_MD.parent.parent
+        texts = {str(f.relative_to(play)): f.read_text() for f in [play / "CLAUDE.md", *play.glob("knowledge/**/*.md")]}
+        for t in asyncio.run(server.mcp.list_tools()):
+            texts[t.name] = t.description or ""
+        hits = {k: sorted(set(answers.findall(v) + oath.findall(v))) for k, v in texts.items()
+                if answers.search(v) or oath.search(v)}
+        self.assertEqual(hits, {})
+
 if __name__ == "__main__":
     unittest.main()

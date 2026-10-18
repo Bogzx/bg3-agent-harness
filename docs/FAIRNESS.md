@@ -62,3 +62,8 @@ Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendere
   cells (`?`), hazards on a route and teleport-landing floors are limited to it. route prints no floor heights
   (they came through solid floors). Stricter than a human in one way: a spot seen from afar and not asked about
   then is not remembered (audit C1/C4/C5/C14/C15/C19, 2026-10-18).
+* `knowledge/walkthrough.md` lists timers, deadlines, points of no return, game-over traps and irreversible
+  choices without their solutions; puzzle and encounter answers are not in play/knowledge (look them up with
+  `wiki_page`, tagged `[wiki]`) (user, 2026-10-18).
+* No oath guard: a paladin's blow that breaks the oath is the agent's choice, and the game's consequence follows,
+  as for a player (user, 2026-10-18).
