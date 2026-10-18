@@ -1470,20 +1470,22 @@ end
 -- component (live 2026-10-10, SCL: Wyll and Halsin had it; party members and unrecruited origins such as
 -- Lae'zel, Astarion, Minsc did not). Fair: the player sees them at camp and knows whom they recruited.
 -- Rows: {uuid, name, level, classes, level_up}; full=true adds skills and equipment (state.camp).
+--
+-- "At camp" is V.partyInCamp (the story's DB_PlayerInCamp), not a GetRegion match: GetRegion is the level id, and the
+-- Act 3 camp may share the Lower City's level (S081's camp() pushed no level_changed), which gave the "!" and the camp
+-- spot anywhere in the city. An unreadable DB reads as not at camp (fail closed).
 function S.campRoster(ctx, full)
     local out = {}
     local ok, rows = pcall(function() return Osi.DB_Origins:Get(nil) end)
     if not ok or not rows then return out end
+    local atCamp = V.partyInCamp(ctx)
     for _, r in ipairs(rows) do
         local u = V.uuid(r[1])
         local e = u and not ctx.is_party[u] and V.entity(u)
         if e and comp(e, "CampPresence") and not truthy(osi(Osi.IsDead, u)) then
             local o = { uuid = u, name = V.name(u), level = level(e), level_up = levelUpTo(e) }
-            -- Its "!" is seen only at camp (the party in the camp's region).
-            if comp(e, "HasExclamationDialog") then
-                local here = ctx.party[1] and osi(Osi.GetRegion, ctx.party[1])
-                if here and osi(Osi.GetRegion, u) == here then o.wants_talk = true end
-            end
+            -- Its "!" is seen only at camp.
+            if atCamp and comp(e, "HasExclamationDialog") then o.wants_talk = true end
             local cl = classes(e)
             if #cl > 0 then o.classes = cl end
             if full then
@@ -1491,10 +1493,9 @@ function S.campRoster(ctx, full)
                 o.equipment = equipmentOf(e)
                 local okx, avail = pcall(function() return e.AvailableLevel.Level end)
                 if okx and avail and o.level and avail > o.level then o.can_reach = avail end
-                -- Where it stands when the party is in the same camp (a player sees the camp companions and walks
-                -- over to talk): swap_party walks up when it's past talk range (Halsin stood 66 m off, live).
-                local here = ctx.party[1] and osi(Osi.GetRegion, ctx.party[1])
-                if here and osi(Osi.GetRegion, u) == here then o.pos = pos1(V.pos(e)) end
+                -- Where it stands when the party is at camp (a player sees the camp companions and walks over to
+                -- talk): swap_party walks up when it's past talk range (Halsin stood 66 m off, live).
+                if atCamp then o.pos = pos1(V.pos(e)) end
             end
             out[#out + 1] = o
         end

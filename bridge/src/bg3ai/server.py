@@ -4011,6 +4011,9 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
             return done("\n".join(steps + ["STOPPED: a camp scene started on arrival: answer it (choose_dialogue), "
                                             f"then swap_party(into=\"{inc.get('name')}\", out=\"{out}\") again"]
                                    + _render_ui(ui)))
+        # state.camp gives a companion's camp spot only while the party is at camp (vis V22): read it on arrival
+        info = game.try_rpc("state.camp") or {}
+        inc = companions.find_row([c for c in info.get("camp") or [] if isinstance(c, dict)], into, _uuid) or inc
     leader = st.get("active") or _active()
     # The join menu is the player's own character's (S032 17:27: Shadowheart was in control, Wyll: "I'm all chatted
     # out ... I may have a word with the chief", no window, swap FAILED; the agent then walked Claude over by hand,
