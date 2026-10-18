@@ -7,6 +7,7 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 
 from __future__ import annotations
 
+import threading
 import time
 import unittest
 
@@ -108,8 +109,19 @@ class FarMoves(Base):
         _, h = self._npc(None)
         self.g.refuse_if = lambda op, a: ("destination is too far away (90m from this character, max 60m)"
                                           if op == "act.move_to" else None)
+        # The walk fails only once the talk_to is queued behind it (flaky under full-suite load, round 30: the worker
+        # failed the walk first, so queue_actions started a new queue that ran the talk)
+        queued = threading.Event()
+        real = self.g.rpc
+
+        def rpc(op, a=None, context="server", timeout=12.0):
+            if op == "act.move_to":
+                self.assertTrue(queued.wait(5.0))
+            return real(op, a, context, timeout)
+        self.g.rpc = rpc
         server.travel_to(target=h)
         server.queue_actions(f'[{{"tool": "talk_to", "npc": "{h}"}}]')
+        queued.set()
         out = server.wait_for("queue", timeout_s=5)
         self.assertIn("STOPPED: step 1 travel_to", out)
         self.assertNotIn("queue_done", out)

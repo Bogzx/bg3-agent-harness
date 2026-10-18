@@ -190,9 +190,14 @@ def _slot_after_select(game: Game, spell: str, char: str | None) -> dict:
     return r
 
 
-def cast_state(game: Game, char: str | None) -> dict:
+def cast_state(game: Game, char: str | None, m: dict | None = None) -> dict:
+    """ui.cast_state; m = the caster's server hotbar map (server_map), which names the active cell when the client
+    entity has no HotbarContainer."""
+    args: dict[str, Any] = {"char": char} if char else {}
+    if m:
+        args["map"] = m
     try:
-        return _rpc(game, "ui.cast_state", {"char": char} if char else {})
+        return _rpc(game, "ui.cast_state", args)
     except GameError:
         return {}
 

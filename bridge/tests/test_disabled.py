@@ -95,6 +95,25 @@ class EveryCombatRead(Base):
         out = server.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=server.H.get(P1))
         self.assertIn(f"NOW {self.e46} Lae'zel's turn: plan it\n{self.line}\nYOUR ACTIONS ({self.e46})", out)
 
+    def test_a_lethargic_member_shows_no_movement(self):
+        # S091 08:30:24: `DISABLED e5 Claude: Lethargic (1 turn)` beside `YOUR ACTIONS (e5) NOW … Move 9/9m …`, and
+        # the agent planned a walk. Guard.disabling now says what Lethargy does, State.lua moveView zeroes the figure.
+        leth = {"name": "Lethargic", "turns": 1,
+                "effect": "cannot move; its turn passes once the rest of its turn group has ended (act with it first)"}
+
+        def advance(op, args):
+            if op == "act.end_turn":
+                self.g.combat = s076_combat(current=P2, gale_current=True)
+                self.g.combat["order"][2]["disabled"] = [dict(leth)]
+        self.g.on_start = advance
+        self.g.actions = {"actions": [{"name": "Scorching Ray", "spell": "Projectile_ScorchingRay"}],
+                          "resources": {"ActionPoint": [1, 1], "Movement": [0, 9], "MoveBlocked": "Lethargic"}}
+        out = server.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=server.H.get(P1))
+        self.assertIn(f"DISABLED {self.e46} Lae'zel: Lethargic (1 turn): cannot move; its turn passes once the rest"
+                      " of its turn group has ended (act with it first)", out)
+        self.assertIn("Move 0/9m (Lethargic)", out)
+        self.assertNotIn("MoveBlocked", out)
+
     def test_interrupted_turn_carries_it(self):
         out = server.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=server.H.get(P1), end=False)
         self.assertIn(self.line, out)

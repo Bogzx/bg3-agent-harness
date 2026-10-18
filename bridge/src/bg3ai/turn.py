@@ -405,6 +405,19 @@ def disabled_lines(combat: dict, label: Callable[[str], str], only: str | None =
     return out
 
 
+def move_blocked(combat: dict, uuid: str) -> str | None:
+    """'Lethargic: cannot move; …' when uuid's disabling statuses (state.combat `disabled`, Guard.disabling) keep it
+    from walking ("cannot act" / "cannot move …"), else None. S091 08:30:24: Claude Lethargic, the plan walked."""
+    for o in (combat or {}).get("order") or []:
+        if o.get("uuid") != uuid or not isinstance(o.get("disabled"), list):
+            continue
+        for d in o["disabled"]:
+            eff = str(d.get("effect") or "") if isinstance(d, dict) else ""
+            if eff == "cannot act" or eff.startswith("cannot move"):
+                return f"{d.get('name') or '?'}: {eff}"
+    return None
+
+
 def party_acting(combat: dict, party: set) -> list[str]:
     """Party members (summons too) who may act now; a downed one can't (its turn passes by itself)."""
     down = downed(combat)

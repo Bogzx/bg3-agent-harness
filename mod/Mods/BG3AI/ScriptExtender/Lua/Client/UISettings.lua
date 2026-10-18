@@ -146,15 +146,42 @@ end)
 -- Reactions
 ------------------------------------------------------------------------
 
-local function controlledUuid()
-    local l = try(Ext.Entity.GetAllEntitiesWithComponent, "ClientControl") or {}
-    local e = l[1]
-    return e and try(function() return e.Uuid.EntityUuid end) or nil
+-- The HUD's selected character: uuid (nil when it can't be told), and every ClientControl holder's uuid.
+-- S091 08:20-08:22 (the Netherbrain fight, the Emperor beside Claude's portrait): two entities held ClientControl and
+-- the first was another member 4 times while the HUD showed the one just selected (screenshots: the Emperor, then
+-- Shadowheart), so set_party select failed "the HUD kept another member selected". With several holders, the one
+-- whose HP, max HP and level match the HUD's SelectedCharacter (the fingerprint Progression.characterVM uses).
+function G.selected()
+    local holders = {}
+    for _, e in ipairs(try(Ext.Entity.GetAllEntitiesWithComponent, "ClientControl") or {}) do
+        local u = try(function() return e.Uuid.EntityUuid end)
+        if u then holders[#holders + 1] = { uuid = u, e = e } end
+    end
+    local uuids = {}
+    for i, h in ipairs(holders) do uuids[i] = h.uuid end
+    if #holders <= 1 then return holders[1] and holders[1].uuid or nil, uuids end
+    local sel = UI.path(UI.dc("HotBar"), "CurrentPlayer.SelectedCharacter")
+    local hp, max = tonumber(UI.path(sel, "Stats.Health.Value")), tonumber(UI.path(sel, "Stats.Health.Max"))
+    local lvl = tonumber(UI.path(sel, "Stats.Level.Value"))
+    if hp == nil or max == nil or lvl == nil then return nil, uuids end
+    local hit
+    for _, h in ipairs(holders) do
+        local ehp, emax = try(function() return h.e.Health.Hp end), try(function() return h.e.Health.MaxHp end)
+        if ehp == hp and emax == max and try(function() return h.e.EocLevel.Level end) == lvl then
+            if hit then return nil, uuids end   -- two alike: can't tell
+            hit = h.uuid
+        end
+    end
+    return hit, uuids
 end
+local function controlledUuid() return (G.selected()) end
 
 -- The HUD's selected character. A16 (S074 23:06:52): the server's act.select was done while the client still had
--- another member; the bridge confirms act.select against this (Game._select).
-RPC.register("ui.selected", function() return { uuid = controlledUuid() } end)
+-- another member; the bridge confirms act.select against this (Game._select). holders: only when several.
+RPC.register("ui.selected", function()
+    local u, holders = G.selected()
+    return { uuid = u, holders = #holders > 1 and holders or nil }
+end)
 
 -- Interrupt ids in InterruptContainer order, with their display names.
 local function interruptIds(uuid)
@@ -206,23 +233,27 @@ RPC.register("ui.reactions", function(args)
         for key, want in pairs(args.set) do
             if want ~= "never" and want ~= "always" and want ~= "ask" then error("mode must be never/always/ask") end
             local k = tostring(key):lower()
-            local r
+            -- a name is every reaction of that name: S092 08:48:37 {Shield: never} set Interrupt_Shield_Wizard_2 only
+            -- (one row per spell level, 6 for Gale) and the Shield prompt came back at 08:50:21. An id is that one.
+            local rs = {}
             for _, x in ipairs(list) do
-                if (x.id and x.id:lower() == k) or (x.name and x.name:lower() == k) then r = x break end
+                if (x.id and x.id:lower() == k) or (x.name and x.name:lower() == k) then rs[#rs + 1] = x end
             end
-            if not r then error("no reaction '" .. tostring(key) .. "'") end
-            targets[r.i] = want
-            if r.mode == want then goto continue end
-            -- Enabled first, then Ask (Ask only matters while enabled).
-            local wantEnabled = want ~= "never"
-            local p = UI.props(r.vm)
-            if (p.Enabled ~= false) ~= wantEnabled then
-                assert(UI.command(dc, "InterruptToggleDisableCommand", r.vm, args.dry))
+            if #rs == 0 then error("no reaction '" .. tostring(key) .. "'") end
+            for _, r in ipairs(rs) do
+                targets[r.i] = want
+                if r.mode ~= want then
+                    -- Enabled first, then Ask (Ask only matters while enabled).
+                    local wantEnabled = want ~= "never"
+                    local p = UI.props(r.vm)
+                    if (p.Enabled ~= false) ~= wantEnabled then
+                        assert(UI.command(dc, "InterruptToggleDisableCommand", r.vm, args.dry))
+                    end
+                    if wantEnabled and (p.Ask == true) ~= (want == "ask") then
+                        assert(UI.command(dc, "InterruptChangeAskCommand", r.vm, args.dry))
+                    end
+                end
             end
-            if wantEnabled and (p.Ask == true) ~= (want == "ask") then
-                assert(UI.command(dc, "InterruptChangeAskCommand", r.vm, args.dry))
-            end
-            ::continue::
         end
         if not args.dry then
             -- The commands are deferred (applied a frame or two later): settle
