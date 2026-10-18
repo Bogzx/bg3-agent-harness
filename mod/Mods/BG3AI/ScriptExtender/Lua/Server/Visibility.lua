@@ -261,10 +261,31 @@ function V.isAlly(ctx, uuid)
     return o.uuid and truthy(V.osi(Osi.IsAlly, o.uuid, uuid)) or false
 end
 
+-- A party member is at camp (the story's DB_PlayerInCamp, as A.in_camp reads it). Memoised on the frame's ctx.
+function V.partyInCamp(ctx)
+    if ctx.in_camp == nil then
+        local hit = false
+        local ok, rows = pcall(function() return Osi.DB_PlayerInCamp:Get(nil) end)
+        if ok and rows then
+            for _, r in ipairs(rows) do
+                if ctx.is_party[V.uuid(r[1]) or ""] then hit = true break end
+            end
+        end
+        ctx.in_camp = hit
+    end
+    return ctx.in_camp
+end
+
 -- Is character `uuid` (entity `e`) perceivable by the party right now?
 function V.characterVisible(ctx, uuid, e, pos)
     if ctx.is_party[uuid] then return true end
     if scriptHidden(uuid) then return false end
+    -- A recruited companion waiting at camp (CampPresence, as State.campRoster lists them) while the party is at
+    -- camp: each stands at its own spot, often past the 18.5 m sight range and outside the facing cone. S081 03:01:
+    -- get_nearby radius 60 at camp listed Withers (16 m) and Scratch, not Karlach, and talk_to Karlach was "not
+    -- visible"; swap_party then walked up to her. A player at camp sees the camp and who waits there; the caller's
+    -- radius still bounds the scan.
+    if U.comp(e, "CampPresence") and V.partyInCamp(ctx) then return true end
     pos = pos or V.pos(e)
     local ally = V.isAlly(ctx, uuid)
     if not ally and truthy(V.osi(Osi.IsInvisible, uuid)) then

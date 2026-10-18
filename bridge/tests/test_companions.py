@@ -286,6 +286,31 @@ class SwapParty(unittest.TestCase):
         self.assertIn("walked to Halsin", out)
         self.assertIn("swap_party: done", out)
 
+    def test_walks_to_the_camp_spot_read_on_arrival(self):
+        # vis V22: state.camp gives the camp spot only while the party is at camp; the read before go_to_camp has none
+        menu = {"options": [{"i": 1, "text": "I'd like you to join me."}]}
+        full = {"options": [{"i": 2, "text": "Gale could do with a rest."}]}
+        fake = FakeGame([menu, full])
+        fake.far = True
+        real = fake.rpc
+
+        def rpc(op, args=None, context="server"):
+            out = real(op, args, context)
+            if op == "state.camp" and fake.at_camp:
+                for c in out["camp"]:
+                    if c["uuid"] == HALSIN:
+                        c["pos"] = [-1450.0, 8.0, -2620.0]
+            return out
+        fake.rpc = rpc
+        self.use(fake)
+        orig = server._far_move
+        server._far_move = lambda *a: None
+        self.addCleanup(setattr, server, "_far_move", orig)
+        out = server.swap_party(into="Halsin", out="Gale")
+        moves = [a for op, a in fake.jobs if op == "act.move_to"]
+        self.assertEqual(moves[0].get("pos"), [-1450.0, 8.0, -2620.0])
+        self.assertIn("swap_party: done", out)
+
     def settle_fake(self, back_after: int | None):
         """S070 20:59:06: Wyll still at the dream scene's spot 7 s after the long rest: talk 'not visible', walk 'no
         path'. back_after: state.camp reads until Halsin stands on his camp spot (None = never)."""
