@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Host tuning before a game launch, opt-in per machine (runner/launch_game.sh calls `apply`).
 
-the test machine cut its power twice under the naut series load (2026-10-16 ~20:07, 2026-10-17 ~16:01) with
+The test machine cut its power twice under the naut series load (2026-10-16 ~20:07, 2026-10-17 ~16:01) with
 platform_profile 'performance' and the NVIDIA GPU uncapped. Both settings reset on every reboot, so the launcher
 sets them again from the machine's marker file $BG3AI_CONFIG_DIR (default $XDG_CONFIG_HOME/bg3ai, else
 ~/.config/bg3ai) / host-tuning, one `key=value` per line (# comments):

@@ -1,6 +1,6 @@
 """The runtime/ dir that offline tools (tools/logs miners, tools/vis/series_report.py) read by default. Stdlib only.
 
-runner/play.py writes to $BG3AI_RUNTIME, else <repo>/runtime. A worker's worktree (/repo/bg3-ai-<name>) has
+runner/play.py writes to $BG3AI_RUNTIME, else <repo>/runtime. A worktree (e.g. ../bg3-ai-<name>) has
 no runtime/: the game, the runner and the transcripts live in the main checkout. So: $BG3AI_RUNTIME, else this
 checkout's runtime/ when it holds sessions/, else the main tree's (found through the worktree's .git file).
 """

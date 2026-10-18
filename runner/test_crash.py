@@ -831,7 +831,7 @@ class SteamGuard(unittest.TestCase):
         for n, v in self.saved.items():
             setattr(P, n, v)
 
-    def require_offline(self, why: str = "machine 2 shares the Steam account") -> None:
+    def require_offline(self, why: str = "this machine shares the Steam account") -> None:
         self.marker.parent.mkdir(parents=True, exist_ok=True)
         self.marker.write_text(why + "\n")
 
@@ -889,12 +889,12 @@ class SteamGuard(unittest.TestCase):
         self.assertIn("not required", why)
 
     def test_marker_requires_offline(self):
-        # machine 2: ~/.config/bg3ai/require-steam-offline keeps the requirement on, its text in the reason
-        self.require_offline("the test machine: shares the account with a second machine")
+        # ~/.config/bg3ai/require-steam-offline keeps the requirement on, its text in the reason
+        self.require_offline("box-b: shares the account with box-a")
         self.write("Starting login")
         ok, why = self.steam_ready()
         self.assertFalse(ok)
-        self.assertIn("the test machine: shares the account", why)
+        self.assertIn("box-b: shares the account", why)
         self.write("Start offline - 1")
         self.assertTrue(self.steam_ready()[0])
 

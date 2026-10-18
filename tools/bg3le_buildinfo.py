@@ -5,7 +5,7 @@
 
 tools/build_bg3le.sh writes one "patch: <name> <sha256[:16]>" line per applied patch into dist/BUILDINFO. A dist
 whose lines don't name every patches/bg3le/*.patch with the same hash was built before a patch was added or changed
-(2026-10-13 audit UI-1: this laptop's dist predated all nine crash patches and passed every check). Prints OK or
+(2026-10-13 audit UI-1: one machine's dist predated all nine crash patches and passed every check). Prints OK or
 each difference plus the rebuild command; exits 0 when current, STALE_EXIT when not (or no BUILDINFO).
 """
 from __future__ import annotations

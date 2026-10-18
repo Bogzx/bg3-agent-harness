@@ -178,7 +178,7 @@ class RamWatchTest(unittest.TestCase):
         a.close()
 
 
-# A real line of tools/orchestrator/thermal_log.sh (runtime/thermal.log, 2026-10-17, after the second freeze)
+# A real line of the operator's thermal_log.sh (runtime/thermal.log, 2026-10-17, after the second freeze)
 SH_LINE = ("2026-10-17 16:25:39 cpu=51 acpi=51 amdgpu=49 nvme=36 nv=[47,8.09,210,0,0x0000000000000001] "
            "profile=balanced load=0.21 bg3=down")
 

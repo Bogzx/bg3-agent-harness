@@ -61,7 +61,7 @@ class ProblemsTest(unittest.TestCase):
         self.assertTrue(any(b.startswith("changed 0002-b.patch") for b in B.problems(self.dist, self.patches)))
 
     def test_no_patch_lines(self):
-        # this laptop's dist (2026-10-09): built before any patch existed
+        # one machine's dist (2026-10-09): built before any patch existed
         self.write("bg3le commit: x\nbuilt: 2026-10-09T18:31:45+03:00\nsha256: ab\n")
         self.assertEqual(len([b for b in B.problems(self.dist, self.patches) if b.startswith("missing")]), 3)
 

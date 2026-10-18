@@ -354,7 +354,7 @@ def is_ai_label(label: str, prefix: str = SAVE_PREFIX) -> bool:
 
 def is_ai_save(s: Save, prefix: str = SAVE_PREFIX) -> bool:
     """An `Sxxx-` save of this playthrough. $BG3AI_SAVE_PREFIX is used two ways: as a label prefix
-    (`pt1-S010-end`) and, by the MCP server and docs/HANDOFF.md (`BG3AI_SAVE_PREFIX=Claude-`), as a folder
+    (`pt1-S010-end`) and, by the MCP server and docs/SETUP.md (`BG3AI_SAVE_PREFIX=Claude-`), as a folder
     prefix: the character's name plus the dash the game adds (`Claude-123__S001-end`). The agent's
     save_game never prefixes the label, so a folder-prefix match takes a plain `Sxxx-` label."""
     if is_ai_label(s.label, prefix):
@@ -636,7 +636,7 @@ def keeps_state(a: dict) -> bool:
 def lose_play_mark(last: dict, actions: list[dict]) -> tuple[float, str]:
     """From when a relaunch onto an older save loses play: the last game-changing call of the last session
     (`actions`: actions.jsonl since its start, keeps_state), else its start. A session that saved partway and played
-    on without saving would otherwise relaunch onto that save and lose the rest (user, 2026-10-18: losing play is worse
+    on without saving would otherwise relaunch onto that save and lose the rest (2026-10-18: losing play is worse
     than a skipped relaunch). -> (time, what it is, for the log)."""
     sid = last.get("session") or "the last session"
     changed = [a for a in actions if not keeps_state(a)]
@@ -759,7 +759,7 @@ def game_scope(stamp: str) -> str:
 
 def find_game_oom(journal: str, stamp: str, spikes: list[dict]) -> str | None:
     """Why the game died of an OOM, from `journalctl --user -o short-unix` lines since its launch, or None. A kill in
-    the game's own scope counts; one in another unit (a game launched before scopes, e.g. inside the multiplexer's unit) only
+    the game's own scope counts; one in another unit (a game launched before scopes, e.g. in a terminal's unit) only
     with a ramwatch RSS spike (runtime/ram_spikes.jsonl) within OOM_SPIKE_S before it."""
     scope = game_scope(stamp)
     for line in journal.splitlines():
@@ -1351,7 +1351,7 @@ def gates_env(allow: bool | None) -> dict:
 
 
 PLAY_SETTINGS = [
-    # (op, args) applied before every session; cutscene autoskip is a user requirement.
+    # (op, args) applied before every session; cutscene autoskip is a project requirement.
     ("ui.config", {"autoskip": True}),
     ("ui.settings", {"show_tutorials": False}),
     ("ui.dismiss", {}),
@@ -3648,10 +3648,10 @@ class Runner:
         return kills[-1].get("why", "too hot") if kills else None
 
     def heat_paused(self, after_kill: bool = False) -> bool:
-        """Heat guard: while runtime/thermal.log (ramwatch, or tools/orchestrator/thermal_log.sh) says the CPU or the
+        """Heat guard: while runtime/thermal.log (ramwatch, or an operator's thermal_log.sh) says the CPU or the
         GPU stayed at the heat-pause limit for pause_s (ramwatch.heat_limits: 92 C / 85 C for 60 s), no session
         starts: waits until both stayed under it for pause_s, then True. after_kill (the heat guard killed the game):
-        waits unless it is cool already. the test machine cut its power twice under the naut series load (2026-10-16 ~20:07,
+        waits unless it is cool already. The test box cut its power twice under the naut series load (2026-10-16 ~20:07,
         2026-10-17 ~16:01). A stale or missing log pauses nothing."""
         path = RUNTIME / "thermal.log"
         h = ramwatch.read_heat(path)
@@ -4577,7 +4577,7 @@ class Runner:
                 write_status(session=None, deadline=None, runner_pid=None)
                 self.write_status_line(f"STOPPED ({stop_why})")
                 self.event("runner_stop", why=stop_why)
-                log(f"runner stopped ({stop_why})")   # every exit path: tools/orchestrator/test_cycle.sh waits for it
+                log(f"runner stopped ({stop_why})")   # every exit path: operator scripts wait for it
         return 0
 
 
@@ -4720,7 +4720,7 @@ def cmd_run(a) -> int:
             log(msg)
             log("runner stopped (sandbox mode differs from the series: run refused)")
             return 2
-    # a the multiplexer/ssh shell has no display env: the game (launch_game.sh inherits os.environ) gets the desktop's
+    # a multiplexer/ssh shell has no display env: the game (launch_game.sh inherits os.environ) gets the desktop's
     filled = display_env.fill(os.environ)
     if a.plan:   # after every refusal above, before the lock: nothing written, nothing launched
         return plan_run(a, scenario, save_sha1, caps, use_judge, judge_model, client)
@@ -5256,7 +5256,7 @@ def run_series(opt: Options, n: int, current: dict, allow_drift: bool = False, s
         if refusal:
             log(refusal)
             print(refusal, file=sys.stderr)
-            log("runner stopped (version drift: run refused)")   # tools/orchestrator/test_cycle.sh waits for it
+            log("runner stopped (version drift: run refused)")   # operator scripts wait for it
             return 2
         opt = replace(opt, series_end=r.opt.series_end)   # a self-restart's handover keeps the series budget
         log(f"series {base}: run {k}/{n} ({pt}, --until {opt.until})")

@@ -451,7 +451,7 @@ GEMINI_BUILTIN_TOOLS = ("run_shell_command", "read_file", "read_many_files", "wr
 
 
 class GeminiClient:
-    """`gemini -p ... --output-format stream-json`. UNTESTED: gemini isn't installed on the test machine; built from the
+    """`gemini -p ... --output-format stream-json`. UNTESTED: no gemini on the test machine; built from the
     documented CLI (settings.json mcpServers, tools.exclude, GEMINI_CLI_SYSTEM_SETTINGS_PATH, --resume, the
     stream-json events init/message/tool_use/tool_result/error/result). The settings file goes into the session
     dir and is set as the system settings (highest precedence), so ~/.gemini is left alone. Check every flag and

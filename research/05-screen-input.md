@@ -15,12 +15,12 @@ confirmed against a running BG3.
 |---|---|
 | Session | `XDG_SESSION_TYPE=wayland`, `WAYLAND_DISPLAY=wayland-0`, `DISPLAY=:1` (Xwayland 24.1.6, started by KWin with `-rootless`, **no** `-enable-ei-portal`) |
 | Compositor | KWin 6.3.6 / Plasma 6.3.6; 3 monitors, 7680x1440 combined workspace |
-| GPU / driver | RX 6900 XT (Navi 21, the BRIEF says 6800) + Raphael iGPU, Mesa RADV 26.1.6 (bpo), Vulkan 1.4 |
+| GPU / driver | RX 6900 XT (Navi 21) + Raphael iGPU, Mesa RADV 26.1.6 (bpo), Vulkan 1.4 |
 | Vulkan layers present | `VK_LAYER_MESA_screenshot` (explicit), `VK_LAYER_MESA_overlay`, `VK_LAYER_MESA_device_select`, `VK_LAYER_MESA_anti_lag`, Steam overlay and fossilize layers |
 | Mesa layer tools | `/usr/bin/mesa-screenshot-control.py`, `/usr/bin/mesa-overlay-control.py` (package `mesa-vulkan-drivers:amd64`) |
 | Installed | `spectacle` (kde-spectacle 6.3.5), `qdbus6`, `xdg-desktop-portal` 1.20.3 + `-kde` 6.3.5 + `-gtk`, PipeWire 1.4.2 + wireplumber, `gstreamer1.0-pipewire`, `vulkaninfo`/`vkcube`, `xwininfo`/`xprop`/`xwd`/`import`, `python3-dbus`, `python3-gi`, `libXtst.so.6`, `libeis1` |
 | Not installed (apt candidate) | `gamescope` (**no Debian 13 package**), `obs-studio` (30.2.3), `ydotool` (1.0.4 bpo), `xdotool` (3.20160805), `python3-evdev` (1.9.1), `tesseract-ocr` (5.5.0), `ffmpeg`, `kdotool` (none) |
-| `/dev/uinput` | `crw-rw----+ root root`, ACL `user:bogdan:rw-` (via `uaccess` tag from `60-steam-input.rules` / `60-antimicrox-uinput.rules`). **Opened O_WRONLY from an unprivileged process: OK** |
+| `/dev/uinput` | `crw-rw----+ root root`, ACL `user:<you>:rw-` (via `uaccess` tag from `60-steam-input.rules` / `60-antimicrox-uinput.rules`). **Opened O_WRONLY from an unprivileged process: OK** |
 | Portals | `org.freedesktop.portal.Screenshot` v2, `ScreenCast` v5, `RemoteDesktop` v2 (AvailableDeviceTypes=7), `InputCapture` present |
 | KWin D-Bus | `/org/kde/KWin/ScreenShot2` (restricted), `/org/kde/KWin/EIS/RemoteDesktop` (`connectToEIS(int caps) -> (fd, int cookie)`) |
 | Steam runtime | BG3 native runs in **SteamLinuxRuntime_sniper** (pressure-vessel 0.20260805.0, `sniper_platform_3.0.20260805.254768`) |
@@ -55,7 +55,7 @@ listening on an abstract socket:
 
 - Network namespace: the **same** as the host (`net:[4026531833]` inside and outside), so **abstract Unix sockets (`\0name`) work across
   the container boundary**. The container connected to a host listener and received its message.
-- `/tmp` and `$HOME` are shared (both `/tmp/bg3ai-io-test` and `/home/user/Repo/bg3-ai` were visible).
+- `/tmp` and `$HOME` are shared (both `/tmp/bg3ai-io-test` and the repo checkout under `$HOME` were visible).
 - `LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libX.so` is rewritten automatically to `/run/host/usr/lib/...`. Paths under `$HOME` or `/tmp`
   are used as is. The host glibc (2.41) is newer than sniper's, so pressure-vessel uses the host glibc and a shim built on the host runs.
 - Host Vulkan layers are imported: `/overrides/share/vulkan/explicit_layer.d/{0,1,2}.json` and
@@ -416,10 +416,10 @@ verified to work inside pressure-vessel. gamescope would give similar isolation 
 
 **Setup steps:**
 1. `mkdir -p /tmp/bg3ai/shots` (the harness should do this at start).
-2. Build `libbg3sdl.so` (C, `-shared -fPIC -ldl`, SDL2 headers only: `apt install libsdl2-dev`) into `~/Repo/bg3-ai/native/`.
+2. Build `libbg3sdl.so` (C, `-shared -fPIC -ldl`, SDL2 headers only: `apt install libsdl2-dev`) into `<repo>/native/`.
 3. BG3 Steam launch options:
    ```
-   SDL_VIDEODRIVER=x11 LD_PRELOAD="$LD_PRELOAD:/home/user/Repo/bg3-ai/native/libbg3sdl.so" VK_LOADER_LAYERS_ENABLE=VK_LAYER_MESA_screenshot VK_LAYER_MESA_SCREENSHOT_CONFIG="comms;control=bg3shot;output_dir=/tmp/bg3ai/shots" %command%
+   SDL_VIDEODRIVER=x11 LD_PRELOAD="$LD_PRELOAD:$HOME/bg3-ai/native/libbg3sdl.so" VK_LOADER_LAYERS_ENABLE=VK_LAYER_MESA_screenshot VK_LAYER_MESA_SCREENSHOT_CONFIG="comms;control=bg3shot;output_dir=/tmp/bg3ai/shots" %command%
    ```
 4. Harness: connect `\0bg3shot` (capture) and `\0bg3input` (input + Noesis dump). Downscale captures to 1280x720 with Pillow, and crop at full resolution for text.
 5. In-game: windowed 1920x1080 on one monitor, 30–60 fps cap, subtitles on, combat log open, tactical camera available, KB/M.

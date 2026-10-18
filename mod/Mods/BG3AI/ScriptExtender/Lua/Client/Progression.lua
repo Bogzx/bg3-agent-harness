@@ -39,7 +39,7 @@
 --             the first live run finished as "Tav". See "Character name" (ui.cc_name / ui.cc_finish): cc_apply
 --             now refuses to finish until the naming page's box shows the name; bg3ai/naming.py types it.
 --             The "Reset Tutorials" message box ignored its button's command; a real click (input shim) works.
---   VERIFIED  (2026-10-10, machine 2) ui.level_up end to end: Gale Wizard 1->2 (subclass Evocation, spells
+--   VERIFIED  (2026-10-10) ui.level_up end to end: Gale Wizard 1->2 (subclass Evocation, spells
 --             Magic Missile + Shield by click), Wyll Warlock 1->2 (invocations Agonising + Repelling Blast by
 --             TogglePassive, spell Hex by click); FinishLevelUp(nil) works. Spell and passive VMs have no readable
 --             name: P.nameSpells / P.namePassives name them from static data (SpellList / PassiveList order).
@@ -1283,7 +1283,7 @@ end
 -- (Text="{Binding CharacterName}", TextImmediateSourceUpdate=True, MaxLength=20) inside Control "namingPage"
 -- (CharacterCreation.xaml / CCLib_k.xaml). The appearance panel has a second, collapsed "characterName",
 -- hence the lookup under namingPage. Its Proceed button only sets flowPage.SelectedIndex = 3.
--- Verified live (machine 2, Patch 8):
+-- Verified live (Patch 8):
 --   * the box is created when the page is first shown: right after page = true it can still be missing.
 --   * CharacterName (ls.LocaString) reads back as its handle ("ResStr_3455818087") before and after
 --     typing, so the character's name cannot be read here; the box's Text reads as nil. The box text is

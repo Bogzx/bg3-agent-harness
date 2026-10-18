@@ -189,8 +189,9 @@ def login_log(home: Path | None = None) -> Path | None:
 def steam_offline(home: Path | None = None) -> tuple[bool, str]:
     """(offline?, why) from the last Steam login in steamui_login.txt: 'Start offline - 1' is an offline start,
     'Starting login' (also written when Steam goes online from the menu) an online one. No log or no login
-    line = not offline. On machine 2 Steam must stay offline so a running BG3 never kicks the account's other
-    machine off; there (offline_required) the runner and launch_game.sh refuse to launch the game otherwise."""
+    line = not offline. Where the account is shared, Steam must stay offline so a running BG3 never kicks
+    the other machine off; there (offline_required) the runner and launch_game.sh refuse to launch the game
+    otherwise."""
     log = login_log(home)
     if log is None:
         return False, "no Steam logs/steamui_login.txt found"
@@ -220,8 +221,8 @@ def offline_marker(home: Path | None = None) -> Path:
 
 def offline_required(home: Path | None = None) -> tuple[bool, str]:
     """(must Steam be offline before the game launches?, why). Off by default (RUN-11: a public user's Steam is
-    online and that's fine). On for a machine that shares its Steam account with another one that plays (machine 2:
-    an online launch kicks the operator off), set explicitly by, first match wins:
+    online and that's fine). On for a machine that shares its Steam account with another one that plays (an online
+    launch kicks the other player off), set explicitly by, first match wins:
     $BG3AI_REQUIRE_STEAM_OFFLINE=1|0; $BG3AI_ALLOW_STEAM_ONLINE=1 (the older override: off); the marker file
     offline_marker() (on)."""
     env = os.environ.get("BG3AI_REQUIRE_STEAM_OFFLINE")

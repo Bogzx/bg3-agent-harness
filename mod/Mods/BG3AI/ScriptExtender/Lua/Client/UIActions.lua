@@ -1093,7 +1093,7 @@ function MENU.continue(args)
     return { done = not args.dry, can = true }
 end
 
--- Load a named save, end to end (verified live, machine 2, S001-end).
+-- Load a named save, end to end (verified live, S001-end).
 -- The Load page (widget "LoadGame", gui::DCSavegames) lists saves grouped by
 -- playthrough (an Expander per character name) newest first. bg3le can't
 -- read a save's title (Run.Text is not marshalled) nor pass the Load

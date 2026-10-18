@@ -152,7 +152,7 @@ class HandoffAndSaves(unittest.TestCase):
         ]
 
     def test_named_saves_with_a_folder_prefix(self):
-        # BG3AI_SAVE_PREFIX=Claude- (docs/HANDOFF.md, the MCP server) names the folder, and the agent's
+        # BG3AI_SAVE_PREFIX=Claude- (docs/SETUP.md, the MCP server) names the folder, and the agent's
         # save_game labels are plain "S001-end": the session's named save must count (S001 quicksaved over it).
         saves = [P.parse_save_folder("Claude-10__S001-end", 200), P.parse_save_folder("Claude-11__QuickSave_0", 300),
                  P.parse_save_folder("Tav-12__S001-end", 250)]
@@ -2383,18 +2383,18 @@ class PlanCheck(unittest.TestCase):
 class OomGuard(unittest.TestCase):
     """20:48 S038: the Shadowfell load blew the game up to 13.3 GB; the kernel OOM-killed it (and systemd every
     agent). The runner must spot a game OOM, and refuse a save that OOM-killed the game twice in a row."""
-    J = ("1791654500.100000 the test machine systemd[1740]: bg3ai-game-20261010-2000.scope: A process of this unit has been "
+    J = ("1791654500.100000 host systemd[1740]: bg3ai-game-20261010-2000.scope: A process of this unit has been "
          "killed by the OOM killer.\n")
-    HERDR = ("1791654510.000000 the test machine systemd[1740]: app-the multiplexer@b676.service: A process of this unit has been killed "
+    OTHER = ("1791654510.000000 host systemd[1740]: app-term@b676.service: A process of this unit has been killed "
              "by the OOM killer.\n")
 
     def test_find_game_oom(self):
         self.assertIn("its scope bg3ai-game-20261010-2000.scope", P.find_game_oom(self.J, "20261010-2000", []))
         self.assertIsNone(P.find_game_oom(self.J, "20261010-2100", []))             # another launch's scope
-        self.assertIsNone(P.find_game_oom(self.HERDR, "x", []))                       # a test OOM'd in the multiplexer's unit
+        self.assertIsNone(P.find_game_oom(self.OTHER, "x", []))                       # a test OOM'd in another unit
         spike = {"t": 1791654480.0, "from_mb": 5000, "to_mb": 13300, "seconds": 35}
-        why = P.find_game_oom(self.HERDR, "x", [spike])                                # legacy: no scope, but a spike
-        self.assertIn("app-the multiplexer@b676.service", why)
+        why = P.find_game_oom(self.OTHER, "x", [spike])                                # legacy: no scope, but a spike
+        self.assertIn("app-term@b676.service", why)
         self.assertIn("5000 → 13300 MB", why)
         self.assertIsNone(P.find_game_oom("garbage killed by the OOM killer\n", "x", [spike]))
 
@@ -3101,7 +3101,7 @@ class SeriesRuns(unittest.TestCase):
         return buf.getvalue()
 
     def test_plan_fills_the_display_env_from_xwayland(self):
-        # a the multiplexer pane has no DISPLAY/XAUTHORITY: the runner finds them itself (no exports in the start command)
+        # a multiplexer pane has no DISPLAY/XAUTHORITY: the runner finds them itself (no exports in the start command)
         out = self._plan("--playthrough", "np", unset=("DISPLAY", "XAUTHORITY"),
                          xwayland="9 /usr/bin/Xwayland :1 -rootless -auth /run/user/1000/xauth_Ab -listenfd 4\n")
         self.assertIn("display:        DISPLAY=:1 XAUTHORITY=/run/user/1000/xauth_Ab", out)

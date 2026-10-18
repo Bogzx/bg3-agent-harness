@@ -18,7 +18,7 @@ Checks (each prints PASS / WARN / FAIL with details; exit code 1 if any FAIL):
                 cost of state.nearby / nav.frontier with the ray rule off vs on.
 
 Not for agent sessions: --reload and the ray on/off toggling change live mod state (rules for live testing:
-docs/HANDOFF.md §7).
+docs/SETUP.md §6).
 """
 
 from __future__ import annotations
@@ -216,7 +216,7 @@ return Ext.Json.Stringify(out)
 def main() -> int:
     args = set(sys.argv[1:])
     if not G.server_ready():
-        print("Game/mod not reachable (load a save first, see docs/HANDOFF.md §5).")
+        print("Game/mod not reachable (load a save first, see docs/SETUP.md §4).")
         return 2
     if "--reload" in args:
         lua("Ext.Debug.Reset(); return 'reset'")

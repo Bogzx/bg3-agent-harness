@@ -56,7 +56,7 @@ from display_env import xwayland_auth  # noqa: E402,F401
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_SAVE = "Claude-4810126690__S027-start"   # acceptance.BASE's folder (acceptance --check proves it is the newest)
-STOP_GRACE_S = 10      # bg3 ignores SIGTERM (docs/HANDOFF.md §7): SIGKILL after this
+STOP_GRACE_S = 10      # bg3 ignores SIGTERM (docs/SETUP.md §6): SIGKILL after this
 STOP_CONFIRM_S = 30
 RELOAD_SETTLE_S = 20
 UV_ARGS = ["run", "--project", "bridge"]
@@ -169,7 +169,7 @@ def held_by_other(path: Path) -> bool:
 
 
 def find_uv(env: dict) -> str:
-    """uv's path: on PATH, else ~/.local/bin/uv (a the multiplexer/ssh shell may lack ~/.local/bin on PATH)."""
+    """uv's path: on PATH, else ~/.local/bin/uv (a multiplexer/ssh shell may lack ~/.local/bin on PATH)."""
     found = shutil.which("uv", path=env.get("PATH"))
     if found:
         return found
@@ -671,7 +671,7 @@ class Window:
             ok = self.display()
             c = self.commands()
             ok = ok and self.simple("steam", c["steam"], "Steam offline", "Steam is not offline (or not running): "
-                                    "never launch online on the test machine", 60)
+                                    "never launch online where Steam must stay offline", 60)
             if ok and not self.procs.steam_running():
                 ok = self.row("steam", "FAIL", "no Steam client process: start Steam (offline) first; the game's "
                               "libsteam_api needs it (launch_game.sh would only warn)") == "PASS"
@@ -728,7 +728,7 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--skip-check", action="store_true", help="skip acceptance.py --check")
     ap.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
                     help="game environment (launch_game.sh --env), e.g. BG3LE_UI_STRICT=1")
-    ap.add_argument("--display", default=":1", help="DISPLAY when unset (the test machine's Xwayland)")
+    ap.add_argument("--display", default=":1", help="DISPLAY when unset (the desktop's Xwayland)")
     ap.add_argument("--lock-wait", type=float, default=0, help="wait up to S s for game.lock (default: refuse)")
     ap.add_argument("--launch-timeout", type=float, default=900)
     ap.add_argument("--acceptance-timeout", type=float, default=5400)

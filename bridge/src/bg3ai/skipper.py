@@ -1,6 +1,6 @@
 """Movie skipper: sends ESCAPE through the SDL input shim when the mod's AutoSkip asks for it.
 
-Cutscenes are always skipped (user requirement). Bink movies only react to real input, so the mod
+Cutscenes are always skipped (project requirement). Bink movies only react to real input, so the mod
 (Client/AutoSkip.lua) detects a movie on its tick (every 100 ms), presses the engine's ESCAPE, and if
 the movie is still up asks for a shim key: `autoskip.status` then carries `want = {seq, key, ...}`.
 This loop polls that cheap op (no UI reads in the game) every `fast_s` and sends each new request
@@ -163,7 +163,7 @@ def start_background(port: int = 9998, log: Callable[[str], None] = lambda m: No
                      lock_path: str | os.PathLike | None = DEFAULT_LOCK) -> threading.Event | None:
     """Run a MovieSkipper on its own Game connection in a daemon thread; set the returned event to stop it.
 
-    None when $BG3AI_MOVIE_SKIP=0. Cutscenes are always skipped (user requirement), so every process that
+    None when $BG3AI_MOVIE_SKIP=0. Cutscenes are always skipped (project requirement), so every process that
     drives the game outside the MCP server (runner/play.py, tools/dev/test_new_game.py) starts one; the lock
     keeps it to one active skipper per game."""
     if os.environ.get("BG3AI_MOVIE_SKIP", "1") == "0":

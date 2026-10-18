@@ -25,7 +25,7 @@ def copy_naut(dst: Path) -> None:
         shutil.copytree(REAL / n, dst / "sessions" / n, ignore=shutil.ignore_patterns("sandbox-home", "reset"))
 
 
-@unittest.skipUnless(HAVE_NAUT, "needs runtime/sessions/naut* (the the test machine naut series)")
+@unittest.skipUnless(HAVE_NAUT, "needs runtime/sessions/naut* (the naut series' run records)")
 class RealNaut(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

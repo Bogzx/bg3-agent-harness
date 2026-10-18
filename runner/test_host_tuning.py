@@ -43,7 +43,7 @@ class HostTuningTest(unittest.TestCase):
     def test_read_config(self):
         m = self.tmp / "host-tuning"
         self.assertEqual(H.read_config(m), ({}, []))                       # no marker: nothing to do
-        m.write_text("# the test machine\nplatform_profile=balanced\nnvidia_max_clock = 1500  # MHz\nfan=max\nnvidia_min_clock=low\n")
+        m.write_text("# box\nplatform_profile=balanced\nnvidia_max_clock = 1500  # MHz\nfan=max\nnvidia_min_clock=low\n")
         cfg, warn = H.read_config(m)
         self.assertEqual(cfg, {"platform_profile": "balanced", "nvidia_max_clock": "1500"})
         self.assertEqual(len(warn), 2)

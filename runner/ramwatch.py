@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RAM watchdog: keeps the game alive when the 15 GB laptop runs short of memory.
+"""RAM watchdog: keeps the game alive when the 15 GB test machine runs short of memory.
 
 2026-10-10 09:50 the kernel OOM killer killed bg3 (anon-rss 1.8 GB, oom_score_adj 200: the game inherits Steam's
 200, so it was the preferred victim) while 4 worker agents ran test suites in parallel. This watchdog:
@@ -12,14 +12,14 @@
     (runtime/ram_kills.jsonl); our own kill is no OOM event, so systemd stops no unit for it;
   - no longer lowers the game's oom_score_adj (it used to set -500): the game runs in its own capped systemd scope
     (runner/launch_game.sh), and when RAM runs out the game must be the victim, never an agent (an OOM kill inside
-    the multiplexer's unit makes systemd stop every agent);
+    the agents' service unit makes systemd stop every agent);
   - below WARN_MB available: marks test runs (unittest/pytest/Lua test suites of this user) as the OOM killer's
     first victims (oom_score_adj 1000, no privilege needed) and logs a warning;
   - below KILL_MB available: SIGTERMs those test runs before the kernel picks the game;
   - every THERMAL_S writes one temperature line to runtime/thermal.log (synced, so the last seconds before a hard
-    power-off survive; the format of tools/orchestrator/thermal_log.sh, which it replaces while it holds
+    power-off survive; the format of an operator's thermal_log.sh, which it replaces while it holds
     runtime/thermal_log.lock), and SIGKILLs bg3 when the CPU or the GPU stays above the heat-kill limits
-    (heat_limits(); runtime/heat_kills.jsonl, with the last tool calls). the test machine cut its power twice under the naut
+    (heat_limits(); runtime/heat_kills.jsonl, with the last tool calls). The test box cut its power twice under the naut
     series load (2026-10-16 ~20:07, 2026-10-17 ~16:01; no kernel log, no MCE, no OOM). The runner pauses between
     sessions at the lower heat-pause limits (runner/play.py heat_paused, from the same log).
 
@@ -75,7 +75,7 @@ GAME_COMM = "bg3"
 # client. Never claude, the runner, the bridge or the game.
 TEST_RX = re.compile(r"(-m\s+(unittest|pytest)\b|\bpytest\b|/test_[\w-]+\.(sh|py|lua)\b|nickblah/lua)")
 THERMAL_LOG = RUNTIME / "thermal.log"
-THERMAL_LOCK = RUNTIME / "thermal_log.lock"   # tools/orchestrator/thermal_log.sh takes the same one (flock -n)
+THERMAL_LOCK = RUNTIME / "thermal_log.lock"   # an operator's thermal_log.sh takes the same one (flock -n)
 THERMAL_S = 5                  # one thermal line per this many seconds (thermal_log.sh's cadence)
 HEAT_KILLS = RUNTIME / "heat_kills.jsonl"
 HWMON = Path("/sys/class/hwmon")

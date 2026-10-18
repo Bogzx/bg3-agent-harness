@@ -2,7 +2,7 @@
 
 Saves are matched to a playthrough by the character's name (runner --save-owner, BG3AI_SAVE_PREFIX), so a
 character finished as the default "Tav" breaks save ownership. What bg3le can and cannot see on the naming
-page (verified live on machine 2, Patch 8; details in mod/.../Client/Progression.lua "Character name"):
+page (verified live, Patch 8; details in mod/.../Client/Progression.lua "Character name"):
 CharacterName reads as a localization handle ("ResStr_...") whatever the box shows, so the character's name
 is unreadable; the box's text is readable (through its selection); focus and hover are readable; the box is
 only created once the naming page is first shown; a click focuses it and selects its text; LCTRL+A does

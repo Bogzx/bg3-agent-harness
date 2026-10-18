@@ -17,7 +17,7 @@
 #   4 bg3le       wait for the Lua debug server on 127.0.0.1:$BG3LE_DEBUG_PORT, then sys.info from the mod
 #   5 health      no "WARNING: resolve:" in bg3le's log; the game is on the NVIDIA GPU (nvidia-smi); the game runs
 #                 in its own systemd scope bg3ai-game-<stamp>.scope (launch_game.sh: OOMPolicy=continue, MemoryMax
-#                 10G), so an OOM kills only the game, never the agents' unit (20:48: one did, inside the multiplexer's unit)
+#                 10G), so an OOM kills only the game, never the agents' unit (2026-10-10: one did)
 #   6 screen      one frame through the screenshot layer (bridge/src/bg3ai/screen.py)
 # Then it prints what to do next. The game is left running.
 set -euo pipefail
@@ -114,7 +114,7 @@ if [ "$attach" = 1 ]; then
     ok "attaching to the running game"
 else
     port_up && die "port $PORT is already in use (a game is running?): pass --attach, or stop it first"
-    # The desktop's display env when this shell lacks it (a the multiplexer pane, ssh); none usable = no launch (L8: the game
+    # The desktop's display env when this shell lacks it (ssh, a multiplexer); none usable = no launch (L8: the game
     # fell back to the AMD iGPU and dumped cores). launch_game.sh checks again (exit 5).
     display_problem=""
     display_sh="$(python3 "$REPO/runner/display_env.py" shell)" || [ -n "$display_sh" ] || display_problem="display_env.py failed"
@@ -224,7 +224,7 @@ for c in check_act check_se; do
     fi
 done
 cat <<EOF
-  3. A supervised session (docs/HANDOFF.md §6): BG3AI_SAVE_PREFIX=Claude- python3 runner/play.py run \\
+  3. A supervised session (docs/SETUP.md §5): BG3AI_SAVE_PREFIX=Claude- python3 runner/play.py run \\
        --playthrough claude-run-1 --save-owner Claude --session-minutes 30 --effort medium
      with the dashboard: uv run --project bridge python runner/dashboard/serve.py --port 8765
 EOF

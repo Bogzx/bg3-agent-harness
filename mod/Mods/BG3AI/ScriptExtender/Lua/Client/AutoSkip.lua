@@ -40,7 +40,7 @@
 -- "dialogue_line" {speaker?, text, options?=n}, so the agent still reads all
 -- of it; skipped movies push "movie_skipped".
 --
--- Latency (se, machine 2): movies are probed every FAST_MS from the tick with
+-- Latency (se, the test machine): movies are probed every FAST_MS from the tick with
 -- a cheap check (ContentRoot child names only, no DataContext reads), and at
 -- once after a game-state change. A movie seen on two probes gets the engine
 -- ESCAPE; if it is still up ENGINE_GRACE_MS later, a shim key is wanted.

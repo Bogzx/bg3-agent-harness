@@ -49,7 +49,7 @@ SCROLL_SAVE = "S066-end"
 # finally; a nav kill list entry: cleared in a finally). strict (S17) runs last: strict on across 2 loads + a long
 # rest, restored in a finally.
 SECTIONS = ["reads", "setup", "act", "vis", "gear", "swap", "rest", "trade", "nav", "combat", "loads", "se", "strict"]
-# Estimated seconds per section (the 2026-10-11/13 full runs on the test machine: max seen, + today's new items), for the plan.
+# Estimated seconds per section (the 2026-10-11/13 full runs, test box: max seen, + today's new items), for the plan.
 EST_S = {"reads": 65, "setup": 30, "act": 140, "vis": 115, "gear": 60, "swap": 85, "rest": 85, "trade": 135,
          "nav": 195, "combat": 220, "loads": 80, "se": 350, "strict": 150}
 # Who fixes a section's FAILs (docs/ORCHESTRATOR.md ownership): tools/dev/live_window.py prints the failures per owner.

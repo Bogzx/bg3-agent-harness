@@ -2,7 +2,7 @@
 
 Calls the bridge's read tools in-process against the running game, N rounds each, and prints per tool the
 median/p90/max round trip plus the evals each call made (ops: "a+b+events.since" ran in one eval).
-Target (goal): read median < 30 ms, p90 < 100 ms (server ticks ~25 ms, client ~46 ms on machine 2).
+Target (goal): read median < 30 ms, p90 < 100 ms (server ticks ~25 ms, client ~46 ms on the test machine).
 
   uv run --project bridge python tools/dev/check_reads.py [--rounds 10] [--queue]
 

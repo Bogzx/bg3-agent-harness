@@ -185,7 +185,7 @@ class Hub:
 
 
 def thermal_view(path: Path) -> dict | None:
-    """The last thermal.log line (runner/ramwatch.py or tools/orchestrator/thermal_log.sh) with its CPU/GPU C and
+    """The last thermal.log line (runner/ramwatch.py or an operator's thermal_log.sh) with its CPU/GPU C and
     the heat-pause limits, or None."""
     last = RW.last_thermal(path)
     if not last:

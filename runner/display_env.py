@@ -1,10 +1,10 @@
 """The desktop session's display env for the game, found when a shell lacks it (stdlib only).
 
-A the multiplexer pane or an ssh shell has no DISPLAY/XAUTHORITY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR, so the game can't open a
-window. The desktop's Xwayland carries them: `Xwayland :1 -auth /run/user/1000/xauth_XXXX ...` (docs/HANDOFF.md).
+A multiplexer pane or an ssh shell has no DISPLAY/XAUTHORITY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR, so the game can't open a
+window. The desktop's Xwayland carries them: `Xwayland :1 -auth /run/user/1000/xauth_XXXX ...` (docs/SETUP.md).
 Used by runner/play.py (run), tools/dev/live_window.py (its display step) and runner/launch_game.sh (`display_env.py
 shell`: fill, or refuse to launch). Without a display the game doesn't fail cleanly: L8 2026-10-18 00:1x, two launches
-from a the multiplexer shell fell back to the AMD iGPU (no NVIDIA PRIME without X) and dumped SIGTRAP cores within 10 s.
+from a multiplexer shell fell back to the AMD iGPU (no NVIDIA PRIME without X) and dumped SIGTRAP cores within 10 s.
 """
 
 from __future__ import annotations

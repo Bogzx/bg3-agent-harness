@@ -43,7 +43,7 @@
 #                      call that can't take the lock in 50 ms is refused instead of running unserialized). Default
 #                      off. The runner also sets it in a kept game at each session start (play.py apply_ui_strict)
 #   BG3AI_REQUIRE_STEAM_OFFLINE=1|0  refuse unless Steam's last login was offline (default 0, or 1 when the machine
-#                      marker ~/.config/bg3ai/require-steam-offline exists: machine 2; tools/steam_paths.py
+#                      marker ~/.config/bg3ai/require-steam-offline exists; tools/steam_paths.py
 #                      offline_required). BG3AI_ALLOW_STEAM_ONLINE=1 is the older "off".
 #   DISPLAY / XAUTHORITY  unset ones are taken from the desktop's Xwayland (runner/display_env.py); with no usable
 #                      display (no X socket, no auth file) the launch is refused, exit 5 (never a silent iGPU start)
@@ -51,8 +51,8 @@
 #                      exit 4, also with --dry-run; tools/bg3le_buildinfo.py compares BUILDINFO next to the library)
 #   BG3AI_GAME_SCOPE   1 (default): run the game in its own systemd user scope bg3ai-game-<stamp>.scope with
 #                      OOMPolicy=continue and a memory cap, so an OOM kills only the game, never the caller's unit
-#                      (20:48: the game hit 13.3 GB inside the multiplexer's unit, OOMPolicy=stop, and systemd killed every
-#                      agent). 0: no scope (and no cap).
+#                      (2026-10-10: the game hit 13.3 GB inside the agents' service unit, OOMPolicy=stop, and
+#                      systemd killed every agent). 0: no scope (and no cap).
 #   host tuning        opt-in per machine: the marker ~/.config/bg3ai/host-tuning (platform_profile=balanced,
 #                      nvidia_max_clock=1500, ...) is applied with `sudo -n` before each launch, skipped with a
 #                      warning when sudo needs a password (runner/host_tuning.py; the test machine froze twice uncapped)
@@ -124,7 +124,7 @@ if [ "$use_bg3le" = 1 ] && [ ! -f "$LIB" ]; then
     [ "$dry_run" = 1 ] || die "no bg3le library at $LIB; run tools/build_bg3le.sh"
     echo "launch_game: warning: no bg3le library at $LIB yet" >&2
 fi
-# A library built before a crash patch was added (UI-1: this laptop's dist predated all nine) passes every other
+# A library built before a crash patch was added (UI-1: one machine's dist predated all nine) passes every other
 # check. Its BUILDINFO's "patch:" lines must name every patches/bg3le/*.patch with the same hash.
 if [ "$use_bg3le" = 1 ] && [ -f "$LIB" ]; then
     if ! stale="$(python3 "$REPO/tools/bg3le_buildinfo.py" --dist "$(dirname "$LIB")")"; then
@@ -148,14 +148,14 @@ fi
 if ! pgrep -x steam >/dev/null 2>&1 && ! pgrep -f 'ubuntu12_32/steam' >/dev/null 2>&1; then
     echo "launch_game: warning: Steam does not appear to be running; libsteam_api needs it" >&2
 fi
-# A machine that shares its Steam account with another one that plays (machine 2: an online launch would kick the
-# operator off) requires an offline Steam (RUN-11: only there; a public user's online Steam is fine).
+# A machine that shares its Steam account with another one that plays (an online launch would kick the other
+# player off) requires an offline Steam (RUN-11: only there; a public user's online Steam is fine).
 if [ "$dry_run" != 1 ]; then
     steam_state="$(python3 "$REPO/tools/steam_paths.py" launch-ok)" \
         || die "REFUSING TO LAUNCH: Steam is not offline ($steam_state). Steam > Go Offline, or BG3AI_REQUIRE_STEAM_OFFLINE=0"
 fi
 # A display the game can open a window on: unset DISPLAY/XAUTHORITY/... come from the desktop's Xwayland
-# (runner/display_env.py; a the multiplexer or ssh shell has none). Without one the game doesn't fail cleanly: L8 2026-10-18,
+# (runner/display_env.py; an ssh shell has none). Without one the game doesn't fail cleanly: L8 2026-10-18,
 # two launches from a bare shell fell back to the AMD iGPU and dumped SIGTRAP cores within 10 s. Exit 5.
 display_problem=""
 display_sh="$(python3 "$REPO/runner/display_env.py" shell)" || [ -n "$display_sh" ] || display_problem="display_env.py failed"
@@ -166,7 +166,7 @@ if [ -n "$display_problem" ]; then
 elif [ -n "$display_sh" ]; then
     echo "launch_game: display env from the desktop session: $(echo $display_sh | sed 's/export //g')" >&2
 fi
-# Host tuning (the test machine: platform_profile and the NVIDIA clock cap reset on every reboot). Never fatal, never a prompt.
+# Host tuning (platform_profile and the NVIDIA clock cap reset on every reboot). Never fatal, never a prompt.
 if [ "$dry_run" = 1 ]; then _tune=plan; else _tune=apply; fi
 python3 "$REPO/runner/host_tuning.py" "$_tune" 2>&1 | sed 's/^/launch_game: /' >&2 || true
 if [ "$use_bg3le" = 1 ] && command -v ss >/dev/null 2>&1 && ss -Hltn "sport = :$PORT" | grep -q .; then
