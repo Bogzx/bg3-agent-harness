@@ -673,6 +673,20 @@ class CombatTurn(Base):
         self.assertEqual(self.casts(), ["Target_LayOnHands", "Target_LayOnHands_BigHeal"])
         self.assertIn("took the biggest heal variant Target_LayOnHands_BigHeal", out)
 
+    def test_ally_call_quick_pick_takes_the_first_usable_group_at_the_point(self):
+        # A27: the mod lists the usable groups' ids first (The Watch already called: named last, by name only)
+        box, keene, gur = ("Shout_END_AllyAbilities_MultipleSummon", "Target_END_AllyAbilities_KeeneSummon",
+                           "Target_END_AllyAbilities_GurSummon")
+        self.g.refuse_if = lambda op, a: (
+            f"choose a variant: {keene}, {gur} (Gather Your Allies casts nothing by itself: use_ability which=<one of "
+            f"Guildmaster Keene's Fixers ({keene}), Gur Huntwardens ({gur}), The Watch "
+            f"(Target_END_AllyAbilities_WatchSummon) [already called]>, x,y,z = the ground where they appear)"
+            if a.get("spell") == box else None)
+        out = server.combat_turn(self.plan(action={"ability": box, "x": 5.0, "y": 0.0, "z": 1.0}))
+        self.assertEqual(self.casts(), [box, keene])
+        self.assertEqual(self.g.ops("act.cast")[-1][1].get("pos"), [5.0, 0.0, 1.0])
+        self.assertIn(f"took the first variant {keene}", out)
+
     # S018 04:06: three combat_turns sent ahead waited 40+30+30 s while our own Spiritual Weapon had its turn.
     def test_sent_ahead_returns_at_once_when_another_party_member_must_act_first(self):
         self.g.combat["current"] = P2

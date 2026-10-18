@@ -463,6 +463,9 @@ local function spellInfo(id)
             concentration = flags.IsConcentration or nil, ritual = nil,
             save = f("SpellSaveDC") and nil or nil,
             tooltip_attack_save = f("TooltipAttackSave"),
+            -- A27: a container with variants and no ContainerSpells list (Gather Your Allies)
+            linked = flags.IsLinkedSpellContainer and (f("ContainerSpells") or "") == ""
+                and (f("SpellContainerID") or "") == "" or nil,
         }
         if c.root == "" then c.root = nil end
         if c.container == "" then c.container = nil end
@@ -562,6 +565,16 @@ function S.actions(uuid)
         if info.concentration then a.concentration = true end
         if upcasts[id] then table.sort(upcasts[id]); a.upcast = upcasts[id] end
         if variants[id] then a.variants = variants[id] end
+        local Gv = BG3AI.Guard
+        if info.linked and not a.variants and Gv and Gv.box_variants then
+            -- A27: Gather Your Allies' groups by name (use_ability "The Watch"), from the book / its container entries
+            local ok, ids = pcall(Gv.box_variants, uuid, id)
+            for _, v in ipairs(ok and ids or {}) do
+                local f = Gv.spell_facts(v)
+                a.variants = a.variants or {}
+                a.variants[#a.variants + 1] = { spell = v, name = f and f.name or v }
+            end
+        end
         local pay = cost
         if cost.action and extra == nil then
             local Gd = BG3AI.Guard
