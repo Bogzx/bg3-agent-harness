@@ -22,6 +22,8 @@ CLAUDE.local.md
 /research/memory-review-*
 /research/triage-live.md
 /tools/dev/live_*.py
+/tools/vis/probe_*
+/runner/test_orchestrator_scripts.py
 # Worker diaries, the backlog, and the orchestrator's process files
 /research/impl-*.md
 /research/live-todo.md
