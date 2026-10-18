@@ -229,6 +229,12 @@ class CampLine(unittest.TestCase):
         self.assertIn("ALSO weather=rain", out)
         self.assertIn("CAMP ", out)
 
+    def test_geo_gen_is_never_shown(self):
+        # audit C18: it counts doors/walls changing near the party, seen or not
+        out = render.render_status({"party": [], "geo_gen": 15, "weather": "rain"}, None, Handles())
+        self.assertNotIn("geo_gen", out)
+        self.assertIn("ALSO weather=rain", out)
+
     def test_odd_rows(self):
         H = Handles()
         self.assertEqual(render.camp_text([{"name": "Minthara"}], H), "Minthara (at camp, not in the party)")

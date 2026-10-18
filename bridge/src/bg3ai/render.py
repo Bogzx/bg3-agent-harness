@@ -281,8 +281,10 @@ def render_status(s: dict, ui: dict | None, H: Handles) -> str:
     me = s.get("active")
     for c in s.get("party") or []:
         lines.append("PARTY " + character_line(c, H, me))
+    # geo_gen: the bridge's own counter of doors/walls changing near the party, seen or not (audit C18)
     extra = {k: v for k, v in s.items() if k not in ("region", "subregion", "level", "in_combat", "combat",
-                                                     "turn_based", "in_dialogue", "gold", "active", "party")}
+                                                     "turn_based", "in_dialogue", "gold", "active", "party",
+                                                     "geo_gen")}
     camp = extra.pop("camp", None)
     if camp:
         lines.append("CAMP " + camp_text(camp, H))
