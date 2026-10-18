@@ -2352,29 +2352,16 @@ def get_frontier() -> str:
 
 @mcp.tool()
 @_guard
-def get_layout(radius: float = 12.0, who: str | None = None, to: str = "") -> str:
-    """The walls, openings and floor around you as a text map (what the overhead camera shows), N up, you = @: mazes, rooms, ledges, chasms. Marks the party (1-3), characters (E hostile, n other), doors (D), ladders (H), levers/buttons (L), containers (C). In a trial room with a floor mosaic it also prints the mosaic's picture and, standing at its start, the MOSAIC PATH along its lines to the far end (to="x,z" or an id: to the line nearest that instead) as one do_actions of straight move_to legs. radius 4-20 m."""
+def get_layout(radius: float = 12.0, who: str | None = None) -> str:
+    """The walls, openings and floor around you as a text map (what the overhead camera shows), N up, you = @: mazes, rooms, ledges, chasms. Marks the party (1-3), characters (E hostile, n other), doors (D), ladders (H), levers/buttons (L), containers (C). In a trial room with a floor mosaic it also prints the mosaic's picture (1 char = 1 m, N up). radius 4-20 m."""
     t0 = time.monotonic()
     char = _who_uuid(who) if who else _active()
     lay = _read1("nav.layout", {"char": char, "radius": radius})
     st = game.try_rpc("state.status") or {}
     near = game.try_rpc("state.nearby", {"radius": min(max(radius, 4.0), 20.0) * 1.5}) or {}
     _remember_names(near)
-    goal = _layout_goal(to, near) if to else None
-    text = render.render_layout(lay if isinstance(lay, dict) else {}, H, near, st.get("party") or [], char, goal)
+    text = render.render_layout(lay if isinstance(lay, dict) else {}, H, near, st.get("party") or [], char)
     return _finish("get_layout", {"radius": radius}, text, t0)
-
-
-def _layout_goal(to: str, near: dict) -> tuple[float, float]:
-    """get_layout to=: "x,z" (or "x,y,z"), or the id/name of something in view -> (x, z)."""
-    nums = re.findall(r"-?\d+(?:\.\d+)?", to)
-    if "," in to and len(nums) in (2, 3):
-        return float(nums[0]), float(nums[-1])
-    u = _uuid(to)
-    for o in (near.get("characters") or []) + (near.get("items") or []):
-        if isinstance(o, dict) and o.get("uuid") and H.get(o["uuid"]) == H.get(u) and isinstance(o.get("pos"), list) and len(o["pos"]) >= 3:
-            return float(o["pos"][0]), float(o["pos"][2])
-    raise ValueError(f"to={to!r}: give x,z or the id of something in view")
 
 
 @mcp.tool()
@@ -2543,10 +2530,6 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
     if not isinstance(res, dict) or not res.get("reachable") or not res.get("pos"):
         n = res.get("samples") if isinstance(res, dict) else None
         hz = macros.hazard_text(res.get("hazard")) if isinstance(res, dict) else ""
-        if isinstance(res, dict) and res.get("hidden_floor"):
-            return _finish("walk_toward", args, f"FAILED: the way toward {what} is the chasm, with no floor you can see"
-                           f" ({_hidden_text(res['hidden_floor'])}). On an invisible-floor trial walk in short steps"
-                           " (move_to ≤ 3m) along the mosaic's lines (get_layout).", t0)
         if hz:
             return _finish("walk_toward", args, f"FAILED: the way toward {what} crosses {hz}. Go around it"
                            " (another direction, get_frontier) or "
@@ -2569,8 +2552,6 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         head += ", needs a jump"
     if res.get("hazard_beyond"):
         head += f", stopping short of {macros.hazard_text(res['hazard_beyond'])}"
-    if res.get("hidden_beyond"):
-        head += f", stopping at the chasm edge (no floor you can see beyond, {_hidden_text(res['hidden_beyond'])})"
     if res.get("standing_in"):
         head += f" (you are standing in {res['standing_in']})"
     wait, note = _walk_wait(wait)
@@ -2598,13 +2579,6 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
             head += (f"; cut to the movement left ({render.num(left)}m): "
                      f"{render.num(r2.get('straight_m', budget))}m")
     return head + "\n" + body
-
-
-def _hidden_text(h: dict) -> str:
-    """Where a walk would leave visible floor for a trial's invisible one (nav hidden_floor {pos, at_m})."""
-    p = h.get("pos") if isinstance(h, dict) else None
-    at = f"{render.num(h.get('at_m', 0))}m along, " if isinstance(h, dict) and h.get("at_m") is not None else ""
-    return at + ("at " + render.pos(p) if isinstance(p, list) and len(p) == 3 else "ahead")
 
 
 @mcp.tool()
@@ -9852,11 +9826,6 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                     stop += macros.direct_why_text(r.get("direct_why"), d)
                 if isinstance(r, dict) and r.get("hazard_beyond"):
                     stop += f"; ahead: {macros.hazard_text(r['hazard_beyond'])}"
-                hid = r.get("hidden_floor") or r.get("hidden_beyond") if isinstance(r, dict) else None
-                if hid:  # S035: a walk onto the Faith-Leap chasm's invisible floor killed Claude
-                    stop = (f"the way on is the chasm, with no floor you can see ({_hidden_text(hid)};"
-                            f" {render.num(round(d, 1))}m left): on an invisible-floor trial walk in short steps"
-                            " (move_to ≤ 3m) along the mosaic's lines (get_layout)")
                 break
             # A plain sampled leg that gains only a few metres on a long trip (acceptance: 30 m, 2 m, 29 m legs; the
             # sampler stopped at an obstacle edge): one verified alternative leg first, kept when it gets clearly further.

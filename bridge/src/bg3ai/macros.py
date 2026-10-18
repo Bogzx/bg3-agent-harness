@@ -211,7 +211,7 @@ def hazard_text(h: dict | None) -> str:
 # straight legs dead-ended west of an Oak Door, 106 m short, with no word on what the game's path did.
 DIRECT_WHY = {"no path": "the game finds no path there", "partial": "the game's path ends short of it",
               "jump": "the game's path needs a jump (jump_to/route)", "long": "the game's path is over 600 m",
-              "no node in reach": "the game's path doubles back first", "hidden floor": "the game's path crosses an unseen floor",
+              "no node in reach": "the game's path doubles back first",
               "leg end unverified": "the game's path's next stop did not check out"}
 
 

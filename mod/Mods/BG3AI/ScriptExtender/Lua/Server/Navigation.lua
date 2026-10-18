@@ -760,20 +760,6 @@ function N.path(charUuid, target, deadline, noSearch)
         end
         r.ms = (r.ms or 0) + (Ext.Utils.MonotonicTime() - t0)
     end
-    -- S035 19:38: walk_toward W in the Faith-Leap room ran Claude onto the
-    -- trial's invisible-floor layer (the engine mesh is one flat floor over
-    -- the whole chasm; only the hidden platforms hold) and Claude fell to
-    -- death. Marked here (hidden_floor, winds = the engine's line bends off
-    -- the straight one); the automatic walks (reachToward, directLeg) never
-    -- take it, Guard refuses a winding one; a straight move_to the agent
-    -- picked from the mosaic, or a short step, is the player's own risk.
-    if r.reachable and r.points and N.hiddenFloor and (r.length_m or 0) > N.HIDDEN_STEP_M then
-        local h = N.hiddenFloor(r.points)
-        if h then
-            r.hidden_floor = h
-            if r.length_m > U.dist(from, r.points[#r.points]) + 1.0 then h.winds = true end
-        end
-    end
     -- A walk never takes a fall that hurts (S035: "walks must never path over a lethal drop"): an engine route
     -- whose link drops more than WALK_DROP_MAX_M is marked; reachToward/directLeg skip it, Guard refuses it
     -- (jump_to is the deliberate way down, it checks the landing).
@@ -1299,7 +1285,6 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline
     -- if pathable and direct (length <= DETOUR x straight), and (avoid) clear
     -- of harmful surfaces at its end and along its route.
     local firstHazard, avoided, tried, memo = nil, 0, 0, {}
-    local hidden -- a sample refused for crossing the invisible-floor layer (N.hiddenFloor)
     local cut = false
     local function good(i)
         if memo[i] ~= nil then return memo[i] end
@@ -1308,8 +1293,7 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline
         tried = tried + 1
         local ok = false
         local r = N.path(charUuid, c.pos)
-        if r and r.hidden_floor and (not hidden or c.dd < hidden.dd) then hidden = { pos = r.hidden_floor.pos, at_m = r.hidden_floor.at_m, dd = c.dd } end
-        if r and r.reachable and not r.hidden_floor and not r.drop and not r.partial and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then
+        if r and r.reachable and not r.drop and not r.partial and r.length_m <= math.max(N.DETOUR * dd, dd + 2.0) then
             local hz = nil
             if avoid then
                 local sf = N.surfaceNear(c.pos)
@@ -1354,7 +1338,7 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline
                 if memo[i] == nil then tried = tried + 1 end
                 n = n + 1
                 local r = N.path(charUuid, c.pos)
-                if r and r.reachable and not r.partial and not r.needs_jump and not r.hidden_floor and not r.drop
+                if r and r.reachable and not r.partial and not r.needs_jump and not r.drop
                     and r.length_m <= math.max(N.DETOUR_LOOSE * dd, dd + 6.0)
                     and not (avoid and (N.surfaceNear(c.pos) or N.routeHazard(r.points))) then
                     best = { pos = c.pos, path_m = r.length_m, straight_m = round(dd, 1) }
@@ -1365,17 +1349,15 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline
         end
     end
     if firstHazard then firstHazard.dd = nil end
-    if hidden then hidden.dd = nil end
     if not best then
-        if cut then return { reachable = nil, unfinished = true, samples = tried, hazard = firstHazard, hidden_floor = hidden } end
-        if avoided == 0 then return { reachable = false, samples = tried, hidden_floor = hidden } end
-        return { reachable = false, samples = tried, hazard = firstHazard, hidden_floor = hidden }
+        if cut then return { reachable = nil, unfinished = true, samples = tried, hazard = firstHazard } end
+        if avoided == 0 then return { reachable = false, samples = tried } end
+        return { reachable = false, samples = tried, hazard = firstHazard }
     end
     local out = { pos = U.vec(best.pos, 1), path_m = best.path_m, straight_m = best.straight_m,
         needs_jump = best.needs_jump, reachable = true, samples = tried, dir = N.direction(from, best.pos),
         searched = true, winding = winding or nil, unfinished = cut or nil }
     if avoided > 0 then out.avoided = avoided; out.hazard_beyond = firstHazard end
-    if hidden then out.hidden_beyond = hidden end
     return out
 end
 
@@ -1673,7 +1655,6 @@ function N.directLeg(charUuid, toward, avoid)
     local legPts = {}
     for i = 1, last do legPts[i] = pts[i] end
     if pos == goal and U.dist(legPts[#legPts], goal) > 0.5 then legPts[#legPts + 1] = goal end
-    if walk > N.HIDDEN_STEP_M and N.hiddenFloor(legPts) then return nil, "hidden floor" end
     local risky = nil
     if avoid and (N.routeHazard(legPts) or (pos == goal and N.surfaceNear(goal))) then
         risky = N.routeExposure(legPts) or { surface = N.surfaceNear(goal), m = 0, pos = U.vec(goal, 1), at_m = round(walk, 1) }
@@ -3819,34 +3800,6 @@ local function inBox(b, x, z, m)
     return b and x >= b.x1 - m and x <= b.x2 + m and z >= b.z1 - m and z <= b.z2 + m
 end
 
--- First point of a route (points from rawPath) on the invisible-floor layer:
--- inside the helpers' box (+ HIDDEN_BOX_M, about half a platform) at the
--- walkway height. A visible statue/platform ~1 m above that layer is not it.
--- Returns {pos, at_m} or nil. Levels without helpers: one cached empty scan.
-N.HIDDEN_STEP_M = 3.0   -- a walk this long or shorter may step onto it (one platform)
-N.HIDDEN_BOX_M = 1.0
-function N.hiddenFloor(points)
-    if type(points) ~= "table" or #points < 2 or #N.helpers() == 0 then return nil end
-    local box = helperBox(points[1], 40)
-    if not box then return nil end
-    local layer = box.y + 0.2
-    local walked = 0
-    for i = 2, #points do
-        local a, b = points[i - 1], points[i]
-        local seg = U.dist(a, b)
-        local n = math.max(1, math.ceil(seg / 0.5))
-        for k = 1, n do
-            local f = k / n
-            local x, y, z = a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f
-            if inBox(box, x, z, N.HIDDEN_BOX_M) and math.abs(y - layer) <= N.HELPER_LAYER_M then
-                return { pos = U.vec({ x, y, z }, 1), at_m = round(walked + seg * f, 1) }
-            end
-        end
-        walked = walked + seg
-    end
-    return nil
-end
-
 local function tileFlags(t)
     local f = {}
     pcall(function() for _, v in ipairs(t.Flags or {}) do f[tostring(v)] = true end end)
@@ -3906,7 +3859,8 @@ function N.layoutCell(x, z, y0, box)
 end
 
 -- The helpers' picture (the Faith-Leap mosaic): helpers linked when <= 2.3 m
--- apart, drawn at 1 m per character, N up. Returns {rows, x1, z2} or nil.
+-- apart, drawn at 1 m per character, N up. Returns {rows, cell} or nil: only
+-- the picture, nothing tying it to world coordinates (FAIRNESS.md, user 2026-10-18).
 function N.mosaic(box)
     if not box or #box.pts < 4 then return nil end
     local x1, z2 = math.floor(box.x1), math.ceil(box.z2)
@@ -3944,7 +3898,7 @@ function N.mosaic(box)
     end
     local rows = {}
     for r = 1, h do rows[r] = (table.concat(grid[r]):gsub("%s+$", "")) end
-    return { rows = rows, x1 = x1, z2 = z2, cell = 1, y = round(box.y + 0.2, 1) } -- y: the walkway height (its ledge's)
+    return { rows = rows, cell = 1 }
 end
 
 function N.layout(char, radius, cell)

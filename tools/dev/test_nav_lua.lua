@@ -1185,13 +1185,15 @@ test("layout: the Faith-Leap walkway layer is never floor; the mosaic shows it n
         local all = table.concat(r.mosaic.rows, "\n")
         assert(all:find("#####", 1, true), "the safe line drawn: " .. all)
         assert(all:find("O", 1, true), "the statue platform drawn: " .. all)
+        -- only the picture: nothing tying it to world coordinates (FAIRNESS.md, user 2026-10-18)
+        eq(r.mosaic.x1, nil, "no x anchor"); eq(r.mosaic.z2, nil, "no z anchor"); eq(r.mosaic.y, nil, "no walkway height")
     end)
     Ext.Level.GetHeightsAt, Ext.Entity, BG3AI.Visibility.helperItem, BG3AI.Visibility.pos = savedH, savedE, savedHelper, savedPos
     N.helperCache = {}
     if not ok then error(err, 0) end
 end)
 
-test("hidden floor: walks stop at the invisible-floor trial's edge; a short step onto it is left to the player (S035)", function()
+test("hidden floor: walks over the invisible-floor trial are neither marked nor stopped, a misstep is the game's (user, 2026-10-18)", function()
     reset()
     local savedE, savedHelper, savedPos = Ext.Entity, BG3AI.Visibility.helperItem, BG3AI.Visibility.pos
     -- the Faith-Leap layout: the engine mesh is one flat floor (y 0) over the chasm W of x=-9; the hidden
@@ -1208,29 +1210,22 @@ test("hidden floor: walks stop at the invisible-floor trial's edge; a short step
     N.helperCache = {}
     local ok, err = pcall(function()
         local r = N.reachToward(P1, "W", nil, 20, 2, true, true)
-        eq(r.reachable, true, "the visible floor up to the edge walks")
-        assert(r.pos[1] >= -8.01, "stops before the hidden layer: " .. r.pos[1])
-        assert(r.hidden_beyond and r.hidden_beyond.pos, "says why it stopped")
+        eq(r.reachable, true, "walks W")
+        assert(r.pos[1] < -9, "not stopped at the chasm edge by the helpers: " .. r.pos[1])
+        eq(r.hidden_beyond, nil, "no hidden-floor note")
         local p = N.path(P1, { -15, 0, 0 })
-        eq(p.reachable, true, "a straight walk the agent picked is its own risk")
-        assert(p.hidden_floor and p.hidden_floor.at_m >= 8.5 and p.hidden_floor.at_m <= 9.5, "marked where: " .. tostring(p.hidden_floor and p.hidden_floor.at_m))
-        eq(p.hidden_floor.winds, nil, "straight")
+        eq(p.reachable, true, "the engine's path")
+        eq(p.hidden_floor, nil, "not marked")
         local savedNodes = nodesFor
         nodesFor = function(from, t) return { { -6, 0, 0 }, { -12, 0, 4 }, t } end
         local w = N.path(P1, { -16, 0, 0 })
         nodesFor = savedNodes
-        assert(w.hidden_floor and w.hidden_floor.winds, "a bend over the hidden floor is flagged (Guard refuses it)")
-        local rt = N.reachToward(P1, nil, { -16, 0, 0 }, 20, 2, true, true)
-        assert(rt.reachable and rt.pos[1] >= -8.01, "walk_toward a point across it stops at the edge too")
-        world[P1] = { -8.5, 0, 0 }
-        eq(N.path(P1, { -10.5, 0, 0 }).reachable, true, "a 2 m step onto it: the player's own risk")
-        world[P1] = { 0, 0, 0 }
-        eq(N.path(P1, { 0, 0, 15 }).reachable, true, "walks elsewhere unaffected")
-        eq(N.directLeg(P1, { -15, 0, 0 }, true), nil, "travel_to's direct leg refuses it too")
-        N.helperCache = {}
-        N.frame = N.frame + 1
-        cubes = {}
-        eq(N.path(P1, { -15, 0, 0 }).hidden_floor, nil, "no helpers on the level: plain floor")
+        eq(w.hidden_floor, nil, "a winding one neither")
+        local saved = N.verifyPoint
+        N.verifyPoint = function() return true end
+        local d = N.directLeg(P1, { -15, 0, 0 }, true)
+        N.verifyPoint = saved
+        assert(d and d.direct, "travel_to's direct leg is not refused")
     end)
     Ext.Entity, BG3AI.Visibility.helperItem, BG3AI.Visibility.pos = savedE, savedHelper, savedPos
     N.helperCache = {}

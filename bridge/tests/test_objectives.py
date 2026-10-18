@@ -269,18 +269,18 @@ class ServerTools(unittest.TestCase):
         self.assertTrue(out.startswith("FAILED: no walkable ground toward N within 30m (9 spots checked)"), out)
         self.assertEqual(self.fake.jobs, [])
 
-    def test_walk_toward_chasm_edge(self):
-        # S035 19:38: walk_toward W ran onto the Faith-Leap chasm's invisible floor (Claude died)
+    def test_walk_toward_no_hidden_floor_report(self):
+        # Fairness (user, 2026-10-18): nothing from the Faith-Leap's hidden platforms reaches the agent; an older
+        # mod's hidden_floor/hidden_beyond fields are ignored
         self.fake.reach = {"reachable": False, "samples": 6, "hidden_floor": {"pos": [-766.5, -28.4, -731.6], "at_m": 12.3}}
         out = server.walk_toward(direction="W", wait=True)
-        self.assertTrue(out.startswith("FAILED: the way toward W is the chasm, with no floor you can see"
-                                       " (12.3m along, at (-766.5,-28.4,-731.6))"), out)
-        self.assertIn("short steps (move_to ≤ 3m)", out)
-        self.assertEqual(self.fake.jobs, [])
+        self.assertTrue(out.startswith("FAILED: no walkable ground toward W within 30m (6 spots checked)"), out)
+        self.assertNotIn("chasm", out)
         self.fake.reach = {"reachable": True, "pos": [-764.0, -28.3, -732.5], "path_m": 10.0, "straight_m": 10.0,
                            "dir": "W", "hidden_beyond": {"pos": [-766.5, -28.4, -731.6], "at_m": 12.3}}
         out = server.walk_toward(direction="W", wait=True)
-        self.assertIn("stopping at the chasm edge (no floor you can see beyond", out)
+        self.assertNotIn("chasm", out)
+        self.assertNotIn("-766.5", out)
 
     def test_walk_toward_needs_an_argument(self):
         self.assertIn("FAILED", server.walk_toward())

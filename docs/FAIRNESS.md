@@ -44,3 +44,6 @@ Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendere
   non-hidden NPCs far away. The screenshot tool covers that gap fairly.
 * Examine-panel data (HP, AC, ability scores, resistances) is exported for visible creatures because the
   game shows it to every player via Examine.
+* The Faith-Leap Trial's floor mosaic is transcribed as a text picture (get_layout: its shape, 1 m per char,
+  N up, no coordinates). No route along it and no warnings or refusals from the hidden platforms: a misstep
+  has its in-game consequence (user, 2026-10-18).

@@ -883,6 +883,13 @@ test("G.reachable: a partial path (ends short of the point) is not reachable; a 
     refused(function() G.point_reachable(P1, { 8.2, 3.1, 0 }) end, "the walkable ground ends 4.2m short of it, at (6.8,0.0,1.4)")
 end)
 
+test("G.point_reachable: a path over the Faith-Leap's hidden floor is not refused (user, 2026-10-18: a misstep is the game's)", function()
+    nav.fn = function() return { reachable = true, length_m = 9.0, hidden_floor = { pos = { -9, 0, 0 }, at_m = 9.0, winds = true } } end
+    local r, info = G.reachable(P1, { -16, 0, 0 })
+    eq(r, true, "reachable"); eq(info.hidden_floor, nil, "not passed on")
+    G.point_reachable(P1, { -16, 0, 0 })
+end)
+
 test("approach: a ladder's foot is approached on the foot's floor, not under its upper landing (live L3 helm probe)", function()
     local heights = Ext.Level.GetHeightsAt
     Ext.Level.GetHeightsAt = helm_heights

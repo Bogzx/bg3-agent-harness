@@ -504,7 +504,7 @@ function G.reachable(char, pos)
         local ok, r = pcall(N.path, char, pos)
         if ok and type(r) == "table" then
             local info = { length_m = r.length_m, needs_jump = r.needs_jump, reason = r.error_cause or r.reason,
-                hidden_floor = r.hidden_floor, drop = r.drop, budget = r.budget }
+                drop = r.drop, budget = r.budget }
             -- A found path that ends short of the point (N.path's partial: end_off > 2 m) does not reach it (live L3
             -- helm probe 2026-10-17: a ring point on the floor above a ladder's foot read "reachable 1.8 m"; the
             -- engine then walked there up the ladder, and the interact's own Use climbed back down). N.verifyPoint
@@ -597,13 +597,6 @@ function G.point_reachable(char, pos)
         local d = info.drop.pos or {}
         G.refuse(string.format("the way there drops %.1fm at (%.1f,%.1f,%.1f) (fall damage): find a ladder or stairs"
             .. " (route), or jump_to the landing on purpose", info.drop.m or 0, d[1] or 0, d[2] or 0, d[3] or 0))
-    end
-    if r == true and info.hidden_floor and info.hidden_floor.winds then
-        -- Navigation.lua N.path (S035: a walk onto the Faith-Leap chasm's invisible floor killed Claude)
-        local h = info.hidden_floor.pos or {}
-        G.refuse(string.format("the engine's way there bends across the chasm where no floor shows (from (%.1f,%.1f,%.1f), %.1fm along):"
-            .. " on an invisible-floor trial walk straight lines along the mosaic's lines (get_layout LINES), corner to corner",
-            h[1] or 0, h[2] or 0, h[3] or 0, info.hidden_floor.at_m or 0))
     end
     if r ~= true and info.partial then
         local e = info.end_pos or {}
