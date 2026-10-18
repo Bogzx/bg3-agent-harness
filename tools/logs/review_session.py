@@ -36,6 +36,7 @@ import session_watch as SW  # noqa: E402
 
 RUNTIME = overlap.repo_paths.runtime_dir()   # $BG3AI_RUNTIME, else the main tree's runtime/ (also from a worktree)
 LONG_GAP_S = triage.LONG_GAP_S
+WAIT_SHARE = 0.5   # a combat gap at least this much inside wait_for calls is the enemy phase, not model think
 TOP_N = 10
 HAND = ("click", "press_key", "screenshot", "zoom", "camera")
 MEMORY = ("note", "end_session", "session_clock", "Read", "Edit", "Write", "Glob", "Grep")
@@ -222,11 +223,30 @@ def headline(sd: Path, sid: str, calls: list[dict], fights: list[dict], cost: di
     return out + [""]
 
 
-def gap_cause(calls: list[dict], a: float, b: float) -> tuple[str, str, dict | None]:
-    """(cause, owner, the call to point at) of an idle gap [a, b]."""
+def enemy_wait(calls: list[dict], a: float, b: float, g: dict | None) -> tuple[float, dict | None]:
+    """(seconds, first wait_for) of a fight's idle gap [a, b] spent blocked in wait_for, when that is at least
+    WAIT_SHARE of its idle time; else (0, None). S094 10:12:17 (89.5 s) and 10:14:23 (68.5 s): wait_for(my_turn)
+    while the enemies (or a stalled hand-off) took the turn, reviewed as model think. Only the wait seconds metrics
+    did not already take out of the idle time (its enemy-turn/busy/load spans; g: the metrics gap)."""
+    if not g or g.get("kind") != "combat":
+        return 0.0, None
+    waits = [c for c in calls if c["name"] == "wait_for" and c.get("t_res") is not None and c["t"] < b
+             and c["t_res"] > a]
+    idle = g.get("s", b - a)
+    wait_s = min(idle, max(0.0, sum(min(c["t_res"], b) - max(c["t"], a) for c in waits)
+                       - (g.get("gap_s", idle) - idle)))
+    return (wait_s, waits[0]) if waits and wait_s >= WAIT_SHARE * idle else (0.0, None)
+
+
+def gap_cause(calls: list[dict], a: float, b: float, g: dict | None = None) -> tuple[str, str, dict | None]:
+    """(cause, owner, the call to point at) of an idle gap [a, b]; g: the metrics gap (kind, idle s, gap_s)."""
     before = [c for c in calls if c["t"] <= a][-1:]
     inside = [c for c in calls if a < c["t"] < b]
     names = [c["name"] for c in inside]
+    wait_s, w = enemy_wait(calls, a, b, g)
+    if w:
+        # the game's time, no harness owner (a hand-off that stalled shows as wait_for timeouts at the evidence)
+        return f"waiting out the enemy phase (wait_for {wait_s:.0f} s, model {g['s'] - wait_s:.0f} s)", "game", w
     if before and before[0]["refusal"]:
         p = before[0]
         return f"recovering from a refusal: {overlap.refusal_key(p['name'], p['refusal'])[:90]}", owner(p["name"]), p
@@ -255,10 +275,17 @@ def gaps(sd: Path, sid: str, calls: list[dict]) -> tuple[list[str], list[dict]]:
     issues = []
     for g in sorted(gl, key=lambda g: g["t"]):
         a, b = g["t"], g["t"] + g.get("gap_s", g["s"])
-        cause, own, c = gap_cause(calls, a, b)
+        cause, own, c = gap_cause(calls, a, b, g)
         own_s = f", own turn {g['own_s']:.1f} s" if g.get("own_s") is not None and g["kind"] == "combat" else ""
         out.append(f"- {hm(a)} **{g['s']:.1f} s** {g['kind']}{own_s} → next `{g['next']}`: {cause} [{own}]"
                    + (f" — {ev(c)}" if c else ""))
+        wait_s = enemy_wait(calls, a, b, g)[0]
+        if wait_s:  # the waited part apart; the model's own part of the gap stays think if it is long itself
+            issues.append({"cause": "waiting out the enemy phase", "own": own, "s": wait_s, "c": c, "detail": cause})
+            if g["s"] - wait_s > LONG_GAP_S:
+                issues.append({"cause": "model think before the next action", "own": "setup", "s": g["s"] - wait_s,
+                               "c": c, "detail": cause})
+            continue
         issues.append({"cause": cause.split(":")[0] if cause.startswith("recovering") else cause, "own": own,
                        "s": g["s"], "c": c, "detail": cause})
     if not gl:

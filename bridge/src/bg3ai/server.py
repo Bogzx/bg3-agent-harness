@@ -932,6 +932,8 @@ def _objective_ref(ref: str) -> str:
         hit = render.find_objective(ms, f"o{int(m.group(1))}")
     except ValueError:
         raise ValueError(f"unknown target '{ref}': no objective {ref} now (get_map lists them)") from None
+    if hit.get("target"):  # the item/character the marker sits on (vis V32); the mod still checks it is in view
+        return str(hit["target"])
     label = render.objective_label(hit)
     try:
         return _uuid(label)
@@ -1010,9 +1012,24 @@ def _uuid(ref: str) -> str:
                 except Exception:  # noqa: BLE001 - an optional read; the refusal below stands
                     cs = {}
                 if not cs.get("active"):
-                    raise e3 from None
+                    return _objective_named(ref, e3)
                 _remember_names(cs)
-                return H.resolve(ref)
+                try:
+                    return H.resolve(ref)
+                except ValueError as e4:
+                    if "unknown target" not in str(e4):
+                        raise
+                    return _objective_named(ref, e4)
+
+
+def _objective_named(ref: str, err: ValueError) -> str:
+    """An objective's label as a target: the thing its marker sits on (S094 09:54 interact("Netherbrain Stem"), the
+    o1 label, for the Brain Stem: "unknown target"). The label exactly (any case); otherwise err stands."""
+    low = str(ref or "").strip().lower()
+    for m in _objective_markers(max_age=600):
+        if isinstance(m, dict) and m.get("target") and render.objective_label(m).strip().lower() == low:
+            return str(m["target"])
+    raise err from None
 
 
 def _active() -> str:

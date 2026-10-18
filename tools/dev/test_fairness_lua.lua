@@ -36,8 +36,8 @@ local MARKERS = {
         OBJ_TECH = { markers = { "M_TECH" }, desc = "dTech" },
     },
     markers = {
-        M_SHOWN = { uuid = WP_A, text = "tShown", level = "", icon = "", radius = 6 },
-        M_TECH = { uuid = WP_B, text = "tTech", level = "", icon = "", radius = 0 },
+        M_SHOWN = { type = "Item", uuid = WP_A, text = "tShown", level = "", icon = "", radius = 6 },
+        M_TECH = { type = "Item", uuid = WP_B, text = "tTech", level = "", icon = "", radius = 0 },
     },
 }
 
@@ -115,7 +115,7 @@ local function test(name, fn)
     seen = function() return true end
     unlocked, accepted, heightsCalls = {}, {}, {}
     N.frame = (N.frame or 0) + 1
-    N.activeCache, N.stepObjectives = nil, nil
+    N.activeCache, N.stepObjectives, N.targetsCache = nil, nil, nil
     local ok, err = pcall(fn)
     if ok then print("ok   " .. name) else failures = failures + 1; print("FAIL " .. name .. ": " .. tostring(err)) end
 end
@@ -171,6 +171,24 @@ test("markers: an area marker says so (area_m)", function()
     accepted = { Q_Shown = true }
     local list = N.objectiveMarkers(CTX)
     eq(list[1].area_m, 6, "area")
+end)
+
+test("V32 S094: an objective's marked item is its target (interact o1) and seen by the objective rule", function()
+    accepted = { Q_Shown = true, Q_Tech = true }
+    local list = N.objectiveMarkers(CTX)
+    eq(list[1].target, WP_A, "target")
+    local set = N.objectiveTargets(CTX)
+    eq(set[WP_A], true, "shown quest's item")
+    eq(set[WP_B], nil, "a hidden quest's item")
+    eq(N.objectiveTargets(CTX), set, "reused while the objective list is")
+    MARKERS.markers.M_SHOWN.type = "Trigger"
+    N.activeCache = nil
+    local ok, err = pcall(function()
+        eq(N.objectiveMarkers(CTX)[1].target, nil, "a trigger is no target")
+        eq(N.objectiveTargets(CTX)[WP_A], nil, "nor seen")
+    end)
+    MARKERS.markers.M_SHOWN.type = "Item"
+    if not ok then error(err, 0) end
 end)
 
 test("explored: places are named only after unlocked waypoints", function()

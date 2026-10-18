@@ -3118,6 +3118,9 @@ function N.objectiveMarkers(ctx)
                         objective = U.loca(ob.desc), kind = m.icon ~= "" and m.icon or "QuestMarker", level = m.level ~= "" and m.level or nil }
                     -- an area marker (a circle on the map), not an exact spot
                     if type(m.radius) == "number" and m.radius > 0 then o.area_m = m.radius end
+                    -- the thing the marker sits on (an item or a character, not a trigger): interact(o1) acts on it
+                    -- (vis V32); the bridge maps it to an id, the mod's visibility check still decides
+                    if (m.type == "Item" or m.type == "Character") and m.uuid and m.uuid ~= "" then o.target = m.uuid end
                     local p = markerPos(m.uuid)
                     if p and (not o.level or o.level == lvl) then
                         o.pos = U.vec(p, 1)
@@ -3137,6 +3140,27 @@ function N.objectiveMarkers(ctx)
         return (a.dist or 1e9) < (b.dist or 1e9)
     end)
     return out
+end
+
+-- Items the active objectives' markers sit on: {uuid = true} (V.objectivePerceived). Rebuilt when
+-- activeObjectives' cached list changes, so a scan's per-item check is a table lookup.
+function N.objectiveTargets(ctx)
+    local data = journalData()
+    local who = ctx and ctx.party and ctx.party[1]
+    if not (data and who) then return {} end
+    local list = activeObjectives(who)
+    local c = N.targetsCache
+    if c and c.list == list then return c.set end
+    local set = {}
+    for _, a in ipairs(list) do
+        local ob = data.objectives[a.objective]
+        for _, mid in ipairs(ob and ob.markers or {}) do
+            local m = data.markers[mid]
+            if m and m.type == "Item" and m.uuid and m.uuid ~= "" then set[m.uuid] = true end
+        end
+    end
+    N.targetsCache = { list = list, set = set }
+    return set
 end
 
 RPC.register("nav.markers", function(args)
