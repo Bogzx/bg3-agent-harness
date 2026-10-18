@@ -9426,7 +9426,11 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                                         fast=(fast or "auto").strip().lower() != "never")
     outer = _batch["exec"] if _batch["active"] else None  # the queue running this trip: its cancel stops it
     if target:
-        lines, stop, left = _macro_groups(char, [(f"walk to {target}", [actq.Step("move_to", {"target": target})])])
+        done: list = []
+        lines, stop, left = _macro_groups(char, [(f"walk to {target}", [actq.Step("move_to", {"target": target})])],
+                                          done=done)
+        if not (stop or done):  # S083: a failed walk (90 m, past the move cap) ended as queue_done done=1
+            _batch["last"] = "failed"
         return _macro_finish("travel_to", {"target": target}, lines, stop, left, t0)
     dest, what = _travel_dest(marker, objective, x, y, z)
     me = next((r for r in w.get("party") or [] if r.get("uuid") == char), {})

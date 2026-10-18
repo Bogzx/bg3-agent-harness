@@ -83,6 +83,38 @@ class FarMoves(Base):
         self.assertEqual((dest, d), ([90.0, 0.0, 0.0], 90.0))
         self.assertTrue(h)
 
+    def _npc(self, pos):
+        """A visible NPC as state.entity sends it (S083 Nocturne); pos=None: a mod without the position."""
+        real = self.g.rpc
+        npc = "cccccccc-4444-3333-4444-555555555555"
+        row = {"uuid": npc, "name": "Nocturne", "relation": "neutral", **({"pos": pos} if pos else {})}
+        self.g.rpc = lambda op, a=None, context="server", timeout=12.0: (
+            dict(row) if op == "state.entity" and (a or {}).get("uuid") == npc else real(op, a, context, timeout))
+        self.g.visible.add(npc)
+        return npc, server.H.get(npc, "Nocturne")
+
+    def test_travel_to_a_far_npc_walks_legs_to_where_it_stands(self):
+        # S083 03:44:25: travel_to(target=e444 Nocturne) 90 m off was one move_to → "too far away (90m, max 60m)".
+        _, h = self._npc([90.0, 0.0, 0.0])
+        out = server.travel_to(target=h)
+        self.assertNotIn("FAILED", out)
+        server.wait_for("queue", timeout_s=5)
+        moves = self.g.ops("act.move_to")
+        self.assertTrue(all("target" not in a for _, a in moves))
+        self.assertEqual([a["pos"][0] for _, a in moves], [30.0, 60.0, 90.0])
+
+    def test_a_failed_walk_to_a_target_stops_the_queue(self):
+        # S083 03:44:32: the one move_to failed and the queue still said `queue_done done=1`, then ran the talk_to.
+        _, h = self._npc(None)
+        self.g.refuse_if = lambda op, a: ("destination is too far away (90m from this character, max 60m)"
+                                          if op == "act.move_to" else None)
+        server.travel_to(target=h)
+        server.queue_actions(f'[{{"tool": "talk_to", "npc": "{h}"}}]')
+        out = server.wait_for("queue", timeout_s=5)
+        self.assertIn("STOPPED: step 1 travel_to", out)
+        self.assertNotIn("queue_done", out)
+        self.assertEqual(self.g.ops("act.talk"), [])
+
 
 class LastSeen(FarMoves):
     """S025/S026: travel_to/route/talk_to on someone out of sight refused "not visible" (10x in two sessions); the

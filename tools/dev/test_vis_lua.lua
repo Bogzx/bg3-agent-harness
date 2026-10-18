@@ -3,6 +3,8 @@
 -- past the 18.5 m sight range), and talk_to Karlach was "not visible"; swap_party then walked up to her.
 -- vis V22b: State.campRoster said "at camp" by GetRegion (the level id), so on a level shared with the camp (the
 -- Act 3 camp and the Lower City, S081) a camp companion's "!" and camp spot showed from anywhere in the city.
+-- vis V23, S083 03:44: state.entity sent no position for a visible NPC, so travel_to/talk_to's walk to Nocturne
+-- 90 m off was one move_to (capped at 60 m) instead of legs.
 -- Ext, Osi and RPC are stubbed; Shared/Util.lua, Server/Visibility.lua and Server/State.lua are real.
 -- Run: tools/dev/test_fairness_lua.sh  (Lua 5.3 + 5.4 in Docker)
 
@@ -32,6 +34,7 @@ Ext = {
         if not d then return nil end
         local e = { Uuid = { EntityUuid = u }, Transform = { Transform = { Translate = d.pos } } }
         e.CampPresence, e.HasExclamationDialog = d.CampPresence, d.HasExclamationDialog
+        e.ServerCharacter = {}
         return e
     end },
 }
@@ -50,7 +53,8 @@ Osi = {
     IsDead = function() return 0 end,
 }
 
-BG3AI = { RPC = { register = function() end, push = function() end } }
+local handlers = {}    -- RPC name -> handler
+BG3AI = { RPC = { register = function(name, fn) handlers[name] = fn end, push = function() end } }
 dofile(LUA .. "/Shared/Util.lua")
 dofile(LUA .. "/Server/Visibility.lua")
 dofile(LUA .. "/Server/State.lua")
@@ -120,6 +124,21 @@ test("campRoster with DB_PlayerInCamp unreadable fails closed", function()
     eq(o.pos, nil, "pos")
     eq(o.wants_talk, nil, "wants_talk")
     eq(visible(KARLACH), false, "visible")
+end)
+
+test("S083: state.entity gives a visible NPC's position (travel_to walks legs from it)", function()
+    sees[WITHERS] = true
+    V.context = ctx
+    local o = handlers["state.entity"]({ uuid = WITHERS })
+    eq(o.pos and o.pos[1], -1418.7, "pos x")
+    eq(o.pos and o.pos[3], -2585.5, "pos z")
+end)
+
+test("state.entity of an unseen NPC still refuses", function()
+    V.context = ctx
+    local ok, err = pcall(handlers["state.entity"], { uuid = GOB })
+    eq(ok, false, "refused")
+    eq(err, "not visible", "error")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))
