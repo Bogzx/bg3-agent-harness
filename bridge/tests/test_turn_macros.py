@@ -53,6 +53,7 @@ class FakeGame:
         self.watch: dict = {"party": [{"uuid": P1, "hp": 20, "max_hp": 20, "pos": [0, 0, 0]},
                                       {"uuid": P2, "hp": 20, "max_hp": 20, "pos": [1, 0, 0]}],
                             "seen": [], "combat": False, "dialogue": False}
+        self.more_party: list[dict] = []  # state.status rows after Claude and Lae'zel
         self.ui: dict = {"screen": "game"}
         self.ui_seq: list[dict] = []  # successive ui.state replies (last one repeats), when set
         self.dur: dict[str, float] = {}
@@ -153,7 +154,7 @@ class FakeGame:
                 return {"ok": True}
             if op == "state.status":
                 return {"active": self.active, "level": "TUT", "party": [{"uuid": P1, "name": "Claude"},
-                                                                 {"uuid": P2, "name": "Lae'zel"}]}
+                                                                 {"uuid": P2, "name": "Lae'zel"}] + self.more_party}
             if op == "state.combat":
                 # Like State.lua: unseen combatants are left out, dead ones carry dead=true.
                 cs = json.loads(json.dumps(self.combat))
@@ -1975,6 +1976,26 @@ class CombatTurnBackgroundEnd(Base):
         self.assertFalse([j for j in self.g.jobs.values() if j["op"] == "act.end_turn"
                           and j["status"] == "interrupted"])
 
+    def test_s084_a_member_shown_open_while_another_end_runs_names_the_running_end(self):
+        # S084 (7x in one fight): Gale's background end (the group's last) still running, the game showed Shadowheart
+        # (ended earlier) as open: Claude's plan was refused "e3 Shadowheart (yours) must act first … end it", and
+        # the end_turn on her found nothing to end
+        p3 = "33333333-2222-3333-4444-555555555555"
+        self.g.more_party = [{"uuid": p3, "name": "Shadowheart"}]
+        self.g.combat["order"].append({"uuid": p3, "name": "Shadowheart", "relation": "party"})
+        self.g.combat["current"] = p3
+        self.g.on_start = lambda op, a: None                 # the end never hands the turn on here
+        self.g.dur["act.end_turn"] = 3600.0
+        self.addCleanup(self.release_end)
+        self.assertTrue(server._end_in_background(P2))
+        with mock.patch.object(server, "END_BG_HOLD_S", 0.2):
+            out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        self.assertIn("Lae'zel's turn end is still running in the background", out)
+        self.assertIn("Shadowheart's turn open meanwhile", out)
+        self.assertNotIn("must act first", out)
+        self.assertIn("waited 0.2s for", out)                # the hold's wait is reported, not only "waited 0.0s"
+        self.assertEqual(self.g.ops("act.cast"), [])
+
     def test_a_shared_turn_group_member_left_ends_inline(self):
         self.g.combat["turn_group"] = [P1, P2]
         self.g.combat["current"] = P1
@@ -2440,7 +2461,7 @@ class ClockStuck(unittest.TestCase):
         os.utime(self.path, (time.time(), time.time() + len(self.path.read_text())))  # new mtime each write
 
     def test_stuck_signal_shows_at_once_then_clears(self):
-        self.assertNotIn("advancing the story", server._clock_line())  # shown recently, not stuck: terse at most
+        self.assertNotIn("no story progress", server._clock_line())  # shown recently, not stuck: terse at most
         now = time.time()
         self.write({"type": "stuck", "t": now, "since": now - 17 * 60, "idle_min": 17, "actions": 40})
         line = server._clock_line()

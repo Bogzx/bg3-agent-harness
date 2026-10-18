@@ -163,12 +163,11 @@ as a `dialogue_line` event (speaker: text). Never wait for, watch or screenshot 
 events. Opening and in-between filler is clicked for you: `talk_to` and `choose_dialogue` results show the
 next real choice directly. Answers are never picked for you.
 
-Every result ends with a `⏱` clock line in runner sessions: a short `⏱ 00:21 · 12m of play left`, every 10
-minutes the full `⏱ 00:21 · 12m of play left until WRAP UP at 00:33: keep advancing the story: …`, and on every
-result in the last 10 minutes of play `⏱ 00:25 · WRAP UP at 00:33. Until then: start the next story step now, even
-a fight or a descent: it needn't finish. …`. So don't call `session_clock` or guess the time: the line says WRAP UP
-NOW by itself. The wrap-up has its own minutes after those: **play until the line itself says WRAP UP NOW**, and
-spend the minutes before it on the story (the next door, descent, talk or fight), not on loot, inventory or waiting.
+Every result ends with a `⏱` clock line in runner sessions. Until wrap-up time it shows no time left at all:
+`⏱ 00:21 · keep playing: you'll be told when to wrap up`. Then it says `⏱ 00:33 · 3m left: WRAP UP NOW. …` by
+itself. So don't call `session_clock` or guess the time: **play until the line itself says WRAP UP NOW**, and keep
+playing the story (the next door, descent, talk or fight) until then, not loot, inventory or waiting. Nothing about
+the wrap-up (no `Sxxx-end` save, no HANDOFF edit, no end_session, no "running out of time" plans) before it.
 **A session never ends mid-fight:** in combat the line is `⏱ 00:31 · in a fight: finish it, taking each turn the
 time it needs; the session waits for the fight`, with no time in it. A fight still on at WRAP UP holds the clock:
 WRAP UP comes when the fight ends. So reloading, fleeing or rushing a fight is never about time. When the line
@@ -301,9 +300,9 @@ continue with another party member → another objective. Then keep playing.
   `session_start` before anything else. Run the `session-start` playbook before playing. If the briefing says
   COMPACTION DUE, run `compaction` next.
 - **Wrap-up (3 min):** only when the `⏱` line says **WRAP UP NOW** or a SESSION CLOCK reminder
-  appears. **Don't start wrap-up before that**, and don't save `Sxxx-end` or rewrite HANDOFF.md early: the
-  minutes left include the wrap-up time, and autonomous sessions block early stops. Nothing needs to fit
-  in the time left: the game keeps running between sessions and the next one starts about a minute later
+  appears. **Don't start wrap-up before that**, and don't save `Sxxx-end` or rewrite HANDOFF.md early:
+  autonomous sessions block early stops. Nothing needs to fit in the session: the game keeps running between
+  sessions and the next one starts about a minute later
   from where the party stands, so start the boss fight, descent or trip. A fight on at WRAP UP holds the session
   until it ends (WRAP UP NOW comes after it). Never idle with get_status/wiki
   reads. Retreating from real danger is play, not wrap-up. Because notes were written during

@@ -49,7 +49,7 @@ HINTS = True         # instructions in results: full text HINT_FULL_TIMES times 
 HINT_FULL_TIMES = 1
 STATIC = True        # ALERTS / PARTY: advisory lines: "(unchanged)" while identical, in full again after STATIC_RESHOW_S
 STATIC_RESHOW_S = 600.0
-CLOCK = True         # a "⏱ 16:38 · 22m of play left" line identical to the last one shown is left out
+CLOCK = True         # a "⏱ 16:38 · keep playing: …" line identical to the last one shown is left out
 LAYOUT_LEGEND = True  # get_layout's symbol key in full once, then "key as before"
 DIALOGUE_DEDUP = True  # dialogue_line events quoting a line this result (or the last one) already shows
 EMPTY_LINES = True   # "ALSO " with nothing after it
@@ -182,7 +182,8 @@ def phrases() -> list:
 _PHRASES = _PHRASES_BASE
 
 _LAYOUT_RE = re.compile(r"^(LAYOUT [^;\n]*; )(# wall .*)$")
-_CLOCK_RE = re.compile(r"^⏱ \d\d:\d\d · (?:\d+m (?:of play )?left|in a fight: [^\n]*)$")  # terse / fight line
+# before WRAP UP / the fight line / the old terse "22m of play left" (recorded sessions: the golden replays)
+_CLOCK_RE = re.compile(r"^⏱ \d\d:\d\d · (?:\d+m (?:of play )?left|keep playing: [^\n]*|in a fight: [^\n]*)$")
 _STATIC_PREFIXES = ("ALERTS ", "PARTY: ")
 _HEADERS = ("CHANGES", "EVENTS")
 

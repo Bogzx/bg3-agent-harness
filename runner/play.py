@@ -112,6 +112,9 @@ STEAM_RETRY_S = 120            # Steam not offline: refuse to launch, retry this
 # work with or without the mod). Between sessions the runner relaunches a game older than this (0 = never by age), or
 # one whose last session logged a ready-check failure, and loads the playthrough's save (choose_save).
 GAME_MAX_AGE_H = float(os.environ.get("BG3AI_GAME_MAX_AGE_H", "2"))
+# The game's RAM grows ~0.9 GB/h (S082: 5754 → 7403 MB RSS in ~2 h, then ramwatch's KILL_ANON_SWAP_MB kill mid-save):
+# a session never starts with a game already holding this much RAM+swap (anon incl. swapped out; 0 = no RAM check).
+RELAUNCH_RAM_MB = int(os.environ.get("BG3AI_RELAUNCH_RAM_MB", "7000"))
 READY_FAIL_RE = re.compile(r"\b(?:ready_failed|end_day_failed)\b(?::\w+)?")
 GAME_FAULTS = ("crash", "hang")
 FAULTS = GAME_FAULTS + ("agent_hang",)
@@ -541,16 +544,30 @@ def saves_since(saves: list[Save], t: float, owner: str | None, prefix: str = SA
 
 
 def relaunch_reason(started: float | None, now: float, last_log: str | None,
-                    max_age_h: float = GAME_MAX_AGE_H) -> str | None:
+                    max_age_h: float = GAME_MAX_AGE_H, session_s: float = 0.0, ram_mb: int | None = None,
+                    ram_limit_mb: int = RELAUNCH_RAM_MB) -> str | None:
     """Why the game process should be relaunched before the next session, or None: the last session's log shows a
-    party ready check failing (ready_failed / end_day_failed), or the process is max_age_h or more old."""
+    party ready check failing (ready_failed / end_day_failed), the game already holds ram_limit_mb or more RAM+swap,
+    or the process would be max_age_h or more old by the end of a session that may run session_s (its length plus
+    the fight hold: S082 started at 1.9 h and ran to 2.3 h)."""
     m = READY_FAIL_RE.search(last_log or "")
     if m:
         return f"the last session logged {m.group(0)} (ready checks break in a long-lived game process)"
-    if started and max_age_h > 0 and now - started >= max_age_h * 3600:
-        return f"the game process is {(now - started) / 3600:.1f} h old (relaunched at {max_age_h:g} h: ready checks " \
-               "break in a long-lived process)"
+    if ram_mb is not None and ram_limit_mb > 0 and ram_mb >= ram_limit_mb:
+        return (f"the game holds {ram_mb} MB RAM+swap (relaunched at {ram_limit_mb} MB: it grows ~0.9 GB/h and "
+                f"ramwatch kills it at {ramwatch.KILL_ANON_SWAP_MB} MB)")
+    if started and max_age_h > 0 and now - started + session_s >= max_age_h * 3600:
+        age = f"{(now - started) / 3600:.1f} h old"
+        if session_s:
+            age += f" and the session may run {session_s / 60:.0f} min (to {(now - started + session_s) / 3600:.1f} h)"
+        return f"the game process is {age} (relaunched at {max_age_h:g} h: ready checks break in a long-lived process)"
     return None
+
+
+def game_ram_mb() -> int | None:
+    """The running game's RAM+swap (RssAnon + VmSwap of all bg3 processes, ramwatch's kill measure), None if none."""
+    pids = ramwatch.game_pids()
+    return sum(ramwatch.anon_swap_mb(p) for p in pids) if pids else None
 
 
 def is_autosave(label: str) -> bool:
@@ -723,6 +740,22 @@ def crash_tools_note(why: str, actions: list[dict], until: float, n: int = 3) ->
     return (f"RUNNER NOTE: the last session ended in a game crash ({why}). The last {len(last)} tool calls before it: "
             f"{calls}. Treat the last one as the likely trigger: don't repeat it at the same spot (a jump: walk "
             "there via route/WAYS instead; a spell/item: another one), and reconcile your notes with get_status.")
+
+
+def last_loaded_save(actions: list[dict], saves: list[Save], fallback: str | None) -> str | None:
+    """The save the game process loaded last: the newest load_game in `actions` (actions.jsonl since its launch) that
+    loaded (`loaded=<label>`), as its folder, else `fallback` (the runner's load at the launch; S082's OOM line named
+    S078-start, loaded 2 h and two agent reloads before)."""
+    for a in reversed(actions):
+        m = re.search(r"loaded=(\S+)", str(a.get("result") or "")) if a.get("tool") == "load_game" else None
+        if not m:
+            continue
+        arg = parse_save_folder(str((a.get("args") or {}).get("save") or ""))
+        if arg and arg.label == m.group(1):
+            return arg.folder
+        same = [sv for sv in saves if sv.label == m.group(1) and sv.mtime <= a.get("t", 0)]
+        return max(same, key=lambda sv: sv.mtime).folder if same else m.group(1)
+    return fallback
 
 
 def oom_streak_update(streak: dict | None, save: str | None, oom: str | None) -> dict | None:
@@ -1006,21 +1039,21 @@ PACE_PREFLIGHT = """PACE PRE-FLIGHT (read before your first game action):
   with another party member, another objective) and keep playing until the ⏱ line says WRAP UP NOW."""
 
 
-def build_kickoff(sid: str, playthrough: str, deadline: float, loaded_save: str | None,
-                  notes: list[str], briefing: str = "", save_why: str = "") -> str:
+def build_kickoff(sid: str, playthrough: str, loaded_save: str | None, notes: list[str], briefing: str = "",
+                  save_why: str = "") -> str:
     """The first message of a session. `briefing` is session.py start's memory injection (the runner opened the
     session): it leads the message, where the SessionStart hook used to put it. Without it (the runner couldn't open
-    the session) the agent calls session_start."""
-    end = datetime.fromtimestamp(deadline).strftime("%H:%M")
+    the session) the agent calls session_start. It names no deadline: every time shown before WRAP UP NOW was read
+    as a clock to beat (S066-S082 wrapped up 7-13 min early)."""
     lines = [
         f"This is session {sid} of the BG3 playthrough '{playthrough}', started by the autonomous runner.",
         ("Your memory briefing (PLAYTHROUGH.md and HANDOFF.md) is above. " if briefing else
          "First call session_start: it shows your memory briefing (PLAYTHROUGH.md and HANDOFF.md). ")
         + "Run the session-start playbook (memory_read knowledge/playbooks/session-start.md), then "
         "play following CLAUDE.md. Your notes are files under memory/: use the memory_* tools and note.",
-        f"Session deadline: {end} local time (the session_clock tool shows the time left). Run the "
-        "session-wrapup playbook when the ⏱ line says WRAP UP; its last step is end_session, and you end your "
-        "turn when that reports the commit. Nobody will answer questions: decide yourself and write down why.",
+        "Keep playing until the ⏱ line in tool results says WRAP UP NOW: you'll be told when to wrap up. Then run "
+        "the session-wrapup playbook; its last step is end_session, and you end your turn when that reports the "
+        "commit. Nobody will answer questions: decide yourself and write down why.",
         PACE_PREFLIGHT,
     ]
     if briefing:
@@ -1034,21 +1067,20 @@ def build_kickoff(sid: str, playthrough: str, deadline: float, loaded_save: str 
     return "\n\n".join(lines)
 
 
-def resume_prompt(why: str, deadline: float, notes: list[str]) -> str:
+def resume_prompt(why: str, notes: list[str]) -> str:
     """The message that resumes a session's claude conversation after the runner recovered a crashed game."""
-    end = datetime.fromtimestamp(deadline).strftime("%H:%M")
     lines = [f"RUNNER: the game {why}. The runner relaunched it and loaded the latest save; the same session "
-             f"continues (deadline still {end}). Call get_status first: anything after that save is lost, so redo it "
+             f"continues (you'll be told when to wrap up). Call get_status first: anything after that save is lost, so redo it "
              "and note the crash in the session log in one line. Then keep playing following CLAUDE.md."]
     return "\n\n".join(lines + notes)
 
 
-def agent_resume_prompt(deadline: float, notes: list[str]) -> str:
+def agent_resume_prompt(notes: list[str]) -> str:
     """The message that resumes a session whose claude process went silent and was stopped by the runner."""
-    end = datetime.fromtimestamp(deadline).strftime("%H:%M")
     lines = [f"RUNNER: your previous turn produced no output for {AGENT_SILENT_MINUTES:g} min, so the runner stopped "
-             f"and resumed you; the game kept running. Same session (deadline still {end}). Call get_status, then "
-             "keep playing following CLAUDE.md; keep each step short (no tool call or think longer than a minute)."]
+             f"and resumed you; the game kept running. Same session (you'll be told when to wrap up). Call "
+             "get_status, then keep playing following CLAUDE.md; keep each step short (no tool call or think longer "
+             "than a minute)."]
     return "\n\n".join(lines + notes)
 
 
@@ -2492,11 +2524,11 @@ class Runner:
         if not oom and kills:
             oom = (f"ramwatch killed the game at {datetime.fromtimestamp(kills[-1]['t']):%H:%M:%S} before the OOM "
                    f"killer could: {kills[-1].get('why', '?')}")
-        save = self.state["loaded_save"]
+        acts = read_actions_since(launched)
+        save = last_loaded_save(acts, self.own_saves(), self.state["loaded_save"])
         streak = oom_streak_update(self.state["oom_streak"], save, oom)
         if streak:
             spikes = read_spikes(launched)
-            acts = read_actions_since(launched)
             streak["tools"] = (spikes[-1].get("tools", []) if spikes else
                                ramwatch.last_tools(acts[-1]["t"], RUNTIME / "actions.jsonl") if acts else [])
         self.state["oom_streak"] = streak
@@ -2675,9 +2707,9 @@ class Runner:
         write_status(alert={"t": time.time(), "kind": "launch_gave_up",
                             "msg": f"runner stopped: the game crashes on every launch ({e})"[:600]})
 
-    def maybe_relaunch(self, first: bool) -> str | None:
-        """Between sessions: kill a game process that relaunch_reason() condemns, so ensure_game() launches a fresh
-        one with the newest save. Never kills when the relaunch can't happen (Steam not offline: the launch guard
+    def maybe_relaunch(self, first: bool, minutes: float = 0.0) -> str | None:
+        """Between sessions: kill a game process that relaunch_reason() condemns for the next session (`minutes`
+        long, plus the fight hold), so ensure_game() launches a fresh one with the newest save. Never kills when the relaunch can't happen (Steam not offline: the launch guard
         would refuse) or would lose play (the newest save is older than the last session's start). -> the reason."""
         if self.opt.dry_run or not port_open():
             return None
@@ -2693,11 +2725,14 @@ class Runner:
                 text = None
         g = self.state["game"] or {}
         started = g.get("launched") if self.owns_game() and g.get("launched") else game_started_at()
-        why = relaunch_reason(started, time.time(), text)
+        ram = game_ram_mb()
+        why = relaunch_reason(started, time.time(), text, session_s=minutes * 60 + FIGHT_HOLD_S if minutes else 0.0,
+                              ram_mb=ram)
         if why is None:
             if started:
-                log(f"game process {(time.time() - started) / 3600:.1f} h old, no ready-check failure last session: "
-                    f"kept (relaunch at {GAME_MAX_AGE_H:g} h)")
+                log(f"game process {(time.time() - started) / 3600:.1f} h old, {ram if ram is not None else '?'} MB "
+                    f"RAM+swap, no ready-check failure last session: kept (relaunch at {GAME_MAX_AGE_H:g} h by the "
+                    f"session's end or {RELAUNCH_RAM_MB} MB)")
             return None
         save = self.choose_save()
         if save is None:
@@ -3902,15 +3937,14 @@ class Runner:
         print(f"memory keeper:  {'on (' + keeper_model(k.keeper_model, self.model_for()[0]) + ', effort ' + str(k.keeper_effort) + ', ≤' + format(k.keeper_minutes, 'g') + ' min) after each session' if k.keeper else 'OFF (--no-keeper)'}")
         print("plan check:     tools/dev/check_plans.py at each session end (→ keeper) and in the prep (→ RUNNER NOTE); now:")
         self.check_plan_lines("dry run", dry=True)
-        prompt = build_kickoff(sid, self.opt.playthrough, time.time() + minutes * 60,
-                               save.label if save else None, list(self.pending_notes), save_why=self.loaded_why(
-                                   save.label if save else None))
+        prompt = build_kickoff(sid, self.opt.playthrough, save.label if save else None, list(self.pending_notes),
+                               save_why=self.loaded_why(save.label if save else None))
         return self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))
 
     def play_session(self, minutes: float, first: bool) -> SessionResult:
         if self.opt.dry_run:
             return self.plan_dry_run(minutes)
-        relaunched = self.maybe_relaunch(first)
+        relaunched = self.maybe_relaunch(first, minutes)
         loaded = self.ensure_game(first)
         if self.opt.start_save and not any(h.get("kind") == "play" for h in self.state["history"] or []):
             self.pending_notes.append(scenario_start_note(self.opt.scenario, self.profile, loaded))
@@ -3962,7 +3996,7 @@ class Runner:
         sid = opened or predicted
         if opened and opened != predicted:
             log(f"session.py start opened {opened} (predicted {predicted})")
-        prompt = build_kickoff(sid, self.opt.playthrough, deadline, loaded, notes, briefing, self.loaded_why(loaded))
+        prompt = build_kickoff(sid, self.opt.playthrough, loaded, notes, briefing, self.loaded_why(loaded))
         res = self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))
         if res.reason == "dry_run":
             return res
@@ -4026,8 +4060,7 @@ class Runner:
                 f"{time.time() - fault_at:.0f} s after the fault)")
             self.event("recovered", fault=fault, session=sid, seconds=round(time.time() - fault_at),
                        how=how + f"; claude resumed (-r{resumes})")
-            prompt = (agent_resume_prompt(session_end, notes) if game_ok
-                      else resume_prompt(why, session_end, notes))
+            prompt = agent_resume_prompt(notes) if game_ok else resume_prompt(why, notes)
             res = self.run_claude(sid, prompt, left, res.claude_session, resume=True, tag=f"-r{resumes}")
         crashed = res.reason in GAME_FAULTS
         res = replace(res, started=session_start)

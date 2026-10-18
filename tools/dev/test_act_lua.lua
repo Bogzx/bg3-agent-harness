@@ -1568,6 +1568,70 @@ test("cast: an item next to the caster needs no engine line of sight (S024 Knock
     eq(j.status, "failed", "char status"); assert(j.error:find("line of sight"), j.error)
 end)
 
+test("cast: a door/wall past arm's length is in sight when an eye ray reaches its body (S083 e284/e703/e720)", function()
+    spell("Target_Knock", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    local WALL = "cdcdcdcd-0000-0000-0000-00000000000b"
+    local function hit(u, p) return { Position = p, Shape = { PhysicsObject = { Entity = { Uuid = { EntityUuid = u } } } } } end
+    local rays, rayfn = {}, nil
+    Ext.Level.RaycastClosest = function(a, b) rays[#rays + 1] = b; return rayfn(a, b) end
+    BG3AI.Visibility = { rayCalibrated = function() return true end, EYE_H = 1.6, RAY_TYPE = 5, RAY_INCLUDE = 0xFFFFFFFF,
+        RAY_EXCLUDE = 0x820200, bounds = function() return { height = 3.0, radius = 1.0 } end }
+    local function knock(t)
+        return job(op("cast", { char = P1, spell = "Target_Knock", target = t }))
+    end
+    local ok, err = pcall(function()
+        -- e284 Threshold of Loss: 6.3 m, its position 5.9 m up at the door's top inside the frame. The ray to the
+        -- position hits the frame (another object); one lower down the door hits the door itself.
+        world[DOOR].pos = { 2.2, 5.9, 0 }
+        osiv[key("HasLineOfSight", P1, DOOR)] = 0
+        rayfn = function(_, b)
+            if b[2] < 5.9 then return hit(DOOR, { 2.0, b[2], 0 }) end
+            return hit(WALL, { 1.9, 5.5, 0 })
+        end
+        local j = knock(DOOR)
+        eq(j.status, "running", "e284 status " .. tostring(j.error))
+        -- the same door behind a wall: every ray stops at the wall (fail: no line of sight)
+        rays, rayfn = {}, function() return hit(WALL, { 1.0, 3.0, 0 }) end
+        j = knock(DOOR)
+        eq(j.status, "failed", "walled status"); assert(j.error:find("line of sight"), j.error)
+        assert(#rays >= 8, "every sample tried: " .. #rays)
+        -- e703 sewer Wall (hidden destructible wall) 7 m away: the ray to its position ends on the wall itself
+        world[DOOR].pos = { 7.0, 0, 0 }
+        rayfn = function(_, b) return hit(DOOR, { 6.6, b[2], 0 }) end
+        j = knock(DOOR)
+        eq(j.status, "running", "e703 status " .. tostring(j.error))
+        -- e720 No Entry - No Exit, caster ~4.5 m back: nothing hit on the way to its middle (no hit = clear)
+        world[DOOR].pos = { 4.5, 0, 0 }
+        rayfn = function(_, b) if b[2] > 1.0 then return nil end return hit(WALL, { 4.4, 0, 0 }) end
+        j = knock(DOOR)
+        eq(j.status, "running", "e720 status " .. tostring(j.error))
+        -- a clear ray only below the position (outside the bounds) proves nothing: refused
+        world[DOOR].pos = { 2.2, 5.9, 0 }
+        rayfn = function(_, b) if b[2] < 5.9 then return nil end return hit(WALL, { 1.9, 5.5, 0 }) end
+        j = knock(DOOR)
+        eq(j.status, "failed", "air below status"); assert(j.error:find("line of sight"), j.error)
+        -- a character keeps the engine's check, whatever the rays say
+        world[GOB].pos = { 6.0, 0, 0 }
+        osiv[key("HasLineOfSight", P1, GOB)] = 0
+        rayfn = function(_, b) return hit(GOB, b) end
+        j = knock(GOB)
+        eq(j.status, "failed", "char status"); assert(j.error:find("line of sight"), j.error)
+        -- rays uncalibrated (the filter flags or the API wrong): fail closed
+        world[DOOR].pos = { 7.0, 0, 0 }
+        rayfn = function(_, b) return hit(DOOR, b) end
+        BG3AI.Visibility.rayCalibrated = function() return false end
+        j = knock(DOOR)
+        eq(j.status, "failed", "uncalibrated status"); assert(j.error:find("line of sight"), j.error)
+        -- the ray API throwing: fail closed
+        BG3AI.Visibility.rayCalibrated = function() return true end
+        rayfn = function() error("bad ray") end
+        j = knock(DOOR)
+        eq(j.status, "failed", "ray error status"); assert(j.error:find("line of sight"), j.error)
+    end)
+    BG3AI.Visibility, Ext.Level.RaycastClosest = nil, nil
+    if not ok then error(err, 0) end
+end)
+
 test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Stand radii)", function()
     combat_setup(9) -- the range refusal (out of combat the cast walks into range first)
     eq(G.radius(P1), 0.5, "fallback radius")
@@ -2271,6 +2335,8 @@ end)
 
 local P2 = "ffffffff-0000-0000-0000-000000000006"
 local function group_setup()
+    -- no pending ends from an earlier test (a leftover request now stays pending END_DROP_MS)
+    G.end_requested, G.end_alone, G.turn_over = {}, {}, {}
     world[P2] = { pos = { -1, 0, 0 }, comps = {} }
     osiv[key("IsCharacter", P2)] = 1
     osiv[key("IsOnStage", P2)] = 1
@@ -2308,9 +2374,44 @@ test("stuck shared turn (S052-S055): a dropped group end is forgotten once nobod
     eq(j2.status, "done", "last member " .. tostring(j2.error))
     local ends = called("EndTurn")
     eq(ends[#ends][2], P1, "P1's EndTurn sent again by the last member")
-    -- nobody else acting: the guard no longer blocks P1 (it can act or end its turn)
+    -- nobody else acting: still ended while the game may be applying the group's requests (S084), then forgotten
+    eq(G.is_my_turn(P1), false, "not forgotten at once")
+    clock = clock + G.END_DROP_MS - 100
+    eq(G.is_my_turn(P1), false, "still pending just short of END_DROP_MS")
+    clock = clock + 200
+    -- it lasted: the guard no longer blocks P1 (it can act or end its turn)
     eq(G.is_my_turn(P1), true, "the game's open turn is P1's again")
     eq(G.turn_requested_end(P1), false, "not 'already ended'")
+    restore()
+end)
+
+test("S084 shared turn end: a member ended earlier stays ended while the game applies the group's requests", function()
+    local restore = group_setup()
+    -- P1 ended first (requested, the game hasn't set RequestedEndTurn: live S002)
+    local j = job(op("end_turn", { char = P1 }))
+    clock = clock + A.END_REQUEST_AFTER_MS + 1 tick()
+    eq(j.status, "done", "requested " .. tostring(j.error)); eq(j.result.requested, true, "requested")
+    -- P2, the last member: its EndTurn starts the group's end (ignored by Lua at 3 s; the bridge presses the HUD)
+    local j2 = job(op("end_turn", { char = P2 }))
+    clock = clock + A.END_IGNORED_MS tick()
+    eq(j2.status, "failed", "ignored " .. tostring(j2.error))
+    -- the game applies P2's request first; P1's comes ~2 s later (one by one)
+    world[P2].comps.TurnBased.RequestedEndTurn = true
+    for _, dt in ipairs({ 0, 1000, 2500, 6000 }) do
+        clock = clock + dt
+        eq(G.end_pending(P1), true, "P1 still counts as ended +" .. dt .. " ms (was: forgotten, shown acting)")
+        eq(G.is_my_turn(P1), false, "P1 may not act +" .. dt .. " ms")
+    end
+    world[P1].comps.TurnBased.RequestedEndTurn = true
+    A.dispatch("TurnEnded", { P2 })
+    A.dispatch("TurnEnded", { "S_Player_" .. P1 })
+    eq(G.is_my_turn(P1), false, "group over")
+    -- the next round: a fresh request in the same alone shape is timed from its own start, not the old one
+    A.dispatch("TurnStarted", { "S_Player_" .. P1 })
+    world[P1].comps.TurnBased.RequestedEndTurn = false
+    clock = clock + G.END_DROP_MS * 2
+    G.end_requested[G.guid(P1)] = G.now_ms()
+    eq(G.end_pending(P1), true, "a new request is not forgotten at once")
     restore()
 end)
 
