@@ -716,6 +716,24 @@ function S.region()
     return e and UI.allText(e) or nil
 end
 
+-- The story turn counter under the minimap (Minimap.xaml ContentPresenter "StoryTimer", bound to
+-- PlayerCharacterProperties.StoryTimer; DataTemplates.xaml StoryTimerStyle draws its Description, the
+-- "N Turns Remaining." line and a ring with the number, TurnAmountLabel). S091 08:19-08:33: the Netherbrain's psyche
+-- ("The brain is resisting the Chains of Karsus! Defeat it before it breaks free!", 4 turns) was only on
+-- screenshots and try 4 ran out of turns with the brain at 28 HP. {text, turns_left} or nil when none is shown.
+function S.storyTimer()
+    local e = UI.cachedByName("Minimap", "StoryTimer")
+    if not (e and UI.isVisible(e)) then return nil end
+    local parts, left = {}, nil
+    for _, t in ipairs(UI.findAll(e, function(x) return UI.typeName(x) == "TextBlock" end, { max = 600 })) do
+        local s = UI.text(t)
+        if s and UI.name(t) == "TurnAmountLabel" then left = tonumber(s)
+        elseif s then parts[#parts + 1] = s end
+    end
+    if #parts == 0 and not left then return nil end
+    return { text = #parts > 0 and table.concat(parts, " ") or nil, turns_left = left }
+end
+
 -- Party wipe: BG3 shows a message box whose buttons are only load/main
 -- menu actions. Heuristic (untested live): popup with a load button and no
 -- cancel/back/resume.
@@ -883,6 +901,7 @@ function S.state(args)
 end
 
 RPC.register("ui.state", function(args) return S.state(args or {}) end)
+RPC.register("ui.story_timer", function() return S.storyTimer() or { none = true } end)
 
 -- ui.answer_list -> {over, first, total, offset, scrollable} of the open dialogue's answer list: the bridge
 -- finds the list under the cursor (over) and wheels it to read the rows below the fold (a player scrolls).

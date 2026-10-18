@@ -783,6 +783,17 @@ def render_combat(res: dict, H: Handles) -> str:
     return "\n".join(lines)
 
 
+def turn_limit_line(t: Any) -> str:
+    """ui.story_timer (the counter under the minimap) as one line, '' when none is on screen. S091: the
+    Netherbrain's psyche gave 4 turns, seen only on screenshots; try 4 ran out of them with the brain at 28 HP."""
+    if not isinstance(t, dict) or not (t.get("text") or t.get("turns_left") is not None):
+        return ""
+    left = t.get("turns_left")
+    head = "TURN LIMIT (the counter on screen)" + (f": {left} turn{'' if left == 1 else 's'} left" if left is not None
+                                                 else "")
+    return head + (f" — {t['text']}" if t.get("text") else "")
+
+
 # Unavailable only because that resource is spent this turn (the NOW line shows it): counted, not listed.
 _SPENT_REASONS = {"no action": "[A] ones", "no bonus action": "[B] ones", "no reaction": "[R] ones"}
 # Spell ids in action lists ("Fire Bolt (Projectile_FireBolt)"): ~1/3 of a ~2.5 KB list. Off: use_ability and

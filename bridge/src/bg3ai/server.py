@@ -2598,8 +2598,15 @@ def get_combat_state() -> str:
     return _finish("get_combat_state", {}, _combat_state_text(), t0)
 
 
+def _story_timer() -> Any:
+    """The story turn counter under the minimap (Client UIState.storyTimer), None when the client can't say."""
+    return game.try_rpc("ui.story_timer", context="client")
+
+
 def _combat_state_text() -> str:
-    res = game.rpc("state.combat")
+    par = getattr(game, "parallel", None)  # the counter's client read in the same tick as state.combat
+    res, timer = par(lambda: game.rpc("state.combat"), _story_timer) if par else (game.rpc("state.combat"),
+                                                                                   _story_timer())
     _remember_names(res)
     if isinstance(res, dict):
         _seen_sides(res)  # the side of a target planned from this read that is out of sight by its turn
@@ -2608,6 +2615,9 @@ def _combat_state_text() -> str:
         _light_noted.clear()
         return "Not in combat."
     body = render.render_combat(res, H) if isinstance(res, dict) else render.compact(res, H)
+    limit = render.turn_limit_line(timer)
+    if limit:
+        body += "\n" + limit
     # One read should be enough to plan the whole turn: add the acting party member's actions.
     st = game.try_rpc("state.status") or {}
     party = {c.get("uuid") for c in st.get("party") or []}
@@ -9153,6 +9163,9 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
                         + (f" {bg_held}" if bg_held else ""))  # S084: "waited 0.0s" hid the hold's wait
     lines = [f"TURN {_label(char)}" + (f" (round {cs['round']})" if cs.get("round") is not None else "")
              + (f" — {waited}" if waited else "") + _light_note(cs)]
+    limit = render.turn_limit_line(_story_timer())  # read now: the wait for this turn may have ticked it
+    if limit:
+        lines.append(limit)
     if bg_held:
         lines.append(bg_held)
     if inferred:
