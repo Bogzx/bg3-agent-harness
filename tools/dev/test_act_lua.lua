@@ -1315,8 +1315,8 @@ test("cast in combat: an enemy's reaction cast holds the no-start, then the orde
     eq(j.status, "running", "second order")
     tick(60)
     eq(j.status, "failed", "dropped twice")
-    assert(j.error:find("never started it %(3 s, no cast, no step%) twice: ordered again after an enemy's reaction"
-        .. " cast"), j.error)
+    assert(j.error:find("never started it %(3 s, no cast, no step%) twice: ordered again after someone's reaction"
+        .. " cast"), j.error) -- audit C23: unseen, so neither named nor called an enemy
     -- a seen caster is named; the game took the action: countered, not ordered again
     BG3AI.Visibility = setmetatable({ is_visible = function() return true end,
         name = function() return "Spellplague" end }, { __index = savedV })

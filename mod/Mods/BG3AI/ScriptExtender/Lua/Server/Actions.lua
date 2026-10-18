@@ -2094,11 +2094,13 @@ local function name_of(uuid)
     return U.loca(G.q("GetDisplayName", uuid))
 end
 
--- A30: the enemy cast seen during our cast, as a player sees it (an unseen caster is not named).
+-- A30: the enemy cast seen during our cast, as a player sees it. An unseen caster is "someone", as the combat log
+-- shows it: not named, and not called an enemy either (audit C23).
 function A.react_name(rx)
+    if not G.visible(rx.caster) then return "someone's reaction cast" end
     local ok, st = pcall(Ext.Stats.Get, rx.spell)
     local spell = ok and st and U.loca(st.DisplayName) or nil
-    local who = G.visible(rx.caster) and name_of(rx.caster) or nil
+    local who = name_of(rx.caster)
     if who and spell then return who .. "'s " .. spell .. " (an enemy reaction)" end
     return "an enemy's reaction cast"
 end
