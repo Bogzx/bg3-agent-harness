@@ -1614,7 +1614,11 @@ timed("state.entity", function(args)
             if m and seen then return { uuid = u, name = m.name, visible = false, last_pos = seen.pos, ago_s = seen.ago_s } end
             error("not visible", 0)
         end
-        return S.examine(ctx, u, e)
+        -- The position get_nearby shows for it: travel_to/talk_to/move_to walk a far target in legs from it (S083:
+        -- without it travel_to Nocturne at 90 m was one capped move_to that failed).
+        local o = S.examine(ctx, u, e)
+        o.pos = pos1(V.pos(e))
+        return o
     end
     if comp(e, "ServerItem") then
         local inv = comp(e, "InventoryMember")
@@ -1642,6 +1646,7 @@ timed("state.entity", function(args)
         end
         local o = itemView(e, nil)
         if outOfSight then o.out_of_sight = true end
+        if not inv then o.pos = pos1(V.pos(e)) end
         local okd, desc = pcall(function()
             local st = Ext.Stats.Get(e.Data.StatsId)
             return st and U.loca(st.Description) or nil

@@ -187,6 +187,25 @@ def call(name, text, inp=None, k=0, t=100.0):
 
 
 class OlderToolFixes(unittest.TestCase):
+    def test_runner_top_only_from_the_sessions_own_events(self):
+        # S083 (03:36-04:03): S082's crash (session S082) and game_oom (no session, 03:33) were S083's TOP 1.
+        lo, hi = 1000.0, 2600.0
+        evs = [{"t": lo - 125, "kind": "fault", "fault": "crash", "session": "S082"},
+               {"t": lo - 123, "kind": "game_oom", "why": "ramwatch killed the game"},
+               {"t": lo + 50, "kind": "fault", "fault": "hang", "session": "S083"},
+               {"t": hi + 60, "kind": "recovered", "session": "S083"}]
+        with tempfile.TemporaryDirectory() as d:
+            out, issues = RS.runner(Path(d), "S083", evs, lo, hi)
+        text = "\n".join(out)
+        self.assertEqual([i["title"].split(":")[0] for i in issues], ["runner fault"])
+        self.assertIn('"hang"', issues[0]["title"])
+        self.assertNotIn("S082", text)   # another session's events are its own
+        self.assertIn("**game_oom** (before S083 started)", text)
+        self.assertIn("**recovered** (after S083 ended)", text)
+        evs.append({"t": lo + 70, "kind": "game_oom", "why": "x"})   # no session, inside the window: this one's
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(len(RS.runner(Path(d), "S083", evs, lo, hi)[1]), 2)
+
     def test_fights_party_from_turn_headers_not_summons(self):
         calls = [
             {"tool": "get_status", "res": "PARTY e1 Corran Vell Fighter1 HP 24/24\nPARTY e29 Lae'zel Fighter1 HP 24/24"},

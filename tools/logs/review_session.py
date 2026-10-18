@@ -418,17 +418,22 @@ def memory(sd: Path, sid: str, calls: list[dict], events: list[dict], cost: dict
 
 
 def runner(rt: Path, sid: str, events: list[dict], lo: float, hi: float) -> tuple[list[str], list[dict]]:
-    """Runner events and runner-log lines from the session's start - 5 min to its end + 5 min (log lines that name
-    another session are left out)."""
+    """Runner events and runner-log lines from the session's start - 5 min to its end + 5 min (events and log lines
+    that name another session are left out; the margins are marked). A TOP issue only from the session's own events:
+    its `session`, or none and inside its first-to-last-call window (S083: S082's game_oom 3 min before S083 started
+    was S083's TOP 1)."""
     a, b = lo - 300, hi + 300
     out = ["## Runner: faults, crashes, relaunches", ""]
     issues = []
+
+    def margin(t: float) -> str:
+        return f" (before {sid} started)" if t < lo else f" (after {sid} ended)" if t > hi else ""
     for e in events:
-        if a <= e.get("t", 0) <= b and e.get("kind") in RUNNER_KINDS:
+        if a <= e.get("t", 0) <= b and e.get("kind") in RUNNER_KINDS and e.get("session") in (None, sid):
             detail = {k: v for k, v in e.items() if k not in ("t", "kind")}
-            out.append(f"- {hm(e['t'])} **{e['kind']}** {json.dumps(detail, ensure_ascii=False)[:200]}")
-            if e["kind"] in ("fault", "game_oom", "recovery_failed", "setup_failed", "agent_hang") and \
-                    e.get("session") in (None, sid):
+            out.append(f"- {hm(e['t'])} **{e['kind']}**{margin(e['t'])} {json.dumps(detail, ensure_ascii=False)[:200]}")
+            own = e.get("session") == sid or lo <= e["t"] <= hi
+            if e["kind"] in ("fault", "game_oom", "recovery_failed", "setup_failed", "agent_hang") and own:
                 issues.append({"title": f"runner {e['kind']}: {json.dumps(detail, ensure_ascii=False)[:80]}",
                                "own": "setup", "s": 300.0, "n": 1, "ev": f"runner_events {hm(e['t'])}"})
     seen = set()   # runner.log repeats run-cont.log's lines
@@ -444,7 +449,7 @@ def runner(rt: Path, sid: str, events: list[dict], lo: float, hi: float) -> tupl
                 other = {x for x in re.findall(r"\bS\d{3,}\b", line) if x != sid}
                 if a <= t <= b and RUNLOG_RX.search(line[20:]) and not other and line.strip() not in seen:
                     seen.add(line.strip())
-                    out.append(f"- {log.name}: {line.strip()[11:230]}")
+                    out.append(f"- {log.name}{margin(t)}: {line.strip()[11:230]}")
     if len(out) == 2:
         out.append("none")
     return out + [""], issues
