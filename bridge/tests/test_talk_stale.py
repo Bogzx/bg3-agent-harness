@@ -31,8 +31,9 @@ REFUSED = "talk_to: FAILED — target is not visible"
 
 
 class Fake:
-    def __init__(self, camp=True, here=CAMP_POS, seen=TEMPLE_SEEN):
+    def __init__(self, camp=True, here=CAMP_POS, seen=TEMPLE_SEEN, camp_pos=None):
         self.camp, self.here, self.seen, self.calls = camp, here, seen, []
+        self.camp_pos = camp_pos   # state.camp's pos for the camp member (only while the party is in its camp)
 
     def try_rpc(self, op, args=None, context="server", default=None):
         self.calls.append(op)
@@ -47,6 +48,8 @@ class Fake:
             return {"screen": "game", "region": "Campsite" if self.here == CAMP_POS else "Bhaal Temple"}
         if op == "nav.waypoints":
             return {"waypoints": [TEMPLE_WP]}
+        if op == "state.camp":
+            return {"camp": [{"uuid": GALE, "name": "Gale", "pos": self.camp_pos}] if self.camp else []}
         return default
 
     rpc = try_rpc
@@ -76,6 +79,16 @@ class StaleSighting(unittest.TestCase):
         self.assertTrue(out.startswith(REFUSED), out)
         self.assertIn("is at camp now (the camp roster), not where the party last saw them: walk around the camp", out)
         self.assertNotIn("going to where you last saw them", out)
+
+    def test_s080_69_at_camp_it_walks_to_the_camp_roster_spot(self):
+        # S080 02:34:21: talk_to Karlach at camp → "not visible … walk around the camp to find them"; get_nearby 40 m
+        # showed only Withers and Scratch and the agent gave up the swap. state.camp says where she stands: go there.
+        spot = [-1466.0, 9.1, -2640.5]
+        trips = self.use(Fake(camp_pos=spot))
+        out = self.walk_first()
+        self.assertEqual(trips, [{"who": None, "x": -1466.0, "y": 9.1, "z": -2640.5}])
+        self.assertIn("is at camp (the camp roster) (-1466,9.1,-2640.5): walking there first; then talk_to", out)
+        self.assertNotIn("walk around the camp", out)
 
     def test_away_from_camp_it_says_camp(self):
         trips = self.use(Fake(here=[-14.0, -46.0, 1003.0]))

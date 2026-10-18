@@ -925,39 +925,67 @@ def _over_list(game: Game, inp: InputClient) -> tuple[int, int] | None:
     return None
 
 
+def _merge_rows(seq: list, rows: list) -> None:
+    """Merge one window of rows (display order) into seq by text: a row already in seq anchors the next ones
+    after it. The mod's own numbers are not used (S081: a two-line row put its window arithmetic off)."""
+    keys = [answer_key(o.get("text")) for o in seq]
+    at = -1
+    for o in rows:
+        k = answer_key(o.get("text"))
+        if k in keys:
+            at = keys.index(k)
+            continue
+        at += 1
+        seq.insert(at, o)
+        keys.insert(at, k)
+
+
 def read_answer_list(game: Game, inp: InputClient, read_options) -> tuple[dict, str | None]:
     """Scroll a dialogue's answer list with the mouse wheel, as a player does, and collect every row's text.
-    read_options() -> the dialogue's options now ([{i, text, ...}], i = answer number). Returns ({i: option},
-    None) or (what was read, why it stopped short). The list is wheeled back to the top afterwards."""
-    got: dict = {o["i"]: o for o in read_options() if isinstance(o.get("i"), int)}
+    read_options() -> the dialogue's options now ([{i, text, ...}], in display order). Returns ({n: option}, None)
+    or (what was read, why it stopped short), n = 1.. in the list's display order (each option's `i` renumbered
+    so): the numbers the agent is shown, whatever the mod's window numbering said. Reads from the top to the
+    bottom of the list (S081 Karlach: the estimated total, 7, stopped the read with "Come on, we're heading out."
+    and "I'll be back." still below), then wheels it back to the top."""
+    seq: list = []
+
+    def numbered() -> dict:
+        return {k + 1: dict(o, i=k + 1) for k, o in enumerate(seq)}
+
+    def rows() -> list:
+        return [o for o in read_options() if isinstance(o, dict) and o.get("text")]
+
     info = _answer_list(game)
-    total = info.get("total")
-    if not total:
-        return got, "the answer list's size could not be read"
+    total, scrollable = info.get("total"), info.get("scrollable")
+    if not total and scrollable is None:
+        _merge_rows(seq, rows())
+        return numbered(), "the answer list's size could not be read"
     at = _over_list(game, inp)
     if at is None:
-        return got, "could not point at the answer list"
+        _merge_rows(seq, rows())
+        return numbered(), "could not point at the answer list"
+    if (info.get("offset") or 0) > 0.5:  # scrolled (a choose left it there): read from the top
+        inp.wheel(WHEEL_STEP * SCROLL_STEPS, at[0], at[1])
+        inp.wait_frames(6)
+        time.sleep(0.1)
+    _merge_rows(seq, rows())
     why = None
     for _ in range(SCROLL_STEPS):
-        if len(got) >= total:
-            break
+        if scrollable is None and total and len(seq) >= total:
+            break  # no scroll extent to go by: the estimated count
+        if scrollable is not None and (info.get("offset") or 0) >= scrollable - 0.5:
+            break  # the bottom of the list: every row has been on screen
         inp.wheel(-WHEEL_STEP, at[0], at[1])
         inp.wait_frames(6)
         time.sleep(0.1)
-        for o in read_options():
-            if isinstance(o.get("i"), int):
-                got.setdefault(o["i"], o)
+        _merge_rows(seq, rows())
         info = _answer_list(game)
-        if info.get("scrollable") is not None and info.get("offset", 0) >= info["scrollable"] - 0.5 \
-                and len(got) < total:
-            why = f"read {len(got)} of {total} answers at the bottom of the list"
-            break
+        scrollable = info.get("scrollable", scrollable)
     else:
-        if len(got) < total:
-            why = f"read {len(got)} of {total} answers"
+        why = f"read {len(seq)} answers, the list goes on below"
     inp.wheel(WHEEL_STEP * SCROLL_STEPS, at[0], at[1])  # back to the top, where the game opened it
     inp.wait_frames(2)
-    return got, why
+    return numbered(), why
 
 
 def answer_key(text) -> str:

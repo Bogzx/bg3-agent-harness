@@ -247,8 +247,10 @@ class SwapParty(unittest.TestCase):
         out = server.swap_party(into="Halsin", out="Gale")
         ops = [j[0] for j in fake.jobs]
         self.assertEqual(ops[:2], ["act.go_to_camp", "act.talk"])
-        self.assertIn(("ui.dialogue_choose", {"i": 2}), fake.jobs)
-        self.assertEqual([j for j in fake.jobs if j[0] == "ui.dialogue_choose"], [("ui.dialogue_choose", {"i": 2})] * 2)
+        # answers are chosen by the text the agent would see (S081), the row's number checked by the mod
+        self.assertEqual([j for j in fake.jobs if j[0] == "ui.dialogue_choose"],
+                         [("ui.dialogue_choose", {"i": 2, "text": "I'd like you to join me."}),
+                          ("ui.dialogue_choose", {"i": 2, "text": "Gale could do with a rest."})])
         self.assertIn("act.leave_camp", ops)
         self.assertIn("swap_party: done", out)
         self.assertIn("Halsin joined", out)
@@ -374,9 +376,54 @@ class SwapParty(unittest.TestCase):
         self.addCleanup(server._no_join.clear)
         out = server.swap_party(into="Halsin", out="Gale")
         self.assertIn("doesn't offer to join right now", out)
-        self.assertIn(("ui.dialogue_choose", {"i": 3}), fake.jobs)
+        self.assertIn(("ui.dialogue_choose", {"i": 3, "text": "Leave."}), fake.jobs)
         self.assertIn("act.leave_camp", [j[0] for j in fake.jobs])
         self.assertIn(HALSIN, server._no_join)
+
+    def remark_fake(self, menu_on_talk: int | None) -> FakeGame:
+        """S080 #60 02:33:48: talking to Karlach at camp opened a one-line remark ("Hm? Did you... are you talking to
+        me?"), no answers, and swap_party said "did not join … Talk to it: talk_to". menu_on_talk: the talk (1-based)
+        whose dialogue shows her camp menu; the others only make the remark (no answer list ever on screen)."""
+        menu = {"options": [{"i": 1, "text": "I'd like you to join me."}]}
+        full = {"options": [{"i": 2, "text": "Gale could do with a rest."}]}
+        fake = FakeGame([menu, full])
+        real = fake.run_job
+        talks = []
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            out = real(op, args, context, wait_s, **kw)
+            if op == "act.talk":
+                talks.append(1)
+                fake.talking = len(talks) == menu_on_talk
+            return out
+        fake.run_job = run_job
+        self.use(fake)
+        self.addCleanup(server._no_join.clear)
+        clock = [0.0]
+        real_mono = server.time.monotonic
+        server.time.monotonic = lambda: real_mono() + clock[0]
+        self.addCleanup(setattr, server.time, "monotonic", real_mono)
+        server.time.sleep = lambda t: clock.__setitem__(0, clock[0] + t)
+        return fake
+
+    def test_s080_a_one_line_remark_is_tried_again_then_reported(self):
+        fake = self.remark_fake(menu_on_talk=None)
+        out = server.swap_party(into="Halsin", out="Gale")
+        self.assertEqual(len([j for j in fake.jobs if j[0] == "act.talk"]), 2)
+        self.assertIn("Halsin only made a remark: talked again", out)
+        self.assertIn("swap_party: Halsin doesn't offer to join right now: talking to them gave only a one-line "
+                      "remark (EVENTS) and no answers", out)
+        self.assertNotIn("Talk to it", out)
+        self.assertIn("act.leave_camp", [j[0] for j in fake.jobs])
+        self.assertIn(HALSIN, server._no_join)
+
+    def test_s080_a_remark_then_the_menu_on_the_second_talk_swaps(self):
+        fake = self.remark_fake(menu_on_talk=2)
+        out = server.swap_party(into="Halsin", out="Gale")
+        self.assertEqual(len([j for j in fake.jobs if j[0] == "act.talk"]), 2)
+        self.assertIn("swap_party: done", out)
+        self.assertIn("Halsin joined", out)
+        self.assertNotIn(HALSIN, server._no_join)
 
     def test_camp_block_fails_at_once_with_the_reason(self):
         # S039 21:48:34 Nightsong's Prison: "FAILED at go to camp — camp: FAILED — cannot travel right now", no reason

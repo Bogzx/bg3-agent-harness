@@ -322,6 +322,19 @@ do
     check("S063 rows only: not with fewer VMs than rows", #out8 == 0 and changing8 == true)
 end
 
+-- 12b. S081 Karlach: the list scrolls (ScrollableHeight > 0) though the row arithmetic said nothing is below:
+--      S.answersScroll says so (S.dialogue flags `scrollable`; the bridge then wheels and reads the whole list).
+do
+    local function list(scrollable)
+        local sv = { Type = "ls.LSScrollViewer", _props = { VerticalOffset = 0.0, ExtentHeight = 588.0,
+            ScrollableHeight = scrollable }, _children = {} }
+        return { _children = { { _name = "answerList", _children = { sv } } } }
+    end
+    check("S081 scroll: a list with scrollable height scrolls", S.answersScroll(list(168.0)) == true)
+    check("S081 scroll: a list that fits does not", S.answersScroll(list(0.0)) == false)
+    check("S081 scroll: no ScrollViewer = no", S.answersScroll({ _children = { { _name = "answerList", _children = {} } } }) == false)
+end
+
 -- 13. Audit UI-4: ui.dialogue_choose for an option outside the visible rows. The i-th answer VM is the i-th row
 --     only when the list's scroll extent counts exactly the VMs (by_position); for rows-only answers (a hidden
 --     text-less VM: S015 "7 VMs, 6 shown") Answers.At(i) is another answer, so choose asks the bridge to wheel

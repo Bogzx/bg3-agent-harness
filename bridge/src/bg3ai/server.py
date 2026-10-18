@@ -570,21 +570,28 @@ def _annotate_checks(ui: dict) -> dict:
     return ui
 
 
-# Answers read by scrolling, per dialogue node: (speaker, line, total) -> {i: option}.
+# Answers read by scrolling, per dialogue node: (speaker, line, the visible rows' texts) -> {n: option}.
 _answer_pages: dict = {}
+# The answer list the agent was last shown: {"node": (speaker, line), "texts": {n: text}} (choose_dialogue's numbers).
+_listed: dict = {}
+
+
+def _node(d: dict | None) -> tuple:
+    return ((d or {}).get("speaker"), (d or {}).get("text"))
 
 
 def _complete_answers(ui: dict) -> dict:
     """A long answer list shows only a window of its rows (live: 6 of Karlach's 10). Wheel it like a player and
-    list every answer (texts of rows outside the window show only when scrolled). Cached per node."""
+    list every answer, numbered 1..N in display order (texts of rows outside the window show only when scrolled).
+    Cached per node. S081: the mod's count said nothing was below (a two-line row), so `scrollable` (the list's
+    ScrollViewer can scroll) triggers the read too, and the read goes to the list's bottom, not to a count."""
     d = ui.get("dialogue") if isinstance(ui, dict) else None
-    if not d or not d.get("options") or not (d.get("more_below") or d.get("more_above")):
+    if not d or not d.get("options") or not (d.get("more_below") or d.get("more_above") or d.get("scrollable")):
         return ui
-    total = len(d["options"]) + int(d.get("more_below") or 0) + int(d.get("more_above") or 0)
-    key = (d.get("speaker"), d.get("text"), total)
-    got = _answer_pages.get(key)
-    why = None
-    if got is None or len(got) < total:
+    from . import clicker
+    key = _node(d) + (tuple(clicker.answer_key(o.get("text")) for o in d["options"]),)
+    hit = _answer_pages.get(key)
+    if hit is None:
         inp = _inp()
         if inp is None:
             return ui
@@ -594,20 +601,28 @@ def _complete_answers(ui: dict) -> dict:
             dd = u.get("dialogue") if isinstance(u, dict) else None
             return list((dd or {}).get("options") or [])
 
-        from . import clicker
-        got, why = clicker.read_answer_list(game, inp, read)
+        hit = clicker.read_answer_list(game, inp, read)
         if len(_answer_pages) > 50:
             _answer_pages.clear()
-        _answer_pages[key] = got
-    for o in d["options"]:
-        got.setdefault(o["i"], o)
-    d = dict(d, options=[got[i] for i in sorted(got)])
-    left = total - len(got)
+        _answer_pages[key] = hit
+    got, why = hit
+    if len(got) < len(d["options"]):
+        return ui   # the read saw less than the window (the list changed meanwhile): the window as it is
+    d = dict(d, options=[got[n] for n in sorted(got)])
     d.pop("more_above", None)
-    d["more_below"] = left if left > 0 else None
+    d.pop("more_below", None)
     if why:
         d["scroll_note"] = why
     return dict(ui, dialogue=d)
+
+
+def _note_listed(ui: dict) -> None:
+    """Remember the numbered answers just rendered for the agent: choose_dialogue(n) means the answer shown as n."""
+    d = ui.get("dialogue") if isinstance(ui, dict) else None
+    opts = [o for o in (d or {}).get("options") or [] if isinstance(o, dict) and o.get("text")]
+    _listed.clear()
+    if opts:
+        _listed.update(node=_node(d), texts={int(o["i"]): str(o["text"]) for o in opts if isinstance(o.get("i"), int)})
 
 
 def _render_ui(ui: dict, brief: bool = False) -> list[str]:
@@ -616,6 +631,7 @@ def _render_ui(ui: dict, brief: bool = False) -> list[str]:
         ui = _complete_answers(ui)
     except Exception:  # best effort: the visible window still renders
         pass
+    _note_listed(ui)
     try:
         ui = _annotate_checks(ui)
     except Exception:  # best effort: a missing sheet never hides the dialogue itself
@@ -3374,6 +3390,14 @@ def _at_camp_line(uuid: str) -> str:
                "camp() takes the party there; then find them in the camp (look / get_nearby)"))
 
 
+def _camp_pos(uuid: str) -> list | None:
+    """Where a camp companion stands while the party is in its camp (state.camp `pos`), or None."""
+    row = next((c for c in (game.try_rpc("state.camp") or {}).get("camp") or []
+                if isinstance(c, dict) and c.get("uuid") == uuid), None)
+    p = (row or {}).get("pos")
+    return list(p[:3]) if isinstance(p, (list, tuple)) and len(p) >= 3 else None
+
+
 def _stale_trip_line(target: str, seen: tuple[list, int | None], here: list, d: float) -> str:
     """Refusal for a walk-first trip to a sighting past STALE_TRIP_M: the distance and the trip it would take."""
     ago = f" {render.num(seen[1])}s ago" if seen[1] is not None else ""
@@ -3406,16 +3430,23 @@ def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, st
         u = _uuid(target)
         st = game.try_rpc("state.status") or {}
         if isinstance(st, dict) and any(isinstance(c, dict) and c.get("uuid") == u for c in st.get("camp") or []):
-            return out + "\n" + _at_camp_line(u)
-        seen = _last_seen(u)
-        if not seen:
-            return None
-        here = _pos_now(char)
-        d = macros.dist(here, seen[0]) if here else None
-        if d is not None and d > STALE_TRIP_M:
-            return out + "\n" + _stale_trip_line(target, seen, here, d)
-        dest = {"x": seen[0][0], "y": seen[0][1], "z": seen[0][2]}
-        line = _seen_line(target, seen)
+            # S080 #69: Karlach (camp roster) out of sight at camp: "walk around the camp to find them" and the agent
+            # gave up. At camp, state.camp says where the companion stands (what swap_party walks to): go there.
+            pos = _camp_pos(u) if _at_camp(game.try_rpc("ui.state", context="client")) else None
+            if not pos:
+                return out + "\n" + _at_camp_line(u)
+            dest = {"x": pos[0], "y": pos[1], "z": pos[2]}
+            line = f"{_label(u)} is at camp (the camp roster) {render.pos(pos)}: walking there first"
+        else:
+            seen = _last_seen(u)
+            if not seen:
+                return None
+            here = _pos_now(char)
+            d = macros.dist(here, seen[0]) if here else None
+            if d is not None and d > STALE_TRIP_M:
+                return out + "\n" + _stale_trip_line(target, seen, here, d)
+            dest = {"x": seen[0][0], "y": seen[0][1], "z": seen[0][2]}
+            line = _seen_line(target, seen)
     trip = travel_to(who=who, **dest)
     if "FAILED" in trip or "REFUSED" in trip:
         return out + "\n" + trip
@@ -3901,6 +3932,7 @@ def _camp_block_text(b: dict) -> str:
 
 
 SWAP_DIALOGUE_S = 25.0  # swap_party: the longest it drives the companion's dialogue
+SWAP_REMARK_RETRY_S = 1.5  # swap_party: a talk that gave only a one-line remark is tried once more after this
 # S070 20:59:06: swap_party 7 s after the long rest's wake-up: Wyll (a speaker of the dream scene) still stood where
 # the scene put him: talk "not visible", walk "no path … travelled=0", FAILED, and the agent played Wyll's own quest
 # without him. Within REST_SETTLE_WINDOW_S of a long rest such a failure waits (≤ SWAP_REST_SETTLE_S) for the
@@ -4038,64 +4070,102 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
     if r.status != "done":
         return done("\n".join(steps + ["swap_party: FAILED to talk to " + str(inc.get("name")) + " — " + _job_text("talk_to", r)]))
     picked, stop = [], None
-    deadline = time.monotonic() + SWAP_DIALOGUE_S
-    opened = asked = False
-    while time.monotonic() < deadline:
-        ui = game.try_rpc("ui.state", context="client") or {}
-        if ui.get("screen") != "dialogue":
-            if not opened and time.monotonic() < deadline - SWAP_DIALOGUE_S + 3.0:
-                time.sleep(0.25)
+    asked = offered = False   # offered: the companion showed an answer list (not a one-line remark)
+    for attempt in range(2):
+        deadline = time.monotonic() + SWAP_DIALOGUE_S
+        opened = False
+        while time.monotonic() < deadline:
+            ui = game.try_rpc("ui.state", context="client") or {}
+            if ui.get("screen") != "dialogue":
+                if not opened and time.monotonic() < deadline - SWAP_DIALOGUE_S + 3.0:
+                    time.sleep(0.25)
+                    continue
+                break
+            opened = True
+            # S081 #95: Karlach's join answer was below the fold of a long camp menu: the whole list, read by
+            # scrolling (cached per node), numbered as the agent would see it; answers are chosen by their text
+            ui = _complete_answers(ui)
+            d = ui.get("dialogue") or {}
+            opts = [o for o in d.get("options") or [] if not o.get("off")]
+            offered = offered or bool(opts)
+            if d.get("changing") or d.get("listening") or (not opts and not d.get("continue")):
+                time.sleep(0.3)
                 continue
-            break
-        opened = True
-        d = ui.get("dialogue") or {}
-        opts = [o for o in d.get("options") or [] if not o.get("off")]
-        if d.get("changing") or d.get("listening") or (not opts and not d.get("continue")):
-            time.sleep(0.3)
-            continue
-        i, what = None, ""
-        if not opts:
-            i, what = 0, "continue"
-        else:
-            if outr is not None and asked:
-                # only after the join answer: a companion's top menu may name others ("About Gale...")
-                i = companions.pick_swap(opts, str(outr.get("name")))
-                what = f"send {outr.get('name')} to camp"
-            if i is None and not asked:
-                i, what = companions.pick_join(opts), "join"
-                asked = i is not None
+            i, what = None, ""
+            if not opts:
+                i, what = 0, "continue"
+            else:
+                if outr is not None and asked:
+                    # only after the join answer: a companion's top menu may name others ("About Gale...")
+                    i = companions.pick_swap(opts, str(outr.get("name")))
+                    what = f"send {outr.get('name')} to camp"
+                if i is None and not asked:
+                    i, what = companions.pick_join(opts), "join"
+                    asked = i is not None
+                if i is None:
+                    ok, fi, _ = macros.dialogue_filler(d, strict=True)
+                    i, what = (fi, "continue") if ok else (None, "")
+            if i is None and not asked:   # no join answer in the companion's menu (pick_join found none)
+                lv = next((int(o.get("i") or 0) for o in opts if re.match(r"\s*leave\b", str(o.get("text") or ""), re.I)), 0)
+                if lv:
+                    # Live 2026-10-10 (SCL camp): Halsin's menu had no join answer at all (Wyll's had "I'd like you to
+                    # join me."): the game decides when a companion may join. Leave and stop suggesting it here.
+                    name = str(inc.get("name"))
+                    try:
+                        _choose_text(lv, next(str(o.get("text")) for o in opts if int(o.get("i") or 0) == lv))
+                    except GameError:
+                        pass  # reported below either way: the menu has no join answer
+                    _no_join[inc["uuid"]] = str(st.get("region") or "")
+                    if went and leave_camp:
+                        game.run_job("act.leave_camp", {}, wait_s=60)
+                        steps.append("left camp")
+                    menu = "; ".join(str(o.get("text"))[:50] for o in opts)
+                    return done("\n".join(steps + [
+                        f"swap_party: {name} doesn't offer to join right now: the camp menu has no join answer ({menu}). "
+                        f"The game decides when (story/quest state, e.g. after a camp scene or a quest step). Left the "
+                        f"conversation; the PARTY hint skips {name} in this region."]))
             if i is None:
-                ok, fi, _ = macros.dialogue_filler(d, strict=True)
-                i, what = (fi, "continue") if ok else (None, "")
-        if i is None and not asked:   # no join answer in the companion's menu (pick_join found none)
-            lv = next((int(o.get("i") or 0) for o in opts if re.match(r"\s*leave\b", str(o.get("text") or ""), re.I)), 0)
-            if lv:
-                # Live 2026-10-10 (SCL camp): Halsin's menu had no join answer at all (Wyll's had "I'd like you to
-                # join me."): the game decides when a companion may join. Leave and stop suggesting it here.
-                name = str(inc.get("name"))
-                game.run_job("ui.dialogue_choose", {"i": lv}, context="client", wait_s=10)
-                _no_join[inc["uuid"]] = str(st.get("region") or "")
-                if went and leave_camp:
-                    game.run_job("act.leave_camp", {}, wait_s=60)
-                    steps.append("left camp")
-                menu = "; ".join(str(o.get("text"))[:50] for o in opts)
-                return done("\n".join(steps + [
-                    f"swap_party: {name} doesn't offer to join right now: the camp menu has no join answer ({menu}). "
-                    f"The game decides when (story/quest state, e.g. after a camp scene or a quest step). Left the "
-                    f"conversation; the PARTY hint skips {name} in this region."]))
-        if i is None:
-            stop = "no join/swap answer recognised: pick it with choose_dialogue (then camp(action='leave'), regroup)"
+                stop = "no join/swap answer recognised: pick it with choose_dialogue (then camp(action='leave'), regroup)"
+                break
+            if what != "continue":
+                txt = next((str(o.get("text")) for o in opts if int(o.get("i") or 0) == i), "")
+                picked.append(f"{what}: '{txt[:70]}'")
+            try:
+                rj = game.run_job("ui.dialogue_choose", {"i": i}, context="client", wait_s=20) if what == "continue" \
+                    else _choose_text(i, txt)
+            except GameError as e:
+                rj = JobResult(status="failed", error=str(e))
+            if rj.status != "done":
+                stop = f"could not pick option {i}: {rj.error or rj.status}"
+                break
+            time.sleep(0.3)
+        else:
+            stop = "the dialogue is still open after " + str(int(SWAP_DIALOGUE_S)) + " s"
+        if stop or asked or offered or attempt:
             break
-        if what != "continue":
-            txt = next((str(o.get("text")) for o in opts if int(o.get("i") or 0) == i), "")
-            picked.append(f"{what}: '{txt[:70]}'")
-        rj = game.run_job("ui.dialogue_choose", {"i": i}, context="client", wait_s=20)
-        if rj.status != "done":
-            stop = f"could not pick option {i}: {rj.error or rj.status}"
+        # S080 #60: Karlach's talk opened a one-line remark ("Hm? Did you... are you talking to me?"), no answers,
+        # and swap_party said "did not join … Talk to it: talk_to". A player clicks her once more.
+        time.sleep(SWAP_REMARK_RETRY_S)
+        r = game.run_job("act.talk", {"char": talker, "npc": inc["uuid"]}, wait_s=40)
+        if r.status != "done" and any(w in _job_text("talk_to", r) for w in unreachable):
+            # she walked off meanwhile: the camp roster says where she stands now (not a sighting)
+            steps.append(_walk_up_to(talker, inc["uuid"], str(inc.get("name")), _camp_pos(inc["uuid"]) or inc.get("pos")))
+            r = game.run_job("act.talk", {"char": talker, "npc": inc["uuid"]}, wait_s=40)
+        if r.status != "done":
+            steps.append("talk again: " + _job_text("talk_to", r))
             break
-        time.sleep(0.3)
-    else:
-        stop = "the dialogue is still open after " + str(int(SWAP_DIALOGUE_S)) + " s"
+        steps.append(f"{inc.get('name')} only made a remark: talked again")
+    if not (stop or asked or offered):
+        name = str(inc.get("name"))
+        _no_join[inc["uuid"]] = str(st.get("region") or "")
+        if went and leave_camp:
+            game.run_job("act.leave_camp", {}, wait_s=60)
+            steps.append("left camp")
+        return done("\n".join(steps + [(
+            f"swap_party: {name} doesn't offer to join right now: talking to them gave only a one-line remark "
+            f"(EVENTS) and no answers, so the game opens no camp menu for them at the moment (story or "
+            f"camp state; it may change after a long rest or a story step). Nothing changed; the PARTY hint skips "
+            f"{name} in this region.")]))
     steps += picked
     if stop:
         ui = game.try_rpc("ui.state", context="client") or {}
@@ -4132,10 +4202,52 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
 # act: dialogue and rolls
 # ---------------------------------------------------------------------------
 
+def _visible_answers() -> list:
+    u = game.try_rpc("ui.state", context="client") or {}
+    dd = u.get("dialogue") if isinstance(u, dict) else None
+    return [o for o in (dd or {}).get("options") or [] if isinstance(o, dict)]
+
+
+def _choose_text(option: int, want: str, rows: list | None = None) -> JobResult:
+    """Choose the answer that reads `want` (shown to the agent as `option`): its row on screen now (rows: the visible
+    answers just read), or wheeled into view (down, then up) like a player does; the mod checks the pressed row still
+    reads it."""
+    from . import clicker
+    key = clicker.answer_key(want)
+    i = next((o["i"] for o in (_visible_answers() if rows is None else rows) if isinstance(o, dict)
+              and isinstance(o.get("i"), int) and clicker.answer_key(o.get("text")) == key), None)
+    if i is None:
+        inp = _inp()
+        if inp is None:
+            raise GameError(f"option {option} ('{want}') is outside the visible rows; scrolling the list needs the "
+                            "input shim")
+        i, why = clicker.scroll_to_answer(game, inp, _visible_answers, want)
+        if i is None:
+            i, why = clicker.scroll_to_answer(game, inp, _visible_answers, want, up=True)
+        if i is None:
+            raise GameError(f"option {option} ('{want}') is not in the answer list now ({why}): call get_dialogue "
+                            "and choose again")
+    return game.run_job("ui.dialogue_choose", {"i": i, "text": want}, context="client", wait_s=20)
+
+
 def _choose_answer(option: int) -> JobResult:
-    """ui.dialogue_choose; an option outside the rendered rows of a long list (the mod says needs_scroll: it no
-    longer guesses the answer VM by position, audit UI-4) is wheeled into view like a player does, found again by
-    its text, and chosen by that row with the text checked by the mod."""
+    """ui.dialogue_choose for answer number `option` as the agent was shown it. S081 Karlach (10 hand calls,
+    ~1.5 min): choose_dialogue(7) `no option 7 (6 shown)` while 7 were listed: the listing is the whole list read
+    by scrolling (numbered 1..N in display order), the mod numbers its visible window. So an answer from the last
+    listing of this node is chosen by its text (_choose_text). Otherwise: the number as the mod has it; an option
+    outside the rendered rows (needs_scroll, audit UI-4) is wheeled into view and chosen by its text."""
+    texts, node = _listed.get("texts") or {}, _listed.get("node")
+    want = texts.get(option)
+    _listed.clear()   # the choice moves the dialogue on: the next listing numbers the next node
+    if want:
+        from . import clicker
+        u = game.try_rpc("ui.state", context="client") or {}
+        d = u.get("dialogue") if isinstance(u, dict) else None
+        rows = [o for o in (d or {}).get("options") or [] if isinstance(o, dict)]
+        listed = {clicker.answer_key(t) for t in texts.values()}
+        # the same menu: same line, and the rows on screen (any window of it) are among the listed answers
+        if d and _node(d) == node and any(clicker.answer_key(o.get("text")) in listed for o in rows):
+            return _choose_text(option, want, rows)
     try:
         return game.run_job("ui.dialogue_choose", {"i": option}, context="client", wait_s=20)
     except GameError as e:
@@ -6018,20 +6130,52 @@ def _reactions_rpc(char: str, args: dict) -> Any:
     shows another member. act.select is done only once the client shows the character (Game._select, A16: in S041,
     S069 and S074 the server's own view said selected while the HUD kept another member, and ui.reactions refused)."""
     if not _hud_has(char):
+        _reaction_prompt_block(char)
         sel = game.run_job("act.select", {"char": char}, wait_s=5)
         if sel.status != "done":
             raise GameError(f"{_label(char)} could not be selected: {sel.error or sel.status}")
     try:
-        return game.rpc("ui.reactions", args, context="client")
+        return _job_reply(game.rpc("ui.reactions", args, context="client"))
     except GameError as e:
         if "not the selected character" not in str(e):
             raise
         last = e
     # selected away between the check and the call (the game picks a member at a turn start): select once more
+    _reaction_prompt_block(char)
     sel = game.run_job("act.select", {"char": char}, wait_s=5)
     if sel.status != "done":
         raise GameError(f"{last} ({_label(char)} could not be selected: {sel.error or sel.status})")
-    return game.rpc("ui.reactions", args, context="client")
+    return _job_reply(game.rpc("ui.reactions", args, context="client"))
+
+
+def _reaction_prompt_block(char: str) -> None:
+    """S081 #8 02:43:22: set_reactions(Wyll) during an enemy's turn, a Counterspell prompt open: `Wyll could not be
+    selected: the HUD kept another member selected`. The HUD doesn't change members under a reaction prompt, and
+    the answer is the agent's: say so instead of trying the select."""
+    ui = game.try_rpc("ui.state", context="client") or {}
+    if not isinstance(ui, dict) or ui.get("screen") != "reaction":
+        return
+    rx = ui.get("reaction") if isinstance(ui.get("reaction"), dict) else {}
+    prompt = H.scrub(str(rx.get("prompt") or "").replace(" | Choose how to react.", "").split(" | ")[0])
+    raise GameError(f"a reaction prompt is on screen{f' ({prompt})' if prompt else ''}: the HUD can't select "
+                    f"{_label(char)} until it is answered. Answer it with react(use=true|false), then set the "
+                    "reactions again")
+
+
+def _job_reply(res: Any, wait_s: float = 5.0) -> Any:
+    """A client op that answered with a job (ui.reactions when it changes a mode: the commands apply a frame or two
+    later): its result once it settles. S081 #258: set_reactions(Counterspell=never) printed only `job=1`."""
+    if not (isinstance(res, dict) and "job" in res):
+        return res
+    view, deadline = res, time.monotonic() + wait_s
+    while view.get("status") in (None, "running") and time.monotonic() < deadline:
+        time.sleep(0.1)
+        view = game.rpc("job.poll", {"id": res["job"]}, "client")
+    if view.get("status") != "done":
+        part = (view.get("result") or view.get("partial") or {}) if isinstance(view, dict) else {}
+        raise GameError(f"the reaction change did not take ({view.get('error') or view.get('status')})"
+                        + (f"; now: {render.compact(part, H)}" if part else ""))
+    return view.get("result")
 
 
 @mcp.tool()
@@ -8271,19 +8415,25 @@ def _wait_turn(ready, max_s: float, blocked=None, on_prompt=None, extend_s: floa
     needs an answer, blocked(combat) names why the turn can't come (another party member must act first),
     or max_s passes. on_prompt(ui) answers a prompt itself (returns True: keep waiting). Past max_s it waits up
     to extend_s more while the enemies' turns still move on (a turn changed in the last TURN_PROGRESS_S).
-    (last state.combat, why it stopped waiting or '')."""
+    (last state.combat, why it stopped waiting or ''): 'timed out' (nothing moved on), or, at the extension's
+    end while turns still progress, 'enemies still acting (N turn changes in the wait, …)' (TURN_STILL_ACTING)."""
     t0 = time.monotonic()
     deadline = t0 + max_s
     n = 0
-    seen, moved = None, float("-inf")  # moved: when the acting combatant last changed during the wait
+    seen, moved, turns = None, float("-inf"), 0  # moved: when the acting combatant last changed during the wait
     while True:
         cs = game.try_rpc("state.combat") or {}
         if not cs.get("active") or ready(cs):
             return cs, ""
-        key = (cs.get("round"), tuple(turn.acting(cs)))
+        # S080 02:31:45: an enemy acting in Darkness is not on the visible order (`now ?`): its hits and kills
+        # (HP, downs, deaths) count as progress too, or a long enemy phase looks stalled
+        key = (cs.get("round"), tuple(turn.acting(cs)),
+               tuple((o.get("uuid"), o.get("hp"), o.get("hp_pct"), bool(o.get("dead")), bool(o.get("downed")))
+                     for o in cs.get("order") or [] if isinstance(o, dict)))
         if key != seen:
             if seen is not None:
                 moved = time.monotonic()
+                turns += 1
             seen = key
         why = blocked(cs) if blocked else ""
         if why:
@@ -8299,8 +8449,10 @@ def _wait_turn(ready, max_s: float, blocked=None, on_prompt=None, extend_s: floa
         if t > deadline:
             # S031 17:04: a 30 s wait timed out mid enemy phase (8 ghosts), the plan came back "not played" and
             # was sent again (another 5 s of thinking + 34 s of waiting). Enemies still taking turns: wait on.
-            if not (t - moved < TURN_PROGRESS_S and t < t0 + max_s + extend_s):
+            if t - moved >= TURN_PROGRESS_S or extend_s <= 0:
                 return cs, "timed out"
+            if t >= t0 + max_s + extend_s:
+                return cs, f"{TURN_STILL_ACTING} ({turns} turn changes in the wait, the last {t - moved:.0f}s ago)"
         time.sleep(TURN_POLL_S)
 
 
@@ -8376,7 +8528,7 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     A slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off); fallbacks keep to the planned target's side (an ally-aimed heal only re-aims at a downed party member, a revive never). A melee swing the game refused without a reason steps within 1 m once and swings again. A melee move that ends out of reach says "melee is out of reach this turn" and skips the melee attacks on that target (ranged / Dash next). The move's target (a hostile) dead or out of sight (Shadow Blend, killed first): the plan is re-aimed at the nearest visible hostile, and walks on if movement is left (retarget:false keeps it). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).
     An empty plan {} just ends that character's turn (e.g. it already acted through single tools).
     end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn). When enemies act next, the end itself runs in the background ("ending in the background", then queue_done): what you send next waits for it.
-    Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), up to 30 s longer while enemies are still taking turns, then plays it."""
+    Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), up to 120 s longer while enemies are still taking turns, then plays it (still their turns then: NOT PLAYED YET, nothing done: send it again)."""
     chain = _turn_chain(plan)
     if chain is None:
         end = _plan_end(plan, end)
@@ -8424,6 +8576,9 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
                 continue
             stop = f"{w}: not played — {why}"
             break
+        if txt.startswith(TURN_NOT_YET):
+            stop = f"{w}: not played — {txt[len(TURN_NOT_YET):].split(chr(10))[0]}"
+            break
         outs.append(txt)
         played += 1
         i += 1
@@ -8464,7 +8619,11 @@ CHAIN_BUDGET_S = 80.0  # a list of member plans: total time the later members ma
 END_ASYNC = os.environ.get("BG3AI_END_ASYNC", "1") != "0"
 END_BG_HOLD_S = 16.0  # Lua fails an ignored end at 3 s, the HUD fallback takes ≤ ~10 s more (select + press + 9 s watch)
 _bg_ends: dict[str, float] = {}  # char -> when its background end started
-TURN_EXTEND_S = 30.0  # the first (or only) plan: extra wait past wait_turn while enemy turns still progress
+# The first (or only) plan: extra wait past wait_turn while enemy turns still progress. 30 s until S080 02:31:45:
+# a 12-cultist enemy phase outlasted 30 + 30 s and the plan came back "FAILED: it is not Claude's turn (now ?)".
+TURN_EXTEND_S = 120.0
+TURN_STILL_ACTING = "enemies still acting"  # _wait_turn's why when the extension ends while turns still progress
+TURN_NOT_YET = "combat_turn: NOT PLAYED YET — "  # combat_turn's answer then (nothing played)
 # How often a wait for a party turn (combat_turn sent ahead, end_turn wait) reads state.combat (~10-20 ms): the turn's
 # start reaches the agent this much late at most (0.3 / 0.5 s until 2026-10-16: ~0.2 s mean per turn, 8-15 a run).
 TURN_POLL_S = float(os.environ.get("BG3AI_TURN_POLL_S", "0.15"))
@@ -8662,7 +8821,7 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
                        "or start a fight with use_ability / do_actions)", t0)
     _seen_sides(cs)
     now = turn.acting(cs)
-    waited = ""
+    waited, still_acting = "", ""
     want = _who_uuid(who) if who else None
     inferred = ""
     if not want:
@@ -8729,6 +8888,9 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
             raise GameError("combat is over: loot, heal, then end_combat_report")
         now = turn.acting(cs)
         waited = f"waited {time.monotonic() - w0:.1f}s for the turn" + (f" ({why})" if why else "")
+        still_acting = why[len(TURN_STILL_ACTING):].strip(" ()") if why.startswith(TURN_STILL_ACTING) else ""
+        if still_acting:
+            still_acting = f"after {time.monotonic() - w0:.0f}s ({still_acting}"
         if answered:
             waited += " — " + "; ".join(answered)
         if want and want in turn.downed(cs):
@@ -8743,6 +8905,13 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
         char = sel if sel in mine else (mine[0] if mine else sel)
     if char in turn.downed(cs):
         return _finish("combat_turn", {"who": who}, _downed_text(char), t0)
+    if char not in now and still_acting:
+        # S080 02:31:45: "FAILED: it is not e4 Claude's turn (now ?)" after 60 s of a 12-cultist enemy phase
+        acting = [_label(u) for u in now if u not in party]
+        return _finish("combat_turn", {"who": who}, (
+            f"{TURN_NOT_YET}the enemies are still taking their turns {still_acting}; now "
+            f"{', '.join(acting) or 'an enemy you cannot see'}). Nothing was played or spent: send the same plan "
+            f"again (it waits for {_label(char)}'s turn)"), t0)
     if char not in now:
         ended = any(o.get("uuid") == char and o.get("ended") for o in cs.get("order") or [])
         why = f"{_label(char)} already ended its turn" if ended else f"it is not {_label(char)}'s turn"
@@ -9149,6 +9318,8 @@ def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.
                 continue
             stop = why
             lines.extend(_render_ui(ui, brief=True))
+            if why.startswith("a real choice (") and _listed.get("node") == _node(ui.get("dialogue")):
+                stop = f"a real choice ({len(_listed['texts'])} options)"  # S081: "(6 options)" under 7 listed
             break
         said = (ui.get("dialogue") or {}).get("text")
         r = game.run_job("ui.dialogue_choose", {"i": i}, context="client", wait_s=20)
