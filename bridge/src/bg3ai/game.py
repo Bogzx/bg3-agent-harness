@@ -51,6 +51,28 @@ class JobResult:
     elapsed_ms: int = 0
 
 
+# A23 (S086 05:17:45 hang; S072/S077/S078 crashes, impl-setup S17/S21): a rest/travel transition the game runs after
+# our click on its Yes/No box. Any client-context eval during it puts our Lua on the client Tick while the game's UI
+# thread tears the box down (every UI read waited out bg3le's 50 ms frame-lock timeout: 954 of them, then the story
+# thread stopped answering). While held, every client-context eval of this process (tools, the skipper, metrics,
+# delta reads) is refused at once with NotReady; server evals go on. hold_client() at the click, release_client()
+# once the server says the transition is over; the hold expires by itself (a crash in between can't wedge it).
+CLIENT_HOLD: dict[str, Any] = {"until": 0.0, "why": ""}
+
+
+def hold_client(seconds: float, why: str) -> None:
+    CLIENT_HOLD["until"], CLIENT_HOLD["why"] = time.monotonic() + seconds, why
+
+
+def release_client() -> None:
+    CLIENT_HOLD["until"] = 0.0
+
+
+def client_held() -> str:
+    """Why client evals are held right now, or ''."""
+    return CLIENT_HOLD["why"] if time.monotonic() < CLIENT_HOLD["until"] else ""
+
+
 POOL_MAX = max(1, int(os.environ.get("BG3AI_RPC_CONNS", "4")))
 JOB_PUSH = os.environ.get("BG3AI_JOB_PUSH", "1") != "0"  # wait on the mod's job-finished prints (jobpush.py)
 
@@ -153,6 +175,9 @@ class Game:
             c.close()
 
     def eval(self, code: str, context: str = "client", timeout: float = 12.0) -> str:
+        held = context == "client" and client_held()
+        if held:
+            raise NotReady(f"the game's UI is held: {held}; the result shows when it is over")
         for attempt in range(2):
             client = self._acquire()
             ok = False

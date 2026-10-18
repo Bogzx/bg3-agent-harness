@@ -373,6 +373,59 @@ class CombatTurn(Base):
         self.assertIn("BG3 has no Dodge action", out)
         self.assertIn("turn NOT ended", out)
 
+    def test_s087_a_stunned_member_does_not_block_a_sent_ahead_turn_and_its_open_turn_is_ended(self):
+        # S087 06:03:03-06:03:26: Claude's combat_turn sent ahead was refused after 23 s "e3 Shadowheart (yours) must
+        # act first" while Shadowheart was Stunned (Mind Blast): her open turn passes, it never blocks another member
+        self.g.combat["current"] = P2
+        for o in self.g.combat["order"]:
+            if o["uuid"] == P2:
+                o.update(is_current=True, ended=True, passes="Stunned")
+        ended = []
+
+        def advance(op, args):
+            if op == "act.end_turn":
+                ended.append(args.get("char"))
+                for o in self.g.combat["order"]:
+                    o.pop("is_current", None), o.pop("passes", None), o.pop("ended", None)
+                self.g.combat["current"] = P1
+        self.g.on_start = advance
+        self.assertEqual(turn.acting(self.g.combat), [])
+        self.assertEqual(turn.passing(self.g.combat), [P2])
+        with mock.patch.object(server, "PASS_END_S", 0.0):
+            out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        self.assertNotIn("must act first", out)
+        self.assertEqual(ended[0], P2)
+        self.assertIn("ended " + server.H.get(P2) + " Lae'zel's turn (Stunned: it can't act)", out)
+        self.assertIn("TURN " + server.H.get(P1), out)
+
+    def test_s087_a_plan_for_a_stunned_member_ends_its_turn_and_says_so(self):
+        for o in self.g.combat["order"]:
+            if o["uuid"] == P1:
+                o.update(is_current=True, ended=True, passes="Stunned")
+        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1))
+        self.assertIn("Claude is Stunned: nothing to play, its turn passes (ended it)", out)
+        self.assertEqual([a.get("char") for _, a in self.g.ops("act.end_turn")], [P1])
+        self.assertEqual(self.g.ops("act.cast"), [])
+
+    def test_blast_warning_keeps_the_turn_open_for_the_agent(self):
+        # S085 05:03:37: Gale's Fireball burst on a ledge on a neutral Guild ally (killed). Guard.blast_risk refuses
+        # with where it bursts and who is in the blast; the agent decides: no other alternative, no fallback on
+        # another target, no end_turn.
+        why = ("Fireball: the way to that point is blocked: it would burst at (-24.5,27.0,742.0), 6.5 m from the "
+               "caster and 11.9 m from the point; in its blast (4 m) there: e606 Lady Croup (neutral, 3.4 m): aim "
+               "elsewhere or move first, or force=true to cast anyway")
+        self.g.refuse_if = lambda op, a: why if a.get("spell") == "Projectile_Fireball" and not a.get("force") else None
+        out = server.combat_turn(self.plan(action=[{"ability": "Projectile_Fireball", "x,y,z": [-27, 17, 736]},
+                                                   {"ability": "Projectile_FireBolt", "target": self.gob}]))
+        self.assertEqual(self.casts(), ["Projectile_Fireball"])
+        self.assertNotIn("act.end_turn", [o for o, _ in self.g.ops("act.")])
+        self.assertIn("Lady Croup (neutral, 3.4 m)", out)
+        self.assertIn("turn NOT ended", out)
+        # force=true casts it
+        out = server.combat_turn(self.plan(action={"ability": "Projectile_Fireball", "x,y,z": [-27, 17, 736],
+                                                   "force": True}))
+        self.assertIn("Projectile_Fireball: done", out)
+
     def test_move_that_does_not_fit_walks_as_far_as_it_can(self):
         self.g.refuse_if = lambda op, a: ("destination is beyond remaining movement (path 14.2 m, 5.5 m left)"
                                           if op == "act.move_to" and a.get("target") else None)
@@ -1403,6 +1456,23 @@ class CombatTurn(Base):
         self.assertIn("a reaction prompt is on screen (Sharran Fidelian Lamona cast Bone Chill on Claude.)", out)
         self.assertIn("react(use=true|false)", out)
         self.assertEqual(self.g.ops("act.select"), [])
+        self.assertEqual(self.g.ops("ui.reactions"), [])
+
+    # S087 06:10:18: set_reactions(Wyll) in the enemies' turns: the select fails; the reason and when it works are named
+    def test_set_reactions_in_an_enemy_turn_says_why_the_select_failed(self):
+        self.g.hud = P2
+        self.g.combat["current"] = GOB      # an enemy acts: no party member's turn
+        orig = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "act.select":
+                self.g.calls.append((op, args))
+                return {"status": "failed", "error": "the HUD kept another member selected"}
+            return orig(op, args, context, timeout)
+        self.g.rpc = rpc
+        out = server.set_reactions(who=server.H.get(P1), settings='{"Counterspell": "never"}')
+        self.assertIn("could not be selected: the HUD kept another member selected", out)
+        self.assertIn("It is the enemies' turn", out)
         self.assertEqual(self.g.ops("ui.reactions"), [])
 
     # S081 #258: a mode change answers with a job (the commands apply a frame later): the result printed `job=1`

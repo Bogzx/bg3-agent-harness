@@ -82,8 +82,43 @@ local RPC = BG3AI.RPC
 -- Safe primitives
 ------------------------------------------------------------------------
 
+-- UI busy (S086 05:17:45 hang, impl-setup S21): during the long-rest transition one client Tick ran job 28's on_tick
+-- (ui.long_rest) for 10.2 s, the next for 35.8 s: ~930 Ext.UI calls, each waiting out bg3le's 50 ms frame-lock timeout
+-- (the UI thread held the frame lock and waited on the Lua lock our Tick held), then the story thread stopped
+-- answering. A call that took UI.BUSY_CALL_MS or more waited out that timeout (or bg3le refused it: "bg3le: UI busy"):
+-- from then on, for UI.BUSY_COOLDOWN_MS, every UI read raises UI.BUSY_ERR at once without touching the UI, so the Tick
+-- ends and the UI thread gets the lock. Never a nil in place of the read (a refused IsVisible read as visible, a box
+-- read as closed). RPC.lua keeps a job running through a busy tick (its verdict that tick is dropped) and answers an
+-- op that met it with an error.
+UI.BUSY_ERR = "bg3le: UI busy"
+UI.BUSY_CALL_MS = 40
+UI.BUSY_COOLDOWN_MS = 200
+UI.busyUntil = UI.busyUntil or -1
+UI.busyHits = UI.busyHits or 0 -- calls that met a busy UI (RPC.lua compares it around a job tick / an op)
+
+local function mono() return Ext.Utils.MonotonicTime() end
+
+function UI.busy() return mono() < UI.busyUntil end
+
+local function busyRaise()
+    UI.busyHits = UI.busyHits + 1
+    error(UI.BUSY_ERR .. " (a transition holds the game's UI; retried on a later tick)", 0)
+end
+
+-- The gate for code that reads a Noesis object itself (not through these helpers): raises while the UI is busy.
+function UI.checkBusy()
+    if mono() < UI.busyUntil then busyRaise() end
+end
+
 local function try(f, ...)
+    local t0 = mono()
+    if t0 < UI.busyUntil then busyRaise() end
     local ok, v = pcall(f, ...)
+    local t1 = mono()
+    if t1 - t0 >= UI.BUSY_CALL_MS or (not ok and tostring(v):find("UI busy", 1, true)) then
+        UI.busyUntil = t1 + UI.BUSY_COOLDOWN_MS
+        busyRaise()
+    end
     if ok then return v end
     return nil
 end
@@ -525,6 +560,7 @@ function UI.execute(cmd, param, dry)
     if param ~= nil and not isNoesis(param) then
         return false, "parameter is a " .. type(param) .. " (" .. tostring(param) .. "); bg3le can only pass Noesis objects"
     end
+    UI.checkBusy()
     local okc, can = pcall(cmd.CanExecute, cmd, param)
     if not okc then return false, "CanExecute failed: " .. tostring(can) end
     if not can then return false, "command cannot execute now" end

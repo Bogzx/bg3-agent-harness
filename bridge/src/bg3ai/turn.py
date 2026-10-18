@@ -39,6 +39,10 @@ MAX_EXTRA = 3
 # Failures after which no fallback can help: the turn is over (or was never ours).
 FATAL = ("not this character's turn", "session is over", "no active character", "is downed", "is dead",
          "not in combat", "already ended its turn")
+# A refusal that is a warning for the agent to weigh, not a miss (Guard.blast_risk, S085 05:03:37: Gale's Fireball
+# burst on a ledge on a neutral ally): the slot stops there and the turn stays open (no other alternative, no
+# fallback on another target, no end_turn).
+DECIDE = ("force=true to cast anyway",)
 # Failures of a move that a shorter walk can fix.
 MELEE_M = 1.5  # a plain move to a target means "next to it"
 MOVE_SHORT = ("beyond remaining movement", "beyond movement (", "no movement left", "not enough movement")
@@ -304,6 +308,11 @@ def is_fatal(text: str) -> bool:
     return any(f in low for f in FATAL)
 
 
+def needs_decision(text: str) -> bool:
+    low = text.lower()
+    return any(f in low for f in DECIDE)
+
+
 def move_too_long(text: str) -> bool:
     low = text.lower()
     return any(f in low for f in MOVE_SHORT)
@@ -342,7 +351,20 @@ def acting(combat: dict) -> list[str]:
            if o.get("is_current") and not o.get("ended") and not o.get("dead") and o.get("uuid")]
     if out:
         return out
-    return [c["current"]] if c.get("current") else []
+    # S087 06:02:59: a group whose members all ended or pass (stunned) keeps one of them as `current` (the game is
+    # about to move on): that one can't act
+    cur = c.get("current")
+    if cur and any(o.get("uuid") == cur and (o.get("ended") or o.get("passes")) for o in c.get("order") or []):
+        return []
+    return [cur] if cur else []
+
+
+def passing(combat: dict) -> list[str]:
+    """Party members whose open turn passes by itself: an INCAPACITATED status (Stunned, Paralysed …; state.combat
+    `passes`, Guard.turn_passes). Not acting, never blocking another member (S087)."""
+    return [o["uuid"] for o in (combat or {}).get("order") or []
+            if o.get("uuid") and o.get("passes") and o.get("is_current") and o.get("relation") == "party"
+            and not o.get("dead")]
 
 
 def is_downed(o: dict) -> bool:

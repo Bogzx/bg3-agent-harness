@@ -116,8 +116,12 @@ def _watch(rpc: Rpc, res: dict) -> dict:
         time.sleep(CLOSE_POLL_S)
 
 
-def click_box(rpc: Rpc, inp: Any, answer: str = "yes", budget_s: float = BUDGET_S) -> dict:
-    """-> {clicked: label, at: (x, y), closed: bool, shown?: True, tries} | {error, tries} | {gone: True}."""
+def click_box(rpc: Rpc, inp: Any, answer: str = "yes", budget_s: float = BUDGET_S,
+              after: Callable[[dict], dict] | None = None) -> dict:
+    """-> {clicked: label, at: (x, y), closed: bool, shown?: True, tries} | {error, tries} | {gone: True}.
+    after: what follows the click instead of _watch (ui.box_open polls): the rest/travel boxes start a transition,
+    and A23 (S086 hang) reads nothing of the client UI from the click until the server says it is over."""
+    watch = after or (lambda res: _watch(rpc, res))
     k = _key(answer)
     first = rpc("ui.confirm_probe", {"answer": answer})
     last = time.monotonic()
@@ -148,18 +152,21 @@ def click_box(rpc: Rpc, inp: Any, answer: str = "yes", budget_s: float = BUDGET_
         if not v.get("over"):
             continue
         inp.click(int(fx * w), int(fy * h))
+        if after is not None:
+            inp.move(w // 2, int(h * 0.2))  # off the box at once (no hover left on its buttons)
         inp.wait_frames(AFTER_CLICK_FRAMES)
-        res = _watch(rpc, {"clicked": v.get("label"), "at": (fx, fy), "tries": tries, "closed": False})
+        res = watch({"clicked": v.get("label"), "at": (fx, fy), "tries": tries, "closed": False})
         if res["closed"] or res.get("shown"):
             _remember(k, title, (fx, fy))
         inp.move(w // 2, int(h * 0.2))  # off the box (no hover left on its buttons)
         return res
     if k == "yes" and (first.get("buttons") or [None])[0] == first.get("label"):
-        return _press_default(rpc, inp, answer, str(first.get("label")), tries, (w, h))
+        return _press_default(rpc, inp, answer, str(first.get("label")), tries, (w, h), watch)
     return {"error": f"no cursor position over the '{answer}' button found", "tries": tries}
 
 
-def _press_default(rpc: Rpc, inp: Any, answer: str, label: str, tries: int, wh: tuple[int, int]) -> dict:
+def _press_default(rpc: Rpc, inp: Any, answer: str, label: str, tries: int, wh: tuple[int, int],
+                   watch: Callable[[dict], dict] | None = None) -> dict:
     """RETURN answers a box's default button, the affirmative one (Yes/Continue, drawn highlighted; live
     2026-10-10 on the rest flow's "Camp without supplies?" box). The fallback when no cursor position
     reads as over the button (S026 09:03: 96 tries, no hover). Same key a player would press."""
@@ -167,7 +174,8 @@ def _press_default(rpc: Rpc, inp: Any, answer: str, label: str, tries: int, wh: 
     inp.wait_frames(2)
     inp.key("RETURN")
     inp.wait_frames(8)
-    res = _watch(rpc, {"clicked": f"{label} (RETURN key)", "tries": tries, "closed": False, "via": "key"})
+    res = (watch or (lambda r: _watch(rpc, r)))({"clicked": f"{label} (RETURN key)", "tries": tries, "closed": False,
+                                                "via": "key"})
     if res["closed"]:
         return res
     return {"error": f"no cursor position over the '{answer}' button found, and RETURN didn't answer it either",

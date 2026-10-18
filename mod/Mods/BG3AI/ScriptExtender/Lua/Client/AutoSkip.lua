@@ -421,11 +421,13 @@ end)
 if not K.subscribed then
     K.subscribed = true
     Ext.Events.Tick:Subscribe(function()
+        -- S086 hang: off the UI while it is busy (Client/UI.lua UI.busy); a tick that met it is no error
+        if UI.busy and UI.busy() then return end
         K.phase = "enter"
         local t0 = Ext.Utils.MonotonicTime()
         local ok, err = pcall(K.tick)
         K.noteSlow(Ext.Utils.MonotonicTime() - t0)
-        if not ok then
+        if not ok and not tostring(err):find("UI busy", 1, true) then
             K.errors = (K.errors or 0) + 1
             if K.errors <= 5 then Ext.Utils.PrintWarning("[BG3AI] autoskip: " .. tostring(err)) end
         end

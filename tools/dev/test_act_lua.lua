@@ -1405,6 +1405,107 @@ test("cast: a door/wall past arm's length is in sight when an eye ray reaches it
     if not ok then error(err, 0) end
 end)
 
+test("cast: a harmful area spell says where it bursts and who is in the blast before it is cast (S085 Fireball)", function()
+    -- S085 05:03:37: Gale @(-22,27,748) on the Guildhall's upper floor, Fireball at (-27,17,736) ~10 m below; it hit
+    -- the ledge and burst on e606 Lady Croup @(-26,27,745), a neutral Guild ally: killed.
+    spell("Projectile_Fireball", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1",
+        Level = 0, ExplodeRadius = "4", SpellFlags = { "IsHarmful" } })
+    local function hit(p) return { Position = p, Shape = { PhysicsObject = { Entity = { Uuid = { EntityUuid = "" } } } } } end
+    local rays, rayfn = {}, nil
+    Ext.Level.RaycastClosest = function(a, b) rays[#rays + 1] = { a, b }; return rayfn(a, b) end
+    local seen = { [P1] = true, [NPC] = true, [GOB] = true }
+    BG3AI.Visibility = { rayCalibrated = function() return true end, EYE_H = 1.6, RAY_TYPE = 5, RAY_INCLUDE = 0xFFFFFFFF,
+        RAY_EXCLUDE = 0x820200, context = function() return { is_party = { [P1] = true }, observers = {} } end,
+        entityUuid = function(e) return e.uuid end,
+        charactersNear = function(c, r)
+            local out = {}
+            for _, u in ipairs({ P1, NPC, GOB }) do
+                local d = U.dist(world[u].pos, c)
+                if d <= r then out[#out + 1] = { { uuid = u }, world[u].pos, d } end
+            end
+            return out
+        end,
+        characterVisible = function(_, u) return seen[u] end,
+        isAlly = function() return false end,
+        name = function(u) return ({ [NPC] = "Lady Croup", [GOB] = "Fishbait Arno", [P1] = "Gale" })[u] or "Unknown" end }
+    osiv[key("IsEnemy", P1, GOB)] = 1
+    local aim = { -27, 17, 736 }
+    local function fireball(extra)
+        local a = { char = P1, spell = "Projectile_Fireball", pos = aim }
+        for k, v in pairs(extra or {}) do a[k] = v end
+        return job(op("cast", a))
+    end
+    local ok, err = pcall(function()
+        world[P1].pos = { -22, 27, 748 }
+        world[NPC].pos = { -26, 27, 745 }
+        world[GOB].pos = { -27, 17, 736.5 }
+        -- the eye ray to the point stops on the ledge, ~6.7 m out on the caster's floor
+        rayfn = function() return hit({ -24.5, 27, 742 }) end
+        local j = fireball()
+        eq(j.status, "failed", "S085 status")
+        assert(j.error:find("the way to that point is blocked: it would burst at %(%-24%.5,27%.0,742%.0%)"), j.error)
+        assert(j.error:find(NPC:gsub("%-", "%%-") .. " Lady Croup %(neutral, 3%.4 m%)"), j.error)
+        assert(j.error:find("blast %(4 m%)"), j.error); assert(j.error:find("force=true to cast anyway"), j.error)
+        assert(not j.error:find(GOB, 1, true), "the hostile below is out of that blast: " .. j.error)
+        eq(#called("UseSpellAtPosition"), 0, "nothing cast")
+        local r = rays[#rays]
+        near(r[1][2], 28.6, "eye height"); near(r[2][2], 17.5, "the ray ends 0.5 m above the point")
+        -- force=true: cast as asked
+        j = fireball({ force = true })
+        eq(j.status, "running", "forced " .. tostring(j.error)); eq(#called("UseSpellAtPosition"), 1, "cast")
+        -- the way clear (no hit, or a hit at the point itself), only the hostile in the blast: cast, no word
+        rayfn = function() return nil end
+        j = fireball()
+        eq(j.status, "running", "clear " .. tostring(j.error))
+        rayfn = function(_, b) return hit({ b[1], b[2] - 0.4, b[3] + 0.2 }) end
+        j = fireball()
+        eq(j.status, "running", "hit at the point " .. tostring(j.error))
+        -- the way clear, but the neutral stands in the ring at the point
+        world[NPC].pos = { -25, 17, 737 }
+        rayfn = function() return nil end
+        j = fireball()
+        eq(j.status, "failed", "neutral in the ring")
+        assert(j.error:find("Projectile_Fireball at that point; in its blast %(4 m%) there: " .. NPC:gsub("%-", "%%-")
+            .. " Lady Croup %(neutral, 2%.2 m%) and 1 hostile"), j.error)
+        -- a neutral the party does not see is not named (fair)
+        seen[NPC] = false
+        j = fireball()
+        eq(j.status, "running", "unseen neutral " .. tostring(j.error))
+        seen[NPC] = true
+        -- blocked far short with nobody there: says so (the spell would be wasted)
+        world[NPC].pos = { 30, 0, 0 }
+        rayfn = function(a, b) -- a wall half way there
+            return hit({ a[1] + (b[1] - a[1]) * 0.5, a[2] + (b[2] - a[2]) * 0.5, a[3] + (b[3] - a[3]) * 0.5 })
+        end
+        world[P1].pos = { -14, 27, 752 } -- nobody (the caster neither) within 4 m of the ledge point
+        aim = { -20, 17, 745 }
+        j = fireball()
+        eq(j.status, "failed", "wasted"); assert(j.error:find("in its blast %(4 m%) there: nobody"), j.error)
+        -- blocked just before the point (within the radius), only the hostile in the blast: cast
+        world[P1].pos = { -22, 27, 748 }
+        aim = { -27, 17, 736 }
+        rayfn = function() return hit({ -26.5, 18.5, 737 }) end
+        j = fireball()
+        eq(j.status, "running", "short but on target " .. tostring(j.error))
+        -- at a creature: who stands beside it (the target itself is not listed)
+        world[NPC].pos = { -26, 17, 736.5 }
+        j = job(op("cast", { char = P1, spell = "Projectile_Fireball", target = GOB }))
+        eq(j.status, "failed", "at a target"); assert(j.error:find("Projectile_Fireball at that target; in its blast"), j.error)
+        assert(j.error:find("Lady Croup"), j.error); assert(not j.error:find("hostile"), j.error)
+        -- a harmless area spell is not checked
+        spell("Projectile_Blessing", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1",
+            Level = 0, ExplodeRadius = "4" })
+        j = job(op("cast", { char = P1, spell = "Projectile_Blessing", pos = aim }))
+        eq(j.status, "running", "harmless " .. tostring(j.error))
+        -- no ray API: the ring at the point is still checked, the path is not
+        BG3AI.Visibility.rayCalibrated = function() return false end
+        j = fireball()
+        eq(j.status, "failed", "uncalibrated ring"); assert(j.error:find("at that point"), j.error)
+    end)
+    BG3AI.Visibility, Ext.Level.RaycastClosest = nil, nil
+    if not ok then error(err, 0) end
+end)
+
 test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Stand radii)", function()
     combat_setup(9) -- the range refusal (out of combat the cast walks into range first)
     eq(G.radius(P1), 0.5, "fallback radius")
@@ -2188,6 +2289,54 @@ test("S084 shared turn end: a member ended earlier stays ended while the game ap
     restore()
 end)
 
+test("S087 group end: the last member's end the game showed stays ended while the game applies the group (18 s)", function()
+    local restore = group_setup()
+    G.end_confirmed = {}
+    local ok, err = pcall(function()
+    -- 05:57:40 High Hall Courtyard: Wyll (P2 here) ended earlier (requested); Claude (P1), the group's last, ends
+    local j = job(op("end_turn", { char = P2 }))
+    clock = clock + A.END_REQUEST_AFTER_MS + 1 tick()
+    eq(j.status, "done", "P2 requested " .. tostring(j.error)); eq(j.result.requested, true, "requested")
+    local j1 = job(op("end_turn", { char = P1 }))
+    world[P1].comps.TurnBased.RequestedEndTurn = true -- the game shows Claude's end
+    tick()
+    eq(j1.status, "done", "P1 " .. tostring(j1.error)); eq(j1.result.requested, nil, "ended by the game's flags")
+    -- then, applying the group's ends one by one, it shows both turns open again (active, no RequestedEndTurn) until
+    -- TurnEnded for all 18 s later
+    world[P1].comps.TurnBased.RequestedEndTurn = false
+    for _, dt in ipairs({ 0, 2000, 16000 }) do
+        clock = clock + dt
+        eq(G.is_my_turn(P1), false, "Claude may not act +" .. dt .. " ms (was: shown acting, 'e4 Claude must act first')")
+        eq(G.is_my_turn(P2), false, "Wyll may not act +" .. dt .. " ms")
+    end
+    A.dispatch("TurnEnded", { P1 })
+    A.dispatch("TurnEnded", { P2 })
+    eq(G.end_requested[G.guid(P1)], nil, "TurnEnded clears the pending end")
+    -- next round: TurnStarted, and the turn is P1's again
+    A.dispatch("TurnStarted", { P1 })
+    eq(G.is_my_turn(P1), true, "P1's next turn is open")
+    end)
+    restore()
+    if not ok then error(err, 0) end
+end)
+
+test("S087 stunned: a party member's INCAPACITATED status makes its turn pass (Guard.turn_passes)", function()
+    local st = {}
+    BG3AI.Visibility = { statuses = function() return st end }
+    stats.STUNNED = { StatusType = "INCAPACITATED" }
+    stats.FEAR = { StatusType = "FEAR" }
+    local ok, err = pcall(function()
+        st = { { id = "STUNNED", name = "Stunned" } }
+        eq(G.turn_passes(P1), "Stunned", "stunned")
+        st = { { id = "FEAR", name = "Frightened" } }
+        eq(G.turn_passes(P1), nil, "frightened still acts (moves away)")
+        st = {}
+        eq(G.turn_passes(P1), nil, "nothing")
+    end)
+    BG3AI.Visibility = nil
+    if not ok then error(err, 0) end
+end)
+
 test("end_turn in a shared turn group: done on RequestedEndTurn, lists who is still to act", function()
     local restore = group_setup()
     local j = job(op("end_turn", { char = P1 }))
@@ -2736,6 +2885,7 @@ test("interact story lock: the Use fails -> the story-lock reason", function()
     world[DOOR].pos = { 1, 0, 0 }
     local j = job(op("interact", { char = P1, target = DOOR }))
     A.dispatch("UseFinished", { P1, DOOR, 0 })
+    tick(6) -- the failure waits A.USE_FAIL_GRACE_MS for a success
     eq(j.status, "failed", "status"); assert(j.error:find("no lock to pick"), j.error)
 end)
 
@@ -2782,7 +2932,42 @@ test("interact locked: Use reports failure and it stays locked -> says the key d
     local j = job(op("interact", { char = P1, target = DOOR }))
     eq(#called("Unlock"), 1, "Unlock in place")
     A.dispatch("UseFinished", { P1, DOOR, 0 })
+    tick(6) -- the failure waits A.USE_FAIL_GRACE_MS for a success
     eq(j.status, "failed", "status"); assert(j.error:find("still locked"), j.error)
+end)
+
+test("interact: a door's UseFinished success then failure is a use; it opens -> done (S085 Sluice Gate, Vault Door)", function()
+    -- S085 04:53:03 e455 Vault Door (Knock had unlocked it): EVENTS `used … success` then `used …`, the job said
+    -- "could not use that", the door opened a moment later
+    world[DOOR].pos = { 1, 0, 0 }
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    eq(#called("Use"), 1, "Use in place")
+    A.dispatch("UseFinished", { P1, DOOR, 1 })
+    A.dispatch("UseFinished", { P1, DOOR, 0 })
+    tick()
+    eq(j.status, "running", "still waiting for the door: " .. tostring(j.error))
+    osiv[key("IsOpened", DOOR)] = 1
+    tick()
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.opened, true, "opened")
+    -- the failure first, the success within the grace: still a use
+    osiv[key("IsOpened", DOOR)] = nil
+    j = job(op("interact", { char = P1, target = DOOR }))
+    A.dispatch("UseFinished", { P1, DOOR, 0 })
+    tick(2)
+    A.dispatch("UseFinished", { P1, DOOR, 1 })
+    tick(6)
+    eq(j.status, "running", "success after the failure: " .. tostring(j.error))
+    osiv[key("IsOpened", DOOR)] = 1
+    tick()
+    eq(j.status, "done", "status " .. tostring(j.error))
+    -- a failure alone still fails, after the grace
+    osiv[key("IsOpened", DOOR)] = nil
+    j = job(op("interact", { char = P1, target = DOOR }))
+    A.dispatch("UseFinished", { P1, DOOR, 0 })
+    tick(2)
+    eq(j.status, "running", "within the grace")
+    tick(4)
+    eq(j.status, "failed", "status"); eq(j.error, "could not use that", "reason")
 end)
 
 test("guard: Unlock stays blocked through G.osi; unlock_with_key needs the key and adjacency", function()

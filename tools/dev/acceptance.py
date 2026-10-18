@@ -1984,6 +1984,7 @@ def sec_se() -> None:
             if ui_screen() == "roll":
                 call("press_key", key="ESCAPE")
         door_los_probe([h for h, _ in re.findall(r"^(?:ITEM\s+|\+\s*)?(e\d+) ([^<\n]+?) <door>", near, re.M)])
+        blast_probe()
         load_verified(BASE)
     strict_lock_probe()  # last: process-wide mode, restored in a finally; nothing runs after it in this section
 
@@ -2019,6 +2020,38 @@ def door_los_probe(handles: list[str]) -> None:
     ev = "; ".join(f"{r['door'][:8]}<-{r['char'][-12:]} {r['d']:.1f}m los={int(bool(r['los']))} ray={r['ray']}"
                    f" guard={int(bool(r['guard']))}" for r in rows)
     item(DOOR_LOS_ITEM, "FAIL" if bad or not rows else "PASS", ev)
+
+
+# A22 (S085 05:03:37): Guard.blast_risk refuses a harmful area cast whose blast catches a party member / ally /
+# neutral in sight, or a projectile that bursts short of its point (eye ray). Read-only: Fireball's radius from the
+# live stats (ExplodeRadius / AreaRadius: which one the game fills), and per member G.blast_path to a point 8 m east
+# (clear/blocked, no error) and G.in_blast around itself (the member must be listed). FAIL = radius 0 (the check
+# never fires), a ray/scan error, or a member missing from its own ring. The real cast: SESSION-WATCH "AoE blast".
+BLAST_ITEM = "act: area blast check reads the radius and who stands in it (A22, S085)"
+BLAST_LUA = (
+    "local B=Mods.BG3AI.BG3AI local G=B.Guard local st=Ext.Stats.Get('Projectile_Fireball') "
+    "local out={explode=st and tostring(st.ExplodeRadius),area=st and tostring(st.AreaRadius),"
+    "r=st and G.blast_radius(st) or -1,rows={}} "
+    "for _,row in pairs(Osi.DB_PartyMembers:Get(nil)) do local c=row[1] local p=G.pos(c) if p then "
+    "local ok,at,blk=pcall(G.blast_path,c,{p[1]+8,p[2],p[3]}) local ok2,hit=pcall(G.in_blast,c,p,4) local me=false "
+    "if ok2 and hit then for _,h in ipairs(hit) do if G.same(h.uuid,c) then me=true end end end "
+    "out.rows[#out.rows+1]={char=tostring(c),path=ok and (blk and 'blocked' or 'clear') or ('err '..tostring(at)),"
+    "ring=ok2 and (hit and #hit or -1) or -2,me=me} end end "
+    "return Ext.Json.Stringify(out,{Beautify=false})")
+
+
+def blast_probe() -> None:
+    raw = lua_server(BLAST_LUA)
+    try:
+        v = json.loads(raw)
+    except ValueError:
+        item(BLAST_ITEM, "FAIL", f"probe: {raw[:200]}")
+        return
+    rows = v.get("rows") or []
+    bad = [r for r in rows if r.get("path") not in ("clear", "blocked") or r.get("ring", -1) < 1 or not r.get("me")]
+    ev = (f"Fireball ExplodeRadius={v.get('explode')} AreaRadius={v.get('area')} radius={v.get('r')}; "
+          + "; ".join(f"{r['char'][-12:]} path={r['path']} ring={r['ring']} self={int(bool(r['me']))}" for r in rows))
+    item(BLAST_ITEM, "FAIL" if bad or not rows or not (v.get("r") or 0) > 0 else "PASS", ev)
 
 
 def click_search_probe(h: str, name: str) -> None:
