@@ -1888,7 +1888,7 @@ end
 -- Full pre-validation for an Osiris-originated cast. Returns
 -- {stats, costs, payers} or refuses with the reason the UI would show.
 -- Oath of Devotion: a killing blow on a Temporarily Hostile (guards turned on you mid-scene) or a neutral
--- character breaks the oath (PALADIN_OATH_BROKEN; restoring it costs 2000 gold at camp). S028 12:44: Claude's bow
+-- character breaks the oath (PALADIN_OATH_BROKEN; restoring it costs gold at camp). S028 12:44: Claude's bow
 -- finished The Warden (Temporarily Hostile, 2 HP) → Oath Broken, the 2nd time (S026 too). A player knows the
 -- tenets and leaves the kill to someone else: a harmful cast by a Devotion paladin on such a target that is low
 -- enough to die is refused unless force (or Non-Lethal Attacks is on, or the oath is already broken).
@@ -1912,15 +1912,26 @@ function G.oath_risk(char, st, flags, target)
     end
     local nl = passive(char, "NonLethal")
     if nl and nl.Disabled == false then return end -- Non-Lethal Attacks on: the blow knocks out
-    local temp = b(G.q("HasActiveStatus", target, "TEMPORARILY_HOSTILE"))
-    if not temp and b(G.q("IsEnemy", char, target)) then return end
+    -- Only what the UI shows (audit C12): the condition by its shown name (V.statusInfo: none for a status the
+    -- portrait/tooltip doesn't draw), and the HP only while the game shows NPC HP (Custom Mode HIDE_NPC_HP, as
+    -- State.lua); hidden HP: any harmful blow may be the killing one.
+    local V = BG3AI.Visibility
+    local shown = V and V.statusInfo and b(G.q("HasActiveStatus", target, "TEMPORARILY_HOSTILE"))
+        and V.statusInfo("TEMPORARILY_HOSTILE")
+    if not shown and b(G.q("IsEnemy", char, target)) then return end
     local hp, max
     pcall(function() local h = G.entity(target).Health; hp, max = h.Hp, h.MaxHp end)
     if not hp or hp <= 0 then return end
+    local kind = shown and shown.name or "neutral"
+    if V and V.rules and V.rules().HIDE_NPC_HP then
+        G.refuse(string.format("Oath of Devotion: a harmful blow on this %s character may kill it (its HP isn't "
+            .. "shown) and break the oath (restoring it costs gold): let another party member fight it, or "
+            .. "force=true to strike anyway", kind))
+    end
     if hp > G.OATH_LOW_HP and not (max and max > 0 and hp <= max * G.OATH_LOW_FRAC) then return end
     G.refuse(string.format("Oath of Devotion: killing this %s character (%d HP left) would break the oath "
-        .. "(restoring it costs 2000 gold): let another party member finish it, or force=true to strike anyway",
-        temp and "Temporarily Hostile" or "neutral", hp))
+        .. "(restoring it costs gold): let another party member finish it, or force=true to strike anyway",
+        kind, hp))
 end
 
 -- The first status on char that stops its orders: {name, type}, or nil. S067 #43/#54: Wyll's Eldritch Blast, ordered

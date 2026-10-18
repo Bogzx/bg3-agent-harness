@@ -3670,8 +3670,21 @@ test("cast: Oath of Devotion refuses a killing blow on a Temporarily Hostile tar
     world[GOB].comps.Health = { Hp = 2, MaxHp = 67 }
     osiv[key("HasActiveStatus", GOB, "TEMPORARILY_HOSTILE")] = 1
     osiv[key("IsEnemy", P1, GOB)] = 1
+    local savedV, hideHp = BG3AI.Visibility, false
+    BG3AI.Visibility = setmetatable({ rules = function() return { HIDE_NPC_HP = hideHp } end,
+        statusInfo = function(id) return ({ TEMPORARILY_HOSTILE = { name = "Temporarily Hostile" } })[id] end },
+        { __index = savedV })
     local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
     eq(j.status, "failed", "refused"); assert(j.error:find("Oath of Devotion", 1, true), j.error)
+    assert(j.error:find("Temporarily Hostile character (2 HP left)", 1, true), j.error)
+    -- audit C12: Custom Mode hides NPC HP: no HP number, and any harmful blow is refused (the HP can't be judged)
+    hideHp = true
+    world[GOB].comps.Health = { Hp = 50, MaxHp = 67 }
+    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "failed", "hidden HP: refused"); assert(not j.error:find("HP left", 1, true), j.error)
+    assert(not j.error:find("50", 1, true), j.error)
+    hideHp = false
+    world[GOB].comps.Health = { Hp = 2, MaxHp = 67 }
     eq(#called("UseSpell"), 0, "no cast")
     j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB, force = true }))
     eq(j.status, "running", "force: " .. tostring(j.error))
@@ -3700,6 +3713,16 @@ test("cast: Oath of Devotion refuses a killing blow on a Temporarily Hostile tar
     world[P1].comps.PassiveContainer.Passives[1].Passive.PassiveId = "Something_Else"
     j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
     eq(j.status, "running", "not devotion: " .. tostring(j.error))
+    RPC.jobs[j.id] = nil; A.active[P1] = nil
+    -- audit C12: a hostile whose Temporarily Hostile condition the UI doesn't draw is an enemy, as the player sees it
+    world[P1].comps.PassiveContainer.Passives[1].Passive.PassiveId = "Oath_Devotion_Tenents"
+    osiv[key("IsEnemy", P1, GOB)] = 1
+    osiv[key("HasActiveStatus", GOB, "TEMPORARILY_HOSTILE")] = 1
+    BG3AI.Visibility = setmetatable({ rules = function() return {} end, statusInfo = function() return nil end },
+        { __index = savedV })
+    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "running", "condition not shown: an enemy " .. tostring(j.error))
+    BG3AI.Visibility = savedV
 end)
 
 test("go_to_camp: a dead selected character doesn't block the party's camp button (S035 19:38)", function()
