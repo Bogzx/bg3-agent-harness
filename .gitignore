@@ -40,3 +40,9 @@ CLAUDE.local.md
 /docs/AUDIT_*.md
 /research/BRIEF.md
 .claude/worktrees/
+
+# Local media files: not part of the repo
+/media/
+*.mp4
+*.mkv
+*.webm
