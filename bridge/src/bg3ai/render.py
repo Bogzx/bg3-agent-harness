@@ -1145,6 +1145,9 @@ def render_path(res: Any, H: Handles) -> str:
         note = opened_note(res, H)
         return (f"UNREACHABLE: no walkable path ({num(res.get('straight_m', '?'))}m straight line): "
                 "it may need a ladder, a jump (jump_to), a door, or another route" + (f"\n{note}" if note else ""))
+    if res.get("unknown_goal"):
+        return (f"not seen or walked yet: {num(res.get('straight_m', '?'))}m {res.get('dir') or ''} straight line only "
+                "(path_preview checks ground the party has seen or walked)").replace("  ", " ")
     if res.get("reachable") is None:
         return compact({k: v for k, v in res.items() if k != "points"}, H)
     bits = [f"reachable: walk {num(res.get('length_m', '?'))}m"]
@@ -1264,7 +1267,8 @@ def render_hazards(hazards: Any, limit: int = 4) -> list[str]:
 
 # get_layout: the text grid around a character (Navigation.lua N.layout) with what the party sees on it.
 LAYOUT_KEY = ("# wall  . floor  ^ higher floor  v lower floor  _ floor 4-10m below (a drop; jump_to checks the landing)  , ground 14m+ below "
-              "(an island/ledge far down; route lists LOWER GROUND)  : darkness  ~ harmful surface  (blank) no floor you can see (chasm, void)")
+              "(an island/ledge far down; route lists LOWER GROUND)  : darkness  ~ harmful surface  (blank) no floor you can see (chasm, void)  "
+              "? not seen or walked yet")
 _LAYOUT_MAX_LEGEND = 12
 
 
@@ -1319,10 +1323,4 @@ def render_layout(lay: dict, H: Handles, nearby: dict | None = None, party: list
     out += ["|" + "".join(r) + "|" for r in rows]
     if legend:
         out.append("ON IT: " + " | ".join(legend))
-    mo = lay.get("mosaic")
-    if isinstance(mo, dict) and mo.get("rows"):
-        # Fairness (user, 2026-10-18): the picture a player sees on the floor, nothing tying it to world coordinates
-        out.append("MOSAIC on the floor of this room (the trial's picture: its safe lines from above, N up, 1 char = "
-                   "1m of the chasm; # line, O statue platform)")
-        out += ["|" + r for r in mo["rows"]]
     return "\n".join(out)

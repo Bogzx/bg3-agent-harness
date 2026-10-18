@@ -145,10 +145,10 @@ test("hazards: the patch underfoot is always listed", function()
     eq(#hz, 1, "patches"); eq(hz[1].under, true, "under")
 end)
 
-test("hazards: no usable ray API (nil) keeps the patch (fail-safe for walking)", function()
+test("hazards: no usable ray API (nil) lists no patch (fail closed; walks avoid patches on their route anyway)", function()
     fire = twoFires
     seen = function() return nil end
-    eq(#N.hazardPatches(P1, 12, 1.0), 2, "patches")
+    eq(#N.hazardPatches(P1, 12, 1.0), 0, "patches")
 end)
 
 test("nav.hazards: hidden patches don't reach the op's output", function()
@@ -214,9 +214,9 @@ test("route: a goal past path range gets no floor heights", function()
     end
 end)
 
-test("route: a goal in range still gets them", function()
+test("route: a goal in range gets no floor heights either, nor does where you stand (audit C4)", function()
     local r = N.routeAhead(CTX, P1, { 20, 0, 0 }, false)
-    eq(type(r.levels_goal), "table", "levels_goal")
+    eq(r.levels_goal, nil, "levels_goal"); eq(r.levels_here, nil, "levels_here")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

@@ -1980,6 +1980,9 @@ function A.landing_ok(char, spell, dest)
         G.refuse(string.format("the landing is out of range (%.1f m, range %.1f m): move closer first",
             U.dist(p, dest), rng))
     end
+    -- Over the Faith-Leap chasm at the walkway's height (Navigation.lua N.helperZone): the game decides, as for move_to
+    local N = BG3AI.Nav
+    if N and N.helperZone and N.helperZone(dest) then return end
     local ok, hs = pcall(Ext.Level.GetHeightsAt, dest[1], dest[3])
     if not ok or type(hs) ~= "table" then return end -- can't tell
     local near, chasm = false, false
@@ -1998,9 +2001,11 @@ function A.landing_ok(char, spell, dest)
             .. " there is fatal; pick a spot on the floor you stand on or can see, away from its edge",
             dest[1], dest[2], dest[3], A.LANDING_CHASM_MARGIN_M))
     end
+    -- the floors named below are only ones the party sees or has walked (N.known); others go unnamed
     local best, void
     for _, h in ipairs(hs) do
-        if type(h) == "number" and (not best or math.abs(h - dest[2]) < math.abs(best - dest[2])) then
+        if type(h) == "number" and (not best or math.abs(h - dest[2]) < math.abs(best - dest[2]))
+            and N and N.known and N.known(nil, { dest[1], h, dest[3] }) then
             if chasm_at({ dest[1], h, dest[3] }) then void = void or h else best = h end
         end
     end

@@ -62,26 +62,21 @@ class Layout(Base):
         self.assertNotIn("MOSAIC", out)
         self.assertEqual(self.g.ops("nav.layout")[0][1]["radius"], 4.5)
 
-    def test_mosaic_block_in_the_trial_room(self):
-        self.lay["mosaic"] = {"rows": ["####   OOO", "   #####OOO#####"], "cell": 1}
-        out = server.get_layout()
-        self.assertIn("MOSAIC on the floor of this room", out)
-        self.assertIn("1 char = 1m of the chasm; # line, O statue platform)", out)
-        self.assertIn("|   #####OOO#####", out)
-        self.assertNotIn("LINES", out)
-
-    def test_mosaic_is_only_the_picture(self):
-        # Fairness (user, 2026-10-18): no route along it and nothing tying it to world coordinates, even from an
-        # older mod that still sends its anchor and the walkway height
-        self.lay["center"] = [-765.0, -28.3, -720.2]
+    def test_no_mosaic_picture_even_from_an_older_mod(self):
+        # Fairness (audit C3, user 2026-10-18): the picture was drawn from the hidden platforms; the agent reads the
+        # floor mosaic off the screen (screenshot/zoom)
         self.lay["mosaic"] = {"rows": ["          #######", "##########     #######OOO"], "x1": -807, "z2": -719,
                               "y": -28.5, "cell": 1}
         out = server.get_layout()
-        self.assertIn("|##########     #######OOO", out)
-        self.assertNotIn("MOSAIC PATH", out)
-        self.assertNotIn("do_actions", out)
-        for coord in ("-807", "-719", "-28.5", "column 1", "row 1"):
-            self.assertNotIn(coord, out)
+        self.assertNotIn("MOSAIC", out)
+        self.assertNotIn("#######OOO", out)
+        self.assertNotIn("mosaic", server.get_layout.__doc__ or "")
+
+    def test_unseen_ground_is_a_question_mark_in_the_key(self):
+        self.lay["rows"] = ["???????", "#.....#", "#.###.#", "#.....#", "#.#.#.#", "#.....#", "###.###"]
+        out = server.get_layout(radius=4.5)
+        self.assertIn("? not seen or walked yet", out.splitlines()[0])
+        self.assertIn("|???????|", out)
 
     def test_render_without_nearby(self):
         text = render.render_layout(LAY, server.H)

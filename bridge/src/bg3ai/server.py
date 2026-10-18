@@ -2353,7 +2353,7 @@ def get_frontier() -> str:
 @mcp.tool()
 @_guard
 def get_layout(radius: float = 12.0, who: str | None = None) -> str:
-    """The walls, openings and floor around you as a text map (what the overhead camera shows), N up, you = @: mazes, rooms, ledges, chasms. Marks the party (1-3), characters (E hostile, n other), doors (D), ladders (H), levers/buttons (L), containers (C). In a trial room with a floor mosaic it also prints the mosaic's picture (1 char = 1 m, N up). radius 4-20 m."""
+    """The walls, openings and floor around you as a text map (what the overhead camera shows), N up, you = @: mazes, rooms, ledges, chasms. Marks the party (1-3), characters (E hostile, n other), doors (D), ladders (H), levers/buttons (L), containers (C). Ground the party hasn't seen or walked is '?'. radius 4-20 m."""
     t0 = time.monotonic()
     char = _who_uuid(who) if who else _active()
     lay = _read1("nav.layout", {"char": char, "radius": radius})
@@ -2369,9 +2369,10 @@ def get_layout(radius: float = 12.0, who: str | None = None) -> str:
 def route(objective: str = "", target: str = "", x: float | None = None, y: float | None = None,
           z: float | None = None, who: str | None = None, connectors: bool = False, go: bool = False) -> str:
     """The way to a goal, read from the engine instead of a screenshot: objective (o1, or a map marker m1), a visible target id, or x,y,z.
-    Says how far and how high it is (floors above/below you and at the goal), the walk in legs (8m NW, CLIMB 9m up, 6m E) with
-    fire on the way, and when no path exists: the closest walkable spot and the ladders/doors in view ranked by how much they
+    Says how far and how high it is, the walk in legs (8m NW, CLIMB 9m up, 6m E) with
+    fire in view on the way, and when no path exists: the closest walkable spot and the ladders/doors in view ranked by how much they
     help (which way a ladder climbs), ending with one NEXT step. connectors=true lists ladders/doors even when a path exists.
+    A goal on ground the party hasn't seen or walked gets only its distance and direction.
     go=true: check and go in one call: starts travel_to the goal when a path exists, else to the closest walkable spot."""
     t0 = time.monotonic()
     args: dict[str, Any] = {"char": _who_uuid(who)} if who else {}  # no char: nav.route uses the active one
@@ -2413,7 +2414,7 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
         dr = res.get("drop") if isinstance(res.get("drop"), dict) else {}
         if res.get("reachable") and isinstance(dr.get("pos"), (list, tuple)) and len(dr["pos"]) >= 3:
             dest = {"x": dr["pos"][0], "y": dr["pos"][1], "z": dr["pos"][2]}  # walks refuse the drop: to its edge
-        elif res.get("reachable"):
+        elif res.get("reachable") or res.get("unknown_goal"):  # unknown: travel_to's legs end on ground in view
             dest = {"target": target} if target and "pos" not in args else {"x": args["pos"][0], "y": args["pos"][1],
                                                                              "z": args["pos"][2]}
         elif isinstance(c.get("pos"), (list, tuple)) and len(c["pos"]) >= 3:
@@ -2448,7 +2449,7 @@ def get_explored() -> str:
 @_guard
 def path_preview(target: str = "", x: float | None = None, y: float | None = None, z: float | None = None,
                  who: str | None = None) -> str:
-    """Walking distance to a target id or x,y,z: reachable?, path length, needs a jump?, fits remaining movement? Use before committing combat movement."""
+    """Walking distance to a target id or x,y,z: reachable?, path length, needs a jump?, fits remaining movement? Use before committing combat movement. A spot the party hasn't seen or walked gets the straight line only."""
     t0 = time.monotonic()
     args: dict[str, Any] = {"char": _who(who)}
     if target and re.fullmatch(r"[om]\d+", target.strip()):  # objective o1 / map marker m1, as travel_to takes

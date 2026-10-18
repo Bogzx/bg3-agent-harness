@@ -24,12 +24,6 @@ def _height(dy: Any, min_m: float = 1.5) -> str:
     return f"{_m(abs(dy))} {'above' if dy > 0 else 'below'} you"
 
 
-def _levels(ls: Any, here: bool = True) -> str:
-    if not isinstance(ls, list) or not ls:
-        return "?"
-    return ", ".join("0 (you)" if here and abs(x) < 0.5 else (f"+{num(x)}" if x > 0 else num(x)) for x in ls)
-
-
 def _legs(legs: Any, limit: int = 8) -> list[str]:
     out = []
     for i, l in enumerate(legs or [], 1):
@@ -155,9 +149,12 @@ def _next(res: dict, H: Handles, ends: list | None = None) -> str:
         return (f"NEXT: move_to x,y,z = {pos(lo['from'])} (the edge), then jump_to x,y,z = {pos(lo['to'])} "
                 f"({_m(lo.get('drop_m'))} down: a fall that deep hurts without Feather Fall), then route again")
     wp = route_waypoint(res)
-    if wp and (res.get("reachable") is False or (res.get("length_m") or 0) > (wp.get("to_goal_m") or 0) + 60):
+    if wp and (res.get("reachable") is False or res.get("unknown_goal")
+               or (res.get("length_m") or 0) > (wp.get("to_goal_m") or 0) + 60):
         return (f"NEXT: travel_to waypoint=\"{wp['name']}\" ({_m(wp.get('to_goal_m'))} from the goal, you are "
                 f"{_m(res.get('straight_m'))}), then route again")
+    if res.get("unknown_goal"):
+        return "NEXT: travel_to/walk_toward it (each leg ends on ground in view), then route again from there"
     dr = res.get("drop")
     if res.get("reachable") and isinstance(dr, dict) and dr.get("pos"):
         return (f"NEXT: travel_to x,y,z = {pos(dr['pos'])} (the edge of the {_m(dr.get('m'))} drop), then jump_to the "
@@ -236,11 +233,11 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
     out = [head]
     if res.get("standing_in"):
         out.append(f"you stand in {res['standing_in']}: step out first")
-    lh, lg = res.get("levels_here"), res.get("levels_goal")
-    if (isinstance(lh, list) and len(lh) > 1) or (isinstance(lg, list) and any(abs(x) >= 1.5 for x in lg)):
-        out.append(f"FLOORS here: {_levels(lh)} · at the goal: {_levels(lg, False)} (m, relative to you)")
     if res.get("too_far"):
         out.append("too far to preview the walk: travel_to goes in 30 m legs")
+    elif res.get("unknown_goal"):
+        out.append("not seen or walked yet: straight line only (route previews walks over ground the party has seen "
+                   "or walked)")
     elif res.get("reachable"):
         line = f"PATH {_m(res.get('length_m'))}"
         sm, lm = res.get("straight_m"), res.get("length_m")

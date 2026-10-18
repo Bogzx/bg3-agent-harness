@@ -91,6 +91,7 @@ BG3AI.Visibility = {
     itemVisible = function(_, u) local it = items[u]; return it ~= nil, it and it.kind end,
     characterVisible = function() return false end,
     characters = function() return {} end,
+    pointSeen = function() return true end, -- all in view (N.known, hazard patches)
 }
 dofile(LUA .. "/Server/Navigation.lua")
 local N, RPC = BG3AI.Nav, BG3AI.RPC

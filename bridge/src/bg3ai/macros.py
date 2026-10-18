@@ -212,7 +212,8 @@ def hazard_text(h: dict | None) -> str:
 DIRECT_WHY = {"no path": "the game finds no path there", "partial": "the game's path ends short of it",
               "jump": "the game's path needs a jump (jump_to/route)", "long": "the game's path is over 600 m",
               "no node in reach": "the game's path doubles back first",
-              "leg end unverified": "the game's path's next stop did not check out"}
+              "leg end unverified": "the game's path's next stop did not check out",
+              "unseen": "the goal is on ground not seen or walked yet: legs end on ground in view"}
 
 
 def direct_why_text(why: Any, left_m: float) -> str:

@@ -394,7 +394,6 @@ end
 --   V.is_visible(uuid) -> bool        (preferred)
 --   V.IsVisible(uuid) -> bool
 --   V.CharacterVisible(party, uuid) / V.ItemVisible(party, uuid)
---   V.position_known(pos) -> bool     (optional; for point targets)
 -- Fallback: some party member CanSee the target, and it is on stage and not
 -- invisible or sneaking. That is strict, never generous.
 ------------------------------------------------------------------------
@@ -470,8 +469,8 @@ function G.target_visible(target)
     if not G.visible(target) then G.refuse("target is not visible" .. G.last_seen_hint(target)) end
 end
 
--- Point targets: within reach of the actor, and (if Visibility offers it)
--- on known/explored ground.
+-- Point targets: within reach of the actor, and on ground the party has seen
+-- or walked (Navigation.lua N.known), as a click needs ground on screen.
 function G.point_ok(char, pos)
     if type(pos) ~= "table" or type(pos[1]) ~= "number" or type(pos[2]) ~= "number"
         or type(pos[3]) ~= "number" then
@@ -484,10 +483,12 @@ function G.point_ok(char, pos)
         G.refuse(string.format("destination is too far away (%.0fm from this character; one walk reaches %.0fm: use travel_to)",
             dd, G.MAX_MOVE_DIST))
     end
-    local V = BG3AI.Visibility
-    if type(V) == "table" and type(V.position_known) == "function" then
-        local ok, r = pcall(V.position_known, pos)
-        if ok and r == false then G.refuse("destination is not explored") end
+    local N = BG3AI.Nav
+    if type(N) == "table" and type(N.known) == "function" then
+        local ok, r = pcall(N.known, nil, pos)
+        if not (ok and r == true) then
+            G.refuse("that spot is not in view and the party hasn't walked there: pick ground you can see")
+        end
     end
 end
 
@@ -590,6 +591,13 @@ function G.closest_hint(char, goal)
 end
 
 function G.point_reachable(char, pos)
+    -- Over the Faith-Leap chasm at the walkway's height (Navigation.lua N.helperZone): nav reads no floor there, so
+    -- no path is proven or refused; the game decides (a misstep: teleported back, or the fall). User 2026-10-18.
+    local N = BG3AI.Nav
+    if type(N) == "table" and type(N.helperZone) == "function" then
+        local okz, zone = pcall(N.helperZone, pos)
+        if okz and zone then return {} end
+    end
     local r, info = G.reachable(char, pos)
     if info.needs_jump and G.in_combat(char) then G.refuse("needs a jump: use jump_to") end
     if r == true and info.drop then

@@ -50,6 +50,15 @@ Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendere
   only: never a place, route, puzzle, item or encounter from a playthrough, and examples are made up (user,
   2026-10-18; bridge/tests/test_tool_docs.py guards the names that leaked). Game facts learned in a run go to
   research/ or docs/.
-* The Faith-Leap Trial's floor mosaic is transcribed as a text picture (get_layout: its shape, 1 m per char,
-  N up, no coordinates). No route along it and no warnings or refusals from the hidden platforms: a misstep
-  has its in-game consequence (user, 2026-10-18).
+* The Faith-Leap Trial's floor mosaic is only what the screen shows: the agent reads it with screenshot/zoom.
+  get_layout draws no picture of it (the old one was drawn from the hidden platforms). Nav never answers from
+  the hidden walkway layer: route, path_preview, WAYS, walk_toward and travel_to read it as no floor, the same
+  as the chasm beside it. A move_to or jump the agent aims there itself is not refused or proven: a misstep has
+  its in-game consequence (user, 2026-10-18; audit C2/C3).
+* Navigation knows only ground the party has seen or walked (`Navigation.lua` `N.known`): the 4 m breadcrumb
+  cell a member stood in, or a point a member sees now (in sight range with a clear eye ray), remembered for the
+  session once seen. Rays that can't answer count as not seen. A goal off that ground gets its straight distance
+  and direction only; walks and move_to/jump_to targets end on it; WAYS, jump solvers, LOWER GROUND, get_layout
+  cells (`?`), hazards on a route and teleport-landing floors are limited to it. route prints no floor heights
+  (they came through solid floors). Stricter than a human in one way: a spot seen from afar and not asked about
+  then is not remembered (audit C1/C4/C5/C14/C15/C19, 2026-10-18).

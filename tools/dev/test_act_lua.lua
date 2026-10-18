@@ -101,7 +101,8 @@ end })
 BG3AI = {}
 dofile(LUA .. "/Shared/Util.lua")
 dofile(LUA .. "/Shared/RPC.lua")
-BG3AI.Nav = { path = function(char, pos) return nav.fn(char, pos) end }
+BG3AI.Nav = { path = function(char, pos) return nav.fn(char, pos) end,
+    known = function(_, p) return not (nav.unseen and nav.unseen(p)) end } -- N.known: all in view unless nav.unseen
 dofile(LUA .. "/Server/Guard.lua")
 dofile(LUA .. "/Server/Actions.lua")
 local G, A, RPC = BG3AI.Guard, BG3AI.Actions, BG3AI.RPC
@@ -148,6 +149,7 @@ local function reset()
         osiv[key("HasLineOfSight", P1, u)] = 1
     end
     nav.fn = function(_, pos) return { reachable = true, length_m = U.dist(world[P1].pos, pos) } end
+    nav.unseen = nil
     for _, j in pairs(RPC.jobs) do j.status = "done" end
     A.active = {}
 end
@@ -226,6 +228,24 @@ end)
 test("approach: nothing reachable -> refused", function()
     nav.fn = function() return { reachable = false } end
     refused(function() G.approach_point(P1, NPC, 2.5) end, "no walkable path")
+end)
+
+test("point moves (audit C1): a spot not in view and never walked is refused, one in view is not", function()
+    nav.unseen = function(p) return p[1] > 4 end
+    refused(function() G.point_ok(P1, { 5, 0, 0 }) end, "not in view and the party hasn't walked there")
+    G.point_ok(P1, { 3, 0, 0 })
+end)
+
+test("point moves (audit C2): over the Faith-Leap chasm at the walkway's height nothing is proven or refused", function()
+    nav.fn = function() return { reachable = false } end
+    BG3AI.Nav.helperZone = function(p) return p[1] < 0 end
+    local ok, err = pcall(function()
+        local info = G.point_reachable(P1, { -5, 0, 0 })
+        eq(info.length_m, nil, "no path claimed")
+        refused(function() G.point_reachable(P1, { 5, 0, 0 }) end, "no walkable path there")
+    end)
+    BG3AI.Nav.helperZone = nil
+    if not ok then error(err, 0) end
 end)
 
 test("approach / point move: no path -> names the closest walkable spot (S021)", function()
@@ -2243,7 +2263,15 @@ test("cast: Dimension Door landing checks: range from AreaRadius, a landing in t
         "the landing is out of range (55.0 m, range 50.0 m)")
     local heights = Ext.Level.GetHeightsAt
     Ext.Level.GetHeightsAt = function() return { 0.0, 13.0 } end
-    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "nearest floor there is at y=")
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "nearest floor there is at y=13.0")
+    -- audit C19: only a floor the party sees or has walked is named
+    nav.unseen = function(p) return p[2] > 10 end
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "nearest floor there is at y=0.0")
+    nav.unseen = function(p) return p[2] > -1 and p[3] > 4 end
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "in view")
+    nav.unseen = function(p) return p[2] ~= 7 end
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "no floor within 2 m of that height; give")
+    nav.unseen = nil
     Ext.Level.GetHeightsAt = heights
     fails({ char = P1, spell = "Teleportation_DimensionDoor", targets = { GOB, NPC }, pos = { 0, 0, 5 } }, "one who goes")
 end)

@@ -218,6 +218,28 @@ function N.visited(level, p, slack)
     return false
 end
 
+-- Known ground (FAIRNESS.md: what a player saw or remembers seeing). A point is known when a party member stood in
+-- its breadcrumb cell (the 4 m cell itself, same height band), or a party member sees it now (V.pointSeen: within
+-- sight range, a clear ray from the eye to 0.5 m above it). A point once seen stays known this session (1 m cells,
+-- 2 m height bands). Fail closed: no ray answer (uncalibrated, broken) is not seen. Nav answers about a goal that is
+-- not known only with its straight distance and direction; walks end only on known ground.
+N.SEEN_MAX = 20000
+N.seenPts = N.seenPts or {}
+N.seenPtsN = N.seenPtsN or 0
+function N.known(ctx, p)
+    if type(p) ~= "table" then return false end
+    local lvl = currentLevel() or "?"
+    local l = store().levels[lvl]
+    if l and l.cells[cellKey(cellOf(p))] then return true end
+    local k = string.format("%s|%d:%d:%d", lvl, math.floor(p[1]), math.floor(p[2] / 2), math.floor(p[3]))
+    if N.seenPts[k] then return true end
+    local ok, s = pcall(V.pointSeen, ctx or V.context(), p)
+    if not (ok and s == true) then return false end
+    if N.seenPtsN >= N.SEEN_MAX then N.seenPts, N.seenPtsN = {}, 0 end
+    N.seenPts[k], N.seenPtsN = true, N.seenPtsN + 1
+    return true
+end
+
 ------------------------------------------------------------------------
 -- Directions
 ------------------------------------------------------------------------
@@ -315,6 +337,110 @@ end
 -- A found path can also end short of the target (the goal is on a rock or
 -- off the mesh: the last node 3+ m from it, where a normal path ends ~1 m
 -- from it); with endTol such a path is flagged partial (end_pos, end_off).
+------------------------------------------------------------------------
+-- The Faith-Leap walkway (user 2026-10-18, FAIRNESS.md): the safe path over
+-- that trial's chasm is a layer of invisible-platform helpers (V.helperItem),
+-- and the engine's floor there is that layer. A player sees no floor there,
+-- so nav never answers from it: its heights are no floor (N.floorHeights)
+-- and a found path that steps on it is no path (readResult), the same answer
+-- as for the chasm around it. A move_to the agent aims there itself is the
+-- player's own risk: Guard asks N.helperZone and lets the game decide.
+------------------------------------------------------------------------
+
+N.HELPER_LAYER_M = 0.6   -- a floor this close to a helper's top is the hidden walkway
+N.HELPER_MARGIN_M = 3.0  -- around the helpers' bounding box (the layout's blank band)
+N.HELPER_PATH_M = 1.0    -- around the box for paths and floor heights (about half a platform)
+N.HELPER_ZONE_DY_M = 2.0 -- Guard's zone: this near the walkway's height
+N.helperCache = N.helperCache or {}
+
+-- Invisible-platform helper positions on this level (one scan per level; the level is read once per frame, as
+-- every floor-height read asks: N.floorHeights).
+function N.helpers()
+    local c = N.helperCache
+    if c.list and c.frame == N.frame then return c.list end
+    local lvl = currentLevel()
+    if c.level == lvl and c.list then c.frame = N.frame; return c.list end
+    local list = {}
+    local ok, all = pcall(function() return Ext.Entity.GetAllEntitiesWithComponent("ServerItem") end)
+    for _, e in ipairs(ok and all or {}) do
+        local u = e.Uuid and e.Uuid.EntityUuid
+        if u and V.helperItem and V.helperItem(u) then
+            local p = V.pos(e)
+            if p then list[#list + 1] = p end
+        end
+    end
+    c.level, c.list, c.frame = lvl, list, N.frame
+    return list
+end
+
+-- Bounding boxes of helper clusters near `from` (within `near` m), with the
+-- walkway layer height.
+local function helperBox(from, near)
+    local box
+    for _, p in ipairs(N.helpers()) do
+        if math.abs(p[1] - from[1]) <= near + 40 and math.abs(p[3] - from[3]) <= near + 40 then
+            if not box then box = { x1 = p[1], x2 = p[1], z1 = p[3], z2 = p[3], y = p[2], pts = {} } end
+            box.x1, box.x2 = math.min(box.x1, p[1]), math.max(box.x2, p[1])
+            box.z1, box.z2 = math.min(box.z1, p[3]), math.max(box.z2, p[3])
+            box.pts[#box.pts + 1] = p
+        end
+    end
+    return box
+end
+
+local function inBox(b, x, z, m)
+    return b and x >= b.x1 - m and x <= b.x2 + m and z >= b.z1 - m and z <= b.z2 + m
+end
+
+
+local function onLayer(box, x, y, z, m)
+    return inBox(box, x, z, m or N.HELPER_PATH_M) and math.abs(y - (box.y + 0.2)) <= N.HELPER_LAYER_M
+end
+
+local function layerBox(x, z)
+    if #N.helpers() == 0 then return nil end
+    return helperBox({ x, 0, z }, 0)
+end
+
+-- Ext.Level.GetHeightsAt without the walkway layer, pcall-shaped (ok, heights).
+function N.floorHeights(x, z)
+    local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+    if not ok or type(hs) ~= "table" then return ok, hs end
+    local box = layerBox(x, z)
+    if not box then return ok, hs end
+    local out = {}
+    for _, h in ipairs(hs) do
+        if not (type(h) == "number" and onLayer(box, x, h, z)) then out[#out + 1] = h end
+    end
+    return true, out
+end
+
+-- Over the chasm at the walkway's height (Guard: a move there is not proven or refused).
+function N.helperZone(p)
+    local box = type(p) == "table" and layerBox(p[1], p[3])
+    return box and inBox(box, p[1], p[3], N.HELPER_MARGIN_M) and math.abs(p[2] - (box.y + 0.2)) <= N.HELPER_ZONE_DY_M
+        or false
+end
+
+-- Does a route (points) step on the walkway layer? Sampled every 0.5 m.
+local function onWalkway(points)
+    if type(points) ~= "table" or #points < 1 or #N.helpers() == 0 then return false end
+    local box = helperBox(points[1], 40)
+    if not box then return false end
+    if onLayer(box, points[1][1], points[1][2], points[1][3]) then return true end
+    for i = 2, #points do
+        local a, b = points[i - 1], points[i]
+        local n = math.max(1, math.ceil(U.dist(a, b) / 0.5))
+        for k = 1, n do
+            local f = k / n
+            if onLayer(box, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 N.PATH_MAX_NODES = 5000 -- more is not a real route (S038: runaway node walk); ~2.5 km tile by tile
 N.PATH_SLOW_MS = 1000
 N.PATH_END_TOL_M = 2.0 -- the walker's own "close enough" (Actions walk_close_enough)
@@ -364,6 +490,8 @@ local function readResult(path, found, from, target, endTol)
         if jump then res.needs_jump = true end
         if #portals > 0 then res.portals = portals end
         res.points = pts
+        -- the Faith-Leap walkway is no floor a player sees: a path on it is no path, as over the chasm beside it
+        if onWalkway(pts) then return { reachable = false, straight_m = round(U.dist(from, target), 1) } end
         local last = pts[#pts]
         if endTol and #pts >= 2 and U.dist(last, target) > endTol then
             res.partial, res.end_pos, res.end_off = true, U.vec(last, 1), round(U.dist(last, target), 1)
@@ -598,7 +726,7 @@ N.PATH_STRAIGHT_MAX_M = 450
 N.PATH_FLOOR_SLACK_M = 5.0
 N.PATH_START_SLACK_M = 3.0
 local function nearFloor(x, z, y, slack)
-    local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+    local ok, hs = N.floorHeights(x, z)
     if not ok or type(hs) ~= "table" then return nil end -- can't tell: search
     for _, h in ipairs(hs) do if type(h) == "number" and math.abs(h - y) <= slack then return true end end
     return false, #hs
@@ -833,11 +961,16 @@ RPC.register("nav.path", function(args)
     if cp and U.dist(cp, target) > N.PATH_MAX_M then
         return { estimate = true, straight_m = round(U.dist(cp, target), 1), reason = "too far to preview" }
     end
+    -- a coordinate the party hasn't seen or walked: the straight line only (N.known)
+    if args.pos and cp and not N.known(ctx, target) then
+        return { unknown_goal = true, straight_m = round(U.dist(cp, target), 1), dir = N.direction(cp, target),
+            dy = round(target[2] - cp[2], 1) }
+    end
     local r0 = N.path(char, target)
     if not r0 then error("no path", 0) end
     local r = {}
     for k, v in pairs(r0) do if k ~= "points" and k ~= "portals" then r[k] = v end end
-    if r0.points then r.hazard = N.routeHazard(r0.points) end
+    if r0.points then r.hazard = N.seenHazard(N.routeHazard(r0.points)) end
     local mv = movementLeft(char)
     if mv and r.reachable then r.within_movement = r.length_m <= mv + 0.05; r.movement_left = round(mv, 1) end
     if not r.reachable then r.opened = N.geoNote(cp) end
@@ -1032,7 +1165,7 @@ local DIR_VEC = {
 
 -- Floor height at (x, z) closest to y (multi-floor aware); nil if no floor.
 floorAt = function(x, z, y)
-    local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+    local ok, hs = N.floorHeights(x, z)
     if not ok or type(hs) ~= "table" then return nil end
     local best
     for _, h in ipairs(hs) do
@@ -1129,6 +1262,14 @@ function N.routeHazard(points, skip)
     end
     if #points == 1 then return probe(points[1], skip) end
     return nil
+end
+
+-- A hazard (routeHazard / routeExposure shape) only if a party member sees where it starts, else nil (fail closed).
+-- Replies name only those; walks still avoid every patch on their own route (the engine's own pathing).
+function N.seenHazard(h)
+    if type(h) ~= "table" or type(h.pos) ~= "table" then return nil end
+    local ok, s = pcall(V.pointSeen, V.context(), h.pos)
+    return ok and s == true and h or nil
 end
 
 -- How much of a route (after `skip` m) lies in harmful surfaces, sampled
@@ -1286,10 +1427,13 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline
     -- of harmful surfaces at its end and along its route.
     local firstHazard, avoided, tried, memo = nil, 0, 0, {}
     local cut = false
+    local ctx = V.context()
     local function good(i)
         if memo[i] ~= nil then return memo[i] end
         if deadline and Ext.Utils.MonotonicTime() > deadline then cut = true; return false end
         local c, dd = pts[i], pts[i].dd
+        -- a walk ends only on ground the party sees or has walked (N.known), as a click does
+        if not N.known(ctx, c.pos) then memo[i] = false; return false end
         tried = tried + 1
         local ok = false
         local r = N.path(charUuid, c.pos)
@@ -1334,7 +1478,7 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline
             if n >= N.LOOSE_TRIES then break end
             if deadline and Ext.Utils.MonotonicTime() > deadline then cut = true; break end
             local c, dd = pts[i], pts[i].dd
-            if dd >= 2.0 then
+            if dd >= 2.0 and N.known(ctx, c.pos) then
                 if memo[i] == nil then tried = tried + 1 end
                 n = n + 1
                 local r = N.path(charUuid, c.pos)
@@ -1349,6 +1493,7 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline
         end
     end
     if firstHazard then firstHazard.dd = nil end
+    firstHazard = N.seenHazard(firstHazard)
     if not best then
         if cut then return { reachable = nil, unfinished = true, samples = tried, hazard = firstHazard } end
         if avoided == 0 then return { reachable = false, samples = tried } end
@@ -1629,6 +1774,8 @@ function N.directLeg(charUuid, toward, avoid)
     local from = e and V.pos(e)
     if not from or type(toward) ~= "table" then return nil, "no position" end
     local goal = { toward[1], floorAt(toward[1], toward[3], toward[2]) or toward[2], toward[3] }
+    -- the engine's whole route only to a goal the party has seen or walked (N.known); else the sampled legs
+    if not N.known(nil, goal) then return nil, "unseen" end
     local r = rawPath(e, from, goal, N.PATH_END_TOL_M)
     if not r.reachable then return nil, "no path" end
     if r.partial then return nil, "partial" end
@@ -1642,7 +1789,8 @@ function N.directLeg(charUuid, toward, avoid)
         for i = 2, #pts do
             acc = acc + U.dist(pts[i - 1], pts[i])
             if acc > N.DIRECT_LEG_PATH_M then break end -- a switchback node near us is not "along the way"
-            if U.dist(from, pts[i]) <= N.DIRECT_LEG_M then idx, walked = i, acc end
+            -- a leg ends on known ground (Guard's point_ok refuses a move_to anywhere else)
+            if U.dist(from, pts[i]) <= N.DIRECT_LEG_M and N.known(nil, pts[i]) then idx, walked = i, acc end
         end
         if not idx or walked < 5 then return nil, "no node in reach" end
         pos, walk, last = pts[idx], walked, idx
@@ -1665,7 +1813,8 @@ function N.directLeg(charUuid, toward, avoid)
         direct = true, verified = true, dir = N.direction(from, pos),
         whole = pos == goal or nil }
     if risky then
-        out.exposure = risky
+        out.exposure = N.seenHazard(risky)
+        if not out.exposure then return nil, "hazard" end -- not in view: the sampled legs avoid it unnamed
         return nil, "hazard", out
     end
     return out
@@ -1874,20 +2023,26 @@ function N.landing(charUuid, pos)
     -- What is at the landing's column: an agent-guessed y with no floor near
     -- it is a jump into air (S021: y 45 where the ground is 37.4; y 32.4 over
     -- a 10 m drop to 22.5).
-    local okh, hs = pcall(Ext.Level.GetHeightsAt, pos[1], pos[3])
-    local fl = {}
+    local okh, hs = N.floorHeights(pos[1], pos[3])
+    local fl, all = {}, 0
     if okh and type(hs) == "table" then
-        for _, h in ipairs(hs) do if type(h) == "number" then fl[#fl + 1] = round(h, 1) end end
+        -- floors named or suggested: only ones the party sees or has walked (N.known)
+        for _, h in ipairs(hs) do
+            if type(h) == "number" then
+                all = all + 1
+                if N.known(nil, { pos[1], h, pos[3] }) then fl[#fl + 1] = round(h, 1) end
+            end
+        end
     end
     local why = bad(pos)
-    if not why and #fl == 0 and okh then
+    if not why and all == 0 and okh then
         -- S038 20:48 / S039 21:53: a column with no AI-grid floor at all (the Shadowfell's void) was "safe", and the
         -- jump cast there froze the engine (13 GB, OOM) both times. Never a landing.
         why, out.void = "no_floor", true
-    elseif not why and #fl > 0 and not floorAt(pos[1], pos[3], pos[2]) then
+    elseif not why and all > 0 and not floorAt(pos[1], pos[3], pos[2]) then
         why = "no_floor"
         table.sort(fl, function(a, b2) return math.abs(a - pos[2]) < math.abs(b2 - pos[2]) end)
-        out.floors = fl
+        if #fl > 0 then out.floors = fl end
     end
     local slowLevel = N.levelSlow()
     if slowLevel then out.level_off = tostring(slowLevel.why) end
@@ -1944,7 +2099,7 @@ function N.landing(charUuid, pos)
         if not fy or math.abs(fy - pos[2]) > 2.5 then return end
         local p = { x, fy, z }
         local r = hdist(from, p)
-        if r < 1.5 or r > reach + 0.05 or bad(p) then return end
+        if r < 1.5 or r > reach + 0.05 or bad(p) or not N.known(nil, p) then return end
         local off = hdist(p, pos)
         if not bd or off < bd then best, bd = p, off end
     end
@@ -2003,7 +2158,7 @@ jumpPlanImpl = function(charUuid, from, pos, cap, bad)
         local fy = floorAt(x, z, pos[2])
         if not fy or math.abs(fy - pos[2]) > 2.5 then return end
         local p = { x, fy, z }
-        if bad(p) then return end
+        if bad(p) or not N.known(nil, p) then return end
         lands[#lands + 1] = { p = p, off = off }
     end
     addLand(pos[1], pos[3], 0)
@@ -2047,7 +2202,9 @@ jumpPlanImpl = function(charUuid, from, pos, cap, bad)
                     local fy = floorAt(x, z, from[2]) or floorAt(x, z, L.p[2])
                     if fy and L.p[2] - fy <= N.JUMP_UP_MAX_M then
                         local sp = { x, fy, z }
-                        if not bad(sp) then stands[#stands + 1] = { p = sp, d = hdist(from, sp), jump = rad } end
+                        if not bad(sp) and N.known(nil, sp) then
+                            stands[#stands + 1] = { p = sp, d = hdist(from, sp), jump = rad }
+                        end
                     end
                 end
             end
@@ -2079,18 +2236,17 @@ N.PATCH_SAMPLES = 5
 
 -- Fairness: a patch is listed only if a party member sees part of it (sight
 -- range + an eye ray, V.pointSeen) -- not fire behind a wall or in the next
--- room. Probes the nearest cell, then cells spread over the patch. Without a
--- usable ray API (nil) the patch is kept: walks need it, and the game draws
--- surfaces on the path preview anyway.
+-- room. Probes the nearest cell, then cells spread over the patch. Fail
+-- closed: without a usable ray API (nil) a patch is not listed (walks avoid
+-- patches on their own route anyway: routeHazard).
 local function patchSeen(ctx, members, near)
-    if not ctx then return true end
+    if not ctx then return false end
     local k = #members
     local picks = { near }
     local nS = math.min(N.PATCH_SAMPLES - 1, k)
     for s = 1, nS do picks[#picks + 1] = members[math.max(1, math.floor(s * k / nS))].p end
     for _, p in ipairs(picks) do
-        local v = V.pointSeen(ctx, p)
-        if v ~= false then return true end
+        if V.pointSeen(ctx, p) == true then return true end
     end
     return false
 end
@@ -2183,7 +2339,7 @@ end
 -- what a player reads off the path preview and the scenery between here and
 -- a goal, so the agent needs no screenshot (live S001: 23 screenshots and 13
 -- clicks, mostly at the fire maze and the ladder). The legs of the walk, the
--- climbs/jumps/drops on it, burning stretches, the floor levels at both ends;
+-- climbs/jumps/drops on it, burning stretches;
 -- with no path: the walkable spot nearest the goal and the ladders/doors in
 -- view, ranked by how much they help.
 ------------------------------------------------------------------------
@@ -2192,7 +2348,6 @@ N.ROUTE_LEG_M = 10       -- a leg ends after this many metres...
 N.ROUTE_TURN_DEG = 35    -- ...or at a turn this sharp
 N.ROUTE_MAX_LEGS = 8
 N.LINK_DY_M = 1.0        -- a step this high and steeper than 1:1 is a climb/drop
-N.LEVEL_RANGE_M = 15     -- floors reported within +-15 m
 N.CONNECT_M = 30         -- ladders/doors considered within 30 m
 N.CONNECT_MAX = 5
 N.CONNECT_PROBE = 8      -- path probes for the nearest 8 only
@@ -2206,24 +2361,6 @@ N.CONNECT_BUDGET_MS = 40
 N.CONNECT_FAIL_TTL_MS = 30000
 N.CONNECT_FAIL_MOVE_M = 2
 N.connectFail = N.connectFail or {}
-
--- Floor heights at (x, z) relative to y, ascending and de-duplicated: {-6.1,
--- 0, 9.2} = a floor 6 m below, this one, a ledge 9 m up. nil if unknown.
-function N.levelsAt(x, z, y)
-    local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
-    if not ok or type(hs) ~= "table" then return nil end
-    local out = {}
-    for _, h in ipairs(hs) do
-        if type(h) == "number" and math.abs(h - y) <= N.LEVEL_RANGE_M then
-            local d = round(h - y, 1)
-            local dup = false
-            for _, o in ipairs(out) do if math.abs(o - d) < 0.5 then dup = true end end
-            if not dup then out[#out + 1] = d end
-        end
-    end
-    table.sort(out)
-    return out
-end
 
 local function heading(a, b)
     local dx, dz = b[1] - a[1], b[3] - a[3]
@@ -2637,7 +2774,7 @@ function N.jumpAcross(charUuid, from, goal, deadline)
         if f then return f end
         f = {}
         local x, z = from[1] + i * c, from[3] + j * c
-        local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+        local ok, hs = N.floorHeights(x, z)
         for _, h in ipairs(ok and type(hs) == "table" and hs or {}) do
             if type(h) == "number" and h < takeLo and h >= lo then
                 f.deep = f.deep or { x = x, z = z } -- read only when a deep landing is looked for (deepNear)
@@ -2714,7 +2851,8 @@ function N.jumpAcross(charUuid, from, goal, deadline)
     for _, cd in ipairs(cands) do
         if tries >= N.JUMPX_TRIES or late() then break end
         local key = math.floor(cd.b[1]) .. "," .. math.floor(cd.b[3])
-        if not seen[key] then
+        -- only a takeoff and a landing the party sees or has walked (N.known)
+        if not seen[key] and N.known(nil, cd.b) and N.known(nil, cd.a) then
             seen[key] = true
             tries = tries + 1
             local rb = N.path(charUuid, cd.b)
@@ -2727,7 +2865,7 @@ function N.jumpAcross(charUuid, from, goal, deadline)
                     local L = math.sqrt(ux * ux + uz * uz)
                     ux, uz = ux / L, uz / L
                     local function floorNear(x, z, y)
-                        local okh, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+                        local okh, hs = N.floorHeights(x, z)
                         for _, h in ipairs(okh and type(hs) == "table" and hs or {}) do
                             if type(h) == "number" and math.abs(h - y) <= N.JUMP_GAP_LEVEL_M then
                                 local t = N.tileAt({ x, h, z })
@@ -2766,7 +2904,8 @@ end
 -- way down is islands 20-30 m below the arrival ledge, 15+ m out over the void; get_layout drew them blank, route
 -- said only "find a ladder/ledge", and the agent spent 2 sessions on screenshots, map clicks and ~15 jump guesses).
 -- A height scan of the disc around the character (no path search): the floors at our level (the ledge) and the
--- clear floors LOWER_MIN_M..LOWER_MAX_M below; for each lower floor the nearest ledge cell. Best per compass
+-- clear floors LOWER_MIN_M..LOWER_MAX_M below; for each lower floor the nearest ledge cell, both seen or walked
+-- (N.known: a floor in the dark void that no ray reaches is not listed). Best per compass
 -- direction (from the character to the lower floor), toward the goal first. Returns a list of
 -- {dir, from (the ledge cell), to, gap_m (horizontal), drop_m, to_goal_m, toward (gets nearer the goal)} or nil.
 N.LOWER_R_M = 40
@@ -2796,7 +2935,7 @@ function N.lowerGround(charUuid, from, goal, deadline)
         for j = -n, n do
             if i * i + j * j <= n * n then
                 local x, z = from[1] + i * c, from[3] + j * c
-                local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+                local ok, hs = N.floorHeights(x, z)
                 local lh, dh
                 for _, h in ipairs(ok and type(hs) == "table" and hs or {}) do
                     if type(h) == "number" then
@@ -2835,8 +2974,9 @@ function N.lowerGround(charUuid, from, goal, deadline)
         local dir = N.direction(from, b)
         local toward = gd(b) < here - 1
         local cur = best[dir]
-        -- per direction: toward the goal first, then the narrowest gap
-        if not cur or (toward and not cur.toward) or (toward == cur.toward and ad < cur.gap) then
+        -- per direction: toward the goal first, then the narrowest gap; only floors the party sees (N.known)
+        if (not cur or (toward and not cur.toward) or (toward == cur.toward and ad < cur.gap))
+            and N.known(nil, b) and N.known(nil, a) then
             best[dir] = { dir = dir, from = a, to = b, gap = ad, toward = toward }
         end
     end
@@ -2864,10 +3004,12 @@ function N.lowerGround(charUuid, from, goal, deadline)
 end
 
 -- Everything above for one goal. {from, goal, straight_m, dir, dy,
--- levels_here, levels_goal, reachable, length_m?, needs_jump?, legs?, links?,
+-- reachable, length_m?, needs_jump?, legs?, links?,
 -- exposure?, straight_hazard?, closest?{..., legs, links}, connectors?,
 -- standing_in?, far? (beyond PATH_MAX_M: probed, no detail), too_far? (beyond
--- ROUTE_FAR_M: not probed), waypoints? and visited_near? (far or no path)}.
+-- ROUTE_FAR_M: not probed), unknown_goal? (not seen or walked, N.known: not
+-- probed), waypoints? and visited_near? (far, unknown or no path)}.
+-- knownGoal: true for a visible target; nil asks N.known.
 -- check_all FAIL 03:50 (Lower City → the Bhaal Temple far below, no walk): nav.route 258 ms = closestReach (rings +
 -- the walk toward it) ~90 + lowerGround ~115 + connectors ~55. Route gives closestReach ROUTE_CLOSEST_BUDGET_MS and
 -- skips the lower-ground scan once ROUTE_BUDGET_MS is spent (lower_skipped).
@@ -2875,16 +3017,18 @@ N.ROUTE_CLOSEST_BUDGET_MS = 80
 N.ROUTE_BUDGET_MS = 110          -- the whole route (check_route: < 150 ms in the mod)
 N.ROUTE_CONNECT_RESERVE_MS = 25  -- kept for the connectors' path probes after the lower-ground scan
 N.ROUTE_JUMPX_BUDGET_MS = 40     -- NAV-5: jumpAcross's grid scan + its (expected-failing) landing searches
-function N.routeAhead(ctx, charUuid, goal, withConnectors)
+function N.routeAhead(ctx, charUuid, goal, withConnectors, knownGoal)
     local t0 = Ext.Utils.MonotonicTime()
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from then return nil, "no position" end
     local out = { from = U.vec(from, 1), goal = U.vec(goal, 1), straight_m = round(U.dist(from, goal), 1),
         dir = N.direction(from, goal), dy = round(goal[2] - from[2], 1) }
-    out.levels_here = N.levelsAt(from[1], from[3], from[2])
+    if knownGoal == nil then knownGoal = N.known(ctx, goal) end
     if U.dist(from, goal) > N.ROUTE_FAR_M then
         out.too_far = true
+    elseif not knownGoal then
+        out.unknown_goal = true
     elseif U.dist(from, goal) > N.PATH_MAX_M then
         out.far = true
         local r = farPath(charUuid, goal)
@@ -2904,9 +3048,6 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
             end
         end
     else
-        -- Floors at the goal only within path range (what panning the camera
-        -- there shows), never for a far, unexplored spot.
-        out.levels_goal = N.levelsAt(goal[1], goal[3], from[2])
         local r = N.path(charUuid, goal)
         if r and r.reachable == nil and r.reason then out.unknown_reason = r.reason end
         -- S039 21:44: route to a point in the void said "path unknown"; the precheck knows (no ground / Chasm there)
@@ -2917,10 +3058,10 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
             if r.partial then out.end_off_m = r.end_off end -- the goal itself is off the walkable ground
             out.legs, out.links = N.routeLegs(r.points, r.portals)
             out.drop = r.drop
-            out.exposure = N.routeExposure(r.points)
+            out.exposure = N.seenHazard(N.routeExposure(r.points))
         elseif r and r.reachable == false then
             out.reachable = false
-            out.straight_hazard = N.routeExposure({ from, goal })
+            out.straight_hazard = N.seenHazard(N.routeExposure({ from, goal }))
             local okj, jx = pcall(N.jumpAcross, charUuid, from, goal, t0 + N.ROUTE_JUMPX_BUDGET_MS)
             if okj and jx then out.jump = jx end
             local c = N.closestReach(charUuid, goal, N.ROUTE_CLOSEST_BUDGET_MS)
@@ -2928,7 +3069,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
                 local rc = N.path(charUuid, c.pos)
                 if rc and rc.reachable then
                     c.legs, c.links = N.routeLegs(rc.points, rc.portals)
-                    c.exposure = N.routeExposure(rc.points)
+                    c.exposure = N.seenHazard(N.routeExposure(rc.points))
                 end
                 out.closest = c
             else
@@ -2952,7 +3093,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors)
         out.connectors = N.connectors(ctx, charUuid, goal, N.CONNECT_M, N.CONNECT_MAX,
             math.max(10, t0 + N.ROUTE_BUDGET_MS - Ext.Utils.MonotonicTime()))
     end
-    if out.far or out.too_far or out.reachable == false then
+    if out.far or out.too_far or out.unknown_goal or out.reachable == false then
         local wps = N.unlockedWaypointsHere(goal, from)
         while #wps > N.WAYPOINTS_SHOWN do table.remove(wps) end
         if #wps > 0 then out.waypoints = wps end
@@ -3211,10 +3352,12 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump, noSearch)
         c = { t = t0, by = {}, settling = N.geoSettling(t0) or nil }
         N.waysCache[key] = c
     end
-    -- true (open), false, or nil (noSearch: no answer yet)
+    -- true (open), false, "unseen" (a probe point the party neither sees nor has walked: N.known), or nil
+    -- (noSearch: no answer yet)
     local function open(v, dd)
         local x, z = round(from[1] + v[1] * dd, 1), round(from[3] + v[2] * dd, 1)
         local fy = floorAt(x, z, from[2])
+        if not N.known(nil, { x, fy or from[2], z }) then return "unseen" end
         if not fy then return false end
         local r = N.path(charUuid, { x, round(fy, 1), z }, nil, noSearch)
         if not r and noSearch then return nil end
@@ -3238,12 +3381,13 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump, noSearch)
             local v = DIR_VEC[d]
             local ok, dy = open(v, far)
             local m = far
-            if ok == false then
+            if ok == false or ok == "unseen" then
                 m = near
                 ok, dy = open(v, near)
                 if ok == false then m = 0 end
             end
             if ok == nil then goto nextDir end
+            if ok == "unseen" then c.by[d] = { dir = d, unseen = true }; goto nextDir end -- not listed
             local w = { dir = d, open_m = m }
             if dy and math.abs(dy) >= 2 then w.dy = round(dy, 1) end
             if m < far and noJump then
@@ -3259,7 +3403,7 @@ function N.ways(charUuid, far, near, budgetMs, maxDirs, noJump, noSearch)
     local out = {}
     for _, d in ipairs(N.WAYS_DIRS) do
         local w = c.by[d]
-        if w then out[#out + 1] = { dir = w.dir, open_m = w.open_m, dy = w.dy, jump = w.jump } end
+        if w and not w.unseen then out[#out + 1] = { dir = w.dir, open_m = w.open_m, dy = w.dy, jump = w.jump } end
     end
     return out, Ext.Utils.MonotonicTime() - t0, slow and tostring(slow.why) or nil
 end
@@ -3296,7 +3440,7 @@ function N.jumpGap(charUuid, from, v)
     local scan = N.JUMP_GAP_SCAN_M + math.max(0, cap - N.JUMP_LAND_CAP_M)
     local y, edge, gapAt = from[2], nil, nil
     local function heightsAt(x, z)
-        local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+        local ok, hs = N.floorHeights(x, z)
         return ok and type(hs) == "table" and hs or {}
     end
     local s = N.JUMP_GAP_STEP_M
@@ -3329,6 +3473,7 @@ function N.jumpGap(charUuid, from, v)
             if gap < N.JUMP_GAP_MIN_M or gap > cap + N.JUMP_GAP_STEP_M then return nil end
             local to = { x, land, z }
             if tileBlocked(to) then return nil end -- lands on a wall top or inside a building
+            if not (N.known(nil, to) and N.known(nil, edge)) then return nil end -- only ground the party sees
             local re = N.path(charUuid, { edge[1], edge[2], edge[3] })
             if not (re and re.reachable and not re.partial and re.length_m <= math.max(N.DETOUR * edge[4], edge[4] + 2.0)) then return nil end
             local rl = N.path(charUuid, to)
@@ -3607,6 +3752,10 @@ RPC.register("nav.approach", function(args)
     if cp and U.dist(cp, tpos) > N.PATH_MAX_M then
         return { reachable = false, reason = "too far", straight_m = round(U.dist(cp, tpos), 1) }
     end
+    if not target and cp and not N.known(ctx, tpos) then
+        return { reachable = nil, unknown_goal = true, reason = "a spot the party hasn't seen or walked",
+            straight_m = round(U.dist(cp, tpos), 1) }
+    end
     local mv = movementLeft(char)
     local budget = tonumber(args.budget_m)
     if mv and Osi.IsInCombat and truthy(osi(Osi.IsInCombat, char)) then
@@ -3697,6 +3846,8 @@ RPC.register("nav.landing", function(args)
     -- and its time once it took long.
     local p = args.pos
     Ext.Utils.Print(string.format("[BG3AI] nav.landing (%s,%s,%s)", tostring(p[1]), tostring(p[2]), tostring(p[3])))
+    -- a landing the party hasn't seen or walked: no answer about its ground (act.jump's point_ok refuses it)
+    if not N.known(ctx, args.pos) then return { unknown_goal = true, ms = Ext.Utils.MonotonicTime() - t0 } end
     local r, err = N.landing(char, args.pos)
     if not r then error(err, 0) end
     r.ms = Ext.Utils.MonotonicTime() - t0
@@ -3747,58 +3898,17 @@ end)
 -- and 16 screenshots in the Soft-Step maze and the Faith-Leap room).
 -- Cells from the AI grid tiles: '#' wall (WalkBlock), '.' floor at our level,
 -- '^'/'v' a floor > 1.2 m above/below, ':' inside a darkness cloud, '~' a
--- harmful surface, ' ' no floor a player can see (drop, chasm).
+-- harmful surface, ' ' no floor a player can see (drop, chasm), '?' not seen
+-- or walked yet (N.known).
 -- Fairness: the Faith-Leap safe path is a walkway layer of invisible-platform
--- helpers (V.helperItem); that layer is never drawn as floor. What a player
--- does see of it is the floor mosaic by the bowl, which depicts the safe
--- lines ([wiki] "the full map of the safe lines is depicted on the mosaic"):
--- N.mosaic draws that picture, only when the character is in that room.
+-- helpers (V.helperItem); that layer is never drawn as floor. The floor
+-- mosaic by the bowl is read off the screen (screenshot/zoom), as a player
+-- does (user 2026-10-18).
 ------------------------------------------------------------------------
 
 N.LAYOUT_R = 12
 N.LAYOUT_MAX_R = 20
-N.HELPER_LAYER_M = 0.6   -- a floor this close to a helper's top is the hidden walkway
-N.HELPER_MARGIN_M = 3.0  -- around the helpers' bounding box
-N.MOSAIC_NEAR_M = 20     -- the mosaic is shown from this close to the helpers' box
-N.MOSAIC_LINK_M = 2.3    -- helpers this close are one line of the picture
-N.helperCache = N.helperCache or {}
-
--- Invisible-platform helper positions on this level (one scan per level).
-function N.helpers()
-    local lvl = currentLevel()
-    local c = N.helperCache
-    if c.level == lvl and c.list then return c.list end
-    local list = {}
-    local ok, all = pcall(function() return Ext.Entity.GetAllEntitiesWithComponent("ServerItem") end)
-    for _, e in ipairs(ok and all or {}) do
-        local u = e.Uuid and e.Uuid.EntityUuid
-        if u and V.helperItem and V.helperItem(u) then
-            local p = V.pos(e)
-            if p then list[#list + 1] = p end
-        end
-    end
-    c.level, c.list = lvl, list
-    return list
-end
-
--- Bounding boxes of helper clusters near `from` (within `near` m), with the
--- walkway layer height.
-local function helperBox(from, near)
-    local box
-    for _, p in ipairs(N.helpers()) do
-        if math.abs(p[1] - from[1]) <= near + 40 and math.abs(p[3] - from[3]) <= near + 40 then
-            if not box then box = { x1 = p[1], x2 = p[1], z1 = p[3], z2 = p[3], y = p[2], pts = {} } end
-            box.x1, box.x2 = math.min(box.x1, p[1]), math.max(box.x2, p[1])
-            box.z1, box.z2 = math.min(box.z1, p[3]), math.max(box.z2, p[3])
-            box.pts[#box.pts + 1] = p
-        end
-    end
-    return box
-end
-
-local function inBox(b, x, z, m)
-    return b and x >= b.x1 - m and x <= b.x2 + m and z >= b.z1 - m and z <= b.z2 + m
-end
+N.LAYOUT_NEAR_M = 2.0   -- cells this near are drawn unchecked (around your feet)
 
 local function tileFlags(t)
     local f = {}
@@ -3840,65 +3950,22 @@ function N.layoutCell(x, z, y0, box)
         local g, cl = "", ""
         pcall(function() g, cl = tostring(t.GroundSurface), tostring(t.CloudSurface) end)
         if N.HARMFUL[g] or N.HARMFUL[cl] then return " " end
-        return mark
+        return mark, low
     end
     if not best then return " " end
     local okt, t = pcall(Ext.Level.GetTileDebugInfo, { x, best, z })
     if okt and t then
         local f = tileFlags(t)
-        if f.WalkBlock then return "#" end
+        if f.WalkBlock then return "#", best end
         local g, cl = "", ""
         pcall(function() g, cl = tostring(t.GroundSurface), tostring(t.CloudSurface) end)
-        if N.HARMFUL[g] or N.HARMFUL[cl] then return "~" end
-        if cl == "DarknessCloud" or g == "Darkness" then return ":" end
+        if N.HARMFUL[g] or N.HARMFUL[cl] then return "~", best end
+        if cl == "DarknessCloud" or g == "Darkness" then return ":", best end
     end
     local dy = best - y0
-    if dy > 1.2 then return "^" end
-    if dy < -1.2 then return "v" end
-    return "."
-end
-
--- The helpers' picture (the Faith-Leap mosaic): helpers linked when <= 2.3 m
--- apart, drawn at 1 m per character, N up. Returns {rows, cell} or nil: only
--- the picture, nothing tying it to world coordinates (FAIRNESS.md, user 2026-10-18).
-function N.mosaic(box)
-    if not box or #box.pts < 4 then return nil end
-    local x1, z2 = math.floor(box.x1), math.ceil(box.z2)
-    local w, h = math.ceil(box.x2) - x1 + 1, z2 - math.floor(box.z1) + 1
-    local grid = {}
-    for r = 1, h do grid[r] = {} for c = 1, w do grid[r][c] = " " end end
-    local function put(x, z)
-        local c, r = math.floor(x - x1 + 0.5) + 1, math.floor(z2 - z + 0.5) + 1
-        if grid[r] and grid[r][c] then grid[r][c] = "#" end
-    end
-    local pts = box.pts
-    for i = 1, #pts do
-        put(pts[i][1], pts[i][3])
-        for j = i + 1, #pts do
-            local d = U.dist({ pts[i][1], 0, pts[i][3] }, { pts[j][1], 0, pts[j][3] })
-            if d <= N.MOSAIC_LINK_M then
-                for k = 1, math.ceil(d / 0.5) do
-                    local f = k / math.ceil(d / 0.5)
-                    put(pts[i][1] + (pts[j][1] - pts[i][1]) * f, pts[i][3] + (pts[j][3] - pts[i][3]) * f)
-                end
-            end
-        end
-    end
-    -- The statue platforms (visible floor ~1 m above the walkway layer, in
-    -- the chasm): the boxes on the mosaic, seen across the chasm too.
-    for r = 1, h do
-        for c = 1, w do
-            if grid[r][c] == " " then
-                local ok, hs = pcall(Ext.Level.GetHeightsAt, x1 + c - 1, z2 - r + 1)
-                for _, hh in ipairs(ok and type(hs) == "table" and hs or {}) do
-                    if type(hh) == "number" and hh - box.y >= 0.6 and hh - box.y <= 1.6 then grid[r][c] = "O" break end
-                end
-            end
-        end
-    end
-    local rows = {}
-    for r = 1, h do rows[r] = (table.concat(grid[r]):gsub("%s+$", "")) end
-    return { rows = rows, cell = 1 }
+    if dy > 1.2 then return "^", best end
+    if dy < -1.2 then return "v", best end
+    return ".", best
 end
 
 function N.layout(char, radius, cell)
@@ -3909,19 +3976,44 @@ function N.layout(char, radius, cell)
     cell = math.max(1, math.min(tonumber(cell) or 1.5, 3))
     local n = math.floor(radius / cell + 0.5)
     local box = helperBox(from, radius)
-    local rows = {}
+    -- Only ground the party sees or has walked (N.known): beyond LAYOUT_NEAR_M a cell's floor (or, with none, the
+    -- air at our height) must be known, else "?". A wall cell's face is what is seen (a ray to its middle stops at
+    -- the face): it shows when a cell next to it shows.
+    local ctx = V.context()
+    local grid = {}
     for iz = n, -n, -1 do
         local row = {}
         for ix = -n, n do
-            row[#row + 1] = N.layoutCell(from[1] + ix * cell, from[3] + iz * cell, from[2], box)
+            local x, z = from[1] + ix * cell, from[3] + iz * cell
+            local ch, y = N.layoutCell(x, z, from[2], box)
+            if ch ~= "#" and (ix * ix + iz * iz) * cell * cell > N.LAYOUT_NEAR_M ^ 2
+                and not N.known(ctx, { x, y or from[2], z }) then
+                ch = "?"
+            end
+            row[#row + 1] = ch
         end
-        rows[#rows + 1] = table.concat(row)
+        grid[#grid + 1] = row
     end
-    local out = { rows = rows, cell = cell, n = n, center = U.vec(from, 1) }
-    if box and inBox(box, from[1], from[3], N.MOSAIC_NEAR_M) and math.abs(from[2] - box.y) <= 6 then
-        out.mosaic = N.mosaic(box)
+    local rows = {}
+    for r = 1, #grid do
+        local row = {}
+        for c = 1, #grid[r] do
+            local ch = grid[r][c]
+            local ix, iz = c - n - 1, n + 1 - r
+            if ch == "#" and (ix * ix + iz * iz) * cell * cell > N.LAYOUT_NEAR_M ^ 2 then
+                ch = "?"
+                for dr = -1, 1 do
+                    for dc = -1, 1 do
+                        local o = grid[r + dr] and grid[r + dr][c + dc]
+                        if o and o ~= "#" and o ~= "?" then ch = "#" end
+                    end
+                end
+            end
+            row[c] = ch
+        end
+        rows[r] = table.concat(row)
     end
-    return out
+    return { rows = rows, cell = cell, n = n, center = U.vec(from, 1) }
 end
 
 -- nav.layout {char?, radius?=12, cell?=1.5}: N.layout.
@@ -3966,7 +4058,7 @@ RPC.register("nav.route", function(args)
     end
     if not goal then error("need pos [x,y,z] or target", 0) end
     local t0 = Ext.Utils.MonotonicTime()
-    local r, err = N.routeAhead(ctx, char, goal, args.connectors == true)
+    local r, err = N.routeAhead(ctx, char, goal, args.connectors == true, not args.pos and args.target and true or nil)
     if not r then error(err, 0) end
     -- No path: the open directions too, as get_frontier gives them (S023 06:23:
     -- 8 guessed route/wiki/zoom calls across a chasm while the way on, a stone

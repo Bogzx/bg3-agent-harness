@@ -86,6 +86,23 @@ class RouteTool(Base):
         server.route(x=1.0, y=2.0, z=3.0)
         self.assertEqual(len(seen), 2)
 
+    def test_unseen_goal_gets_the_straight_line_only(self):
+        """Audit C1/C5 (user 2026-10-18): a goal the party hasn't seen or walked: distance and direction, no walk."""
+        seen = []
+        orig = server.travel_to
+        server.travel_to = lambda **kw: seen.append(kw) or "travel_to: started"
+        self.addCleanup(setattr, server, "travel_to", orig)
+        self.reply = {"from": [0.0, 0.0, 0.0], "goal": [-60.0, -8.0, 0.0], "straight_m": 60.5, "dir": "W", "dy": -8.0,
+                      "unknown_goal": True}
+        out = server.route(x=-60.0, y=-8.0, z=0.0)
+        self.assertIn("ROUTE to (-60,-8,0): 60.5m W, 8m below you", out)
+        self.assertIn("not seen or walked yet: straight line only", out)
+        for word in ("PATH", "CLOSEST walkable", "FLOORS", "path unknown"):
+            self.assertNotIn(word, out)
+        self.assertIn("NEXT: travel_to/walk_toward it (each leg ends on ground in view)", out)
+        self.assertIn("GO travel_to: started", server.route(x=-60.0, y=-8.0, z=0.0, go=True))
+        self.assertEqual(seen[-1], {"who": None, "x": -60.0, "y": -8.0, "z": 0.0})
+
     def test_no_path_lists_the_open_directions(self):
         """S023 06:23: 8 guessed route calls across a chasm; the way on (a stone bridge) lay SW."""
         self.reply = dict(FIRE_MAZE, ways=[{"dir": "SW", "open_m": 20}, {"dir": "N", "open_m": 8, "dy": 3.1},
@@ -155,7 +172,7 @@ class RouteTool(Base):
         self.assertEqual(args["pos"], HELM)
         self.assertNotIn("char", args)  # the mod defaults to the active character: no extra state.status RPC
         self.assertIn("ROUTE to objective Helm: 17.8m NE, 9.2m above you", out)
-        self.assertIn("FLOORS here: 0 (you), +9.3 · at the goal: +0.1, +9.2 (m, relative to you)", out)
+        self.assertNotIn("FLOORS", out)  # audit C4: floors under/above read through solid ground
         self.assertIn("NO WALKABLE PATH", out)
         self.assertIn("CLOSEST walkable spot (-33,9,-356): 9.3m from the goal, 9.2m below it", out)
         lad = server.H.get(LADDER, "Arterial Mesh")
@@ -308,6 +325,11 @@ class Rendering(unittest.TestCase):
         self.assertTrue(out.startswith("UNREACHABLE: no walkable path (6.8m straight line)"))
         self.assertIn("e1 Stone Wall opened 2s ago and may still be moving: this passage just opened, try again", out)
         self.assertEqual(render.render_path({"reachable": False, "straight_m": 6.8}, H).count("\n"), 0)
+
+    def test_path_preview_unseen_spot_is_the_straight_line_only(self):
+        out = render.render_path({"unknown_goal": True, "straight_m": 20.0, "dir": "W", "dy": 0.0}, render.Handles())
+        self.assertEqual(out, "not seen or walked yet: 20m W straight line only "
+                              "(path_preview checks ground the party has seen or walked)")
 
     def test_unprobed_connector_says_so(self):
         # nav.route's connector probes have a budget: past it a ladder/door is listed without a path probe

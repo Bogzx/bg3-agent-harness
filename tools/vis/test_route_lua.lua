@@ -1,5 +1,5 @@
 -- Offline tests for the route-ahead helpers in Server/Navigation.lua (nav.route:
--- legs, links, floor levels, closest reachable spot, ladders/doors toward a
+-- legs, links, closest reachable spot, ladders/doors toward a
 -- goal; ladder height in nav.frontier) and the journal cache in
 -- Server/State.lua. Ext and Visibility are stubbed; Shared/Util.lua is real.
 -- Run: tools/vis/test_route.sh  (Lua 5.3 + 5.4 in Docker)
@@ -79,6 +79,7 @@ BG3AI.Visibility = {
     itemKind = function(u) local it = items[u]; return it and it.kind or "item" end,
     characterVisible = function() return false end,
     bounds = function(e) local it = items[e.uuid]; return it and it.height and { height = it.height, radius = 0.5 } or nil end,
+    pointSeen = function() return true end, -- all in view (N.known)
 }
 dofile(LUA .. "/Server/Navigation.lua")
 local N, RPC = BG3AI.Nav, BG3AI.RPC
@@ -155,14 +156,6 @@ test("routeLegs: a long winding route is capped at ROUTE_MAX_LEGS legs", functio
     eq(#legs <= N.ROUTE_MAX_LEGS, true, "cap (" .. #legs .. ")")
 end)
 
--- ---- levels ----------------------------------------------------------------------
-
-test("levelsAt: floors relative to us, sorted, deduplicated, within range", function()
-    heights = function() return { 9.2, 0.1, -6.1, 30, 0.0 } end
-    local l = N.levelsAt(0, 0, 0)
-    eq(#l, 3, "count"); near(l[1], -6.1, "below"); near(l[2], 0.1, "here"); near(l[3], 9.2, "above")
-end)
-
 -- ---- route ahead -----------------------------------------------------------------
 
 test("routeAhead: reachable goal: legs, links, fire on the way", function()
@@ -174,7 +167,7 @@ test("routeAhead: reachable goal: legs, links, fire on the way", function()
     eq(r.connectors, nil, "no connectors when there is a path")
 end)
 
-test("routeAhead: the goal 9 m up: the spot under it, levels, the ladder that climbs there", function()
+test("routeAhead: the goal 9 m up: the spot under it, the ladder that climbs there", function()
     local goal = { -10, 9, 10 }
     -- everything on the upper deck (y > 5) is unreachable from here
     blocked = function(x, y) return y > 5 end
@@ -184,7 +177,7 @@ test("routeAhead: the goal 9 m up: the spot under it, levels, the ladder that cl
     item("L2", { 2, 0, -2 }, "ladder", { visible = false, height = 9 })
     local r = N.routeAhead(BG3AI.Visibility.context(), P1, goal)
     eq(r.reachable, false, "unreachable"); near(r.dy, 9, "dy")
-    near(r.levels_goal[2], 9, "a floor 9 m up at the goal")
+    eq(r.levels_goal, nil, "no floors listed at the goal (audit C4)")
     -- the deck around the goal is unreachable: the walk toward it ends right under it, 9 m below
     eq(r.closest ~= nil, true, "closest"); eq(r.closest.via, "toward", "straight walk")
     near(r.closest.dy_to_goal, 9, "it is 9 m below the goal"); near(r.closest.to_goal_m, 9, "under it")

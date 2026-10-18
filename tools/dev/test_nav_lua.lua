@@ -15,6 +15,7 @@ local fire = function() return false end      -- (x, z) -> burning?
 local blocked = function() return false end   -- (x, z) -> no path there
 local wall = function() return false end      -- (x, z) -> WalkBlock tile (wall, hole)
 local nodesFor = nil                          -- optional (from, target) -> node list
+local seen = function() return true end       -- V.pointSeen: (pt) -> true|false|nil (default: all in view)
 printedErrors = {}
 asyncQ = {}                                    -- pending async path requests
 function pumpPaths()                           -- the engine answers every pending async request
@@ -79,6 +80,7 @@ BG3AI.Visibility = {
     uuid = function(u) return u end,
     context = function() return { party = { P1 }, is_party = { [P1] = true } } end,
     inDialog = function() return false end,
+    pointSeen = function(ctx, pt) return seen(pt) end,
 }
 dofile(LUA .. "/Server/Navigation.lua")
 local N, U, RPC = BG3AI.Nav, BG3AI.Util, BG3AI.RPC
@@ -92,6 +94,8 @@ local function reset()
     blocked = function() return false end
     wall = function() return false end
     nodesFor = nil
+    seen = function() return true end
+    N.seenPts, N.seenPtsN = {}, 0
     clock = clock + 1000
     N.frame = (N.frame or 0) + 1 -- new frame: drop the path cache
     N.lowerMemo = nil
@@ -1152,7 +1156,7 @@ test("layout: a floor 4-10 m below is a drop '_', a chasm or a deeper floor stay
     if not ok then error(err, 0) end
 end)
 
-test("layout: the Faith-Leap walkway layer is never floor; the mosaic shows it near the trial", function()
+test("layout: the Faith-Leap walkway layer is never floor, and no picture is drawn from the helpers (C3)", function()
     reset()
     local savedH, savedE, savedHelper = Ext.Level.GetHeightsAt, Ext.Entity, BG3AI.Visibility.helperItem
     -- chasm W of x=-3: the hidden walkway at -2.7 (helpers' top), the chasm bottom at -15; a statue platform at
@@ -1181,23 +1185,21 @@ test("layout: the Faith-Leap walkway layer is never floor; the mosaic shows it n
         eq(mid:sub(r.n - 2, r.n - 2), " ", "x=-4.5 on the walkway layer: no visible floor")
         mid = r.rows[r.n - 0]  -- z = +1.5
         eq(mid:sub(r.n - 5, r.n - 5), "v", "x=-9 the statue platform: a visible lower floor [" .. mid .. "]")
-        assert(r.mosaic and r.mosaic.rows, "the mosaic near the trial")
-        local all = table.concat(r.mosaic.rows, "\n")
-        assert(all:find("#####", 1, true), "the safe line drawn: " .. all)
-        assert(all:find("O", 1, true), "the statue platform drawn: " .. all)
-        -- only the picture: nothing tying it to world coordinates (FAIRNESS.md, user 2026-10-18)
-        eq(r.mosaic.x1, nil, "no x anchor"); eq(r.mosaic.z2, nil, "no z anchor"); eq(r.mosaic.y, nil, "no walkway height")
+        -- the floor mosaic is read off the screen (screenshot/zoom), not drawn from the hidden helpers
+        eq(r.mosaic, nil, "no mosaic")
+        eq(N.mosaic, nil, "no mosaic renderer")
     end)
     Ext.Level.GetHeightsAt, Ext.Entity, BG3AI.Visibility.helperItem, BG3AI.Visibility.pos = savedH, savedE, savedHelper, savedPos
     N.helperCache = {}
     if not ok then error(err, 0) end
 end)
 
-test("hidden floor: walks over the invisible-floor trial are neither marked nor stopped, a misstep is the game's (user, 2026-10-18)", function()
+test("Faith-Leap walkway: path, walks, ways, route and travel_to's direct leg never answer from the hidden layer (C2)", function()
     reset()
     local savedE, savedHelper, savedPos = Ext.Entity, BG3AI.Visibility.helperItem, BG3AI.Visibility.pos
     -- the Faith-Leap layout: the engine mesh is one flat floor (y 0) over the chasm W of x=-9; the hidden
-    -- platforms' helpers sit just under it (y -0.2) from x=-10 to -20
+    -- platforms' helpers sit just under it (y -0.2) from x=-10 to -20. Before the fix every answer below came off
+    -- that layer: a path along it, walk_toward/travel_to walking it, WAYS "W 20m".
     local cubes = {}
     for i = 0, 5 do cubes["H" .. i] = { -10 - 2 * i, -0.2, 0 } end
     Ext.Entity = { GetAllEntitiesWithComponent = function()
@@ -1207,26 +1209,43 @@ test("hidden floor: walks over the invisible-floor trial are neither marked nor 
     end }
     BG3AI.Visibility.helperItem = function(u) return cubes[u] ~= nil end
     BG3AI.Visibility.pos = function(e) local p = cubes[e.uuid or e.Uuid and e.Uuid.EntityUuid] or world[e.uuid]; return p and { p[1], p[2], p[3] } end
+    local savedH = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function(x, z)
+        if x < -9 and math.abs(z) > 1 then return {} end -- the chasm beside the walkway: no floor
+        return { 0.0 }
+    end
     N.helperCache = {}
     local ok, err = pcall(function()
-        local r = N.reachToward(P1, "W", nil, 20, 2, true, true)
-        eq(r.reachable, true, "walks W")
-        assert(r.pos[1] < -9, "not stopped at the chasm edge by the helpers: " .. r.pos[1])
-        eq(r.hidden_beyond, nil, "no hidden-floor note")
+        -- a spot on the layer reads like the chasm: no floor there
         local p = N.path(P1, { -15, 0, 0 })
-        eq(p.reachable, true, "the engine's path")
-        eq(p.hidden_floor, nil, "not marked")
-        local savedNodes = nodesFor
-        nodesFor = function(from, t) return { { -6, 0, 0 }, { -12, 0, 4 }, t } end
-        local w = N.path(P1, { -16, 0, 0 })
-        nodesFor = savedNodes
-        eq(w.hidden_floor, nil, "a winding one neither")
-        local saved = N.verifyPoint
-        N.verifyPoint = function() return true end
-        local d = N.directLeg(P1, { -15, 0, 0 }, true)
-        N.verifyPoint = saved
-        assert(d and d.direct, "travel_to's direct leg is not refused")
+        eq(p.reachable, false, "no path onto the layer"); eq(p.no_floor, true, "no floor there, as over the chasm")
+        -- a visible floor past it: the engine's way runs along the layer -> no path, nothing marked
+        nodesFor = function(from, t) return { { -6, 0, 0 }, { -12, 0, 0 }, t } end
+        local q = N.path(P1, { -6, 0, 5 })
+        eq(q.reachable, false, "no path along the layer")
+        eq(q.points, nil, "no points from it")
+        nodesFor = nil
+        eq(N.path(P1, { 0, 0, 5 }).reachable, true, "a walk off the layer still is one")
+        local r = N.reachToward(P1, "W", nil, 20, 2, true, true)
+        assert(not r.reachable or r.pos[1] > -9, "walk_toward stops at the chasm edge: " .. tostring(r.pos and r.pos[1]))
+        local ways = N.ways(P1, 20, 8, 1000)
+        for _, w in ipairs(ways) do
+            if w.dir == "W" then assert(w.open_m < 20, "WAYS W is not open over the layer: " .. w.open_m) end
+        end
+        local d, why = N.directLeg(P1, { -15, 0, 0 }, true)
+        eq(d, nil, "travel_to's direct leg is not taken along it")
+        local savedIA = BG3AI.Visibility.itemsAround
+        BG3AI.Visibility.itemsAround = function() return {} end
+        local ra = N.routeAhead(BG3AI.Visibility.context(), P1, { -15, 0, 0 })
+        BG3AI.Visibility.itemsAround = savedIA
+        eq(ra.reachable, false, "route: no path")
+        eq(ra.legs, nil, "route: no legs")
+        assert(not ra.closest or ra.closest.pos[1] > -9, "route's closest spot is not on the layer")
+        eq(N.helperZone({ -15, 0.1, 0 }), true, "over the chasm at the walkway's height: Guard's zone")
+        eq(N.helperZone({ 0, 0, 0 }), false, "the room's floor is not")
     end)
+    nodesFor = nil
+    Ext.Level.GetHeightsAt = savedH
     Ext.Entity, BG3AI.Visibility.helperItem, BG3AI.Visibility.pos = savedE, savedHelper, savedPos
     N.helperCache = {}
     world[P1] = { 0, 0, 0 }
@@ -1904,6 +1923,133 @@ test("NAV-5: nearestVisited parses each breadcrumb cell once", function()
     local b = N.nearestVisited("WLD_Main_A", { -30, 0, 10 })
     eq(b.pos[1], a.pos[1], "same answer from the cache")
     PersistentVars = nil
+end)
+
+-- ---- fairness (audit C1, user 2026-10-18): nav answers only from ground the party sees or has walked ----------
+
+local function noItems(fn)
+    local saved = BG3AI.Visibility.itemsAround
+    BG3AI.Visibility.itemsAround = function() return {} end
+    local ok, err = pcall(fn)
+    BG3AI.Visibility.itemsAround = saved
+    PersistentVars = nil
+    if not ok then error(err, 0) end
+end
+
+test("known (C1): an unseen, unwalked coordinate gets the straight line only (path_preview, route, approach)", function()
+    seen = function(p) return p[1] > -10 end -- W past 10 m: behind a wall
+    noItems(function()
+        local r = RPC.ops["nav.path"]({ pos = { -20, 0, 0 } })
+        eq(r.unknown_goal, true, "path_preview: unknown"); eq(r.reachable, nil, "no reachable")
+        eq(r.length_m, nil, "no length"); near(r.straight_m, 20, "straight"); eq(r.dir, "W", "direction")
+        eq(RPC.ops["nav.path"]({ pos = { -5, 0, 0 } }).reachable, true, "a spot in view: the preview")
+        local ra = N.routeAhead(BG3AI.Visibility.context(), P1, { -20, 0, 0 })
+        eq(ra.unknown_goal, true, "route: unknown"); eq(ra.reachable, nil, "route: no reachable")
+        eq(ra.legs, nil, "no legs"); eq(ra.closest, nil, "no closest"); eq(ra.jump, nil, "no jump")
+        eq(RPC.ops["nav.approach"]({ pos = { -20, 0, 0 } }).unknown_goal, true, "approach: unknown")
+        local l = RPC.ops["nav.landing"]({ pos = { -20, 0, 0 } })
+        eq(l.unknown_goal, true, "jump_to's landing check: unknown"); eq(l.safe, nil, "no verdict on its ground")
+        -- a target the RPC proved visible needs no ray
+        eq(N.routeAhead(BG3AI.Visibility.context(), P1, { -20, 0, 0 }, false, true).reachable, true, "visible target")
+        -- walked there (its 4 m breadcrumb cell): known
+        PersistentVars = { nav = { levels = { ["?"] = { cells = { ["-5:0:0"] = 1 }, n = 1, places = {} } } } }
+        eq(N.routeAhead(BG3AI.Visibility.context(), P1, { -20, 0, 0 }).reachable, true, "walked: the route")
+    end)
+end)
+
+test("known (C1): a seen spot stays known; no ray answer is not seen (fail closed)", function()
+    eq(N.known(nil, { -30, 0, 0 }), true, "in view")
+    seen = function() return false end
+    eq(N.known(nil, { -30, 0, 0 }), true, "remembered")
+    eq(N.known(nil, { -40, 0, 0 }), false, "never seen")
+    seen = function() return nil end
+    eq(N.known(nil, { -50, 0, 0 }), false, "rays unusable: not seen")
+end)
+
+test("known (C1/C5): walks end on known ground; travel_to's direct leg needs a known goal", function()
+    seen = function(p) return p[1] > -10 end
+    local r = N.reachToward(P1, "W", nil, 30, 2, false)
+    eq(r.reachable, true, "walks")
+    assert(r.pos[1] > -10, "stops where the view ends: " .. r.pos[1])
+    local d, why = N.directLeg(P1, { -100, 0, 0 }, true)
+    eq(d, nil, "no direct leg"); eq(why, "unseen", "why")
+    local w = RPC.ops["nav.reach_toward"]({ pos = { -100, 0, 0 }, max_m = 30, direct = true })
+    eq(w.direct, nil, "sampled legs instead"); assert(w.pos[1] > -10, "the leg ends in view: " .. w.pos[1])
+end)
+
+test("known (C1): WAYS lists a direction only as far as it is seen", function()
+    seen = function(p) return p[1] > -10 end
+    local ways = N.ways(P1, 20, 8, 1000)
+    local W
+    for _, x in ipairs(ways) do if x.dir == "W" then W = x end end
+    eq(W and W.open_m, 8, "W: open as far as seen")
+    seen = function(p) return p[1] > -5 end
+    N.waysCache, N.waysCacheN, N.seenPts = {}, 0, {} -- another spot, nothing remembered
+    for _, x in ipairs(N.ways(P1, 20, 8, 1000)) do assert(x.dir ~= "W", "W unseen: not listed") end
+end)
+
+test("route (C4): no floors under or above you or the goal", function()
+    local savedH = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { -13.0, 0.0 } end -- a crypt 13 m under the floor
+    local ok, err = pcall(noItems, function()
+        local ra = N.routeAhead(BG3AI.Visibility.context(), P1, { -5, 0, 0 })
+        eq(ra.reachable, true, "route")
+        eq(ra.levels_here, nil, "no floors here"); eq(ra.levels_goal, nil, "no floors at the goal")
+        eq(N.levelsAt, nil, "no floor lister")
+    end)
+    Ext.Level.GetHeightsAt = savedH
+    if not ok then error(err, 0) end
+end)
+
+test("hazards (C19): a patch on the route is named only where seen; hazardPatches fails closed", function()
+    fire = function(x) return x < -4 and x > -6 end
+    seen = function(p) return not (p[1] < -4 and p[1] > -6) end -- the patch behind a pillar
+    local r = RPC.ops["nav.path"]({ pos = { -8, 0, 0 } })
+    eq(r.reachable, true, "path"); eq(r.hazard, nil, "unseen fire not named")
+    seen = function() return true end
+    N.frame = N.frame + 1
+    eq(RPC.ops["nav.path"]({ pos = { -8, 0, 0 } }).hazard.surface, "Fire", "seen fire named")
+    seen = function() return nil end
+    eq(#N.hazardPatches(P1, 12, 1.0), 0, "no ray answer: no patch listed")
+end)
+
+test("layout: ground not seen or walked is '?', a wall shows next to seen floor", function()
+    wall = function(x) return x > 3 and x < 5 end
+    seen = function(p) return p[1] > -4 end
+    local r = N.layout(P1, 6, 1.5)
+    local mid = r.rows[r.n + 1]
+    eq(mid:sub(r.n + 1, r.n + 1), ".", "our cell [" .. mid .. "]")
+    eq(mid:sub(r.n - 2, r.n - 2), "?", "x=-4.5 unseen")
+    eq(mid:sub(r.n + 4, r.n + 4), "#", "x=4.5 the wall's face")
+    eq(mid:sub(r.n, r.n), ".", "x=-1.5 near: drawn")
+end)
+
+test("lower ground / jumps (C14/C15): only floors the party sees", function()
+    withIslands(function()
+        seen = function(p) return p[2] > -10 end -- the island 22 m down, in the dark: no ray reaches it
+        local lo = N.lowerGround(P1, { 0, 0, 0 }, { -200, -140, 0 })
+        assert(not lo or #lo == 0, "no unseen island listed")
+    end)
+    local savedH, savedT = Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo
+    Ext.Level.GetHeightsAt = function(x)
+        if x > -2.9 then return { 0.0 } end
+        if x > -5.9 then return { -30.0 } end
+        return { -2.0 }
+    end
+    Ext.Level.GetTileDebugInfo = function(p)
+        local chasm = p[2] < -20
+        return { GroundSurface = chasm and "Chasm" or "None", CloudSurface = "None", Flags = chasm and { "WalkBlock" } or {} }
+    end
+    blocked = function(x) return x < -5 end
+    seen = function(p) return p[1] > -5.9 end -- the far side not in view
+    local ok, err = pcall(function()
+        eq(N.jumpAcross(P1, { 0, 0, 0 }, { -20, -2, 0 }), nil, "no jump to an unseen landing")
+        eq(N.jumpGap(P1, { 0, 0, 0 }, { -1, 0 }), nil, "no WAYS jump to an unseen landing")
+        local l = N.landing(P1, { -8, 8, 0 })
+        eq(l.floors, nil, "jump_to names no unseen floor"); eq(l.suggest, nil, "nor suggests one")
+    end)
+    Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo = savedH, savedT
+    if not ok then error(err, 0) end
 end)
 
 print(string.format("%d/%d passed", count - failures, count))
