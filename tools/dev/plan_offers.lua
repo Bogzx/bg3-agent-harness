@@ -18,6 +18,24 @@ for _, pid in ipairs(Ext.StaticData.GetAll("Progression")) do
         table.insert(rows[k], pr)
     end
 end
+-- Feats by id: the display name the plan lines use (FeatDescription), the internal name, and whether the game
+-- lets it be taken again (Ability Improvement). S085: the check passed Claude L12 Tough, taken at L4.
+local feats, repeatable = {}, {}
+for _, fid in ipairs(Ext.StaticData.GetAll("Feat")) do
+    local f = Ext.StaticData.Get(fid, "Feat")
+    if f then feats[tostring(fid)] = { name = tostring(f.Name), multi = f.CanBeTakenMultipleTimes == true } end
+end
+for _, did in ipairs(Ext.StaticData.GetAll("FeatDescription")) do
+    local d = Ext.StaticData.Get(did, "FeatDescription")
+    local f = d and feats[tostring(d.FeatId)]
+    if f then
+        local ok, h = pcall(function() return d.DisplayName.Handle.Handle end)
+        f.display = ok and loca(h) or nil
+    end
+end
+for _, f in pairs(feats) do
+    if f.multi then repeatable[#repeatable + 1] = f.display or f.name end
+end
 local out = {}
 for _, u in ipairs(MEMBERS) do
     local e = Ext.Entity.Get(u)
@@ -30,6 +48,22 @@ for _, u in ipairs(MEMBERS) do
         for _, pe in ipairs(e.PassiveContainer.Passives) do
             local id = pe.Passive and pe.Passive.PassiveId
             if id then m.known_passives[#m.known_passives + 1] = passiveName(id) end
+        end
+    end)
+    -- Feats already taken (each level-up's Feat and its feat selectors), except the repeatable ones.
+    m.known_feats, m.repeatable_feats = {}, repeatable
+    pcall(function()
+        local seen = {}
+        local function add(id)
+            local f = id and feats[tostring(id)]
+            if f and not f.multi and not seen[f] then
+                seen[f] = true
+                m.known_feats[#m.known_feats + 1] = f.display or f.name
+            end
+        end
+        for _, ld in pairs(e.LevelUp.LevelUps) do
+            add(ld.Feat)
+            pcall(function() for _, fs in pairs(ld.Upgrades.Feats) do add(fs.Feat) end end)
         end
     end)
     local total = 0

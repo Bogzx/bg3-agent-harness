@@ -5,7 +5,8 @@
 Reads each party/camp member's next levels from the game's Progression data (class AND subclass rows by Name +
 Level: the spell picks sit in the subclass rows, research/impl-se.md handoff 5) via tools/dev/plan_offers.lua,
 then checks the stored line `- <Name> L<n>: {json}` for that level: every spell/cantrip/passive named must be
-offered and not already known, counts must fill each choice, a feat only where the level allows one.
+offered and not already known, counts must fill each choice, a feat only where the level allows one and not one
+already taken (unless the game lets it repeat, like Ability Improvement).
 Exit 1 when a line is invalid or missing a needed pick.
 """
 
@@ -35,8 +36,9 @@ def _norm(s: str) -> str:
     return s.strip().lower().replace("armor", "armour").replace("agonizing", "agonising")
 
 
-def check_level(lv: dict, plan: dict | None, known: set[str]) -> list[str]:
-    """Problems of one plan line against one level's offers ([] = valid)."""
+def check_level(lv: dict, plan: dict | None, known: set[str], taken_feats: set[str] = frozenset()) -> list[str]:
+    """Problems of one plan line against one level's offers ([] = valid). taken_feats: the non-repeatable feats
+    the character already has."""
     if plan is None:
         need = [f"{s['amount']} from {s['list'] or 'spells'}" for s in lv["spells"]] + \
                [f"{p['amount']} from {p['list'] or 'passives'}" for p in lv["passives"]] + \
@@ -69,6 +71,9 @@ def check_level(lv: dict, plan: dict | None, known: set[str]) -> list[str]:
         probs.append(f"passives: {len(plan.get('passives') or [])} of {need} picks")
     if plan.get("feat") and not lv["feat"]:
         probs.append(f"feat {plan['feat']}: this level has no feat")
+    elif plan.get("feat") and _norm(plan["feat"]) in {_norm(f) for f in taken_feats}:
+        # S085: Claude L12 Tough (taken at L4) passed and level_up failed on it
+        probs.append(f"feat {plan['feat']}: already taken (taken: {', '.join(sorted(taken_feats))})")
     # S053: placeholder lines ({} "assuming no picks") passed; a feat level or skill picks left out of the line are
     # decisions the game would take by default (Ability Improvement +2 on the primary ability, the first skills).
     if lv.get("feat") and not plan.get("feat"):
@@ -78,7 +83,7 @@ def check_level(lv: dict, plan: dict | None, known: set[str]) -> list[str]:
     return probs
 
 
-def offer_text(lv: dict, known: set[str], cap: int = 24) -> str:
+def offer_text(lv: dict, known: set[str], cap: int = 24, taken_feats: set[str] = frozenset()) -> str:
     k = {_norm(x) for x in known}
     bits = []
     for s in lv["spells"]:
@@ -90,8 +95,28 @@ def offer_text(lv: dict, known: set[str], cap: int = 24) -> str:
     if lv["skills"]:
         bits.append(f"{lv['skills']} skill(s)")
     if lv["feat"]:
-        bits.append("feat")
+        bits.append(f"feat (already taken: {', '.join(sorted(taken_feats))})" if taken_feats else "feat")
     return " | ".join(bits) or "no choices"
+
+
+def check_member(m: dict, plans: dict) -> list[dict]:
+    """One member's offers (plan_offers.lua) vs the stored plans → [{name, level, plan, problems, offers}]."""
+    rows = []
+    known = set(m["known"]) | set(m.get("known_passives") or [])
+    taken = set(m.get("known_feats") or [])
+    repeatable = {_norm(f) for f in m.get("repeatable_feats") or []}
+    for i, lv in enumerate(m["levels"]):
+        plan = plans.get((m["name"].lower(), lv["level"]))
+        # a later level ahead can't see the earlier ones' picks: count them as known
+        if i > 0:
+            prev = plans.get((m["name"].lower(), lv["level"] - 1)) or {}
+            known |= set(prev.get("spells") or []) | set(prev.get("cantrips") or []) | set(prev.get("passives") or [])
+            if prev.get("feat") and _norm(prev["feat"]) not in repeatable:
+                taken.add(prev["feat"])
+        rows.append({"name": m["name"], "level": lv["level"], "plan": plan,
+                     "problems": check_level(lv, plan, known, taken),
+                     "offers": offer_text(lv, known, cap=40, taken_feats=taken)})
+    return rows
 
 
 def main() -> int:
@@ -107,28 +132,20 @@ def main() -> int:
     mem = Path(a.memory) if a.memory else ROOT / "playthroughs" / os.environ["BG3AI_PLAYTHROUGH"] / "memory"
     rows = []
     plans = leveling.load_plans((mem / leveling.PLAN_FILE).read_text())
-    bad = 0
     for m in offers(server.game, uuids, a.ahead):
         cls = ", ".join(f"{c.get('class')}/{c.get('sub') or '-'} {c.get('level')}" for c in m["classes"])
-        known = set(m["known"]) | set(m.get("known_passives") or [])
-        for i, lv in enumerate(m["levels"]):
-            plan = plans.get((m["name"].lower(), lv["level"]))
-            # a later level ahead can't see the earlier ones' picks: count them as known
-            if i > 0:
-                prev = plans.get((m["name"].lower(), lv["level"] - 1)) or {}
-                known |= set(prev.get("spells") or []) | set(prev.get("cantrips") or []) | set(prev.get("passives") or [])
-            probs = check_level(lv, plan, known)
-            bad += bool(probs)
+        for r in check_member(m, plans):
+            probs = r["problems"]
             mark = "OK " if not probs else "BAD"
-            print(f"{mark} {m['name']} L{lv['level']} ({cls}): {json.dumps(plan) if plan is not None else '(no line)'}"
+            line = json.dumps(r["plan"]) if r["plan"] is not None else "(no line)"
+            print(f"{mark} {m['name']} L{r['level']} ({cls}): {line}"
                   + (f"\n    problems: {'; '.join(probs)}" if probs else ""))
             if a.offers or probs:
-                print(f"    offers: {offer_text(lv, known)}")
-            rows.append({"name": m["name"], "level": lv["level"], "plan": plan, "problems": probs,
-                         "offers": offer_text(lv, known, cap=40)})
+                print(f"    offers: {r['offers']}")
+            rows.append(r)
     if a.json:
         Path(a.json).write_text(json.dumps(rows))
-    return 1 if bad else 0
+    return 1 if any(r["problems"] for r in rows) else 0
 
 
 if __name__ == "__main__":
