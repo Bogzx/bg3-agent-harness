@@ -1404,8 +1404,8 @@ function A.ladder_release(char, held)
     end
 end
 
-A.STORY_LOCKED = "clicked it: still locked (no lock to pick: the game opens it some other way, e.g. a lever, a"
-    .. " quest item carried or used on it, a spell)"
+-- Only what the game shows on the click (audit C13: no story-lock read from the lock's data, no lever/puzzle hints).
+A.STILL_LOCKED = "clicked it: still locked"
 -- S085 04:52:05 Sluice Gate, 04:53:03 Vault Door: one Use of a door fired UseFinished twice, success then failure
 -- (EVENTS `used … success` then `used …`). The success left the job waiting for the door to open (IsOpened flips a
 -- few frames later); the failure then ended it "could not use that" (the door opened; ~28 s and 2 extra turns).
@@ -1461,11 +1461,10 @@ reg("interact", function(args)
         G.refuse("use talk_to to talk to characters")
     end
     -- Locked: as in the game, a party member carrying its key opens it (the
-    -- player would select them and click). Otherwise refuse with the options.
-    -- A story lock (no lockpick difficulty: the Temple of Bhaal door the amulet opens, a lever-worked gate) has no
-    -- key to match: the click is still sent, as a player's, and the game's own script answers it (a prompt, the
-    -- door opening, or "Locked"). Refusing it needed a hand click (audit ACT-6, impl-logs.md:679).
-    local key_item, key_note, story_lock, relocked
+    -- player would select them and click). With no key the click is still sent, as a player's, and the game
+    -- answers it (a prompt, a story door opening, or "Locked"): refusing story locks needed a hand click (audit
+    -- ACT-6, impl-logs.md:679), and telling them apart read the lock's hidden difficulty id (audit C13).
+    local key_item, key_note, keyless, relocked
     if G.b(G.q("IsLocked", target)) then
         local h, k = G.party_key(target, char)
         local fresh = not h and A.unlocked_lately(target)
@@ -1473,27 +1472,25 @@ reg("interact", function(args)
             G.refuse("it is open now (the game unlocked or opened it " .. math.floor((G.now_ms() - fresh) / 1000)
                 .. " s ago): walk through it (interact on an open door closes it)")
         elseif fresh then
-            story_lock, relocked = true, true
-        elseif not h and G.lock_pickable(target) == false then
-            story_lock = true
+            keyless, relocked = true, true
         elseif not h then
-            G.refuse("it is locked and nobody in the party carries its key (lockpick it, force it, or find the key)")
+            keyless = true
         end
-        if story_lock then -- the actor clicks it themselves
+        if keyless then -- the actor clicks it themselves
         elseif not G.same(h, char) then
             char = h
             G.not_in_dialogue(char)
             G.combat_gate(char, "no_combat")
             G.within(char, target, G.MAX_INTERACT_DIST, "the key holder's target")
         end
-        if not story_lock then
+        if not keyless then
             key_item = k
             local function nm(u) local ok, n = pcall(function() return BG3AI.Visibility.name(u) end); return ok and n or u end
             key_note = { unlocked_with = nm(k), key_holder = nm(char) }
         end
     end
-    local function story_locked()
-        return story_lock and G.b(G.q("IsLocked", target))
+    local function still_locked()
+        return keyless and G.b(G.q("IsLocked", target))
     end
     local was_open = G.b(G.q("IsOpened", target))
     local openable, ladder = false, false
@@ -1556,8 +1553,8 @@ reg("interact", function(args)
                         return
                     end
                     job.use_ok, job.use_fail = true, nil
-                    if story_locked() and not openable then
-                        RPC.finish_job(job, "failed", nil, relocked and A.RELOCKED or A.STORY_LOCKED)
+                    if still_locked() and not openable then
+                        RPC.finish_job(job, "failed", nil, relocked and A.RELOCKED or A.STILL_LOCKED)
                         return
                     end
                     local res = state_result()
@@ -1619,7 +1616,7 @@ reg("interact", function(args)
             if job.use_fail and RPC.now_ms() - job.use_fail >= A.USE_FAIL_GRACE_MS then
                 RPC.finish_job(job, "failed", nil, key_note and G.b(G.q("IsLocked", target))
                     and ("still locked: " .. key_note.unlocked_with .. " did not open it")
-                    or (story_locked() and (relocked and A.RELOCKED or A.STORY_LOCKED)) or "could not use that")
+                    or (still_locked() and (relocked and A.RELOCKED or A.STILL_LOCKED)) or "could not use that")
                 return
             end
             -- Use walks on its own if still out of range; a jump while far from
@@ -1736,8 +1733,8 @@ reg("interact", function(args)
             if res then
                 RPC.finish_job(job, "done", res)
             elseif job.used_at and RPC.now_ms() - job.used_at > (openable and 1500 or 300) then
-                if story_locked() then
-                    RPC.finish_job(job, "failed", { used = true }, relocked and A.RELOCKED or A.STORY_LOCKED)
+                if still_locked() then
+                    RPC.finish_job(job, "failed", { used = true }, relocked and A.RELOCKED or A.STILL_LOCKED)
                 else RPC.finish_job(job, "done", with_key({ used = true })) end
             end
         end,
@@ -3321,10 +3318,6 @@ reg("lockpick", function(args)
     if h then
         local ok, n = pcall(function() return BG3AI.Visibility.name(h) end)
         G.refuse((ok and n or "a party member") .. " carries its key: use interact on it (opens it with the key)")
-    end
-    if G.lock_pickable(target) == false then
-        G.refuse("this lock cannot be picked (the game offers no lockpick roll for it, only 'locked'): "
-            .. "it opens with its key or a mechanism nearby (lever, button, puzzle), or force it if it is not Sturdy")
     end
     return approach("lockpick", char, target, function(job) needs_click(job, target, "roll", "Lockpick") end)
 end)

@@ -818,19 +818,6 @@ function G.lock_key(item)
     return k
 end
 
--- false when `item`'s lock has no lockpick difficulty (Lock.LockDifficultyClassID is the zero GUID:
--- story locks, puzzle walls; the game answers a click with "locked" and never a roll), true when it has
--- one, nil when there is no Lock component to read. Live probe S026 (SCL): the Mausoleum "Stone Wall"
--- doors and every STORY_LOCK have the zero id; LockDC itself reads 0 on every lock.
-function G.lock_pickable(item)
-    local id
-    pcall(function() id = G.entity(item).Lock.LockDifficultyClassID end)
-    if id == nil then return nil end
-    id = tostring(id)
-    if id == "" or id:match("^[0%-]+$") then return false end
-    return true
-end
-
 local function item_key(ie)
     local k
     pcall(function() k = ie.Key.Key end)

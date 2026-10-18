@@ -822,7 +822,7 @@ end)
 -- V24, S083 03:55:56-58: Knock unlocked e720 (look: "unlocked"), 2 s later IsLocked read true again and interact
 -- refused "nobody in the party carries its key" while EVENTS had door_opened e720.
 local function knocked_door()
-    world[DOOR].comps.Lock = { Key_M = "", LockDifficultyClassID = "11111111-2222-3333-4444-555555555555" }
+    world[DOOR].comps.Lock = { Key_M = "" }
     osiv[key("IsLocked", DOOR)] = 1
 end
 local function interact_refused(pat)
@@ -833,7 +833,6 @@ end
 
 test("interact V24: a door the game unlocked 2 s ago that reads locked again is clicked, not refused", function()
     knocked_door()
-    interact_refused("nobody in the party carries its key")
     A.dispatch("Unlocked", { DOOR, P2, "NULL_00000000-0000-0000-0000-000000000000" })
     clock = clock + 2000
     local j = job(op("interact", { char = P1, target = DOOR }))
@@ -865,11 +864,15 @@ test("interact V24: a door opened moments ago that still reads locked: 'it is op
     eq(#called("Use"), 0, "Use")
 end)
 
-test("interact V24: an unlock older than LOCK_FRESH_MS no longer counts: refused as locked", function()
+test("interact V24: an unlock older than LOCK_FRESH_MS no longer counts: still locked, not 'locked again'", function()
     knocked_door()
+    world[DOOR].pos = { 1, 0, 0 }
     A.dispatch("Unlocked", { DOOR, P2, "" })
     clock = clock + A.LOCK_FRESH_MS + 1
-    interact_refused("nobody in the party carries its key")
+    local j = job(op("interact", { char = P1, target = DOOR }))
+    A.dispatch("UseFinished", { P1, DOOR, 0 })
+    tick(6)
+    eq(j.status, "failed", "status"); eq(j.error, A.STILL_LOCKED, "error")
 end)
 
 -- Live L3 helm probe 2026-10-17 (e39 at the Nautiloid helm): the ring point facing the actor lies under the upper
@@ -3361,18 +3364,23 @@ local function add_p2(pos)
     osiv[key("IsOnStage", P2)] = 1
 end
 
-test("interact locked: nobody carries the key -> refused with the options", function()
+test("interact locked: nobody carries the key -> clicked like a player's, 'still locked', no Unlock", function()
     osiv[key("IsLocked", DOOR)] = 1
     world[DOOR].comps.Lock = { Key_M = "PriestessKey" }
+    world[DOOR].pos = { 1, 0, 0 }
     local j = job(op("interact", { char = P1, target = DOOR }))
-    eq(j.status, "failed", "status"); assert(j.error:find("nobody in the party carries its key"), j.error)
+    eq(#called("Use"), 1, "Use in place")
+    A.dispatch("UseFinished", { P1, DOOR, 0 })
+    tick(6)
+    eq(j.status, "failed", "status"); eq(j.error, A.STILL_LOCKED, "only what the game shows")
     eq(#called("Unlock"), 0, "Unlock")
 end)
 
--- ACT-6: a story lock (zero lockpick-difficulty id: the Temple of Bhaal door the amulet opens) is clicked anyway.
+-- ACT-6: a story lock (the Temple of Bhaal door the amulet opens) is clicked anyway. Audit C13: no lock is told
+-- apart by its hidden lockpick-difficulty id any more (a pickable id here changes nothing).
 local function story_door()
     osiv[key("IsLocked", DOOR)] = 1
-    world[DOOR].comps.Lock = { Key_M = "NO_KEY", LockDifficultyClassID = "00000000-0000-0000-0000-000000000000", LockDC = 0 }
+    world[DOOR].comps.Lock = { Key_M = "NO_KEY", LockDifficultyClassID = "0d9484eb-0000-4000-8000-000000000001", LockDC = 0 }
 end
 
 test("interact story lock, no key: walks and clicks it; the game's script opens it -> done", function()
@@ -3389,14 +3397,14 @@ test("interact story lock, no key: walks and clicks it; the game's script opens 
     eq(j.result.unlocked_with, nil, "no key reported")
 end)
 
-test("interact story lock: the click changes nothing -> failed, says it is a story lock", function()
+test("interact story lock: the click changes nothing -> failed, 'still locked' only", function()
     story_door()
     world[DOOR].pos = { 1, 0, 0 }
     local j = job(op("interact", { char = P1, target = DOOR }))
     eq(#called("Use"), 1, "Use in place")
     A.dispatch("UseFinished", { P1, DOOR, 1 })
     tick(30)
-    eq(j.status, "failed", "status " .. tostring(j.status)); assert(j.error:find("no lock to pick"), j.error)
+    eq(j.status, "failed", "status " .. tostring(j.status)); eq(j.error, A.STILL_LOCKED, "no lever/puzzle hint")
 end)
 
 test("interact story lock: the Use fails -> the story-lock reason", function()
@@ -3405,13 +3413,15 @@ test("interact story lock: the Use fails -> the story-lock reason", function()
     local j = job(op("interact", { char = P1, target = DOOR }))
     A.dispatch("UseFinished", { P1, DOOR, 0 })
     tick(6) -- the failure waits A.USE_FAIL_GRACE_MS for a success
-    eq(j.status, "failed", "status"); assert(j.error:find("no lock to pick"), j.error)
+    eq(j.status, "failed", "status"); eq(j.error, A.STILL_LOCKED, "error")
 end)
 
 test("interact locked: a key with another name does not fit", function()
     keyed_door(P1, "PriestessKey", "PrisonKey")
     local j = job(op("interact", { char = P1, target = DOOR }))
-    eq(j.status, "failed", "status"); assert(j.error:find("carries its key"), j.error)
+    eq(j.status, "running", "clicked without a key " .. tostring(j.error))
+    arrive(j, { 8.5, 0, 0 })
+    eq(#called("Unlock"), 0, "the other key is not used")
 end)
 
 test("interact locked: actor's own key (keychain) -> walk, Unlock, Use, reported", function()
@@ -3536,12 +3546,14 @@ test("lockpick (default): no engine request; right-click -> context menu 'Lockpi
     eq(j.result.button, "R", "right-click"); eq(j.result.menu, "Lockpick", "menu item")
 end)
 
-test("lockpick: a lock with no lockpick difficulty (zero DC id) -> refused before walking, no Use/click", function()
+test("lockpick: a lock with no lockpick difficulty (zero DC id) -> the right-click, as any lock (audit C13)", function()
+    -- the game's own menu shows whether Lockpick is offered; the hidden difficulty id is never read
     osiv[key("IsLocked", DOOR)] = 1
     world[DOOR].comps.Lock = { Key_M = "NO_KEY", LockDifficultyClassID = "00000000-0000-0000-0000-000000000000", LockDC = 0 }
     local j = job(op("lockpick", { char = P1, target = DOOR }))
-    eq(j.status, "failed", "status"); assert(j.error:find("cannot be picked"), j.error)
-    eq(#called("Use"), 0, "no Use"); eq(#called("CharacterMoveToPosition"), 0, "no walk")
+    eq(j.status, "running", "status " .. tostring(j.error))
+    arrive(j, { 8.5, 0, 0 })
+    eq(j.result.needs_click, DOOR, "needs_click"); eq(j.result.menu, "Lockpick", "menu")
 end)
 
 test("lockpick: a lock with a difficulty id -> proceeds to the right-click, no engine request", function()
