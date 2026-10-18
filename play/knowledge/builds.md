@@ -12,10 +12,8 @@ casters), Alert (initiative, never surprised), Tough, Polearm Master, Lucky, Res
 - L4 Great Weapon Master (two-handed) or +2 STR · L8 +2 STR · L12 +2 CHA (Aura of Protection adds CHA to saves).
 - Key: Extra Attack L5, Aura of Protection L6; Divine Smite on crits and bosses; spells Bless, Shield of
   Faith, Command, Compelled Duel (L2-4), Aid, Magic Weapon (L5+), Revivify (L9+).
-- **Keep the oath:** the Paladin landing the killing blow on someone who was not an enemy breaks Devotion (S026: a
-  confused Cloudkill killed a patient; S028: the bow finished the Warden, "Temporarily Hostile" after being caught
-  in the Moonrise prison). Restoring it at the camp's Oathbreaker Knight cost 1000 g the first time and 2000 g the
-  second. When guards/neutrals turn temporarily hostile, let companions take the kills (or knock them out), and
+- **Keep the oath:** the Paladin landing the killing blow on someone who was not an enemy breaks Devotion (an area
+  spell or a stray shot counts too). Restoring it at the camp's Oathbreaker Knight costs gold, more each time. When guards/neutrals turn temporarily hostile, let companions take the kills (or knock them out), and
   keep the Paladin on the real enemies.
 ## Cleric: Trickery (Shadowheart) / Life — healer, support
 - Stats: WIS > CON > STR/DEX (medium armour + shield). Shadowheart starts WIS 17 → L4 +1 WIS +1 CON.
@@ -64,7 +62,7 @@ casters), Alert (initiative, never surprised), Tough, Polearm Master, Lucky, Res
 ## Monk: Open Hand — mobile striker
 - Subclass L3. DEX > WIS. L4 +2 DEX · L8 +2 DEX · L12 Alert/Tavern Brawler. Flurry of Blows, Stunning Strike.
 
-## A balanced Act 1 party from the current one
-Your PC (default Paladin: front + face) · Shadowheart (Cleric, heals + Spirit Guardians) · Gale (Evocation
-Wizard, Sleep/Web/Fireball) · **Astarion** (Rogue: locks, traps, ranged, stealth). Swap in Lae'zel or
-Karlach for melee-heavy fights; Wyll if a second blaster helps more than skills.
+## A balanced party
+Your PC (default Paladin: front + face) · a healer (Cleric) · an area caster (Wizard or Warlock) · a skills
+character (Rogue: locks, traps, ranged, stealth). Swap in a second frontliner (Fighter, Barbarian) for
+melee-heavy fights, or a second blaster when skills matter less.

@@ -51,12 +51,11 @@ level up, every companion met or lost, and before a region whose needs you know.
 | **Healer / support** | Healing Word, Bless, Spirit Guardians, revives | Shadowheart (Cleric), Jaheira or Halsin (Druid, Act 2) |
 | **Arcane damage / control** | area damage, crowd control (Sleep, Web, Hold, Fireball, Hypnotic Pattern) | Gale (Wizard), Wyll (Warlock) |
 | **Skills / rogue-ish** | locks, traps, Perception, Sleight of Hand, stealth, ranged | Astarion (Rogue), a Bard or Ranger |
-- **Now (Act 1):** your PC (default Paladin: tank + face) · Shadowheart (healer) · Gale (control) · the 4th slot is
-  the gap: **recruit Astarion** (skills/locks/traps; on the beach near the crash site `[wiki]`) or Lae'zel
-  (second frontliner; she joins again if found and talked to) / Karlach (Act 1, later). Prefer Astarion
-  while locked chests, traps and stealth come up; switch to Karlach or Lae'zel for a hard melee fight.
+- **Example:** your PC (default Paladin: tank + face) · a healer · a control caster · and whoever fills the
+  gap you have: a skills character while locked chests, traps and stealth come up, a second frontliner for a
+  hard melee fight.
 - Recruit every companion you meet (talk, accept): a full camp roster lets you cover any gap later.
-  Lae'zel "left behind" is not gone: she can be recruited where she is, or waits at camp once recruited.
+  A companion "left behind" is not gone: they can be recruited where they are, or wait at camp once recruited.
 - **Swapping: `swap_party(into, out)`**, one call (camp → join answer → leave camp → regroup). Then
   `level_up` the newcomer at once: camp companions gain XP but their level ups wait (`LEVEL UP` line).
   `get_party(camp=true)` shows who waits at camp. **When to swap** (the `PARTY:` line in get_status/look

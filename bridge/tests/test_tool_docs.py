@@ -29,6 +29,18 @@ class ToolDocs(unittest.TestCase):
         al = {t.name for t in tools if (getattr(t, "meta", None) or {}).get("anthropic/alwaysLoad")}
         self.assertTrue(al and al <= names and len(al) < len(names), (len(al), len(names)))
 
+    def test_tool_text_names_no_playthrough_specifics(self):
+        """Fairness audit C6/C7/C25 (user, 2026-10-18): harness-news.md, tools.md and the tool docstrings describe tool
+        behaviour only. Names from claude-run-2 (a puzzle's answer, a route to a boss, an item pairing) are coaching."""
+        names = re.compile(r"Mausoleum|Moonrise Towers|Yurgir|Silent Library|Riddle of the Night|Teachings of Loss|"
+                           r"Syringe|Moonlantern|\bOrin\b|Yoonce|Avatar form|Cazador|Viconia|Keene|The Watch|Wyrm|"
+                           r"Rivington|Shadow-Cursed", re.I)
+        news = TOOLS_MD.parent / "harness-news.md"
+        texts = {"tools.md": TOOLS_MD.read_text(), "harness-news.md": news.read_text()}
+        for t in asyncio.run(server.mcp.list_tools()):
+            texts[t.name] = t.description or ""
+        hits = {k: sorted(set(names.findall(v))) for k, v in texts.items() if names.search(v)}
+        self.assertEqual(hits, {})
 
 if __name__ == "__main__":
     unittest.main()
