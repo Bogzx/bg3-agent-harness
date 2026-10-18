@@ -82,28 +82,28 @@ class DeadlineMath(unittest.TestCase):
         self.assertIsNone(P.session_budget(now, now - 5, 60))
 
     def test_kickoff_has_pace_preflight(self):
-        k = P.build_kickoff("S004", "pt1", time.time() + 3600, None, [])
+        k = P.build_kickoff("S004", "pt1", None, [])
         self.assertIn("PACE PRE-FLIGHT", k)
         self.assertIn("Never pass wait=true", k)
         self.assertIn("stuck.md", k)
         self.assertNotIn(time.strftime("%Y-%m-%d"), P.PACE_PREFLIGHT)  # static: cache-friendly
 
-    def test_kickoff_mentions_deadline_and_notes(self):
-        t = time.mktime((2026, 10, 9, 21, 30, 0, 0, 0, -1))
-        k = P.build_kickoff("S004", "pt1", t, "S003-end", ["NOTE A", "NOTE B"])
+    def test_kickoff_names_no_deadline_and_has_the_notes(self):
+        # S082: any time shown before WRAP UP NOW was read as a clock to beat (early wrap-up 6 sessions in a row)
+        k = P.build_kickoff("S004", "pt1", "S003-end", ["NOTE A", "NOTE B"])
         self.assertIn("S004", k)
-        self.assertIn("21:30", k)
+        self.assertNotRegex(k.split("PACE PRE-FLIGHT")[0], r"\d\d:\d\d|deadline|time left")
+        self.assertIn("you'll be told when to wrap up", k)
         self.assertIn('"S003-end"', k)
         self.assertTrue(k.index("NOTE A") < k.index("NOTE B"))
-        self.assertNotIn("already loaded", P.build_kickoff("S001", "pt1", t, None, []))
+        self.assertNotIn("already loaded", P.build_kickoff("S001", "pt1", None, []))
 
     def test_kickoff_leads_with_the_memory_briefing(self):
-        t = time.time() + 3600
-        k = P.build_kickoff("S004", "pt1", t, None, [], "=== BG3 PLAYTHROUGH MEMORY — session S004 ===\n...")
+        k = P.build_kickoff("S004", "pt1", None, [], "=== BG3 PLAYTHROUGH MEMORY — session S004 ===\n...")
         self.assertTrue(k.startswith("=== BG3 PLAYTHROUGH MEMORY — session S004"))
         self.assertIn("briefing (PLAYTHROUGH.md and HANDOFF.md) is above", k)
         self.assertIn("end_session", k)
-        self.assertIn("First call session_start", P.build_kickoff("S004", "pt1", t, None, []))
+        self.assertIn("First call session_start", P.build_kickoff("S004", "pt1", None, []))
 
 
 class HandoffAndSaves(unittest.TestCase):
@@ -260,7 +260,7 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertIn("S075's choice", r.loaded_why("S075-end"))
         self.assertEqual(r.loaded_why("S075-fight"), "")   # a fallback loaded another save: no reason
         self.assertEqual(r.loaded_why(None), "")
-        k = P.build_kickoff("S076", "pt", time.time() + 60, "S075-end", [], save_why=r.loaded_why("S075-end"))
+        k = P.build_kickoff("S076", "pt", "S075-end", [], save_why=r.loaded_why("S075-end"))
         self.assertIn('already loaded save "S075-end" (HANDOFF\'s "Save to load" (S075\'s choice), not the newer '
                       '"S075-fight" from the same session). Don\'t reload it', k)
 
@@ -891,6 +891,17 @@ class Relaunch(unittest.TestCase):
         self.assertIn("end_day_failed", P.relaunch_reason(None, now, "rest_flow step=end_day_failed", 2))
         self.assertIsNone(P.relaunch_reason(None, now, None, 2))
 
+    def test_reason_counts_the_coming_session_and_ram(self):
+        now, session = 100_000.0, 30 * 60 + P.FIGHT_HOLD_S
+        # S082: 1.9 h old at the session start was kept and ran to 2.3 h; with the session counted it relaunches
+        why = P.relaunch_reason(now - 1.9 * 3600, now, "", 2, session_s=session)
+        self.assertIn("1.9 h old and the session may run 45 min (to 2.6 h)", why)
+        self.assertIsNone(P.relaunch_reason(now - 1.2 * 3600, now, "", 2, session_s=session))
+        why = P.relaunch_reason(now - 600, now, "", 2, session_s=session, ram_mb=7100, ram_limit_mb=7000)
+        self.assertIn("7100 MB RAM+swap (relaunched at 7000 MB", why)
+        self.assertIsNone(P.relaunch_reason(now - 600, now, "", 2, ram_mb=6900, ram_limit_mb=7000))
+        self.assertIsNone(P.relaunch_reason(now - 600, now, "", 2, ram_mb=9000, ram_limit_mb=0))   # 0 = off
+
     def test_pick_save_never_an_autosave(self):
         f = P.parse_save_folder
         saves = [f("Claude-1__S032-end", 10.0), f("Claude-2__AutoSave_59", 20.0), f("Claude-3__QuickSave_4", 30.0)]
@@ -899,9 +910,10 @@ class Relaunch(unittest.TestCase):
         self.assertEqual(P.pick_save(saves, None, "Claude", {"Claude-3__QuickSave_4"}).label, "QuickSave_4")  # runner's own
 
     def _runner(self, d: Path, *, launched, log_text, save_mtime, last_started=50.0, steam=(True, "offline"),
-                owns=True, first=False):
-        self.saved = (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log)
+                owns=True, first=False, ram=5000):
+        self.saved = (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb)
         P.port_open = lambda *a, **k: True
+        P.game_ram_mb = lambda: ram
         P.steam_ready = lambda: steam
         P.list_saves = lambda: [P.Save("Claude-1__S032-end", "Claude", "S032-end", save_mtime)]
         P.game_started_at = lambda: launched
@@ -924,7 +936,7 @@ class Relaunch(unittest.TestCase):
 
     def tearDown(self):
         if hasattr(self, "saved"):
-            (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log) = self.saved
+            (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb) = self.saved
 
     def test_relaunches_after_a_ready_check_failure(self):
         with tempfile.TemporaryDirectory() as td:
@@ -945,6 +957,26 @@ class Relaunch(unittest.TestCase):
             r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=100.0)
             self.assertIsNone(r.maybe_relaunch(False))
             self.assertEqual(self.killed, [])
+
+    def test_relaunches_at_the_session_start_when_the_session_would_pass_the_age(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 1.9 * 3600, log_text="ok", save_mtime=100.0)
+            self.assertIn("the session may run 45 min", r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [1])
+            self.assertTrue(any("relaunching the game: the game process is 1.9 h old" in m for m in self.logs))
+
+    def test_relaunches_a_game_already_high_on_ram(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=100.0,
+                             ram=P.RELAUNCH_RAM_MB + 1)
+            self.assertIn("MB RAM+swap", r.maybe_relaunch(False, 30))
+            self.assertEqual(self.killed, [1])
+
+    def test_kept_log_names_the_ram(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ok", save_mtime=100.0, ram=5432)
+            self.assertIsNone(r.maybe_relaunch(False, 30))
+            self.assertTrue(any("5432 MB RAM+swap" in m and "kept" in m for m in self.logs))
 
     def test_kept_when_steam_not_offline(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1749,8 +1781,8 @@ class MemorySessionWithoutHooks(unittest.TestCase):
             sid, brief = r.open_memory_session(deadline, 30)
             self.assertEqual(sid, "S001")
             self.assertTrue(brief.startswith("=== BG3 PLAYTHROUGH MEMORY — session S001 ==="))
-            self.assertIn("Autonomous session: deadline", brief)
-            self.assertIn("min of play before WRAP UP at", r.stop_check(sid, deadline, 30))
+            self.assertIn("Autonomous session: keep playing until the ⏱ line", brief)
+            self.assertIn("Keep playing: you'll be told when to wrap up", r.stop_check(sid, deadline, 30))
             near = time.time() + 120   # inside the last 3 minutes: wrap-up is due
             self.assertIn("HANDOFF.md hasn't been rewritten", r.stop_check(sid, near, 30))
             (r.mem / "HANDOFF.md").write_text("# Handoff S001 → S002\nSave to load: \"S001-end\" — camp\n\n"
@@ -2036,6 +2068,28 @@ class OomGuard(unittest.TestCase):
             self.assertTrue(any("REFUSING TO RESUME" in m for m in self.logs))
             self.assertIn("jump_to", r.pending_notes[-1])
             self.assertIn("S037-end", r.pending_notes[-1])
+
+    def test_oom_line_names_the_save_loaded_last(self):
+        # S082: the line named S078-start (the runner's load at the launch), not the agent's later S081-end reload
+        saves = [P.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0),
+                 P.Save("Claude-3__S039-end", "Claude", "S039-end", 30.0)]
+        acts = [{"t": 40.0, "tool": "load_game", "args": {"save": "Claude-3__S039-end"}, "result": "load_game: done — loaded=S039-end"},
+                {"t": 50.0, "tool": "load_game", "args": {"save": "latest"}, "result": "NOT READY: game not reachable"}]
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), saves)
+            P.read_actions_since = lambda t, path=None: acts
+            r.state["game"] = {"stamp": "20261010-2000", "launched": 1.0}
+            r.check_game_oom()
+            self.assertTrue(any("save loaded before it: Claude-3__S039-end" in m for m in self.logs))
+            self.assertEqual(r.state["oom_streak"]["save"], "Claude-3__S039-end")
+
+    def test_last_loaded_save(self):
+        saves = [P.Save("Claude-1__S081-end", "Claude", "S081-end", 10.0)]
+        by_label = [{"t": 20.0, "tool": "load_game", "args": {"save": "S081-end"}, "result": "done loaded=S081-end"}]
+        self.assertEqual(P.last_loaded_save(by_label, saves, "x"), "Claude-1__S081-end")
+        self.assertEqual(P.last_loaded_save([], saves, "Claude-0__S078-start"), "Claude-0__S078-start")
+        failed = [{"t": 20.0, "tool": "load_game", "args": {"save": "S081-end"}, "result": "FAILED: no such save"}]
+        self.assertEqual(P.last_loaded_save(failed, saves, "fallback"), "fallback")
 
     def test_refused_with_no_other_save_stops(self):
         saves = [P.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0)]

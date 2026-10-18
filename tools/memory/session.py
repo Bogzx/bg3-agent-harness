@@ -262,11 +262,10 @@ def build_context(mem: Path, source: str = "startup", notes: list[str] | None = 
     if st.get("open"):
         deadline = session_deadline()
         if deadline:
-            left = (deadline - time.time()) / 60
-            head.append(f"Autonomous session: deadline {time.strftime('%H:%M', time.localtime(deadline))} "
-                        f"({left:.0f} min left). Play until the ⏱ line in tool results says WRAP UP "
-                        f"({(deadline - wrap_at()) / 60:.0f} min before), then "
-                        f"run the session-wrapup playbook. Don't stop early: nobody is there to answer.")
+            # No deadline or minutes before WRAP UP NOW: every time shown was read as a clock to beat (S066-S082).
+            head.append("Autonomous session: keep playing until the ⏱ line in tool results says WRAP UP NOW (you'll "
+                        "be told when to wrap up), then run the session-wrapup playbook. Don't stop early: nobody "
+                        "is there to answer.")
         else:
             head.append(f"Started {st.get('started', '?')}; elapsed {elapsed_minutes(st):.0f} min. "
                         f"Wrap up at ~{wrap_minutes():.0f} min (session-wrapup playbook); hard limit "
@@ -548,8 +547,9 @@ def stop_decision(mem: Path, now: float | None = None, in_combat: Callable[[], b
         early = False
     elif deadline and w is not None and st.get("time_named"):
         # S074: refused with "Call end_session again at 23:27", accepted at 23:25:50 by the grace below (the 4th
-        # call, after 3 refusals each with a HANDOFF edit). Once a refusal named the time, that time holds.
-        early = now < w - w % 60   # the start of the "at HH:MM" minute
+        # call, after 3 refusals each with a HANDOFF edit). Once refused ("Call end_session again only when the ⏱
+        # line says WRAP UP NOW"), WRAP UP holds against the grace.
+        early = now < w
     elif deadline and handoff_ready and w is not None and now >= w - STOP_GRACE_S:
         early = False
     else:
@@ -574,23 +574,22 @@ def stop_decision(mem: Path, now: float | None = None, in_combat: Callable[[], b
                                f"{sid}-end or edit HANDOFF.md during the fight. Your next message is a game tool "
                                f"call, not a summary (nobody reads it; a text-only message ends your turn). Call "
                                f"end_session again only when the ⏱ line says WRAP UP NOW.")}
-        st["time_named"] = True  # "at HH:MM" below
+        st["time_named"] = True  # "when the ⏱ line says WRAP UP NOW" below
         M.save_state(mem, st)
-        play = max(1, int((w - now) // 60))  # w: wrap_at() is set whenever the deadline is
-        at = time.strftime("%H:%M", time.localtime(w))
         # S030: 7 early stops from 10 min left, each with a 1.3-2.1k-char session summary (6-9 s) and, after the
         # first, another save_game Sxxx-end + HANDOFF.md rewrite. A text-only message is what ends the turn, so
         # the reason asks for a game call next and says the early wrap-up need not be redone.
         # S070: wrapped up at 9 min left, then end_session x5 (4 refused) with a HANDOFF edit before each (~130 s of
         # gaps): "Keep playing: 8 minutes left" said neither when to call again nor that the minutes include the
-        # wrap-up. So: the play minutes, the time to call again, and no HANDOFF/end_session until then.
-        again = (" You already wrapped up early. A boss fight, descent or trip needn't fit in the time left: start "
-                 "it; a fight holds the session until it ends, and the next session plays on from where you are. "
+        # wrap-up. So: when to call again, and no HANDOFF/end_session until then. S082: any minutes or time shown
+        # were read as a clock to beat (early wrap-up 6 sessions in a row), so it names neither.
+        again = (" You already wrapped up early. Start the next boss fight, descent or trip: a fight holds the "
+                 "session until it ends, and the next session plays on from where you are. "
                  "Never idle reads." if handoff_ready or keep
                  else "")
         return {"decision": "block",
-                "reason": (f"Keep playing: {play} min of play before WRAP UP at {at}. Call end_session again at "
-                           f"{at}, when the ⏱ line says WRAP UP NOW; until then don't call end_session, save "
+                "reason": (f"Keep playing: you'll be told when to wrap up. Call end_session again only when the "
+                           f"⏱ line says WRAP UP NOW; until then don't call end_session, save "
                            f"{sid}-end or edit HANDOFF.md (at WRAP UP: one memory_edit of the lines that changed, a "
                            f"save only if the party moved). Your next message is a game tool call, not a summary "
                            f"(nobody reads it; a text-only message ends your turn): get_status if you lost track. "

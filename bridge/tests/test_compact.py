@@ -194,11 +194,13 @@ class Rules(unittest.TestCase):
 
     def test_clock_only_when_it_changed(self):
         c = fresh()
-        self.assertIn("⏱ 16:38 · 25m left", c.apply("look", "a\n⏱ 16:38 · 25m left"))
-        self.assertEqual(c.apply("look", "b\n⏱ 16:38 · 25m left"), "b")
-        self.assertIn("⏱ 16:39 · 24m left", c.apply("look", "c\n⏱ 16:39 · 24m left"))
-        self.assertIn("⏱ 16:40 · 20m of play left", c.apply("look", "d\n⏱ 16:40 · 20m of play left"))
-        self.assertEqual(c.apply("look", "e\n⏱ 16:40 · 20m of play left"), "e")
+        keep = "⏱ 16:38 · keep playing: you'll be told when to wrap up"
+        self.assertIn(keep, c.apply("look", "a\n" + keep))
+        self.assertEqual(c.apply("look", "b\n" + keep), "b")
+        self.assertIn(keep.replace("16:38", "16:39"), c.apply("look", "c\n" + keep.replace("16:38", "16:39")))
+        fight = "⏱ 16:40 · in a fight: finish it, taking each turn the time it needs; the session waits for the fight"
+        self.assertIn(fight, c.apply("look", "d\n" + fight))
+        self.assertEqual(c.apply("look", "e\n" + fight), "e")
         wrap = "⏱ 16:39 · 3m left: WRAP UP NOW. Reach a safe spot, save_game, then follow x."
         self.assertIn(wrap, c.apply("look", "d\n" + wrap))
         self.assertIn(wrap, c.apply("look", "e\n" + wrap))  # never dropped

@@ -1,13 +1,14 @@
 # Session wrap-up (target: ≤ 3 minutes)
 
 **When:** only when the `⏱` line says **WRAP UP NOW** (or a SESSION CLOCK reminder, or the operator asks).
-"⏱ 21:12 · 2m of play left" means play 2 more minutes; stuck is not a reason (run `stuck`); escaping danger is
-play. A boss fight, descent or long trip needn't fit in the minutes left: a fight on at WRAP UP holds the session
-until it ends (the ⏱ line says "in a fight", no time), and the next session plays on from where the party stands,
-so start it.
+**Until then do nothing wrap-up-related:** no `Sxxx-end` save, no HANDOFF edit, no end_session, no "out of time"
+plan. "⏱ 21:12 · keep playing: you'll be told when to wrap up" means play on; there is no time to watch. Stuck is
+not a reason (run `stuck`); escaping danger is play. A boss fight, descent or long trip needn't fit in the session:
+a fight on at WRAP UP holds the session until it ends (the ⏱ line says "in a fight", no time), and the next
+session plays on from where the party stands, so start it.
 Never kill time with get_status/wiki reads (S036 idled ~2.5 min).
-**Do it once.** If `end_session` or the runner says "Keep playing", play on until the time it names: no
-`end_session`, `Sxxx-end` save or HANDOFF edit before then. At that time: one `memory_edit` of HANDOFF's changed
+**Do it once.** If `end_session` or the runner says "Keep playing", play on until the ⏱ line says WRAP UP NOW: no
+`end_session`, `Sxxx-end` save or HANDOFF edit before then. Then: one `memory_edit` of HANDOFF's changed
 lines, a save only if the party moved, `end_session`. No reading through files, no tidying. "Finish the fight
 first" (a call mid-fight): play the fight out, no wrap-up during it; WRAP UP comes after it.
 
