@@ -1,6 +1,6 @@
 """Per-session fairness audit: scan every game-tool result the playing agent got for things a human player
-couldn't have seen (docs/FAIRNESS.md). Text rules over the transcript, so it audits what actually reached the
-agent, whatever layer produced it.
+couldn't have seen (docs/FAIRNESS.md). Text rules over the transcript and the runner's prompts, so it audits what
+actually reached the agent, whatever layer produced it.
 
     python runner/fairness.py runtime/sessions/<playthrough>/S026 [...]   # prints the section per session
 
@@ -61,6 +61,13 @@ _MEMORY_LINE = re.compile(r"^\s*(?:-\s*)?WHEN\b|\bLESSONS?\b|\bLAST ATTEMPT\b|^\
 # (Traps: listings tag "trap" only once the engine says it's discovered, so a text rule can't tell; the
 # mod's gate is tested offline: tools/vis/test_route_lua.lua "combat: an undiscovered trap ...".)
 _ROLL_SUBJECT = re.compile(r"roll_result[^|\n]*\b(?:subject|event|vs)=")
+# Audit C1 (2026-10-18) classes a text rule can see: a flag or counter about unseen things (C8 unseen_combatants,
+# C18 geo_gen), a verdict read from story or lock data (C11 "(solved)", "wrong order"; C13 story-lock hints), an
+# unseen target's fate from the engine (C9), and a hidden quest's unlocalised text (C10 "%%% EMPTY").
+_SIDE_CHANNEL = re.compile(r"\bunseen_combatants\b|\bgeo_gen=")
+_VERDICT = re.compile(r"\((?:solved|wrong order[^)]*)\)|\bno lock to pick\b|\blever, button, puzzle\b")
+_ENGINE_GONE = re.compile(r"\bis gone \(it (?:died|left the battlefield)|\bdissipated or despawned\b")
+_UNLOCALISED = re.compile(r"%%% EMPTY")
 
 LEAK, CHECK = "LEAK", "CHECK"
 RULES = {  # rule -> (severity, what it means)
@@ -72,7 +79,13 @@ RULES = {  # rule -> (severity, what it means)
     "status_id": (LEAK, "engine status id (the UI shows only the name; fixed 2026-10-10)"),
     "hidden_state": (CHECK, "hidden-state word on an entity line (invisible/sneaking/ambushing)"),
     "judged_id": (LEAK, "waypoint/level id (the map shows names; fixed 2026-10-10)"),
+    "side_channel": (LEAK, "a flag/counter about unseen things (unseen_combatants, geo_gen)"),
+    "verdict": (LEAK, "a puzzle/lock verdict read from story or lock data ('solved', 'wrong order', story-lock hint)"),
+    "engine_gone": (LEAK, "an unseen target's fate from the engine ('it died', 'despawned')"),
+    "unlocalised": (LEAK, "unlocalised engine text ('%%% EMPTY': a hidden quest or technical status)"),
 }
+# Pseudo-tool name of the runner's prompts (kickoff, RUNNER NOTE/DIRECTIVE) read from the session's .log.
+PROMPT = "(runner prompt)"
 
 
 def _lines(text: str) -> list[str]:
@@ -112,11 +125,26 @@ def audit_calls(calls: list[dict]) -> dict[str, list[tuple[dict, str]]]:
                 hit("template", c, nojudged, m)
             for m in _JUDGED_ID.finditer(noact):
                 hit("judged_id", c, noact, m)
+            for rule, rx in (("side_channel", _SIDE_CHANNEL), ("verdict", _VERDICT), ("engine_gone", _ENGINE_GONE),
+                             ("unlocalised", _UNLOCALISED)):
+                for m in rx.finditer(clean):
+                    hit(rule, c, clean, m)
             if not re.search(r"spotted|status_removed|dialogue_line|text=|^\s*\d+\. ", clean):
                 if _HANDLE.search(clean) and not _INVIS_STATUS.search(clean):
                     for m in _HIDDEN_STATE.finditer(clean):
                         hit("hidden_state", c, clean, m)
     return hits
+
+
+def prompt_calls(log_path: Path) -> list[dict]:
+    """The runner's prompts to the agent (the .log's `[prompt]` lines, play.py) as calls named PROMPT: the audit scans
+    them like results (audit C24: a level id in the stuck directive went unflagged)."""
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    return [{"name": PROMPT, "text": ln[len("[prompt] "):].replace(" ⏎ ", "\n"), "t": None}
+            for ln in lines if ln.startswith("[prompt] ")]
 
 
 def section(calls: list[dict], hm=lambda t: "--:--:--", examples: int = 3) -> list[str]:
@@ -151,5 +179,6 @@ if __name__ == "__main__":
     for arg in sys.argv[1:]:
         base = Path(re.sub(r"\.(jsonl|log|triage\.md)$", "", arg))
         calls, _ = triage.load_calls(Path(f"{base}.jsonl"), Path(f"{base}.turns.jsonl"))
+        calls += prompt_calls(Path(f"{base}.log"))
         print(f"# {base.name}")
         print("\n".join(section(calls, triage.hm)))

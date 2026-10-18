@@ -267,7 +267,7 @@ def build(base: Path) -> str:
     lines += toolsearch_section(calls)
     lines += counts_section(calls)
     lines += stuck_section(Path(f"{base}.progress.jsonl"), calls)
-    lines += fairness.section(calls, hm)
+    lines += fairness.section(calls + fairness.prompt_calls(Path(f"{base}.log")), hm)
     lines += ["## Last agent summary", "", (summary or "(none)").strip(), ""]
     return "\n".join(lines)
 

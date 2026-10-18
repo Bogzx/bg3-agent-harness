@@ -87,6 +87,37 @@ class Rules(unittest.TestCase):
         self.assertEqual(got.get("hidden_state"), 1)
         self.assertNotIn("template", got)
 
+    def test_audit_c1_classes(self):
+        # the side channels, verdicts and engine truths of the 2026-10-18 audit (C8-C11, C13, C18), as they read
+        got = self.rules(
+            call("get_combat_state", "COMBAT round=2 unseen_combatants turn_group=[e1] current=e1"),
+            call("get_status", "WHERE Grand Mausoleum | exploring\nALSO geo_gen=15"),
+            call("look", "  e992 Painting <usable> 3m [glowing (solved)]"),
+            call("wait_for", "  item_effect item={e993 Painting} state=flashing (wrong order: resets)"),
+            call("interact", "interact: failed — clicked it: still locked (no lock to pick: the game opens it some other way)"),
+            call("combat_turn", "action: use_ability e303: skipped (e303 Mind Flayer is gone (it died))"),
+            call("wait_for", "  quest_update text=%%% EMPTY title=%%% EMPTY"),
+        )
+        self.assertEqual({k: got.get(k) for k in ("side_channel", "verdict", "engine_gone", "unlocalised")},
+                         {"side_channel": 2, "verdict": 3, "engine_gone": 1, "unlocalised": 2})
+        # what the harness says now passes
+        self.assertEqual(self.rules(
+            call("look", "  e992 Painting <usable> 3m [glowing]"),
+            call("interact", "interact: failed — clicked it: still locked"),
+            call("combat_turn", "skipped (e303 Mind Flayer is gone (it is no longer in the turn order))"),
+        ), {})
+
+    def test_runner_prompts_are_audited(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "S041.log"
+            log.write_text("===== S041 2026-10-10 claude session (new)\n[prompt] This is session S041. ⏎  ⏎ RUNNER "
+                           "DIRECTIVE, CHANGE APPROACH: ... level=SCL_Main_A, region=Shadow-Cursed Lands\n"
+                           "12:00:00 [tool] look\n")
+            calls = F.prompt_calls(log)
+        self.assertEqual([c["name"] for c in calls], [F.PROMPT])
+        self.assertEqual({k: len(v) for k, v in F.audit_calls(calls).items()}, {"judged_id": 1})
+        self.assertEqual(F.prompt_calls(Path("/nonexistent/S000.log")), [])
+
     def test_invisibility_status_by_name_is_not_hidden_state(self):
         # the old event form and the bridge's compacted ones (compact.py EVENT_LINES / CHANGES)
         got = self.rules(
