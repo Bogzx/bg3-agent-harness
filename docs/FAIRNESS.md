@@ -32,14 +32,14 @@ Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendere
   `pickpocket` prints "60% DC9" and `lockpick`/`disarm`/`roll_check` print the roll screen's DC, and nothing else does.
 * `dev.fairness_probe` (server op) returns, for the current area, how many candidates each rule filtered.
   It returns counts only, never names.
-* Visibility probes and their live results are in `research/impl-vis.md`.
+* The fairness audit of 2026-10-10 is `research/fairness-audit-2026-10-10.md`.
 * The agent is told to log `[note] fairness leak: …` if a tool ever shows it something a player couldn't
   see. The runner surfaces these notes.
 
 ## Known judgment calls
 * Places are named as the map names them: get_map lists regions ("Shadow-Cursed Lands") and waypoint names
   ("Last Light Inn"), level_changed carries the region, and fast_travel/travel_to take those names. Level
-  ids (WLD_Main_A) and waypoint ids (WAYP_CHA_Top) stay internal (decided 2026-10-10, BACKLOG #8).
+  ids (WLD_Main_A) and waypoint ids (WAYP_CHA_Top) stay internal (decided 2026-10-10).
 * "Perceived by any party member" is slightly *stricter* than a human with a free camera, who can pan to
   non-hidden NPCs far away. The screenshot tool covers that gap fairly.
 * Examine-panel data (HP, AC, ability scores, resistances) is exported for visible creatures because the

@@ -12,9 +12,9 @@ and unit-tested but has not played a real run yet.
 - **The native Linux build** (`bin/bg3`, Vulkan), not the Windows build under Proton, plus Steam Linux Runtime 3.0
   (sniper). bg3le, the mod loader we build from `third_party/bg3le`, hooks the native binary only.
 - **Hardware**: the game runs in its own cgroup capped at 10 GB RAM (`BG3AI_GAME_MEMORY_MAX`; it normally peaks at
-  ~6.3 GB RSS), so 16 GB RAM in total; a 4 GB+ GPU (tested: NVIDIA RTX 3050 Laptop, 4 GB, PRIME offload). Building
+  ~6.3 GB RSS), so 16 GB RAM in total; a 4 GB+ GPU (tested: NVIDIA RTX 3050 Laptop GPU, 4 GB, PRIME offload). Building
   bg3le needs ~10 GB RAM once. ~160 GB disk for the game.
-- **Setup**: [docs/HANDOFF.md](HANDOFF.md) (machine setup), then `tools/build_bg3le.sh`, then
+- **Setup**: [docs/SETUP.md](SETUP.md) (machine setup), then `tools/build_bg3le.sh`, then
   `tools/dev/first_launch.sh` (one supervised launch that checks every layer).
 - **The preflight**, read-only, before every series:
 
@@ -36,7 +36,7 @@ A comparison only holds when all of these are equal across the models compared. 
 |---|---|---|
 | Game build | Steam buildid `25605617` (Patch 8 Hotfix 10; `tools/dev/first_launch.sh` `WANT_BUILD`) | preflight; series pins |
 | bg3le, mod, harness code | `series.json` `pins`: bg3le sha256 + source, mod tree sha1, repo commit + dirty diff ([runner/README.md](../runner/README.md), "Fixed per series") | the runner refuses a run whose pins differ (`--allow-version-drift` records it) |
-| Steam updates | Steam in offline mode for the whole series | preflight WARN; the runner refuses to launch with Steam online where the machine requires offline (`~/.config/bg3ai/require-steam-offline` or `BG3AI_REQUIRE_STEAM_OFFLINE=1`; the test machine does) |
+| Steam updates | Steam in offline mode for the whole series | preflight WARN; the runner refuses to launch with Steam online where the machine requires offline (`~/.config/bg3ai/require-steam-offline` or `BG3AI_REQUIRE_STEAM_OFFLINE=1`) |
 | Scenarios | `scenarios/<name>.json`: start, `until` milestone, caps, profile, resets ([scenarios/README.md](../scenarios/README.md)) | `series.json` `scenario.digest` + the start save's sha1 |
 | Caps | per scenario (`run_hours`, `max_cost`, `max_tokens`) | `series.json` `caps` (`--allow-cap-change` records a change) |
 | Persona judge model | `claude-sonnet-5-5` (`runner/judge.py`, `$BG3AI_JUDGE_MODEL`); never the model under test | `series.json`; `--allow-judge-change` records it |

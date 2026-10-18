@@ -5,8 +5,8 @@ failed, we fixed the harness. Code fixes (a better route, a tool that no longer 
 fixes are different: we wrote rules into the prompts that answer *Claude's* mistakes. A model with other mistakes
 gets no such help. This file lists those places, what they bias, and what a fair cross-model benchmark should do.
 
-Evidence: the agent-facing files themselves, `research/impl-*.md`, `docs/BACKLOG.md` and the git log (the last two
-are dev notes, not in the public repo).
+Evidence: the agent-facing files themselves, the git log, and the developers' working notes (the per-area
+implementation diaries and the backlog, which are not in the public repo).
 
 ## Where the text was tuned on Claude's failures
 
@@ -14,7 +14,7 @@ are dev notes, not in the public repo).
 - "Their real names are `mcp__bg3__<name>`… a call to the bare name fails": the first call of S009–S013 used the
   bare name.
 - "Never pass `wait=true` to walks", with the numbers: in claude-run-2 S001 all 31 walks after the first blocked,
-  0 of 96 actions overlapped (research/impl-setup.md, "Why wait=true on every walk"). The agent copied its own
+  0 of 96 actions overlapped (from the working notes). The agent copied its own
   earlier calls.
 - "Trust the result; don't re-read": S023–S026 made 11 calls a minute, a third of them re-reads.
 - "Load others with ToolSearch only when you need one": S005 lost 10 turns to ToolSearch.
@@ -24,7 +24,7 @@ are dev notes, not in the public repo).
 
 **The runner's kickoff** (`runner/play.py`):
 - `PACE_PREFLIGHT`, a worked example in the first message, was added because S001 read the CLAUDE.md pipelining
-  rules and blocked anyway (research/impl-setup.md).
+  rules and blocked anyway.
 - The full tool names in the kickoff (commit 5e12129, after S009–S013).
 - `STUCK_DIRECTIVE` ("write three approaches that are genuinely different") answers Claude's repeat loops.
 

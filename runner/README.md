@@ -282,12 +282,12 @@ stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
   It refuses to start without the host firewall (`sudo tools/container/firewall.sh up`; `--sandbox-unfirewalled`
   for dev runs, recorded). runner/sandbox.py, tools/container/README.md ("The runner").
 - Only one runner at a time (`runtime/runner.lock`, an flock; never delete the file:
-  `tools/orchestrator/runner_lib.sh` waits for the lock instead).
+  a wrapper script should wait for the lock instead).
 - Steam offline is required only on a machine that sets it: `~/.config/bg3ai/require-steam-offline` (its
-  text is the reason; the test machine has it) or `BG3AI_REQUIRE_STEAM_OFFLINE=1` (`=0` overrides the file). Elsewhere an
+  text is the reason) or `BG3AI_REQUIRE_STEAM_OFFLINE=1` (`=0` overrides the file). Elsewhere an
   online Steam is fine. `python3 tools/steam_paths.py launch-ok` shows the decision.
 - `BG3AI_SAVE_PREFIX` marks this playthrough's saves. The runner accepts it as a folder prefix (`Claude-`:
-  the character name plus the game's dash, what the MCP server and docs/HANDOFF.md use; the agent's
+  the character name plus the game's dash, what the MCP server and docs/SETUP.md use; the agent's
   `Sxxx-` labels stay plain) or as a label prefix (`pt1-S010-end`). It is optional: without it the runner
   passes `<owner>-`. Use `--save-owner` for the character name; new games name the character with it
   (create_character types and checks it before "Venture forth").

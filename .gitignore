@@ -29,4 +29,11 @@ CLAUDE.local.md
 /docs/BACKLOG.md
 /docs/SESSION-WATCH.md
 /tools/orchestrator/
+# The orchestrator's instructions, handoffs and dated progress notes, and the research workers' brief
+/CLAUDE.md
+/docs/ORCHESTRATOR.md
+/docs/HANDOFF.md
+/docs/PROGRESS-*.md
+/docs/AUDIT_*.md
+/research/BRIEF.md
 .claude/worktrees/

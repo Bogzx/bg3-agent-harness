@@ -189,7 +189,7 @@ target moves more than 2 m or is out of reach on arrival, up to 4 times. Jump di
   guarded tools with the default interrupts.
 
 ### UI (`Client/UI.lua`, `Client/UIState.lua`, `Client/UIActions.lua`; owner: worker **io**)
-Details and live-test status are in `research/impl-io.md`. The helper API for other client modules is documented at the top of `Client/UI.lua`.
+The helper API for other client modules is documented at the top of `Client/UI.lua`.
 Every action op accepts `dry=true`, which only runs `CanExecute`. Ops marked *job* return `{job}` and settle at the next
 decision point, so batched actions can chain.
 
