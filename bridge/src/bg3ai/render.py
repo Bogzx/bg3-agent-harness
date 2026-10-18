@@ -177,9 +177,11 @@ _RES_ALIASES = {"ActionPoint": "Action", "BonusActionPoint": "Bonus", "ReactionA
 
 
 def resources_text(res: dict) -> str:
-    """{'ActionPoint':[1,1],'SpellSlot':{'1':[4,4]}} -> 'Action 1/1 · Slots L1 4/4 ...' (fixed order first)."""
+    """{'ActionPoint':[1,1],'SpellSlot':{'1':[4,4]}} -> 'Action 1/1 · Slots L1 4/4 ...' (fixed order first).
+    MoveBlocked (State.lua moveView: the status that keeps the member from walking) -> 'Move 0/9m (Lethargic)'."""
     order = ["ActionPoint", "BonusActionPoint", "Movement", "ReactionActionPoint", "SpellSlot"]
-    keys = [k for k in order if k in res] + sorted(k for k in res if k not in order)
+    blocked = res.get("MoveBlocked")
+    keys = [k for k in order if k in res] + sorted(k for k in res if k not in order and k != "MoveBlocked")
     parts = []
     for k in keys:
         v = res[k]
@@ -189,7 +191,8 @@ def resources_text(res: dict) -> str:
                              if isinstance(cm, (list, tuple)) and len(cm) == 2)
             parts.append(f"{name} {slots}")
         elif isinstance(v, (list, tuple)) and len(v) == 2:
-            parts.append(f"{name} {num(v[0])}/{num(v[1])}" + ("m" if k == "Movement" else ""))
+            parts.append(f"{name} {num(v[0])}/{num(v[1])}" + ("m" if k == "Movement" else "")
+                         + (f" ({blocked})" if k == "Movement" and blocked else ""))
         else:
             parts.append(f"{name} {num(v)}")
     return " · ".join(parts)

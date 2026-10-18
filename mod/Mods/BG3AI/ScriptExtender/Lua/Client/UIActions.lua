@@ -893,19 +893,50 @@ end)
 --   use=true : which = option number from ui.state reaction.options selects
 --              that reaction's toggle first; then "React"
 --              (InterruptAcceptPlayerCommand(event)).
+--              A prompt with several rows (Gale's Shield at levels I-VI) -> {needs_click = which, rows}: the bridge
+--              clicks that row with the mouse (bridge reactclick.py), nothing is sent here.
+-- ui.react_probe {which?, watch?} -> {open, events, rows, over?, over_row?}
+--   For that click: is the cursor over row `which` (over), or over another row (over_row = its number)?
+--   watch=true reads only whether the prompt shows and its event count (the bridge's watch after the click).
 ------------------------------------------------------------------------
 
+-- The reaction popup on screen (the shown page of that name, as ui.state reads it), nil when none is shown.
+-- S091 08:11:01 / 08:12:16: two answers timed out after 10 s ("react: TIMEOUT") with the prompt gone from the screen
+-- (the waits after them saw none): the wait read the first page of that name, left hidden with its events.
+local function reactionPopup()
+    local w = UI.widgetMap().ReactionDecisionPopup
+    return w and UI.isVisible(w.el) and w.el or nil
+end
+
+local function reactRows(w)
+    return UI.findAll(w, function(e) return UI.name(e) == "ReactButton" end, { prune = true })
+end
+
 RPC.register("ui.react", function(args)
-    local w = UI.widget("ReactionDecisionPopup") or error("no reaction prompt on screen")
+    local w = reactionPopup() or error("no reaction prompt on screen")
     local dc = try(function() return w.DataContext end)
     local ev = UI.path(dc, "Data.InterruptEvents.1") or error("no pending interrupt")
+    if args.use ~= false then
+        -- S091 08:12:16 + S092 08:43:38 / 08:44:52 (TIMEOUT 4 of 5, by name and by number): on a prompt with one row per
+        -- spell level (Gale's Shield I-VI) the row's press + InterruptAcceptPlayerCommand never answered it (the
+        -- Accept button is collapsed for a lone interruptor), while each hand click on a Shield row cast it at once
+        -- (S092 08:45:05, 08:47:50, 08:51:28, 08:53:30, 08:55:36). Single-row prompts (Counterspell, Shield Blow) go on
+        -- by command, which works live; so do prompts with several interruptors (their Accept button shows).
+        local btns = reactRows(w)
+        local roots = UI.findAll(w, function(e) return UI.name(e) == "InterruptorRoot" end, { prune = true })
+        if #btns > 1 and #roots <= 1 then
+            local i = tonumber(args.which) or 1
+            if not btns[i] then error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)") end
+            return { needs_click = i, rows = #btns }
+        end
+    end
     if args.use == false then
         check(UI.command(dc, "InterruptDontReactPlayerCommand", ev, args.dry))
     else
         if args.which then
             -- ReactButton toggles, in display order; their CommandParameter
             -- is the PassThrough (decision, interruptor) object.
-            local btns = UI.findAll(w, function(e) return UI.name(e) == "ReactButton" end, { prune = true })
+            local btns = reactRows(w)
             local b = btns[tonumber(args.which)] or error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)")
             if UI.prop(b, "IsChecked") ~= true then check(UI.press(b, args.dry)) end
         end
@@ -914,7 +945,7 @@ RPC.register("ui.react", function(args)
     if args.dry then return { can = true } end
     local before = UI.count(UI.path(dc, "Data.InterruptEvents"))
     return waitJob("ui.react", 10000, function()
-        local w2 = UI.widget("ReactionDecisionPopup")
+        local w2 = reactionPopup()
         local d2 = w2 and try(function() return w2.DataContext end)
         local n = d2 and UI.count(UI.path(d2, "Data.InterruptEvents")) or 0
         if n < before or n == 0 then
@@ -922,6 +953,23 @@ RPC.register("ui.react", function(args)
             return "done", { pending = n > 0 and n or nil, reaction = n > 0 and S.reaction(wmap) or nil }
         end
     end)
+end)
+
+RPC.register("ui.react_probe", function(args)
+    local w = reactionPopup()
+    local dc = w and try(function() return w.DataContext end)
+    local n = dc and UI.count(UI.path(dc, "Data.InterruptEvents")) or 0
+    local out = { open = w ~= nil and n > 0, events = n }
+    if not out.open or args.watch then return out end
+    local btns = reactRows(w)
+    out.rows = #btns
+    local want = tonumber(args.which)
+    for i, b in ipairs(btns) do
+        if UI.prop(b, "IsMouseOver") == true then
+            if i == want then out.over = true else out.over_row = i end
+        end
+    end
+    return out
 end)
 
 ------------------------------------------------------------------------

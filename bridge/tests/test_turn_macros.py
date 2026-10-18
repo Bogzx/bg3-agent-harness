@@ -1211,6 +1211,32 @@ class CombatTurn(Base):
         self.assertIn("melee is out of reach this turn", out)
         self.assertEqual(self.casts(), ["Projectile_MainHandAttack"])
 
+    def test_a_lethargic_member_stays_put_at_once(self):
+        # S091 08:30:24: Claude Lethargic (`DISABLED … Lethargic` beside `Move 9/9m`), the plan walked off the
+        # Orb of Negation's platform: no walk is sent, the plan goes on from where he stands
+        self.g.combat = combat(gob_dist=8.0)
+        self.g.combat["order"][0]["disabled"] = [{"name": "Lethargic", "turns": 1,
+                                                 "effect": "cannot move; its turn passes once the rest of its turn"
+                                                           " group has ended (act with it first)"}]
+        out = server.combat_turn(self.plan(move=self.gob,
+                                           action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   {"ability": "Projectile_MainHandAttack", "target": self.gob}]))
+        self.assertIn(f"move {self.gob}: stays put — Lethargic: cannot move", out)
+        self.assertEqual(self.g.ops("act.move_to"), [])
+        self.assertEqual(self.casts(), ["Projectile_MainHandAttack"])
+
+    def test_a_walk_refused_as_blocked_runs_the_rest_from_here(self):
+        # the mod's own refusal (Actions.lua combat_budget, Guard.move_blocked) when no kept combat read said so
+        self.g.combat = combat(gob_dist=8.0)
+        self.g.refuse_if = lambda op, a: ("cannot move while Lethargic (the status keeps it in place this turn)"
+                                          if op == "act.move_to" else None)
+        out = server.combat_turn(self.plan(move=self.gob,
+                                           action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+                                                   {"ability": "Projectile_MainHandAttack", "target": self.gob}]))
+        self.assertIn("cannot move while Lethargic", out)
+        self.assertIn("melee is out of reach this turn", out)
+        self.assertEqual(self.casts(), ["Projectile_MainHandAttack"])
+
     def test_turn_passing_during_the_walk_stops_the_plan(self):
         # S074 23:21:50: "action: it is no longer e5 Claude's turn" came only from the next step; the walk says it now
         self.g.combat = combat(gob_dist=8.0)

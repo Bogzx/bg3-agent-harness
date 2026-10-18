@@ -4518,7 +4518,7 @@ def roll_check(boosts: str = "", reroll_on_fail: bool = False) -> str:
 @mcp.tool()
 @_guard
 def react(use: bool, which: str = "") -> str:
-    """Answer a reaction prompt (Shield, Counterspell, Opportunity Attack...). use=true to react. which: the option's number in REACTION options, or its name ("Shield": the first row, the lowest level; "Shield 3" or "Shield III": that slot level)."""
+    """Answer a reaction prompt (Shield, Counterspell, Opportunity Attack...). use=true to react. which: the option's number in REACTION options, or its name ("Shield": the first row, the lowest level; "Shield 3" or "Shield III": that slot level). A prompt with one row per level is answered by a click on that row; Do Not React has never closed one: set_reactions {"Shield": "never"} beforehand stops them."""
     args: dict[str, Any] = {"use": use}
     if which:
         args["which"] = which
@@ -4528,7 +4528,40 @@ def react(use: bool, which: str = "") -> str:
             if isinstance(i, str):
                 return _finish("react", args, "react: FAILED — " + i, time.monotonic())
             args["which"] = i
-    return _act("react", "ui.react", args, context="client", wait_s=15)
+    t0 = time.monotonic()
+    out = _act("react", "ui.react", args, context="client", wait_s=15)
+    res = _batch.get("result")
+    if use and isinstance(res, dict) and res.get("needs_click"):
+        return _react_click(args, int(res["needs_click"]), t0)
+    if not use and "TIMEOUT" in out.split("\n", 1)[0]:
+        ui = game.try_rpc("ui.state", context="client") or {}
+        r = ui.get("reaction") if isinstance(ui, dict) else None
+        if isinstance(r, dict) and len(r.get("options") or []) > 1:
+            # S092 08:46:43 / 08:47:47 (two hand clicks) and 08:55:23 (the command): Do Not React left Gale's
+            # multi-level Shield prompt up every time; only a row click answered it
+            out += ("\nthe prompt is still up: Do Not React has never closed a prompt with one row per level (S092: by"
+                    " command and by hand); answer it with a row, react(use=true, which=<number or level>), and"
+                    " set_reactions {\"<name>\": \"never\"} stops these prompts")
+    return out
+
+
+def _react_click(args: dict, which: int, t0: float) -> str:
+    """ui.react said this prompt answers only to a click on its row (one row per spell level): click it with the
+    mouse, hover-checked (reactclick)."""
+    from . import reactclick
+
+    inp = _inp()
+    if inp is None:
+        return _finish("react", args, "react: FAILED — this prompt answers only to a click on its row, and the input"
+                       " shim is not available", t0)
+    c = reactclick.click_row(lambda o, a: game.rpc(o, a, context="client"), inp, which)
+    if c.get("closed") or c.get("gone"):
+        text = "react: done — " + reactclick.describe(c)
+    elif c.get("shown"):
+        text = "react: clicked — " + reactclick.describe(c) + ": look before answering again (EVENTS say if it cast)"
+    else:
+        text = "react: FAILED — " + reactclick.describe(c)
+    return _finish("react", args, text, t0)
 
 
 _ROMAN = re.compile(r"^(?:I|II|III|IV|V|VI|VII|VIII|IX)$")
@@ -6464,12 +6497,18 @@ def _in_hand_note() -> str:
     another layout) and the reply said only `clicked left at 881,1004`: the next left click on the world would have
     cast it. A player sees the spell in hand (the cursor changes, its cell lights up): say which one."""
     st = hotbar.cast_state(game, None)
+    if (st.get("armed") or st.get("upcast_open")) and not st.get("spell") and st.get("char"):
+        # S091 11/11 `IN HAND: a spell`: the slot VMs carry no id and the client entity's hotbar map may be missing;
+        # the HUD character's server map names the active cell
+        m = hotbar.server_map(game, st["char"])
+        if m:
+            st = hotbar.cast_state(game, st["char"], m) or st
     # S086-r1/S087 (14x): plain clicks on the world while the party walked said `IN HAND: a spell`: one of the weaker
     # armed signals (a task preview, the cursor task) fires for a walk too, and no spell was ever named. A spell in
     # hand is one the game names (the hotbar's active slot or the client cast state), or the upcast picker open.
     if not (st.get("upcast_open") or (st.get("armed") and st.get("spell"))):
         return ""
-    what = st.get("spell") or "a spell"
+    what = st.get("spell_name") or st.get("spell") or "a spell"
     return (f"\nIN HAND: {what} (the next left click on the world casts it at the cursor; press_key ESCAPE puts it"
             " back)")
 
@@ -7889,6 +7928,14 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
             info["melee_out"] = {"target": tu, "dist": d2}
             return " — melee is out of reach this turn"
         return ""
+    cs = _cs_cached()
+    blk = turn.move_blocked(cs, who) if cs else None
+    if blk:
+        # S091 08:30:24: Lethargic Claude's plan walked off the Orb of Negation's platform; a member that can't walk
+        # stays put at once and the plan goes on from there (Actions.lua combat_budget refuses the walk too)
+        info["short"] = "no_path"
+        lines.append(f"move {what}: stays put — {blk}" + out_of_melee(dist_now()))
+        return "none"
     if tu and mv.within is not None:
         d = dist_now()
         if d is not None and d <= mv.within:
@@ -8054,6 +8101,10 @@ def _turn_move(mv: turn.Move, who: str, watcher: actq.Watcher, lines: list, afte
         m = re.search(r"dist=([\d.]+)", text)
         info["short"] = "route_end"
         text += out_of_melee(float(m.group(1)) if m else dist_now())
+    elif "cannot move while" in text:
+        # Actions.lua combat_budget (Guard.move_blocked): the plan goes on from where the member stands
+        info["short"] = "no_path"
+        text += out_of_melee(dist_now())
     elif "never started moving" in text:
         # S074 r2: Claude's walk stood still (the mod gives up after 2.5 s, no longer 5 s of "no path"): the plan
         # goes on from where he stands, melee on a target out of reach skipped like a route that ends here
@@ -8691,7 +8742,17 @@ def _prompt_why(ui: dict) -> str:
 
 def _answer_reaction(use: bool) -> str:
     _turn_cs.clear()  # a reaction (an opportunity attack) can kill: the kept turn read is stale
-    r = _watch_conn().run_job("ui.react", {"use": use}, context="client", wait_s=10)
+    conn = _watch_conn()
+    r = conn.run_job("ui.react", {"use": use}, context="client", wait_s=10)
+    res = r.result if isinstance(r.result, dict) else {}
+    inp = _inp() if use and res.get("needs_click") else None
+    if inp is not None:
+        # one row per spell level (S092 Gale's Shield): only a click on the row answers it (reactclick)
+        from . import reactclick
+        c = reactclick.click_row(lambda o, a: conn.rpc(o, a, context="client"), inp, int(res["needs_click"]))
+        return f"reaction prompt: used ({reactclick.describe(c)})"
+    if use and res.get("needs_click"):
+        return "reaction prompt: NOT answered (it takes a click on its row and the input shim is not available)"
     return f"reaction prompt: {'used' if use else 'declined'} ({r.status})"
 
 
