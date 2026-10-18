@@ -1284,7 +1284,7 @@ def fix_notes_prompt(lint_report: str) -> str:
 
 STUCK_DIRECTIVE = (
     "RUNNER DIRECTIVE, CHANGE APPROACH: the last {n} sessions ended with no measurable progress "
-    f"(same level, region, party levels/XP and journal, under {PROGRESS_MIN_POINTS} story points, no far move: "
+    f"(same place, party levels/XP and journal, under {PROGRESS_MIN_POINTS} story points, no far move: "
     "{what}). What you've been doing isn't working. "
     "Before anything else: run the stuck playbook, write three approaches in hypotheses.md that are "
     "genuinely different from the ones in your recent session logs, and pick one you haven't tried. "
@@ -1293,7 +1293,8 @@ STUCK_DIRECTIVE = (
 
 def stuck_directive(history: list[dict], n: int = STUCK_SESSIONS) -> str:
     sig = next((h.get("end_sig") for h in reversed(history) if h.get("end_sig")), None) or {}
-    what = ", ".join(f"{k}={v}" for k, v in sig.items() if k in ("level", "region", "subregion")) or "n/a"
+    # region/subregion as the map names them; the level id stays internal (FAIRNESS.md, audit C24)
+    what = ", ".join(f"{k}={v}" for k, v in sig.items() if k in ("region", "subregion")) or "n/a"
     return STUCK_DIRECTIVE.format(n=n, what=what)
 
 

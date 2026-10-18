@@ -409,6 +409,7 @@ class StuckDetection(unittest.TestCase):
         d = P.stuck_directive([{"progress": False, "end_sig": sig}] * 2)
         self.assertIn("CHANGE APPROACH", d)
         self.assertIn("Last Light Inn", d)
+        self.assertNotIn(sig["level"], d)  # audit C24: the level id stays internal
 
 
 # ---------------------------------------------------------------- the claude path before runner/clients.py
