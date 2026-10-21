@@ -80,6 +80,7 @@ local handlers = {}    -- RPC name -> handler
 BG3AI = { RPC = { register = function(name, fn) handlers[name] = fn end, push = function() end },
     Nav = { objectiveTargets = function() return objectives end } }
 dofile(LUA .. "/Shared/Util.lua")
+Ext.Require = function(p) return dofile(LUA .. "/" .. p) end -- the modules load their parts
 dofile(LUA .. "/Server/Visibility.lua")
 dofile(LUA .. "/Server/State.lua")
 local V, S = BG3AI.Visibility, BG3AI.State

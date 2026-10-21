@@ -67,6 +67,7 @@ BG3AI.Visibility = {
     context = function() return { party = members, is_party = { [members[1]] = true, [members[2]] = true,
                                                                [members[3]] = true, [members[4]] = true } } end,
 }
+Ext.Require = function(p) return dofile(LUA .. "/" .. p) end -- the modules load their parts
 dofile(LUA .. "/Server/State.lua")
 local S = BG3AI.State
 
