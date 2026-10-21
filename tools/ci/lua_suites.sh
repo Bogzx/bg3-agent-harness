@@ -10,9 +10,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 2
 
 # Known broken, with the reason; a suite leaves this list when it passes again.
-declare -A BROKEN=(
-  [tools/vis/test_trade.sh]="19/21: the Balance-gold trade cases fail on main too (research/ovh/found.md)"
-)
+declare -A BROKEN=()
 
 if [ $# -gt 0 ]; then suites=("$@"); else suites=(tools/dev/test_*.sh tools/vis/test_*.sh); fi
 fail=0

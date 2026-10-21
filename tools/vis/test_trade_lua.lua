@@ -46,6 +46,24 @@ local dc = { Mode = "Barter", TradePartyGold = 300, TraderInventoryGold = 900, P
     CharacterOfferGold = 0, TraderOfferGold = 0, TradeButtonsEnabled = true }
 local widget = { DataContext = dc, visible = true }
 
+-- BalanceTrade as the game does it: the side that gets less puts the difference on the table as a Gold stack
+-- (price = count) in its first free offer slot, if it has that much gold
+local function offerSum(o)
+    local t = 0
+    for _, s in ipairs(o.Slots.list) do if s.Object then t = t + s.Object.TradePrice end end
+    return t
+end
+local function addGold(o, n)
+    for _, s in ipairs(o.Slots.list) do
+        if not s.Object then s.Object = { TradePrice = n, Count = n, ItemType = "Gold" }; return end
+    end
+end
+local function balance(d)
+    local diff = offerSum(d.TraderOffer) - offerSum(d.CharacterOffer)
+    if diff > 0 and d.TradePartyGold >= diff then addGold(d.CharacterOffer, diff) end
+    if diff < 0 and d.TraderInventoryGold >= -diff then addGold(d.TraderOffer, -diff) end
+end
+
 Ext = {
     Utils = { MonotonicTime = function() return clock end },
     Entity = {
@@ -86,6 +104,7 @@ BG3AI = {
         end,
         path = function(o, p) for part in p:gmatch("[^%.]+") do if type(o) ~= "table" then return nil end o = o[part] end return o end,
         command = function(d, name, param)
+            if name == "BalanceTrade" then balance(d) end
             if name == "FinishBarter" then d.CharacterOffer, d.TraderOffer = vmInv({}), vmInv({}) end
             if name == "MoveTradeItem" then d.TraderOffer = vmInv({ [0] = param }) end
             return true
