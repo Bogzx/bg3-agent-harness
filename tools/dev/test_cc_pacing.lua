@@ -120,6 +120,7 @@ BG3AI.UI = {
         return {}
     end,
 }
+Ext = { Require = function(p) return dofile(L .. "/" .. p) end } -- Progression.lua loads its parts
 dofile(L .. "/Client/Progression.lua")
 local P = BG3AI.Progression
 

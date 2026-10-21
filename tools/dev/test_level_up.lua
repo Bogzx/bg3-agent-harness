@@ -314,6 +314,7 @@ BG3AI.UI = {
         return false, "unknown command " .. name
     end,
 }
+Ext.Require = function(p) return dofile(L .. "/" .. p) end -- Progression.lua loads its parts
 dofile(L .. "/Client/Progression.lua")
 
 local function run(args)

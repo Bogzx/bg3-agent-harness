@@ -71,6 +71,7 @@ BG3AI.UI = {
     path = function() return nil end,
     findAll = function() return {} end,
 }
+Ext = { Require = function(p) return dofile(L .. "/" .. p) end } -- Progression.lua loads its parts
 dofile(L .. "/Client/Progression.lua")
 
 local function call(op, args)
