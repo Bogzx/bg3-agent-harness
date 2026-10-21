@@ -75,7 +75,10 @@ end
 -- Least-exposure way on (travel_to when no fire-free walk leads further):
 -- a fan of bearings around the goal direction x distances. A candidate must
 -- end on clear ground (0.5 m margin), get >= 1 m closer to the goal and be
--- walkable; its score is progress - CROSS_COST x metres of harmful surface
+-- walkable, on ground the party sees or has walked (N.known: Guard's point_ok
+-- refuses a move_to anywhere else; E2E run 1: 9 of 50 travel_to legs, all
+-- crossing candidates, refused "not in view"); its score is progress -
+-- CROSS_COST x metres of harmful surface
 -- on its route - a small detour penalty. A clear detour (0 m) beats any
 -- crossing that gains less than CROSS_COST m per burning metre; otherwise
 -- the shortest crossing that still gets on wins (patch edges, quick hops).
@@ -98,12 +101,13 @@ function N.crossing(charUuid, toward, maxM)
     local d0 = U.dist(from, toward)
     local skip = N.surfaceAt(from) and N.HAZARD_SKIP_M or 0.5
     local best, bestScore, tried = nil, nil, 0
+    local ctx = V.context()
     local function try(x, z)
         local fy = floorAt(x, z, from[2])
         if not fy then return end
-        local p = { x, fy, z }
+        local p = U.vec({ x, fy, z }, 1) -- the 0.1 m point handed out is the one checked
         local progress = d0 - U.dist(p, toward)
-        if progress < 1.0 or N.surfaceNear(p, 0.5) then return end
+        if progress < 1.0 or N.surfaceNear(p, 0.5) or not N.known(ctx, p) then return end
         tried = tried + 1
         local dd = U.dist(from, p)
         local r = N.path(charUuid, p)

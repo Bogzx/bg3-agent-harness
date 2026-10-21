@@ -59,6 +59,19 @@ class TravelLegs(Base):
         self.assertIn("another way (along the route)", out)
         self.assertIn("arrived", out)
 
+    def test_run1_leg_ends_reach_the_guard_unchanged(self):
+        # E2E run 1 (actions.jsonl #323, travel_to (-47.4,13.2,-426)): leg 3 refused by the mod's point_ok, which keys
+        # known ground by the exact point (1 m cells): the leg ends nav.reach_toward checked go to act.move_to as they
+        # are, and a refusal ends the trip (no retry that hides a planner/guard disagreement).
+        legs = [[-14.2, 17.6, -428.1], [-20.7, 17.3, -432.2], [-37.6, 15.0, -434.3]]
+        self.g.reach = lambda a: {"reachable": True, "pos": legs[len(self.g.ops("act.move_to"))], "verified": True}
+        guard = "that spot is not in view and the party hasn't walked there: pick ground you can see"
+        self.g.refuse_if = lambda op, a: guard if op == "act.move_to" and a.get("pos") == legs[2] else None
+        out = travel_macro.travel_to(x=-47.4, y=13.2, z=-426.0)
+        self.assertEqual([m[1]["pos"] for m in self.g.ops("act.move_to")], legs)
+        self.assertFalse(macros.leg_retryable("failed", "step 1 move_to failed", f"move_to: FAILED — {guard}"))
+        self.assertIn("STOPPED: leg 3 failed", out)
+
     def test_retries_are_capped(self):
         self.g.reach = self.reach
         self.g.refuse_if = lambda op, a: "no walkable path there" if op == "act.move_to" else None

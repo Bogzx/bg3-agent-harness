@@ -814,7 +814,9 @@ end
 -- the whole trip). First a point along the engine's own route (it follows
 -- stairs and detours the straight-line samples miss), then the farthest
 -- straight sample of a half / quarter leg. Each must verify, get >= 1 m
--- closer, and lie >= ALT_EXCLUDE_M from `bad` (the leg end that failed).
+-- closer, lie >= ALT_EXCLUDE_M from `bad` (the leg end that failed) and on
+-- known ground (N.known, as Guard's point_ok: run 1's "another way (along the
+-- route)" leg ended on an unseen route point and was refused).
 -- Returns a reach_toward-shaped result with alt="route"|"shorter", or nil.
 N.ALT_EXCLUDE_M = 1.5
 function N.altLeg(charUuid, toward, maxM, bad, avoid)
@@ -825,6 +827,7 @@ function N.altLeg(charUuid, toward, maxM, bad, avoid)
     local function good(p, searched)
         if type(p) ~= "table" or d0 - U.dist(p, toward) < 1.0 then return false end
         if bad and U.dist(p, bad) < N.ALT_EXCLUDE_M then return false end
+        if not N.known(nil, p) then return false end
         return searched or N.verifyPoint(charUuid, p) == true
     end
     local ap = N.approach(charUuid, toward, toward, 1.0, maxM, avoid)
@@ -864,7 +867,8 @@ function N.directLeg(charUuid, toward, avoid)
     local e = V.entity(charUuid)
     local from = e and V.pos(e)
     if not from or type(toward) ~= "table" then return nil, "no position" end
-    local goal = { toward[1], floorAt(toward[1], toward[3], toward[2]) or toward[2], toward[3] }
+    -- 0.1 m, as handed out: N.known's 1 m key of the point checked is the one Guard's point_ok checks
+    local goal = U.vec({ toward[1], floorAt(toward[1], toward[3], toward[2]) or toward[2], toward[3] }, 1)
     -- the engine's whole route only to a goal the party has seen or walked (N.known); else the sampled legs
     if not N.known(nil, goal) then return nil, "unseen" end
     local r = rawPath(e, from, goal, N.PATH_END_TOL_M)
@@ -881,7 +885,7 @@ function N.directLeg(charUuid, toward, avoid)
             acc = acc + U.dist(pts[i - 1], pts[i])
             if acc > N.DIRECT_LEG_PATH_M then break end -- a switchback node near us is not "along the way"
             -- a leg ends on known ground (Guard's point_ok refuses a move_to anywhere else)
-            if U.dist(from, pts[i]) <= N.DIRECT_LEG_M and N.known(nil, pts[i]) then idx, walked = i, acc end
+            if U.dist(from, pts[i]) <= N.DIRECT_LEG_M and N.known(nil, U.vec(pts[i], 1)) then idx, walked = i, acc end
         end
         if not idx or walked < 5 then return nil, "no node in reach" end
         pos, walk, last = pts[idx], walked, idx
