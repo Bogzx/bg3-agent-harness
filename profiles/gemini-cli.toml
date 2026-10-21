@@ -1,3 +1,4 @@
+# UNSUPPORTED (D14, 2026-10-22): the Gemini CLI is not installed here and has never run; kept for later.
 # Gemini CLI with its own endpoint and login. Example model id.
 client = "gemini"
 model = "gemini-2.5-pro"

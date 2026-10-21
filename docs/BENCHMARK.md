@@ -78,8 +78,10 @@ python3 runner/play.py runs --playthrough naut-opus [--failures]        # the ta
 start save"); loading a start save in a series is *not live-tested*.
 
 **Models other than Claude.** `--client claude|codex|gemini` picks the CLI that plays (`runner/clients.py`:
-Claude: the same command as before, verified offline; Codex run against stubs only, Gemini untested); a series
-keeps its first client (series.json). A non-Claude series is *not live-tested yet*.
+Claude: the same command as before, verified offline; Codex: untested live, its CodexClient command passes an
+offline check against codex-cli 0.157.1, a stub Responses-API model and the stub MCP server
+(`tools/codex/conformance/`); Gemini: **unsupported** (D14: the Gemini CLI is not installed or logged in here, never
+run)); a series keeps its first client (series.json). A non-Claude series is *not live-tested yet*.
 
 **The container sandbox (step 3).** `--sandbox container` runs the client in a container that reaches only the bg3
 MCP server (served over http on the host with the session's env) and, through an egress proxy, its own model API:

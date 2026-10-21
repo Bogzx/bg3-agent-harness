@@ -1,3 +1,4 @@
+# Untested live (D14, 2026-10-22): offline check only, tools/codex/conformance/ (codex-cli 0.157.1).
 # Codex CLI with its own endpoint and login (~/.codex). Example model id.
 client = "codex"
 model = "gpt-5"
