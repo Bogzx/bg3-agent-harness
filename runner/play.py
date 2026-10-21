@@ -72,6 +72,10 @@ import game_settings  # noqa: E402  (runner/game_settings.py: settings readout, 
 sys.path.insert(0, str(REPO / "tools"))
 import steam_paths  # noqa: E402  (stdlib: Steam's offline state, the game's install and Larian profile paths)
 import bg3le_buildinfo  # noqa: E402  (stdlib: is build/bg3le/dist built with every patches/bg3le patch?)
+from bg3harness.game import io as game  # noqa: E402  (the game's I/O; called as game.<name> so tests patch one place)
+from bg3harness.game.io import (  # noqa: E402, F401  (port_open: re-exported for test_play_isolation only)
+    DEBUG_PORT, EVAL_TIMEOUT, MOD_READY_LUA, Bg3leStale, ForeignGameRunning, GameDied, LaunchBlocked, LaunchGaveUp,
+    LaunchWatch, NoDisplay, RpcError, Save, SteamNotOffline, port_open)
 
 PLAY_DIR = REPO / "play"
 PLAYTHROUGHS = Path(os.environ.get("BG3AI_PLAYTHROUGHS", REPO / "playthroughs"))
@@ -83,8 +87,6 @@ REVIEW_PY = REPO / "tools" / "logs" / "review_session.py"
 CHECK_PLANS = REPO / "tools" / "dev" / "check_plans.py"   # party-build.md plan lines vs the game's level-up offers
 CHECK_PLANS_TIMEOUT = 90
 SAVE_DIR = steam_paths.saves_dir()   # $BG3AI_SAVE_DIR, else under $BG3AI_PROFILE_DIR / the default profile
-DEBUG_HOST = "127.0.0.1"
-DEBUG_PORT = int(os.environ.get("BG3LE_DEBUG_PORT", "9998"))
 SAVE_PREFIX = os.environ.get("BG3AI_SAVE_PREFIX", "")
 MEMORY_TEMPLATE = REPO / "memory-template"
 SCENARIOS = Path(os.environ.get("BG3AI_SCENARIOS", REPO / "scenarios"))   # scenarios/<name>.json (run --scenario)
@@ -108,7 +110,6 @@ HEALTH_INTERVAL = 30           # seconds between liveness evals during a session
 HEALTH_RETRY_INTERVAL = 10     # ... and after a failed one (a hang is declared within ~2 min, see detect_budget_s)
 HEALTH_FAILURES = 3            # consecutive failed evals → hung
 HEALTH_EVAL_TIMEOUT = 8        # a liveness eval slower than this counts as failed
-EVAL_TIMEOUT = 15
 AGENT_SILENT_MINUTES = float(os.environ.get("BG3AI_AGENT_SILENT_MIN", "4"))  # no claude output this long → hung
                                # (bridge tools cap their waits at ~60 s; a model turn is seconds to ~1 min)
 CHECK_ALL_INTERVAL = 30 * 60   # tools/dev/check_all.py between sessions, at most this often (it takes ~25 s)
@@ -201,8 +202,6 @@ MENU_TIMEOUT = 180             # debug port up → main menu (splash pressed pas
 MENU_POLL = 3                  # seconds between menu/splash checks
 LOAD_START_TIMEOUT = 60        # ui.menu load → the game leaves the menu, else the load never started
 STALE_EXIT_WITHIN_S = 30       # launch_game.sh exiting STALE_EXIT this soon after the launch = its stale-bg3le refusal
-PORT_DEAD_S = 60               # bg3 up this long with port 9998 refusing = dead (bg3le listens ~1 s after start)
-BG3_APP_ENV = b"SteamAppId=1086940"
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # Flags for every playing session. Keep the cacheable prefix (system prompt + tool schemas) byte-identical
 # across sessions: per-machine sections (cwd, git status, env info) move into the first user message, and the
@@ -344,24 +343,6 @@ def parse_handoff_save(text: str) -> str | None:
     if not label or label.lower().startswith(("(none", "none", "n/a")):
         return None
     return label
-
-
-SAVE_FOLDER_RE = re.compile(r"^(?P<owner>.+)-(?P<num>\d+)__(?P<label>.+)$")
-
-
-@dataclass(frozen=True)
-class Save:
-    folder: str
-    owner: str
-    label: str
-    mtime: float
-
-
-def parse_save_folder(name: str, mtime: float = 0.0) -> Save | None:
-    m = SAVE_FOLDER_RE.match(name)
-    if not m:
-        return None
-    return Save(name, m.group("owner"), m.group("label"), mtime)
 
 
 def is_ai_label(label: str, prefix: str = SAVE_PREFIX) -> bool:
@@ -606,7 +587,7 @@ def agent_quicksaves(actions: list[dict], owner: str | None) -> list[str]:
     for a in actions:
         if a.get("tool") != "save_game.bg" or not a.get("ok") or not a.get("folder"):
             continue
-        s = parse_save_folder(str(a["folder"]))
+        s = game.parse_save_folder(str(a["folder"]))
         if s and owner and s.owner.casefold() == owner.casefold() and is_autosave(s.label) and s.folder not in out:
             out.append(s.folder)
     return out
@@ -850,7 +831,7 @@ def last_loaded_save(actions: list[dict], saves: list[Save], fallback: str | Non
         m = re.search(r"loaded=(\S+)", str(a.get("result") or "")) if a.get("tool") == "load_game" else None
         if not m:
             continue
-        arg = parse_save_folder(str((a.get("args") or {}).get("save") or ""))
+        arg = game.parse_save_folder(str((a.get("args") or {}).get("save") or ""))
         if arg and arg.label == m.group(1):
             return arg.folder
         same = [sv for sv in saves if sv.label == m.group(1) and sv.mtime <= a.get("t", 0)]
@@ -872,40 +853,6 @@ def game_started_at() -> float | None:
         return (RUNTIME / "game.pid").stat().st_mtime
     except OSError:
         return None
-
-
-def progress_signature(status: dict | None, journal: list | dict | None) -> dict | None:
-    """What counts as progress: level/region/subregion, party levels and XP, journal steps."""
-    if status is None and journal is None:
-        return None
-    sig: dict = {}
-    if status:
-        sig["level"] = status.get("level")
-        sig["region"] = status.get("region")
-        sig["subregion"] = status.get("subregion")
-        party = status.get("party") or []
-        sig["party_levels"] = sorted(str(p.get("level")) for p in party if isinstance(p, dict))
-        placed = [p for p in party if isinstance(p, dict) and isinstance(p.get("pos"), list) and len(p["pos"]) >= 3]
-        if placed:
-            sig["pos"] = [round(float(x), 1) for x in placed[0]["pos"][:3]]   # not compared as is: see session_progress
-            # RUN-6: the party's order can change (a swap, the selection); state_drift compares one member by name
-            sig["pos_name"] = placed[0].get("name")
-            sig["party_pos"] = {str(p["name"]): [round(float(x), 1) for x in p["pos"][:3]] for p in placed
-                                if p.get("name")}
-        xp = [p.get("xp") for p in party if isinstance(p, dict) and p.get("xp") is not None]
-        if xp:
-            sig["xp"] = sum(xp)
-    if journal is not None:
-        quests = journal.get("quests", journal) if isinstance(journal, dict) else journal
-        steps = 0
-        titles = []
-        for q in quests or []:
-            if isinstance(q, dict):
-                titles.append(f"{q.get('title')}|{q.get('done', False)}")
-                steps += len(q.get("steps") or [])
-        sig["journal"] = hashlib.sha1("\n".join(sorted(titles)).encode()).hexdigest()[:12]
-        sig["journal_steps"] = steps
-    return sig
 
 
 POS_KEYS = ("pos", "pos_name", "party_pos")   # where the party stands: never a save-state change by itself
@@ -1400,29 +1347,13 @@ def ui_strict_text(reply: str) -> str:
 # The player's own created character (the avatar), not the selected one: Osi.GetHostCharacter() and the
 # client's ClientControl follow the selection, so picking Lae'zel used to close the save/load gates.
 # Server context. DB_Avatars first, then the Avatar component; the host character only as a last resort.
-AVATAR_NAME_LUA = (
-    'local function nm(g) local ok, n = pcall(function() return '
-    'Ext.Loca.GetTranslatedString(Osi.GetDisplayName(g)) end) return ok and n or nil end '
-    'local ok, rows = pcall(function() return Osi.DB_Avatars:Get(nil) end) '
-    'if ok and rows and rows[1] and rows[1][1] then local n = nm(rows[1][1]) if n and n ~= "" then return n end end '
-    'for _, e in ipairs(Ext.Entity.GetAllEntitiesWithComponent("Avatar") or {}) do '
-    '  local dn = e.DisplayName '
-    '  if dn then local n = Ext.Loca.GetTranslatedString(dn.NameKey.Handle.Handle) if n and n ~= "" then return n end end '
-    'end '
-    'return nm(Osi.GetHostCharacter()) or ""')
 
 # "1" when a party member is in a fight, "0" when none is, "?" when the party can't be read.
-PARTY_COMBAT_LUA = (
-    'local ok, rows = pcall(function() return Osi.DB_PartyMembers:Get(nil) end) '
-    'if not ok or not rows or not rows[1] then return "?" end '
-    'for _, r in ipairs(rows) do local c = Osi.IsInCombat(r[1]) if c == 1 or c == true then return "1" end end '
-    'return "0"')
 
 MOD_DIR = REPO / "mod"
 # The runner's game loads the mod from this copy of mod/ (launch_game.sh --mod-path), refreshed only at a session
 # boundary: S090 loaded the Lua of a merge into main that landed 19 s after the session's bridge started.
 MOD_LIVE = RUNTIME / "mod-live"
-MOD_READY_LUA = "return tostring(Mods.BG3AI ~= nil and Mods.BG3AI.BG3AI ~= nil and Mods.BG3AI.BG3AI.RPC ~= nil)"
 RELOAD_TIMEOUT = 60
 WAIT_REPORT_AFTER = 90         # a runner wait longer than this logs what it waits for ...
 WAIT_REPORT_EVERY = 30         # ... every this many seconds
@@ -1484,7 +1415,7 @@ def repo_commit(repo: Path = REPO, paths: tuple[str, ...] = ("mod", "bridge/src"
 def game_mod_path(proc: Path = Path("/proc")) -> str | None:
     """BG3LE_MOD_PATH of the running harness game (its environ): where it loads the mod from. None: no game, or
     none it reads (no bg3le, or an unreadable environ)."""
-    for pid in pids_of_game():
+    for pid in game.pids_of_game():
         try:
             env = (proc / str(pid) / "environ").read_bytes().split(b"\0")
         except OSError:
@@ -1630,46 +1561,9 @@ class HealthTracker:
 
 # ======================================================================== game I/O
 
-class RpcError(RuntimeError):
-    """The mod refused an op or answered garbage. A RuntimeError: at a session boundary it is a setup failure
-    (relaunch and retry), never the runner's death (RUN-3: a refused ui.menu load killed the run)."""
-
 
 # What a session's setup or recovery may raise when the game or the mod misbehaves: retried, never fatal.
 SETUP_ERRORS = (RuntimeError, OSError, TimeoutError, LuaDebugError)
-
-
-class LaunchBlocked(RuntimeError):
-    """The game can't be launched now for a reason an operator fixes outside the runner: never a give-up, the run
-    loop retries every STEAM_RETRY_S."""
-
-
-class ForeignGameRunning(LaunchBlocked):
-    """A bg3 this harness didn't launch (a user's own BG3) is running: never signalled, and no second game beside it
-    (RUN-4)."""
-
-
-class SteamNotOffline(LaunchBlocked):
-    """Steam isn't in offline mode: launching BG3 could kick the account's other machine off. Never launch."""
-
-
-class NoDisplay(LaunchBlocked):
-    """No usable display env (display_env.problem): the game would fall back to the iGPU and crash (L8). Never
-    launch; the desktop session coming back fixes it."""
-
-
-class GameDied(RuntimeError):
-    """The game died while the runner waited on it (crash, crash reporter, bg3 gone, dead debug port, launcher exit)."""
-
-
-class Bg3leStale(Exception):
-    """The bg3le build lacks a patches/bg3le patch (UI-1): never launch it. Not a RuntimeError: a stale build never
-    fixes itself, so no retry loop may swallow it; the runner stops until tools/build_bg3le.sh is run."""
-
-
-class LaunchGaveUp(Exception):
-    """LAUNCH_ATTEMPTS launches in a row died before the save played: the runner stops (not a RuntimeError, so no
-    retry loop swallows it)."""
 
 
 def steam_ready() -> tuple[bool, str]:
@@ -1699,132 +1593,6 @@ def bg3le_problems() -> list[str]:
     return bg3le_buildinfo.problems(lib.parent)
 
 
-def port_open(host: str = DEBUG_HOST, port: int = DEBUG_PORT, timeout: float = 1.0) -> bool:
-    """The debug port answers. A handshake, not a bare connect-and-close: that leaked a bg3le client slot
-    per probe ("client attached (371 connected)"); see luadebug.port_answers."""
-    from bg3ai.luadebug import port_answers
-    return port_answers(host, port, timeout)
-
-
-def lua_eval(code: str, context: str = "client", timeout: float = EVAL_TIMEOUT) -> str:
-    from bg3ai.luadebug import LuaDebugClient
-    with LuaDebugClient(connect_timeout=5.0) as lua:
-        return lua.evaluate(code, context=context, timeout=timeout)
-
-
-def rpc(op: str, args: dict | None = None, context: str = "server", timeout: float = EVAL_TIMEOUT):
-    payload = json.dumps({"op": op, "args": args or {}})
-    if "]==]" in payload:
-        raise ValueError("payload contains the Lua long-string terminator")
-    raw = lua_eval(f"return Mods.BG3AI.BG3AI.rpc([==[{payload}]==])", context, timeout)
-    try:
-        reply = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise RpcError(f"{op}: non-JSON reply {raw[:200]!r}") from e
-    if not reply.get("ok"):
-        raise RpcError(f"{op}: {reply.get('error')}")
-    return reply.get("result")
-
-
-def mod_loaded(timeout: float = EVAL_TIMEOUT) -> bool | None:
-    """RUN-8: the BG3AI mod's RPC is loaded in the client context (MOD_READY_LUA); None when the eval itself fails
-    (that is game_state's business, not a missing mod)."""
-    try:
-        return lua_eval(MOD_READY_LUA, "client", timeout).strip() == "true"
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def game_state(timeout: float = EVAL_TIMEOUT) -> str | None:
-    """Ext.Utils.GetGameState() from the client context, or None if the game doesn't answer."""
-    try:
-        return lua_eval("return tostring(Ext.Utils.GetGameState())", "client", timeout).strip()
-    except Exception:  # noqa: BLE001 - any failure means "no answer"
-        return None
-
-
-def available_ops(context: str) -> set[str]:
-    try:
-        return set((rpc("sys.info", context=context) or {}).get("ops") or [])
-    except Exception:  # noqa: BLE001
-        return set()
-
-
-def host_character_name() -> str | None:
-    """Display name of the party's avatar (the player's own created character), or None.
-
-    Not the selected character: selecting a companion must neither close the save/load gates nor make
-    --take-over think the running game belongs to someone else."""
-    try:
-        return lua_eval(AVATAR_NAME_LUA, context="server").strip() or None
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def party_in_combat() -> bool | None:
-    """Whether a party member is in a fight (server context), None if the game doesn't answer."""
-    try:
-        r = lua_eval(PARTY_COMBAT_LUA, context="server").strip()
-    except Exception:  # noqa: BLE001
-        return None
-    return {"1": True, "0": False}.get(r)
-
-
-def server_ready() -> bool:
-    try:
-        rpc("sys.ping", context="server")
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def ui_state() -> dict | None:
-    """The mod's ui.state (client), or None without the op or an answer."""
-    if "ui.state" not in available_ops("client"):
-        return None
-    try:
-        return rpc("ui.state", context="client") or {}
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def ui_screen() -> str | None:
-    return (ui_state() or {}).get("screen")
-
-
-def at_splash(st: dict | None) -> bool:
-    """The "Press any key" splash before the main menu (ui.state shows it as a panel, not a screen)."""
-    st = st or {}
-    return st.get("page") == "SplashScreen" or "SplashScreen" in (st.get("panels_open") or [])
-
-
-def press_menu_key() -> str:
-    """One key past the splash: Enter through the input shim (a real SDL key, like a player), else the engine's
-    InjectKeyPress. Returns which one worked."""
-    try:
-        from bg3ai.input import InputClient
-        with InputClient(timeout=3.0) as inp:
-            inp.key("ENTER")
-        return "shim Enter"
-    except Exception as e:  # noqa: BLE001
-        log(f"shim key failed ({e}); using InjectKeyPress")
-    lua_eval('Ext.Input.InjectKeyPress("SPACE") return 1')
-    return "InjectKeyPress SPACE"
-
-
-def read_progress() -> dict | None:
-    ops = available_ops("server")
-    status = journal = None
-    try:
-        if "state.status" in ops:
-            status = rpc("state.status")
-        if "state.journal" in ops:
-            journal = rpc("state.journal")
-    except Exception as e:  # noqa: BLE001
-        log(f"progress read failed: {e}")
-    return progress_signature(status, journal)
-
-
 def list_saves() -> list[Save]:
     out = []
     try:
@@ -1839,161 +1607,15 @@ def list_saves() -> list[Save]:
             mtime = lsv.stat().st_mtime if lsv is not None else e.stat().st_mtime
         except OSError:
             continue
-        s = parse_save_folder(e.name, mtime)
+        s = game.parse_save_folder(e.name, mtime)
         if s:
             out.append(s)
     return out
 
 
-def load_menu_args(save: Save, saves: list[Save]) -> dict:
-    """ui.menu load arguments: the Load page groups saves by owner, newest first, and the mod checks the
-    selected save's date before loading (it can't read save titles there)."""
-    same = sorted((s for s in saves if s.owner == save.owner), key=lambda s: s.mtime, reverse=True)
-    args: dict = {"action": "load", "name": save.folder, "owner": save.owner}
-    idx = next((i for i, s in enumerate(same, 1) if s.folder == save.folder), None)
-    if idx is not None:
-        t = time.localtime(save.mtime)
-        args.update(index=idx, date={"y": t.tm_year, "m": t.tm_mon, "d": t.tm_mday, "H": t.tm_hour, "M": t.tm_min})
-    return args
-
-
-def all_bg3_pids() -> list[int]:
-    """Every native game process on the machine (./bin/bg3), ours or a user's own; not the pressure-vessel wrapper."""
-    r = subprocess.run(["pgrep", "-x", "bg3"], capture_output=True, text=True)
-    return [int(p) for p in r.stdout.split()]
-
-
 # A harness process (launch_game.sh's game, or the crash reporter it spawns) carries one of these (RUN-4): the marker
 # env (BG3AI_GAME_STAMP, from 2026-10-16) or the screenshot layer's bg3ai control socket (every launch before it),
 # its own cgroup scope (BG3AI_GAME_SCOPE, the default) or bg3le mapped in.
-HARNESS_ENV = (b"BG3AI_GAME_STAMP=", b"control=bg3ai-shot")
-
-
-def is_harness_pid(pid: int) -> bool:
-    """The process was started by runner/launch_game.sh (this harness), not by a user from Steam."""
-    proc = Path(f"/proc/{pid}")
-    try:
-        if "/bg3ai-game-" in (proc / "cgroup").read_text(errors="replace"):
-            return True
-    except OSError:
-        pass
-    try:
-        env = (proc / "environ").read_bytes()
-        if any(m in env for m in HARNESS_ENV):
-            return True
-    except OSError:
-        pass
-    try:
-        with open(proc / "maps", "rb") as f:
-            return any(b"libbg3le" in ln for ln in f)
-    except OSError:
-        return False
-
-
-def pids_of_game() -> list[int]:
-    """This harness's native game processes (all_bg3_pids that is_harness_pid): the ones the runner may wait on,
-    count as its game, or kill. A user's own BG3 is never one of them (RUN-4)."""
-    return [p for p in all_bg3_pids() if is_harness_pid(p)]
-
-
-def foreign_bg3_pids() -> list[int]:
-    """bg3 processes this harness didn't launch (a user's own BG3): the runner never signals them and never
-    launches a second game beside one."""
-    return [p for p in all_bg3_pids() if not is_harness_pid(p)]
-
-
-def proc_start(pid: int) -> int | None:
-    """The process's start time (clock ticks since boot, /proc/<pid>/stat field 22): with the pid, its identity
-    (a pid reused after a reboot or a wrap has another start time)."""
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-        return int(stat[stat.rindex(")") + 2:].split()[19])
-    except (OSError, ValueError, IndexError):
-        return None
-
-
-def proc_cmdline(pid: int) -> bytes:
-    try:
-        return Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
-        return b""
-
-
-def _pgid(pid: int) -> int | None:
-    try:
-        return os.getpgid(pid)
-    except OSError:
-        return None
-
-
-def crash_reporter_pids() -> list[int]:
-    """BG3's LinuxCrashReporter processes. One starts after the game crashes and keeps the launcher alive (S014:
-    the runner then waited 10 min for a dead game). Only reporters with the game's SteamAppId (or its install path)
-    that this harness's game spawned (is_harness_pid): a user's own BG3 crash report is left alone (RUN-4)."""
-    r = subprocess.run(["pgrep", "-f", "LinuxCrashReporter"], capture_output=True, text=True)
-    out = []
-    for p in r.stdout.split():
-        try:
-            env = Path(f"/proc/{p}/environ").read_bytes().split(b"\0")
-            cmd = Path(f"/proc/{p}/cmdline").read_bytes()
-        except OSError:
-            continue
-        if (BG3_APP_ENV in env or b"Baldurs Gate 3" in cmd) and is_harness_pid(int(p)):   # RUN-4: ours only
-            out.append(int(p))
-    return out
-
-
-class LaunchWatch:
-    """Fast crash detection for one launch, polled by Runner.wait_for(). Dead when: a bg3le log of this launch's stamp
-    (runtime/logs/bg3le-<stamp>.log.<pid>) has a `crash:` line or was written by LinuxCrashReporter; a game crash
-    reporter runs; bg3 was up and is gone; or bg3 is up but port 9998 has refused for PORT_DEAD_S s."""
-
-    def __init__(self, stamp: str, logs: Path, started: float | None = None, port_dead_s: float = PORT_DEAD_S):
-        self.stamp, self.logs, self.port_dead_s = stamp, logs, port_dead_s
-        self.started = time.time() if started is None else started
-        self.offsets: dict[str, int] = {}
-        self.bg3_since: float | None = None
-        self.port_ok_at: float | None = None
-
-    def log_crash(self) -> str | None:
-        """The first crash sign in this launch's bg3le logs; reads only what's new since the last call."""
-        for f in sorted(self.logs.glob(f"bg3le-{self.stamp}.log*")):
-            off = self.offsets.get(f.name, 0)
-            try:
-                with open(f, "rb") as fh:
-                    fh.seek(off)
-                    chunk = fh.read()
-            except OSError:
-                continue
-            end = chunk.rfind(b"\n") + 1   # keep a partial last line for the next call
-            self.offsets[f.name] = off + end
-            for line in chunk[:end].splitlines():
-                if b"] crash:" in line:
-                    return line.split(b"] ", 1)[-1].decode(errors="replace").strip()[:200]
-                if b"host is LinuxCrashReporter" in line:
-                    return f"LinuxCrashReporter started ({f.name})"
-        return None
-
-    def check(self, now: float | None = None) -> str | None:
-        now = time.time() if now is None else now
-        why = self.log_crash()
-        if why:
-            return f"bg3le logged {why}"
-        rep = crash_reporter_pids()
-        if rep:
-            return f"LinuxCrashReporter is running (pid {', '.join(map(str, rep))})"
-        if pids_of_game():
-            if self.bg3_since is None:
-                self.bg3_since = now
-        elif self.bg3_since is not None:
-            return "the bg3 process is gone"
-        if port_open():
-            self.port_ok_at = now
-        elif self.bg3_since is not None:
-            since = max(self.bg3_since, self.port_ok_at or 0.0)
-            if now - since > self.port_dead_s:
-                return f"bg3 is up but debug port {DEBUG_PORT} has refused for {now - since:.0f} s"
-        return None
 
 
 # ======================================================================== check_all between sessions
@@ -2387,10 +2009,10 @@ class Runner:
             os.waitpid(pg, os.WNOHANG)
         except OSError:
             pass
-        start = proc_start(pg)
+        start = game.proc_start(pg)
         if start is None:   # the leader (launch_game.sh) is gone: the group is ours only if it holds a harness game
-            return pg if any(_pgid(p) == pg for p in pids_of_game()) else None
-        if b"launch_game.sh" not in proc_cmdline(pg):
+            return pg if any(game._pgid(p) == pg for p in game.pids_of_game()) else None
+        if b"launch_game.sh" not in game.proc_cmdline(pg):
             return None
         if g.get("pg_start") is not None and g["pg_start"] != start:
             return None
@@ -2412,7 +2034,7 @@ class Runner:
     def game_alive(self) -> bool:
         if self.game_proc is not None and self.game_proc.poll() is not None:
             return False
-        return port_open()
+        return game.port_open()
 
     def launch_game(self, load_folder: str | None) -> None:
         ok, why = steam_ready()
@@ -2423,7 +2045,7 @@ class Runner:
             self.event("steam_refused", why=why)
             raise SteamNotOffline(why)
         self.refuse_stale_bg3le(bg3le_problems())
-        foreign = foreign_bg3_pids()
+        foreign = game.foreign_bg3_pids()
         if foreign:   # RUN-4: a user's own BG3 (Steam would hand a second launch to it, or two games fight)
             why = f"a BG3 this harness didn't launch is running (pid {', '.join(map(str, foreign))})"
             write_status(alert={"t": time.time(), "kind": "foreign_game", "msg": f"not launching: {why}"[:600]})
@@ -2431,7 +2053,7 @@ class Runner:
                 "launch its own game; the runner keeps retrying. !!!!!")
             self.event("foreign_game", pids=foreign)
             raise ForeignGameRunning(why)
-        if port_open():
+        if game.port_open():
             raise RuntimeError(f"port {DEBUG_PORT} is still in use; can't launch another game")
         filled = display_env.fill(os.environ)   # Xwayland restarted since the runner started: its new -auth file
         if filled:
@@ -2457,7 +2079,7 @@ class Runner:
         logf.close()  # the game has its own copy of the descriptor
         now = time.time()
         self.watch = LaunchWatch(stamp, RUNTIME / "logs", now)
-        self.state["game"] = {"pgid": self.game_proc.pid, "pg_start": proc_start(self.game_proc.pid), "launched": now,
+        self.state["game"] = {"pgid": self.game_proc.pid, "pg_start": game.proc_start(self.game_proc.pid), "launched": now,
                               "load": load_folder, "stamp": stamp}
         self.state["mod_hashes"] = mod_tree_hashes()  # a fresh game loads the mod as it is now
         write_status(game_pgid=self.game_proc.pid)
@@ -2490,7 +2112,7 @@ class Runner:
             elif (self.state["game"] or {}).get("pgid"):
                 log(f"not signalling process group {self.state['game']['pgid']}: not provably our launch any more "
                     "(a reboot or a reused pid)")
-        foreign = foreign_bg3_pids()
+        foreign = game.foreign_bg3_pids()
         if foreign:
             log(f"leaving bg3 pid(s) {', '.join(map(str, foreign))} alone: not launched by this harness")
 
@@ -2500,14 +2122,14 @@ class Runner:
                     os.killpg(pgid, sig)
                 except (ProcessLookupError, PermissionError):
                     pass
-            for pid in pids_of_game() + crash_reporter_pids():
+            for pid in game.pids_of_game() + game.crash_reporter_pids():
                 try:
                     os.kill(pid, sig)
                 except (ProcessLookupError, PermissionError):
                     pass
 
         def gone() -> bool:
-            return not pids_of_game() and not crash_reporter_pids() and not port_open()
+            return not game.pids_of_game() and not game.crash_reporter_pids() and not game.port_open()
 
         send(signal.SIGTERM)
         end = time.time() + KILL_GRACE
@@ -2528,9 +2150,9 @@ class Runner:
         self.watch = None
         self.state["game"] = None
         self.state["game_killed_at"] = time.time()
-        if pids_of_game():
-            raise RuntimeError(f"bg3 processes survive SIGKILL: {pids_of_game()}")
-        if port_open():
+        if game.pids_of_game():
+            raise RuntimeError(f"bg3 processes survive SIGKILL: {game.pids_of_game()}")
+        if game.port_open():
             raise RuntimeError(f"port {DEBUG_PORT} is still in use after the game was killed")
 
     def wait_for(self, what: str, pred, timeout: float, interval: float = 2.0) -> bool:
@@ -2562,11 +2184,11 @@ class Runner:
     def wait_menu(self) -> bool:
         """Up to the main menu, pressing past the "Press any key" splash. The client state there is Menu or LoadMenu
         (it flips between them on the splash): never a reason to wait for Running."""
-        if not self.wait_for("debug port", port_open, 240):
+        if not self.wait_for("debug port", game.port_open, 240):
             return False
-        if not self.wait_for("client game state Menu", lambda: game_state() in MENU_STATES, 300):
+        if not self.wait_for("client game state Menu", lambda: game.game_state() in MENU_STATES, 300):
             return False
-        if "ui.state" not in available_ops("client"):
+        if "ui.state" not in game.available_ops("client"):
             for _ in range(2):  # without ui.state (no mod yet): two blind presses
                 self.try_menu_key()
                 time.sleep(MENU_POLL)
@@ -2576,12 +2198,12 @@ class Runner:
 
         def at_menu() -> bool:
             nonlocal loadmenu_since, presses
-            state, st = game_state(), ui_state() or {}
+            state, st = game.game_state(), game.ui_state() or {}
             if state == "Menu" and st.get("screen") == "main_menu":
                 return True
             loadmenu_since = (loadmenu_since or time.time()) if state == "LoadMenu" else None
             # Only on the splash: a key on the main menu itself would hit Continue (someone else's save, maybe).
-            if (state == "Menu" and at_splash(st)) or (
+            if (state == "Menu" and game.at_splash(st)) or (
                     loadmenu_since is not None and time.time() - loadmenu_since >= SPLASH_LOADMENU_S):
                 presses += 1
                 how = self.try_menu_key()
@@ -2594,7 +2216,7 @@ class Runner:
 
     def try_menu_key(self) -> str:
         try:
-            return press_menu_key()
+            return game.press_menu_key(log)
         except Exception as e:  # noqa: BLE001
             log(f"key press failed: {e}")
             return "nothing (failed)"
@@ -2602,14 +2224,14 @@ class Runner:
     def wait_running(self) -> bool:
         """After a load was started: Running, then the server context. A splash on the way gets a key press."""
         def running() -> bool:
-            state = game_state()
+            state = game.game_state()
             if state == "Running":
                 return True
-            if state == "Menu" and at_splash(ui_state()):
+            if state == "Menu" and game.at_splash(game.ui_state()):
                 log(f"splash screen while waiting for the load: pressed {self.try_menu_key()}")
             return False
         return (self.wait_for("game state Running", running, 600, MENU_POLL)
-                and self.wait_for("server context", server_ready, 120, 3))
+                and self.wait_for("server context", game.server_ready, 120, 3))
 
     def own_saves(self) -> list[Save]:
         """list_saves() minus saves older than this playthrough's run start (runner.json saves_after, set for a
@@ -2740,7 +2362,7 @@ class Runner:
         last = next((h for h in reversed(self.state["history"] or []) if h.get("kind") == "play"), None)
         if not last or not last.get("end_sig"):
             return None
-        now = read_progress()
+        now = game.read_progress(log)
         if now is None:
             return "its progress can't be read (state.status/state.journal), so it isn't known to be where it was"
         return state_drift(last["end_sig"], now)
@@ -2748,20 +2370,20 @@ class Runner:
     def load_save(self, save: Save | None, force: bool = False) -> str | None:
         """Bring the game to this playthrough's latest save (or the main menu for a new game). force: load it even
         when --take-over would play on from the running game (restart_drift found it elsewhere)."""
-        ui_load = "ui.menu" in available_ops("client") if port_open() else False
+        ui_load = "ui.menu" in game.available_ops("client") if game.port_open() else False
         self.new_game = save is None
         if save is None:
-            if port_open() and game_state() == "Running" and server_ready() and self.opt.take_over:
+            if game.port_open() and game.game_state() == "Running" and game.server_ready() and self.opt.take_over:
                 # A new game already past character creation (e.g. started by an operator or a previous
                 # session that ended before its first save): play on from here.
-                host = host_character_name()
+                host = game.host_character_name()
                 owner = self.state.data.get("save_owner")
                 if owner is None or (host and host.casefold() == owner.casefold()):
                     log(f"no save yet, but a new game is running (host '{host}'): playing on from here")
                     return None
                 raise SystemExit(f"a game is running with host '{host}', not this playthrough's '{owner}'")
             log("no save for this playthrough yet: leaving the game at the main menu (new game)")
-            if not port_open():
+            if not game.port_open():
                 self.launch_game(None)
             if not self.wait_menu():
                 raise RuntimeError("the main menu never came up")
@@ -2774,10 +2396,10 @@ class Runner:
                 # Saves are matched to this playthrough by the character's name: a "Tav" breaks that.
                 self.pending_notes.append(new_game_note(owner))
             return None
-        if port_open() and game_state() == "Running" and server_ready() and self.opt.take_over and not force:
+        if game.port_open() and game.game_state() == "Running" and game.server_ready() and self.opt.take_over and not force:
             # The operator says: take over the game as it is. If it's this playthrough's character, play on
             # from here instead of reloading (a reload only loses the minutes since the last save).
-            host = host_character_name()
+            host = game.host_character_name()
             owner = self.state.data.get("save_owner") or save.owner
             touched = self.foreign_use(save)
             if host and owner and host.casefold() == owner.casefold() and not touched:
@@ -2786,21 +2408,21 @@ class Runner:
             if touched:
                 log(f"--take-over: not playing on from the running game: {touched}")
         log(f"loading save {save.folder}")
-        use_menu = port_open() and ui_load
+        use_menu = game.port_open() and ui_load
         if use_menu:
-            state = game_state()
+            state = game.game_state()
             if state != "Running" and not self.wait_menu():   # splash included: press past it first
-                raise RuntimeError(f"the main menu never came up (state {game_state()})")
+                raise RuntimeError(f"the main menu never came up (state {game.game_state()})")
             # The mod refuses a load while its persisted load gate is off (the default on a fresh profile). This
             # is this playthrough's own save, which is exactly when the gates may open; apply_play_settings
             # re-decides them by the loaded character's name.
             try:
-                rpc("ui.config", {"save_enabled": True, "load_enabled": True}, context="client")
+                game.rpc("ui.config", {"save_enabled": True, "load_enabled": True}, context="client")
             except Exception as e:  # noqa: BLE001 - a refusal below falls back to a relaunch
                 log(f"opening the save/load gates before the load failed: {e}")
             try:
                 # ui.menu load works from the main menu and from in-game (it opens the load screen itself).
-                rpc("ui.menu", load_menu_args(save, list_saves()), context="client", timeout=30)
+                game.rpc("ui.menu", game.load_menu_args(save, list_saves()), context="client", timeout=30)
             except (RpcError, LuaDebugError) as e:
                 # Refused (gate, no such playthrough or date on the page) or the eval failed: restart the game
                 # with -loadSaveGame, which needs neither the gate nor the Load page.
@@ -2812,12 +2434,12 @@ class Runner:
                 # the load begins (S002's agent started mid-load); from the menu a load that never starts is an
                 # error, not a 10-minute wait.
                 here = ("Running",) if state == "Running" else MENU_STATES
-                if not self.wait_for("the load to start", lambda: game_state() not in here, LOAD_START_TIMEOUT,
+                if not self.wait_for("the load to start", lambda: game.game_state() not in here, LOAD_START_TIMEOUT,
                                      0.5):
-                    raise RuntimeError(f"the load of {save.folder} never started (state {game_state()})")
+                    raise RuntimeError(f"the load of {save.folder} never started (state {game.game_state()})")
         if not use_menu:
-            if port_open():
-                if not (self.owns_game() or self.opt.take_over or game_state() in MENU_STATES):
+            if game.port_open():
+                if not (self.owns_game() or self.opt.take_over or game.game_state() in MENU_STATES):
                     raise SystemExit("would have to restart a game the runner didn't launch; "
                                      "close it or pass --take-over")
                 self.kill_game()
@@ -2857,7 +2479,7 @@ class Runner:
         for attempt in range(1, LAUNCH_ATTEMPTS + 1):
             try:
                 self.launch_game(target.folder)
-                if not self.wait_for("debug port", port_open, 240):
+                if not self.wait_for("debug port", game.port_open, 240):
                     raise GameDied("the debug port never opened")
                 if not self.wait_running():
                     raise GameDied(f"save {target.folder} didn't finish loading")
@@ -2904,7 +2526,7 @@ class Runner:
         start without one: lose_play_mark; unless that session
         ended on a load_game of it, ended_on_save, or the runner's quicksave at its end holds its last state,
         boundary_save: then the relaunch loads that one). -> the reason."""
-        if self.opt.dry_run or not port_open():
+        if self.opt.dry_run or not game.port_open():
             return None
         if first and not (self.owns_game() or self.opt.take_over):
             return None  # ensure_game decides about a game the runner didn't launch
@@ -2940,7 +2562,7 @@ class Runner:
             else:
                 qs, no = boundary_save(self.own_saves(), set(self.state["runner_saves"] or []),
                                        self.state["runner_save_combat"] or {}, last, acts)
-                if qs is not None and (now := party_in_combat()) is not False:
+                if qs is not None and (now := game.party_in_combat()) is not False:
                     qs, no = None, (f"the party is in a fight now, after {qs.label}" if now else
                                     f"the game doesn't say whether the party is in a fight now (after {qs.label})")
                 if qs is None:
@@ -2969,7 +2591,7 @@ class Runner:
 
     def ensure_game(self, first: bool) -> str | None:
         """Make sure the game runs with this playthrough loaded. Returns the loaded save label, if any."""
-        state = game_state() if port_open() else None
+        state = game.game_state() if game.port_open() else None
         if state is not None and not self.owns_game():
             last = next((h for h in reversed(self.state["history"] or []) if h.get("kind") == "play"), {})
             started = game_started_at()
@@ -2978,12 +2600,12 @@ class Runner:
         if state not in (None, *MENU_STATES, "Running"):
             # Mid-load or similar: settle at a menu or in-game; never wait for Running from the menu/splash.
             log(f"game is busy (state {state}); waiting for it to settle")
-            self.wait_for("the game to settle", lambda: game_state() in (*MENU_STATES, "Running"), 600, 3)
-            state = game_state()
-        if state == "Running" and not server_ready():
-            self.wait_for("server context", server_ready, 120, 3)
+            self.wait_for("the game to settle", lambda: game.game_state() in (*MENU_STATES, "Running"), 600, 3)
+            state = game.game_state()
+        if state == "Running" and not game.server_ready():
+            self.wait_for("server context", game.server_ready, 120, 3)
         owned = self.owns_game() and self.state["loaded_save"] is not None
-        if state == "Running" and server_ready():
+        if state == "Running" and game.server_ready():
             if first and not owned and not self.opt.take_over:
                 raise SystemExit("the game is running with a save loaded that the runner didn't load "
                                  "(maybe your own playthrough). Quit to the main menu, close the game, or "
@@ -2998,7 +2620,7 @@ class Runner:
                     return self.load_save(save, force=True)
             if not first or owned:
                 return None  # keep playing where the last session left off
-        if port_open() and state is None:
+        if game.port_open() and state is None:
             raise RuntimeError("debug port open but the game doesn't answer")
         if state is None:
             self.note_game_gone(self.check_game_oom())   # gone (e.g. 20:48: an OOM took the runner down with it)
@@ -3010,13 +2632,13 @@ class Runner:
         self.gates = None
         for op, args in PLAY_SETTINGS:
             try:
-                rpc(op, args, context="client")
+                game.rpc(op, args, context="client")
             except Exception as e:  # noqa: BLE001
                 log(f"play settings: {op} {args} failed: {e}")
         self.apply_ui_strict()
         name = None
         if not self.new_game:
-            name = host_character_name()
+            name = game.host_character_name()
             if name is None:
                 log("play settings: couldn't read the avatar's name")
         owner = self.opt.save_owner or self.state["save_owner"]
@@ -3025,7 +2647,7 @@ class Runner:
             log(f"save/load gates left unchanged (character {name!r}, save owner {owner!r})")
             return
         try:
-            rpc("ui.config", {"save_enabled": allow, "load_enabled": allow}, context="client")
+            game.rpc("ui.config", {"save_enabled": allow, "load_enabled": allow}, context="client")
             log(f"save/load gates {'enabled' if allow else 'DISABLED'} "
                 f"({'new game' if self.new_game else f'character {name!r}, save owner {owner!r}'})")
         except Exception as e:  # noqa: BLE001
@@ -3039,7 +2661,7 @@ class Runner:
         if on is None:
             return
         try:
-            log("ui strict: " + ui_strict_text(lua_eval(ui_strict_lua(on), "client")))
+            log("ui strict: " + ui_strict_text(game.lua_eval(ui_strict_lua(on), "client")))
         except Exception as e:  # noqa: BLE001
             log(f"ui strict: setting {'on' if on else 'off'} failed: {e}")
 
@@ -3081,19 +2703,19 @@ class Runner:
         changed = changed_files(self.state["mod_hashes"], cur)
         if not changed:
             return 0
-        state = game_state() if port_open() else None
+        state = game.game_state() if game.port_open() else None
         if state not in ("Running", "Menu"):
             log(f"mod changed ({len(changed)} files) but the game is {state or 'not up'}; reload skipped")
             return 0
         ctxs = ["server", "client"] if state == "Running" else ["client"]  # no server context at the menu
         try:
-            lua_eval("Ext.Debug.Reset() return 'reset'", ctxs[0], timeout=EVAL_TIMEOUT)
+            game.lua_eval("Ext.Debug.Reset() return 'reset'", ctxs[0], timeout=EVAL_TIMEOUT)
         except Exception as e:  # noqa: BLE001 - the reset can drop the eval connection
             log(f"hot reload: Reset eval returned {e!r} (usually harmless)")
 
         def back() -> bool:
             try:
-                return all(lua_eval(MOD_READY_LUA, c, timeout=5).strip() == "true" for c in ctxs)
+                return all(game.lua_eval(MOD_READY_LUA, c, timeout=5).strip() == "true" for c in ctxs)
             except Exception:  # noqa: BLE001
                 return False
         time.sleep(1)
@@ -3139,7 +2761,7 @@ class Runner:
             log(f"session saved: {new[-1].folder}")
             return
         others = [s.folder for s in list_saves() if s.mtime >= since and is_ai_label(s.label, "")]
-        if not self.game_alive() or not server_ready():
+        if not self.game_alive() or not game.server_ready():
             log("no save this session and the game isn't ready for one")
             return
         if others:
@@ -3149,13 +2771,13 @@ class Runner:
         else:
             log("the agent didn't save this session; quicksaving")
         before = {s.folder for s in list_saves()}
-        combat = party_in_combat()   # recorded with the save: boundary_save never relaunches onto a mid-fight one
+        combat = game.party_in_combat()   # recorded with the save: boundary_save never relaunches onto a mid-fight one
         t0 = time.time()
         try:
-            if "ui.menu" in available_ops("client"):
-                rpc("ui.menu", {"action": "quicksave"}, context="client", timeout=30)
+            if "ui.menu" in game.available_ops("client"):
+                game.rpc("ui.menu", {"action": "quicksave"}, context="client", timeout=30)
             else:
-                lua_eval('Ext.Input.InjectKeyPress("F5") return 1')  # default quicksave binding
+                game.lua_eval('Ext.Input.InjectKeyPress("F5") return 1')  # default quicksave binding
         except Exception as e:  # noqa: BLE001
             log(f"quicksave request failed: {e}")
             return
@@ -3411,11 +3033,11 @@ class Runner:
                 hard_stop = min(hard_stop, now)
             if needs_game and now >= next_health and reason == "exited":
                 alive = self.game_alive()
-                ok = alive and game_state(HEALTH_EVAL_TIMEOUT) is not None
+                ok = alive and game.game_state(HEALTH_EVAL_TIMEOUT) is not None
                 health.record(ok)
                 next_health = time.time() + (HEALTH_INTERVAL if ok else HEALTH_RETRY_INTERVAL)
                 write_status(heartbeat=time.time())
-                if ok and mod_loaded(HEALTH_EVAL_TIMEOUT) is False:
+                if ok and game.mod_loaded(HEALTH_EVAL_TIMEOUT) is False:
                     mod_gone_since = mod_gone_since or now
                 else:
                     mod_gone_since = None
@@ -3529,7 +3151,7 @@ class Runner:
     def fault_detail(self, health: HealthTracker) -> str:
         if self.game_proc is not None and self.game_proc.poll() is not None:
             return f"game process exited (status {self.game_proc.returncode})"
-        if not port_open():
+        if not game.port_open():
             return f"debug port {DEBUG_PORT} stopped answering" + (" (game process still alive)" if self.game_proc else "")
         return f"port {DEBUG_PORT} open but {health.limit} liveness evals in a row failed or timed out"
 
@@ -3603,7 +3225,7 @@ class Runner:
         # S068 started on screen=map (the waypoints check's map was still up, the agent pressed ESCAPE): check_all's
         # last row closes it and says what the next session would start on; no row (timed out): ask ourselves.
         scr = next((r for r in res["rows"] if r.get("name") == "screen"), None)
-        if scr is None and (screen := ui_screen()) == "map":
+        if scr is None and (screen := game.ui_screen()) == "map":
             scr = {"verdict": "FAIL", "detail": f"screen {screen} after check_all ({res['why'] or 'no screen row'})"}
         if scr and scr.get("verdict") == "FAIL":
             log(f"PREP FAIL: the game is not on the game view after check_all: {scr.get('detail')}")
@@ -3625,7 +3247,7 @@ class Runner:
         actions = story.actions_in(Path(f"{base}.metrics.jsonl"))
         while not stop.wait(story.POLL_S):
             try:
-                got = story.read_game(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
+                got = story.read_game(lambda code, ctx: game.lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
             except Exception:  # noqa: BLE001 - loading screens, crashes: just a failed poll
                 got = None
             try:
@@ -3655,7 +3277,7 @@ class Runner:
         if got:
             self.game_setup()
             self.ring_feed().poll()
-        inv = facts.read_inventory(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT),
+        inv = facts.read_inventory(lambda code, ctx: game.lua_eval(code, ctx, timeout=EVAL_TIMEOUT),
                                    story.combined_code) if got else None
         self.facts_writer().observe(got, inv)
 
@@ -3667,9 +3289,9 @@ class Runner:
             return
         self._facts_ended = True
         w = self.facts_writer()
-        if w.last is not None and port_open():
+        if w.last is not None and game.port_open():
             try:
-                got = story.read_game(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
+                got = story.read_game(lambda code, ctx: game.lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
                 w.snap_t = None
                 self.facts_poll(got)
             except Exception as e:  # noqa: BLE001 - the mark below is written anyway
@@ -3696,7 +3318,7 @@ class Runner:
         `settings` mark) and, for a seeded run, scn.seed (the mod re-applies it after every load)."""
         if getattr(self, "game_settings", None) is not None:
             return
-        call = lambda op, args: rpc(op, args, timeout=EVAL_TIMEOUT)  # noqa: E731
+        call = lambda op, args: game.rpc(op, args, timeout=EVAL_TIMEOUT)  # noqa: E731
         sys.path.append(str(REPO / "tools" / "saves"))
         import lsf
         got = game_settings.readout(game_settings.profile_files(steam_paths.profile_dir(), steam_paths.manifest(),
@@ -3716,7 +3338,7 @@ class Runner:
         if not getattr(self, "seeded", False):
             return
         try:
-            game_settings.undo(lambda op, args: rpc(op, args, timeout=EVAL_TIMEOUT))
+            game_settings.undo(lambda op, args: game.rpc(op, args, timeout=EVAL_TIMEOUT))
             self.seeded = False
         except Exception as e:  # noqa: BLE001
             log(f"!!!!! scn.undo failed: {e}; BG3AI/scenario.json keeps seeding every load until undone !!!!!")
@@ -3725,7 +3347,7 @@ class Runner:
         """The referee ring into facts.jsonl and the roll log into rolls.jsonl (kept across sessions: its cursor)."""
         f = getattr(self, "_ring_feed", None)
         if f is None:
-            f = self._ring_feed = facts.RingFeed(lambda op, args: rpc(op, args, timeout=EVAL_TIMEOUT),
+            f = self._ring_feed = facts.RingFeed(lambda op, args: game.rpc(op, args, timeout=EVAL_TIMEOUT),
                                                  self.facts_writer(), self.state.dir / "rolls.jsonl")
         return f
 
@@ -3847,7 +3469,7 @@ class Runner:
         """ui.state's screen, polled until it is want or timeout passed; the last screen seen."""
         end = time.monotonic() + timeout
         while True:
-            screen = ui_screen()
+            screen = game.ui_screen()
             if screen == want or time.monotonic() >= end:
                 return screen
             time.sleep(0.15)
@@ -3858,7 +3480,7 @@ class Runner:
         skips it), on a loading screen or with a panel open an ESCAPE does something else, so those are skipped
         with a log line. True when it opened the menu (heat_menu_close closes it again). Never raises."""
         try:
-            st = ui_state()
+            st = game.ui_state()
             if st is None:
                 log("heat: game menu not opened (the game's UI doesn't answer)")
                 return False
@@ -3867,7 +3489,7 @@ class Runner:
                 log(f"heat: game menu not opened: the {screen} screen{' with ' + ', '.join(panels) if panels else ''}"
                     " is up (an ESCAPE there does something else); the game keeps rendering")
                 return False
-            rpc("ui.key", {"key": "ESCAPE"}, context="client")
+            game.rpc("ui.key", {"key": "ESCAPE"}, context="client")
             got = self.wait_screen("game_menu")
             if got != "game_menu":
                 log(f"heat: ESCAPE did not open the game menu (screen {got}); the game keeps rendering")
@@ -3882,13 +3504,13 @@ class Runner:
         """Closes the game menu heat_menu_open opened: its Resume button (a second ESCAPE left it open 3/3 live,
         bridge server._press_escape), ESCAPE if it is still up. Never raises."""
         try:
-            screen = ui_screen()
+            screen = game.ui_screen()
             if screen != "game_menu":
                 log(f"heat: the game menu is already closed (screen {screen})")
                 return
-            rpc("ui.press", {"button": "Resume", "widget": "GameMenu"}, context="client")
+            game.rpc("ui.press", {"button": "Resume", "widget": "GameMenu"}, context="client")
             if (got := self.wait_screen("game")) == "game_menu":
-                rpc("ui.key", {"key": "ESCAPE"}, context="client")
+                game.rpc("ui.key", {"key": "ESCAPE"}, context="client")
                 got = self.wait_screen("game")
             log("heat: game menu closed" if got != "game_menu" else "heat: the game menu is STILL OPEN after Resume "
                 "and ESCAPE (the next session's agent sees it)")
@@ -4076,7 +3698,7 @@ class Runner:
         (the mod's Lua state, the kill list in memory included). Also at the end of a series or an --until run
         (when="series end" / "run end"; --keep-game skips that): naut2 left its last run's game running
         (bg3ai-game-20261017-133954.scope). A game the runner doesn't own is left alone."""
-        if not port_open() and not self.owns_game():
+        if not game.port_open() and not self.owns_game():
             return
         if not (self.owns_game() or self.opt.take_over):
             log(f"{when}: the game up is not one this runner launched; left running"
@@ -4205,10 +3827,10 @@ class Runner:
         """tools/dev/check_plans.py (reads only, ~3 s): the stored plan lines for each member's next 2 levels vs the
         game's Progression offers. Logs one line; returns the invalid lines (keeper refused-line format). Needs the
         game Running with the party loaded and no bridge in use (between sessions). Never raises."""
-        if (self.opt.dry_run and not dry) or not port_open():
+        if (self.opt.dry_run and not dry) or not game.port_open():
             return []
         try:
-            if game_state() != "Running":
+            if game.game_state() != "Running":
                 return []
             json_path = RUNTIME / "check_plans.json"
             json_path.unlink(missing_ok=True)
@@ -4335,8 +3957,8 @@ class Runner:
         print(f"memory:         {self.mem}")
         print(f"save to load:   {save.folder if save else '(none: new game from the main menu)'}"
               + (f" ({self.save_choice[1]})" if save and self.save_choice else ""))
-        print(f"game:           {'up, state ' + str(game_state()) if port_open() else 'not running'}")
-        if save and self.opt.take_over and port_open():
+        print(f"game:           {'up, state ' + str(game.game_state()) if game.port_open() else 'not running'}")
+        if save and self.opt.take_over and game.port_open():
             touched = self.foreign_use(save)
             print(f"take-over:      {'reload ' + save.label + ' (' + touched + ')' if touched else 'play on from the running game'}")
         print(f"stuck:          {is_stuck(self.state['history'])}")
@@ -4366,7 +3988,7 @@ class Runner:
         notes = list(self.pending_notes)
         self.pending_notes.clear()
 
-        screen = ui_screen()
+        screen = game.ui_screen()
         at_game_over = screen == "game_over"
         last = (self.state["history"] or [{}])[-1]
         if at_game_over and last.get("started_at_game_over"):
@@ -4401,7 +4023,7 @@ class Runner:
         notes += self.pending_notes
         self.pending_notes.clear()
         predicted = self.next_sid()
-        start_sig = read_progress()
+        start_sig = game.read_progress(log)
         deadline = time.time() + minutes * 60
         opened, briefing = self.open_memory_session(deadline, minutes)   # was the SessionStart hook
         sid = opened or predicted
@@ -4441,7 +4063,7 @@ class Runner:
                                       tag=f"-c{stop_resumes}")
                 continue
             fault, fault_at = res.reason, res.fault_at or res.ended
-            game_ok = fault == "agent_hang" and self.game_alive() and game_state(HEALTH_EVAL_TIMEOUT) is not None
+            game_ok = fault == "agent_hang" and self.game_alive() and game.game_state(HEALTH_EVAL_TIMEOUT) is not None
             why = {"crash": "crashed", "hang": "stopped responding"}.get(fault, "was unreachable after the agent hang")
             how = "claude restarted, game untouched"
             if not game_ok:
@@ -4489,7 +4111,7 @@ class Runner:
                 log(f"{sid}: the agent's quicksave(s) {', '.join(got)} are this playthrough's saves too")
         except Exception as e:  # noqa: BLE001 - bookkeeping, never ends the session handling
             log(f"{sid}: agent saves not recorded: {e!r}")
-        end_sig = read_progress()
+        end_sig = game.read_progress(log)
         entry = {
             "kind": "play", "session": sid, "claude_session": res.claude_session, "reason": res.reason,
             "exit": res.exit_code, "started": res.started, "ended": res.ended,
@@ -5126,10 +4748,10 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
           + (f"  -> THE RUNNER WOULD REFUSE TO LAUNCH: {no_display}" if no_display else ""))
     bad = bg3le_buildinfo.problems()
     print("bg3le:          " +("STALE: " + "; ".join(bad) + " -> the runner would stop" if bad else "dist has every patch"))
-    game = pids_of_game()
-    print(f"game:           {'harness bg3 up: ' + str(game) if game else 'not running: the runner launches it'}"
-          + (f"; a user's own bg3 runs {foreign_bg3_pids()}: the runner won't launch beside it"
-             if foreign_bg3_pids() else ""))
+    ours = game.pids_of_game()
+    print(f"game:           {'harness bg3 up: ' + str(ours) if ours else 'not running: the runner launches it'}"
+          + (f"; a user's own bg3 runs {game.foreign_bg3_pids()}: the runner won't launch beside it"
+             if game.foreign_bg3_pids() else ""))
     holder = (RUNTIME / "runner.lock").exists() and not _lock_free(RUNTIME / "runner.lock")
     print(f"runner lock:    {'HELD: another runner is active (run would refuse)' if holder else 'free'}")
     keeper = keeper_model(a.keeper_model, a.model) if not a.no_memory_keeper else "OFF"
@@ -5550,8 +5172,8 @@ def cmd_status(a) -> int:
             os.kill(alive_pid, 0)
         except OSError:
             alive_pid = None
-    up = port_open()
-    gs = game_state() if up else None
+    up = game.port_open()
+    gs = game.game_state() if up else None
     print(f"runner:   {'running (pid %d)' % alive_pid if alive_pid else 'not running'}"
           + (f", STOP requested" if (RUNTIME / 'STOP').exists() else ""))
     print(f"game:     {'up, state ' + str(gs) if up else 'not running (no debug port)'}")

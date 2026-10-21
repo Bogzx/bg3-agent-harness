@@ -21,6 +21,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")   # never chmod the real play/knowledge (Knowledge tests patch it)
 import play as P  # noqa: E402
+from bg3harness.game import io as G  # noqa: E402  (the game's I/O, moved out of play.py)
+
+G_FUNCS = {n for n, v in vars(G).items() if callable(v) and getattr(v, "__module__", None) == G.__name__
+           and not isinstance(v, type)}
+
+
+def home(name: str):
+    """The module a patched name lives in: the game's I/O functions moved to bg3harness.game.io."""
+    return G if name in G_FUNCS else P
 
 
 class SessionNumbering(unittest.TestCase):
@@ -113,7 +122,7 @@ class HandoffAndSaves(unittest.TestCase):
                  P.Save("Claude-2__S001-imps-done", "Claude", "S001-imps-done", t),
                  P.Save("Claude-3__S001-end", "Claude", "S001-end", t + 360),
                  P.Save("Tav-4__S002-end", "Tav", "S002-end", t + 900)]
-        a = P.load_menu_args(saves[1], saves)
+        a = G.load_menu_args(saves[1], saves)
         self.assertEqual((a["action"], a["name"], a["owner"], a["index"]), ("load", "Claude-2__S001-imps-done", "Claude", 2))
         self.assertEqual(a["date"], {"y": 2026, "m": 10, "d": 9, "H": 22, "M": 39})
 
@@ -127,11 +136,11 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertIsNone(P.parse_handoff_save('<!--\nSave to load: "S042-end"\n-->\nSave to load: (none)\n'))
 
     def test_parse_folder(self):
-        s = P.parse_save_folder("pibooool-10812619937__QuickSave_42", 5.0)
+        s = G.parse_save_folder("pibooool-10812619937__QuickSave_42", 5.0)
         self.assertEqual((s.owner, s.label, s.mtime), ("pibooool", "QuickSave_42", 5.0))
-        s = P.parse_save_folder("Tav-Name-52012618851__S003-pre-boss")
+        s = G.parse_save_folder("Tav-Name-52012618851__S003-pre-boss")
         self.assertEqual((s.owner, s.label), ("Tav-Name", "S003-pre-boss"))
-        self.assertIsNone(P.parse_save_folder("garbage"))
+        self.assertIsNone(G.parse_save_folder("garbage"))
 
     def test_is_ai_label(self):
         self.assertTrue(P.is_ai_label("S001-start", ""))
@@ -141,7 +150,7 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertFalse(P.is_ai_label("S010-end", "pt1-"))
 
     def _saves(self):
-        f = P.parse_save_folder
+        f = G.parse_save_folder
         return [
             f("pibooool-1__Dank Crypt - 3h 15m", 900),      # the user's own playthrough
             f("pibooool-2__QuickSave_42", 950),
@@ -154,26 +163,26 @@ class HandoffAndSaves(unittest.TestCase):
     def test_named_saves_with_a_folder_prefix(self):
         # BG3AI_SAVE_PREFIX=Claude- (docs/SETUP.md, the MCP server) names the folder, and the agent's
         # save_game labels are plain "S001-end": the session's named save must count (S001 quicksaved over it).
-        saves = [P.parse_save_folder("Claude-10__S001-end", 200), P.parse_save_folder("Claude-11__QuickSave_0", 300),
-                 P.parse_save_folder("Tav-12__S001-end", 250)]
+        saves = [G.parse_save_folder("Claude-10__S001-end", 200), G.parse_save_folder("Claude-11__QuickSave_0", 300),
+                 G.parse_save_folder("Tav-12__S001-end", 250)]
         self.assertEqual([s.folder for s in P.saves_since(saves, 100, "Claude", "Claude-")], ["Claude-10__S001-end"])
         self.assertEqual(P.pick_save(saves, None, "Claude", set(), "Claude-").folder, "Claude-10__S001-end")
         # a label prefix still works, and a foreign character never matches
-        self.assertTrue(P.is_ai_save(P.parse_save_folder("Ilse-1__pt1-S010-end"), "pt1-"))
-        self.assertFalse(P.is_ai_save(P.parse_save_folder("Ilse-1__S010-end"), "pt1-"))
-        self.assertFalse(P.is_ai_save(P.parse_save_folder("Tav-12__S001-end"), "Claude-"))
+        self.assertTrue(P.is_ai_save(G.parse_save_folder("Ilse-1__pt1-S010-end"), "pt1-"))
+        self.assertFalse(P.is_ai_save(G.parse_save_folder("Ilse-1__S010-end"), "pt1-"))
+        self.assertFalse(P.is_ai_save(G.parse_save_folder("Tav-12__S001-end"), "Claude-"))
 
     def test_pick_skips_worker_saves(self):
         # 2026-10-10 live-test break: workers saved LIVETEST-* after S027-start; the playthrough's save stays the pick
-        saves = [P.parse_save_folder("Claude-48__S027-start", 100), P.parse_save_folder("Claude-14__LIVETEST-act", 200),
-                 P.parse_save_folder("Claude-12__LIVETEST-vis-open", 300), P.parse_save_folder("Claude-13__AutoSave_42", 250)]
+        saves = [G.parse_save_folder("Claude-48__S027-start", 100), G.parse_save_folder("Claude-14__LIVETEST-act", 200),
+                 G.parse_save_folder("Claude-12__LIVETEST-vis-open", 300), G.parse_save_folder("Claude-13__AutoSave_42", 250)]
         self.assertEqual(P.pick_save(saves, "S027-start", "Claude", set(), "Claude-").folder, "Claude-48__S027-start")
 
     def test_pick_only_saves_written_while_this_playthrough_played(self):
         # 2026-10-17: claude-run-2's newest save is S065-end (10-11 12:03), but replay-hoh saved S027-end and
         # S028-lastlight-prep as "Claude" on 10-15 and a worker saved S999-savetest on 10-13: without the play
         # windows the resume would have loaded Act 2's S028-lastlight-prep
-        f = P.parse_save_folder
+        f = G.parse_save_folder
         saves = [f("Claude-1__S065-pre-orin", 1000.0), f("Claude-2__S065-end", 1500.0),
                  f("Claude-3__S999-savetest", 5000.0), f("Claude-4__S027-end", 9000.0),
                  f("Claude-5__S028-lastlight-prep", 9500.0), f("Claude-6__QuickSave_9", 9600.0)]
@@ -196,7 +205,7 @@ class HandoffAndSaves(unittest.TestCase):
     def test_handoff_save_is_the_agents_choice(self):
         # L8: S076 started from S075-fight (newest, mid-fight try 6) while S075's HANDOFF named S075-end; S076's
         # HANDOFF named S075-end again ("S076-end = try 7 mid-fight, losing: don't continue it")
-        f = P.parse_save_folder
+        f = G.parse_save_folder
         ends = {75: 2000.0, 76: 3000.0}
         s75 = [f("Claude-1__S074-end", 900.0), f("Claude-2__S075-end", 1500.0), f("Claude-3__S075-fight", 1900.0)]
         save, why = P.pick_save_why(s75, "S075-end", "Claude", set(), "Claude-", None, 75, ends)
@@ -243,7 +252,7 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertEqual(P.session_ends(None, None), {})
 
     def test_choose_save_follows_handoff_and_tells_the_kickoff(self):
-        f = P.parse_save_folder
+        f = G.parse_save_folder
         saves = [f("Claude-2__S075-end", 1500.0), f("Claude-3__S075-fight", 1900.0)]
         with tempfile.TemporaryDirectory() as d:
             mem = Path(d) / "memory"
@@ -265,7 +274,7 @@ class HandoffAndSaves(unittest.TestCase):
                       '"S075-fight" from the same session). Don\'t reload it', k)
 
     def test_foreign_saves_for_the_mcp_server(self):
-        f = P.parse_save_folder
+        f = G.parse_save_folder
         saves = [f("Claude-2__S065-end", 1500.0), f("Claude-3__S999-savetest", 5000.0),
                  f("Claude-5__S028-lastlight-prep", 9500.0), f("Claude-6__QuickSave_9", 9600.0),
                  f("Claude-7__LIVETEST-x", 9700.0), f("Tav-8__S001-end", 9800.0)]
@@ -298,13 +307,13 @@ class HandoffAndSaves(unittest.TestCase):
             self.assertEqual(P.play_windows(None, None), [])
 
     def test_foreign_use_since(self):
-        best = P.parse_save_folder("Claude-48__S027-start", 100)
-        mine = [best, P.parse_save_folder("Claude-13__AutoSave_42", 150), P.parse_save_folder("Claude-9__S026-end", 90)]
+        best = G.parse_save_folder("Claude-48__S027-start", 100)
+        mine = [best, G.parse_save_folder("Claude-13__AutoSave_42", 150), G.parse_save_folder("Claude-9__S026-end", 90)]
         f = lambda saves=mine, acts=(), started=None, rs=set(): P.foreign_use_since(best, saves, list(acts), started, rs, "Claude-")
         self.assertIsNone(f())
-        self.assertIn("LIVETEST-setup", f(mine + [P.parse_save_folder("Claude-21__LIVETEST-setup", 120)]))
-        self.assertIsNone(f(mine + [P.parse_save_folder("Claude-21__LIVETEST-setup", 80)]))   # older: not a sign
-        self.assertIsNone(f(mine + [P.parse_save_folder("Claude-5__QuickSave_1", 130)], rs={"Claude-5__QuickSave_1"}))
+        self.assertIn("LIVETEST-setup", f(mine + [G.parse_save_folder("Claude-21__LIVETEST-setup", 120)]))
+        self.assertIsNone(f(mine + [G.parse_save_folder("Claude-21__LIVETEST-setup", 80)]))   # older: not a sign
+        self.assertIsNone(f(mine + [G.parse_save_folder("Claude-5__QuickSave_1", 130)], rs={"Claude-5__QuickSave_1"}))
         load = {"t": 130, "tool": "load_game", "args": {"save": "Claude-9__S026-end"}, "result": "load_game: done — loaded=S026-end"}
         self.assertIn("S026-end", f(acts=[load]))                  # a worker loaded an older playthrough save
         self.assertIsNone(f(acts=[dict(load, t=90)]))              # before our save: irrelevant
@@ -349,38 +358,38 @@ class StuckDetection(unittest.TestCase):
     journal = [{"title": "Find the Nightsong", "steps": ["a", "b"]}, {"title": "Lift the Curse", "steps": ["x"]}]
 
     def test_signature(self):
-        sig = P.progress_signature(self.status, self.journal)
+        sig = G.progress_signature(self.status, self.journal)
         self.assertEqual(sig["level"], "SCL_Main_A")
         self.assertEqual(sig["party_levels"], ["6", "6"])
         self.assertEqual(sig["xp"], 190)
         self.assertEqual(sig["journal_steps"], 3)
-        self.assertIsNone(P.progress_signature(None, None))
-        self.assertEqual(P.progress_signature(None, {"quests": self.journal})["journal_steps"], 3)
+        self.assertIsNone(G.progress_signature(None, None))
+        self.assertEqual(G.progress_signature(None, {"quests": self.journal})["journal_steps"], 3)
 
     def test_changes_count_as_progress(self):
-        a = P.progress_signature(self.status, self.journal)
-        self.assertFalse(P.made_progress(a, P.progress_signature(self.status, self.journal)))
+        a = G.progress_signature(self.status, self.journal)
+        self.assertFalse(P.made_progress(a, G.progress_signature(self.status, self.journal)))
         moved = dict(self.status, subregion="Reithwin Town")
-        self.assertTrue(P.made_progress(a, P.progress_signature(moved, self.journal)))
+        self.assertTrue(P.made_progress(a, G.progress_signature(moved, self.journal)))
         more = self.journal + [{"title": "New", "steps": ["s"]}]
-        self.assertTrue(P.made_progress(a, P.progress_signature(self.status, more)))
+        self.assertTrue(P.made_progress(a, G.progress_signature(self.status, more)))
         xp = dict(self.status, party=[{"level": 6, "xp": 150}, {"level": 6, "xp": 90}])
-        self.assertTrue(P.made_progress(a, P.progress_signature(xp, self.journal)))
+        self.assertTrue(P.made_progress(a, G.progress_signature(xp, self.journal)))
         self.assertIsNone(P.made_progress(None, a))
 
     def test_session_progress_counts_points_and_far_moves(self):
-        a = P.progress_signature(self.status, self.journal)
+        a = G.progress_signature(self.status, self.journal)
         # S040: islands descent + Balthazar (32 pts), wipe, reload: same save signature, still progress
         self.assertEqual(P.session_progress(a, dict(a), 32), (True, "32 story points"))
         self.assertEqual(P.session_progress(a, dict(a), 2)[0], False)            # S039: 2 explore points
         here = dict(self.status, party=[{"level": 6, "xp": 100, "pos": [0, 0, 0]}, {"level": 6, "xp": 90}])
         near = dict(here, party=[{"level": 6, "xp": 100, "pos": [20, 0, 0]}, {"level": 6, "xp": 90}])
         far = dict(here, party=[{"level": 6, "xp": 100, "pos": [0, -30, 70]}, {"level": 6, "xp": 90}])
-        s0 = P.progress_signature(here, self.journal)
+        s0 = G.progress_signature(here, self.journal)
         self.assertEqual(s0["pos"], [0.0, 0.0, 0.0])
-        self.assertFalse(P.made_progress(s0, P.progress_signature(near, self.journal)))   # a step isn't progress
-        self.assertEqual(P.session_progress(s0, P.progress_signature(near, self.journal), 0)[0], False)
-        ok, why = P.session_progress(s0, P.progress_signature(far, self.journal), 0)
+        self.assertFalse(P.made_progress(s0, G.progress_signature(near, self.journal)))   # a step isn't progress
+        self.assertEqual(P.session_progress(s0, G.progress_signature(near, self.journal), 0)[0], False)
+        ok, why = P.session_progress(s0, G.progress_signature(far, self.journal), 0)
         self.assertTrue(ok)
         self.assertIn("moved 76 m", why)
         ok, why = P.session_progress(a, dict(a, subregion="Reithwin Town"), 0)
@@ -405,7 +414,7 @@ class StuckDetection(unittest.TestCase):
         self.assertTrue(P.is_stuck([h(False), h(False, "fix"), h(False)]))  # fix sessions don't count
 
     def test_directive_mentions_location(self):
-        sig = P.progress_signature(self.status, self.journal)
+        sig = G.progress_signature(self.status, self.journal)
         d = P.stuck_directive([{"progress": False, "end_sig": sig}] * 2)
         self.assertIn("CHANGE APPROACH", d)
         self.assertIn("Last Light Inn", d)
@@ -619,171 +628,6 @@ class Misc(unittest.TestCase):
             P.main(["run", "--playthrough", "x", "--effort", "turbo"])
 
 
-os_getpgid = P.os.getpgid
-
-
-class KillGame(unittest.TestCase):
-    """kill_game with every OS call mocked: nothing is signalled for real."""
-
-    def setUp(self):
-        self.saved = (P.all_bg3_pids, P.port_open, P.os.kill, P.os.killpg, P.time.sleep, P.KILL_GRACE, P.KILL_CONFIRM,
-                      P.RUNTIME, P.crash_reporter_pids, P.is_harness_pid, P.proc_start, P.proc_cmdline)
-        self.tmp = tempfile.TemporaryDirectory()
-        P.RUNTIME = Path(self.tmp.name)              # RUN-9: never the real runtime/runner.log
-        P.crash_reporter_pids = lambda: []           # nor the machine's real crash reporters
-        self.sent = []
-        self.alive = {4242}       # our harness game
-        self.foreign = set()      # a user's own Steam-launched BG3
-        self.ignores_term = True
-        # the launcher's group 777: launch_game.sh started at tick 555 (runner.json records it as pg_start)
-        self.leader = {"start": 555, "cmd": b"/bin/bash\0/repo/runner/launch_game.sh\0"}
-
-        def kill(pid, sig):
-            self.sent.append((pid, sig))
-            if sig == P.signal.SIGKILL or not self.ignores_term:
-                self.alive.discard(pid)
-
-        P.all_bg3_pids = lambda: sorted(self.alive | self.foreign)
-        P.is_harness_pid = lambda pid: pid not in self.foreign
-        P.proc_start = lambda pid: self.leader["start"] if pid == 777 else None
-        P.proc_cmdline = lambda pid: self.leader["cmd"] if pid == 777 else b""
-        P.port_open = lambda *a, **k: bool(self.alive)
-        P.os.kill = kill
-        P.os.killpg = lambda pg, sig: self.sent.append(("pg", pg, sig))
-        P.time.sleep = lambda s: None
-        P.KILL_GRACE = 0.01
-        P.KILL_CONFIRM = 0.01
-        self.r = P.Runner.__new__(P.Runner)
-        self.r.game_proc = None
-        self.r.state = type("S", (), {"data": {"game": {"pgid": 777, "pg_start": 555}}, "__getitem__": lambda s, k: s.data.get(k),
-                                      "__setitem__": lambda s, k, v: s.data.__setitem__(k, v)})()
-
-    def tearDown(self):
-        (P.all_bg3_pids, P.port_open, P.os.kill, P.os.killpg, P.time.sleep, P.KILL_GRACE, P.KILL_CONFIRM,
-         P.RUNTIME, P.crash_reporter_pids, P.is_harness_pid, P.proc_start, P.proc_cmdline) = self.saved
-        self.tmp.cleanup()
-
-    def test_logs_to_the_test_runtime(self):
-        # RUN-9: the kill bursts these tests log go to a temp runtime, never REPO/runtime/runner.log
-        self.r.kill_game()
-        self.assertIn("killing the game", (P.RUNTIME / "runner.log").read_text())
-        self.assertNotEqual(self.saved[7], P.REPO / "runtime")   # the module-level guard: BG3AI_RUNTIME is a tmp dir
-
-    def test_escalates_to_sigkill_when_sigterm_ignored(self):
-        self.r.kill_game()
-        sigs = [x[-1] for x in self.sent]
-        self.assertIn(P.signal.SIGTERM, sigs)
-        self.assertIn(P.signal.SIGKILL, sigs)
-        self.assertIn(("pg", 777, P.signal.SIGTERM), self.sent)   # the launcher's group too
-        self.assertIn((4242, P.signal.SIGKILL), self.sent)        # and the bg3 process itself
-        self.assertIsNone(self.r.state["game"])
-
-    def test_no_sigkill_when_sigterm_works(self):
-        self.ignores_term = False
-        self.r.kill_game()
-        self.assertNotIn(P.signal.SIGKILL, [x[-1] for x in self.sent])
-
-    def test_survivor_raises(self):
-        P.os.kill = lambda pid, sig: self.sent.append((pid, sig))   # nothing ever dies
-        with self.assertRaises(RuntimeError):
-            self.r.kill_game()
-
-    def test_users_own_bg3_never_signalled(self):
-        # RUN-4: a user's Steam-launched BG3 beside ours: ours dies, theirs gets no signal at all
-        self.foreign = {5151}
-        self.r.kill_game()
-        self.assertIn((4242, P.signal.SIGKILL), self.sent)
-        self.assertNotIn(5151, [x[0] for x in self.sent])
-        self.assertIn("leaving bg3 pid(s) 5151 alone", (P.RUNTIME / "runner.log").read_text())
-
-    def test_stale_group_not_signalled(self):
-        # RUN-4: runner.json's pgid after a reboot (or a reused pid): another start time or another program
-        for leader in ({"start": 999, "cmd": self.leader["cmd"]}, {"start": 555, "cmd": b"/usr/bin/firefox\0"}):
-            with self.subTest(leader=leader):
-                self.sent, self.alive = [], {4242}
-                self.r.state["game"] = {"pgid": 777, "pg_start": 555}
-                self.leader = leader
-                self.assertIsNone(self.r.owned_group())
-                self.r.kill_game()
-                self.assertNotIn("pg", [x[0] for x in self.sent])
-                self.assertIn((4242, P.signal.SIGKILL), self.sent)   # our game itself still goes
-
-    def test_owned_group(self):
-        self.assertEqual(self.r.owned_group(), 777)
-        self.r.state["game"] = {"pgid": 777}                  # a record from before pg_start: the command line decides
-        self.assertEqual(self.r.owned_group(), 777)
-        self.leader = {"start": None, "cmd": b""}             # leader gone: ours only while it holds our game
-        P.os.getpgid = lambda pid: 777 if pid == 4242 else 1
-        try:
-            self.assertEqual(self.r.owned_group(), 777)
-            self.alive = set()
-            self.assertIsNone(self.r.owned_group())
-        finally:
-            P.os.getpgid = os_getpgid
-
-    def test_launch_refused_beside_a_foreign_bg3(self):
-        self.foreign, self.alive = {5151}, set()
-        self.r.event = lambda kind, **f: self.sent.append(("event", kind))
-        saved = (P.steam_ready, P.bg3le_problems, P.subprocess.Popen)
-        P.steam_ready, P.bg3le_problems = (lambda: (True, "ok")), (lambda: [])
-        P.subprocess.Popen = None                              # launching would fail loudly
-        try:
-            with self.assertRaises(P.ForeignGameRunning):
-                self.r.launch_game(None)
-        finally:
-            P.steam_ready, P.bg3le_problems, P.subprocess.Popen = saved
-        self.assertIn(("event", "foreign_game"), self.sent)
-        self.assertTrue(issubclass(P.ForeignGameRunning, P.LaunchBlocked))   # the run loop retries, never gives up
-
-    def test_launch_refreshes_a_stale_xauthority(self):
-        # naut3: Xwayland restarted (16:01 freeze) with a new -auth file; a game launched with the old one can't
-        # open a window. Each launch re-checks it.
-        from unittest import mock
-        self.alive = set()
-        envs: list[dict] = []
-        args: list[list] = []
-
-        class Proc:
-            pid = 4343
-
-        def popen(a, **kw):
-            args.append(a)
-            envs.append(kw["env"])
-            return Proc()
-        self.r.state = {}
-        self.r.refresh_mod_snapshot = lambda: []
-        with mock.patch.object(P, "steam_ready", lambda: (True, "ok")), \
-                mock.patch.object(P, "bg3le_problems", lambda: []), \
-                mock.patch.object(P.subprocess, "Popen", popen), \
-                mock.patch.object(P, "mod_tree_hashes", lambda: {}), \
-                mock.patch.object(P, "write_status", lambda **kw: None), \
-                mock.patch.object(P.display_env, "pgrep_xwayland",
-                                  lambda: "9 /usr/bin/Xwayland :1 -auth /run/user/1000/xauth_new -rootless\n"), \
-                mock.patch.object(P.display_env, "problem", lambda env: None), \
-                mock.patch.dict(P.os.environ, {"DISPLAY": ":1", "XAUTHORITY": "/run/user/1000/xauth_old"}):
-            self.r.launch_game(None)
-        self.assertEqual(envs[0]["XAUTHORITY"], "/run/user/1000/xauth_new")
-        self.assertEqual(args[0][1:3], ["--mod-path", str(P.MOD_LIVE)])   # S24: the snapshot, never <repo>/mod
-        self.assertIn("display env refreshed", (P.RUNTIME / "runner.log").read_text())
-
-    def test_launch_refused_without_a_display(self):
-        # L8: a launch with no usable display fell back to the AMD iGPU and dumped cores; refuse, the run loop retries
-        from unittest import mock
-        self.alive = set()
-        self.r.event = lambda kind, **f: self.sent.append(("event", kind, f))
-        with mock.patch.object(P, "steam_ready", lambda: (True, "ok")), \
-                mock.patch.object(P, "bg3le_problems", lambda: []), \
-                mock.patch.object(P.subprocess, "Popen", None), \
-                mock.patch.object(P, "write_status", lambda **kw: None), \
-                mock.patch.object(P.display_env, "pgrep_xwayland", lambda: ""), \
-                mock.patch.dict(P.os.environ, {"DISPLAY": ":97", "XAUTHORITY": "/nonexistent/xauth"}):
-            with self.assertRaises(P.NoDisplay) as cm:
-                self.r.launch_game(None)
-        self.assertIn("DISPLAY=:97 but no X server socket", str(cm.exception))
-        self.assertTrue(issubclass(P.NoDisplay, P.LaunchBlocked))
-        self.assertEqual(self.sent[-1][:2], ("event", "display_refused"))
-        self.assertIn("REFUSING TO LAUNCH BG3: no usable display", (P.RUNTIME / "runner.log").read_text())
-
 
 class ApiAndMcpFailures(unittest.TestCase):
     """RUN-7 / RUN-8 pure parts."""
@@ -838,48 +682,17 @@ class AgentSaves(unittest.TestCase):
             r.record_agent_saves(0)
         self.assertEqual(len(r.state["agent_saves"]), P.AGENT_SAVES_KEPT)
         self.assertEqual(r.state["agent_saves"][-1], "Claude-1__QuickSave_59")
-        saves = [P.parse_save_folder("Claude-1__S010-end", 10.0), P.parse_save_folder("Claude-1__QuickSave_59", 20.0),
-                 P.parse_save_folder("Claude-1__QuickSave_99", 30.0)]
+        saves = [G.parse_save_folder("Claude-1__S010-end", 10.0), G.parse_save_folder("Claude-1__QuickSave_59", 20.0),
+                 G.parse_save_folder("Claude-1__QuickSave_99", 30.0)]
         self.assertEqual(P.pick_save(saves, None, "Claude", r.ours()).label, "QuickSave_59")
 
     def test_position_keys_are_not_progress(self):
         status = {"level": "L", "party": [{"name": "Claude", "pos": [1, 2, 3]}, {"name": "Gale", "pos": [4, 5, 6]}]}
-        a = P.progress_signature(status, [])
+        a = G.progress_signature(status, [])
         self.assertEqual((a["pos_name"], a["party_pos"]["Gale"]), ("Claude", [4.0, 5.0, 6.0]))
-        b = P.progress_signature(dict(status, party=status["party"][::-1]), [])
+        b = G.progress_signature(dict(status, party=status["party"][::-1]), [])
         self.assertFalse(P.made_progress(a, b))
         self.assertIsNone(P.state_drift(a, b))           # same members, same places, other order
-
-
-class HarnessPid(unittest.TestCase):
-    """RUN-4: is_harness_pid/proc_start on real processes (sleep children; no game)."""
-
-    def spawn(self, **env):
-        import subprocess
-        p = subprocess.Popen(["sleep", "30"], env={"PATH": "/usr/bin:/bin", **env})
-        self.addCleanup(lambda: (p.kill(), p.wait()))
-        time.sleep(0.1)
-        return p.pid
-
-    def test_markers(self):
-        self.assertFalse(P.is_harness_pid(self.spawn()))                                  # a user's own process
-        self.assertFalse(P.is_harness_pid(self.spawn(SteamAppId="1086940")))              # a Steam-launched BG3
-        self.assertTrue(P.is_harness_pid(self.spawn(BG3AI_GAME_STAMP="20261016-120000")))  # launch_game.sh's
-        self.assertTrue(P.is_harness_pid(self.spawn(                                       # a launch from before
-            VK_LAYER_MESA_SCREENSHOT_CONFIG="comms;control=bg3ai-shot;output_dir=/x")))
-        self.assertFalse(P.is_harness_pid(2 ** 22 + 7))                                   # no such process
-
-    def test_proc_start_identity(self):
-        a = self.spawn()
-        self.assertIsInstance(P.proc_start(a), int)
-        self.assertEqual(P.proc_start(a), P.proc_start(a))
-        self.assertIsNone(P.proc_start(2 ** 22 + 7))
-        self.assertIn(b"sleep", P.proc_cmdline(a))
-
-    def test_launcher_marks_the_game(self):
-        sh = (P.REPO / "runner" / "launch_game.sh").read_text()
-        self.assertIn('"BG3AI_GAME_STAMP=$stamp"', sh)
-        self.assertIn('SCOPE_UNIT="bg3ai-game-$stamp.scope"', sh)
 
 
 class Relaunch(unittest.TestCase):
@@ -908,7 +721,7 @@ class Relaunch(unittest.TestCase):
         self.assertIsNone(P.relaunch_reason(now - 600, now, "", 2, ram_mb=9000, ram_limit_mb=0))   # 0 = off
 
     def test_pick_save_never_an_autosave(self):
-        f = P.parse_save_folder
+        f = G.parse_save_folder
         saves = [f("Claude-1__S032-end", 10.0), f("Claude-2__AutoSave_59", 20.0), f("Claude-3__QuickSave_4", 30.0)]
         self.assertEqual(P.pick_save(saves, None, "Claude", set()).label, "S032-end")
         self.assertEqual(P.pick_save(saves, "AutoSave_59", "Claude", set()).label, "S032-end")   # not even by HANDOFF
@@ -917,10 +730,10 @@ class Relaunch(unittest.TestCase):
     def _runner(self, d: Path, *, launched, log_text, save_mtime, last_started=50.0, steam=(True, "offline"),
                 owns=True, first=False, ram=5000, mod_path=None, acts=(), extra_saves=(), runner_saves=(),
                 save_combat=None, combat_now=False, last_ended=None):
-        self.saved = getattr(self, "saved", None) or (P.port_open, P.steam_ready, P.list_saves, P.game_started_at,
-                      P.log, P.game_ram_mb, P.game_mod_path, P.read_actions_since, P.party_in_combat)  # first call's
-        P.port_open = lambda *a, **k: True
-        P.party_in_combat = lambda: combat_now
+        self.saved = getattr(self, "saved", None) or (G.port_open, P.steam_ready, P.list_saves, P.game_started_at,
+                      P.log, P.game_ram_mb, P.game_mod_path, P.read_actions_since, G.party_in_combat)  # first call's
+        G.port_open = lambda *a, **k: True
+        G.party_in_combat = lambda: combat_now
         P.read_actions_since = lambda t, *a, **k: [x for x in acts if x.get("t", 0) > t]   # never the real log
         P.game_ram_mb = lambda: ram
         P.game_mod_path = lambda: mod_path   # never the machine's real game
@@ -949,8 +762,8 @@ class Relaunch(unittest.TestCase):
 
     def tearDown(self):
         if hasattr(self, "saved"):
-            (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb,
-             P.game_mod_path, P.read_actions_since, P.party_in_combat) = self.saved
+            (G.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb,
+             P.game_mod_path, P.read_actions_since, G.party_in_combat) = self.saved
 
     def test_relaunches_after_a_ready_check_failure(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1213,9 +1026,9 @@ class Relaunch(unittest.TestCase):
                 self.tearDown()
 
     def test_ensure_game_loads_the_relaunch_save_once(self):
-        saved = (P.port_open, P.log)
+        saved = (G.port_open, P.log)
         try:
-            P.port_open = lambda *a, **k: False
+            G.port_open = lambda *a, **k: False
             P.log = lambda m: None
             r = P.Runner.__new__(P.Runner)
             r.state = {"history": [], "loaded_save": None}
@@ -1229,21 +1042,21 @@ class Relaunch(unittest.TestCase):
             self.assertIsNone(r.relaunch_save)
             self.assertEqual(r.ensure_game(False), "chosen")
         finally:
-            P.port_open, P.log = saved
+            G.port_open, P.log = saved
 
 
 class EnsureSave(unittest.TestCase):
     def test_records_whether_the_runner_quicksave_was_mid_fight(self):
-        saved = (P.saves_since, P.list_saves, P.server_ready, P.available_ops, P.rpc, P.party_in_combat, P.log)
+        saved = (P.saves_since, P.list_saves, G.server_ready, G.available_ops, G.rpc, G.party_in_combat, P.log)
         try:
             for combat, tail in ((False, ""), (True, " (mid-fight)"), (None, " (fight state unknown)")):
                 logs, disk = [], []
                 P.saves_since = lambda *a: []
                 P.list_saves = lambda d=disk: list(d)
-                P.server_ready = lambda: True
-                P.available_ops = lambda c: {"ui.menu"}
-                P.party_in_combat = lambda c=combat: c
-                P.rpc = lambda *a, d=disk, **k: d.append(
+                G.server_ready = lambda: True
+                G.available_ops = lambda c: {"ui.menu"}
+                G.party_in_combat = lambda c=combat: c
+                G.rpc = lambda *a, d=disk, **k: d.append(
                     P.Save("Claude-4__QuickSave_24", "Claude", "QuickSave_24", time.time()))
                 P.log = logs.append
                 r = P.Runner.__new__(P.Runner)
@@ -1254,13 +1067,13 @@ class EnsureSave(unittest.TestCase):
                 self.assertEqual(r.state["runner_save_combat"], {"Claude-4__QuickSave_24": combat})
                 self.assertIn(f"quicksave written: Claude-4__QuickSave_24{tail}", logs)
         finally:
-            (P.saves_since, P.list_saves, P.server_ready, P.available_ops, P.rpc, P.party_in_combat,
+            (P.saves_since, P.list_saves, G.server_ready, G.available_ops, G.rpc, G.party_in_combat,
              P.log) = saved
 
 
 class Gates(unittest.TestCase):
     def setUp(self):
-        self.saved = (P.rpc, P.lua_eval, P.log)
+        self.saved = (G.rpc, G.lua_eval, P.log)
         self.calls = []
 
     def test_decision(self):
@@ -1278,11 +1091,11 @@ class Gates(unittest.TestCase):
         r.new_game = new_game
         self.calls = []
         P.log = lambda m: None
-        P.lua_eval = lambda *a, **k: name
+        G.lua_eval = lambda *a, **k: name
         return r
 
     def tearDown(self):
-        P.rpc, P.lua_eval, P.log = self.saved
+        G.rpc, G.lua_eval, P.log = self.saved
 
     def test_settings_errors_never_raise(self):
         r = self._runner()
@@ -1290,7 +1103,7 @@ class Gates(unittest.TestCase):
         def boom(op, args=None, context="server", timeout=0):
             self.calls.append((op, args))
             raise RuntimeError("game not answering")
-        P.rpc = boom
+        G.rpc = boom
         r.apply_play_settings()                                            # must not raise
         self.assertEqual([c[0] for c in self.calls[:3]], ["ui.config", "ui.settings", "ui.dismiss"])
         self.assertEqual(self.calls[0][1], {"autoskip": True})
@@ -1300,7 +1113,7 @@ class Gates(unittest.TestCase):
         for name, new_game, expected in (("Claude", False, True), ("pibooool", False, False),
                                          ("", True, True), ("", False, None)):
             r = self._runner(new_game, name)
-            P.rpc = lambda op, args=None, context="server", timeout=0: self.calls.append((op, args))
+            G.rpc = lambda op, args=None, context="server", timeout=0: self.calls.append((op, args))
             r.apply_play_settings()
             gates = [a for op, a in self.calls if op == "ui.config" and "save_enabled" in a]
             if expected is None:
@@ -1309,7 +1122,7 @@ class Gates(unittest.TestCase):
                 self.assertEqual(gates, [{"save_enabled": expected, "load_enabled": expected}], name)
             # UI-2: the MCP server follows the same decision (its _enable_save_gates used to reopen closed gates)
             self.assertEqual(r.save_env().get("BG3AI_SAVE_GATES"), {True: "1", False: "0", None: None}[expected])
-            P.rpc, P.lua_eval, P.log = self.saved
+            G.rpc, G.lua_eval, P.log = self.saved
 
     def test_ui_strict_switch(self):
         """S17: BG3AI_UI_STRICT=1/0 sets bg3le's strict frame lock in the running game at session start; unset
@@ -1326,10 +1139,10 @@ class Gates(unittest.TestCase):
         for env, sent in ((None, False), ("1", True), ("0", True)):
             r = self._runner()
             evals, logs = [], []
-            P.lua_eval = lambda code, ctx="client", evals=evals, **k: evals.append((code, ctx)) or (
+            G.lua_eval = lambda code, ctx="client", evals=evals, **k: evals.append((code, ctx)) or (
                 "true 0 5 0" if "UiStrict" in code else "Claude")
             P.log = logs.append
-            P.rpc = lambda op, args=None, context="server", timeout=0: None
+            G.rpc = lambda op, args=None, context="server", timeout=0: None
             old = os.environ.pop("BG3AI_UI_STRICT", None)
             try:
                 if env is not None:
@@ -1345,7 +1158,7 @@ class Gates(unittest.TestCase):
                 self.assertEqual(strict[0][1], "client")
                 self.assertIn(f"f({'true' if env == '1' else 'false'})", strict[0][0])
                 self.assertIn("ui strict: ON (refused 0, lock timeouts lua 5 ui 0)", logs)
-            P.rpc, P.lua_eval, P.log = self.saved
+            G.rpc, G.lua_eval, P.log = self.saved
 
 
 class SaveIdentity(unittest.TestCase):
@@ -1460,7 +1273,7 @@ class UntilMilestone(unittest.TestCase):
 
 class ClaudeSaves(unittest.TestCase):
     def test_claude_owner(self):
-        f = P.parse_save_folder
+        f = G.parse_save_folder
         saves = [f("Claude-11__S001-start", 10), f("Claude-12__S002-end", 20), f("pibooool-9__S002-end", 30),
                  f("Claude-13__QuickSave_4", 40)]
         best = P.pick_save(saves, "S002-end", "Claude", set(), "")
@@ -1571,33 +1384,33 @@ class Progress(unittest.TestCase):
 class AvatarName(unittest.TestCase):
     def test_reads_the_avatar_not_the_selection(self):
         seen = []
-        saved = P.lua_eval
+        saved = G.lua_eval
         try:
-            P.lua_eval = lambda code, context="client", timeout=0: seen.append((code, context)) or " Claude \n"
-            self.assertEqual(P.host_character_name(), "Claude")
+            G.lua_eval = lambda code, context="client", timeout=0: seen.append((code, context)) or " Claude \n"
+            self.assertEqual(G.host_character_name(), "Claude")
         finally:
-            P.lua_eval = saved
+            G.lua_eval = saved
         code, ctx = seen[0]
         self.assertEqual(ctx, "server")
         self.assertIn("DB_Avatars", code)
         self.assertLess(code.index("DB_Avatars"), code.index("GetHostCharacter"))  # selection only as fallback
 
     def test_unreadable_is_none(self):
-        saved = P.lua_eval
+        saved = G.lua_eval
         try:
-            P.lua_eval = lambda *a, **k: (_ for _ in ()).throw(OSError("no game"))
-            self.assertIsNone(P.host_character_name())
+            G.lua_eval = lambda *a, **k: (_ for _ in ()).throw(OSError("no game"))
+            self.assertIsNone(G.host_character_name())
         finally:
-            P.lua_eval = saved
+            G.lua_eval = saved
 
 
 class HotReload(unittest.TestCase):
     def setUp(self):
-        self.saved = (P.port_open, P.game_state, P.lua_eval, P.log, P.time.sleep, P.mod_tree_hashes)
+        self.saved = (G.port_open, G.game_state, G.lua_eval, P.log, P.time.sleep, P.mod_tree_hashes)
         self.logs, self.evals = [], []
         self.back_after = 2
-        P.port_open = lambda *a, **k: True
-        P.game_state = lambda: "Running"
+        G.port_open = lambda *a, **k: True
+        G.game_state = lambda: "Running"
         P.log = self.logs.append
         P.time.sleep = lambda s: None
 
@@ -1607,14 +1420,14 @@ class HotReload(unittest.TestCase):
                 raise ConnectionError("dropped")
             self.back_after -= 1
             return "true" if self.back_after <= 0 else "false"
-        P.lua_eval = ev
+        G.lua_eval = ev
         self.r = P.Runner.__new__(P.Runner)
         self.r.game_proc, self.r.abort = None, False
         self.r.state = type("S", (), {"data": {}, "__getitem__": lambda s, k: s.data.get(k),
                                       "__setitem__": lambda s, k, v: s.data.__setitem__(k, v)})()
 
     def tearDown(self):
-        (P.port_open, P.game_state, P.lua_eval, P.log, P.time.sleep, P.mod_tree_hashes) = self.saved
+        (G.port_open, G.game_state, G.lua_eval, P.log, P.time.sleep, P.mod_tree_hashes) = self.saved
 
     def test_hashes_and_diff(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1663,13 +1476,13 @@ class HotReload(unittest.TestCase):
 
     def test_skipped_while_loading(self):
         P.mod_tree_hashes = lambda: {"a.lua": "2"}
-        P.game_state = lambda: "LoadLevel"
+        G.game_state = lambda: "LoadLevel"
         self.assertEqual(self.r.hot_reload_mod(), 0)
         self.assertEqual(self.evals, [])
 
     def test_menu_uses_client_context(self):
         P.mod_tree_hashes = lambda: {"a.lua": "2"}
-        P.game_state = lambda: "Menu"
+        G.game_state = lambda: "Menu"
         self.r.hot_reload_mod()
         self.assertEqual({c for _, c in self.evals}, {"client"})
 
@@ -1777,9 +1590,9 @@ class ModSnapshot(unittest.TestCase):
                              (12, b"HOME=/h\0BG3LE_MOD_PATH=/rt/mod-live\0BG3LE_DEBUG=1\0")):
                 (proc / str(pid)).mkdir()
                 (proc / str(pid) / "environ").write_bytes(env)
-            with mock.patch.object(P, "pids_of_game", lambda: [10, 11, 12]):   # 10: gone (no /proc entry)
+            with mock.patch.object(G, "pids_of_game", lambda: [10, 11, 12]):   # 10: gone (no /proc entry)
                 self.assertEqual(P.game_mod_path(proc), "/rt/mod-live")
-            with mock.patch.object(P, "pids_of_game", lambda: [11]):
+            with mock.patch.object(G, "pids_of_game", lambda: [11]):
                 self.assertIsNone(P.game_mod_path(proc))
 
     def test_wired_at_the_boundary(self):
@@ -1949,7 +1762,7 @@ class CheckAllBetweenSessions(unittest.TestCase):
             return mock.Mock(returncode=rc, stdout="", stderr="")
 
         with mock.patch.object(P, "RUNTIME", d), mock.patch.object(P, "log", logs.append), \
-                mock.patch.object(P.subprocess, "run", fake_run), mock.patch.object(P, "ui_screen", return_value=screen):
+                mock.patch.object(P.subprocess, "run", fake_run), mock.patch.object(G, "ui_screen", return_value=screen):
             res = r.between_sessions_check()
         return res, logs, calls
 
@@ -2570,13 +2383,13 @@ class LongRun(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-long-"))
         self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
-        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "PLAYTHROUGHS", "COST_PAUSE_CHECK_S", "day_cost")}
-        self.addCleanup(lambda: [setattr(P, n, v) for n, v in self.saved.items()])
+        self.saved = {n: getattr(home(n), n) for n in ("RUNTIME", "PLAYTHROUGHS", "COST_PAUSE_CHECK_S", "day_cost")}
+        self.addCleanup(lambda: [setattr(home(n), n, v) for n, v in self.saved.items()])
         P.RUNTIME, P.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
         P.RUNTIME.mkdir(parents=True)
         self.ui = FakeUI()   # never the real game's UI (the heat pause presses ESCAPE in it)
         for name in ("ui_state", "ui_screen", "rpc"):
-            p = mock.patch.object(P, name, getattr(self.ui, name))
+            p = mock.patch.object(home(name), name, getattr(self.ui, name))
             p.start()
             self.addCleanup(p.stop)
 
@@ -2744,12 +2557,12 @@ class LongRun(unittest.TestCase):
         import contextlib
         import io
         self.thermal([(80, 68)])
-        with mock.patch.object(P, "port_open", return_value=False), \
+        with mock.patch.object(G, "port_open", return_value=False), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             P.cmd_status(P.argparse.Namespace(playthrough=None))
         self.assertRegex(out.getvalue(), r"thermal:  \d{4}-\d\d-\d\d \d\d:\d\d:\d\d cpu=80 .* nv=\[68,")
         (P.RUNTIME / "thermal.log").unlink()
-        with mock.patch.object(P, "port_open", return_value=False), \
+        with mock.patch.object(G, "port_open", return_value=False), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             P.cmd_status(P.argparse.Namespace(playthrough=None))
         self.assertIn("thermal:  - (no runtime/thermal.log)", out.getvalue())
@@ -2769,9 +2582,9 @@ class SeriesRuns(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-series-"))
         self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
-        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "PLAYTHROUGHS", "SE_BG3AI_DIR", "KNOWLEDGE_DIR",
+        self.saved = {n: getattr(home(n), n) for n in ("RUNTIME", "PLAYTHROUGHS", "SE_BG3AI_DIR", "KNOWLEDGE_DIR",
                                                  "PLAY_DIR", "list_saves", "read_actions_since")}
-        self.addCleanup(lambda: [setattr(P, n, v) for n, v in self.saved.items()])
+        self.addCleanup(lambda: [setattr(home(n), n, v) for n, v in self.saved.items()])
         P.RUNTIME, P.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
         P.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"
         P.PLAY_DIR = self.tmp / "play"
@@ -3091,8 +2904,8 @@ class SeriesRuns(unittest.TestCase):
                 mock.patch.object(P.steam_paths, "offline_required", lambda: (True, "marker")), \
                 mock.patch.object(P.steam_paths, "steam_offline", lambda: (False, "last login online")), \
                 mock.patch.object(P.bg3le_buildinfo, "problems", lambda: []), \
-                mock.patch.object(P, "pids_of_game", lambda: []), \
-                mock.patch.object(P, "foreign_bg3_pids", lambda: []), \
+                mock.patch.object(G, "pids_of_game", lambda: []), \
+                mock.patch.object(G, "foreign_bg3_pids", lambda: []), \
                 mock.patch.dict(P.os.environ, env or {}), \
                 mock.patch.object(P.display_env, "pgrep_xwayland", lambda: xwayland), \
                 contextlib.redirect_stdout(buf):
@@ -3394,12 +3207,12 @@ class SeriesRuns(unittest.TestCase):
         from unittest import mock
         r = self._series_runner()
         logged = []
-        with mock.patch.object(P, "port_open", lambda: True), mock.patch.object(r, "owns_game", lambda: True), \
+        with mock.patch.object(G, "port_open", lambda: True), mock.patch.object(r, "owns_game", lambda: True), \
                 mock.patch.object(r, "kill_game") as kill, mock.patch.object(P, "log", logged.append):
             r.end_run_game("series end", "--keep-game leaves it up")
         kill.assert_called_once()
         self.assertEqual(logged, ["series end: game stopped; --keep-game leaves it up"])
-        with mock.patch.object(P, "port_open", lambda: True), mock.patch.object(r, "owns_game", lambda: False), \
+        with mock.patch.object(G, "port_open", lambda: True), mock.patch.object(r, "owns_game", lambda: False), \
                 mock.patch.object(r, "kill_game") as kill, mock.patch.object(P, "log", logged.append):
             r.end_run_game("run end")
         kill.assert_not_called()                                   # not this runner's game: never killed

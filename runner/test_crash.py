@@ -12,6 +12,8 @@ plus a crash during the relaunch's load (bg3le `crash:` log → retry, then the 
 with an alert), LaunchWatch's crash signs, the memory note after a crash, the worst-case detection budget with the real constants (≤ 3 min), the Steam-offline guard before any
 launch, and session-config.json "minutes" switching the session length between sessions.
 
+The detection budget, the Steam guard and the run loop are in test_crash_loop.py; the splash/menu loads and the
+restart drift in test_crash_menu.py.
 The fake game is a real process started by the real Runner.launch_game() (LAUNCH_SH points at a stub script),
 so the launch → crash → kill → relaunch path runs for real; only the game's answers (debug port, game state,
 saves) are simulated, from whether that process is alive. A crash is a SIGKILL of the stub's process group.
@@ -40,6 +42,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # "0.01 s after SIGTERM" kill bursts the orchestrator chased). Tests that need a runtime set their own.
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 import play as P  # noqa: E402
+from bg3harness.game import io as G  # noqa: E402  (the game's I/O, moved out of play.py)
+
+G_FUNCS = {n for n, v in vars(G).items() if callable(v) and getattr(v, "__module__", None) == G.__name__
+           and not isinstance(v, type)}
+
+
+def home(name: str):
+    """The module a patched name lives in: the game's I/O functions moved to bg3harness.game.io."""
+    return G if name in G_FUNCS else P
 
 FAKE_LAUNCH = """#!/bin/sh
 # stand-in for runner/launch_game.sh: just a process that lives until killed
@@ -188,7 +199,7 @@ class FakeRunBase(unittest.TestCase):
                  "pids_of_game", "all_bg3_pids", "list_saves", "RESUME_MIN_MINUTES", "steam_ready", "crash_reporter_pids",
                  "LAUNCH_BACKOFF", "PLAYTHROUGHS", "press_menu_key", "MENU_POLL", "bg3le_problems", "MOD_GONE_S",
                  "user_journal", "SE_BG3AI_DIR")
-        self.saved = {n: getattr(P, n) for n in names}
+        self.saved = {n: getattr(home(n), n) for n in names}
         for k in ("FAKE_CLAUDE_HANG", "FAKE_CLAUDE_MCP", "FAKE_CLAUDE_LIMIT", "FAKE_CLAUDE_RESET", "FAKE_CLAUDE_HOLD_S"):
             os.environ.pop(k, None)
             self.addCleanup(os.environ.pop, k, None)
@@ -200,10 +211,10 @@ class FakeRunBase(unittest.TestCase):
         P.AGENT_SILENT_MINUTES = 2               # the fake claude idles silently; test_agent_hang sets 3 s
         P.SIGINT_GRACE, P.SIGTERM_GRACE, P.KILL_GRACE = 2, 2, 2
         P.steam_ready = lambda: (True, "test: offline")
-        P.crash_reporter_pids = lambda: []   # never a real reporter (kill_game would kill it)
+        G.crash_reporter_pids = lambda: []   # never a real reporter (kill_game would kill it)
         P.LAUNCH_BACKOFF = (0.2, 0.2)
         P.PLAYTHROUGHS = self.tmp / "playthroughs"     # profile.json
-        P.press_menu_key = lambda: "fake key"          # never the real input shim
+        G.press_menu_key = lambda log=None: "fake key"         # never the real input shim
         P.bg3le_problems = lambda: []                  # the real dist may be stale on a dev machine (UI-1)
         P.MENU_POLL = 0.05
         P.user_journal = lambda since: ""              # recover's OOM check: never the real journalctl (up to 20 s)
@@ -228,14 +239,14 @@ class FakeRunBase(unittest.TestCase):
         real_cmd = r.agent_cmd
         r.agent_cmd = lambda req: [sys.executable, str(self.claude)] + real_cmd(req)[1:]
         g = FakeGame(r, saves)
-        P.port_open, P.game_state, P.lua_eval, P.rpc = g.port_open, g.game_state, g.lua_eval, g.rpc
-        P.server_ready = lambda: g.port_open() and not g.hung and g.loaded() is not None
-        P.available_ops = lambda ctx: set()
-        P.host_character_name = lambda: "Claude"
-        P.ui_screen = lambda: "game"
-        P.read_progress = lambda: None
-        P.pids_of_game = lambda: []          # never a real bg3 pid; the stub dies with its process group
-        P.all_bg3_pids = lambda: []          # nor a user's own BG3 (RUN-4: one would block every launch)
+        G.port_open, G.game_state, G.lua_eval, G.rpc = g.port_open, g.game_state, g.lua_eval, g.rpc
+        G.server_ready = lambda: g.port_open() and not g.hung and g.loaded() is not None
+        G.available_ops = lambda ctx: set()
+        G.host_character_name = lambda: "Claude"
+        G.ui_screen = lambda: "game"
+        G.read_progress = lambda log=None: None
+        G.pids_of_game = lambda: []          # never a real bg3 pid; the stub dies with its process group
+        G.all_bg3_pids = lambda: []          # nor a user's own BG3 (RUN-4: one would block every launch)
         P.list_saves = lambda: list(g.saves)
         self.r, self.g = r, g
 
@@ -245,7 +256,7 @@ class FakeRunBase(unittest.TestCase):
                 os.killpg(self.r.game_proc.pid, signal.SIGKILL)
             self.r.game_proc.wait()
         for n, v in self.saved.items():
-            setattr(P, n, v)
+            setattr(home(n), n, v)
 
     def claude_runs(self) -> list[list[str]]:
         return [json.loads(ln)["argv"] for ln in self.claude_log.read_text().splitlines()]
@@ -691,7 +702,7 @@ class Series(NautiloidBase):
     def setUp(self):
         super().setUp()
         for n in ("PLAY_DIR", "KNOWLEDGE_DIR", "SE_BG3AI_DIR", "current_pins"):
-            self.saved[n] = getattr(P, n)
+            self.saved[n] = getattr(home(n), n)
         pins = P.current_pins()   # frozen: other workers editing the shared tree mid-test read as version drift
         P.current_pins = lambda: json.loads(json.dumps(pins))
         P.PLAY_DIR = self.tmp / "play"                  # check_memory links play/memory here, not in the repo
@@ -793,574 +804,22 @@ class StaleBg3le(FakeRunBase):
         self.assertEqual([e["kind"] for e in self.events()].count("bg3le_stale"), 1)
 
 
-class DetectionBudget(unittest.TestCase):
-    """With the real constants, every fault is detected and claude stopped within 3 min (the agent hang after its
-    silence limit). Then kill_game (≤ KILL_GRACE + KILL_CONFIRM) and BG3's own relaunch + load follow."""
-
-    def test_real_constants(self):
-        for kind in ("crash", "hang"):
-            self.assertLessEqual(P.detect_budget_s(kind), 180, kind)
-        self.assertLessEqual(P.detect_budget_s("agent_hang") - P.AGENT_SILENT_MINUTES * 60, 180)
-        self.assertLessEqual(P.AGENT_SILENT_MINUTES, 5)
-        self.assertLessEqual(P.KILL_GRACE + P.KILL_CONFIRM, 60)
-
-
-class SteamGuard(unittest.TestCase):
-    """No game launch unless Steam's last login was offline (and Steam runs)."""
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-steam-"))
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.log = self.tmp / "steamui_login.txt"
-        os.environ["BG3AI_STEAM_LOGIN_LOG"] = str(self.log)
-        self.env_saved = {k: os.environ.pop(k, None) for k in ("BG3AI_ALLOW_STEAM_ONLINE", "BG3AI_REQUIRE_STEAM_OFFLINE",
-                                                                  "BG3AI_CONFIG_DIR")}
-        os.environ["BG3AI_CONFIG_DIR"] = str(self.tmp / "config")   # never this machine's real marker
-        self.marker = self.tmp / "config" / "require-steam-offline"
-        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "port_open", "LAUNCH_SH")}
-        P.RUNTIME = self.tmp / "runtime"
-        P.port_open = lambda *a, **k: False
-        P.LAUNCH_SH = self.tmp / "must-not-run.sh"
-
-    def tearDown(self):
-        os.environ.pop("BG3AI_STEAM_LOGIN_LOG", None)
-        for k, v in self.env_saved.items():
-            os.environ.pop(k, None)
-            if v is not None:
-                os.environ[k] = v
-        for n, v in self.saved.items():
-            setattr(P, n, v)
-
-    def require_offline(self, why: str = "this machine shares the Steam account") -> None:
-        self.marker.parent.mkdir(parents=True, exist_ok=True)
-        self.marker.write_text(why + "\n")
-
-    def steam_ready(self, steam_running: bool = True) -> tuple[bool, str]:
-        real = P.subprocess.run
-        P.subprocess.run = lambda *a, **k: P.subprocess.CompletedProcess(a, 0 if steam_running else 1,
-                                                                         "123\n" if steam_running else "", "")
-        try:
-            return P.steam_ready()
-        finally:
-            P.subprocess.run = real
-
-    def write(self, *lines: str) -> None:
-        self.log.write_text("\n".join(f"[2026-10-09 21:00:0{i}] [ None ] {ln}" for i, ln in enumerate(lines)) + "\n")
-
-    def test_parser(self):
-        sp = P.steam_paths
-        self.write("Starting login", "SetLoginState: Success - OK", "Start offline - 1", "SetLoginState: Success - OK")
-        self.assertTrue(sp.steam_offline()[0])
-        self.write("Start offline - 1", "Starting login", "Received logon success response")   # went online
-        ok, why = sp.steam_offline()
-        self.assertFalse(ok)
-        self.assertIn("online", why)
-        self.write("Start offline - 0")
-        self.assertFalse(sp.steam_offline()[0])
-        self.log.unlink()
-        self.assertFalse(sp.steam_offline()[0])
-
-    def test_launch_refused_loudly_when_online(self):
-        self.require_offline()
-        self.write("Starting login", "Received logon success response")
-        r = P.Runner(P.Options("steam-test", None, 20, "opus", save_owner="Claude"))
-        with self.assertRaises(P.SteamNotOffline):
-            r.launch_game("Claude-1__x")
-        self.assertIsNone(r.game_proc)                                    # nothing launched
-        self.assertIn("REFUSING TO LAUNCH BG3", (P.RUNTIME / "runner.log").read_text())
-        ev = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
-        self.assertEqual(ev[-1]["kind"], "steam_refused")
-        self.assertFalse(json.loads((P.RUNTIME / "runner.status.json").read_text())["steam_offline"])
-
-    def test_steam_not_running_is_refused_too(self):
-        self.write("Start offline - 1")
-        for required in (False, True):
-            if required:
-                self.require_offline()
-            ok, why = self.steam_ready(steam_running=False)
-            self.assertFalse(ok)
-            self.assertIn("isn't running", why)
-
-    def test_online_is_fine_by_default(self):
-        # RUN-11: a public user's machine has no marker and no env: an online Steam launches (it used to retry forever)
-        self.write("Starting login", "Received logon success response")
-        ok, why = self.steam_ready()
-        self.assertTrue(ok, why)
-        self.assertIn("not required", why)
-
-    def test_marker_requires_offline(self):
-        # ~/.config/bg3ai/require-steam-offline keeps the requirement on, its text in the reason
-        self.require_offline("box-b: shares the account with box-a")
-        self.write("Starting login")
-        ok, why = self.steam_ready()
-        self.assertFalse(ok)
-        self.assertIn("box-b: shares the account", why)
-        self.write("Start offline - 1")
-        self.assertTrue(self.steam_ready()[0])
-
-    def test_env_overrides(self):
-        self.write("Starting login")
-        os.environ["BG3AI_REQUIRE_STEAM_OFFLINE"] = "1"            # no marker: the env turns it on
-        self.assertFalse(self.steam_ready()[0])
-        self.require_offline()
-        os.environ["BG3AI_REQUIRE_STEAM_OFFLINE"] = "0"            # and off, over the marker
-        self.assertTrue(self.steam_ready()[0])
-        os.environ.pop("BG3AI_REQUIRE_STEAM_OFFLINE")
-        self.assertFalse(self.steam_ready()[0])
-        os.environ["BG3AI_ALLOW_STEAM_ONLINE"] = "1"               # the older override still turns it off
-        self.assertTrue(self.steam_ready()[0])
-
-    def test_launcher_agrees(self):
-        # launch_game.sh asks `steam_paths.py launch-ok` (exit 0 launch / 3 refuse): the same policy as steam_ready
-        sp = Path(P.REPO) / "tools" / "steam_paths.py"
-
-        def launch_ok() -> int:
-            return P.subprocess.run([sys.executable, str(sp), "launch-ok"], capture_output=True, text=True,
-                                    env=dict(os.environ)).returncode
-        self.write("Starting login")
-        self.assertEqual(launch_ok(), 0)
-        self.require_offline()
-        self.assertEqual(launch_ok(), 3)
-        self.write("Start offline - 1")
-        self.assertEqual(launch_ok(), 0)
-        self.assertIn("steam_paths.py\" launch-ok", (Path(P.REPO) / "runner" / "launch_game.sh").read_text())
-
-
-class RunLoop(unittest.TestCase):
-    """Runner.run(): a Steam refusal never counts toward giving up; start/stop land in runner_events.jsonl."""
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-loop-"))
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "STEAM_RETRY_S", "MAX_SETUP_FAILURES", "HANDOVER")}
-        P.RUNTIME = self.tmp / "runtime"
-        P.HANDOVER = P.RUNTIME / "runner-handover.json"   # bound at import: a restart's handover stays in this test
-        P.STEAM_RETRY_S = 0
-        P.MAX_SETUP_FAILURES = 2
-        # other workers edit the tree meanwhile: a changed module would raise RestartRunner out of run()
-        patcher = mock.patch.object(P.Runner, "code_update_check", lambda self: None)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def tearDown(self):
-        for n, v in self.saved.items():
-            setattr(P, n, v)
-
-    def test_steam_refusals_retry_forever_then_play(self):
-        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
-        r.check_memory = lambda: None
-        calls = []
-
-        def play(minutes, first):
-            calls.append(minutes)
-            if len(calls) <= 5:                     # more than MAX_SETUP_FAILURES refusals
-                raise P.SteamNotOffline("last Steam login was online")
-            r.stop_requested = True
-            return P.SessionResult("S001", "c", 0, "exited", time.time() - 600, time.time())
-        r.play_session = play
-        self.assertEqual(r.run(), 0)
-        self.assertEqual(len(calls), 6)
-        kinds = [json.loads(ln)["kind"] for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
-        self.assertEqual((kinds[0], kinds[-1]), ("runner_start", "runner_stop"))
-        self.assertNotIn("setup_failed", kinds)
-        self.assertIn("Steam not offline", (P.RUNTIME / "runner.log").read_text())
-
-
-    def test_launch_gave_up_stops_the_runner_with_an_alert(self):
-        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
-        r.check_memory = lambda: None
-
-        def play(minutes, first):
-            raise P.LaunchGaveUp("3 launches in a row died before the save played: x")
-        r.play_session = play
-        self.assertEqual(r.run(), 1)
-        evs = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
-        self.assertEqual([e["kind"] for e in evs][-2:], ["launch_gave_up", "runner_stop"])
-        self.assertEqual(evs[-1]["why"], "gave up: the game crashes on every launch")
-        alert = json.loads((P.RUNTIME / "runner.status.json").read_text())["alert"]
-        self.assertEqual(alert["kind"], "launch_gave_up")
-        self.assertIn("GAME CRASH LOOP", (P.RUNTIME / "runner.log").read_text())
-        r2 = P.Runner(P.Options("loop-test", None, 20, "opus"))                # the next run clears the alert
-        r2.check_memory = lambda: None
-        r2.stop_requested = True
-        r2.run()
-        self.assertIsNone(json.loads((P.RUNTIME / "runner.status.json").read_text())["alert"])
-        self.assertIn("runner stopped (gave up: the game crashes on every launch)",
-                      (P.RUNTIME / "runner.log").read_text())
-
-    def test_mod_refusals_are_setup_failures_not_the_runners_death(self):
-        # RUN-3: an RpcError / LuaDebugError from the session setup (a refused ui.menu load, a failed eval) used to
-        # miss the run loop's except and kill the unattended runner. Now: setup failure → recover → next session.
-        P.MAX_SETUP_FAILURES = 3
-        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
-        r.check_memory = lambda: None
-        recovered, calls = [], []
-        r.recover = lambda why: recovered.append(why)
-
-        def play(minutes, first):
-            calls.append(first)
-            if len(calls) == 1:
-                raise P.RpcError("ui.menu: loading is disabled (bg3ai/config.json)")
-            if len(calls) == 2:
-                raise P.LuaDebugError("EVAL_ENGINE_NOT_READY")
-            r.stop_requested = True
-            return P.SessionResult("S001", "c", 0, "exited", time.time() - 600, time.time())
-        r.play_session = play
-        self.assertEqual(r.run(), 0)
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(len(recovered), 2)
-        self.assertIn("loading is disabled", recovered[0])
-        kinds = [json.loads(ln)["kind"] for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
-        self.assertEqual(kinds.count("setup_failed"), 2)
-        log = (P.RUNTIME / "runner.log").read_text()
-        self.assertIn("session setup failed: RpcError: ui.menu: loading is disabled", log)
-        self.assertIn("runner stopped (stopped)", log)
-
-    def test_api_limit_never_gives_up(self):
-        # RUN-7: 5 limits in a row (was: 3 quick exits → "gave up" in ~90 s): each waits, then the run goes on
-        P.API_BACKOFF_MIN_S, P.API_BACKOFF_MAX_S = 0.01, 0.05
-        self.addCleanup(lambda: setattr(P, "API_BACKOFF_MIN_S", 60) or setattr(P, "API_BACKOFF_MAX_S", 3600))
-        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
-        r.check_memory = lambda: None
-        calls = []
-
-        def play(minutes, first):
-            calls.append(first)
-            now = time.time()
-            if len(calls) <= 5:
-                return P.SessionResult("S001", "c", 1, "api_limit", now - 2, now, detail="usage limit reached")
-            r.stop_requested = True
-            return P.SessionResult("S001", "c", 0, "exited", now - 600, now)
-        r.play_session = play
-        self.assertEqual(r.run(), 0)
-        self.assertEqual(len(calls), 6)
-        ev = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
-        self.assertEqual([e["repeat"] for e in ev if e["kind"] == "api_limit"], [1, 2, 3, 4, 5])
-        self.assertNotIn("gave up", (P.RUNTIME / "runner.log").read_text())
-
-    def test_auth_errors_still_stop(self):
-        # RUN-7: a bad key / unknown model exits at once as before ("exited" < 60 s): 3 strikes stop the runner
-        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
-        r.check_memory = lambda: None
-        real_sleep = P.time.sleep
-        P.time.sleep = lambda s: None
-        self.addCleanup(setattr, P.time, "sleep", real_sleep)
-        r.play_session = lambda m, f: P.SessionResult("S001", "c", 1, "exited", time.time() - 2, time.time())
-        self.assertEqual(r.run(), 1)
-        self.assertIn("runner stopped (gave up: claude exits at once)", (P.RUNTIME / "runner.log").read_text())
-
-    def test_an_overflow_at_the_kickoff_is_a_quick_failure(self):
-        # the kickoff alone overflows the context (no tool call): every new session would, so 3 strikes stop
-        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
-        r.check_memory = lambda: None
-        real_sleep = P.time.sleep
-        P.time.sleep = lambda s: None
-        self.addCleanup(setattr, P.time, "sleep", real_sleep)
-        calls = []
-
-        def play(m, f):
-            calls.append(1)
-            r.stop_requested = len(calls) >= 5   # without the rule: sessions go on until stopped
-            return P.SessionResult("S001", "c", 0, "context_overflow", time.time() - 300, time.time())
-        r.play_session = play
-        self.assertEqual(r.run(), 1)
-        self.assertEqual(len(calls), P.MAX_QUICK_FAILURES)
-        self.assertIn("runner stopped (gave up: claude exits at once)", (P.RUNTIME / "runner.log").read_text())
-
-    def test_an_overflow_after_play_is_no_quick_failure(self):
-        res = P.SessionResult("S001", "c", 0, "context_overflow", 0.0, 30.0, tool_calls=40)
-        self.assertFalse(P.quick_failure(res))
-        self.assertTrue(P.quick_failure(P.SessionResult("S001", "c", 0, "exited", 0.0, 30.0, tool_calls=40)))
-
-    def test_mcp_failures_are_setup_failures(self):
-        # RUN-8: the bg3 MCP server never comes up: a setup failure per session, then a loud give-up
-        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
-        r.check_memory = lambda: None
-        real_sleep, P.time.sleep = P.time.sleep, (lambda s: None)
-        self.addCleanup(setattr, P.time, "sleep", real_sleep)
-        n = []
-
-        def play(m, f):
-            n.append(1)
-            return P.SessionResult("S001", "c", 0, "mcp_failed", time.time() - 5, time.time(),
-                                   detail="the bg3 MCP server is failed")
-        r.play_session = play
-        self.assertEqual(r.run(), 1)
-        self.assertEqual(len(n), P.MAX_SETUP_FAILURES)
-        self.assertIn("runner stopped (gave up: the bg3 MCP server fails to start)",
-                      (P.RUNTIME / "runner.log").read_text())
-
-    def test_any_other_death_is_logged_with_its_traceback(self):
-        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
-        r.check_memory = lambda: None
-
-        def play(minutes, first):
-            raise KeyError("boom")
-        r.play_session = play
-        with self.assertRaises(KeyError):
-            r.run()
-        log = (P.RUNTIME / "runner.log").read_text()
-        self.assertIn("runner died:\nTraceback", log)
-        self.assertIn("runner stopped (died: KeyError: 'boom')", log)
-
-
-class FakeMenuGame:
-    """A game at the main menu's splash ("Press any key"): the client state flips LoadMenu/Menu (or stays LoadMenu),
-    ui.state shows SplashScreen as a panel, ui.menu fails until a key gets past it; a load takes 3 polls."""
-
-    def __init__(self, splash: bool = True, flip: bool = True, load_starts: bool = True):
-        self.splash, self.flip, self.load_starts = splash, flip, load_starts
-        self.polls, self.presses, self.loads, self.loading, self.running = 0, 0, [], 0, False
-        self.load_gate = True   # the mod's persisted load gate (ui.config load_enabled)
-        self.refuse = None      # ui.menu load raises this RpcError text
-
-    def game_state(self, timeout: float = 0):
-        self.polls += 1
-        if self.running:
-            return "Running"
-        if self.loading:
-            self.loading -= 1
-            self.running = self.loading == 0
-            return "Running" if self.running else "LoadSession"
-        if self.splash:
-            return ("LoadMenu", "Menu")[self.polls % 2] if self.flip else "LoadMenu"
-        return "Menu"
-
-    def rpc(self, op: str, args=None, context: str = "server", timeout: float = 0):
-        if op == "ui.state":
-            if self.running:
-                return {"screen": "game"}
-            return {"screen": "game", "panels_open": ["SplashScreen"]} if self.splash else {"screen": "main_menu"}
-        if op == "ui.config" and "load_enabled" in (args or {}):
-            self.load_gate = args["load_enabled"]
-        if op == "ui.menu":
-            if self.splash:
-                raise P.RpcError("ui.menu: not at the main menu")
-            if self.refuse:
-                raise P.RpcError(self.refuse)
-            if not self.load_gate:
-                raise P.RpcError("ui.menu: loading is disabled")
-            self.loads.append(args)
-            self.loading = 3 if self.load_starts else 0
-            return {}
-        return {}
-
-    def press(self) -> str:
-        self.presses += 1
-        self.splash = False
-        return "fake Enter"
-
-
-class SplashMenu(unittest.TestCase):
-    """Live bug: a fresh game at the splash (state LoadMenu/Menu) made ensure_game wait 5+ min for Running.
-    Now LoadMenu counts as the menu, the splash gets a key, and Running is awaited only after a load started."""
-
-    NAMES = ("RUNTIME", "port_open", "game_state", "rpc", "available_ops", "server_ready", "list_saves",
-             "press_menu_key", "host_character_name", "MENU_POLL", "SPLASH_LOADMENU_S", "LOAD_START_TIMEOUT")
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-splash-"))
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.saved = {n: getattr(P, n) for n in self.NAMES}
-        P.RUNTIME = self.tmp / "runtime"
-        P.MENU_POLL, P.SPLASH_LOADMENU_S, P.LOAD_START_TIMEOUT = 0.01, 0.2, 1
-
-    def tearDown(self):
-        for n, v in self.saved.items():
-            setattr(P, n, v)
-
-    def run_ensure(self, g: FakeMenuGame):
-        P.port_open = lambda *a, **k: True
-        P.game_state, P.rpc, P.press_menu_key = g.game_state, g.rpc, g.press
-        P.available_ops = lambda ctx: {"ui.state", "ui.menu"}
-        P.server_ready = lambda: g.running
-        P.host_character_name = lambda: "Claude"
-        P.list_saves = lambda: [P.Save("Claude-1__S014-start", "Claude", "S014-start", time.time() - 60)]
-        r = P.Runner(P.Options("splash-test", None, 20, "opus", save_owner="Claude"))
-        r.mem = self.tmp / "memory"
-        r.owns_game = lambda: True
-        t0 = time.time()
-        label = r.ensure_game(first=True)
-        return r, label, time.time() - t0, (P.RUNTIME / "runner.log").read_text()
-
-    def test_splash_flipping_loadmenu_menu_gets_a_key_then_the_save_loads(self):
-        g = FakeMenuGame()
-        r, label, secs, log = self.run_ensure(g)
-        self.assertEqual(label, "S014-start")
-        self.assertEqual(g.presses, 1)
-        self.assertEqual(len(g.loads), 1)
-        self.assertTrue(g.running)
-        self.assertEqual(r.state["loaded_save"], "Claude-1__S014-start")
-        self.assertLess(secs, 5)
-        self.assertNotIn("game is busy", log)
-        self.assertIn("splash screen (state Menu): pressed fake Enter", log)
-
-    def test_splash_stuck_in_loadmenu_gets_a_key_after_a_while(self):
-        g = FakeMenuGame(flip=False)
-        _r, label, _secs, log = self.run_ensure(g)
-        self.assertEqual((label, g.presses), ("S014-start", 1))
-        self.assertIn("splash screen (state LoadMenu)", log)
-
-    def test_main_menu_gets_no_key(self):
-        # a key on the main menu would hit Continue
-        g = FakeMenuGame(splash=False)
-        _r, label, _secs, _log = self.run_ensure(g)
-        self.assertEqual((label, g.presses, len(g.loads)), ("S014-start", 0, 1))
-
-    def test_load_gates_open_before_the_menu_load(self):
-        # RUN-3: the mod refuses ui.menu load while its persisted load gate is off (a fresh profile's default)
-        g = FakeMenuGame(splash=False)
-        g.load_gate = False
-        _r, label, _secs, _log = self.run_ensure(g)
-        self.assertEqual((label, len(g.loads)), ("S014-start", 1))
-        self.assertTrue(g.load_gate)
-
-    def test_a_refused_menu_load_relaunches_the_game_with_the_save(self):
-        # RUN-3: any refusal (gate, playthrough not on the page, eval failure) → kill + launch_and_load
-        # (-loadSaveGame needs no gate), not a dead runner.
-        g = FakeMenuGame(splash=False)
-        g.refuse = "ui.menu: loading is disabled (bg3ai/config.json load_enabled=false)"
-        relaunched = []
-        real_runner = P.Runner
-
-        class R(real_runner):
-            def kill_game(self):
-                relaunched.append("kill")
-
-            def launch_and_load(self, save):
-                relaunched.append(save.folder)
-                return save
-        P.Runner = R
-        try:
-            r, label, _secs, log = self.run_ensure(g)
-        finally:
-            P.Runner = real_runner
-        self.assertEqual(label, "S014-start")
-        self.assertEqual(relaunched, ["kill", "Claude-1__S014-start"])
-        self.assertEqual(r.state["loaded_save"], "Claude-1__S014-start")
-        self.assertIn("refused (ui.menu: loading is disabled", log)
-        ev = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
-        self.assertEqual(ev[-1]["kind"], "load_refused")
-
-    def test_a_load_that_never_starts_fails_fast_instead_of_waiting_for_running(self):
-        g = FakeMenuGame(load_starts=False)
-        t0 = time.time()
-        with self.assertRaisesRegex(RuntimeError, "never started"):
-            self.run_ensure(g)
-        self.assertLess(time.time() - t0, 5)
-        self.assertNotIn("waiting for game state Running", (P.RUNTIME / "runner.log").read_text())
-
-
-class RestartDrift(unittest.TestCase):
-    """S059 08:45 / S063 10:51: a runner restart (test cycle) kept the running game, but acceptance had loaded its own
-    saves in between; claude started on an Act-2 fixture. Now a restart compares the game with the last session's
-    end_sig and loads the newest save when it moved; an unchanged game is kept (no reload)."""
-
-    END = {"level": "BGO_Main_A", "region": "R", "party_levels": ["9"], "pos": [15.3, 46.4, 224.3],
-           "journal": "921b6e07b9fa", "journal_steps": 413}
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-drift-"))
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        names = SplashMenu.NAMES + ("read_progress",)
-        self.saved = {n: getattr(P, n) for n in names}
-        self.addCleanup(lambda: [setattr(P, n, v) for n, v in self.saved.items()])
-        P.RUNTIME = self.tmp / "runtime"
-        P.MENU_POLL, P.SPLASH_LOADMENU_S, P.LOAD_START_TIMEOUT = 0.01, 0.2, 1
-
-    def run_restart(self, now_sig: dict | None, take_over: bool = True, owned: bool = True,
-                    saves: list | None = None, agent_saves: list | None = None):
-        g = FakeMenuGame(splash=False)
-        g.running = True
-        orig_rpc = g.rpc
-
-        def rpc(op, args=None, context="server", timeout=0):
-            if op == "ui.menu":
-                g.running = False   # an in-game load: Running → loading → Running
-            return orig_rpc(op, args, context, timeout)
-        P.port_open = lambda *a, **k: True
-        P.game_state, P.rpc, P.press_menu_key = g.game_state, rpc, g.press
-        P.available_ops = lambda ctx: {"ui.state", "ui.menu"}
-        P.server_ready = lambda: g.running
-        P.host_character_name = lambda: "Claude"
-        P.read_progress = lambda: now_sig
-        P.list_saves = lambda: saves or [P.Save("Claude-1__S062-end", "Claude", "S062-end", time.time() - 60)]
-        r = P.Runner(P.Options("drift-test", None, 20, "opus", save_owner="Claude", take_over=take_over))
-        r.state["agent_saves"] = agent_saves
-        r.mem = self.tmp / "memory"
-        r.owns_game = lambda: owned
-        r.state["loaded_save"] = "Claude-1__S062-end" if owned else None
-        r.state["history"] = [{"kind": "play", "session": "S062", "ended": time.time() - 600, "end_sig": self.END}]
-        label = r.ensure_game(first=True)
-        logf = P.RUNTIME / "runner.log"
-        return g, label, logf.read_text() if logf.exists() else ""
-
-    def test_fixture_loaded_in_between_reloads_the_newest_save(self):
-        act2 = dict(self.END, level="SCL_Main_A", journal="79e1e111a061", journal_steps=219, pos=[635.3, 18.8, -1499.8])
-        g, label, log = self.run_restart(act2)
-        self.assertEqual((label, len(g.loads)), ("S062-end", 1))
-        self.assertIn("the running game moved since the last session (level SCL_Main_A", log)
-
-    def test_take_over_of_a_foreign_game_also_reloads(self):
-        g, label, _log = self.run_restart(dict(self.END, pos=[115.3, 46.4, 224.3]), owned=False)
-        self.assertEqual((label, len(g.loads)), ("S062-end", 1))
-
-    def test_same_place_is_kept(self):
-        g, label, log = self.run_restart(dict(self.END, pos=[16.0, 46.4, 226.0], party_levels=["1", "9"]))
-        self.assertEqual((label, len(g.loads)), (None, 0))
-        self.assertNotIn("moved since", log)
-
-    def test_unreadable_state_fails_closed(self):
-        # RUN-6: the progress read failed: the game isn't known to be where the session ended → reload (was: kept)
-        g, label, log = self.run_restart(None)
-        self.assertEqual((label, len(g.loads)), ("S062-end", 1))
-        self.assertIn("progress can't be read", log)
-
-    def test_agent_quicksave_is_the_reload_target(self):
-        # RUN-6 (S059): the newest good state was the agent's own quicksave; pick_save used to skip every QuickSave_N
-        now = time.time()
-        saves = [P.Save("Claude-1__S062-end", "Claude", "S062-end", now - 600),
-                 P.Save("Claude-1__QuickSave_7", "Claude", "QuickSave_7", now - 60),     # the agent's (recorded)
-                 P.Save("Claude-1__QuickSave_8", "Claude", "QuickSave_8", now - 30)]     # acceptance's (not)
-        act2 = dict(self.END, level="SCL_Main_A")
-        g, label, _log = self.run_restart(act2, saves=saves, agent_saves=["Claude-1__QuickSave_7"])
-        self.assertEqual((label, len(g.loads)), ("QuickSave_7", 1))
-        g, label, _log = self.run_restart(act2, saves=saves, agent_saves=None)
-        self.assertEqual(label, "S062-end")                                              # unrecorded: never
-
-    def test_party_order_change_is_not_a_move(self):
-        # RUN-6: party[0] changed (a swap/selection) but Claude stands where the session ended → kept
-        end = dict(self.END, pos_name="Claude", party_pos={"Claude": [15.3, 46.4, 224.3], "Gale": [17.0, 46.4, 226.0]})
-        self.END = end
-        now = dict(end, pos=[300.0, 46.4, 224.3], pos_name="Karlach",
-                   party_pos={"Karlach": [300.0, 46.4, 224.3], "Claude": [16.0, 46.4, 225.0]})
-        g, label, _log = self.run_restart(now)
-        self.assertEqual((label, len(g.loads)), (None, 0))
-        moved = dict(now, party_pos={"Karlach": [300.0, 46.4, 224.3], "Claude": [90.0, 46.4, 224.3]})
-        self.assertIn("Claude stands 75 m from", P.state_drift(end, moved))
-
-    def test_state_drift(self):
-        self.assertIsNone(P.state_drift(None, self.END))
-        self.assertIn("journal_steps 414", P.state_drift(self.END, dict(self.END, journal_steps=414)))
-        self.assertIn("40 m from", P.state_drift(self.END, dict(self.END, pos=[55.3, 46.4, 224.3])))
-
-
 class Watch(unittest.TestCase):
     """LaunchWatch: each crash sign, read from fakes (no real processes or ports)."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-watch-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.saved = {n: getattr(P, n) for n in ("pids_of_game", "crash_reporter_pids", "port_open")}
+        self.saved = {n: getattr(home(n), n) for n in ("pids_of_game", "crash_reporter_pids", "port_open")}
         self.pids, self.reporters, self.port = [], [], False
-        P.pids_of_game = lambda: list(self.pids)
-        P.crash_reporter_pids = lambda: list(self.reporters)
-        P.port_open = lambda *a, **k: self.port
+        G.pids_of_game = lambda: list(self.pids)
+        G.crash_reporter_pids = lambda: list(self.reporters)
+        G.port_open = lambda *a, **k: self.port
         self.w = P.LaunchWatch("20261010-020143", self.tmp, started=100.0)
 
     def tearDown(self):
         for n, v in self.saved.items():
-            setattr(P, n, v)
+            setattr(home(n), n, v)
 
     def test_crash_line_in_this_launchs_bg3le_log(self):
         main = self.tmp / "bg3le-20261010-020143.log.379707"

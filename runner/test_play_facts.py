@@ -21,6 +21,7 @@ os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runti
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")
 import play as P  # noqa: N812, I001  (play puts packages/harness/src on sys.path)
 from bg3harness import clients, events
+from bg3harness.game import io as G
 
 RECORD = {
     "clean": True,
@@ -63,7 +64,7 @@ class FactsWiring(unittest.TestCase):
             mock.patch.object(P, "run_record", lambda *a, **k: dict(RECORD, t=time.time())),
             mock.patch.object(P.model_time, "model_time", lambda *a, **k: None),
             mock.patch.object(P.runs, "model_time_field", lambda *a, **k: None),
-            mock.patch.multiple(P, **patches),
+            mock.patch.multiple(G, **patches),
         ):
             r.opt.judge = False
             return r.write_run_record(time.time() - 5)
@@ -124,7 +125,7 @@ class FactsWiring(unittest.TestCase):
 
         t0 = time.time() - 5
         with (
-            mock.patch.object(P, "rpc", rpc),
+            mock.patch.object(G, "rpc", rpc),
             mock.patch.object(
                 P,
                 "run_record",
