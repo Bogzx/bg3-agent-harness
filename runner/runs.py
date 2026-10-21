@@ -426,8 +426,11 @@ def stream_events(lines: list[str], parsers: dict | None = None, name: str | Non
 
 def claude_totals(state_dir: Path, since: float) -> dict:
     """Cost, turns and tokens of every play-agent stream written since `since` (play, resumes, -fix, -keeper; any
-    client): their result events (events.load_events), i.e. the finished processes. A cost a client can't know
-    (codex/gemini model without a price) counts 0."""
+    client): their result events (events.load_events). A process stopped before its result (a cap, a hang, a
+    crash: no result event) counts its usage events, UsageMeter's way: the tokens per message id, one turn per
+    message, the cost its client reported as running (pi), else its tokens at the run's cost per token so far
+    (claude reports cost only in its result). A cost a client can't know (codex/gemini model without a price)
+    counts 0."""
     cost, turns, tokens = 0.0, 0, {k: 0 for k, _ in TOKEN_FIELDS}
     try:
         files = list(state_dir.iterdir()) if state_dir.is_dir() else []
@@ -442,12 +445,32 @@ def claude_totals(state_dir: Path, since: float) -> dict:
             continue
     parsers: dict = {}
     for _, _, f in sorted(found):   # in the order written: a resume after the process it resumes
-        for ev in events.load_events(f.with_name(f.name[:-len(".jsonl")]), kinds={"result"}, parsers=parsers):
+        base = f.with_name(f.name[:-len(".jsonl")])
+        evs = events.load_events(base, kinds={"result"}, parsers=parsers)
+        if not evs:   # no result: the process's usage events
+            evs = [unfinished_result(events.load_events(base, kinds={"usage"}), cost, token_total(tokens))]
+        for ev in evs:
             cost += float(ev.cost_usd or 0)
             turns += int(ev.turns or 0)
             for k in clients.TOKEN_KEYS:
                 tokens[k] += int((ev.tokens or {}).get(k) or 0)
     return {"cost_usd": cost, "turns": turns, "tokens": tokens}
+
+
+def unfinished_result(usage: list, done_cost: float, done_tokens: int):
+    """The result a process stopped before its own would have reported, from its usage events (claude_totals): the
+    last tokens per message id, one turn per message, the last running cost (pi), else the tokens at done_cost per
+    done_token (UsageMeter's live rate)."""
+    msgs: dict = {}
+    running = None
+    for ev in usage:
+        msgs[ev.message_id or f"#{len(msgs)}"] = ev.tokens or {}
+        if ev.cost_usd is not None:
+            running = float(ev.cost_usd)
+    tokens = {k: sum(int(t.get(k) or 0) for t in msgs.values()) for k in clients.TOKEN_KEYS}
+    if running is None:
+        running = token_total(tokens) * (done_cost / done_tokens if done_tokens else 0.0)
+    return clients.Event("result", turns=len(msgs), cost_usd=running, tokens=tokens)
 
 
 class UsageMeter:

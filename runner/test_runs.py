@@ -140,6 +140,30 @@ class Caps(TmpDir):
         self.assertEqual(R.token_total(tot["tokens"]), 10)
         self.assertEqual(R.claude_totals(self.tmp, time.time() + 60)["cost_usd"], 0.0)   # streams before the run
 
+    def test_claude_totals_counts_a_process_stopped_before_its_result(self):
+        # the e2e pi run (e2e-naut-pi S001, trimmed to 5 of its 431 usage events): the cost cap stopped pi, no result
+        # event, and the run record said cost_usd 0, turns 0, tokens 0
+        src = Path(__file__).resolve().parent / "fixtures" / "pi" / "e2e-naut-pi"
+        for name in ("S001.jsonl", "S001.events.jsonl"):
+            shutil.copy(src / name, self.tmp / name)
+        tot = R.claude_totals(self.tmp, 0)
+        self.assertEqual((tot["cost_usd"], tot["turns"]), (0.500185, 5))   # pi's last running (billed) cost
+        self.assertEqual(tot["tokens"], {"input": 27990, "output": 616, "cache_read": 512896, "cache_write": 0})
+        # claude stopped mid-stream: its usage per message id at the run's cost per token so far
+        _stream(self.tmp / "S002.jsonl", {"type": "result", "total_cost_usd": 1.0, "num_turns": 1,
+                                          "usage": {"input_tokens": 1000}})
+        later = time.time() + 5
+        os.utime(self.tmp / "S002.jsonl", (later, later))
+        _stream(self.tmp / "S003.jsonl", {"type": "system", "subtype": "init"},
+                *({"type": "assistant", "message": {"id": "m1", "usage": {"input_tokens": 10, "output_tokens": n}}}
+                  for n in (5, 90)), {"type": "assistant", "message": {"id": "m2", "usage": {"input_tokens": 100}}})
+        os.utime(self.tmp / "S003.jsonl", (later + 1, later + 1))
+        rate = 1.0 / (541502 + 1000)   # the run's dollars per token before S003
+        tot = R.claude_totals(self.tmp, 0)
+        self.assertEqual(tot["turns"], 5 + 1 + 2)
+        self.assertEqual(tot["tokens"]["input"], 27990 + 1000 + 110)
+        self.assertAlmostEqual(tot["cost_usd"], 0.500185 + 1.0 + 200 * rate * (0.500185 + 1.0))
+
     def test_a_cap_is_the_agents_failure_like_a_timeout(self):
         f = R.outcome_failure("over_budget", "", 9, [], "tokens")
         self.assertEqual([(x["kind"], x["class"]) for x in f], [("tokens_cap", "agent")])
