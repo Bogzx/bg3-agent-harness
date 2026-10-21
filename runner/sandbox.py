@@ -6,8 +6,9 @@ bound to the sandbox network's gateway (172.30.99.1:8770) with the session env a
 client CLI (runner/clients.py) inside `bg3ai/agent-client` with that server as its only MCP server:
 
     host                                         internal network bg3ai-sandbox (172.30.99.0/24)
-      bg3ai-mcp --transport http  <── 8770 ───   client container (claude | codex | gemini), --cap-drop ALL,
-      game, repo, saves, memory                    read-only root, HOME = runtime/sessions/<pt>/sandbox-home
+      bg3ai-mcp --transport http  <── 8770 ───   client container (claude | codex | gemini | pi),
+      game, repo, saves, memory                    --cap-drop ALL, read-only root,
+                                                   HOME = runtime/sessions/<pt>/sandbox-home
                                                      │ HTTPS_PROXY
       internet  <── bridge ── bg3ai-egress (172.30.99.2:3128): CONNECT to the client's model API host only
 
@@ -21,6 +22,7 @@ Docker is driven through the `docker` CLI ($BG3AI_DOCKER, tests use a fake one);
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import signal
@@ -32,6 +34,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 CONTAINER_DIR = REPO / "tools" / "container"
+PI_DIR = REPO / "tools" / "pi"              # Dockerfile.agent's `pi` build context: pi pinned by its package-lock
+PI_HOME = "/opt/pi"                         # where the image has it (npm ci of tools/pi, with bg3.ts)
+PI_BIN = f"{PI_HOME}/node_modules/.bin/pi"
+PI_EXTENSION = f"{PI_HOME}/bg3.ts"
 FIREWALL = CONTAINER_DIR / "firewall.sh"
 NET = os.environ.get("BG3AI_SANDBOX_NET", "bg3ai-sandbox")
 SUBNET = os.environ.get("BG3AI_SANDBOX_SUBNET", "172.30.99.0/24")
@@ -55,10 +61,12 @@ EGRESS = {
     "claude": ("api.anthropic.com", "console.anthropic.com"),
     "codex": ("api.openai.com", "chatgpt.com", "auth.openai.com"),
     "gemini": ("generativelanguage.googleapis.com", "cloudcode-pa.googleapis.com", "oauth2.googleapis.com"),
+    "pi": ("openrouter.ai", "api.deepseek.com"),   # the profiles' endpoints (profiles/*.toml)
 }
 # Credentials passed into the container by name (`docker run -e NAME`: the value never shows in argv or logs), when
 # set in the runner's env. A login kept in the sandbox home (e.g. `claude setup-token` → CLAUDE_CODE_OAUTH_TOKEN, or
-# the CLI's own login run once in the container) works too.
+# the CLI's own login run once in the container) works too. pi's key is the one its profile names
+# (`[endpoint] api_key_env`): prepare(..., auth_env=(profile.endpoint.api_key_env,)).
 AUTH_ENV = {
     "claude": ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"),
     "codex": ("OPENAI_API_KEY", "CODEX_API_KEY"),
@@ -159,12 +167,23 @@ def cli_version(name: str) -> str | None:
     return m.group(0) if r.returncode == 0 and m else None
 
 
+def pi_version() -> str | None:
+    """The pi version tools/pi/package.json pins (the image installs it from the lock file)."""
+    try:
+        deps = json.loads((PI_DIR / "package.json").read_text())["dependencies"]
+    except (OSError, ValueError, KeyError):
+        return None
+    return deps.get("@earendil-works/pi-coding-agent")
+
+
 def build_images(client: str) -> dict:
     """Builds the tools image and the agent image (cached when nothing changed). {client version} for the record."""
     docker("build", "-q", "-t", TOOLS_IMAGE, str(CONTAINER_DIR), timeout=BUILD_TIMEOUT_S)
-    args, version = [], cli_version(client)
-    if version:
+    args, version = ["--build-context", f"pi={PI_DIR}"], None
+    if client in VERSION_ARGS and (version := cli_version(client)):
         args += ["--build-arg", f"{VERSION_ARGS[client]}={version}"]
+    elif client == "pi":
+        version = pi_version()
     docker("build", "-q", "-t", CLIENT_IMAGE, "-f", str(CONTAINER_DIR / "Dockerfile.agent"), *args,
            str(CONTAINER_DIR), timeout=BUILD_TIMEOUT_S)
     return {"client_version": version}
@@ -295,6 +314,7 @@ class Sandbox:
     unfirewalled: bool = False
     info: dict = field(default_factory=dict)     # firewall + build facts for the log and the record
     pid_file: Path | None = None
+    auth_env: tuple[str, ...] | None = None      # the credential env names to pass (None: AUTH_ENV[client])
 
     @property
     def url(self) -> str:
@@ -308,9 +328,10 @@ class Sandbox:
         return f"bg3ai-play-{re.sub(r'[^A-Za-z0-9_.-]', '-', tag)}-{os.getpid()}-{int(time.time() * 1000) % 10**8}"
 
     def run_argv(self, name: str, client_cmd: list[str], client_env: dict | None = None,
-                 files: list[Path] | tuple = (), role: str = "play") -> list[str]:
+                 files: list[Path] | tuple = (), role: str = "play", writable: list[Path] | tuple = ()) -> list[str]:
         """`docker run` of client_cmd in the agent image: the sandbox network only, no capabilities, read-only root,
-        HOME from the host's sandbox home, config files (client.write_config's) mounted read-only at their path."""
+        HOME from the host's sandbox home, config files (client.write_config's) mounted read-only at their path, and
+        `writable` dirs (pi's agent dir: its session files) read-write at their path."""
         if self.home is None:
             raise SandboxError("no sandbox home set (the Runner sets runtime/sessions/<pt>/sandbox-home)")
         self.home.mkdir(parents=True, exist_ok=True)
@@ -324,11 +345,17 @@ class Sandbox:
         argv += ["-e", f"NO_PROXY={GW}", "-e", f"no_proxy={GW}"]
         for k, v in {**CLIENT_ENV.get(self.client, {}), **(client_env or {})}.items():
             argv += ["-e", f"{k}={v}"]
-        for k in AUTH_ENV.get(self.client, ()):
+        for k in AUTH_ENV.get(self.client, ()) if self.auth_env is None else self.auth_env:
             if os.environ.get(k):
                 argv += ["-e", k]   # by name: docker copies the value from its own env
+        dirs = [Path(d).resolve() for d in writable]
+        for d in dirs:
+            d.mkdir(parents=True, exist_ok=True)
+            argv += ["-v", f"{d}:{d}"]
         for f in files:
-            argv += ["-v", f"{Path(f).resolve()}:{Path(f).resolve()}:ro"]
+            f = Path(f).resolve()
+            if not any(f.is_relative_to(d) for d in dirs):
+                argv += ["-v", f"{f}:{f}:ro"]
         return argv + [CLIENT_IMAGE, *client_cmd]
 
     def start_server(self, server: dict, env: dict, cwd: Path, log_path: Path, **kw) -> HttpServer:
@@ -344,9 +371,10 @@ class Sandbox:
 
 
 def prepare(client: str, home: Path | None = None, unfirewalled: bool = False, log=print, pid_file: Path | None = None,
-            gate=firewall_gate) -> Sandbox:
+            gate=firewall_gate, auth_env: tuple[str, ...] | None = None) -> Sandbox:
     """Once per runner start: docker answers, the network and images exist, the firewall is up (or the dev flag),
-    the egress proxy runs, no play container of a dead runner is left. SandboxError says what's missing."""
+    the egress proxy runs, no play container of a dead runner is left. SandboxError says what's missing. auth_env:
+    the credential env names to pass in (pi: its profile's api_key_env; default AUTH_ENV[client])."""
     if docker("version", "--format", "{{.Server.Version}}", check=False, timeout=30).returncode != 0:
         raise SandboxError("docker doesn't answer (is the daemon running and the user in the docker group?)")
     ensure_network()
@@ -358,7 +386,7 @@ def prepare(client: str, home: Path | None = None, unfirewalled: bool = False, l
     info["egress"] = start_proxy(client)
     log(f"sandbox: {client} in {CLIENT_IMAGE} on {NET}; bg3 server {URL}; egress {', '.join(info['egress'])}; "
         f"firewall {'OFF (--sandbox-unfirewalled)' if unfirewalled else info.get('table')}")
-    return Sandbox(client, home, unfirewalled, info, pid_file)
+    return Sandbox(client, home, unfirewalled, info, pid_file, auth_env)
 
 
 def shutdown() -> None:

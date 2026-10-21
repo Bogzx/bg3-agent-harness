@@ -225,13 +225,14 @@ class PiClient:
                 "config): only bg3.ts's tools exist")
 
     def __init__(self, profile: Profile, system_file: Path | str, server: dict | None = None, cwd: Path = C.PLAY_DIR,
-                 binary: Path | str | None = None, settings: dict | None = None):
+                 binary: Path | str | None = None, settings: dict | None = None, extension: Path | str | None = None):
         if profile.client != "pi":
             raise ProfileError(f"{profile.source}: PiClient needs a pi profile (client = {profile.client!r})")
         self.p, self.system_file = profile, Path(system_file)
         self.server = server if server is not None else C.bg3_server()
         self.cwd, self.settings = cwd, settings if settings is not None else PI_SETTINGS
         self.binary = Path(binary) if binary else PI_DIR / "node_modules" / ".bin" / "pi"
+        self.extension = Path(extension) if extension else EXTENSION   # the container sandbox: the image's copy
         self.parser = PiParser(profile.model)
 
     def agent_dir(self, req: C.Request) -> Path:
@@ -267,7 +268,7 @@ class PiClient:
             raise ValueError(f"the request's model {req.model!r} is not the profile's {self.p.model!r}")
         self.parser = PiParser(self.p.model)
         cmd = [str(self.binary), "--mode", "json", "-ne", "-na", "-nc", "-ns", "-np", "--offline",
-               "-e", str(EXTENSION), "--tools", "mcp__bg3__*",
+               "-e", str(self.extension), "--tools", "mcp__bg3__*",
                "--session-dir", str(self.agent_dir(req) / "sessions"), "--session-id", req.session,
                "--model", self.p.pi_model]
         effort = req.effort or self.p.effort

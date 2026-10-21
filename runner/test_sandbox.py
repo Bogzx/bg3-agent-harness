@@ -24,7 +24,14 @@ os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runti
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")
 import clients as C  # noqa: E402
 import play as P  # noqa: E402
+import profiles as PR  # noqa: E402
 import sandbox as S  # noqa: E402
+
+PI_PROFILE = PR.parse({"client": "pi", "model": "deepseek-flash",
+                       "endpoint": {"provider": "deepseek", "base_url": "https://api.deepseek.com",
+                                    "api_key_env": "DEEPSEEK_API_KEY"},
+                       "model_info": {"input": ["text"], "reasoning": True, "context_window": 1000000,
+                                      "max_tokens": 32000}}, "test")
 
 CLAUDE_STREAM = [
     {"type": "system", "subtype": "init", "session_id": "c-1", "model": "opus", "tools": ["x"],
@@ -177,6 +184,30 @@ class DockerSide(unittest.TestCase):
         self.assertEqual(box.info["egress"], ["api.anthropic.com", "console.anthropic.com"])
         self.assertEqual(box.record(), {"sandbox": "container"})
 
+    def test_prepare_pi(self):
+        with mock.patch.object(S, "cli_version", side_effect=AssertionError("pi has no host CLI")):
+            box = S.prepare("pi", None, False, lambda m: None, gate=lambda u, log: {"table": "loaded"},
+                            auth_env=(PI_PROFILE.endpoint.api_key_env,))
+        argvs = calls(self.d)
+        agent_build = [a for a in argvs if a[0] == "build"][1]
+        self.assertEqual(agent_build[agent_build.index("--build-context") + 1], f"pi={S.PI_DIR}")
+        self.assertFalse(any(a.startswith("--build-arg") for a in agent_build))
+        proxy = next(a for a in argvs if a[:2] == ["run", "-d"])
+        self.assertEqual(proxy[proxy.index("--allow") + 1], "openrouter.ai,api.deepseek.com")
+        self.assertEqual(box.info["client_version"], "1.3.0")   # tools/pi/package.json's pin
+        self.assertEqual(box.auth_env, ("DEEPSEEK_API_KEY",))
+
+    def test_every_agent_build_has_the_pi_context(self):
+        with mock.patch.object(S, "cli_version", lambda name: None):
+            S.prepare("claude", None, False, lambda m: None, gate=lambda u, log: {})
+        agent_build = [a for a in calls(self.d) if a[0] == "build"][1]
+        self.assertIn(f"pi={S.PI_DIR}", agent_build)
+        dockerfile = (S.CONTAINER_DIR / "Dockerfile.agent").read_text()
+        self.assertIn("COPY --from=pi package.json package-lock.json bg3.ts /opt/pi/", dockerfile)
+        self.assertIn("npm ci", dockerfile)
+        self.assertEqual(S.PI_BIN, "/opt/pi/node_modules/.bin/pi")
+        self.assertEqual(S.PI_EXTENSION, "/opt/pi/bg3.ts")
+
     def test_prepare_refuses(self):
         fake_docker(self.d, fail=("version",))
         with self.assertRaises(S.SandboxError) as e:
@@ -220,6 +251,26 @@ class DockerSide(unittest.TestCase):
         self.assertIn("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", envs)
         self.assertIn("CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", envs)
         self.assertTrue((self.d / "home").is_dir())
+
+    def test_run_argv_pi(self):
+        box = S.Sandbox("pi", self.d / "home", auth_env=("DEEPSEEK_API_KEY",))
+        agent = self.d / "S001.pi"
+        agent.mkdir()
+        cfg, system = agent / "bg3.json", self.d / "system.txt"
+        cfg.write_text("{}")
+        system.write_text("rules")
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-ds-secret", "OPENROUTER_API_KEY": "sk-or"}):
+            argv = box.run_argv("bg3ai-play-x", [S.PI_BIN, "--mode", "json"], {"PI_OFFLINE": "1"}, [cfg, system],
+                                writable=[agent])
+        mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "-v"]
+        self.assertEqual(mounts, [f"{self.d / 'home'}:/home/agent", f"{agent.resolve()}:{agent.resolve()}",
+                                  f"{system.resolve()}:{system.resolve()}:ro"])   # cfg rides on the rw agent dir
+        envs = [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
+        self.assertIn("DEEPSEEK_API_KEY", envs)            # the profile's key, by name
+        self.assertNotIn("OPENROUTER_API_KEY", envs)       # not this profile's
+        self.assertFalse(any("sk-" in a for a in argv))
+        self.assertIn("PI_OFFLINE=1", envs)
+        self.assertEqual(argv[-3:], [S.PI_BIN, "--mode", "json"])
 
     def test_remove_and_shutdown(self):
         S.Sandbox.remove("bg3ai-play-x")
@@ -323,6 +374,21 @@ class HttpClients(unittest.TestCase):
             [path] = c.write_config(self.req(Path(d)))
             bg3 = json.loads(path.read_text())["mcpServers"]["bg3"]
         self.assertEqual(bg3, {"httpUrl": S.URL, "timeout": 110_000, "trust": True})
+
+    def test_pi(self):
+        with tempfile.TemporaryDirectory() as d:
+            system = Path(d) / "system.txt"
+            system.write_text("rules")
+            c = C.make_http("pi", S.URL, profile=PI_PROFILE, system_file=system, binary=S.PI_BIN,
+                            extension=S.PI_EXTENSION)
+            req = C.Request("go", PI_PROFILE.model, Path(d), session="s1", env={"BG3AI_SESSION": "S001"}, tag="S001")
+            cmd = c.command(req)
+            files = c.write_config(req)
+            bg3 = json.loads((c.agent_dir(req) / "bg3.json").read_text())
+        self.assertEqual(cmd[0], S.PI_BIN)
+        self.assertEqual(cmd[cmd.index("-e") + 1], S.PI_EXTENSION)
+        self.assertEqual(bg3, {"server": {"url": S.URL, "timeout": 110.0}, "systemPromptFile": str(system)})
+        self.assertTrue(all(f.parent == c.agent_dir(req) for f in files))
 
     def test_stdio_unchanged(self):
         c = C.make("codex")

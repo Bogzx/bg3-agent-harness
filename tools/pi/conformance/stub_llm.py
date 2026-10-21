@@ -3,7 +3,8 @@
 
     python3 stub_llm.py <script.json> <request log.jsonl> <port file>
 
-It listens on 127.0.0.1 (a free port, written to the port file). The step of a request is the number of assistant
+It listens on 127.0.0.1 (a free port, written to the port file), or on $STUB_LLM_BIND (host:port; the container
+sandbox smoke, tools/container/sandbox_smoke.py). The step of a request is the number of assistant
 messages in it, so a retried request gets the same step again. The script is a JSON list of steps, the last one
 repeating; a step is one of
     {"tool_calls": [{"name": "mcp__bg3__press_key", "arguments": {...} | "<raw string>"}, ...]}
@@ -16,6 +17,7 @@ chunk carries OpenRouter-style usage with `cost`, plus `provider`, like OpenRout
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -79,7 +81,8 @@ def serve(script: list[dict], log: Path, port_file: Path) -> None:
                 self.wfile.write(e)
                 self.wfile.flush()
 
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    host, _, port = (os.environ.get("STUB_LLM_BIND") or "127.0.0.1:0").rpartition(":")
+    srv = ThreadingHTTPServer((host, int(port)), Handler)
     port_file.write_text(str(srv.server_address[1]))
     srv.serve_forever()
 
