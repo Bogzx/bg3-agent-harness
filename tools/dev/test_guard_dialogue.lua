@@ -15,6 +15,7 @@ Ext = {
         GetDialogManager = function() if dm_ok then return { Dialogs = dialogs } end return nil end,
     },
     Entity = { Get = function(u) return comps[u] or {} end },
+    Require = function(p) return dofile(LUA .. "/" .. p) end, -- Guard.lua loads its parts
 }
 Osi = setmetatable({}, { __index = function(_, name)
     if name == "SpeakerGetDialog" then return function(u) return speaker_dialog[u] end end
