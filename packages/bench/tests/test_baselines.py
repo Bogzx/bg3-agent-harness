@@ -11,6 +11,7 @@ import pytest
 
 pytest.importorskip("mcp")
 
+from bg3harness import clients
 from mcp import Client
 
 from bg3bench.baselines import agent, client, donothing, random_agent
@@ -209,17 +210,7 @@ def test_the_processes_speak_mcp_over_stdio(tmp_path, module, extra):
     assert parsed[0].kind == "init" and parsed[-1].kind == "result" and parsed[-1].cost_usd == 0.0
 
 
-def runner_clients():
-    sys.path.insert(0, str(HERE.parents[2] / "runner"))
-    try:
-        import clients
-    finally:
-        sys.path.pop(0)
-    return clients
-
-
 def test_baseline_client_speaks_the_runner_protocol(tmp_path):
-    clients = runner_clients()
     c = client.BaselineClient(mcp_config=tmp_path / ".mcp.json", event=clients.Event)
     for attr in ("name", "supports_resume", "assigns_session", "no_tools"):
         assert hasattr(c, attr)

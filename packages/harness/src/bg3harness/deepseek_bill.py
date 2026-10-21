@@ -1,3 +1,4 @@
+# pyright: basic
 """What DeepSeek bills for one response, from DeepSeek's own usage fields (no endpoint cost field to read).
 
 DeepSeek's usage has prompt_cache_hit_tokens, prompt_cache_miss_tokens and completion_tokens (reasoning included).
