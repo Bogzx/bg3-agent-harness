@@ -7,6 +7,7 @@ describe("routes", () => {
       { screen: "watch" as const, pt: "claude-run-2", file: null },
       { screen: "memory" as const, pt: "a b", file: "sessions/S096.md" },
       { screen: "timeline" as const, pt: "x", file: null },
+      { screen: "launch" as const, pt: null, file: null },
     ]) {
       expect(parseRoute(href(r))).toEqual(r);
     }

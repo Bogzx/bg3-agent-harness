@@ -221,3 +221,101 @@ def test_positions_endpoint(server):
     code, p = get_json(server, f"/api/v1/playthroughs/{PT}/positions?level=END_Main")
     assert code == 200 and p["level"] == "END_Main" and len(p["segments"]) == 2
     assert get_json(server, f"/api/v1/playthroughs/{PT}/positions")[1]["level"] == "EPI_Main_A"
+
+
+class Headers(dict):
+    def get(self, k, default=None):
+        return super().get(k, default)
+
+
+def test_authorize_writes(store: RunStore):
+    app = App(store, Hub(store, generation="g"), None)
+    assert app.authorize("127.0.0.1", Headers(Host="127.0.0.1:8780")) is None
+    assert app.authorize("::1", Headers(Host="x", Origin="http://x")) is None
+    assert "cross-origin" in app.authorize("127.0.0.1", Headers(Host="127.0.0.1:8780", Origin="http://evil.test"))
+    assert "localhost" in app.authorize("100.64.0.7", Headers(Host="dev2:8780"))
+    tok = App(store, Hub(store, generation="g"), None, token="s3cret")
+    assert tok.authorize("100.64.0.7", Headers(Host="dev2", Authorization="Bearer s3cret")) is None
+    assert "token" in tok.authorize("127.0.0.1", Headers(Host="dev2", Authorization="Bearer nope"))
+
+
+def post(server, path: str, body: object = None, headers: dict | None = None) -> tuple[int, dict]:
+    host, port, _ = server
+    c = http.client.HTTPConnection(host, port, timeout=10)
+    data = json.dumps(body).encode() if body is not None else b""
+    c.request("POST", path, body=data, headers={"Content-Type": "application/json", **(headers or {})})
+    r = c.getresponse()
+    out = json.loads(r.read())
+    c.close()
+    return r.status, out
+
+
+def test_control_without_a_supervisor(server):
+    assert post(server, f"/api/v1/playthroughs/{PT}/start", {})[0] == 409
+    assert post(server, "/api/v1/nothing", {})[0] == 404
+    assert get_json(server, "/api/v1/supervisor")[1] == {"v": 1, "supervisor": None, "profiles": []}
+
+
+def test_control_start_stop_resume(store: RunStore, web: Path, tmp_path: Path):
+    from bg3play.supervisor import SessionResult, Supervisor
+
+    gate, entered = threading.Event(), threading.Event()
+
+    class Runner:
+        def __init__(self):
+            self.reqs = []
+
+        def run_session(self, req, stop):
+            self.reqs.append(req)
+            entered.set()
+            gate.wait(10)
+            return SessionResult(f"S{req.session:03d}", "stopped" if stop.is_set() else "ok", True)
+
+    class Keeper:
+        def run_keeper(self, pt, result):
+            pass
+
+    runner = Runner()
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    (profiles / "codex.toml").write_text('client = "codex"\n')
+    hub = Hub(store, generation="g1")
+    sup = Supervisor(runner, Keeper(), store.runtime, store.playthroughs_dir, lambda: 0.0,
+                     lambda v: hub.publish("supervisor", v), played=lambda pt: len(store.session_logs(pt)))
+    srv = serve(App(store, hub, web, supervisor=sup, profiles=profiles), "127.0.0.1", 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    s = ("127.0.0.1", srv.server_address[1], hub)
+    try:
+        assert get_json(s, "/api/v1/supervisor")[1]["profiles"] == ["codex"]
+        code, cfg = get_json(s, "/api/v1/playthroughs/newpt/config")
+        assert code == 200 and cfg["config"]["name"] == "newpt" and cfg["sessions"] == 0
+        assert get_json(s, f"/api/v1/playthroughs/{PT}/config")[1]["sessions"] == 3  # the runner's S094-S096
+        assert post(s, "/api/v1/playthroughs/newpt/start", {"difficulty": "Nightmare"})[0] == 400
+        assert post(s, "/api/v1/playthroughs/newpt/start", [1])[0] == 400
+        assert post(s, "/api/v1/playthroughs/..%2Fx/start", {})[0] == 400
+        assert post(s, "/api/v1/playthroughs/newpt/start", {}, {"Origin": "http://evil.test"})[0] == 403
+        code, body = post(s, "/api/v1/playthroughs/newpt/start",
+                          {"brief": "a bard", "session_minutes": 30, "recording": False})
+        assert code == 200 and body["supervisor"]["state"] == "running"
+        assert entered.wait(10)
+        assert (store.playthroughs_dir / "newpt" / "playthrough.toml").exists()
+        assert runner.reqs[0].config.character.brief == "a bard" and runner.reqs[0].config.session.minutes == 30
+        assert post(s, "/api/v1/playthroughs/newpt/start", {})[0] == 409
+        assert post(s, f"/api/v1/playthroughs/{PT}/stop")[0] == 409  # not the running one
+        code, body = post(s, "/api/v1/playthroughs/newpt/stop")
+        assert code == 200 and body["supervisor"]["state"] == "stopping"
+        gate.set()
+        sup.thread.join(10)
+        assert get_json(s, "/api/v1/supervisor")[1]["supervisor"]["state"] == "idle"
+        assert [e.data["state"] for e in hub.events if e.type == "supervisor"] == [
+            "running", "running", "stopping", "stopping", "idle"]  # claimed, S001, stop, its keeper, done
+        entered.clear()
+        code, _ = post(s, "/api/v1/playthroughs/newpt/resume", {})
+        assert code == 200 and entered.wait(10) and runner.reqs[1].resume and runner.reqs[1].session == 2
+        sup.stop()
+        sup.thread.join(10)
+    finally:
+        gate.set()
+        hub.close()
+        srv.shutdown()
+        srv.server_close()

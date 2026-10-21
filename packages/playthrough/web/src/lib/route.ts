@@ -1,7 +1,8 @@
-// Hash routes: #/watch/<pt>, #/memory/<pt>[/<file path>], #/timeline/<pt>. No server fallback needed.
+// Hash routes: #/watch/<pt>, #/memory/<pt>[/<file path>], #/timeline/<pt>, #/launch[/<pt>]. No server fallback
+// needed.
 
-export type Screen = "watch" | "memory" | "timeline";
-export const SCREENS: Screen[] = ["watch", "memory", "timeline"];
+export type Screen = "watch" | "memory" | "timeline" | "launch";
+export const SCREENS: Screen[] = ["watch", "memory", "timeline", "launch"];
 
 export interface Route {
   screen: Screen;

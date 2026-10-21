@@ -1,5 +1,6 @@
 import type {
-  Commit, MemoryFile, PlaythroughRow, Positions, RecorderState, Runner, Segment, TimelinePayload, WatchSnapshot,
+  Commit, MemoryFile, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, Runner, Segment, SupervisorView,
+  TimelinePayload, WatchSnapshot,
 } from "./types";
 
 export class ApiError extends Error {
@@ -8,8 +9,8 @@ export class ApiError extends Error {
   }
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const r = await fetch(path, { headers: { Accept: "application/json" } });
+async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(path, { ...init, headers: { Accept: "application/json", ...(init?.headers ?? {}) } });
   if (!r.ok) {
     let msg = `${r.status} ${r.statusText}`;
     try {
@@ -40,9 +41,18 @@ export const api = {
     getJson<Positions>(`${pt(name)}/positions${level ? `?level=${encodeURIComponent(level)}` : ""}`),
   recorder: () => getJson<{ v: number; recorder: RecorderState | null }>("/api/v1/recorder"),
   videoIndex: () => getJson<{ v: number; segments: Segment[] }>("/api/v1/video/index"),
+  supervisor: () => getJson<{ v: number; supervisor: SupervisorView | null; profiles: string[] }>("/api/v1/supervisor"),
+  config: (name: string) =>
+    getJson<{ v: number; playthrough: string; config: PlaythroughConfig; sessions: number }>(`${pt(name)}/config`),
+  control: (name: string, what: "start" | "resume" | "stop", body: object = {}) =>
+    getJson<{ v: number; supervisor: SupervisorView }>(`${pt(name)}/${what}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 };
 
-export const STREAM_TYPES = ["status", "session", "log", "action", "party", "memory", "position", "actions_reset", "hub_error"];
+export const STREAM_TYPES = ["status", "session", "log", "action", "party", "memory", "position", "supervisor", "actions_reset", "hub_error"];
 
 /** The SSE stream from `lastId` on. EventSource resends the last id it saw on reconnect by itself; a "reset" means
  * the server lost our place (it restarted): the caller reloads its snapshot. Returns a close function. */

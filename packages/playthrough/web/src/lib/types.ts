@@ -194,3 +194,21 @@ export interface Segment {
   end: number | null;
   bytes: number;
 }
+
+export interface SupervisorView {
+  playthrough: string | null;
+  state: "idle" | "running" | "stopping";
+  detail: string;
+  session: string | null;
+}
+
+/** playthrough.toml as JSON (config.py to_dict). */
+export interface PlaythroughConfig {
+  name: string;
+  difficulty: string;
+  agent: { profile: string; client: string; model: string; effort: string };
+  character: { brief: string; roleplay: string; name: string; constraints: string };
+  session: { minutes: number; hours: number };
+  keeper: { enabled: boolean; model: string; effort: string; minutes: number };
+  recording: { enabled: boolean; fps: number; height: number };
+}

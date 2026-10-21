@@ -3,12 +3,13 @@
   import { api } from "./lib/api";
   import { href, parseRoute, SCREENS, type Route } from "./lib/route";
   import type { PlaythroughRow } from "./lib/types";
+  import Launch from "./screens/Launch.svelte";
   import Memory from "./screens/Memory.svelte";
   import Timeline from "./screens/Timeline.svelte";
   import Watch from "./screens/Watch.svelte";
 
   type Theme = "" | "dark" | "light";
-  const LABELS = { watch: "Watch", memory: "Memory", timeline: "Timeline" };
+  const LABELS = { watch: "Watch", memory: "Memory", timeline: "Timeline", launch: "Launch" };
 
   let route = $state<Route>(parseRoute(location.hash));
   let pts = $state<PlaythroughRow[]>([]);
@@ -51,7 +52,7 @@
       .playthroughs()
       .then((p) => {
         pts = p.playthroughs;
-        if (!route.pt) {
+        if (!route.pt && route.screen !== "launch") {
           const pick = pts.find((x) => x.current) ?? pts[pts.length - 1];
           if (pick) go({ ...route, pt: pick.name });
         }
@@ -75,6 +76,7 @@
       value={route.pt ?? ""}
       onchange={(e) => go({ screen: route.screen, pt: (e.currentTarget as HTMLSelectElement).value, file: null })}
     >
+      {#if !route.pt}<option value="" disabled>playthrough…</option>{/if}
       {#each pts as p (p.name)}
         <option value={p.name}>{p.name}{p.current ? " ●" : ""}</option>
       {/each}
@@ -88,6 +90,8 @@
 <main>
   {#if error}
     <div class="error">Can't reach the API: {error}</div>
+  {:else if route.screen === "launch"}
+    <Launch pt={route.pt} known={pts.map((p) => p.name)} onWatch={(name) => go({ screen: "watch", pt: name, file: null })} />
   {:else if !route.pt}
     <div class="empty">{pts.length ? "Pick a playthrough." : "Loading…"}</div>
   {:else}

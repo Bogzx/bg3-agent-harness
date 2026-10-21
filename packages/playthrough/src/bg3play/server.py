@@ -20,12 +20,17 @@ Endpoints (GET, JSON unless noted, Cache-Control: no-store):
     /api/v1/stream                                   SSE (text/event-stream); Last-Event-ID header or ?last_id=
     anything else                                    the web app (web/dist), index.html for unknown paths
 
-Read-only. Binds 127.0.0.1 by default; writes (P1) will need a token off localhost.
+Control (POST, JSON body; needs --supervise): /api/v1/playthroughs/<pt>/start|resume (body: the Launcher's fields,
+supervisor.LAUNCH_KEYS), /api/v1/playthroughs/<pt>/stop. GET /api/v1/supervisor (state + client profiles),
+GET /api/v1/playthroughs/<pt>/config. Writes are refused cross-origin, and from anywhere but localhost unless the
+request carries the --token (Authorization: Bearer). Binds 127.0.0.1 by default.
 """
 
 from __future__ import annotations
 
 import argparse
+import hmac
+import ipaddress
 import json
 import mimetypes
 import os
@@ -35,18 +40,25 @@ import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import api
+from . import config as C
 from . import positions as pos
 from . import recorder as rec
+from . import supervisor as sup
 from .hub import Hub
 from .store import RunStore, StoreError
 
 PT_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/log|timeline|positions)$")
+CONTROL_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(start|stop|resume)$")
+CONFIG_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/config$")
+MAX_BODY = 64 * 1024
 VIDEO_FILE = re.compile(r"^/api/v1/video/(rec-\d+-\d{4}\.mp4)$")
 KEEPALIVE_S = 15.0
 DEFAULT_WEB = Path(__file__).resolve().parents[2] / "web" / "dist"
+REPO = Path(__file__).resolve().parents[4]
 
 
 def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
@@ -69,10 +81,54 @@ def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
 
 class App:
     def __init__(self, store: RunStore, hub: Hub, web_dir: Path | None, keepalive_s: float = KEEPALIVE_S,
-                 recorder: rec.Recorder | None = None, video_dir: Path | None = None):
+                 recorder: rec.Recorder | None = None, video_dir: Path | None = None,
+                 supervisor: sup.Supervisor | None = None, token: str | None = None, profiles: Path | None = None):
         self.store, self.hub, self.web_dir, self.keepalive_s = store, hub, web_dir, keepalive_s
         self.recorder = recorder
         self.video_dir = video_dir if video_dir is not None else store.runtime / "video"
+        self.supervisor, self.token, self.profiles = supervisor, token or None, profiles
+
+    def authorize(self, client_ip: str, headers: Any) -> str | None:
+        """Why a write is refused (None: allowed): another site's page (Origin not this host), or a client off
+        localhost without the token."""
+        origin, host = headers.get("Origin"), headers.get("Host")
+        if origin and origin not in (f"http://{host}", f"https://{host}"):
+            return "cross-origin write refused"
+        if self.token:
+            auth = headers.get("Authorization") or ""
+            return None if hmac.compare_digest(auth, f"Bearer {self.token}") else "bad or missing token"
+        try:
+            local = ipaddress.ip_address(client_ip).is_loopback
+        except ValueError:
+            local = False
+        return None if local else "writes need localhost or the server's --token"
+
+    def profile_names(self) -> list[str]:
+        if self.profiles is None or not self.profiles.is_dir():
+            return []
+        return sorted(f.stem for f in self.profiles.glob("*.toml"))
+
+    def control(self, pt: str, what: str, body: dict) -> tuple[int, dict]:
+        """POST start/resume/stop -> (HTTP code, payload)."""
+        v = api.API_VERSION
+        s = self.supervisor
+        if s is None:
+            return 409, {"v": v, "error": "no supervisor: start the server with --supervise"}
+        try:
+            if what == "stop":
+                if s.pt != pt:
+                    return 409, {"v": v, "error": f"{pt} is not running"}
+                s.stop()
+            else:
+                cfg = sup.launch_config(C.load(self.store.playthroughs_dir / pt), body)
+                if self.recorder is not None:
+                    self.recorder.enabled = cfg.recording.enabled
+                s.start(pt, resume=what == "resume", cfg=cfg)
+        except C.ConfigError as e:
+            return 400, {"v": v, "error": str(e)}
+        except sup.SupervisorError as e:
+            return 409, {"v": v, "error": str(e)}
+        return 200, {"v": v, "supervisor": s.view()}
 
     def route(self, path: str, q: dict[str, list[str]]) -> dict | None:
         """A JSON API path -> its payload (None: not found). Raises StoreError for a refused request."""
@@ -83,6 +139,19 @@ class App:
             return api.playthroughs(s)
         if path == "/api/v1/recorder":
             return {"v": api.API_VERSION, "recorder": self.recorder.state() if self.recorder else None}
+        if path == "/api/v1/supervisor":
+            return {"v": api.API_VERSION, "supervisor": self.supervisor.view() if self.supervisor else None,
+                    "profiles": self.profile_names()}
+        if (cm := CONFIG_ROUTE.match(path)) is not None:
+            name = s.check_name(unquote(cm.group(1)))
+            try:
+                cfg = C.to_dict(C.load(s.playthroughs_dir / name))
+            except C.ConfigError as e:
+                raise StoreError(f"playthrough.toml: {e}") from e
+            played = len(s.session_logs(name))
+            if self.supervisor is not None:
+                played = self.supervisor.sessions_played(name)
+            return {"v": api.API_VERSION, "playthrough": name, "config": cfg, "sessions": played}
         if path == "/api/v1/video/index":
             return {"v": api.API_VERSION, "segments": rec.read_index(self.video_dir)}
         m = PT_ROUTE.match(path)
@@ -145,6 +214,32 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
 
         def _json(self, obj: dict, code: int = 200) -> None:
             self._send(code, json.dumps(obj, ensure_ascii=False, default=str).encode(), "application/json")
+
+        def do_POST(self) -> None:
+            url = urlparse(self.path)
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if not 0 <= n <= MAX_BODY:
+                self.close_connection = True  # the body stays unread
+                return self._json({"v": api.API_VERSION, "error": "bad or too large body"}, 413)
+            raw = self.rfile.read(n) if n else b""
+            why = app.authorize(self.client_address[0], self.headers)
+            if why:
+                return self._json({"v": api.API_VERSION, "error": why}, 403)
+            m = CONTROL_ROUTE.match(url.path)
+            if not m:
+                return self._json({"v": api.API_VERSION, "error": "not found"}, 404)
+            try:
+                body = json.loads(raw) if raw else {}
+                if not isinstance(body, dict):
+                    raise ValueError("the body is not a JSON object")  # noqa: TRY004 - a 400, like bad JSON
+                pt = app.store.check_name(unquote(m.group(1)))
+            except ValueError as e:  # StoreError is a ValueError
+                return self._json({"v": api.API_VERSION, "error": f"bad request: {e}"}, 400)
+            code, payload = app.control(pt, m.group(2), body)
+            return self._json(payload, code)
 
         def do_HEAD(self) -> None:
             self.do_GET()
@@ -292,6 +387,11 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--positions", action="store_true",
                     help="sample party positions from the game's state.status (adapters/bridge_status.py)")
     ap.add_argument("--debug-port", type=int, default=9998, help="the mod's RPC port (--positions)")
+    ap.add_argument("--supervise", action="store_true",
+                    help="enable start/stop/resume (sessions through adapters/legacy_cli.py: runner/play.py run)")
+    ap.add_argument("--repo", type=Path, default=REPO, help="the bg3-ai checkout play.py runs from (--supervise)")
+    ap.add_argument("--token", default=os.environ.get("BG3PLAY_TOKEN"),
+                    help="bearer token for writes from off localhost (default $BG3PLAY_TOKEN)")
     ap.add_argument("--verbose", action="store_true")
     return ap
 
@@ -322,7 +422,16 @@ def main(argv: list[str] | None = None) -> int:
                               lambda row: hub.publish("position", dict(row, playthrough=opt.playthrough
                                                                        or store.current())))
         threading.Thread(target=sample_loop, args=(sampler, stop), daemon=True, name="positions").start()
-    srv = serve(App(store, hub, opt.web, recorder=recorder, video_dir=video), opt.host, opt.port, opt.verbose)
+    supervisor = None
+    if opt.supervise:
+        from .adapters.legacy_cli import LegacyCli  # temporary until the harness's run_session
+
+        supervisor = sup.Supervisor(LegacyCli(opt.repo, opt.runtime), sup.NoKeeper(), opt.runtime, opt.playthroughs,
+                                    time.time, lambda view: hub.publish("supervisor", view),
+                                    played=lambda pt: len(store.session_logs(pt)))
+    app = App(store, hub, opt.web, recorder=recorder, video_dir=video, supervisor=supervisor, token=opt.token,
+              profiles=opt.repo / "profiles")
+    srv = serve(app, opt.host, opt.port, opt.verbose)
     print(f"bg3play: http://{opt.host}:{srv.server_address[1]}/  (runtime {opt.runtime})", flush=True)
     try:
         srv.serve_forever()
