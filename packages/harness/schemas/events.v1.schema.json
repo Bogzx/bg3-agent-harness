@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/harness/schemas/events.v1.schema.json",
+  "title": "bg3 harness event log, v1",
+  "description": "One line of Sxxx.events.jsonl: a normalized client stream event (src client) or a runner event (src harness). Written by runner/events.py EventLog from runner/clients.py Event.to_json; fields at their default are left out. Token counts use input without cache reads.",
+  "type": "object",
+  "required": ["v", "seq", "t", "src", "kind"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1},
+    "seq": {"type": "integer", "minimum": 0, "description": "position in this file (one file per play process)"},
+    "t": {"type": "number", "description": "epoch seconds when the runner read the line or made the event"},
+    "src": {"enum": ["client", "harness"]},
+    "kind": {
+      "type": "string",
+      "description": "client kinds: init, text, thinking, tool_call, tool_result, usage, rate_limit, compact, error, result. harness kinds: session_start, session_end, and the runner's events (fault, recovered, mcp_failed, ...)"
+    },
+    "text": {"type": "string"},
+    "tool": {"type": "string", "description": "bare bg3 tool name; other servers' tools keep their prefix"},
+    "args": {"type": "object"},
+    "call_id": {"type": "string"},
+    "is_error": {"type": "boolean"},
+    "api_error": {"type": "boolean", "description": "an API, auth or usage-limit failure"},
+    "session_id": {"type": ["string", "null"], "description": "the client's conversation id"},
+    "model": {"type": ["string", "null"]},
+    "tools": {"type": ["integer", "null"], "description": "init: tools the model was given"},
+    "mcp": {"type": ["array", "null"], "items": {"type": "string"}, "description": "init: name:status per MCP server"},
+    "subtype": {"type": ["string", "null"]},
+    "turns": {"type": ["integer", "null"]},
+    "duration_ms": {"type": ["number", "null"]},
+    "cost_usd": {"type": ["number", "null"], "description": "result: the process's cost; null when the client can't know it"},
+    "tokens": {
+      "type": ["object", "null"],
+      "properties": {
+        "input": {"type": "integer"}, "output": {"type": "integer"},
+        "cache_read": {"type": "integer"}, "cache_write": {"type": "integer"}
+      },
+      "additionalProperties": false
+    },
+    "message_id": {"type": ["string", "null"]},
+    "resets_at": {"type": ["number", "null"]},
+    "think_ms": {"type": ["number", "null"], "description": "thinking: the CLI's thinking time for the block"},
+    "api_ms": {"type": ["number", "null"], "description": "result: API time of the process"},
+    "think_tokens": {"type": ["integer", "null"], "description": "result: output tokens spent thinking"},
+    "detail": {"type": ["object", "null"], "description": "harness kinds: what happened"}
+  }
+}

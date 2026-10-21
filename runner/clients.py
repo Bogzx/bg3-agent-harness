@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Protocol
 
@@ -53,10 +53,17 @@ class Request:
     tag: str = ""                      # the session's file stem (S012, S012-fix): names per-session config files
 
 
+EVENTS_VERSION = 1   # Sxxx.events.jsonl (packages/harness/schemas/events.v1.schema.json)
+CLIENT_KINDS = ("init", "text", "thinking", "tool_call", "tool_result", "usage", "rate_limit", "compact", "error",
+                "result")
+
+
 @dataclass
 class Event:
-    """One normalized stream event. kind: init | text | tool_call | tool_result | usage | rate_limit | compact |
-    error | result. tokens use TOKEN_KEYS (input without cache reads, as claude reports it)."""
+    """One normalized stream event. kind: CLIENT_KINDS from a client's stream (src "client"), or the runner's own
+    kinds (src "harness": session_start, session_end, fault, mcp_failed, ...; what in `detail`). tokens use
+    TOKEN_KEYS (input without cache reads, as claude reports it). The envelope (v, t, seq, src) is set by the
+    events.jsonl writer (runner/events.py), not by the parsers."""
     kind: str
     text: str = ""
     tool: str = ""                     # bare bg3 tool name (other servers' tools keep their prefix)
@@ -75,6 +82,29 @@ class Event:
     tokens: dict | None = None
     message_id: str | None = None      # usage: the message a running token count belongs to
     resets_at: float | None = None     # rate_limit: when the limit resets (epoch s), if the client says
+    think_ms: float | None = None      # thinking: the CLI's thinking time for this block (claude thinking_duration_ms)
+    api_ms: float | None = None        # result: API time of the process (claude duration_api_ms)
+    think_tokens: int | None = None    # result: output tokens spent thinking (claude output_tokens_details)
+    detail: dict | None = None         # harness kinds: what happened (reason, fault, exit, ...)
+    v: int = EVENTS_VERSION
+    t: float | None = None             # when the runner read the line (epoch s)
+    seq: int | None = None             # position in the process's events.jsonl
+    src: str = "client"                # client | harness
+
+    def to_json(self) -> str:
+        """One events.jsonl line: the envelope first, then every field that differs from its default."""
+        d = {"v": self.v, "seq": self.seq, "t": self.t, "src": self.src, "kind": self.kind}
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if f.name not in d and value != f.default:
+                d[f.name] = value
+        return json.dumps(d, ensure_ascii=False, separators=(",", ":"), default=str)
+
+    @classmethod
+    def from_json(cls, line: str) -> Event:
+        d = json.loads(line)
+        names = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in names})
 
 
 class Client(Protocol):
@@ -224,8 +254,12 @@ class ClaudeClient:
         if t == "assistant":
             msg = ev.get("message") or {}
             out = []
+            think_ms = ev.get("thinking_duration_ms")
             for c in msg.get("content") or []:
-                if c.get("type") == "text" and c.get("text", "").strip():
+                if c.get("type") == "thinking" and think_ms:   # the thinking time model_time.py reads
+                    out.append(Event("thinking", session_id=sid, message_id=msg.get("id"), think_ms=float(think_ms)))
+                    think_ms = None
+                elif c.get("type") == "text" and c.get("text", "").strip():
                     text = c["text"].strip()
                     out.append(Event("text", text=text, session_id=sid, api_error=text.startswith(API_ERROR_TEXT)))
                 elif c.get("type") == "tool_use":
@@ -248,6 +282,8 @@ class ClaudeClient:
             return [Event("result", text=str(ev.get("result") or ""), subtype=sub, session_id=sid, is_error=err,
                           api_error=err and bool(API_ERROR_RE.search(str(ev.get("result") or ""))),
                           turns=ev.get("num_turns"), duration_ms=ev.get("duration_ms"),
+                          api_ms=ev.get("duration_api_ms"),
+                          think_tokens=(u.get("output_tokens_details") or {}).get("thinking_tokens"),
                           cost_usd=float(ev.get("total_cost_usd") or 0),
                           tokens=tokens(u.get("input_tokens"), u.get("output_tokens"),
                                         u.get("cache_read_input_tokens"), u.get("cache_creation_input_tokens")))]

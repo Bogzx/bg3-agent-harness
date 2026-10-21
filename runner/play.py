@@ -58,6 +58,7 @@ import ramwatch  # noqa: E402  (runner/ramwatch.py: RAM watchdog, RSS spikes wit
 import runs  # noqa: E402  (runner/runs.py: run --runs naming, per-run resets, failure tagging, the runs table)
 import judge  # noqa: E402  (runner/judge.py: the persona judge, a run record's `persona`)
 import clients  # noqa: E402  (runner/clients.py: the CLI that plays, --client claude|codex|gemini)
+import events  # noqa: E402  (runner/events.py: Sxxx.events.jsonl, the normalized event log)
 import display_env  # noqa: E402  (runner/display_env.py: DISPLAY/XAUTHORITY/... when a shell lacks them)
 import sandbox  # noqa: E402  (runner/sandbox.py: run --sandbox container)
 import model_time  # noqa: E402  (runner/model_time.py: model vs harness time, a run record's `model_time`)
@@ -2313,12 +2314,15 @@ class Runner:
 
     def event(self, kind: str, **fields) -> None:
         """runtime/sessions/<pt>/runner_events.jsonl: runner start/stop, faults, recoveries, refused launches
-        (the dashboard's unattended hours and crash/recovery counts). Never breaks the runner."""
+        (the dashboard's unattended hours and crash/recovery counts). Never breaks the runner. During a play
+        process also in its Sxxx.events.jsonl (src "harness")."""
         try:
             with open(self.state.dir / "runner_events.jsonl", "a") as f:
                 f.write(json.dumps({"t": round(time.time(), 1), "kind": kind, **fields}) + "\n")
         except OSError as e:
             log(f"event log failed: {e}")
+        if (evlog := getattr(self, "events_log", None)) is not None:
+            evlog.harness(kind, **fields)
 
     # ---------------------------------------------------------------- setup
 
@@ -3257,6 +3261,9 @@ class Runner:
             return SessionResult(sid, claude_session, 0, "dry_run", start, start, model=model, effort=effort)
 
         jsonl = open(f"{base}.jsonl", "a")
+        evlog = self.events_log = events.EventLog(Path(f"{base}.events.jsonl"))
+        evlog.harness("session_start", session=sid + tag, client=client.name, model=model, effort=effort,
+                      conversation=claude_session, resume=resume, deadline=deadline, hard_stop=hard_stop)
         human = open(f"{base}.log", "a", buffering=1)
         human.write(f"===== {sid}{tag} {datetime.now():%Y-%m-%d %H:%M:%S} {client.name} session "
                     f"{claude_session or '(new)'}\n")
@@ -3272,15 +3279,17 @@ class Runner:
                 jsonl.close()
                 log(f"{sid}{tag}: {detail} (a setup failure)")
                 self.event("mcp_failed", session=sid + tag, detail=detail[:300])
+                self.events_log = evlog.end("mcp_failed", None, start)
                 return SessionResult(sid, claude_session, None, "mcp_failed", start, time.time(), model=model,
                                      effort=effort, detail=detail)
         try:
             proc = subprocess.Popen(cmd, cwd=PLAY_DIR, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     stdin=subprocess.DEVNULL, start_new_session=True, text=True, bufsize=1)
-        except OSError:
+        except OSError as e:
             self.sandbox_cleanup()
             human.close()
             jsonl.close()
+            self.events_log = evlog.end("setup_failed", None, start, detail=str(e)[:300])
             raise
 
         timing = latency.StreamTiming(Path(f"{base}.turns.jsonl"))
@@ -3310,6 +3319,7 @@ class Runner:
                     human.write(f"{stamp} [raw] {type(e).__name__}: {line.rstrip()[:400]}\n")
                     continue
                 for e in events:
+                    evlog.write(e)
                     for text in clients.format_event(e):
                         human.write(f"{stamp} {text}\n")
                     if e.kind == "init" and e.session_id and not seen_session[0]:
@@ -3440,6 +3450,8 @@ class Runner:
                     f"{(end - start) / 60:.1f} min\n")
         human.close()
         jsonl.close()
+        self.events_log = evlog.end(reason, proc.returncode, start, detail=detail, fault_at=fault_at,
+                                    conversation=seen_session[0])
         log(f"{sid}{tag}: claude finished ({reason}, exit {proc.returncode}, {(end - start) / 60:.1f} min)")
         self.code_moved(sid + tag)
         self.write_latency(f"{sid}{tag}", base, start, end)
