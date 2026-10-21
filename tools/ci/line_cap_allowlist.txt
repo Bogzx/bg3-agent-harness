@@ -10,7 +10,6 @@
 1643 bridge/tests/test_economy.py
 1488 runner/test_crash.py
 1476 runner/runs.py
-1345 tools/dev/test_confirm.lua
 1326 bridge/src/bg3ai/render.py
 1177 bridge/src/bg3ai/metrics.py
 1158 bridge/tests/test_se_tools.py
