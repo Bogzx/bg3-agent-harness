@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 FACTS_V = 1
+ROLLS_V = 1
 # Fields of a ring record that are not part of the facts event.
 _RING_FIELDS = ("seq", "t")
 
@@ -78,6 +79,18 @@ def to_fact(rec: dict) -> dict:
 
 def referee(rpc: Rpc, wall: Callable[[], float] = time.time) -> RingReader:
     return RingReader(rpc, "ref.since", wall)
+
+
+def rolls(rpc: Rpc, wall: Callable[[], float] = time.time) -> RingReader:
+    return RingReader(rpc, "roll.since", wall)
+
+
+def to_roll(rec: dict) -> dict:
+    """One roll log record (already through RingReader) as a rolls.jsonl row: {v, t, srcs: [...], roller, party,
+    success, active, crit, natural, dc, streams, ...}; fields a source did not give are left out."""
+    row = {"v": ROLLS_V, "t": rec["t"]}
+    row.update({k: v for k, v in rec.items() if k not in _RING_FIELDS and v is not None})
+    return row
 
 
 def selfcheck(snapshot: dict) -> dict:

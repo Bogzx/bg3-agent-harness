@@ -147,6 +147,29 @@ class FactsTest(unittest.TestCase):
         )
 
 
+class RollsTest(unittest.TestCase):
+    def test_roll_rows(self):
+        ring = FakeRing()
+        ring.add(
+            "",
+            roller="14e6",
+            party=True,
+            success=True,
+            natural=14,
+            dc=10,
+            srcs=["finished", "osi"],
+            streams={"Generic": 2},
+            crit=None,
+        )
+        reader = referee.rolls(ring, wall=lambda: 100.0)
+        rows = [referee.to_roll(r) for r in reader.poll()]
+        self.assertEqual(ring.calls[0]["op"], "roll.since")
+        self.assertEqual(rows[0]["v"], 1)
+        self.assertEqual((rows[0]["natural"], rows[0]["dc"], rows[0]["streams"]), (14, 10, {"Generic": 2}))
+        self.assertNotIn("crit", rows[0])
+        self.assertNotIn("seq", rows[0])
+
+
 class FairnessTest(unittest.TestCase):
     """The hidden rings reach the harness only: no other bridge module names their ops or imports this reader, so no
     MCP tool can return them. (A tool that needs them is a fairness bug: route it through the harness instead.)"""
