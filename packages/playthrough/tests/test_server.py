@@ -3,6 +3,7 @@ import json
 import threading
 from collections.abc import Iterator
 from pathlib import Path
+from unittest import mock
 
 import pytest
 from bg3play.hub import Hub
@@ -366,3 +367,63 @@ def test_replay_endpoint(server):
     assert code == 200 and r["session"] == "S096" and r["events"] and r["segments"] == []
     assert get_json(server, f"/api/v1/playthroughs/{PT}/replay/S001")[0] == 404
     assert get_json(server, "/api/v1/playthroughs/nope/replay/S096")[0] == 404
+
+
+def test_main_wires_the_app_and_shuts_down(store: RunStore, web: Path, capsys: pytest.CaptureFixture[str]):
+    from bg3play import server as srv_mod
+    from bg3play.adapters import bridge_status
+
+    served: list[App] = []
+
+    class FakeServer:
+        server_address = ("127.0.0.1", 4321)
+        closed = False
+
+        def serve_forever(self) -> None:
+            raise KeyboardInterrupt  # Ctrl-C: a clean shutdown
+
+        def server_close(self) -> None:
+            self.closed = True
+
+    fake = FakeServer()
+
+    def fake_serve(app: App, host: str, port: int, verbose: bool = False) -> FakeServer:
+        served.append(app)
+        return fake
+
+    class NoStatus:
+        def __init__(self, port: int):
+            self.port = port
+
+        def status(self) -> None:
+            return None
+
+    with (
+        mock.patch.object(srv_mod, "serve", fake_serve),
+        mock.patch.object(bridge_status, "BridgeStatus", NoStatus),
+        mock.patch.object(bridge_status, "bridge_capture", lambda shots, width: (None, "no screen", None)),
+    ):
+        rc = srv_mod.main(
+            [
+                "--runtime",
+                str(store.runtime),
+                "--playthroughs",
+                str(store.playthroughs),
+                "--web",
+                str(web),
+                "--port",
+                "0",
+                "--supervise",
+                "--game",
+                "--screen",
+                "--positions",
+                "--debug-port",
+                "1",
+            ]
+        )
+    assert rc == 0 and fake.closed
+    app = served[0]
+    assert app.supervisor is not None and app.hub.closed
+    assert app.dashboard.game is not None
+    assert app.dashboard.screen is not None and app.dashboard.screen.capture is None
+    assert "bg3play: http://127.0.0.1:4321/" in capsys.readouterr().out

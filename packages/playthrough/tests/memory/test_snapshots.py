@@ -1,4 +1,10 @@
+import io
+import json
+import sys
+import types
 import unittest
+from contextlib import redirect_stdout
+from unittest import mock
 
 from bg3play.memory import memlib, snapshots
 
@@ -190,6 +196,86 @@ class WriteTest(MemoryTestCase):
         self.assertEqual(written, [])
         self.assertIn("not reachable", notes[0])
         self.assertFalse((self.mem / "snapshots" / "status.md").exists())
+
+
+class GameError(Exception):
+    pass
+
+
+def fake_game_module(ops: list[str], fail_info: bool = False) -> tuple[types.ModuleType, list[object]]:
+    """A bg3ai.game stand-in whose Game answers sys.info and the state ops from STATUS; `made` lists the games."""
+    made: list[object] = []
+
+    class Game:
+        def __init__(self, port: int):
+            self.port, self.closed, self.calls = port, False, []
+            made.append(self)
+
+        def rpc(self, op, args=None, context="client", timeout=0.0):
+            self.calls.append((op, args, context))
+            if op == "sys.info":
+                if fail_info:
+                    raise GameError("server context not loaded")
+                return {"ops": ops}
+            return {"state.status": STATUS, "state.map": {"region": "R"}}[op]
+
+        def close(self):
+            self.closed = True
+
+    m = types.ModuleType("bg3ai.game")
+    m.Game, m.GameError = Game, GameError
+    return m, made
+
+
+class RunTest(MemoryTestCase):
+    def run_with(self, mod: types.ModuleType | None, **kw):
+        with (
+            mock.patch.dict(sys.modules, {"bg3ai.game": mod}),
+            mock.patch.object(snapshots, "port_open", lambda p: True),
+        ):
+            return snapshots.run(self.mem, port=4, **kw)
+
+    def test_writes_what_the_game_has(self):
+        self.open_session(2)
+        mod, made = fake_game_module(["state.status", "state.map"])
+        written, notes = self.run_with(mod)
+        self.assertEqual(written, ["status.md", "map.md"])
+        self.assertTrue(any(n.startswith("party: skipped") for n in notes))
+        self.assertIn("session S002", self.read("snapshots/map.md"))
+        game = made[0]
+        self.assertTrue(game.closed)
+        self.assertEqual(game.port, 4)
+        self.assertIn(("state.map", {}, "server"), game.calls)
+
+    def test_server_context_not_ready(self):
+        mod, _made = fake_game_module([], fail_info=True)
+        written, notes = self.run_with(mod)
+        self.assertEqual(written, [])
+        self.assertIn("server context not ready", notes[0])
+
+    def test_bridge_not_importable(self):
+        written, notes = self.run_with(None)
+        self.assertEqual(written, [])
+        self.assertIn("bridge not importable", notes[0])
+
+    def test_missing_memory_dir(self):
+        written, notes = snapshots.run(self.tmp / "nope")
+        self.assertEqual(written, [])
+        self.assertIn("does not exist", notes[0])
+
+    def test_main_json_and_strict(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = snapshots.main(["--memory-dir", str(self.mem), "--port", "1", "--json", "--strict"])
+        self.assertEqual(rc, 1)  # nothing written
+        out = json.loads(buf.getvalue())
+        self.assertEqual(out["written"], [])
+        self.assertIn("not reachable", out["notes"][0])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = snapshots.main(["--memory-dir", str(self.mem), "--port", "1"])
+        self.assertEqual(rc, 0)
+        self.assertIn("snapshots: wrote nothing", buf.getvalue())
 
 
 if __name__ == "__main__":
