@@ -7,7 +7,8 @@ config's cost cap as --max-cost and no keeper (what play.py --profile requires f
 A soft stop writes <runtime>/STOP (`play.py stop`: the session finishes, the runner exits). The result comes from the
 newest play entry of <runtime>/sessions/<pt>/runner.json.
 
-What play.py does itself here, so the supervisor must not do it again: the memory keeper (use NoKeeper), the stuck
+What play.py does itself here, so the supervisor must not do it again: the memory keeper (but not for pi, which
+play.py runs with --no-keeper: keeper_client gives the app's keeper_pass.MemoryKeeper pi's profile), the stuck
 directive and the crash resume (request.notes are not passed on), the save to load (HANDOFF.md).
 """
 
@@ -143,6 +144,17 @@ class LegacyCli:
         if cfg.agent.profile:
             return profile_agent(self.profiles, cfg.agent.profile, self.load)
         return cfg.agent
+
+    def keeper_client(self, cfg: config.PlaythroughConfig) -> tuple[str, Any] | None:
+        """(client, profile) for the app's keeper pass (keeper_pass.MemoryKeeper): only pi's, since play.py keeps
+        the memory itself for every other client and runs pi with --no-keeper. None = play.py's keeper or none."""
+        agent = self.agent(cfg)
+        if agent.client != "pi" or not cfg.keeper.enabled:
+            return None
+        try:
+            return "pi", client_profiles.load_one(self.profiles, agent.profile, self.load)
+        except (OSError, ValueError) as e:
+            raise SupervisorError(f"client profile {agent.profile}: {e}") from e
 
     def run_session(self, req: SessionRequest, stop: threading.Event) -> SessionResult:
         runner_json = self.runtime / "sessions" / req.playthrough / "runner.json"

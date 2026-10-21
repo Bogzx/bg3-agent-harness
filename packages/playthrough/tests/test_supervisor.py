@@ -299,3 +299,13 @@ def test_crashes_in_a_row_end_the_loop(tmp_path: Path):
     sup, runner, _, _ = make(tmp_path, [("crash", None), ("ok", True)] + [("crash", None)] * 5, hours=0)
     sup.start("ilse", wait=True)
     assert len(runner.requests) == 5 and sup.detail == "3 sessions crashed in a row"
+
+
+def test_legacy_keeper_client_is_pis_only(tmp_path: Path):
+    repo_profiles = Path(__file__).resolve().parents[3] / "profiles"
+    cli = legacy_cli.LegacyCli(tmp_path, tmp_path / "runtime", profiles=repo_profiles)
+    pi = req(agent={"profile": "deepseek-flash"}, session={"max_cost_usd": 1.0})
+    client, profile = cli.keeper_client(pi.config) or ("", None)
+    assert client == "pi" and profile.model == "deepseek-flash"
+    assert cli.keeper_client(req().config) is None  # claude: play.py runs its own keeper
+    assert cli.keeper_client(req(agent={"profile": "deepseek-flash"}, keeper={"enabled": False}).config) is None

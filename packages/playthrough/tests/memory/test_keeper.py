@@ -9,6 +9,7 @@ import os
 import unittest
 from pathlib import Path
 
+from bg3play.adapters import legacy_paths
 from bg3play.memory import keeper, memlib
 
 from tests.memory._testutil import MemoryTestCase
@@ -67,6 +68,18 @@ elif mode == "fail":
     sys.exit(3)
 print(json.dumps({"type": "result", "subtype": "success"}))
 """
+
+
+def _pi_profile():
+    return legacy_paths.load("profiles").parse(
+        {
+            "client": "pi",
+            "model": "anthropic/stub-model",
+            "effort": "low",
+            "endpoint": {"provider": "openrouter", "base_url": "http://127.0.0.1:9/v1", "api_key_env": "BG3_STUB_KEY"},
+            "model_info": {"input": ["text"], "reasoning": True, "context_window": 200000, "max_tokens": 16000},
+        }
+    )
 
 
 class KeeperTest(MemoryTestCase):
@@ -204,6 +217,31 @@ class KeeperTest(MemoryTestCase):
         r = self.run_codex("fail")
         self.assertEqual(r.status, "error")
         self.assertIn("codex exit 3", r.detail)
+
+    def run_pi(self, mode: str) -> keeper.KeeperResult:
+        os.environ["FAKE_MODE"] = mode
+        return keeper.run_keeper(
+            self.mem, 3, self.base, minutes=1.0, client="pi", binary=str(self.fake), profile=_pi_profile()
+        )
+
+    def test_pi_via_mcp_keeper_server(self):
+        r = self.run_pi("ok")
+        self.assertEqual(r.status, "ok", r.summary())
+        self.assertEqual(self.git_log()[0], "S003 memory-keeper: objectives.md, quests.md")
+        args = self.call_args()[0]
+        self.assertEqual(args[args.index("--model") + 1], "openrouter/anthropic/stub-model")  # the profile's
+        self.assertEqual(args[args.index("--tools") + 1], "mcp__bg3__*")
+        self.assertIn("memory_write", args[-1])  # the prompt is pi's last argument
+        bg3 = json.loads((self.tmp / "S003-keeper.pi" / "bg3.json").read_text())
+        self.assertEqual(bg3["server"]["env"]["BG3AI_KEEPER_MODE"], "1")
+        self.assertEqual(bg3["server"]["cwd"], str(self.mem))
+        self.assertEqual(Path(bg3["systemPromptFile"]), Path(f"{self.base}.task.md"))  # the task as system text
+
+    def test_pi_without_profile_is_an_error(self):
+        os.environ["FAKE_MODE"] = "ok"
+        r = keeper.run_keeper(self.mem, 3, self.base, minutes=1.0, client="pi", binary=str(self.fake))
+        self.assertEqual(r.status, "error")
+        self.assertIn("needs its client profile", r.detail)
 
     def test_deaths_always_become_lessons(self):
         # S043 Jaheira / S045 Aylin: an ally's death in a fight must reach lessons.md (and the party notes)

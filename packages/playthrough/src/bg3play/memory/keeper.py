@@ -533,14 +533,27 @@ def keeper_server(mem: Path, knowledge: Path = KNOWLEDGE, task: Path | None = No
     return {"type": "stdio", "command": s["command"], "args": args, "env": env, "timeout": s.get("timeout") or 110_000}
 
 
-def keeper_client(name: str, mem: Path, log_base: Path, knowledge: Path = KNOWLEDGE, binary: str | None = None) -> Any:
-    """A clients.py Client whose only tools are the keeper-mode bg3 server's (its config files next to log_base)."""
-    server = keeper_server(mem, knowledge, Path(f"{log_base}.task.md"))
+def keeper_client(
+    name: str,
+    mem: Path,
+    log_base: Path,
+    knowledge: Path = KNOWLEDGE,
+    binary: str | None = None,
+    profile: Any = None,
+) -> Any:
+    """A clients.py Client whose only tools are the keeper-mode bg3 server's (its config files next to log_base).
+    pi plays from its client profile (`profile`, a parsed profiles.Profile) with the task as its system text."""
+    task = Path(f"{log_base}.task.md")
+    server = keeper_server(mem, knowledge, task)
     kw: dict[str, Any] = {"binary": binary} if binary else {}
     if name == "claude":
         cfg = Path(f"{log_base}.mcp.json")
         cfg.write_text(json.dumps({"mcpServers": {"bg3": server}}, indent=1) + "\n")
         return clients.ClaudeClient(mcp_config=cfg, settings={"permissions": {"allow": ["mcp__bg3__*"]}}, **kw)
+    if name == "pi":
+        if profile is None:
+            raise ValueError("a pi keeper needs its client profile")
+        kw |= {"profile": profile, "system_file": task}
     return clients.make(name, server=server, cwd=mem, **kw)
 
 
@@ -778,6 +791,7 @@ def run_keeper(
     mcp: bool | None = None,
     binary: str | None = None,
     sandbox: Any = None,
+    profile: Any = None,
 ) -> KeeperResult:
     """One keeper pass for the session that just ended (number sid_n). Never raises.
 
@@ -785,12 +799,15 @@ def run_keeper(
     end). mcp: through the bg3 server in keeper mode (keeper_server); None = True for every client but claude,
     whose default stays today's pass with Claude Code's file tools (keeper_cmd). binary: the client's executable
     (default: `claude` for claude, else the client's own). sandbox: the runner's runner/sandbox.Sandbox (run
-    --sandbox container): the client runs in the container against the keeper-mode server over http (always MCP)."""
+    --sandbox container): the client runs in the container against the keeper-mode server over http (always MCP).
+    profile: pi's client profile (profiles.Profile; its model is the keeper's)."""
     sid = memlib.session_id(sid_n)
     via_mcp = client != "claude" if mcp is None else mcp
     if sandbox is not None:
         via_mcp = True  # no file tools in the container: the keeper-mode server is the only way to the memory
     who = client
+    if profile is not None:
+        model = profile.model  # pi runs the profile's model only
     res = KeeperResult(sid)
     snap = pending = None
     t0 = time.time()
@@ -820,7 +837,7 @@ def run_keeper(
                 cli = clients.make_http(client, sandbox.url, **({"binary": binary} if binary else {}))
             else:
                 cli = keeper_client(
-                    client, mem, log_base, knowledge, binary or (claude if client == "claude" else None)
+                    client, mem, log_base, knowledge, binary or (claude if client == "claude" else None), profile
                 )
             sess = sess if cli.assigns_session else None
 

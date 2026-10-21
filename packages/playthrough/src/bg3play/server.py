@@ -519,10 +519,12 @@ def main(argv: list[str] | None = None) -> int:
     supervisor = None
     if opt.supervise:
         from .adapters.legacy_cli import LegacyCli  # temporary until the harness's run_session
+        from .keeper_pass import MemoryKeeper
 
+        legacy = LegacyCli(opt.repo, opt.runtime)
         supervisor = sup.Supervisor(
-            LegacyCli(opt.repo, opt.runtime),
-            sup.NoKeeper(),
+            legacy,
+            MemoryKeeper(opt.runtime, opt.playthroughs, legacy.keeper_client, time.time),
             opt.runtime,
             opt.playthroughs,
             time.time,
