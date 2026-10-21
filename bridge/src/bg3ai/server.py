@@ -21,6 +21,8 @@ from .game import Game
 from .tools import core, session
 
 mcp = core.mcp  # the server every tools/ module registers its tools on (tools/__init__.py has the order)
+INSTRUCTIONS = session.INSTRUCTIONS  # for the served tool set; tools/pi/dump_server.py reads these two
+RULES = core.RULES
 
 
 # ---------------------------------------------------------------------------

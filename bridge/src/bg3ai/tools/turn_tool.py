@@ -8,6 +8,7 @@ import os
 import re
 import threading
 import time
+from typing import Any
 
 from .. import actq, delta, render, turn
 from ..game import GameError
@@ -16,16 +17,16 @@ from . import batch, core, observe, overview, plumbing, queueing, reporting, tur
 
 @core.mcp.tool()
 @reporting._guard
-def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: bool = False,
-                ignore: str = "hostile", wait_turn: float = 30.0) -> str:
-    """A WHOLE combat turn in one call — or the turns of SEVERAL party members acting now: plan = JSON list
+def combat_turn(plan: dict[str, Any] | list[dict[str, Any]] | str, who: str | None = None, end: bool = True,
+                wait_next: bool = False, ignore: str = "hostile", wait_turn: float = 30.0) -> str:
+    """A WHOLE combat turn in one call — or the turns of SEVERAL party members acting now: plan = a list
     [{"who":"Karlach","plan":{...}},{"who":"Gale","plan":{...}}] plays them in order (each as below, each turn ended);
     a later member's plan waits for its turn like a sent-ahead plan (the chain waits ≤80 s in all); a member that already ended its turn is skipped, and one the game wants first is played first; it stops and
     hands back as soon as a turn is interrupted, a member's turn doesn't come in time, or the fight ends, and lists
     who was NOT played. Use it when the result
     says `NOW <a>'s turn: plan it; also <b>, <c>` (S023-S026: 175 back-to-back combat_turn calls, one per member).
     Single turn:  move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Disengage). If every action alternative is out of range, it tries the ranged weapon attack itself, else Dash + walk on when the move ran out of movement. A move that ends out of reach says how far it got and why (out of movement / fire on the route / no route closer).
-    plan: JSON, e.g. {"move":{"target":"e12","within":1.5},"action":[{"ability":"Target_MainHandAttack","target":"e12"},{"ability":"Projectile_MainHandAttack","target":"e12"},{"ability":"Shout_Dash","then_move":true},"Shout_Disengage"],"bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"},"extra":[[{"ability":"Target_MainHandAttack","target":"e12"}]]}
+    plan: an object (or the same as a JSON string), e.g. {"move":{"target":"e12","within":1.5},"action":[{"ability":"Target_MainHandAttack","target":"e12"},{"ability":"Projectile_MainHandAttack","target":"e12"},{"ability":"Shout_Dash","then_move":true},"Shout_Disengage"],"bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"},"extra":[[{"ability":"Target_MainHandAttack","target":"e12"}]]}
     move: "e12" (walk next to it), {"target","within":<m>} (stop once that close, e.g. ranged), [x,y,z], "o3" (an objective: toward its marker, e.g. a Dash to the exit). Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).
     Abilities: the shown name or the id; a weapon attack the character doesn't have (a summon's) becomes its own weapon attack. Extra Attack: after the first weapon attack, an "extra" slot attack costs no action (the game's rule).
     Alternatives: an ability id, or {"ability","target"|"x,y,z","upcast","targets","force","if","unless","then_move"}, or {"tool":<batchable tool>,...}. then_move: after it, walk the move again (a Dash does this by default; then_move:false turns it off).
@@ -37,6 +38,7 @@ def combat_turn(plan: str, who: str | None = None, end: bool = True, wait_next: 
     An empty plan {} just ends that character's turn (e.g. it already acted through single tools).
     end=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn). When enemies act next, the end itself runs in the background ("ending in the background", then queue_done): what you send next waits for it.
     Not this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), up to 120 s longer while enemies are still taking turns, then plays it (still their turns then: NOT PLAYED YET, nothing done: send it again)."""
+    plan = batch._as_json(plan)
     chain = _turn_chain(plan)
     if chain is None:
         end = _plan_end(plan, end)

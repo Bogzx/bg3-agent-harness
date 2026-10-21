@@ -14,7 +14,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing the server)
+
+# isort: split
 from bg3ai import capabilities
+from bg3ai.tools import core
 
 BRIDGE = Path(__file__).resolve().parents[1]
 FULL = 94
@@ -23,9 +27,10 @@ FULL = 94
 # running game.
 PROBE = """
 import json, sys
+from bg3ai import server
 from bg3ai.tools import core, batch, travel_macro
 out = {"tools": sorted(t.name for t in core.mcp._tool_manager.list_tools()),
-       "batchable": sorted(batch._BATCHABLE)}
+       "batchable": sorted(batch._BATCHABLE), "instructions": core.mcp.instructions, "base": server.INSTRUCTIONS}
 if "--note" in sys.argv:
     out["note"] = [batch.do_actions("[]", note="x"), batch.queue_actions("[]", note="x"),
                    travel_macro.travel_to(note="x")]
@@ -94,6 +99,34 @@ class Server(unittest.TestCase):
         out = tools({}, "--note")
         for text in out["note"]:
             self.assertNotIn("note= is not available", text)
+
+    def test_instructions_name_only_served_tools(self):
+        # D15: the server instructions told every client about memory_read, end_session and screenshot even when its
+        # condition had switched them off
+        full = tools({"BG3AI_SERVE_RULES": "0"})
+        self.assertEqual(full["instructions"], full["base"])
+        for name in ("memory_read", "end_session", "screenshot"):
+            self.assertIn(name, full["instructions"])
+        game = tools({"BG3AI_TOOLS": "game", "BG3AI_SERVE_RULES": "0"})
+        self.assertEqual(game["instructions"], game["base"])
+        for name in ("memory", "end_session", "session_start", "screenshot", "knowledge/"):
+            self.assertNotIn(name, game["instructions"])
+        self.assertIn("combat_turn", game["instructions"])
+        self.assertTrue(tools({"BG3AI_TOOLS": "game,memory", "BG3AI_SERVE_RULES": "1"})["instructions"].startswith(
+            full["base"].split("\nUse screenshot")[0] + "\nMemory: "))
+
+
+class Instructions(unittest.TestCase):
+    def test_parts_follow_the_tool_set(self):
+        self.assertEqual(core.instructions(), core.INSTRUCTIONS)
+        self.assertNotIn("screenshot", core.instructions({"screenshot", "zoom"}))
+        self.assertIn("memory_read", core.instructions({"screenshot"}))
+        self.assertNotIn("memory_read", core.instructions({"memory_read", "note"}))
+
+    def test_client_neutral(self):
+        # D15: no client-specific wording (Claude Code's "end your turn", its file tools, its deferred-tool search)
+        for bad in ("end your turn", "ToolSearch", "CLAUDE.md", "Read/Edit"):
+            self.assertNotIn(bad.lower(), core.INSTRUCTIONS.lower())
 
 
 class Disabled(unittest.TestCase):

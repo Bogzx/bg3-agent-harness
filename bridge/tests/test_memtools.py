@@ -252,7 +252,7 @@ class ServerMemoryTools(Base):
         memory.memory_write("memory/objectives.md", "# Objectives\n## Main\n- reach camp [seen S001]\n")
         out = memory.end_session()
         self.assertIn("committed", out)
-        self.assertIn("end your turn now", out)
+        self.assertIn("Session over: stop now", out)
         self.assertFalse(M.load_state(self.mem)["open"])
         self.assertEqual(M.git(self.mem, "log", "-1", "--format=%s").stdout.strip(), "S001")
         self.assertIn("No open session", memory.end_session())

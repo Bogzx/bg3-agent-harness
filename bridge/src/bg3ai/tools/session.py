@@ -14,7 +14,7 @@ from typing import Callable
 
 from mcp.server.mcpserver import MCPServer
 
-from .. import capabilities, compact, render
+from .. import capabilities, compact, render, rules
 from ..game import Game
 from . import batch, core, plumbing, queueing, reporting, world_tools
 
@@ -237,6 +237,8 @@ TOOLS_OFF = capabilities.disabled([t.name for t in core.mcp._tool_manager.list_t
 for _name in sorted(TOOLS_OFF):
     core.mcp.remove_tool(_name)
 batch._BATCHABLE -= TOOLS_OFF
+INSTRUCTIONS = core.instructions(TOOLS_OFF)
+core.mcp._lowlevel_server.instructions = rules.instructions(INSTRUCTIONS, core.RULES.rules)
 
 
 def _note_refused(text: str) -> str:

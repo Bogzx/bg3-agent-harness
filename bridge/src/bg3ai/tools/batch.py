@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -23,10 +24,17 @@ _BATCHABLE = {
 }
 
 
+def _as_json(arg: Any) -> str:
+    """A batch argument as the JSON text the step parsers take: clients send a real JSON array or object, or the same
+    as a string (D15: one interface for every model)."""
+    return arg if isinstance(arg, str) else json.dumps(arg)
+
+
 @core.mcp.tool()
-def do_actions(actions: str, wait: bool = True, ignore: str = "", note: str = "") -> str:
+def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool = True, ignore: str = "",
+               note: str = "") -> str:
     """Run several actions in order in ONE call: a whole combat turn, a looting sweep, a dialogue chain. Plan from one observation, then execute.
-    actions: JSON list of steps, e.g.
+    actions: a list of steps (or the same list as a JSON string), e.g.
     [{"tool":"move_to","target":"e12"},{"tool":"use_ability","ability":"Target_MainHandAttack","target":"e12","unless":"hp_below:30"},{"tool":"use_ability","ability":"Shout_SecondWind","if":"hp_below:50"},{"tool":"end_turn"}]
     Allowed: move_to, walk_toward, travel_to (a whole trip as one step, e.g. after a climb), interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
     Optional per step: "if"/"unless" with in_combat, in_dialogue, my_turn, hp_below:<pct>, item_present:<id>, target_visible:<id> (a failed condition skips the step).
@@ -34,6 +42,7 @@ def do_actions(actions: str, wait: bool = True, ignore: str = "", note: str = ""
     Returns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions).
     note: memory log line(s) appended to your session log at once, as note() does (no extra turn)."""
     t0 = time.monotonic()
+    actions = _as_json(actions)
     if refused := session._note_refused(note):
         return reporting._finish("do_actions", {}, refused, t0)
     if not wait:
@@ -71,10 +80,11 @@ def do_actions(actions: str, wait: bool = True, ignore: str = "", note: str = ""
 
 @core.mcp.tool()
 @reporting._guard
-def queue_actions(actions: str, who: str | None = None, replace: bool = False, ignore: str = "",
-                  note: str = "") -> str:
+def queue_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, who: str | None = None,
+                  replace: bool = False, ignore: str = "", note: str = "") -> str:
     """Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Same step format, conditions and interrupts as do_actions. On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue. note: memory log line(s) for your session log, written at once (as note())."""
     t0 = time.monotonic()
+    actions = _as_json(actions)
     if refused := session._note_refused(note):
         return reporting._finish("queue_actions", {}, refused, t0)
     memory._note_quiet(note)

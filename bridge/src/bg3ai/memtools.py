@@ -430,7 +430,7 @@ class Lifecycle:
             return S.no_memory_message(mem)
         st = M.load_state(mem)
         if not st.get("open"):
-            return "No open session (it was already committed). You can end your turn."
+            return "No open session (it was already committed). You can stop now."
         sid = M.session_id(st["current"])
         out = S.stop_decision(mem, in_combat=in_combat)
         if out is None:
@@ -441,8 +441,8 @@ class Lifecycle:
         if not M.load_state(mem).get("open"):
             self.ended = True
             self.opened = None
-            return out.get("systemMessage", f"{sid} closed.") + " Session over: end your turn now."
-        return out.get("systemMessage", "") + " You can end your turn."
+            return out.get("systemMessage", f"{sid} closed.") + " Session over: stop now (no more tool calls)."
+        return out.get("systemMessage", "") + " You can stop now."
 
     def clock(self, now: float | None = None) -> str:
         """Manual sessions (no runner deadline): the elapsed-time wrap-up reminder (was the PostToolUse clock hook)."""

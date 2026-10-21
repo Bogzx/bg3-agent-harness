@@ -61,7 +61,7 @@ def _note_quiet(text: str) -> None:
 @core.mcp.tool()
 @reporting._guard
 def note(text: str, tag: str = "note") -> str:
-    """Append line(s) to your session log (memory/sessions/Sxxx.md) at once: no file Read/Edit round trip, so a note never holds up play. One log line per line of text, '- HH:MM [tag] text'; start a line with its own [tag] (quest, decision, npc, combat, loot, puzzle, lesson, stuck, ...) to override tag. Curated files (objectives, npcs, quests, ...) are updated from the log between sessions; Edit them yourself only for plan changes you need this session. travel_to, queue_actions and do_actions take note= too (written with the action, no extra turn)."""
+    """Append line(s) to your session log (memory/sessions/Sxxx.md) at once: no memory_read/memory_edit round trip, so a note never holds up play. One log line per line of text, '- HH:MM [tag] text'; start a line with its own [tag] (quest, decision, npc, combat, loot, puzzle, lesson, stuck, ...) to override tag. Curated files (objectives, npcs, quests, ...) are updated from the log between sessions; edit them yourself (memory_edit) only for plan changes you need this session. travel_to, queue_actions and do_actions take note= too (written with the action, no extra turn)."""
     t0 = time.monotonic()
     n, path = _append_note(text, tag)
     if not n:
@@ -168,7 +168,7 @@ def rules_resource() -> str:
 @core.mcp.tool()
 @reporting._guard
 def end_session() -> str:
-    """The last step of the wrap-up: checks the session can end (wrap-up time reached, HANDOFF.md written for this session, memory lint clean) and commits the memory. If it says NOT ENDED, do what it says (keep playing, or fix and call it again). End your turn only when it reports the commit."""
+    """The last step of the wrap-up: checks the session can end (wrap-up time reached, HANDOFF.md written for this session, memory lint clean) and commits the memory. If it says NOT ENDED, do what it says (keep playing, or fix and call it again). Stop (no more tool calls) only when it reports the commit."""
     t0 = time.monotonic()
     if core.DEADLINE:
         core._times()  # the fight hold up to date for session.py's check ($BG3AI_FIGHT_HOLD_PATH)

@@ -30,7 +30,10 @@ SAVE_DIR = Path(os.environ.get("BG3AI_SAVE_DIR") or Path(
 DEADLINE = float(os.environ.get("BG3AI_SESSION_DEADLINE", "0") or 0)
 WRAPUP_S = 10 * 60  # wrap-up length without the runner's BG3AI_SESSION_WRAPUP (the runner: 3 min, a third of a short one)
 
-INSTRUCTIONS = """Tools to play Baldur's Gate 3 as the player. All information is what the player can see.
+# The server instructions, one part per line group; a part that names a tool group (capabilities.py) is served only
+# with that tool on, so no client is told about tools it doesn't have.
+_INSTRUCTION_PARTS: tuple[tuple[str, str], ...] = (
+    ("", """Tools to play Baldur's Gate 3 as the player. All information is what the player can see.
 Start with get_status. Refer to things by their short id (e12) or a party member's name.
 Pipeline like a human clicking ahead: issue the next steps, then observe and plan while they run.
 queue_actions runs several steps back to back (walk, open, loot, walk on) and returns at once; call it
@@ -38,12 +41,21 @@ again to append more. Movement (move_to, walk_toward, travel_to) also returns at
 queue entry: keep planning while the character walks; wait_for only when the next step depends on the
 arrival. Other action tools block until they settle; pass wait=false to return at once.
 In combat, combat_turn plays a whole turn (with fallbacks) in one call and says who acts next. Chores are
-one call each: loot_area, dialogue_advance, travel_to, regroup, read_all, rest_if_needed.
-Use screenshot only when the text tools can't tell you something (spatial layout, puzzles, unknown popups).
-Memory: your notes live in memory/ (read and write with memory_list, memory_read, memory_search, memory_write,
+one call each: loot_area, dialogue_advance, travel_to, regroup, read_all, rest_if_needed."""),
+    ("screenshot", """Use screenshot only when the text tools can't tell you something (spatial layout, puzzles, unknown popups)."""),
+    ("memory_read", """Memory: your notes live in memory/ (read and write with memory_list, memory_read, memory_search, memory_write,
 memory_edit, memory_append; note appends to the session log). knowledge/ holds read-only reference notes and the
 playbooks. Session: if your first message doesn't show your memory briefing, call session_start first; at the end
-of the wrap-up call end_session and end your turn only when it reports the commit."""
+of the wrap-up call end_session and stop (no more tool calls) only when it reports the commit."""),
+)
+
+
+def instructions(off: set[str] | frozenset[str] = frozenset()) -> str:
+    """The server instructions for the served tool set: parts that need a tool in `off` are left out."""
+    return "\n".join(text for tool, text in _INSTRUCTION_PARTS if tool not in off)
+
+
+INSTRUCTIONS = instructions()  # every tool on; session.INSTRUCTIONS is the served set's
 
 # The assembled rules for clients other than Claude Code (rules.py): in `instructions` and on the first briefing.
 RULES = rules.Once(rules.load())
