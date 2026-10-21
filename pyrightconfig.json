@@ -108,7 +108,6 @@
     "runner/test_runs.py",
     "runner/test_sandbox.py",
     "runner/test_scenarios.py",
-    "tools/bench_preflight.py",
     "tools/container/egress_proxy.py",
     "tools/container/sandbox_smoke.py",
     "tools/dev/acceptance.py",
