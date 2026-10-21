@@ -9,6 +9,7 @@ from bg3play.store import RunStore
 from .conftest import PT
 
 S096_START = 1792311134.6876369  # 2026-10-18 11:12:14.69 on the recording machine (EEST, UTC+3)
+NOW = S096_START + 3600
 
 
 @pytest.fixture
@@ -67,7 +68,7 @@ def test_replay_on_the_fixture(store: RunStore, git_memory: Path, tmp_path: Path
             }
         )
     )
-    r = replay.replay(store, PT, "S096", video)
+    r = replay.replay(store, PT, "S096", video, NOW)
     assert r["started"] == S096_START and r["ended"] == 1792312705.6318264
     kinds = {e["kind"] for e in r["events"]}
     assert kinds == {"action", "say", "memory"}
@@ -77,4 +78,20 @@ def test_replay_on_the_fixture(store: RunStore, git_memory: Path, tmp_path: Path
     assert says and all(r["started"] - 1 <= e["t"] <= r["ended"] + 60 for e in says)
     assert [e["subject"] for e in r["events"] if e["kind"] == "memory"] == ["S096 memory-keeper: HANDOFF.md"]
     assert [s["file"] for s in r["segments"]] == ["rec-1-0001.mp4", "rec-2-0000.mp4"]
-    assert replay.replay(store, PT, "S999", video) is None
+    assert replay.replay(store, PT, "S999", video, NOW) is None
+
+
+def test_replay_of_running_session(store: RunStore, tmp_path: Path):
+    # S097 runs now: no runner.json history row, no [end] line; its start is in runner.status.json
+    st = json.loads(store.status_path.read_text())
+    start = 1792312800.0
+    st.update(session="S097", started=start, session_ended=None, log="/elsewhere/S097.log")
+    store.status_path.write_text(json.dumps(st))
+    (store.session_dir(PT) / "S097.log").write_text("")
+    with store.actions_path.open("a") as f:
+        f.write(json.dumps({"t": start + 30, "tool": "look", "args": {}, "ms": 5, "result": "WHERE beach"}) + "\n")
+    row = store.sessions(PT)[-1]
+    assert (row["session"], row["started"], row["running"]) == ("S097", start, True)
+    r = replay.replay(store, PT, "S097", tmp_path / "video", start + 90)
+    assert r is not None and (r["started"], r["ended"]) == (start, start + 90)
+    assert [(e["kind"], e["t"]) for e in r["events"]] == [("action", start + 30)]

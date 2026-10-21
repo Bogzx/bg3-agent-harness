@@ -107,12 +107,14 @@ class App:
         token: str | None = None,
         profiles: Path | None = None,
         dashboard: Dashboard | None = None,
+        clock: Callable[[], float] = time.time,
     ):
         self.store, self.hub, self.web_dir, self.keepalive_s = store, hub, web_dir, keepalive_s
         self.dashboard = dashboard or Dashboard(store, None, None, Viewers(time.time))
         self.recorder = recorder
         self.video_dir = video_dir if video_dir is not None else store.runtime / "video"
         self.supervisor, self.token, self.profiles = supervisor, token or None, profiles
+        self.clock = clock
 
     def authorize(self, client_ip: str, headers: Any) -> str | None:
         """Why a write is refused (None: allowed): another site's page (Origin not this host), or a client off
@@ -185,7 +187,7 @@ class App:
             name = s.check_name(unquote(rm.group(1)))
             if name not in s.playthroughs():
                 return None
-            r = replay.replay(s, name, rm.group(2), self.video_dir)
+            r = replay.replay(s, name, rm.group(2), self.video_dir, self.clock())
             return {"v": api.API_VERSION, "playthrough": name, **r} if r else None
         if path == "/api/v1/video/index":
             return {"v": api.API_VERSION, "segments": rec.read_index(self.video_dir)}

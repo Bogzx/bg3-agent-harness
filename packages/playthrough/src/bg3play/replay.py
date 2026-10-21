@@ -73,17 +73,18 @@ def window_actions(path: Path, t0: float, t1: float, limit: int = MAX_EVENTS) ->
     return out
 
 
-def session_window(store: RunStore, pt: str, session: str) -> tuple[float, float] | None:
+def session_window(store: RunStore, pt: str, session: str, now: float) -> tuple[float, float] | None:
+    """(start, end) of a session; a running one ends now (what exists so far)."""
     for s in store.sessions(pt):
         if s["session"] == session and s["started"]:
-            end = s["ended"] or (s["started"] + (s["minutes"] or 60) * 60)
+            end = s["ended"] or (max(now, s["started"]) if s["running"] else s["started"] + (s["minutes"] or 60) * 60)
             return float(s["started"]), float(end)
     return None
 
 
-def replay(store: RunStore, pt: str, session: str, video_dir: Path) -> dict[str, Any] | None:
+def replay(store: RunStore, pt: str, session: str, video_dir: Path, now: float) -> dict[str, Any] | None:
     """The replay payload, or None when the session (or its start time) is unknown."""
-    win = session_window(store, pt, session)
+    win = session_window(store, pt, session, now)
     if win is None:
         return None
     t0, t1 = win
