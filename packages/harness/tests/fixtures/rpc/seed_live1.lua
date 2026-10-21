@@ -86,6 +86,7 @@ Ext = {
     Entity = {
         GetAllEntitiesWithComponent = function() return { { ServerRollStreams = RS } } end,
         OnCreate = function(name, fn) onCreate[name] = fn end,
+        OnSystemPostUpdate = function() end,
     },
     IO = { LoadFile = function(p) return files[p] end, SaveFile = function(p, s) files[p] = s return true end },
     Json = { Stringify = function(v) return encode(v) end, Parse = function() return nil end },

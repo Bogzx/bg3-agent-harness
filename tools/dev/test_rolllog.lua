@@ -9,7 +9,8 @@ local HOST = "14e68d14-c5a2-1e68-d51f-c2fe2defd545"
 local GOB = "b1e2d6a7-0fad-4485-ae2e-2ec78ce4e658"
 local ZERO = "00000000-0000-0000-0000-000000000000"
 
-local listeners, ops, pushed, onCreate = {}, {}, {}, {}
+local listeners, ops, pushed, onCreate, postUpdate = {}, {}, {}, {}, {}
+local oneFrame = {} -- entities carrying ServerRollFinishedEvent this frame
 local clock = 1000
 
 local function stream(t, player, n)
@@ -25,10 +26,12 @@ Ext = {
         PrintWarning = function(m) print("WARN " .. m) end, Print = function() end },
     Entity = {
         GetAllEntitiesWithComponent = function(name)
+            if name == "ServerRollFinishedEvent" then return oneFrame end
             assert(name == "ServerRollStreams")
             return { { ServerRollStreams = RS } }
         end,
         OnCreate = function(name, fn) onCreate[name] = fn end,
+        OnSystemPostUpdate = function(name, fn) postUpdate[name] = fn end,
     },
 }
 Osi = {}
@@ -67,6 +70,9 @@ end
 check("listens RollResult/6", listeners["RollResult/6"] ~= nil)
 check("listens DialogRollResult/5", listeners["DialogRollResult/5"] ~= nil)
 check("subscribed finished", onCreate.ServerRollFinishedEvent ~= nil and L.finishedSubscribed)
+check("subscribed requested", onCreate.RequestedRoll ~= nil and L.hooks.requested_create == true)
+check("post-update hook on ServerRoll", postUpdate.ServerRoll ~= nil and L.hooks.post_update == true
+    and L.hooks.tick == nil)
 check("roll.since quiet", BG3AI.RPC.QUIET_OPS["roll.since"] == true)
 
 -- A load seeds the per-stream counts; a passive Perception roll draws 2 Generic rolls (live1 §4).
@@ -161,7 +167,150 @@ do
     check("cap", #L.ring == 3 and ops["roll.since"]({ seq = 0 }).first == L.seq - 2)
 end
 
+------------------------------------------------------------------------
+-- Round 5: natural/total/dc from the in-frame sources; per-record stream counts (research/ovh/live3.md §4).
+------------------------------------------------------------------------
+L.CAP = 4000
+local function fresh()
+    L.ring, L.batch, L.pending = {}, nil, {}
+    clock = clock + 10000
+end
+local function ent(uuid) return { Uuid = { EntityUuid = uuid } } end
+local function osi(i, ok, crit)
+    clock = clock + 5
+    listeners["RollResult/6"]("probe" .. i, "Player_" .. HOST, "Player_" .. HOST, ok and 1 or 0, 0, crit or 0)
+end
+
+-- A batch of 24 passive checks in one frame: the 68 draws (48 + 20 ambient, live3 §4) are shared out, every record
+-- gets its own streams and stream, and the counts add up to the batch's.
+fresh()
+RS.Streams[1].State.NumRolls = 100
+L.lastRolls = L.counts()
+RS.Streams[1].State.NumRolls = 168
+for i = 1, 24 do osi(i, i % 2 == 0) end
+do
+    check("batch: 24 records", #L.ring == 24, #L.ring)
+    local sum, all = 0, true
+    for _, r in ipairs(L.ring) do
+        all = all and r.streams ~= nil and r.stream == "Generic" and r.streams_shared == 24
+        sum = sum + (r.streams and r.streams.Generic or 0)
+    end
+    check("batch: each record has streams", all)
+    check("batch: draws add up", sum == 68, sum)
+    check("batch: remainder to the earliest", L.ring[1].streams.Generic == 3 and L.ring[20].streams.Generic == 3
+        and L.ring[21].streams.Generic == 2 and L.ring[24].streams.Generic == 2)
+    -- A roll after the window with no new draws starts no batch and changes nothing before it.
+    clock = clock + 1000
+    osi(25, true)
+    check("after the batch: no streams", L.ring[25].streams == nil and L.ring[24].streams.Generic == 2)
+end
+
+-- finished, read in the frame by the ServerRoll post-update hook: natural and DC; reading the same one-frame again
+-- (two updates in one frame) adds nothing.
+fresh()
+do
+    local before = L.fired.finished
+    oneFrame = { { ServerRollFinishedEvent = { Events = {
+        { Roller = ent(HOST), Subject = ent(HOST), RollUuid = "roll-1", NaturalRoll = 7, DC = 12,
+          Skill = "Perception", Ability = "Wisdom", RollType = 3, Advantage = false, Disadvantage = false,
+          Canceled = false } } } } }
+    postUpdate.ServerRoll()
+    postUpdate.ServerRoll()
+    oneFrame = {}
+    check("in-frame finished: one record", #L.ring == 1 and L.fired.finished == before + 1, #L.ring)
+    osi(1, false)
+    local r = L.ring[1]
+    check("in-frame finished + osi merged", #L.ring == 1 and r.natural == 7 and r.dc == 12 and r.roll_uuid == "roll-1"
+        and r.success == false and r.srcs.finished and r.srcs.osi)
+end
+
+-- OnCreate after the frame (bg3le queues it to the next tick): the one-frame is gone; counted, nothing recorded.
+do
+    local n, e = #L.ring, L.seen.finished_empty
+    onCreate.ServerRollFinishedEvent({})
+    check("late OnCreate counted as empty", #L.ring == n and L.seen.finished_empty == e + 1)
+end
+
+-- requested: the roll entity is tracked from its OnCreate and read once Finished (natural, total, DC); a canceled
+-- roll and a vanished entity are dropped.
+fresh()
+do
+    local c = { Roller = ent(HOST), Subject = ent(HOST), RollUuid = "roll-2", DC = 10, NaturalRoll = 0,
+        Finished = false, Canceled = false, Skill = "Perception", Ability = "Wisdom",
+        Roll = { Advantage = false, Disadvantage = false }, Result = { Total = 0, NaturalRoll = 0 } }
+    local live = { RequestedRoll = c }
+    onCreate.RequestedRoll(live)
+    onCreate.RequestedRoll({ RequestedRoll = { Roller = ent(HOST), Finished = false, Canceled = true } })
+    onCreate.RequestedRoll({})
+    postUpdate.ServerRoll()
+    check("requested: unfinished kept, canceled and gone dropped", #L.ring == 0 and #L.pending == 1, #L.pending)
+    c.Finished, c.Result = true, { Total = 17, NaturalRoll = 14 }
+    osi(1, true)
+    local r = L.ring[1]
+    check("requested + osi: one record", #L.ring == 1 and #L.pending == 0, #L.ring)
+    check("requested fields", r.natural == 14 and r.result == 17 and r.dc == 10 and r.skill == "Perception"
+        and r.success == true and r.srcs.requested and r.srcs.osi and r.party == true)
+    -- The finished one-frame of the same roll merges by roll uuid; its fields don't overwrite.
+    oneFrame = { { ServerRollFinishedEvent = { Events = {
+        { Roller = ent(HOST), RollUuid = "roll-2", NaturalRoll = 14, DC = 10, Canceled = false } } } } }
+    postUpdate.ServerRoll()
+    oneFrame = {}
+    check("finished merges by roll uuid", #L.ring == 1 and L.ring[1].srcs.finished)
+    local view = ops["roll.since"]({ seq = r.seq - 1 }).events[1]
+    check("srcs listed", table.concat(view.srcs, ",") == "finished,osi,requested", table.concat(view.srcs, ","))
+end
+
+-- A batch of requested rolls by one roller pairs with the Osiris results in order (oldest first).
+fresh()
+do
+    local nats, oks = { 5, 12, 19 }, { false, true, true }
+    for i, n in ipairs(nats) do
+        onCreate.RequestedRoll({ RequestedRoll = { Roller = ent(HOST), RollUuid = "b" .. i, DC = 10,
+            Finished = true, Canceled = false, Result = { Total = n + 2, NaturalRoll = n } } })
+    end
+    for i, ok in ipairs(oks) do osi(i, ok) end
+    check("batch pairing: 3 records", #L.ring == 3, #L.ring)
+    local good = true
+    for i, r in ipairs(L.ring) do
+        good = good and r.natural == nats[i] and r.success == oks[i] and r.event == "probe" .. i
+    end
+    check("batch pairing in order", good)
+end
+
+-- A face outside 1..20 or a zero DC is not reported as one.
+fresh()
+do
+    onCreate.RequestedRoll({ RequestedRoll = { Roller = ent(GOB), RollUuid = "z", DC = 0, Finished = true,
+        Canceled = false, Result = { Total = 31, NaturalRoll = 0 }, NaturalRoll = 25 } })
+    postUpdate.ServerRoll()
+    local r = L.ring[1]
+    check("bad face and dc dropped", r and r.natural == nil and r.dc == nil and r.result == 31 and r.party == false)
+end
+
+-- Snapshot: hooks, raw hook hits and pending entities.
+do
+    local snap = ops["roll.snapshot"]({})
+    check("snapshot hooks", snap.hooks.post_update == true and snap.hooks.requested_create == true
+        and snap.seen.requested_create >= 7 and snap.seen.finished_empty >= 1 and snap.pending == 0
+        and snap.fired.requested >= 4)
+end
+
 check("no RPC.push", #pushed == 0, #pushed)
+
+-- No system hook on this build: the Tick fallback reads the in-frame sources instead.
+do
+    local ticks = {}
+    BG3AI.RollLog = nil
+    Ext.Entity.OnSystemPostUpdate = function() error("not registered") end
+    Ext.Events = { Tick = { Subscribe = function(_, fn) ticks[#ticks + 1] = fn end } }
+    local warn = Ext.Utils.PrintWarning
+    Ext.Utils.PrintWarning = function() end
+    dofile(LUA .. "/Server/RollLog.lua")
+    Ext.Utils.PrintWarning = warn
+    local L2 = BG3AI.RollLog
+    check("tick fallback", L2.hooks.post_update == false and L2.hooks.tick == true and #ticks == 1
+        and L2.finishedSubscribed == true)
+end
 
 print(string.format("rolllog: %d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end
