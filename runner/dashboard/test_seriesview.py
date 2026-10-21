@@ -213,6 +213,13 @@ class Synthetic(unittest.TestCase):
         u = V.live_usage(d, t0)
         self.assertEqual((u["tokens_m"], u["running_streams"], u["estimated"]), (round(1500 / 1e6, 2), 1, True))
         self.assertAlmostEqual(u["cost_usd"], 3.0)
+        # S002 stopped before its result (a cap: the runner's session_end): a finished process, counted once
+        log = V.R.events.EventLog(d / "S002.events.jsonl")
+        log.write(V.R.clients.Event("usage", message_id="m1", tokens=V.R.clients.tokens(10, 390, 100, 0)))
+        log.end("cap", -2, time.time())
+        u2 = V.live_usage(d, t0)
+        self.assertEqual((u2["tokens_m"], u2["running_streams"], u2["cost_usd"]), (u["tokens_m"], 0, 3.0))
+        (d / "S002.events.jsonl").unlink()
         # the status names the series run: the live row carries it, a session playing now counts
         st = {"playthrough": "sb-r2", "series": "sb", "run_index": 2, "runner_pid": 1, "heartbeat": time.time(),
               "run_started": t0, "session": "S002", "started": t0 + 20, "session_ended": t0 + 15}

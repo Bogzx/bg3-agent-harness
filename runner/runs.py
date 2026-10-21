@@ -427,7 +427,7 @@ def stream_events(lines: list[str], parsers: dict | None = None, name: str | Non
 def claude_totals(state_dir: Path, since: float) -> dict:
     """Cost, turns and tokens of every play-agent stream written since `since` (play, resumes, -fix, -keeper; any
     client): their result events (events.load_events). A process stopped before its result (a cap, a hang, a
-    crash: no result event) counts its usage events, UsageMeter's way: the tokens per message id, one turn per
+    crash: no result event, its events log's session_end; stopped_usage) counts its usage events, UsageMeter's way: the tokens per message id, one turn per
     message, the cost its client reported as running (pi), else its tokens at the run's cost per token so far
     (claude reports cost only in its result). A cost a client can't know (codex/gemini model without a price)
     counts 0."""
@@ -447,14 +447,23 @@ def claude_totals(state_dir: Path, since: float) -> dict:
     for _, _, f in sorted(found):   # in the order written: a resume after the process it resumes
         base = f.with_name(f.name[:-len(".jsonl")])
         evs = events.load_events(base, kinds={"result"}, parsers=parsers)
-        if not evs:   # no result: the process's usage events
-            evs = [unfinished_result(events.load_events(base, kinds={"usage"}), cost, token_total(tokens))]
+        if not evs and (usage := stopped_usage(base)) is not None:
+            evs = [unfinished_result(usage, cost, token_total(tokens))]
         for ev in evs:
             cost += float(ev.cost_usd or 0)
             turns += int(ev.turns or 0)
             for k in clients.TOKEN_KEYS:
                 tokens[k] += int((ev.tokens or {}).get(k) or 0)
     return {"cost_usd": cost, "turns": turns, "tokens": tokens}
+
+
+def stopped_usage(base: Path) -> list | None:
+    """The usage events of a process that ended without its result (its events log has the runner's session_end),
+    else None: a stream still running (or one from before the events log) is no finished process."""
+    if not base.with_name(base.name + ".events.jsonl").exists():
+        return None
+    evs = events.load_events(base, kinds={"usage", "session_end"})
+    return [e for e in evs if e.kind == "usage"] if any(e.kind == "session_end" for e in evs) else None
 
 
 def unfinished_result(usage: list, done_cost: float, done_tokens: int):

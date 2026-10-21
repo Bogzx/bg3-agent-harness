@@ -57,8 +57,8 @@ def live_usage(d: Path, started: float) -> dict:
         except OSError:
             continue
         evs = R.stream_events(lines, {}, R.stream_client(lines))
-        if any(e.kind == "result" for e in evs):
-            continue   # finished: in claude_totals
+        if any(e.kind == "result" for e in evs) or R.stopped_usage(f.with_name(f.name[:-len(".jsonl")])) is not None:
+            continue   # finished (or stopped before its result): in claude_totals
         running += 1
         for e in evs:
             meter.on_event(e)

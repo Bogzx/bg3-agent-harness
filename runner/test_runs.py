@@ -149,15 +149,19 @@ class Caps(TmpDir):
         tot = R.claude_totals(self.tmp, 0)
         self.assertEqual((tot["cost_usd"], tot["turns"]), (0.500185, 5))   # pi's last running (billed) cost
         self.assertEqual(tot["tokens"], {"input": 27990, "output": 616, "cache_read": 512896, "cache_write": 0})
-        # claude stopped mid-stream: its usage per message id at the run's cost per token so far
+        # claude stopped mid-stream (its events log ends in session_end): its usage per message id at the run's
+        # cost per token so far; while it runs (no session_end yet) it is no finished process: not counted
         _stream(self.tmp / "S002.jsonl", {"type": "result", "total_cost_usd": 1.0, "num_turns": 1,
                                           "usage": {"input_tokens": 1000}})
         later = time.time() + 5
         os.utime(self.tmp / "S002.jsonl", (later, later))
-        _stream(self.tmp / "S003.jsonl", {"type": "system", "subtype": "init"},
-                *({"type": "assistant", "message": {"id": "m1", "usage": {"input_tokens": 10, "output_tokens": n}}}
-                  for n in (5, 90)), {"type": "assistant", "message": {"id": "m2", "usage": {"input_tokens": 100}}})
+        _stream(self.tmp / "S003.jsonl", {"type": "system", "subtype": "init"})
         os.utime(self.tmp / "S003.jsonl", (later + 1, later + 1))
+        log = R.events.EventLog(self.tmp / "S003.events.jsonl")
+        for mid, i, o in (("m1", 10, 5), ("m1", 10, 90), ("m2", 100, 0)):
+            log.write(R.clients.Event("usage", message_id=mid, tokens=R.clients.tokens(i, o, 0, 0)))
+        self.assertEqual(R.claude_totals(self.tmp, 0)["turns"], 5 + 1)
+        log.end("cap", -2, time.time())
         rate = 1.0 / (541502 + 1000)   # the run's dollars per token before S003
         tot = R.claude_totals(self.tmp, 0)
         self.assertEqual(tot["turns"], 5 + 1 + 2)
