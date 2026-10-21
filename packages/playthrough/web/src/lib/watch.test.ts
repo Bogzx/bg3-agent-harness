@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Action, LogEntry, WatchSnapshot } from "./types";
-import { applyEvent, fromSnapshot, LIMITS, says, secondsLeft } from "./watch";
+import { applyEvent, fromSnapshot, LIMITS, says, screenSrc, secondsLeft } from "./watch";
 
 const action = (t: number, tool = "look", kind: Action["kind"] = "read"): Action => ({
   t, tool, args: {}, ms: 5, result: `r${t}`, ok: true, kind,
@@ -66,6 +66,13 @@ describe("watch reducer", () => {
     expect(s.session).toBe("S002");
     expect(s.log.at(-1)).toMatchObject({ kind: "header", text: "session S002" });
     expect(s.actions).toEqual([]); // the calls shown are the new session's own
+  });
+
+  it("the game panel shows the recorder's live view while it records, else the agent's screenshot", () => {
+    expect(screenSrc(true, fromSnapshot(snap({ screenshot: null })))).toBe("/api/v1/screen.mjpg");
+    expect(screenSrc(true, fromSnapshot(snap()))).toBe("/api/v1/screen.mjpg");
+    expect(screenSrc(false, fromSnapshot(snap()))).toBe("/api/v1/screenshot?rev=50");
+    expect(screenSrc(false, fromSnapshot(snap({ screenshot: null })))).toBeNull();
   });
 
   it("the [end] line adds the session's cost", () => {

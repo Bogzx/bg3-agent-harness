@@ -32,6 +32,24 @@ def test_watch_snapshot_map_and_live_stream(page, site):
     no_overflow(page, 1440)
 
 
+def test_watch_game_panel_shows_the_recorder_after_a_missing_screenshot(page, site):
+    # live run 2: no agent screenshot (404) failed first, the recorder answered "recording" after: the panel stayed
+    # "No capture yet" with live frames on /api/v1/screen.mjpg
+    frame = (site["store"].runtime / "shots" / "shot_000001.jpg").read_bytes()
+    held = []
+    page.route("**/api/v1/screenshot*", lambda r: r.fulfill(status=404, body="not found"))
+    page.route("**/api/v1/recorder", lambda r: held.append(r))
+    page.route("**/api/v1/screen.mjpg", lambda r: r.fulfill(status=200, body=frame, content_type="image/jpeg"))
+    with page.expect_request("**/api/v1/recorder"):
+        page.goto(f"{site['url']}/#/watch/{PT}")
+    expect(page.locator(".screen").get_by_text("No capture yet.")).to_be_visible()
+    assert held, "the page asked the recorder"
+    held[0].fulfill(status=200, json={"v": 1, "recorder": {"recording": True}})
+    expect(page.locator(".screen img")).to_have_attribute("src", "/api/v1/screen.mjpg")
+    expect(page.locator(".screen img")).to_be_visible()
+    page.errors.clear()  # the 404 screenshot is logged as a console error by design here
+
+
 def test_memory_browser(page, site):
     page.goto(f"{site['url']}/#/memory/{PT}/decisions.md")
     expect(page.get_by_text("Memory commits")).to_be_visible()

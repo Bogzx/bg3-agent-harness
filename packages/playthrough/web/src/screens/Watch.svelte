@@ -4,7 +4,7 @@
   import { applyPosition, emptyPositions } from "../lib/breadcrumb";
   import { argLine, clock, hpPct, mmss, num, usd } from "../lib/format";
   import type { PositionRow, Positions } from "../lib/types";
-  import { applyEvent, fromSnapshot, says, secondsLeft, type WatchState } from "../lib/watch";
+  import { applyEvent, fromSnapshot, says, screenSrc, secondsLeft, type WatchState } from "../lib/watch";
   import Breadcrumb from "./Breadcrumb.svelte";
 
   let { pt }: { pt: string } = $props();
@@ -13,11 +13,15 @@
   let error = $state<string | null>(null);
   let connected = $state(false);
   let now = $state(Date.now() / 1000);
-  let shotOk = $state(true);
+  let failedSrc = $state<string | null>(null); // the picture that failed to load (a new source is tried again)
   let filter = $state<"all" | "act" | "read">("all");
   let pos = $state.raw<Positions>(emptyPositions());
   let liveVideo = $state(false);
   let close: (() => void) | null = null;
+
+  function checkRecorder() {
+    api.recorder().then((r) => (liveVideo = Boolean(r.recorder?.recording)), () => (liveVideo = false));
+  }
 
   async function load() {
     close?.();
@@ -26,7 +30,7 @@
       s = fromSnapshot(snap);
       error = null;
       api.positions(pt).then((p) => (pos = p), () => (pos = emptyPositions()));
-      api.recorder().then((r) => (liveVideo = Boolean(r.recorder?.recording)), () => (liveVideo = false));
+      checkRecorder();
       close = openStream(
         snap.stream_id,
         (type, data) => {
@@ -46,14 +50,16 @@
   onMount(() => {
     void load();
     const tick = setInterval(() => (now = Date.now() / 1000), 1000);
+    const rec = setInterval(checkRecorder, 10000); // the recorder starts and stops with the game
     return () => {
       clearInterval(tick);
+      clearInterval(rec);
       close?.();
     };
   });
 
   const left = $derived(s ? secondsLeft(s.runner, now) : null);
-  const shotSrc = $derived(liveVideo ? "/api/v1/screen.mjpg" : s ? `/api/v1/screenshot?rev=${s.screenshotRev}` : "");
+  const shotSrc = $derived(s ? screenSrc(liveVideo, s) : null);
   const calls = $derived(
     s ? s.actions.filter((a) => filter === "all" || (filter === "read" ? a.kind === "read" : a.kind !== "read")).slice(-60).reverse() : [],
   );
@@ -84,8 +90,8 @@
     <div class="col main">
       <section class="panel screen o1">
         <h2>Game <span class="right faint">for viewers only, never sent to the agent</span></h2>
-        {#if shotOk}
-          <img src={shotSrc} alt="Latest game capture" onerror={() => (shotOk = false)} onload={() => (shotOk = true)} />
+        {#if shotSrc && shotSrc !== failedSrc}
+          <img src={shotSrc} alt="Latest game capture" onerror={() => (failedSrc = shotSrc)} />
         {:else}
           <div class="empty">No capture yet.</div>
         {/if}

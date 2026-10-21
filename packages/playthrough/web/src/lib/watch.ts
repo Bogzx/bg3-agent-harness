@@ -14,7 +14,7 @@ export interface WatchState {
   goal: string | null;
   cost: Cost;
   latency: Latency | null;
-  screenshotRev: number;
+  screenshotRev: number; // 0: no agent screenshot
   memory: Commit[];
 }
 
@@ -101,6 +101,12 @@ export function applyEvent(s: WatchState, type: string, data: unknown): WatchSta
     default:
       return s;
   }
+}
+
+/** The GAME panel's picture: the recorder's live view while it records, else the latest agent screenshot. */
+export function screenSrc(recording: boolean, s: WatchState): string | null {
+  if (recording) return "/api/v1/screen.mjpg";
+  return s.screenshotRev ? `/api/v1/screenshot?rev=${s.screenshotRev}` : null;
 }
 
 /** The agent's own words, newest first. */
