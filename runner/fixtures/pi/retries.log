@@ -1,0 +1,9 @@
+[init] session=conf-0001 model=anthropic/stub-model tools=94 mcp=['bg3:connected']
+[api] 529: {"message":"Overloaded","type":"overloaded_error"}
+[api] retry 1/3: 529: {"message":"Overloaded","type":"overloaded_error"}
+[api] 529: {"message":"Overloaded","type":"overloaded_error"}
+[api] retry 2/3: 529: {"message":"Overloaded","type":"overloaded_error"}
+[api] 529: {"message":"Overloaded","type":"overloaded_error"}
+[api] retry 3/3: 529: {"message":"Overloaded","type":"overloaded_error"}
+[api] 529: {"message":"Overloaded","type":"overloaded_error"}
+[end] error_during_execution turns=4 duration=0.0min cost=$0.00

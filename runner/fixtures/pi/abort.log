@@ -1,0 +1,6 @@
+[init] session=None model=anthropic/stub-model tools=94 mcp=['bg3:connected']
+[tool] wait {"seconds":30}
+[tool] press_key {"key":"never"}
+[error] MCP request aborted
+[api] This operation was aborted
+[end] aborted turns=2 duration=0.0min cost=$0.01

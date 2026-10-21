@@ -6,7 +6,8 @@ temp dir. No key, no network, no game; ~1 min. Skips when tools/pi/node_modules 
 
     python3 -m unittest tools/pi/conformance/test_pi_conformance.py
 
-BG3AI_PI_CAPTURE=<dir> keeps each run's pi stdout there as <test>.jsonl (runner/fixtures/pi/ was made that way).
+BG3AI_PI_CAPTURE=<dir> keeps each run's pi stdout there as <test>.jsonl, scrubbed (scrub()): runner/fixtures/pi/
+was made that way.
 """
 from __future__ import annotations
 
@@ -28,6 +29,9 @@ REPO = PI_DIR.parents[1]
 BINARY = PI_DIR / "node_modules" / ".bin" / "pi"
 EXTENSION = PI_DIR / "bg3.ts"
 sys.path.insert(0, str(REPO / "runner"))
+import clients as C
+import pi_client as PC
+
 import profiles as PR
 
 sys.path.insert(0, str(HERE))
@@ -83,6 +87,26 @@ class Reader:
         self.thread.join(WAIT_S)
         p.stdout.close()
         return "".join(self.lines)
+
+
+def scrub(out: str) -> str:
+    """A captured stream without the bulk the runner never reads: message_update deltas, the tool schemas in
+    toolsAdded (names kept, so the count stays), agent_end's copy of the whole transcript."""
+    lines = []
+    for line in out.splitlines():
+        if not line.startswith("{"):
+            continue
+        ev = json.loads(line)
+        if ev.get("type") == "message_update":
+            continue
+        if ev.get("type") == "agent_end":
+            ev["messages"] = []
+        msg = ev.get("message") if isinstance(ev.get("message"), dict) else {}
+        if msg.get("toolsAdded"):
+            msg["toolsAdded"] = [{"name": t["name"]} for t in msg["toolsAdded"]]
+            msg.pop("sections", None)
+        lines.append(json.dumps(ev, ensure_ascii=False) + "\n")
+    return "".join(lines)
 
 
 def jsonl(path: Path) -> list[dict]:
@@ -172,7 +196,7 @@ class Conformance(unittest.TestCase):
         if d:
             Path(d).mkdir(parents=True, exist_ok=True)
             n = len(list(Path(d).glob(f"{self._testMethodName}*.jsonl")))
-            (Path(d) / f"{self._testMethodName}{'-' + str(n) if n else ''}.jsonl").write_text(out)
+            (Path(d) / f"{self._testMethodName}{'-' + str(n) if n else ''}.jsonl").write_text(scrub(out))
 
     def run_pi(self, script=None, prompt: str = "play", cwd: Path | None = None, **cfg) -> Run:
         if script is not None:
@@ -386,6 +410,39 @@ class Conformance(unittest.TestCase):
         self.assertNotIn(claude_md[:80], json.dumps(run.requests))
         self.assertEqual(sorted(p.name for p in (self.ws / "home").iterdir()), [])   # no ~/.pi
         self.assertEqual(len(run.requests[0]["messages"]), 2)   # system + prompt, no context files
+
+    def test_30_pi_client_end_to_end(self):
+        """runner/pi_client.py's own config files, env and command against the stubs, its parser on the stream."""
+        port = self.start_stub([{"tool_calls": [call("get_status"), call("press_key", '{"key"')]},
+                                {"text": "done"}])
+        server = {"command": sys.executable, "args": [str(HERE / "stub_mcp.py")], "timeout": 110_000,
+                  "env": {"STUB_MCP_LOG": str(self.ws / "mcp.jsonl")}}
+        client = PC.PiClient(PR.parse(PROFILE), self.ws / "system.txt", server=server, cwd=self.ws / "cwd",
+                             settings=SETTINGS)
+        req = C.Request(prompt="play", model=MODEL, session_dir=self.ws / "sessions-root", session="S001-pi",
+                        env={"BG3AI_SESSION_DEADLINE": "123"}, tag="S001")
+        client.write_config(req)
+        models = client.agent_dir(req) / "models.json"
+        m = json.loads(models.read_text())
+        m["providers"]["openrouter"]["baseUrl"] = f"http://127.0.0.1:{port}/v1"   # the stub, as OpenRouter
+        models.write_text(json.dumps(m))
+        env = {**self.env(), **client.env(req)}
+        p = subprocess.run(client.command(req), cwd=self.ws / "cwd", env=env, stdin=subprocess.DEVNULL, check=False,
+                           capture_output=True, text=True, timeout=WAIT_S)
+        self.capture(p.stdout)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        events = [e for line in p.stdout.splitlines() for e in client.parse(line)]
+        self.assertEqual([e.kind for e in events], ["init", "tool_call", "tool_call", "usage", "tool_result",
+                                                    "tool_result", "text", "usage", "result"])
+        self.assertEqual((events[0].tools, events[0].mcp, events[0].session_id), (94, ["bg3:connected"], "S001-pi"))
+        self.assertEqual(events[2].args.keys(), {"_malformed"})
+        res = events[-1]
+        self.assertEqual((res.subtype, res.is_error, res.turns, res.cost_usd), ("success", False, 2, 0.025))
+        self.assertEqual(client.parser.providers, ["StubProvider", "StubProvider"])
+        self.assertEqual(client.parser.malformed, 1)
+        sent = json.loads((self.ws / "llm.jsonl").read_text().splitlines()[0])["body"]
+        self.assertEqual(text_of(sent["messages"][0]["content"]), SYSTEM)
+        self.assertEqual([r["tool"] for r in jsonl(self.ws / "mcp.jsonl") if r["ev"] == "start"], ["get_status"])
 
 
 def pid_alive(pid: int) -> bool:

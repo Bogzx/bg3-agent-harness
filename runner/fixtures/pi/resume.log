@@ -1,0 +1,3 @@
+[init] session=conf-0001 model=anthropic/stub-model tools=94 mcp=['bg3:connected']
+[say] resumed
+[end] success turns=1 duration=0.0min cost=$0.01

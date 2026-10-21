@@ -530,7 +530,8 @@ class GeminiClient:
         return []
 
 
-CLIENTS = {"claude": ClaudeClient, "codex": CodexClient, "gemini": GeminiClient}
+CLIENTS = {"claude": ClaudeClient, "codex": CodexClient, "gemini": GeminiClient,
+           "pi": lambda **kw: __import__("pi_client").PiClient(**kw)}   # runner/pi_client.py imports this module
 
 
 def make(name: str, **kw) -> Client:

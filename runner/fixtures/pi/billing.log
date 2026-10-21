@@ -1,0 +1,5 @@
+[init] session=conf-0001 model=anthropic/stub-model tools=94 mcp=['bg3:connected']
+[tool] get_status {}
+[result] ok get_status {} ⏎ [clock] 41:12 left of 45:00
+[say] ok
+[end] success turns=2 duration=0.0min cost=$0.03

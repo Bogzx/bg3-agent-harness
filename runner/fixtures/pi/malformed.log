@@ -1,0 +1,11 @@
+[init] session=conf-0001 model=anthropic/stub-model tools=94 mcp=['bg3:connected']
+[tool] press_key {"_malformed":"Expected ',' or '}' after property value in JSON at position 11 (line 1 column 12)\n\nReceived arguments:\n{\"key\": \"e\""}
+[tool] press_key {}
+[tool] press_key {"key":5}
+[tool] press_key {"key":"ok"}
+[error] Invalid arguments for tool "mcp__bg3__press_key": Expected ',' or '}' after property value in JSON at position 11 (line 1 column 12) ⏎  ⏎ Received arguments: ⏎ {"key": "e"
+[error] Validation failed for tool "mcp__bg3__press_key": ⏎   - key: must have required properties key ⏎  ⏎ Received arguments: ⏎ {}
+[result] ok press_key {"key": "5"} ⏎ [clock] 41:12 left of 45:00
+[result] ok press_key {"key": "ok"} ⏎ [clock] 41:12 left of 45:00
+[say] ok
+[end] success turns=2 duration=0.0min cost=$0.03
