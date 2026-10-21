@@ -1,0 +1,28 @@
+===== S094 2026-10-18 09:51:17 claude session 00000000-0000-0000-0000-000000000000
+[prompt] === BG3 PLAYTHROUGH MEMORY — session S094 === ⏎ Autonomous session: keep playing until the ⏱ line in tool results says WRAP UP NOW (you'll be told when to wrap up), then run the session-wrapup playbook. Don't stop early: nobody is there to answer. ⏎ Your append-only log for this session: memory/sessions/S094.md ⏎ Next: run the session-start playbook. ⏎  ⏎ ----- PLAYTHROUGH.md ----- ⏎ # Pl…
+09:51:18 [init] session=00000000-0000-0000-0000-000000000000 model=claude-opus-5-5 tools=95 mcp=['bg3:connected']
+10:19:34 [result] FAILED: e5 Claude already ended its turn (now e1 The Emperor); waited 0.1s for the turn (e1 The Emperor (yours) must act first: play that turn (combat_turn who=e1) or end it (end_turn who=e1))
+10:19:37 [say] Wyll revived by Shadowheart's scroll; ending the channeling Emperor's turn.
+10:19:37 [tool] end_turn {"who":"The Emperor","wait":false}
+10:19:41 [result] end_turn e1 The Emperor: done — ended via the HUD
+10:19:43 [tool] wait_for {"target":"my_turn","timeout_s":240}
+10:20:43 [result] still waiting for my_turn after 60s ⏎ CHANGES ⏎   TURN round 3 turn=e512 Illithid Arcanist ⏎   e1 The Emperor +Hypnotised -Shield of Faith ⏎   e2 Wyll moved 3m NE, HP 8->0/174, +Downed, DOWNED ⏎   e3 Gale moved 2m SE, HP 103->0/177 (temp 1->0), +Burning +Downed +Spirit Guardians -Temporary Hit Points -Threatened, DOWNED ⏎   e4 Shadowheart moved 3m E, HP 130->18/179, +Burning +Cov…
+10:21:01 [tool] note {"text":"[combat] Try 10 lost R3: Dash rush to the Crown (no Dimension Door: harness can't do the 2-step DD) got Compulsion cast R3, but rushing pulled all countermeasures + 4 Arcanists (they appear when you near the Crown, on y=11 platforms around it) onto us; Emperor hypnotised (channel lost), Wy…
+10:21:01 [result] Noted 1 line in S094.md. ⏎ EVENTS ⏎   turn e509 Illithid Arcanist: Dash ⏎   status_removed e512 Illithid Arcanist: Dash ⏎   turn e513 Tentacle ⏎   turn e527 Tentacle ⏎ ⏱ 10:21 · in a fight: finish it, taking each turn the time it needs; the session waits for the fight
+10:21:02 [tool] load_game {"save":"S090-end"}
+10:21:21 [result] load_game: done — loaded=S090-end ⏎ FIGHT DEBRIEF (reloaded, 3 rounds, 12m27s) vs Tentacle x7, Illithid Arcanist x4, Dominated Red Dragon, Blasphemous Acolyte, Spellplague, Oathless Wretch +1 more ⏎   DIED: Wyll (r2, by Illithid Arcanist: Magic Missile) — revive now: Scroll of Revivify / Revivify on the body; Withers (camp) raises only party members; or reload before the fight ⏎ …
+10:21:23 [runner] fight hold (a fight at WRAP UP): session end 10:24:21, hard stop 10:34
+10:21:24 [say] Wrap-up time. Reading the wrap-up playbook.
+10:21:24 [tool] memory_read {"path":"knowledge/playbooks/session-wrapup.md"}
+10:21:24 [result] knowledge/playbooks/session-wrapup.md (59 lines) ⏎ # Session wrap-up (target: ≤ 3 minutes) ⏎  ⏎ **When:** only when the `⏱` line says **WRAP UP NOW** (or a SESSION CLOCK reminder, or the operator asks). ⏎ **Until then do nothing wrap-up-related:** no `Sxxx-end` save, no HANDOFF edit, no end_session, no "out of time" ⏎ plan. "⏱ 21:12 · keep playing: you'll be told when to wrap up"…
+10:21:38 [tool] memory_write {"path":"memory/HANDOFF.md","content":"# Handoff S094 → S095  (2026-10-18 10:22)\nSave to load: \"S090-end\" — at the Brain Stem in the High Hall, out of combat, whole party full. (S094 made no save: tries 9 and 10 lost, reloaded to S090-end at session end.)\n\n## Doing right now\nFinal fight Atop …
+10:21:40 [result] Rewrote memory/HANDOFF.md (22 lines). ⏎ lint: ok ⏎ ⏱ 10:21 · 2m left: WRAP UP NOW. Reach a safe spot, save_game, then follow knowledge/playbooks/session-wrapup.md.
+10:21:40 [tool] memory_edit {"path":"memory/PLAYTHROUGH.md","old_text":"· Last session: S093 · Save: S090-end","new_text":"· S094: tries 9-10 lost (try 9 cleared countermeasures R5; try 10 rushed, Compulsion cast R3) · Last session: S094 · Save: S090-end"}
+10:21:40 [tool] note {"text":"[save] no new save: party at S090-end (Brain Stem, High Hall) after reload; next session loads S090-end"}
+10:21:41 [result] Edited (1 replacement(s)) memory/PLAYTHROUGH.md (37 lines). ⏎ lint: ok ⏎ ⏱ 10:21 · 2m left: WRAP UP NOW. Reach a safe spot, save_game, then follow knowledge/playbooks/session-wrapup.md.
+10:21:41 [result] Noted 1 line in S094.md. ⏎ ⏱ 10:21 · 2m left: WRAP UP NOW. Reach a safe spot, save_game, then follow knowledge/playbooks/session-wrapup.md.
+10:21:43 [tool] end_session {}
+10:21:44 [result] Memory for S094 committed (ef484fa). Session over: end your turn now. ⏎ ⏱ 10:21 · 2m left: WRAP UP NOW. Reach a safe spot, save_game, then follow knowledge/playbooks/session-wrapup.md.
+10:21:53 [say] S094 is over and the memory is committed. Both tries at the final Netherbrain fight (try 9 and try 10) were lost, and the game is back at the S090-end save at the Brain Stem. ⏎  ⏎ - **Try 9** reused try 8's opening and it worked again: the dragon and all the Netherbrain's countermeasures (its summoned defenders) were dead by round 5, and Divine Intervention healed everyone to full i…
+10:21:53 [end] success turns=179 duration=30.6min cost=$5.33
+===== S094 ended: exited, exit 0, 30.6 min

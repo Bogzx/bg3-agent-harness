@@ -5,6 +5,9 @@ description = "The BG3 playthrough app: config, run store, HTTP/SSE API and the 
 requires-python = ">=3.12"
 dependencies = []
 
+[project.scripts]
+bg3play-serve = "bg3play.server:main"
+
 [dependency-groups]
 dev = ["pytest>=8"]
 

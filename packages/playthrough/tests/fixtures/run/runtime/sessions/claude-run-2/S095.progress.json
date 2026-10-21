@@ -1,0 +1,47 @@
+{
+ "minutes": 45.6,
+ "points": 79,
+ "per_hour": 104.0,
+ "events": 37,
+ "by_kind": {
+  "talk": 6,
+  "kill": 22,
+  "story_kill": 6,
+  "key_item": 3
+ },
+ "longest_no_progress_min": 7.8,
+ "stuck_episodes": 0,
+ "stuck_min": 0.0,
+ "last": [
+  {
+   "t": 1792310744.1698287,
+   "kind": "kill",
+   "what": "Mind Flayer",
+   "points": 1
+  },
+  {
+   "t": 1792310955.2955456,
+   "kind": "kill",
+   "what": "Intellect Devourer",
+   "points": 1
+  },
+  {
+   "t": 1792310955.2955456,
+   "kind": "kill",
+   "what": "Intellect Glutton",
+   "points": 1
+  },
+  {
+   "t": 1792311000.4864793,
+   "kind": "kill",
+   "what": "Mind Flayer",
+   "points": 1
+  },
+  {
+   "t": 1792311030.625942,
+   "kind": "kill",
+   "what": "Intellect Devourer",
+   "points": 1
+  }
+ ]
+}

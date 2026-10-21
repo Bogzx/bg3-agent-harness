@@ -1,0 +1,47 @@
+{
+ "minutes": 30.6,
+ "points": 36,
+ "per_hour": 70.5,
+ "events": 12,
+ "by_kind": {
+  "talk": 6,
+  "story_kill": 4,
+  "kill": 1,
+  "area": 1
+ },
+ "longest_no_progress_min": 9.0,
+ "stuck_episodes": 0,
+ "stuck_min": 0.0,
+ "last": [
+  {
+   "t": 1792307302.640687,
+   "kind": "talk",
+   "what": "Pactsplitter",
+   "points": 2
+  },
+  {
+   "t": 1792307302.640687,
+   "kind": "talk",
+   "what": "Oathless Wretch",
+   "points": 2
+  },
+  {
+   "t": 1792307302.640687,
+   "kind": "talk",
+   "what": "Spellplague",
+   "points": 2
+  },
+  {
+   "t": 1792307845.3098352,
+   "kind": "story_kill",
+   "what": "Oathless Wretch",
+   "points": 5
+  },
+  {
+   "t": 1792307935.753737,
+   "kind": "area",
+   "what": "Atop the Netherbrain",
+   "points": 3
+  }
+ ]
+}

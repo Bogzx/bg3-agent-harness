@@ -1,0 +1,14 @@
+{
+ "playthrough": "claude-run-2",
+ "runner_pid": null,
+ "session": "S096",
+ "deadline": null,
+ "model": "claude-opus-5-5",
+ "effort": "medium",
+ "started": 1792311134.6876369,
+ "session_ended": 1792312705.6318264,
+ "updated": 1792312705.6318264,
+ "log": "<repo>/runtime/sessions/claude-run-2/S096.log",
+ "session_minutes": 45.0,
+ "status_line": "claude-run-2: S096 ended (fixture)"
+}

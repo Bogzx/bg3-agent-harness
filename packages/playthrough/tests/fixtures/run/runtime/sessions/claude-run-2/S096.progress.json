@@ -1,0 +1,54 @@
+{
+ "minutes": 26.2,
+ "points": 128,
+ "per_hour": 293.3,
+ "events": 23,
+ "by_kind": {
+  "kill": 5,
+  "quest_step": 1,
+  "quest_done": 5,
+  "quest_new": 3,
+  "objective": 1,
+  "story_kill": 1,
+  "explore": 1,
+  "region": 1,
+  "area": 1,
+  "talk": 3,
+  "game_end": 1
+ },
+ "longest_no_progress_min": 17.3,
+ "stuck_episodes": 1,
+ "stuck_min": 17.3,
+ "last": [
+  {
+   "t": 1792312703.269515,
+   "kind": "quest_new",
+   "what": "A Fitting Farewell",
+   "points": 3
+  },
+  {
+   "t": 1792312703.269515,
+   "kind": "talk",
+   "what": "Tressym",
+   "points": 2
+  },
+  {
+   "t": 1792312703.269515,
+   "kind": "talk",
+   "what": "Scratch",
+   "points": 2
+  },
+  {
+   "t": 1792312703.269515,
+   "kind": "talk",
+   "what": "Milil",
+   "points": 2
+  },
+  {
+   "t": 1792312703.269515,
+   "kind": "game_end",
+   "what": "the epilogue (EPI_Main_A)",
+   "points": 30
+  }
+ ]
+}

@@ -1,0 +1,28 @@
+===== S095 2026-10-18 10:25:32 claude session 00000000-0000-0000-0000-000000000000
+[prompt] === BG3 PLAYTHROUGH MEMORY — session S095 === ⏎ Autonomous session: keep playing until the ⏱ line in tool results says WRAP UP NOW (you'll be told when to wrap up), then run the session-wrapup playbook. Don't stop early: nobody is there to answer. ⏎ Your append-only log for this session: memory/sessions/S095.md ⏎ Next: run the session-start playbook. ⏎  ⏎ ----- PLAYTHROUGH.md ----- ⏎ # Pl…
+10:25:34 [init] session=00000000-0000-0000-0000-000000000000 model=claude-opus-5-5 tools=95 mcp=['bg3:connected']
+11:09:41 [tool] get_nearby {"kinds":"characters","radius":40}
+11:09:41 [result] Nothing visible in range. ⏎ ⏱ 11:09 · 0m left: WRAP UP NOW. Reach a safe spot, save_game, then follow knowledge/playbooks/session-wrapup.md.
+11:09:43 [tool] end_turn {"who":"The Emperor"}
+11:10:00 [progress] +1 kill: Mind Flayer
+11:10:27 [result] end_turn e1 The Emperor: done — ended after={hp=122/145 action=1 bonus=1 reaction=1 movement=9 @(235.4,-52.9,4253.4)} ⏎ now e3's and e5's turn (shared turn group: any order, end each) ⏎ EVENTS ⏎   (+4 earlier events) ⏎   roll_result roller=e3 Gale success ⏎   damage e535 Mind Flayer -> e2 Wyll 0 ⏎   turn e515 Intellect Devourer: Claws (attack) -> e2 6 Slashing ⏎   status_removed …
+11:10:30 [progress] +1 kill: Intellect Devourer
+11:10:31 [say] Wyll is downed again. I'll Lay on Hands him, then Gale, Wyll and I go through the portal.
+11:10:32 [tool] combat_turn {"who":"Claude","plan":"{\"move\":{\"target\":\"e2\",\"within\":1.4},\"action\":[{\"ability\":\"Lay on Hands\",\"target\":\"e2\"}],\"retarget\":false}","end":false}
+11:10:32 [result] REFUSED: the session is over. Save and write your handoff notes. ⏎ EVENTS ⏎   status_applied e3 Gale: Temporary Hit Points ⏎   status_removed e2 Wyll: Burning ⏎   status_removed e3: Burning ⏎ ⏱ SESSION OVER: only save_game and note-taking now; follow knowledge/playbooks/session-wrapup.md.
+11:10:33 [say] The session clock has run out mid-fight. I'll try a save (likely impossible in combat), then do the wrap-up.
+11:10:34 [tool] save_game {"label":"S095-psyche"}
+11:10:34 [tool] memory_read {"path":"knowledge/playbooks/session-wrapup.md"}
+11:10:39 [result] SAVED 'S095-psyche' (4.8s, on disk) ⏎ ⏱ SESSION OVER: only save_game and note-taking now; follow knowledge/playbooks/session-wrapup.md.
+11:10:39 [result] knowledge/playbooks/session-wrapup.md (59 lines) ⏎ # Session wrap-up (target: ≤ 3 minutes) ⏎  ⏎ **When:** only when the `⏱` line says **WRAP UP NOW** (or a SESSION CLOCK reminder, or the operator asks). ⏎ **Until then do nothing wrap-up-related:** no `Sxxx-end` save, no HANDOFF edit, no end_session, no "out of time" ⏎ plan. "⏱ 21:12 · keep playing: you'll be told when to wrap up"…
+11:10:51 [tool] memory_write {"path":"memory/HANDOFF.md","content":"# Handoff S095 → S096  (2026-10-18 11:10)\nSave to load: \"S095-psyche\" — IN COMBAT, final fight round 14, Claude's turn (shared group with Gale). Portal \"Enter the Netherbrain's Psyche\" (e538 that load) is OPEN 2.3 m from Claude atop the brain (5564,9,476)…
+11:10:52 [result] Rewrote memory/HANDOFF.md (20 lines). ⏎ lint: ok ⏎ ⏱ SESSION OVER: only save_game and note-taking now; follow knowledge/playbooks/session-wrapup.md.
+11:10:53 [tool] memory_edit {"path":"memory/PLAYTHROUGH.md","old_text":"· S094: tries 9-10 lost (try 9 cleared countermeasures R5; try 10 rushed, Compulsion cast R3) · Last session: S094 · Save: S090-end","new_text":"· S094: tries 9-10 lost (try 9 cleared countermeasures R5; try 10 rushed, Compulsion cast R3) · S095: try 12 r…
+11:10:54 [tool] note {"tag":"save","text":"S095-psyche at the Netherbrain (in combat R14, portal open, Emperor inside, Wyll downed, Shadowheart dead)"}
+11:10:54 [result] Edited (1 replacement(s)) memory/PLAYTHROUGH.md (37 lines). ⏎ lint: ok ⏎ ⏱ SESSION OVER: only save_game and note-taking now; follow knowledge/playbooks/session-wrapup.md.
+11:10:54 [result] Noted 1 line in S095.md. ⏎ ⏱ SESSION OVER: only save_game and note-taking now; follow knowledge/playbooks/session-wrapup.md.
+11:10:55 [tool] end_session {}
+11:10:56 [result] Memory for S095 committed (ab068a7). Session over: end your turn now. ⏎ ⏱ SESSION OVER: only save_game and note-taking now; follow knowledge/playbooks/session-wrapup.md.
+11:11:03 [say] S095 ended with the final fight unfinished: on try 12 we reached the psyche portal for the first time since S091. The clock ran out mid-combat, and I saved there as "S095-psyche" (the game allowed it). ⏎  ⏎ **State at the save:** ⏎ - Round 14, my turn. The portal into the Netherbrain's psyche is open about 2 m from me, and the Emperor is already inside. ⏎ - The psyche's 5-turn count…
+11:11:03 [end] success turns=225 duration=45.5min cost=$8.58
+===== S095 ended: exited, exit 0, 45.6 min

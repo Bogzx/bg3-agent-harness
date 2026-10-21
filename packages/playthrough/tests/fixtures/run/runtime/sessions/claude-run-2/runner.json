@@ -1,0 +1,37 @@
+{
+ "history": [
+  {
+   "kind": "play",
+   "session": "S094",
+   "reason": "exited",
+   "exit": 0,
+   "started": 1792306276.498546,
+   "ended": 1792308115.1076827,
+   "model": "opus",
+   "effort": "medium",
+   "minutes": 30.6
+  },
+  {
+   "kind": "play",
+   "session": "S095",
+   "reason": "exited",
+   "exit": 0,
+   "started": 1792308332.1466067,
+   "ended": 1792311065.6931472,
+   "model": "opus",
+   "effort": "medium",
+   "minutes": 45.6
+  },
+  {
+   "kind": "play",
+   "session": "S096",
+   "reason": "milestone",
+   "exit": 0,
+   "started": 1792311134.6876369,
+   "ended": 1792312705.6318264,
+   "model": "opus",
+   "effort": "medium",
+   "minutes": 26.2
+  }
+ ]
+}

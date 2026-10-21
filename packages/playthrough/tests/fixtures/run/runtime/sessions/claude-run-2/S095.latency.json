@@ -1,0 +1,305 @@
+{
+ "start": 1792308332.1,
+ "end": 1792311065.7,
+ "minutes": 45.56,
+ "source": "bridge",
+ "idle_s": {
+  "all": {
+   "n": 341,
+   "median": 0.0,
+   "p90": 7.35,
+   "mean": 2.37,
+   "max": 66.08
+  },
+  "explore": {
+   "n": 145,
+   "median": 0.0,
+   "p90": 0.04,
+   "mean": 0.36,
+   "max": 25.74
+  },
+  "combat": {
+   "n": 191,
+   "median": 0.06,
+   "p90": 12.41,
+   "mean": 3.84,
+   "max": 66.08
+  },
+  "dialogue": {
+   "n": 5,
+   "median": 2.51,
+   "p90": 9.02,
+   "mean": 4.41,
+   "max": 12.61
+  },
+  "combat_incl_enemy": {
+   "n": 191,
+   "median": 0.08,
+   "p90": 23.3,
+   "mean": 7.72,
+   "max": 88.21
+  },
+  "wrapup": {
+   "n": 15,
+   "median": 0.05,
+   "p90": 5.34,
+   "mean": 3.87,
+   "max": 44.08
+  }
+ },
+ "wrapup_s": 201.7,
+ "wrapup_at": 1792310864.0,
+ "enemy_turn_s": 722.9,
+ "loading_s": 19.4,
+ "long_gaps": {
+  "threshold_s": 10.0,
+  "total": 30,
+  "explore": 2,
+  "combat": 27,
+  "dialogue": 1,
+  "wrapup": 1,
+  "worst": [
+   {
+    "t": 1792309586.35,
+    "s": 66.08,
+    "gap_s": 66.08,
+    "busy_s": 0.0,
+    "kind": "combat",
+    "next": "set_party",
+    "own_s": 66.08
+   },
+   {
+    "t": 1792309459.16,
+    "s": 64.94,
+    "gap_s": 64.94,
+    "busy_s": 0.0,
+    "kind": "combat",
+    "next": "end_turn",
+    "own_s": 64.94
+   },
+   {
+    "t": 1792309706.56,
+    "s": 37.64,
+    "gap_s": 57.0,
+    "busy_s": 0.0,
+    "kind": "combat",
+    "next": "manage_inventory",
+    "load_s": 19.36,
+    "own_s": 37.64
+   },
+   {
+    "t": 1792309336.2,
+    "s": 33.85,
+    "gap_s": 34.45,
+    "busy_s": 0.6,
+    "kind": "combat",
+    "next": "use_ability",
+    "own_s": 33.85
+   },
+   {
+    "t": 1792308951.46,
+    "s": 28.23,
+    "gap_s": 81.22,
+    "busy_s": 0.0,
+    "kind": "combat",
+    "next": "use_ability",
+    "turn_s": 52.99,
+    "own_s": 28.23
+   }
+  ]
+ },
+ "think_s": {
+  "n": 213,
+  "median": 1.93,
+  "p90": 7.68,
+  "mean": 3.46,
+  "max": 22.08
+ },
+ "api": {
+  "source": "result",
+  "ms_per_out_tok": 13.4,
+  "api_s_per_turn": 3.75,
+  "out_tok_per_turn": 279,
+  "turns": 225
+ },
+ "turns": 213,
+ "tool_rt_ms": {
+  "all": {
+   "n": 280,
+   "median": 324.7,
+   "p90": 17553.7,
+   "mean": 4913.8,
+   "max": 63508.5
+  },
+  "read": {
+   "n": 47,
+   "median": 100.0,
+   "p90": 233.3,
+   "mean": 110.1,
+   "max": 286.0
+  },
+  "read_by_tool": {
+   "look": {
+    "n": 5,
+    "median": 259.6,
+    "max": 286.0
+   },
+   "get_status": {
+    "n": 1,
+    "median": 184.8,
+    "max": 184.8
+   },
+   "get_combat_state": {
+    "n": 15,
+    "median": 109.2,
+    "max": 267.7
+   },
+   "get_inventory": {
+    "n": 7,
+    "median": 101.2,
+    "max": 217.9
+   },
+   "path_preview": {
+    "n": 1,
+    "median": 96.4,
+    "max": 96.4
+   },
+   "get_party": {
+    "n": 3,
+    "median": 81.7,
+    "max": 177.9
+   },
+   "route": {
+    "n": 1,
+    "median": 60.3,
+    "max": 60.3
+   },
+   "get_nearby": {
+    "n": 7,
+    "median": 54.2,
+    "max": 94.9
+   },
+   "get_actions": {
+    "n": 2,
+    "median": 48.0,
+    "max": 67.6
+   },
+   "look_at": {
+    "n": 2,
+    "median": 33.2,
+    "max": 46.1
+   },
+   "get_dialogue": {
+    "n": 2,
+    "median": 25.1,
+    "max": 29.3
+   },
+   "list_saves": {
+    "n": 1,
+    "median": 10.7,
+    "max": 10.7
+   }
+  },
+  "wait_for": {
+   "n": 36,
+   "median": 16295.2,
+   "p90": 57660.6,
+   "mean": 21702.1,
+   "max": 60288.4
+  },
+  "rpc": {
+   "n": 274,
+   "median": 24.0,
+   "p90": 33.5,
+   "mean": 27.7,
+   "max": 164.6
+  }
+ },
+ "combat_turn_rt": {
+  "n": 108,
+  "median": 18.0,
+  "p90": 31.3,
+  "mean": 27.0,
+  "max": 278
+ },
+ "wait_for_noop": {
+  "n": 13,
+  "of": 36,
+  "ms": 1528.6,
+  "by": {
+   "already": 9,
+   "job_done": 4
+  }
+ },
+ "tool_calls": 280,
+ "result_tokens": {
+  "total": 133355,
+  "n": 224,
+  "per_result": 595.3,
+  "images": 5
+ },
+ "rates": {
+  "source": "stream",
+  "minutes": 42.2,
+  "calls": 205,
+  "reads": 51,
+  "action_calls": 95,
+  "calls_pm": 4.86,
+  "reads_pm": 1.21,
+  "actions_pm": 2.25,
+  "reads_by": {
+   "get_combat_state": 14,
+   "get_inventory": 7,
+   "get_nearby": 6,
+   "screenshot": 5,
+   "look": 4,
+   "get_party": 3,
+   "wiki_page": 3,
+   "get_dialogue": 2
+  }
+ },
+ "actions": 358,
+ "apm": 7.86,
+ "busy_pct": 20.4,
+ "dialogue_pct": 1.8,
+ "busy_or_dialogue_pct": 22.1,
+ "samples": 2628,
+ "pipelining": {
+  "issued": 163,
+  "dialogue": 6,
+  "pipelined": 12,
+  "pct": 7.6,
+  "enemy_turn": 5,
+  "strict_pct": 4.3,
+  "async": 34,
+  "async_pct": 20.9,
+  "queue_calls": 0,
+  "batch_calls": 111,
+  "source": "bridge"
+ },
+ "pipelining_pct": 7.6,
+ "think_overlap": {
+  "samples": 105,
+  "busy": 27,
+  "pct": 25.7
+ },
+ "think_overlap_pct": 25.7,
+ "targets": {
+  "median_idle_explore_s": {
+   "value": 0.0,
+   "target": 2.0,
+   "pass": true
+  },
+  "long_gaps_non_dialogue": {
+   "value": 29,
+   "target": 0,
+   "pass": false
+  },
+  "bridge_rt_median_ms": {
+   "value": 100.0,
+   "target": 100.0,
+   "pass": false
+  }
+ },
+ "session": "S095"
+}
