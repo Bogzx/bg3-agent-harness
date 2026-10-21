@@ -351,5 +351,8 @@ def test_legacy_cli_profile_jobs(tmp_path):
     assert cmd[cmd.index("--client") + 1] == "pi"
     assert cmd[-5:] == ["--profile", "profiles/opus-5.5-pi.toml", "--max-cost", "12.5", "--no-keeper"]
     assert run_one.env(job) == {}
-    with pytest.raises(ValueError, match="needs a max_cost"):
+    with pytest.raises(ValueError, match="paid job needs a max_cost"):
         run_one.command({**job, "max_cost": None}, "s", 1)
+    sub = {"slug": "claude-opus-5-5", "client": "claude", "profile": "profiles/opus-5.5-claude-code.toml"}
+    cmd = run_one.command(matrix.plan([sub], ["grove"], ["rules"], 1)[0], "s", 1)
+    assert cmd[-2:] == ["--profile", "profiles/opus-5.5-claude-code.toml"] and "--max-cost" not in cmd

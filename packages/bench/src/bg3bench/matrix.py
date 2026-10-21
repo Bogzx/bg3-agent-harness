@@ -35,6 +35,7 @@ from typing import Protocol
 
 SCHEMA = 1
 MAX_RERUNS = 2
+PAID_CLIENTS = ("pi",)  # runner/spend.py's: the clients billed per token (the others run on subscriptions)
 FINISHED, BUDGET, GUARD, COST_UNKNOWN = "finished", "budget", "guard", "cost unknown"
 
 
@@ -298,3 +299,9 @@ class Matrix:
             if result.cost_usd is None and not result.charged:
                 self._progress(self.state(), "stopped", stop=COST_UNKNOWN)
                 return COST_UNKNOWN
+
+
+if __name__ == "__main__":  # pragma: no cover - python -m bg3bench.matrix
+    from bg3bench import matrix_cli
+
+    raise SystemExit(matrix_cli.main())

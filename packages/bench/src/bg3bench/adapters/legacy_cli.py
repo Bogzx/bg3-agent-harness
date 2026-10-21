@@ -7,8 +7,8 @@ re-run resumes it), so the adapter counts the series' records first and reads th
 
 The returned result is `charged`: play.py adds a paid run's cost to runtime/budget.json itself.
 
-A job with a `profile` (profiles/*.toml, the pi client) adds `--profile P --max-cost <job max_cost> --no-keeper`, as
-play.py requires for a paid client. Conditions come as play.py flags plus environment (adapters/play_flags.py:
+A job with a `profile` (profiles/*.toml) adds `--profile P`; a paid client's job (pi) adds `--max-cost <job max_cost>
+--no-keeper`, as play.py requires. Conditions come as play.py flags plus environment (adapters/play_flags.py:
 BG3AI_TOOLS_OFF for the bridge).
 """
 
@@ -23,7 +23,7 @@ from pathlib import Path
 
 from bg3bench import results
 from bg3bench.manifest import run_id
-from bg3bench.matrix import RunResult
+from bg3bench.matrix import PAID_CLIENTS, RunResult
 
 REPO = Path(__file__).resolve().parents[5]
 
@@ -72,9 +72,11 @@ class LegacyCli:
         if job["effort"]:
             cmd += ["--effort", job["effort"]]
         if job.get("profile"):
+            cmd += ["--profile", job["profile"]]
+        if job["client"] in PAID_CLIENTS:
             if job["max_cost"] is None:
-                raise ValueError(f"a --profile job needs a max_cost: play.py caps every paid run ({job['id']})")
-            cmd += ["--profile", job["profile"], "--max-cost", f"{job['max_cost']:g}", "--no-keeper"]
+                raise ValueError(f"a paid job needs a max_cost: play.py caps every paid run ({job['id']})")
+            cmd += ["--max-cost", f"{job['max_cost']:g}", "--no-keeper"]
         return cmd + list(self.condition_flags[job["condition"]])
 
     def env(self, job: Mapping) -> dict[str, str]:
