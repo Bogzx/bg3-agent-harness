@@ -142,6 +142,7 @@ def test_release_results_round_trip(tmp_path):
     out = results.build_results(pairs, seed=0, created=1792300000.0, bench_tag="bench-v0.1", b=500)
     assert_valid("results.v1.schema.json", out)
     assert [r["run_id"] for r in out["runs"]] == ["naut2-r001", "naut2-r002", "naut2-r003"]
+    assert out["runs"][0]["tokens"] == {"input": 186, "output": 15172, "cache_read": 4291143, "cache_write": 80131}
     (group,) = out["groups"]
     assert (group["model"], group["condition"], group["n_runs"], group["n_invalid"]) == ("opus", None, 3, 0)
     naut = group["stats"]["per_scenario"]["nautiloid"]

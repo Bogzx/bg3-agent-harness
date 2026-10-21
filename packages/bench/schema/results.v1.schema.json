@@ -20,7 +20,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["run_id", "scenario", "model", "condition", "valid", "passed", "t_pass_s", "cost_usd", "wall_s"],
+        "required": ["run_id", "scenario", "model", "condition", "valid", "passed", "t_pass_s", "cost_usd", "wall_s", "tokens"],
         "additionalProperties": false,
         "properties": {
           "run_id": {"type": "string", "minLength": 1},
@@ -31,7 +31,18 @@
           "passed": {"type": "boolean"},
           "t_pass_s": {"$ref": "#/$defs/num_or_null"},
           "cost_usd": {"$ref": "#/$defs/num_or_null"},
-          "wall_s": {"$ref": "#/$defs/num_or_null"}
+          "wall_s": {"$ref": "#/$defs/num_or_null"},
+          "tokens": {
+            "type": "object",
+            "required": ["input", "output", "cache_read", "cache_write"],
+            "additionalProperties": false,
+            "properties": {
+              "input": {"type": "integer", "minimum": 0},
+              "output": {"type": "integer", "minimum": 0},
+              "cache_read": {"type": "integer", "minimum": 0},
+              "cache_write": {"type": "integer", "minimum": 0}
+            }
+          }
         }
       }
     },

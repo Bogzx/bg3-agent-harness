@@ -100,6 +100,7 @@ def build_results(
                 "t_pass_s": res["t_pass_s"],
                 "cost_usd": res["cost_usd"],
                 "wall_s": res["wall_s"],
+                "tokens": res["tokens"],
             }
         )
     if len({r["run_id"] for r in runs}) != len(runs):
