@@ -16,6 +16,7 @@ for _, path in ipairs({
     "Server/Actions.lua",
     "Server/Referee.lua", -- harness only, never an agent tool (B-mod)
     "Server/RollLog.lua", -- harness only, never an agent tool (B-mod)
+    "Server/Scenario.lua", -- harness only, refused without BG3AI_SCENARIO_SETUP=1 (B-mod)
 }) do
     U.require(path)
 end
