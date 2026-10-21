@@ -44,7 +44,7 @@ START: dict[str, dict] = {
     "act1_gold_1000": {
         "area": "Emerald Grove",
         "level": "WLD_Main_A",
-        "party": [("Tav", "Paladin", 2), ("Shadowheart", "Cleric", 2), ("Lae'zel", "Fighter", 2), ("Gale", "Wizard", 2)],
+        "party": [("Tav", "Paladin", 2), ("Shadowheart", "Cleric", 2), ("Gale", "Wizard", 2)],
         "gold": 150,
         "quests": ["Find a Cure"],
         "nearby": ["Arron", "Dammon", "Alfira"],
@@ -60,7 +60,7 @@ START: dict[str, dict] = {
     "choice_act1_minthara": {
         "area": "Shattered Sanctum",
         "level": "WLD_Main_A",
-        "party": [("Tav", "Paladin", 4), ("Wyll", "Warlock", 4), ("Gale", "Wizard", 4), ("Shadowheart", "Cleric", 4)],
+        "party": [("Tav", "Paladin", 3), ("Wyll", "Warlock", 3), ("Gale", "Wizard", 3), ("Shadowheart", "Cleric", 3)],
         "gold": 300,
         "quests": [],
         "nearby": ["Minthara", "Drow Guard"],
@@ -240,6 +240,13 @@ def test_every_scenario_has_a_fake_start_and_a_live_note():
     names = sorted(p.stem for p in SCENARIOS.glob("*.json"))
     assert sorted(START) == names and sorted(LIVE) == names
     assert set(BROKEN) <= set(names)
+
+
+def test_each_fake_start_hosts_the_scenarios_party():
+    for name, st in START.items():
+        note = json.loads((SCENARIOS / f"{name}.json").read_text())["start"].get("note", {})
+        if "party" in note:
+            assert [m.split(" (")[0] for m in note["party"]] == [n for n, _, _ in st["party"]], name
 
 
 @pytest.mark.parametrize(

@@ -72,6 +72,28 @@ def test_save_starts_wait_for_their_save(path):
     assert raw(path)["profile"]["character"]["name"] == "Tav"
 
 
+@pytest.mark.parametrize("path", FILES, ids=lambda p: p.stem)
+def test_needs_save_agrees_with_the_note(path):
+    st = raw(path)["start"]
+    if st["kind"] == "new_game":
+        return
+    party = [re.fullmatch(r"(.+) \((\w+)(?: (\d+))?\)", m).groups() for m in st["note"]["party"]]
+    assert party[0][0] == "Tav"
+    if level := re.search(r"party level (\d+)", st["needs_save"]):
+        assert {lv for _, _, lv in party} == {level[1]}, path.stem
+    if named := re.search(r"companions \(([^)]+)\)", st["needs_save"]):
+        assert sorted(re.split(r", | and ", named[1])) == sorted(n for n, _, _ in party[1:]), path.stem
+
+
+def test_starts_match_the_claude_run_2_saves():
+    """research/ovh/bench.md "Start saves to make": run 2 never recruited Lae'zel; the Sanctum save is level 3."""
+    gold = raw(SET / "act1_gold_1000.json")["start"]
+    assert "Lae'zel never recruited): two companions (Shadowheart, Gale)" in gold["needs_save"]
+    assert not any("Lae'zel" in m for m in gold["note"]["party"])
+    minthara = raw(SET / "choice_act1_minthara.json")["start"]
+    assert "S017-worgpens" in minthara["needs_save"] and "party level 3" in minthara["needs_save"]
+
+
 def test_seeds_differ():
     seeds = [raw(p)["game_settings"]["seed"] for p in FILES]
     assert len(set(seeds)) == len(seeds)
