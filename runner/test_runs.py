@@ -31,72 +31,28 @@ from test_play import _res, _stream, _use  # noqa: E402
 import test_judge as TJ  # noqa: E402  (its stream builders and CHARACTER.md fixture)
 
 
-def _git(answers: dict):
-    """A fake runs._git: {first arg: stdout} (None: git failed)."""
-    return lambda cwd, *args: answers.get(args[0])
-
-
 class TmpDir(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-runs-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
 
-# ======================================================================== pins
+# ======================================================================== the bench re-exports
 
-class Pins(TmpDir):
-    def test_buildinfo_mod_version_and_digest(self):
-        info = R.buildinfo("bg3le commit: 3728a68\npatch: 0001-a.patch 126c\npatch: 0002-b.patch 51bc\n"
-                           "built: 2026-10-13\nsha256: 7d4c\n")
-        self.assertEqual(info, {"commit": "3728a68", "sha256": "7d4c", "patches": ["0001-a.patch 126c",
-                                                                                    "0002-b.patch 51bc"]})
-        self.assertEqual(R.mod_version('<attribute id="Version64" type="int64" value="36028797018963968"/>'),
-                         "1.0.0.0")
-        v = (1 << 55) | (2 << 47) | (3 << 31) | 4
-        self.assertEqual(R.mod_version(f'id="Version64" type="int64" value="{v}"'), "1.2.3.4")
-        self.assertIsNone(R.mod_version("<save/>"))
-        self.assertEqual(R.tree_digest({"a": "1", "b": "2"}), R.tree_digest({"b": "2", "a": "1"}))
-        self.assertNotEqual(R.tree_digest({"a": "1"}), R.tree_digest({"a": "2"}))
-
-    def test_version_pins(self):
-        dist = self.tmp / "dist"
-        dist.mkdir()
-        (dist / "BUILDINFO").write_text("bg3le commit: abc\npatch: 0001-x.patch 1\nsha256: feed\n")
-        meta = self.tmp / "meta.lsx"
-        meta.write_text('<attribute id="Version64" type="int64" value="36028797018963968"/>')
-        git = _git({"rev-parse": "92634f4\n", "status": " M runner/runs.py\n?? runner/new.py\n",
-                    "diff": "diff --git a/runner/runs.py\n", "describe": "v0.3.6-dirty\n"})
-        pins = R.version_pins(self.tmp, "25605617", dist, meta, {"Mods/x.lua": "aa"}, git)
-        self.assertEqual(pins["game_build"], "25605617")
-        self.assertEqual(pins["bg3le"], {"source": "v0.3.6-dirty", "local_changes": True, "commit": "abc",
-                                         "sha256": "feed", "patches": 1})
-        self.assertEqual(pins["mod"]["version"], "1.0.0.0")
-        self.assertEqual((pins["repo"]["commit"], pins["repo"]["dirty"]), ("92634f4", True))
-        self.assertEqual(len(pins["repo"]["diff"]), 16)
-        # another edit → another diff hash; a clean tree has none
-        other = R.repo_pin(self.tmp, _git({"rev-parse": "92634f4", "status": " M runner/runs.py\n",
-                                           "diff": "something else"}))
-        self.assertNotEqual(other["diff"], pins["repo"]["diff"])
-        clean = R.repo_pin(self.tmp, _git({"rev-parse": "92634f4", "status": "", "diff": ""}))
-        self.assertEqual(clean, {"commit": "92634f4", "dirty": False, "diff": None})
-        # no BUILDINFO: the binary's own sha256; no git, no manifest: None, never an exception
-        (dist / "BUILDINFO").unlink()
-        (dist / "libbg3le.so").write_bytes(b"elf")
-        bare = R.version_pins(self.tmp, "", dist, self.tmp / "missing.lsx", {}, _git({}))
-        self.assertEqual(len(bare["bg3le"]["sha256"]), 64)
-        self.assertEqual((bare["game_build"], bare["mod"], bare["repo"]["commit"], bare["bg3le"]["local_changes"]),
-                         (None, {"version": None, "sha1": None}, None, None))
-
-    def test_pin_drift(self):
-        first = {"game_build": "1", "bg3le": {"sha256": "a", "source": "v0.3.6-dirty"}, "mod": {"sha1": "m"},
-                 "repo": {"commit": "c1", "dirty": False, "diff": None}}
-        self.assertEqual(R.pin_drift(first, json.loads(json.dumps(first))), [])
-        self.assertEqual(R.pin_drift(None, first), [])
-        now = json.loads(json.dumps(first))
-        now["game_build"] = "2"
-        now["repo"].update(commit="c2", dirty=True, diff="d")
-        self.assertEqual(R.pin_drift(first, now), ["game_build: 1 → 2", "repo.commit: c1 → c2",
-                                                   "repo.dirty: False → True", "repo.diff: None → d"])
+class Shims(unittest.TestCase):
+    def test_runs_reexports_the_bench_and_its_contract_copies_agree(self):
+        """The benchmark parts live in bg3bench (runs.py re-exports them); bg3bench.records reads run records with its
+        own copies of model_time's headline key and floor limit and of runs.py's failure classes: they must agree."""
+        from bg3bench import pins, records, resets, scenario_v1, series
+        self.assertIs(R.series_caps, series.series_caps)
+        self.assertIs(R.version_pins, pins.version_pins)
+        self.assertIs(R.lock_tree, resets.lock_tree)
+        self.assertIs(R.runs_table, records.runs_table)
+        self.assertIs(R.load_scenario, scenario_v1.load_scenario)
+        self.assertEqual((records.HEADLINE, records.FLOOR_DIFF_S), (R.model_time.HEADLINE, R.model_time.FLOOR_DIFF_S))
+        self.assertEqual((records.HARNESS, records.AGENT, records.UNKNOWN), (R.HARNESS, R.AGENT, R.UNKNOWN))
+        self.assertEqual(records.token_total({"input": 1, "output": None, "cache_read": 3}),
+                         R.token_total({"input": 1, "output": None, "cache_read": 3}))
 
 
 # ======================================================================== caps
@@ -116,21 +72,6 @@ class KnowledgeLock(TmpDir):
 
     def modes(self, k: Path) -> dict:
         return {str(p.relative_to(k)): p.stat().st_mode & 0o777 for p in k.rglob("*") if p.is_file()}
-
-    def test_lock_unlock_restores_modes(self):
-        k, rec = self.tree(), self.tmp / "rt" / "lock.json"
-        before = self.modes(k)
-        self.assertEqual(R.lock_tree(k, rec), 3)
-        self.assertEqual(self.modes(k), {"a.md": 0o440, "playbooks/b.md": 0o444, "x.sh": 0o555})
-        with self.assertRaises(PermissionError) if os.geteuid() else contextlib.nullcontext():
-            (k / "a.md").write_text("agent edit")
-        # an execv'd successor (or a restart after a kill) locks again: the record keeps the first modes
-        self.assertEqual(R.lock_tree(k, rec), 3)
-        self.assertEqual(R.unlock_tree(k, rec), 3)
-        self.assertEqual(self.modes(k), before)
-        self.assertFalse(rec.exists())
-        self.assertEqual(R.unlock_tree(k, rec), 0)   # nothing locked: no-op
-        self.assertEqual(R.lock_tree(self.tmp / "none", rec), 0)
 
     def test_a_series_locks_for_its_duration_only(self):
         k, rec = self.tree(), self.tmp / "rt" / "lock.json"
@@ -156,19 +97,6 @@ class KnowledgeLock(TmpDir):
 
 
 class Caps(TmpDir):
-    def test_series_caps(self):
-        cli = {"run_hours": 4, "max_cost": 30.0, "max_tokens": None}
-        self.assertEqual(R.series_caps(None, cli, False), (cli, None, []))           # the first run sets them
-        frozen = {"run_hours": 4, "max_cost": 30.0, "max_tokens": 9_000_000}
-        self.assertEqual(R.series_caps(frozen, {"run_hours": None, "max_cost": None, "max_tokens": None}, False),
-                         (frozen, None, []))                                         # later runs take series.json's
-        self.assertEqual(R.series_caps(frozen, cli, False)[1], None)                # same values, one left out
-        caps, err, changes = R.series_caps(frozen, {**cli, "max_cost": 50.0}, False)
-        self.assertIn("--allow-cap-change", err)
-        self.assertEqual(changes, ["max_cost: 30.0 → 50.0"])
-        caps, err, changes = R.series_caps(frozen, {**cli, "max_cost": 50.0}, True)
-        self.assertEqual((caps["max_cost"], err, changes), (50.0, None, ["max_cost: 30.0 → 50.0"]))
-
     def test_usage_meter(self):
         def msg(mid, out):
             return {"type": "assistant", "message": {"id": mid, "usage": {"input_tokens": 10, "output_tokens": out,
@@ -224,10 +152,6 @@ class Caps(TmpDir):
 # ======================================================================== run metrics
 
 class Metrics(TmpDir):
-    def test_time_to_milestone(self):
-        self.assertEqual(R.time_to_milestone(100.0, 760.25), 660.2)
-        self.assertIsNone(R.time_to_milestone(100.0, None))
-
     def test_deaths(self):
         t0 = time.time() - 10
         _stream(self.tmp / "S001.fights.jsonl",
@@ -289,12 +213,6 @@ class Metrics(TmpDir):
         (self.tmp / "S003.latency.json").write_text(json.dumps({}))        # no field and no stream: skipped
         self.assertEqual(R.result_tokens_summary(self.tmp, t0), got)        # -fix is not a play session
 
-    def test_result_tok_grade_vs_naut(self):
-        self.assertEqual((R.RESULT_TOK_BASELINE_TOTAL, R.RESULT_TOK_BASELINE_PER_RESULT), (42075.3, 393.2))
-        self.assertEqual([R.result_tok_grade(v, 1000) for v in (900, 950, 1099, 1100, None)],
-                         ["better", "same", "same", "worse", None])
-        self.assertIsNone(R.result_tok_grade(5, None))
-
     def test_story_gained(self):
         _stream(self.tmp / "progress_history.jsonl",
                 {"session": "S000", "t": 50, "points": 999, "events": 9},
@@ -320,49 +238,6 @@ class Summary(unittest.TestCase):
          "wall_min": 30.0, "sessions": 2, "cost_usd": 10.0, "time_to_milestone_s": None,
          "latency": {"idle_median_s": 1.5}, "version_drift": ["repo.commit: a → b"],
          "caps": {"max_cost": 10.0}, "failures": [{"kind": "cost_cap", "class": "agent"}]}]
-
-    def test_stats(self):
-        st = R.stats([1, None, 3])
-        self.assertEqual((st["n"], st["min"], st["max"], st["mean"]), (2, 1.0, 3.0, 2.0))
-        self.assertAlmostEqual(st["stddev"], 1.41421356, places=6)
-        self.assertEqual(R.stats([5])["stddev"], 0.0)
-        self.assertIsNone(R.stats([None]))
-
-    def test_series_summary(self):
-        out = R.series_summary(self.RECS)
-        lines = out.splitlines()
-        self.assertEqual(lines[0], "series: n=3, reached 2/3")
-        row = {ln.split("  ")[0]: ln.split() for ln in lines[3:8]}
-        self.assertEqual(row["wall min"][-5:], ["3", "12.5", "30.0", "18.4", "10.0"])
-        self.assertEqual(row["to milestone min"][-5:], ["2", "11.6", "11.8", "11.7", "0.2"])   # 693 s and 708 s
-        self.assertEqual(row["cost $"][-5:-3], ["3", "4.20"])
-        self.assertEqual(row["tokens M"][-5:-3], ["2", "6.20"])                       # run 3 has no tokens
-        self.assertEqual(row["idle median s"][-5:], ["2", "0.50", "1.50", "1.00", "0.71"])
-        self.assertIn("version drift (--allow-version-drift): run 3: repo.commit: a → b", out)
-        self.assertIn("caps differ between runs", out)
-
-    def test_table_columns(self):
-        lines = R.runs_table(self.RECS).splitlines()
-        self.assertTrue(lines[0].startswith("run  playthrough  outcome"))
-        self.assertIn("to M min", lines[0])
-        self.assertIn("over_budget (cost)", lines[4])
-        self.assertIn("11.6", lines[2])            # time to the milestone of an old record (reached_at - started)
-        self.assertIn("6.63", lines[2])            # tokens, millions
-
-    def test_result_tokens_in_the_table_and_summary(self):
-        recs = [dict(self.RECS[0], result_tokens={"total": 41944, "n": 115, "per_result": 364.7}),
-                dict(self.RECS[1], result_tokens={"total": 30000, "n": 100, "per_result": 300.0}),
-                self.RECS[2]]                                        # run 3: no field
-        lines = R.runs_table(recs).splitlines()
-        self.assertIn("result tok k (/res)", lines[0])
-        self.assertIn("41.9 (365)", lines[2])
-        self.assertIn("30.0 (300)", lines[3])
-        out = R.series_summary(recs)
-        row = {ln.split("  ")[0]: ln.split() for ln in out.splitlines()}
-        self.assertEqual(row["result tok k"][-5:], ["2", "30.0", "41.9", "36.0", "8.4"])
-        self.assertIn("result tokens vs the naut baseline (42.1k/run, 393/result): run 1 same/same, "
-                      "run 2 better/better (total/per result; ±10 % = same)", out)
-        self.assertNotIn("result tokens vs", R.series_summary(self.RECS))
 
 
 # ======================================================================== play.py wiring
@@ -550,71 +425,6 @@ class Judging(TmpDir):
         return len(self.calls.read_text().splitlines()) if self.calls.exists() else 0
 
     # ---------------------------------------------------------------- runs.py
-
-    def test_update_record_in_place(self):
-        path = self.tmp / "runs.jsonl"
-        recs = [{"run": 1, "playthrough": "naut", "started": 1.0}, {"run": 2, "playthrough": "naut-r2", "started": 2.0}]
-        path.write_text(json.dumps(recs[0]) + "\nnot json\n" + json.dumps(recs[1]) + "\n")
-        self.assertTrue(R.update_record(path, recs[1], {"persona": {"score": 5}}))
-        lines = path.read_text().splitlines()
-        self.assertEqual(lines[:2], [json.dumps(recs[0]), "not json"])                # the rest byte for byte
-        self.assertEqual(json.loads(lines[2]), {**recs[1], "persona": {"score": 5}})
-        self.assertFalse(R.update_record(path, {"run": 3, "playthrough": "naut-r3", "started": 3.0}, {"x": 1}))
-        self.assertFalse(R.update_record(self.tmp / "missing.jsonl", recs[0], {"x": 1}))
-        self.assertFalse((self.tmp / "runs.jsonl.tmp").exists())
-
-    def test_series_judge_model(self):
-        self.assertEqual(R.series_judge_model(None, None, "d", False), ("d", None, None))      # first run: default
-        self.assertEqual(R.series_judge_model(None, "j1", "d", False), ("j1", None, None))
-        self.assertEqual(R.series_judge_model("j1", None, "d", False), ("j1", None, None))     # frozen rules
-        self.assertEqual(R.series_judge_model("j1", "j1", "d", False), ("j1", None, None))
-        model, err, change = R.series_judge_model("j1", "j2", "d", False)
-        self.assertIn("--allow-judge-change", err)
-        self.assertEqual(change, "judge_model: j1 → j2")
-        self.assertEqual(R.series_judge_model("j1", "j2", "d", True), ("j2", None, "judge_model: j1 → j2"))
-
-    def test_table_and_summary_show_persona_and_model_time(self):
-        recs = [dict(Summary.RECS[0], persona={"status": "ok", "score": 8.0, "judge_model": "j", "cost_usd": 0.1},
-                     model_time={"adjusted_model_s_ref_ttft": 300.0, "adjusted_model_s": 330.0, "model_s": 400.0,
-                                 "api_floor": {"p10_s": 1.0}}),
-                dict(Summary.RECS[1], persona={"status": "judge_failed", "judge_model": "j", "cost_usd": 0.05},
-                     model_time={"adjusted_model_s_ref_ttft": 420.0, "adjusted_model_s": 500.0,
-                                 "api_floor": {"p10_s": 1.1}}),
-                dict(Summary.RECS[2], persona={"status": "ok", "score": 6.0, "judge_model": "k", "cost_usd": 0.1})]
-        lines = R.runs_table(recs).splitlines()
-        self.assertIn("persona  adj model min  API floor s", lines[0])
-        cells = [ln.split() for ln in lines[2:5]]
-        # adj model min = the TTFT-normalised adjusted_model_s_ref_ttft, not adjusted_model_s
-        self.assertEqual((cells[0][13:16], cells[1][13:16]), (["8", "5.0", "1.00"], ["fail", "7.0", "1.10"]))
-        self.assertIn("6  ", lines[4][lines[0].index("persona"):])
-        self.assertIn("-", lines[4][lines[0].index("adj model min"):].split()[0])
-        self.assertEqual(R.persona_cell({}), "-")
-        out = R.series_summary(recs)
-        row = {ln.split("  ")[0]: ln.split() for ln in out.splitlines()[3:11]}
-        self.assertEqual(row["persona score"][-5:], ["2", "6.0", "8.0", "7.0", "1.4"])          # failed: not a score
-        self.assertEqual(row["adj model min"][-5:], ["2", "5.0", "7.0", "6.0", "1.4"])
-        self.assertEqual(row["judge $"][-5:-3], ["3", "0.05"])
-        self.assertIn("judge models differ between runs (scores don't compare): j | k", out)
-        self.assertNotIn("API floor differs", out)                                  # 1.0 vs 1.1 s: same API
-        self.assertIn("API floor s", out)
-
-    def test_api_floor_difference_is_flagged_not_a_regression(self):
-        mt = lambda adj, floor: {"model_s": adj + 40, "adjusted_model_s_ref_ttft": adj,   # noqa: E731
-                                 "api_floor": {"p10_s": floor}, "model_turns": 80}
-        naut = [dict(Summary.RECS[0], model_time=mt(193.0, 1.0)), dict(Summary.RECS[1], model_time=mt(190.0, 1.02))]
-        naut2 = [dict(Summary.RECS[0], model_time=mt(167.0, 1.5)), dict(Summary.RECS[1], model_time=mt(166.0, 1.6))]
-        out = R.series_summary(naut + [dict(Summary.RECS[2], run=3, model_time=mt(170.0, 1.55))])
-        self.assertIn("API floor differs (run 1 1.00 s … run 3 1.55 s per request, > 0.3 s)", out)
-        cmp = R.series_compare("naut", naut, "naut2", naut2)
-        self.assertIn("naut (n=2) vs naut2 (n=2), means", cmp)
-        row = {ln.split("  ")[0]: ln for ln in cmp.splitlines()}
-        self.assertIn("-0.42 (-13 %)", row["adj model min"])
-        self.assertIn("+0.54 (+53 %)", row["API floor s"])
-        self.assertIn("API floor differs (naut 1.01 s … naut2 1.55 s per request", cmp)
-        self.assertNotIn("API floor differs", R.series_compare("a", naut, "b", naut))
-        old = [dict(Summary.RECS[0], model_time={"adjusted_model_s": 1.0})]
-        self.assertIn("API floor unknown", R.series_compare("a", old, "b", naut))
-        self.assertIsNone(R.record_adjusted_model_s(old[0]))   # the headline only: no fallback to adjusted_model_s
 
     def test_backfill_model_time_adds_missing_keys_only(self):
         fresh = {"sessions": 1, "model_s": 999.0, "adjusted_model_s_ref_ttft": 160.0, "api_floor": {"p10_s": 1.5},
