@@ -68,7 +68,11 @@ def _insert_listing(res: dict) -> str:
 
 
 def _opened_dialogue(out: str) -> bool:
-    return "\nDIALOGUE " in "\n" + (out or "") or "dialogue_started" in (out or "")
+    """The interact opened a conversation: its own text says so, or one is on screen now (live3 run 1, the
+    Nautiloid's console e99: the dialogue came up after the interact returned, so insert_item said "not every
+    pedestal takes items" while the conversation offered "Insert the rune into the socket")."""
+    return ("\nDIALOGUE " in "\n" + (out or "") or "dialogue_started" in (out or "")
+            or macro_tools._dialogue_needs_answer())
 
 
 def _insert_poll(out: str, wait_s: float = 4.0) -> JobResult:
@@ -569,5 +573,5 @@ def _rest_dead_note(can: Any) -> str:
 # The next module (and so the rest, in file order) loads after this one; later ones used here.
 # isort: off
 from . import (  # noqa: E402, F401
-    progression, uitools, queueing,
+    progression, uitools, queueing, macro_tools,
 )

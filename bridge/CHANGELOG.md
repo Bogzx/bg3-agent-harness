@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-10-22: run 1 result wording (live3, pi + DeepSeek Flash)
+
+- A do_actions/queue_actions/combat_turn step whose tool can't be a step (look, loot_area, ...) is refused with the
+  list of tools a step can be, and "call other tools on their own".
+- insert_item on an object that answers with a conversation (the Nautiloid's rune console) says "using it opened a
+  conversation instead" when the conversation comes up after the interact returns too; it said "no Insert Item
+  panel opened ... not every pedestal takes items" while the conversation offered the insert.
+
 ## 2026-10-22: D15 tool interface review (one interface for every model)
 
 - do_actions and queue_actions take `actions` as a JSON array (or the `{"actions": [...]}` object), and combat_turn

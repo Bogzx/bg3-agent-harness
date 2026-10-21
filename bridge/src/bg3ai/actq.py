@@ -137,7 +137,9 @@ def parse_steps(raw: Any, allowed: set) -> list[Step]:
         st = dict(st)
         name = st.pop("tool", None)
         if name not in allowed:
-            raise StepError(f"step {i}: '{name}' can't be batched or queued")
+            # live3 run 1: 'look', then 'loot_area' (a tool called on its own): name what a step can be
+            raise StepError(f"step {i}: '{name}' can't be batched or queued (a step is one of: "
+                            f"{', '.join(sorted(allowed))}; call other tools on their own)")
         c_if, c_unless = _parse_conds(st.pop("if", None)), _parse_conds(st.pop("unless", None))
         st.pop("wait", None)  # steps always run to completion
         if isinstance(st.get("targets"), (list, tuple)):

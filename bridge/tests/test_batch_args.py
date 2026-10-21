@@ -55,6 +55,12 @@ class SameText(unittest.TestCase):
         self.assertEqual(batch.do_actions(bad), batch.do_actions(json.dumps(bad)))
         self.assertIn("'fly' can't be batched", batch.do_actions(bad))
 
+    def test_a_refused_step_names_what_a_step_can_be(self):
+        # live3 run 1: queue_actions [look, loot_area], later [loot_area]: the refusal named neither alternative
+        out = batch.queue_actions([{"tool": "look"}, {"tool": "loot_area", "radius": 10}])
+        self.assertIn("step 1: 'look' can't be batched or queued (a step is one of: camp, choose_dialogue,", out)
+        self.assertIn("walk_toward; call other tools on their own)", out)
+
     def test_combat_turn_chain_from_a_list(self):
         chain = [{"who": "Karlach", "plan": PLAN}, {"who": "Gale", "plan": {}}]
         self.assertEqual(turn_tool._turn_chain(batch._as_json(chain)),
