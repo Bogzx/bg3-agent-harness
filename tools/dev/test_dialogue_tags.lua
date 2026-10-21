@@ -346,6 +346,7 @@ do
         Utils = { MonotonicTime = function() return 0 end, GetGameState = function() return "Running" end },
         Input = { InjectKeyPress = function() end },
         Events = { GameStateChanged = { Subscribe = function() end } },
+        Require = function(p) return dofile(LUA .. "/" .. p) end, -- UIActions.lua loads its parts
     }
     BG3AI.RPC.register = function(name, fn) ops[name] = fn end
     BG3AI.RPC.start_job = function(kind, spec) return { id = 1 } end

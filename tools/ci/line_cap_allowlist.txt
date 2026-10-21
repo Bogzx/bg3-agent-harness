@@ -9,7 +9,6 @@
 3183 tools/dev/acceptance.py
 2721 bridge/tests/test_turn_macros.py
 2056 tools/dev/test_nav_lua.lua
-1680 mod/Mods/BG3AI/ScriptExtender/Lua/Client/UIActions.lua
 1643 bridge/tests/test_economy.py
 1488 runner/test_crash.py
 1476 runner/runs.py
