@@ -21,3 +21,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 - Size (all 94 tools, chars; ~chars/4 tokens): tools/list wire form 68,499 -> 69,023 (+524, the anyOf schemas),
   descriptions 35,909 -> 36,010 (+101), instructions 1,398 -> 1,410. With BG3AI_TOOLS=game (74 tools) the
   instructions are 869 chars.
+
+## 2026-10-22: pickpocket fixes (research/ovh/live2.md §1)
+
+- pickpocket(take=...) clicks Steal for real: the mod selects the item and reads its odds without pressing
+  (ui.pickpocket min_chance=101), then hoverclick.py moves the cursor until the mod's new ui.steal_probe
+  (Client/PickpocketOps.lua) says it is over StealBtn, clicks, and reads the roll. The old Command press never
+  started a steal (14 live tries). min_chance is checked in the bridge. A window that closes right after the click
+  reads "CAUGHT?".
+- pickpocket(npc) closes a pickpocket window this server didn't open for that NPC before opening theirs (a stale
+  window of another NPC was listed as this NPC's pockets).
+- The description and the pockets listing say the shown odds assume nobody sees the thief.

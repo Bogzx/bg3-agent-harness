@@ -994,7 +994,7 @@
  {
   "name": "pickpocket",
   "title": null,
-  "description": "Sneak up to a visible NPC and open the pickpocket window (best while sneaking and unseen); the result lists their pockets with the game's own odds per item (chance %, DC). take: steal that item (name or id) in the same call (the window is opened first if needed); min_chance: take nothing below this %. A failed steal is a crime if they notice. leave=true closes the window.",
+  "description": "Sneak up to a visible NPC and open the pickpocket window; the result lists their pockets with the game's own odds per item (chance %, DC). Those odds assume nobody sees the thief: a steal in the owner's sight fails whatever they say, so steal while hidden (sneaking unseen, invisible). take: steal that item (name or id) in the same call (the window is opened first if needed; Steal is clicked); min_chance: take nothing below this %. A failed steal is a crime if they notice. leave=true closes the window.",
   "input_schema": {
    "properties": {
     "npc": {

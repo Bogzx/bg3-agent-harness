@@ -8,7 +8,7 @@ import re
 import time
 from typing import Any
 
-from .. import actq, economy, macros, render, twostep
+from .. import actq, economy, hoverclick, macros, render, twostep
 from ..game import GameError, JobResult, hold_client, release_client
 from . import core, overview, plumbing, reporting
 
@@ -327,11 +327,12 @@ def disarm(trap: str, who: str | None = None) -> str:
 @core.mcp.tool()
 @reporting._guard
 def pickpocket(npc: str, who: str | None = None, take: str = "", min_chance: int = 0, leave: bool = False) -> str:
-    """Sneak up to a visible NPC and open the pickpocket window (best while sneaking and unseen); the result lists their pockets with the game's own odds per item (chance %, DC). take: steal that item (name or id) in the same call (the window is opened first if needed); min_chance: take nothing below this %. A failed steal is a crime if they notice. leave=true closes the window."""
+    """Sneak up to a visible NPC and open the pickpocket window; the result lists their pockets with the game's own odds per item (chance %, DC). Those odds assume nobody sees the thief: a steal in the owner's sight fails whatever they say, so steal while hidden (sneaking unseen, invisible). take: steal that item (name or id) in the same call (the window is opened first if needed; Steal is clicked); min_chance: take nothing below this %. A failed steal is a crime if they notice. leave=true closes the window."""
     t0 = time.monotonic()
     target = plumbing._uuid(npc)
     args: dict[str, Any] = {"npc": target}
     if leave:
+        _pp_open["npc"] = None
         r = _pockets(dict(args, leave=True))
         gone = r.status != "done" and "no pickpocket window" in str(r.error or "")   # it had closed itself (live 12:4x)
         return reporting._finish("pickpocket", {"npc": npc, "leave": True},
@@ -339,6 +340,11 @@ def pickpocket(npc: str, who: str | None = None, take: str = "", min_chance: int
                        "pickpocket: left (no window was open)" if gone else plumbing._job_text("pickpocket", r), t0)
     out = sel = ""
     listing = _pockets(args)
+    if listing.status == "done" and _pp_open["npc"] != target:
+        # live2 §1: a window left open for another NPC (or opened by hand) was listed as this NPC's pockets (a stale
+        # empty Cerys window read "nothing to steal" for Alfira and Tumeril 4 times). Close it and open this NPC's.
+        _pockets(dict(args, leave=True))
+        listing = JobResult("failed", error="no pickpocket window is open")
     if listing.status != "done" and "no pickpocket window" in str(listing.error or ""):
         char = plumbing._who(who)
         if who and not uitools._hud_has(char):
@@ -350,6 +356,7 @@ def pickpocket(npc: str, who: str | None = None, take: str = "", min_chance: int
         out = _click_act("pickpocket", "act.pickpocket", {"char": char, "target": target})
         if reporting._batch.get("last") != "done":
             return out
+        _pp_open["npc"] = target
         # The engine says opened before the client widget shows (live 12:5x: Dammon's window up ~1 s later).
         deadline = time.monotonic() + 3.0
         listing = _pockets(args)
@@ -366,11 +373,57 @@ def pickpocket(npc: str, who: str | None = None, take: str = "", min_chance: int
     text = economy.pockets_text(listing.result, _pocket_handle)
     if take:
         tk = plumbing._uuid(take) if re.fullmatch(r"e\d+", take.strip()) else take   # a handle from the listing, else a name
-        r = _pockets(dict(args, take=tk, min_chance=min_chance or None))
-        plumbing._remember_names(r.result)
-        text = (economy.steal_text(r.result, _pocket_handle) if r.status == "done" else plumbing._job_text("pickpocket", r)) + "\n" + text
+        text = _steal(args, tk, min_chance) + "\n" + text
     head = out.split("\n", 1)[0] + "\n" if out else ""
     return reporting._finish("pickpocket", {"npc": npc, "take": take}, head + text + ("\n" + sel if sel else ""), t0)
+
+
+_pp_open: dict[str, str | None] = {"npc": None}   # the NPC whose pickpocket window this server opened last
+SELECT_ONLY = 101   # ui.pickpocket's min_chance above any odds: it selects the item, reads its odds, presses nothing
+STEAL_SEED = (0.5604, 0.6519)   # live2 §1: the Steal button at (538, 352) of a 960x540 window
+STEAL_ROLL_S = 5.0
+
+
+def _steal(args: dict, item: str, min_chance: int) -> str:
+    """Select the item (the mod reads its odds), then click Steal as a player does: ui.pickpocket's own press of
+    StealBtn never started a steal (live2 §1: 0 events in 14 tries; every steal came from a hand click)."""
+    r = _pockets(dict(args, take=item, min_chance=SELECT_ONLY))
+    plumbing._remember_names(r.result)
+    res = r.result if isinstance(r.result, dict) else {}
+    if r.status == "done" and not res.get("pending"):
+        return economy.steal_text(res, _pocket_handle)   # odds unread: the mod pressed and the roll came anyway
+    it = res.get("item")
+    if not isinstance(it, dict):
+        return plumbing._job_text("pickpocket", r)
+    chance = it.get("chance")
+    if min_chance and isinstance(chance, (int, float)) and chance < min_chance:
+        return f"FAILED: {it.get('name')}: {chance}% chance (DC {it.get('dc')}) is below min_chance {min_chance}; nothing taken"
+    inp = _inp()
+    if inp is None:
+        return "FAILED: no mouse input to click Steal (the input helper is not running)"
+    probe = lambda: core.game.rpc("ui.steal_probe", {}, context="client")  # noqa: E731
+    with plumbing._InputHeld():
+        click = hoverclick.hover_click(probe, inp, "steal", STEAL_SEED)
+    if not click.get("clicked"):
+        why = "the window closed" if click.get("gone") else click.get("error")
+        return f"FAILED: couldn't click Steal ({why}; {click.get('tries', 0)} tries); nothing taken"
+    return economy.steal_text(_steal_outcome(probe, it), _pocket_handle)
+
+
+def _steal_outcome(probe, it: dict) -> dict:
+    """After the click: the window's roll until it finished, or the window closing (a caught thief's crime scene)."""
+    end = time.monotonic() + STEAL_ROLL_S
+    while True:
+        v = probe()
+        if not isinstance(v, dict) or not v.get("open"):
+            return {"item": it, "closed": True, "chance": it.get("chance")}
+        roll = v.get("roll") or {}
+        if roll.get("finished"):
+            return {"item": it, "success": roll.get("success"), "rolled": roll.get("rolled"), "dc": roll.get("dc"),
+                    "chance": it.get("chance")}
+        if time.monotonic() >= end:
+            return {"item": it, "pending": True}
+        time.sleep(0.2)
 
 
 def _pockets(args: dict) -> JobResult:

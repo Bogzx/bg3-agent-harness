@@ -757,7 +757,8 @@ def pockets_text(res: dict, h: Callable[[dict], str]) -> str:
     more = (res or {}).get("more")
     return ("POCKETS (the game's chance to steal, DC; best odds first): " + " | ".join(_pocket(it, h) for it in items)
             + (f" | +{more} more" if more else "")
-            + ' → pickpocket(npc, take="<name or id>"); pickpocket(npc, leave=true) leaves with nothing')
+            + ' → pickpocket(npc, take="<name or id>"); pickpocket(npc, leave=true) leaves with nothing. The odds assume'
+            + " nobody sees the thief: in the owner's sight a steal fails whatever they say")
 
 
 def steal_text(res: dict, h: Callable[[dict], str]) -> str:
@@ -765,6 +766,9 @@ def steal_text(res: dict, h: Callable[[dict], str]) -> str:
     what = _pocket({k: v for k, v in it.items() if k not in ("chance", "dc")}, h)
     if res.get("pending"):
         return f"stole? {what}: the roll had not finished after 5 s (get_inventory shows if it came)"
+    if res.get("closed"):
+        return (f"CAUGHT? the pickpocket window closed right after Steal on {what}: a failed steal ends it (look for a "
+                f"dialogue or a crime; get_inventory shows whether it came)")
     roll = f"rolled {res.get('rolled')} vs DC {res.get('dc')}" if res.get("rolled") is not None else ""
     odds = f"{res.get('chance')}% chance" if res.get("chance") is not None else ""
     tail = ", ".join(x for x in (odds, roll) if x)
