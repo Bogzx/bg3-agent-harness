@@ -23,7 +23,8 @@ from test_turn_macros import (
     Base,  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 )
 
-from bg3ai import clicker, server
+from bg3ai import clicker
+from bg3ai.tools import core, reporting, world_tools, dialogue
 from bg3ai.game import GameError, JobResult
 
 KARLACH = [   # S081's menu as the agent finally found it (the first answer wraps to two lines)
@@ -113,30 +114,30 @@ class Menu:
 class AnswerNumbers(unittest.TestCase):
     def setUp(self) -> None:
         clicker._list_hit["at"] = None
-        server._answer_pages.clear()
-        server._listed.clear()
+        reporting._answer_pages.clear()
+        reporting._listed.clear()
         self.inp = FakeInput()
         self.g = Menu(self.inp)
-        for target, name, val in ((server, "game", self.g), (server, "_inp", lambda: self.inp),
+        for target, name, val in ((core, "game", self.g), (world_tools, "_inp", lambda: self.inp),
                                   (clicker.time, "sleep", lambda s: None)):
             p = unittest.mock.patch.object(target, name, val)
             p.start()
             self.addCleanup(p.stop)
 
     def listing(self) -> list[str]:
-        return [ln for ln in server._render_ui(self.g.try_rpc("ui.state")) if ln[:4].strip()[:1].isdigit()]
+        return [ln for ln in reporting._render_ui(self.g.try_rpc("ui.state")) if ln[:4].strip()[:1].isdigit()]
 
     def test_s081_the_whole_menu_is_listed_in_order(self):
         rows = self.listing()
         self.assertEqual(len(rows), 9, rows)
         self.assertEqual(rows[7], "  8. Come on, we're heading out.")
         self.assertEqual(rows[8], "  9. I'll be back.")
-        self.assertNotIn("more answers below", "\n".join(server._render_ui(self.g.try_rpc("ui.state"))))
+        self.assertNotIn("more answers below", "\n".join(reporting._render_ui(self.g.try_rpc("ui.state"))))
         self.assertEqual(self.g.off, 0.0)   # wheeled back to the top
 
     def test_s081_choose_picks_the_answer_listed_under_that_number(self):
         self.listing()
-        r = server._choose_answer(8)       # below the fold; the mod numbers its rows differently once scrolled
+        r = dialogue._choose_answer(8)       # below the fold; the mod numbers its rows differently once scrolled
         self.assertEqual(r.status, "done")
         self.assertEqual(self.g.chosen, ["Come on, we're heading out."])
         self.assertEqual(self.g.jobs[-1]["text"], "Come on, we're heading out.")
@@ -144,7 +145,7 @@ class AnswerNumbers(unittest.TestCase):
     def test_s081_a_visible_answer_is_chosen_without_scrolling(self):
         self.listing()
         n = len(self.inp.log)
-        server._choose_answer(3)
+        dialogue._choose_answer(3)
         self.assertEqual(self.g.chosen, ["In your expert opinion, what's the best way to kill a devil?"])
         self.assertFalse([e for e in self.inp.log[n:] if e[0] == "wheel"])
 
@@ -154,13 +155,13 @@ class AnswerNumbers(unittest.TestCase):
         self.inp.wheel(-6)
         self.g.options()
         self.assertNotEqual([o["i"] for o in self.g.options() if o["text"] == KARLACH[6]], [7])
-        server._choose_answer(7)
+        dialogue._choose_answer(7)
         self.assertEqual(self.g.chosen, ["Tell me again why you want to collect soul coins."])
 
     def test_another_node_uses_the_mods_numbers(self):
         self.listing()
-        server._listed["node"] = ("Karlach", "an earlier line")
-        server._choose_answer(2)
+        reporting._listed["node"] = ("Karlach", "an earlier line")
+        dialogue._choose_answer(2)
         self.assertEqual(self.g.jobs[-1], {"i": 2})
 
 

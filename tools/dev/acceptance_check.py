@@ -566,7 +566,7 @@ def main_check(acc_module) -> int:
     scratch = Path(tempfile.mkdtemp(prefix="acc-check-"))
     os.environ["BG3AI_RUNTIME"] = str(scratch / "rt")
     os.environ["BG3AI_MEMORY_DIR"] = str(scratch / "memory")
-    from bg3ai import server as S  # noqa: E402 - no game needed to import
+    from server_view import S  # noqa: E402 - no game needed to import
     rows = check(Path(acc_module.__file__), S, acc_module)
     rows += check_saves(S, getattr(acc_module, "SAVE_NEEDS", {}))
     shutil.rmtree(scratch, ignore_errors=True)

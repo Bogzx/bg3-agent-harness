@@ -17,7 +17,8 @@ from unittest import mock
 import test_memtools as TM  # (sets BG3AI_RUNTIME before importing server)
 from test_turn_macros import Base
 
-from bg3ai import memtools, rules, server  # noqa: E402
+from bg3ai import memtools, rules  # noqa: E402
+from bg3ai.tools import core, world_tools, memory  # noqa: E402
 
 
 class Served(unittest.TestCase):
@@ -52,7 +53,7 @@ class Served(unittest.TestCase):
         # bench.md §2.6 test c against the live registry (the prompts' own lint uses tools/pi's dump of it)
         import asyncio
         import re
-        tools = {t.name for t in asyncio.run(server.mcp.list_tools())}
+        tools = {t.name for t in asyncio.run(core.mcp.list_tools())}
         named = {m.group(1) for m in re.finditer(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)", rules.load())}
         events = {"job_finished", "queue_done", "queue_interrupted", "my_turn", "in_combat", "hp_below",
                   "item_present", "target_visible", "in_dialogue", "dialogue_line"}
@@ -69,9 +70,9 @@ class Served(unittest.TestCase):
             self.assertEqual(rules.instructions("base", "R"), "base")
 
     def test_server_instructions(self):
-        self.assertTrue(server.mcp.instructions.startswith(server.INSTRUCTIONS))
+        self.assertTrue(core.mcp.instructions.startswith(core.INSTRUCTIONS))
         if rules.serve_enabled():
-            self.assertIn("## Fairness and sandbox", server.mcp.instructions)
+            self.assertIn("## Fairness and sandbox", core.mcp.instructions)
 
     def test_once_per_session(self):
         once = rules.Once("RULES TEXT")
@@ -116,66 +117,66 @@ class ServerBase(Base):
         root = Path(tempfile.mkdtemp(prefix="bg3rules-"))
         self.addCleanup(shutil.rmtree, root, True)
         _play, mem, k = TM.make_tree(root)
-        saved = (server.MEMORY, server.KNOWLEDGE, server.LIFE, server.DEADLINE)
+        saved = (core.MEMORY, core.KNOWLEDGE, core.LIFE, core.DEADLINE)
         self.addCleanup(self._restore_mem, saved)
-        server.MEMORY, server.KNOWLEDGE, server.DEADLINE = mem, k, 0.0
-        server.LIFE = memtools.Lifecycle(lambda: server.MEMORY, auto=True)
-        server._clock_shown.update(at=0.0, stuck=None)
+        core.MEMORY, core.KNOWLEDGE, core.DEADLINE = mem, k, 0.0
+        core.LIFE = memtools.Lifecycle(lambda: core.MEMORY, auto=True)
+        core._clock_shown.update(at=0.0, stuck=None)
 
     def _restore_mem(self, saved) -> None:
-        server.MEMORY, server.KNOWLEDGE, server.LIFE, server.DEADLINE = saved
+        core.MEMORY, core.KNOWLEDGE, core.LIFE, core.DEADLINE = saved
 
 
 class ServerRules(ServerBase):
     def setUp(self) -> None:
         super().setUp()
         os.environ["BG3AI_SERVE_RULES"] = "1"
-        saved = server.RULES
-        server.RULES = rules.Once("RULES TEXT")
-        self.addCleanup(setattr, server, "RULES", saved)
+        saved = core.RULES
+        core.RULES = rules.Once("RULES TEXT")
+        self.addCleanup(setattr, core, "RULES", saved)
 
     def test_first_session_start_carries_the_rules(self):
-        out = server.session_start()
+        out = memory.session_start()
         self.assertTrue(out.startswith("=== RULES"))
         self.assertIn("session S001", out)
-        again = server.session_start()
+        again = memory.session_start()
         self.assertNotIn("RULES TEXT", again)
-        self.assertIn("RULES TEXT", server.session_start(rules=True))
+        self.assertIn("RULES TEXT", memory.session_start(rules=True))
 
     def test_manual_first_call_carries_rules_and_briefing(self):
-        out = server.memory_list("knowledge")
+        out = memory.memory_list("knowledge")
         self.assertIn("RULES TEXT", out)
         self.assertIn("session S001", out)
-        self.assertNotIn("RULES TEXT", server.session_start())   # already shown this session
+        self.assertNotIn("RULES TEXT", memory.session_start())   # already shown this session
 
     def test_off_for_claude_code(self):
         os.environ["BG3AI_SERVE_RULES"] = "0"
-        self.assertNotIn("RULES TEXT", server.session_start())
+        self.assertNotIn("RULES TEXT", memory.session_start())
 
     def test_prompt_and_resource(self):
-        self.assertEqual(server.rules_prompt(), "RULES TEXT")
-        self.assertEqual(server.rules_resource(), "RULES TEXT")
+        self.assertEqual(memory.rules_prompt(), "RULES TEXT")
+        self.assertEqual(memory.rules_resource(), "RULES TEXT")
 
 
 class ServerStop(ServerBase):
     def setUp(self) -> None:
         super().setUp()
         os.environ["BG3AI_SESSION"] = "S001"   # runner mode: nothing opens a session
-        p = mock.patch.object(server, "_stuck", lambda: None)
+        p = mock.patch.object(core, "_stuck", lambda: None)
         p.start()
         self.addCleanup(p.stop)
 
     def test_past_deadline_plus_grace(self):
-        server.DEADLINE = time.time() - rules.STOP_GRACE_S - 60
-        out = server.move_to("e1")
+        core.DEADLINE = time.time() - rules.STOP_GRACE_S - 60
+        out = world_tools.move_to("e1")
         self.assertTrue(out.startswith("REFUSED: the session ended"), out)
         self.assertIn("end_session", out)
-        self.assertFalse(server.memory_list("knowledge").startswith("REFUSED"))
-        self.assertFalse(server.note("[note] late").startswith("REFUSED"))
+        self.assertFalse(memory.memory_list("knowledge").startswith("REFUSED"))
+        self.assertFalse(memory.note("[note] late").startswith("REFUSED"))
 
     def test_within_grace_the_old_refusal(self):
-        server.DEADLINE = time.time() - 30   # over, inside the grace: _act's own "session is over" text
-        out = server.move_to("e1")
+        core.DEADLINE = time.time() - 30   # over, inside the grace: _act's own "session is over" text
+        out = world_tools.move_to("e1")
         self.assertNotIn("call end_session now", out)
 
 

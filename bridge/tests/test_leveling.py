@@ -368,7 +368,7 @@ class ServerWiring(unittest.TestCase):
     """level_up() with no plan sends the stored plan; get_status shows the LEVEL UP line."""
 
     def test_level_up_uses_stored_plan(self):
-        from bg3ai import server as S
+        from bg3ai.tools import core, overview, plumbing, progression
 
         mem = Path(tempfile.mkdtemp(prefix="bg3lv-"))
         self.addCleanup(shutil.rmtree, mem, True)
@@ -383,25 +383,25 @@ class ServerWiring(unittest.TestCase):
             sent.update(op=op, args=args, note=note)
             return "level_up: done"
 
-        saved = (S.game, S._act, S.MEMORY, S._who)
-        S.game, S._act, S.MEMORY, S._who = G(), fake_act, mem, (lambda ref: "u-gale")
+        saved = (core.game, plumbing._act, core.MEMORY, plumbing._who)
+        core.game, plumbing._act, core.MEMORY, plumbing._who = G(), fake_act, mem, (lambda ref: "u-gale")
         try:
-            S._LEVEL_NUDGE.observe(ST)
-            out = S.level_up("Gale")
+            overview._LEVEL_NUDGE.observe(ST)
+            out = progression.level_up("Gale")
             self.assertEqual(out, "level_up: done")
             self.assertEqual(sent["op"], "ui.level_up")
             self.assertEqual(sent["args"], {"uuid": "u-gale", "plan": {"subclass": "Evocation",
                                                                        "spells": ["Magic Missile", "Shield"]}})
             self.assertIn("Gale L2 from memory/party-build.md", sent["note"])
-            self.assertEqual(S._LEVEL_NUDGE.rows, [])            # done: no more nudging for Gale
-            S.level_up("Gale", plan='{"subclass": "Divination"}')  # an explicit plan wins
+            self.assertEqual(overview._LEVEL_NUDGE.rows, [])            # done: no more nudging for Gale
+            progression.level_up("Gale", plan='{"subclass": "Divination"}')  # an explicit plan wins
             self.assertEqual(sent["args"]["plan"], {"subclass": "Divination"})
-            self.assertTrue(S._level_up_line(ST).startswith("LEVEL UP: u-gale (2) → level_up(who)"))
+            self.assertTrue(overview._level_up_line(ST).startswith("LEVEL UP: u-gale (2) → level_up(who)"))
         finally:
-            S.game, S._act, S.MEMORY, S._who = saved
+            core.game, plumbing._act, core.MEMORY, plumbing._who = saved
 
     def test_camp_member_is_swapped_in_levelled_and_swapped_back(self):
-        from bg3ai import server as S
+        from bg3ai.tools import core, plumbing, progression, travel
         wyll = {"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}
         party = [{"uuid": f"u-{n}", "name": n.title(), "level": 5} for n in ("claude", "gale", "karlach", "sh")]
         party[0]["avatar"] = True
@@ -432,12 +432,12 @@ class ServerWiring(unittest.TestCase):
                 jobs.append(op)
                 return type("R", (), {"status": "done"})()
 
-        saved = (S.game, S._level_up, S._who, S.swap_party)
-        S.game, S._level_up, S._who, S.swap_party = G(), fake_level, (lambda ref: "u-wyll"), fake_swap
+        saved = (core.game, progression._level_up, plumbing._who, travel.swap_party)
+        core.game, progression._level_up, plumbing._who, travel.swap_party = G(), fake_level, (lambda ref: "u-wyll"), fake_swap
         try:
-            out = S.level_up("Wyll", out="Gale")
+            out = progression.level_up("Wyll", out="Gale")
         finally:
-            S.game, S._level_up, S._who, S.swap_party = saved
+            core.game, progression._level_up, plumbing._who, travel.swap_party = saved
         self.assertTrue(out.startswith("level_up: done — Wyll (camp member)"), out)
         self.assertEqual(swaps, [("Wyll", "Gale", False), ("Gale", "Wyll", False)])
         self.assertEqual(len(levels), 2)
@@ -447,7 +447,7 @@ class ServerWiring(unittest.TestCase):
 
     def test_camp_member_second_level_fails_says_partly_done(self):
         """Live 12:4x: Wyll L4 went through, L5 failed on the closing page: not a bare FAILED."""
-        from bg3ai import server as S
+        from bg3ai.tools import core, plumbing, progression, travel
         wyll = {"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}
         party = [{"uuid": f"u-{n}", "name": n.title(), "level": 5} for n in ("claude", "gale", "karlach", "sh")]
         state = {"in_combat": False, "party": list(party), "camp": [wyll]}
@@ -471,18 +471,18 @@ class ServerWiring(unittest.TestCase):
             def run_job(self, op, args=None, wait_s=0, context="server"):
                 return type("R", (), {"status": "done"})()
 
-        saved = (S.game, S._level_up, S._who, S.swap_party)
-        S.game, S._level_up, S._who, S.swap_party = G(), fake_level, (lambda ref: "u-wyll"), fake_swap
+        saved = (core.game, progression._level_up, plumbing._who, travel.swap_party)
+        core.game, progression._level_up, plumbing._who, travel.swap_party = G(), fake_level, (lambda ref: "u-wyll"), fake_swap
         try:
-            out = S.level_up("Wyll", out="Gale")
+            out = progression.level_up("Wyll", out="Gale")
         finally:
-            S.game, S._level_up, S._who, S.swap_party = saved
+            core.game, progression._level_up, plumbing._who, travel.swap_party = saved
         self.assertTrue(out.startswith("level_up: partly done (1 of 2 levels) — Wyll (camp member)"), out)
 
     def test_camp_member_second_level_needs_picks_says_partly_done(self):
         """Live 12:2x: Wyll L4 done, L5's stored plan lacked an invocation + a spell: he stays in with the page
         open (no swap back), and the headline still says a level went through."""
-        from bg3ai import server as S
+        from bg3ai.tools import core, plumbing, progression, travel
         wyll = {"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}
         party = [{"uuid": f"u-{n}", "name": n.title(), "level": 5} for n in ("claude", "gale", "karlach", "sh")]
         state = {"in_combat": False, "party": list(party), "camp": [wyll]}
@@ -505,20 +505,20 @@ class ServerWiring(unittest.TestCase):
             def try_rpc(self, op, args=None, context="server", default=None):
                 return state if op == "state.status" else ({"region": "Campsite"} if op == "ui.state" else default)
 
-        saved = (S.game, S._level_up, S._who, S.swap_party)
-        S.game, S._level_up, S._who, S.swap_party = G(), fake_level, (lambda ref: "u-wyll"), fake_swap
+        saved = (core.game, progression._level_up, plumbing._who, travel.swap_party)
+        core.game, progression._level_up, plumbing._who, travel.swap_party = G(), fake_level, (lambda ref: "u-wyll"), fake_swap
         try:
-            out = S.level_up("Wyll", out="Gale")
+            out = progression.level_up("Wyll", out="Gale")
         finally:
-            S.game, S._level_up, S._who, S.swap_party = saved
+            core.game, progression._level_up, plumbing._who, travel.swap_party = saved
         self.assertTrue(out.startswith("level_up: partly done (1 of 2 levels) — Wyll (camp member)"), out)
         self.assertIn("stays in the party", out)
         self.assertEqual(swaps, ["Wyll"])
 
     def test_party_name_resolves_on_a_fresh_bridge(self):
         """Live 12:3x: pickpocket(who="Shadowheart") as a fresh bridge's first call: "unknown target"."""
-        from bg3ai import server as S
         from bg3ai.render import Handles
+        from bg3ai.tools import core, plumbing
         su = "c774d764-4a17-48dc-b470-32ace9ce4471"
         reads = []
 
@@ -526,46 +526,46 @@ class ServerWiring(unittest.TestCase):
             def try_rpc(self, op, args=None, context="server", default=None):
                 reads.append(op)
                 return {"party": [{"uuid": su, "name": "Shadowheart"}]} if op == "state.status" else default
-        saved = (S.game, S.H)
-        S.game, S.H = G(), Handles()
+        saved = (core.game, core.H)
+        core.game, core.H = G(), Handles()
         try:
-            self.assertEqual(S._uuid("Shadowheart"), su)
+            self.assertEqual(plumbing._uuid("Shadowheart"), su)
             self.assertEqual(reads, ["state.status"])
-            self.assertEqual(S._uuid("shadowheart"), su)          # known now: no second read
-            self.assertEqual(reads, ["state.status"])
-            with self.assertRaises(ValueError):
-                S._uuid("e99")                                   # a stale handle never triggers a read
+            self.assertEqual(plumbing._uuid("shadowheart"), su)          # known now: no second read
             self.assertEqual(reads, ["state.status"])
             with self.assertRaises(ValueError):
-                S._uuid("Nobody")
+                plumbing._uuid("e99")                                   # a stale handle never triggers a read
+            self.assertEqual(reads, ["state.status"])
+            with self.assertRaises(ValueError):
+                plumbing._uuid("Nobody")
         finally:
-            S.game, S.H = saved
+            core.game, core.H = saved
 
     def test_who_prefers_the_party_member_over_a_namesake(self):
         """S035 19:32/19:38: a hostile copy named 'Karlach' made use_ability(who="Karlach") / set_party(who=
         "Shadowheart") fail "is ambiguous"; a `who` is always ours. A target name stays ambiguous."""
-        from bg3ai import server as S
         from bg3ai.render import Handles
+        from bg3ai.tools import core, plumbing
         ka, foe = "aaaaaaaa-2222-3333-4444-555555555555", "bbbbbbbb-2222-3333-4444-555555555555"
 
         class G:
             def try_rpc(self, op, args=None, context="server", default=None):
                 return {"party": [{"uuid": ka, "name": "Karlach"}]} if op == "state.status" else default
-        saved = (S.game, S.H)
-        S.game, S.H = G(), Handles()
+        saved = (core.game, core.H)
+        core.game, core.H = G(), Handles()
         try:
-            S.H.get(ka, "Karlach"); S.H.get(foe, "Karlach")
-            self.assertEqual(S._who("Karlach"), ka)
-            self.assertEqual(S._who_uuid("karlach"), ka)
+            core.H.get(ka, "Karlach"); core.H.get(foe, "Karlach")
+            self.assertEqual(plumbing._who("Karlach"), ka)
+            self.assertEqual(plumbing._who_uuid("karlach"), ka)
             with self.assertRaises(ValueError):
-                S._uuid("Karlach")                               # as a target: still ask
+                plumbing._uuid("Karlach")                               # as a target: still ask
         finally:
-            S.game, S.H = saved
+            core.game, core.H = saved
 
     def test_who_two_summons_one_name_takes_the_one_in_the_fight(self):
         """S034 19:17:15: 'Spiritual Weapon' is ambiguous: e328 (an earlier cast's, gone), e612 (now)."""
-        from bg3ai import server as S
         from bg3ai.render import Handles
+        from bg3ai.tools import core, plumbing
         old, new = "aaaaaaaa-0000-0000-0000-000000000328", "aaaaaaaa-0000-0000-0000-000000000612"
         order = [{"uuid": new, "summon": True, "relation": "party"}]
 
@@ -574,63 +574,63 @@ class ServerWiring(unittest.TestCase):
                 if op == "state.combat":
                     return {"active": True, "current": new, "order": order}
                 return {"party": []} if op == "state.status" else default
-        saved = (S.game, S.H)
-        S.game, S.H = G(), Handles()
+        saved = (core.game, core.H)
+        core.game, core.H = G(), Handles()
         try:
-            S.H.get(old, "Spiritual Weapon"); S.H.get(new, "Spiritual Weapon")
-            self.assertEqual(S._who_uuid("Spiritual Weapon"), new)
+            core.H.get(old, "Spiritual Weapon"); core.H.get(new, "Spiritual Weapon")
+            self.assertEqual(plumbing._who_uuid("Spiritual Weapon"), new)
             order.append({"uuid": old, "summon": True, "relation": "party"})   # both in the fight: the acting one
-            self.assertEqual(S._who_uuid("Spiritual Weapon"), new)
+            self.assertEqual(plumbing._who_uuid("Spiritual Weapon"), new)
             order[0]["dead"] = True
-            self.assertEqual(S._who_uuid("Spiritual Weapon"), old)
+            self.assertEqual(plumbing._who_uuid("Spiritual Weapon"), old)
         finally:
-            S.game, S.H = saved
+            core.game, core.H = saved
 
     def test_react_by_name_maps_to_the_option_number(self):
         """S034 19:03:14: react(which="Shield") → "no reaction option Shield (3 shown)"; options had no names."""
-        from bg3ai import server as S
+        from bg3ai.tools import dialogue
         r = {"prompt": "Justiciar Soulhunter used Ranged Attack on Gale. They rolled 17. | Choose how to react. | "
                        "76/81 | Shield | II | Shield | II | III | Shield | III | Do Not React",
              "options": [{"i": 1, "decision": "Undecided"}, {"i": 2}, {"i": 3}]}
-        self.assertEqual(S._reaction_index(r, "Shield"), 1)
+        self.assertEqual(dialogue._reaction_index(r, "Shield"), 1)
         r2 = {"prompt": "Choose how to react. | Counterspell | III | Shield | I", "options": [{"i": 1}, {"i": 2}]}
-        self.assertEqual(S._reaction_index(r2, "shield"), 2)
-        self.assertEqual(S._reaction_index({"options": [{"i": 1, "name": "Divine Smite"}, {"i": 2, "name": "Shield"}]},
+        self.assertEqual(dialogue._reaction_index(r2, "shield"), 2)
+        self.assertEqual(dialogue._reaction_index({"options": [{"i": 1, "name": "Divine Smite"}, {"i": 2, "name": "Shield"}]},
                                            "Shield"), 2)
-        why = S._reaction_index(r2, "Hellish Rebuke")
+        why = dialogue._reaction_index(r2, "Hellish Rebuke")
         self.assertIn("1=Counterspell, 2=Shield", why)
-        self.assertIn("no reaction prompt", S._reaction_index(None, "Shield"))
+        self.assertIn("no reaction prompt", dialogue._reaction_index(None, "Shield"))
 
     def test_s088_react_by_name_with_a_portrait_hp_token_and_upcast_rows(self):
         """S088 06:16:18: react(which="Shield") → "no reaction option 'Shield' on this prompt (6 options: 1=+1/1,
         2=Shield, … 7=Shield)": Gale's temporary HP (+1/1) read as a name, the rows (Shield at levels I-VI) nameless."""
-        from bg3ai import server as S
+        from bg3ai.tools import dialogue
         prompt = ("Inquisitor of the Absolute used Arrow of Arcane Interference on Gale. Inquisitor of the Absolute "
                   "needs 15 to hit. They rolled 16. | Choose how to react. | 177/177 | +1/1 | Shield | II | Shield | "
                   "II | III | Shield | III | IV | Shield | IV | V | Shield | V | VI | Shield | VI | Do Not React")
         old = {"prompt": prompt, "options": [{"i": k, "decision": "Undecided"} for k in range(1, 7)]}
-        self.assertEqual(S._reaction_index(old, "Shield"), 1)   # an old mod's nameless rows: the prompt's names
+        self.assertEqual(dialogue._reaction_index(old, "Shield"), 1)   # an old mod's nameless rows: the prompt's names
         # the rows as shown (UIState.reactionRows): name and level, display order
         rows = {"prompt": prompt, "options": [{"i": 1, "who": "Gale", "name": "Shield"}] +
                 [{"i": k, "who": "Gale", "name": "Shield", "level": k} for k in range(2, 7)]}
-        self.assertEqual(S._reaction_index(rows, "Shield"), 1)
-        self.assertEqual(S._reaction_index(rows, "Shield 3"), 3)
-        self.assertEqual(S._reaction_index(rows, "shield III"), 3)
-        self.assertEqual(S._reaction_index(rows, "Shield (level 6)"), 6)
-        self.assertEqual(S._reaction_index(rows, "Shield L1"), 1)
-        why = S._reaction_index(rows, "Shield 7")
+        self.assertEqual(dialogue._reaction_index(rows, "Shield"), 1)
+        self.assertEqual(dialogue._reaction_index(rows, "Shield 3"), 3)
+        self.assertEqual(dialogue._reaction_index(rows, "shield III"), 3)
+        self.assertEqual(dialogue._reaction_index(rows, "Shield (level 6)"), 6)
+        self.assertEqual(dialogue._reaction_index(rows, "Shield L1"), 1)
+        why = dialogue._reaction_index(rows, "Shield 7")
         self.assertIn("6=Shield (level 6)", why)
         cs = {"prompt": "Adept of the Absolute cast Guiding Bolt on Claude. | Choose how to react. | 179/179 | "
                         "+17/17 | V | Counterspell | V | Do Not React",
               "options": [{"i": 1, "who": "Gale", "name": "Counterspell", "level": 5}]}
-        self.assertEqual(S._reaction_index(cs, "Counterspell"), 1)
-        self.assertEqual(S._reaction_index({**cs, "options": [{"i": 1, "decision": "Undecided"}]}, "Counterspell"), 1)
+        self.assertEqual(dialogue._reaction_index(cs, "Counterspell"), 1)
+        self.assertEqual(dialogue._reaction_index({**cs, "options": [{"i": 1, "decision": "Undecided"}]}, "Counterspell"), 1)
 
     def test_name_by_a_whole_word_and_an_ally_in_the_fight(self):
         """S045 00:15 look_at("Aylin") for "Dame Aylin"; S043 23:15 talk_to("Jaheira"), an ally only in the turn
         order: both "unknown target"."""
-        from bg3ai import server as S
         from bg3ai.render import Handles
+        from bg3ai.tools import core, plumbing
         ay, ja = "aaaaaaaa-0000-0000-0000-00000000a71e", "aaaaaaaa-0000-0000-0000-00000000da01"
 
         class G:
@@ -638,22 +638,22 @@ class ServerWiring(unittest.TestCase):
                 if op == "state.combat":
                     return {"active": True, "order": [{"uuid": ja, "name": "Jaheira", "relation": "ally"}]}
                 return {"party": []} if op == "state.status" else ({"characters": []} if op == "state.nearby" else default)
-        saved = (S.game, S.H)
-        S.game, S.H = G(), Handles()
+        saved = (core.game, core.H)
+        core.game, core.H = G(), Handles()
         try:
-            S.H.get(ay, "Dame Aylin")
-            self.assertEqual(S._uuid("Aylin"), ay)
+            core.H.get(ay, "Dame Aylin")
+            self.assertEqual(plumbing._uuid("Aylin"), ay)
             zt = "aaaaaaaa-0000-0000-0000-00000000c0de"
-            S.H.get(zt, "Gondian Zanner Toobin")   # S055 06:41 who='Zanner Toobin'
-            self.assertEqual(S._uuid("Zanner Toobin"), zt)
-            self.assertEqual(S._uuid("Jaheira"), ja)
+            core.H.get(zt, "Gondian Zanner Toobin")   # S055 06:41 who='Zanner Toobin'
+            self.assertEqual(plumbing._uuid("Zanner Toobin"), zt)
+            self.assertEqual(plumbing._uuid("Jaheira"), ja)
         finally:
-            S.game, S.H = saved
+            core.game, core.H = saved
 
     def test_npc_in_view_resolves_on_a_fresh_bridge(self):
         """S029 16:04: talk_to(npc="Wulbren") as the session's first call failed "unknown target" with him in view."""
-        from bg3ai import server as S
         from bg3ai.render import Handles
+        from bg3ai.tools import core, plumbing
         wu = "11111111-2222-3333-4444-555555555555"
         reads = []
 
@@ -663,21 +663,21 @@ class ServerWiring(unittest.TestCase):
                 if op == "state.nearby":
                     return {"characters": [{"uuid": wu, "name": "Wulbren Bongle"}], "items": []}
                 return {"party": []} if op == "state.status" else default
-        saved = (S.game, S.H)
-        S.game, S.H = G(), Handles()
+        saved = (core.game, core.H)
+        core.game, core.H = G(), Handles()
         try:
-            self.assertEqual(S._uuid("Wulbren"), wu)
+            self.assertEqual(plumbing._uuid("Wulbren"), wu)
             self.assertEqual(reads, ["state.status", "state.nearby"])
             with self.assertRaises(ValueError):
-                S._uuid("Nobody")
+                plumbing._uuid("Nobody")
         finally:
-            S.game, S.H = saved
+            core.game, core.H = saved
 
     def test_camp_member_named_on_a_fresh_bridge(self):
         """Live 12:3x: level_up(who="Wyll") as a fresh bridge's first call failed "unknown target 'Wyll'" (only
         party names were known); the earlier tests stubbed _who and hid it."""
-        from bg3ai import server as S
         from bg3ai.render import Handles
+        from bg3ai.tools import core, progression
         wu = "c774d764-4a17-48dc-b470-32ace9ce447d"
         state = {"in_combat": False, "active": "11111111-2222-3333-4444-555555555555",
                  "party": [{"uuid": "11111111-2222-3333-4444-555555555555", "name": "Claude", "level": 5}],
@@ -689,17 +689,17 @@ class ServerWiring(unittest.TestCase):
 
             def rpc(self, op, *a, **k):
                 return state
-        saved = (S.game, S.H)
-        S.game, S.H = G(), Handles()
+        saved = (core.game, core.H)
+        core.game, core.H = G(), Handles()
         try:
-            out = S.level_up("Wyll")
+            out = progression.level_up("Wyll")
         finally:
-            S.game, S.H = saved
+            core.game, core.H = saved
         self.assertEqual(out, "level_up: nothing to do — Wyll (camp) has no level up waiting")
 
     def test_camp_member_missing_picks_stays_in_with_the_page_open(self):
         """Live 11:14: Wyll L4 needed a cantrip + a spell the stored plan lacked; the swap back then failed."""
-        from bg3ai import server as S
+        from bg3ai.tools import core, plumbing, progression, travel
         wyll = {"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}
         party = [{"uuid": f"u-{n}", "name": n.title(), "level": 5} for n in ("claude", "gale", "karlach", "sh")]
         party[0]["avatar"] = True
@@ -723,12 +723,12 @@ class ServerWiring(unittest.TestCase):
 
         need = ("level_up: FAILED — finish: level up is not complete, not finishing: spell choice 'cantrips' needs 1 "
                 "more cantrip in plan.cantrips; can pick: Booming Blade")
-        saved = (S.game, S._level_up, S._who, S.swap_party)
-        S.game, S._level_up, S._who, S.swap_party = G(), (lambda u, p: need), (lambda ref: "u-wyll"), fake_swap
+        saved = (core.game, progression._level_up, plumbing._who, travel.swap_party)
+        core.game, progression._level_up, plumbing._who, travel.swap_party = G(), (lambda u, p: need), (lambda ref: "u-wyll"), fake_swap
         try:
-            out = S.level_up("Wyll", out="Gale")
+            out = progression.level_up("Wyll", out="Gale")
         finally:
-            S.game, S._level_up, S._who, S.swap_party = saved
+            core.game, progression._level_up, plumbing._who, travel.swap_party = saved
         self.assertEqual(swaps, [("Wyll", "Gale")])  # no swap back
         self.assertEqual(jobs, [])                   # no leave camp with the page up
         self.assertIn("Wyll stays in the party (Gale at camp) with the level-up page open", out)
@@ -736,33 +736,33 @@ class ServerWiring(unittest.TestCase):
         self.assertIn("can pick: Booming Blade", out)
 
     def test_camp_member_swap_failure_is_reported(self):
-        from bg3ai import server as S
+        from bg3ai.tools import core, plumbing, progression, travel
         st = dict(ST, camp=[{"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}])
 
         class G:
             def try_rpc(self, op, args=None, context="server", default=None):
                 return st if op == "state.status" else {"region": "Campsite"}
 
-        saved = (S.game, S._who, S.swap_party)
-        S.game, S._who = G(), (lambda ref: "u-wyll")
-        S.swap_party = lambda **k: "swap_party: FAILED to talk to Wyll"
+        saved = (core.game, plumbing._who, travel.swap_party)
+        core.game, plumbing._who = G(), (lambda ref: "u-wyll")
+        travel.swap_party = lambda **k: "swap_party: FAILED to talk to Wyll"
         try:
-            out = S.level_up("Wyll")
+            out = progression.level_up("Wyll")
         finally:
-            S.game, S._who, S.swap_party = saved
+            core.game, plumbing._who, travel.swap_party = saved
         self.assertIn("level_up: FAILED — Wyll is in camp and the swap-in did not finish", out)
 
     def test_level_up_clicks_spells_then_reruns(self):
-        from bg3ai import server as S
+        from bg3ai.tools import plumbing, progression, reporting, world_tools
 
         calls = []
 
         def fake_act(tool, op, args, wait_s=25.0, context="server", wait=True, note=""):
             calls.append(note)
             if len(calls) == 1:
-                S._batch["result"] = {"needs_clicks": [{"name": "Hex", "cantrips": False}]}
+                reporting._batch["result"] = {"needs_clicks": [{"name": "Hex", "cantrips": False}]}
                 return "level_up: FAILED — finish: spell picks need mouse clicks (Hex)"
-            S._batch["result"] = {"finished": True}
+            reporting._batch["result"] = {"finished": True}
             return "level_up: done — finished"
 
         clicked = {}
@@ -771,16 +771,16 @@ class ServerWiring(unittest.TestCase):
             clicked["needs"] = needs
             return {"picked": ["Hex"], "failed": {}, "probes": 12}
 
-        saved = (S._act, S._who, S._inp, LV.click_spells)
-        S._act, S._who, S._inp, LV.click_spells = fake_act, (lambda ref: "u-wyll"), (lambda: object()), fake_click
+        saved = (plumbing._act, plumbing._who, world_tools._inp, LV.click_spells)
+        plumbing._act, plumbing._who, world_tools._inp, LV.click_spells = fake_act, (lambda ref: "u-wyll"), (lambda: object()), fake_click
         try:
-            out = S.level_up("Wyll", plan='{"spells": ["Hex"], "passives": ["Agonizing Blast"]}')
+            out = progression.level_up("Wyll", plan='{"spells": ["Hex"], "passives": ["Agonizing Blast"]}')
             self.assertEqual(out, "level_up: done — finished")
             self.assertEqual(clicked["needs"], [{"name": "Hex", "cantrips": False}])
             self.assertEqual(len(calls), 2)
             self.assertIn("clicked spells: Hex", calls[1])
         finally:
-            S._act, S._who, S._inp, LV.click_spells = saved
+            plumbing._act, plumbing._who, world_tools._inp, LV.click_spells = saved
 
 
 if __name__ == "__main__":
@@ -789,34 +789,34 @@ if __name__ == "__main__":
 
 class ServerRetryAndRefresh(unittest.TestCase):
     def test_unrendered_subclass_labels_retry_once(self):
-        from bg3ai import server as S
+        from bg3ai.tools import plumbing, progression, reporting
 
         calls = []
 
         def fake_act(tool, op, args, wait_s=25.0, context="server", wait=True, note=""):
             calls.append(op)
-            S._batch["result"] = {}
+            reporting._batch["result"] = {}
             if len(calls) == 1:
                 return "level_up: FAILED — subclass: no 'Evocation'; choices: #1, #2, #3 — stage=subclass"
             return "level_up: done — finished complete"
 
-        saved = (S._act, S._who)
-        S._act, S._who = fake_act, (lambda ref: "u-gale")
+        saved = (plumbing._act, plumbing._who)
+        plumbing._act, plumbing._who = fake_act, (lambda ref: "u-gale")
         try:
-            out = S.level_up("Gale", plan='{"subclass": "Evocation", "spells": ["Sleep"]}')
+            out = progression.level_up("Gale", plan='{"subclass": "Evocation", "spells": ["Sleep"]}')
             self.assertEqual((out, len(calls)), ("level_up: done — finished complete", 2))
         finally:
-            S._act, S._who = saved
+            plumbing._act, plumbing._who = saved
 
     def test_ambiguous_portrait_selects_the_member_and_retries(self):
         # S042 23:11: "cannot tell this character's portrait apart; select it first (act.select)" ×2 (Shadowheart).
-        from bg3ai import server as S
+        from bg3ai.tools import core, plumbing, progression, reporting
 
         calls, selects = [], []
 
         def fake_act(tool, op, args, wait_s=25.0, context="server", wait=True, note=""):
             calls.append(op)
-            S._batch["result"] = {}
+            reporting._batch["result"] = {}
             if len(calls) == 1:
                 return ("level_up: FAILED — open: cannot tell this character's portrait apart; select it first "
                         "(act.select) and retry")
@@ -829,28 +829,28 @@ class ServerRetryAndRefresh(unittest.TestCase):
             def try_rpc(self, *a, **k):
                 return None
 
-        saved = (S._act, S._who, S._active, S.game)
-        S._act, S._who, S._active, S.game = fake_act, (lambda ref: "u-sh"), (lambda: "u-claude"), G()
+        saved = (plumbing._act, plumbing._who, plumbing._active, core.game)
+        plumbing._act, plumbing._who, plumbing._active, core.game = fake_act, (lambda ref: "u-sh"), (lambda: "u-claude"), G()
         try:
-            out = S.level_up("Shadowheart", plan='{"spells": ["Bless"]}')
+            out = progression.level_up("Shadowheart", plan='{"spells": ["Bless"]}')
             self.assertEqual((out, len(calls)), ("level_up: done — finished complete", 2))
             # selected up front, once more on the ambiguity, then the control given back
             self.assertEqual(selects, [("act.select", "u-sh"), ("act.select", "u-sh"), ("act.select", "u-claude")])
         finally:
-            S._act, S._who, S._active, S.game = saved
+            plumbing._act, plumbing._who, plumbing._active, core.game = saved
 
     def test_member_selected_before_the_page_opens(self):
         # S062 10:17-10:23: Shadowheart and Wyll level_up unselected: open waited 25 s ("closed_page=another
         # character's page"), spell clicks found no button ×4; worked at once after a hand select. Now the tool
         # selects first; a FAILED keeps the member selected (the retry's page), the active member needs no select.
-        from bg3ai import server as S
+        from bg3ai.tools import core, plumbing, progression, reporting, uitools, world_tools
 
         selects, order, results = [], [], ["level_up: FAILED — finish: spell picks pending (Light)",
                                            "level_up: done — finished complete"]
 
         def fake_act(tool, op, args, wait_s=25.0, context="server", wait=True, note=""):
             order.append("act")
-            S._batch["result"] = {}
+            reporting._batch["result"] = {}
             return results.pop(0)
 
         class G:
@@ -861,26 +861,26 @@ class ServerRetryAndRefresh(unittest.TestCase):
             def try_rpc(self, *a, **k):
                 return None
 
-        saved = (S._act, S._who, S._active, S.game, S._inp, S._hud_has)
-        S._act, S._who, S._active, S.game, S._inp = fake_act, (lambda ref: "u-sh"), (lambda: "u-claude"), G(), (lambda: None)
-        S._hud_has = lambda u: u == "u-claude"  # the HUD has Claude (A16: the select reads the client)
+        saved = (plumbing._act, plumbing._who, plumbing._active, core.game, world_tools._inp, uitools._hud_has)
+        plumbing._act, plumbing._who, plumbing._active, core.game, world_tools._inp = fake_act, (lambda ref: "u-sh"), (lambda: "u-claude"), G(), (lambda: None)
+        uitools._hud_has = lambda u: u == "u-claude"  # the HUD has Claude (A16: the select reads the client)
         try:
-            out = S.level_up("Shadowheart", plan='{"cantrips": ["Light"]}')
+            out = progression.level_up("Shadowheart", plan='{"cantrips": ["Light"]}')
             self.assertTrue(out.startswith("level_up: FAILED"))
             self.assertEqual((selects, order), (["u-sh"], ["select", "act"]))   # no give-back after a failure
-            out = S.level_up("Shadowheart", plan='{"cantrips": ["Light"]}')
+            out = progression.level_up("Shadowheart", plan='{"cantrips": ["Light"]}')
             self.assertEqual(out, "level_up: done — finished complete")
             self.assertEqual(selects, ["u-sh", "u-sh", "u-claude"])
             selects.clear()
             results.append("level_up: done — finished complete")
-            S._who = lambda ref: "u-claude"
-            S.level_up("Claude", plan="{}")
+            plumbing._who = lambda ref: "u-claude"
+            progression.level_up("Claude", plan="{}")
             self.assertEqual(selects, [])   # already the active member
         finally:
-            S._act, S._who, S._active, S.game, S._inp, S._hud_has = saved
+            plumbing._act, plumbing._who, plumbing._active, core.game, world_tools._inp, uitools._hud_has = saved
 
     def test_finish_refreshes_status_for_a_new_level_up(self):
-        from bg3ai import server as S
+        from bg3ai.tools import core, overview, reporting
 
         reads = []
 
@@ -889,38 +889,38 @@ class ServerRetryAndRefresh(unittest.TestCase):
                 reads.append(op)
                 return ST if op == "state.status" else default
 
-        saved = (S.game, S._LEVEL_NUDGE)
-        S.game, S._LEVEL_NUDGE = G(), LV.Nudge()
+        saved = (core.game, overview._LEVEL_NUDGE)
+        core.game, overview._LEVEL_NUDGE = G(), LV.Nudge()
         try:
-            out = S._finish("save_game", {}, "save_game: done", time.monotonic(), events=False)
+            out = reporting._finish("save_game", {}, "save_game: done", time.monotonic(), events=False)
             self.assertIn("LEVEL UP pending: Gale (2)", out)
             n = reads.count("state.status")
-            S._finish("save_game", {}, "save_game: done", time.monotonic(), events=False)
+            reporting._finish("save_game", {}, "save_game: done", time.monotonic(), events=False)
             self.assertEqual(reads.count("state.status"), n)    # fresh: no second read within REFRESH_S
         finally:
-            S.game, S._LEVEL_NUDGE = saved
+            core.game, overview._LEVEL_NUDGE = saved
 
     def test_rerun_after_spell_clicks_keeps_the_page(self):
         """S032 17:28: the rerun after the spell clicks closed this character's frozen (Started) page and lost the
         pick, 4x. The rerun now passes keep_page; the first call never does."""
-        from bg3ai import server as S
+        from bg3ai.tools import plumbing, progression, reporting, world_tools
 
         calls = []
 
         def fake_act(tool, op, args, **kw):
             calls.append(dict(args))
             if len(calls) == 1:
-                S._batch["result"] = {"needs_clicks": [{"name": "Fireball"}]}
+                reporting._batch["result"] = {"needs_clicks": [{"name": "Fireball"}]}
                 return "level_up: FAILED — finish: spell picks pending (Fireball)"
             return "level_up: done — finished complete"
 
-        saved = (S._act, S._inp, LV.click_spells)
-        S._act, S._inp = fake_act, (lambda: object())
+        saved = (plumbing._act, world_tools._inp, LV.click_spells)
+        plumbing._act, world_tools._inp = fake_act, (lambda: object())
         LV.click_spells = lambda rpc, inp, needs, **kw: {"picked": ["Fireball"], "failed": {}}
         try:
-            out = S._level_up("u-wyll", '{"spells": ["Fireball"]}')
+            out = progression._level_up("u-wyll", '{"spells": ["Fireball"]}')
             self.assertTrue(out.startswith("level_up: done"))
             self.assertNotIn("keep_page", calls[0])
             self.assertTrue(calls[1]["keep_page"])
         finally:
-            S._act, S._inp, LV.click_spells = saved
+            plumbing._act, world_tools._inp, LV.click_spells = saved

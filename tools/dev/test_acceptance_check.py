@@ -21,7 +21,7 @@ os.environ.setdefault("BG3AI_RUNTIME", str(Path(_scratch) / "rt"))
 os.environ.setdefault("BG3AI_MEMORY_DIR", str(Path(_scratch) / "memory"))
 
 import acceptance_check as AC  # noqa: E402
-from bg3ai import server as S  # noqa: E402
+from server_view import S  # noqa: E402
 
 SRC = (HERE / "acceptance.py").read_text()
 LUA = AC.lua_index()

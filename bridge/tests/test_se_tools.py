@@ -10,7 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_turn_macros import P1, Base  # noqa: E402,F401  (sets BG3AI_RUNTIME before importing server)
-from bg3ai import server  # noqa: E402
+from bg3ai.render import Handles
+from bg3ai.tools import core, reporting, plumbing, observe, world_tools, travel, dialogue, inventory, uitools, batch, queueing, macro_tools, saving  # noqa: E402
 from bg3ai.game import Game, GameError, JobResult, NotReady  # noqa: E402
 from bg3ai.luadebug import LuaDebugError  # noqa: E402
 
@@ -47,26 +48,26 @@ class Fake:
 class PressEscape(unittest.TestCase):
     def use(self, screens):
         fake = Fake(screens)
-        orig = server.game
-        server.game = fake
-        self.addCleanup(setattr, server, "game", orig)
+        orig = core.game
+        core.game = fake
+        self.addCleanup(setattr, core, "game", orig)
         return fake
 
     def test_plain_game_view_refused(self):
         fake = self.use(["game"])
-        out = server.press_key.fn("escape") if hasattr(server.press_key, "fn") else server.press_key("escape")
+        out = uitools.press_key.fn("escape") if hasattr(uitools.press_key, "fn") else uitools.press_key("escape")
         self.assertTrue(out.startswith("REFUSED"), out)
         self.assertEqual(fake.keys, [])
 
     def test_open_panel_closes(self):
         fake = self.use([{"screen": "game", "panels_open": ["Inventory"]}, "game"])
-        out = getattr(server.press_key, "fn", server.press_key)("ESCAPE")
+        out = getattr(uitools.press_key, "fn", uitools.press_key)("ESCAPE")
         self.assertNotIn("REFUSED", out)
         self.assertEqual(fake.keys, ["ESCAPE"])
 
     def test_menu_that_opens_is_closed_again(self):
         fake = self.use(["trade", "game_menu"])
-        out = getattr(server.press_key, "fn", server.press_key)("ESCAPE")
+        out = getattr(uitools.press_key, "fn", uitools.press_key)("ESCAPE")
         self.assertEqual(fake.keys, ["ESCAPE", "RESUME:Resume"])
         self.assertIn("closed it again", out)
 
@@ -75,9 +76,9 @@ class PressEscape(unittest.TestCase):
         'closed it again'. Resume first, then the key; if it is still up, say so, and that ESCAPE doesn't end a talk."""
         fake = self.use(["dialogue", "game_menu"])
         fake.resume_closes = False
-        server.time.sleep, real = (lambda s: None), server.time.sleep
-        self.addCleanup(setattr, server.time, "sleep", real)
-        out = getattr(server.press_key, "fn", server.press_key)("ESCAPE")
+        time.sleep, real = (lambda s: None), time.sleep
+        self.addCleanup(setattr, time, "sleep", real)
+        out = getattr(uitools.press_key, "fn", uitools.press_key)("ESCAPE")
         self.assertEqual(fake.keys, ["ESCAPE", "RESUME:Resume", "ESCAPE"])
         self.assertIn("STILL OPEN", out)
         self.assertNotIn("closed it again", out)
@@ -85,19 +86,19 @@ class PressEscape(unittest.TestCase):
 
     def test_escape_on_game_menu_closes_it_once(self):
         fake = self.use(["game_menu", "game"])
-        getattr(server.press_key, "fn", server.press_key)("ESCAPE")
+        getattr(uitools.press_key, "fn", uitools.press_key)("ESCAPE")
         self.assertEqual(fake.keys, ["ESCAPE"])
 
     def test_unknown_screen_presses(self):
         fake = self.use([None])
         fake.rpc = lambda op, args=None, context="server": (fake.keys.append(args["key"]) if op == "ui.key" else None)
         fake.try_rpc = fake.rpc
-        getattr(server.press_key, "fn", server.press_key)("ESCAPE")
+        getattr(uitools.press_key, "fn", uitools.press_key)("ESCAPE")
         self.assertEqual(fake.keys[0], "ESCAPE")
 
     def test_other_keys_untouched(self):
         fake = self.use(["game"])
-        getattr(server.press_key, "fn", server.press_key)("space")
+        getattr(uitools.press_key, "fn", uitools.press_key)("space")
         self.assertEqual(fake.keys, ["SPACE"])
 
 
@@ -106,35 +107,35 @@ class SaveLoadHatches(unittest.TestCase):
 
     def use(self):
         fake = Fake(["game"])
-        orig = server.game
-        server.game = fake
-        self.addCleanup(setattr, server, "game", orig)
+        orig = core.game
+        core.game = fake
+        self.addCleanup(setattr, core, "game", orig)
         return fake
 
     def test_ui_action_quickload_refused_before_the_game(self):
         fake = self.use()
         for cmd in ("QuickLoadCommand", "QuickSaveCommand", "OpenLoadGameDialog", "ContinueGameCommand",
                     "DeleteSavegameCommand", "Overwrite"):
-            out = getattr(server.ui_action, "fn", server.ui_action)(cmd, "*")
+            out = getattr(uitools.ui_action, "fn", uitools.ui_action)(cmd, "*")
             self.assertTrue(out.startswith("REFUSED"), (cmd, out))
         self.assertEqual(fake.keys, [])
 
     def test_ui_action_other_commands_pass(self):
-        self.assertIsNone(server._saveload_word("UserTriggeredNextPhaseCommand"))
-        self.assertIsNone(server._saveload_word("SelectAnswerCommand"))
-        self.assertIsNone(server._saveload_word("TakeAllCommand"))
+        self.assertIsNone(uitools._saveload_word("UserTriggeredNextPhaseCommand"))
+        self.assertIsNone(uitools._saveload_word("SelectAnswerCommand"))
+        self.assertIsNone(uitools._saveload_word("TakeAllCommand"))
 
     def test_f8_refused(self):
         fake = self.use()
-        out = getattr(server.press_key, "fn", server.press_key)("f8")
+        out = getattr(uitools.press_key, "fn", uitools.press_key)("f8")
         self.assertTrue(out.startswith("REFUSED"), out)
         self.assertEqual(fake.keys, [])
 
     def test_f5_is_save_game(self):
         fake = self.use()
         calls = []
-        with unittest.mock.patch.object(server, "save_game", lambda label="": calls.append(label) or "save_game: queued"):
-            out = getattr(server.press_key, "fn", server.press_key)("F5")
+        with unittest.mock.patch.object(saving, "save_game", lambda label="": calls.append(label) or "save_game: queued"):
+            out = getattr(uitools.press_key, "fn", uitools.press_key)("F5")
         self.assertEqual(calls, ["quicksave"])
         self.assertIn("save_game: queued", out)
         self.assertEqual(fake.keys, [])
@@ -167,37 +168,37 @@ class ChooseBelowTheFold(unittest.TestCase):
         g = self.G()
         full = {"dialogue": {"options": [{"i": k, "text": f"answer {k}"} for k in range(1, 11)]}}
         from bg3ai import clicker
-        with unittest.mock.patch.object(server, "game", g), \
-                unittest.mock.patch.object(server, "_complete_answers", lambda ui: full), \
-                unittest.mock.patch.object(server, "_inp", lambda: object()), \
+        with unittest.mock.patch.object(core, "game", g), \
+                unittest.mock.patch.object(reporting, "_complete_answers", lambda ui: full), \
+                unittest.mock.patch.object(world_tools, "_inp", lambda: object()), \
                 unittest.mock.patch.object(clicker, "scroll_to_answer", lambda game, inp, read, text, up=False: (8, None)):
-            r = server._choose_answer(8)
+            r = dialogue._choose_answer(8)
         self.assertEqual(r.status, "done")
         self.assertEqual(g.jobs, [{"i": 8}, {"i": 8, "text": "answer 8"}])
 
     def test_other_errors_pass_through(self):
         g = self.G()
         g.run_job = lambda *a, **k: (_ for _ in ()).throw(GameError("option 3 is disabled"))
-        with unittest.mock.patch.object(server, "game", g):
+        with unittest.mock.patch.object(core, "game", g):
             with self.assertRaises(GameError):
-                server._choose_answer(3)
+                dialogue._choose_answer(3)
 
 
 class FeedGale(unittest.TestCase):
     def test_item_by_handle_goes_to_ui_donate(self):
         fake = Fake(["donate"])
-        orig = server.game
-        server.game = fake
-        self.addCleanup(setattr, server, "game", orig)
+        orig = core.game
+        core.game = fake
+        self.addCleanup(setattr, core, "game", orig)
         u = "cccccccc-0000-0000-0000-000000000001"
-        h = server.H.get(u, "Komira's Locket")
-        out = getattr(server.feed_gale, "fn", server.feed_gale)(h)
+        h = core.H.get(u, "Komira's Locket")
+        out = getattr(inventory.feed_gale, "fn", inventory.feed_gale)(h)
         self.assertEqual(fake.jobs[0][:2], ("ui.donate", {"item": u}))
         self.assertEqual(fake.jobs[0][2], "client")
         self.assertIn("feed_gale: done", out)
 
     def test_donate_screen_hint(self):
-        self.assertIn("feed_gale", server._input_screen_text("donate"))
+        self.assertIn("feed_gale", batch._input_screen_text("donate"))
 
 
 
@@ -233,17 +234,17 @@ class NightFake:
 
 class NightCamp(unittest.TestCase):
     def use(self, fake):
-        orig = server.game
-        server.game = fake
-        self.addCleanup(setattr, server, "game", orig)
-        orig_wait = server._wait_running
-        server._wait_running = lambda max_s=60.0: True
-        self.addCleanup(setattr, server, "_wait_running", orig_wait)
+        orig = core.game
+        core.game = fake
+        self.addCleanup(setattr, core, "game", orig)
+        orig_wait = travel._wait_running
+        travel._wait_running = lambda max_s=60.0: True
+        self.addCleanup(setattr, travel, "_wait_running", orig_wait)
         return fake
 
     def test_fast_travel_ends_the_night_first(self):
         fake = self.use(NightFake())
-        out = getattr(server.fast_travel, "fn", server.fast_travel)("Last Light Inn")
+        out = getattr(travel.fast_travel, "fn", travel.fast_travel)("Last Light Inn")
         ops = [o for o, _ in fake.jobs]
         self.assertEqual(ops[0], "ui.long_rest")
         self.assertEqual(fake.jobs[0][1], {"sleep_only": True})
@@ -252,13 +253,13 @@ class NightCamp(unittest.TestCase):
 
     def test_night_that_wont_end_stops_travel(self):
         fake = self.use(NightFake(ends=False))
-        out = getattr(server.fast_travel, "fn", server.fast_travel)("Last Light Inn")
+        out = getattr(travel.fast_travel, "fn", travel.fast_travel)("Last Light Inn")
         self.assertNotIn("ui.fast_travel", [o for o, _ in fake.jobs])
         self.assertIn("night at camp hasn't ended", out)
 
     def test_camp_leave_ends_the_night_first(self):
         fake = self.use(NightFake())
-        out = getattr(server.camp, "fn", server.camp)("leave")
+        out = getattr(travel.camp, "fn", travel.camp)("leave")
         self.assertEqual([o for o, _ in fake.jobs][:2], ["ui.long_rest", "act.leave_camp"])
         self.assertIn("ended the night", out)
 
@@ -266,7 +267,7 @@ class NightCamp(unittest.TestCase):
         fake = NightFake()
         fake.night = False
         self.use(fake)
-        getattr(server.camp, "fn", server.camp)("leave")
+        getattr(travel.camp, "fn", travel.camp)("leave")
         self.assertEqual([o for o, _ in fake.jobs], ["act.leave_camp"])
 
 
@@ -285,7 +286,7 @@ class NightCamp(unittest.TestCase):
         fake.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult(
             status="failed", result=None, error="cannot travel right now")
         self.use(fake)
-        go = getattr(server.camp, "fn", server.camp)
+        go = getattr(travel.camp, "fn", travel.camp)
         fake.err = "DangerZone"
         self.assertIn("(DangerZone): this is a danger zone", go())
         fake.err = "Unavailable"
@@ -308,7 +309,7 @@ class NightCamp(unittest.TestCase):
 
         fake.rpc = fake.try_rpc = rpc
         self.use(fake)
-        out = getattr(server.camp, "fn", server.camp)()
+        out = getattr(travel.camp, "fn", travel.camp)()
         self.assertIn("camp: FAILED — cannot travel right now", out)
         self.assertIn("(Location): this area does not let the party go to camp", out)
         self.assertNotIn("act.go_to_camp", [o for o, _ in fake.jobs])
@@ -329,10 +330,10 @@ class NightCamp(unittest.TestCase):
 
         fake.rpc = fake.try_rpc = rpc
         self.use(fake)
-        orig = server.time.sleep
-        server.time.sleep = lambda s: None
-        self.addCleanup(setattr, server.time, "sleep", orig)
-        out = getattr(server.fast_travel, "fn", server.fast_travel)("Last Light Inn")
+        orig = time.sleep
+        time.sleep = lambda s: None
+        self.addCleanup(setattr, time, "sleep", orig)
+        out = getattr(travel.fast_travel, "fn", travel.fast_travel)("Last Light Inn")
         self.assertIn("ui.fast_travel", [o for o, _ in fake.jobs])
         self.assertIn("for the party to wake up", out)
         self.assertGreater(polls["n"], 3)
@@ -368,9 +369,9 @@ class BootErrors(unittest.TestCase):
 def _game_alive(test):
     """The game process "runs" for this test: load_game's retry stops when no bg3 process is left, and the real
     check reads this machine's /proc (red whenever the game happened to be down, 2026-10-10 21:00)."""
-    orig = server._game_process_alive
-    test.addCleanup(setattr, server, "_game_process_alive", orig)
-    server._game_process_alive = lambda: True
+    orig = saving._game_process_alive
+    test.addCleanup(setattr, saving, "_game_process_alive", orig)
+    saving._game_process_alive = lambda: True
 
 
 class WorldUuid(unittest.TestCase):
@@ -382,22 +383,22 @@ class WorldUuid(unittest.TestCase):
         class G:
             def try_rpc(self, op, args=None, context="server"):
                 return {"state.inventory": {"items": inv}, "state.nearby": nearby}.get(op)
-        orig = (server.game, server.H)
-        server.game, server.H = G(), server.Handles()
-        self.addCleanup(lambda: (setattr(server, "game", orig[0]), setattr(server, "H", orig[1])))
+        orig = (core.game, core.H)
+        core.game, core.H = G(), Handles()
+        self.addCleanup(lambda: (setattr(core, "game", orig[0]), setattr(core, "H", orig[1])))
         return test
 
     def test_carried_namesakes_skipped(self):
         self.use([{"uuid": "g1", "name": "Umbral Gem", "owner": P1}, {"uuid": "g2", "name": "Umbral Gem", "owner": P1}],
                  {"items": [{"uuid": "g3", "name": "Umbral Gem"}]})
-        server.H.get("g1", "Umbral Gem"), server.H.get("g2", "Umbral Gem"), server.H.get("g3", "Umbral Gem")
-        self.assertEqual(server._world_uuid("Umbral Gem"), "g3")
+        core.H.get("g1", "Umbral Gem"), core.H.get("g2", "Umbral Gem"), core.H.get("g3", "Umbral Gem")
+        self.assertEqual(plumbing._world_uuid("Umbral Gem"), "g3")
 
     def test_only_carried_says_who_holds_it(self):
         self.use([{"uuid": "g1", "name": "Umbral Gem", "owner": P1}], {"items": []})
-        server.H.get("g1", "Umbral Gem")
+        core.H.get("g1", "Umbral Gem")
         with self.assertRaises(ValueError) as cm:
-            server._world_uuid("Umbral Gem")
+            plumbing._world_uuid("Umbral Gem")
         self.assertIn("the party carries it", str(cm.exception))
 
 
@@ -418,23 +419,23 @@ class ConfirmReward(unittest.TestCase):
 
             def drain_events(self, ctx):
                 return []
-        orig = server.game
-        server.game = G()
-        self.addCleanup(setattr, server, "game", orig)
+        orig = core.game
+        core.game = G()
+        self.addCleanup(setattr, core, "game", orig)
         return calls
 
     def test_accept_takes_the_reward(self):
         calls = self.use("reward")
-        out = server.confirm("Accept")
+        out = uitools.confirm("Accept")
         self.assertIn("ui.dismiss", calls)
         self.assertIn("confirm: done — the Reward panel", out)
 
     def test_no_leaves_it(self):
         calls = self.use("reward")
-        orig = server._box_act
-        server._box_act = lambda *a, **k: "FAILED: no confirmation box is open"
-        self.addCleanup(setattr, server, "_box_act", orig)
-        server.confirm("no")
+        orig = world_tools._box_act
+        world_tools._box_act = lambda *a, **k: "FAILED: no confirmation box is open"
+        self.addCleanup(setattr, world_tools, "_box_act", orig)
+        uitools.confirm("no")
         self.assertNotIn("ui.dismiss", calls)
 
 
@@ -475,14 +476,14 @@ class FastTravelReadyCheck(unittest.TestCase):
             def drain_events(self, ctx):
                 return []
         g = G()
-        saved = (server.game, server._watch_game, server._leave_camp_first, server._travel_block)
-        self.addCleanup(lambda: (setattr(server, "game", saved[0]), setattr(server, "_watch_game", saved[1]),
-                                 setattr(server, "_leave_camp_first", saved[2]), setattr(server, "_travel_block", saved[3])))
-        server.game, server._watch_game = g, g
-        server._leave_camp_first = lambda: ""
-        server._travel_block = lambda *a, **k: {}
+        saved = (core.game, queueing._watch_game, travel._leave_camp_first, travel._travel_block)
+        self.addCleanup(lambda: (setattr(core, "game", saved[0]), setattr(queueing, "_watch_game", saved[1]),
+                                 setattr(travel, "_leave_camp_first", saved[2]), setattr(travel, "_travel_block", saved[3])))
+        core.game, queueing._watch_game = g, g
+        travel._leave_camp_first = lambda: ""
+        travel._travel_block = lambda *a, **k: {}
         t0 = time.monotonic()
-        out = server.fast_travel("Waukeen's Rest")
+        out = travel.fast_travel("Waukeen's Rest")
         return out, time.monotonic() - t0, keys
 
     def test_ready_check_failure_ends_the_wait(self):
@@ -498,7 +499,7 @@ class FastTravelReadyCheck(unittest.TestCase):
         self.assertEqual(keys, [])
 
     def test_check_ignores_other_steps(self):
-        w = server._ReadyCheckWatch()
+        w = travel._ReadyCheckWatch()
         w._seq = 0
         self.assertFalse(w.check({"events": [{"seq": 1, "kind": "rest_flow", "data": {"step": "ready_ok:X"}}]}))
         self.assertTrue(w.check({"events": [{"seq": 2, "kind": "rest_flow", "data": {"step": "ready_failed:Y"}}]}))
@@ -519,34 +520,34 @@ class GameProcessAlive(unittest.TestCase):
         return d
 
     def test_parent_and_game(self):
-        self.assertTrue(server._game_process_alive(self._proc([(10, "bg3", 60), (11, "bg3", 4800), (12, "bash", 5)])))
+        self.assertTrue(saving._game_process_alive(self._proc([(10, "bg3", 60), (11, "bg3", 4800), (12, "bash", 5)])))
 
     def test_lingering_parent_only(self):
-        self.assertFalse(server._game_process_alive(self._proc([(10, "bg3", 60), (12, "bash", 5)])))
+        self.assertFalse(saving._game_process_alive(self._proc([(10, "bg3", 60), (12, "bash", 5)])))
 
     def test_zombie_game_child(self):
-        self.assertFalse(server._game_process_alive(self._proc([(10, "bg3", 60), (11, "bg3", None)])))
+        self.assertFalse(saving._game_process_alive(self._proc([(10, "bg3", 60), (11, "bg3", None)])))
 
     def test_no_proc(self):
-        self.assertIsNone(server._game_process_alive(Path("/nonexistent-proc")))
+        self.assertIsNone(saving._game_process_alive(Path("/nonexistent-proc")))
 
 
 class LoadCrash(unittest.TestCase):
     def test_process_gone_fails_at_once(self):
         alive = iter([True] + [False] * 50)
-        orig_pt = server.PLAYTHROUGH
-        server.PLAYTHROUGH = "test"
-        self.addCleanup(setattr, server, "PLAYTHROUGH", orig_pt)
-        orig = (server.game, server._game_process_alive, server.SAVE_DIR, server.SAVE_PREFIX, server.time.sleep)
-        self.addCleanup(lambda: (setattr(server, "game", orig[0]), setattr(server, "_game_process_alive", orig[1]),
-                                 setattr(server, "SAVE_DIR", orig[2]), setattr(server, "SAVE_PREFIX", orig[3]),
-                                 setattr(server.time, "sleep", orig[4])))
+        orig_pt = saving.PLAYTHROUGH
+        saving.PLAYTHROUGH = "test"
+        self.addCleanup(setattr, saving, "PLAYTHROUGH", orig_pt)
+        orig = (core.game, saving._game_process_alive, core.SAVE_DIR, saving.SAVE_PREFIX, time.sleep)
+        self.addCleanup(lambda: (setattr(core, "game", orig[0]), setattr(saving, "_game_process_alive", orig[1]),
+                                 setattr(core, "SAVE_DIR", orig[2]), setattr(saving, "SAVE_PREFIX", orig[3]),
+                                 setattr(time, "sleep", orig[4])))
         import tempfile
         d = Path(tempfile.mkdtemp())
         (d / "Claude-1__LIVETEST-se").mkdir()
-        server.SAVE_DIR, server.SAVE_PREFIX = d, "Claude-"
-        server._game_process_alive = lambda: next(alive)
-        server.time.sleep = lambda s: None
+        core.SAVE_DIR, saving.SAVE_PREFIX = d, "Claude-"
+        saving._game_process_alive = lambda: next(alive)
+        time.sleep = lambda s: None
 
         class G(Fake):
             def game_state(self):
@@ -558,21 +559,21 @@ class LoadCrash(unittest.TestCase):
             def run_job(self, op, args, context="server", wait_s=25.0, **kw):
                 return JobResult(status="done", result={"loading": True})
 
-        server.game = G(["game"])
+        core.game = G(["game"])
         t0 = time.monotonic()
-        out = getattr(server.load_game, "fn", server.load_game)("LIVETEST-se")
+        out = getattr(saving.load_game, "fn", saving.load_game)("LIVETEST-se")
         self.assertLess(time.monotonic() - t0, 5)
         self.assertIn("CRASHED", out)
 
     def test_load_that_never_starts_fails_and_closes_the_page(self):
-        orig = (server.game, server.SAVE_DIR, server.SAVE_PREFIX, server.PLAYTHROUGH, server.LOAD_START_S)
-        self.addCleanup(lambda: (setattr(server, "game", orig[0]), setattr(server, "SAVE_DIR", orig[1]),
-                                 setattr(server, "SAVE_PREFIX", orig[2]), setattr(server, "PLAYTHROUGH", orig[3]),
-                                 setattr(server, "LOAD_START_S", orig[4])))
+        orig = (core.game, core.SAVE_DIR, saving.SAVE_PREFIX, saving.PLAYTHROUGH, saving.LOAD_START_S)
+        self.addCleanup(lambda: (setattr(core, "game", orig[0]), setattr(core, "SAVE_DIR", orig[1]),
+                                 setattr(saving, "SAVE_PREFIX", orig[2]), setattr(saving, "PLAYTHROUGH", orig[3]),
+                                 setattr(saving, "LOAD_START_S", orig[4])))
         import tempfile
         d = Path(tempfile.mkdtemp())
         (d / "Claude-1__LIVETEST-se").mkdir()
-        server.SAVE_DIR, server.SAVE_PREFIX, server.PLAYTHROUGH, server.LOAD_START_S = d, "Claude-", "t", 0.5
+        core.SAVE_DIR, saving.SAVE_PREFIX, saving.PLAYTHROUGH, saving.LOAD_START_S = d, "Claude-", "t", 0.5
         _game_alive(self)
 
         class G(Fake):
@@ -587,10 +588,10 @@ class LoadCrash(unittest.TestCase):
                 return JobResult(status="done", result={"pressed": "Load"})
 
         g = G(["save_load"])
-        server.game = g
-        out = getattr(server.load_game, "fn", server.load_game)("LIVETEST-se")
+        core.game = g
+        out = getattr(saving.load_game, "fn", saving.load_game)("LIVETEST-se")
         self.assertIn("didn't start a load", out)
-        self.assertEqual(g.presses, 1 + server.LOAD_RETRIES)  # pressed again before giving up
+        self.assertEqual(g.presses, 1 + saving.LOAD_RETRIES)  # pressed again before giving up
         self.assertEqual(g.keys, ["ESCAPE", "ESCAPE"])  # the page is closed only at the end
 
 
@@ -599,18 +600,18 @@ class LoadVerified(unittest.TestCase):
     """load_game is done only when a load really happened: a new server Lua state and no Load page."""
 
     def run_load(self, boots, screens, states=None):
-        orig = (server.game, server.SAVE_DIR, server.SAVE_PREFIX, server.PLAYTHROUGH, server.time.sleep,
-                server.LOAD_START_S)
-        self.addCleanup(lambda: (setattr(server, "game", orig[0]), setattr(server, "SAVE_DIR", orig[1]),
-                                 setattr(server, "SAVE_PREFIX", orig[2]), setattr(server, "PLAYTHROUGH", orig[3]),
-                                 setattr(server.time, "sleep", orig[4]), setattr(server, "LOAD_START_S", orig[5])))
-        server.LOAD_START_S = 0.3
+        orig = (core.game, core.SAVE_DIR, saving.SAVE_PREFIX, saving.PLAYTHROUGH, time.sleep,
+                saving.LOAD_START_S)
+        self.addCleanup(lambda: (setattr(core, "game", orig[0]), setattr(core, "SAVE_DIR", orig[1]),
+                                 setattr(saving, "SAVE_PREFIX", orig[2]), setattr(saving, "PLAYTHROUGH", orig[3]),
+                                 setattr(time, "sleep", orig[4]), setattr(saving, "LOAD_START_S", orig[5])))
+        saving.LOAD_START_S = 0.3
         _game_alive(self)
         import tempfile
         d = Path(tempfile.mkdtemp())
         (d / "Claude-1__LIVETEST-se").mkdir()
-        server.SAVE_DIR, server.SAVE_PREFIX, server.PLAYTHROUGH = d, "Claude-", "t"
-        server.time.sleep = lambda s: None
+        core.SAVE_DIR, saving.SAVE_PREFIX, saving.PLAYTHROUGH = d, "Claude-", "t"
+        time.sleep = lambda s: None
         boots = list(boots)
         import itertools
         states = itertools.chain(states or ["LoadSession"], itertools.repeat("Running"))
@@ -634,8 +635,8 @@ class LoadVerified(unittest.TestCase):
                 return JobResult(status="done", result={"pressed": "Load"})
 
         self.g = G(screens)
-        server.game = self.g
-        return getattr(server.load_game, "fn", server.load_game)("LIVETEST-se")
+        core.game = self.g
+        return getattr(saving.load_game, "fn", saving.load_game)("LIVETEST-se")
 
     def test_new_boot_is_done(self):
         self.assertIn("load_game: done", self.run_load(["a", "b"], ["game"]))
@@ -647,7 +648,7 @@ class LoadVerified(unittest.TestCase):
     def test_load_page_still_up_fails(self):
         out = self.run_load(["a", "b"], ["save_load"])
         self.assertIn("nothing was loaded", out)  # page still up, then a 2nd press that didn't start either
-        self.assertEqual(self.g.presses, 1 + server.LOAD_RETRIES)
+        self.assertEqual(self.g.presses, 1 + saving.LOAD_RETRIES)
         self.assertEqual(self.g.keys, ["ESCAPE", "ESCAPE"])
 
     def test_press_that_did_nothing_is_pressed_again(self):
@@ -704,16 +705,16 @@ class InsertFake:
 
 class InsertItem(unittest.TestCase):
     def use(self, fake):
-        orig = server.game
-        server.game = fake
-        self.addCleanup(setattr, server, "game", orig)
-        server.H.get(InsertFake.ME, "Claude")
-        self.ped = server.H.get("cccccccc-0000-0000-0000-0000000000c1", "Riddle of the Night")
-        self.book = server.H.get(InsertFake.BOOK, "Teachings of Loss: The Nightsinger")
+        orig = core.game
+        core.game = fake
+        self.addCleanup(setattr, core, "game", orig)
+        core.H.get(InsertFake.ME, "Claude")
+        self.ped = core.H.get("cccccccc-0000-0000-0000-0000000000c1", "Riddle of the Night")
+        self.book = core.H.get(InsertFake.BOOK, "Teachings of Loss: The Nightsinger")
         return fake
 
     def call(self, **kw):
-        return getattr(server.insert_item, "fn", server.insert_item)(**kw)
+        return getattr(inventory.insert_item, "fn", inventory.insert_item)(**kw)
 
     def test_opens_the_panel_by_the_carrier_and_inserts(self):
         fake = self.use(InsertFake())
@@ -770,7 +771,7 @@ class InsertItem(unittest.TestCase):
                     return JobResult(status="done", result={})   # used, but the panel shows on nobody's screen
                 return super().run_job(op, args, context, wait_s, **kw)
 
-        h = server.H.get(sh, "Shadowheart")
+        h = core.H.get(sh, "Shadowheart")
         fake = self.use(Fake())
         out = self.call(item=self.book, into=self.ped, who=h)
         ops = [o for o, _, _ in fake.jobs]
@@ -793,7 +794,7 @@ class InsertItem(unittest.TestCase):
             try_rpc = rpc
 
         fake = self.use(Fake())
-        self.assertEqual(server._uuid("Riddle of the Tide"), ped)
+        self.assertEqual(plumbing._uuid("Riddle of the Tide"), ped)
         self.assertIn("items", fake.nearby_kinds)
 
     class AltarFake(InsertFake):
@@ -818,17 +819,17 @@ class InsertItem(unittest.TestCase):
 
     def test_insert_tries_the_object_at_the_same_spot(self):
         fake = self.use(self.AltarFake())
-        ped = server.H.get(self.AltarFake.PED, "Pedestal of Reckoning")
+        ped = core.H.get(self.AltarFake.PED, "Pedestal of Reckoning")
         out = self.call(item=self.book, into=ped)
         targets = [a.get("target") for o, a, _ in fake.jobs if o == "act.interact"]
         self.assertEqual(targets, [self.AltarFake.PED, self.AltarFake.ALTAR])
         self.assertIn("insert_item: done — inserted", out)
-        self.assertIn(f"the slot is on {server.H.get(self.AltarFake.ALTAR)} Ancient Altar", out)
+        self.assertIn(f"the slot is on {core.H.get(self.AltarFake.ALTAR)} Ancient Altar", out)
 
     def test_insert_that_opens_a_conversation_says_so_and_names_the_neighbour(self):
         fake = self.use(self.AltarFake())
-        ped = server.H.get(self.AltarFake.PED, "Pedestal of Reckoning")
-        orig = server._act
+        ped = core.H.get(self.AltarFake.PED, "Pedestal of Reckoning")
+        orig = plumbing._act
 
         def act(name, op, args, **kw):
             if op == "act.interact" and args.get("target") == self.AltarFake.PED:
@@ -836,14 +837,14 @@ class InsertItem(unittest.TestCase):
                 return "interact: done — used\nDIALOGUE Shadowheart: We have all the gems\n  1. Examine the altar."
             return orig(name, op, args, **kw)
 
-        server._act = act
-        self.addCleanup(setattr, server, "_act", orig)
+        plumbing._act = act
+        self.addCleanup(setattr, plumbing, "_act", orig)
         t = time.monotonic()
         out = self.call(item=self.book, into=ped)
         self.assertLess(time.monotonic() - t, 2.0)   # no 4 s poll for a panel once a conversation is up
         self.assertIn("opened a conversation instead", out)
         self.assertIn("1. Examine the altar.", out)
-        self.assertIn(f"insert_item(into={server.H.get(self.AltarFake.ALTAR)})", out)
+        self.assertIn(f"insert_item(into={core.H.get(self.AltarFake.ALTAR)})", out)
         self.assertEqual([a.get("target") for o, a, _ in fake.jobs if o == "act.interact"], [self.AltarFake.PED])
 
     def test_insert_that_closes_the_panel_says_closed(self):
@@ -878,7 +879,7 @@ class InsertItem(unittest.TestCase):
         self.assertNotIn("ESCAPE", out)
 
     def test_insert_screen_hint(self):
-        self.assertIn("insert_item", server._input_screen_text("insert"))
+        self.assertIn("insert_item", batch._input_screen_text("insert"))
 
 
 class WorldTarget(unittest.TestCase):
@@ -905,33 +906,33 @@ class WorldTarget(unittest.TestCase):
             return []
 
     def use(self, g):
-        saved, server.game = server.game, g
-        self.addCleanup(setattr, server, "game", saved)
+        saved, core.game = core.game, g
+        self.addCleanup(setattr, core, "game", saved)
         return g
 
     def setUp(self):
         self.name = f"Umbral Gem {self._testMethodName}"   # H is process-wide: a name of our own
-        server.H.get(self.SH, "Holder Shadowheart")   # unique names: H is shared, "Shadowheart" is taken elsewhere
-        server.H.get(self.ME, "Holder Claude")
+        core.H.get(self.SH, "Holder Shadowheart")   # unique names: H is shared, "Shadowheart" is taken elsewhere
+        core.H.get(self.ME, "Holder Claude")
         self.carried = [{"uuid": self.G1, "name": self.name, "owner": self.SH},
                         {"uuid": self.G2, "name": self.name, "owner": self.ME}]
-        server.H.get(self.G1, self.name)
-        server.H.get(self.G2, self.name)
+        core.H.get(self.G1, self.name)
+        core.H.get(self.G2, self.name)
 
     def test_carried_namesakes_skipped_for_the_one_on_the_floor(self):
-        server.H.get(self.G3, self.name)
+        core.H.get(self.G3, self.name)
         self.use(self.G(self.carried))
-        self.assertEqual(server._world_uuid(self.name), self.G3)
+        self.assertEqual(plumbing._world_uuid(self.name), self.G3)
 
     def test_only_carried_known_reads_nearby_once(self):
         g = self.use(self.G(self.carried, nearby=[{"uuid": self.G3, "name": self.name}]))
-        self.assertEqual(server._world_uuid(self.name), self.G3)
+        self.assertEqual(plumbing._world_uuid(self.name), self.G3)
         self.assertEqual(g.ops.count("state.nearby"), 1)
 
     def test_none_in_sight_says_who_carries_it(self):
         self.use(self.G(self.carried))
         with self.assertRaises(ValueError) as cm:
-            server._world_uuid(self.name)
+            plumbing._world_uuid(self.name)
         msg = str(cm.exception)
         self.assertIn("party carries it", msg)
         self.assertIn("by Holder Shadowheart", msg)
@@ -940,23 +941,23 @@ class WorldTarget(unittest.TestCase):
 
     def test_handle_is_taken_as_given(self):
         g = self.use(self.G(self.carried))
-        h = server.H.get(self.G2)
-        self.assertEqual(server._world_uuid(h), self.G2)
+        h = core.H.get(self.G2)
+        self.assertEqual(plumbing._world_uuid(h), self.G2)
         self.assertEqual(g.ops, [])
 
     def test_interact_keeps_a_unique_carried_item(self):
         g = self.use(self.G(self.carried))
         u = "11111111-0000-0000-0000-00000000ab09"
-        server.H.get(u, f"Book {self._testMethodName}")
-        self.assertEqual(server._interact_uuid(f"Book {self._testMethodName}"), u)
+        core.H.get(u, f"Book {self._testMethodName}")
+        self.assertEqual(plumbing._interact_uuid(f"Book {self._testMethodName}"), u)
         self.assertEqual(g.ops, [])
 
     def test_click_on_resolves_to_the_world_gem(self):
-        server.H.get(self.G3, self.name)
+        core.H.get(self.G3, self.name)
         self.use(self.G(self.carried))
         seen = {}
-        saved_inp, server._inp = server._inp, lambda: object()
-        self.addCleanup(setattr, server, "_inp", saved_inp)
+        saved_inp, world_tools._inp = world_tools._inp, lambda: object()
+        self.addCleanup(setattr, world_tools, "_inp", saved_inp)
         import bg3ai.clicker as clicker
 
         class CR:
@@ -968,7 +969,7 @@ class WorldTarget(unittest.TestCase):
         saved_ce = clicker.click_entity
         clicker.click_entity = lambda game, inp, u, b: seen.setdefault("u", u) and CR()
         self.addCleanup(setattr, clicker, "click_entity", saved_ce)
-        out = server.click_on(self.name)
+        out = world_tools.click_on(self.name)
         self.assertEqual(seen["u"], self.G3, out)
 
 
@@ -991,7 +992,7 @@ class LeftTrade(Base):
                                              if op == "act.move_to" and self.g.ui.get("screen") == "trade" else None)
 
     def test_action_refused_by_a_left_trade_closes_it_and_runs(self):
-        out = server._act("move_to", "act.move_to", {"char": P1, "pos": [5, 0, 0]})
+        out = plumbing._act("move_to", "act.move_to", {"char": P1, "pos": [5, 0, 0]})
         self.assertIn("(closed the trade window first)", out)
         self.assertNotIn("FAILED", out)
         self.assertEqual(len(self.g.ops("act.move_to")), 2)
@@ -999,7 +1000,7 @@ class LeftTrade(Base):
     def test_a_real_conversation_is_left_alone(self):
         self.g.ui = {"screen": "dialogue"}
         self.g.refuse_if = lambda op, args: "character is in a conversation (InDialog)" if op == "act.move_to" else None
-        out = server._act("move_to", "act.move_to", {"char": P1, "pos": [5, 0, 0]})
+        out = plumbing._act("move_to", "act.move_to", {"char": P1, "pos": [5, 0, 0]})
         self.assertIn("in a conversation", out)
         self.assertEqual([c for c in self.g.calls if c[0] == "ui.key"], [])
 
@@ -1010,9 +1011,9 @@ class CampAfterClosingTalk(Base):
 
     def setUp(self) -> None:
         super().setUp()
-        saved = (server._travel_block, server.CONVO_WAIT_S)
-        server._travel_block = lambda *a, **k: {}
-        self.addCleanup(lambda: (setattr(server, "_travel_block", saved[0]), setattr(server, "CONVO_WAIT_S", saved[1])))
+        saved = (travel._travel_block, macro_tools.CONVO_WAIT_S)
+        travel._travel_block = lambda *a, **k: {}
+        self.addCleanup(lambda: (setattr(travel, "_travel_block", saved[0]), setattr(macro_tools, "CONVO_WAIT_S", saved[1])))
         self.jobs, self.fails, self.screen = [], [2], "game"
         orig = self.g.try_rpc
 
@@ -1031,14 +1032,14 @@ class CampAfterClosingTalk(Base):
         self.g.run_job = run_job
 
     def test_waits_for_the_goodbye_line_then_goes(self):
-        with unittest.mock.patch.object(server.time, "sleep"):
-            out = server.camp()
+        with unittest.mock.patch.object(time, "sleep"):
+            out = travel.camp()
         self.assertNotIn("FAILED", out)
         self.assertEqual(self.jobs.count("act.go_to_camp"), 3)
 
     def test_open_dialogue_window_fails_at_once(self):
         self.screen = "dialogue"
-        out = server.camp()
+        out = travel.camp()
         self.assertIn("during a conversation", out)
         self.assertEqual(self.jobs.count("act.go_to_camp"), 1)
 
@@ -1054,8 +1055,8 @@ class CampAfterClosingTalk(Base):
                                                            "listening": True}}
             return orig(op, args, context=context, **kw)
         self.g.try_rpc = try_rpc
-        with unittest.mock.patch.object(server.time, "sleep"):
-            out = server.camp()
+        with unittest.mock.patch.object(time, "sleep"):
+            out = travel.camp()
         self.assertNotIn("FAILED", out)
         self.assertEqual(self.jobs.count("act.go_to_camp"), 3)
 
@@ -1064,7 +1065,7 @@ class CampAfterClosingTalk(Base):
         self.g.try_rpc = lambda op, args=None, context="server", **kw: (
             {"screen": "dialogue", "dialogue": {"options": [{"i": 1, "text": "Leave."}]}} if op == "ui.state"
             else orig(op, args, context=context, **kw))
-        out = server.camp()
+        out = travel.camp()
         self.assertIn("during a conversation", out)
         self.assertEqual(self.jobs.count("act.go_to_camp"), 1)
 
@@ -1081,9 +1082,9 @@ class ScreenshotMap(Base):
             def capture(self, max_width):
                 order.append("capture")
                 return b"jpg", PILImage.new("RGB", (8, 8))
-        saved = (server._screen, server.MAP_SHOT_SETTLE_S)
-        server._screen, server.MAP_SHOT_SETTLE_S = Cap(), 0.0
-        self.addCleanup(lambda: (setattr(server, "_screen", saved[0]), setattr(server, "MAP_SHOT_SETTLE_S", saved[1])))
+        saved = (core._screen, observe.MAP_SHOT_SETTLE_S)
+        core._screen, observe.MAP_SHOT_SETTLE_S = Cap(), 0.0
+        self.addCleanup(lambda: (setattr(core, "_screen", saved[0]), setattr(observe, "MAP_SHOT_SETTLE_S", saved[1])))
         self.opened = True
         orig = self.g.try_rpc
 
@@ -1103,7 +1104,7 @@ class ScreenshotMap(Base):
         self.g.run_job = run_job
 
     def fn(self, **kw):
-        f = getattr(server.screenshot, "fn", server.screenshot)
+        f = getattr(observe.screenshot, "fn", observe.screenshot)
         return f(**kw)
 
     def test_opens_captures_closes(self):
@@ -1130,7 +1131,7 @@ class ScreenshotMap(Base):
         # live 20261017-145354: acceptance.py's bridge ran on runtime/acceptance/rt and waited for the PNG in
         # rt/shots while the game wrote into runtime/shots: "game did not present a frame in time"
         made = []
-        server._screen = None
+        core._screen = None
         with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": "/game/runtime/shots"}), \
                 unittest.mock.patch("bg3ai.screen.ScreenCapture", side_effect=lambda d: made.append(d)):
             try:
@@ -1139,7 +1140,7 @@ class ScreenshotMap(Base):
                 pass
         self.assertEqual(made, [Path("/game/runtime/shots")])
         with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": ""}):
-            self.assertEqual(server._shots_dir(), server.RUNTIME / "shots")
+            self.assertEqual(observe._shots_dir(), core.RUNTIME / "shots")
 
 
 class DoorOpenState(unittest.TestCase):
@@ -1147,7 +1148,7 @@ class DoorOpenState(unittest.TestCase):
 
     def test_door_shows_open_or_closed(self):
         from bg3ai import render
-        H = server.H
+        H = core.H
         n = {"items": [{"uuid": "d00r0000-0000-0000-0000-000000000001", "name": "Control Centre", "kind": "door",
                         "dist": 4.5, "open": True},
                        {"uuid": "d00r0000-0000-0000-0000-000000000002", "name": "Cell Door", "kind": "door",

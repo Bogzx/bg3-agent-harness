@@ -645,7 +645,7 @@ def run_all(names: list[str], g, tools_fn, calls: int, budget: float, verbose: b
 
 
 def server_tools() -> dict[str, Callable[[], str]]:
-    from bg3ai import server as S
+    from server_view import S
     return {"look": S.look, "get_status": S.get_status, "get_nearby": S.get_nearby}
 
 

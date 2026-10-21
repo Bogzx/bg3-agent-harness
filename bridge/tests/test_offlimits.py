@@ -18,7 +18,8 @@ from test_turn_macros import (  # sets BG3AI_RUNTIME before importing server
     Base,
 )
 
-from bg3ai import offlimits, server
+from bg3ai import offlimits
+from bg3ai.tools import core, reporting, observe, world_tools
 
 LEVEL = "CTY_Main_A"
 MOFTY = "12121212-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -91,29 +92,29 @@ class Tracker(unittest.TestCase):
 class Walks(Base):
     def setUp(self) -> None:
         super().setUp()
-        saved, server.OFFLIMITS = server.OFFLIMITS, offlimits.OffLimits()
-        self.addCleanup(setattr, server, "OFFLIMITS", saved)
+        saved, reporting.OFFLIMITS = reporting.OFFLIMITS, offlimits.OffLimits()
+        self.addCleanup(setattr, reporting, "OFFLIMITS", saved)
 
     def warn(self) -> str:
         self.g.push("dialogue_started", talk(DADGER, "Cashguard Artillerist Dadger", [-111.0, 4.0, -177.0])["data"])
         self.g.push("dialogue_line", {"speaker": "Narrator", "text": OFF})
-        return server._events_text()
+        return core._events_text()
 
     def test_a_warned_area_goes_to_every_walk_and_the_events_dont_show_where(self):
-        server.move_to(x=1, y=0, z=1)
+        world_tools.move_to(x=1, y=0, z=1)
         self.assertNotIn("avoid", self.g.ops("act.move_to")[-1][1])  # nothing warned yet
         shown = self.warn()
         self.assertIn("dialogue_started", shown)
         self.assertNotIn("at=", shown)
         self.assertNotIn(LEVEL, shown)
-        server.move_to(x=1, y=0, z=1)
+        world_tools.move_to(x=1, y=0, z=1)
         avoid = self.g.ops("act.move_to")[-1][1]["avoid"]
         self.assertEqual([a["name"] for a in avoid],
                          ["the off-limits area by Cashguard Artillerist Dadger (-111,4,-177)"])
 
     def test_trespass_true_walks_without_it(self):
         self.warn()
-        server.move_to(x=1, y=0, z=1, trespass=True)
+        world_tools.move_to(x=1, y=0, z=1, trespass=True)
         args = self.g.ops("act.move_to")[-1][1]
         self.assertTrue(args["trespass"])
         self.assertNotIn("avoid", args)
@@ -130,7 +131,7 @@ class Walks(Base):
                 return {"level": LEVEL, "active": P1, "party": [{"uuid": P1, "name": "Claude"}]}
             return base(op, args, context, timeout)
         self.g.rpc = rpc
-        out = server.route(x=-122.0, y=4.0, z=-177.0)
+        out = observe.route(x=-122.0, y=4.0, z=-177.0)
         self.assertIn("avoiding the off-limits area by Cashguard Artillerist Dadger (-111,4,-177) you were warned"
                       " about", out)
 

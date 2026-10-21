@@ -463,18 +463,18 @@ class Recording(unittest.TestCase):
 
 class ServerHook(unittest.TestCase):
     def test_every_tool_call_is_recorded(self):
-        from bg3ai import server
+        from bg3ai.tools import core, overview, observe
         from test_objectives import FakeGame
 
         with tempfile.TemporaryDirectory() as d:
-            orig_game, orig_m = server.game, server.METRICS
-            server.METRICS = M.Recorder(Path(d) / "m.jsonl")
-            server.game = FakeGame()
+            orig_game, orig_m = core.game, core.METRICS
+            core.METRICS = M.Recorder(Path(d) / "m.jsonl")
+            core.game = FakeGame()
             try:
-                server.get_status()
-                server.walk_toward(direction="W", wait=True)
+                overview.get_status()
+                observe.walk_toward(direction="W", wait=True)
             finally:
-                server.game, server.METRICS = orig_game, orig_m
+                core.game, core.METRICS = orig_game, orig_m
             recs = M.read_jsonl(Path(d) / "m.jsonl")
             self.assertEqual([r["tool"] for r in recs], ["get_status", "walk_toward"])
             self.assertTrue(all(r["t1"] >= r["t0"] for r in recs))

@@ -15,7 +15,8 @@ from test_turn_macros import (  # noqa: F401  (sets BG3AI_RUNTIME before importi
     Base,
 )
 
-from bg3ai import render, server
+from bg3ai import render
+from bg3ai.tools import core, overview, world_tools
 
 PLATE = "a1a1a1a1-bbbb-cccc-dddd-eeeeeeeeeeee"
 
@@ -23,9 +24,9 @@ PLATE = "a1a1a1a1-bbbb-cccc-dddd-eeeeeeeeeeee"
 class PlateStep(Base):
     def setUp(self) -> None:
         super().setUp()
-        server._stay.clear()
-        self.addCleanup(server._stay.clear)
-        self.plate = server.H.get(PLATE, "Marble Plate")  # listed by get_nearby: the bridge knows its name
+        overview._stay.clear()
+        self.addCleanup(overview._stay.clear)
+        self.plate = core.H.get(PLATE, "Marble Plate")  # listed by get_nearby: the bridge knows its name
         base = self.g.rpc
 
         def rpc(op, args=None, context="server", timeout=12.0):
@@ -36,17 +37,17 @@ class PlateStep(Base):
         self.g.rpc = rpc
 
     def test_a_step_onto_a_plate_keeps_the_companions_put(self):
-        out = server.move_to(target=self.plate)
+        out = world_tools.move_to(target=self.plate)
         self.assertEqual([a["char"] for _, a in self.g.ops("act.unchain")], [P2])
-        self.assertIn(P2, server._stay)  # look/get_status don't re-chain her onto the plates
+        self.assertIn(P2, overview._stay)  # look/get_status don't re-chain her onto the plates
         self.assertIn("staying off the plates: e5 Lae'zel (regroup brings them back)", out)
         self.assertEqual(self.g.ops("act.move_to")[0][1]["target"], PLATE)
 
     def test_a_move_to_anything_else_leaves_the_party_as_it_is(self):
-        out = server.move_to(target=self.gob)
+        out = world_tools.move_to(target=self.gob)
         self.assertEqual(self.g.ops("act.unchain"), [])
         self.assertNotIn("staying off the plates", out)
-        self.assertEqual(server._stay, set())
+        self.assertEqual(overview._stay, set())
 
 
 class PlateListing(Base):
@@ -54,7 +55,7 @@ class PlateListing(Base):
         plates = [{"uuid": f"a{i}a1a1a1-bbbb-cccc-dddd-eeeeeeeeeeee", "name": "Marble Plate", "kind": "plate",
                    "dist": 2.0 + i} for i in range(4)]
         plates[1]["on"] = [P1]
-        out = render.render_nearby({"characters": [], "items": plates}, server.H)
+        out = render.render_nearby({"characters": [], "items": plates}, core.H)
         self.assertEqual(out.count("Marble Plate <plate>"), 4, out)  # one line each, never "(+3 more ...)"
         self.assertIn("Marble Plate <plate> 3m [on it: e4 Claude]", out)
         self.assertNotIn("scenery objects not listed", out)

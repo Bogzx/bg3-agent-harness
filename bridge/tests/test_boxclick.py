@@ -14,9 +14,10 @@ from pathlib import Path
 
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
-from bg3ai import boxclick, server  # noqa: E402
+from bg3ai import boxclick  # noqa: E402
+from bg3ai.tools import world_tools, inventory, uitools  # noqa: E402
 from bg3ai import game as game_mod
-from bg3ai.game import JobResult  # noqa: E402
+from bg3ai.game import JobResult, NotReady  # noqa: E402
 
 W, H = 1920, 1080
 YES = (780, 560, 900, 610)  # Yes button rect (px)
@@ -257,12 +258,12 @@ class BoxAct(Base):
         super().setUp()
         boxclick._hits.clear()
         self.scr = FakeScreen()
-        self.saved_inp = server._inp
-        server._inp = lambda: self.scr
-        self.addCleanup(setattr, server, "_inp", self.saved_inp)
+        self.saved_inp = world_tools._inp
+        world_tools._inp = lambda: self.scr
+        self.addCleanup(setattr, world_tools, "_inp", self.saved_inp)
         self.g.rpc = lambda op, args=None, context="server", **kw: self.scr.rpc(op, args or {})
-        self.addCleanup(setattr, server, "TRANSITION_SETTLE_S", server.TRANSITION_SETTLE_S)
-        server.TRANSITION_SETTLE_S = 0.0
+        self.addCleanup(setattr, world_tools, "TRANSITION_SETTLE_S", world_tools.TRANSITION_SETTLE_S)
+        world_tools.TRANSITION_SETTLE_S = 0.0
 
     def test_long_rest_clicks_and_reruns(self):
         calls = []
@@ -273,7 +274,7 @@ class BoxAct(Base):
                 return JobResult("failed", {"needs_click": "yes"}, "the Yes press didn't close the game's question")
             return JobResult("done", {"rest": "full", "supplies_used": 40})
         self.g.run_job = run_job
-        out = server.long_rest()
+        out = inventory.long_rest()
         self.assertEqual(calls, ["ui.long_rest", "ui.long_rest"])
         self.assertEqual(self.scr.pressed, "Yes")
         # S033 18:36:20: a "(the button press didn't land: clicked Yes …)" prefix on a SUCCESS read as a failure;
@@ -284,7 +285,7 @@ class BoxAct(Base):
     def test_long_rest_no_click_without_needs_click(self):
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult(
             "failed", None, "not at camp")
-        out = server.long_rest()
+        out = inventory.long_rest()
         self.assertEqual(self.scr.clicks, [])
         self.assertIn("not at camp", out)
 
@@ -292,7 +293,7 @@ class BoxAct(Base):
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult(
             "done", {"pressed": "No", "via": "command", "still_open": True, "needs_click": "no",
                      "buttons": ["Yes", "No"]})
-        out = server.confirm("no")
+        out = uitools.confirm("no")
         self.assertEqual(self.scr.pressed, "No")
         self.assertIn("confirm: done", out)
         self.assertIn("clicked No", out)
@@ -300,7 +301,7 @@ class BoxAct(Base):
     def test_confirm_normal_untouched(self):
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult(
             "done", {"pressed": "Yes", "buttons": ["Yes", "No"]})
-        out = server.confirm("yes")
+        out = uitools.confirm("yes")
         self.assertEqual(self.scr.clicks, [])
         self.assertIn("pressed=Yes", out)
 
@@ -313,12 +314,12 @@ class RestTransition(Base):
         super().setUp()
         boxclick._hits.clear()
         self.scr = FakeScreen()
-        self.saved_inp = server._inp
-        server._inp = lambda: self.scr
-        self.addCleanup(setattr, server, "_inp", self.saved_inp)
+        self.saved_inp = world_tools._inp
+        world_tools._inp = lambda: self.scr
+        self.addCleanup(setattr, world_tools, "_inp", self.saved_inp)
         for k, v in (("TRANSITION_POLL_S", 0.0), ("TRANSITION_SETTLE_S", 0.0)):
-            self.addCleanup(setattr, server, k, getattr(server, k))
-            setattr(server, k, v)
+            self.addCleanup(setattr, world_tools, k, getattr(world_tools, k))
+            setattr(world_tools, k, v)
         self.addCleanup(game_mod.release_client)
         self.clicked = False
         orig = self.scr.click
@@ -343,7 +344,7 @@ class RestTransition(Base):
             if op == "sys.info":
                 st = self.state.pop(0) if len(self.state) > 1 else self.state[0]
                 if st is None:
-                    raise server.NotReady("loading")
+                    raise NotReady("loading")
                 return {"game_state": st}
             if op == "camp.rest_flow":
                 return self.flow.pop(0) if len(self.flow) > 1 else self.flow[0]
@@ -366,7 +367,7 @@ class RestTransition(Base):
         return self.log[i:]
 
     def test_s086_long_rest_waits_on_the_server_only_after_the_click(self):
-        out = server.long_rest()
+        out = inventory.long_rest()
         self.assertEqual(self.scr.pressed, "Yes")
         self.assertTrue(out.startswith("long_rest: done"), out)
         self.assertEqual([op for op, _ in self.jobs], ["ui.long_rest", "ui.long_rest"])
@@ -375,26 +376,26 @@ class RestTransition(Base):
         self.assertEqual({c for _op, c, _h in after if _h}, {"server"}, after)
         self.assertNotIn("ui.box_open", [op for op, _c, _h in self.log])
         self.assertIn("camp.rest_flow", [op for op, _c, _h in after])
-        self.assertEqual(server._TRANSITION_LAST.get("transition"), "the game answered (end_day_ok)")
+        self.assertEqual(world_tools._TRANSITION_LAST.get("transition"), "the game answered (end_day_ok)")
         self.assertEqual(game_mod.client_held(), "")
 
     def test_s086_a_camp_scene_after_the_yes_stops_without_reading_the_ui(self):
         self.flow = [{"steps": [], "can_rest": {"blocked": [{"name": "Claude", "flags": ["Dialog"]}]}}]
-        out = server.long_rest()
+        out = inventory.long_rest()
         self.assertEqual([op for op, _ in self.jobs], ["ui.long_rest"])
         self.assertIn("a conversation started (a camp scene)", out)
         self.assertTrue(out.startswith("long_rest: STOPPED"), out)
 
     def test_a_load_back_to_running_ends_the_wait(self):
         self.state = ["Running", "UnloadLevel", None, "LoadLevel", "Running"]
-        r = server._transition_wait("fast_travel")
+        r = world_tools._transition_wait("fast_travel")
         self.assertEqual(r["transition"], "the game loaded")
 
     def test_no_word_from_the_game_goes_on_after_the_budget(self):
         self.flow = [{"steps": ["requested", "gathered"]}]
-        self.addCleanup(setattr, server, "TRANSITION_MAX_S", server.TRANSITION_MAX_S)
-        server.TRANSITION_MAX_S = 0.05
-        r = server._transition_wait("long_rest")
+        self.addCleanup(setattr, world_tools, "TRANSITION_MAX_S", world_tools.TRANSITION_MAX_S)
+        world_tools.TRANSITION_MAX_S = 0.05
+        r = world_tools._transition_wait("long_rest")
         self.assertEqual(r["transition"], "no word from the game")
 
     def test_the_hold_refuses_client_evals_at_once(self):
@@ -424,18 +425,18 @@ class ClickButton(Base):
 
             def click(self, x, y, button="L", count=1, sync=True):
                 test.ops.append(("click", button, x, y))
-        saved = server._inp
-        server._inp = lambda: Inp()
-        self.addCleanup(setattr, server, "_inp", saved)
+        saved = world_tools._inp
+        world_tools._inp = lambda: Inp()
+        self.addCleanup(setattr, world_tools, "_inp", saved)
 
     def test_none_only_hovers(self):
-        out = server.click(0.5, 0.5, "none")
+        out = uitools.click(0.5, 0.5, "none")
         self.assertEqual(self.ops, [("move", 500, 250)])
         self.assertIn("nothing clicked", out)
 
     def test_left_and_right(self):
-        server.click(0.1, 0.2)
-        server.click(0.1, 0.2, "Right")
+        uitools.click(0.1, 0.2)
+        uitools.click(0.1, 0.2, "Right")
         self.assertEqual(self.ops, [("click", "L", 100, 100), ("click", "R", 100, 100)])
 
     def test_left_click_says_the_spell_now_in_hand(self):
@@ -445,14 +446,14 @@ class ClickButton(Base):
         saved = hotbar.cast_state
         hotbar.cast_state = lambda game, char: states.pop(0)
         self.addCleanup(setattr, hotbar, "cast_state", saved)
-        out = server.click(0.459, 0.93)
+        out = uitools.click(0.459, 0.93)
         self.assertIn("IN HAND: Projectile_NethereseOrbBlast", out)
         self.assertIn("press_key ESCAPE", out)
-        out = server.click(0.6, 0.4)
+        out = uitools.click(0.6, 0.4)
         self.assertNotIn("IN HAND", out)
         self.assertEqual(len(states), 0)
-        server.click(0.6, 0.4, "right")   # a right click or a hover reads nothing
-        server.click(0.6, 0.4, "none")
+        uitools.click(0.6, 0.4, "right")   # a right click or a hover reads nothing
+        uitools.click(0.6, 0.4, "none")
 
     def test_a_world_click_while_walking_is_no_spell_in_hand(self):
         # S086-r1 05:35-05:38 / S087 (14x): move clicks on the world read `IN HAND: a spell` (armed by a weak signal,
@@ -464,9 +465,9 @@ class ClickButton(Base):
         saved = hotbar.cast_state
         hotbar.cast_state = lambda game, char: states.pop(0)
         self.addCleanup(setattr, hotbar, "cast_state", saved)
-        self.assertNotIn("IN HAND", server.click(0.62, 0.2))
-        self.assertNotIn("IN HAND", server.click(0.47, 0.22))
-        self.assertIn("IN HAND: Target_CureWounds", server.click(0.5, 0.9))   # the upcast picker is open: a spell
+        self.assertNotIn("IN HAND", uitools.click(0.62, 0.2))
+        self.assertNotIn("IN HAND", uitools.click(0.47, 0.22))
+        self.assertIn("IN HAND: Target_CureWounds", uitools.click(0.5, 0.9))   # the upcast picker is open: a spell
 
     def test_the_spell_in_hand_is_named_from_the_server_map(self):
         # S091 11/11 `IN HAND: a spell` (Guiding Bolt, Magic Missile from the hotbar in the psyche): no id on the
@@ -484,16 +485,16 @@ class ClickButton(Base):
         for name, fn in (("cast_state", cast_state), ("server_map", lambda game, char: maps.get(char))):
             self.addCleanup(setattr, hotbar, name, getattr(hotbar, name))
             setattr(hotbar, name, fn)
-        out = server.click(0.603, 0.93)
+        out = uitools.click(0.603, 0.93)
         self.assertIn("IN HAND: Magic Missile (the next left click", out)
         self.assertEqual(calls, [(None, None), ("c-gale", maps["c-gale"])])
         maps.clear()   # no server map either: still in hand, unnamed
         calls.clear()
-        self.assertIn("IN HAND: a spell", server.click(0.75, 0.55))
+        self.assertIn("IN HAND: a spell", uitools.click(0.75, 0.55))
         self.assertEqual(calls, [(None, None)])
 
     def test_unknown_button_refused(self):
-        out = server.click(0.1, 0.2, "middle")
+        out = uitools.click(0.1, 0.2, "middle")
         self.assertEqual(self.ops, [])
         self.assertIn("unknown button", out)
 

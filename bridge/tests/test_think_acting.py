@@ -12,7 +12,7 @@ import unittest
 
 from test_turn_macros import GOB, P1, P2, Base, combat  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
-from bg3ai import server
+from bg3ai.tools import core, plumbing, overview, observe, combat as combat_tools, batch, turn_plan, turn_tool
 
 TRANSPONDER = {"label": "Transponder", "quest": "Escape the Nautiloid", "pos": [30.0, 0.0, 0.0], "dist": 30.0,
                "dir": "E", "here": True}
@@ -34,16 +34,16 @@ class Fight(Base):
         self.g.rpc = rpc
 
     def markers(self, *ms: dict) -> None:
-        server._objectives["last"] = []
-        server._objective_ids.clear()
+        overview._objectives["last"] = []
+        overview._objective_ids.clear()
 
         def read(max_age=0.0):
             out = [dict(m) for m in ms]
-            server._set_objectives(out)
+            overview._set_objectives(out)
             return out
-        orig = server._objective_markers
-        server._objective_markers = read
-        self.addCleanup(setattr, server, "_objective_markers", orig)
+        orig = overview._objective_markers
+        overview._objective_markers = read
+        self.addCleanup(setattr, overview, "_objective_markers", orig)
         read()
 
     def moves(self) -> list[dict]:
@@ -62,7 +62,7 @@ class MoveToObjective(Fight):
         self.g.reach = reach_toward
         self.g.refuse_if = lambda op, a: ("destination is beyond remaining movement (path 33.2 m, 9.0 m left)"
                                           if op == "act.move_to" and a.get("pos") == [20.0, 0.0, 0.0] else None)
-        out = server.combat_turn(json.dumps({"move": "o1", "action": ["Shout_Dash"]}), end=False)
+        out = turn_tool.combat_turn(json.dumps({"move": "o1", "action": ["Shout_Dash"]}), end=False)
         self.assertNotIn("objective marker", out)
         self.assertEqual(reach[0]["pos"], [30.0, 0.0, 0.0])  # toward the marker, a walkable spot first
         self.assertTrue(reach[0].get("loose"))
@@ -76,20 +76,20 @@ class MoveToObjective(Fight):
     def test_no_walkable_ground_toward_the_marker(self):
         self.markers(TRANSPONDER)
         self.g.reach = {"reachable": False}
-        out = server.combat_turn(json.dumps({"move": "o1"}), end=False)
+        out = turn_tool.combat_turn(json.dumps({"move": "o1"}), end=False)
         self.assertIn("move o1 (objective Transponder): no walkable ground toward it", out)
         self.assertEqual(self.moves(), [])
 
     def test_objective_in_another_area_still_fails(self):
         self.markers(dict(TRANSPONDER, here=False))
-        out = server.combat_turn(json.dumps({"move": "o1"}), end=False)
+        out = turn_tool.combat_turn(json.dumps({"move": "o1"}), end=False)
         self.assertIn("FAILED: objective o1 'Transponder' is not in this area", out)
 
     def test_switch_off_refuses_as_before(self):
         self.markers(TRANSPONDER)
-        old, server.TURN_MOVE_OBJECTIVE = server.TURN_MOVE_OBJECTIVE, False
-        self.addCleanup(setattr, server, "TURN_MOVE_OBJECTIVE", old)
-        out = server.combat_turn(json.dumps({"move": "o1"}), end=False)
+        old, turn_plan.TURN_MOVE_OBJECTIVE = turn_plan.TURN_MOVE_OBJECTIVE, False
+        self.addCleanup(setattr, turn_plan, "TURN_MOVE_OBJECTIVE", old)
+        out = turn_tool.combat_turn(json.dumps({"move": "o1"}), end=False)
         self.assertIn("is the objective marker 'Transponder'", out)
 
 
@@ -106,7 +106,7 @@ class PartialShrink(Fight):
             return None
         self.g.refuse_if = refuse
         self.g.reach = lambda a: {"reachable": True, "pos": [3.0, 0.0, 4.0] if a["max_m"] > 5 else [2.0, 0.0, 3.0]}
-        out = server.combat_turn(json.dumps({"move": self.gob}), end=False)
+        out = turn_tool.combat_turn(json.dumps({"move": self.gob}), end=False)
         # 5.2 m that needed 6.1 m: shorter in proportion, 5.2 × 5.2 / 6.1 = 4.4 (A6: was 5.2 − 0.6 − 0.3)
         self.assertEqual([round(a["max_m"], 1) for _, a in self.g.ops("nav.reach_toward")], [5.2, 4.4])
         self.assertEqual(self.moves()[-1]["pos"], [2.0, 0.0, 3.0])
@@ -126,7 +126,7 @@ class PartialShrink(Fight):
         self.g.refuse_if = refuse
         self.g.approach = lambda a: {"reachable": True, "limit": "movement", "walk_m": a.get("budget_m"),
                                      "pos": [1.5, 0.0, 0.5] if a.get("budget_m", 9) > 1.5 else [0.9, 0.0, 0.3]}
-        return server.combat_turn(json.dumps({"move": self.gob}), end=False)
+        return turn_tool.combat_turn(json.dumps({"move": self.gob}), end=False)
 
     def test_r3_a_short_walk_that_bends_retries_in_proportion(self):
         out = self.r3(second_ok=True)
@@ -142,12 +142,12 @@ class PartialShrink(Fight):
         self.assertNotIn("FAILED", out.split("→", 1)[1])
 
     def test_switch_off_keeps_the_one_try(self):
-        old, server.PARTIAL_SHRINK_RETRY = server.PARTIAL_SHRINK_RETRY, False
-        self.addCleanup(setattr, server, "PARTIAL_SHRINK_RETRY", old)
+        old, turn_plan.PARTIAL_SHRINK_RETRY = turn_plan.PARTIAL_SHRINK_RETRY, False
+        self.addCleanup(setattr, turn_plan, "PARTIAL_SHRINK_RETRY", old)
         self.g.refuse_if = lambda op, a: ("destination is beyond remaining movement (path 14.2 m, 5.5 m left)"
                                           if op == "act.move_to" else None)
         self.g.reach = {"reachable": True, "pos": [3.0, 0.0, 4.0]}
-        out = server.combat_turn(json.dumps({"move": self.gob}), end=False)
+        out = turn_tool.combat_turn(json.dumps({"move": self.gob}), end=False)
         self.assertEqual(len(self.g.ops("nav.reach_toward")), 1)
         self.assertIn("→ partial 5.2m toward it: FAILED", out)
 
@@ -157,13 +157,13 @@ class SpentTurn(Fight):
         # naut3-r2 #54: Tamsin's turn group stayed open after her attack, walk and end request; the same plan again
         self.g.refuse_if = lambda op, a: ("no movement left" if op == "act.move_to" else
                                           "not enough action" if op == "act.cast" else None)
-        out = server.combat_turn(json.dumps({"move": self.gob, "action": [{"ability": "Shout_Dash"}]}), end=False)
+        out = turn_tool.combat_turn(json.dumps({"move": self.gob, "action": [{"ability": "Shout_Dash"}]}), end=False)
         self.assertIn("no movement left", out)
         self.assertIn("both were spent earlier in this same turn (not a new turn)", out)
 
     def test_no_note_when_the_action_was_spent_by_this_plan(self):
         self.g.refuse_if = lambda op, a: "no movement left" if op == "act.move_to" else None
-        out = server.combat_turn(json.dumps({"move": self.gob, "action": [{"ability": "Shout_Dash"}]}), end=False)
+        out = turn_tool.combat_turn(json.dumps({"move": self.gob, "action": [{"ability": "Shout_Dash"}]}), end=False)
         self.assertNotIn("spent earlier", out)
 
 
@@ -176,38 +176,38 @@ class WhoInAFight(Fight):
 
     def test_left_out_who_is_the_member_acting_now(self):
         # naut2 run 1 19:59:10: use_ability Shout_Dash, no who → "FAILED — it is not this character's turn"
-        out = server.use_ability(ability="Shout_Dash")
+        out = combat_tools.use_ability(ability="Shout_Dash")
         self.assertEqual([a["char"] for _, a in self.g.ops("act.cast")], [P2])
         self.assertIn("whose turn it is; the selected", out)
         self.assertTrue(out.rstrip().endswith("can't act now)"))  # last: the result's own first word stays first
 
     def test_the_selected_member_acting_keeps_it(self):
         self.g.combat.update(current=P1, turn_group=[P1])
-        out = server.use_ability(ability="Shout_Dash")
+        out = combat_tools.use_ability(ability="Shout_Dash")
         self.assertEqual([a["char"] for _, a in self.g.ops("act.cast")], [P1])
         self.assertNotIn("whose turn it is", out)
 
     def test_two_acting_keeps_the_selection(self):
         self.g.combat.update(current=P2, turn_group=[P1, P2])
-        server.use_ability(ability="Shout_Dash")
+        combat_tools.use_ability(ability="Shout_Dash")
         self.assertEqual([a["char"] for _, a in self.g.ops("act.cast")], [P1])
 
     def test_out_of_combat_no_combat_read(self):
         self.g.combat = {"active": False}
         self.g.watch["combat"] = False
-        server.use_ability(ability="Shout_Dash")
+        combat_tools.use_ability(ability="Shout_Dash")
         self.assertEqual([a["char"] for _, a in self.g.ops("act.cast")], [P1])
         self.assertEqual(self.g.ops("state.combat"), [])
 
     def test_note_does_not_leak_into_the_next_call(self):
-        server.use_ability(ability="Shout_Dash")
-        out = server.use_ability(ability="Shout_Dash", who=server.H.get(P2))
+        combat_tools.use_ability(ability="Shout_Dash")
+        out = combat_tools.use_ability(ability="Shout_Dash", who=core.H.get(P2))
         self.assertNotIn("whose turn it is", out)
 
     def test_switch_off(self):
-        old, server.COMBAT_WHO_ACTING = server.COMBAT_WHO_ACTING, False
-        self.addCleanup(setattr, server, "COMBAT_WHO_ACTING", old)
-        server.use_ability(ability="Shout_Dash")
+        old, plumbing.COMBAT_WHO_ACTING = plumbing.COMBAT_WHO_ACTING, False
+        self.addCleanup(setattr, plumbing, "COMBAT_WHO_ACTING", old)
+        combat_tools.use_ability(ability="Shout_Dash")
         self.assertEqual([a["char"] for _, a in self.g.ops("act.cast")], [P1])
 
 
@@ -223,7 +223,7 @@ class WalkTowardClip(Fight):
                                   {"reachable": True, "pos": [8.1, 0.0, 0.0], "straight_m": 8.1})
         self.g.refuse_if = lambda op, a: ("destination is beyond remaining movement (path 9.6 m, 9.0 m left)"
                                           if op == "act.move_to" and a.get("pos") == [9.0, 0.0, 0.0] else None)
-        out = server.walk_toward(direction="E", max_m=9, wait=True)
+        out = observe.walk_toward(direction="E", max_m=9, wait=True)
         self.assertEqual([round(a["max_m"], 1) for _, a in self.g.ops("nav.reach_toward")], [9.0, 8.1])
         self.assertEqual([m["pos"] for m in self.moves()], [[9.0, 0.0, 0.0], [8.1, 0.0, 0.0]])
         self.assertIn("cut to the movement left (9m): 8.1m", out)
@@ -236,7 +236,7 @@ class WalkTowardClip(Fight):
         self.g.approach = {"reachable": True, "pos": [7.9, 0.0, 1.0], "walk_m": 8.7, "limit": "movement"}
         self.g.refuse_if = lambda op, a: ("destination is beyond remaining movement (path 9.6 m, 9.0 m left)"
                                           if op == "act.move_to" and a.get("pos") == [9.0, 0.0, 0.0] else None)
-        out = server.walk_toward(direction="E", max_m=9, wait=True)
+        out = observe.walk_toward(direction="E", max_m=9, wait=True)
         ap = [a for _, a in self.g.ops("nav.approach")]
         self.assertEqual((ap[-1]["pos"], ap[-1]["budget_m"]), ([9.0, 0.0, 0.0], 8.7))
         self.assertEqual(len(self.g.ops("nav.reach_toward")), 1)  # only the first pick
@@ -245,12 +245,12 @@ class WalkTowardClip(Fight):
         self.assertNotIn("FAILED", out)
 
     def test_switch_off_fails_as_before(self):
-        old, server.WALK_CLIP_MOVEMENT = server.WALK_CLIP_MOVEMENT, False
-        self.addCleanup(setattr, server, "WALK_CLIP_MOVEMENT", old)
+        old, observe.WALK_CLIP_MOVEMENT = observe.WALK_CLIP_MOVEMENT, False
+        self.addCleanup(setattr, observe, "WALK_CLIP_MOVEMENT", old)
         self.g.reach = {"reachable": True, "pos": [9.0, 0.0, 0.0], "straight_m": 9.0, "path_m": 9.6}
         self.g.refuse_if = lambda op, a: ("destination is beyond remaining movement (path 9.6 m, 9.0 m left)"
                                           if op == "act.move_to" else None)
-        out = server.walk_toward(direction="E", max_m=9, wait=True)
+        out = observe.walk_toward(direction="E", max_m=9, wait=True)
         self.assertIn("FAILED", out)
         self.assertEqual(len(self.moves()), 1)
 
@@ -258,8 +258,8 @@ class WalkTowardClip(Fight):
 class DoActionsDoc(unittest.TestCase):
     def test_travel_to_is_listed(self):
         # ACT-P5: _BATCHABLE has travel_to; the docstring's "Allowed:" list didn't say so
-        self.assertIn("travel_to", server._BATCHABLE)
-        allowed = server.do_actions.__doc__.split("Allowed:", 1)[1].split("\n", 1)[0]
+        self.assertIn("travel_to", batch._BATCHABLE)
+        allowed = batch.do_actions.__doc__.split("Allowed:", 1)[1].split("\n", 1)[0]
         self.assertIn("travel_to", allowed)
 
 

@@ -7,7 +7,8 @@ import unittest
 
 from test_turn_macros import Base, P1  # noqa: F401  (sets BG3AI_RUNTIME first)
 
-from bg3ai import render, route, server  # noqa: E402
+from bg3ai import longnav, render, route  # noqa: E402
+from bg3ai.tools import core, observe, batch, travel_macro  # noqa: E402
 
 LADDER = "11111111-2222-3333-4444-000000000070"
 DOOR = "11111111-2222-3333-4444-000000000040"
@@ -71,43 +72,43 @@ class RouteTool(Base):
     def test_go_travels_to_the_goal_or_the_closest_spot(self):
         """S023-S026: route then travel_to the same goal (17x) or its closest walkable spot (12x)."""
         seen = []
-        orig = server.travel_to
-        server.travel_to = lambda **kw: seen.append(kw) or "travel_to: started"
-        self.addCleanup(setattr, server, "travel_to", orig)
+        orig = travel_macro.travel_to
+        travel_macro.travel_to = lambda **kw: seen.append(kw) or "travel_to: started"
+        self.addCleanup(setattr, travel_macro, "travel_to", orig)
         self.reply = WITH_CLIMB
-        out = server.route(x=HELM[0], y=HELM[1], z=HELM[2], go=True)
+        out = observe.route(x=HELM[0], y=HELM[1], z=HELM[2], go=True)
         self.assertIn("GO travel_to: started", out)
         self.assertEqual(seen[-1], {"who": None, "x": HELM[0], "y": HELM[1], "z": HELM[2]})
         self.reply = UP_THERE
-        server.route(x=HELM[0], y=HELM[1], z=HELM[2], go=True)
+        observe.route(x=HELM[0], y=HELM[1], z=HELM[2], go=True)
         self.assertEqual(seen[-1], {"who": None, "x": -33.0, "y": 9.0, "z": -356.0})
         self.reply = dict(UP_THERE, closest=None)
-        self.assertIn("go: not started", server.route(x=1.0, y=2.0, z=3.0, go=True))
-        server.route(x=1.0, y=2.0, z=3.0)
+        self.assertIn("go: not started", observe.route(x=1.0, y=2.0, z=3.0, go=True))
+        observe.route(x=1.0, y=2.0, z=3.0)
         self.assertEqual(len(seen), 2)
 
     def test_unseen_goal_gets_the_straight_line_only(self):
         """Audit C1/C5 (user 2026-10-18): a goal the party hasn't seen or walked: distance and direction, no walk."""
         seen = []
-        orig = server.travel_to
-        server.travel_to = lambda **kw: seen.append(kw) or "travel_to: started"
-        self.addCleanup(setattr, server, "travel_to", orig)
+        orig = travel_macro.travel_to
+        travel_macro.travel_to = lambda **kw: seen.append(kw) or "travel_to: started"
+        self.addCleanup(setattr, travel_macro, "travel_to", orig)
         self.reply = {"from": [0.0, 0.0, 0.0], "goal": [-60.0, -8.0, 0.0], "straight_m": 60.5, "dir": "W", "dy": -8.0,
                       "unknown_goal": True}
-        out = server.route(x=-60.0, y=-8.0, z=0.0)
+        out = observe.route(x=-60.0, y=-8.0, z=0.0)
         self.assertIn("ROUTE to (-60,-8,0): 60.5m W, 8m below you", out)
         self.assertIn("not seen or walked yet: straight line only", out)
         for word in ("PATH", "CLOSEST walkable", "FLOORS", "path unknown"):
             self.assertNotIn(word, out)
         self.assertIn("NEXT: travel_to/walk_toward it (each leg ends on ground in view)", out)
-        self.assertIn("GO travel_to: started", server.route(x=-60.0, y=-8.0, z=0.0, go=True))
+        self.assertIn("GO travel_to: started", observe.route(x=-60.0, y=-8.0, z=0.0, go=True))
         self.assertEqual(seen[-1], {"who": None, "x": -60.0, "y": -8.0, "z": 0.0})
 
     def test_no_path_lists_the_open_directions(self):
         """S023 06:23: 8 guessed route calls across a chasm; the way on (a stone bridge) lay SW."""
         self.reply = dict(FIRE_MAZE, ways=[{"dir": "SW", "open_m": 20}, {"dir": "N", "open_m": 8, "dy": 3.1},
                                            {"dir": "E", "open_m": 0}])
-        out = server.route(x=-40.0, y=16.0, z=-431.0)
+        out = observe.route(x=-40.0, y=16.0, z=-431.0)
         self.assertIn("NO WALKABLE PATH", out)
         self.assertIn("WAYS walkable: SW 20m+, N 8m (3.1m up) | blocked: E", out)
 
@@ -120,16 +121,16 @@ class RouteTool(Base):
 
     def test_no_path_right_after_a_wall_opened_says_try_again(self):
         self.reply = dict(FIRE_MAZE, opened=self.opened(True))
-        out = server.route(x=-40.0, y=16.0, z=-431.0)
+        out = observe.route(x=-40.0, y=16.0, z=-431.0)
         self.assertIn("NO WALKABLE PATH", out)
         self.assertRegex(out, r"e\d+ Stone Wall opened 3s ago and may still be moving: this passage just opened, "
                               r"try again in a few seconds")
         self.g.reach = {"reachable": False, "samples": 9, "opened": self.opened(True)}
-        self.assertIn("this passage just opened, try again", server.walk_toward(direction="W"))
+        self.assertIn("this passage just opened, try again", observe.walk_toward(direction="W"))
         self.reply = dict(FIRE_MAZE, opened=self.opened(False))
-        self.assertRegex(server.route(x=-40.0, y=16.0, z=-431.0), r"\(searched after e\d+ Stone Wall opened 12s ago: up to date\)")
+        self.assertRegex(observe.route(x=-40.0, y=16.0, z=-431.0), r"\(searched after e\d+ Stone Wall opened 12s ago: up to date\)")
         self.reply = FIRE_MAZE
-        self.assertNotIn("opened", server.route(x=-40.0, y=16.0, z=-431.0))
+        self.assertNotIn("opened", observe.route(x=-40.0, y=16.0, z=-431.0))
 
     def test_dead_ends_from_before_a_wall_changed_no_longer_apply(self):
         gen = {"n": 0}
@@ -140,14 +141,14 @@ class RouteTool(Base):
                 return {"level": "BGO_Main_A", "geo_gen": gen["n"]}
             return orig(op, args, context, timeout)
         self.g.rpc = rpc
-        dead = server.longnav.DeadEnds(level=server._map_level)
+        dead = longnav.DeadEnds(level=batch._map_level)
         goal, at = [5.0, 11.7, -729.5], [11.8, 11.6, -729.3]
         dead.record(goal, at)
         dead.record(goal, at)
         self.assertEqual(dead.near(goal, at).count, 2)
         gen["n"] = 1   # the Stone Wall opened next to the party
         self.assertIsNone(dead.near(goal, at))
-        self.assertEqual(server._map_level(), "BGO_Main_A#1")
+        self.assertEqual(batch._map_level(), "BGO_Main_A#1")
 
     def test_pulled_up_ladder_is_no_way_up(self):
         # S059 08:56 Wyrm's Rock: e683's foot hung 5.7 m above the floor; route/frontier said "climbs 6.5m up"
@@ -155,8 +156,8 @@ class RouteTool(Base):
         res = copy.deepcopy(UP_THERE)
         res["connectors"][0]["raised_m"] = 5.7
         res["connectors"][1].pop("locked")
-        out = route.render_route(res, server.H, "it")
-        lad = server.H.get(LADDER, "Arterial Mesh")
+        out = route.render_route(res, core.H, "it")
+        lad = core.H.get(LADDER, "Arterial Mesh")
         self.assertIn(f"{lad} Arterial Mesh <ladder> 2.5m N climbs 9.4m up PULLED UP: its foot hangs 5.7m above the "
                       "floor, can't be climbed from below (lowered from above) walk 2.7m", out)
         self.assertNotIn(f"NEXT: interact {lad}", out)
@@ -164,10 +165,10 @@ class RouteTool(Base):
         fr = {"leads": [{"uuid": LADDER, "name": "Ladder", "kind": "ladder", "dist": 9.3, "dir": "S", "dy": 5.8,
                          "height_m": 6.5, "leads": "up", "to": [-23, 73.2, 190.1], "raised_m": 5.7}]}
         self.assertIn("climbs 6.5m up to (-23,73.2,190.1) PULLED UP: its foot hangs 5.7m",
-                      render.render_frontier(fr, server.H))
+                      render.render_frontier(fr, core.H))
 
     def test_goal_above_names_the_ladder_up(self):
-        out = server.route(objective="o1")
+        out = observe.route(objective="o1")
         args = self.g.ops("nav.route")[0][1]
         self.assertEqual(args["pos"], HELM)
         self.assertNotIn("char", args)  # the mod defaults to the active character: no extra state.status RPC
@@ -175,23 +176,23 @@ class RouteTool(Base):
         self.assertNotIn("FLOORS", out)  # audit C4: floors under/above read through solid ground
         self.assertIn("NO WALKABLE PATH", out)
         self.assertIn("CLOSEST walkable spot (-33,9,-356): 9.3m from the goal, 9.2m below it", out)
-        lad = server.H.get(LADDER, "Arterial Mesh")
+        lad = core.H.get(LADDER, "Arterial Mesh")
         self.assertIn(f"{lad} Arterial Mesh <ladder> 2.5m N climbs 9.4m up [interact to climb] walk 2.7m", out)
         self.assertIn("LOCKED", out)
         self.assertIn(f"NEXT: interact {lad} (ladder up), then route again", out)
 
     def test_objective_by_words_and_target_id(self):
-        server.route(objective="helm")
+        observe.route(objective="helm")
         self.assertEqual(self.g.ops("nav.route")[-1][1]["pos"], HELM)
-        door = server.H.get(DOOR, "Sphincter")
-        server.route(target=door)
+        door = core.H.get(DOOR, "Sphincter")
+        observe.route(target=door)
         self.assertEqual(self.g.ops("nav.route")[-1][1]["target"], DOOR)
-        server.route(x=1.0, y=2.0, z=3.0, connectors=True)
+        observe.route(x=1.0, y=2.0, z=3.0, connectors=True)
         self.assertEqual(self.g.ops("nav.route")[-1][1], {"pos": [1.0, 2.0, 3.0], "connectors": True})
 
     def test_path_with_a_climb_lists_legs_and_the_link(self):
         self.reply = WITH_CLIMB
-        out = server.route(objective="o1")
+        out = observe.route(objective="o1")
         self.assertIn("PATH 16.4m, with a climb (9.2m up) at 4m", out)
         self.assertIn("  1. 4m N", out)
         self.assertIn("  2. CLIMB 9.2m up to (-38,18.2,-357.5)", out)
@@ -200,16 +201,16 @@ class RouteTool(Base):
 
     def test_fire_maze_points_to_the_closest_spot_and_crossing(self):
         self.reply = FIRE_MAZE
-        out = server.route(x=-40.0, y=16.0, z=-431.0)
+        out = observe.route(x=-40.0, y=16.0, z=-431.0)
         self.assertIn("NO WALKABLE PATH (the straight line crosses 3m of Fire (~1-4 dmg + Burning) at 6m)", out)
         self.assertIn("NEXT: travel_to x,y,z = (-24,18,-428) (the closest walkable spot); the rest crosses 3m of Fire", out)
 
     def test_no_goal_is_a_readable_failure(self):
-        self.assertTrue(server.route().startswith("FAILED: give objective=o1"))
+        self.assertTrue(observe.route().startswith("FAILED: give objective=o1"))
 
     def test_walk_toward_objective_failure_says_the_way(self):
         self.g.reach = {"reachable": False, "samples": 6}
-        out = server.walk_toward(objective="o1")
+        out = observe.walk_toward(objective="o1")
         self.assertIn("FAILED: no walkable ground toward objective Helm within 30m (6 spots checked)", out)
         self.assertIn("ROUTE: the goal is 9.2m above you; closest walkable spot (-33,9,-356) is 9.3m from it", out)
         self.assertIn("NEXT: interact", out)
@@ -217,7 +218,7 @@ class RouteTool(Base):
 
     def test_walk_toward_direction_failure_keeps_the_old_advice(self):
         self.g.reach = {"reachable": False, "samples": 1}
-        out = server.walk_toward(direction="SE")
+        out = observe.walk_toward(direction="SE")
         self.assertIn("Try another direction, get_frontier, or a door.", out)
         self.assertEqual(self.g.ops("nav.route"), [])
 
@@ -225,11 +226,11 @@ class RouteTool(Base):
     def test_path_with_a_drop_says_walks_stop_there_and_go_walks_to_the_edge(self):
         """S053 05:49: route said PATH 170.8m; travel_to's first leg: 'the way there drops 8.4m (fall damage)'."""
         seen = []
-        orig = server.travel_to
-        server.travel_to = lambda **kw: seen.append(kw) or "travel_to: started"
-        self.addCleanup(setattr, server, "travel_to", orig)
+        orig = travel_macro.travel_to
+        travel_macro.travel_to = lambda **kw: seen.append(kw) or "travel_to: started"
+        self.addCleanup(setattr, travel_macro, "travel_to", orig)
         self.reply = dict(WITH_CLIMB, drop={"pos": [-227.6, 13.5, -114.0], "m": 8.4})
-        out = server.route(x=HELM[0], y=HELM[1], z=HELM[2], go=True)
+        out = observe.route(x=HELM[0], y=HELM[1], z=HELM[2], go=True)
         self.assertIn("  DROPS 8.4m at (-227.6,13.5,-114) (fall damage): walks stop there", out)
         self.assertIn("NEXT: travel_to x,y,z = (-227.6,13.5,-114) (the edge of the 8.4m drop), then jump_to", out)
         self.assertEqual(seen[-1], {"who": None, "x": -227.6, "y": 13.5, "z": -114.0})
@@ -238,16 +239,16 @@ class RouteTool(Base):
         """S058 08:00: Claude stuck in a nook after a pick_up: WAYS none, no closest spot; 6 calls to guess a jump."""
         self.reply = dict(FIRE_MAZE, closest=None, ways=[{"dir": d, "open_m": 0} for d in ("N", "E", "S", "W")],
                           wedged={"wedged": True, "to": [21.0, 46.4, 228.5], "near": "Wyll", "dist_m": 3.1})
-        out = server.route(x=-40.0, y=16.0, z=-431.0)
+        out = observe.route(x=-40.0, y=16.0, z=-431.0)
         self.assertIn("WEDGED: no walkable ground leads out from where you stand: jump_to x,y,z = (21,46.4,228.5) "
                       "next to Wyll (3.1m), then try again", out)
         self.assertIn("NEXT: jump_to x,y,z = (21,46.4,228.5) (out of the nook), then route again", out)
-        self.assertIn("you are wedged", route.hint_text(self.reply, server.H))
+        self.assertIn("you are wedged", route.hint_text(self.reply, core.H))
 
     def test_walk_toward_direction_failure_when_wedged(self):
         self.g.reach = {"reachable": False, "samples": 3}
         self.wedged = {"wedged": True, "to": [21.0, 46.4, 228.5], "near": "Wyll", "dist_m": 3.1, "in_reach": False}
-        out = server.walk_toward(direction="N", max_m=6)
+        out = observe.walk_toward(direction="N", max_m=6)
         self.assertIn("FAILED: no walkable ground toward N within 6m (3 spots checked)", out)
         self.assertIn("you are wedged: no walkable ground leads out from where you stand: jump_to x,y,z = "
                       "(21,46.4,228.5) next to Wyll (3.1m) if it is in reach, then try again", out)
@@ -275,14 +276,14 @@ def _helm_from(here: list, e56_leads: str) -> dict:
 class HelmRoute(Base):
     def test_lower_deck_names_both_climbs_in_order(self):
         """naut2 r1/r2: from the lower deck NEXT said "interact e57 (ladder up)"; e57's foot is on the deck 2.7 m up."""
-        out = route.render_route(_helm_from([-43.0, 5.0, -362.2], "up"), server.H, "objective Helm")
-        a, b = server.H.get(E56, "Arterial Mesh"), server.H.get(E57, "Arterial Mesh")
+        out = route.render_route(_helm_from([-43.0, 5.0, -362.2], "up"), core.H, "objective Helm")
+        a, b = core.H.get(E56, "Arterial Mesh"), core.H.get(E57, "Arterial Mesh")
         self.assertIn(f"NEXT: interact {a} (ladder up), then interact {b} (ladder up) "
                       f"(one call: queue_actions [interact {a}, interact {b}]), then route again", out)
 
     def test_from_the_short_ladders_top_names_the_long_one(self):
-        out = route.render_route(_helm_from([-43.0, 7.6, -363.1], "down"), server.H, "objective Helm")
-        b = server.H.get(E57, "Arterial Mesh")
+        out = route.render_route(_helm_from([-43.0, 7.6, -363.1], "down"), core.H, "objective Helm")
+        b = core.H.get(E57, "Arterial Mesh")
         self.assertIn(f"NEXT: interact {b} (ladder up), then route again", out)
 
     def test_wedged_with_only_a_landing_away_from_the_goal_says_dont_jump(self):
@@ -292,7 +293,7 @@ class HelmRoute(Base):
         self.assertIn("the only landing (next to Lae'zel) is 2.9m below, away from the goal: don't jump there", txt)
         self.assertNotIn("jump_to", txt)
         res = dict(FIRE_MAZE, closest=None, wedged=w)
-        out = route.render_route(res, server.H, "it")
+        out = route.render_route(res, core.H, "it")
         self.assertIn("WEDGED? no walkable ground reads around you", out)
         self.assertNotIn("NEXT: jump_to", out)
 
@@ -306,9 +307,9 @@ class HelmRoute(Base):
                 return {"wedged": True, "away": "Lae'zel", "away_dy": -2.9}
             return real(op, args, context, default)
         self.g.try_rpc = fake
-        self.assertIn("away from the goal", server._wedged_hint(P1, HELM))
+        self.assertIn("away from the goal", observe._wedged_hint(P1, HELM))
         self.assertEqual(seen, [{"char": P1, "goal": HELM}])
-        server._wedged_hint(P1)
+        observe._wedged_hint(P1)
         self.assertEqual(seen[-1], {"char": P1})
 
 

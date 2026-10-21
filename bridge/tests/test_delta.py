@@ -19,7 +19,8 @@ from typing import Any
 _RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit (/tmp filled up 2026-10-10)
 os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
-from bg3ai import delta, server  # noqa: E402
+from bg3ai import delta  # noqa: E402
+from bg3ai.tools import core, reporting, overview, observe  # noqa: E402
 from bg3ai.render import Handles  # noqa: E402
 
 
@@ -153,25 +154,25 @@ SCENARIOS = [("nothing changed", lambda w: None), ("walk 12m", walk), ("combat s
 class Base(unittest.TestCase):
     def setUp(self):
         self.fake = FakeGame(base_world())
-        orig = server.game
-        server.game = self.fake
-        self.addCleanup(setattr, server, "game", orig)
-        server.DELTA.reset()
+        orig = core.game
+        core.game = self.fake
+        self.addCleanup(setattr, core, "game", orig)
+        core.DELTA.reset()
         delta.INV.reset()
-        server._objectives["last"] = []
+        overview._objectives["last"] = []
 
 
 class LookTool(Base):
     def test_first_look_is_full_then_no_change(self):
-        out = server.look()
+        out = overview.look()
         self.assertIn("WHERE Ship Hold · Nautiloid", out)
         self.assertIn("ITEM", out)  # nearby listing
-        self.assertEqual(server.look(), "No change since your last look (full=true shows everything).")
+        self.assertEqual(overview.look(), "No change since your last look (full=true shows everything).")
 
     def test_walk(self):
-        server.look()
+        overview.look()
         walk(self.fake.w)
-        out = server.look().splitlines()
+        out = overview.look().splitlines()
         self.assertEqual(out[0], "PARTY moved 12m W")
         self.assertTrue(any(x.startswith("+ ") and "Lever <lever> 2m" in x for x in out), out)
         self.assertTrue(any(x.startswith("GONE ") and "Tadpole Pod 1" in x for x in out), out)
@@ -180,37 +181,37 @@ class LookTool(Base):
 
     def test_long_walk_spread_is_one_party_line(self):
         """S026: 152/146/152/151 m S took four lines; give or take a few metres it is one PARTY line."""
-        server.look()
+        overview.look()
         for i, c in enumerate(self.fake.w["status"]["party"]):
             c["pos"] = [c["pos"][0], c["pos"][1], c["pos"][2] - 150.0 + 2 * i]
-        out = server.look().splitlines()
+        out = overview.look().splitlines()
         self.assertTrue(out[0].startswith("PARTY moved ~"), out[0])
         self.assertFalse(any(" moved " in x for x in out[1:] if not x.startswith(("~", "+"))), out)
 
     def test_followers_trailing_the_leader_are_one_range_line(self):
         """S040: 'Wyll moved 12m SE, Karlach 11m S, Shadowheart 13m SE, Claude 21m SE' = 4 lines per walk result."""
-        server.look()
+        overview.look()
         for i, c in enumerate(self.fake.w["status"]["party"]):
             d = 21.0 if i == 0 else 12.0 + i
             c["pos"] = [c["pos"][0] + d * 0.7, c["pos"][1], c["pos"][2] - d * 0.7 - (3.0 if i == 1 else 0.0)]
-        out = server.look().splitlines()
+        out = overview.look().splitlines()
         self.assertTrue(re.match(r"PARTY moved \d+-21m SE$", out[0]), out[0])
         self.assertFalse(any(" moved " in x for x in out[1:]), out)
 
     def test_straggler_keeps_its_own_line(self):
-        server.look()
+        overview.look()
         party = self.fake.w["status"]["party"]
         for c in party:
             c["pos"] = [c["pos"][0] - 12.0, c["pos"][1], c["pos"][2]]
         party[0]["pos"][0] += 9.0
-        out = server.look().splitlines()
+        out = overview.look().splitlines()
         self.assertFalse(any(x.startswith("PARTY moved") for x in out), out)
         self.assertEqual(sum(" moved " in x for x in out), len(party))
 
     def test_combat(self):
-        server.look()
+        overview.look()
         combat(self.fake.w)
-        out = server.look()
+        out = overview.look()
         self.assertRegex(out, r"MODE exploring -> COMBAT turn-based \(round 1 turn=e\d+ Imp\)")
         self.assertRegex(out, r"e\d+ Gale HP 8->3/12, \+Burning")
         self.assertEqual(out.count("Imp hostile HP 9/9 7.1m"), 3)
@@ -218,9 +219,9 @@ class LookTool(Base):
         self.assertNotIn(IMP1, out)
 
     def test_loot(self):
-        server.look()
+        overview.look()
         loot(self.fake.w)
-        out = server.look()
+        out = overview.look()
         self.assertRegex(out, r"~ e\d+ Chest unlocked, opened|~ e\d+ Chest opened, unlocked")
         self.assertIn("GOLD 40->65", out)
         self.assertRegex(out, r"ITEM \+ e\d+ Potion of Healing x2 \(Claude\)")
@@ -229,95 +230,95 @@ class LookTool(Base):
     def test_door_opens_and_trap_disarmed(self):  # NAV-4: no diff line before (S054 06:11/06:13 extra interacts)
         self.fake.w["nearby"]["items"][1]["closed"] = True
         self.fake.w["nearby"]["items"][0]["trap"] = {"armed": True}
-        server.look()
+        overview.look()
         door, chest = self.fake.w["nearby"]["items"][1], self.fake.w["nearby"]["items"][0]
         door.pop("closed")
         door["open"] = True
         chest["trap"] = {"armed": False}
-        out = server.look()
+        out = overview.look()
         self.assertRegex(out, r"~ e\d+ Sphincter Door now open")
         self.assertRegex(out, r"~ e\d+ Chest trap disarmed")
 
     def test_painting_lights_up(self):  # Grand Mausoleum: a button press lights its painting (puzzle state)
-        server.look()
+        overview.look()
         ch = self.fake.w["nearby"]["items"][0]
         ch["effect"] = "lit"
-        self.assertRegex(server.look(), r"~ e\d+ Chest now lit")
+        self.assertRegex(overview.look(), r"~ e\d+ Chest now lit")
         ch.pop("effect")
-        self.assertRegex(server.look(), r"~ e\d+ Chest no longer lit")
+        self.assertRegex(overview.look(), r"~ e\d+ Chest no longer lit")
         self.fake.w["nearby"]["items"].append({"uuid": U(701), "name": "General", "kind": "usable", "dist": 3.6,
                                                "effect": "lit"})
-        self.assertRegex(server.look(), r"\+ e\d+ General <usable> 3.6m \[lit\]")
+        self.assertRegex(overview.look(), r"\+ e\d+ General <usable> 3.6m \[lit\]")
 
     def test_dialogue_and_reminder(self):
-        server.look()
+        overview.look()
         dialogue(self.fake.w)
-        out = server.look()
+        out = overview.look()
         self.assertIn("DIALOGUE Lae'zel: You. Tadpole. Help me or die.", out)
         self.assertIn("  2. [Intimidation] Back off.", out)
-        again = server.look()
+        again = overview.look()
         self.assertEqual(again, "No change since your last look (full=true shows everything).\n(DIALOGUE still open, unchanged; full=true repeats it)")
-        self.assertIn("2. [Intimidation] Back off.", server.look(full=True))
+        self.assertIn("2. [Intimidation] Back off.", overview.look(full=True))
 
     def test_quest(self):
-        server.look()
+        overview.look()
         quest(self.fake.w)
-        out = server.look()
+        out = overview.look()
         self.assertIn("QUEST Escape the Nautiloid: Take the helm and steer the ship.", out)
         self.assertIn("QUEST + Find a Cure: Find a healer.", out)
         self.assertIn("OBJECTIVE + o3 Find a healer (another area) [Find a Cure]", out)
 
     def test_new_area_gives_full_view(self):
-        server.look()
+        overview.look()
         self.fake.w["status"]["subregion"] = "Helm"
-        out = server.look()
+        out = overview.look()
         self.assertIn("WHERE Helm · Nautiloid", out)
         self.assertIn("PARTY", out)
 
     def test_output_is_stable(self):
-        server.look()
+        overview.look()
         combat(self.fake.w)
-        a = server.look()
-        server.DELTA.reset()
+        a = overview.look()
+        core.DELTA.reset()
         self.fake.w = base_world()
-        server.look()
+        overview.look()
         combat(self.fake.w)
-        self.assertEqual(server.look(), a)
+        self.assertEqual(overview.look(), a)
 
 
 class StatusAndMap(Base):
     def test_status_delta_does_not_touch_nearby(self):
-        server.look()
-        server.get_status()
+        overview.look()
+        overview.get_status()
         walk(self.fake.w)
-        out = server.get_status()
+        out = overview.get_status()
         self.assertIn("PARTY moved 12m W", out)
         self.assertNotIn("Lever", out)  # nearby not fetched by get_status...
-        self.assertIn("Lever", server.look())  # ...so the next look still reports it
+        self.assertIn("Lever", overview.look())  # ...so the next look still reports it
 
     def test_status_full(self):
-        server.get_status()
-        out = server.get_status(full=True)
+        overview.get_status()
+        out = overview.get_status(full=True)
         self.assertIn("PARTY", out)
         self.assertIn("OBJECTIVE o1 Escape the ship 16m W", out)
 
     def test_map_delta(self):
-        first = server.get_map()
+        first = observe.get_map()
         self.assertIn("OBJECTIVES", first)
-        self.assertTrue(server.get_map().startswith("No map change (Nautiloid; 2 objectives"))
+        self.assertTrue(observe.get_map().startswith("No map change (Nautiloid; 2 objectives"))
         self.fake.w["map"]["waypoints"].append({"id": 2, "name": "Roadside Cliffs"})
         quest(self.fake.w)
-        out = server.get_map()
+        out = observe.get_map()
         self.assertIn("WAYPOINT + Roadside Cliffs", out)
         self.assertIn("OBJECTIVE + o3 Find a healer", out)
 
     def test_nearby_and_inventory_update_baseline(self):
-        server.look()
+        overview.look()
         walk(self.fake.w)
         loot(self.fake.w)
-        server.get_nearby()
-        server.get_inventory()
-        out = server.look()
+        observe.get_nearby()
+        observe.get_inventory()
+        out = overview.look()
         self.assertNotIn("Lever", out)
         self.assertNotIn("Rusty Key", out)
         self.assertIn("PARTY moved 12m W", out)
@@ -325,10 +326,10 @@ class StatusAndMap(Base):
 
 class ActionHook(Base):
     def test_changes_text(self):
-        server.look()
-        self.assertEqual(delta.changes_text(self.fake, server.H), "")
+        overview.look()
+        self.assertEqual(delta.changes_text(self.fake, core.H), "")
         combat(self.fake.w)
-        txt = delta.changes_text(self.fake, server.H)
+        txt = delta.changes_text(self.fake, core.H)
         self.assertTrue(txt.startswith("CHANGES\n  MODE exploring -> COMBAT"), txt)
         self.assertNotIn("state.inventory", self.fake.calls[-5:])
 
@@ -336,7 +337,7 @@ class ActionHook(Base):
         class Broken:
             def try_rpc(self, *a, **k):
                 raise RuntimeError("boom")
-        self.assertEqual(delta.changes_text(Broken(), server.H), "")
+        self.assertEqual(delta.changes_text(Broken(), core.H), "")
 
 
 class MultiRpc(unittest.TestCase):
@@ -380,22 +381,22 @@ class InventoryRev(Base):
         self.fake.rpc = rpc
 
     def test_second_look_reuses_the_held_inventory(self):
-        server.look()
+        overview.look()
         self.assertEqual(self.sent[-1], {})
-        server.look()
+        overview.look()
         self.assertEqual(self.sent[-1], {"rev": 1})
         self.assertIsNotNone(delta.INV.data)
         # gold rides on the unchanged reply; items come from the held copy, so no item lines
         self.fake.w["inventory"]["gold"] = (self.fake.w["inventory"].get("gold") or 0) + 25
-        out = server.look()
+        out = overview.look()
         self.assertIn("gold", out.lower())
         self.assertNotIn("lost", out.lower())
 
     def test_new_rev_sends_the_full_list_and_the_delta_sees_it(self):
-        server.look()
+        overview.look()
         self.fake.w["inventory"]["items"].append({"uuid": U(901), "name": "Healing Potion", "owner": self.fake.w["status"]["party"][0]["uuid"]})
         self.rev = 2  # an item event bumped the mod's cache
-        out = server.look()
+        out = overview.look()
         self.assertIn("Healing Potion", out)
         self.assertEqual(delta.INV.data["rev"], 2)
 
@@ -505,13 +506,12 @@ class Lookalikes(unittest.TestCase):
         """S029 16:12: get_nearby kinds="Mystic Thurible" folded 6 thuribles into one line; the agent had to cast at
         each and guessed their ids with 22 look_at calls (~3 min)."""
         from unittest import mock
-        from bg3ai import server
         items = [{"uuid": U(1600 + i), "name": "Mystic Thurible", "kind": "usable", "dist": 9 + i} for i in range(6)]
         items += [{"uuid": U(1700 + i), "name": "Candles", "kind": "usable", "dist": 3 + i} for i in range(5)]
-        with mock.patch.object(server, "_read1", return_value={"characters": [], "items": items}), \
-                mock.patch.object(server, "_finish", lambda name, args, text, t0: text):  # no live game events
-            text = server.get_nearby(radius=60, kinds="Mystic Thurible")
-            props = server.get_nearby(radius=60, kinds="props")
+        with mock.patch.object(reporting, "_read1", return_value={"characters": [], "items": items}), \
+                mock.patch.object(reporting, "_finish", lambda name, args, text, t0: text):  # no live game events
+            text = observe.get_nearby(radius=60, kinds="Mystic Thurible")
+            props = observe.get_nearby(radius=60, kinds="props")
         self.assertEqual(text.count("Mystic Thurible <usable>"), 6, text)
         self.assertNotIn("more Mystic Thurible", text)
         self.assertNotIn("Candles", text)
@@ -520,16 +520,15 @@ class Lookalikes(unittest.TestCase):
     def test_item_searches_drop_unrelated_remembered_characters(self):
         """S035 19:37: get_nearby kinds="umbral,gem" / "item" listed 4 REMEMBERED Self-Same mirrors every time."""
         from unittest import mock
-        from bg3ai import server
         items = [{"uuid": U(1800), "name": "Umbral Transporter", "kind": "usable", "dist": 0.9}]
         mem = [{"uuid": U(1801), "name": "Karlach", "last_pos": [1, 2, 3], "ago_s": 140},
                {"uuid": U(1802), "name": "Umbral Horror", "last_pos": [4, 5, 6], "ago_s": 30}]
-        with mock.patch.object(server, "_read1", return_value={"characters": [], "items": items, "remembered": mem}), \
-                mock.patch.object(server, "_finish", lambda name, args, text, t0: text):  # no live game events
-            words = server.get_nearby(radius=40, kinds="umbral,gem")
-            kinds = server.get_nearby(radius=40, kinds="items")
-            chars = server.get_nearby(radius=40, kinds="characters")
-            plain = server.get_nearby(radius=40)
+        with mock.patch.object(reporting, "_read1", return_value={"characters": [], "items": items, "remembered": mem}), \
+                mock.patch.object(reporting, "_finish", lambda name, args, text, t0: text):  # no live game events
+            words = observe.get_nearby(radius=40, kinds="umbral,gem")
+            kinds = observe.get_nearby(radius=40, kinds="items")
+            chars = observe.get_nearby(radius=40, kinds="characters")
+            plain = observe.get_nearby(radius=40)
         self.assertIn("Umbral Transporter", words)
         self.assertIn("REMEMBERED", words)  # the remembered one the search names
         self.assertIn("Umbral Horror", words)
@@ -542,12 +541,11 @@ class Lookalikes(unittest.TestCase):
     def test_name_search_with_no_match_says_so(self):
         """S042 22:51: get_nearby kinds="Jaheira,characters" answered "Nothing visible in range." (she was not there)."""
         from unittest import mock
-        from bg3ai import server
         chars = [{"uuid": U(1900), "name": "Isobel", "dist": 5}, {"uuid": U(1901), "name": "Harper Donner", "dist": 8}]
-        with mock.patch.object(server, "_read1", return_value={"characters": chars, "items": []}), \
-                mock.patch.object(server, "_finish", lambda name, args, text, t0: text):
-            text = server.get_nearby(radius=60, kinds="Jaheira,characters")
-            hit = server.get_nearby(radius=60, kinds="isobel")
+        with mock.patch.object(reporting, "_read1", return_value={"characters": chars, "items": []}), \
+                mock.patch.object(reporting, "_finish", lambda name, args, text, t0: text):
+            text = observe.get_nearby(radius=60, kinds="Jaheira,characters")
+            hit = observe.get_nearby(radius=60, kinds="isobel")
         self.assertIn("No 'jaheira' in view within 60m", text)
         self.assertIn("Characters in view:", text)
         self.assertIn("Isobel", text); self.assertIn("Harper Donner", text)
@@ -558,20 +556,19 @@ class Lookalikes(unittest.TestCase):
         """S057 07:49 / S058 07:52: kinds="Shadowheart,Wyll" → "No 'shadowheart', 'wyll' in view" ×4 while both lay dead
         nearby (state.nearby lists only others); the agent took screenshots to find the bodies for a Revivify."""
         from unittest import mock
-        from bg3ai import server
         st = {"active": U(2101), "party": [
             {"uuid": U(2101), "name": "Claude", "hp": 41, "max_hp": 157, "pos": [0, 0, 0]},
             {"uuid": U(2102), "name": "Shadowheart", "hp": 0, "max_hp": 132, "dead": True, "pos": [-5, 0, 0]},
             {"uuid": U(2103), "name": "Karlach", "hp": 5, "max_hp": 177, "pos": [0, 0, 3]}]}
         chars = [{"uuid": U(2104), "name": "Patriar", "dist": 5}]
-        real = server.game.try_rpc
-        with mock.patch.object(server, "_read1", return_value={"characters": chars, "items": []}), \
-                mock.patch.object(server.game, "try_rpc", lambda op, *a, **k: st if op == "state.status" else real(op, *a, **k)), \
-                mock.patch.object(server, "_finish", lambda name, args, text, t0: text):
-            text = server.get_nearby(radius=25, kinds="Shadowheart,Wyll")
-            both = server.get_nearby(radius=25, kinds="karlach,patriar")
-            door = server.get_nearby(radius=25, kinds="door")
-        sh = server.H.get(U(2102), "Shadowheart")
+        real = core.game.try_rpc
+        with mock.patch.object(reporting, "_read1", return_value={"characters": chars, "items": []}), \
+                mock.patch.object(core.game, "try_rpc", lambda op, *a, **k: st if op == "state.status" else real(op, *a, **k)), \
+                mock.patch.object(reporting, "_finish", lambda name, args, text, t0: text):
+            text = observe.get_nearby(radius=25, kinds="Shadowheart,Wyll")
+            both = observe.get_nearby(radius=25, kinds="karlach,patriar")
+            door = observe.get_nearby(radius=25, kinds="door")
+        sh = core.H.get(U(2102), "Shadowheart")
         self.assertIn(f"PARTY {sh} Shadowheart dead (its body) 5m W (your party: target it by this id)", text)
         self.assertNotIn("No 'shadowheart'", text)
         self.assertIn("PARTY", both); self.assertIn("HP 5/177", both); self.assertIn("Patriar", both)
@@ -612,14 +609,14 @@ class Fixtures(unittest.TestCase):
         self.assertIn("props 20", text)
 
     def test_get_nearby_kinds_words(self):
-        self.assertEqual(server._nearby_kinds("doors,usable"), (["door", "usable"], []))
-        mod, words = server._nearby_kinds("Buttons,props")
+        self.assertEqual(observe._nearby_kinds("doors,usable"), (["door", "usable"], []))
+        mod, words = observe._nearby_kinds("Buttons,props")
         self.assertEqual(words, ["buttons", "props"])
         self.assertEqual(mod, ["characters", "items", "object"])
         res = {"characters": [{"name": "Buttonmaker"}, {"name": "Isobel"}],
                "items": [{"name": "Button", "kind": "usable"}, {"name": "Candles", "kind": "usable"},
                          {"name": "Grief", "kind": "usable"}], "more_items": 3}
-        got = server._nearby_match(res, words)
+        got = observe._nearby_match(res, words)
         self.assertEqual([i["name"] for i in got["items"]], ["Button", "Candles"])
         self.assertEqual([c["name"] for c in got["characters"]], ["Buttonmaker"])
         self.assertNotIn("more_items", got)
@@ -630,18 +627,18 @@ def sizes() -> list[tuple[str, int, int, int]]:
     rows = []
     for name, step in SCENARIOS:
         fake = FakeGame(base_world())
-        server.game = fake
-        server.DELTA.reset()
-        server.look()
+        core.game = fake
+        core.DELTA.reset()
+        overview.look()
         step(fake.w)
-        old = len(server.get_status(full=True)) + len(server.get_nearby())
-        server.DELTA.reset()
+        old = len(overview.get_status(full=True)) + len(observe.get_nearby())
+        core.DELTA.reset()
         fresh = FakeGame(base_world())
-        server.game = fresh
-        server.look()
+        core.game = fresh
+        overview.look()
         step(fresh.w)
-        d = server.look()
-        full = len(server.look(full=True))
+        d = overview.look()
+        full = len(overview.look(full=True))
         rows.append((name, old, full, len(d)))
     return rows
 

@@ -7,8 +7,8 @@ import unittest
 from unittest import mock
 
 import test_se_tools as T
-from bg3ai import server
 from bg3ai.game import JobResult
+from bg3ai.tools import saving
 
 STUCK = JobResult(status="failed", result={"stage": "open", "loading": True,
                                            "error": "a loading screen stayed up 25 s: the load page can't open"})
@@ -41,7 +41,7 @@ class LoadDuringLoadingScreen(unittest.TestCase):
     def test_loading_screen_never_goes(self):
         out = self._run([STUCK, STUCK], states=["Running"])
         self.assertIn("loading screen stayed up", out)
-        self.assertEqual(self.g.presses, 1 + server.LOAD_RETRIES)
+        self.assertEqual(self.g.presses, 1 + saving.LOAD_RETRIES)
 
     def test_other_failures_are_final(self):
         bad = JobResult(status="failed", result={"stage": "select"}, error="no playthrough named 'Claude' on the load page")

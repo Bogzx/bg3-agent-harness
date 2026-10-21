@@ -38,7 +38,7 @@ if "BG3AI_RUNTIME" not in os.environ:  # keep runtime/actions.jsonl clean; remov
     atexit.register(shutil.rmtree, os.environ["BG3AI_RUNTIME"], True)
 
 from bg3ai import render  # noqa: E402
-from bg3ai import server as S  # noqa: E402
+from server_view import S  # noqa: E402
 from bg3ai.game import GameError  # noqa: E402
 
 G = S.game

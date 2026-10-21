@@ -12,7 +12,8 @@ import unittest
 
 from test_turn_macros import GOB, IMP, P1, P2, Base, combat  # noqa: F401 (sets BG3AI_RUNTIME first)
 
-from bg3ai import hotbar, server
+from bg3ai import hotbar
+from bg3ai.tools import core, reporting, world_tools, combat as combat_tools, batch, turn_tool
 from bg3ai.game import GameError
 
 
@@ -51,16 +52,16 @@ class HotbarRoute(Base):
         self.g.watch["combat"] = True
         self.g.dur["act.cast"] = 0.05
         self.g.on_start = lambda op, a: self.g.combat.update(current=GOB) if op == "act.end_turn" else None
-        saved = (hotbar.HOTBAR_CAST_ENABLED, hotbar.hotbar_cast, server._inp)
+        saved = (hotbar.HOTBAR_CAST_ENABLED, hotbar.hotbar_cast, world_tools._inp)
         self.addCleanup(lambda: (setattr(hotbar, "HOTBAR_CAST_ENABLED", saved[0]),
-                                 setattr(hotbar, "hotbar_cast", saved[1]), setattr(server, "_inp", saved[2])))
-        server._inp = lambda: object()
+                                 setattr(hotbar, "hotbar_cast", saved[1]), setattr(world_tools, "_inp", saved[2])))
+        world_tools._inp = lambda: object()
         self.fake = FakeHotbar(self.g)
         hotbar.hotbar_cast = self.fake
-        self.p1 = server.H.get(P1)
+        self.p1 = core.H.get(P1)
 
     def bless3(self, **kw) -> str:
-        return server.use_ability("Target_Bless", targets=[self.p1, self.gob, self.imp], who=self.p1, **kw)
+        return combat_tools.use_ability("Target_Bless", targets=[self.p1, self.gob, self.imp], who=self.p1, **kw)
 
     def cast_args(self) -> list[dict]:
         return [a for _, a in self.g.ops("act.cast")]
@@ -92,12 +93,12 @@ class HotbarRoute(Base):
     def test_on_target_plus_targets_and_repeats_keep_click_order(self):
         # Magic Missile: the same target twice = 2 darts
         hotbar.HOTBAR_CAST_ENABLED = True
-        server.use_ability("Target_Bless", target=self.gob, targets=[self.gob, self.imp], who=self.p1)
+        combat_tools.use_ability("Target_Bless", target=self.gob, targets=[self.gob, self.imp], who=self.p1)
         self.assertEqual(self.cast_args()[0]["targets"], [GOB, GOB, IMP])
 
     def test_on_two_targets_stay_osiris(self):
         hotbar.HOTBAR_CAST_ENABLED = True
-        server.use_ability("Target_Bless", targets=[self.gob, self.imp], who=self.p1)
+        combat_tools.use_ability("Target_Bless", targets=[self.gob, self.imp], who=self.p1)
         (a,) = self.cast_args()
         self.assertNotIn("ui", a)
         self.assertEqual(self.fake.calls, [])
@@ -112,7 +113,7 @@ class HotbarRoute(Base):
     def test_off_three_beams_on_one_target_cast_at_it_alone(self):
         # S066 #59 r1 Wyll: Eldritch Blast targets=[e356]x3 → UseSpell(Orin, Orin): "the game never started it"
         hotbar.HOTBAR_CAST_ENABLED = False
-        out = server.use_ability("Projectile_EldritchBlast", targets=[self.gob] * 3, who=self.p1)
+        out = combat_tools.use_ability("Projectile_EldritchBlast", targets=[self.gob] * 3, who=self.p1)
         (a,) = self.cast_args()
         self.assertEqual(a["target"], GOB)
         self.assertNotIn("targets", a)
@@ -123,8 +124,8 @@ class HotbarRoute(Base):
 
     def test_two_beams_on_one_target_too_and_a_later_one_is_named(self):
         hotbar.HOTBAR_CAST_ENABLED = False
-        server.use_ability("Projectile_EldritchBlast", target=self.gob, targets=[self.gob], who=self.p1)
-        out = server.use_ability("Projectile_EldritchBlast", targets=[self.gob, self.gob, self.imp], who=self.p1)
+        combat_tools.use_ability("Projectile_EldritchBlast", target=self.gob, targets=[self.gob], who=self.p1)
+        out = combat_tools.use_ability("Projectile_EldritchBlast", targets=[self.gob, self.gob, self.imp], who=self.p1)
         a1, a2 = self.cast_args()
         self.assertEqual((a1["target"], a1.get("targets")), (GOB, None))
         self.assertEqual((a2["target"], a2.get("targets")), (GOB, None))
@@ -132,7 +133,7 @@ class HotbarRoute(Base):
 
     def test_distinct_picks_keep_the_two_target_cast(self):
         hotbar.HOTBAR_CAST_ENABLED = False
-        server.use_ability("Projectile_EldritchBlast", targets=[self.gob, self.imp, self.gob], who=self.p1)
+        combat_tools.use_ability("Projectile_EldritchBlast", targets=[self.gob, self.imp, self.gob], who=self.p1)
         (a,) = self.cast_args()
         self.assertEqual(a["targets"], [GOB, IMP])
 
@@ -141,7 +142,7 @@ class HotbarRoute(Base):
         self.g.dur["act.cast"] = 5.0
         self.fake.ok, self.fake.reason, self.fake.stage = False, "cell_not_found", "locate"
         self.g.on_start = lambda op, a: self.g.dur.update({"act.cast": 0.05}) if a.get("ui") is None else None
-        out = server.use_ability("Projectile_EldritchBlast", targets=[self.gob] * 3, who=self.p1)
+        out = combat_tools.use_ability("Projectile_EldritchBlast", targets=[self.gob] * 3, who=self.p1)
         a1, a2 = self.cast_args()
         self.assertEqual(a1["targets"], [GOB] * 3)        # the route clicks the repeats (valid by hand)
         self.assertEqual((a2["target"], a2.get("targets")), (GOB, None))
@@ -189,7 +190,7 @@ class HotbarRoute(Base):
 
     def test_combat_turn_step_takes_the_route(self):
         hotbar.HOTBAR_CAST_ENABLED = True
-        out = server.combat_turn(json.dumps({"action": {"ability": "Target_Bless",
+        out = turn_tool.combat_turn(json.dumps({"action": {"ability": "Target_Bless",
                                                         "targets": [self.p1, self.gob, self.imp]}}))
         a = self.cast_args()[0]
         self.assertTrue(a["ui"])
@@ -227,8 +228,8 @@ class HotbarRoute(Base):
 
     def test_m1_stop_hook_follows_the_executor(self):
         hotbar.HOTBAR_CAST_ENABLED = True
-        self.assertFalse(server._click_stop()())               # a plain call: nothing to follow
-        out = server.do_actions(json.dumps([{"tool": "use_ability", "ability": "Target_Bless",
+        self.assertFalse(combat_tools._click_stop()())               # a plain call: nothing to follow
+        out = batch.do_actions(json.dumps([{"tool": "use_ability", "ability": "Target_Bless",
                                              "targets": [self.p1, self.gob, self.imp], "who": self.p1}]))
         stop = self.fake.kw[0]["should_stop"]
         self.assertFalse(stop())
@@ -238,14 +239,14 @@ class HotbarRoute(Base):
             interrupt = None
             stop = __import__("threading").Event()
         ex = Ex()
-        server._batch["exec"] = ex
+        reporting._batch["exec"] = ex
         try:
-            s = server._click_stop()
+            s = combat_tools._click_stop()
             self.assertFalse(s())
             ex.interrupt = ("combat", "combat started")
             self.assertTrue(s())
         finally:
-            server._batch["exec"] = None
+            reporting._batch["exec"] = None
 
     def test_m2_input_error_cancels_and_is_not_cast_again(self):
         hotbar.HOTBAR_CAST_ENABLED = True
@@ -281,7 +282,7 @@ class HotbarRoute(Base):
 
     def test_cast_log_line(self):
         hotbar.HOTBAR_CAST_ENABLED = True
-        log = server.RUNTIME / "hotbar_cast.jsonl"
+        log = core.RUNTIME / "hotbar_cast.jsonl"
         n0 = len(log.read_text().splitlines()) if log.exists() else 0
         self.bless3()
         rows = [json.loads(x) for x in log.read_text().splitlines()]
@@ -303,8 +304,8 @@ class EndHudFirst(Base):
                 o["ended"] = True
         self.g.combat = cs
         self.g.watch["combat"] = True
-        saved = server.END_HUD_FIRST
-        self.addCleanup(setattr, server, "END_HUD_FIRST", saved)
+        saved = combat_tools.END_HUD_FIRST
+        self.addCleanup(setattr, combat_tools, "END_HUD_FIRST", saved)
         self.pressed: list = []
         real = self.g.rpc
 
@@ -321,35 +322,35 @@ class EndHudFirst(Base):
         self.g.rpc = rpc
 
     def test_off_orders_osiris(self):
-        server.END_HUD_FIRST = False
-        out = server.end_turn(who=server.H.get(P1), wait=False)
+        combat_tools.END_HUD_FIRST = False
+        out = combat_tools.end_turn(who=core.H.get(P1), wait=False)
         self.assertEqual(len(self.g.ops("act.end_turn")), 1)
         self.assertEqual(self.pressed, [])
         self.assertIn("end_turn", out)
 
     def test_on_presses_the_hud_at_once(self):
-        server.END_HUD_FIRST = True
-        out = server.end_turn(who=server.H.get(P1), wait=False)
+        combat_tools.END_HUD_FIRST = True
+        out = combat_tools.end_turn(who=core.H.get(P1), wait=False)
         self.assertEqual(self.g.ops("act.end_turn"), [])
         self.assertEqual(self.pressed, [{"widget": "*", "command": "EndTurn"}])
         self.assertIn("the HUD's End Turn at once (e", out)
         self.assertNotIn("FAILED", out)
 
     def test_on_without_a_peer_that_ended_orders_osiris(self):
-        server.END_HUD_FIRST = True
+        combat_tools.END_HUD_FIRST = True
         for o in self.g.combat["order"]:
             o.pop("ended", None)
         self.g.combat["turn_group"] = [P1, P2]
-        server.end_turn(who=server.H.get(P1), wait=False)
+        combat_tools.end_turn(who=core.H.get(P1), wait=False)
         self.assertEqual(len(self.g.ops("act.end_turn")), 1)
         self.assertEqual(self.pressed, [])
 
     def test_on_hud_that_does_nothing_falls_back_to_osiris(self):
-        server.END_HUD_FIRST = True
+        combat_tools.END_HUD_FIRST = True
         self.hud_works = False
-        saved, server.END_HUD_WAIT_S = server.END_HUD_WAIT_S, 0.2
-        self.addCleanup(setattr, server, "END_HUD_WAIT_S", saved)
-        out = server.end_turn(who=server.H.get(P1), wait=False)
+        saved, combat_tools.END_HUD_WAIT_S = combat_tools.END_HUD_WAIT_S, 0.2
+        self.addCleanup(setattr, combat_tools, "END_HUD_WAIT_S", saved)
+        out = combat_tools.end_turn(who=core.H.get(P1), wait=False)
         self.assertEqual(len(self.pressed), 1)
         self.assertEqual(len(self.g.ops("act.end_turn")), 1)
         self.assertNotIn("FAILED", out)

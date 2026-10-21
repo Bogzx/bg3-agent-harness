@@ -15,7 +15,8 @@ import unittest
 
 from test_turn_macros import GOB, IMP, NOT_JOBS, P1, P2, Base
 
-from bg3ai import server, turn
+from bg3ai import turn
+from bg3ai.tools import core, combat, turn_plan, turn_tool
 
 
 def group_combat(ended: tuple = ()) -> dict:
@@ -72,14 +73,14 @@ class SharedTurn(Base):
                 ended = tuple(o["uuid"] for o in self.g.combat["order"] if o.get("ended")) + (args["char"],)
                 self.g.combat = group_combat(ended=ended)
         self.g.on_start = end
-        self.e1 = server.H.get(P1)
-        self.e46 = server.H.get(P2)
+        self.e1 = core.H.get(P1)
+        self.e46 = core.H.get(P2)
 
     def plan(self, **kw) -> str:
         return json.dumps(kw)
 
     def test_other_group_member_may_take_its_turn(self):
-        out = server.combat_turn(self.plan(action="Shout_Disengage"), who=self.e46)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Disengage"), who=self.e46)
         self.assertNotIn("FAILED", out)
         self.assertIn(f"TURN {self.e46}", out)
         self.assertEqual(self.g.ops("act.cast")[0][1]["char"], P2)
@@ -87,12 +88,12 @@ class SharedTurn(Base):
     def test_no_default_actor_in_a_shared_turn(self):
         # ACT-2 (S065): who left out used to pick the selected member (Claude) though the plan could be either's;
         # a plan both members can play is refused before anything runs.
-        out = server.combat_turn(self.plan(action="Shout_Disengage"))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Disengage"))
         self.assertIn("REFUSED: several of your characters can act now", out)
         self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], [])
 
     def test_ending_one_member_hands_over_to_the_other(self):
-        out = server.combat_turn(self.plan(action="Shout_Disengage"), who=self.e1)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Disengage"), who=self.e1)
         self.assertIn("end_turn: done", out)
         self.assertIn(f"NOW {self.e46} Lae'zel's turn: plan it", out)
         self.assertIn("YOUR ACTIONS", out)
@@ -100,27 +101,27 @@ class SharedTurn(Base):
 
     def test_ended_member_is_refused(self):
         self.g.combat = group_combat(ended=(P1,))
-        out = server.combat_turn(self.plan(action="Shout_Disengage"), who=self.e1)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Disengage"), who=self.e1)
         self.assertIn("already ended its turn", out)
         self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], [])
 
     def test_turn_check_accepts_any_group_member(self):
-        self.assertEqual(server._turn_check(P2, None), (False, ""))
-        self.assertEqual(server._turn_check(P1, None), (False, ""))
+        self.assertEqual(turn_plan._turn_check(P2, None), (False, ""))
+        self.assertEqual(turn_plan._turn_check(P1, None), (False, ""))
         self.g.combat = group_combat(ended=(P1,))
-        fatal, why = server._turn_check(P1, None)
+        fatal, why = turn_plan._turn_check(P1, None)
         self.assertTrue(fatal)
         self.assertIn("no longer", why)
 
     def test_whole_group_then_enemies(self):
-        server.combat_turn(self.plan(action="Shout_Disengage"), who=self.e1)
-        out = server.combat_turn(self.plan(action="Shout_Disengage"), who=self.e46)
+        turn_tool.combat_turn(self.plan(action="Shout_Disengage"), who=self.e1)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Disengage"), who=self.e46)
         self.assertNotIn("'s turn: plan it", out)
         self.assertIn(f"NOW {self.e46} hp=", out)  # whose numbers they are
         self.assertIn(f"Imp, then {self.e46} Lae'zel + {self.e1} Claude (yours, shared turn)", out)
 
     def test_wait_for_party_turn_names_the_whole_group(self):
-        text = server._wait_for_party_turn(1.0)
+        text = combat._wait_for_party_turn(1.0)
         self.assertIn(self.e46, text)
         self.assertIn(self.e1, text)
         self.assertIn("shared turn group", text)
@@ -128,7 +129,7 @@ class SharedTurn(Base):
     def test_end_turn_without_who_ends_the_one_who_can_act(self):
         # The game moved the selection? Here the selected Claude already ended: end_turn() means Lae'zel.
         self.g.combat = group_combat(ended=(P1,))
-        out = server.end_turn(wait=False)
+        out = combat.end_turn(wait=False)
         self.assertIn(f"end_turn {self.e46} Lae'zel: done", out)
         self.assertEqual(self.g.ops("act.end_turn")[0][1]["char"], P2)
 
@@ -136,7 +137,7 @@ class SharedTurn(Base):
     def test_within_move_reports_distance_to_the_target(self):
         # Live: "move e49: done — @(…) dist=0.9" was the distance to the walk point; the imp was 1.8 m away.
         self.g.reach = {"reachable": True, "pos": [1.0, 0.0, 0.0]}
-        out = server.combat_turn(self.plan(move={"target": server.H.get(GOB), "within": 1.2},
+        out = turn_tool.combat_turn(self.plan(move={"target": core.H.get(GOB), "within": 1.2},
                                            action="Shout_Disengage"), who=self.e1, end=False)
         line = next(x for x in out.splitlines() if x.startswith("move "))
         self.assertNotIn("dist=", line)

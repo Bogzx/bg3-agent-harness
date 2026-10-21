@@ -20,7 +20,8 @@ from test_turn_macros import (
     Base,  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 )
 
-from bg3ai import server
+from bg3ai import actq
+from bg3ai.tools import core, travel, batch, queueing, travel_macro
 
 CLAUDE = "aaaaaaaa-0000-4000-8000-000000000004"
 GALE = "c7c13742-bacd-460a-8f65-f864fe41f255"
@@ -57,20 +58,20 @@ class Fake:
 
 class StaleSighting(unittest.TestCase):
     def use(self, fake: Fake) -> list:
-        saved = (server.game, server._watch_game, server.travel_to, server._enqueue)
-        self.addCleanup(lambda: (setattr(server, "game", saved[0]), setattr(server, "_watch_game", saved[1]),
-                                 setattr(server, "travel_to", saved[2]), setattr(server, "_enqueue", saved[3])))
+        saved = (core.game, queueing._watch_game, travel_macro.travel_to, batch._enqueue)
+        self.addCleanup(lambda: (setattr(core, "game", saved[0]), setattr(queueing, "_watch_game", saved[1]),
+                                 setattr(travel_macro, "travel_to", saved[2]), setattr(batch, "_enqueue", saved[3])))
         trips: list = []
-        server.game = server._watch_game = fake
-        server.travel_to = lambda **kw: trips.append(kw) or "travel_to: started (98.7m)"
-        server._enqueue = lambda char, steps, ignore=None: "queued 1 step(s)"
-        server.H.get(CLAUDE, "Claude")
-        server.H.get(GALE, "Gale")
+        core.game = queueing._watch_game = fake
+        travel_macro.travel_to = lambda **kw: trips.append(kw) or "travel_to: started (98.7m)"
+        batch._enqueue = lambda char, steps, ignore=None: "queued 1 step(s)"
+        core.H.get(CLAUDE, "Claude")
+        core.H.get(GALE, "Gale")
         return trips
 
     def walk_first(self):
-        return server._walk_first("talk_to", REFUSED, CLAUDE, None, server.H.get(GALE),
-                                  server.actq.Step("talk_to", {"npc": "e"}))
+        return travel._walk_first("talk_to", REFUSED, CLAUDE, None, core.H.get(GALE),
+                                  actq.Step("talk_to", {"npc": "e"}))
 
     def test_s067_129_a_camp_member_is_found_at_camp_not_at_the_temple(self):
         trips = self.use(Fake())
@@ -100,7 +101,7 @@ class StaleSighting(unittest.TestCase):
         trips = self.use(Fake(camp=False))   # anyone not on the camp roster, last seen 3870 m away
         out = self.walk_first()
         self.assertEqual(trips, [])
-        self.assertIn("NOT TRAVELLED: " + server.H.get(GALE) + " is out of sight; the party last saw them 201s ago "
+        self.assertIn("NOT TRAVELLED: " + core.H.get(GALE) + " is out of sight; the party last saw them 201s ago "
                       "(40.7,-49.2,989.9), 3878m away (a fast travel to Temple of Bhaal + a 100m walk)", out)
         self.assertIn("To go anyway: travel_to x=40.7, y=-49.2, z=989.9, then talk_to", out)
 

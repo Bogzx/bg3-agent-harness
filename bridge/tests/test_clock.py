@@ -16,7 +16,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from bg3ai import rules, server
+from bg3ai import rules
+from bg3ai.tools import core, session as session_tools
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools" / "memory"))
 import session  # noqa: E402
@@ -31,26 +32,26 @@ NO_TIME = r"\d+ ?m\b|\d+ min|WRAP UP at|\d\d:\d\d\D*\d\d:\d\d"   # a countdown, 
 
 class Clock(unittest.TestCase):
     def setUp(self):
-        self.saved = server.DEADLINE
+        self.saved = core.DEADLINE
         self.now = time.time()
-        for p in (mock.patch.object(server, "_stuck", lambda: None), mock.patch.object(server, "_fight_now", lambda: False),
-                  mock.patch.dict(server._hold, {"of": None})):
+        for p in (mock.patch.object(core, "_stuck", lambda: None), mock.patch.object(core, "_fight_now", lambda: False),
+                  mock.patch.dict(core._hold, {"of": None})):
             p.start()
             self.addCleanup(p.stop)
 
     def tearDown(self):
-        server.DEADLINE = self.saved
+        core.DEADLINE = self.saved
 
     def at(self, in_s: float) -> str:
         return time.strftime("%H:%M", time.localtime(self.now + in_s))
 
     def clock(self, left_s: float, wrap_left_s: float | None) -> str:
-        server.DEADLINE = self.now + left_s
-        env = {} if wrap_left_s is None else {"BG3AI_SESSION_WRAPUP": str(server.DEADLINE - wrap_left_s)}
-        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(server.time, "time", lambda: self.now):
+        core.DEADLINE = self.now + left_s
+        env = {} if wrap_left_s is None else {"BG3AI_SESSION_WRAPUP": str(core.DEADLINE - wrap_left_s)}
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(time, "time", lambda: self.now):
             if wrap_left_s is None:
                 os.environ.pop("BG3AI_SESSION_WRAPUP", None)
-            return server._clock()
+            return core._clock()
 
     def test_short_session_14m_left_is_play_time(self):
         # 15-min session: wrap-up is its last third (5 min). 14m left must not read as "wrap up".
@@ -81,19 +82,19 @@ class Clock(unittest.TestCase):
 
     def test_between_full_lines_a_terse_clock(self):
         # S009: with no clock for 4 minutes the agent guessed the session was over (15 min early).
-        server.DEADLINE = self.now + 30 * 60
-        with mock.patch.object(server.time, "time", lambda: self.now), \
-                mock.patch.dict(server._clock_shown, {"at": 0.0, "stuck": None}):
-            self.assertEqual(server._clock_line(), keep())  # first: the full line
-            self.assertEqual(server._clock_line(), keep())
+        core.DEADLINE = self.now + 30 * 60
+        with mock.patch.object(time, "time", lambda: self.now), \
+                mock.patch.dict(core._clock_shown, {"at": 0.0, "stuck": None}):
+            self.assertEqual(core._clock_line(), keep())  # first: the full line
+            self.assertEqual(core._clock_line(), keep())
 
     def line_at(self, left_s: float, wrap_left_s: float) -> str:
         """_clock_line with left_s to go, a full line shown 1 min ago and WRAP UP at wrap_left_s before the end."""
-        server.DEADLINE = self.now + left_s
-        env = {"BG3AI_SESSION_WRAPUP": str(server.DEADLINE - wrap_left_s)}
-        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(server.time, "time", lambda: self.now), \
-                mock.patch.dict(server._clock_shown, {"at": self.now - 60, "stuck": None}):
-            return server._clock_line()
+        core.DEADLINE = self.now + left_s
+        env = {"BG3AI_SESSION_WRAPUP": str(core.DEADLINE - wrap_left_s)}
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(time, "time", lambda: self.now), \
+                mock.patch.dict(core._clock_shown, {"at": self.now - 60, "stuck": None}):
+            return core._clock_line()
 
     def test_terse_line_has_no_time_left(self):
         # S069: "⏱ 20:38 · 13m left" (the last full line 7 min before) read as wrap-up: S069-end + HANDOFF at 13m left
@@ -105,10 +106,10 @@ class Clock(unittest.TestCase):
         self.assertIn("WRAP UP NOW", self.line_at(10, 3 * 60))
 
     def session_clock(self, left_s: float, wrap_left_s: float) -> str:
-        server.DEADLINE = self.now + left_s
-        env = {"BG3AI_SESSION_WRAPUP": str(server.DEADLINE - wrap_left_s)}
-        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(server.time, "time", lambda: self.now):
-            return server.session_clock()
+        core.DEADLINE = self.now + left_s
+        env = {"BG3AI_SESSION_WRAPUP": str(core.DEADLINE - wrap_left_s)}
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(time, "time", lambda: self.now):
+            return session_tools.session_clock()
 
     def test_session_clock_says_no_need_to_call_again(self):
         # S073 called session_clock 10 times in 2.5 min (22:56-22:58), waiting for WRAP UP. S082: no time in it either.
@@ -135,16 +136,16 @@ class FightHold(unittest.TestCase):
         self.hold = self.tmp / "S001.hold.json"
         self.deadline = self.t0 + 30 * 60
         self.wrap = self.deadline - 180
-        for p in (mock.patch.object(server, "_stuck", lambda: None),
-                  mock.patch.object(server, "_fight_now", lambda: self.fight),
-                  mock.patch.object(server, "DEADLINE", self.deadline),
-                  mock.patch.object(server, "HOLD_PATH", str(self.hold)),
-                  mock.patch.dict(server._hold, {"of": None}),
-                  mock.patch.dict(server._clock_shown, {"at": 0.0, "stuck": None}),
+        for p in (mock.patch.object(core, "_stuck", lambda: None),
+                  mock.patch.object(core, "_fight_now", lambda: self.fight),
+                  mock.patch.object(core, "DEADLINE", self.deadline),
+                  mock.patch.object(core, "HOLD_PATH", str(self.hold)),
+                  mock.patch.dict(core._hold, {"of": None}),
+                  mock.patch.dict(core._clock_shown, {"at": 0.0, "stuck": None}),
                   mock.patch.dict(os.environ, {"BG3AI_SESSION_WRAPUP": str(self.wrap),
                                                "BG3AI_SESSION_DEADLINE": str(self.deadline),
                                                "BG3AI_FIGHT_HOLD_PATH": str(self.hold)}),
-                  mock.patch.object(server.time, "time", lambda: self.now)):
+                  mock.patch.object(time, "time", lambda: self.now)):
             p.start()
             self.addCleanup(p.stop)
 
@@ -154,25 +155,25 @@ class FightHold(unittest.TestCase):
     def test_in_combat_line_has_no_countdown(self):
         self.now = self.wrap - 2 * 60   # S078's moment: 2 min of play before WRAP UP
         self.fight = True
-        for line in (server._clock_line(), server._clock_line(), server._clock(), server.session_clock()):
-            self.assertEqual(line, f"⏱ {self.hhmm()} · " + server.FIGHT_LINE)
+        for line in (core._clock_line(), core._clock_line(), core._clock(), session_tools.session_clock()):
+            self.assertEqual(line, f"⏱ {self.hhmm()} · " + core.FIGHT_LINE)
             self.assertNotRegex(line, r"\d+m|WRAP UP|left|nearly")
         self.now = self.t0 + 60   # early in the session too: no "28m of play left" in a fight
-        self.assertEqual(server._clock_line(), f"⏱ {self.hhmm()} · " + server.FIGHT_LINE)
+        self.assertEqual(core._clock_line(), f"⏱ {self.hhmm()} · " + core.FIGHT_LINE)
         self.fight = False
-        self.assertEqual(server._clock_line(), keep())
+        self.assertEqual(core._clock_line(), keep())
         self.assertFalse(self.hold.exists())  # the fight ended before WRAP UP: nothing held
 
     def test_fight_spanning_the_deadline_extends_the_session_until_it_ends(self):
         self.fight = True
         self.now = self.wrap - 60
-        self.assertEqual(server._clock_line(), f"⏱ {self.hhmm()} · " + server.FIGHT_LINE)
+        self.assertEqual(core._clock_line(), f"⏱ {self.hhmm()} · " + core.FIGHT_LINE)
         self.now = self.deadline + 4 * 60   # past the planned end, still fighting
-        self.assertEqual(server._clock_line(), f"⏱ {self.hhmm()} · " + server.FIGHT_LINE)
-        self.assertFalse(server._session_over())
-        cap = self.wrap + server.FIGHT_HOLD_S
-        self.assertEqual(server._times(), (cap, cap + 180, True))
-        self.assertEqual(rules.stop_refusal("move_to", server._times()[1], now=self.now), "")
+        self.assertEqual(core._clock_line(), f"⏱ {self.hhmm()} · " + core.FIGHT_LINE)
+        self.assertFalse(core._session_over())
+        cap = self.wrap + core.FIGHT_HOLD_S
+        self.assertEqual(core._times(), (cap, cap + 180, True))
+        self.assertEqual(rules.stop_refusal("move_to", core._times()[1], now=self.now), "")
         held = json.loads(self.hold.read_text())
         self.assertEqual((held["held"], held["wrap"], held["deadline"]), (True, int(cap), int(cap + 180)))
         # the runner's end check sees the hold: mid-fight end_session / stop check says finish the fight, no time
@@ -181,57 +182,57 @@ class FightHold(unittest.TestCase):
         self.fight = False   # the fight ends 9 min after WRAP UP: WRAP UP now, the end its 3 min later
         self.now = self.wrap + 9 * 60
         end = self.now + 180
-        self.assertEqual(server._times(), (self.now, end, False))
-        line = server._clock_line()
+        self.assertEqual(core._times(), (self.now, end, False))
+        line = core._clock_line()
         self.assertIn("3m left: WRAP UP NOW", line)
         held = json.loads(self.hold.read_text())
         self.assertEqual((held["held"], held["wrap"], held["deadline"]), (False, int(self.now), int(end)))
         self.assertEqual(session.session_deadline(), int(end))
         self.now = end + 1
-        self.assertTrue(server._session_over())
-        self.assertIn("SESSION OVER", server._clock_line())
+        self.assertTrue(core._session_over())
+        self.assertIn("SESSION OVER", core._clock_line())
 
     def test_the_hold_is_bounded(self):
         self.fight = True
         self.now = self.wrap + 1
-        self.assertTrue(server._times()[2])
-        cap = self.wrap + server.FIGHT_HOLD_S
+        self.assertTrue(core._times()[2])
+        cap = self.wrap + core.FIGHT_HOLD_S
         self.now = cap + 1   # still fighting: the normal end comes
-        self.assertEqual(server._times(), (cap, cap + 180, False))
-        self.assertIn("WRAP UP NOW", server._clock_line())
+        self.assertEqual(core._times(), (cap, cap + 180, False))
+        self.assertIn("WRAP UP NOW", core._clock_line())
         self.now = cap + 181
-        self.assertTrue(server._session_over())
+        self.assertTrue(core._session_over())
 
     def test_a_restarted_server_keeps_the_sessions_cap(self):
         # crash resume: a new server process with the runner's resumed (later) clock reads the hold file
-        cap = self.wrap + server.FIGHT_HOLD_S
+        cap = self.wrap + core.FIGHT_HOLD_S
         self.hold.write_text(json.dumps({"wrap": int(cap), "deadline": int(cap + 180), "held": True, "cap": int(cap)}))
         later = self.wrap + 5 * 60
-        with mock.patch.object(server, "DEADLINE", later + 180), \
+        with mock.patch.object(core, "DEADLINE", later + 180), \
                 mock.patch.dict(os.environ, {"BG3AI_SESSION_WRAPUP": str(later)}):
             self.now = later + 60
             self.fight = True
-            self.assertEqual(server._times(), (int(cap), int(cap) + 180, True))
+            self.assertEqual(core._times(), (int(cap), int(cap) + 180, True))
             self.fight = False   # it ended while the server was down: WRAP UP now
-            self.assertEqual(server._times(), (self.now, self.now + 180, False))
+            self.assertEqual(core._times(), (self.now, self.now + 180, False))
 
     def test_fight_events_drop_the_combat_read(self):
         reads = []
         g = mock.Mock(try_rpc=lambda op: reads.append(op) or {"active": True})
-        real = _REAL_FIGHT_NOW   # setUp patched server._fight_now
-        with mock.patch.object(server, "game", g), mock.patch.dict(server._hold, {"fight": None, "read_at": 0.0}):
+        real = _REAL_FIGHT_NOW   # setUp patched core._fight_now
+        with mock.patch.object(core, "game", g), mock.patch.dict(core._hold, {"fight": None, "read_at": 0.0}):
             self.assertTrue(real())
             self.assertTrue(real())
             self.assertEqual(len(reads), 1)   # kept FIGHT_READ_S
-            server._fight_seen("combat_turn", "EVENTS\n  combat_ended")
+            core._fight_seen("combat_turn", "EVENTS\n  combat_ended")
             real()
             self.assertEqual(len(reads), 2)
-            server._fight_seen("move_to", "")
+            core._fight_seen("move_to", "")
             real()
             self.assertEqual(len(reads), 2)
 
 
-_REAL_FIGHT_NOW = getattr(server, "_fight_now", None)
+_REAL_FIGHT_NOW = getattr(core, "_fight_now", None)
 
 
 if __name__ == "__main__":

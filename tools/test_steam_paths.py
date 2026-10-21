@@ -112,9 +112,9 @@ class SteamPathsTest(unittest.TestCase):
         self.assertEqual((sp.saves_dir(env, self.home), sp.se_dir(env, self.home)), (Path("/s"), Path("/e")))
 
     def test_mirrors_agree(self):
-        """server.py (the bridge doesn't import tools/) and launch_game.sh resolve the profile like profile_dir()."""
+        """bg3ai/tools/core.py (no import of tools/) and launch_game.sh resolve the profile like profile_dir()."""
         repo = Path(sp.__file__).resolve().parents[1]
-        server = (repo / "bridge/src/bg3ai/server.py").read_text()
+        server = (repo / "bridge/src/bg3ai/tools/core.py").read_text()
         for needle in ("BG3AI_SAVE_DIR", "BG3AI_PROFILE_DIR", str(sp.PROFILE_REL), str(sp.SAVES_REL)):
             self.assertIn(needle, server)
         self.assertIn("steam_paths.py\" profile", (repo / "runner/launch_game.sh").read_text())

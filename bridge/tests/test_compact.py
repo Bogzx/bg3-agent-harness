@@ -594,27 +594,27 @@ class SwitchOff(unittest.TestCase):
 
 class ServerWiring(unittest.TestCase):
     def test_every_tool_is_compacted_and_plain(self):
-        from bg3ai import server
-        tools = server.mcp._tool_manager.list_tools()
+        from bg3ai.tools import core, session
+        tools = core.mcp._tool_manager.list_tools()
         self.assertGreater(len(tools), 50)
         for t in tools:
             self.assertTrue(getattr(t.fn, "__compacted__", False), t.name)
-            if server.PLAIN_RESULTS:
+            if session.PLAIN_RESULTS:
                 self.assertIsNone(t.output_schema, t.name)
 
     def test_plain_text_result_has_no_structured_copy(self):
-        from bg3ai import server
-        tool = server.mcp._tool_manager.get_tool("look")
+        from bg3ai.tools import core
+        tool = core.mcp._tool_manager.get_tool("look")
         res = tool.fn_metadata.convert_result("WHERE x")
         self.assertEqual(res.content[0].text, "WHERE x")
         self.assertIsNone(res.structured_content)
 
     def test_briefing_is_not_compacted(self):
-        from bg3ai import server
+        from bg3ai.tools import session
         brief = "BRIEFING\nitem_added x= \n⏱ 16:38 · 25m left"
         body = "look\n  combat_started []"
-        fn = server._compacted("look", lambda: brief + server.BRIEFING_SEP + body)
-        self.assertEqual(fn(), brief + server.BRIEFING_SEP + "look\n  combat_started")
+        fn = session._compacted("look", lambda: brief + session.BRIEFING_SEP + body)
+        self.assertEqual(fn(), brief + session.BRIEFING_SEP + "look\n  combat_started")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,8 @@ import unittest
 
 from test_turn_macros import GOB, P1, P2, Base
 
-from bg3ai import compact, server, turn
+from bg3ai import compact, turn
+from bg3ai.tools import core, observe, travel, combat, turn_slots, turn_tool
 
 # Guard.disabling's entry for SLEEPING_EYEBITE (using SLEEPING_MAGICAL -> SLEEPING: SG_Sleeping, RemoveEvents OnDamage)
 SLEEPING = {"name": "Sleeping", "turns": 7, "effect": "cannot act",
@@ -74,14 +75,14 @@ class EveryCombatRead(Base):
             if op == "act.end_turn":
                 self.g.combat = s076_combat(current=GOB)
         self.g.on_start = advance
-        self.e46 = server.H.get(P2)
+        self.e46 = core.H.get(P2)
         self.line = f"DISABLED {self.e46} {GALE_TAIL}"
         self.g.actions = {"actions": [{"name": "Scorching Ray", "spell": "Projectile_ScorchingRay"}],
                           "resources": {"ActionPoint": [1, 1]}}  # Action 1/1 while asleep, as in S076
 
     def test_turn_block_next_line_carries_it(self):
         # 00:39:38 shape: Shadowheart's TURN block (her Help went to Karlach), the NEXT line names Gale
-        out = server.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=server.H.get(P1))
+        out = turn_tool.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=core.H.get(P1))
         self.assertIn("end_turn: done", out)
         self.assertIn(f"then {self.e46} Lae'zel (yours)", out)
         self.assertIn(self.line, out)
@@ -92,7 +93,7 @@ class EveryCombatRead(Base):
             if op == "act.end_turn":
                 self.g.combat = s076_combat(current=P2, gale_current=True)
         self.g.on_start = advance
-        out = server.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=server.H.get(P1))
+        out = turn_tool.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=core.H.get(P1))
         self.assertIn(f"NOW {self.e46} Lae'zel's turn: plan it\n{self.line}\nYOUR ACTIONS ({self.e46})", out)
 
     def test_a_lethargic_member_shows_no_movement(self):
@@ -108,38 +109,38 @@ class EveryCombatRead(Base):
         self.g.on_start = advance
         self.g.actions = {"actions": [{"name": "Scorching Ray", "spell": "Projectile_ScorchingRay"}],
                           "resources": {"ActionPoint": [1, 1], "Movement": [0, 9], "MoveBlocked": "Lethargic"}}
-        out = server.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=server.H.get(P1))
+        out = turn_tool.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=core.H.get(P1))
         self.assertIn(f"DISABLED {self.e46} Lae'zel: Lethargic (1 turn): cannot move; its turn passes once the rest"
                       " of its turn group has ended (act with it first)", out)
         self.assertIn("Move 0/9m (Lethargic)", out)
         self.assertNotIn("MoveBlocked", out)
 
     def test_interrupted_turn_carries_it(self):
-        out = server.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=server.H.get(P1), end=False)
+        out = turn_tool.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=core.H.get(P1), end=False)
         self.assertIn(self.line, out)
 
     def test_get_combat_state_carries_it_once(self):
-        out = server.get_combat_state()
+        out = observe.get_combat_state()
         self.assertEqual(out.count("Sleeping"), 1, out)
         self.assertIn(self.line, out)
         self.assertNotIn("disabled=", out)
 
     def test_wait_for_party_turn_carries_it(self):
         self.g.combat = s076_combat(current=P2, gale_current=True)
-        self.assertIn(self.line, server._wait_for_party_turn(1.0))
+        self.assertIn(self.line, combat._wait_for_party_turn(1.0))
 
     def test_set_party_select_carries_it(self):
-        out = server.set_party("select", who=self.e46)
+        out = travel.set_party("select", who=self.e46)
         self.assertIn(self.line, out)
         self.g.combat = {"active": False}
-        self.assertNotIn("DISABLED", server.set_party("select", who=self.e46))
+        self.assertNotIn("DISABLED", travel.set_party("select", who=self.e46))
 
     def test_compaction_keeps_it_on_every_read(self):
         c = compact.Compactor(clock=lambda: 1000.0)
         for _ in range(3):  # three reads in a row, the same order each time: never "(unchanged)" / "(as before)"
-            text = server._turn_next(P1, {P1, P2})
+            text = turn_slots._turn_next(P1, {P1, P2})
             self.assertIn(self.line, c.apply("combat_turn", text))
-            self.assertIn(self.line, c.apply("get_combat_state", server._combat_state_text()))
+            self.assertIn(self.line, c.apply("get_combat_state", observe._combat_state_text()))
 
 
 if __name__ == "__main__":

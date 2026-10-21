@@ -16,7 +16,9 @@ from pathlib import Path
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 from test_memtools import make_tree  # noqa: E402
 
+from mcp.server.mcpserver import MCPServer
 from bg3ai import memtools, server  # noqa: E402
+from bg3ai.tools import core  # noqa: E402
 from bg3ai.memtools import Refused  # noqa: E402
 
 SECTION = "## From the logs (memory keeper)"
@@ -122,9 +124,9 @@ class Server(KeeperBase):
         from unittest import mock
         served = {}
         with mock.patch.dict(os.environ, {"BG3AI_KEEPER_MODE": "1", "BG3AI_KEEPER_WRITABLE": "objectives.md"}), \
-                mock.patch.object(server.MCPServer, "run", lambda srv, transport, **kw: served.update(srv=srv)):
+                mock.patch.object(MCPServer, "run", lambda srv, transport, **kw: served.update(srv=srv)):
             server.main([])
-        self.assertIsNot(served["srv"], server.mcp)
+        self.assertIsNot(served["srv"], core.mcp)
         self.assertEqual(sorted(t.name for t in asyncio.run(served["srv"].list_tools())), sorted(server.KEEPER_TOOLS))
 
 

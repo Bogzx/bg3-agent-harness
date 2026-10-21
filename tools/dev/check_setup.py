@@ -29,7 +29,7 @@ os.environ.setdefault("BG3AI_METRICS_PATH", str(_tmp / "metrics.jsonl"))
 os.environ.setdefault("BG3AI_PLAYTHROUGH", "claude-run-2")
 os.environ.setdefault("BG3AI_SAVE_PREFIX", "Claude-")
 
-from bg3ai import server  # noqa: E402
+from server_view import S as server  # noqa: E402, N811
 
 
 def call(name: str, args: dict) -> str:

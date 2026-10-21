@@ -19,7 +19,8 @@ from pathlib import Path
 
 from test_turn_macros import P1, Base  # (sets BG3AI_RUNTIME before importing server)
 
-from bg3ai import saver, server  # noqa: E402
+from bg3ai import saver  # noqa: E402
+from bg3ai.tools import batch, queueing, saving, session  # noqa: E402
 
 # Captured at import (test discovery, before any test runs). Other modules patch the global time.sleep to a
 # no-op for speed; if one ever leaks that patch, these timing tests would see menus that take no time at all.
@@ -289,38 +290,38 @@ class ServerSave(Base):
         super().setUp()
         real_time(self)
         self.rig = Rig(menu_s=0.2)
-        saved = (server.SAVER, server._enable_save_gates, saver.STABLE_S)
-        server.SAVER = self.rig.saver()
-        server._enable_save_gates = lambda: None
+        saved = (saving.SAVER, saving._enable_save_gates, saver.STABLE_S)
+        saving.SAVER = self.rig.saver()
+        saving._enable_save_gates = lambda: None
         saver.STABLE_S = 0.05
         self.addCleanup(self._undo, saved)
 
     def _undo(self, saved):
-        server.SAVER.settle(3)
-        server.SAVER, server._enable_save_gates, saver.STABLE_S = saved
+        saving.SAVER.settle(3)
+        saving.SAVER, saving._enable_save_gates, saver.STABLE_S = saved
 
     def test_save_game_returns_at_once_and_a_later_result_says_saved(self):
         t0 = time.monotonic()
-        out = server.save_game("S010-pre.kagha!")
+        out = saving.save_game("S010-pre.kagha!")
         self.assertLess(time.monotonic() - t0, 0.15)
         self.assertIn("saving 'S010-prekagha' in the background", out)  # the mod's name filter, no dots
         t1 = time.monotonic()
-        server.session_clock()  # ungated: doesn't wait for the menus
+        session.session_clock()  # ungated: doesn't wait for the menus
         self.assertLess(time.monotonic() - t1, 0.1)
-        self.assertTrue(wait_until(lambda: server.SAVER.pending is None))
-        later = server.wait_for("idle", timeout_s=0.1)
+        self.assertTrue(wait_until(lambda: saving.SAVER.pending is None))
+        later = batch.wait_for("idle", timeout_s=0.1)
         self.assertIn("SAVED 'S010-prekagha'", later)
 
     def test_an_empty_label_is_named_after_the_session(self):
         # S070 21:14:32: save_game(label="") made a quicksave where a named save was meant
         with unittest.mock.patch.dict(os.environ, {"BG3AI_SESSION": "S070"}):
-            out = server.save_game("")
+            out = saving.save_game("")
         self.assertRegex(out, r"saving 'S070-\d{4}' in the background")
-        server.SAVER.settle(3)
+        saving.SAVER.settle(3)
         with unittest.mock.patch.dict(os.environ, {"BG3AI_SESSION": ""}):
-            out = server.save_game("  ")
+            out = saving.save_game("  ")
         self.assertIn("save_game: REFUSED — no label", out)
-        out = server.save_game("QuickSave")
+        out = saving.save_game("QuickSave")
         self.assertIn("saving 'quicksave' in the background", out)
 
     def test_a17_a_save_during_a_walk_waits_for_it(self):
@@ -336,16 +337,16 @@ class ServerSave(Base):
             def status(self):
                 return [{"who": P1, "running": "travel_to o1", "waiting": []}] if self.walking else []
         q = Q()
-        saved = (server._queues, server._running_jobs, saver.DEFER_POLL_S)
-        server._queues, server._running_jobs, saver.DEFER_POLL_S = (lambda: q), list, 0.05
-        self.addCleanup(lambda: (setattr(server, "_queues", saved[0]), setattr(server, "_running_jobs", saved[1]),
+        saved = (queueing._queues, queueing._running_jobs, saver.DEFER_POLL_S)
+        queueing._queues, queueing._running_jobs, saver.DEFER_POLL_S = (lambda: q), list, 0.05
+        self.addCleanup(lambda: (setattr(queueing, "_queues", saved[0]), setattr(queueing, "_running_jobs", saved[1]),
                                  setattr(saver, "DEFER_POLL_S", saved[2])))
-        ok, why = server._can_save()
+        ok, why = saving._can_save()
         self.assertFalse(ok)
         self.assertIn("a walk/action is running (queue e4 Claude: travel_to o1)", why)
         rig = self.rig
-        server.SAVER = saver.Saver(rig.run_menu, server._can_save, lambda: rig.dir)
-        out = server.save_game("S078-start")
+        saving.SAVER = saver.Saver(rig.run_menu, saving._can_save, lambda: rig.dir)
+        out = saving.save_game("S078-start")
         self.assertIn("queued 'S078-start': the game can't save right now (a walk/action is running", out)
         time.sleep(0.3)
         self.assertEqual(rig.menus, [])            # no menus while it walks
@@ -355,9 +356,9 @@ class ServerSave(Base):
         self.assertTrue(wait_until(lambda: rig.menus == ["S078-start"]), self.g.calls[-5:])
 
     def test_a_gated_tool_waits_for_the_menus(self):
-        server.save_game("x")
+        saving.save_game("x")
         t0 = time.monotonic()
-        server.wait_for("idle", timeout_s=0.1)
+        batch.wait_for("idle", timeout_s=0.1)
         self.assertGreater(time.monotonic() - t0, 0.1)  # waited for the ~0.2 s of menus
         self.assertEqual(self.rig.menus, ["x"])
 

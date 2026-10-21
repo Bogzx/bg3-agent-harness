@@ -11,7 +11,8 @@ from unittest import mock
 
 from test_turn_macros import CHEST, P1, P2, Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
-from bg3ai import delta, render, server  # noqa: E402
+from bg3ai import delta, render  # noqa: E402
+from bg3ai.tools import core, world_tools, batch  # noqa: E402
 
 
 class ArrivalLeads(Base):
@@ -23,7 +24,7 @@ class ArrivalLeads(Base):
             return {"leads": [{"uuid": CHEST, "name": "Crate", "kind": "container", "dist": 3.0, "dir": "N",
                                "unvisited": True}], "ways": [{"dir": "N", "open_m": 20}]}
         self.g.try_rpc = frontier
-        out = server._arrival_leads()
+        out = batch._arrival_leads()
         self.assertEqual(seen, [("nav.frontier", {"ways_cached": True})])
         self.assertIn("LEADS (unvisited", out)
         self.assertIn("WAYS walkable: N 20m+", out)
@@ -32,12 +33,12 @@ class ArrivalLeads(Base):
 class KilledLevelWays(unittest.TestCase):
     def test_partial_ways_line(self):
         out = render.render_frontier({"leads": [], "ways": [{"dir": "N", "open_m": 20}], "ways_off": "slow"},
-                                     server.H)
+                                     core.H)
         self.assertIn("WAYS walkable: N 20m+", out)
         self.assertIn("WAYS partial: path searches are throttled on this level", out)
 
     def test_no_line_on_a_healthy_level(self):
-        out = render.render_frontier({"leads": [], "ways": [{"dir": "N", "open_m": 20}]}, server.H)
+        out = render.render_frontier({"leads": [], "ways": [{"dir": "N", "open_m": 20}]}, core.H)
         self.assertNotIn("WAYS partial", out)
 
 
@@ -81,11 +82,11 @@ class ClickOffScreen(Base):
                 return {"ok": self.ok}
         self.CR = CR
 
-        saved_ce, saved_inp = clicker.click_entity, server._inp
+        saved_ce, saved_inp = clicker.click_entity, world_tools._inp
         clicker.click_entity = lambda game, inp, u, b: self.clicks.append(u) or CR(next(tries))
-        server._inp = lambda: object()
+        world_tools._inp = lambda: object()
         self.addCleanup(setattr, clicker, "click_entity", saved_ce)
-        self.addCleanup(setattr, server, "_inp", saved_inp)
+        self.addCleanup(setattr, world_tools, "_inp", saved_inp)
         self.g.watch["party"] = [{"uuid": P1, "pos": [0, 0, 0]}, {"uuid": P2, "pos": [11, 0, 0]}]
         real = self.g.rpc
 
@@ -96,8 +97,8 @@ class ClickOffScreen(Base):
         self.g.rpc = rpc
 
     def test_selects_the_member_beside_it_and_retries(self):
-        server.H.get(CHEST, "Touch")
-        out = server.click_on(server.H.get(CHEST))
+        core.H.get(CHEST, "Touch")
+        out = world_tools.click_on(core.H.get(CHEST))
         self.assertEqual(len(self.clicks), 2, out)
         self.assertIn(("act.select", {"char": P2}), [(op, a) for op, a in self.g.calls if op == "act.select"])
         self.assertIn("selected", out)
@@ -115,8 +116,8 @@ class ClickOffScreen(Base):
         self.tries = iter([True])
         import bg3ai.clicker as clicker
         clicker.click_entity = lambda game, inp, u, b: self.clicks.append(u) or self.CR(next(self.tries))
-        server.H.get(CHEST, "Touch")
-        out = server.click_on(server.H.get(CHEST))
+        core.H.get(CHEST, "Touch")
+        out = world_tools.click_on(core.H.get(CHEST))
         self.assertEqual(len(self.clicks), 1, out)
         self.assertIn(("act.select", {"char": P2}), [(op, a) for op, a in self.g.calls if op == "act.select"])
         self.assertTrue(out.startswith("selected"), out)
@@ -127,17 +128,17 @@ class ClickOffScreen(Base):
         sp = {"on_screen": True, "ndc": [0.1, 0.2]}
         self.g.rpc = lambda op, args=None, context="server", timeout=12.0: \
             sp if op == "ui.screen_pos" else real(op, args, context, timeout)
-        self.assertFalse(server._click_off_view(CHEST))
+        self.assertFalse(world_tools._click_off_view(CHEST))
         sp = {"on_screen": False, "behind": True}
-        self.assertTrue(server._click_off_view(CHEST))
+        self.assertTrue(world_tools._click_off_view(CHEST))
         with mock.patch.object(clicker, "HOVER_V2", False):
-            server.H.get(CHEST, "Touch")
-            out = server.click_on(server.H.get(CHEST))
+            core.H.get(CHEST, "Touch")
+            out = world_tools.click_on(core.H.get(CHEST))
         self.assertEqual(len(self.clicks), 2, out)   # v1: off_screen first, then select + retry
 
     def test_no_select_when_the_selected_one_is_nearest(self):
         self.g.watch["party"] = [{"uuid": P1, "pos": [11, 0, 0]}, {"uuid": P2, "pos": [0, 0, 0]}]
-        self.assertIsNone(server._click_selects(CHEST))
+        self.assertIsNone(world_tools._click_selects(CHEST))
 
 
 if __name__ == "__main__":

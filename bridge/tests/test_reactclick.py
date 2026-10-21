@@ -12,7 +12,8 @@ import unittest
 
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
-from bg3ai import reactclick, server  # noqa: E402
+from bg3ai import reactclick  # noqa: E402
+from bg3ai.tools import world_tools, dialogue, queueing, turn_slots  # noqa: E402
 from bg3ai.game import JobResult  # noqa: E402
 
 W, H = 1920, 1080
@@ -137,9 +138,9 @@ class ReactTool(Base):
     def setUp(self):
         super().setUp()
         self.p = FakePrompt()
-        saved = server._inp
-        server._inp = lambda: self.p
-        self.addCleanup(setattr, server, "_inp", saved)
+        saved = world_tools._inp
+        world_tools._inp = lambda: self.p
+        self.addCleanup(setattr, world_tools, "_inp", saved)
         base = self.g.rpc
         self.g.rpc = lambda op, args=None, context="server", **kw: (
             self.p.rpc(op, args or {}) if op == "ui.react_probe" else base(op, args, context, **kw))
@@ -155,14 +156,14 @@ class ReactTool(Base):
             self.jobs.append((op, dict(args)))
             return JobResult("done", {"needs_click": int(args.get("which") or 1), "rows": 6})
         self.g.run_job = run_job
-        out = server.react(True, "3")
+        out = dialogue.react(True, "3")
         self.assertTrue(out.startswith("react: done — clicked reaction row 3"), out)
         self.assertEqual(self.p.clicked, [3])
         self.assertEqual(self.jobs, [("ui.react", {"use": True, "which": "3"})])
 
     def test_a_single_row_prompt_is_untouched(self):
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult("done", {})
-        out = server.react(True, "1")
+        out = dialogue.react(True, "1")
         self.assertIn("react: done", out)
         self.assertEqual(self.p.clicked, [])
 
@@ -174,18 +175,18 @@ class ReactTool(Base):
         saved = self.g.rpc
         self.g.rpc = lambda op, args=None, context="server", **kw: (ui if op == "ui.state"
                                                                     else saved(op, args, context))
-        out = server.react(False)
+        out = dialogue.react(False)
         self.assertIn("react: TIMEOUT", out)
         self.assertIn("Do Not React has never closed a prompt with one row per level", out)
         self.assertIn('set_reactions {"<name>": "never"}', out)
 
     def test_combat_turn_reaction_answer_clicks_the_row(self):
-        saved = server._watch_conn
-        server._watch_conn = lambda: self.g
-        self.addCleanup(setattr, server, "_watch_conn", saved)
+        saved = queueing._watch_conn
+        queueing._watch_conn = lambda: self.g
+        self.addCleanup(setattr, queueing, "_watch_conn", saved)
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult(
             "done", {"needs_click": 1, "rows": 6})
-        out = server._answer_reaction(True)
+        out = turn_slots._answer_reaction(True)
         self.assertIn("reaction prompt: used (clicked reaction row 1", out)
         self.assertEqual(self.p.clicked, [1])
 

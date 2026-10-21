@@ -14,8 +14,9 @@ from typing import Any
 _RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit (/tmp filled up 2026-10-10)
 os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)  # tool logs go here, not runtime/
 
-from bg3ai import render, server  # noqa: E402
+from bg3ai import render  # noqa: E402
 from bg3ai.game import JobResult  # noqa: E402
+from bg3ai.tools import batch, core, macro_tools, observe, overview, plumbing, travel_macro  # noqa: E402
 
 PARTY = "11111111-2222-3333-4444-555555555555"
 DOOR = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -44,7 +45,7 @@ class FakeGame:
                     "party": [{"uuid": PARTY, "name": "Claude", "hp": 12, "max_hp": 12}]}
         if op == "state.map":
             return {"region": "Nautiloid"}
-        if op == "nav.markers":  # copies: server._set_objectives tags each with its oid
+        if op == "nav.markers":  # copies: overview._set_objectives tags each with its oid
             return {"markers": [dict(m) for m in self.markers], "ms": 1}
         if op == "nav.reach_toward":
             return self.reach
@@ -121,15 +122,15 @@ class RenderObjectives(unittest.TestCase):
 class ServerTools(unittest.TestCase):
     def setUp(self):
         self.fake = FakeGame()
-        self._orig = server.game
-        server.game = self.fake
-        server._objectives["last"] = []
-        server._objective_ids.clear()
-        server.DELTA.reset()  # each test starts with no previous look (full views)
-        self.addCleanup(setattr, server, "game", self._orig)
+        self._orig = core.game
+        core.game = self.fake
+        overview._objectives["last"] = []
+        overview._objective_ids.clear()
+        core.DELTA.reset()  # each test starts with no previous look (full views)
+        self.addCleanup(setattr, core, "game", self._orig)
 
     def test_get_status_shows_nearby_objectives(self):
-        out = server.get_status()
+        out = overview.get_status()
         self.assertIn("OBJECTIVE o1 Escape the ship 16m W", out)
         self.assertIn("OBJECTIVE o2 Find the helm 40.2m N", out)
         self.assertNotIn("Shadowheart", out)
@@ -137,48 +138,48 @@ class ServerTools(unittest.TestCase):
         self.assertNotIn(PARTY, out)
 
     def test_get_map_lists_all(self):
-        out = server.get_map()
+        out = observe.get_map()
         self.assertIn("OBJECTIVES", out)
         self.assertIn("OBJECTIVE o3 Rescue Shadowheart (another area)", out)
 
     def test_map_unchanged_names_the_objectives_here(self):
         # naut2 run 1: "No map change (Nautiloid; 1 objectives, 0 markers)" hid that o1 now stood 66.8m W
-        server.get_map()
-        out = server.get_map()
+        observe.get_map()
+        out = observe.get_map()
         self.assertTrue(out.startswith("No map change (Nautiloid; 3 objectives"))
         self.assertIn("Here: o1 Escape the ship 16m W", out)
         self.assertIn("o2 Find the helm 40.2m N", out)
         self.assertNotIn("Shadowheart", out)
-        server.MAP_SAME_OBJECTIVES = False
-        self.addCleanup(setattr, server, "MAP_SAME_OBJECTIVES", True)
-        self.assertNotIn("Here:", server.get_map())
+        observe.MAP_SAME_OBJECTIVES = False
+        self.addCleanup(setattr, observe, "MAP_SAME_OBJECTIVES", True)
+        self.assertNotIn("Here:", observe.get_map())
 
     def test_objective_moved_on_after_arrival(self):
-        server.get_map()  # o1/o2 ids as shown
+        observe.get_map()  # o1/o2 ids as shown
         arrived_at = [-16.0, 0.0, 0.0]
-        self.assertEqual(server._objective_moved_note("o1", arrived_at), "")  # still there: nothing to say
+        self.assertEqual(travel_macro._objective_moved_note("o1", arrived_at), "")  # still there: nothing to say
         moved = dict(MARKERS[0], pos=[-60.0, 0.0, 30.0], dist=66.8, dir="W")
         self.fake.markers = [moved, MARKERS[1], MARKERS[2]]
-        self.assertEqual(server._objective_moved_note("o1", arrived_at),
+        self.assertEqual(travel_macro._objective_moved_note("o1", arrived_at),
                          'o1 Escape the ship moved on: now 66.8m W: travel_to(objective="o1") again')
         self.fake.markers = [MARKERS[1], MARKERS[2]]
-        self.assertIn("is gone now", server._objective_moved_note("o1", arrived_at))
+        self.assertIn("is gone now", travel_macro._objective_moved_note("o1", arrived_at))
 
     def test_objective_handle_as_a_target(self):
         """S041 22:24 talk_to(npc="o1") for the Balthazar marker: 'unknown target'. o1 resolves by its label."""
         balth = "99999999-2222-3333-4444-555555555555"
         self.fake.markers = [{"label": "Balthazar", "quest": "Find the Nightsong", "pos": [-5.0, 0, 0], "dist": 5.0,
                               "dir": "W", "here": True}] + MARKERS
-        server.H.get(balth, "Balthazar")
-        self.assertEqual(server._uuid("o1"), balth)
+        core.H.get(balth, "Balthazar")
+        self.assertEqual(plumbing._uuid("o1"), balth)
         orig = self.fake.try_rpc
         self.fake.try_rpc = lambda op, args=None, context="server": {} if op == "state.nearby" else orig(op, args, context)
         with self.assertRaises(ValueError) as cm:
-            server._uuid("o2")  # "Escape the ship": nothing in view by that name
+            plumbing._uuid("o2")  # "Escape the ship": nothing in view by that name
         self.assertIn("o2 is the objective marker 'Escape the ship'", str(cm.exception))
         self.assertIn("route(objective='o2', go=true)", str(cm.exception))
         with self.assertRaises(ValueError) as cm:
-            server._uuid("o9")
+            plumbing._uuid("o9")
         self.assertIn("no objective o9 now", str(cm.exception))
 
     def test_objective_target_by_id_and_label(self):
@@ -187,24 +188,24 @@ class ServerTools(unittest.TestCase):
         stem = "dddddddd-0000-0000-0000-000000000466"
         self.fake.markers = [{"label": "Netherbrain Stem", "quest": "Confront the Elder Brain", "pos": [-5.0, 0, 0],
                               "dist": 5.7, "dir": "SW", "here": True, "target": stem}] + MARKERS
-        out = server.get_status()
+        out = overview.get_status()
         self.assertIn("OBJECTIVE o1 Netherbrain Stem 5.7m SW", out)
         self.assertNotIn(stem, out)
-        self.assertEqual(server._uuid("o1"), stem)
+        self.assertEqual(plumbing._uuid("o1"), stem)
         orig = self.fake.try_rpc
         self.fake.try_rpc = lambda op, args=None, context="server": (
             {} if op in ("state.nearby", "state.combat") else orig(op, args, context))
-        self.assertEqual(server._uuid("Netherbrain Stem"), stem)
-        self.assertEqual(server._uuid("netherbrain stem"), stem)
+        self.assertEqual(plumbing._uuid("Netherbrain Stem"), stem)
+        self.assertEqual(plumbing._uuid("netherbrain stem"), stem)
         with self.assertRaises(ValueError) as cm:
-            server._uuid("Netherbrain")  # part of a label is no target
+            plumbing._uuid("Netherbrain")  # part of a label is no target
         self.assertIn("unknown target 'Netherbrain'", str(cm.exception))
         with self.assertRaises(ValueError) as cm:
-            server._uuid("Escape the ship")  # an objective without a marked thing (a trigger/area)
+            plumbing._uuid("Escape the ship")  # an objective without a marked thing (a trigger/area)
         self.assertIn("unknown target 'Escape the ship'", str(cm.exception))
 
     def test_walk_toward_direction(self):
-        out = server.walk_toward(direction="w", wait=True)
+        out = observe.walk_toward(direction="w", wait=True)
         reach = [a for op, a in self.fake.calls if op == "nav.reach_toward"][0]
         self.assertEqual(reach["dir"], "W")
         self.assertEqual(reach["char"], PARTY)
@@ -213,10 +214,10 @@ class ServerTools(unittest.TestCase):
         self.assertIn("walk_toward: done", out)
 
     def test_walk_toward_objective_by_shown_id(self):
-        server.get_status()  # shows o1/o2
+        overview.get_status()  # shows o1/o2
         # The party moved: the server now returns the helm first. o1 must still mean "Escape the ship".
         self.fake.markers = [MARKERS[1], MARKERS[0], MARKERS[2]]
-        server.walk_toward(objective="o1", wait=True)
+        observe.walk_toward(objective="o1", wait=True)
         reach = [a for op, a in self.fake.calls if op == "nav.reach_toward"][-1]
         self.assertEqual(reach["pos"], [-16.0, 0.0, 0.0])
 
@@ -224,19 +225,19 @@ class ServerTools(unittest.TestCase):
         """S059 08:53: route(objective="o3") meant Gortash; the list re-sorted by distance and o3 was the Ordination."""
         ms = [dict(m) for m in MARKERS]
         self.fake.markers = ms
-        server.get_map()
+        observe.get_map()
         self.fake.markers = [ms[1], ms[0], ms[2]]  # the party moved: the helm is nearest now
-        server._objectives["at"] = 0.0  # stale: the next use fetches the re-sorted list
-        pos, what = server._travel_dest("", "o1", None, None, None)
+        overview._objectives["at"] = 0.0  # stale: the next use fetches the re-sorted list
+        pos, what = macro_tools._travel_dest("", "o1", None, None, None)
         self.assertEqual(pos, [-16.0, 0.0, 0.0])
         self.assertIn("Escape the ship", what)
-        out = server.get_map(full=True)
+        out = observe.get_map(full=True)
         self.assertIn("OBJECTIVE o2 Find the helm", out)
         self.assertIn("OBJECTIVE o1 Escape the ship", out)
         self.fake.markers = [ms[1], ms[2]]  # "Escape the ship" done: o1 is gone, not the helm
-        server._objectives["at"] = 0.0
+        overview._objectives["at"] = 0.0
         with self.assertRaises(ValueError) as cm:
-            server._travel_dest("", "o1", None, None, None)
+            macro_tools._travel_dest("", "o1", None, None, None)
         self.assertIn("no objective o1 now (done or gone); current: o2 Find the helm", str(cm.exception))
 
     def test_one_marker_under_two_quests_is_not_ambiguous(self):
@@ -251,21 +252,21 @@ class ServerTools(unittest.TestCase):
         self.assertIn("o1 Gortash [Servant of None], o2 Gortash [Get Gortash's Netherstone]; use the id", str(cm.exception))
 
     def test_walk_toward_objective_elsewhere_refused(self):
-        out = server.walk_toward(objective="shadowheart")
+        out = observe.walk_toward(objective="shadowheart")
         self.assertIn("FAILED", out)
         self.assertIn("not in this area", out)
         self.assertEqual(self.fake.jobs, [])
 
     def test_walk_toward_target(self):
-        h = server.H.get(DOOR, "Sphincter Door")
-        server.walk_toward(target=h, max_m=12, wait=True)
+        h = core.H.get(DOOR, "Sphincter Door")
+        observe.walk_toward(target=h, max_m=12, wait=True)
         reach = [a for op, a in self.fake.calls if op == "nav.reach_toward"][-1]
         self.assertEqual(reach["target"], DOOR)
         self.assertEqual(reach["max_m"], 12)
 
     def test_walk_toward_unreachable(self):
         self.fake.reach = {"reachable": False, "samples": 9}
-        out = server.walk_toward(direction="N", wait=True)
+        out = observe.walk_toward(direction="N", wait=True)
         self.assertTrue(out.startswith("FAILED: no walkable ground toward N within 30m (9 spots checked)"), out)
         self.assertEqual(self.fake.jobs, [])
 
@@ -273,20 +274,20 @@ class ServerTools(unittest.TestCase):
         # Fairness (user, 2026-10-18): nothing from the Faith-Leap's hidden platforms reaches the agent; an older
         # mod's hidden_floor/hidden_beyond fields are ignored
         self.fake.reach = {"reachable": False, "samples": 6, "hidden_floor": {"pos": [-766.5, -28.4, -731.6], "at_m": 12.3}}
-        out = server.walk_toward(direction="W", wait=True)
+        out = observe.walk_toward(direction="W", wait=True)
         self.assertTrue(out.startswith("FAILED: no walkable ground toward W within 30m (6 spots checked)"), out)
         self.assertNotIn("chasm", out)
         self.fake.reach = {"reachable": True, "pos": [-764.0, -28.3, -732.5], "path_m": 10.0, "straight_m": 10.0,
                            "dir": "W", "hidden_beyond": {"pos": [-766.5, -28.4, -731.6], "at_m": 12.3}}
-        out = server.walk_toward(direction="W", wait=True)
+        out = observe.walk_toward(direction="W", wait=True)
         self.assertNotIn("chasm", out)
         self.assertNotIn("-766.5", out)
 
     def test_walk_toward_needs_an_argument(self):
-        self.assertIn("FAILED", server.walk_toward())
+        self.assertIn("FAILED", observe.walk_toward())
 
     def test_batchable(self):
-        self.assertIn("walk_toward", server._BATCHABLE)
+        self.assertIn("walk_toward", batch._BATCHABLE)
 
 
 if __name__ == "__main__":

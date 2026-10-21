@@ -10,7 +10,8 @@ from __future__ import annotations
 import time
 import unittest
 
-from bg3ai import party, server
+from bg3ai import actq, party, render
+from bg3ai.tools import core, overview, plumbing, queueing, travel_macro
 from test_turn_macros import P1, P2, Base
 
 P3 = "33333333-2222-3333-4444-555555555555"
@@ -80,17 +81,17 @@ class Pure(unittest.TestCase):
         self.assertEqual(party.stragglers(rows, [0, 0, 0], skip={P2}), [])
 
     def test_party_line_tags_summon(self):
-        H = server.render.Handles()
+        H = render.Handles()
         H.get(P1, "Claude")
-        line = server.render.character_line({"uuid": P2, "name": "Spiritual Weapon", "summon": True, "owner": P1}, H)
+        line = render.character_line({"uuid": P2, "name": "Spiritual Weapon", "summon": True, "owner": P1}, H)
         self.assertTrue(line.endswith("summon of " + H.get(P1)), line)
 
 
 class Cohesion(Base):
     def setUp(self) -> None:
         super().setUp()
-        server._stay.clear()
-        self.addCleanup(server._stay.clear)
+        overview._stay.clear()
+        self.addCleanup(overview._stay.clear)
         saved, party.CATCH_UP_S = party.CATCH_UP_S, 0.3
         self.addCleanup(setattr, party, "CATCH_UP_S", saved)
         self.st = status()
@@ -107,7 +108,7 @@ class Cohesion(Base):
 
     def test_get_status_warns_and_rechains(self):
         self.st = status({"chained": False, "pos": [34, 0, 0]})
-        out = server.get_status()
+        out = overview.get_status()
         self.assertEqual(self.chains(), [P2])
         self.assertIn("PARTY APART: ", out)
         self.assertIn("34m", out)
@@ -116,37 +117,37 @@ class Cohesion(Base):
     def test_no_party_apart_at_camp(self):
         # S014: companions idle at their tents 16-23 m away while long resting: not a split
         self.st = status({"pos": [20, 0, 0]})
-        self.assertEqual(server._party_check(self.st, ui={"region": "Campsite"}), "")
-        self.assertIn("PARTY APART: ", server._party_check(self.st, ui={"region": "Blighted Village"}))
+        self.assertEqual(overview._party_check(self.st, ui={"region": "Campsite"}), "")
+        self.assertIn("PARTY APART: ", overview._party_check(self.st, ui={"region": "Blighted Village"}))
 
     def test_floor_split_survives_rechain_filter(self):
         self.st = status({"chained": False, "pos": [4, 5.5, 4]})
-        out = server._party_check(self.st)
+        out = overview._party_check(self.st)
         self.assertEqual(self.chains(), [P2])
         self.assertIn("6m above", out)
         self.assertIn("re-chained to ", out)
 
     def test_staying_member_is_left_alone(self):
         self.st = status({"chained": False, "pos": [34, 0, 0]})
-        r = server.stay(server.H.get(P2))
+        r = overview.stay(core.H.get(P2))
         self.assertIn("stays put", r)
         self.assertEqual([a["char"] for _, a in self.g.ops("act.unchain")], [P2])
-        out = server.look()
+        out = overview.look()
         self.assertEqual(self.chains(), [])
         self.assertIn("(staying)", out)
 
     def test_companion_queue_end_rechains_it(self):
         self.st = status({"chained": False})
-        server._on_queue_report(P2, server.actq.Report(done=1))
+        queueing._on_queue_report(P2, actq.Report(done=1))
         self.assertEqual(self.chains(), [P2])
-        server._on_queue_report(P1, server.actq.Report(done=1))  # the leader: nothing to chain
+        queueing._on_queue_report(P1, actq.Report(done=1))  # the leader: nothing to chain
         self.assertEqual(self.chains(), [P2])
 
     def test_regroup_names_a_member_on_another_level_and_chains(self):
         self.st = status({"region": "TUT"}, {"chained": False})
         self.g.watch["party"].append({"uuid": P3, "hp": 20, "max_hp": 20, "pos": [2, 0, 0]})
-        server.H.get(P3, "Gale")
-        out = server.regroup()
+        core.H.get(P3, "Gale")
+        out = travel_macro.regroup()
         self.assertIn("on another level (TUT)", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
         self.assertEqual(self.chains(), [P3])
@@ -155,28 +156,28 @@ class Cohesion(Base):
         # S035 19:28: regroup replaced Shadowheart's own move_to + jump_to queue with a travel_to that had no way up.
         self.st = status({"chained": False})
         self.g.watch["party"][1]["pos"] = [40, 0, 0]
-        q = server._queues()
+        q = queueing._queues()
         orig = q.busy
         q.busy = lambda u: u == P2
         self.addCleanup(setattr, q, "busy", orig)
-        out = server.regroup()
+        out = travel_macro.regroup()
         self.assertIn("left on its own queue", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
         self.assertEqual(self.chains(), [])
 
     def test_far_unchained_summon_is_left_alone(self):
         self.st = status({"chained": False, "pos": [34, 0, 0], "summon": True})
-        self.assertNotIn("PARTY APART", server.get_status())
+        self.assertNotIn("PARTY APART", overview.get_status())
         self.assertEqual(self.chains(), [])
-        server._on_queue_report(P2, server.actq.Report(done=1))
+        queueing._on_queue_report(P2, actq.Report(done=1))
         self.assertEqual(self.chains(), [])
 
     def test_regroup_does_not_walk_or_chain_a_summon(self):
         self.st = status({"chained": False, "summon": True}, {"chained": False})
         self.g.watch["party"][1]["pos"] = [40, 0, 0]
         self.g.watch["party"].append({"uuid": P3, "hp": 20, "max_hp": 20, "pos": [2, 0, 0]})
-        server.H.get(P3, "Gale")
-        server.regroup()
+        core.H.get(P3, "Gale")
+        travel_macro.regroup()
         self.assertEqual([a["char"] for _, a in self.g.ops("act.move_to")], [])
         self.assertEqual(self.chains(), [P3])
 
@@ -187,7 +188,7 @@ class Cohesion(Base):
         self.assertIn("arrived", out)
 
     def _trip(self, follower_moves: bool) -> str:
-        server.SETTLE_S = 10.0
+        plumbing.SETTLE_S = 10.0
         self.g.result_for = lambda op, a: {"after": {"pos": a.get("pos")}} if op == "act.move_to" else {}
 
         def reach(a):
@@ -206,7 +207,7 @@ class Cohesion(Base):
             elif follower_moves:  # the walk back works
                 self.g.watch["party"][1]["pos"] = list(a["pos"])
         self.g.on_start = walk
-        return server.travel_to(x=30.0, y=0.0, z=0.0)
+        return travel_macro.travel_to(x=30.0, y=0.0, z=0.0)
 
     def test_leader_trip_walks_a_straggler_back(self):
         out = self._trip(follower_moves=True)
@@ -247,7 +248,7 @@ class Cohesion(Base):
         self.assertEqual([a for _, a in self.g.ops("act.move_to") if a.get("char") == P2], [])
 
     def test_staying_member_is_not_waited_for(self):
-        server._stay.add(P2)
+        overview._stay.add(P2)
         out = self._trip(follower_moves=False)
         self.assertNotIn("behind", out)
         self.assertIn("arrived", out)

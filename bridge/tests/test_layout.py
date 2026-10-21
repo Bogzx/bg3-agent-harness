@@ -10,7 +10,8 @@ import unittest
 
 from test_turn_macros import P1, P2, Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
-from bg3ai import render, server  # noqa: E402
+from bg3ai import render  # noqa: E402
+from bg3ai.tools import core, observe  # noqa: E402
 
 DOOR = "dddddddd-0000-0000-0000-000000000001"
 SHADOW = "dddddddd-0000-0000-0000-000000000002"
@@ -47,7 +48,7 @@ class Layout(Base):
                                     "pos": [0.0, 0.0, -4.5]}]}
 
     def test_grid_with_what_the_party_sees(self):
-        out = server.get_layout(radius=4.5)
+        out = observe.get_layout(radius=4.5)
         lines = out.splitlines()
         self.assertIn("LAYOUT 4.5m around you (@), N up", lines[0])
         grid = [l for l in lines if l.startswith("|")]
@@ -67,19 +68,19 @@ class Layout(Base):
         # floor mosaic off the screen (screenshot/zoom)
         self.lay["mosaic"] = {"rows": ["          #######", "##########     #######OOO"], "x1": -807, "z2": -719,
                               "y": -28.5, "cell": 1}
-        out = server.get_layout()
+        out = observe.get_layout()
         self.assertNotIn("MOSAIC", out)
         self.assertNotIn("#######OOO", out)
-        self.assertNotIn("mosaic", server.get_layout.__doc__ or "")
+        self.assertNotIn("mosaic", observe.get_layout.__doc__ or "")
 
     def test_unseen_ground_is_a_question_mark_in_the_key(self):
         self.lay["rows"] = ["???????", "#.....#", "#.###.#", "#.....#", "#.#.#.#", "#.....#", "###.###"]
-        out = server.get_layout(radius=4.5)
+        out = observe.get_layout(radius=4.5)
         self.assertIn("? not seen or walked yet", out.splitlines()[0])
         self.assertIn("|???????|", out)
 
     def test_render_without_nearby(self):
-        text = render.render_layout(LAY, server.H)
+        text = render.render_layout(LAY, core.H)
         self.assertIn("|#..@..#|", text)
         self.assertNotIn("ON IT", text)
 

@@ -19,14 +19,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_turn_macros import Base  # noqa: E402,F401  (sets BG3AI_RUNTIME before importing server)
-from bg3ai import server  # noqa: E402
+from bg3ai.tools import core  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 SRC = REPO / "bridge" / "src" / "bg3ai"
 LUA = REPO / "mod" / "Mods" / "BG3AI" / "ScriptExtender" / "Lua" / "Server"
-PY_FILES = ["server.py", "route.py", "turn.py", "render.py", "compact.py", "navhints.py", "macros.py", "actq.py",
-            "longnav.py", "delta.py", "twostep.py", "hotbar.py", "clicker.py", "party.py", "economy.py", "saver.py",
-            "spellprep.py"]
+PY_FILES = ["server.py", *sorted(f"tools/{p.name}" for p in (SRC / "tools").glob("*.py")), "route.py", "turn.py",
+            "render.py", "compact.py", "navhints.py", "macros.py", "actq.py", "longnav.py", "delta.py", "twostep.py",
+            "hotbar.py", "clicker.py", "party.py", "economy.py", "saver.py", "spellprep.py"]
 LUA_FILES = ["Guard.lua", "Actions.lua", "Navigation.lua"]
 # Prose strings that name an RPC op on purpose (they answer the bridge, not the agent).
 RPC_OK = {"act.note: only queue_* events"}
@@ -42,7 +42,7 @@ LUA_STR = re.compile(r'"((?:[^"\\\n]|\\.)*)"|\'((?:[^\'\\\n]|\\.)*)\'')
 
 def registered() -> dict[str, set[str]]:
     return {t.name: set((t.input_schema or {}).get("properties", {}))
-            for t in asyncio.run(server.mcp.list_tools())}
+            for t in asyncio.run(core.mcp.list_tools())}
 
 
 def _is_tool_def(node: ast.AST) -> bool:
@@ -160,7 +160,7 @@ class HintTools(unittest.TestCase):
 
     def test_tool_docstrings_are_scanned(self):
         # an MCP tool's docstring is its description: it is in the scan; other functions' docstrings are not
-        strings = [s for _, s in py_strings(SRC / "server.py")]
+        strings = [s for _, s in py_strings(SRC / "tools" / "travel.py")]
         self.assertTrue(any(s.startswith("Party control.") for s in strings))
         self.assertFalse(any("make_executor(who)" in s for _, s in py_strings(SRC / "actq.py")))
 

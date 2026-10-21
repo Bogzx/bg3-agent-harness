@@ -126,7 +126,7 @@ def main() -> int:
     ap.add_argument("--json", help="also write [{name, level, plan, problems, offers}] for every checked line here")
     ap.add_argument("--memory", help="memory dir (default: playthroughs/$BG3AI_PLAYTHROUGH/memory)")
     a = ap.parse_args()
-    from bg3ai import server
+    from server_view import S as server  # noqa: N811
     st = server.game.rpc("state.status")
     uuids = [r["uuid"] for r in (st.get("party") or []) + (st.get("camp") or []) if isinstance(r, dict) and r.get("uuid")]
     mem = Path(a.memory) if a.memory else ROOT / "playthroughs" / os.environ["BG3AI_PLAYTHROUGH"] / "memory"

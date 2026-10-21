@@ -23,12 +23,12 @@ FULL = 94
 # running game.
 PROBE = """
 import json, sys
-from bg3ai import server
-out = {"tools": sorted(t.name for t in server.mcp._tool_manager.list_tools()),
-       "batchable": sorted(server._BATCHABLE)}
+from bg3ai.tools import core, batch, travel_macro
+out = {"tools": sorted(t.name for t in core.mcp._tool_manager.list_tools()),
+       "batchable": sorted(batch._BATCHABLE)}
 if "--note" in sys.argv:
-    out["note"] = [server.do_actions("[]", note="x"), server.queue_actions("[]", note="x"),
-                   server.travel_to(note="x")]
+    out["note"] = [batch.do_actions("[]", note="x"), batch.queue_actions("[]", note="x"),
+                   travel_macro.travel_to(note="x")]
 print(json.dumps(out))
 """
 

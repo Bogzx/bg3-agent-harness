@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 import unittest
 
-from bg3ai import macros, server
+from bg3ai import macros
+from bg3ai.tools import plumbing, travel_macro, turn_tool
 from test_turn_macros import CHEST, GOB, P1, P2, Base, combat
 
 
@@ -35,7 +36,7 @@ class LegRules(unittest.TestCase):
 class TravelLegs(Base):
     def setUp(self) -> None:
         super().setUp()
-        server.SETTLE_S = 10.0
+        plumbing.SETTLE_S = 10.0
         self.g.result_for = lambda op, a: {"after": {"pos": a.get("pos")}} if op == "act.move_to" else {}
 
     def reach(self, a):
@@ -50,7 +51,7 @@ class TravelLegs(Base):
         self.g.reach = self.reach
         self.g.refuse_if = lambda op, a: ("no walkable path there (may need a jump or another route)"
                                           if op == "act.move_to" and a.get("pos") == [30.0, 0.0, 0.0] else None)
-        out = server.travel_to(x=50.0, y=0.0, z=0.0)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0)
         calls = self.g.ops("nav.reach_toward")
         self.assertTrue(calls[1][1].get("alt"))
         self.assertEqual(calls[1][1]["exclude"], [30.0, 0.0, 0.0])
@@ -61,7 +62,7 @@ class TravelLegs(Base):
     def test_retries_are_capped(self):
         self.g.reach = self.reach
         self.g.refuse_if = lambda op, a: "no walkable path there" if op == "act.move_to" else None
-        out = server.travel_to(x=50.0, y=0.0, z=0.0)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0)
         self.assertEqual(len(self.g.ops("act.move_to")), 1 + macros.TRAVEL_LEG_RETRIES)
         self.assertIn("STOPPED: leg 3 failed", out)
 
@@ -72,14 +73,14 @@ class TravelLegs(Base):
             return {"reachable": True, "pos": [30.0, 0.0, 0.0]}
         self.g.reach = reach
         self.g.refuse_if = lambda op, a: "no walkable path there" if op == "act.move_to" else None
-        out = server.travel_to(x=50.0, y=0.0, z=0.0)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0)
         self.assertEqual(len(self.g.ops("act.move_to")), 1)
         self.assertIn("no other leg either", out)
 
     def test_a_conversation_is_not_retried(self):
         self.g.reach = self.reach
         self.g.refuse_if = lambda op, a: "character is in a conversation" if op == "act.move_to" else None
-        out = server.travel_to(x=50.0, y=0.0, z=0.0)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0)
         self.assertEqual(len(self.g.ops("act.move_to")), 1)
         self.assertIn("leg 1 failed", out)
 
@@ -92,7 +93,7 @@ class TravelLegs(Base):
                 return {"reachable": True, "pos": [x + 25.0, 0.0, 0.0], "alt": "route", "verified": True}
             return {"reachable": True, "pos": [x + 2.0, 0.0, 0.0], "verified": True}
         self.g.reach = reach
-        out = server.travel_to(x=50.0, y=0.0, z=0.0)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0)
         self.assertEqual([m[1]["pos"][0] for m in self.g.ops("act.move_to")], [25.0, 50.0])
         self.assertIn("arrived", out)
 
@@ -104,7 +105,7 @@ class TravelLegs(Base):
                 return {"reachable": False, "alt_failed": True}
             return {"reachable": True, "pos": [min(50.0, x + 4.0), 0.0, 0.0], "verified": True}
         self.g.reach = reach
-        server.travel_to(x=12.0, y=0.0, z=0.0)
+        travel_macro.travel_to(x=12.0, y=0.0, z=0.0)
         self.assertEqual([m[1]["pos"][0] for m in self.g.ops("act.move_to")][:2], [4.0, 8.0])
 
     def test_direct_route_is_one_leg(self):
@@ -117,7 +118,7 @@ class TravelLegs(Base):
             return {"reachable": True, "pos": [nx, 0.0, 0.0], "direct": True, "verified": True,
                     "route_m": 92.0 - x, "path_m": nx - x}
         self.g.reach = reach
-        out = server.travel_to(x=90.0, y=0.0, z=0.0)
+        out = travel_macro.travel_to(x=90.0, y=0.0, z=0.0)
         self.assertEqual([m[1]["pos"][0] for m in self.g.ops("act.move_to")], [55.0, 90.0])
         self.assertIn("leg 1: along the route (92m): move_to: done", out)
         self.assertIn("arrived", out)
@@ -133,7 +134,7 @@ class TravelLegs(Base):
             return {"reachable": True, "pos": legs[n], "direct": True, "verified": True,
                     "route_m": left[n] + 40.0, "path_m": 40.0, "route_left_m": left[n]}
         self.g.reach = reach
-        out = server.travel_to(x=60.0, y=0.0, z=0.0)
+        out = travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertEqual([m[1]["pos"] for m in self.g.ops("act.move_to")], legs)
         self.assertIn("arrived", out)
         self.assertNotIn("no walkable ground", out)
@@ -150,7 +151,7 @@ class TravelLegs(Base):
                 r["exposure"] = {"surface": "Grease", "m": 3.0, "patches": 1, "pos": [-15.0, 0.0, 5.0], "at_m": 12}
             return r
         self.g.reach = reach
-        out = server.travel_to(x=10.0, y=0.0, z=0.0, avoid_hazards="cross")
+        out = travel_macro.travel_to(x=10.0, y=0.0, z=0.0, avoid_hazards="cross")
         self.assertIn("crossing 3m of Grease", out)
         self.assertIn("arrived", out)
 
@@ -159,7 +160,7 @@ class TravelLegs(Base):
             return {"reachable": True, "pos": [-40.0, 0.0, 0.0], "direct": True, "verified": True,
                     "route_m": 220.0, "path_m": 40.0, "route_left_m": 180.0}
         self.g.reach = reach
-        out = server.travel_to(x=60.0, y=0.0, z=0.0)
+        out = travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertLessEqual(len(self.g.ops("act.move_to")), 2)
         self.assertIn("no walkable ground leads further", out)
 
@@ -171,10 +172,10 @@ class InTheWay(Base):
 
     def setUp(self) -> None:
         super().setUp()
-        server.SETTLE_S = 10.0
-        self.saved = server.BLOCKER_WAIT_S
-        server.BLOCKER_WAIT_S = 0.5
-        self.addCleanup(setattr, server, "BLOCKER_WAIT_S", self.saved)
+        plumbing.SETTLE_S = 10.0
+        self.saved = travel_macro.BLOCKER_WAIT_S
+        travel_macro.BLOCKER_WAIT_S = 0.5
+        self.addCleanup(setattr, travel_macro, "BLOCKER_WAIT_S", self.saved)
         self.leader_moves = 0
 
         def result(op, a):
@@ -200,7 +201,7 @@ class InTheWay(Base):
 
     def test_companion_in_the_doorway_is_stepped_back(self):
         self.g.watch["party"][1]["pos"] = [11.5, 0.0, 0.4]
-        out = server.travel_to(x=30.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=30.0, y=0.0, z=0.0, wait=True)
         self.assertIn("in the way: ", out)
         self.assertIn("stepped back behind", out)
         self.assertEqual(self.moves_of(P2)[0]["pos"], [7.0, 0.0, 0.0])
@@ -218,7 +219,7 @@ class InTheWay(Base):
                 self.g.nearby["characters"][0]["pos"] = [11.0, 0.0, 5.0]  # steps aside after the first look
             return r
         self.g.rpc = rpc
-        out = server.travel_to(x=30.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=30.0, y=0.0, z=0.0, wait=True)
         self.assertIn("Mattis: waited", out)
         self.assertIn("arrived", out)
         self.assertEqual(self.moves_of(P2), [])
@@ -228,7 +229,7 @@ class InTheWay(Base):
                                             "after": {"pos": [10.0, 0.0, 0.0]}} if op == "act.move_to" else {})
         self.g.watch["party"][0]["pos"] = [10.0, 0.0, 0.0]
         self.g.nearby = {"characters": [{"uuid": self.NPC, "name": "Mattis", "pos": [11.0, 0.0, 0.2]}], "items": []}
-        out = server.travel_to(x=30.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=30.0, y=0.0, z=0.0, wait=True)
         self.assertIn("Mattis (stands in the path, didn't move", out)
         self.assertIn("STOPPED", out)
         self.assertEqual(out.count("didn't move"), 1)
@@ -244,7 +245,7 @@ class InTheWay(Base):
                 return {"leads": [{"uuid": CHEST, "name": "Ladder", "kind": "ladder", "dist": 13.0, "dir": "N"}]}
             return real(op, args, context, default)
         self.g.try_rpc = fake
-        out = server.travel_to(x=30.0, y=-12.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=30.0, y=-12.0, z=0.0, wait=True)
         self.assertIn("STOPPED", out)
         self.assertIn("12m below you: climb with interact on a ladder", out)
         self.assertIn("Ladder <ladder> 13m N", out)
@@ -260,12 +261,12 @@ class InTheWay(Base):
                 return {"leads": [{"uuid": CHEST, "name": "Ladder", "kind": "ladder", "dist": 1.0, "dir": "E"}]}
             return real(op, args, context, default)
         self.g.try_rpc = fake
-        out = server.travel_to(x=10.0, y=-11.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=10.0, y=-11.0, z=0.0, wait=True)
         self.assertIn("11m below you: climb with interact on a ladder", out)
         self.assertGreater(len(self.g.ops("act.move_to")), 1)  # retried another way first
 
 
-        self.assertEqual(server._in_the_way([0, 0, 0], [10, 0, 0], [{"uuid": "x", "pos": [-1, 0, 0]},
+        self.assertEqual(travel_macro._in_the_way([0, 0, 0], [10, 0, 0], [{"uuid": "x", "pos": [-1, 0, 0]},
                                                                      {"uuid": "y", "pos": [2, 0, 3]},
                                                                      {"uuid": "z", "pos": [2, 5, 0]}], P1), [])
 
@@ -285,7 +286,7 @@ class MeleeApproach(Base):
                            "end_m": 2.5}
         self.g.result_for = lambda op, a: ({"dist": 1.4, "target": a.get("target"), "in_reach": True}
                                            if op == "act.move_to" else {})
-        out = server.combat_turn(json.dumps({"move": {"target": self.gob, "within": 1.5},
+        out = turn_tool.combat_turn(json.dumps({"move": {"target": self.gob, "within": 1.5},
                                              "action": ["Shout_Dodge"]}), end=False)
         mv = self.g.ops("act.move_to")[0][1]
         self.assertEqual((mv.get("target"), mv.get("within")), (GOB, 1.5))
@@ -295,14 +296,14 @@ class MeleeApproach(Base):
     def test_plain_move_passes_the_melee_reach_and_says_when_short(self):
         self.g.result_for = lambda op, a: ({"dist": 2.6, "target": a.get("target"), "in_reach": False}
                                            if op == "act.move_to" else {})
-        out = server.combat_turn(json.dumps({"move": self.gob, "action": ["Shout_Dodge"]}), end=False)
+        out = turn_tool.combat_turn(json.dumps({"move": self.gob, "action": ["Shout_Dodge"]}), end=False)
         self.assertEqual(self.g.ops("act.move_to")[0][1].get("within"), 1.5)
         self.assertIn("stopped short of melee reach", out)
 
     def test_far_ledge_still_stays_put(self):
         self.g.approach = {"reachable": True, "pos": [0.0, 0.0, 0.0], "walk_m": 0.2, "limit": "route_end",
                            "end_m": 7.8}
-        out = server.combat_turn(json.dumps({"move": {"target": self.gob, "within": 1.5},
+        out = turn_tool.combat_turn(json.dumps({"move": {"target": self.gob, "within": 1.5},
                                              "action": ["Shout_Dodge"]}), end=False)
         self.assertEqual(self.g.ops("act.move_to"), [])
         self.assertIn("stays put", out)
@@ -318,7 +319,7 @@ class MeleeApproach(Base):
         self.g.refuse_if = refuse
         self.g.result_for = lambda op, a: ({"dist": 1.3, "target": a.get("target"), "in_reach": True}
                                            if op == "act.move_to" else {})
-        out = server.combat_turn(json.dumps({"action": {"ability": "Target_MainHandAttack", "target": self.gob}}))
+        out = turn_tool.combat_turn(json.dumps({"action": {"ability": "Target_MainHandAttack", "target": self.gob}}))
         self.assertEqual(self.g.ops("act.move_to")[0][1].get("within"), 1.5)
         self.assertEqual(self.g.ops("nav.approach"), [])
         self.assertIn("stepped next to it", out)
@@ -328,7 +329,7 @@ class MeleeApproach(Base):
 class CombatOver(Base):
     def test_combat_turn_after_the_fight_is_not_a_failure(self):
         self.g.combat = {"active": False}
-        out = server.combat_turn(json.dumps({"action": ["Shout_Dodge"]}))
+        out = turn_tool.combat_turn(json.dumps({"action": ["Shout_Dodge"]}))
         self.assertTrue(out.startswith("combat_turn: nothing to play — not in combat"), out)
         self.assertEqual(self.casts(), [])
 
@@ -337,7 +338,7 @@ class CombatOver(Base):
         self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=GOB)
         self.g.refuse_if = lambda op, a: ("choose a variant: Shout_SpiritGuardians_Radiant, Shout_SpiritGuardians_Necrotic"
                                           if op == "act.cast" and a.get("spell") == "Shout_SpiritGuardians" else None)
-        out = server.combat_turn(json.dumps({"action": ["Shout_SpiritGuardians"]}))
+        out = turn_tool.combat_turn(json.dumps({"action": ["Shout_SpiritGuardians"]}))
         self.assertEqual(self.casts(), ["Shout_SpiritGuardians", "Shout_SpiritGuardians_Radiant"])
         self.assertIn("Shout_SpiritGuardians: took the first variant Shout_SpiritGuardians_Radiant", out)
         self.assertNotIn("choose a variant", out)  # S040-S041: read and triaged as a FAILED step
@@ -345,11 +346,11 @@ class CombatOver(Base):
     def test_end_inside_the_plan_is_the_end_argument(self):
         # S041 22:36:18: {"end": false} in the plan failed the call "unknown plan key(s) end"
         self.g.combat = combat()
-        out = server.combat_turn(json.dumps({"action": ["Shout_Dodge"], "end": False}))
+        out = turn_tool.combat_turn(json.dumps({"action": ["Shout_Dodge"], "end": False}))
         self.assertNotIn("unknown plan key", out)
         self.assertEqual(self.g.ops("act.end_turn"), [])
-        self.assertEqual(server._plan_end('{"end": true}', False), True)
-        self.assertEqual(server._plan_end('{"action": []}', False), False)
+        self.assertEqual(turn_tool._plan_end('{"end": true}', False), True)
+        self.assertEqual(turn_tool._plan_end('{"action": []}', False), False)
 
 
 class StepIntoRange(Base):
@@ -368,7 +369,7 @@ class StepIntoRange(Base):
         self.g.refuse_if = refuse
 
     def turn(self) -> str:
-        return server.combat_turn(json.dumps({"action": {"ability": "Target_SacredFlame", "target": self.gob}}))
+        return turn_tool.combat_turn(json.dumps({"action": {"ability": "Target_SacredFlame", "target": self.gob}}))
 
     def test_steps_in_and_casts(self):
         self.g.approach = {"reachable": True, "pos": [0.8, 0.0, 0.0], "walk_m": 0.8, "limit": "in_range"}

@@ -13,7 +13,8 @@ import unittest
 
 from test_turn_macros import P1, P2, Base, FakeGame  # noqa: F401 (sets BG3AI_RUNTIME first)
 
-from bg3ai import server, spellprep
+from bg3ai import spellprep
+from bg3ai.tools import core, plumbing, overview, progression, queueing
 from bg3ai.game import JobResult
 
 BLESS = {"id": "Target_Bless", "name": "Bless", "level": 1}
@@ -96,11 +97,11 @@ class PrepareSpells(Base):
     def setUp(self) -> None:
         super().setUp()
         self.g = PrepGame()
-        server.game = self.g
-        server._watch_game = self.g
+        core.game = self.g
+        queueing._watch_game = self.g
 
     def call(self, **kw) -> str:
-        return server.prepare_spells.fn(**kw) if hasattr(server.prepare_spells, "fn") else server.prepare_spells(**kw)
+        return progression.prepare_spells.fn(**kw) if hasattr(progression.prepare_spells, "fn") else progression.prepare_spells(**kw)
 
     def test_prepares_through_the_spellbook_and_lists_the_server_set(self):
         out = self.call(who="Claude", add=["Bless"])
@@ -113,7 +114,7 @@ class PrepareSpells(Base):
     def test_the_cached_hotbar_map_is_dropped(self):
         # L7 22:08: a hotbar map cached before the prepare (MAP_TTL_S 20) still lacked Bless 3 s after it
         from bg3ai import hotbar
-        uuid = server._who("Claude")
+        uuid = plumbing._who("Claude")
         hotbar._maps[uuid] = (time.monotonic(), {"ClassHotBar": {"1": "Target_CureWounds"}})
         self.call(who="Claude", add=["Bless"])
         self.assertNotIn(uuid, hotbar._maps)
@@ -131,9 +132,9 @@ class PrepareSpells(Base):
             return real(op, args, context, timeout)
         self.g.rpc = rpc
         self.g.try_rpc = lambda op, args=None, context="server", default=None: rpc(op, args, context)
-        real_sleep = server.time.sleep
-        server.time.sleep = lambda s: None
-        self.addCleanup(setattr, server.time, "sleep", real_sleep)
+        real_sleep = time.sleep
+        time.sleep = lambda s: None
+        self.addCleanup(setattr, time, "sleep", real_sleep)
         out = self.call(who="Claude", add=["Bless"])
         self.assertGreaterEqual(len(seen), 4)  # read until the load ended, then the page
         self.assertIn("prepare_spells: done — prepared Bless", out)
@@ -200,11 +201,11 @@ class PrepareSpells(Base):
         self.assertIn("(the spellbook shows the selected character)", out)
 
     def test_get_party_shows_prepared_and_limit(self):
-        out = server.get_party.fn() if hasattr(server.get_party, "fn") else server.get_party()
+        out = overview.get_party.fn() if hasattr(overview.get_party, "fn") else overview.get_party()
         self.assertIn("   prepared 2/3: Cure Wounds, Shield of Faith; always: Sanctuary", out)
 
     def test_get_status_prepared_line_on_a_full_look_and_on_change(self):
-        st = server.get_status.fn if hasattr(server.get_status, "fn") else server.get_status
+        st = overview.get_status.fn if hasattr(overview.get_status, "fn") else overview.get_status
         self.assertIn("PREPARED (only these cast; prepare_spells out of combat changes them): Claude 2/3: Cure Wounds, "
                       "Shield of Faith +1 always", st(full=True))
         self.assertNotIn("PREPARED", st())

@@ -23,7 +23,8 @@ from test_turn_macros import (
     Base,  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 )
 
-from bg3ai import actq, party, server
+from bg3ai import actq, longnav, party
+from bg3ai.tools import core, plumbing, travel, batch, queueing, travel_macro
 from bg3ai.game import JobResult
 
 CLAUDE = "aaaaaaaa-0000-4000-8000-000000000004"
@@ -101,19 +102,19 @@ class Fake:
 
 class JobText(unittest.TestCase):
     def use(self, fake) -> None:
-        saved = server.game
-        self.addCleanup(lambda: setattr(server, "game", saved))
-        server.game = fake
+        saved = core.game
+        self.addCleanup(lambda: setattr(core, "game", saved))
+        core.game = fake
         for u, n in ((CLAUDE, "Claude"), (KARLACH, "Karlach"), (WYLL, "Wyll"), (SHADOWHEART, "Shadowheart")):
-            server.H.get(u, n)
+            core.H.get(u, n)
 
     def test_wait_for_shows_the_game_move_and_checks_one_way_back(self):
         fake = Fake(s066_status())
         self.use(fake)
         res = dict(BY_GAME, after={"pos": ARENA, "hp": 168, "max_hp": 168})
-        out = server._job_text("move_to", JobResult("interrupted", res, "the game moved the character (a quest "
+        out = plumbing._job_text("move_to", JobResult("interrupted", res, "the game moved the character (a quest "
                                                     "updated), not our walk"), CLAUDE)
-        self.assertIn("the game moved " + server._label(CLAUDE) + " 22m", out)
+        self.assertIn("the game moved " + queueing._label(CLAUDE) + " 22m", out)
         self.assertIn("into Bhaal Temple", out)
         self.assertIn("PARTY LEFT BEHIND", out)
         self.assertIn("regroup(leader=", out)
@@ -124,13 +125,13 @@ class JobText(unittest.TestCase):
 
     def test_no_way_for_them(self):
         self.use(Fake(s066_status(), reachable=False))
-        out = server._job_text("move_to", JobResult("interrupted", dict(BY_GAME), "x"), CLAUDE)
+        out = plumbing._job_text("move_to", JobResult("interrupted", dict(BY_GAME), "x"), CLAUDE)
         self.assertIn("(a sealed story area?)", out)
 
     def test_the_engines_own_teleport_reads_as_before(self):
         self.use(Fake(s066_status()))
         res = {"pos": ARENA, "teleported": True, "from": [27.3, -42.9, 998.8], "m": 21.7, "dest_m": 1.4}
-        out = server._job_text("move_to", JobResult("failed", res, "engine teleported the character (not allowed)"))
+        out = plumbing._job_text("move_to", JobResult("failed", res, "engine teleported the character (not allowed)"))
         self.assertTrue(out.startswith("move_to: FAILED — engine teleported the character (not allowed)"), out)
 
 
@@ -143,14 +144,14 @@ BY_TRIP = {"pos": S073_END, "teleported": True, "by_trip": True, "from": S073_FR
 
 class TripMoved(unittest.TestCase):
     def setUp(self):
-        saved = server.game
-        self.addCleanup(lambda: setattr(server, "game", saved))
-        server.game = Fake(s066_status())
-        server.H.get(CLAUDE, "Claude")
+        saved = core.game
+        self.addCleanup(lambda: setattr(core, "game", saved))
+        core.game = Fake(s066_status())
+        core.H.get(CLAUDE, "Claude")
 
     def test_s073_the_walk_put_on_its_end_after_a_fast_travel_is_done(self):
-        out = server._job_text("move_to", JobResult("done", dict(BY_TRIP)), CLAUDE)
-        self.assertEqual(out, f"move_to: done — @(-47.7,20.1,-102.2) dist=0: the game moved {server._label(CLAUDE)} "
+        out = plumbing._job_text("move_to", JobResult("done", dict(BY_TRIP)), CLAUDE)
+        self.assertEqual(out, f"move_to: done — @(-47.7,20.1,-102.2) dist=0: the game moved {queueing._label(CLAUDE)} "
                               "the last 29.8m to the walk's end in one jump from @(-48.5,27.9,-73.5), 9s after the "
                               "fast travel (not walked; nothing to undo)")
         self.assertNotIn("not allowed", out)
@@ -171,13 +172,13 @@ class TripMoved(unittest.TestCase):
             def try_rpc(self, op, args=None):
                 return {"party": [{"uuid": CLAUDE, "pos": [-50.2, 27.2, -54.8]}]}
 
-        server.game = G()
+        core.game = G()
         wp = {"name": "Lower City Central Wall", "pos": [-50.2, 27.2, -54.8], "to_goal_m": 60.4}
-        with mock.patch.object(server, "_pos_now", return_value=[150.0, 30.0, -100.0]), \
-                mock.patch.object(server.longnav, "pick_waypoint", return_value=wp), \
-                mock.patch.object(server, "_leave_camp_first", return_value=""), \
-                mock.patch.object(server, "_watch_conn", return_value=W()):
-            line, left = server._fast_travel_first(CLAUDE, [-76, 19, -112], 224.0)
+        with mock.patch.object(travel_macro, "_pos_now", return_value=[150.0, 30.0, -100.0]), \
+                mock.patch.object(longnav, "pick_waypoint", return_value=wp), \
+                mock.patch.object(travel, "_leave_camp_first", return_value=""), \
+                mock.patch.object(queueing, "_watch_conn", return_value=W()):
+            line, left = batch._fast_travel_first(CLAUDE, [-76, 19, -112], 224.0)
         self.assertTrue(line.endswith(": done"), line)
         self.assertEqual(calls[calls.index("ui.fast_travel"):], ["ui.fast_travel", "act.trip_arrived"])
 

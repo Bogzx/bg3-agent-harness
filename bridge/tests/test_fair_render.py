@@ -155,10 +155,10 @@ class GroupStatuses(unittest.TestCase):
 
 class ExamineStatuses(unittest.TestCase):
     def test_look_at_drops_status_ids(self):
-        from bg3ai import server
+        from bg3ai.tools import observe
         res = {"name": "Gremishka", "statuses": [{"id": "GREMISHKA_MAGICALLERGY_AURA", "name": "Magic Allergy"},
                                                  {"id": "NAMELESS_ONE"}]}
-        out = server._shown_statuses(res)
+        out = observe._shown_statuses(res)
         self.assertEqual(out["statuses"][0], {"name": "Magic Allergy"})
         self.assertEqual(out["statuses"][1], {"id": "NAMELESS_ONE"})
         self.assertNotIn("GREMISHKA", render.compact(out, Handles()))

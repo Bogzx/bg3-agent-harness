@@ -16,7 +16,7 @@ libraryfolders.vdf lists for app 1086940, then the old default ~/.local/share/St
 The sniper runtime (app 1628350) can sit in a different library than the game: $BG3AI_SNIPER_DIR, then
 libraryfolders.vdf, then next to the game. The Larian profile (saves, Script Extender files): $BG3AI_PROFILE_DIR,
 else ~/.local/share/Larian Studios/Baldur's Gate 3 (where the native bg3le build keeps it); $BG3AI_SAVE_DIR and
-$BG3AI_SE_DIR override its two subfolders. The runner, launch_game.sh and the MCP server (server.py mirrors this
+$BG3AI_SE_DIR override its two subfolders. The runner, launch_game.sh and the MCP server (bg3ai/tools/core.py mirrors this
 lookup inline: the bridge doesn't import tools/) all resolve these the same way. Prints the path even when it does not exist (the caller
 reports what is missing); exits 1 only for an unknown key.
 """

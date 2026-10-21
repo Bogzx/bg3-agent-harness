@@ -15,12 +15,13 @@ import unittest
 
 from test_turn_macros import CHEST, P1, Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
-from bg3ai import metrics, server  # noqa: E402
+from bg3ai import metrics  # noqa: E402
+from bg3ai.tools import core, plumbing, observe, world_tools, batch, queueing, travel_macro, session  # noqa: E402
 
 
 def who() -> str:
     """The party leader's label in queue lines ("e4 Claude"): handle numbering depends on setup order."""
-    return server._label(P1)
+    return queueing._label(P1)
 
 
 def wait_until(cond, timeout: float = 5.0) -> bool:
@@ -48,7 +49,7 @@ class AsyncTravel(Base):
     def test_returns_at_once_and_the_queue_walks_the_legs(self):
         self.g.dur["act.move_to"] = 0.15
         t0 = time.monotonic()
-        out = server.travel_to(marker="m1")
+        out = travel_macro.travel_to(marker="m1")
         self.assertLess(time.monotonic() - t0, 0.1)  # did not wait for the first 0.15 s leg
         self.assertIn("travel_to marker m1 Old well: started (50m)", out)
         self.assertIn("queued 1 step(s)", out)
@@ -56,29 +57,29 @@ class AsyncTravel(Base):
         self.g.try_rpc = lambda op, args=None, context="server", default=None: (
             {"leads": [{"uuid": CHEST, "name": "Well", "kind": "usable", "dist": 3.0, "dir": "N", "unvisited": True}]}
             if op == "nav.frontier" else real(op, args, context, default))
-        done = server.wait_for("queue", timeout_s=5)
+        done = batch.wait_for("queue", timeout_s=5)
         self.assertIn("queue e", done)
         self.assertIn("done (1 steps)", done)
-        self.assertIn("LEADS (unvisited; get_frontier lists all): " + server.H.get(CHEST) + " Well <usable> 3m N", done)
+        self.assertIn("LEADS (unvisited; get_frontier lists all): " + core.H.get(CHEST) + " Well <usable> 3m N", done)
         self.assertEqual([a["pos"][0] for _, a in self.g.ops("act.move_to")], [30.0, 50.0])
         self.assertTrue(any(e["kind"] == "queue_done" for e in self.g.events))
 
     def test_arrival_steps_append_after_the_trip(self):
         self.g.dur["act.move_to"] = 0.1
-        server.travel_to(marker="m1")
-        out = server.queue_actions(json.dumps([{"tool": "interact", "target": server.H.get(CHEST)}]))
+        travel_macro.travel_to(marker="m1")
+        out = batch.queue_actions(json.dumps([{"tool": "interact", "target": core.H.get(CHEST)}]))
         self.assertIn("queued 1 step(s)", out)
-        server.wait_for("queue", timeout_s=5)
+        batch.wait_for("queue", timeout_s=5)
         ops = [op for op, _ in self.g.calls if op in ("act.move_to", "act.interact")]
         self.assertEqual(ops, ["act.move_to", "act.move_to", "act.interact"])
 
     def test_cancel_queue_stops_the_trip(self):
         self.g.dur["act.move_to"] = 0.5
-        server.travel_to(marker="m1")
+        travel_macro.travel_to(marker="m1")
         self.assertTrue(wait_until(lambda: self.g.ops("act.move_to")))
-        out = server.cancel_queue()
+        out = batch.cancel_queue()
         self.assertIn("cancelled", out)
-        server.wait_for("queue", timeout_s=5)
+        batch.wait_for("queue", timeout_s=5)
         time.sleep(0.1)
         self.assertEqual(len(self.g.ops("act.move_to")), 1)  # the first leg was cancelled, no second leg
         jid = max(self.g.jobs)
@@ -87,12 +88,12 @@ class AsyncTravel(Base):
     def test_queue_after_an_async_walk_waits_for_it(self):
         # move_to returns at once; queue_actions right after must not supersede the walk.
         self.g.dur["act.move_to"] = 0.3
-        out = server.move_to(x=5.0, y=0.0, z=0.0)
+        out = world_tools.move_to(x=5.0, y=0.0, z=0.0)
         self.assertIn("started j", out)
         h = out.split("started ", 1)[1].split(",")[0].split()[0]
-        q = server.queue_actions(json.dumps([{"tool": "interact", "target": server.H.get(CHEST)}]))
+        q = batch.queue_actions(json.dumps([{"tool": "interact", "target": core.H.get(CHEST)}]))
         self.assertIn(f"after {h} arrives", q)
-        server.wait_for("queue", timeout_s=5)
+        batch.wait_for("queue", timeout_s=5)
         walk = self.g.jobs[int(h[1:])]
         self.assertEqual(walk["status"], "done")  # not superseded
         self.assertEqual([op for op, _ in self.g.calls if op in ("act.move_to", "act.interact")],
@@ -100,26 +101,26 @@ class AsyncTravel(Base):
 
     def test_cancel_queue_also_stops_the_walk_it_waits_for(self):
         self.g.dur["act.move_to"] = 1.0
-        h = server.move_to(x=5.0, y=0.0, z=0.0).split("started ", 1)[1].split(",")[0].split()[0]
-        server.queue_actions(json.dumps([{"tool": "interact", "target": server.H.get(CHEST)}]))
+        h = world_tools.move_to(x=5.0, y=0.0, z=0.0).split("started ", 1)[1].split(",")[0].split()[0]
+        batch.queue_actions(json.dumps([{"tool": "interact", "target": core.H.get(CHEST)}]))
         time.sleep(0.1)
-        server.cancel_queue()
-        server.wait_for("queue", timeout_s=5)
+        batch.cancel_queue()
+        batch.wait_for("queue", timeout_s=5)
         self.assertEqual(self.g.jobs[int(h[1:])]["status"], "interrupted")
         self.assertEqual(self.g.ops("act.interact"), [])
 
     def test_bad_destination_fails_at_once(self):
-        out = server.travel_to(marker="nowhere")
+        out = travel_macro.travel_to(marker="nowhere")
         self.assertIn("FAILED: no marker 'nowhere'", out)
-        self.assertFalse(server._queues().busy())
+        self.assertFalse(queueing._queues().busy())
         self.assertEqual(self.g.ops("act.move_to"), [])
 
     def test_wait_true_does_not_block_and_shows_progress(self):
-        server.SETTLE_S = 0.2
+        plumbing.SETTLE_S = 0.2
         self.g.dur["act.move_to"] = 1.0
         self.g.watch["party"][0]["pos"] = [0.0, 0.0, 0.0]
         t0 = time.monotonic()
-        out = server.travel_to(marker="m1", wait=True)
+        out = travel_macro.travel_to(marker="m1", wait=True)
         self.assertLess(time.monotonic() - t0, 0.6)
         self.assertIn("travel_to marker m1 Old well: started (50m); 50m left", out)
         self.assertIn("wait=true ignored", out)
@@ -128,21 +129,21 @@ class AsyncTravel(Base):
         self.assertIn("NEXT: queue_actions", out)
 
     def test_a_trip_that_ends_in_the_settle_window_reports_now(self):
-        server.SETTLE_S = 3.0
-        out = server.travel_to(marker="m1")
+        plumbing.SETTLE_S = 3.0
+        out = travel_macro.travel_to(marker="m1")
         self.assertIn(f"queue {who()}: done (1 steps)", out)
         self.assertIn("arrived", out)
         self.assertNotIn("RUNNING", out)
         self.assertNotIn("NEXT:", out)
 
     def test_trip_progress_has_an_eta(self):
-        server._trips[P1] = {"dest": [50.0, 0.0, 0.0], "d0": 50.0, "t0": time.monotonic() - 4.0}
+        batch._trips[P1] = {"dest": [50.0, 0.0, 0.0], "d0": 50.0, "t0": time.monotonic() - 4.0}
         self.g.watch["party"][0]["pos"] = [20.0, 0.0, 0.0]  # 20 m in 4 s: 30 m left at 5 m/s
-        self.assertEqual(server._trip_progress(P1), "30m left, ETA ~6s")
+        self.assertEqual(batch._trip_progress(P1), "30m left, ETA ~6s")
 
     def test_do_actions_can_travel(self):
-        out = server.do_actions(json.dumps([{"tool": "travel_to", "marker": "m1"},
-                                            {"tool": "interact", "target": server.H.get(CHEST)}]))
+        out = batch.do_actions(json.dumps([{"tool": "travel_to", "marker": "m1"},
+                                            {"tool": "interact", "target": core.H.get(CHEST)}]))
         self.assertIn("1. travel_to marker m1 Old well: 50m", out)
         self.assertIn("arrived", out)
         self.assertIn("2. interact", out)
@@ -159,48 +160,48 @@ class EarlyWake(Base):
 
     def walk(self, dur: float) -> str:
         self.g.dur["act.move_to"] = dur  # the fake's ETA is 1.0 s
-        out = server.move_to(x=5.0, y=0.0, z=0.0)
+        out = world_tools.move_to(x=5.0, y=0.0, z=0.0)
         return out.split("started ", 1)[1].split(",")[0].split()[0]
 
     def test_wakes_early_and_the_next_action_waits_for_the_walk(self):
         h = self.walk(1.2)
         t0 = time.monotonic()
-        out = server.wait_for(h, timeout_s=5, lead_s=2)
+        out = batch.wait_for(h, timeout_s=5, lead_s=2)
         self.assertLess(time.monotonic() - t0, 0.5)
         self.assertIn(f"{h} move_to: arriving, ETA ~", out)
         self.assertIn("runs after the walk arrives", out)
         self.assertNotIn("blocks to the end", out)  # ACT-P4: it invited an immediate re-wait
         walk = self.g.jobs[int(h[1:])]
         self.assertEqual(walk["status"], "running")
-        res = server.interact(target=server.H.get(CHEST))
+        res = world_tools.interact(target=core.H.get(CHEST))
         self.assertIn("waited", res)
         self.assertEqual(walk["status"], "done")  # not cancelled
         self.assertGreaterEqual(self.started["act.interact"], walk["end"])
 
     def test_once_per_walk_then_blocks_to_the_end(self):
         h = self.walk(0.8)
-        self.assertIn("arriving", server.wait_for(h, timeout_s=5, lead_s=2))
-        out = server.wait_for(h, timeout_s=5, lead_s=2)
+        self.assertIn("arriving", batch.wait_for(h, timeout_s=5, lead_s=2))
+        out = batch.wait_for(h, timeout_s=5, lead_s=2)
         self.assertIn("move_to: done", out)
         self.assertNotIn("arriving", out)
 
     def test_default_waits_for_the_arrival(self):
         # ACT-P4 (naut2 runs 1-2: 4 of 5 early wakes were followed at once by wait_for(lead_s=0)): opt-in only
-        self.assertEqual(server.LEAD_S, 0.0)
+        self.assertEqual(batch.LEAD_S, 0.0)
         h = self.walk(0.8)
-        out = server.wait_for(h, timeout_s=5)
+        out = batch.wait_for(h, timeout_s=5)
         self.assertIn("move_to: done", out)
         self.assertNotIn("arriving", out)
 
     def test_lead_zero_waits_for_the_end(self):
         h = self.walk(0.5)
-        out = server.wait_for(h, timeout_s=5, lead_s=0)
+        out = batch.wait_for(h, timeout_s=5, lead_s=0)
         self.assertIn("move_to: done", out)
 
     def test_far_from_arrival_blocks(self):
         h = self.walk(1.5)
         t0 = time.monotonic()
-        out = server.wait_for(h, timeout_s=5, lead_s=0.2)  # ETA 1.0 s: more than 0.2 s left at first
+        out = batch.wait_for(h, timeout_s=5, lead_s=0.2)  # ETA 1.0 s: more than 0.2 s left at first
         self.assertIn("arriving", out)  # wakes once the ETA drops under 0.2 s
         self.assertGreater(time.monotonic() - t0, 0.6)
         self.assertEqual(self.g.jobs[int(h[1:])]["status"], "running")
@@ -218,42 +219,42 @@ class EarlyWake(Base):
             return real(op, args, context, default)
         self.g.try_rpc = fake
         h = self.walk(0.3)
-        out = server.wait_for(h, timeout_s=5, lead_s=0)
+        out = batch.wait_for(h, timeout_s=5, lead_s=0)
         self.assertIn("move_to: done", out)
-        self.assertIn(f"LEADS (unvisited; get_frontier lists all): {server.H.get(CHEST)} Door <door> 15.3m NW "
+        self.assertIn(f"LEADS (unvisited; get_frontier lists all): {core.H.get(CHEST)} Door <door> 15.3m NW "
                       "(2.4m down)", out)
         self.assertNotIn("Crate", out)  # visited
         self.assertIn("WAYS walkable: N 20m+ | blocked: S", out)
         h = self.walk(0.8)
-        self.assertNotIn("LEADS", server.wait_for(h, timeout_s=5, lead_s=2))  # early wake: still walking
+        self.assertNotIn("LEADS", batch.wait_for(h, timeout_s=5, lead_s=2))  # early wake: still walking
 
     def test_not_in_combat(self):
         h = self.walk(0.5)
-        self.g.combat = {"active": True, "current": server.H.get(P1)}
-        out = server.wait_for(h, timeout_s=5)
+        self.g.combat = {"active": True, "current": core.H.get(P1)}
+        out = batch.wait_for(h, timeout_s=5)
         self.assertNotIn("arriving", out)
         self.assertIn("move_to: done", out)
-        self.assertEqual(server._early, {})
+        self.assertEqual(batch._early, {})
 
     def test_not_for_non_walks(self):
         self.g.dur["act.interact"] = 0.5
-        out = server.interact(target=server.H.get(CHEST), wait=False)
+        out = world_tools.interact(target=core.H.get(CHEST), wait=False)
         h = out.split("started ", 1)[1].split(",")[0].split()[0]
-        self.assertNotIn("arriving", server.wait_for(h, timeout_s=5))
+        self.assertNotIn("arriving", batch.wait_for(h, timeout_s=5))
 
     def test_trip_wakes_queue_wait_and_a_direct_action_follows_it(self):
         (self.tmp / "markers.json").write_text(json.dumps([{"id": "m1", "label": "Old well", "pos": [50, 0, 0],
                                                              "level": "TUT"}]))
         self.g.reach = lambda a: {"reachable": True, "pos": [50.0, 0.0, 0.0]}
         self.g.dur["act.move_to"] = 1.0
-        server.travel_to(marker="m1")
+        travel_macro.travel_to(marker="m1")
         self.assertTrue(wait_until(lambda: self.g.ops("act.move_to")))
-        server._trips[P1] = {"dest": [50.0, 0.0, 0.0], "d0": 50.0, "t0": time.monotonic() - 4.0}
+        batch._trips[P1] = {"dest": [50.0, 0.0, 0.0], "d0": 50.0, "t0": time.monotonic() - 4.0}
         self.g.watch["party"][0]["pos"] = [45.0, 0.0, 0.0]  # 45 m in 4 s: ~0.4 s left
-        out = server.wait_for("queue", timeout_s=5, lead_s=2)
+        out = batch.wait_for("queue", timeout_s=5, lead_s=2)
         self.assertIn(f"queue {who()} travel_to: arriving, ETA ~", out)
-        self.assertTrue(server._queues().busy(P1))
-        res = server.interact(target=server.H.get(CHEST))
+        self.assertTrue(queueing._queues().busy(P1))
+        res = world_tools.interact(target=core.H.get(CHEST))
         self.assertIn("waited", res)
         legs = [j for j in self.g.jobs.values() if j["op"] == "act.move_to"]
         self.assertEqual({j["status"] for j in legs}, {"done"})  # the trip's leg was not cancelled
@@ -261,9 +262,9 @@ class EarlyWake(Base):
     def test_queue_with_arrival_steps_waits_to_the_end(self):
         self.g.dur["act.move_to"] = 0.3
         self.g.dur["act.interact"] = 0.3
-        server.queue_actions(json.dumps([{"tool": "move_to", "x": 5, "y": 0, "z": 0},
-                                         {"tool": "interact", "target": server.H.get(CHEST)}]))
-        out = server.wait_for("queue", timeout_s=5)
+        batch.queue_actions(json.dumps([{"tool": "move_to", "x": 5, "y": 0, "z": 0},
+                                         {"tool": "interact", "target": core.H.get(CHEST)}]))
+        out = batch.wait_for("queue", timeout_s=5)
         self.assertNotIn("arriving", out)
         self.assertIn("done (2 steps)", out)
 
@@ -278,12 +279,12 @@ class ClimbHint(Base):
                               {"uuid": "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee", "name": "Crate", "kind": "container",
                                "dist": 1.0}]}
         self.g.try_rpc = frontier
-        out = server._climb_hint([0.0, 0.0, 0.0], [0.0, 5.0, 0.0])
+        out = travel_macro._climb_hint([0.0, 0.0, 0.0], [0.0, 5.0, 0.0])
         self.assertEqual(seen, [("nav.frontier", {"ways": False})])
         self.assertIn("5m above you", out)
         self.assertIn("Trapdoor <exit> 4m", out)
         self.assertNotIn("Crate", out)
-        self.assertEqual(server._climb_hint([0.0, 0.0, 0.0], [3.0, 1.0, 0.0]), "")  # same deck
+        self.assertEqual(travel_macro._climb_hint([0.0, 0.0, 0.0], [3.0, 1.0, 0.0]), "")  # same deck
 
 
 class OtherFloor(Base):
@@ -307,28 +308,28 @@ class OtherFloor(Base):
         self.g.try_rpc = fake
 
     def test_refuses_fast_and_names_the_entrance(self):
-        out = server.travel_to(x=20.0, y=-62.0, z=0.0)
+        out = travel_macro.travel_to(x=20.0, y=-62.0, z=0.0)
         self.assertIn("REFUSED: the goal is 62m below you", out)
-        self.assertIn(f"{server.H.get(CHEST)} Mausoleum Entrance <exit> 17.1m NW", out)
+        self.assertIn(f"{core.H.get(CHEST)} Mausoleum Entrance <exit> 17.1m NW", out)
         self.assertNotIn("Far Ladder", out)  # past FLOOR_WAY_M
         self.assertEqual(self.g.ops("act.move_to"), [])
-        self.assertFalse(server._queues().busy())
+        self.assertFalse(queueing._queues().busy())
 
     def test_walks_when_the_route_exists_or_the_goal_is_level(self):
         self.g.reach = lambda a: {"reachable": True, "pos": [20.0, -62.0, 0.0]}
         self.route = {"reachable": True}
-        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [20.0, -62.0, 0.0]))
+        self.assertIsNone(travel_macro._other_floor(P1, [0.0, 0.0, 0.0], [20.0, -62.0, 0.0]))
         self.route = {"reachable": False}
-        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [20.0, -3.0, 0.0]))  # same floor: no probe
+        self.assertIsNone(travel_macro._other_floor(P1, [0.0, 0.0, 0.0], [20.0, -3.0, 0.0]))  # same floor: no probe
         self.assertEqual(len(self.g.ops("nav.route")), 1)
         self.route = {"too_far": True}
-        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [500.0, -12.0, 0.0]))  # not far below: walk
+        self.assertIsNone(travel_macro._other_floor(P1, [0.0, 0.0, 0.0], [500.0, -12.0, 0.0]))  # not far below: walk
 
     def test_far_interior_goal_names_the_entrance(self):
         # Live 11:2x: the Mausoleum room is ~950 m off and 69 m below the gate in level coordinates (too far to
         # preview); travel_to walked 115 m south to the House of Healing. An entrance 17 m away = the way in.
         self.route = {"too_far": True, "straight_m": 954.6}
-        out = server._other_floor(P1, [0.0, 38.0, 0.0], [-100.0, -31.0, -950.0])
+        out = travel_macro._other_floor(P1, [0.0, 38.0, 0.0], [-100.0, -31.0, -950.0])
         self.assertIn("REFUSED: the goal is 69m below you", out)
         self.assertIn("likely inside an interior", out)
         self.assertIn("Mausoleum Entrance <exit> 17.1m NW", out)
@@ -345,8 +346,8 @@ class OtherFloor(Base):
                 asked.append(args)
             return real(op, args, context, default)
         self.g.try_rpc = fake
-        server._other_floor(P1, [0.0, 35.6, 0.0], [-100.0, -31.0, -950.0])
-        self.assertEqual(asked, [{"ways": False, "radius": server.FLOOR_WAY_M, "known": True}])
+        travel_macro._other_floor(P1, [0.0, 35.6, 0.0], [-100.0, -31.0, -950.0])
+        self.assertEqual(asked, [{"ways": False, "radius": travel_macro.FLOOR_WAY_M, "known": True}])
 
     def test_far_goal_with_only_a_ladder_walks(self):
         self.route = {"too_far": True}
@@ -357,7 +358,7 @@ class OtherFloor(Base):
                 return {"leads": [{"uuid": CHEST, "name": "Ladder", "kind": "ladder", "dist": 10.0}]}
             return real(op, args, context, default)
         self.g.try_rpc = fake
-        self.assertIsNone(server._other_floor(P1, [0.0, 38.0, 0.0], [-100.0, -31.0, -950.0]))
+        self.assertIsNone(travel_macro._other_floor(P1, [0.0, 38.0, 0.0], [-100.0, -31.0, -950.0]))
 
 
 class HelmLadders(Base):
@@ -380,15 +381,15 @@ class HelmLadders(Base):
                 return {"leads": [dict(l) for l in self.leads]}
             return real(op, args, context, default)
         self.g.try_rpc = fake
-        self.e56 = server.H.get(self.E56, "Arterial Mesh")
-        self.e57 = server.H.get(self.E57, "Arterial Mesh")
+        self.e56 = core.H.get(self.E56, "Arterial Mesh")
+        self.e57 = core.H.get(self.E57, "Arterial Mesh")
 
     def test_from_the_short_ladders_top_names_the_one_going_up(self):
         self.leads = [{"uuid": self.E56, "name": "Arterial Mesh", "kind": "ladder", "dist": 3.1, "dir": "S",
                        "pos": [-43.0, 5.0, -363.2], "dy": -2.6, "height_m": 2.9, "leads": "down", "to": [-43.0, 5.0, -363.2]},
                       {"uuid": self.E57, "name": "Arterial Mesh", "kind": "ladder", "dist": 6.0, "dir": "N",
                        "pos": [-41.0, 7.7, -357.0], "height_m": 10.1, "leads": "up", "to": [-41.0, 17.8, -357.0]}]
-        out = server._other_floor(P1, [-43.0, 7.6, -363.1], self.HELM)
+        out = travel_macro._other_floor(P1, [-43.0, 7.6, -363.1], self.HELM)
         self.assertIn("REFUSED: the goal is 11m above you", out)
         self.assertIn(f"likely: {self.e57} Arterial Mesh <ladder> 6m N (climbs 10.1m up), {self.e56} ", out)
         self.assertIn(f"{self.e56} Arterial Mesh <ladder> 3.1m S (climbs 2.9m down)", out)
@@ -399,7 +400,7 @@ class HelmLadders(Base):
                        "pos": [-41.0, 7.7, -357.0], "dy": 2.7, "height_m": 10.1, "leads": "up", "to": [-41.0, 17.8, -357.0]},
                       {"uuid": self.E56, "name": "Arterial Mesh", "kind": "ladder", "dist": 1.1, "dir": "N",
                        "pos": [-43.0, 5.0, -363.2], "height_m": 2.9, "leads": "up", "to": [-43.0, 7.9, -363.2]}]
-        out = server._other_floor(P1, [-43.0, 5.0, -362.0], self.HELM)
+        out = travel_macro._other_floor(P1, [-43.0, 5.0, -362.0], self.HELM)
         self.assertIn(f"likely: {self.e56} Arterial Mesh <ladder> 1.1m N (climbs 2.9m up), "
                       f"{self.e57} Arterial Mesh <ladder> 8.6m N (climbs 10.1m up, from a floor 2.7m above you)", out)
         self.assertIn(f"interact {self.e56}, then interact {self.e57} (or queue_actions [interact {self.e56}, "
@@ -408,12 +409,12 @@ class HelmLadders(Base):
     def test_ranking_without_a_goal_or_climb_data_stays_nearest_first(self):
         far = {"uuid": "x1", "kind": "stairs", "dist": 9.0}
         near = {"uuid": "x2", "kind": "ladder", "dist": 2.0}
-        self.assertEqual(server._rank_ways([far, near], None, None), ([near, far], []))
-        self.assertEqual(server._rank_ways([far, near], [0.0, 0.0, 0.0], [0.0, 10.0, 0.0]), ([near, far], []))
+        self.assertEqual(travel_macro._rank_ways([far, near], None, None), ([near, far], []))
+        self.assertEqual(travel_macro._rank_ways([far, near], [0.0, 0.0, 0.0], [0.0, 10.0, 0.0]), ([near, far], []))
         # a ladder going the other way goes after the stairs
         down = {"uuid": "x3", "kind": "ladder", "dist": 1.0, "pos": [0.0, -3.0, 0.0], "height_m": 3.0,
                 "leads": "down"}
-        ranked, chain = server._rank_ways([down, far], [0.0, 0.0, 0.0], [0.0, 10.0, 0.0])
+        ranked, chain = travel_macro._rank_ways([down, far], [0.0, 0.0, 0.0], [0.0, 10.0, 0.0])
         self.assertEqual((ranked, chain), ([far, down], []))
 
 
@@ -437,7 +438,7 @@ class FloorDetour(Base):
         self.g.try_rpc = fake
 
     def test_long_detour_names_the_ladder(self):
-        out = server._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0])
+        out = travel_macro._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0])
         self.assertFalse(out.startswith("REFUSED"))
         self.assertIn("12m below you", out)
         self.assertIn("winds 140m for 19m straight", out)
@@ -446,16 +447,16 @@ class FloorDetour(Base):
 
     def test_short_route_or_no_ladder_says_nothing(self):
         self.route = {"reachable": True, "length_m": 40.0}
-        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0]))
+        self.assertIsNone(travel_macro._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0]))
         self.route = {"reachable": True}
-        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0]))
+        self.assertIsNone(travel_macro._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0]))
         # live 13:08: the long route climbs the ladder itself (a climb/drop link): no note
         self.route = {"reachable": True, "length_m": 140.0, "links": [{"kind": "drop", "dy": -11.0}]}
-        self.assertIsNone(server._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0]))
+        self.assertIsNone(travel_macro._other_floor(P1, [0.0, 0.0, 0.0], [15.0, -12.0, 0.0]))
 
     def test_travel_to_walks_with_the_note_first(self):
         self.g.reach = lambda a: {"reachable": True, "pos": [15.0, -12.0, 0.0]}
-        out = server.travel_to(x=15.0, y=-12.0, z=0.0)
+        out = travel_macro.travel_to(x=15.0, y=-12.0, z=0.0)
         self.assertIn("note: the goal is 12m below you", out)
         self.assertNotIn("REFUSED", out)
         self.assertTrue(wait_until(lambda: self.g.ops("act.move_to")))
@@ -464,24 +465,24 @@ class FloorDetour(Base):
 class SettleAndPace(Base):
     def setUp(self) -> None:
         super().setUp()
-        server.SETTLE_S = 0.3
+        plumbing.SETTLE_S = 0.3
 
     def test_quick_walk_reports_its_result(self):
         self.g.dur["act.move_to"] = 0.05
         t0 = time.monotonic()
-        out = server.move_to(x=5.0, y=0.0, z=0.0)
+        out = world_tools.move_to(x=5.0, y=0.0, z=0.0)
         self.assertLess(time.monotonic() - t0, 0.25)  # returned when the job ended, not after the window
         self.assertTrue(out.startswith("move_to: done"), out)
-        self.assertEqual(server._async, {})
+        self.assertEqual(plumbing._async, {})
 
     def test_failure_in_the_window_comes_back_now(self):
         self.g.refuse_if = lambda op, a: "no walkable path there" if op == "act.move_to" else None
-        self.assertIn("FAILED — no walkable path there", server.move_to(x=5.0, y=0.0, z=0.0))
+        self.assertIn("FAILED — no walkable path there", world_tools.move_to(x=5.0, y=0.0, z=0.0))
 
     def test_long_walk_returns_after_the_window(self):
         self.g.dur["act.move_to"] = 3.0
         t0 = time.monotonic()
-        out = server.move_to(x=5.0, y=0.0, z=0.0, wait=True)
+        out = world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=True)
         self.assertLess(time.monotonic() - t0, 0.8)
         self.assertTrue(out.startswith("move_to: started j1, ETA"), out)
         self.assertIn("\n(pace guard: wait=true ignored outside combat", out.split("RUNNING")[0])  # before the status lines
@@ -490,33 +491,33 @@ class SettleAndPace(Base):
     def test_wait_true_blocks_in_combat(self):
         self.g.watch["combat"] = True
         self.g.dur["act.move_to"] = 0.5
-        out = server.move_to(x=5.0, y=0.0, z=0.0, wait=True)
+        out = world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=True)
         self.assertTrue(out.startswith("move_to: done"), out)
         self.assertNotIn("ignored", out)
 
     def test_pace_hint_when_waiting_right_after_issuing(self):
         self.g.dur["act.move_to"] = 0.6
-        server.move_to(x=5.0, y=0.0, z=0.0)
-        self.assertIn("PACE:", server.wait_for("j1", timeout_s=2))
-        server.move_to(x=6.0, y=0.0, z=0.0)
-        server.get_events()  # independent work in between: no nudge
-        self.assertNotIn("PACE:", server.wait_for("j2", timeout_s=2))
+        world_tools.move_to(x=5.0, y=0.0, z=0.0)
+        self.assertIn("PACE:", batch.wait_for("j1", timeout_s=2))
+        world_tools.move_to(x=6.0, y=0.0, z=0.0)
+        observe.get_events()  # independent work in between: no nudge
+        self.assertNotIn("PACE:", batch.wait_for("j2", timeout_s=2))
 
     def test_next_hint_three_times_then_after_a_nudge(self):
         self.g.dur["act.move_to"] = 5.0
         seen = []
         for i in range(5):
-            seen.append("NEXT:" in server.move_to(x=float(i), y=0.0, z=0.0))
-            server.get_events()
+            seen.append("NEXT:" in world_tools.move_to(x=float(i), y=0.0, z=0.0))
+            observe.get_events()
         self.assertEqual(seen, [True, True, True, False, False])
-        server.move_to(x=9.0, y=0.0, z=0.0)
-        server.wait_for("idle", timeout_s=0.1)  # right after issuing: nudged
-        self.assertIn("NEXT:", server.move_to(x=10.0, y=0.0, z=0.0))
+        world_tools.move_to(x=9.0, y=0.0, z=0.0)
+        batch.wait_for("idle", timeout_s=0.1)  # right after issuing: nudged
+        self.assertIn("NEXT:", world_tools.move_to(x=10.0, y=0.0, z=0.0))
 
     def test_queue_result_shows_what_runs(self):
         self.g.dur["act.interact"] = 2.0
-        out = server.queue_actions(json.dumps([{"tool": "interact", "target": server.H.get(CHEST)},
-                                               {"tool": "interact", "target": server.H.get(CHEST)}]))
+        out = batch.queue_actions(json.dumps([{"tool": "interact", "target": core.H.get(CHEST)},
+                                               {"tool": "interact", "target": core.H.get(CHEST)}]))
         self.assertIn(f"RUNNING queue {who()}:", out)
         self.assertIn("(queue_actions appends after it)", out)
 
@@ -526,15 +527,15 @@ class SettleAndPace(Base):
             self.g.push("combat_started", {})
         threading.Thread(target=later).start()
         t0 = time.monotonic()
-        out = server.wait(5)
+        out = session.wait(5)
         self.assertLess(time.monotonic() - t0, 1.5)
         self.assertIn("combat_started after", out)
 
 
 class AlwaysLoad(unittest.TestCase):
     def test_core_tools_are_marked_and_the_rest_deferred(self):
-        tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
-        self.assertEqual(server._mark_always_load(), [])  # every listed name exists
+        tools = {t.name: t for t in asyncio.run(core.mcp.list_tools())}
+        self.assertEqual(session._mark_always_load(), [])  # every listed name exists
         for name in ("queue_actions", "do_actions", "wait_for", "look", "travel_to", "combat_turn"):
             self.assertEqual((tools[name].meta or {}).get("anthropic/alwaysLoad"), True, name)
         for name in ("wiki_page", "wiki_search", "load_game", "list_saves"):
@@ -544,7 +545,7 @@ class AlwaysLoad(unittest.TestCase):
 
     def test_movement_defaults_to_async(self):
         import inspect
-        for fn in (server.move_to, server.walk_toward, server.travel_to):
+        for fn in (world_tools.move_to, observe.walk_toward, travel_macro.travel_to):
             self.assertIs(inspect.signature(fn).parameters["wait"].default, False, fn.__name__)
 
 

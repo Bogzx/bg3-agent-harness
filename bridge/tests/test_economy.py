@@ -16,10 +16,24 @@ from unittest import mock
 _RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit
 os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
-from bg3ai import economy, render, server  # noqa: E402
-from bg3ai.game import JobResult  # noqa: E402
+from bg3ai import economy, render  # noqa: E402
+from bg3ai.game import GameError, JobResult  # noqa: E402
 from bg3ai.hotbar import HotbarCastResult
 from bg3ai.render import Handles  # noqa: E402
+from bg3ai.tools import (  # noqa: E402
+    combat,
+    core,
+    inventory,
+    observe,
+    overview,
+    plumbing,
+    progression,
+    reporting,
+    travel,
+    turn_tool,
+    uitools,
+    world_tools,
+)
 
 CLAUDE = "11111111-0000-0000-0000-000000000001"
 GALE = "11111111-0000-0000-0000-000000000002"
@@ -207,12 +221,12 @@ class Alerts(unittest.TestCase):
 
     def test_dead_allies_reach_the_alerts_line(self):
         import time as _t
-        tr = server._fights()
+        tr = reporting._fights()
         saved = list(tr.dead_allies)
         self.addCleanup(setattr, tr, "dead_allies", saved)
         tr.dead_allies = [{"uuid": "u-j", "name": "Jaheira", "t": _t.time()},
-                          {"uuid": "u-old", "name": "Old", "t": _t.time() - server.DEAD_ALLY_ALERT_S - 1}]
-        self.assertEqual([a["name"] for a in server._dead_allies()], ["Jaheira"])
+                          {"uuid": "u-old", "name": "Old", "t": _t.time() - overview.DEAD_ALLY_ALERT_S - 1}]
+        self.assertEqual([a["name"] for a in overview._dead_allies()], ["Jaheira"])
 
     def test_low_hp_says_how_to_heal(self):
         al = " | ".join(economy.alerts(STATUS, s026_inventory(), short_rests=2))
@@ -339,12 +353,12 @@ class Lantern(unittest.TestCase):
         self.assertIsNone(economy.lantern_plan(inv))
 
     def test_light_note_once_per_fight(self):
-        server._light_noted.clear()
+        observe._light_noted.clear()
         cs = {"active": True, "order": [{"uuid": CLAUDE, "light_in_hand": "Moonlantern"}, {"uuid": GALE}]}
-        self.assertIn("fights with the Moonlantern", server._light_note(cs))
-        self.assertEqual(server._light_note(cs), "")
-        server._light_note({"active": False})
-        self.assertIn("LIGHT:", server._light_note(cs))
+        self.assertIn("fights with the Moonlantern", observe._light_note(cs))
+        self.assertEqual(observe._light_note(cs), "")
+        observe._light_note({"active": False})
+        self.assertIn("LIGHT:", observe._light_note(cs))
 
     def test_alert_names_the_move(self):
         out = economy.alerts({"in_combat": False}, lantern_inventory(), name=lambda u: {CLAUDE: "Claude", GALE: "Gale"}[u])
@@ -385,19 +399,19 @@ class FakeGame:
 class Tools(unittest.TestCase):
     def setUp(self):
         # Fresh handles and alerts: other test modules expect e1 to be their own party member.
-        saved = (server.H, server.ALERTS)
-        server.H, server.ALERTS = Handles(), server.economy.AlertTracker()
-        self.addCleanup(lambda: (setattr(server, "H", saved[0]), setattr(server, "ALERTS", saved[1])))
+        saved = (core.H, overview.ALERTS)
+        core.H, overview.ALERTS = Handles(), economy.AlertTracker()
+        self.addCleanup(lambda: (setattr(core, "H", saved[0]), setattr(overview, "ALERTS", saved[1])))
 
     def use(self, fake: FakeGame) -> FakeGame:
-        orig = server.game
-        server.game = fake
-        self.addCleanup(setattr, server, "game", orig)
+        orig = core.game
+        core.game = fake
+        self.addCleanup(setattr, core, "game", orig)
         return fake
 
     def test_stash_junk_sends_each_junk_item_to_camp(self):
         g = self.use(FakeGame(s026_inventory()))
-        out = server.manage_inventory("camp", "junk")
+        out = inventory.manage_inventory("camp", "junk")
         sent = {a["item"] for op, a in g.jobs if op == "act.transfer" and a["to"] == "camp"}
         self.assertEqual(sent, {_u(4), _u(5), _u(6), _u(11), _u(23)})
         self.assertIn("sent 5 junk items to camp", out)
@@ -407,7 +421,7 @@ class Tools(unittest.TestCase):
             {"uuid": _u(6), "price": 30}, {"uuid": _u(11), "price": 20}, {"uuid": _u(4), "price": 1},
             {"uuid": _u(7), "price": 40, "count": 3}]}  # the potions are on screen but never sold
         g = self.use(FakeGame(s026_inventory(), trade))
-        out = server.trade(sell="junk")
+        out = progression.trade(sell="junk")
         op, args = g.jobs[-1]
         self.assertEqual(op, "ui.trade")
         self.assertEqual(args["offer"], [_u(6), _u(4)])  # 30 + 1 fits in 40; the candlestick (20) doesn't
@@ -426,34 +440,34 @@ class Tools(unittest.TestCase):
                {"kind": "item_added", "data": {"owner": claude, "item": {"uuid": _u(90), "name": "Gold"}, "count": 799}},
                {"kind": "item_added", "data": {"owner": claude, "item": {"uuid": _u(91), "name": "Strange Key"}}}]
         g.drain_events = lambda ctx: evs if ctx == "server" else []
-        out = server.trade(sell="junk")
+        out = progression.trade(sell="junk")
         self.assertNotIn("Crude Mace", out)
         self.assertNotIn("count=799", out)
         self.assertIn("Strange Key", out)
         # late events of the sale are still dropped in the next call, then the window closes
-        self.assertEqual(server._drop_events([evs[0]]), [])
-        server._EV_DROP["until"] = time.monotonic() - 1
-        self.assertEqual(server._drop_events([evs[0]]), [evs[0]])
-        self.assertEqual(server._EV_DROP["items"], set())
+        self.assertEqual(core._drop_events([evs[0]]), [])
+        core._EV_DROP["until"] = time.monotonic() - 1
+        self.assertEqual(core._drop_events([evs[0]]), [evs[0]])
+        self.assertEqual(core._EV_DROP["items"], set())
 
     def test_sell_junk_stack_price_is_whole_stack(self):
         # TradePrice is the stack's price (live: Cup x3 = 24): 24 fits in 30, never 24 x 3 = 72
         trade = {"trader_gold": 30, "your_items": [{"uuid": _u(6), "price": 24, "count": 3}]}
         g = self.use(FakeGame(s026_inventory(), trade))
-        out = server.trade(sell="junk")
+        out = progression.trade(sell="junk")
         self.assertEqual(g.jobs[-1][1]["offer"], [_u(6)])
         self.assertIn("~24 g", out)
 
     def test_sell_junk_in_barters_of_25(self):
         # acceptance 01:07: 72 junk items in one barter → the job's 15 s timeout, nothing sold
         inv = s026_inventory()
-        mine = [it for it in server.economy.junk(inv, set())]
+        mine = [it for it in economy.junk(inv, set())]
         trade = {"trader_gold": 10 ** 6, "your_items": [{"uuid": it["uuid"], "price": 1} for it in mine]}
         g = self.use(FakeGame(inv, trade))
-        saved = server.SELL_CHUNK
-        server.SELL_CHUNK = 2
-        self.addCleanup(setattr, server, "SELL_CHUNK", saved)
-        out = server.trade(sell="junk")
+        saved = progression.SELL_CHUNK
+        progression.SELL_CHUNK = 2
+        self.addCleanup(setattr, progression, "SELL_CHUNK", saved)
+        out = progression.trade(sell="junk")
         offers = [a["offer"] for op, a in g.jobs if op == "ui.trade"]
         self.assertEqual(sum(len(o) for o in offers), len(mine))
         self.assertTrue(all(len(o) <= 2 for o in offers))
@@ -462,30 +476,30 @@ class Tools(unittest.TestCase):
 
     def test_sell_junk_stops_after_a_failed_barter(self):
         inv = s026_inventory()
-        mine = server.economy.junk(inv, set())
+        mine = economy.junk(inv, set())
         trade = {"trader_gold": 10 ** 6, "your_items": [{"uuid": it["uuid"], "price": 1} for it in mine]}
         g = self.use(FakeGame(inv, trade))
-        saved = (server.SELL_CHUNK, server._act)
-        server.SELL_CHUNK = 2
+        saved = (progression.SELL_CHUNK, plumbing._act)
+        progression.SELL_CHUNK = 2
         n = []
 
         def fake_act(tool, op, args, **kw):
             n.append(args["offer"])
             return "trade: done — confirmed" if len(n) == 1 else "trade: TIMEOUT — timed out"
-        server._act = fake_act
-        self.addCleanup(lambda: (setattr(server, "SELL_CHUNK", saved[0]), setattr(server, "_act", saved[1])))
-        out = server.trade(sell="junk")
+        plumbing._act = fake_act
+        self.addCleanup(lambda: (setattr(progression, "SELL_CHUNK", saved[0]), setattr(plumbing, "_act", saved[1])))
+        out = progression.trade(sell="junk")
         self.assertEqual(len(n), 2)
         self.assertIn("trade: TIMEOUT", out)
         self.assertIn(f"sold 2 of {len(mine)} junk items in 1 barter(s) before this one failed", out)
 
     def test_sell_junk_nothing_on_screen(self):
         self.use(FakeGame(s026_inventory(), {"trader_gold": 500, "your_items": []}))
-        self.assertIn("nothing sold (none of the junk is on this trade screen)", server.trade(sell="junk"))
+        self.assertIn("nothing sold (none of the junk is on this trade screen)", progression.trade(sell="junk"))
 
     def test_equip_best_equips_upgrades(self):
         g = self.use(FakeGame(s026_inventory()))
-        out = server.equip_best()
+        out = inventory.equip_best()
         equipped = {(a["char"], a["item"]) for op, a in g.jobs if op == "act.equip"}
         self.assertIn((CLAUDE, _u(3)), equipped)
         self.assertIn((GALE, _u(22)), equipped)
@@ -495,7 +509,7 @@ class Tools(unittest.TestCase):
         inv = s026_inventory()
         inv["items"][2]["owner"] = GALE  # the shield sits in Gale's bag
         g = self.use(FakeGame(inv))
-        server.equip_best(server.H.get(CLAUDE))
+        inventory.equip_best(core.H.get(CLAUDE))
         ops = [(op, a.get("item"), a.get("to") or a.get("char")) for op, a in g.jobs]
         i = ops.index(("act.transfer", _u(3), CLAUDE))
         self.assertEqual(ops[i + 1], ("act.equip", _u(3), CLAUDE))
@@ -506,7 +520,7 @@ class Tools(unittest.TestCase):
         saved = dict(STATUS)
         STATUS["in_combat"] = True
         try:
-            out = server.equip_best()
+            out = inventory.equip_best()
         finally:
             STATUS.clear()
             STATUS.update(saved)
@@ -521,7 +535,7 @@ class Tools(unittest.TestCase):
                     self.inv = economy.apply_lantern(self.inv, {"lantern": _u(40), "frm": CLAUDE, "to": GALE})
                 return r
         g = self.use(G(lantern_inventory()))
-        out = server.equip_best()
+        out = inventory.equip_best()
         ops = [(op, a.get("item"), a.get("char") or a.get("to")) for op, a in g.jobs]
         self.assertEqual(ops[:3], [("act.unequip", _u(40), CLAUDE), ("act.transfer", _u(40), GALE),
                                    ("act.equip", _u(40), GALE)])
@@ -540,17 +554,17 @@ class Tools(unittest.TestCase):
                 return JobResult(status="failed", error="refused")
             return orig(op, args, context, wait_s, **kw)
         g.run_job = run_job
-        out = server.equip_best()
+        out = inventory.equip_best()
         self.assertIn(("act.equip", {"char": CLAUDE, "item": _u(40)}), g.jobs)
         self.assertIn("transfer failed", out)
 
     def test_alerts_line_in_full_status_only_once_in_deltas(self):
-        server.ALERTS.last = ()
+        overview.ALERTS.last = ()
         st, inv = STATUS, s026_inventory()
-        self.assertIn("ALERTS low HP Claude 34/88", server._alerts_line(st, inv, force=True))
-        self.assertEqual(server._alerts_line(st, inv), "")
+        self.assertIn("ALERTS low HP Claude 34/88", overview._alerts_line(st, inv, force=True))
+        self.assertEqual(overview._alerts_line(st, inv), "")
         inv["gold"] = 300
-        self.assertNotIn("gold", server._alerts_line(st, inv))
+        self.assertNotIn("gold", overview._alerts_line(st, inv))
 
     def test_short_rest_result_shows_hp_and_rests_left(self):
         class G(FakeGame):
@@ -565,12 +579,12 @@ class Tools(unittest.TestCase):
             def run_job(self, op, args, context="server", wait_s=25.0, **kw):
                 return JobResult(status="done", result={"short_rests_left": 1, "of": 2})
         self.use(G(s026_inventory()))
-        out = server.short_rest()
+        out = inventory.short_rest()
         self.assertIn("HP Claude 34→70/88 · short rests left 1/2", out)
-        self.assertEqual(server.ALERTS.short_rests, 1)
+        self.assertEqual(overview.ALERTS.short_rests, 1)
 
     def test_alerts_line_never_raises(self):
-        self.assertEqual(server._alerts_line(None, {"items": "bad"}), "")
+        self.assertEqual(overview._alerts_line(None, {"items": "bad"}), "")
 
 
 # S023 Lae'zel's shop (trimmed): one 4.7 KB line per call before.
@@ -651,17 +665,17 @@ class TradeText(unittest.TestCase):
             def run_job(self, op, args, context="server", wait_s=25.0, **kw):
                 self.jobs.append((op, args))
                 return JobResult(status="done", result=TRADE_S023)
-        saved = (server.H, server.game)
-        server.H, server.game = Handles(), G(s026_inventory())
-        self.addCleanup(lambda: (setattr(server, "H", saved[0]), setattr(server, "game", saved[1])))
-        out = server.trade()
+        saved = (core.H, core.game)
+        core.H, core.game = Handles(), G(s026_inventory())
+        self.addCleanup(lambda: (setattr(core, "H", saved[0]), setattr(core, "game", saved[1])))
+        out = progression.trade()
         self.assertTrue(out.startswith("trade: done\nTRADE "), out[:80])
         self.assertIn("WARES 20 items", out)
-        out = server.trade(request="e1", confirm=True)
+        out = progression.trade(request="e1", confirm=True)
         self.assertNotIn("WARES", out)
         self.assertIn("wares/your items unchanged", out)
-        out = server.trade(full=True)
-        self.assertEqual(server.game.jobs[-1][1].get("max"), 500)
+        out = progression.trade(full=True)
+        self.assertEqual(core.game.jobs[-1][1].get("max"), 500)
 
 
 if __name__ == "__main__":
@@ -676,10 +690,10 @@ class Pickpocket(unittest.TestCase):
                          {"uuid": _u(32), "name": "Ring", "price": 90, "chance": 20, "dc": 18}]}
 
     def setUp(self):
-        saved = (server.H, server.game, server._click_act)
-        server.H = Handles()
-        self.addCleanup(lambda: (setattr(server, "H", saved[0]), setattr(server, "game", saved[1]),
-                                 setattr(server, "_click_act", saved[2])))
+        saved = (core.H, core.game, world_tools._click_act)
+        core.H = Handles()
+        self.addCleanup(lambda: (setattr(core, "H", saved[0]), setattr(core, "game", saved[1]),
+                                 setattr(world_tools, "_click_act", saved[2])))
         self.jobs: list = []
         self.window = False
         test = self
@@ -707,14 +721,14 @@ class Pickpocket(unittest.TestCase):
             def rpc(self, op, *a, **k):
                 return {"active": _u(1), "party": [{"uuid": _u(1), "name": "Claude"}, {"uuid": _u(2), "name": "Shadowheart"}]}
 
-        server.game = G()
+        core.game = G()
 
         def click_act(tool, op, args, wait_s=40.0):
             test.window = True
-            server._batch["last"] = "done"
+            reporting._batch["last"] = "done"
             return "pickpocket: done — opened pickpocket"
-        server._click_act = click_act
-        self.npc = server.H.get(_u(30), "Refugee")
+        world_tools._click_act = click_act
+        self.npc = core.H.get(_u(30), "Refugee")
 
     def test_text_sorted_by_odds(self):
         t = economy.pockets_text(self.POCKETS, lambda it: "")
@@ -730,7 +744,7 @@ class Pickpocket(unittest.TestCase):
         self.assertLess(t.index("Bow 45%"), t.index("Club odds ?"))
 
     def test_opens_then_lists(self):
-        out = server.pickpocket(self.npc)
+        out = world_tools.pickpocket(self.npc)
         self.assertIn("opened pickpocket", out)
         self.assertIn("Ring 90g 20% DC18", out)
         self.assertEqual([op for op, _ in self.jobs], ["ui.pickpocket", "ui.pickpocket"])
@@ -739,20 +753,20 @@ class Pickpocket(unittest.TestCase):
     def test_other_member_takes_control_first(self):
         """Live 12:3x: who=Shadowheart while Claude was controlled: the window never showed (client UI follows the
         controlled character)."""
-        server.H.get(_u(2), "Shadowheart")
-        out = server.pickpocket(self.npc, who="Shadowheart")
+        core.H.get(_u(2), "Shadowheart")
+        out = world_tools.pickpocket(self.npc, who="Shadowheart")
         self.assertEqual([op for op, _ in self.jobs], ["ui.pickpocket", "act.select", "ui.pickpocket"])
         self.assertEqual(self.jobs[1][1], {"char": _u(2)})
         self.assertIn("took control of Shadowheart", out)
         self.jobs.clear()
         self.window = False
-        server.pickpocket(self.npc, who="Claude")                  # already controlled: no select
+        world_tools.pickpocket(self.npc, who="Claude")                  # already controlled: no select
         self.assertNotIn("act.select", [op for op, _ in self.jobs])
 
     def test_take_by_handle_in_one_call(self):
         self.window = True
-        h = server.H.get(_u(31), "Dagger")
-        out = server.pickpocket(self.npc, take=h, min_chance=40)
+        h = core.H.get(_u(31), "Dagger")
+        out = world_tools.pickpocket(self.npc, take=h, min_chance=40)
         self.assertIn("stole", out)
         self.assertIn("rolled 15 vs DC 12", out)
         take = self.jobs[-1][1]
@@ -763,14 +777,14 @@ class Pickpocket(unittest.TestCase):
         test = self
 
         def click_act(tool, op, args, wait_s=40.0):
-            server._batch["last"] = "done"
+            reporting._batch["last"] = "done"
             return "pickpocket: done — opened=pickpocket via=engine"
-        server._click_act = click_act
+        world_tools._click_act = click_act
 
         class Raising:
             def run_job(self, op, args, context="server", wait_s=25.0):
                 test.jobs.append((op, dict(args)))
-                raise server.GameError("no pickpocket window is open: pickpocket(npc) opens it")
+                raise GameError("no pickpocket window is open: pickpocket(npc) opens it")
 
             def drain_events(self, ctx):
                 return []
@@ -780,8 +794,8 @@ class Pickpocket(unittest.TestCase):
 
             def rpc(self, op, *a, **k):
                 return {"active": _u(1), "party": [{"uuid": _u(1), "name": "Claude"}]}
-        server.game = Raising()
-        out = server.pickpocket(self.npc)
+        core.game = Raising()
+        out = world_tools.pickpocket(self.npc)
         self.assertIn("no pickpocket window", out)
         self.assertGreaterEqual(len(self.jobs), 2)   # read, open, then polls ~3 s for the widget
 
@@ -824,15 +838,15 @@ class TradeOpen(unittest.TestCase):
             state["ui"] = {"screen": "dialogue", "dialogue": {"options": dialogue_opts or []}}
             return "talk_to: done — dialogue"
 
-        saved = (server.game, server.talk_to, server._act, server.H)
-        server.H = Handles()
-        server.H.get("11111111-2222-3333-4444-5555555555aa", "Dammon")
-        server.game, server.talk_to = G(), fake_talk
-        server._act = lambda tool, op, args, **kw: calls.append((op, args)) or "trade: done — wares=[…]"
+        saved = (core.game, travel.talk_to, plumbing._act, core.H)
+        core.H = Handles()
+        core.H.get("11111111-2222-3333-4444-5555555555aa", "Dammon")
+        core.game, travel.talk_to = G(), fake_talk
+        plumbing._act = lambda tool, op, args, **kw: calls.append((op, args)) or "trade: done — wares=[…]"
         try:
-            return server.trade(npc="e1"), calls
+            return progression.trade(npc="e1"), calls
         finally:
-            server.game, server.talk_to, server._act, server.H = saved
+            core.game, travel.talk_to, plumbing._act, core.H = saved
 
     def test_trade_npc_talks_and_picks_the_wares_answer(self):
         out, calls = self.run_trade([{"screen": "game"}], self.DAMMON)
@@ -1054,7 +1068,7 @@ class TradeHandover(unittest.TestCase):
 
         def fake_act(tool, op, args, **k):
             calls.append((op, dict(args)))
-            server._batch["result"] = job_result
+            reporting._batch["result"] = job_result
             return "trade: done"
 
         def fake_box(tool, op, args, wait_s=8, rounds=3):
@@ -1067,15 +1081,15 @@ class TradeHandover(unittest.TestCase):
             ui.update(screen="dialogue", dialogue={"speaker": "Wulbren Bongle", "options": []})
             return "press_key: done"
 
-        saved = (server.game, server._act, server._box_act, server._press_escape, server._render_ui, server.H)
-        server.H = Handles()
-        server.H.get(self.MACE, "Crude Mace")
-        server.game, server._act, server._box_act, server._press_escape = G(), fake_act, fake_box, fake_esc
-        server._render_ui = lambda u, brief=False: [f"SCREEN {u.get('screen')}"]
+        saved = (core.game, plumbing._act, world_tools._box_act, uitools._press_escape, reporting._render_ui, core.H)
+        core.H = Handles()
+        core.H.get(self.MACE, "Crude Mace")
+        core.game, plumbing._act, world_tools._box_act, uitools._press_escape = G(), fake_act, fake_box, fake_esc
+        reporting._render_ui = lambda u, brief=False: [f"SCREEN {u.get('screen')}"]
         try:
-            return server.trade(**kw), calls
+            return progression.trade(**kw), calls
         finally:
-            (server.game, server._act, server._box_act, server._press_escape, server._render_ui, server.H) = saved
+            (core.game, plumbing._act, world_tools._box_act, uitools._press_escape, reporting._render_ui, core.H) = saved
 
     def test_handover_donates_answers_the_box_and_closes(self):
         moved = [{"uuid": self.MACE, "name": "Crude Mace", "side": "you"}]
@@ -1128,19 +1142,19 @@ class TradeConfirmCloses(unittest.TestCase):
 
         def fake_act(tool, op, args, **k):
             calls.append((op, dict(args)))
-            server._batch["result"] = job_result
+            reporting._batch["result"] = job_result
             return "trade: done"
 
-        saved = (server.game, server._act, server._render_ui, server.H, server.TRADE_CLOSE_S)
-        server.H = Handles()
-        handles = ",".join(server.H.get(u, f"ware {i}") for i, u in enumerate(self.WARES))
-        server.game, server._act = G(), fake_act
-        server._render_ui = lambda u, brief=False: [f"SCREEN {u.get('screen')}"]
-        server.TRADE_CLOSE_S = 0.5
+        saved = (core.game, plumbing._act, reporting._render_ui, core.H, progression.TRADE_CLOSE_S)
+        core.H = Handles()
+        handles = ",".join(core.H.get(u, f"ware {i}") for i, u in enumerate(self.WARES))
+        core.game, plumbing._act = G(), fake_act
+        reporting._render_ui = lambda u, brief=False: [f"SCREEN {u.get('screen')}"]
+        progression.TRADE_CLOSE_S = 0.5
         try:
-            return server.trade(request=handles, **kw), calls
+            return progression.trade(request=handles, **kw), calls
         finally:
-            (server.game, server._act, server._render_ui, server.H, server.TRADE_CLOSE_S) = saved
+            (core.game, plumbing._act, reporting._render_ui, core.H, progression.TRADE_CLOSE_S) = saved
 
     def test_s068_confirmed_deal_closes_the_window(self):
         out, calls = self._trade({"confirmed": True, "moved": []}, confirm=True)
@@ -1176,15 +1190,15 @@ class TradeWaresFill(unittest.TestCase):
 
         def fake_act(tool, op, args, **k):
             calls.append((op, dict(args)))
-            server._batch["result"] = results[min(len(calls), len(results)) - 1]
-            return "trade: done" + (" (no id)" if server._wares_unnamed(server._batch["result"]) else " named")
+            reporting._batch["result"] = results[min(len(calls), len(results)) - 1]
+            return "trade: done" + (" (no id)" if progression._wares_unnamed(reporting._batch["result"]) else " named")
 
-        saved = (server._act, server.TRADE_FILL_S)
-        server._act, server.TRADE_FILL_S = fake_act, 0.0
+        saved = (plumbing._act, progression.TRADE_FILL_S)
+        plumbing._act, progression.TRADE_FILL_S = fake_act, 0.0
         try:
-            return server.trade(**kw), calls
+            return progression.trade(**kw), calls
         finally:
-            server._act, server.TRADE_FILL_S = saved
+            plumbing._act, progression.TRADE_FILL_S = saved
 
 
     def test_half_filled_wares_are_read_again(self):
@@ -1198,30 +1212,30 @@ class TradeWaresFill(unittest.TestCase):
 
     def test_never_named_stops_after_the_tries(self):
         out, calls = self._listing([_HALF])
-        self.assertEqual(len(calls), 1 + server.TRADE_FILL_TRIES)
+        self.assertEqual(len(calls), 1 + progression.TRADE_FILL_TRIES)
         self.assertIn("(no id)", out)
 
     def test_a_request_is_not_repeated(self):
-        saved = server.H
-        server.H = Handles()
+        saved = core.H
+        core.H = Handles()
         try:
-            h = server.H.get("11111111-2222-3333-4444-555555555701", "Supply Pack")
+            h = core.H.get("11111111-2222-3333-4444-555555555701", "Supply Pack")
             _, calls = self._listing([_HALF], request=h)
         finally:
-            server.H = saved
+            core.H = saved
         self.assertEqual(len(calls), 1)
 
 
 class TradeSellOpens(unittest.TestCase):
     def test_npc_with_sell_junk_opens_first(self):
         calls = []
-        saved = (server._open_trade, server._sell_junk)
-        server._open_trade = lambda npc: calls.append(("open", npc)) or "(opened: talked to e5, picked 'Let's see your wares.')"
-        server._sell_junk = lambda keep="": calls.append(("sell", keep)) or "trade: done"
+        saved = (progression._open_trade, progression._sell_junk)
+        progression._open_trade = lambda npc: calls.append(("open", npc)) or "(opened: talked to e5, picked 'Let's see your wares.')"
+        progression._sell_junk = lambda keep="": calls.append(("sell", keep)) or "trade: done"
         try:
-            out = server.trade(npc="e5", sell="junk")
+            out = progression.trade(npc="e5", sell="junk")
         finally:
-            server._open_trade, server._sell_junk = saved
+            progression._open_trade, progression._sell_junk = saved
         self.assertEqual([c[0] for c in calls], ["open", "sell"])
         self.assertIn("(opened: talked to e5", out)
         self.assertIn("trade: done", out)
@@ -1252,15 +1266,15 @@ class GiveEquipped(unittest.TestCase):
             calls.append((op, dict(args)))
             return next(results)
 
-        saved = (server.game, server._act, server._item_uuid, server.H)
-        server.H = Handles()
-        server.H.get(amulet, "Spellcrux Amulet"), server.H.get(karlach, "Karlach"), server.H.get(gale, "Gale")
-        server.game, server._act = G(), fake_act
-        server._item_uuid = lambda item, who=None, worn=False: amulet
+        saved = (core.game, plumbing._act, inventory._item_uuid, core.H)
+        core.H = Handles()
+        core.H.get(amulet, "Spellcrux Amulet"), core.H.get(karlach, "Karlach"), core.H.get(gale, "Gale")
+        core.game, plumbing._act = G(), fake_act
+        inventory._item_uuid = lambda item, who=None, worn=False: amulet
         try:
-            out = server.manage_inventory("give", "e1", who="Karlach", to="Gale")
+            out = inventory.manage_inventory("give", "e1", who="Karlach", to="Gale")
         finally:
-            server.game, server._act, server._item_uuid, server.H = saved
+            core.game, plumbing._act, inventory._item_uuid, core.H = saved
         self.assertEqual([c[0] for c in calls], ["act.transfer", "act.unequip", "act.transfer"])
         self.assertEqual(calls[1][1], {"char": karlach, "item": amulet})
         self.assertIn("manage_inventory: done", out)
@@ -1300,9 +1314,9 @@ class StageMs(unittest.TestCase):
     def test_stage_ms_logged_not_rendered(self):
         import json as _json
         r = JobResult(status="done", result={"set": {"feat": "x"}, "_stage_ms": "open=900 spells=4200"}, elapsed_ms=5100)
-        server._log_stage_ms("ui.level_up", r)
+        plumbing._log_stage_ms("ui.level_up", r)
         self.assertNotIn("_stage_ms", r.result)
-        lines = (server.RUNTIME / "stage_ms.jsonl").read_text().strip().splitlines()
+        lines = (core.RUNTIME / "stage_ms.jsonl").read_text().strip().splitlines()
         self.assertEqual(_json.loads(lines[-1])["stages"], "open=900 spells=4200")
 
 
@@ -1324,14 +1338,14 @@ class TradeNoGold(unittest.TestCase):
             def try_rpc(self, op, args=None, context="server", default=None):
                 return {"screen": screen} if op == "ui.state" else default
 
-        saved = (server.game, server._open_trade, server._sell_junk)
-        server.game = G()
-        server._open_trade = lambda npc: calls.append(("open", npc)) or "(opened: picked 'Let me see your wares.')"
-        server._sell_junk = lambda keep="": calls.append(("sell", keep)) or "trade: done"
+        saved = (core.game, progression._open_trade, progression._sell_junk)
+        core.game = G()
+        progression._open_trade = lambda npc: calls.append(("open", npc)) or "(opened: picked 'Let me see your wares.')"
+        progression._sell_junk = lambda keep="": calls.append(("sell", keep)) or "trade: done"
         try:
-            return server.trade(sell="junk"), calls
+            return progression.trade(sell="junk"), calls
         finally:
-            server.game, server._open_trade, server._sell_junk = saved
+            core.game, progression._open_trade, progression._sell_junk = saved
 
     def test_sell_junk_without_a_screen_refuses_clearly(self):
         out, calls = self._sell("game")
@@ -1345,12 +1359,12 @@ class TradeNoGold(unittest.TestCase):
 
     def test_sell_junk_broke_trader_message(self):
         g = FakeGame(s026_inventory(), {"trader_gold": 0, "your_items": [{"uuid": _u(6), "price": 30}]})
-        orig = server.game
-        server.game = g
+        orig = core.game
+        core.game = g
         try:
-            out = server.trade(sell="junk")
+            out = progression.trade(sell="junk")
         finally:
-            server.game = orig
+            core.game = orig
         self.assertIn("the trader has no gold left", out)
 
 
@@ -1387,11 +1401,11 @@ class ScrollUse(unittest.TestCase):
 
         def fake_act(tool, op, args, **kw):
             calls.append((op, dict(args)))
-            server._batch["last"] = "done"
+            reporting._batch["last"] = "done"
             return res + "\nEVENTS\n  used item={name=" + name + "}"
 
         def no_action(char, ability):
-            raise server.GameError(f"{char} has no action called '{ability}' (get_actions lists them)")
+            raise GameError(f"{char} has no action called '{ability}' (get_actions lists them)")
 
         def fake_click(game, inp, uuid, button="L", **kw):
             clicks.append(uuid)
@@ -1401,25 +1415,25 @@ class ScrollUse(unittest.TestCase):
             self.grounds.append((caster, spell, list(p)))
             return ground or HotbarCastResult(True, picked=1)
 
-        saved = (server.game, server._act, server._ability_id, server.H, server._inp, clicker.click_entity,
-                 server._who, twostep.ground_click)
+        saved = (core.game, plumbing._act, overview._ability_id, core.H, world_tools._inp, clicker.click_entity,
+                 plumbing._who, twostep.ground_click)
         twostep.ground_click = fake_ground
-        server.H = Handles()
+        core.H = Handles()
         for u, n in ((sh, "Shadowheart"), (self.GALE, "Gale"), (scroll, "Scroll of Invisibility")):
-            server.H.get(u, n)
-        server.game, server._act, server._ability_id = G(), fake_act, no_action
-        server._inp = lambda: object()
+            core.H.get(u, n)
+        core.game, plumbing._act, overview._ability_id = G(), fake_act, no_action
+        world_tools._inp = lambda: object()
         clicker.click_entity = fake_click
-        server._who = lambda w: {"Shadowheart": sh, "Gale": self.GALE}.get(w, w)
+        plumbing._who = lambda w: {"Shadowheart": sh, "Gale": self.GALE}.get(w, w)
         try:
             x, y, z = pos or (None, None, None)
-            out = server.use_ability(ability, target=server.H.get(target) if target else "", who=who,
+            out = combat.use_ability(ability, target=core.H.get(target) if target else "", who=who,
                                      targets=targets, x=x, y=y, z=z)
-        except server.GameError as e:
+        except GameError as e:
             out = "ERR " + str(e)
         finally:
-            (server.game, server._act, server._ability_id, server.H, server._inp, clicker.click_entity,
-             server._who, twostep.ground_click) = saved
+            (core.game, plumbing._act, overview._ability_id, core.H, world_tools._inp, clicker.click_entity,
+             plumbing._who, twostep.ground_click) = saved
         return out, calls, clicks
 
     def test_scroll_read_and_target_clicked(self):
@@ -1474,8 +1488,8 @@ class ScrollUse(unittest.TestCase):
         self.assertNotIn("combat_scroll", out)
 
     def test_scroll_in_combat_not_used_up_spends_nothing(self):
-        saved, server.SCROLL_SETTLE_S = server.SCROLL_SETTLE_S, 0.0
-        self.addCleanup(setattr, server, "SCROLL_SETTLE_S", saved)
+        saved, world_tools.SCROLL_SETTLE_S = world_tools.SCROLL_SETTLE_S, 0.0
+        self.addCleanup(setattr, world_tools, "SCROLL_SETTLE_S", saved)
         out, _, _ = self._run("Shadowheart", "Scroll of Fear", target=self.GALE, name="Scroll of Fear",
                               res="use_ability: done — combat_scroll",
                               rpc={"act.scroll_settle": lambda a: {"read": False}})
@@ -1520,7 +1534,7 @@ class ScrollUse(unittest.TestCase):
         def status(a):
             last[0] = next(where, last[0])
             return {"party": [{"uuid": self.SH, "pos": last[0]}]}
-        with mock.patch.object(server.time, "sleep"):
+        with mock.patch.object(time, "sleep"):
             out, _, clicks = self._run("Shadowheart", "Scroll of Misty Step", name="Scroll of Misty Step",
                                        pos=(24.0, -43.0, 1005.0), rpc={"state.status": status})
         head = out.split("\n")[0]
@@ -1544,16 +1558,16 @@ class ScrollUse(unittest.TestCase):
         self.assertEqual([a.get("pos") for op, a in self.rpcs if op == "act.landing_check"], [[230.5, -55.7, 4260.5]])
 
     def test_misty_step_scroll_that_did_not_move_says_so(self):
-        saved, server.TELEPORT_WAIT_S = server.TELEPORT_WAIT_S, 0.0
-        self.addCleanup(setattr, server, "TELEPORT_WAIT_S", saved)
+        saved, world_tools.TELEPORT_WAIT_S = world_tools.TELEPORT_WAIT_S, 0.0
+        self.addCleanup(setattr, world_tools, "TELEPORT_WAIT_S", saved)
         out, _, _ = self._run("Shadowheart", "Scroll of Misty Step", name="Scroll of Misty Step",
                               pos=(24.0, -43.0, 1005.0),
                               rpc={"state.status": lambda a: {"party": [{"uuid": self.SH, "pos": [17.8, -42.8, 1004.8]}]}})
         self.assertIn("Shadowheart did NOT move (still (17.8,-42.8,1004.8))", out.split("\n")[0])
 
     def test_ground_not_taken_spends_nothing(self):
-        saved, server.SCROLL_SETTLE_S = server.SCROLL_SETTLE_S, 0.0
-        self.addCleanup(setattr, server, "SCROLL_SETTLE_S", saved)
+        saved, world_tools.SCROLL_SETTLE_S = world_tools.SCROLL_SETTLE_S, 0.0
+        self.addCleanup(setattr, world_tools, "SCROLL_SETTLE_S", saved)
         miss = HotbarCastResult(False, reason="ground_refused", stage="ground",
                                 detail={"why": "the game shows a CastWarning cursor there", "cancelled": "escape"})
         out, _, clicks = self._run("Shadowheart", "Scroll of Cone of Cold", name="Scroll of Cone of Cold",
@@ -1587,8 +1601,8 @@ class ScrollUse(unittest.TestCase):
     def test_a17_misty_step_landed_clear_of_a_body_says_so(self):
         hit = HotbarCastResult(True, detail={"ground_src": "Position", "clear_of": [self.GALE], "shifted_m": 1.2,
                                              "ground_at": [23.8, -42.35, 1006.0]})
-        saved, server.TELEPORT_WAIT_S = server.TELEPORT_WAIT_S, 0.0
-        self.addCleanup(setattr, server, "TELEPORT_WAIT_S", saved)
+        saved, world_tools.TELEPORT_WAIT_S = world_tools.TELEPORT_WAIT_S, 0.0
+        self.addCleanup(setattr, world_tools, "TELEPORT_WAIT_S", saved)
         out, _, _ = self._run("Shadowheart", "Scroll of Misty Step", name="Scroll of Misty Step",
                               pos=(23.8, -42.35, 1004.8), ground=hit)
         self.assertRegex(out.split("\n")[0], r"by a click; ground point from Position; landed the click at "
@@ -1609,15 +1623,15 @@ class ScrollUse(unittest.TestCase):
                 return inv if op == "state.inventory" else {"actions": []}
 
         def no_action(char, ability):
-            raise server.GameError(f"{char} has no action called '{ability}'")
-        with mock.patch.object(server, "game", G()), mock.patch.object(server, "_ability_id", no_action), \
-                mock.patch.object(server, "_learn_actions", lambda *a: None):
-            self.assertTrue(server._plan_fits(self.SH, ["Scroll of Fear"]))
-            self.assertFalse(server._plan_fits(self.GALE, ["Scroll of Fear"]))
+            raise GameError(f"{char} has no action called '{ability}'")
+        with mock.patch.object(core, "game", G()), mock.patch.object(overview, "_ability_id", no_action), \
+                mock.patch.object(overview, "_learn_actions", lambda *a: None):
+            self.assertTrue(turn_tool._plan_fits(self.SH, ["Scroll of Fear"]))
+            self.assertFalse(turn_tool._plan_fits(self.GALE, ["Scroll of Fear"]))
 
     def test_disarm_by_name_is_the_disarm_tool(self):
         from unittest import mock
-        with mock.patch.object(server, "disarm", lambda t, w=None: f"disarm: done {t} {w}"):
+        with mock.patch.object(world_tools, "disarm", lambda t, w=None: f"disarm: done {t} {w}"):
             out, calls, _ = self._run("Shadowheart", "Disarm", target=self.SH)
         self.assertTrue(out.startswith("disarm: done"), out)
         self.assertEqual(calls, [])

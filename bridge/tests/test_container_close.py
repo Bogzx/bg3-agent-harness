@@ -8,7 +8,7 @@ import unittest
 
 from test_turn_macros import Base  # noqa: F401 (sets BG3AI_RUNTIME first)
 
-from bg3ai import server
+from bg3ai.tools import core, plumbing, world_tools, travel
 from bg3ai.game import JobResult
 
 U = "11111111-2222-3333-4444-555555555801"
@@ -37,40 +37,40 @@ OPENED = "interact: done — used @(1,2,3)\nCONTAINER text=Take All\nSTOPPED: co
 
 class ContainerClose(unittest.TestCase):
     def setUp(self) -> None:
-        self.saved = (server.game, server._act, server._walk_first, server._who, server._interact_uuid,
-                      server.CONTAINER_EMPTY_S)
-        server._act = lambda tool, op, args, **k: (self.acts.append((op, dict(args))), self.out)[1]
-        server._walk_first = lambda *a, **k: None
-        server._who = lambda w: U
-        server._interact_uuid = lambda t: t
-        server.CONTAINER_EMPTY_S = 0.0
+        self.saved = (core.game, plumbing._act, travel._walk_first, plumbing._who, plumbing._interact_uuid,
+                      world_tools.CONTAINER_EMPTY_S)
+        plumbing._act = lambda tool, op, args, **k: (self.acts.append((op, dict(args))), self.out)[1]
+        travel._walk_first = lambda *a, **k: None
+        plumbing._who = lambda w: U
+        plumbing._interact_uuid = lambda t: t
+        world_tools.CONTAINER_EMPTY_S = 0.0
         self.acts: list = []
         self.out = OPENED
 
     def tearDown(self) -> None:
-        (server.game, server._act, server._walk_first, server._who, server._interact_uuid,
-         server.CONTAINER_EMPTY_S) = self.saved
+        (core.game, plumbing._act, travel._walk_first, plumbing._who, plumbing._interact_uuid,
+         world_tools.CONTAINER_EMPTY_S) = self.saved
 
     def interact(self, containers: list) -> str:
-        server.game = G(containers)
-        fn = server.interact.fn if hasattr(server.interact, "fn") else server.interact
+        core.game = G(containers)
+        fn = world_tools.interact.fn if hasattr(world_tools.interact, "fn") else world_tools.interact
         return fn(target="e722")
 
     def test_empty_container_is_closed_and_said(self):
         out = self.interact([{"text": "Take All"}])
-        self.assertEqual(server.game.jobs, [("ui.loot", {"close": True})])
+        self.assertEqual(core.game.jobs, [("ui.loot", {"close": True})])
         self.assertIn("(the container is empty: closed its window)", out)
         self.assertNotIn("STOPPED: container on screen", out)
         self.assertNotIn("CONTAINER ", out)
 
     def test_late_filling_grid_is_not_closed(self):
         out = self.interact([{"text": "Take All"}, {"text": "Take All", "slots": [{"i": 1, "gold": 65}]}])
-        self.assertEqual(server.game.jobs, [])
+        self.assertEqual(core.game.jobs, [])
         self.assertIn('loot(take="none") closes it without taking', out)
 
     def test_full_container_stays_open_with_the_way_out(self):
         out = self.interact([{"text": "Take All", "slots": [{"i": 1, "gold": 65}]}])
-        self.assertEqual(server.game.jobs, [])
+        self.assertEqual(core.game.jobs, [])
         self.assertIn("STOPPED: container on screen", out)
         self.assertIn("the container window stays open", out)
 
@@ -80,29 +80,29 @@ class ContainerClose(unittest.TestCase):
 
     def test_loot_after_the_empty_close_says_nothing_to_take(self):
         self.interact([{"text": "Take All"}])
-        fn = server.loot.fn if hasattr(server.loot, "fn") else server.loot
+        fn = world_tools.loot.fn if hasattr(world_tools.loot, "fn") else world_tools.loot
         self.acts.clear()
         out = fn()
         self.assertIn("nothing to take", out)
         self.assertEqual(self.acts, [])
 
     def test_loot_none_closes_without_taking(self):
-        server.game = G([{"text": "Take All", "slots": [{"i": 1}]}])
-        fn = server.loot.fn if hasattr(server.loot, "fn") else server.loot
+        core.game = G([{"text": "Take All", "slots": [{"i": 1}]}])
+        fn = world_tools.loot.fn if hasattr(world_tools.loot, "fn") else world_tools.loot
         fn(take="none")
         self.assertEqual(self.acts, [("ui.loot", {"close": True})])
 
     def test_loot_some_ids_closes_after(self):
-        server.game = G([{"text": "Take All", "slots": [{"i": 1}]}])
-        saved = server._uuid
-        server._uuid = lambda t: t
+        core.game = G([{"text": "Take All", "slots": [{"i": 1}]}])
+        saved = plumbing._uuid
+        plumbing._uuid = lambda t: t
         try:
-            fn = server.loot.fn if hasattr(server.loot, "fn") else server.loot
+            fn = world_tools.loot.fn if hasattr(world_tools.loot, "fn") else world_tools.loot
             out = fn(take="e5,e6")
         finally:
-            server._uuid = saved
+            plumbing._uuid = saved
         self.assertEqual([op for op, _ in self.acts], ["act.transfer", "act.transfer"])
-        self.assertEqual(server.game.jobs, [("ui.loot", {"close": True})])
+        self.assertEqual(core.game.jobs, [("ui.loot", {"close": True})])
         self.assertIn("(closed the container window)", out)
 
 

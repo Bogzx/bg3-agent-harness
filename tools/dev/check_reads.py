@@ -35,7 +35,7 @@ atexit.register(shutil.rmtree, _metrics.parent, True)
 os.environ.setdefault("BG3AI_METRICS_PATH", str(_metrics))
 
 from bg3ai import metrics as M  # noqa: E402
-from bg3ai import server  # noqa: E402
+from server_view import S as server  # noqa: E402, N811
 
 RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", ROOT / "runtime"))
 DEBUG_PORT = int(os.environ.get("BG3LE_DEBUG_PORT", "9998"))

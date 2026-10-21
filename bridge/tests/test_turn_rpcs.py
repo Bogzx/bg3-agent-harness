@@ -17,8 +17,9 @@ import time
 import unittest
 
 import test_turn_macros as T
-from bg3ai import actq, metrics, server
+from bg3ai import actq, metrics
 from bg3ai.game import GameError
+from bg3ai.tools import core, queueing, turn_plan, turn_tool
 
 P1, P2, GOB, IMP = T.P1, T.P2, T.GOB, T.IMP
 
@@ -84,7 +85,7 @@ def play(batch: bool, shape) -> tuple[str, list, list]:
         g = TripGame()
         g.combat, g.watch["combat"], g.on_start = r.g.combat, True, r.g.on_start
         r.g = g
-        server.game = server._watch_game = g
+        core.game = queueing._watch_game = g
         r.g.on_start = lambda op, a: g.combat.update(current=GOB) if op == "act.end_turn" else None
         out = shape(r)
         time.sleep(0.05)  # a background end's worker
@@ -95,14 +96,14 @@ def play(batch: bool, shape) -> tuple[str, list, list]:
 
 
 def whole_turn(r) -> str:
-    return server.combat_turn(r.plan(move=r.gob, action={"ability": "Target_MainHandAttack", "target": r.gob},
+    return turn_tool.combat_turn(r.plan(move=r.gob, action={"ability": "Target_MainHandAttack", "target": r.gob},
                                      bonus={"ability": "Shout_SecondWind"}))
 
 
 def ranged_fallback(r) -> str:
     r.g.refuse_if = lambda op, a: ("target is out of range (6.0 m, range 1.5 m): move closer first"
                                    if a.get("spell") == "Target_MainHandAttack" else None)
-    return server.combat_turn(r.plan(action=[{"ability": "Target_MainHandAttack", "target": r.gob},
+    return turn_tool.combat_turn(r.plan(action=[{"ability": "Target_MainHandAttack", "target": r.gob},
                                              {"ability": "Projectile_ThrowWeapon", "target": r.gob}]))
 
 
@@ -118,18 +119,18 @@ def dies_mid_turn(r) -> str:
         return base(op, a)
     r.g.result_for = result_for
     hit = {"ability": "Target_MainHandAttack", "target": r.gob}
-    return server.combat_turn(r.plan(action=hit, extra=[[dict(hit)]]))
+    return turn_tool.combat_turn(r.plan(action=hit, extra=[[dict(hit)]]))
 
 
 def dead_alternative(r) -> str:
     r.g.dead.add(GOB)
-    return server.combat_turn(r.plan(action=[{"ability": "Target_MainHandAttack", "target": r.gob},
+    return turn_tool.combat_turn(r.plan(action=[{"ability": "Target_MainHandAttack", "target": r.gob},
                                              {"ability": "Target_MainHandAttack", "target": r.imp}]))
 
 
 def background_end(r) -> str:
-    server.END_ASYNC = True
-    return server.combat_turn(r.plan(action={"ability": "Target_MainHandAttack", "target": r.gob}))
+    turn_tool.END_ASYNC = True
+    return turn_tool.combat_turn(r.plan(action={"ability": "Target_MainHandAttack", "target": r.gob}))
 
 
 def approach_short(r) -> str:
@@ -148,7 +149,7 @@ def approach_short(r) -> str:
     r.g.refuse_if = lambda op, a: ("target is out of range (9.9 m, range 1.5 m): move closer first"
                                    if a.get("spell") == "Target_MainHandAttack" else None)
     r.g.actions = [{"spell": "Target_MainHandAttack"}, {"spell": "Projectile_MainHandAttack", "range": 18}]
-    return server.combat_turn(r.plan(move={"target": r.gob, "within": 1.5},
+    return turn_tool.combat_turn(r.plan(move={"target": r.gob, "within": 1.5},
                                      action={"ability": "Target_MainHandAttack", "target": r.gob}))
 
 
@@ -193,15 +194,15 @@ class SerialRoundTrips(unittest.TestCase):
         self.assertEqual([t for t in trips if t == "state.combat"], ["state.combat", "state.combat"], trips)
 
     def test_a_stale_kept_read_is_read_again(self):
-        server._cs_keep({"active": True, "order": []})
-        server._turn_cs["t"] -= server.TURN_CS_MAX_S + 0.1
+        turn_plan._cs_keep({"active": True, "order": []})
+        turn_plan._turn_cs["t"] -= turn_plan.TURN_CS_MAX_S + 0.1
         saved = actq.BATCH_CHECKS
         actq.BATCH_CHECKS = True
         try:
-            self.assertIsNone(server._cs_cached())
+            self.assertIsNone(turn_plan._cs_cached())
         finally:
             actq.BATCH_CHECKS = saved
-            server._turn_cs.clear()
+            turn_plan._turn_cs.clear()
 
     def test_a_failed_read_falls_back_like_try_rpc(self):
         class Broken(TripGame):

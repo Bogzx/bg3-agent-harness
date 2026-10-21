@@ -14,7 +14,8 @@ from unittest import mock
 from test_hotbar import FakeInput, FakeWorld
 from test_turn_macros import P1, Base  # noqa: F401 (sets BG3AI_RUNTIME first)
 
-from bg3ai import hotbar, server, twostep
+from bg3ai import hotbar, twostep
+from bg3ai.tools import core, plumbing, world_tools, combat
 from bg3ai.game import GameError
 
 DD = "Teleportation_DimensionDoor"
@@ -504,13 +505,13 @@ class TwoStepRoute(Base):
     def setUp(self) -> None:
         super().setUp()
         self.g.dur["act.cast"] = 0.05
-        saved = (twostep.TWOSTEP_ENABLED, twostep.twostep_cast, server._inp)
+        saved = (twostep.TWOSTEP_ENABLED, twostep.twostep_cast, world_tools._inp)
         self.addCleanup(lambda: (setattr(twostep, "TWOSTEP_ENABLED", saved[0]),
-                                 setattr(twostep, "twostep_cast", saved[1]), setattr(server, "_inp", saved[2])))
-        server._inp = lambda: object()
+                                 setattr(twostep, "twostep_cast", saved[1]), setattr(world_tools, "_inp", saved[2])))
+        world_tools._inp = lambda: object()
         self.fake = FakeTwoStep(self.g)
         twostep.twostep_cast = self.fake
-        self.p1 = server.H.get(P1)
+        self.p1 = core.H.get(P1)
 
     def cast_args(self) -> list[dict]:
         return [a for _, a in self.g.ops("act.cast")]
@@ -521,22 +522,22 @@ class TwoStepRoute(Base):
         saved = hotbar.HOTBAR_CAST_ENABLED
         self.addCleanup(setattr, hotbar, "HOTBAR_CAST_ENABLED", saved)
         hotbar.HOTBAR_CAST_ENABLED = True
-        server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        combat.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         self.assertEqual(self.fake.calls, [])
         hotbar.HOTBAR_CAST_ENABLED, twostep.TWOSTEP_ENABLED = False, True
-        server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        combat.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         self.assertEqual(len(self.fake.calls), 1)
 
     def test_off_sends_the_osiris_form_the_mod_refuses(self):
         twostep.TWOSTEP_ENABLED = False
-        server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        combat.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         (a,) = self.cast_args()
         self.assertNotIn("ui", a)
         self.assertEqual(self.fake.calls, [])
 
     def test_on_dimension_door_alone(self):
         twostep.TWOSTEP_ENABLED = True
-        out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        out = combat.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         (a,) = self.cast_args()
         self.assertTrue(a["ui"])
         self.assertEqual(a["pos"], [1.0, 0.0, 10.0])
@@ -547,7 +548,7 @@ class TwoStepRoute(Base):
 
     def test_on_dimension_door_with_an_ally_from_targets(self):
         twostep.TWOSTEP_ENABLED = True
-        server.use_ability(DD, targets=[self.gob], x=1.0, y=0.0, z=10.0, who=self.p1)
+        combat.use_ability(DD, targets=[self.gob], x=1.0, y=0.0, z=10.0, who=self.p1)
         (a,) = self.cast_args()
         self.assertEqual(a["target"], self.g_uuid(self.gob))
         self.assertNotIn("targets", a)
@@ -555,7 +556,7 @@ class TwoStepRoute(Base):
 
     def test_on_revivify_body(self):
         twostep.TWOSTEP_ENABLED = True
-        out = server.use_ability(REV, target=self.gob, who=self.p1)
+        out = combat.use_ability(REV, target=self.gob, who=self.p1)
         (a,) = self.cast_args()
         self.assertTrue(a["ui"])
         self.assertEqual(self.fake.calls[0][2:4], (a["target"], None))
@@ -572,19 +573,19 @@ class TwoStepRoute(Base):
             held["n"] += 1
             return "escape"
         with mock.patch.object(hotbar, "cancel", cancel):
-            out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+            out = combat.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         (clicked,) = [a for _, a in self.g.ops("act.ui_clicked")]
         self.assertIsNotNone(clicked.get("id"))
         self.assertEqual(held["n"], 1)
         self.assertIn("the spell was still in hand after the cast: put back (escape)", out)
         with mock.patch.object(hotbar, "cancel", lambda g, i, c: None):
-            out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+            out = combat.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         self.assertNotIn("still in hand", out)
         # a failed route cancels the job instead: no act.ui_clicked
         self.fake.ok, self.fake.reason, self.fake.stage = False, "ground_refused", "ground"
         self.g.dur["act.cast"] = 5.0
         with mock.patch.object(hotbar, "cancel", lambda g, i, c: None):
-            server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+            combat.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         self.assertEqual(len(self.g.ops("act.ui_clicked")), 2)
         self.assertEqual(len(self.g.ops("job.cancel")), 1)
 
@@ -592,7 +593,7 @@ class TwoStepRoute(Base):
         twostep.TWOSTEP_ENABLED = True
         self.g.dur["act.cast"] = 5.0
         self.fake.ok, self.fake.reason, self.fake.stage = False, "ground_refused", "ground"
-        out = server.use_ability(REV, target=self.gob, who=self.p1)
+        out = combat.use_ability(REV, target=self.gob, who=self.p1)
         self.assertEqual(len(self.cast_args()), 1)
         self.assertEqual(len(self.g.ops("job.cancel")), 1)
         self.assertIn("the two-step route failed at ground (ground_refused (fake)); nothing was cast", out)
@@ -602,20 +603,20 @@ class TwoStepRoute(Base):
         twostep.TWOSTEP_ENABLED = True
         self.g.dur["act.cast"] = 5.0
         self.fake.raises = True
-        out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        out = combat.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         self.assertEqual(len(self.g.ops("job.cancel")), 1)
         self.assertIn("failed at slot", out)
 
     def test_mod_refusal_no_clicks(self):
         twostep.TWOSTEP_ENABLED = True
         self.g.refuse_if = lambda op, a: "the landing is out of range (55.0 m, range 50.0 m)" if op == "act.cast" else None
-        out = server.use_ability(DD, x=55.0, y=0.0, z=0.0, who=self.p1)
+        out = combat.use_ability(DD, x=55.0, y=0.0, z=0.0, who=self.p1)
         self.assertEqual(self.fake.calls, [])
         self.assertIn("the landing is out of range", out)
 
     def test_upcast_stays_osiris(self):
         twostep.TWOSTEP_ENABLED = True
-        server.use_ability(REV, target=self.gob, who=self.p1, upcast=5)
+        combat.use_ability(REV, target=self.gob, who=self.p1, upcast=5)
         self.assertNotIn("ui", self.cast_args()[0])
         self.assertEqual(self.fake.calls, [])
 
@@ -623,7 +624,7 @@ class TwoStepRoute(Base):
         twostep.TWOSTEP_ENABLED = True
         self.g.supersede = True
         self.g.active = "p2-not-the-caster"
-        out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        out = combat.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         names = [op for op, _ in self.g.calls if op in ("act.select", "act.cast")]
         self.assertEqual(names, ["act.select", "act.cast"])
         self.assertFalse(self.fake.select)
@@ -634,12 +635,12 @@ class TwoStepRoute(Base):
         twostep.TWOSTEP_ENABLED = True
         self.g.dur["act.cast"] = 5.0
         self.fake.raises = RuntimeError("the shim has not seen the game window yet")
-        out = server.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
+        out = combat.use_ability(DD, x=1.0, y=0.0, z=10.0, who=self.p1)
         self.assertEqual(len(self.g.ops("job.cancel")), 1)
         self.assertIn("failed at error (RuntimeError: the shim has not seen the game window yet)", out)
 
     def g_uuid(self, h):
-        return server._uuid(h)
+        return plumbing._uuid(h)
 
 
 if __name__ == "__main__":

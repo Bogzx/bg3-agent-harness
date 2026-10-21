@@ -11,20 +11,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_turn_macros import Base  # noqa: E402,F401  (sets BG3AI_RUNTIME before importing server)
-from bg3ai import server  # noqa: E402
+from bg3ai.tools import core  # noqa: E402
 
 TOOLS_MD = Path(__file__).resolve().parents[2] / "play" / "knowledge" / "tools.md"
 
 
 class ToolDocs(unittest.TestCase):
     def test_every_tool_is_in_tools_md(self):
-        tools = asyncio.run(server.mcp.list_tools())
+        tools = asyncio.run(core.mcp.list_tools())
         doc = TOOLS_MD.read_text()
         missing = [t.name for t in tools if not re.search(r"`" + re.escape(t.name) + r"\(", doc)]
         self.assertEqual(missing, [], f"document these in {TOOLS_MD} as `name(args)`")
 
     def test_always_load_is_a_subset(self):
-        tools = asyncio.run(server.mcp.list_tools())
+        tools = asyncio.run(core.mcp.list_tools())
         names = {t.name for t in tools}
         al = {t.name for t in tools if (getattr(t, "meta", None) or {}).get("anthropic/alwaysLoad")}
         self.assertTrue(al and al <= names and len(al) < len(names), (len(al), len(names)))
@@ -37,7 +37,7 @@ class ToolDocs(unittest.TestCase):
                            r"Rivington|Shadow-Cursed", re.I)
         news = TOOLS_MD.parent / "harness-news.md"
         texts = {"tools.md": TOOLS_MD.read_text(), "harness-news.md": news.read_text()}
-        for t in asyncio.run(server.mcp.list_tools()):
+        for t in asyncio.run(core.mcp.list_tools()):
             texts[t.name] = t.description or ""
         hits = {k: sorted(set(names.findall(v))) for k, v in texts.items() if names.search(v)}
         self.assertEqual(hits, {})
@@ -53,7 +53,7 @@ class ToolDocs(unittest.TestCase):
                           r"force=true strikes anyway|Non-Lethal Attacks on skips", re.I)
         play = TOOLS_MD.parent.parent
         texts = {str(f.relative_to(play)): f.read_text() for f in [play / "CLAUDE.md", *play.glob("knowledge/**/*.md")]}
-        for t in asyncio.run(server.mcp.list_tools()):
+        for t in asyncio.run(core.mcp.list_tools()):
             texts[t.name] = t.description or ""
         hits = {k: sorted(set(answers.findall(v) + oath.findall(v))) for k, v in texts.items()
                 if answers.search(v) or oath.search(v)}

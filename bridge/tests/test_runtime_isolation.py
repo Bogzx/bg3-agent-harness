@@ -3,12 +3,12 @@
 import unittest
 from pathlib import Path
 
-from bg3ai import server
+from bg3ai.tools import core
 
 
 class RuntimeIsolation(unittest.TestCase):
     def test_runtime_is_not_the_repo_runtime(self):
-        self.assertNotEqual(server.RUNTIME.resolve(), (Path(server.REPO) / "runtime").resolve())
+        self.assertNotEqual(core.RUNTIME.resolve(), (Path(core.REPO) / "runtime").resolve())
 
 
 if __name__ == "__main__":

@@ -13,7 +13,8 @@ from unittest import mock
 
 from test_turn_macros import P1, Base
 
-from bg3ai import longnav, render, route, server
+from bg3ai import longnav, render, route
+from bg3ai.tools import core, plumbing, observe, travel, batch, travel_macro, saving
 from bg3ai.game import GameError, JobResult
 
 KARLACH = [104.2, 21.1, 516.7]
@@ -201,15 +202,15 @@ class RouteJump(unittest.TestCase):
         inv = {"items": [{"uuid": "11111111-0000-0000-0000-00000000aaaa", "name": "Scroll of Misty Step", "owner": P1}]}
         g = mock.Mock()
         g.try_rpc.return_value = inv
-        with mock.patch.object(server, "game", g):
-            out = server._teleport_hint({"lower": [lo]})
+        with mock.patch.object(core, "game", g):
+            out = plumbing._teleport_hint({"lower": [lo]})
             self.assertIn("TELEPORT:", out)
             self.assertIn("Scroll of Misty Step (18m) reaches the floor NW", out)
             lo2 = dict(lo, to=[-455.5, -27.8, -1408.8])  # 21 m down: 25 m in 3D
-            self.assertIn("too far", server._teleport_hint({"lower": [lo2]}))
-            self.assertEqual(server._teleport_hint({"lower": [dict(lo, reach_m=30)]}), "")  # a jump does it
+            self.assertIn("too far", plumbing._teleport_hint({"lower": [lo2]}))
+            self.assertEqual(plumbing._teleport_hint({"lower": [dict(lo, reach_m=30)]}), "")  # a jump does it
             g.try_rpc.return_value = {"items": []}
-            self.assertEqual(server._teleport_hint({"lower": [lo]}), "")
+            self.assertEqual(plumbing._teleport_hint({"lower": [lo]}), "")
 
     def test_unknown_path_says_why(self):
         """S039 21:44: 'path unknown (pathfinding unavailable)' right after a jump onto a rock off the grid."""
@@ -230,9 +231,9 @@ class RouteJump(unittest.TestCase):
 class TravelTrips(Base):
     def setUp(self) -> None:
         super().setUp()
-        server.SETTLE_S = 10.0
-        server.DEAD.clear()
-        self.addCleanup(server.DEAD.clear)
+        plumbing.SETTLE_S = 10.0
+        batch.DEAD.clear()
+        self.addCleanup(batch.DEAD.clear)
         self.wps: list | None = None
         orig = self.g.rpc
 
@@ -247,38 +248,38 @@ class TravelTrips(Base):
 
     def test_the_second_stop_at_the_same_wall_says_tried_twice(self):
         self.g.reach = {"reachable": False}
-        first = server.travel_to(x=60.0, y=0.0, z=0.0)
+        first = travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertIn("no walkable ground leads further", first)
         self.assertNotIn("tried", first)
-        second = server.travel_to(x=60.0, y=0.0, z=0.0)
+        second = travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertIn("tried 2x: blocked 2x at (0,0,0) 60m short", second)
         self.assertIn("Don't try this approach again", second)
-        third = server.travel_to(x=60.0, y=0.0, z=0.0)
+        third = travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertIn("KNOWN DEAD END toward it: blocked 2x", third)
         self.assertIn("tried 3x", third)
 
     def test_dead_ends_carry_the_level_and_a_load_clears_them(self):
         self.g.reach = {"reachable": False}
-        server.travel_to(x=60.0, y=0.0, z=0.0)
-        self.assertEqual([e.level for e in server.DEAD.items], ["TUT"])  # state.status level
+        travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
+        self.assertEqual([e.level for e in batch.DEAD.items], ["TUT"])  # state.status level
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "P__S099-pre").mkdir()
-            with mock.patch.object(server, "SAVE_DIR", Path(tmp)), mock.patch.object(server, "SAVE_PREFIX", "P"), \
-                    mock.patch.object(server, "_enable_save_gates", lambda: None), \
-                    mock.patch.object(server.SAVER, "settle", lambda: ""), \
-                    mock.patch.object(server, "_game_process_alive", lambda: True), \
-                    mock.patch.object(server, "_server_boot", lambda: "b"), \
-                    mock.patch.object(server, "_load_once", lambda *a: (JobResult("done", {"loaded": "S099-pre"}), False)):
-                server.load_game("S099-pre")
-        self.assertEqual(server.DEAD.items, [])
-        second = server.travel_to(x=60.0, y=0.0, z=0.0)
+            with mock.patch.object(core, "SAVE_DIR", Path(tmp)), mock.patch.object(saving, "SAVE_PREFIX", "P"), \
+                    mock.patch.object(saving, "_enable_save_gates", lambda: None), \
+                    mock.patch.object(saving.SAVER, "settle", lambda: ""), \
+                    mock.patch.object(saving, "_game_process_alive", lambda: True), \
+                    mock.patch.object(saving, "_server_boot", lambda: "b"), \
+                    mock.patch.object(saving, "_load_once", lambda *a: (JobResult("done", {"loaded": "S099-pre"}), False)):
+                saving.load_game("S099-pre")
+        self.assertEqual(batch.DEAD.items, [])
+        second = travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertNotIn("tried", second)  # the wall hit before the load is forgotten
 
     def test_a_cancelled_trip_is_no_dead_end(self):
         self.g.reach = {"reachable": False, "hazard": {"surface": "Fire", "at_m": 3}}
-        server.travel_to(x=60.0, y=0.0, z=0.0)
-        server.travel_to(x=60.0, y=0.0, z=0.0)
-        self.assertEqual(server.DEAD.items, [])
+        travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
+        travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
+        self.assertEqual(batch.DEAD.items, [])
 
     def test_long_trip_fast_travels_first_to_a_waypoint_near_the_goal(self):
         # S011: travel_to Zevlor 463 m on foot with an unlocked waypoint next to him
@@ -295,7 +296,7 @@ class TravelTrips(Base):
             return orig_job(op, args, context, wait_s, poll_s, on_start)
         self.g.run_job = run_job
         self.g.reach = {"reachable": False}
-        out = server.travel_to(x=463.0, y=0.0, z=0.0)
+        out = travel_macro.travel_to(x=463.0, y=0.0, z=0.0)
         self.assertEqual(travelled, ["Emerald Grove Environs"])
         self.assertIn("fast travel to Emerald Grove Environs first (25.1m from it; you were 463m away): done", out)
         self.assertIn("travel_to (463,0,0): started (25.1m)", out)
@@ -303,8 +304,8 @@ class TravelTrips(Base):
     def test_fast_never_walks_and_short_trips_never_ask(self):
         self.wps = [{"name": "Grove", "pos": [440.0, 0.0, 10.0]}]
         self.g.reach = {"reachable": False}
-        server.travel_to(x=463.0, y=0.0, z=0.0, fast="never")
-        server.travel_to(x=60.0, y=0.0, z=0.0)
+        travel_macro.travel_to(x=463.0, y=0.0, z=0.0, fast="never")
+        travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertEqual(self.g.ops("nav.waypoints"), [])
         self.assertEqual(self.g.ops("ui.fast_travel"), [])
 
@@ -312,13 +313,13 @@ class TravelTrips(Base):
         self.wps = [{"name": "Grove", "pos": [440.0, 0.0, 10.0]}]
         self.g.run_job = lambda op, args, **kw: JobResult("failed", None, "in dialogue")
         self.g.reach = {"reachable": False}
-        out = server.travel_to(x=463.0, y=0.0, z=0.0)
+        out = travel_macro.travel_to(x=463.0, y=0.0, z=0.0)
         self.assertIn("fast travel to Grove failed (in dialogue): walking instead", out)
 
     def test_fast_travel_from_camp_leaves_camp_first(self):
         # live 2026-10-10: a fast travel from camp moved only Claude (companions stayed at the Campsite)
         seen, at_camp = [], {"on": True}
-        orig_rpc, orig_job, orig_wait = self.g.rpc, self.g.run_job, server._wait_running
+        orig_rpc, orig_job, orig_wait = self.g.rpc, self.g.run_job, travel._wait_running
 
         def rpc(op, args=None, context="server", timeout=12.0):
             if op == "ui.fast_travel" and (args or {}).get("dry"):
@@ -338,28 +339,28 @@ class TravelTrips(Base):
                 return JobResult("done", {"arrived": args["waypoint"]})
             return orig_job(op, args, context, wait_s, poll_s, on_start)
         self.g.rpc, self.g.run_job = rpc, run_job
-        server._wait_running = lambda max_s=60.0: True
+        travel._wait_running = lambda max_s=60.0: True
         try:
-            out = server.fast_travel("Last Light Inn")
+            out = travel.fast_travel("Last Light Inn")
             self.assertEqual(seen, ["dry", "leave", "travel"])
             self.assertIn("left camp first", out)
             seen.clear()
-            server.fast_travel("Last Light Inn")  # not at camp: no leave
+            travel.fast_travel("Last Light Inn")  # not at camp: no leave
             self.assertEqual(seen, ["dry", "travel"])
             at_camp["on"] = True
             self.g.run_job = lambda op, args, **kw: (seen.append(op), JobResult("failed", None, "cannot travel right now"))[1]
             seen.clear()
-            out = server.fast_travel("Last Light Inn")
+            out = travel.fast_travel("Last Light Inn")
             self.assertIn("FAILED to leave camp first", out)
             self.assertNotIn("ui.fast_travel", seen)
         finally:
-            server._wait_running = orig_wait
+            travel._wait_running = orig_wait
 
     def test_fast_travel_in_a_no_travel_area_says_why_at_once(self):
         # S035 19:27/19:39: "can't fast travel now (Location)" twice in the Gauntlet of Shar, no way out given
         seen = []
         orig_try, orig_job = self.g.try_rpc, self.g.run_job
-        self.addCleanup(setattr, server.AREA, "block", None)   # the block it remembers would skip later trips' fast travel
+        self.addCleanup(setattr, travel.AREA, "block", None)   # the block it remembers would skip later trips' fast travel
 
         def try_rpc(op, args=None, context="server", **kw):
             if op == "ui.travel_block":
@@ -368,7 +369,7 @@ class TravelTrips(Base):
         self.g.try_rpc = try_rpc
         self.g.run_job = lambda op, args, **kw: (seen.append(op), JobResult("done", {}))[1]
         try:
-            out = server.fast_travel("Last Light Inn")
+            out = travel.fast_travel("Last Light Inn")
         finally:
             self.g.try_rpc, self.g.run_job = orig_try, orig_job
         self.assertIn("FAILED — can't fast travel now (Location)", out)
@@ -376,7 +377,7 @@ class TravelTrips(Base):
         self.assertNotIn("ui.fast_travel", seen)
 
     def test_route_tool_shows_this_sessions_dead_ends(self):
-        server.DEAD.record([60.0, 0.0, 0.0], [10.0, 0.0, 0.0], 50.0)
+        batch.DEAD.record([60.0, 0.0, 0.0], [10.0, 0.0, 0.0], 50.0)
         orig = self.g.rpc
 
         def rpc(op, args=None, context="server", timeout=12.0):
@@ -385,7 +386,7 @@ class TravelTrips(Base):
                         "reachable": False}
             return orig(op, args, context, timeout)
         self.g.rpc = rpc
-        out = server.route(x=60.0, y=0.0, z=0.0)
+        out = observe.route(x=60.0, y=0.0, z=0.0)
         self.assertIn("BLOCKED BEFORE (this session): blocked 1x at (10,0,0) 50m short", out)
 
 

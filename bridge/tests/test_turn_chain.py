@@ -1,12 +1,13 @@
 """combat_turn list form: several party members' turns in one call (round-trip fold, 2026-10-10)."""
 import json
+import time
 import unittest
 from unittest import mock
 
-from bg3ai import server
 from bg3ai.game import GameError
+from bg3ai.tools import core, observe, plumbing, reporting, turn_slots, turn_tool
 
-TC = getattr(server.combat_turn, "fn", server.combat_turn)
+TC = getattr(turn_tool.combat_turn, "fn", turn_tool.combat_turn)
 
 
 class Chain(unittest.TestCase):
@@ -15,9 +16,9 @@ class Chain(unittest.TestCase):
 
         def fake(plan, who, end, wait_next, ignore, wait_turn, **kw):
             calls.append((who, json.loads(plan), wait_turn))
-            server._batch["last"] = "done"
+            reporting._batch["last"] = "done"
             return one(who) + "\n⏱ 12:00 · 40m left"
-        with mock.patch.object(server, "_combat_turn_one", fake):
+        with mock.patch.object(turn_tool, "_combat_turn_one", fake):
             out = TC(json.dumps(plans))
         return out, calls
 
@@ -34,7 +35,7 @@ class Chain(unittest.TestCase):
         self.assertNotIn("CHAIN STOPPED", out)
 
     def test_budget_spent_no_more_waiting(self):
-        with mock.patch.object(server, "CHAIN_BUDGET_S", 0.0):
+        with mock.patch.object(turn_tool, "CHAIN_BUDGET_S", 0.0):
             _, calls = self.run_chain(self.PLANS, lambda w: f"TURN {w}")
         self.assertEqual([c[2] for c in calls], [30.0, 0.0, 0.0])
 
@@ -70,16 +71,16 @@ class Chain(unittest.TestCase):
             order.append(w)
             return f"TURN {w}"
         uu = {"e4": "U-claude", "Claude": "U-claude", "Gale": "U-gale", "Karlach": "U-karlach"}
-        with mock.patch.object(server, "_uuid", lambda h: uu[h]):
+        with mock.patch.object(plumbing, "_uuid", lambda h: uu[h]):
             out, calls = self.run_chain(self.PLANS, one)
         self.assertEqual(order, ["Claude", "Karlach", "Gale"])
         self.assertNotIn("CHAIN STOPPED", out)
 
     def test_stops_on_interrupt(self):
         def fake(plan, who, end, wait_next, ignore, wait_turn, **kw):
-            server._batch["last"] = "interrupted" if who == "Karlach" else "done"
+            reporting._batch["last"] = "interrupted" if who == "Karlach" else "done"
             return f"TURN {who}\nturn NOT ended"
-        with mock.patch.object(server, "_combat_turn_one", fake):
+        with mock.patch.object(turn_tool, "_combat_turn_one", fake):
             out = TC(json.dumps(self.PLANS))
         self.assertIn("Karlach's turn was interrupted", out)
         self.assertIn("NOT PLAYED: Gale, Claude", out)
@@ -89,14 +90,14 @@ class Chain(unittest.TestCase):
         # turn was interrupted (above)" on the flag an earlier call had left; Gale not played
         def fake(plan, who, end, wait_next, ignore, wait_turn, **kw):
             return f"{who} is downed: nothing to play" if who == "Karlach" else f"TURN {who}"
-        server._batch["last"] = "interrupted"
-        with mock.patch.object(server, "_combat_turn_one", fake):
+        reporting._batch["last"] = "interrupted"
+        with mock.patch.object(turn_tool, "_combat_turn_one", fake):
             out = TC(json.dumps(self.PLANS))
         self.assertNotIn("CHAIN STOPPED", out)
         self.assertIn("TURN Gale", out)
 
     def test_single_plan_unchanged(self):
-        with mock.patch.object(server, "_combat_turn_one", return_value="TURN x") as m:
+        with mock.patch.object(turn_tool, "_combat_turn_one", return_value="TURN x") as m:
             self.assertEqual(TC('{"action":[]}', who="Gale"), "TURN x")
         m.assert_called_once()
 
@@ -111,13 +112,13 @@ if __name__ == "__main__":
 
 class AutoCombat(unittest.TestCase):
     def test_fight_start_carries_the_combat_state(self):
-        with mock.patch.object(server, "_combat_state_text", return_value="ROUND 1 order: e1 Karlach, e9 Goblin\nYOUR ACTIONS (e1)"):
-            out = server._auto_combat("move_to", "move_to: done", "EVENTS\n  combat_started {}")
+        with mock.patch.object(observe, "_combat_state_text", return_value="ROUND 1 order: e1 Karlach, e9 Goblin\nYOUR ACTIONS (e1)"):
+            out = reporting._auto_combat("move_to", "move_to: done", "EVENTS\n  combat_started {}")
             self.assertTrue(out.startswith("COMBAT STARTED (no get_combat_state needed):"))
             self.assertIn("YOUR ACTIONS (e1)", out)
-            self.assertEqual(server._auto_combat("combat_turn", "TURN e1", "EVENTS\n  combat_started {}"), "")
-            self.assertEqual(server._auto_combat("move_to", "move_to: done", "EVENTS\n  died {}"), "")
-            self.assertEqual(server._auto_combat("move_to", "x\nYOUR ACTIONS (e1)", "  combat_started"), "")
+            self.assertEqual(reporting._auto_combat("combat_turn", "TURN e1", "EVENTS\n  combat_started {}"), "")
+            self.assertEqual(reporting._auto_combat("move_to", "move_to: done", "EVENTS\n  died {}"), "")
+            self.assertEqual(reporting._auto_combat("move_to", "x\nYOUR ACTIONS (e1)", "  combat_started"), "")
 
 
 class WaitTurn(unittest.TestCase):
@@ -135,10 +136,10 @@ class WaitTurn(unittest.TestCase):
                     return last[0]
                 return {}
 
-        with mock.patch.object(server, "game", G()), \
-                mock.patch.object(server.time, "monotonic", lambda: clock[0]), \
-                mock.patch.object(server.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + step)):
-            cs, why = server._wait_turn(lambda c: c.get("current") == "me", max_s, None, None, extend_s)
+        with mock.patch.object(core, "game", G()), \
+                mock.patch.object(time, "monotonic", lambda: clock[0]), \
+                mock.patch.object(time, "sleep", lambda s: clock.__setitem__(0, clock[0] + step)):
+            cs, why = turn_slots._wait_turn(lambda c: c.get("current") == "me", max_s, None, None, extend_s)
         return cs, why, clock[0]
 
     def enemy(self, n):
@@ -167,7 +168,7 @@ class WaitTurn(unittest.TestCase):
         # S080 02:31:45: still progressing at the cap = "enemies still acting", not a bare "timed out"
         states = [self.enemy(i // 5) for i in range(200)]
         _, why, t = self.run_wait(states, 30.0, 30.0)
-        self.assertTrue(why.startswith(server.TURN_STILL_ACTING), why)
+        self.assertTrue(why.startswith(turn_tool.TURN_STILL_ACTING), why)
         self.assertIn("turn changes in the wait", why)
         self.assertLess(t, 62.0)
 
@@ -178,7 +179,7 @@ class WaitTurn(unittest.TestCase):
             return {"active": True, "round": 3,
                     "order": [{"uuid": "me", "hp": 100 - i // 6, "relation": "party"}]}
         states = [hidden(i) for i in range(80)] + [{"active": True, "round": 3, "current": "me"}]
-        cs, why, t = self.run_wait(states, 30.0, server.TURN_EXTEND_S)
+        cs, why, t = self.run_wait(states, 30.0, turn_tool.TURN_EXTEND_S)
         self.assertEqual(why, "")
         self.assertEqual(cs.get("current"), "me")
         self.assertGreater(t, 60.0)

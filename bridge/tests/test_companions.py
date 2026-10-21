@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -14,8 +15,9 @@ from typing import Any
 _RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")
 os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
-from bg3ai import companions, server  # noqa: E402
+from bg3ai import companions  # noqa: E402
 from bg3ai.game import JobResult  # noqa: E402
+from bg3ai.tools import batch, core, inventory, overview, plumbing, travel, travel_macro, world_tools  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 TABLE = companions.load_ties((REPO / "play/knowledge/companions.md").read_text())
@@ -212,12 +214,12 @@ class FakeGame:
 
 class SwapParty(unittest.TestCase):
     def use(self, fake: FakeGame) -> None:
-        orig = server.game
-        server.game = fake
-        self.addCleanup(setattr, server, "game", orig)
-        real_sleep = server.time.sleep  # captured before patching: restoring time.sleep itself here
-        server.time.sleep = lambda s: None  # left it a no-op for every later module (test_saver failed)
-        self.addCleanup(setattr, server.time, "sleep", real_sleep)
+        orig = core.game
+        core.game = fake
+        self.addCleanup(setattr, core, "game", orig)
+        real_sleep = time.sleep  # captured before patching: restoring time.sleep itself here
+        time.sleep = lambda s: None  # left it a no-op for every later module (test_saver failed)
+        self.addCleanup(setattr, time, "sleep", real_sleep)
 
     def test_already_at_camp_refusal_is_not_a_failure(self):
         """Live 11:14: the level-up page hid the camp from ui.state; go_to_camp answered 'already at camp'."""
@@ -234,7 +236,7 @@ class SwapParty(unittest.TestCase):
             return real(op, args, context, wait_s, **kw)
         fake.run_job = run_job
         self.use(fake)
-        out = server.swap_party(into="Halsin", out="Gale", leave_camp=False)
+        out = travel.swap_party(into="Halsin", out="Gale", leave_camp=False)
         self.assertIn("swap_party: done", out)
         self.assertNotIn("FAILED at go to camp", out)
 
@@ -244,7 +246,7 @@ class SwapParty(unittest.TestCase):
         full = {"options": Pickers.FULL[:1] + [{"i": 2, "text": "Gale could do with a rest."}]}
         fake = FakeGame([menu, full])
         self.use(fake)
-        out = server.swap_party(into="Halsin", out="Gale")
+        out = travel.swap_party(into="Halsin", out="Gale")
         ops = [j[0] for j in fake.jobs]
         self.assertEqual(ops[:2], ["act.go_to_camp", "act.talk"])
         # answers are chosen by the text the agent would see (S081), the row's number checked by the mod
@@ -265,7 +267,7 @@ class SwapParty(unittest.TestCase):
         fake.rpc = lambda op, args=None, context="server": (dict(real(op, args, context), active=SH)
                                                             if op == "state.status" else real(op, args, context))
         self.use(fake)
-        out = server.swap_party(into="Halsin", out="Gale")
+        out = travel.swap_party(into="Halsin", out="Gale")
         talks = [a for op, a in fake.jobs if op == "act.talk"]
         self.assertEqual(talks[0]["char"], CLAUDE)
         self.assertIn("swap_party: done", out)
@@ -277,10 +279,10 @@ class SwapParty(unittest.TestCase):
         fake = FakeGame([menu, full])
         fake.far = True
         self.use(fake)
-        orig = server._far_move
-        server._far_move = lambda *a: None
-        self.addCleanup(setattr, server, "_far_move", orig)
-        out = server.swap_party(into="Halsin", out="Gale")
+        orig = world_tools._far_move
+        world_tools._far_move = lambda *a: None
+        self.addCleanup(setattr, world_tools, "_far_move", orig)
+        out = travel.swap_party(into="Halsin", out="Gale")
         ops = [j[0] for j in fake.jobs]
         self.assertEqual(ops[:4], ["act.go_to_camp", "act.talk", "act.move_to", "act.talk"])
         self.assertIn("walked to Halsin", out)
@@ -303,10 +305,10 @@ class SwapParty(unittest.TestCase):
             return out
         fake.rpc = rpc
         self.use(fake)
-        orig = server._far_move
-        server._far_move = lambda *a: None
-        self.addCleanup(setattr, server, "_far_move", orig)
-        out = server.swap_party(into="Halsin", out="Gale")
+        orig = world_tools._far_move
+        world_tools._far_move = lambda *a: None
+        self.addCleanup(setattr, world_tools, "_far_move", orig)
+        out = travel.swap_party(into="Halsin", out="Gale")
         moves = [a for op, a in fake.jobs if op == "act.move_to"]
         self.assertEqual(moves[0].get("pos"), [-1450.0, 8.0, -2620.0])
         self.assertIn("swap_party: done", out)
@@ -344,19 +346,19 @@ class SwapParty(unittest.TestCase):
         fake.rpc, fake.run_job = rpc, run_job
         fake.try_rpc = lambda op, args=None, context="server", default=None: rpc(op, args, context)
         self.use(fake)
-        for name, val in (("_far_move", lambda *a: None), ("LONG_REST_AT", [server.time.monotonic()])):
-            self.addCleanup(setattr, server, name, getattr(server, name))
-            setattr(server, name, val)
+        for mod, name, val in ((world_tools, "_far_move", lambda *a: None), (inventory, "LONG_REST_AT", [time.monotonic()])):
+            self.addCleanup(setattr, mod, name, getattr(mod, name))
+            setattr(mod, name, val)
         clock = [0.0]
-        real_mono = server.time.monotonic
-        server.time.monotonic = lambda: real_mono() + clock[0]
-        self.addCleanup(setattr, server.time, "monotonic", real_mono)
-        server.time.sleep = lambda s: clock.__setitem__(0, clock[0] + s)
+        real_mono = time.monotonic
+        time.monotonic = lambda: real_mono() + clock[0]
+        self.addCleanup(setattr, time, "monotonic", real_mono)
+        time.sleep = lambda s: clock.__setitem__(0, clock[0] + s)
         return fake
 
     def test_after_a_long_rest_waits_for_the_companion_to_return(self):
         fake = self.settle_fake(back_after=3)
-        out = server.swap_party(into="Halsin", out="Gale", leave_camp=False)
+        out = travel.swap_party(into="Halsin", out="Gale", leave_camp=False)
         talks = [j for j in fake.jobs if j[0] == "act.talk"]
         self.assertEqual(len(talks), 3)
         self.assertIn("to return to its camp spot after the long rest", out)
@@ -364,30 +366,30 @@ class SwapParty(unittest.TestCase):
 
     def test_after_a_long_rest_never_a_final_failure_while_it_hasnt_returned(self):
         self.settle_fake(back_after=None)
-        out = server.swap_party(into="Halsin", out="Gale", leave_camp=False)
+        out = travel.swap_party(into="Halsin", out="Gale", leave_camp=False)
         self.assertIn("swap_party: NOT YET — Halsin hasn't come back to its camp spot since the long rest", out)
         self.assertIn("30 s waited", out)
         self.assertNotIn("FAILED to talk", out)
 
     def test_no_settle_wait_long_after_a_rest(self):
         fake = self.settle_fake(back_after=None)
-        server.LONG_REST_AT[0] = server.time.monotonic() - 2 * server.REST_SETTLE_WINDOW_S
-        out = server.swap_party(into="Halsin", out="Gale", leave_camp=False)
+        inventory.LONG_REST_AT[0] = time.monotonic() - 2 * travel.REST_SETTLE_WINDOW_S
+        out = travel.swap_party(into="Halsin", out="Gale", leave_camp=False)
         self.assertIn("swap_party: FAILED to talk to Halsin", out)
         self.assertEqual(len([j for j in fake.jobs if j[0] == "act.talk"]), 2)
 
     def test_far_walk_up_stops_short_of_the_companion(self):
         # acceptance 12:2x: the 59 m walk to Wyll ended on his spot, then a 3.4 m second leg; stop short instead
         seen = {}
-        orig = (server._far_move, server._ent_pos, server.travel_to, server.wait_for)
-        self.addCleanup(lambda: (setattr(server, "_far_move", orig[0]), setattr(server, "_ent_pos", orig[1]),
-                                 setattr(server, "travel_to", orig[2]), setattr(server, "wait_for", orig[3])))
-        server._far_move = lambda *a: ([60.0, 1.0, 0.0], 60.0)
-        server._ent_pos = lambda u: [0.0, 1.0, 0.0]
-        server.travel_to = lambda **kw: seen.update(kw) or "travel_to: started (58m)"
-        server.wait_for = lambda **kw: "idle"
-        out = server._walk_up_to("me", "wyll", "Wyll", [60.0, 1.0, 0.0])
-        self.assertAlmostEqual(seen["x"], 60.0 - server.WALK_UP_SHORT_M)
+        orig = (world_tools._far_move, world_tools._ent_pos, travel_macro.travel_to, batch.wait_for)
+        self.addCleanup(lambda: (setattr(world_tools, "_far_move", orig[0]), setattr(world_tools, "_ent_pos", orig[1]),
+                                 setattr(travel_macro, "travel_to", orig[2]), setattr(batch, "wait_for", orig[3])))
+        world_tools._far_move = lambda *a: ([60.0, 1.0, 0.0], 60.0)
+        world_tools._ent_pos = lambda u: [0.0, 1.0, 0.0]
+        travel_macro.travel_to = lambda **kw: seen.update(kw) or "travel_to: started (58m)"
+        batch.wait_for = lambda **kw: "idle"
+        out = travel._walk_up_to("me", "wyll", "Wyll", [60.0, 1.0, 0.0])
+        self.assertAlmostEqual(seen["x"], 60.0 - travel.WALK_UP_SHORT_M)
         self.assertEqual((seen["y"], seen["z"]), (1.0, 0.0))
         self.assertIn("walked to Wyll (60m)", out)
 
@@ -398,12 +400,12 @@ class SwapParty(unittest.TestCase):
                             {"i": 3, "text": "Leave."}]}
         fake = FakeGame([menu], joins=False)
         self.use(fake)
-        self.addCleanup(server._no_join.clear)
-        out = server.swap_party(into="Halsin", out="Gale")
+        self.addCleanup(overview._no_join.clear)
+        out = travel.swap_party(into="Halsin", out="Gale")
         self.assertIn("doesn't offer to join right now", out)
         self.assertIn(("ui.dialogue_choose", {"i": 3, "text": "Leave."}), fake.jobs)
         self.assertIn("act.leave_camp", [j[0] for j in fake.jobs])
-        self.assertIn(HALSIN, server._no_join)
+        self.assertIn(HALSIN, overview._no_join)
 
     def remark_fake(self, menu_on_talk: int | None) -> FakeGame:
         """S080 #60 02:33:48: talking to Karlach at camp opened a one-line remark ("Hm? Did you... are you talking to
@@ -423,39 +425,39 @@ class SwapParty(unittest.TestCase):
             return out
         fake.run_job = run_job
         self.use(fake)
-        self.addCleanup(server._no_join.clear)
+        self.addCleanup(overview._no_join.clear)
         clock = [0.0]
-        real_mono = server.time.monotonic
-        server.time.monotonic = lambda: real_mono() + clock[0]
-        self.addCleanup(setattr, server.time, "monotonic", real_mono)
-        server.time.sleep = lambda t: clock.__setitem__(0, clock[0] + t)
+        real_mono = time.monotonic
+        time.monotonic = lambda: real_mono() + clock[0]
+        self.addCleanup(setattr, time, "monotonic", real_mono)
+        time.sleep = lambda t: clock.__setitem__(0, clock[0] + t)
         return fake
 
     def test_s080_a_one_line_remark_is_tried_again_then_reported(self):
         fake = self.remark_fake(menu_on_talk=None)
-        out = server.swap_party(into="Halsin", out="Gale")
+        out = travel.swap_party(into="Halsin", out="Gale")
         self.assertEqual(len([j for j in fake.jobs if j[0] == "act.talk"]), 2)
         self.assertIn("Halsin only made a remark: talked again", out)
         self.assertIn("swap_party: Halsin doesn't offer to join right now: talking to them gave only a one-line "
                       "remark (EVENTS) and no answers", out)
         self.assertNotIn("Talk to it", out)
         self.assertIn("act.leave_camp", [j[0] for j in fake.jobs])
-        self.assertIn(HALSIN, server._no_join)
+        self.assertIn(HALSIN, overview._no_join)
 
     def test_s080_a_remark_then_the_menu_on_the_second_talk_swaps(self):
         fake = self.remark_fake(menu_on_talk=2)
-        out = server.swap_party(into="Halsin", out="Gale")
+        out = travel.swap_party(into="Halsin", out="Gale")
         self.assertEqual(len([j for j in fake.jobs if j[0] == "act.talk"]), 2)
         self.assertIn("swap_party: done", out)
         self.assertIn("Halsin joined", out)
-        self.assertNotIn(HALSIN, server._no_join)
+        self.assertNotIn(HALSIN, overview._no_join)
 
     def test_camp_block_fails_at_once_with_the_reason(self):
         # S039 21:48:34 Nightsong's Prison: "FAILED at go to camp — camp: FAILED — cannot travel right now", no reason
         fake = FakeGame([])
         fake.block = {"hud": True, "error": "Location"}
         self.use(fake)
-        out = server.swap_party(into="Halsin", out="Gale")
+        out = travel.swap_party(into="Halsin", out="Gale")
         self.assertIn("FAILED at go to camp — cannot travel right now", out)
         self.assertIn("(Location): this area does not let the party go to camp", out)
         self.assertNotIn("act.go_to_camp", [j[0] for j in fake.jobs])
@@ -471,28 +473,28 @@ class SwapParty(unittest.TestCase):
             return real(op, args, context, wait_s, **kw)
         fake.run_job = run_job
         self.use(fake)
-        out = server.swap_party(into="Halsin", out="Gale")
+        out = travel.swap_party(into="Halsin", out="Gale")
         self.assertIn("FAILED at go to camp", out)
         self.assertIn("(DangerZone): this is a danger zone", out)
 
     def test_full_party_needs_out(self):
         self.use(FakeGame([]))
-        out = server.swap_party(into="Halsin")
+        out = travel.swap_party(into="Halsin")
         self.assertIn("the party is full", out)
         self.assertIn('into="Halsin", out="', out)
         self.assertNotIn('out="Claude"', out)
 
     def test_refuses_avatar_and_unknown(self):
         self.use(FakeGame([]))
-        self.assertIn("your own character", server.swap_party(into="Halsin", out="Claude"))
-        self.assertIn("not waiting at camp", server.swap_party(into="Minsc", out="Gale"))
-        self.assertIn("already in the party", server.swap_party(into="Gale", out="Karlach"))
+        self.assertIn("your own character", travel.swap_party(into="Halsin", out="Claude"))
+        self.assertIn("not waiting at camp", travel.swap_party(into="Minsc", out="Gale"))
+        self.assertIn("already in the party", travel.swap_party(into="Gale", out="Karlach"))
 
     def test_unknown_answer_stops_with_dialogue(self):
         fake = FakeGame([{"options": [{"i": 1, "text": "Tell me about the curse."}, {"i": 2, "text": "Hmm."}]}],
                         at_camp=True, joins=False)
         self.use(fake)
-        out = server.swap_party(into="Halsin", out="Gale")
+        out = travel.swap_party(into="Halsin", out="Gale")
         self.assertIn("STOPPED: no join/swap answer recognised", out)
         self.assertNotIn("act.go_to_camp", [j[0] for j in fake.jobs])
 
@@ -516,13 +518,13 @@ class SetPartyAlready(unittest.TestCase):
     """S062 10:00: set_party unchain on a member already alone → "FAILED: already unchained" ×3 (the state wanted)."""
 
     def run_party(self, action: str, out: str) -> str:
-        saved = (server._act, server._who, server._active)
-        server._act = lambda tool, op, args, **k: out
-        server._who, server._active = (lambda ref: "u-k"), (lambda: "u-c")
+        saved = (plumbing._act, plumbing._who, plumbing._active)
+        plumbing._act = lambda tool, op, args, **k: out
+        plumbing._who, plumbing._active = (lambda ref: "u-k"), (lambda: "u-c")
         try:
-            return server.set_party(action, who="Karlach")
+            return travel.set_party(action, who="Karlach")
         finally:
-            server._act, server._who, server._active = saved
+            plumbing._act, plumbing._who, plumbing._active = saved
 
     def test_already_is_done(self):
         self.assertEqual(self.run_party("unchain", "set_party: FAILED — already unchained\n⏱ 10:00"),

@@ -6,8 +6,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from bg3ai import server  # noqa: E402
+from bg3ai import render  # noqa: E402
 from bg3ai.game import JobResult  # noqa: E402
+from bg3ai.tools import core, inventory  # noqa: E402
 
 GALE = "aaaaaaaa-0000-0000-0000-000000000001"
 CLAUDE = "aaaaaaaa-0000-0000-0000-000000000002"
@@ -43,41 +44,41 @@ class Fake:
 class ItemRef(unittest.TestCase):
     def use(self, items):
         fake = Fake(items)
-        orig = server.game
-        server.game = fake
-        self.addCleanup(setattr, server, "game", orig)
+        orig = core.game
+        core.game = fake
+        self.addCleanup(setattr, core, "game", orig)
         # Fresh handles: other modules register their own "Gale"/"Simple Robe" (then names are ambiguous).
-        saved_h, server.H = server.H, server.render.Handles()
-        self.addCleanup(setattr, server, "H", saved_h)
+        saved_h, core.H = core.H, render.Handles()
+        self.addCleanup(setattr, core, "H", saved_h)
         for u in (GALE, CLAUDE):
-            server.H.get(u, "Gale" if u == GALE else "Claude")
+            core.H.get(u, "Gale" if u == GALE else "Claude")
         for it in items:
-            server.H.get(it["uuid"], it["name"])
+            core.H.get(it["uuid"], it["name"])
         return fake
 
     def test_identical_items_pick_one_unworn_in_own_bag(self):
         self.use([robe(R[0], CLAUDE, worn=True), robe(R[1], CLAUDE), robe(R[2], GALE), robe(R[3], GALE, worn=True)])
-        self.assertEqual(server._item_uuid("Simple Robe", "Gale"), R[2])
-        self.assertEqual(server._item_uuid("simple robe", "Gale", worn=True), R[3])
+        self.assertEqual(inventory._item_uuid("Simple Robe", "Gale"), R[2])
+        self.assertEqual(inventory._item_uuid("simple robe", "Gale", worn=True), R[3])
 
     def test_different_items_stay_ambiguous(self):
         self.use([robe(R[0], GALE), robe(R[1], GALE, rarity="uncommon")])
         with self.assertRaises(ValueError):
-            server._item_uuid("Simple Robe", "Gale")
+            inventory._item_uuid("Simple Robe", "Gale")
 
     def test_one_carried_namesake_wins_over_a_traders_stock(self):
         # S057 07:49: e239 in the bags, e460 a trader's stack seen in the trade window (not in state.inventory)
         pot = lambda u: {"uuid": u, "name": "Potion of Superior Healing", "owner": CLAUDE, "rarity": "uncommon"}  # noqa: E731
         fake = self.use([pot(R[0])])
-        server.H.get(R[1], "Potion of Superior Healing")
-        self.assertEqual(server._item_uuid("Potion of Superior Healing", "Claude"), R[0])
+        core.H.get(R[1], "Potion of Superior Healing")
+        self.assertEqual(inventory._item_uuid("Potion of Superior Healing", "Claude"), R[0])
 
     def test_nothing_carried_stays_ambiguous(self):
         self.use([])
-        server.H.get(R[0], "Potion of Superior Healing")
-        server.H.get(R[1], "Potion of Superior Healing")
+        core.H.get(R[0], "Potion of Superior Healing")
+        core.H.get(R[1], "Potion of Superior Healing")
         with self.assertRaises(ValueError):
-            server._item_uuid("Potion of Superior Healing", "Claude")
+            inventory._item_uuid("Potion of Superior Healing", "Claude")
 
 
 if __name__ == "__main__":

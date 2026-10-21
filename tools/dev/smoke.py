@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "src"))
 
-from bg3ai import server as S  # noqa: E402
+from server_view import S  # noqa: E402
 
 READ_ONLY = [
     ("get_status", {}),

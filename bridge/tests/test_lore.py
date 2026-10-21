@@ -44,23 +44,23 @@ class Lore(unittest.TestCase):
 class KeepFromScreen(unittest.TestCase):
     def test_a_book_panel_on_screen_is_kept(self):
         from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
-        from bg3ai import server
+        from bg3ai.tools import core, reporting
         d = Path(tempfile.mkdtemp())
-        old, server.MEMORY = server.MEMORY, d
+        old, core.MEMORY = core.MEMORY, d
         try:
-            server._keep_read({"screen": "book", "popup": {"title": "Note", "text": "Press them in order."}})
-            server._keep_read({"screen": "dialogue", "popup": {"title": "X", "text": "not a book"}})
+            reporting._keep_read({"screen": "book", "popup": {"title": "Note", "text": "Press them in order."}})
+            reporting._keep_read({"screen": "dialogue", "popup": {"title": "X", "text": "not a book"}})
             long = "[A massive compendium of notes on illithid parasites.] Sample 231 Observations: " + "x " * 2000
-            server._keep_read({"screen": "book", "popup": {"text": long}})  # live: book panels have no title
+            reporting._keep_read({"screen": "book", "popup": {"text": long}})  # live: book panels have no title
             self.assertIn("READ [A massive compendium of notes on illithid parasites.]…", lore.search(d, "compendium"))
             from bg3ai import render
-            shown = "\n".join(render.render_ui({"screen": "book", "popup": {"text": long}}, server.H))
+            shown = "\n".join(render.render_ui({"screen": "book", "popup": {"text": long}}, core.H))
             self.assertLess(len(shown), render.BOOK_SHOWN + 200)
             self.assertIn("recall(", shown)
             self.assertIn("READ Note: Press them in order.", lore.search(d, "order"))
             self.assertNotIn("not a book", (d / lore.FILE).read_text())
         finally:
-            server.MEMORY = old
+            core.MEMORY = old
 
 
 if __name__ == "__main__":

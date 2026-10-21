@@ -2,8 +2,9 @@
 import unittest
 from unittest import mock
 
-from bg3ai import render, server
+from bg3ai import actq, render
 from bg3ai.render import Handles
+from bg3ai.tools import core, queueing, reporting, turn_plan
 
 DOOR = "aaaaaaaa-0000-0000-0000-000000000021"
 TAV = "bbbbbbbb-0000-0000-0000-000000000002"
@@ -63,11 +64,11 @@ class Echo(unittest.TestCase):
             def drain_events(self, ctx):
                 return drained[ctx].pop(0)
         g = G()
-        with mock.patch.object(server, "game", g), mock.patch.object(render, "ECHO", render.EventEcho()), \
-                mock.patch.object(server, "_party_cached", lambda: set()), \
-                mock.patch.object(server, "_fight_feed", lambda evs: ""):
-            first = server._events_text("interact: done — closed")
-            second = server._events_text("ROUTE ...")
+        with mock.patch.object(core, "game", g), mock.patch.object(render, "ECHO", render.EventEcho()), \
+                mock.patch.object(turn_plan, "_party_cached", lambda: set()), \
+                mock.patch.object(reporting, "_fight_feed", lambda evs: ""):
+            first = core._events_text("interact: done — closed")
+            second = core._events_text("ROUTE ...")
         self.assertIn("used", first)
         self.assertNotIn("used", second)
 
@@ -77,10 +78,10 @@ class QueueReport(unittest.TestCase):
         sent = []
         conn = mock.Mock()
         conn.rpc = lambda op, args, **kw: sent.append((op, args))
-        rep = server.actq.Report(done=0, stopped="step 1 travel_to interrupted", lines=[STEP])
-        with mock.patch.object(server, "_watch_conn", lambda: conn), \
-                mock.patch.object(server, "_rechain_after", lambda who: None):
-            server._on_queue_report(TAV, rep)
+        rep = actq.Report(done=0, stopped="step 1 travel_to interrupted", lines=[STEP])
+        with mock.patch.object(queueing, "_watch_conn", lambda: conn), \
+                mock.patch.object(queueing, "_rechain_after", lambda who: None):
+            queueing._on_queue_report(TAV, rep)
         (op, args), = sent
         self.assertEqual((op, args["kind"]), ("act.note", "queue_interrupted"))
         self.assertNotIn("\n", args["data"]["last"])

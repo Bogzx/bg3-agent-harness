@@ -9,7 +9,8 @@ import unittest
 
 from test_turn_macros import Base, P1  # noqa: F401  (sets BG3AI_RUNTIME first)
 
-from bg3ai import macros, render, server  # noqa: E402
+from bg3ai import macros, render  # noqa: E402
+from bg3ai.tools import core, plumbing, overview, observe, travel, batch, queueing, travel_macro  # noqa: E402
 from bg3ai.game import NotReady  # noqa: E402
 
 FIRE = {"m": 1.5, "surface": "Fire", "patches": 1, "longest_m": 1.5, "pos": [5.0, 0.0, 0.0], "at_m": 4.0}
@@ -43,7 +44,7 @@ class CrossingPolicy(unittest.TestCase):
 class TravelCrossing(Base):
     def setUp(self) -> None:
         super().setUp()
-        server.SETTLE_S = 10.0  # the trips end within the settle window: their whole report comes back
+        plumbing.SETTLE_S = 10.0  # the trips end within the settle window: their whole report comes back
         self.g.watch["party"][0].update(hp=22, max_hp=22)
         self.g.result_for = lambda op, a: ({"after": {"pos": a.get("pos"), "hp": 21, "max_hp": 22}}
                                            if op == "act.move_to" else {})
@@ -59,7 +60,7 @@ class TravelCrossing(Base):
         self.g.reach = reach
 
     def test_takes_the_crossing_and_says_what_it_costs(self):
-        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
         self.assertEqual(self.g.ops("nav.reach_toward")[0][1]["avoid"], "least")
         self.assertIn("leg 1: crossing 1.5m of Fire (~1-4 dmg + Burning) @(5,0,0), the shortest way on: move_to: done", out)
         self.assertIn("arrived", out)
@@ -72,38 +73,38 @@ class TravelCrossing(Base):
                 self.g.watch["party"][0].update(surface=None, hp=17)  # Burning ticks on the next leg
         self.g.on_start = burn
         self.g.dur["act.move_to"] = 0.15
-        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
         self.assertNotIn("STOPPED", out)
         self.assertIn("arrived", out)
 
     def test_low_hp_stops_before_the_crossing(self):
         self.g.watch["party"][0].update(hp=11)
-        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
         self.assertIn("STOPPED: the way on crosses 1.5m of Fire", out)
         self.assertIn("HP 11/22 is too low", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
 
     def test_strict_asks_for_no_crossing(self):
         self.g.reach = {"reachable": False, "hazard": {"surface": "Fire", "pos": [5, 0, 0], "at_m": 5}}
-        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True, avoid_hazards="strict")
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True, avoid_hazards="strict")
         self.assertNotIn("avoid", self.g.ops("nav.reach_toward")[0][1])
         self.assertIn("STOPPED: the way on crosses Fire 5m ahead", out)
 
     def test_detour_is_named(self):
         self.g.reach = lambda a: ({"reachable": True, "pos": [50.0, 0.0, -8.0], "detour": True, "dir": "SE",
                                    "straight": {"hazard": {"surface": "Fire"}}})
-        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
         self.assertIn("leg 1: around Fire (heading SE): move_to: done", out)
 
     def test_bad_policy(self):
-        self.assertIn("avoid_hazards must be", server.travel_to(x=1.0, y=0.0, z=0.0, avoid_hazards="yolo"))
+        self.assertIn("avoid_hazards must be", travel_macro.travel_to(x=1.0, y=0.0, z=0.0, avoid_hazards="yolo"))
 
     def test_async_passes_the_policy_to_the_queue(self):
-        server.travel_to(x=50.0, y=0.0, z=0.0, avoid_hazards="cross")
-        q = server._queues().queues.get(P1)
+        travel_macro.travel_to(x=50.0, y=0.0, z=0.0, avoid_hazards="cross")
+        q = queueing._queues().queues.get(P1)
         self.assertIsNotNone(q)
         for _ in range(200):
-            if not server._queues().busy(P1):
+            if not queueing._queues().busy(P1):
                 break
             time.sleep(0.01)
         self.assertTrue(q.last_report and q.last_report.lines)
@@ -114,7 +115,7 @@ class JumpLanding(Base):
     def test_landing_in_fire_moves_to_the_suggested_spot(self):
         self.g.landing = {"safe": False, "surface": "Fire", "dist_m": 4.0, "reliable_m": 4.5,
                           "suggest": [-4.0, 0.0, 1.5], "suggest_off_m": 1.5, "suggest_dist_m": 4.3}
-        out = server.jump_to(-4.0, 0.0, 0.0)
+        out = travel.jump_to(-4.0, 0.0, 0.0)
         self.assertIn("landing (-4,0,0) is in Fire: jumping to (-4,0,1.5) instead (1.5m from it, 4.3m jump, clear)", out)
         self.assertEqual(self.g.ops("act.cast")[0][1]["pos"], [-4.0, 0.0, 1.5])
 
@@ -122,54 +123,54 @@ class JumpLanding(Base):
         # S032 17:32 Gauntlet broken staircase: y -1 asked over the Chasm around the stairs' floor
         self.g.landing = {"safe": False, "surface": "Chasm", "dist_m": 4.0, "reliable_m": 4.5,
                           "suggest": [-672.0, -3.2, -859.0], "suggest_off_m": 0, "suggest_dist_m": 4.0, "floor_y": -3.2}
-        out = server.jump_to(-672.0, -1.0, -859.0)
+        out = travel.jump_to(-672.0, -1.0, -859.0)
         self.assertIn("landing (-672,-1,-859) is in Chasm: the floor there is at y -3.2, jumping to (-672,-3.2,-859)", out)
         self.assertEqual(self.g.ops("act.cast")[0][1]["pos"], [-672.0, -3.2, -859.0])
 
     def test_chasm_refusal_names_the_full_reach(self):
         # S040 22:10:24: "no clear spot within 3m of it is in reach (4.5m)" for a 6.9 m jump the agent then made by hand
         self.g.landing = {"safe": False, "surface": "Chasm", "dist_m": 6.9, "reliable_m": 4.5, "reach_m": 12.1}
-        out = server.jump_to(-599.5, -142.0, -1431.0)
+        out = travel.jump_to(-599.5, -142.0, -1431.0)
         self.assertIn("is in reach (12.1m)", out)
         self.assertEqual(self.g.ops("act.cast"), [])
 
     def test_long_jump_that_may_fall_short(self):
         self.g.landing = {"safe": False, "surface": "Fire", "dist_m": 7.8, "reliable_m": 4.5, "short_pos": [-4.5, 0, 0],
                           "suggest": [-2.0, 0.0, 0.0], "suggest_off_m": 5.8, "suggest_dist_m": 2.0}
-        out = server.jump_to(-7.8, 0.0, 0.0)
+        out = travel.jump_to(-7.8, 0.0, 0.0)
         self.assertIn("7.8m away, past reliable reach (4.5m): it may land short in Fire", out)
 
     def test_no_clear_spot_refuses(self):
         self.g.landing = {"safe": False, "surface": "Fire", "dist_m": 4.0, "reliable_m": 4.5}
-        out = server.jump_to(-4.0, 0.0, 0.0)
+        out = travel.jump_to(-4.0, 0.0, 0.0)
         self.assertIn("jump_to: FAILED", out)
         self.assertEqual(self.g.ops("act.cast"), [])
 
     def test_chasm_refusal_never_offers_force(self):
         # S035 19:38 / S038 20:44: force=true into a Chasm killed Claude both times
         self.g.landing = {"safe": False, "surface": "Chasm", "dist_m": 4.0, "reliable_m": 4.5}
-        out = server.jump_to(-449.0, -12.0, -1421.0)
+        out = travel.jump_to(-449.0, -12.0, -1421.0)
         self.assertIn("is in Chasm", out)
         self.assertNotIn("force=true", out)
         self.assertIn("fatal fall", out)
         self.g.landing = {"safe": False, "surface": "Fire", "dist_m": 4.0, "reliable_m": 4.5}
-        self.assertIn("force=true", server.jump_to(-4.0, 0.0, 0.0))  # other hazards still offer it
+        self.assertIn("force=true", travel.jump_to(-4.0, 0.0, 0.0))  # other hazards still offer it
 
     def test_far_alternative_is_named_not_taken(self):
         self.g.landing = {"safe": False, "blocked": True, "dist_m": 10.3, "reliable_m": 4.5,
                           "nearest_clear": [-40.7, 7.8, -361.0], "nearest_clear_off_m": 6.8}
-        out = server.jump_to(-36.0, 9.5, -356.0)
+        out = travel.jump_to(-36.0, 9.5, -356.0)
         self.assertIn("is on a blocked tile (wall or hole)", out)
         self.assertIn("nearest clear landing in reach is (-40.7,7.8,-361), 6.8m from it", out)
         self.assertEqual(self.g.ops("act.cast"), [])
 
     def test_force_and_safe_and_old_mod(self):
         self.g.landing = {"safe": False, "surface": "Fire", "dist_m": 4.0, "reliable_m": 4.5}
-        server.jump_to(-4.0, 0.0, 0.0, force=True)
+        travel.jump_to(-4.0, 0.0, 0.0, force=True)
         self.g.landing = {"safe": True, "dist_m": 4.0}
-        server.jump_to(-3.0, 0.0, 0.0)
+        travel.jump_to(-3.0, 0.0, 0.0)
         self.g.landing = None  # nav.landing unknown (mod not reloaded): jump as asked
-        server.jump_to(-2.0, 0.0, 0.0)
+        travel.jump_to(-2.0, 0.0, 0.0)
         self.assertEqual([a["pos"] for _, a in self.g.ops("act.cast")],
                          [[-4.0, 0.0, 0.0], [-3.0, 0.0, 0.0], [-2.0, 0.0, 0.0]])
 
@@ -182,13 +183,13 @@ class JumpLanding(Base):
                 raise NotReady("timed out waiting for the story thread; is the game paused or still loading?")
             return real(op, args, context, timeout)
         self.g.rpc = rpc
-        out = server.jump_to(-408.5, 1.0, -1437.0)
+        out = travel.jump_to(-408.5, 1.0, -1437.0)
         self.assertIn("NOT READY", out)
         self.assertEqual(self.g.ops("act.cast"), [])
 
     def test_refusal_fails_the_batch_step(self):
         self.g.landing = {"safe": False, "surface": "Fire", "dist_m": 4.0, "reliable_m": 4.5}
-        out = server.do_actions(json.dumps([{"tool": "jump_to", "x": -4, "y": 0, "z": 0},
+        out = batch.do_actions(json.dumps([{"tool": "jump_to", "x": -4, "y": 0, "z": 0},
                                             {"tool": "move_to", "x": 1, "y": 0, "z": 0}]))
         self.assertIn("STOPPED", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
@@ -196,7 +197,7 @@ class JumpLanding(Base):
     # S038 20:48 / S039 21:53: both freezes were a jump cast at a column with no ground at all.
     def test_void_landing_is_refused(self):
         self.g.landing = {"safe": False, "no_floor": True, "void": True, "dist_m": 7.0, "reliable_m": 4.5}
-        out = server.jump_to(-414.0, 20.0, -1447.0)
+        out = travel.jump_to(-414.0, 20.0, -1447.0)
         self.assertIn("is over the void: no ground at all under that spot", out)
         self.assertEqual(self.g.ops("act.cast"), [])
 
@@ -204,7 +205,7 @@ class JumpLanding(Base):
     def test_too_far_on_a_killed_level_says_planning_is_off(self):
         self.g.landing = {"safe": True, "too_far": True, "dist_m": 11.0, "max_m": 8.5, "reliable_m": 4.5,
                           "plan_skipped": "jump planning is off on this level (a path search took 900 ms)"}
-        out = server.jump_to(-11, 0, 0)
+        out = travel.jump_to(-11, 0, 0)
         self.assertIn("too far to jump (11 m", out)
         self.assertIn("No jump plan: jump planning is off on this level", out)
         self.assertNotIn("No walk gets within jumping distance", out)
@@ -214,7 +215,7 @@ class JumpLanding(Base):
         self.g.landing = {"safe": True, "too_far": True, "dist_m": 9.6, "max_m": 4.0, "reliable_m": 4.0,
                           "plan": {"stand": [78.1, 22.9, 506.0], "walk_m": 7.4, "land": [74.8, 22.8, 507.3],
                                    "land_off_m": 0, "jump_m": 3.5}}
-        out = server.jump_to(74.8, 22.8, 507.3)
+        out = travel.jump_to(74.8, 22.8, 507.3)
         self.assertIn("jump_to: FAILED — too far to jump (9.6 m, this character can jump 4 m)", out)
         self.assertIn("move_to (78.1,22.9,506) (walk 7.4m), then jump_to (74.8,22.8,507.3), a 3.5m jump", out)
         self.assertEqual(self.g.ops("act.cast"), [])
@@ -222,21 +223,21 @@ class JumpLanding(Base):
     def test_too_far_but_walkable(self):
         self.g.landing = {"safe": True, "too_far": True, "dist_m": 9.0, "max_m": 4.0,
                           "plan": {"walk": True, "land": [-9.0, 0.0, 0.0], "land_off_m": 0, "path_m": 9.4}}
-        out = server.jump_to(-9.0, 0.0, 0.0)
+        out = travel.jump_to(-9.0, 0.0, 0.0)
         self.assertIn("It is walkable: move_to (-9,0,0) (path 9.4m)", out)
 
     def test_blocked_landing_plan_replaces_pick_another(self):
         self.g.landing = {"safe": False, "blocked": True, "dist_m": 4.4, "reliable_m": 4.0,
                           "plan": {"stand": [-8.9, 33.8, 490.0], "walk_m": 3.1, "land": [-9.4, 33.6, 492.4],
                                    "land_off_m": 1.0, "jump_m": 2.5}}
-        out = server.jump_to(-6.0, 35.0, 493.0)
+        out = travel.jump_to(-6.0, 35.0, 493.0)
         self.assertIn("is on a blocked tile (wall or hole)", out)
         self.assertIn("then jump_to (-9.4,33.6,492.4) (1m from what you asked), a 2.5m jump", out)
         self.assertNotIn("Pick another landing", out)
 
     def test_landing_in_the_air(self):
         self.g.landing = {"safe": False, "no_floor": True, "floors": [37.4], "dist_m": 4.0, "reliable_m": 4.5}
-        out = server.jump_to(-72.0, 45.0, 606.0)
+        out = travel.jump_to(-72.0, 45.0, 606.0)
         self.assertIn("is in the air: no floor at that height (the ground there is at y 37.4)", out)
 
 
@@ -244,7 +245,7 @@ class WalkTowardAlternatives(Base):
     def test_dead_direction_names_working_ones(self):
         self.g.reach = {"reachable": False, "samples": 7,
                         "others": [{"dir": "SW", "m": 18.0, "path_m": 19.0}, {"dir": "NW", "m": 12.0, "winding": True}]}
-        out = server.walk_toward(direction="W", max_m=30)
+        out = observe.walk_toward(direction="W", max_m=30)
         self.assertIn("no walkable ground toward W within 30m (7 spots checked). Walkable instead: SW 18m, "
                       "NW 12m (winding) → walk_toward(direction=\"SW\").", out)
         args = self.g.ops("nav.reach_toward")[0][1]
@@ -253,7 +254,7 @@ class WalkTowardAlternatives(Base):
     def test_winding_walk_is_said(self):
         self.g.reach = {"reachable": True, "pos": [-20.0, 0.0, 0.0], "straight_m": 20.0, "path_m": 32.0,
                         "dir": "W", "winding": True}
-        out = server.walk_toward(direction="W", max_m=20)
+        out = observe.walk_toward(direction="W", max_m=20)
         self.assertIn("heading W toward W: 20m (path 32m, winding)", out)
 
 
@@ -269,18 +270,18 @@ class HazardLines(unittest.TestCase):
         self.assertEqual(render.render_hazards(None), [])
 
     def test_frontier_lists_hazards_after_leads(self):
-        out = render.render_frontier({"leads": [], "hazards": PATCHES[:1]}, server.H)
+        out = render.render_frontier({"leads": [], "hazards": PATCHES[:1]}, core.H)
         self.assertEqual(out.splitlines(), ["No leads in view. Try another direction, a door, or get_map.",
                                             "HAZARD Fire 3m W (2x4m)"])
 
     def test_look_delta_shows_them_only_when_they_change(self):
-        server._hazards_seen["sig"] = None
-        self.assertEqual(server._hazard_lines(PATCHES), render.render_hazards(PATCHES))
-        self.assertEqual(server._hazard_lines(PATCHES), [])
-        self.assertEqual(server._hazard_lines(PATCHES, always=True), render.render_hazards(PATCHES))
-        self.assertEqual(server._hazard_lines([]), ["HAZARD none in view now"])
-        self.assertEqual(server._hazard_lines([]), [])
-        self.assertEqual(server._hazard_lines(None), [])
+        overview._hazards_seen["sig"] = None
+        self.assertEqual(overview._hazard_lines(PATCHES), render.render_hazards(PATCHES))
+        self.assertEqual(overview._hazard_lines(PATCHES), [])
+        self.assertEqual(overview._hazard_lines(PATCHES, always=True), render.render_hazards(PATCHES))
+        self.assertEqual(overview._hazard_lines([]), ["HAZARD none in view now"])
+        self.assertEqual(overview._hazard_lines([]), [])
+        self.assertEqual(overview._hazard_lines(None), [])
 
 
 if __name__ == "__main__":

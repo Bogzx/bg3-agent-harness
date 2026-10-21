@@ -18,6 +18,7 @@ from unittest import mock
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
 from bg3ai import memtools, server  # noqa: E402
+from bg3ai.tools import core, plumbing, memory  # noqa: E402
 from bg3ai.memtools import Refused  # noqa: E402
 
 import _testutil as TU  # noqa: E402  (tools/memory, on sys.path via memtools)
@@ -174,63 +175,63 @@ class ServerMemoryTools(Base):
         self.root = Path(tempfile.mkdtemp(prefix="bg3memtools-"))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.play, self.mem, self.k = make_tree(self.root)
-        saved = (server.MEMORY, server.KNOWLEDGE, server.LIFE, server.DEADLINE)
+        saved = (core.MEMORY, core.KNOWLEDGE, core.LIFE, core.DEADLINE)
         self.addCleanup(self._restore_mem, saved)
-        server.MEMORY, server.KNOWLEDGE, server.DEADLINE = self.mem, self.k, 0.0
-        server.LIFE = memtools.Lifecycle(lambda: server.MEMORY, auto=True)   # as server.main sets it
-        server._clock_shown.update(at=0.0, stuck=None)
+        core.MEMORY, core.KNOWLEDGE, core.DEADLINE = self.mem, self.k, 0.0
+        core.LIFE = memtools.Lifecycle(lambda: core.MEMORY, auto=True)   # as server.main sets it
+        core._clock_shown.update(at=0.0, stuck=None)
 
     def _restore_mem(self, saved) -> None:
-        server.MEMORY, server.KNOWLEDGE, server.LIFE, server.DEADLINE = saved
+        core.MEMORY, core.KNOWLEDGE, core.LIFE, core.DEADLINE = saved
 
     def test_refusals_are_results_not_errors(self):
         os.environ["BG3AI_SESSION"] = "S001"   # runner mode: nothing opens a session
-        self.assertTrue(server.memory_read(".git/config").startswith("REFUSED"))
-        self.assertTrue(server.memory_write("knowledge/playbooks/combat.md", "x").startswith("REFUSED"))
-        out = server.memory_append("memory/npcs.md", "- untagged bullet")
+        self.assertTrue(memory.memory_read(".git/config").startswith("REFUSED"))
+        self.assertTrue(memory.memory_write("knowledge/playbooks/combat.md", "x").startswith("REFUSED"))
+        out = memory.memory_append("memory/npcs.md", "- untagged bullet")
         self.assertIn("LINT", out)
 
     def test_clock_in_tool_results_runner_mode(self):
         os.environ["BG3AI_SESSION"] = "S001"
-        server.DEADLINE = time.time() + 30 * 60
-        with mock.patch.object(server, "_stuck", lambda: None):
-            out = server.memory_list()
+        core.DEADLINE = time.time() + 30 * 60
+        with mock.patch.object(core, "_stuck", lambda: None):
+            out = memory.memory_list()
         self.assertIn("⏱", out)
         self.assertIn("keep playing: you'll be told when to wrap up", out)
 
     def test_manual_mode_first_call_opens_the_session(self):
-        out = server.memory_list("knowledge")
+        out = memory.memory_list("knowledge")
         self.assertIn("BG3 PLAYTHROUGH MEMORY — session S001", out)
         self.assertIn("=== the result of your call ===\nknowledge/", out)
         self.assertTrue((self.mem / "sessions" / "S001.md").is_file())
-        out2 = server.memory_list("knowledge")
+        out2 = memory.memory_list("knowledge")
         self.assertNotIn("PLAYTHROUGH MEMORY", out2)
-        self.assertIn("Session already open", server.session_start())
+        self.assertIn("Session already open", memory.session_start())
         self.assertEqual(M.load_state(self.mem)["current"], 1)   # nothing opened a second session
 
     def test_manual_mode_session_start_first(self):
-        out = server.session_start()
+        out = memory.session_start()
         self.assertIn("session S001", out)
         self.assertNotIn("=== the result of your call ===", out)   # the briefing once, not twice
 
     def test_manual_clock_reminder(self):
-        server.session_start()
+        memory.session_start()
         st = M.load_state(self.mem)
         st["started_epoch"] = time.time() - 55 * 60   # past BG3_WRAP_MINUTES (50)
         M.save_state(self.mem, st)
-        self.assertIn("SESSION CLOCK", server.memory_list())
-        self.assertNotIn("SESSION CLOCK", server.memory_list())   # repeats only every few minutes
+        self.assertIn("SESSION CLOCK", memory.memory_list())
+        self.assertNotIn("SESSION CLOCK", memory.memory_list())   # repeats only every few minutes
 
     def test_a_library_import_never_opens(self):
         # tools/dev/check_*.py import the server and call tools on the live play/memory between sessions
-        server.LIFE = memtools.Lifecycle(lambda: server.MEMORY)
-        out = server.memory_list()
+        core.LIFE = memtools.Lifecycle(lambda: core.MEMORY)
+        out = memory.memory_list()
         self.assertNotIn("PLAYTHROUGH MEMORY", out)
         self.assertFalse((self.mem / "sessions" / "S001.md").exists())
 
     def test_runner_mode_never_opens(self):
         os.environ["BG3AI_SESSION"] = "S001"
-        out = server.memory_list()
+        out = memory.memory_list()
         self.assertNotIn("PLAYTHROUGH MEMORY", out)
         self.assertFalse((self.mem / "sessions" / "S001.md").exists())
 
@@ -240,21 +241,21 @@ class ServerMemoryTools(Base):
         deadline = time.time() + 30 * 60
         os.environ["BG3AI_SESSION_DEADLINE"] = str(deadline)
         os.environ["BG3AI_SESSION_WRAPUP"] = str(deadline - 180)
-        out = server.end_session()
+        out = memory.end_session()
         self.assertTrue(out.startswith("NOT ENDED. Keep playing"), out)
         self.assertTrue(M.load_state(self.mem)["open"])
         os.environ["BG3AI_SESSION_WRAPUP"] = str(time.time() - 1)   # wrap-up time reached
-        out = server.end_session()
+        out = memory.end_session()
         self.assertIn("HANDOFF.md hasn't been rewritten", out)
         self.assertIn("then call end_session again", out)
-        server.memory_write("memory/HANDOFF.md", TU.MemoryTestCase.good_handoff(self, 1))
-        server.memory_write("memory/objectives.md", "# Objectives\n## Main\n- reach camp [seen S001]\n")
-        out = server.end_session()
+        memory.memory_write("memory/HANDOFF.md", TU.MemoryTestCase.good_handoff(self, 1))
+        memory.memory_write("memory/objectives.md", "# Objectives\n## Main\n- reach camp [seen S001]\n")
+        out = memory.end_session()
         self.assertIn("committed", out)
         self.assertIn("end your turn now", out)
         self.assertFalse(M.load_state(self.mem)["open"])
         self.assertEqual(M.git(self.mem, "log", "-1", "--format=%s").stdout.strip(), "S001")
-        self.assertIn("No open session", server.end_session())
+        self.assertIn("No open session", memory.end_session())
 
     def test_end_session_mid_fight(self):
         # S074: refused mid-fight with "2 min of play before WRAP UP at 23:27": in a fight it says finish it.
@@ -264,11 +265,11 @@ class ServerMemoryTools(Base):
         os.environ["BG3AI_SESSION_DEADLINE"] = str(deadline)
         os.environ["BG3AI_SESSION_WRAPUP"] = str(deadline - 180)
         self.g.combat = {"active": True}
-        out = server.end_session()
+        out = memory.end_session()
         self.assertTrue(out.startswith("NOT ENDED. Finish the fight first"), out)
         self.assertNotIn("min of play", out)
         self.g.combat = {"active": False}
-        self.assertTrue(server.end_session().startswith("NOT ENDED. Keep playing"))
+        self.assertTrue(memory.end_session().startswith("NOT ENDED. Keep playing"))
 
     # helpers borrowed by the test above (TU.MemoryTestCase's, bound to this case)
     def write(self, rel: str, text: str) -> None:
@@ -290,14 +291,14 @@ class HttpTransport(unittest.TestCase):
         self.assertIn("http://172.30.99.1:8770", sec.allowed_origins)
 
     def test_cli(self):
-        with mock.patch.object(server.mcp, "run") as run, mock.patch.object(server.LIFE, "auto", False), \
+        with mock.patch.object(core.mcp, "run") as run, mock.patch.object(core.LIFE, "auto", False), \
                 mock.patch.dict(os.environ, {"BG3AI_MOVIE_SKIP": "0", "BG3AI_METRICS_SAMPLE_S": "0"}):
             server.main(["--transport", "http", "--host", "172.30.99.1", "--port", "9001"])
             self.assertEqual(run.call_args.args, ("streamable-http",))
             self.assertEqual(run.call_args.kwargs["port"], 9001)
             server.main([])
             self.assertEqual(run.call_args.args, ("stdio",))
-            self.assertTrue(server.LIFE.auto)   # serving a client: the first call may open the session
+            self.assertTrue(core.LIFE.auto)   # serving a client: the first call may open the session
 
 
 class PaceGuard(Base):
@@ -305,16 +306,16 @@ class PaceGuard(Base):
 
     def test_wait_true_dropped_out_of_combat(self):
         self.g.watch["combat"] = False
-        wait, note = server._walk_wait(True)
+        wait, note = plumbing._walk_wait(True)
         self.assertFalse(wait)
         self.assertIn("pace guard", note)
 
     def test_wait_true_kept_in_combat_and_when_unknown(self):
         self.g.watch["combat"] = True
-        self.assertEqual(server._walk_wait(True), (True, ""))
-        with mock.patch.object(server.game, "try_rpc", return_value=None):
-            self.assertEqual(server._walk_wait(True), (True, ""))
-        self.assertEqual(server._walk_wait(False), (False, ""))
+        self.assertEqual(plumbing._walk_wait(True), (True, ""))
+        with mock.patch.object(core.game, "try_rpc", return_value=None):
+            self.assertEqual(plumbing._walk_wait(True), (True, ""))
+        self.assertEqual(plumbing._walk_wait(False), (False, ""))
 
 
 if __name__ == "__main__":

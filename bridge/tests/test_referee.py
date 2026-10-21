@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import ClassVar
 
 import jsonschema
-
 from bg3ai import referee
 
 BRIDGE = Path(__file__).resolve().parents[1]
@@ -189,9 +188,9 @@ class FairnessTest(unittest.TestCase):
         self.assertEqual(offenders, [])
 
     def test_no_tool_is_named_for_them(self):
-        from bg3ai import server
+        from bg3ai.tools import core
 
-        names = [t.name for t in server.mcp._tool_manager.list_tools()]
+        names = [t.name for t in core.mcp._tool_manager.list_tools()]
         self.assertTrue(names)
         self.assertEqual([n for n in names if re.match(r"(ref_|referee|scn_|scenario|roll_log|rolls)", n)], [])
 

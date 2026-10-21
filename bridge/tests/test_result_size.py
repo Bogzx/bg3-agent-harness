@@ -10,7 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from bg3ai import render, server  # noqa: E402
+from bg3ai import render  # noqa: E402
+from bg3ai.tools import observe, plumbing  # noqa: E402
 
 U1, U2, U3 = ("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222",
               "33333333-3333-3333-3333-333333333333")
@@ -66,32 +67,32 @@ def acts(*names, slots=3):
 
 class ActionsDelta(unittest.TestCase):
     def setUp(self):
-        server._acts_shown.clear()
+        observe._acts_shown.clear()
 
     def test_full_list_once_then_only_changes(self):
         many = [f"A{i}" for i in range(12)]
-        first = server._actions_delta(U1, acts(*many, "Bless"))
+        first = observe._actions_delta(U1, acts(*many, "Bless"))
         self.assertIn("\nA0 1.5m", first)
-        again = server._actions_delta(U1, acts(*many, "Bless", slots=2))
+        again = observe._actions_delta(U1, acts(*many, "Bless", slots=2))
         self.assertNotIn("\nA0 1.5m", again)
         self.assertIn("as listed before", again)
         self.assertIn("+ Bless 1.5m uses 2", again)    # changed uses: shown again, not as removed
         self.assertNotIn("- Bless", again)
-        gone = server._actions_delta(U1, acts(*many[1:], "Bless", slots=2))
+        gone = observe._actions_delta(U1, acts(*many[1:], "Bless", slots=2))
         self.assertIn("- A0", gone)
-        self.assertIn("\nA5 1.5m", server._actions_delta(U2, acts(*many)))  # per character
+        self.assertIn("\nA5 1.5m", observe._actions_delta(U2, acts(*many)))  # per character
 
     def test_spent_slot_level_is_one_line_not_also_removed(self):
         """S026 09:31: Shadowheart's last L3 slot spent: 13 L3 spells listed in '+ UNAVAILABLE' with full costs and
         again as 13 '- ...' lines (~1.6 KB); now one names-only line, no '-' lines."""
         base = [f"A{i}" for i in range(30)]
         l3 = [f"Third {i}" for i in range(13)]
-        server._actions_delta(U1, acts(*base, *l3))
+        observe._actions_delta(U1, acts(*base, *l3))
         spent = acts(*base, *l3)
         for a in spent["actions"]:
             if a["name"].startswith("Third"):
                 a.update(available=False, reason="no spell slot of level 3+", cost={"action": 1, "slot": 3})
-        out = server._actions_delta(U1, spent)
+        out = observe._actions_delta(U1, spent)
         self.assertIn("as listed before", out)
         self.assertIn("+ UNAVAILABLE: no spell slot of level 3+: Third 0, Third 1,", out)
         self.assertEqual(out.count("Third 5"), 1)
@@ -104,18 +105,18 @@ class ActionsDelta(unittest.TestCase):
         a = acts("Fire Bolt", "Bless", *[f"A{i}" for i in range(10)])
         a["actions"].append({"name": "Main Hand Attack", "spell": "Target_MainHandAttack", "cost": {"action": 1}})
         a["actions"].append({"name": "Main Hand Attack", "spell": "Target_MainHandAttack_Lantern", "cost": {"action": 1}})
-        first = server._actions_delta(U1, a)
+        first = observe._actions_delta(U1, a)
         self.assertIn("\nFire Bolt 1.5m", first)
         self.assertNotIn("Target_Fire Bolt", first)
         self.assertIn("Main Hand Attack (Target_MainHandAttack_Lantern)", first)  # two share the name: ids kept
         a["actions"][1]["uses"] = 2  # Bless used once: a '+', not also a '-'
-        again = server._actions_delta(U1, a)
+        again = observe._actions_delta(U1, a)
         self.assertIn("+ Bless", again)
         self.assertNotIn("- Bless", again)
 
     def test_mostly_different_list_is_shown_whole(self):
-        server._actions_delta(U1, acts("A", "B", "C", "D"))
-        out = server._actions_delta(U1, acts("E", "F", "G", "D"))
+        observe._actions_delta(U1, acts("A", "B", "C", "D"))
+        out = observe._actions_delta(U1, acts("E", "F", "G", "D"))
         self.assertNotIn("as listed before", out)
         self.assertIn("\nE 1.5m", out)
 
@@ -131,11 +132,11 @@ class AfterTrim(unittest.TestCase):
              "bonus": 1, "hp": 48, "reaction": 1}
 
     def setUp(self):
-        server._last_hp.clear()
+        plumbing._last_hp.clear()
 
     def text(self, result, tool="walk_toward", char="c1"):
         from bg3ai.game import JobResult
-        return server._job_text(tool, JobResult("done", result), char)
+        return plumbing._job_text(tool, JobResult("done", result), char)
 
     def test_walk_outside_combat_has_no_stat_block(self):
         # S015: walks/interacts still carried after={hp=34/55} every time the leader was hurt
@@ -155,7 +156,7 @@ class AfterTrim(unittest.TestCase):
 
     def test_hp_change_is_one_short_field(self):
         for tool in ("walk_toward", "move_to", "interact", "pick_up", "loot_corpse"):
-            server._last_hp.clear()
+            plumbing._last_hp.clear()
             self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, hp=34)}, tool)
             self.assertNotIn("hp", self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, hp=34)}, tool))
             out = self.text({"dist": 0, "pos": [1, 2, 3], "after": dict(self.AFTER, hp=7)}, tool)

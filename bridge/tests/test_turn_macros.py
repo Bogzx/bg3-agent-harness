@@ -21,7 +21,8 @@ from typing import Any
 _RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit (/tmp filled up 2026-10-10)
 os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
-from bg3ai import actq, macros, server, turn  # noqa: E402
+from bg3ai import actq, delta, macros, turn  # noqa: E402
+from bg3ai.tools import core, reporting, plumbing, overview, observe, world_tools, travel, dialogue, combat as combat_tools, uitools, batch, queueing, turn_plan, turn_slots, turn_tool, macro_tools, travel_macro  # noqa: E402
 from bg3ai.game import GameError, JobResult  # noqa: E402
 
 P1 = "11111111-2222-3333-4444-555555555555"
@@ -245,14 +246,14 @@ def clear_server_state() -> None:
     """Forget the server's in-flight jobs, queues' leftovers and per-session caches. Base runs it before and after
     each test, so a test that leaves an _async job behind (a walk the queue never polled to its end) can't make a
     later module's tools poll it ('unittest test_turn_based test_objectives': 12 FAILs "unexpected op job.poll")."""
-    for d in (server._async, server._early, server._early_seen, server._looted, server._bg_ends, server._turn_sides,
-              server._ability_ids, server._trips, server._queue_ignore, server._turn_cs, server._step_note):
+    for d in (plumbing._async, batch._early, batch._early_seen, macro_tools._looted, turn_tool._bg_ends, turn_plan._turn_sides,
+              overview._ability_ids, batch._trips, queueing._queue_ignore, turn_plan._turn_cs, turn_slots._step_note):
         d.clear()
 
 
 def reset_handles() -> None:
-    """Empty server.H in place (modules hold the object): the next uuid registered is e1 again."""
-    h = server.H
+    """Empty core.H in place (modules hold the object): the next uuid registered is e1 again."""
+    h = core.H
     h.by_uuid.clear()
     h.by_handle.clear()
     h.names.clear()
@@ -262,44 +263,44 @@ def reset_handles() -> None:
 class Base(unittest.TestCase):
     def setUp(self) -> None:
         self.g = FakeGame()
-        server._listed.clear()  # the last answer listing shown (choose_dialogue numbers): per test
+        reporting._listed.clear()  # the last answer listing shown (choose_dialogue numbers): per test
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-mem-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        saved = (server.game, server._watch_game, server._queue_mgr, actq.WATCH_EVERY_S, actq.UI_EVERY_S,
-                 server.MEMORY, server.delta.changes_text)
-        server.game = self.g
-        server._watch_game = self.g
-        server._queue_mgr = None
+        saved = (core.game, queueing._watch_game, queueing._queue_mgr, actq.WATCH_EVERY_S, actq.UI_EVERY_S,
+                 core.MEMORY, delta.changes_text)
+        core.game = self.g
+        queueing._watch_game = self.g
+        queueing._queue_mgr = None
         clear_server_state()
-        server.MEMORY = self.tmp
-        server.delta.changes_text = lambda game, H: ""
+        core.MEMORY = self.tmp
+        delta.changes_text = lambda game, H: ""
         actq.WATCH_EVERY_S, actq.UI_EVERY_S = 0.01, 0.01
         self.addCleanup(self._restore, saved)
         # Old tests check the instant-return shape; settle-window tests set it themselves.
-        saved_settle, server.SETTLE_S = server.SETTLE_S, 0.0
-        self.addCleanup(setattr, server, "SETTLE_S", saved_settle)
+        saved_settle, plumbing.SETTLE_S = plumbing.SETTLE_S, 0.0
+        self.addCleanup(setattr, plumbing, "SETTLE_S", saved_settle)
         # Old tests check combat_turn's inline end ("end_turn: done"); CombatTurnBackgroundEnd turns it on.
-        saved_end, server.END_ASYNC = server.END_ASYNC, False
-        self.addCleanup(setattr, server, "END_ASYNC", saved_end)
-        server._pace.update(issued_at=0.0, calls_since=0, next_shown=0, nudge=False)
+        saved_end, turn_tool.END_ASYNC = turn_tool.END_ASYNC, False
+        self.addCleanup(setattr, turn_tool, "END_ASYNC", saved_end)
+        reporting._pace.update(issued_at=0.0, calls_since=0, next_shown=0, nudge=False)
         # A17: an empty handle registry, so these are e1 Goblin, e2 Imp, e3 Chest, e4 Claude, e5 Lae'zel whatever ran
         # before ('unittest tests.test_leveling tests.test_turn_macros': 5 FAILs, "e6 Goblin" for "e1 Goblin")
         reset_handles()
-        self.gob = server.H.get(GOB, "Goblin")
-        self.imp = server.H.get(IMP, "Imp")
-        self.chest = server.H.get(CHEST, "Chest")
-        server.H.get(P1, "Claude")
-        server.H.get(P2, "Lae'zel")
+        self.gob = core.H.get(GOB, "Goblin")
+        self.imp = core.H.get(IMP, "Imp")
+        self.chest = core.H.get(CHEST, "Chest")
+        core.H.get(P1, "Claude")
+        core.H.get(P2, "Lae'zel")
 
     def _restore(self, saved) -> None:
-        if server._queue_mgr is not None:
-            server._queue_mgr.cancel()
-            for q in server._queue_mgr.queues.values():
+        if queueing._queue_mgr is not None:
+            queueing._queue_mgr.cancel()
+            for q in queueing._queue_mgr.queues.values():
                 if q.thread:
                     q.thread.join(2)
         clear_server_state()
-        (server.game, server._watch_game, server._queue_mgr, actq.WATCH_EVERY_S, actq.UI_EVERY_S,
-         server.MEMORY, server.delta.changes_text) = saved
+        (core.game, queueing._watch_game, queueing._queue_mgr, actq.WATCH_EVERY_S, actq.UI_EVERY_S,
+         core.MEMORY, delta.changes_text) = saved
 
     def casts(self) -> list[str]:
         return [a.get("spell") for _, a in self.g.ops("act.cast")]
@@ -325,23 +326,23 @@ class CombatTurn(Base):
 
     def test_force_reaches_the_cast(self):
         # force=true on an alternative goes to act.cast (the area-blast guard's override)
-        server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob, "force": True}))
+        turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob, "force": True}))
         self.assertEqual([a.get("force") for _, a in self.g.ops("act.cast")], [True])
 
     def test_list_targets_reach_the_cast(self):
         # ACT-8: a plan's list-form targets failed the step "'list' object has no attribute 'split'"
-        out = server.combat_turn(self.plan(action={"ability": "Target_Bless", "targets": [self.gob, self.imp]}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_Bless", "targets": [self.gob, self.imp]}))
         self.assertNotIn("split", out)
         self.assertEqual([a.get("targets") for _, a in self.g.ops("act.cast")], [[GOB, IMP]])
 
     def test_empty_plan_just_ends_the_turn(self):
         # S031 17:07: {"plan":{}} for a member that had acted through do_actions stopped the chain
-        out = server.combat_turn(self.plan())
+        out = turn_tool.combat_turn(self.plan())
         self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], ["act.end_turn"])
         self.assertIn("end_turn: done", out)
 
     def test_whole_turn_in_one_call(self):
-        out = server.combat_turn(self.plan(
+        out = turn_tool.combat_turn(self.plan(
             move=self.gob, action={"ability": "Target_MainHandAttack", "target": self.gob},
             bonus={"ability": "Shout_SecondWind"}))
         self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS],
@@ -359,7 +360,7 @@ class CombatTurn(Base):
     def test_out_of_range_falls_back_to_ranged(self):
         self.g.refuse_if = lambda op, a: ("target is out of range (6.0 m, range 1.5 m): move closer first"
                                           if a.get("spell") == "Target_MainHandAttack" else None)
-        out = server.combat_turn(self.plan(action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+        out = turn_tool.combat_turn(self.plan(action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    {"ability": "Projectile_ThrowWeapon", "target": self.gob}]))
         self.assertEqual(self.casts(), ["Target_MainHandAttack", "Projectile_ThrowWeapon"])
         self.assertIn("FAILED — target is out of range", out)
@@ -371,7 +372,7 @@ class CombatTurn(Base):
         # S035 19:33: action ["Shout_Dodge"] → "unknown action" (nothing spent), then end_turn threw the action away.
         self.g.refuse_if = lambda op, a: ("unknown action Shout_Dodge (not an ability id; get_actions lists them)"
                                           if a.get("spell") == "Shout_Dodge" else None)
-        out = server.combat_turn(self.plan(move=self.gob, action=["Shout_Dodge"]))
+        out = turn_tool.combat_turn(self.plan(move=self.gob, action=["Shout_Dodge"]))
         self.assertNotIn("act.end_turn", [o for o, _ in self.g.ops("act.")])
         self.assertIn("BG3 has no Dodge action", out)
         self.assertIn("turn NOT ended", out)
@@ -394,18 +395,18 @@ class CombatTurn(Base):
         self.g.on_start = advance
         self.assertEqual(turn.acting(self.g.combat), [])
         self.assertEqual(turn.passing(self.g.combat), [P2])
-        with mock.patch.object(server, "PASS_END_S", 0.0):
-            out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        with mock.patch.object(turn_slots, "PASS_END_S", 0.0):
+            out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1), wait_turn=5)
         self.assertNotIn("must act first", out)
         self.assertEqual(ended[0], P2)
-        self.assertIn("ended " + server.H.get(P2) + " Lae'zel's turn (Stunned: it can't act)", out)
-        self.assertIn("TURN " + server.H.get(P1), out)
+        self.assertIn("ended " + core.H.get(P2) + " Lae'zel's turn (Stunned: it can't act)", out)
+        self.assertIn("TURN " + core.H.get(P1), out)
 
     def test_s087_a_plan_for_a_stunned_member_ends_its_turn_and_says_so(self):
         for o in self.g.combat["order"]:
             if o["uuid"] == P1:
                 o.update(is_current=True, ended=True, passes="Stunned")
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1))
         self.assertIn("Claude is Stunned: nothing to play, its turn passes (ended it)", out)
         self.assertEqual([a.get("char") for _, a in self.g.ops("act.end_turn")], [P1])
         self.assertEqual(self.g.ops("act.cast"), [])
@@ -416,8 +417,8 @@ class CombatTurn(Base):
         party turn is Cambion + the Emperor's (a shared group after the goblin's). Returns their uuids."""
         p3, p4 = "33333333-2222-3333-4444-555555555555", "44444444-2222-3333-4444-555555555555"
         self.g.more_party = [{"uuid": p3, "name": "Cambion"}, {"uuid": p4, "name": "The Emperor"}]
-        server.H.get(p3, "Cambion")
-        server.H.get(p4, "The Emperor")
+        core.H.get(p3, "Cambion")
+        core.H.get(p4, "The Emperor")
         self.g.combat["order"] += [{"uuid": p3, "name": "Cambion", "relation": "party"},
                                    {"uuid": p4, "name": "The Emperor", "relation": "party"}]
         for o in self.g.combat["order"]:
@@ -453,13 +454,13 @@ class CombatTurn(Base):
         self.g.on_start = advance
         self.assertEqual(turn.acting(self.g.combat), [])
         with mock.patch.object(self.g, "rpc", rpc):
-            out = server.combat_turn(json.dumps([{"who": "Cambion", "plan": {"action": "Shout_Dodge"}},
+            out = turn_tool.combat_turn(json.dumps([{"who": "Cambion", "plan": {"action": "Shout_Dodge"}},
                                                  {"who": "The Emperor", "plan": {"action": "Shout_Dodge"}}]),
                                      wait_turn=5)
         self.assertNotIn("must act first", out)
         self.assertNotIn("CHAIN STOPPED", out)
-        self.assertIn("TURN " + server.H.get(p3) + " Cambion", out)
-        self.assertIn("TURN " + server.H.get(p4) + " The Emperor", out)
+        self.assertIn("TURN " + core.H.get(p3) + " Cambion", out)
+        self.assertIn("TURN " + core.H.get(p4) + " The Emperor", out)
         self.assertEqual([a.get("char") for _, a in self.g.ops("act.end_turn")], [p3, p4])
 
     def test_s088_end_turn_on_a_member_of_an_ended_group_names_no_ended_member_as_acting(self):
@@ -469,7 +470,7 @@ class CombatTurn(Base):
         self.g.on_start = lambda op, a: None
         self.g.refuse_if = lambda op, a: ("this character already ended its turn (the rest of its turn group is "
                                           "still acting)" if op == "act.end_turn" else None)
-        out = server.end_turn(who="Claude", wait=False)
+        out = combat_tools.end_turn(who="Claude", wait=False)
         self.assertIn("nothing to end — its turn already ended", out)
         self.assertNotIn("(yours)", out)
         self.assertNotIn("the rest of its turn group is still acting", out)
@@ -483,14 +484,14 @@ class CombatTurn(Base):
                "caster and 11.9 m from the point; in its blast (4 m) there: e606 Lady Croup (neutral, 3.4 m): aim "
                "elsewhere or move first, or force=true to cast anyway")
         self.g.refuse_if = lambda op, a: why if a.get("spell") == "Projectile_Fireball" and not a.get("force") else None
-        out = server.combat_turn(self.plan(action=[{"ability": "Projectile_Fireball", "x,y,z": [-27, 17, 736]},
+        out = turn_tool.combat_turn(self.plan(action=[{"ability": "Projectile_Fireball", "x,y,z": [-27, 17, 736]},
                                                    {"ability": "Projectile_FireBolt", "target": self.gob}]))
         self.assertEqual(self.casts(), ["Projectile_Fireball"])
         self.assertNotIn("act.end_turn", [o for o, _ in self.g.ops("act.")])
         self.assertIn("Lady Croup (neutral, 3.4 m)", out)
         self.assertIn("turn NOT ended", out)
         # force=true casts it
-        out = server.combat_turn(self.plan(action={"ability": "Projectile_Fireball", "x,y,z": [-27, 17, 736],
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Projectile_Fireball", "x,y,z": [-27, 17, 736],
                                                    "force": True}))
         self.assertIn("Projectile_Fireball: done", out)
 
@@ -498,7 +499,7 @@ class CombatTurn(Base):
         self.g.refuse_if = lambda op, a: ("destination is beyond remaining movement (path 14.2 m, 5.5 m left)"
                                           if op == "act.move_to" and a.get("target") else None)
         self.g.reach = {"reachable": True, "pos": [3.0, 0.0, 4.0]}
-        out = server.combat_turn(self.plan(move=self.gob, action=["Shout_Dodge"]), end=False)
+        out = turn_tool.combat_turn(self.plan(move=self.gob, action=["Shout_Dodge"]), end=False)
         moves = self.g.ops("act.move_to")
         self.assertEqual(moves[1][1]["pos"], [3.0, 0.0, 4.0])
         self.assertAlmostEqual(self.g.ops("nav.reach_toward")[0][1]["max_m"], 5.2)
@@ -506,20 +507,20 @@ class CombatTurn(Base):
         self.assertEqual(self.g.ops("act.end_turn"), [])
 
     def test_within_range_skips_the_move(self):
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 18},
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 18},
                                            action={"ability": "Projectile_RangedAttack", "target": self.gob}))
         self.assertEqual(self.g.ops("act.move_to"), [])
         self.assertIn("already within 18m", out)
 
     def test_within_walks_only_to_range(self):
         self.g.reach = {"reachable": True, "pos": [2.0, 0.0, 0.0]}
-        server.combat_turn(self.plan(move={"target": self.gob, "within": 4},
+        turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 4},
                                      action={"ability": "Projectile_RangedAttack", "target": self.gob}))
         self.assertAlmostEqual(self.g.ops("nav.reach_toward")[0][1]["max_m"], 2.3)  # 6 - 4 + 0.3
         self.assertEqual(self.g.ops("act.move_to")[0][1]["pos"], [2.0, 0.0, 0.0])
 
     def test_within_never_walks_into_melee_when_no_ground_leads_there(self):
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 4},
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 4},
                                            action={"ability": "Projectile_RangedAttack", "target": self.gob}))
         self.assertEqual(self.g.ops("act.move_to"), [])
         self.assertIn("no walkable ground toward it", out)
@@ -527,14 +528,14 @@ class CombatTurn(Base):
 
     def test_dead_target_skips_to_the_next_alternative(self):
         self.g.dead.add(GOB)
-        out = server.combat_turn(self.plan(action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+        out = turn_tool.combat_turn(self.plan(action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    {"ability": "Target_MainHandAttack", "target": self.imp}]))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [IMP])
         self.assertIn("is already dead", out)
 
     def test_not_my_turn_is_refused(self):
         self.g.combat["current"] = GOB
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=0)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1), wait_turn=0)
         self.assertIn("FAILED: it is not", out)
         self.assertEqual(self.g.ops("act.cast"), [])
 
@@ -543,18 +544,18 @@ class CombatTurn(Base):
     def test_plan_sent_ahead_waits_for_the_turn(self):
         self.g.combat["current"] = GOB
         threading.Timer(0.4, lambda: self.g.combat.update(current=P1)).start()
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1), wait_turn=5)
         self.assertRegex(out, r"TURN .* — waited 0\.\ds for the turn")
         self.assertEqual(self.casts(), ["Shout_Dodge"])
 
     def test_waiting_for_the_turn_stops_on_a_prompt_and_times_out(self):
         self.g.combat["current"] = GOB
         self.g.ui["screen"] = "reaction"
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1), wait_turn=5)
         self.assertIn("reaction on screen", out)
         self.g.ui["screen"] = "game"
         t = time.monotonic()
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=0.5)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1), wait_turn=0.5)
         self.assertIn("(timed out)", out)
         self.assertLess(time.monotonic() - t, 2.0)
         self.assertEqual(self.g.ops("act.cast"), [])
@@ -564,15 +565,15 @@ class CombatTurn(Base):
     # nothing played; a list plan stops there too instead of counting it as played.
     def test_wait_bound_hit_while_enemies_still_act_is_not_a_failure(self):
         self.g.combat["current"] = GOB
-        still = (self.g.combat, server.TURN_STILL_ACTING + " (40 turn changes in the wait, the last 1s ago)")
-        with mock.patch.object(server, "_wait_turn", return_value=still):
-            out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1))
-            self.assertTrue(out.startswith(server.TURN_NOT_YET), out)
+        still = (self.g.combat, turn_tool.TURN_STILL_ACTING + " (40 turn changes in the wait, the last 1s ago)")
+        with mock.patch.object(turn_slots, "_wait_turn", return_value=still):
+            out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1))
+            self.assertTrue(out.startswith(turn_tool.TURN_NOT_YET), out)
             self.assertIn("still taking their turns", out)
-            self.assertIn(server.H.get(GOB), out)
+            self.assertIn(core.H.get(GOB), out)
             self.assertNotIn("FAILED", out)
-            out = server.combat_turn(json.dumps([{"who": server.H.get(P1), "plan": {"action": "Shout_Dodge"}},
-                                                 {"who": server.H.get(P2), "plan": {"action": "Shout_Dodge"}}]))
+            out = turn_tool.combat_turn(json.dumps([{"who": core.H.get(P1), "plan": {"action": "Shout_Dodge"}},
+                                                 {"who": core.H.get(P2), "plan": {"action": "Shout_Dodge"}}]))
             self.assertIn("not played — the enemies are still taking their turns", out)
         self.assertEqual(self.g.ops("act.cast"), [])
 
@@ -587,7 +588,7 @@ class CombatTurn(Base):
                 self.g.ui["screen"] = "game"
                 threading.Timer(0.2, lambda: self.g.combat.update(current=P1)).start()
         self.g.on_start = answer
-        out = server.combat_turn(self.plan(action="Shout_Dodge", on_reaction="skip"), who=server.H.get(P1),
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge", on_reaction="skip"), who=core.H.get(P1),
                                  wait_turn=5)
         self.assertEqual(self.g.ops("ui.react")[0][1], {"use": False})
         self.assertRegex(out, r"TURN .* — waited \d\.\ds for the turn — reaction prompt: declined")
@@ -598,7 +599,7 @@ class CombatTurn(Base):
         self.g.ui.update(screen="reaction", reaction={
             "options": [{"i": 1, "decision": "Undecided"}],
             "prompt": "Justiciar Avenger attacked Claude. | Choose how to react. | 72/88 | Shield Blow | Do Not React"})
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1), wait_turn=5)
         self.assertIn("reaction on screen: Justiciar Avenger attacked Claude. | 72/88 | Shield Blow", out)
         self.assertIn('react(use=true|false)', out)
         self.assertIn('"on_reaction"', out)
@@ -607,14 +608,14 @@ class CombatTurn(Base):
     def test_combat_ending_while_waiting(self):
         self.g.combat["current"] = GOB
         threading.Timer(0.2, lambda: self.g.combat.update(active=False)).start()
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1), wait_turn=5)
         self.assertIn("combat is over", out)
 
     # S007: Shadowheart's and Gale's casts had no line of sight to the goblin -> action wasted twice.
     def test_no_line_of_sight_retargets_the_nearest_visible_hostile_in_range(self):
         self.g.refuse_if = lambda op, a: "no line of sight to target" if a.get("target") == GOB else None
         self.g.actions = [{"spell": "Target_SacredFlame", "range": 18}]
-        out = server.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [GOB, IMP])
         self.assertIn(f"action (auto fallback): Target_SacredFlame {self.imp}: done", out)
 
@@ -626,7 +627,7 @@ class CombatTurn(Base):
                                           if op == "act.cast" and a.get("target") == GOB and not moved else None)
         self.g.actions = [{"spell": "Projectile_FireBolt", "range": 18}]
         self.g.los_spot = {"found": True, "pos": [2.0, 0.0, 1.5], "walk_m": 2.5, "dist_m": 7.0, "via": "ring"}
-        out = server.combat_turn(self.plan(action={"ability": "Projectile_FireBolt", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Projectile_FireBolt", "target": self.gob}))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [GOB, GOB])
         self.assertEqual(len(moved), 1)
         spot = self.g.ops("nav.los_spot")[0][1]
@@ -639,7 +640,7 @@ class CombatTurn(Base):
         self.g.refuse_if = lambda op, a: "no line of sight to target" if a.get("target") == GOB else None
         self.g.actions = [{"spell": "Target_SacredFlame", "range": 18}]
         self.g.los_spot = {"found": False, "reason": "no spot in sight"}
-        out = server.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
         self.assertEqual(self.g.ops("act.move_to"), [])
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [GOB, IMP])
         self.assertIn("(auto fallback)", out)
@@ -648,7 +649,7 @@ class CombatTurn(Base):
         self.g.refuse_if = lambda op, a: "no line of sight to target" if a.get("target") == GOB else None
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
         self.g.los_spot = {"found": True, "pos": [2.0, 0.0, 1.5], "walk_m": 2.5}
-        server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertEqual(self.g.ops("nav.los_spot"), [])
 
     def test_touch_cast_in_reach_without_sight_seeks_a_spot(self):
@@ -660,7 +661,7 @@ class CombatTurn(Base):
                                           if op == "act.cast" and a.get("target") == GOB and not moved else None)
         self.g.actions = [{"spell": "Target_CureWounds", "range": 1.5}]
         self.g.los_spot = {"found": True, "pos": [1.0, 0.0, 1.0], "walk_m": 1.2}
-        out = server.combat_turn(self.plan(action={"ability": "Target_CureWounds", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_CureWounds", "target": self.gob}))
         self.assertEqual(len(moved), 1)
         self.assertIn("stepped 1.2m to see it", out)
         self.assertIn(f"Target_CureWounds {self.gob}: done", out)
@@ -669,7 +670,7 @@ class CombatTurn(Base):
         # S033 18:47: Lay on Hands on Claude at 13/104 took SmallHeal
         self.g.refuse_if = lambda op, a: ("choose a variant: Target_LayOnHands_SmallHeal, Target_LayOnHands_BigHeal, "
                                           "Target_LayOnHands_Cure" if a.get("spell") == "Target_LayOnHands" else None)
-        out = server.combat_turn(self.plan(action={"ability": "Target_LayOnHands", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_LayOnHands", "target": self.gob}))
         self.assertEqual(self.casts(), ["Target_LayOnHands", "Target_LayOnHands_BigHeal"])
         self.assertIn("took the biggest heal variant Target_LayOnHands_BigHeal", out)
 
@@ -680,7 +681,7 @@ class CombatTurn(Base):
             "Gather Your Allies casts nothing by itself: use_ability which=<one of The Watch [already called], "
             "Guildmaster Keene's Fixers, Gur Huntwardens [already called]>, x,y,z = the ground where they appear"
             if a.get("spell") == box and not a.get("which") else None)
-        out = server.combat_turn(self.plan(action={"ability": box, "x": 5.0, "y": 0.0, "z": 1.0}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": box, "x": 5.0, "y": 0.0, "z": 1.0}))
         self.assertEqual(self.casts(), [box, box])
         last = self.g.ops("act.cast")[-1][1]
         self.assertEqual(last.get("which"), "Guildmaster Keene's Fixers")
@@ -692,11 +693,11 @@ class CombatTurn(Base):
     def test_sent_ahead_returns_at_once_when_another_party_member_must_act_first(self):
         self.g.combat["current"] = P2
         t = time.monotonic()
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1), wait_turn=5)
         self.assertLess(time.monotonic() - t, 1.5)
         self.assertIn("FAILED: it is not", out)
         self.assertIn("(yours) must act first", out)
-        self.assertIn(f"end_turn who={server.H.get(P2)}", out)
+        self.assertIn(f"end_turn who={core.H.get(P2)}", out)
         self.assertEqual(self.g.ops("act.cast"), [])
 
     # S035: three chains stopped 'not e6's turn (now e510 Spiritual Weapon)': up to 21.7 s waited + a re-send each.
@@ -709,8 +710,8 @@ class CombatTurn(Base):
             if op == "act.end_turn":
                 self.g.combat["current"] = P1 if self.g.combat["current"] == P2 else GOB
         self.g.on_start = advance
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}),
-                                 who=server.H.get(P1), wait_turn=5)
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}),
+                                 who=core.H.get(P1), wait_turn=5)
         self.assertIn("(your summon) had to act first", out)
         self.assertNotIn("FAILED: it is not", out)
         casts = [(a.get("spell"), a.get("caster") or a.get("who")) for _, a in self.g.ops("act.cast")]
@@ -720,8 +721,8 @@ class CombatTurn(Base):
         # in a list plan too; a heal on an ally is never the summon's target
         self.g.combat["current"] = P2
         n = len(self.g.ops("act.cast"))
-        out = server.combat_turn(json.dumps([{"who": server.H.get(P1), "plan": {
-            "action": {"ability": "Target_CureWounds", "target": server.H.get(P1)}}}]))
+        out = turn_tool.combat_turn(json.dumps([{"who": core.H.get(P1), "plan": {
+            "action": {"ability": "Target_CureWounds", "target": core.H.get(P1)}}}]))
         # no hostile named, none with a position: the summon's turn just ends; the one new cast is Claude's heal
         self.assertEqual([a.get("spell") for _, a in self.g.ops("act.cast")[n:]], ["Target_CureWounds"])
         self.assertIn("(your summon) had to act first", out)
@@ -729,7 +730,7 @@ class CombatTurn(Base):
 
     def test_other_member_first_still_hands_back(self):
         self.g.combat["current"] = P2   # Lae'zel, not a summon: the player plans her turn
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1), wait_turn=5)
         self.assertIn("(yours) must act first", out)
         self.assertNotIn("your summon", out)
 
@@ -737,9 +738,9 @@ class CombatTurn(Base):
     def test_downed_character_turn_is_skipped(self):
         p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
         p1.update(hp_pct=0, downed=True)
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1))
         self.assertIn("is downed: nothing to play", out)
-        out = server.end_turn(who=server.H.get(P1), wait=False)
+        out = combat_tools.end_turn(who=core.H.get(P1), wait=False)
         self.assertIn("skipped", out)
         self.assertNotIn("FAILED", out)
         self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], [])
@@ -750,15 +751,15 @@ class CombatTurn(Base):
         p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
         p1["hp_pct"] = 0                       # round(100 * 1 / 218) from an older mod; no downed flag
         self.assertEqual(turn.downed(self.g.combat), set())
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1))
         self.assertNotIn("is downed", out)
         self.assertIn("Shout_Dodge", self.casts())
         self.assertIn("end_turn: done", out)
 
     def test_stale_conversation_flag_retried_for_a_single_tool(self):
         # S055 06:44: pickpocket ×3 "character is in a conversation" right after the conversation ended
-        saved, server.CONVO_WAIT_S = server.CONVO_WAIT_S, 2.0
-        self.addCleanup(setattr, server, "CONVO_WAIT_S", saved)
+        saved, macro_tools.CONVO_WAIT_S = macro_tools.CONVO_WAIT_S, 2.0
+        self.addCleanup(setattr, macro_tools, "CONVO_WAIT_S", saved)
         n = {"left": 2}
 
         def refuse(op, a):
@@ -768,14 +769,14 @@ class CombatTurn(Base):
             return None
         self.g.refuse_if = refuse
         self.g.ui = {"screen": "game"}
-        out = server._act("pickpocket", "act.pickpocket", {"char": P1, "npc": GOB})
+        out = plumbing._act("pickpocket", "act.pickpocket", {"char": P1, "npc": GOB})
         self.assertIn("pickpocket: done", out)
         self.assertEqual(len(self.g.ops("act.pickpocket")), 3)
 
     def test_invented_ranged_attack_id_is_aliased(self):
         # S051 ×2: "Projectile_RangedAttack" → "unknown action", a failed alternative each time
-        self.assertEqual(server._ability_id(P1, "Projectile_RangedAttack"), "Projectile_MainHandAttack")
-        self.assertEqual(server._ability_id(P1, "Target_MeleeAttack"), "Target_MainHandAttack")
+        self.assertEqual(overview._ability_id(P1, "Projectile_RangedAttack"), "Projectile_MainHandAttack")
+        self.assertEqual(overview._ability_id(P1, "Target_MeleeAttack"), "Target_MainHandAttack")
 
     def test_mid_fight_lines_are_waited_out(self):
         # S045 Ketheric: 6 steps "character is in a conversation (InDialog)" while his lines played
@@ -788,19 +789,19 @@ class CombatTurn(Base):
             return None
         self.g.refuse_if = refuse
         self.g.ui = {"screen": "dialogue", "dialogue": {"text": "Ketheric: ...", "listening": True}}
-        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         self.assertIn("Shout_Dodge: done", out)
         self.assertIn("for the mid-fight lines)", out)
         # an answer on screen: handed back at once
         n["left"] = 99
         self.g.combat = combat()
         self.g.ui = {"screen": "dialogue", "dialogue": {"text": "?", "options": [{"i": 1, "text": "Never."}]}}
-        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         self.assertIn("needs your answer", out)
 
     def test_hud_end_is_not_interleaved_with_input_from_another_thread(self):
         """Review M7: the background end's HUD fallback (select A, press End Turn) ran while the MCP thread clicked /
-        selected for B: the press could land on B. Both take server._INPUT_LOCK now: B's press_key waits."""
+        selected for B: the press could land on B. Both take plumbing._INPUT_LOCK now: B's press_key waits."""
         self.g.combat["current"] = P1
         self.g.active = P2                       # someone else is selected: the fallback selects P1 first
         self.g.dur["act.select"] = 0.3
@@ -819,19 +820,19 @@ class CombatTurn(Base):
             return real(op, args, context, timeout)
         self.g.rpc = rpc
         self.g.ui = {"screen": "inventory", "panels_open": ["Inventory"]}
-        t = threading.Thread(target=server._end_turn_by_hud,
-                             args=(P1, server.JobResult("failed", None, server.END_IGNORED)))
+        t = threading.Thread(target=combat_tools._end_turn_by_hud,
+                             args=(P1, JobResult("failed", None, combat_tools.END_IGNORED)))
         t.start()
         deadline = time.monotonic() + 2
         while not order and time.monotonic() < deadline:
             time.sleep(0.01)
-        server._act("press_key", "ui.key", {"key": "I"}, context="client", wait_s=2)
+        plumbing._act("press_key", "ui.key", {"key": "I"}, context="client", wait_s=2)
         t.join(5)
         self.assertEqual(order[:3], [f"select {P1[-1]}", "ui.command", "ui.key"], order)
 
     def test_ignored_end_turn_presses_the_hud_end_turn(self):
         # S044/S045: Osiris EndTurn ignored for our Spiritual Weapon / during Ketheric's lines: 10 s TIMEOUT ×9
-        self.g.refuse_if = lambda op, a: server.END_IGNORED if op == "act.end_turn" else None
+        self.g.refuse_if = lambda op, a: combat_tools.END_IGNORED if op == "act.end_turn" else None
         self.g.on_start = None   # (the class's hook hands the turn on at the order: here the game ignores it)
         real = self.g.rpc
         pressed = []
@@ -843,14 +844,14 @@ class CombatTurn(Base):
                 return {"done": True}
             return real(op, args, context, timeout)
         self.g.rpc = rpc
-        out = server.end_turn(who=server.H.get(P1), wait=False)
+        out = combat_tools.end_turn(who=core.H.get(P1), wait=False)
         self.assertEqual(pressed, [{"widget": "*", "command": "EndTurn"}])
         self.assertIn("the HUD's End Turn", out)
         self.assertNotIn("FAILED", out)
         # the HUD doesn't end it either: says so
         self.g.combat["current"] = P1
-        saved, server.END_HUD_WAIT_S = server.END_HUD_WAIT_S, 0.3
-        self.addCleanup(setattr, server, "END_HUD_WAIT_S", saved)
+        saved, combat_tools.END_HUD_WAIT_S = combat_tools.END_HUD_WAIT_S, 0.3
+        self.addCleanup(setattr, combat_tools, "END_HUD_WAIT_S", saved)
         def stuck(op, args=None, context="server", timeout=12.0):
             if op == "ui.command":
                 return {"done": True}
@@ -858,7 +859,7 @@ class CombatTurn(Base):
                 self.g.combat["current"] = P1   # the turn never moves on
             return real(op, args, context, timeout)
         self.g.rpc = stuck
-        out = server.end_turn(who=server.H.get(P1), wait=False)
+        out = combat_tools.end_turn(who=core.H.get(P1), wait=False)
         self.assertIn("didn't end it either", out, (out, self.g.combat))
 
     def test_a_slow_end_after_the_hud_press_is_done_not_failed(self):
@@ -876,10 +877,10 @@ class CombatTurn(Base):
         def sleep(s):
             clock[0] += s
         g = type("G", (), {"rpc": staticmethod(rpc), "try_rpc": staticmethod(rpc)})()
-        with mock.patch.object(server, "game", g), mock.patch.object(server, "_hud_has", lambda u: u == P1), \
-                mock.patch.object(server.time, "monotonic", lambda: clock[0]), \
-                mock.patch.object(server.time, "sleep", sleep):
-            r = server._end_turn_by_hud(P1, server.JobResult("failed", None, server.END_IGNORED))
+        with mock.patch.object(core, "game", g), mock.patch.object(uitools, "_hud_has", lambda u: u == P1), \
+                mock.patch.object(time, "monotonic", lambda: clock[0]), \
+                mock.patch.object(time, "sleep", sleep):
+            r = combat_tools._end_turn_by_hud(P1, JobResult("failed", None, combat_tools.END_IGNORED))
         self.assertEqual(r.status, "done", r.error)
         self.assertIn("the game, slowly (10 s after the order", r.result["via"])
 
@@ -893,7 +894,7 @@ class CombatTurn(Base):
     # though Claude was down before the turn started.
     def test_ally_already_downed_does_not_stop_the_turn(self):
         self.g.watch["party"][1]["downed"] = True
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertNotIn("STOPPED", out)
         self.assertIn("end_turn: done", out)
 
@@ -905,7 +906,7 @@ class CombatTurn(Base):
         self.g.on_start = aoo
         self.g.dur["act.cast"] = 0.2
         hit = {"ability": "Target_MainHandAttack", "target": self.gob}
-        out = server.combat_turn(self.plan(action=hit, extra=[[dict(hit)]]))
+        out = turn_tool.combat_turn(self.plan(action=hit, extra=[[dict(hit)]]))
         self.assertIn("action: Target_MainHandAttack e1: done", out)   # the running cast finished
         self.assertNotIn("INTERRUPTED", out)
         self.assertIn("STOPPED: e4 Claude HP 4/20 (HP dropped mid-turn", out)
@@ -929,7 +930,7 @@ class CombatTurn(Base):
                 j["status"], j["error"] = "failed", "the attack was cancelled"
             return view(jid)
         self.g._view = failing
-        out = server.combat_turn(self.plan(action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+        out = turn_tool.combat_turn(self.plan(action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    {"ability": "Projectile_FireBolt", "target": self.gob}]))
         self.assertEqual(self.casts(), ["Target_MainHandAttack"], out)
         self.assertIn("action: Target_MainHandAttack e1: FAILED", out)
@@ -942,7 +943,7 @@ class CombatTurn(Base):
                 self.g.watch["party"][0]["hp"] = 4
         self.g.on_start = aoo
         self.g.dur["act.cast"] = 0.2
-        out = server.combat_turn(self.plan(move=self.gob, action=[{"ability": "Shout_Dash", "then_move": True}]))
+        out = turn_tool.combat_turn(self.plan(move=self.gob, action=[{"ability": "Shout_Dash", "then_move": True}]))
         self.assertIn("STOPPED: e4 Claude HP 4/20 (HP dropped mid-turn", out)
         self.assertEqual(len(self.g.ops("act.move_to")), 1, out)   # the move before the Dash only
         self.assertEqual(self.g.ops("act.end_turn"), [])
@@ -950,7 +951,7 @@ class CombatTurn(Base):
     def test_hp_below_condition_still_decides_inside_the_turn(self):
         self.g.watch["party"][0]["hp"] = 4
         self.g.actions = [{"spell": "Shout_SecondWind"}, {"spell": "Target_MainHandAttack"}]
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
                                            bonus={"ability": "Shout_SecondWind", "if": "hp_below:50"}))
         self.assertIn("Shout_SecondWind", self.casts())
 
@@ -960,7 +961,7 @@ class CombatTurn(Base):
                 self.g.watch["party"][1]["downed"] = True
         self.g.on_start = down
         self.g.dur["act.cast"] = 0.2
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertIn("is downed", out)
         self.assertIn("turn NOT ended", out)
 
@@ -968,7 +969,7 @@ class CombatTurn(Base):
     def test_dead_target_retargets(self):
         self.g.dead.add(GOB)
         self.g.actions = [{"spell": "Target_SacredFlame", "range": 18}]
-        out = server.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [IMP])
         self.assertIn("already dead → aimed at", out)  # re-aimed at once (no skip, no fallback pass)
 
@@ -976,7 +977,7 @@ class CombatTurn(Base):
     def test_dead_first_pick_is_replaced_in_targets_only(self):
         self.g.dead.add(GOB)
         self.g.actions = [{"spell": "Projectile_MagicMissile", "range": 18}]
-        server.combat_turn(self.plan(action={"ability": "Projectile_MagicMissile", "target": self.gob,
+        turn_tool.combat_turn(self.plan(action={"ability": "Projectile_MagicMissile", "target": self.gob,
                                              "targets": [self.gob, self.imp, self.gob]}))
         # target + targets = 4 picks; the hotbar route is off, so the 2-target cast takes target + the 1st pick
         # (before: targets popped, one dart). A9: that pair is the imp twice, UseSpell(imp, imp), which the game never
@@ -986,7 +987,7 @@ class CombatTurn(Base):
     def test_dead_picks_are_dropped_from_targets(self):
         self.g.dead.add(IMP)
         self.g.actions = [{"spell": "Projectile_MagicMissile", "range": 18}]
-        out = server.combat_turn(self.plan(action={"ability": "Projectile_MagicMissile",
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Projectile_MagicMissile",
                                                    "targets": [self.gob, self.imp]}))
         self.assertEqual([a.get("targets") for _, a in self.g.ops("act.cast")], [[GOB]])
         self.assertIn("dropped dead e2 Imp from the picks", out)
@@ -995,31 +996,31 @@ class CombatTurn(Base):
         self.g.dead.add(GOB)
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
         plan = {"action": {"ability": "Target_MainHandAttack", "target": self.gob}}
-        server.combat_turn(self.plan(**plan))  # the imp is 12 m away: out of melee reach
+        turn_tool.combat_turn(self.plan(**plan))  # the imp is 12 m away: out of melee reach
         self.assertEqual(self.g.ops("act.cast"), [])
         imp = next(o for o in self.g.combat["order"] if o["uuid"] == IMP)
         imp["from"][P1] = [2.2, 0]  # in reach (edge to edge) but out of sight
         self.g.combat["current"] = P1
-        server.combat_turn(self.plan(**plan))
+        turn_tool.combat_turn(self.plan(**plan))
         self.assertEqual(self.g.ops("act.cast"), [])
         imp["from"][P1] = [2.2, 1]
         self.g.combat["current"] = P1
-        server.combat_turn(self.plan(**plan, retarget=False))
+        turn_tool.combat_turn(self.plan(**plan, retarget=False))
         self.assertEqual(self.g.ops("act.cast"), [])
         self.g.combat["current"] = P1
-        server.combat_turn(self.plan(**plan))
+        turn_tool.combat_turn(self.plan(**plan))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [IMP])
 
     # S033 18:39-18:41: Umbral Tremors left the fight; act.target_state said only visible=false, 4 turns of
     # skipped attacks. Now "is gone (…)" and the attack is re-aimed at once (the Dodge after it is not used).
     def test_gone_target_says_gone_and_reaims_at_once(self):
-        server._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
+        turn_plan._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
         self.g.visible.discard(GOB)
         self.g.gone[GOB] = "left_fight"
         next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.9, 1]
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}, {"spell": "Shout_Dodge"}]
         hit = {"ability": "Target_MainHandAttack", "target": self.gob}
-        out = server.combat_turn(self.plan(action=[hit, "Shout_Dodge"], extra=[[dict(hit)]]))
+        out = turn_tool.combat_turn(self.plan(action=[hit, "Shout_Dodge"], extra=[[dict(hit)]]))
         self.assertIn(f"{self.gob} Goblin is gone (it is no longer in the turn order) → aimed at "
                       f"{self.imp} Imp", out)
         self.assertNotIn("not visible", out)
@@ -1027,11 +1028,11 @@ class CombatTurn(Base):
                          [("Target_MainHandAttack", IMP), ("Target_MainHandAttack", IMP)])
 
     def test_gone_target_nobody_in_reach_skips_and_says_gone(self):
-        server._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
+        turn_plan._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
         self.g.visible.discard(GOB)
         self.g.gone[GOB] = "left_fight"
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}, {"spell": "Shout_Dodge"}]
-        out = server.combat_turn(self.plan(action=[{"ability": "Target_MainHandAttack", "target": self.gob},
+        out = turn_tool.combat_turn(self.plan(action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    "Shout_Dodge"]))
         self.assertIn("is gone (it is no longer in the turn order)", out)  # imp 12 m: out of melee reach
         self.assertEqual(self.casts(), ["Shout_Dodge"])
@@ -1041,39 +1042,39 @@ class CombatTurn(Base):
         self.g.visible.discard(GOB)
         next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.9, 1]
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertIn("not visible", out)
         self.assertNotIn("is gone", out)
         self.assertIn("(auto fallback)", out)
 
     def test_gone_move_target_says_gone(self):
-        server._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
+        turn_plan._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
         self.g.visible.discard(GOB)
         self.g.gone[GOB] = "left_fight"
-        out = server.combat_turn(self.plan(move=self.gob,
+        out = turn_tool.combat_turn(self.plan(move=self.gob,
                                            action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertIn(f"target: {self.gob} Goblin is gone (it is no longer in the turn order) → the plan now aims at "
                       f"the nearest visible hostile {self.imp} Imp", out)
 
     def test_target_never_seen_on_the_turn_order_is_only_out_of_sight(self):
         # audit C9: a character the party never saw on the turn bar: no "is gone" from the engine, only out of sight
-        server._turn_sides.pop(GOB, None)
+        turn_plan._turn_sides.pop(GOB, None)
         self.g.combat["order"] = [o for o in self.g.combat["order"] if o["uuid"] != GOB]
         self.g.visible.discard(GOB)
         self.g.gone[GOB] = "left_fight"
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertNotIn("is gone", out)
         self.assertIn("not visible", out)
         self.assertEqual([a.get("on_bar") for op, a in self.g.ops("act.target_state")][:1], [False])
 
     def test_gone_target_retarget_false_keeps_the_skip(self):
-        server._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
+        turn_plan._turn_sides[GOB] = "hostile"  # on a turn order read earlier: the party saw it on the bar
         self.g.visible.discard(GOB)
         self.g.gone[GOB] = "left_fight"
         next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.9, 1]
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
                                            retarget=False))
         self.assertIn("is gone", out)
         self.assertEqual(self.g.ops("act.cast"), [])
@@ -1088,7 +1089,7 @@ class CombatTurn(Base):
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5}]
         next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.9, 1]
         hit = {"ability": "Target_MainHandAttack", "target": self.gob}
-        out = server.combat_turn(self.plan(action=hit, extra=[[hit]]))
+        out = turn_tool.combat_turn(self.plan(action=hit, extra=[[hit]]))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [GOB, IMP])
         self.assertIn("extra 1: e1 Goblin is already dead → aimed at e2 Imp", out)
 
@@ -1097,7 +1098,7 @@ class CombatTurn(Base):
         lae.update(hp_pct=0, downed=True, **{"from": {P1: [7.0, 1]}})
         self.g.visible.add(P2)  # G.visible: party members always
         self.g.actions = [{"spell": "Target_HealingWord", "range": 18}, {"spell": "Shout_Dodge"}]
-        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         self.assertEqual(self.casts(), ["Shout_Dodge", "Target_HealingWord"])
         self.assertEqual(self.g.ops("act.cast")[1][1]["target"], P2)
         self.assertIn("bonus (auto: ally downed): Target_HealingWord", out)
@@ -1106,28 +1107,28 @@ class CombatTurn(Base):
     def test_no_auto_bonus_without_a_downed_ally_or_when_planned_or_off(self):
         self.g.actions = [{"spell": "Target_HealingWord", "range": 18}]
         self.g.visible.add(P2)
-        server.combat_turn(self.plan(action="Shout_Dodge"))
+        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         lae = next(o for o in self.g.combat["order"] if o["uuid"] == P2)
         lae.update(hp_pct=0, downed=True, **{"from": {P1: [7.0, 1]}})
         for kw in ({"auto_bonus": False}, {"bonus": "Shout_SecondWind"}):
             self.g.combat["current"] = P1
-            server.combat_turn(self.plan(action="Shout_Dodge", **kw))
+            turn_tool.combat_turn(self.plan(action="Shout_Dodge", **kw))
         self.assertNotIn("Target_HealingWord", self.casts())
         lae["from"][P1] = [25.0, 1]  # out of range
         self.g.combat["current"] = P1
-        server.combat_turn(self.plan(action="Shout_Dodge"))
+        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         self.assertNotIn("Target_HealingWord", self.casts())
 
     def test_not_in_combat(self):
         self.g.combat = {"active": False}
-        self.assertIn("nothing to play — not in combat", server.combat_turn(self.plan(action="Shout_Dodge")))
+        self.assertIn("nothing to play — not in combat", turn_tool.combat_turn(self.plan(action="Shout_Dodge")))
 
     def test_hp_drop_stops_the_turn_without_ending_it(self):
         def hurt(op, args):
             if op == "act.move_to":
                 self.g.watch["party"][0]["hp"] = 4
         self.g.on_start = hurt
-        out = server.combat_turn(self.plan(move=self.gob, action={"ability": "Target_MainHandAttack",
+        out = turn_tool.combat_turn(self.plan(move=self.gob, action={"ability": "Target_MainHandAttack",
                                                                   "target": self.gob}))
         self.assertIn("STOPPED: ", out)
         self.assertIn("HP 4/20", out)
@@ -1140,7 +1141,7 @@ class CombatTurn(Base):
             if op == "act.cast":
                 self.g.combat["current"] = GOB
         self.g.on_start = lose
-        out = server.combat_turn(self.plan(action="Shout_Dash", bonus="Shout_SecondWind"))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dash", bonus="Shout_SecondWind"))
         self.assertEqual(self.casts(), ["Shout_Dash"])
         self.assertIn("no longer", out)
         self.assertEqual(self.g.ops("act.end_turn"), [])
@@ -1164,7 +1165,7 @@ class CombatTurn(Base):
         self.g.refuse_if = lambda op, a: ("target is out of range (9.9 m, range 1.5 m): move closer first"
                                           if a.get("spell") == "Target_MainHandAttack" else None)
         self.g.actions = [{"spell": "Target_MainHandAttack"}, {"spell": "Projectile_MainHandAttack", "range": 18}]
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
                                            action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertEqual(self.g.ops("nav.approach")[0][1]["within"], 1.5)
         self.assertEqual(self.g.ops("act.move_to")[0][1]["pos"], [-4.0, 0.0, 5.0])
@@ -1184,7 +1185,7 @@ class CombatTurn(Base):
         self._walk_to(3.1)
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5},
                           {"spell": "Projectile_MainHandAttack", "range": 18}]
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
                                            action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    {"ability": "Projectile_MainHandAttack", "target": self.gob}]))
         self.assertEqual(self.casts(), ["Projectile_MainHandAttack"])
@@ -1198,7 +1199,7 @@ class CombatTurn(Base):
                            "end_m": 2.5}
         self.g.result_for = lambda op, a: ({"dist": 2.9, "target": GOB, "in_reach": False} if op == "act.move_to"
                                            else {"dist": 1.0})
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
                                            action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    "Shout_Dash", "Shout_Dodge"]))
         self.assertIn("melee is out of reach this turn", out)
@@ -1211,7 +1212,7 @@ class CombatTurn(Base):
                            "limit": "in_range", "movement_left": 9.0}
         self.g.refuse_if = lambda op, a: ("could not get closer to the destination — dist=3.5"
                                           if op == "act.move_to" else None)
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
                                            action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    "Shout_Dash", "Shout_Dodge"]))
         self.assertIn("melee is out of reach this turn", out)
@@ -1224,7 +1225,7 @@ class CombatTurn(Base):
         self.g.combat = combat(gob_dist=8.0)
         self.g.refuse_if = lambda op, a: ("never started moving (2.5 s, the route was there); the character is "
                                           "Lethargic" if op == "act.move_to" else None)
-        out = server.combat_turn(self.plan(move=self.gob,
+        out = turn_tool.combat_turn(self.plan(move=self.gob,
                                            action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    {"ability": "Projectile_MainHandAttack", "target": self.gob}]))
         self.assertIn("never started moving", out)
@@ -1238,7 +1239,7 @@ class CombatTurn(Base):
         self.g.combat["order"][0]["disabled"] = [{"name": "Lethargic", "turns": 1,
                                                  "effect": "cannot move; its turn passes once the rest of its turn"
                                                            " group has ended (act with it first)"}]
-        out = server.combat_turn(self.plan(move=self.gob,
+        out = turn_tool.combat_turn(self.plan(move=self.gob,
                                            action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    {"ability": "Projectile_MainHandAttack", "target": self.gob}]))
         self.assertIn(f"move {self.gob}: stays put — Lethargic: cannot move", out)
@@ -1250,7 +1251,7 @@ class CombatTurn(Base):
         self.g.combat = combat(gob_dist=8.0)
         self.g.refuse_if = lambda op, a: ("cannot move while Lethargic (the status keeps it in place this turn)"
                                           if op == "act.move_to" else None)
-        out = server.combat_turn(self.plan(move=self.gob,
+        out = turn_tool.combat_turn(self.plan(move=self.gob,
                                            action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    {"ability": "Projectile_MainHandAttack", "target": self.gob}]))
         self.assertIn("cannot move while Lethargic", out)
@@ -1262,7 +1263,7 @@ class CombatTurn(Base):
         self.g.combat = combat(gob_dist=8.0)
         self.g.refuse_if = lambda op, a: ("not this character's turn any more: the game passed the turn on during "
                                           "the walk (travelled 0.0 m)" if op == "act.move_to" else None)
-        out = server.combat_turn(self.plan(move=self.gob,
+        out = turn_tool.combat_turn(self.plan(move=self.gob,
                                            action=[{"ability": "Projectile_MainHandAttack", "target": self.gob}]))
         self.assertIn("the game passed the turn on during the walk", out)
         self.assertEqual(self.casts(), [])
@@ -1275,12 +1276,12 @@ class CombatTurn(Base):
         self.g.refuse_if = lambda op, a: ("could not get closer to the destination — dist=5.7"
                                           if op == "act.move_to" and a.get("target") else None)
         self._walk_to(1.2)
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
                                            action={"ability": "Target_MainHandAttack", "target": self.gob}))
         moves = self.g.ops("act.move_to")
         self.assertEqual(moves[-1][1]["pos"], [-4.0, 0.0, 5.0])
         # naut3 15:40:52: the range asked for was reached, so the move line says done, not "FAILED — could not …"
-        self.assertIn(f"move {server.H.get(GOB)}: done", out)
+        self.assertIn(f"move {core.H.get(GOB)}: done", out)
         self.assertIn("now 1.2m from", out)
         self.assertIn("(along the route; the walk to the spot beside it stopped 5.7m away)", out)
         self.assertNotIn("could not get closer", out)
@@ -1294,7 +1295,7 @@ class CombatTurn(Base):
         self.g.refuse_if = lambda op, a: ("could not get closer to the destination — dist=5.7"
                                           if op == "act.move_to" and a.get("target") else None)
         self._walk_to(3.5)
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5}))
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 1.5}))
         self.assertIn("FAILED — could not get closer to the destination", out)
         self.assertIn("→ along the route: done", out)
 
@@ -1304,7 +1305,7 @@ class CombatTurn(Base):
         self.g.approach = {"reachable": True, "pos": [-4.0, 0.0, 5.0], "walk_m": 8.0, "need_m": 8.7,
                            "limit": "movement", "movement_left": 8.0}
         self._walk_to(2.2)
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
                                            action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertEqual(self.casts(), ["Target_MainHandAttack"])
         self.assertNotIn("melee is out of reach", out)
@@ -1319,7 +1320,7 @@ class CombatTurn(Base):
                 self.g.combat["current"] = GOB
         self.g.on_start = vanish
         next(o for o in self.g.combat["order"] if o["uuid"] == IMP)["from"][P1] = [1.8, 1]
-        out = server.combat_turn(self.plan(move=self.gob,
+        out = turn_tool.combat_turn(self.plan(move=self.gob,
                                            action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    "Shout_Dash"]))
         self.assertIn(f"target: {self.gob} Goblin is out of sight → the plan now aims at the nearest visible "
@@ -1337,7 +1338,7 @@ class CombatTurn(Base):
         self.g.result_for = lambda op, a: {"dist": 1.0, "after": {"movement": 0, "action": 1}}
         self.g.actions = [{"spell": "Target_MainHandAttack", "range": 1.5},
                           {"spell": "Projectile_MainHandAttack", "range": 18}]
-        out = server.combat_turn(self.plan(move=self.gob,
+        out = turn_tool.combat_turn(self.plan(move=self.gob,
                                            action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    {"ability": "Projectile_MainHandAttack", "target": self.gob}]))
         self.assertEqual(len(self.g.ops("act.move_to")), 1)  # no movement left: no walk on
@@ -1347,12 +1348,12 @@ class CombatTurn(Base):
 
     def test_move_target_dead_before_the_turn_aims_at_the_nearest(self):
         self.g.dead.add(GOB)
-        out = server.combat_turn(self.plan(move=self.gob,
+        out = turn_tool.combat_turn(self.plan(move=self.gob,
                                            action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertIn("is dead → the plan now aims at the nearest visible hostile", out)
         self.assertEqual(self.g.ops("act.move_to")[0][1].get("target"), IMP)
         self.assertEqual([a.get("target") for _, a in self.g.ops("act.cast")], [IMP])
-        server.H.get(GOB, "Goblin")
+        core.H.get(GOB, "Goblin")
 
     def test_move_target_gone_and_nobody_in_sight_skips_the_dash(self):
         def vanish(op, a):
@@ -1361,7 +1362,7 @@ class CombatTurn(Base):
             if op == "act.end_turn":
                 self.g.combat["current"] = GOB
         self.g.on_start = vanish
-        out = server.combat_turn(self.plan(move=self.gob,
+        out = turn_tool.combat_turn(self.plan(move=self.gob,
                                            action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    "Shout_Dash", "Shout_Dodge"]))
         self.assertIn("no other hostile is in sight", out)
@@ -1372,7 +1373,7 @@ class CombatTurn(Base):
         # S028: "target: e742 Shadow is out of sight ... skipped" x3, and the move still ran (FAILED not visible)
         self.g.visible.clear()
         self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=GOB)
-        out = server.combat_turn(self.plan(move=self.gob,
+        out = turn_tool.combat_turn(self.plan(move=self.gob,
                                            action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    "Shout_Dodge"]))
         self.assertEqual(out.count("no other hostile is in sight"), 1, out)
@@ -1381,7 +1382,7 @@ class CombatTurn(Base):
 
     def test_retarget_false_keeps_a_vanished_move_target(self):
         self.g.dead.add(GOB)
-        out = server.combat_turn(self.plan(move=self.gob, action=["Shout_Dodge"], retarget=False))
+        out = turn_tool.combat_turn(self.plan(move=self.gob, action=["Shout_Dodge"], retarget=False))
         self.assertNotIn("the plan now aims", out)
 
     def test_short_move_without_ranged_dashes_and_walks_on(self):
@@ -1392,7 +1393,7 @@ class CombatTurn(Base):
         self.g.refuse_if = lambda op, a: ("target is out of range (6 m, range 1.5 m): move closer first"
                                           if a.get("spell") == "Target_MainHandAttack" else None)
         self.g.actions = [{"spell": "Target_MainHandAttack"}, {"spell": "Shout_Dash"}]
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 1.5},
                                            action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertEqual(self.casts(), ["Shout_Dash"])  # melee skipped: out of reach after the move
         self.assertEqual(len(self.g.ops("act.move_to")), 2)
@@ -1402,7 +1403,7 @@ class CombatTurn(Base):
         self.g.combat = combat(gob_dist=8.0)
         self.g.approach = {"reachable": True, "pos": [0.0, 0.0, 0.0], "walk_m": 0.2, "limit": "route_end",
                            "end_m": 7.8}
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5}, action=["Shout_Dodge"]))
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 1.5}, action=["Shout_Dodge"]))
         self.assertEqual(self.g.ops("act.move_to"), [])
         self.assertIn("stays put, 8m away — no walkable route gets closer than 7.8m", out)
 
@@ -1411,10 +1412,10 @@ class CombatTurn(Base):
         self.g.approach = {"reachable": True, "pos": [-3.0, 0.0, 0.0], "walk_m": 3.0, "limit": "hazard",
                            "hazard": {"surface": "Fire", "at_m": 4.2}}
         self._walk_to(7.0)
-        out = server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5}, action=["Shout_Dodge"]),
+        out = turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 1.5}, action=["Shout_Dodge"]),
                                  end=False)
         self.assertIn("stopped short of ≤1.5m: kept out of Fire on the route 4.2m ahead", out)
-        server.combat_turn(self.plan(move={"target": self.gob, "within": 1.5, "avoid": False},
+        turn_tool.combat_turn(self.plan(move={"target": self.gob, "within": 1.5, "avoid": False},
                                      action=["Shout_Dodge"]), end=False)
         self.assertIs(self.g.ops("nav.approach")[-1][1]["avoid"], False)
 
@@ -1427,7 +1428,7 @@ class CombatTurn(Base):
                 return "no movement left" if n["moves"] == 1 else None
             return None
         self.g.refuse_if = refuse
-        out = server.combat_turn(self.plan(move=self.gob, action=[{"ability": "Shout_Dash", "then_move": True}]))
+        out = turn_tool.combat_turn(self.plan(move=self.gob, action=[{"ability": "Shout_Dash", "then_move": True}]))
         self.assertEqual(len(self.g.ops("act.move_to")), 2)
         self.assertIn(f"move {self.gob}: FAILED — no movement left", out)
         self.assertIn("action: Shout_Dash: done", out)
@@ -1443,22 +1444,22 @@ class CombatTurn(Base):
                 return "no movement left" if n["moves"] == 1 else None
             return None
         self.g.refuse_if = refuse
-        server.combat_turn(self.plan(move=self.gob, action=["Shout_Dash"]))
+        turn_tool.combat_turn(self.plan(move=self.gob, action=["Shout_Dash"]))
         self.assertEqual(len(self.g.ops("act.move_to")), 2)
 
     def test_dash_then_move_false_stays(self):
         p = turn.parse_plan(json.dumps({"move": "e1", "action": [{"ability": "Dash", "then_move": False}, "Dash",
                                                                   "Shout_Dash_CunningAction", "Shout_Dodge"]}),
-                            server._BATCHABLE)
+                            batch._BATCHABLE)
         self.assertEqual([a.then_move for a in p.slots["action"]], [False, True, True, False])
 
     def test_plan_level_avoid_folds_into_move(self):
         # S061: {"move": ..., "avoid": false} → "unknown plan key(s) avoid" (our refusal says "move avoid:false")
-        p = turn.parse_plan(json.dumps({"move": "e1", "avoid": False, "action": ["Dash"]}), server._BATCHABLE)
+        p = turn.parse_plan(json.dumps({"move": "e1", "avoid": False, "action": ["Dash"]}), batch._BATCHABLE)
         self.assertFalse(p.move.avoid)
-        p = turn.parse_plan(json.dumps({"move": {"target": "e1", "avoid": True}, "avoid": False}), server._BATCHABLE)
+        p = turn.parse_plan(json.dumps({"move": {"target": "e1", "avoid": True}, "avoid": False}), batch._BATCHABLE)
         self.assertTrue(p.move.avoid)  # the move's own key wins
-        p = turn.parse_plan(json.dumps({"avoid": False, "action": ["Dash"]}), server._BATCHABLE)
+        p = turn.parse_plan(json.dumps({"avoid": False, "action": ["Dash"]}), batch._BATCHABLE)
         self.assertIsNone(p.move)
 
     def test_point_target_becomes_xyz(self):
@@ -1468,12 +1469,12 @@ class CombatTurn(Base):
                                                    {"ability": "Fireball", "target": [1, 2, 3]},
                                                    {"ability": "Fireball", "pos": [4, 5, 6]},
                                                    {"ability": "Fireball", "x,y,z": "7,8,9"}]}),
-                            server._BATCHABLE)
+                            batch._BATCHABLE)
         args = [a.step.args for a in p.slots["action"]]
         self.assertEqual((args[0].get("x"), args[0].get("y"), args[0].get("z")), (-828.0, 8.5, -783.0))
         self.assertNotIn("target", args[0])
         self.assertEqual((args[1]["x"], args[2]["z"], args[3]["y"]), (1.0, 6.0, 8.0))
-        server.combat_turn(self.plan(action={"ability": "Shout_Dodge", "target": "1,0,1"}))
+        turn_tool.combat_turn(self.plan(action={"ability": "Shout_Dodge", "target": "1,0,1"}))
         self.assertEqual([a.get("pos") for _, a in self.g.ops("act.cast")][:1], [[1.0, 0.0, 1.0]])
 
     def test_reaction_prompt_answered_by_policy(self):
@@ -1485,7 +1486,7 @@ class CombatTurn(Base):
             if op == "ui.react":
                 self.g.ui["screen"] = "game"
         self.g.on_start = prompt
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
                                            on_reaction="use"), end=False)
         self.assertEqual(self.g.ops("ui.react")[0][1], {"use": True})
         self.assertIn("reaction prompt: used", out)
@@ -1496,7 +1497,7 @@ class CombatTurn(Base):
         self.g.dur["act.cast"] = 0.4
         self.g.on_start = lambda op, a: op == "act.cast" and threading.Timer(
             0.05, lambda: self.g.ui.update(screen="reaction")).start()
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertIn("STOPPED: reaction on screen", out)
         self.assertEqual(self.g.ops("ui.react"), [])
 
@@ -1505,8 +1506,8 @@ class CombatTurn(Base):
     def test_a_reaction_prompt_open_at_the_start_plays_nothing(self):
         self.g.ui.update(screen="reaction", reaction={
             "prompt": "Mind Flayer used Tentacle Whip on Claude. | Choose how to react. | 77/205 | Shield Blow"})
-        out = server.combat_turn(self.plan(move=self.gob, action={"ability": "Shout_Dash"}))
-        self.assertTrue(out.startswith(server.TURN_NOT_YET), out)
+        out = turn_tool.combat_turn(self.plan(move=self.gob, action={"ability": "Shout_Dash"}))
+        self.assertTrue(out.startswith(turn_tool.TURN_NOT_YET), out)
         self.assertIn("e4 Claude's turn not started: reaction on screen: Mind Flayer used Tentacle Whip on Claude.",
                       out)
         self.assertIn("Nothing was played or spent", out)
@@ -1516,7 +1517,7 @@ class CombatTurn(Base):
     def test_a_reaction_prompt_open_at_the_start_is_answered_by_the_plan(self):
         self.g.ui["screen"] = "reaction"
         self.g.on_start = lambda op, a: op == "ui.react" and self.g.ui.update(screen="game")
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
                                            on_reaction="skip"), end=False)
         self.assertEqual(self.g.ops("ui.react")[0][1], {"use": False})
         self.assertIn("reaction prompt: declined", out)
@@ -1533,9 +1534,9 @@ class CombatTurn(Base):
                 self.g.combat["turn_group"] = [P2]
                 self.g.ui.update(screen="reaction", reaction={"prompt": "Goblin attacked Claude. | Shield Blow"})
         self.g.on_start = end
-        out = server.combat_turn(json.dumps([
-            {"who": server.H.get(P1), "plan": {"action": [{"ability": "Target_MainHandAttack", "target": self.gob}]}},
-            {"who": server.H.get(P2), "plan": {"move": self.gob, "action": ["Shout_Dash"]}}]))
+        out = turn_tool.combat_turn(json.dumps([
+            {"who": core.H.get(P1), "plan": {"action": [{"ability": "Target_MainHandAttack", "target": self.gob}]}},
+            {"who": core.H.get(P2), "plan": {"move": self.gob, "action": ["Shout_Dash"]}}]))
         self.assertIn(f"action: Target_MainHandAttack {self.gob}: done", out)
         self.assertIn("CHAIN STOPPED after 1 of 2: e5: not played — e5 Lae'zel's turn not started: reaction on screen:"
                       " Goblin attacked Claude.", out)
@@ -1545,7 +1546,7 @@ class CombatTurn(Base):
 
     # S018/S025/S029: Bless on 3 targets was refused ("more than two targets"): the action went to the fallback.
     def test_three_targets_cast_on_the_first_two(self):
-        out = server.combat_turn(self.plan(action={"ability": "Target_Bless", "targets": f"{self.gob},{self.imp},{server.H.get(P1)}"}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_Bless", "targets": f"{self.gob},{self.imp},{core.H.get(P1)}"}))
         casts = [a for _, a in self.g.ops("act.cast")]
         self.assertEqual(casts[0]["targets"], [GOB, IMP])
         self.assertIn("targets: cast on the first 2 only", out)
@@ -1555,12 +1556,12 @@ class CombatTurn(Base):
 
     def test_use_ability_takes_a_list_of_targets(self):
         # ACT-8: a client sending targets as a JSON list reached targets.split(",")
-        out = server.use_ability("Target_Bless", targets=[self.gob, " ", self.imp])
+        out = combat_tools.use_ability("Target_Bless", targets=[self.gob, " ", self.imp])
         self.assertNotIn("split", out)
         self.assertEqual([a.get("targets") for _, a in self.g.ops("act.cast")], [[GOB, IMP]])
 
     def test_reactions_prep(self):
-        server.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
+        turn_tool.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
         self.assertEqual(self.g.ops("ui.reactions")[0][1], {"char": P1, "set": {"Divine Smite": "always"}})
 
     # S041 22:41:22: the server said P1 is active (host fallback) but the client's ClientControl was elsewhere.
@@ -1576,7 +1577,7 @@ class CombatTurn(Base):
                                 'select it first (act.select)')
             return orig(op, args, context, timeout)
         self.g.rpc = rpc
-        out = server.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
         self.assertEqual(len(self.g.ops("ui.reactions")), 2)
         self.assertIn(("act.select", {"char": P1}), [(o, a) for o, a in self.g.calls if o == "act.select"])
         self.assertIn("reactions set: Divine Smite=always", out)
@@ -1599,7 +1600,7 @@ class CombatTurn(Base):
                         " via another member)"}
             return orig(op, args, context, timeout)
         self.g.rpc = rpc
-        out = server.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
         self.assertEqual(len(self.g.ops("ui.reactions")), 1)
         self.assertIn("could not be selected: the game kept Karlach selected", out)
         self.assertIn("action: Shout_Dodge: done", out)
@@ -1607,7 +1608,7 @@ class CombatTurn(Base):
     # A16 (S074 23:06:52): the server said Claude was selected, the HUD had another member: select before the prep
     def test_reactions_prep_selects_first_when_the_hud_shows_another_member(self):
         self.g.hud = P2
-        out = server.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge", reactions={"Divine Smite": "always"}))
         sel = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.select"]
         reac = [i for i, (o, _) in enumerate(self.g.calls) if o == "ui.reactions"]
         self.assertEqual(len(reac), 1)
@@ -1620,7 +1621,7 @@ class CombatTurn(Base):
         self.g.hud = P2
         self.g.ui = {"screen": "reaction", "reaction": {
             "prompt": "Sharran Fidelian Lamona cast Bone Chill on Claude. | Choose how to react. | 108/160 | Counterspell"}}
-        out = server.set_reactions(who=server.H.get(P1), settings='{"Counterspell": "never"}')
+        out = uitools.set_reactions(who=core.H.get(P1), settings='{"Counterspell": "never"}')
         self.assertIn("a reaction prompt is on screen (Sharran Fidelian Lamona cast Bone Chill on Claude.)", out)
         self.assertIn("react(use=true|false)", out)
         self.assertEqual(self.g.ops("act.select"), [])
@@ -1638,7 +1639,7 @@ class CombatTurn(Base):
                 return {"status": "failed", "error": "the HUD kept another member selected"}
             return orig(op, args, context, timeout)
         self.g.rpc = rpc
-        out = server.set_reactions(who=server.H.get(P1), settings='{"Counterspell": "never"}')
+        out = uitools.set_reactions(who=core.H.get(P1), settings='{"Counterspell": "never"}')
         self.assertIn("could not be selected: the HUD kept another member selected", out)
         self.assertIn("It is the enemies' turn", out)
         self.assertEqual(self.g.ops("ui.reactions"), [])
@@ -1656,7 +1657,7 @@ class CombatTurn(Base):
                 return {"status": "done", "result": {"char": P1, "reactions": [{"name": "Counterspell", "mode": "never"}]}}
             return orig(op, args, context, timeout)
         self.g.rpc = rpc
-        out = server.set_reactions(who=server.H.get(P1), settings='{"Counterspell": "never"}')
+        out = uitools.set_reactions(who=core.H.get(P1), settings='{"Counterspell": "never"}')
         self.assertTrue(polls)
         self.assertIn("Counterspell", out)
         self.assertIn("never", out)
@@ -1664,12 +1665,12 @@ class CombatTurn(Base):
 
     def test_next_party_member_already_up_gets_actions(self):
         self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
-        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         self.assertIn("'s turn: plan it", out)
         self.assertIn("YOUR ACTIONS", out)
 
     def test_extra_attack_slot_and_order(self):
-        server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+        turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
                                      bonus="Shout_SecondWind",
                                      extra=[[{"ability": "Target_MainHandAttack", "target": self.gob}]],
                                      order="bonus,action,extra"))
@@ -1677,7 +1678,7 @@ class CombatTurn(Base):
 
     def test_extra_attack_skipped_after_a_dash(self):
         # S032 17:44: "extra 1: Target_MainHandAttack e743: FAILED — not enough action" after the action went to Dash
-        out = server.combat_turn(self.plan(action="Shout_Dash",
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dash",
                                            extra=[[{"ability": "Target_MainHandAttack", "target": self.gob}]]))
         self.assertEqual(self.casts(), ["Shout_Dash"])
         self.assertIn("extra: skipped (the action went to Shout_Dash", out)
@@ -1691,7 +1692,7 @@ class CombatTurn(Base):
         self.g.refuse_if = lambda op, a: (
             "target is out of range (2.7 m, range 1.5 m): move closer first" if op == "act.cast"
             else "no walkable path there (may need a jump or another route)" if op == "act.move_to" else None)
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertIn("(no step closer: ", out)
         self.assertIn("no walkable path there", out)
 
@@ -1702,7 +1703,7 @@ class CombatTurn(Base):
         self.g.result_for = lambda op, a: ({"cast": a.get("spell"), "extra_attack": True}
                                            if op == "act.cast" and a.get("spell") == "Projectile_MainHandAttack"
                                            else real(op, a))
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
                                            bonus={"ability": "Projectile_MainHandAttack", "target": self.gob},
                                            extra=[[{"ability": "Target_MainHandAttack", "target": self.gob}]]))
         self.assertIn("extra 1: skipped (the Extra Attack already went to the bonus attack)", out)
@@ -1723,8 +1724,8 @@ class CombatTurn(Base):
                           {"spell": "Projectile_MainHandAttack", "range": 18}]
         self.g.refuse_if = lambda op, a: ("target is out of range (9.0 m, range 1.5 m): move closer first"
                                           if a.get("spell") == "Target_LayOnHands" else None)
-        p2 = server.H.get(P2)
-        out = server.combat_turn(self.plan(action={"ability": "Target_LayOnHands", "target": p2}))
+        p2 = core.H.get(P2)
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_LayOnHands", "target": p2}))
         self.assertEqual(self.casts(), ["Target_LayOnHands"])
         self.assertNotIn("auto fallback", out)
 
@@ -1734,18 +1735,18 @@ class CombatTurn(Base):
         self.g.actions = [{"spell": "Target_HealingWord", "range": 18}]
         self.g.refuse_if = lambda op, a: ("target is out of range (20.0 m, range 18.0 m): move closer first"
                                           if a.get("spell") == "Target_HealingWord" and a.get("target") == P2 else None)
-        out = server.combat_turn(self.plan(action={"ability": "Target_HealingWord", "target": server.H.get(P2)}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_HealingWord", "target": core.H.get(P2)}))
         self.assertEqual([a.get("target") for _, a in self.g.ops("act.cast")], [P2])
         self.assertNotIn(GOB, [a.get("target") for _, a in self.g.ops("act.cast")])
         self.assertNotIn("auto fallback", out)
         # a heal may re-aim at another (downed) party member in reach
         p3 = "33333333-2222-3333-4444-555555555555"
-        server.H.get(p3, "Gale")
+        core.H.get(p3, "Gale")
         self.g.combat["order"].append({"uuid": p3, "name": "Gale", "relation": "party", "hp_pct": 0,
                                        "downed": True, "from": {P1: [5.0, 1]}})
         self.g.combat["current"] = P1
         n = len(self.g.ops("act.cast"))
-        out = server.combat_turn(self.plan(action={"ability": "Target_HealingWord", "target": server.H.get(P2)},
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_HealingWord", "target": core.H.get(P2)},
                                            auto_bonus=False))
         self.assertEqual([a.get("target") for _, a in self.g.ops("act.cast")][n:], [P2, p3])
         self.assertIn("(auto fallback)", out)
@@ -1754,7 +1755,7 @@ class CombatTurn(Base):
         self.g.dead.add(GOB)
         self._ally_at(3.0)
         self.g.actions = [{"spell": "Target_SacredFlame", "range": 18}]
-        server.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
+        turn_tool.combat_turn(self.plan(action={"ability": "Target_SacredFlame", "target": self.gob}))
         self.assertEqual([a["target"] for _, a in self.g.ops("act.cast")], [IMP])
 
     def test_revive_on_a_dead_ally_is_cast_and_never_reaimed(self):
@@ -1763,13 +1764,13 @@ class CombatTurn(Base):
         self.g.dead.add(P2)
         next(o for o in self.g.combat["order"] if o["uuid"] == GOB)["from"][P1] = [1.8, 1]
         self.g.actions = [{"spell": "Teleportation_Revivify", "range": 1.5}]
-        out = server.combat_turn(self.plan(action={"ability": "Teleportation_Revivify", "target": server.H.get(P2)}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Teleportation_Revivify", "target": core.H.get(P2)}))
         self.assertEqual([(a.get("spell"), a.get("target")) for _, a in self.g.ops("act.cast")],
                          [("Teleportation_Revivify", P2)])
         self.assertNotIn("already dead", out)
         self.g.refuse_if = lambda op, a: ("no line of sight to target" if op == "act.cast" else None)
         self.g.combat["current"] = P1
-        server.combat_turn(self.plan(action={"ability": "Teleportation_Revivify", "target": server.H.get(P2)}))
+        turn_tool.combat_turn(self.plan(action={"ability": "Teleportation_Revivify", "target": core.H.get(P2)}))
         self.assertEqual({a.get("target") for _, a in self.g.ops("act.cast")}, {P2})
 
     def test_move_to_a_dead_ally_is_not_reaimed_at_a_hostile(self):
@@ -1777,8 +1778,8 @@ class CombatTurn(Base):
         self._ally_at(4.0)
         self.g.dead.add(P2)
         self.g.actions = [{"spell": "Teleportation_Revivify", "range": 1.5}]
-        p2 = server.H.get(P2)
-        out = server.combat_turn(self.plan(move=p2, action={"ability": "Teleportation_Revivify", "target": p2}))
+        p2 = core.H.get(P2)
+        out = turn_tool.combat_turn(self.plan(move=p2, action={"ability": "Teleportation_Revivify", "target": p2}))
         self.assertNotIn("now aims at", out)
         self.assertEqual([a.get("target") for _, a in self.g.ops("act.move_to")], [P2])
         self.assertEqual({a.get("target") for _, a in self.g.ops("act.cast")}, {P2})
@@ -1802,7 +1803,7 @@ class CombatTurn(Base):
 
     def test_shared_turn_without_who_plays_the_member_the_plan_fits(self):
         self._shared_group()  # Claude (P1) is selected; only Lae'zel has Action Surge
-        out = server.combat_turn(self.plan(action="Action Surge"))
+        out = turn_tool.combat_turn(self.plan(action="Action Surge"))
         self.assertEqual([(a.get("spell"), a.get("char")) for _, a in self.g.ops("act.cast")],
                          [("Shout_ActionSurge", P2)])
         self.assertEqual([a.get("char") for _, a in self.g.ops("act.end_turn")], [P2])
@@ -1811,25 +1812,25 @@ class CombatTurn(Base):
 
     def test_shared_turn_without_who_refuses_a_plan_both_could_play(self):
         self._shared_group()
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertIn("REFUSED: several of your characters can act now", out)
         self.assertIn("give who=", out)
         self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], [])
-        out = server.combat_turn(self.plan())  # an empty plan would end an unknown member's turn
+        out = turn_tool.combat_turn(self.plan())  # an empty plan would end an unknown member's turn
         self.assertIn("REFUSED", out)
         self.assertEqual(self.g.ops("act.end_turn"), [])
 
     def test_sent_ahead_without_who_is_not_taken_by_another_member(self):
         self.g.combat["current"] = GOB
         threading.Timer(0.3, lambda: self.g.combat.update(current=P2)).start()
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}),
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}),
                                  wait_turn=3)
         self.assertEqual(self.g.ops("act.cast"), [])  # Lae'zel's turn came first: not hers to take
         self.assertIn("(yours) must act first", out)
         # the selected member's own turn plays it
         self.g.combat["current"] = GOB
         threading.Timer(0.3, lambda: self.g.combat.update(current=P1)).start()
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}),
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}),
                                  wait_turn=3)
         self.assertEqual([a.get("char") for _, a in self.g.ops("act.cast")], [P1])
         self.assertIn("sent ahead: the character selected when it was sent", out)
@@ -1839,7 +1840,7 @@ class CombatTurn(Base):
                              P2: [{"spell": "Shout_ActionSurge", "name": "Action Surge"}]}
         self.g.combat["current"] = GOB
         threading.Timer(0.3, lambda: self.g.combat.update(current=P2)).start()
-        out = server.combat_turn(self.plan(action="Shout_ActionSurge"), wait_turn=3)
+        out = turn_tool.combat_turn(self.plan(action="Shout_ActionSurge"), wait_turn=3)
         self.assertEqual([a.get("char") for _, a in self.g.ops("act.cast")], [P2])
         self.assertIn("the only one of yours whose actions the plan fits", out)
 
@@ -1857,17 +1858,17 @@ class CombatTurn(Base):
                 return self.NO_REASON if n["cast"] == 1 else None
             return None
         self.g.refuse_if = refuse
-        out = server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob}))
         self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS],
                          ["act.cast", "act.move_to", "act.cast", "act.end_turn"])
         mv = self.g.ops("act.move_to")[0][1]
-        self.assertEqual((mv.get("target"), mv.get("within")), (GOB, server.MELEE_STEP_IN_M))
+        self.assertEqual((mv.get("target"), mv.get("within")), (GOB, turn_slots.MELEE_STEP_IN_M))
         self.assertIn("stepped closer for the swing", out)
         self.assertIn(f"Target_MainHandAttack {self.gob}: done", out)
 
     def test_melee_refused_steps_in_only_once_and_not_for_other_reasons(self):
         self.g.refuse_if = lambda op, a: self.NO_REASON if op == "act.cast" else None
-        server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+        turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
                                      retarget=False))
         self.assertEqual(len(self.g.ops("act.move_to")), 1)
         self.assertEqual(len(self.g.ops("act.cast")), 2)
@@ -1876,7 +1877,7 @@ class CombatTurn(Base):
             self.g.combat["current"] = P1
             self.g.refuse_if = lambda op, a, why=why: why if op == "act.cast" else None
             n = len(self.g.ops("act.move_to"))
-            server.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
+            turn_tool.combat_turn(self.plan(action={"ability": "Target_MainHandAttack", "target": self.gob},
                                          retarget=False))
             self.assertEqual(len(self.g.ops("act.move_to")), n, why)
         # a ranged ability refused without a reason: no step in
@@ -1885,7 +1886,7 @@ class CombatTurn(Base):
         self.g.refuse_if = lambda op, a: "the game refused the cast (no reason given): usually the shot's path" \
             if op == "act.cast" else None
         n = len(self.g.ops("act.move_to"))
-        server.combat_turn(self.plan(action={"ability": "Projectile_FireBolt", "target": self.gob}, retarget=False))
+        turn_tool.combat_turn(self.plan(action={"ability": "Projectile_FireBolt", "target": self.gob}, retarget=False))
         self.assertEqual(len(self.g.ops("act.move_to")), n)
 
     def test_plan_errors(self):
@@ -1894,7 +1895,7 @@ class CombatTurn(Base):
                          ({"action": {"tool": "save_game"}}, "can't be batched"),
                          ({"action": "Shout_Dodge", "on_reaction": "maybe"}, "on_reaction"),
                          ({"action": "Shout_Dodge", "order": "action,fly"}, "order")):
-            self.assertIn(msg, server.combat_turn(json.dumps(bad)), bad)
+            self.assertIn(msg, turn_tool.combat_turn(json.dumps(bad)), bad)
 
 
 class NearestNamesake(Base):
@@ -1904,8 +1905,8 @@ class NearestNamesake(Base):
 
     def setUp(self) -> None:
         super().setUp()
-        server.H.get(self.T1, "Fire Trap")
-        server.H.get(self.T2, "Fire Trap")
+        core.H.get(self.T1, "Fire Trap")
+        core.H.get(self.T2, "Fire Trap")
         self.g.nearby = {"characters": [], "items": [
             {"uuid": self.T1, "name": "Fire Trap", "pos": [9, 0, 0], "dist": 9.0},
             {"uuid": self.T2, "name": "Fire Trap", "pos": [3, 0, 0], "dist": 3.0}]}
@@ -1920,21 +1921,21 @@ class NearestNamesake(Base):
         self.g.rpc = with_pos
 
     def test_the_nearest_in_sight_is_meant(self):
-        self.assertEqual(server._nearest_uuid("Fire Trap", P1), self.T2)
+        self.assertEqual(plumbing._nearest_uuid("Fire Trap", P1), self.T2)
         # from Lae'zel's side the other one is nearer: distances are the actor's, not the active member's
         self.g.watch["party"][1]["pos"] = [10, 0, 0]
-        self.assertEqual(server._nearest_uuid("Fire Trap", P2), self.T1)
+        self.assertEqual(plumbing._nearest_uuid("Fire Trap", P2), self.T1)
 
     def test_a_tie_or_none_in_sight_stays_ambiguous(self):
         self.g.nearby["items"][0]["pos"] = [-3.2, 0, 0]
         with self.assertRaisesRegex(ValueError, "is ambiguous"):
-            server._nearest_uuid("Fire Trap", P1)
+            plumbing._nearest_uuid("Fire Trap", P1)
         self.g.nearby = {"characters": [], "items": []}
         with self.assertRaisesRegex(ValueError, "is ambiguous"):
-            server._nearest_uuid("Fire Trap", P1)
+            plumbing._nearest_uuid("Fire Trap", P1)
 
     def test_an_id_is_taken_as_is(self):
-        self.assertEqual(server._nearest_uuid(server.H.get(self.T1), P1), self.T1)
+        self.assertEqual(plumbing._nearest_uuid(core.H.get(self.T1), P1), self.T1)
 
 
 class OpenerCombat(Base):
@@ -1942,12 +1943,12 @@ class OpenerCombat(Base):
 
     def setUp(self) -> None:
         super().setUp()
-        saved, server.OPENER_WAIT_S = server.OPENER_WAIT_S, 0.05
-        self.addCleanup(setattr, server, "OPENER_WAIT_S", saved)
+        saved, combat_tools.OPENER_WAIT_S = combat_tools.OPENER_WAIT_S, 0.05
+        self.addCleanup(setattr, combat_tools, "OPENER_WAIT_S", saved)
         self.g.result_for = lambda op, a: ({"total_damage": 3, "target": GOB} if op == "act.cast" else {})
 
     def test_damage_without_a_fight_says_so(self):
-        out = server.use_ability("Projectile_MainHandAttack", target=self.gob)
+        out = combat_tools.use_ability("Projectile_MainHandAttack", target=self.gob)
         self.assertIn(f"combat: NOT started — {self.gob} Goblin took 3 damage but no fight began", out)
 
     def test_fight_started_says_so(self):
@@ -1955,14 +1956,14 @@ class OpenerCombat(Base):
             if op == "act.cast":
                 self.g.combat = combat()
         self.g.on_start = start
-        out = server.use_ability("Projectile_MainHandAttack", target=self.gob)
+        out = combat_tools.use_ability("Projectile_MainHandAttack", target=self.gob)
         self.assertIn("COMBAT: the attack started a fight (round 2)", out)
 
     def test_items_party_and_in_combat_add_nothing(self):
-        out = server.use_ability("Projectile_MainHandAttack", target=self.chest)
+        out = combat_tools.use_ability("Projectile_MainHandAttack", target=self.chest)
         self.assertNotIn("combat:", out.lower())
         self.g.combat = combat()
-        out = server.use_ability("Projectile_MainHandAttack", target=self.gob)
+        out = combat_tools.use_ability("Projectile_MainHandAttack", target=self.gob)
         self.assertNotIn("combat: NOT", out)
         self.assertNotIn("started a fight", out)
 
@@ -2002,25 +2003,25 @@ class LootArea(Base):
 
         def fake_loot_corpse(corpse: str, who: str | None = None) -> str:
             self.corpses.append(corpse)
-            server._batch["last"] = "done"
+            reporting._batch["last"] = "done"
             return "loot_corpse: done"
-        orig = server.loot_corpse
-        server.loot_corpse = fake_loot_corpse
-        self.addCleanup(setattr, server, "loot_corpse", orig)
+        orig = world_tools.loot_corpse
+        world_tools.loot_corpse = fake_loot_corpse
+        self.addCleanup(setattr, world_tools, "loot_corpse", orig)
 
     def test_loots_visible_in_walking_order_and_skips_the_rest(self):
-        out = server.loot_area()
+        out = macro_tools.loot_area()
         self.assertEqual(self.g.ops("act.interact")[0][1]["target"], CHEST)
         self.assertEqual(self.corpses, [self.gob])
         self.assertEqual(len(self.g.ops("ui.loot")), 2)
         self.assertLess(out.index(self.chest), out.index(f"{self.gob} Goblin:"))  # nearest first
         self.assertIn("Iron Chest (locked)", out)
         self.assertIn("Merchant's Crate (owned: taking is stealing)", out)
-        self.assertIn("nothing to loot", server.loot_area())  # remembered
+        self.assertIn("nothing to loot", macro_tools.loot_area())  # remembered
 
     def test_stops_at_the_first_interrupt(self):
         self.g.on_start = lambda op, a: op == "ui.loot" and self.g.push("combat_started", {})
-        out = server.loot_area()
+        out = macro_tools.loot_area()
         self.assertIn("STOPPED: combat started; not reached: ", out)
         self.assertEqual(self.corpses, [])
 
@@ -2032,16 +2033,16 @@ class LootArea(Base):
         self.g.watch["party"] = [{"uuid": P1, "hp": 104, "max_hp": 104, "pos": [0, 0, 0]}]
         self.g.dur["act.interact"] = 0.0   # opened at once; the damage shows at the check after the step
         self.g.on_start = opened
-        out = server.loot_area()
+        out = macro_tools.loot_area()
         self.assertIn("STOPPED: ", out)
         self.assertIn("took damage outside combat", out)
         self.assertEqual(self.g.ops("ui.loot")[:1], [("ui.loot", {"all": True})], (self.g.ops("ui.loot"), out))  # Take All ran
-        self.assertIn(CHEST, server._looted, out)
+        self.assertIn(CHEST, macro_tools._looted, out)
         self.assertEqual(self.corpses, [])                       # the next target was not started
 
     def test_refused_in_combat(self):
         self.g.watch["combat"] = True
-        self.assertIn("FAILED: loot_area is for outside combat", server.loot_area())
+        self.assertIn("FAILED: loot_area is for outside combat", macro_tools.loot_area())
 
     def _in_convo(self, refusals: int) -> None:
         """The Guard refuses the first `refusals` act steps (live S021: InDialog after a fight)."""
@@ -2058,27 +2059,27 @@ class LootArea(Base):
         # S021: 4 corpses each "FAILED — character is in a conversation"; now one try, then hand it back.
         self._in_convo(99)
         self.g.ui = {"screen": "dialogue"}
-        out = server.loot_area()
+        out = macro_tools.loot_area()
         self.assertIn("STOPPED: a conversation is open: answer it (choose_dialogue)", out)
         self.assertIn(f"not reached: {self.chest} Chest, {self.gob} Goblin", out)
         self.assertEqual(len(self.g.ops("act.interact")), 1)
         self.assertEqual(self.corpses, [])
 
     def test_stale_conversation_flag_retried(self):
-        saved, server.CONVO_WAIT_S = server.CONVO_WAIT_S, 2.0
-        self.addCleanup(setattr, server, "CONVO_WAIT_S", saved)
+        saved, macro_tools.CONVO_WAIT_S = macro_tools.CONVO_WAIT_S, 2.0
+        self.addCleanup(setattr, macro_tools, "CONVO_WAIT_S", saved)
         self._in_convo(2)
-        out = server.loot_area()
+        out = macro_tools.loot_area()
         self.assertNotIn("STOPPED", out)
         self.assertNotIn("conversation", out)
         self.assertEqual(len(self.g.ops("act.interact")), 3)  # 2 refused, then opened
         self.assertEqual(self.corpses, [self.gob])
 
     def test_conversation_flag_that_never_clears(self):
-        saved, server.CONVO_WAIT_S = server.CONVO_WAIT_S, 0.5
-        self.addCleanup(setattr, server, "CONVO_WAIT_S", saved)
+        saved, macro_tools.CONVO_WAIT_S = macro_tools.CONVO_WAIT_S, 0.5
+        self.addCleanup(setattr, macro_tools, "CONVO_WAIT_S", saved)
         self._in_convo(99)
-        out = server.loot_area()
+        out = macro_tools.loot_area()
         self.assertIn("STOPPED: still in a conversation after 0.5s with no dialogue on screen", out)
         self.assertEqual(self.corpses, [])
 
@@ -2096,7 +2097,7 @@ class CombatTurnBackgroundEnd(Base):
             if op == "act.end_turn":
                 self.g.combat["current"] = GOB
         self.g.on_start = advance
-        server.END_ASYNC = True
+        turn_tool.END_ASYNC = True
         self.g.dur["act.end_turn"] = 0.6
 
     def plan(self, **kw) -> str:
@@ -2107,8 +2108,8 @@ class CombatTurnBackgroundEnd(Base):
         releases it: nothing here may depend on a 0.6 s end outlasting the tool calls in between (flaky under
         full-suite load, 2026-10-17: no 'waited' in the next combat_turn, 1 of 5 full runs)."""
         self.g.dur["act.end_turn"] = 3600.0
-        mgr = server._queues()
-        busy, hold = mgr.busy, server._hold_for_bg_end
+        mgr = queueing._queues()
+        busy, hold = mgr.busy, turn_tool._hold_for_bg_end
         holding = threading.local()
 
         def held_busy(who=None):
@@ -2123,7 +2124,7 @@ class CombatTurnBackgroundEnd(Base):
                 return hold(char)
             finally:
                 holding.on = False
-        for p in (mock.patch.object(mgr, "busy", held_busy), mock.patch.object(server, "_hold_for_bg_end", gated_hold)):
+        for p in (mock.patch.object(mgr, "busy", held_busy), mock.patch.object(turn_tool, "_hold_for_bg_end", gated_hold)):
             p.start()
             self.addCleanup(p.stop)
 
@@ -2140,7 +2141,7 @@ class CombatTurnBackgroundEnd(Base):
         # just before). Flaky under full-suite load when this asserted the op at once (se, 2026-10-16: 0 != 1 in 1 of
         # 4 full runs, 10/10 alone): wait for it, bounded. The end runs until released, so "returned first" is no race.
         self.gate_end()
-        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         self.assertIn("end_turn: ending in the background", out)
         self.assertIn(f"NEXT {self.gob} Goblin", out)
         self.assertIn("RUNNING queue", out)
@@ -2148,21 +2149,21 @@ class CombatTurnBackgroundEnd(Base):
         while not self.g.ops("act.end_turn") and time.monotonic() < until:
             time.sleep(0.01)
         self.assertEqual(len(self.g.ops("act.end_turn")), 1)
-        self.assertNotIn("queue_done", server.get_events())  # still running
+        self.assertNotIn("queue_done", observe.get_events())  # still running
         self.release_end()
         evs = ""
         until = time.monotonic() + 5.0
         while "queue_done" not in evs and time.monotonic() < until:
             time.sleep(0.1)
-            evs += server.get_events()
+            evs += observe.get_events()
         self.assertIn("queue_done", evs)
         self.assertEqual(len(self.g.ops("act.end_turn")), 1)
 
     def test_next_combat_turn_waits_for_the_background_end(self):
         self.gate_end()
-        server.combat_turn(self.plan(action="Shout_Dodge"))
+        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         self.g.combat["current"] = P1  # the enemies acted; Claude again
-        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         self.assertRegex(out, r"waited [\d.]+s for e\d+ Claude's turn end to finish first")
         ends = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.end_turn"]
         casts = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.cast"]
@@ -2170,18 +2171,18 @@ class CombatTurnBackgroundEnd(Base):
 
     def test_a_direct_action_for_that_character_waits_too(self):
         self.gate_end()
-        server.combat_turn(self.plan(action="Shout_Dodge"))
-        out = server.use_ability("Shout_Dodge")
+        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
+        out = combat_tools.use_ability("Shout_Dodge")
         self.assertIn("turn end to finish first", out)
 
     def test_review_m4_queued_steps_wait_and_get_their_own_interrupts(self):
         self.gate_end()
         # the end's executor ignores every interrupt: steps queued for that character during it must not run in it
-        server.combat_turn(self.plan(action="Shout_Dodge"))
-        out = server.queue_actions(json.dumps([{"tool": "use_ability", "ability": "Shout_Dodge"}]),
-                                   who=server.H.get(P1))
+        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
+        out = batch.queue_actions(json.dumps([{"tool": "use_ability", "ability": "Shout_Dodge"}]),
+                                   who=core.H.get(P1))
         self.assertIn("turn end to finish first", out)
-        q = server._queues().queues[P1]
+        q = queueing._queues().queues[P1]
         ex = q.executor
         self.assertEqual(ex.watcher.ignore, set())               # not the end's all-kinds set
         # queue_actions returns before its worker sends the cast (flaky under full-suite load, 2026-10-17: the cast
@@ -2194,22 +2195,22 @@ class CombatTurnBackgroundEnd(Base):
 
     def test_review_m5_cancel_queue_never_cancels_the_end_half_way(self):
         self.gate_end()
-        server.combat_turn(self.plan(action="Shout_Dodge"))
+        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         until = time.monotonic() + 3.0
         while not self.g.ops("act.end_turn") and time.monotonic() < until:
             time.sleep(0.01)
-        out = server.cancel_queue()
+        out = batch.cancel_queue()
         self.assertIn("turn end to finish first", out)
         self.assertEqual(self.g.ops("job.cancel"), [])
         end = next(j for j in self.g.jobs.values() if j["op"] == "act.end_turn")
-        server.game.rpc("job.poll", {"id": next(k for k, j in self.g.jobs.items() if j is end)})
+        core.game.rpc("job.poll", {"id": next(k for k, j in self.g.jobs.items() if j is end)})
         self.assertEqual(end["status"], "done")
 
     def test_review_m5_replace_waits_for_the_end_too(self):
         self.gate_end()
-        server.combat_turn(self.plan(action="Shout_Dodge"))
-        out = server.queue_actions(json.dumps([{"tool": "use_ability", "ability": "Shout_Dodge"}]),
-                                   who=server.H.get(P1), replace=True)
+        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
+        out = batch.queue_actions(json.dumps([{"tool": "use_ability", "ability": "Shout_Dodge"}]),
+                                   who=core.H.get(P1), replace=True)
         self.assertIn("turn end to finish first", out)
         self.assertFalse([j for j in self.g.jobs.values() if j["op"] == "act.end_turn"
                           and j["status"] == "interrupted"])
@@ -2225,9 +2226,9 @@ class CombatTurnBackgroundEnd(Base):
         self.g.on_start = lambda op, a: None                 # the end never hands the turn on here
         self.g.dur["act.end_turn"] = 3600.0
         self.addCleanup(self.release_end)
-        self.assertTrue(server._end_in_background(P2))
-        with mock.patch.object(server, "END_BG_HOLD_S", 0.2):
-            out = server.combat_turn(self.plan(action="Shout_Dodge"), who=server.H.get(P1), wait_turn=5)
+        self.assertTrue(turn_tool._end_in_background(P2))
+        with mock.patch.object(turn_tool, "END_BG_HOLD_S", 0.2):
+            out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1), wait_turn=5)
         self.assertIn("Lae'zel's turn end is still running in the background", out)
         self.assertIn("Shadowheart's turn open meanwhile", out)
         self.assertNotIn("must act first", out)
@@ -2242,7 +2243,7 @@ class CombatTurnBackgroundEnd(Base):
             if op == "act.end_turn":
                 self.g.combat["turn_group"] = [P2]
         self.g.on_start = advance
-        out = server.combat_turn(json.dumps({}), who=server.H.get(P1))
+        out = turn_tool.combat_turn(json.dumps({}), who=core.H.get(P1))
         self.assertIn("end_turn: done", out)
         self.assertNotIn("background", out)
 
@@ -2250,18 +2251,18 @@ class CombatTurnBackgroundEnd(Base):
         self.g.combat["order"] = [o for o in self.g.combat["order"] if o["uuid"] in (P1, P2)] + \
             [o for o in self.g.combat["order"] if o["uuid"] not in (P1, P2)]
         self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
-        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         self.assertIn("end_turn: done", out)
         self.assertIn("'s turn: plan it", out)
 
     def test_wait_next_blocks_as_before(self):
         self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
-        out = server.combat_turn(self.plan(action="Shout_Dodge"), wait_next=True)
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), wait_next=True)
         self.assertNotIn("background", out)
 
     def test_off_switch(self):
-        server.END_ASYNC = False
-        out = server.combat_turn(self.plan(action="Shout_Dodge"))
+        turn_tool.END_ASYNC = False
+        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         self.assertIn("end_turn: done", out)
 
 
@@ -2272,7 +2273,7 @@ class DialogueAdvance(Base):
         self.g.ui_seq = [{"screen": "dialogue", "dialogue": {"text": "Hello there.", "continue": True}},
                          {"screen": "dialogue", "dialogue": {"text": "Listen.", "options": [{"i": 1, "text": "..."}]}},
                          choice]
-        out = server.dialogue_advance()
+        out = macro_tools.dialogue_advance()
         self.assertEqual([a["i"] for _, a in self.g.ops("ui.dialogue_choose")], [0, 1])
         self.assertIn("2 filler line(s)", out)
         self.assertIn("STOPPED: a real choice (2 options)", out)
@@ -2281,20 +2282,20 @@ class DialogueAdvance(Base):
     def test_never_picks_a_tagged_or_committing_option(self):
         for opt in ({"i": 1, "text": "Let me through.", "tags": ["PERSUASION"]}, {"i": 1, "text": "Attack them."}):
             self.g.ui_seq = [{"screen": "dialogue", "dialogue": {"options": [opt]}}]
-            out = server.dialogue_advance()
+            out = macro_tools.dialogue_advance()
             self.assertIn("0 filler line(s)", out)
         self.assertEqual(self.g.ops("ui.dialogue_choose"), [])
 
     def test_conversation_over(self):
-        self.assertIn("STOPPED: conversation ended", server.dialogue_advance())
+        self.assertIn("STOPPED: conversation ended", macro_tools.dialogue_advance())
 
     def test_nobody_in_a_conversation_returns_at_once(self):
         # naut series (latency): "0 filler line(s), STOPPED: conversation ended" took 2.7 s each (the whole 2.5 s
         # open window), 2-3 calls a run. The game says no party member is in one: wait DIALOGUE_IDLE_OPEN_S only.
         self.g.activity = {"in_dialogue": False}
         t = time.monotonic()
-        out = server.dialogue_advance()
-        self.assertLess(time.monotonic() - t, server.DIALOGUE_IDLE_OPEN_S + 0.6)
+        out = macro_tools.dialogue_advance()
+        self.assertLess(time.monotonic() - t, macro_tools.DIALOGUE_IDLE_OPEN_S + 0.6)
         self.assertIn("STOPPED: conversation ended", out)
         self.assertEqual(len(self.g.ops("nav.activity")), 1)
 
@@ -2302,7 +2303,7 @@ class DialogueAdvance(Base):
         self.g.activity = {"in_dialogue": True}  # started on the server, not drawn yet
         self.g.ui_seq = [{"screen": "game"}] * 4 + [{"screen": "dialogue", "dialogue": {"text": "Choose.", "options": [
             {"i": 1, "text": "Yes"}, {"i": 2, "text": "No"}]}}]
-        out = server.dialogue_advance()
+        out = macro_tools.dialogue_advance()
         self.assertIn("STOPPED: a real choice (2 options)", out)
 
     # naut series (helm): "*The helm's alien transponder - you've made it in time.*" in the party's combat turn.
@@ -2315,21 +2316,21 @@ class DialogueAdvance(Base):
                               ("tries", "still up after 8 skips")):
             self.g.autoskip = {"on": True, "line": {"id": 7, "tries": 8, "age": 4000, "blocked": blocked}}
             t = time.monotonic()
-            out = server.dialogue_advance()
+            out = macro_tools.dialogue_advance()
             self.assertLess(time.monotonic() - t, 2.5)  # not DIALOGUE_LINE_WAIT_S (15 s)
             self.assertIn("STOPPED: line still playing (a line playing 4s, " + says, out)
             self.assertIn("wait_for dialogue_ended or level_changed", out)
         self.g.autoskip = {"on": True, "line": {"id": 7, "notext": True, "tries": 60, "age": 61000, "blocked": "tries"}}
-        self.assertIn("a cinematic shot playing 61s", server.dialogue_advance())
+        self.assertIn("a cinematic shot playing 61s", macro_tools.dialogue_advance())
         self.g.autoskip = {"on": False}
-        self.assertIn("AutoSkip is off", server.dialogue_advance())
+        self.assertIn("AutoSkip is off", macro_tools.dialogue_advance())
 
     def test_a_line_autoskip_is_skipping_is_waited_for(self):
         # Skipping (no blocked) or too new: the usual wait, and the next prompt is clicked through.
         self.g.autoskip = {"on": True, "line": {"id": 7, "tries": 2, "age": 1500, "turn": True}}
         self.g.ui_seq = [self.HELM] * 8 + [{"screen": "dialogue", "dialogue": {"text": "Choose.", "options": [
             {"i": 1, "text": "Yes"}, {"i": 2, "text": "No"}]}}]
-        out = server.dialogue_advance()
+        out = macro_tools.dialogue_advance()
         self.assertIn("STOPPED: a real choice (2 options)", out)
         self.assertGreaterEqual(len(self.g.ops("autoskip.status")), 1)
 
@@ -2339,10 +2340,10 @@ class DialogueAdvance(Base):
                                (2.0, None)):
             self.g.calls.clear()
             self.g.autoskip = status
-            with mock.patch.object(server, "DIALOGUE_STUCK_EXIT_S", exit_s), \
-                    mock.patch.object(server, "DIALOGUE_LINE_WAIT_S", 1.2):
+            with mock.patch.object(macro_tools, "DIALOGUE_STUCK_EXIT_S", exit_s), \
+                    mock.patch.object(macro_tools, "DIALOGUE_LINE_WAIT_S", 1.2):
                 t = time.monotonic()
-                out = server.dialogue_advance()
+                out = macro_tools.dialogue_advance()
             self.assertGreaterEqual(time.monotonic() - t, 1.2)
             self.assertIn("STOPPED: line still playing", out)
             self.assertNotIn("line still playing (", out)
@@ -2353,13 +2354,13 @@ class DialogueAdvance(Base):
         # naut-r2: get_combat_state (dialogue_started in its events) took 15.4 s on the helm line.
         self.g.ui = self.HELM
         self.g.autoskip = {"on": True, "line": {"id": 7, "tries": 1, "age": 300, "turn": True}}
-        with mock.patch.object(server, "AUTO_DIALOGUE_READ_LINE_S", 0.6):
+        with mock.patch.object(macro_tools, "AUTO_DIALOGUE_READ_LINE_S", 0.6):
             t = time.monotonic()
-            out = server._auto_dialogue("get_combat_state", "COMBAT round=6", "dialogue_started []")
+            out = reporting._auto_dialogue("get_combat_state", "COMBAT round=6", "dialogue_started []")
             took = time.monotonic() - t
         self.assertLess(took, 1.5)
         self.assertIn("STOPPED: line still playing", out)
-        self.assertEqual(server.AUTO_DIALOGUE_READ_LINE_S, 3.0)  # the default; a talk_to/wait_for keeps 15 s
+        self.assertEqual(macro_tools.AUTO_DIALOGUE_READ_LINE_S, 3.0)  # the default; a talk_to/wait_for keeps 15 s
 
     def test_filler_rules(self):
         self.assertEqual(macros.dialogue_filler({"continue": True}), (True, 0, ""))
@@ -2379,7 +2380,7 @@ class AutoDialogue(Base):
         self.g.ui_seq = [{"screen": "game"},
                          {"screen": "dialogue", "dialogue": {"text": "Hello there.", "continue": True}},
                          self.CHOICE]
-        out = server.talk_to(self.gob)
+        out = travel.talk_to(self.gob)
         self.assertEqual([a["i"] for _, a in self.g.ops("ui.dialogue_choose")], [0])
         self.assertIn("auto-advanced 1 opening filler line(s)", out)
         self.assertIn("STOPPED: a real choice (2 options)", out)
@@ -2388,7 +2389,7 @@ class AutoDialogue(Base):
     def test_choose_dialogue_clicks_through_following_filler(self):
         self.g.ui_seq = [{"screen": "dialogue", "dialogue": {"text": "Hm.", "options": [{"i": 1, "text": "..."}]}},
                          self.CHOICE]
-        out = server.choose_dialogue(2)
+        out = dialogue.choose_dialogue(2)
         self.assertEqual([a["i"] for _, a in self.g.ops("ui.dialogue_choose")], [2, 1])
         self.assertIn("then auto-advanced 1 filler line(s)", out)
         self.assertIn("STOPPED: a real choice (2 options)", out)
@@ -2397,19 +2398,19 @@ class AutoDialogue(Base):
         for opt in ({"i": 1, "text": "Let me through.", "tags": ["PERSUASION"]}, {"i": 1, "text": "Attack them."}):
             self.g.calls.clear()
             self.g.ui_seq = [{"screen": "dialogue", "dialogue": {"text": "So?", "options": [opt]}}]
-            out = server.choose_dialogue(1)
+            out = dialogue.choose_dialogue(1)
             self.assertEqual([a["i"] for _, a in self.g.ops("ui.dialogue_choose")], [1])
             self.assertNotIn("auto-advanced", out)
             self.assertIn(opt["text"], out)
 
     def test_choose_dialogue_end(self):
         self.g.ui = {"screen": "game"}
-        out = server.choose_dialogue(1)
+        out = dialogue.choose_dialogue(1)
         self.assertIn("STOPPED: conversation ended", out)
 
     def test_plain_interact_adds_nothing_and_stays_quick(self):
         t = time.monotonic()
-        out = server.interact(self.chest)
+        out = world_tools.interact(self.chest)
         self.assertLess(time.monotonic() - t, 1.5)
         self.assertNotIn("DIALOGUE", out)
         self.assertEqual(self.g.ops("ui.dialogue_choose"), [])
@@ -2417,22 +2418,22 @@ class AutoDialogue(Base):
     def test_dialogue_started_event_after_a_walk(self):
         self.g.push("dialogue_started", {"speakers": [{"name": "Shadowheart"}]})
         self.g.ui_seq = [self.CHOICE]
-        out = server.wait_for("idle", timeout_s=0.1)
+        out = batch.wait_for("idle", timeout_s=0.1)
         self.assertIn("1. Yes", out)
         self.assertEqual(out.count("1. Yes"), 1)
         # A result that already shows the dialogue (get_status) is left alone.
         self.g.push("dialogue_started", {"speakers": [{"name": "Shadowheart"}]})
-        self.assertNotIn("STOPPED", server.get_status())
+        self.assertNotIn("STOPPED", overview.get_status())
 
     def test_ambient_dialogue_event_adds_nothing(self):
         self.g.push("dialogue_started", {"speakers": [{"name": "Lae'zel"}]})
-        out = server.wait_for("idle", timeout_s=0.1)
+        out = batch.wait_for("idle", timeout_s=0.1)
         self.assertNotIn("STOPPED", out)
 
     def test_autopilot_never_says_a_lone_spoken_answer(self):
         # dialogue_advance (asked for) may take "Hm."; the bridge's own autopilot leaves any spoken line to the agent.
         self.g.ui_seq = [{"screen": "dialogue", "dialogue": {"text": "Well?", "options": [{"i": 1, "text": "Hm."}]}}]
-        out = server.choose_dialogue(1)
+        out = dialogue.choose_dialogue(1)
         self.assertEqual([a["i"] for _, a in self.g.ops("ui.dialogue_choose")], [1])
         self.assertIn("the only answer is yours to give: 'Hm.'", out)
 
@@ -2440,9 +2441,9 @@ class AutoDialogue(Base):
         self.g.sheets = {P1: {"skills": {"Persuasion": 3, "Intimidation": 5, "SleightOfHand": 0},
                               "abilities": {"str": 17, "wis": 10}},
                          P2: {"skills": {"Persuasion": 6, "Intimidation": 2}, "abilities": {"str": 16}}}
-        server._sheet_cache.clear()
+        reporting._sheet_cache.clear()
         self.g.push("dialogue_started", {"party": [{"uuid": P1, "name": "Claude"}], "speakers": []})
-        server.get_events()
+        observe.get_events()
         self.g.ui = {"screen": "dialogue", "dialogue": {"text": "Halt.", "options": [
             {"i": 1, "text": "Let me through.", "tags": ["PERSUASION"]},
             {"i": 2, "text": "Move.", "tags": ["INTIMIDATION"]},
@@ -2450,8 +2451,8 @@ class AutoDialogue(Base):
             {"i": 4, "text": "Pray.", "tags": ["CLERIC"]},
             {"i": 5, "text": "Use the tadpole.", "tags": ["ILLITHID"]},
             {"i": 6, "text": "Leave."}], "dc": 15}}
-        out = server.get_dialogue()
-        claude, laezel = server.H.get(P1), server.H.get(P2)
+        out = observe.get_dialogue()
+        claude, laezel = core.H.get(P1), core.H.get(P2)
         self.assertIn(f"1. [PERSUASION] Let me through.  ← Persuasion check: {claude} +3 (party best {laezel} +6", out)
         self.assertIn(f"2. [INTIMIDATION] Move.  ← Intimidation check: {claude} +5", out)
         self.assertNotIn("party best", out.split("\n")[[i for i, l in enumerate(out.split("\n")) if "2. [" in l][0]])
@@ -2462,10 +2463,10 @@ class AutoDialogue(Base):
         self.assertNotIn("15", out.split("EVENTS")[0].replace("+15", ""))
 
     def test_off_switch(self):
-        saved, server.AUTO_DIALOGUE = server.AUTO_DIALOGUE, False
-        self.addCleanup(setattr, server, "AUTO_DIALOGUE", saved)
+        saved, macro_tools.AUTO_DIALOGUE = macro_tools.AUTO_DIALOGUE, False
+        self.addCleanup(setattr, macro_tools, "AUTO_DIALOGUE", saved)
         self.g.ui_seq = [{"screen": "dialogue", "dialogue": {"text": "Hello there.", "continue": True}}]
-        out = server.talk_to(self.gob)
+        out = travel.talk_to(self.gob)
         self.assertNotIn("STOPPED", out)
         self.assertEqual(self.g.ops("ui.dialogue_choose"), [])
 
@@ -2473,7 +2474,7 @@ class AutoDialogue(Base):
 class TravelTo(Base):
     def setUp(self) -> None:
         super().setUp()
-        server.SETTLE_S = 10.0  # the trips end within the settle window: their whole report comes back
+        plumbing.SETTLE_S = 10.0  # the trips end within the settle window: their whole report comes back
         (self.tmp / "markers.json").write_text(json.dumps([{"id": "m1", "label": "Old well", "pos": [50, 0, 0],
                                                              "level": "TUT"}]))
         self.g.result_for = lambda op, a: {"after": {"pos": a.get("pos")}} if op == "act.move_to" else {}
@@ -2485,7 +2486,7 @@ class TravelTo(Base):
         self.g.reach = reach
 
     def test_chained_walks_to_a_marker(self):
-        out = server.travel_to(marker="well", wait=True)
+        out = travel_macro.travel_to(marker="well", wait=True)
         self.assertEqual([a["pos"][0] for _, a in self.g.ops("act.move_to")], [30.0, 50.0])
         self.assertIn("travel_to marker m1 Old well: 50m", out)
         self.assertIn("arrived", out)
@@ -2495,41 +2496,41 @@ class TravelTo(Base):
         seen = [[{"label": "Escape Route", "pos": [50.0, 0.0, 0.0], "dist": 50.0, "dir": "E", "here": True}],
                 [{"label": "Escape Route", "pos": [50.0, 0.0, 66.0], "dist": 66.8, "dir": "N", "here": True}]]
         calls = []
-        server._objectives["last"] = []
-        server._objective_ids.clear()  # o1 = this marker, whatever ids earlier tests handed out
+        overview._objectives["last"] = []
+        overview._objective_ids.clear()  # o1 = this marker, whatever ids earlier tests handed out
 
         def markers(max_age=0.0):
             calls.append(max_age)
             arrived = any(a["pos"][0] >= 50.0 for _, a in self.g.ops("act.move_to"))
             ms = [dict(m) for m in seen[1 if arrived else 0]]
-            server._set_objectives(ms)
+            overview._set_objectives(ms)
             return ms
-        orig = server._objective_markers
-        server._objective_markers = markers
-        self.addCleanup(setattr, server, "_objective_markers", orig)
-        out = server.travel_to(objective="o1", wait=True)
+        orig = overview._objective_markers
+        overview._objective_markers = markers
+        self.addCleanup(setattr, overview, "_objective_markers", orig)
+        out = travel_macro.travel_to(objective="o1", wait=True)
         self.assertIn("arrived", out)
         self.assertIn('o1 Escape Route moved on: now 66.8m N: travel_to(objective="o1") again', out)
         self.assertEqual(calls[-1], 0.0)  # a fresh read on arrival, not the cached markers
 
     def test_no_way_further(self):
         self.g.reach = {"reachable": True, "pos": [0.2, 0, 0]}
-        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
         self.assertIn("STOPPED: no walkable ground leads further", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
 
     def test_no_way_further_says_why_the_games_route_was_not_taken(self):
         # live window #2: inside the Last Light Inn the straight legs dead-ended 106 m short, the reason unsaid
         self.g.reach = {"reachable": True, "pos": [0.2, 0, 0], "direct_why": "partial"}
-        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
         self.assertIn("; the game's path ends short of it", out)
-        out = server.travel_to(x=20.0, y=0.0, z=0.0, wait=True)  # one sampled leg: no route asked about
+        out = travel_macro.travel_to(x=20.0, y=0.0, z=0.0, wait=True)  # one sampled leg: no route asked about
         self.assertIn("STOPPED: no walkable ground leads further", out)
         self.assertNotIn("the game's path", out)
 
     def test_interrupt_stops_the_trip(self):
         self.g.on_start = lambda op, a: op == "act.move_to" and self.g.push("dialogue_started", {})
-        out = server.travel_to(marker="m1", wait=True)
+        out = travel_macro.travel_to(marker="m1", wait=True)
         self.assertIn("STOPPED: a conversation started", out)
         self.assertEqual(len(self.g.ops("act.move_to")), 1)
 
@@ -2538,14 +2539,14 @@ class TravelTo(Base):
         self.g.reach = {"reachable": True, "pos": [20.0, 0.0, 0.0]}
         self.g.result_for = lambda op, a: ({"stopped_short": True, "reason": "path blocked",
                                             "after": {"pos": [5.0, 0.0, 0.0]}} if op == "act.move_to" else {})
-        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
         # leg 1 gets 5 m closer (progress), legs 2 and 3 end at the same spot: stop after 2 stalls
         self.assertEqual(len(self.g.ops("act.move_to")), 3)
         self.assertIn("STOPPED: stopped short 2 legs in a row", out)
 
     def test_fire_on_the_only_way_stops_before_walking_into_it(self):
         self.g.reach = {"reachable": False, "hazard": {"surface": "Fire", "pos": [-18, 18, -424], "at_m": 6}}
-        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
         self.assertIn("STOPPED: the way on crosses Fire 6m ahead", out)
         self.assertEqual(self.g.ops("act.move_to"), [])
 
@@ -2554,7 +2555,7 @@ class TravelTo(Base):
             return {"reachable": True, "pos": [50.0, 0.0, 0.0], "avoided": 1,
                     "hazard_beyond": {"surface": "Acid", "at_m": 31}}
         self.g.reach = reach
-        out = server.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
+        out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True)
         self.assertIn("kept clear of Acid 31m ahead", out)
         self.assertIn("arrived", out)
 
@@ -2566,7 +2567,7 @@ class TravelTo(Base):
         self.g.dur["act.move_to"] = 0.2
         self.g.safe = {"safe": False, "standing_in": "Fire", "found": True, "pos": [-2.0, 0.0, 0.0],
                        "path_m": 2.0, "dir": "W"}
-        out = server.travel_to(marker="m1", wait=True)
+        out = travel_macro.travel_to(marker="m1", wait=True)
         # it steps out (toward the destination), then goes on
         self.assertIn("left Fire W 2m", out)
         self.assertEqual(self.g.ops("nav.safe_spot")[-1][1]["pos"], [50, 0, 0])
@@ -2580,7 +2581,7 @@ class TravelTo(Base):
         self.g.dur["act.move_to"] = 0.2
         self.g.safe = {"safe": False, "standing_in": "Fire", "found": True, "pos": [-2.0, 0.0, 0.0],
                        "path_m": 2.0, "dir": "W"}
-        out = server.travel_to(marker="m1", wait=True, avoid_hazards="strict")
+        out = travel_macro.travel_to(marker="m1", wait=True, avoid_hazards="strict")
         self.assertIn("standing in Fire", out)
         self.assertIn("left Fire W 2m", out)
         self.assertEqual(self.g.ops("act.move_to")[-1][1]["pos"], [-2.0, 0.0, 0.0])
@@ -2589,7 +2590,7 @@ class TravelTo(Base):
         self.g.watch["party"][0]["surface"] = "Fire"
         self.g.safe = {"safe": False, "standing_in": "Fire", "found": True, "pos": [3.0, 0.0, 0.0],
                        "path_m": 3.0, "dir": "E"}
-        out = server.travel_to(marker="m1", wait=True)
+        out = travel_macro.travel_to(marker="m1", wait=True)
         self.assertEqual(self.g.ops("act.move_to")[0][1]["pos"], [3.0, 0.0, 0.0])
         self.assertIn("left Fire E 3m", out)
         self.assertIn("arrived", out)
@@ -2597,7 +2598,7 @@ class TravelTo(Base):
     def test_marker_on_another_level(self):
         (self.tmp / "markers.json").write_text(json.dumps([{"id": "m1", "label": "x", "pos": [1, 0, 0],
                                                              "level": "WLD", "region": "Wilderness"}]))
-        self.assertIn("fast_travel there first", server.travel_to(marker="m1", wait=True))
+        self.assertIn("fast_travel there first", travel_macro.travel_to(marker="m1", wait=True))
 
 
 class Regroup(Base):
@@ -2610,14 +2611,14 @@ class Regroup(Base):
             if op == "act.move_to" and a.get("char") == P2:
                 self.g.watch["party"][1]["pos"] = list(a["pos"])
         self.g.on_start = arrive
-        out = server.regroup()
+        out = travel_macro.regroup()
         mv = self.g.ops("act.move_to")
         self.assertEqual((mv[0][1]["char"], mv[0][1]["pos"]), (P2, [0.0, 0.0, 0.0]))
         self.assertIn("1 walking", out)
         self.assertIn("(20m → 0m): back", out)
 
     def test_nobody_far(self):
-        self.assertIn("everyone is within", server.regroup())
+        self.assertIn("everyone is within", travel_macro.regroup())
 
 
 class ReadAll(Base):
@@ -2635,13 +2636,13 @@ class ReadAll(Base):
                 self.g.ui["screen"] = "game"
             return orig(op, args, context, timeout)
         self.g.rpc = rpc
-        out = server.read_all()
+        out = travel_macro.read_all()
         self.assertEqual([a["target"] for _, a in self.g.ops("act.interact")], [BOOK, LETTER])
         self.assertEqual(self.g.ops("act.interact")[1][1]["char"], P2)  # the owner reads it
         self.assertIn("The tadpoles must be removed.", out)
         self.assertEqual(len(self.g.ops("ui.dismiss")), 2)
         self.assertEqual(set(json.loads((self.tmp / "read_items.json").read_text())), {BOOK, LETTER})
-        self.assertIn("nothing new to read", server.read_all())
+        self.assertIn("nothing new to read", travel_macro.read_all())
 
     def test_readable_names(self):
         self.assertTrue(macros.readable({"name": "Necromancy of Thay"}) is False)  # needs a book word
@@ -2651,12 +2652,12 @@ class ReadAll(Base):
 
 class RestIfNeeded(Base):
     def test_no_rest_needed(self):
-        self.assertIn("no rest needed (lowest HP 100%)", server.rest_if_needed())
+        self.assertIn("no rest needed (lowest HP 100%)", travel_macro.rest_if_needed())
         self.assertEqual(self.g.ops("ui.short_rest"), [])
 
     def test_short_rest_when_low(self):
         self.g.watch["party"][1]["hp"] = 6
-        out = server.rest_if_needed()
+        out = travel_macro.rest_if_needed()
         self.assertEqual(len(self.g.ops("ui.short_rest")), 1)
         self.assertIn("low: ", out)
         self.assertIn("6/20", out)
@@ -2664,33 +2665,33 @@ class RestIfNeeded(Base):
     def test_long_rest_only_when_allowed(self):
         self.g.watch["party"][0]["hp"] = 2
         self.g.refuse_if = lambda op, a: "no short rests left" if op == "ui.short_rest" else None
-        out = server.rest_if_needed()
+        out = travel_macro.rest_if_needed()
         self.assertIn("long rest at camp", out)
         self.assertEqual(self.g.ops("ui.long_rest"), [])
-        server.rest_if_needed(allow_long=True)
+        travel_macro.rest_if_needed(allow_long=True)
         self.assertEqual(len(self.g.ops("act.go_to_camp")), 1)
         self.assertEqual(len(self.g.ops("ui.long_rest")), 1)
 
 
 class ClockStuck(unittest.TestCase):
     def setUp(self) -> None:
-        saved = (server.DEADLINE, server.PROGRESS_PATH, dict(server._clock_shown), dict(server._stuck_cache))
+        saved = (core.DEADLINE, core.PROGRESS_PATH, dict(core._clock_shown), dict(core._stuck_cache))
         self.addCleanup(self._restore, saved)
         self.path = Path(tempfile.mkdtemp()) / "S005.progress.jsonl"
         self.addCleanup(shutil.rmtree, self.path.parent, True)
-        server.PROGRESS_PATH = str(self.path)
-        server.DEADLINE = time.time() + 40 * 60
-        server._clock_shown.update(at=time.time(), stuck=None)
-        p = mock.patch.object(server, "_fight_now", lambda: False)  # this module's fake game may be mid-fight
+        core.PROGRESS_PATH = str(self.path)
+        core.DEADLINE = time.time() + 40 * 60
+        core._clock_shown.update(at=time.time(), stuck=None)
+        p = mock.patch.object(core, "_fight_now", lambda: False)  # this module's fake game may be mid-fight
         p.start()
         self.addCleanup(p.stop)
 
     def _restore(self, saved) -> None:
-        server.DEADLINE, server.PROGRESS_PATH = saved[0], saved[1]
-        server._clock_shown.clear()
-        server._clock_shown.update(saved[2])
-        server._stuck_cache.clear()
-        server._stuck_cache.update(saved[3])
+        core.DEADLINE, core.PROGRESS_PATH = saved[0], saved[1]
+        core._clock_shown.clear()
+        core._clock_shown.update(saved[2])
+        core._stuck_cache.clear()
+        core._stuck_cache.update(saved[3])
 
     def write(self, *recs: dict) -> None:
         with self.path.open("a") as f:
@@ -2699,18 +2700,18 @@ class ClockStuck(unittest.TestCase):
         os.utime(self.path, (time.time(), time.time() + len(self.path.read_text())))  # new mtime each write
 
     def test_stuck_signal_shows_at_once_then_clears(self):
-        self.assertNotIn("no story progress", server._clock_line())  # shown recently, not stuck: terse at most
+        self.assertNotIn("no story progress", core._clock_line())  # shown recently, not stuck: terse at most
         now = time.time()
         self.write({"type": "stuck", "t": now, "since": now - 17 * 60, "idle_min": 17, "actions": 40})
-        line = server._clock_line()
+        line = core._clock_line()
         self.assertIn(" · no story progress for 17 min: change approach", line)
-        self.assertNotIn("no story progress", server._clock_line())  # announced once, then with the clock
+        self.assertNotIn("no story progress", core._clock_line())  # announced once, then with the clock
         self.write({"type": "progress", "t": now + 1, "kind": "area", "what": "x", "points": 3})
-        self.assertNotIn("no story progress", server._clock())
+        self.assertNotIn("no story progress", core._clock())
 
     def test_wrapup_points_to_the_playbook(self):
-        server.DEADLINE = time.time() + 5 * 60
-        line = server._clock_line()
+        core.DEADLINE = time.time() + 5 * 60
+        line = core._clock_line()
         self.assertIn("WRAP UP NOW", line)
         self.assertIn("knowledge/playbooks/session-wrapup.md", line)
         self.assertNotIn("skill", line)

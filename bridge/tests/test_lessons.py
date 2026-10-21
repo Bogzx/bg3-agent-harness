@@ -15,7 +15,8 @@ from pathlib import Path
 
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
-from bg3ai import lessons, server  # noqa: E402
+from bg3ai import lessons  # noqa: E402
+from bg3ai.tools import core, reporting  # noqa: E402
 
 LESSONS_MD = """# Lessons from fights
 
@@ -132,13 +133,13 @@ class PlaceInsideTrigger(unittest.TestCase):
 
 
 class ServerHook(unittest.TestCase):
-    """server._lessons_text: a fight start reads state.combat + state.status once and shows matching lessons."""
+    """reporting._lessons_text: a fight start reads state.combat + state.status once and shows matching lessons."""
 
     def setUp(self):
         d = Path(tempfile.mkdtemp())
         (d / "lessons.md").write_text(LESSONS_MD)
-        self.saved = (server.LESSONS, server.game)
-        server.LESSONS = lessons.Store(d / "lessons.md")
+        self.saved = (reporting.LESSONS, core.game)
+        reporting.LESSONS = lessons.Store(d / "lessons.md")
         self.reads = []
         self.status = {"region": "Shadow-Cursed Lands", "subregion": "Gauntlet of Shar"}
         test = self
@@ -154,28 +155,28 @@ class ServerHook(unittest.TestCase):
                 if op == "state.status":
                     return test.status
                 return None
-        server.game = G()
+        core.game = G()
 
     def tearDown(self):
-        server.LESSONS, server.game = self.saved
+        reporting.LESSONS, core.game = self.saved
 
     def test_fight_start_then_quiet_then_end(self):
-        out = server._lessons_text("use_ability", "use_ability: done", "EVENTS\n  combat_started")
+        out = reporting._lessons_text("use_ability", "use_ability: done", "EVENTS\n  combat_started")
         self.assertIn("Soulhunter", out)
         self.assertIn("antechamber", out)          # the place matches too
         self.assertNotIn("Undead", out)
         self.assertEqual(self.reads, ["state.combat", "state.status", "state.nearby"])
-        self.assertEqual(server._lessons_text("combat_turn", "TURN …", ""), "")
+        self.assertEqual(reporting._lessons_text("combat_turn", "TURN …", ""), "")
         self.assertEqual(len(self.reads), 3)       # no reads while the fight runs
-        server._lessons_text("combat_turn", "…", "EVENTS\n  combat_ended")
-        self.assertIn("Soulhunter", server._lessons_text("get_combat_state", "COMBAT round=1", ""))
+        reporting._lessons_text("combat_turn", "…", "EVENTS\n  combat_ended")
+        self.assertIn("Soulhunter", reporting._lessons_text("get_combat_state", "COMBAT round=1", ""))
 
     def test_enemy_status_matches_a_trigger_stem(self):
         # S035 Self-Same Trial: the mirrors are named like the party; only [Mirrored] (status) tells them apart.
-        server.LESSONS.path.write_text(
+        reporting.LESSONS.path.write_text(
             LESSONS_MD + "- WHEN mirror, Sacrificial Bowl: mirrors copy our gear → strip it first (S035) [seen]\n")
         self.status = {"region": "Shadow-Cursed Lands", "subregion": None}
-        orig = server.game.try_rpc
+        orig = core.game.try_rpc
 
         def try_rpc(op, args=None, **kw):
             if op == "state.combat":
@@ -185,35 +186,35 @@ class ServerHook(unittest.TestCase):
                 return {"characters": [{"uuid": "u-k2", "name": "Karlach",
                                         "statuses": [{"id": "SELF_SAME_MIRRORED", "name": "Mirrored"}]}]}
             return orig(op, args, **kw)
-        server.game.try_rpc = try_rpc
-        out = server._lessons_text("use_ability", "use_ability: done", "EVENTS\n  combat_started")
+        core.game.try_rpc = try_rpc
+        out = reporting._lessons_text("use_ability", "use_ability: done", "EVENTS\n  combat_started")
         self.assertIn("strip it first", out)
 
     def test_no_reads_without_a_fight(self):
-        self.assertEqual(server._lessons_text("move_to", "move_to: done", ""), "")
+        self.assertEqual(reporting._lessons_text("move_to", "move_to: done", ""), "")
         self.assertEqual(self.reads, [])
 
     def test_place_lessons_from_the_status_where_line(self):
-        out = server._lessons_text("get_status", "WHERE Gauntlet of Shar · Shadow-Cursed Lands | gold 5\nPARTY …", "")
+        out = reporting._lessons_text("get_status", "WHERE Gauntlet of Shar · Shadow-Cursed Lands | gold 5\nPARTY …", "")
         self.assertIn("antechamber", out)
         self.assertEqual(self.reads, [])
 
     def test_fight_start_matches_the_place_before_the_fight(self):
         # S035 19:32: combat_started and WHERE Self-Same Trial · … -> Shadow-Cursed Lands in the same result.
-        server.LESSONS.region = "Gauntlet of Shar · Shadow-Cursed Lands"
+        reporting.LESSONS.region = "Gauntlet of Shar · Shadow-Cursed Lands"
         body = "move_to: INTERRUPTED — combat started\nCHANGES\n  WHERE Gauntlet of Shar · Shadow-Cursed Lands -> Shadow-Cursed Lands"
         self.status = {"region": "Shadow-Cursed Lands", "subregion": ""}
-        out = server._lessons_text("move_to", body, "EVENTS\n  combat_started")
+        out = reporting._lessons_text("move_to", body, "EVENTS\n  combat_started")
         self.assertIn("antechamber", out)
 
     def test_place_lessons_from_a_move_results_changes(self):
         # S035: the Gauntlet was entered through move_to results only (2 get_status calls in 25 min).
         body = ("move_to: done — travelled=12.0\nCHANGES\n  WHERE Self-Same Trial · Shadow-Cursed Lands -> "
                 "Gauntlet of Shar · Shadow-Cursed Lands\n  e5 Karlach moved 6m SW")
-        out = server._lessons_text("move_to", body, "")
+        out = reporting._lessons_text("move_to", body, "")
         self.assertIn("LESSONS for Gauntlet of Shar · Shadow-Cursed Lands", out)
         self.assertNotIn("Karlach", out.split("\n")[0])
-        self.assertEqual(server._lessons_text("move_to", body, ""), "")   # same place: once
+        self.assertEqual(reporting._lessons_text("move_to", body, ""), "")   # same place: once
         self.assertEqual(self.reads, [])
 
 

@@ -17,8 +17,9 @@ from typing import Any
 _RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit (/tmp filled up 2026-10-10)
 os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
-from bg3ai import actq, server  # noqa: E402
+from bg3ai import actq  # noqa: E402
 from bg3ai.game import GameError, JobResult  # noqa: E402
+from bg3ai.tools import batch, core, observe, overview, plumbing, queueing, reporting, world_tools  # noqa: E402
 
 P1 = "11111111-2222-3333-4444-555555555555"
 P2 = "22222222-2222-3333-4444-555555555555"
@@ -147,42 +148,42 @@ class FakeGame:
 class Base(unittest.TestCase):
     def setUp(self) -> None:
         self.g = FakeGame()
-        saved = (server.game, server._watch_game, server._queue_mgr, actq.WATCH_EVERY_S, actq.UI_EVERY_S)
-        server.game = self.g
-        server._watch_game = self.g
-        server._queue_mgr = None
-        server._async.clear()
+        saved = (core.game, queueing._watch_game, queueing._queue_mgr, actq.WATCH_EVERY_S, actq.UI_EVERY_S)
+        core.game = self.g
+        queueing._watch_game = self.g
+        queueing._queue_mgr = None
+        plumbing._async.clear()
         actq.WATCH_EVERY_S, actq.UI_EVERY_S = 0.01, 0.01
         self.addCleanup(self._restore, saved)
         # Old tests check the instant-return shape; settle-window tests set it themselves.
-        saved_settle, server.SETTLE_S = server.SETTLE_S, 0.0
-        self.addCleanup(setattr, server, "SETTLE_S", saved_settle)
-        server._pace.update(issued_at=0.0, calls_since=0, next_shown=0, nudge=False)
-        self.door = server.H.get(DOOR, "Door")
-        self.gob = server.H.get(GOB, "Goblin")
-        server.H.get(P1, "Claude")
-        server.H.get(P2, "Lae'zel")
+        saved_settle, plumbing.SETTLE_S = plumbing.SETTLE_S, 0.0
+        self.addCleanup(setattr, plumbing, "SETTLE_S", saved_settle)
+        reporting._pace.update(issued_at=0.0, calls_since=0, next_shown=0, nudge=False)
+        self.door = core.H.get(DOOR, "Door")
+        self.gob = core.H.get(GOB, "Goblin")
+        core.H.get(P1, "Claude")
+        core.H.get(P2, "Lae'zel")
 
     def _restore(self, saved) -> None:
-        if server._queue_mgr is not None:
-            server._queue_mgr.cancel()
-            for q in server._queue_mgr.queues.values():
+        if queueing._queue_mgr is not None:
+            queueing._queue_mgr.cancel()
+            for q in queueing._queue_mgr.queues.values():
                 if q.thread:
                     q.thread.join(2)
-        server.game, server._watch_game, server._queue_mgr, actq.WATCH_EVERY_S, actq.UI_EVERY_S = saved
+        core.game, queueing._watch_game, queueing._queue_mgr, actq.WATCH_EVERY_S, actq.UI_EVERY_S = saved
 
     def wait_queue_idle(self, s: float = 3.0) -> None:
         end = time.monotonic() + s
-        while server._queues().busy() and time.monotonic() < end:
+        while queueing._queues().busy() and time.monotonic() < end:
             time.sleep(0.01)
-        self.assertFalse(server._queues().busy(), "queue still busy")
+        self.assertFalse(queueing._queues().busy(), "queue still busy")
 
 
 class AsyncActions(Base):
     def test_move_to_returns_at_once_with_eta(self):
         self.g.dur["act.move_to"] = 5
         t0 = time.monotonic()
-        out = server.move_to(target=self.door)
+        out = world_tools.move_to(target=self.door)
         self.assertLess(time.monotonic() - t0, 0.5)
         self.assertTrue(out.startswith("move_to: started j1, ETA 2.4s (8m)"), out)
         self.assertTrue(self.g.ops("act.move_to")[0][1]["notify"])
@@ -190,12 +191,12 @@ class AsyncActions(Base):
     def test_a_waited_job_that_outlives_its_wait_is_followed(self):
         # ACT-10: "still running (use wait to keep watching)" with no id and no job_finished: the outcome was lost
         self.g.dur["act.interact"] = 0.4
-        out = server._act("interact", "act.interact", {"char": P1, "target": DOOR}, wait_s=0.05)
+        out = plumbing._act("interact", "act.interact", {"char": P1, "target": DOOR}, wait_s=0.05)
         self.assertIn("still running", out)
         self.assertIn("goes on as j1", out)
-        self.assertIn("j1", server._async)
-        self.assertIn("RUNNING j1 interact", server.get_events())
-        out = server.wait_for("j1", timeout_s=2)
+        self.assertIn("j1", plumbing._async)
+        self.assertIn("RUNNING j1 interact", observe.get_events())
+        out = batch.wait_for("j1", timeout_s=2)
         self.assertIn("interact: done", out)
 
     def test_a_waited_job_that_ends_before_it_is_followed_reports_its_end(self):
@@ -207,32 +208,32 @@ class AsyncActions(Base):
             return orig(op, args, context, timeout)
         self.g.rpc = ended
         self.g.dur["act.interact"] = 5
-        out = server._act("interact", "act.interact", {"char": P1, "target": DOOR}, wait_s=0.05)
+        out = plumbing._act("interact", "act.interact", {"char": P1, "target": DOOR}, wait_s=0.05)
         self.assertIn("interact: FAILED — could not use that", out)
-        self.assertNotIn("j1", server._async)
+        self.assertNotIn("j1", plumbing._async)
 
     def test_async_refusal_is_reported_immediately(self):
         self.g.refuse["act.move_to"] = "no walkable path there"
-        out = server.move_to(target=self.door)
+        out = world_tools.move_to(target=self.door)
         self.assertIn("FAILED — no walkable path there", out)
-        self.assertEqual(server._async, {})
+        self.assertEqual(plumbing._async, {})
 
     def test_wait_for_job(self):
-        server.move_to(target=self.door)
-        out = server.wait_for("j1", timeout_s=2)
+        world_tools.move_to(target=self.door)
+        out = batch.wait_for("j1", timeout_s=2)
         self.assertIn("move_to: done", out)
         self.assertNotIn("job_finished", out)  # the result already says it: no duplicate EVENTS line
 
     def test_wait_for_times_out_and_lists_running(self):
         self.g.dur["act.move_to"] = 5
-        server.move_to(target=self.door)
-        out = server.wait_for("j1", timeout_s=0.2)
+        world_tools.move_to(target=self.door)
+        out = batch.wait_for("j1", timeout_s=0.2)
         self.assertIn("still waiting for j1", out)
         self.assertIn("RUNNING j1 move_to", out)
 
     def test_wait_for_event_kind_does_not_eat_events(self):
         self.g.push("combat_started", {})
-        out = server.wait_for("combat_started,dialogue_started", timeout_s=1)
+        out = batch.wait_for("combat_started,dialogue_started", timeout_s=1)
         self.assertIn("combat_started happened", out)
         self.assertIn("EVENTS", out)
 
@@ -241,7 +242,7 @@ class AsyncActions(Base):
             time.sleep(0.15)
             self.g.screen = "reaction"
         threading.Thread(target=later).start()
-        out = server.wait_for("combat_started", timeout_s=3)
+        out = batch.wait_for("combat_started", timeout_s=3)
         self.assertIn("stopped waiting: reaction on screen", out)
 
     def test_wait_for_stops_when_the_rest_screen_opens(self):
@@ -253,53 +254,53 @@ class AsyncActions(Base):
             self.g.screen = "rest"
         threading.Thread(target=later).start()
         t0 = time.monotonic()
-        out = server.wait_for("dialogue_started,combat_started", timeout_s=5)
+        out = batch.wait_for("dialogue_started,combat_started", timeout_s=5)
         self.assertLess(time.monotonic() - t0, 2.0)
         self.assertIn("stopped waiting: the rest screen is open and waits on you: long_rest finishes it", out)
 
     def test_wait_for_an_event_on_an_input_screen_answers_at_once(self):
         self.g.screen = "rest"
         t0 = time.monotonic()
-        out = server.wait_for("dialogue_started,combat_started", timeout_s=5)
+        out = batch.wait_for("dialogue_started,combat_started", timeout_s=5)
         self.assertLess(time.monotonic() - t0, 1.0)
         self.assertIn("not waiting: the rest screen is open and waits on you", out)
 
     def test_wait_for_an_event_with_nothing_running_gives_up_early(self):
-        old = server.IDLE_EVENT_WAIT_S
-        server.IDLE_EVENT_WAIT_S = 0.2
+        old = queueing.IDLE_EVENT_WAIT_S
+        queueing.IDLE_EVENT_WAIT_S = 0.2
         try:
             t0 = time.monotonic()
-            out = server.wait_for("dialogue_started", timeout_s=5)
+            out = batch.wait_for("dialogue_started", timeout_s=5)
             self.assertLess(time.monotonic() - t0, 1.5)
             self.assertIn("nothing is running that would cause dialogue_started", out)
             self.g.dur["act.move_to"] = 0.6  # a walk is running: it could start one, so keep waiting
-            server.move_to(target=self.door)
-            out = server.wait_for("dialogue_started", timeout_s=0.5)
+            world_tools.move_to(target=self.door)
+            out = batch.wait_for("dialogue_started", timeout_s=0.5)
             self.assertIn("still waiting for dialogue_started", out)
         finally:
-            server.IDLE_EVENT_WAIT_S = old
+            queueing.IDLE_EVENT_WAIT_S = old
 
     def test_wait_for_my_turn(self):
         self.g.combat = {"active": True, "current": P1}
-        self.assertIn("'s turn", server.wait_for("my_turn", timeout_s=1))
+        self.assertIn("'s turn", batch.wait_for("my_turn", timeout_s=1))
 
     def test_get_events_never_blocks_and_shows_running(self):
         self.g.dur["act.move_to"] = 5
-        server.move_to(target=self.door)
+        world_tools.move_to(target=self.door)
         t0 = time.monotonic()
-        out = server.get_events()
+        out = observe.get_events()
         self.assertLess(time.monotonic() - t0, 0.3)
         self.assertIn("RUNNING j1 move_to ~", out)
 
     def test_blocking_tools_still_block_by_default(self):
-        out = server.interact(self.door)
+        out = world_tools.interact(self.door)
         self.assertIn("interact: done", out)
 
 
 class DoActions(Base):
     def test_conditions_skip_and_run(self):
         self.g.watch["party"] = [{"uuid": P1, "hp": 8, "max_hp": 20}]
-        out = server.do_actions('[{"tool":"interact","target":"%s","unless":"in_combat"},'
+        out = batch.do_actions('[{"tool":"interact","target":"%s","unless":"in_combat"},'
                                 '{"tool":"use_ability","ability":"Shout_SecondWind","if":"in_combat"},'
                                 '{"tool":"use_ability","ability":"Target_Heal","target":"Claude","if":"hp_below:50"}]'
                                 % self.door)
@@ -311,7 +312,7 @@ class DoActions(Base):
 
     def test_failed_step_stops_and_lists_what_was_left(self):
         self.g.refuse["act.interact"] = "it is locked"
-        out = server.do_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"},'
+        out = batch.do_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"},'
                                 '{"tool":"move_to","target":"%s"}]' % (self.door, self.door, self.door))
         self.assertIn("1. interact: FAILED — it is locked", out)
         self.assertIn("STOPPED: step 1 interact %s failed; not run: pick_up %s, move_to %s"
@@ -326,7 +327,7 @@ class DoActions(Base):
                     seen=[{"uuid": GOB, "name": "Goblin", "hostile": True}])).start()
         self.g.on_start = hostile_appears
         t0 = time.monotonic()
-        out = server.do_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
+        out = batch.do_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
                                 % (self.door, self.door))
         self.assertLess(time.monotonic() - t0, 2.0)
         self.assertIn("move_to: INTERRUPTED — cancelled", out)
@@ -339,7 +340,7 @@ class DoActions(Base):
         def hostile(op, args):
             self.g.watch["seen"] = [{"uuid": GOB, "hostile": True}]
         self.g.on_start = hostile
-        out = server.do_actions('[{"tool":"interact","target":"%s"},{"tool":"interact","target":"%s"}]'
+        out = batch.do_actions('[{"tool":"interact","target":"%s"},{"tool":"interact","target":"%s"}]'
                                 % (self.door, self.door), ignore="hostile")
         self.assertNotIn("STOPPED", out)
 
@@ -347,7 +348,7 @@ class DoActions(Base):
         def hurt(op, args):
             self.g.watch["party"] = [{"uuid": P1, "hp": 5, "max_hp": 20}]
         self.g.on_start = hurt
-        out = server.do_actions('[{"tool":"interact","target":"%s"},{"tool":"interact","target":"%s"}]'
+        out = batch.do_actions('[{"tool":"interact","target":"%s"},{"tool":"interact","target":"%s"}]'
                                 % (self.door, self.door))
         self.assertIn("STOPPED: ", out)
         self.assertIn("HP 5/20", out)
@@ -356,7 +357,7 @@ class DoActions(Base):
         def burn(op, args):
             self.g.watch["party"] = [{"uuid": P1, "hp": 18, "max_hp": 20, "surface": "Fire"}]
         self.g.on_start = burn
-        out = server.do_actions('[{"tool":"interact","target":"%s"},{"tool":"interact","target":"%s"}]'
+        out = batch.do_actions('[{"tool":"interact","target":"%s"},{"tool":"interact","target":"%s"}]'
                                 % (self.door, self.door))
         self.assertIn("STOPPED: ", out)
         self.assertIn("standing in Fire", out)
@@ -371,15 +372,15 @@ class DoActions(Base):
         self.assertEqual(st.args["targets"], "e1,e2")
 
     def test_bad_steps(self):
-        self.assertIn("FAILED: step 1: 'save_game' can't be batched", server.do_actions('[{"tool":"save_game"}]'))
+        self.assertIn("FAILED: step 1: 'save_game' can't be batched", batch.do_actions('[{"tool":"save_game"}]'))
         self.assertIn("unknown condition 'drunk'",
-                      server.do_actions('[{"tool":"wait","if":"drunk"}]'))
+                      batch.do_actions('[{"tool":"wait","if":"drunk"}]'))
 
     def test_combat_start_mid_batch(self):
         def fight(op, args):
             self.g.push("combat_started", {})
         self.g.on_start = fight
-        out = server.do_actions('[{"tool":"interact","target":"%s"},{"tool":"interact","target":"%s"}]'
+        out = batch.do_actions('[{"tool":"interact","target":"%s"},{"tool":"interact","target":"%s"}]'
                                 % (self.door, self.door))
         self.assertIn("STOPPED: combat started", out)
 
@@ -388,17 +389,17 @@ class Queue(Base):
     def test_queue_runs_in_background_and_reports_by_event(self):
         self.g.dur["act.interact"] = 0.2
         t0 = time.monotonic()
-        out = server.queue_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"}]'
+        out = batch.queue_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"}]'
                                    % (self.door, self.door))
         self.assertLess(time.monotonic() - t0, 0.3)
         self.assertIn("queued 2 step(s) for", out)
-        self.assertFalse(server._batch["active"])  # the worker's batch flag is its own
-        out = server.wait_for("queue", timeout_s=3)
+        self.assertFalse(reporting._batch["active"])  # the worker's batch flag is its own
+        out = batch.wait_for("queue", timeout_s=3)
         self.assertIn("done (2 steps)", out)
         self.assertNotIn("queue_done", out)  # the wait_for result is the report: no duplicate EVENTS line
 
     def test_queue_steps_act_for_the_queue_owner(self):
-        server.queue_actions('[{"tool":"interact","target":"%s"}]' % self.door, who="Lae'zel")
+        batch.queue_actions('[{"tool":"interact","target":"%s"}]' % self.door, who="Lae'zel")
         self.wait_queue_idle()
         self.assertEqual(self.g.ops("act.interact")[0][1]["char"], P2)
 
@@ -409,7 +410,7 @@ class Queue(Base):
             if op == "act.move_to":
                 threading.Timer(0.1, lambda: self.g.push("dialogue_started", {})).start()
         self.g.on_start = talk
-        server.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"},'
+        batch.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"},'
                              '{"tool":"pick_up","item":"%s"}]' % (self.door, self.door, self.door))
         self.wait_queue_idle()
         note = [a for op, a in self.g.ops("act.note")][-1]
@@ -425,7 +426,7 @@ class Queue(Base):
             if op == "act.move_to":
                 self.g.push("dialogue_started", {"automated": True})
         self.g.on_start = banter
-        server.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"wait","seconds":0.2}]' % self.door)
+        batch.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"wait","seconds":0.2}]' % self.door)
         self.wait_queue_idle()
         self.assertEqual(self.g.ops("act.note")[-1][1]["kind"], "queue_done")
 
@@ -435,16 +436,16 @@ class Queue(Base):
                 self.g.push("dialogue_started", {})
                 self.g.screen = "dialogue"
         self.g.on_start = talk
-        server.queue_actions('[{"tool":"talk_to","npc":"%s"},{"tool":"wait","seconds":0.2}]' % self.gob)
+        batch.queue_actions('[{"tool":"talk_to","npc":"%s"},{"tool":"wait","seconds":0.2}]' % self.gob)
         self.wait_queue_idle()
         self.assertEqual(self.g.ops("act.note")[-1][1]["kind"], "queue_done")
 
     def test_cancel_queue(self):
         self.g.dur["act.move_to"] = 5
-        server.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
+        batch.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
                              % (self.door, self.door))
         time.sleep(0.1)
-        out = server.cancel_queue()
+        out = batch.cancel_queue()
         self.assertIn("stopped move_to", out)
         self.assertIn("dropped 1", out)
         self.wait_queue_idle()
@@ -452,32 +453,32 @@ class Queue(Base):
 
     def test_appending_while_running_extends_the_same_run(self):
         self.g.dur["act.interact"] = 0.2
-        server.queue_actions('[{"tool":"interact","target":"%s"}]' % self.door)
-        server.queue_actions('[{"tool":"pick_up","item":"%s"}]' % self.door)
+        batch.queue_actions('[{"tool":"interact","target":"%s"}]' % self.door)
+        batch.queue_actions('[{"tool":"pick_up","item":"%s"}]' % self.door)
         self.wait_queue_idle()
         self.assertEqual(len(self.g.ops("act.pickup")), 1)
 
     def test_two_characters_in_parallel(self):
         self.g.dur["act.move_to"] = 0.4
         t0 = time.monotonic()
-        server.queue_actions('[{"tool":"move_to","target":"%s"}]' % self.door, who="Claude")
-        server.queue_actions('[{"tool":"move_to","target":"%s"}]' % self.door, who="Lae'zel")
+        batch.queue_actions('[{"tool":"move_to","target":"%s"}]' % self.door, who="Claude")
+        batch.queue_actions('[{"tool":"move_to","target":"%s"}]' % self.door, who="Lae'zel")
         self.wait_queue_idle()
         self.assertLess(time.monotonic() - t0, 0.75)
         self.assertEqual({a["char"] for _, a in self.g.ops("act.move_to")}, {P1, P2})
 
     def test_do_actions_wait_false_queues(self):
-        out = server.do_actions('[{"tool":"interact","target":"%s"}]' % self.door, wait=False)
+        out = batch.do_actions('[{"tool":"interact","target":"%s"}]' % self.door, wait=False)
         self.assertIn("queued 1 step(s)", out)
         self.wait_queue_idle()
 
     def test_running_text_shows_queue(self):
         self.g.dur["act.move_to"] = 2
-        server.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
+        batch.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
                              % (self.door, self.door))
         time.sleep(0.1)
-        out = server.get_events()
-        self.assertIn(f"queue {server.H.get(P1)} Claude: move_to {self.door} then interact {self.door}", out)
+        out = observe.get_events()
+        self.assertIn(f"queue {core.H.get(P1)} Claude: move_to {self.door} then interact {self.door}", out)
 
 
 class Parsing(unittest.TestCase):
@@ -499,14 +500,14 @@ class WaitForNoop(Base):
     def setUp(self) -> None:
         super().setUp()
         self.recs: list[dict] = []
-        orig = server.METRICS.write
-        server.METRICS.write = lambda rec: self.recs.append(rec)
-        self.addCleanup(setattr, server.METRICS, "write", orig)
-        server._noop_waits["n"] = 0
+        orig = core.METRICS.write
+        core.METRICS.write = lambda rec: self.recs.append(rec)
+        self.addCleanup(setattr, core.METRICS, "write", orig)
+        reporting._noop_waits["n"] = 0
 
     def timed(self, target: str, timeout_s: float = 5.0) -> tuple[str, float]:
         t0 = time.monotonic()
-        out = server.wait_for(target, timeout_s=timeout_s)
+        out = batch.wait_for(target, timeout_s=timeout_s)
         return out, time.monotonic() - t0
 
     def last_noop(self):
@@ -539,7 +540,7 @@ class WaitForNoop(Base):
         self.assertIn("already in combat", out)
 
     def test_finished_job_returns_at_once(self):
-        server.move_to(target=self.door)
+        world_tools.move_to(target=self.door)
         time.sleep(0.05)
         out, dt = self.timed("j1")
         self.assertLess(dt, 0.4)
@@ -561,38 +562,38 @@ class WaitForNoop(Base):
 
     def test_waits_while_a_job_runs_then_a_short_grace(self):
         self.g.dur["act.move_to"] = 0.4
-        server.move_to(target=self.door)
+        world_tools.move_to(target=self.door)
         out, dt = self.timed("dialogue_started", timeout_s=5)
-        self.assertGreater(dt, 0.4 + server.EVENT_GRACE_S - 0.15)
-        self.assertLess(dt, 0.4 + server.EVENT_GRACE_S + 0.6)
+        self.assertGreater(dt, 0.4 + batch.EVENT_GRACE_S - 0.15)
+        self.assertLess(dt, 0.4 + batch.EVENT_GRACE_S + 0.6)
         self.assertIn("nothing is running that would cause dialogue_started", out)
         self.assertIsNone(self.last_noop())  # it really waited for the walk
 
     def test_world_events_keep_the_idle_fallback(self):
-        old, server.IDLE_EVENT_WAIT_S = server.IDLE_EVENT_WAIT_S, 0.4
+        old, queueing.IDLE_EVENT_WAIT_S = queueing.IDLE_EVENT_WAIT_S, 0.4
         try:
             out, dt = self.timed("combat_started,dialogue_started", timeout_s=5)  # an ambush needs no job of ours
             self.assertGreater(dt, 0.35)
             self.assertIn("after 0.", out)
         finally:
-            server.IDLE_EVENT_WAIT_S = old
+            queueing.IDLE_EVENT_WAIT_S = old
 
     def test_repeated_world_wait_with_only_reads_between_answers_at_once(self):
-        old, server.IDLE_EVENT_WAIT_S = server.IDLE_EVENT_WAIT_S, 0.4
+        old, queueing.IDLE_EVENT_WAIT_S = queueing.IDLE_EVENT_WAIT_S, 0.4
         try:
             out, dt = self.timed("combat_started", timeout_s=5)
             self.assertGreater(dt, 0.35)  # the first one still waits for an ambush
-            server.get_status()  # a read: nothing could have changed
+            overview.get_status()  # a read: nothing could have changed
             out, dt = self.timed("combat_started", timeout_s=5)
             self.assertLess(dt, 0.3)
             self.assertIn("again: only reads ran since", out)
             self.assertEqual(self.last_noop(), "repeat")
-            server.move_to(target=self.door)  # an action resets it
+            world_tools.move_to(target=self.door)  # an action resets it
             time.sleep(0.05)
             out, dt = self.timed("combat_started", timeout_s=5)
             self.assertNotIn("again", out)
         finally:
-            server.IDLE_EVENT_WAIT_S = old
+            queueing.IDLE_EVENT_WAIT_S = old
 
     def test_enemy_turn_keeps_waiting(self):
         self.g.combat = {"active": True, "current": GOB}

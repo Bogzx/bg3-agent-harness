@@ -3091,7 +3091,7 @@ def run_section(name: str) -> int:
     os.environ["BG3AI_SESSION"] = "S999"
     (OUT / "memory" / "sessions").mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(REPO / "bridge" / "src"))
-    from bg3ai import server  # noqa: E402
+    from server_view import S as server  # noqa: E402, N811
     S = server
     LOGF = open(OUT / f"{name}.log", "w")
     log(f"section {name} start {time.strftime('%H:%M:%S')}")
