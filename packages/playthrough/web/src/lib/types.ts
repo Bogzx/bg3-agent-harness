@@ -227,3 +227,250 @@ export interface ReplayPayload {
   events: ReplayEvent[];
   segments: Segment[];
 }
+
+// The live views the old dashboard showed (packages/playthrough/src/bg3play/dashboard.py, live.py, story.py).
+
+export interface Thermal {
+  t: number;
+  line: string;
+  cpu: number | null;
+  gpu: number | null;
+  pause_cpu_c: number;
+  pause_gpu_c: number;
+}
+
+export interface SessionClock {
+  deadline: number | null;
+  left_s: number | null;
+  source: string | null;
+  phase: "idle" | "play" | "wrapup" | "over";
+  started?: number | null;
+  hard_stop?: number | null;
+}
+
+export interface GameMember {
+  name: string;
+  classes: string;
+  hp: number | null;
+  max_hp: number | null;
+  temp_hp: number | null;
+  statuses: string[];
+  downed: boolean;
+  dead: boolean;
+  in_combat: boolean;
+  active: boolean;
+}
+
+export interface GameView {
+  reachable: boolean;
+  error: string | null;
+  t?: number;
+  note?: string | null;
+  status?: {
+    region: string | null;
+    subregion: string | null;
+    level: string | null;
+    gold: number | null;
+    mode: string;
+    turn_based: boolean;
+    combat: Record<string, unknown> | null;
+    party: GameMember[];
+  } | null;
+}
+
+export interface CheckAll {
+  ok: boolean;
+  t?: number;
+  session?: string;
+  why?: string;
+  counts?: { PASS?: number; WARN?: number; FAIL?: number };
+  fails?: string[];
+}
+
+export interface LivePayload {
+  v: number;
+  now: number;
+  playthrough: string | null;
+  runner: { session?: string; check_all?: CheckAll } & Record<string, unknown>;
+  clock: SessionClock;
+  game: GameView;
+  events: { t: number | null; kind: string | null; text: string }[];
+  screen: { enabled: boolean; error: string | null; t: number | null; mime: string | null; note?: string | null };
+  thermal: Thermal | null;
+}
+
+export type Num = number | null | undefined;
+
+export interface LatencyLive {
+  busy_now?: boolean;
+  current_idle_s?: Num;
+  in_dialogue?: boolean;
+  in_combat?: boolean;
+  idle_explore_median_s?: Num;
+  idle_median_s?: Num;
+  idle_p90_s?: Num;
+  long_gaps?: { dialogue?: number } | null;
+  think_median_s?: Num;
+  api_source?: string;
+  api_s_per_turn?: Num;
+  ms_per_out_tok?: Num;
+  rt_read_median_ms?: Num;
+  apm?: Num;
+  calls_pm?: Num;
+  reads_pm?: Num;
+  actions_pm?: Num;
+  busy_pct?: Num;
+  pipelining_pct?: Num;
+  think_overlap_pct?: Num;
+  targets?: Record<string, { value?: Num; pass?: boolean | null }>;
+  timeline?: { buckets?: string[] } | null;
+}
+
+export interface LatencyRow {
+  session: string;
+  minutes?: Num;
+  idle_median_s?: Num;
+  idle_p90_s?: Num;
+  idle_explore_median_s?: Num;
+  long_gaps?: Num;
+  long_gaps_dialogue?: Num;
+  think_median_s?: Num;
+  api_s_per_turn?: Num;
+  ms_per_out_tok?: Num;
+  rt_read_median_ms?: Num;
+  apm?: Num;
+  busy_pct?: Num;
+  pipelining_pct?: Num;
+  think_overlap_pct?: Num;
+  pass?: Record<string, boolean | null>;
+}
+
+export interface LatencyPayload {
+  v: number;
+  live: LatencyLive | null;
+  history: LatencyRow[];
+  targets: Record<string, number>;
+  files: Record<string, string | null>;
+}
+
+export interface Milestones {
+  act: number | string;
+  reached: number;
+  total: number;
+  next: string | null;
+  items: { label: string; reached: boolean; t?: number | null; session?: string | null }[];
+}
+
+export interface ProgressPayload {
+  v: number;
+  live: {
+    session?: string | null;
+    running?: boolean;
+    points: number;
+    per_hour: Num;
+    events: number;
+    stuck: boolean;
+    stuck_min?: Num;
+    since_progress_min?: Num;
+    minutes?: Num;
+    recent?: { t: number; points: number; kind: string; what: string }[];
+  } | null;
+  history: {
+    session: string;
+    minutes?: Num;
+    points?: Num;
+    per_hour?: Num;
+    events?: Num;
+    longest_no_progress_min?: Num;
+    stuck_episodes?: Num;
+    stuck_min?: Num;
+  }[];
+  stuck_after_min: number;
+  milestones: Milestones | null;
+}
+
+export type GoalOp = "<" | "==" | ">=";
+
+export interface Goal {
+  key: string;
+  label: string;
+  unit: string;
+  op: GoalOp;
+  target: number;
+  digits: number;
+  series: Num[];
+  best: Num;
+  pass_rate: Num;
+}
+
+export interface GoalSession {
+  session: string;
+  live?: boolean;
+  short?: boolean;
+  minutes?: Num;
+  points?: Num;
+  values: Record<string, Num>;
+  pass: Record<string, boolean | null>;
+  judged?: number;
+  passed?: number;
+}
+
+export interface GoalsPayload {
+  v: number;
+  goals: Goal[];
+  sessions: GoalSession[];
+  milestones: Milestones | null;
+  unattended: Unattended | null;
+}
+
+export interface Unattended {
+  live: boolean;
+  current_h: Num;
+  longest_h: Num;
+  total_h: Num;
+  runs: number;
+  last_stop: string | null;
+  faults: Record<string, number>;
+  fault_total: number;
+  recovered: number;
+  failed: number;
+  steam_refused: number;
+  launch_failed: number;
+  alert: { t: number; msg?: string; kind?: string } | null;
+  steam_offline: boolean | null;
+  recovery_s_median: Num;
+  recovery_s_max: Num;
+  events: import("./stats").RunnerEvent[];
+}
+
+export interface StoryItem {
+  name: string;
+  slot?: string;
+  rarity?: string | null;
+  story?: boolean;
+}
+
+export interface StoryMember {
+  name: string;
+  class?: string;
+  hp?: number;
+  max_hp?: number;
+  active?: boolean;
+  statuses?: string[];
+  equipped?: StoryItem[];
+  notable?: StoryItem[];
+  camp?: boolean;
+}
+
+export interface StoryPayload {
+  v: number;
+  playthrough: string;
+  exists: boolean;
+  dir: string;
+  decisions: Decision[];
+  chapters: { file: string; title: string; sections: { heading: string | null; items: string[] }[] }[];
+  overview: { title: string | null; header: string[]; now: string | null; main_thread: string | null; party: string[];
+              commitments: string[] };
+  status: { where: string | null; mode: string | null; gold: number | null; when: string | null; party: StoryMember[] };
+  others: StoryMember[];
+}

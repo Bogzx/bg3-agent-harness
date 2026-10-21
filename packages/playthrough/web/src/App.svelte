@@ -6,11 +6,14 @@
   import Launch from "./screens/Launch.svelte";
   import Memory from "./screens/Memory.svelte";
   import Replay from "./screens/Replay.svelte";
+  import Stats from "./screens/Stats.svelte";
+  import Story from "./screens/Story.svelte";
   import Timeline from "./screens/Timeline.svelte";
   import Watch from "./screens/Watch.svelte";
 
   type Theme = "" | "dark" | "light";
-  const LABELS = { watch: "Watch", memory: "Memory", timeline: "Timeline", replay: "Replay", launch: "Launch" };
+  const LABELS = { watch: "Watch", stats: "Stats", memory: "Memory", timeline: "Timeline", story: "Story", replay: "Replay",
+                   launch: "Launch" };
 
   let route = $state<Route>(parseRoute(location.hash));
   let pts = $state<PlaythroughRow[]>([]);
@@ -99,6 +102,10 @@
     {#key route.pt}
       {#if route.screen === "watch"}
         <Watch pt={route.pt} />
+      {:else if route.screen === "stats"}
+        <Stats />
+      {:else if route.screen === "story"}
+        <Story pt={route.pt} />
       {:else if route.screen === "memory"}
         <Memory pt={route.pt} file={route.file} onOpen={(f) => go({ screen: "memory", pt: route.pt, file: f })} />
       {:else if route.screen === "replay"}
@@ -119,7 +126,7 @@
   }
   .brand { font-weight: 650; letter-spacing: 0.03em; white-space: nowrap; }
   .mark { color: var(--accent); }
-  nav { display: flex; gap: 4px; }
+  nav { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
   nav a {
     padding: 4px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; font-weight: 550;
   }
@@ -134,6 +141,7 @@
   @media (max-width: 560px) {
     header { padding: 8px 12px; }
     .brand { display: none; }
+    nav a { padding: 4px 7px; }
     main { padding: 10px 10px 24px; }
   }
 </style>

@@ -1,12 +1,10 @@
-"""Offline tests for the dashboard Story panel parsers (story.py)."""
+"""Offline tests for the Story parsers (bg3play.story, was runner/dashboard/story.py)."""
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import story as ST  # noqa: E402
+from bg3play import story as ST
 
 DECISIONS = """# Decisions and consequences
 
@@ -89,6 +87,14 @@ class StoryParse(unittest.TestCase):
         d9 = cards[1]
         self.assertEqual(d9["session"], "S017-S018")
         self.assertEqual(d9["choice"][1], "killed Dror Ragzlin and Minthara (S018) instead of raiding the Grove")
+
+    def test_status_party_lines_of_the_current_format(self):
+        st = ST.parse_status("WHERE Upper City | gold 7166\n"
+                             "PARTY * The Emperor L12 HP 122/145 [Aid,Marked for Negation] in_combat\n"
+                             "PARTY Gale Wizard 12 (Evocation) HP 116/177+1 [Aid] in_combat\n")
+        self.assertEqual([(m["name"], m["class"], m["hp"], m["active"]) for m in st["party"]],
+                         [("The Emperor", "L12", 122, True), ("Gale", "Wizard 12 (Evocation)", 116, False)])
+        self.assertEqual(st["party"][0]["statuses"], ["Aid", "Marked for Negation"])
 
     def test_status_and_inventory(self):
         st = ST.parse_status(STATUS)

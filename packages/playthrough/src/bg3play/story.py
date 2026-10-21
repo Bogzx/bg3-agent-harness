@@ -1,4 +1,4 @@
-"""The story so far, for the dashboard's Story panel (/api/story), read from the playthrough memory (read-only).
+"""The story so far (the Story screen; /api/v1/playthroughs/<pt>/story), read from the playthrough memory.
 
 - decisions.md: one card per "## D-xx Title (Sxxx)" entry: choices, why, consequences (seen / expected), reversible.
 - chapters/*.md: chapter summaries, split into their "## " sections.
@@ -13,17 +13,14 @@ an unknown line is kept as text, a missing file is an empty part.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "playthrough" / "src"))
-from bg3play import parse as PARSE  # noqa: E402  (decisions.md: single source in the playthrough app)
+from . import parse as PARSE
 
 _CACHE: dict[str, tuple[tuple, Any]] = {}
 
-PARTY_LINE_RE = re.compile(r"^PARTY\s+(\*\s+)?(\S+)\s+(.*?)\s+HP\s+(\d+)/(\d+)\s*(?:\[(.*)\])?\s*$")
-RARE_RE = re.compile(r"\((uncommon|rare|very rare|legendary)\)", re.I)
+RARE_RE = re.compile(r"\((uncommon|rare|very rare|legendary)\)", re.IGNORECASE)
 EQUIP_RE = re.compile(r"\[equipped ([^\]]+)\]")
 RARITY_RANK = {"legendary": 4, "very rare": 3, "rare": 2, "uncommon": 1}
 
@@ -47,7 +44,7 @@ def _read(p: Path) -> str:
 
 
 def _strip_comments(text: str) -> str:
-    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
 
 
 # ---------------------------------------------------------------- decisions
@@ -131,11 +128,9 @@ def parse_status(text: str) -> dict:
                     out["gold"] = int(g.group(1))
                 elif out["mode"] is None:
                     out["mode"] = p
-        m = PARTY_LINE_RE.match(s)
-        if m:
-            out["party"].append({"name": m.group(2), "active": bool(m.group(1)), "class": m.group(3),
-                                 "hp": int(m.group(4)), "max_hp": int(m.group(5)),
-                                 "statuses": [x.strip() for x in (m.group(6) or "").split(",") if x.strip()]})
+    st = PARSE.status_text(text)   # PARTY rows: the app's one parser (names with spaces, +temp HP, flags)
+    out["party"] = [{"name": m["name"], "active": m["active"], "class": m["classes"], "hp": m["hp"],
+                     "max_hp": m["max_hp"], "statuses": m["statuses"]} for m in (st["party"] if st else [])]
     return out
 
 

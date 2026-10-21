@@ -1,5 +1,5 @@
 import type {
-  Commit, MemoryFile, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SupervisorView,
+  Commit, GoalsPayload, LatencyPayload, LivePayload, MemoryFile, ProgressPayload, StoryPayload, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SupervisorView,
   TimelinePayload, WatchSnapshot,
 } from "./types";
 
@@ -42,6 +42,11 @@ export const api = {
     ),
   replay: (name: string, session: string) => getJson<ReplayPayload>(`${pt(name)}/replay/${encodeURIComponent(session)}`),
   timeline: (name: string) => getJson<TimelinePayload>(`${pt(name)}/timeline`),
+  story: (name: string) => getJson<StoryPayload>(`${pt(name)}/story`),
+  live: () => getJson<LivePayload>("/api/v1/live"),
+  latency: () => getJson<LatencyPayload>("/api/v1/latency"),
+  progress: () => getJson<ProgressPayload>("/api/v1/progress"),
+  goals: () => getJson<GoalsPayload>("/api/v1/goals"),
   positions: (name: string, level?: string) =>
     getJson<Positions>(`${pt(name)}/positions${level ? `?level=${encodeURIComponent(level)}` : ""}`),
   recorder: () => getJson<{ v: number; recorder: RecorderState | null }>("/api/v1/recorder"),

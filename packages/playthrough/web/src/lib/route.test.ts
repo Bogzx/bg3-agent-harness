@@ -7,6 +7,8 @@ describe("routes", () => {
       { screen: "watch" as const, pt: "claude-run-2", file: null },
       { screen: "memory" as const, pt: "a b", file: "sessions/S096.md" },
       { screen: "timeline" as const, pt: "x", file: null },
+      { screen: "stats" as const, pt: "x", file: null },
+      { screen: "story" as const, pt: "x", file: null },
       { screen: "replay" as const, pt: "x", file: "S096" },
       { screen: "launch" as const, pt: null, file: null },
     ]) {

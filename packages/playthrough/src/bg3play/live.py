@@ -1,6 +1,9 @@
-"""Pure helpers for the live dashboard (stdlib only): file tailing, clock, state shaping.
+"""The live views the old dashboard (runner/dashboard, retired) showed: session clock, game status shaping, memory
+view, latency, story progress, the goal scorecard, unattended hours, milestones and the machine's temperature.
 
-Everything here is side-effect free apart from reading files, so it is unit-tested without a game.
+Everything here is side-effect free apart from reading files, so it is unit-tested without a game. The latency,
+progress and milestone views use the bridge's stdlib-only bg3ai.metrics / progress / milestones and the thermal view
+runner/ramwatch.py, reached through adapters/legacy_paths.py until the harness package exposes them.
 """
 
 from __future__ import annotations
@@ -8,18 +11,15 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 import time
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "playthrough" / "src"))
-from bg3play import parse as PARSE  # noqa: E402  (single source: the playthrough app)
-from bg3play.parse import tool_kind  # noqa: E402, F401  (re-exported)
-from bg3play.tail import read_new  # noqa: E402, F401  (re-exported)
+from . import parse as PARSE
+from .adapters import legacy_paths
 
-UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
-COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 SESSION_LOG_RE = re.compile(r"^S(\d{3,})\.md$")
 
 
@@ -261,7 +261,8 @@ def _tail_jsonl(path: Path | None, max_bytes: int = 4 * 1024 * 1024) -> list[dic
 
 def latency_payload(runtime: Path, runner_status: dict, now: float | None = None, history_rows: int = 30) -> dict:
     """/api/latency: live view (bg3ai.metrics.live_view) plus the per-session history table."""
-    from bg3ai import metrics as M  # noqa: PLC0415 - bridge/src is on sys.path (serve.py)
+    legacy_paths.ensure()
+    from bg3ai import metrics as M
 
     now = time.time() if now is None else now
     paths = resolve_latency_paths(runtime, runner_status)
@@ -280,7 +281,8 @@ def latency_payload(runtime: Path, runner_status: dict, now: float | None = None
 
 def progress_payload(runtime: Path, runner_status: dict, now: float | None = None, history_rows: int = 30) -> dict:
     """/api/progress: live counter of the running session (bg3ai.progress.live_view) + per-session history."""
-    from bg3ai import progress as P  # noqa: PLC0415 - bridge/src is on sys.path (serve.py)
+    legacy_paths.ensure()
+    from bg3ai import progress as P
 
     now = time.time() if now is None else now
     live_path = runner_status.get("progress")
@@ -353,7 +355,7 @@ def goal_values(lat: dict | None, prog: dict | None) -> dict:
     """One session's latency + progress summaries → {goal key: value}."""
     lat, prog = lat or {}, prog or {}
     t = lat.get("targets") or {}
-    v = lambda k: (t.get(k) or {}).get("value")  # noqa: E731
+    v = lambda k: (t.get(k) or {}).get("value")
     return {"idle": v("median_idle_explore_s"),
             "gaps": v("long_gaps_non_dialogue") if (t.get("long_gaps_non_dialogue") or {}).get("pass") is not None else None,
             "rt": v("bridge_rt_median_ms"), "apm": lat.get("apm") if lat.get("actions") else None,
@@ -368,8 +370,9 @@ def goal_pass(op: str, value, target) -> bool | None:
 
 
 def _session_summaries(d: Path, sid: str, live: bool, started: float | None, now: float) -> tuple[dict | None, dict | None]:
-    from bg3ai import metrics as M  # noqa: PLC0415
-    from bg3ai import progress as P  # noqa: PLC0415
+    legacy_paths.ensure()
+    from bg3ai import metrics as M
+    from bg3ai import progress as P
 
     lat_f, met_f, turns_f = d / f"{sid}.latency.json", d / f"{sid}.metrics.jsonl", d / f"{sid}.turns.jsonl"
     prog_f, progl_f = d / f"{sid}.progress.json", d / f"{sid}.progress.jsonl"
@@ -497,8 +500,9 @@ def unattended_payload(d: Path, runner_status: dict, now: float | None = None, l
 
 def milestones_payload(d: Path) -> dict | None:
     """Story milestones for the playthrough dir (bg3ai.milestones), with the session that first reached each."""
-    from bg3ai import milestones as MS  # noqa: PLC0415
-    from bg3ai import progress as P  # noqa: PLC0415
+    legacy_paths.ensure()
+    from bg3ai import milestones as MS
+    from bg3ai import progress as P
 
     seen = read_json(d / "progress_state.json")
     sessions = [(sid, P.load(d / f"{sid}.progress.jsonl")) for sid in session_ids(d)]
@@ -507,3 +511,21 @@ def milestones_payload(d: Path) -> dict | None:
     st = MS.status(seen, sessions)
     st["line"] = MS.line(st)
     return st
+
+
+# ---------------------------------------------------------------- machine
+
+
+def thermal_view(path: Path) -> dict | None:
+    """The last thermal.log line (runner/ramwatch.py or an operator's thermal_log.sh) with its CPU/GPU C and
+    the heat-pause limits, or None."""
+    legacy_paths.ensure()
+    import ramwatch as RW
+
+    last = RW.last_thermal(path)
+    if not last:
+        return None
+    _, cpu, gpu = RW.parse_thermal(last[1])
+    lim = RW.heat_limits()
+    return {"t": last[0], "line": last[1], "cpu": cpu, "gpu": gpu,
+            "pause_cpu_c": lim["pause_cpu_c"], "pause_gpu_c": lim["pause_gpu_c"]}

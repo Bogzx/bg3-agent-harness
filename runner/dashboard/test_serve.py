@@ -1,120 +1,76 @@
-"""HTTP-level test of the dashboard server against a temp runtime dir (no game, no screen)."""
+"""runner/dashboard/serve.py is a shim over the playthrough app: the old flags map onto bg3play-serve's, and running
+it serves the old endpoints on the old port. The endpoint tests live in packages/playthrough/tests/test_dashboard.py."""
 
 import json
 import os
 import shutil
+import socket
+import subprocess
 import sys
 import tempfile
-import threading
 import unittest
 import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-TMP = Path(tempfile.mkdtemp(prefix="bg3dash-rt-"))
-os.environ["BG3AI_RUNTIME"] = str(TMP)
+REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-import serve as SV  # noqa: E402
+import serve as SV
 
 
-class ServeTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        mem = TMP / "memory"
-        (mem / "sessions").mkdir(parents=True)
-        (mem / "HANDOFF.md").write_text("# Handoff S001 → S002\nSave to load: x\n")
-        (mem / ".session.json").write_text(json.dumps({"current": 1, "open": True}))
-        (mem / "sessions" / "S001.md").write_text("# S001\n- 10:00 [quest] hi\n")
-        (TMP / "actions.jsonl").write_text(
-            json.dumps({"t": 1, "tool": "get_status", "args": {}, "ms": 5, "result": "WHERE x"}) + "\n")
-        (TMP / "runner.status.json").write_text(json.dumps({"playthrough": "run1", "deadline": 4e9}))
-        (TMP / "thermal.log").write_text(
-            "2026-10-17 16:25:39 cpu=51 acpi=51 amdgpu=49 nvme=36 nv=[47,8.09,210,0,0x0000000000000001] "
-            "profile=balanced load=0.21 bg3=down\n")
-        logs = TMP / "sessions" / "run1"
-        logs.mkdir(parents=True)
-        (logs / "S001.log").write_text("[say] I will head north.\n[tool] get_status {}\n")
-        opt = SV.argparse.Namespace(no_screen=True, memory_dir=str(mem), verbose=False, debug_port=1,
-                                    status_interval=3.0, screen_interval=5.0, screen_width=960)
-        cls.hub = SV.Hub(opt)
-        cls.srv = SV.ThreadingHTTPServer(("127.0.0.1", 0), SV.make_handler(cls.hub))
-        cls.port = cls.srv.server_address[1]
-        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+def flags(args: list[str]) -> dict:
+    out, i = {}, 0
+    while i < len(args):
+        if i + 1 < len(args) and not args[i + 1].startswith("--"):
+            out[args[i]] = args[i + 1]
+            i += 2
+        else:
+            out[args[i]] = True
+            i += 1
+    return out
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.srv.shutdown()
-        cls.srv.server_close()
-        shutil.rmtree(TMP, ignore_errors=True)
 
-    def get(self, path):
-        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}", timeout=5) as r:
-            return r.status, r.headers.get("Content-Type"), r.read()
+class Translate(unittest.TestCase):
+    def test_defaults(self):
+        f = flags(SV.translate([]))
+        self.assertEqual((f["--port"], f["--host"], f["--status-interval"]), ("8765", "127.0.0.1", "3.0"))
+        self.assertTrue(f["--game"] and f["--screen"])
+        self.assertEqual(f["--playthroughs"], str(REPO / "playthroughs"))
+        self.assertNotIn("--memory-dir", f)
+        SV.server.parser().parse_args(SV.translate([]))   # bg3play-serve accepts all of them
 
-    def test_index(self):
-        code, ctype, body = self.get("/")
-        self.assertEqual(code, 200)
-        self.assertIn("text/html", ctype)
-        self.assertIn(b"BG3 AI Live", body)
+    def test_old_flags(self):
+        args = SV.translate(["--port", "9000", "--host", "0.0.0.0", "--no-screen", "--memory-dir", "/m",
+                             "--debug-port", "1", "--screen-width", "960", "--verbose"])
+        f = flags(args)
+        self.assertNotIn("--screen", f)
+        self.assertEqual((f["--port"], f["--host"], f["--memory-dir"], f["--debug-port"], f["--screen-width"]),
+                         ("9000", "0.0.0.0", "/m", "1", "960"))
+        opt = SV.server.parser().parse_args(args)
+        self.assertEqual((opt.port, opt.memory_dir, opt.screen, opt.verbose), (9000, Path("/m"), False, True))
 
-    def test_state(self):
-        _, _, body = self.get("/api/state")
-        s = json.loads(body)
-        self.assertEqual(s["playthrough"], "run1")
-        self.assertEqual(s["clock"]["source"], "runner")
-        self.assertEqual(s["memory"]["session"], "S001")
-        self.assertIn("Handoff S001", s["memory"]["handoff"])
-        self.assertFalse(s["screen"]["enabled"])
-        self.assertTrue(self.hub.watching())
-        th = s["thermal"]   # runtime/thermal.log's last line (runner/ramwatch.py or thermal_log.sh)
-        self.assertEqual((th["cpu"], th["gpu"], th["pause_cpu_c"], th["pause_gpu_c"]), (51, 47, 92, 85))
-        self.assertIn("profile=balanced", th["line"])
 
-    def test_feed_incremental(self):
-        _, _, body = self.get("/api/feed?after=-1")
-        r = json.loads(body)
-        self.assertEqual([i["tool"] for i in r["items"]], ["get_status"])
-        _, _, body = self.get(f"/api/feed?after={r['offset']}")
-        self.assertEqual(json.loads(body)["items"], [])
-
-    def test_agentlog(self):
-        _, _, body = self.get("/api/agentlog?after=-1&path=")
-        r = json.loads(body)
-        self.assertEqual(r["path_id"], "S001.log")
-        self.assertIn("[say] I will head north.", r["text"])
-
-    def test_story(self):
-        (TMP / "memory" / "decisions.md").write_text("## Decisions\n\n## D-01 Freed Shadowheart (S002)\n- Choice: opened the pod\n")
-        _, _, body = self.get("/api/story")
-        r = json.loads(body)
-        self.assertTrue(r["exists"])
-        self.assertEqual([d["id"] for d in r["decisions"]], ["D-01"])
-        self.assertEqual(r["chapters"], [])
-        code, _, body = self.get("/")
-        self.assertIn(b'id="storyTabs"', body)
-
-    def test_series(self):
-        code, ctype, body = self.get("/series")
-        self.assertEqual(code, 200)
-        self.assertIn(b"BG3 AI Series", body)
-        _, _, body = self.get("/api/series")
-        r = json.loads(body)
-        self.assertEqual((r["series"], r["rows"], r["live"]), (None, [], None))
-        d = TMP / "sessions" / "sx"
-        d.mkdir(parents=True)
-        (d / "runs.jsonl").write_text(json.dumps({"series": "sx", "run": 1, "playthrough": "sx", "outcome": "reached",
-                                                  "clean": True, "cost_usd": 1.5}) + "\n")
-        r = json.loads(self.get("/api/series?playthrough=sx")[2])
-        self.assertEqual((r["series"], r["rows"][0]["cost_usd"], r["spread"]["clean_streak"]), ("sx", 1.5, 1))
-        self.assertIn("not a series name", json.loads(self.get("/api/series?playthrough=..%2Fx")[2])["error"])
-        self.assertIn(b'href="/series"', self.get("/")[2])
-
-    def test_screen_empty_and_404(self):
-        code, _, _ = self.get("/api/screen")
-        self.assertEqual(code, 204)
-        with self.assertRaises(urllib.error.HTTPError) as cm:
-            self.get("/nope")
-        self.assertEqual(cm.exception.code, 404)
+class Runs(unittest.TestCase):
+    def test_serves_the_old_endpoints(self):
+        tmp = Path(tempfile.mkdtemp(prefix="bg3dash-rt-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "runner.status.json").write_text(json.dumps({"playthrough": "run1", "deadline": 4e9}))
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        env = dict(os.environ, BG3AI_RUNTIME=str(tmp))
+        p = subprocess.Popen([sys.executable, str(HERE / "serve.py"), "--port", str(port), "--no-screen",
+                              "--debug-port", "1", "--memory-dir", str(tmp / "memory")],
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        self.addCleanup(p.stdout.close)
+        self.addCleanup(p.wait, 10)
+        self.addCleanup(p.terminate)
+        self.assertIn(f":{port}/", p.stdout.readline())   # the ready line
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=10) as r:
+            s = json.loads(r.read())
+        self.assertEqual((s["playthrough"], s["clock"]["source"]), ("run1", "runner"))
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/series", timeout=10) as r:
+            self.assertIn(b"bench", r.read())
 
 
 if __name__ == "__main__":

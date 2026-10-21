@@ -1,15 +1,15 @@
-"""Unit tests for the dashboard's pure helpers:  python3 -m unittest discover -s runner/dashboard"""
+"""Unit tests for bg3play.live (was runner/dashboard/feeds.py) and the tail/parse helpers it uses."""
 
 import json
 import shutil
-import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import feeds as F  # noqa: E402
+from bg3play import live as F
+from bg3play.parse import tool_kind
+from bg3play.tail import read_new
 
 GUID = "11111111-2222-3333-4444-555555555555"
 
@@ -25,12 +25,12 @@ class TmpCase(unittest.TestCase):
 
 class ReadNewTest(TmpCase):
     def test_missing_file(self):
-        self.assertEqual(F.read_new(self.tmp / "nope", -1), (0, "", False))
+        self.assertEqual(read_new(self.tmp / "nope", -1), (0, "", False))
 
     def test_initial_tail_starts_at_line_boundary(self):
         p = self.tmp / "a.log"
         p.write_text("".join(f"line {i}\n" for i in range(1000)))
-        off, text, reset = F.read_new(p, -1, initial_bytes=100)
+        off, text, reset = read_new(p, -1, initial_bytes=100)
         self.assertTrue(reset)
         self.assertEqual(off, p.stat().st_size)
         lines = text.splitlines()
@@ -40,21 +40,21 @@ class ReadNewTest(TmpCase):
     def test_incremental_and_partial_lines(self):
         p = self.tmp / "a.log"
         p.write_text("one\ntw")
-        off, text, _ = F.read_new(p, 0)
+        off, text, _ = read_new(p, 0)
         self.assertEqual((text, off), ("one\n", 4))
         with p.open("a") as f:
             f.write("o\nthree\n")
-        off, text, reset = F.read_new(p, off)
+        off, text, reset = read_new(p, off)
         self.assertEqual(text, "two\nthree\n")
         self.assertFalse(reset)
-        self.assertEqual(F.read_new(p, off), (off, "", False))
+        self.assertEqual(read_new(p, off), (off, "", False))
 
     def test_truncation_resets(self):
         p = self.tmp / "a.log"
         p.write_text("x" * 50 + "\n")
-        off, _, _ = F.read_new(p, 0)
+        off, _, _ = read_new(p, 0)
         p.write_text("new\n")
-        off2, text, reset = F.read_new(p, off)
+        off2, text, reset = read_new(p, off)
         self.assertTrue(reset)
         self.assertEqual(text, "new\n")
         self.assertEqual(off2, 4)
@@ -62,7 +62,7 @@ class ReadNewTest(TmpCase):
     def test_giant_line_does_not_stall(self):
         p = self.tmp / "a.log"
         p.write_text("y" * 5000)
-        off, text, _ = F.read_new(p, 0, max_bytes=1000)
+        off, text, _ = read_new(p, 0, max_bytes=1000)
         self.assertEqual((off, text), (1000, ""))
 
 
@@ -82,9 +82,9 @@ class ActionsTest(unittest.TestCase):
         self.assertEqual(len(items[2]["result"]), 101)
 
     def test_tool_kind(self):
-        self.assertEqual(F.tool_kind("mcp__bg3__save_game"), "save")
-        self.assertEqual(F.tool_kind("list_saves"), "read")
-        self.assertEqual(F.tool_kind("use_ability"), "act")
+        self.assertEqual(tool_kind("mcp__bg3__save_game"), "save")
+        self.assertEqual(tool_kind("list_saves"), "read")
+        self.assertEqual(tool_kind("use_ability"), "act")
 
 
 class ClockTest(unittest.TestCase):
@@ -182,7 +182,6 @@ class MemoryViewTest(TmpCase):
 
 
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "src"))
 
 
 class LatencyTest(TmpCase):

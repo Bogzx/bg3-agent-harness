@@ -1,8 +1,8 @@
-// Hash routes: #/watch/<pt>, #/memory/<pt>[/<file path>], #/timeline/<pt>, #/replay/<pt>[/<session>],
-// #/launch[/<pt>]. No server fallback needed. /overlay is its own page (main.ts).
+// Hash routes: #/watch/<pt>, #/stats/<pt>, #/memory/<pt>[/<file path>], #/timeline/<pt>, #/story/<pt>,
+// #/replay/<pt>[/<session>], #/launch[/<pt>]. No server fallback needed. /overlay is its own page (main.ts).
 
-export type Screen = "watch" | "memory" | "timeline" | "replay" | "launch";
-export const SCREENS: Screen[] = ["watch", "memory", "timeline", "replay", "launch"];
+export type Screen = "watch" | "stats" | "memory" | "timeline" | "story" | "replay" | "launch";
+export const SCREENS: Screen[] = ["watch", "stats", "memory", "timeline", "story", "replay", "launch"];
 
 export interface Route {
   screen: Screen;

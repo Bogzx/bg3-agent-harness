@@ -18,7 +18,11 @@ Endpoints (GET, JSON unless noted, Cache-Control: no-store):
     /api/v1/video/index                              recorded segments (recorder.py index.json)
     /api/v1/video/<file>                             one MP4 segment (HTTP Range)
     /api/v1/screen.mjpg, /api/v1/screen.jpg          the recorder's live view (204 without a frame)
+    /api/v1/playthroughs/<pt>/story                  decisions, chapters, overview, party snapshot (story.py)
+    /api/v1/live, /api/v1/live/screen                clock, live game, thermal; the latest frame (dashboard.py)
+    /api/v1/latency, /api/v1/progress, /api/v1/goals the running session's latency, story progress, goal scorecard
     /api/v1/stream                                   SSE (text/event-stream); Last-Event-ID header or ?last_id=
+    /api/state, /api/feed, ... /series               the retired runner/dashboard's paths (dashboard.py)
     anything else                                    the web app (web/dist), index.html for unknown paths
 
 Control (POST, JSON body; needs --supervise): /api/v1/playthroughs/<pt>/start|resume (body: the Launcher's fields,
@@ -46,13 +50,17 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from . import api, replay
 from . import config as C
+from . import game as gm
 from . import positions as pos
 from . import recorder as rec
 from . import supervisor as sup
+from .adapters import legacy_paths
+from .dashboard import SERIES_HTML, Dashboard
+from .game import GameWatch, ScreenWatch, Viewers
 from .hub import Hub
 from .store import RunStore, StoreError
 
-PT_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/log|timeline|positions)$")
+PT_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/log|timeline|positions|story)$")
 CONTROL_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(start|stop|resume)$")
 REPLAY_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/replay/(S\d{3,})$")
 CONFIG_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/config$")
@@ -84,8 +92,10 @@ def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
 class App:
     def __init__(self, store: RunStore, hub: Hub, web_dir: Path | None, keepalive_s: float = KEEPALIVE_S,
                  recorder: rec.Recorder | None = None, video_dir: Path | None = None,
-                 supervisor: sup.Supervisor | None = None, token: str | None = None, profiles: Path | None = None):
+                 supervisor: sup.Supervisor | None = None, token: str | None = None, profiles: Path | None = None,
+                 dashboard: Dashboard | None = None):
         self.store, self.hub, self.web_dir, self.keepalive_s = store, hub, web_dir, keepalive_s
+        self.dashboard = dashboard or Dashboard(store, None, None, Viewers(time.time))
         self.recorder = recorder
         self.video_dir = video_dir if video_dir is not None else store.runtime / "video"
         self.supervisor, self.token, self.profiles = supervisor, token or None, profiles
@@ -135,6 +145,8 @@ class App:
     def route(self, path: str, q: dict[str, list[str]]) -> dict | None:
         """A JSON API path -> its payload (None: not found). Raises StoreError for a refused request."""
         s = self.store
+        if (d := self.dashboard.route(path, q)) is not None:
+            return d
         if path == "/api/v1/status":
             return api.status(s)
         if path == "/api/v1/playthroughs":
@@ -176,6 +188,7 @@ class App:
             "memory/log": lambda: api.memory_log(s, pt),
             "timeline": lambda: api.timeline(s, pt),
             "positions": lambda: api.positions(s, pt, q.get("level", [""])[0]),
+            "story": lambda: self.dashboard.story(pt),
         }
         return builders[what]()
 
@@ -264,6 +277,11 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
                         return self._send(204, b"", "text/plain")
                     ctype = mimetypes.guess_type(shot.name)[0] or "application/octet-stream"
                     return self._send(200, shot.read_bytes(), ctype)
+                if url.path in ("/api/v1/live/screen", "/api/screen"):
+                    frame, mime = app.dashboard.frame()
+                    return self._send(200, frame, mime or "image/jpeg") if frame else self._send(204, b"", "text/plain")
+                if url.path in ("/series", "/series.html"):
+                    return self._send(200, SERIES_HTML, "text/html; charset=utf-8")
                 if url.path in ("/api/v1/screen.mjpg", "/api/v1/screen.jpg"):
                     return self._screen(url.path.endswith(".mjpg"))
                 if (m := VIDEO_FILE.match(url.path)) is not None:
@@ -394,7 +412,18 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--video-cap-gb", type=float, default=20.0, help="delete the oldest segments above this")
     ap.add_argument("--positions", action="store_true",
                     help="sample party positions from the game's state.status (adapters/bridge_status.py)")
-    ap.add_argument("--debug-port", type=int, default=9998, help="the mod's RPC port (--positions)")
+    ap.add_argument("--debug-port", type=int, default=int(os.environ.get("BG3LE_DEBUG_PORT", "9998")),
+                    help="the mod's RPC port (--positions, --game)")
+    ap.add_argument("--game", action="store_true",
+                    help="poll the game's status and visible events while someone watches /api/v1/live")
+    ap.add_argument("--status-interval", type=float, default=3.0, help="seconds between game polls (--game)")
+    ap.add_argument("--screen", action="store_true",
+                    help="capture game frames while someone watches (the bridge's ScreenCapture; --record has its "
+                         "own live view)")
+    ap.add_argument("--screen-interval", type=float, default=5.0)
+    ap.add_argument("--screen-width", type=int, default=1280)
+    ap.add_argument("--memory-dir", type=Path,
+                    help="the memory /api/state and /api/story read (default: the runner's playthrough's)")
     ap.add_argument("--supervise", action="store_true",
                     help="enable start/stop/resume (sessions through adapters/legacy_cli.py: runner/play.py run)")
     ap.add_argument("--repo", type=Path, default=REPO, help="the bg3-ai checkout play.py runs from (--supervise)")
@@ -422,6 +451,7 @@ def main(argv: list[str] | None = None) -> int:
     if opt.positions:
         from .adapters.bridge_status import BridgeStatus  # temporary; needs the bridge package
 
+        legacy_paths.ensure()
         def path_for() -> Path | None:
             cur = opt.playthrough or store.current()
             return store.positions_path(cur) if cur else None
@@ -437,8 +467,26 @@ def main(argv: list[str] | None = None) -> int:
         supervisor = sup.Supervisor(LegacyCli(opt.repo, opt.runtime), sup.NoKeeper(), opt.runtime, opt.playthroughs,
                                     time.time, lambda view: hub.publish("supervisor", view),
                                     played=lambda pt: len(store.session_logs(pt)))
+    viewers = Viewers(time.time)
+    game = screen = None
+    if opt.game:
+        from .adapters.bridge_status import bridge_game  # temporary; needs the bridge package
+
+        legacy_paths.ensure()
+        game = GameWatch(lambda: bridge_game(opt.debug_port), viewers, opt.status_interval)
+        threading.Thread(target=gm.loop, args=(game, stop, time.time), daemon=True, name="game").start()
+    if opt.screen:
+        from .adapters.bridge_status import bridge_capture  # temporary; needs the bridge package
+
+        legacy_paths.ensure()
+        capture, note, err = bridge_capture(opt.runtime / "shots", opt.screen_width)
+        interval = opt.screen_interval if note is None else max(opt.screen_interval, 15.0)
+        screen = ScreenWatch(capture, viewers, interval, note=note, error=err)
+        if capture is not None:
+            threading.Thread(target=gm.loop, args=(screen, stop, time.time), daemon=True, name="screen").start()
     app = App(store, hub, opt.web, recorder=recorder, video_dir=video, supervisor=supervisor, token=opt.token,
-              profiles=opt.repo / "profiles")
+              profiles=opt.repo / "profiles",
+              dashboard=Dashboard(store, game, screen, viewers, memory_dir=opt.memory_dir))
     srv = serve(app, opt.host, opt.port, opt.verbose)
     print(f"bg3play: http://{opt.host}:{srv.server_address[1]}/  (runtime {opt.runtime})", flush=True)
     try:

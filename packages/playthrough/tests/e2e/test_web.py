@@ -38,6 +38,22 @@ def test_memory_browser(page, site):
     expect(page.locator(".md h1, .md h2").first).to_be_visible()
 
 
+def test_stats(page, site):
+    page.goto(f"{site['url']}/#/stats/{PT}")
+    expect(page.get_by_text("Goal scorecard")).to_be_visible()
+    expect(page.locator("table.goals th").get_by_text("S096")).to_be_visible()
+    expect(page.get_by_text("game polling is off")).to_be_visible()   # the e2e server runs without --game
+    no_overflow(page, 1440)
+
+
+def test_story_party_from_the_snapshot(page, site):
+    page.goto(f"{site['url']}/#/story/{PT}")
+    expect(page.get_by_text("2 chapters")).to_be_visible()
+    page.get_by_role("button", name="Party").click()
+    expect(page.get_by_text("The Emperor")).to_be_visible()
+    no_overflow(page, 1440)
+
+
 def test_timeline(page, site):
     page.goto(f"{site['url']}/#/timeline/{PT}")
     expect(page.get_by_text("choices", exact=False).first).to_be_visible()
