@@ -42,3 +42,18 @@ omit = ["*/test_*.py", "*/tests/*"]
 [tool.coverage.report]
 skip_empty = true
 precision = 1
+
+[tool.importlinter]
+root_packages = ["bg3ai", "bg3harness", "bg3bench", "bg3play"]
+include_external_packages = false
+
+[[tool.importlinter.contracts]]
+name = "harness imports neither bench nor app"
+type = "forbidden"
+source_modules = ["bg3harness", "bg3ai"]
+forbidden_modules = ["bg3bench", "bg3play"]
+
+[[tool.importlinter.contracts]]
+name = "bench and app are independent"
+type = "independence"
+modules = ["bg3bench", "bg3play"]
