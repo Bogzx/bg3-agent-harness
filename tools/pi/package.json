@@ -1,0 +1,17 @@
+{
+  "name": "bg3-pi",
+  "private": true,
+  "description": "Pinned pi coding agent and the bg3 extension the harness runs it with (see README.md)",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.3.0",
+    "@earendil-works/pi-mcp": "1.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

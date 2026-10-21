@@ -46,3 +46,5 @@ CLAUDE.local.md
 *.mp4
 *.mkv
 *.webm
+# pi is installed per repo from the lockfile (tools/pi/README.md)
+/tools/pi/node_modules/
