@@ -615,7 +615,7 @@ class Keeper(unittest.TestCase):
         removed = []
         box.remove = removed.append
 
-        def run_claude(cmd, cwd, log_path, timeout, extra_env=None, pending=None):
+        def run_claude(cmd, cwd, log_path, timeout, extra_env=None, pending=None, watch=None):
             ran.append(cmd)
             return 0, False
         with mock.patch.object(K, "_run_claude", run_claude), \
