@@ -1,4 +1,13 @@
-# scenarios/: fixed start points for benchmark series
+# scenarios/: fixed start points for benchmark series (v1, legacy)
+
+**Canonical: [packages/bench/scenarios/](../packages/bench/scenarios/) (scenario v2, `bg3bench.scenario`).** New
+scenarios go there ([SCENARIOS-AUTHORING.md](../packages/bench/docs/SCENARIOS-AUTHORING.md)), never here. These v1
+files stay, unchanged, until Phase D ends, for the legacy runner only: `runner/play.py run --scenario` (and the
+matrix jobs, which are such calls) reads this folder, and a series frozen on one of them refuses an edited file.
+The v2 set supersedes them: `nautiloid` has a v2 twin (difficulty fixed to Balanced and the dice seeded, so its
+digest differs and old series stay on the v1 file); `crash_site_grove`, `act1_underdark` and `act2_last_light` are
+drafts the v2 set did not take. The list is closed: `packages/bench/tests/test_scenario_v1.py` fails on a new file
+here. The v1 code is `bg3bench.scenario_v1` (re-exported by runner/runs.py).
 
 A scenario is one `scenarios/<name>.json`: where a run starts (a new game, or a start save), the milestone it ends
 at, the caps, the character profile and the per-run resets. `play.py run --scenario NAME [--runs N]` plays it as a

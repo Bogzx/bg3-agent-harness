@@ -10,6 +10,10 @@ from pathlib import Path
 
 from bg3bench import scenario_v1 as R
 
+REPO = Path(__file__).resolve().parents[3]
+# The legacy v1 set (scenarios/README.md): closed until Phase D ends; packages/bench/scenarios/ (v2) is canonical.
+LEGACY = {"nautiloid": "nautiloid", "crash_site_grove": None, "act1_underdark": None, "act2_last_light": None}
+
 MILESTONES = ["nautiloid_escaped", "beach", "grove"]  # stand-ins for bg3ai.milestones' ids
 ROLEPLAY_MODES = ("strict", "light")  # play.py's
 DIFFICULTIES = ("Explorer", "Balanced", "Tactician")  # play.py's (new_game's)
@@ -172,3 +176,20 @@ class Checks(unittest.TestCase):
         self.assertEqual(R.save_digest(tmp, odd), "a9993e364706816aba3e25717850c26c9cd0d89d")
         (tmp / odd / "another.lsv").write_bytes(b"x")
         self.assertIsNone(R.save_digest(tmp, odd))  # ambiguous: two .lsv and none named after the label
+
+
+class Legacy(unittest.TestCase):
+    def test_the_legacy_set_is_closed_and_loads(self):
+        """No new v1 file: a new scenario is a v2 file in packages/bench/scenarios. The ones left still load."""
+        names = {p.stem for p in (REPO / "scenarios").glob("*.json")}
+        self.assertEqual(names, set(LEGACY), "new scenarios go to packages/bench/scenarios/ (v2), not scenarios/")
+        for name, twin in LEGACY.items():
+            sc = R.load_scenario(
+                REPO / "scenarios" / f"{name}.json",
+                MILESTONES + ["underdark", "last_light"],
+                ROLEPLAY_MODES,
+                DIFFICULTIES,
+            )
+            self.assertEqual(sc["name"], name)
+            if twin:
+                self.assertTrue((REPO / "packages" / "bench" / "scenarios" / f"{twin}.json").is_file())

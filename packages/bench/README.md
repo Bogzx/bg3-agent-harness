@@ -16,12 +16,15 @@ Version: `pyproject.toml` (0.1.0). A results release is the tag `bench-vX.Y` wit
 | `schema/` | JSON Schemas: scenario v2, goal, run manifest, run result, release results, roll log |
 | `docs/SCENARIOS-AUTHORING.md` | the checklist for adding a scenario, from start save to baselines |
 | `src/bg3bench/scenario.py` | load and validate scenario files, and convert the v1 files in `scenarios/` at the root |
+| `src/bg3bench/scenario_v1.py` | the v1 format the legacy runner (`play.py run --scenario`) still plays; `scenarios/*.json` here is canonical, the root `scenarios/` is legacy and closed (its README) |
 | `predicates.py`, `graders.py`, `facts.py` | goals over `facts.jsonl`: state, ever and never leaves, progress curve |
 | `methods.py` | how a sandbox goal was reached (trade, pickpocket, loot, quest): reported, never graded |
 | `stats.py`, `luck.py` | Wilson intervals, pass^k, two-level bootstrap, paired differences, the luck covariate |
 | `manifest.py`, `results.py` | run manifest, run result and release `results.json` builders |
 | `conditions.py`, `contamination.py` | condition ids (`rules`, `rules+coaching@<hash8>`, `+wiki`, ...), quizzes, holdouts |
 | `matrix.py` | the matrix runner: models x scenarios x conditions x repeats, resumable, under a global budget |
+| `series.py`, `resets.py`, `pins.py`, `records.py` | a series' runs: naming, runs.jsonl records, frozen caps/judge/client/sandbox, per-run resets and the FAIR-2 knowledge lock, version pins, the runs table and summary (moved from runner/runs.py, which re-exports them) |
+| `preflight.py` | can this machine run the benchmark (CLI: `python3 tools/bench_preflight.py`) |
 | `adapters/` | temporary: the matrix runs jobs through `runner/play.py` until the harness has `run_session` |
 | `baselines/` | do-nothing and seeded random agents that speak MCP to the bg3 server |
 | `fairness_probes.py` | every bg3 tool has a hidden-fact probe or a written exemption (`fairness_probes.json`) |
