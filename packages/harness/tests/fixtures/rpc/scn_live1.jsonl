@@ -1,0 +1,8 @@
+{"calls":[{"args":{},"op":"scn.status"}],"ctx":"server","ms":1,"replies":[{"error":"mod/Mods/BG3AI/ScriptExtender/Lua/Server/Scenario.lua:35: scenario setup is off: the game was not started with BG3AI_SCENARIO_SETUP=1","ok":false}],"t":471.424,"v":1}
+{"calls":[{"args":{},"op":"scn.status"}],"ctx":"server","ms":1,"replies":[{"ok":true,"result":{"renames":{}}}],"t":471.424,"v":1}
+{"calls":[{"args":{},"op":"scn.karmic"}],"ctx":"server","ms":1,"replies":[{"ok":true,"result":{"component_mode":"Random","karmic":false,"mode":"Random"}}],"t":471.424,"v":1}
+{"calls":[{"args":{"seed":12345},"op":"scn.seed"}],"ctx":"server","ms":1,"replies":[{"ok":true,"result":{"base_seed":12345,"seed":12345,"streams":4}}],"t":471.424,"v":1}
+{"calls":[{"args":{"renames":[{"name":"Test Name","uuid":"e1fda08b-45d4-41db-84b5-20e9931ba5af"}]},"op":"scn.rename"}],"ctx":"server","ms":1,"replies":[{"ok":true,"result":[{"handle":"hMattis","name":"Test Name","original":"Mattis","uuid":"e1fda08b-45d4-41db-84b5-20e9931ba5af"}]}],"t":471.424,"v":1}
+{"calls":[{"args":{},"op":"scn.status"}],"ctx":"server","ms":1,"replies":[{"ok":true,"result":{"applied":{"gt":471.424,"seed":12345,"streams":4},"renames":[{"handle":"hMattis","name":"Test Name","original":"Mattis","uuid":"e1fda08b-45d4-41db-84b5-20e9931ba5af"}],"seed":12345}}],"t":471.424,"v":1}
+{"calls":[{"args":{},"op":"scn.undo"}],"ctx":"server","ms":1,"replies":[{"ok":true,"result":{"restored":[{"handle":"hMattis","original":"Mattis"}]}}],"t":471.424,"v":1}
+{"calls":[{"args":{"seed":-1},"op":"scn.seed"}],"ctx":"server","ms":1,"replies":[{"error":"mod/Mods/BG3AI/ScriptExtender/Lua/Server/Scenario.lua:176: seed must be an integer in 0..2000000000","ok":false}],"t":471.424,"v":1}
