@@ -1,0 +1,25 @@
+[project]
+name = "bg3bench"
+version = "0.1.0"
+description = "The BG3 benchmark: graders over facts.jsonl, statistics, run manifests and results"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-cov>=5", "jsonschema>=4.20"]
+# Optional cross-check of the statistics against scipy; the tests skip it when scipy is absent.
+crosscheck = ["scipy>=1.11"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bg3bench"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["unit", "integration"]
+
+[tool.ruff]
+line-length = 120
