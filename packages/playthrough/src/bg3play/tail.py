@@ -1,4 +1,4 @@
-"""Incremental file tailing by byte offset (copy of runner/dashboard/feeds.py read_new; delete that in Phase D)."""
+"""Incremental file tailing by byte offset (the single source; runner/dashboard/feeds.py re-exports it)."""
 
 from __future__ import annotations
 

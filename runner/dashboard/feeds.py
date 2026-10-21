@@ -8,9 +8,15 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "playthrough" / "src"))
+from bg3play import parse as PARSE  # noqa: E402  (single source: the playthrough app)
+from bg3play.parse import tool_kind  # noqa: E402, F401  (re-exported)
+from bg3play.tail import read_new  # noqa: E402, F401  (re-exported)
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
@@ -49,80 +55,9 @@ def tail_lines(path: Path | None, n: int = 30, strip_comments: bool = True) -> l
     return t.splitlines()[-n:]
 
 
-def read_new(path: Path, offset: int, initial_bytes: int = 64 * 1024,
-             max_bytes: int = 512 * 1024) -> tuple[int, str, bool]:
-    """Incremental tail. Returns (new_offset, complete_lines_text, reset).
-
-    offset < 0 means "start near the end" (the last `initial_bytes`, from a line boundary). If the file
-    shrank (rotated or truncated), restart from 0. `reset` tells the client to clear what it shows.
-    Only complete lines are returned; a trailing partial line is left for the next call.
-    """
-    try:
-        size = path.stat().st_size
-    except OSError:
-        return 0, "", offset > 0
-    reset = offset < 0 or offset > size
-    if offset < 0:
-        start = max(0, size - initial_bytes)
-    elif offset > size:
-        start = 0
-    else:
-        start = offset
-    skip_partial = offset < 0 and start > 0
-    if start >= size:
-        return start, "", reset
-    with path.open("rb") as f:
-        f.seek(start)
-        data = f.read(max_bytes)
-    if skip_partial:
-        nl = data.find(b"\n")
-        if nl < 0:
-            return start, "", reset
-        start += nl + 1
-        data = data[nl + 1:]
-    cut = data.rfind(b"\n")
-    if cut < 0:
-        # No newline at all: wait for more, unless one giant line fills the window (skip it).
-        return (start + len(data) if len(data) >= max_bytes else start), "", reset
-    chunk = data[: cut + 1]
-    return start + len(chunk), chunk.decode("utf-8", errors="replace"), reset
-
-
 def parse_actions(text: str, result_limit: int = 2500) -> list[dict]:
     """actions.jsonl lines -> feed items. Bad lines are skipped."""
-    out = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(e, dict):
-            continue
-        result = str(e.get("result", ""))
-        out.append({
-            "t": e.get("t"),
-            "tool": str(e.get("tool", "?")),
-            "args": e.get("args") or {},
-            "ms": e.get("ms"),
-            "result": result[:result_limit] + ("…" if len(result) > result_limit else ""),
-            "ok": not re.match(r"^(FAILED|ERROR|error|Blocked|NOT READY)", result),
-            "kind": tool_kind(str(e.get("tool", ""))),
-        })
-    return out
-
-
-def tool_kind(tool: str) -> str:
-    t = tool.removeprefix("mcp__bg3__")
-    if t in ("screenshot", "zoom"):
-        return "vision"
-    if t.startswith(("get_", "list_", "look_", "session_clock", "wiki", "ability_preview")):
-        return "read"
-    if t in ("save_game", "load_game"):
-        return "save"
-    return "act"
+    return [a for line in text.splitlines() if line.strip() and (a := PARSE.action(line, result_limit))]
 
 
 # ---------------------------------------------------------------- clock

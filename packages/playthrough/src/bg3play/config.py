@@ -30,8 +30,8 @@ Secrets never go here (keys come from the machine's .env). Parsing, validation a
 text and dicts; load/save/migrate are the only file I/O. Unknown keys are errors, so a typo is not silently ignored.
 
 Migration: profile.json (runner/play.py load_profile) maps onto `difficulty` and `[character]`; `to_profile` gives
-back exactly what load_profile returns for it. `parse_profile_json` is a copy of load_profile (duplicated until
-Phase D moves the runner's prompt code into this package).
+back exactly what load_profile returns for it. `parse_profile_json` is the single source of that parse;
+runner/play.py load_profile still has its own copy until the harness owner points it here.
 """
 
 from __future__ import annotations
@@ -215,7 +215,7 @@ def to_dict(cfg: PlaythroughConfig) -> dict:
 
 
 def parse_profile_json(text: str) -> dict:
-    """runner/play.py load_profile on the file's text (copy; delete in Phase D): {"character": {"brief", "name"?,
+    """runner/play.py load_profile on the file's text (play.py still has a copy: harness-owned): {"character": {"brief", "name"?,
     "constraints"?, "roleplay"}, "difficulty"?}. Broken JSON, or a character without a brief, means no character."""
     try:
         raw = json.loads(text)

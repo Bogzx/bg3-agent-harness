@@ -2,13 +2,13 @@
 
 - Sxxx.log lines ("HH:MM:SS [kind] text", "===== ..." headers) from runner/play.py's stream printer.
 - The `[end]` line's outcome, turns, minutes and cost.
-- actions.jsonl rows (copy of runner/dashboard/feeds.py parse_actions/tool_kind).
+- actions.jsonl rows and their tool kind.
 - get_status / look result text: WHERE line and PARTY rows (HP, flags).
 - The current goal from objectives.md ("NOW:") or HANDOFF.md ("## Doing right now").
-- decisions.md cards (copy of runner/dashboard/story.py parse_decisions).
+- decisions.md cards.
 - fights.jsonl rows (tools/logs fight records) and `git log` output.
 
-Copies are marked; they are deleted with runner/dashboard in Phase D.
+The single source of these parsers: runner/dashboard imports them.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def end_line(text: str) -> dict:
             "cost_usd": float(m.group(4)) if m.group(4) else None}
 
 
-# ---------------------------------------------------------------- actions.jsonl (copy of feeds.py)
+# ---------------------------------------------------------------- actions.jsonl
 
 
 def tool_kind(tool: str) -> str:
@@ -142,7 +142,7 @@ def current_goal(objectives: str, handoff: str) -> str | None:
     return None
 
 
-# ---------------------------------------------------------------- decisions.md (copy of story.py)
+# ---------------------------------------------------------------- decisions.md
 
 DECISION_RE = re.compile(r"^##\s+(D-\d+[a-z]?)\s+(.*?)\s*(?:\((S[\d\-–, S]+[^)]*)\))?\s*$")
 FIELD_RE = re.compile(r"^-\s+(Choice|Why|Consequence|Expected later|Expected|Reversible|Note)s?:\s*(.*)$", re.IGNORECASE)

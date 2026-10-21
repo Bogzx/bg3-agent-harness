@@ -13,14 +13,15 @@ an unknown line is kept as text, a missing file is an empty part.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "playthrough" / "src"))
+from bg3play import parse as PARSE  # noqa: E402  (decisions.md: single source in the playthrough app)
+
 _CACHE: dict[str, tuple[tuple, Any]] = {}
 
-DECISION_RE = re.compile(r"^##\s+(D-\d+[a-z]?)\s+(.*?)\s*(?:\((S[\d\-–, S]+[^)]*)\))?\s*$")
-FIELD_RE = re.compile(r"^-\s+(Choice|Why|Consequence|Expected later|Expected|Reversible|Note)s?:\s*(.*)$", re.I)
-TAG_RE = re.compile(r"\[(seen[^\]]*|wiki|guess|expected[^\]]*)\]\s*$", re.I)
 PARTY_LINE_RE = re.compile(r"^PARTY\s+(\*\s+)?(\S+)\s+(.*?)\s+HP\s+(\d+)/(\d+)\s*(?:\[(.*)\])?\s*$")
 RARE_RE = re.compile(r"\((uncommon|rare|very rare|legendary)\)", re.I)
 EQUIP_RE = re.compile(r"\[equipped ([^\]]+)\]")
@@ -51,51 +52,7 @@ def _strip_comments(text: str) -> str:
 
 # ---------------------------------------------------------------- decisions
 
-def parse_decisions(text: str) -> list[dict]:
-    """D-xx cards in file order. Field lines may repeat (several choices or consequences)."""
-    cards: list[dict] = []
-    cur: dict | None = None
-    field = None
-    for raw in _strip_comments(text).splitlines():
-        line = raw.rstrip()
-        m = DECISION_RE.match(line)
-        if m:
-            cur = {"id": m.group(1), "title": m.group(2).strip(), "session": (m.group(3) or "").strip() or None,
-                   "choice": [], "why": [], "consequences": [], "expected": [], "reversible": None, "notes": []}
-            cards.append(cur)
-            field = None
-            continue
-        if line.startswith("#"):
-            cur = None if not line.startswith("###") else cur
-            continue
-        if cur is None or not line.strip():
-            continue
-        f = FIELD_RE.match(line.strip())
-        if f:
-            key, val = f.group(1).lower(), f.group(2).strip()
-            tag = TAG_RE.search(val)
-            item = {"text": TAG_RE.sub("", val).strip(), "tag": tag.group(1) if tag else None}
-            if key == "choice":
-                cur["choice"].append(val); field = "choice"
-            elif key == "why":
-                cur["why"].append(val); field = "why"
-            elif key == "consequence":
-                cur["consequences"].append(item); field = "consequences"
-            elif key.startswith("expected"):
-                cur["expected"].append(item); field = "expected"
-            elif key == "reversible":
-                cur["reversible"] = val; field = None
-            else:
-                cur["notes"].append(val); field = "notes"
-        elif line.startswith(("  ", "\t")) and field and cur[field]:
-            last = cur[field][-1]  # a wrapped continuation line
-            if isinstance(last, dict):
-                last["text"] += " " + line.strip()
-            else:
-                cur[field][-1] = last + " " + line.strip()
-        else:
-            cur["notes"].append(line.strip().lstrip("- "))
-    return cards
+parse_decisions = PARSE.decisions   # single source: the playthrough app
 
 
 # ---------------------------------------------------------------- chapters
