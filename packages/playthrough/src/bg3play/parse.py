@@ -141,15 +141,19 @@ def status_text(text: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------- goal
 
 NOW_RE = re.compile(r"^\s*(?:\d+\.\s*|-\s*)?NOW:\s*(.+)$")
+TEMPLATE_HANDOFF_RE = re.compile(r"^#\s*Handoff\s+S0+\b", re.MULTILINE)  # memory-template's "# Handoff S000 → S001"
 
 
 def current_goal(objectives: str, handoff: str) -> str | None:
-    """objectives.md's "NOW:" entry, else the first line under HANDOFF.md's "## Doing right now"."""
+    """objectives.md's "NOW:" entry, else the first line under HANDOFF.md's "## Doing right now" once a session has
+    written it (the template's own text is no goal)."""
     for line in _strip_comments(objectives).splitlines():
         m = NOW_RE.match(line)
         if m:
             return m.group(1).strip()
     lines = _strip_comments(handoff).splitlines()
+    if TEMPLATE_HANDOFF_RE.match(_strip_comments(handoff).lstrip()):
+        return None
     for i, line in enumerate(lines):
         if line.strip().lower().startswith("## doing right now"):
             for nxt in lines[i + 1 :]:

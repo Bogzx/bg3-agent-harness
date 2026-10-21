@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from bg3play import parse
 
 
@@ -97,6 +99,10 @@ def test_current_goal():
     handoff = "# Handoff\n## Doing right now\n\nFinal fight try 12.\nmore\n## Next steps\n1. x"
     assert parse.current_goal("# Objectives\n", handoff) == "Final fight try 12."
     assert parse.current_goal("", "# Handoff\n## Doing right now\n## Next\n") is None
+    # the template's HANDOFF.md (no session wrote one yet, live3 S001 stopped at the milestone) is no goal
+    template = (Path(__file__).resolve().parents[3] / "memory-template" / "HANDOFF.md").read_text()
+    assert parse.current_goal("", template) is None
+    assert parse.current_goal("", template.replace("S000 → S001", "S001 → S002")).startswith("Nothing yet:")
 
 
 def test_decisions():
