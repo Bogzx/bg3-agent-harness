@@ -12,6 +12,7 @@ Endpoints (GET, JSON unless noted, Cache-Control: no-store):
     /api/v1/playthroughs/<pt>/memory/log             memory commits
     /api/v1/playthroughs/<pt>/timeline               choices and fights
     /api/v1/playthroughs/<pt>/positions?level=L      breadcrumb tracks (positions.py)
+    /api/v1/playthroughs/<pt>/replay/<Sxxx>          one session's events + video segments (replay.py)
     /api/v1/screenshot                               the latest capture (image)
     /api/v1/recorder                                 recorder state (null without --record)
     /api/v1/video/index                              recorded segments (recorder.py index.json)
@@ -43,7 +44,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import api
+from . import api, replay
 from . import config as C
 from . import positions as pos
 from . import recorder as rec
@@ -53,6 +54,7 @@ from .store import RunStore, StoreError
 
 PT_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/log|timeline|positions)$")
 CONTROL_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(start|stop|resume)$")
+REPLAY_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/replay/(S\d{3,})$")
 CONFIG_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/config$")
 MAX_BODY = 64 * 1024
 VIDEO_FILE = re.compile(r"^/api/v1/video/(rec-\d+-\d{4}\.mp4)$")
@@ -152,6 +154,12 @@ class App:
             if self.supervisor is not None:
                 played = self.supervisor.sessions_played(name)
             return {"v": api.API_VERSION, "playthrough": name, "config": cfg, "sessions": played}
+        if (rm := REPLAY_ROUTE.match(path)) is not None:
+            name = s.check_name(unquote(rm.group(1)))
+            if name not in s.playthroughs():
+                return None
+            r = replay.replay(s, name, rm.group(2), self.video_dir)
+            return {"v": api.API_VERSION, "playthrough": name, **r} if r else None
         if path == "/api/v1/video/index":
             return {"v": api.API_VERSION, "segments": rec.read_index(self.video_dir)}
         m = PT_ROUTE.match(path)

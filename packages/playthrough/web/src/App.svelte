@@ -5,11 +5,12 @@
   import type { PlaythroughRow } from "./lib/types";
   import Launch from "./screens/Launch.svelte";
   import Memory from "./screens/Memory.svelte";
+  import Replay from "./screens/Replay.svelte";
   import Timeline from "./screens/Timeline.svelte";
   import Watch from "./screens/Watch.svelte";
 
   type Theme = "" | "dark" | "light";
-  const LABELS = { watch: "Watch", memory: "Memory", timeline: "Timeline", launch: "Launch" };
+  const LABELS = { watch: "Watch", memory: "Memory", timeline: "Timeline", replay: "Replay", launch: "Launch" };
 
   let route = $state<Route>(parseRoute(location.hash));
   let pts = $state<PlaythroughRow[]>([]);
@@ -100,6 +101,10 @@
         <Watch pt={route.pt} />
       {:else if route.screen === "memory"}
         <Memory pt={route.pt} file={route.file} onOpen={(f) => go({ screen: "memory", pt: route.pt, file: f })} />
+      {:else if route.screen === "replay"}
+        {#key route.file}
+          <Replay pt={route.pt} session={route.file} onSession={(f) => go({ screen: "replay", pt: route.pt, file: f })} />
+        {/key}
       {:else}
         <Timeline pt={route.pt} />
       {/if}

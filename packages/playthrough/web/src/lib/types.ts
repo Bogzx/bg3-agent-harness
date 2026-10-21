@@ -212,3 +212,18 @@ export interface PlaythroughConfig {
   keeper: { enabled: boolean; model: string; effort: string; minutes: number };
   recording: { enabled: boolean; fps: number; height: number };
 }
+
+export type ReplayEvent =
+  | { t: number; kind: "action"; tool: string; args: Record<string, unknown>; ms: number | null; ok: boolean; result: string }
+  | { t: number; kind: "say"; say: string; text: string }
+  | { t: number; kind: "memory"; subject: string; sha: string };
+
+export interface ReplayPayload {
+  v: number;
+  playthrough: string;
+  session: string;
+  started: number;
+  ended: number;
+  events: ReplayEvent[];
+  segments: Segment[];
+}

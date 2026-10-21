@@ -1,5 +1,5 @@
 import type {
-  Commit, MemoryFile, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, Runner, Segment, SupervisorView,
+  Commit, MemoryFile, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SupervisorView,
   TimelinePayload, WatchSnapshot,
 } from "./types";
 
@@ -36,6 +36,11 @@ export const api = {
       `${pt(name)}/memory/file?path=${encodeURIComponent(path)}`,
     ),
   memoryLog: (name: string) => getJson<{ v: number; commits: Commit[] }>(`${pt(name)}/memory/log`),
+  sessions: (name: string) =>
+    getJson<{ v: number; sessions: { session: string; started: number | null; minutes: number | null }[] }>(
+      `${pt(name)}/sessions`,
+    ),
+  replay: (name: string, session: string) => getJson<ReplayPayload>(`${pt(name)}/replay/${encodeURIComponent(session)}`),
   timeline: (name: string) => getJson<TimelinePayload>(`${pt(name)}/timeline`),
   positions: (name: string, level?: string) =>
     getJson<Positions>(`${pt(name)}/positions${level ? `?level=${encodeURIComponent(level)}` : ""}`),

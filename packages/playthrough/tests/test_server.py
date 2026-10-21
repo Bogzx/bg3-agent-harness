@@ -319,3 +319,10 @@ def test_control_start_stop_resume(store: RunStore, web: Path, tmp_path: Path):
         hub.close()
         srv.shutdown()
         srv.server_close()
+
+
+def test_replay_endpoint(server):
+    code, r = get_json(server, f"/api/v1/playthroughs/{PT}/replay/S096")
+    assert code == 200 and r["session"] == "S096" and r["events"] and r["segments"] == []
+    assert get_json(server, f"/api/v1/playthroughs/{PT}/replay/S001")[0] == 404
+    assert get_json(server, "/api/v1/playthroughs/nope/replay/S096")[0] == 404
