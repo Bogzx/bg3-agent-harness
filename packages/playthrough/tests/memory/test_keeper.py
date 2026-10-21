@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""Offline tests for runner/memory_keeper.py with a fake `claude` (never calls the real CLI or the game).
-
-    python3 runner/test_memory_keeper.py
-"""
+"""Offline tests for bg3play.memory.keeper (was runner/memory_keeper.py) with a fake `claude` (never calls the real CLI
+or the game)."""
 from __future__ import annotations
 
 import json
@@ -11,12 +9,9 @@ import sys
 import unittest
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE.parent / "tools" / "memory"))
-import memory_keeper as K  # noqa: E402
-import memlib as M  # noqa: E402
-from _testutil import MemoryTestCase  # noqa: E402
+from bg3play.memory import keeper as K
+from bg3play.memory import memlib as M
+from tests.memory._testutil import MemoryTestCase
 
 # The fake claude: runs in the memory dir (cwd), records its argv, and edits files per $FAKE_MODE.
 FAKE = r'''#!/usr/bin/env python3

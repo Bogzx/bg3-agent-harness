@@ -10,11 +10,11 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-import memlib as M
-import session as S
-from _testutil import MemoryTestCase, character_text
+from bg3play.memory import memlib as M
+from bg3play.memory import session as S
+from tests.memory._testutil import MemoryTestCase, character_text
 
-SESSION_PY = str(Path(__file__).resolve().parent / "session.py")
+SESSION_PY = str(M.REPO_ROOT / "tools" / "memory" / "session.py")   # the path the runner and the hooks call
 
 
 def run_quiet(fn, *args, stdin="{}"):
@@ -660,6 +660,18 @@ class MemlintTest(MemoryTestCase):
         link.symlink_to(self.mem, target_is_directory=True)
         self.append("npcs.md", "- untagged\n")
         self.assertIsNotNone(S.memlint_message(link, str(link / "npcs.md")))
+
+
+class RefreshSnapshotsTest(MemoryTestCase):
+    def test_runs_the_package_module_in_a_subprocess(self):
+        import socket
+        with socket.socket() as s:   # a port nothing listens on: the game is "not running"
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        env = {"BG3_SNAPSHOTS": "1", "BG3LE_DEBUG_PORT": str(port), "PYTHONPATH": ""}
+        with mock.patch.dict(os.environ, env):
+            line = S.refresh_snapshots(self.mem)
+        self.assertTrue(line.startswith("snapshots: wrote"), line)
 
 
 if __name__ == "__main__":

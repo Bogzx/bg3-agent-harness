@@ -6,9 +6,9 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-import memlib as M
-import new_playthrough as NP
-from _testutil import isolate_git
+from bg3play.memory import memlib as M
+from bg3play.memory import new_playthrough as NP
+from tests.memory._testutil import isolate_git
 
 
 class NewPlaythroughTest(unittest.TestCase):
@@ -79,7 +79,7 @@ class NewPlaythroughTest(unittest.TestCase):
         self.assertEqual(rc, 2)
 
     def test_fresh_memory_lints_clean(self):
-        import lint as L
+        from bg3play.memory import lint as L
         self.run_main("run1")
         r = L.lint(self.root / "play" / "memory")
         self.assertEqual(r.errors, [])

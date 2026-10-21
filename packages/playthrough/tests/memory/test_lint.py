@@ -3,8 +3,8 @@ import json
 import unittest
 from contextlib import redirect_stdout
 
-import lint as L
-from _testutil import MemoryTestCase, character_text
+from bg3play.memory import lint as L
+from tests.memory._testutil import MemoryTestCase, character_text
 
 
 def kinds(items):
@@ -51,7 +51,7 @@ class CharacterTest(MemoryTestCase):
 
     def test_template_and_playbook_format_match_lint(self):
         import re
-        import memlib as M
+        from bg3play.memory import memlib as M
         playbook = (M.REPO_ROOT / "play" / "knowledge" / "playbooks" / "character-creation.md").read_text()
         skeleton = playbook.split("## CHARACTER.md format", 1)[1].split("```")[1]
         template = M.strip_comments((M.TEMPLATE_DIR / "CHARACTER.md").read_text())

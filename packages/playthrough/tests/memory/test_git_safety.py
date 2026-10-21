@@ -11,11 +11,10 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import lint as L  # noqa: E402
-import memlib as M  # noqa: E402
-import session as S  # noqa: E402
-from _testutil import MemoryTestCase  # noqa: E402
+from bg3play.memory import lint as L
+from bg3play.memory import memlib as M
+from bg3play.memory import session as S
+from tests.memory._testutil import MemoryTestCase
 
 
 class GitSafetyTest(MemoryTestCase):

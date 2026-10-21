@@ -1,8 +1,8 @@
 import unittest
 
-import memlib as M
-import snapshots as SN
-from _testutil import MemoryTestCase
+from bg3play.memory import memlib as M
+from bg3play.memory import snapshots as SN
+from tests.memory._testutil import MemoryTestCase
 
 GUID_A = "11111111-2222-3333-4444-555555555555"
 GUID_B = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
