@@ -137,7 +137,8 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "bridge/tests/test_route.py" = ["E501", "I001", "N806", "RUF100"]
 "bridge/tests/test_rules.py" = ["I001", "N812", "RUF100"]
 "bridge/tests/test_saver.py" = ["E501", "I001", "RUF100"]
-"bridge/tests/test_se_tools.py" = ["E501", "I001", "N806", "RUF002", "RUF005", "RUF012", "RUF100", "SIM105", "SIM117"]
+"bridge/tests/test_se_tools.py" = ["E501", "I001", "RUF005", "RUF012", "RUF100", "SIM117"]
+"bridge/tests/test_se_tools_world.py" = ["E501", "N806", "RUF002", "RUF100", "SIM105"]
 "bridge/tests/test_skipper.py" = ["I001"]
 "bridge/tests/test_talk_stale.py" = ["I001"]
 "bridge/tests/test_think_acting.py" = ["I001", "RUF003", "RUF100"]
@@ -413,6 +414,7 @@ exclude = [
     "bridge/tests/test_saver.py",
     "bridge/tests/test_saves.py",
     "bridge/tests/test_se_tools.py",
+    "bridge/tests/test_se_tools_world.py",
     "bridge/tests/test_select.py",
     "bridge/tests/test_skipper.py",
     "bridge/tests/test_talk_stale.py",
