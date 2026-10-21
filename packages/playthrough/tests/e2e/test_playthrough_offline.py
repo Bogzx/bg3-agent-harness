@@ -136,6 +136,8 @@ def played(tmp_path_factory):
     model = GameModel(clock=FakeClock())
     model.open_dialogue("Lae'zel", "Help me get to the helm.", ["We go together.", "Leave."])
     create_memory(PT, pts / PT / "memory")  # new_playthrough.py, as before a first `play.py run`
+    runtime.mkdir()
+    (runtime / "budget.json").write_text('{"cap": 1.0, "spent": 0.0}')  # the global budget a paid keeper needs
     play_llm = StubLLM(root / "llm-play", PLAY_SCRIPT)
     keeper_llm = StubLLM(root / "llm-keeper", keeper_script((pts / PT / "memory" / "quests.md").read_text()))
     (profile_dir / "stub-pi.toml").write_text(profile_toml(play_llm.url))
@@ -211,6 +213,9 @@ def test_two_sessions_through_the_legacy_adapter_with_the_keeper_between(played)
     sdir = played["runtime"] / "sessions" / PT
     keeps = [json.loads(ln) for ln in (sdir / "keeper_history.jsonl").read_text().splitlines()]
     assert [(k["sid"], k["status"], k["client"]) for k in keeps] == [("S001", "ok", "pi"), ("S002", "no_changes", "pi")]
+    # each keeper pass: 2 stub responses billed $0.0125 each, under the default cap ($0.05), added to the budget
+    assert [k["cost_usd"] for k in keeps] == [0.025, 0.025]
+    assert json.loads((played["runtime"] / "budget.json").read_text())["spent"] == 0.05
     assert QUEST in (played["memory"] / "quests.md").read_text()
 
 

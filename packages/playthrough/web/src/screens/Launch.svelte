@@ -97,7 +97,8 @@
         </select>
         {#if picked?.client === "pi"}
           <small class="faint">pi plays through {picked.provider}; the key comes from ${picked.api_key_env} in the machine's
-            .env. Needs a cost cap (play sessions only: the memory keeper between them runs on this profile too).</small>
+            .env. Needs a cost cap per session; the memory keeper between sessions runs on this profile too, capped by
+            playthrough.toml [keeper] max_cost_usd (default $0.05), both counted in runtime/budget.json.</small>
         {:else if picked}
           <small class="faint">{picked.client} uses its CLI's own login and endpoint.</small>
         {/if}

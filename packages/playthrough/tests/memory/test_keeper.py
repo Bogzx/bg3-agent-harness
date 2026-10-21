@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import unittest
 from pathlib import Path
 
@@ -24,6 +25,12 @@ with open(os.environ["FAKE_CALLS"], "a") as f:
 mode, resume = os.environ.get("FAKE_MODE", "ok"), "--resume" in args or args[:2] == ["exec", "resume"]
 if args[:1] == ["exec"]:   # codex: the thread id comes first in its stream
     print(json.dumps({"type": "thread.started", "thread_id": "thread-1"}), flush=True)
+def pi_usage(n, usd):   # pi: an assistant message whose usage carries its cost (the running cost adds up)
+    msg = {"role": "assistant", "responseId": f"r{n}", "usage": {"input": 10, "output": 5, "cost": {"total": usd}},
+           "content": [], "stopReason": "toolUse"}
+    print(json.dumps({"type": "message_end", "message": msg}), flush=True)
+if "--mode" in args:
+    pi_usage(0, 0.01)
 def app(rel, text):
     with open(rel, "a") as f:
         f.write(text)
@@ -64,6 +71,12 @@ elif mode == "git_meta":
 elif mode == "hallucinate":   # MEM-1: a name no note has, next to a real one
     app("quests.md", "\n- Bring the idol to Qxzarnath the Undying [seen] (S003)\n"
         "- Find the tiefling kids [seen] (S003)\n")
+elif mode == "spend":   # keeps spending until it is killed at the cap
+    app("quests.md", "\n- Find the tiefling kids [seen] (S003)\n")
+    for n in range(1, 20):
+        pi_usage(n, 0.02)
+        time.sleep(0.05)
+    time.sleep(60)
 elif mode == "fail":
     sys.exit(3)
 print(json.dumps({"type": "result", "subtype": "success"}))
@@ -94,6 +107,7 @@ class KeeperTest(MemoryTestCase):
         self.calls = self.tmp / "calls.jsonl"
         os.environ["FAKE_CALLS"] = str(self.calls)
         self.base = self.tmp / "S003-keeper"
+        self.budget = self.tmp / "budget.json"
 
     def run_keeper(self, mode: str, minutes: float = 1.0) -> keeper.KeeperResult:
         os.environ["FAKE_MODE"] = mode
@@ -218,11 +232,23 @@ class KeeperTest(MemoryTestCase):
         self.assertEqual(r.status, "error")
         self.assertIn("codex exit 3", r.detail)
 
-    def run_pi(self, mode: str) -> keeper.KeeperResult:
+    def run_pi(self, mode: str, max_cost: float | None = 0.05, budget: dict | None = None) -> keeper.KeeperResult:
         os.environ["FAKE_MODE"] = mode
+        self.budget.write_text(json.dumps(budget or {"cap": 1.0, "spent": 0.0}))
         return keeper.run_keeper(
-            self.mem, 3, self.base, minutes=1.0, client="pi", binary=str(self.fake), profile=_pi_profile()
+            self.mem,
+            3,
+            self.base,
+            minutes=1.0,
+            client="pi",
+            binary=str(self.fake),
+            profile=_pi_profile(),
+            max_cost=max_cost,
+            budget=self.budget,
         )
+
+    def spent(self) -> float:
+        return json.loads(self.budget.read_text())["spent"]
 
     def test_pi_via_mcp_keeper_server(self):
         r = self.run_pi("ok")
@@ -236,10 +262,48 @@ class KeeperTest(MemoryTestCase):
         self.assertEqual(bg3["server"]["env"]["BG3AI_KEEPER_MODE"], "1")
         self.assertEqual(bg3["server"]["cwd"], str(self.mem))
         self.assertEqual(Path(bg3["systemPromptFile"]), Path(f"{self.base}.task.md"))  # the task as system text
+        self.assertEqual(r.cost_usd, 0.01)
+        self.assertAlmostEqual(self.spent(), 0.01)  # added to runtime/budget.json
+        self.assertIn("keeper cost $0.0100; budget $0.01 of $1", r.detail)
+
+    def test_pi_killed_at_its_cost_cap(self):
+        t0 = time.monotonic()
+        r = self.run_pi("spend", max_cost=0.05)
+        self.assertLess(time.monotonic() - t0, 30)  # killed at the cap, not at the 1-minute timeout
+        self.assertFalse(r.timed_out)
+        self.assertIn("cost cap $0.05 hit", r.detail)
+        self.assertGreaterEqual(r.cost_usd, 0.05)
+        self.assertLess(r.cost_usd, 0.09)  # stopped within a message of the cap
+        self.assertAlmostEqual(self.spent(), r.cost_usd)
+        self.assertEqual(r.status, "ok", r.summary())  # its edits so far are checked like a timed-out pass
+
+    def test_pi_cap_cut_to_the_budget_left(self):
+        r = self.run_pi("spend", max_cost=1.0, budget={"cap": 1.0, "spent": 0.97})
+        self.assertIn("cost cap $0.03 hit", r.detail)
+
+    def test_pi_refused_without_cap_or_budget(self):
+        for max_cost, budget, why in (
+            (None, None, "a keeper cost cap ([keeper] max_cost_usd)"),
+            (0.0, None, "a keeper cost cap"),
+            (0.05, {"cap": 1.0, "spent": 1.0}, "the global budget is used up"),
+        ):
+            r = self.run_pi("ok", max_cost=max_cost, budget=budget)
+            self.assertEqual(r.status, "refused")
+            self.assertIn(why, r.detail)
+        os.environ["FAKE_MODE"] = "ok"
+        r = keeper.run_keeper(
+            self.mem, 3, self.base, minutes=1.0, client="pi", binary=str(self.fake), profile=_pi_profile(), max_cost=1
+        )
+        self.assertEqual(r.status, "refused")
+        self.assertIn("runtime/budget.json", r.detail)
+        self.assertFalse(self.calls.exists())  # no pi process ran
 
     def test_pi_without_profile_is_an_error(self):
         os.environ["FAKE_MODE"] = "ok"
-        r = keeper.run_keeper(self.mem, 3, self.base, minutes=1.0, client="pi", binary=str(self.fake))
+        self.budget.write_text('{"cap": 1, "spent": 0}')
+        r = keeper.run_keeper(
+            self.mem, 3, self.base, minutes=1.0, client="pi", binary=str(self.fake), max_cost=1, budget=self.budget
+        )
         self.assertEqual(r.status, "error")
         self.assertIn("needs its client profile", r.detail)
 

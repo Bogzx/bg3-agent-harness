@@ -2,9 +2,9 @@
 
 Which client keeps the memory comes from the session runner (`client_for`): with the legacy CLI, play.py runs the
 keeper itself for every client but pi (play.py --profile pi needs --no-keeper), so only a pi playthrough's keeper
-runs here, through pi with the playthrough's client profile. The pass's model, effort and minutes are the config's
-[keeper]; its log is <runtime>/sessions/<pt>/Sxxx-keeper.* and its result a keeper_history.jsonl row, as play.py
-writes them.
+runs here, through pi with the playthrough's client profile. The pass's model, effort, minutes and cost cap
+(max_cost_usd; a paid client also needs runtime/budget.json: memory/keeper_spend.py) are the config's [keeper]; its
+log is <runtime>/sessions/<pt>/Sxxx-keeper.* and its result a keeper_history.jsonl row, as play.py writes them.
 """
 
 from __future__ import annotations
@@ -58,6 +58,8 @@ class MemoryKeeper:
             cfg.keeper.minutes,
             client=client,
             profile=profile,
+            max_cost=cfg.keeper.max_cost_usd,
+            budget=self.runtime / "budget.json",
         )
         row = {"t": round(self.clock(), 1), "client": client, "model": model, "effort": cfg.keeper.effort}
         with (d / "keeper_history.jsonl").open("a", encoding="utf-8") as f:

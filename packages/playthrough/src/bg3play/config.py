@@ -22,6 +22,7 @@
     model = ""                         # "" = the play model
     effort = "low"
     minutes = 5.0
+    max_cost_usd = 0.05                # cost cap of one keeper pass (a paid client: pi; 0 = none, refused for pi)
     [recording]
     enabled = true
     fps = 15
@@ -92,6 +93,7 @@ class Keeper:
     model: str = ""
     effort: str = "low"
     minutes: float = 5.0
+    max_cost_usd: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -188,6 +190,8 @@ def validate(data: dict[str, Any]) -> PlaythroughConfig:
         raise ConfigError(f"session.max_cost_usd: must be >= 0 (0 = no cap), got {cfg.session.max_cost_usd}")
     if cfg.keeper.minutes <= 0:
         raise ConfigError(f"keeper.minutes: must be > 0, got {cfg.keeper.minutes}")
+    if cfg.keeper.max_cost_usd < 0:
+        raise ConfigError(f"keeper.max_cost_usd: must be >= 0 (0 = no cap), got {cfg.keeper.max_cost_usd}")
     if not 1 <= cfg.recording.fps <= 60:
         raise ConfigError(f"recording.fps: must be 1-60, got {cfg.recording.fps}")
     if not 144 <= cfg.recording.height <= 2160:

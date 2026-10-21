@@ -48,8 +48,10 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -87,6 +89,7 @@ from bg3play.memory.keeper_files import PENDING as PENDING  # these four: the ru
 from bg3play.memory.keeper_files import REPO as REPO
 from bg3play.memory.keeper_files import recover as recover
 from bg3play.memory.keeper_files import ungrounded_names as ungrounded_names
+from bg3play.memory.keeper_spend import KeeperSpend
 
 # ---------------------------------------------------------------- prompt / command
 
@@ -638,7 +641,7 @@ def keeper_cmd(
 @dataclass
 class KeeperResult:
     sid: str
-    status: str = "error"  # ok | no_changes | lint_failed | error
+    status: str = "error"  # ok | no_changes | lint_failed | error | refused (a paid client without cap or budget)
     seconds: float = 0.0
     files: list[str] = field(default_factory=list[str])
     reverted: list[str] = field(default_factory=list[str])  # touched outside the writable set
@@ -647,6 +650,7 @@ class KeeperResult:
     exit_code: int | None = None
     lint_errors: list[str] = field(default_factory=list[str])
     ungrounded: list[str] = field(default_factory=list[str])  # MEM-1: added lines dropped (names not in the memory)
+    cost_usd: float | None = None  # a paid client's pass (keeper_spend.py)
     detail: str = ""
 
     def summary(self) -> str:
@@ -677,9 +681,11 @@ def _run_claude(
     timeout: float,
     extra_env: dict[str, Any] | None = None,
     pending: Path | None = None,
+    watch: Callable[[str], bool] | None = None,
 ) -> tuple[int | None, bool]:
     """Runs one claude (or other client) call with its stream into log_path; kills its process group at the
-    timeout (the keeper-mode MCP server is in that group too)."""
+    timeout (the keeper-mode MCP server is in that group too), or when `watch` (each stream line; the cost cap,
+    keeper_spend.py) returns True."""
     env = {**os.environ, "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", **(extra_env or {})}
     for k in ("BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP", "BG3AI_METRICS_PATH"):
         env.pop(k, None)
@@ -688,25 +694,47 @@ def _run_claude(
             cmd,
             cwd=cwd,
             env=env,
-            stdout=out,
+            stdout=out if watch is None else subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
             text=True,
         )
         note_pgid(pending, proc.pid)  # its own process group: recover() kills it if the runner dies meanwhile
+        reader = None
+        if watch is not None:
+            reader = threading.Thread(target=_pump, args=(proc, out, watch), daemon=True, name="keeper-stream")
+            reader.start()
         try:
             return proc.wait(timeout=max(1.0, timeout)), False
         except subprocess.TimeoutExpired:
-            for sig, wait in ((signal.SIGINT, 10), (signal.SIGKILL, 10)):
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    os.killpg(proc.pid, sig)
-                try:
-                    proc.wait(timeout=wait)
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
+            _kill_group(proc)
             return proc.returncode, True
+        finally:
+            if reader is not None:
+                reader.join(10)
+
+
+def _kill_group(proc: subprocess.Popen[str]) -> None:
+    for sig, wait in ((signal.SIGINT, 10), (signal.SIGKILL, 10)):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, sig)
+        try:
+            proc.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _pump(proc: subprocess.Popen[str], out: Any, watch: Callable[[str], bool]) -> None:
+    """The stream into the log, each line through `watch`; the process group is killed when it trips."""
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        out.write(line)
+        out.flush()
+        if watch(line):
+            _kill_group(proc)
+            return
 
 
 def keeper_server_env(mem: Path, knowledge: Path, task: Path) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -735,6 +763,7 @@ def _run_sandboxed(
     log_path: Path,
     timeout: float,
     pending: Path | None,
+    watch: Callable[[str], bool] | None = None,
 ) -> tuple[int | None, bool]:
     """One keeper call in the container sandbox: the keeper-mode server over http on the host for this call, the
     client in a `keeper` container; both gone afterwards, whatever happened."""
@@ -754,7 +783,7 @@ def _run_sandboxed(
     t0 = time.time()
     srv = box.start_server(server, env, mem, Path(f"{log_base}.mcp-http.log"))  # SandboxError: run_keeper's error
     try:
-        return _run_claude(cmd, mem, log_path, timeout - (time.time() - t0), pending=pending)
+        return _run_claude(cmd, mem, log_path, timeout - (time.time() - t0), pending=pending, watch=watch)
     finally:
         box.remove(name)
         srv.stop()
@@ -792,6 +821,8 @@ def run_keeper(
     binary: str | None = None,
     sandbox: Any = None,
     profile: Any = None,
+    max_cost: float | None = None,
+    budget: Path | None = None,
 ) -> KeeperResult:
     """One keeper pass for the session that just ended (number sid_n). Never raises.
 
@@ -800,7 +831,8 @@ def run_keeper(
     whose default stays today's pass with Claude Code's file tools (keeper_cmd). binary: the client's executable
     (default: `claude` for claude, else the client's own). sandbox: the runner's runner/sandbox.Sandbox (run
     --sandbox container): the client runs in the container against the keeper-mode server over http (always MCP).
-    profile: pi's client profile (profiles.Profile; its model is the keeper's)."""
+    profile: pi's client profile (profiles.Profile; its model is the keeper's). max_cost, budget: a paid client's
+    cap for this pass and runtime/budget.json (keeper_spend.py): refused without them, killed at the cap."""
     sid = memlib.session_id(sid_n)
     via_mcp = client != "claude" if mcp is None else mcp
     if sandbox is not None:
@@ -809,6 +841,10 @@ def run_keeper(
     if profile is not None:
         model = profile.model  # pi runs the profile's model only
     res = KeeperResult(sid)
+    spend = KeeperSpend(client, max_cost, budget)
+    if spend.refusal:
+        res.status, res.detail = "refused", spend.refusal
+        return res
     snap = pending = None
     t0 = time.time()
     end = t0 + minutes * 60
@@ -853,10 +889,23 @@ def run_keeper(
                 )
             if sandbox is not None:
                 return _run_sandboxed(
-                    sandbox, cli, text, mem, model, effort, sess, resume, log_base, knowledge, log_path, left, pending
+                    sandbox,
+                    cli,
+                    text,
+                    mem,
+                    model,
+                    effort,
+                    sess,
+                    resume,
+                    log_base,
+                    knowledge,
+                    log_path,
+                    left,
+                    pending,
+                    spend.watcher(cli),
                 )
             cmd, env = client_cmd(cli, text, mem, model, effort, sess, resume, log_base)
-            return _run_claude(cmd, mem, log_path, left, env, pending=pending)
+            return _run_claude(cmd, mem, log_path, left, env, pending=pending, watch=spend.watcher(cli))
 
         rc, res.timed_out = call(prompt, False, end - time.time())
         if cli is not None and not cli.assigns_session:
@@ -878,7 +927,7 @@ def run_keeper(
                 res.ungrounded += [f"{rel}: {ln.strip()}" for rel, lns in bad.items() for ln in lns]
             new = [e for e in _errors(mem, sid_n + 1) if e not in before_errors]
             left = end - time.time()
-            if not new or attempt == 1 or left < FIX_MIN_SECONDS or res.timed_out:
+            if not new or attempt == 1 or left < FIX_MIN_SECONDS or res.timed_out or spend.cap_hit:
                 break
             fix = (
                 "Memory lint now reports these NEW errors; fix them with minimal edits, then stop:\n"
@@ -911,5 +960,9 @@ def run_keeper(
                 res.detail += "; keeper edits rolled back"
             except Exception as e2:
                 res.detail += f"; rollback failed ({type(e2).__name__}), recover() at the next start"
+    if spend.paid:
+        res.cost_usd = round(spend.cost, 6)
+        notes = [f"cost cap ${spend.cap:g} hit" if spend.cap_hit else "", spend.record(mem.parent.name, sid)]
+        res.detail = "; ".join(x for x in (res.detail, *notes) if x)
     res.seconds = round(time.time() - t0, 1)
     return res

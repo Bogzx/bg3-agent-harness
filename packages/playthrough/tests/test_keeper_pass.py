@@ -37,15 +37,18 @@ def test_runs_the_pass_with_the_runners_client_and_logs_it(tmp_path: Path):
     ((a, kw),) = run.calls
     d = tmp_path / "runtime" / "sessions" / "ilse"
     assert a == (tmp_path / "playthroughs" / "ilse" / "memory", 4, d / "S004-keeper", "opus", "medium", 3.0)
-    assert kw == {"client": "pi", "profile": profile}
+    budget = tmp_path / "runtime" / "budget.json"
+    assert kw == {"client": "pi", "profile": profile, "max_cost": 0.05, "budget": budget}
     (row,) = [json.loads(ln) for ln in (d / "keeper_history.jsonl").read_text().splitlines()]
     assert row["t"] == 1234.5 and row["client"] == "pi" and row["status"] == "ok" and row["commit"] == "abc1234"
 
 
 def test_keeper_model_overrides_the_play_model(tmp_path: Path):
-    k, run = make(tmp_path, lambda cfg: ("codex", None), agent={"model": "gpt"}, keeper={"model": "gpt-mini"})
+    k, run = make(
+        tmp_path, lambda cfg: ("codex", None), agent={"model": "gpt"}, keeper={"model": "gpt-mini", "max_cost_usd": 0.2}
+    )
     k.run_keeper("ilse", SessionResult("S001", "ok"))
-    assert run.calls[0][0][3] == "gpt-mini"
+    assert run.calls[0][0][3] == "gpt-mini" and run.calls[0][1]["max_cost"] == 0.2
 
 
 def test_nothing_when_the_runner_keeps_the_memory_or_no_session(tmp_path: Path):
