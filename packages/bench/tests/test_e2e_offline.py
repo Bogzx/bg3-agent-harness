@@ -23,7 +23,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
@@ -51,16 +50,8 @@ if not PI.exists():
     pytest.skip("tools/pi/node_modules missing: cd tools/pi && npm ci --ignore-scripts", allow_module_level=True)
 
 
-def _runner(name: str) -> ModuleType:
-    """A runner/ module by path, under its own name (runner/ is not a package)."""
-    spec = importlib.util.spec_from_file_location(f"runner_{name}", REPO / "runner" / f"{name}.py")
-    assert spec is not None and spec.loader is not None
-    mod = sys.modules[spec.name] = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-profiles, facts_w = _runner("profiles"), _runner("facts")
+from bg3harness import facts as facts_w
+from bg3harness import profiles
 
 
 def call(name: str, args: dict | None = None) -> dict:
