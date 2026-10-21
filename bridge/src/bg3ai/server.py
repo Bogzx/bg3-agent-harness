@@ -56,8 +56,8 @@ memory_edit, memory_append; note appends to the session log). knowledge/ holds r
 playbooks. Session: if your first message doesn't show your memory briefing, call session_start first; at the end
 of the wrap-up call end_session and end your turn only when it reports the commit."""
 
-# play/CLAUDE.md for clients other than Claude Code (rules.py): in `instructions` and on the first briefing.
-RULES = rules.Once(rules.load(Path(os.environ.get("BG3AI_RULES_PATH") or PLAY_DIR / "CLAUDE.md")))
+# The assembled rules for clients other than Claude Code (rules.py): in `instructions` and on the first briefing.
+RULES = rules.Once(rules.load())
 mcp = MCPServer("bg3", instructions=rules.instructions(INSTRUCTIONS, RULES.rules))
 SANDBOX = memtools.Sandbox(lambda: MEMORY, lambda: KNOWLEDGE)  # memory/ + read-only knowledge/ (memtools.py)
 LIFE = memtools.Lifecycle(lambda: MEMORY)  # opens/ends the memory session without client hooks

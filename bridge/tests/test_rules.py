@@ -1,5 +1,5 @@
-"""Offline tests: play/CLAUDE.md served to any MCP client (instructions, the first briefing of a session, the rules
-prompt/resource), adapted where it describes Claude Code; and the server-side stop after deadline + grace (rules.py).
+"""Offline tests: the assembled rules (packages/harness/prompts) served to any MCP client (instructions, the first
+briefing of a session, the rules prompt/resource); and the server-side stop after deadline + grace (rules.py).
 
 Run: cd bridge && uv run python -m unittest discover -s tests
 """
@@ -21,21 +21,42 @@ from bg3ai import memtools, rules, server  # noqa: E402
 
 
 class Served(unittest.TestCase):
-    def test_every_adaptation_still_matches_play_claude_md(self):
-        # A failure here: play/CLAUDE.md changed; update rules.ADAPT (and docs/BENCHMARK-BIAS.md).
-        import re
-        raw = rules.RULES_PATH.read_text(encoding="utf-8")
-        for pat, _ in rules.ADAPT:
-            self.assertRegex(raw, re.compile(pat, re.S))
+    def setUp(self) -> None:
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        for k in ("BG3AI_RULES_PATH", "BG3AI_PROMPT_CONDITION"):
+            os.environ.pop(k, None)
 
-    def test_claude_code_bits_are_rewritten_the_rest_kept(self):
+    def test_the_default_is_the_assembled_rules(self):
         text = rules.load()
-        self.assertNotIn("mcp__bg3__", text)
-        self.assertNotIn("ToolSearch", text)
-        self.assertIn("your client may show them with a prefix", text)
-        for keep in ("# You are playing Baldur's Gate 3", "## Fairness and sandbox (hard rules)", "## Session lifecycle",
-                     "Never pass `wait=true`"):
-            self.assertIn(keep, text)
+        self.assertEqual(text, rules.prompts().assemble("rules").text.strip())
+        self.assertTrue(text.startswith("# You are playing Baldur's Gate 3"))
+        self.assertIn("## Fairness and sandbox (hard rules)", text)
+        self.assertNotIn("## Session lifecycle", text)          # coaching: not in the rules condition
+        for client_only in ("mcp__bg3__", "ToolSearch", "Claude"):
+            self.assertNotIn(client_only, text)
+
+    def test_condition_and_file_overrides(self):
+        coached = rules.prompts().assemble("rules+coaching").text.strip()
+        self.assertEqual(rules.load(condition="rules+coaching"), coached)
+        os.environ["BG3AI_PROMPT_CONDITION"] = "rules+coaching"
+        self.assertEqual(rules.load(), coached)
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "rules.md"
+            f.write_text("MY RULES\n", encoding="utf-8")
+            os.environ["BG3AI_RULES_PATH"] = str(f)
+            self.assertEqual(rules.load(), "MY RULES")
+
+    def test_every_tool_the_rules_name_is_a_server_tool(self):
+        # bench.md §2.6 test c against the live registry (the prompts' own lint uses tools/pi's dump of it)
+        import asyncio
+        import re
+        tools = {t.name for t in asyncio.run(server.mcp.list_tools())}
+        named = {m.group(1) for m in re.finditer(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)", rules.load())}
+        events = {"job_finished", "queue_done", "queue_interrupted", "my_turn", "in_combat", "hp_below",
+                  "item_present", "target_visible", "in_dialogue", "dialogue_line"}
+        self.assertEqual(named - tools - events, set())
 
     def test_missing_file_serves_nothing(self):
         self.assertEqual(rules.load(rules.REPO / "no-such-CLAUDE.md"), "")
@@ -43,7 +64,7 @@ class Served(unittest.TestCase):
 
     def test_instructions_carry_the_rules_unless_turned_off(self):
         with mock.patch.dict(os.environ, {"BG3AI_SERVE_RULES": "1"}):
-            self.assertIn("=== RULES (play/CLAUDE.md) ===\nR", rules.instructions("base", "R"))
+            self.assertIn("=== RULES ===\nR", rules.instructions("base", "R"))
         with mock.patch.dict(os.environ, {"BG3AI_SERVE_RULES": "0"}):
             self.assertEqual(rules.instructions("base", "R"), "base")
 

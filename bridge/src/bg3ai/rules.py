@@ -1,11 +1,14 @@
 """The play rules for any MCP client, and the server-side session stop.
 
-Claude Code reads play/CLAUDE.md by itself (`claude -p` runs in play/). Any other client (Codex, Gemini CLI, a plain
-MCP client) gets the same file from the server instead: in the initialize result's `instructions`, prepended to the
-first briefing of a session (session_start, or the first tool result in manual mode; a client that ignores
-`instructions` still sees them), and as the `rules` prompt and the bg3://rules resource. play/CLAUDE.md stays the
-source of truth; the few Claude-Code-only passages are rewritten at serve time (ADAPT; docs/BENCHMARK-BIAS.md).
-$BG3AI_SERVE_RULES=0 turns the instructions and the briefing copy off (play/.mcp.json, for Claude Code).
+The rules are data files in packages/harness/prompts (D3 in docs/OVERHAUL-PLAN.md), assembled per condition by its
+assemble.py: "rules" (how the game, the tools, fairness and the clock line work; client-neutral) or
+"rules+coaching" (plus how to play well and the playthrough's memory protocol). Claude Code reads play/CLAUDE.md by
+itself (`claude -p` runs in play/), the generated rules+coaching text for the claude client. Any other client gets
+assemble($BG3AI_PROMPT_CONDITION, default "rules") from the server: in the initialize result's `instructions`,
+prepended to the first briefing of a session (session_start, or the first tool result in manual mode; a client that
+ignores `instructions` still sees them), and as the `rules` prompt and the bg3://rules resource.
+$BG3AI_RULES_PATH serves that file verbatim instead. $BG3AI_SERVE_RULES=0 turns the instructions and the briefing
+copy off (play/.mcp.json for Claude Code; pi, whose system text carries the rules: D2).
 
 The stop: the runner stops `claude` at deadline + 10 min. Any client gets the same from the server: after the
 deadline + STOP_GRACE_S every tool outside the allowed set (reads, memory, note, save, session tools) is refused
@@ -14,35 +17,34 @@ with a pointer to end_session.
 
 from __future__ import annotations
 
+import importlib.util
 import os
-import re
 import time
 from pathlib import Path
+from types import ModuleType
 
 REPO = Path(__file__).resolve().parents[3]
-RULES_PATH = Path(os.environ.get("BG3AI_RULES_PATH") or REPO / "play" / "CLAUDE.md")
+ASSEMBLE = REPO / "packages" / "harness" / "prompts" / "assemble.py"
 URI = "bg3://rules"
 
-# (pattern, replacement): passages of play/CLAUDE.md that describe Claude Code, not the game or the server. A
-# pattern that stops matching (CLAUDE.md was edited) is skipped; test_rules.py fails so it gets updated.
-ADAPT: list[tuple[str, str]] = [
-    # Claude Code's mcp__bg3__ prefix, its ToolSearch and the alwaysLoad hint.
-    (r"Game tools come from the `bg3` MCP server\. \*\*Their real names.*?(?=\n\n)",   # the whole paragraph
-     "Game tools come from the `bg3` MCP server. This text names them by their bare name (`get_status`, "
-     "`travel_to`); your client may show them with a prefix. Every tool is available: call them directly."),
-]
+
+def prompts(path: Path = ASSEMBLE) -> ModuleType:
+    """packages/harness/prompts/assemble.py (standard library only), loaded by path: the bridge doesn't depend on
+    the harness package."""
+    spec = importlib.util.spec_from_file_location("bg3_prompts_assemble", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
-def adapt(text: str) -> str:
-    for pat, rep in ADAPT:
-        text = re.sub(pat, rep, text, count=1, flags=re.S)
-    return text
-
-
-def load(path: Path | None = None) -> str:
-    """play/CLAUDE.md as served to a client ("" when unreadable: the server still runs, without rules)."""
+def load(path: Path | None = None, condition: str | None = None) -> str:
+    """The rules a client is served: `path` (or $BG3AI_RULES_PATH) verbatim, else the assembled text of `condition`
+    (or $BG3AI_PROMPT_CONDITION, default "rules"). "" when unreadable: the server still runs, without rules."""
+    path = path or (Path(p) if (p := os.environ.get("BG3AI_RULES_PATH")) else None)
     try:
-        return adapt((path or RULES_PATH).read_text(encoding="utf-8")).strip()
+        if path is not None:
+            return path.read_text(encoding="utf-8").strip()
+        return prompts().assemble(condition or os.environ.get("BG3AI_PROMPT_CONDITION") or "rules").text.strip()
     except OSError:
         return ""
 
@@ -53,7 +55,7 @@ def serve_enabled() -> bool:
 
 
 def instructions(base: str, rules: str) -> str:
-    return f"{base}\n\n=== RULES (play/CLAUDE.md) ===\n{rules}" if rules and serve_enabled() else base
+    return f"{base}\n\n=== RULES ===\n{rules}" if rules and serve_enabled() else base
 
 
 class Once:
@@ -64,7 +66,7 @@ class Once:
         self.sent_for: str | None = None
 
     def header(self) -> str:
-        return (f"=== RULES (play/CLAUDE.md, once per session; session_start(rules=true), the `rules` prompt or "
+        return (f"=== RULES (once per session; session_start(rules=true), the `rules` prompt or "
                 f"{URI} give them again) ===\n{self.rules}\n=== end of rules ===")
 
     def take(self, key: str, force: bool = False) -> str:
