@@ -25,9 +25,17 @@ from .store import RunStore
 from .tail import read_new
 
 LIVE_V1 = ("/api/v1/latency", "/api/v1/progress", "/api/v1/goals")
-<<<<<<< HEAD
-SERIES_MOVED = "The series view moves to the benchmark package (bg3bench); until then run runner/play.py --runs."
-SERIES_HTML = b"<!doctype html><meta charset=utf-8><title>BG3 AI Series</title><p>" + SERIES_MOVED.encode() + b"</p>"
+SERIES_PORT = 8766  # bg3bench.seriesview's default port
+SERIES_MOVED = (
+    f"The series view moved to the benchmark package (bg3bench): run python3 runner/dashboard/seriesview.py "
+    f"and open http://127.0.0.1:{SERIES_PORT}/series."
+)
+SERIES_HTML = (
+    b"<!doctype html><meta charset=utf-8><title>BG3 AI Series</title>"
+    b"<p>" + SERIES_MOVED.encode() + b"</p>"
+    b'<p><a id="series" href="http://127.0.0.1:%d/series">Open the series view</a></p>'
+    b'<script>document.getElementById("series").host = location.hostname + ":%d";</script>' % (SERIES_PORT, SERIES_PORT)
+)
 RUNNER_KEYS = (
     "session",
     "started",
@@ -39,24 +47,6 @@ RUNNER_KEYS = (
     "claude_session",
     "check_all",
 )
-||||||| parent of 1b9fa21 (The series view lives in bg3bench.seriesview: the page and the rows from the records, served on port 8766 (python -m bg3bench.seriesview for recorded rows only, runner/dashboard/seriesview.py with the runner's analyzers for the live row and the result-token backfill); the playthrough app's /series stub links to it)
-SERIES_MOVED = "The series view moves to the benchmark package (bg3bench); until then run runner/play.py --runs."
-SERIES_HTML = (b"<!doctype html><meta charset=utf-8><title>BG3 AI Series</title>"
-               b"<p>" + SERIES_MOVED.encode() + b"</p>")
-RUNNER_KEYS = ("session", "started", "deadline", "hard_stop", "runner_pid", "run_end", "updated", "claude_session",
-               "check_all")
-=======
-SERIES_PORT = 8766   # bg3bench.seriesview's default port
-SERIES_MOVED = (f"The series view moved to the benchmark package (bg3bench): run python3 runner/dashboard/seriesview.py "
-                f"and open http://127.0.0.1:{SERIES_PORT}/series.")
-SERIES_HTML = (b"<!doctype html><meta charset=utf-8><title>BG3 AI Series</title>"
-               b"<p>" + SERIES_MOVED.encode() + b"</p>"
-               b'<p><a id="series" href="http://127.0.0.1:%d/series">Open the series view</a></p>'
-               b'<script>document.getElementById("series").host = location.hostname + ":%d";</script>'
-               % (SERIES_PORT, SERIES_PORT))
-RUNNER_KEYS = ("session", "started", "deadline", "hard_stop", "runner_pid", "run_end", "updated", "claude_session",
-               "check_all")
->>>>>>> 1b9fa21 (The series view lives in bg3bench.seriesview: the page and the rows from the records, served on port 8766 (python -m bg3bench.seriesview for recorded rows only, runner/dashboard/seriesview.py with the runner's analyzers for the live row and the result-token backfill); the playthrough app's /series stub links to it)
 
 
 class Dashboard:
