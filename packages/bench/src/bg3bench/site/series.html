@@ -68,7 +68,7 @@ tr.live td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   <select id="pick" aria-label="series"></select>
   <div class="chips" id="frozen"></div>
   <span class="upd" id="upd">…</span>
-  <a href="/">live dashboard</a>
+  <a id="app" href="http://127.0.0.1:8765/">live dashboard</a>
 </header>
 <main>
   <section class="card">
@@ -94,6 +94,8 @@ tr.live td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
+// the playthrough app (bg3play-serve, port 8765) on the host this page came from
+$("app").href = location.protocol + "//" + (location.hostname || "127.0.0.1") + ":8765/";
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const num = (v, d = 1) => (v === null || v === undefined) ? '<span class="muted">-</span>' : Number(v).toFixed(d);
 let TG = {idle_median_s: 2, gaps_over_10s: 0, read_rt_median_ms: 100};

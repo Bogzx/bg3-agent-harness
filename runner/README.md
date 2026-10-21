@@ -314,8 +314,10 @@ Tests (pure logic only, nothing is launched): `python3 runner/test_play.py`, `ru
 `runner/test_scenarios.py`. Crash recovery end to end with
 stubs (no game, no claude, temp dirs only): `python3 runner/test_crash.py`.
 
-Dashboard: **`/series`** (`/api/series[?playthrough=BASE]`, `runner/dashboard/seriesview.py`), the benchmark series
-view: per run outcome, minutes to the milestone, cost, tokens, H/A/U failures, persona, idle median/p90, gaps > 10 s,
+Series view: **`/series`** (`/api/series[?playthrough=BASE]`) served by `python3 runner/dashboard/seriesview.py
+[--port 8766]` (the page and the rows are `packages/bench`'s `bg3bench.seriesview`; the runner shim adds the live row
+from runs.py / model_time.py; `python -m bg3bench.seriesview --runtime runtime` serves the recorded rows only); the
+playthrough app's `/series` links there. The benchmark series view: per run outcome, minutes to the milestone, cost, tokens, H/A/U failures, persona, idle median/p90, gaps > 10 s,
 read round trip, the model_time harness/model/overlap bar with the top harness tools, sandbox; the series.json
 settings; the spread (the streak line and the stats of `play.py runs`); and a live row for the run in progress
 (runner.status.json `series`/`run_index`: elapsed, cost so far incl. the running stream, the current session's live

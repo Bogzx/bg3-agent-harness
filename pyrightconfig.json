@@ -93,7 +93,6 @@
     "packages/playthrough/tests/test_store.py",
     "packages/playthrough/tests/test_supervisor.py",
     "runner/dashboard/feeds.py",
-    "runner/dashboard/seriesview.py",
     "runner/dashboard/serve.py",
     "runner/dashboard/test_feeds.py",
     "runner/dashboard/test_serve.py",

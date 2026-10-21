@@ -121,6 +121,7 @@ def test_story(server, root):
 def test_series_moved(server):
     code, headers, body = get(server, "/series")
     assert code == 200 and "text/html" in headers["Content-Type"] and b"bg3bench" in body
+    assert b'href="http://127.0.0.1:8766/series"' in body   # bg3bench.seriesview's page
     r = get_json(server, "/api/series")
     assert (r["series"], r["rows"], r["live"]) == (None, [], None)
     assert "benchmark package" in r["error"]
