@@ -150,3 +150,47 @@ export interface StreamEvent {
   type: string;
   data: unknown;
 }
+
+export interface PositionRow {
+  t: number;
+  level: string;
+  region: string;
+  party: { name: string; x: number; y: number; z: number; active?: boolean }[];
+  playthrough?: string | null;
+}
+
+export interface LevelSeen {
+  level: string;
+  region: string | null;
+  samples: number;
+  first_t: number;
+  last_t: number;
+}
+
+/** /positions: the lead's [t, x, z] segments for one level (map X = world x, map Y = world z). */
+export interface Positions {
+  v?: number;
+  playthrough?: string;
+  level: string | null;
+  levels: LevelSeen[];
+  segments: [number, number, number][][];
+  party: { name: string; x: number; z: number; active: boolean }[];
+  t: number | null;
+  bounds: { min_x: number; max_x: number; min_z: number; max_z: number } | null;
+}
+
+export interface RecorderState {
+  recording: boolean;
+  enabled: boolean;
+  reason: string;
+  segments: number;
+  bytes: number;
+}
+
+export interface Segment {
+  file: string;
+  run: string;
+  start: number;
+  end: number | null;
+  bytes: number;
+}

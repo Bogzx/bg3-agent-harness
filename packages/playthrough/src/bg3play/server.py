@@ -11,6 +11,7 @@ Endpoints (GET, JSON unless noted, Cache-Control: no-store):
     /api/v1/playthroughs/<pt>/memory/file?path=P     one file's text and its commits
     /api/v1/playthroughs/<pt>/memory/log             memory commits
     /api/v1/playthroughs/<pt>/timeline               choices and fights
+    /api/v1/playthroughs/<pt>/positions?level=L      breadcrumb tracks (positions.py)
     /api/v1/screenshot                               the latest capture (image)
     /api/v1/recorder                                 recorder state (null without --record)
     /api/v1/video/index                              recorded segments (recorder.py index.json)
@@ -37,11 +38,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import api
+from . import positions as pos
 from . import recorder as rec
 from .hub import Hub
 from .store import RunStore, StoreError
 
-PT_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/log|timeline)$")
+PT_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/log|timeline|positions)$")
 VIDEO_FILE = re.compile(r"^/api/v1/video/(rec-\d+-\d{4}\.mp4)$")
 KEEPALIVE_S = 15.0
 DEFAULT_WEB = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -96,6 +98,7 @@ class App:
             "memory/file": lambda: api.memory_file(s, pt, q.get("path", [""])[0]),
             "memory/log": lambda: api.memory_log(s, pt),
             "timeline": lambda: api.timeline(s, pt),
+            "positions": lambda: api.positions(s, pt, q.get("level", [""])[0]),
         }
         return builders[what]()
 
@@ -263,6 +266,12 @@ def serve(app: App, host: str, port: int, verbose: bool = False) -> ThreadingHTT
     return srv
 
 
+def sample_loop(sampler: pos.Sampler, stop: threading.Event, interval: float = 2.0) -> None:
+    while not stop.is_set():
+        sampler.poll()
+        stop.wait(interval)
+
+
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runtime", type=Path, default=Path(os.environ.get("BG3AI_RUNTIME", "runtime")))
@@ -280,6 +289,9 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--display", default=os.environ.get("DISPLAY", ":1"))
     ap.add_argument("--encoder", choices=sorted(rec.ENCODER_ARGS), default="h264_nvenc")
     ap.add_argument("--video-cap-gb", type=float, default=20.0, help="delete the oldest segments above this")
+    ap.add_argument("--positions", action="store_true",
+                    help="sample party positions from the game's state.status (adapters/bridge_status.py)")
+    ap.add_argument("--debug-port", type=int, default=9998, help="the mod's RPC port (--positions)")
     ap.add_argument("--verbose", action="store_true")
     return ap
 
@@ -299,6 +311,17 @@ def main(argv: list[str] | None = None) -> int:
                                 cap_bytes=int(opt.video_cap_gb * 1024**3))
         rec_thread = threading.Thread(target=recorder.loop, args=(stop,), daemon=True, name="recorder")
         rec_thread.start()
+    if opt.positions:
+        from .adapters.bridge_status import BridgeStatus  # temporary; needs the bridge package
+
+        def path_for() -> Path | None:
+            cur = opt.playthrough or store.current()
+            return store.positions_path(cur) if cur else None
+
+        sampler = pos.Sampler(BridgeStatus(opt.debug_port), path_for, time.time,
+                              lambda row: hub.publish("position", dict(row, playthrough=opt.playthrough
+                                                                       or store.current())))
+        threading.Thread(target=sample_loop, args=(sampler, stop), daemon=True, name="positions").start()
     srv = serve(App(store, hub, opt.web, recorder=recorder, video_dir=video), opt.host, opt.port, opt.verbose)
     print(f"bg3play: http://{opt.host}:{srv.server_address[1]}/  (runtime {opt.runtime})", flush=True)
     try:

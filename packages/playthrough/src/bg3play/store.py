@@ -6,6 +6,7 @@
     <runtime>/sessions/<pt>/runner.json      session history (started, ended, model, minutes)
     <runtime>/sessions/<pt>/Sxxx.log         the agent's stream as text ([say], [tool], [result], [end] ...)
     <runtime>/sessions/<pt>/Sxxx.latency.json, Sxxx.progress.json, Sxxx.fights.jsonl, progress_history.jsonl
+    <runtime>/sessions/<pt>/positions.jsonl  party positions (positions.py; written by the app's sampler)
     <playthroughs>/<pt>/memory/              the memory dir, its own git repo
     <playthroughs>/<pt>/playthrough.toml     (config.py)
 
@@ -96,6 +97,9 @@ class RunStore:
 
     def memory_dir(self, pt: str) -> Path:
         return self.playthroughs_dir / self.check_name(pt) / "memory"
+
+    def positions_path(self, pt: str) -> Path:
+        return self.session_dir(pt) / "positions.jsonl"
 
     @property
     def actions_path(self) -> Path:

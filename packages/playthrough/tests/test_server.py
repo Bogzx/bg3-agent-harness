@@ -215,3 +215,9 @@ def test_live_mjpeg_from_the_recorder(store: RunStore, web: Path):
         hub.close()
         srv.shutdown()
         srv.server_close()
+
+
+def test_positions_endpoint(server):
+    code, p = get_json(server, f"/api/v1/playthroughs/{PT}/positions?level=END_Main")
+    assert code == 200 and p["level"] == "END_Main" and len(p["segments"]) == 2
+    assert get_json(server, f"/api/v1/playthroughs/{PT}/positions")[1]["level"] == "EPI_Main_A"

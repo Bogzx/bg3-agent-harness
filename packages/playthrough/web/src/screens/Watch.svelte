@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, openStream } from "../lib/api";
+  import { applyPosition, emptyPositions } from "../lib/breadcrumb";
   import { argLine, clock, hpPct, mmss, num, usd } from "../lib/format";
+  import type { PositionRow, Positions } from "../lib/types";
   import { applyEvent, fromSnapshot, says, secondsLeft, type WatchState } from "../lib/watch";
+  import Breadcrumb from "./Breadcrumb.svelte";
 
   let { pt }: { pt: string } = $props();
 
@@ -12,6 +15,8 @@
   let now = $state(Date.now() / 1000);
   let shotOk = $state(true);
   let filter = $state<"all" | "act" | "read">("all");
+  let pos = $state.raw<Positions>(emptyPositions());
+  let liveVideo = $state(false);
   let close: (() => void) | null = null;
 
   async function load() {
@@ -20,10 +25,15 @@
       const snap = await api.watch(pt);
       s = fromSnapshot(snap);
       error = null;
+      api.positions(pt).then((p) => (pos = p), () => (pos = emptyPositions()));
+      api.recorder().then((r) => (liveVideo = Boolean(r.recorder?.recording)), () => (liveVideo = false));
       close = openStream(
         snap.stream_id,
         (type, data) => {
-          if (s) s = applyEvent(s, type, data);
+          if (type === "position") {
+            const row = data as PositionRow;
+            if (row.playthrough === pt) pos = applyPosition(pos, row);
+          } else if (s) s = applyEvent(s, type, data);
         },
         () => void load(),
         (open) => (connected = open),
@@ -43,7 +53,7 @@
   });
 
   const left = $derived(s ? secondsLeft(s.runner, now) : null);
-  const shotSrc = $derived(s ? `/api/v1/screenshot?rev=${s.screenshotRev}` : "");
+  const shotSrc = $derived(liveVideo ? "/api/v1/screen.mjpg" : s ? `/api/v1/screenshot?rev=${s.screenshotRev}` : "");
   const calls = $derived(
     s ? s.actions.filter((a) => filter === "all" || (filter === "read" ? a.kind === "read" : a.kind !== "read")).slice(-60).reverse() : [],
   );
@@ -160,8 +170,10 @@
         {/if}
       </section>
 
+      <Breadcrumb {pos} onLevel={(lv) => api.positions(pt, lv).then((p) => (pos = p), () => {})} />
+
       {#if s.memory.length}
-        <section class="panel o6">
+        <section class="panel o7">
           <h2>Memory edits</h2>
           <ul class="mem">
             {#each s.memory as c (c.sha)}
@@ -227,7 +239,7 @@
     /* one column: the picture, then what it is doing and the party, then its words and calls */
     .grid { display: flex; flex-direction: column; align-items: stretch; }
     .col { display: contents; }
-    .o1 { order: 1; } .o2 { order: 2; } .o3 { order: 3; } .o4 { order: 4; } .o5 { order: 5; } .o6 { order: 6; }
+    .o1 { order: 1; } .o2 { order: 2; } .o3 { order: 3; } .o4 { order: 4; } .o5 { order: 5; } :global(.o6) { order: 6; } .o7 { order: 7; }
   }
   @media (max-width: 560px) {
     .calls li { grid-template-columns: auto minmax(0, 1fr) auto; }

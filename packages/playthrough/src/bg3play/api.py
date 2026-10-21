@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import parse as P
+from . import positions as POS
 from .store import RunStore
 
 API_VERSION = 1
@@ -112,3 +113,8 @@ def timeline(store: RunStore, pt: str) -> dict:
                "sessions": [{"session": s["session"], "started": s["started"], "minutes": s["minutes"],
                              "outcome": s["outcome"]} for s in ss],
                "decisions": cards, "fights": store.fights(pt)})
+
+
+def positions(store: RunStore, pt: str, level: str | None = None) -> dict:
+    """The breadcrumb plot's data (positions.tracks) for one level, default the latest."""
+    return _v({"playthrough": pt, **POS.tracks(POS.read(store.positions_path(pt)), level or None)})

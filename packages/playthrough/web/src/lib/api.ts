@@ -1,4 +1,6 @@
-import type { Commit, MemoryFile, PlaythroughRow, Runner, TimelinePayload, WatchSnapshot } from "./types";
+import type {
+  Commit, MemoryFile, PlaythroughRow, Positions, RecorderState, Runner, Segment, TimelinePayload, WatchSnapshot,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -34,9 +36,13 @@ export const api = {
     ),
   memoryLog: (name: string) => getJson<{ v: number; commits: Commit[] }>(`${pt(name)}/memory/log`),
   timeline: (name: string) => getJson<TimelinePayload>(`${pt(name)}/timeline`),
+  positions: (name: string, level?: string) =>
+    getJson<Positions>(`${pt(name)}/positions${level ? `?level=${encodeURIComponent(level)}` : ""}`),
+  recorder: () => getJson<{ v: number; recorder: RecorderState | null }>("/api/v1/recorder"),
+  videoIndex: () => getJson<{ v: number; segments: Segment[] }>("/api/v1/video/index"),
 };
 
-export const STREAM_TYPES = ["status", "session", "log", "action", "party", "memory", "actions_reset", "hub_error"];
+export const STREAM_TYPES = ["status", "session", "log", "action", "party", "memory", "position", "actions_reset", "hub_error"];
 
 /** The SSE stream from `lastId` on. EventSource resends the last id it saw on reconnect by itself; a "reset" means
  * the server lost our place (it restarted): the caller reloads its snapshot. Returns a close function. */
