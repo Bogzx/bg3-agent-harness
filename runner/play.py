@@ -66,6 +66,7 @@ import model_time  # noqa: E402  (runner/model_time.py: model vs harness time, a
 import client_setup  # noqa: E402  (runner/client_setup.py: --profile, API key, system text, expected tool count)
 import pi_client  # noqa: E402  (runner/pi_client.py: pi's exit problem when it ends before any event)
 import spend  # noqa: E402  (runner/spend.py: paid clients' per-run cap and runtime/budget.json)
+import facts  # noqa: E402  (runner/facts.py: facts.jsonl v1, the graders' game state)
 sys.path.insert(0, str(REPO / "tools"))
 import steam_paths  # noqa: E402  (stdlib: Steam's offline state, the game's install and Larian profile paths)
 import bg3le_buildinfo  # noqa: E402  (stdlib: is build/bg3le/dist built with every patches/bg3le patch?)
@@ -2809,11 +2810,13 @@ class Runner:
             save = self.launch_and_load(save)
             self.state["loaded_save"] = save.folder
             write_status(last_loaded=save.folder)
+            self.facts_writer().mark("load", save.folder)
             return save.label
         if not self.wait_running():
             raise RuntimeError(f"save {save.folder} didn't finish loading")
         self.state["loaded_save"] = save.folder
         write_status(last_loaded=save.folder)
+        self.facts_writer().mark("load", save.folder)
         return save.label
 
     def previous_good_save(self, failed: set[str]) -> Save | None:
@@ -3605,6 +3608,12 @@ class Runner:
                 got = story.read_game(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
             except Exception:  # noqa: BLE001 - loading screens, crashes: just a failed poll
                 got = None
+            try:   # facts.jsonl: the same read and the party inventory
+                inv = facts.read_inventory(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT),
+                                           story.combined_code) if got else None
+                self.facts_writer().observe(got, inv)
+            except Exception as e:  # noqa: BLE001 - facts never break a session
+                log(f"{session}: facts poll failed: {e}")
             try:
                 was_stuck = tl.stuck_since is not None
                 evs = tl.observe(got, actions_since=actions)
@@ -3622,6 +3631,16 @@ class Runner:
                                 f"{'the game is finished' if self.game_ended() else '--until stop'}\n")
             except Exception as e:  # noqa: BLE001 - progress never breaks a session
                 log(f"{session}: progress poll failed: {e}")
+
+    def facts_writer(self) -> facts.FactsWriter:
+        """This playthrough's facts.jsonl (one per run); the first use writes its run_start mark."""
+        w = getattr(self, "_facts", None)
+        if w is None:
+            w = self._facts = facts.FactsWriter(self.state.dir / "facts.jsonl")
+            if w.t0 is None:
+                w.mark("run_start", {"playthrough": self.opt.playthrough, "client": self.opt.client,
+                                     "model": self.opt.model})
+        return w
 
     def check_until(self, seen: dict | None, session: str | None) -> dict | None:
         """run --until: the milestone, the first time milestones.status() says it's reached (else None). Every run
@@ -3868,6 +3887,7 @@ class Runner:
                 if k.get("agent_edits") or k.get("other_changes"):
                     rec["clean"] = False
                     rec["knowledge_changed"] = True
+        self.facts_writer().mark("run_end", {"outcome": outcome})
         path = self.runs_path()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -4511,6 +4531,8 @@ class Runner:
                 return 0
             if self.opt.until:
                 run_started = self.run_started = self.begin_run(run_started)
+            if not self.opt.dry_run:
+                self.facts_writer()   # time zero: the run's start
             while not self.stop_requested and not (RUNTIME / "STOP").exists():
                 self.code_update_check()
                 loop = crash_loop(run_events(self.state.dir, run_started - 1), time.time(), run_started)
