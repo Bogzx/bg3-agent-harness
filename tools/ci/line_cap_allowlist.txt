@@ -5,7 +5,6 @@
 # this check existed (pi client, spend caps, facts writer). Both shrink in Phase D (harness r3, bench r6).
 5703 runner/play.py
 3480 runner/test_play.py
-3183 tools/dev/acceptance.py
 2721 bridge/tests/test_turn_macros.py
 1643 bridge/tests/test_economy.py
 1488 runner/test_crash.py

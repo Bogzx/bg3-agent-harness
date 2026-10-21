@@ -1,4 +1,4 @@
-"""acceptance.py --check catches what would break a live item: each test mutates a copy of acceptance.py.
+"""acceptance.py --check catches what would break a live item: each test mutates a copy of the acceptance package.
 
     uv run --project bridge python -m unittest tools/dev/test_acceptance_check.py
 """
@@ -23,22 +23,27 @@ os.environ.setdefault("BG3AI_MEMORY_DIR", str(Path(_scratch) / "memory"))
 import acceptance_check as AC  # noqa: E402
 from server_view import S  # noqa: E402
 
-SRC = (HERE / "acceptance.py").read_text()
+SRC = {p.name: p.read_text() for p in sorted((HERE / "acceptance").glob("*.py"))}
 LUA = AC.lua_index()
 INTERNALS = AC.bg3le_internals()
 
 
-def run(src: str, luac: bool = False) -> dict[str, tuple[str, str]]:
+def run(src: dict[str, str], luac: bool = False) -> dict[str, tuple[str, str]]:
     with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "acceptance.py"
-        p.write_text(src)
-        rows = AC.check(p, S, None, LUA, INTERNALS, run_luac=luac)
+        paths = []
+        for name, text in src.items():
+            p = Path(d) / name
+            p.write_text(text)
+            paths.append(p)
+        rows = AC.check(paths, S, None, LUA, INTERNALS, run_luac=luac)
     return {what: (v, ev) for v, what, ev in rows}
 
 
-def mutate(old: str, new: str) -> str:
-    assert SRC.count(old) >= 1, old
-    return SRC.replace(old, new, 1)
+def mutate(old: str, new: str) -> dict[str, str]:
+    """The package with the first file (by name) holding `old` changed."""
+    name = next((n for n, text in SRC.items() if old in text), None)
+    assert name is not None, old
+    return {**SRC, name: SRC[name].replace(old, new, 1)}
 
 
 class TestCheck(unittest.TestCase):
@@ -98,6 +103,14 @@ class TestCheck(unittest.TestCase):
         self.assertIn("S._select_for_level_up(...)", got["Python attributes (S.*, imported modules)"][1])
         got = run(mutate("    lg = bg3le_log()\n    cnt =", "    lg = bg3le_logs()\n    cnt ="))
         self.assertIn("bg3le_logs", got["names defined"][1])
+
+    def test_a_section_must_import_what_it_reads(self):
+        # each module's names are its own: one defined in core but not imported by the section is undefined there
+        got = run(mutate("from .core import BASE, alive, bg3le_log, grep_crash, item, load_verified\n",
+                         "from .core import BASE, alive, grep_crash, item, load_verified\n"))
+        self.assertEqual(got["names defined"][0], "FAIL")
+        self.assertIn("sec_loads:bg3le_log", got["names defined"][1])
+
 
     @unittest.skipUnless(shutil.which("docker"), "no docker")
     def test_luac_syntax(self):

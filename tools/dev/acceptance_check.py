@@ -248,21 +248,32 @@ def literal_type_ok(ann, value) -> bool:
     return True
 
 
-def check(acc_path: Path, S, acc_module=None, lua: dict | None = None, internals: set[str] | None = None,
-          run_luac: bool = True) -> list[tuple[str, str, str]]:
-    """-> [(verdict, check, evidence)]."""
+def package_files(acc_module) -> list[Path]:
+    """The acceptance package's modules (tools/dev/acceptance/*.py), or the one file of a single-file module."""
+    f = Path(acc_module.__file__)
+    return sorted(f.parent.glob("*.py")) if f.name == "__init__.py" else [f]
+
+
+def check(acc_paths: Path | list[Path], S, acc_module=None, lua: dict | None = None,
+          internals: set[str] | None = None, run_luac: bool = True) -> list[tuple[str, str, str]]:
+    """-> [(verdict, check, evidence)] over the acceptance package's files (or one file). String constants and
+    functions are looked up across all of them; names must be defined (or imported) in each file."""
     res: list[tuple[str, str, str]] = []
 
     def add(verdict: str, what: str, ev: str) -> None:
         res.append((verdict, what, ev))
 
-    src = acc_path.read_text()
-    try:
-        tree = ast.parse(src, str(acc_path))
-    except SyntaxError as e:
-        add("FAIL", "parse", f"{e}")
-        return res
-    add("PASS", "parse", f"{acc_path.name}: {len(src.splitlines())} lines")
+    paths = [acc_paths] if isinstance(acc_paths, Path) else list(acc_paths)
+    files: list[tuple[Path, str, ast.Module]] = []
+    for p in paths:
+        src = p.read_text()
+        try:
+            files.append((p, src, ast.parse(src, str(p))))
+        except SyntaxError as e:
+            add("FAIL", "parse", f"{e}")
+            return res
+    add("PASS", "parse", ", ".join(f"{p.name}: {len(src.splitlines())} lines" for p, src, _t in files))
+
     lua = lua if lua is not None else lua_index()
     internals = internals if internals is not None else bg3le_internals()
 
@@ -274,34 +285,36 @@ def check(acc_path: Path, S, acc_module=None, lua: dict | None = None, internals
         add("FAIL" if missing else ("WARN" if extra else "PASS"), "sections registered",
             f"SECTIONS={secs}; no function: {missing or 'none'}; in FUNCS but not run: {extra or 'none'}")
 
-    # --- undefined names (symtable: implicit globals that the module doesn't define)
-    mod_names = {n for n in dir(builtins)} | {"__file__", "__name__", "__doc__"}
-    for node in tree.body:
-        for t in (ast.walk(node) if not isinstance(node, (ast.FunctionDef, ast.ClassDef)) else [node]):
-            if isinstance(t, (ast.FunctionDef, ast.ClassDef)):
-                mod_names.add(t.name)
-            elif isinstance(t, ast.Name) and isinstance(t.ctx, ast.Store):
-                mod_names.add(t.id)
-            elif isinstance(t, (ast.Import, ast.ImportFrom)):
-                mod_names.update((a.asname or a.name).split(".")[0] for a in t.names)
-            elif isinstance(t, ast.Global):
-                mod_names.update(t.names)
+    # --- undefined names (symtable: implicit globals that the module doesn't define), per file
     undefined: list[str] = []
+    for p, src, tree in files:
+        mod_names = {n for n in dir(builtins)} | {"__file__", "__name__", "__doc__"}
+        for node in tree.body:
+            for t in (ast.walk(node) if not isinstance(node, (ast.FunctionDef, ast.ClassDef)) else [node]):
+                if isinstance(t, (ast.FunctionDef, ast.ClassDef)):
+                    mod_names.add(t.name)
+                elif isinstance(t, ast.Name) and isinstance(t.ctx, ast.Store):
+                    mod_names.add(t.id)
+                elif isinstance(t, (ast.Import, ast.ImportFrom)):
+                    mod_names.update((a.asname or a.name).split(".")[0] for a in t.names)
+                elif isinstance(t, ast.Global):
+                    mod_names.update(t.names)
 
-    def walk_st(t: symtable.SymbolTable) -> None:
-        for s in t.get_symbols():
-            if t.get_type() != "module" and s.is_referenced() and s.is_global() and not s.is_declared_global() \
-                    and s.get_name() not in mod_names:
-                undefined.append(f"{t.get_name()}:{s.get_name()}")
-        for c in t.get_children():
-            walk_st(c)
+        def walk_st(t: symtable.SymbolTable, mod_names: set[str] = mod_names) -> None:
+            for s in t.get_symbols():
+                if t.get_type() != "module" and s.is_referenced() and s.is_global() and not s.is_declared_global() \
+                        and s.get_name() not in mod_names:
+                    undefined.append(f"{t.get_name()}:{s.get_name()}")
+            for c in t.get_children():
+                walk_st(c)
 
-    walk_st(symtable.symtable(src, str(acc_path), "exec"))
+        walk_st(symtable.symtable(src, str(p), "exec"))
     add("FAIL" if undefined else "PASS", "names defined", ", ".join(sorted(set(undefined))) or "every name a function reads exists")
 
     # --- per function: tools, attributes, RPC ops, Lua snippets
+    trees = [t for _p, _s, t in files]
     module_consts = {}
-    for node in tree.body:
+    for node in (n for t in trees for n in t.body):
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             v = const_str(node.value, {})
             if v is not None:
@@ -312,12 +325,12 @@ def check(acc_path: Path, S, acc_module=None, lua: dict | None = None, internals
     ncalls = 0
     imported: dict[str, object] = {}
     hasattr_guarded: set[str] = set()
-    for n in ast.walk(tree):
+    for n in (n for t in trees for n in ast.walk(t)):
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "hasattr" and len(n.args) == 2 \
                 and isinstance(n.args[1], ast.Constant):
             hasattr_guarded.add(str(n.args[1].value))
     sys.path.insert(0, str(REPO / "runner"))
-    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+    for fn in [n for t in trees for n in ast.walk(t) if isinstance(n, ast.FunctionDef)]:
         F = _Fn(fn, module_consts)
         where = fn.name
         for n in ast.walk(fn):
@@ -471,7 +484,7 @@ def check(acc_path: Path, S, acc_module=None, lua: dict | None = None, internals
                 if not inspect.ismodule(obj) and part != "game" and part != "H" and part != "render":
                     break  # stop at values (functions, dicts, objects built at run time)
     # op-like strings outside direct calls (a tuple of ops in a loop)
-    loose = sorted({c.value for c in ast.walk(tree) if isinstance(c, ast.Constant) and isinstance(c.value, str)
+    loose = sorted({c.value for t in trees for c in ast.walk(t) if isinstance(c, ast.Constant) and isinstance(c.value, str)
                     and OP_LIKE.match(c.value) and c.value not in rpc_ok})
     for op in loose:
         if op not in lua["ops"]:
@@ -567,7 +580,7 @@ def main_check(acc_module) -> int:
     os.environ["BG3AI_RUNTIME"] = str(scratch / "rt")
     os.environ["BG3AI_MEMORY_DIR"] = str(scratch / "memory")
     from server_view import S  # noqa: E402 - no game needed to import
-    rows = check(Path(acc_module.__file__), S, acc_module)
+    rows = check(package_files(acc_module), S, acc_module)
     rows += check_saves(S, getattr(acc_module, "SAVE_NEEDS", {}))
     shutil.rmtree(scratch, ignore_errors=True)
     w = max(len(r[1]) for r in rows)

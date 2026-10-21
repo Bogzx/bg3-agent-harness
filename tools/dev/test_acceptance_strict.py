@@ -1,4 +1,4 @@
-"""acceptance.py's strict section (S17: strict frame lock across 2 loads + a long rest), offline with a fake game.
+"""The acceptance strict section (S17: strict frame lock across 2 loads + a long rest), offline with a fake game.
 
     uv run --project bridge python -m unittest tools/dev/test_acceptance_strict.py
 """
@@ -15,6 +15,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1] / "bridge" / "src"))
 import acceptance as A  # noqa: E402
+from acceptance import core, strict  # noqa: E402
 
 
 class FakeLock:
@@ -57,12 +58,16 @@ class StrictSection(unittest.TestCase):
 
         fake_s = mock.Mock()
         fake_s.game.eval = lock.eval
-        with mock.patch.object(A, "S", fake_s), mock.patch.object(A, "load_verified", load), \
-                mock.patch.object(A, "took", took), mock.patch.object(A, "alive", lambda: alive), \
-                mock.patch.object(A, "bg3le_log", lambda: None), mock.patch.object(A, "grep_crash", lambda lg: crash), \
-                mock.patch.object(A.time, "sleep", lambda s: None), mock.patch.object(A, "log", lambda m: None), \
-                mock.patch.object(A, "item", lambda *a: got.append(a)):
-            A.sec_strict()
+        with mock.patch.object(strict, "S", fake_s), mock.patch.object(strict, "load_verified", load), \
+                mock.patch.object(strict, "took", took), mock.patch.object(strict, "alive", lambda: alive), \
+                mock.patch.object(strict, "bg3le_log", lambda: None), \
+                mock.patch.object(strict, "grep_crash", lambda lg: crash), \
+                mock.patch.object(strict.time, "sleep", lambda s: None), \
+                mock.patch.object(strict, "log", lambda m: None), \
+                mock.patch.object(strict, "item", lambda *a: got.append(a)), \
+                mock.patch.object(core, "item", lambda *a: got.append(a)):  # need() reports through core's item
+
+            strict.sec_strict()
         return got, calls
 
     def test_on_across_two_loads_and_a_rest_then_restored(self):
@@ -70,11 +75,11 @@ class StrictSection(unittest.TestCase):
         got, calls = self._run(lock)
         self.assertEqual([c[0] for c in calls], ["load_game", "load_game", "camp", "long_rest"])
         self.assertTrue(all(c[2] for c in calls))                     # strict was on for every step
-        self.assertEqual([c[1] for c in calls[:2]], [A.BASE, A.HOTBAR_SAVE])
+        self.assertEqual([c[1] for c in calls[:2]], [core.BASE, core.HOTBAR_SAVE])
         self.assertFalse(lock.on)                                     # restored to what it was
         name, verdict, ev = got[0]
-        self.assertEqual((name, verdict), (A.STRICT_ITEM, "PASS"))
-        self.assertIn(f"load {A.BASE}: ok (refused +1 lua_timeouts +2 ui_timeouts +0)", ev)
+        self.assertEqual((name, verdict), (strict.STRICT_ITEM, "PASS"))
+        self.assertIn(f"load {core.BASE}: ok (refused +1 lua_timeouts +2 ui_timeouts +0)", ev)
         self.assertIn("total refused +3 lua_timeouts +6 ui_timeouts +0", ev)
 
     def test_restored_after_a_failed_load_and_the_item_fails(self):
@@ -102,7 +107,7 @@ class StrictSection(unittest.TestCase):
 
     def test_registered_last(self):
         self.assertEqual(A.SECTIONS[-1], "strict")
-        self.assertIs(A.FUNCS["strict"], A.sec_strict)
+        self.assertIs(A.FUNCS["strict"], strict.sec_strict)
         self.assertEqual(A.SECTION_OWNERS["strict"], "setup")
 
 

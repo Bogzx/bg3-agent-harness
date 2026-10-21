@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import acceptance as A  # noqa: E402
+from acceptance import core  # noqa: E402
 
 SCOPE = "/user.slice/user-1000.slice/user@1000.service/app.slice/bg3ai-game-20261017-223018.scope"
 
@@ -33,7 +33,7 @@ class GameMemory(unittest.TestCase):
         self.proc.mkdir()
         (self.proc / "self").mkdir()
         self.pid(10, "steam", 100, 0)
-        self.assertEqual(A.game_memory(self.proc, self.cg), {})
+        self.assertEqual(core.game_memory(self.proc, self.cg), {})
 
     def test_rss_and_scope(self):
         # the L8 window game at its stop: 10G scope peak (MemoryMax), 990 MB swap, while the RSS was ~5.4 GB
@@ -47,7 +47,7 @@ class GameMemory(unittest.TestCase):
                      ("memory.swap.peak", 991)):
             (scope / f).write_text(f"{v * mb}\n")
         (scope / "memory.stat").write_text(f"anon {5_300 * mb}\nfile {4_400 * mb}\nkernel {50 * mb}\n")
-        self.assertEqual(A.game_memory(self.proc, self.cg),
+        self.assertEqual(core.game_memory(self.proc, self.cg),
                          {"rss": 5_500, "swap": 990, "scope": "bg3ai-game-20261017-223018.scope",
                           "cg_current": 9_800, "cg_peak": 10_240, "cg_swap": 990, "cg_swap_peak": 991,
                           "anon": 5_300, "file": 4_400})
@@ -55,7 +55,7 @@ class GameMemory(unittest.TestCase):
     def test_not_in_a_game_scope(self):
         # BG3AI_GAME_SCOPE=0: the caller's cgroup is not the game's; RSS only
         self.pid(4242, "bg3", 2048, 0, cg="/user.slice/user-1000.slice/session-2.scope")
-        self.assertEqual(A.game_memory(self.proc, self.cg), {"rss": 2, "swap": 0})
+        self.assertEqual(core.game_memory(self.proc, self.cg), {"rss": 2, "swap": 0})
 
 
 if __name__ == "__main__":
