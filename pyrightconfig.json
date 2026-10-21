@@ -84,8 +84,6 @@
     "packages/harness/src/bg3harness/pi_client.py",
     "packages/harness/src/bg3harness/profiles.py",
     "packages/harness/src/bg3harness/ramwatch.py",
-    "packages/playthrough/src/bg3play/api.py",
-    "packages/playthrough/src/bg3play/server.py",
     "packages/playthrough/tests/e2e/conftest.py",
     "packages/playthrough/tests/test_parse.py",
     "packages/playthrough/tests/test_positions.py",

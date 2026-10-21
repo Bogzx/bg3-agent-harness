@@ -1,4 +1,3 @@
-# pyright: basic
 """The screen recorder: one ffmpeg process that records the game into rolling MP4 segments and tees a low-rate MJPEG
 stream for the live view.
 

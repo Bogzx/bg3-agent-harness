@@ -1,4 +1,3 @@
-# pyright: basic
 """Party positions for the breadcrumb map: sampled from the mod's state.status into positions.jsonl, read back as
 tracks per level.
 

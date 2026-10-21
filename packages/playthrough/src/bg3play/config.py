@@ -1,4 +1,3 @@
-# pyright: basic
 """playthroughs/<pt>/playthrough.toml: one playthrough's settings, the single file the app edits.
 
     v = 1

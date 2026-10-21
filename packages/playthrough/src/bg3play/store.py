@@ -1,4 +1,3 @@
-# pyright: basic
 """The run store: one reader over the files today's runner, bridge and memory leave on disk.
 
     <runtime>/runner.status.json             the runner's live status (play.py write_status)

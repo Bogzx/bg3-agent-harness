@@ -1,4 +1,3 @@
-# pyright: basic
 """The SSE hub: feeds turn file changes into numbered events; viewers read them with Last-Event-ID resume.
 
 Feeds (each `poll()` returns the new (type, data) pairs since its last call):
