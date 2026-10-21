@@ -31,7 +31,8 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "bridge/src/bg3ai/luadebug.py" = ["E501", "RUF023", "RUF100", "SIM105"]
 "bridge/src/bg3ai/macros.py" = ["E501", "SIM102"]
 "bridge/src/bg3ai/memtools.py" = ["E501", "F541", "N812", "N818", "RUF100", "UP035", "UP037"]
-"bridge/src/bg3ai/metrics.py" = ["B905", "E501", "RUF007", "RUF100", "SIM102", "SIM105", "UP035", "UP037"]
+"bridge/src/bg3ai/metrics.py" = ["B905", "E501", "RUF007", "UP035"]
+"bridge/src/bg3ai/metrics_record.py" = ["RUF100", "SIM102", "SIM105", "UP035", "UP037"]
 "bridge/src/bg3ai/milestones.py" = ["E501"]
 "bridge/src/bg3ai/naming.py" = ["B007", "RUF046", "UP035"]
 "bridge/src/bg3ai/navhints.py" = ["E501"]
@@ -296,6 +297,7 @@ exclude = [
     "bridge/src/bg3ai/macros.py",
     "bridge/src/bg3ai/memtools.py",
     "bridge/src/bg3ai/metrics.py",
+    "bridge/src/bg3ai/metrics_record.py",
     "bridge/src/bg3ai/milestones.py",
     "bridge/src/bg3ai/naming.py",
     "bridge/src/bg3ai/navhints.py",
