@@ -4,7 +4,6 @@
 # 2026-10-22 00:40 (orchestrator): play.py 5575->5703 and runs.py 1474->1476 re-recorded once: harness wiring merged before
 # this check existed (pi client, spend caps, facts writer). Both shrink in Phase D (harness r3, bench r6).
 5703 runner/play.py
-4154 tools/dev/test_act_lua.lua
 3480 runner/test_play.py
 3183 tools/dev/acceptance.py
 2721 bridge/tests/test_turn_macros.py
