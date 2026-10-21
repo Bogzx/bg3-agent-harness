@@ -30,9 +30,9 @@ Status of each item is tracked in the local `docs/BACKLOG.md` ("Target architect
 | D4 | Persona/choice judge | decision extraction and a generic "LLM judge over events" go to the harness; the benchmark's choices grader and the app's persona score both call it | both packages need it and neither may import the other |
 | D5 | Benchmark session length | one session per run, no memory keeper, no resume; a context overflow ends the run as a recorded failure | the plan's "crash = invalid rerun" and no compaction |
 | D6 | Wire format for the ranked track | every model, Claude included, through OpenRouter's chat-completions API via pi; Claude through Claude Code is a labelled condition | one routing and caching path for all models |
-| D7 | Time in exploration and sandbox scoring | think-pause on; score on game time, wall time reported | a slow model should not lose game time while it thinks |
+| D7 | Time in exploration and sandbox scoring | REVISED 2026-10-21 after live probe L1: the ESC menu does NOT pause BG3 (NPCs walk, buffs tick, GameTime runs 1:1; research/ovh/live1.md §1), and no mod API pauses real time. No think-pause. Score on wall time, report each model's thinking time and latency next to it; exploration and sandbox results are labelled real-time; forced turn-based mode stays a possible later condition | there is no way to stop the world from the mod |
 | D8 | Goals a do-nothing agent could pass ("no fight", "survive 30 min") | they must be combined with a positive goal | the baseline must fail every scenario |
-| D9 | Dice | Karmic Dice off in every scenario; every roll logged out of the agent's sight; a per-run luck number published. Seeded dice only if the live probe shows it works | the engine has seeds, but they may depend on timing |
+| D9 | Dice | Karmic Dice off in every scenario (readable: RollManager.RollModeType); every roll logged out of the agent's sight; a per-run luck number published; and seeded dice: probe L3/L4 showed every load reseeds from the wall clock, and writing the ServerRollStreams component after a load gives the same roll sequence, so each run of a scenario starts from the same seed (same start, not the same run: rolls diverge once the runs do) | common random numbers at the start reduce variance |
 | D10 | Lint on legacy code | ruff and pyright strict on `packages/`; legacy files get a per-file ignore list that only shrinks; no repo-wide reformat commit | a repo-wide reformat would bury every later diff |
 | D11 | `runner/play.py` edits | one owner (the harness worker) takes all `play.py` edits as patches from the others | four tracks need small edits there |
 | D12 | Who solves a scenario for the oracle run | one successful run by a strong model through Claude Code, kept as the reference trajectory; a human run where no model succeeds; scripted solves only for trivial scenarios | scripting a solve per scenario does not scale to 20-30 scenarios |
@@ -129,9 +129,12 @@ game or a paid API.
 1. Referee ring (`Referee.lua`): crimes, theft, pickpocket, trade, kills, combat membership; never reachable by an
    agent tool (fairness test).
 2. Hidden roll log (`RollLog.lua`).
-3. Think-pause in the bridge: open the ESC menu after a result, close it before the next call; never in combat,
-   dialogue or trade; screenshot taken before the menu opens.
-4. Save inspector (`tools/saves/inspect.py`): lists what a save embeds, run on copies only.
+3. Seeded dice: a setup RPC (behind the scenario-setup switch, never an agent tool) that writes ServerRollStreams
+   seeds after every load, re-applied by the harness after each load; manifest records the seed. (The think-pause
+   is dropped: D7.)
+4. Rename perturbation cleanup: Ext.Loca renames survive a save load, so the setup RPC records and undoes them, or
+   the game restarts between runs.
+5. Save inspector (`tools/saves/inspect.py`): lists what a save embeds, run on copies only.
 
 **B-app** (owns `packages/playthrough`)
 1. Config file (`playthrough.toml`) replacing `profile.json`, with migration.
@@ -152,7 +155,9 @@ game or a paid API.
 
 Ask before it starts. Every check has exact steps in the research reports.
 - `run_session` live: one 20-minute session and one forced crash recovery.
-- Think-pause: the menu freezes NPCs, timers and surfaces; 50 open/close cycles at ≤ 0.5 s.
+- DONE 2026-10-21 (research/ovh/live1.md): menu pause does not freeze the world (D7 revised); Karmic readable; reloads
+  reseed, seeds writable (D9); referee event arities captured; x11grab capture works; renames survive loads; map
+  X/Y = world x/z.
 - Dice: do reloads reroll; can the mod set the seed; is Karmic Dice readable.
 - Referee events: which exist on the current build, and their arguments (trade, pickpocket, loot, trader kill,
   flee).
