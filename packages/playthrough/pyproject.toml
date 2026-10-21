@@ -9,7 +9,7 @@ dependencies = []
 bg3play-serve = "bg3play.server:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "playwright==1.64.0"]  # playwright: tests/e2e; 1.64.0 = the cached chromium 1243
 
 [build-system]
 requires = ["hatchling"]
@@ -20,7 +20,8 @@ packages = ["src/bg3play"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["unit", "integration"]
+markers = ["unit", "integration", "e2e: browser tests of the built web app (npm run build first; -m e2e)"]
+addopts = "-m 'not e2e'"
 
 [tool.ruff]
 line-length = 120
