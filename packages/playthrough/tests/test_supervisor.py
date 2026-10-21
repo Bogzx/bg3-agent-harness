@@ -53,8 +53,9 @@ def make(tmp_path: Path, script, hours=3.0, minutes=60.0, keeper=True):
     clock, log, events = Clock(), [], []
     pts = tmp_path / "playthroughs"
     (pts / "ilse").mkdir(parents=True)
-    cfg = C.validate({"v": 1, "name": "ilse", "session": {"minutes": minutes, "hours": hours},
-                      "keeper": {"enabled": keeper}})
+    cfg = C.validate(
+        {"v": 1, "name": "ilse", "session": {"minutes": minutes, "hours": hours}, "keeper": {"enabled": keeper}}
+    )
     C.save(pts / "ilse", cfg)
     runner = FakeRunner(clock, script, log)
     sup = Supervisor(runner, FakeKeeper(log), tmp_path / "runtime", pts, clock, events.append)
@@ -73,8 +74,9 @@ def test_runs_sessions_to_the_budget_with_the_keeper_between(tmp_path: Path):
 
 
 def test_stuck_nudge_after_two_sessions_without_progress(tmp_path: Path):
-    sup, runner, _, _ = make(tmp_path, [("ok", False), ("ok", None), ("ok", False), ("ok", False), ("ok", True)],
-                             hours=6.0)
+    sup, runner, _, _ = make(
+        tmp_path, [("ok", False), ("ok", None), ("ok", False), ("ok", False), ("ok", True)], hours=6.0
+    )
     sup.start("ilse", wait=True)
     stuck = [any("CHANGE APPROACH" in n for n in r.notes) for r in runner.requests]
     # None (unknown) doesn't count; S005 follows S003 + S004 without progress; S006 follows S004 + a progress one
@@ -145,11 +147,23 @@ def test_a_runner_exception_is_reported(tmp_path: Path):
 
 def test_launch_config_and_saved_on_start(tmp_path: Path):
     sup, runner, _, _ = make(tmp_path, [("error", None)])
-    cfg = S.launch_config(C.load(tmp_path / "playthroughs" / "ilse"),
-                          {"profile": "codex", "brief": "a dwarf cleric", "difficulty": "Tactician",
-                           "session_minutes": 45, "recording": False})
+    cfg = S.launch_config(
+        C.load(tmp_path / "playthroughs" / "ilse"),
+        {
+            "profile": "codex",
+            "brief": "a dwarf cleric",
+            "difficulty": "Tactician",
+            "session_minutes": 45,
+            "recording": False,
+        },
+    )
     assert (cfg.agent.profile, cfg.character.brief, cfg.difficulty, cfg.session.minutes, cfg.recording.enabled) == (
-        "codex", "a dwarf cleric", "Tactician", 45.0, False)
+        "codex",
+        "a dwarf cleric",
+        "Tactician",
+        45.0,
+        False,
+    )
     with pytest.raises(C.ConfigError, match="unknown launch field"):
         S.launch_config(cfg, {"api_key": "x"})
     with pytest.raises(C.ConfigError, match="difficulty"):
@@ -171,9 +185,12 @@ def test_play_args():
     s = " ".join(a)
     assert "--hours 0.75 --session-minutes 45 --client claude --model opus" in s and "--effort" not in a
     assert "--keeper-effort low --keeper-minutes 5" in s
-    a = L.play_args("py", Path("/r"), req(difficulty="Balanced", keeper={"enabled": False},
-                                          character={"brief": "a bard", "roleplay": "light"}),
-                    C.Agent(client="codex", model="gpt", effort="high"))
+    a = L.play_args(
+        "py",
+        Path("/r"),
+        req(difficulty="Balanced", keeper={"enabled": False}, character={"brief": "a bard", "roleplay": "light"}),
+        C.Agent(client="codex", model="gpt", effort="high"),
+    )
     s = " ".join(a)
     assert "--effort high" in s and "--no-keeper" in a and "--difficulty Balanced" in s
     assert a[a.index("--character-brief") + 1] == "a bard" and "--roleplay light" in s
@@ -209,7 +226,9 @@ def test_pi_profile_runs_from_its_file_with_a_cost_cap():
 
 def test_result_from():
     e = {"session": "S004", "reason": "exited", "progress": True, "started": 1.0, "ended": 2.0}
-    assert L.result_from(e, None, 0, False) == SessionResult("S004", "ok", True, 1.0, 2.0, detail="reason=exited exit=0")
+    assert L.result_from(e, None, 0, False) == SessionResult(
+        "S004", "ok", True, 1.0, 2.0, detail="reason=exited exit=0"
+    )
     assert L.result_from(e, None, 0, True).outcome == "stopped"
     assert L.result_from(dict(e, reason="crash"), None, 0, False).outcome == "crash"
     assert L.result_from(e, None, 3, False).outcome == "crash"
@@ -242,8 +261,9 @@ def test_legacy_run_session_soft_stop(tmp_path: Path):
     def finish():
         assert (runtime / "STOP").exists()  # the soft stop reached play.py before it exited
         h = json.loads(rj.read_text())["history"]
-        rj.write_text(json.dumps({"history": h + [{"kind": "play", "session": "S002", "reason": "exited",
-                                                   "progress": False}]}))
+        rj.write_text(
+            json.dumps({"history": h + [{"kind": "play", "session": "S002", "reason": "exited", "progress": False}]})
+        )
 
     def spawn(args, cwd, log):
         spawned.append((args, cwd))

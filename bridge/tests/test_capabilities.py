@@ -37,8 +37,15 @@ def build(env: dict[str, str], *args: str) -> subprocess.CompletedProcess:
     with tempfile.TemporaryDirectory(prefix="bg3caps-") as rt:
         full = {k: v for k, v in os.environ.items() if not k.startswith("BG3AI_TOOLS")}
         full.update({"BG3AI_RUNTIME": rt, "BG3AI_MEMORY_DIR": rt, "BG3LE_DEBUG_PORT": "1"}, **env)
-        return subprocess.run([sys.executable, "-c", PROBE, *args], cwd=BRIDGE, env=full, capture_output=True, check=False,
-                              text=True, timeout=120)
+        return subprocess.run(
+            [sys.executable, "-c", PROBE, *args],
+            cwd=BRIDGE,
+            env=full,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=120,
+        )
 
 
 def tools(env: dict[str, str], *args: str) -> dict:
@@ -96,8 +103,10 @@ class Disabled(unittest.TestCase):
         self.assertEqual(capabilities.disabled(self.ALL, {}), set())
 
     def test_game_always_on(self):
-        self.assertEqual(capabilities.disabled(self.ALL, {"BG3AI_TOOLS": "wiki"}),
-                         self.ALL - {"move_to", "look", "wiki_search", "wiki_page"})
+        self.assertEqual(
+            capabilities.disabled(self.ALL, {"BG3AI_TOOLS": "wiki"}),
+            self.ALL - {"move_to", "look", "wiki_search", "wiki_page"},
+        )
 
     def test_off_removes_game_tools(self):
         self.assertEqual(capabilities.disabled(self.ALL, {"BG3AI_TOOLS_OFF": "game"}), {"move_to", "look"})

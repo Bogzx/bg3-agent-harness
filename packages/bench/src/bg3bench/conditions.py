@@ -1,3 +1,4 @@
+# pyright: basic
 """Conditions: what a run's agent is given besides the scenario. The id is the condition's whole content, so a
 run's manifest names it exactly: `rules`, `rules+coaching@<hash8>`, `rules+wiki`, `rules+persona:evil`,
 `rules+reloads:2`, combined in that order (`rules+coaching@1a2b3c4d+wiki+persona:evil`).

@@ -1,3 +1,4 @@
+# pyright: basic
 """The run store: one reader over the files today's runner, bridge and memory leave on disk.
 
     <runtime>/runner.status.json             the runner's live status (play.py write_status)
@@ -35,8 +36,9 @@ GitRunner = Callable[[Path, list[str]], str]  # (repo dir, git args) -> stdout; 
 
 
 def run_git(repo: Path, args: list[str]) -> str:
-    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True,
-                          timeout=10).stdout
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True, timeout=10
+    ).stdout
 
 
 class StoreError(ValueError):
@@ -150,8 +152,11 @@ class RunStore:
     def sessions(self, pt: str) -> list[dict]:
         """One row per play session: runner.json history joined with the log's [end] line and latency summary."""
         d = self.session_dir(pt)
-        hist = {h.get("session"): h for h in read_json(d / "runner.json").get("history") or []
-                if isinstance(h, dict) and h.get("kind", "play") == "play"}
+        hist = {
+            h.get("session"): h
+            for h in read_json(d / "runner.json").get("history") or []
+            if isinstance(h, dict) and h.get("kind", "play") == "play"
+        }
         rows = []
         for log in self.session_logs(pt):
             sid = log.stem
@@ -164,11 +169,20 @@ class RunStore:
             h = hist.get(sid, {})
             lat = read_json(d / f"{sid}.latency.json")
             prog = read_json(d / f"{sid}.progress.json")
-            rows.append({"session": sid, "started": h.get("started"), "ended": h.get("ended"),
-                         "model": h.get("model"), "effort": h.get("effort"), **end,
-                         "minutes": end["minutes"] or h.get("minutes") or lat.get("minutes"),
-                         "latency": latency_summary(lat) if lat else None,
-                         "points": prog.get("points"), "points_per_hour": prog.get("per_hour")})
+            rows.append(
+                {
+                    "session": sid,
+                    "started": h.get("started"),
+                    "ended": h.get("ended"),
+                    "model": h.get("model"),
+                    "effort": h.get("effort"),
+                    **end,
+                    "minutes": end["minutes"] or h.get("minutes") or lat.get("minutes"),
+                    "latency": latency_summary(lat) if lat else None,
+                    "points": prog.get("points"),
+                    "points_per_hour": prog.get("per_hour"),
+                }
+            )
         return rows
 
     def log_entries(self, path: Path, max_bytes: int = 256 * 1024) -> list[dict]:
@@ -255,7 +269,11 @@ class RunStore:
 def latency_summary(lat: dict) -> dict:
     """The few Sxxx.latency.json numbers the cost/latency strip shows."""
     targets = lat.get("targets") or {}
-    return {"apm": lat.get("apm"), "busy_pct": lat.get("busy_pct"), "think_overlap_pct": lat.get("think_overlap_pct"),
-            "idle_median_s": (targets.get("median_idle_explore_s") or {}).get("value"),
-            "long_gaps": (targets.get("long_gaps_non_dialogue") or {}).get("value"),
-            "bridge_rt_ms": (targets.get("bridge_rt_median_ms") or {}).get("value")}
+    return {
+        "apm": lat.get("apm"),
+        "busy_pct": lat.get("busy_pct"),
+        "think_overlap_pct": lat.get("think_overlap_pct"),
+        "idle_median_s": (targets.get("median_idle_explore_s") or {}).get("value"),
+        "long_gaps": (targets.get("long_gaps_non_dialogue") or {}).get("value"),
+        "bridge_rt_ms": (targets.get("bridge_rt_median_ms") or {}).get("value"),
+    }

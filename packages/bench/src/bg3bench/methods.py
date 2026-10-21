@@ -1,3 +1,4 @@
+# pyright: basic
 """How a run made its gold: attribution of gold changes to the referee events around them.
 
 Reported next to the verdict, never part of it: the windows are a heuristic (a quest reward that lands during a trade

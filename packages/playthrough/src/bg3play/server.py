@@ -62,7 +62,9 @@ from .game import GameWatch, ScreenWatch, Viewers
 from .hub import Hub
 from .store import RunStore, StoreError
 
-PT_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/diff|memory/log|timeline|positions|story)$")
+PT_ROUTE = re.compile(
+    r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/diff|memory/log|timeline|positions|story)$"
+)
 CONTROL_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(start|stop|resume)$")
 REPLAY_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/replay/(S\d{3,})$")
 CONFIG_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/config$")
@@ -92,10 +94,19 @@ def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
 
 
 class App:
-    def __init__(self, store: RunStore, hub: Hub, web_dir: Path | None, keepalive_s: float = KEEPALIVE_S,
-                 recorder: rec.Recorder | None = None, video_dir: Path | None = None,
-                 supervisor: sup.Supervisor | None = None, token: str | None = None, profiles: Path | None = None,
-                 dashboard: Dashboard | None = None):
+    def __init__(
+        self,
+        store: RunStore,
+        hub: Hub,
+        web_dir: Path | None,
+        keepalive_s: float = KEEPALIVE_S,
+        recorder: rec.Recorder | None = None,
+        video_dir: Path | None = None,
+        supervisor: sup.Supervisor | None = None,
+        token: str | None = None,
+        profiles: Path | None = None,
+        dashboard: Dashboard | None = None,
+    ):
         self.store, self.hub, self.web_dir, self.keepalive_s = store, hub, web_dir, keepalive_s
         self.dashboard = dashboard or Dashboard(store, None, None, Viewers(time.time))
         self.recorder = recorder
@@ -154,8 +165,11 @@ class App:
         if path == "/api/v1/recorder":
             return {"v": api.API_VERSION, "recorder": self.recorder.state() if self.recorder else None}
         if path == "/api/v1/supervisor":
-            return {"v": api.API_VERSION, "supervisor": self.supervisor.view() if self.supervisor else None,
-                    "profiles": self.client_profiles()}
+            return {
+                "v": api.API_VERSION,
+                "supervisor": self.supervisor.view() if self.supervisor else None,
+                "profiles": self.client_profiles(),
+            }
         if (cm := CONFIG_ROUTE.match(path)) is not None:
             name = s.check_name(unquote(cm.group(1)))
             try:
@@ -348,8 +362,11 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
             self.close_connection = True
             try:
                 while frame is not None and not live.closed and not app.hub.closed:
-                    self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n"
-                                     % len(frame) + frame + b"\r\n")
+                    self.wfile.write(
+                        b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(frame)
+                        + frame
+                        + b"\r\n"
+                    )
                     self.wfile.flush()
                     seq, frame = live.get(seq, app.keepalive_s)
             except (BrokenPipeError, ConnectionResetError):
@@ -368,8 +385,11 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
                 while not app.hub.closed:
                     events, reset, last_id = app.hub.read(last_id, timeout)
                     chunks = ["event: reset\ndata: {}\n\n"] if reset else []
-                    chunks += [f"id: {app.hub.event_id(e.seq)}\nevent: {e.type}\n"
-                               f"data: {json.dumps(e.data, ensure_ascii=False, default=str)}\n\n" for e in events]
+                    chunks += [
+                        f"id: {app.hub.event_id(e.seq)}\nevent: {e.type}\n"
+                        f"data: {json.dumps(e.data, ensure_ascii=False, default=str)}\n\n"
+                        for e in events
+                    ]
                     if not chunks and timeout:
                         chunks = [": keepalive\n\n"]
                     if chunks:
@@ -405,31 +425,56 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--poll", type=float, default=0.5, help="seconds between file checks")
     ap.add_argument("--record", action="store_true", help="record the game while it runs (recorder.py)")
     ap.add_argument("--video", type=Path, help="recording dir (default <runtime>/video)")
-    ap.add_argument("--capture", choices=("window", "display"), default="window",
-                    help="grab the game window (x11grab -window_id) or the whole display (black under rootless "
-                         "Xwayland: research/ovh/live1.md 7)")
+    ap.add_argument(
+        "--capture",
+        choices=("window", "display"),
+        default="window",
+        help="grab the game window (x11grab -window_id) or the whole display (black under rootless "
+        "Xwayland: research/ovh/live1.md 7)",
+    )
     ap.add_argument("--display", default=os.environ.get("DISPLAY", ":1"))
     ap.add_argument("--encoder", choices=sorted(rec.ENCODER_ARGS), default="h264_nvenc")
     ap.add_argument("--video-cap-gb", type=float, default=20.0, help="delete the oldest segments above this")
-    ap.add_argument("--positions", action="store_true",
-                    help="sample party positions from the game's state.status (adapters/bridge_status.py)")
-    ap.add_argument("--debug-port", type=int, default=int(os.environ.get("BG3LE_DEBUG_PORT", "9998")),
-                    help="the mod's RPC port (--positions, --game)")
-    ap.add_argument("--game", action="store_true",
-                    help="poll the game's status and visible events while someone watches /api/v1/live")
+    ap.add_argument(
+        "--positions",
+        action="store_true",
+        help="sample party positions from the game's state.status (adapters/bridge_status.py)",
+    )
+    ap.add_argument(
+        "--debug-port",
+        type=int,
+        default=int(os.environ.get("BG3LE_DEBUG_PORT", "9998")),
+        help="the mod's RPC port (--positions, --game)",
+    )
+    ap.add_argument(
+        "--game",
+        action="store_true",
+        help="poll the game's status and visible events while someone watches /api/v1/live",
+    )
     ap.add_argument("--status-interval", type=float, default=3.0, help="seconds between game polls (--game)")
-    ap.add_argument("--screen", action="store_true",
-                    help="capture game frames while someone watches (the bridge's ScreenCapture; --record has its "
-                         "own live view)")
+    ap.add_argument(
+        "--screen",
+        action="store_true",
+        help="capture game frames while someone watches (the bridge's ScreenCapture; --record has its own live view)",
+    )
     ap.add_argument("--screen-interval", type=float, default=5.0)
     ap.add_argument("--screen-width", type=int, default=1280)
-    ap.add_argument("--memory-dir", type=Path,
-                    help="the memory /api/state and /api/story read (default: the runner's playthrough's)")
-    ap.add_argument("--supervise", action="store_true",
-                    help="enable start/stop/resume (sessions through adapters/legacy_cli.py: runner/play.py run)")
+    ap.add_argument(
+        "--memory-dir",
+        type=Path,
+        help="the memory /api/state and /api/story read (default: the runner's playthrough's)",
+    )
+    ap.add_argument(
+        "--supervise",
+        action="store_true",
+        help="enable start/stop/resume (sessions through adapters/legacy_cli.py: runner/play.py run)",
+    )
     ap.add_argument("--repo", type=Path, default=REPO, help="the bg3-ai checkout play.py runs from (--supervise)")
-    ap.add_argument("--token", default=os.environ.get("BG3PLAY_TOKEN"),
-                    help="bearer token for writes from off localhost (default $BG3PLAY_TOKEN)")
+    ap.add_argument(
+        "--token",
+        default=os.environ.get("BG3PLAY_TOKEN"),
+        help="bearer token for writes from off localhost (default $BG3PLAY_TOKEN)",
+    )
     ap.add_argument("--verbose", action="store_true")
     return ap
 
@@ -444,30 +489,44 @@ def main(argv: list[str] | None = None) -> int:
     video = opt.video or opt.runtime / "video"
     recorder, rec_thread = None, None
     if opt.record:
-        recorder = rec.Recorder(rec.RecordSpec(video, encoder=opt.encoder), rec.game_probe(opt.display, opt.capture),
-                                time.time, rec.resource_guard(opt.runtime / "thermal.log"),
-                                cap_bytes=int(opt.video_cap_gb * 1024**3))
+        recorder = rec.Recorder(
+            rec.RecordSpec(video, encoder=opt.encoder),
+            rec.game_probe(opt.display, opt.capture),
+            time.time,
+            rec.resource_guard(opt.runtime / "thermal.log"),
+            cap_bytes=int(opt.video_cap_gb * 1024**3),
+        )
         rec_thread = threading.Thread(target=recorder.loop, args=(stop,), daemon=True, name="recorder")
         rec_thread.start()
     if opt.positions:
         from .adapters.bridge_status import BridgeStatus  # temporary; needs the bridge package
 
         legacy_paths.ensure()
+
         def path_for() -> Path | None:
             cur = opt.playthrough or store.current()
             return store.positions_path(cur) if cur else None
 
-        sampler = pos.Sampler(BridgeStatus(opt.debug_port), path_for, time.time,
-                              lambda row: hub.publish("position", dict(row, playthrough=opt.playthrough
-                                                                       or store.current())))
+        sampler = pos.Sampler(
+            BridgeStatus(opt.debug_port),
+            path_for,
+            time.time,
+            lambda row: hub.publish("position", dict(row, playthrough=opt.playthrough or store.current())),
+        )
         threading.Thread(target=sample_loop, args=(sampler, stop), daemon=True, name="positions").start()
     supervisor = None
     if opt.supervise:
         from .adapters.legacy_cli import LegacyCli  # temporary until the harness's run_session
 
-        supervisor = sup.Supervisor(LegacyCli(opt.repo, opt.runtime), sup.NoKeeper(), opt.runtime, opt.playthroughs,
-                                    time.time, lambda view: hub.publish("supervisor", view),
-                                    played=lambda pt: len(store.session_logs(pt)))
+        supervisor = sup.Supervisor(
+            LegacyCli(opt.repo, opt.runtime),
+            sup.NoKeeper(),
+            opt.runtime,
+            opt.playthroughs,
+            time.time,
+            lambda view: hub.publish("supervisor", view),
+            played=lambda pt: len(store.session_logs(pt)),
+        )
     viewers = Viewers(time.time)
     game = screen = None
     if opt.game:
@@ -485,9 +544,17 @@ def main(argv: list[str] | None = None) -> int:
         screen = ScreenWatch(capture, viewers, interval, note=note, error=err)
         if capture is not None:
             threading.Thread(target=gm.loop, args=(screen, stop, time.time), daemon=True, name="screen").start()
-    app = App(store, hub, opt.web, recorder=recorder, video_dir=video, supervisor=supervisor, token=opt.token,
-              profiles=opt.repo / "profiles",
-              dashboard=Dashboard(store, game, screen, viewers, memory_dir=opt.memory_dir))
+    app = App(
+        store,
+        hub,
+        opt.web,
+        recorder=recorder,
+        video_dir=video,
+        supervisor=supervisor,
+        token=opt.token,
+        profiles=opt.repo / "profiles",
+        dashboard=Dashboard(store, game, screen, viewers, memory_dir=opt.memory_dir),
+    )
     srv = serve(app, opt.host, opt.port, opt.verbose)
     print(f"bg3play: http://{opt.host}:{srv.server_address[1]}/  (runtime {opt.runtime})", flush=True)
     try:

@@ -1,3 +1,4 @@
+# pyright: basic
 import json
 import tomllib
 from pathlib import Path

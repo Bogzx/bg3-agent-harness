@@ -1,3 +1,4 @@
+# pyright: basic
 """The Replay screen's data: one session's events on one wall-clock axis, and the recorded video that covers it.
 
     GET /api/v1/playthroughs/<pt>/replay/<session> ->
@@ -56,8 +57,17 @@ def window_actions(path: Path, t0: float, t1: float, limit: int = MAX_EVENTS) ->
                 continue
             a = P.action(line, result_limit=600)
             if a:
-                out.append({"t": t, "kind": "action", "tool": a["tool"], "args": a["args"], "ms": a["ms"],
-                            "ok": a["ok"], "result": P.scrub(a["result"])})
+                out.append(
+                    {
+                        "t": t,
+                        "kind": "action",
+                        "tool": a["tool"],
+                        "args": a["args"],
+                        "ms": a["ms"],
+                        "ok": a["ok"],
+                        "result": P.scrub(a["result"]),
+                    }
+                )
                 if len(out) >= limit:
                     break
     return out
@@ -88,6 +98,5 @@ def replay(store: RunStore, pt: str, session: str, video_dir: Path) -> dict | No
         if t0 <= c["t"] <= t1 + 900:  # the keeper commits after the session
             events.append({"t": c["t"], "kind": "memory", "subject": c["subject"], "sha": c["sha"]})
     events.sort(key=lambda e: e["t"])
-    segs = [s for s in rec.read_index(video_dir)
-            if s["start"] <= t1 and (s["end"] is None or s["end"] >= t0)]
+    segs = [s for s in rec.read_index(video_dir) if s["start"] <= t1 and (s["end"] is None or s["end"] >= t0)]
     return {"session": session, "started": t0, "ended": t1, "events": events[:MAX_EVENTS], "segments": segs}

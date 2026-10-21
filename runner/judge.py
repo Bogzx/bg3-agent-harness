@@ -28,7 +28,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import events  # noqa: E402
+import events
 
 REPO = Path(__file__).resolve().parent.parent
 PLAYTHROUGHS = Path(os.environ.get("BG3AI_PLAYTHROUGHS", REPO / "playthroughs"))   # as play.py

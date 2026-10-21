@@ -145,7 +145,7 @@ def in_game_folder(path: Path) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument("save", type=Path, help="a COPY of a .lsv")
     ap.add_argument("--show", action="store_true", help="print found IDs/paths unmasked")
     ap.add_argument("--shallow", action="store_true", help="scan only SaveInfo.json and meta.lsf (fast)")

@@ -12,6 +12,7 @@ the profile's key in the env and stops after --max-requests responses.
 no cost (DeepSeek); OpenRouter's usage.cost is used when present. For DeepSeek the account balance before and
 after is printed too (GET /user/balance, free), as the billed check.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,9 +32,11 @@ import pi_client as PC
 
 import profiles as PR
 
-PROMPT = ("This is a harness test, not a game. Do exactly this, one tool call per step: 1) call get_status; "
-          "2) call press_key with key \"e\"; 3) call look; 4) call get_party and wait with seconds 1 in the same "
-          "message; 5) reply with the single word DONE.")
+PROMPT = (
+    "This is a harness test, not a game. Do exactly this, one tool call per step: 1) call get_status; "
+    '2) call press_key with key "e"; 3) call look; 4) call get_party and wait with seconds 1 in the same '
+    "message; 5) reply with the single word DONE."
+)
 
 
 def balance(base_url: str, key: str) -> str | None:
@@ -50,8 +53,9 @@ def response_cost(usage: dict, price: tuple[float, float, float] | None) -> floa
         return float(usage["cost"])
     if price is None:
         return None
-    hit = int(usage.get("prompt_cache_hit_tokens") or (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
-              or 0)
+    hit = int(
+        usage.get("prompt_cache_hit_tokens") or (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+    )
     miss = int(usage.get("prompt_cache_miss_tokens") or (int(usage.get("prompt_tokens") or 0) - hit))
     return (miss * price[0] + int(usage.get("completion_tokens") or 0) * price[1] + hit * price[2]) / 1e6
 
@@ -67,8 +71,9 @@ def main(argv: list[str] | None = None) -> int:
     profile = PR.load(a.profile)
     key = os.environ.get(profile.endpoint.api_key_env) if profile.endpoint else None
     if not key:
-        print(f"set {profile.endpoint.api_key_env if profile.endpoint else 'the key'} for this command",
-              file=sys.stderr)
+        print(
+            f"set {profile.endpoint.api_key_env if profile.endpoint else 'the key'} for this command", file=sys.stderr
+        )
         return 2
     price = tuple(float(x) for x in a.price.split(",")) if a.price else None
     a.out.mkdir(parents=True, exist_ok=True)
@@ -76,15 +81,26 @@ def main(argv: list[str] | None = None) -> int:
     before = balance(profile.endpoint.base_url, key)
     with tempfile.TemporaryDirectory(prefix="bg3-pi-live-") as tmp:
         ws = Path(tmp)
-        server = {"command": sys.executable, "args": [str(HERE / "stub_mcp.py")], "timeout": 110_000,
-                  "env": {"STUB_MCP_LOG": str(a.out / "mcp.jsonl")}}
+        server = {
+            "command": sys.executable,
+            "args": [str(HERE / "stub_mcp.py")],
+            "timeout": 110_000,
+            "env": {"STUB_MCP_LOG": str(a.out / "mcp.jsonl")},
+        }
         settings = {**PC.PI_SETTINGS, "retry": {"enabled": True, "maxRetries": 1}}
         client = PC.PiClient(profile, system, server=server, cwd=ws, settings=settings)
         req = C.Request(prompt=PROMPT, model=profile.model, session_dir=ws, session="live-check-0001", tag="live")
         client.write_config(req)
         env = {**os.environ, **client.env(req)}
-        p = subprocess.Popen(client.command(req), cwd=ws, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True)
+        p = subprocess.Popen(
+            client.command(req),
+            cwd=ws,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         events, billing, out = [], [], []
         for line in p.stdout:
             out.append(line)
@@ -106,19 +122,37 @@ def main(argv: list[str] | None = None) -> int:
     calls = [e for e in events if e.kind == "tool_call"]
     costs = [response_cost(b.get("usage") or {}, price) for b in billing]
     report = {
-        "profile": str(a.profile), "model": profile.model, "rc": p.returncode,
+        "profile": str(a.profile),
+        "model": profile.model,
+        "rc": p.returncode,
         "init": next(({"tools": e.tools, "mcp": e.mcp} for e in events if e.kind == "init"), None),
         "tool_calls": [{"tool": e.tool, "args": e.args} for e in calls],
-        "malformed": client.parser.malformed, "malformed_rate": client.parser.malformed / len(calls) if calls else None,
-        "server_calls": [json.loads(x)["tool"] for x in (a.out / "mcp.jsonl").read_text().splitlines()
-                         if json.loads(x).get("ev") == "start"] if (a.out / "mcp.jsonl").exists() else [],
+        "malformed": client.parser.malformed,
+        "malformed_rate": client.parser.malformed / len(calls) if calls else None,
+        "server_calls": [
+            json.loads(x)["tool"]
+            for x in (a.out / "mcp.jsonl").read_text().splitlines()
+            if json.loads(x).get("ev") == "start"
+        ]
+        if (a.out / "mcp.jsonl").exists()
+        else [],
         "texts": [e.text for e in events if e.kind == "text"],
-        "responses": [{"id": b.get("id"), "provider": b.get("provider"), "usage": b.get("usage"), "cost_usd": c}
-                      for b, c in zip(billing, costs, strict=True)],
+        "responses": [
+            {"id": b.get("id"), "provider": b.get("provider"), "usage": b.get("usage"), "cost_usd": c}
+            for b, c in zip(billing, costs, strict=True)
+        ],
         "cost_usd": round(sum(c for c in costs if c is not None), 6),
-        "result": next(({"subtype": e.subtype, "is_error": e.is_error, "text": e.text[:300]}
-                        for e in events if e.kind == "result"), None),
-        "balance_before": before, "balance_after": after, "stderr_tail": err[-500:],
+        "result": next(
+            (
+                {"subtype": e.subtype, "is_error": e.is_error, "text": e.text[:300]}
+                for e in events
+                if e.kind == "result"
+            ),
+            None,
+        ),
+        "balance_before": before,
+        "balance_after": after,
+        "stderr_tail": err[-500:],
     }
     (a.out / "report.json").write_text(json.dumps(report, indent=1) + "\n")
     print(json.dumps(report, indent=1))

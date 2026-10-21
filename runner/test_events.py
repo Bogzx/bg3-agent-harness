@@ -4,6 +4,7 @@ client fixtures of test_clients.py), and run_claude writing Sxxx.events.jsonl (t
 
     python3 -m unittest runner/test_events.py
 """
+
 from __future__ import annotations
 
 import json
@@ -26,34 +27,94 @@ SCHEMA = Path(__file__).resolve().parents[1] / "packages" / "harness" / "schemas
 
 # claude stream-json shapes (as in runtime/sessions streams): init, a thinking-only line with its time, a call with
 # its result (the bridge's {"result": ...} envelope), a screenshot result, text, the final result.
-CLAUDE = [json.dumps(x) for x in (
-    {"type": "system", "subtype": "init", "session_id": "c1", "model": "claude-opus-5-5", "tools": ["a", "b"],
-     "mcp_servers": [{"name": "bg3", "status": "connected"}]},
-    {"type": "assistant", "thinking_duration_ms": 624, "session_id": "c1",
-     "message": {"id": "msg_1", "content": [{"type": "thinking", "thinking": ""}],
-                 "usage": {"input_tokens": 2, "output_tokens": 28}}},
-    {"type": "assistant", "session_id": "c1", "message": {"id": "msg_1", "content": [
-        {"type": "text", "text": "Looking first."},
-        {"type": "tool_use", "id": "toolu_1", "name": "mcp__bg3__look", "input": {"radius": 10}}]}},
-    {"type": "user", "session_id": "c1", "message": {"content": [
-        {"type": "tool_result", "tool_use_id": "toolu_1", "content": '{"result": "a door e1"}'}]}},
-    {"type": "assistant", "session_id": "c1", "message": {"id": "msg_2", "content": [
-        {"type": "tool_use", "id": "toolu_2", "name": "mcp__bg3__screenshot", "input": {}}]}},
-    {"type": "user", "session_id": "c1", "message": {"content": [
-        {"type": "tool_result", "tool_use_id": "toolu_2", "is_error": True,
-         "content": [{"type": "text", "text": "FAILED: no window"}, {"type": "image", "source": {}}]}]}},
-    {"type": "result", "subtype": "success", "session_id": "c1", "result": "done", "num_turns": 2,
-     "duration_ms": 5000, "duration_api_ms": 4000, "total_cost_usd": 0.5,
-     "usage": {"input_tokens": 10, "output_tokens": 5, "output_tokens_details": {"thinking_tokens": 3}}},
-)]
-GEMINI = [json.dumps(x) for x in (
-    {"type": "init", "session_id": "g1", "model": "gemini-2.5-pro"},
-    {"type": "message", "role": "assistant", "content": "Checking.", "delta": True},
-    {"type": "tool_use", "tool_name": "get_status", "tool_id": "t1", "parameters": {}},
-    {"type": "tool_result", "tool_id": "t1", "status": "success", "output": "status: ok"},
-    {"type": "result", "status": "success",
-     "stats": {"input_tokens": 1000, "output_tokens": 10, "cached": 600, "duration_ms": 1200}},
-)]
+CLAUDE = [
+    json.dumps(x)
+    for x in (
+        {
+            "type": "system",
+            "subtype": "init",
+            "session_id": "c1",
+            "model": "claude-opus-5-5",
+            "tools": ["a", "b"],
+            "mcp_servers": [{"name": "bg3", "status": "connected"}],
+        },
+        {
+            "type": "assistant",
+            "thinking_duration_ms": 624,
+            "session_id": "c1",
+            "message": {
+                "id": "msg_1",
+                "content": [{"type": "thinking", "thinking": ""}],
+                "usage": {"input_tokens": 2, "output_tokens": 28},
+            },
+        },
+        {
+            "type": "assistant",
+            "session_id": "c1",
+            "message": {
+                "id": "msg_1",
+                "content": [
+                    {"type": "text", "text": "Looking first."},
+                    {"type": "tool_use", "id": "toolu_1", "name": "mcp__bg3__look", "input": {"radius": 10}},
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "session_id": "c1",
+            "message": {
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": '{"result": "a door e1"}'}]
+            },
+        },
+        {
+            "type": "assistant",
+            "session_id": "c1",
+            "message": {
+                "id": "msg_2",
+                "content": [{"type": "tool_use", "id": "toolu_2", "name": "mcp__bg3__screenshot", "input": {}}],
+            },
+        },
+        {
+            "type": "user",
+            "session_id": "c1",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_2",
+                        "is_error": True,
+                        "content": [{"type": "text", "text": "FAILED: no window"}, {"type": "image", "source": {}}],
+                    }
+                ]
+            },
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "session_id": "c1",
+            "result": "done",
+            "num_turns": 2,
+            "duration_ms": 5000,
+            "duration_api_ms": 4000,
+            "total_cost_usd": 0.5,
+            "usage": {"input_tokens": 10, "output_tokens": 5, "output_tokens_details": {"thinking_tokens": 3}},
+        },
+    )
+]
+GEMINI = [
+    json.dumps(x)
+    for x in (
+        {"type": "init", "session_id": "g1", "model": "gemini-2.5-pro"},
+        {"type": "message", "role": "assistant", "content": "Checking.", "delta": True},
+        {"type": "tool_use", "tool_name": "get_status", "tool_id": "t1", "parameters": {}},
+        {"type": "tool_result", "tool_id": "t1", "status": "success", "output": "status: ok"},
+        {
+            "type": "result",
+            "status": "success",
+            "stats": {"input_tokens": 1000, "output_tokens": 10, "cached": 600, "duration_ms": 1200},
+        },
+    )
+]
 
 
 def _strip(evs: list[C.Event]) -> list[dict]:
@@ -63,11 +124,22 @@ def _strip(evs: list[C.Event]) -> list[dict]:
 
 class Envelope(unittest.TestCase):
     def test_round_trip(self):
-        ev = C.Event("result", text="done", subtype="success", turns=2, cost_usd=0.5, api_ms=4000.0, think_tokens=3,
-                     tokens=C.tokens(10, 5), session_id="c1", t=1761050000.123, seq=7)
+        ev = C.Event(
+            "result",
+            text="done",
+            subtype="success",
+            turns=2,
+            cost_usd=0.5,
+            api_ms=4000.0,
+            think_tokens=3,
+            tokens=C.tokens(10, 5),
+            session_id="c1",
+            t=1761050000.123,
+            seq=7,
+        )
         line = ev.to_json()
         self.assertEqual(list(json.loads(line))[:5], ["v", "seq", "t", "src", "kind"])
-        self.assertNotIn('"tool"', line)                         # defaults left out
+        self.assertNotIn('"tool"', line)  # defaults left out
         self.assertEqual(C.Event.from_json(line), ev)
         h = C.Event("fault", src="harness", detail={"fault": "crash", "path": Path("/x")}, seq=0, t=1.0)
         self.assertEqual(C.Event.from_json(h.to_json()).detail, {"fault": "crash", "path": "/x"})
@@ -88,7 +160,7 @@ class Envelope(unittest.TestCase):
         evs = [e for ln in CLAUDE for e in C.ClaudeClient().parse(ln)]
         think = [e for e in evs if e.kind == "thinking"]
         self.assertEqual([(e.message_id, e.think_ms) for e in think], [("msg_1", 624.0)])
-        self.assertEqual(C.format_event(think[0]), [])           # the human log is unchanged
+        self.assertEqual(C.format_event(think[0]), [])  # the human log is unchanged
         res = evs[-1]
         self.assertEqual((res.api_ms, res.think_tokens, res.duration_ms), (4000, 3, 5000))
 
@@ -105,13 +177,19 @@ class Log(unittest.TestCase):
         log.write(C.Event("text", text="hi"))
         log.write(C.Event("text", text="given", t=5.0))
         log.close()
-        log.write(C.Event("text", text="after close"))           # dropped, no error
+        log.write(C.Event("text", text="after close"))  # dropped, no error
         log = E.EventLog(self.d / "S001.events.jsonl", clock=lambda: 20.0)
         log.end("exited", 0, 20.0, detail="", fault_at=None)
         evs = E.load_events(self.d / "S001")
-        self.assertEqual([(e.seq, e.t, e.src, e.kind) for e in evs],
-                         [(0, 10.0, "harness", "session_start"), (1, 11.0, "client", "text"),
-                          (2, 5.0, "client", "text"), (3, 20.0, "harness", "session_end")])
+        self.assertEqual(
+            [(e.seq, e.t, e.src, e.kind) for e in evs],
+            [
+                (0, 10.0, "harness", "session_start"),
+                (1, 11.0, "client", "text"),
+                (2, 5.0, "client", "text"),
+                (3, 20.0, "harness", "session_end"),
+            ],
+        )
         self.assertEqual(evs[0].detail, {"client": "claude"})
         self.assertEqual(evs[3].detail, {"reason": "exited", "exit": 0, "minutes": 0.0})
 
@@ -135,10 +213,14 @@ class Log(unittest.TestCase):
         log.close()
 
     def test_parity_raw_fallback_and_log(self):
-        for i, (name, client, lines) in enumerate((("claude", C.ClaudeClient(), CLAUDE),
-                                                   ("codex", C.CodexClient(server={}), TC.CODEX_RUN),
-                                                   ("codex", C.CodexClient(server={}), TC.CODEX_DOWN),
-                                                   ("gemini", C.GeminiClient(server={}), GEMINI))):
+        for i, (name, client, lines) in enumerate(
+            (
+                ("claude", C.ClaudeClient(), CLAUDE),
+                ("codex", C.CodexClient(server={}), TC.CODEX_RUN),
+                ("codex", C.CodexClient(server={}), TC.CODEX_DOWN),
+                ("gemini", C.GeminiClient(server={}), GEMINI),
+            )
+        ):
             stem = f"S00{i + 1}"
             with self.subTest(name=name, stem=stem):
                 self.write_both(client, lines, stem)
@@ -146,8 +228,10 @@ class Log(unittest.TestCase):
                 raw = E.load_events(self.d / stem)
                 self.assertTrue(logged)
                 self.assertEqual(_strip(raw), _strip(logged))
-                self.assertEqual([e.kind for e in E.load_events(self.d / stem, kinds={"result"})],
-                                 [e.kind for e in logged if e.kind == "result"])
+                self.assertEqual(
+                    [e.kind for e in E.load_events(self.d / stem, kinds={"result"})],
+                    [e.kind for e in logged if e.kind == "result"],
+                )
 
     def test_codex_resume_totals_shared_parser(self):
         (self.d / "S001.jsonl").write_text("\n".join(TC.CODEX_RUN) + "\n")
@@ -156,16 +240,31 @@ class Log(unittest.TestCase):
         first = E.load_events(self.d / "S001", kinds={"result"}, parsers=parsers)
         resumed = E.load_events(self.d / "S001-r1", kinds={"result"}, parsers=parsers)
         self.assertEqual(first[-1].tokens["output"], 100)
-        self.assertEqual(resumed[-1].tokens["output"], 50)        # this process's share of the running total
+        self.assertEqual(resumed[-1].tokens["output"], 50)  # this process's share of the running total
 
     def test_raw_fallback_times_calls_from_turns(self):
         (self.d / "S001.jsonl").write_text("\n".join(CLAUDE) + "\n")
-        (self.d / "S001.turns.jsonl").write_text("\n".join(json.dumps(r) for r in (
-            {"type": "use", "t": 100.0, "id": "toolu_1", "name": "look"},
-            {"type": "result", "t": 101.5, "id": "toolu_1"}, {"type": "result", "t": 109.0, "id": "toolu_1"})) + "\n")
+        (self.d / "S001.turns.jsonl").write_text(
+            "\n".join(
+                json.dumps(r)
+                for r in (
+                    {"type": "use", "t": 100.0, "id": "toolu_1", "name": "look"},
+                    {"type": "result", "t": 101.5, "id": "toolu_1"},
+                    {"type": "result", "t": 109.0, "id": "toolu_1"},
+                )
+            )
+            + "\n"
+        )
         evs = {(e.kind, e.call_id): e.t for e in E.load_events(self.d / "S001") if e.call_id}
-        self.assertEqual(evs, {("tool_call", "toolu_1"): 100.0, ("tool_result", "toolu_1"): 101.5,
-                               ("tool_call", "toolu_2"): None, ("tool_result", "toolu_2"): None})
+        self.assertEqual(
+            evs,
+            {
+                ("tool_call", "toolu_1"): 100.0,
+                ("tool_result", "toolu_1"): 101.5,
+                ("tool_call", "toolu_2"): None,
+                ("tool_result", "toolu_2"): None,
+            },
+        )
 
     def test_missing_session(self):
         self.assertEqual(E.load_events(self.d / "S404"), [])
@@ -188,9 +287,16 @@ class RunClaudeWritesEvents(TCR.FakeRunBase):
 
     def test_exited(self):
         evs = self.run_one()
-        self.assertEqual([(e.src, e.kind) for e in evs],
-                         [("harness", "session_start"), ("client", "init"), ("client", "text"), ("client", "result"),
-                          ("harness", "session_end")])
+        self.assertEqual(
+            [(e.src, e.kind) for e in evs],
+            [
+                ("harness", "session_start"),
+                ("client", "init"),
+                ("client", "text"),
+                ("client", "result"),
+                ("harness", "session_end"),
+            ],
+        )
         self.assertEqual([e.seq for e in evs], list(range(5)))
         self.assertTrue(all(e.t for e in evs))
         self.assertEqual((evs[0].detail["client"], evs[0].detail["session"]), ("claude", "S001"))
@@ -207,7 +313,7 @@ class RunClaudeWritesEvents(TCR.FakeRunBase):
         self.assertLess(kinds.index(("client", "init")), kinds.index(("harness", "mcp_failed")))
         self.assertEqual(kinds[-1], ("harness", "session_end"))
         self.assertEqual(evs[-1].detail["reason"], "mcp_failed")
-        self.r.event("after", x=1)                                  # no log open: runner_events.jsonl only
+        self.r.event("after", x=1)  # no log open: runner_events.jsonl only
         self.assertEqual(len(E.load_events(self.r.state.dir / "S001")), len(evs))
 
 

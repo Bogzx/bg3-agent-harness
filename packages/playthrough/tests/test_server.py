@@ -180,9 +180,17 @@ def test_video_index_file_ranges_and_no_recorder(server, store: RunStore):
     video = store.runtime / "video"
     video.mkdir()
     (video / "rec-100-0000.mp4").write_bytes(bytes(range(200)))
-    (video / "index.json").write_text(json.dumps({"v": 1, "segments": [
-        {"file": "rec-100-0000.mp4", "run": "rec-100", "start": 100.0, "end": 700.0, "bytes": 200},
-        {"file": "rec-100-0001.mp4", "run": "rec-100", "start": 700.0, "end": None, "bytes": 0}]}))
+    (video / "index.json").write_text(
+        json.dumps(
+            {
+                "v": 1,
+                "segments": [
+                    {"file": "rec-100-0000.mp4", "run": "rec-100", "start": 100.0, "end": 700.0, "bytes": 200},
+                    {"file": "rec-100-0001.mp4", "run": "rec-100", "start": 700.0, "end": None, "bytes": 0},
+                ],
+            }
+        )
+    )
     code, idx = get_json(server, "/api/v1/video/index")
     assert code == 200 and [s["file"] for s in idx["segments"]] == ["rec-100-0000.mp4"]  # missing file dropped
     code, headers, body = get(server, "/api/v1/video/rec-100-0000.mp4")
@@ -290,8 +298,15 @@ def test_control_start_stop_resume(store: RunStore, web: Path, tmp_path: Path):
     profiles.mkdir()
     (profiles / "codex.toml").write_text('client = "codex"\n')
     hub = Hub(store, generation="g1")
-    sup = Supervisor(runner, Keeper(), store.runtime, store.playthroughs_dir, lambda: 0.0,
-                     lambda v: hub.publish("supervisor", v), played=lambda pt: len(store.session_logs(pt)))
+    sup = Supervisor(
+        runner,
+        Keeper(),
+        store.runtime,
+        store.playthroughs_dir,
+        lambda: 0.0,
+        lambda v: hub.publish("supervisor", v),
+        played=lambda pt: len(store.session_logs(pt)),
+    )
     srv = serve(App(store, hub, web, supervisor=sup, profiles=profiles), "127.0.0.1", 0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     s = ("127.0.0.1", srv.server_address[1], hub)
@@ -306,8 +321,9 @@ def test_control_start_stop_resume(store: RunStore, web: Path, tmp_path: Path):
         assert post(s, "/api/v1/playthroughs/newpt/start", [1])[0] == 400
         assert post(s, "/api/v1/playthroughs/..%2Fx/start", {})[0] == 400
         assert post(s, "/api/v1/playthroughs/newpt/start", {}, {"Origin": "http://evil.test"})[0] == 403
-        code, body = post(s, "/api/v1/playthroughs/newpt/start",
-                          {"brief": "a bard", "session_minutes": 30, "recording": False})
+        code, body = post(
+            s, "/api/v1/playthroughs/newpt/start", {"brief": "a bard", "session_minutes": 30, "recording": False}
+        )
         assert code == 200 and body["supervisor"]["state"] == "running"
         assert entered.wait(10)
         assert (store.playthroughs_dir / "newpt" / "playthrough.toml").exists()
@@ -320,7 +336,12 @@ def test_control_start_stop_resume(store: RunStore, web: Path, tmp_path: Path):
         sup.thread.join(10)
         assert get_json(s, "/api/v1/supervisor")[1]["supervisor"]["state"] == "idle"
         assert [e.data["state"] for e in hub.events if e.type == "supervisor"] == [
-            "running", "running", "stopping", "stopping", "idle"]  # claimed, S001, stop, its keeper, done
+            "running",
+            "running",
+            "stopping",
+            "stopping",
+            "idle",
+        ]  # claimed, S001, stop, its keeper, done
         entered.clear()
         code, _ = post(s, "/api/v1/playthroughs/newpt/resume", {})
         assert code == 200 and entered.wait(10) and runner.reqs[1].resume and runner.reqs[1].session == 2

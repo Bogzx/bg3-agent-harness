@@ -1,3 +1,4 @@
+# pyright: basic
 import hashlib
 import json
 

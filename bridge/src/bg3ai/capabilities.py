@@ -12,8 +12,18 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 GROUPS: dict[str, tuple[str, ...]] = {
-    "memory": ("memory_list", "memory_read", "memory_search", "memory_write", "memory_edit", "memory_append",
-               "note", "session_start", "end_session", "recall"),
+    "memory": (
+        "memory_list",
+        "memory_read",
+        "memory_search",
+        "memory_write",
+        "memory_edit",
+        "memory_append",
+        "note",
+        "session_start",
+        "end_session",
+        "recall",
+    ),
     "wiki": ("wiki_search", "wiki_page"),
     "reload": ("load_game",),
     "saves": ("save_game", "list_saves"),
@@ -37,8 +47,7 @@ def _expand(names: list[str], tools: set[str], var: str) -> set[str]:
         elif name in tools:
             out.add(name)
         else:
-            raise ValueError(f"{var}: unknown tool group or tool name {name!r} "
-                             f"(groups: {', '.join([GAME, *GROUPS])})")
+            raise ValueError(f"{var}: unknown tool group or tool name {name!r} (groups: {', '.join([GAME, *GROUPS])})")
     return out
 
 

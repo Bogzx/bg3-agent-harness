@@ -127,7 +127,7 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "bridge/tests/test_result_size.py" = ["E501", "N806", "RUF012", "RUF100"]
 "bridge/tests/test_revive.py" = ["RUF100"]
 "bridge/tests/test_route.py" = ["E501", "I001", "N806", "RUF100"]
-"bridge/tests/test_rules.py" = ["E501", "I001", "N812", "RUF100"]
+"bridge/tests/test_rules.py" = ["I001", "N812", "RUF100"]
 "bridge/tests/test_saver.py" = ["E501", "I001", "RUF100"]
 "bridge/tests/test_se_tools.py" = ["E501", "I001", "N806", "RUF002", "RUF005", "RUF012", "RUF100", "SIM105", "SIM117"]
 "bridge/tests/test_skipper.py" = ["I001"]
@@ -251,6 +251,19 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "tools/vis/series_report.py" = ["B905", "C408", "E501", "N812", "RUF005", "RUF007"]
 "tools/vis/test_overlap.py" = ["E401", "I001", "RUF059"]
 "tools/vis/test_series_report.py" = ["C402", "N812"]
+# Merged after the 2026-10-21 baseline, not legacy: runner/ and tools/ scripts aren't packages, so they put runner/ on
+# sys.path before importing it (E402) under the runner's one-letter module aliases (N812). tools/saves/inspect.py
+# imports after taking its own folder off sys.path (it would shadow the stdlib `inspect`). They leave the list when
+# runner/ moves into packages/harness (OVERHAUL-PLAN.md B-harness).
+"runner/pi_client.py" = ["N812"]
+"runner/test_analyzer_parity.py" = ["N812"]
+"runner/test_events.py" = ["N812"]
+"runner/test_pi_client.py" = ["N812"]
+"runner/test_profiles.py" = ["N812"]
+"tools/pi/conformance/live_check.py" = ["E402", "N812"]
+"tools/pi/conformance/test_pi_conformance.py" = ["E402", "N812"]
+"tools/saves/inspect.py" = ["E402"]
+"tools/saves/test_inspect.py" = ["E402"]
 
 [format]
 # Legacy files not yet in ruff format (2026-10-21). Only shrinks; format a file only when you own it.

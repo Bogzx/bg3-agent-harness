@@ -14,6 +14,7 @@ and may add "usage": {...} (merged into the final chunk's usage) or "delay": <s>
 chunk carries OpenRouter-style usage with `cost`, plus `provider`, like OpenRouter's streams. Every request
 (headers + body) is appended to the log.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,12 +25,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 PROVIDER = "StubProvider"
-COST = 0.0125   # billed USD per response
+COST = 0.0125  # billed USD per response
 
 
 def chunk(cid: str, delta: dict, finish: str | None = None) -> bytes:
-    body = {"id": cid, "object": "chat.completion.chunk", "created": 0, "model": "stub",
-            "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+    body = {
+        "id": cid,
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "stub",
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+    }
     return f"data: {json.dumps(body)}\n\n".encode()
 
 
@@ -41,14 +47,42 @@ def events(step: dict, n: int) -> list[bytes]:
     calls = step.get("tool_calls") or []
     for i, c in enumerate(calls):
         args = c.get("arguments", {})
-        out.append(chunk(cid, {"tool_calls": [{
-            "index": i, "id": f"call_{n}_{i}", "type": "function",
-            "function": {"name": c["name"], "arguments": args if isinstance(args, str) else json.dumps(args)}}]}))
+        out.append(
+            chunk(
+                cid,
+                {
+                    "tool_calls": [
+                        {
+                            "index": i,
+                            "id": f"call_{n}_{i}",
+                            "type": "function",
+                            "function": {
+                                "name": c["name"],
+                                "arguments": args if isinstance(args, str) else json.dumps(args),
+                            },
+                        }
+                    ]
+                },
+            )
+        )
     out.append(chunk(cid, {}, "tool_calls" if calls else "stop"))
-    usage = {"prompt_tokens": 1000, "completion_tokens": 50, "total_tokens": 1050,
-             "prompt_tokens_details": {"cached_tokens": 800}, "cost": COST, **(step.get("usage") or {})}
-    final = {"id": cid, "object": "chat.completion.chunk", "created": 0, "model": "stub", "choices": [],
-             "usage": usage, "provider": PROVIDER}
+    usage = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 50,
+        "total_tokens": 1050,
+        "prompt_tokens_details": {"cached_tokens": 800},
+        "cost": COST,
+        **(step.get("usage") or {}),
+    }
+    final = {
+        "id": cid,
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "stub",
+        "choices": [],
+        "usage": usage,
+        "provider": PROVIDER,
+    }
     out += [f"data: {json.dumps(final)}\n\n".encode(), b"data: [DONE]\n\n"]
     return out
 
@@ -61,8 +95,10 @@ def serve(script: list[dict], log: Path, port_file: Path) -> None:
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             with open(log, "a") as f:
-                f.write(json.dumps({"t": time.time(), "path": self.path, "headers": dict(self.headers),
-                                    "body": body}) + "\n")
+                f.write(
+                    json.dumps({"t": time.time(), "path": self.path, "headers": dict(self.headers), "body": body})
+                    + "\n"
+                )
             n = sum(1 for m in body.get("messages") or [] if m.get("role") == "assistant")
             step = script[min(n, len(script) - 1)]
             time.sleep(float(step.get("delay") or 0))

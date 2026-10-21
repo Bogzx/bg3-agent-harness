@@ -9,6 +9,7 @@ temp dir. No key, no network, no game; ~1 min. Skips when tools/pi/node_modules 
 BG3AI_PI_CAPTURE=<dir> keeps each run's pi stdout there as <test>.jsonl, scrubbed (scrub()): runner/fixtures/pi/
 was made that way.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,15 +44,23 @@ MODEL = "anthropic/stub-model"
 SESSION = "conf-0001"
 SYSTEM = "SYSTEM-CANARY-91\n\nRules of play: line two, with trailing spaces   \n"
 # What runner/pi_client.py writes (PI_SETTINGS) plus fast retries, so check 20 takes ms, not 14 s.
-SETTINGS = {"compaction": {"enabled": False}, "cacheWarming": "off", "enableInstallTelemetry": False,
-            "retry": {"enabled": True, "maxRetries": 3, "baseDelayMs": 10}, "defaultTools": [], "quietStartup": True}
-PROFILE = {"client": "pi", "model": MODEL, "effort": "high",
-           "endpoint": {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1",
-                        "api_key_env": "BG3_STUB_KEY"},
-           "routing": {"only": ["anthropic"]},
-           "model_info": {"input": ["text", "image"], "reasoning": True, "context_window": 200000,
-                          "max_tokens": 16000}}
-WAIT_S = 30   # upper bound on any one pi process or condition; a pass takes far less
+SETTINGS = {
+    "compaction": {"enabled": False},
+    "cacheWarming": "off",
+    "enableInstallTelemetry": False,
+    "retry": {"enabled": True, "maxRetries": 3, "baseDelayMs": 10},
+    "defaultTools": [],
+    "quietStartup": True,
+}
+PROFILE = {
+    "client": "pi",
+    "model": MODEL,
+    "effort": "high",
+    "endpoint": {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1", "api_key_env": "BG3_STUB_KEY"},
+    "routing": {"only": ["anthropic"]},
+    "model_info": {"input": ["text", "image"], "reasoning": True, "context_window": 200000, "max_tokens": 16000},
+}
+WAIT_S = 30  # upper bound on any one pi process or condition; a pass takes far less
 
 
 def call(name: str, args: dict | str | None = None) -> dict:
@@ -157,8 +166,15 @@ class Conformance(unittest.TestCase):
         (self.ws / "script.json").write_text(json.dumps(script))
         port = self.ws / "port"
         port.unlink(missing_ok=True)
-        self.stub = subprocess.Popen([sys.executable, str(HERE / "stub_llm.py"), str(self.ws / "script.json"),
-                                      str(self.ws / "llm.jsonl"), str(port)])
+        self.stub = subprocess.Popen(
+            [
+                sys.executable,
+                str(HERE / "stub_llm.py"),
+                str(self.ws / "script.json"),
+                str(self.ws / "llm.jsonl"),
+                str(port),
+            ]
+        )
         wait_until(lambda: port.exists() and port.read_text(), "the stub model's port")
         return int(port.read_text())
 
@@ -167,29 +183,64 @@ class Conformance(unittest.TestCase):
         raw = json.loads(json.dumps(PROFILE))
         raw["model_info"].update(model_info or {})
         models = PR.models_json(PR.parse(raw))
-        models["providers"]["openrouter"]["baseUrl"] = f"http://127.0.0.1:{port}/v1"   # the stub, as OpenRouter
+        models["providers"]["openrouter"]["baseUrl"] = f"http://127.0.0.1:{port}/v1"  # the stub, as OpenRouter
         (self.ws / "agent" / "models.json").write_text(json.dumps(models))
         (self.ws / "agent" / "settings.json").write_text(json.dumps(settings or SETTINGS))
         env = {"STUB_MCP_LOG": str(self.ws / "mcp.jsonl"), **(mcp_env or {})}
         server = {"command": sys.executable, "args": [str(HERE / "stub_mcp.py")], "env": env, "timeout": timeout_s}
-        (self.ws / "bg3.json").write_text(json.dumps({"server": server,
-                                                      "systemPromptFile": str(self.ws / "system.txt")}))
+        (self.ws / "bg3.json").write_text(
+            json.dumps({"server": server, "systemPromptFile": str(self.ws / "system.txt")})
+        )
 
     def command(self, prompt: str | None, mode: str = "json", session: str = SESSION) -> list[str]:
-        cmd = [str(BINARY), "--mode", mode, "-ne", "-na", "-nc", "-ns", "-np", "--offline", "-e", str(EXTENSION),
-               "--tools", PREFIX + "*", "--session-dir", str(self.ws / "sessions"), "--session-id", session,
-               "--model", f"openrouter/{MODEL}", "--thinking", "high"]
+        cmd = [
+            str(BINARY),
+            "--mode",
+            mode,
+            "-ne",
+            "-na",
+            "-nc",
+            "-ns",
+            "-np",
+            "--offline",
+            "-e",
+            str(EXTENSION),
+            "--tools",
+            PREFIX + "*",
+            "--session-dir",
+            str(self.ws / "sessions"),
+            "--session-id",
+            session,
+            "--model",
+            f"openrouter/{MODEL}",
+            "--thinking",
+            "high",
+        ]
         return cmd + ([prompt] if prompt is not None else [])
 
     def env(self) -> dict:
         keep = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "TERM")}
-        return {**keep, "HOME": str(self.ws / "home"), "PI_CODING_AGENT_DIR": str(self.ws / "agent"),
-                "BG3_PI_CONFIG": str(self.ws / "bg3.json"), "PI_OFFLINE": "1", "BG3_STUB_KEY": "stub-key"}
+        return {
+            **keep,
+            "HOME": str(self.ws / "home"),
+            "PI_CODING_AGENT_DIR": str(self.ws / "agent"),
+            "BG3_PI_CONFIG": str(self.ws / "bg3.json"),
+            "PI_OFFLINE": "1",
+            "BG3_STUB_KEY": "stub-key",
+        }
 
-    def popen(self, cmd: list[str], cwd: Path | None = None, stdin=subprocess.DEVNULL,
-              stderr=subprocess.PIPE) -> subprocess.Popen:
-        return subprocess.Popen(cmd, cwd=cwd or self.ws / "cwd", env=self.env(), stdin=stdin,
-                                stdout=subprocess.PIPE, stderr=stderr, text=True)
+    def popen(
+        self, cmd: list[str], cwd: Path | None = None, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE
+    ) -> subprocess.Popen:
+        return subprocess.Popen(
+            cmd,
+            cwd=cwd or self.ws / "cwd",
+            env=self.env(),
+            stdin=stdin,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            text=True,
+        )
 
     def capture(self, out: str) -> None:
         d = os.environ.get("BG3AI_PI_CAPTURE")
@@ -221,23 +272,26 @@ class Conformance(unittest.TestCase):
         self.assertEqual(run.rc, 0, run.err)
         declared = {t["function"]["name"]: t["function"]["parameters"] for t in run.requests[0]["tools"]}
         self.assertEqual(sorted(declared), sorted(PREFIX + t["name"] for t in TOOLS))
-        for t in TOOLS:   # 1: the server's schemas, unchanged
+        for t in TOOLS:  # 1: the server's schemas, unchanged
             self.assertEqual(declared[PREFIX + t["name"]], t["inputSchema"], t["name"])
-        system = run.messages("system")[0]   # 2: pi's own view of what it declared
+        system = run.messages("system")[0]  # 2: pi's own view of what it declared
         self.assertEqual(sorted(t["name"] for t in system["toolsAdded"]), sorted(declared))
-        tools_entry = [e["entry"]["data"] for e in run.of("entry_appended") if e["entry"].get("customType") ==
-                       "bg3.tools"]
+        tools_entry = [
+            e["entry"]["data"] for e in run.of("entry_appended") if e["entry"].get("customType") == "bg3.tools"
+        ]
         self.assertEqual([d["n"] for d in tools_entry], [len(TOOLS)])
 
     def test_03_04_calls_run_one_at_a_time_in_source_order(self):
         names = ["press_key", "screenshot", "press_key", "wait"]
-        script = [{"tool_calls": [call(n, {"key": str(i)} if n == "press_key" else None)
-                                  for i, n in enumerate(names)]}, {"text": "done"}]
+        script = [
+            {"tool_calls": [call(n, {"key": str(i)} if n == "press_key" else None) for i, n in enumerate(names)]},
+            {"text": "done"},
+        ]
         run = self.run_pi(script)
         self.assert_sequential(run, names)
         assistant = run.requests[1]["messages"]
         ids = [c["id"] for m in assistant if m["role"] == "assistant" for c in m.get("tool_calls") or []]
-        self.assertEqual([m["tool_call_id"] for m in assistant if m["role"] == "tool"], ids)   # 4
+        self.assertEqual([m["tool_call_id"] for m in assistant if m["role"] == "tool"], ids)  # 4
         self.assertEqual(ids, [f"call_0_{i}" for i in range(4)])
 
     def test_05_system_text_is_the_file_byte_for_byte(self):
@@ -247,20 +301,27 @@ class Conformance(unittest.TestCase):
         self.assertEqual(text_of(first["content"]), SYSTEM)
 
     def test_06_no_compaction_past_the_threshold(self):
-        big = {"prompt_tokens": 195000, "prompt_tokens_details": {"cached_tokens": 0}}   # window 200k
-        script = [{"tool_calls": [call("get_status")], "usage": big},
-                  {"tool_calls": [call("look")], "usage": big}, {"text": "done"}]
+        big = {"prompt_tokens": 195000, "prompt_tokens_details": {"cached_tokens": 0}}  # window 200k
+        script = [
+            {"tool_calls": [call("get_status")], "usage": big},
+            {"tool_calls": [call("look")], "usage": big},
+            {"text": "done"},
+        ]
         run = self.run_pi(script)
         self.assertEqual(run.of("compaction_start"), [])
         self.assertEqual(len(run.requests), 3)
         roles = [m["role"] for m in run.requests[2]["messages"]]
-        self.assertEqual(roles, ["developer", "user", "assistant", "tool", "assistant", "tool"])   # full history
+        self.assertEqual(roles, ["developer", "user", "assistant", "tool", "assistant", "tool"])  # full history
 
     def test_07_overflow_error_ends_the_run_without_compaction(self):
-        body = {"error": {"message": "This model's maximum context length is 200000 tokens.",
-                          "code": "context_length_exceeded"}}
+        body = {
+            "error": {
+                "message": "This model's maximum context length is 200000 tokens.",
+                "code": "context_length_exceeded",
+            }
+        }
         run = self.run_pi([{"error": 400, "body": body}])
-        self.assertEqual(run.rc, 0)   # pi exits 0: the client must read stopReason
+        self.assertEqual(run.rc, 0)  # pi exits 0: the client must read stopReason
         self.assertEqual(len(run.requests), 1)
         self.assertEqual(run.of("compaction_start"), [])
         self.assertEqual(run.messages("assistant")[-1]["stopReason"], "error")
@@ -271,10 +332,15 @@ class Conformance(unittest.TestCase):
         msgs = run.requests[1]["messages"]
         tool = next(m for m in msgs if m["role"] == "tool")
         self.assertEqual(tool["content"], "(see attached image)")
-        urls = [c["image_url"]["url"] for m in msgs if m["role"] == "user" and isinstance(m["content"], list)
-                for c in m["content"] if c.get("type") == "image_url"]
+        urls = [
+            c["image_url"]["url"]
+            for m in msgs
+            if m["role"] == "user" and isinstance(m["content"], list)
+            for c in m["content"]
+            if c.get("type") == "image_url"
+        ]
         self.assertEqual(urls, [f"data:image/png;base64,{stub_mcp.CANARY_B64}"])
-        self.assertEqual(msgs.index(tool) + 1, len(msgs) - 1)   # one user message right after the tool results
+        self.assertEqual(msgs.index(tool) + 1, len(msgs) - 1)  # one user message right after the tool results
 
     def test_09_image_dropped_for_a_text_only_model(self):
         run = self.run_pi([{"tool_calls": [call("screenshot")]}, {"text": "?"}], model_info={"input": ["text"]})
@@ -283,14 +349,25 @@ class Conformance(unittest.TestCase):
 
     def test_10_11_clock_line_and_stop_refusal_pass_through(self):
         refusal = "REFUSED: the session is over; call end_session"
-        run = self.run_pi([{"tool_calls": [call("get_status"), call("travel_to")]}, {"text": "ok"}],
-                          mcp_env={"STUB_MCP_REFUSE": "travel_to", "STUB_MCP_REFUSAL": refusal})
+        run = self.run_pi(
+            [{"tool_calls": [call("get_status"), call("travel_to")]}, {"text": "ok"}],
+            mcp_env={"STUB_MCP_REFUSE": "travel_to", "STUB_MCP_REFUSAL": refusal},
+        )
         tools = [text_of(m["content"]) for m in run.requests[1]["messages"] if m["role"] == "tool"]
-        self.assertEqual(tools, ['ok get_status {}\n' + stub_mcp.CLOCK, f"{refusal}\n{stub_mcp.CLOCK}"])
+        self.assertEqual(tools, ["ok get_status {}\n" + stub_mcp.CLOCK, f"{refusal}\n{stub_mcp.CLOCK}"])
 
     def test_12_13_bad_arguments_never_reach_the_server(self):
-        script = [{"tool_calls": [call("press_key", '{"key": "e"'), call("press_key", {}),
-                                  call("press_key", {"key": 5}), call("press_key", {"key": "ok"})]}, {"text": "ok"}]
+        script = [
+            {
+                "tool_calls": [
+                    call("press_key", '{"key": "e"'),
+                    call("press_key", {}),
+                    call("press_key", {"key": 5}),
+                    call("press_key", {"key": "ok"}),
+                ]
+            },
+            {"text": "ok"},
+        ]
         run = self.run_pi(script)
         # pi coerces a wrong primitive type to the schema's (5 -> "5") before validating: such a call is sent
         self.assertEqual([r["args"] for r in run.mcp if r["ev"] == "start"], [{"key": "5"}, {"key": "ok"}])
@@ -300,7 +377,7 @@ class Conformance(unittest.TestCase):
         self.assertRegex(texts[0], "Invalid arguments")
         self.assertRegex(texts[1], "Validation failed")
         calls = run.messages("assistant")[0]["content"]
-        self.assertIn("argumentsError", calls[0])   # the parser reports these as malformed
+        self.assertIn("argumentsError", calls[0])  # the parser reports these as malformed
 
     def test_14_mcp_is_error_is_an_error_result(self):
         run = self.run_pi([{"tool_calls": [call("press_key", {"key": "boom"})]}, {"text": "ok"}])
@@ -309,8 +386,9 @@ class Conformance(unittest.TestCase):
         self.assertIn("press_key failed: boom", end["result"]["content"][0]["text"])
 
     def test_15_abort_cancels_the_running_call_and_the_rest_of_the_batch(self):
-        self.configure([{"tool_calls": [call("wait", {"seconds": 30}), call("press_key", {"key": "never"})]},
-                        {"text": "ok"}])
+        self.configure(
+            [{"tool_calls": [call("wait", {"seconds": 30}), call("press_key", {"key": "never"})]}, {"text": "ok"}]
+        )
         p = self.popen(self.command(None, mode="rpc"), stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         reader = Reader(p)
         p.stdin.write(json.dumps({"id": "p1", "type": "prompt", "message": "play"}) + "\n")
@@ -326,14 +404,15 @@ class Conformance(unittest.TestCase):
         run = Run(self.ws, out, "", p.returncode)
         cancelled = [r for r in run.mcp if r["ev"] == "recv" and r["method"] == "notifications/cancelled"]
         self.assertEqual(len(cancelled), 1)
-        self.assertEqual([r["tool"] for r in run.mcp if r["ev"] == "start"], ["wait"])   # press_key never sent
+        self.assertEqual([r["tool"] for r in run.mcp if r["ev"] == "start"], ["wait"])  # press_key never sent
         self.assertTrue(run.of("agent_settled")[-1]["aborted"])
         self.assertTrue(run.of("tool_execution_end")[0]["isError"])
         self.assertEqual(len(run.requests), 1)
 
     def signal_mid_call(self, sig: int) -> Run:
-        self.configure([{"tool_calls": [call("wait", {"seconds": 30}), call("press_key", {"key": "x"})]},
-                        {"text": "resumed"}])
+        self.configure(
+            [{"tool_calls": [call("wait", {"seconds": 30}), call("press_key", {"key": "x"})]}, {"text": "resumed"}]
+        )
         p = self.popen(self.command("play"), stderr=subprocess.DEVNULL)
         reader = Reader(p)
         wait_until(lambda: any(r["ev"] == "start" for r in jsonl(self.ws / "mcp.jsonl")), "the first call")
@@ -348,11 +427,11 @@ class Conformance(unittest.TestCase):
         run = self.signal_mid_call(signal.SIGINT)
         self.assertNotEqual(run.rc, 0)
         self.assertEqual(run.of("agent_settled"), [])
-        resumed = self.run_pi(prompt="continue")   # same session id, same agent dir
+        resumed = self.run_pi(prompt="continue")  # same session id, same agent dir
         self.assertEqual(resumed.rc, 0, resumed.err)
         msgs = resumed.requests[-1]["messages"]
         first_prompt = next(text_of(m["content"]) for m in msgs if m["role"] == "user")
-        self.assertEqual(first_prompt, "play")   # the first exchange is in the request
+        self.assertEqual(first_prompt, "play")  # the first exchange is in the request
         orphans = [text_of(m["content"]) for m in msgs if m["role"] == "tool"]
         self.assertEqual(len(orphans), 2)
         self.assertTrue(all("No result provided" in c for c in orphans), orphans)
@@ -364,8 +443,9 @@ class Conformance(unittest.TestCase):
     def test_18_routing_session_cache_and_effort_in_the_request(self):
         run = self.run_pi([{"tool_calls": [call("get_status")]}, {"text": "ok"}])
         body, headers = run.requests[0], {k.lower(): v for k, v in run.headers[0].items()}
-        self.assertEqual(body["provider"], {"only": ["anthropic"], "allow_fallbacks": False,
-                                            "require_parameters": True})
+        self.assertEqual(
+            body["provider"], {"only": ["anthropic"], "allow_fallbacks": False, "require_parameters": True}
+        )
         self.assertEqual(body["reasoning"], {"effort": "high"})
         self.assertEqual(headers["x-session-id"], SESSION)
         self.assertEqual(headers["authorization"], "Bearer stub-key")
@@ -377,8 +457,9 @@ class Conformance(unittest.TestCase):
 
     def test_19_billed_cost_and_provider_per_response(self):
         run = self.run_pi([{"tool_calls": [call("get_status")]}, {"text": "ok"}])
-        billing = [e["entry"]["data"] for e in run.of("entry_appended")
-                   if e["entry"].get("customType") == "bg3.billing"]
+        billing = [
+            e["entry"]["data"] for e in run.of("entry_appended") if e["entry"].get("customType") == "bg3.billing"
+        ]
         self.assertEqual([b["id"] for b in billing], ["gen-stub-0", "gen-stub-1"])
         self.assertEqual({b["provider"] for b in billing}, {"StubProvider"})
         self.assertEqual([b["usage"]["cost"] for b in billing], [0.0125, 0.0125])
@@ -393,8 +474,10 @@ class Conformance(unittest.TestCase):
         self.assertEqual(run.messages("assistant")[-1]["stopReason"], "error")
 
     def test_21_mcp_timeout_is_an_error_result_and_the_next_call_runs(self):
-        run = self.run_pi([{"tool_calls": [call("wait", {"seconds": 5}), call("press_key", {"key": "x"})]},
-                           {"text": "ok"}], timeout_s=1)
+        run = self.run_pi(
+            [{"tool_calls": [call("wait", {"seconds": 5}), call("press_key", {"key": "x"})]}, {"text": "ok"}],
+            timeout_s=1,
+        )
         ends = run.of("tool_execution_end")
         self.assertEqual([e["isError"] for e in ends], [True, False])
         self.assertLess(ends[0]["durationMs"], 4000)
@@ -408,32 +491,52 @@ class Conformance(unittest.TestCase):
         self.assertEqual(sorted(str(p.relative_to(play)) for p in play.rglob("*")), before)
         claude_md = (play / "CLAUDE.md").read_text()[:200]
         self.assertNotIn(claude_md[:80], json.dumps(run.requests))
-        self.assertEqual(sorted(p.name for p in (self.ws / "home").iterdir()), [])   # no ~/.pi
-        self.assertEqual(len(run.requests[0]["messages"]), 2)   # system + prompt, no context files
+        self.assertEqual(sorted(p.name for p in (self.ws / "home").iterdir()), [])  # no ~/.pi
+        self.assertEqual(len(run.requests[0]["messages"]), 2)  # system + prompt, no context files
 
     def test_30_pi_client_end_to_end(self):
         """runner/pi_client.py's own config files, env and command against the stubs, its parser on the stream."""
-        port = self.start_stub([{"tool_calls": [call("get_status"), call("press_key", '{"key"')]},
-                                {"text": "done"}])
-        server = {"command": sys.executable, "args": [str(HERE / "stub_mcp.py")], "timeout": 110_000,
-                  "env": {"STUB_MCP_LOG": str(self.ws / "mcp.jsonl")}}
-        client = PC.PiClient(PR.parse(PROFILE), self.ws / "system.txt", server=server, cwd=self.ws / "cwd",
-                             settings=SETTINGS)
-        req = C.Request(prompt="play", model=MODEL, session_dir=self.ws / "sessions-root", session="S001-pi",
-                        env={"BG3AI_SESSION_DEADLINE": "123"}, tag="S001")
+        port = self.start_stub([{"tool_calls": [call("get_status"), call("press_key", '{"key"')]}, {"text": "done"}])
+        server = {
+            "command": sys.executable,
+            "args": [str(HERE / "stub_mcp.py")],
+            "timeout": 110_000,
+            "env": {"STUB_MCP_LOG": str(self.ws / "mcp.jsonl")},
+        }
+        client = PC.PiClient(
+            PR.parse(PROFILE), self.ws / "system.txt", server=server, cwd=self.ws / "cwd", settings=SETTINGS
+        )
+        req = C.Request(
+            prompt="play",
+            model=MODEL,
+            session_dir=self.ws / "sessions-root",
+            session="S001-pi",
+            env={"BG3AI_SESSION_DEADLINE": "123"},
+            tag="S001",
+        )
         client.write_config(req)
         models = client.agent_dir(req) / "models.json"
         m = json.loads(models.read_text())
-        m["providers"]["openrouter"]["baseUrl"] = f"http://127.0.0.1:{port}/v1"   # the stub, as OpenRouter
+        m["providers"]["openrouter"]["baseUrl"] = f"http://127.0.0.1:{port}/v1"  # the stub, as OpenRouter
         models.write_text(json.dumps(m))
         env = {**self.env(), **client.env(req)}
-        p = subprocess.run(client.command(req), cwd=self.ws / "cwd", env=env, stdin=subprocess.DEVNULL, check=False,
-                           capture_output=True, text=True, timeout=WAIT_S)
+        p = subprocess.run(
+            client.command(req),
+            cwd=self.ws / "cwd",
+            env=env,
+            stdin=subprocess.DEVNULL,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=WAIT_S,
+        )
         self.capture(p.stdout)
         self.assertEqual(p.returncode, 0, p.stderr)
         events = [e for line in p.stdout.splitlines() for e in client.parse(line)]
-        self.assertEqual([e.kind for e in events], ["init", "tool_call", "tool_call", "usage", "tool_result",
-                                                    "tool_result", "text", "usage", "result"])
+        self.assertEqual(
+            [e.kind for e in events],
+            ["init", "tool_call", "tool_call", "usage", "tool_result", "tool_result", "text", "usage", "result"],
+        )
         self.assertEqual((events[0].tools, events[0].mcp, events[0].session_id), (94, ["bg3:connected"], "S001-pi"))
         self.assertEqual(events[2].args.keys(), {"_malformed"})
         res = events[-1]

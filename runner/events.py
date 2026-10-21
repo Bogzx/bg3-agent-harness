@@ -8,6 +8,7 @@ parsed by its client (sessions recorded before the log), with the tool calls and
 
     python3 -m unittest runner/test_events.py
 """
+
 from __future__ import annotations
 
 import json
@@ -28,7 +29,7 @@ class EventLog:
     def __init__(self, path: Path, clock: Callable[[], float] = time.time):
         self.path, self.clock = Path(path), clock
         self.lock = threading.Lock()
-        self.seq = 0   # a log reopened (the same file stem again) goes on counting
+        self.seq = 0  # a log reopened (the same file stem again) goes on counting
         try:
             with open(self.path, "rb") as f:
                 self.seq = sum(1 for _ in f)
@@ -55,8 +56,13 @@ class EventLog:
     def end(self, reason: str, code: int | None, start: float, **detail) -> None:
         """The process ended: a session_end event (empty details left out), then the file is closed. Returns None
         (the runner's `events_log = evlog.end(...)`: no log open)."""
-        self.harness("session_end", reason=reason, exit=code, minutes=round((self.clock() - start) / 60, 2),
-                     **{k: v for k, v in detail.items() if v})
+        self.harness(
+            "session_end",
+            reason=reason,
+            exit=code,
+            minutes=round((self.clock() - start) / 60, 2),
+            **{k: v for k, v in detail.items() if v},
+        )
         self.close()
 
     def close(self) -> None:
@@ -84,8 +90,9 @@ def _turn_times(path: Path) -> dict:
     return times
 
 
-def load_events(base: Path, kinds: Collection[str] | None = None, parsers: dict | None = None,
-                turns: Path | None = None) -> list[Event]:
+def load_events(
+    base: Path, kinds: Collection[str] | None = None, parsers: dict | None = None, turns: Path | None = None
+) -> list[Event]:
     """The Events of one play process; base is its path without the extension (runtime/sessions/<pt>/S012-r1).
     kinds: only these kinds (the raw fallback skips lines early for kinds={"result"}: streams run to tens of MB).
     parsers: the raw fallback's parser per client, shared across a run's streams in write order (runs.stream_events:
@@ -101,7 +108,7 @@ def load_events(base: Path, kinds: Collection[str] | None = None, parsers: dict 
             try:
                 ev = Event.from_json(ln)
             except (ValueError, TypeError):
-                continue   # a line cut short by a crash
+                continue  # a line cut short by a crash
             if not kinds or ev.kind in kinds:
                 out.append(ev)
         return out
@@ -134,4 +141,3 @@ def result_text(ev: Event) -> str:
         except ValueError:
             pass
     return s
-

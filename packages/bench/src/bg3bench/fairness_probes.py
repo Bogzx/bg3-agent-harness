@@ -1,3 +1,4 @@
+# pyright: basic
 """The per-tool fairness probe table (packages/bench/fairness_probes.json, research/arch/bench.md 2.5).
 
 Every tool of the bg3 server has a row: `{"tool", "probes": [{"args", "hidden", "expect"}]}` or

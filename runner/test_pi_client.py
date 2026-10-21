@@ -6,6 +6,7 @@ command, and the runner's tool-count check (check 22) through play.mcp_problem. 
 
     python3 -m unittest runner/test_pi_client.py
 """
+
 from __future__ import annotations
 
 import json
@@ -25,12 +26,20 @@ import profiles as PR
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pi"
 STREAMS = ("sequential", "overflow", "malformed", "tool_error", "abort", "resume", "billing", "retries", "image")
-PROFILE = PR.parse({
-    "client": "pi", "model": "vendor/model-1", "effort": "medium",
-    "endpoint": {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1",
-                 "api_key_env": "OPENROUTER_API_KEY"},
-    "routing": {"only": ["vendor"]},
-    "model_info": {"input": ["text", "image"], "reasoning": True, "context_window": 200000, "max_tokens": 16000}})
+PROFILE = PR.parse(
+    {
+        "client": "pi",
+        "model": "vendor/model-1",
+        "effort": "medium",
+        "endpoint": {
+            "provider": "openrouter",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key_env": "OPENROUTER_API_KEY",
+        },
+        "routing": {"only": ["vendor"]},
+        "model_info": {"input": ["text", "image"], "reasoning": True, "context_window": 200000, "max_tokens": 16000},
+    }
+)
 
 
 def lines(name: str) -> list[str]:
@@ -53,8 +62,14 @@ def ev(t: str, **kw) -> str:
 
 
 def assistant(stop="stop", error=None, cost=0.001, content=None) -> str:
-    msg = {"role": "assistant", "content": content or [], "model": "m", "stopReason": stop, "timestamp": 1000,
-           "usage": {"input": 10, "output": 5, "cacheRead": 20, "cacheWrite": 0, "cost": {"total": cost}}}
+    msg = {
+        "role": "assistant",
+        "content": content or [],
+        "model": "m",
+        "stopReason": stop,
+        "timestamp": 1000,
+        "usage": {"input": 10, "output": 5, "cacheRead": 20, "cacheWrite": 0, "cost": {"total": cost}},
+    }
     if error:
         msg["errorMessage"] = error
     return ev("message_end", message=msg)
@@ -76,17 +91,19 @@ class Streams(unittest.TestCase):
     def test_sequential(self):
         p, events = parse(lines("sequential"))
         init = events[0]
-        self.assertEqual((init.kind, init.session_id, init.tools, init.mcp), ("init", "conf-0001", 94,
-                                                                               ["bg3:connected"]))
-        self.assertEqual([e.tool for e in events if e.kind == "tool_call"],
-                         ["press_key", "screenshot", "press_key", "wait"])
+        self.assertEqual(
+            (init.kind, init.session_id, init.tools, init.mcp), ("init", "conf-0001", 94, ["bg3:connected"])
+        )
+        self.assertEqual(
+            [e.tool for e in events if e.kind == "tool_call"], ["press_key", "screenshot", "press_key", "wait"]
+        )
         calls = [e.call_id for e in events if e.kind == "tool_call"]
         self.assertEqual([e.call_id for e in events if e.kind == "tool_result"], calls)
         res = result(events)
         self.assertEqual((res.subtype, res.is_error, res.api_error, res.turns), ("success", False, False, 2))
         # two responses of 1000 prompt tokens (800 cached) + 50 output: input excludes cache reads
         self.assertEqual(res.tokens, {"input": 400, "output": 100, "cache_read": 1600, "cache_write": 0})
-        self.assertEqual(res.cost_usd, 0.025)   # billed (2 x 0.0125), not pi's catalog estimate
+        self.assertEqual(res.cost_usd, 0.025)  # billed (2 x 0.0125), not pi's catalog estimate
         self.assertEqual(p.generations, ["gen-stub-0", "gen-stub-1"])
 
     def test_exit_0_after_an_api_error_is_a_failure(self):
@@ -144,7 +161,7 @@ class Guards(unittest.TestCase):
 
     def test_init_waits_for_both_and_comes_once(self):
         p = PC.PiParser("m")
-        self.assertEqual(p.parse(SYSTEM), [])   # the server's count not known yet
+        self.assertEqual(p.parse(SYSTEM), [])  # the server's count not known yet
         self.assertEqual([e.kind for e in p.parse(TOOLS)], [])
         self.assertEqual([e.kind for e in p.parse(assistant())], ["init", "usage"])
         self.assertEqual([e.kind for e in p.parse(assistant())], ["usage"])
@@ -153,22 +170,27 @@ class Guards(unittest.TestCase):
         compact = ev("compaction_start")
         _, events = parse([TOOLS, SYSTEM] + [compact] * (PC.MAX_RECOVERY + 3) + [ev("agent_settled", aborted=False)])
         self.assertEqual([e.kind for e in events].count("compact"), PC.MAX_RECOVERY + 3)
-        res = result(events)   # one result: the loop's, not a second one at agent_settled
+        res = result(events)  # one result: the loop's, not a second one at agent_settled
         self.assertEqual((res.subtype, res.is_error, res.api_error), ("error_overflow_loop", True, False))
         overflow = assistant("error", "400: maximum context length is 200000 tokens")
         _, events = parse([TOOLS, SYSTEM] + [overflow] * (PC.MAX_RECOVERY + 1))
         self.assertEqual(result(events).subtype, "error_overflow_loop")
 
     def test_api_error_classes(self):
-        for msg, api in (("429: rate limit exceeded", True), ("401: invalid api key", True),
-                         ("503: service unavailable", True), ("400: tool_choice is not supported", False),
-                         ("context_length_exceeded: prompt is too long", False)):
+        for msg, api in (
+            ("429: rate limit exceeded", True),
+            ("401: invalid api key", True),
+            ("503: service unavailable", True),
+            ("400: tool_choice is not supported", False),
+            ("context_length_exceeded: prompt is too long", False),
+        ):
             res = result(parse([TOOLS, SYSTEM, assistant("error", msg), ev("agent_settled", aborted=False)])[1])
             self.assertEqual((res.is_error, res.api_error), (True, api), msg)
 
     def test_cost_falls_back_to_the_estimate(self):
-        res = result(parse([TOOLS, SYSTEM, assistant(cost=0.25), assistant(cost=0.5),
-                            ev("agent_settled", aborted=False)])[1])
+        res = result(
+            parse([TOOLS, SYSTEM, assistant(cost=0.25), assistant(cost=0.5), ev("agent_settled", aborted=False)])[1]
+        )
         self.assertEqual(res.cost_usd, 0.75)
         billing = ev("entry_appended", entry={"customType": "bg3.billing", "data": {"usage": {"cost": 0.1}}})
         res = result(parse([TOOLS, SYSTEM, billing, assistant(cost=0.25), ev("agent_settled", aborted=False)])[1])
@@ -180,8 +202,10 @@ class Guards(unittest.TestCase):
             self.assertEqual(p.parse(line), [])
 
     def test_exit_problem(self):
-        err = ('Error: Failed to load extension "/x/tools/pi/bg3.ts": Failed to load extension: spawn uv ENOENT\n'
-               'Hint: Start without extensions using "pi -ne".\n')
+        err = (
+            'Error: Failed to load extension "/x/tools/pi/bg3.ts": Failed to load extension: spawn uv ENOENT\n'
+            'Hint: Start without extensions using "pi -ne".\n'
+        )
         self.assertIn("spawn uv ENOENT", PC.exit_problem(1, err))
         self.assertIsNone(PC.exit_problem(0, err))
         self.assertIsNone(PC.exit_problem(1, "Error: something else"))
@@ -190,12 +214,23 @@ class Guards(unittest.TestCase):
 class Client(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3-pi-client-"))
-        self.server = {"command": "uv", "args": ["run", "bg3ai-mcp"], "env": {"BG3AI_SERVE_RULES": "1"},
-                       "timeout": 110_000}
-        self.client = PC.PiClient(PROFILE, self.tmp / "system.txt", server=self.server, cwd=self.tmp / "play",
-                                  binary="/opt/pi")
-        self.req = C.Request(prompt="go", model="vendor/model-1", session_dir=self.tmp, session="S007-ab",
-                             env={"BG3AI_SESSION_DEADLINE": "99", "OTHER": "x"}, tag="S007")
+        self.server = {
+            "command": "uv",
+            "args": ["run", "bg3ai-mcp"],
+            "env": {"BG3AI_SERVE_RULES": "1"},
+            "timeout": 110_000,
+        }
+        self.client = PC.PiClient(
+            PROFILE, self.tmp / "system.txt", server=self.server, cwd=self.tmp / "play", binary="/opt/pi"
+        )
+        self.req = C.Request(
+            prompt="go",
+            model="vendor/model-1",
+            session_dir=self.tmp,
+            session="S007-ab",
+            env={"BG3AI_SESSION_DEADLINE": "99", "OTHER": "x"},
+            tag="S007",
+        )
 
     def test_registered(self):
         c = C.make("pi", profile=PROFILE, system_file=self.tmp / "s.txt", server=self.server)
@@ -204,10 +239,33 @@ class Client(unittest.TestCase):
 
     def test_command(self):
         d = self.tmp / "S007.pi"
-        self.assertEqual(self.client.command(self.req), [
-            "/opt/pi", "--mode", "json", "-ne", "-na", "-nc", "-ns", "-np", "--offline", "-e", str(PC.EXTENSION),
-            "--tools", "mcp__bg3__*", "--session-dir", str(d / "sessions"), "--session-id", "S007-ab",
-            "--model", "openrouter/vendor/model-1", "--thinking", "medium", "go"])
+        self.assertEqual(
+            self.client.command(self.req),
+            [
+                "/opt/pi",
+                "--mode",
+                "json",
+                "-ne",
+                "-na",
+                "-nc",
+                "-ns",
+                "-np",
+                "--offline",
+                "-e",
+                str(PC.EXTENSION),
+                "--tools",
+                "mcp__bg3__*",
+                "--session-dir",
+                str(d / "sessions"),
+                "--session-id",
+                "S007-ab",
+                "--model",
+                "openrouter/vendor/model-1",
+                "--thinking",
+                "medium",
+                "go",
+            ],
+        )
         self.req.effort = "max"
         self.assertEqual(self.client.command(self.req)[-3:], ["--thinking", "max", "go"])
 
@@ -227,10 +285,19 @@ class Client(unittest.TestCase):
         self.assertEqual(paths, [d / "settings.json", d / "models.json", d / "bg3.json"])
         self.assertEqual(json.loads(paths[0].read_text()), PC.PI_SETTINGS)
         self.assertEqual(json.loads(paths[1].read_text()), PR.models_json(PROFILE))
-        self.assertEqual(json.loads(paths[2].read_text()), {
-            "server": {"command": "uv", "args": ["run", "bg3ai-mcp"], "cwd": str(self.tmp / "play"),
-                       "env": {"BG3AI_SERVE_RULES": "0", "BG3AI_SESSION_DEADLINE": "99"}, "timeout": 110.0},
-            "systemPromptFile": str(self.tmp / "system.txt")})
+        self.assertEqual(
+            json.loads(paths[2].read_text()),
+            {
+                "server": {
+                    "command": "uv",
+                    "args": ["run", "bg3ai-mcp"],
+                    "cwd": str(self.tmp / "play"),
+                    "env": {"BG3AI_SERVE_RULES": "0", "BG3AI_SESSION_DEADLINE": "99"},
+                    "timeout": 110.0,
+                },
+                "systemPromptFile": str(self.tmp / "system.txt"),
+            },
+        )
         self.assertNotIn("OTHER", paths[2].read_text())
 
     def test_config_http(self):
@@ -239,8 +306,10 @@ class Client(unittest.TestCase):
 
     def test_env(self):
         d = self.tmp / "S007.pi"
-        self.assertEqual(self.client.env(self.req), {"PI_CODING_AGENT_DIR": str(d),
-                                                     "BG3_PI_CONFIG": str(d / "bg3.json"), "PI_OFFLINE": "1"})
+        self.assertEqual(
+            self.client.env(self.req),
+            {"PI_CODING_AGENT_DIR": str(d), "BG3_PI_CONFIG": str(d / "bg3.json"), "PI_OFFLINE": "1"},
+        )
 
     def test_settings_keep_compaction_off(self):
         self.assertEqual(PC.PI_SETTINGS["compaction"], {"enabled": False})

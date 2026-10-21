@@ -7,6 +7,7 @@ fallback) and from an events.jsonl written from it (the new path).
 
     python3 -m unittest runner/test_analyzer_parity.py
 """
+
 from __future__ import annotations
 
 import json
@@ -34,6 +35,7 @@ REAL_SAMPLE = ("claude-run-2/S062", "claude-run-2/S068", "claude-run-2/S078-r1",
 
 # ======================================================================== frozen pre-port versions (raw claude stream)
 
+
 def legacy_load_calls(stream_path: Path, turns_path: Path) -> tuple[list[dict], str | None]:
     times = {}
     for r in T.latency.read_jsonl(turns_path):
@@ -52,9 +54,16 @@ def legacy_load_calls(stream_path: Path, turns_path: Path) -> tuple[list[dict], 
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "tool_use" and b.get("id"):
-                calls[b["id"]] = {"id": b["id"], "name": T.bare(b.get("name", "")), "input": b.get("input"),
-                                  "t": times.get(("use", b["id"])), "t_res": None, "failed": False, "text": "",
-                                  "fails": []}
+                calls[b["id"]] = {
+                    "id": b["id"],
+                    "name": T.bare(b.get("name", "")),
+                    "input": b.get("input"),
+                    "t": times.get(("use", b["id"])),
+                    "t_res": None,
+                    "failed": False,
+                    "text": "",
+                    "fails": [],
+                }
                 order.append(b["id"])
             elif b.get("type") == "tool_result" and b.get("tool_use_id") in calls:
                 c = calls[b["tool_use_id"]]
@@ -85,9 +94,12 @@ def _legacy_result_text(block: dict) -> str:
 
 
 def legacy_stream_decisions(stream: Path, since: float | None = None, until: float | None = None) -> list[dict]:
-    sid = stream.name[:-len(".jsonl")]
-    times = {r["id"]: r.get("t") for r in J._read_jsonl(stream.with_name(sid + ".turns.jsonl"))
-             if r.get("type") == "use" and r.get("id")}
+    sid = stream.name[: -len(".jsonl")]
+    times = {
+        r["id"]: r.get("t")
+        for r in J._read_jsonl(stream.with_name(sid + ".turns.jsonl"))
+        if r.get("type") == "use" and r.get("id")
+    }
     if not times and since is not None:
         try:
             if stream.stat().st_mtime < since:
@@ -114,8 +126,12 @@ def legacy_stream_decisions(stream: Path, since: float | None = None, until: flo
             if typ == "assistant" and bt == "text" and b.get("text", "").strip():
                 said.append(b["text"].strip())
             elif typ == "assistant" and bt == "tool_use" and b.get("id"):
-                pending[b["id"]] = {"name": (b.get("name") or "").rsplit("__", 1)[-1], "input": b.get("input"),
-                                    "reason": " ".join(said) or None, "offered": offered}
+                pending[b["id"]] = {
+                    "name": (b.get("name") or "").rsplit("__", 1)[-1],
+                    "input": b.get("input"),
+                    "reason": " ".join(said) or None,
+                    "offered": offered,
+                }
             elif bt == "tool_result" and b.get("tool_use_id") in pending:
                 call = pending.pop(b["tool_use_id"])
                 t = times.get(b["tool_use_id"])
@@ -124,9 +140,10 @@ def legacy_stream_decisions(stream: Path, since: float | None = None, until: flo
                 if in_window(t):
                     out += J._call_decisions(sid, t, call, blocks)
                 said = []
-                if call["name"] in (J.CHOOSE,) + J.BATCH_TOOLS or blocks:
-                    offered = blocks[-1] if blocks else (None if J._choice_steps(call["name"], call["input"])
-                                                         else offered)
+                if call["name"] in (J.CHOOSE, *J.BATCH_TOOLS) or blocks:
+                    offered = (
+                        blocks[-1] if blocks else (None if J._choice_steps(call["name"], call["input"]) else offered)
+                    )
                 elif "conversation ended" in text or "no dialogue on screen" in text:
                     offered = None
     return out
@@ -145,9 +162,13 @@ def legacy_stream_info(stream: Path) -> dict:
                 think_ms[mid] = think_ms.get(mid, 0.0) + float(ev["thinking_duration_ms"])
         elif typ == "result":
             u = ev.get("usage") or {}
-            result = {"api_ms": ev.get("duration_api_ms"), "out": u.get("output_tokens"),
-                      "think": (u.get("output_tokens_details") or {}).get("thinking_tokens"),
-                      "turns": ev.get("num_turns"), "wall_ms": ev.get("duration_ms")}
+            result = {
+                "api_ms": ev.get("duration_api_ms"),
+                "out": u.get("output_tokens"),
+                "think": (u.get("output_tokens_details") or {}).get("thinking_tokens"),
+                "turns": ev.get("num_turns"),
+                "wall_ms": ev.get("duration_ms"),
+            }
         if t is not None and typ in ("assistant", "user", "system"):
             records.extend(MT.M.stream_records(ev, t))
     return {"think_ms": think_ms, "result": result, "records": records}
@@ -155,8 +176,11 @@ def legacy_stream_info(stream: Path) -> dict:
 
 def legacy_claude_totals(state_dir: Path, since: float) -> dict:
     cost, turns, tokens = 0.0, 0, {k: 0 for k, _ in R.TOKEN_FIELDS}
-    found = sorted((f.stat().st_mtime, f.name, f) for f in state_dir.iterdir()
-                   if R.CLAUDE_STREAM_RE.match(f.name) and f.stat().st_mtime >= since)
+    found = sorted(
+        (f.stat().st_mtime, f.name, f)
+        for f in state_dir.iterdir()
+        if R.CLAUDE_STREAM_RE.match(f.name) and f.stat().st_mtime >= since
+    )
     parsers: dict = {}
     for _, _, f in found:
         lines = f.read_text(errors="replace").splitlines()
@@ -175,7 +199,7 @@ def legacy_fairness_flags(streams: list[Path]) -> dict:
     kinds: dict = {}
     leak = check = blocks = 0
     for s in streams:
-        calls, _ = legacy_load_calls(s, Path(str(s)[:-len(".jsonl")] + ".turns.jsonl"))
+        calls, _ = legacy_load_calls(s, Path(str(s)[: -len(".jsonl")] + ".turns.jsonl"))
         blocks += sum(1 for c in calls if c["name"] in R.fairness.NOT_GAME and R.GUARD_BLOCK in (c.get("text") or ""))
         for rule, hits in R.fairness.audit_calls(calls).items():
             kinds[rule] = kinds.get(rule, 0) + len(hits)
@@ -188,14 +212,15 @@ def legacy_fairness_flags(streams: list[Path]) -> dict:
 
 # ======================================================================== the two ways in
 
+
 def with_events_log(src_dir: Path, dst_dir: Path) -> None:
     """dst_dir: the sessions of src_dir as the runner now writes them: raw stream, turns and an events.jsonl (the
     raw stream's Events, each call and result at its turns.jsonl time, as the pump stamps them on arrival)."""
     for f in sorted(src_dir.iterdir()):
         shutil.copy2(f, dst_dir / f.name)
         if R.CLAUDE_STREAM_RE.match(f.name):
-            base = dst_dir / f.name[:-len(".jsonl")]
-            evs = E.load_events(src_dir / f.name[:-len(".jsonl")])
+            base = dst_dir / f.name[: -len(".jsonl")]
+            evs = E.load_events(src_dir / f.name[: -len(".jsonl")])
             base.with_name(base.name + ".events.jsonl").write_text("".join(ev.to_json() + "\n" for ev in evs))
 
 
@@ -216,8 +241,8 @@ class Base(unittest.TestCase):
         return sorted(f for f in d.iterdir() if rx.match(f.name))
 
     def check_session(self, how: str, stream: Path, legacy_stream: Path) -> None:
-        turns = Path(str(stream)[:-len(".jsonl")] + ".turns.jsonl")
-        legacy_turns = Path(str(legacy_stream)[:-len(".jsonl")] + ".turns.jsonl")
+        turns = Path(str(stream)[: -len(".jsonl")] + ".turns.jsonl")
+        legacy_turns = Path(str(legacy_stream)[: -len(".jsonl")] + ".turns.jsonl")
         msg = f"{how} {stream.parent.name}/{stream.name}"
         calls, summary = T.load_calls(stream, turns)
         old_calls, old_summary = legacy_load_calls(legacy_stream, legacy_turns)
@@ -228,7 +253,7 @@ class Base(unittest.TestCase):
         self.assertEqual(summary, old_summary, msg)
         self.assertEqual(J.stream_decisions(stream), legacy_stream_decisions(legacy_stream), msg)
         ts = [c["t"] for c in old_calls if c["t"]]
-        if ts:   # a window over the middle of the session
+        if ts:  # a window over the middle of the session
             lo, hi = ts[len(ts) // 4], ts[3 * len(ts) // 4]
             self.assertEqual(J.stream_decisions(stream, lo, hi), legacy_stream_decisions(legacy_stream, lo, hi), msg)
         self.assertEqual(MT.stream_info(stream), legacy_stream_info(legacy_stream), msg)
@@ -263,6 +288,7 @@ class Fixtures(Base):
     def test_codex_calls_now_read(self):
         # before the port the analyzers read only claude's blocks; a codex session's calls now count too
         import test_clients as TC
+
         (self.tmp / "S001.jsonl").write_text("\n".join(TC.CODEX_RUN) + "\n")
         calls, summary = T.load_calls(self.tmp / "S001.jsonl", self.tmp / "S001.turns.jsonl")
         self.assertEqual([(c["name"], c["text"]) for c in calls], [("get_status", "status: ok, hp 12/12")])

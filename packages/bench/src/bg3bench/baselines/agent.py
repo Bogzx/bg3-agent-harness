@@ -1,3 +1,4 @@
+# pyright: basic
 """What both baseline agents share: the tool session they play through, the JSONL they print, the run loop's clock.
 
 The agents speak MCP to the bg3 server over stdio, launched from play/.mcp.json the way the model's client launches

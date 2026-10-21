@@ -44,10 +44,30 @@ def test_replay_on_the_fixture(store: RunStore, git_memory: Path, tmp_path: Path
     video.mkdir()
     for name in ("rec-1-0000.mp4", "rec-1-0001.mp4", "rec-2-0000.mp4"):
         (video / name).write_bytes(b"x")
-    (video / "index.json").write_text(json.dumps({"v": 1, "segments": [
-        {"file": "rec-1-0000.mp4", "run": "rec-1", "start": S096_START - 700, "end": S096_START - 100, "bytes": 1},
-        {"file": "rec-1-0001.mp4", "run": "rec-1", "start": S096_START - 100, "end": S096_START + 500, "bytes": 1},
-        {"file": "rec-2-0000.mp4", "run": "rec-2", "start": S096_START + 600, "end": None, "bytes": 1}]}))
+    (video / "index.json").write_text(
+        json.dumps(
+            {
+                "v": 1,
+                "segments": [
+                    {
+                        "file": "rec-1-0000.mp4",
+                        "run": "rec-1",
+                        "start": S096_START - 700,
+                        "end": S096_START - 100,
+                        "bytes": 1,
+                    },
+                    {
+                        "file": "rec-1-0001.mp4",
+                        "run": "rec-1",
+                        "start": S096_START - 100,
+                        "end": S096_START + 500,
+                        "bytes": 1,
+                    },
+                    {"file": "rec-2-0000.mp4", "run": "rec-2", "start": S096_START + 600, "end": None, "bytes": 1},
+                ],
+            }
+        )
+    )
     r = R.replay(store, PT, "S096", video)
     assert r["started"] == S096_START and r["ended"] == 1792312705.6318264
     kinds = {e["kind"] for e in r["events"]}

@@ -13,6 +13,7 @@ tests read. Replies:
 every text result ends with a clock line, like the real server's.
 $STUB_MCP_TOOLS caps how many tools are listed (the tool-count check).
 """
+
 from __future__ import annotations
 
 import json
@@ -27,8 +28,7 @@ TOOLS = json.loads((HERE / "tools.json").read_text())
 CLOCK = "[clock] 41:12 left of 45:00"
 INSTRUCTIONS = "STUB-INSTRUCTIONS-CANARY"
 # A 2x2 red PNG; the tests look for its base64 in the model request.
-CANARY_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==")
+CANARY_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg=="
 
 LOG = os.environ.get("STUB_MCP_LOG")
 DELAY = float(os.environ.get("STUB_MCP_DELAY") or 0.3)
@@ -70,15 +70,24 @@ def handle(msg: dict) -> None:
     method, rid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
     log(ev="recv", method=method, id=rid, params=params if method != "tools/call" else None)
     if method == "initialize":
-        send({"jsonrpc": "2.0", "id": rid, "result": {
-            "protocolVersion": params.get("protocolVersion") or "2025-06-18",
-            "capabilities": {"tools": {}}, "serverInfo": {"name": "bg3", "version": "stub"},
-            "instructions": INSTRUCTIONS}})
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": rid,
+                "result": {
+                    "protocolVersion": params.get("protocolVersion") or "2025-06-18",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "bg3", "version": "stub"},
+                    "instructions": INSTRUCTIONS,
+                },
+            }
+        )
     elif method == "tools/list":
         send({"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS[:LIMIT]}})
     elif method == "tools/call":
-        threading.Thread(target=call, args=(rid, params.get("name"), params.get("arguments") or {}),
-                         daemon=True).start()
+        threading.Thread(
+            target=call, args=(rid, params.get("name"), params.get("arguments") or {}), daemon=True
+        ).start()
     elif method == "ping":
         send({"jsonrpc": "2.0", "id": rid, "result": {}})
     elif rid is not None:

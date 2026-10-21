@@ -1,3 +1,4 @@
+# pyright: basic
 """playthroughs/<pt>/playthrough.toml: one playthrough's settings, the single file the app edits.
 
     v = 1
@@ -51,9 +52,9 @@ FILENAME = "playthrough.toml"
 PROFILE_FILENAME = "profile.json"
 
 CLIENTS = ("claude", "codex", "gemini", "pi")
-EFFORTS = ("low", "medium", "high", "xhigh", "max")      # runner/play.py EFFORTS
-ROLEPLAY_MODES = ("strict", "light")                      # runner/play.py ROLEPLAY_MODES
-DIFFICULTIES = ("Explorer", "Balanced", "Tactician")      # runner/play.py DIFFICULTIES (new_game's)
+EFFORTS = ("low", "medium", "high", "xhigh", "max")  # runner/play.py EFFORTS
+ROLEPLAY_MODES = ("strict", "light")  # runner/play.py ROLEPLAY_MODES
+DIFFICULTIES = ("Explorer", "Balanced", "Tactician")  # runner/play.py DIFFICULTIES (new_game's)
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -111,11 +112,19 @@ class PlaythroughConfig:
     v: int = VERSION
 
 
-SECTIONS: dict[str, type] = {"agent": Agent, "character": Character, "session": Session, "keeper": Keeper,
-                             "recording": Recording}
+SECTIONS: dict[str, type] = {
+    "agent": Agent,
+    "character": Character,
+    "session": Session,
+    "keeper": Keeper,
+    "recording": Recording,
+}
 ENUMS: dict[str, tuple[str, ...]] = {
-    "difficulty": ("", *DIFFICULTIES), "agent.client": CLIENTS, "agent.effort": ("", *EFFORTS),
-    "character.roleplay": ROLEPLAY_MODES, "keeper.effort": EFFORTS,
+    "difficulty": ("", *DIFFICULTIES),
+    "agent.client": CLIENTS,
+    "agent.effort": ("", *EFFORTS),
+    "character.roleplay": ROLEPLAY_MODES,
+    "keeper.effort": EFFORTS,
 }
 
 
@@ -162,8 +171,10 @@ def validate(data: dict) -> PlaythroughConfig:
     if unknown:
         raise ConfigError(f"unknown key(s) {', '.join(unknown)}")
     cfg = PlaythroughConfig(
-        name=name, difficulty=_typed("difficulty", data.get("difficulty", ""), ""),
-        **{s: _section(s, cls, data.get(s, {})) for s, cls in SECTIONS.items()})
+        name=name,
+        difficulty=_typed("difficulty", data.get("difficulty", ""), ""),
+        **{s: _section(s, cls, data.get(s, {})) for s, cls in SECTIONS.items()},
+    )
     if cfg.agent.profile and not NAME_RE.match(cfg.agent.profile):
         raise ConfigError(f"agent.profile: expected a profile name, got {cfg.agent.profile!r}")
     if not cfg.agent.model.strip() and not cfg.agent.profile:

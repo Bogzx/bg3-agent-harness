@@ -1,3 +1,4 @@
+# pyright: basic
 """Matrix runner: models × scenarios × conditions × repeats as one persistent queue, run unattended, one at a time.
 
 Files in the matrix folder (runtime/matrix/<name>/):

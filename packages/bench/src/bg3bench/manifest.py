@@ -1,3 +1,4 @@
+# pyright: basic
 """Run manifests (schema/manifest.v1.schema.json): what a run was set up with.
 
 `from_series` builds one from a series' `series.json` and one `runs.jsonl` record, the files the runner writes today

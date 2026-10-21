@@ -1,3 +1,4 @@
+# pyright: basic
 """Party positions for the breadcrumb map: sampled from the mod's state.status into positions.jsonl, read back as
 tracks per level.
 
@@ -50,8 +51,13 @@ def snapshot(t: float, status: dict) -> dict | None:
         party.append(row)
     if not party:
         return None
-    return {"v": POSITIONS_VERSION, "t": round(t, 3), "level": level, "region": status.get("region") or level,
-            "party": party}
+    return {
+        "v": POSITIONS_VERSION,
+        "t": round(t, 3),
+        "level": level,
+        "region": status.get("region") or level,
+        "party": party,
+    }
 
 
 def moved(a: dict, b: dict) -> float:
@@ -80,8 +86,9 @@ def tracks(rows: list[dict], level: str | None = None, gap_s: float = GAP_S, max
     rows = sorted((r for r in rows if r.get("party")), key=lambda r: r["t"])
     levels: dict[str, dict] = {}
     for r in rows:
-        lv = levels.setdefault(r["level"], {"level": r["level"], "region": r.get("region"), "samples": 0,
-                                            "first_t": r["t"]})
+        lv = levels.setdefault(
+            r["level"], {"level": r["level"], "region": r.get("region"), "samples": 0, "first_t": r["t"]}
+        )
         lv["samples"] += 1
         lv["last_t"] = r["t"]
     if level is None and rows:
@@ -105,12 +112,16 @@ def tracks(rows: list[dict], level: str | None = None, gap_s: float = GAP_S, max
     xs = [p[1] for s in segments for p in s]
     zs = [p[2] for s in segments for p in s]
     now = picked[-1] if picked else None
-    return {"level": level, "levels": sorted(levels.values(), key=lambda lv: lv["first_t"]),
-            "segments": segments,
-            "party": [{"name": m["name"], "x": m["x"], "z": m["z"], "active": bool(m.get("active"))}
-                      for m in now["party"]] if now else [],
-            "t": now["t"] if now else None,
-            "bounds": {"min_x": min(xs), "max_x": max(xs), "min_z": min(zs), "max_z": max(zs)} if xs else None}
+    return {
+        "level": level,
+        "levels": sorted(levels.values(), key=lambda lv: lv["first_t"]),
+        "segments": segments,
+        "party": [{"name": m["name"], "x": m["x"], "z": m["z"], "active": bool(m.get("active"))} for m in now["party"]]
+        if now
+        else [],
+        "t": now["t"] if now else None,
+        "bounds": {"min_x": min(xs), "max_x": max(xs), "min_z": min(zs), "max_z": max(zs)} if xs else None,
+    }
 
 
 def read(path: Path) -> list[dict]:
@@ -124,8 +135,12 @@ def read(path: Path) -> list[dict]:
             r = json.loads(line)
         except ValueError:
             continue
-        if isinstance(r, dict) and isinstance(r.get("t"), (int, float)) and isinstance(r.get("party"), list) \
-                and isinstance(r.get("level"), str):
+        if (
+            isinstance(r, dict)
+            and isinstance(r.get("t"), (int, float))
+            and isinstance(r.get("party"), list)
+            and isinstance(r.get("level"), str)
+        ):
             out.append(r)
     return out
 

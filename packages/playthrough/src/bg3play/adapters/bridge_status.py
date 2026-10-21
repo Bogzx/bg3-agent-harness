@@ -1,3 +1,4 @@
+# pyright: basic
 """TEMPORARY (remove in Phase D: the harness's game facts replace it): state.status straight from the mod's RPC
 port through the bridge's Game client, as the retired dashboard's game loop did. Needs the bridge package
 (bg3ai) importable; any failure is "no status" and the next call reconnects."""

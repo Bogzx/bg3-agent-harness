@@ -1,3 +1,4 @@
+# pyright: basic
 """The screen recorder: one ffmpeg process that records the game into rolling MP4 segments and tees a low-rate MJPEG
 stream for the live view.
 
@@ -85,8 +86,10 @@ def ffmpeg_args(spec: RecordSpec, capture: Capture, prefix: str, ffmpeg: str = "
             src += ["-window_id", capture.window_id]
         src += ["-i", capture.display]
     w, h = spec.width, spec.height
-    rec = (f"fps={spec.fps},scale={w}:{h}:force_original_aspect_ratio=decrease,"
-           f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,format=yuv420p")
+    rec = (
+        f"fps={spec.fps},scale={w}:{h}:force_original_aspect_ratio=decrease,"
+        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,format=yuv420p"
+    )
     if spec.live:
         graph = f"[0:v]{rec},split=2[rec][lv0];[lv0]fps={spec.live_fps:g},scale={spec.live_width}:-2[lv]"
     else:
@@ -95,14 +98,35 @@ def ffmpeg_args(spec: RecordSpec, capture: Capture, prefix: str, ffmpeg: str = "
     args = [ffmpeg, "-hide_banner", "-loglevel", "warning", "-nostdin", "-y"]
     if spec.duration_s is not None:
         args += ["-t", f"{spec.duration_s:g}"]
-    args += [*src, "-filter_complex", graph,
-             "-map", "[rec]", "-c:v", spec.encoder, *ENCODER_ARGS[spec.encoder], "-g", str(spec.fps * 2),
-             "-f", "segment", "-segment_time", str(spec.segment_s), "-reset_timestamps", "1",
-             "-segment_format", "mp4",
-             "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof",
-             "-segment_list", str(out / f"{prefix}.csv"), "-segment_list_type", "csv",
-             "-segment_list_flags", "live",
-             str(out / f"{prefix}-%04d.mp4")]
+    args += [
+        *src,
+        "-filter_complex",
+        graph,
+        "-map",
+        "[rec]",
+        "-c:v",
+        spec.encoder,
+        *ENCODER_ARGS[spec.encoder],
+        "-g",
+        str(spec.fps * 2),
+        "-f",
+        "segment",
+        "-segment_time",
+        str(spec.segment_s),
+        "-reset_timestamps",
+        "1",
+        "-segment_format",
+        "mp4",
+        "-segment_format_options",
+        "movflags=+frag_keyframe+empty_moov+default_base_moof",
+        "-segment_list",
+        str(out / f"{prefix}.csv"),
+        "-segment_list_type",
+        "csv",
+        "-segment_list_flags",
+        "live",
+        str(out / f"{prefix}-%04d.mp4"),
+    ]
     if spec.live:
         args += ["-map", "[lv]", "-c:v", "mjpeg", "-q:v", "7", "-f", "mpjpeg", "pipe:1"]
     return args
@@ -125,17 +149,32 @@ def parse_segment_list(text: str) -> list[tuple[str, float, float]]:
     return out
 
 
-def run_segments(prefix: str, t0: float, listed: list[tuple[str, float, float]], files: list[str],
-                 sizes: dict[str, int], ended_at: float | None) -> list[dict]:
+def run_segments(
+    prefix: str,
+    t0: float,
+    listed: list[tuple[str, float, float]],
+    files: list[str],
+    sizes: dict[str, int],
+    ended_at: float | None,
+) -> list[dict]:
     """One run's index rows: the listed (finished) segments, then files on disk the list doesn't have yet (the one
     being written; after a crash the last one, closed at `ended_at`)."""
-    rows = [{"file": f, "run": prefix, "start": round(t0 + s, 3), "end": round(t0 + e, 3), "bytes": sizes.get(f, 0)}
-            for f, s, e in listed]
+    rows = [
+        {"file": f, "run": prefix, "start": round(t0 + s, 3), "end": round(t0 + e, 3), "bytes": sizes.get(f, 0)}
+        for f, s, e in listed
+    ]
     seen = {r["file"] for r in rows}
     start = t0 + (listed[-1][2] if listed else 0.0)
     for f in sorted(x for x in files if x.startswith(prefix + "-") and x.endswith(".mp4") and x not in seen):
-        rows.append({"file": f, "run": prefix, "start": round(start, 3),
-                     "end": round(ended_at, 3) if ended_at is not None else None, "bytes": sizes.get(f, 0)})
+        rows.append(
+            {
+                "file": f,
+                "run": prefix,
+                "start": round(start, 3),
+                "end": round(ended_at, 3) if ended_at is not None else None,
+                "bytes": sizes.get(f, 0),
+            }
+        )
     return rows
 
 
@@ -183,17 +222,17 @@ class MjpegParser:
                 return frames
             m = re.search(rb"(?i)content-length:\s*(\d+)", self.buf[:head_end])
             if not m:
-                self.buf = self.buf[head_end + 4:]
+                self.buf = self.buf[head_end + 4 :]
                 continue
             n = int(m.group(1))
             if n > self.max_frame:
-                self.buf = self.buf[head_end + 4:]
+                self.buf = self.buf[head_end + 4 :]
                 continue
             body = head_end + 4
             if len(self.buf) < body + n:
                 return frames
-            frames.append(self.buf[body:body + n])
-            self.buf = self.buf[body + n:]
+            frames.append(self.buf[body : body + n])
+            self.buf = self.buf[body + n :]
 
 
 class LiveFrame:
@@ -275,14 +314,18 @@ def find_window(tree: str, title: re.Pattern[str] = GAME_TITLE_RE) -> str | None
     return best[1] if best else None
 
 
-def game_probe(display: str = ":1", mode: str = "window",
-               running: Callable[[], bool] = game_running,
-               tree: Callable[[str], str] | None = None) -> Callable[[], Capture | None]:
+def game_probe(
+    display: str = ":1",
+    mode: str = "window",
+    running: Callable[[], bool] = game_running,
+    tree: Callable[[str], str] | None = None,
+) -> Callable[[], Capture | None]:
     """The default probe: None while the game isn't running (or its window isn't up yet in window mode)."""
 
     def xwininfo(d: str) -> str:
-        r = subprocess.run(["xwininfo", "-root", "-tree", "-display", d], capture_output=True, text=True, timeout=5,
-                           check=False)
+        r = subprocess.run(
+            ["xwininfo", "-root", "-tree", "-display", d], capture_output=True, text=True, timeout=5, check=False
+        )
         return r.stdout
 
     get_tree = tree or xwininfo
@@ -331,8 +374,12 @@ class GuardLimits:
     stale_s: float = 30.0  # thermal lines older than this are ignored
 
 
-def resource_guard(thermal_log: Path, limits: GuardLimits | None = None, clock: Callable[[], float] | None = None,
-                   meminfo: Path = Path("/proc/meminfo")) -> Callable[[], str | None]:
+def resource_guard(
+    thermal_log: Path,
+    limits: GuardLimits | None = None,
+    clock: Callable[[], float] | None = None,
+    meminfo: Path = Path("/proc/meminfo"),
+) -> Callable[[], str | None]:
     """The default guard: a reason to stop recording (low RAM, hot CPU/GPU from thermal.log), or None."""
     now = clock or time.time
     limits = limits or GuardLimits()
@@ -419,8 +466,17 @@ class Recorder:
         if run is not None and run.proc.poll() is not None:
             self._ended(run, now, crashed=True)
         elif run is not None:
-            stop_why = ("disabled" if not self.enabled else "game not running" if target is None
-                        else why if why else "capture changed" if target != run.capture else None)
+            stop_why = (
+                "disabled"
+                if not self.enabled
+                else "game not running"
+                if target is None
+                else why
+                if why
+                else "capture changed"
+                if target != run.capture
+                else None
+            )
             if stop_why:
                 self.stop(stop_why)
         if self.run is None:
@@ -443,8 +499,9 @@ class Recorder:
         proc = self.spawn(args, self.out / "ffmpeg.log")
         self.run = Run(prefix, now, capture, proc)
         if self.spec.live and proc.stdout is not None:
-            self.run.pump = threading.Thread(target=pump_mjpeg, args=(proc.stdout, self.live), daemon=True,
-                                             name="mjpeg")
+            self.run.pump = threading.Thread(
+                target=pump_mjpeg, args=(proc.stdout, self.live), daemon=True, name="mjpeg"
+            )
             self.run.pump.start()
         self.reason = "recording"
 
@@ -515,10 +572,17 @@ class Recorder:
         tmp.replace(self.out / "index.json")
 
     def state(self) -> dict:
-        return {"recording": self.run is not None, "enabled": self.enabled, "reason": self.reason,
-                "crashes": self.crashes, "segments": len(self.segments),
-                "bytes": sum(s["bytes"] for s in self.segments), "cap_bytes": self.cap_bytes,
-                "capture": vars(self.run.capture) if self.run else None, "live_seq": self.live.seq}
+        return {
+            "recording": self.run is not None,
+            "enabled": self.enabled,
+            "reason": self.reason,
+            "crashes": self.crashes,
+            "segments": len(self.segments),
+            "bytes": sum(s["bytes"] for s in self.segments),
+            "cap_bytes": self.cap_bytes,
+            "capture": vars(self.run.capture) if self.run else None,
+            "live_seq": self.live.seq,
+        }
 
     def loop(self, stop: threading.Event, interval: float = 1.0) -> None:
         while not stop.is_set():

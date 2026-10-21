@@ -4,6 +4,7 @@ check runs the installed binary; it skips with the install command when node_mod
 
     python3 -m unittest tools/pi/test_pi_install.py
 """
+
 from __future__ import annotations
 
 import json
@@ -20,7 +21,7 @@ BINARY = PI_DIR / "node_modules" / ".bin" / "pi"
 class PinnedTest(unittest.TestCase):
     def test_package_json_pins_exact_versions(self):
         deps = json.loads((PI_DIR / "package.json").read_text())["dependencies"]
-        self.assertEqual({p: deps[p] for p in PACKAGES}, {p: PI_VERSION for p in PACKAGES})
+        self.assertEqual({p: deps[p] for p in PACKAGES}, dict.fromkeys(PACKAGES, PI_VERSION))
 
     def test_lockfile_resolves_the_pinned_version(self):
         lock = json.loads((PI_DIR / "package-lock.json").read_text())["packages"]

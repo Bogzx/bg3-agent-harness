@@ -49,15 +49,29 @@ def play_args(python: str, repo: Path, req: SessionRequest, agent: C.Agent, prof
     """The play.py command line for one session (pure). A pi agent runs from its profile file under `profiles`."""
     cfg = req.config
     m = cfg.session.minutes
-    args = [python, str(repo / "runner" / "play.py"), "run", "--playthrough", req.playthrough,
-            "--hours", f"{m / 60:.4g}", "--session-minutes", f"{m:g}"]
-    if agent.client == "pi":   # play.py --profile: pi needs --max-cost and --no-keeper
+    args = [
+        python,
+        str(repo / "runner" / "play.py"),
+        "run",
+        "--playthrough",
+        req.playthrough,
+        "--hours",
+        f"{m / 60:.4g}",
+        "--session-minutes",
+        f"{m:g}",
+    ]
+    if agent.client == "pi":  # play.py --profile: pi needs --max-cost and --no-keeper
         if not agent.profile or profiles is None:
             raise SupervisorError("client pi: pick a pi client profile (profiles/*.toml)")
         if cfg.session.max_cost_usd <= 0:
             raise SupervisorError(f"client profile {agent.profile}: pi needs a cost cap (session.max_cost_usd > 0)")
-        args += ["--profile", str(profiles / f"{agent.profile}.toml"), "--max-cost", f"{cfg.session.max_cost_usd:g}",
-                 "--no-keeper"]
+        args += [
+            "--profile",
+            str(profiles / f"{agent.profile}.toml"),
+            "--max-cost",
+            f"{cfg.session.max_cost_usd:g}",
+            "--no-keeper",
+        ]
     else:
         args += ["--client", agent.client, "--model", agent.model]
         if agent.effort:
@@ -90,17 +104,29 @@ def result_from(entry: dict | None, before: dict | None, exit_code: int, stopped
     if entry is None or entry == before:
         return SessionResult(session="?", outcome="error", detail=f"play.py exited {exit_code} without a session")
     reason = str(entry.get("reason") or "")
-    outcome = ("crash" if reason in CRASH_REASONS or exit_code != 0 else "stopped" if stopped else "ok")
+    outcome = "crash" if reason in CRASH_REASONS or exit_code != 0 else "stopped" if stopped else "ok"
     prog = entry.get("progress")
-    return SessionResult(session=str(entry.get("session") or "?"), outcome=outcome,
-                         progress=prog if isinstance(prog, bool) else None, started=entry.get("started"),
-                         ended=entry.get("ended"), detail=f"reason={reason} exit={exit_code}")
+    return SessionResult(
+        session=str(entry.get("session") or "?"),
+        outcome=outcome,
+        progress=prog if isinstance(prog, bool) else None,
+        started=entry.get("started"),
+        ended=entry.get("ended"),
+        detail=f"reason={reason} exit={exit_code}",
+    )
 
 
 class LegacyCli:
-    def __init__(self, repo: Path, runtime: Path, profiles: Path | None = None, python: str = "python3",
-                 spawn_fn: Callable[[list[str], Path, IO[bytes]], Proc] = spawn, poll_s: float = 1.0,
-                 load: Callable[[Path], Any] = CP.runner_load):
+    def __init__(
+        self,
+        repo: Path,
+        runtime: Path,
+        profiles: Path | None = None,
+        python: str = "python3",
+        spawn_fn: Callable[[list[str], Path, IO[bytes]], Proc] = spawn,
+        poll_s: float = 1.0,
+        load: Callable[[Path], Any] = CP.runner_load,
+    ):
         self.repo, self.runtime, self.python, self.spawn, self.poll_s = repo, runtime, python, spawn_fn, poll_s
         self.load = load
         self.profiles = profiles if profiles is not None else repo / "profiles"

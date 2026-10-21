@@ -917,8 +917,8 @@ class Relaunch(unittest.TestCase):
     def _runner(self, d: Path, *, launched, log_text, save_mtime, last_started=50.0, steam=(True, "offline"),
                 owns=True, first=False, ram=5000, mod_path=None, acts=(), extra_saves=(), runner_saves=(),
                 save_combat=None, combat_now=False, last_ended=None):
-        self.saved = (P.port_open, P.steam_ready, P.list_saves, P.game_started_at, P.log, P.game_ram_mb,
-                      P.game_mod_path, P.read_actions_since, P.party_in_combat)
+        self.saved = getattr(self, "saved", None) or (P.port_open, P.steam_ready, P.list_saves, P.game_started_at,
+                      P.log, P.game_ram_mb, P.game_mod_path, P.read_actions_since, P.party_in_combat)  # first call's
         P.port_open = lambda *a, **k: True
         P.party_in_combat = lambda: combat_now
         P.read_actions_since = lambda t, *a, **k: [x for x in acts if x.get("t", 0) > t]   # never the real log

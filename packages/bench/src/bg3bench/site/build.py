@@ -1,3 +1,4 @@
+# pyright: basic
 """Static leaderboard: a release's results.json v1 -> one self-contained HTML page (no JS, inline SVG).
 
 One table per scenario family (never one number across families): per (model, condition), valid runs only,
@@ -256,7 +257,7 @@ def render(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("results")
     ap.add_argument("out")
     ap.add_argument("--families", help="JSON object: scenario name -> family")

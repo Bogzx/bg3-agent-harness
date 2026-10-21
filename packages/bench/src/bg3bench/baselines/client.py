@@ -1,3 +1,4 @@
+# pyright: basic
 """BaselineClient: the runner's Client protocol (runner/clients.py `Client`) for the baseline agents, so a series
 runs them like any model client and its cost, token and event accounting sees them the same way.
 

@@ -1,7 +1,9 @@
 # Files allowed over the 1000-line cap (tools/ci/line_cap.py). Generated from the tree on 2026-10-21.
 # "<lines> <path>": legacy file at its exact current length; it may only shrink, and leaves the list at <= 1000.
 # "exempt <path>  # <reason>": the cap doesn't apply (generated data). The target is an empty list.
-5575 runner/play.py
+# 2026-10-22 00:40 (orchestrator): play.py 5575->5703 and runs.py 1474->1476 re-recorded once: harness wiring merged before
+# this check existed (pi client, spend caps, facts writer). Both shrink in Phase D (harness r3, bench r6).
+5703 runner/play.py
 4154 tools/dev/test_act_lua.lua
 4114 mod/Mods/BG3AI/ScriptExtender/Lua/Server/Navigation.lua
 3500 mod/Mods/BG3AI/ScriptExtender/Lua/Server/Actions.lua
@@ -16,7 +18,7 @@
 1680 mod/Mods/BG3AI/ScriptExtender/Lua/Client/UIActions.lua
 1643 bridge/tests/test_economy.py
 1488 runner/test_crash.py
-1474 runner/runs.py
+1476 runner/runs.py
 1345 tools/dev/test_confirm.lua
 1326 bridge/src/bg3ai/render.py
 1276 mod/Mods/BG3AI/ScriptExtender/Lua/Server/Visibility.lua

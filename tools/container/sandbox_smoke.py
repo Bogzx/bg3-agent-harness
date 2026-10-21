@@ -36,8 +36,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "runner"))
 import clients as C  # noqa: E402
 import pi_client as PC  # noqa: E402
-import profiles as PR  # noqa: E402
 import sandbox as S  # noqa: E402
+
+import profiles as PR  # noqa: E402
 
 STUB_IP, STUB_PORT, STUB_NAME = "172.30.99.3", 8000, "bg3ai-stub-llm"
 STUB_KEY_ENV = "BG3AI_SMOKE_STUB_KEY"

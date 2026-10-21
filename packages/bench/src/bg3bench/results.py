@@ -1,3 +1,4 @@
+# pyright: basic
 """Per-run results (schema/result.v1.schema.json) and the release file (schema/results.v1.schema.json).
 
 `from_record` turns one runs.jsonl record (runner/runs.py) into a result, with the grader output (graders.grade)

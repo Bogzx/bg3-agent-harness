@@ -76,19 +76,7 @@ jobs:
       - name: Pull the Lua images
         run: docker pull -q nickblah/lua:5.3 && docker pull -q nickblah/lua:5.4
       - name: Run the suites
-        run: |
-          fail=0
-          for t in tools/vis/test_lua.sh tools/vis/test_read_cost.sh tools/vis/test_route.sh \
-                   tools/dev/test_act_lua.sh tools/dev/test_autoskip.sh tools/dev/test_nav_lua.sh \
-                   tools/dev/test_guard_dialogue.sh tools/dev/test_confirm.sh tools/dev/test_events_lua.sh \
-                   tools/dev/test_hotbar.sh tools/dev/test_cc_pacing.sh tools/dev/test_cc_name.sh \
-                   tools/dev/test_dialogue_tags.sh tools/dev/test_fairness_lua.sh tools/dev/test_level_up.sh \
-                   tools/dev/test_mem.sh tools/dev/test_save.sh tools/dev/test_ui_children.sh \
-                   tools/dev/test_spellbook.sh tools/dev/test_ui_busy.sh tools/dev/test_ui_selected.sh; do
-            echo "::group::$t"
-            if bash "$t"; then echo "::endgroup::"; else echo "::endgroup::"; echo "::error::$t failed"; fail=1; fi
-          done
-          exit $fail
+        run: bash tools/ci/lua_suites.sh
 
   typescript:
     name: TypeScript
@@ -99,18 +87,25 @@ jobs:
       - name: Find TypeScript packages
         id: find
         run: |
-          dirs=$( (find packages -name package.json -not -path '*/node_modules/*' -printf '%h\n' 2>/dev/null || true) | sort | tr '\n' ' ')
+          dirs=$( (find packages tools -name package.json -not -path '*/node_modules/*' -printf '%h\n' 2>/dev/null || true) | sort | tr '\n' ' ')
           echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
-          [ -n "$dirs" ] || echo "no packages/**/package.json yet: nothing to check"
+          [ -n "$dirs" ] || echo "no package.json under packages/ or tools/: nothing to check"
       - uses: actions/setup-node@v4
         if: steps.find.outputs.dirs != ''
         with:
           node-version: 22
-      - name: npm ci, tsc --noEmit, lint, vitest
+      - name: npm ci, tsc --noEmit, check, lint, vitest
         if: steps.find.outputs.dirs != ''
+        # --ignore-scripts: no install hooks (tools/pi/README.md); `check` is svelte-check where a package has it
         run: |
+          fail=0
           for d in ${{ steps.find.outputs.dirs }}; do
             echo "::group::$d"
-            (cd "$d" && npm ci && npx tsc --noEmit && npm run --if-present lint && npm run --if-present test)
-            echo "::endgroup::"
+            if (cd "$d" && npm ci --ignore-scripts --no-audit --no-fund && npx tsc --noEmit \
+                && npm run --if-present check && npm run --if-present lint && npm run --if-present test); then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"; echo "::error::$d failed"; fail=1
+            fi
           done
+          exit $fail

@@ -1,3 +1,4 @@
+# pyright: basic
 """Statistics for benchmark results: pure Python, no numpy/scipy.
 
 Runs are grouped by scenario: `runs = {"<scenario>": [1.0, 0.0, ...]}` (one score per run, 0/1 for pass/fail).

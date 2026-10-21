@@ -59,3 +59,31 @@ def test_ruff_needed_keeps_the_unused_noqa_an_ignore_causes(tree: Path) -> None:
 @pytest.mark.integration
 def test_format_needed_on_a_tree(tree: Path) -> None:
     assert legacy_lint.format_needed() == {"ugly.py"}
+
+
+@pytest.fixture
+def strict_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "untyped.py").write_text("# pyright: basic\ndef f(x):\n    return x\n")
+    (pkg / "typed.py").write_text("# pyright: basic\ndef f(x: int) -> int:\n    return x\n")
+    (pkg / "plain.py").write_text("X = 1\n")
+    (tmp_path / "other.py").write_text("# pyright: basic\n")
+    monkeypatch.setattr(legacy_lint, "ROOT", tmp_path)
+    return tmp_path
+
+
+@pytest.mark.unit
+def test_basic_marked_finds_comment_lines_under_strict_paths_only(strict_tree: Path) -> None:
+    assert legacy_lint.basic_marked({"strict": ["pkg"]}) == ["pkg/typed.py", "pkg/untyped.py"]
+
+
+@pytest.mark.integration
+def test_strict_needed_keeps_only_files_that_fail_strict(strict_tree: Path) -> None:
+    cfg = {"include": ["pkg"], "strict": ["pkg"], "ignore": ["pkg/untyped.py"]}
+    assert legacy_lint.strict_needed(cfg, ["pkg/typed.py", "pkg/untyped.py"]) == {"pkg/untyped.py"}
+    assert sorted(p.name for p in (strict_tree / "pkg").iterdir()) == ["plain.py", "typed.py", "untyped.py"]
+    marked = legacy_lint.basic_marked(cfg)
+    assert legacy_lint.stale_paths("# pyright: basic comment", marked, {"pkg/untyped.py"}) == [
+        "# pyright: basic comment: pkg/typed.py no longer needs the exemption: remove it"
+    ]

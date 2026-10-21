@@ -54,6 +54,7 @@ with model slugs `baseline:donothing` and `baseline:random:<seed>`. To play one 
 
 ```python
 from bg3bench.baselines.client import BaselineClient
+
 CLIENTS["baseline"] = lambda **kw: BaselineClient(event=Event, **kw)
 ```
 

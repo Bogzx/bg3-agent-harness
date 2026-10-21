@@ -13,8 +13,12 @@ PT = "claude-run-2"
 
 def git(repo: Path, *args: str, date: int | None = None) -> None:
     env = dict(os.environ, GIT_AUTHOR_DATE=f"@{date}", GIT_COMMITTER_DATE=f"@{date}") if date else None
-    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
-                    *args], check=True, capture_output=True, env=env)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
+        check=True,
+        capture_output=True,
+        env=env,
+    )
 
 
 @pytest.fixture

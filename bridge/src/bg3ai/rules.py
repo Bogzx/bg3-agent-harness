@@ -32,6 +32,8 @@ def prompts(path: Path = ASSEMBLE) -> ModuleType:
     """packages/harness/prompts/assemble.py (standard library only), loaded by path: the bridge doesn't depend on
     the harness package."""
     spec = importlib.util.spec_from_file_location("bg3_prompts_assemble", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

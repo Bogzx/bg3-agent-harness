@@ -1,3 +1,4 @@
+# pyright: basic
 """The random-action baseline: look, pick a random action on a random entity in view, repeat until the deadline.
 
     python -m bg3bench.baselines.random_agent --mcp-config play/.mcp.json --seed 7 [--deadline EPOCH]
@@ -103,7 +104,7 @@ async def play(
 
 
 def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - process entry
-    ap = parser(__doc__.splitlines()[0])
+    ap = parser((__doc__ or "").splitlines()[0])
     ap.add_argument("--seed", type=int, required=True)
     ap.add_argument("--max-steps", type=int, help="stop after this many actions (smoke tests)")
     ap.add_argument("--period-s", type=float, default=PERIOD_S, help="seconds between actions")

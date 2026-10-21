@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-def read_new(path: Path, offset: int, initial_bytes: int = 64 * 1024,
-             max_bytes: int = 512 * 1024) -> tuple[int, str, bool]:
+def read_new(
+    path: Path, offset: int, initial_bytes: int = 64 * 1024, max_bytes: int = 512 * 1024
+) -> tuple[int, str, bool]:
     """Returns (new_offset, complete_lines_text, reset).
 
     offset < 0 means "start near the end" (the last `initial_bytes`, from a line boundary). If the file shrank
@@ -36,7 +37,7 @@ def read_new(path: Path, offset: int, initial_bytes: int = 64 * 1024,
         if nl < 0:
             return start, "", reset
         start += nl + 1
-        data = data[nl + 1:]
+        data = data[nl + 1 :]
     cut = data.rfind(b"\n")
     if cut < 0:
         # No newline at all: wait for more, unless one giant line fills the window (skip it).

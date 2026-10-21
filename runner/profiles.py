@@ -32,6 +32,7 @@ CLI's own, so endpoint, routing and model_info are an error there rather than si
 
     python3 -m unittest runner/test_profiles.py
 """
+
 from __future__ import annotations
 
 import re
@@ -41,10 +42,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 CLIENT_NAMES = ("claude", "codex", "gemini", "pi")
-EFFORTS = ("low", "medium", "high", "xhigh", "max")   # play.EFFORTS
-API = "openai-completions"                              # the one wire format for pi (D6)
+EFFORTS = ("low", "medium", "high", "xhigh", "max")  # play.EFFORTS
+API = "openai-completions"  # the one wire format for pi (D6)
 INPUTS = ("text", "image")
-THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")   # pi's thinkingLevelMap keys
+THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")  # pi's thinkingLevelMap keys
 COST_KEYS = {"input": "input", "output": "output", "cache_read": "cacheRead", "cache_write": "cacheWrite"}
 ROUTING_KEYS = ("only", "allow_fallbacks", "require_parameters")
 PI_ONLY = ("endpoint", "routing", "model_info")
@@ -58,9 +59,9 @@ class ProfileError(ValueError):
 
 @dataclass(frozen=True)
 class Endpoint:
-    provider: str          # pi's provider id; models.json defines it (a built-in id like openrouter is overridden)
+    provider: str  # pi's provider id; models.json defines it (a built-in id like openrouter is overridden)
     base_url: str
-    api_key_env: str       # the runner passes this env var to pi; models.json refers to it as ${NAME}
+    api_key_env: str  # the runner passes this env var to pi; models.json refers to it as ${NAME}
 
 
 @dataclass(frozen=True)
@@ -69,9 +70,9 @@ class ModelInfo:
     reasoning: bool
     context_window: int
     max_tokens: int
-    thinking_level_map: dict = field(default_factory=dict)   # pi level -> provider value (None: unsupported)
-    cost: dict = field(default_factory=dict)                 # USD per M tokens, COST_KEYS; pi's estimate only
-    compat: dict = field(default_factory=dict)               # pi's model compat flags, as written
+    thinking_level_map: dict = field(default_factory=dict)  # pi level -> provider value (None: unsupported)
+    cost: dict = field(default_factory=dict)  # USD per M tokens, COST_KEYS; pi's estimate only
+    compat: dict = field(default_factory=dict)  # pi's model compat flags, as written
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,7 @@ class Profile:
     effort: str | None = None
     fallback_model: str | None = None
     endpoint: Endpoint | None = None
-    routing: dict | None = None     # compat.openRouterRouting, as sent
+    routing: dict | None = None  # compat.openRouterRouting, as sent
     model_info: ModelInfo | None = None
     source: str = ""
 
@@ -131,7 +132,7 @@ def _endpoint(t: object, where: str) -> Endpoint:
         raise ProfileError(f"{w}: api_key_env must name an environment variable (the key never goes in a profile)")
     if is_openrouter(base_url) and provider != "openrouter":
         # pi turns on OpenRouter's Anthropic cache_control by the provider id, not the URL
-        raise ProfileError(f"{w}: an OpenRouter base_url needs provider = \"openrouter\" (got {provider!r})")
+        raise ProfileError(f'{w}: an OpenRouter base_url needs provider = "openrouter" (got {provider!r})')
     return Endpoint(provider, base_url, key)
 
 
@@ -146,13 +147,17 @@ def _routing(t: object, where: str, endpoint: Endpoint) -> dict:
         raise ProfileError(f"{w}: must be a table")
     _take(t, w, ROUTING_KEYS)
     if not is_openrouter(endpoint.base_url):
-        raise ProfileError(f"{w}: routing is OpenRouter's provider pin; base_url {endpoint.base_url!r} is not "
-                           f"OpenRouter")
+        raise ProfileError(
+            f"{w}: routing is OpenRouter's provider pin; base_url {endpoint.base_url!r} is not OpenRouter"
+        )
     only = t.get("only")
     if not isinstance(only, list) or not only or not all(isinstance(x, str) and x for x in only):
         raise ProfileError(f"{w}: only must be a non-empty list of provider names")
-    out = {"only": list(only), "allow_fallbacks": t.get("allow_fallbacks", False),
-           "require_parameters": t.get("require_parameters", True)}
+    out = {
+        "only": list(only),
+        "allow_fallbacks": t.get("allow_fallbacks", False),
+        "require_parameters": t.get("require_parameters", True),
+    }
     for k in ("allow_fallbacks", "require_parameters"):
         if not isinstance(out[k], bool):
             raise ProfileError(f"{w}: {k} must be true or false")
@@ -166,7 +171,7 @@ def _model_info(t: object, where: str) -> ModelInfo:
     _take(t, w, ("input", "reasoning", "context_window", "max_tokens", "thinking_level_map", "cost", "compat"))
     inp = t.get("input")
     if not isinstance(inp, list) or "text" not in inp or not set(inp) <= set(INPUTS) or len(set(inp)) != len(inp):
-        raise ProfileError(f"{w}: input must list {INPUTS} without repeats and include \"text\"")
+        raise ProfileError(f'{w}: input must list {INPUTS} without repeats and include "text"')
     if not isinstance(t.get("reasoning"), bool):
         raise ProfileError(f"{w}: reasoning must be true or false")
     ctx, max_tokens = _int(t, "context_window", w), _int(t, "max_tokens", w)
@@ -181,9 +186,15 @@ def _model_info(t: object, where: str) -> ModelInfo:
     compat = t.get("compat") or {}
     if not isinstance(compat, dict) or "openRouterRouting" in compat:
         raise ProfileError(f"{w}: compat must be a table of pi compat flags; the provider pin goes in [routing]")
-    return ModelInfo(tuple(inp), t["reasoning"], ctx, max_tokens,
-                     {k: None if v is False else v for k, v in tlm.items()}, {k: float(v) for k, v in cost.items()},
-                     dict(compat))
+    return ModelInfo(
+        tuple(inp),
+        t["reasoning"],
+        ctx,
+        max_tokens,
+        {k: None if v is False else v for k, v in tlm.items()},
+        {k: float(v) for k, v in cost.items()},
+        dict(compat),
+    )
 
 
 def parse(raw: dict, source: str = "<profile>") -> Profile:
@@ -195,8 +206,10 @@ def parse(raw: dict, source: str = "<profile>") -> Profile:
     if client != "pi":
         given = [k for k in PI_ONLY if k in raw]
         if given:
-            raise ProfileError(f"{source}: {', '.join(given)} only apply to client \"pi\"; {client} uses its CLI's "
-                               f"own endpoint and model catalog")
+            raise ProfileError(
+                f'{source}: {", ".join(given)} only apply to client "pi"; {client} uses its CLI\'s '
+                f"own endpoint and model catalog"
+            )
     _take(raw, source, allowed + (PI_ONLY if client == "pi" else ()))
     model = _str(raw, "model", source)
     effort = raw.get("effort")
@@ -207,8 +220,9 @@ def parse(raw: dict, source: str = "<profile>") -> Profile:
         return Profile(client, model, effort, fallback, source=source)
     endpoint = _endpoint(raw.get("endpoint"), source)
     routing = _routing(raw["routing"], source, endpoint) if "routing" in raw else None
-    return Profile(client, model, effort, None, endpoint, routing, _model_info(raw.get("model_info"), source),
-                   source=source)
+    return Profile(
+        client, model, effort, None, endpoint, routing, _model_info(raw.get("model_info"), source), source=source
+    )
 
 
 def load(path: Path | str) -> Profile:
@@ -226,13 +240,28 @@ def models_json(p: Profile) -> dict:
     if p.client != "pi" or p.endpoint is None or p.model_info is None:
         raise ProfileError(f"{p.source}: models.json is for pi profiles only")
     mi = p.model_info
-    model: dict = {"id": p.model, "name": p.model, "api": API, "reasoning": mi.reasoning, "input": list(mi.input),
-                   "contextWindow": mi.context_window, "maxTokens": mi.max_tokens,
-                   "cost": {COST_KEYS[k]: mi.cost.get(k, 0.0) for k in COST_KEYS}}
+    model: dict = {
+        "id": p.model,
+        "name": p.model,
+        "api": API,
+        "reasoning": mi.reasoning,
+        "input": list(mi.input),
+        "contextWindow": mi.context_window,
+        "maxTokens": mi.max_tokens,
+        "cost": {COST_KEYS[k]: mi.cost.get(k, 0.0) for k in COST_KEYS},
+    }
     if mi.thinking_level_map:
         model["thinkingLevelMap"] = dict(mi.thinking_level_map)
     compat = dict(mi.compat) | ({"openRouterRouting": dict(p.routing)} if p.routing is not None else {})
     if compat:
         model["compat"] = compat
-    return {"providers": {p.endpoint.provider: {"baseUrl": p.endpoint.base_url, "api": API,
-                                                "apiKey": "${" + p.endpoint.api_key_env + "}", "models": [model]}}}
+    return {
+        "providers": {
+            p.endpoint.provider: {
+                "baseUrl": p.endpoint.base_url,
+                "api": API,
+                "apiKey": "${" + p.endpoint.api_key_env + "}",
+                "models": [model],
+            }
+        }
+    }

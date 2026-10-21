@@ -17,7 +17,10 @@ def test_sessions_join_history_end_line_and_latency(store: RunStore):
     rows = store.sessions(PT)
     assert [r["session"] for r in rows] == ["S094", "S095", "S096"]
     assert [(r["outcome"], r["cost_usd"], r["turns"]) for r in rows] == [
-        ("success", 5.33, 179), ("success", 8.58, 225), ("error_during_execution", 8.12, 305)]
+        ("success", 5.33, 179),
+        ("success", 8.58, 225),
+        ("error_during_execution", 8.12, 305),
+    ]
     for r in rows:
         assert r["started"] < r["ended"] and r["model"] == "opus"
         assert r["latency"]["apm"] is not None and r["points"] is not None
@@ -41,8 +44,10 @@ def test_memory_tree_and_file(store: RunStore):
     assert store.memory_file(PT, "missing.md") is None
 
 
-@pytest.mark.parametrize("rel", ["../../../runtime/runner.status.json", "/etc/passwd", ".git/config",
-                                 "snapshots/../../HANDOFF.sh", "HANDOFF"])
+@pytest.mark.parametrize(
+    "rel",
+    ["../../../runtime/runner.status.json", "/etc/passwd", ".git/config", "snapshots/../../HANDOFF.sh", "HANDOFF"],
+)
 def test_memory_path_refused(store: RunStore, rel: str):
     with pytest.raises(StoreError):
         store.memory_file(PT, rel)
@@ -56,7 +61,9 @@ def test_bad_playthrough_name_refused(store: RunStore):
 def test_memory_log_without_and_with_git(store: RunStore, git_memory: Path):
     log = store.memory_log(PT)
     assert [(c["subject"], c["t"], c["session"]) for c in log] == [
-        ("S096 memory-keeper: HANDOFF.md", 1792312786, "S096"), ("S095", 1792311056, "S095")]
+        ("S096 memory-keeper: HANDOFF.md", 1792312786, "S096"),
+        ("S095", 1792311056, "S095"),
+    ]
     assert [c["session"] for c in store.memory_log(PT, rel="objectives.md")] == ["S095"]
 
 

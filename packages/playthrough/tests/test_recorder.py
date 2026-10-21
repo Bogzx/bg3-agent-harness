@@ -48,7 +48,7 @@ def test_args_full_display_x264_no_live(tmp_path: Path):
 def test_args_source_override_and_bad_encoder(tmp_path: Path):
     spec = RecordSpec(tmp_path, source=("-f", "lavfi", "-i", "testsrc"), duration_s=3)
     a = R.ffmpeg_args(spec, Capture(), "p")
-    assert "x11grab" not in a and a[a.index("-t") + 1:a.index("-t") + 6] == ["3", "-f", "lavfi", "-i", "testsrc"]
+    assert "x11grab" not in a and a[a.index("-t") + 1 : a.index("-t") + 6] == ["3", "-f", "lavfi", "-i", "testsrc"]
     with pytest.raises(ValueError):
         R.ffmpeg_args(RecordSpec(tmp_path, encoder="vp9"), Capture(), "p")
 
@@ -62,7 +62,10 @@ def test_segment_list_and_run_rows():
     files = ["rec-1-0002.mp4", "rec-1-0000.mp4", "rec-1-0001.mp4", "rec-2-0000.mp4", "rec-1.csv"]
     rows = R.run_segments("rec-1", 1000.0, listed, files, {"rec-1-0002.mp4": 7}, None)
     assert [(r["file"], r["start"], r["end"]) for r in rows] == [
-        ("rec-1-0000.mp4", 1000.0, 1600.0), ("rec-1-0001.mp4", 1600.0, 2200.0), ("rec-1-0002.mp4", 2200.0, None)]
+        ("rec-1-0000.mp4", 1000.0, 1600.0),
+        ("rec-1-0001.mp4", 1600.0, 2200.0),
+        ("rec-1-0002.mp4", 2200.0, None),
+    ]
     assert rows[2]["bytes"] == 7 and rows[0]["bytes"] == 0
     crashed = R.run_segments("rec-1", 1000.0, [], ["rec-1-0000.mp4"], {}, 1042.5)
     assert crashed[0]["end"] == 1042.5
@@ -95,7 +98,7 @@ def test_mjpeg_parser_split_chunks():
     p = R.MjpegParser()
     frames = []
     for i in range(0, len(data), 7):
-        frames += p.feed(data[i:i + 7])
+        frames += p.feed(data[i : i + 7])
     assert frames == [b"abc", b"hello"]
 
 
@@ -109,13 +112,13 @@ def test_live_frame_wait():
 
 
 def test_find_window():
-    tree = '''
+    tree = """
      0x200001 "Steam": ("steam" "Steam")  800x600+0+0  +0+0
      0x2a00007 "Baldur's Gate 3 (4.1.1.6758295)": ("bg3" "bg3")  1920x1080+0+0  +0+0
      0x2a00003 "Baldur's Gate 3": ("bg3" "bg3")  10x10+0+0  +0+0
-    '''
+    """
     assert R.find_window(tree) == "0x2a00007"
-    assert R.find_window("0x1 \"Konsole\": ()  10x10+0+0") is None
+    assert R.find_window('0x1 "Konsole": ()  10x10+0+0') is None
 
 
 def test_game_probe_modes():
@@ -174,8 +177,14 @@ def fake_env(monkeypatch):
 
 def make(tmp_path: Path, clock: Clock, game: dict, guard: dict | None = None, **kw) -> Recorder:
     guard = guard if guard is not None else {"why": None}
-    return Recorder(RecordSpec(tmp_path / "video"), probe=lambda: game.get("cap"), clock=clock,
-                    guard=lambda: guard["why"], ffmpeg=FAKE, **kw)
+    return Recorder(
+        RecordSpec(tmp_path / "video"),
+        probe=lambda: game.get("cap"),
+        clock=clock,
+        guard=lambda: guard["why"],
+        ffmpeg=FAKE,
+        **kw,
+    )
 
 
 def test_recorder_follows_the_game_and_indexes(tmp_path: Path, fake_env):
@@ -191,8 +200,10 @@ def test_recorder_follows_the_game_and_indexes(tmp_path: Path, fake_env):
     rec.poll()
     idx = json.loads((tmp_path / "video" / "index.json").read_text())
     assert [(s["file"], s["start"], s["end"]) for s in idx["segments"]] == [
-        ("rec-1000-0000.mp4", 1000.0, 1600.0), ("rec-1000-0001.mp4", 1600.0, 2200.0),
-        ("rec-1000-0002.mp4", 2200.0, None)]
+        ("rec-1000-0000.mp4", 1000.0, 1600.0),
+        ("rec-1000-0001.mp4", 1600.0, 2200.0),
+        ("rec-1000-0002.mp4", 2200.0, None),
+    ]
     game["cap"] = None
     clock.t = 3000.0
     rec.poll()  # game gone: SIGTERM, the fake lists the last segment like ffmpeg does
@@ -296,8 +307,13 @@ def test_recorder_keeps_the_index_across_restarts(tmp_path: Path, fake_env):
 @pytest.mark.skipif(shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None, reason="needs ffmpeg")
 def test_real_ffmpeg_writes_a_playable_mp4(tmp_path: Path):
     out = tmp_path / "video"
-    spec = RecordSpec(out, encoder="libx264", segment_s=2, duration_s=3,
-                      source=("-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=15"))
+    spec = RecordSpec(
+        out,
+        encoder="libx264",
+        segment_s=2,
+        duration_s=3,
+        source=("-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=15"),
+    )
     rec = Recorder(spec, probe=lambda: Capture(), clock=time.time)
     rec.poll()
     assert rec.run.proc.wait(60) == 0
@@ -308,14 +324,33 @@ def test_real_ffmpeg_writes_a_playable_mp4(tmp_path: Path):
     assert rec.live.data[:2] == b"\xff\xd8"
     total = 0.0
     for s in segs:
-        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                                "stream=codec_name,width,height,pix_fmt:format=duration", "-of", "json",
-                                str(out / s["file"])], capture_output=True, text=True, check=True, env=os.environ)
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,width,height,pix_fmt:format=duration",
+                "-of",
+                "json",
+                str(out / s["file"]),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=os.environ,
+        )
         info = json.loads(probe.stdout)
         st = info["streams"][0]
         assert (st["codec_name"], st["width"], st["height"], st["pix_fmt"]) == ("h264", 1280, 720, "yuv420p")
         total += float(info["format"]["duration"])
     assert 2.5 <= total <= 3.5
-    dec = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out / segs[0]["file"]), "-f", "null", "-"],
-                         capture_output=True, text=True, check=False)
+    dec = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(out / segs[0]["file"]), "-f", "null", "-"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert dec.returncode == 0 and dec.stderr == ""

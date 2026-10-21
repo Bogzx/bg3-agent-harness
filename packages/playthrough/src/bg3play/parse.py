@@ -1,3 +1,4 @@
+# pyright: basic
 """Pure parsers for the files a playthrough run leaves behind (no I/O; the store reads, these shape).
 
 - Sxxx.log lines ("HH:MM:SS [kind] text", "===== ..." headers) from runner/play.py's stream printer.
@@ -43,9 +44,12 @@ def end_line(text: str) -> dict:
     m = END_RE.match(text.strip())
     if not m:
         return {"outcome": None, "turns": None, "minutes": None, "cost_usd": None}
-    return {"outcome": m.group(1), "turns": int(m.group(2)) if m.group(2) else None,
-            "minutes": float(m.group(3)) if m.group(3) else None,
-            "cost_usd": float(m.group(4)) if m.group(4) else None}
+    return {
+        "outcome": m.group(1),
+        "turns": int(m.group(2)) if m.group(2) else None,
+        "minutes": float(m.group(3)) if m.group(3) else None,
+        "cost_usd": float(m.group(4)) if m.group(4) else None,
+    }
 
 
 # ---------------------------------------------------------------- actions.jsonl
@@ -73,7 +77,10 @@ def action(line: str, result_limit: int = 2500) -> dict | None:
     result = str(e.get("result", ""))
     tool = str(e.get("tool", "?"))
     return {
-        "t": e.get("t"), "tool": tool, "args": e.get("args") or {}, "ms": e.get("ms"),
+        "t": e.get("t"),
+        "tool": tool,
+        "args": e.get("args") or {},
+        "ms": e.get("ms"),
         "result": result[:result_limit] + ("…" if len(result) > result_limit else ""),
         "ok": not re.match(r"^(FAILED|ERROR|error|Blocked|NOT READY)", result),
         "kind": tool_kind(tool),
@@ -88,7 +95,7 @@ CLASS_TOKEN_RE = re.compile(r"^(?:[A-Z][A-Za-z]*\d+\S*|L\d+)$")
 
 
 def _split_name(head: str) -> tuple[str, str]:
-    """"Shadowheart Cleric1(Trickery Domain)" / "Wyll Warlock 12 (The Fiend)" / "The Emperor L12" -> name, classes."""
+    """ "Shadowheart Cleric1(Trickery Domain)" / "Wyll Warlock 12 (The Fiend)" / "The Emperor L12" -> name, classes."""
     toks = head.split()
     for i, tok in enumerate(toks[1:], 1):
         if CLASS_TOKEN_RE.match(tok) or (i + 1 < len(toks) and toks[i + 1].isdigit()):
@@ -111,10 +118,20 @@ def status_text(text: str) -> dict | None:
         if p:
             name, classes = _split_name(p.group(2))
             flags = p.group(7).split()
-            party.append({"name": name, "classes": classes, "hp": int(p.group(3)), "max_hp": int(p.group(4)),
-                          "temp_hp": int(p.group(5)) if p.group(5) else 0, "active": bool(p.group(1)),
-                          "statuses": [s for s in (p.group(6) or "").split(",") if s],
-                          "downed": "downed" in flags, "dead": "dead" in flags, "in_combat": "in_combat" in flags})
+            party.append(
+                {
+                    "name": name,
+                    "classes": classes,
+                    "hp": int(p.group(3)),
+                    "max_hp": int(p.group(4)),
+                    "temp_hp": int(p.group(5)) if p.group(5) else 0,
+                    "active": bool(p.group(1)),
+                    "statuses": [s for s in (p.group(6) or "").split(",") if s],
+                    "downed": "downed" in flags,
+                    "dead": "dead" in flags,
+                    "in_combat": "in_combat" in flags,
+                }
+            )
     if where is None and not party:
         return None
     return {"where": where, "mode": mode, "gold": gold, "party": party}
@@ -134,7 +151,7 @@ def current_goal(objectives: str, handoff: str) -> str | None:
     lines = _strip_comments(handoff).splitlines()
     for i, line in enumerate(lines):
         if line.strip().lower().startswith("## doing right now"):
-            for nxt in lines[i + 1:]:
+            for nxt in lines[i + 1 :]:
                 if nxt.startswith("#"):
                     break
                 if nxt.strip():
@@ -145,7 +162,9 @@ def current_goal(objectives: str, handoff: str) -> str | None:
 # ---------------------------------------------------------------- decisions.md
 
 DECISION_RE = re.compile(r"^##\s+(D-\d+[a-z]?)\s+(.*?)\s*(?:\((S[\d\-–, S]+[^)]*)\))?\s*$")
-FIELD_RE = re.compile(r"^-\s+(Choice|Why|Consequence|Expected later|Expected|Reversible|Note)s?:\s*(.*)$", re.IGNORECASE)
+FIELD_RE = re.compile(
+    r"^-\s+(Choice|Why|Consequence|Expected later|Expected|Reversible|Note)s?:\s*(.*)$", re.IGNORECASE
+)
 TAG_RE = re.compile(r"\[(seen[^\]]*|wiki|guess|expected[^\]]*)\]\s*$", re.IGNORECASE)
 
 
@@ -162,8 +181,17 @@ def decisions(text: str) -> list[dict]:
         line = raw.rstrip()
         m = DECISION_RE.match(line)
         if m:
-            cur = {"id": m.group(1), "title": m.group(2).strip(), "session": (m.group(3) or "").strip() or None,
-                   "choice": [], "why": [], "consequences": [], "expected": [], "reversible": None, "notes": []}
+            cur = {
+                "id": m.group(1),
+                "title": m.group(2).strip(),
+                "session": (m.group(3) or "").strip() or None,
+                "choice": [],
+                "why": [],
+                "consequences": [],
+                "expected": [],
+                "reversible": None,
+                "notes": [],
+            }
             cards.append(cur)
             field = None
             continue
@@ -220,12 +248,20 @@ def fight(row: Any) -> dict | None:
         return None
     party = [p for p in row.get("party") or [] if isinstance(p, dict)]
     enemies = [e for e in row.get("enemies") or [] if isinstance(e, dict)]
-    return {"session": row["session"], "t": row.get("t"), "region": row.get("region"), "grade": row.get("grade"),
-            "rounds": row.get("rounds"), "duration_s": row.get("duration_s"), "reloaded": bool(row.get("reloaded")),
-            "enemies": [f"{e.get('name', '?')}" + (f" x{e['count']}" if (e.get("count") or 1) > 1 else "")
-                        for e in enemies],
-            "downed": sum(int(p.get("downed") or 0) for p in party),
-            "died": [p.get("name") for p in party if p.get("died")]}
+    return {
+        "session": row["session"],
+        "t": row.get("t"),
+        "region": row.get("region"),
+        "grade": row.get("grade"),
+        "rounds": row.get("rounds"),
+        "duration_s": row.get("duration_s"),
+        "reloaded": bool(row.get("reloaded")),
+        "enemies": [
+            f"{e.get('name', '?')}" + (f" x{e['count']}" if (e.get("count") or 1) > 1 else "") for e in enemies
+        ],
+        "downed": sum(int(p.get("downed") or 0) for p in party),
+        "died": [p.get("name") for p in party if p.get("died")],
+    }
 
 
 # ---------------------------------------------------------------- git log

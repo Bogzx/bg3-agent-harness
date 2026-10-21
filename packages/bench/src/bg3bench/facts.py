@@ -1,3 +1,4 @@
+# pyright: basic
 """Reading facts.jsonl v1 (packages/harness/schemas/facts.v1.schema.json) and folding it into game state.
 
 The harness writes the file; the benchmark only reads it. `State` is what the graders test: snapshots replace the

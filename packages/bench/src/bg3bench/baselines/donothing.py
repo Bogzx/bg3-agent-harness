@@ -1,3 +1,4 @@
+# pyright: basic
 """The do-nothing baseline: start the session, wait for the deadline, end the session. No game action at all.
 
     python -m bg3bench.baselines.donothing --mcp-config play/.mcp.json [--deadline EPOCH]
@@ -49,7 +50,7 @@ async def play(
 
 
 def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - process entry
-    args = parser(__doc__.splitlines()[0]).parse_args(argv)
+    args = parser((__doc__ or "").splitlines()[0]).parse_args(argv)
     return serve(lambda s, p, d: play(s, p, d, session_start=not args.no_session_start, now=time.time), args, ALLOWED)
 
 

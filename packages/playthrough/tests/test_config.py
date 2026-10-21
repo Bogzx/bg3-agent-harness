@@ -6,31 +6,38 @@ import pytest
 
 from bg3play import config as C
 
-BRIEF = ("A level-headed half-elf fighter, once a Baldur's Gate city watch sergeant: protects the weak, keeps "
-         "promises, distrusts mind magic and anyone who offers easy power.")
+BRIEF = (
+    "A level-headed half-elf fighter, once a Baldur's Gate city watch sergeant: protects the weak, keeps "
+    "promises, distrusts mind magic and anyone who offers easy power."
+)
 # the profile.json shapes on disk on 2026-10-21 (playthroughs/*/profile.json), plus the documented optional keys
 OLD_PROFILES = [
     {"character": {"brief": BRIEF, "roleplay": "strict", "name": "Corran Vell"}},
     {"character": {"brief": BRIEF, "roleplay": "strict"}},
-    {"character": {"brief": "a dwarf cleric", "roleplay": "light", "constraints": "no stealing"},
-     "difficulty": "Tactician"},
-    {"character": {"brief": "a gnome bard"}},                         # roleplay missing -> strict
-    {"character": {"brief": "a gnome bard", "roleplay": "wild"}},     # bad roleplay -> strict (load_profile)
-    {"character": {"brief": "   "}, "difficulty": "Balanced"},        # no brief -> no character
-    {"difficulty": "Nightmare"},                                      # unknown difficulty dropped
+    {
+        "character": {"brief": "a dwarf cleric", "roleplay": "light", "constraints": "no stealing"},
+        "difficulty": "Tactician",
+    },
+    {"character": {"brief": "a gnome bard"}},  # roleplay missing -> strict
+    {"character": {"brief": "a gnome bard", "roleplay": "wild"}},  # bad roleplay -> strict (load_profile)
+    {"character": {"brief": "   "}, "difficulty": "Balanced"},  # no brief -> no character
+    {"difficulty": "Nightmare"},  # unknown difficulty dropped
     {},
 ]
 
 
 def full_config() -> C.PlaythroughConfig:
     return C.PlaythroughConfig(
-        name="ilse", difficulty="Balanced",
+        name="ilse",
+        difficulty="Balanced",
         agent=C.Agent(profile="or-deepseek", client="pi", model="deepseek/deepseek-v4", effort="high"),
-        character=C.Character(brief='a "pious" dwarf\ncleric \\ with a tab\t', roleplay="light", name="Ilse",
-                              constraints="never steal"),
-        session=C.Session(minutes=45.0, hours=8.5), keeper=C.Keeper(enabled=False, model="sonnet", effort="medium",
-                                                                    minutes=3.0),
-        recording=C.Recording(enabled=False, fps=10, height=1080))
+        character=C.Character(
+            brief='a "pious" dwarf\ncleric \\ with a tab\t', roleplay="light", name="Ilse", constraints="never steal"
+        ),
+        session=C.Session(minutes=45.0, hours=8.5),
+        keeper=C.Keeper(enabled=False, model="sonnet", effort="medium", minutes=3.0),
+        recording=C.Recording(enabled=False, fps=10, height=1080),
+    )
 
 
 def test_round_trip_full():
@@ -57,10 +64,16 @@ def test_save_load_files(tmp_path: Path):
     assert sorted(p.name for p in d.iterdir()) == ["playthrough.toml"]  # no temp file left behind
 
 
-@pytest.mark.parametrize("key,section,value", [
-    ("client", "agent", "copilot"), ("effort", "agent", "extreme"), ("roleplay", "character", "method"),
-    ("effort", "keeper", ""), ("difficulty", None, "Honour"),
-])
+@pytest.mark.parametrize(
+    "key,section,value",
+    [
+        ("client", "agent", "copilot"),
+        ("effort", "agent", "extreme"),
+        ("roleplay", "character", "method"),
+        ("effort", "keeper", ""),
+        ("difficulty", None, "Honour"),
+    ],
+)
 def test_bad_enum_rejected(key, section, value):
     data = {"v": 1, "name": "x"}
     if section:
@@ -71,25 +84,28 @@ def test_bad_enum_rejected(key, section, value):
         C.validate(data)
 
 
-@pytest.mark.parametrize("data,match", [
-    ({"v": 2, "name": "x"}, "v:"),
-    ({"name": "x"}, "v:"),
-    ({"v": 1}, "name"),
-    ({"v": 1, "name": "../etc"}, "name"),
-    ({"v": 1, "name": "x", "sesion": {}}, "unknown key"),
-    ({"v": 1, "name": "x", "agent": {"modle": "opus"}}, "agent: unknown"),
-    ({"v": 1, "name": "x", "agent": "opus"}, "agent: expected a table"),
-    ({"v": 1, "name": "x", "session": {"minutes": "60"}}, "session.minutes: expected float"),
-    ({"v": 1, "name": "x", "session": {"minutes": 0}}, "session.minutes"),
-    ({"v": 1, "name": "x", "session": {"max_cost_usd": -1}}, "session.max_cost_usd: must be >= 0"),
-    ({"v": 1, "name": "x", "session": {"hours": -1}}, "session.hours"),
-    ({"v": 1, "name": "x", "recording": {"enabled": 1}}, "recording.enabled: expected bool"),
-    ({"v": 1, "name": "x", "recording": {"fps": 15.0}}, "recording.fps: expected int"),
-    ({"v": 1, "name": "x", "recording": {"fps": 0}}, "recording.fps"),
-    ({"v": 1, "name": "x", "recording": {"height": 99999}}, "recording.height"),
-    ({"v": 1, "name": "x", "agent": {"profile": "a b"}}, "agent.profile"),
-    ({"v": 1, "name": "x", "agent": {"model": " "}}, "agent.model"),
-])
+@pytest.mark.parametrize(
+    "data,match",
+    [
+        ({"v": 2, "name": "x"}, "v:"),
+        ({"name": "x"}, "v:"),
+        ({"v": 1}, "name"),
+        ({"v": 1, "name": "../etc"}, "name"),
+        ({"v": 1, "name": "x", "sesion": {}}, "unknown key"),
+        ({"v": 1, "name": "x", "agent": {"modle": "opus"}}, "agent: unknown"),
+        ({"v": 1, "name": "x", "agent": "opus"}, "agent: expected a table"),
+        ({"v": 1, "name": "x", "session": {"minutes": "60"}}, "session.minutes: expected float"),
+        ({"v": 1, "name": "x", "session": {"minutes": 0}}, "session.minutes"),
+        ({"v": 1, "name": "x", "session": {"max_cost_usd": -1}}, "session.max_cost_usd: must be >= 0"),
+        ({"v": 1, "name": "x", "session": {"hours": -1}}, "session.hours"),
+        ({"v": 1, "name": "x", "recording": {"enabled": 1}}, "recording.enabled: expected bool"),
+        ({"v": 1, "name": "x", "recording": {"fps": 15.0}}, "recording.fps: expected int"),
+        ({"v": 1, "name": "x", "recording": {"fps": 0}}, "recording.fps"),
+        ({"v": 1, "name": "x", "recording": {"height": 99999}}, "recording.height"),
+        ({"v": 1, "name": "x", "agent": {"profile": "a b"}}, "agent.profile"),
+        ({"v": 1, "name": "x", "agent": {"model": " "}}, "agent.model"),
+    ],
+)
 def test_invalid_rejected(data, match):
     with pytest.raises(C.ConfigError, match=match):
         C.validate(data)
@@ -123,7 +139,8 @@ def test_parse_profile_json_matches_load_profile_contract():
     assert C.parse_profile_json("not json") == {}
     assert C.parse_profile_json("[1]") == {}
     assert C.parse_profile_json('{"character": {"brief": "x", "roleplay": "bad"}}') == {
-        "character": {"brief": "x", "roleplay": "strict"}}
+        "character": {"brief": "x", "roleplay": "strict"}
+    }
     assert C.parse_profile_json('{"character": {"name": "A"}, "difficulty": "Balanced"}') == {"difficulty": "Balanced"}
 
 

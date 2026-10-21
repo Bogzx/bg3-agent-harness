@@ -53,9 +53,20 @@ def site(tmp_path_factory) -> Iterator[dict]:
     git(mem, "add", "-A")
     git(mem, "commit", "-q", "-m", "S096 memory-keeper: decisions.md", date=1792312786)
     video = run / "runtime" / "video"
-    rec = Recorder(RecordSpec(video, width=640, height=360, encoder="libx264", segment_s=2, duration_s=4, live=False,
-                              source=("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=15")),
-                   probe=lambda: Capture(), clock=lambda: VIDEO_AT)
+    rec = Recorder(
+        RecordSpec(
+            video,
+            width=640,
+            height=360,
+            encoder="libx264",
+            segment_s=2,
+            duration_s=4,
+            live=False,
+            source=("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=15"),
+        ),
+        probe=lambda: Capture(),
+        clock=lambda: VIDEO_AT,
+    )
     rec.poll()
     assert rec.run.proc.wait(60) == 0
     rec.poll()
@@ -63,17 +74,31 @@ def site(tmp_path_factory) -> Iterator[dict]:
     hub = Hub(store, generation="e2e")
     hub.poll()
     runner = InstantRunner()
-    sup = Supervisor(runner, NoKeeper(), store.runtime, store.playthroughs_dir, time.time,
-                     lambda v: hub.publish("supervisor", v), played=lambda pt: len(store.session_logs(pt)))
+    sup = Supervisor(
+        runner,
+        NoKeeper(),
+        store.runtime,
+        store.playthroughs_dir,
+        time.time,
+        lambda v: hub.publish("supervisor", v),
+        played=lambda pt: len(store.session_logs(pt)),
+    )
     profiles = root / "profiles"
     profiles.mkdir()
     (profiles / "codex.toml").write_text('client = "codex"\nmodel = "gpt-5.5"\n')
-    shutil.copy(FIXTURE.parents[3].parent / "profiles" / "deepseek-flash.toml", profiles)   # the repo's pi profile
-    srv = serve(App(store, hub, DEFAULT_WEB, keepalive_s=5, video_dir=video, supervisor=sup, profiles=profiles),
-                "127.0.0.1", 0)
+    shutil.copy(FIXTURE.parents[3].parent / "profiles" / "deepseek-flash.toml", profiles)  # the repo's pi profile
+    srv = serve(
+        App(store, hub, DEFAULT_WEB, keepalive_s=5, video_dir=video, supervisor=sup, profiles=profiles), "127.0.0.1", 0
+    )
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield {"url": f"http://127.0.0.1:{srv.server_address[1]}", "store": store, "hub": hub, "runner": runner,
-           "sup": sup, "video": video}
+    yield {
+        "url": f"http://127.0.0.1:{srv.server_address[1]}",
+        "store": store,
+        "hub": hub,
+        "runner": runner,
+        "sup": sup,
+        "video": video,
+    }
     hub.close()
     srv.shutdown()
     srv.server_close()

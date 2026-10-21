@@ -9,8 +9,20 @@ from . import positions as POS
 from .store import RunStore
 
 API_VERSION = 1
-RUNNER_KEYS = ("session", "started", "deadline", "hard_stop", "run_end", "session_ended", "updated", "model",
-               "effort", "session_minutes", "status_line", "alert")
+RUNNER_KEYS = (
+    "session",
+    "started",
+    "deadline",
+    "hard_stop",
+    "run_end",
+    "session_ended",
+    "updated",
+    "model",
+    "effort",
+    "session_minutes",
+    "status_line",
+    "alert",
+)
 LOG_KINDS_SHOWN = ("say", "tool", "result", "progress", "end", "error", "runner", "init", "header")
 
 
@@ -33,10 +45,16 @@ def playthroughs(store: RunStore) -> dict:
     for pt in store.playthroughs():
         ss = store.sessions(pt)
         costs = [s["cost_usd"] for s in ss if s["cost_usd"] is not None]
-        rows.append({"name": pt, "current": pt == cur, "sessions": len(ss),
-                     "last_session": ss[-1]["session"] if ss else None,
-                     "cost_usd": round(sum(costs), 2) if costs else None,
-                     "minutes": round(sum(s["minutes"] or 0 for s in ss), 1)})
+        rows.append(
+            {
+                "name": pt,
+                "current": pt == cur,
+                "sessions": len(ss),
+                "last_session": ss[-1]["session"] if ss else None,
+                "cost_usd": round(sum(costs), 2) if costs else None,
+                "minutes": round(sum(s["minutes"] or 0 for s in ss), 1),
+            }
+        )
     return _v({"playthroughs": rows})
 
 
@@ -64,25 +82,32 @@ def watch(store: RunStore, pt: str, log_entries: int = 300, action_rows: int = 1
         # actions.jsonl is shared by every playthrough: keep this one's session windows
         t0 = min((s["started"] for s in ss if s["started"]), default=None)
         t1 = max((s["ended"] for s in ss if s["ended"]), default=None)
-        actions = [a for a in actions if isinstance(a["t"], (int, float))
-                   and (t0 is None or a["t"] >= t0) and (t1 is None or a["t"] <= t1)]
+        actions = [
+            a
+            for a in actions
+            if isinstance(a["t"], (int, float)) and (t0 is None or a["t"] >= t0) and (t1 is None or a["t"] <= t1)
+        ]
     costs = [s["cost_usd"] for s in ss if s["cost_usd"] is not None]
     last = ss[-1] if ss else None
     shot = store.latest_screenshot()
-    return _v({
-        "playthrough": pt,
-        "runner": runner_view(store) if pt == store.current() else None,
-        "session": log.stem if log else None,
-        "log": entries,
-        "actions": [dict(a, result=P.scrub(a["result"])) for a in actions[-action_rows:]],
-        "party": _party(actions, store.memory_text(pt, "snapshots/status.md")),
-        "goal": P.current_goal(store.memory_text(pt, "objectives.md"), store.memory_text(pt, "HANDOFF.md")),
-        "cost": {"total_usd": round(sum(costs), 2) if costs else None,
-                 "last_session_usd": last["cost_usd"] if last else None,
-                 "sessions": len(ss)},
-        "latency": (last or {}).get("latency"),
-        "screenshot": {"t": shot.stat().st_mtime, "name": shot.name} if shot else None,
-    })
+    return _v(
+        {
+            "playthrough": pt,
+            "runner": runner_view(store) if pt == store.current() else None,
+            "session": log.stem if log else None,
+            "log": entries,
+            "actions": [dict(a, result=P.scrub(a["result"])) for a in actions[-action_rows:]],
+            "party": _party(actions, store.memory_text(pt, "snapshots/status.md")),
+            "goal": P.current_goal(store.memory_text(pt, "objectives.md"), store.memory_text(pt, "HANDOFF.md")),
+            "cost": {
+                "total_usd": round(sum(costs), 2) if costs else None,
+                "last_session_usd": last["cost_usd"] if last else None,
+                "sessions": len(ss),
+            },
+            "latency": (last or {}).get("latency"),
+            "screenshot": {"t": shot.stat().st_mtime, "name": shot.name} if shot else None,
+        }
+    )
 
 
 def memory_tree(store: RunStore, pt: str) -> dict:
@@ -117,10 +142,17 @@ def timeline(store: RunStore, pt: str) -> dict:
         n = P.session_number(c["session"])
         c["session_id"] = f"S{n:03d}" if n is not None else None
         c["t"] = starts.get(c["session_id"])
-    return _v({"playthrough": pt,
-               "sessions": [{"session": s["session"], "started": s["started"], "minutes": s["minutes"],
-                             "outcome": s["outcome"]} for s in ss],
-               "decisions": cards, "fights": store.fights(pt)})
+    return _v(
+        {
+            "playthrough": pt,
+            "sessions": [
+                {"session": s["session"], "started": s["started"], "minutes": s["minutes"], "outcome": s["outcome"]}
+                for s in ss
+            ],
+            "decisions": cards,
+            "fights": store.fights(pt),
+        }
+    )
 
 
 def positions(store: RunStore, pt: str, level: str | None = None) -> dict:

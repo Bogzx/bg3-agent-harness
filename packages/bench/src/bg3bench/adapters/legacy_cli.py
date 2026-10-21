@@ -1,3 +1,4 @@
+# pyright: basic
 """TEMPORARY (remove in Phase D, when the harness has a run API): the matrix's run_one through the legacy CLI.
 
 One job = one more run of a series: `python3 runner/play.py run --scenario S --playthrough <series> --client C

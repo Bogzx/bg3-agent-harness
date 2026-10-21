@@ -5,6 +5,7 @@ deliberate change, then review the diff).
 
     python3 -m unittest runner/test_profiles.py
 """
+
 from __future__ import annotations
 
 import json
@@ -22,9 +23,14 @@ EXAMPLES = REPO / "profiles"
 GOLDEN = Path(__file__).resolve().parent / "fixtures" / "pi"
 
 PI = {
-    "client": "pi", "model": "vendor/model-1", "effort": "medium",
-    "endpoint": {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1",
-                 "api_key_env": "OPENROUTER_API_KEY"},
+    "client": "pi",
+    "model": "vendor/model-1",
+    "effort": "medium",
+    "endpoint": {
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY",
+    },
     "routing": {"only": ["vendor"]},
     "model_info": {"input": ["text", "image"], "reasoning": True, "context_window": 200000, "max_tokens": 16000},
 }
@@ -71,8 +77,9 @@ class Parse(unittest.TestCase):
 
     def test_pi_profile(self):
         p = PR.parse(pi(), "t.toml")
-        self.assertEqual((p.client, p.model, p.effort, p.pi_model), ("pi", "vendor/model-1", "medium",
-                                                                     "openrouter/vendor/model-1"))
+        self.assertEqual(
+            (p.client, p.model, p.effort, p.pi_model), ("pi", "vendor/model-1", "medium", "openrouter/vendor/model-1")
+        )
         self.assertEqual(p.endpoint, PR.Endpoint("openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"))
         # the pin's defaults: no fallback to another provider, no endpoint that ignores a parameter
         self.assertEqual(p.routing, {"only": ["vendor"], "allow_fallbacks": False, "require_parameters": True})
@@ -86,7 +93,7 @@ class Parse(unittest.TestCase):
     def test_endpoint_keys_rejected_on_non_pi_clients(self):
         for client in ("claude", "codex", "gemini"):
             for key in PR.PI_ONLY:
-                self.err({"client": client, "model": "m", key: PI[key]}, f"{key} only apply to client \"pi\"")
+                self.err({"client": client, "model": "m", key: PI[key]}, f'{key} only apply to client "pi"')
 
     def test_fallback_model_is_claude_only(self):
         self.err({"client": "codex", "model": "m", "fallback_model": "f"}, "unknown key.*fallback_model")
@@ -107,7 +114,7 @@ class Parse(unittest.TestCase):
         self.err(pi(endpoint__base_url="openrouter.ai"), "not an http")
         self.err(pi(endpoint__provider="Open Router"), "not a pi provider id")
         # pi turns on Anthropic cache_control for provider id "openrouter" only
-        self.err(pi(endpoint__provider="bench"), "OpenRouter base_url needs provider = \"openrouter\"")
+        self.err(pi(endpoint__provider="bench"), 'OpenRouter base_url needs provider = "openrouter"')
         self.assertEqual(PR.parse(pi(endpoint__api="openai-completions")).endpoint.provider, "openrouter")
 
     def test_routing_validation(self):
@@ -122,7 +129,7 @@ class Parse(unittest.TestCase):
 
     def test_model_info_validation(self):
         self.err(pi(model_info=None), r"pi needs a \[model_info\]")
-        self.err(pi(model_info__input=["image"]), "include \"text\"")
+        self.err(pi(model_info__input=["image"]), 'include "text"')
         self.err(pi(model_info__input=["text", "audio"]), "input must list")
         self.err(pi(model_info__reasoning="yes"), "reasoning must be true or false")
         self.err(pi(model_info__context_window=0), "context_window must be a positive integer")
@@ -144,20 +151,44 @@ class Parse(unittest.TestCase):
 
 class ModelsJson(unittest.TestCase):
     def test_full_definition(self):
-        raw = pi(model_info__thinking_level_map={"off": "none", "minimal": False},
-                 model_info__cost={"input": 1, "output": 2.5},
-                 model_info__compat={"requiresReasoningContentOnAssistantMessages": True})
-        self.assertEqual(PR.models_json(PR.parse(raw)), {"providers": {"openrouter": {
-            "baseUrl": "https://openrouter.ai/api/v1", "api": "openai-completions",
-            "apiKey": "${OPENROUTER_API_KEY}",   # an env reference: the key is never written
-            "models": [{
-                "id": "vendor/model-1", "name": "vendor/model-1", "api": "openai-completions", "reasoning": True,
-                "input": ["text", "image"], "contextWindow": 200000, "maxTokens": 16000,
-                "cost": {"input": 1.0, "output": 2.5, "cacheRead": 0.0, "cacheWrite": 0.0},
-                "thinkingLevelMap": {"off": "none", "minimal": None},
-                "compat": {"requiresReasoningContentOnAssistantMessages": True,
-                           "openRouterRouting": {"only": ["vendor"], "allow_fallbacks": False,
-                                                 "require_parameters": True}}}]}}})
+        raw = pi(
+            model_info__thinking_level_map={"off": "none", "minimal": False},
+            model_info__cost={"input": 1, "output": 2.5},
+            model_info__compat={"requiresReasoningContentOnAssistantMessages": True},
+        )
+        self.assertEqual(
+            PR.models_json(PR.parse(raw)),
+            {
+                "providers": {
+                    "openrouter": {
+                        "baseUrl": "https://openrouter.ai/api/v1",
+                        "api": "openai-completions",
+                        "apiKey": "${OPENROUTER_API_KEY}",  # an env reference: the key is never written
+                        "models": [
+                            {
+                                "id": "vendor/model-1",
+                                "name": "vendor/model-1",
+                                "api": "openai-completions",
+                                "reasoning": True,
+                                "input": ["text", "image"],
+                                "contextWindow": 200000,
+                                "maxTokens": 16000,
+                                "cost": {"input": 1.0, "output": 2.5, "cacheRead": 0.0, "cacheWrite": 0.0},
+                                "thinkingLevelMap": {"off": "none", "minimal": None},
+                                "compat": {
+                                    "requiresReasoningContentOnAssistantMessages": True,
+                                    "openRouterRouting": {
+                                        "only": ["vendor"],
+                                        "allow_fallbacks": False,
+                                        "require_parameters": True,
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                }
+            },
+        )
 
     def test_no_routing_no_compat(self):
         raw = pi(endpoint__provider="deepseek", endpoint__base_url="https://api.deepseek.com", routing=None)

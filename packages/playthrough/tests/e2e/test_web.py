@@ -1,3 +1,4 @@
+# pyright: basic
 import json
 
 import pytest
@@ -83,8 +84,14 @@ def test_launcher_resume_offer_and_start_a_new_playthrough(page, site):
     expect(page.locator(".state")).to_contain_text("idle")  # the instant runner's session ended at once
     req = site["runner"].requests[-1]
     cfg = req.config
-    assert (req.playthrough, req.session, cfg.agent.profile, cfg.character.brief, cfg.difficulty,
-            cfg.recording.enabled) == ("e2e-new", 1, "codex", "a nervous halfling bard", "Tactician", False)
+    assert (
+        req.playthrough,
+        req.session,
+        cfg.agent.profile,
+        cfg.character.brief,
+        cfg.difficulty,
+        cfg.recording.enabled,
+    ) == ("e2e-new", 1, "codex", "a nervous halfling bard", "Tactician", False)
     assert (site["store"].playthroughs_dir / "e2e-new" / "playthrough.toml").exists()
 
 
@@ -115,7 +122,9 @@ def test_overlay_transparent_and_panel_flags(browser, site):
     expect(page.locator(".box.tool")).to_be_visible()
     assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgba(0, 0, 0, 0)"
     assert page.evaluate("[document.documentElement.scrollWidth, document.documentElement.scrollHeight]") == [
-        1920, 1080]
+        1920,
+        1080,
+    ]
     page.goto(f"{site['url']}/overlay?pt={PT}&panels=party")
     expect(page.locator(".box.party")).to_be_visible()
     expect(page.locator(".box")).to_have_count(1)
@@ -134,8 +143,10 @@ def test_replay_steps_events_and_plays_the_recording(page, site):
     # seek 1.5 s into the recording: the first segment, 1.5 s in
     page.evaluate(f"""() => {{ const r = document.querySelector('input[type=range]');
         r.value = String({VIDEO_AT + 1.5}); r.dispatchEvent(new Event('input', {{bubbles: true}})); }}""")
-    page.wait_for_function("() => { const v = document.querySelector('video');"
-                           " return v && v.readyState >= 2 && !v.seeking && v.currentTime > 0 }")
+    page.wait_for_function(
+        "() => { const v = document.querySelector('video');"
+        " return v && v.readyState >= 2 && !v.seeking && v.currentTime > 0 }"
+    )
     src = page.evaluate("document.querySelector('video').src")
     assert src.endswith("-0000.mp4")
     assert abs(page.evaluate("document.querySelector('video').currentTime") - 1.5) < 0.2

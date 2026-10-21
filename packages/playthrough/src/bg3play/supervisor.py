@@ -28,9 +28,11 @@ HISTORY_VERSION = 1
 STUCK_SESSIONS = 2  # runner/play.py STUCK_SESSIONS
 MAX_CRASHES = 3  # crashed sessions in a row before the loop gives up
 # Coaching text (the app's, not the harness's: app.md §5.7); moves to kit/prompts.py with A1.
-STUCK_NUDGE = ("CHANGE APPROACH: the last {n} sessions ended with no measurable progress. What you've been doing "
-               "isn't working. Run the stuck playbook, write three genuinely different approaches in hypotheses.md "
-               "and pick one you haven't tried; consider parking the blocked objective for another quest or region.")
+STUCK_NUDGE = (
+    "CHANGE APPROACH: the last {n} sessions ended with no measurable progress. What you've been doing "
+    "isn't working. Run the stuck playbook, write three genuinely different approaches in hypotheses.md "
+    "and pick one you haven't tried; consider parking the blocked objective for another quest or region."
+)
 CRASH_NOTE = "The last session ended early ({why}). Load the save from HANDOFF.md and continue from there."
 
 
@@ -101,11 +103,18 @@ def budget_left(cfg: C.PlaythroughConfig, started: float, now: float) -> bool:
 
 # The Launcher's fields -> config keys (section, key); section None = top level.
 LAUNCH_KEYS: dict[str, tuple[str | None, str]] = {
-    "profile": ("agent", "profile"), "client": ("agent", "client"), "model": ("agent", "model"),
-    "effort": ("agent", "effort"), "brief": ("character", "brief"), "roleplay": ("character", "roleplay"),
-    "difficulty": (None, "difficulty"), "session_minutes": ("session", "minutes"), "hours": ("session", "hours"),
+    "profile": ("agent", "profile"),
+    "client": ("agent", "client"),
+    "model": ("agent", "model"),
+    "effort": ("agent", "effort"),
+    "brief": ("character", "brief"),
+    "roleplay": ("character", "roleplay"),
+    "difficulty": (None, "difficulty"),
+    "session_minutes": ("session", "minutes"),
+    "hours": ("session", "hours"),
     "max_cost": ("session", "max_cost_usd"),
-    "keeper": ("keeper", "enabled"), "recording": ("recording", "enabled"),
+    "keeper": ("keeper", "enabled"),
+    "recording": ("recording", "enabled"),
 }
 
 
@@ -230,8 +239,9 @@ class Supervisor:
                     end = "hours budget spent"
                     break
                 n = self.sessions_played(pt, hist) + 1
-                req = SessionRequest(pt, n, cfg, resume=resume or n > 1, notes=notes_for(hist),
-                                     record=cfg.recording.enabled)
+                req = SessionRequest(
+                    pt, n, cfg, resume=resume or n > 1, notes=notes_for(hist), record=cfg.recording.enabled
+                )
                 self._set(session=f"S{n:03d}", detail="playing" + (" (stuck nudge)" if is_stuck(hist) else ""))
                 res = self.runner.run_session(req, self.stop_event)
                 hist.append(asdict(res))

@@ -1,3 +1,4 @@
+# pyright: basic
 """A stub bg3 MCP server for the baseline tests: the tool names the agents use plus forbidden ones, and a log of
 every call (to the file in $STUB_LOG, one JSON line per call). `python stub_server.py` serves it over stdio."""
 

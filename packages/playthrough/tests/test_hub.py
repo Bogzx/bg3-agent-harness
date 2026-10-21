@@ -1,3 +1,4 @@
+# pyright: basic
 import json
 from pathlib import Path
 
@@ -23,7 +24,9 @@ def rt(tmp_path: Path) -> Path:
     runtime = tmp_path / "runtime"
     (runtime / "sessions" / PT).mkdir(parents=True)
     (tmp_path / "playthroughs" / PT / "memory").mkdir(parents=True)
-    (runtime / "runner.status.json").write_text(json.dumps({"playthrough": PT, "session": "S001", "log": "/x/S001.log"}))
+    (runtime / "runner.status.json").write_text(
+        json.dumps({"playthrough": PT, "session": "S001", "log": "/x/S001.log"})
+    )
     (runtime / "actions.jsonl").write_text("")
     (runtime / "sessions" / PT / "S001.log").write_text("===== S001 2026-10-21 10:00:00 claude session x\n")
     return runtime
@@ -52,7 +55,11 @@ def test_first_poll_then_appended_lines_in_order(rt: Path):
     events, reset, last = hub.read("g1-3")
     assert not reset and last == "g1-7"
     assert [(e.type, e.data.get("text") or e.data.get("result")) for e in events] == [
-        ("log", "going north"), ("log", "look {}"), ("action", "r1"), ("action", "r2")]
+        ("log", "going north"),
+        ("log", "look {}"),
+        ("action", "r1"),
+        ("action", "r2"),
+    ]
     assert [e.seq for e in events] == [4, 5, 6, 7]
     assert hub.poll() == 0  # nothing new: no events
 
@@ -177,8 +184,11 @@ def test_full_status_result_also_emits_party(rt: Path):
     hub = make_hub(rt)
     hub.poll()
     status = "WHERE Grove | exploring | gold 5\nPARTY *e1 Tav Fighter1 HP 9/12 []"
-    append(rt / "actions.jsonl", json.dumps({"t": 5.0, "tool": "get_status", "args": {}, "ms": 2, "result": status}),
-           json.dumps({"t": 6.0, "tool": "look", "args": {}, "ms": 2, "result": "e1 Tav moved 3m"}))
+    append(
+        rt / "actions.jsonl",
+        json.dumps({"t": 5.0, "tool": "get_status", "args": {}, "ms": 2, "result": status}),
+        json.dumps({"t": 6.0, "tool": "look", "args": {}, "ms": 2, "result": "e1 Tav moved 3m"}),
+    )
     hub.poll()
     events, _, last = hub.read("g1-3")
     assert types(events) == ["action", "party", "action"]

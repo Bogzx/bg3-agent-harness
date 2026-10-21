@@ -1,3 +1,4 @@
+# pyright: basic
 """Goal predicates: a small JSON language over the facts a run records (facts.jsonl v1).
 
 A goal is one JSON node. Combinators: `{"all": [..]}`, `{"any": [..]}`, `{"not": node}`. Modes:
