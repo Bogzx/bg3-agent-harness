@@ -125,6 +125,13 @@ Where this conflicts with how the code is today, the code moves toward this; new
 - TypeScript (pi extension, app frontend): `npm ci`, `tsc --noEmit`, eslint, vitest; Playwright for browser
   tests. Lua: the existing Docker suites (`tools/dev/test_*.sh`).
 - Pinned versions everywhere: pi via `tools/pi/package.json` + lockfile, bg3le by submodule, the game by buildid.
+- **The offline suite** is two commands from the repo root, the same ones CI runs: `uv run pytest -m "not live"`
+  (bridge, runner, tools, every package; about 9 minutes on dev2) and `bash tools/ci/lua_suites.sh` (every
+  `tools/dev/test_*.sh` and `tools/vis/test_*.sh` under Docker; known-broken suites are listed in it with the
+  reason). TypeScript is checked per package (`npm ci --ignore-scripts`, `tsc --noEmit`, `npm run check`, `npm test`)
+  in `packages/playthrough/web` and `tools/pi`. Tests that need something a fresh clone lacks (a local file, the
+  web build) are skipped with the reason by the root `conftest.py`, never silently. These replace
+  `tools/orchestrator/suite_wt.sh`'s Python part.
 - Secrets only in gitignored `.env` files; tests never need a real key.
 
 ### Tests
