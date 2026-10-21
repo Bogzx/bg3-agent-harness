@@ -26,6 +26,7 @@ from . import config as C
 
 HISTORY_VERSION = 1
 STUCK_SESSIONS = 2  # runner/play.py STUCK_SESSIONS
+MAX_CRASHES = 3  # crashed sessions in a row before the loop gives up
 # Coaching text (the app's, not the harness's: app.md §5.7); moves to kit/prompts.py with A1.
 STUCK_NUDGE = ("CHANGE APPROACH: the last {n} sessions ended with no measurable progress. What you've been doing "
                "isn't working. Run the stuck playbook, write three genuinely different approaches in hypotheses.md "
@@ -239,6 +240,11 @@ class Supervisor:
                     self.keeper.run_keeper(pt, res)
                 if res.outcome == "finished":
                     end = "the story is finished"
+                    break
+                if res.outcome == "stopped":  # also a stop from outside (play.py stop / runtime/STOP)
+                    break
+                if len(hist) >= MAX_CRASHES and all(h["outcome"] == "crash" for h in hist[-MAX_CRASHES:]):
+                    end = f"{MAX_CRASHES} sessions crashed in a row"
                     break
                 if res.outcome == "error":
                     end = f"session error: {res.detail}"

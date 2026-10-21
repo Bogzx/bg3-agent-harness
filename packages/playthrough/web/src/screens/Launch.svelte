@@ -13,9 +13,11 @@
   let sessions = $state(0);
   let error = $state<string | null>(null);
   let busy = $state(false);
+  let loaded = ""; // the name whose config fills the form: a second change event must not wipe the user's picks
 
   async function loadConfig(name: string) {
-    if (!name) return;
+    if (!name || name === loaded) return;
+    loaded = name;
     try {
       const c = await api.config(name);
       form = formFrom(c.config);
@@ -55,7 +57,7 @@
       const r = await api.control(form.name, what, what === "stop" ? {} : b.body);
       sup = r.supervisor;
       error = null;
-      if (what !== "stop") onWatch(form.name);
+      if (what === "resume") onWatch(form.name); // a new playthrough has nothing to watch until its runner writes
     } catch (e) {
       error = (e as Error).message;
     } finally {

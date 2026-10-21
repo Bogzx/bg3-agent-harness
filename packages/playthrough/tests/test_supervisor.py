@@ -246,3 +246,15 @@ def test_sessions_the_runner_played_before_count(tmp_path: Path):
         sup.start("ilse")
     sup.resume("ilse", wait=True)
     assert runner.requests[0].session == 97 and runner.requests[0].resume
+
+
+def test_a_stop_from_outside_ends_the_loop(tmp_path: Path):
+    sup, runner, _, _ = make(tmp_path, [("ok", True), ("stopped", None)], hours=4)  # e.g. `play.py stop`
+    sup.start("ilse", wait=True)
+    assert len(runner.requests) == 2 and sup.state == "idle" and sup.detail == "stopped"
+
+
+def test_crashes_in_a_row_end_the_loop(tmp_path: Path):
+    sup, runner, _, _ = make(tmp_path, [("crash", None), ("ok", True)] + [("crash", None)] * 5, hours=0)
+    sup.start("ilse", wait=True)
+    assert len(runner.requests) == 5 and sup.detail == "3 sessions crashed in a row"
