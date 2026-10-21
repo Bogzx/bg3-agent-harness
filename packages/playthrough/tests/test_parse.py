@@ -159,3 +159,12 @@ def test_diff_lines():
         "meta",
     ]
     assert parse.diff_lines("") == []
+
+
+def test_region_change():
+    # live3 run 2: after the crash only diff statuses came; the beach showed as an event line under a wait_for
+    assert parse.region_change("wait_for: done\n  level_changed region=Wilderness\n") == "Wilderness"
+    assert parse.region_change("REGION Nautiloid\nMARKERS ...") == "Nautiloid"
+    assert parse.region_change("REGION ?\n") is None
+    assert parse.region_change("WHERE Nautiloid | exploring | gold 4") is None
+    assert parse.region_change("  level_changed region=A\n  level_changed region=Emerald Grove") == "Emerald Grove"

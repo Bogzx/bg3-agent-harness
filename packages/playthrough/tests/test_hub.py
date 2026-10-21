@@ -194,3 +194,23 @@ def test_full_status_result_also_emits_party(rt: Path):
     party = events[1].data
     assert party["where"] == "Grove" and party["party"][0]["hp"] == 9 and party["source"] == "get_status"
     assert hub.last_id() == last
+
+
+def test_a_region_change_after_a_full_status_moves_the_party(rt: Path):
+    # live3 run 2: the area stayed "Nautiloid" after the beach (no full status came after level_changed)
+    hub = make_hub(rt)
+    hub.poll()
+    status = "WHERE Nautiloid | exploring | gold 4\nPARTY *e1 Tav Fighter1 HP 9/12 []"
+    append(
+        rt / "actions.jsonl",
+        json.dumps({"t": 5.0, "tool": "get_status", "args": {}, "ms": 2, "result": status}),
+        json.dumps(
+            {"t": 6.0, "tool": "wait_for", "args": {}, "ms": 2, "result": "done\n  level_changed region=Wilderness"}
+        ),
+        json.dumps({"t": 7.0, "tool": "get_map", "args": {}, "ms": 2, "result": "REGION Wilderness"}),
+    )
+    hub.poll()
+    events, _, _ = hub.read("g1-3")
+    assert types(events) == ["action", "party", "action", "party", "action"]  # the same region again: no event
+    moved = events[3].data
+    assert moved["where"] == "Wilderness" and moved["party"][0]["name"] == "Tav" and moved["source"] == "wait_for"

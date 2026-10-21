@@ -63,11 +63,14 @@ def sessions(store: RunStore, pt: str) -> dict[str, Any]:
 
 
 def _party(actions: list[dict[str, Any]], snapshot: str) -> dict[str, Any] | None:
-    """The newest full status (WHERE/PARTY rows) among the tool results, else memory snapshots/status.md."""
+    """The newest full status (WHERE/PARTY rows) among the tool results, else memory snapshots/status.md. A region
+    change after it (a level_changed event, get_map) is the place now: diff-only statuses carry no WHERE row."""
+    region = None
     for a in reversed(actions):
         st = parse.status_text(a["result"])
         if st and st["party"]:
-            return {**st, "t": a["t"], "source": a["tool"]}
+            return {**st, "where": region or st["where"], "t": a["t"], "source": a["tool"]}
+        region = region or parse.region_change(a["result"])
     st = parse.status_text(snapshot)
     return {**st, "t": None, "source": "snapshots/status.md"} if st else None
 

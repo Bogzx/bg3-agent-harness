@@ -138,6 +138,21 @@ def status_text(text: str) -> dict[str, Any] | None:
     return {"where": where, "mode": mode, "gold": gold, "party": party}
 
 
+# A region change in a tool result that has no WHERE row: the mod's level_changed event (an event line under any
+# result) or get_map's REGION line.
+REGION_RE = re.compile(r"^\s*(?:level_changed region=|REGION )(.+?)\s*$")
+
+
+def region_change(text: str) -> str | None:
+    """The last region a tool result names (level_changed event, get_map REGION), else None."""
+    found = None
+    for line in text.splitlines():
+        m = REGION_RE.match(line)
+        if m and m.group(1) != "?":
+            found = m.group(1)
+    return found
+
+
 # ---------------------------------------------------------------- goal
 
 NOW_RE = re.compile(r"^\s*(?:\d+\.\s*|-\s*)?NOW:\s*(.+)$")

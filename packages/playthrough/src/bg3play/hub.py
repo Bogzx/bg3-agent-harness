@@ -2,7 +2,7 @@
 
 Feeds (each `poll()` returns the new (type, data) pairs since its last call):
 - actions: new actions.jsonl lines -> "action" (a tool call with ms and result), then "party" when its result is a
-  full status (WHERE/PARTY rows); a truncated file -> "actions_reset"
+  full status (WHERE/PARTY rows) or names a new region (level_changed, get_map); a truncated file -> "actions_reset"
 - log: the followed playthrough's agent log -> "log" entries; a new log file -> "session" first
 - status: runner.status.json changed (heartbeat/updated ignored) -> "status"
 - memory: a new commit in the memory repo -> "memory" (checked only when .git/logs/HEAD changes)
@@ -38,6 +38,7 @@ class ActionsFeed:
     def __init__(self, store: RunStore):
         self.tail = Tailer(store.actions_path, initial_bytes=64 * 1024)
         self.started = False
+        self.party: dict[str, Any] | None = None  # the last "party" sent: a later region change updates its place
 
     def poll(self) -> list[tuple[str, Any]]:
         lines, reset = self.tail.lines()
@@ -48,8 +49,14 @@ class ActionsFeed:
             if a:
                 out.append(("action", dict(a, result=parse.scrub(a["result"]))))
                 st = parse.status_text(a["result"])
+                region = parse.region_change(a["result"])
                 if st and st["party"]:
-                    out.append(("party", dict(st, t=a["t"], source=a["tool"])))
+                    self.party = dict(st, t=a["t"], source=a["tool"])
+                elif region and self.party and region != self.party["where"]:
+                    self.party = dict(self.party, where=region, t=a["t"], source=a["tool"])
+                else:
+                    continue
+                out.append(("party", self.party))
         return out
 
 
