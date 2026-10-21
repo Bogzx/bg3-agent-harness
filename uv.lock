@@ -6,6 +6,11 @@ resolution-markers = [
     "python_full_version < '3.14'",
 ]
 
+[manifest]
+members = [
+    "bg3ai-bridge",
+]
+
 [[package]]
 name = "annotated-types"
 version = "0.8.0"
@@ -40,7 +45,7 @@ wheels = [
 [[package]]
 name = "bg3ai-bridge"
 version = "0.1.0"
-source = { editable = "." }
+source = { editable = "bridge" }
 dependencies = [
     { name = "mcp" },
     { name = "pillow" },

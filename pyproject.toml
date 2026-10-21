@@ -1,0 +1,4 @@
+# Virtual uv workspace root: no package of its own, one lock (uv.lock) for every member.
+# Members: the MCP bridge (bg3ai) and the packages under packages/ (bg3harness, bg3bench, bg3play).
+[tool.uv.workspace]
+members = ["bridge", "packages/*"]
