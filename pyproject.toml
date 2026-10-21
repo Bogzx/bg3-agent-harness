@@ -10,6 +10,7 @@ dev = [
     "pyright[nodejs]>=1.1.414",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
+    "pytest-timeout>=2.3",
     "ruff>=0.17.1",
     "zstandard>=0.22",
 ]
@@ -26,6 +27,10 @@ testpaths = [
 ]
 python_files = ["test_*.py"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
+# A test that hangs fails after 300 s with every thread's stack (the slowest today, runner/test_crash.py, take ~17 s),
+# instead of the CI job timing out with no name (07794d7: the pytest job stopped in runner/test_crash.py for 26 min).
+timeout = 300
+timeout_method = "thread"
 markers = [
     "unit: pure logic, no I/O beyond tmp dirs",
     "integration: one real component against fakes or recorded fixtures",
