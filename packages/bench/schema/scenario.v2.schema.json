@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/scenario.v2.schema.json",
+  "title": "Scenario v2 (scenarios/<name>.json)",
+  "description": "A fixed start point, a goal, caps and the game settings. Semantics and the checks a schema can't express (name = file stem, the goal's D8 rule, the save owner = profile.character.name, a neutral start note) are in packages/bench/src/bg3bench/scenario.py. v1 files (no `schema` key) are converted by scenario.from_v1.",
+  "type": "object",
+  "required": ["schema", "name", "title", "family", "start", "caps", "profile"],
+  "additionalProperties": false,
+  "oneOf": [{"required": ["goal"]}, {"required": ["until"]}],
+  "$defs": {
+    "pos_or_null": {"oneOf": [{"type": "null"}, {"type": "number", "exclusiveMinimum": 0}]},
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "reset_new_game": {"const": {"saves": "after_run_start", "nav_state": "archive", "knowledge": "restore_agent_edits", "memory": "template"}},
+    "reset_save": {"const": {"saves": "after_run_start+start_save", "nav_state": "archive", "knowledge": "restore_agent_edits", "memory": "template+start_note"}}
+  },
+  "properties": {
+    "schema": {"const": 2},
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,47}$"},
+    "title": {"type": "string", "pattern": "\\S"},
+    "about": {"type": "string", "description": "For people; never shown to the agent."},
+    "family": {"enum": ["fight", "sandbox", "choice", "exploration", "puzzle"]},
+    "holdout": {"type": "boolean", "default": false, "description": "Private holdout: run, never published."},
+    "start": {
+      "oneOf": [
+        {"type": "object", "required": ["kind"], "additionalProperties": false, "properties": {"kind": {"const": "new_game"}}},
+        {
+          "type": "object",
+          "required": ["kind", "note"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"const": "save"},
+            "save": {"oneOf": [{"type": "null"}, {"type": "string", "pattern": "^.+-\\d+__.+$"}]},
+            "save_sha1": {"type": ["string", "null"]},
+            "note": {
+              "type": "object",
+              "required": ["where", "objective"],
+              "additionalProperties": false,
+              "properties": {
+                "where": {"type": "string", "minLength": 1},
+                "objective": {"type": "string", "minLength": 1},
+                "party": {"$ref": "#/$defs/strings"},
+                "journal": {"$ref": "#/$defs/strings"}
+              }
+            }
+          }
+        }
+      ]
+    },
+    "goal": {"$ref": "goal.v1.schema.json"},
+    "until": {"type": "string", "minLength": 1, "description": "A milestone id; shorthand for goal {\"milestone\": id}."},
+    "runs": {"type": "integer", "minimum": 1, "default": 3},
+    "caps": {
+      "type": "object",
+      "required": ["run_hours"],
+      "additionalProperties": false,
+      "properties": {
+        "run_hours": {"type": "number", "exclusiveMinimum": 0},
+        "max_cost": {"$ref": "#/$defs/pos_or_null"},
+        "max_tokens": {"$ref": "#/$defs/pos_or_null"}
+      }
+    },
+    "profile": {
+      "type": "object",
+      "required": ["character"],
+      "additionalProperties": false,
+      "properties": {
+        "character": {
+          "type": "object",
+          "required": ["brief"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "brief": {"type": "string", "minLength": 1},
+            "roleplay": {"enum": ["strict", "light"]}
+          }
+        }
+      }
+    },
+    "game_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "null = not fixed by the scenario; the setup check records what the game has.",
+      "properties": {
+        "difficulty": {"enum": ["Explorer", "Balanced", "Tactician", "Honour", null]},
+        "karmic_dice": {"const": false, "description": "Off in every scenario (D9)."},
+        "resolution": {"oneOf": [{"type": "null"}, {"type": "string", "pattern": "^\\d{3,5}x\\d{3,5}$"}]},
+        "ui_scale": {"$ref": "#/$defs/pos_or_null"},
+        "language": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1}]}
+      }
+    },
+    "think_pause": {"type": "boolean", "default": true, "description": "D7: pause the game while the model thinks (never in combat, dialogue or trade)."},
+    "requires": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vision": {"type": "boolean", "default": false},
+        "min_context": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]}
+      }
+    },
+    "conditions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9+@:._-]{0,63}$"},
+      "default": ["rules"]
+    },
+    "reset": {"anyOf": [{"$ref": "#/$defs/reset_new_game"}, {"$ref": "#/$defs/reset_save"}]}
+  }
+}
