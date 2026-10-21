@@ -9,7 +9,6 @@
 3183 tools/dev/acceptance.py
 2721 bridge/tests/test_turn_macros.py
 2056 tools/dev/test_nav_lua.lua
-1802 mod/Mods/BG3AI/ScriptExtender/Lua/Client/Services.lua
 1786 mod/Mods/BG3AI/ScriptExtender/Lua/Server/State.lua
 1680 mod/Mods/BG3AI/ScriptExtender/Lua/Client/UIActions.lua
 1643 bridge/tests/test_economy.py

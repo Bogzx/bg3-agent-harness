@@ -25,7 +25,7 @@ Ext = {
     Utils = { MonotonicTime = function() return clock end, GetGameState = function() return "Running" end },
     Input = { InjectKeyPress = function(k) keys[#keys + 1] = k end },
     IO = { LoadFile = function() return nil end },
-    Json = { Parse = function() return {} end },
+    Json = { Parse = function() return {} end }, Require = function(p) return dofile(LUA .. "/" .. p) end, -- + parts
 }
 
 local jobs = {}

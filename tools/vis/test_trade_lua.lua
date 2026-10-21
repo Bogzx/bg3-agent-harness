@@ -58,6 +58,7 @@ Ext = {
     },
     Stats = { Get = function() return nil end },
     IO = { LoadFile = function() return nil end },
+    Require = function(p) return dofile(LUA .. "/" .. p) end, -- Services.lua loads its parts
     Json = { Parse = function() return {} end },
 }
 local jobs, ops = {}, {}
