@@ -35,6 +35,10 @@ Status of each item is tracked in the local `docs/BACKLOG.md` ("Target architect
 | D9 | Dice | Karmic Dice off in every scenario; every roll logged out of the agent's sight; a per-run luck number published. Seeded dice only if the live probe shows it works | the engine has seeds, but they may depend on timing |
 | D10 | Lint on legacy code | ruff and pyright strict on `packages/`; legacy files get a per-file ignore list that only shrinks; no repo-wide reformat commit | a repo-wide reformat would bury every later diff |
 | D11 | `runner/play.py` edits | one owner (the harness worker) takes all `play.py` edits as patches from the others | four tracks need small edits there |
+| D12 | Who solves a scenario for the oracle run | one successful run by a strong model through Claude Code, kept as the reference trajectory; a human run where no model succeeds; scripted solves only for trivial scenarios | scripting a solve per scenario does not scale to 20-30 scenarios |
+| D13 | `main` during the overhaul | frozen: only critical fixes, each also cherry-picked onto `overhaul` | keeps the final rebase small |
+| D14 | Codex and Gemini CLI | kept, with one live smoke run each in Phase C; a client that fails it is marked unsupported in the docs, not fixed in this overhaul | they have never played a live session |
+| D15 | Tool interface changes for non-Claude models | allowed only as one change for every model (e.g. real JSON arrays instead of JSON inside strings), recorded in the harness version; never per model | fairness |
 
 ## Phase A: foundations (sequential, one worker, offline)
 
@@ -65,6 +69,23 @@ game or a paid API.
    same; a fake client and a fake game drive it end to end in tests.
 7. Facts stream writer (`facts.jsonl` v1, poller reusing `progress.read_game`), wired at the poll site.
 8. Wire in the other tracks' `play.py` patches (pi client flags, prompt assembly, think-pause switch).
+9. Facts for the choices family: every dialogue choice (scene, options shown, option picked) and the agent's
+   stated reason from the event log, in `facts.jsonl`.
+10. Game settings readout: resolution, UI scale, language, subtitles, camera, difficulty and Karmic Dice read at
+    session start and written to the manifest; a run whose settings differ from the scenario's is refused.
+11. Container sandbox for pi: OpenRouter in the egress allowlist, the key passed by env, pi and Node in the image;
+    the existing offline sandbox smoke extended to pi.
+12. Spend safety: a per-run dollar cap enforced from the billed cost as it streams (kill at the cap, run marked
+    `cap_hit`), a global budget file for a whole matrix, and a refusal to start without a cap.
+
+**B-tests** (owns `tests/` at the root, `packages/*/tests/fakes/`, fixtures)
+1. Fake mod: a TCP server that speaks the mod's Lua-eval protocol and replays recorded replies by request, with a
+   scripted game state for the scenarios used in tests (gold changes, a fight, a dialogue, an area change).
+2. Fixture recorder: a bridge option that records every Lua request/reply pair of a live session to a fixture
+   file (used in Phase C; small, scrubbed of paths).
+3. Offline end-to-end test: scenario file → `run_session` → pi with a scripted stub model → real bridge → fake
+   mod → `facts.jsonl` → grader → `result.json` → stats → leaderboard build; runs in CI in a few minutes.
+4. Playwright test of the app against the same run's output; coverage thresholds per package in CI.
 
 **B-pi** (owns `tools/pi/`, `runner/profiles.py`, the pi parts of `runner/clients.py`)
 1. Pinned pi 1.3.0 in `tools/pi/` (package.json + lockfile, `npm ci --ignore-scripts`).
@@ -86,7 +107,17 @@ game or a paid API.
 6. Static leaderboard page with the success-vs-cost plot.
 7. Baseline clients: do-nothing and random, through the same client interface.
 8. Fairness probe table: every tool has a probe or a written exemption.
-9. Scenario schema additions: `game_settings` (Karmic Dice, difficulty), `think_pause`, goal predicates.
+9. Scenario schema additions: `game_settings` (Karmic Dice, difficulty, resolution, UI scale, language), `think_pause`,
+   goal predicates, `requires` (`vision`, `min_context`) so a model that can't meet them is reported as not
+   applicable instead of failing, `difficulty` as a variant dimension, `family`, `holdout`.
+10. Matrix runner: models × scenarios × conditions × repeats as one queue that runs unattended overnight: one game at
+    a time, resumes after a crash of the runner itself, reruns invalid runs, honours the RAM and thermal guards,
+    stops at the global budget, and writes progress the dashboard shows. Conditions include reasoning effort,
+    persona (neutral, evil, ...), wiki on/off and rules vs rules + coaching.
+11. Contamination tooling: the closed-book quiz per scenario (questions, answer key, scoring, run through the same
+    client profile), wiki off by default, the private holdout flag kept out of published results.
+12. Scenario authoring kit: a checklist and a tool that registers a start save (copy, inspect, sha, neutral-name
+    check), drafts the scenario file, records the oracle trajectory (D12) and runs both baselines against it.
 
 **B-prompts** (owns `packages/harness/prompts/`, lint tests; hands diffs to the owners of `play/CLAUDE.md`,
 `bridge/src/bg3ai/rules.py`, the kickoff text)
@@ -113,6 +144,9 @@ game or a paid API.
 **B-split** (after B-harness step 1, owns `bridge/src/bg3ai/server.py`)
 1. Split `server.py` (11,152 lines) into tool-group modules under the cap, behaviour unchanged, tests green.
 2. Then the other over-cap files, largest first, each by its package's owner.
+3. Tool interface review for non-Claude models (D15): batch tools take real JSON arrays instead of JSON inside a
+   string; descriptions lose Claude Code assumptions (ToolSearch, deferred tools, turn wording); tool count and
+   description length measured; any change shipped for every model and recorded in the harness version.
 
 ## Phase C: first live window (needs the game, one sitting, runner stopped)
 
@@ -124,6 +158,9 @@ Ask before it starts. Every check has exact steps in the research reports.
   flee).
 - Recording: ffmpeg captures the BG3 window under Xwayland; NVENC cost while the game runs.
 - Map coordinates; loot generation timing; renames.
+- Record golden fixtures for the fake mod (B-tests 2): a fight, a trade, a dialogue choice, an area change, a
+  load.
+- Codex and Gemini CLI: one short smoke run each (D14).
 - Then pi real-call checks per model family (about $1 in total, asked first): billed cost, served provider,
   images, cache hits, effort.
 
@@ -140,7 +177,12 @@ Ask before it starts. Every check has exact steps in the research reports.
 1. Neutral start saves (generic name, standard build), checked by the save inspector.
 2. First scenarios: `nautiloid`, `act1_gold_1000`, 3 fights, 2 choice scenes; oracle run and baselines for each.
 3. Nautiloid pilot on pi: 5 models × 3 runs (~$40-60, asked first).
-4. Then the variance pilot and the rest of the suite, per BENCHMARK-PLAN.md phases 2-3.
+4. Claude Code baseline on the new harness: the same scenarios and conditions, so the harness effect (Claude
+   through Claude Code vs through pi) is measured on one harness version.
+5. Human baseline: the owner plays each scenario once or twice through the normal game (time, success, attempts),
+   published as its own leaderboard row.
+6. Then the variance pilot and the rest of the suite, per BENCHMARK-PLAN.md phases 2-3, including harder
+   difficulty variants of the fights.
 
 ## Phase F: stress-test round
 
@@ -148,6 +190,16 @@ The coverage matrix (`docs/STRESS-TEST.md`): every BG3 situation (game lifecycle
 trade, stealth, inventory, party, puzzles, UI states, special forms) across acts, with a start save, a live check
 and a result, through Claude Code and pi. Every failure becomes a backlog item, gets fixed and is re-run. The saves
 and recorded replies become fixtures for the integration tests.
+
+## Phase F2: docs, releases and the launch gate
+
+1. Versioning: harness and benchmark versions, `bench-vX` tags, a changelog; every result cites both versions.
+2. Docs: README rewritten for the three packages; a quickstart "test your own model" (one profile file, one
+   command); app docs; standalone MCP server docs for people bringing their own client; contributing.
+3. Game-update procedure: stay offline, pin the buildid, and on a new build rerun the conformance suite, the fake-
+   mod fixtures check and the stress-test matrix before moving the pin.
+4. Launch gate (nothing public before all are settled by the owner): Larian's AI clause, publishing start saves,
+   the benchmark's name, and a scrub of personal paths and keys from anything published.
 
 ## Phase G: replace main
 
@@ -159,5 +211,15 @@ checks to the `protect-main` ruleset.
 | When | Workers |
 |---|---|
 | Phase A | 1 (foundations) |
-| Phase B | up to 5 at once: harness, pi, bench, app, and prompts or mod or split as the others free up |
+| Phase B | up to 5 at once: harness, pi, bench, app, tests; prompts, mod and split as the others free up |
 | Phases C, D.4, E, F | the live worker, one game at a time |
+| Phase F2 | 1 (docs), the owner for the launch gate |
+
+## Not planned (optional, later)
+
+- Publishing claude-run-2's data (decisions, memory, transcripts).
+- Streaming to Twitch or YouTube with narration.
+- One model per companion (multi-agent party).
+- A decision model fine-tuned on our logs for latency and cost.
+- An open track for outside harness submissions.
+- Windows: a non-goal; the harness runs on the native Linux build.
