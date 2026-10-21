@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bg3ai/stress-results.v1",
+  "title": "runtime/stress/results.json: the stress run's result per check (tools/stress/stress_core.py)",
+  "type": "object",
+  "required": ["v", "checks"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1},
+    "checks": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[A-Z][0-9]{1,3}#[0-9]+$"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["kind", "verdict", "evidence", "state", "attempts"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {"enum": ["acc", "probe", "agent", "manual"]},
+          "verdict": {"enum": ["", "PASS", "FAIL", "ERROR", "REVIEW", "SKIP", "INFO"]},
+          "evidence": {"type": "string"},
+          "state": {"enum": ["running", "done"]},
+          "attempts": {"type": "integer", "minimum": 1},
+          "started": {"type": "number"},
+          "ended": {"type": "number"},
+          "by": {"const": "hand"}
+        }
+      }
+    }
+  }
+}
