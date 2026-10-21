@@ -21,6 +21,7 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "bridge/src/bg3ai/compact_rules.py" = ["E501", "RUF005", "RUF021"]
 "bridge/src/bg3ai/companions.py" = ["E501", "RUF100", "UP035"]
 "bridge/src/bg3ai/debrief.py" = ["E501", "RUF005"]
+"bridge/src/bg3ai/debrief_text.py" = ["E501"]
 "bridge/src/bg3ai/delta.py" = ["B905", "E501", "N803", "RUF005", "RUF046", "RUF100", "UP037"]
 "bridge/src/bg3ai/economy.py" = ["E501", "E731", "UP035"]
 "bridge/src/bg3ai/game.py" = ["B904", "B905", "E501", "N818", "RUF100", "SIM105", "UP037"]
@@ -285,6 +286,7 @@ exclude = [
     "bridge/src/bg3ai/compact_rules.py",
     "bridge/src/bg3ai/companions.py",
     "bridge/src/bg3ai/debrief.py",
+    "bridge/src/bg3ai/debrief_text.py",
     "bridge/src/bg3ai/delta.py",
     "bridge/src/bg3ai/economy.py",
     "bridge/src/bg3ai/game.py",
