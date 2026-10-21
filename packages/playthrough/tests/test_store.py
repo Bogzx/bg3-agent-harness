@@ -170,3 +170,16 @@ def test_watch_current_session_drops_another_runs_calls(store: RunStore):
     assert w["actions"] and all(a["t"] >= ss[-1]["started"] for a in w["actions"])
     assert all(m["name"] != "Corwin Thale" for m in w["party"]["party"])
 
+
+def test_session_cost_from_events_when_the_end_line_has_none(store: RunStore):
+    seen: list[str] = []
+
+    def cost(base: Path) -> float | None:
+        seen.append(base.name)
+        return 0.5 if base.name == "S097" else None
+
+    _start_s097(store, 1792312800.0)
+    store.cost = cost
+    rows = store.sessions(PT)
+    assert [r["cost_usd"] for r in rows] == [5.33, 8.58, 8.12, 0.5]
+    assert seen == ["S097"]  # the [end] line's cost wins where there is one

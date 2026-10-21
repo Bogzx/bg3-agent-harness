@@ -57,6 +57,7 @@ from . import positions as pos
 from . import recorder as rec
 from . import supervisor as sup
 from .adapters import legacy_paths
+from .adapters.session_cost import session_cost
 from .dashboard import SERIES_HTML, Dashboard
 from .game import GameWatch, ScreenWatch, Viewers
 from .hub import Hub
@@ -483,7 +484,7 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     opt = parser().parse_args(argv)
 
-    store = RunStore(opt.runtime, opt.playthroughs)
+    store = RunStore(opt.runtime, opt.playthroughs, cost=session_cost)
     hub = Hub(store, generation=format(time.time_ns(), "x"), pt=opt.playthrough)
     stop = threading.Event()
     threading.Thread(target=hub.run, args=(stop, opt.poll), daemon=True, name="hub").start()

@@ -33,6 +33,7 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
 GitRunner = Callable[[Path, list[str]], str]  # (repo dir, git args) -> stdout; raises on failure
+CostReader = Callable[[Path], float | None]  # session base path (<dir>/Sxxx) -> its cost from the events log
 
 
 def run_git(repo: Path, args: list[str]) -> str:
@@ -83,10 +84,11 @@ def read_tail(path: Path, max_bytes: int) -> list[str]:
 
 
 class RunStore:
-    def __init__(self, runtime: Path, playthroughs: Path, git: GitRunner = run_git):
+    def __init__(self, runtime: Path, playthroughs: Path, git: GitRunner = run_git, cost: CostReader | None = None):
         self.runtime = runtime
         self.playthroughs_dir = playthroughs
         self.git = git
+        self.cost = cost
 
     # ------------------------------------------------------------ paths
 
@@ -180,6 +182,8 @@ class RunStore:
                     break
             h = hist.get(sid, {})
             live = running is not None and running[0] == sid
+            if end["cost_usd"] is None and self.cost is not None:
+                end["cost_usd"] = self.cost(d / sid)
             lat = read_json(d / f"{sid}.latency.json")
             prog = read_json(d / f"{sid}.progress.json")
             rows.append(
