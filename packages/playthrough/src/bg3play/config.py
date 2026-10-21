@@ -16,6 +16,7 @@
     [session]
     minutes = 60.0                     # per play session
     hours = 0.0                        # total budget; 0 = until stopped or the game ends
+    max_cost_usd = 0.0                 # cost cap per session run (play.py --max-cost); required for pi profiles
     [keeper]
     enabled = true
     model = ""                         # "" = the play model
@@ -80,6 +81,7 @@ class Character:
 class Session:
     minutes: float = 60.0
     hours: float = 0.0
+    max_cost_usd: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -170,6 +172,8 @@ def validate(data: dict) -> PlaythroughConfig:
         raise ConfigError(f"session.minutes: must be > 0, got {cfg.session.minutes}")
     if cfg.session.hours < 0:
         raise ConfigError(f"session.hours: must be >= 0 (0 = until stopped), got {cfg.session.hours}")
+    if cfg.session.max_cost_usd < 0:
+        raise ConfigError(f"session.max_cost_usd: must be >= 0 (0 = no cap), got {cfg.session.max_cost_usd}")
     if cfg.keeper.minutes <= 0:
         raise ConfigError(f"keeper.minutes: must be > 0, got {cfg.keeper.minutes}")
     if not 1 <= cfg.recording.fps <= 60:

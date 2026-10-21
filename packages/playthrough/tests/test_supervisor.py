@@ -182,11 +182,29 @@ def test_play_args():
 def test_profile_agent(tmp_path: Path):
     (tmp_path / "codex.toml").write_text('client = "codex"\nmodel = "gpt-5.5"\neffort = "high"\n')
     (tmp_path / "pi.toml").write_text('client = "pi"\nmodel = "x"\n[endpoint]\nprovider = "openrouter"\n')
-    assert L.profile_agent(tmp_path / "codex.toml") == C.Agent("codex", "codex", "gpt-5.5", "high")
-    with pytest.raises(SupervisorError, match="pi profiles"):
-        L.profile_agent(tmp_path / "pi.toml")
+    assert L.profile_agent(tmp_path, "codex") == C.Agent("codex", "codex", "gpt-5.5", "high")
+    with pytest.raises(SupervisorError, match="pi.toml"):   # runner/profiles.py: no base_url, no model_info
+        L.profile_agent(tmp_path, "pi")
     with pytest.raises(SupervisorError, match="missing"):
-        L.profile_agent(tmp_path / "missing.toml")
+        L.profile_agent(tmp_path, "missing")
+
+
+def test_pi_profile_runs_from_its_file_with_a_cost_cap():
+    repo_profiles = Path(__file__).resolve().parents[3] / "profiles"
+    agent = L.profile_agent(repo_profiles, "deepseek-flash")
+    assert (agent.client, agent.model, agent.effort) == ("pi", "deepseek-flash", "high")
+    with pytest.raises(SupervisorError, match="cost cap"):
+        L.play_args("py", Path("/r"), req(), agent, repo_profiles)
+    a = L.play_args("py", Path("/r"), req(session={"max_cost_usd": 2.5}, keeper={"enabled": True}), agent,
+                    repo_profiles)
+    assert a[a.index("--profile") + 1] == str(repo_profiles / "deepseek-flash.toml")
+    assert a[a.index("--max-cost") + 1] == "2.5" and "--no-keeper" in a
+    assert "--client" not in a and "--keeper-effort" not in a
+    with pytest.raises(SupervisorError, match="pick a pi client profile"):
+        L.play_args("py", Path("/r"), req(session={"max_cost_usd": 1.0}), C.Agent(client="pi", model="x"))
+    claude = L.play_args("py", Path("/r"), req(session={"max_cost_usd": 3.0}), C.Agent())
+    assert claude[claude.index("--max-cost") + 1] == "3" and "--client" in claude
+    assert "--max-cost" not in L.play_args("py", Path("/r"), req(), C.Agent())   # no cap: today's command line
 
 
 def test_result_from():

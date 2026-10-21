@@ -81,6 +81,7 @@ def test_bad_enum_rejected(key, section, value):
     ({"v": 1, "name": "x", "agent": "opus"}, "agent: expected a table"),
     ({"v": 1, "name": "x", "session": {"minutes": "60"}}, "session.minutes: expected float"),
     ({"v": 1, "name": "x", "session": {"minutes": 0}}, "session.minutes"),
+    ({"v": 1, "name": "x", "session": {"max_cost_usd": -1}}, "session.max_cost_usd: must be >= 0"),
     ({"v": 1, "name": "x", "session": {"hours": -1}}, "session.hours"),
     ({"v": 1, "name": "x", "recording": {"enabled": 1}}, "recording.enabled: expected bool"),
     ({"v": 1, "name": "x", "recording": {"fps": 15.0}}, "recording.fps: expected int"),

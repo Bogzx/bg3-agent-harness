@@ -1,8 +1,9 @@
 """TEMPORARY SessionRunner over today's runner CLI (remove in Phase D: the harness's run_session replaces it).
 
 One session = one `python3 runner/play.py run --playthrough <pt> --hours <minutes/60> --session-minutes <minutes>`
-with the config's client/model/effort/character/difficulty as flags. A client profile (profiles/<name>.toml) is
-mapped to --client/--model/--effort; pi profiles need an endpoint the CLI can't take yet, so they are refused.
+with the config's client/model/effort/character/difficulty as flags. A client profile (profiles/<name>.toml, parsed
+by runner/profiles.py) is mapped to --client/--model/--effort; a pi profile is passed whole as --profile with the
+config's cost cap as --max-cost and no keeper (what play.py --profile requires for pi).
 A soft stop writes <runtime>/STOP (`play.py stop`: the session finishes, the runner exits). The result comes from the
 newest play entry of <runtime>/sessions/<pt>/runner.json.
 
@@ -15,11 +16,11 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
-import tomllib
 from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any, Protocol
 
+from .. import client_profiles as CP
 from .. import config as C
 from ..supervisor import SessionRequest, SessionResult, SupervisorError
 
@@ -35,32 +36,40 @@ def spawn(args: list[str], cwd: Path, log: IO[bytes]) -> Proc:
     return subprocess.Popen(args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
 
 
-def profile_agent(path: Path) -> C.Agent:
-    """client/model/effort of a client profile; pi (an endpoint) isn't something the legacy CLI can take."""
+def profile_agent(directory: Path, name: str, load: Callable[[Path], Any] = CP.runner_load) -> C.Agent:
+    """client/model/effort of a client profile (runner/profiles.py checks it)."""
     try:
-        d = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as e:
-        raise SupervisorError(f"client profile {path.name}: {e}") from e
-    if d.get("client") == "pi" or "endpoint" in d:
-        raise SupervisorError(f"client profile {path.name}: pi profiles need the harness (not the legacy CLI)")
-    return C.Agent(profile=path.stem, client=str(d.get("client") or "claude"), model=str(d.get("model") or "opus"),
-                   effort=str(d.get("effort") or ""))
+        p = CP.load_one(directory, name, load)
+    except (OSError, ValueError) as e:
+        raise SupervisorError(f"client profile {name}: {e}") from e
+    return C.Agent(profile=name, client=p.client, model=p.model, effort=p.effort or "")
 
 
-def play_args(python: str, repo: Path, req: SessionRequest, agent: C.Agent) -> list[str]:
-    """The play.py command line for one session (pure)."""
+def play_args(python: str, repo: Path, req: SessionRequest, agent: C.Agent, profiles: Path | None = None) -> list[str]:
+    """The play.py command line for one session (pure). A pi agent runs from its profile file under `profiles`."""
     cfg = req.config
     m = cfg.session.minutes
     args = [python, str(repo / "runner" / "play.py"), "run", "--playthrough", req.playthrough,
-            "--hours", f"{m / 60:.4g}", "--session-minutes", f"{m:g}", "--client", agent.client, "--model", agent.model]
-    if agent.effort:
-        args += ["--effort", agent.effort]
-    if not cfg.keeper.enabled:
-        args.append("--no-keeper")
+            "--hours", f"{m / 60:.4g}", "--session-minutes", f"{m:g}"]
+    if agent.client == "pi":   # play.py --profile: pi needs --max-cost and --no-keeper
+        if not agent.profile or profiles is None:
+            raise SupervisorError("client pi: pick a pi client profile (profiles/*.toml)")
+        if cfg.session.max_cost_usd <= 0:
+            raise SupervisorError(f"client profile {agent.profile}: pi needs a cost cap (session.max_cost_usd > 0)")
+        args += ["--profile", str(profiles / f"{agent.profile}.toml"), "--max-cost", f"{cfg.session.max_cost_usd:g}",
+                 "--no-keeper"]
     else:
-        args += ["--keeper-effort", cfg.keeper.effort, "--keeper-minutes", f"{cfg.keeper.minutes:g}"]
-        if cfg.keeper.model:
-            args += ["--keeper-model", cfg.keeper.model]
+        args += ["--client", agent.client, "--model", agent.model]
+        if agent.effort:
+            args += ["--effort", agent.effort]
+        if cfg.session.max_cost_usd > 0:
+            args += ["--max-cost", f"{cfg.session.max_cost_usd:g}"]
+        if not cfg.keeper.enabled:
+            args.append("--no-keeper")
+        else:
+            args += ["--keeper-effort", cfg.keeper.effort, "--keeper-minutes", f"{cfg.keeper.minutes:g}"]
+            if cfg.keeper.model:
+                args += ["--keeper-model", cfg.keeper.model]
     if cfg.difficulty:
         args += ["--difficulty", cfg.difficulty]
     if cfg.character.brief:
@@ -90,19 +99,21 @@ def result_from(entry: dict | None, before: dict | None, exit_code: int, stopped
 
 class LegacyCli:
     def __init__(self, repo: Path, runtime: Path, profiles: Path | None = None, python: str = "python3",
-                 spawn_fn: Callable[[list[str], Path, IO[bytes]], Proc] = spawn, poll_s: float = 1.0):
+                 spawn_fn: Callable[[list[str], Path, IO[bytes]], Proc] = spawn, poll_s: float = 1.0,
+                 load: Callable[[Path], Any] = CP.runner_load):
         self.repo, self.runtime, self.python, self.spawn, self.poll_s = repo, runtime, python, spawn_fn, poll_s
+        self.load = load
         self.profiles = profiles if profiles is not None else repo / "profiles"
 
     def agent(self, cfg: C.PlaythroughConfig) -> C.Agent:
         if cfg.agent.profile:
-            return profile_agent(self.profiles / f"{cfg.agent.profile}.toml")
+            return profile_agent(self.profiles, cfg.agent.profile, self.load)
         return cfg.agent
 
     def run_session(self, req: SessionRequest, stop: threading.Event) -> SessionResult:
         runner_json = self.runtime / "sessions" / req.playthrough / "runner.json"
         before = last_play(runner_json)
-        args = play_args(self.python, self.repo, req, self.agent(req.config))
+        args = play_args(self.python, self.repo, req, self.agent(req.config), self.profiles)
         log_path = self.runtime / "sessions" / req.playthrough / "app-runner.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         stopped = False

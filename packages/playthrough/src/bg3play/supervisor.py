@@ -104,6 +104,7 @@ LAUNCH_KEYS: dict[str, tuple[str | None, str]] = {
     "profile": ("agent", "profile"), "client": ("agent", "client"), "model": ("agent", "model"),
     "effort": ("agent", "effort"), "brief": ("character", "brief"), "roleplay": ("character", "roleplay"),
     "difficulty": (None, "difficulty"), "session_minutes": ("session", "minutes"), "hours": ("session", "hours"),
+    "max_cost": ("session", "max_cost_usd"),
     "keeper": ("keeper", "enabled"), "recording": ("recording", "enabled"),
 }
 

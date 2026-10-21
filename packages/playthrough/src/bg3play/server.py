@@ -27,7 +27,7 @@ Endpoints (GET, JSON unless noted, Cache-Control: no-store):
     anything else                                    the web app (web/dist), index.html for unknown paths
 
 Control (POST, JSON body; needs --supervise): /api/v1/playthroughs/<pt>/start|resume (body: the Launcher's fields,
-supervisor.LAUNCH_KEYS), /api/v1/playthroughs/<pt>/stop. GET /api/v1/supervisor (state + client profiles),
+supervisor.LAUNCH_KEYS), /api/v1/playthroughs/<pt>/stop. GET /api/v1/supervisor (state + client profiles: client_profiles.py),
 GET /api/v1/playthroughs/<pt>/config. Writes are refused cross-origin, and from anywhere but localhost unless the
 request carries the --token (Authorization: Bearer). Binds 127.0.0.1 by default.
 """
@@ -50,6 +50,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import api, replay
+from . import client_profiles as CP
 from . import config as C
 from . import game as gm
 from . import positions as pos
@@ -116,10 +117,8 @@ class App:
             local = False
         return None if local else "writes need localhost or the server's --token"
 
-    def profile_names(self) -> list[str]:
-        if self.profiles is None or not self.profiles.is_dir():
-            return []
-        return sorted(f.stem for f in self.profiles.glob("*.toml"))
+    def client_profiles(self) -> list[dict]:
+        return CP.read_profiles(self.profiles)
 
     def control(self, pt: str, what: str, body: dict) -> tuple[int, dict]:
         """POST start/resume/stop -> (HTTP code, payload)."""
@@ -156,7 +155,7 @@ class App:
             return {"v": api.API_VERSION, "recorder": self.recorder.state() if self.recorder else None}
         if path == "/api/v1/supervisor":
             return {"v": api.API_VERSION, "supervisor": self.supervisor.view() if self.supervisor else None,
-                    "profiles": self.profile_names()}
+                    "profiles": self.client_profiles()}
         if (cm := CONFIG_ROUTE.match(path)) is not None:
             name = s.check_name(unquote(cm.group(1)))
             try:

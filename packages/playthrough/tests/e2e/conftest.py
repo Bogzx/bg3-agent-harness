@@ -68,6 +68,7 @@ def site(tmp_path_factory) -> Iterator[dict]:
     profiles = root / "profiles"
     profiles.mkdir()
     (profiles / "codex.toml").write_text('client = "codex"\nmodel = "gpt-5.5"\n')
+    shutil.copy(FIXTURE.parents[3].parent / "profiles" / "deepseek-flash.toml", profiles)   # the repo's pi profile
     srv = serve(App(store, hub, DEFAULT_WEB, keepalive_s=5, video_dir=video, supervisor=sup, profiles=profiles),
                 "127.0.0.1", 0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()

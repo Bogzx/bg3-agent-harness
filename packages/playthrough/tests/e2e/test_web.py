@@ -88,6 +88,24 @@ def test_launcher_resume_offer_and_start_a_new_playthrough(page, site):
     assert (site["store"].playthroughs_dir / "e2e-new" / "playthrough.toml").exists()
 
 
+def test_launcher_pi_profile_needs_a_cost_cap(page, site):
+    page.goto(f"{site['url']}/#/launch")
+    name = page.locator("input[list=pts]")
+    name.fill("e2e-pi")
+    name.press("Tab")
+    expect(page.get_by_text("new: Start plays session 1")).to_be_visible()
+    page.get_by_label("Client profile").select_option("deepseek-flash")
+    expect(page.get_by_text("pi plays through deepseek")).to_be_visible()
+    page.get_by_role("button", name="Start").click()
+    expect(page.locator(".error")).to_have_text("A pi profile needs a cost cap (USD per session)")
+    page.get_by_label("Cost cap (USD)").fill("2.5")
+    page.get_by_role("button", name="Start").click()
+    expect(page.locator(".state")).to_contain_text("e2e-pi")
+    cfg = site["runner"].requests[-1].config
+    assert (cfg.agent.profile, cfg.session.max_cost_usd) == ("deepseek-flash", 2.5)
+    no_overflow(page, 1440)
+
+
 def test_overlay_transparent_and_panel_flags(browser, site):
     ctx = browser.new_context(viewport={"width": 1920, "height": 1080})
     page = ctx.new_page()

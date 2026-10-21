@@ -1,15 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, openStream } from "../lib/api";
-  import { actions, DIFFICULTIES, formFrom, launchBody, type Action, type LaunchForm } from "../lib/launcher";
-  import type { SupervisorView } from "../lib/types";
+  import { actions, DIFFICULTIES, formFrom, launchBody, profileLabel, type Action, type LaunchForm } from "../lib/launcher";
+  import type { ClientProfile, SupervisorView } from "../lib/types";
 
   let { pt, known, onWatch }: { pt: string | null; known: string[]; onWatch: (name: string) => void } = $props();
 
   let sup = $state.raw<SupervisorView | null>(null);
   let enabled = $state(true); // the server runs a supervisor (--supervise)
-  let profiles = $state<string[]>([]);
-  let form = $state<LaunchForm>({ name: "", profile: "", brief: "", difficulty: "Explorer", minutes: 60, recording: true });
+  let profiles = $state<ClientProfile[]>([]);
+  let form = $state<LaunchForm>({ name: "", profile: "", brief: "", difficulty: "Explorer", minutes: 60, maxCost: 0, recording: true });
   let sessions = $state(0);
   let error = $state<string | null>(null);
   let busy = $state(false);
@@ -45,9 +45,10 @@
   });
 
   const can = $derived(actions(form.name, sessions, sup));
+  const picked = $derived(profiles.find((p) => p.name === form.profile) ?? null);
 
   async function act(what: Action) {
-    const b = launchBody(form);
+    const b = launchBody(form, profiles);
     if ("error" in b) {
       error = b.error;
       return;
@@ -87,8 +88,14 @@
       <span>Client profile</span>
       <select bind:value={form.profile}>
         <option value="">from playthrough.toml (client and model)</option>
-        {#each profiles as p (p)}<option value={p}>{p}</option>{/each}
+        {#each profiles as p (p.name)}<option value={p.name} disabled={p.error !== null}>{profileLabel(p)}</option>{/each}
       </select>
+      {#if picked?.client === "pi"}
+        <small class="faint">pi plays through {picked.provider}; the key comes from ${picked.api_key_env} in the machine's
+          .env. Needs a cost cap; the memory keeper is off for pi sessions.</small>
+      {:else if picked}
+        <small class="faint">{picked.client} uses its CLI's own login and endpoint.</small>
+      {/if}
     </label>
     <label class="field">
       <span>Character brief</span>
@@ -105,6 +112,8 @@
     </fieldset>
     <div class="row2">
       <label class="field"><span>Session minutes</span><input type="number" min="1" max="600" bind:value={form.minutes} /></label>
+      <label class="field"><span>Cost cap (USD)</span><input type="number" min="0" step="0.5" bind:value={form.maxCost} />
+        <small class="faint">{picked?.client === "pi" ? "required" : "0 = none"}</small></label>
       <label class="check"><input type="checkbox" bind:checked={form.recording} /> Record video</label>
     </div>
     {#if error}<div class="error">{error}</div>{/if}

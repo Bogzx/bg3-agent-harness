@@ -208,7 +208,7 @@ export interface PlaythroughConfig {
   difficulty: string;
   agent: { profile: string; client: string; model: string; effort: string };
   character: { brief: string; roleplay: string; name: string; constraints: string };
-  session: { minutes: number; hours: number };
+  session: { minutes: number; hours: number; max_cost_usd: number };
   keeper: { enabled: boolean; model: string; effort: string; minutes: number };
   recording: { enabled: boolean; fps: number; height: number };
 }
@@ -478,4 +478,15 @@ export interface StoryPayload {
 export interface DiffLine {
   kind: "add" | "del" | "hunk" | "ctx" | "meta";
   text: string;
+}
+
+/** profiles/*.toml as the server parsed it (bg3play/client_profiles.py over runner/profiles.py). */
+export interface ClientProfile {
+  name: string;
+  client: string | null;
+  model: string | null;
+  effort: string;
+  provider: string | null;
+  api_key_env: string | null;
+  error: string | null;
 }

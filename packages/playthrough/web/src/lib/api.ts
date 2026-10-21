@@ -1,5 +1,5 @@
 import type {
-  Commit, DiffLine, GoalsPayload, LatencyPayload, LivePayload, MemoryFile, ProgressPayload, StoryPayload, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SupervisorView,
+  ClientProfile, Commit, DiffLine, GoalsPayload, LatencyPayload, LivePayload, MemoryFile, ProgressPayload, StoryPayload, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SupervisorView,
   TimelinePayload, WatchSnapshot,
 } from "./types";
 
@@ -55,7 +55,7 @@ export const api = {
     getJson<Positions>(`${pt(name)}/positions${level ? `?level=${encodeURIComponent(level)}` : ""}`),
   recorder: () => getJson<{ v: number; recorder: RecorderState | null }>("/api/v1/recorder"),
   videoIndex: () => getJson<{ v: number; segments: Segment[] }>("/api/v1/video/index"),
-  supervisor: () => getJson<{ v: number; supervisor: SupervisorView | null; profiles: string[] }>("/api/v1/supervisor"),
+  supervisor: () => getJson<{ v: number; supervisor: SupervisorView | null; profiles: ClientProfile[] }>("/api/v1/supervisor"),
   config: (name: string) =>
     getJson<{ v: number; playthrough: string; config: PlaythroughConfig; sessions: number }>(`${pt(name)}/config`),
   control: (name: string, what: "start" | "resume" | "stop", body: object = {}) =>
