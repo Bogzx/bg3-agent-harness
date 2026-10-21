@@ -1,0 +1,15 @@
+{"v": 1, "kind": "mark", "t": 0, "game_t": 0, "mark": "run_start"}
+{"v": 1, "kind": "snapshot", "t": 5, "game_t": 5, "gold": 10, "party": [{"name": "Tav", "level": 2, "hp": 20, "max_hp": 20, "dead": false, "downed": false, "avatar": true}, {"name": "Lae'zel", "level": 2, "hp": 22, "max_hp": 22, "dead": false, "downed": false}, {"name": "Wolf", "level": 1, "hp": 11, "max_hp": 11, "dead": false, "downed": false, "summon": true}], "region": "Wilderness", "area": "Ravaged Beach", "areas": ["Ravaged Beach"], "combat": false, "inv": [], "quests": {}}
+{"v": 1, "kind": "event", "t": 10, "game_t": 10, "ev": "combat_started"}
+{"v": 1, "kind": "snapshot", "t": 15, "game_t": 15, "gold": 10, "party": [{"name": "Tav", "level": 2, "hp": 20, "max_hp": 20, "dead": false, "downed": false, "avatar": true}, {"name": "Lae'zel", "level": 2, "hp": 22, "max_hp": 22, "dead": false, "downed": false}, {"name": "Wolf", "level": 1, "hp": 11, "max_hp": 11, "dead": false, "downed": false, "summon": true}], "region": "Wilderness", "area": "Ravaged Beach", "areas": ["Ravaged Beach"], "combat": true, "inv": [], "quests": {}}
+{"v": 1, "kind": "event", "t": 20, "game_t": 20, "ev": "downed", "name": "Lae'zel", "party": true}
+{"v": 1, "kind": "event", "t": 22, "game_t": 22, "ev": "died", "name": "Goblin", "party": false}
+{"v": 1, "kind": "event", "t": 25, "game_t": 25, "ev": "revived", "name": "Lae'zel", "party": true}
+{"v": 1, "kind": "event", "t": 30, "game_t": 30, "ev": "combat_ended"}
+{"v": 1, "kind": "snapshot", "t": 35, "game_t": 35, "gold": 10, "party": [{"name": "Tav", "level": 2, "hp": 20, "max_hp": 20, "dead": false, "downed": false, "avatar": true}, {"name": "Lae'zel", "level": 2, "hp": 22, "max_hp": 22, "dead": false, "downed": false}, {"name": "Wolf", "level": 1, "hp": 11, "max_hp": 11, "dead": false, "downed": false, "summon": true}], "region": "Wilderness", "area": "Ravaged Beach", "areas": ["Ravaged Beach"], "combat": false, "inv": [], "quests": {}}
+{"v": 1, "kind": "event", "t": 40, "game_t": 40, "ev": "combat_started"}
+{"v": 1, "kind": "event", "t": 45, "game_t": 45, "ev": "downed", "name": "Tav", "party": true}
+{"v": 1, "kind": "event", "t": 46, "game_t": 46, "ev": "downed", "name": "Lae'zel", "party": true}
+{"v": 1, "kind": "event", "t": 50, "game_t": 50, "ev": "combat_ended"}
+{"v": 1, "kind": "snapshot", "t": 55, "game_t": 55, "gold": 10, "party": [{"name": "Tav", "level": 2, "hp": 20, "max_hp": 20, "dead": false, "downed": true, "avatar": true}, {"name": "Lae'zel", "level": 2, "hp": 22, "max_hp": 22, "dead": false, "downed": true}, {"name": "Wolf", "level": 1, "hp": 11, "max_hp": 11, "dead": false, "downed": false, "summon": true}], "region": "Wilderness", "area": "Ravaged Beach", "areas": ["Ravaged Beach"], "combat": false, "inv": [], "quests": {}}
+{"v": 1, "kind": "mark", "t": 60, "game_t": 60, "mark": "run_end"}

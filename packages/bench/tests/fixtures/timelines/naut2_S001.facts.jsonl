@@ -1,0 +1,21 @@
+{"v": 1, "kind": "mark", "t": 1792169546.4, "mark": "run_start", "detail": "from_progress"}
+{"v": 1, "kind": "event", "t": 1792169685.2218556, "ev": "region", "name": "Nautiloid"}
+{"v": 1, "kind": "event", "t": 1792169685.2218556, "ev": "joined", "name": "Corran Vell"}
+{"v": 1, "kind": "event", "t": 1792169685.2218556, "ev": "kill", "victim": "Mind Flayer"}
+{"v": 1, "kind": "event", "t": 1792169700.2681658, "ev": "quest_added", "title": "Escape the Nautiloid"}
+{"v": 1, "kind": "event", "t": 1792169760.4347873, "ev": "joined", "name": "Lae'zel"}
+{"v": 1, "kind": "event", "t": 1792169775.4627204, "ev": "kill", "victim": "Imp"}
+{"v": 1, "kind": "event", "t": 1792169775.4627204, "ev": "kill", "victim": "Imp"}
+{"v": 1, "kind": "event", "t": 1792169790.5384054, "ev": "kill", "victim": "Imp"}
+{"v": 1, "kind": "event", "t": 1792169895.8393338, "ev": "kill", "victim": "Lesser Hellsboar"}
+{"v": 1, "kind": "event", "t": 1792169925.9096322, "ev": "kill", "victim": "Lesser Imp"}
+{"v": 1, "kind": "event", "t": 1792169940.9721818, "ev": "kill", "victim": "Lesser Imp"}
+{"v": 1, "kind": "event", "t": 1792170046.3007524, "ev": "kill", "victim": "Lesser Hellsboar"}
+{"v": 1, "kind": "event", "t": 1792170046.3007524, "ev": "kill", "victim": "Mind Flayer"}
+{"v": 1, "kind": "event", "t": 1792170061.3741508, "ev": "quest_added", "title": "Rescue the Illithids' Captive"}
+{"v": 1, "kind": "event", "t": 1792170061.3741508, "ev": "quest_done", "title": "Rescue the Illithids' Captive"}
+{"v": 1, "kind": "event", "t": 1792170076.4275746, "ev": "region", "name": "Wilderness"}
+{"v": 1, "kind": "event", "t": 1792170076.4275746, "ev": "kill", "victim": "Mangled Fisher"}
+{"v": 1, "kind": "event", "t": 1792170092.2728782, "ev": "quest_added", "title": "Find a Cure"}
+{"v": 1, "kind": "event", "t": 1792170092.2728782, "ev": "quest_done", "title": "Escape the Nautiloid"}
+{"v": 1, "kind": "mark", "t": 1792170148.5, "mark": "run_end", "detail": "reached"}

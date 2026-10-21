@@ -1,0 +1,23 @@
+{"type": "poll", "t": 1792169655.1801746, "ok": true}
+{"type": "progress", "t": 1792169685.2218556, "kind": "region", "what": "Nautiloid", "points": 15}
+{"type": "progress", "t": 1792169685.2218556, "kind": "companion", "what": "Corran Vell", "points": 5}
+{"type": "progress", "t": 1792169685.2218556, "kind": "kill", "what": "Mind Flayer", "points": 1}
+{"type": "progress", "t": 1792169700.2681658, "kind": "quest_new", "what": "Escape the Nautiloid", "points": 3}
+{"type": "progress", "t": 1792169760.4347873, "kind": "companion", "what": "Lae'zel", "points": 5}
+{"type": "progress", "t": 1792169760.4347873, "kind": "quest_step", "what": "Escape the Nautiloid: We met a githyanki named Lae'zel. She told us we can escape if we reach the ship's helm.", "points": 2}
+{"type": "progress", "t": 1792169775.4627204, "kind": "kill", "what": "Imp", "points": 1}
+{"type": "progress", "t": 1792169775.4627204, "kind": "kill", "what": "Imp", "points": 1}
+{"type": "progress", "t": 1792169790.5384054, "kind": "kill", "what": "Imp", "points": 1}
+{"type": "progress", "t": 1792169880.8151066, "kind": "quest_step", "what": "Escape the Nautiloid: The mind flayer told us we need to connect the nerves of the transponder to escape the Hells.", "points": 2}
+{"type": "progress", "t": 1792169895.8393338, "kind": "kill", "what": "Lesser Hellsboar", "points": 1}
+{"type": "progress", "t": 1792169925.9096322, "kind": "kill", "what": "Lesser Imp", "points": 1}
+{"type": "progress", "t": 1792169940.9721818, "kind": "kill", "what": "Lesser Imp", "points": 1}
+{"type": "progress", "t": 1792170046.3007524, "kind": "kill", "what": "Lesser Hellsboar", "points": 1}
+{"type": "progress", "t": 1792170046.3007524, "kind": "story_kill", "what": "Mind Flayer", "points": 5}
+{"type": "progress", "t": 1792170061.3741508, "kind": "quest_new", "what": "Rescue the Illithids' Captive", "points": 3}
+{"type": "progress", "t": 1792170061.3741508, "kind": "quest_done", "what": "Rescue the Illithids' Captive", "points": 10}
+{"type": "progress", "t": 1792170076.4275746, "kind": "region", "what": "Wilderness", "points": 15}
+{"type": "progress", "t": 1792170076.4275746, "kind": "kill", "what": "Mangled Fisher", "points": 1}
+{"type": "progress", "t": 1792170092.2728782, "kind": "quest_new", "what": "Find a Cure", "points": 3}
+{"type": "progress", "t": 1792170092.2728782, "kind": "quest_step", "what": "Escape the Nautiloid: We escaped the Hells on the nautiloid.", "points": 2}
+{"type": "progress", "t": 1792170092.2728782, "kind": "quest_done", "what": "Escape the Nautiloid", "points": 10}

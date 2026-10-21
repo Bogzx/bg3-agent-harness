@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/goal.v1.schema.json",
+  "title": "Benchmark goal v1",
+  "description": "A goal predicate over facts.jsonl v1. Semantics in packages/bench/src/bg3bench/predicates.py. The D8 rule (a do-nothing agent must not pass) is checked by predicates.parse, not by this schema.",
+  "$ref": "#/$defs/node",
+  "$defs": {
+    "cmp": {
+      "type": "object",
+      "properties": {"gte": {"type": "number", "minimum": 0}, "lte": {"type": "number", "minimum": 0}},
+      "minProperties": 1,
+      "additionalProperties": false
+    },
+    "level_cmp": {
+      "type": "object",
+      "properties": {
+        "gte": {"type": "number", "minimum": 0},
+        "lte": {"type": "number", "minimum": 0},
+        "agg": {"enum": ["min", "max"]}
+      },
+      "anyOf": [{"required": ["gte"]}, {"required": ["lte"]}],
+      "additionalProperties": false
+    },
+    "regex": {"type": "string", "minLength": 1},
+    "item": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "tpl": {"type": "string", "minLength": 1},
+        "gte": {"type": "number", "minimum": 0}
+      },
+      "oneOf": [{"required": ["name"]}, {"required": ["tpl"]}],
+      "additionalProperties": false
+    },
+    "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}, "minItems": 1},
+    "node": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "all": {"$ref": "#/$defs/nodes"},
+        "any": {"$ref": "#/$defs/nodes"},
+        "not": {"$ref": "#/$defs/node"},
+        "ever": {"$ref": "#/$defs/node"},
+        "never": {"$ref": "#/$defs/node"},
+        "state": {"$ref": "#/$defs/node"},
+        "gold": {"$ref": "#/$defs/cmp"},
+        "party_level": {"$ref": "#/$defs/level_cmp"},
+        "companions": {"$ref": "#/$defs/cmp"},
+        "combats_won": {"$ref": "#/$defs/cmp"},
+        "combats_started": {"$ref": "#/$defs/cmp"},
+        "party_dead": {"$ref": "#/$defs/cmp"},
+        "elapsed_s": {"$ref": "#/$defs/cmp"},
+        "item": {"$ref": "#/$defs/item"},
+        "area": {"$ref": "#/$defs/regex"},
+        "region": {"$ref": "#/$defs/regex"},
+        "quest_done": {"$ref": "#/$defs/regex"},
+        "combat": {"const": true},
+        "wipe": {"const": true},
+        "game_end": {"const": true},
+        "no_combat": {"const": true},
+        "survive_s": {"type": "number", "minimum": 0},
+        "milestone": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  }
+}
