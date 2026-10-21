@@ -131,7 +131,11 @@ class ClaudeDropIn(unittest.TestCase):
                 except json.JSONDecodeError:
                     continue
                 got = [s for e in client.parse(ln) for s in C.format_event(e)]
-                self.assertEqual(got, TP.legacy_format_stream_event(ev), f"{f.name}:{i + 1}")
+                want = TP.legacy_format_stream_event(ev)
+                if ev.get("subtype") == "init":   # init counts only the bg3 server's tools since round 7 (pi's count)
+                    bg3 = sum(str(t).startswith(C.MCP_PREFIX) for t in ev.get("tools") or [])
+                    want = [re.sub(r" tools=\d+ ", f" tools={bg3} ", w, count=1) for w in want]
+                self.assertEqual(got, want, f"{f.name}:{i + 1}")
                 n += 1
         self.assertGreater(n, 100)
 

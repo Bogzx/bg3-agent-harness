@@ -243,7 +243,9 @@ class ClaudeClient:
         t, sub, sid = ev.get("type"), ev.get("subtype"), ev.get("session_id")
         if t == "system" and sub == "init":
             mcp = [f"{m.get('name')}:{m.get('status')}" for m in ev.get("mcp_servers") or [] if isinstance(m, dict)]
-            return [Event("init", session_id=sid, model=ev.get("model"), tools=len(ev.get("tools") or []), mcp=mcp)]
+            # tools: the bg3 server's (pi's count; claude's list has its own too, e.g. ToolSearch)
+            bg3 = [t for t in ev.get("tools") or [] if str(t).startswith(MCP_PREFIX)]
+            return [Event("init", session_id=sid, model=ev.get("model"), tools=len(bg3), mcp=mcp)]
         if t == "system" and sub == "compact_boundary":
             return [Event("compact", session_id=sid)]
         if t == "rate_limit_event":

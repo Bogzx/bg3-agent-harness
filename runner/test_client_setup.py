@@ -86,6 +86,24 @@ class ToolCount(unittest.TestCase):
             "the bg3 MCP server gave 94 tools, expected 76 (BG3AI_TOOLS=game)",
         )
 
+    def test_claude_init_counts_the_bg3_tools(self):
+        # the e2e claude run's init: 95 tools, 94 of them the bg3 server's (mcp__bg3__*) plus claude's ToolSearch;
+        # registry: that run's server (bg3-tools.json of the same code)
+        import json
+
+        import clients
+
+        fx = json.loads((REPO / "runner" / "fixtures" / "claude" / "e2e-naut-init.json").read_text())
+        self.assertEqual(len(fx["init"]["tools"]), 95)
+        (init,) = clients.ClaudeClient().parse(json.dumps(fx["init"]))
+        self.assertEqual(init.tools, 94)
+        self.assertIsNone(CS.tool_count_problem(init.tools, CS.expected_tools(fx["registry"], {}), {}))
+        off = {"BG3AI_TOOLS_OFF": "wiki"}
+        self.assertEqual(
+            CS.tool_count_problem(init.tools, CS.expected_tools(fx["registry"], off), off),
+            "the bg3 MCP server gave 94 tools, expected 92 (BG3AI_TOOLS_OFF=wiki)",
+        )
+
     def test_dump_server_leaves_the_tool_selection_out(self):
         seen = {}
 
