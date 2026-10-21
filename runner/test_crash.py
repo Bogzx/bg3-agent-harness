@@ -1049,6 +1049,29 @@ class RunLoop(unittest.TestCase):
         self.assertEqual(r.run(), 1)
         self.assertIn("runner stopped (gave up: claude exits at once)", (P.RUNTIME / "runner.log").read_text())
 
+    def test_an_overflow_at_the_kickoff_is_a_quick_failure(self):
+        # the kickoff alone overflows the context (no tool call): every new session would, so 3 strikes stop
+        r = P.Runner(P.Options("loop-test", None, 20, "opus"))
+        r.check_memory = lambda: None
+        real_sleep = P.time.sleep
+        P.time.sleep = lambda s: None
+        self.addCleanup(setattr, P.time, "sleep", real_sleep)
+        calls = []
+
+        def play(m, f):
+            calls.append(1)
+            r.stop_requested = len(calls) >= 5   # without the rule: sessions go on until stopped
+            return P.SessionResult("S001", "c", 0, "context_overflow", time.time() - 300, time.time())
+        r.play_session = play
+        self.assertEqual(r.run(), 1)
+        self.assertEqual(len(calls), P.MAX_QUICK_FAILURES)
+        self.assertIn("runner stopped (gave up: claude exits at once)", (P.RUNTIME / "runner.log").read_text())
+
+    def test_an_overflow_after_play_is_no_quick_failure(self):
+        res = P.SessionResult("S001", "c", 0, "context_overflow", 0.0, 30.0, tool_calls=40)
+        self.assertFalse(P.quick_failure(res))
+        self.assertTrue(P.quick_failure(P.SessionResult("S001", "c", 0, "exited", 0.0, 30.0, tool_calls=40)))
+
     def test_mcp_failures_are_setup_failures(self):
         # RUN-8: the bg3 MCP server never comes up: a setup failure per session, then a loud give-up
         r = P.Runner(P.Options("loop-test", None, 20, "opus"))

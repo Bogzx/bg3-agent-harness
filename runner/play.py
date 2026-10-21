@@ -164,6 +164,15 @@ def exit_reason(reason: str, returncode: int | None) -> str:
     for a clean exit, so the end lint demanded a handoff and a fix-notes session ran); else `reason`."""
     return "killed" if reason == "exited" and returncode in KILLED_EXITS else reason
 STUCK_SESSIONS = 2
+
+
+def quick_failure(res) -> bool:
+    """The client failed at once: it exited within a minute, or the context overflowed before any tool call (the
+    kickoff alone is too big: every new session would overflow the same way)."""
+    return ((res.ended - res.started < 60 and res.reason == "exited")
+            or (res.reason == "context_overflow" and res.tool_calls == 0))
+
+
 MAX_QUICK_FAILURES = 3         # claude exiting within a minute this many times in a row → give up (auth/config only:
                                # a usage/rate limit or an overload backs off and never gives up, RUN-7)
 API_BACKOFF_MIN_S = 60         # RUN-7: the first wait after a limit/overload with no reset time; doubles per repeat
@@ -2231,6 +2240,7 @@ class SessionResult:
     detail: str = ""     # what the runner saw, for a fault
     fault_at: float | None = None
     resets_at: float | None = None   # api_limit: when the client said the limit resets
+    tool_calls: int = 0              # the process's tool calls (a context_overflow without any: at the kickoff)
 
 
 class Runner:
@@ -3318,7 +3328,8 @@ class Runner:
             meter = runs.UsageMeter(done["cost_usd"], runs.token_total(done["tokens"]))
         seen_session = [claude_session]   # the conversation id: assigned up front, or the stream's init event's
         api = {"texts": [], "rejected": False, "resets_at": None, "mcp": None,   # RUN-7/RUN-8, from the stream
-               "overflow": None, "raw": collections.deque(maxlen=40)}   # pi: its overflow result, stderr tail
+               "overflow": None, "raw": collections.deque(maxlen=40),   # pi: its overflow result, stderr tail
+               "tool_calls": 0}
         cost = spend.ProcessCost()
 
         def pump():
@@ -3349,6 +3360,8 @@ class Runner:
                     if e.kind == "init" and api["mcp"] is None:
                         api["mcp"] = (mcp_problem(e.mcp, client.name == "claude") or client_setup.tool_count_problem(
                             e.tools, self.opt.tools_expected, os.environ) or "")
+                    if e.kind == "tool_call":
+                        api["tool_calls"] += 1
                     if e.kind == "result" and e.subtype in ("error_context_overflow", "error_overflow_loop"):
                         api["overflow"] = e.subtype
                     cost.on_event(e)
@@ -3500,7 +3513,8 @@ class Runner:
         self.write_progress(f"{sid}{tag}", base, start, end)
         self.write_triage(f"{sid}{tag}", base)
         return SessionResult(sid, seen_session[0], proc.returncode, reason, start, end, model=model, effort=effort,
-                             detail=detail, fault_at=fault_at, resets_at=api["resets_at"])
+                             detail=detail, fault_at=fault_at, resets_at=api["resets_at"],
+                             tool_calls=api["tool_calls"])
 
     def sandbox_cleanup(self) -> None:
         """--sandbox container: the play process's container (a SIGKILL to the docker CLI doesn't reach it) and
@@ -4687,10 +4701,11 @@ class Runner:
                         return 1
                     time.sleep(min(30 * setup_failures, 300))
                     continue
-                if res.ended - res.started < 60 and res.reason == "exited":
+                if quick_failure(res):
                     self.quick_failures += 1
                     if self.quick_failures >= MAX_QUICK_FAILURES:
-                        log("claude exited within a minute 3 times in a row; stopping (see the session logs)")
+                        log(f"the client failed at once {self.quick_failures} times in a row ({res.reason}); "
+                            "stopping (see the session logs)")
                         stop_why = "gave up: claude exits at once"
                         outcome = "gave_up"
                         return 1

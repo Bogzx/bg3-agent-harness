@@ -123,6 +123,8 @@ class PiRun(PiRunBase):
         res = self.run_pi(FIXTURES / "overflow.jsonl")
         self.assertEqual(res.reason, "context_overflow")
         self.assertNotIn(res.reason, P.FAULTS)                          # play_session: no resume of a full context
+        self.assertEqual(res.tool_calls, 0)                             # at the kickoff: a quick failure
+        self.assertTrue(P.quick_failure(res))
         self.assertEqual(len(self.calls()), 1)
 
     def test_an_overflow_loop_is_stopped(self):
