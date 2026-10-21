@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/results.v1.schema.json",
+  "title": "Release results v1 (results.json)",
+  "description": "Every run of a release and the statistics per (model, condition), from valid runs only. `stats` is bg3bench.stats.summarize output (null when a group has no valid run). Built by bg3bench.results.build_results.",
+  "type": "object",
+  "required": ["schema", "bench_tag", "created", "seed", "b", "runs", "groups"],
+  "additionalProperties": false,
+  "$defs": {
+    "num_or_null": {"type": ["number", "null"], "minimum": 0},
+    "str_or_null": {"type": ["string", "null"]}
+  },
+  "properties": {
+    "schema": {"const": 1},
+    "bench_tag": {"$ref": "#/$defs/str_or_null"},
+    "created": {"type": "number"},
+    "seed": {"type": "integer"},
+    "b": {"type": "integer", "minimum": 1},
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["run_id", "scenario", "model", "condition", "valid", "passed", "t_pass_s", "cost_usd", "wall_s"],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {"type": "string", "minLength": 1},
+          "scenario": {"type": "string", "minLength": 1},
+          "model": {"type": "string", "minLength": 1},
+          "condition": {"$ref": "#/$defs/str_or_null"},
+          "valid": {"type": "boolean"},
+          "passed": {"type": "boolean"},
+          "t_pass_s": {"$ref": "#/$defs/num_or_null"},
+          "cost_usd": {"$ref": "#/$defs/num_or_null"},
+          "wall_s": {"$ref": "#/$defs/num_or_null"}
+        }
+      }
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["model", "condition", "n_runs", "n_invalid", "invalid_rate", "stats", "cost_usd", "wall_s"],
+        "additionalProperties": false,
+        "properties": {
+          "model": {"type": "string", "minLength": 1},
+          "condition": {"$ref": "#/$defs/str_or_null"},
+          "n_runs": {"type": "integer", "minimum": 1},
+          "n_invalid": {"type": "integer", "minimum": 0},
+          "invalid_rate": {"type": "number", "minimum": 0, "maximum": 1},
+          "stats": {
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "required": ["schema", "seed", "b", "alpha", "per_scenario", "aggregate"],
+                "properties": {
+                  "schema": {"const": 1},
+                  "per_scenario": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "required": ["n", "k", "rate", "wilson", "pass_hat"],
+                      "properties": {
+                        "n": {"type": "integer", "minimum": 1},
+                        "k": {"type": "integer", "minimum": 0},
+                        "rate": {"type": "number", "minimum": 0, "maximum": 1},
+                        "wilson": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                        "pass_hat": {"type": "object", "additionalProperties": {"type": "number"}}
+                      }
+                    }
+                  },
+                  "aggregate": {
+                    "type": "object",
+                    "required": ["mean_rate", "ci", "n_scenarios", "n_runs"],
+                    "properties": {
+                      "mean_rate": {"type": "number"},
+                      "ci": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                      "n_scenarios": {"type": "integer", "minimum": 1},
+                      "n_runs": {"type": "integer", "minimum": 1}
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "cost_usd": {
+            "type": "object",
+            "required": ["median_per_run", "per_success"],
+            "additionalProperties": false,
+            "properties": {
+              "median_per_run": {"$ref": "#/$defs/num_or_null"},
+              "per_success": {"$ref": "#/$defs/num_or_null"}
+            }
+          },
+          "wall_s": {
+            "type": "object",
+            "required": ["median"],
+            "additionalProperties": false,
+            "properties": {"median": {"$ref": "#/$defs/num_or_null"}}
+          }
+        }
+      }
+    }
+  }
+}

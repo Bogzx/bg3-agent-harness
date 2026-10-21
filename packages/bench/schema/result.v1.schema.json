@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/result.v1.schema.json",
+  "title": "Run result v1 (result.json)",
+  "description": "How one run ended, written after it. An invalid run (harness failure, operator action, runner error) is rerun and never scored. `grade` is the grader output over facts.jsonl, null for older series graded by the runner's milestone; `methods` is the sandbox method attribution (reported, never graded). Built by bg3bench.results.",
+  "type": "object",
+  "required": ["schema", "run_id", "outcome", "valid", "invalid_reason", "passed", "t_pass_s", "grade", "methods",
+               "cost_usd", "tokens", "wall_s", "play_s", "reloads", "deaths", "fairness"],
+  "additionalProperties": false,
+  "$defs": {
+    "count": {"type": "integer", "minimum": 0},
+    "num_or_null": {"type": ["number", "null"], "minimum": 0}
+  },
+  "properties": {
+    "schema": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "outcome": {"enum": ["reached", "timeout", "over_budget", "gave_up", "runner_error"]},
+    "valid": {"type": "boolean"},
+    "invalid_reason": {"enum": [null, "runner_error", "harness_failure", "operator"]},
+    "passed": {"type": "boolean"},
+    "t_pass_s": {"$ref": "#/$defs/num_or_null"},
+    "grade": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["violations", "curve", "progress"],
+          "additionalProperties": false,
+          "properties": {
+            "violations": {
+              "type": "array",
+              "items": {"type": "object", "required": ["t_s", "node"], "properties": {"t_s": {"type": "number"}}}
+            },
+            "curve": {
+              "type": "object",
+              "required": ["fact", "points"],
+              "properties": {
+                "fact": {"type": "string"},
+                "points": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["at_s", "value", "peak"],
+                    "properties": {
+                      "at_s": {"type": "number"},
+                      "value": {"type": ["number", "null"]},
+                      "peak": {"type": ["number", "null"]}
+                    }
+                  }
+                }
+              }
+            },
+            "progress": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+          }
+        }
+      ]
+    },
+    "methods": {"type": ["object", "null"]},
+    "cost_usd": {"$ref": "#/$defs/num_or_null"},
+    "tokens": {
+      "type": "object",
+      "required": ["input", "output", "cache_read", "cache_write"],
+      "additionalProperties": false,
+      "properties": {
+        "input": {"$ref": "#/$defs/count"},
+        "output": {"$ref": "#/$defs/count"},
+        "cache_read": {"$ref": "#/$defs/count"},
+        "cache_write": {"$ref": "#/$defs/count"}
+      }
+    },
+    "wall_s": {"$ref": "#/$defs/num_or_null"},
+    "play_s": {"$ref": "#/$defs/num_or_null"},
+    "reloads": {"$ref": "#/$defs/count"},
+    "deaths": {
+      "type": "object",
+      "required": ["fights", "downs", "deaths", "wipes"],
+      "additionalProperties": false,
+      "properties": {
+        "fights": {"$ref": "#/$defs/count"},
+        "downs": {"$ref": "#/$defs/count"},
+        "deaths": {"$ref": "#/$defs/count"},
+        "wipes": {"$ref": "#/$defs/count"}
+      }
+    },
+    "fairness": {
+      "type": "object",
+      "required": ["leak", "check", "blocks"],
+      "additionalProperties": false,
+      "properties": {
+        "leak": {"$ref": "#/$defs/count"},
+        "check": {"$ref": "#/$defs/count"},
+        "blocks": {"$ref": "#/$defs/count"}
+      }
+    }
+  }
+}

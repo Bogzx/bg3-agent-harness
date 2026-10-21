@@ -1,0 +1,146 @@
+"""Per-run results (schema/result.v1.schema.json) and the release file (schema/results.v1.schema.json).
+
+`from_record` turns one runs.jsonl record (runner/runs.py) into a result, with the grader output (graders.grade)
+and the method attribution (methods.attribute) when the run has a facts.jsonl. Without a grade, the runner's own
+milestone verdict is used (`outcome == "reached"`), which is how series before facts.jsonl were scored.
+
+Validity (docs/BENCHMARK-PLAN.md): a run is invalid, rerun and never scored when the runner itself failed
+(`runner_error`), a harness failure was classified (runs.py `harness_failures`), or an operator acted on it.
+
+`build_results` aggregates (manifest, result) pairs per (model, condition) with stats.summarize over valid runs.
+"""
+
+from __future__ import annotations
+
+import json
+import random
+from collections.abc import Iterable
+from pathlib import Path
+from statistics import median
+
+from bg3bench import stats
+
+SCHEMA = 1
+OUTCOMES = ("reached", "timeout", "over_budget", "gave_up", "runner_error")
+
+
+def validity(record: dict) -> tuple[bool, str | None]:
+    if record["outcome"] == "runner_error":
+        return False, "runner_error"
+    if record.get("harness_failures"):
+        return False, "harness_failure"
+    if record.get("operator"):
+        return False, "operator"
+    return True, None
+
+
+def _minutes_to_s(m: float | None) -> float | None:
+    return None if m is None else round(m * 60, 1)
+
+
+def from_record(record: dict, run_id: str, grade: dict | None = None, methods: dict | None = None) -> dict:
+    """One runs.jsonl record (+ grader output, + method attribution) -> result v1."""
+    if record["outcome"] not in OUTCOMES:
+        raise ValueError(f"unknown outcome {record['outcome']!r}")
+    valid, reason = validity(record)
+    if grade is None:
+        passed, t_pass = record["outcome"] == "reached", record.get("time_to_milestone_s")
+    else:
+        passed, t_pass = grade["passed"], grade["t_pass_s"]
+    tokens = record.get("tokens") or {}
+    deaths = record.get("deaths") or {}
+    fair = record.get("fairness_flags") or {}
+    return {
+        "schema": SCHEMA,
+        "run_id": run_id,
+        "outcome": record["outcome"],
+        "valid": valid,
+        "invalid_reason": reason,
+        "passed": passed,
+        "t_pass_s": t_pass if passed else None,
+        "grade": None if grade is None else {k: grade[k] for k in ("violations", "curve", "progress")},
+        "methods": methods,
+        "cost_usd": record.get("cost_usd"),
+        "tokens": {k: int(tokens.get(k) or 0) for k in ("input", "output", "cache_read", "cache_write")},
+        "wall_s": _minutes_to_s(record.get("wall_min")),
+        "play_s": _minutes_to_s(record.get("play_min")),
+        "reloads": int(record.get("reloads") or 0),
+        "deaths": {k: int(deaths.get(k) or 0) for k in ("fights", "downs", "deaths", "wipes")},
+        "fairness": {k: int(fair.get(k) or 0) for k in ("leak", "check", "blocks")},
+    }
+
+
+def _costs(results: list[dict]) -> dict:
+    costs = [r["cost_usd"] for r in results]
+    if not costs or any(c is None for c in costs):
+        return {"median_per_run": None, "per_success": None}
+    wins = sum(1 for r in results if r["passed"])
+    return {"median_per_run": median(costs), "per_success": sum(costs) / wins if wins else None}
+
+
+def build_results(
+    pairs: Iterable[tuple[dict, dict]], *, seed: int, created: float, bench_tag: str | None = None, b: int = 10000
+) -> dict:
+    """(manifest, result) pairs -> results v1. Each group's bootstrap gets a fresh random.Random(seed), so its
+    numbers do not depend on which other groups are in the release."""
+    runs, groups = [], {}
+    for man, res in pairs:
+        if man["run_id"] != res["run_id"]:
+            raise ValueError(f"manifest {man['run_id']!r} paired with result {res['run_id']!r}")
+        key = (man["model"]["slug"], man["condition"])
+        groups.setdefault(key, []).append((man["scenario"]["name"], res))
+        runs.append(
+            {
+                "run_id": res["run_id"],
+                "scenario": man["scenario"]["name"],
+                "model": key[0],
+                "condition": key[1],
+                "valid": res["valid"],
+                "passed": res["passed"],
+                "t_pass_s": res["t_pass_s"],
+                "cost_usd": res["cost_usd"],
+                "wall_s": res["wall_s"],
+            }
+        )
+    if len({r["run_id"] for r in runs}) != len(runs):
+        raise ValueError("a run_id appears twice")
+    out_groups = []
+    for (model, condition), members in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
+        valid = [(s, r) for s, r in members if r["valid"]]
+        by_scenario: dict[str, list[bool]] = {}
+        for s, r in valid:
+            by_scenario.setdefault(s, []).append(r["passed"])
+        summary = stats.summarize(by_scenario, random.Random(seed), seed=seed, b=b) if valid else None
+        walls = [r["wall_s"] for _, r in valid if r["wall_s"] is not None]
+        out_groups.append(
+            {
+                "model": model,
+                "condition": condition,
+                "n_runs": len(members),
+                "n_invalid": len(members) - len(valid),
+                "invalid_rate": (len(members) - len(valid)) / len(members),
+                "stats": summary,
+                "cost_usd": _costs([r for _, r in valid]),
+                "wall_s": {"median": median(walls) if walls else None},
+            }
+        )
+    return {
+        "schema": SCHEMA,
+        "bench_tag": bench_tag,
+        "created": created,
+        "seed": seed,
+        "b": b,
+        "runs": runs,
+        "groups": out_groups,
+    }
+
+
+def write(data: dict, path: str | Path) -> None:
+    Path(path).write_text(json.dumps(data, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def load(path: str | Path) -> dict:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if data.get("schema") != SCHEMA:
+        raise ValueError(f"{path}: not a v{SCHEMA} result file (schema={data.get('schema')!r})")
+    return data

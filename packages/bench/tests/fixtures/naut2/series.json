@@ -1,0 +1,72 @@
+{
+ "series": "naut2",
+ "runs": 3,
+ "until": "nautiloid_escaped",
+ "profile": {
+  "character": {
+   "brief": "A level-headed half-elf fighter, once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ },
+ "created": 1792169546.4,
+ "scenario": {
+  "name": "nautiloid",
+  "digest": "f4db191ceaad1415",
+  "start_save_sha1": null,
+  "spec": {
+   "name": "nautiloid",
+   "title": "New game → Nautiloid escaped (the launch bar)",
+   "about": "The launch-bar series (3/3 clean, 2026-10-13, series naut): a new game, character creation from the brief, the prologue until the Nautiloid crashes.",
+   "start": {
+    "kind": "new_game"
+   },
+   "until": "nautiloid_escaped",
+   "runs": 3,
+   "caps": {
+    "run_hours": 4,
+    "max_cost": null,
+    "max_tokens": null
+   },
+   "profile": {
+    "character": {
+     "brief": "A level-headed half-elf fighter, once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+     "roleplay": "strict"
+    }
+   },
+   "reset": {
+    "saves": "after_run_start",
+    "nav_state": "archive",
+    "knowledge": "restore_agent_edits",
+    "memory": "template"
+   }
+  }
+ },
+ "pins": {
+  "game_build": "25605617",
+  "bg3le": {
+   "source": "v0.3.6-dirty",
+   "local_changes": true,
+   "commit": "3728a68ef4a98fe0d25e3dac9b7d1f89d96f40ec",
+   "sha256": "5032557f0c179f621afac14c918cd750bfec035547485cd7b5ad8078e730e4d8",
+   "patches": 10
+  },
+  "mod": {
+   "version": "1.0.0.0",
+   "sha1": "8e8ba48870b97e0e07c4a7cf4e66e1ed64c6fe52"
+  },
+  "repo": {
+   "commit": "df88054130e70cfb2fcabf4541673d74fe21955b",
+   "dirty": false,
+   "diff": null
+  }
+ },
+ "caps": {
+  "run_hours": 4,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "judge_model": "claude-sonnet-5-5",
+ "client": "claude",
+ "sandbox": "none",
+ "sandbox_unfirewalled": false
+}

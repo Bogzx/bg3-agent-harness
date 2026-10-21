@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/manifest.v1.schema.json",
+  "title": "Run manifest v1 (manifest.json)",
+  "description": "What a benchmark run was set up with, written at its start and never edited. Fields the harness does not record yet are null (older series have no prompt hash, tool allowlist or price sheet). Built by bg3bench.manifest.",
+  "type": "object",
+  "required": ["schema", "run_id", "created", "bench_tag", "series", "run", "scenario", "condition", "client", "model",
+               "caps", "pins", "prompt", "tools", "grader", "facts_schema", "price_sheet", "sandbox"],
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "str_or_null": {"type": ["string", "null"]},
+    "num_or_null": {"type": ["number", "null"], "minimum": 0}
+  },
+  "properties": {
+    "schema": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "created": {"type": "number", "description": "epoch seconds the run started"},
+    "bench_tag": {"$ref": "#/$defs/str_or_null"},
+    "series": {"type": "string", "minLength": 1},
+    "run": {"type": "integer", "minimum": 1},
+    "scenario": {
+      "type": "object",
+      "required": ["name", "digest", "start_save_sha1"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "digest": {"$ref": "#/$defs/str_or_null"},
+        "start_save_sha1": {"$ref": "#/$defs/str_or_null"}
+      }
+    },
+    "condition": {"$ref": "#/$defs/str_or_null", "description": "rules | rules+coaching@<hash8> | byo:<client>"},
+    "client": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {"name": {"type": "string", "minLength": 1}, "version": {"$ref": "#/$defs/str_or_null"}}
+    },
+    "model": {
+      "type": "object",
+      "required": ["slug", "provider_requested", "reasoning_effort"],
+      "additionalProperties": false,
+      "properties": {
+        "slug": {"type": "string", "minLength": 1},
+        "provider_requested": {"$ref": "#/$defs/str_or_null"},
+        "reasoning_effort": {"$ref": "#/$defs/str_or_null"}
+      }
+    },
+    "caps": {
+      "type": "object",
+      "required": ["run_hours", "max_cost", "max_tokens"],
+      "properties": {
+        "run_hours": {"$ref": "#/$defs/num_or_null"},
+        "max_cost": {"$ref": "#/$defs/num_or_null"},
+        "max_tokens": {"$ref": "#/$defs/num_or_null"}
+      }
+    },
+    "pins": {"type": "object", "description": "game build, bg3le, mod and repo versions (runner/runs.py version_pins)"},
+    "prompt": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["sha256", "parts"],
+          "additionalProperties": false,
+          "properties": {
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "parts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["file", "sha256"],
+                "additionalProperties": false,
+                "properties": {"file": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}}
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tools": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["allowlist_sha256", "count"],
+          "additionalProperties": false,
+          "properties": {"allowlist_sha256": {"$ref": "#/$defs/sha256"}, "count": {"type": "integer", "minimum": 0}}
+        }
+      ]
+    },
+    "grader": {
+      "type": "object",
+      "required": ["version"],
+      "additionalProperties": false,
+      "properties": {"version": {"type": "string", "minLength": 1}}
+    },
+    "facts_schema": {"const": 1},
+    "price_sheet": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["date", "usd_per_mtok"],
+          "additionalProperties": false,
+          "properties": {
+            "date": {"type": "string", "format": "date"},
+            "usd_per_mtok": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}}
+          }
+        }
+      ]
+    },
+    "sandbox": {"$ref": "#/$defs/str_or_null"}
+  }
+}
