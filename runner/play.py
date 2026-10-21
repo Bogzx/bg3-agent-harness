@@ -3679,7 +3679,7 @@ class Runner:
         sys.path.append(str(REPO / "tools" / "saves"))
         import lsf
         got = game_settings.readout(game_settings.profile_files(steam_paths.profile_dir(), steam_paths.manifest(),
-                                                                lsf.attributes), call)
+                                                                lsf.attributes, steam_paths.parse_vdf), call)
         if self.opt.seed is not None:
             try:
                 got["seed"] = {"seed": self.opt.seed, "applied": game_settings.apply_seed(call, self.opt.seed)}

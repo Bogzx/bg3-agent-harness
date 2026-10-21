@@ -42,6 +42,9 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "bridge/src/bg3ai/route.py" = ["E501", "E741", "N803"]
 "bridge/src/bg3ai/saver.py" = ["E501", "RUF100", "SIM102", "UP035"]
 "bridge/src/bg3ai/screen.py" = ["B904", "F821", "SIM105", "UP035", "UP037"]
+"bridge/src/bg3ai/server.py" = ["E501"]
+"bridge/src/bg3ai/skipper.py" = ["SIM115", "UP035"]
+"bridge/src/bg3ai/spellprep.py" = ["E501"]
 "bridge/src/bg3ai/tools/batch.py" = ["E501", "E741", "RUF005", "SIM102"]
 "bridge/src/bg3ai/tools/combat.py" = ["E501", "RUF002", "RUF003", "RUF005", "UP035"]
 "bridge/src/bg3ai/tools/core.py" = ["E501"]
@@ -65,9 +68,6 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "bridge/src/bg3ai/tools/turn_tool.py" = ["B905", "E501", "RUF003", "RUF021", "SIM102"]
 "bridge/src/bg3ai/tools/uitools.py" = ["E501"]
 "bridge/src/bg3ai/tools/world_tools.py" = ["B905", "E501", "RUF003", "RUF005"]
-"bridge/src/bg3ai/server.py" = ["E501"]
-"bridge/src/bg3ai/skipper.py" = ["SIM115", "UP035"]
-"bridge/src/bg3ai/spellprep.py" = ["E501"]
 "bridge/src/bg3ai/turn.py" = ["B023", "E501", "RUF002", "RUF005", "RUF100", "UP035"]
 "bridge/src/bg3ai/twostep.py" = ["B023"]
 "bridge/src/bg3ai/wiki.py" = ["B905", "E501"]
@@ -79,7 +79,7 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "bridge/tests/test_cc_saves.py" = ["E501", "I001", "RUF059", "SIM117"]
 "bridge/tests/test_clicker.py" = ["E501", "RUF005", "RUF059"]
 "bridge/tests/test_climb_settle.py" = ["E501", "RUF012", "RUF059", "RUF100"]
-"bridge/tests/test_clock.py" = ["I001", "RUF100"]
+"bridge/tests/test_clock.py" = ["E501", "I001", "RUF100"]
 "bridge/tests/test_combat_tools.py" = ["F401"]
 "bridge/tests/test_compact.py" = ["E501", "I001", "RUF100"]
 "bridge/tests/test_companions.py" = ["E501", "N806", "RUF002", "RUF005", "RUF012"]
@@ -145,51 +145,50 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "bridge/tests/test_twostep.py" = ["E501", "I001", "RUF059", "RUF100"]
 "bridge/tests/test_ui_confirm.py" = ["E501", "I001", "RUF100"]
 "native/bg3sdl/test/test_shim.py" = ["E501", "E741"]
-"runner/clients.py" = ["B905"]
+"packages/harness/src/bg3harness/clients.py" = ["B905"]
+"packages/harness/src/bg3harness/facts.py" = ["RUF100"]
+"packages/harness/src/bg3harness/fairness.py" = ["E501", "RUF001", "RUF005", "SIM102"]
+"packages/harness/src/bg3harness/model_time.py" = ["B905", "C420", "N812", "RUF007"]
+"packages/harness/src/bg3harness/pi_client.py" = ["N812"]
+"packages/harness/src/bg3harness/ramwatch.py" = ["E501", "RUF100", "SIM105", "SIM115"]
+"packages/harness/src/bg3harness/sandbox.py" = ["E501", "RUF005", "SIM105", "SIM115"]
+"packages/harness/src/bg3harness/triage.py" = ["B905", "RUF001", "RUF005", "RUF007"]
+"runner/dashboard/feeds.py" = ["C420", "E501", "N812", "RUF100"]
 "runner/dashboard/seriesview.py" = ["N812"]
+"runner/dashboard/serve.py" = ["E501", "N812", "RUF100", "SIM105"]
+"runner/dashboard/story.py" = ["E702", "RUF001", "SIM105"]
+"runner/dashboard/test_feeds.py" = ["E501", "N812", "RUF100"]
 "runner/dashboard/test_seriesview.py" = ["B905", "N812"]
-"runner/dashboard/test_serve.py" = ["N812"]
-"runner/fairness.py" = ["E501", "RUF001", "RUF005", "RUF100", "SIM102"]
+"runner/dashboard/test_serve.py" = ["E501", "N812", "RUF059"]
+"runner/dashboard/test_story.py" = ["E501", "N812", "RUF100"]
 "runner/judge.py" = ["E501", "RUF005"]
-"runner/model_time.py" = ["B905", "C420", "I001", "N812", "RUF007"]
+"runner/memory_keeper.py" = ["E501", "I001", "N812", "RUF001", "RUF100", "SIM105"]
 "runner/play.py" = ["C408", "E501", "F541", "I001", "N812", "N818", "RUF001", "RUF005", "RUF100", "SIM103", "SIM105", "SIM108", "SIM114", "SIM115", "UP031", "UP037"]
-"runner/ramwatch.py" = ["E501", "RUF100", "SIM105", "SIM115"]
-"runner/runs.py" = ["E501", "F401", "RUF100", "SIM105", "SIM114"]   # F401: re-exports of bg3bench
-"runner/sandbox.py" = ["E501", "RUF005", "SIM105", "SIM115"]
+"runner/runs.py" = ["B023", "B905", "E501", "F401", "RUF001", "RUF100", "SIM105", "SIM114"]   # F401: re-exports of bg3bench
+"runner/test_analyzer_parity.py" = ["N812"]
 "runner/test_clients.py" = ["B905", "E501", "I001", "N812", "RUF100"]
 "runner/test_crash.py" = ["C416", "E501", "I001", "N812", "RUF005", "RUF012", "RUF100", "UP031"]
 "runner/test_display_env.py" = ["N812"]
+"runner/test_events.py" = ["N812"]
 "runner/test_fairness.py" = ["E501", "N812", "RUF100"]
 "runner/test_host_tuning.py" = ["E501", "N812", "RUF100"]
 "runner/test_judge.py" = ["N812", "RUF012", "RUF100"]
+"runner/test_memory_keeper.py" = ["E401", "E501", "F401", "I001", "N812"]
 "runner/test_model_time.py" = ["B905", "C416", "C420", "N812", "RUF100", "UP017"]
+"runner/test_pi_client.py" = ["N812"]
 "runner/test_play.py" = ["E501", "E731", "I001", "N805", "N812", "RUF001", "RUF005", "RUF012", "RUF015", "RUF059", "RUF100", "SIM117"]
+"runner/test_profiles.py" = ["N812"]
 "runner/test_ramwatch.py" = ["E501", "N812", "RUF005", "RUF100"]
-"runner/test_runs.py" = ["E501", "I001", "N812", "RUF012", "RUF100"]
+"runner/test_runs.py" = ["E501", "I001", "N812", "RUF005", "RUF012", "RUF059", "RUF100"]
 "runner/test_sandbox.py" = ["I001", "N812", "RUF059", "RUF100"]
-"runner/test_scenarios.py" = ["I001", "N812", "RUF005", "RUF100"]
-"runner/triage.py" = ["B905", "RUF001", "RUF005", "RUF007", "RUF100"]
+"runner/test_scenarios.py" = ["E501", "I001", "N812", "RUF005", "RUF100"]
 "tools/container/egress_proxy.py" = ["SIM105", "UP041"]
 "tools/container/mcp_smoke.py" = ["SIM117"]
 "tools/container/sandbox_smoke.py" = ["E501", "N812"]
-"tools/dev/acceptance/act.py" = ["E501", "N812"]
-"tools/dev/acceptance/combat.py" = ["B023", "B905", "E501", "E741", "I001", "N812", "RUF002", "RUF005"]
-"tools/dev/acceptance/core.py" = ["B905", "E501", "E741", "RUF100", "SIM105"]
-"tools/dev/acceptance/gear.py" = ["E501", "F841"]
-"tools/dev/acceptance/hotbar.py" = ["E501", "E741", "N812", "RUF100"]
-"tools/dev/acceptance/loads.py" = ["E501", "E731"]
-"tools/dev/acceptance/nav.py" = ["E501", "F841"]
-"tools/dev/acceptance/reads.py" = ["E501", "F841", "RUF100"]
-"tools/dev/acceptance/rest.py" = ["B905", "E501", "F841"]
-"tools/dev/acceptance/runner.py" = ["E501", "RUF005", "RUF100", "SIM115"]
-"tools/dev/acceptance/se.py" = ["E501", "N812", "RUF003", "RUF100"]
-"tools/dev/acceptance/setup.py" = ["E501", "N812", "RUF003", "SIM105"]
-"tools/dev/acceptance/strict.py" = ["E501", "RUF100"]
-"tools/dev/acceptance/trade.py" = ["E501", "F841", "RUF003", "RUF021"]
-"tools/dev/acceptance/vis.py" = ["E501", "E741", "F541", "I001", "RUF059"]
+"tools/dev/acceptance.py" = ["B023", "B905", "E501", "E731", "E741", "F401", "F541", "F841", "I001", "N812", "RUF002", "RUF003", "RUF005", "RUF021", "RUF059", "RUF100", "SIM105", "SIM115"]
 "tools/dev/acceptance_check.py" = ["B007", "C416", "E501", "N803", "N806", "N812", "RUF005", "RUF100", "SIM105", "SIM108"]
-"tools/dev/check_act.py" = ["E501", "E702", "RUF100", "UP031"]
-"tools/dev/check_all.py" = ["C401", "E501", "I001", "RUF001", "RUF100", "UP035"]
+"tools/dev/check_act.py" = ["E501", "E702", "N812", "RUF100", "UP031"]
+"tools/dev/check_all.py" = ["C401", "E501", "I001", "N812", "RUF001", "RUF100", "UP035"]
 "tools/dev/check_levelup.py" = ["E501", "I001", "RUF100"]
 "tools/dev/check_plans.py" = ["E501"]
 "tools/dev/check_reads.py" = ["B007", "E501", "I001", "N812", "SIM105"]
@@ -197,15 +196,15 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "tools/dev/check_se.py" = ["E501", "I001", "RUF005", "RUF021", "SIM105"]
 "tools/dev/check_session.py" = ["E501", "E741", "RUF059", "SIM105"]
 "tools/dev/check_setup.py" = ["E501"]
-"tools/dev/check_vis.py" = ["E501", "I001", "RUF100"]
+"tools/dev/check_vis.py" = ["E501", "I001", "N812", "RUF100"]
 "tools/dev/combat_review.py" = ["B007", "C408", "E401", "E501", "E701", "E702", "E731", "E741", "I001", "SIM105", "SIM108", "SIM115"]
 "tools/dev/gap_causes.py" = ["B007", "C408", "E401", "E402", "E501", "E701", "E702", "E741", "F401", "I001", "N812", "SIM115"]
-"tools/dev/smoke.py" = ["RUF005", "RUF100"]
+"tools/dev/smoke.py" = ["N812", "RUF005", "RUF100"]
 "tools/dev/test_acceptance_check.py" = ["N812"]
-"tools/dev/test_acceptance_memory.py" = ["RUF100"]
+"tools/dev/test_acceptance_memory.py" = ["N812", "RUF100"]
 "tools/dev/test_acceptance_se.py" = ["E501", "I001", "N806", "N812", "RUF012", "RUF059"]
 "tools/dev/test_acceptance_strict.py" = ["N812"]
-"tools/dev/test_acceptance_targets.py" = ["RUF100"]
+"tools/dev/test_acceptance_targets.py" = ["N812", "RUF100"]
 "tools/dev/test_cc_watch.py" = ["RUF100"]
 "tools/dev/test_check_all.py" = ["E501", "I001", "N812", "RUF005", "RUF059", "RUF100"]
 "tools/dev/test_check_levelup.py" = ["E501", "N812", "RUF100"]
@@ -233,6 +232,21 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "tools/logs/think_by_situation.py" = ["E401", "I001", "SIM115"]
 "tools/logs/tool_latency.py" = ["E401", "E501", "E702", "I001", "SIM115"]
 "tools/logs/trim_estimate.py" = ["E401", "E501", "I001", "SIM105", "SIM115"]
+"tools/memory/_testutil.py" = ["N812"]
+"tools/memory/lint.py" = ["N812", "RUF100"]
+"tools/memory/memlib.py" = ["UP017"]
+"tools/memory/new_playthrough.py" = ["N812", "RUF100"]
+"tools/memory/session.py" = ["E501", "E741", "N812", "RUF005", "RUF100"]
+"tools/memory/snapshots.py" = ["N806", "N812", "RUF100", "UP035"]
+"tools/memory/test_git_safety.py" = ["N812", "RUF100"]
+"tools/memory/test_lint.py" = ["I001", "N812"]
+"tools/memory/test_new_playthrough.py" = ["N812", "RUF059"]
+"tools/memory/test_session.py" = ["E501", "N812", "RUF059"]
+"tools/memory/test_snapshots.py" = ["N812"]
+"tools/pi/conformance/live_check.py" = ["E402", "N812"]
+"tools/pi/conformance/test_pi_conformance.py" = ["E402", "N812"]
+"tools/saves/inspect.py" = ["E402"]
+"tools/saves/test_inspect.py" = ["E402"]
 "tools/steam_paths.py" = ["E501"]
 "tools/test_bg3le_buildinfo.py" = ["N812", "RUF100"]
 "tools/test_bg3le_static_data.py" = ["E501"]
@@ -249,15 +263,6 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 # sys.path before importing it (E402) under the runner's one-letter module aliases (N812). tools/saves/inspect.py
 # imports after taking its own folder off sys.path (it would shadow the stdlib `inspect`). They leave the list when
 # runner/ moves into packages/harness (OVERHAUL-PLAN.md B-harness).
-"runner/pi_client.py" = ["N812"]
-"runner/test_analyzer_parity.py" = ["N812"]
-"runner/test_events.py" = ["N812"]
-"runner/test_pi_client.py" = ["N812"]
-"runner/test_profiles.py" = ["N812"]
-"tools/pi/conformance/live_check.py" = ["E402", "N812"]
-"tools/pi/conformance/test_pi_conformance.py" = ["E402", "N812"]
-"tools/saves/inspect.py" = ["E402"]
-"tools/saves/test_inspect.py" = ["E402"]
 
 [format]
 # Legacy files not yet in ruff format (2026-10-21). Only shrinks; format a file only when you own it.
@@ -297,6 +302,7 @@ exclude = [
     "bridge/src/bg3ai/rules.py",
     "bridge/src/bg3ai/saver.py",
     "bridge/src/bg3ai/skipper.py",
+    "bridge/src/bg3ai/spellprep.py",
     "bridge/src/bg3ai/tools/batch.py",
     "bridge/src/bg3ai/tools/combat.py",
     "bridge/src/bg3ai/tools/core.py",
@@ -320,7 +326,6 @@ exclude = [
     "bridge/src/bg3ai/tools/turn_tool.py",
     "bridge/src/bg3ai/tools/uitools.py",
     "bridge/src/bg3ai/tools/world_tools.py",
-    "bridge/src/bg3ai/spellprep.py",
     "bridge/src/bg3ai/turn.py",
     "bridge/src/bg3ai/twostep.py",
     "bridge/src/bg3ai/wiki.py",
@@ -404,54 +409,45 @@ exclude = [
     "bridge/tests/test_ui_confirm.py",
     "bridge/tests/test_wiki_format.py",
     "native/bg3sdl/test/test_shim.py",
-    "runner/clients.py",
+    "packages/harness/src/bg3harness/clients.py",
+    "packages/harness/src/bg3harness/display_env.py",
+    "packages/harness/src/bg3harness/facts.py",
+    "packages/harness/src/bg3harness/fairness.py",
+    "packages/harness/src/bg3harness/host_tuning.py",
+    "packages/harness/src/bg3harness/model_time.py",
+    "packages/harness/src/bg3harness/ramwatch.py",
+    "packages/harness/src/bg3harness/sandbox.py",
+    "packages/harness/src/bg3harness/triage.py",
+    "runner/dashboard/feeds.py",
     "runner/dashboard/seriesview.py",
     "runner/dashboard/serve.py",
+    "runner/dashboard/story.py",
+    "runner/dashboard/test_feeds.py",
     "runner/dashboard/test_seriesview.py",
     "runner/dashboard/test_serve.py",
-    "runner/display_env.py",
-    "runner/fairness.py",
-    "runner/host_tuning.py",
+    "runner/dashboard/test_story.py",
     "runner/judge.py",
     "runner/memory_keeper.py",
-    "runner/model_time.py",
     "runner/play.py",
-    "runner/ramwatch.py",
     "runner/runs.py",
-    "runner/sandbox.py",
     "runner/test_clients.py",
     "runner/test_crash.py",
     "runner/test_display_env.py",
     "runner/test_fairness.py",
     "runner/test_host_tuning.py",
     "runner/test_judge.py",
+    "runner/test_memory_keeper.py",
     "runner/test_model_time.py",
     "runner/test_play.py",
     "runner/test_ramwatch.py",
     "runner/test_runs.py",
     "runner/test_sandbox.py",
     "runner/test_scenarios.py",
-    "runner/triage.py",
     "tools/bg3le_buildinfo.py",
     "tools/container/egress_proxy.py",
     "tools/container/mcp_smoke.py",
     "tools/container/sandbox_smoke.py",
-    "tools/dev/acceptance/act.py",
-    "tools/dev/acceptance/combat.py",
-    "tools/dev/acceptance/core.py",
-    "tools/dev/acceptance/gear.py",
-    "tools/dev/acceptance/hotbar.py",
-    "tools/dev/acceptance/loads.py",
-    "tools/dev/acceptance/nav.py",
-    "tools/dev/acceptance/reads.py",
-    "tools/dev/acceptance/rest.py",
-    "tools/dev/acceptance/runner.py",
-    "tools/dev/acceptance/se.py",
-    "tools/dev/acceptance/setup.py",
-    "tools/dev/acceptance/strict.py",
-    "tools/dev/acceptance/swap.py",
-    "tools/dev/acceptance/trade.py",
-    "tools/dev/acceptance/vis.py",
+    "tools/dev/acceptance.py",
     "tools/dev/acceptance_check.py",
     "tools/dev/check_act.py",
     "tools/dev/check_all.py",
@@ -503,6 +499,11 @@ exclude = [
     "tools/memory/new_playthrough.py",
     "tools/memory/session.py",
     "tools/memory/snapshots.py",
+    "tools/memory/test_git_safety.py",
+    "tools/memory/test_lint.py",
+    "tools/memory/test_new_playthrough.py",
+    "tools/memory/test_session.py",
+    "tools/memory/test_snapshots.py",
     "tools/pak.py",
     "tools/repo_paths.py",
     "tools/steam_paths.py",

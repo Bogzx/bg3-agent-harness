@@ -100,7 +100,7 @@ class LaunchRefusesWithoutDisplay(unittest.TestCase):
                     "DISPLAY": ":97", "XAUTHORITY": str(self.tmp / "no-such-xauth")}   # no /tmp/.X11-unix/X97
 
     def launch(self, *args: str) -> subprocess.CompletedProcess:
-        sh = Path(D.__file__).parent / "launch_game.sh"
+        sh = Path(__file__).resolve().parent / "launch_game.sh"
         return subprocess.run(["bash", str(sh), "--no-bg3le", "--no-input-shim", *args], capture_output=True,
                               text=True, env=self.env, timeout=60)
 
@@ -120,7 +120,7 @@ class LaunchRefusesWithoutDisplay(unittest.TestCase):
 
     def test_ui_strict_env(self):
         """S17: BG3AI_UI_STRICT=1 starts the game with bg3le's strict frame lock; unset/0 leaves it off."""
-        sh = Path(D.__file__).parent / "launch_game.sh"
+        sh = Path(__file__).resolve().parent / "launch_game.sh"
 
         def cmd(**env):
             r = subprocess.run(["bash", str(sh), "--no-input-shim", "--dry-run"], capture_output=True, text=True,

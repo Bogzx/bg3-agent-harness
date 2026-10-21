@@ -147,7 +147,7 @@ class Facts(unittest.TestCase):
         ring = FakeRing()
         feed = F.RingFeed(ring, self.w, self.path.with_name("rolls.jsonl"), wall=lambda: 2000.0)
         self.w.mark("run_start", now=1000.0)
-        self.assertEqual(feed.poll(), (0, 0))                      # synced: the ring's earlier records aren't this run's
+        self.assertEqual(feed.poll(), (0, 0))                      # synced: older ring records aren't this run's
         self.assertEqual(self.w.referee_live, True)
         ring.ref.append({"seq": 4, "t": 9_000, "ev": "trade_end", "npc": "Arron", "sold": [], "gold_in": 5})
         ring.ref.append({"seq": 5, "t": 9_500, "ev": "gold", "gold": 40, "delta": 5, "holder": None})

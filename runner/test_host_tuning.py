@@ -99,7 +99,7 @@ class HostTuningTest(unittest.TestCase):
             self.assertEqual(H.main([]), 2)
 
     def test_launch_game_applies_it_before_the_launch(self):
-        sh = (Path(H.__file__).parent / "launch_game.sh").read_text()
+        sh = (Path(__file__).resolve().parent / "launch_game.sh").read_text()
         call = sh.index('runner/host_tuning.py" "$_tune"')
         self.assertLess(call, sh.index('launch=("${scope[@]}"'))
         self.assertIn("|| true", sh[call:sh.index("\n", call)])           # never fails a launch

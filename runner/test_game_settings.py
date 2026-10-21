@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """runner/game_settings.py: the settings readout from profile files and roll.snapshot; scn.seed / scn.undo.
 
-    python3 -m unittest runner/test_game_settings.py
+python3 -m unittest runner/test_game_settings.py
 """
+
 from __future__ import annotations
 
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace as NS
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-import game_settings as G  # noqa: E402
+import game_settings as gs
 
 LSX = """<node id="ConfigEntry">
     <attribute id="MapKey" type="FixedString" value="ScreenHeight"/>
@@ -28,9 +29,13 @@ VDF = '"AppState"\n{\n\t"appid"\t"1086940"\n\t"UserConfig"\n\t{\n\t\t"language"\
 
 
 def attrs(**entries):
-    out = [NS(name="Version64", value=1)]
+    out = [SimpleNamespace(name="Version64", value=1)]
     for k, v in entries.items():
-        out += [NS(name="MapKey", value=k), NS(name="Type", value=0), NS(name="Value", value=v)]
+        out += [
+            SimpleNamespace(name="MapKey", value=k),
+            SimpleNamespace(name="Type", value=0),
+            SimpleNamespace(name="Value", value=v),
+        ]
     return out
 
 
@@ -49,24 +54,48 @@ class Rpc:
 class Settings(unittest.TestCase):
     def test_readout(self):
         import steam_paths
-        files = {"graphics": lambda: LSX, "config": lambda: attrs(ShowTutorials=0, UIScaleFactor=120),
-                 "manifest": lambda: steam_paths.parse_vdf(VDF)}
-        got = G.readout(files, Rpc({"roll.snapshot": {"mode": "WeightedRandom"}}))
-        self.assertEqual(got, {"resolution": "1920x1080", "ui_scale": 120, "language": "english", "difficulty": None,
-                               "roll_mode": "WeightedRandom", "karmic_dice": True})
+
+        files = {
+            "graphics": lambda: LSX,
+            "config": lambda: attrs(ShowTutorials=0, UIScaleFactor=120),
+            "manifest": lambda: steam_paths.parse_vdf(VDF),
+        }
+        got = gs.readout(files, Rpc({"roll.snapshot": {"mode": "WeightedRandom"}}))
+        self.assertEqual(
+            got,
+            {
+                "resolution": "1920x1080",
+                "ui_scale": 120,
+                "language": "english",
+                "difficulty": None,
+                "roll_mode": "WeightedRandom",
+                "karmic_dice": True,
+            },
+        )
 
     def test_unreadable(self):
         boom = lambda: (_ for _ in ()).throw(OSError("missing"))  # noqa: E731
-        got = G.readout({"graphics": boom, "config": lambda: attrs(ShowTutorials=0), "manifest": boom},
-                        Rpc({"roll.snapshot": OSError("no game")}))
-        self.assertEqual(got, {"resolution": None, "ui_scale": None, "language": None, "difficulty": None,
-                               "roll_mode": None, "karmic_dice": None})
-        self.assertEqual(G.karmic(Rpc({"roll.snapshot": {"mode": "Random"}})), ("Random", False))
+        got = gs.readout(
+            {"graphics": boom, "config": lambda: attrs(ShowTutorials=0), "manifest": boom},
+            Rpc({"roll.snapshot": OSError("no game")}),
+        )
+        self.assertEqual(
+            got,
+            {
+                "resolution": None,
+                "ui_scale": None,
+                "language": None,
+                "difficulty": None,
+                "roll_mode": None,
+                "karmic_dice": None,
+            },
+        )
+        self.assertEqual(gs.karmic(Rpc({"roll.snapshot": {"mode": "Random"}})), ("Random", False))
 
     def test_seed_and_undo(self):
         rpc = Rpc({"scn.seed": {"streams": 3}, "scn.undo": {"restored": 0}})
-        self.assertEqual(G.apply_seed(rpc, 12345), {"streams": 3})
-        self.assertEqual(G.undo(rpc), {"restored": 0})
+        self.assertEqual(gs.apply_seed(rpc, 12345), {"streams": 3})
+        self.assertEqual(gs.undo(rpc), {"restored": 0})
         self.assertEqual(rpc.calls, [("scn.seed", {"seed": 12345}), ("scn.undo", {})])
 
 
