@@ -13,7 +13,7 @@ Version: `pyproject.toml` (0.1.0). A results release is the tag `bench-vX.Y` wit
 |---|---|
 | `scenarios/*.json` | scenario files v2: start, goal, caps, game settings, dice seed, timing, conditions |
 | `scenarios/quizzes/` | closed-book quizzes per scenario, for contamination checks |
-| `schema/` | JSON Schemas: scenario v2, goal, run manifest, run result, release results, roll log |
+| `schema/` | JSON Schemas: scenario v2, goal, run manifest, run result, release results, roll log, human results |
 | `docs/SCENARIOS-AUTHORING.md` | the checklist for adding a scenario, from start save to baselines |
 | `src/bg3bench/scenario.py` | load and validate scenario files, and convert the v1 files in `scenarios/` at the root |
 | `src/bg3bench/scenario_v1.py` | the v1 format the legacy runner (`play.py run --scenario`) still plays; `scenarios/*.json` here is canonical, the root `scenarios/` is legacy and closed (its README) |
@@ -28,6 +28,7 @@ Version: `pyproject.toml` (0.1.0). A results release is the tag `bench-vX.Y` wit
 | `adapters/` | temporary: the matrix runs jobs through `runner/play.py` until the harness has `run_session` |
 | `baselines/` | do-nothing and seeded random agents that speak MCP to the bg3 server |
 | `fairness_probes.py` | every bg3 tool has a hidden-fact probe or a written exemption (`fairness_probes.json`) |
+| `human.py` | the human baseline: reads a player's results file and adds the `human (<player>)` row ([docs/HUMAN-BASELINE.md](../../docs/HUMAN-BASELINE.md)) |
 | `report.py`, `site/`, `export_inspect.py`, `publish.py` | series report, leaderboard page, Inspect `.eval`, release upload (dry run only) |
 
 ## Commands
