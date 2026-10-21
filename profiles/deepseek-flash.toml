@@ -1,4 +1,4 @@
-# DeepSeek V4.1 Flash through pi and DeepSeek's own API (no OpenRouter, so no [routing]).
+# DeepSeek V4.1 Flash through pi and DeepSeek's own API (pi's deepseek provider id; no OpenRouter, so no [routing]).
 # Example: model numbers from pi 1.3.0's catalog (2026-10-21); pi detects DeepSeek's compat from the provider id.
 client = "pi"
 model = "deepseek-flash"

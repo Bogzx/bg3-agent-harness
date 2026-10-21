@@ -54,7 +54,9 @@ class Examples(unittest.TestCase):
             self.assertNotRegex(text, r"sk-[A-Za-z0-9]|api_key\s*=", p.name)
 
     def test_golden_models_json(self):
-        for p in sorted(EXAMPLES.glob("*-pi.toml")):
+        pi = [p for p in sorted(EXAMPLES.glob("*.toml")) if PR.load(p).client == "pi"]
+        self.assertEqual(len(pi), 3)
+        for p in pi:
             got = json.dumps(PR.models_json(PR.load(p)), indent=1) + "\n"
             golden = GOLDEN / f"models.{p.stem}.json"
             if os.environ.get("BG3AI_UPDATE_GOLDEN"):
