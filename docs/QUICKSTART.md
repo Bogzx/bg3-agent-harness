@@ -4,9 +4,9 @@ Three ways in: run your own model through the harness, plug your own MCP client 
 playthrough app to watch a long run. All three need the game set up first: [SETUP.md](SETUP.md) (Linux, a Steam
 copy of BG3 on the pinned build, bg3le built), then `python3 tools/bench_preflight.py` with no FAIL line.
 
-Status on 2026-10-21: only Claude through Claude Code has played live. The pi client (any OpenAI-compatible
-endpoint) is tested offline and through one real API call, not yet in the game. `--profile` and the spend caps
-below are on the harness branch (`ovh/harness`) and not yet merged into `overhaul`.
+Status on 2026-10-22: Claude through Claude Code and DeepSeek Flash through pi (`profiles/deepseek-flash.toml`)
+have played the Nautiloid live on the overhaul code, one run each (research/ovh/live3.md). No other model has played
+through pi yet.
 
 ## Test your own model
 
@@ -58,17 +58,37 @@ python3 runner/play.py runs --playthrough naut-my-model
 - `--max-cost` is required for pi: the runner kills the play process when the billed cost reaches it and records
   the run as over budget. A series keeps the caps of its first run.
 - `--no-keeper` is required for pi for now (the memory keeper can't run through pi yet). `--no-judge` skips the
-  persona judge, which would otherwise run on Claude after each run.
+  persona judge, which would otherwise run on Claude after each run. To judge with another model afterwards:
+  `python3 runner/judge.py <session_dir> --profile profiles/<judge>.toml --max-cost 0.2` (any client profile; a
+  paid one needs the cap, and the judge is never the model under test).
 - `--plan` prints what the series would freeze and the first session's command without starting anything.
 
-The matrix runner (`packages/bench`, `bg3bench.matrix`) queues the same command over models x scenarios x
-conditions x repeats under one budget. It has no command line yet.
+The matrix runner queues the same command over models x scenarios x conditions x repeats under one budget:
+
+```bash
+uv run --project packages/bench python -m bg3bench.matrix plan --matrix packages/bench/matrices/pilot-2026-10-22.toml
+uv run --project packages/bench python -m bg3bench.matrix run --matrix packages/bench/matrices/pilot-2026-10-22.toml
+```
+
+`plan` is a dry run (the jobs, the budget reserve and what play.py can't play exactly yet); `run`, `resume` and
+`status` do the rest. The matrix file format is in [packages/bench/README.md](../packages/bench/README.md).
 
 ### What it costs
 
-Cost is what the endpoint bills for the tokens. The numbers we have are for Claude Opus 5.5 through Claude Code on
-the Nautiloid, 9 to 13 minutes per run: a mean of $4.34 per run in the first series, $3.30 in the second and $1.46
-in the third, as the harness got better. No model has played through pi yet, so there is no measured cost for it.
+Cost is what the endpoint bills for the tokens. The numbers we have:
+
+- Claude Opus 5.5 through Claude Code on the Nautiloid, 9 to 13 minutes per run: a mean of $4.34 per run in the
+  first series, $3.30 in the second and $1.46 in the third, as the harness got better.
+- DeepSeek Flash through pi: one Nautiloid run stopped by a $0.50 cap after 40 minutes, in the final fight, and
+  DeepSeek billed $0.24 for it (account balance before and after; the cap then counted pi's catalog price, about
+  twice the bill). A crash-site-to-Emerald-Grove run cost $0.18.
+
+For DeepSeek's own API, the runner now computes the bill (`bg3harness.pi_client`, `deepseek_bill.py`) from DeepSeek's usage fields (cache hits, cache misses, output) at the
+profile's `cost` rates, which are the peak prices, and halves them in DeepSeek's off-peak hours (Beijing time,
+outside 09:00-12:00 and 14:00-18:00 on weekdays). That run comes to $0.25 by this count. Chinese public holidays
+count as peak, so the estimate errs high. Other endpoints are priced from the profile's `cost` table (OpenRouter's
+own `usage.cost` where it sends one).
+
 The plan's estimate for the pi pilot is $40-60 for 5 models x 3 Nautiloid runs.
 
 What bounds your spend:
@@ -90,7 +110,9 @@ name itself, the later runs are `<name>-r2`, `<name>-r3` and so on.
 | `<run>/Sxxx.events.jsonl` | the normalized event log of each play process |
 | `<run>/Sxxx.log` | the readable session log |
 
-`python3 runner/play.py runs --playthrough NAME [--failures]` prints the table. The benchmark's per-run manifest
+`python3 runner/play.py runs --playthrough NAME [--failures]` prints the table, and the series view
+(`python3 runner/dashboard/seriesview.py`, http://127.0.0.1:8766/series) shows the same rows and the run in
+progress. The benchmark's per-run manifest
 and result files, the series report (`python3 -m bg3bench.report`) and the leaderboard read the same data once the
 harness writes them per run ([packages/bench/README.md](../packages/bench/README.md)).
 

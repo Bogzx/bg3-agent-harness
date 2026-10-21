@@ -22,13 +22,16 @@ Version: `pyproject.toml` (0.1.0). A results release is the tag `bench-vX.Y` wit
 | `stats.py`, `luck.py` | Wilson intervals, pass^k, two-level bootstrap, paired differences, the luck covariate |
 | `manifest.py`, `results.py` | run manifest, run result and release `results.json` builders |
 | `conditions.py`, `contamination.py` | condition ids (`rules`, `rules+coaching@<hash8>`, `+wiki`, ...), quizzes, holdouts |
-| `matrix.py` | the matrix runner: models x scenarios x conditions x repeats, resumable, under a global budget |
+| `matrix.py`, `matrix_cli.py`, `matrices/` | the matrix runner: models x scenarios x conditions x repeats, resumable, under a global budget; its command line and matrix files |
 | `series.py`, `resets.py`, `pins.py`, `records.py` | a series' runs: naming, runs.jsonl records, frozen caps/judge/client/sandbox, per-run resets and the FAIR-2 knowledge lock, version pins, the runs table and summary (moved from runner/runs.py, which re-exports them) |
 | `preflight.py` | can this machine run the benchmark (CLI: `python3 tools/bench_preflight.py`) |
 | `adapters/` | temporary: the matrix runs jobs through `runner/play.py` until the harness has `run_session` |
 | `baselines/` | do-nothing and seeded random agents that speak MCP to the bg3 server |
 | `fairness_probes.py` | every bg3 tool has a hidden-fact probe or a written exemption (`fairness_probes.json`) |
 | `human.py` | the human baseline: reads a player's results file and adds the `human (<player>)` row ([docs/HUMAN-BASELINE.md](../../docs/HUMAN-BASELINE.md)) |
+| `choices.py` | the choices grader: a choice scenario's picks from the facts' choice events (compared, never scored) and, given a judge, their fit to the character brief |
+| `authoring.py` | the scenario authoring steps: register a start save, draft the file, attach the oracle, run the baselines ([docs/SCENARIOS-AUTHORING.md](docs/SCENARIOS-AUTHORING.md)) |
+| `seriesview.py` | the series view: one row per run of a `play.py run --runs N` series, its spread and frozen settings, and the live run |
 | `report.py`, `site/`, `export_inspect.py`, `publish.py` | series report, leaderboard page, Inspect `.eval`, release upload (dry run only) |
 
 ## Commands
@@ -44,8 +47,27 @@ PYTHONPATH=src python3 -m bg3bench.site.build <results.json> <out.html> [--famil
 PYTHONPATH=src python3 -m bg3bench.publish <release_dir> --tag bench-v0.1 --hf-repo OWNER/NAME --dry-run <out_dir>
 ```
 
-The matrix runner has no command line yet. It is used from Python (`bg3bench.matrix`) with the play.py adapter;
-one job is one `runner/play.py run --scenario ...` call ([docs/QUICKSTART.md](../../docs/QUICKSTART.md)).
+From the repo root:
+
+```bash
+# the matrix runner; one job is one runner/play.py run --scenario ... call (the legacy CLI adapter)
+uv run --project packages/bench python -m bg3bench.matrix plan --matrix packages/bench/matrices/<file>.toml
+uv run --project packages/bench python -m bg3bench.matrix run|resume|status --matrix <file>.toml
+
+# the series view on http://127.0.0.1:8766/series, with the live row (the recorded rows only: python -m bg3bench.seriesview)
+python3 runner/dashboard/seriesview.py
+
+# register a start save for a scenario (copies it, runs the save inspector, writes registration.json)
+uv run --project packages/bench python -m bg3bench.authoring register <save folder> <store> <name>
+```
+
+`plan` is a dry run: the jobs, the budget reserve, and what play.py can't play exactly yet for each condition. A
+paid job needs `runtime/budget.json` (`{"cap": ..., "spent": ...}`); without it `run` stops before its first job.
+The format of a matrix file is in `matrix_cli.py`'s docstring; `matrices/pilot-2026-10-22.toml` is an example.
+
+The choice scenarios' result has the picks (`choices`), and the leaderboard adds a table of who picked what at each
+scene. The fit score needs a judge: `bg3harness.judge` takes any client profile (Claude through `claude -p`, or a pi
+profile's endpoint, which needs a cost cap), and a release refuses a judge that is also a contestant.
 
 ## Tests
 
@@ -58,7 +80,20 @@ uv run ruff check src tests
 The tests are offline and deterministic. `test_probes.py` lists the bridge's tools through `uv run` in `bridge/`.
 Tests that need an optional extra (inspect-ai, mcp, scipy) are skipped when it is not installed.
 
-## Status (2026-10-21)
+Two tests (marker `e2e`, run by default; `-m "not e2e"` skips them) play the whole pipeline with no game and no key,
+through the real bridge and the fake mod (`bg3harness.testing.fakemod`, a TCP server that answers the bridge's mod
+calls from a scripted game):
 
-Built and tested offline. Only `nautiloid` has run live, and that was through the older v1 series runner. The other
-scenarios need their start saves, an oracle run and both baselines before they count.
+- `test_e2e_offline.py`: a scenario file, pi with a scripted stub model, the bridge, the fake mod, `facts.jsonl`,
+  the grader, `result.json`, the stats, the report and the leaderboard. Needs `tools/pi/node_modules`
+  (`cd tools/pi && npm ci --ignore-scripts`), skipped without it.
+- `test_baseline_validity.py`: the do-nothing and random baselines play every scenario through the matrix runner
+  from the scenario's start hosted by the fake mod, and every grader must fail them. `choice_act1_karlach` is a
+  strict xfail until the harness keeps the avatar flag in `facts.jsonl`.
+
+## Status (2026-10-22)
+
+Built and tested offline. Only `nautiloid` has run live, through `play.py run --scenario`, which still reads the v1
+file in the root `scenarios/`: Claude Opus 5.5 through Claude Code and DeepSeek Flash through pi, one run each
+(research/ovh/live3.md). The other scenarios need their start saves, an oracle run and both baselines before they
+count. The human baseline protocol is [docs/HUMAN-BASELINE.md](../../docs/HUMAN-BASELINE.md).

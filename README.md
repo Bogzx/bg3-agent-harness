@@ -49,8 +49,9 @@ harness improved between series. Fights are the harness's own records: one per f
   actions). The agent usually recovered, at a cost in time.
 - Until 2026-10-17 a harness bug let the agent cast spells its characters had not prepared. It is fixed, but the
   run had that advantage before then.
-- Only Claude through Claude Code has played. The Codex, Gemini and pi clients are tested offline against stubs;
-  none has played a live session yet.
+- Claude through Claude Code played the full game. The only other live play so far is DeepSeek Flash through pi,
+  two short test runs on 2026-10-22 (the Nautiloid, and the crash site to the Emerald Grove). The Codex and Gemini
+  clients are tested offline against stubs only.
 - Every run so far used the agent text from before the overhaul, which was tuned on Claude's failures. The overhaul
   splits it into neutral rules and optional coaching, but no run has used the split text yet.
   [docs/BENCHMARK-BIAS.md](docs/BENCHMARK-BIAS.md) lists where the old text favoured Claude.
@@ -152,8 +153,19 @@ What exists now:
   differ, and a matrix runner on top of it that queues models x scenarios x conditions x repeats under a global
   budget.
 - A per-run dollar cap from the billed cost, required for pi, and a global budget file.
+- A matrix command line (`python -m bg3bench.matrix plan|run|status|resume`) with a dry-run plan of the jobs and
+  the budget reserve.
 - Do-nothing and random baselines, a fairness probe for every tool, statistics with confidence intervals, a series
-  report and a static leaderboard.
+  report, a series view of the runs in progress, and a static leaderboard.
+- A choices grader for the choice scenarios: the picks are compared across models, never scored, and a persona
+  judge (any client profile, never the model under test) can rate how well they fit the character brief.
+- A human baseline protocol ([docs/HUMAN-BASELINE.md](docs/HUMAN-BASELINE.md)): the owner plays each scenario from
+  the same start save, and the attempts become a "human (owner)" leaderboard row. Not played yet.
+- Offline end-to-end tests with no game and no key: a fake mod answers the real bridge's calls from a scripted game,
+  and a scripted model plays through pi, so a scenario runs all the way to its graded result and the leaderboard.
+  The do-nothing and random baselines are run against every scenario's start on the fake mod too.
+- Cost caps that track what the endpoint bills. For DeepSeek's own API the runner computes the bill from DeepSeek's
+  usage fields and its off-peak discount; a test run came to $0.25 against $0.24 actually billed.
 - A container sandbox where the playing client can reach only the bg3 MCP server and its model API
   ([tools/container/README.md](tools/container/README.md)). It has not yet run on a real host with the firewall.
 
@@ -247,11 +259,11 @@ from `journalctl --user`. Both degrade to a warning without systemd. `runner/lau
 
 The overhaul ([docs/OVERHAUL-PLAN.md](docs/OVERHAUL-PLAN.md)), in order:
 
-- Live checks of what is built offline: pi with real models, the seeded dice, the referee and roll logs, the
+- Live checks of what is built offline: pi with more models, the seeded dice, the referee and roll logs, the
   recorder, the container firewall.
 - Split `runner/play.py` behind a `run_session` API, so the benchmark and the app stop going through the CLI.
 - Benchmark content: neutral start saves, the first scenario set with oracle runs and baselines, a Nautiloid pilot
-  on pi with five models, a Claude Code baseline on the same harness version, and a human baseline.
+  on pi with five models, a Claude Code baseline on the same harness version, and the human baseline played.
 - A stress-test round over every BG3 situation (movement, combat, dialogue, trade, stealth, inventory, party,
   puzzles, UI states) through Claude Code and pi.
 - The first tagged release, `bench-v0.1`, after the owner settles the launch gate: Larian's AI clause, publishing
