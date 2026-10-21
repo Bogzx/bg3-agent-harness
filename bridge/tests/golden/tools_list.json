@@ -1,0 +1,3347 @@
+[
+ {
+  "name": "get_status",
+  "title": null,
+  "description": "Where you are, party HP/conditions, mode (exploring/combat/dialogue), what's on screen, objectives, and recent events. Call this first.\nAfter the first call it returns only what CHANGED since your last look (moves, HP, conditions, mode, objectives, new prompts); full=true shows everything again.",
+  "input_schema": {
+   "properties": {
+    "full": {
+     "default": false,
+     "title": "Full",
+     "type": "boolean"
+    }
+   },
+   "title": "get_statusArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "look",
+  "title": null,
+  "description": "The cheap way to keep your bearings: what CHANGED since your last look, in a few lines. Party moves (12m NW), HP, conditions gained/lost, characters and objects that appeared, left view or changed (hostile, dead, opened, unlocked), items gained/lost, gold, mode, new objectives and quest entries, and any new prompt (dialogue, roll, popup).\nfull=true (or the first call, or a new area): the full status plus everything visible nearby.",
+  "input_schema": {
+   "properties": {
+    "full": {
+     "default": false,
+     "title": "Full",
+     "type": "boolean"
+    }
+   },
+   "title": "lookArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "stay",
+  "title": null,
+  "description": "Keep a companion where it is on purpose (guarding a door, standing on a plate): it is not re-chained to the leader, PARTY APART only notes it as staying, and the leader's travel_to doesn't wait for it. on=false (or regroup) brings it back into the group. Every other companion is chained to the leader by default and re-chained after it moved on its own.",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "title": "Who",
+     "type": "string"
+    },
+    "on": {
+     "default": true,
+     "title": "On",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "who"
+   ],
+   "title": "stayArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_party",
+  "title": null,
+  "description": "Each party member's key numbers: HP, AC, level, conditions, resources (spell slots, actions), concentration.\ncamp=true: instead, the companions waiting at camp (class, level, pending level up, best skills, weapons and armour) — who swap_party could bring in.",
+  "input_schema": {
+   "properties": {
+    "camp": {
+     "default": false,
+     "title": "Camp",
+     "type": "boolean"
+    }
+   },
+   "title": "get_partyArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_character",
+  "title": null,
+  "description": "Character sheet. Full for party members (abilities, skills, resources, spell slots, equipment, passives); what Examine shows for others. who: id or party name (default: active character). sections: optional comma list to limit output, e.g. \"resources,equipment\".",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "sections": {
+     "default": "",
+     "title": "Sections",
+     "type": "string"
+    }
+   },
+   "title": "get_characterArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "get_actions",
+  "title": null,
+  "description": "The actions/spells/items a character can use right now (as on the hotbar), with costs and availability.",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "title": "get_actionsArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_nearby",
+  "title": null,
+  "description": "Visible characters and interactable objects near the party (ids, distance, relation, HP, locked/opened, [lit]/[glowing] = an object's visible puzzle state, e.g. a painting lit by its button), plus remembered last-seen positions. kinds: optional filter: characters, items, door, container, item, ladder, usable, trap, props (decoration), or words to match names (e.g. \"button,lever\"). Lookalikes show as one line \"(+N more <name>)\"; kinds=<that name> lists each with its id.",
+  "input_schema": {
+   "properties": {
+    "radius": {
+     "default": 25.0,
+     "title": "Radius",
+     "type": "number"
+    },
+    "kinds": {
+     "default": "",
+     "title": "Kinds",
+     "type": "string"
+    }
+   },
+   "title": "get_nearbyArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "look_at",
+  "title": null,
+  "description": "What the Examine panel shows for a visible character or object (stats, resistances, conditions, description).",
+  "input_schema": {
+   "properties": {
+    "target": {
+     "title": "Target",
+     "type": "string"
+    }
+   },
+   "required": [
+    "target"
+   ],
+   "title": "look_atArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_inventory",
+  "title": null,
+  "description": "Party inventory (or one member's): equipment, notable items (story, magic, consumables, tools, bags) and a junk summary; plus the open container, camp supplies carried and gear upgrades. filter: \"equipped\" | \"consumables\" | \"food\" (camp supplies: supply=N per item) | \"junk\" (what trade sell=junk sells) | \"gear\" (better gear in bags) | \"all\" | words to match names (e.g. \"potion\").",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "filter": {
+     "default": "",
+     "title": "Filter",
+     "type": "string"
+    }
+   },
+   "title": "get_inventoryArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_journal",
+  "title": null,
+  "description": "Active quests with their latest journal entry, plus finished quest titles. quest: words from a title to see all of that quest's entries.",
+  "input_schema": {
+   "properties": {
+    "quest": {
+     "default": "",
+     "title": "Quest",
+     "type": "string"
+    }
+   },
+   "title": "get_journalArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_map",
+  "title": null,
+  "description": "Current region/subregion, unlocked waypoints, active quest objectives (distance, direction), and your own map markers.\nAfter the first call it shows only what changed (new waypoints, objectives added/done, region); full=true for everything.",
+  "input_schema": {
+   "properties": {
+    "full": {
+     "default": false,
+     "title": "Full",
+     "type": "boolean"
+    }
+   },
+   "title": "get_mapArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_frontier",
+  "title": null,
+  "description": "Leads worth exploring: visible doors, ladders, stairs, exits and unvisited things near you, with distance and direction. Use it to decide where to go next.",
+  "input_schema": {
+   "properties": {},
+   "title": "get_frontierArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_layout",
+  "title": null,
+  "description": "The walls, openings and floor around you as a text map (what the overhead camera shows), N up, you = @: mazes, rooms, ledges, chasms. Marks the party (1-3), characters (E hostile, n other), doors (D), ladders (H), levers/buttons (L), containers (C). Ground the party hasn't seen or walked is '?'. radius 4-20 m.",
+  "input_schema": {
+   "properties": {
+    "radius": {
+     "default": 12.0,
+     "title": "Radius",
+     "type": "number"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "title": "get_layoutArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "route",
+  "title": null,
+  "description": "The way to a goal, read from the engine instead of a screenshot: objective (o1, or a map marker m1), a visible target id, or x,y,z.\nSays how far and how high it is, the walk in legs (8m NW, CLIMB 9m up, 6m E) with\nfire in view on the way, and when no path exists: the closest walkable spot and the ladders/doors in view ranked by how much they\nhelp (which way a ladder climbs), ending with one NEXT step. connectors=true lists ladders/doors even when a path exists.\nA goal on ground the party hasn't seen or walked gets only its distance and direction.\ngo=true: check and go in one call: starts travel_to the goal when a path exists, else to the closest walkable spot.",
+  "input_schema": {
+   "properties": {
+    "objective": {
+     "default": "",
+     "title": "Objective",
+     "type": "string"
+    },
+    "target": {
+     "default": "",
+     "title": "Target",
+     "type": "string"
+    },
+    "x": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "X"
+    },
+    "y": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Y"
+    },
+    "z": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Z"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "connectors": {
+     "default": false,
+     "title": "Connectors",
+     "type": "boolean"
+    },
+    "go": {
+     "default": false,
+     "title": "Go",
+     "type": "boolean"
+    }
+   },
+   "title": "routeArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_explored",
+  "title": null,
+  "description": "Where the party has been in this area (your own breadcrumbs): size of explored region and recent named places.",
+  "input_schema": {
+   "properties": {},
+   "title": "get_exploredArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "path_preview",
+  "title": null,
+  "description": "Walking distance to a target id or x,y,z: reachable?, path length, needs a jump?, fits remaining movement? Use before committing combat movement. A spot the party hasn't seen or walked gets the straight line only.",
+  "input_schema": {
+   "properties": {
+    "target": {
+     "default": "",
+     "title": "Target",
+     "type": "string"
+    },
+    "x": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "X"
+    },
+    "y": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Y"
+    },
+    "z": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Z"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "title": "path_previewArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "walk_toward",
+  "title": null,
+  "description": "Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (returns within ~1 s with a job id + ETA, or the result if it already ended; wait=true blocks only in combat). Good for \"head west\" or \"go toward the objective marker\" when no door or item is in view. In a fight a walk longer than the movement left is cut to it (the result says so).",
+  "input_schema": {
+   "properties": {
+    "direction": {
+     "default": "",
+     "title": "Direction",
+     "type": "string"
+    },
+    "objective": {
+     "default": "",
+     "title": "Objective",
+     "type": "string"
+    },
+    "target": {
+     "default": "",
+     "title": "Target",
+     "type": "string"
+    },
+    "max_m": {
+     "default": 30.0,
+     "title": "Max M",
+     "type": "number"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "run": {
+     "default": true,
+     "title": "Run",
+     "type": "boolean"
+    },
+    "wait": {
+     "default": false,
+     "title": "Wait",
+     "type": "boolean"
+    }
+   },
+   "title": "walk_towardArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_combat_state",
+  "title": null,
+  "description": "Turn order (visible combatants), whose turn it is, round, and the active character's remaining action economy.",
+  "input_schema": {
+   "properties": {},
+   "title": "get_combat_stateArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_dialogue",
+  "title": null,
+  "description": "The current dialogue line and numbered answer options. A tagged option also shows its check and your speaker's bonus (plus the party's best), never the DC. Or the roll/reaction/popup on screen.",
+  "input_schema": {
+   "properties": {},
+   "title": "get_dialogueArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "get_events",
+  "title": null,
+  "description": "Never blocks: what happened since your last tool call (combat log, quest updates, items, rolls, job_finished, queue_*), plus jobs and queues still running.",
+  "input_schema": {
+   "properties": {},
+   "title": "get_eventsArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "screenshot",
+  "title": null,
+  "description": "Picture of the game screen exactly as the player sees it. Costly: use only when text tools can't answer (layout, puzzles, unknown popups). scale: 0.25-1.0 of 2560px width. map=true: opens the map, takes the picture and closes the map again, in one call (no M / ESCAPE by hand).",
+  "input_schema": {
+   "properties": {
+    "scale": {
+     "default": 0.5,
+     "title": "Scale",
+     "type": "number"
+    },
+    "map": {
+     "default": false,
+     "title": "Map",
+     "type": "boolean"
+    }
+   },
+   "title": "screenshotArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "zoom",
+  "title": null,
+  "description": "Crop of the LAST screenshot at full resolution. x,y,w,h are fractions 0-1 of the screen (e.g. 0.3,0.7,0.4,0.3 = bottom-middle dialogue box).",
+  "input_schema": {
+   "properties": {
+    "x": {
+     "title": "X",
+     "type": "number"
+    },
+    "y": {
+     "title": "Y",
+     "type": "number"
+    },
+    "w": {
+     "title": "W",
+     "type": "number"
+    },
+    "h": {
+     "title": "H",
+     "type": "number"
+    }
+   },
+   "required": [
+    "x",
+    "y",
+    "w",
+    "h"
+   ],
+   "title": "zoomArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "move_to",
+  "title": null,
+  "description": "Walk to a visible entity (target=id) or a position (x,y,z). Returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. wait=true blocks only in combat. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow). Out of combat a destination past ~58 m goes via travel_to (legs) by itself. within=1.5 (with target): stop inside that melee reach. A floor plate as target is stood on (its centre; the companions stay put); walks go round the floor plates the party has seen. Walks keep out of an off-limits area the game warned you about (round it, else refused); trespass=true walks in anyway.",
+  "input_schema": {
+   "properties": {
+    "target": {
+     "default": "",
+     "title": "Target",
+     "type": "string"
+    },
+    "x": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "X"
+    },
+    "y": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Y"
+    },
+    "z": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Z"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "run": {
+     "default": true,
+     "title": "Run",
+     "type": "boolean"
+    },
+    "wait": {
+     "default": false,
+     "title": "Wait",
+     "type": "boolean"
+    },
+    "within": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Within"
+    },
+    "trespass": {
+     "default": false,
+     "title": "Trespass",
+     "type": "boolean"
+    }
+   },
+   "title": "move_toArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "interact",
+  "title": null,
+  "description": "Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first (past 40 m: a travel_to, then the use on arrival). A locked door/chest opens when anyone in the party carries its key (that member walks up and opens it). wait=false returns at once with a job id.",
+  "input_schema": {
+   "properties": {
+    "target": {
+     "title": "Target",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "wait": {
+     "default": true,
+     "title": "Wait",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "target"
+   ],
+   "title": "interactArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "pick_up",
+  "title": null,
+  "description": "Pick up a visible item from the ground (walks there first). wait=false returns at once with a job id.",
+  "input_schema": {
+   "properties": {
+    "item": {
+     "title": "Item",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "wait": {
+     "default": true,
+     "title": "Wait",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "item"
+   ],
+   "title": "pick_upArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "loot_corpse",
+  "title": null,
+  "description": "Walk to a visible dead body and open its loot window (then use loot).",
+  "input_schema": {
+   "properties": {
+    "corpse": {
+     "title": "Corpse",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "required": [
+    "corpse"
+   ],
+   "title": "loot_corpseArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "lockpick",
+  "title": null,
+  "description": "Pick the lock of a visible locked door/chest (needs Thieves' Tools); opens the roll — then roll_check.",
+  "input_schema": {
+   "properties": {
+    "target": {
+     "title": "Target",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "required": [
+    "target"
+   ],
+   "title": "lockpickArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "disarm",
+  "title": null,
+  "description": "Disarm a DISCOVERED trap (needs a Trap Disarm Toolkit); opens the roll — then roll_check.",
+  "input_schema": {
+   "properties": {
+    "trap": {
+     "title": "Trap",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "required": [
+    "trap"
+   ],
+   "title": "disarmArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "pickpocket",
+  "title": null,
+  "description": "Sneak up to a visible NPC and open the pickpocket window (best while sneaking and unseen); the result lists their pockets with the game's own odds per item (chance %, DC). take: steal that item (name or id) in the same call (the window is opened first if needed); min_chance: take nothing below this %. A failed steal is a crime if they notice. leave=true closes the window.",
+  "input_schema": {
+   "properties": {
+    "npc": {
+     "title": "Npc",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "take": {
+     "default": "",
+     "title": "Take",
+     "type": "string"
+    },
+    "min_chance": {
+     "default": 0,
+     "title": "Min Chance",
+     "type": "integer"
+    },
+    "leave": {
+     "default": false,
+     "title": "Leave",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "npc"
+   ],
+   "title": "pickpocketArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "click_on",
+  "title": null,
+  "description": "Last-resort: point the mouse at a visible entity (verified hover) and click it, for interactions no other tool covers. Logged.",
+  "input_schema": {
+   "properties": {
+    "target": {
+     "title": "Target",
+     "type": "string"
+    },
+    "button": {
+     "default": "left",
+     "title": "Button",
+     "type": "string"
+    }
+   },
+   "required": [
+    "target"
+   ],
+   "title": "click_onArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "loot",
+  "title": null,
+  "description": "Take items from the open container/corpse window, then close it. take: \"all\", comma-separated item ids (from get_inventory, which lists the open container's contents), or \"none\" (close it without taking).",
+  "input_schema": {
+   "properties": {
+    "take": {
+     "default": "all",
+     "title": "Take",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "title": "lootArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "talk_to",
+  "title": null,
+  "description": "Walk up to a visible character (follows them if they move) and start a conversation. The result already shows the dialogue at its first real choice (opening filler clicked through); answer with choose_dialogue. Someone out of sight whom the party saw on this level, or past 40 m: walks there first and talks on arrival (queued).",
+  "input_schema": {
+   "properties": {
+    "npc": {
+     "title": "Npc",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "wait": {
+     "default": true,
+     "title": "Wait",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "npc"
+   ],
+   "title": "talk_toArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "jump_to",
+  "title": null,
+  "description": "Jump to a position (costs movement/bonus action in combat; distance limited by Strength). A landing in a harmful surface (fire, acid, ...) or on a wall, or a long jump that may fall short into one, is moved to the nearest clear spot near it within reliable reach (~4.5 m) and says so; with no clear spot near it the jump is refused. force=true jumps exactly there.",
+  "input_schema": {
+   "properties": {
+    "x": {
+     "title": "X",
+     "type": "number"
+    },
+    "y": {
+     "title": "Y",
+     "type": "number"
+    },
+    "z": {
+     "title": "Z",
+     "type": "number"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "wait": {
+     "default": true,
+     "title": "Wait",
+     "type": "boolean"
+    },
+    "force": {
+     "default": false,
+     "title": "Force",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "x",
+    "y",
+    "z"
+   ],
+   "title": "jump_toArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "set_party",
+  "title": null,
+  "description": "Party control. action: select (control 'who'), chain (link 'who' to 'leader'), unchain (detach 'who'), sneak_on, sneak_off, turn_based_on, turn_based_off.",
+  "input_schema": {
+   "properties": {
+    "action": {
+     "title": "Action",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "leader": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Leader"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "title": "set_partyArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "fast_travel",
+  "title": null,
+  "description": "Travel to an unlocked waypoint (name or id from get_map). Not possible in combat. From camp it leaves camp\nfirst (everyone comes along), then travels. Only the selected member's group travels: members apart and unchained\nstay where they are (the result says LEFT BEHIND and the one call that travels each of them).",
+  "input_schema": {
+   "properties": {
+    "waypoint": {
+     "title": "Waypoint",
+     "type": "string"
+    }
+   },
+   "required": [
+    "waypoint"
+   ],
+   "title": "fast_travelArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "camp",
+  "title": null,
+  "description": "action: go (travel to camp, like the camp button) | leave (return to where you were).",
+  "input_schema": {
+   "properties": {
+    "action": {
+     "default": "go",
+     "title": "Action",
+     "type": "string"
+    }
+   },
+   "title": "campArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "swap_party",
+  "title": null,
+  "description": "Swap a companion waiting at camp into the active party in one call, out of combat, from anywhere: goes to camp, talks to `into`, picks its join answer (and, with a full party, the answer that sends `out` to camp), leaves camp and re-chains everyone to the leader. out: who goes to camp (required with 4 members; never your own character). get_party(camp=true) lists who waits at camp; get_status's PARTY line says when a swap pays off. A camp scene or an answer it can't recognise stops it and shows the dialogue: answer with choose_dialogue, then call it again. A companion whose menu has no join answer (the game's story state) is reported and left.",
+  "input_schema": {
+   "properties": {
+    "into": {
+     "title": "Into",
+     "type": "string"
+    },
+    "out": {
+     "default": "",
+     "title": "Out",
+     "type": "string"
+    },
+    "leave_camp": {
+     "default": true,
+     "title": "Leave Camp",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "into"
+   ],
+   "title": "swap_partyArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "choose_dialogue",
+  "title": null,
+  "description": "Pick dialogue answer number `option` (as numbered in the last DIALOGUE shown). Then clicks through any filler that follows (Continue, a single non-committing line) and returns the next real choice, roll, or the end. Never picks a real answer for you.",
+  "input_schema": {
+   "properties": {
+    "option": {
+     "title": "Option",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "option"
+   ],
+   "title": "choose_dialogueArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "roll_check",
+  "title": null,
+  "description": "Resolve the skill-check roll on screen: optionally add boosts shown on the roll screen (comma list, e.g. \"Guidance\"), roll, and continue.",
+  "input_schema": {
+   "properties": {
+    "boosts": {
+     "default": "",
+     "title": "Boosts",
+     "type": "string"
+    },
+    "reroll_on_fail": {
+     "default": false,
+     "title": "Reroll On Fail",
+     "type": "boolean"
+    }
+   },
+   "title": "roll_checkArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "react",
+  "title": null,
+  "description": "Answer a reaction prompt (Shield, Counterspell, Opportunity Attack...). use=true to react. which: the option's number in REACTION options, or its name (\"Shield\": the first row, the lowest level; \"Shield 3\" or \"Shield III\": that slot level). A prompt with one row per level is answered by a click on that row; Do Not React has never closed one: set_reactions {\"Shield\": \"never\"} beforehand stops them.",
+  "input_schema": {
+   "properties": {
+    "use": {
+     "title": "Use",
+     "type": "boolean"
+    },
+    "which": {
+     "default": "",
+     "title": "Which",
+     "type": "string"
+    }
+   },
+   "required": [
+    "use"
+   ],
+   "title": "reactArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "use_ability",
+  "title": null,
+  "description": "Use an action/spell/attack/item from get_actions: at a target id, at a position (x,y,z), or on self. upcast: spell slot level to cast at. which: the variant of an action that has several, by its name (Gather Your Allies: the ally group, e.g. which=\"<group name>\" with x,y,z = the ground where they appear; the result lists who arrived); without it the refusal lists them. targets: a list (or comma list) for multi-target spells, in click order (the same id twice = 2 darts/beams; all on one target = cast at it, which takes every beam); a cast may use only the first 2 (the result then says \"cast on the first 2 only\"). Costs and rules are the game's. Out of combat at a creature, the result says whether it started a fight (COMBAT: ...) or not (combat: NOT started — a dormant/unaware target). Two-step spells: Dimension Door takes x,y,z = the landing (target = an ally beside you to bring, else you go alone); the Revivify spell takes target = the body; while their route is off they are refused: read a Scroll of Revivify instead. A carried scroll works by name (\"Scroll of Invisibility\", or the spell's name when it isn't an action): it is read and its target clicked (default: who; targets = one click per beam/pick, e.g. Scorching Ray; x,y,z = the ground for a point/cone scroll: Cone of Cold, Misty Step, Fireball); in combat too, on the reader's turn for an action, like casting. A harmful area spell (Fireball) whose blast would catch a party member, ally or neutral in sight, or that would burst short of its point (the way there blocked, e.g. a ledge), is refused with where it bursts and who is in the blast; force=true casts anyway.",
+  "input_schema": {
+   "properties": {
+    "ability": {
+     "title": "Ability",
+     "type": "string"
+    },
+    "target": {
+     "default": "",
+     "title": "Target",
+     "type": "string"
+    },
+    "x": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "X"
+    },
+    "y": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Y"
+    },
+    "z": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Z"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "upcast": {
+     "default": 0,
+     "title": "Upcast",
+     "type": "integer"
+    },
+    "targets": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      }
+     ],
+     "default": "",
+     "title": "Targets"
+    },
+    "wait": {
+     "default": true,
+     "title": "Wait",
+     "type": "boolean"
+    },
+    "force": {
+     "default": false,
+     "title": "Force",
+     "type": "boolean"
+    },
+    "which": {
+     "default": "",
+     "title": "Which",
+     "type": "string"
+    }
+   },
+   "required": [
+    "ability"
+   ],
+   "title": "use_abilityArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "end_turn",
+  "title": null,
+  "description": "End the current character's turn; blocks through enemy turns until a party member can act or combat ends (wait=false: return right after ending it; then wait_for('my_turn')).",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "wait": {
+     "default": true,
+     "title": "Wait",
+     "type": "boolean"
+    }
+   },
+   "title": "end_turnArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "end_combat_report",
+  "title": null,
+  "description": "Required after each fight: a short reflection that is appended to your session log.",
+  "input_schema": {
+   "properties": {
+    "what_worked": {
+     "title": "What Worked",
+     "type": "string"
+    },
+    "what_to_change": {
+     "title": "What To Change",
+     "type": "string"
+    },
+    "next_goal": {
+     "title": "Next Goal",
+     "type": "string"
+    }
+   },
+   "required": [
+    "what_worked",
+    "what_to_change",
+    "next_goal"
+   ],
+   "title": "end_combat_reportArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "note",
+  "title": null,
+  "description": "Append line(s) to your session log (memory/sessions/Sxxx.md) at once: no file Read/Edit round trip, so a note never holds up play. One log line per line of text, '- HH:MM [tag] text'; start a line with its own [tag] (quest, decision, npc, combat, loot, puzzle, lesson, stuck, ...) to override tag. Curated files (objectives, npcs, quests, ...) are updated from the log between sessions; Edit them yourself only for plan changes you need this session. travel_to, queue_actions and do_actions take note= too (written with the action, no extra turn).",
+  "input_schema": {
+   "properties": {
+    "text": {
+     "title": "Text",
+     "type": "string"
+    },
+    "tag": {
+     "default": "note",
+     "title": "Tag",
+     "type": "string"
+    }
+   },
+   "required": [
+    "text"
+   ],
+   "title": "noteArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "memory_list",
+  "title": null,
+  "description": "List a folder of your notes: memory/ (yours, read-write), memory/sessions, memory/chapters, knowledge/ (read-only reference notes), knowledge/playbooks. Shows each file's line count.",
+  "input_schema": {
+   "properties": {
+    "path": {
+     "default": "memory",
+     "title": "Path",
+     "type": "string"
+    }
+   },
+   "title": "memory_listArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "memory_read",
+  "title": null,
+  "description": "Read a note file: \"memory/<file>\" (e.g. memory/npcs.md, memory/sessions/S012.md) or \"knowledge/<file>\" (e.g. knowledge/playbooks/combat.md, knowledge/tools.md). A bare name means memory/. Long files come in pages: start_line for the next one.",
+  "input_schema": {
+   "properties": {
+    "path": {
+     "title": "Path",
+     "type": "string"
+    },
+    "start_line": {
+     "default": 1,
+     "title": "Start Line",
+     "type": "integer"
+    },
+    "max_lines": {
+     "default": 400,
+     "title": "Max Lines",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "path"
+   ],
+   "title": "memory_readArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "memory_search",
+  "title": null,
+  "description": "Find a name or word in your notes (case-insensitive): every matching line as file:line: text. path narrows it (memory/npcs.md, memory/sessions, knowledge). regex=true for a regular expression.",
+  "input_schema": {
+   "properties": {
+    "query": {
+     "title": "Query",
+     "type": "string"
+    },
+    "path": {
+     "default": "memory",
+     "title": "Path",
+     "type": "string"
+    },
+    "regex": {
+     "default": false,
+     "title": "Regex",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "query"
+   ],
+   "title": "memory_searchArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "memory_write",
+  "title": null,
+  "description": "Create or rewrite a whole memory file (memory/HANDOFF.md at wrap-up, memory/objectives.md, ...). Markdown only. Not for session logs (append-only: note) or snapshots/ (generated); knowledge/ is read-only. The result shows memory lint errors about the file: fix them.",
+  "input_schema": {
+   "properties": {
+    "path": {
+     "title": "Path",
+     "type": "string"
+    },
+    "content": {
+     "title": "Content",
+     "type": "string"
+    }
+   },
+   "required": [
+    "path",
+    "content"
+   ],
+   "title": "memory_writeArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "memory_edit",
+  "title": null,
+  "description": "Replace exact text in a memory file (old_text must match once, whitespace included; replace_all=true for every match). For one changed line or section instead of a rewrite. The result shows memory lint errors about the file: fix them.",
+  "input_schema": {
+   "properties": {
+    "path": {
+     "title": "Path",
+     "type": "string"
+    },
+    "old_text": {
+     "title": "Old Text",
+     "type": "string"
+    },
+    "new_text": {
+     "title": "New Text",
+     "type": "string"
+    },
+    "replace_all": {
+     "default": false,
+     "title": "Replace All",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "path",
+    "old_text",
+    "new_text"
+   ],
+   "title": "memory_editArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "memory_append",
+  "title": null,
+  "description": "Append lines at the end of a memory file (decisions.md entries, a CHARACTER.md development line, a new npcs.md bullet). For the session log use note (it adds the time and tag).",
+  "input_schema": {
+   "properties": {
+    "path": {
+     "title": "Path",
+     "type": "string"
+    },
+    "text": {
+     "title": "Text",
+     "type": "string"
+    }
+   },
+   "required": [
+    "path",
+    "text"
+   ],
+   "title": "memory_appendArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "session_start",
+  "title": null,
+  "description": "Your memory briefing for this session: the session log it opened, CHARACTER.md, PLAYTHROUGH.md, HANDOFF.md, the last game state and harness notes. Call it first if your first message doesn't already show it, and again after your context was compacted. The first call of a session also starts with the rules of play; rules=true shows them again.",
+  "input_schema": {
+   "properties": {
+    "rules": {
+     "default": false,
+     "title": "Rules",
+     "type": "boolean"
+    }
+   },
+   "title": "session_startArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "end_session",
+  "title": null,
+  "description": "The last step of the wrap-up: checks the session can end (wrap-up time reached, HANDOFF.md written for this session, memory lint clean) and commits the memory. If it says NOT ENDED, do what it says (keep playing, or fix and call it again). End your turn only when it reports the commit.",
+  "input_schema": {
+   "properties": {},
+   "title": "end_sessionArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "feed_gale",
+  "title": null,
+  "description": "Give Gale a magic item to absorb, in the donation window his dialogue opens ('Give Gale a magic artefact'): selects the item and presses Donate. item: name or handle from get_inventory (one in a party bag).",
+  "input_schema": {
+   "properties": {
+    "item": {
+     "title": "Item",
+     "type": "string"
+    }
+   },
+   "required": [
+    "item"
+   ],
+   "title": "feed_galeArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "insert_item",
+  "title": null,
+  "description": "Put an item into an \"Insert Item\" panel (pedestal, plaque, socket: what a player drags into the slot) and press Insert. into: the object (opens its panel with interact when none is open; walks there). item: name or handle; without item it opens the panel and lists the slot and the items it can take. who: who opens/inserts (default: the item's carrier, else the active character). Some story pedestals punish a wrong item: choose by the riddle/notes.",
+  "input_schema": {
+   "properties": {
+    "item": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Item"
+    },
+    "into": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Into"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "title": "insert_itemArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "manage_inventory",
+  "title": null,
+  "description": "op: equip | unequip | use (drink/read/eat) | give (to another party member: to=name) | camp (send to camp chest; item=\"junk\" sends all junk at once: what trade sell=junk would sell).",
+  "input_schema": {
+   "properties": {
+    "op": {
+     "title": "Op",
+     "type": "string"
+    },
+    "item": {
+     "title": "Item",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "to": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "To"
+    }
+   },
+   "required": [
+    "op",
+    "item"
+   ],
+   "title": "manage_inventoryArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "equip_best",
+  "title": null,
+  "description": "Equip the better gear sitting in party bags (out of combat): for each member (or just who), every item that beats what they wear in that slot (armour/shield AC, weapon damage/enchantment, else rarity) and that they are proficient with; moved from another member's bag first. get_inventory(filter=\"gear\") lists the same without equipping.",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "title": "equip_bestArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "short_rest",
+  "title": null,
+  "description": "Short rest (2 per long rest): restores some HP and short-rest resources. The result shows HP before→after per member and the short rests left.",
+  "input_schema": {
+   "properties": {},
+   "title": "short_restArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "long_rest",
+  "title": null,
+  "description": "Long rest at camp (go there with camp first): consumes 40 camp supplies, restores everything, may trigger camp scenes (handle them as dialogues). The game's questions on the way (\"End the day?\", \"someone still wants to talk, rest anyway?\") are answered Yes and listed in the result; confirm=false stops at the first readable one instead (then confirm(...)); the unreadable \"[ForceUpdate]\" box (the game's own End-the-Day check) is answered either way. With fewer than 40 supplies it stops before resting (a partial rest restores only half HP and slots): get food first, or partial=true to rest anyway.",
+  "input_schema": {
+   "properties": {
+    "confirm": {
+     "default": true,
+     "title": "Confirm",
+     "type": "boolean"
+    },
+    "partial": {
+     "default": false,
+     "title": "Partial",
+     "type": "boolean"
+    }
+   },
+   "title": "long_restArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "prepare_spells",
+  "title": null,
+  "description": "Change a caster's PREPARED spells (clerics, paladins, druids, wizards), out of combat: only prepared spells cast. add/remove: spell names (or ids), a list or a comma string; removals happen first, so a swap fits the limit. It works the spellbook page like a player (opens it, clicks the spells, closes it) and ends with the prepared list. Refused in combat, over the limit (it names what is prepared), for a spell not in the character's book, and for classes that don't prepare (sorcerer/warlock/bard/ranger: level_up changes their spells). get_party and get_status show each caster's PREPARED list and limit.",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "add": {
+     "anyOf": [
+      {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Add"
+    },
+    "remove": {
+     "anyOf": [
+      {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Remove"
+    }
+   },
+   "title": "prepare_spellsArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "get_level_up_options",
+  "title": null,
+  "description": "What the level-up screen offers for a character (class/subclass, feats or ability points, spells, skills).",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "title": "get_level_up_optionsArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "level_up",
+  "title": null,
+  "description": "Level a character up in one call (out of combat). With no plan it uses your stored line for that character and level in memory/party-build.md (\"- Gale L2: {...}\"). plan: JSON like {\"subclass\":\"Evocation\",\"feat\":\"Ability Improvement\",\"abilities\":{\"Strength\":2},\"spells\":[\"Magic Missile\",\"Shield\"],\"cantrips\":[],\"skills\":[],\"passives\":[\"Agonizing Blast\"]}; omitted fields take the game's defaults, except choices with no default: a subclass, spells/cantrips to learn, and passives (invocations, fighting styles). Then it fails and lists what can be picked; add them to the plan and call again.\nA companion waiting at camp is levelled too (every level it has waiting): it swaps in for `out` (default: the member it replaces best), levels, and swaps back.",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "plan": {
+     "default": "",
+     "title": "Plan",
+     "type": "string"
+    },
+    "out": {
+     "default": "",
+     "title": "Out",
+     "type": "string"
+    }
+   },
+   "title": "level_upArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "trade",
+  "title": null,
+  "description": "Barter with a trader. Open with npc=<id> (talks to them and picks the conversation's trade answer, e.g. 'Let me see your wares.'; if none is offered yet it stops at the conversation), then list items via get_inventory; offer/request: comma lists of item ids to move; confirm=true to finish the deal (then the window closes). price is for the whole stack (price=156 count=3: 52 each; a stack moves whole). Wares marked supply=N are food (camp supplies per item; a long rest needs 40). A stack's \"how many?\" box is answered for you: the whole stack, or count=N.\nsell=\"junk\": sell everything a player sells at every trader in one call (not equipped, story, consumables, food, keys/tools, magic gear, or keep=<comma ids>), up to the trader's gold; get_inventory(filter=\"junk\") previews it.\nOpening or trade() with no args lists the wares grouped (food with supply, potions/scrolls, gear by rarity) and your best-priced items, capped per group; full=true lists everything. offer/request/confirm calls show the table and the balance only.\nconfirm refuses an uneven table before the barter (a trader with no gold swaps items only); donate=true gives the offered items (or an overpay's difference) for nothing (answers the game's \"Donate these items?\"); automatic on a quest hand-over screen (a dialogue answer like \"take them\" opens a trade screen whose other side has no wares and no gold): trade(offer=<id>, confirm=true) gives it and closes the screen.",
+  "input_schema": {
+   "properties": {
+    "npc": {
+     "default": "",
+     "title": "Npc",
+     "type": "string"
+    },
+    "offer": {
+     "default": "",
+     "title": "Offer",
+     "type": "string"
+    },
+    "request": {
+     "default": "",
+     "title": "Request",
+     "type": "string"
+    },
+    "confirm": {
+     "default": false,
+     "title": "Confirm",
+     "type": "boolean"
+    },
+    "sell": {
+     "default": "",
+     "title": "Sell",
+     "type": "string"
+    },
+    "keep": {
+     "default": "",
+     "title": "Keep",
+     "type": "string"
+    },
+    "full": {
+     "default": false,
+     "title": "Full",
+     "type": "boolean"
+    },
+    "donate": {
+     "default": false,
+     "title": "Donate",
+     "type": "boolean"
+    },
+    "count": {
+     "default": 0,
+     "title": "Count",
+     "type": "integer"
+    }
+   },
+   "title": "tradeArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "ability_preview",
+  "title": null,
+  "description": "What the game shows when targeting: hit chance / save DC, damage preview, range and line of sight.",
+  "input_schema": {
+   "properties": {
+    "ability": {
+     "title": "Ability",
+     "type": "string"
+    },
+    "target": {
+     "title": "Target",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "required": [
+    "ability",
+    "target"
+   ],
+   "title": "ability_previewArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "ui_action",
+  "title": null,
+  "description": "Escape hatch for screens without a dedicated tool (level up, trade, character creation, popups): run a named UI command on the current screen, as get_dialogue/ui dump lists them.",
+  "input_schema": {
+   "properties": {
+    "command": {
+     "title": "Command",
+     "type": "string"
+    },
+    "widget": {
+     "default": "",
+     "title": "Widget",
+     "type": "string"
+    },
+    "param": {
+     "default": "",
+     "title": "Param",
+     "type": "string"
+    }
+   },
+   "required": [
+    "command"
+   ],
+   "title": "ui_actionArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "dismiss_popups",
+  "title": null,
+  "description": "Close informational popups (tutorials, info boxes, reward/book panels). Decision popups are never closed; they're listed so you can answer with confirm.",
+  "input_schema": {
+   "properties": {},
+   "title": "dismiss_popupsArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "confirm",
+  "title": null,
+  "description": "Answer the open Yes/No (OK/Cancel, Confirm...) question box: answer = \"yes\" | \"no\" | a button label | its number. Shows the next question if the game asks another. A stack-split box (\"how many?\", POPUP ... split): amount=N sets how many before \"yes\".",
+  "input_schema": {
+   "properties": {
+    "answer": {
+     "default": "yes",
+     "title": "Answer",
+     "type": "string"
+    },
+    "amount": {
+     "default": 0,
+     "title": "Amount",
+     "type": "integer"
+    }
+   },
+   "title": "confirmArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "set_reactions",
+  "title": null,
+  "description": "See or change a character's reaction prompts (e.g. Shield, Divine Smite, Opportunity Attack). settings: JSON {\"<reaction name>\": \"never\"|\"always\"|\"ask\"}; empty = list current.",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "settings": {
+     "default": "",
+     "title": "Settings",
+     "type": "string"
+    }
+   },
+   "title": "set_reactionsArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "ui_dump",
+  "title": null,
+  "description": "Text dump of what's on screen in the UI (visible text, buttons and their commands). Cheaper than a screenshot.",
+  "input_schema": {
+   "properties": {
+    "text_only": {
+     "default": true,
+     "title": "Text Only",
+     "type": "boolean"
+    }
+   },
+   "title": "ui_dumpArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "press_key",
+  "title": null,
+  "description": "Press a keyboard key in the game (SDL scancode name, e.g. ESCAPE, SPACE, RETURN, F5, 1). Prefer dedicated tools. ESCAPE with nothing open is refused (it would open the game menu).",
+  "input_schema": {
+   "properties": {
+    "key": {
+     "title": "Key",
+     "type": "string"
+    }
+   },
+   "required": [
+    "key"
+   ],
+   "title": "press_keyArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "click",
+  "title": null,
+  "description": "Last-resort mouse click at a screen position given as fractions 0-1 of the latest screenshot.\nbutton: \"left\", \"right\", or \"none\" (= hover: only moves the cursor there, nothing is clicked; for a tooltip or\nthe cursor text of a targeting mode, then take a screenshot).",
+  "input_schema": {
+   "properties": {
+    "x": {
+     "title": "X",
+     "type": "number"
+    },
+    "y": {
+     "title": "Y",
+     "type": "number"
+    },
+    "button": {
+     "default": "left",
+     "title": "Button",
+     "type": "string"
+    }
+   },
+   "required": [
+    "x",
+    "y"
+   ],
+   "title": "clickArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "new_game",
+  "title": null,
+  "description": "From the main menu: start a new game at the given difficulty (Explorer | Balanced | Tactician) and open character creation.",
+  "input_schema": {
+   "properties": {
+    "difficulty": {
+     "default": "Explorer",
+     "title": "Difficulty",
+     "type": "string"
+    }
+   },
+   "title": "new_gameArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "character_creation_options",
+  "title": null,
+  "description": "What the character creation screen offers right now: origins, races/subraces, classes/subclasses, backgrounds, ability points, skill and spell picks, current step.",
+  "input_schema": {
+   "properties": {},
+   "title": "character_creation_optionsArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "create_character",
+  "title": null,
+  "description": "Fill in character creation, type the character's name, finish it (\"Venture forth\") and check the name in game. plan: JSON with your build, e.g. {\"race\":\"Elf\",\"subrace\":\"High Elf\",\"class\":\"Wizard\",\"subclass\":\"School of Evocation\",\"background\":\"Sage\",\"abilities\":\"recommended\",\"name\":\"Ilse\"}; or {\"origin\":\"Lae'zel\"}. \"name\" is required for a custom character unless the playthrough already has a save owner (then it must be that name). Omitted fields keep the game's defaults/recommendations.",
+  "input_schema": {
+   "properties": {
+    "plan": {
+     "title": "Plan",
+     "type": "string"
+    }
+   },
+   "required": [
+    "plan"
+   ],
+   "title": "create_characterArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "do_actions",
+  "title": null,
+  "description": "Run several actions in order in ONE call: a whole combat turn, a looting sweep, a dialogue chain. Plan from one observation, then execute.\nactions: JSON list of steps, e.g.\n[{\"tool\":\"move_to\",\"target\":\"e12\"},{\"tool\":\"use_ability\",\"ability\":\"Target_MainHandAttack\",\"target\":\"e12\",\"unless\":\"hp_below:30\"},{\"tool\":\"use_ability\",\"ability\":\"Shout_SecondWind\",\"if\":\"hp_below:50\"},{\"tool\":\"end_turn\"}]\nAllowed: move_to, walk_toward, travel_to (a whole trip as one step, e.g. after a climb), interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.\nOptional per step: \"if\"/\"unless\" with in_combat, in_dialogue, my_turn, hp_below:<pct>, item_present:<id>, target_visible:<id> (a failed condition skips the step).\nStops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a trap spotted on the way, a blocked teleport, or a failed step. ignore=\"hostile,hp\" disables some (combat, dialogue, prompt, hostile, hp, damage, surface, teleport, trap).\nReturns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions).\nnote: memory log line(s) appended to your session log at once, as note() does (no extra turn).",
+  "input_schema": {
+   "properties": {
+    "actions": {
+     "title": "Actions",
+     "type": "string"
+    },
+    "wait": {
+     "default": true,
+     "title": "Wait",
+     "type": "boolean"
+    },
+    "ignore": {
+     "default": "",
+     "title": "Ignore",
+     "type": "string"
+    },
+    "note": {
+     "default": "",
+     "title": "Note",
+     "type": "string"
+    }
+   },
+   "required": [
+    "actions"
+   ],
+   "title": "do_actionsArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "queue_actions",
+  "title": null,
+  "description": "Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Same step format, conditions and interrupts as do_actions. On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue. note: memory log line(s) for your session log, written at once (as note()).",
+  "input_schema": {
+   "properties": {
+    "actions": {
+     "title": "Actions",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "replace": {
+     "default": false,
+     "title": "Replace",
+     "type": "boolean"
+    },
+    "ignore": {
+     "default": "",
+     "title": "Ignore",
+     "type": "string"
+    },
+    "note": {
+     "default": "",
+     "title": "Note",
+     "type": "string"
+    }
+   },
+   "required": [
+    "actions"
+   ],
+   "title": "queue_actionsArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "cancel_queue",
+  "title": null,
+  "description": "Stop a character's queue (who) or every queue (who empty): the running step is cancelled and the rest dropped.",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "title": "cancel_queueArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "wait_for",
+  "title": null,
+  "description": "Block only until something happens, then report it plus events and CHANGES. target: a job id (j12) from an async action; 'queue' (all queues done) or 'queue:<who>'; 'idle' (no async job or queue running); 'my_turn' (a party member can act, or combat ended); or event kinds, comma-separated (e.g. 'combat_started,dialogue_started,job_finished'). Also returns early when a reaction/roll/dialogue/popup or a rest/level-up/trade screen appears. Returns at once when the state already answers it or nothing running could cause it. A walk/travel_to (job id, 'queue', 'idle') is waited to its arrival; lead_s=2 (outside combat) returns once ~2 s of it are left instead, only for when you will queue the arrival step without needing its result: what you issue then runs after the arrival, never cancelling it.",
+  "input_schema": {
+   "properties": {
+    "target": {
+     "default": "idle",
+     "title": "Target",
+     "type": "string"
+    },
+    "timeout_s": {
+     "default": 15.0,
+     "title": "Timeout S",
+     "type": "number"
+    },
+    "lead_s": {
+     "default": 0.0,
+     "title": "Lead S",
+     "type": "number"
+    }
+   },
+   "title": "wait_forArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "combat_turn",
+  "title": null,
+  "description": "A WHOLE combat turn in one call — or the turns of SEVERAL party members acting now: plan = JSON list\n[{\"who\":\"Karlach\",\"plan\":{...}},{\"who\":\"Gale\",\"plan\":{...}}] plays them in order (each as below, each turn ended);\na later member's plan waits for its turn like a sent-ahead plan (the chain waits ≤80 s in all); a member that already ended its turn is skipped, and one the game wants first is played first; it stops and\nhands back as soon as a turn is interrupted, a member's turn doesn't come in time, or the fight ends, and lists\nwho was NOT played. Use it when the result\nsays `NOW <a>'s turn: plan it; also <b>, <c>` (S023-S026: 175 back-to-back combat_turn calls, one per member).\nSingle turn:  move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Disengage). If every action alternative is out of range, it tries the ranged weapon attack itself, else Dash + walk on when the move ran out of movement. A move that ends out of reach says how far it got and why (out of movement / fire on the route / no route closer).\nplan: JSON, e.g. {\"move\":{\"target\":\"e12\",\"within\":1.5},\"action\":[{\"ability\":\"Target_MainHandAttack\",\"target\":\"e12\"},{\"ability\":\"Projectile_MainHandAttack\",\"target\":\"e12\"},{\"ability\":\"Shout_Dash\",\"then_move\":true},\"Shout_Disengage\"],\"bonus\":{\"ability\":\"Shout_SecondWind\",\"if\":\"hp_below:50\"},\"extra\":[[{\"ability\":\"Target_MainHandAttack\",\"target\":\"e12\"}]]}\nmove: \"e12\" (walk next to it), {\"target\",\"within\":<m>} (stop once that close, e.g. ranged), [x,y,z], \"o3\" (an objective: toward its marker, e.g. a Dash to the exit). Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).\nAbilities: the shown name or the id; a weapon attack the character doesn't have (a summon's) becomes its own weapon attack. Extra Attack: after the first weapon attack, an \"extra\" slot attack costs no action (the game's rule).\nAlternatives: an ability id, or {\"ability\",\"target\"|\"x,y,z\",\"upcast\",\"targets\",\"force\",\"if\",\"unless\",\"then_move\"}, or {\"tool\":<batchable tool>,...}. then_move: after it, walk the move again (a Dash does this by default; then_move:false turns it off).\norder: \"move,action,bonus,extra\" (default; e.g. \"bonus,move,action\" for Misty Step first). reactions: {\"Divine Smite\":\"ask\"} sets prompts first; on_reaction: \"use\"|\"skip\" answers reaction prompts open at the turn's start, mid-turn and while a sent-ahead plan waits (default: stop, nothing played into an open prompt).\nNo line of sight to a ranged target: it first steps (within the movement left and the ability's range) to the nearest spot that sees it, then casts again. A downed character has no turn to play (it passes by itself); another of your characters acting first makes a sent-ahead plan return at once; your summon (Spiritual Weapon …) acting first and not in the plan: its turn is played for it (its weapon attack on the plan's first target, else the nearest hostile) and then the plan.\nBefore each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore=\"\" adds new hostiles in view).\nwho: required when NOW lists more than one of your characters; left out, the plan goes to the only one acting whose actions cover every ability it names (else REFUSED), and a plan sent ahead waits for the character selected when it was sent.\nA slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off); fallbacks keep to the planned target's side (an ally-aimed heal only re-aims at a downed party member, a revive never). A melee swing the game refused without a reason steps within 1 m once and swings again. A melee move that ends out of reach says \"melee is out of reach this turn\" and skips the melee attacks on that target (ranged / Dash next). The move's target (a hostile) dead or out of sight (Shadow Blend, killed first): the plan is re-aimed at the nearest visible hostile, and walks on if movement is left (retarget:false keeps it). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).\nAn empty plan {} just ends that character's turn (e.g. it already acted through single tools).\nend=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn). When enemies act next, the end itself runs in the background (\"ending in the background\", then queue_done): what you send next waits for it.\nNot this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), up to 120 s longer while enemies are still taking turns, then plays it (still their turns then: NOT PLAYED YET, nothing done: send it again).",
+  "input_schema": {
+   "properties": {
+    "plan": {
+     "title": "Plan",
+     "type": "string"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "end": {
+     "default": true,
+     "title": "End",
+     "type": "boolean"
+    },
+    "wait_next": {
+     "default": false,
+     "title": "Wait Next",
+     "type": "boolean"
+    },
+    "ignore": {
+     "default": "hostile",
+     "title": "Ignore",
+     "type": "string"
+    },
+    "wait_turn": {
+     "default": 30.0,
+     "title": "Wait Turn",
+     "type": "number"
+    }
+   },
+   "required": [
+    "plan"
+   ],
+   "title": "combat_turnArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "loot_area",
+  "title": null,
+  "description": "Loot every VISIBLE corpse and unlocked container within radius (m), nearest-first walking order: walk, open, take all. Skips locked ones, owned ones (stealing), discovered armed traps, already opened ones (opened=true includes them) and what this session already looted. Stops at the first interrupt (combat, conversation, prompt, new hostile, HP drop).",
+  "input_schema": {
+   "properties": {
+    "radius": {
+     "default": 12.0,
+     "title": "Radius",
+     "type": "number"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "corpses": {
+     "default": true,
+     "title": "Corpses",
+     "type": "boolean"
+    },
+    "containers": {
+     "default": true,
+     "title": "Containers",
+     "type": "boolean"
+    },
+    "opened": {
+     "default": false,
+     "title": "Opened",
+     "type": "boolean"
+    }
+   },
+   "title": "loot_areaArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "dialogue_advance",
+  "title": null,
+  "description": "Click through FILLER dialogue lines only (a Continue prompt, or a single untagged option that commits to nothing). Stops and shows the dialogue at the first real choice (2+ options, a skill/class tag, a committing option), a roll, a reaction, a popup, or when the conversation ends. Never picks an answer for you. Rarely needed: choose_dialogue and talk_to already do this.",
+  "input_schema": {
+   "properties": {
+    "max_lines": {
+     "default": 12,
+     "title": "Max Lines",
+     "type": "integer"
+    }
+   },
+   "title": "dialogue_advanceArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "travel_to",
+  "title": null,
+  "description": "Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Walks the game's own route in one go when the whole way is plain walking (long trips in ≤55 m legs), else chains walks of up to 30 m along walkable ground toward it, around harmful surfaces you can see (fire, acid, ...); a leg that fails on the ground (no path, blocked) is retried another way (along the route, or shorter; twice per trip); stops on arrival (within 3 m), when no walkable ground leads further, after 2 legs without progress, or at the first interrupt (combat, conversation, prompt, new hostile, any damage). Stepping into a surface: it steps out (forward if it can) and goes on.\navoid_hazards: auto (default) = when no clear way leads on, it takes the shortest crossing (says e.g. 'crossing 1.5m of Fire (~1-4 dmg + Burning)') unless HP is too low for the worst case; strict = never crosses; cross = crosses even at low HP (never lava/chasms, never >6 m).\nReturns within ~1 s with live progress (m left, ETA), or the outcome if the trip already ended: the trip runs as the first entry of the character's action queue, so queue_actions appends what to do on arrival while you observe and plan. Every later result shows it RUNNING, then queue_done or queue_interrupted (why). wait is ignored (the trip never blocks).\nfast: auto (default) = a trip of 120 m+ fast travels first to an unlocked waypoint of this level that is much nearer the goal (says so); never = always walk.\nA trip that stops twice at the same blocked spot says \"tried 2x: blocked\" and names another way (a waypoint, another side); route() shows the dead ends, unlocked waypoints and the closest spot you have been.\nnote: memory log line(s) appended to your session log at once, as note() does: write notes with the walk, no extra turn.\nAn off-limits area the game warned you about (a guard's trespass talk) is walked round; a goal inside it, or a way with no way round, is refused (trespass=true walks in anyway).",
+  "input_schema": {
+   "properties": {
+    "marker": {
+     "default": "",
+     "title": "Marker",
+     "type": "string"
+    },
+    "objective": {
+     "default": "",
+     "title": "Objective",
+     "type": "string"
+    },
+    "waypoint": {
+     "default": "",
+     "title": "Waypoint",
+     "type": "string"
+    },
+    "target": {
+     "default": "",
+     "title": "Target",
+     "type": "string"
+    },
+    "x": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "X"
+    },
+    "y": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Y"
+    },
+    "z": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Z"
+    },
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "wait": {
+     "default": false,
+     "title": "Wait",
+     "type": "boolean"
+    },
+    "avoid_hazards": {
+     "default": "auto",
+     "title": "Avoid Hazards",
+     "type": "string"
+    },
+    "fast": {
+     "default": "auto",
+     "title": "Fast",
+     "type": "string"
+    },
+    "note": {
+     "default": "",
+     "title": "Note",
+     "type": "string"
+    },
+    "trespass": {
+     "default": false,
+     "title": "Trespass",
+     "type": "boolean"
+    }
+   },
+   "title": "travel_toArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "regroup",
+  "title": null,
+  "description": "Bring party members who are farther than near_m from the leader (default: the active character) back to them, all walking at once, each in legs of verified walkable ground like travel_to (any distance; jump/climb links on the route are fine out of combat), then chain everyone to the leader (chain=false skips that). Downed members are left (help them up first); a member on another level is named (walk the leader there or fast travel). Members told to stay come back too. Each walk stops on the usual interrupts.",
+  "input_schema": {
+   "properties": {
+    "leader": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Leader"
+    },
+    "near_m": {
+     "default": 6.0,
+     "title": "Near M",
+     "type": "number"
+    },
+    "chain": {
+     "default": true,
+     "title": "Chain",
+     "type": "boolean"
+    }
+   },
+   "title": "regroupArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "read_all",
+  "title": null,
+  "description": "Read every book, note and letter in the party's bags you haven't read yet (by name), one after another, and return their text. Remembers what was read across sessions. Out of combat only. Stops at a conversation, roll, reaction or decision popup.",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    },
+    "max_items": {
+     "default": 6,
+     "title": "Max Items",
+     "type": "integer"
+    }
+   },
+   "title": "read_allArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "recall",
+  "title": null,
+  "description": "Search what the party has READ (books, notes, letters, inscriptions shown on screen, read_all) and its journal steps, by words: the puzzle hints a player remembers (e.g. \"statue order\", \"door password\"). Empty query: the titles read so far. Only texts the game showed you; read nearby books/notes first (interact) when nothing matches.",
+  "input_schema": {
+   "properties": {
+    "query": {
+     "default": "",
+     "title": "Query",
+     "type": "string"
+    },
+    "max_chars": {
+     "default": 3000,
+     "title": "Max Chars",
+     "type": "integer"
+    }
+   },
+   "title": "recallArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "rest_if_needed",
+  "title": null,
+  "description": "Rest only when it's worth it: if any party member is downed or at/below threshold % HP, take a short rest; if no short rest is left and allow_long=true, go to camp and long rest (camp scenes then come up as dialogues). Out of combat only. HP only: check spell slots yourself.",
+  "input_schema": {
+   "properties": {
+    "threshold": {
+     "default": 50.0,
+     "title": "Threshold",
+     "type": "number"
+    },
+    "allow_long": {
+     "default": false,
+     "title": "Allow Long",
+     "type": "boolean"
+    }
+   },
+   "title": "rest_if_neededArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "save_game",
+  "title": null,
+  "description": "Save the game (returns at once: the save runs in the background; SAVED shows on a later result). label: short name for a named save (e.g. \"Sxxx-pre-kagha\"); empty = named after the session and the time (Sxxx-HHMM); \"quicksave\" = the game's quicksave. If the game can't save right now (conversation, roll, a walk/action still running) it is queued for the next moment it can.",
+  "input_schema": {
+   "properties": {
+    "label": {
+     "default": "",
+     "title": "Label",
+     "type": "string"
+    }
+   },
+   "title": "save_gameArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "list_saves",
+  "title": null,
+  "description": "Your most recent saves (as the load menu shows them); \"latest\" marks the one load_game(\"latest\") loads.",
+  "input_schema": {
+   "properties": {
+    "limit": {
+     "default": 10,
+     "title": "Limit",
+     "type": "integer"
+    }
+   },
+   "title": "list_savesArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "load_game",
+  "title": null,
+  "description": "Load one of YOUR saves (folder name from list_saves, or \"latest\"). Use after a party wipe or a clear mistake.",
+  "input_schema": {
+   "properties": {
+    "save": {
+     "default": "latest",
+     "title": "Save",
+     "type": "string"
+    }
+   },
+   "title": "load_gameArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "wait",
+  "title": null,
+  "description": "Let game time pass (cutscenes, NPC turns) and report what happened. Returns early on the first notable event (combat/turn/dialogue start or end, a job or queue finishing). To follow an action, prefer wait_for.",
+  "input_schema": {
+   "properties": {
+    "seconds": {
+     "default": 3.0,
+     "title": "Seconds",
+     "type": "number"
+    }
+   },
+   "title": "waitArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "place_marker",
+  "title": null,
+  "description": "Remember a place on your own map (persists across sessions): at a visible entity's position or x,y,z.",
+  "input_schema": {
+   "properties": {
+    "label": {
+     "title": "Label",
+     "type": "string"
+    },
+    "target": {
+     "default": "",
+     "title": "Target",
+     "type": "string"
+    },
+    "x": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "X"
+    },
+    "y": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Y"
+    },
+    "z": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Z"
+    }
+   },
+   "required": [
+    "label"
+   ],
+   "title": "place_markerArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "delete_marker",
+  "title": null,
+  "description": "Delete one of your map markers.",
+  "input_schema": {
+   "properties": {
+    "marker_id": {
+     "title": "Marker Id",
+     "type": "string"
+    }
+   },
+   "required": [
+    "marker_id"
+   ],
+   "title": "delete_markerArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
+  "name": "wiki_search",
+  "title": null,
+  "description": "Search bg3.wiki (general game knowledge, like a player looking things up). Tag what you learn [wiki].",
+  "input_schema": {
+   "properties": {
+    "query": {
+     "title": "Query",
+     "type": "string"
+    },
+    "limit": {
+     "default": 5,
+     "title": "Limit",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "query"
+   ],
+   "title": "wiki_searchArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "wiki_page",
+  "title": null,
+  "description": "Read a bg3.wiki page (or one section) as plain text. A whole page is cut at max_chars and lists its sections: read the one you need with section= (S018-S027 pages ran ~2.5 KB median, most of it unread). For a puzzle, recall(query) and get_nearby(kinds=\"props\") first.",
+  "input_schema": {
+   "properties": {
+    "title": {
+     "title": "Title",
+     "type": "string"
+    },
+    "section": {
+     "default": "",
+     "title": "Section",
+     "type": "string"
+    },
+    "max_chars": {
+     "default": 2500,
+     "title": "Max Chars",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "title"
+   ],
+   "title": "wiki_pageArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ },
+ {
+  "name": "session_clock",
+  "title": null,
+  "description": "The session clock: the same ⏱ line every tool result ends with. It says WRAP UP NOW by itself when it is time;\nuntil then there is no time to watch.",
+  "input_schema": {
+   "properties": {},
+   "title": "session_clockArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": {
+   "anthropic/alwaysLoad": true
+  }
+ }
+]
