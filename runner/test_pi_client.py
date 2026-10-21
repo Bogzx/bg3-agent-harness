@@ -196,6 +196,44 @@ class Guards(unittest.TestCase):
         res = result(parse([TOOLS, SYSTEM, billing, assistant(cost=0.25), ev("agent_settled", aborted=False)])[1])
         self.assertEqual(res.cost_usd, 0.1)
 
+    def test_deepseek_cost_from_its_usage_fields(self):
+        # run 1 (research/ovh/live3.md) was off-peak: pi's catalog estimate said 2x DeepSeek's bill
+        def billing(ts, **usage):
+            data = {
+                "usage": {
+                    "prompt_cache_hit_tokens": 1_000_000,
+                    "prompt_cache_miss_tokens": 100_000,
+                    "completion_tokens": 10_000,
+                    **usage,
+                }
+            }
+            return ev("entry_appended", entry={"customType": "bg3.billing", "data": data, "timestamp": ts})
+
+        stream = [
+            TOOLS,
+            SYSTEM,
+            billing("2026-10-21T21:16:07.030Z"),
+            billing("2026-10-22T02:00:00Z"),
+            assistant(cost=0.25),
+            ev("agent_settled", aborted=False),
+        ]
+        rates = {"input": 0.3, "output": 1.2, "cache_read": 0.006}
+        p = PC.PiParser("deepseek-flash", rates)
+        res = result([e for line in stream for e in p.parse(line)])
+        peak = 0.006 + 0.03 + 0.012
+        self.assertAlmostEqual(res.cost_usd, peak / 2 + peak)  # off-peak (05:16 Beijing) + peak (10:00)
+        # a billed usage.cost (OpenRouter) still wins; no DeepSeek rates: pi's estimate
+        p = PC.PiParser("deepseek-flash", rates)
+        res = result(
+            [
+                e
+                for line in [TOOLS, SYSTEM, billing("2026-10-22T02:00:00Z", cost=0.1), *stream[4:]]
+                for e in p.parse(line)
+            ]
+        )
+        self.assertEqual(res.cost_usd, 0.1)
+        self.assertEqual(result(parse(stream)[1]).cost_usd, 0.25)
+
     def test_garbage_lines(self):
         p = PC.PiParser()
         for line in ("", "not json", "[1]", "null", ev("message_update")):
@@ -278,6 +316,12 @@ class Client(unittest.TestCase):
             self.client.command(self.req)
         with self.assertRaisesRegex(PR.ProfileError, "needs a pi profile"):
             PC.PiClient(PR.parse({"client": "codex", "model": "m"}), self.tmp / "s.txt", server=self.server)
+
+    def test_deepseek_rates_only_for_deepseeks_api(self):
+        self.assertIsNone(self.client.new_parser().deepseek_prices)  # OpenRouter bills usage.cost itself
+        prof = PR.load(C.REPO / "profiles" / "deepseek-flash.toml")
+        c = PC.PiClient(prof, self.tmp / "s.txt", server=self.server)
+        self.assertEqual(c.parser.deepseek_prices, {"input": 0.3, "output": 1.2, "cache_read": 0.006})
 
     def test_config_files(self):
         paths = self.client.write_config(self.req)

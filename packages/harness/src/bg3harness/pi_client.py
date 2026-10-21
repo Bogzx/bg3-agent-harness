@@ -15,7 +15,8 @@ The parser's guards (pi's exit code is no signal: it is 0 after a final API erro
 - an overflow-recovery loop (pi #11161: compaction is off, so it should never start) is cut: after
   MAX_RECOVERY compaction or overflow rounds the parser emits an error result, and the runner stops the process;
 - cost_usd is the billed cost (OpenRouter's usage.cost, from bg3.ts's bg3.billing entries) when the endpoint
-  reports it, else pi's catalog estimate from the profile's prices;
+  reports it; for DeepSeek's own API, DeepSeek's usage fields x its price sheet (deepseek_bill.py: the profile's
+  prices at peak, half off-peak); else pi's catalog estimate from the profile's prices;
 - the init event's mcp status compares the tools the model got with the tools the server listed (bg3.tools).
 
     python3 -m unittest runner/test_pi_client.py
@@ -29,6 +30,7 @@ import subprocess
 from pathlib import Path
 
 from . import clients as C
+from . import deepseek_bill
 from .profiles import Profile, ProfileError, models_json
 
 PI_DIR = C.REPO / "tools" / "pi"
@@ -87,8 +89,9 @@ def exit_problem(returncode: int | None, stderr: str) -> str | None:
 class PiParser:
     """pi --mode json lines -> Events (one parser per process)."""
 
-    def __init__(self, model: str | None = None):
+    def __init__(self, model: str | None = None, deepseek_prices: dict | None = None):
         self.model = model
+        self.deepseek_prices = deepseek_prices  # the profile's USD rates when DeepSeek's API serves it
         self.session: str | None = None
         self.server_tools: int | None = None  # bg3.tools: what the server listed
         self.model_tools: int | None = None  # the system message's toolsAdded: what the model got (None: no
@@ -223,8 +226,14 @@ class PiParser:
             if entry.get("customType") == "bg3.tools":
                 self.server_tools = int(data.get("n") or 0)
             elif entry.get("customType") == "bg3.billing":
-                cost = (data.get("usage") or {}).get("cost")
-                if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+                usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+                cost = usage.get("cost")
+                if not isinstance(cost, (int, float)) or isinstance(cost, bool):
+                    cost = None
+                    if self.deepseek_prices is not None:
+                        when = deepseek_bill.parse_ts(entry.get("timestamp"))
+                        cost = deepseek_bill.cost(usage, self.deepseek_prices, when)
+                if cost is not None:
                     self.billed = (self.billed or 0.0) + float(cost)
                 if data.get("provider"):
                     self.providers.append(str(data["provider"]))
@@ -314,7 +323,14 @@ class PiClient:
         self.cwd, self.settings = cwd, settings if settings is not None else PI_SETTINGS
         self.binary = Path(binary) if binary else PI_DIR / "node_modules" / ".bin" / "pi"
         self.extension = Path(extension) if extension else EXTENSION  # the container sandbox: the image's copy
-        self.parser = PiParser(profile.model)
+        self.parser = self.new_parser()
+
+    def new_parser(self) -> PiParser:
+        p = self.p
+        deepseek = p.endpoint is not None and deepseek_bill.is_deepseek(p.endpoint.base_url)
+        cost = p.model_info.cost if p.model_info is not None else {}
+        rates = deepseek and all(k in cost for k in deepseek_bill.RATES)  # else pi's estimate (or the bill)
+        return PiParser(p.model, dict(cost) if rates else None)
 
     def agent_dir(self, req: C.Request) -> Path:
         return Path(req.session_dir) / f"{req.tag or 'session'}.pi"
@@ -350,7 +366,7 @@ class PiClient:
             raise ValueError("pi needs the session id up front (--session-id)")
         if req.model and req.model != self.p.model:
             raise ValueError(f"the request's model {req.model!r} is not the profile's {self.p.model!r}")
-        self.parser = PiParser(self.p.model)
+        self.parser = self.new_parser()
         cmd = [
             str(self.binary),
             "--mode",
